@@ -48,6 +48,10 @@ func pumpReview776QueueAttempt(t *testing.T, cfg *Config, thread string) (map[st
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join(cfg.StateDir, pumpStateFile))
 	if err != nil {
+		if os.IsNotExist(err) {
+			// A round that pinned nothing wrote no state file at all.
+			return nil, false
+		}
 		t.Fatal(err)
 	}
 	var doc struct {
@@ -489,5 +493,74 @@ func TestPumpReview776CancelledRoundWritesNothing(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(cfg.StateDir, pumpQueueDir, "parent-1", pumpSentDir)); !os.IsNotExist(err) {
 		t.Errorf("a cancelled round moved a notice: %v", err)
+	}
+}
+
+// An oversize/ directory that is a symlink is refused, so the notice is not moved out of the
+// queue through it.
+func TestPumpReview776OversizeSymlinkIsRefused(t *testing.T) {
+	now := pumpTestNow
+	e := pumpTestEnv(t, &now)
+	bridge, _ := deliverFakeBridge(t, []map[string]any{
+		{"payload": map[string]any{"observation": "active", "activeTurnId": "turn-1"}},
+		{"payload": map[string]any{"status": "accepted", "delivery": "accepted_not_applied"}},
+	})
+	cfg := pumpTestConfig(t, bridge)
+	threadDir := filepath.Join(cfg.StateDir, pumpQueueDir, "parent-1")
+	if err := os.MkdirAll(threadDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(threadDir, pumpReview776OversizeDir)); err != nil {
+		t.Skipf("symlinks are unavailable: %v", err)
+	}
+	huge := strings.Repeat("y", 130000)
+	if err := os.WriteFile(filepath.Join(threadDir, "aaaaaaaaaaaaaaaa.txt"), []byte(huge), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := pumpQueueFlush(context.Background(), e, cfg, pumpTestReadStatePtr(t, cfg), pumpSettingsFrom(cfg), false); err != nil {
+		t.Fatal(err)
+	}
+	if entries, err := os.ReadDir(outside); err != nil {
+		t.Fatal(err)
+	} else if len(entries) != 0 {
+		t.Errorf("the notice was moved through the symlink: %v", entries)
+	}
+	if names := pumpQueueTestNames(t, cfg, "parent-1"); len(names) != 1 {
+		t.Errorf("the notice left the queue: %v", names)
+	}
+}
+
+// A notice that is not valid UTF-8 is refused before it is pinned, so a persisted pin can never
+// disagree with the bytes on disk.
+func TestPumpReview776InvalidUTF8NoticeIsNotPinned(t *testing.T) {
+	now := pumpTestNow
+	e := pumpTestEnv(t, &now)
+	bridge, log := deliverFakeBridge(t, []map[string]any{
+		{"payload": map[string]any{"observation": "active", "activeTurnId": "turn-1"}},
+	})
+	cfg := pumpTestConfig(t, bridge)
+	dir := filepath.Join(cfg.StateDir, pumpQueueDir, "parent-1")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "aaaaaaaaaaaaaaaa.txt"), []byte{0xff, 0xfe, 0xfd}, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := pumpQueueFlush(context.Background(), e, cfg, pumpTestReadStatePtr(t, cfg), pumpSettingsFrom(cfg), false); err != nil {
+		t.Fatal(err)
+	}
+	// The refusal happens before the pin is written, so the flush creates no state file at all: a
+	// pin saved with a JSON-mangled body would leave the frozen text disagreeing with the file.
+	if _, err := os.Stat(filepath.Join(cfg.StateDir, pumpStateFile)); !os.IsNotExist(err) {
+		t.Errorf("a notice that is not valid UTF-8 was pinned and saved: %v", err)
+	}
+	if _, ok := pumpReview776QueueAttempt(t, cfg, "parent-1"); ok {
+		t.Error("a notice that is not valid UTF-8 was pinned")
+	}
+	for _, tool := range deliverSendToolsOf(t, log) {
+		if tool == deliverToolSend || tool == deliverToolSteer {
+			t.Errorf("a notice that is not valid UTF-8 was sent: %v", deliverSendToolsOf(t, log))
+		}
 	}
 }
