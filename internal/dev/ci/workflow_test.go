@@ -309,10 +309,19 @@ func alternation(words []string) string {
 func pythonInWorkflow(file, text string) []string {
 	var found []string
 	admitted := filepath.Base(file) == skillScriptsNodeFile
-	inSkillScriptsNode := false
+	inJobs, inSkillScriptsNode := false, false
 	for number, line := range lines(text) {
-		if name, ok := workflowJobHeader(line); ok {
-			inSkillScriptsNode = admitted && name == skillScriptsNodeJob
+		// A key at column 0 is a top-level key: it opens or closes the jobs block, and the job
+		// exception lives only inside it. A workflow-level `env:` value whose key happens to be
+		// skill-scripts-node shares the two-space key shape, so without this the exception would
+		// switch on before `jobs:` and a job that reads the variable would run a skill test with no
+		// finding (CRW-939, the generation-2 evaluation's d1).
+		if line != "" && !strings.HasPrefix(line, " ") {
+			inJobs, inSkillScriptsNode = strings.HasPrefix(line, "jobs:"), false
+		} else if inJobs {
+			if name, ok := workflowJobHeader(line); ok {
+				inSkillScriptsNode = admitted && name == skillScriptsNodeJob
+			}
 		}
 		code := strings.TrimSpace(line)
 		skillPath := skillStep.MatchString(code) || skillRootValue.MatchString(code)
@@ -487,6 +496,20 @@ func TestWorkflow_every_yaml_job_key_resets_the_skill_scripts_exception(t *testi
 		if got := pythonInWorkflow("ci.yml", body); len(got) != 0 {
 			t.Errorf("%q is not a job key but reset the exception: %q", strings.TrimSpace(line), got)
 		}
+	}
+	// The exception lives inside the jobs block. A workflow-level key whose name is
+	// skill-scripts-node shares the two-space key shape, so a reader that reset the exception on
+	// every two-space line switched it on before `jobs:` and let a job that reads the value run a
+	// skill test with no finding (CRW-939, the generation-2 evaluation's d1).
+	globalEnv := "name: ci\nenv:\n  skill-scripts-node: port/cxc/skills\njobs:\n  gui:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: node --test \"${{ env['skill-scripts-node'] }}\"/crw-qa/tests/a.test.mjs\n"
+	if got := pythonInWorkflow("ci.yml", globalEnv); len(got) == 0 {
+		t.Error("a workflow-level key named skill-scripts-node switched the exception on before jobs:")
+	}
+	// The control: the same value inside the real job is the one admitted place, and the real
+	// ci.yml carries no workflow-level key of that name.
+	insideJob := "name: ci\njobs:\n  skill-scripts-node:\n    runs-on: ubuntu-24.04\n    env:\n      skill-scripts-node: port/cxc/skills\n    steps:\n      - run: node --test port/cxc/skills/crw-qa/tests/a.test.mjs\n"
+	if got := pythonInWorkflow("ci.yml", insideJob); len(got) != 0 {
+		t.Errorf("the real job's own root is refused: %q", got)
 	}
 }
 

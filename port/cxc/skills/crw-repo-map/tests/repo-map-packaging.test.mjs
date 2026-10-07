@@ -110,9 +110,17 @@ function parserImportsBeforeParsing(source) {
   if (parseAt < 0) return { parseAt, offenders: ["(no `args = parser.parse_args()` line found)"] };
   const offenders = [];
   for (const [i, line] of lines.entries()) {
-    if (i >= parseAt) break;
     const code = line.trim();
     if (!/^(?:from|import)\s/.test(code)) continue;
+    // `parse_args()` lives inside main(), so it runs only after the whole module body has
+    // executed. A module-level import (no indentation) therefore precedes the parse however late
+    // it sits in the file, while an import indented inside a function can be deferred past it.
+    // Reading only the lines before the textual parse missed the module-level shape: an import
+    // moved just above the `if __name__ == "__main__":` guard still sat after the parse in the
+    // text, but a module-level import runs before main() and makes `--help` fail without the
+    // deps (CRW-939, the generation-2 evaluation's d2).
+    const moduleLevel = !/^[ \t]/.test(line);
+    if (!moduleLevel && i >= parseAt) continue;
     const modules = importedModules(code);
     if (modules === null) {
       offenders.push(`line ${i + 1}: ${code} (not a plain import this check can read)`);
@@ -181,6 +189,20 @@ test("the parser-import check reads every module and refuses what it cannot read
     const { offenders } = parserImportsBeforeParsing(line + parse);
     assert.ok(offenders.length > 0, `${JSON.stringify(line)}: an unreadable import must be refused, not passed`);
   }
+});
+
+// `parse_args()` runs inside main(), so a module-level import placed after the parse in the text
+// still executes before the parse and breaks `--help` without the parser deps. The check has to
+// read module-level imports wherever they sit, not only above the parse line (CRW-939, the
+// generation-2 evaluation's d2).
+test("the parser-import check reads module-level imports placed after the parse", () => {
+  const parse = "args = parser.parse_args()\n";
+  const moduleLevel = "from repomap_class import RepoMap\n"; // column 0: runs before main()
+  const { offenders } = parserImportsBeforeParsing(parse + moduleLevel);
+  assert.ok(offenders.length > 0, "a module-level parser import after the parse must still be reported");
+  // The control: the same import indented inside the function is deferred past the parse and clean.
+  const deferred = "    from repomap_class import RepoMap\n";
+  assert.deepEqual(parserImportsBeforeParsing(parse + deferred).offenders, [], "a deferred import must stay clean");
 });
 
 test("find_src_files skips compiled-output dirs", () => {
