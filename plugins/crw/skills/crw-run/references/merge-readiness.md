@@ -340,8 +340,8 @@ coordinator can do depends on the relay it runs, and `codex-session-relay merge-
 
 **A thread inside this issue's scope**, a P0 or security thread in or out of scope, a blocking thread, or a
 thread the coordinator cannot classify without reconstructing the child's reasoning, is not recorded by the
-coordinator. It goes to the child as an ordinary correction while a correction can reach the child, and after
-that the candidate is held.
+coordinator. It goes to the child as an ordinary correction (a fix or an answer from the code) while a correction
+can reach the child, and after that the candidate is held.
 
 **Before the acceptance.** In a DAG-managed project that is a node `dag-ready` does not yet read as accepted; in
 a project with no plan it lasts until the merged mark. A merge turn of the candidate that is merging or of
