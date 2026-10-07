@@ -1048,6 +1048,39 @@ func TestPumpReview776AcceptedPinCompletesAfterACrash(t *testing.T) {
 	}
 }
 
+// The pre-pin membership completion never replaces an entry already under sent/ and never deletes a
+// notice the producer wrote.
+func TestPumpReview776LegacyMembershipCompletionNeverReplaces(t *testing.T) {
+	dir := t.TempDir()
+	sent := filepath.Join(dir, pumpSentDir)
+	if err := os.MkdirAll(sent, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "aaaaaaaaaaaaaaaa.txt"), []byte("queued"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// An earlier completion already holds this name under sent/.
+	if err := os.WriteFile(filepath.Join(sent, "aaaaaaaaaaaaaaaa.txt"), []byte("earlier"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := pumpReview776QueueMoveByName(dir, []string{"aaaaaaaaaaaaaaaa.txt"}); err != nil {
+		t.Fatal(err)
+	}
+	if raw, err := os.ReadFile(filepath.Join(sent, "aaaaaaaaaaaaaaaa.txt")); err != nil || string(raw) != "earlier" {
+		t.Errorf("the earlier completion was disturbed: %q %v", raw, err)
+	}
+	entries, err := os.ReadDir(sent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 {
+		t.Errorf("sent/ holds %d entries, want the earlier one and the completed notice", len(entries))
+	}
+	if _, err := os.Stat(filepath.Join(dir, "aaaaaaaaaaaaaaaa.txt")); !os.IsNotExist(err) {
+		t.Errorf("the queue name survived the completion: %v", err)
+	}
+}
+
 // A pre-change accepted record whose text no longer matches the queue is not completed by name: a
 // member the producer replaced was never sent, so it must not be taken to sent/.
 func TestPumpReview776LegacyAcceptedWithAChangedBodyIsNotCompleted(t *testing.T) {

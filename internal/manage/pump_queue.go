@@ -854,21 +854,30 @@ func pumpReview776QueuePresent(dir string, names []string) []string {
 }
 
 // pumpReview776QueueMoveByName moves the named notices into sent/, the completion the pre-pin
-// membership shape uses.
+// membership shape uses. It takes each name aside with one atomic rename and publishes the taken
+// file with os.Link, so it never replaces an entry that is already under sent/ and never deletes a
+// notice the producer wrote: a replacement keeps the queue name while the taken copy is completed.
 func pumpReview776QueueMoveByName(dir string, names []string) error {
 	sent := filepath.Join(dir, pumpSentDir)
 	if err := os.MkdirAll(sent, 0o700); err != nil {
 		return err
 	}
 	for _, name := range names {
-		source := filepath.Join(dir, name)
-		if _, err := os.Lstat(source); err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				continue
+		aside, err := pumpReview776QueueTakeAside(dir, name)
+		if err != nil {
+			return err
+		}
+		if aside == "" {
+			// The notice is already gone; nothing to complete.
+			continue
+		}
+		if _, err := pumpReview776QueuePublish(aside, sent, name); err != nil {
+			if putErr := pumpReview776QueuePutBack(aside, filepath.Join(dir, name)); putErr != nil {
+				return putErr
 			}
 			return err
 		}
-		if err := os.Rename(source, filepath.Join(sent, name)); err != nil {
+		if err := os.Remove(aside); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
 	}
@@ -998,12 +1007,6 @@ func pumpReview776QueueThreadRecords(cfg *Config, thread string) ([]deliverRecor
 		return records[i].LogicalID < records[j].LogicalID
 	})
 	return records, nil
-}
-
-// pumpQueueLegacyBatchID is the pre-change queue batch id: the thread and the sorted notice names,
-// without the body. It is read only to find an unsettled record an upgrade left behind.
-func pumpQueueLegacyBatchID(thread string, names []string) string {
-	return pumpBatchIDStrings(append([]string{thread}, names...))
 }
 
 // pumpReview776QueuePinLift drops a pin whose delivery settled without an acceptance: a refusal is
