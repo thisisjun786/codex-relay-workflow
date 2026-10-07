@@ -538,3 +538,90 @@ func TestShellWriteHeredocGeneration9SedOptionArgumentControls(t *testing.T) {
 		})
 	}
 }
+
+// The blind pre-merge evaluation of head 4c8b1b9ea (score 4) found three more bypasses and one regression in the same
+// promise: the name-binding scan read the text the oracle's legacy stripper left behind, a delimiter holding a
+// non-ASCII blank was split at it, a Python program with a source-encoding declaration was read as its undecoded
+// spelling, and a quoted delimiter written in two spans made an ordinary documentation command look like a binding.
+// The rows below are red on 4c8b1b9ea.
+
+// TestShellWriteHeredocGeneration9NonASCIISpaceDelimiterDenied is the denied case for a delimiter that holds a
+// non-ASCII blank: the shell splits the word at an ASCII blank only, so the delimiter is the whole word and the
+// document ends where the shell ends it.
+func TestShellWriteHeredocGeneration9NonASCIISpaceDelimiterDenied(t *testing.T) {
+	cwd, root, env := gateScene(t)
+	mem := root
+	for _, blank := range []struct{ name, c string }{
+		{"a non-breaking space", "\u00a0"},
+		{"an em space", "\u2003"},
+	} {
+		t.Run(blank.name, func(t *testing.T) {
+			command := "cat <<EOF" + blank.c + "X\nsafe\nEOF" + blank.c + "X\npython3 - <<'PY'\nopen('" + mem + "/a','w')\nPY"
+			got := memoryGateClassify("Bash", map[string]any{"command": command}, cwd, env)
+			if !shellWriteHeredocGateDenied(got, mem+"/a") {
+				t.Errorf("%q: %+v, want a deny naming the protected path", command, got)
+			}
+		})
+	}
+	// An ASCII blank still separates the delimiter word from what follows it.
+	if hss := shellWriteHeredocs(utf16.Encode([]rune("cat <<EOF \nx\nEOF"))); len(hss) != 1 || string(utf16.Decode(hss[0].delim)) != "EOF" {
+		t.Errorf("an ASCII blank: %+v, want one here-document delimited by EOF", hss)
+	}
+}
+
+// TestShellWriteHeredocGeneration9PythonEncodingDenied is the denied case for a Python program read from standard input
+// that declares a source encoding: Python decodes those bytes under a codec this reader does not model, so the program
+// it runs is not the text read here and the here-document is refused.
+func TestShellWriteHeredocGeneration9PythonEncodingDenied(t *testing.T) {
+	cwd, root, env := gateScene(t)
+	mem := root
+	for _, row := range []struct{ name, body string }{
+		{"a UTF-7 cookie", "# coding: utf-7\n+AG8-pen('" + mem + "/a','w')\n"},
+		{"a latin-1 cookie", "# -*- coding: latin-1 -*-\nopen('" + mem + "/a','w')\n"},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			command := "python3 - <<'PY'\n" + row.body + "PY"
+			got := memoryGateClassify("Bash", map[string]any{"command": command}, cwd, env)
+			if got.Surface == "" {
+				t.Errorf("%q must be refused: %+v", command, got)
+			}
+		})
+	}
+	// A harmless program with no declaration stays readable.
+	if got, ok := shellWriteHeredocUnreadable("python3 - <<'PY'\nprint(1)\nPY"); ok {
+		t.Errorf("a harmless program reported unreadable %q", got)
+	}
+}
+
+// TestShellWriteHeredocGeneration9SplitDelimiterControls is the invariant case for a quoted delimiter written in two
+// spans: the shell concatenates them into one word, so the body ends there and the lines inside it are text, not
+// commands.
+func TestShellWriteHeredocGeneration9SplitDelimiterControls(t *testing.T) {
+	cwd, root, env := gateScene(t)
+	mem := root
+	for _, row := range []struct{ name, command string }{
+		{"a documentation body naming a binding verb", "cat > note.md <<'E''OF'\nE\nalias tool=python3\nEOF"},
+		{"a documentation body naming a function", "cat > note.md <<'E''OF'\nE\nf() { python3 -; }\nEOF"},
+		{"a documentation body naming the memories path", "cat > note.md <<'E''OF'\nE\n" + mem + "/a\nEOF"},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			if got, ok := shellWriteHeredocUnreadable(row.command); ok {
+				t.Errorf("%q reported unreadable %q, want data", row.command, got)
+			}
+			if got := memoryGateClassify("Bash", map[string]any{"command": row.command}, cwd, env); got.Surface != "" {
+				t.Errorf("%q must pass: %+v", row.command, got)
+			}
+		})
+	}
+	// A binding written before the here-document still denies, whatever the delimiter's spelling.
+	for _, command := range []string{
+		"cat() { python3 -; }\ncat <<'E''OF'\nsafe\nEOF",
+		"cat <<'DATA'\nsafe\nDATA\ncat() { python3 -; }\ncat <<'PY'\nopen('" + mem + "/a','w')\nPY",
+	} {
+		t.Run("a binding denies: "+command[:10], func(t *testing.T) {
+			if got := memoryGateClassify("Bash", map[string]any{"command": command}, cwd, env); got.Surface == "" {
+				t.Errorf("%q must be denied: %+v", command, got)
+			}
+		})
+	}
+}

@@ -321,13 +321,13 @@ func shellWriteHeredocDelimiter(s []uint16, i int) (delim []uint16, quoted bool)
 	if shellAt(s, i) == '-' {
 		i++
 	}
-	for i < len(s) && shellSpace(s[i]) {
+	for i < len(s) && shellWriteHeredocBlank(s[i]) {
 		i++
 	}
 	out := []uint16{}
 	for i < len(s) {
 		c := s[i]
-		if shellSpace(c) || c == ';' || c == '|' || c == '&' || c == '(' || c == ')' || c == '<' || c == '>' {
+		if shellWriteHeredocBlank(c) || c == ';' || c == '|' || c == '&' || c == '(' || c == ')' || c == '<' || c == '>' {
 			break
 		}
 		switch c {
@@ -550,7 +550,7 @@ func shellWriteHeredocInterpreterName(word string) bool {
 // `<<'PY' python3` both read `python3`.
 func shellWriteHeredocVerbExpanded(line []uint16) bool {
 	for i := 0; i < len(line); {
-		if shellSpace(line[i]) {
+		if shellWriteHeredocBlank(line[i]) {
 			i++
 			continue
 		}
@@ -1012,7 +1012,7 @@ func shellWriteHeredocSegmentWords(seg []uint16, requireLiteral bool) (words []s
 	words = []string{}
 	for i := 0; i < len(seg); {
 		c := seg[i]
-		if shellSpace(c) {
+		if shellWriteHeredocBlank(c) {
 			i++
 			continue
 		}
@@ -1118,7 +1118,7 @@ func shellWriteHeredocOperator(s []uint16, i int) (kind int, next int) {
 // a substitution, a brace, a glob or a comment marker; a single-quoted word; or a double-quoted word without an
 // expansion, a backtick or a backslash. It returns the word's unquoted text and the offset after it.
 func shellWriteHeredocLiteralWord(s []uint16, i int) (word []uint16, next int, literal bool) {
-	for i < len(s) && shellSpace(s[i]) {
+	for i < len(s) && shellWriteHeredocBlank(s[i]) {
 		i++
 	}
 	out := []uint16{}
@@ -1127,7 +1127,7 @@ func shellWriteHeredocLiteralWord(s []uint16, i int) (word []uint16, next int, l
 	for i < len(s) {
 		c := s[i]
 		if quote == 0 {
-			if shellSpace(c) || c == '<' || c == '>' || c == ';' || c == '|' || c == '&' || c == '(' || c == ')' {
+			if shellWriteHeredocBlank(c) || c == '<' || c == '>' || c == ';' || c == '|' || c == '&' || c == '(' || c == ')' {
 				break
 			}
 			switch c {
@@ -1164,12 +1164,12 @@ func shellWriteHeredocLiteralWord(s []uint16, i int) (word []uint16, next int, l
 
 // shellWriteHeredocDelimiterEnd is the offset after a here-document delimiter word that begins at i.
 func shellWriteHeredocDelimiterEnd(s []uint16, i int) int {
-	for i < len(s) && shellSpace(s[i]) {
+	for i < len(s) && shellWriteHeredocBlank(s[i]) {
 		i++
 	}
 	for i < len(s) {
 		c := s[i]
-		if shellSpace(c) || c == ';' || c == '|' || c == '&' || c == '(' || c == ')' || c == '<' || c == '>' {
+		if shellWriteHeredocBlank(c) || c == ';' || c == '|' || c == '&' || c == '(' || c == ')' || c == '<' || c == '>' {
 			break
 		}
 		switch c {

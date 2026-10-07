@@ -1987,9 +1987,10 @@ func shellWriteHeredocKindOf(verb string) shellWriteHeredocKind {
 // feed an interpreter.
 func shellWriteHeredocFunctionNames(command []uint16) map[string]bool {
 	out := map[string]bool{}
-	// A word-initial # makes the rest of its physical line inert, so a function example written in a comment is no
-	// definition (CRW-765 correction 9, third pass, after the blind pre-merge evaluation of head 05dc1a743).
-	s := shellWriteHeredocBlankComments(stripHeredocBodies(command))
+	// The text is already body-free (the caller blanks the here-documents it finds) and its comments are inert: a
+	// word-initial # ends its physical line, so a function example written in a comment is no definition (CRW-765
+	// correction 9).
+	s := shellWriteHeredocBlankComments(command)
 	for i := 0; i < len(s); i++ {
 		if s[i] != '(' {
 			continue
@@ -2110,11 +2111,15 @@ func shellWriteHeredocNamesInterpreter(command []uint16) bool {
 // interpreter the reader cannot see from the command text alone, so the here-document is denied even when the text
 // names no interpreter. The text is the same canonical text rule R2 reads.
 func shellWriteHeredocNameBinding(command []uint16) bool {
-	stripped := stripHeredocBodies(command)
+	// The text outside the here-document bodies, read by this issue's own collector and not by the oracle's legacy
+	// stripper: the legacy delimiter reader takes only the first quoted span of `<<'E''OF'`, so its body ends at the
+	// line `E` and the body's own text leaked into this scan as commands (CRW-765 correction 9, fifth pass, after the
+	// blind pre-merge evaluation of head 4c8b1b9ea).
+	stripped := shellWriteHeredocOutsideBodies(command)
 	if len(shellWriteHeredocFunctionNames(stripped)) > 0 {
 		return true
 	}
-	s := shellWriteHeredocCanonical(shellString(stripped))
+	s := shellWriteHeredocCanonical(shellString(shellWriteHeredocBlankComments(stripped)))
 	for i := 0; i+len("path=") <= len(s); i++ {
 		if s[i:i+len("path=")] != "path=" {
 			continue
@@ -2145,6 +2150,16 @@ func shellWriteHeredocNameBinding(command []uint16) bool {
 		}
 	}
 	return false
+}
+
+// shellWriteHeredocOutsideBodies is the command text with every here-document this issue's collector finds blanked out
+// (its body and its terminator line), so a check that reads the command's own words never reads a body as one.
+func shellWriteHeredocOutsideBodies(command []uint16) []uint16 {
+	spans := [][2]int{}
+	for _, h := range shellWriteHeredocs(command) {
+		spans = append(spans, [2]int{h.bodyAt, h.bodyEnd})
+	}
+	return shellWriteHeredocBlankSpans(command, spans)
 }
 
 // shellWriteHeredocFirstWord is the first word of a token list, or the empty string when the list is empty.
@@ -2257,6 +2272,12 @@ func shellWriteHeredocProgramWrites(h shellWriteHeredoc, kind shellWriteHeredocK
 	body := shellWriteHeredocProgramBody(h)
 	switch kind {
 	case shellWriteHeredocPython:
+		// A source-encoding declaration makes Python decode these bytes under a codec this reader does not model, so
+		// the program text it runs is not the text read here; the same rule CRW-754 applies to a bytes literal passed
+		// to exec applies to a program read from standard input (CRW-765 correction 9, fifth pass).
+		if shellWriteExecCodingDecl(body) {
+			return nil, shellWriteHeredocUnreadableWhat
+		}
 		what, _ := shellWriteFStringUnreadableProgram(body)
 		return shellVerbScriptWritesIn(body, true, true), what
 	case shellWriteHeredocNode:
@@ -2357,6 +2378,12 @@ func shellWriteHeredocUnreadableIn(command string, depth int, budget *int) (stri
 		body := shellWriteHeredocProgramBody(h)
 		switch kind {
 		case shellWriteHeredocPython:
+			// A source-encoding declaration makes Python decode these bytes under a codec this reader does not model, so
+			// the program text it runs is not the text read here; the same rule CRW-754 applies to a bytes literal passed
+			// to exec applies to a program read from standard input (CRW-765 correction 9, fifth pass).
+			if shellWriteExecCodingDecl(body) {
+				return shellWriteHeredocUnreadableWhat, true
+			}
 			if what, bad := shellWriteFStringUnreadableProgram(body); bad {
 				return what, true
 			}
