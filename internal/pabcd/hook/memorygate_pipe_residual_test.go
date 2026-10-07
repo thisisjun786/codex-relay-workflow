@@ -27,6 +27,21 @@ func TestMemoryGatePipeResidual(t *testing.T) {
 		// CRW-894 c9(b), zsh MULTIOS: a descriptor-0 file does not replace the pipe.
 		"printf 'echo x > " + root + "/a' | bash </dev/null",
 		"printf 'echo x > " + root + "/a' | python3 </dev/null",
+		// CRW-894 c10: the forms the gate shares with the worktree guard. (a) another process's descriptor is
+		// unknown and fails closed; (b) a redirection between exec's options and its executable hides the shell;
+		// (c) a shell as the condition of a compound, and a negated shell, are commands the reading classifies;
+		// (d) a here-string written before the command name belongs to that command; (e) the & of a descriptor
+		// duplication is no command separator; (f) a -word is no argument of an unknown-arity option; (h) php's
+		// -f/--file naming a standard-input alias and python's -m code read the pipe.
+		"printf 'echo x > " + root + "/a' | bash -c 'bash </dev/null </proc/$$/fd/0; :'",
+		"printf 'echo x > " + root + "/a' | exec -a x >/dev/null bash",
+		"printf 'echo x > " + root + "/a' | bash -c 'if bash; then :; fi'",
+		"printf 'echo x > " + root + "/a' | bash -c '! bash'",
+		"<<< 'echo x > " + root + "/a' bash",
+		"python3 2>&1 <<'PY'\nopen('" + root + "/a','w')\nPY",
+		"printf x | node --no-warnings --require fs",
+		"printf x | php -f /dev/stdin",
+		"printf x | python3 -m code",
 	} {
 		got := memoryGateClassify("Bash", map[string]any{"command": command}, cwd, env)
 		if got.Surface != "shell" || !strings.HasPrefix(got.Target, "(a program the gate cannot read: ") {

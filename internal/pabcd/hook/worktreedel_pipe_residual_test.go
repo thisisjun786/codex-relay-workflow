@@ -504,3 +504,85 @@ func TestWorktreeDelUnreadableStdinHoldingsBound(t *testing.T) {
 	}
 	r.intact(t)
 }
+
+// TestWorktreeDelPipeResidualC10 is CRW-894 c10, the generation-3 criterion, red first on head f54cf198. Each form was
+// reproduced with a harmless stand-in for rm in the host's zsh (the shell the commands run through): (a) a
+// /proc/<pid>/fd/N alias whose pid is not this process names a descriptor the guard cannot track; (b) a redirection
+// written between a wrapper's options and its executable is skipped by the shared prefix walk; (c) a listed shell that
+// stands as the condition of if, elif, while or until, or after !, is a command the pipe reading classifies; (d) a
+// redirection written before the command name belongs to that command; (e) the & of a descriptor duplication is no
+// command separator when the owner of a here-document is found; (f) a word that starts with - is never the argument of an
+// option whose arity the guard does not know; (g) the -c and eval recursion carries the standard input the guard
+// computed for the intermediate shell; (h) php -f/--file naming a standard-input alias and python -m code are programs
+// read from the pipe.
+func TestWorktreeDelPipeResidualC10(t *testing.T) {
+	r := newDelRig(t)
+	// (a) another process's descriptor, and a descriptor the guard cannot follow, fail closed.
+	worktreeDelPipeDenied(t, r, "printf 'rm -rf ../repo' | bash -c 'bash </dev/null </proc/$$/fd/0; :'")
+	worktreeDelPipeInterpreterDenied(t, r, "printf 'rm -rf ../repo' | bash -c 'python3 </dev/null </proc/$$/fd/0'")
+	worktreeDelPipeDenied(t, r, "printf 'rm -rf ../repo' | bash 3</proc/$$/fd/0 </dev/null <&3")
+	worktreeDelPipeInterpreterDenied(t, r, "printf 'rm -rf ../repo' | python3 3</proc/$$/fd/0 </dev/null <&3")
+	// /proc/self/fd/N keeps the c9 bookkeeping: it names this command's own descriptor.
+	worktreeDelPipeDenied(t, r, "printf 'rm -rf ../repo' | bash 3</proc/self/fd/0 </dev/null <&3")
+	// (b) a redirection between the wrapper's options and its executable.
+	worktreeDelPipeDenied(t, r, "printf 'rm -rf ../repo' | exec -a x >/dev/null bash")
+	worktreeDelPipeDenied(t, r, "printf 'rm -rf ../repo' | exec -a x 2>/dev/null bash")
+	r.denied(t, "exec -a x >/dev/null rm -rf ../repo", "rm -r ../repo")
+	// (c) a shell as the condition of a compound, and a negated shell.
+	for _, cmd := range []string{
+		"printf 'rm -rf ../repo' | bash -c 'if bash; then :; fi'",
+		"printf 'rm -rf ../repo' | bash -c 'elif bash; then :; fi'",
+		"printf 'rm -rf ../repo' | bash -c 'while bash; do :; done'",
+		"printf 'rm -rf ../repo' | bash -c 'until bash; do :; done'",
+		"printf 'rm -rf ../repo' | bash -c '! bash'",
+	} {
+		worktreeDelPipeDenied(t, r, cmd)
+	}
+	// (d) a redirection written before the command name belongs to that command.
+	worktreeDelUnreadableDenied(t, r, "<<< 'import shutil; shutil.rmtree(\"../repo\")' python3", "an interpreter program read from a here-string")
+	worktreeDelUnreadableDenied(t, r, "<<< 'rm -rf ../repo' bash", "a shell program read from a here-string")
+	worktreeDelUnreadableDenied(t, r, "<<< 'rm -rf ../repo' sh", "a shell program read from a here-string")
+	// (e) the & of a descriptor duplication is no command separator.
+	worktreeDelUnreadableDenied(t, r, "python3 2>&1 <<'PY'\nimport shutil; shutil.rmtree('../repo')\nPY", "an interpreter program read from a here-document")
+	worktreeDelUnreadableDenied(t, r, "python3 2>&1 <<EOF\nimport os\nEOF", "an interpreter program read from a here-document")
+	// (f) a -word is no argument of an option whose arity the guard does not know.
+	worktreeDelPipeInterpreterDenied(t, r, "printf x | node --no-warnings --require fs")
+	worktreeDelPipeInterpreterDenied(t, r, "printf x | python3 --no-warnings --require fs")
+	// (g) the recursion carries the standard input the guard computed for the intermediate shell, so a shell whose own
+	// descriptor 0 is a known file hands no pipe to its program. The previous head denied this row.
+	r.allowed(t,
+		"printf x | bash -c 'bash -c bash </dev/null'",
+		"printf x | bash -c 'bash </dev/null'",
+	)
+	// (h) php's -f/--file naming a standard-input alias, and python's -m code.
+	for _, cmd := range []string{
+		"printf x | php -f /dev/stdin",
+		"printf x | php --file /dev/stdin",
+		"printf x | php --file=/dev/stdin",
+		"printf x | php -f /proc/self/fd/0",
+		"printf x | php -f /dev/fd/0",
+		"printf x | python3 -m code",
+	} {
+		worktreeDelPipeInterpreterDenied(t, r, cmd)
+	}
+	// The controls the criterion names keep their answers.
+	r.allowed(t,
+		"printf x | python3 -c 'print(1)'",
+		"printf x | python3 -m json.tool",
+		"printf x | php -f script.php",
+		"printf x | php -r 'echo 1;'",
+		"printf x | node script.js",
+		"printf x | bash -c 'cat'",
+		"printf x | (cd sub; cat)",
+		"printf x | nohup cat",
+		"printf x | bash -c 'if true; then :; fi'",
+		"printf x | bash -c '! true'",
+		"cat <<< 'rm -rf ../repo'",
+		"cat 2>&1 <<'PY'\nimport os\nPY",
+		"exec -a x true",
+		"printf x | exec -a x cat",
+		"bash 3</proc/self/fd/0",
+		"bash </dev/null",
+	)
+	r.intact(t)
+}
