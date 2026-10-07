@@ -118,6 +118,9 @@ var (
 	// writeCandidate is the seam a test replaces to reach the moment between the backup and the
 	// publication: a cancellation there must publish nothing.
 	writeCandidate = candidateBytes
+	// writeExchange is the seam a test replaces to drive the instant between the publication's undo
+	// exchange and its read-back: a writer that saves again in that window must keep its bytes.
+	writeExchange = exchangeFiles
 )
 
 // WriteOptions are the seams a write runs with. A nil field takes the production value: the clock,
@@ -775,7 +778,7 @@ func swapPolicy(ctx context.Context, path string, expected, next []byte, mode os
 		_ = os.Remove(temporary)
 		return nil, "", err
 	}
-	if err := exchangeFiles(temporary, path); err != nil {
+	if err := writeExchange(temporary, path); err != nil {
 		_ = os.Remove(temporary)
 		return nil, "", err
 	}
@@ -796,7 +799,7 @@ func swapPolicy(ctx context.Context, path string, expected, next []byte, mode os
 	}
 	// The file had already moved on, so this call replaces nothing. The exchange is undone so the
 	// writer that saved keeps its bytes.
-	if undoErr := exchangeFiles(temporary, path); undoErr != nil {
+	if undoErr := writeExchange(temporary, path); undoErr != nil {
 		return nil, temporary, fmt.Errorf("%w: the exchange could not be undone: %s (%s)", errExchangeHappened, undoErr.Error(), temporary)
 	}
 	// The undo moved this call's own candidate back to the temporary path unless a writer saved again

@@ -160,6 +160,65 @@ func TestATrustedRegistrationReportsTheBytesActuallyStored(t *testing.T) {
 	}
 }
 
+// TestThePublicationKeepsBytesItDidNotCreate is the independent review's remaining blocker: the
+// publication's undo guard decides whether the file it exchanged away holds this call's own
+// candidate before it deletes it. A document that is not this call's candidate is kept and named,
+// so no writer's bytes are lost to a decision made before it saved. The exchange is wrapped so the
+// test reaches the instant between the undo and the read-back deterministically.
+func TestThePublicationKeepsBytesItDidNotCreate(t *testing.T) {
+	env, file := host(t, policyText, true)
+	writerDoc := "a document a writer put at the temporary path\n"
+	var keptPath string
+	exchange := writeExchange
+	calls := 0
+	writeExchange = func(a, b string) error {
+		calls++
+		if calls == 1 {
+			// A writer saved to the policy path after this run's locked read but before the
+			// exchange, so what the exchange displaces is not the bytes this run authorized.
+			if err := os.WriteFile(b, []byte("a document another writer saved\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := exchange(a, b); err != nil {
+			return err
+		}
+		if calls == 2 {
+			// The undo put this run's candidate back at the temporary path; a writer then puts its
+			// own document there before the read-back. Those bytes are not this call's to delete.
+			keptPath = a
+			if err := os.WriteFile(a, []byte(writerDoc), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return nil
+	}
+	t.Cleanup(func() { writeExchange = exchange })
+	result := Write(context.Background(), envOf(env), WriteOptions{Register: neverRegisters(t)},
+		WriteRequest{ExpectedDigest: digestOf(policyText), Change: removeLegacy()})
+	if result.Kind != WriteRecoveryNeeded {
+		t.Fatalf("kind = %q (%v), want %q", result.Kind, result.Errors, WriteRecoveryNeeded)
+	}
+	if keptPath == "" {
+		t.Fatal("the undo exchange never ran, so the guard was not reached")
+	}
+	if result.Kept != keptPath {
+		t.Fatalf("kept = %q, want %q: the bytes at the temporary path were deleted or unreported", result.Kept, keptPath)
+	}
+	kept, err := os.ReadFile(keptPath)
+	if err != nil || string(kept) != writerDoc {
+		t.Fatalf("the kept bytes are gone or changed: %v %q", err, string(kept))
+	}
+	// The writer that saved to the policy path keeps its document too.
+	after, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != "a document another writer saved\n" {
+		t.Fatalf("the writer's document at the policy path was replaced: %q", string(after))
+	}
+}
+
 // surrogateEscaped spells a kernel path the way a Python writer spells a name whose bytes are not
 // UTF-8: every byte that is not valid UTF-8 stands in the record as the lone surrogate U+DCxx, which
 // the record carries as the JSON escape \udcXX.
