@@ -494,3 +494,156 @@ func TestPromptDcloseGuardRefusalWithoutAWarningIsUnchanged(t *testing.T) {
 	}
 	promptDcloseUnchanged(t, before, promptDcloseSnapshot(t, cwd, "s1", slug), "a guard refusal with no earlier warning")
 }
+
+// --- CRW-930 generation 2: the three pre-merge findings of the f487e8a8 head -------------------
+
+// promptDcloseRecoveryCommittedShape writes the plan a committed close of wp-1 leaves behind: the
+// target done, the recorded successor running on the cursor. criterionIDs, when non-empty, is hung
+// on the successor so the plan also fails its definition integrity check.
+func promptDcloseRecoveryCommittedShape(t *testing.T, cwd, slug string, criterionIDs []string) {
+	t.Helper()
+	plan := goalplan.BuildGoalplan(goalplan.NewGoalplanInput{Objective: "committed " + slug})
+	plan.Slug = slug
+	plan.WorkPhases = []goalplan.GoalplanWorkPhase{
+		{ID: "wp-1", Title: "one", Status: goalplan.WorkPhaseDone, Tasks: []goalplan.GoalplanTask{}, CriteriaIDs: []string{}},
+		{ID: "wp-2", Title: "two", Status: goalplan.WorkPhaseInProgress, Tasks: []goalplan.GoalplanTask{}, CriteriaIDs: criterionIDs},
+	}
+	plan.ActiveWorkPhaseID = promptDcloseStr("wp-2")
+	if err := goalplan.WriteGoalplan(cwd, plan); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestPromptDcloseRecoveryCorruptMarkerDoesNotClaimThePlan is the d1 case: a marker that names the
+// target as its own successor is corrupt, so the retry refuses, but the target is still open and the
+// plan therefore cannot carry this close's commit. The refusal names the marker it inherited and
+// must not claim the goalplan was published; the generation-1 head read the self-successor as the
+// commit's settled shape and named both.
+func TestPromptDcloseRecoveryCorruptMarkerDoesNotClaimThePlan(t *testing.T) {
+	cwd := promptDcloseRepo(t)
+	slug := "chat-recovery-corrupt-shape"
+	// wp-1 is still in progress with the cursor on it, and the marker records wp-1 as its successor:
+	// the corrupt marker the existing recovery case pins. No close can produce this, so no commit of
+	// this close is on disk.
+	attest := promptDcloseRecoverable(t, cwd, "s1", slug, promptDcloseStr("wp-1"))
+	answer := promptDcloseRun(t, cwd, "s1", "t1", attest)
+	if !strings.Contains(answer, "names that same work-phase as its successor") {
+		t.Fatalf("the recovery did not refuse the corrupt marker: %q", answer)
+	}
+	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
+		t.Errorf("the refusal did not name the inherited marker: %q", answer)
+	}
+	if strings.Contains(answer, promptDcloseGoalplanPublishedSentence()) {
+		t.Errorf("the refusal claimed a goalplan this close never committed: %q", answer)
+	}
+	if strings.Contains(answer, "Nothing was written.") {
+		t.Errorf("the refusal denied the marker this close published: %q", answer)
+	}
+}
+
+// TestPromptDcloseRecoveryIntegrityRefusalNamesTheCommittedPlan is the d2 case: the first attempt of
+// this close committed the plan (the target is done and its successor runs on the cursor) and the
+// operator then broke the plan's definition, so the retry refuses at the integrity check - which runs
+// before the recovery accounting. The refusal must still name the goalplan this close published; the
+// generation-1 head names the marker alone and denies the rest.
+func TestPromptDcloseRecoveryIntegrityRefusalNamesTheCommittedPlan(t *testing.T) {
+	cwd := promptDcloseRepo(t)
+	slug := "chat-recovery-integrity"
+	attest := promptDcloseRecoverable(t, cwd, "s1", slug, promptDcloseStr("wp-2"))
+	// The committed shape, plus a criterion reference the plan does not define: structurally readable,
+	// but its definition is refused.
+	promptDcloseRecoveryCommittedShape(t, cwd, slug, []string{"missing"})
+	answer := promptDcloseRun(t, cwd, "s1", "t1", attest)
+	if !strings.Contains(answer, "invalid goalplan:") {
+		t.Fatalf("the recovery did not refuse at the integrity check: %q", answer)
+	}
+	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
+		t.Errorf("the integrity refusal did not name the inherited marker: %q", answer)
+	}
+	if !strings.Contains(answer, promptDcloseGoalplanPublishedSentence()) {
+		t.Errorf("the integrity refusal dropped the goalplan this close committed: %q", answer)
+	}
+	if strings.Contains(answer, "Nothing was written.") {
+		t.Errorf("the integrity refusal denied the artifacts this close published: %q", answer)
+	}
+}
+
+// TestPromptDcloseRecoveryIntegrityRefusalWithoutACommitKeepsTheBareClaim is the control for the case
+// above: a fresh close (no inherited marker, so nothing of this close is on disk) that fails the same
+// integrity check keeps today's text, with no publication sentence added.
+func TestPromptDcloseRecoveryIntegrityRefusalWithoutACommitKeepsTheBareClaim(t *testing.T) {
+	cwd := promptDcloseRepo(t)
+	slug := "chat-integrity-fresh"
+	promptDcloseTwoPhases(t, cwd, slug)
+	promptDcloseSeedState(t, cwd, "s1", slug, "c-integrity-fresh")
+	receipt := promptDcloseReceipt(t, cwd, "s1", "c-integrity-fresh")
+	plan := promptDcloseReadPlan(t, cwd, slug)
+	plan.WorkPhases[0].CriteriaIDs = []string{"missing"}
+	if err := goalplan.WriteGoalplan(cwd, plan); err != nil {
+		t.Fatal(err)
+	}
+	answer := promptDcloseRun(t, cwd, "s1", "t1", promptDcloseAttest("wp-1", receipt))
+	if !strings.Contains(answer, "invalid goalplan:") {
+		t.Fatalf("the close did not refuse at the integrity check: %q", answer)
+	}
+	if strings.Contains(answer, promptDcloseMarkerPublishedSentence()) || strings.Contains(answer, promptDcloseGoalplanPublishedSentence()) {
+		t.Errorf("a fresh close claimed a publication it never made: %q", answer)
+	}
+	if !strings.Contains(answer, "Nothing was written.") {
+		t.Errorf("a fresh close lost its bare claim: %q", answer)
+	}
+}
+
+// TestPromptDcloseRecoveryBusyLockNamesWhatTheFirstAttemptPublished is the d3 case: the retry cannot
+// take the goalplan lock, so it never reads the plan, but its first attempt's marker and committed
+// goalplan are still on disk. The busy refusal must name both; the generation-1 head returns the busy
+// text alone, so the operator cannot tell that a partial close is waiting.
+func TestPromptDcloseRecoveryBusyLockNamesWhatTheFirstAttemptPublished(t *testing.T) {
+	cwd := promptDcloseRepo(t)
+	slug := "chat-recovery-busy-lock"
+	attest := promptDcloseRecoverable(t, cwd, "s1", slug, promptDcloseStr("wp-2"))
+	promptDcloseRecoveryCommittedShape(t, cwd, slug, nil)
+	// Another writer holds the plan's write lock: the lock is the directory itself, so a leftover one
+	// makes every attempt of this retry answer busy.
+	planDir, err := goalplan.GoalplanDir(cwd, slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(planDir, goalplan.GoalplanLockDir), 0o777); err != nil {
+		t.Fatal(err)
+	}
+	answer := promptDcloseRun(t, cwd, "s1", "t1", attest)
+	if !strings.Contains(answer, "is busy") {
+		t.Fatalf("the retry did not answer the busy lock: %q", answer)
+	}
+	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
+		t.Errorf("the busy refusal did not name the inherited marker: %q", answer)
+	}
+	if !strings.Contains(answer, promptDcloseGoalplanPublishedSentence()) {
+		t.Errorf("the busy refusal dropped the goalplan this close committed: %q", answer)
+	}
+}
+
+// TestPromptDcloseFreshCloseBusyLockKeepsTheBareText is the control for the case above: a close with
+// no inherited marker published nothing of its own, so its busy text is unchanged.
+func TestPromptDcloseFreshCloseBusyLockKeepsTheBareText(t *testing.T) {
+	cwd := promptDcloseRepo(t)
+	slug := "chat-fresh-busy-lock"
+	promptDcloseTwoPhases(t, cwd, slug)
+	promptDcloseSeedState(t, cwd, "s1", slug, "c-fresh-busy-lock")
+	receipt := promptDcloseReceipt(t, cwd, "s1", "c-fresh-busy-lock")
+	planDir, err := goalplan.GoalplanDir(cwd, slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(planDir, goalplan.GoalplanLockDir), 0o777); err != nil {
+		t.Fatal(err)
+	}
+	answer := promptDcloseRun(t, cwd, "s1", "t1", promptDcloseAttest("wp-1", receipt))
+	if !strings.Contains(answer, "is busy") {
+		t.Fatalf("the close did not answer the busy lock: %q", answer)
+	}
+	if strings.Contains(answer, promptDcloseMarkerPublishedSentence()) || strings.Contains(answer, promptDcloseGoalplanPublishedSentence()) {
+		t.Errorf("a fresh close claimed a publication it never made: %q", answer)
+	}
+}
