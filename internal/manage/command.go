@@ -75,6 +75,12 @@ func coreNames() []string {
 func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	e := &Env{Stdin: stdin, Stdout: stdout, Stderr: stderr, Getenv: os.Getenv, Now: time.Now, Executable: coreExecutable()}
 	defer coreForgetConfig(e)
+	// The three Env-keyed memos hold their entry for the invocation and no longer: a process
+	// that embeds Run and calls it many times would otherwise grow one entry, with the Env and
+	// its streams, per call. Deleting an entry that was never written is a no-op, so every
+	// subcommand and every exit path clears all three.
+	defer relayHelperForget(e)
+	defer branchAlwaysForget(e)
 	if len(args) == 0 {
 		coreUsage(stderr)
 		fmt.Fprintln(stderr, "crw manage: error: the following arguments are required: command")
