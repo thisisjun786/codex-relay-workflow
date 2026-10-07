@@ -34,6 +34,41 @@ func review836RaceHost(t *testing.T) (component, root, target string) {
 	return component, root, target
 }
 
+// review836RetargetHost builds the shape a retargeted parent needs: the root is spelled through a
+// symbolic link and a "..", so "link/.." is the parent of the directory the link names. The two
+// candidates are in different parents, so moving the link moves the ".." with it -- which a pair of
+// sibling directories would not do, because ".." would name their common parent either way.
+func review836RetargetHost(t *testing.T) (first, second, link, root string) {
+	t.Helper()
+	base := t.TempDir()
+	first = filepath.Join(base, "first")
+	second = filepath.Join(base, "second")
+	for _, dir := range []string{first, second} {
+		if err := os.MkdirAll(filepath.Join(dir, "inner"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	link = filepath.Join(base, "link")
+	if err := os.Symlink(filepath.Join(first, "inner"), link); err != nil {
+		t.Fatal(err)
+	}
+	// "link/.." is <base>/first while the link points into <base>/first/inner, and <base>/second
+	// after it is retargeted, so the same spelling names a different parent.
+	root = link + "/../p/q"
+	return first, second, link, root
+}
+
+// review836RecordFor answers the record createRoot holds for the given spelled component, or false
+// when it holds none.
+func review836RecordFor(created []createRootRecord, path string) (createRootRecord, bool) {
+	for _, made := range created {
+		if made.path == path {
+			return made, true
+		}
+	}
+	return createRootRecord{}, false
+}
+
 // C1, C3: the component before the ".." is removed by a concurrent install while the directory
 // this call made below it is still there. The scan then reports that directory missing, x is made
 // again and the mkdir of the directory this call already made answers EEXIST. It is still this
@@ -236,10 +271,8 @@ func TestToolsReview836DropsARecordedPathAnotherInstallTookOver(t *testing.T) {
 	if err != nil {
 		t.Fatalf("createRoot with a recorded path taken over: %v", err)
 	}
-	for _, made := range created {
-		if made.path == spelled {
-			t.Fatalf("createRoot kept the path another install took over in the record: %v", created)
-		}
+	if _, held := review836RecordFor(created, spelled); held {
+		t.Fatalf("createRoot kept the path another install took over in the record: %v", created)
 	}
 	removeCreated(created)
 	info, statErr := os.Stat(target)
@@ -248,150 +281,97 @@ func TestToolsReview836DropsARecordedPathAnotherInstallTookOver(t *testing.T) {
 	}
 }
 
-// The parent's location is read before the mkdir, so it can be stale: a link or a parent can change
-// between that read and the mkdir, and then the parent location and the spelled path name different
-// objects. Neither name then proves which object the mkdir made, so nothing may be recorded -- a
-// record here would let the cleanup remove an object this call never made.
-func TestToolsReview836RecordsNothingWhenTheNamesDisagree(t *testing.T) {
-	base := t.TempDir()
-	first := filepath.Join(base, "first")
-	second := filepath.Join(base, "second")
-	for _, dir := range []string{first, second} {
-		if err := os.Mkdir(dir, 0o755); err != nil {
-			t.Fatal(err)
+// C1, C3 across a retargeted parent: the same spelled path below a ".." names one directory before
+// the parent is retargeted and a different one after, and this call made both. A record keyed by the
+// spelling alone would keep only the second, so the first -- still standing under the parent this
+// call made it through -- would survive the cleanup. Both must be removed.
+func TestToolsReview836RemovesBothDirectoriesOfARetargetedDotDot(t *testing.T) {
+	first, second, link, root := review836RetargetHost(t)
+
+	retargeted := false
+	review836Seam(t, func(path string) {
+		if path != root || retargeted {
+			return
 		}
-	}
-	link := filepath.Join(base, "link")
-	if err := os.Symlink(first, link); err != nil {
-		t.Fatal(err)
-	}
-	// The peer's directory stands where the stale parent location points.
-	peer := filepath.Join(first, "q")
-	if err := os.Mkdir(peer, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	// The parent is repointed, and the mkdir then makes its directory through the new target.
-	if err := os.Remove(link); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(second, link); err != nil {
-		t.Fatal(err)
-	}
-	made := filepath.Join(second, "q")
-	if err := os.Mkdir(made, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	// first is the parent read before the mkdir, and the mkdir then ran through the repointed link,
-	// so the two names disagree.
-
-	location, info, err := componentIdentity(filepath.Join(link, "q"), first)
-	if err == nil {
-		t.Fatalf("componentIdentity recorded %q with %v while the two names disagreed", location, info)
-	}
-	if location != "" || info != nil {
-		t.Fatalf("componentIdentity answered %q with %v while the two names disagreed", location, info)
-	}
-	// The peer's directory is untouched and is not what the record would have named.
-	if _, statErr := os.Lstat(peer); statErr != nil {
-		t.Fatalf("the peer's directory was disturbed: %v", statErr)
-	}
-	// The directory the mkdir made is not recorded either, so the cleanup cannot touch it.
-	removeCreated(nil)
-	if _, statErr := os.Lstat(made); statErr != nil {
-		t.Fatalf("the directory the mkdir made was disturbed: %v", statErr)
-	}
-}
-
-// The unreadable-spelling branch must not be fooled by a parent that changed before the mkdir: the
-// parent location read then names a slot the mkdir never filled, and a peer's directory standing
-// there must not be recorded. The parent's own identity is what decides, and it is checked at the
-// parent location rather than at the spelled path.
-func TestToolsReview836RecordsNothingWhenTheParentChangedBeforeTheMkdir(t *testing.T) {
-	base := t.TempDir()
-	first := filepath.Join(base, "first")
-	second := filepath.Join(base, "second")
-	for _, dir := range []string{first, second} {
-		if err := os.Mkdir(dir, 0o755); err != nil {
-			t.Fatal(err)
+		retargeted = true
+		// The directory below the first parent has been made by now; moving the link moves the ".."
+		// for the rest of the walk, so the target is made under the second parent as well.
+		if err := os.Remove(link); err != nil {
+			t.Errorf("the seam could not remove the link: %v", err)
 		}
-	}
-	link := filepath.Join(base, "link")
-	if err := os.Symlink(first, link); err != nil {
-		t.Fatal(err)
-	}
-	// The peer's directory stands at the location the stale parent names.
-	peer := filepath.Join(first, "q")
-	if err := os.Mkdir(peer, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	// The link is repointed before the mkdir, so the mkdir fills a slot under second, and the
-	// spelled path is then made unreadable so the unreadable-spelling branch runs.
-	if err := os.Remove(link); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(second, link); err != nil {
-		t.Fatal(err)
-	}
-	made := filepath.Join(second, "q")
-	if err := os.Mkdir(made, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Remove(link); err != nil {
-		t.Fatal(err)
-	}
+		if err := os.Symlink(filepath.Join(second, "inner"), link); err != nil {
+			t.Errorf("the seam could not retarget the link: %v", err)
+		}
+	})
 
-	// The parent location still names the peer's directory under first, and first is unchanged, so
-	// only the fact that the spelling is unreadable could license it; the peer's directory must not
-	// be recorded.
-	location, info, err := componentIdentity(filepath.Join(base, "link", "q"), first)
-	if err == nil {
-		t.Fatalf("componentIdentity recorded %q with %v from a parent that changed before the mkdir", location, info)
-	}
-	if _, statErr := os.Lstat(peer); statErr != nil {
-		t.Fatalf("the peer's directory was disturbed: %v", statErr)
-	}
-}
-
-// The fail-closed side of the location: when the object at the spelled path cannot be read, no
-// identity can be established, and the parent's location must not be accepted in its place. That
-// location was read before the mkdir, so it may now name a different directory's parent -- a
-// directory this call never made -- and recording it would let the cleanup remove an unrelated
-// directory. Nothing is recorded and the error is answered instead.
-func TestToolsReview836IdentityFailsClosedWhenTheSpelledPathIsUnreadable(t *testing.T) {
-	base := t.TempDir()
-	parent := filepath.Join(base, "parent")
-	if err := os.Mkdir(parent, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	// The peer's directory stands where the stale parent location points.
-	peer := filepath.Join(parent, "q")
-	if err := os.Mkdir(peer, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	peerInfo, err := os.Lstat(peer)
+	created, err := createRoot(root)
 	if err != nil {
+		t.Fatalf("createRoot across a retargeted parent: %v", err)
+	}
+	removeCreated(created)
+	for _, path := range []string{
+		filepath.Join(first, "p"),
+		filepath.Join(second, "p"),
+		filepath.Join(second, "p", "q"),
+	} {
+		if _, statErr := os.Lstat(path); !errors.Is(statErr, fs.ErrNotExist) {
+			t.Errorf("%s survived the cleanup of %v: %v", path, created, statErr)
+		}
+	}
+	// The link and the directories it points into were there before the call and are never recorded.
+	if _, statErr := os.Lstat(link); statErr != nil {
+		t.Errorf("the pre-existing link was removed: %v", statErr)
+	}
+	for _, path := range []string{filepath.Join(first, "inner"), filepath.Join(second, "inner")} {
+		if info, statErr := os.Stat(path); statErr != nil || !info.IsDir() {
+			t.Errorf("the pre-existing directory %s was disturbed: %v", path, statErr)
+		}
+	}
+}
+
+// C2 through the real walk: a parent repointed before the target's mkdir must not make the cleanup
+// disturb a directory that was already there under the parent the walk started with. The
+// pre-existing directory was made while this call's was not there at all, so the two identities
+// differ and only the identity comparison keeps it.
+func TestToolsReview836RepointedParentLeavesPreExistingDirectoriesAlone(t *testing.T) {
+	first, second, link, root := review836RetargetHost(t)
+	// A directory another install left under the first parent, at the very path this call's target
+	// would have taken there.
+	peer := filepath.Join(first, "p")
+	if err := os.Mkdir(peer, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// The component this call made is not at the spelled path any more.
-	spelled := filepath.Join(base, "gone", "q")
 
-	// The parent location was read before the mkdir, so it may now name a peer's directory; it must
-	// be refused.
-	location, info, err := componentIdentity(spelled, parent)
-	if err == nil {
-		t.Fatalf("componentIdentity accepted the parent's location %q with %v while the spelled path could not be read", location, info)
+	repointed := false
+	review836Seam(t, func(path string) {
+		// The target's parent is resolved after this seam runs, so the link is moved before the walk
+		// resolves the parent the target will be made under.
+		if path != root || repointed {
+			return
+		}
+		repointed = true
+		if err := os.Remove(link); err != nil {
+			t.Errorf("the seam could not remove the link: %v", err)
+		}
+		if err := os.Symlink(filepath.Join(second, "inner"), link); err != nil {
+			t.Errorf("the seam could not repoint the link: %v", err)
+		}
+	})
+
+	created, err := createRoot(root)
+	if err != nil {
+		t.Fatalf("createRoot across a repointed parent: %v", err)
 	}
-	if info != nil {
-		t.Fatalf("componentIdentity answered an identity %v while the spelled path could not be read", info)
+	removeCreated(created)
+	// The other install's directory is not this call's to remove.
+	info, statErr := os.Stat(peer)
+	if statErr != nil || !info.IsDir() {
+		t.Errorf("this call removed the directory another install made at %s: %v", peer, statErr)
 	}
-	if location != "" {
-		t.Fatalf("componentIdentity answered the location %q while the spelled path could not be read", location)
+	// The directory this call made under the parent it actually used is removed.
+	if _, statErr := os.Lstat(filepath.Join(second, "p")); !errors.Is(statErr, fs.ErrNotExist) {
+		t.Errorf("the directory this call made survived the cleanup: %v", statErr)
 	}
-	// The peer's directory is untouched.
-	if _, statErr := os.Lstat(peer); statErr != nil {
-		t.Fatalf("the peer's directory was disturbed: %v", statErr)
-	}
-	_ = peerInfo
 }
 
 // C2, not-a-directory side: only a directory is ever this call's to remove. The record here names
@@ -417,7 +397,7 @@ func TestToolsReview836RemoveCreatedLeavesANonDirectoryAlone(t *testing.T) {
 	if info.IsDir() {
 		t.Fatal("the test did not place a regular file at the recorded path")
 	}
-	created := []createRootRecord{{path: target, resolved: target, info: info}}
+	created := []createRootRecord{{path: target, info: info}}
 
 	removeCreated(created)
 	if _, err := os.Stat(target); err != nil {
@@ -425,10 +405,10 @@ func TestToolsReview836RemoveCreatedLeavesANonDirectoryAlone(t *testing.T) {
 	}
 }
 
-// C1, the location a recorded component is reached by: the recorded location must still reach the
-// directory after a component before a ".." has vanished, which is what the exhaustion cleanup
-// needs. The parent is read as text and resolved, so the location keeps the ".." instead of the
-// different directory filepath.Clean would name.
+// C1, the location a recorded component is reached by: the record must reach the directory through
+// the parent the mkdir ran under, so the cleanup still finds it after a component before a ".." has
+// vanished. The parent is taken as text and resolved by the kernel, so the record keeps the ".."
+// instead of the different directory filepath.Clean would name.
 func TestToolsReview836RecordsALocationThatSurvivesAVanishedComponent(t *testing.T) {
 	base := t.TempDir()
 	real := filepath.Join(base, "real")
@@ -449,22 +429,12 @@ func TestToolsReview836RecordsALocationThatSurvivesAVanishedComponent(t *testing
 	if err != nil {
 		t.Fatalf("createRoot under a link and a dot-dot: %v", err)
 	}
-	found := false
-	for _, made := range created {
-		if made.path != link+"/../p" {
-			continue
-		}
-		found = true
-		if made.resolved == "" || made.resolved == made.path {
-			t.Fatalf("the record reaches %q, which still traverses the link", made.resolved)
-		}
-		info, statErr := os.Lstat(made.resolved)
-		if statErr != nil || !info.IsDir() {
-			t.Fatalf("the recorded location %q does not reach a directory: %v", made.resolved, statErr)
-		}
-	}
+	made, found := review836RecordFor(created, link+"/../p")
 	if !found {
 		t.Fatalf("createRoot recorded %v, want the dot-dot component", created)
+	}
+	if made.parent != real || made.name != "p" {
+		t.Fatalf("the record reaches %q by %q, want %q by \"p\"", made.parent, made.name, real)
 	}
 	removeCreated(created)
 	// The link is not this call's: it was there before the call and is never recorded.
@@ -479,55 +449,5 @@ func TestToolsReview836RecordsALocationThatSurvivesAVanishedComponent(t *testing
 	}
 	if _, statErr := os.Lstat(link); statErr != nil {
 		t.Errorf("the pre-existing link was removed: %v", statErr)
-	}
-}
-
-// C2 through the real walk: a parent repointed while the walk is running must not make the cleanup
-// disturb a directory that was already there. The link is repointed before the root's mkdir, so the
-// walk finishes under a different parent than it started, and neither pre-existing directory may be
-// removed. The EEXIST identity-read-failure keep is a separate branch; this test covers the walk's
-// behaviour around a moving parent, not that branch.
-func TestToolsReview836RepointedParentLeavesPreExistingDirectoriesAlone(t *testing.T) {
-	base := t.TempDir()
-	first := filepath.Join(base, "first")
-	second := filepath.Join(base, "second")
-	for _, dir := range []string{first, second} {
-		if err := os.Mkdir(dir, 0o755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	link := filepath.Join(base, "link")
-	if err := os.Symlink(first, link); err != nil {
-		t.Fatal(err)
-	}
-	// The root's parent before the ".." is the link, and the kernel resolves "link/.." to base.
-	root := link + "/../p/q"
-
-	// p's mkdir succeeds and records it; then the link is repointed so the next round's read of p
-	// finds the parent location naming a different object than the spelling.
-	phase := 0
-	review836Seam(t, func(path string) {
-		switch {
-		case path == root && phase == 0:
-			phase = 1
-			if err := os.Remove(link); err != nil {
-				t.Errorf("the seam could not remove the link: %v", err)
-			}
-			if err := os.Symlink(second, link); err != nil {
-				t.Errorf("the seam could not repoint the link: %v", err)
-			}
-		}
-	})
-
-	created, err := createRoot(root)
-	if err != nil {
-		t.Fatalf("createRoot across a repointed parent: %v", err)
-	}
-	// Whatever the walk decided, the cleanup must not remove a directory this call never made.
-	removeCreated(created)
-	for _, path := range []string{first, second} {
-		if info, statErr := os.Stat(path); statErr != nil || !info.IsDir() {
-			t.Errorf("the pre-existing directory %s was disturbed: %v", path, statErr)
-		}
 	}
 }
