@@ -727,7 +727,11 @@ func TestMigrateOwnedDirIdentityPinIsHeldAcrossTheReadHandle(t *testing.T) {
 		var after unix.Stat_t
 		must(t, unix.Lstat(target, &after))
 		if (fileID{uint64(after.Dev), uint64(after.Ino)}) == (fileID{uint64(before.Dev), uint64(before.Ino)}) {
-			t.Skip("this filesystem reused the inode of the removed directory")
+			// The pin is held at this seam, so the directory this run created must still be referenced
+			// and the kernel must not hand its inode to the replacement. Equality means the pin was
+			// released - the defect this case exists to catch - or the filesystem cannot provide the
+			// identity guarantee the fix relies on; neither is a skip.
+			t.Errorf("the replacement carries the removed directory's identity %v: the pin did not hold the inode", fileID{uint64(after.Dev), uint64(after.Ino)})
 		}
 		return nil
 	})
