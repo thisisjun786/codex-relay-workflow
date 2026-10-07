@@ -460,19 +460,17 @@ func (a *applyRun) migrateReviewFollowupReceiptManifest(it Item) ([]migrateRevie
 
 // migrateReviewFollowupDecodeManifest reads one record as a receipt within limit bytes and returns the artifactManifest
 // entries it names. ok is false, with no entries, for a record that is not one JSON object with a non-empty
-// artifactManifest array, for one with data after that object, and for one that is longer than limit. The object is decoded
-// from the reader rather than buffered whole, so a large evidence record costs no more memory than the manifest it names;
-// the bytes the decoder consumed are then compared with limit, because the decoder consumes the whitespace after the object
-// and a trailing run would otherwise let a record past the bound be judged by content. Only the entries whose kind is
-// verdict or artifact-identity name a dependency; an entry of another kind, or one that is not an object, contributes no
-// key and never fails the run.
+// artifactManifest array, for one with data after that object, and for one that is longer than limit. The key is read by its
+// exact spelling from the decoded object, as the receipt reader's own map lookup does, so a record whose key differs in case
+// is not judged a receipt here either; the bytes the decoder consumed are compared with limit afterwards, because the
+// decoder consumes the whitespace after the object and a trailing run would otherwise let a record past the bound be judged
+// by content. Only the entries whose kind is verdict or artifact-identity name a dependency; an entry of another kind, or
+// one that is not an object, contributes no key and never fails the run.
 func migrateReviewFollowupDecodeManifest(r io.Reader, limit int64) ([]migrateReviewFollowupManifestEntry, bool) {
-	var view struct {
-		ArtifactManifest []migrateReviewFollowupManifestEntry `json:"artifactManifest"`
-	}
 	limited := &io.LimitedReader{R: r, N: limit + 1}
 	dec := json.NewDecoder(limited)
-	if dec.Decode(&view) != nil {
+	var object map[string]json.RawMessage
+	if dec.Decode(&object) != nil {
 		return nil, false
 	}
 	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
@@ -481,10 +479,15 @@ func migrateReviewFollowupDecodeManifest(r io.Reader, limit int64) ([]migrateRev
 	if read := limit + 1 - limited.N; read > limit {
 		return nil, false
 	}
-	if len(view.ArtifactManifest) == 0 {
+	raw, present := object["artifactManifest"]
+	if !present {
 		return nil, false
 	}
-	return view.ArtifactManifest, true
+	var manifest []migrateReviewFollowupManifestEntry
+	if json.Unmarshal(raw, &manifest) != nil || len(manifest) == 0 {
+		return nil, false
+	}
+	return manifest, true
 }
 
 // migrateApplyReviewSubRank is the ordering key inside a rank: 0 for the artifacts an evidence manifest names and for the

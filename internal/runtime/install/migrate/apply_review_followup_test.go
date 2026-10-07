@@ -203,6 +203,9 @@ func TestMigrateApplyReviewFollowupBoundsTheRecordNotTheObject(t *testing.T) {
 		"truncated below the bound":     {body[:len(body)-1], int64(len(body)), false},
 		"data after the object":         {body + "{}", int64(len(body)) + 2, false},
 		"no manifest array":             {"{\"a\":1}", 8, false},
+		// The receipt reader looks the key up by its exact spelling in a decoded object, so a key that differs only in
+		// case is not the manifest it reads, and this order must not treat it as one.
+		"key of another case": {"{\"ArtifactManifest\":[{\"path\":\"v.json\",\"kind\":\"verdict\"}]}", 200, false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			manifest, ok := migrateReviewFollowupDecodeManifest(strings.NewReader(c.record), c.limit)
