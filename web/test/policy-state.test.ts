@@ -52,6 +52,7 @@ import {
   screenAllowedEntryAdded,
   screenAllowedEntryRemoved,
   screenAllowedEntryText,
+  allowedNewOf,
   screenPropose,
   type ExceptionDraft,
   type ModelCatalog,
@@ -186,8 +187,8 @@ test("removing an exception previews that scope returning to the role default", 
 test("the allowed-list preview shows the efforts before and after", () => {
   const preview = previewChange(reading(), { kind: "setAllowed", model: "gpt-6.1-sol", efforts: ["max"] });
   const item = preview.items.find((entry) => entry.label.includes("gpt-6.1-sol"));
-  assert.equal(item?.before, "xhigh");
-  assert.equal(item?.after, "max");
+  assert.equal(item?.before, '"xhigh"');
+  assert.equal(item?.after, '"max"');
 });
 
 test("removing an allowed model previews the row leaving the list", () => {
@@ -196,7 +197,7 @@ test("removing an allowed model previews the row leaving the list", () => {
   const preview = previewChange(reading(), { kind: "removeAllowed", model: "gpt-6.1-sol" });
   const item = preview.items.find((entry) => entry.label.includes("gpt-6.1-sol"));
   assert.ok(item, "the preview names the allowed row");
-  assert.equal(item?.before, "xhigh");
+  assert.equal(item?.before, '"xhigh"');
   assert.equal(item?.after, "removed");
   assert.equal(preview.blastRadius, POLICY_BLAST_RADIUS);
 });
@@ -554,8 +555,9 @@ test("editing an existing exception keeps its model byte for byte", () => {
   const change = changeFromExceptionDraft({ ...draft, effort: "max" });
   assert.equal((change as { model: string }).model, " model-a ", "the stored model is not trimmed");
   // A model the operator picks for a NEW exception is trimmed, because they are typing it.
+  // The model is never trimmed, new or existing: it comes from a select of exact identifiers.
   const fresh = changeFromExceptionDraft({ ...draftForNewException("parent", " model-b ", "high"), id: "fresh", cwd: ["/srv/a"] });
-  assert.equal((fresh as { model: string }).model, "model-b");
+  assert.equal((fresh as { model: string }).model, " model-b ");
 });
 
 test("an edit started after an explicit re-read survives the read", () => {
@@ -572,6 +574,47 @@ test("an edit started after an explicit re-read survives the read", () => {
   const afterRead = screenLoaded(during, reading({ digest: "b".repeat(64) }), true);
   assert.deepEqual(afterRead.allowedDraft["gpt-6.1-sol"], ["high"], "the later edit survives");
   assert.equal((afterRead.change as { model: string }).model, "gpt-6.1-sol");
+});
+
+// The four defects the seventh pre-merge evaluation found.
+
+test("a second allowlist row's edit replaces the first, so no row shows an unsaved value", () => {
+  // d1: the API applies exactly one change per request, so a second row's edit replaces the first.
+  // Keeping the first row's draft would leave it displaying a value no pending change carries, and a
+  // reload would silently revert it.
+  let state = initialScreen();
+  state = screenLoaded(state, reading({ allowed: [{ model: "A", efforts: ["high"] }, { model: "B", efforts: ["low"] }] }));
+  state = screenAllowedDraft(state, "A", ["high", "max"]);
+  assert.deepEqual((state.change as { model: string }).model, "A");
+  state = screenAllowedDraft(state, "B", ["low", "max"]);
+  assert.deepEqual((state.change as { model: string }).model, "B", "the pending change is B's");
+  // A shows the file again, because its edit is no longer pending.
+  assert.deepEqual(allowedEntriesOf(state, "A", ["high"]), ["high"]);
+  assert.deepEqual(allowedEntriesOf(state, "B", ["low"]), ["low", "max"]);
+});
+
+test("a model named __proto__ or constructor is read as a file value, not a draft", () => {
+  // d2: the draft dictionaries were ordinary objects, so an inherited property was read as a stored
+  // draft and the row crashed. The Go parser accepts any nonempty identifier.
+  const state = initialScreen();
+  for (const model of ["__proto__", "constructor", "toString"]) {
+    assert.deepEqual(allowedEntriesOf(state, model, ["high"]), ["high"], `${model} reads the file's efforts`);
+    assert.equal(allowedNewOf(state, model), "");
+  }
+  // And a draft for such a model is stored and read back correctly.
+  const withProto = screenAllowedDraft(state, "__proto__", ["high", "max"]);
+  assert.deepEqual(allowedEntriesOf(withProto, "__proto__", ["high"]), ["high", "max"]);
+  assert.deepEqual((withProto.change as { efforts: string[] }).efforts, ["high", "max"]);
+});
+
+test("the allowed preview quotes each effort so one comma-containing name is not two names", () => {
+  // d4: joining exact identifiers with ", " made one effort named "low, high" read the same as two
+  // efforts named "low" and "high", hiding a real permission change.
+  const one = previewChange(reading({ allowed: [{ model: "m", efforts: ["low, high"] }] }), { kind: "setAllowed", model: "m", efforts: ["low, high"] });
+  const two = previewChange(reading({ allowed: [{ model: "m", efforts: ["low, high"] }] }), { kind: "setAllowed", model: "m", efforts: ["low", "high"] });
+  assert.notEqual(one.items[0].after, two.items[0].after, "one name and two names do not read alike");
+  assert.ok(one.items[0].after.includes('"low, high"'), "the single name is quoted");
+  assert.ok(two.items[0].after.includes('"low", "high"'), "the two names are quoted separately");
 });
 
 // The four defects the third pre-merge evaluation found.

@@ -492,14 +492,17 @@ export function previewChange(reading: PolicyReading, change: PolicyChange): Pol
       const entry = reading.allowed.find((row) => row.model === change.model);
       items.push({
         label: `allowed ${change.model}`,
-        before: entry ? entry.efforts.join(", ") : "not listed",
-        after: change.efforts.join(", "),
+        // Each effort is quoted: an effort name is an identifier compared exactly and may contain a
+        // comma, so joining them plainly would show one effort named "low, high" and two efforts
+        // named "low" and "high" as the same text - a real permission change that looks identical.
+        before: entry ? entry.efforts.map((effort) => JSON.stringify(effort)).join(", ") : "not listed",
+        after: change.efforts.map((effort) => JSON.stringify(effort)).join(", "),
       });
       break;
     }
     case "removeAllowed": {
       const entry = reading.allowed.find((row) => row.model === change.model);
-      items.push({ label: `allowed ${change.model}`, before: entry ? entry.efforts.join(", ") : "not listed", after: "removed" });
+      items.push({ label: `allowed ${change.model}`, before: entry ? entry.efforts.map((effort) => JSON.stringify(effort)).join(", ") : "not listed", after: "removed" });
       break;
     }
     case "setException": {
@@ -852,7 +855,29 @@ export function screenPropose(state: PolicyScreenState, change: PolicyChange | n
 
 /** allowedEntriesOf is the efforts an allowlist row is being edited as: the draft, then the file. */
 export function allowedEntriesOf(state: PolicyScreenState, model: string, saved: readonly string[]): string[] {
-  return state.allowedDraft[model] ?? [...saved];
+  // An own-property lookup: a model may legitimately be named "__proto__" or "constructor" (the Go
+  // parser accepts any nonempty identifier), and an inherited property would otherwise be read as a
+  // draft and crash the row.
+  return Object.hasOwn(state.allowedDraft, model) ? state.allowedDraft[model] : [...saved];
+}
+
+/** allowedNewOf is the text of a row's "add an effort" field, by own property only. */
+export function allowedNewOf(state: PolicyScreenState, model: string): string {
+  return Object.hasOwn(state.allowedNew, model) ? state.allowedNew[model] : "";
+}
+
+/** setKey returns a record with one key set, without touching the record's prototype. */
+function setKey<T>(record: Record<string, T>, key: string, value: T): Record<string, T> {
+  const next = { ...record };
+  Object.defineProperty(next, key, { value, enumerable: true, writable: true, configurable: true });
+  return next;
+}
+
+/** dropKey returns a record with one key removed, without touching the record's prototype. */
+function dropKey<T>(record: Record<string, T>, key: string): Record<string, T> {
+  const next: Record<string, T> = {};
+  for (const existing of Object.keys(record)) if (existing !== key) next[existing] = record[existing];
+  return next;
 }
 
 /** screenAllowedDraft stores one row's entries and derives the pending change from them. An empty
@@ -861,7 +886,11 @@ export function screenAllowedDraft(state: PolicyScreenState, model: string, entr
   const efforts = entries.filter((text) => text !== "");
   return {
     ...state,
-    allowedDraft: { ...state.allowedDraft, [model]: entries },
+    // Only the row being edited holds a draft. The API applies exactly one change per request, so a
+    // second row's edit replaces the first: keeping the first row's draft would leave it displaying a
+    // value that no pending change carries and that a reload would silently revert.
+    allowedDraft: { [model]: entries },
+    allowedNew: setKey({}, model, allowedNewOf(state, model)),
     change: efforts.length === 0 ? null : { kind: "setAllowed", model, efforts },
     notice: null,
   };
@@ -875,18 +904,13 @@ export function screenAllowedEntryText(state: PolicyScreenState, model: string, 
 /** screenAllowedEntryAdded appends one entry the operator typed. */
 export function screenAllowedEntryAdded(state: PolicyScreenState, model: string, saved: readonly string[], text: string): PolicyScreenState {
   if (text === "") return state;
-  const next = { ...state, allowedNew: { ...state.allowedNew, [model]: "" } };
+  const next = { ...state, allowedNew: setKey({}, model, "") };
   return screenAllowedDraft(next, model, [...allowedEntriesOf(state, model, saved), text]);
-}
-
-/** allowedNewOf is the text of a row's "add an effort" field. */
-export function allowedNewOf(state: PolicyScreenState, model: string): string {
-  return state.allowedNew[model] ?? "";
 }
 
 /** screenAllowedNewText records the text of a row's "add an effort" field. */
 export function screenAllowedNewText(state: PolicyScreenState, model: string, text: string): PolicyScreenState {
-  return { ...state, allowedNew: { ...state.allowedNew, [model]: text } };
+  return { ...state, allowedNew: setKey(state.allowedNew, model, text) };
 }
 
 /** screenAllowedEntryRemoved drops one entry from a row. */
@@ -937,7 +961,11 @@ export function changeFromExceptionDraft(draft: ExceptionDraft): PolicyChange | 
   const id = draft.isNew ? draft.id.trim() : draft.id;
   // The model is carried the same way and for the same reason: an identifier is compared exactly, so
   // trimming a stored " model-a " would change which model the exception authorizes.
-  const model = draft.isNew ? draft.model.trim() : draft.model;
+  // The model is never trimmed, new or existing: it comes from a select of exact policy and catalog
+  // identifiers, and an identifier is compared exactly, so trimming " model-a " would name a
+  // different model. Only the id, which the operator types as free text for a new exception, is
+  // trimmed.
+  const model = draft.model;
   if (id === "" || model === "") return null;
   // An exception with no cwd covers no request: the bridge requires a request to state a cwd the
   // exception lists (internal/bridge/execution/execution.go exceptionCovers), so a root-less
@@ -996,8 +1024,7 @@ export function screenSaveFinished(state: PolicyScreenState, saved: PolicyChange
     // the save started, so a draft that has not moved since is the spent one and a changed one is not.
     const before = state.savingDrafts;
     if (saved.kind === "setAllowed" && allowedDraft[saved.model] === before?.allowedDraft[saved.model]) {
-      const { [saved.model]: _spent, ...rest } = allowedDraft;
-      allowedDraft = rest;
+      allowedDraft = dropKey(allowedDraft, saved.model);
     }
     if (saved.kind === "setException" && exceptionDraft !== null && exceptionDraft === before?.exceptionDraft) {
       exceptionDraft = null;
