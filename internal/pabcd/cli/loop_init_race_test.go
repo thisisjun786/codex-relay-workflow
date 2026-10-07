@@ -17,7 +17,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -141,6 +140,7 @@ func TestLoopInitCreatesThePlanExclusivelyUnderConcurrency(t *testing.T) {
 // the failed init leaves an unbound plan that refuses the retry.
 func TestLoopInitWritesNothingWhenTheSessionLockIsHeld(t *testing.T) {
 	cwd := loopReadWorkspace(t)
+	loopInitFastWaits(t) // the competing init never publishes, so do not spend the full wait budget
 	gitInit(t, cwd)
 	const id = "rec-lock"
 	const slug = "bound-objective"
@@ -387,9 +387,10 @@ func TestLoopInitAnswersAlreadyExistsWhenTheLockTimesOut(t *testing.T) {
 			t.Fatal(err)
 		}
 		go func() {
-			// Publish well after the lock's own 75 ms budget and inside the loser's extended wait, so the
-			// case proves that wait holds the criterion's answer rather than the lock's busy message.
-			time.Sleep(1300 * time.Millisecond)
+			// Publish well after the lock's own 75 ms budget and after the short budget an earlier
+			// revision used (about 1.9 s), but inside the production wait, so the case proves the wait
+			// holds the criterion's answer rather than the lock's busy message.
+			time.Sleep(5000 * time.Millisecond)
 			plan := goalplan.BuildGoalplan(goalplan.NewGoalplanInput{Objective: "Ship the export feature"})
 			published <- goalplan.WriteGoalplan(cwd, plan)
 		}()
@@ -446,9 +447,6 @@ func TestLoopInitNamesThePublishedPlanWhenTheLedgerRowFails(t *testing.T) {
 func TestLoopInitWritesNothingWhenTheBoundCycleIsRefused(t *testing.T) {
 	cwd := loopReadWorkspace(t)
 	const id = "019a0000-0000-7000-8000-000000000177"
-	// No session state file: the workspace is untouched when the case starts, so a state directory
-	// the lock acquisition creates would show up as a difference.
-	before := loopTreeSnapshot(t, cwd)
 
 	result := loopRun(t, cwd, "init", "--objective", "bound probe in a non-git tree", "--session", id)
 	if result.Code != 1 || !strings.Contains(result.Output, "no resolvable git source identity") {
@@ -457,34 +455,16 @@ func TestLoopInitWritesNothingWhenTheBoundCycleIsRefused(t *testing.T) {
 	if !strings.Contains(result.Output, "Nothing was written") {
 		t.Fatalf("the refusal does not claim nothing was written: %q", result.Output)
 	}
-	if after := loopTreeSnapshot(t, cwd); after != before {
-		t.Fatalf("the refused bound init changed the workspace:\nbefore %q\nafter  %q", before, after)
+	// The artifacts init owns are absent: no plan directory, no plan file, no created row and no
+	// session state. The state root itself is the session lock's own home — taking the lock creates
+	// it — and is deliberately not removed: a pre-lock observation cannot prove this call created it,
+	// so acting on that guess could delete another writer's state root (CRW-646 c2).
+	if _, err := os.Stat(filepath.Join(cwd, ".crw", "goalplans")); !os.IsNotExist(err) {
+		t.Fatalf("the refused bound init wrote a plan directory: %v", err)
 	}
-}
-
-// loopTreeSnapshot lists every path under cwd, so a case can prove a refused command left the
-// workspace exactly as it found it.
-func loopTreeSnapshot(t *testing.T, cwd string) string {
-	t.Helper()
-	paths := []string{}
-	err := filepath.WalkDir(cwd, func(path string, entry os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, err := filepath.Rel(cwd, path)
-		if err != nil {
-			return err
-		}
-		if rel != "." {
-			paths = append(paths, rel)
-		}
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
+	if _, err := os.Stat(state.StatePath(cwd, id)); !os.IsNotExist(err) {
+		t.Fatalf("the refused bound init wrote session state: %v", err)
 	}
-	slices.Sort(paths)
-	return strings.Join(paths, "\n")
 }
 
 // TestLoopInitCarriesOnWhenThePlanWriteOnlyFailedItsDirectorySync is the commit-order case of d2: the
@@ -536,7 +516,9 @@ func TestLoopInitAnswersAlreadyExistsWhenTheSessionLockTimesOut(t *testing.T) {
 		// budget (about 285 ms) has run out, so the loser is already reporting the lock error when the
 		// plan appears and must still answer the criterion's refusal.
 		go func() {
-			time.Sleep(600 * time.Millisecond)
+			// Publish after the session lock's own budget and after the short budget an earlier revision
+			// used (about 1.5 s), but inside the production wait.
+			time.Sleep(5000 * time.Millisecond)
 			plan := goalplan.BuildGoalplan(goalplan.NewGoalplanInput{Objective: "Bound objective"})
 			published <- goalplan.WriteGoalplan(cwd, plan)
 		}()
@@ -555,4 +537,20 @@ func TestLoopInitAnswersAlreadyExistsWhenTheSessionLockTimesOut(t *testing.T) {
 	if err := <-published; err != nil {
 		t.Fatalf("the competing init could not publish: %v", err)
 	}
+}
+
+// loopInitFastWaits shrinks the bounded post-lock waits so a case that intentionally never publishes
+// a competing plan does not spend the production budget waiting for one. It restores the seams when
+// the test ends.
+func loopInitFastWaits(t *testing.T) {
+	t.Helper()
+	rounds, planRounds := loopInitCreationLockRounds, loopInitPlanWaitRounds
+	wait, planWait := loopInitCreationLockWait, loopInitPlanWait
+	loopInitCreationLockRounds, loopInitPlanWaitRounds = 1, 1
+	loopInitCreationLockWait = func() {}
+	loopInitPlanWait = func() {}
+	t.Cleanup(func() {
+		loopInitCreationLockRounds, loopInitPlanWaitRounds = rounds, planRounds
+		loopInitCreationLockWait, loopInitPlanWait = wait, planWait
+	})
 }
