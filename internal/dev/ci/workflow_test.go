@@ -272,7 +272,12 @@ var (
 	// one lets another job run the staged tests with no finding (CRW-939, the generation-2
 	// evaluations). `npm test` is not this pattern: it runs the gui job's own suite, not the staged
 	// skills'.
-	nodeTest = regexp.MustCompile(`(?:^|[^A-Za-z0-9_-])node[ \t].*--test(?:$|[^A-Za-z0-9_-])`)
+	// A quoted executable is the same run: "node" --test and "/usr/bin/node" --test launch the same
+	// binary, so the word is read through either quote as well as bare (CRW-939, the generation-2
+	// evaluation of d1). The gap between the word and --test stops at a newline, a separator or a
+	// pipeline, because a literal block scalar keeps its lines apart: a node in one line and a
+	// --test in another are two commands, not one run (the same evaluation's d2).
+	nodeTest = regexp.MustCompile(`(?m)(?:^|[^A-Za-z0-9_./-])(?:"[^"]*node[^"]*"|'[^']*node[^']*'|[^ \t]*node)[ \t][^;|&\n]*--test(?:$|[^A-Za-z0-9_-])`)
 )
 
 // skillScriptsNodeJob is the one job whose subject is the staged skills' Node tests (the
@@ -317,6 +322,12 @@ func alternation(words []string) string {
 func commandWindow(physical []string, i int) string {
 	joined := physical[i]
 	if key, ok := blockScalarKey(physical[i]); ok {
+		// A literal scalar keeps its newlines and a folded one joins them with a blank, so the two
+		// kinds give the shell different commands. A literal body line is a command of its own unless
+		// it ends in a backslash, which the shell itself joins to the next line; joining every line
+		// with a blank instead would read a node in one command and a --test in another as one run and
+		// refuse a workflow that only runs them apart (CRW-939, the generation-2 evaluation of d2).
+		literal := blockScalarLiteral(physical[i])
 		for j := i + 1; j < len(physical); j++ {
 			body := physical[j]
 			if strings.TrimSpace(body) == "" {
@@ -331,6 +342,14 @@ func commandWindow(physical []string, i int) string {
 			if strings.HasPrefix(strings.TrimSpace(body), "#") {
 				continue
 			}
+			if literal {
+				if strings.HasSuffix(strings.TrimRight(joined, " \t"), "\\") {
+					joined = strings.TrimSuffix(strings.TrimRight(joined, " \t"), "\\") + " " + strings.TrimSpace(body)
+					continue
+				}
+				joined += "\n" + strings.TrimSpace(body)
+				continue
+			}
 			joined += " " + strings.TrimSpace(body)
 		}
 		return joined
@@ -341,6 +360,11 @@ func commandWindow(physical []string, i int) string {
 	}
 	return joined
 }
+
+// blockScalarMarker reads a block scalar's style and indentation indicator (`|`, `>2-`) from the
+// text after its key's colon. The style is the first character after the colon, so a colon inside a
+// trailing comment does not hide it.
+var blockScalarMarker = regexp.MustCompile(`:[ \t]*([|>])(?:[0-9][-+]?|[-+][0-9]?)?[ \t]*(?:#.*)?$`)
 
 // blockScalarKey reports the indentation of the key when line opens a block scalar (`key: |`,
 // `- run: >-`), and whether it does. A trailing comment is part of the same header (`- run: >- # a
@@ -356,11 +380,19 @@ func blockScalarKey(line string) (int, bool) {
 	// line, which would land inside the comment (CRW-939, the ninth generation-2 evaluation of d1).
 	// A YAML indentation indicator is allowed too, in either order (`>2-`, `|2`, `>-2`); missing it
 	// would leave the body unjoined and a split command unread (the tenth evaluation's d1).
-	marker := regexp.MustCompile(`:[ \t]*([|>](?:[0-9][-+]?|[-+][0-9]?)?[ \t]*(?:#.*)?)$`)
-	if !marker.MatchString(trimmed) {
+	if !blockScalarMarker.MatchString(trimmed) {
 		return 0, false
 	}
 	return indentOf(line), true
+}
+
+// blockScalarLiteral reports whether a block scalar header names the literal style (`|`) rather than
+// the folded one (`>`). The two differ in what the shell receives -- a literal keeps its newlines,
+// a folded joins them with a blank -- so the reader must tell them apart (CRW-939, the generation-2
+// evaluation of d2).
+func blockScalarLiteral(line string) bool {
+	m := blockScalarMarker.FindStringSubmatch(strings.TrimSpace(line))
+	return m != nil && m[1] == "|"
 }
 
 // indentOf counts the leading blanks of a line.
@@ -762,13 +794,20 @@ func TestWorkflow_a_block_scalar_with_an_indent_indicator_is_still_a_finding(t *
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for name, marker := range map[string]string{"folded": ">2-", "literal": "|2-", "reversed": ">-2"} {
-		body := "name: extra\n\njobs:\n  other:\n    steps:\n      - run: " + marker + "\n          node\n          --test\n"
+	// A folded body joins its lines into one command; a literal body keeps them apart, so the
+	// literal case writes the split with the backslash the shell itself joins (CRW-939, the
+	// generation-2 evaluation of d2).
+	for name, split := range map[string]string{
+		"folded":   ">2-\n          node\n          --test",
+		"reversed": ">-2\n          node\n          --test",
+		"literal":  "|2-\n          node \\\n            --test",
+	} {
+		body := "name: extra\n\njobs:\n  other:\n    steps:\n      - run: " + split + "\n"
 		if err := os.WriteFile(filepath.Join(dir, "extra.yml"), []byte(body), 0o644); err != nil {
 			t.Fatal(err)
 		}
 		if findings := workflowPythonFindings(t, dir); len(findings["extra.yml"]) == 0 {
-			t.Errorf("%s: extra.yml splits a node --test run under %q and is not refused", name, marker)
+			t.Errorf("%s: extra.yml splits a node --test run under an indentation indicator and is not refused", name)
 		}
 	}
 }
@@ -786,6 +825,23 @@ func TestWorkflow_a_comment_inside_a_block_scalar_is_not_a_command(t *testing.T)
 	}
 	if findings := workflowPythonFindings(t, dir); len(findings["extra.yml"]) != 0 {
 		t.Errorf("a comment naming the run was read as a command: %v", findings)
+	}
+}
+
+// A literal block scalar keeps its newlines: each line is a separate command, so a `node` in one and
+// a `--test` in another are not one run. Joining the whole block would refuse a workflow that only
+// runs them apart (CRW-939, the eleventh generation-2 evaluation of d2).
+func TestWorkflow_separate_commands_in_a_literal_block_are_not_one_run(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), ".github", "workflows")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "name: extra\n\njobs:\n  other:\n    steps:\n      - run: |\n          node --version\n          printf '%s\\n' '--test'\n"
+	if err := os.WriteFile(filepath.Join(dir, "extra.yml"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if findings := workflowPythonFindings(t, dir); len(findings["extra.yml"]) != 0 {
+		t.Errorf("two separate commands were read as one node run: %v", findings)
 	}
 }
 
@@ -857,6 +913,9 @@ func TestWorkflow_python_detector(t *testing.T) {
 		{"      - run: node --experimental-strip-types --test x", true},                        // and so is any other option
 		{"      - run: node --version", false},                                                 // no --test is not a test run
 		{"      - run: node_modules/.bin/node --test", true},                                   // a node binary by path still runs the tests
+		{"      - run: \"node\" --test", true},                                                 // a quoted node word is the same run
+		{"      - run: '/usr/bin/node' --test", true},                                          // and a quoted absolute path
+		{"      - run: \"/usr/bin/node\" --test", true},                                        // in either quote
 		{"      - run: node --test port/cxc/skills/x/tests/a.test.mjs", true},                  // a skill path in any other job
 		{"      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0", false},
 	} {

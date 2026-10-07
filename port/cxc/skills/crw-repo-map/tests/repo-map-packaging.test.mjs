@@ -200,6 +200,21 @@ function catchesSystemExit(clause) {
   return listed.some((name) => !/^(?:ImportError|Exception)(?:[ \t]+as[ \t]+\w+)?$/.test(name));
 }
 
+/**
+ * The unwind handler a statement at offset `at` on `line` shares its line with, or "" when there is
+ * none. A `finally` body and any `except` that can catch the SystemExit argparse raises for --help
+ * run while the parse unwinds, so a statement in one is not deferred; the header is the last one
+ * opened before the statement on the line, whether it is the statement's own prefix or an earlier
+ * `;`-separated one (CRW-939, the seventh and eleventh generation-2 evaluations of d2 and d3).
+ */
+function inlineUnwindHandler(line, at) {
+  if (at < 0) return "";
+  const opened = [...line.slice(0, at).matchAll(/(?:^|;)[ \t]*((?:finally|except)\b[^;:]*:)/g)];
+  if (opened.length === 0) return "";
+  const clause = opened[opened.length - 1][1].trim();
+  return /^finally\b/.test(clause) || (/^except\b/.test(clause) && catchesSystemExit(clause)) ? clause : "";
+}
+
 function deferredImport(code, i, parseAt) {
   let indent = code[i].match(/^[ \t]*/)[0].length;
   for (let j = i - 1; j >= 0; j--) {
@@ -271,7 +286,12 @@ function parserImportsBeforeParsing(source) {
     // such a call names, so one where an import would run before --help is refused rather than
     // passed (CRW-939, the tenth generation-2 evaluation of d2).
     const dynamic = /(?:^|[^A-Za-z0-9_.])(?:importlib[ \t]*\.[ \t]*import_module|__import__)[ \t]*\(/.test(line);
-    if (dynamic && !(i >= parseAt && deferredImport(code, i, parseAt))) {
+    // A dynamic call shares a line with its handler like a static import does, so the same inline
+    // rule governs it: a finally or a handler that catches SystemExit on that line runs while
+    // --help unwinds, and the enclosing function cannot defer it (CRW-939, the eleventh
+    // generation-2 evaluation of d3).
+    const dynamicHandler = dynamic ? inlineUnwindHandler(line, line.search(/(?:^|[^A-Za-z0-9_.])(?:importlib[ \t]*\.[ \t]*import_module|__import__)[ \t]*\(/)) : "";
+    if (dynamic && (dynamicHandler !== "" || !(i >= parseAt && deferredImport(code, i, parseAt)))) {
       offenders.push(`line ${i + 1}: ${line.trim()} (a dynamic import this check cannot resolve)`);
       continue;
     }
@@ -282,9 +302,8 @@ function parserImportsBeforeParsing(source) {
       // The handler is the last one opened before this statement on the line, whether it is the
       // statement's immediate prefix or an earlier `;`-separated one: in `finally: import os;
       // import networkx` both statements are in the finally body.
-      const opened = [...line.slice(0, line.indexOf(text)).matchAll(/(?:^|;)[ \t]*((?:finally|except)\b[^;:]*:)/g)];
-      const clause = opened.length === 0 ? "" : opened[opened.length - 1][1].trim();
-      if (/^finally\b/.test(clause) || (/^except\b/.test(clause) && catchesSystemExit(clause))) {
+      const clause = inlineUnwindHandler(line, line.indexOf(text));
+      if (clause !== "") {
         const modules = importedModules(text);
         if (modules === null || modules.some((mod) => PARSER_IMPORTS.includes(mod))) {
           offenders.push(`line ${i + 1}: ${text}`);
@@ -463,6 +482,11 @@ test("the parser-import check reads module-level imports placed after the parse"
   }
   // The control: an inline import in a body that cannot catch SystemExit still defers.
   const inlineImportError = "def main():\n    try:\n        args = parser.parse_args()\n    except ImportError: from repomap_class import RepoMap\n";
+  // A dynamic import in an inline handler body runs while --help unwinds like a static one, so the
+  // same-line handler rule applies to it too (CRW-939, the eleventh generation-2 evaluation of d3).
+  const dynamicInline = 'def main():\n    try:\n        args = parser.parse_args()\n    finally: importlib.import_module("networkx")\n';
+  assert.ok(parserImportsBeforeParsing(dynamicInline).offenders.length > 0,
+    "a dynamic import in an inline finally body runs while --help unwinds");
   // An import can also be made by a call the reader cannot resolve: `importlib.import_module("networkx")`
   // or `__import__("networkx")` loads the same dependency with no import statement. The reader cannot
   // see what such a call names, so it fails closed on one where an import would run before --help
