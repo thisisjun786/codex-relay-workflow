@@ -154,7 +154,11 @@ export function HelperRolesPage() {
     }
     setConfig(result.config);
     if (patch.inherit || patch.promptOverride !== undefined) {
-      setPrompts((previous) => ({ ...previous, [role]: result.config.roles[role].promptOverride ?? "" }));
+      // Seed the draft verbatim, exactly as the load and discard paths do. Collapsing a confirmed
+      // null to "" here would leave the draft disagreeing with the settings the server returned, so
+      // the save controls would reappear right after a successful clear and one more click would
+      // store an empty-string override the user never asked for.
+      setPrompts((previous) => ({ ...previous, [role]: result.config.roles[role].promptOverride }));
     }
     toast(`${role} ${patch.inherit ? "now inherits defaults" : "updated"}`, "ok");
   }
