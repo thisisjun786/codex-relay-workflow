@@ -312,6 +312,36 @@ func TestEvidenceReview759UnreadableTestStepIsNoSubstitute(t *testing.T) {
 	if problems := ChecksProblems(crw824Head, []string{"dev-gate"}, checks); len(problems) != 0 {
 		t.Fatalf("a readable test step is the evidence, want no problem, got %v", problems)
 	}
+
+	// The same reading on the collector's own rows, which is what the merge turn restates: a light
+	// run and a second run on the same head whose leg concluded success with an unreadable test
+	// step. The rows are the only thing the merge turn sees, and they do not accept the second run.
+	runs := []any{
+		map[string]any{"id": 8, "name": "CI", "head_sha": collectorHead, "workflow_id": 100,
+			"event": "pull_request", "run_started_at": "2026-10-07T06:00:00Z"},
+		map[string]any{"id": 9, "name": "CI", "head_sha": collectorHead, "workflow_id": 100,
+			"event": "pull_request", "run_started_at": "2026-10-07T07:00:00Z"},
+	}
+	gate := func(id int) map[string]any {
+		return map[string]any{"id": id, "name": "dev-gate", "run_attempt": 1, "status": "completed",
+			"conclusion": "success", "started_at": "2026-10-07T06:00:00Z"}
+	}
+	snapshot, _ := Collect(fixedForge(&collectorScript{
+		threads: 1, unresolved: map[int]bool{}, runs: runs,
+		jobs: map[int][]any{8: {gate(60), review759SkippedLeg(61)}, 9: {gate(62), review759MirroredJob(63, nil)}},
+	}), "owner/name", 7)
+	rows := listOf(mapOf(snapshot["handoff"])["checks"])
+	if problems := ChecksProblems(collectorHead, []string{"dev-gate"}, rows); len(problems) != 1 || problems[0].Code != ChecksStale {
+		t.Fatalf("the collector's own rows must not accept an unreadable substitute, want one %s, got %v", ChecksStale, problems)
+	}
+}
+
+// review759SkippedLeg is a go-product test leg that concluded success with its test step skipped,
+// the light-mode shape.
+func review759SkippedLeg(id int) map[string]any {
+	return map[string]any{"id": id, "name": "go-product (test-1)", "run_attempt": 1, "status": "completed", "conclusion": "success", "started_at": "2026-10-07T06:00:00Z", "steps": []any{
+		map[string]any{"name": "Test and replay the contract corpus (test-1)", "conclusion": "skipped", "started_at": nil},
+	}}
 }
 
 // The light gate a substitute exempted is not an integration success. The success counted for a
