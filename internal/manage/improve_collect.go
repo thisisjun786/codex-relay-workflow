@@ -64,6 +64,16 @@ var improveInputBeforeRename func(improveOutputPlan)
 // improveStoreFile is the relay store's file name inside a state directory.
 const improveStoreFile = "relay.sqlite3"
 
+// improveEvidenceIssuePrefix marks the evidence entry that names the issue a record belongs to,
+// rather than a place the friction itself was seen. A split whose relationship carries no scope
+// keeps its issue key this way, so the key is not mistaken for a project or for an occurrence.
+const improveEvidenceIssuePrefix = "issue:"
+
+// improveEvidenceAnswerPrefix marks the evidence entry that names the decision reply which answered
+// a blockage. The reply's own record is folded into the blockage's, so the reply's event is cited
+// as the source of the reason rather than counted as a second occurrence.
+const improveEvidenceAnswerPrefix = "answer:"
+
 // improveStoreTimeout bounds the read-only store open.
 const improveStoreTimeout = 5 * time.Second
 
@@ -808,6 +818,9 @@ func improveReadRelay(ctx context.Context, dbPath string, acc *improveAccumulato
 		// blockage's answer, not a second record, so one blockage stays one record.
 		answered := map[improveParseBlockedKey]string{}
 		blocked := map[improveParseBlockedKey]bool{}
+		// answerEvents maps a blocked event to the decision reply that answered it, so the
+		// blockage's record can cite the reply whose note gave it its reason.
+		answerEvents := map[improveParseBlockedKey]string{}
 		for _, row := range splits {
 			key := improveParseBlockedKey{relationship: row.Text("relationship_id"), event: row.Text("event_id")}
 			if row.Text("outcome") == "blocked_needs_input" {
@@ -820,6 +833,7 @@ func improveReadRelay(ctx context.Context, dbPath string, acc *improveAccumulato
 				continue
 			}
 			answered[improveParseBlockedKey{relationship: key.relationship, event: event}] = improveStringField(receipt, "note")
+			answerEvents[improveParseBlockedKey{relationship: key.relationship, event: event}] = key.event
 		}
 		for _, row := range splits {
 			outcome, receipt := row.Text("outcome"), improveParseJSONObject(row.Text("receipt"))
@@ -855,8 +869,13 @@ func improveReadRelay(ctx context.Context, dbPath string, acc *improveAccumulato
 			// taking the project's place.
 			key := improveSplitKey(project)
 			evidence := []string{"events:" + row.Text("event_id")}
+			// The reply that answered this blockage is cited as the source of the reason the
+			// record carries, so the reason is substantiated rather than asserted.
+			if answer := answerEvents[improveParseBlockedKey{relationship: relationship, event: row.Text("event_id")}]; answer != "" {
+				evidence = append(evidence, improveEvidenceAnswerPrefix+answer)
+			}
 			if key == "" && issue != "" {
-				evidence = append(evidence, "issue:"+issue)
+				evidence = append(evidence, improveEvidenceIssuePrefix+issue)
 			}
 			rows++
 			acc.improveAdd(improveRecord{Kind: improveKindSplit, Key: key, Where: relationship,

@@ -58,8 +58,8 @@ type improveProposeCandidate struct {
 	seen []auditDraftSeen
 
 	// seenProjects is the project each sighting was seen in, so an update of a draft that already
-	// exists adds only the sightings this run newly recorded to the project's count. It does not
-	// reach the report: the report names the candidate, not how it is merged.
+	// exists adds only the sightings this run newly recorded to that project's count. It does not
+	// reach the report: the report names the candidate, not how a merge counts it.
 	seenProjects map[auditDraftSeen]string
 }
 
@@ -162,8 +162,9 @@ func improveProposeTitleOf(record improveRecord) string {
 // owners. A record whose kind carries no project reads as the empty one.
 func improveProposeProjectOf(record improveRecord) string {
 	switch record.Kind {
-	// A split record's key is the project key the issue belongs to (721's improveSplitKey),
-	// falling back to the issue key when the scope is absent.
+	// A split record's key is the project key the issue belongs to (721's improveSplitKey), which
+	// is empty when the relationship carries no scope: an issue key is not a project, and such a
+	// record stays owner-unknown.
 	case improveKindSplit:
 		return strings.TrimSpace(record.Key)
 	}
@@ -196,20 +197,68 @@ func improveProposeImpactOf(record improveRecord) int {
 // improveProposeRecordSightings is the sightings one record makes, in the audit draft seen shape
 // the shared crw-issue-draft/1 format carries: the source, what the record is about, where it was
 // seen, and when it was last seen. A record that merges two or more origin locations was seen
-// once at each of them, so it makes one sighting per location; a record with none or one makes
-// one. Head is the origin location then, because that is what tells the sightings apart, and At
-// stays the record's last sighting. Two records with one origin are one sighting, so a rerun over
-// the same bundle never doubles a seen entry.
+// once at each of them, so it makes one sighting per location. Head names that location, because
+// it is what tells the sightings apart, and At is the record's last sighting. A record that names
+// no location makes one sighting of the record's where, so the shape does not change when a
+// record gains its first location.
 func improveProposeRecordSightings(record improveRecord) []auditDraftSeen {
 	subject, at := strings.TrimSpace(record.Key), strings.TrimSpace(record.LastAt)
-	if len(record.Evidence) < 2 {
+	locations := improveProposeOrigins(record)
+	if len(locations) == 0 {
 		return []auditDraftSeen{{Mode: improveProposeSource, Subject: subject, Head: strings.TrimSpace(record.Where), At: at}}
 	}
-	out := make([]auditDraftSeen, 0, len(record.Evidence))
-	for _, evidence := range record.Evidence {
-		out = append(out, auditDraftSeen{Mode: improveProposeSource, Subject: subject, Head: strings.TrimSpace(evidence), At: at})
+	out := make([]auditDraftSeen, 0, len(locations))
+	for _, location := range locations {
+		out = append(out, auditDraftSeen{Mode: improveProposeSource, Subject: subject, Head: location, At: at})
 	}
 	return out
+}
+
+// improveProposeOrigins is the origin locations of one record: the evidence entries that name
+// where the friction was seen. An entry that is context rather than an occurrence — the issue a
+// split without a scope belongs to, or the decision reply that answered a blockage — is carried in
+// the record's evidence for a reader but is not a place the friction happened, so it makes no
+// sighting of its own and never counts as one.
+func improveProposeOrigins(record improveRecord) []string {
+	locations := make([]string, 0, len(record.Evidence))
+	for _, evidence := range record.Evidence {
+		trimmed := strings.TrimSpace(evidence)
+		if trimmed == "" || improveProposeContextEvidence(trimmed) {
+			continue
+		}
+		locations = append(locations, trimmed)
+	}
+	return locations
+}
+
+// improveProposeContextEvidence reports whether an evidence entry is context for a record rather
+// than an origin location: the issue a scopeless split belongs to, or the decision reply whose note
+// gave a blockage its reason.
+func improveProposeContextEvidence(entry string) bool {
+	return strings.HasPrefix(entry, improveEvidenceIssuePrefix) || strings.HasPrefix(entry, improveEvidenceAnswerPrefix)
+}
+
+// improveProposeSightingIdentity is what makes two sightings the same occurrence: the source, the
+// record they are about, and the origin location. The time is deliberately not part of it. A
+// record's last sighting moves forward every time the record is seen again, so a time that
+// participates in the identity would make every earlier occurrence look new on the next run and
+// count it a second time.
+func improveProposeSightingIdentity(sighting auditDraftSeen) auditDraftSeen {
+	sighting.At = ""
+	return sighting
+}
+
+// improveProposeSeenHas reports whether a seen list already carries this occurrence. It compares
+// identities rather than whole entries, so a sighting whose record was seen again is recognised
+// as the occurrence it already is.
+func improveProposeSeenHas(seen []auditDraftSeen, entry auditDraftSeen) bool {
+	identity := improveProposeSightingIdentity(entry)
+	for _, have := range seen {
+		if improveProposeSightingIdentity(have) == identity {
+			return true
+		}
+	}
+	return false
 }
 
 // improveProposeCandidates groups the bundle's records into candidates. Records that share the
@@ -314,7 +363,7 @@ func improveProposeAddSightings(candidate *improveProposeCandidate, project stri
 	}
 	owner := improveProposeProjectKey(project)
 	for _, sighting := range sightings {
-		if auditDraftSeenHas(candidate.seen, sighting) {
+		if improveProposeSeenHas(candidate.seen, sighting) {
 			continue
 		}
 		candidate.seen = append(candidate.seen, sighting)
@@ -447,7 +496,7 @@ func improveProposeMergeProjects(stored, current []improveProposeProject, added 
 func improveProposeAddedSightings(candidate improveProposeCandidate, stored []auditDraftSeen) map[string]int {
 	added := map[string]int{}
 	for _, sighting := range candidate.seen {
-		if auditDraftSeenHas(stored, sighting) {
+		if improveProposeSeenHas(stored, sighting) {
 			continue
 		}
 		added[improveProposeProjectKey(candidate.seenProjects[sighting])]++
@@ -660,7 +709,7 @@ func improveProposeRunCapped(ctx context.Context, e *Env, bundlePath string, dry
 		added := improveProposeAddedSightings(candidate, doc.Seen)
 		changed := false
 		for _, sighting := range candidate.seen {
-			if !auditDraftSeenHas(doc.Seen, sighting) {
+			if !improveProposeSeenHas(doc.Seen, sighting) {
 				doc.Seen = append(doc.Seen, sighting)
 				changed = true
 			}

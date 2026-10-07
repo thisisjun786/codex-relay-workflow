@@ -335,3 +335,125 @@ func TestImproveReview789SplitWithoutScopeHasNoProject(t *testing.T) {
 		t.Errorf("the draft project = %q, want it not to be the issue key", doc.Project)
 	}
 }
+
+// TestImproveReview789BlankEvidenceMakesNoSighting covers decided answer 3's edge: an origin
+// location that is blank is not an origin, so a record whose evidence list is blank entries plus
+// one real location makes the one sighting it has rather than a sighting with an empty head.
+func TestImproveReview789BlankEvidenceMakesNoSighting(t *testing.T) {
+	s := improveTestSetup(t)
+	manageState := filepath.Join(s.root, "manage-state")
+	improveTestStore(t, s, func(t *testing.T, db *sql.DB) {
+		improveReview789SeedSplit(t, db, "rel-a", "CRW-1", "project-a", "size overrun", "ev-a")
+	})
+	improveReview789Configure(t, s, manageState, map[string]any{})
+
+	improveReview789Collect(t, s)
+	report := improveReview789Propose(t, s, improveReview789BundlePath(s))
+	if len(report.Created) != 1 {
+		t.Fatalf("created = %+v, want one draft", report.Created)
+	}
+	doc := improveReview789Draft(t, manageState, report.Created[0].Fingerprint)
+	for _, sighting := range doc.Seen {
+		if strings.TrimSpace(sighting.Head) == "" {
+			t.Errorf("the draft carries a sighting with no origin location: %+v", doc.Seen)
+		}
+	}
+	if len(doc.Seen) != 1 {
+		t.Errorf("the draft carries %d seen entries, want one: %+v", len(doc.Seen), doc.Seen)
+	}
+}
+
+// TestImproveReview789NewOccurrenceCountsOnce covers the review finding that a new occurrence must
+// count once: one refusal record already recorded twice, then seen a third time, must add exactly
+// one sighting and one to the project's count rather than re-adding every earlier occurrence.
+func TestImproveReview789NewOccurrenceCountsOnce(t *testing.T) {
+	s := improveTestSetup(t)
+	manageState := filepath.Join(s.root, "manage-state")
+	improveReview789Configure(t, s, manageState, map[string]any{})
+
+	improveTestStore(t, s, func(t *testing.T, db *sql.DB) {
+		improveTestInsert(t, db, "INSERT INTO refusals (at, relationship_id, event_id, reason, detail) VALUES ('2026-10-06T01:00:00Z','rel-a','ev-a','manifest_forbidden','first')")
+		improveTestInsert(t, db, "INSERT INTO refusals (at, relationship_id, event_id, reason, detail) VALUES ('2026-10-06T02:00:00Z','rel-b','ev-b','manifest_forbidden','second')")
+	})
+	improveReview789Collect(t, s)
+	first := improveReview789Propose(t, s, improveReview789BundlePath(s))
+	if len(first.Created) != 1 {
+		t.Fatalf("created = %+v, want one draft", first.Created)
+	}
+	fingerprint := first.Created[0].Fingerprint
+	if doc := improveReview789Draft(t, manageState, fingerprint); len(doc.Seen) != 2 {
+		t.Fatalf("the first draft carries %d seen entries, want two: %+v", len(doc.Seen), doc.Seen)
+	}
+
+	// A third refusal of the same reason arrives, so the record is seen once more.
+	improveTestStore(t, s, func(t *testing.T, db *sql.DB) {
+		improveTestInsert(t, db, "INSERT INTO refusals (at, relationship_id, event_id, reason, detail) VALUES ('2026-10-06T03:00:00Z','rel-c','ev-c','manifest_forbidden','third')")
+	})
+	improveReview789Collect(t, s)
+	second := improveReview789Propose(t, s, improveReview789BundlePath(s))
+	if len(second.Updated) != 1 {
+		t.Fatalf("updated = %+v, want the existing draft to grow once", second.Updated)
+	}
+	doc := improveReview789Draft(t, manageState, fingerprint)
+	if len(doc.Seen) != 3 {
+		t.Errorf("the draft carries %d seen entries, want three (one per occurrence): %+v", len(doc.Seen), doc.Seen)
+	}
+	if !strings.Contains(doc.Body, "- owner_unknown (3)") {
+		t.Errorf("the merged draft does not count three occurrences:\n%s", doc.Body)
+	}
+}
+
+// TestImproveReview789UnscopedBlockageCountsOnce covers the review finding that the issue key a
+// scopeless split carries as evidence is context, not a second occurrence: one blockage is one
+// sighting and one occurrence.
+func TestImproveReview789UnscopedBlockageCountsOnce(t *testing.T) {
+	s := improveTestSetup(t)
+	manageState := filepath.Join(s.root, "manage-state")
+	improveTestStore(t, s, func(t *testing.T, db *sql.DB) {
+		improveTestInsert(t, db, "INSERT INTO relationships (relationship_id, issue_key, status, parent_task_id, parent_host_id, child_task_id, child_host_id, execution_generation, artifact_roots, allowed_recipients, created_at, updated_at) VALUES ('rel-a','CRW-900','active','parent','host','child','host',1,'[]','[]','2026-10-06T00:00:00Z','2026-10-06T00:00:00Z')")
+		improveTestInsert(t, db, "INSERT INTO events (event_id, relationship_id, execution_generation, revision_hash, outcome, producer, turn_thread_id, turn_id, turn_status, receipt, stage, first_seen_at, last_seen_at) VALUES ('ev-a','rel-a',1,?,'decision_reply','parent','t','turn-1','completed',?,'final','2026-10-06T01:00:00Z','2026-10-06T01:00:00Z')",
+			strings.Repeat("0", 64), improveReview789SplitReceipt("size overrun"))
+	})
+	improveReview789Configure(t, s, manageState, map[string]any{})
+
+	improveReview789Collect(t, s)
+	report := improveReview789Propose(t, s, improveReview789BundlePath(s))
+	if len(report.Created) != 1 {
+		t.Fatalf("created = %+v, want one draft", report.Created)
+	}
+	doc := improveReview789Draft(t, manageState, report.Created[0].Fingerprint)
+	if len(doc.Seen) != 1 {
+		t.Errorf("the draft carries %d seen entries, want one: %+v", len(doc.Seen), doc.Seen)
+	}
+}
+
+// TestImproveReview789ConcurrentRunIsRefused covers the review finding that two runs of one
+// boundary and ref must not both pass the roadmap check: while one run holds the pass, another is
+// refused by name rather than proposing with a stale cap.
+func TestImproveReview789ConcurrentRunIsRefused(t *testing.T) {
+	s := improveTestSetup(t)
+	manageState := filepath.Join(s.root, "manage-state")
+	improveTestStore(t, s, func(t *testing.T, db *sql.DB) {
+		improveReview789SeedSplit(t, db, "rel-a", "CRW-1", "project-a", "size overrun", "ev-a")
+	})
+	improveRoadmapTestConfigure(t, s, manageState, map[string]any{})
+	dir := filepath.Join(manageState, "improve")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	release, err := improveRoadmapLock(dir, "milestone", "M2")
+	if err != nil {
+		t.Fatalf("taking the pass: %v", err)
+	}
+	defer release()
+
+	var stdout, stderr strings.Builder
+	e := improveRoadmapTestEnv(s, &stdout, &stderr)
+	code, _, errOut := improveRoadmapTestRun(t, e, "--boundary", "milestone", "--ref", "M2")
+	if code != 1 || !strings.Contains(errOut, improveReasonRoadmapLocked) {
+		t.Fatalf("a concurrent run: exit %d, stderr %q, want the named refusal %s", code, errOut, improveReasonRoadmapLocked)
+	}
+	if drafts := improveRoadmapTestDrafts(t, manageState); len(drafts) != 0 {
+		t.Errorf("the refused run wrote %v", drafts)
+	}
+}
