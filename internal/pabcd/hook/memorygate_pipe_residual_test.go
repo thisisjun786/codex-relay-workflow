@@ -60,6 +60,13 @@ func TestMemoryGatePipeResidual(t *testing.T) {
 		"printf 'echo x > " + root + "/a' | python3 /dev/fd/3 3<&0 </dev/null",
 		"if python3 <<'PY'\nopen('" + root + "/a','w')\nPY\nthen :; fi",
 		"python3 3<<'PY' <&3\nopen('" + root + "/a','w')\nPY",
+		// CRW-894 c10, fifth round: (a) a quoted argument that only looks like a redirection is the option
+		// argument it is; (b) MULTIOS reaches the descriptor that holds the pipe; (c) a here-document after a
+		// compound closer feeds the whole compound; (d) a condition prefix before a here-string does not hide
+		// the interpreter owner.
+		"printf 'echo x > " + root + "/a' | env -u '>/dev/null' bash",
+		"printf 'echo x > " + root + "/a' | python3 /dev/fd/3 3<&0 3</dev/null",
+		"while python3; do :; done <<'PYEOF'\nopen('" + root + "/a','w')\nPYEOF",
 	} {
 		got := memoryGateClassify("Bash", map[string]any{"command": command}, cwd, env)
 		if got.Surface != "shell" || !strings.HasPrefix(got.Target, "(a program the gate cannot read: ") {

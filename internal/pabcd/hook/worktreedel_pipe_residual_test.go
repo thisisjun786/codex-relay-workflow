@@ -776,3 +776,74 @@ func TestWorktreeDelPipeResidualC10d(t *testing.T) {
 	)
 	r.intact(t)
 }
+
+// TestWorktreeDelPipeResidualC10e is the pre-merge evaluation fifth round, red first on head 65a24b8bc. Five forms
+// inside this issue promise still reached the piped program, and two were over-denials this change introduced:
+// (d1) the new option-argument skip stepped over a quoted argument that only looks like a redirection after quote
+// removal, so `env -u ">/dev/null" rm -rf ../repo` was allowed and `env -u ">/dev/null" bash` hid the shell;
+// (d2) the descriptor walk read a shell argument that only looks like a redirection after quote removal as a real one,
+// so `bash -c 'bash -s "</dev/null"'` lost the pipe; (d3) MULTIOS was applied to descriptor 0 only, so
+// `python3 /dev/fd/3 3<&0 3</dev/null` read the pipe on descriptor 3; (d4) a condition prefix before a here-string and
+// a subshell opener written without a blank before the command name hid the interpreter owner; (d5) an exec builtin
+// with only redirections did not carry its descriptor change to the commands after it, so `bash -c 'exec </dev/null;
+// bash'` was denied although the inner shell reads the file. Each was reproduced with a harmless stand-in for the
+// deletion in the host zsh; no row runs a deletion, and the guard reads text and runs nothing.
+func TestWorktreeDelPipeResidualC10e(t *testing.T) {
+	r := newDelRig(t)
+	// (d1) a quoted argument that only looks like a redirection is the option argument it is.
+	r.denied(t, `env -u ">/dev/null" rm -rf ../repo`, "rm -r ../repo")
+	r.denied(t, `exec -a ">/dev/null" rm -rf ../repo`, "rm -r ../repo")
+	worktreeDelPipeDenied(t, r, `printf 'rm -rf ../repo' | env -u ">/dev/null" bash`)
+	r.allowed(t, `env -u ">/dev/null" rm -rf ../other`, `exec -a ">/dev/null" rm -rf ../other`)
+	// (d2) a shell argument that only looks like a redirection changes no descriptor.
+	worktreeDelPipeDenied(t, r, `printf 'rm -rf ../repo' | bash -c 'bash -s "</dev/null"'`)
+	worktreeDelPipeDenied(t, r, `printf 'rm -rf ../repo' | bash -c 'bash "</dev/null"'`)
+	// (d3) MULTIOS reaches the descriptor that holds the pipe, not only descriptor 0.
+	worktreeDelPipeInterpreterDenied(t, r, `printf x | python3 /dev/fd/3 3<&0 3</dev/null`)
+	worktreeDelPipeDenied(t, r, `printf 'rm -rf ../repo' | bash 3<&0 3</dev/null`)
+	// (d4) the condition prefix and a subshell opener written without a blank do not hide the owner.
+	worktreeDelUnreadableDenied(t, r, `if python3 <<< 'import os'; then :; fi`, "an interpreter program read from a here-string")
+	worktreeDelUnreadableDenied(t, r, "(python3 <<'PY'\nimport os\nPY\n)", "an interpreter program read from a here-document")
+	// (d5) an exec builtin with only redirections carries its descriptor change to the commands after it.
+	r.allowed(t,
+		`printf x | bash -c 'exec </dev/null; bash'`,
+		`printf x | bash -c 'exec </dev/null; cat'`,
+	)
+	worktreeDelPipeDenied(t, r, `printf 'rm -rf ../repo' | bash -c 'exec bash'`)
+	worktreeDelPipeDenied(t, r, `printf 'rm -rf ../repo' | bash -c 'cat; bash'`)
+	// The controls keep their answers.
+	r.allowed(t,
+		`printf x | env -u FOO cat`,
+		`printf x | bash -c 'cat'`,
+		`printf x | python3 /dev/fd/3 3</dev/null`,
+		`printf x | python3 -c 'print(1)'`,
+	)
+	r.intact(t)
+}
+
+// TestWorktreeDelPipeResidualC10f is this change's own independent review's fifth round, red first on head 65a24b8bc.
+// A here-document or here-string written after the word that closes a compound or a group feeds the whole compound,
+// and the shell or interpreter inside it that reads standard input reads that body: the owner word is done, fi, esac,
+// } or ), not a command, so the reading judged the closer as a command name and allowed the body. Each form was
+// reproduced with a harmless stand-in for the deletion in bash 5.3.9 and zsh 5.9; no row runs a deletion, and the
+// guard reads text and runs nothing.
+func TestWorktreeDelPipeResidualC10f(t *testing.T) {
+	r := newDelRig(t)
+	for _, cmd := range []string{
+		"while python3; do :; done <<'PYEOF'\nimport os\nPYEOF",
+		"if python3; then :; fi <<'PYEOF'\nimport os\nPYEOF",
+		"for i in 1; do python3; done <<'PYEOF'\nimport os\nPYEOF",
+		"{ python3; } <<'PYEOF'\nimport os\nPYEOF",
+		"(python3) <<'PYEOF'\nimport os\nPYEOF",
+	} {
+		worktreeDelUnreadableDenied(t, r, cmd, "an interpreter program read from a here-document")
+	}
+	worktreeDelUnreadableDenied(t, r, "while bash; do :; done <<'SHEOF'\ntouch x\nSHEOF", "a shell program read from a here-document")
+	// A compound whose body reads no standard input keeps its answer.
+	r.allowed(t,
+		"cat <<'EOF'\nimport os\nEOF",
+		"while cat; do :; done <<'EOF'\nimport os\nEOF",
+		"while python3 -c 'print(1)'; do :; done <<'PYEOF'\nimport os\nPYEOF",
+	)
+	r.intact(t)
+}

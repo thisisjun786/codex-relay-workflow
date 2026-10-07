@@ -142,7 +142,7 @@ func isAssignment(token string) bool {
 // take, and over the assignments and numbers that may stand before a command. ok is false when every word from i on is
 // a prefix. Every reader that has to find a command word shares this one walk and the one wrapper table, so no reader
 // keeps a second list (CRW-726, c15(c)).
-func worktreeDelCommandPrefix(words []string, i int) (next int, ok bool) {
+func worktreeDelCommandPrefix(words []string, raw []string, i int) (next int, ok bool) {
 	wrapper := ""
 	for ; i < len(words); i++ {
 		word := words[i]
@@ -151,11 +151,13 @@ func worktreeDelCommandPrefix(words []string, i int) (next int, ok bool) {
 			wrapper = name
 			continue
 		}
-		if worktreeDelRedirectWord(word) {
+		if worktreeDelUnreadableRedirectAt(words, raw, i) {
 			// A redirection written between the wrapper's options and its executable belongs to the wrapper's
 			// command, not to the command word: `exec -a x >/dev/null bash` runs bash (CRW-894 c10(b), and
 			// `exec -a x 2>&1 bash` the same in the criterion's second round). A lone operator takes the next
-			// word as its target.
+			// word as its target. The written word decides, so a quoted argument that only looks like a
+			// redirection after quote removal (`env -u '>/dev/null' rm`) stays the argument it is (CRW-894, the
+			// pre-merge evaluation's fifth round).
 			if worktreeDelUnreadableRedirectAlone(word) && i+1 < len(words) {
 				i++
 			}
@@ -170,7 +172,7 @@ func worktreeDelCommandPrefix(words []string, i int) (next int, ok bool) {
 			// `exec -a >/dev/null x bash` runs bash with x as argv[0], because the shell takes the redirection out
 			// before it reads the option's argument (CRW-894, the pre-merge evaluation's fourth round).
 			if worktreeDelWrapperOptionArg(wrapper, word) {
-				j := worktreeDelUnreadableSkipRedirections(words, i+1)
+				j := worktreeDelUnreadableSkipRedirections(words, raw, i+1)
 				if j < len(words) {
 					i = j
 				}
@@ -182,18 +184,60 @@ func worktreeDelCommandPrefix(words []string, i int) (next int, ok bool) {
 	return i, false
 }
 
+// worktreeDelUnreadableRawRedirect says whether a word as written opens with a redirection operator the outer shell
+// performs: the descriptor digits and a {name} prefix are stepped over, and the operator must open the word itself.
+// The tokenizer removes the quotes, so a word that only looks like a redirection afterwards is an ordinary argument
+// (`bash -s "</dev/null"`, `env -u '>/dev/null' rm`); only the written word can tell them apart (CRW-894, the
+// pre-merge evaluation's fifth round).
+func worktreeDelUnreadableRawRedirect(raw string) bool {
+	rest := strings.TrimLeft(raw, "0123456789")
+	if strings.HasPrefix(rest, "{") {
+		if end := strings.IndexByte(rest, '}'); end > 0 {
+			rest = rest[end+1:]
+		}
+	}
+	return strings.HasPrefix(rest, "<") || strings.HasPrefix(rest, ">")
+}
+
+// worktreeDelUnreadableRedirectAt is the redirection test over a word list: the written word decides when it is known,
+// and the quote-removed text is the fallback, so a caller without the written form keeps the reading it had
+// (CRW-894, the pre-merge evaluation's fifth round).
+func worktreeDelUnreadableRedirectAt(words []string, raw []string, i int) bool {
+	if i < len(raw) {
+		return worktreeDelUnreadableRawRedirect(raw[i])
+	}
+	return worktreeDelRedirectWord(words[i])
+}
+
+// worktreeDelUnreadableRawTokens is the written form of each token, in the same order, for the walks that must tell a
+// real redirection from an ordinary argument that only looks like one. It is empty when the two tokenizations
+// disagree, so the caller falls back to the quote-removed text (CRW-894, the pre-merge evaluation's fifth round).
+func worktreeDelUnreadableRawTokens(segment string, tokens []string) []string {
+	words := worktreeDelUnreadableWords(segment)
+	if len(words) != len(tokens) {
+		return nil
+	}
+	raw := make([]string, len(words))
+	for i, word := range words {
+		if word.text != tokens[i] {
+			return nil
+		}
+		raw[i] = word.raw
+	}
+	return raw
+}
+
 // worktreeDelUnreadableSkipRedirections is the index of the first word from i on that is no redirection and no target
 // of one: the shell takes a command's redirections out of its argument list before the command reads it, so a
 // redirection written between an option and the option's own argument belongs to neither (CRW-894, the pre-merge
 // evaluation's fourth round). A lone operator takes the next word as its target.
-func worktreeDelUnreadableSkipRedirections(words []string, i int) int {
+func worktreeDelUnreadableSkipRedirections(words []string, raw []string, i int) int {
 	for i < len(words) {
-		if strings.Trim(words[i], "0123456789") == "" && i+1 < len(words) &&
-			(strings.HasPrefix(words[i+1], "<") || strings.HasPrefix(words[i+1], ">")) {
+		if strings.Trim(words[i], "0123456789") == "" && i+1 < len(words) && worktreeDelUnreadableRedirectAt(words, raw, i+1) {
 			i += 2 // a descriptor word and the redirection it belongs to
 			continue
 		}
-		if !worktreeDelRedirectWord(words[i]) {
+		if !worktreeDelUnreadableRedirectAt(words, raw, i) {
 			return i
 		}
 		if worktreeDelUnreadableRedirectAlone(words[i]) && i+1 < len(words) {
@@ -288,7 +332,7 @@ func worktreeDelWrapperClusterArg(name, option string) bool {
 // worktreeDelCommandPrefixEnv is worktreeDelCommandPrefix over the same table: the wrapper words are read there, and
 // env's own NAME=value operands are assignments, so `env FOO=1 rm -rf x` names rm.
 func worktreeDelCommandPrefixEnv(words []string, i int) (next int, ok bool) {
-	return worktreeDelCommandPrefix(words, i)
+	return worktreeDelCommandPrefix(words, nil, i)
 }
 
 // stripPrefixes drops leading sudo, command and builtin, and env with the NAME=value words that follow it. A prefix is
@@ -316,8 +360,8 @@ func stripPrefixes(tokens []string) []string {
 // and arguments each wrapper may carry. The oracle strips only sudo, command, builtin and env, so a removal behind
 // nohup, timeout, nice, setsid or stdbuf was never named and was allowed; the extended walk names it (CRW-726, c15(d);
 // port: fixed, a security fix). It can only add denies, and the first walk keeps stripPrefixes.
-func stripPrefixesExtended(tokens []string) []string {
-	i, ok := worktreeDelCommandPrefix(tokens, 0)
+func stripPrefixesExtended(tokens, raw []string) []string {
+	i, ok := worktreeDelCommandPrefix(tokens, raw, 0)
 	if !ok {
 		return nil
 	}
@@ -362,11 +406,17 @@ func isProtectedTarget(target, segCwd string, id WorktreeIdentity, extended bool
 // evaluateSegment is the verdict of one segment, and false when it has none. rm and rmdir are the POSIX removals, git
 // worktree remove the other; unlink is a file removal and never threatens a worktree.
 func evaluateSegment(segment, cwd string, id WorktreeIdentity, extended, quoting bool) (GuardVerdict, bool) {
-	prefix := stripPrefixes
+	tokens := worktreeDelQuoteTokens(segment, quoting)
+	// The written form of each token is carried beside the quote-removed one, so a redirection is read from what the
+	// shell wrote and an ordinary argument that only looks like one after quote removal stays an argument
+	// (CRW-894, the pre-merge evaluation's fifth round).
+	raw := worktreeDelUnreadableRawTokens(segment, tokens)
 	if extended {
-		prefix = stripPrefixesExtended // the extended walk names a verb behind any wrapper; the first walk stays the oracle's
+		// the extended walk names a verb behind any wrapper; the first walk stays the oracle's
+		tokens = stripPrefixesExtended(tokens, raw)
+	} else {
+		tokens, raw = stripPrefixes(tokens), nil
 	}
-	tokens := prefix(worktreeDelQuoteTokens(segment, quoting))
 	if len(tokens) == 0 {
 		return GuardVerdict{}, false
 	}
@@ -2219,8 +2269,15 @@ func worktreeDelUnreadableSourceIndex(tail []string) int {
 // worktreeDelUnreadableCommandWord is the index, in a word list, of the word stripPrefixes keeps first: the word that
 // names the command, after sudo, command, builtin and env with its assignments. -1 when every word is a prefix.
 func worktreeDelUnreadableCommandWord(words []string) int {
+	return worktreeDelUnreadableCommandWordRaw(words, nil)
+}
+
+// worktreeDelUnreadableCommandWordRaw is worktreeDelUnreadableCommandWord with the written form of each word, so a
+// word that only looks like a redirection after quote removal is no redirection (CRW-894, the pre-merge evaluation's
+// fifth round).
+func worktreeDelUnreadableCommandWordRaw(words, raw []string) int {
 	for i := 0; i < len(words); {
-		if i+1 < len(words) && strings.Trim(words[i], "0123456789") == "" && worktreeDelRedirectWord(words[i+1]) {
+		if i+1 < len(words) && strings.Trim(words[i], "0123456789") == "" && worktreeDelUnreadableRedirectAt(words, raw, i+1) {
 			i += 2 // a descriptor and the redirection it belongs to stand before the command word
 			continue
 		}
@@ -2228,7 +2285,7 @@ func worktreeDelUnreadableCommandWord(words []string) int {
 			i++ // a subshell or a group opener stands before the command word
 			continue
 		}
-		if worktreeDelRedirectWord(words[i]) { // a redirection stands before the command word and is no part of it
+		if worktreeDelUnreadableRedirectAt(words, raw, i) { // a redirection stands before the command word and is no part of it
 			if strings.Trim(words[i], "0123456789&<>|") == "" && i+1 < len(words) {
 				i++ // a lone operator takes the next word as its target
 			}
@@ -2239,7 +2296,7 @@ func worktreeDelUnreadableCommandWord(words []string) int {
 			i++ // a leading assignment is no part of the command word (Y=1 $X -rf ../repo runs $X)
 			continue
 		}
-		if next, ok := worktreeDelCommandPrefixEnv(words, i); ok {
+		if next, ok := worktreeDelCommandPrefix(words, raw, i); ok {
 			return next
 		}
 		return -1
@@ -2381,20 +2438,27 @@ type worktreeDelUnreadableStdinRedirect struct {
 // descriptor is read from the word — 3</dev/null names descriptor 3 — and never assumed to be 0, so the bookkeeping
 // follows every descriptor and not only descriptor 0 (CRW-894 c9(a)). A here-document and a here-string feed the
 // descriptor a program of their own and are not the pipe (CRW-726, c15(a)).
-func worktreeDelUnreadableStdinStep(word, next string, hasNext bool) (worktreeDelUnreadableStdinRedirect, bool) {
+func worktreeDelUnreadableStdinStep(word, written, next, writtenNext string, hasNext bool) (worktreeDelUnreadableStdinRedirect, bool) {
 	// The operator is the first < or > of the word. Every redirection form is read, not only the < forms: a
 	// duplication written with > puts descriptor M's content on descriptor N just as one written with < does
 	// (CRW-894 c10, third round: 0>&3 copies the saved pipe back onto descriptor 0 and the shell reads it), and <>
 	// reopens its target read-write. A redirection written with no descriptor names descriptor 0 for < and
 	// descriptor 1 for >, which is where the shell puts it (>&2 redirects standard output, not standard input).
 	// &>f redirects both standard streams and names no descriptor of its own.
+	//
+	// The operator must open the word as it was written. The tokenizer removes the quotes, so a shell argument that
+	// only looks like a redirection afterwards (bash -s "</dev/null") is an ordinary argument and changes no
+	// descriptor (CRW-894, the pre-merge evaluation's fifth round).
+	if written != "" && !worktreeDelUnreadableRawRedirect(written) {
+		return worktreeDelUnreadableStdinRedirect{}, false
+	}
 	if strings.HasPrefix(word, "&>") {
 		return worktreeDelUnreadableStdinRedirect{}, false
 	}
-	// The operator must open the word. A word that merely holds a < or > further along is text, not a redirection:
-	// the tokenizer removes quotes, so the -c or eval program 'eval "0</dev/null; bash"' reaches this walk as one word
-	// whose blank and separator are the program's own, and the shell performs no redirection of the outer command
-	// (CRW-894, the pre-merge evaluation's fourth round).
+	// A word that merely holds a < or > further along is text, not a redirection: the tokenizer removes quotes, so
+	// the -c or eval program 'eval "0</dev/null; bash"' reaches this walk as one word whose blank and separator are
+	// the program's own, and the shell performs no redirection of the outer command (CRW-894, the pre-merge
+	// evaluation's fourth round).
 	if strings.ContainsAny(word, " \t\r\n;|()") {
 		return worktreeDelUnreadableStdinRedirect{}, false
 	}
@@ -2522,32 +2586,50 @@ func worktreeDelUnreadableDescriptor(s string) (int, bool) {
 // is written on it and every redirection that names descriptor 0 changes nothing. Off it (inside a subshell, a group
 // or a program handed to -c or eval), the redirections apply as written.
 func worktreeDelUnreadableStdinHoldings(operands []string, multios bool) map[int]int {
-	return worktreeDelUnreadableStdinHoldingsFrom(operands, multios, worktreeDelStdinPipe)
+	return worktreeDelUnreadableStdinHoldingsFrom(operands, nil, multios, worktreeDelStdinPipe)
 }
 
 // worktreeDelUnreadableStdinHoldingsFrom is worktreeDelUnreadableStdinHoldings with the content the caller knows
 // descriptor 0 already holds. The pipe rule hands a program on to the shells inside it, and when the shell that owns
 // the program has a known file on its own descriptor 0 (off the zsh multios position) that file, not the outer pipe,
 // is what the program's own commands inherit (CRW-894 c10(g)).
-func worktreeDelUnreadableStdinHoldingsFrom(operands []string, multios bool, initial int) map[int]int {
+// written is the written form of each operand, in the same order, or nil when the caller has none: a word that only
+// looks like a redirection after quote removal is then read as an ordinary argument (CRW-894, the pre-merge
+// evaluation's fifth round).
+func worktreeDelUnreadableStdinHoldingsFrom(operands, written []string, multios bool, initial int) map[int]int {
 	holds := map[int]int{0: initial}
 	for i := 0; i < len(operands); i++ {
 		word := operands[i]
+		wordRaw := ""
+		if i < len(written) {
+			wordRaw = written[i]
+		}
 		if strings.Trim(word, "0123456789") == "" && i+1 < len(operands) &&
-			(strings.HasPrefix(operands[i+1], "<") || strings.HasPrefix(operands[i+1], ">")) {
+			worktreeDelUnreadableRedirectAt(operands, written, i+1) {
 			word, i = word+operands[i+1], i+1 // a descriptor word before the operator belongs to it
+			wordRaw = ""
 		}
 		hasNext := i+1 < len(operands)
-		next := ""
+		next, nextRaw := "", ""
 		if hasNext {
 			next = operands[i+1]
+			if i+1 < len(written) {
+				nextRaw = written[i+1]
+			}
 		}
-		redirect, ok := worktreeDelUnreadableStdinStep(word, next, hasNext)
+		redirect, ok := worktreeDelUnreadableStdinStep(word, wordRaw, next, nextRaw, hasNext)
 		if !ok {
 			continue
 		}
-		if multios && redirect.descriptor == 0 {
-			continue // the user's shell feeds descriptor 0 both the pipe and the redirection
+		if multios {
+			// MULTIOS is a property of the reading descriptor, not of descriptor 0: zsh feeds the command that
+			// stands directly on the right of a pipe every one of its own redirections on the descriptor that holds
+			// the pipe, so a second redirection onto that same descriptor does not replace the pipe
+			// (python3 /dev/fd/3 3<&0 3</dev/null still reads the pipe on descriptor 3; CRW-894, the pre-merge
+			// evaluation's fifth round).
+			if _, held := holds[redirect.descriptor]; held {
+				continue
+			}
 		}
 		if redirect.from != worktreeDelStdinCopies {
 			if copied, seen := holds[redirect.from]; seen {
@@ -2904,14 +2986,19 @@ func (s *worktreeDelUnreadableScan) read(text, cwd string, depth int, named bool
 // whole command, not only in the operands after the command word: a redirection written before the command name belongs
 // to that command (CRW-894 c10(d)).
 func worktreeDelUnreadableStdin(cut worktreeDelUnreadableCut, words []worktreeDelUnreadableWord, plain []string) (string, bool) {
-	i := worktreeDelUnreadableCommandWord(plain)
+	// The shell's condition syntax in front of the command is taken off the way the pipe reading takes it off, so the
+	// owner of the condition command is the interpreter, not the 'if' keyword (CRW-894, the pre-merge evaluation's
+	// fifth round).
+	cond := worktreeDelUnreadableConditionWords(plain)
+	offset := len(plain) - len(cond)
+	i := worktreeDelUnreadableCommandWord(cond)
 	if i < 0 {
 		return "", false
 	}
-	name := basename(plain[i])
-	operands := plain[i+1:]
+	name := basename(cond[i])
+	operands := cond[i+1:]
 	// here is the index, in the whole word list, of the word a here-string feeds, or -1 when the command takes none.
-	here := worktreeDelUnreadableHereString(plain)
+	here := worktreeDelUnreadableHereString(plain) - offset
 	if strings.Contains(worktreeDelUnreadableShells, " "+name+" ") && worktreeDelUnreadableStdinShell(name, operands) {
 		if here >= 0 && (here < i || worktreeDelUnreadableOuter(words[here].raw)) {
 			// A redirection written before the command name belongs to that command (CRW-894 c10(d)): the
@@ -3102,8 +3189,50 @@ func worktreeDelUnreadablePipeRegion(text string, depth int, multios bool, stdin
 		if what, ok := worktreeDelUnreadablePipePiece(piece, depth, multios, stdin); ok {
 			return what, true
 		}
+		// An exec builtin with no command word and only redirections changes the shell's own descriptors for every
+		// command after it, so `exec </dev/null; bash` hands the following shell the file, not the pipe (CRW-894,
+		// the pre-merge evaluation's fifth round).
+		if next, ok := worktreeDelUnreadableExecStdin(piece, stdin); ok {
+			stdin = next
+		}
 	}
 	return "", false
+}
+
+// worktreeDelUnreadableExecStdin is what descriptor 0 holds after a piece that is an exec builtin with only
+// redirections and no command word: the shell applies those redirections to itself and every later command inherits
+// them. ok is false when the piece is no such exec. multios does not apply: the redirection is the -c program's own,
+// and the program runs in a shell that has no multios (CRW-894, the pre-merge evaluation's fifth round).
+func worktreeDelUnreadableExecStdin(piece string, stdin int) (int, bool) {
+	words := worktreeDelUnreadableWords(piece)
+	plain := worktreeDelUnreadablePlainTexts(words)
+	i := 0
+	for i < len(plain) && isAssignment(plain[i]) {
+		i++
+	}
+	if i >= len(plain) || basename(plain[i]) != "exec" {
+		return 0, false
+	}
+	raw := make([]string, len(words))
+	for j, word := range words {
+		raw[j] = word.raw
+	}
+	rest, restRaw := plain[i+1:], raw[i+1:]
+	// A word that is no option and no redirection names the command exec replaces the shell with, and that command
+	// reads the pipe (exec bash): the piece is not an exec with only redirections.
+	for j := 0; j < len(rest); j++ {
+		if worktreeDelUnreadableRedirectAt(rest, restRaw, j) {
+			if worktreeDelUnreadableRedirectAlone(rest[j]) && j+1 < len(rest) {
+				j++ // a lone operator takes the next word as its target
+			}
+			continue
+		}
+		if strings.HasPrefix(rest[j], "-") && len(rest[j]) > 1 {
+			continue // exec's own option (-c, -l, -a NAME)
+		}
+		return 0, false
+	}
+	return worktreeDelUnreadableStdinHoldingsFrom(rest, restRaw, false, stdin)[0], true
 }
 
 // worktreeDelUnreadablePipePieces is the text one | feeds, split at every separator and at every delimiter that is no
@@ -3184,7 +3313,12 @@ func worktreeDelUnreadablePipePiece(piece string, depth int, multios bool, stdin
 	// counts too.
 	// stdin is what descriptor 0 already holds for this piece: the outer pipe, or the file the shell that owns this
 	// region put on its own descriptor 0, which the commands inside its program inherit (CRW-894 c10(g)).
-	holds := worktreeDelUnreadableStdinHoldingsFrom(worktreeDelUnreadablePlainTexts(worktreeDelUnreadableWords(piece)), multios, stdin)
+	pieceWords := worktreeDelUnreadableWords(piece)
+	pieceRaw := make([]string, len(pieceWords))
+	for i, word := range pieceWords {
+		pieceRaw[i] = word.raw
+	}
+	holds := worktreeDelUnreadableStdinHoldingsFrom(worktreeDelUnreadablePlainTexts(pieceWords), pieceRaw, multios, stdin)
 	pieceStdin := holds[0]
 	pipeStdin := pieceStdin != worktreeDelStdinFile
 	// descriptorHoldsPipe is what the piece's own redirections leave on a descriptor an interpreter's script operand
@@ -3243,12 +3377,23 @@ func worktreeDelUnreadablePipePiece(piece string, depth int, multios bool, stdin
 // only the head of a compound (`if bash`, `while bash`, `until bash`) is the condition command, and a negated command
 // (`! bash`) is the command after the ! (CRW-894 c10(c)).
 func worktreeDelUnreadablePieceCommand(text string) (name string, operands []string, ok bool) {
-	plain := worktreeDelUnreadableConditionWords(worktreeDelUnreadablePlainTexts(worktreeDelUnreadableWords(text)))
-	i := worktreeDelUnreadableCommandWord(plain)
+	words := worktreeDelUnreadableWords(text)
+	raw := make([]string, len(words))
+	for j, word := range words {
+		raw[j] = word.raw
+	}
+	plain := worktreeDelUnreadableConditionWords(worktreeDelUnreadablePlainTexts(words))
+	i := worktreeDelUnreadableCommandWordRaw(plain, raw[len(raw)-len(plain):])
 	if i < 0 {
 		return "", nil, false
 	}
-	return basename(plain[i]), plain[i+1:], true
+	// A subshell or group opener written without a blank before the command name belongs to the opener, not to the
+	// name: the owner of '(python3 <<PY' is python3 (CRW-894, the pre-merge evaluation's fifth round).
+	command := strings.Trim(basename(plain[i]), "(){}")
+	if command == "" {
+		return "", nil, false
+	}
+	return command, plain[i+1:], true
 }
 
 // worktreeDelUnreadableConditionWords is a piece's words with the shell's condition syntax in front of the command
@@ -3370,6 +3515,19 @@ func (s *worktreeDelUnreadableScan) heredocs(text, cwd string, depth int, named 
 			// bash that reads /dev/null (CRW-726).
 			name, operands, ok := worktreeDelUnreadableLineCommandAt(line, body.op.at)
 			if !ok {
+				// A here-document whose owner is a compound closer (done, fi, esac, } or )) feeds the whole compound,
+				// and every command inside it that reads standard input reads the body (CRW-894, the independent
+				// review's fifth round).
+				if what, found := worktreeDelUnreadableCompoundReads(line, body.op.at); found {
+					return worktreeDelUnreadableRefusal{what: what}, true
+				}
+				continue
+			}
+
+			if worktreeDelUnreadableCompoundCloser(name) {
+				if what, found := worktreeDelUnreadableCompoundReads(line, body.op.at); found {
+					return worktreeDelUnreadableRefusal{what: what}, true
+				}
 				continue
 			}
 			if strings.Contains(worktreeDelUnreadableHereShells, " "+name+" ") && worktreeDelUnreadableStdinShell(name, operands) {
@@ -3402,6 +3560,45 @@ func (s *worktreeDelUnreadableScan) heredocs(text, cwd string, depth int, named 
 }
 
 // worktreeDelUnreadableStdinProgramAt says whether the command that owns the here-document operator at byte at ends up
+// worktreeDelUnreadableCompoundCloser says whether name is a word that closes a shell compound or a group: a
+// here-document written after one of them feeds the whole compound, and the commands inside it that read standard
+// input read that body (while bash; do :; done <<EOF runs bash on the body).
+func worktreeDelUnreadableCompoundCloser(name string) bool {
+	return strings.Contains(" done fi esac ", " "+name+" ") || strings.HasPrefix(name, ")") || strings.HasPrefix(name, "}")
+}
+
+// worktreeDelUnreadableCompoundReads judges a here-document whose owner word is a compound closer: the body is the
+// standard input of the whole compound, so every listed shell or interpreter inside the compound that reads its
+// program from standard input reads it, and a shell inside reads the body as its program too (CRW-894, the
+// independent review's fifth round).
+func worktreeDelUnreadableCompoundReads(line string, at int) (string, bool) {
+	// The compound runs from the opener that begins it to the closer that holds the operator. Every command the
+	// compound runs is judged: the line is cut at its separators, so python3; and :; are the commands python3 and :.
+	for _, cut := range worktreeDelUnreadableCuts(line) {
+		if cut.text == "(" || cut.text == ")" {
+			continue
+		}
+		words := worktreeDelUnreadableWords(cut.text)
+		plain := worktreeDelUnreadablePlainTexts(words)
+		i := worktreeDelUnreadableCommandWord(worktreeDelUnreadableConditionWords(plain))
+		if i < 0 {
+			continue
+		}
+		cond := worktreeDelUnreadableConditionWords(plain)
+		name := strings.Trim(basename(cond[i]), "(){}")
+		operands := cond[i+1:]
+		if strings.Contains(worktreeDelUnreadableHereShells, " "+name+" ") && worktreeDelUnreadableStdinShell(name, operands) {
+			return "a shell program read from a here-document", true
+		}
+		if worktreeDelUnreadableInterpreter(name) {
+			if reads, _, unknown := worktreeDelUnreadableInterpreterStdin(name, operands); reads || unknown {
+				return "an interpreter program read from a here-document", true
+			}
+		}
+	}
+	return "", false
+}
+
 // with a program on descriptor 0: the here-document operators of that command feed their descriptor a program of their
 // own, and a later redirection that copies such a descriptor onto descriptor 0 puts that body back on standard input
 // (python3 3<<EOF <&3 runs the here-document). A here-document that feeds another descriptor and stays away from
@@ -3418,7 +3615,7 @@ func worktreeDelUnreadableStdinProgramAt(line string, at int) bool {
 		break
 	}
 	words := worktreeDelUnreadablePlainTexts(worktreeDelUnreadableWords(line[start:end]))
-	return worktreeDelUnreadableStdinHoldingsFrom(words, false, worktreeDelStdinFile)[0] == worktreeDelStdinProgram
+	return worktreeDelUnreadableStdinHoldingsFrom(words, nil, false, worktreeDelStdinFile)[0] == worktreeDelStdinProgram
 }
 
 // worktreeDelUnreadableHereDescriptor is the descriptor written before the here-document operator at byte at, or ""
@@ -3494,7 +3691,13 @@ func worktreeDelUnreadableLineCommandAt(line string, at int) (string, []string, 
 	if i < 0 {
 		return "", nil, false
 	}
-	return basename(plain[i]), plain[i+1:], true
+	// A subshell or group opener written without a blank before the command name belongs to the opener, not to the
+	// name: the owner of '(python3 <<PY' is python3 (CRW-894, the pre-merge evaluation's fifth round).
+	name := strings.Trim(basename(plain[i]), "(){}")
+	if name == "" {
+		return "", nil, false
+	}
+	return name, plain[i+1:], true
 }
 
 // worktreeDelUnreadableLineSeparators is the bytes of a line that end a command, in order: ;, | and a newline, and an &
