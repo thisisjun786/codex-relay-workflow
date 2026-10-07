@@ -595,6 +595,39 @@ func TestMemoryGateUnnamedDestinationSixthPassShapes(t *testing.T) {
 	}
 }
 
+// TestMemoryGateUnnamedDestinationSeventhPassShapes pins the shapes the seventh pre-merge evaluation found: a copy
+// value taken off a variable holding a module, a tuple assignment rebinding an imported name, and a here-document
+// whose interpreter carries a separate redirection target.
+func TestMemoryGateUnnamedDestinationSeventhPassShapes(t *testing.T) {
+	cwd, root, env := gateScene(t)
+	m := root + "/n.md"
+	py := func(program string) string { return "python3 -c " + shellWriteUnnamedQuote(program) }
+	for _, c := range []struct{ name, command string }{
+		{"copy value from a variable holding a module", py("import shutil, os; s = shutil; f = s.copy; f(\"/w/a\", os.path.join(\"" + root + "\", \"n.md\"))")},
+		{"tuple assignment rebinding an imported name", py("import io; from pathlib import Path; io, = (Path(\"" + m + "\"),); io.write_text(\"x\")")},
+		{"separate redirection target after the interpreter", "python3 <<'PY' > /w/out\nimport os\nopen(os.path.join(\"" + root + "\", \"n.md\"), \"w\").write(\"x\")\nPY"},
+		{"separate redirection target before the interpreter", "> /w/out python3 <<'PY'\nimport os\nopen(os.path.join(\"" + root + "\", \"n.md\"), \"w\").write(\"x\")\nPY"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got := memoryGateClassify("Bash", map[string]any{"command": c.command}, cwd, env)
+			if got.Surface != "shell" || got.Target != unnamedDestWant {
+				t.Errorf("%q: %+v, want the shell surface and %s", c.command, got, unnamedDestWant)
+			}
+		})
+	}
+	for _, c := range []struct{ name, command string }{
+		// A redirection that carries its own target leaves the verb alone, and a read-only program stays allowed.
+		{"redirection with its own target", "2>/dev/null python3 -c " + shellWriteUnnamedQuote("import os; open(os.path.join(\""+root+"\", \"n.md\")).read()")},
+		{"read-only variable receiver open with a buffering name", py("from pathlib import Path; p = Path(\"" + m + "\"); buffering = -1; p.open(\"r\", buffering).read()")},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got := memoryGateClassify("Bash", map[string]any{"command": c.command}, cwd, env); got.Surface != "" {
+				t.Errorf("%q must pass: %+v", c.command, got)
+			}
+		})
+	}
+}
+
 // TestMemoryGateUnnamedDestinationControlShapes is the matching /w control set the pre-merge evaluation asked for: the
 // computed shapes of the issue body that write under /w with no protected-area literal must stay allowed, so the
 // protected-area condition alone decides.

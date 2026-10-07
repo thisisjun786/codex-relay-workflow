@@ -2467,12 +2467,38 @@ func shellWriteUnnamedOwnerEnd(line string, at int) int {
 	return len(line)
 }
 
+// shellWriteUnnamedRedirectBare reports whether a redirection word is a bare operator that names its target as the
+// next word: its text after the leading digits and & is nothing but < and > (">", "2>", "&>"). A word that carries
+// its target (2>/dev/null, >out) is not bare, so the word after it is no target.
+func shellWriteUnnamedRedirectBare(word string) bool {
+	rest := strings.TrimLeft(word, "0123456789&")
+	if rest == "" {
+		return false
+	}
+	for i := 0; i < len(rest); i++ {
+		if rest[i] != '<' && rest[i] != '>' {
+			return false
+		}
+	}
+	return true
+}
+
 // shellWriteUnnamedCommandWords drops the here-document operator and the redirections that stand in front of a command,
 // so the verb is read from what is left: the operator token (0<<'PY', <<-EOF) and a leading redirection (</dev/null,
 // >out, 2>&1) are not the command name.
 func shellWriteUnnamedCommandWords(tokens []string) []string {
 	for len(tokens) > 0 && (strings.Contains(tokens[0], "<<") || worktreeDelRedirectWord(tokens[0])) {
+		word := tokens[0]
 		tokens = tokens[1:]
+		if strings.Contains(word, "<<") {
+			continue // the here-document operator; the body is read by the caller
+		}
+		// A redirection may name its target as a separate word (> /w/out python3 ...), so the target goes with the
+		// operator. Only a bare operator (its text after the digits and & is nothing but < and >) takes the next
+		// word as its target; a word that already carries a target (2>/dev/null) does not.
+		if shellWriteUnnamedRedirectBare(word) && len(tokens) > 0 && !worktreeDelRedirectWord(tokens[0]) && !strings.Contains(tokens[0], "<<") {
+			tokens = tokens[1:]
+		}
 	}
 	tokens = shellVerbSkipWrappers(tokens)
 	// A redirection may also stand after the command (python3 <<'PY' 2>/dev/null), so the words that follow the
@@ -2482,6 +2508,10 @@ func shellWriteUnnamedCommandWords(tokens []string) []string {
 		last := tokens[len(tokens)-1]
 		if worktreeDelRedirectWord(last) {
 			tokens = tokens[:len(tokens)-1]
+			continue
+		}
+		if len(tokens) > 2 && worktreeDelRedirectWord(tokens[len(tokens)-2]) {
+			tokens = tokens[:len(tokens)-2] // the operator and the separate target word it names
 			continue
 		}
 		break
@@ -2911,9 +2941,10 @@ func (w *shellWriteUnnamedWalk) identifier(rs []rune, i, j int, importStmt, inDe
 			w.unnamed = true
 			return
 		}
-		if mod == "" && !shellWriteUnnamedCalled(rs, j) && (shellWriteCopyFunc("shutil", word) || shellWriteCopyFunc("os", word)) {
-			// A copy, rename or link function taken off a receiver the reader cannot name as a bare name
-			// (f = (shutil).copy) is a write function value whose destination it cannot name.
+		if !shellWriteUnnamedCalled(rs, j) && (shellWriteCopyFunc("shutil", word) || shellWriteCopyFunc("os", word)) {
+			// A copy, rename or link function taken off a receiver the reader cannot name as a bare module
+			// (f = (shutil).copy, f = s.copy where s holds shutil) is a write function value whose destination it
+			// cannot name. A receiver the reader does place is left to the branch above.
 			w.unnamed = true
 			return
 		}
@@ -3051,7 +3082,23 @@ func shellWriteUnnamedTarget(rs []rune, j int) bool {
 	for j < len(rs) && shellVerbSpaceRune(rs[j]) {
 		j++
 	}
-	return j < len(rs) && rs[j] == '=' && (j+1 >= len(rs) || rs[j+1] != '=')
+	if j < len(rs) && rs[j] == '=' && (j+1 >= len(rs) || rs[j+1] != '=') {
+		return true
+	}
+	// A tuple target binds every name it lists (io, = (Path(...),)), so a comma that leads to an assignment
+	// anywhere before the end of the statement counts too.
+	for k := j; k < len(rs) && rs[k] != '\n' && rs[k] != '\r' && rs[k] != ';'; k++ {
+		if rs[k] == '=' && (k+1 >= len(rs) || rs[k+1] != '=') {
+			return true
+		}
+		if rs[k] == '(' || rs[k] == ')' {
+			continue
+		}
+		if !shellVerbSpaceRune(rs[k]) && rs[k] != ',' {
+			break // something other than a tuple element: the name is no target
+		}
+	}
+	return false
 }
 
 // shellWriteUnnamedUnpacked reports whether any argument of a call is a * or ** unpacking, which may supply the mode or
