@@ -564,3 +564,72 @@ func TestMigrateOwnedDirIdentityCreatedRootHandleIsHeld(t *testing.T) {
 		t.Errorf("the root must be the directory this run created: %v %v", fi, err)
 	}
 }
+
+// C2(1): the run holds the handle of the root its own creation made for the rest of the run, and the
+// handle is really open on that directory - a closed descriptor would report an error, and the recorded
+// identity would then be reusable by another directory.
+func TestMigrateOwnedDirIdentityCreatedRootHandleIsOpen(t *testing.T) {
+	ws, r, p := apPlan(t, migrateOwnedDirIdentityEntries(), nil)
+	if _, err := apply(r, p); err != nil {
+		t.Fatal(err)
+	}
+	held := r.Project.createdDir
+	if held == nil {
+		t.Fatal("the run must hold the handle of the root its own creation made")
+	}
+	if held.id != r.Project.created {
+		t.Errorf("the held handle is %v, want the recorded identity %v", held.id, r.Project.created)
+	}
+	var st unix.Stat_t
+	if err := unix.Fstat(held.fd(), &st); err != nil {
+		t.Errorf("the held handle must still be open on the created directory: %v", err)
+	}
+	if (fileID{uint64(st.Dev), uint64(st.Ino)}) != r.Project.created {
+		t.Errorf("the held handle is not the directory this run created: %v", st)
+	}
+	if _, err := os.Stat(apDst(ws, "")); err != nil {
+		t.Errorf("the root must exist: %v", err)
+	}
+}
+
+// C2(1): a retry that fails at the parent sync twice still finishes the root this run created on the
+// third attempt. The root is pinned from the second attempt on, so the retry path must report it as
+// this run's own from the identity it recorded rather than as an existing directory.
+func TestMigrateOwnedDirIdentityRepeatedSyncFailureStillFinishesTheRoot(t *testing.T) {
+	ws, r, p := apPlan(t, migrateOwnedDirIdentityEntries(), nil)
+	syncs := 0
+	migrateOwnedDirIdentitySteps(t, func(step string) error {
+		if step == "sync" {
+			if syncs++; syncs <= 2 {
+				return errApplyInterrupted
+			}
+		}
+		return nil
+	})
+	for i := range 2 {
+		if _, err := apply(r, p); !errors.Is(err, errApplyInterrupted) {
+			t.Fatalf("attempt %d: %v", i+1, err)
+		}
+	}
+	res, err := apply(r, p)
+	must(t, err)
+	migrateOwnedDirIdentityWantRaw(t, apDst(ws, ""), 0o755)
+	if ai := apItem(t, res, "."); strings.Contains(ai.Note, "kept its mode") {
+		t.Errorf("the third attempt must finish the root this run made, note = %q", ai.Note)
+	}
+}
+
+// C2(4): the pin answers the platform's own answer, so the fchmodat2 case's skip and the by-name case's
+// path are chosen by the platform rather than assumed.
+func TestMigrateOwnedDirIdentityPinAnswersThePlatform(t *testing.T) {
+	fd, err := migrateOwnedDirIdentityPin(-1, "x")
+	if ownedDirIdentityHandleOK {
+		if err == nil {
+			t.Errorf("the pin must fail on an invalid descriptor, got fd %d", fd)
+		}
+		return
+	}
+	if !ownedDirIdentityNoHandle(err) {
+		t.Errorf("a platform without a handle must answer ownedDirIdentityNoHandle, got %v", err)
+	}
+}
