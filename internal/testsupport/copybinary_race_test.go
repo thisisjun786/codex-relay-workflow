@@ -19,10 +19,10 @@ import (
 )
 
 // The shape of the ETXTBSY regression CRW-929 records, and its envelope: enough forkers and
-// copiers to reach the window between a copy's open and its last close, small enough to stay
-// inside the limits the issue sets (up to 8 copiers x 40 copies, 64 MiB and one minute). The
-// copy count comes down from the source program's size, so the exercise fits that ceiling on a
-// host whose true(1) is the large BusyBox multi-call binary.
+// copiers to reach the window between a copy's open and its last close, inside the limits the
+// issue sets (8 copiers, 40 copies, 64 MiB and one minute). The copy count comes down from the
+// source program's size, so a host whose true(1) is the large BusyBox multi-call binary still
+// runs the exercise.
 const (
 	copyWriters    = 8
 	copyIterations = 40
@@ -81,9 +81,9 @@ func copyRace(t *testing.T, copy func(source, path string) error) (busy, written
 		t.Fatal(err)
 	}
 	// The program is whatever true(1) this host has, and on a BusyBox system that is the multi-call
-	// binary rather than a tiny program. The copy count comes down from the source's own size so the
-	// exercise stays inside the byte ceiling below on any host, rather than failing a correct host
-	// whose true(1) is large.
+	// binary rather than a tiny program. The copy count comes down from the source's own size, so a
+	// large true(1) does not fail a correct host; the count keeps at least one round, so a program
+	// past a sixteenth of the ceiling still runs and the ceiling is a budget rather than a refusal.
 	iterations := int64(copyIterations)
 	if size := info.Size(); size > 0 {
 		if affordable := copyByteBudget / (size * copyWriters); affordable < iterations {
