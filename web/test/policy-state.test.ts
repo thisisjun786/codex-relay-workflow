@@ -22,6 +22,7 @@ import {
   decodePolicy,
   draftForException,
   draftForNewException,
+  exceptionRoleOptions,
   lostWriteNotice,
   modelOptions,
   modelLadder,
@@ -46,6 +47,7 @@ import {
   screenSaveStarted,
   initialScreen,
   allowedAddChoice,
+  addModelOptions,
   allowedTextOf,
   screenPropose,
   type ExceptionDraft,
@@ -353,7 +355,13 @@ test("the add-model control follows a catalog that arrives after the policy", ()
   // A choice the operator made is kept while it is still free, and dropped when it is not.
   state = screenAllowedAddModel(state, "fresh/model");
   assert.equal(allowedAddChoice(state, free), "fresh/model");
-  assert.equal(allowedAddChoice(state, []), "");
+  // d3: a chosen model that is no longer free is KEPT rather than substituted with the first free
+  // one, so the control can never display one model while Add proposes another.
+  assert.equal(allowedAddChoice(state, []), "fresh/model");
+  assert.deepEqual(addModelOptions(state, []), ["fresh/model"]);
+  assert.deepEqual(addModelOptions(state, ["other"]), ["fresh/model", "other"]);
+  // With nothing chosen, the first free model is the default.
+  assert.equal(allowedAddChoice(screenAllowedAddModel(state, ""), ["other"]), "other");
 });
 
 // The five defects the second pre-merge evaluation found on the fixed head.
@@ -460,6 +468,60 @@ test("a role-less exception is described as covering the requests that cite no r
   assert.ok(!item?.before.includes("covers no request"));
   assert.ok(preview.fallback?.includes("cite no role"));
   assert.ok(!preview.fallback?.includes("role default"));
+});
+
+// The five defects the fifth pre-merge evaluation found.
+
+test("a supervisor-scoped exception keeps a matching option in its editor", () => {
+  // d4: the role options came from the pair-editable roles, which excludes the supervisor, so a valid
+  // supervisor-scoped exception's select had no option for the role its draft still carried.
+  const options = exceptionRoleOptions("supervisor");
+  assert.ok(options.includes("supervisor"), "the stored role is offered");
+  assert.deepEqual(options, ["supervisor", "parent", "child"]);
+  // A role the policy does not know is still offered, so a stored value is never dropped.
+  assert.equal(exceptionRoleOptions("custom-role")[0], "custom-role");
+  // The list is stable and complete for a new exception.
+  assert.deepEqual(exceptionRoleOptions(""), ["supervisor", "parent", "child"]);
+});
+
+test("a draft changed while a save is in flight is not dropped by that save's answer", () => {
+  // d2: the spent draft was identified by model/id, so a NEWER edit to the same model lost its text
+  // and a reopened exception editor was closed. The spent draft is the one that has not moved since
+  // the save started.
+  let state = initialScreen();
+  state = screenLoaded(state, reading());
+  state = screenAllowedText(state, "anthropic/opus", "max");
+  const saved = state.change;
+  state = screenSaveStarted(state);
+  // A newer edit to the SAME model while the write is in flight.
+  state = screenAllowedText(state, "anthropic/opus", "max, xhigh");
+  const finished = screenSaveFinished(state, saved, noticeForWrite(200, { stored: { digest: "b".repeat(64) }, registered: { digest: "b".repeat(64) }, applied: "applied", actions: [] }));
+  assert.equal(finished.allowedText["anthropic/opus"], "max, xhigh", "the newer text is kept");
+  assert.deepEqual((finished.change as { efforts: string[] }).efforts, ["max", "xhigh"], "and matches the pending change");
+  // An unchanged draft for the saved model IS the spent one and goes.
+  let other = screenAllowedText(screenLoaded(initialScreen(), reading()), "anthropic/opus", "max");
+  const otherSaved = other.change;
+  other = screenSaveFinished(screenSaveStarted(other), otherSaved, noticeForWrite(200, { stored: { digest: "c".repeat(64) }, registered: { digest: "c".repeat(64) }, applied: "applied", actions: [] }));
+  assert.equal(other.allowedText["anthropic/opus"], undefined, "the spent draft is dropped");
+});
+
+test("the repair sentence stays on screen after an explicit re-read", () => {
+  // d5: the re-read cleared the notice that carried the server's recovery instruction while the block
+  // it explained stayed in force, leaving the operator blocked with no explanation.
+  let state = initialScreen();
+  state = screenLoaded(state, reading({ digest: "1".repeat(64), registeredDigest: "2".repeat(64) }));
+  const recovery = noticeForWrite(500, { error: "recovery_needed", fileDigest: "1".repeat(64), registeredDigest: "2".repeat(64), backup: "/host/execution-policy.json.backup", recovery: "restore the backup, then re-register" });
+  state = screenSaveFinished(state, null, recovery);
+  const sentence = state.repair;
+  assert.ok(sentence?.includes("restore the backup"), "the server's sentence is kept");
+  state = screenReread(state);
+  assert.equal(state.notice, null, "the notice is gone");
+  assert.equal(state.repair, sentence, "but the repair sentence is not");
+  assert.equal(screenEditable(state), false, "and editing is still blocked");
+  // Only a repaired reading clears both.
+  state = screenLoaded(state, reading({ digest: "3".repeat(64), registeredDigest: "3".repeat(64) }));
+  assert.equal(state.repair, null);
+  assert.equal(screenEditable(state), true);
 });
 
 // The four defects the third pre-merge evaluation found.

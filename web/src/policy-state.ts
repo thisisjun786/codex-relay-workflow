@@ -251,6 +251,12 @@ export interface PolicyScreenState {
   exceptionDraft: ExceptionDraft | null;
   /** The change a save in flight is writing, or null when no save is in flight. */
   saving: PolicyChange | null;
+  /**
+   * The drafts as they were when the save in flight started. A draft that has not moved since is the
+   * one the write spent and is dropped when it lands; a draft the operator changed while the write
+   * was in flight is their next edit and stays, even when it is for the same model or exception.
+   */
+  savingDrafts: { allowedText: Record<string, string>; exceptionDraft: ExceptionDraft | null } | null;
   notice: PolicyNotice | null;
   /**
    * The repair a person must make before this screen may edit again, or null. It is separate from
@@ -390,6 +396,20 @@ export function decodeCheck(raw: unknown): PolicyCheckResult {
   };
 }
 
+/**
+ * exceptionRoleOptions is the roles an exception may name. It is every role the execution policy
+ * knows, not only the pair-editable ones: an exception is scoped to a role by exact equality
+ * (internal/bridge/execution/execution.go exceptionCovers), and a supervisor-scoped exception is a
+ * valid, live authorization the editor must be able to show and keep. The current draft's role is
+ * always included first, so a stored value never loses its matching option.
+ */
+export function exceptionRoleOptions(current: string): string[] {
+  const options: string[] = [];
+  if (current !== "") options.push(current);
+  for (const role of POLICY_ROLES) if (!options.includes(role)) options.push(role);
+  return options;
+}
+
 /** policyView builds the first screen from one reading. It invents no value. */
 export function policyView(reading: PolicyReading): PolicyView {
   const roles = POLICY_ROLES.map((name) => {
@@ -443,7 +463,7 @@ function exceptionText(exception: { role?: string; model: string; reasoningEffor
   // role-less exception covers exactly the requests that cite no role - which the schema allows and
   // authorize_test.go pins ("an exception written before roles existed still works for a caller that
   // names none"). Describing it as covering nothing would understate a live authorization.
-  return `${exception.role || "covers requests that cite no role"} ${exception.model} ${exception.reasoningEffort} (${scope})`;
+  return `${exception.role || "no role - covers requests that cite no role"} ${exception.model} ${exception.reasoningEffort} (${scope})`;
 }
 
 /**
@@ -779,7 +799,7 @@ export function unreachableNotice(): PolicyNotice {
 
 /** initialScreen is the state before anything has been read. */
 export function initialScreen(): PolicyScreenState {
-  return { reading: null, catalog: null, error: null, change: null, allowedText: {}, allowedAddModel: "", exceptionDraft: null, saving: null, notice: null, repair: null };
+  return { reading: null, catalog: null, error: null, change: null, allowedText: {}, allowedAddModel: "", exceptionDraft: null, saving: null, savingDrafts: null, notice: null, repair: null };
 }
 
 /**
@@ -853,7 +873,15 @@ export function screenAllowedAddModel(state: PolicyScreenState, model: string): 
  * a free option, and the first free one otherwise. "" means there is nothing left to add.
  */
 export function allowedAddChoice(state: PolicyScreenState, free: readonly string[]): string {
-  return free.includes(state.allowedAddModel) ? state.allowedAddModel : (free[0] ?? "");
+  // A chosen model that is no longer free is kept rather than substituted: the operator's selection
+  // is not the screen's to replace, and Add must propose the model the control shows.
+  return state.allowedAddModel !== "" ? state.allowedAddModel : (free[0] ?? "");
+}
+
+/** addModelOptions is what the add-allowed select offers: every free model, plus the chosen one. */
+export function addModelOptions(state: PolicyScreenState, free: readonly string[]): string[] {
+  if (state.allowedAddModel === "" || free.includes(state.allowedAddModel)) return [...free];
+  return [state.allowedAddModel, ...free];
 }
 
 /** allowedTextOf is the text one allowed-list input shows: the draft first, then the saved list. */
@@ -909,7 +937,7 @@ export function screenDraftIsNew(state: PolicyScreenState): boolean {
 
 /** screenSaveStarted marks the change a save in flight is writing. */
 export function screenSaveStarted(state: PolicyScreenState): PolicyScreenState {
-  return { ...state, saving: state.change };
+  return { ...state, saving: state.change, savingDrafts: { allowedText: { ...state.allowedText }, exceptionDraft: state.exceptionDraft } };
 }
 
 /**
@@ -931,17 +959,22 @@ export function screenSaveFinished(state: PolicyScreenState, saved: PolicyChange
   }
   else if (notice.tone === "ok" && saved !== null) {
     // The write landed, so the drafts that produced it are spent. Only THOSE drafts are dropped: an
-    // edit the operator started while the save was in flight is their next change and stays.
-    if (saved.kind === "setAllowed") {
+    // edit the operator made while the save was in flight is their next change and stays, even when
+    // it is for the same model or exception. The drafts are compared against the snapshot taken when
+    // the save started, so a draft that has not moved since is the spent one and a changed one is not.
+    const before = state.savingDrafts;
+    if (saved.kind === "setAllowed" && allowedText[saved.model] === before?.allowedText[saved.model]) {
       const { [saved.model]: _spent, ...rest } = allowedText;
       allowedText = rest;
     }
-    if (saved.kind === "setException" && exceptionDraft?.id === saved.id) exceptionDraft = null;
+    if (saved.kind === "setException" && exceptionDraft !== null && exceptionDraft === before?.exceptionDraft) {
+      exceptionDraft = null;
+    }
     // The pending change is cleared only when it is still the one that was saved; a later edit is
     // the operator's next change.
     if (stillPending) change = null;
   }
-  return { ...state, saving: null, notice, change, allowedText, exceptionDraft, repair };
+  return { ...state, saving: null, savingDrafts: null, notice, change, allowedText, exceptionDraft, repair };
 }
 
 /**
@@ -951,6 +984,8 @@ export function screenSaveFinished(state: PolicyScreenState, saved: PolicyChange
  * server requires before it will accept a write again.
  */
 export function screenReread(state: PolicyScreenState): PolicyScreenState {
+  // The notice goes, but the repair sentence does not: it is the server's own instruction for the
+  // repair, and the block it explains is still in force. screenRepairCleared lifts both together.
   return { ...state, change: null, allowedText: {}, allowedAddModel: "", exceptionDraft: null, notice: null };
 }
 

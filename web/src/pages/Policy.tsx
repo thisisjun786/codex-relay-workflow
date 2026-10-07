@@ -9,6 +9,8 @@ import { useEffect, useRef, useState } from "react";
 import {
   POLICY_BLAST_RADIUS,
   allowedAddChoice,
+  addModelOptions,
+  exceptionRoleOptions,
   allowedEffortsLabel,
   allowedTextOf,
   catalogNotice,
@@ -272,8 +274,11 @@ export function PolicyScreen({ state, handlers, help }: { state: PolicyScreenSta
                       <div className="row-id"><span className="row-sub">Add a model to the allowed list</span></div>
                       <div className="row-actions">
                         <select className="select" style={{ maxWidth: "220px" }} aria-label="model to allow" value={choice} onChange={(e) => handlers.allowedAddModel(e.target.value)}>
-                          {free.map((option) => (
-                            <option key={option.id} value={option.id}>{option.id}</option>
+                          {/* The chosen model keeps a matching option even when the refreshed catalog
+                              no longer lists it, so the control can never display one model while Add
+                              proposes another. */}
+                          {addModelOptions(state, free.map((option) => option.id)).map((id) => (
+                            <option key={id} value={id}>{id}</option>
                           ))}
                         </select>
                         <button className="btn" disabled={choice === "" || efforts.length === 0} aria-label="Add allowed model" onClick={() => handlers.propose({ kind: "setAllowed", model: choice, efforts: [efforts[0] ?? ""] })}>Add</button>
@@ -366,7 +371,16 @@ export function PolicyScreen({ state, handlers, help }: { state: PolicyScreenSta
                 {state.notice.errors.map((message) => (
                   <p className="sub" key={message}>{message}</p>
                 ))}
-                {state.notice.blockEditing ? <p className="sub">Editing is blocked until the recovery above is done.</p> : null}
+              {state.notice.blockEditing ? <p className="sub">Editing is blocked until the recovery above is done.</p> : null}
+              </div>
+            ) : null}
+
+            {/* The repair sentence outlives the notice it arrived with: it is the server's own
+                instruction, and the block it explains is still in force until the host is repaired. */}
+            {state.repair !== null && state.notice === null ? (
+              <div className="card" role="status" style={{ marginTop: 12 }}>
+                <h2 className="card-title">Editing is blocked until this is repaired</h2>
+                <p className="sub">{state.repair}</p>
               </div>
             ) : null}
 
@@ -411,7 +425,7 @@ function ExceptionRow({
       <section className="list-row" aria-label={`exception ${exception.id}`}>
         <div className="row-id">
           <span className="row-name">{exception.id}</span>
-          <span className="row-sub">{exception.role || "no role (covers no request)"} · {exception.model} · {exception.reasoningEffort} · {exceptionScope(exception)}</span>
+              <span className="row-sub">{exception.role || "no role - covers requests that cite no role"} · {exception.model} · {exception.reasoningEffort} · {exceptionScope(exception)}</span>
         </div>
       </section>
     );
@@ -421,7 +435,7 @@ function ExceptionRow({
       <section className="list-row" aria-label={`exception ${exception.id}`}>
         <div className="row-id">
           <span className="row-name">{exception.id}</span>
-          <span className="row-sub">{exception.role || "no role (covers no request)"} · {exception.model} · {exception.reasoningEffort} · {exceptionScope(exception)}</span>
+          <span className="row-sub">{exception.role || "no role - covers requests that cite no role"} · {exception.model} · {exception.reasoningEffort} · {exceptionScope(exception)}</span>
         </div>
         <div className="row-actions">
           <button className="btn" aria-label={editExceptionLabel(exception.id)} onClick={() => onDraft(draftForException(exception))}>Edit</button>
@@ -436,8 +450,8 @@ function ExceptionRow({
       <fieldset className="role-controls" style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }} aria-label={`${exception.id} exception controls`}>
         <div className="role-selects">
           <select className="select" style={{ maxWidth: "160px" }} aria-label={`${exception.id} exception role`} value={draft.role} onChange={(e) => onDraft({ ...draft, role: e.target.value })}>
-            {draft.role === "" ? <option value="">no role (covers no request)</option> : null}
-            {roles.map((role) => (
+            {draft.role === "" ? <option value="">no role - covers requests that cite no role</option> : null}
+            {exceptionRoleOptions(draft.role).map((role) => (
               <option key={role} value={role}>{role}</option>
             ))}
           </select>
@@ -531,7 +545,7 @@ function ExceptionAdder({
         <div className="role-selects">
           <input className="input" style={{ maxWidth: "160px" }} aria-label="new exception id" placeholder="id" value={draft.id} onChange={(e) => onDraft({ ...draft, id: e.target.value })} />
           <select className="select" style={{ maxWidth: "160px" }} aria-label="new exception role" value={draft.role} onChange={(e) => onDraft({ ...draft, role: e.target.value })}>
-            {roles.map((role) => (
+            {exceptionRoleOptions(draft.role).map((role) => (
               <option key={role} value={role}>{role}</option>
             ))}
           </select>
