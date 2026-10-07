@@ -186,6 +186,39 @@ func TestMigrateApplyReviewFollowupKeepsTheNameOrderPastTheReceiptReadBound(t *t
 	}
 }
 
+// R1d: the bound is the bytes of the record itself, not the bytes up to the object's last token. The decoder consumes the
+// whitespace after the object, so a record that grew past the bound after the plan measured it would otherwise be judged by
+// content while the receipt reader refuses it. The helper takes the limit, so the case needs no record of that size.
+func TestMigrateApplyReviewFollowupBoundsTheRecordNotTheObject(t *testing.T) {
+	body := "{\"artifactManifest\":[{\"path\":\"v.json\",\"kind\":\"verdict\"}]}"
+	for name, c := range map[string]struct {
+		record string
+		limit  int64
+		want   bool
+	}{
+		"exactly the bound":             {body, int64(len(body)), true},
+		"past the bound by whitespace":  {body + "\n", int64(len(body)), false},
+		"past the bound by a long tail": {body + strings.Repeat(" ", 8), int64(len(body)), false},
+		"whitespace within the bound":   {body + "\n", int64(len(body)) + 1, true},
+		"truncated below the bound":     {body[:len(body)-1], int64(len(body)), false},
+		"data after the object":         {body + "{}", int64(len(body)) + 2, false},
+		"no manifest array":             {"{\"a\":1}", 8, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			manifest, ok := migrateReviewFollowupDecodeManifest(strings.NewReader(c.record), c.limit)
+			if ok != c.want {
+				t.Errorf("ok = %v, want %v (record %d bytes, limit %d)", ok, c.want, len(c.record), c.limit)
+			}
+			if ok && len(manifest) != 1 {
+				t.Errorf("manifest = %v, want one entry", manifest)
+			}
+			if !ok && manifest != nil {
+				t.Errorf("a refused record must return no manifest: %v", manifest)
+			}
+		})
+	}
+}
+
 // planItems wraps a plan's items as an ApplyResult so apItem can find one by source.
 func planItems(p *Plan) []ApplyItem {
 	items := make([]ApplyItem, len(p.Items))

@@ -424,18 +424,21 @@ func (a *applyRun) migrateApplyReviewReferences() (refs, receipts map[string]boo
 	return refs, receipts
 }
 
+// migrateReviewFollowupManifestEntry is one artifactManifest entry of a receipt: the relative path and the kind the receipt
+// is judged with.
+type migrateReviewFollowupManifestEntry struct {
+	Path string `json:"path"`
+	Kind string `json:"kind"`
+}
+
 // migrateReviewFollowupReceiptManifest reads one planned item as a receipt and returns the artifactManifest entries it
 // names. ok is true for a referring receipt, which is any file whose content is a JSON object with a non-empty
 // artifactManifest array, whatever the file is called: the receipt reader takes the caller's chosen name
 // (internal/pabcd/gate/receipt.go:104-108), so a dependency order that only knew the conventional qa-receipt.json name left
 // a receipt under another name publishing before the artifact it refers to (CRW-879). A file this run cannot open, one past
 // migrateReviewFollowupReceiptReadCap, or one that is not such an object returns ok false with a nil manifest, and the
-// caller falls back to the name judgement for it. Only the entries whose kind is verdict or artifact-identity name a
-// dependency; an entry of another kind, or one that is not an object, contributes no key and never fails the run.
-func (a *applyRun) migrateReviewFollowupReceiptManifest(it Item) (manifest []struct {
-	Path string `json:"path"`
-	Kind string `json:"kind"`
-}, ok bool) {
+// caller falls back to the name judgement for it.
+func (a *applyRun) migrateReviewFollowupReceiptManifest(it Item) ([]migrateReviewFollowupManifestEntry, bool) {
 	if it.Size > migrateReviewFollowupReceiptReadCap {
 		// The plan already measured it, so a record past the receipt reader's bound is refused without opening it: the
 		// receipt reader could not read it either, so it keeps the name judgement.
@@ -452,21 +455,30 @@ func (a *applyRun) migrateReviewFollowupReceiptManifest(it Item) (manifest []str
 		return nil, false
 	}
 	defer f.Close()
-	// The object is decoded from the reader rather than buffered whole, so a large evidence record costs no more memory than
-	// the manifest it names. The reader is limited and the value must be the whole record, as the receipt reader requires,
-	// so a record that grew past the bound after the plan measured it, or one with data after the object, is refused and
-	// keeps the order the name judgement gave it.
+	return migrateReviewFollowupDecodeManifest(f, migrateReviewFollowupReceiptReadCap)
+}
+
+// migrateReviewFollowupDecodeManifest reads one record as a receipt within limit bytes and returns the artifactManifest
+// entries it names. ok is false, with no entries, for a record that is not one JSON object with a non-empty
+// artifactManifest array, for one with data after that object, and for one that is longer than limit. The object is decoded
+// from the reader rather than buffered whole, so a large evidence record costs no more memory than the manifest it names;
+// the bytes the decoder consumed are then compared with limit, because the decoder consumes the whitespace after the object
+// and a trailing run would otherwise let a record past the bound be judged by content. Only the entries whose kind is
+// verdict or artifact-identity name a dependency; an entry of another kind, or one that is not an object, contributes no
+// key and never fails the run.
+func migrateReviewFollowupDecodeManifest(r io.Reader, limit int64) ([]migrateReviewFollowupManifestEntry, bool) {
 	var view struct {
-		ArtifactManifest []struct {
-			Path string `json:"path"`
-			Kind string `json:"kind"`
-		} `json:"artifactManifest"`
+		ArtifactManifest []migrateReviewFollowupManifestEntry `json:"artifactManifest"`
 	}
-	dec := json.NewDecoder(io.LimitReader(f, migrateReviewFollowupReceiptReadCap+1))
+	limited := &io.LimitedReader{R: r, N: limit + 1}
+	dec := json.NewDecoder(limited)
 	if dec.Decode(&view) != nil {
 		return nil, false
 	}
 	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+		return nil, false
+	}
+	if read := limit + 1 - limited.N; read > limit {
 		return nil, false
 	}
 	if len(view.ArtifactManifest) == 0 {
