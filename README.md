@@ -108,8 +108,10 @@ crw=~/.local/share/crw-runtime/current/bin/crw
 ```
 
 Without `--execution-policy` the bridge record is version 1 and the bridge checks no role
-pairs. `register-mcp` never overwrites a record that says something else, so naming a policy
-later means moving that record aside by hand first
+pairs. `register-mcp` never overwrites a record that says something else, so a record that
+already names a policy is re-registered with
+`register-mcp --re-register-policy --execution-policy <policy-file>`, which replaces that one
+field and backs the record up first
 ([the execution policy](docs/runtime-install.md#the-execution-policy-the-plugin-bridge-runs-under)).
 
 The runtime goes to `~/.local/share/crw-runtime`, the path the plugin's declared server

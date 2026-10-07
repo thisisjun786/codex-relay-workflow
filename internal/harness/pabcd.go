@@ -31,7 +31,7 @@ func Verbs() []Verb {
 		{Name: "metric", RunContext: metricVerb},
 		{Name: "divergence", RunContext: divergenceVerb},
 		{Name: "loop", Run: loopVerb},
-		{Name: "orchestrate", Run: orchestrateVerb},
+		{Name: "orchestrate", RunContext: orchestrateVerb},
 	}
 }
 
