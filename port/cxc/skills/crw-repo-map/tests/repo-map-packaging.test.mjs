@@ -179,25 +179,54 @@ function deferredImport(code, i) {
 }
 
 /** Imports of the optional parser stack that run before the `parse_args()` call. */
+/**
+ * The import statements of one line of code, together with the compound header a statement shares
+ * its line with. Python allows several statements on one line: a `;` separates them, and a
+ * `if`/`def`/... header may be followed by its body on the same line. A line that merely begins
+ * with something else can therefore still carry an import this check has to read (CRW-939, the
+ * third generation-2 evaluation's d2). Strings and comments are already gone when this runs.
+ */
+function importStatements(line) {
+  const out = [];
+  for (const part of line.split(";")) {
+    const text = part.trim();
+    if (/^(?:from|import)[ \t]/.test(text)) {
+      out.push({ text, header: null });
+      continue;
+    }
+    const inline = /^(.*?):[ \t]*((?:from|import)[ \t].*)$/.exec(text);
+    if (inline) out.push({ text: inline[2].trim(), header: inline[1].trim() });
+  }
+  return out;
+}
+
+/** True when a compound header defers the statement it shares its line with past the parse. */
+function inlineHeaderDefers(header) {
+  return header !== null && /^(?:async[ \t]+def|def)[ \t]/.test(header);
+}
+
 function parserImportsBeforeParsing(source) {
   const code = codeLines(source);
   const parseAt = code.findIndex((line) => /^\s*args\s*=\s*parser\.parse_args\(\)\s*$/.test(line));
   if (parseAt < 0) return { parseAt, offenders: ["(no `args = parser.parse_args()` line found)"] };
   const offenders = [];
   for (const [i, line] of code.entries()) {
-    const text = line.trim();
-    if (!/^(?:from|import)\s/.test(text)) continue;
-    // `parse_args()` lives inside main(), so an import deferred inside a def/class body placed
-    // after the parse runs only once that body is reached; every other import runs while the
-    // module loads or before the parse in main(), so it precedes --help.
-    if (i >= parseAt && deferredImport(code, i)) continue;
-    const modules = importedModules(text);
-    if (modules === null) {
-      offenders.push(`line ${i + 1}: ${text} (not a plain import this check can read)`);
-      continue;
+    for (const statement of importStatements(line)) {
+      const text = statement.text;
+      // `parse_args()` lives inside main(), so an import deferred inside a def body placed after
+      // the parse runs only once that body is reached; every other import runs while the module
+      // loads or before the parse in main(), so it precedes --help. An import under a module-level
+      // compound header (`if True:` / `try:` / `with`) runs while the module loads and is not
+      // deferred, and only a `def` header defers a statement it shares its line with.
+      if (i >= parseAt && (deferredImport(code, i) || inlineHeaderDefers(statement.header))) continue;
+      const modules = importedModules(text);
+      if (modules === null) {
+        offenders.push(`line ${i + 1}: ${text} (not a plain import this check can read)`);
+        continue;
+      }
+      // Every module the statement binds, not only the first: `import os, networkx` names both.
+      if (modules.some((mod) => PARSER_IMPORTS.includes(mod))) offenders.push(`line ${i + 1}: ${text}`);
     }
-    // Every module the statement binds, not only the first: `import os, networkx` names both.
-    if (modules.some((mod) => PARSER_IMPORTS.includes(mod))) offenders.push(`line ${i + 1}: ${text}`);
   }
   return { parseAt, offenders };
 }
@@ -294,6 +323,27 @@ test("the parser-import check reads module-level imports placed after the parse"
   const classInFunction = "def main():\n    args = parser.parse_args()\n    class Probe:\n        import networkx\n";
   assert.deepEqual(parserImportsBeforeParsing(classInFunction).offenders, [],
     "a class body inside the function after the parse stays clean");
+  // A line can carry more than one statement: a `;` separates two, and a compound header may be
+  // followed by its body on the same line. An import in either position runs at the same time as
+  // the statement it shares the line with, so the check reads it (CRW-939, the third
+  // generation-2 evaluation's d2).
+  for (const shape of [
+    "os = 1; import networkx\n",
+    "if True: import networkx\n",
+    "try: import networkx\nexcept ImportError:\n    pass\n",
+    "with open('x'): import networkx\n",
+  ]) {
+    const { offenders: got } = parserImportsBeforeParsing(parse + shape);
+    assert.ok(got.length > 0, `${JSON.stringify(shape)}: an import on a shared line runs before the parse`);
+  }
+  // The control: the same shapes inside the function after the parse are deferred and stay clean.
+  for (const shape of [
+    "def main():\n    args = parser.parse_args()\n    if True: import networkx\n",
+    "def main():\n    args = parser.parse_args()\n    os = 1; import networkx\n",
+  ]) {
+    assert.deepEqual(parserImportsBeforeParsing(shape).offenders, [],
+      `${JSON.stringify(shape)}: a statement inside the function after the parse stays clean`);
+  }
 });
 
 test("find_src_files skips compiled-output dirs", () => {

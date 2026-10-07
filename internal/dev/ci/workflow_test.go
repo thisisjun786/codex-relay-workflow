@@ -262,7 +262,7 @@ var (
 	// before the colon (`SKILLS_ROOT : port/cxc/skills`). Each one carried the root past the check
 	// would let a job assemble a skill path from the variable and run it, and the run statement names
 	// no literal skill path for the other pattern to catch (CRW-939, the generation-2 evaluations).
-	skillRootValue = regexp.MustCompile(`^\s*(?:[A-Za-z_][A-Za-z0-9_-]*|"[^"]*"|'[^']*')[ \t]*:\s*["']?(?:` + alternation(skillAssetRoots) + `)/?["']?(?:\s|$)`)
+	skillRootValue = regexp.MustCompile(`(?:^|[{,])\s*(?:[A-Za-z_][A-Za-z0-9_-]*|"[^"]*"|'[^']*')[ \t]*:\s*["']?(?:` + alternation(skillAssetRoots) + `)/?["']?(?:[,\s}]|$)`)
 )
 
 // skillScriptsNodeJob is the one job whose subject is the staged skills' Node tests (the
@@ -631,6 +631,8 @@ func TestWorkflow_python_detector(t *testing.T) {
 		{"      'SKILLS_ROOT': port/cxc/skills", true},                                         // in either quote
 		{"      SKILLS_ROOT : port/cxc/skills", true},                                          // a blank before the colon is the same assignment
 		{"      \"SKILLS_ROOT\" : port/cxc/skills", true},                                      // and so is a quoted key with one
+		{"      env: {SKILLS_ROOT: port/cxc/skills}", true},                                    // a flow mapping is the same assignment
+		{"      env: {OTHER: 1, SKILLS_ROOT: port/cxc/skills}", true},                          // after a comma too
 		{"      - run: node --test port/cxc/skills/x/tests/a.test.mjs", true},                  // a skill path in any other job
 		{"      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0", false},
 	} {
