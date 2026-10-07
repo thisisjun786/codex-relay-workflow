@@ -8,6 +8,12 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/policystore"
 )
 
+// policyWriteSeams are the seams the write route runs with. The zero value is the production one:
+// the clock, install.Main called in this process, and the running relay's worker policy digest. A
+// test replaces them, so the route can be driven end to end without starting an installer or
+// reading a real relay.
+var policyWriteSeams policystore.WriteOptions
+
 // policyBody is the GET /api/policy answer. A value the reader could not establish is a named
 // state or a null with a reason, never a zero and never an empty success.
 type policyBody struct {
@@ -40,6 +46,47 @@ type checkBody struct {
 	CurrentDigest string   `json:"currentDigest"`
 	Stale         bool     `json:"stale"`
 	Diff          []string `json:"diff"`
+}
+
+// policyWriteRequest is the POST /api/policy request: the digest the caller read and the change it
+// proposes. It is the same shape the check route takes, because a caller checks and then writes the
+// same proposal.
+type policyWriteRequest struct {
+	ExpectedDigest string             `json:"expectedDigest"`
+	Change         policystore.Change `json:"change"`
+}
+
+// policyWriteDigest is one digest of the write result.
+type policyWriteDigest struct {
+	Digest string `json:"digest"`
+}
+
+// policyWriteBody is the 200 answer: what was stored, what the wiring record now names, whether the
+// running relay has it, and the work a caller must still do. The three are separate fields because
+// they are three separate facts.
+type policyWriteBody struct {
+	Stored     policyWriteDigest `json:"stored"`
+	Registered policyWriteDigest `json:"registered"`
+	Applied    string            `json:"applied"`
+	Actions    []string          `json:"actions"`
+	Backup     string            `json:"backup,omitempty"`
+	Warnings   []string          `json:"warnings,omitempty"`
+}
+
+// policyWriteErrorBody is every refusal of the write route. Only the fields the outcome has are
+// set, so a stale digest carries the digest on disk and a recovery carries both digests and the
+// command that settles them. It never carries an environment variable, a secret or the token.
+type policyWriteErrorBody struct {
+	Error            string   `json:"error"`
+	Reason           string   `json:"reason,omitempty"`
+	CurrentDigest    string   `json:"currentDigest,omitempty"`
+	Errors           []string `json:"errors,omitempty"`
+	Restored         bool     `json:"restored,omitempty"`
+	FileDigest       string   `json:"fileDigest,omitempty"`
+	RegisteredDigest string   `json:"registeredDigest,omitempty"`
+	Backup           string   `json:"backup,omitempty"`
+	Recovery         string   `json:"recovery,omitempty"`
+	Step             string   `json:"step,omitempty"`
 }
 
 // envLookup is the process environment as a LookupEnv.
@@ -114,6 +161,63 @@ func emptyIfNil(values []string) []string {
 	return values
 }
 
+// policyWriteHandler answers POST /api/policy. It is a thin mapper over policystore.Write: the
+// write path owns the order, the lock, the backup, the atomic replacement and the judgement of the
+// registration's answer, and this maps its named outcome to a status and a body.
+func policyWriteHandler(_ *Env, r *http.Request) (Response, error) {
+	var request policyWriteRequest
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		return Response{Status: http.StatusBadRequest, Body: jsonError{Error: codeBadRequest}}, nil
+	}
+	result := policystore.Write(r.Context(), envLookup, policyWriteSeams,
+		policystore.WriteRequest{ExpectedDigest: request.ExpectedDigest, Change: request.Change})
+	switch result.Kind {
+	case policystore.WriteStored:
+		return Response{Status: http.StatusOK, Body: policyWriteBody{
+			Stored:     policyWriteDigest{Digest: result.StoredDigest},
+			Registered: policyWriteDigest{Digest: result.RegisteredDigest},
+			Applied:    result.Applied,
+			Actions:    emptyIfNil(result.Actions),
+			Backup:     result.Backup,
+			Warnings:   result.Warnings,
+		}}, nil
+	case policystore.WriteStaleDigest:
+		return Response{Status: http.StatusConflict, Body: policyWriteErrorBody{
+			Error: "stale_digest", CurrentDigest: result.CurrentDigest}}, nil
+	case policystore.WriteInvalidPolicy:
+		return Response{Status: http.StatusUnprocessableEntity, Body: policyWriteErrorBody{
+			Error: "invalid_policy", Errors: emptyIfNil(result.Errors)}}, nil
+	case policystore.WriteRegisterFailed:
+		// The decided answer fixes this body: the file was put back, so restored is the whole
+		// message.
+		return Response{Status: http.StatusBadGateway, Body: policyWriteErrorBody{
+			Error: "register_failed", Restored: result.Restored}}, nil
+	case policystore.WriteRecoveryNeeded:
+		return Response{Status: http.StatusInternalServerError, Body: policyWriteErrorBody{
+			Error: "recovery_needed", FileDigest: result.FileDigest, RegisteredDigest: result.RegisteredDigest,
+			Backup: result.Backup, Recovery: result.Recovery}}, nil
+	case policystore.WriteCancelled:
+		return Response{Status: http.StatusInternalServerError, Body: policyWriteErrorBody{
+			Error: "cancelled", Step: result.Step}}, nil
+	case policystore.WriteFailed:
+		return Response{Status: http.StatusInternalServerError, Body: policyWriteErrorBody{
+			Error: "failed", Reason: firstReason(result.Errors)}}, nil
+	default:
+		// not_registered, unreadable, symlinked and busy are all "the write could not be started",
+		// each with its own reason.
+		return Response{Status: http.StatusConflict, Body: policyWriteErrorBody{
+			Error: result.Kind, Reason: firstReason(result.Errors)}}, nil
+	}
+}
+
+// firstReason is the first reason a result carries, or "".
+func firstReason(errors []string) string {
+	if len(errors) == 0 {
+		return ""
+	}
+	return errors[0]
+}
+
 func emptyIfNilRoles(values []policystore.RoleView) []policystore.RoleView {
 	if values == nil {
 		return []policystore.RoleView{}
@@ -138,4 +242,5 @@ func emptyIfNilExceptions(values []policystore.ExceptionView) []policystore.Exce
 func init() {
 	Register(http.MethodGet, "/api/policy", policyHandler)
 	Register(http.MethodPost, "/api/policy/check", policyCheckHandler)
+	Register(http.MethodPost, "/api/policy", policyWriteHandler)
 }
