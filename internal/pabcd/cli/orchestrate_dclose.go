@@ -24,6 +24,12 @@ package cli
 // unexported seam the tests pass in. The one package-level value here is
 // orchestrateDcloseSurrogateOptions, a struct literal with no initializer work; nothing runs at
 // program start and there is no init().
+//
+// A third departure, CRW-922: the oracle's process has no signal path, so a SIGINT ends it wherever it
+// stands. This port reads the invocation's context immediately before every durable effect that can
+// still be this invocation's first one and answers 130 with no output when it is already done - CRW-871's
+// rule, extended here past the reads that precede each write - and it reads the context once more before
+// answering a goalplan lock that gave up, so a cancelled close never reports the busy text instead.
 
 import (
 	"context"
