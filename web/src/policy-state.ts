@@ -920,12 +920,17 @@ export function checkRefusedNotice(status: number, body: unknown): PolicyNotice 
  */
 export function blockedWriteNotice(state: PolicyScreenState): PolicyNotice {
   const reading = state.reading;
-  const why = reading === null
-    ? "the policy could not be read"
-    : reading.state === "not_registered"
-      ? "this host has no registered execution policy"
-      : `the policy could not be read${reading.reason ? `: ${reading.reason}` : ""}`;
-  const notice = emptyNotice("err", `The policy cannot be edited right now because ${why}, so nothing was sent. Your inputs are kept; save again once the policy can be read.`);
+  // The block has three distinct causes and the sentence names the one in force, so it never sends the
+  // operator to fix something that is not wrong: a standing repair, an absent record, or a file this
+  // screen could not read.
+  const why = state.repair !== null
+    ? `a repair is still outstanding: ${state.repair}`
+    : reading === null
+      ? "the policy could not be read"
+      : reading.state === "not_registered"
+        ? "this host has no registered execution policy"
+        : `the policy could not be read${reading.reason ? `: ${reading.reason}` : ""}`;
+  const notice = emptyNotice("err", `The policy cannot be edited right now because ${why}, so nothing was sent. Your inputs are kept; save again once the policy can be edited.`);
   notice.keepInputs = true;
   return notice;
 }

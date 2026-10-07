@@ -514,6 +514,27 @@ test("a save with no registered policy is refused without sending a check", asyn
   assert.equal(outcome.saved, false);
 });
 
+test("a save refused while a repair is outstanding names the repair, not a read failure", async () => {
+  // The third non-editable state: the file and the wiring record disagree, so every write is refused
+  // until the operator runs the server's repair. The notice must say so rather than blaming the read.
+  let state = initialScreen();
+  state = screenLoaded(state, reading({ digest: "1".repeat(64), registeredDigest: "2".repeat(64) }));
+  const recovery = noticeForWrite(500, { error: "recovery_needed", fileDigest: "1".repeat(64), registeredDigest: "2".repeat(64), backup: "/host/execution-policy.json.backup", recovery: "restore the backup, then re-register" });
+  state = screenSaveFinished(state, null, recovery);
+  assert.equal(screenEditable(state), false, "the repair blocks editing");
+  // A change kept across a conflict is still refused, and the sentence names the repair.
+  state = { ...state, change: { kind: "setAllowed", model: "anthropic/opus", efforts: ["max"] } };
+  let checked = 0;
+  const outcome = await runSave(state, {
+    check: async () => { checked += 1; return { status: 200, body: { valid: true, errors: [], currentDigest: "1".repeat(64), stale: false, diff: [] } }; },
+    write: async () => { throw new Error("the write must not run"); },
+  });
+  assert.equal(checked, 0, "nothing is sent while the repair is outstanding");
+  assert.equal(outcome.saved, false);
+  assert.ok(outcome.state.notice?.text.includes("restore the backup"), "the notice carries the repair sentence");
+  assert.ok(!outcome.state.notice?.text.includes("could not be read"), "it does not blame the read");
+});
+
 test("a successful save leaves the file's values behind it and no draft of its own", () => {
   // The success path drops the draft the write spent, so a later read shows the file rather than a
   // value no pending change carries. An edit cannot be started during the save (answer 4), so there
