@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -997,13 +998,14 @@ func TestImproveReview799FifoInputStillReachesTheReader(t *testing.T) {
 	}
 }
 
-// TestImproveReview799UnremovableTemporaryFileIsReported covers the refusal that cannot clean up
-// after itself: removing the temporary file needs write permission on the output directory at the
-// moment of the removal, and a directory whose permission was taken away after the file was created
-// refuses it. The refusal is still named, and the file it could not remove is named with it, so a
-// leftover is reported rather than dropped. root ignores the permission bits this relies on, so the
-// test skips there.
-func TestImproveReview799UnremovableTemporaryFileIsReported(t *testing.T) {
+// TestImproveReview799RefusedRunLeavesNoTemporaryFile covers C4's promise that a refusal leaves no
+// temporary file. The directory the bundle was written in is moved aside and loses the write
+// permission a removal would need, so a cleanup that had to unlink a name could not carry the
+// promise out and the file would stay. The temporary file is created unnamed and released by
+// closing its descriptor, so the refusal leaves nothing behind whether or not the directory may
+// still be written to. The outcome is checked on the directory itself, not on the message a refusal
+// prints. root ignores the permission bits this relies on, so the test skips there.
+func TestImproveReview799RefusedRunLeavesNoTemporaryFile(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root ignores the permission bits this test relies on")
 	}
@@ -1015,8 +1017,8 @@ func TestImproveReview799UnremovableTemporaryFileIsReported(t *testing.T) {
 	previous := improveInputBeforeRename
 	improveInputBeforeRename = func(improveOutputPlan) {
 		// The directory the bundle was written in is moved aside and the spelling now reaches a
-		// configured source directory, so the last comparison refuses; the directory that holds
-		// the temporary file loses the write permission the removal needs.
+		// configured source directory, so the last comparison refuses; the directory that holds the
+		// temporary file loses the write permission an unlink would need.
 		if err := os.Rename(out, aside); err != nil {
 			t.Errorf("moving the output directory aside: %v", err)
 			return
@@ -1037,10 +1039,71 @@ func TestImproveReview799UnremovableTemporaryFileIsReported(t *testing.T) {
 	if code != 1 || !strings.Contains(stderr, improveReasonOutputParent) {
 		t.Fatalf("a swapped output directory: exit %d, stderr %q, want the named refusal %s", code, stderr, improveReasonOutputParent)
 	}
-	if !strings.Contains(stderr, "could not be removed") {
-		t.Errorf("the refusal did not report the temporary file it could not remove: %q", stderr)
-	}
 	if _, err := os.Stat(aside); err != nil {
 		t.Errorf("the directory the bundle was written in is gone: %v", err)
+	}
+	for _, dir := range []string{aside, s.stateDir} {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, entry := range entries {
+			if strings.HasPrefix(entry.Name(), "improve-bundle-") {
+				t.Errorf("the refusal left the temporary file %s in %s", entry.Name(), dir)
+			}
+		}
+	}
+}
+
+// TestImproveReview799ManyDraftsDoNotExhaustDescriptors covers the regression a descriptor per
+// input introduces: a link-free collection over a drafts directory holding many documents used to
+// read them one after another, and holding a descriptor for every one of them until the bundle is
+// renamed runs the process out of descriptors and refuses a directory that always worked. The
+// collection holds a bounded number of descriptors, so the ordinary path keeps working under a low
+// limit.
+func TestImproveReview799ManyDraftsDoNotExhaustDescriptors(t *testing.T) {
+	s := improveTestSetup(t)
+	improveReview799Store(t, s)
+	drafts := filepath.Join(s.root, "drafts")
+	if err := os.MkdirAll(drafts, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const count = 100
+	for i := 0; i < count; i++ {
+		// The draft's fingerprint has to name its own file, so the reader accepts each one.
+		fingerprint := fmt.Sprintf("fp%03d", i)
+		improveTestWrite(t, filepath.Join(drafts, fingerprint+".json"),
+			fmt.Sprintf("{\"schema\":\"crw-issue-draft/1\",\"fingerprint\":%q,\"project\":\"p\",\"title\":\"t\"}\n", fingerprint))
+	}
+	improveTestConfig(t, s, map[string]any{"manage": map[string]any{"improve": map[string]any{
+		"sources": map[string]any{
+			"relay": map[string]any{"path": s.stateDir},
+			"draft": map[string]any{"path": drafts},
+		},
+	}}})
+	// The process may hold only a few descriptors. A collection that keeps one open per draft runs
+	// out; the sequential reader this replaces read every draft without holding any.
+	var before unix.Rlimit
+	if err := unix.Getrlimit(unix.RLIMIT_NOFILE, &before); err != nil {
+		t.Skipf("the descriptor limit cannot be read here: %v", err)
+	}
+	limited := before
+	if limited.Cur > 64 {
+		limited.Cur = 64
+	}
+	if limited.Cur < 32 {
+		t.Skipf("the descriptor limit is already too low to run the collection: %d", limited.Cur)
+	}
+	if err := unix.Setrlimit(unix.RLIMIT_NOFILE, &limited); err != nil {
+		t.Skipf("the descriptor limit cannot be lowered here: %v", err)
+	}
+	t.Cleanup(func() { _ = unix.Setrlimit(unix.RLIMIT_NOFILE, &before) })
+	out := filepath.Join(improveReview799OutDir(t, s), "bundle.json")
+	code, _, stderr := improveTestRun(t, s, "--out", out)
+	if code != 0 {
+		t.Fatalf("a link-free collection over %d drafts with a low descriptor limit: exit %d, stderr %q", count, code, stderr)
+	}
+	if rows := improveTestRecordsOf(improveTestReadBundle(t, out), improveKindDraft); len(rows) != count {
+		t.Errorf("the bundle carries %d draft records, want %d", len(rows), count)
 	}
 }

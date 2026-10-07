@@ -485,6 +485,13 @@ func improveOpenDirectory(path string) (*os.File, error) {
 // input directory, before. The window between the last comparison and the rename itself is
 // accepted: nothing closes it without holding the destination's directory against every other
 // writer.
+//
+// The temporary file is created unnamed where the platform supports it, so a refusal releases it by
+// closing the descriptor and cannot leave it behind: a removal that has to unlink a name needs the
+// output directory's write permission again, and a directory whose permission was taken away after
+// the file was created refused that removal and kept the file. The unnamed file is named once, by
+// the link immediately before the rename, and a filesystem without the unnamed form keeps the named
+// file and its reported cleanup.
 func improveWriteFile(plan improveOutputPlan, ids *improveIdentitySet, data []byte) error {
 	parent, err := improveOpenDirectory(plan.Parent)
 	if err != nil {
@@ -513,37 +520,52 @@ func improveWriteFile(plan improveOutputPlan, ids *improveIdentitySet, data []by
 	if improveOutputBeforeCreate != nil {
 		improveOutputBeforeCreate(plan)
 	}
-	name := "improve-bundle-" + rand.Text()
-	fd, err := unix.Openat(dirfd, name, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0o600)
+	// The temporary file is created unnamed when the platform has that form. Nothing names it until
+	// the link below, so a refusal anywhere after this point releases it by closing the descriptor,
+	// whatever the output directory's permissions have become.
+	fd, err := improveCreateTemporary(dirfd)
+	unnamed := err == nil
+	name := ""
+	if !unnamed {
+		name = "improve-bundle-" + rand.Text()
+		fd, err = unix.Openat(dirfd, name, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0o600)
+	}
 	if err != nil {
 		return err
 	}
-	// discard removes the temporary file through the descriptor it was created on, so a directory
-	// replaced under the spelling cannot make it miss. A removal that fails is reported with the
-	// refusal it belongs to, naming the file that was left: a refusal the caller is told about is
-	// not one that silently leaves a temporary file in the output directory.
+	file := os.NewFile(uintptr(fd), name)
+	// named tracks whether the temporary file carries a name on disk. An unnamed file has none until
+	// the link immediately before the rename, so a refusal up to that point releases it by closing
+	// the descriptor alone; once it has a name, the refusal removes it through the descriptor the
+	// file was created on, which a directory replaced under the spelling cannot make miss.
+	named := !unnamed
+	// discard releases the temporary file and reports the refusal it belongs to. A removal that fails
+	// is reported with it, naming the file that was left: a refusal the caller is told about is not
+	// one that silently leaves a temporary file in the output directory.
 	discard := func(cause error) error {
+		_ = file.Close()
+		if !named {
+			return cause
+		}
 		if err := unix.Unlinkat(dirfd, name, 0); err != nil {
 			return fmt.Errorf("%w (the temporary file %s could not be removed: %v)", cause, name, err)
 		}
 		return cause
 	}
-	file := os.NewFile(uintptr(fd), name)
 	if _, err := file.Write(data); err != nil {
-		_ = file.Close()
 		return discard(err)
 	}
 	if err := file.Sync(); err != nil {
-		_ = file.Close()
 		return discard(err)
 	}
 	// The mode is set on the descriptor, not by spelling the name again.
 	if err := unix.Fchmod(fd, 0o600); err != nil {
-		_ = file.Close()
 		return discard(err)
 	}
-	if err := file.Close(); err != nil {
-		return discard(err)
+	if !unnamed {
+		if err := file.Close(); err != nil {
+			return discard(err)
+		}
 	}
 	if improveInputBeforeRename != nil {
 		improveInputBeforeRename(plan)
@@ -571,12 +593,43 @@ func improveWriteFile(plan improveOutputPlan, ids *improveIdentitySet, data []by
 		return discard(err)
 	}
 	// The rename goes through the same descriptor the file was created on, so it lands in the
-	// directory that was checked, whatever the spelling now reaches.
+	// directory that was checked, whatever the spelling now reaches. An unnamed file is given its
+	// one name here, immediately before the rename, and that link and the rename both go through the
+	// held descriptor.
+	if unnamed {
+		name = "improve-bundle-" + rand.Text()
+		if err := unix.Linkat(fd, "", dirfd, name, improveAtEmptyPath); err != nil {
+			return discard(err)
+		}
+		named = true
+	}
 	if err := unix.Renameat(dirfd, name, dirfd, filepath.Base(fresh.Dest)); err != nil {
 		return discard(err)
 	}
+	_ = file.Close()
 	return nil
 }
+
+// improveCreateTemporary creates the bundle's temporary file unnamed in the directory the
+// descriptor names, so the file has no name to remove and a refusal releases it by closing the
+// descriptor. The unnamed form is Linux's O_TMPFILE; the named numeric constant keeps this file
+// buildable for both release platforms, and a platform or filesystem without it reports an error
+// and the caller falls back to a named file.
+func improveCreateTemporary(dirfd int) (int, error) {
+	if runtime.GOOS != "linux" {
+		return -1, errors.New("the unnamed temporary file is unavailable on this platform")
+	}
+	return unix.Openat(dirfd, ".", unix.O_WRONLY|improveOtmpfile|unix.O_CLOEXEC, 0o600)
+}
+
+// improveOtmpfile is Linux's O_TMPFILE: the file is created in the directory the descriptor names
+// and given no name. The platform headers name it, and the constant keeps this one file buildable
+// for the release platforms that do not have it.
+const improveOtmpfile = 0x410000
+
+// improveAtEmptyPath names the file a descriptor holds, which is how the unnamed temporary file
+// receives its one name immediately before the rename.
+const improveAtEmptyPath = 0x1000
 
 // improveParseArgs reads --out FILE and the help flags.
 func improveParseArgs(args []string) (out string, help bool, err error) {

@@ -96,7 +96,14 @@ func improveIdentityResolved(path string) string {
 // hang the collection before a reader or a refusal is reached. A path that is absent leaves the
 // entry with its name alone; a path that exists but cannot be opened or examined is a refusal,
 // because an input the collection cannot pin is one it cannot prove it will not overwrite.
-func improveIdentityPin(entry *improveIdentityEntry) error {
+//
+// Only improveIdentityHeldLimit inputs keep their descriptor. A drafts directory may hold thousands
+// of documents, and one descriptor per document held until the rename makes a link-free collection
+// fail with "too many open files" where the sequential reader it replaces read each document in
+// turn. The inputs past the bound keep the identity this examination recorded, which every
+// comparison still uses; the descriptor's only extra service is to keep the inode number from being
+// reused, and a file that was read is not replaced by a bundle that never reuses it.
+func (ids *improveIdentitySet) improveIdentityPin(entry *improveIdentityEntry) error {
 	file, err := improveOpenInput(entry.path)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
@@ -109,8 +116,30 @@ func improveIdentityPin(entry *improveIdentityEntry) error {
 		_ = file.Close()
 		return fmt.Errorf("%s: the input %s could not be examined to record its identity: %w", improveReasonInputChanged, entry.path, statErr)
 	}
-	entry.info, entry.file = info, file
+	entry.info = info
+	if ids.improveIdentityHeld() < improveIdentityHeldLimit {
+		entry.file = file
+		return nil
+	}
+	_ = file.Close()
 	return nil
+}
+
+// improveIdentityHeldLimit bounds how many inputs hold a descriptor until the bundle is renamed.
+// The bound is far above the handful of store files, sidecars and configured directories one
+// collection opens, and far below the default descriptor limit, so a large drafts directory is
+// still read one document after another as it was before.
+const improveIdentityHeldLimit = 48
+
+// improveIdentityHeld counts the descriptors the set holds open.
+func (ids *improveIdentitySet) improveIdentityHeld() int {
+	held := 0
+	for i := range ids.entries {
+		if ids.entries[i].file != nil {
+			held++
+		}
+	}
+	return held
 }
 
 // improveOpenInput opens an input without reading it, without blocking and without requiring more
@@ -173,10 +202,10 @@ func (ids *improveIdentitySet) improveIdentityAdd(path, resolved string, sidecar
 			return nil
 		}
 		ids.entries[i].resolved = resolved
-		return improveIdentityPin(&ids.entries[i])
+		return ids.improveIdentityPin(&ids.entries[i])
 	}
 	entry := improveIdentityEntry{path: path, resolved: resolved, sidecar: sidecar}
-	if err := improveIdentityPin(&entry); err != nil {
+	if err := ids.improveIdentityPin(&entry); err != nil {
 		return err
 	}
 	ids.entries = append(ids.entries, entry)
