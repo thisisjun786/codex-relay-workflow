@@ -91,7 +91,7 @@ func pumpQueueFlushThread(ctx context.Context, e *Env, cfg *Config, st *pumpStat
 	}
 	// A notice that alone exceeds the batch limit is moved aside first, so the longest fitting
 	// prefix always has something to carry and one oversized notice cannot hold the queue.
-	names, texts, err = pumpReview776QueueOversize(e, cfg, dir, thread, names, texts, dry)
+	names, texts, err = pumpReview776QueueOversize(ctx, e, cfg, dir, thread, names, texts, dry)
 	if err != nil {
 		return err
 	}
@@ -256,7 +256,7 @@ func pumpReview776QueueOldest(dir string, names []string) (time.Time, error) {
 // queue into the thread's oversize/ directory, logging its name and size. A single notice that can
 // never fit is never sent: a batch the delivery core would refuse every round would hold that
 // thread's queue forever. A dry run reports the move instead of making it.
-func pumpReview776QueueOversize(e *Env, cfg *Config, dir, thread string, names, texts []string, dry bool) ([]string, []string, error) {
+func pumpReview776QueueOversize(ctx context.Context, e *Env, cfg *Config, dir, thread string, names, texts []string, dry bool) ([]string, []string, error) {
 	keptNames := make([]string, 0, len(names))
 	keptTexts := make([]string, 0, len(texts))
 	for i, name := range names {
@@ -268,6 +268,10 @@ func pumpReview776QueueOversize(e *Env, cfg *Config, dir, thread string, names, 
 		if dry {
 			fmt.Fprintf(e.Stdout, "queue %s: would move oversize notice %s (%d bytes) to oversize/\n", thread, name, len(texts[i]))
 			continue
+		}
+		// The move is durable, so a cancelled round does not make it.
+		if err := ctx.Err(); err != nil {
+			return keptNames, keptTexts, err
 		}
 		oversizeDir := filepath.Join(dir, pumpReview776OversizeDir)
 		// The destination is checked the way the queue root is: a symlink planted in its place would
