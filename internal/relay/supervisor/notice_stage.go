@@ -58,7 +58,7 @@ func (n NoticeChannel) StageNotice(ctx context.Context, notice map[string]any) (
 			return nil
 		}
 		if r == nil {
-			result, err := noticeExec(ctx, l.Store, "INSERT OR IGNORE INTO supervisor_messages(message_id,obligation_id,obligation_kind,relationship_id,project_key,purpose,kind,sender_task_id,recipient_task_id,subject,packet,state,attempt_count,next_eligible_at,staged_at,updated_at,event_id,submission_no,reading) VALUES(?,?,'fault_notification',?,?,?,?,?,?,?,?,'queued',0,NULL,?,?,NULL,NULL,NULL)", id, notice["notificationId"], relation, resolution["projectKey"], env["purpose"], env["kind"], resolution["sender"], resolution["recipient"], notice["deliveryKey"], noticeDumps(packet), stamp, stamp)
+			result, err := noticeExec(ctx, l.Store, "INSERT OR IGNORE INTO supervisor_messages(message_id,obligation_id,obligation_kind,relationship_id,project_key,purpose,kind,sender_task_id,recipient_task_id,subject,packet,state,attempt_count,next_eligible_at,staged_at,updated_at,event_id,submission_no,reading) VALUES(?,?,'"+store.SupervisorNoticeObligationKind+"',?,?,?,?,?,?,?,?,'queued',0,NULL,?,?,NULL,NULL,NULL)", id, notice["notificationId"], relation, resolution["projectKey"], env["purpose"], env["kind"], resolution["sender"], resolution["recipient"], notice["deliveryKey"], noticeDumps(packet), stamp, stamp)
 			if err != nil {
 				return err
 			}
@@ -123,7 +123,7 @@ func (n NoticeChannel) StageNotice(ctx context.Context, notice map[string]any) (
 func (n NoticeChannel) Park(ctx context.Context, id, reason string) error {
 	l := n.Ledger
 	return l.Store.Compose(ctx, func(ctx context.Context, _ *sql.Conn) error {
-		result, err := noticeExec(ctx, l.Store, "UPDATE supervisor_messages SET hold_reason=?,updated_at=? WHERE message_id=? AND obligation_kind='fault_notification' AND hold_reason IS NULL AND "+store.SupervisorNeverSentSQL(), store.SupervisorHoldSuperseded, l.Clock.ISO(), id)
+		result, err := noticeExec(ctx, l.Store, "UPDATE supervisor_messages SET hold_reason=?,updated_at=? WHERE message_id=? AND obligation_kind='"+store.SupervisorNoticeObligationKind+"' AND hold_reason IS NULL AND "+store.SupervisorNeverSentSQL(), store.SupervisorHoldSuperseded, l.Clock.ISO(), id)
 		if err != nil {
 			return err
 		}

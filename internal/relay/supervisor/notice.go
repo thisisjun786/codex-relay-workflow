@@ -47,6 +47,24 @@ func (n NoticeChannel) Measure(ctx context.Context, task string) error {
 	return delivery.RecordLifecycle(ctx, n.Channel.Store, n.Ledger.Clock, delivery.Observe(ctx, n.Host, task, nil, true))
 }
 
+// noticeYieldsToBusyHead reports whether a notice to recipient must wait: a delivery to that
+// recipient is waiting out a busy backoff, so the notice channel yields the recipient's line to it
+// and that head meets the recipient idle rather than busy again (I-216's notice part, section 82
+// decision 2). It asks the delivery path's own predicate, so the two channels cannot disagree about
+// which deliveries hold a line. The supervisor channel never asks it.
+//
+// It reads on ctx's querier: the claim asks it under its write lock, and the attempt's check before
+// any host work asks it on the store.
+func (c *Channel) noticeYieldsToBusyHead(ctx context.Context, recipient string, now float64) (bool, error) {
+	return delivery.NewService(c.Store, delivery.SystemClock{}).BusyHeadHoldsRecipientLine(ctx, recipient, now)
+}
+
+// noticeYieldsDetail is why a notice waits for a delivery that holds its recipient's line. Both the
+// attempt's check before any host work and the claim's check under its write lock answer with it.
+func noticeYieldsDetail(recipient string) string {
+	return "a delivery to " + pyvalue.StrRepr(recipient) + " is waiting out a busy backoff and holds that recipient's line, so this notice yields to it and waits: the receipt that head carries reaches the recipient first. This notice is claimable again once that head's backoff ends or the head is delivered"
+}
+
 // A staged notice is not permission to send. Re-derive the reservation under
 // the same transaction as the claim and again at the transport-start fence.
 func (c *Channel) refreshNotice(ctx context.Context, row store.SupervisorMessagesRow, r Resolution, at string, currentAttempt int64) (bool, error) {

@@ -232,6 +232,18 @@ func (c *Channel) claim(ctx context.Context, id string, r Resolution, now float6
 		if found {
 			return Refusal{"not_claimable", "message " + pyvalue.StrRepr(older) + " was staged for " + pyvalue.StrRepr(r.Recipient) + " first and can be sent now, so this one waits. Two facts reach the level above in the order they arose"}
 		}
+		// A notice yields the recipient's line to a delivery that waits out a busy backoff, asked
+		// again here under the claim's write lock because a head can appear between the attempt's
+		// check and this one. A supervisor message is untouched (I-216).
+		if current.YieldsToBusyHead() {
+			held, err := c.noticeYieldsToBusyHead(tx, r.Recipient, now)
+			if err != nil {
+				return err
+			}
+			if held {
+				return Refusal{"not_claimable", noticeYieldsDetail(r.Recipient)}
+			}
+		}
 		attemptNo = current.AttemptCount + 1
 		requestID = "sup-" + id[:min(12, len(id))] + "-a" + strconv.FormatInt(attemptNo, 10)
 		var clash string
@@ -411,7 +423,8 @@ func (a *attemptRun) read(ctx context.Context) error {
 }
 
 // eligible stops quietly for a message that cannot be claimed now (held, not due, not unsent) and
-// refuses one that an older message to the same recipient goes ahead of.
+// refuses one that an older message to the same recipient goes ahead of, or - a notice only - one
+// whose recipient's line a delivery holds under a busy backoff.
 func (a *attemptRun) eligible(ctx context.Context) (stop bool, err error) {
 	row := a.row
 	if !row.ClaimableAt(a.now) {
@@ -423,6 +436,18 @@ func (a *attemptRun) eligible(ctx context.Context) (stop bool, err error) {
 	}
 	if found {
 		return true, Refusal{"not_claimable", "message " + pyvalue.StrRepr(older) + " was staged for " + pyvalue.StrRepr(row.RecipientTaskID) + " first and can be sent now, so this one waits. Two facts reach the level above in the order they arose, which is not a property an ordered selection can have on its own while any caller may name any row"}
+	}
+	// A notice yields the recipient's line to a delivery that waits out a busy backoff, so that
+	// head meets the recipient idle rather than busy again (I-216's notice part, section 82
+	// decision 2). The claim asks it again under its write lock; a supervisor message is untouched.
+	if row.YieldsToBusyHead() {
+		held, err := a.c.noticeYieldsToBusyHead(ctx, row.RecipientTaskID, a.now)
+		if err != nil {
+			return true, err
+		}
+		if held {
+			return true, Refusal{"not_claimable", noticeYieldsDetail(row.RecipientTaskID)}
+		}
 	}
 	return false, nil
 }
