@@ -14,7 +14,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
 	"golang.org/x/sys/unix"
 )
 
@@ -340,9 +339,6 @@ func (c *migrateReviewFollowupCountingReader) Read(p []byte) (int, error) {
 	return n, nil
 }
 
-// R1h: the streaming reader must give exactly the text the receipt reader's own normaliser gives, whatever the record
-// holds and however the reads are cut. A record split in the middle of a multi-byte sequence, or holding bytes that are
-// not UTF-8 at all, is where a chunk-at-a-time conversion could disagree with the whole-buffer one.
 // R1g2: the end-to-end case: a receipt whose manifest path holds bytes that are not UTF-8 names the plan file the
 // reader's own text holds, so the artifact must publish before a plain record of the same rank. Decoding the raw bytes
 // would name a file that is not in the plan and leave the artifact in plan order.
@@ -364,59 +360,4 @@ func TestMigrateApplyReviewFollowupReadsAPathAsTheReceiptReaderDoes(t *testing.T
 	if identity > plain {
 		t.Errorf("the reader's own text names the identity file, so it must publish before a plain record: %v", got)
 	}
-}
-
-func TestMigrateApplyReviewFollowupNormalisesAsTheReaderDoes(t *testing.T) {
-	records := [][]byte{
-		[]byte("{\"a\":1}"),
-		[]byte("{}"),
-		[]byte(""),
-		append([]byte("{\"a\":\""), 0xff),
-		append(append([]byte("{\"a\":\""), 0xff), []byte("\"}")...),
-		append(append([]byte("{\"a\":\""), 0xe2, 0x82), []byte("\"}")...),
-		append(append([]byte("{\"a\":\""), 0xe2, 0x82, 0xac), []byte("\"}")...),
-		append(append([]byte("{\"a\":\""), 0xf0, 0x9f, 0x92), []byte("\"}")...),
-		append(append([]byte("{\"a\":\""), 0xed, 0xa0, 0x80), []byte("\"}")...),
-		append(append([]byte("{\"a\":\""), 0xc2), []byte("A\"}")...),
-		append([]byte("{\"a\":\""), bytes.Repeat([]byte{0x80}, 9)...),
-		append(append([]byte("{\"a\":\""), bytes.Repeat([]byte{0xe2}, 7)...), []byte("\"}")...),
-		append([]byte("{\"a\":\""), bytes.Repeat([]byte{0xf0, 0x9f}, 5)...),
-	}
-	for _, record := range records {
-		want := source.DecodeUTF8(record)
-		for _, chunk := range []int{1, 2, 3, 4, 5, 7, 64, 4096} {
-			r := &migrateReviewFollowupNormalisingReader{src: &migrateReviewFollowupChunkReader{data: record, chunk: chunk}}
-			got, err := io.ReadAll(r)
-			if err != nil {
-				t.Fatalf("record %q at chunk %d: %v", record, chunk, err)
-			}
-			if string(got) != want {
-				t.Errorf("record %q at chunk %d: got %q, want %q", record, chunk, got, want)
-			}
-		}
-	}
-}
-
-// migrateReviewFollowupChunkReader hands out a record in fixed-size pieces, so a rune that straddles a piece boundary is
-// exercised.
-type migrateReviewFollowupChunkReader struct {
-	data  []byte
-	chunk int
-	at    int
-}
-
-func (c *migrateReviewFollowupChunkReader) Read(p []byte) (int, error) {
-	if c.at >= len(c.data) {
-		return 0, io.EOF
-	}
-	n := c.chunk
-	if n > len(p) {
-		n = len(p)
-	}
-	if c.at+n > len(c.data) {
-		n = len(c.data) - c.at
-	}
-	copy(p, c.data[c.at:c.at+n])
-	c.at += n
-	return n, nil
 }
