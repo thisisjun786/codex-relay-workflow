@@ -195,6 +195,95 @@ func TestCheckpointReview788BrokenPairEvalLineIsUnmeasured(t *testing.T) {
 // The exit status follows due only: a due project with an unreadable input is still exit 1, and the
 // unreadable input leaves only the signals that depend on it unmeasured. This is the contrast case
 // of the review: it holds on dev and after the fix.
+// checkpointReview788PairEvalReason reads the pair-eval reason a file produces.
+func checkpointReview788PairEvalReason(t *testing.T, f *checkpointFixture, pairEval string) string {
+	t.Helper()
+	report := checkpointReport(t, checkpointRead(t, f, CheckpointOptions{PairEval: pairEval}, nil), "project-1")
+	if !checkpointHasUnmeasured(report, checkpointSignalPairEval) {
+		t.Fatalf("the pair evaluation is measured: %+v %+v", report.Unmeasured, report.Counts)
+	}
+	if report.Counts.PairEvalP0P1SinceCheckpoint != nil {
+		t.Errorf("an unmeasured pair-eval signal carries a count: %+v", report.Counts.PairEvalP0P1SinceCheckpoint)
+	}
+	return report.UnmeasuredReasons[checkpointSignalPairEval]
+}
+
+// The other trigger the issue names: a row whose JSON parses but whose instant this build cannot
+// read is unreadable too, so it leaves the signal unmeasured and is named by its row number.
+func TestCheckpointReview788UnreadablePairEvalInstantIsUnmeasured(t *testing.T) {
+	f := checkpointNewFixture(t)
+	f.scope("relationship-1", "project-1")
+	f.close()
+	f.record("project-1", checkpointAt(1), "a checkpoint")
+	// Row 1 reads; row 2 parses but carries an instant in no form this build knows.
+	pairEval := checkpointWriteInput(t, t.TempDir(), "pair-eval.jsonl",
+		"{\"project\":\"project-1\",\"severity\":\"P1\",\"at\":\""+checkpointAt(2)+"\"}\n"+
+			"{\"project\":\"project-1\",\"severity\":\"P0\",\"at\":\"not an instant\"}\n")
+
+	reason := checkpointReview788PairEvalReason(t, f, pairEval)
+	if !strings.Contains(reason, filepath.Base(pairEval)) {
+		t.Errorf("the reason does not name the file: %q", reason)
+	}
+	_, rows, _ := strings.Cut(reason, filepath.Base(pairEval))
+	numbers := checkpointReview788Numbers(rows)
+	if !checkpointReview788HasNumber(numbers, 2) {
+		t.Errorf("the reason does not name row 2: %q -> %v", reason, numbers)
+	}
+	if checkpointReview788HasNumber(numbers, 1) {
+		t.Errorf("the reason names row 1, which was readable: %q -> %v", reason, numbers)
+	}
+}
+
+// A file broken on more rows than the reason names still produces a short reason: at most five row
+// numbers, and the rest elided rather than listed.
+func TestCheckpointReview788ManyBrokenPairEvalRowsAreCapped(t *testing.T) {
+	f := checkpointNewFixture(t)
+	f.scope("relationship-1", "project-1")
+	f.close()
+	f.record("project-1", checkpointAt(1), "a checkpoint")
+	var lines []string
+	for i := 0; i < 8; i++ {
+		lines = append(lines, "{\"project\":\"project-1\",\"severity\":\"P1\"")
+	}
+	pairEval := checkpointWriteInput(t, t.TempDir(), "pair-eval.jsonl", strings.Join(lines, "\n")+"\n")
+
+	// The decided answer's own number: at most five row numbers in the reason. Pinned here as a
+	// literal rather than read from the implementation, so the test states the contract instead of
+	// mirroring the code it checks.
+	const decidedRowLimit = 5
+	reason := checkpointReview788PairEvalReason(t, f, pairEval)
+	_, rows, _ := strings.Cut(reason, filepath.Base(pairEval))
+	numbers := checkpointReview788Numbers(rows)
+	if len(numbers) != decidedRowLimit {
+		t.Errorf("the reason names %d rows, want %d: %q -> %v", len(numbers), decidedRowLimit, reason, numbers)
+	}
+	if !strings.Contains(rows, "...") {
+		t.Errorf("the reason does not mark the elided rows: %q", reason)
+	}
+}
+
+// An all-readable pair-eval file behaves exactly as before: the readable findings are counted.
+func TestCheckpointReview788ReadablePairEvalStillCounts(t *testing.T) {
+	f := checkpointNewFixture(t)
+	f.scope("relationship-1", "project-1")
+	f.close()
+	f.record("project-1", checkpointAt(1), "a checkpoint")
+	// A blank line between the rows is skipped and does not make the file unreadable.
+	pairEval := checkpointWriteInput(t, t.TempDir(), "pair-eval.jsonl",
+		"{\"project\":\"project-1\",\"severity\":\"P1\",\"at\":\""+checkpointAt(2)+"\"}\n"+
+			"\n"+
+			"{\"project\":\"project-1\",\"severity\":\"P0\",\"at\":\""+checkpointAt(3)+"\"}\n"+
+			"{\"project\":\"project-1\",\"severity\":\"P2\",\"at\":\""+checkpointAt(4)+"\"}\n")
+
+	report := checkpointReport(t, checkpointRead(t, f, CheckpointOptions{PairEval: pairEval}, nil), "project-1")
+	if checkpointHasUnmeasured(report, checkpointSignalPairEval) {
+		t.Fatalf("a readable pair evaluation is unmeasured: %+v %+v", report.Unmeasured, report.UnmeasuredReasons)
+	}
+	if report.Counts.PairEvalP0P1SinceCheckpoint == nil || *report.Counts.PairEvalP0P1SinceCheckpoint != 2 {
+		t.Errorf("pair P0/P1 = %v, want 2", report.Counts.PairEvalP0P1SinceCheckpoint)
+	}
+}
+
 func TestCheckpointReview788DueWithUnreadableInputExitsOne(t *testing.T) {
 	f := checkpointNewFixture(t)
 	f.scope("relationship-1", "project-1")
