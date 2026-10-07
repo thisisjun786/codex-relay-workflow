@@ -130,11 +130,30 @@ func manifestTargetsCommandText(s string) string {
 // for the system call and returns as the character it was given. The containment judgement compares those
 // two answers, so the spelling has to survive (CRW-652).
 func manifestTargetsRealpath(path string) (string, error) {
-	abs, err := filepath.Abs(path)
+	abs, err := manifestTargetsAbsolute(path)
 	if err != nil {
 		return "", err
 	}
 	return manifestTargetsFollow(abs, 0)
+}
+
+// manifestTargetsAbsolute makes a path absolute WITHOUT cleaning it. filepath.Abs would Clean the
+// result, and a '..' in the argument -- after a symlink or not -- would be dropped before the walk
+// reached its own component, so the walk would answer a different file than the kernel does (CRW-937).
+// The walk resolves every component, '..' included, in kernel order, so the argument has to reach it
+// spelled as the caller gave it.
+func manifestTargetsAbsolute(path string) (string, error) {
+	if filepath.IsAbs(path) {
+		return path, nil
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	if path == "" {
+		return wd, nil
+	}
+	return wd + string(filepath.Separator) + path, nil
 }
 
 // manifestTargetsFollow is one walk of manifestTargetsRealpath: the components are walked in kernel
@@ -224,8 +243,10 @@ func targetResolve(root, rel string) string {
 	if filepath.IsAbs(rel) {
 		return filepath.Clean(rel)
 	}
-	p, _ := filepath.Abs(filepath.Join(root, rel))
-	return p
+	// Concatenated, not joined: filepath.Join would Clean the result and drop a '..' the caller
+	// spelled after a symlink, so the containment check would resolve a different file than the
+	// kernel does (CRW-937). manifestTargetsRealpath walks every component in order.
+	return root + string(filepath.Separator) + rel
 }
 func targetCheck(issues *[]TargetIssue, kind TargetKind, root, rel, missing string) error {
 	abs := targetResolve(root, rel)

@@ -232,13 +232,10 @@ func TestManifestTargetsKernelOrderAgreesWithEvalSymlinks(t *testing.T) {
 		root + sep + "sublink" + sep + ".." + sep + "hook.json",
 	} {
 		t.Run(strings.TrimPrefix(path, root+sep), func(t *testing.T) {
-			// Compared like for like: the walk's entry point cleans the argument with filepath.Abs
-			// first (manifest_targets.go:133), so the kernel is asked the same cleaned path.
-			abs, err := filepath.Abs(path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			want, wantErr := filepath.EvalSymlinks(filepath.Clean(abs))
+			// The kernel is asked the path exactly as the caller spelled it, '..' and all: that is
+			// the file a hook command naming this target would open, so it is the comparison that
+			// matters.
+			want, wantErr := filepath.EvalSymlinks(path)
 			got, gotErr := manifestTargetsRealpath(path)
 			if (wantErr == nil) != (gotErr == nil) {
 				t.Fatalf("manifestTargetsRealpath(%q) = %q, %v; the kernel answers %q, %v", path, got, gotErr, want, wantErr)
@@ -303,4 +300,53 @@ func TestManifestTargetsKernelOrderLongTargetDoesNotFailOpen(t *testing.T) {
 	if got, err := ValidateManifestTargets(root); err != nil || !reflect.DeepEqual(got, want) {
 		t.Fatalf("issues: %+v %v; want %+v", got, err, want)
 	}
+}
+
+// TestManifestTargetsKernelOrderCallerPathEscapes is the pre-merge evaluation's d1: a manifest target
+// whose OWN spelling names a link followed by '..'. targetResolve joined the whole spelling with
+// filepath.Join, whose lexical Clean drops the '..' after the link before the walk sees it, so the
+// judgement resolved root/hook.sh while a hook command naming the same string opens outside/hook.sh.
+func TestManifestTargetsKernelOrderCallerPathEscapes(t *testing.T) {
+	root, _ := kernelOrderFixture(t)
+	kernelOrderBadLink(t, root)
+	// The file the caller's spelling really reaches, and a decoy of the same name inside the root.
+	if err := os.WriteFile(filepath.Join(root, "..", "outside", "hook.sh"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "hook.sh"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Run("manifest_hooks_entry", func(t *testing.T) {
+		targetTestWrite(t, root, ".codex-plugin/plugin.json", `{"hooks":["./sublink/../hook.sh"]}`)
+		want := []TargetIssue{{TargetHook, "manifest hook file escapes plugin root: ./sublink/../hook.sh"}}
+		if got, err := ValidateManifestTargets(root); err != nil || !reflect.DeepEqual(got, want) {
+			t.Fatalf("issues: %+v %v; want %+v", got, err, want)
+		}
+	})
+	t.Run("manifest_mcp_servers_file", func(t *testing.T) {
+		targetTestWrite(t, root, ".codex-plugin/plugin.json", `{"mcpServers":"./sublink/../hook.sh"}`)
+		want := []TargetIssue{{TargetMCP, "manifest mcpServers file escapes plugin root: ./sublink/../hook.sh"}}
+		if got, err := ValidateManifestTargets(root); err != nil || !reflect.DeepEqual(got, want) {
+			t.Fatalf("issues: %+v %v; want %+v", got, err, want)
+		}
+	})
+	t.Run("hook_command_target", func(t *testing.T) {
+		root := targetTestRoot(t, `"node \"${PLUGIN_ROOT}/sublink/../hook.sh\""`, `null`, `[]`)
+		if err := os.MkdirAll(filepath.Join(root, "..", "outside", "deep"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, "..", "outside", "hook.sh"), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, "hook.sh"), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(filepath.Join("..", "outside", "deep"), filepath.Join(root, "sublink")); err != nil {
+			t.Fatal(err)
+		}
+		want := []TargetIssue{{TargetHook, "target escapes plugin root: sublink/../hook.sh"}}
+		if got, err := ValidateManifestTargets(root); err != nil || !reflect.DeepEqual(got, want) {
+			t.Fatalf("issues: %+v %v; want %+v", got, err, want)
+		}
+	})
 }
