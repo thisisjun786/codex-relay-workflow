@@ -200,15 +200,46 @@ func TestTrainJobReaderCountsAQuotedKeyWithAColon(t *testing.T) {
 	if strings.Join(jobs, ",") != "validate,audit: extra" {
 		t.Fatalf("jobs = %v, want validate and the quoted key", jobs)
 	}
-	// a quoted key that never closes is not read as a job, and not silently skipped either: the line
-	// simply is not a job key, so the block reads as the one job it holds
+	// a quoted key that never closes cannot be read, and a line this reader cannot read key by key
+	// is an error rather than a silently skipped job
 	unterminated := "\njobs:\n  validate:\n    runs-on: ubuntu\n  \"audit:\n    runs-on: ubuntu\n"
-	jobs, err = TrainJobsFromWorkflow(unterminated)
-	if err != nil {
-		t.Fatalf("an unterminated quoted key: %v", err)
+	if _, err := TrainJobsFromWorkflow(unterminated); err == nil {
+		t.Fatal("an unterminated quoted key was read as a pass")
 	}
-	if strings.Join(jobs, ",") != "validate" {
-		t.Fatalf("jobs with an unterminated quoted key = %v, want validate only", jobs)
+}
+
+// TestTrainJobReaderCountsAnchoredAndAliasedJobs: a job whose value is a whole-job YAML anchor
+// ("audit: &base_job") or an alias ("audit-copy: *base_job") is a job too; GitHub Actions supports
+// those forms, and a reader that judged the value would let an added job through unnoticed
+// (CRW-897, answer 2).
+func TestTrainJobReaderCountsAnchoredAndAliasedJobs(t *testing.T) {
+	workflow := "\njobs:\n  base: &base_job\n    runs-on: ubuntu\n  audit: &audit_job\n    runs-on: ubuntu\n  audit-copy: *audit_job\n"
+	jobs, err := TrainJobsFromWorkflow(workflow)
+	if err != nil {
+		t.Fatalf("a workflow with anchored and aliased jobs: %v", err)
+	}
+	if strings.Join(jobs, ",") != "base,audit,audit-copy" {
+		t.Fatalf("jobs = %v, want the anchored and aliased jobs named", jobs)
+	}
+	// and the refusal names an aliased job a head added, rather than passing it
+	repository, err := os.ReadFile(filepath.Join("..", "..", "..", ".github", "workflows", "ci.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := newTr(t)
+	train := w.openedTrain()
+	w.pr(900, "head-bundle", TrainLaneLabel)
+	w.forge.runs["run-1"] = runFor("head-bundle")
+	w.proof.workflow = strings.Replace(string(repository), "\n  gui:\n", "\n  gui: &gui_job\n  gui-copy: *gui_job\n", 1)
+	if w.proof.workflow == string(repository) {
+		t.Fatal("the fixture did not add an aliased job")
+	}
+	_, err = w.m.Verify(w.ctx, train, trLeader, "900", "head-bundle", "run-1", "/checkout", w.forge, w.proof)
+	if err == nil || trReason(err) != "disposition_conflict" {
+		t.Fatalf("an added aliased job: %v", err)
+	}
+	if !strings.Contains(err.Error(), "gui-copy") {
+		t.Fatalf("the refusal does not name the added aliased job: %v", err)
 	}
 }
 

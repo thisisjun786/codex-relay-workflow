@@ -42,11 +42,13 @@ func TrainJobsFromWorkflow(workflow string) ([]string, error) {
 	return out, nil
 }
 
-// trainWorkflowJobNames reads the two-space-indented keys under the workflow's jobs block. A key
-// whose value sits on the same line as the key (a flow mapping, "  audit: {runs-on: ubuntu,
-// steps: [...]}") is a job just as a key whose block follows on the next lines is; missing it would
-// let a head add a job this runtime never checks. A jobs block this reader cannot read key by key — a
-// flow mapping on the jobs: line, or a block that yields no job key — is an error, never an empty pass.
+// trainWorkflowJobNames reads the two-space-indented keys under the workflow's jobs block. Inside
+// that block a two-space-indented key is a job whatever its value looks like: a block that follows on
+// the next lines, a flow mapping on the same line ("  audit: {runs-on: ubuntu, steps: [...]}"), a
+// whole-job anchor ("  audit: &base_job") or an alias ("  audit-copy: *base_job"). Missing any of
+// them would let a head add a job this runtime never checks. A jobs block this reader cannot read key
+// by key — a value on the jobs: line itself, or a job-level line whose key cannot be read — is an
+// error, never an empty pass.
 func trainWorkflowJobNames(workflow string) ([]string, error) {
 	body, inline, found := trainJobsBlock(workflow)
 	if !found {
@@ -56,29 +58,24 @@ func trainWorkflowJobNames(workflow string) ([]string, error) {
 		return nil, errors.New("the workflow's jobs block carries its value on the jobs: line, which this reader cannot read key by key")
 	}
 	var names []string
-	keys := 0
 	for _, line := range strings.Split(body, "\n") {
 		line = trainStripComment(line)
 		if line != "" && !strings.HasPrefix(line, " ") {
 			break
 		}
 		// the two-space gate is what keeps a nested key ("    runs-on: ubuntu") from being read as a
-		// job: trainJobKey reads a key, not an indentation level.
+		// job: trainJobKey reads a key, not an indentation level. A job's own block scalar cannot sit
+		// at exactly this indent, so every two-space line here is a job key.
 		if !strings.HasPrefix(line, "  ") || strings.HasPrefix(line, "   ") {
 			continue
 		}
-		if name, ok := trainJobKey(strings.TrimPrefix(line, "  ")); ok {
-			keys++
-			if name != "" {
-				names = append(names, name)
-			}
+		name, ok := trainJobKey(strings.TrimPrefix(line, "  "))
+		if !ok {
+			return nil, errors.New("the workflow's jobs block holds a line whose key this reader cannot read")
 		}
+		names = append(names, name)
 	}
 	if len(names) == 0 {
-		// a block this reader cannot read key by key is never an empty pass
-		if keys > 0 {
-			return nil, errors.New("the workflow's jobs block declares no job name this reader can read")
-		}
 		return nil, errors.New("the workflow's jobs block holds no job key")
 	}
 	return names, nil
@@ -102,38 +99,36 @@ func trainJobsBlock(workflow string) (body string, inline bool, found bool) {
 	return rest, false, true
 }
 
-// trainJobKey reads one jobs-block line's key. A key whose value sits on the same line as the key (a
-// flow mapping) is a job just as a key whose block follows on the next lines is. A quoted key is cut
-// at its closing quote, so a key that itself contains a colon is read whole rather than split at the
-// wrong colon; a quoted key with no closing quote is not a job key at all. It answers ok=false for a
-// line that is not a job key.
+// trainJobKey reads one line's key. Within a jobs block a two-space-indented key is a job whatever
+// its value looks like — a block on the following lines, a flow mapping on the same line
+// ("audit: {runs-on: ubuntu, steps: [...]}"), a whole-job anchor ("audit: &base_job") or an alias
+// ("audit-copy: *base_job") — so the value is deliberately not inspected: the key names the job, and
+// a reader that judged the value could let an added job through unnoticed. A quoted key is cut at its
+// closing quote, so a key that itself contains a colon is read whole rather than split at the wrong
+// colon. It answers ok=false for a line whose key cannot be read at all (no colon, an empty key, a
+// quoted key with no closing quote), which the caller answers as unreadable.
 func trainJobKey(line string) (string, bool) {
 	if line == "" || strings.HasPrefix(line, "#") {
 		return "", false
 	}
-	var key, value string
+	var key string
 	if quote := line[0]; quote == '"' || quote == '\'' {
 		end := strings.IndexByte(line[1:], quote)
 		if end < 0 {
 			return "", false
 		}
 		key = line[1 : 1+end]
-		rest := strings.TrimSpace(line[2+end:])
-		if !strings.HasPrefix(rest, ":") {
+		if !strings.HasPrefix(strings.TrimSpace(line[2+end:]), ":") {
 			return "", false
 		}
-		value = strings.TrimSpace(rest[1:])
 	} else {
-		cut, rest, found := strings.Cut(line, ":")
+		cut, _, found := strings.Cut(line, ":")
 		if !found {
 			return "", false
 		}
-		key, value = strings.TrimSpace(cut), strings.TrimSpace(rest)
+		key = strings.TrimSpace(cut)
 	}
 	if key == "" || strings.ContainsAny(key, "{}[]") {
-		return "", false
-	}
-	if value != "" && !strings.HasPrefix(value, "{") {
 		return "", false
 	}
 	return key, true
