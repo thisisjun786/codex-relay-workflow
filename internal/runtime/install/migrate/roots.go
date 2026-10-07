@@ -129,18 +129,20 @@ func (r *Roots) Close() error {
 	return errors.Join(err, r.Codex.Close())
 }
 
-// EnsureDest returns the pinned destination root, creating it with perm (under the umask) when absent. The directory that holds it
-// is synced either way, so a run interrupted between the mkdir and its sync finishes the entry on the next one.
-func (p *Pair) EnsureDest(perm uint32) (*Dir, error) {
+// EnsureDest returns the pinned destination root, creating it with perm (under the umask) when absent, and reports whether this
+// call's own mkdir created it. A creation that ended in EEXIST is not this run's, so made is false then and the caller must not
+// give the directory a mode. The directory that holds it is synced either way, so a run interrupted between the mkdir and its
+// sync finishes the entry on the next one.
+func (p *Pair) EnsureDest(perm uint32) (*Dir, bool, error) {
 	if p.Dest != nil {
-		return p.Dest, p.parent.Sync()
+		return p.Dest, false, p.parent.Sync()
 	}
-	d, err := p.parent.EnsureChild(filepath.Base(p.DestPath), perm)
+	d, made, err := p.parent.EnsureChild(filepath.Base(p.DestPath), perm)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	p.Dest = d
-	return d, nil
+	return d, made, nil
 }
 
 // resolveRoot picks the explicit root, else the environment variable, else the default under the home directory.
@@ -468,14 +470,24 @@ func (d *Dir) Child(name string) (*Dir, error) {
 	return nil, &fs.PathError{Op: "open", Path: d.join(name), Err: err}
 }
 
+// migrateOwnedDirMkdirat creates a directory for EnsureChild. It is a variable so a case can model a host whose mkdir does not
+// keep the mode it is given - Darwin drops the sticky bit from a directory's creation mode - which is the case the marker chmod
+// after a creation exists for; no other code replaces it.
+var migrateOwnedDirMkdirat = unix.Mkdirat
+
 // EnsureChild creates the subdirectory name with perm (under the umask) unless it exists, pins it, and syncs this directory so
-// the new entry survives a crash. The sync also runs when the entry already existed.
-func (d *Dir) EnsureChild(name string, perm uint32) (*Dir, error) {
+// the new entry survives a crash, and reports whether its own mkdir created the directory. A creation that ended in EEXIST is
+// another actor's directory, so made is false then. The sync also runs when the entry already existed.
+func (d *Dir) EnsureChild(name string, perm uint32) (*Dir, bool, error) {
 	if err := checkName(name); err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	if err := unix.Mkdirat(d.fd(), name, perm); err != nil && !errors.Is(err, unix.EEXIST) {
-		return nil, &fs.PathError{Op: "mkdir", Path: d.join(name), Err: err}
+	made := true
+	if err := migrateOwnedDirMkdirat(d.fd(), name, perm); err != nil {
+		if !errors.Is(err, unix.EEXIST) {
+			return nil, false, &fs.PathError{Op: "mkdir", Path: d.join(name), Err: err}
+		}
+		made = false
 	}
 	child, err := d.Child(name)
 	if err == nil {
@@ -484,9 +496,9 @@ func (d *Dir) EnsureChild(name string, perm uint32) (*Dir, error) {
 		}
 	}
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	return child, nil
+	return child, made, nil
 }
 
 // OpenRegular opens the file name for reading. A link, directory, FIFO, socket or device found there is refused without being

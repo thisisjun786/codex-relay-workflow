@@ -39,6 +39,7 @@ package hook
 import (
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -69,6 +70,11 @@ type promptDcloseSeams struct {
 	afterGoalplanCommit      func()
 	afterStateWrite          func()
 	afterPabcdLedgerAppend   func()
+	// writeMarker and writePlan are the two plan-stage writes the close makes before its rows.
+	// nil means the real function, so a production run holds neither and a test can make one
+	// report a post-rename failure without a package-level variable (CRW-869, finding 2).
+	writeMarker func(cwd string, held state.State, closePhaseID string, nextWorkPhaseID *string) error
+	writePlan   func(cwd string, plan *goalplan.Goalplan) error
 }
 
 // promptDcloseOutcome is what one bound close did while it held the session lock: the refusal or
@@ -92,6 +98,10 @@ type promptDclosePlanOutcome struct {
 	allDone    bool
 	markerNext *string
 	rows       []promptDcloseGoalplanRow
+	// warnings are the durability lines of a marker or plan write that published its artifact and
+	// then failed a step after the rename. The close goes on; the caller reports them on the answer
+	// (CRW-869, finding 2).
+	warnings []string
 }
 
 // promptDcloseGoalplanRow is one goalplan ledger row the close owes, in the oracle's order.
@@ -194,6 +204,12 @@ func promptOrchestrateBoundDclose(p PromptSubmitPayload, current state.State, tu
 		return outcome.refusal, true
 	}
 	if outcome.pending != "" {
+		// The close is closed but its finalization is pending, and a marker or plan write that
+		// published and then failed the directory sync may also have a durability line to report
+		// (CRW-869, finding 2). The pending text keeps its promise; the warning rides after it.
+		if outcome.warning != "" {
+			return outcome.pending + "\n" + outcome.warning, true
+		}
 		return outcome.pending, true
 	}
 	// done: the chat D-close. Inject the DONE summary directive this turn; the resting state is
@@ -267,6 +283,11 @@ func promptDcloseClose(p PromptSubmitPayload, held state.State, turn, closePhase
 		return promptDcloseOutcome{refusal: locked.Value.output}
 	}
 	plan := locked.Value
+	// warnings collects every durability line of a write that published its artifact and then
+	// failed a step after the rename: the marker and plan writes the first lock made (CRW-869,
+	// finding 2), the resting state write below and the marker cleanup. A slice rather than one
+	// string, so a state warning is not silently overwritten by the cleanup warning.
+	warnings := append([]string{}, plan.warnings...)
 
 	// §40 Z3: the bound D-close owns its own state write. The write keeps every field the ordinary
 	// D-close write sets - dropping injectedTurns would break same-turn dedup and dropping the
@@ -289,11 +310,20 @@ func promptDcloseClose(p PromptSubmitPayload, held state.State, turn, closePhase
 		next.DcloseRecovery = promptDcloseMarker(held, closePhaseID, plan.markerNext)
 	}
 	if refusal := guard(); refusal != "" {
+		// No warning can be outstanding here: this guard evaluates the same state the identical
+		// guard accepted before the marker write, and the marker write preserves every record class
+		// the guard checks, so the bare refusal is exact (CRW-869).
 		return promptDcloseOutcome{refusal: refusal}
 	}
-	landed, warning := promptDcloseWriteLanded(state.WriteState(p.Cwd, next))
+	landed, stateWarning := promptDcloseWriteLanded(state.WriteState(p.Cwd, next))
 	if !landed {
-		return promptDcloseOutcome{refusal: promptDcloseStateRefusal()}
+		// An earlier write of this close may already have published its artifact (the marker or the
+		// plan), so the refusal must name it rather than deny that anything was written (CRW-869,
+		// the review finding on the mixed-failure path).
+		return promptDcloseOutcome{refusal: promptDclosePartialRefusal(promptDcloseStateRefusal(), warnings)}
+	}
+	if stateWarning != "" {
+		warnings = append(warnings, stateWarning)
 	}
 	promptDcloseSeam(seams, func(s *promptDcloseSeams) func() { return s.afterStateWrite })
 
@@ -312,7 +342,15 @@ func promptDcloseClose(p PromptSubmitPayload, held state.State, turn, closePhase
 	rowsErr := error(nil)
 	finalize, finalizeErr := goalplan.WithGoalplanWriteLock(p.Cwd, slug, func(*goalplan.Goalplan) (struct{}, error) {
 		for _, row := range plan.rows {
-			if promptDcloseHasGoalplanRow(p.Cwd, slug, string(row.event), row.detail) {
+			// CRW-869 finding 1: a row read that failed with anything but ENOENT is unreadable, not
+			// absent. Believing it would append the row again, so the close stops here with the
+			// ledger read as the reason; the caller answers the pending text (or the all-done
+			// warning) and the marker is kept, because the cleanup below never runs.
+			present, readErr := promptDcloseHasGoalplanRow(p.Cwd, slug, string(row.event), row.detail)
+			if readErr != nil {
+				return struct{}{}, errors.New("the goalplan ledger could not be read: " + readErr.Error())
+			}
+			if present {
 				continue
 			}
 			if rowErr := goalplan.AppendGoalplanLedger(p.Cwd, slug, goalplan.GoalplanLedgerEntry{
@@ -326,19 +364,25 @@ func promptDcloseClose(p PromptSubmitPayload, held state.State, turn, closePhase
 				return struct{}{}, nil
 			}
 		}
-		if result.Ledger != nil && !promptDcloseHasPabcdCloseRow(p.Cwd, p.SessionID, closeCheckEpoch, closedWorkPhaseID) {
-			row := *result.Ledger
-			row.Close = &state.CloseKey{CheckEpoch: closeCheckEpoch}
-			if closedWorkPhaseID != "" {
-				row.Close.ClosedWorkPhaseID = &closedWorkPhaseID
+		if result.Ledger != nil {
+			present, readErr := promptDcloseHasPabcdCloseRow(p.Cwd, p.SessionID, closeCheckEpoch, closedWorkPhaseID)
+			if readErr != nil {
+				return struct{}{}, errors.New("the PABCD ledger could not be read: " + readErr.Error())
 			}
-			// The hook's close rows spread the transition row, evidence included, before the close key
-			// (hook.ts:1147 and :1335 through orchestrate-apply.ts:111-118).
-			row.EvidenceAfterReason = true
-			if rowErr := state.AppendLedger(p.Cwd, row); rowErr != nil {
-				return struct{}{}, rowErr
+			if !present {
+				row := *result.Ledger
+				row.Close = &state.CloseKey{CheckEpoch: closeCheckEpoch}
+				if closedWorkPhaseID != "" {
+					row.Close.ClosedWorkPhaseID = &closedWorkPhaseID
+				}
+				// The hook's close rows spread the transition row, evidence included, before the close key
+				// (hook.ts:1147 and :1335 through orchestrate-apply.ts:111-118).
+				row.EvidenceAfterReason = true
+				if rowErr := state.AppendLedger(p.Cwd, row); rowErr != nil {
+					return struct{}{}, rowErr
+				}
+				promptDcloseSeam(seams, func(s *promptDcloseSeams) func() { return s.afterPabcdLedgerAppend })
 			}
-			promptDcloseSeam(seams, func(s *promptDcloseSeams) func() { return s.afterPabcdLedgerAppend })
 		}
 		if plan.allDone {
 			return struct{}{}, nil
@@ -360,7 +404,7 @@ func promptDcloseClose(p PromptSubmitPayload, held state.State, turn, closePhase
 				return struct{}{}, errors.New("the recovery marker could not be cleared")
 			}
 			if cleanupWarning != "" {
-				warning = cleanupWarning
+				warnings = append(warnings, cleanupWarning)
 			}
 		}
 		return struct{}{}, nil
@@ -376,17 +420,18 @@ func promptDcloseClose(p PromptSubmitPayload, held state.State, turn, closePhase
 			// an illegal IDLE->D transition. The close did happen and only its ledger row is
 			// missing, which is the durability warning the CLI writers use (CRW-744/793/811;
 			// finding (c) of generation 2 of CRW-797).
-			return promptDcloseOutcome{warning: promptDcloseLedgerWarning(reason)}
+			warnings = append(warnings, promptDcloseLedgerWarning(reason))
+			return promptDcloseOutcome{warning: strings.Join(warnings, "\n")}
 		}
-		return promptDcloseOutcome{pending: promptDcloseFinalizePending(reason)}
+		return promptDcloseOutcome{pending: promptDcloseFinalizePending(reason), warning: strings.Join(warnings, "\n")}
 	}
 	if rowsErr != nil {
 		// The resting state and the recovery marker are already on disk when the goalplan rows are
 		// appended, so a row that could not be written is not a close that wrote nothing (finding
 		// (b) of generation 2 of CRW-797). The marker is still there, so the pending text is exact.
-		return promptDcloseOutcome{pending: promptDcloseFinalizePending("the goalplan ledger row could not be written: " + rowsErr.Error())}
+		return promptDcloseOutcome{pending: promptDcloseFinalizePending("the goalplan ledger row could not be written: " + rowsErr.Error()), warning: strings.Join(warnings, "\n")}
 	}
-	return promptDcloseOutcome{warning: warning}
+	return promptDcloseOutcome{warning: strings.Join(warnings, "\n")}
 }
 
 // promptDclosePlanWork is the body of the first goalplan lock (:956-1266). It answers the text to
@@ -395,6 +440,18 @@ func promptDcloseClose(p PromptSubmitPayload, held state.State, turn, closePhase
 // appended here, because the session state is published before them.
 func promptDclosePlanWork(p PromptSubmitPayload, held state.State, plan *goalplan.Goalplan, closePhaseID string, recovering bool, command *fsm.OrchestrateCommand, seams *promptDcloseSeams, guard func() string) (promptDclosePlanOutcome, error) {
 	slug := held.Slug
+	// CRW-869 finding 2: the marker and the plan writes can each publish their artifact and then fail
+	// a step after the rename. The seams default to the real functions, so a production run holds
+	// neither; warnings collects the durability line of each such write.
+	writeMarker := promptDcloseWriteMarker
+	if seams != nil && seams.writeMarker != nil {
+		writeMarker = seams.writeMarker
+	}
+	writePlan := goalplan.WriteGoalplan
+	if seams != nil && seams.writePlan != nil {
+		writePlan = seams.writePlan
+	}
+	warnings := []string{}
 
 	// §5: integrity is checked inside the lock, before marker or any write.
 	integrityReasons := goalplan.GoalplanDefinitionIntegrityReasons(plan)
@@ -460,14 +517,29 @@ func promptDclosePlanWork(p PromptSubmitPayload, held state.State, plan *goalpla
 		if refusal := guard(); refusal != "" {
 			return promptDclosePlanOutcome{output: refusal}, nil
 		}
-		if markerErr := promptDcloseWriteMarker(p.Cwd, held, closePhaseID, markerNext); markerErr != nil {
+		markerLanded, markerWarning := promptDcloseWriteLanded(writeMarker(p.Cwd, held, closePhaseID, markerNext))
+		if !markerLanded {
 			return promptDclosePlanOutcome{output: promptDcloseStateRefusal()}, nil
+		}
+		if markerWarning != "" {
+			warnings = append(warnings, markerWarning)
 		}
 		promptDcloseSeam(seams, func(s *promptDcloseSeams) func() { return s.afterRecoveryMarkerWrite })
 	}
 	if writeClosedPlan {
-		if planErr := goalplan.WriteGoalplan(p.Cwd, closeResult.plan); planErr != nil {
-			return promptDclosePlanOutcome{output: promptOrchestrateRefusal("the goalplan could not be written: " + planErr.Error() + " Nothing was written.")}, nil
+		planErr := writePlan(p.Cwd, closeResult.plan)
+		switch {
+		case planErr == nil:
+		case state.Published(planErr):
+			// The artifact is the goalplan, not the session state, so the warning names the file whose
+			// durability is in question while keeping the sentence shape of the state warning.
+			warnings = append(warnings, promptDcloseGoalplanPublishedWarning(planErr))
+		default:
+			// The plan write did not land, but the marker write before it may have published its own
+			// artifact; the refusal then names that partial commit instead of denying it (CRW-869,
+			// the review finding on the mixed-failure path).
+			return promptDclosePlanOutcome{output: promptDclosePartialRefusal(
+				promptOrchestrateRefusal("the goalplan could not be written: "+planErr.Error()+" Nothing was written."), warnings)}, nil
 		}
 		promptDcloseSeam(seams, func(s *promptDcloseSeams) func() { return s.afterGoalplanCommit })
 	}
@@ -483,7 +555,7 @@ func promptDclosePlanWork(p PromptSubmitPayload, held state.State, plan *goalpla
 	if startedID != "" {
 		rows = append(rows, promptDcloseGoalplanRow{event: goalplan.EventWorkphaseStarted, detail: "started " + startedID})
 	}
-	return promptDclosePlanOutcome{markerNext: markerNext, rows: rows}, nil
+	return promptDclosePlanOutcome{markerNext: markerNext, rows: rows, warnings: warnings}, nil
 }
 
 // promptDcloseWriteLanded says whether a state write reached the file. state.WriteState reports a
@@ -499,6 +571,26 @@ func promptDcloseWriteLanded(err error) (bool, string) {
 		return true, "the session state was published but its directory could not be synced: " + err.Error()
 	}
 	return false, ""
+}
+
+// promptDcloseGoalplanPublishedWarning is the durability line for a plan write that published the
+// goalplan and then failed a step after the rename. It keeps promptDcloseWriteLanded's sentence
+// shape but names the goalplan, which is a different file in a different directory from the session
+// state, so the operator's verification target is right (CRW-869, finding 2).
+func promptDcloseGoalplanPublishedWarning(err error) string {
+	return "the goalplan was published but its directory could not be synced: " + err.Error()
+}
+
+// promptDclosePartialRefusal is a refusal whose trailing "Nothing was written." claim is replaced
+// when an earlier write of the same close already published its artifact (CRW-869, the review
+// finding on the mixed-failure path). The close still did not apply, but an answer that denied the
+// published marker or plan would hide a partial commit the operator has to know about. With no such
+// warning the refusal is returned exactly as it was.
+func promptDclosePartialRefusal(refusal string, warnings []string) string {
+	if len(warnings) == 0 {
+		return refusal
+	}
+	return strings.Replace(refusal, "Nothing was written.", strings.Join(warnings, " ")+" Nothing else was written.", 1)
 }
 
 // promptDcloseSameOptionalText compares two optional texts, where an absent one differs from any
@@ -659,11 +751,13 @@ func promptDcloseWriteMarker(cwd string, held state.State, closePhaseID string, 
 
 // promptDcloseHasGoalplanRow is hasGoalplanRow (:628-632): a row of the bound plan's ledger with
 // this event and detail. An absent file has no row; a line that is not a JSON object matches
-// nothing, where the oracle's JSON.parse throws and the same D request can never finish.
-func promptDcloseHasGoalplanRow(cwd, slug, event, detail string) bool {
+// nothing, where the oracle's JSON.parse throws and the same D request can never finish. A
+// directory the slug cannot be resolved to is unreadable, not absent: the row's presence is unknown
+// and a caller must not append (CRW-869, finding 1).
+func promptDcloseHasGoalplanRow(cwd, slug, event, detail string) (bool, error) {
 	dir, err := goalplan.GoalplanDir(cwd, slug)
 	if err != nil {
-		return false
+		return false, err
 	}
 	return promptDcloseAnyRow(filepath.Join(dir, goalplan.GoalplanLedgerFile), func(row map[string]any) bool {
 		gotEvent, _ := row["event"].(string)
@@ -674,8 +768,9 @@ func promptDcloseHasGoalplanRow(cwd, slug, event, detail string) bool {
 
 // promptDcloseHasPabcdCloseRow is hasPabcdCloseRow (:634-645): the PABCD close row of this
 // session, this check cycle and this closed work phase, where the closed phase is JSON null when
-// the id is empty. A row of a damaged line matches nothing, as in promptDcloseHasGoalplanRow.
-func promptDcloseHasPabcdCloseRow(cwd, sessionID string, checkEpoch *string, closedWorkPhaseID string) bool {
+// the id is empty. A row of a damaged line matches nothing, as in promptDcloseHasGoalplanRow, and
+// an unreadable ledger is unreadable, not absent (CRW-869, finding 1).
+func promptDcloseHasPabcdCloseRow(cwd, sessionID string, checkEpoch *string, closedWorkPhaseID string) (bool, error) {
 	return promptDcloseAnyRow(filepath.Join(cwd, crwdir.DirName, state.LedgerFile), func(row map[string]any) bool {
 		gotSession, _ := row["sessionId"].(string)
 		gotFrom, _ := row["from"].(string)
@@ -696,12 +791,16 @@ func promptDcloseHasPabcdCloseRow(cwd, sessionID string, checkEpoch *string, clo
 }
 
 // promptDcloseAnyRow reads the JSON-object lines of a JSONL file and reports whether any of them
-// satisfies match. A file that is not there has no row; a line that is not a JSON object, a blank
-// line and an unreadable file match nothing.
-func promptDcloseAnyRow(path string, match func(map[string]any) bool) bool {
+// satisfies match. The answer has three states, by construction: present (true, nil), absent
+// (false, nil) for a file that is not there, and unreadable (false, err) for any other read error
+// (CRW-869, finding 1). A line that is not a JSON object and a blank line match nothing.
+func promptDcloseAnyRow(path string, match func(map[string]any) bool) (bool, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return false
+		if errors.Is(err, fs.ErrNotExist) {
+			return false, nil
+		}
+		return false, err
 	}
 	for _, line := range text.SplitLines(string(data)) {
 		if strings.TrimSpace(line) == "" {
@@ -712,10 +811,10 @@ func promptDcloseAnyRow(path string, match func(map[string]any) bool) bool {
 			continue
 		}
 		if match(row) {
-			return true
+			return true, nil
 		}
 	}
-	return false
+	return false, nil
 }
 
 // promptDcloseSameJSONString is the oracle's row.checkEpoch === checkEpoch: JSON null and an

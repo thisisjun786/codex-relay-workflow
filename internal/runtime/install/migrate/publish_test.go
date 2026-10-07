@@ -271,7 +271,7 @@ func TestRefusalWithFailedCleanupIsAFailure(t *testing.T) {
 		t.Cleanup(func() { r.Close() })
 		p := newPub(t)
 		racer(t, ws+"/.crw", ".gitignore", p)
-		if root, err := p.EnsureProjectRoot(r.Project); root != nil || !errors.Is(err, fs.ErrPermission) {
+		if root, _, err := p.EnsureProjectRoot(r.Project); root != nil || !errors.Is(err, fs.ErrPermission) {
 			t.Errorf("EnsureProjectRoot = %v, %v; want the cleanup failure, not the retained .gitignore", root, err)
 		}
 	})
@@ -309,7 +309,7 @@ func TestEnsureProjectRoot(t *testing.T) {
 			if _, err := os.Lstat(ws + "/.crw"); err == nil {
 				before = fingerprint(t, ws+"/.crw")
 			}
-			root, err := newPub(t).EnsureProjectRoot(open(t, ws))
+			root, _, err := newPub(t).EnsureProjectRoot(open(t, ws))
 			if c.reason != "" {
 				wantRefusal(t, err, c.reason)
 				if after := fingerprint(t, ws+"/.crw"); after != before {
@@ -335,7 +335,7 @@ func TestEnsureProjectRoot(t *testing.T) {
 		}
 		ws := isolate(t) + "/ws"
 		put(t, ws+"/.crw/.gitignore", "mine", 0o000)
-		root, err := newPub(t).EnsureProjectRoot(open(t, ws))
+		root, _, err := newPub(t).EnsureProjectRoot(open(t, ws))
 		var refused *RefusedError
 		if root != nil || err == nil || errors.As(err, &refused) {
 			t.Errorf("unreadable ignore: %v, %v; want a plain failure and no root", root, err)
@@ -368,7 +368,7 @@ func TestEnsureProjectRoot(t *testing.T) {
 				}
 				return nil
 			}
-			root, err := p.EnsureProjectRoot(open(t, ws))
+			root, _, err := p.EnsureProjectRoot(open(t, ws))
 			if c.reason != "" {
 				wantRefusal(t, err, c.reason)
 				if root != nil {
@@ -395,14 +395,14 @@ func TestEnsureProjectRoot(t *testing.T) {
 			}
 			return nil
 		}
-		if root, err := p.EnsureProjectRoot(open(t, ws)); root != nil || !errors.Is(err, boom) {
+		if root, _, err := p.EnsureProjectRoot(open(t, ws)); root != nil || !errors.Is(err, boom) {
 			t.Fatalf("interrupted: %v, %v", root, err)
 		}
 		if got := ls(t, ws+"/.crw"); len(got) != 0 {
 			t.Fatalf("the interrupted run left %v", got)
 		}
 		// The rerun finds the root, and publishes the absent .gitignore before it hands the root out.
-		root, err := newPub(t).EnsureProjectRoot(open(t, ws))
+		root, _, err := newPub(t).EnsureProjectRoot(open(t, ws))
 		if err != nil || root == nil || get(t, ws+"/.crw/.gitignore") != crwdir.GitignoreText {
 			t.Errorf("rerun: %v, %v", root, err)
 		}
@@ -424,7 +424,7 @@ func TestEnsureProjectRootRefusesARacerCreatedIgnore(t *testing.T) {
 	r, err := Open(Options{Scope: ScopeProject, Cwd: ws})
 	must(t, err)
 	t.Cleanup(func() { r.Close() })
-	root, err := p.EnsureProjectRoot(r.Project)
+	root, _, err := p.EnsureProjectRoot(r.Project)
 	wantRefusal(t, err, ReasonDiffers)
 	if root != nil || get(t, ws+"/.crw/.gitignore") != "mine" || !slices.Equal(ls(t, ws+"/.crw"), []string{".gitignore"}) {
 		t.Errorf("root = %v, .crw = %v, .gitignore = %q; want a refusal, no root and the racer's file", root, ls(t, ws+"/.crw"), get(t, ws+"/.crw/.gitignore"))
@@ -446,7 +446,7 @@ func TestEnsureProjectRootRefusesARacerCreatedIgnoreWhenTheRootIsNew(t *testing.
 	r, err := Open(Options{Scope: ScopeProject, Cwd: ws})
 	must(t, err)
 	t.Cleanup(func() { r.Close() })
-	root, err := p.EnsureProjectRoot(r.Project)
+	root, _, err := p.EnsureProjectRoot(r.Project)
 	wantRefusal(t, err, ReasonDiffers)
 	if root != nil || get(t, ws+"/.crw/.gitignore") != "mine" || !slices.Equal(ls(t, ws+"/.crw"), []string{".gitignore"}) {
 		t.Errorf("root = %v, .crw = %v, .gitignore = %q; want a refusal, no root and the racer's file", root, ls(t, ws+"/.crw"), get(t, ws+"/.crw/.gitignore"))
