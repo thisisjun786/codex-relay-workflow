@@ -62,6 +62,9 @@ type branchFixture struct {
 	written   int
 	// nodes is the issue key each node id of the described plan carries.
 	nodes map[string]string
+	// passRevision is the plan revision the fake dag-ready answer names; 0 leaves the key out, which is
+	// the head a real relay reads when it answers for the plan's newest revision.
+	passRevision int64
 }
 
 // branchRevisionFixture is one revision of a described plan: the instant it is recorded at and the
@@ -344,7 +347,7 @@ func (f *branchFixture) publish() *branchFixture {
 // leaves the writer open, so a test can commit a revision while the reading is in flight.
 func (f *branchFixture) publishOpen() *branchFixture {
 	f.t.Helper()
-	branchWriteReady(f.t, f, filepath.Join(f.dir, "ready.json"), f.ready, "within")
+	branchWriteReady(f.t, f, filepath.Join(f.dir, "ready.json"), f.ready, "within", f.passRevision)
 	script := "#!/bin/sh\ncase \"$*\" in\n" +
 		"  *dag-ready*) cat " + coreShellQuote(filepath.Join(f.dir, "ready.json")) + " ;;\n" +
 		"  *) echo refused >&2; exit 2 ;;\nesac\n"
@@ -362,16 +365,21 @@ func (f *branchFixture) publishOpen() *branchFixture {
 	return f
 }
 
-// branchWriteReady writes one dag-ready answer whose ready set is the given issue keys.
-func branchWriteReady(t *testing.T, f *branchFixture, path string, keys []string, hostMemory string) {
+// branchWriteReady writes one dag-ready answer whose ready set is the given issue keys. revision is
+// the plan revision the answer names; 0 leaves the key out, which a reading takes as the head.
+func branchWriteReady(t *testing.T, f *branchFixture, path string, keys []string, hostMemory string, revision int64) {
 	t.Helper()
 	ready := make([]any, len(keys))
 	for i, key := range keys {
 		ready[i] = map[string]any{"node_id": f.nodeIDFor(key), "issue_key": key, "disposition": "ready", "reason": nil}
 	}
-	branchWriteJSON(t, path, map[string]any{"ok": true, "schema": "dag-ready/1",
+	answer := map[string]any{"ok": true, "schema": "dag-ready/1",
 		"pass":  map[string]any{"free_slots": 0, "ceiling": 12, "held": 12, "host_memory": map[string]any{"state": hostMemory}},
-		"ready": ready, "nodes": []any{}})
+		"ready": ready, "nodes": []any{}}
+	if revision != 0 {
+		answer["plan_revision"] = revision
+	}
+	branchWriteJSON(t, path, answer)
 }
 
 // branchSeams replaces the gh and status-page seams for one test: no merges and no incident, so the
@@ -491,7 +499,7 @@ func TestBranchCandidatesKeepTheOmittedListApartFromTheEmptyOne(t *testing.T) {
 	}
 
 	// The same plan held back by the host memory bound carries no key at all.
-	branchWriteReady(t, f, filepath.Join(f.dir, "ready.json"), f.ready, "deferring")
+	branchWriteReady(t, f, filepath.Join(f.dir, "ready.json"), f.ready, "deferring", 0)
 	hold := f.run()
 	if hold.Verdict != capacityHold {
 		t.Fatalf("the plan is %s, want %s", hold.Verdict, capacityHold)
@@ -528,7 +536,7 @@ func TestBranchCandidatesRefuseABadThresholdOnAHoldPlan(t *testing.T) {
 	f.region("B", "b.go", "file", "", "edit", false)
 	f.publish()
 	// The host memory bound makes the verdict hold, which is the path that skips the candidates.
-	branchWriteReady(t, f, filepath.Join(f.dir, "ready.json"), []string{"CRW-1", "CRW-2"}, "deferring")
+	branchWriteReady(t, f, filepath.Join(f.dir, "ready.json"), []string{"CRW-1", "CRW-2"}, "deferring", 0)
 	f.section["min_branch_nodes"] = "two"
 	f.load()
 	config := capacityConfig
@@ -843,7 +851,7 @@ func TestBranchCandidatesDocumentKeysAndTheAlwaysFlag(t *testing.T) {
 
 	// A hold plan carries no branches at all, and --branches-always carries them.
 	// The host memory bound is what makes the plan a hold: the waiting set stays as it is.
-	branchWriteReady(t, f, filepath.Join(f.dir, "ready.json"), []string{"CRW-1"}, "deferring")
+	branchWriteReady(t, f, filepath.Join(f.dir, "ready.json"), []string{"CRW-1"}, "deferring", 0)
 	hold := f.run()
 	if hold.Verdict != capacityHold || hold.Branches != nil {
 		t.Fatalf("the hold plan = %+v, want a hold that carries no branches", hold)

@@ -186,6 +186,11 @@ type capacityWaiting struct {
 	// want of a slot. The branch reading judges readiness by node id, because a plan may hold two
 	// nodes with one issue key (a redefinition) and their states must not mix.
 	WaitingNodes []string
+	// PlanRevision is the plan revision the pass read. The branch reading takes its own snapshot at
+	// this revision, so the readiness the pass reports and the nodes and edges the reading reports come
+	// from one revision: a revision that lands between the pass and the snapshot cannot make a node
+	// ready in a graph that no longer holds it, or hold it in a graph where the pass never saw it.
+	PlanRevision int64
 	Held         int
 	Ceiling      int
 	HostMemory   string
@@ -211,7 +216,8 @@ func capacityWaitingFor(ctx context.Context, e *Env, cfg *Config, plan, zoneReas
 		return capacityWaiting{}, fmt.Errorf("relay dag-ready --plan %s: exit %d", plan, code)
 	}
 	var reading struct {
-		Pass struct {
+		PlanRevision int64 `json:"plan_revision"`
+		Pass         struct {
 			Held       int `json:"held"`
 			Ceiling    int `json:"ceiling"`
 			HostMemory *struct {
@@ -262,7 +268,8 @@ func capacityWaitingFor(ctx context.Context, e *Env, cfg *Config, plan, zoneReas
 		waitingNodes = append(waitingNodes, id)
 	}
 	sort.Strings(waitingNodes)
-	out := capacityWaiting{Waiting: waiting, WaitingNodes: waitingNodes, Held: reading.Pass.Held, Ceiling: reading.Pass.Ceiling}
+	out := capacityWaiting{Waiting: waiting, WaitingNodes: waitingNodes, PlanRevision: reading.PlanRevision,
+		Held: reading.Pass.Held, Ceiling: reading.Pass.Ceiling}
 	if reading.Pass.HostMemory != nil {
 		out.HostMemory = reading.Pass.HostMemory.State
 	}

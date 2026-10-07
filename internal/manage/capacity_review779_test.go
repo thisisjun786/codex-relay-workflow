@@ -205,6 +205,31 @@ func TestCapacityReview779OneSnapshot(t *testing.T) {
 	})
 }
 
+// C1: the readiness a plan's pass reports and the nodes and edges the reading reports come from one
+// revision. The pass answers for revision 1, and a revision that cancels D lands after the pass and
+// before the reading's snapshot. A reading that took the snapshot at the head would report a graph the
+// pass never saw: D gone, so C+D no longer a bundle and C alone below the floor, while the pass still
+// counts C and D as nodes of its plan. Reading the revision the pass named keeps the two together, so
+// both bundles survive.
+func TestCapacityReview779PassAndReadingShareOneRevision(t *testing.T) {
+	f := branchNewFixture(t, "CRW-1", "CRW-2")
+	capacityReview779Plan(f)
+	// The pass answers for revision 1; revision 2 cancels D.
+	f.passRevision = 1
+	f.revision(2)
+	f.cancelNode("D")
+	f.publishOpen()
+	previous := branchPassSeam
+	branchPassSeam = func() { f.writePlan() }
+	t.Cleanup(func() { branchPassSeam = previous })
+	plan := f.run()
+	if plan.Verdict != capacityExpand {
+		t.Fatalf("the plan is %s, want %s", plan.Verdict, capacityExpand)
+	}
+	branchWant(t, branchSummaries(branchList(t, plan)),
+		"A+B pkg/A.go,pkg/B.go ready=2 edges=1", "C+D pkg/C.go,pkg/D.go ready=0 edges=1")
+}
+
 // C3: readiness is judged by node id. Two nodes implement the same issue, and the pass lists only
 // one of them as ready; a reading that judged readiness by issue key would count both.
 func TestCapacityReview779ReadyByNodeID(t *testing.T) {
