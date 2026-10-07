@@ -342,7 +342,9 @@ Execution:
   ([Devin and Codex reviews are references, not merge gates](merge-readiness.md#devin-and-codex-reviews-are-references-not-merge-gates)
   keeps the gates): fix a finding inside this issue's scope or answer it from the code, fix a P0 or security
   finding before the merge whether or not it belongs to this issue (`not_applicable` only with code evidence that
-  the reading is wrong), and record the rest as follow-ups with their owner and trigger. A `partial`, `invalid` or `unavailable` run is not "no findings": say what the command reported
+  the reading is wrong), and handle the remaining findings as
+  [What each finding needs before the receipt](merge-readiness.md#what-each-finding-needs-before-the-receipt) says.
+  A `partial`, `invalid` or `unavailable` run is not "no findings": say what the command reported
   (outcome, status, `retryNotBefore` if any, the comment link) in the handoff. [crw review](../../../../../docs/review/crw-review.md)
   has the rules.
 - Finishing the review is part of finishing the work. Read every applicable review to the
