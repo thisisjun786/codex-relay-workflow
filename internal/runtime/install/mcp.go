@@ -748,7 +748,7 @@ func UpdateRegisteredPolicy(ctx context.Context, o Options, r PolicyUpdateOption
 	published, err := reRegisteredBytes(before.raw, wanted)
 	if err != nil {
 		return refused(append(base, field("outcome", RecordUpdateFailed), field("detail", err.Error())),
-			"nothing was written: the record's own bytes do not hold the executionPolicy member this run replaces")
+			"nothing was written: the record's own bytes could not be given the policy this run read")
 	}
 	// A record reached through a symbolic link is refused: the read and the backup follow the link,
 	// but the replacement renames a file over the path itself, which would turn the link into a
