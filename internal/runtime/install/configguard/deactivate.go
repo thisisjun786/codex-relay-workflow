@@ -383,7 +383,15 @@ func Deactivate(deps DeactivateDeps) (*DeactivateResult, error) {
 		// config file would have this deactivation apply one file's ownership records to another, so
 		// it refuses rather than acting under the wrong lock (fail closed). An explicit ConfigPath
 		// overrides the manifest in both readings, so only the derived path can disagree.
-		if deps.ConfigPath == "" && !configLockPathsSameTarget(m.ConfigPath, pin) {
+		if deps.ConfigPath != "" {
+			// An explicit ConfigPath has no manifest spelling to agree with, but it must still prove
+			// the pin: the override chooses WHICH file this command acts on, and the held sidecar must
+			// still be that file's. Without this the override would skip the proof entirely and act on
+			// a path a directory replacement moved the lock off (CRW-899's eleventh evaluation).
+			if !configLockPathsPinHolds(pin) {
+				return nil, fmt.Errorf("the config file's directory changed while the lock was held (%s); run the deactivation again", lockedPath)
+			}
+		} else if !configLockPathsSameTarget(m.ConfigPath, pin) {
 			return nil, fmt.Errorf("the install manifest now names a different config file (%s, was %s); run the deactivation again", m.ConfigPath, lockedPath)
 		}
 	}

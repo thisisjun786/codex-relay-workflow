@@ -741,6 +741,49 @@ func TestConfigLockPathsDeactivateAcceptsASameBasenameThroughABindMount(t *testi
 	t.Log("the bound alias was accepted")
 }
 
+// The eleventh-generation d1 case, through the public entry point: an explicit ConfigPath selects
+// which file to act on, but it must not skip the pin proof. The pinned directory is replaced after
+// the pin, so the held sidecar no longer belongs to the path this command would restore; without the
+// unconditional proof the override would restore the replacement's key under the moved file's lock.
+func TestConfigLockPathsDeactivateRefusesAReplacedPinWithAnExplicitConfigPath(t *testing.T) {
+	home := configLockActivationHome(t)
+	dirA := filepath.Join(home, "A")
+	dirB := filepath.Join(home, "B")
+	for _, dir := range []string{dirA, dirB} {
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfgA := filepath.Join(dirA, "config.toml")
+	activationWrite(t, cfgA, deactivationConfig)
+	activationWrite(t, filepath.Join(dirB, "config.toml"), deactivationConfig)
+	hash, err := hashOrNull(cfgA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys := map[string]TableKeyRecord{"memories.dedicated_tools": deactivationKey(nil)}
+	stale := configLockActivationManifestBytes(t, &InstallManifest{Version: 2, ConfigPath: cfgA, PostActivateHash: hash, Flags: map[string]FlagRecord{}, TableKeys: keys})
+
+	held := configLockWritersHold(t, cfgA)
+	configLockPathsHandoverRetarget(t, home, stale, func() error {
+		if err := os.Rename(dirA, dirA+".saved"); err != nil {
+			return err
+		}
+		return os.Rename(dirB, dirA)
+	}, held.Release, stale)
+
+	deps := deactivationDeps(home, func([]string) CodexRunResult { return CodexRunResult{} })
+	deps.ConfigPath = cfgA
+	_, err = Deactivate(deps)
+	if err == nil || !strings.Contains(err.Error(), "directory changed") {
+		t.Fatalf("the explicit ConfigPath skipped the pin proof: %v", err)
+	}
+	if got := activationRead(t, filepath.Join(dirA, "config.toml")); got != deactivationConfig {
+		t.Fatalf("the refused deactivation restored the replacement's key: %q", got)
+	}
+}
+
+// The root-parent boundary: a config named directly at the filesystem root must resolve through
 // The root-parent boundary: a config named directly at the filesystem root must resolve through
 // The root-parent boundary: a config named directly at the filesystem root must resolve through
 // "/". Dropping the trailing separator unconditionally would leave an empty parent and resolve the
