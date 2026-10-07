@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
@@ -282,12 +283,11 @@ func configLockPathsCaseFlippedResolvesToThePin(pinned *configLockPathsPin) bool
 	if pinned.lock == nil {
 		return false
 	}
-	// The held sidecar's own name is known to exist, so its case-flipped spelling resolves to it
-	// only on a filesystem that folds case. That is a property of the FILESYSTEM rather than of
-	// the config entry, so an unrelated hard link to the config file does not affect the answer,
-	// and the probe needs neither a directory read nor a directory write — os.Stat of two known
-	// names is all it asks (CRW-899's fourteenth evaluation).
-	held := pinned.lock.Path
+	// The sidecar BESIDE THE PINNED PATH, not the lock's pre-pin spelling: a directory alias
+	// retargeted after the pin would otherwise send the probe to another directory, where the held
+	// sidecar does not live (CRW-899's fifteenth evaluation). The name is the held sidecar's own
+	// basename, which is known to exist.
+	held := filepath.Join(filepath.Dir(pinned.path), filepath.Base(pinned.lock.Path))
 	base := filepath.Base(held)
 	flipped := strings.ToUpper(base)
 	if flipped == base {
@@ -296,15 +296,32 @@ func configLockPathsCaseFlippedResolvesToThePin(pinned *configLockPathsPin) bool
 	if flipped == base {
 		return false
 	}
-	other, err := os.Stat(filepath.Join(filepath.Dir(held), flipped))
-	if err != nil {
-		return false
-	}
 	self, err := os.Stat(held)
 	if err != nil {
 		return false
 	}
-	return os.SameFile(other, self)
+	other, err := os.Stat(filepath.Join(filepath.Dir(held), flipped))
+	if err != nil {
+		return false
+	}
+	// Two names reaching one inode is a case-folding filesystem's single entry ONLY when the inode
+	// has exactly one link. A hard link planted at the flipped name — which is how a case-sensitive
+	// directory could otherwise make this probe report case folding — gives the inode a second
+	// link, so the count separates the two (CRW-899's fifteenth evaluation). A count that cannot be
+	// read is not known to be one, so the comparison refuses.
+	return os.SameFile(other, self) && configLockPathsOneLink(self)
+}
+
+// configLockPathsOneLink reports whether the inode has exactly one directory entry.
+func configLockPathsOneLink(info os.FileInfo) bool {
+	if info == nil {
+		return false
+	}
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return false
+	}
+	return uint64(st.Nlink) == 1
 }
 
 // DecideKeyRestore is deactivate.ts's per-key decision table. backupKnown=false means

@@ -1373,3 +1373,75 @@ func TestConfigLockPathsDeactivateRefusesAnEntryRenamedToAFoldedSibling(t *testi
 }
 
 // The root-parent boundary: a config named directly at the filesystem root must resolve through
+
+// The fifteenth-generation d1 case: a hard link planted at the case-flipped SIDECAR name makes two
+// names reach one inode on a case-SENSITIVE directory, so a probe that trusted os.SameFile alone
+// would report case folding and accept a genuinely different config entry. The inode has two links
+// then, which is what separates a hard link from a case-folding filesystem's single entry.
+func TestConfigLockPathsCaseFlippedProbeRefusesASidecarHardLink(t *testing.T) {
+	home := configLockActivationHome(t)
+	dir := filepath.Join(home, "x")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	cfg := filepath.Join(dir, "config.toml")
+	activationWrite(t, cfg, deactivationConfig)
+	configLockPathsRequiresCaseSensitive(t, dir)
+	pin := configLockPathsTestPin(t, cfg)
+	// The sidecar exists now; plant its flipped name as a second link to the same inode.
+	sidecar := cfg + ".crw-lock"
+	if _, err := os.Stat(sidecar); err != nil {
+		t.Fatalf("the sidecar was not created: %v", err)
+	}
+	if err := os.Link(sidecar, filepath.Join(dir, "CONFIG.TOML.CRW-LOCK")); err != nil {
+		t.Fatal(err)
+	}
+	if configLockPathsCaseFlippedResolvesToThePin(pin) {
+		t.Fatal("a hard link at the flipped sidecar name was reported as case folding")
+	}
+}
+
+// The fifteenth-generation d2 case: the probe must look beside the PINNED path, not beside the
+// lock's pre-pin spelling. The alias is retargeted after the pin, and the new directory holds a hard
+// link at the flipped sidecar name, so a probe that followed the pre-pin spelling would report case
+// folding for a file the lock no longer guards.
+func TestConfigLockPathsCaseFlippedProbeStaysBesideThePinnedPath(t *testing.T) {
+	home := configLockActivationHome(t)
+	dirA := filepath.Join(home, "A")
+	dirB := filepath.Join(home, "B")
+	for _, dir := range []string{dirA, dirB} {
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	configLockPathsRequiresCaseSensitive(t, dirA)
+	activationWrite(t, filepath.Join(dirA, "config.toml"), deactivationConfig)
+	activationWrite(t, filepath.Join(dirB, "config.toml"), deactivationConfig)
+	alias := filepath.Join(home, "alias")
+	if err := os.Symlink("A", alias); err != nil {
+		t.Fatal(err)
+	}
+	pin := configLockPathsTestPin(t, filepath.Join(alias, "config.toml"))
+	// Give the OTHER directory the spoof: a hard link at its sidecar's flipped name.
+	otherSidecar := filepath.Join(dirB, "config.toml.crw-lock")
+	otherLock, err := crwdir.LockConfig(filepath.Join(dirB, "config.toml"), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(otherLock.Release)
+	if err := os.Link(otherSidecar, filepath.Join(dirB, "CONFIG.TOML.CRW-LOCK")); err != nil {
+		t.Fatal(err)
+	}
+	// Retarget the alias, so the lock's pre-pin spelling now names the other directory.
+	if err := os.Remove(alias); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("B", alias); err != nil {
+		t.Fatal(err)
+	}
+	if configLockPathsCaseFlippedResolvesToThePin(pin) {
+		t.Fatal("the probe followed the lock's pre-pin spelling instead of the pinned path")
+	}
+}
+
+// The name-folded count on a readable directory: a separate hard link under ANOTHER name leaves the
