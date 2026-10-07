@@ -88,11 +88,7 @@ function wtf8(text) {
   return Buffer.from(bytes);
 }
 
-function answer(request) {
-  const input = request.input;
-  if (input === null || typeof input !== "object" || Array.isArray(input)) {
-    return refusal();
-  }
+function answer(input) {
   const fn = functions[input.fn];
   if (!fn) return refusal();
   const args = Array.isArray(input.args) ? input.args : [];
@@ -100,6 +96,29 @@ function answer(request) {
   const value = fn(...translated);
   if (input.fn === "MentionedFolders") return sortFolders(value);
   return value;
+}
+
+// run isolates one case before the oracle is consulted. The harness hands the worker pool the
+// caller's environment (Campaign passes os.Environ() through NewPool), so without this step the
+// worker would import and answer under the real HOME, CODEX_HOME, CRW_HOME, CODEXCLAW_HOME and
+// TMPDIR. The echo, memorygate and doctor shims each put those five under request.root per request;
+// this does the same. An input that is not an object is answered with the refusal first and touches
+// nothing else: the pool's start-up handshake is {"id":N,"input":null,"root":""}, a readiness probe
+// that must never read or write a home.
+function run(request) {
+  const input = request.input;
+  if (input === null || typeof input !== "object" || Array.isArray(input)) {
+    return refusal();
+  }
+  const root = typeof request.root === "string" ? request.root : "";
+  if (root !== "") {
+    process.env.HOME = root + "/home";
+    process.env.CODEX_HOME = root + "/codex-home";
+    process.env.CRW_HOME = root + "/crw-home";
+    process.env.CODEXCLAW_HOME = root + "/codexclaw-home";
+    process.env.TMPDIR = root + "/tmp";
+  }
+  return answer(input);
 }
 
 // The answer both sides give an input outside the grammar. It is answered rather than thrown,
@@ -121,7 +140,7 @@ lines.on("line", (line) => {
     return;
   }
   try {
-    process.stdout.write(JSON.stringify({ id: request.id, output: answer(request) }) + "\n");
+    process.stdout.write(JSON.stringify({ id: request.id, output: run(request) }) + "\n");
   } catch (error) {
     process.stdout.write(JSON.stringify({ id: request.id, error: { name: error.name, message: error.message } }) + "\n");
   }

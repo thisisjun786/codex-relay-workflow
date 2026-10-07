@@ -70,6 +70,90 @@ const (
 // in which surrogate they hold stay apart.
 var spawnLoneSurrogates = []string{"\xed\xa0\x80", "\xed\xa0\x81", "\xed\xb0\x80"}
 
+// The nesting a MentionedFolders case builds, which is the one place this target can nest something
+// its classifier reads. The depth is the number the port's JSON-writer bound names
+// (spawnHookRouteMaxDepth, internal/role/spawn/hook_route.go:32), so a case's depth follows the size
+// the campaign passes up to it and reaches it from both sides. That writer bound belongs to the hook
+// route rather than to these six classifiers, so the depth does not exercise it: what it exercises is
+// the mention syntax, whose link path is captured verbatim and so carries the depth into the answer
+// both sides give. The generated input is therefore really nested rather than a long flat string, and
+// a case's nesting depth follows size, which is what the deep-nesting case pins.
+//
+// Nothing is put in a second argument: MentionedFolders reads only its first, so a value there would be
+// serialized and parsed by the harness and reach neither side's code.
+const (
+	// spawnNestingPrefix, spawnNestingFolder and spawnNestingSuffix are the mention the nesting is
+	// built in: a skill:// link, the one mention shape MentionedFolders answers verbatim, so the
+	// depth the generator built comes back in the answer on both sides.
+	spawnNestingPrefix = "skill:///x/"
+	spawnNestingFolder = "crw-dev"
+	spawnNestingSuffix = "/SKILL.md"
+	// spawnNestingBound is the port's JSON-writer depth bound (spawnHookRouteMaxDepth) that the
+	// crw-614 case names, and spawnNestingSpread how far past it a case reaches, so a generated depth
+	// straddles the boundary rather than sitting on one side of it.
+	spawnNestingBound  = 4400
+	spawnNestingSpread = 3
+	// spawnNestingFixedBytes is the link text around the nesting: the prefix, the folder and the
+	// suffix.
+	spawnNestingFixedBytes = len(spawnNestingPrefix) + len(spawnNestingFolder) + len(spawnNestingSuffix)
+	// spawnNestingBytesPerLevel is what one level costs in the link path: one '[' and one ']'.
+	spawnNestingBytesPerLevel = 2
+	// spawnNestingMaxBytes caps what one generated case may build: the byte cost of the deepest case
+	// the bound allows. A depth's bytes are computed from it before anything is built, and a depth
+	// past the cap is refused rather than built.
+	spawnNestingMaxBytes = spawnNestingFixedBytes + spawnNestingBytesPerLevel*(spawnNestingBound+spawnNestingSpread)
+)
+
+// spawnNestingBytes is what one case of this depth costs to build, computed before it is built.
+func spawnNestingBytes(depth int) int {
+	if depth < 0 {
+		depth = 0
+	}
+	return spawnNestingFixedBytes + spawnNestingBytesPerLevel*depth
+}
+
+// spawnNestingDepth is the nesting depth one case builds. The campaign's size is an arbitrary int
+// (rng.Int()), so it is folded into the port's bound and its spread rather than used directly, which
+// puts a case on either side of the 4,400-level bound.
+func spawnNestingDepth(size int) int {
+	if size < 0 {
+		size = -size
+	}
+	return size % (spawnNestingBound + spawnNestingSpread + 1)
+}
+
+// spawnNestingMention is the mention a depth builds, or false when the depth's bytes would pass
+// spawnNestingMaxBytes, so nothing past the cap is built.
+func spawnNestingMention(depth int) (string, bool) {
+	if depth < 0 {
+		depth = 0
+	}
+	if spawnNestingBytes(depth) > spawnNestingMaxBytes {
+		return "", false
+	}
+	return spawnNestingPrefix + strings.Repeat("[", depth) + spawnNestingFolder + strings.Repeat("]", depth) + spawnNestingSuffix, true
+}
+
+// spawnMentionedFoldersArgs is the MentionedFolders argument list: the ordinary message with the
+// nested mention appended, so the classifier is still driven on varied text and the depth lands in
+// the one place it reads.
+func spawnMentionedFoldersArgs(rng *rand.Rand, size int) []any {
+	depth := spawnNestingDepth(size)
+	mention, ok := spawnNestingMention(depth)
+	if !ok {
+		mention = spawnNestingPrefix + spawnNestingFolder + spawnNestingSuffix
+	}
+	return []any{spawnMessage(rng, 1+rng.Intn(8)) + " " + mention}
+}
+
+// spawnMentionedFoldersInput is the whole MentionedFolders case, in the grammar the target reads.
+func spawnMentionedFoldersInput(rng *rand.Rand, size int) pyjson.Object {
+	return pyjson.Object{
+		{Key: "fn", Value: spawnFnMentionedFolders},
+		{Key: "args", Value: spawnMentionedFoldersArgs(rng, size)},
+	}
+}
+
 // spawnWords are the message pieces the generator assembles: the role-like spellings, the mention
 // shapes, the header lines, and the characters that make the classifiers' folding and scanning
 // interesting.
@@ -135,6 +219,8 @@ func spawnFunctionNames() []string {
 }
 
 // spawnGenerate builds one input: {"fn": name, "args": [...]}. It is deterministic for a given rng.
+// size drives the MentionedFolders case's nesting depth, which is the one structural parameter this
+// target has to reach a boundary with.
 func spawnGenerate(rng *rand.Rand, size int) any {
 	names := spawnFunctionNames()
 	name := names[rng.Intn(len(names))]
@@ -149,7 +235,7 @@ func spawnGenerate(rng *rand.Rand, size int) any {
 		toolNames := []any{"spawn_agent", "collaborationspawn_agent", "collaboration.spawn_agent", "collaboration_spawn_agent", "Spawn_Agent", "spawn_agent ", "", nil, 3, true}
 		args = []any{toolNames[rng.Intn(len(toolNames))]}
 	case spawnFnMentionedFolders:
-		args = []any{spawnMessage(rng, 1+rng.Intn(8))}
+		return spawnMentionedFoldersInput(rng, size)
 	}
 	return pyjson.Object{{Key: "fn", Value: name}, {Key: "args", Value: args}}
 }
