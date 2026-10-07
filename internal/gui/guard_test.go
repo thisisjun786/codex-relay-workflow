@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"io/fs"
 	"net"
 	"net/http"
@@ -83,20 +84,32 @@ func writeHeaders() map[string]string {
 func TestGuardHost(t *testing.T) {
 	server := testServer(t)
 	for _, test := range []struct {
-		name string
-		host string
-		want int
+		name      string
+		host      string
+		emptyHost bool
+		want      int
 	}{
-		{"the loopback address", "127.0.0.1:51234", http.StatusOK},
-		{"the loopback name", "localhost:51234", http.StatusOK},
-		{"the loopback name in another case", "LOCALHOST:51234", http.StatusOK},
-		{"no Host at all", "", http.StatusForbidden},
-		{"another name", "evil.example:51234", http.StatusForbidden},
-		{"another port", "127.0.0.1:51235", http.StatusForbidden},
-		{"the name without a port", "127.0.0.1", http.StatusForbidden},
+		{"the loopback address", "127.0.0.1:51234", false, http.StatusOK},
+		{"the loopback name", "localhost:51234", false, http.StatusOK},
+		{"the loopback name in another case", "LOCALHOST:51234", false, http.StatusOK},
+		{"no Host at all", "", true, http.StatusForbidden},
+		{"another name", "evil.example:51234", false, http.StatusForbidden},
+		{"another port", "127.0.0.1:51235", false, http.StatusForbidden},
+		{"the name without a port", "127.0.0.1", false, http.StatusForbidden},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			recorder := request(server, http.MethodGet, "/api/thing", test.host, "", nil)
+			// The shared helper leaves httptest's default host in place when the host argument
+			// is empty, so the empty-Host case is built here and clears the field itself; that
+			// is what makes this case send a real empty Host rather than example.com.
+			var recorder *httptest.ResponseRecorder
+			if test.emptyHost {
+				req := httptest.NewRequest(http.MethodGet, "/api/thing", nil)
+				req.Host = ""
+				recorder = httptest.NewRecorder()
+				server.ServeHTTP(recorder, req)
+			} else {
+				recorder = request(server, http.MethodGet, "/api/thing", test.host, "", nil)
+			}
 			if recorder.Code != test.want {
 				t.Fatalf("host %q: status %d, want %d (%s)", test.host, recorder.Code, test.want, recorder.Body.String())
 			}
@@ -134,19 +147,102 @@ func TestGuardWrite(t *testing.T) {
 	}
 }
 
-// A write body over 1 MiB is refused with 413.
+// The write body limit is exactly 1 MiB: a body of exactly maxBodyBytes passes, one byte
+// more is refused with 413, and a body whose length is not declared is bounded by the read
+// (MaxBytesReader) rather than by the declared Content-Length, so the same boundary holds
+// for a chunked upload. The body need not be valid JSON: the guard never parses it.
 func TestGuardBodyLimit(t *testing.T) {
 	server := testServer(t)
-	body := `{"pad":"` + strings.Repeat("x", maxBodyBytes) + `"}`
-	recorder := request(server, http.MethodPost, "/api/thing", guardHost, body, writeHeaders())
-	if recorder.Code != http.StatusRequestEntityTooLarge {
-		t.Fatalf("an oversized body: status %d, want %d (%s)", recorder.Code, http.StatusRequestEntityTooLarge, recorder.Body.String())
+	// A body of exactly the limit passes.
+	if got := request(server, http.MethodPost, "/api/thing", guardHost, strings.Repeat("x", maxBodyBytes), writeHeaders()); got.Code != http.StatusOK {
+		t.Fatalf("a body of exactly %d bytes: status %d (%s)", maxBodyBytes, got.Code, got.Body.String())
 	}
-	// A body just under the limit still passes, so the check is a limit and not a refusal.
-	fitting := `{"pad":"` + strings.Repeat("x", maxBodyBytes-64) + `"}`
-	if got := request(server, http.MethodPost, "/api/thing", guardHost, fitting, writeHeaders()); got.Code != http.StatusOK {
-		t.Fatalf("a body under the limit: status %d (%s)", got.Code, got.Body.String())
+	// One byte over the limit is refused.
+	if got := request(server, http.MethodPost, "/api/thing", guardHost, strings.Repeat("x", maxBodyBytes+1), writeHeaders()); got.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("a body of %d bytes: status %d, want %d (%s)", maxBodyBytes+1, got.Code, http.StatusRequestEntityTooLarge, got.Body.String())
 	}
+	// A body whose length is unknown, as a chunked upload has, is bounded by the read: one
+	// byte over the limit is refused by MaxBytesReader, not by the Content-Length pre-check.
+	if got := unknownLengthWrite(t, server, maxBodyBytes+1); got.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("an unknown-length body of %d bytes: status %d, want %d (%s)", maxBodyBytes+1, got.Code, http.StatusRequestEntityTooLarge, got.Body.String())
+	}
+	if got := unknownLengthWrite(t, server, maxBodyBytes); got.Code != http.StatusOK {
+		t.Fatalf("an unknown-length body of %d bytes: status %d (%s)", maxBodyBytes, got.Code, got.Body.String())
+	}
+}
+
+// unknownLengthBody is a body type httptest does not recognise, so the request it builds
+// carries ContentLength -1 exactly as a chunked upload does. Without it the shared request
+// helper's strings.Reader declares the exact length and only the pre-check is exercised.
+type unknownLengthBody struct{ r io.Reader }
+
+func (b unknownLengthBody) Read(p []byte) (int, error) { return b.r.Read(p) }
+
+// unknownLengthWrite drives one write whose declared length is unknown through the guard. It
+// asserts the unknown length itself, so a body type httptest happens to recognise cannot turn
+// this into a second test of the Content-Length pre-check.
+func unknownLengthWrite(t *testing.T, server *Server, size int) *httptest.ResponseRecorder {
+	t.Helper()
+	body := unknownLengthBody{r: io.LimitReader(strings.NewReader(strings.Repeat("x", size)), int64(size))}
+	req := httptest.NewRequest(http.MethodPost, "/api/thing", body)
+	if req.ContentLength != -1 {
+		t.Fatalf("the test body declared its length (%d); the unknown-length path is not exercised", req.ContentLength)
+	}
+	req.Host = guardHost
+	for name, value := range writeHeaders() {
+		req.Header.Set(name, value)
+	}
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, req)
+	return recorder
+}
+
+// A write header is counted by line. An Origin field that is present must carry exactly one
+// allowed Origin; an empty value or a repeated field is refused, and so is a repeated
+// Content-Type or X-CRW-Token even when every line is individually valid. A comma inside one
+// line is not split, so it fails the exact comparison as it stands.
+func TestGuardWriteHeaderLineCounts(t *testing.T) {
+	server := testServer(t)
+	for _, test := range []struct {
+		name    string
+		headers map[string][]string
+		want    int
+	}{
+		{"an empty Origin", map[string][]string{"Content-Type": {"application/json"}, tokenHeader: {guardToken}, "Origin": {""}}, http.StatusForbidden},
+		{"an allowed Origin followed by a foreign one", map[string][]string{"Content-Type": {"application/json"}, tokenHeader: {guardToken}, "Origin": {"http://127.0.0.1:51234", "https://evil.example"}}, http.StatusForbidden},
+		{"a foreign Origin followed by an allowed one", map[string][]string{"Content-Type": {"application/json"}, tokenHeader: {guardToken}, "Origin": {"https://evil.example", "http://127.0.0.1:51234"}}, http.StatusForbidden},
+		{"two identical allowed Origin lines", map[string][]string{"Content-Type": {"application/json"}, tokenHeader: {guardToken}, "Origin": {"http://127.0.0.1:51234", "http://127.0.0.1:51234"}}, http.StatusForbidden},
+		{"two Content-Type lines", map[string][]string{"Content-Type": {"application/json", "application/json"}, tokenHeader: {guardToken}}, http.StatusForbidden},
+		{"a JSON Content-Type followed by a plain-text one", map[string][]string{"Content-Type": {"application/json", "text/plain"}, tokenHeader: {guardToken}}, http.StatusForbidden},
+		{"two correct token lines", map[string][]string{"Content-Type": {"application/json"}, tokenHeader: {guardToken, guardToken}}, http.StatusForbidden},
+		{"a correct token line followed by a wrong one", map[string][]string{"Content-Type": {"application/json"}, tokenHeader: {guardToken, "not-the-token"}}, http.StatusForbidden},
+		{"one Origin line holding a comma", map[string][]string{"Content-Type": {"application/json"}, tokenHeader: {guardToken}, "Origin": {"http://127.0.0.1:51234, https://evil.example"}}, http.StatusForbidden},
+		{"one allowed Origin line", map[string][]string{"Content-Type": {"application/json"}, tokenHeader: {guardToken}, "Origin": {"http://127.0.0.1:51234"}}, http.StatusOK},
+		{"no Origin field at all", map[string][]string{"Content-Type": {"application/json"}, tokenHeader: {guardToken}}, http.StatusOK},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			recorder := repeatedHeaderWrite(server, test.headers)
+			if recorder.Code != test.want {
+				t.Fatalf("status %d, want %d (%s)", recorder.Code, test.want, recorder.Body.String())
+			}
+		})
+	}
+}
+
+// repeatedHeaderWrite drives one write whose header fields may hold several lines each; the
+// shared request helper cannot express that, because its headers argument is a map holding
+// one value per name.
+func repeatedHeaderWrite(server *Server, headers map[string][]string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodPost, "/api/thing", strings.NewReader(`{"a":1}`))
+	req.Host = guardHost
+	for name, values := range headers {
+		for _, value := range values {
+			req.Header.Add(name, value)
+		}
+	}
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, req)
+	return recorder
 }
 
 // A path segment holding two consecutive dots is refused with 400, for a read and a write.
