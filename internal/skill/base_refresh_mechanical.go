@@ -454,12 +454,12 @@ func (g *refreshGit) settleMechanical(ctx context.Context, facts refreshFacts, p
 		for _, command := range sortedCommands(regenerate) {
 			rule := dagsched.RuleRegeneratePref + command
 			scope := func(p string) bool {
-			if r, ok := decided[p]; ok {
-				return r == rule
+				if r, ok := decided[p]; ok {
+					return r == rule
+				}
+				r, ok := cov.ruleFor(p)
+				return ok && r == rule
 			}
-			r, ok := cov.ruleFor(p)
-			return ok && r == rule
-		}
 			result, err := g.regenerate(ctx, head, command, regenerate[command], scope, headEntries, devEntries, timeout)
 			if err != nil {
 				return nil, nil, err

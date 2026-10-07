@@ -39,7 +39,13 @@ const (
 
 // RefreshResolved is a path one hop left to settle and the blob the head holds for it (empty when the resolution deleted the file): a file git could not merge, or the plugin manifest the head recorded
 // again after a clean merge (CRW-732). What a hand put there is the one thing the relay cannot prove; Rule is the proved mechanical rule, or empty when the parent must name and review the file.
-type RefreshResolved struct{ Path, Blob, Rule string }
+type RefreshResolved struct {
+	Path, Blob, Rule string
+	// Conflicted is whether git could not merge the path, so two sides edited it. A clean
+	// difference the head produced by regenerating (CRW-898, item 9) has no second edit to
+	// attribute and needs no contributor agreement; a conflict does.
+	Conflicted bool
+}
 
 // RefreshMechanicalChecker evaluates selected conflict paths in one already proved merge.
 // The skill package registers its existing checker at initialization to avoid an import cycle.
@@ -52,6 +58,7 @@ type RefreshMechanicalChecker func(context.Context, string, RefreshStep, []Regio
 // the candidate's declaration alone: the relay has already weighed the candidate and every
 // contributing node, and a candidate-only declaration must not block the built-in rule.
 const RefreshDecisionBuiltin = ""
+
 type RefreshMechanicalRefusal struct {
 	Detail string
 	// Manual is an internal eligibility result, never part of the wire proof.
@@ -126,7 +133,12 @@ func (p *refreshProof) applyMechanical(ctx context.Context, g *refreshRepo, chec
 		rules := map[string]string{}
 		decided := map[string]string{}
 		for _, r := range st.Resolved {
-			if rule, ok := MechanicalRuleFor(append([][]Region{regions}, sets[r.Path]...), r.Path); ok && len(sets[r.Path]) > 0 {
+			// A conflict needs every contributing node to agree, because two sides edited the place. A
+			// clean difference the head produced by regenerating (CRW-898, item 9) has no such second
+			// edit to attribute: the candidate"s own declaration admits it, and the re-run below
+			// is the proof. Everything else keeps the contributor requirement.
+			admitted := len(sets[r.Path]) > 0 || (!r.Conflicted && declaresRegenerate(regions, r.Path))
+			if rule, ok := MechanicalRuleFor(append([][]Region{regions}, sets[r.Path]...), r.Path); ok && admitted {
 				paths = append(paths, r.Path)
 				descriptions = append(descriptions, fmt.Sprintf("%s (%s)", r.Path, rule))
 				rules[r.Path] = rule
@@ -595,10 +607,19 @@ func refreshPathsText(paths []string) string {
 	return strings.Join(paths, ", ")
 }
 
+// declaresRegenerate is whether the candidate's own declaration covers a path with a
+// mechanical regenerate rule: a whole-file mechanical region naming regenerate:<command>. It admits
+// the path as one a rule may settle; whether every contributing node agrees is decided later, by
+// MechanicalRuleFor over every declaration given (CRW-898, item 9).
+func declaresRegenerate(declared []Region, path string) bool {
+	rule, ok := MechanicalRuleFor([][]Region{declared}, path)
+	return ok && strings.HasPrefix(rule, RuleRegeneratePref)
+}
+
 // proveBaseRefresh walks the first parents from head back to accepted. Every commit on the way must be a merge of exactly two parents, the previous commit first and a commit on the first-parent line of baseTip
 // second, and must hold the tree git merges from those two parents. A merge git cannot do cleanly is accepted only when its tree differs from the tree git writes in the files git could not merge and nowhere
 // else; those files are returned as resolved by hand. A refusal is an answer; an error means git could not answer (a commit the checkout does not hold is the caller's to name before this).
-func proveBaseRefresh(ctx context.Context, g *refreshRepo, accepted, head, baseTip string) (*refreshProof, *refreshRefusal, error) {
+func proveBaseRefresh(ctx context.Context, g *refreshRepo, accepted, head, baseTip string, declared []Region) (*refreshProof, *refreshRefusal, error) {
 	refuse := func(code, format string, args ...any) (*refreshProof, *refreshRefusal, error) {
 		return nil, &refreshRefusal{Code: code, Detail: fmt.Sprintf(format, args...)}, nil
 	}
@@ -701,10 +722,12 @@ func proveBaseRefresh(ctx context.Context, g *refreshRepo, accepted, head, baseT
 				if conflicted[d] {
 					continue
 				}
-				// The plugin manifest's version line is the one clean difference the proof does not
-				// refuse: the line is derived from the payload, and the mechanical step recomputes it
-				// from the head itself (CRW-732). Every other clean difference keeps today's refusal.
-				if d == pluginversion.ManifestRepoPath {
+				// Two clean differences are not a hand resolution: the plugin manifest's version line,
+				// which is derived from the payload and recomputed from the head itself (CRW-732), and a
+				// path the candidate's own declaration covers with a mechanical regenerate rule
+				// (CRW-898, item 9): the command rebuilds the file, and the mechanical step re-runs it and
+				// compares. Every other clean difference keeps today's refusal.
+				if d == pluginversion.ManifestRepoPath || declaresRegenerate(declared, d) {
 					clean = append(clean, d)
 					continue
 				}
@@ -734,7 +757,7 @@ func proveBaseRefresh(ctx context.Context, g *refreshRepo, accepted, head, baseT
 			} else if marked {
 				return refuse(RefreshTreeDiffers, "%s commits %s with conflict markers in it, which no one resolved", cur, c)
 			}
-			step.Resolved = append(step.Resolved, RefreshResolved{Path: c, Blob: blob})
+			step.Resolved = append(step.Resolved, RefreshResolved{Path: c, Blob: blob, Conflicted: true})
 		}
 		// The manifest the head recorded again after a clean merge is settled like a conflicted one:
 		// by the rule the mechanical step proves for it, or by the parent naming it.

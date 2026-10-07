@@ -254,18 +254,9 @@ func (s *Scheduler) RecordBaseRefresh(ctx context.Context, plan, node, actor str
 	if said := strings.ToLower(strings.TrimSpace(reported.String)); said != "" && !(len(said) >= 7 && strings.HasPrefix(pr.HeadSHA, said)) {
 		return out, refuse(contract.RefusalDispositionConflict, "the report of generation %d (event %s) names the head %s and pull request %s#%d is at %s now: the head that was verified is not the head to refresh", rel.Generation, head.EventID, said, forge, number, pr.HeadSHA)
 	}
-	proof, refusal, err := proveBaseRefresh(ctx, g, acc.HeadSHA, pr.HeadSHA, tip.SHA)
-	if err != nil {
-		return out, refuse(contract.RefusalMergeTargetUnreadable, "git could not answer for %s: %v", checkout, err)
-	}
-	if refusal != nil {
-		return out, refusedProof(refusal)
-	}
-	// Check authority before executing any declared regeneration command; the write
-	// checks it again in its transaction, as every deciding write does.
-	if err := s.fence(ctx, q, plan, actor); err != nil {
-		return out, err
-	}
+	// The candidate"s own declaration is read before the proof so a clean difference under
+	// its declared regenerate rule is proved as a step rather than refused tree_differs (CRW-898,
+	// item 9).
 	declarations, err := loadDeclarations(ctx, q, plan)
 	if err != nil {
 		return out, err
@@ -282,6 +273,18 @@ func (s *Scheduler) RecordBaseRefresh(ctx context.Context, plan, node, actor str
 			r.Repository = canonical
 			regions = append(regions, r)
 		}
+	}
+	proof, refusal, err := proveBaseRefresh(ctx, g, acc.HeadSHA, pr.HeadSHA, tip.SHA, regions)
+	if err != nil {
+		return out, refuse(contract.RefusalMergeTargetUnreadable, "git could not answer for %s: %v", checkout, err)
+	}
+	if refusal != nil {
+		return out, refusedProof(refusal)
+	}
+	// Check authority before executing any declared regeneration command; the write
+	// checks it again in its transaction, as every deciding write does.
+	if err := s.fence(ctx, q, plan, actor); err != nil {
+		return out, err
 	}
 	// A recorded proof is immutable evidence. Replay its stored classification,
 	// including manual-only proofs made before the checker was linked, without

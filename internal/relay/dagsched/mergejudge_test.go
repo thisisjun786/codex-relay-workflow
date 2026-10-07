@@ -422,7 +422,7 @@ func TestEvictionSurvivesAFreshAcceptanceOfTheSameHead(t *testing.T) {
 	}
 }
 
-// Two nodes that were accepted at one commit are two pull requests of two relationships: a turn that is open for the first is not an answer for the second.
+// Two nodes that were accepted at one commit are two pull requests of two relationships: a turn that is open for the first is never an answer for the second. Since CRW-898 (the management decision of 10-07 13:5x) the second node's request is kept as a member-only waiting turn of the same parent instead of being refused, so it still never receives the first turn.
 func TestMergeRequestIsNotAnsweredByAnotherNodesTurnAtTheSameHead(t *testing.T) {
 	t.Parallel()
 	k := newJudgeKit(t)
@@ -436,8 +436,11 @@ func TestMergeRequestIsNotAnsweredByAnotherNodesTurnAtTheSameHead(t *testing.T) 
 		t.Fatalf("I = %v %+v %v", err, first, turn)
 	}
 	second, other, err := k.sched.RequestMergeTurn(context.Background(), "g", "D", "parent", MergeRequestInput{Host: "host"})
-	if refusalReason(err) != "disposition_conflict" || other != nil || !second.Eligible() || !strings.Contains(err.Error(), "rel-g-I") {
+	if err != nil || !second.Eligible() || other == nil {
 		t.Fatalf("D at the same head = %v %+v %v", err, second, other)
+	}
+	if other["turnId"] == turn["turnId"] || other["state"] != "member_waiting" || other["relationshipId"] != "rel-g-D" {
+		t.Fatalf("D got %v, want its own member-only waiting turn (never I's)", other)
 	}
 }
 

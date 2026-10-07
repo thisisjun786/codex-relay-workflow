@@ -1158,6 +1158,17 @@ its correction; the operator page is `docs/relay/README.md`).
 
 **Choosing the members.** The parent that holds the lane turn is the leader.
 
+**A parent's further ready pull requests.** A parent holds one lane turn per target, and since
+CRW-898 (the management decision of 10-07 13:5x) its other ready pull requests for the same target are
+kept as **member-only waiting turns**: `merge-turn-request` for another accepted candidate of the same
+target creates a turn in the `member_waiting` state instead of refusing it, and that turn rides bundles
+and never takes the solo grant. The solo grant order is unchanged — each parent's oldest live turn is
+the one that takes the lane, and a later one waits behind it — so a bundle is no longer capped at one
+member per parent, while fairness between parents and every member's own turn, verdict, acceptance and
+landing record stay as they are. A member-only waiting turn is withdrawn with `merge-turn-withdraw`
+like any waiting turn, and `merge-turn-show` reports it as `member_only_waiting` in `heldBackBy`.
+
+
 - Every member must be a verified, accepted candidate. Before the leader opens the bundle, each
   member's own parent runs `dag-accept` on the member pull request's head, so the member's relationship
   carries an active acceptance standing on that head. The leader picks members whose `dag-ready` reads
@@ -1180,7 +1191,14 @@ its correction; the operator page is `docs/relay/README.md`).
    than the dev tip) with no event. A bundle of one member is today's lane and opens no train.
 2. Build the bundle branch `refs/heads/crw-train/<train_id>` from the dev tip D by `git merge --no-ff`
    of each member head in order. Do not resolve by hand; a member that conflicts is left out and the
-   train reopened.
+   train reopened. One difference is not a hand resolution and is not a reason to drop a member: when a
+   chain step's tree differs from what git merges only in `plugins/crw/.codex-plugin/plugin.json`, and
+   the version line the head records is the one the head's own payload derives (the same built-in
+   `regenerate:plugin-version` rule the single lane's base refresh uses), `merge-train-verify` proves
+   that step by the built-in rule and records it with the train in the verified event's `steps`. Two
+   members that both re-recorded the version line therefore ride together instead of one of them being
+   dropped. Every other difference, and a conflict on any other path, still fails the chain proof and
+   drops that member.
 3. Open the one bundle pull request. Its title is "CRW bundle <train_id>: #a #b …" and its body lists
    the members and the evidence. Post it through a file scanned by gitleaks, and label it `crw-lane`
    so its run is a full one even in light mode.
@@ -1209,6 +1227,22 @@ its correction; the operator page is `docs/relay/README.md`).
 `assignment-mark` (merged) and `dag-integration-observe` on its relationship — except for a member the
 landed event's `excluded` list names, whose work did not land and which therefore gets neither mark.
 The ruling and the integration observation stay the parent's work.
+
+**The bundle pull request's review threads.** The one-shot reviews (Devin, GitHub Codex) run on
+the bundle pull request like any other. The leader owns every thread on it, the same way a single-lane
+parent owns the threads on its own pull request:
+
+- Map each finding to the member it points at. A finding that names a member's file, package or commit
+  is that member's.
+- A **blocking** finding (Devin red, Codex P0 or P1, or any security finding, whoever wrote it) that
+  points at one member drops **that member only**. Abandon the bundle, reopen it without that member
+  and verify and land the rest once more; the dropped member goes back to its own parent. This is the
+  CRW-898 answer to the second bundle of 10-07: one member's P1 no longer costs the whole bundle.
+- A blocking finding that points at **no** member stops the bundle as before: there is no member to
+  remove, so the leader abandons it and reports.
+- A non-blocking finding (Devin yellow, Codex P2 or P3) is answered on its thread with the member pull
+  request it belongs to named, and resolved. The member's own parent may also answer it.
+- Recheck what a fix changed on the new head; never carry a green result across a head it never saw.
 
 **Failure handling.**
 

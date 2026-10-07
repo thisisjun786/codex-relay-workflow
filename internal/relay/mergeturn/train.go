@@ -312,6 +312,9 @@ func (s *Service) Open(ctx context.Context, turn, actor, base string, members []
 			if err != nil {
 				return nil, err
 			}
+			if !SameCommit(pull.HeadSHA, memberHead) {
+				return nil, trainConflict("the leader's pull request %d reads head %s and the head the bundle carries is %s; a member's head is not refreshed by the bundle", pr, pyvalue.StrRepr(pull.HeadSHA), pyvalue.StrRepr(memberHead))
+			}
 			expectations = append(expectations, TrainMemberExpectation{TurnID: turn, PRNumber: pr, RelationshipID: early.RelationshipID.String, AcceptedHead: memberHead, RuledEventID: active.EventID, RulingHead: rulingHead, RulingHeadSource: rulingSource})
 			continue
 		}
@@ -328,6 +331,9 @@ func (s *Service) Open(ctx context.Context, turn, actor, base string, members []
 		active, memberHead, rulingHead, rulingSource, err := memberHeadFor(pr, member.RelationshipID.String, member.CandidateHead)
 		if err != nil {
 			return nil, err
+		}
+		if !SameCommit(pull.HeadSHA, memberHead) {
+			return nil, trainConflict("pull request %d reads head %s and the head the bundle carries for it is %s; the member's head moved", pr, pyvalue.StrRepr(pull.HeadSHA), pyvalue.StrRepr(memberHead))
 		}
 		expectations = append(expectations, TrainMemberExpectation{TurnID: member.TurnID, PRNumber: pr, RelationshipID: member.RelationshipID.String, AcceptedHead: memberHead, RuledEventID: active.EventID, RulingHead: rulingHead, RulingHeadSource: rulingSource})
 	}

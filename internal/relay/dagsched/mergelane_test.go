@@ -107,11 +107,13 @@ func TestMergeLaneStaysFIFOAndLandsOnlyJudgedTrees(t *testing.T) {
 	if err != nil || third["state"] != "waiting" {
 		t.Fatalf("the third project's turn = %v %v", err, third)
 	}
-	// asking again is the same turn; D cannot take a second one while I's is open
+	// asking again is the same turn; D cannot take a solo grant while I's is open. Since CRW-898 (the
+	// management decision of 10-07 13:5x) D's request is kept as a member-only waiting turn of the same
+	// parent instead of being refused, and it still never receives I's turn.
 	if _, again, err := k.request("I"); err != nil || again["turnId"] != first["turnId"] {
 		t.Fatalf("I again = %v %v", err, again)
 	}
-	if res, turn, err := k.request("D"); refusalReason(err) != "disposition_conflict" || !res.Eligible() || turn != nil || !strings.Contains(err.Error(), first["turnId"].(string)) {
+	if res, turn, err := k.request("D"); err != nil || !res.Eligible() || turn == nil || turn["turnId"] == first["turnId"] || turn["state"] != "member_waiting" {
 		t.Fatalf("D while I's turn is open = %v %+v %v", err, res, turn)
 	}
 	released, err := service.Release(ctx, other["turnId"].(string), "parent-b", "returned", "done", "")
