@@ -469,10 +469,10 @@ func migrateReviewFollowupDepths(deps map[string][]string) map[string]int {
 }
 
 // migrateReviewFollowupManifestEntry is one artifactManifest entry of a receipt: the relative path and the kind the receipt
-// is judged with.
+// is judged with. Both are read by their exact spelling, as the receipt reader's own lookups read them.
 type migrateReviewFollowupManifestEntry struct {
-	Path string `json:"path"`
-	Kind string `json:"kind"`
+	Path string
+	Kind string
 }
 
 // migrateReviewFollowupReceiptManifest reads one planned item as a receipt and returns the artifactManifest entries it
@@ -535,9 +535,18 @@ func migrateReviewFollowupDecodeManifest(r io.Reader, limit int64) ([]migrateRev
 	}
 	manifest := make([]migrateReviewFollowupManifestEntry, 0, len(items))
 	for _, item := range items {
+		// Each entry's keys are read by their exact spelling, as the receipt reader's own map lookups read them, so a
+		// field spelled differently is not the path or kind the reader would use and names no dependency here either.
+		var fields map[string]json.RawMessage
+		if json.Unmarshal(item, &fields) != nil {
+			continue
+		}
 		var entry migrateReviewFollowupManifestEntry
-		if json.Unmarshal(item, &entry) != nil {
-			continue // an entry that is not an object with string fields names no dependency
+		if raw, present := fields["path"]; !present || json.Unmarshal(raw, &entry.Path) != nil || entry.Path == "" {
+			continue
+		}
+		if raw, present := fields["kind"]; !present || json.Unmarshal(raw, &entry.Kind) != nil || entry.Kind == "" {
+			continue
 		}
 		manifest = append(manifest, entry)
 	}

@@ -214,6 +214,9 @@ func TestMigrateApplyReviewFollowupBoundsTheRecordNotTheObject(t *testing.T) {
 		"entry of another type":      {record: "{\"artifactManifest\":[1,2]}", limit: 40, want: true},
 		"entry of the wrong shape":   {record: "{\"artifactManifest\":[{\"path\":1,\"kind\":2}]}", limit: 60, want: true},
 		"one good entry and one bad": {record: "{\"artifactManifest\":[1,{\"path\":\"v.json\",\"kind\":\"verdict\"}]}", limit: 90, want: true, entries: 1},
+		// An entry's own keys are read by their exact spelling too, so a field spelled differently names no dependency
+		// rather than a false one the receipt reader would never use.
+		"entry field of another case": {record: "{\"artifactManifest\":[{\"Path\":\"v.json\",\"Kind\":\"verdict\"}]}", limit: 80, want: true},
 		// A duplicated key is read the way the receipt reader's own map decode reads it: the last value wins.
 		"duplicate key keeps the last": {
 			record:  "{\"artifactManifest\":[{\"path\":\"first.json\",\"kind\":\"verdict\"}],\"artifactManifest\":[{\"path\":\"last.json\",\"kind\":\"verdict\"}]}",
