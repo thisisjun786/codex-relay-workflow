@@ -258,11 +258,13 @@ var (
 	// the root followed by the end of the line, a quote, or a blank. The roots alone are no skill
 	// path (a listing names them), but a job that carries one as a value names where the skill
 	// scripts live, so it is the other shape this detector has to see (CRW-353). YAML accepts more
-	// spellings of the same assignment than a bare key: a single- or double-quoted key, and blanks
-	// before the colon (`SKILLS_ROOT : port/cxc/skills`). Each one carried the root past the check
-	// would let a job assemble a skill path from the variable and run it, and the run statement names
-	// no literal skill path for the other pattern to catch (CRW-939, the generation-2 evaluations).
-	skillRootValue = regexp.MustCompile(`(?:^|[{,])\s*(?:[A-Za-z_][A-Za-z0-9_-]*|"[^"]*"|'[^']*')[ \t]*:\s*["']?(?:` + alternation(skillAssetRoots) + `)/?["']?(?:[,\s}]|$)`)
+	// spellings of the same assignment than a bare key, and every one of them has to be read, or a
+	// job could assemble a skill path from the variable and run it while the run statement names no
+	// literal skill path for the other pattern to catch (CRW-939, the generation-2 evaluations):
+	// a single- or double-quoted key, blanks before the colon (`SKILLS_ROOT : port/cxc/skills`), a key
+	// inside a flow mapping (`env: {SKILLS_ROOT: port/cxc/skills}`), and the body line of a block
+	// scalar (`SKILLS_ROOT: |` with the root alone on the next line), which is no assignment at all.
+	skillRootValue = regexp.MustCompile(`(?:^|[{,])\s*(?:[A-Za-z_][A-Za-z0-9_-]*|"[^"]*"|'[^']*')[ \t]*:\s*["']?(?:` + alternation(skillAssetRoots) + `)/?["']?(?:[,\s}]|$)|^\s*(?:` + alternation(skillAssetRoots) + `)/?[ \t]*(?:#.*)?$`)
 )
 
 // skillScriptsNodeJob is the one job whose subject is the staged skills' Node tests (the
@@ -633,6 +635,10 @@ func TestWorkflow_python_detector(t *testing.T) {
 		{"      \"SKILLS_ROOT\" : port/cxc/skills", true},                                      // and so is a quoted key with one
 		{"      env: {SKILLS_ROOT: port/cxc/skills}", true},                                    // a flow mapping is the same assignment
 		{"      env: {OTHER: 1, SKILLS_ROOT: port/cxc/skills}", true},                          // after a comma too
+		{"          port/cxc/skills", true},                                                    // the body line of a YAML block scalar is the same value
+		{"          port/cxc/skills/", true},                                                   // with a trailing slash
+		{"          port/cxc/skills # the staged skills", true},                                // and with a trailing comment
+		{"          port/cxc/skillset", false},                                                 // a longer name is no root
 		{"      - run: node --test port/cxc/skills/x/tests/a.test.mjs", true},                  // a skill path in any other job
 		{"      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0", false},
 	} {
