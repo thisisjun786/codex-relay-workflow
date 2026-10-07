@@ -207,8 +207,10 @@ func download(ctx context.Context, pin Pin, seams *Seams, dir string) (string, e
 // remove an ancestor this call's scan found present. The mkdir of a component then answers ENOENT;
 // the missing components are recomputed and the walk continues, at most createRootMkdirRounds
 // times, so a normal overlap does not become a host failure. What this call made stays recorded
-// either way, and a component that was made, removed and made again is the same directory, so it is
-// recorded once.
+// either way, and the record is kept outermost first -- the order removeCreated walks backwards --
+// so an ancestor re-made after a component below it is still reached only after that component. A
+// component the scan found missing but the mkdir finds present was made by another install, so it is
+// dropped from the record rather than removed as if it were this call's.
 func createRoot(dir string) ([]string, error) {
 	// A root that keeps vanishing under this call must not spin: after this many recomputes the
 	// error is returned rather than the walk being tried again.
@@ -225,14 +227,20 @@ func createRoot(dir string) ([]string, error) {
 			err := os.Mkdir(component, 0o755)
 			switch {
 			case err == nil:
-				// A component made, removed and made again is the same directory, so the list stays
-				// the set of paths this call created, outermost first.
+				// The component is this call's, wherever in the walk it was made, so the record is
+				// kept outermost first: removeCreated walks it backwards, and an ancestor must not
+				// be reached while a directory below it is still there.
 				if !slices.Contains(created, component) {
 					created = append(created, component)
 				}
+				slices.SortFunc(created, func(a, b string) int {
+					return strings.Count(a, string(os.PathSeparator)) - strings.Count(b, string(os.PathSeparator))
+				})
 			case errors.Is(err, fs.ErrExist):
-				// Already there, or another call made it in the same instant; either way it is not
-				// this call's to remove.
+				// The path is there but the scan found it missing, so whoever made it is not this
+				// call: a component this call made was removed by a concurrent install and made
+				// again by it. This call no longer owns the path and must not remove it.
+				created = slices.DeleteFunc(created, func(path string) bool { return path == component })
 			case errors.Is(err, fs.ErrNotExist):
 				// An ancestor the scan found was removed before this mkdir; the missing components
 				// are recomputed and the walk continues.

@@ -8,7 +8,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -55,12 +54,31 @@ func TestToolsReview809AncestorRemovedDuringCreate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("createRoot with an ancestor removed between its scan and its mkdir: %v", err)
 	}
-	want := []string{toolsDir, tempRoot}
-	if strings.Join(created, ",") != strings.Join(want, ",") {
-		t.Fatalf("createRoot recorded %v, want the ancestor and the target %v", created, want)
+	// Both the re-made ancestor and the target are this call's. The ancestor may be named more than
+	// once, because it was made once before it vanished and once again after; what matters is that
+	// every entry is one of the two and that the ancestor comes before the target, which is the order
+	// removeCreated's reverse walk needs.
+	first, last := -1, -1
+	for i, path := range created {
+		switch path {
+		case toolsDir:
+			if first < 0 {
+				first = i
+			}
+		case tempRoot:
+			last = i
+		default:
+			t.Fatalf("createRoot recorded %q, which is neither the ancestor nor the target", path)
+		}
+	}
+	if first < 0 || last < 0 {
+		t.Fatalf("createRoot recorded %v, want both the ancestor and the target", created)
+	}
+	if first > last {
+		t.Fatalf("createRoot recorded %v, want the ancestor before the target", created)
 	}
 	removeCreated(created)
-	for _, path := range want {
+	for _, path := range []string{toolsDir, tempRoot} {
 		if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
 			t.Errorf("%s survived the cleanup: %v", path, statErr)
 		}
@@ -139,5 +157,80 @@ func TestToolsReview809GivesUpAfterThreeRounds(t *testing.T) {
 		if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
 			t.Errorf("%s was left behind after createRoot gave up: %v", path, statErr)
 		}
+	}
+}
+
+// C1, ordering side: a component this call already made can vanish together with its ancestor, and
+// the retry then makes the ancestor again before that component. The record must keep the ancestor
+// before the component, or removeCreated walks the list backwards, tries the ancestor while it is
+// still non-empty, and leaves it behind.
+func TestToolsReview809RecreatedAncestorIsRemovedInOrder(t *testing.T) {
+	base := t.TempDir()
+	parent := filepath.Join(base, "parent")
+	if err := os.Mkdir(parent, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	child := filepath.Join(parent, "child")
+	leaf := filepath.Join(child, "leaf")
+
+	removed := false
+	review809Seam(t, func(path string) {
+		if path != leaf || removed {
+			return
+		}
+		removed = true
+		// The concurrent install takes back the ancestor and the component this call already made.
+		if err := os.RemoveAll(parent); err != nil {
+			t.Errorf("the seam could not remove the ancestor: %v", err)
+		}
+	})
+
+	created, err := createRoot(leaf)
+	if err != nil {
+		t.Fatalf("createRoot with a made ancestor removed: %v", err)
+	}
+	removeCreated(created)
+	for _, path := range []string{parent, child, leaf} {
+		if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+			t.Errorf("%s survived the cleanup of %v: %v", path, created, statErr)
+		}
+	}
+}
+
+// C1, ownership side: a path this call made can be removed by a concurrent install and made again
+// by it before this call's next mkdir. That mkdir then answers EEXIST, so the directory standing
+// at the path is not this call's and must not be removed as if it were.
+func TestToolsReview809KeepsAnotherCallsDirectory(t *testing.T) {
+	base := t.TempDir()
+	ancestor := filepath.Join(base, "a")
+	target := filepath.Join(ancestor, "b")
+
+	phase := 0
+	review809Seam(t, func(path string) {
+		switch {
+		case path == target && phase == 0:
+			// The concurrent install takes its ancestor back before this call's mkdir reaches the
+			// target, which is what makes this call recompute.
+			phase = 1
+			if err := os.Remove(ancestor); err != nil {
+				t.Errorf("the seam could not remove the ancestor: %v", err)
+			}
+		case path == ancestor && phase == 1:
+			// The concurrent install then makes that path again, so this call's mkdir answers
+			// EEXIST and the directory standing there belongs to the other call.
+			phase = 2
+			if err := os.Mkdir(ancestor, 0o755); err != nil {
+				t.Errorf("the seam could not make the ancestor again: %v", err)
+			}
+		}
+	})
+
+	created, err := createRoot(target)
+	if err != nil {
+		t.Fatalf("createRoot with a path another install took over: %v", err)
+	}
+	removeCreated(created)
+	if info, statErr := os.Stat(ancestor); statErr != nil || !info.IsDir() {
+		t.Fatalf("this call removed the directory the other install made: %v", statErr)
 	}
 }
