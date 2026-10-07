@@ -395,6 +395,41 @@ func review818SetOptionJSON(t *testing.T, state, decisionID, options string) {
 	review818Exec(t, state, "UPDATE dag_user_decisions SET options_json = ? WHERE decision_id = ?", options, decisionID)
 }
 
+// Two option ids the fingerprint calls one identity (HOLD and hold, which Validate admits because
+// the trimmed ids differ) each keep their own reply, and an identical repeat raise of that question
+// folds: the replies are compared option by option, so the question can still take its second
+// observation and move from open to raised.
+func TestReview818AnIdenticalReraiseWithOneIdentityFolds(t *testing.T) {
+	state := crw737Store(t)
+	const question = "Hold the merge until the retention decision?"
+	raise := func() crw737Answer {
+		return crw737Run(t, "--state", state, "decision-raise", "--kind", "merge_approval",
+			"--context", question, "--option", "HOLD=Hold:wait", "--option", "hold=Continue:resume",
+			"--option-reply", "HOLD=stop", "--option-reply", "hold=answer",
+			"--blocking", "relationship=rel-903", "--origin-project", "PRJ-A", "--source", "report=1",
+			"--authority", "user")
+	}
+	first := crw737JSON(t, raise())
+	decision, _ := first["decisionId"].(string)
+	if decision == "" {
+		t.Fatalf("the first raise answered %v", first)
+	}
+	second := crw737JSON(t, raise())
+	if second["merged"] != true || second["decisionId"] != decision {
+		t.Fatalf("the identical re-raise answered %v, want the stored record %s merged", second, decision)
+	}
+	record := crw737List(t, state)[0].(map[string]any)
+	if record["state"] != "raised" {
+		t.Fatalf("the re-raise left the record %v, want it raised", record["state"])
+	}
+	if seen, _ := record["seen"].([]any); len(seen) != 2 {
+		t.Fatalf("the re-raise left %d observations, want the appended second one", len(seen))
+	}
+	if replies := review818OptionReplies(t, record); replies["HOLD"] != "stop" || replies["hold"] != "answer" {
+		t.Fatalf("the re-raise changed the stored replies: %v", replies)
+	}
+}
+
 // A question whose options carry no reply has nothing for the fold to reconcile, so a repeat raise
 // of it must still fold and append its observation however the ids are spelled. An option id the
 // fingerprint calls one identity is admitted by the raise path (Validate refuses only an exact

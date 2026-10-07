@@ -111,12 +111,55 @@ func TestReview818ARepeatRaiseWithoutRepliesStillFolds(t *testing.T) {
 	}
 }
 
-// An option reply the stored set cannot place is refused: two stored ids that are one identity to
-// the fingerprint cannot say which option an incoming reply belongs to.
+// The stored option set may hold two ids the fingerprint calls one identity (Validate refuses only
+// an exact duplicate), each with its own reply. An incoming raise that names the same ids is the
+// same statement of the same question, so it folds: each reply is compared with the reply of the
+// option that carries the same id, not with every option in the normalized bucket.
+func TestReview818AnIdenticalReraiseWithOneIdentityFolds(t *testing.T) {
+	stored := review818Record(Authority{Kind: AuthorityUser}, review818Relationship(), []Option{
+		{ID: "HOLD", Label: "hold", Effect: "hold the merge", Reply: ReplyStop},
+		{ID: "hold", Label: "hold again", Effect: "hold the merge", Reply: ReplyAnswer},
+	})
+	incoming := stored
+	incoming.Seen = append([]Seen{}, stored.Seen...)
+	merged, err := Merge(stored, incoming)
+	if err != nil {
+		t.Fatalf("an identical repeat raise: %v", err)
+	}
+	if len(merged.Seen) != 2 {
+		t.Fatalf("the fold left %d observations, want the appended second one", len(merged.Seen))
+	}
+	for i, option := range merged.Options {
+		if option.ID != stored.Options[i].ID || option.Reply != stored.Options[i].Reply {
+			t.Fatalf("the fold changed option %d: %+v", i, option)
+		}
+	}
+}
+
+// The conflict is per option id: a raise that changes HOLD's reply while hold keeps its own is
+// refused, and the option whose reply it did not change is not what refuses it.
+func TestReview818AConflictIsJudgedPerOptionID(t *testing.T) {
+	stored := review818Record(Authority{Kind: AuthorityUser}, review818Relationship(), []Option{
+		{ID: "HOLD", Label: "hold", Effect: "hold the merge", Reply: ReplyStop},
+		{ID: "hold", Label: "hold again", Effect: "hold the merge", Reply: ReplyAnswer},
+	})
+	incoming := stored
+	incoming.Options = []Option{
+		{ID: "HOLD", Label: "hold", Effect: "hold the merge", Reply: ReplyAnswer},
+		{ID: "hold", Label: "hold again", Effect: "hold the merge", Reply: ReplyAnswer},
+	}
+	if _, err := Merge(stored, incoming); !errors.Is(err, ErrMergeConflict) {
+		t.Fatalf("changing one option's reply = %v, want ErrMergeConflict", err)
+	}
+}
+
+// An option reply the stored set cannot place is refused. The stored ids here are HOLD and HoLd,
+// which the fingerprint calls one identity and whose exact spellings the incoming raise does not
+// repeat, so a named reply has no single stored option to belong to.
 func TestReview818AReplyThatNamesNoSingleStoredOptionIsRefused(t *testing.T) {
 	stored := review818Record(Authority{Kind: AuthorityUser}, review818Relationship(), []Option{
 		{ID: "HOLD", Label: "hold", Effect: "hold the merge"},
-		{ID: "hold", Label: "hold again", Effect: "hold the merge"},
+		{ID: "HoLd", Label: "hold again", Effect: "hold the merge"},
 	})
 	incoming := stored
 	incoming.Options = []Option{

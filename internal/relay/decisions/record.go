@@ -614,18 +614,19 @@ func mergeOptionReplies(stored, incoming []Option) ([]Option, error) {
 			continue
 		}
 		incomingReply := strings.TrimSpace(option.Reply)
+		// Each incoming option is matched with the stored option that carries the same id, so a
+		// repeat raise of a set that holds two ids the fingerprint calls one identity compares like
+		// with like. An id that matches no single stored option cannot say where a named reply
+		// belongs, and that is refused rather than guessed at; a raise that names no reply for it
+		// writes nothing and folds as it did.
 		if len(indexes) > 1 {
-			// Two stored ids the fingerprint calls one identity (a row written before this check, or
-			// one the raise path admits because the trimmed ids differ): the stored set cannot say
-			// which of them an incoming reply belongs to. Nothing is written when the raise names no
-			// reply, or when every candidate already carries it, so the fold proceeds; a reply that
-			// would have to be placed is refused rather than guessed at.
-			for _, index := range indexes {
-				if strings.TrimSpace(merged[index].Reply) != incomingReply {
-					return nil, fmt.Errorf("%w: the stored options %q and %q are one id to the fingerprint, and this raise names reply %q for it", ErrMergeConflict, merged[indexes[0]].ID, merged[indexes[1]].ID, option.Reply)
-				}
+			if exact := exactOptionIndexes(merged, indexes, option.ID); len(exact) == 1 {
+				indexes = exact
+			} else if incomingReply == "" {
+				continue
+			} else {
+				return nil, fmt.Errorf("%w: the stored options %q and %q are one id to the fingerprint, so the reply %q this raise names for %q cannot be placed", ErrMergeConflict, merged[indexes[0]].ID, merged[indexes[1]].ID, option.Reply, option.ID)
 			}
-			continue
 		}
 		index := indexes[0]
 		storedReply := strings.TrimSpace(merged[index].Reply)
@@ -639,6 +640,18 @@ func mergeOptionReplies(stored, incoming []Option) ([]Option, error) {
 		}
 	}
 	return merged, nil
+}
+
+// exactOptionIndexes narrows candidates to the stored options whose id is the incoming id as
+// written, which is the one an incoming reply for that spelling belongs to.
+func exactOptionIndexes(stored []Option, candidates []int, id string) []int {
+	exact := make([]int, 0, len(candidates))
+	for _, index := range candidates {
+		if strings.TrimSpace(stored[index].ID) == strings.TrimSpace(id) {
+			exact = append(exact, index)
+		}
+	}
+	return exact
 }
 
 // validateStoredRaisedAt is Validate with the one exemption the store's read uses (decodeUserDecision):
