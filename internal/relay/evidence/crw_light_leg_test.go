@@ -325,9 +325,11 @@ func TestCRW824AnOptionalLightLegBesideTheRequiredOne(t *testing.T) {
 	}
 }
 
-// A leg the collector did not mark is not read as one, whatever the record spells: the flag is a
-// strict boolean, so a string, a number and a nil all read false and cannot make the lane treat an
-// untested head as tested.
+// A leg whose testSkipped the collector did not leave unmarked is not read as one that ran its
+// tests. The flag is read fail-closed: only an absent field or an explicit false says the leg ran,
+// so a string, a number, a nil and an empty list all say it did not and cannot make the lane treat
+// an unconfirmed head as tested. The shape check refuses such a value where it runs; this predicate
+// is what the merge turn's own reading has, since it receives only the rows (CRW-946).
 func TestCRW824ANonBooleanTestSkippedReadsFalse(t *testing.T) {
 	for _, value := range []any{"true", 1, nil, []any{}} {
 		checks := []any{
@@ -335,8 +337,9 @@ func TestCRW824ANonBooleanTestSkippedReadsFalse(t *testing.T) {
 			crw824Entry("workflow-run:600:go-product (test-1)#0", "go-product (test-1)", "success", 1, false),
 		}
 		checks[1].(map[string]any)["testSkipped"] = value
-		if problems := ChecksProblems(crw824Head, []string{"dev-gate"}, checks); len(problems) != 0 {
-			t.Fatalf("testSkipped %#v read as set: %v", value, problems)
+		problems := ChecksProblems(crw824Head, []string{"dev-gate"}, checks)
+		if len(problems) != 1 || problems[0].Code != ChecksStale {
+			t.Fatalf("testSkipped %#v must fail closed, want one %s, got %v", value, ChecksStale, problems)
 		}
 	}
 }

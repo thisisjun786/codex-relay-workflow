@@ -198,6 +198,24 @@ func testUnreadableMark(o contract.OrderedObject) bool {
 	return !isBool || flag
 }
 
+// confirmedLegMark reports whether a check object may be read as a leg whose tests the run actually
+// ran: neither mark is set. testUnreadable is read fail-closed through testUnreadableMark, and
+// testSkipped is read the same way here, because the reading the merge turn uses receives only these
+// rows and runs no shape check of its own: a value the reader cannot read must not be taken as a leg
+// that ran its tests, and ShapeProblems refuses it on the paths that do run the shape check
+// (CRW-946). An absent field and an explicit false are a leg the collector left unmarked.
+func confirmedLegMark(o contract.OrderedObject) bool {
+	if testUnreadableMark(o) {
+		return false
+	}
+	value, present := o.Lookup("testSkipped")
+	if !present {
+		return true
+	}
+	flag, isBool := value.(bool)
+	return isBool && !flag
+}
+
 // ShapeProblems is mergeevidence.shape_problems. It must run before semantic predicates.
 func ShapeProblems(review, checks, required any, head *string) []Problem {
 	var problems []Problem
@@ -362,8 +380,10 @@ func isLightLegName(entry any) bool {
 
 // testSkippedJobs lists the names of the entries of one workflow run that the collector marked
 // testSkipped: go-product test legs that concluded success without running their test step
-// (CRW-824). The flag is read as a strict boolean and the name must be a test leg, so a restated
-// record that states anything else cannot make the lane treat an untested head as tested. Each leg
+// (CRW-824). The name must be a test leg, and the flag is read fail-closed: an absent field and an
+// explicit false are a leg that ran its tests, while true and any value the reader cannot read are
+// a leg that did not, so a restated record that states something else cannot make the lane treat an
+// unconfirmed leg as one that ran. Each leg
 // is read at its OWN newest attempt within the run rather than at the judged check's attempt: a
 // rerun of the failed jobs leaves the successful skipped legs at an earlier attempt than the
 // rerun's dev-gate, and that leg still says the head's tests did not run. Reading it at its own
@@ -389,8 +409,15 @@ func testSkippedJobs(checks []any, run string, highest map[string]*big.Int) []st
 		if o.Get("conclusion") != "success" {
 			continue
 		}
-		flag, isBool := o.Get("testSkipped").(bool)
-		if !isBool || !flag {
+		// The mark is read fail-closed: an absent field or an explicit false says the leg ran its
+		// tests, and true or any value the reader cannot read says it did not, so a restated record
+		// that states something else cannot make the lane treat an unconfirmed leg as one that ran
+		// (CRW-946).
+		value, present := o.Lookup("testSkipped")
+		if !present {
+			continue
+		}
+		if flag, isBool := value.(bool); isBool && !flag {
 			continue
 		}
 		names = append(names, textField(entry, "name"))
@@ -476,11 +503,28 @@ func confirmedTestLegs(checks []any, run string, highest map[string]*big.Int) in
 	return count
 }
 
-// headHoldsTestLeg reports whether any workflow run on this head holds a go-product test leg, read
-// at each leg's own newest attempt. A head whose CI runs no test leg at all is a workflow that holds
-// only the gate, and the light-run rule has nothing to be about there: the pinned integration is
-// answered by the gate exactly as it was before (CRW-946).
-func headHoldsTestLeg(checks []any, highest map[string]*big.Int) bool {
+// headTestLegNames lists every go-product test leg the head's CI runs, read at each leg's own newest
+// attempt. It is the suite an integration's run must have run to be the success that integration is
+// counted by. A run whose gate is a known integration the branch rule does not name is a parallel
+// reading of the same check rather than an obligation, so its legs are not part of this head's suite:
+// otherwise a foreign workflow could demand that the pinned integration reproduce legs it never ran
+// (CRW-946). A head whose CI runs no test leg at all answers empty, and the pinned integration is
+// then answered by the gate exactly as it was before (CRW-946).
+func headTestLegNames(checks []any, name string, pinned []string, highest map[string]*big.Int) []string {
+	// foreign marks the runs whose gate is a known integration outside the pinned set.
+	foreign := map[string]bool{}
+	for _, entry := range checks {
+		if textField(entry, "name") != name {
+			continue
+		}
+		run := workflowRun(textField(entry, "runId"))
+		if run == "" || foreign[run] {
+			continue
+		}
+		provider := providerField(entry)
+		foreign[run] = len(pinned) > 0 && provider != "" && !slices.Contains(pinned, provider)
+	}
+	seen := map[string]bool{}
 	for _, entry := range checks {
 		if !isLightLegName(entry) {
 			continue
@@ -489,22 +533,53 @@ func headHoldsTestLeg(checks []any, highest map[string]*big.Int) bool {
 		if newest, seen := highest[runId]; seen && attempt(entry).Cmp(newest) != 0 {
 			continue
 		}
-		return true
+		if foreign[workflowRun(runId)] {
+			continue
+		}
+		seen[textField(entry, "name")] = true
 	}
-	return false
+	names := make([]string, 0, len(seen))
+	for name := range seen {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	return names
 }
 
-// runProvedTests reports whether the gate of one check entry may answer a pinned integration: the
-// run behind it confirmed that it ran its tests, or the head's CI holds no test leg at all. A
-// workflow run that holds no test leg on a head that does -- the dev-gate-only shape -- never showed
-// that it ran the tests, so it cannot be the integration success the criterion counts (CRW-946). An
-// entry that is not a workflow run at all (a published check run or a commit status) holds no job
-// and is read by the same rule.
-func runProvedTests(checks []any, run string, highest map[string]*big.Int) bool {
+// runRanTheWholeSuite reports whether the gate of one check entry may answer a pinned integration:
+// the run behind it confirmed that it ran every test leg the head's CI defines. The success counted
+// for an integration is the gate of a run that actually ran the tests, so a run that confirmed only
+// some of them -- or none, the dev-gate-only shape -- answers no integration: otherwise a partially
+// tested run would fill the integration a light run was exempted from, although no run from that
+// integration ran the whole suite (CRW-946). A head whose CI defines no test leg answers every run,
+// so a gate-only workflow is read as before. An entry that is not a workflow run at all (a published
+// check run or a commit status) holds no job and is read by the same rule.
+func runRanTheWholeSuite(checks []any, run, name string, pinned []string, highest map[string]*big.Int) bool {
 	if run == "" {
 		return true
 	}
-	return confirmedTestLegs(checks, run, highest) > 0 || !headHoldsTestLeg(checks, highest)
+	for _, leg := range headTestLegNames(checks, name, pinned, highest) {
+		confirmed := false
+		for _, entry := range checks {
+			runId := textField(entry, "runId")
+			if workflowRun(runId) != run || textField(entry, "name") != leg {
+				continue
+			}
+			if newest, seen := highest[runId]; seen && attempt(entry).Cmp(newest) != 0 {
+				continue
+			}
+			o, _ := Object(entry)
+			if o.Get("conclusion") != "success" || !confirmedLegMark(o) {
+				continue
+			}
+			confirmed = true
+			break
+		}
+		if !confirmed {
+			return false
+		}
+	}
+	return true
 }
 
 // testedElsewhere reports whether another workflow run on this head actually ran the tests the
@@ -598,10 +673,7 @@ func ranEverySkippedLeg(checks []any, candidate, head string, skipped []string, 
 			if o.Get("headSha") != any(head) || o.Get("conclusion") != "success" {
 				continue
 			}
-			if flag, isBool := o.Get("testSkipped").(bool); isBool && flag {
-				continue
-			}
-			if testUnreadableMark(o) {
+			if !confirmedLegMark(o) {
 				continue
 			}
 			answered = true
@@ -746,6 +818,16 @@ func ChecksProblemsWith(head string, required []string, checks []any, requireDec
 		if !isRequired(name) {
 			continue
 		}
+		// A namesake from a known integration the branch rule does not name is an optional parallel
+		// reading of the same check, not the integration that answers it: the branch rule decides
+		// which integrations are obligations, and a foreign workflow's legs are not legs this head's
+		// pinned integration has to reproduce (CRW-946). A provider the collector could not fill is
+		// unknown rather than foreign -- the check-run listing it reads is filtered to the latest
+		// run -- so that entry's legs are still read, or the very run whose tests did not run would
+		// be dropped by the filter (CRW-946).
+		if !answers(entry, name) && providerField(entry) != "" {
+			continue
+		}
 		// A required check whose own run attempt holds a go-product test leg that concluded
 		// success without running its tests is not evidence, even when the required check itself
 		// succeeded -- which is the shape CI light mode produces, where dev-gate is green and the
@@ -753,12 +835,11 @@ func ChecksProblemsWith(head string, required []string, checks []any, requireDec
 		// light leg makes the run no merge evidence, never a rerun. The lowest (run, name) pair is
 		// kept, so the detail does not move with the enumeration (CRW-661).
 		//
-		// This is read before the integration filter, because whether the run's tests ran is a
-		// fact about the head and not about which integration answered the gate: the collector
-		// fills an entry's provider from the check-run listing filtered to the LATEST run, so the
-		// gate of an older light run carries none, and filtering first would drop the very run
-		// whose tests did not run (CRW-946). A leg whose test step could not be read is the same
-		// shape: the run says nothing about the commit (CRW-946).
+		// Where the branch rule names no integration for this check, answers accepts every entry and
+		// this reads every one of them. Where it does name integrations, an entry whose provider the
+		// collector could not fill is unknown rather than foreign, and answers accepts an unknown
+		// provider only where the rule names none -- so the run whose tests did not run is not
+		// dropped by the filter (CRW-946).
 		if unconfirmed := unconfirmedTestLegs(checks, workflowRun(run), highest); len(unconfirmed) > 0 {
 			// Another run of the same required check on this head that actually ran those legs'
 			// tests is the evidence: the lane's repair for a light run is a labeled full run on the
@@ -769,9 +850,6 @@ func ChecksProblemsWith(head string, required []string, checks []any, requireDec
 					lightKey, lightRun, lightName = key, run, unconfirmed[0]
 				}
 			}
-		}
-		if !answers(entry, name) {
-			continue
 		}
 		if o.Get("conclusion") == "success" {
 			continue
@@ -843,18 +921,14 @@ func ChecksProblemsWith(head string, required []string, checks []any, requireDec
 				if textField(entry, "name") == name && textField(entry, "provider") == provider && attempt(entry).Cmp(highest[textField(entry, "runId")]) == 0 {
 					o, _ := Object(entry)
 					// The success counted for a pinned integration is the gate of a run that
-					// actually ran its tests. The gate of a run holding a leg whose tests were
-					// skipped, or could not be read, answers no integration, even where a
-					// substitute exempted the run: the substitute answers the integration
-					// through its own gate. And a run that confirmed no test leg at all -- the
-					// dev-gate-only shape -- never showed that it ran the tests, so its gate
-					// answers no integration either (CRW-946).
+					// actually ran the tests -- all of them, not merely one. The gate of a run
+					// holding a leg whose tests were skipped, or could not be read, answers no
+					// integration, even where a substitute exempted the run: the substitute
+					// answers the integration through its own gate. And a run that ran only part
+					// of the suite -- or none of it, the dev-gate-only shape -- never showed that
+					// it ran the tests the integration is counted by (CRW-946).
 					run := workflowRun(textField(entry, "runId"))
-					// The gate of a workflow run that holds no test leg at all -- the dev-gate-only
-					// shape -- is not an integration success either: the run never showed that it ran
-					// the tests (CRW-946). A run that holds no job (a published check run or a commit
-					// status) carries no test legs by construction and is read as before.
-					if o.Get("conclusion") == "success" && runUsable(run) && runProvedTests(checks, run, highest) {
+					if o.Get("conclusion") == "success" && runUsable(run) && runRanTheWholeSuite(checks, run, name, providers[name], highest) {
 						found = true
 					}
 				}

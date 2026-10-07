@@ -556,3 +556,75 @@ func TestEvidenceReview759ShapeRefusesAnUnreadableMarkTheCollectorCannotProduce(
 		}
 	}
 }
+
+// A pinned integration must be answered by a run that ran the whole suite, not merely one leg. A
+// run that confirmed a single test leg while the head's CI defines two does not replace the
+// light run for that integration, even though it is a partial substitute (CRW-946, the evaluation's d1).
+func TestEvidenceReview759PartialRunIsNoIntegrationSuccess(t *testing.T) {
+	pinned := map[string][]string{"dev-gate": {"42", "99"}}
+	checks := []any{
+		review759Entry("workflow-run:600:dev-gate#0", "dev-gate", "success", nil),
+		review759Entry("workflow-run:600:go-product (test-1)#0", "go-product (test-1)", "success", map[string]bool{"testSkipped": true}),
+		review759Entry("workflow-run:600:go-product (test-2)#0", "go-product (test-2)", "success", map[string]bool{"testSkipped": true}),
+		review759Entry("workflow-run:601:dev-gate#0", "dev-gate", "success", nil),
+		review759Entry("workflow-run:601:go-product (test-1)#0", "go-product (test-1)", "success", nil),
+		review759Entry("workflow-run:601:go-product (test-2)#0", "go-product (test-2)", "success", nil),
+		review759Entry("workflow-run:602:dev-gate#0", "dev-gate", "success", nil),
+		review759Entry("workflow-run:602:go-product (test-1)#0", "go-product (test-1)", "success", nil),
+	}
+	for i, provider := range []string{"42", "42", "42", "99", "99", "99", "42", "42"} {
+		checks[i].(map[string]any)["provider"] = provider
+	}
+	// run 601 (integration 99) ran both legs and exempts the light run 600. run 602 (integration
+	// 42) ran only test-1, so integration 42 is still unanswered.
+	problems := ChecksProblemsWith(crw824Head, []string{"dev-gate"}, checks, true, pinned)
+	if len(problems) != 1 || problems[0].Code != ChecksStale {
+		t.Fatalf("a partially tested run must not answer the integration, want one %s, got %v", ChecksStale, problems)
+	}
+	// The contrast: run 602 runs both legs, so it answers integration 42.
+	ran := review759Entry("workflow-run:602:go-product (test-2)#0", "go-product (test-2)", "success", nil)
+	ran["provider"] = "42"
+	if problems := ChecksProblemsWith(crw824Head, []string{"dev-gate"}, append(checks, ran), true, pinned); len(problems) != 0 {
+		t.Fatalf("a run that ran the whole suite answers its integration, want no problem, got %v", problems)
+	}
+}
+
+// A malformed testSkipped value cannot be read, so the leg is not evidence that the run tested the
+// head. merge-turn-check receives only the check rows and runs no shape check of its own, so the
+// predicate itself fails closed (CRW-946, the evaluation's d2).
+func TestEvidenceReview759MalformedSkippedMarkFailsClosed(t *testing.T) {
+	for _, value := range []any{"true", 1, []any{}, map[string]any{}} {
+		checks := []any{
+			review759Entry("workflow-run:600:dev-gate#0", "dev-gate", "success", nil),
+			review759Entry("workflow-run:600:go-product (test-1)#0", "go-product (test-1)", "success", nil),
+			review759Entry("workflow-run:601:dev-gate#0", "dev-gate", "success", nil),
+			review759Entry("workflow-run:601:go-product (test-1)#0", "go-product (test-1)", "success", nil),
+		}
+		checks[1].(map[string]any)["testSkipped"] = value
+		checks[3].(map[string]any)["testSkipped"] = value
+		problems := ChecksProblems(crw824Head, []string{"dev-gate"}, checks)
+		if len(problems) != 1 || problems[0].Code != ChecksStale {
+			t.Fatalf("testSkipped %#v must fail closed, want one %s, got %v", value, ChecksStale, problems)
+		}
+	}
+}
+
+// A namesake from a known integration the branch rule does not name is an optional parallel reading,
+// not an obligation: it must not block the pinned integration's own full run (CRW-946, the
+// evaluation's d3, a regression this generation introduced).
+func TestEvidenceReview759ForeignNamesakeDoesNotBlockThePinnedIntegration(t *testing.T) {
+	pinned := map[string][]string{"dev-gate": {"42"}}
+	checks := []any{
+		review759Entry("workflow-run:600:dev-gate#0", "dev-gate", "success", nil),
+		review759Entry("workflow-run:600:go-product (test-extra)#0", "go-product (test-extra)", "success", map[string]bool{"testSkipped": true}),
+		review759Entry("workflow-run:601:dev-gate#0", "dev-gate", "success", nil),
+		review759Entry("workflow-run:601:go-product (test-1)#0", "go-product (test-1)", "success", nil),
+	}
+	checks[0].(map[string]any)["provider"] = "99"
+	checks[1].(map[string]any)["provider"] = "99"
+	checks[2].(map[string]any)["provider"] = "42"
+	checks[3].(map[string]any)["provider"] = "42"
+	if problems := ChecksProblemsWith(crw824Head, []string{"dev-gate"}, checks, true, pinned); len(problems) != 0 {
+		t.Fatalf("a foreign namesake must not block the pinned integration, want no problem, got %v", problems)
+	}
+}
