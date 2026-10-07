@@ -600,6 +600,116 @@ func TestImproveReview799ParentSwappedBeforeCreationIsRefused(t *testing.T) {
 	}
 }
 
+// TestImproveReview799InputReplacedRightAfterTheReadIsRefused covers the check C2 promises after
+// each reader returns: an input whose path reaches a different file in that window is refused
+// there, before the bundle is written, not only at the rename. The seam runs exactly where the
+// collection re-examines the inputs, so a build without that examination fails this test even
+// though the pre-rename comparison would still be there.
+func TestImproveReview799InputReplacedRightAfterTheReadIsRefused(t *testing.T) {
+	s := improveTestSetup(t)
+	improveReview799Store(t, s)
+	out := filepath.Join(improveReview799OutDir(t, s), "bundle.json")
+	improveInputRelayConfig(t, s)
+	replaced := false
+	previous := improveInputAfterRead
+	improveInputAfterRead = func() {
+		replaced = true
+		if err := os.Remove(s.dbPath); err != nil {
+			t.Errorf("removing the store: %v", err)
+		}
+		if err := os.WriteFile(s.dbPath, []byte("replaced"), 0o600); err != nil {
+			t.Errorf("replacing the store: %v", err)
+		}
+	}
+	t.Cleanup(func() { improveInputAfterRead = previous })
+	code, _, stderr := improveTestRun(t, s, "--out", out)
+	if !replaced {
+		t.Fatalf("the post-read check ran without the seam: exit %d, stderr %q", code, stderr)
+	}
+	if code != 1 || !strings.Contains(stderr, improveReasonInputChanged) {
+		t.Fatalf("an input replaced right after the read: exit %d, stderr %q, want the named refusal %s", code, stderr, improveReasonInputChanged)
+	}
+	if _, err := os.Stat(out); !os.IsNotExist(err) {
+		t.Errorf("the refused run wrote a bundle (stat err %v)", err)
+	}
+}
+
+// TestImproveReview799ParentReplacedBeforeTheWriteIsRefused covers the directory the write actually
+// lands in: the plan is taken, the destination's spelling is then made to reach a configured source
+// directory, and the write refuses because the directory it opened is not the one the plan named.
+func TestImproveReview799ParentReplacedBeforeTheWriteIsRefused(t *testing.T) {
+	s := improveTestSetup(t)
+	improveReview799Store(t, s)
+	out := improveReview799OutDir(t, s)
+	improveInputRelayConfig(t, s)
+	section := improveSection{Sources: map[string]improveSourceConfig{improveKindRelay: {Path: s.stateDir}}}
+	plan, err := improvePlanOutput(filepath.Join(out, "bundle.json"))
+	if err != nil {
+		t.Fatalf("the plan: %v", err)
+	}
+	ids := improveIdentityNew(true)
+	defer ids.improveIdentityClose()
+	if err := ids.improveIdentityRecord(section); err != nil {
+		t.Fatalf("the recording: %v", err)
+	}
+	// The spelling now reaches the configured source directory, while the plan named the real one.
+	if err := os.RemoveAll(out); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(s.stateDir, out); err != nil {
+		t.Skipf("symbolic links are unavailable here: %v", err)
+	}
+	err = improveWriteFile(plan, ids, []byte("{}\n"))
+	if err == nil {
+		t.Fatalf("a parent replaced before the write was not refused")
+	}
+	if !strings.Contains(err.Error(), improveReasonOutputParent) {
+		t.Errorf("the refusal named %v, want %s", err, improveReasonOutputParent)
+	}
+	entries, err := os.ReadDir(s.stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), "improve-bundle-") || entry.Name() == "bundle.json" {
+			t.Errorf("the refused write left %s in the source directory", entry.Name())
+		}
+	}
+}
+
+// TestImproveReview799UnreadableOutputSpellingFailsClosed covers the destination's own examination:
+// a spelling whose inspection fails for a reason other than absence is refused, so a loose
+// resolution cannot step over the part it could not reach and write somewhere else.
+func TestImproveReview799UnreadableOutputSpellingFailsClosed(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores the permission bits this test relies on")
+	}
+	s := improveTestSetup(t)
+	improveReview799Store(t, s)
+	locked := filepath.Join(s.root, "locked")
+	reachable := filepath.Join(s.root, "reachable")
+	for _, dir := range []string{locked, reachable} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
+	if err := os.Chmod(locked, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	improveInputRelayConfig(t, s)
+	// The spelled path steps out of the directory that cannot be examined; a loose resolution
+	// would drop that component and land on the reachable directory instead.
+	out := locked + "/../reachable/bundle.json"
+	code, _, stderr := improveTestRun(t, s, "--out", out)
+	if code != 1 || !strings.Contains(stderr, improveReasonOutputUnreadable) {
+		t.Fatalf("an output whose spelling cannot be examined: exit %d, stderr %q, want the named refusal %s", code, stderr, improveReasonOutputUnreadable)
+	}
+	if _, err := os.Stat(filepath.Join(reachable, "bundle.json")); !os.IsNotExist(err) {
+		t.Errorf("the refused run wrote the bundle through the loose resolution (stat err %v)", err)
+	}
+}
+
 // TestImproveReview799OrdinaryCollectStillWrites is the control: a link-free path with its own
 // output directory still writes the bundle.
 func TestImproveReview799OrdinaryCollectStillWrites(t *testing.T) {

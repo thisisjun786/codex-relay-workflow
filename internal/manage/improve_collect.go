@@ -72,6 +72,12 @@ var improveInputBeforeRename func(improveOutputPlan)
 // Production leaves it nil.
 var improveOutputBeforeCreate func(improveOutputPlan)
 
+// improveInputAfterRead runs after one source's reader has returned and before the identities are
+// examined again. It is the seam a test uses to replace an input inside the window the post-read
+// examination exists to close, and prove the run refuses there rather than only at the rename.
+// Production leaves it nil.
+var improveInputAfterRead func()
+
 // improveStoreFile is the relay store's file name inside a state directory.
 const improveStoreFile = "relay.sqlite3"
 
@@ -381,7 +387,14 @@ type improveOutputPlan struct {
 // destination that cannot be examined for any reason other than its absence is refused as well:
 // a comparison that cannot be made is never a pass.
 func improvePlanOutput(out string) (improveOutputPlan, error) {
-	if info, err := os.Lstat(out); err == nil && info.Mode()&os.ModeSymlink != 0 {
+	// The destination is examined first, and a failure that is not its absence refuses the run: an
+	// output the collection cannot examine is one it cannot prove is not an input, and letting the
+	// spelling through would let the resolution below step over the part it could not reach.
+	if info, err := os.Lstat(out); err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return improveOutputPlan{}, fmt.Errorf("%s: %s: %w", improveReasonOutputUnreadable, out, err)
+		}
+	} else if info.Mode()&os.ModeSymlink != 0 {
 		return improveOutputPlan{}, fmt.Errorf("%s: %s", improveReasonOutputSymlink, out)
 	}
 	dest, err := store.Realpath(out)
@@ -458,9 +471,22 @@ func improveWriteFile(plan improveOutputPlan, ids *improveIdentitySet, data []by
 	}
 	defer func() { _ = parent.Close() }()
 	dirfd := int(parent.Fd())
+	// The directory that will actually be written to is the one the descriptor names, so it is
+	// compared with the identity the plan recorded before anything is created in it: a spelling
+	// that now reaches a different directory is refused here rather than written through.
+	held, err := parent.Stat()
+	if err != nil {
+		return fmt.Errorf("%s: the parent directory of %s could not be examined: %w", improveReasonOutputUnreadable, plan.Out, err)
+	}
+	if !held.IsDir() {
+		return fmt.Errorf("%s: the parent directory of %s is not a directory", improveReasonOutputParent, plan.Out)
+	}
+	if plan.parent != nil && !os.SameFile(plan.parent, held) {
+		return fmt.Errorf("%s: the parent directory of %s is not the directory the plan named", improveReasonOutputParent, plan.Out)
+	}
 	// The check runs before the temporary file is created, against the identities the read
 	// recorded, so a destination that is one of them is refused without writing anything at all.
-	if err := ids.improveIdentityRefuse(plan.Dest, plan.parent); err != nil {
+	if err := ids.improveIdentityRefuse(plan.Dest, held); err != nil {
 		return err
 	}
 	if improveOutputBeforeCreate != nil {
@@ -507,11 +533,13 @@ func improveWriteFile(plan improveOutputPlan, ids *improveIdentitySet, data []by
 		discard()
 		return err
 	}
-	if plan.parent != nil && fresh.parent != nil && !os.SameFile(plan.parent, fresh.parent) {
+	// The rename lands in the directory the descriptor names, so that is the directory the
+	// destination has to still be in: a spelling that now reaches somewhere else is refused.
+	if fresh.parent != nil && !os.SameFile(held, fresh.parent) {
 		discard()
 		return fmt.Errorf("%s: the parent directory of %s is not the directory the plan named", improveReasonOutputParent, plan.Out)
 	}
-	if err := ids.improveIdentityRefuse(fresh.Dest, fresh.parent); err != nil {
+	if err := ids.improveIdentityRefuse(fresh.Dest, held); err != nil {
 		discard()
 		return err
 	}
@@ -610,7 +638,12 @@ func improveCollect(ctx context.Context, section improveSection, guarded bool) (
 	// after records the inputs again and examines them, so a source that appeared or changed while
 	// a reader ran is still an input of the set, and one that no longer names the file that was
 	// read is refused rather than written over.
-	after := func() error { return ids.improveIdentityRefresh(section) }
+	after := func() error {
+		if improveInputAfterRead != nil {
+			improveInputAfterRead()
+		}
+		return ids.improveIdentityRefresh(section)
+	}
 	acc := improveNewAccumulator()
 	sources := []improveSourceRow{}
 
