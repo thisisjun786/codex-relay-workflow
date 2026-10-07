@@ -44,7 +44,14 @@ type RefreshResolved struct{ Path, Blob, Rule string }
 // RefreshMechanicalChecker evaluates selected conflict paths in one already proved merge.
 // The skill package registers its existing checker at initialization to avoid an import cycle.
 // A missing checker leaves every path manual; a refusal never becomes a manual override.
-type RefreshMechanicalChecker func(context.Context, string, RefreshStep, []Region, []string) (*RefreshMechanicalRefusal, error)
+type RefreshMechanicalChecker func(context.Context, string, RefreshStep, []Region, map[string]string) (*RefreshMechanicalRefusal, error)
+
+// RefreshDecision is the relay's own decision for one path of a step: the rule it selected for the
+// place, or empty when it selected none and the path is the plugin manifest, which the checker
+// settles by its built-in rule (CRW-898, item 6). The checker never re-derives the decision from
+// the candidate's declaration alone: the relay has already weighed the candidate and every
+// contributing node, and a candidate-only declaration must not block the built-in rule.
+const RefreshDecisionBuiltin = ""
 type RefreshMechanicalRefusal struct {
 	Detail string
 	// Manual is an internal eligibility result, never part of the wire proof.
@@ -117,11 +124,13 @@ func (p *refreshProof) applyMechanical(ctx context.Context, g *refreshRepo, chec
 		}
 		var paths, descriptions []string
 		rules := map[string]string{}
+		decided := map[string]string{}
 		for _, r := range st.Resolved {
 			if rule, ok := MechanicalRuleFor(append([][]Region{regions}, sets[r.Path]...), r.Path); ok && len(sets[r.Path]) > 0 {
 				paths = append(paths, r.Path)
 				descriptions = append(descriptions, fmt.Sprintf("%s (%s)", r.Path, rule))
 				rules[r.Path] = rule
+				decided[r.Path] = rule
 				continue
 			}
 			// The plugin manifest's version line is the one place no declaration has to settle with one
@@ -131,12 +140,13 @@ func (p *refreshProof) applyMechanical(ctx context.Context, g *refreshRepo, chec
 			if r.Path == pluginversion.ManifestRepoPath {
 				paths = append(paths, r.Path)
 				descriptions = append(descriptions, r.Path)
+				decided[r.Path] = RefreshDecisionBuiltin
 			}
 		}
 		if len(paths) == 0 {
 			continue
 		}
-		why, err := refreshMechanical(ctx, checkout, *st, regions, paths)
+		why, err := refreshMechanical(ctx, checkout, *st, regions, decided)
 		if err != nil {
 			return nil, fmt.Errorf("mechanical resolution of %s: %w", strings.Join(descriptions, ", "), err)
 		}
@@ -607,8 +617,12 @@ func proveBaseRefresh(ctx context.Context, g *refreshRepo, accepted, head, baseT
 		return nil, nil, err
 	}
 	var steps []RefreshStep
+	merges := 0
 	for cur := head; cur != accepted; {
-		if len(steps) >= MaxRefreshHops {
+		// The bound counts the merges between the heads, not the steps of the chain: a version-only
+		// re-record is a step but not a merge, and it can only follow a merge this chain proved, so it
+		// never carries the count past the number of merges (CRW-898, item 7).
+		if merges >= MaxRefreshHops {
 			return refuse(RefreshChainTooLong, "more than %d merges lie between the accepted head %s and %s", MaxRefreshHops, accepted, head)
 		}
 		parents, err := g.parents(ctx, cur)
@@ -650,6 +664,7 @@ func proveBaseRefresh(ctx context.Context, g *refreshRepo, accepted, head, baseT
 		if len(parents) != 2 {
 			return refuse(RefreshNotAMerge, "%s has %d parent(s): a refresh is a chain of merges of exactly two parents, and this commit is work of the child's own", cur, len(parents))
 		}
+		merges++
 		previous, merged := parents[0], parents[1]
 		if previous != accepted {
 			under, err := g.isAncestor(ctx, accepted, previous)

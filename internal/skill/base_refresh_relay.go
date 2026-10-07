@@ -3,6 +3,7 @@ package skill
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -14,7 +15,7 @@ func init() { dagsched.RegisterRefreshMechanical(settleRelayRefresh) }
 
 // settleRelayRefresh shares the full check's rule evaluator, but checks only the
 // mechanical conflict files. The relay proves the other files separately.
-func settleRelayRefresh(ctx context.Context, checkout string, st dagsched.RefreshStep, regions []dagsched.Region, paths []string) (*dagsched.RefreshMechanicalRefusal, error) {
+func settleRelayRefresh(ctx context.Context, checkout string, st dagsched.RefreshStep, regions []dagsched.Region, decided map[string]string) (*dagsched.RefreshMechanicalRefusal, error) {
 	cov := coverage{regionSet{regions: regions}}
 	ctx, cancel := context.WithTimeout(ctx, refreshTimeout+time.Duration(8*len(cov.regenerateCommands()))*defaultRegenerateTimeout)
 	defer cancel()
@@ -27,10 +28,17 @@ func settleRelayRefresh(ctx context.Context, checkout string, st dagsched.Refres
 	if err != nil {
 		return nil, err
 	}
-	// A path is in this check's reading when git could not merge it, or when it is the plugin
-	// manifest the head recorded again after a clean merge (CRW-732): the version line is derived
-	// from the payload, and the built-in rule recomputes it from the head. Every other path is not
-	// one this check settles.
+	// The relay decided, per path, which rule settles the place (CRW-898, item 6): it weighed the
+	// candidate's declaration and every contributing node's, and it hands that decision here rather
+	// than a bare list of paths, so the checker never re-derives the decision from the candidate
+	// alone. A path is in this check's reading when git could not merge it, or when the head
+	// recorded it again over a clean merge under a declared regenerate rule or the built-in
+	// plugin-version rule (CRW-732). Every other path is not one this check settles.
+	paths := make([]string, 0, len(decided))
+	for p := range decided {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
 	var differing map[string]bool
 	for _, p := range paths {
 		if _, ok := merged.conflicts[p]; ok {
@@ -107,7 +115,7 @@ func settleRelayRefresh(ctx context.Context, checkout string, st dagsched.Refres
 		}
 		builtin[p] = resolution
 	}
-	_, why, err := g.settleMechanical(ctx, facts, st.Previous, st.Head, st.BaseParent, cov, eligible, merged, builtin, defaultRegenerateTimeout)
+	_, why, err := g.settleMechanical(ctx, facts, st.Previous, st.Head, st.BaseParent, cov, decided, eligible, merged, builtin, defaultRegenerateTimeout)
 	if err != nil {
 		return nil, err
 	}

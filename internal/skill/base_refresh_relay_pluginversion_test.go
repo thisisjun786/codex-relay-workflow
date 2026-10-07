@@ -48,7 +48,7 @@ func (f *pluginVersionFixture) amendHead() string {
 // rule: no refusal detail, nothing manual, and the rule named for the path.
 func wantRelayPluginVersionSettled(t *testing.T, f *pluginVersionFixture, head string, regions []dagsched.Region) {
 	t.Helper()
-	why, err := settleRelayRefresh(context.Background(), f.r.path, relayPluginVersionStep(f, head), regions, []string{pluginversion.ManifestRepoPath})
+	why, err := settleRelayRefresh(context.Background(), f.r.path, relayPluginVersionStep(f, head), regions, map[string]string{pluginversion.ManifestRepoPath: dagsched.RefreshDecisionBuiltin})
 	if err != nil || why == nil || why.Detail != "" || len(why.Manual) != 0 {
 		t.Fatalf("the manifest was not settled = %v %+v", err, why)
 	}
@@ -74,7 +74,7 @@ func TestRelayPluginVersionLine(t *testing.T) {
 		f := newPluginVersionFixture(t)
 		head := f.mergeCleanlyRecordedAgain()
 		regions := []dagsched.Region{regenRegion(pluginversion.ManifestRepoPath, "false")}
-		why, err := settleRelayRefresh(context.Background(), f.r.path, relayPluginVersionStep(f, head), regions, []string{pluginversion.ManifestRepoPath})
+		why, err := settleRelayRefresh(context.Background(), f.r.path, relayPluginVersionStep(f, head), regions, map[string]string{pluginversion.ManifestRepoPath: "regenerate:false"})
 		if err != nil || why == nil || why.Detail != "" || strings.Join(why.Manual, ",") != pluginversion.ManifestRepoPath || len(why.Rules) != 0 {
 			t.Fatalf("a declared rule = %v %+v, want the declared rule to leave the path manual", err, why)
 		}
@@ -82,7 +82,7 @@ func TestRelayPluginVersionLine(t *testing.T) {
 	t.Run("a path the step did not settle is an error", func(t *testing.T) {
 		f := newPluginVersionFixture(t)
 		head := f.mergeCleanlyRecordedAgain()
-		if _, err := settleRelayRefresh(context.Background(), f.r.path, relayPluginVersionStep(f, head), nil, []string{"notes.md"}); err == nil {
+		if _, err := settleRelayRefresh(context.Background(), f.r.path, relayPluginVersionStep(f, head), nil, map[string]string{"notes.md": ""}); err == nil {
 			t.Fatal("a path the step did not settle was accepted")
 		}
 	})
@@ -117,7 +117,7 @@ func TestRelayPluginVersionLineRefusals(t *testing.T) {
 			f.mergeCleanlyRecordedAgain()
 			c.mutate(t, f)
 			head := f.amendHead()
-			why, err := settleRelayRefresh(context.Background(), f.r.path, relayPluginVersionStep(f, head), nil, []string{pluginversion.ManifestRepoPath})
+			why, err := settleRelayRefresh(context.Background(), f.r.path, relayPluginVersionStep(f, head), nil, map[string]string{pluginversion.ManifestRepoPath: dagsched.RefreshDecisionBuiltin})
 			if err != nil || why == nil || why.Detail == "" || !strings.Contains(why.Detail, pluginversion.ManifestRepoPath) {
 				t.Fatalf("refusal = %v %+v, want a refusal naming the manifest", err, why)
 			}

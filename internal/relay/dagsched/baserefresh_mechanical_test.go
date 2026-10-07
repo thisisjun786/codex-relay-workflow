@@ -236,7 +236,7 @@ func TestBaseRefreshMechanicalLegacyReplayAndUnavailableChecker(t *testing.T) {
 	}
 	refreshRuleRecord(t, s, "shared.json", "")
 	calls := 0
-	refreshMechanical = func(context.Context, string, RefreshStep, []Region, []string) (*RefreshMechanicalRefusal, error) {
+	refreshMechanical = func(context.Context, string, RefreshStep, []Region, map[string]string) (*RefreshMechanicalRefusal, error) {
 		calls++
 		t.Error("immutable replay invoked checker")
 		return nil, nil
@@ -259,7 +259,7 @@ func TestBaseRefreshMechanicalStaleEpochNeverEvaluates(t *testing.T) {
 	}
 	checker := refreshMechanical
 	calls := 0
-	refreshMechanical = func(context.Context, string, RefreshStep, []Region, []string) (*RefreshMechanicalRefusal, error) {
+	refreshMechanical = func(context.Context, string, RefreshStep, []Region, map[string]string) (*RefreshMechanicalRefusal, error) {
 		calls++
 		return nil, nil
 	}
@@ -369,10 +369,10 @@ func TestBaseRefreshMechanicalEvaluationErrorIsUnreadable(t *testing.T) {
 	s := mechanicalRefresh(t, RuleUnion, false)
 	mechanicalMerge(t, s, "base\nchild\ndev\n", false)
 	checker := refreshMechanical
-	refreshMechanical = func(ctx context.Context, repo string, st RefreshStep, regions []Region, paths []string) (*RefreshMechanicalRefusal, error) {
+	refreshMechanical = func(ctx context.Context, repo string, st RefreshStep, regions []Region, decided map[string]string) (*RefreshMechanicalRefusal, error) {
 		canceled, cancel := context.WithCancel(ctx)
 		cancel()
-		return checker(canceled, repo, st, regions, paths)
+		return checker(canceled, repo, st, regions, decided)
 	}
 	t.Cleanup(func() { refreshMechanical = checker })
 	_, err := s.record()

@@ -329,12 +329,12 @@ func (g *refreshGit) proveMechanical(ctx context.Context, previous, head, tip st
 	if len(openDifferences) > 0 {
 		return refuse("differs_outside_mechanical", "the tree of %s differs from the clean three-way result of %s and %s in %s, which no declared mechanical region covers with one rule", head, previous, tip, nameList(openDifferences))
 	}
-	return g.settleMechanical(ctx, facts, previous, head, tip, cov, resolved, merged, builtin, timeout)
+	return g.settleMechanical(ctx, facts, previous, head, tip, cov, nil, resolved, merged, builtin, timeout)
 }
 
 // settleMechanical evaluates selected paths with the same guards and rules as the full skill check.
 // The relay has separately proved that all other changes are confined to conflict files.
-func (g *refreshGit) settleMechanical(ctx context.Context, facts refreshFacts, previous, head, tip string, cov coverage, resolved []string, merged *mergeOutcome, builtin map[string]builtinResolution, timeout time.Duration) (*mechanicalProof, *refreshRefusal, error) {
+func (g *refreshGit) settleMechanical(ctx context.Context, facts refreshFacts, previous, head, tip string, cov coverage, decided map[string]string, resolved []string, merged *mergeOutcome, builtin map[string]builtinResolution, timeout time.Duration) (*mechanicalProof, *refreshRefusal, error) {
 	refuse := func(code, format string, args ...any) (*mechanicalProof, *refreshRefusal, error) {
 		return nil, &refreshRefusal{code: code, detail: fmt.Sprintf(format, args...), safe: mechanicalSafeSide, facts: facts}, nil
 	}
@@ -343,6 +343,12 @@ func (g *refreshGit) settleMechanical(ctx context.Context, facts refreshFacts, p
 	for _, p := range resolved {
 		if resolution, ok := builtin[p]; ok {
 			rules[p] = resolution.rule
+			continue
+		}
+		if rule, ok := decided[p]; ok {
+			// The relay decided this path (CRW-898, item 6): the rule it selected, or none when it left the
+			// path to the built-in rule. The checker never re-derives the decision from the candidate alone.
+			rules[p] = rule
 			continue
 		}
 		rules[p], _ = cov.ruleFor(p)
@@ -447,7 +453,13 @@ func (g *refreshGit) settleMechanical(ctx context.Context, facts refreshFacts, p
 		}
 		for _, command := range sortedCommands(regenerate) {
 			rule := dagsched.RuleRegeneratePref + command
-			scope := func(p string) bool { r, ok := cov.ruleFor(p); return ok && r == rule }
+			scope := func(p string) bool {
+			if r, ok := decided[p]; ok {
+				return r == rule
+			}
+			r, ok := cov.ruleFor(p)
+			return ok && r == rule
+		}
 			result, err := g.regenerate(ctx, head, command, regenerate[command], scope, headEntries, devEntries, timeout)
 			if err != nil {
 				return nil, nil, err

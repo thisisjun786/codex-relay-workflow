@@ -8,10 +8,22 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dagsched"
 )
 
+// relayDecision is the decision map the relay hands its checker for a test: every named path keeps
+// the rule a declaration gives it, and a path with none is the manifest the built-in rule settles.
+func relayDecision(regions []dagsched.Region, paths []string) map[string]string {
+	cov := coverage{regionSet{regions: regions}}
+	out := map[string]string{}
+	for _, p := range paths {
+		rule, _ := cov.ruleFor(p)
+		out[p] = rule
+	}
+	return out
+}
+
 func relayWitness(t *testing.T, f *mechFixture, head string, regions []dagsched.Region, paths ...string) *dagsched.RefreshMechanicalRefusal {
 	t.Helper()
 	st := dagsched.RefreshStep{Previous: f.previous, BaseParent: f.devTip, Head: head, Tree: f.r.git("rev-parse", head+"^{tree}")}
-	why, err := settleRelayRefresh(context.Background(), f.r.path, st, regions, paths)
+	why, err := settleRelayRefresh(context.Background(), f.r.path, st, regions, relayDecision(regions, paths))
 	if err != nil {
 		t.Fatal(err)
 	}
