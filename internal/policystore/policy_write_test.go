@@ -662,6 +662,20 @@ func cancelAfterPublish(t *testing.T) (context.Context, func()) {
 	return ctx, cancel
 }
 
+// detachedRegistration wraps a registration so it fails the test when it is handed a context that
+// has already ended. The post-publication sequence must run detached from the request, so a write
+// that passed the cancelled request context down would fail here instead of passing for the wrong
+// reason.
+func detachedRegistration(t *testing.T, inner RegisterFunc) RegisterFunc {
+	t.Helper()
+	return func(ctx context.Context, path string) RegisterAnswer {
+		if err := ctx.Err(); err != nil {
+			t.Fatalf("the registration ran on a context that had already ended (%v): it must run detached from the request", err)
+		}
+		return inner(ctx, path)
+	}
+}
+
 // TestACancellationAfterTheReplacementStillRegisters is the corrected C3 answer: a client that
 // goes away between the replacement and the registration must not leave the file and the wiring
 // record naming different digests, so the registration runs to completion under a context detached
@@ -670,7 +684,7 @@ func TestACancellationAfterTheReplacementStillRegisters(t *testing.T) {
 	env, file := host(t, policyText, true)
 	ctx, cancel := cancelAfterPublish(t)
 	defer cancel()
-	opts := WriteOptions{Register: updatingRegisters(t, env), Running: unavailableRunning()}
+	opts := WriteOptions{Register: detachedRegistration(t, updatingRegisters(t, env)), Running: unavailableRunning()}
 	result := Write(ctx, envOf(env), opts,
 		WriteRequest{ExpectedDigest: digestOf(policyText), Change: removeLegacy()})
 	if result.Kind != WriteStored {
@@ -690,7 +704,7 @@ func TestACancellationAfterTheReplacementStillRestores(t *testing.T) {
 	env, file := host(t, policyText, true)
 	ctx, cancel := cancelAfterPublish(t)
 	defer cancel()
-	opts := WriteOptions{Register: func(context.Context, string) RegisterAnswer { return answer("record_absent", 1) }}
+	opts := WriteOptions{Register: detachedRegistration(t, func(context.Context, string) RegisterAnswer { return answer("record_absent", 1) })}
 	result := Write(ctx, envOf(env), opts,
 		WriteRequest{ExpectedDigest: digestOf(policyText), Change: removeLegacy()})
 	if result.Kind != WriteRegisterFailed || !result.Restored {
