@@ -67,13 +67,18 @@ func TestGitHubPostGuardDoesNotLeakAWrapperState(t *testing.T) {
 	githubPostWrite(t, cwd, "lib.sh", "echo hi\n")
 	bin := t.TempDir()
 	t.Setenv("PATH", bin)
-	// A PATH= word on one command does not persist; a bare PATH= word (or an export) does.
+	// A PATH= word in front of a command is that command's own temporary environment, so it does not
+	// persist; a standalone PATH= word (or an export) does.
 	githubPostWant(t, githubPostShell(t, cwd, "env PATH="+evil+" true; source lib.sh"),
 		"env PATH=... true; source lib.sh", "", "")
+	githubPostWant(t, githubPostShell(t, cwd, "PATH="+evil+" true; source lib.sh"),
+		"PATH=... true; source lib.sh", "", "")
 	for _, command := range []string{
-		"PATH=" + evil + " true; source lib.sh",
 		"PATH=" + evil + "; source lib.sh",
 		"export PATH=" + evil + "; source lib.sh",
+		// A standalone assignment after && may or may not have run, so both PATHs stay possible and the
+		// posting file on either one is refused.
+		"true && PATH=" + evil + "; source lib.sh",
 	} {
 		githubPostWant(t, githubPostShell(t, cwd, command), command, githubPostRuleUnread, filepath.Join(evil, "lib.sh")+":1")
 	}
@@ -214,4 +219,127 @@ func TestGitHubPostGuardReadsAPathLineInsideAScriptByItsFile(t *testing.T) {
 	githubPostWrite(t, cwd, "gh", "#!/bin/sh\necho hi\n")
 	githubPostWrite(t, cwd, "quiet.sh", "./gh pr view 1\n")
 	githubPostWant(t, githubPostShell(t, cwd, "bash quiet.sh"), "bash quiet.sh", "", "")
+}
+
+// TestGitHubPostGuardKeepsAnEscapedSpaceInAWord: a backslash keeps the character after it in the same word,
+// so `bash post.sh\ extra` runs the file named `post.sh extra`, not the decoy `post.sh\`.
+func TestGitHubPostGuardKeepsAnEscapedSpaceInAWord(t *testing.T) {
+	githubPostTempHome(t)
+	cwd := t.TempDir()
+	t.Setenv("TMPDIR", cwd)
+	githubPostWrite(t, cwd, "post.sh\\", "echo clean\n")
+	githubPostWrite(t, cwd, "post.sh extra", "gh pr comment 1 -b \"$(env)\"\n")
+	command := "bash post.sh\\ extra"
+	githubPostWant(t, githubPostShell(t, cwd, command), command, githubPostRuleUnread, "post.sh extra:1")
+}
+
+// TestGitHubPostGuardSplitsAnUnquotedRedirection: an unquoted operator is a token of its own, so
+// `bash post.sh>out` runs post.sh with stdout redirected and `>out bash post.sh` runs bash post.sh.
+func TestGitHubPostGuardSplitsAnUnquotedRedirection(t *testing.T) {
+	githubPostTempHome(t)
+	cwd := t.TempDir()
+	t.Setenv("TMPDIR", cwd)
+	githubPostWrite(t, cwd, "post.sh", "gh pr comment 1 -b \"$(env)\"\n")
+	githubPostWrite(t, cwd, "post.sh>out", "echo clean\n")
+	for _, c := range []struct{ command, place string }{
+		{"bash post.sh>out", "post.sh:1"},
+		{">out bash post.sh", "post.sh:1"},
+		{"bash post.sh >out", "post.sh:1"},
+	} {
+		githubPostWant(t, githubPostShell(t, cwd, c.command), c.command, githubPostRuleUnread, c.place)
+	}
+	// The control: the decoy that only spells the redirect shape is not the file the shell runs.
+	githubPostWrite(t, cwd, "post.sh", "echo clean\n")
+	githubPostWant(t, githubPostShell(t, cwd, "bash post.sh>out"), "bash post.sh>out", "", "")
+}
+
+// TestGitHubPostGuardJudgesASplitStringInTheWrappersDirectory: env -C and env -S together move the directory
+// the split program is judged in.
+func TestGitHubPostGuardJudgesASplitStringInTheWrappersDirectory(t *testing.T) {
+	githubPostTempHome(t)
+	cwd := t.TempDir()
+	t.Setenv("TMPDIR", cwd)
+	if err := os.Mkdir(filepath.Join(cwd, "sub"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	githubPostWrite(t, cwd, "post.sh", "echo clean\n")
+	githubPostWrite(t, cwd, "sub/post.sh", "gh pr comment 1 -b \"$(env)\"\n")
+	for _, command := range []string{
+		"env -C sub -S 'bash post.sh'",
+		"true; env -C sub -S 'bash post.sh'",
+	} {
+		githubPostWant(t, githubPostShell(t, cwd, command), command, githubPostRuleUnread, githubPostWhereCommand)
+	}
+}
+
+// TestGitHubPostGuardKeepsThePathLifetimesApart: a PATH= word in front of a command is that command's own
+// temporary environment and does not persist, a standalone one does, and one after an uncertain separator
+// leaves both PATHs possible.
+func TestGitHubPostGuardKeepsThePathLifetimesApart(t *testing.T) {
+	githubPostTempHome(t)
+	cwd := t.TempDir()
+	t.Setenv("TMPDIR", cwd)
+	evil := t.TempDir()
+	githubPostWrite(t, evil, "lib.sh", "gh pr comment 1 -b \"$(env)\"\n")
+	githubPostWrite(t, cwd, "lib.sh", "echo hi\n")
+	bin := t.TempDir()
+	t.Setenv("PATH", bin)
+	for _, command := range []string{
+		"true && PATH=" + evil + ":/usr/bin:/bin; source lib.sh",
+		"PATH=" + evil + ":/usr/bin:/bin; source lib.sh",
+		"export PATH=" + evil + ":/usr/bin:/bin; source lib.sh",
+	} {
+		githubPostWant(t, githubPostShell(t, cwd, command), command, githubPostRuleUnread, filepath.Join(evil, "lib.sh")+":1")
+	}
+	// The control: a temporary PATH does not persist, so the clean copy is the one read.
+	githubPostWant(t, githubPostShell(t, cwd, "PATH="+evil+":/usr/bin:/bin true; source lib.sh"),
+		"PATH=... true; source lib.sh", "", "")
+}
+
+// TestGitHubPostGuardRefusesMoreStatesThanItCanJudge: a list whose uncertain commands multiply past the
+// state bound is refused rather than judged in a subset of the directories the shell may be in.
+func TestGitHubPostGuardRefusesMoreStatesThanItCanJudge(t *testing.T) {
+	githubPostTempHome(t)
+	cwd := t.TempDir()
+	t.Setenv("TMPDIR", cwd)
+	githubPostWrite(t, cwd, "post.sh", "gh pr comment 1 -b \"$(env)\"\n")
+	for _, d := range []string{"a", "b", "c", "d", "e", "f"} {
+		if err := os.Mkdir(filepath.Join(cwd, d), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		githubPostWrite(t, cwd, filepath.Join(d, "post.sh"), "echo clean\n")
+	}
+	command := "false && cd a; false && cd b; false && cd c; false && cd d; false && cd e; false && cd f; bash post.sh"
+	githubPostWant(t, githubPostShell(t, cwd, command), command, githubPostRuleUnread, githubPostWhereCommand)
+}
+
+// TestGitHubPostGuardReadsAQuotedLiteralExpansionCharacter: a character quoting protected is a literal the
+// shell passes on, so a file whose name holds one is read as written.
+func TestGitHubPostGuardReadsAQuotedLiteralExpansionCharacter(t *testing.T) {
+	githubPostTempHome(t)
+	cwd := t.TempDir()
+	t.Setenv("TMPDIR", cwd)
+	githubPostWrite(t, cwd, "cash$.sh", "echo hi\n")
+	for _, command := range []string{"bash 'cash$.sh'", "bash cash\\$.sh", "sh 'cash$.sh'"} {
+		githubPostWant(t, githubPostShell(t, cwd, command), command, "", "")
+	}
+	// The control: a live expansion is still refused, fail closed.
+	githubPostWant(t, githubPostShell(t, cwd, "bash \"$SCRIPT\""), "bash \"$SCRIPT\"", githubPostRuleUnread, "$SCRIPT")
+}
+
+// TestGitHubPostGuardRefusesAMissingPathNamedGh: a path named gh that is absent, a directory or a FIFO is
+// refused by the direct-execution rule, while a shape the gh form itself denies keeps its own rule.
+func TestGitHubPostGuardRefusesAMissingPathNamedGh(t *testing.T) {
+	githubPostTempHome(t)
+	cwd := t.TempDir()
+	t.Setenv("TMPDIR", cwd)
+	for _, command := range []string{"./gh pr view 1", "./gh issue list", "./gh pr status"} {
+		githubPostWant(t, githubPostShell(t, cwd, command), command, githubPostRuleUnread, "./gh")
+	}
+	if err := os.Mkdir(filepath.Join(cwd, "ghdir"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	githubPostWant(t, githubPostShell(t, cwd, "./ghdir pr view 1"), "./ghdir pr view 1", githubPostRuleUnread, "./ghdir")
+	// The control: a shape the gh form denies keeps the form's own rule and place.
+	githubPostWant(t, githubPostShell(t, cwd, "./gh pr comment 1 -b plain"), "./gh pr comment 1 -b plain", githubPostRuleInline, githubPostWhereCommand)
 }
