@@ -2387,9 +2387,7 @@ func shellWriteUnnamedHerePrograms(command string, budget *shellWriteUnnamedBudg
 // redirection words go first, and an interpreter with a script operand or -m runs that instead, its here-document being
 // only the program's standard input.
 func shellWriteUnnamedHereOwner(line string, at int) string {
-	start, end := 0, len(line)
-	start = shellWriteUnnamedOwnerStart(line, at)
-	end = shellWriteUnnamedOwnerEnd(line, at)
+	start, end := shellWriteUnnamedOwnerStart(line, at), shellWriteUnnamedOwnerEnd(line, at)
 	tokens := shellWriteUnnamedCommandWords(shellTokenize(line[start:end]))
 	if len(tokens) == 0 {
 		return ""
