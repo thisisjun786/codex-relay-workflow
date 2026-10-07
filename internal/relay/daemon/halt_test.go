@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
@@ -37,10 +38,11 @@ func damageStorePages(t *testing.T, path string) {
 	}
 }
 
-// TestHaltDaemonMarksACorruptingObservation: the daemon's own read of the store (the observation
-// pass's census) meets the class, so the pass publishes the marker with the observation site and
-// ends without an error, which is what keeps the run ticking and write-free.
-func TestHaltDaemonMarksACorruptingObservation(t *testing.T) {
+// TestHaltDaemonMarksACorruptingWrite: the first statement a pass issues against the damaged store
+// meets the class (the anchor recovery's write), so the pass publishes the marker with the write
+// site and ends without an error, which is what keeps the run ticking and write-free. The
+// observation site is the omission observer's, pinned by TestHaltOnUnreadableStoreMarksTheObservation.
+func TestHaltDaemonMarksACorruptingWrite(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	dir := t.TempDir()
@@ -63,7 +65,7 @@ func TestHaltDaemonMarksACorruptingObservation(t *testing.T) {
 	if !state.Present || state.Detail != "" {
 		t.Fatalf("no marker was published: %+v", state)
 	}
-	if state.Marker.Code != 11 || state.Marker.Site != store.HaltSiteObservation {
+	if state.Marker.Code != 11 || state.Marker.Site != store.HaltSiteWrite {
 		t.Fatalf("marker %+v", state.Marker)
 	}
 	// The next pass is write-free because the marker is checked first: it attempts no statement at
@@ -187,5 +189,76 @@ func TestHaltDaemonIgnoresAnotherFailure(t *testing.T) {
 	}
 	if state := store.HaltStateAt(path); state.Present {
 		t.Fatalf("a marker was written for an ordinary failure: %+v", state)
+	}
+}
+
+// TestHaltDaemonStopsEvenWhenTheMarkerCannotBeWritten: a state directory that cannot take the marker
+// (a full disk, a read-only directory) must not turn the halt back into writes. The process keeps
+// its own halt and says so, and no later pass attempts a write.
+func TestHaltDaemonStopsEvenWhenTheMarkerCannotBeWritten(t *testing.T) {
+	// Not parallel: it installs the store package's publication fault, which is process-wide.
+	ctx := context.Background()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "relay.sqlite3")
+	s, err := fixtureStore(ctx, path, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Close() }()
+	damageStorePages(t, path)
+	store.SetHaltFault(func(string) error { return errors.New("the state directory is full") })
+	defer store.SetHaltFault(nil)
+	d := New(s, &observationHost{status: "completed"}, &delivery.FakeClock{T: 1700000000}, nil)
+	r, err := d.Tick(ctx)
+	if err != nil {
+		t.Fatalf("the pass errored: %v", err)
+	}
+	if len(r.Notes) == 0 || !strings.Contains(strings.Join(r.Notes, " "), "could not be written") {
+		t.Fatalf("the pass did not report the failed marker: %+v", r.Notes)
+	}
+	if state := store.HaltStateAt(path); state.Present {
+		t.Fatalf("a marker was published through the fault: %+v", state)
+	}
+	if !d.haltedStore {
+		t.Fatal("the process did not keep its own halt")
+	}
+	// The next pass attempts no write: it reports the retained halt and calls nothing.
+	host := d.Host.(*observationHost)
+	r, err = d.Tick(ctx)
+	if err != nil {
+		t.Fatalf("the pass after the failed publication errored: %v", err)
+	}
+	if len(r.Notes) == 0 || !strings.Contains(strings.Join(r.Notes, " "), "could not be written") {
+		t.Fatalf("the retained halt was not reported: %+v", r.Notes)
+	}
+	if len(host.reads) != 0 {
+		t.Fatalf("a halted pass read the host: %v", host.reads)
+	}
+}
+
+// TestHaltDaemonKeepsTheFirstSite: the site of the first detection stands, and a later error of the
+// same class publishes no second marker.
+func TestHaltDaemonKeepsTheFirstSite(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "relay.sqlite3")
+	s, err := fixtureStore(ctx, path, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Close() }()
+	damageStorePages(t, path)
+	d := New(s, &observationHost{status: "completed"}, &delivery.FakeClock{T: 1700000000}, nil)
+	r := Report{Notes: []string{}}
+	writeErr := damageStoreWrite(t, s)
+	if !d.halted(ctx, &r, store.HaltSiteWrite, writeErr) {
+		t.Fatal("the write site was not classified")
+	}
+	if !d.halted(ctx, &r, store.HaltSiteObservation, writeErr) {
+		t.Fatal("the already halted store was not reported as halted")
+	}
+	state := store.HaltStateAt(path)
+	if state.Marker.Site != store.HaltSiteWrite || state.Marker.Sequence != 1 {
+		t.Fatalf("a second detection was published: %+v", state.Marker)
 	}
 }

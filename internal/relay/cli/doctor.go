@@ -34,7 +34,11 @@ var doctorCommand = dispatch.Command{Name: "doctor", Exempt: true, ReportsMismat
 func runDoctor(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
 	ctx = store.WithSidecarFreeReads(ctx)
 	probeWrite := args.Bool("probe-write")
-	probed := store.ProbeWith(ctx, services.Selection, store.ProbeOptions{Write: probeWrite})
+	// A write probe takes the store's write lock, which a halted store may not have (CRW-848): the
+	// probe is not run and the answer says so. doctor still answers, and the corruption block below
+	// names the halt.
+	halt := store.HaltStateAt(services.Selection.DBPath())
+	probed := store.ProbeWith(ctx, services.Selection, store.ProbeOptions{Write: probeWrite && !halt.Present})
 	loc := probeStore(probed)
 	report := contract.OrderedObject{
 		{Key: "stateSelection", Value: selectionRecord(services.Selection)},
@@ -123,8 +127,8 @@ func runDoctor(ctx context.Context, services dispatch.Services, args dispatch.Ar
 	// workerReadiness and serviceStore (CRW-848): a store whose writes are halted is reported here
 	// and doctor still answers, which is how an operator reads the halt. An absent marker adds no
 	// key, so every existing answer and golden is unchanged.
-	if state := store.HaltStateAt(services.Selection.DBPath()); state.Present {
-		add("corruption", corruptionRecord(state))
+	if halt.Present {
+		add("corruption", corruptionRecord(halt))
 	}
 	// Present only where it has something to say, like issue and workerReadiness (decision 73).
 	served, err := serviceStore(services)

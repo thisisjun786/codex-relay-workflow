@@ -72,6 +72,11 @@ type Daemon struct {
 	// beforeSettle is called, when set, once the end of a turn is judged and before the settlement commits.
 	// Tests move the store in that gap by hand; production leaves it nil.
 	beforeSettle func(store.TurnReference)
+	// haltedStore is this process's own halt: once a pass has seen the class, no later pass attempts a
+	// write whatever became of the marker, because a state directory that cannot be written must not
+	// turn a halt back into writes. haltReason is what the pass says about it.
+	haltedStore bool
+	haltReason  string
 }
 
 func New(s *store.Store, host Host, clock delivery.Clock, channel *supervisor.Channel) *Daemon {
@@ -87,20 +92,30 @@ func (d *Daemon) Tick(ctx context.Context) (Report, error) {
 	// A store whose writes are halted gets a pass that writes nothing at all (CRW-848): no read of
 	// the host, no settlement, no delivery, no journal row. The deliveries this daemon was carrying
 	// stay where they are, for the next daemon and for the operator's restore.
+	if d.haltedStore {
+		r.Notes = append(r.Notes, d.haltReason)
+		return r, nil
+	}
 	if state := store.HaltStateAt(d.Store.Path); state.Present {
 		r.Notes = append(r.Notes, haltNote(state))
 		return r, nil
 	}
 	now := d.Clock.Now()
-	bind := func() {
+	bind := func() bool {
 		bound, err := d.Ack.BindPendingAnchors(ctx)
 		if err != nil {
+			if d.halted(ctx, &r, store.HaltSiteWrite, err) {
+				return true
+			}
 			r.Notes = append(r.Notes, "anchor recovery failed: "+err.Error())
 		} else {
 			r.AnchorsBound += len(bound)
 		}
+		return false
 	}
-	bind()
+	if bind() {
+		return r, nil
+	}
 	if err := d.observe(ctx, &r); err != nil {
 		if d.halted(ctx, &r, store.HaltSiteObservation, err) {
 			return r, nil
@@ -123,10 +138,15 @@ func (d *Daemon) Tick(ctx context.Context) (Report, error) {
 	r.Reconciled += rr.Reconciled
 	r.Skipped += rr.Skipped
 	r.Notes = append(r.Notes, rr.Notes...)
-	bind()
+	if bind() {
+		return r, nil
+	}
 	r.Notes = append(r.Notes, delivery.ConfirmKeptAcks(ctx, d.Ack, d.Reconciler, d.Host, now)...)
 	results, err := d.Ack.VerifyPendingAcks(ctx, d.Host, 8, &now)
 	if err != nil {
+		if d.halted(ctx, &r, store.HaltSiteWrite, err) {
+			return r, nil
+		}
 		r.Notes = append(r.Notes, "pending acknowledgement pass failed: "+err.Error())
 	} else {
 		for _, result := range results {
@@ -202,16 +222,26 @@ func value(o contract.OrderedObject, key string) any {
 // exactly as it was. The marker's own failure is a note, never a second failure that would hide the
 // first.
 func (d *Daemon) halted(ctx context.Context, r *Report, site string, err error) bool {
+	if d.haltedStore {
+		// Already halted: the site of the first detection stands, and no second marker is
+		// published for the same damage.
+		return true
+	}
 	cause, ok := store.CorruptingFailure(err)
 	if !ok {
 		return false
 	}
 	cause.Site = site
+	reason := ""
 	if recordErr := store.RecordHalt(ctx, d.Store.Path, cause); recordErr != nil {
-		r.Notes = append(r.Notes, "the halt marker could not be written: "+recordErr.Error())
+		reason = "store writes are halted, and the halt marker could not be written: " + recordErr.Error()
 	} else {
-		r.Notes = append(r.Notes, haltNote(store.HaltStateAt(d.Store.Path)))
+		reason = haltNote(store.HaltStateAt(d.Store.Path))
 	}
+	// The in-process halt stands whatever became of the marker: a marker that could not be written
+	// must not let the next pass treat the damaged store as healthy.
+	d.haltedStore, d.haltReason = true, reason
+	r.Notes = append(r.Notes, reason)
 	return true
 }
 
@@ -240,11 +270,17 @@ func (d *Daemon) requeue(ctx context.Context, r *Report, now float64) error {
 		event := row.Get("event_id").(string)
 		_, err := d.Delivery.Enqueue(ctx, event, row.Get("kind").(string), row.Get("recipient_task_id").(string))
 		if err != nil {
+			if _, corrupting := store.CorruptingFailure(err); corrupting {
+				return err
+			}
 			r.Notes = append(r.Notes, "requeue refused for "+event+": "+err.Error())
 			err = d.Store.Transaction(ctx, func(tx context.Context, _ *sql.Conn) error {
 				return d.Delivery.RecordIntentIn(tx, event, row.Get("relationship_id").(string), row.Get("kind").(string), row.Get("recipient_task_id").(string), err.Error(), now)
 			})
 			if err != nil {
+				if _, corrupting := store.CorruptingFailure(err); corrupting {
+					return err
+				}
 				r.Notes = append(r.Notes, "requeue intent failed for "+event+": "+err.Error())
 			}
 			continue

@@ -81,10 +81,18 @@ func haltMarkerPath(dbPath string) string {
 // Detail.
 func HaltStateAt(dbPath string) HaltState {
 	state := HaltState{Path: haltMarkerPath(dbPath)}
+	// The directory entry is what decides presence, not what a read makes of it: a marker that is
+	// a dangling symbolic link, or one that cannot be read at all, is a halt whose content is
+	// unknown, never an absent marker.
+	if _, err := os.Lstat(state.Path); errors.Is(err, os.ErrNotExist) {
+		return state
+	} else if err != nil {
+		state.Present = true
+		state.Detail = "the halt marker could not be examined: " + err.Error()
+		return state
+	}
 	raw, err := os.ReadFile(state.Path)
 	switch {
-	case errors.Is(err, os.ErrNotExist):
-		return state
 	case err != nil:
 		state.Present = true
 		state.Detail = "the halt marker could not be read: " + err.Error()
@@ -115,14 +123,50 @@ func haltDetail(state HaltState) string {
 		state.Path, marker.Message, marker.Code, marker.Site, marker.DetectedAt, marker.PID)
 }
 
-// haltCommand is the command line the marker records. A variable so a test can pin how a hostile
-// argument is encoded (JSON replaces invalid UTF-8).
-var haltCommand = func() string { return strings.Join(os.Args, " ") }
+// haltCommand is the process identity the marker records: the program and the command words that
+// follow it, with every flag and the value that follows it dropped. A relay command line can carry
+// a bearer token (--claim-token), and the marker outlives the process that wrote it and is read by
+// whoever inspects the state directory, so the arguments are never copied in. What is left still
+// names the process that saw the damage. It is bounded, so a hostile command line cannot grow the
+// marker without limit. A variable so a test can pin the encoding of a hostile argument (JSON
+// replaces invalid UTF-8).
+var haltCommand = func() string { return haltCommandWords(os.Args, haltCommandLimit) }
+
+// haltCommandLimit bounds the recorded identity.
+const haltCommandLimit = 512
+
+func haltCommandWords(argv []string, limit int) string {
+	words := make([]string, 0, len(argv))
+	for i := 0; i < len(argv); i++ {
+		arg := argv[i]
+		if arg == "--" {
+			break
+		}
+		if strings.HasPrefix(arg, "-") {
+			// A flag, and the separate word it takes as its value, are dropped whole. A value
+			// written into the flag (--flag=value) goes with the flag.
+			if !strings.Contains(arg, "=") && i+1 < len(argv) && !strings.HasPrefix(argv[i+1], "-") {
+				i++
+			}
+			continue
+		}
+		words = append(words, arg)
+	}
+	line := strings.Join(words, " ")
+	if len(line) > limit {
+		line = line[:limit]
+	}
+	return line
+}
 
 // haltFault is a deterministic crash boundary seam for the marker's publication: production leaves
 // it nil, and a test moves the file at a named point to prove no half-written marker is ever
 // visible.
 var haltFault func(string) error
+
+// SetHaltFault installs the deterministic crash boundary the marker's publication runs (nil
+// removes it). Tests only; production leaves it nil.
+func SetHaltFault(fault func(string) error) { haltFault = fault }
 
 // RecordHalt publishes S/corruption.json for the store dbPath names with ownership.Publish's
 // durability: a temporary file in S, fsync, rename, then the directory fsync. It is the one

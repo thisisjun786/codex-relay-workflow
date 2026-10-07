@@ -425,3 +425,97 @@ func TestHaltIgnoresANonCorruptingFailure(t *testing.T) {
 		t.Fatalf("a marker was written for a non-corrupting failure: %+v", state)
 	}
 }
+
+// TestHaltRedactsTheRecordedCommand: the marker records the process identity and never the
+// arguments, because a relay command line can carry a bearer token.
+func TestHaltRedactsTheRecordedCommand(t *testing.T) {
+	t.Parallel()
+	for _, one := range []struct {
+		argv []string
+		want string
+	}{
+		{[]string{"crw", "relay", "--state", "/s", "daemon"}, "crw relay daemon"},
+		{[]string{"crw", "relay", "session", "bind", "--claim-token", "sekrit"}, "crw relay session bind"},
+		{[]string{"crw", "relay", "sync-target", "--relationship=r-1", "--token=sekrit"}, "crw relay sync-target"},
+		{[]string{"crw", "relay", "--", "--claim-token", "sekrit"}, "crw relay"},
+		{[]string{"crw"}, "crw"},
+	} {
+		if got := haltCommandWords(one.argv, haltCommandLimit); got != one.want {
+			t.Errorf("%v: %q, want %q", one.argv, got, one.want)
+		}
+	}
+	long := haltCommandWords([]string{"crw", strings.Repeat("x", 4*haltCommandLimit)}, haltCommandLimit)
+	if len(long) != haltCommandLimit {
+		t.Fatalf("the recorded identity is not bounded: %d bytes", len(long))
+	}
+}
+
+// TestHaltRefusesAnAutocommitWrite: a statement a writable store issues outside a transaction takes
+// no writer lock, so it is refused by the querier itself; reads still answer.
+func TestHaltRefusesAnAutocommitWrite(t *testing.T) {
+	t.Parallel()
+	s, dir := haltFixture(t)
+	before := journalRows(t, s)
+	if err := RecordHalt(context.Background(), filepath.Join(dir, "relay.sqlite3"), CorruptingCause{Code: 11, Message: "malformed", Site: HaltSiteWrite}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := s.Querier(context.Background()).ExecContext(context.Background(), "INSERT INTO journal(at,kind,subject,detail) VALUES('t','k','s','d')")
+	if RefusalReason(err) != ReasonStoreWriteHalted {
+		t.Fatalf("an autocommit write was admitted: %v", err)
+	}
+	if after := journalRows(t, s); after != before {
+		t.Fatalf("the refused statement wrote %d rows", after-before)
+	}
+	rows, err := s.All(context.Background(), "SELECT COUNT(*) FROM journal")
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("a read stopped answering: %v %v", rows, err)
+	}
+}
+
+// TestHaltRefusesAWritableOpen: the schema script and the metadata seeds a writable open runs are
+// writes, so a marker published between a command's preflight and its open still stops them. A
+// read-only command reads through the read-only opener instead.
+func TestHaltRefusesAWritableOpen(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "relay.sqlite3")
+	s, err := Open(context.Background(), dbPath, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err = RecordHalt(context.Background(), dbPath, CorruptingCause{Code: 11, Message: "malformed", Site: HaltSiteWrite}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = Open(context.Background(), dbPath, ""); RefusalReason(err) != ReasonStoreWriteHalted {
+		t.Fatalf("a writable open was admitted: %v", err)
+	}
+	read, err := Open(WithReadOnlyCommand(context.Background()), dbPath, "")
+	if err != nil {
+		t.Fatalf("a read-only command could not open the halted store: %v", err)
+	}
+	defer func() { _ = read.Close() }()
+	if !read.ReadOnly() {
+		t.Fatal("a read-only command got a writable store")
+	}
+	if _, err = read.All(context.Background(), "SELECT COUNT(*) FROM schema_meta"); err != nil {
+		t.Fatalf("the read-only store does not answer: %v", err)
+	}
+}
+
+// TestHaltFailClosedOnADanglingMarker: a marker that is a dangling symbolic link is a directory entry
+// that cannot be read, so it is a halt, never an absent marker.
+func TestHaltFailClosedOnADanglingMarker(t *testing.T) {
+	t.Parallel()
+	_, dir := haltFixture(t)
+	dbPath := filepath.Join(dir, "relay.sqlite3")
+	if err := os.Symlink(filepath.Join(dir, "gone"), filepath.Join(dir, HaltMarkerName)); err != nil {
+		t.Fatal(err)
+	}
+	state := HaltStateAt(dbPath)
+	if !state.Present || state.Detail == "" {
+		t.Fatalf("a dangling marker did not halt: %+v", state)
+	}
+}

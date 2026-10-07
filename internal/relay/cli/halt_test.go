@@ -92,3 +92,23 @@ func TestHaltLeavesAHealthyStoreAlone(t *testing.T) {
 		t.Fatalf("doctor reported a marker on a healthy store: %s", answer.stdout)
 	}
 }
+
+// TestHaltDoctorDoesNotProbeAHaltedStore: doctor is read-only for every option, so its write probe
+// takes the store's write lock without any preflight. With the marker present the probe is not run,
+// and doctor still answers.
+func TestHaltDoctorDoesNotProbeAHaltedStore(t *testing.T) {
+	state := haltedState(t, "probe", `{"code":11,"message":"database disk image is malformed","site":"write","sequence":1}`)
+	answer := goCLI(t, "--state", state, "doctor", "--probe-write")
+	if answer.code != 0 {
+		t.Fatalf("doctor refused: %d %s", answer.code, answer.stdout)
+	}
+	decoded := object(t, answer.stdout)
+	probe, _ := decoded["writeProbe"].(map[string]any)
+	if probe == nil || probe["requested"] != true || probe["ran"] != false {
+		t.Fatalf("the probe was run against a halted store: %v", probe)
+	}
+	corruption, _ := decoded["corruption"].(map[string]any)
+	if corruption == nil || corruption["present"] != true {
+		t.Fatalf("doctor did not report the marker: %v", corruption)
+	}
+}

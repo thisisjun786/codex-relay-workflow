@@ -172,6 +172,16 @@ func openFenced(ctx context.Context, path, socket string, options OpenOptions) (
 	if err != nil {
 		return nil, err
 	}
+	// A store whose writes are halted is judged before any writable statement runs (CRW-848): the
+	// schema script, the additive zone and the metadata seeds a writable open runs are writes, and a
+	// marker published between the command's preflight and this open must still stop them. A
+	// read-only command reads through the read-only opener, which writes nothing.
+	if state := HaltStateAt(resolved); state.Present {
+		if ReadOnlyCommand(ctx) {
+			return OpenReadOnlyStore(ctx, path)
+		}
+		return nil, HaltRefusal(state)
+	}
 	if err = createAbsent(ctx, resolved, socket, options); err != nil {
 		return nil, err
 	}

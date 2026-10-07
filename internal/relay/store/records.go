@@ -45,7 +45,35 @@ func (s *Store) q(ctx context.Context) querier {
 	if open, ok := ctx.Value(openTxKey{}).(openTx); ok && open.store == s {
 		return open.conn
 	}
+	if !s.readOnly {
+		// A statement issued outside a transaction is autocommitted and takes no writer lock, so
+		// Transaction's own check cannot cover it (CRW-848): the marker is read per statement. A
+		// read-only store answers as it always has, because a read-only command must still answer.
+		return haltedQuerier{store: s, inner: s.DB}
+	}
 	return s.DB
+}
+
+// haltedQuerier refuses a statement a writable store issues outside a transaction once the halt
+// marker exists. Reads pass through: the halt stops writes, not answers.
+type haltedQuerier struct {
+	store *Store
+	inner querier
+}
+
+func (h haltedQuerier) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	return h.inner.QueryContext(ctx, query, args...)
+}
+
+func (h haltedQuerier) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
+	return h.inner.QueryRowContext(ctx, query, args...)
+}
+
+func (h haltedQuerier) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
+	if state := HaltStateAt(h.store.Path); state.Present {
+		return nil, HaltRefusal(state)
+	}
+	return h.inner.ExecContext(ctx, query, args...)
 }
 
 // Transaction runs a group of writes on the store's one connection under BEGIN IMMEDIATE, and

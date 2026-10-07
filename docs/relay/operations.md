@@ -987,10 +987,13 @@ command that meets the marker refuses at the open.
 **The marker.** `corruption.json` in the state directory, beside `takeover.json` and
 `write-gate.lock`, published the way the ownership mirror is (temporary file, fsync, rename,
 directory fsync), so a reader sees the whole previous record or the whole new one and never a
-partial file. It holds the detection time, the process (pid and the command line), the result code
-and message, the site (`write` or `observation`) and the marker's own sequence. **Nothing is
-written into the store when it is set**, and the store is never repaired by the halt: the marker is
-a stop, not a recovery.
+partial file. It holds the detection time, the process (pid and the command identity), the result
+code and message, the site (`write` or `observation`) and the marker's own sequence. The recorded
+identity is the program and the command words only: a relay command line can carry a bearer token
+(`--claim-token`), the marker outlives the process that wrote it, and whoever inspects the state
+directory reads it, so flags and their values are never copied in. **Nothing is written into the
+store when it is set**, and the store is never repaired by the halt: the marker is a stop, not a
+recovery.
 
 Two processes that detect the damage at once both publish, and the last rename is the one that
 stands; what survives is always one whole, decodable record. The sequence counts the detections one
@@ -1002,13 +1005,27 @@ no host read, no settlement, no delivery, no journal row. The deliveries it was 
 where they are, for the next daemon and for the operator's restore. Nothing is retried and no ledger
 row is written for the failed write.
 
+The daemon also keeps its own halt in memory. A marker that cannot be written (a state directory
+that is full or read-only) must not turn a halt back into writes, so the process stops writing
+whatever became of the marker and says so in its notes; the operator then has the note and the
+damaged store to act on. The site of the first detection stands: a later error of the same class
+publishes no second marker.
+
 **What the CLI does.** A writable command is refused at the open with the reason
 `store_write_halted` (exit 2), whose detail names the marker file and the detection it records.
+The refusal happens three times, because there are three ways to write: the command's preflight
+(`StartPreflight`, `CheckStartLikeFence`), the writable open itself (the schema script, the additive
+zone and the metadata seeds are writes, so a marker published between the preflight and the open
+still stops them), and every statement - inside the writer lock for a transaction (`Transaction`,
+`RegistrationHold`) and per statement for one issued in autocommit, which takes no lock at all.
 Read-only commands still answer: they read the store through the read-only opener, which runs no DDL,
 installs no index and takes no write lock. `doctor` answers and reports the marker as a trailing
 `corruption` key (`present`, `path`, and the detection when the marker decodes; an unreadable
 marker reports `present: true` with the failure in `detail`, because a marker nobody can read is
-not evidence that the store is healthy).
+not evidence that the store is healthy; a marker that is a dangling symbolic link is such a marker,
+because the directory entry decides presence and not what a read makes of it). `doctor` is read-only
+for every option, so its own preflight never runs: with `--probe-write` against a halted store the
+write probe is not run at all - it would take the store's write lock - and the answer says so.
 
 **Clearing it by hand, until the command exists.** The operator command that clears the marker
 ships separately (the follow-up issue for `store-halt-clear`). Until then:
