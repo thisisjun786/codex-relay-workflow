@@ -285,7 +285,7 @@ func TestCRW737C7ApplyNeedsTheDecisionReplyEvent(t *testing.T) {
 		"--context", "Hold the merge until the retention decision?", "--option", "hold=h:hold the merge",
 		"--option", "merge=m:merge now", "--option-reply", "hold=stop", "--option-reply", "merge=answer",
 		"--blocking", "relationship=rel-737",
-		"--origin-project", "PRJ-A", "--source", "receipt=ev-blocked", "--authority", "user"))
+		"--origin-project", "PRJ-A", "--source", "event=ev-blocked", "--authority", "user"))
 	decision, _ := raised["decisionId"].(string)
 	if got := crw737Run(t, "--state", state, "decision-answer", "--decision", decision, "--option", "hold",
 		"--by", "task-sup", "--via", "direct-ask", "--authority", "user"); got.code != 0 {
@@ -366,6 +366,10 @@ func crw737SeedRelationship(t *testing.T, state string) {
 			[]any{"rel-737", int64(1), "dispatch-1", "bound", "turn-1", "2026-10-06T00:00:00Z"}},
 		{"INSERT INTO events (event_id, relationship_id, execution_generation, revision_hash, outcome, producer, turn_thread_id, turn_id, turn_status, receipt, stage, first_seen_at, last_seen_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
 			[]any{delivery.DecisionEventID("rel-737", "ev-blocked"), "rel-737", int64(1), "no_deliverable", "decision_reply", "relay", "thread", "turn-1", "completed", receipt, "final", "2026-10-06T00:00:00Z", "2026-10-06T00:00:00Z"}},
+		// CRW-903: the relay queues the reply's delivery when it records the event, and the apply
+		// waits for that delivery to be accepted, so the fixture records it as dispatched.
+		{"INSERT INTO deliveries (event_id, relationship_id, kind, recipient_task_id, recipient_thread_id, state, attempt_count, created_at, updated_at) VALUES (?,?,?,?,?,?,0,?,?)",
+			[]any{delivery.DecisionEventID("rel-737", "ev-blocked"), "rel-737", delivery.Revision, "child", "child", delivery.Dispatched, "2026-10-06T00:00:00Z", "2026-10-06T00:00:00Z"}},
 	} {
 		if _, err := opened.Querier(ctx).ExecContext(ctx, statement.query, statement.args...); err != nil {
 			t.Fatalf("%s: %v", statement.query, err)
@@ -446,7 +450,7 @@ func TestCRW737ApplyRefusesAReplyOfAnotherRelationship(t *testing.T) {
 		"--context", "Hold the merge of another relationship?", "--option", "hold=h:hold it",
 		"--option", "merge=m:merge now", "--option-reply", "hold=stop", "--option-reply", "merge=answer",
 		"--blocking", "relationship=rel-other",
-		"--origin-project", "PRJ-A", "--source", "receipt=ev-blocked", "--authority", "user"))
+		"--origin-project", "PRJ-A", "--source", "event=ev-blocked", "--authority", "user"))
 	decision, _ := raised["decisionId"].(string)
 	if got := crw737Run(t, "--state", state, "decision-answer", "--decision", decision, "--option", "hold",
 		"--by", "task-sup", "--via", "direct-ask", "--authority", "user"); got.code != 0 {

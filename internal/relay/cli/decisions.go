@@ -295,9 +295,10 @@ func containsString(list []string, value string) bool {
 }
 
 // runDecisionApply is decision-apply: it moves an answered record to applied once the event that
-// unblocked the relationship it blocks is the record's own decision_reply event. Delivery alone
-// never applies a decision (Q5): the event must be the one the relay computed for the receipt the
-// decision answered, so the apply is only a read of what the relay recorded.
+// unblocked the relationship it blocks is the record's own decision_reply event, and that reply has
+// reached the child. Delivery alone never applies a decision (Q5): the event must be the one the
+// relay computed for the receipt the decision answered, and the relay must have recorded its
+// delivery as accepted by the child, so the apply is only a read of what the relay recorded.
 func runDecisionApply(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
 	decisionID := strings.TrimSpace(args.Text("decision"))
 	event := strings.TrimSpace(args.Text("event"))
@@ -343,22 +344,27 @@ const decisionReplyProducer = "relay"
 // decisionReplyEvent reports whether the events row named event is the decision_reply event that
 // answers the receipt this decision was raised on, for a relationship the decision blocks.
 //
-// Three things must hold, and all three are needed: the row must be the relay's own decision_reply
-// (a child never writes that outcome); the relationship it answers must be one the decision blocks;
-// and its answersEvent must be the receipt this decision was raised on (the record's source ref),
-// so an older reply to another receipt of the same relationship cannot apply a later decision. The
-// relay's own id for that reply is delivery.DecisionEventID(relationship, answersEvent), read from
-// the delivery package rather than re-derived, because decision.go belongs to another project.
+// Several things must hold, and all are needed: the row must be the relay's own decision_reply (a
+// child never writes that outcome); the relationship it answers must be one the decision blocks; the
+// decision the reply carries must be the reply the option the answer chose makes (the relay records
+// one decision_reply per receipt, so a question whose hold option replies stop is not applied by a
+// reply that decided answer, and an answer whose chosen option carries no reply, or that names no
+// option at all, cannot be matched and is refused the same way); and the relay must have recorded
+// the reply's delivery as accepted by the child, because a decision is applied on the reply the
+// child received rather than on the event alone.
 //
-// A fourth thing must hold, and it is the answer's own: the decision the reply carries must be the
-// reply the option the answer chose makes. The relay records one decision_reply per receipt, so a
-// question whose hold option replies stop is not applied by a reply that decided answer, however
-// well the reply answers the right receipt. An answer whose chosen option carries no reply, or that
-// names no option at all, cannot be matched and is refused the same way. What it returns is the
-// execution generation the reply event itself was recorded under, which the record then carries as
-// the generation the decision was applied in.
+// How the reply is identified depends on what the question was raised from, which is its source
+// kind. A question raised on a receipt names that receipt as its source ref, so the reply must
+// answer it — an older reply to another receipt of the same relationship cannot apply a later
+// decision — and its id must be the relay's own delivery.DecisionEventID(relationship,
+// answersEvent), read from the delivery package rather than re-derived, because decision.go belongs
+// to another project. Any other source — a report, a status file, a message — names no receipt, so
+// the reply is identified by the relationship and by when the relay recorded it: it must have been
+// recorded at or after the decision was answered. What it returns is the execution generation the
+// reply event itself was recorded under, which the record then carries as the generation it was
+// applied in.
 func decisionReplyEvent(ctx context.Context, opened *store.Store, record decisions.Record, event string) (int64, error) {
-	row, err := opened.One(ctx, "SELECT relationship_id, outcome, producer, receipt, execution_generation FROM events WHERE event_id = ?", event)
+	row, err := opened.One(ctx, "SELECT relationship_id, outcome, producer, receipt, execution_generation, first_seen_at FROM events WHERE event_id = ?", event)
 	if err != nil {
 		return 0, err
 	}
@@ -377,13 +383,21 @@ func decisionReplyEvent(ctx context.Context, opened *store.Store, record decisio
 	if answers == "" {
 		return 0, decisionNotTheReplyEvent(event)
 	}
-	// The reply must answer the receipt this decision was raised on, not merely some receipt of
-	// the blocked relationship: decision-raise names that receipt as the record's source, so an
-	// older reply to another receipt on the same relationship cannot apply a later decision.
-	if strings.TrimSpace(record.Source.Ref) != answers {
-		return 0, decisionNotTheReplyEvent(event)
-	}
-	if delivery.DecisionEventID(relationship, answers) != event {
+	if decisionSourceIsEvent(record) {
+		// The question was raised on a receipt, and decision-raise names that receipt as the
+		// record's source: the reply must answer it, so an older reply to another receipt of the
+		// same relationship cannot apply a later decision.
+		if strings.TrimSpace(record.Source.Ref) != answers {
+			return 0, decisionNotTheReplyEvent(event)
+		}
+		if delivery.DecisionEventID(relationship, answers) != event {
+			return 0, decisionNotTheReplyEvent(event)
+		}
+	} else if !decisionReplyRecordedAtOrAfterTheAnswer(record, row.Text("first_seen_at")) {
+		// A question raised from anything else — a report, a status file, a message — names no
+		// receipt, so the reply is identified by the relationship it answers and by when the relay
+		// recorded it: a reply recorded before the decision was answered cannot be the reply that
+		// answers it. An instant either side cannot be read is refused rather than accepted.
 		return 0, decisionNotTheReplyEvent(event)
 	}
 	decision, _ := get(receipt, "decision").(string)
@@ -394,11 +408,74 @@ func decisionReplyEvent(ctx context.Context, opened *store.Store, record decisio
 	if strings.TrimSpace(option.Reply) != strings.TrimSpace(decision) {
 		return 0, decisionConflict("reply_contradicts_answer", fmt.Sprintf("the answer chose option %q, whose reply is %q, and the relay recorded the decision %q: a decision is applied by the reply its chosen option makes", option.ID, option.Reply, decision))
 	}
+	// The reply applies the decision only once the relay has recorded its delivery as accepted by
+	// the child: a reply that is still queued has not been observed by the child, and Q5 applies a
+	// decision on the reply the child received, not on the event alone.
+	delivered, err := delivery.NewService(opened, delivery.SystemClock{}).Find(ctx, event)
+	if err != nil {
+		return 0, err
+	}
+	if !decisionReplyDelivered(delivered) {
+		return 0, decisionConflict("reply_not_delivered", fmt.Sprintf("the reply %q has not been delivered to the child (%s): a decision is applied once the relay records the reply's delivery as accepted", event, decisionDeliveryState(delivered)))
+	}
 	generation, ok := row.Get("execution_generation").(int64)
 	if !ok {
 		return 0, dispatch.Host(fmt.Sprintf("the decision_reply event %q carries no execution generation", event))
 	}
 	return generation, nil
+}
+
+// decisionSourceIsEvent reports whether the question was raised on a receipt: the source kind
+// decision-raise records for the event a question was read from. A receipt is the one source whose
+// identity is the event id the reply must answer; every other source names no receipt, so the reply
+// is matched by the relationship and the time it was recorded instead.
+func decisionSourceIsEvent(record decisions.Record) bool {
+	return strings.TrimSpace(record.Source.Kind) == decisionEventSourceKind
+}
+
+// decisionEventSourceKind is the source kind a receipt is recorded under. The value is the format's,
+// written by decision-raise as the kind of the report, event or message the question was read from.
+const decisionEventSourceKind = "event"
+
+// decisionReplyRecordedAtOrAfterTheAnswer reports whether the reply event was first seen at or after
+// the instant the decision was answered, both read as instants rather than compared as text. An
+// instant either side cannot be read is refused: a reply whose time cannot be placed is not shown
+// to have answered the decision.
+func decisionReplyRecordedAtOrAfterTheAnswer(record decisions.Record, firstSeenAt string) bool {
+	answered, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(record.AnsweredAt))
+	if err != nil {
+		return false
+	}
+	seen, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(firstSeenAt))
+	if err != nil {
+		return false
+	}
+	return !seen.Before(answered)
+}
+
+// decisionReplyDelivered reports whether the delivery the relay queued for the reply event has
+// reached the child: the state the transport records once the child's host accepted the turn the
+// message was carried in. Every other state — queued, sending, a held or uncertain send, a busy or
+// withheld one, a stored-not-woken one, a superseded one — is not delivery, and an event with no
+// delivery row at all is not either, so a decision applies only on a reply that actually arrived.
+func decisionReplyDelivered(delivered delivery.Row) bool {
+	if delivered == nil {
+		return false
+	}
+	switch delivered.S("state") {
+	case delivery.Dispatched, delivery.Acknowledged:
+		return true
+	}
+	return false
+}
+
+// decisionDeliveryState is the delivery's state for a refusal's detail, or that no delivery was
+// queued for the event.
+func decisionDeliveryState(delivered delivery.Row) string {
+	if delivered == nil {
+		return "no delivery is queued"
+	}
+	return fmt.Sprintf("state %q", delivered.S("state"))
 }
 
 // decisionNotTheReplyEvent is the refusal of an event that is not the decision_reply the relay

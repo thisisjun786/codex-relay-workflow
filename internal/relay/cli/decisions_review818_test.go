@@ -59,6 +59,10 @@ func review818SeedReply(t *testing.T, state, relationship, answersEvent, decisio
 			[]any{relationship, int64(1), "dispatch-1", "bound", "turn-1", "2026-10-06T00:00:00Z"}},
 		{"INSERT INTO events (event_id, relationship_id, execution_generation, revision_hash, outcome, producer, turn_thread_id, turn_id, turn_status, receipt, stage, first_seen_at, last_seen_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
 			[]any{event, relationship, generation, "no_deliverable", "decision_reply", "relay", "thread", "turn-1", "completed", receipt, "final", "2026-10-06T00:00:00Z", "2026-10-06T00:00:00Z"}},
+		// The relay queues the reply's delivery when it records the event; a decision applies only
+		// once that delivery is accepted by the child, so the fixture records it as dispatched.
+		{"INSERT INTO deliveries (event_id, relationship_id, kind, recipient_task_id, recipient_thread_id, state, attempt_count, created_at, updated_at) VALUES (?,?,?,?,?,?,0,?,?)",
+			[]any{event, relationship, delivery.Revision, "child", "child", delivery.Dispatched, "2026-10-06T00:00:00Z", "2026-10-06T00:00:00Z"}},
 	} {
 		if _, err := opened.Querier(ctx).ExecContext(ctx, statement.query, statement.args...); err != nil {
 			t.Fatalf("%s: %v", statement.query, err)
@@ -87,7 +91,7 @@ func review818RaiseBlocker(t *testing.T, state string) string {
 	raised := crw737JSON(t, crw737Run(t, "--state", state, "decision-raise", "--kind", "merge_approval",
 		"--context", "Hold the merge until the retention decision?", "--option", "hold=hold:hold the merge",
 		"--option", "merge=merge:merge now", "--option-reply", "hold=stop", "--option-reply", "merge=answer",
-		"--blocking", "relationship=rel-903", "--origin-project", "PRJ-A", "--source", "receipt=ev-blocked",
+		"--blocking", "relationship=rel-903", "--origin-project", "PRJ-A", "--source", "event=ev-blocked",
 		"--authority", "user"))
 	decision, _ := raised["decisionId"].(string)
 	if decision == "" {
@@ -103,6 +107,41 @@ func review818AnswerUser(t *testing.T, state, decision, option string) {
 		"--by", "task-sup", "--via", "dots", "--authority", "user"); got.code != 0 {
 		t.Fatalf("decision-answer: exit %d %s %s", got.code, got.stdout, got.stderr)
 	}
+}
+
+// review818Exec runs one statement against the case's store, so a fixture can write the rows the
+// relay would hold: a delivery's state, an event's first_seen_at, a field an older build wrote.
+func review818Exec(t *testing.T, state, query string, args ...any) {
+	t.Helper()
+	ctx := context.Background()
+	opened, err := store.Open(ctx, filepath.Join(state, "relay.sqlite3"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer opened.Close()
+	if _, err := opened.Querier(ctx).ExecContext(ctx, query, args...); err != nil {
+		t.Fatalf("%s: %v", query, err)
+	}
+}
+
+// review818SetDeliveryState moves the reply event's delivery to deliveryState, so a case can show
+// the apply waiting for the child to receive the reply.
+func review818SetDeliveryState(t *testing.T, state, event, deliveryState string) {
+	t.Helper()
+	review818Exec(t, state, "UPDATE deliveries SET state = ? WHERE event_id = ?", deliveryState, event)
+}
+
+// review818SetFirstSeenAt moves the reply event's first_seen_at, the instant the relay recorded it.
+func review818SetFirstSeenAt(t *testing.T, state, event, at string) {
+	t.Helper()
+	review818Exec(t, state, "UPDATE events SET first_seen_at = ? WHERE event_id = ?", at, event)
+}
+
+// review818SetRaisedAt writes raised_at straight into the record: the value an older build could
+// write, which the reader preserves and a re-raise must not fail on.
+func review818SetRaisedAt(t *testing.T, state, decisionID, value string) {
+	t.Helper()
+	review818Exec(t, state, "UPDATE dag_user_decisions SET raised_at = ? WHERE decision_id = ?", value, decisionID)
 }
 
 // The option-reply vocabulary is the decision vocabulary the delivery package records on the
@@ -292,6 +331,82 @@ func TestReview818AppliedGenerationIsRead(t *testing.T) {
 	}
 	record := crw737List(t, state)[0].(map[string]any)
 	if record["state"] != "applied" || record["applied_generation"] != float64(2) {
+		t.Fatalf("the applied record is %v", record)
+	}
+}
+
+// A stored record whose raised_at an older build could write is preserved by the reader and by
+// Update; re-raising the same question must append the observation rather than fail on the stored
+// value, so a question can still move from open to raised.
+func TestReview818ReraiseKeepsAStoredBadRaisedAt(t *testing.T) {
+	state := crw737Store(t)
+	first := crw737JSON(t, crw737Raise(t, state, "PRJ-A", "Which window does the host update take?"))
+	decision, _ := first["decisionId"].(string)
+	review818SetRaisedAt(t, state, decision, "not a time")
+	second := crw737JSON(t, crw737Raise(t, state, "PRJ-A", "Which window does the host update take?"))
+	if second["merged"] != true || second["decisionId"] != decision {
+		t.Fatalf("the re-raise answered %v, want the stored record %v", second, first)
+	}
+	record := crw737List(t, state)[0].(map[string]any)
+	if record["raised_at"] != "not a time" {
+		t.Fatalf("the re-raise rewrote raised_at to %v", record["raised_at"])
+	}
+	if seen, _ := record["seen"].([]any); len(seen) != 2 {
+		t.Fatalf("the re-raise left %d observations, want the appended second one", len(seen))
+	}
+}
+
+// A decision is applied only once the relay has recorded the reply's delivery as accepted by the
+// child: a reply still queued leaves the record answered.
+func TestReview818ApplyWaitsForTheDelivery(t *testing.T) {
+	state := crw737Store(t)
+	review818SeedSupervisor(t, state, "task-sup")
+	event := review818SeedReply(t, state, "rel-903", "ev-blocked", "stop", 1)
+	review818SetDeliveryState(t, state, event, delivery.Queued)
+	decision := review818RaiseBlocker(t, state)
+	review818AnswerUser(t, state, decision, "hold")
+	crw737Refused(t, crw737Run(t, "--state", state, "decision-apply", "--decision", decision, "--event", event), "reply_not_delivered")
+	if record := crw737List(t, state)[0].(map[string]any); record["state"] != "answered" {
+		t.Fatalf("an undelivered reply moved the record: %v", record)
+	}
+	// The relay records the delivery as accepted by the child: the same reply applies it.
+	review818SetDeliveryState(t, state, event, delivery.Dispatched)
+	if got := crw737Run(t, "--state", state, "decision-apply", "--decision", decision, "--event", event); got.code != 0 {
+		t.Fatalf("decision-apply: exit %d %s %s", got.code, got.stdout, got.stderr)
+	}
+	if record := crw737List(t, state)[0].(map[string]any); record["state"] != "applied" {
+		t.Fatalf("the applied record is %v", record)
+	}
+}
+
+// A question raised from a report names no receipt, so the receipt identity check does not apply:
+// the reply is the relay's own decision_reply on the blocked relationship, recorded at or after the
+// record's answered_at. A reply recorded before the answer cannot be the reply that answers it.
+func TestReview818ReportSourceApplies(t *testing.T) {
+	state := crw737Store(t)
+	review818SeedSupervisor(t, state, "task-sup")
+	event := review818SeedReply(t, state, "rel-903", "ev-report", "stop", 1)
+	raised := crw737JSON(t, crw737Run(t, "--state", state, "decision-raise", "--kind", "merge_approval",
+		"--context", "Hold the merge the report asks about?", "--option", "hold=hold:hold the merge",
+		"--option", "merge=merge:merge now", "--option-reply", "hold=stop", "--option-reply", "merge=answer",
+		"--blocking", "relationship=rel-903", "--origin-project", "PRJ-A", "--source", "report=1",
+		"--authority", "user"))
+	decision, _ := raised["decisionId"].(string)
+	review818AnswerUser(t, state, decision, "hold")
+	crw737Refused(t, crw737Run(t, "--state", state, "decision-apply", "--decision", decision, "--event", event), "disposition_conflict")
+	if record := crw737List(t, state)[0].(map[string]any); record["state"] != "answered" {
+		t.Fatalf("a reply recorded before the answer applied the record: %v", record)
+	}
+	// Recorded at the answer, the same reply applies it.
+	answeredAt, _ := crw737List(t, state)[0].(map[string]any)["answered_at"].(string)
+	if answeredAt == "" {
+		t.Fatal("the answered record carries no answered_at")
+	}
+	review818SetFirstSeenAt(t, state, event, answeredAt)
+	if got := crw737Run(t, "--state", state, "decision-apply", "--decision", decision, "--event", event); got.code != 0 {
+		t.Fatalf("decision-apply: exit %d %s %s", got.code, got.stdout, got.stderr)
+	}
+	if record := crw737List(t, state)[0].(map[string]any); record["state"] != "applied" {
 		t.Fatalf("the applied record is %v", record)
 	}
 }

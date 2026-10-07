@@ -536,6 +536,14 @@ func sameAnswer(first, second Record) bool {
 // and its stored fingerprint must match its content. The identity and answer checks run before the
 // per-record validation so that a differing answer is reported as the conflict it is, rather than
 // masked by a format refusal in one of the very fields the comparison covers.
+//
+// The two statements are held to the format differently, because they are not the same kind of
+// thing. The second is this raise's own fields, and it is checked whole. The first is the row the
+// question is already stored as, and it is checked with the one exemption the store's read uses
+// (decodeUserDecision): a raised_at an older build could write is kept as it stands, so a question
+// that lists, answers and withdraws also takes a second observation. Everything the fold newly
+// writes — the appended observations, the state the caller moves, and a raised_at this raise filled
+// in — is checked as the format requires.
 func Merge(first, second Record) (Record, error) {
 	if first.Fingerprint != second.Fingerprint {
 		return Record{}, fmt.Errorf("%w: %s and %s", ErrFingerprintMismatch, first.Fingerprint, second.Fingerprint)
@@ -543,15 +551,37 @@ func Merge(first, second Record) (Record, error) {
 	if !sameAnswer(first, second) {
 		return Record{}, fmt.Errorf("%w: %s and %s", ErrMergeConflict, first.State, second.State)
 	}
+	if err := Validate(second); err != nil {
+		return Record{}, err
+	}
+	if err := validateStoredRaisedAt(first); err != nil {
+		return Record{}, err
+	}
 	for _, record := range []Record{first, second} {
-		if err := Validate(record); err != nil {
-			return Record{}, err
-		}
 		if content := Fingerprint(record.Context, record.Blocking, record.Options); content != record.Fingerprint {
 			return Record{}, fmt.Errorf("%w: %s is not its content's %s", ErrFingerprintMismatch, record.Fingerprint, content)
 		}
 	}
 	merged := first
 	merged.Seen = append(append([]Seen{}, first.Seen...), second.Seen...)
+	if merged.RaisedAt == first.RaisedAt {
+		if err := validateStoredRaisedAt(merged); err != nil {
+			return Record{}, err
+		}
+	} else if err := Validate(merged); err != nil {
+		return Record{}, err
+	}
 	return merged, nil
+}
+
+// validateStoredRaisedAt is Validate with the one exemption the store's read uses (decodeUserDecision):
+// a stored raised_at that is not an RFC 3339 timestamp is kept as it stands rather than failing the
+// record. Every other field is checked, and the writer path still refuses a raised_at it is asked to
+// store: this exemption exists only so a row an older build wrote stays readable.
+func validateStoredRaisedAt(record Record) error {
+	kept := record.RaisedAt
+	record.RaisedAt = ""
+	err := Validate(record)
+	record.RaisedAt = kept
+	return err
 }
