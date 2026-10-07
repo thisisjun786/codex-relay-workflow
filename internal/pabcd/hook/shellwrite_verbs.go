@@ -480,6 +480,11 @@ func shellVerbSkipOptions(head string, rest []string, opts string, duration bool
 		rest = rest[1:]
 		if a[1] == '-' {
 			name, _, inline := strings.Cut(a[2:], "=")
+			if head == "env" && name == "split-string" {
+				// env's --split-string builds a command line out of the argument, so the command this reader would call
+				// the verb is not the one env runs (CRW-765 correction 9, sixth pass).
+				return nil, false
+			}
 			if shellVerbNoExec(head, name, 0) {
 				return nil, false
 			}
@@ -489,6 +494,10 @@ func shellVerbSkipOptions(head string, rest []string, opts string, duration bool
 			continue
 		}
 		for j := 1; j < len(a); j++ {
+			if head == "env" && a[j] == 'S' {
+				// env -S builds a command line out of its argument (CRW-765 correction 9, sixth pass).
+				return nil, false
+			}
 			if shellVerbNoExec(head, "", a[j]) {
 				return nil, false
 			}
@@ -1987,10 +1996,10 @@ func shellWriteHeredocKindOf(verb string) shellWriteHeredocKind {
 // feed an interpreter.
 func shellWriteHeredocFunctionNames(command []uint16) map[string]bool {
 	out := map[string]bool{}
-	// The text is already body-free (the caller blanks the here-documents it finds) and its comments are inert: a
-	// word-initial # ends its physical line, so a function example written in a comment is no definition (CRW-765
-	// correction 9).
-	s := shellWriteHeredocBlankComments(command)
+	// The text is already body-free (the caller blanks the here-documents it finds); its comments and its quoted spans
+	// are inert: a word-initial # ends its physical line, and a quoted word is text the shell passes through, so neither
+	// a function example in a comment nor one in a quoted argument defines anything (CRW-765 correction 9).
+	s := shellWriteHeredocBlankCommentsAndQuotes(command)
 	for i := 0; i < len(s); i++ {
 		if s[i] != '(' {
 			continue
@@ -2415,7 +2424,11 @@ func shellWriteHeredocUnreadableIn(command string, depth int, budget *int) (stri
 // correction 2). Each nested program is read as the token holds it and again with its shell escapes removed, matching
 // the destination walk's shellVerbNestedBoth, so a reason from either reading denies.
 func shellWriteHeredocUnreadableNested(command string, depth int, budget *int) (string, bool) {
-	header := shellString(stripHeredocBodies(utf16.Encode([]rune(command))))
+	// The bodies this issue's collector finds are blanked, not the oracle's legacy stripper's: that reader takes only
+	// the first quoted span of `<<'E''OF'`, so its body ended at the line `E` and a later body line leaked out as a
+	// nested program the shell never runs (CRW-765 correction 9, sixth pass, after the blind pre-merge evaluation of
+	// head 9709977c5).
+	header := shellString(shellWriteHeredocOutsideBodies(utf16.Encode([]rune(command))))
 	for _, sub := range shellVerbSubsegments(header) {
 		tokens := shellVerbSkipWrappers(shellTokenize(sub))
 		nested, ok := shellWriteFStringNestedScript(tokens)

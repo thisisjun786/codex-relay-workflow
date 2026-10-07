@@ -625,3 +625,92 @@ func TestShellWriteHeredocGeneration9SplitDelimiterControls(t *testing.T) {
 		})
 	}
 }
+
+// The blind pre-merge evaluation of head 9709977c5 (score 4) found two more bypasses inside the same promise and two
+// regressions this change had introduced: env's split-string option built a command line this reader did not read, an
+// ANSI-C delimiter holding a NUL was read past the shell's truncation, the nested unreadable scan still read the
+// legacy stripper's text, and function detection read a quoted argument as a definition. The rows below are red on
+// 9709977c5.
+
+// TestShellWriteHeredocGeneration9EnvSplitStringDenied is the denied case for env's --split-string: env builds a
+// command line out of the argument, so the command this reader would call the verb is not the one env runs.
+func TestShellWriteHeredocGeneration9EnvSplitStringDenied(t *testing.T) {
+	cwd, root, env := gateScene(t)
+	mem := root
+	for _, row := range []struct{ name, command string }{
+		{"env -S with a long option", "env -S 'python3 -' cat <<'PY'\nopen('" + mem + "/a','w')\nPY"},
+		{"env --split-string", "env --split-string 'python3 -' cat <<'PY'\nopen('" + mem + "/a','w')\nPY"},
+		{"env --split-string=", "env --split-string='python3 -' cat <<'PY'\nopen('" + mem + "/a','w')\nPY"},
+		{"env -S with a bundled short option", "env -iS 'python3 -' cat <<'PY'\nopen('" + mem + "/a','w')\nPY"},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			got := memoryGateClassify("Bash", map[string]any{"command": row.command}, cwd, env)
+			if !shellWriteHeredocGateDenied(got, mem+"/a") {
+				t.Errorf("%q: %+v, want a deny naming the protected path or the fail-closed reason", row.command, got)
+			}
+		})
+	}
+	// An ordinary env wrapper with no split-string stays readable.
+	for _, command := range []string{"env cat <<'EOF'\n" + mem + "\nEOF", "env -i cat <<'EOF'\n" + mem + "\nEOF"} {
+		t.Run("an ordinary env stays allowed: "+command[:7], func(t *testing.T) {
+			if got := memoryGateClassify("Bash", map[string]any{"command": command}, cwd, env); got.Surface != "" {
+				t.Errorf("%q must pass: %+v", command, got)
+			}
+		})
+	}
+}
+
+// TestShellWriteHeredocGeneration9AnsiCNulDenied is the denied case for an ANSI-C delimiter holding a NUL: the shell
+// truncates the word there, so the delimiter is the part before it and the document closes where the shell closes it.
+func TestShellWriteHeredocGeneration9AnsiCNulDenied(t *testing.T) {
+	cwd, root, env := gateScene(t)
+	mem := root
+	for _, row := range []struct{ name, delim, term string }{
+		{"a trailing NUL", `$'DATA\0ignored'`, "DATA"},
+		{"a NUL inside the word", `$'DA\0TA'`, "DA"},
+		{"a NUL before the end", `$'DATA\0'`, "DATA"},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			command := "cat <<" + row.delim + "\ntext\n" + row.term + "\npython3 - <<'PY'\nopen('" + mem + "/a','w')\nPY"
+			hss := shellWriteHeredocs(utf16.Encode([]rune(command)))
+			if len(hss) != 2 {
+				t.Fatalf("collected %d here-documents, want 2: %+v", len(hss), hss)
+			}
+			got := memoryGateClassify("Bash", map[string]any{"command": command}, cwd, env)
+			if !shellWriteHeredocGateDenied(got, mem+"/a") {
+				t.Errorf("%q: %+v, want a deny naming the protected path", command, got)
+			}
+		})
+	}
+}
+
+// TestShellWriteHeredocGeneration9QuotedFunctionControls is the invariant case for function detection and the nested
+// scan: a quoted argument naming a function or a nested program is text the shell passes through, and a documentation
+// body holding a concatenated delimiter keeps its own lines inside the body.
+func TestShellWriteHeredocGeneration9QuotedFunctionControls(t *testing.T) {
+	cwd, root, env := gateScene(t)
+	mem := root
+	for _, row := range []struct{ name, command string }{
+		{"a quoted function example on the header", "cat > note.md <<'DOC'; printf '%s' 'f()'\nhello\nDOC"},
+		{"a quoted function example after a data here-document", "cat <<'EOF'\n" + mem + "\nEOF\nprintf '%s' 'f()'"},
+		{"a documentation body with a concatenated delimiter", "cat > note.md <<'E''OF'\nE\nbash -c 'mytool <<INNER\nexample\nINNER'\nEOF"},
+		{"a documentation body with a concatenated delimiter naming a path", "cat > note.md <<'E''OF'\nE\n" + mem + "/a\nEOF"},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			if got, ok := shellWriteHeredocUnreadable(row.command); ok {
+				t.Errorf("%q reported unreadable %q, want data", row.command, got)
+			}
+			if got := memoryGateClassify("Bash", map[string]any{"command": row.command}, cwd, env); got.Surface != "" {
+				t.Errorf("%q must pass: %+v", row.command, got)
+			}
+		})
+	}
+	// A real function definition still makes the header unprovable.
+	for _, command := range []string{"f() { true; }; cat <<'EOF'\n" + mem + "\nEOF", "function f { true; }; cat <<'EOF'\n" + mem + "\nEOF"} {
+		t.Run("a real definition denies: "+command[:6], func(t *testing.T) {
+			if got := memoryGateClassify("Bash", map[string]any{"command": command}, cwd, env); got.Surface == "" {
+				t.Errorf("%q must be denied: %+v", command, got)
+			}
+		})
+	}
+}

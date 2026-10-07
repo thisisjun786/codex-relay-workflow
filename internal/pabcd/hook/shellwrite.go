@@ -203,6 +203,37 @@ func shellWriteHeredocBlankComments(s []uint16) []uint16 {
 	return out
 }
 
+// shellWriteHeredocBlankCommentsAndQuotes is shellWriteHeredocBlankComments with every quoted span blanked too, so a
+// check that reads the text as shell syntax does not read a word the shell only passes through as text. A function
+// example inside a quoted argument (`printf '%s' 'f()'`) defines nothing, so it must not make a header unprovable
+// (CRW-765 correction 9, sixth pass, after the blind pre-merge evaluation of head 9709977c5).
+func shellWriteHeredocBlankCommentsAndQuotes(s []uint16) []uint16 {
+	out := shellWriteHeredocBlankComments(s)
+	for i := 0; i < len(out); {
+		c := out[i]
+		if c == '\\' {
+			i += 2
+			continue
+		}
+		if c == '\'' || c == '"' {
+			end := skipQuoted(out, i)
+			if end <= i {
+				i++
+				continue
+			}
+			for k := i; k < end && k < len(out); k++ {
+				if out[k] != '\n' {
+					out[k] = ' '
+				}
+			}
+			i = end
+			continue
+		}
+		i++
+	}
+	return out
+}
+
 // shellWriteHeredocLineStart is the offset of the physical line that holds at: the byte after the last newline before it.
 // The header a here-document is judged by is that physical line, so a backslash, a control operator or a second command
 // beside the operator is seen by the header proof (CRW-765 correction 4, rule G1).
@@ -343,6 +374,13 @@ func shellWriteHeredocDelimiter(s []uint16, i int) (delim []uint16, quoted bool)
 				for i < len(s) && s[i] != '\'' {
 					if s[i] == '\\' {
 						dec, n := shellWriteHeredocAnsiC(s, i)
+						if len(dec) == 1 && dec[0] == 0 {
+							// Bash truncates the ANSI-C quoted word at a NUL: the delimiter is the part before it, and
+							// the rest of the word is gone, so the terminator is not the text this reader would build
+							// from the raw spelling (CRW-765 correction 9, sixth pass, after the blind pre-merge
+							// evaluation of head 9709977c5).
+							return out, quoted
+						}
 						out = append(out, dec...)
 						i = n
 						continue
