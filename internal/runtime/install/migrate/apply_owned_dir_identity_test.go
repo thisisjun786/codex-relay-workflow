@@ -121,24 +121,6 @@ func migrateOwnedDirIdentityWantNoTemp(t *testing.T, dir string) {
 	}
 }
 
-// migrateOwnedDirIdentityTempIn returns the name of the one temporary of this run's naming rule directly
-// inside dir, failing when there is not exactly one.
-func migrateOwnedDirIdentityTempIn(t *testing.T, dir string) string {
-	t.Helper()
-	entries, err := os.ReadDir(dir)
-	must(t, err)
-	var names []string
-	for _, e := range entries {
-		if _, ok := tempRun(e.Name()); ok {
-			names = append(names, e.Name())
-		}
-	}
-	if len(names) != 1 {
-		t.Fatalf("want exactly one temporary in %s, found %v", dir, names)
-	}
-	return names[0]
-}
-
 // migrateOwnedDirIdentityRerun opens the same project roots again and applies them: a rerun is a new
 // process with its own pinned roots and its own publisher.
 func migrateOwnedDirIdentityRerun(t *testing.T, ws string) (*ApplyResult, error) {
