@@ -20,15 +20,6 @@ import (
 const (
 	// localHookName is the hook this tool owns.
 	localHookName = "pre-push"
-	// localHookMarker is the line the hook carries, so a reader can tell this tool's hook from a
-	// foreign one. The whole script is compared, not this line alone.
-	localHookMarker = "# crw-dev ci local pre-push hook (CRW-964)"
-	// localBlobLimit is the largest blob a push may carry, the same bound crw-dev ci validate
-	// applies (2 MiB).
-	localBlobLimit = 2 << 20
-	// localGitleaksEnv names the Gitleaks binary the hook runs, so a host that keeps it outside
-	// PATH can still use the hook.
-	localGitleaksEnv = "CRW_CI_GITLEAKS"
 )
 
 // localHookScript is the hook, written verbatim. It is a shell script so it can run before git

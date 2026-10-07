@@ -7,9 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -229,20 +227,6 @@ func localReuse(reused, current verificationRecord) (bool, string) {
 		}
 	}
 	return true, "every key matches"
-}
-
-// localDigestOfFile is the sha256 of a file, or "" when it is absent (a tree without go.sum or
-// web/package-lock.json is not an error; the record then carries no digest for it).
-func localDigestOfFile(path string) (string, error) {
-	data, err := os.ReadFile(path)
-	if errors.Is(err, fs.ErrNotExist) {
-		return "", nil
-	}
-	if err != nil {
-		return "", err
-	}
-	sum := sha256.Sum256(data)
-	return "sha256:" + hex.EncodeToString(sum[:]), nil
 }
 
 // localHostOS and localHostArch are the platform the record names.
