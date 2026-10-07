@@ -747,3 +747,45 @@ func TestMemoryGateUnnamedDestinationControlShapes(t *testing.T) {
 		})
 	}
 }
+
+// TestMemoryGateUnnamedDestinationEleventhPassShapes pins the shapes the eleventh pre-merge evaluation found: a Path.open
+// mode computed by a call on a chained receiver, and an unparenthesised or nested tuple loop target that rebinds an
+// imported module's name.
+func TestMemoryGateUnnamedDestinationEleventhPassShapes(t *testing.T) {
+	cwd, root, env := gateScene(t)
+	m := root + "/n.md"
+	py := func(program string) string { return "python3 -c " + shellWriteUnnamedQuote(program) }
+	for _, c := range []struct{ name, command string }{
+		{"chained Path open with a str-wrapped write mode", py("from pathlib import Path; Path(\"" + root + "\").joinpath(\"n.md\").open(str(\"w\")).write(\"x\")")},
+		{"chained Path open with a joined write mode", py("from pathlib import Path; Path(\"" + root + "\").joinpath(\"n.md\").open(\"\".join([\"w\"])).write(\"x\")")},
+		{"comprehension over an unparenthesised tuple target", py("import io\nfrom pathlib import Path\n[io.write_text(\"x\") for io, unused in [(Path(\"" + m + "\"), 0)]]")},
+		{"for statement over a bare second target", py("import io\nfrom pathlib import Path\nfor x, io in [(0, Path(\"" + m + "\"))]:\n    io.write_text(\"x\")")},
+		{"for statement over a nested tuple target", py("import io\nfrom pathlib import Path\nfor x, (io, y) in [(0, (Path(\"" + m + "\"), 1))]:\n    io.write_text(\"x\")")},
+		{"for statement over a trailing-comma target", py("import io\nfrom pathlib import Path\nfor io, in [(Path(\"" + m + "\"),)]:\n    io.write_text(\"x\")")},
+		{"tuple assignment rebinding a module name", py("import io\nfrom pathlib import Path\nio, x = Path(\"" + m + "\"), 0\nio.write_text(\"x\")")},
+		{"parenthesised tuple assignment rebinding a module name", py("import io\nfrom pathlib import Path\n(io, x) = (Path(\"" + m + "\"), 0)\nio.write_text(\"x\")")},
+		{"list assignment rebinding a module name", py("import io\nfrom pathlib import Path\n[io, x] = [Path(\"" + m + "\"), 0]\nio.write_text(\"x\")")},
+		{"with-as rebinding a module name", py("import io\nfrom pathlib import Path\nwith Path(\"" + m + "\").open(\"r\") as io:\n    io.write_text(\"x\")")},
+		{"walrus rebinding a module name", py("import io\nfrom pathlib import Path\n(io := Path(\"" + m + "\"))\nio.write_text(\"x\")")},
+		{"annotated assignment rebinding a module name", py("import io\nfrom pathlib import Path\nio: Path = Path(\"" + m + "\")\nio.write_text(\"x\")")},
+		{"chained Path open with a call-made mode", py("from pathlib import Path\nmk = lambda: 'w'\nPath(\"" + root + "\").joinpath(\"n.md\").open(mk()).write(\"x\")")},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got := memoryGateClassify("Bash", map[string]any{"command": c.command}, cwd, env)
+			if got.Surface != "shell" || got.Target != unnamedDestWant {
+				t.Errorf("%q: %+v, want the shell surface and %s", c.command, got, unnamedDestWant)
+			}
+		})
+	}
+	for _, c := range []struct{ name, command string }{
+		{"read-only chained Path open with a str-wrapped read mode", py("from pathlib import Path; Path(\"" + root + "\").joinpath(\"n.md\").open(str(\"r\")).read()")},
+		{"chained Path write under /w with a str-wrapped mode", py("from pathlib import Path; Path('/w').joinpath('n.md').open(str('w')).write('x')")},
+		{"comprehension rebinding a module name under /w", py("import io\nfrom pathlib import Path\n[io.write_text('x') for io, unused in [(Path('/w/n.md'), 0)]]")},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got := memoryGateClassify("Bash", map[string]any{"command": c.command}, cwd, env); got.Surface != "" {
+				t.Errorf("%q must pass: %+v", c.command, got)
+			}
+		})
+	}
+}

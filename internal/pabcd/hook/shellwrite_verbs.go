@@ -2827,10 +2827,15 @@ func (w *shellWriteUnnamedWalk) close(rs []rune, f shellWriteUnnamedFrame, spans
 			writes = shellWriteUnnamedWrites(first)
 		case !shellVerbBlank(second) && !shellWriteUnnamedNumber(second):
 			writes = shellWriteUnnamedWrites(second) || !shellWriteUnnamedLiteral(second)
-		case !shellVerbBlank(first) && !shellWriteUnnamedLiteral(first) && !shellWriteUnnamedNumber(first) && !shellWriteUnnamedCallArg(first):
+		case !shellVerbBlank(first) && shellWriteUnnamedCallArg(first):
+			// A call-shaped lone argument is a path only for a module receiver, which the cases above read. Otherwise
+			// it is the mode of a Path's open, and the mode a call passes is its first argument: str("w") and
+			// "".join(["w"]) write, str("r") reads, and a first argument the reader cannot read as a literal may hold
+			// a write mode, so it writes.
+			writes = shellWriteUnnamedCallMode(first)
+		case !shellVerbBlank(first) && !shellWriteUnnamedLiteral(first) && !shellWriteUnnamedNumber(first):
 			// A lone argument the reader can read as neither a mode nor a path leaves the call's own form unknown,
-			// so it fails closed. An argument that is a call is a path (module.open(path) reads by default), and a
-			// missing mode reads in every form, so neither is a write.
+			// so it fails closed.
 			writes = true
 		}
 		if writes {
@@ -2937,53 +2942,50 @@ func (w *shellWriteUnnamedWalk) bindLoopTargets(rs []rune) {
 }
 
 // shellWriteUnnamedTargetNames is every name a for clause's target binds, read from k: a bare name, or the names a
-// parenthesised or bracketed tuple lists (with nested tuples and a trailing comma). It returns the names and the
-// offset just after the target.
+// tuple lists, with a star, nested parentheses or brackets and a trailing comma. Targets are comma-separated elements
+// (for x, io in ...), so the list goes on past the first name. It returns the names and the offset just after the last
+// element, before the in keyword.
 func shellWriteUnnamedTargetNames(rs []rune, k int) ([]string, int) {
 	names := []string{}
-	if k < len(rs) && (rs[k] == '(' || rs[k] == '[') {
-		open, depth := rs[k], 0
-		for m := k; m < len(rs); m++ {
-			switch {
-			case rs[m] == open:
-				depth++
-			case rs[m] == ')' || rs[m] == ']':
-				if depth--; depth == 0 {
-					return append(names, shellWriteUnnamedNamesIn(rs, k+1, m)...), m + 1
-				}
-			}
+	for {
+		for k < len(rs) && (rs[k] == '*' || shellVerbSpaceRune(rs[k])) {
+			k++
 		}
-		return names, k
+		if k < len(rs) && (rs[k] == '(' || rs[k] == '[') {
+			inner, after := shellWriteUnnamedBracketNames(rs, k)
+			names, k = append(names, inner...), after
+		} else {
+			start := k
+			for k < len(rs) && shellWriteCopyIdentRune(rs[k]) {
+				k++
+			}
+			if k == start || string(rs[start:k]) == "in" {
+				return names, start
+			}
+			names = append(names, string(rs[start:k]))
+		}
+		m := k
+		for m < len(rs) && shellVerbSpaceRune(rs[m]) {
+			m++
+		}
+		if m >= len(rs) || rs[m] != ',' {
+			return names, k
+		}
+		k = m + 1
 	}
-	start := k
-	for k < len(rs) && shellWriteCopyIdentRune(rs[k]) {
-		k++
-	}
-	if k == start {
-		return names, k
-	}
-	return []string{string(rs[start:k])}, k
 }
 
-// shellWriteUnnamedNamesIn is every bare name that stands at the top level of a tuple target's text.
-func shellWriteUnnamedNamesIn(rs []rune, from, to int) []string {
-	names, depth := []string{}, 0
-	for i := from; i < to; i++ {
-		switch c := rs[i]; {
-		case c == '(' || c == '[' || c == '{':
-			depth++
-		case c == ')' || c == ']' || c == '}':
-			depth--
-		case depth == 0 && shellWriteCopyIdentRune(c):
-			j := i
-			for j < to && shellWriteCopyIdentRune(rs[j]) {
-				j++
-			}
-			names = append(names, string(rs[i:j]))
-			i = j - 1
-		}
+// shellWriteUnnamedBracketNames is the names a parenthesised or bracketed target lists, from the bracket at k, and the
+// offset just after its closing bracket. A bracket left open returns the offset it stopped at.
+func shellWriteUnnamedBracketNames(rs []rune, k int) ([]string, int) {
+	names, after := shellWriteUnnamedTargetNames(rs, k+1)
+	for after < len(rs) && shellVerbSpaceRune(rs[after]) {
+		after++
 	}
-	return names
+	if after < len(rs) && (rs[after] == ')' || rs[after] == ']') {
+		return names, after + 1
+	}
+	return names, after
 }
 
 // literal records the decoded value of one string literal the program holds.
@@ -3199,6 +3201,9 @@ func shellWriteUnnamedBinds(rs []rune, i, j int) bool {
 	if shellWriteUnnamedLambdaParam(rs, i) {
 		return true // a lambda's parameter binds the name in the lambda's body
 	}
+	if shellWriteUnnamedAsTarget(rs, i) {
+		return true // a with or except clause's as target binds the name (with open(p) as io)
+	}
 	k := j
 	for k < len(rs) && shellVerbSpaceRune(rs[k]) {
 		k++
@@ -3270,14 +3275,22 @@ func shellWriteUnnamedTarget(rs []rune, j int) bool {
 		if rs[k] == '=' && (k+1 >= len(rs) || rs[k+1] != '=') {
 			return true
 		}
-		if rs[k] == '(' || rs[k] == ')' {
-			continue
+		if shellWriteCopyIdentRune(rs[k]) || strings.ContainsRune("()[]*, \t", rs[k]) {
+			continue // the other names of the tuple, and its brackets, commas and star
 		}
-		if !shellVerbSpaceRune(rs[k]) && rs[k] != ',' {
-			break // something other than a tuple element: the name is no target
-		}
+		break // something other than a tuple element: the name is no target
 	}
 	return false
+}
+
+// shellWriteUnnamedAsTarget reports whether the name that starts at rs[i] stands after the as keyword of a with or except
+// clause, which binds it.
+func shellWriteUnnamedAsTarget(rs []rune, i int) bool {
+	k := i
+	for k > 0 && shellVerbSpaceRune(rs[k-1]) {
+		k--
+	}
+	return k >= 2 && string(rs[k-2:k]) == "as" && (k == 2 || !shellWriteCopyIdentRune(rs[k-3]))
 }
 
 // shellWriteUnnamedUnpacked reports whether any argument of a call is a * or ** unpacking, which may supply the mode or
@@ -3710,6 +3723,58 @@ func shellWriteUnnamedCallArg(arg []rune) bool {
 		}
 	}
 	return false
+}
+
+// shellWriteUnnamedCallMode reports whether a call-shaped argument of an open-like method opens for writing. A call that
+// makes a mode is read by the mode it passes: str(...), and a join on a string literal, write when the first argument
+// they pass is a write mode (str("w") writes, str("r") reads, and an argument the reader cannot read as a literal may
+// hold a write mode). A call that makes a path (os.path.join, Path(...), joinpath and the like) is the path a module's
+// open reads by default, so it does not write. Any other call computes a value this reader cannot read, so it writes.
+func shellWriteUnnamedCallMode(arg []rune) bool {
+	end := len(arg)
+	for end > 0 && shellVerbSpaceRune(arg[end-1]) {
+		end--
+	}
+	lp := 0
+	for lp < end && arg[lp] != '(' {
+		lp++
+	}
+	if end == 0 || lp >= end || arg[end-1] != ')' {
+		return true
+	}
+	callee := strings.TrimSpace(string(arg[:lp]))
+	name := callee[strings.LastIndexByte(callee, '.')+1:]
+	if callee == "str" || strings.HasPrefix(callee, "'") || strings.HasPrefix(callee, "\"") {
+		return shellWriteUnnamedCallInner(arg[lp+1 : end-1])
+	}
+	switch name {
+	case "join", "joinpath", "abspath", "normpath", "realpath", "resolve", "absolute", "expanduser", "fspath", "Path", "PurePath":
+		return false
+	}
+	return true
+}
+
+// shellWriteUnnamedCallInner reports whether the first argument of a call inside a call-shaped open argument is a write
+// mode: the text up to the first top-level comma, or the whole inside when there is none.
+func shellWriteUnnamedCallInner(inner []rune) bool {
+	depth, quote := 0, rune(0)
+	for i, c := range inner {
+		switch {
+		case quote != 0:
+			if c == quote {
+				quote = 0
+			}
+		case c == '"' || c == '\'':
+			quote = c
+		case c == '(' || c == '[' || c == '{':
+			depth++
+		case c == ')' || c == ']' || c == '}':
+			depth--
+		case c == ',' && depth == 0:
+			return shellWriteUnnamedWrites(inner[:i])
+		}
+	}
+	return shellWriteUnnamedWrites(inner)
 }
 
 // shellWriteUnnamedNumber reports whether an argument is a number literal: an optional sign, digits and one dot. It
