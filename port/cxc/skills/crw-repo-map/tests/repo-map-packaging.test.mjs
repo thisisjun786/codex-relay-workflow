@@ -103,31 +103,99 @@ function importedModules(statement) {
   return names.map((name) => name.split(".")[0]);
 }
 
-/** Imports of the optional parser stack that appear before the `parse_args()` call. */
+/**
+ * The code of each line: a line inside a triple-quoted string is dropped and an unquoted `#` starts
+ * a comment, so text that only looks like code -- the vendored script's help epilog holds a bare
+ * `Examples:` line -- is never read as a statement. A quote that does not close leaves the rest of
+ * the line unread, and the import check then refuses the statement rather than passing it.
+ */
+function codeLines(source) {
+  const out = [];
+  let open = null; // the triple-quote delimiter a string is still open with
+  for (const raw of source.replace(/\r\n/g, "\n").split("\n")) {
+    let line = raw;
+    if (open !== null) {
+      const end = line.indexOf(open);
+      if (end < 0) {
+        out.push("");
+        continue;
+      }
+      line = line.slice(end + open.length);
+      open = null;
+    }
+    let code = "";
+    let at = 0;
+    while (at < line.length) {
+      const ch = line[at];
+      if (ch === "#") break;
+      if (ch === '"' || ch === "'") {
+        const triple = ch.repeat(3);
+        if (line.slice(at, at + 3) === triple) {
+          const end = line.indexOf(triple, at + 3);
+          if (end < 0) {
+            open = triple;
+            break;
+          }
+          at = end + 3;
+          continue;
+        }
+        const end = line.indexOf(ch, at + 1);
+        if (end < 0) break; // a quote that does not close: the rest of the line is unread
+        at = end + 1;
+        continue;
+      }
+      code += ch;
+      at += 1;
+    }
+    out.push(code);
+  }
+  return out;
+}
+
+/**
+ * True when the import at `code[i]` sits inside a `def` or `class` body, which is what defers it
+ * past the parse. The enclosing blocks are walked by indentation: a `def`/`class` header defers the
+ * import, another header (`if`, `try`, `with`, `for`, ...) is stepped over and the walk continues,
+ * and a plain statement at a smaller indent -- or the top of the file -- means module level, which
+ * runs while the module loads (CRW-939, the generation-2 evaluation's d2 and d3).
+ */
+function deferredImport(code, i) {
+  let indent = code[i].match(/^[ \t]*/)[0].length;
+  for (let j = i - 1; j >= 0; j--) {
+    if (code[j].trim() === "") continue;
+    const narrower = code[j].match(/^[ \t]*/)[0].length;
+    if (narrower >= indent) continue;
+    const text = code[j].trim();
+    if (/^(?:async[ \t]+def|def|class)[ \t]/.test(text)) return true;
+    if (/^(?:if|elif|else|try|except|finally|with|for|while|match|case)\b/.test(text) && /:[ \t]*$/.test(text)) {
+      indent = narrower;
+      continue;
+    }
+    return false;
+  }
+  return false;
+}
+
+/** Imports of the optional parser stack that run before the `parse_args()` call. */
 function parserImportsBeforeParsing(source) {
-  const lines = source.replace(/\r\n/g, "\n").split("\n");
-  const parseAt = lines.findIndex((line) => /^\s*args\s*=\s*parser\.parse_args\(\)\s*$/.test(line));
+  const code = codeLines(source);
+  const parseAt = code.findIndex((line) => /^\s*args\s*=\s*parser\.parse_args\(\)\s*$/.test(line));
   if (parseAt < 0) return { parseAt, offenders: ["(no `args = parser.parse_args()` line found)"] };
   const offenders = [];
-  for (const [i, line] of lines.entries()) {
-    const code = line.trim();
-    if (!/^(?:from|import)\s/.test(code)) continue;
-    // `parse_args()` lives inside main(), so it runs only after the whole module body has
-    // executed. A module-level import (no indentation) therefore precedes the parse however late
-    // it sits in the file, while an import indented inside a function can be deferred past it.
-    // Reading only the lines before the textual parse missed the module-level shape: an import
-    // moved just above the `if __name__ == "__main__":` guard still sat after the parse in the
-    // text, but a module-level import runs before main() and makes `--help` fail without the
-    // deps (CRW-939, the generation-2 evaluation's d2).
-    const moduleLevel = !/^[ \t]/.test(line);
-    if (!moduleLevel && i >= parseAt) continue;
-    const modules = importedModules(code);
+  for (const [i, line] of code.entries()) {
+    const text = line.trim();
+    if (!/^(?:from|import)\s/.test(text)) continue;
+    // `parse_args()` lives inside main(), so an import deferred inside a def/class body placed
+    // after the parse runs only once that body is reached; every other import runs while the
+    // module loads or before the parse in main(), so it precedes --help.
+    if (i >= parseAt && deferredImport(code, i)) continue;
+    const modules = importedModules(text);
     if (modules === null) {
-      offenders.push(`line ${i + 1}: ${code} (not a plain import this check can read)`);
+      offenders.push(`line ${i + 1}: ${text} (not a plain import this check can read)`);
       continue;
     }
     // Every module the statement binds, not only the first: `import os, networkx` names both.
-    if (modules.some((mod) => PARSER_IMPORTS.includes(mod))) offenders.push(`line ${i + 1}: ${code}`);
+    if (modules.some((mod) => PARSER_IMPORTS.includes(mod))) offenders.push(`line ${i + 1}: ${text}`);
   }
   return { parseAt, offenders };
 }
@@ -200,9 +268,21 @@ test("the parser-import check reads module-level imports placed after the parse"
   const moduleLevel = "from repomap_class import RepoMap\n"; // column 0: runs before main()
   const { offenders } = parserImportsBeforeParsing(parse + moduleLevel);
   assert.ok(offenders.length > 0, "a module-level parser import after the parse must still be reported");
-  // The control: the same import indented inside the function is deferred past the parse and clean.
-  const deferred = "    from repomap_class import RepoMap\n";
-  assert.deepEqual(parserImportsBeforeParsing(parse + deferred).offenders, [], "a deferred import must stay clean");
+  // The control: the same import inside the function body after the parse is deferred past it and
+  // stays clean.
+  const inFunction = "def main():\n    args = parser.parse_args()\n    from repomap_class import RepoMap\n";
+  assert.deepEqual(parserImportsBeforeParsing(inFunction).offenders, [], "a deferred import must stay clean");
+  // A module-level `try`/`except` around the parse is the real file's shape: the import below the
+  // parse inside that try is deferred, and the check must not report it.
+  const tryShape = "def main():\n    args = parser.parse_args()\n    try:\n        from repomap_class import RepoMap\n    except ImportError:\n        pass\n";
+  assert.deepEqual(parserImportsBeforeParsing(tryShape).offenders, [], "a deferred try import must stay clean");
+  // Indentation alone does not make an import deferred: a module-level compound statement
+  // (`if True:` / `try:` / a `with`) runs while the module loads, so an import indented under one
+  // still executes before main() (CRW-939, the generation-2 evaluation's d3).
+  for (const shape of ["if True:\n    import networkx\n", "try:\n    import networkx\nexcept ImportError:\n    pass\n", "with open('x'):\n    import networkx\n"]) {
+    const { offenders: got } = parserImportsBeforeParsing(parse + shape);
+    assert.ok(got.length > 0, `${JSON.stringify(shape)}: an import under a module-level block runs before the parse`);
+  }
 });
 
 test("find_src_files skips compiled-output dirs", () => {

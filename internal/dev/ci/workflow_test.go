@@ -257,8 +257,11 @@ var (
 	// skillRootValue matches an assignment whose value is exactly a skills root, quoted or not:
 	// the root followed by the end of the line, a quote, or a blank. The roots alone are no skill
 	// path (a listing names them), but a job that carries one as a value names where the skill
-	// scripts live, so it is the other shape this detector has to see (CRW-353).
-	skillRootValue = regexp.MustCompile(`^\s*[A-Za-z_][A-Za-z0-9_-]*:\s*["']?(?:` + alternation(skillAssetRoots) + `)/?["']?(?:\s|$)`)
+	// scripts live, so it is the other shape this detector has to see (CRW-353). The key may be
+	// quoted too: YAML reads `"SKILLS_ROOT": port/cxc/skills` as the same assignment, and a quoted
+	// key that carried the root past the check would let a job assemble a skill path from the
+	// variable and run it (CRW-939, the generation-2 evaluation's d1).
+	skillRootValue = regexp.MustCompile(`^\s*(?:[A-Za-z_][A-Za-z0-9_-]*|"[^"]*"|'[^']*'):\s*["']?(?:` + alternation(skillAssetRoots) + `)/?["']?(?:\s|$)`)
 )
 
 // skillScriptsNodeJob is the one job whose subject is the staged skills' Node tests (the
@@ -315,8 +318,11 @@ func pythonInWorkflow(file, text string) []string {
 		// exception lives only inside it. A workflow-level `env:` value whose key happens to be
 		// skill-scripts-node shares the two-space key shape, so without this the exception would
 		// switch on before `jobs:` and a job that reads the variable would run a skill test with no
-		// finding (CRW-939, the generation-2 evaluation's d1).
-		if line != "" && !strings.HasPrefix(line, " ") {
+		// finding (CRW-939, the generation-2 evaluation's d1). A column-0 comment and a blank line
+		// are not keys -- YAML reads a '#' there as a comment and closes no block -- so neither may
+		// switch the exception off inside the job it admits (CRW-939, the generation-2 evaluation's
+		// d2).
+		if line != "" && !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "#") {
 			inJobs, inSkillScriptsNode = strings.HasPrefix(line, "jobs:"), false
 		} else if inJobs {
 			if name, ok := workflowJobHeader(line); ok {
@@ -511,6 +517,18 @@ func TestWorkflow_every_yaml_job_key_resets_the_skill_scripts_exception(t *testi
 	if got := pythonInWorkflow("ci.yml", insideJob); len(got) != 0 {
 		t.Errorf("the real job's own root is refused: %q", got)
 	}
+	// A column-0 comment is not a key: YAML reads a '#' there as a comment, so it neither opens nor
+	// closes a block. Treating it as one switched the exception off inside the job it admits and
+	// reported the job's own test run (CRW-939, the generation-2 evaluation's d2).
+	commented := "name: ci\njobs:\n  skill-scripts-node:\n    runs-on: ubuntu-24.04\n# staged test coverage\n    steps:\n      - run: node --test port/cxc/skills/crw-qa/tests/a.test.mjs\n"
+	if got := pythonInWorkflow("ci.yml", commented); len(got) != 0 {
+		t.Errorf("a column-0 comment ended the admitted job's exception: %q", got)
+	}
+	// A blank line is not a key either.
+	blank := "name: ci\njobs:\n  skill-scripts-node:\n    runs-on: ubuntu-24.04\n\n    steps:\n      - run: node --test port/cxc/skills/crw-qa/tests/a.test.mjs\n"
+	if got := pythonInWorkflow("ci.yml", blank); len(got) != 0 {
+		t.Errorf("a blank line ended the admitted job's exception: %q", got)
+	}
 }
 
 // The job-key reader finds exactly the jobs the real ci.yml declares, in order and nothing else: the
@@ -608,6 +626,8 @@ func TestWorkflow_python_detector(t *testing.T) {
 		{"jobs:\n  other:\n    steps:\n      SKILLS_ROOT: port/cxc/skills", true},              // the same value in another named job
 		{"      SKILLS_ROOT: 'port/cxc/skills'", true},                                         // the quoted form is the same value
 		{"      SKILLS_ROOT: port/cxc/skills # the staged skills", true},                       // and so is the form a trailing blank ends
+		{"      \"SKILLS_ROOT\": port/cxc/skills", true},                                       // a quoted key carries the same value
+		{"      'SKILLS_ROOT': port/cxc/skills", true},                                         // in either quote
 		{"      - run: node --test port/cxc/skills/x/tests/a.test.mjs", true},                  // a skill path in any other job
 		{"      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0", false},
 	} {

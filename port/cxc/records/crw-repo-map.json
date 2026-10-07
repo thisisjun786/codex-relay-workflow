@@ -253,9 +253,9 @@
     },
     {
       "file": "tests/repo-map-packaging.test.mjs",
-      "reason": "CRW-939: port the skill's own Node test from CXC v0.2.40 plugins/codexclaw/test/ into the staged skill's tests/, with the name substitution applied and the paths adapted to the staged skill; the test travels with the script it protects. The --help case is checked from repomap.py's source structure (the optional parser imports come after the argument parsing) because CI runs no skill script; the check reads module-level imports wherever they sit, because parse_args() runs inside main().",
+      "reason": "CRW-939: port the skill's own Node test from CXC v0.2.40 plugins/codexclaw/test/ into the staged skill's tests/, with the name substitution applied and the paths adapted to the staged skill; the test travels with the script it protects. The --help case is checked from repomap.py's source structure (the optional parser imports do not run before the argument parsing) because CI runs no skill script; the check reads each line's code with strings and comments stripped and defers an import only inside a def/class body after the parse, so a module-level import, a compound-statement import, a multi-module import and an unreadable statement are all reported.",
       "add": true,
-      "sha256": "23d94ce50720ab2cec083166cd78ca5d8118f65d5ae4013022c027f553143e35"
+      "sha256": "74936c7fc005f44c9358e9e2966d09929785ab7d304f327133c5e6fb4ea7d02c"
     },
     {
       "file": "tests/repo-map-smoke.test.mjs",
