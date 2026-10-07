@@ -219,16 +219,11 @@ func githubPostPathFileBeforeFormDepth(words []string, cwd string, quoted bool, 
 	return githubPostJudgePathScriptDepth(name, cwd, depth)
 }
 
-// githubPostJudgePathScript is D2 for a command word that is a path: the file is read and judged by the
+// githubPostJudgePathScriptDepth is D2 for a command word that is a path: the file is read and judged by the
 // generation-1 line rule. A name that is not a regular file is not a script the shell runs (the caller
 // leaves the judgement to the form), a binary is not a target, and a regular text file the guard cannot
-// read is refused at the name.
-func githubPostJudgePathScript(name, cwd string) (githubPostSite, bool) {
-	return githubPostJudgePathScriptDepth(name, cwd, 0)
-}
-
-// githubPostJudgePathScriptDepth is githubPostJudgePathScript with the script-in-script walk bounded: a
-// chain deeper than githubPostScriptMaxDepth is refused rather than followed (fail closed).
+// read is refused at the name. The script-in-script walk is bounded: a chain deeper than
+// githubPostScriptMaxDepth is refused rather than followed (fail closed).
 func githubPostJudgePathScriptDepth(name, cwd string, depth int) (githubPostSite, bool) {
 	if depth >= githubPostScriptMaxDepth {
 		return githubPostSite{githubPostRuleUnread, name}, true
