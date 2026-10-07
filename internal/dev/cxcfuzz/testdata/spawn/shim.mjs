@@ -11,22 +11,37 @@
 import { createInterface } from "node:readline";
 import { join } from "node:path";
 
-const oracleRoot = process.env.ORACLE_ROOT;
-if (!oracleRoot) throw new Error("ORACLE_ROOT is not set");
-const hook = await import("file://" + join(oracleRoot, "subagent-config", "dist", "spawn-attach-hook.js"));
+// The oracle is imported per request, never at module load. The pool's start-up handshake is a null
+// input with an empty root, and the worker has to answer it - and keep answering - whatever the
+// oracle tree looks like: an import at load time ends the process before its stdin listener exists,
+// so a missing or hidden tree reads as a dead worker instead of as an answer, and a tree that is
+// present would run its module initialization under the caller's homes before any case could be
+// isolated. The doctor shim reads its root the same way, per request.
+let oracleModule = null;
+let oracleTable = null;
+async function oracle() {
+  if (oracleTable) return oracleTable;
+  const root = process.env.ORACLE_ROOT;
+  if (!root) throw new Error("ORACLE_ROOT is not set");
+  oracleModule = await import("file://" + join(root, "subagent-config", "dist", "spawn-attach-hook.js"));
+  oracleTable = functions(oracleModule);
+  return oracleTable;
+}
 
 // The exported functions the issue names: each has an exported counterpart here. The Go side's
 // StripControlMarkers and DenyEnvelope are not in this table: stripControlMarkers (409) and
 // denyEnvelope (450) are internal to the oracle, and the issue's rule leaves a helper without an
 // exported counterpart out of the target.
-const functions = {
-  InferRole: (agentType, message) => hook.inferRole(agentType, typeof message === "string" ? message : ""),
-  IsV2SpawnInput: (toolInput) => hook.isV2SpawnInput(asObject(toolInput)),
-  IsFullHistoryFork: (toolInput) => hook.isFullHistoryFork(asObject(toolInput)),
-  IsSpawnToolName: (name) => hook.isSpawnToolName(name),
-  IsCollaborationToolName: (name) => hook.isCollaborationToolName(name),
-  MentionedFolders: (message) => [...hook.mentionedFolders(typeof message === "string" ? message : "")],
-};
+function functions(hook) {
+  return {
+    InferRole: (agentType, message) => hook.inferRole(agentType, typeof message === "string" ? message : ""),
+    IsV2SpawnInput: (toolInput) => hook.isV2SpawnInput(asObject(toolInput)),
+    IsFullHistoryFork: (toolInput) => hook.isFullHistoryFork(asObject(toolInput)),
+    IsSpawnToolName: (name) => hook.isSpawnToolName(name),
+    IsCollaborationToolName: (name) => hook.isCollaborationToolName(name),
+    MentionedFolders: (message) => [...hook.mentionedFolders(typeof message === "string" ? message : "")],
+  };
+}
 
 function asObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value : {};
@@ -88,8 +103,8 @@ function wtf8(text) {
   return Buffer.from(bytes);
 }
 
-function answer(input) {
-  const fn = functions[input.fn];
+function answer(table, input) {
+  const fn = table[input.fn];
   if (!fn) return refusal();
   const args = Array.isArray(input.args) ? input.args : [];
   const translated = args.map((argument) => (typeof argument === "string" ? crwToCxc(argument) : argument));
@@ -100,12 +115,13 @@ function answer(input) {
 
 // run isolates one case before the oracle is consulted. The harness hands the worker pool the
 // caller's environment (Campaign passes os.Environ() through NewPool), so without this step the
-// worker would import and answer under the real HOME, CODEX_HOME, CRW_HOME, CODEXCLAW_HOME and
-// TMPDIR. The echo, memorygate and doctor shims each put those five under request.root per request;
-// this does the same. An input that is not an object is answered with the refusal first and touches
-// nothing else: the pool's start-up handshake is {"id":N,"input":null,"root":""}, a readiness probe
-// that must never read or write a home.
-function run(request) {
+// worker would answer under the real HOME, CODEX_HOME, CRW_HOME, CODEXCLAW_HOME and TMPDIR. The
+// echo, memorygate and doctor shims each put those five under request.root per request; this does
+// the same. An input that is not an object is answered with the refusal first and touches nothing
+// else: the pool's start-up handshake is {"id":N,"input":null,"root":""}, a readiness probe that
+// must never read or write a home. The isolation runs before the oracle is imported, so the
+// oracle's own module initialization sees the case's homes rather than the caller's.
+async function run(request) {
   const input = request.input;
   if (input === null || typeof input !== "object" || Array.isArray(input)) {
     return refusal();
@@ -118,7 +134,7 @@ function run(request) {
     process.env.CODEXCLAW_HOME = root + "/codexclaw-home";
     process.env.TMPDIR = root + "/tmp";
   }
-  return answer(input);
+  return answer(await oracle(), input);
 }
 
 // The answer both sides give an input outside the grammar. It is answered rather than thrown,
@@ -129,7 +145,7 @@ function refusal() {
 }
 
 const lines = createInterface({ input: process.stdin, terminal: false });
-lines.on("line", (line) => {
+lines.on("line", async (line) => {
   const text = line.trim();
   if (text === "") return;
   let request;
@@ -140,7 +156,7 @@ lines.on("line", (line) => {
     return;
   }
   try {
-    process.stdout.write(JSON.stringify({ id: request.id, output: run(request) }) + "\n");
+    process.stdout.write(JSON.stringify({ id: request.id, output: await run(request) }) + "\n");
   } catch (error) {
     process.stdout.write(JSON.stringify({ id: request.id, error: { name: error.name, message: error.message } }) + "\n");
   }
