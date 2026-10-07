@@ -123,7 +123,9 @@ type WriteOptions struct {
 // PublishFunc is the shape of the publication step: the temporary file, the fsync, the rename and
 // the directory fsync, answering whether the path now holds the new bytes. It is exported so a caller
 // outside policystore can name the type of the WriteOptions.Publish seam.
-type PublishFunc func(path string, data []byte, mode os.FileMode) (renamed bool, err error)
+// The context is honoured up to the rename, which is the durable effect: a request that goes away
+// while the temporary file is written leaves the policy as it was.
+type PublishFunc func(ctx context.Context, path string, data []byte, mode os.FileMode) (renamed bool, err error)
 
 // WriteRequest is one proposed write: the digest the caller read and the change it proposes.
 type WriteRequest struct {
@@ -261,6 +263,11 @@ func Write(ctx context.Context, env LookupEnv, opts WriteOptions, request WriteR
 	if err != nil {
 		return WriteResult{Kind: WriteUnreadable, Errors: []string{err.Error()}}
 	}
+	// The backup is the first durable effect of this write: a request that went away while the
+	// candidate was judged must not leave one behind.
+	if err := ctx.Err(); err != nil {
+		return WriteResult{Kind: WriteCancelled, Step: "check", Errors: []string{err.Error()}}
+	}
 	backup, err := backupPolicy(encoded, raw, now())
 	if err != nil {
 		return WriteResult{Kind: WriteFailed, Errors: []string{"the execution policy could not be backed up: " + err.Error()}}
@@ -280,8 +287,12 @@ func Write(ctx context.Context, env LookupEnv, opts WriteOptions, request WriteR
 	if err := ctx.Err(); err != nil {
 		return WriteResult{Kind: WriteCancelled, Step: "publish", Backup: reported, Errors: []string{err.Error()}}
 	}
-	renamed, err := publish(encoded, updated, info.Mode())
+	renamed, err := publish(ctx, encoded, updated, info.Mode())
 	if err != nil && !renamed {
+		if ctx.Err() != nil {
+			// The publication refused the replacement because the request ended: nothing was replaced.
+			return WriteResult{Kind: WriteCancelled, Step: "publish", Backup: reported, Errors: []string{err.Error()}}
+		}
 		return WriteResult{Kind: WriteFailed, Backup: reported, Errors: []string{"the execution policy could not be written: " + err.Error()}}
 	}
 	var warnings []string
@@ -297,6 +308,10 @@ func Write(ctx context.Context, env LookupEnv, opts WriteOptions, request WriteR
 	// is decided as an untrusted answer by re-reading the file and the record, never left half-done.
 	decision, stop := context.WithTimeout(context.WithoutCancel(ctx), writeDecisionTimeout)
 	defer stop()
+	// The restore repairs a file this run already replaced, so it must run to completion: neither the
+	// request's cancellation nor the decision bound may stop it, or the file and the record would be
+	// left naming different digests with no repair. Its own atomic write is a bounded local operation.
+	restore := context.WithoutCancel(decision)
 	// The registration receives the kernel spelling the command line's --execution-policy receives,
 	// not the record's surrogate-escaped spelling: the installer opens what it is given.
 	answer := register(decision, encoded)
@@ -311,9 +326,17 @@ func Write(ctx context.Context, env LookupEnv, opts WriteOptions, request WriteR
 		// record_absent and record_changed_underneath in particular can leave a record that names
 		// something else, or nothing at all.
 		if after := Locate(env); after.State == Registered && after.RegisteredDigest == original {
-			return restoreResult(publish, encoded, path, raw, info.Mode(), original, reported, warnings, "the registration did not take the new policy: "+outcome)
+			return restoreResult(restore, publish, encoded, path, raw, info.Mode(), original, stored, reported, warnings, "the registration did not take the new policy: "+outcome)
 		}
-		return recoveryFrom(env, path, stored, reported, warnings, "the registration did not take the new policy: "+outcome)
+		// The record names something else, so nothing is restored. What the file holds is read rather
+		// than assumed: reporting the digest this run tried to write would present an intention as an
+		// observation.
+		fileNow, fileErr := digestAt(path)
+		detail := "the registration did not take the new policy: " + outcome
+		if fileErr != nil {
+			detail += "; the policy file could not be read back: " + fileErr.Error()
+		}
+		return recoveryFrom(env, path, fileNow, reported, warnings, detail)
 	}
 	// The answer is not trusted: read the file and the record again and decide from what they say.
 	fileNow, fileErr := digestAt(path)
@@ -325,7 +348,7 @@ func Write(ctx context.Context, env LookupEnv, opts WriteOptions, request WriteR
 		return storedResult(decision, env, running, path, stored, reported, registrationEnvelope{}, warnings, []string{detail})
 	case recordNow.State == Registered && recordNow.RegisteredDigest == original:
 		// (b) the record still names the old bytes: put them back.
-		return restoreResult(publish, encoded, path, raw, info.Mode(), original, reported, warnings, detail)
+		return restoreResult(restore, publish, encoded, path, raw, info.Mode(), original, stored, reported, warnings, detail)
 	default:
 		// (c) the two no longer describe one document, or the restore cannot be made.
 		if fileErr != nil {
@@ -400,8 +423,21 @@ func storedResult(ctx context.Context, env LookupEnv, running func(context.Conte
 // whose rename happened and whose directory could not be synced is still a restore - the original
 // bytes are on disk and the record names them - and its answer warns that a power loss may bring the
 // new bytes back, in which case the next write refuses on the digest disagreement.
-func restoreResult(publish PublishFunc, encoded, path string, raw []byte, mode os.FileMode, original, backup string, warnings []string, detail string) WriteResult {
-	renamed, err := publish(encoded, raw, mode)
+// The restore replaces only the bytes this run published: a file another writer moved is not this
+// run's to overwrite, and those bytes are in no backup, so the answer is a recovery that names what
+// was observed instead.
+func restoreResult(ctx context.Context, publish PublishFunc, encoded, path string, raw []byte, mode os.FileMode, original, published, backup string, warnings []string, detail string) WriteResult {
+	if now, readErr := digestAt(path); readErr != nil || now != published {
+		digest := now
+		if readErr != nil {
+			digest = ""
+			detail += "; the policy file could not be read back: " + readErr.Error()
+		}
+		return WriteResult{Kind: WriteRecoveryNeeded, FileDigest: digest, RegisteredDigest: original, Backup: backup,
+			Recovery: recoveryAdvice(path, backup), Warnings: warnings,
+			Errors: []string{detail + "; the file no longer holds the bytes this write published, so it was left as it stands"}}
+	}
+	renamed, err := publish(ctx, encoded, raw, mode)
 	if err != nil && !renamed {
 		digest, _ := digestAt(path)
 		return WriteResult{Kind: WriteRecoveryNeeded, FileDigest: digest, RegisteredDigest: original, Backup: backup,
@@ -572,7 +608,9 @@ func backupPolicy(path string, raw []byte, now time.Time) (string, error) {
 // directory is fsynced so the rename itself survives a power loss. renamed reports whether the path
 // now holds the new bytes: a failure after the rename is a file that was replaced whose durability
 // was not established, which a caller must not report as nothing written.
-func publishPolicy(path string, data []byte, mode os.FileMode) (renamed bool, err error) {
+// The context is checked immediately before the rename: everything before it is reversible, and a
+// request that ended during the temporary file's write must not replace the policy.
+func publishPolicy(ctx context.Context, path string, data []byte, mode os.FileMode) (renamed bool, err error) {
 	dir := publishParent(path)
 	file, err := os.CreateTemp(dir, writeTempPrefix)
 	if err != nil {
@@ -594,6 +632,12 @@ func publishPolicy(path string, data []byte, mode os.FileMode) (renamed bool, er
 		return fail(err)
 	}
 	if err := file.Close(); err != nil {
+		_ = os.Remove(temporary)
+		return false, err
+	}
+	// The rename is the durable effect: a request that went away while the bytes were written leaves
+	// the policy as it was.
+	if err := ctx.Err(); err != nil {
 		_ = os.Remove(temporary)
 		return false, err
 	}

@@ -130,6 +130,13 @@ func Check(raw []byte, expectedDigest string, change Change) CheckResult {
 		return result
 	}
 	encoded := []byte(encode(updated))
+	// A change that produces the bytes already on disk moves nothing, so it cannot be published: the
+	// write's promise is that a repeated request ends stale_digest, which needs the digest to advance.
+	// Like removing an unlisted model, such a request is refused rather than reported as a change.
+	if string(encoded) == string(raw) {
+		result.Errors = append(result.Errors, "the change moves nothing: the policy already holds these values")
+		return result
+	}
 	candidate, err := execution.FromBytes(encoded, "the candidate execution policy")
 	if err != nil {
 		result.Errors = append(result.Errors, err.Error())

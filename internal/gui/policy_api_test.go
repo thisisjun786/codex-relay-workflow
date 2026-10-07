@@ -709,7 +709,7 @@ func TestPolicyWriteReportsTheRestoreWarning(t *testing.T) {
 	}, unavailablePolicyRunning)
 	previous := policyWriteSeams
 	calls := 0
-	policyWriteSeams.Publish = func(path string, data []byte, mode os.FileMode) (bool, error) {
+	policyWriteSeams.Publish = func(_ context.Context, path string, data []byte, mode os.FileMode) (bool, error) {
 		calls++
 		// The GUI package cannot reach policystore's unexported publishPolicy, so the seam writes the
 		// bytes itself: the first call publishes the candidate, the second restores the original.

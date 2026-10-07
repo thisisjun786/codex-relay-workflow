@@ -655,8 +655,8 @@ func cancelAfterPublish(t *testing.T) (context.Context, func()) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	restore := writePublish
-	writePublish = func(path string, data []byte, mode os.FileMode) (bool, error) {
-		renamed, err := restore(path, data, mode)
+	writePublish = func(ctx context.Context, path string, data []byte, mode os.FileMode) (bool, error) {
+		renamed, err := restore(ctx, path, data, mode)
 		cancel()
 		return renamed, err
 	}
@@ -1017,9 +1017,9 @@ func TestARestoreWhoseDirectorySyncFailedIsStillARestore(t *testing.T) {
 	env, file := host(t, policyText, true)
 	restore := writePublish
 	calls := 0
-	writePublish = func(path string, data []byte, mode os.FileMode) (bool, error) {
+	writePublish = func(ctx context.Context, path string, data []byte, mode os.FileMode) (bool, error) {
 		calls++
-		renamed, err := restore(path, data, mode)
+		renamed, err := restore(ctx, path, data, mode)
 		if calls == 2 {
 			return renamed, errors.New("the directory could not be synced")
 		}
@@ -1130,9 +1130,9 @@ func TestARestoreWhoseBytesMovedAfterTheRenameNeedsRecovery(t *testing.T) {
 	third := "a document another writer put there after the restore\n"
 	restore := writePublish
 	calls := 0
-	writePublish = func(path string, data []byte, mode os.FileMode) (bool, error) {
+	writePublish = func(ctx context.Context, path string, data []byte, mode os.FileMode) (bool, error) {
 		calls++
-		renamed, err := restore(path, data, mode)
+		renamed, err := restore(ctx, path, data, mode)
 		if calls == 2 {
 			// The restore's rename is done and its directory was not synced; another writer then
 			// replaces the bytes before the write reads them back.
@@ -1158,5 +1158,132 @@ func TestARestoreWhoseBytesMovedAfterTheRenameNeedsRecovery(t *testing.T) {
 	}
 	if result.RegisteredDigest != digestOf(policyText) {
 		t.Fatalf("registeredDigest = %q, want the digest the record still names", result.RegisteredDigest)
+	}
+}
+
+// TestARestoreNeverOverwritesAnotherWritersEdit is the pre-merge evaluation's P0: the (b) branch
+// restored whenever the record still named the original bytes, without checking what the file held.
+// An editor that saved a different policy between this run's publication and the failed
+// registration had its bytes overwritten by the restore, and they were in no backup. A file that no
+// longer holds the bytes this run published is not this run's to replace: the answer is a recovery
+// that names what was observed.
+func TestARestoreNeverOverwritesAnotherWritersEdit(t *testing.T) {
+	env, file := host(t, policyText, true)
+	edited := "a policy an editor saved while the registration was failing\n"
+	opts := WriteOptions{Register: func(_ context.Context, path string) RegisterAnswer {
+		// The editor saves its own policy at the same path; the registration then fails without
+		// updating the record, so the record still names the original bytes.
+		if err := os.WriteFile(file, []byte(edited), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return answer("record_changed_underneath", 1)
+	}}
+	result := Write(context.Background(), envOf(env), opts,
+		WriteRequest{ExpectedDigest: digestOf(policyText), Change: removeLegacy()})
+	if result.Kind != WriteRecoveryNeeded {
+		t.Fatalf("kind = %q (%v), want %q: the file is not this run's to replace", result.Kind, result.Errors, WriteRecoveryNeeded)
+	}
+	if result.Restored {
+		t.Fatal("the restore overwrote another writer's edit")
+	}
+	if result.FileDigest != digestOf(edited) {
+		t.Fatalf("fileDigest = %q, want the digest of the bytes on disk", result.FileDigest)
+	}
+	after, _ := os.ReadFile(file)
+	if string(after) != edited {
+		t.Fatalf("the editor's bytes are gone: %q", string(after))
+	}
+}
+
+// TestANamedRefusalReportsTheBytesOnDisk is the pre-merge evaluation's P1 on R5: the
+// registrationUnchanged branch re-read only the record and reported the digest this run tried to
+// write as fileDigest. When the file no longer holds those bytes, the answer must name what is
+// actually there, or say the file could not be read.
+func TestANamedRefusalReportsTheBytesOnDisk(t *testing.T) {
+	env, file := host(t, policyText, true)
+	third := "a policy the file now holds instead of the candidate\n"
+	opts := WriteOptions{Register: func(_ context.Context, path string) RegisterAnswer {
+		// The record is left naming the original, so the branch decides a restore; the file holds a
+		// third document, so the restore must not run and the answer must name the third digest.
+		if err := os.WriteFile(file, []byte(third), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return answer("record_absent", 1)
+	}}
+	result := Write(context.Background(), envOf(env), opts,
+		WriteRequest{ExpectedDigest: digestOf(policyText), Change: removeLegacy()})
+	if result.Kind != WriteRecoveryNeeded {
+		t.Fatalf("kind = %q (%v), want %q", result.Kind, result.Errors, WriteRecoveryNeeded)
+	}
+	if result.FileDigest != digestOf(third) {
+		t.Fatalf("fileDigest = %q, want the digest the file actually holds (%q)", result.FileDigest, digestOf(third))
+	}
+	after, _ := os.ReadFile(file)
+	if string(after) != third {
+		t.Fatal("the refused write replaced the file")
+	}
+}
+
+// TestACancellationDuringPublicationDoesNotReplaceTheFile is the pre-merge evaluation's P1 on R3:
+// the check sat before the publication was called, but the publication itself (a temporary file,
+// an fsync, a close and a rename) ran with no context, so a request that went away inside it still
+// replaced the policy. The rename is the durable effect, so the context must be honoured up to it.
+func TestACancellationDuringPublicationDoesNotReplaceTheFile(t *testing.T) {
+	env, file := host(t, policyText, true)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	opts := WriteOptions{Register: neverRegisters(t), Publish: func(publishCtx context.Context, path string, data []byte, mode os.FileMode) (bool, error) {
+		// The request goes away while the publication is under way; the real publisher must then
+		// refuse the rename.
+		cancel()
+		return publishPolicy(publishCtx, path, data, mode)
+	}}
+	result := Write(ctx, envOf(env), opts,
+		WriteRequest{ExpectedDigest: digestOf(policyText), Change: removeLegacy()})
+	if result.Kind != WriteCancelled {
+		t.Fatalf("kind = %q (%v), want %q", result.Kind, result.Errors, WriteCancelled)
+	}
+	if result.Step != "publish" {
+		t.Fatalf("step = %q, want %q", result.Step, "publish")
+	}
+	after, _ := os.ReadFile(file)
+	if string(after) != policyText {
+		t.Fatal("a cancelled publication replaced the policy")
+	}
+}
+
+// TestAChangeThatMovesNothingIsRefused is the pre-merge evaluation's P1 on the replay promise: a
+// set that names the values already in the document produced the same bytes, so the write reported
+// success without advancing the digest, and the same request could be accepted again. A write that
+// changes no byte cannot satisfy the promise that a repeated request is refused, so it is refused.
+func TestAChangeThatMovesNothingIsRefused(t *testing.T) {
+	env, file := host(t, policyText, true)
+	change := Change{Kind: KindSetAllowed, Model: "anthropic/opus", Efforts: []string{"xhigh", "max"}}
+	// The first write normalises the allowlist row, so the same change against the file it produced
+	// renders the very bytes that are already on disk.
+	first := Write(context.Background(), envOf(env), WriteOptions{Register: updatingRegisters(t, env), Running: unavailableRunning()},
+		WriteRequest{ExpectedDigest: digestOf(policyText), Change: change})
+	if first.Kind != WriteStored {
+		t.Fatalf("the first write: kind = %q (%v)", first.Kind, first.Errors)
+	}
+	current, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := backupsOf(t, filepath.Dir(file))
+	// The same request again, against the digest the file now has: the change would render exactly
+	// those bytes, so accepting it would leave the digest where it is and let the request succeed
+	// for ever instead of ending stale_digest.
+	result := Write(context.Background(), envOf(env), WriteOptions{Register: neverRegisters(t)},
+		WriteRequest{ExpectedDigest: digestOf(string(current)), Change: change})
+	if result.Kind != WriteInvalidPolicy {
+		t.Fatalf("kind = %q (%v), want %q: a change that moves nothing must be refused", result.Kind, result.Errors, WriteInvalidPolicy)
+	}
+	after, _ := os.ReadFile(file)
+	if !bytes.Equal(after, current) {
+		t.Fatal("a refused no-op changed the file")
+	}
+	if !slices.Equal(before, backupsOf(t, filepath.Dir(file))) {
+		t.Fatal("a refused no-op wrote a backup")
 	}
 }
