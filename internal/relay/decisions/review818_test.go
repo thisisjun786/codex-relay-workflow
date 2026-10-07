@@ -86,23 +86,48 @@ func TestReview818RaiseNeedsRepliesForARelationship(t *testing.T) {
 	}
 }
 
-// A second statement of one question is folded into the record that carries it, and the stored
-// option replies survive the fold. The reply is not part of the question's identity (the issue
-// fixes the fingerprint that way), so the stored mapping is the one an answer is applied against:
-// the first raise's reply for an option is the reply that option makes, and a later raise cannot
-// rewrite it silently. What a later raise offers differently is therefore not applied, which is
-// the same fail-closed direction the apply takes everywhere else.
-func TestReview818AFoldKeepsTheStoredOptionReplies(t *testing.T) {
+// The reply is not part of the question's identity, so two raises of one question that name
+// different replies for the same option are the same question and cannot become two records. The
+// fold is refused instead: applying the record compares the chosen option's reply with the reply
+// the relay recorded, and a silent fold would apply the later raise's answer against a mapping it
+// never offered.
+func TestReview818AFoldRefusesConflictingOptionReplies(t *testing.T) {
 	first := review818Record(Authority{Kind: AuthorityUser}, review818Relationship(), review818Options(ReplyStop, ReplyAnswer))
 	second := review818Record(Authority{Kind: AuthorityUser}, review818Relationship(), review818Options(ReplyAnswer, ReplyStop))
 	if first.Fingerprint != second.Fingerprint {
 		t.Fatalf("the two statements are not one question: %s and %s", first.Fingerprint, second.Fingerprint)
 	}
-	merged, err := Merge(first, second)
-	if err != nil {
-		t.Fatalf("Merge: %v", err)
+	if _, err := Merge(first, second); !errors.Is(err, ErrMergeConflict) {
+		t.Fatalf("folding a conflicting reply = %v, want ErrMergeConflict", err)
 	}
-	for _, option := range merged.Options {
+}
+
+// The fold fills a reply the stored record does not carry, which is the shape a record written
+// before the reply field existed has, and an incoming raise that names no reply keeps the stored
+// one. The stored record's options are the ones the merged record carries.
+func TestReview818AFoldFillsAndKeepsOptionReplies(t *testing.T) {
+	legacy := review818Record(Authority{Kind: AuthorityUser}, review818Relationship(), review818Options("", ""))
+	named := review818Record(Authority{Kind: AuthorityUser}, review818Relationship(), review818Options(ReplyStop, ReplyAnswer))
+	filled, err := Merge(legacy, named)
+	if err != nil {
+		t.Fatalf("filling a stored empty reply: %v", err)
+	}
+	for _, option := range filled.Options {
+		want := ReplyStop
+		if option.ID == "merge" {
+			want = ReplyAnswer
+		}
+		if option.Reply != want {
+			t.Fatalf("option %q carries reply %q after the fold, want the filled %q", option.ID, option.Reply, want)
+		}
+	}
+	// An incoming raise that names no reply keeps the stored one.
+	silent := review818Record(Authority{Kind: AuthorityUser}, review818Relationship(), review818Options("", ""))
+	kept, err := Merge(named, silent)
+	if err != nil {
+		t.Fatalf("a raise that names no reply: %v", err)
+	}
+	for _, option := range kept.Options {
 		want := ReplyStop
 		if option.ID == "merge" {
 			want = ReplyAnswer

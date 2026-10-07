@@ -544,6 +544,15 @@ func sameAnswer(first, second Record) bool {
 // that lists, answers and withdraws also takes a second observation. Everything the fold newly
 // writes — the appended observations, the state the caller moves, and a raised_at this raise filled
 // in — is checked as the format requires.
+//
+// An option's reply is folded the one way the identity rule allows. The fingerprint excludes the
+// reply, so two raises of one question that name different replies for the same option are the same
+// question and cannot become two records; the fold is therefore refused when the stored reply and
+// the incoming one are both named and differ, because applying the record compares the chosen
+// option's reply with the reply the relay recorded, and a silent fold would apply the later raise's
+// answer against a mapping it never offered. A stored reply an older build could not have written
+// (the field is this format's) is filled from the incoming raise, and an incoming raise that names
+// no reply keeps the stored one. The merged options are then checked as the format requires.
 func Merge(first, second Record) (Record, error) {
 	if first.Fingerprint != second.Fingerprint {
 		return Record{}, fmt.Errorf("%w: %s and %s", ErrFingerprintMismatch, first.Fingerprint, second.Fingerprint)
@@ -557,12 +566,17 @@ func Merge(first, second Record) (Record, error) {
 	if err := validateStoredRaisedAt(first); err != nil {
 		return Record{}, err
 	}
+	options, err := mergeOptionReplies(first.Options, second.Options)
+	if err != nil {
+		return Record{}, err
+	}
 	for _, record := range []Record{first, second} {
 		if content := Fingerprint(record.Context, record.Blocking, record.Options); content != record.Fingerprint {
 			return Record{}, fmt.Errorf("%w: %s is not its content's %s", ErrFingerprintMismatch, record.Fingerprint, content)
 		}
 	}
 	merged := first
+	merged.Options = options
 	merged.Seen = append(append([]Seen{}, first.Seen...), second.Seen...)
 	if merged.RaisedAt == first.RaisedAt {
 		if err := validateStoredRaisedAt(merged); err != nil {
@@ -570,6 +584,38 @@ func Merge(first, second Record) (Record, error) {
 		}
 	} else if err := Validate(merged); err != nil {
 		return Record{}, err
+	}
+	return merged, nil
+}
+
+// mergeOptionReplies folds the incoming raise's option replies into the stored set. The two sets name
+// the same option ids (they share the fingerprint), so the fold walks the stored set and takes the
+// incoming reply for each id. A stored reply and an incoming reply that are both named and differ is
+// ErrMergeConflict: the stored mapping is the one an answer is applied against, and the fingerprint
+// cannot separate the two raises, so the second raise is refused rather than silently dropped. A
+// stored reply that is empty — a record written before the reply field existed — takes the incoming
+// one, and an incoming reply that is empty keeps the stored one. A reply is never written where the
+// option it belongs to is not in the stored set, because an option set is the stored one.
+func mergeOptionReplies(stored, incoming []Option) ([]Option, error) {
+	merged := append([]Option{}, stored...)
+	at := make(map[string]int, len(merged))
+	for i, option := range merged {
+		at[strings.TrimSpace(option.ID)] = i
+	}
+	for _, option := range incoming {
+		index, ok := at[strings.TrimSpace(option.ID)]
+		if !ok {
+			continue
+		}
+		storedReply, incomingReply := strings.TrimSpace(merged[index].Reply), strings.TrimSpace(option.Reply)
+		switch {
+		case storedReply == "":
+			merged[index].Reply = incomingReply
+		case incomingReply == "" || storedReply == incomingReply:
+			// The stored reply stands: the raise names none, or names the same one.
+		default:
+			return nil, fmt.Errorf("%w: option %q is stored with reply %q and this raise names %q", ErrMergeConflict, merged[index].ID, merged[index].Reply, option.Reply)
+		}
 	}
 	return merged, nil
 }

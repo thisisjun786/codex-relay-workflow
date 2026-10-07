@@ -342,18 +342,118 @@ func TestReview818ReraiseKeepsAStoredBadRaisedAt(t *testing.T) {
 	state := crw737Store(t)
 	first := crw737JSON(t, crw737Raise(t, state, "PRJ-A", "Which window does the host update take?"))
 	decision, _ := first["decisionId"].(string)
+	// A question that has not been shown yet is open; the re-raise is what moves it to raised.
+	review818SetState(t, state, decision, "open")
 	review818SetRaisedAt(t, state, decision, "not a time")
 	second := crw737JSON(t, crw737Raise(t, state, "PRJ-A", "Which window does the host update take?"))
 	if second["merged"] != true || second["decisionId"] != decision {
 		t.Fatalf("the re-raise answered %v, want the stored record %v", second, first)
 	}
 	record := crw737List(t, state)[0].(map[string]any)
+	if record["state"] != "raised" {
+		t.Fatalf("the re-raise left the record %v, want the open question raised", record["state"])
+	}
 	if record["raised_at"] != "not a time" {
 		t.Fatalf("the re-raise rewrote raised_at to %v", record["raised_at"])
 	}
 	if seen, _ := record["seen"].([]any); len(seen) != 2 {
 		t.Fatalf("the re-raise left %d observations, want the appended second one", len(seen))
 	}
+}
+
+// review818SetState writes state straight into the record, so a case can seed the state a question
+// has before it is shown.
+func review818SetState(t *testing.T, state, decisionID, value string) {
+	t.Helper()
+	review818Exec(t, state, "UPDATE dag_user_decisions SET state = ? WHERE decision_id = ?", value, decisionID)
+}
+
+// review818StripOptionReplies rewrites a stored record's options without their replies: the shape
+// a row written before the reply field existed has.
+func review818StripOptionReplies(t *testing.T, state, decisionID string) {
+	t.Helper()
+	review818Exec(t, state, "UPDATE dag_user_decisions SET options_json = ? WHERE decision_id = ?",
+		`[{"id":"hold","label":"hold","effect":"hold the merge"},{"id":"merge","label":"merge","effect":"merge now"}]`, decisionID)
+}
+
+// A second raise that names another reply for an option the stored record already answers with one
+// is refused: the reply is what the apply matches, so folding it silently would apply the record
+// against a mapping the later raiser never offered. The fingerprint excludes the reply, so refusing
+// the fold leaves the question's identity contract as it is, and nothing is written.
+func TestReview818ConflictingOptionRepliesAreRefused(t *testing.T) {
+	state := crw737Store(t)
+	decision := review818RaiseBlocker(t, state)
+	// The same question, the same options, another reply for the hold option.
+	crw737Refused(t, crw737Run(t, "--state", state, "decision-raise", "--kind", "merge_approval",
+		"--context", "Hold the merge until the retention decision?", "--option", "hold=hold:hold the merge",
+		"--option", "merge=merge:merge now", "--option-reply", "hold=answer", "--option-reply", "merge=answer",
+		"--blocking", "relationship=rel-903", "--origin-project", "PRJ-A", "--source", "event=ev-blocked",
+		"--authority", "user"), "disposition_conflict")
+	// Nothing was written: one observation, and the stored replies are the first raise's.
+	record := crw737List(t, state)[0].(map[string]any)
+	if seen, _ := record["seen"].([]any); len(seen) != 1 {
+		t.Fatalf("the refused re-raise left %d observations, want the stored one", len(seen))
+	}
+	if replies := review818OptionReplies(t, record); replies["hold"] != "stop" || replies["merge"] != "answer" {
+		t.Fatalf("the refused re-raise rewrote the stored replies: %v", replies)
+	}
+	// The contrast: the same replies re-raised fold as before.
+	same := crw737JSON(t, crw737Run(t, "--state", state, "decision-raise", "--kind", "merge_approval",
+		"--context", "Hold the merge until the retention decision?", "--option", "hold=hold:hold the merge",
+		"--option", "merge=merge:merge now", "--option-reply", "hold=stop", "--option-reply", "merge=answer",
+		"--blocking", "relationship=rel-903", "--origin-project", "PRJ-A", "--source", "event=ev-blocked",
+		"--authority", "user"))
+	if same["merged"] != true || same["decisionId"] != decision {
+		t.Fatalf("the same replies answered %v, want the stored record %s merged", same, decision)
+	}
+	if seen, _ := crw737List(t, state)[0].(map[string]any)["seen"].([]any); len(seen) != 2 {
+		t.Fatalf("the identical re-raise left %d observations, want the appended second one", len(seen))
+	}
+}
+
+// A relationship-blocking record written before the reply field existed has no replies; a re-raise
+// that names them fills them in, and the record then applies with the reply the option makes.
+func TestReview818ReraiseFillsTheRepliesOfALegacyRecord(t *testing.T) {
+	state := crw737Store(t)
+	review818SeedSupervisor(t, state, "task-sup")
+	event := review818SeedReply(t, state, "rel-903", "ev-blocked", "stop", 1)
+	decision := review818RaiseBlocker(t, state)
+	review818StripOptionReplies(t, state, decision)
+	// The raise names the replies the legacy row lacks, so the merge fills them in.
+	merged := crw737JSON(t, crw737Run(t, "--state", state, "decision-raise", "--kind", "merge_approval",
+		"--context", "Hold the merge until the retention decision?", "--option", "hold=hold:hold the merge",
+		"--option", "merge=merge:merge now", "--option-reply", "hold=stop", "--option-reply", "merge=answer",
+		"--blocking", "relationship=rel-903", "--origin-project", "PRJ-A", "--source", "event=ev-blocked",
+		"--authority", "user"))
+	if merged["merged"] != true || merged["decisionId"] != decision {
+		t.Fatalf("the re-raise answered %v, want the stored record %s merged", merged, decision)
+	}
+	record := crw737List(t, state)[0].(map[string]any)
+	if replies := review818OptionReplies(t, record); replies["hold"] != "stop" || replies["merge"] != "answer" {
+		t.Fatalf("the re-raise left the replies %v, want the named ones filled in", replies)
+	}
+	// The filled reply is the one the apply matches.
+	review818AnswerUser(t, state, decision, "hold")
+	if got := crw737Run(t, "--state", state, "decision-apply", "--decision", decision, "--event", event); got.code != 0 {
+		t.Fatalf("decision-apply: exit %d %s %s", got.code, got.stdout, got.stderr)
+	}
+	if record := crw737List(t, state)[0].(map[string]any); record["state"] != "applied" {
+		t.Fatalf("the applied record is %v", record)
+	}
+}
+
+// review818OptionReplies is a listed record's option replies by option id.
+func review818OptionReplies(t *testing.T, record map[string]any) map[string]string {
+	t.Helper()
+	replies := map[string]string{}
+	options, _ := record["options"].([]any)
+	for _, raw := range options {
+		option, _ := raw.(map[string]any)
+		id, _ := option["id"].(string)
+		reply, _ := option["reply"].(string)
+		replies[id] = reply
+	}
+	return replies
 }
 
 // A decision is applied only once the relay has recorded the reply's delivery as accepted by the
