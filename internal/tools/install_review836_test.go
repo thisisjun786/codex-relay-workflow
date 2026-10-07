@@ -247,3 +247,89 @@ func TestToolsReview836DropsARecordedPathAnotherInstallTookOver(t *testing.T) {
 		t.Fatalf("this call removed the directory another install made at %s: %v", target, statErr)
 	}
 }
+
+// The parent's location is read before the mkdir, so it can be stale: the parent can be repointed
+// between that read and the mkdir. A location that then names a different object than the mkdir
+// acted on is not this call's directory and must not be recorded, because the removal would delete
+// an object this call never made. The object the mkdir acted on is the one at the spelled path, so
+// that is what the read is checked against.
+func TestToolsReview836IdentityRefusesALocationThatNamesAnotherObject(t *testing.T) {
+	base := t.TempDir()
+	first := filepath.Join(base, "first")
+	second := filepath.Join(base, "second")
+	for _, dir := range []string{first, second} {
+		if err := os.Mkdir(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	link := filepath.Join(base, "link")
+	if err := os.Symlink(first, link); err != nil {
+		t.Fatal(err)
+	}
+	// The peer's directory stands at the location the stale parent names.
+	peer := filepath.Join(first, "q")
+	if err := os.Mkdir(peer, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// The parent is repointed, and the mkdir then makes its directory through the new target.
+	if err := os.Remove(link); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(second, link); err != nil {
+		t.Fatal(err)
+	}
+	made := filepath.Join(second, "q")
+	if err := os.Mkdir(made, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// first is the parent read before the mkdir; the mkdir then ran through the repointed link.
+	location, info, err := componentIdentity(filepath.Join(link, "q"), first)
+	if err != nil {
+		t.Fatalf("componentIdentity under a repointed parent: %v", err)
+	}
+	if !info.IsDir() {
+		t.Fatalf("componentIdentity answered a %v", info.Mode().Type())
+	}
+	madeInfo, statErr := os.Lstat(made)
+	if statErr != nil {
+		t.Fatal(statErr)
+	}
+	if !os.SameFile(madeInfo, info) {
+		t.Fatalf("componentIdentity recorded %s, which is not the directory the mkdir made (%s)", location, made)
+	}
+	peerInfo, statErr := os.Lstat(peer)
+	if statErr != nil {
+		t.Fatal(statErr)
+	}
+	if os.SameFile(peerInfo, info) {
+		t.Fatalf("componentIdentity recorded the peer's directory at the stale location %s", peer)
+	}
+}
+
+// C2, not-a-directory side: only a directory is ever this call's to remove. The record here claims
+// the identity of the regular file itself, so nothing but the directory check keeps the removal
+// from deleting it; a record whose identity matches is not by itself a licence to remove a file.
+func TestToolsReview836RemoveCreatedLeavesANonDirectoryAlone(t *testing.T) {
+	base := t.TempDir()
+	target := filepath.Join(base, "a", "b")
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(target); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, []byte("not a directory\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Lstat(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	created := []createRootRecord{{path: target, resolved: target, info: info}}
+
+	removeCreated(created)
+	if _, err := os.Stat(target); err != nil {
+		t.Fatalf("removeCreated removed a regular file whose identity matched the record: %v", err)
+	}
+}
