@@ -19,6 +19,7 @@ package hook
 // not gh appears; that is what refuses a program word built in quote pieces or one quoting level down.
 
 import (
+	"bytes"
 	"io"
 	"os"
 	"path/filepath"
@@ -133,7 +134,7 @@ func githubPostJudgeText(command, cwd string) (githubPostSite, bool) {
 	if words, simple := githubPostSimple(command); simple {
 		return githubPostJudgeWords(words, cwd)
 	}
-	return githubPostUnread(command)
+	return githubPostUnread(command, cwd)
 }
 
 // githubPostJudgeArgv judges an already-split argv array: it is a simple command when every word is
@@ -141,7 +142,7 @@ func githubPostJudgeText(command, cwd string) (githubPostSite, bool) {
 func githubPostJudgeArgv(words []string, cwd string) (githubPostSite, bool) {
 	for _, w := range words {
 		if !githubPostLiteralWord(w) {
-			return githubPostUnread(strings.Join(words, " "))
+			return githubPostUnread(strings.Join(words, " "), cwd)
 		}
 	}
 	return githubPostJudgeWords(words, cwd)
@@ -153,8 +154,8 @@ func githubPostJudgeWords(words []string, cwd string) (githubPostSite, bool) {
 	if site, denied, handled := githubPostForm(words, cwd); handled {
 		return site, denied
 	}
-	if site, denied, handled := githubPostShellScript(words, cwd); handled {
-		return site, denied
+	if site, denied := githubPostScriptCommand(words, cwd); denied {
+		return site, true
 	}
 	if githubPostQuiet(words) {
 		return githubPostSite{}, false
@@ -174,7 +175,7 @@ func githubPostJudgeWords(words []string, cwd string) (githubPostSite, bool) {
 // githubPostUnread is the fail-closed judgement for a text that is not one simple command: rule 2's
 // canonical words are the gate, so a text that names a post is refused whatever its quoting depth, its
 // case or its number of commands, and a text that names no post is not a target.
-func githubPostUnread(command string) (githubPostSite, bool) {
+func githubPostUnread(command, cwd string) (githubPostSite, bool) {
 	// A text that spells an inline body is the inline-body rule, wherever the body sits.
 	if githubPostInlineShape(command) {
 		return githubPostSite{githubPostRuleInline, githubPostWhereCommand}, true
@@ -183,6 +184,11 @@ func githubPostUnread(command string) (githubPostSite, bool) {
 	// generation-6 refusal: the expansion may build the post the guard cannot read.
 	if githubPostExpands(command) && githubPostMentionsBroad(command) {
 		return githubPostSite{githubPostRuleExpand, githubPostWhereCommand}, true
+	}
+	// The file rule reads each command of a list through the same decomposition the write reader uses, so a
+	// wrapper prefix or a list separator no longer hides a shell that runs a posting script file.
+	if site, denied := githubPostScriptList(command, cwd); denied {
+		return site, true
 	}
 	if !githubPostCanonicalNamesPost(githubPostCanonicalWords(command)) {
 		// A command word that still holds an expansion after quote removal cannot be judged, and the rest
@@ -578,6 +584,76 @@ func githubPostPost(args []string, cwd string) (githubPostSite, bool, bool) {
 	return githubPostSite{}, false, true
 }
 
+// githubPostScriptCommand is CRW-875's file rule for one command's tokens: the leading assignments and the
+// wrapper commands with their options are dropped with the same reader the gh-post decomposition uses, and
+// the program that remains is judged as a shell that takes its program from a file (D1) or as a path the
+// shell runs directly (D2). A command whose wrapper runs nothing is not a target, and an allowed script
+// leaves the command text to the closed rule, because the shell's own arguments may run a post the script
+// passes on.
+func githubPostScriptCommand(tokens []string, cwd string) (githubPostSite, bool) {
+	// The words are read as the shell builds them (quote removal) and with a trailing grouping close removed
+	// (a subshell or a brace group ends on the same word), so a wrapper or a shell in quote pieces
+	// ('timeout' 30 bash post.sh, 'bash' post.sh, (bash post.sh)) is the word the shell runs.
+	normal := make([]string, len(tokens))
+	for i, token := range tokens {
+		normal[i] = strings.TrimRight(githubPostNormal(token), ")}")
+	}
+	rest := shellVerbSkipWrappers(normal)
+	if len(rest) == 0 {
+		return githubPostSite{}, false
+	}
+	if site, denied, _ := githubPostShellScript(rest, cwd); denied {
+		return site, true
+	}
+	return githubPostDirectScript(rest, cwd)
+}
+
+// githubPostScriptList applies the file rule to each command of a text that is not one simple command: the
+// text is cut at a list separator, the leading assignments and the wrapper commands with their options are
+// dropped, and the program that remains is judged. That is the same decomposition the write reader uses, so
+// a wrapper prefix (timeout, sudo, env, nohup, nice, time, command, exec, a NAME=value word) or a list
+// (cd . && bash post.sh, true; bash post.sh, bash post.sh &) no longer hides a posting script file.
+func githubPostScriptList(command, cwd string) (githubPostSite, bool) {
+	for _, part := range shellVerbSubsegments(command) {
+		if site, denied := githubPostScriptCommand(shellTokenize(part), cwd); denied {
+			return site, true
+		}
+	}
+	return githubPostSite{}, false
+}
+
+// githubPostDirectScript is D2: a command word that is a path holding / and naming a regular file the shell
+// reads as text (a #! line, or no NUL byte in its first 4 KiB) is a script, so the guard reads it and
+// applies the generation-1 line rule. A binary (a NUL byte in the first 4 KiB) is not a target, and a text
+// script the guard cannot read (absent, over 1 MiB, a read error) is refused as unreadable-github-post at
+// the name.
+func githubPostDirectScript(words []string, cwd string) (githubPostSite, bool) {
+	name := words[0]
+	if !strings.ContainsRune(name, '/') {
+		return githubPostSite{}, false
+	}
+	switch githubPostProgram(name) {
+	case "bash", "sh", "zsh", "dash", "ksh", "source", ".":
+		// The shell rule owns a shell spelled as a path (/bin/bash script.sh); it already judged the script.
+		return githubPostSite{}, false
+	}
+	content, binary, unreadable := githubPostReadScriptFile(name, cwd)
+	if binary {
+		// A regular file with a NUL byte in its first 4 KiB is a binary the shell does not run as a script.
+		return githubPostSite{}, false
+	}
+	if unreadable {
+		return githubPostSite{githubPostRuleUnread, name}, true
+	}
+	if !githubPostScriptNamesPost(content) {
+		return githubPostSite{}, false
+	}
+	if line, found := githubPostScriptBadLine(content, cwd); found {
+		return githubPostSite{githubPostRuleUnread, name + ":" + strconv.Itoa(line)}, true
+	}
+	return githubPostSite{}, false
+}
+
 // githubPostShellScript is CRW-875's rule: a shell that takes its program from a file makes the guard read
 // that file. bash, sh, zsh, dash and ksh take their first operand as the program, and source and the dot
 // builtin take a file. The file is judged by the closed rule, and a file the guard cannot read is refused
@@ -631,6 +707,15 @@ func githubPostShellProgramFile(words []string) (string, bool) {
 		if githubPostShellProgramWord(w) {
 			return "", false
 		}
+		if operator, consumesNext := githubPostRedirection(w); operator {
+			// A redirection is not the program operand. A bare operator takes the word after it (the
+			// redirection target, or the here-string), so both are skipped: "bash < post.sh" reads its
+			// program from standard input, which is not a file the guard can read.
+			if consumesNext {
+				i++
+			}
+			continue
+		}
 		if strings.HasPrefix(w, "-") || strings.HasPrefix(w, "+") {
 			if githubPostShellValueOption(w) {
 				i++
@@ -640,6 +725,25 @@ func githubPostShellProgramFile(words []string) (string, bool) {
 		return githubPostNormal(w), true
 	}
 	return "", false
+}
+
+// githubPostRedirection is whether a word is a shell redirection operator, and whether it takes the word
+// after it as its target. A leading file-descriptor number is skipped, so 2> and 2>> are operators too.
+func githubPostRedirection(w string) (operator, consumesNext bool) {
+	i := 0
+	for i < len(w) && w[i] >= '0' && w[i] <= '9' {
+		i++
+	}
+	rest := w[i:]
+	if rest == "" || rest[0] != '<' && rest[0] != '>' {
+		return false, false
+	}
+	switch rest {
+	case "<", ">", ">>", "<<", "<<<", "<>", ">&", "<&", "&>", "&>>":
+		return true, true
+	}
+	// An attached target (>out.txt) or a process substitution (<(cmd)) carries its own word.
+	return true, false
 }
 
 // githubPostSourcedPath is the file a shell's source or dot builtin would read for a name with no slash: it
@@ -747,6 +851,50 @@ func githubPostScriptBadLine(content, cwd string) (int, bool) {
 		return i + 1, true
 	}
 	return 0, false
+}
+
+// githubPostReadScriptFile reads a directly executed script (D2). The path is joined with the payload's
+// working directory. A regular file whose first 4 KiB hold a NUL byte is a binary the shell does not run as
+// a script, and it is the one case that is not a target. Any other regular file is text the shell runs with
+// sh, and its whole text (at most 1 MiB) is returned. A name the guard cannot read as a text script - an
+// absent file, a directory, a FIFO, a file over 1 MiB, a read error - reports unreadable, which the caller
+// refuses at the name, exactly as generation 1 refuses a shell program file it cannot read.
+func githubPostReadScriptFile(name, cwd string) (content string, binary, unreadable bool) {
+	path := name
+	if !filepath.IsAbs(path) {
+		base := cwd
+		if base == "" {
+			if wd, err := os.Getwd(); err == nil {
+				base = wd
+			}
+		}
+		path = filepath.Join(base, path)
+	}
+	path = filepath.Clean(path)
+	// A name that is not a regular file is refused before any open: a FIFO would wait for a writer, and an
+	// absent file, a directory or a link to nothing is not a text script the guard can rule out.
+	if st, err := os.Stat(path); err != nil || !st.Mode().IsRegular() {
+		return "", false, true
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return "", false, true
+	}
+	defer file.Close()
+	head := make([]byte, 4096)
+	n, err := io.ReadFull(file, head)
+	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+		return "", false, true
+	}
+	head = head[:n]
+	if bytes.IndexByte(head, 0) >= 0 {
+		return "", true, false
+	}
+	rest, err := io.ReadAll(io.LimitReader(file, githubPostMaxFileBytes+1))
+	if err != nil || int64(len(head))+int64(len(rest)) > githubPostMaxFileBytes {
+		return "", false, true
+	}
+	return string(head) + string(rest), false, false
 }
 
 // githubPostReadScript reads the text of the shell program a command names: a literal path, a relative one
