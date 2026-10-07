@@ -433,11 +433,135 @@ var (
 	dagHostDagSubcommand   = regexp.MustCompile(`^dag-[a-z-]+$`)
 	dagHostVariableWord    = regexp.MustCompile(`^\$\{?[A-Za-z_][A-Za-z0-9_]*\}?$`)
 	dagHostAssignmentWord  = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=`)
-	dagHostCommandSplitter = regexp.MustCompile(`\$\(|&&|\|\||;|\||\n`)
+	dagHostHeredocName     = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 	dagHostRefusedAnswer   = regexp.MustCompile(`"ok"\s*:\s*false`)
 	dagHostRefusedEnvelope = regexp.MustCompile(`"error"\s*:\s*"refused"`)
 	dagHostRefusedReason   = regexp.MustCompile(`"reason"\s*:\s*"([a-z_]+)"`)
 )
+
+// dagHostCommandUnits splits a tool call's argument text into the simple command units a shell would
+// run: a newline, ;, &&, ||, | or $( starts one. A separator inside a quoted string is data, not a
+// separator, and a here-document's body is not a command at all, so a relay command written inside
+// an example the parent only read (rg's pattern, cat's document) is never mistaken for a command the
+// parent ran. A unit keeps its own text, quotes included, for the word reading that follows; text
+// the reader cannot read to its end (an unterminated quote) stays one unit and is never split.
+func dagHostCommandUnits(text string) []string {
+	var units []string
+	var unit strings.Builder
+	flush := func() {
+		if strings.TrimSpace(unit.String()) != "" {
+			units = append(units, unit.String())
+		}
+		unit.Reset()
+	}
+	body := dagHostWithoutHeredocs(text)
+	for i := 0; i < len(body); {
+		switch c := body[i]; {
+		case c == '\\' && i+1 < len(body):
+			unit.WriteString(body[i : i+2])
+			i += 2
+		case c == '\'' || c == '"':
+			end := dagHostQuotedEnd(body, i, c)
+			unit.WriteString(body[i:end])
+			i = end
+		case c == '\n' || c == ';':
+			flush()
+			i++
+		case c == '|' || c == '&':
+			flush()
+			i++
+			if i < len(body) && (body[i] == '|' || body[i] == '&') {
+				i++
+			}
+		case c == '$' && i+1 < len(body) && body[i+1] == '(':
+			flush()
+			i += 2
+		default:
+			unit.WriteByte(c)
+			i++
+		}
+	}
+	flush()
+	return units
+}
+
+// dagHostQuotedEnd is the index just past the quoted string that starts at i with quote q. A single
+// quote ends at the next single quote; a double quote ends at the next double quote a backslash does
+// not escape. A quote with no end is the end of the text, so an unterminated string is never split.
+func dagHostQuotedEnd(s string, i int, q byte) int {
+	for j := i + 1; j < len(s); j++ {
+		if q == '"' && s[j] == '\\' {
+			j++
+			continue
+		}
+		if s[j] == q {
+			return j + 1
+		}
+	}
+	return len(s)
+}
+
+// dagHostWithoutHeredocs is the text with every here-document body removed: the line that carries
+// <<DELIM (or <<-DELIM) stays and the lines up to and including the one that is exactly DELIM are
+// dropped. The body is data the parent read or wrote, so a relay command inside one is not a relay
+// invocation. Only the first here-document of a line is read, which is what the review needs.
+func dagHostWithoutHeredocs(text string) string {
+	var out strings.Builder
+	delimiter := ""
+	for _, line := range strings.SplitAfter(text, "\n") {
+		content := strings.TrimRight(line, "\n")
+		content = strings.TrimRight(content, "\r")
+		if delimiter != "" {
+			if strings.TrimSpace(content) == delimiter {
+				delimiter = ""
+			}
+			continue
+		}
+		out.WriteString(line)
+		delimiter = dagHostHeredocDelimiter(content)
+	}
+	return out.String()
+}
+
+// dagHostHeredocDelimiter is the delimiter of the here-document a line starts, or "" when it starts
+// none. << and <<- are both read; the delimiter may be bare or quoted.
+func dagHostHeredocDelimiter(line string) string {
+	for i := 0; i+1 < len(line); i++ {
+		switch line[i] {
+		case '\'', '"':
+			i = dagHostQuotedEnd(line, i, line[i]) - 1
+			continue
+		case '\\':
+			i++
+			continue
+		case '<':
+			if line[i+1] != '<' {
+				continue
+			}
+			rest := strings.TrimLeft(strings.TrimPrefix(line[i+2:], "-"), " \t")
+			if rest == "" {
+				return ""
+			}
+			if rest[0] == '\'' || rest[0] == '"' {
+				if end := dagHostQuotedEnd(rest, 0, rest[0]); end > 1 && rest[end-1] == rest[0] {
+					return rest[1 : end-1]
+				}
+				return ""
+			}
+			word := rest
+			if end := strings.IndexAny(rest, " \t"); end >= 0 {
+				word = rest[:end]
+			}
+			// A bare delimiter is a name: <<2)) in an arithmetic expansion is not a here-document, and
+			// <<< starts a here-string, which is ordinary text.
+			if dagHostHeredocName.MatchString(word) {
+				return word
+			}
+			return ""
+		}
+	}
+	return ""
+}
 
 // dagHostRelaySubcommands reads the dag- subcommands of the relay invocations in a tool call's
 // argument text. The text is split into simple command units (a newline, ;, &&, ||, | or $( starts
@@ -451,7 +575,7 @@ var (
 // document with cat or searching for a dag- word with rg is never a relay invocation.
 func dagHostRelaySubcommands(text string) []string {
 	var subcommands []string
-	for _, unit := range dagHostCommandSplitter.Split(text, -1) {
+	for _, unit := range dagHostCommandUnits(text) {
 		words := strings.Fields(unit)
 		for len(words) > 0 && (dagHostAssignmentWord.MatchString(words[0]) || words[0] == "exec") {
 			words = words[1:]

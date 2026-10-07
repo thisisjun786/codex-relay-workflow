@@ -175,6 +175,15 @@ func TestDagHostReview775DocsReadIsNotRelayCall(t *testing.T) {
 		{"a variable program with a value-less option", "$RELAY --json dag-ready --plan p", true},
 		{"a variable program with an inline option value", "$RELAY --state=$ST dag-release --plan p1", true},
 		{"the relay program with an inline option value", "codex-session-relay --state=$ST dag-release --plan p1", true},
+		// A separator inside a quoted string is data, not a command boundary, and a here-document
+		// body is not a command at all: a relay command inside an example the parent only read is
+		// not an invocation the parent ran.
+		{"a quoted example holding a relay command", `rg -n 'example; crw relay dag-release --plan p1' docs/relay/example.md`, false},
+		{"a double-quoted example holding a relay command", `rg -n "x | codex-session-relay dag-ready --plan p" docs`, false},
+		{"a here-document body holding a relay command", "cat <<'EOF' > notes.txt\ncrw relay dag-release --plan p1\nEOF", false},
+		{"a here-document body holding a bare relay program", "cat <<EOF\ncodex-session-relay dag-ready --plan p\nEOF", false},
+		{"a relay command after a here-document closes", "cat <<'EOF' > notes.txt\ncrw relay dag-release --plan p1\nEOF\ncrw relay dag-release --plan p2", true},
+		{"a quoted argument on a real relay call", `codex-session-relay dag-ready --plan "p 1"`, true},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
@@ -496,5 +505,39 @@ func TestDagHostReview775FirstSightWithNothingPendingResumesAtTheEnd(t *testing.
 	offsets := dagHostReview775ReadOffsets(t, stateDir)
 	if got := offsets[rollout]; got != info.Size() {
 		t.Fatalf("the first-sight resume offset is %d, want the end of the file %d", got, info.Size())
+	}
+}
+
+// The reported list is bounded by the resume offset: a call the next check no longer reads drops out
+// of it, so a long-lived rollout does not grow the list without limit.
+func TestDagHostReview775ReportedListKeepsOnlyWhatTheResumeReads(t *testing.T) {
+	f := dagReviewNewFixture(t)
+	stateDir := filepath.Join(t.TempDir(), "state")
+	rollout := dagHostWriteRollout(t, f.dir, "parent.jsonl", dagHostReview775Refusal(t, "call-1", "crw relay dag-release --plan p1")...)
+	f.close()
+	dagHostReview775SeedOffsets(t, stateDir, rollout, 0)
+	cfg := dagHostReview775Parent(t, f, rollout, stateDir)
+
+	if found := dagReviewFind(dagHostRun(t, context.Background(), f, cfg), dagHostKindParentDagRefusals); len(found) != 1 {
+		t.Fatalf("the refusal was not reported: %+v", found)
+	}
+	data, err := os.ReadFile(filepath.Join(stateDir, dagHostStateFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document struct {
+		Reported map[string][]string `json:"reported"`
+	}
+	if err := json.Unmarshal(data, &document); err != nil {
+		t.Fatal(err)
+	}
+	// The refusal's call is behind the resume offset the check saved, so the next check never reads
+	// it again and the id has dropped out of the list.
+	if ids := document.Reported[rollout]; len(ids) != 0 {
+		t.Fatalf("the reported list kept %v, want nothing behind the resume offset", ids)
+	}
+	// The next check reads nothing behind that offset, so it reports nothing either.
+	if found := dagReviewFind(dagHostRun(t, context.Background(), f, cfg), dagHostKindParentDagRefusals); len(found) != 0 {
+		t.Fatalf("the next check reported a refusal behind the resume offset: %+v", found)
 	}
 }
