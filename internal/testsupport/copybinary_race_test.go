@@ -2,6 +2,7 @@ package testsupport_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -33,15 +34,34 @@ const (
 	// machine whose locking is correct.
 	copyBudget     = 2 * time.Second
 	copyByteBudget = 64 << 20
-	// copyRunaway is what the wall clock is actually asserted against: a ceiling a hang or a
-	// pathological slowdown still trips, wide enough that no correct run reaches it.
-	copyRunaway = 30 * time.Second
-	// copyForkerStop is the forker shutdown's own budget, spent after the copies are done and stop
-	// is closed. It is separate from copyRunaway so a run that finishes its copies near the ceiling
-	// still gives a forker inside its own exec the full budget to return; the two together stay
-	// under the issue's one-minute ceiling.
+	// copyRunaway bounds the copies and copyForkerStop the forker shutdown inside the child, so a
+	// stalled copy or fork fails there with its own message. The two together stay under the issue's
+	// one-minute ceiling.
+	copyRunaway    = 30 * time.Second
 	copyForkerStop = 10 * time.Second
+	// copyChildBudget is the parent's own ceiling on the child process, above the child's internal
+	// 40 s. It is what makes the exercise terminable rather than merely time-bound: the parent kills
+	// the child's whole process group here, so a copy blocked inside CopyBinary while it holds
+	// syscall.ForkLock, and the forks that block behind it, cannot hold this package past the ceiling.
+	copyChildBudget = 50 * time.Second
 )
+
+// The child the two exercise tests re-execute carries the mode it runs, the program to copy and the
+// path it writes its result to.
+const (
+	copyRaceModeEnv   = "CRW929_COPY_RACE_MODE"
+	copyRaceSourceEnv = "CRW929_COPY_RACE_SOURCE"
+	copyRaceResultEnv = "CRW929_COPY_RACE_RESULT"
+)
+
+// copyRaceResult is what the child hands back: the ETXTBSY count, the bytes copied, the copies
+// attempted and the wall clock the child measured.
+type copyRaceResult struct {
+	Busy      int64         `json:"busy"`
+	Written   int64         `json:"written"`
+	Attempted int64         `json:"attempted"`
+	Elapsed   time.Duration `json:"elapsed"`
+}
 
 // TestCopyBinarySurvivesConcurrentForks is this issue's regression. CopyBinary opens the copy for
 // writing and closes it before returning, and a test that runs the copy right after races every
@@ -51,11 +71,12 @@ const (
 // across the copy, so no fork lands inside it and every copy runs.
 func TestCopyBinarySurvivesConcurrentForks(t *testing.T) {
 	t.Parallel()
-	busy, written, attempted, elapsed := copyRace(t, testsupport.CopyBinary)
-	if busy != 0 {
-		t.Fatalf("%d of the %d copies could not be run: ETXTBSY", busy, attempted)
+	result := copyRaceInChild(t, "locked")
+	if result.Busy != 0 {
+		t.Fatalf("%d of the %d copies could not be run: ETXTBSY", result.Busy, result.Attempted)
 	}
-	t.Logf("locked: %d copies in %s (the issue's design budget is %s), %d bytes, no ETXTBSY", attempted, elapsed, copyBudget, written)
+	t.Logf("locked: %d copies in %s (the issue's design budget is %s), %d bytes, no ETXTBSY",
+		result.Attempted, result.Elapsed, copyBudget, result.Written)
 }
 
 // The same exercise through the copy the package did before this issue - the same open, copy and
@@ -63,27 +84,113 @@ func TestCopyBinarySurvivesConcurrentForks(t *testing.T) {
 // host and this moment, so the count is reported, never asserted.
 func TestACopyWithoutTheLockRacesConcurrentForks(t *testing.T) {
 	t.Parallel()
-	busy, written, attempted, elapsed := copyRace(t, plainCopy)
-	t.Logf("unlocked: %d of %d copies hit ETXTBSY in %s (%d bytes written)", busy, attempted, elapsed, written)
+	result := copyRaceInChild(t, "plain")
+	t.Logf("unlocked: %d of %d copies hit ETXTBSY in %s (%d bytes written)",
+		result.Busy, result.Attempted, result.Elapsed, result.Written)
+}
+
+// TestCopyBinaryRaceExercise is the exercise itself. It runs only in the child process the two
+// tests above start, and is a no-op in an ordinary package run.
+func TestCopyBinaryRaceExercise(t *testing.T) {
+	mode := os.Getenv(copyRaceModeEnv)
+	if mode == "" {
+		t.Skip("the exercise runs in the child process its parent starts")
+	}
+	source := os.Getenv(copyRaceSourceEnv)
+	copyFile := testsupport.CopyBinary
+	if mode == "plain" {
+		copyFile = plainCopy
+	}
+	result, err := copyRace(t, copyFile, source)
+	raw, marshalErr := json.Marshal(result)
+	if marshalErr != nil {
+		t.Fatal(marshalErr)
+	}
+	// The result is written before the busy count is judged, so the parent can report the counts of a
+	// failing run rather than only its exit status.
+	if err := os.WriteFile(os.Getenv(copyRaceResultEnv), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err != nil {
+		t.Fatalf("%s: %v", mode, err)
+	}
+	if mode == "locked" && result.Busy != 0 {
+		t.Fatalf("%d of the %d copies could not be run: ETXTBSY", result.Busy, result.Attempted)
+	}
+	t.Logf("%s: %d copies in %s, %d bytes, %d ETXTBSY", mode, result.Attempted, result.Elapsed, result.Written, result.Busy)
+}
+
+// copyRaceInChild runs the exercise in a child process of this test binary, in a process group of
+// its own, and kills the whole group when the child does not finish inside copyChildBudget. A copy
+// blocked inside CopyBinary cannot be stopped from inside the process that is blocked - it holds
+// syscall.ForkLock, so the forkers queue behind it - so the bound has to be enforced from outside.
+func copyRaceInChild(t *testing.T, mode string) copyRaceResult {
+	t.Helper()
+	source := forkProgramPath(t)
+	dir := t.TempDir()
+	resultPath := filepath.Join(dir, "result.json")
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(exe, "-test.run=^TestCopyBinaryRaceExercise$", "-test.count=1", "-test.timeout="+copyChildBudget.String())
+	cmd.Env = append(os.Environ(),
+		copyRaceModeEnv+"="+mode, copyRaceSourceEnv+"="+source, copyRaceResultEnv+"="+resultPath)
+	// The child gets its own process group so the kill below reaches the forks it started too.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	var output bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &output, &output
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	killed := make(chan struct{})
+	timer := time.AfterFunc(copyChildBudget, func() {
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		close(killed)
+	})
+	waitErr := cmd.Wait()
+	if !timer.Stop() {
+		<-killed
+	}
+	select {
+	case <-killed:
+		t.Fatalf("the exercise did not finish within %s and its process group was killed: a copy or fork is stuck\n%s",
+			copyChildBudget, output.String())
+	default:
+	}
+	if waitErr != nil {
+		t.Fatalf("the exercise failed: %v\n%s", waitErr, output.String())
+	}
+	raw, err := os.ReadFile(resultPath)
+	if err != nil {
+		t.Fatalf("the exercise left no result: %v\n%s", err, output.String())
+	}
+	var result copyRaceResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		t.Fatalf("the exercise's result is not readable: %v\n%s", err, output.String())
+	}
+	return result
 }
 
 // copyRace copies and runs fresh copies of source through copy while copyForkers goroutines fork
 // and run a program of their own, and answers how many of those executions failed with ETXTBSY,
 // how many bytes of copies were written, how many copies were attempted and how long the exercise
-// took. It fails when the exercise does not finish within copyRunaway, so a hang is this test's
-// failure and not the test binary's timeout.
+// took.
 //
 // A fork copies every descriptor that is not close-on-exec into the child, and the child holds
 // them until it execs. A path a fork inherited that way is open for writing in another process,
 // and Linux refuses to execute a file open for writing with ETXTBSY, "text file busy"
 // (golang/go#22315). The forkers here are the concurrent forks; each copier writes a fresh path
 // and then runs it.
-func copyRace(t *testing.T, copy func(source, path string) error) (busy, written, attempted int64, elapsed time.Duration) {
+//
+// The bounds here fail the run at copyRunaway and copyForkerStop so a stalled exercise is reported
+// as such; the parent's copyChildBudget is what ends it, since nothing inside this process can
+// unblock a copy stuck while it holds syscall.ForkLock.
+func copyRace(t *testing.T, copyFile func(source, path string) error, source string) (result copyRaceResult, err error) {
 	t.Helper()
-	source := forkProgramPath(t)
-	info, err := os.Stat(source)
-	if err != nil {
-		t.Fatal(err)
+	info, statErr := os.Stat(source)
+	if statErr != nil {
+		return result, statErr
 	}
 	// The program is whatever true(1) this host has, and on a BusyBox system that is the multi-call
 	// binary rather than a tiny program. The copy count comes down from the source's own size, so a
@@ -98,7 +205,7 @@ func copyRace(t *testing.T, copy func(source, path string) error) (busy, written
 	if iterations < 1 {
 		iterations = 1
 	}
-	attempted = copyWriters * iterations
+	result.Attempted = copyWriters * iterations
 	root := t.TempDir()
 	stop := make(chan struct{})
 	var forkers sync.WaitGroup
@@ -116,8 +223,8 @@ func copyRace(t *testing.T, copy func(source, path string) error) (busy, written
 			}
 		}()
 	}
-	// The writers never call testing.T: the runaway ceiling below can end the test while one of them
-	// is still stuck, and a call on t from a goroutine that outlives its test panics.
+	// The writers never call testing.T: the runaway ceiling below can end the run while one of them
+	// is still stuck, and a call on t from a goroutine that outlives it panics.
 	var failuresMu sync.Mutex
 	var failures []string
 	fail := func(format string, args ...any) {
@@ -126,8 +233,6 @@ func copyRace(t *testing.T, copy func(source, path string) error) (busy, written
 		failures = append(failures, fmt.Sprintf(format, args...))
 	}
 	start := time.Now()
-	// The copies are bounded by copyRunaway, so a stalled copy fails the test there rather than
-	// hanging it. The forker shutdown below gets its own budget.
 	deadline := start.Add(copyRunaway)
 	var writers sync.WaitGroup
 	for i := 0; i < copyWriters; i++ {
@@ -136,11 +241,11 @@ func copyRace(t *testing.T, copy func(source, path string) error) (busy, written
 			defer writers.Done()
 			for n := int64(0); n < iterations; n++ {
 				target := filepath.Join(root, fmt.Sprintf("copy-%d-%d", writer, n))
-				if err := copy(source, target); err != nil {
+				if err := copyFile(source, target); err != nil {
 					fail("copying to %s: %v", target, err)
 					return
 				}
-				atomic.AddInt64(&written, info.Size())
+				atomic.AddInt64(&result.Written, info.Size())
 				// CopyBinary asks for 0755 and this process's umask may clear the owner's execute bit,
 				// which would make running the copy fail with EACCES and be read as a copy failure. The
 				// exercise is the inherited write descriptor, not the mode (the caller-contract test
@@ -157,7 +262,7 @@ func copyRace(t *testing.T, copy func(source, path string) error) (busy, written
 				run.Args[0] = filepath.Base(source)
 				if err := run.Run(); err != nil {
 					if errors.Is(err, syscall.ETXTBSY) {
-						atomic.AddInt64(&busy, 1)
+						atomic.AddInt64(&result.Busy, 1)
 						continue
 					}
 					fail("running %s: %v", target, err)
@@ -172,29 +277,27 @@ func copyRace(t *testing.T, copy func(source, path string) error) (busy, written
 	case <-done:
 	case <-time.After(time.Until(deadline)):
 		// A stuck copy holds syscall.ForkLock, so the forkers are not waited for here: they could not
-		// fork again while it is held. The failure is the answer either way.
+		// fork again while it is held. The parent's kill is what ends this process.
 		close(stop)
-		t.Fatalf("the exercise did not finish within the %s runaway ceiling: a copy is stuck", copyRunaway)
+		return result, fmt.Errorf("the copies did not finish within %s: a copy is stuck", copyRunaway)
 	}
 	close(stop)
 	// The forker shutdown is bounded too, with its own budget: closing stop ends a forker that is
-	// between execs, but one already inside exec.Command(source).Run() must return on its own. A
-	// budget shared with the copies would leave a run that finished near the ceiling no time for
-	// that and would fail a correct run.
+	// between execs, but one already inside exec.Command(source).Run() must return on its own.
 	forked := make(chan struct{})
 	go func() { forkers.Wait(); close(forked) }()
 	select {
 	case <-forked:
 	case <-time.After(copyForkerStop):
-		t.Fatalf("the forkers did not stop within %s after stop was closed: a fork is stuck", copyForkerStop)
+		return result, fmt.Errorf("the forkers did not stop within %s after stop was closed: a fork is stuck", copyForkerStop)
 	}
-	elapsed = time.Since(start)
+	result.Elapsed = time.Since(start)
 	failuresMu.Lock()
 	defer failuresMu.Unlock()
 	if len(failures) > 0 {
-		t.Fatalf("%s", strings.Join(failures, "; "))
+		return result, errors.New(strings.Join(failures, "; "))
 	}
-	return busy, written, attempted, elapsed
+	return result, nil
 }
 
 // plainCopy is the copy the package did before this issue: the same open, copy and close, with no
