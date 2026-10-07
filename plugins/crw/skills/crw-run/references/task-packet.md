@@ -26,7 +26,7 @@ this default. This convention names issue children; the management task above th
 is named by [Set the app presentation and record](../../crw-plan/references/integrations.md#set-the-app-presentation-and-record),
 including the product-family prefix that no child title carries.
 Each implementation packet names its
-one issue and intended PR, which is today's operation under the [work-unit rules](../../../../../POLICY.md#work-units-review-and-integration);
+one issue and one intended delivery, which is today's operation under the [work-unit rules](../../../../../POLICY.md#work-units-review-and-integration);
 several packets for one feature are allowed by policy and switch on when their support lands. A batch retains separate packets and issue/PR pairs;
 do not use a primary issue to hide a combined delivery. If no issue is linked,
 use the known project name instead of inventing an issue number and reconcile
@@ -55,7 +55,7 @@ authorized work. Task identity and recovery always use stable IDs, not title mat
 ## Launch packet
 
 This packet targets a verified independent implementation task for one issue and its
-one intended PR, or an explicitly non-PR result. Follow [Independent implementation tasks](../SKILL.md#independent-implementation-tasks)
+one intended delivery, or an explicitly non-delivery result. Follow [Independent implementation tasks](../SKILL.md#independent-implementation-tasks)
 before dispatch. A packet's wording cannot turn an internal subagent into that
 task. Record the existing owner and creation/reuse authorization before sending.
 For non-PR work, remove inapplicable Git/worktree/PR/OPS delivery fields and steps
@@ -72,7 +72,7 @@ Supervisor: [the initiative ID and task ID of THIS project's designated executio
   where one exists; context only. A project contributing to several initiatives still has exactly
   one, and the others are not named here because they only reference its outcome.
   A supervisor works through your parent and is not a route into this task]
-Issue/PR mapping: [one implementation issue ID, target repository, and intended PR scope
+Issue/PR mapping: [one implementation issue ID, target repository, and intended delivery scope
   or existing PR URL; related issues are dependencies, not additional deliveries.
   For non-PR work, state the result and how it will be verified]
 Title: [the Codex task title: issue ID · descriptive title of up to 20 characters, following
@@ -120,7 +120,7 @@ Context:
 
 Authorized execution:
 - Sandbox/permission profile and approval policy: [agreed values]
-- Delivery: [where the assignment covers publication, the task branch and the head pushed for the integrator, with its local verification record; a pull request is opened only where the assignment names one (an external contribution, or a relay pull request already in flight), non-draft, with that pull request's own review cycle. Otherwise local commits or a frozen diff. Publication is never inferred from the delivery line alone]
+- Delivery: [where the assignment covers publication, the task branch and the head pushed for the integrator, with its local verification record; a pull request is named only where the in-flight transition section of merge-readiness.md applies. Otherwise local commits or a frozen diff. Publication is never inferred from the delivery line alone]
 - External actions: [actions covered by the assignment and shared defaults, with any narrower user limits]
 - Integration owner/target: [coordinator and verified destination; copy the applicable dev default or explicit delivery limit]
 - Operations clauses carried to this child: [OPS-5.5 and OPS-9 from
@@ -277,52 +277,17 @@ Execution:
   Where an initiative above it has a supervisor, that supervisor works through your parent:
   it does not instruct you, and you report to your parent. See
   [Supervisor, parent and child scope](../../crw-plan/references/integrations.md#supervisor-parent-and-child-scope).
-- Where the assignment covers publication and you can push, own the delivery end to
-  end: implement, test, commit, push, open a pull request where the delivery is one, then triage, fix, reply
-  to and recheck its reviews. Report once the current head's required checks and
-  reviews have finished and their blockers are resolved, not when the code is written.
-  That publication scope is the explicit push approval CXC `DEV-GIT-PUSH-01` requires, the
-  standing authorization of
-  [Default dev integration](../../crw-plan/references/integrations.md#default-dev-integration)
-  carried by this packet: push your task branch and open the pull request without stopping
-  to ask, and never merge; no force-push, no tag, no push to `dev` or `main`.
+- Where the assignment covers publication and you can push, own the delivery end to end: implement, test, commit, push the task branch, then triage, fix, reply to and recheck any review. Report once the current head's local verification has passed and its blockers are resolved, not when the code is written. That publication scope is the explicit push approval CXC `DEV-GIT-PUSH-01` requires, the standing authorization of [Default dev integration](../../crw-plan/references/integrations.md#default-dev-integration) carried by this packet: push your task branch without stopping to ask, and never merge; no force-push, no tag, no push to `dev` or `main`.
   Without that authorization, or without the access to use it, commit locally or
   return the frozen diff and say which publication you did not perform.
-- Run your own independent review and open the pull request in the order your workflow chooses; the
-  two may overlap, because preparation and review are parallel. The review meant here is the one your
-  workflow runs on the candidate inside this task; whether and how often it runs is that workflow's
-  decision, which this packet does not change. Where one runs, it ends on a head and the hosted
-  review follows on the open pull request. The handoff says which head your review covered and lists
-  the commits made after it, so a hosted review that reads a later head is still read against the
-  revision your own review actually answered ([what a handoff discloses](#what-a-handoff-discloses)).
+- Run your own independent review in the order your workflow chooses; the two may overlap, because preparation and review are parallel. The review meant here is the one your workflow runs on the candidate inside this task; whether and how often it runs is that workflow's decision, which this packet does not change. Where one runs, it ends on a head and the handoff names it, lists the commits made after it, and says which head the review answered ([what a handoff discloses](#what-a-handoff-discloses)).
 - A finding of your own review that you reject is not yours to close. When the review rated a
   finding High or blocker and you would not apply it, because you rebutted it or place it outside
   this issue, list it in the handoff as a decision request, or ask your parent first when the answer
   decides what you build next: end the turn `blocked_needs_input` with a blocked receipt that carries no file (the request is in the blocked file and your final message). An
-  internal finding has no pull request thread, so a rejection the handoff does not show is one
+  internal finding has no review thread, so a rejection the handoff does not show is one
   nobody can find.
-- Where your delivery is a pull request, open it non-draft, or transition an existing draft to Ready for review
-  as soon as the implementation is reviewable, then request the review the repository
-  requires and this assignment authorizes, and confirm it actually started. An optional
-  reviewer that cannot start or stalls is recorded as a gap and does not hold you, except that you
-  wait for the one run each of Devin and Codex makes on the open pull request within the
-  [waiting budget](merge-readiness.md#the-one-run-of-each-reviewer-awaited-before-the-receipt) — past
-  it a run still going is recorded as pending, not complete — or until it is skipped,
-  before you emit ([Devin and Codex reviews are references, not merge gates](merge-readiness.md#devin-and-codex-reviews-are-references-not-merge-gates));
-  a required gate does. Findings, pending CI and your own revision pushes do not send
-  it back to draft; fix on the open pull request and refresh only the review evidence
-  invalidated by the change. Apply the [reviewer policy](merge-readiness.md#reviewer-policy)
-  before requesting or waiting for a review. Ready is review entry, not merge permission. A criterion or gate line in the packet that
-  reads "Devin has no red or security finding" means that if a Devin review exists, its red and security
-  findings are resolved, and that no new Devin review is awaited
-  ([what the record says](merge-readiness.md#what-the-record-says)). A thread that still reaches the head
-  after your receipt is not yours to chase and needs no new review: the coordinator triages a minor one itself,
-  and where its relay cannot record that it asks you only to read the review threads again and emit again, and
-  one inside your issue's scope, a P0 or security one anywhere, a blocking one, or one it cannot classify, comes
-  back as an ordinary correction, both only while a correction can still
-  reach you: once your result is accepted the coordinator holds the candidate instead, and after the merge it is
-  new work, except that an in-scope one reopens your issue ([Late review threads](merge-readiness.md#late-review-threads)). See
-  [Publish for review when the work is reviewable](../../crw-plan/references/integrations.md#publish-for-review-when-the-work-is-reviewable).
+- Your delivery is commits on the task branch, with the handoff and the local verification record; internal work opens no pull request and waits for no hosted review. The pull request lane applies only to in-flight relay pull requests, under [In-flight pull requests (transition)](merge-readiness.md#in-flight-pull-requests-transition). A review thread that reaches the head after your receipt is not yours to chase: [Late review threads](merge-readiness.md#late-review-threads) says who handles it, and an in-scope one reopens your issue.
 - Where the assignment names the independent code review, run it once per head: `crw review --base <the base commit> --head <the head you hand off> --issue <this issue> --out <a directory of the task's evidence>`; when the head is a pull request and its summary belongs on it, add `--post-summary --pr <number>`,
   after the local full verification passes on that head and before you emit. The command keeps the run rules itself: the same
   patch-id is never reviewed again (a repeat answers `already_reviewed` and calls no model), one review runs at a time on the host
@@ -588,7 +553,7 @@ field in brackets where that reduced shape names it differently.
   here, what the coordinator owns after it.
 - Publication scope — the publication sentence under `Execution:` and the `Delivery:` line
   under `Authorized execution:`. The packet says that its publication scope is the explicit
-  push approval CXC `DEV-GIT-PUSH-01` requires (push the task branch, open the pull request,
+  push approval CXC `DEV-GIT-PUSH-01` requires (push the task branch,
   never merge), or that its scope excludes publication and the child pushes nothing.
   [Default dev integration](../../crw-plan/references/integrations.md#default-dev-integration)
   owns the rule; this line checks that the packet carries it. [A Non-PR packet has no
@@ -792,7 +757,7 @@ Model/effort: <the pair requested through the creation call; the coordinator rea
 Language: English for everything you write (messages, commits, pull request title, body and replies, handoff and receipt text).
 
 DELIVERABLE
-- <the pull request: non-draft, English title ISSUE-ID: <short English summary>, a non-empty body; internal work may instead deliver commits on a task branch, and the body rule applies only where a pull request is the delivery>
+- <the task branch and its pushed head, with the local verification record; a pull request only where SCOPE names an in-flight one, non-draft, with English title ISSUE-ID: <short English summary>>
 - <the handoff record and the completion receipt over it, and a final return that states what `Return:` lists: task id, baseline and
   final head, model and effort as observed, goal ids, per-criterion evidence, remaining defects, and the resource delta: what you
   created, changed, retained or started, each with its owner, release condition and next action, and any process with its working
@@ -806,14 +771,14 @@ SCOPE
 - <the permission profile the child was created with, the measured write capability of the checkout and its git metadata, and the
   fallback where a write is refused>
 - <host values: a short TMPDIR with the socket limit stated, the Go build resources, relay ids, where a finding you leave unfixed is recorded>
-- <the publication scope (push the task branch and open the pull request, or none) and the delivery contract by id: OPS-5.5 and OPS-9 in operations.md>
+- <the publication scope (push the task branch, or none) and the delivery contract by id: OPS-5.5 and OPS-9 in operations.md>
 
 VERIFY
 - <commands confirmed to exist at the baseline, the acceptance example, the data boundary>
 - <local runs on the packages the change touches; what hosted CI on the same head stands in for, and what this child does not verify>
 
 STOP WHEN
-- Done: <the delivery is in place (a pull request open where one is named), the repository's named verification passes on its head, the one-time reviews are finished or
+- Done: <the delivery is in place (the task branch pushed, or a pull request that is open where SCOPE names one), the repository's named verification passes on its head, the one-time reviews are finished or
   skipped, every thread is answered, the receipt is emitted>. Then publish the ready_for_review disposition and end the turn.
 - Blocked: <the size passes the cap, an input mismatch, a question only a person can answer, anything you cannot clear under
   the assignment>. Write the blocked file, emit blocked_needs_input without `--artifact` (it carries no file) and name the blocked file in your final message, then end the turn.
@@ -865,55 +830,24 @@ host values filled in.
    Source: new here, because no Launch packet rule gives a child a line count. The nearest are the parent's pre-dispatch check
    ([Check the size before dispatch](../SKILL.md#check-the-size-before-dispatch)), "Do not absorb another issue into this task or
    PR" and the `blocked_needs_input` route of `Execution:`. The figure is this project's; a packet may carry another.
-3. **Text on GitHub.** The title, body, commit messages and replies are English. Where the delivery is a pull request, its
-   title is `<ISSUE-ID>: <short English summary>`, never the Codex task title, and it targets the integration branch SCOPE
-   names (`dev` in this repository). The only Linear issue id you write in any of them is the one you deliver: name another issue
-   by its pull request number or its title, and never write a project id, a plan or node id or a relay id. A body states the
-   expected behavior and acceptance criteria, the commands run with their results and what is out of scope, carries no private
-   path, and is read back after the pull request is opened. Under the push-only procedure the same facts go in the handoff and
-   the coordination record instead, and the body is not the place a rule is recorded.
+3. **Text on GitHub.** The title, body, commit messages and replies are English. A reply or commit message names no other Linear issue by its id: name it by its title or its pull request number, and never write a project id, a plan or node id or a relay id. The handoff and the coordination record carry the facts a pull request description would carry.
+
+   Source: `Language:`, `Title:` and `Issue/PR mapping:` (one issue, one delivery), [Child task titles](#child-task-titles), and the delivery lines of `Return:`. The ban on other ids is new here: Linear's GitHub integration acts on any issue id it reads in this text, and a project id of the form P-<TEAM>-<number> contains one.
 
    Source: `Language:`, `Title:` and `Issue/PR mapping:` (one issue, one pull request), [Child task titles](#child-task-titles), and the
    pull request lines of `Return:`. The ban on other ids is new here: Linear's GitHub integration acts on any issue id it reads in
    this text, and a project id of the form P-<TEAM>-<number> contains one.
-4. **Delivery and base.** Where SCOPE grants publication, you own the commits, the push, the pull request (opened ready for review,
-   not as a draft) and its review cycle, and the coordinator merges; where it does not, commit locally or return the frozen diff and say
-   which publication you did not perform. Push your task branch only: no merge, force-push, rebase or tag, no push to the integration
-   branch, and no release, installation, service restart, Linear write or change to global settings. Do not chase the integration
-   branch: merge it into your branch with a merge commit only when GitHub reports a conflict (record what you resolved), or when
-   the coordinator's correction asks for a base refresh, which arrives as a new generation and is not new scope: name the kind of each
-   merge (`clean`, `mechanical` or `manual`) and rerun only what that kind needs ([what a handoff discloses](#what-a-handoff-discloses)).
+4. **Delivery and base.** Where SCOPE grants publication, you own the commits and the push of your task branch; the integrator fast-forwards the verified merged tree to the integration branch. Where it does not, commit locally or return the frozen diff and say which publication you did not perform. Push your task branch only: no merge into the integration branch, no force-push, rebase or tag, no push to the integration branch or `main`, and no release, installation, service restart, Linear write or change to global settings. Do not chase the integration branch: merge it into your branch with a merge commit only when the integrator reports a conflict (record what you resolved), or when the coordinator's correction asks for a base refresh, which arrives as a new generation and is not new scope: name the kind of each merge (`clean`, `mechanical` or `manual`) and rerun only what that kind needs ([what a handoff discloses](#what-a-handoff-discloses)).
 
-   Source: the `Delivery:` line and the publication bullet of `Execution:` ("push your task branch and open the pull request ... never merge; no force-push,
-   no tag, no push to `dev` or `main`"), OPS-9.1 and OPS-9.3 in [Operations contract](operations.md), and the `Execution:` bullet
-   on a correction that asks only for the base ([Refresh the base yourself when only the base moved](merge-readiness.md#refresh-the-base-yourself-when-only-the-base-moved)
-   says why the coordinator refreshes only the candidate about to merge). The exception for a reported conflict is new here.
-5. **Reviews.** Where you open a pull request (with no pull request there is no review to wait for), Devin and GitHub Codex each review it once (Codex when it is opened, Devin when it becomes ready for
-   review) and neither is a merge gate; you never request or re-request one. Wait for that one run of each to end before you emit, within the
-   [waiting budget](merge-readiness.md#the-one-run-of-each-reviewer-awaited-before-the-receipt): a
-   notice that a review was skipped (no credits, a usage limit) means skipped; past the budget a review still running is recorded as
-   pending, not complete; and with no signal of any kind 30 minutes after the pull
-   request is open and ready you record "review unavailable (no signal)" and go on. The independent code review (`crw review`, a reference opinion) is a separate step with its own bullet under `Execution:`; you run it only where the assignment names the independent code review for this task (this rule and that bullet mention it in every packet and are not such a naming), once per pull request after every CI job is green on the head you hand off. A finding inside this issue's scope is fixed on this pull request whatever its grade, or refuted from the code in a reply, and a P0 or security
-   finding is fixed before the merge whether or not it belongs to this issue; each is checked again on the new head. The rest get your
-   reply with your judgment and are resolved or listed for the backlog where SCOPE says; a finding you would leave unfixed is proposed
-   to the parent, not accepted by you, unless SCOPE grants that standing decision. Your own independent review, where your workflow runs
-   one, ends on a head and the handoff names it, and a High finding of it that you would not apply is not yours to close: list it
-   in the handoff as a decision request, or ask first and end the turn blocked. A required check that is not green, a mandatory review
-   that has not finished or a blocking finding left open is BLOCKED: report it as blocked, never as complete with a note.
+   Source: the `Delivery:` line and the publication bullet of `Execution:`, OPS-9.1 and OPS-9.3 in [Operations contract](operations.md), and [Refresh the base yourself when only the base moved](merge-readiness.md#refresh-the-base-yourself-when-only-the-base-moved), which says why the coordinator refreshes only the candidate about to merge.
+5. **Reviews.** Internal work has no pull request and so no hosted review. Your own independent review, where your workflow runs one, ends on a head and the handoff names it. The independent code review (`crw review`, a reference opinion) is a separate step with its own bullet under `Execution:`; you run it only where the assignment names it, once per head after the local full verification passes. A finding inside this issue's scope is fixed in this change whatever its grade, or refuted from the code in a reply, and a P0 or security finding is fixed before integration whether or not it belongs to this issue; each is checked again on the new head. The rest get your reply with your judgment and are resolved or listed for the backlog where SCOPE says; a finding you would leave unfixed is proposed to the parent, not accepted by you, unless SCOPE grants that standing decision. A High finding of your own review that you would not apply is not yours to close: list it in the handoff as a decision request, or ask first and end the turn blocked. A required check that is not green, a mandatory review that has not finished or a blocking finding left open is BLOCKED: report it as blocked, never as complete with a note.
 
-   Source: the `Execution:` bullets "Run your own independent review ...", "A finding of your own review that you reject is not
-   yours to close", "Open that pull request non-draft ..." (which waits for the one run each of Devin and Codex makes), "Where the assignment names the independent code review ..." (the condition of the independent-review sentence) and "Finishing the
-   review is part of finishing the work", OPS-9.2, and in [Merge readiness](merge-readiness.md) the
-   [reviewer policy](merge-readiness.md#reviewer-policy),
-   [the one run of each reviewer, awaited before the receipt](merge-readiness.md#the-one-run-of-each-reviewer-awaited-before-the-receipt)
-   (skip notices, no signal after 30 minutes),
-   [what each finding needs before the receipt](merge-readiness.md#what-each-finding-needs-before-the-receipt) (the scope basis) and
-   [Judge a finding by its impact](merge-readiness.md#judge-a-finding-by-its-impact) (what blocks, and who accepts a residue).
+   Source: the `Execution:` bullets on your own review and on rejected findings, OPS-9.2, and [Merge readiness](merge-readiness.md): the scope basis in [what each finding needs before the receipt](merge-readiness.md#what-each-finding-needs-before-the-receipt) and [Judge a finding by its impact](merge-readiness.md#judge-a-finding-by-its-impact).
 
 6. **Relay.** Where a relay holds the assignment (SCOPE carries the state directory, marker root, exact issue identity and routing
    ids): in your first turn publish your `intent-claim` with your current turn id, and at the end of every turn publish one
-   `intent-disposition` for that turn (`in_progress`, `blocked_needs_input`, `failed` or `ready_for_review`). When the pull request is
-   ready, write the handoff record, which states every field of the merge-readiness handoff and of the disclosures `Return:` lists
+   `intent-disposition` for that turn (`in_progress`, `blocked_needs_input`, `failed` or `ready_for_review`). When the task branch is
+   pushed, write the handoff record, which states every field of the merge-readiness handoff and of the disclosures `Return:` lists
    (`none` where there is none), and from inside your own turn emit the completion receipt over it without `--socket`, publish
    `ready_for_review` and end the turn. If you cannot proceed, write a blocked file and emit `blocked_needs_input` (or `failed`, with `--turn-status failed`) the same way but without `--artifact`: an execution-only receipt
    carries no file (the relay refuses one with `manifest_forbidden`), so the file stays where you wrote it, your final message names it, and a

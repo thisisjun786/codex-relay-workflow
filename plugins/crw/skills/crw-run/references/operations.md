@@ -1198,7 +1198,7 @@ and rechecking.
 | Step | Owner |
 |---|---|
 | Implement, basic checks, commit, push the task branch | child |
-| Deliverable reviewable: a pull request open and ready for review, or the pushed branch with its verification evidence | child |
+| Deliverable reviewable: the pushed branch with its verification evidence, or a pull request where SCOPE names one | child |
 | Review requested where a pull request exists, hosted review runs | child |
 | Findings triaged, fixed, replied and rechecked until the applicable gates are met | child |
 | Readiness handoff recorded: the head, the verified base, the verification evidence, the review coverage and a judged disposition per thread | child |
@@ -1207,7 +1207,7 @@ and rechecking.
 | Integrate into `dev` and verify the landing, without asking the user again | parent |
 | Release or deployment | user |
 
-Review handling stays on the pull request that produced it. A second pull request opened to escape
+Review handling stays on the delivery that produced it. A second delivery opened to escape
 a review thread loses the history a reviewer needs and starts the review over.
 
 ### OPS-9.2 What normal completion means

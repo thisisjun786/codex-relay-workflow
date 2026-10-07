@@ -36,7 +36,7 @@ Start from this cycle's changed paths and follow their relevant callers, consume
 | Duplicated logic or scattered rules | The same decision made at multiple sites, with a drift example or repeated synchronized edits |
 | Mixed responsibilities | One change forcing unrelated consumers or tests to change because distinct decisions share an owner |
 | Dead code or temporary compatibility | Consumer/registration search, supported-version contract and the removal trigger; a search miss alone does not prove runtime disuse |
-| Repeated co-change | Related fixes or PRs changing the same sites for one cause; distinguish true coupling from incidental formatting or generated output |
+| Repeated co-change | Related fixes or deliveries changing the same sites for one cause; distinguish true coupling from incidental formatting or generated output |
 | Difficult testing or diagnosis | A reproducible boundary that requires excessive setup, obscures a failure's source or prevents a focused control |
 
 Search the affected scope for sibling instances and state the search boundary. Do not claim complete coverage from a few examples. Separate debt introduced in the cycle from older debt the cycle exposed; keep older, unrelated opportunities outside the recommendations unless they block the agreed next work.

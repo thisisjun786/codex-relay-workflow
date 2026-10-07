@@ -201,7 +201,7 @@ In this managed execution workflow, implementation belongs to a responsible
 independent child Codex task, including a single issue, an existing worktree,
 and repairs to an existing PR. The coordinator owns scope selection, preparation,
 dispatch, delivery validation, and authorized integration; a child whose assignment
-covers publication owns its own pull request, including its checks and its review
+covers publication owns its own delivery, including its checks and its review
 cycle. Issue count and checkout availability do not turn the coordinator into the
 implementation worker.
 
@@ -414,7 +414,7 @@ applies throughout dispatch, observation and completion below.
 
 For repository-changing work, every packet carries the current delivery contract, and where the template's older
 delivery menu disagrees the contract wins. Name in the packet that the child owns its
-commits, push, the pull request and the review on that same pull request through to
+commits, push, the task branch and its verification through to
 the applicable gates, and that the coordinator performs the merge while release and
 deployment remain the user's. Then give the child OPS-5.5 and OPS-9 from
 [Operations contract](references/operations.md) as context of its own: cite them by id
@@ -846,7 +846,7 @@ Describe evidence separately:
 | Agreed workflow actually followed | That task's own recorded phases, plan and evidence for this assignment. A skill-loading line, an acceptance receipt, or the instruction quoted back is an indication of receipt, not of compliance |
 | Child reused its own existing goal | That task's current goal and goalplan read back under its own identity. A second goal opened for the same assignment is a duplicate, not a resume |
 | Work delivered | Completed turn plus actual commit/diff and checks for code; verified result with both input baseline and delivered output revision/digest for non-PR work |
-| Pull request review handled by the child | Per-finding trail on that PR: the finding, the commit that addressed it, and the recheck |
+| In-flight pull request review handled by the child | Per-finding trail on that pull request (in-flight only): the finding, the commit that addressed it, and the recheck |
 | Child reports normal completion | The repository's named verification and the applicable reviews finished on the current head, blocking findings resolved; a missing mandatory review or verification is blocked, not complete |
 | Candidate ready to hand over | The child's handoff record: the delivered tree and head, the verified destination tip, the verification evidence the repository names (this repository's `verification-record/1`, or the runs by id and attempt where a repository still runs hosted CI), the review coverage actually read, and a judged disposition with evidence for every thread seen. A completion naming a pull request and saying nothing about its review is refused, because silence is the failure this exists to catch |
 | Parent runs its own goal loop | That task's own active goal, read back under its own identity, where a Loop was explicitly requested. A parent operating without a goal is the default and needs no authorization; what is recorded instead is its observation path and the readiness facts behind it |
@@ -854,7 +854,7 @@ Describe evidence separately:
 | Receipt recorded, where a relay holds the assignment | The child's completion receipt with its revision hash and manifest |
 | Verification decision, where a relay holds the assignment | A verdict at the current head revision, covering the registered criteria and naming the criteria set it was reviewed against |
 | Coordination summary written | The coordinator's own connector write, confirmed by a readback carrying that job's structured record |
-| Merged by the coordinator | Linear criteria and the PR's latest diff/base/head/checks/review resolution checked, then the actual landing verified |
+| Merged by the coordinator | Linear criteria and the delivered head's verification checked, then the actual landing on the intended branch verified (for an in-flight pull request, its latest diff, base, head, checks and review resolution) |
 | Release or deployment | The user's approval for that action, obtained before a merge known to trigger it |
 
 Do not assume a worktree/task returned by a backend appears in the app's project.
@@ -1215,7 +1215,7 @@ A record saying completed is a claim rather than a verdict, and it is corroborat
 evidence its own delivery shape requires under
 [Implementation Done](../crw-plan/references/integrations.md#implementation-done) and C9 in
 [Initiative supervision](references/initiative-supervision.md): for implementation work that is
-the pull request landed in its intended target together with every accepted criterion still
+the delivery landed in its intended target together with every accepted criterion still
 outstanding beside it, installation or live verification included where the criteria named them;
 for accepted non-PR work it is the agreed observable result, which has no pull request by design.
 That test runs per subject rather than once, so each scoped issue is corroborated on its own

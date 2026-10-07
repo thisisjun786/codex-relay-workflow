@@ -12,7 +12,7 @@ Loading it does not make the goal the default again, and an ordinary project exe
 [crw-run](../crw-run/SKILL.md)'s, not this skill's.
 
 One parent coordinates one project; one independent child owns one issue and its
-delivery, one issue per PR today under the repository's [work-unit rules](../../../../POLICY.md#work-units-review-and-integration), under the shared
+delivery, one issue per delivery today under the repository's [work-unit rules](../../../../POLICY.md#work-units-review-and-integration), under the shared
 [supervisor, parent and child scope](../crw-plan/references/integrations.md#supervisor-parent-and-child-scope).
 Run and Loop have the same project scope. This skill adds the
 parent's host goal, automatic continuation and goal completion decision.
@@ -124,7 +124,7 @@ relay incompatibility is a concrete blocker, not a reason to fake ACK or bypass 
 
 Finish when every obligation in the agreed scope meets its verified delivery boundary
 and no owned work, correction, receipt or integration remains pending. For implementation
-scope that includes integration, verify each required PR landed; non-PR work requires
+scope that includes integration, verify each required delivery landed on its integration branch; non-PR work requires
 its agreed result evidence. A no-merge or batch boundary can finish that limited run,
 but does not make the whole project complete. Then close the matching parent goal
 under [its lifecycle](references/parent-goal.md). Cancellation is not successful delivery.

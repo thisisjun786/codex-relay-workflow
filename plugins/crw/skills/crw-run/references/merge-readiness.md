@@ -230,7 +230,7 @@ the same three gates.
 
 | | Devin Review | Codex review |
 | --- | --- | --- |
-| Runs | once, when the pull request becomes ready | once, when the pull request is opened: a code review and a security review |
+| Runs | in-flight pull requests only: once, when the pull request becomes ready | in-flight pull requests only: once, when the pull request is raised: a code review and a security review |
 | In progress | the `Devin Review` status description is `Analyzing your changes` (state pending): wait, up to the waiting budget | the bot's eyes reaction is on the pull request, or any row of its summary comment is not `Completed` (observed: `🔄 Running since <time>`) |
 | Finished | the description is `Completed analysis in <time>` | the eyes reaction is gone and each of its two reviews, the code review and the security review, is either `Completed` in its summary comment or skipped by the bot's notice that names it; a thumbs-up counts for both when no row contradicts it |
 | Skipped, not waited for | the description is `Full review skipped: trial expired and no credits remaining` (state `success`) | the bot's issue comment that it skipped for limits, for the review it names (observed: `You have reached your Codex usage limits for security reviews. Please try again later.`, which ended the security review only) |
@@ -309,6 +309,8 @@ review exists, its red and security findings are resolved; no new Devin review i
 wait for Devin, and the child's wait for the one run is the step above.
 
 ### Late review threads
+
+This rule covers a late finding on any delivered head. The forge reading that finds one (`merge-evidence --restate`) applies to in-flight pull requests only ([In-flight pull requests (transition)](#in-flight-pull-requests-transition)); for internal work the coordinator grades a late finding by the rule below.
 
 A review thread is late when it is on the candidate's head and is not in the record's `threadsSeen`: the
 reviewer's one run ended after the child's receipt, or a reviewer that showed no signal for 30 minutes posted
@@ -1216,6 +1218,19 @@ count and are not in it; so are a landing not yet landed (`pending`) and one not
 and none of them is ever counted as zero.
 
 
+## In-flight pull requests (transition)
+
+This section is the one place in this procedure that describes a pull request lane. It covers relay pull requests that were already open when the push-only procedure took effect (after CRW-965 is installed), and nothing else. Internal work never opens a pull request: its candidate is a task branch whose head the integrator verifies and fast-forwards to ~dev~.
+
+The rules for that transition:
+
+- An in-flight pull request is not merged before CRW-965 is installed, and no open pull request is closed or switched while its lane is running.
+- After ~ci.yml~ declares only ~workflow_dispatch~, an open pull request gets hosted CI only from a manual dispatch of its branch, ~gh workflow run ci.yml --ref <branch>~. No step waits for a run that no event can create: a step that needs hosted CI dispatches it itself, or the pull request leaves the lane.
+- To leave the lane, the pull request's commits go to the integrator: the head is verified locally with the verification record and fast-forwarded to ~dev~, and the pull request is closed with a comment that names the landing commit.
+- The one run each external reviewer makes on a pull request that is still open follows [The one run of each reviewer](#the-one-run-of-each-reviewer-awaited-before-the-receipt).
+
+The subsections below are the lane's mechanics (bundles, the merge lane and its base conflicts) and apply only while such a pull request exists.
+
 ### Merge a bundle
 
 **The installed relay still runs the PR path.** The lane, the train and `merge-evidence` below read hosted
@@ -1260,7 +1275,7 @@ its correction; the operator page is `docs/relay/README.md`).
 3. Open the one bundle pull request. Its title is "CRW bundle <train_id>: #a #b …" and its body lists
    the members and the evidence. Post it through a file scanned by gitleaks, and label it `crw-lane`
    so its run is a full one even in light mode.
-4. After its CI finishes, `merge-train-verify --train <id> --actor <leader> --bundle-pr <n> --head <H>
+4. Once the bundle pull request's checks have finished, `merge-train-verify --train <id> --actor <leader> --bundle-pr <n> --head <H>
    --run <R> --repo <a checkout>`. The relay reads the pull request, the run and the chain itself and
    compares your values; a run that is not this repository's `ci.yml`, a fork run, a job that is not a
    success, a go-product test leg whose test step was skipped, and a hand-resolved merge are each

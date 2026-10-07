@@ -11,12 +11,12 @@ What each judged surface is measured against, and what exempts it. The rules the
 | Project membership | Every implementation issue sits in the project its product and delivery scope belong to ([Linear operating model](../../crw-plan/references/integrations.md#linear-operating-model)); a team, a product-family label or a relation does not stand in for the project | A standalone issue the operating model allows outside a project; an issue whose membership is still an open classification decision recorded as such | The project is quotable from the issue's body, its current delivery PR or its existing assignment, or from an accepted plan, and every input that names a project names the same one; a majority is not agreement. Otherwise propose it and leave the choice to the decision a midpoint check surfaces: tidy never picks among candidate projects |
 | Unreflected approved decision | The canonical document carries the latest accepted decision or explicit user correction ([Linear holds canonical documents](../../crw-plan/references/integrations.md#linear-holds-canonical-documents)) | An issue status, an assistant proposal or a newer local draft is not a decision; unclear decision authority is a conflict rather than a gap | The decision carries a traceable source and date, either a Linear anchor by ID or the user's own later correction, and the passage it changes is unambiguous. Link that basis in the edit |
 
-An issue whose body, current PR and assignment all name the same repository, with the label absent
+An issue whose body, current delivery and assignment all name the same repository, with the label absent
 and the value already in the group, is the ordinary gap: add the one label and leave every other
 field alone. An issue with no repository anywhere, on non-development work, is the ordinary
 exception, because the empty group is what the rule asks for there.
 
-Where the body names one repository and the current PR sits in another, nothing in this table
+Where the body names one repository and the current delivery sits in another, nothing in this table
 decides which is right. Record both readings and the decision that would settle them. The same
 holds when a body sentence is the only evidence: a note about where work might land is not the
 execution evidence the first row asks for, so that item is unverified rather than a gap.
@@ -24,5 +24,5 @@ execution evidence the first row asks for, so that item is unverified rather tha
 Separate the two quiet outcomes there. Where the record itself shows the target is still undecided,
 that is the unresolved-target exception the rule already allows. Where the target may well be
 settled but the corroborating evidence this table requires could not be read, or does not exist
-yet, that is unverified: a definite body line with no current PR and no assignment is the ordinary
+yet, that is unverified: a definite body line with no current delivery and no assignment is the ordinary
 case of it. Neither outcome is a defect, and neither licenses picking a value.

@@ -263,7 +263,7 @@ switch on when their support lands.
 Keep review fixes on the same issue and delivery. A necessary replacement PR retains
 the superseded link and names the one current delivery PR; it does not create a
 second simultaneous delivery for the issue. A new change after that delivery
-has landed gets a new issue and delivery. Research, design, or operational work with
+has landed gets a new issue and delivery, except a defect inside the finished issue's own specification, criteria or promise: that reopens the same issue key ([After the merge](../../crw-run/references/merge-readiness.md#late-review-threads)), and only a defect outside the issue gets a new issue. Research, design, or operational work with
 no repository change uses an explicit non-PR result and verification; do not
 create an empty PR merely to fit the rule.
 
@@ -1348,7 +1348,7 @@ An optional reviewer that cannot start, stalls, or sits outside the authorized s
 
 Review findings, pending CI, and ordinary revision pushes never send a pull request back to draft. Re-draft only when the implementation itself stops being reviewable.
 
-Two facts are easy to collapse and are recorded separately: a relay receipt whose outcome is `ready_for_review` says the child emitted a reviewable revision, and GitHub `isDraft=false` says the pull request is open for review. Neither implies the other.
+Two facts are easy to collapse and are recorded separately: a relay receipt whose outcome is `ready_for_review` says the child emitted a reviewable revision, and GitHub `isDraft=false` says the pull request is ready for review. Neither implies the other.
 
 Where publication is in scope but the child cannot execute it, the coordinator performs only that blocked action, from the child's verified artifact, and records the actual resulting state. The child keeps review and fix ownership. That is the exception for a capability-limited task, not a standing parent obligation for children that can publish, and not a way to supply authorization the assignment never had: a coordinator cannot publish on behalf of an assignment whose scope excludes publication.
 
