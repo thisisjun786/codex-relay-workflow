@@ -61,6 +61,11 @@ type improveProposeCandidate struct {
 	// exists adds only the sightings this run newly recorded to that project's count. It does not
 	// reach the report: the report names the candidate, not how a merge counts it.
 	seenProjects map[auditDraftSeen]string
+
+	// seenCounts is how many occurrences each sighting stands for. A record that aggregates its
+	// occurrences into one origin reports its own count; a record with an origin per occurrence
+	// reports one each.
+	seenCounts map[auditDraftSeen]int
 }
 
 // improveProposeReport is what crw manage improve propose prints: the ranked candidates, the
@@ -316,7 +321,7 @@ func improveProposeCandidates(bundle improveBundle) []improveProposeCandidate {
 			}
 			improveProposeAddProject(&current.Projects, project, count)
 			current.Evidence = append(current.Evidence, record.Evidence...)
-			improveProposeAddSightings(current, project, sightings)
+			improveProposeAddSightings(current, project, sightings, improveProposeSightingWeight(record, len(sightings)))
 			continue
 		}
 		byKey[key] = len(candidates)
@@ -326,7 +331,7 @@ func improveProposeCandidates(bundle improveBundle) []improveProposeCandidate {
 			Evidence: append([]string(nil), record.Evidence...),
 		}
 		improveProposeAddProject(&candidate.Projects, project, count)
-		improveProposeAddSightings(&candidate, project, sightings)
+		improveProposeAddSightings(&candidate, project, sightings, improveProposeSightingWeight(record, len(sightings)))
 		candidates = append(candidates, candidate)
 	}
 	for i := range candidates {
@@ -375,11 +380,15 @@ func improveProposeProjectKey(project string) string {
 }
 
 // improveProposeAddSightings adds the sightings one record makes to a candidate, once each, and
-// remembers the project each was seen in. A merge counts a project by the sightings this run newly
-// added to it, so the map is what keeps a stored count and a grown seen list in step.
-func improveProposeAddSightings(candidate *improveProposeCandidate, project string, sightings []auditDraftSeen) {
+// remembers the project each was seen in and how many occurrences it stands for. A merge counts a
+// project by the occurrences this run newly added to it, so the maps are what keep a stored count
+// and a grown seen list in step.
+func improveProposeAddSightings(candidate *improveProposeCandidate, project string, sightings []auditDraftSeen, weight int) {
 	if candidate.seenProjects == nil {
 		candidate.seenProjects = map[auditDraftSeen]string{}
+	}
+	if candidate.seenCounts == nil {
+		candidate.seenCounts = map[auditDraftSeen]int{}
 	}
 	owner := improveProposeProjectKey(project)
 	for _, sighting := range sightings {
@@ -389,6 +398,9 @@ func improveProposeAddSightings(candidate *improveProposeCandidate, project stri
 		candidate.seen = append(candidate.seen, sighting)
 		if _, ok := candidate.seenProjects[sighting]; !ok {
 			candidate.seenProjects[sighting] = owner
+		}
+		if _, ok := candidate.seenCounts[sighting]; !ok {
+			candidate.seenCounts[sighting] = weight
 		}
 	}
 }
@@ -590,6 +602,23 @@ func improveProposeMergedCount(project string, incremental int, current []improv
 	return incremental
 }
 
+// improveProposeSightingWeight is how many occurrences each of a record's sightings stands for: the
+// record's own count when it names one origin, and one per origin when it names several. A source
+// that aggregates its occurrences into one row (a fault ledger row, whose count moves while its
+// origin stays the same) reports its whole count at that one location, so it is never understated.
+// A record with an origin per occurrence reports one each, however many rows the bundle merged into
+// it, because each of those origins is one occurrence.
+func improveProposeSightingWeight(record improveRecord, sightings int) int {
+	count := record.Count
+	if count <= 0 {
+		count = 1
+	}
+	if sightings > 1 {
+		return 1
+	}
+	return count
+}
+
 // improveProposeReconcileSightings brings a stored seen list and the counts its draft holds up to
 // date with this run's candidate, and reports what changed. One origin is one sighting: an origin
 // the draft already carries is not added again, and the owner its occurrence is counted under
@@ -597,7 +626,7 @@ func improveProposeMergedCount(project string, incremental int, current []improv
 // the unknown owner to the project instead of counting the origin twice. An origin the draft does
 // not carry yet adds one to the project this run saw it in. The owner moves are returned in a
 // second map, because a stored project's count is otherwise carried forward unchanged.
-func improveProposeReconcileSightings(candidate improveProposeCandidate, stored []auditDraftSeen, issueKeys map[string]bool) (seen []auditDraftSeen, added map[string]int, moved map[string]int) {
+func improveProposeReconcileSightings(candidate improveProposeCandidate, stored []auditDraftSeen, issueKeys map[string]bool) (seen []auditDraftSeen, added, moved map[string]int) {
 	seen = append([]auditDraftSeen(nil), stored...)
 	added = map[string]int{}
 	moved = map[string]int{}
@@ -606,7 +635,7 @@ func improveProposeReconcileSightings(candidate improveProposeCandidate, stored 
 		at := improveProposeSeenIndex(seen, sighting)
 		if at < 0 {
 			seen = append(seen, sighting)
-			added[owner]++
+			added[owner] += improveProposeSightingCount(candidate, sighting)
 			continue
 		}
 		// The occurrence is already recorded. Its owner in this run may differ from the stored one:
@@ -626,11 +655,20 @@ func improveProposeReconcileSightings(candidate improveProposeCandidate, stored 
 		// already drops that false project and carries its occurrences to the unknown owner, so
 		// moving them again would count the same occurrence twice.
 		if was != owner && !issueKeys[was] {
-			moved[was]--
-			moved[owner]++
+			count := improveProposeSightingCount(candidate, sighting)
+			moved[was] -= count
+			moved[owner] += count
 		}
 	}
 	return seen, added, moved
+}
+
+// improveProposeSightingCount is how many occurrences one of a candidate's sightings stands for.
+func improveProposeSightingCount(candidate improveProposeCandidate, sighting auditDraftSeen) int {
+	if count := candidate.seenCounts[sighting]; count > 0 {
+		return count
+	}
+	return 1
 }
 
 // improveProposeSuppressed reports whether an exported issue already covers a candidate: the issue

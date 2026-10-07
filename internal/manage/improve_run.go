@@ -2,6 +2,9 @@ package manage
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -37,7 +40,7 @@ func improveRoadmapLock(dir, boundary, ref string) (func(), error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
-	lockPath := filepath.Join(dir, "roadmap-"+boundary+"-"+ref+".lock")
+	lockPath := filepath.Join(dir, improveRoadmapLockName(boundary, ref))
 	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return nil, err
@@ -53,6 +56,19 @@ func improveRoadmapLock(dir, boundary, ref string) (func(), error) {
 		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 		_ = f.Close()
 	}, nil
+}
+
+// improveRoadmapLockName is the pass lock's file name: a fixed-length digest of the boundary and
+// ref, so a long but legal ref cannot push the name past the filesystem's name limit. The two
+// fields are hashed as a JSON array, so no delimiter inside either can make two passes share a
+// name.
+func improveRoadmapLockName(boundary, ref string) string {
+	parts, err := json.Marshal([]string{boundary, ref})
+	if err != nil {
+		parts = []byte(boundary + "\x00" + ref)
+	}
+	sum := sha256.Sum256(parts)
+	return "roadmap-" + hex.EncodeToString(sum[:])[:auditDraftFingerprintChars] + ".lock"
 }
 
 // improveRoadmapStampFormat is the UTC stamp a roadmap file name carries. It keeps

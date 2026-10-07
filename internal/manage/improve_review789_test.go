@@ -997,3 +997,94 @@ func TestImproveReview789IssueKeyOwnerIsNotMovedTwice(t *testing.T) {
 		t.Errorf("the corrected draft still names the issue key as a project:\n%s", doc.Body)
 	}
 }
+
+// TestImproveReview789RotatedFileCountsItsNewRow covers the review finding that a rotated JSON-line
+// source lost its new occurrence: the origin was the resolved file and the line number alone, so a
+// different row at the same line number read as the one already seen and the second occurrence was
+// never counted. The row's own time is part of the origin, so two rows that share a position are
+// still two occurrences.
+func TestImproveReview789RotatedFileCountsItsNewRow(t *testing.T) {
+	s := improveTestSetup(t)
+	manageState := filepath.Join(s.root, "manage-state")
+	interventions := filepath.Join(s.root, "interventions.jsonl")
+	improveTestStore(t, s, func(t *testing.T, db *sql.DB) {})
+	improveReview789Configure(t, s, manageState, map[string]any{
+		"sources": map[string]any{"intervention": map[string]any{"path": interventions}},
+	})
+
+	improveTestWrite(t, interventions, "{\"signal\":\"stalled\",\"at\":\"2026-10-06T01:00:00Z\"}\n")
+	improveReview789Collect(t, s)
+	first := improveReview789Propose(t, s, improveReview789BundlePath(s))
+	if len(first.Created) != 1 {
+		t.Fatalf("created = %+v, want one draft", first.Created)
+	}
+	fingerprint := first.Created[0].Fingerprint
+
+	// The file is rotated: the same path and line number now hold a different occurrence.
+	improveTestWrite(t, interventions, "{\"signal\":\"stalled\",\"at\":\"2026-10-07T01:00:00Z\"}\n")
+	improveReview789Collect(t, s)
+	second := improveReview789Propose(t, s, improveReview789BundlePath(s))
+	if len(second.Updated) != 1 {
+		t.Fatalf("updated = %+v, want the existing draft to grow", second.Updated)
+	}
+	doc := improveReview789Draft(t, manageState, fingerprint)
+	if len(doc.Seen) != 2 {
+		t.Errorf("the draft carries %d seen entries, want one per occurrence (2): %+v", len(doc.Seen), doc.Seen)
+	}
+	if !strings.Contains(doc.Body, "- owner_unknown (2)") {
+		t.Errorf("the rotated row was not counted as a second occurrence:\n%s", doc.Body)
+	}
+}
+
+// TestImproveReview789LongRefStillRuns covers the review finding that the pass lock's file name was
+// the boundary and ref spelled out, so a long but legal ref pushed the name past the filesystem's
+// limit and the run failed before collecting anything. The name is a fixed-length digest, so the
+// ref's length no longer decides whether the pass can run.
+func TestImproveReview789LongRefStillRuns(t *testing.T) {
+	s := improveTestSetup(t)
+	manageState := filepath.Join(s.root, "manage-state")
+	improveTestStore(t, s, func(t *testing.T, db *sql.DB) {
+		improveReview789SeedSplit(t, db, "rel-a", "CRW-1", "project-a", "size overrun", "ev-a")
+	})
+	improveRoadmapTestConfigure(t, s, manageState, map[string]any{})
+	ref := strings.Repeat("a", 240)
+	var stdout, stderr strings.Builder
+	e := improveRoadmapTestEnv(s, &stdout, &stderr)
+	if code, _, errOut := improveRoadmapTestRun(t, e, "--boundary", "milestone", "--ref", ref); code != 0 {
+		t.Fatalf("a long ref: exit %d, stderr %q", code, errOut)
+	}
+	if roadmaps := improveRoadmapTestRoadmaps(t, manageState); len(roadmaps) != 1 {
+		t.Errorf("the improve directory holds %v, want one roadmap for the long ref", roadmaps)
+	}
+}
+
+// TestImproveReview789AggregateCountAddsAcrossStores covers the review finding that an aggregated
+// source's occurrences were not added across bundles: a fault ledger row reports its whole count at
+// one origin, and a second store's independent occurrences must be added to it rather than replaced
+// by the larger of the two.
+func TestImproveReview789AggregateCountAddsAcrossStores(t *testing.T) {
+	w := improveProposeTestSetup(t)
+	improveProposeTestConfigure(t, w, map[string]any{})
+	first := improveProposeTestBundle(t, w, []improveRecord{improveReview789FaultRecord(5, "2026-10-06T01:00:00Z")})
+	if code, _, stderr := improveProposeTestRun(t, w, "--bundle", first); code != 0 {
+		t.Fatalf("the first propose: exit %d, stderr %s", code, stderr)
+	}
+
+	// The same friction, seen in a second store: another row of the same signature, five more
+	// occurrences, at its own origin.
+	second := improveProposeTestBundle(t, w, []improveRecord{
+		improveProposeTestRecord(improveKindFault, "observation_stalled", "project-a", "a signature", 5, "fault:other-store:f2"),
+	})
+	code, stdout, stderr := improveProposeTestRun(t, w, "--bundle", second)
+	if code != 0 {
+		t.Fatalf("the second propose: exit %d, stderr %s", code, stderr)
+	}
+	report := improveProposeTestReport(t, stdout)
+	if len(report.Updated) != 1 {
+		t.Fatalf("updated = %+v, want the existing draft to grow", report.Updated)
+	}
+	doc := improveProposeTestDraft(t, w, report.Updated[0].Fingerprint)
+	if !strings.Contains(doc.Body, "- owner_unknown (10)") {
+		t.Errorf("the merged draft does not add the second store's occurrences to the first's:\n%s", doc.Body)
+	}
+}

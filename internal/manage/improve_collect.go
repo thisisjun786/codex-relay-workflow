@@ -1042,6 +1042,20 @@ func improvePatterns(pattern string) []string {
 	return out
 }
 
+// improveFileOrigin is the origin of one row of a JSON-line source: the resolved file, the line
+// number, and the time the row itself records. The file is resolved so two spellings that reach it
+// through a link are one location. The time is part of it because such a file is read by position:
+// a rotated file can put a different occurrence at the same line number, and without the row's own
+// time that new occurrence would read as the one already seen. A row that carries no time is named
+// by its position alone, which is the best the file offers.
+func improveFileOrigin(path string, line int, at string) string {
+	origin := fmt.Sprintf("%s:%d", improveResolvedPathOr(path), line)
+	if trimmed := strings.TrimSpace(at); trimmed != "" {
+		origin += ":" + trimmed
+	}
+	return origin
+}
+
 // improveReadAudit reads the audit ledger, one JSON line per graded result, and normalizes
 // it by issue.
 func improveReadAudit(path string, acc *improveAccumulator) (int, error) {
@@ -1049,12 +1063,12 @@ func improveReadAudit(path string, acc *improveAccumulator) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	origin := improveResolvedPathOr(path)
 	for i, line := range lines {
+		at := improveStringField(line, "graded_at")
 		acc.improveAdd(improveRecord{Kind: improveKindAudit, Key: improveStringField(line, "issue"),
 			Where: improveStringField(line, "subject"), What: improveStringField(line, "status"), Count: 1,
-			FirstAt: improveStringField(line, "graded_at"), LastAt: improveStringField(line, "graded_at"),
-			Evidence: []string{fmt.Sprintf("%s:%d", origin, i+1)}})
+			FirstAt: at, LastAt: at,
+			Evidence: []string{improveFileOrigin(path, i+1, at)}})
 	}
 	return len(lines), nil
 }
@@ -1066,14 +1080,12 @@ func improveReadInterventions(path string, acc *improveAccumulator) (int, error)
 	if err != nil {
 		return 0, err
 	}
-	// The origin names the resolved file, so a second source spelling that reaches the same file
-	// through a link is the same location rather than a new occurrence.
-	origin := improveResolvedPathOr(path)
 	for i, line := range lines {
 		signal := improveStringField(line, "signal", "kind", "case")
+		at := improveStringField(line, "at", "date", "recorded_at")
 		acc.improveAdd(improveRecord{Kind: improveKindIntervention, Key: signal, What: signal, Count: 1,
-			FirstAt: improveStringField(line, "at", "date", "recorded_at"), LastAt: improveStringField(line, "at", "date", "recorded_at"),
-			Evidence: []string{fmt.Sprintf("%s:%d", origin, i+1)}})
+			FirstAt: at, LastAt: at,
+			Evidence: []string{improveFileOrigin(path, i+1, at)}})
 	}
 	return len(lines), nil
 }
