@@ -53,11 +53,14 @@ type Endpoint struct {
 
 // ReleaseRequest is the document dag-release reads (dag-release-request/1): everything a managed child needs that the plan and the store do not hold.
 type ReleaseRequest struct {
-	Schema            string      `json:"schema"`
-	Base              *BaseSpec   `json:"base"`
-	RuleVersion       RuleVersion `json:"rule_version"`
-	Volatile          []Volatile  `json:"volatile"`
-	Instructions      string      `json:"instructions"`
+	Schema       string      `json:"schema"`
+	Base         *BaseSpec   `json:"base"`
+	RuleVersion  RuleVersion `json:"rule_version"`
+	Volatile     []Volatile  `json:"volatile"`
+	Instructions string      `json:"instructions"`
+	// WorkBranch is the child's work branch, when the request names one (CRW-839). It is optional and
+	// recorded with the release as the packet's branch; a request that names none records none.
+	WorkBranch        string      `json:"work_branch"`
 	Criteria          []Criterion `json:"criteria"`
 	CriteriaSource    string      `json:"criteria_source"`
 	ScopeRef          string      `json:"scope_ref"`
@@ -110,7 +113,56 @@ func DecodeReleaseRequest(raw []byte) (ReleaseRequest, error) {
 	if req.Parent.Settings == nil || req.Child.Settings == nil {
 		return ReleaseRequest{}, refuse(contract.RefusalMalformedReceipt, "parent.settings and child.settings are the settings the tasks run with")
 	}
+	if req.WorkBranch != "" {
+		if err := validWorkBranch(req.WorkBranch); err != nil {
+			return ReleaseRequest{}, refuse(contract.RefusalMalformedReceipt, "work_branch %q is not a git branch name: %s", req.WorkBranch, err)
+		}
+	}
 	return req, nil
+}
+
+// validWorkBranch is the part of `git check-ref-format --branch` that matters here (CRW-839): the shape
+// of a name a child can actually check out. It is a refusal of the document, never a guess at what the
+// caller meant.
+func validWorkBranch(s string) error {
+	switch {
+	case len(s) > 255:
+		return errors.New("it is longer than 255 bytes")
+	case strings.HasPrefix(s, "-"):
+		return errors.New("it starts with '-'")
+	case strings.HasPrefix(s, "/") || strings.HasSuffix(s, "/"):
+		return errors.New("it starts or ends with '/'")
+	case strings.HasSuffix(s, "."):
+		return errors.New("it ends with '.'")
+	case strings.Contains(s, ".."):
+		return errors.New("it holds '..'")
+	case strings.Contains(s, "//"):
+		return errors.New("it holds '//'")
+	case strings.Contains(s, "@{"):
+		return errors.New("it holds '@{'")
+	case strings.HasSuffix(s, ".lock"):
+		return errors.New("it ends with '.lock'")
+	case strings.ContainsAny(s, " ~^:?*[\\"):
+		return errors.New("it holds a character git refuses in a ref name")
+	}
+	for _, r := range s {
+		if r < 0x20 || r == 0x7f {
+			return errors.New("it holds a control character")
+		}
+	}
+	return nil
+}
+
+// workBranchOf reads the work branch a frozen release request names. The request is read again rather
+// than carried as a field, because the bind runs from the frozen bytes on the replay path too.
+func workBranchOf(raw []byte) string {
+	var doc struct {
+		WorkBranch string `json:"work_branch"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(doc.WorkBranch)
 }
 
 // releaseRow is a decided release: the manifest it was decided on and the managed-start request id derived from it. Recovered says the request is the successor of a closed intent (a rereleased row of
@@ -715,7 +767,34 @@ func (s *Scheduler) startAndBind(ctx context.Context, plan, node, actor string, 
 		}
 		_, err = q.ExecContext(txCtx, "INSERT INTO dag_node_executions (plan_id, node_id, relationship_id, execution_generation, manifest_digest, kind, managed_request_id) VALUES (?,?,?,?,?,'initial',?)"+
 			" ON CONFLICT (relationship_id, execution_generation) DO NOTHING", plan, node, rid, generation, out.ManifestDigest, out.RequestID)
-		return err
+		if err != nil {
+			return err
+		}
+		// CRW-839: the packet this relationship executes, one row per relationship. It is written here, and
+		// not with the release intent, because the relationship id exists only after the managed start has
+		// created the relationship: the intent (dag_releases) is what the duplicate guard resolves the
+		// newcomer's packet by, and this row is what it resolves the rival's by.
+		var nodePacket string
+		packeted, err := queryOne(txCtx, q, "SELECT p.packet_id FROM dag_node_packets p JOIN dag_nodes n ON n.plan_id = p.plan_id AND n.node_id = p.node_id AND n.introduced_rev = p.introduced_rev"+
+			" WHERE p.plan_id = ? AND p.node_id = ? AND n.retired_rev IS NULL", []any{plan, node}, &nodePacket)
+		if err != nil {
+			return err
+		}
+		if !packeted || nodePacket == "" {
+			return nil
+		}
+		var hadPacket string
+		if had, err := queryOne(txCtx, q, "SELECT packet_id FROM dag_execution_packets WHERE relationship_id = ?", []any{rid}, &hadPacket); err != nil {
+			return err
+		} else if had && hadPacket != nodePacket {
+			return refuse(contract.RefusalRelationshipConflict, "relationship %s is already recorded under packet %s, not %s", rid, hadPacket, nodePacket)
+		}
+		branch := sql.NullString{}
+		if b := workBranchOf(raw); b != "" {
+			branch = sql.NullString{String: b, Valid: true}
+		}
+		return store.RecordDagExecutionPacket(txCtx, s.Store, store.DagExecutionPacketRow{
+			RelationshipID: rid, PlanID: plan, NodeID: node, IssueKey: nodeIssue, PacketID: nodePacket, Branch: branch, RecordedAt: s.now()})
 	})
 	if err != nil {
 		return out, err

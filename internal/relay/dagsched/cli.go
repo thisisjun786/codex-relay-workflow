@@ -38,6 +38,8 @@ func init() {
 		// dag-conflict-sweep measures every pair of the live heads and each against the tip: a measurement, like dag-conflict-observe, so it is not fenced by the coordinator epoch.
 		dispatch.Command{Name: "dag-conflict-sweep", Run: runConflictSweep},
 		dispatch.Command{Name: "dag-cap-basis-record", Run: runCapBasis},
+		// dag-feature-coverage is a reading of the plan and the execution rows and writes nothing.
+		dispatch.Command{Name: "dag-feature-coverage", ReadOnlyWhen: func(dispatch.Args) bool { return true }, Run: runFeatureCoverage},
 	)
 }
 
