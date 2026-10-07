@@ -255,13 +255,6 @@ var (
 	// working-directory or a cd as well as in the command.
 	skillStep = regexp.MustCompile(`(?:^|[^A-Za-z0-9_-])(?:` + alternation(skillAssetRoots) + `)/[^/\s]`)
 	// skillRootValue matches an assignment whose value is exactly a skills root, quoted or not:
-	// nodeTest matches a Node test run: the node word followed by --test as its own argument. It is the
-	// subject the one admitted job exists for, and the run needs no skill path spelled out -- a bare
-	// `node --test` discovers the test files under its working directory -- so a detector that only
-	// looks for a skills root or a path below one lets another job run the staged tests with no
-	// finding (CRW-939, the fifth generation-2 evaluation's d1). `npm test` is not this pattern: it
-	// runs the gui job's own suite, not the staged skills'.
-	nodeTest = regexp.MustCompile(`(?:^|[^A-Za-z0-9_-])node[ \t]+--test(?:$|[^A-Za-z0-9_-])`)
 	// the root followed by the end of the line, a quote, or a blank. The roots alone are no skill
 	// path (a listing names them), but a job that carries one as a value names where the skill
 	// scripts live, so it is the other shape this detector has to see (CRW-353). YAML accepts more
@@ -272,6 +265,14 @@ var (
 	// inside a flow mapping (`env: {SKILLS_ROOT: port/cxc/skills}`), and the body line of a block
 	// scalar (`SKILLS_ROOT: |` with the root alone on the next line), which is no assignment at all.
 	skillRootValue = regexp.MustCompile(`(?:^|[{,])\s*(?:[A-Za-z_][A-Za-z0-9_-]*|"[^"]*"|'[^']*')[ \t]*:\s*["']?(?:` + alternation(skillAssetRoots) + `)/?["']?(?:[,\s}]|$)|^[ \t]*(?:(?:export|readonly|declare|local)[ \t]+)?(?:[A-Za-z_][A-Za-z0-9_-]*=)?["']?(?:` + alternation(skillAssetRoots) + `)/?["']?(?:[ \t]*(?:#.*)?$|[ \t]+)`)
+	// nodeTest matches a Node test run: the node word, any options, and --test as its own argument
+	// (`node --test`, `node --no-warnings --test`). It is the subject the one admitted job exists for,
+	// and the run needs no skill path spelled out -- a bare `node --test` discovers the test files
+	// under its working directory -- so a detector that only looks for a skills root or a path below
+	// one lets another job run the staged tests with no finding (CRW-939, the generation-2
+	// evaluations). `npm test` is not this pattern: it runs the gui job's own suite, not the staged
+	// skills'.
+	nodeTest = regexp.MustCompile(`(?:^|[^A-Za-z0-9_-])node[ \t].*--test(?:$|[^A-Za-z0-9_-])`)
 )
 
 // skillScriptsNodeJob is the one job whose subject is the staged skills' Node tests (the
@@ -689,6 +690,10 @@ func TestWorkflow_python_detector(t *testing.T) {
 		{"      - run: node --test 2>&1 | tail -5", true},                                      // and so is one with a pipe
 		{"      - run: node --test-x", false},                                                  // a flag that is not --test
 		{"      - run: npm test", false},                                                       // npm is not node
+		{"      - run: node --no-warnings --test", true},                                       // an option before --test is the same run
+		{"      - run: node --experimental-strip-types --test x", true},                        // and so is any other option
+		{"      - run: node --version", false},                                                 // no --test is not a test run
+		{"      - run: node_modules/.bin/node --test", true},                                   // a node binary by path still runs the tests
 		{"      - run: node --test port/cxc/skills/x/tests/a.test.mjs", true},                  // a skill path in any other job
 		{"      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0", false},
 	} {

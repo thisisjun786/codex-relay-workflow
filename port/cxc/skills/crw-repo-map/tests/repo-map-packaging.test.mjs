@@ -182,6 +182,23 @@ function codeLines(source) {
  * class body runs when the class statement runs, which is while the module loads, and only a
  * `class` nested in the function that parses the arguments is deferred with it.
  */
+/**
+ * True when an `except` clause can catch the SystemExit argparse raises to answer --help: a bare
+ * handler, `BaseException`, `SystemExit`, or a tuple naming either one. Any other name (the real
+ * file's `ImportError`, or `Exception`) cannot, so an import under it is still deferred (CRW-939,
+ * the generation-2 evaluations). A clause this reader cannot fully read is treated as catching it,
+ * so the check fails closed rather than passing a handler it did not understand.
+ */
+function catchesSystemExit(clause) {
+  const rest = clause.replace(/^except\b/, "").trim();
+  const colon = rest.lastIndexOf(":");
+  const names = (colon < 0 ? rest : rest.slice(0, colon)).trim();
+  if (names === "") return true;
+  const listed = names.replace(/^[([]/, "").replace(/[)\]]$/, "").split(",").map((part) => part.trim());
+  if (listed.length === 0 || listed.some((name) => name === "")) return true;
+  return listed.some((name) => /^(?:BaseException|SystemExit)(?:[ \t]+as[ \t]+\w+)?$/.test(name));
+}
+
 function deferredImport(code, i, parseAt) {
   let indent = code[i].match(/^[ \t]*/)[0].length;
   for (let j = i - 1; j >= 0; j--) {
@@ -190,11 +207,16 @@ function deferredImport(code, i, parseAt) {
     if (narrower >= indent) continue;
     const text = code[j].trim();
     if (/^(?:async[ \t]+def|def)[ \t]/.test(text)) return functionHoldsTheParse(code, j, parseAt);
-    // A `finally` body, and a bare `except`, run while the parse unwinds: argparse answers --help
-    // by raising SystemExit, and both of these still execute before that reaches the caller, so an
-    // import under one is not deferred (CRW-939, the fifth generation-2 evaluation of d2). A typed
-    // handler cannot catch SystemExit, so the real file's `except ImportError` still defers.
-    if (/^(?:finally|except)[ \t]*:/.test(text)) return false;
+    // A `finally` body, and any handler that can catch the SystemExit argparse raises for --help,
+    // run while the parse unwinds, so an import under one is not deferred (CRW-939, the generation-2
+    // evaluations): a bare `except`, `except BaseException`, and a tuple naming either one. A handler
+    // that cannot catch it (`except ImportError`, `except Exception`) still defers.
+    if (/^finally[ \t]*:/.test(text)) return false;
+    if (/^except\b/.test(text)) {
+      if (catchesSystemExit(text)) return false;
+      indent = narrower;
+      continue;
+    }
     if (/^(?:class|if|elif|else|try|except|finally|with|for|while|match|case)\b/.test(text) && /:[ \t]*$/.test(text)) {
       indent = narrower;
       continue;
@@ -402,6 +424,25 @@ test("the parser-import check reads module-level imports placed after the parse"
   // The control: the real file's `except ImportError` cannot catch SystemExit, so its import is
   // deferred and stays clean.
   const typedExcept = "def main():\n    try:\n        args = parser.parse_args()\n    except ImportError:\n        from repomap_class import RepoMap\n";
+  // A handler that can catch the SystemExit argparse raises for --help runs before the caller sees
+  // it, so its import is not deferred either: a bare `except`, `except BaseException` and a tuple
+  // naming either one all run (CRW-939, the sixth generation-2 evaluation of d2). A handler that
+  // cannot catch it -- `except ImportError`, `except Exception` -- still defers.
+  for (const handler of [
+    "    except SystemExit:\n        from repomap_class import RepoMap\n",
+    "    except BaseException:\n        from repomap_class import RepoMap\n",
+    "    except (ImportError, SystemExit):\n        from repomap_class import RepoMap\n",
+    "    except (SystemExit,):\n        from repomap_class import RepoMap\n",
+  ]) {
+    const shape = "def main():\n    try:\n        args = parser.parse_args()\n" + handler;
+    assert.ok(parserImportsBeforeParsing(shape).offenders.length > 0,
+      `${JSON.stringify(handler.trim())}: a handler that catches SystemExit runs while --help unwinds`);
+  }
+  for (const handler of ["    except ImportError:\n        from repomap_class import RepoMap\n", "    except Exception:\n        from repomap_class import RepoMap\n"]) {
+    const shape = "def main():\n    try:\n        args = parser.parse_args()\n" + handler;
+    assert.deepEqual(parserImportsBeforeParsing(shape).offenders, [],
+      `${JSON.stringify(handler.trim())}: a handler that cannot catch SystemExit stays clean`);
+  }
   assert.deepEqual(parserImportsBeforeParsing(typedExcept).offenders, [],
     "an import under except ImportError stays clean");
   assert.ok(parserImportsBeforeParsing(helperShape).offenders.length > 0,

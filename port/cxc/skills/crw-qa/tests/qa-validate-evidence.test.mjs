@@ -181,7 +181,6 @@ test("the emitted receipt binds the bytes on disk, and an edit shows up", () => 
   const receiptDir = dirname(result.receiptPath);
   // Every entry names a relative path, a lowercase SHA-256 of the bytes there, and a kind matching the basename.
   for (const entry of written.artifactManifest) {
-    assert.equal(resolve(receiptDir, entry.path), resolve(receiptDir, entry.path));
     assert.ok(!entry.path.startsWith("/"), `${entry.path}: a manifest path is relative`);
     assert.equal(entry.kind, entry.path.replace(/.*\//, "").replace(/\.json$/, ""), `${entry.path}: kind names the basename`);
     assert.match(entry.sha256, /^[0-9a-f]{64}$/, `${entry.path}: a lowercase SHA-256 digest`);
