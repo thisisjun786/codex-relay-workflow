@@ -512,11 +512,54 @@ func (s *Scheduler) refuseAcceptedHeadOnItsWayToTheBase(ctx context.Context, q s
 	var turn, state, head string
 	found, err := queryOne(ctx, q, "SELECT turn_id, state, candidate_head FROM merge_turns"+
 		" WHERE state IN ('merging','unknown','landed') AND ("+strings.Join(clauses, " OR ")+") ORDER BY requested_at, turn_id LIMIT 1", args, &turn, &state, &head)
-	if err != nil || !found {
+	if err != nil {
 		return err
 	}
-	return refuse(contract.RefusalDispositionConflict, "the accepted result of %s is on its way to the base already: merge turn %s of the relationship is %s on head %s, and a correction cannot be recorded over a head the forge may already have merged. Resolve that turn first (merge-turn-resolve, or merge-turn-unknown then merge-turn-resolve) and open the generation again",
-		acc.NodeID, short(turn), state, short(head))
+	if found {
+		return refuse(contract.RefusalDispositionConflict, "the accepted result of %s is on its way to the base already: merge turn %s of the relationship is %s on head %s, and a correction cannot be recorded over a head the forge may already have merged. Resolve that turn first (merge-turn-resolve, or merge-turn-unknown then merge-turn-resolve) and open the generation again",
+			acc.NodeID, short(turn), state, short(head))
+	}
+	// A live bundle is the second way the head may already be on the base. The parent merges a verified
+	// bundle on the forge and records it with merge-train-land afterwards, so between those two the
+	// bundle's members still hold or wait in the lane while the forge already carries the head; the
+	// bundle's own state cannot be told from one that was never merged, and the relay reads no forge
+	// here. Recording a correction now would name a head the forge may already have merged, and the
+	// later train refusal cannot undo that. The bundle is closed first (merge-train-close), which is what
+	// a parent that found a defect in a bundle review does anyway.
+	if err := s.refuseLiveBundleCarrying(ctx, q, acc, heads); err != nil {
+		return err
+	}
+	return nil
+}
+
+// refuseLiveBundleCarrying refuses the correction while an opened or verified bundle carries the node's
+// stand head as a member: the bundle's merge may already be on the forge, and the relay records that
+// merge only when the bundle lands. A bundle that landed, was done or was abandoned carries nothing
+// live, so a parent that closed the bundle before correcting a member is not held back.
+func (s *Scheduler) refuseLiveBundleCarrying(ctx context.Context, q store.Querier, acc Acceptance, heads []string) error {
+	present, err := tableExists(ctx, q, "merge_train_members")
+	if err != nil || !present {
+		return err
+	}
+	for _, head := range heads {
+		if head == "" {
+			continue
+		}
+		var train string
+		found, err := queryOne(ctx, q, "SELECT m.train_id FROM merge_train_members m"+
+			" WHERE m.relationship_id = ? AND m.member_head = ?"+
+			" AND (SELECT kind FROM merge_train_events e WHERE e.train_id = m.train_id ORDER BY e.seq DESC LIMIT 1) IN ('opened','verified')"+
+			" ORDER BY m.train_id, m.seq LIMIT 1", []any{acc.RelationshipID, head}, &train)
+		if err != nil {
+			return err
+		}
+		if !found {
+			continue
+		}
+		return refuse(contract.RefusalDispositionConflict, "the accepted result of %s is on its way to the base already: bundle %s is live and carries head %s as a member, so its merge may already be on the forge and a correction cannot be recorded over it. Close the bundle first (merge-train-close), then open the generation again",
+			acc.NodeID, short(train), short(head))
+	}
+	return nil
 }
 
 // refuseLanded is the guard of a correction (contract 8.4, E-20): a node whose accepted head landed in every target it lands on is never run again, whatever changed above it and whatever the plan now

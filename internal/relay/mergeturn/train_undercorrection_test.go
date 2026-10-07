@@ -1,6 +1,7 @@
 package mergeturn
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"strings"
@@ -160,9 +161,11 @@ func TestTheLaneGateResolvesTheRelationshipFromThePullRequest(t *testing.T) {
 	if !strings.Contains(refusal.Detail, "under correction") || !strings.Contains(refusal.Detail, "rel-lane") {
 		t.Fatalf("the refusal does not name the relationship and the reason: %s", refusal.Detail)
 	}
-	// a turn whose pull request has no accepted result is left to the lane's own rules
+	// a turn whose pull request has no accepted result, and whose head no acceptance stands on, is left
+	// to the lane's own rules
 	other := turn
 	other.PRNumber = sql.NullInt64{Int64: 99, Valid: true}
+	other.CandidateHead = "head-unaccepted"
 	if refusal, err := underCorrectionRefusal(w.ctx, w.s.Querier(w.ctx), other); err != nil || refusal != nil {
 		t.Fatalf("a turn whose pull request has no accepted result = %+v %v, want no refusal", refusal, err)
 	}
@@ -355,6 +358,65 @@ func TestTheLaneGateAsksEveryMatchingAcceptance(t *testing.T) {
 }
 
 // CRW-906 generation 2, d3: the excluded member's hold must not clear just because the correction was
+// CRW-906 generation 2, d3: the recheck inside the write transaction asks about the head the bundle
+// CRW-906 generation 2, d1: naming a relationship must not suppress the other identities. Acceptance
+// uniqueness is per node and output, so two nodes can accept the same commit: a turn that names the
+// relationship which is NOT being corrected is still carrying a head another relationship is repairing,
+// and the gate must read that one too rather than trusting the name it was given.
+func TestTheLaneGateAsksTheOtherAcceptancesOfANamedRelationship(t *testing.T) {
+	w := newFx(t)
+	// rel-named is the relationship the turn names, and it is not under correction
+	w.ucLaneRelationship("rel-named", 1)
+	w.exec("INSERT INTO dag_acceptances (acceptance_id, plan_id, node_id, manifest_digest, relationship_id, execution_generation, event_id, revision_hash, criteria_set_digest, verdict, head_sha, repository, pr_number, ack_tier, verdict_turn_id, rule_version_json, accepted_by_task_id, coordinator_epoch, accepted_at, state)"+
+		" VALUES ('acc-rel-named', 'plan-x', 'node-named', 'manifest-named', 'rel-named', 1, 'ev-named', 'rev-named', 'crit-1', 'verified', 'head-shared', ?, 1, 'bound', 'turn-1', '{}', ?, 0, '2023-11-14T22:13:19.000000+00:00', 'active')",
+		fxRepo, alpha.TaskID)
+	// rel-correcting accepts the same head and has a correction open over it
+	w.ucLaneRelationship("rel-correcting", 2)
+	w.exec("UPDATE dag_acceptances SET head_sha = 'head-shared' WHERE relationship_id = 'rel-correcting'")
+	turn := store.MergeTurnsRow{TurnID: "mtn-named", TargetKey: "tgt-x", Repository: fxRepo, BaseRef: fxBase, ProjectKey: fxA,
+		HolderTaskID: alpha.TaskID, RelationshipID: sql.NullString{String: "rel-named", Valid: true}, CandidateHead: "head-shared", State: Holding}
+	refusal, err := underCorrectionRefusal(w.ctx, w.s.Querier(w.ctx), turn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if refusal == nil || refusal.Reason != contract.RefusalDispositionConflict {
+		t.Fatalf("a turn naming a live relationship but holding a head another one is repairing was not refused: %+v", refusal)
+	}
+	if !strings.Contains(refusal.Detail, "rel-correcting") {
+		t.Fatalf("the refusal does not name the correcting relationship: %s", refusal.Detail)
+	}
+}
+
+// CRW-906 generation 2, d3: the recheck inside the write transaction asks about the head the bundle
+// carries, not only whether a correction is open. A correction opened AND accepted over inside the gap
+// makes the live and stand generations equal again, so a guard that only asked UnderCorrection would let
+// the obsolete bundle through with a verified event for a head the plan no longer accepts.
+func TestTrainVerifyRefusesAMemberWhoseAcceptedResultMovedOn(t *testing.T) {
+	w := newTr(t)
+	train := w.openedTrain()
+	w.pr(900, "head-bundle", TrainLaneLabel)
+	w.forge.runs["run-1"] = runFor("head-bundle")
+	// the member's accepted result is corrected and accepted over while the run and the chain are being
+	// proved: the live and stand generations are equal again by the time the write transaction runs, so a
+	// guard that only asked whether a correction is open would let the obsolete bundle through. The
+	// mutation runs inside the proof, which is the gap the recheck exists for.
+	proof := &ucProver{trProof: w.proof, during: func() {
+		w.exec("UPDATE relationships SET execution_generation = 2 WHERE relationship_id = 'rel-task-m2'")
+		w.exec("UPDATE dag_acceptances SET execution_generation = 2, head_sha = 'head-m2-corrected' WHERE relationship_id = 'rel-task-m2' AND state = 'active'")
+	}}
+	_, err := w.m.Verify(w.ctx, train, trLeader, "900", "head-bundle", "run-1", "/checkout", w.forge, proof)
+	if err == nil || trReason(err) != "disposition_conflict" {
+		t.Fatalf("a verify whose member's accepted result moved on: %v", err)
+	}
+	if !strings.Contains(err.Error(), "head-m2-corrected") {
+		t.Fatalf("the refusal does not name the stand the acceptance moved to: %v", err)
+	}
+	if n := w.count("SELECT count(*) FROM merge_train_events WHERE kind = 'verified'"); n != 0 {
+		t.Fatalf("a refused verify wrote %d verified event(s)", n)
+	}
+}
+
+// CRW-906 generation 2, d3: the excluded member's hold must not clear just because the correction was
 // accepted over. Exclusion changes the accounting, not the bundle tree: the verified tree still carries the
 // member head it was verified on, so once the acceptance stands on a corrected head the bundle no longer
 // holds what the plan accepts for that member and must be rebuilt and verified.
@@ -389,6 +451,22 @@ func TestTrainLandRefusesAnExcludedMemberWhoseAcceptanceMovedOn(t *testing.T) {
 	if n := w.count("SELECT count(*) FROM merge_turns WHERE state = 'landed'"); n != 0 {
 		t.Fatalf("a refused land landed %d turn(s)", n)
 	}
+}
+
+// ucProver is the checkout stand-in with a seam: it runs during() inside the chain proof, which is the
+// gap between the reads a verify makes and the transaction it writes in. That is where a member's
+// accepted result can move without either read seeing it, and what the transaction recheck exists for.
+type ucProver struct {
+	*trProof
+	during func()
+}
+
+func (p *ucProver) Chain(ctx context.Context, checkout, head, base string, members []TrainMemberExpectation) (TrainChain, error) {
+	chain, err := p.trProof.Chain(ctx, checkout, head, base, members)
+	if err == nil && p.during != nil {
+		p.during()
+	}
+	return chain, err
 }
 
 // ucCount is the number of rows a query answers, for the writes a refusal must not leave behind.

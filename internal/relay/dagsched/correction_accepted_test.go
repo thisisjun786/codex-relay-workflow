@@ -264,6 +264,50 @@ func TestAHandOpenedGenerationOfAnAcceptedCurrentResultIsStillRefused(t *testing
 
 // The reason a generation was opened under is what states the correction, and the stale route keeps its own
 // Criterion c1, the safety bound of the accepted-current route: a correction is not recorded over an
+// Criterion c1, generation 2, d2: a live bundle is the other way the accepted head may already be on the
+// base. The parent merges a verified bundle on the forge and records it with merge-train-land afterwards,
+// so between those two the bundle's members still hold or wait in the lane while the forge already carries
+// the head. Recording a correction in that window names a head the forge may already have merged.
+func TestACorrectionIsNotRecordedOverALiveBundleCarryingTheHead(t *testing.T) {
+	t.Parallel()
+	for _, kind := range []string{"opened", "verified"} {
+		t.Run("a bundle that is "+kind, func(t *testing.T) {
+			k, accepted := rvSettledSharedRoot(t)
+			rid := accepted["B"].RelationshipID
+			prepared := k.rvPrepare("sr", "B")
+			acOpenByHand(t, k, rid, prepared.DispatchRequestID, "needs_changes_revision", 2, true)
+			k.exec("UPDATE dag_acceptances SET repository = 'owner/repo', head_sha = 'head-b' WHERE relationship_id = ?", rid)
+			// a live bundle carries this node's accepted head as a member
+			k.exec("INSERT INTO merge_trains (train_id, target_key, repository, base_ref, base_sha, leader_task_id, created_at) VALUES ('trn-" + kind + "', 'tgt', 'owner/repo', 'dev', 'base-0', 'parent', 't')")
+			k.exec("INSERT INTO merge_train_members (train_id, seq, turn_id, pr_number, relationship_id, member_head) VALUES ('trn-"+kind+"', 1, 'turn-1', 5, ?, 'head-b')", rid)
+			k.exec("INSERT INTO merge_train_events (train_id, seq, kind, actor, detail_json, recorded_at) VALUES ('trn-"+kind+"', 1, ?, 'parent', '{}', 't')", kind)
+			_, err := k.sched.RecordCorrection(context.Background(), "sr", "B", "parent", prepared.ManifestDigest)
+			if refusalReason(err) != "disposition_conflict" {
+				t.Fatalf("a correction over a %s bundle carrying the head = %v, want disposition_conflict", kind, err)
+			}
+			if !strings.Contains(err.Error(), "trn-"+kind) || !strings.Contains(err.Error(), "merge-train-close") {
+				t.Fatalf("the refusal does not name the bundle and the way on: %v", err)
+			}
+			if got := acExecution(k, "B", 2); got != "" {
+				t.Fatalf("the refused correction wrote the execution %q", got)
+			}
+		})
+	}
+	t.Run("a bundle that landed does not block the correction", func(t *testing.T) {
+		k, accepted := rvSettledSharedRoot(t)
+		rid := accepted["B"].RelationshipID
+		prepared := k.rvPrepare("sr", "B")
+		acOpenByHand(t, k, rid, prepared.DispatchRequestID, "needs_changes_revision", 2, true)
+		k.exec("UPDATE dag_acceptances SET repository = 'owner/repo', head_sha = 'head-b' WHERE relationship_id = ?", rid)
+		k.exec("INSERT INTO merge_trains (train_id, target_key, repository, base_ref, base_sha, leader_task_id, created_at) VALUES ('trn-done', 'tgt', 'owner/repo', 'dev', 'base-0', 'parent', 't')")
+		k.exec("INSERT INTO merge_train_members (train_id, seq, turn_id, pr_number, relationship_id, member_head) VALUES ('trn-done', 1, 'turn-1', 5, ?, 'head-b')", rid)
+		k.exec("INSERT INTO merge_train_events (train_id, seq, kind, actor, detail_json, recorded_at) VALUES ('trn-done', 1, 'landed', 'parent', '{}', 't')")
+		if _, err := k.sched.RecordCorrection(context.Background(), "sr", "B", "parent", prepared.ManifestDigest); err != nil {
+			t.Fatalf("a closed bundle blocked the correction: %v", err)
+		}
+	})
+}
+
 // Criterion c1, generation 2, d1: the guard resolves the merge turn by every identity a claim may carry.
 // --relationship and --pr are both optional on merge-turn-request, and a successful merge-turn-check has
 // already authorized the merge of H before the correction is recorded. A guard that read only the
