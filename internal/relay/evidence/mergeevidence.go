@@ -467,42 +467,6 @@ func unconfirmedTestLegs(checks []any, run string, highest map[string]*big.Int) 
 	return append(append([]string{}, testSkippedJobs(checks, run, highest)...), testUnreadableJobs(checks, run, highest)...)
 }
 
-// confirmedTestLegs counts the legs of one workflow run that the collector left as legs that ran
-// their tests: go-product test legs, each at its own newest attempt, that concluded success and
-// carry neither mark (CRW-946). A workflow run that confirmed no leg at all never showed that it
-// ran the tests, so its gate cannot be the success of an integration: the shape a dev-gate-only
-// workflow has answers the required name without testing anything.
-func confirmedTestLegs(checks []any, run string, highest map[string]*big.Int) int {
-	if run == "" {
-		return 0
-	}
-	count := 0
-	for _, entry := range checks {
-		runId := textField(entry, "runId")
-		if workflowRun(runId) != run {
-			continue
-		}
-		if newest, seen := highest[runId]; seen && attempt(entry).Cmp(newest) != 0 {
-			continue
-		}
-		if !isLightLegName(entry) {
-			continue
-		}
-		o, _ := Object(entry)
-		if o.Get("conclusion") != "success" {
-			continue
-		}
-		if flag, isBool := o.Get("testSkipped").(bool); isBool && flag {
-			continue
-		}
-		if testUnreadableMark(o) {
-			continue
-		}
-		count++
-	}
-	return count
-}
-
 // headTestLegNames lists every go-product test leg the head's CI runs, read at each leg's own newest
 // attempt. It is the suite an integration's run must have run to be the success that integration is
 // counted by. A run whose gate is a known integration the branch rule does not name is a parallel
