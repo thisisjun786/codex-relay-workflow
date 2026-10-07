@@ -244,15 +244,21 @@ export interface PolicyScreenState {
   /** The one pending change, or null. */
   change: PolicyChange | null;
   /**
-   * The allowlist rows being edited, keyed by model: one entry per approved effort. A comma-separated
-   * field could not be lossless, because the Go policy parser does not forbid a comma inside an
-   * effort name and compares the value exactly, so splitting one stored entry on a comma would
-   * replace one approval with two (and dropping the commas would change the name). Each entry is
-   * edited in its own field.
+   * The allowlist rows being edited, keyed by the exact model identifier: one entry per approved
+   * effort. A comma-separated field could not be lossless, because the Go policy parser does not
+   * forbid a comma inside an effort name and compares the value exactly, so splitting one stored
+   * entry on a comma would replace one approval with two (and dropping the commas would change the
+   * name). Each entry is edited in its own field.
+   *
+   * It is a Map rather than a plain object because the key is a value the policy file declares. The
+   * Go parser accepts any nonempty identifier as a model name, so a policy may legitimately name a
+   * model "__proto__", "constructor" or "toString"; as an ordinary object's key that would read an
+   * inherited property instead of the draft (or silently set the prototype on write). A Map has no
+   * prototype chain to collide with, so every key is exactly the string the file declared.
    */
-  allowedDraft: Record<string, string[]>;
+  allowedDraft: Map<string, string[]>;
   /** The text of each allowlist row's "add an effort" field. */
-  allowedNew: Record<string, string>;
+  allowedNew: Map<string, string>;
   /** The model the "add a model to the allowed list" select is on, or "" for its first free one. */
   allowedAddModel: string;
   /** The exception editor's draft, or null when it is closed. */
@@ -260,11 +266,20 @@ export interface PolicyScreenState {
   /** The change a save in flight is writing, or null when no save is in flight. */
   saving: PolicyChange | null;
   /**
-   * The drafts as they were when the save in flight started. A draft that has not moved since is the
-   * one the write spent and is dropped when it lands; a draft the operator changed while the write
-   * was in flight is their next edit and stays, even when it is for the same model or exception.
+   * The drafts as they were when the save in flight started, or null. A draft that has not moved
+   * since is the one the write spent and is dropped when it lands; a draft the operator changed
+   * while the write was in flight is their next edit and stays, even when it is for the same model
+   * or exception. The screen disables every other edit control while a write is in flight, so this
+   * is the belt to that brace: even a programmatic edit cannot make a spent draft look unspent.
    */
-  savingDrafts: { allowedDraft: Record<string, string[]>; exceptionDraft: ExceptionDraft | null } | null;
+  savingDrafts: { allowedDraft: Map<string, string[]>; exceptionDraft: ExceptionDraft | null } | null;
+  /**
+   * True while a read, a check or a save is in flight. Every edit control is disabled then, which is
+   * what makes "one pending change at a time" hold without a race: an edit cannot be started while an
+   * answer is on its way, so a re-read can never silently replace a draft begun after it started and
+   * a save's answer can never land on top of an edit it did not write.
+   */
+  busy: boolean;
   notice: PolicyNotice | null;
   /**
    * The repair a person must make before this screen may edit again, or null. It is separate from
@@ -283,19 +298,22 @@ function stringOf(value: unknown): string {
 }
 
 /**
- * parseListInput is how a comma-separated list input becomes the list the API takes: each entry is
- * trimmed and the empty ones are dropped. It is deliberately NOT applied on every keystroke - the
- * screen keeps the raw text in its state and calls this only to derive the change, so a trailing
- * comma the operator is about to follow with another entry survives on screen.
- *
- * It is used for the allowed-efforts list, whose entries are effort NAMES and so cannot contain a
- * comma. A cwd is a path and uses one input per root instead (ExceptionDraft.cwd).
+ * isBlank is the only check the screen makes on a value a person typed into a free-text box: an
+ * obviously blank value is refused because the server would refuse it too. It is deliberately not a
+ * re-implementation of the server's own blankness test - the server judges the exact bytes, and an
+ * identifier is otherwise opaque here and is carried exactly as typed, never trimmed or re-parsed.
  */
-export function parseListInput(text: string): string[] {
-  return text
-    .split(",")
-    .map((entry) => entry.trim())
-    .filter((entry) => entry !== "");
+function isBlank(value: string): boolean {
+  return value.trim() === "";
+}
+
+/**
+ * isBlankText is the same blankness check exposed to the screen, which needs it to disable a control
+ * whose free-text box is still empty. It is the only judgement the screen makes on typed text; the
+ * value itself is always carried exactly as typed.
+ */
+export function isBlankText(value: string): boolean {
+  return isBlank(value);
 }
 
 /** One pair, or null when the answer did not carry a usable one. */
@@ -451,33 +469,87 @@ export function policyView(reading: PolicyReading): PolicyView {
   };
 }
 
-/** pairText is one pair as a row reads it. */
-function pairText(pair: PolicyPair): string {
-  return `${pair.model} ${pair.reasoningEffort}`.trim();
+/**
+ * quoted is one identifier as a preview row reads it. Every value a preview shows is an identifier
+ * the policy compares exactly and may contain a space or a comma, so it is quoted: a plain join
+ * would make the pair ("a b", "c") and the pair ("a", "b c") read as the same text, and one effort
+ * named "low, high" read the same as two efforts named "low" and "high".
+ */
+function quoted(value: string): string {
+  return JSON.stringify(value);
 }
 
-/** pairsText is a pair list as a row reads it, or a word for the empty list. */
-function pairsText(pairs: readonly PolicyPair[]): string {
-  return pairs.length === 0 ? "none" : pairs.map(pairText).join(", ");
+/**
+ * entryRows is one list as the preview shows it: one row per entry, so two different lists can never
+ * render the same text and a reader can see exactly which entry is added, changed or removed. An
+ * entry that is gone reads "removed", never an empty cell a reader could mistake for "no change".
+ */
+function entryRows(label: string, before: readonly string[], after: readonly string[]): PolicyPreviewItem[] {
+  const rows: PolicyPreviewItem[] = [];
+  const count = Math.max(before.length, after.length);
+  for (let index = 0; index < count; index += 1) {
+    rows.push({
+      label: `${label} ${index + 1}`,
+      before: index < before.length ? quoted(before[index]) : "none",
+      after: index < after.length ? quoted(after[index]) : "removed",
+    });
+  }
+  return rows;
 }
 
-/** exceptionText is one exception as a row reads it. */
-function exceptionText(exception: { role?: string; model: string; reasoningEffort: string; cwd: string[] }): string {
-  // Each root is quoted, so a path that itself contains a comma still reads as one path and the
-  // before/after rows cannot show two different scopes as the same text.
-  const scope = exception.cwd.length === 0 ? "no cwd scope" : exception.cwd.map((root) => JSON.stringify(root)).join(", ");
-  // An exception with no role is not inert: the bridge matches an exception's role against the
-  // request's role with exact equality (internal/bridge/execution/execution.go exceptionCovers), so a
-  // role-less exception covers exactly the requests that cite no role - which the schema allows and
-  // authorize_test.go pins ("an exception written before roles existed still works for a caller that
-  // names none"). Describing it as covering nothing would understate a live authorization.
-  return `${exception.role || "no role - covers requests that cite no role"} ${exception.model} ${exception.reasoningEffort} (${scope})`;
+/** pairRowText is one pair as a preview row reads it: both identifiers quoted, so the model and the
+ * effort each stay exactly one value however they are spelled. */
+function pairRowText(pair: PolicyPair): string {
+  return `${quoted(pair.model)} ${quoted(pair.reasoningEffort)}`;
+}
+
+/** pairRows is a pair list as the preview shows it: one row per pair. */
+function pairRows(label: string, before: readonly PolicyPair[], after: readonly PolicyPair[]): PolicyPreviewItem[] {
+  const rows: PolicyPreviewItem[] = [];
+  const count = Math.max(before.length, after.length);
+  for (let index = 0; index < count; index += 1) {
+    rows.push({
+      label: `${label} ${index + 1}`,
+      before: index < before.length ? pairRowText(before[index]) : "none",
+      after: index < after.length ? pairRowText(after[index]) : "removed",
+    });
+  }
+  return rows;
+}
+
+/**
+ * exceptionRows is one exception as the preview shows it: a row for each part that can change, and
+ * one row per cwd root, so a scope with two roots never reads as a scope with one root that contains
+ * a comma.
+ */
+function exceptionRows(label: string, before: { role?: string; model: string; reasoningEffort: string; cwd: string[] } | null, after: { role?: string; model: string; reasoningEffort: string; cwd: string[] } | null): PolicyPreviewItem[] {
+  // A side that is null is the exception absent: the whole side reads one word rather than a set of
+  // empty cells a reader could mistake for "unchanged".
+  const roleText = (exception: { role?: string } | null, absent: string): string => {
+    if (exception === null) return absent;
+    // The role is the one part whose absence carries a meaning: the bridge matches an exception's
+    // role against the request's role with exact equality (internal/bridge/execution/execution.go
+    // exceptionCovers), so a role-less exception covers exactly the requests that cite no role - a
+    // live authorization the schema allows. "none" would understate it.
+    return exception.role === undefined || exception.role === "" ? "no role - covers requests that cite no role" : quoted(exception.role);
+  };
+  const part = (value: string | undefined, absent: string): string => (value === undefined || value === "" ? absent : quoted(value));
+  return [
+    { label: `${label} role`, before: roleText(before, "not declared"), after: roleText(after, "removed") },
+    { label: `${label} model`, before: part(before?.model, "not declared"), after: part(after?.model, "removed") },
+    { label: `${label} effort`, before: part(before?.reasoningEffort, "not declared"), after: part(after?.reasoningEffort, "removed") },
+    ...entryRows(`${label} cwd`, before?.cwd ?? [], after?.cwd ?? []),
+  ];
 }
 
 /**
  * previewChange is the before/after of one pending change, plus the blast radius. It is derived
  * from the reading the caller already has, so the preview is shown before anything is sent; the
  * server's own check is what judges whether the change would be accepted.
+ *
+ * Every row names ONE entry and quotes it, so two different lists can never render the same text and
+ * a reader can see exactly which entry is added, changed or removed rather than comparing two
+ * comma-joined blobs that a comma inside an identifier would make ambiguous.
  */
 export function previewChange(reading: PolicyReading, change: PolicyChange): PolicyPreview {
   const items: PolicyPreviewItem[] = [];
@@ -485,24 +557,17 @@ export function previewChange(reading: PolicyReading, change: PolicyChange): Pol
   switch (change.kind) {
     case "setRolePairs": {
       const role = reading.roles.find((entry) => entry.name === change.role);
-      items.push({ label: `role ${change.role}`, before: pairsText(role?.pairs ?? []), after: pairsText(change.pairs) });
+      items.push(...pairRows(`role ${change.role} pair`, role?.pairs ?? [], change.pairs));
       break;
     }
     case "setAllowed": {
       const entry = reading.allowed.find((row) => row.model === change.model);
-      items.push({
-        label: `allowed ${change.model}`,
-        // Each effort is quoted: an effort name is an identifier compared exactly and may contain a
-        // comma, so joining them plainly would show one effort named "low, high" and two efforts
-        // named "low" and "high" as the same text - a real permission change that looks identical.
-        before: entry ? entry.efforts.map((effort) => JSON.stringify(effort)).join(", ") : "not listed",
-        after: change.efforts.map((effort) => JSON.stringify(effort)).join(", "),
-      });
+      items.push(...entryRows(`allowed ${change.model} effort`, entry?.efforts ?? [], change.efforts));
       break;
     }
     case "removeAllowed": {
       const entry = reading.allowed.find((row) => row.model === change.model);
-      items.push({ label: `allowed ${change.model}`, before: entry ? entry.efforts.map((effort) => JSON.stringify(effort)).join(", ") : "not listed", after: "removed" });
+      items.push(...entryRows(`allowed ${change.model} effort`, entry?.efforts ?? [], []));
       break;
     }
     case "setException": {
@@ -511,22 +576,13 @@ export function previewChange(reading: PolicyReading, change: PolicyChange): Pol
       // (internal/policystore/check.go applySetException), so the preview must show that preserved
       // role rather than an "any role" the write would not produce.
       const role = change.role !== undefined && change.role !== "" ? change.role : existing?.role;
-      const after = { role, model: change.model, reasoningEffort: change.effort, cwd: change.cwd };
-      items.push({
-        label: `exception ${change.id}`,
-        before: existing ? exceptionText(existing) : "not declared",
-        after: exceptionText(after),
-      });
+      items.push(...exceptionRows(`exception ${change.id}`, existing ?? null, { role, model: change.model, reasoningEffort: change.effort, cwd: change.cwd }));
       break;
     }
     case "removeException": {
       const existing = reading.exceptions.find((row) => row.id === change.id);
       const scope = existing && existing.cwd.length > 0 ? existing.cwd.join(", ") : "the exception's scope";
-      items.push({
-        label: `exception ${change.id}`,
-        before: existing ? exceptionText(existing) : "not declared",
-        after: existing?.role ? `${existing.role} default` : "no role",
-      });
+      items.push(...exceptionRows(`exception ${change.id}`, existing ?? null, null));
       // An exception that omits role applies to every role, so there is no one role whose default it
       // returns to: each task under that scope falls back to its own role's default.
       preview.fallback = existing?.role
@@ -810,7 +866,15 @@ export function unreachableNotice(): PolicyNotice {
 
 /** initialScreen is the state before anything has been read. */
 export function initialScreen(): PolicyScreenState {
-  return { reading: null, catalog: null, error: null, change: null, allowedDraft: {}, allowedNew: {}, allowedAddModel: "", exceptionDraft: null, saving: null, savingDrafts: null, notice: null, repair: null };
+  return { reading: null, catalog: null, error: null, change: null, allowedDraft: new Map(), allowedNew: new Map(), allowedAddModel: "", exceptionDraft: null, saving: null, savingDrafts: null, busy: false, notice: null, repair: null };
+}
+
+/**
+ * screenReadStarted marks a read, a check or a save as in flight. Every edit control is disabled
+ * until the answer lands, so nothing the operator types can race the answer that is coming.
+ */
+export function screenReadStarted(state: PolicyScreenState): PolicyScreenState {
+  return { ...state, busy: true };
 }
 
 /**
@@ -827,14 +891,15 @@ export function screenLoaded(state: PolicyScreenState, reading: PolicyReading, k
     ...state,
     reading,
     error: null,
+    busy: false,
     repair,
-    ...(keepInputs ? {} : { change: null, allowedDraft: {}, allowedNew: {}, allowedAddModel: "", exceptionDraft: null }),
+    ...(keepInputs ? {} : { change: null, allowedDraft: new Map<string, string[]>(), allowedNew: new Map<string, string>(), allowedAddModel: "", exceptionDraft: null }),
   };
 }
 
 /** screenLoadFailed records that the policy itself could not be read. */
 export function screenLoadFailed(state: PolicyScreenState, message: string): PolicyScreenState {
-  return { ...state, reading: null, error: message };
+  return { ...state, reading: null, error: message, busy: false };
 }
 
 /** screenCatalog applies a catalog answer. */
@@ -848,49 +913,59 @@ export function screenPropose(state: PolicyScreenState, change: PolicyChange | n
   // behind would show a value the operator just abandoned, and would survive the re-read that a
   // later successful save triggers. A non-null change keeps the drafts so a multi-step edit can go on.
   if (change === null) {
-    return { ...state, change: null, notice: null, allowedDraft: {}, allowedNew: {}, exceptionDraft: null };
+    return { ...state, change: null, notice: null, allowedDraft: new Map<string, string[]>(), allowedNew: new Map<string, string>(), exceptionDraft: null };
   }
+  // One pending change at a time: a proposal from a control that does not own the live edit, or one
+  // made while an answer is in flight, is refused, so the pending change is never silently replaced
+  // by another row's edit. The controls are disabled in the same condition, so this is the state's
+  // own guard rather than the only one.
+  if (!screenMayEdit(state, changeOwner(change))) return state;
   return { ...state, change, notice: null, exceptionDraft: null };
+}
+
+/** changeOwner is the edit token one proposed change belongs to. */
+function changeOwner(change: PolicyChange): string {
+  switch (change.kind) {
+    case "setRolePairs":
+      return `role:${change.role}`;
+    case "setAllowed":
+    case "removeAllowed":
+      return `allowed:${change.model}`;
+    case "setException":
+    case "removeException":
+      return `exception:${change.id}`;
+  }
 }
 
 /** allowedEntriesOf is the efforts an allowlist row is being edited as: the draft, then the file. */
 export function allowedEntriesOf(state: PolicyScreenState, model: string, saved: readonly string[]): string[] {
-  // An own-property lookup: a model may legitimately be named "__proto__" or "constructor" (the Go
-  // parser accepts any nonempty identifier), and an inherited property would otherwise be read as a
-  // draft and crash the row.
-  return Object.hasOwn(state.allowedDraft, model) ? state.allowedDraft[model] : [...saved];
+  // A Map lookup by the exact identifier: a model may legitimately be named "__proto__" or
+  // "constructor" (the Go parser accepts any nonempty identifier), and as an ordinary object's key
+  // that would read an inherited property rather than the draft.
+  const draft = state.allowedDraft.get(model);
+  return draft === undefined ? [...saved] : [...draft];
 }
 
-/** allowedNewOf is the text of a row's "add an effort" field, by own property only. */
+/** allowedNewOf is the text of a row's "add an effort" field. */
 export function allowedNewOf(state: PolicyScreenState, model: string): string {
-  return Object.hasOwn(state.allowedNew, model) ? state.allowedNew[model] : "";
-}
-
-/** setKey returns a record with one key set, without touching the record's prototype. */
-function setKey<T>(record: Record<string, T>, key: string, value: T): Record<string, T> {
-  const next = { ...record };
-  Object.defineProperty(next, key, { value, enumerable: true, writable: true, configurable: true });
-  return next;
-}
-
-/** dropKey returns a record with one key removed, without touching the record's prototype. */
-function dropKey<T>(record: Record<string, T>, key: string): Record<string, T> {
-  const next: Record<string, T> = {};
-  for (const existing of Object.keys(record)) if (existing !== key) next[existing] = record[existing];
-  return next;
+  return state.allowedNew.get(model) ?? "";
 }
 
 /** screenAllowedDraft stores one row's entries and derives the pending change from them. An empty
  * list clears the pending change rather than sending a list the server refuses. */
 export function screenAllowedDraft(state: PolicyScreenState, model: string, entries: string[]): PolicyScreenState {
+  // One pending change at a time: a row that does not own the live edit, or an edit made while an
+  // answer is in flight, is refused rather than silently replacing the pending one. The control is
+  // disabled in the same condition.
+  if (!screenMayEdit(state, `allowed:${model}`)) return state;
   const efforts = entries.filter((text) => text !== "");
   return {
     ...state,
     // Only the row being edited holds a draft. The API applies exactly one change per request, so a
     // second row's edit replaces the first: keeping the first row's draft would leave it displaying a
     // value that no pending change carries and that a reload would silently revert.
-    allowedDraft: { [model]: entries },
-    allowedNew: setKey({}, model, allowedNewOf(state, model)),
+    allowedDraft: new Map([[model, [...entries]]]),
+    allowedNew: new Map([[model, allowedNewOf(state, model)]]),
     change: efforts.length === 0 ? null : { kind: "setAllowed", model, efforts },
     notice: null,
   };
@@ -904,13 +979,14 @@ export function screenAllowedEntryText(state: PolicyScreenState, model: string, 
 /** screenAllowedEntryAdded appends one entry the operator typed. */
 export function screenAllowedEntryAdded(state: PolicyScreenState, model: string, saved: readonly string[], text: string): PolicyScreenState {
   if (text === "") return state;
-  const next = { ...state, allowedNew: setKey({}, model, "") };
+  const next = { ...state, allowedNew: new Map([[model, ""]]) };
   return screenAllowedDraft(next, model, [...allowedEntriesOf(state, model, saved), text]);
 }
 
 /** screenAllowedNewText records the text of a row's "add an effort" field. */
 export function screenAllowedNewText(state: PolicyScreenState, model: string, text: string): PolicyScreenState {
-  return { ...state, allowedNew: setKey(state.allowedNew, model, text) };
+  if (!screenMayEdit(state, `allowed:${model}`)) return state;
+  return { ...state, allowedNew: new Map(state.allowedNew).set(model, text) };
 }
 
 /** screenAllowedEntryRemoved drops one entry from a row. */
@@ -946,6 +1022,12 @@ export function addModelOptions(state: PolicyScreenState, free: readonly string[
 
 /** screenExceptionDraft opens or updates the exception editor. */
 export function screenExceptionDraft(state: PolicyScreenState, draft: ExceptionDraft | null): PolicyScreenState {
+  // Closing is always allowed; opening or moving the editor while another edit owns the pending
+  // change is refused, so the two edits never compete for the one change the API applies.
+  if (draft !== null) {
+    const token = draft.isNew ? "exception:new" : `exception:${draft.id}`;
+    if (!screenMayEdit(state, token)) return state;
+  }
   return { ...state, exceptionDraft: draft };
 }
 
@@ -954,19 +1036,15 @@ export function screenExceptionDraft(state: PolicyScreenState, draft: ExceptionD
  * complete. An empty id or model would be refused by the check, so it is not proposed at all.
  */
 export function changeFromExceptionDraft(draft: ExceptionDraft): PolicyChange | null {
-  // An existing exception's id is carried through byte for byte: the policy file is the authority on
-  // its identifiers and the store finds the entry by exact match, so trimming a stored " legacy "
-  // would create a different exception and leave the original untouched. Only a NEW id, which the
-  // operator is inventing, is trimmed.
-  const id = draft.isNew ? draft.id.trim() : draft.id;
-  // The model is carried the same way and for the same reason: an identifier is compared exactly, so
-  // trimming a stored " model-a " would change which model the exception authorizes.
-  // The model is never trimmed, new or existing: it comes from a select of exact policy and catalog
-  // identifiers, and an identifier is compared exactly, so trimming " model-a " would name a
-  // different model. Only the id, which the operator types as free text for a new exception, is
-  // trimmed.
+  // Identifiers are opaque: an id, a model, an effort and a cwd taken from the policy, the catalog
+  // or a select are carried byte for byte and never trimmed, split, joined or re-parsed. The Go
+  // parser accepts any non-blank string as an identifier and the store compares it exactly, so
+  // trimming a stored " legacy " or " model-a " would name a different exception or model and leave
+  // the one the file declares untouched. Only blankness is checked, and only to refuse a change the
+  // server would refuse; the value itself is stored exactly as typed.
+  const id = draft.id;
   const model = draft.model;
-  if (id === "" || model === "") return null;
+  if (isBlank(id) || isBlank(model)) return null;
   // An exception with no cwd covers no request: the bridge requires a request to state a cwd the
   // exception lists (internal/bridge/execution/execution.go exceptionCovers), so a root-less
   // exception would be stored and then never apply. The editor requires at least one root.
@@ -997,7 +1075,7 @@ export function screenDraftIsNew(state: PolicyScreenState): boolean {
 
 /** screenSaveStarted marks the change a save in flight is writing. */
 export function screenSaveStarted(state: PolicyScreenState): PolicyScreenState {
-  return { ...state, saving: state.change, savingDrafts: { allowedDraft: { ...state.allowedDraft }, exceptionDraft: state.exceptionDraft } };
+  return { ...state, saving: state.change, savingDrafts: { allowedDraft: new Map(state.allowedDraft), exceptionDraft: state.exceptionDraft }, busy: true };
 }
 
 /**
@@ -1023,17 +1101,30 @@ export function screenSaveFinished(state: PolicyScreenState, saved: PolicyChange
     // it is for the same model or exception. The drafts are compared against the snapshot taken when
     // the save started, so a draft that has not moved since is the spent one and a changed one is not.
     const before = state.savingDrafts;
-    if (saved.kind === "setAllowed" && allowedDraft[saved.model] === before?.allowedDraft[saved.model]) {
-      allowedDraft = dropKey(allowedDraft, saved.model);
+    if (saved.kind === "setAllowed" && before !== null && sameEntries(allowedDraft.get(saved.model), before.allowedDraft.get(saved.model))) {
+      allowedDraft = withoutKey(allowedDraft, saved.model);
     }
-    if (saved.kind === "setException" && exceptionDraft !== null && exceptionDraft === before?.exceptionDraft) {
+    if (saved.kind === "setException" && exceptionDraft !== null && before !== null && exceptionDraft === before.exceptionDraft) {
       exceptionDraft = null;
     }
     // The pending change is cleared only when it is still the one that was saved; a later edit is
     // the operator's next change.
     if (stillPending) change = null;
   }
-  return { ...state, saving: null, savingDrafts: null, notice, change, allowedDraft, exceptionDraft, repair };
+  return { ...state, saving: null, savingDrafts: null, busy: false, notice, change, allowedDraft, exceptionDraft, repair };
+}
+
+/** sameEntries reports whether two effort lists hold the same entries in the same order. */
+function sameEntries(left: readonly string[] | undefined, right: readonly string[] | undefined): boolean {
+  if (left === undefined || right === undefined) return left === right;
+  return left.length === right.length && left.every((entry, index) => entry === right[index]);
+}
+
+/** withoutKey returns a draft map with one key removed, leaving every other key as it was. */
+function withoutKey<T>(drafts: Map<string, T>, key: string): Map<string, T> {
+  const next = new Map(drafts);
+  next.delete(key);
+  return next;
 }
 
 /**
@@ -1045,7 +1136,7 @@ export function screenSaveFinished(state: PolicyScreenState, saved: PolicyChange
 export function screenReread(state: PolicyScreenState): PolicyScreenState {
   // The notice goes, but the repair sentence does not: it is the server's own instruction for the
   // repair, and the block it explains is still in force. screenRepairCleared lifts both together.
-  return { ...state, change: null, allowedDraft: {}, allowedAddModel: "", exceptionDraft: null, notice: null };
+  return { ...state, change: null, allowedDraft: new Map<string, string[]>(), allowedNew: new Map<string, string>(), allowedAddModel: "", exceptionDraft: null, notice: null };
 }
 
 /**
@@ -1069,6 +1160,56 @@ export function screenEditable(state: PolicyScreenState): boolean {
 /** screenSaving is whether a save is in flight; the controls are disabled while it is. */
 export function screenSaving(state: PolicyScreenState): boolean {
   return state.saving !== null;
+}
+
+/**
+ * screenBusy is whether an answer is on its way: a read, a check or a save. Every edit control is
+ * disabled while it is true, so an edit can never race the answer that is coming.
+ */
+export function screenBusy(state: PolicyScreenState): boolean {
+  return state.busy || state.saving !== null;
+}
+
+/**
+ * screenEditOwner is the one edit control that may be live right now, or null when every control may
+ * be. The API applies exactly one change per request, so a second edit would silently replace the
+ * first and leave a row showing a value no pending change carries; the screen therefore lets one
+ * edit own the pending change and disables the rest until it is saved or cancelled.
+ *
+ * The token names the edited thing by its own identifier: two different models, exceptions or roles
+ * never share a token, and the same one keeps its token across its own edits.
+ */
+export function screenEditOwner(state: PolicyScreenState): string | null {
+  // An open exception editor owns the edit before its change is proposed: its draft is the operator's
+  // work in progress, and another row's edit would leave it unsubmittable.
+  if (state.exceptionDraft !== null) return state.exceptionDraft.isNew ? "exception:new" : `exception:${state.exceptionDraft.id}`;
+  const change = state.change;
+  if (change === null) return null;
+  switch (change.kind) {
+    case "setRolePairs":
+      return `role:${change.role}`;
+    case "setAllowed":
+    case "removeAllowed":
+      return `allowed:${change.model}`;
+    case "setException":
+    case "removeException":
+      return `exception:${change.id}`;
+  }
+}
+
+/** screenOwns reports whether one control's token is the live edit, or every control is live. */
+export function screenOwns(state: PolicyScreenState, token: string): boolean {
+  const owner = screenEditOwner(state);
+  return owner === null || owner === token;
+}
+
+/**
+ * screenMayEdit reports whether one control may make an edit right now: no answer may be in flight,
+ * and no other edit may own the single pending change. The controls are disabled in this same
+ * condition, so the state refuses an edit the screen already prevents.
+ */
+export function screenMayEdit(state: PolicyScreenState, token: string): boolean {
+  return !screenBusy(state) && screenOwns(state, token);
 }
 
 /**

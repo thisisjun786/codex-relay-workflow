@@ -334,20 +334,23 @@ test("a stale check keeps the inputs and asks for a re-read", async () => {
   const pending = state.change;
   const kept = pure.screenLoaded(state, pure.decodePolicy(readingBody({ digest: "b".repeat(64) })), true);
   assert.deepEqual(kept.change, pending, "the pending change survives the stale re-read");
-  assert.deepEqual(kept.allowedDraft["anthropic/opus"], ["max", "high"], "the typed text survives too");
+  assert.deepEqual(kept.allowedDraft.get("anthropic/opus"), ["max", "high"], "the typed text survives too");
 });
 
-test("a save in flight does not drop an edit made while it is running", async () => {
+test("a save in flight disables the screen's other edit controls", async () => {
   const pure = await import("../src/policy-state.ts");
   let state = pure.initialScreen();
   state = pure.screenLoaded(state, pure.decodePolicy(readingBody()));
   state = pure.screenAllowedDraft(state, "anthropic/opus", ["max"]);
   const saving = pure.screenSaveStarted(state);
-  // A second edit lands while the first save is in flight.
-  const edited = pure.screenAllowedDraft(saving, "gpt-6.1-sol", ["high"]);
-  const finished = pure.screenSaveFinished(edited, state.change, pure.noticeForWrite(200, { stored: { digest: "b".repeat(64) }, registered: { digest: "b".repeat(64) }, applied: "applied", actions: [] }));
-  assert.equal(finished.change?.kind, "setAllowed", "the later edit is still pending");
-  assert.equal((finished.change as { model: string }).model, "gpt-6.1-sol");
+  // While the save is in flight the screen disables every edit control, so no second edit can race
+  // the answer (decided answer 4: one pending change at a time).
+  const { elements } = await mount(saving as unknown as Record<string, unknown>);
+  const allowedControls = elements.find((el) => el.props["aria-label"] === "allowed anthropic/opus controls");
+  assert.ok(allowedControls, "the allowed row renders its controls");
+  assert.equal(allowedControls?.props.disabled, true, "the allowed controls are disabled during a save");
+  const parentControls = byLabel(elements, "parent pair controls");
+  assert.equal(parentControls?.props.disabled, true, "the role controls are disabled during a save");
 });
 
 test("an undeclared role row is not editable for the supervisor but is for the parent", async () => {

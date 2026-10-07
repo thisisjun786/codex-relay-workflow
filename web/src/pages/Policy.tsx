@@ -28,7 +28,6 @@ import {
   noticeForWrite,
   pairEffortLabel,
   pairModelLabel,
-  parseListInput,
   policyEfforts,
   policyView,
   previewChange,
@@ -46,13 +45,17 @@ import {
   screenDraftIsNew,
   screenLoaded,
   screenLoadFailed,
+  screenMayEdit,
   screenPropose,
+  screenReadStarted,
   screenReread,
   screenSaveFinished,
   screenSaveStarted,
   screenRepairCleared,
   screenSaving,
   initialScreen,
+  isBlankText,
+  screenBusy,
   unreachableNotice,
   type ExceptionDraft,
   type PolicyChange,
@@ -71,14 +74,24 @@ const PAGE_TITLE = "Execution policy";
 /** How often the catalog is re-read, and on window focus as well. */
 const CATALOG_REFRESH_MS = 30_000;
 
-/** pairText is one pair as a control row reads it. */
-function pairText(pair: PolicyPair): string {
-  return `${pair.model} ${pair.reasoningEffort}`.trim();
+/**
+ * quoted is one identifier as a row reads it. Every value a row shows is an identifier the policy
+ * compares exactly and may contain a space or a comma, so it is quoted: joining a model and an
+ * effort with a space would otherwise make the pair ("a b", "c") and the pair ("a", "b c") read as
+ * the same text, and one cwd root containing a comma would read as two roots.
+ */
+function quoted(value: string): string {
+  return JSON.stringify(value);
 }
 
-/** exceptionScope is an exception's cwd scope as a row reads it. */
+/** pairText is one pair as a control row reads it: both identifiers quoted, so each stays one value. */
+function pairText(pair: PolicyPair): string {
+  return `${quoted(pair.model)} ${quoted(pair.reasoningEffort)}`;
+}
+
+/** exceptionScope is an exception's cwd scope as a row reads it: one quoted entry per root. */
 function exceptionScope(exception: PolicyExceptionView): string {
-  return exception.cwd.length === 0 ? "no cwd scope" : exception.cwd.join(", ");
+  return exception.cwd.length === 0 ? "no cwd scope" : exception.cwd.map(quoted).join(", ");
 }
 
 /** What the screen calls when the operator does something. */
@@ -105,6 +118,9 @@ export function PolicyScreen({ state, handlers, help }: { state: PolicyScreenSta
   const efforts = state.reading ? policyEfforts(state.reading, state.catalog) : [];
   const models = state.reading ? modelOptions(state.reading, state.catalog) : [];
   const editable = screenEditable(state);
+  // One pending change at a time: an answer in flight or another row's live edit disables this
+  // control, so the single change the API applies is never silently replaced.
+  const busy = screenBusy(state);
   const saving = screenSaving(state);
   const preview = state.reading && state.change ? previewChange(state.reading, state.change) : null;
   const roles = view ? view.roles.filter((role) => role.editable).map((role) => role.name) : [];
@@ -174,7 +190,7 @@ export function PolicyScreen({ state, handlers, help }: { state: PolicyScreenSta
                       {role.expectation ? <span className="row-sub">expectation: {role.expectation}</span> : null}
                     </div>
                     {role.editable && editable ? (
-                      <fieldset className="role-controls" disabled={saving} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }} aria-label={roleControlsLabel(role.name)}>
+                      <fieldset className="role-controls" disabled={busy || !screenMayEdit(state, `role:${role.name}`)} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }} aria-label={roleControlsLabel(role.name)}>
                         {pairs.map((pair, index) => {
                           const savedEffort = !efforts.includes(pair.reasoningEffort) || screenEffortUnavailable(state, pair.model, pair.reasoningEffort);
                           return (
@@ -253,7 +269,7 @@ export function PolicyScreen({ state, handlers, help }: { state: PolicyScreenSta
                 <section key={entry.model} className="list-row" aria-label={`allowed ${entry.model}`}>
                   <div className="row-id">
                     <span className="row-name">{entry.model}</span>
-                    <span className="row-sub">{entry.efforts.join(" · ") || "no effort listed"}</span>
+                    <span className="row-sub">{entry.efforts.map(quoted).join(" · ") || "no effort listed"}</span>
                   </div>
                   {editable ? (
                     <AllowedRow
@@ -265,6 +281,7 @@ export function PolicyScreen({ state, handlers, help }: { state: PolicyScreenSta
                       onEntryAdded={(text) => handlers.allowedEntryAdded(entry.model, entry.efforts, text)}
                       onEntryRemoved={(index) => handlers.allowedEntryRemoved(entry.model, entry.efforts, index)}
                       onRemoveModel={() => handlers.propose({ kind: "removeAllowed", model: entry.model })}
+                      disabled={busy || !screenMayEdit(state, `allowed:${entry.model}`)}
                     />
                   ) : null}
                 </section>
@@ -286,7 +303,7 @@ export function PolicyScreen({ state, handlers, help }: { state: PolicyScreenSta
                             <option key={id} value={id}>{id}</option>
                           ))}
                         </select>
-                        <button className="btn" disabled={choice === "" || efforts.length === 0} aria-label="Add allowed model" onClick={() => handlers.propose({ kind: "setAllowed", model: choice, efforts: [efforts[0] ?? ""] })}>Add</button>
+                        <button className="btn" disabled={busy || choice === "" || efforts.length === 0} aria-label="Add allowed model" onClick={() => handlers.propose({ kind: "setAllowed", model: choice, efforts: [efforts[0] ?? ""] })}>Add</button>
                       </div>
                     </div>
                   );
@@ -307,6 +324,7 @@ export function PolicyScreen({ state, handlers, help }: { state: PolicyScreenSta
                   efforts={efforts}
                   editable={editable}
                   draft={!draftIsNew && state.exceptionDraft?.id === exception.id ? state.exceptionDraft : null}
+                  disabled={busy || !screenMayEdit(state, `exception:${exception.id}`)}
                   effortRefused={(model, effort) => screenEffortUnavailable(state, model, effort)}
                   onDraft={handlers.exceptionDraft}
                   onRemove={() => handlers.removeException(exception.id)}
@@ -322,6 +340,7 @@ export function PolicyScreen({ state, handlers, help }: { state: PolicyScreenSta
                   models={models}
                   efforts={efforts}
                   draft={draftIsNew ? state.exceptionDraft : null}
+                  disabled={busy || !screenMayEdit(state, "exception:new")}
                   effortRefused={(model, effort) => screenEffortUnavailable(state, model, effort)}
                   onDraft={handlers.exceptionDraft}
                   onAdd={(draft) => {
@@ -352,8 +371,8 @@ export function PolicyScreen({ state, handlers, help }: { state: PolicyScreenSta
                 {preview.fallback ? <p className="sub" role="status">{preview.fallback}</p> : null}
                 <p className="sub" role="status">{POLICY_BLAST_RADIUS}</p>
                 <div className="modal-foot">
-                  <button className="btn" disabled={saving} onClick={() => handlers.propose(null)}>Cancel</button>
-                  <button className="btn primary" disabled={saving} onClick={handlers.save}>
+                  <button className="btn" disabled={busy} onClick={() => handlers.propose(null)}>Cancel</button>
+                  <button className="btn primary" disabled={busy} onClick={handlers.save}>
                     {saving ? "Saving..." : "Save"}
                   </button>
                 </div>
@@ -391,7 +410,7 @@ export function PolicyScreen({ state, handlers, help }: { state: PolicyScreenSta
 
             <p className="sub" style={{ marginTop: 12 }}>{catalogNotice(state.catalog)}</p>
             <div className="role-selects">
-              <button className="btn" disabled={saving} onClick={handlers.reread}>Read the policy again</button>
+              <button className="btn" disabled={busy} onClick={handlers.reread}>Read the policy again</button>
             </div>
           </>
         ) : null}
@@ -417,6 +436,7 @@ function AllowedRow({
   onEntryAdded,
   onEntryRemoved,
   onRemoveModel,
+  disabled,
 }: {
   model: string;
   entries: readonly string[];
@@ -426,9 +446,10 @@ function AllowedRow({
   onEntryAdded: (text: string) => void;
   onEntryRemoved: (index: number) => void;
   onRemoveModel: () => void;
+  disabled: boolean;
 }) {
   return (
-    <div className="role-controls" style={{ flex: 2 }}>
+    <fieldset className="role-controls" disabled={disabled} style={{ border: 0, padding: 0, margin: 0, minWidth: 0, flex: 2 }} aria-label={`allowed ${model} controls`}>
       {entries.map((effort, index) => (
         <div className="role-selects" key={index}>
           <input className="input" style={{ maxWidth: "220px" }} aria-label={allowedEffortsLabel(model, index)} value={effort} onChange={(e) => onEntryText(index, e.target.value)} />
@@ -440,7 +461,7 @@ function AllowedRow({
         <button className="btn" disabled={newText === ""} onClick={() => onEntryAdded(newText)}>Add effort</button>
         <button className="btn danger" aria-label={`Remove ${model} from the allowed list`} onClick={onRemoveModel}>Remove model</button>
       </div>
-    </div>
+    </fieldset>
   );
 }
 
@@ -451,6 +472,7 @@ function ExceptionRow({
   efforts,
   editable,
   draft,
+  disabled,
   effortRefused,
   onDraft,
   onRemove,
@@ -462,6 +484,7 @@ function ExceptionRow({
   efforts: string[];
   editable: boolean;
   draft: ExceptionDraft | null;
+  disabled: boolean;
   effortRefused: (model: string, effort: string) => boolean;
   onDraft: (draft: ExceptionDraft | null) => void;
   onRemove: () => void;
@@ -485,8 +508,8 @@ function ExceptionRow({
           <span className="row-sub">{exception.role || "no role - covers requests that cite no role"} · {exception.model} · {exception.reasoningEffort} · {exceptionScope(exception)}</span>
         </div>
         <div className="row-actions">
-          <button className="btn" aria-label={editExceptionLabel(exception.id)} onClick={() => onDraft(draftForException(exception))}>Edit</button>
-          <button className="btn danger" aria-label={removeExceptionLabel(exception.id)} onClick={onRemove}>Remove</button>
+          <button className="btn" disabled={disabled} aria-label={editExceptionLabel(exception.id)} onClick={() => onDraft(draftForException(exception))}>Edit</button>
+          <button className="btn danger" disabled={disabled} aria-label={removeExceptionLabel(exception.id)} onClick={onRemove}>Remove</button>
         </div>
       </section>
     );
@@ -494,7 +517,7 @@ function ExceptionRow({
   return (
     <section className="list-row role-row" aria-label={`edit exception ${exception.id}`}>
       <div className="row-id"><span className="row-name">{exception.id}</span></div>
-      <fieldset className="role-controls" style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }} aria-label={`${exception.id} exception controls`}>
+      <fieldset className="role-controls" disabled={disabled} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }} aria-label={`${exception.id} exception controls`}>
         <div className="role-selects">
           <select className="select" style={{ maxWidth: "160px" }} aria-label={`${exception.id} exception role`} value={draft.role} onChange={(e) => onDraft({ ...draft, role: e.target.value })}>
             {draft.role === "" ? <option value="">no role - covers requests that cite no role</option> : null}
@@ -536,14 +559,14 @@ function ExceptionRow({
           <input className="input" style={{ maxWidth: "320px" }} aria-label={`${exception.id} exception cwd to add`} placeholder="one cwd root" value={draft.cwdNew} onChange={(e) => onDraft({ ...draft, cwdNew: e.target.value })} />
           <button
             className="btn"
-            disabled={draft.cwdNew.trim() === ""}
-            onClick={() => onDraft({ ...draft, cwd: [...draft.cwd, draft.cwdNew.trim()], cwdNew: "" })}
+            disabled={isBlankText(draft.cwdNew)}
+            onClick={() => onDraft({ ...draft, cwd: [...draft.cwd, draft.cwdNew], cwdNew: "" })}
           >
             Add root
           </button>
         </div>
         <div className="role-selects">
-          <button className="btn primary" disabled={draft.id.trim() === "" || draft.model.trim() === ""} onClick={() => onApply(draft)}>Apply</button>
+          <button className="btn primary" disabled={isBlankText(draft.id) || isBlankText(draft.model)} onClick={() => onApply(draft)}>Apply</button>
           <button className="btn" onClick={() => onDraft(null)}>Cancel</button>
         </div>
       </fieldset>
@@ -557,6 +580,7 @@ function ExceptionAdder({
   models,
   efforts,
   draft,
+  disabled,
   effortRefused,
   onDraft,
   onAdd,
@@ -565,6 +589,7 @@ function ExceptionAdder({
   models: Array<{ id: string; label: string; unavailable: boolean }>;
   efforts: string[];
   draft: ExceptionDraft | null;
+  disabled: boolean;
   effortRefused: (model: string, effort: string) => boolean;
   onDraft: (draft: ExceptionDraft | null) => void;
   onAdd: (draft: ExceptionDraft) => void;
@@ -576,7 +601,7 @@ function ExceptionAdder({
         <div className="row-actions">
           <button
             className="btn"
-            disabled={models.length === 0 || efforts.length === 0}
+            disabled={disabled || models.length === 0 || efforts.length === 0}
             onClick={() => onDraft(draftForNewException(roles[0] ?? "", models[0]?.id ?? "", efforts[0] ?? ""))}
           >
             Add exception
@@ -588,7 +613,7 @@ function ExceptionAdder({
   return (
     <section className="list-row role-row" aria-label="add exception">
       <div className="row-id"><span className="row-name">New exception</span></div>
-      <fieldset className="role-controls" style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }} aria-label="new exception controls">
+      <fieldset className="role-controls" disabled={disabled} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }} aria-label="new exception controls">
         <div className="role-selects">
           <input className="input" style={{ maxWidth: "160px" }} aria-label="new exception id" placeholder="id" value={draft.id} onChange={(e) => onDraft({ ...draft, id: e.target.value })} />
           <select className="select" style={{ maxWidth: "160px" }} aria-label="new exception role" value={draft.role} onChange={(e) => onDraft({ ...draft, role: e.target.value })}>
@@ -630,8 +655,8 @@ function ExceptionAdder({
           <input className="input" style={{ maxWidth: "320px" }} aria-label="new exception cwd to add" placeholder="one cwd root" value={draft.cwdNew} onChange={(e) => onDraft({ ...draft, cwdNew: e.target.value })} />
           <button
             className="btn"
-            disabled={draft.cwdNew.trim() === ""}
-            onClick={() => onDraft({ ...draft, cwd: [...draft.cwd, draft.cwdNew.trim()], cwdNew: "" })}
+            disabled={isBlankText(draft.cwdNew)}
+            onClick={() => onDraft({ ...draft, cwd: [...draft.cwd, draft.cwdNew], cwdNew: "" })}
           >
             Add root
           </button>
@@ -639,7 +664,7 @@ function ExceptionAdder({
         <div className="role-selects">
           <button
             className="btn primary"
-            disabled={draft.id.trim() === "" || draft.model.trim() === "" || draft.cwd.length === 0}
+            disabled={isBlankText(draft.id) || isBlankText(draft.model) || draft.cwd.length === 0}
             onClick={() => onAdd(draft)}
           >
             Add
@@ -711,6 +736,9 @@ export function PolicyPage() {
     const current = ++generation.current;
     const keep = keepInputs.current;
     keepInputs.current = false;
+    // One pending change at a time: while the read is in flight every edit control is disabled, so
+    // no draft can be started that this read's answer would silently replace.
+    apply(screenReadStarted);
     void getPolicy(controller.signal)
       .then((body) => {
         if (controller.signal.aborted || current !== generation.current) return;

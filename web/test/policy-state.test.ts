@@ -36,12 +36,17 @@ import {
   roleControlsLabel,
   screenAllowedAddModel,
   screenAllowedDraft,
+  screenAllowedNewText,
+  screenBusy,
   screenDraftIsNew,
   screenEditable,
   screenEffortUnavailable,
   screenExceptionDraft,
   screenLoaded,
   screenCatalogLoaded,
+  screenMayEdit,
+  screenReadStarted,
+  screenSaving,
   screenReread,
   screenSaveFinished,
   screenSaveStarted,
@@ -166,27 +171,36 @@ test("a null pairs list is a role with no pairs, not a malformed answer", () => 
 test("the role-pair preview shows the before and after of the changing row", () => {
   const change: PolicyChange = { kind: "setRolePairs", role: "parent", pairs: [{ model: "anthropic/opus", reasoningEffort: "max" }] };
   const preview = previewChange(reading(), change);
-  const item = preview.items.find((entry) => entry.label.includes("parent"));
-  assert.ok(item, "the preview names the parent row");
-  assert.equal(item?.before, "gpt-6.1-sol xhigh");
-  assert.equal(item?.after, "anthropic/opus max");
+  // One row per pair, each identifier quoted: a pair is two exact identifiers, and a plain join would
+  // make ("a b", "c") and ("a", "b c") read as the same text.
+  const item = preview.items.find((entry) => entry.label === "role parent pair 1");
+  assert.ok(item, "the preview names the parent row's first pair");
+  assert.equal(item?.before, '"gpt-6.1-sol" "xhigh"');
+  assert.equal(item?.after, '"anthropic/opus" "max"');
   assert.equal(preview.blastRadius, POLICY_BLAST_RADIUS);
 });
 
 test("removing an exception previews that scope returning to the role default", () => {
   const preview = previewChange(reading(), { kind: "removeException", id: "legacy" });
-  const item = preview.items.find((entry) => entry.label.includes("legacy"));
-  assert.ok(item, "the preview names the exception");
-  assert.equal(item?.before, 'parent devin/swe-2 max ("/srv/project")');
-  assert.ok(item?.after.includes("parent"), "the after names the role whose default returns");
+  const role = preview.items.find((entry) => entry.label === "exception legacy role");
+  const model = preview.items.find((entry) => entry.label === "exception legacy model");
+  const cwd = preview.items.find((entry) => entry.label === "exception legacy cwd 1");
+  assert.ok(role, "the preview names the exception's role");
+  assert.equal(role?.before, '"parent"');
+  assert.equal(role?.after, "removed", "a removed exception's parts read removed, never empty");
+  assert.equal(model?.before, '"devin/swe-2"');
+  assert.equal(model?.after, "removed");
+  assert.equal(cwd?.before, '"/srv/project"', "the cwd root is quoted as one path");
+  assert.equal(cwd?.after, "removed");
   assert.ok(preview.fallback, "the preview carries the fallback sentence");
   assert.ok(preview.fallback?.includes("/srv/project"));
+  assert.ok(preview.fallback?.includes("parent"), "the fallback names the role whose default returns");
   assert.equal(preview.blastRadius, POLICY_BLAST_RADIUS);
 });
 
 test("the allowed-list preview shows the efforts before and after", () => {
   const preview = previewChange(reading(), { kind: "setAllowed", model: "gpt-6.1-sol", efforts: ["max"] });
-  const item = preview.items.find((entry) => entry.label.includes("gpt-6.1-sol"));
+  const item = preview.items.find((entry) => entry.label === "allowed gpt-6.1-sol effort 1");
   assert.equal(item?.before, '"xhigh"');
   assert.equal(item?.after, '"max"');
 });
@@ -195,8 +209,8 @@ test("removing an allowed model previews the row leaving the list", () => {
   // The trigger a reviewer would try: remove the row, not edit its efforts. The backend refuses
   // removing the last entry (check.go:309-313), so the preview names which row leaves.
   const preview = previewChange(reading(), { kind: "removeAllowed", model: "gpt-6.1-sol" });
-  const item = preview.items.find((entry) => entry.label.includes("gpt-6.1-sol"));
-  assert.ok(item, "the preview names the allowed row");
+  const item = preview.items.find((entry) => entry.label === "allowed gpt-6.1-sol effort 1");
+  assert.ok(item, "the preview names the allowed row's first effort");
   assert.equal(item?.before, '"xhigh"');
   assert.equal(item?.after, "removed");
   assert.equal(preview.blastRadius, POLICY_BLAST_RADIUS);
@@ -211,10 +225,15 @@ test("setting an exception previews the exception before and after", () => {
     effort: "max",
     cwd: ["/srv/other"],
   });
-  const item = preview.items.find((entry) => entry.label.includes("legacy"));
-  assert.ok(item, "the preview names the exception");
-  assert.equal(item?.before, 'parent devin/swe-2 max ("/srv/project")');
-  assert.equal(item?.after, 'child anthropic/opus max ("/srv/other")');
+  const role = preview.items.find((entry) => entry.label === "exception legacy role");
+  const model = preview.items.find((entry) => entry.label === "exception legacy model");
+  const cwd = preview.items.find((entry) => entry.label === "exception legacy cwd 1");
+  assert.equal(role?.before, '"parent"');
+  assert.equal(role?.after, '"child"');
+  assert.equal(model?.before, '"devin/swe-2"');
+  assert.equal(model?.after, '"anthropic/opus"');
+  assert.equal(cwd?.before, '"/srv/project"');
+  assert.equal(cwd?.after, '"/srv/other"');
 });
 
 test("setting an exception that is not declared previews it as new", () => {
@@ -226,9 +245,12 @@ test("setting an exception that is not declared previews it as new", () => {
     effort: "xhigh",
     cwd: [],
   });
-  const item = preview.items.find((entry) => entry.label.includes("fresh"));
-  assert.equal(item?.before, "not declared");
-  assert.equal(item?.after, "parent gpt-6.1-sol xhigh (no cwd scope)");
+  const role = preview.items.find((entry) => entry.label === "exception fresh role");
+  const model = preview.items.find((entry) => entry.label === "exception fresh model");
+  assert.equal(role?.before, "not declared", "a part the file does not declare says so, never a value");
+  assert.equal(role?.after, '"parent"');
+  assert.equal(model?.before, "not declared");
+  assert.equal(model?.after, '"gpt-6.1-sol"');
 });
 
 test("removing an exception with no role says what that removal actually does", () => {
@@ -237,8 +259,9 @@ test("removing an exception with no role says what that removal actually does", 
   // that, and must not invent a role or claim a fallback to a role default.
   const unscoped = reading({ exceptions: [{ id: "any", model: "m", reasoningEffort: "max", cwd: ["/srv/all"] }] });
   const preview = previewChange(unscoped, { kind: "removeException", id: "any" });
-  const item = preview.items.find((entry) => entry.label.includes("any"));
-  assert.equal(item?.after, "no role");
+  const role = preview.items.find((entry) => entry.label === "exception any role");
+  assert.ok(role?.before.includes("cite no role"), "the role-less exception's role says what it covers");
+  assert.equal(role?.after, "removed");
   assert.ok(preview.fallback?.includes("cite no role"));
   assert.ok(!preview.fallback?.includes("role default"));
   assert.ok(!preview.fallback?.includes("the cited role"));
@@ -384,10 +407,14 @@ test("a new exception's editor stays open while its id is being typed", () => {
   const change = changeFromExceptionDraft(state.exceptionDraft as ExceptionDraft);
   assert.equal(change?.kind, "setException");
   assert.equal((change as { id: string }).id, "fresh");
-  // An existing exception's draft is not the new one.
+  // An existing exception's draft is not the new one. Opening it is refused while the new-exception
+  // editor owns the pending change, so the two never compete for the one change the API applies.
   const existing = draftForException({ id: "legacy", role: "parent", model: "m", reasoningEffort: "high", cwd: ["/srv/a"] });
   assert.equal(existing.isNew, false);
-  assert.equal(screenDraftIsNew(screenExceptionDraft(state, existing)), false);
+  assert.equal(screenDraftIsNew(screenExceptionDraft(state, existing)), true, "the new-exception editor keeps the edit");
+  const closed = screenExceptionDraft(state, null);
+  assert.equal(screenDraftIsNew(closed), false, "closing is always allowed");
+  assert.equal(screenDraftIsNew(screenExceptionDraft(closed, existing)), false, "and then the other editor opens");
 });
 
 test("the effort names include what the policy's pairs and exceptions declare", () => {
@@ -419,23 +446,22 @@ test("the recovery block survives a re-read until the host is actually repaired"
   assert.equal(screenEditable(state), true, "a repaired host is editable again");
 });
 
-test("a successful save keeps an edit the operator started while it was in flight", () => {
-  // d2: the success branch always re-read without keeping the inputs, so the next edit was wiped.
+test("a successful save leaves the file's values behind it and no draft of its own", () => {
+  // The success path drops the draft the write spent, so a later read shows the file rather than a
+  // value no pending change carries. An edit cannot be started during the save (answer 4), so there
+  // is no second draft for the answer to land on top of.
   let state = initialScreen();
   state = screenLoaded(state, reading());
   state = screenAllowedDraft(state, "anthropic/opus", ["max"]);
-  const first = state.change;
+  const saved = state.change;
   const saving = screenSaveStarted(state);
-  const second = screenAllowedDraft(saving, "gpt-6.1-sol", ["high"]);
-  const finished = screenSaveFinished(second, first, noticeForWrite(200, { stored: { digest: "b".repeat(64) }, registered: { digest: "b".repeat(64) }, applied: "applied", actions: [] }));
-  // The saved model's spent draft is gone, and the later edit is still pending.
+  const finished = screenSaveFinished(saving, saved, noticeForWrite(200, { stored: { digest: "b".repeat(64) }, registered: { digest: "b".repeat(64) }, applied: "applied", actions: [] }));
   assert.equal(allowedEntriesOf(finished, "anthropic/opus", ["max", "xhigh"]).join(", "), "max, xhigh", "the spent draft is dropped");
-  assert.equal(finished.change?.kind, "setAllowed");
-  assert.equal((finished.change as { model: string }).model, "gpt-6.1-sol");
-  // The screen re-reads with keepInputs, so the later edit survives the read.
+  assert.equal(finished.change, null, "the saved change is no longer pending");
+  // The re-read that follows shows the file's values and keeps whatever is pending (nothing).
   const afterSave = screenLoaded(finished, reading({ digest: "b".repeat(64) }), true);
-  assert.equal((afterSave.change as { model: string })?.model, "gpt-6.1-sol", "the later edit survives the re-read");
-  assert.equal(afterSave.allowedDraft["gpt-6.1-sol"]?.join(", "), "high");
+  assert.equal(afterSave.change, null);
+  assert.equal(afterSave.allowedDraft.size, 0, "no draft survives the save's own re-read");
 });
 
 test("a successful save with nothing pending leaves no drafts behind", () => {
@@ -457,9 +483,9 @@ test("editing an existing exception keeps its identifier byte for byte", () => {
   const draft = draftForException(exception);
   const change = changeFromExceptionDraft({ ...draft, effort: "max" });
   assert.equal((change as { id: string }).id, " legacy ", "the stored id is not trimmed");
-  // A new id the operator invents is trimmed.
+  // A new id the operator invents is stored exactly as typed too (decided answer 1).
   const fresh = changeFromExceptionDraft({ ...draftForNewException("parent", "m", "high"), id: " fresh ", cwd: ["/srv/a"] });
-  assert.equal((fresh as { id: string }).id, "fresh");
+  assert.equal((fresh as { id: string }).id, " fresh ");
 });
 
 test("a role-less exception is described as covering the requests that cite no role", () => {
@@ -467,7 +493,7 @@ test("a role-less exception is described as covering the requests that cite no r
   // requests the schema allows; calling it inert understated a live authorization.
   const exception = { id: "legacy", model: "m", reasoningEffort: "high", cwd: ["/srv/a"] };
   const preview = previewChange(reading({ exceptions: [exception] }), { kind: "removeException", id: "legacy" });
-  const item = preview.items.find((entry) => entry.label.includes("legacy"));
+  const item = preview.items.find((entry) => entry.label === "exception legacy role");
   assert.ok(item?.before.includes("cite no role"), "the row says which requests it covers");
   assert.ok(!item?.before.includes("covers no request"));
   assert.ok(preview.fallback?.includes("cite no role"));
@@ -489,24 +515,25 @@ test("a supervisor-scoped exception keeps a matching option in its editor", () =
 });
 
 test("a draft changed while a save is in flight is not dropped by that save's answer", () => {
-  // d2: the spent draft was identified by model/id, so a NEWER edit to the same model lost its text
-  // and a reopened exception editor was closed. The spent draft is the one that has not moved since
-  // the save started.
+  // The spent draft is the one that has not moved since the save started, so a newer edit to the SAME
+  // model keeps its text rather than being dropped with the write's own draft. The screen disables
+  // edits during a save, so this is the state's own guard (answer 4).
   let state = initialScreen();
   state = screenLoaded(state, reading());
   state = screenAllowedDraft(state, "anthropic/opus", ["max"]);
   const saved = state.change;
   state = screenSaveStarted(state);
-  // A newer edit to the SAME model while the write is in flight.
-  state = screenAllowedDraft(state, "anthropic/opus", ["max", "xhigh"]);
+  // A newer edit to the SAME model while the write is in flight is refused by the state itself.
+  const during = screenAllowedDraft(state, "anthropic/opus", ["max", "xhigh"]);
+  assert.equal(during, state, "the edit is refused while the save is in flight");
   const finished = screenSaveFinished(state, saved, noticeForWrite(200, { stored: { digest: "b".repeat(64) }, registered: { digest: "b".repeat(64) }, applied: "applied", actions: [] }));
-  assert.deepEqual(finished.allowedDraft["anthropic/opus"], ["max", "xhigh"], "the newer entries are kept");
-  assert.deepEqual((finished.change as { efforts: string[] }).efforts, ["max", "xhigh"], "and matches the pending change");
+  assert.equal(finished.allowedDraft.get("anthropic/opus"), undefined, "the spent draft is dropped");
+  assert.equal(finished.change, null, "and no change is left pending");
   // An unchanged draft for the saved model IS the spent one and goes.
   let other = screenAllowedDraft(screenLoaded(initialScreen(), reading()), "anthropic/opus", ["max"]);
   const otherSaved = other.change;
   other = screenSaveFinished(screenSaveStarted(other), otherSaved, noticeForWrite(200, { stored: { digest: "c".repeat(64) }, registered: { digest: "c".repeat(64) }, applied: "applied", actions: [] }));
-  assert.equal(other.allowedDraft["anthropic/opus"], undefined, "the spent draft is dropped");
+  assert.equal(other.allowedDraft.get("anthropic/opus"), undefined, "the spent draft is dropped");
 });
 
 test("the repair sentence stays on screen after an explicit re-read", () => {
@@ -548,6 +575,99 @@ test("an allowlist entry is edited as its own entry, so a comma inside it is not
   assert.deepEqual((state.change as { efforts: string[] }).efforts, ["low,high,ultra"]);
 });
 
+test("identifiers are opaque: a stored model, effort, id and cwd are carried byte for byte", () => {
+  // Decided answer 1: a value taken from the policy, the catalog or a select is never trimmed, split,
+  // joined or re-parsed. The Go parser accepts any non-blank string as an identifier and the store
+  // compares it exactly, so trimming " model-a " would name a different model and leave the file's
+  // own value unauthorized.
+  const stored = { id: " legacy ", role: "parent", model: " model-a ", reasoningEffort: " low, high ", cwd: [" /srv/a , /srv/b "] };
+  const draft = draftForException(stored);
+  assert.equal(draft.id, " legacy ", "a stored id keeps its bytes");
+  assert.equal(draft.model, " model-a ", "a stored model keeps its bytes");
+  assert.deepEqual(draft.cwd, [" /srv/a , /srv/b "], "a stored cwd root keeps its bytes, comma and all");
+  const change = changeFromExceptionDraft(draft);
+  assert.equal((change as { id: string }).id, " legacy ", "the id is not trimmed on the way out either");
+  assert.equal((change as { model: string }).model, " model-a ");
+  assert.equal((change as { effort: string }).effort, " low, high ");
+  assert.deepEqual((change as { cwd: string[] }).cwd, [" /srv/a , /srv/b "]);
+  // A NEW id and cwd are still stored exactly as typed: only blankness is refused.
+  const fresh = changeFromExceptionDraft({ ...draftForNewException("parent", " model-b ", "high"), id: " fresh ", cwd: [" /srv/c "] });
+  assert.equal((fresh as { id: string }).id, " fresh ", "the new id is stored as typed");
+  assert.equal((fresh as { model: string }).model, " model-b ");
+  assert.deepEqual((fresh as { cwd: string[] }).cwd, [" /srv/c "]);
+  // Only an obviously blank value is refused, because the server would refuse it too.
+  assert.equal(changeFromExceptionDraft({ ...draft, id: "   " }), null, "a blank id proposes no change");
+  assert.equal(changeFromExceptionDraft({ ...draft, model: "" }), null, "a blank model proposes no change");
+  assert.equal(changeFromExceptionDraft({ ...draft, cwd: [] }), null, "a root-less exception proposes no change");
+});
+
+test("a value from the policy is never used as a plain-object key", () => {
+  // Decided answer 3: the per-model drafts are a Map, so a model named "__proto__", "constructor" or
+  // "toString" is a key like any other rather than a prototype-chain lookup.
+  let state = initialScreen();
+  state = screenLoaded(state, reading({ allowed: [{ model: "__proto__", efforts: ["high"] }] }));
+  state = screenAllowedDraft(state, "__proto__", ["high", "max"]);
+  assert.deepEqual(state.allowedDraft.get("__proto__"), ["high", "max"]);
+  assert.equal(Object.getPrototypeOf(state.allowedDraft), Map.prototype, "the draft map has no colliding key");
+  assert.equal(Object.keys(state.allowedDraft).length, 0, "the map holds its keys off the object's own");
+  assert.equal(Object.prototype.hasOwnProperty.call(state.allowedDraft, "__proto__"), false, "nothing leaked onto a prototype");
+  state = screenAllowedNewText(state, "__proto__", "typed");
+  assert.equal(state.allowedNew.get("__proto__"), "typed");
+});
+
+test("one pending change at a time: another row's edit cannot replace the live one", () => {
+  // Decided answer 4: the API applies exactly one change per request, so the screen lets one edit own
+  // the pending change and refuses (and disables) the rest until it is saved or cancelled.
+  let state = initialScreen();
+  state = screenLoaded(state, reading({ allowed: [{ model: "A", efforts: ["high"] }, { model: "B", efforts: ["low"] }] }));
+  state = screenAllowedDraft(state, "A", ["high", "max"]);
+  assert.equal((state.change as { model: string }).model, "A");
+  // B's edit is refused while A owns the pending change, so B shows the file's value, not a draft.
+  const refused = screenAllowedDraft(state, "B", ["low", "max"]);
+  assert.equal(refused, state, "the second row's edit does not change the state");
+  assert.equal((refused.change as { model: string }).model, "A", "the pending change is still A's");
+  assert.deepEqual(allowedEntriesOf(refused, "B", ["low"]), ["low"], "B shows the file's value");
+  assert.equal(screenMayEdit(refused, "allowed:B"), false, "B's control is disabled");
+  assert.equal(screenMayEdit(refused, "allowed:A"), true, "A's control stays live");
+  // Cancelling releases the owner, and B can then edit.
+  state = screenPropose(refused, null);
+  assert.equal(screenMayEdit(state, "allowed:B"), true);
+  state = screenAllowedDraft(state, "B", ["low", "max"]);
+  assert.equal((state.change as { model: string }).model, "B");
+});
+
+test("an answer in flight disables every edit, so no draft races the answer", () => {
+  // Decided answer 4: while a read, a check or a save is in flight the controls are disabled, so a
+  // re-read can never silently replace a draft started after it began.
+  let state = initialScreen();
+  state = screenLoaded(state, reading());
+  assert.equal(screenBusy(state), false);
+  const reading_ = screenReadStarted(state);
+  assert.equal(screenBusy(reading_), true);
+  assert.equal(screenMayEdit(reading_, "allowed:anthropic/opus"), false, "no edit while the read is in flight");
+  assert.equal(screenAllowedDraft(reading_, "anthropic/opus", ["max"]), reading_, "the edit is refused");
+  assert.equal(screenAllowedNewText(reading_, "anthropic/opus", "x"), reading_);
+  assert.equal(screenExceptionDraft(reading_, draftForNewException("parent", "m", "high")), reading_);
+  assert.equal(screenPropose(reading_, { kind: "removeException", id: "legacy" }), reading_);
+  // The answer lands and the controls come back.
+  const loaded = screenLoaded(reading_, reading({ digest: "b".repeat(64) }), true);
+  assert.equal(screenBusy(loaded), false);
+  assert.equal(screenMayEdit(loaded, "allowed:anthropic/opus"), true);
+});
+
+test("an answer in flight blocks a save's own edits and a second save", () => {
+  let state = initialScreen();
+  state = screenLoaded(state, reading());
+  state = screenAllowedDraft(state, "anthropic/opus", ["max"]);
+  const saving = screenSaveStarted(state);
+  assert.equal(screenSaving(saving), true);
+  assert.equal(screenBusy(saving), true, "a save in flight counts as busy");
+  assert.equal(screenMayEdit(saving, "allowed:gpt-6.1-sol"), false);
+  assert.equal(screenAllowedDraft(saving, "gpt-6.1-sol", ["high"]), saving, "no second edit during a save");
+  const done = screenSaveFinished(saving, state.change, noticeForWrite(200, { stored: { digest: "b".repeat(64) }, applied: "applied", actions: [] }));
+  assert.equal(screenBusy(done), false);
+});
+
 test("editing an existing exception keeps its model byte for byte", () => {
   // d2: the model was trimmed, so editing only the effort sent a different model identifier.
   const exception = { id: "legacy", role: "parent", model: " model-a ", reasoningEffort: "high", cwd: ["/srv/a"] };
@@ -572,26 +692,11 @@ test("an edit started after an explicit re-read survives the read", () => {
   // The operator starts a new edit while the read is in flight.
   const during = screenAllowedDraft(beforeReread, "gpt-6.1-sol", ["high"]);
   const afterRead = screenLoaded(during, reading({ digest: "b".repeat(64) }), true);
-  assert.deepEqual(afterRead.allowedDraft["gpt-6.1-sol"], ["high"], "the later edit survives");
+  assert.deepEqual(afterRead.allowedDraft.get("gpt-6.1-sol"), ["high"], "the later edit survives");
   assert.equal((afterRead.change as { model: string }).model, "gpt-6.1-sol");
 });
 
 // The four defects the seventh pre-merge evaluation found.
-
-test("a second allowlist row's edit replaces the first, so no row shows an unsaved value", () => {
-  // d1: the API applies exactly one change per request, so a second row's edit replaces the first.
-  // Keeping the first row's draft would leave it displaying a value no pending change carries, and a
-  // reload would silently revert it.
-  let state = initialScreen();
-  state = screenLoaded(state, reading({ allowed: [{ model: "A", efforts: ["high"] }, { model: "B", efforts: ["low"] }] }));
-  state = screenAllowedDraft(state, "A", ["high", "max"]);
-  assert.deepEqual((state.change as { model: string }).model, "A");
-  state = screenAllowedDraft(state, "B", ["low", "max"]);
-  assert.deepEqual((state.change as { model: string }).model, "B", "the pending change is B's");
-  // A shows the file again, because its edit is no longer pending.
-  assert.deepEqual(allowedEntriesOf(state, "A", ["high"]), ["high"]);
-  assert.deepEqual(allowedEntriesOf(state, "B", ["low"]), ["low", "max"]);
-});
 
 test("a model named __proto__ or constructor is read as a file value, not a draft", () => {
   // d2: the draft dictionaries were ordinary objects, so an inherited property was read as a stored
@@ -609,12 +714,17 @@ test("a model named __proto__ or constructor is read as a file value, not a draf
 
 test("the allowed preview quotes each effort so one comma-containing name is not two names", () => {
   // d4: joining exact identifiers with ", " made one effort named "low, high" read the same as two
-  // efforts named "low" and "high", hiding a real permission change.
+  // efforts named "low" and "high", hiding a real permission change. The preview now shows one row
+  // per entry, so the two lists cannot render the same text at all.
   const one = previewChange(reading({ allowed: [{ model: "m", efforts: ["low, high"] }] }), { kind: "setAllowed", model: "m", efforts: ["low, high"] });
   const two = previewChange(reading({ allowed: [{ model: "m", efforts: ["low, high"] }] }), { kind: "setAllowed", model: "m", efforts: ["low", "high"] });
-  assert.notEqual(one.items[0].after, two.items[0].after, "one name and two names do not read alike");
-  assert.ok(one.items[0].after.includes('"low, high"'), "the single name is quoted");
-  assert.ok(two.items[0].after.includes('"low", "high"'), "the two names are quoted separately");
+  assert.deepEqual(one.items.map((item) => item.label), ["allowed m effort 1"], "one entry is one row");
+  assert.equal(one.items[0].after, '"low, high"', "the single name is quoted as one value");
+  assert.deepEqual(two.items.map((item) => item.label), ["allowed m effort 1", "allowed m effort 2"], "two entries are two rows");
+  assert.equal(two.items[0].after, '"low"');
+  assert.equal(two.items[1].after, '"high"');
+  // The two previews do not read alike: the row counts and the values both differ.
+  assert.notDeepEqual(one.items.map((item) => item.after), two.items.map((item) => item.after));
 });
 
 // The four defects the third pre-merge evaluation found.
@@ -633,7 +743,9 @@ test("an exception's cwd is carried as a list, so a path containing a comma surv
   const readingWith = reading({ exceptions: [exception] });
   const before = previewChange(readingWith, { kind: "setException", id: "legacy", role: "parent", model: "m", effort: "max", cwd: [commaPath] });
   const after = previewChange(readingWith, { kind: "setException", id: "legacy", role: "parent", model: "m", effort: "max", cwd: ["/srv/a", "/srv/b"] });
-  assert.notEqual(before.items[0].after, after.items[0].after, "one path and two paths do not read the same");
+  // One path is one cwd row; two paths are two, so the two scopes cannot read the same.
+  assert.deepEqual(before.items.filter((item) => item.label.includes("cwd")).map((item) => item.after), ['"/srv/a, /srv/b"']);
+  assert.deepEqual(after.items.filter((item) => item.label.includes("cwd")).map((item) => item.after), ['"/srv/a"', '"/srv/b"']);
 });
 
 test("cancelling an allowlist edit clears its draft so a later re-read shows the file's value", () => {
@@ -660,10 +772,11 @@ test("the new-exception draft starts with no cwd and requires at least one root"
   assert.equal(draft.cwdNew, "");
   // A draft with no root yet does not propose a change.
   assert.equal(changeFromExceptionDraft({ ...draft, id: "fresh" }), null);
-  // Once a root is added the change carries it, and the id and model are trimmed.
+  // Once a root is added the change carries it, and the id is carried exactly as typed: identifiers
+  // are opaque and only blankness is refused.
   const complete = { ...draft, id: " fresh ", cwd: ["/srv/a"] };
   const change = changeFromExceptionDraft(complete);
-  assert.equal((change as { id: string }).id, "fresh");
+  assert.equal((change as { id: string }).id, " fresh ");
   assert.deepEqual((change as { cwd: string[] }).cwd, ["/srv/a"]);
 });
 
