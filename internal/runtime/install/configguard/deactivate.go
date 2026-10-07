@@ -45,8 +45,9 @@ type DeactivateResult struct {
 // the wait. The path is therefore pinned to the file the held sidecar belongs to: the sidecar beside
 // the resolved real path must be the very file this lock holds (fstat), or the directory changed
 // under the wait and acting now would edit a file this lock does not guard (CRW-899 E1, fail
-// closed). Everything downstream — the drift hash, the read, the restore and the injected CLI calls
-// — works on the pinned path, never on a spelling re-resolved after the wait.
+// closed). The Go-side operations — the drift hash, the read and the restore — work on the pinned
+// path, never on a spelling re-resolved after the wait. The injected CLI calls take only feature
+// names and read CODEX_HOME from the environment, so they are not pinned by this path.
 func configLockPathsPinned(lock *crwdir.ConfigLock) (string, error) {
 	pinned, ok := configLockPathsRealPath(lock.Target)
 	if !ok || !lock.HoldsSidecar(pinned) {
@@ -89,8 +90,12 @@ func configLockPathsRealPath(p string) (string, bool) {
 	}
 	if dir == "" {
 		dir = "."
+	} else if trimmed := strings.TrimSuffix(dir, string(filepath.Separator)); trimmed != "" {
+		// A trailing separator is dropped so the parent resolves as a directory, but the root
+		// separator is not: "" would resolve to the working directory instead of "/".
+		dir = trimmed
 	}
-	realDir, err := filepath.EvalSymlinks(strings.TrimSuffix(dir, string(filepath.Separator)))
+	realDir, err := filepath.EvalSymlinks(dir)
 	if err != nil {
 		return "", false
 	}

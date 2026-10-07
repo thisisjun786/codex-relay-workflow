@@ -221,6 +221,26 @@ func TestConfigLockPathsPinnedRefusesARetargetedDirectoryAlias(t *testing.T) {
 
 // configLockPathsRenameRunner is the issue's reproduction: the injected CLI writes the new settings
 
+// The root-parent boundary: a config named directly at the filesystem root must resolve through
+// "/". Dropping the trailing separator unconditionally would leave an empty parent and resolve the
+// working directory instead, so the pin would reject a correctly held root sidecar.
+func TestConfigLockPathsRootParentKeepsTheRoot(t *testing.T) {
+	if _, err := os.Stat(string(filepath.Separator)); err != nil {
+		t.Skip("no filesystem root")
+	}
+	name := string(filepath.Separator) + "config.toml.crw-899-absent"
+	got, ok := configLockPathsRealPath(name)
+	if !ok {
+		t.Fatalf("a root-parented absent file did not resolve")
+	}
+	if got != name {
+		t.Fatalf("the root parent resolved to %q, want %q", got, name)
+	}
+	if root, ok := configLockPathsRealPath(string(filepath.Separator)); !ok || root != string(filepath.Separator) {
+		t.Fatalf("the root itself resolved to %q ok=%v", root, ok)
+	}
+}
+
 // The pre-merge d1 case (second record), pinned directly: only the FINAL component may be missing.
 // A missing intermediate directory must not be synthesised, because the kernel cannot resolve such a
 // path and the answer would otherwise be folded back onto the locked file with a lexical Join.
