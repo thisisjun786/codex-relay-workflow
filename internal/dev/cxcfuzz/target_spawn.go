@@ -112,38 +112,45 @@ func spawnNestingBytes(depth int) int {
 	return spawnNestingFixedBytes + spawnNestingBytesPerLevel*depth
 }
 
+// spawnNestingLimit is the deepest depth spawnNestingMaxBytes allows. It is derived from the cap
+// rather than assumed equal to spawnNestingMaxDepth, so a case's bytes are decided by the cap and the
+// two can never drift into a depth the cap forbids.
+func spawnNestingLimit() int {
+	return (spawnNestingMaxBytes - spawnNestingFixedBytes) / spawnNestingBytesPerLevel
+}
+
 // spawnNestingDepth is the nesting depth one case builds. The campaign's size is an arbitrary int
 // (rng.Int()), so it is folded into the port's bound and its spread rather than used directly, which
-// puts a case on either side of the 4,400-level bound.
+// puts a case on either side of the 4,400-level bound; the byte cap then clamps it, so a depth the cap
+// forbids is never built.
 func spawnNestingDepth(size int) int {
 	if size < 0 {
 		size = -size
 	}
-	return size % (spawnNestingBound + spawnNestingSpread + 1)
+	depth := size % (spawnNestingBound + spawnNestingSpread + 1)
+	if limit := spawnNestingLimit(); depth > limit {
+		depth = limit
+	}
+	return depth
 }
 
-// spawnNestingMention is the mention a depth builds, or false when the depth's bytes would pass
-// spawnNestingMaxBytes, so nothing past the cap is built.
-func spawnNestingMention(depth int) (string, bool) {
+// spawnNestingMention is the mention a depth builds. It is total: the depth is clamped to what the cap
+// allows, so no caller can build a mention past it and no path silently degrades to a flat one.
+func spawnNestingMention(depth int) string {
 	if depth < 0 {
 		depth = 0
 	}
-	if spawnNestingBytes(depth) > spawnNestingMaxBytes {
-		return "", false
+	if limit := spawnNestingLimit(); depth > limit {
+		depth = limit
 	}
-	return spawnNestingPrefix + strings.Repeat("[", depth) + spawnNestingFolder + strings.Repeat("]", depth) + spawnNestingSuffix, true
+	return spawnNestingPrefix + strings.Repeat("[", depth) + spawnNestingFolder + strings.Repeat("]", depth) + spawnNestingSuffix
 }
 
 // spawnMentionedFoldersArgs is the MentionedFolders argument list: the ordinary message with the
 // nested mention appended, so the classifier is still driven on varied text and the depth lands in
 // the one place it reads.
 func spawnMentionedFoldersArgs(rng *rand.Rand, size int) []any {
-	depth := spawnNestingDepth(size)
-	mention, ok := spawnNestingMention(depth)
-	if !ok {
-		mention = spawnNestingPrefix + spawnNestingFolder + spawnNestingSuffix
-	}
-	return []any{spawnMessage(rng, 1+rng.Intn(8)) + " " + mention}
+	return []any{spawnMessage(rng, 1+rng.Intn(8)) + " " + spawnNestingMention(spawnNestingDepth(size))}
 }
 
 // spawnMentionedFoldersInput is the whole MentionedFolders case, in the grammar the target reads.

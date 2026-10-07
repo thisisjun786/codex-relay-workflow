@@ -235,6 +235,18 @@ func TestSpawnGenerateNestsBySize(t *testing.T) {
 			t.Errorf("size %d built a mention %d deep, past the port's bound plus its spread", size, depth)
 		}
 	}
+	// The cap, not the bound, is what forbids a deeper mention: a depth past what the cap allows is
+	// clamped rather than built, so no path silently degrades to a flat one.
+	deepest := spawnNestingLimit()
+	if got := spawnNestingBytes(deepest); got > spawnNestingMaxBytes {
+		t.Fatalf("the deepest allowed depth costs %d bytes, past the cap %d", got, spawnNestingMaxBytes)
+	}
+	if message := spawnNestingMention(deepest + 1); len(message) != len(spawnNestingMention(deepest)) {
+		t.Fatalf("a depth past the cap built %d bytes, want it clamped to %d", len(message), len(spawnNestingMention(deepest)))
+	}
+	if depth := spawnNestingDepth(1 << 40); depth > deepest {
+		t.Fatalf("a huge size drew depth %d, past what the cap allows %d", depth, deepest)
+	}
 }
 
 // c3 (CRW-938): the depths a campaign draws straddle the port's 4,400-level bound, so the boundary is
