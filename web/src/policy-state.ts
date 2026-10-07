@@ -1,8 +1,9 @@
-// Original CRW module (no CXC counterpart): the execution-policy screen's pure state logic.
+// Original CRW module (no CXC counterpart): the execution-policy screen's state logic.
 //
-// This file holds everything the #/policy screen decides and nothing it renders: the wire shapes
-// the Go routes answer with, the view model derived from one reading, the one pending change and
-// its preview, the option lists the selects are built from, and the notice a write answer becomes.
+// This file holds everything the #/policy screen decides and nothing it renders: the wire shapes the
+// Go routes answer with, the view model derived from one reading, the one pending change and its
+// preview, the raw text the operator is typing into each list input, the option lists the selects
+// are built from, the notice a write answer becomes, and the reducer every transition goes through.
 // It imports no React, no DOM and no fetch, which is what lets web/test/policy-state.test.ts import
 // it directly - the same reason effort-support.ts sits outside the .tsx component.
 //
@@ -10,6 +11,7 @@
 // never a zero and never an empty success. And the policy file is the only source of a policy value:
 // the catalog contributes model and effort NAMES, never a value this screen writes.
 import type { CatalogEntry, ModelCatalog } from "./api.ts";
+import { effortExcluded } from "./effort-support.ts";
 
 // The catalog types are re-exported so a test of this module can build a catalog answer without
 // importing the API client, which keeps this module's tests free of a fetch boundary.
@@ -20,6 +22,14 @@ export const POLICY_BLAST_RADIUS = "Applies to tasks created after the relay ser
 
 /** The supervisor row's label: its model is Jun's own selection and this screen does not manage it. */
 export const SUPERVISOR_LABEL = "Selected by Jun; not managed here";
+
+/**
+ * The three roles the first screen always shows a row for, in the order it shows them. A role the
+ * file does not declare still gets a row: the issue's first screen is three rows, and a policy that
+ * declares only the child must still show the supervisor and the parent rather than hiding them.
+ */
+export const POLICY_ROLES = ["supervisor", "parent", "child"] as const;
+export type PolicyRoleName = (typeof POLICY_ROLES)[number];
 
 /** The three states a reading answers with (internal/policystore/policy.go's State). */
 export type PolicyStateName = "registered" | "not_registered" | "unreadable";
@@ -73,6 +83,11 @@ export interface PolicyReading {
  * One proposed edit. It is the shape POST /api/policy/check and POST /api/policy take
  * (internal/policystore.Change). Exactly one kind is applied per request, and a member carries
  * only the fields its own kind uses, so the server's singleKind check can never see a stray field.
+ *
+ * An omitted role on setException is NOT "any role": the server keeps the role an existing
+ * exception already records (internal/policystore/check.go applySetException), and a brand-new
+ * exception with no role is only ever covered by a request that itself cites no role, which no task
+ * does. The screen therefore requires a role and never offers an empty one as a choice.
  */
 export type PolicyChange =
   | { kind: "setRolePairs"; role: string; pairs: PolicyPair[] }
@@ -88,23 +103,6 @@ export interface PolicyCheckResult {
   currentDigest: string;
   stale: boolean;
   diff: string[];
-}
-
-/**
- * decodeCheck validates a POST /api/policy/check answer. A body without the boolean the route always
- * answers with is refused rather than read as a refusal, which would show the operator a message the
- * server never sent.
- */
-export function decodeCheck(raw: unknown): PolicyCheckResult {
-  if (!isObject(raw) || typeof raw.valid !== "boolean") throw new Error("The policy check could not be read. Try saving again.");
-  const strings = (value: unknown): string[] => (Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []);
-  return {
-    valid: raw.valid,
-    errors: strings(raw.errors),
-    currentDigest: stringOf(raw.currentDigest),
-    stale: raw.stale === true,
-    diff: strings(raw.diff),
-  };
 }
 
 /** POST /api/policy's 200 answer (internal/gui/policyWriteBody). */
@@ -134,6 +132,8 @@ export interface PolicyWriteError {
 /** One row of the first screen. */
 export interface PolicyRoleRow {
   name: string;
+  /** False when the file does not declare this role: the row then says so. */
+  declared: boolean;
   /** False for the supervisor, whose model and effort are the user's own selection. */
   editable: boolean;
   label: string;
@@ -208,12 +208,58 @@ export interface PolicyModelOption {
   unavailable: boolean;
 }
 
+/** The raw text the operator is typing into one exception's editor. */
+export interface ExceptionDraft {
+  /** The exception being edited, or "" when a new one is being added. */
+  id: string;
+  role: string;
+  model: string;
+  effort: string;
+  /** The cwd text exactly as typed; it is parsed only when the change is built. */
+  cwdText: string;
+}
+
+/**
+ * The screen's whole state. Every transition goes through one of the screen* functions below, which
+ * is what makes the screen's behaviour testable without a DOM: the component renders this state and
+ * calls these functions, so a test that drives them drives the screen.
+ */
+export interface PolicyScreenState {
+  reading: PolicyReading | null;
+  catalog: ModelCatalog | null;
+  error: string | null;
+  /** The one pending change, or null. */
+  change: PolicyChange | null;
+  /** The raw text of each allowed-list input, keyed by model. */
+  allowedText: Record<string, string>;
+  /** The model the "add a model to the allowed list" select is on, or "" for its first free one. */
+  allowedAddModel: string;
+  /** The exception editor's draft, or null when it is closed. */
+  exceptionDraft: ExceptionDraft | null;
+  /** The change a save in flight is writing, or null when no save is in flight. */
+  saving: PolicyChange | null;
+  notice: PolicyNotice | null;
+}
+
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function stringOf(value: unknown): string {
   return typeof value === "string" ? value : "";
+}
+
+/**
+ * parseListInput is how a comma-separated list input becomes the list the API takes: each entry is
+ * trimmed and the empty ones are dropped. It is deliberately NOT applied on every keystroke - the
+ * screen keeps the raw text in its state and calls this only to derive the change, so a trailing
+ * comma the operator is about to follow with another entry survives on screen.
+ */
+export function parseListInput(text: string): string[] {
+  return text
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry !== "");
 }
 
 /** One pair, or null when the answer did not carry a usable one. */
@@ -280,14 +326,14 @@ export function decodePolicy(raw: unknown): PolicyReading {
     }
     exceptions.push({
       id: stringOf(entry.id),
-      role: entry.role === undefined ? undefined : stringOf(entry.role),
+      role: entry.role === undefined || entry.role === null ? undefined : stringOf(entry.role),
       model: stringOf(entry.model),
       reasoningEffort: stringOf(entry.reasoningEffort),
       cwd,
     });
   }
   const running = raw.runningDigest;
-  if (running !== null && typeof running !== "string") throw new Error("Invalid policy response. Reload and try again.");
+  if (running !== null && running !== undefined && typeof running !== "string") throw new Error("Invalid policy response. Reload and try again.");
   return {
     state,
     reason: stringOf(raw.reason),
@@ -295,7 +341,7 @@ export function decodePolicy(raw: unknown): PolicyReading {
     mode: stringOf(raw.mode),
     digest: stringOf(raw.digest),
     registeredDigest: stringOf(raw.registeredDigest),
-    runningDigest: running,
+    runningDigest: typeof running === "string" ? running : null,
     runningReason: stringOf(raw.runningReason),
     roles,
     allowed,
@@ -305,15 +351,36 @@ export function decodePolicy(raw: unknown): PolicyReading {
   };
 }
 
-/** derivePolicyView builds the first screen from one reading. It invents no value. */
+/**
+ * decodeCheck validates a POST /api/policy/check answer. A body without the boolean the route always
+ * answers with is refused rather than read as a refusal, which would show the operator a message the
+ * server never sent.
+ */
+export function decodeCheck(raw: unknown): PolicyCheckResult {
+  if (!isObject(raw) || typeof raw.valid !== "boolean") throw new Error("The policy check could not be read. Try saving again.");
+  const strings = (value: unknown): string[] => (Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []);
+  return {
+    valid: raw.valid,
+    errors: strings(raw.errors),
+    currentDigest: stringOf(raw.currentDigest),
+    stale: raw.stale === true,
+    diff: strings(raw.diff),
+  };
+}
+
+/** policyView builds the first screen from one reading. It invents no value. */
 export function policyView(reading: PolicyReading): PolicyView {
-  const roles = reading.roles.map((role) => ({
-    name: role.name,
-    editable: role.name !== "supervisor",
-    label: role.name === "supervisor" ? SUPERVISOR_LABEL : "",
-    expectation: role.expectation,
-    pairs: role.pairs,
-  }));
+  const roles = POLICY_ROLES.map((name) => {
+    const declared = reading.roles.find((role) => role.name === name);
+    return {
+      name,
+      declared: declared !== undefined,
+      editable: name !== "supervisor",
+      label: name === "supervisor" ? SUPERVISOR_LABEL : "",
+      expectation: declared?.expectation ?? "",
+      pairs: declared?.pairs ?? [],
+    };
+  });
   return {
     state: reading.state,
     reason: reading.reason ?? "",
@@ -339,50 +406,15 @@ function pairText(pair: PolicyPair): string {
   return `${pair.model} ${pair.reasoningEffort}`.trim();
 }
 
-/**
- * The accessible name of a control on the screen. They live here rather than in the .tsx so the
- * label a control carries is pinned by a pure test, which is the only kind node:test can run
- * without a DOM: the screen imports these and every control it renders is named from them, so a
- * control cannot appear unlabelled.
- */
-export function roleControlsLabel(role: string): string {
-  return `${role} pair controls`;
-}
-
-export function pairModelLabel(role: string, index: number): string {
-  return `${role} pair ${index + 1} model`;
-}
-
-export function pairEffortLabel(role: string, index: number): string {
-  return `${role} pair ${index + 1} effort`;
-}
-
-export function allowedEffortsLabel(model: string): string {
-  return `${model} allowed efforts`;
-}
-
-export function removeExceptionLabel(id: string): string {
-  return `Remove exception ${id}`;
-}
-
-/**
- * Every control the screen renders is one of these native elements, which the browser makes
- * keyboard operable and focusable by itself. The screen adds no custom widget, no tabindex of its
- * own and no key handler, so keyboard operability is a property of the element kind rather than of
- * code this screen writes. A test pins the list so a later edit that introduces a non-native
- * control has to change it deliberately.
- */
-export const POLICY_CONTROL_ELEMENTS = ["select", "input", "button", "fieldset"] as const;
-
 /** pairsText is a pair list as a row reads it, or a word for the empty list. */
 function pairsText(pairs: readonly PolicyPair[]): string {
   return pairs.length === 0 ? "none" : pairs.map(pairText).join(", ");
 }
 
 /** exceptionText is one exception as a row reads it. */
-function exceptionText(exception: PolicyExceptionView): string {
+function exceptionText(exception: { role?: string; model: string; reasoningEffort: string; cwd: string[] }): string {
   const scope = exception.cwd.length === 0 ? "no cwd scope" : exception.cwd.join(", ");
-  return `${exception.role ?? "any role"} ${exception.model} ${exception.reasoningEffort} (${scope})`;
+  return `${exception.role || "no role (covers no request)"} ${exception.model} ${exception.reasoningEffort} (${scope})`;
 }
 
 /**
@@ -415,7 +447,11 @@ export function previewChange(reading: PolicyReading, change: PolicyChange): Pol
     }
     case "setException": {
       const existing = reading.exceptions.find((row) => row.id === change.id);
-      const after: PolicyExceptionView = { id: change.id, role: change.role, model: change.model, reasoningEffort: change.effort, cwd: change.cwd };
+      // The server keeps the role an existing exception already records when the change omits it
+      // (internal/policystore/check.go applySetException), so the preview must show that preserved
+      // role rather than an "any role" the write would not produce.
+      const role = change.role !== undefined && change.role !== "" ? change.role : existing?.role;
+      const after = { role, model: change.model, reasoningEffort: change.effort, cwd: change.cwd };
       items.push({
         label: `exception ${change.id}`,
         before: existing ? exceptionText(existing) : "not declared",
@@ -453,6 +489,10 @@ export function previewChange(reading: PolicyReading, change: PolicyChange): Pol
  * or swapped for another. The catalog adds names a model advertises that the allowlist does not
  * mention, which is what lets the screen show an option the operator may still add. A catalog that
  * could not be read contributes nothing and takes nothing away.
+ *
+ * This is the list of names that EXIST. Whether one is offered for a particular model is a separate
+ * question the screen answers with modelLadder and effortExcluded, so a name another model
+ * advertises is not silently presented as available for this one.
  */
 export function policyEfforts(reading: PolicyReading, catalog: ModelCatalog | null): string[] {
   const seen = new Set<string>();
@@ -468,6 +508,16 @@ export function policyEfforts(reading: PolicyReading, catalog: ModelCatalog | nu
     if (Array.isArray(entry.reasoningEfforts)) for (const effort of entry.reasoningEfforts) add(effort);
   }
   return names;
+}
+
+/**
+ * modelLadder is the effort ladder the catalog advertises for one model, with the same three-state
+ * meaning the effort control uses: an array is the advertised ladder, and null means the catalog did
+ * not report one (which is not evidence that the model refuses anything).
+ */
+export function modelLadder(catalog: ModelCatalog | null, model: string | null | undefined): readonly string[] | null {
+  if (!model) return null;
+  return catalog?.entries.find((entry) => entry.id === model)?.reasoningEfforts ?? null;
 }
 
 /** everyModel names every model the reading mentions, in the order the document declares them. */
@@ -509,15 +559,26 @@ export function modelOptions(reading: PolicyReading, catalog: ModelCatalog | nul
 }
 
 /**
+ * modelOptionLabel is what one model reads as in a select: the catalog's label when the catalog
+ * lists it, and the "(saved, unavailable)" form when it does not. The exception editor uses this so
+ * a saved model the catalog dropped is marked there exactly as it is in the pair rows.
+ */
+export function modelOptionLabel(options: readonly PolicyModelOption[], model: string): string {
+  const found = options.find((option) => option.id === model);
+  if (!found) return model;
+  return found.unavailable ? `${model} (saved, unavailable)` : found.label;
+}
+
+/**
  * catalogNotice names the catalog's own state. A catalog still loading, one that failed, one that
  * is stale behind a cached list and one this host's OCX cannot read are four different sentences:
  * collapsing them into "no models" would hide which of them the operator is looking at.
  */
 export function catalogNotice(catalog: ModelCatalog | null): string {
   if (!catalog) return "Loading the model list...";
-  // This host's OCX does not read the live catalog at all. The reader reports that as a stale
-  // answer behind a cache, and it is a different state from a refresh that simply failed: the
-  // message says so, and folding it into the generic stale sentence would hide which one it is.
+  // This host's OCX does not read the live catalog at all. The reader reports that as a stale answer
+  // behind a cache, and it is a different state from a refresh that simply failed: the message says
+  // so, and folding it into the generic stale sentence would hide which one it is.
   if (catalog.state === "unsupported-ocx-catalog") {
     return catalog.message && catalog.message !== ""
       ? `Model list unavailable: ${catalog.message}`
@@ -585,8 +646,7 @@ export function noticeForWrite(status: number, body: unknown): PolicyNotice {
     else if (notice.applied === "needs_user_action") {
       parts.push("the running relay still holds the old bytes");
       if (notice.actions.length > 0) parts.push(`to apply it: ${notice.actions.join("; ")}`);
-    }
-    else if (notice.applied === "unverifiable") parts.push("whether the running relay holds these bytes could not be read");
+    } else if (notice.applied === "unverifiable") parts.push("whether the running relay holds these bytes could not be read");
     else parts.push(`applied: ${notice.applied || "unknown"}`);
     notice.text = `${parts.join("; ")}.`;
     return notice;
@@ -635,13 +695,23 @@ export function noticeForWrite(status: number, body: unknown): PolicyNotice {
  * checkNotice turns POST /api/policy/check's answer into a notice. A change the server refuses is
  * never shown as ready to save: the same parser judges the write, so a refusal here is a refusal
  * there.
+ *
+ * A stale check is a conflict first. The route answers stale whenever the caller's digest is no
+ * longer the file's (internal/policystore/check.go), and it can be stale AND invalid at once - the
+ * file moved and the change no longer applies to it. Reporting only the invalidity would leave the
+ * operator retrying a change against a file they have not seen, so the stale case keeps the inputs
+ * and asks for a re-read, exactly as the write route's 409 does.
  */
 export function checkNotice(result: PolicyCheckResult): PolicyNotice {
+  if (result.stale) {
+    const notice = emptyNotice("err", `The policy changed elsewhere since it was read, so this change was not checked against the current file. The file has been read again; your inputs are kept. Check the new values, then save again.${result.errors.length > 0 ? ` The change was also refused: ${result.errors.join("; ")}` : ""}`);
+    notice.keepInputs = true;
+    notice.reread = true;
+    notice.errors = result.errors;
+    return notice;
+  }
   if (result.valid) {
     const notice = emptyNotice("info", `The policy check accepts this change: ${result.diff.join(", ")}`);
-    notice.reread = result.stale;
-    notice.keepInputs = result.stale;
-    if (result.stale) notice.text = `The policy changed elsewhere since it was read. Read it again before saving. Checked fields: ${result.diff.join(", ")}`;
     return notice;
   }
   const notice = emptyNotice("err", result.errors.length > 0 ? `The policy check refused this change: ${result.errors.join("; ")}` : "The policy check refused this change.");
@@ -661,3 +731,193 @@ export function lostWriteNotice(): PolicyNotice {
   notice.reread = true;
   return notice;
 }
+
+/** unreachableNotice is the sentence a request that could not be answered at all becomes. */
+export function unreachableNotice(): PolicyNotice {
+  const notice = emptyNotice("err", "The backend could not be reached, so nothing was sent.");
+  notice.keepInputs = true;
+  return notice;
+}
+
+/* ---- the screen's state transitions ---- */
+
+/** initialScreen is the state before anything has been read. */
+export function initialScreen(): PolicyScreenState {
+  return { reading: null, catalog: null, error: null, change: null, allowedText: {}, allowedAddModel: "", exceptionDraft: null, saving: null, notice: null };
+}
+
+/**
+ * screenLoaded applies a freshly read policy. keepInputs is true when the read follows a conflict or
+ * a lost response: the decided answer keeps the operator's inputs across a stale re-read, so the
+ * pending change and the raw text stay; an ordinary load (the first one, or the one after a
+ * successful save) starts from the file.
+ */
+export function screenLoaded(state: PolicyScreenState, reading: PolicyReading, keepInputs = false): PolicyScreenState {
+  return {
+    ...state,
+    reading,
+    error: null,
+    ...(keepInputs ? {} : { change: null, allowedText: {}, allowedAddModel: "", exceptionDraft: null }),
+  };
+}
+
+/** screenLoadFailed records that the policy itself could not be read. */
+export function screenLoadFailed(state: PolicyScreenState, message: string): PolicyScreenState {
+  return { ...state, reading: null, error: message };
+}
+
+/** screenCatalog applies a catalog answer. */
+export function screenCatalogLoaded(state: PolicyScreenState, catalog: ModelCatalog): PolicyScreenState {
+  return { ...state, catalog };
+}
+
+/** screenPropose sets the one pending change and clears the previous attempt's notice. */
+export function screenPropose(state: PolicyScreenState, change: PolicyChange | null): PolicyScreenState {
+  return { ...state, change, notice: null, exceptionDraft: null };
+}
+
+/**
+ * screenAllowedText records the raw text of one allowed-list input and derives the pending change
+ * from it. The raw text is what the input renders, so a trailing comma the operator is about to
+ * follow with another entry survives; an empty parse clears the pending change rather than sending
+ * a list the server refuses.
+ */
+export function screenAllowedText(state: PolicyScreenState, model: string, text: string): PolicyScreenState {
+  const efforts = parseListInput(text);
+  return {
+    ...state,
+    allowedText: { ...state.allowedText, [model]: text },
+    change: efforts.length === 0 ? null : { kind: "setAllowed", model, efforts },
+    notice: null,
+  };
+}
+
+/**
+ * screenAllowedAddModel records which model the "add to the allowed list" select is on. It is part
+ * of the state rather than component-local because the select's value must follow the options: a
+ * catalog that arrives after the policy would otherwise leave the control showing one model and
+ * sending another.
+ */
+export function screenAllowedAddModel(state: PolicyScreenState, model: string): PolicyScreenState {
+  return { ...state, allowedAddModel: model };
+}
+
+/**
+ * allowedAddChoice is the model the add control is on: the one the operator chose when it is still
+ * a free option, and the first free one otherwise. "" means there is nothing left to add.
+ */
+export function allowedAddChoice(state: PolicyScreenState, free: readonly string[]): string {
+  return free.includes(state.allowedAddModel) ? state.allowedAddModel : (free[0] ?? "");
+}
+
+/** allowedTextOf is the text one allowed-list input shows: the draft first, then the saved list. */
+export function allowedTextOf(state: PolicyScreenState, model: string, saved: readonly string[]): string {
+  const text = state.allowedText[model];
+  return text !== undefined ? text : saved.join(", ");
+}
+
+/** screenExceptionDraft opens or updates the exception editor. */
+export function screenExceptionDraft(state: PolicyScreenState, draft: ExceptionDraft | null): PolicyScreenState {
+  return { ...state, exceptionDraft: draft };
+}
+
+/**
+ * changeFromExceptionDraft is the change an exception draft proposes, or null when it is not yet
+ * complete. An empty id or model would be refused by the check, so it is not proposed at all.
+ */
+export function changeFromExceptionDraft(draft: ExceptionDraft): PolicyChange | null {
+  const id = draft.id.trim();
+  const model = draft.model.trim();
+  if (id === "" || model === "") return null;
+  const change: PolicyChange = { kind: "setException", id, model, effort: draft.effort, cwd: parseListInput(draft.cwdText) };
+  // An empty role is left off the request: the server then keeps the role an existing exception
+  // records. The screen only produces this for an exception that already has no role.
+  if (draft.role !== "") change.role = draft.role;
+  return change;
+}
+
+/** screenSaveStarted marks the change a save in flight is writing. */
+export function screenSaveStarted(state: PolicyScreenState): PolicyScreenState {
+  return { ...state, saving: state.change };
+}
+
+/**
+ * screenSaveFinished applies a write answer. The pending change is cleared only when it is still the
+ * one that was saved: an edit made while the save was in flight is the operator's next change and is
+ * never dropped by a response to the previous one.
+ */
+export function screenSaveFinished(state: PolicyScreenState, saved: PolicyChange | null, notice: PolicyNotice): PolicyScreenState {
+  const stillPending = saved !== null && state.change === saved;
+  let change = state.change;
+  if (notice.blockEditing) change = null;
+  else if (notice.tone === "ok" && stillPending) change = null;
+  return { ...state, saving: null, notice, change };
+}
+
+/** screenReread is the explicit re-read: it drops the pending change and the previous notice. */
+export function screenReread(state: PolicyScreenState): PolicyScreenState {
+  return { ...state, change: null, allowedText: {}, allowedAddModel: "", exceptionDraft: null, notice: null };
+}
+
+/**
+ * screenEditable is whether the editing controls are live: the file must be registered and no
+ * notice may be blocking on a repair a person has to make first.
+ */
+export function screenEditable(state: PolicyScreenState): boolean {
+  if (state.reading === null || state.reading.state !== "registered") return false;
+  return !(state.notice?.blockEditing ?? false);
+}
+
+/** screenSaving is whether a save is in flight; the controls are disabled while it is. */
+export function screenSaving(state: PolicyScreenState): boolean {
+  return state.saving !== null;
+}
+
+/**
+ * screenEffortUnavailable is whether one effort name is refused for one model. Only an advertised
+ * ladder is evidence that a model refuses a name (effort-support.ts), so an unreported ladder or no
+ * catalog at all leaves every name selectable.
+ */
+export function screenEffortUnavailable(state: PolicyScreenState, model: string, effort: string): boolean {
+  return effortExcluded(modelLadder(state.catalog, model), effort);
+}
+
+/* ---- the accessible names the screen renders every control from ---- */
+
+/**
+ * The accessible name of a control on the screen. They live here rather than in the .tsx so the
+ * label a control carries is built by a pure function the tests can call; the component renders
+ * every aria-label from these, so a control cannot appear unlabelled.
+ */
+export function roleControlsLabel(role: string): string {
+  return `${role} pair controls`;
+}
+
+export function pairModelLabel(role: string, index: number): string {
+  return `${role} pair ${index + 1} model`;
+}
+
+export function pairEffortLabel(role: string, index: number): string {
+  return `${role} pair ${index + 1} effort`;
+}
+
+export function allowedEffortsLabel(model: string): string {
+  return `${model} allowed efforts`;
+}
+
+export function removeExceptionLabel(id: string): string {
+  return `Remove exception ${id}`;
+}
+
+export function editExceptionLabel(id: string): string {
+  return `Edit exception ${id}`;
+}
+
+/**
+ * Every control the screen renders is one of these native elements, which the browser makes
+ * keyboard operable and focusable by itself. The screen adds no custom widget, no tabindex of its
+ * own and no key handler, so keyboard operability is a property of the element kind rather than of
+ * code this screen writes. A test pins the list so a later edit that introduces a non-native control
+ * has to change it deliberately.
+ */
+export const POLICY_CONTROL_ELEMENTS = ["select", "input", "button", "fieldset"] as const;

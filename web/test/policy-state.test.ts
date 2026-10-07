@@ -21,6 +21,7 @@ import {
   decodePolicy,
   lostWriteNotice,
   modelOptions,
+  modelLadder,
   noticeForWrite,
   pairEffortLabel,
   pairModelLabel,
@@ -29,6 +30,12 @@ import {
   previewChange,
   removeExceptionLabel,
   roleControlsLabel,
+  screenAllowedAddModel,
+  screenEffortUnavailable,
+  screenLoaded,
+  screenCatalogLoaded,
+  initialScreen,
+  allowedAddChoice,
   type ModelCatalog,
   type PolicyChange,
   type PolicyReading,
@@ -68,7 +75,10 @@ function catalog(status: "fresh" | "stale" | "unavailable", entries: ModelCatalo
 
 test("the view carries the supervisor, parent and child rows and their source", () => {
   const view = policyView(reading());
-  assert.deepEqual(view.roles.map((role) => role.name), ["child", "parent", "supervisor"]);
+  // The first screen is a row for each of the three roles, in the order the issue lists them,
+  // whether or not the file declares them: a child-only policy still shows the other two.
+  assert.deepEqual(view.roles.map((role) => role.name), ["supervisor", "parent", "child"]);
+  assert.deepEqual(view.roles.map((role) => role.declared), [true, true, true]);
   const supervisor = view.roles.find((role) => role.name === "supervisor");
   assert.equal(supervisor?.editable, false);
   assert.equal(supervisor?.label, SUPERVISOR_LABEL);
@@ -86,7 +96,11 @@ test("a reading with no record shows its state and blocks editing", () => {
   assert.equal(view.state, "not_registered");
   assert.equal(view.reason, "no record");
   assert.equal(view.editable, false);
-  assert.deepEqual(view.roles, []);
+  // The three rows remain, each marked undeclared, so the operator can see the screen is complete
+  // even though the file it reads declares nothing.
+  assert.deepEqual(view.roles.map((role) => role.name), ["supervisor", "parent", "child"]);
+  assert.deepEqual(view.roles.map((role) => role.declared), [false, false, false]);
+  assert.deepEqual(view.roles.map((role) => role.pairs), [[], [], []]);
 });
 
 test("an unreadable policy blocks editing and keeps its reason", () => {
@@ -293,6 +307,38 @@ test("a saved model is kept when the catalog could not be read at all", () => {
   const options = modelOptions(reading(), catalog("unavailable"));
   assert.ok(options.some((option) => option.id === "anthropic/opus"));
   assert.ok(options.some((option) => option.id === "gpt-6.1-sol"));
+});
+
+test("an effort the selected model's catalog ladder omits is marked unavailable, not offered", () => {
+  // d5: the effort list is the names that EXIST; whether one is offered for a particular model is a
+  // separate question. A name only another model advertises must not read as a normal option here.
+  const fresh = catalog("fresh", [{ id: "gpt-6.1-sol", label: "Sol", reasoningEfforts: ["xhigh"] }]);
+  const names = policyEfforts(reading(), fresh);
+  assert.ok(names.includes("max"), "max is still a name the policy declares");
+  // The parent runs gpt-6.1-sol, whose ladder is xhigh only, so max is not selectable for it.
+  assert.equal(screenEffortUnavailable({ ...initialScreen(), reading: reading(), catalog: fresh }, "gpt-6.1-sol", "max"), true);
+  assert.equal(screenEffortUnavailable({ ...initialScreen(), reading: reading(), catalog: fresh }, "gpt-6.1-sol", "xhigh"), false);
+  // An unreported ladder is not evidence that the model refuses anything.
+  assert.equal(screenEffortUnavailable({ ...initialScreen(), reading: reading(), catalog: catalog("fresh", [{ id: "gpt-6.1-sol", label: "Sol" }]) }, "gpt-6.1-sol", "max"), false);
+  assert.equal(modelLadder(fresh, "gpt-6.1-sol")?.join(","), "xhigh");
+  assert.equal(modelLadder(fresh, "nope"), null);
+});
+
+test("the add-model control follows a catalog that arrives after the policy", () => {
+  // d3: the policy answers first and the catalog second, which is the ordinary order. The control
+  // must end up on a model that is actually offered, never on an empty string.
+  let state = initialScreen();
+  state = screenLoaded(state, reading({ allowed: [{ model: "m", efforts: ["high"] }], exceptions: [], roles: [{ name: "child", expectation: "", pairs: [{ model: "m", reasoningEffort: "high" }] }] }));
+  // Before the catalog, the only model is the policy's own, and it is already in the allowed list.
+  assert.equal(allowedAddChoice(state, []), "");
+  // The catalog then lists a new model.
+  state = screenCatalogLoaded(state, catalog("fresh", [{ id: "fresh/model", label: "Fresh" }]) as never);
+  const free = ["fresh/model"];
+  assert.equal(allowedAddChoice(state, free), "fresh/model");
+  // A choice the operator made is kept while it is still free, and dropped when it is not.
+  state = screenAllowedAddModel(state, "fresh/model");
+  assert.equal(allowedAddChoice(state, free), "fresh/model");
+  assert.equal(allowedAddChoice(state, []), "");
 });
 
 /* ---- C4/C5: the write answer, and never a success notice on a refusal ---- */
