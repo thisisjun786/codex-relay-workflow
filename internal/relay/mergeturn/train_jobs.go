@@ -53,6 +53,16 @@ func TrainJobsFromWorkflow(workflow string) ([]string, error) {
 			out = append(out, display+" ("+part+")")
 		}
 	}
+	// a name reported twice would collapse in the set comparison and hide an added job behind an
+	// existing one's name, so a workflow whose jobs report the same name is refused rather than
+	// compared as a smaller set
+	seen := map[string]bool{}
+	for _, name := range out {
+		if seen[name] {
+			return nil, errors.New("the workflow's jobs report the name " + pyvalue.StrRepr(name) + " more than once, so an added job could hide behind it")
+		}
+		seen[name] = true
+	}
 	return out, nil
 }
 
@@ -220,9 +230,22 @@ func trainJobDisplayName(body, job string) (string, error) {
 		if value == "" {
 			return "", errors.New("the workflow's " + job + " job carries its name on the name: line, which this reader cannot read")
 		}
-		return value, nil
+		return trainUnquote(value), nil
 	}
 	return job, nil
+}
+
+// trainUnquote strips one layer of YAML quotes from a scalar: "gui" and 'gui' both name gui, while an
+// unquoted scalar is returned as it stands. A quoted scalar that never closes is returned as it was,
+// so it stays distinct from the unquoted spelling rather than being silently folded into it.
+func trainUnquote(value string) string {
+	if len(value) < 2 {
+		return value
+	}
+	if quote := value[0]; (quote == '"' || quote == '\'') && value[len(value)-1] == quote {
+		return value[1 : len(value)-1]
+	}
+	return value
 }
 
 func trainJobMatrixParts(workflow, job string) ([]string, bool, error) {

@@ -515,6 +515,20 @@ func TestTrainJobReaderReadsAJobDisplayName(t *testing.T) {
 	if strings.Join(jobs, ",") != "validate,gui-renamed,go-product (lint)" {
 		t.Fatalf("jobs = %v, want the display name", jobs)
 	}
+	// a quoted display name is the same name, not a different one
+	quoted := strings.Replace(job, "    name: gui-renamed", "    name: \"gui-renamed\"", 1)
+	jobs, err = TrainJobsFromWorkflow(quoted)
+	if err != nil {
+		t.Fatalf("a quoted display name: %v", err)
+	}
+	if strings.Join(jobs, ",") != "validate,gui-renamed,go-product (lint)" {
+		t.Fatalf("jobs = %v, want the quoted name unquoted", jobs)
+	}
+	// two jobs reporting the same name would collapse in the set comparison and hide an added job
+	dup := strings.Replace(job, "  go-product:", "  audit:\n    name: gui-renamed\n    runs-on: ubuntu\n  go-product:", 1)
+	if _, err := TrainJobsFromWorkflow(dup); err == nil {
+		t.Fatal("two jobs reporting one name were compared as a smaller set")
+	}
 	// and through verify the renamed job is refused naming the missing and added names
 	repository, err := os.ReadFile(filepath.Join("..", "..", "..", ".github", "workflows", "ci.yml"))
 	if err != nil {
