@@ -1008,8 +1008,10 @@ the acceptance, for example while N's jobs run or while the candidate waits for 
 parent's to refresh in that same turn: the update moves the head off the accepted one, and
 `dag-base-refresh` records the refreshed head in the acceptance's own generation, so the head moves
 and the generation does not (`docs/relay/dag-scheduler.md`, "A base refresh of an accepted node").
-Without that record the judge reads `stale_base`; with it the judge, the merge request, the release
-freshness check and a bundle's stand-head check all read the refreshed head. That candidate does not go back by a second ruling, because the relay takes none on an accepted head; [a base refresh the child made after the acceptance](#a-base-refresh-the-child-made-after-the-acceptance) is the other way back, and [a base conflict after the ruling and before the acceptance](#a-base-conflict-after-the-ruling-and-before-the-acceptance) says what remains for the ruling that precedes it. The window now includes N's job time, and another project's landing during it
+Without that record the judge reads `stale_head` and `dag-merge-request` refuses
+`merge_candidate_moved`, because the head is no longer the one the acceptance stands on: the head is
+compared before the base is. With it the judge, the merge request, the release freshness check and a
+bundle's stand-head check all read the refreshed head. That candidate does not go back by a second ruling, because the relay takes none on an accepted head; [a base refresh the child made after the acceptance](#a-base-refresh-the-child-made-after-the-acceptance) is the other way back, and [a base conflict after the ruling and before the acceptance](#a-base-conflict-after-the-ruling-and-before-the-acceptance) says what remains for the ruling that precedes it. The window now includes N's job time, and another project's landing during it
 counts; refreshing only the candidate about to merge is what keeps it short. The limit is the
 scheduler's, which has no re-acceptance of a verified refresh: the refresh is recorded beside the acceptance instead.
 
