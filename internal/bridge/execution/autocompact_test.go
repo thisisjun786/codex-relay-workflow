@@ -42,7 +42,7 @@ func TestAutoCompactTokenLimitAbsentLeavesThePolicyAsItWas(t *testing.T) {
 // A value that is not a positive integer is refused while the file is read, through the policy error
 // every other unusable value is refused with. No new refusal name appears.
 func TestAutoCompactTokenLimitIsRefusedWhenItIsNotAPositiveInteger(t *testing.T) {
-	for _, value := range []string{`"550000"`, `0`, `-1`, `550000.0`, `1.5e6`, `true`, `null`} {
+	for _, value := range []string{`"550000"`, `0`, `-1`, `550000.0`, `1.5e6`, `1e6`, `true`, `null`, `NaN`, `Infinity`, `99999999999999999999`} {
 		t.Run(value, func(t *testing.T) {
 			raw := []byte(`{"roles":{"child":{"model":"` + model + `","reasoningEffort":"` + effort + `","autoCompactTokenLimit":` + value + `}}}`)
 			_, err := FromBytes(raw, "test-policy")

@@ -3,14 +3,17 @@ package adapter
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/settings"
+	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/managed"
@@ -18,7 +21,7 @@ import (
 )
 
 // autoCompactManagedPolicy is the child pair a managed start creates under, carrying the limit this
-// issue recommends. Managed start reaches the bridge's settings contract, so the value the operator
+// issue recommends. Managed start reaches the bridge settings contract, so the value the operator
 // puts on the pair is what the creation sends.
 const autoCompactManagedPolicy = `{"roles":{"parent":{"model":"gpt-5.4","reasoningEffort":"medium"},"child":{"model":"gpt-5.4","reasoningEffort":"medium","autoCompactTokenLimit":550000}}}`
 
@@ -129,5 +132,69 @@ func TestManagedStartSendsTheChildPairsAutoCompactLimit(t *testing.T) {
 	config, _ := autoCompactHostParams(t, host, "thread/start")["config"].(map[string]any)
 	if config == nil || config[settings.AutoCompactTokenLimitKey] != float64(550000) {
 		t.Fatalf("thread/start config = %v", config)
+	}
+}
+
+// autoCompactChildPolicy is the child role a relay delivery is judged against: the pair the record
+// states carries the limit and a second pair does not, so a record on that pair must not inherit its
+// sibling's value. The pair's model is taken from the record itself, so this fixture cannot drift
+// away from the settings the send is verifying.
+func autoCompactChildPolicy(t *testing.T, record *delivery.TaskSettings) bridge.ExecutionPolicy {
+	t.Helper()
+	model, _ := record.Data.Lookup("model")
+	body := fmt.Sprintf(`{"roles":{"child":{"pairs":[{"model":%q,"reasoningEffort":"xhigh","autoCompactTokenLimit":550000},{"model":"gpt-6.1-sol","reasoningEffort":"xhigh"}]}}}`, model)
+	p, err := execution.FromBytes([]byte(body), "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// A relay delivery resumes a child from its recorded settings, and that record cannot hold this value
+// because the host never reports it. The limit is resolved from the policy by the pair the record
+// states, so an unloaded child comes back under its pair's threshold rather than the host's window --
+// on both routes, including the settings-free resume that transmits no pair.
+func TestARelayDeliveryResumeCarriesTheRecordedPairsAutoCompactLimit(t *testing.T) {
+	for _, free := range []bool{false, true} {
+		t.Run(map[bool]string{false: "with-pair", true: "settings-free"}[free], func(t *testing.T) {
+			record := childRecord(free, "")
+			rpc := &mcpRPC{}
+			a := mcpAdapter(t, rpc, autoCompactChildPolicy(t, record))
+			if receipt := sendRecord(t, a, "send-auto-compact", record); receipt["status"] != "accepted" {
+				t.Fatalf("receipt=%v", receipt)
+			}
+			if got := resumeConfig(rpc)[settings.AutoCompactTokenLimitKey]; got != int64(550000) {
+				t.Fatalf("thread/resume config = %v", resumeConfig(rpc))
+			}
+		})
+	}
+}
+
+// A record on the role's other pair sends no limit: the value belongs to the pair, and a pair that
+// declares none must not inherit its sibling's.
+func TestARelayDeliveryOnAPairWithoutALimitSendsNone(t *testing.T) {
+	record := childRecord(false, "")
+	record.Data = delivery.Obj(contract.OrderedObject(record.Data).Set("model", "gpt-6.1-sol"))
+	rpc := &mcpRPC{model: "gpt-6.1-sol"}
+	a := mcpAdapter(t, rpc, autoCompactChildPolicy(t, childRecord(false, "")))
+	if receipt := sendRecord(t, a, "send-other-pair", record); receipt["status"] != "accepted" {
+		t.Fatalf("receipt=%v", receipt)
+	}
+	if _, present := resumeConfig(rpc)[settings.AutoCompactTokenLimitKey]; present {
+		t.Fatalf("thread/resume config = %v", resumeConfig(rpc))
+	}
+}
+
+// A record citing an exception names no pair, so no limit is derived for it.
+func TestARelayDeliveryCitingAnExceptionSendsNoLimit(t *testing.T) {
+	record := childRecord(false, "")
+	record.Data = delivery.Obj(contract.OrderedObject(record.Data).Set("citedException", "one-task"))
+	rpc := &mcpRPC{}
+	a := mcpAdapter(t, rpc, autoCompactChildPolicy(t, record))
+	if receipt := sendRecord(t, a, "send-excepted", record); receipt["status"] != "accepted" {
+		t.Fatalf("receipt=%v", receipt)
+	}
+	if _, present := resumeConfig(rpc)[settings.AutoCompactTokenLimitKey]; present {
+		t.Fatalf("an exception carried a pair-derived limit: %v", resumeConfig(rpc))
 	}
 }

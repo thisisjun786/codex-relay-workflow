@@ -157,9 +157,18 @@ behaves exactly as before — no key is sent and the host's own threshold stands
 exception name no pair, so neither can carry one: a `supervisor` entry that declares the field does
 not load, and so does an entry that puts it beside `pairs` instead of inside one.
 
+The relay reads the same declaration. A task's recorded settings come from the host's creation
+response, which never carries this value, so a relay delivery or correction send resolves the
+recipient's role from its record and the limit from the pair that record states, and adds it to the
+resume's config — including on a settings-free resume, which transmits no pair but may still carry
+the limit of the pair the record says the thread is on. A record on a pair that declares no limit
+sends none rather than inheriting a sibling pair's, and a record citing an exception sends none.
+
 A value that is not a positive integer is refused when the file is read, through the same
 `execution_policy_unreadable` path as every other unusable policy value: a string, a boolean, a
-fraction or an exponent, zero and a negative number all fail there. The limit is not part of what a
+fraction or an exponent, zero and a negative number all fail there. A number written with an
+exponent is refused even when it is integral — `1e6` is a float spelling, not an integer — so a
+value the host would accept only after rounding is never silently taken. The limit is not part of what a
 request is judged against, so it changes neither which pairs a role allows nor the description
 `get_capabilities` reports — that description is the authorization surface, as it is for MCP
 profiles.

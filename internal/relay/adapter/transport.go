@@ -335,6 +335,11 @@ func (a *Adapter) guardedSend(ctx context.Context, requestID, thread, message st
 				params["config"] = expectedMCP.Overrides()
 			}
 		}
+		// The limit is not in the record (the host never reports it back), so a resume built from the
+		// record would drop it and the thread would return to the host's own window. It is resolved
+		// from the policy by the pair the record states, on both routes: a settings-free resume sends
+		// no pair, but it may still send the limit of the pair the record says the thread is on.
+		a.withAutoCompactLimit(send, params)
 		if client, ok := a.rpc.(*appserver.Client); ok {
 			watch, err = client.WatchTurn(ctx, thread)
 			if err = awaited(err); err != nil {

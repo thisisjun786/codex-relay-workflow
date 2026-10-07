@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/settings"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
@@ -125,5 +126,50 @@ func TestAPolicyWithoutTheLimitSendsNoAutoCompactKey(t *testing.T) {
 	}
 	if autoCompactListed(autoCompactReceiptSettings(t, receipt)["unobservable"], settings.AutoCompactTokenLimitKey) {
 		t.Fatalf("settings receipt = %v", receipt["settings"])
+	}
+}
+
+// The third creation path, create_worktree_thread, builds its own contract; it must carry the limit
+// too, or a worktree child would be the one creation that keeps the host's larger window.
+func TestCreateWorktreeThreadSendsThePairsAutoCompactLimit(t *testing.T) {
+	b, host := policyBridge(t, autoCompactPolicy)
+	input := worktreeInput(t)
+	input.Role = "child"
+	worktreeHost(host, input.Destination)
+	receipt, err := b.CreateWorktreeThread(context.Background(), input)
+	if err != nil || receipt["status"] != "accepted" || receipt["phase"] != "complete" {
+		t.Fatalf("receipt=%v err=%v", receipt, err)
+	}
+	if got := autoCompactConfig(t, host, "thread/start")[settings.AutoCompactTokenLimitKey]; got != float64(550000) {
+		t.Fatalf("thread/start config = %v", autoCompactConfig(t, host, "thread/start"))
+	}
+	section := autoCompactReceiptSettings(t, receipt)
+	if !autoCompactListed(section["unobservable"], settings.AutoCompactTokenLimitKey) {
+		t.Fatalf("settings receipt = %v", section)
+	}
+}
+
+// An exception is not a pair, so it carries no limit even when the role's pair does.
+func TestAnExceptionCarriesNoAutoCompactLimit(t *testing.T) {
+	b, host := testBridge(t)
+	cwd := t.TempDir()
+	policy := `{"roles":{"child":{"model":"explicit-model","reasoningEffort":"high","autoCompactTokenLimit":550000}},"exceptions":{"one-task":{"model":"gpt-6-astra","reasoningEffort":"high","cwd":[` + jsonQuote(cwd) + `],"role":"child"}}}`
+	loaded, err := execution.FromBytes([]byte(policy), "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.Policy = loaded
+	start := startReply(cwd)
+	start.Result["model"] = "gpt-6-astra"
+	host.Respond("thread/start", start)
+	host.Respond("turn/start", fakehost.Reply{Result: map[string]any{"turn": map[string]any{"id": "turn-1"}}})
+	input := createInput(cwd, "auto-compact-exception")
+	input.Role, input.Model, input.Effort, input.Exception = "child", "gpt-6-astra", "high", "one-task"
+	receipt, err := b.CreateThread(context.Background(), input)
+	if err != nil || receipt["status"] != "accepted" {
+		t.Fatalf("receipt=%v err=%v", receipt, err)
+	}
+	if _, present := autoCompactConfig(t, host, "thread/start")[settings.AutoCompactTokenLimitKey]; present {
+		t.Fatalf("an exception carried the role pair's limit: %v", autoCompactConfig(t, host, "thread/start"))
 	}
 }
