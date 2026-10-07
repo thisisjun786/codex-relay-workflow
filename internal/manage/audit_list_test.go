@@ -122,6 +122,12 @@ func auditListFixture(t *testing.T, e *Env) (string, *Config) {
 		auditRoundPackage{Package: "pkg/b", State: auditRoundPending})
 	auditListWriteDraft(t, state, "bbbbbbbbbbbbbbbb", "CRW", "P1", auditDraftStateDraft)
 	auditListWriteDraft(t, state, "aaaaaaaaaaaaaaaa", "CRW", "P2", auditDraftStatePosted)
+	// A document of another schema belongs to somebody else and is skipped, unlike a draft
+	// that names no schema at all.
+	if err := os.WriteFile(filepath.Join(state, "drafts", "zzzzzzzzzzzzzzzz.json"),
+		[]byte("{\"schema\":\"other-document/1\"}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	return state, coreDefaults(e)
 }
 
@@ -367,6 +373,23 @@ func TestAuditListUnreadableSourceIsUnknown(t *testing.T) {
 				}
 			},
 			want: "drafts", listKey: "drafts", reason: "cccccccccccccccc.json",
+		},
+		{
+			// A draft that is valid JSON but names no schema is a draft this build cannot
+			// read, not a file of another schema: reporting the source ok while leaving it
+			// out would lose a recorded draft silently.
+			name: "a draft without a schema",
+			break_: func(t *testing.T, state string) {
+				dir := filepath.Join(state, "drafts")
+				if err := os.MkdirAll(dir, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				body := []byte("{\"fingerprint\":\"dddddddddddddddd\"}")
+				if err := os.WriteFile(filepath.Join(dir, "dddddddddddddddd.json"), body, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: "drafts", listKey: "drafts", reason: "dddddddddddddddd.json",
 		},
 	}
 	for _, tc := range cases {

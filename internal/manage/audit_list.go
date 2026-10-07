@@ -307,6 +307,13 @@ func auditListDrafts(e *Env, cfg *Config) ([]auditDraftSummary, error) {
 			return nil, fmt.Errorf("%s: %w", path, err)
 		}
 		if head.Schema != auditDraftSchema {
+			// A document that names another schema is a file this command does not own and
+			// is skipped. A document that names no schema at all is not a foreign schema but
+			// a draft this build cannot read, so it is refused rather than dropped: the
+			// drafts source must never report ok while leaving a draft out.
+			if head.Schema == "" {
+				return nil, fmt.Errorf("%s: the draft names no schema", path)
+			}
 			continue
 		}
 		doc, err := auditDraftLoad(path)
