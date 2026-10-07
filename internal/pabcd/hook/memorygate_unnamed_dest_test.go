@@ -250,3 +250,35 @@ func TestMemoryGateUnnamedDestinationMethodReceivers(t *testing.T) {
 		})
 	}
 }
+
+// TestMemoryGateUnnamedDestinationRenameAndGetattr pins two shapes this check's own review found: a CRW-900 rename or
+// link call whose receiver the reader never named (a variable Path), and getattr whose name argument is not a literal,
+// so the reader cannot tell which function it reaches. An ordinary string's own replace takes two arguments and writes
+// no file, so it stays allowed.
+func TestMemoryGateUnnamedDestinationRenameAndGetattr(t *testing.T) {
+	cwd, _, env := gateScene(t)
+	py := func(program string) string { return "python3 -c " + shellWriteUnnamedQuote(program) }
+	for _, c := range []struct{ name, command string }{
+		{"variable receiver replace", py("from pathlib import Path; p = Path('/w/a'); p.replace('/w/b'); print('memories')")},
+		{"variable receiver symlink_to", py("from pathlib import Path; p = Path('/w/l'); p.symlink_to('/w/a'); print('memories')")},
+		{"computed getattr name", py("import shutil; getattr(shutil, 'co'+'py')('/w/a', '/w/b'); print('memories')")},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got := memoryGateClassify("Bash", map[string]any{"command": c.command}, cwd, env)
+			if got.Surface != "shell" || got.Target != unnamedDestWant {
+				t.Errorf("%q: %+v, want the shell surface and %s", c.command, got, unnamedDestWant)
+			}
+		})
+	}
+	for _, c := range []struct{ name, command string }{
+		{"string replace with two arguments", py("s = 'memories'; print(s.replace('a','b'))")},
+		{"string replace with three arguments", py("s = 'memories'; print(s.replace('a','b',1))")},
+		{"getattr of a name that is no write function", py("import shutil; getattr(shutil, 'disk_usage')('/w'); print('memories')")},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got := memoryGateClassify("Bash", map[string]any{"command": c.command}, cwd, env); got.Surface != "" {
+				t.Errorf("%q must pass: %+v", c.command, got)
+			}
+		})
+	}
+}

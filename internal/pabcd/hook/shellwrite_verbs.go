@@ -2596,7 +2596,10 @@ func (w *shellWriteUnnamedWalk) close(rs []rune, f shellWriteUnnamedFrame, spans
 			w.unnamed = true
 		}
 	case 'g':
-		if name, ok := shellVerbLiteral(shellWriteUnnamedArg(rs, spans, 1, "name")); ok && shellWriteUnnamedFunc(name) {
+		// getattr(obj, name) reaches a write function dynamically: the reader names the destination only when it can
+		// read the name, so an argument that is no literal is a write whose destination it cannot name.
+		name, ok := shellVerbLiteral(shellWriteUnnamedArg(rs, spans, 1, "name"))
+		if !ok || shellWriteUnnamedFunc(name) {
 			w.unnamed = true
 		}
 	case 'i':
@@ -2827,10 +2830,10 @@ func shellWriteUnnamedPathNamed(rs []rune, spans [][2]int) bool {
 
 // shellWriteUnnamedMethodAt reads the call whose bracket is at i when the method that stands before it is one of the
 // write methods this check reads and its receiver is not a Path(...) call (read by shellWriteUnnamedReceiver): the
-// destination of such a call is its receiver, which the reader cannot name. A name a module the reader reads its own way
-// owns (shutil.copy, os.rename, importlib.import_module) is left to shellWriteCopyModuleKind and
-// shellWriteUnnamedSpecial. replace is left out: a str's own .replace is ordinary and names no file, and a Path receiver
-// reaches replace through shellWriteUnnamedReceiver, os.replace through its own call.
+// destination of such a call is its receiver or its argument, which the reader cannot name. A name a module the reader
+// reads its own way owns (shutil.copy, os.rename, importlib.import_module) is left to shellWriteCopyModuleKind and
+// shellWriteUnnamedSpecial. A method named replace counts only with one argument, because str.replace needs two and
+// Path.replace takes one (CRW-900's rename), so an ordinary string's own replace is never refused.
 func shellWriteUnnamedMethodAt(rs []rune, i int, binds shellWriteCopyImports) byte {
 	start := i - 1
 	for start >= 0 && shellVerbSpaceRune(rs[start]) {
@@ -2844,7 +2847,7 @@ func shellWriteUnnamedMethodAt(rs []rune, i int, binds shellWriteCopyImports) by
 		return 0
 	}
 	name := string(rs[start+1 : end])
-	if !shellWriteUnnamedMethod(name) || name == "replace" {
+	if !shellWriteUnnamedMethod(name) {
 		return 0
 	}
 	receiver, ok := shellWriteUnnamedAttribute(rs, start+1)
@@ -2854,7 +2857,34 @@ func shellWriteUnnamedMethodAt(rs []rune, i int, binds shellWriteCopyImports) by
 	if shellWriteUnnamedModuleReceiver(receiver, binds) {
 		return 0
 	}
+	if name == "replace" && shellWriteUnnamedArgs(rs, i) != 1 {
+		return 0 // two or more arguments: a str's own replace, which writes no file
+	}
 	return shellWriteUnnamedMethodKind(name)
+}
+
+// shellWriteUnnamedArgs counts the arguments of the call whose opening bracket is at rs[i]: the top-level commas plus
+// one when the call is not empty.
+func shellWriteUnnamedArgs(rs []rune, i int) int {
+	depth, commas := 0, 0
+	for j := i; j < len(rs); j++ {
+		switch rs[j] {
+		case '(', '[', '{':
+			depth++
+		case ')', ']', '}':
+			if depth--; depth == 0 {
+				if commas == 0 && shellVerbBlank(rs[i+1:j]) {
+					return 0
+				}
+				return commas + 1
+			}
+		case ',':
+			if depth == 1 {
+				commas++
+			}
+		}
+	}
+	return -1
 }
 
 // shellWriteUnnamedModuleReceiver reports whether the name a method hangs off is a module this reader reads its own way:
