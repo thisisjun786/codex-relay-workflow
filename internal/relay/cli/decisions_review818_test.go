@@ -198,6 +198,29 @@ func TestReview818OptionAndTextTogetherIsRefused(t *testing.T) {
 	}
 }
 
+// Giving both flags is what is refused, not giving both with text: an empty or blank --text is
+// still --text on the line, and accepting it would store the option and let the answer stand
+// without the prose the caller asked to record.
+func TestReview818AnEmptyTextBesideAnOptionIsStillBoth(t *testing.T) {
+	for _, text := range []string{"", "   "} {
+		state := crw737Store(t)
+		review818SeedSupervisor(t, state, "task-sup")
+		decision := review818Raise(t, state, "Which window does the host update take?")
+		crw737Refused(t, crw737Run(t, "--state", state, "decision-answer", "--decision", decision,
+			"--option", "now", "--text", text, "--by", "task-sup", "--via", "dots", "--authority", "user"), "bad_invocation")
+		// The refusal wrote nothing: the record is still raised and still answerable.
+		if record := crw737List(t, state)[0].(map[string]any); record["state"] != "raised" {
+			t.Fatalf("--text %q left the record %v", text, record["state"])
+		}
+	}
+	// A lone blank --text with no option is refused as an answer that names nothing.
+	state := crw737Store(t)
+	review818SeedSupervisor(t, state, "task-sup")
+	decision := review818Raise(t, state, "Which window does the host update take?")
+	crw737Refused(t, crw737Run(t, "--state", state, "decision-answer", "--decision", decision,
+		"--text", "   ", "--by", "task-sup", "--via", "dots", "--authority", "user"), "bad_invocation")
+}
+
 // A relationship-blocking decision answered with free text alone is refused.
 func TestReview818RelationshipDecisionNeedsAnOption(t *testing.T) {
 	state := crw737Store(t)
