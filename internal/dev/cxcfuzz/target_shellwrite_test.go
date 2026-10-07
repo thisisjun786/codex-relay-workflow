@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"math/rand"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -160,10 +161,12 @@ func TestShellwriteSeedCasesReplay(t *testing.T) {
 	}
 }
 
-// c3 (CRW-908): the shared generator emits every Python literal spelling, and an f form writes the
-// destination's braces doubled so the literal evaluates to the destination itself. Red first: the
-// doubled-brace form was emitted around the destination, so it evaluated to '{<destination>}' - a
-// leading brace, a relative path, and a destination the memory gate is never asked about.
+// c3 (CRW-908): the shared generator emits the Python literal spelling it can hold, and an f form
+// writes the destination's braces doubled so the literal evaluates to the destination itself. A form
+// that cannot hold the destination is not emitted at all (c7 d2): a raw form only where the
+// destination has no quote to escape and does not end in a backslash, a b form only for an ASCII
+// destination. Red first: the doubled-brace form was emitted around the destination, so it evaluated
+// to a leading brace, and the plain forms were emitted for destinations holding a quote or a backslash.
 func TestShellwritePythonLiteralForms(t *testing.T) {
 	for _, c := range []struct {
 		word string
@@ -188,6 +191,57 @@ func TestShellwritePythonLiteralForms(t *testing.T) {
 			}
 		}
 	}
+}
+
+// c7 d3 (CRW-908 generation 2): every literal form the generator emits for a destination evaluates in
+// Python 3 to exactly that destination. The check runs the real interpreter when python3 is on PATH and
+// skips with a message otherwise; it walks the actual destination pools of both targets, so the quote,
+// backslash and brace paths the pre-merge evaluation named are covered. Red first on the generation-1
+// head: /m/a'b and /m/a\b in the single-quoted and f forms do not evaluate to the destination.
+func TestShellwriteLiteralFormsEvaluateInPython(t *testing.T) {
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("python3 is not on PATH, so the emitted literal forms cannot be evaluated here")
+	}
+	// The harness substitutes the ROOT placeholder in the decoded command after the program is built and
+	// before any interpreter sees it, so a ROOT-prefixed form is evaluated with the case root in place of
+	// the placeholder - the substitution the campaign makes - against the destination it then names.
+	root := t.TempDir()
+	dests := append([]string{}, shellWritePathFragments()...)
+	dests = append(dests,
+		rootPlaceholder+"/codex-home/memories/n.md", rootPlaceholder+"/codex-home/memories",
+		rootPlaceholder+"/codex-home/memories/a b.md", rootPlaceholder+"/codex-home/memories/a'b.md",
+		rootPlaceholder+"/codex-home/memories/{x}.md", rootPlaceholder+"/codex-home/memories/a\\b.md",
+		"{x}.md", "/m/a}b", "/m/{a}b", "/m/a\nb", "/m/a\rb", "/m/a\r\nb",
+	)
+	for _, dest := range dests {
+		want := strings.ReplaceAll(dest, rootPlaceholder, root)
+		for _, form := range shellWritePythonLiteralForms(dest) {
+			t.Run(form, func(t *testing.T) {
+				substituted := strings.ReplaceAll(form, rootPlaceholder, root)
+				got, err := pythonLiteralValue(python, substituted)
+				if err != nil {
+					t.Fatalf("the form %q for %q does not evaluate in Python: %v", form, dest, err)
+				}
+				if got != want {
+					t.Fatalf("the form %q evaluates to %q, want %q", form, got, want)
+				}
+			})
+		}
+	}
+}
+
+// pythonLiteralValue is what Python 3 evaluates a literal to, run through the real interpreter. The
+// value is written as bytes so a destination that is not valid UTF-8 survives the pipe.
+func pythonLiteralValue(python, literal string) (string, error) {
+	const script = `import sys` + "\n" +
+		`v = eval(sys.argv[1])` + "\n" +
+		`sys.stdout.buffer.write(v if isinstance(v, bytes) else v.encode("utf-8", "surrogateescape"))`
+	out, err := exec.Command(python, "-c", script, literal).Output()
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
 }
 
 // c3 (CRW-908): the ROOT placeholder keeps its braces. The harness substitutes that token in the
@@ -230,8 +284,14 @@ func TestShellwriteFStringFormsKeepTheRootPlaceholder(t *testing.T) {
 
 // c3 (CRW-908): every f form evaluates to the destination, and the generator emits three of them for
 // every destination. The plain f form is not emitted for a brace-holding destination: a single brace
-// there opens a replacement field, which is not the destination at all.
+// there opens a replacement field, which is not the destination at all. The value is taken from the real
+// interpreter (c7 d3): a Go helper modelling Python's literal rules cannot prove them, so this test runs
+// python3 and skips with a message where it is not on PATH.
 func TestShellwriteFStringFormsEvaluateToTheDestination(t *testing.T) {
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("python3 is not on PATH, so the emitted f forms cannot be evaluated here")
+	}
 	root := t.TempDir()
 	for _, dest := range []string{"/m/a", rootPlaceholder + "/codex-home/memories/{x}.md", "{x}.md", "/m/a}b", "/m/{a}b", rootPlaceholder + "/codex-home/memories/{a}{b}.md"} {
 		// The harness substitutes the placeholder in the decoded command after the program is built and
@@ -244,9 +304,9 @@ func TestShellwriteFStringFormsEvaluateToTheDestination(t *testing.T) {
 				continue
 			}
 			seen++
-			got, ok := fstringValue(strings.ReplaceAll(form, rootPlaceholder, root))
-			if !ok {
-				t.Fatalf("the form %q is not an f literal this test can evaluate", form)
+			got, err := pythonLiteralValue(python, strings.ReplaceAll(form, rootPlaceholder, root))
+			if err != nil {
+				t.Fatalf("the form %q is not an f literal Python can evaluate: %v", form, err)
 			}
 			if got != want {
 				t.Fatalf("the form %q evaluates to %q, want %q", form, got, want)
@@ -256,41 +316,6 @@ func TestShellwriteFStringFormsEvaluateToTheDestination(t *testing.T) {
 			t.Fatalf("the destination %q produced %d f forms, want 3", dest, seen)
 		}
 	}
-}
-
-// fstringValue is the value Python gives an f literal the generator emits, by the same rule: the prefix
-// and the quotes come off and a doubled brace is one brace. The generator emits no replacement field, so
-// that rule is the whole of it; a single brace is reported as unreadable rather than guessed at.
-func fstringValue(literal string) (string, bool) {
-	body, ok := strings.CutPrefix(literal, "f")
-	if !ok {
-		return "", false
-	}
-	quote := ""
-	for _, candidate := range []string{"'''", "\"\"\"", "'", "\""} {
-		if strings.HasPrefix(body, candidate) {
-			quote = candidate
-			break
-		}
-	}
-	if quote == "" || len(body) < 2*len(quote) || !strings.HasSuffix(body, quote) {
-		return "", false
-	}
-	inner := body[len(quote) : len(body)-len(quote)]
-	var out strings.Builder
-	for i := 0; i < len(inner); i++ {
-		if inner[i] != '{' && inner[i] != '}' {
-			out.WriteByte(inner[i])
-			continue
-		}
-		if i+1 < len(inner) && inner[i+1] == inner[i] {
-			out.WriteByte(inner[i])
-			i++
-			continue
-		}
-		return "", false
-	}
-	return out.String(), true
 }
 
 // c2 (CRW-908): the ROOT placeholder is left unescaped, so after the harness substitutes the case root

@@ -264,6 +264,30 @@ func Campaign(cfg Config) (Summary, error) {
 // errRefused is a case whose fs scenario the harness refused to build, so it was not run.
 var errRefused = errors.New("the fs scenario was refused")
 
+// refusedOutcome turns a scenario failure into the error the caller sees. A refusal is the harness
+// declining the case; a RemovalError is not - the root survived, so it is reported as itself and never
+// as a refused case a target may run on.
+func refusedOutcome(err error) error {
+	var removal RemovalError
+	if errors.As(err, &removal) {
+		return err
+	}
+	return errRefused
+}
+
+// joinCleanup folds a cleanup failure into the error a function is already returning. The first
+// failure is kept, because it is the one that explains the run, and a cleanup failure is never
+// discarded: it says a root outlived the run that owned it.
+func joinCleanup(err, cleanup error) error {
+	if cleanup == nil {
+		return err
+	}
+	if err == nil {
+		return cleanup
+	}
+	return errors.Join(err, cleanup)
+}
+
 type campaign struct {
 	cfg  Config
 	pool *Pool
@@ -278,28 +302,31 @@ func (c *campaign) one() (Verdict, string, string, any, error) {
 	return verdict, goOut, oracleOut, input, err
 }
 
-func (c *campaign) evaluate(input any) (Verdict, string, string, error) {
+func (c *campaign) evaluate(input any) (verdict Verdict, goText, oracleText string, err error) {
 	text := canonical(input)
 	goRoot, err := os.MkdirTemp("", "cxcfuzz-go-")
 	if err != nil {
 		return Verdict{}, "", "", err
 	}
-	defer func() { _ = os.RemoveAll(goRoot) }()
+	defer func() { err = joinCleanup(err, RemoveCaseRoot(goRoot)) }()
 	oracleRoot, err := os.MkdirTemp("", "cxcfuzz-oracle-")
 	if err != nil {
 		return Verdict{}, "", "", err
 	}
-	defer func() { _ = os.RemoveAll(oracleRoot) }()
+	defer func() { err = joinCleanup(err, RemoveCaseRoot(oracleRoot)) }()
 	for _, root := range []string{goRoot, oracleRoot} {
 		if err := PrepareRoot(root); err != nil {
 			return Verdict{}, "", "", err
 		}
 	}
+	// A refused scenario is the harness declining the case, and a removal that still failed is its own
+	// error: the caller must not read either as an agreement, and must not read the removal failure as
+	// a refused case a target may run on.
 	if _, err := Scenarios(goRoot, input); err != nil {
-		return Verdict{}, "", "", errRefused
+		return Verdict{}, "", "", refusedOutcome(err)
 	}
 	if _, err := Scenarios(oracleRoot, input); err != nil {
-		return Verdict{}, "", "", errRefused
+		return Verdict{}, "", "", refusedOutcome(err)
 	}
 	value, err := decode(text)
 	if err != nil {
@@ -310,17 +337,17 @@ func (c *campaign) evaluate(input any) (Verdict, string, string, error) {
 	if goErr != nil {
 		goOut = errorValue(goErr)
 	}
-	oracleText, err := c.pool.Call(text, oracleRoot)
+	oracleAnswer, err := c.pool.Call(text, oracleRoot)
 	if err != nil {
 		return Verdict{}, "", "", err
 	}
-	oracleValue, err := decode(oracleText)
+	oracleValue, err := decode(oracleAnswer)
 	if err != nil {
 		return Verdict{}, "", "", err
 	}
 	goStripped := stripRoot(goOut, goRoot)
 	oracleStripped := stripRoot(oracleValue, oracleRoot)
-	verdict := c.cfg.Target.Compare(goStripped, oracleStripped)
+	verdict = c.cfg.Target.Compare(goStripped, oracleStripped)
 	return verdict, canonical(goStripped), canonical(oracleStripped), nil
 }
 

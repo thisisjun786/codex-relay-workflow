@@ -45,15 +45,111 @@ func Scenarios(root string, input any) (int, error) {
 	}
 	for _, entry := range entries {
 		if err := build(root, resolvedRoot, entry); err != nil {
-			_ = os.RemoveAll(root)
-			return 0, err
+			return 0, refuse(root, err)
 		}
 	}
 	if err := sweepLinks(root, resolvedRoot); err != nil {
-		_ = os.RemoveAll(root)
-		return 0, err
+		return 0, refuse(root, err)
 	}
 	return len(entries), nil
+}
+
+// RemovalError is a case root that survived a refused build. It is not a refused case: the root it
+// names was not removed for certain, so a caller must never read it as a case a target may run on.
+type RemovalError struct {
+	Root    string
+	Refused error
+	Err     error
+}
+
+func (e RemovalError) Error() string {
+	return "the case root " + e.Root + " was not removed after " + e.Refused.Error() + ": " + e.Err.Error()
+}
+
+// Unwrap is the removal failure, so errors.Is and errors.As see the cause of the removal itself.
+func (e RemovalError) Unwrap() error { return e.Err }
+
+// refuse removes the case root of a refused build and returns the refusal. The root is removed for
+// certain before Scenarios returns, so a refused case leaves no tree at all - not an empty root, and
+// not a sealed directory holding an escaping link. A removal that still fails is returned as its own
+// RemovalError, named for the root, so it is never taken for a refusal a target may run on.
+func refuse(root string, refused error) error {
+	if err := RemoveCaseRoot(root); err != nil {
+		return RemovalError{Root: root, Refused: refused, Err: err}
+	}
+	return refused
+}
+
+// RemoveCaseRoot removes a case root for certain. Every directory under it is first made
+// owner-readable, writable and searchable, because an entry may have created a directory with a mode
+// that keeps it from being listed, and a directory that cannot be listed keeps its contents - an
+// escaping link included. Only then is the root removed. A root that is already gone is not an error,
+// so the helper is safe to call again from a caller's cleanup.
+func RemoveCaseRoot(root string) error {
+	if err := makeDirectoriesRemovable(root); err != nil {
+		return err
+	}
+	return os.RemoveAll(root)
+}
+
+// makeDirectoriesRemovable gives every directory under root the owner's read, write and search bits,
+// descending by hand because filepath.Walk lists a directory before it calls the callback for it: a
+// directory whose mode hides its entries would make the walk itself fail, and its contents - an
+// escaping link included - would never be reached. Each directory is made listable before it is read,
+// and the descent uses Lstat, so it never follows a link out of the tree. A root that is already gone
+// is not an error.
+func makeDirectoriesRemovable(root string) error {
+	info, err := os.Lstat(root)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if !info.IsDir() {
+		return nil
+	}
+	return makeDirectoryRemovable(root)
+}
+
+// makeDirectoryRemovable makes one directory listable and then recurses into the directories under it.
+func makeDirectoryRemovable(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if perm := info.Mode().Perm(); perm&0o700 != 0o700 {
+		if err := os.Chmod(path, perm|0o700); err != nil {
+			return err
+		}
+	}
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	for _, entry := range entries {
+		child := filepath.Join(path, entry.Name())
+		childInfo, err := os.Lstat(child)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return err
+		}
+		if !childInfo.IsDir() {
+			continue
+		}
+		if err := makeDirectoryRemovable(child); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // fsEntries reads the "fs" array of an input.

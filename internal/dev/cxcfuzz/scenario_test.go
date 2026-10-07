@@ -3,6 +3,7 @@
 package cxcfuzz
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -315,6 +316,69 @@ func TestScenariosStillAllowTheConfinedControls(t *testing.T) {
 		if want := filepath.Join(root, "codex-home", "memories"); resolved != want {
 			t.Fatalf("%s resolves to %q, want %q", link, resolved, want)
 		}
+	}
+}
+
+// c7 d1 (CRW-908 generation 2): a refused build removes the root for certain, even when an entry gave
+// a directory a mode that keeps it from being listed. The removal first makes every directory under the
+// root owner-readable, writable and searchable - walked without following links - and only then removes
+// the root, so a sealed directory cannot keep an escaping link on disk. Red first on the generation-1
+// head: the removal error was discarded and root/sealed/escape survived the refusal.
+func TestScenariosRemoveTheRootOfARefusedBuildWithASealedDirectory(t *testing.T) {
+	base, root := caseRoot(t)
+	input := fsInput(
+		fsEntry("sealed", "dir", "", "", 0o300),
+		fsEntry("sealed/escape", "symlink", "", "../../outside", 0),
+	)
+	// The sealed directory keeps a best-effort cleanup possible whatever the outcome.
+	defer func() { _ = removeSealedForTest(base) }()
+	if _, err := Scenarios(root, input); err == nil {
+		t.Fatal("a link that leaves the case root was materialised")
+	}
+	if err := emptyBase(base); err != nil {
+		t.Fatalf("the refused build left the root behind: %v", err)
+	}
+}
+
+// removeSealedForTest makes a test's own base removable again, so a red run does not leave a sealed
+// directory behind for the test framework to trip over.
+func removeSealedForTest(base string) error {
+	_ = filepath.Walk(base, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		if info.IsDir() {
+			_ = os.Chmod(path, 0o700)
+		}
+		return nil
+	})
+	return os.RemoveAll(base)
+}
+
+// c7 d1 (CRW-908 generation 2): a removal that still fails is its own error that names the root and is
+// not a refused case. The base denies the write that removing the root itself needs, so the removal
+// fails after the helper has already made everything under the root removable; the error must name the
+// root and must not be a plain refusal a target may run on.
+func TestScenariosRemovalFailureIsItsOwnError(t *testing.T) {
+	base, root := caseRoot(t)
+	if err := PrepareRoot(root); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(base, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	// Restore the base before the test framework removes it.
+	defer func() { _ = os.Chmod(base, 0o700) }()
+	_, err := Scenarios(root, fsInput(fsEntry("escape", "symlink", "", "../../outside", 0)))
+	if err == nil {
+		t.Fatal("a link that leaves the case root was materialised")
+	}
+	var removal RemovalError
+	if !errors.As(err, &removal) {
+		t.Fatalf("the error is not a RemovalError: %v", err)
+	}
+	if removal.Root != root {
+		t.Fatalf("the removal error names %q, want %q", removal.Root, root)
 	}
 }
 
