@@ -368,7 +368,7 @@ func Write(ctx context.Context, env LookupEnv, opts WriteOptions, request WriteR
 	outcome := envelope.Outcome
 	switch {
 	case answer.Err == nil && parsed && registrationSucceeded[outcome]:
-		return storedResult(decision, env, running, path, stored, reported, envelope, warnings, nil)
+		return storedResult(decision, env, running, path, reported, envelope, warnings, nil)
 	case answer.Err == nil && parsed && registrationUnchanged[outcome]:
 		// The outcome says the registration did not update the record. Whether the record still names
 		// the bytes this run replaced is a separate fact, and only that fact makes a restore correct:
@@ -394,7 +394,7 @@ func Write(ctx context.Context, env LookupEnv, opts WriteOptions, request WriteR
 	switch {
 	case fileErr == nil && fileNow == stored && recordNow.State == Registered && recordNow.RegisteredDigest == stored:
 		// (a) both durable effects happened; only the answer was lost.
-		return storedResult(decision, env, running, path, stored, reported, registrationEnvelope{}, warnings, []string{detail})
+		return storedResult(decision, env, running, path, reported, registrationEnvelope{}, warnings, []string{detail})
 	case recordNow.State == Registered && recordNow.RegisteredDigest == original:
 		// (b) the record still names the old bytes: put them back.
 		return restoreResult(restore, swap, env, encoded, path, raw, info.Mode(), original, stored, reported, warnings, detail)
@@ -426,7 +426,7 @@ func recoveryFrom(env LookupEnv, path, fileDigest, backup string, warnings []str
 // envelope carries the facts a trusted registration answered with: the wiring record's backup and the
 // restart advice. A success established by re-reading (the lost-answer case) passes the zero envelope,
 // because nothing in an answer that was not trusted may be reported.
-func storedResult(ctx context.Context, env LookupEnv, running func(context.Context, LookupEnv) Running, path, stored, backup string, envelope registrationEnvelope, warnings, extra []string) WriteResult {
+func storedResult(ctx context.Context, env LookupEnv, running func(context.Context, LookupEnv) Running, path, backup string, envelope registrationEnvelope, warnings, extra []string) WriteResult {
 	// The registration answers about the file it read, which is the file at the path now: the
 	// installer opens the path itself, so an editor that saved after this run published leaves a
 	// record naming bytes this run did not write. What is stored is therefore read back rather than
@@ -446,7 +446,7 @@ func storedResult(ctx context.Context, env LookupEnv, running func(context.Conte
 			Recovery: recoveryAdvice(path, backup), Warnings: warnings,
 			Errors: []string{"the execution policy could not be read back after the registration: " + readErr.Error()}}
 	}
-	stored = digestOfBytes(current)
+	stored := digestOfBytes(current)
 	registered := stored
 	located := Locate(env)
 	established := located.State == Registered && located.RegisteredDigest != ""
