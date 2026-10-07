@@ -155,14 +155,14 @@ func TestReleaseWorkflow_verify_requires_a_passing_record_for_the_commit(t *test
 	r := releaseFixture(t)
 	r.pass(t, "a passing record", "verify", map[string]string{"RUNNER_TEMP": r.verifyRecord(t, nil)})
 	for label, values := range map[string]map[string]any{
-		"missing record":      nil,
-		"failed result":       {"result": "fail"},
-		"no result":           {"result": nil},
-		"pin mismatch":        {"pinMismatch": []any{"node"}},
-		"foreign commit":      {"headCommit": strings.Repeat("0", 40)},
-		"no head commit":      {"headCommit": nil},
-		"wrong schema":        {"schema": "verification-record/2"},
-		"no schema":           {"schema": nil},
+		"missing record": nil,
+		"failed result":  {"result": "fail"},
+		"no result":      {"result": nil},
+		"pin mismatch":   {"pinMismatch": []any{"node"}},
+		"foreign commit": {"headCommit": strings.Repeat("0", 40)},
+		"no head commit": {"headCommit": nil},
+		"wrong schema":   {"schema": "verification-record/2"},
+		"no schema":      {"schema": nil},
 	} {
 		t.Run(label, func(t *testing.T) {
 			temp := r.verifyRecord(t, values)
