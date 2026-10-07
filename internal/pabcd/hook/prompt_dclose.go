@@ -98,10 +98,91 @@ type promptDclosePlanOutcome struct {
 	allDone    bool
 	markerNext *string
 	rows       []promptDcloseGoalplanRow
-	// warnings are the durability lines of a marker or plan write that published its artifact and
-	// then failed a step after the rename. The close goes on; the caller reports them on the answer
-	// (CRW-869, finding 2).
-	warnings []string
+	// published records which artifacts this close actually wrote - the recovery marker and the
+	// goalplan - beside their durability warnings, so a later refusal names each of them whether or
+	// not a directory-sync warning was collected for it (CRW-930, c6: the promise CRW-869 left
+	// open). The close goes on; the caller reports the warnings on the answer (CRW-869, finding 2).
+	published promptDclosePublishedArtifacts
+}
+
+// promptDclosePublication is one artifact a close wrote: whether it reached its final path, and the
+// durability warning when the step after its rename failed. A write that never reached its final
+// path leaves landed false and wrote nothing.
+type promptDclosePublication struct {
+	landed  bool
+	warning string
+}
+
+// promptDclosePublishedArtifacts is what one bound close published: its recovery marker and its
+// goalplan. A refusal after either one names it instead of claiming nothing was written, because an
+// artifact that published cleanly carries no warning to be recovered from (CRW-930, c6).
+// "Nothing was written." stays only when neither landed and no other durability warning is
+// outstanding.
+type promptDclosePublishedArtifacts struct {
+	marker promptDclosePublication
+	plan   promptDclosePublication
+}
+
+// sentences name every artifact this close published, one sentence per artifact and in write order:
+// the fixed sentence when it published cleanly, its own durability line when the step after its
+// rename failed (that line already says which file it is). Either way the artifact is named, so the
+// refusal never claims nothing was written. An artifact that never landed contributes nothing, so an
+// empty answer means this close published nothing and the bare refusal is exact (CRW-930, c6).
+func (p promptDclosePublishedArtifacts) sentences() []string {
+	out := []string{}
+	if p.marker.landed {
+		out = append(out, p.marker.sentence(promptDcloseMarkerPublishedSentence()))
+	}
+	if p.plan.landed {
+		out = append(out, p.plan.sentence(promptDcloseGoalplanPublishedSentence()))
+	}
+	return out
+}
+
+// sentence is one publication's naming sentence: its durability line when the write published and
+// then failed a step after the rename, the fixed sentence when the write was clean.
+func (p promptDclosePublication) sentence(clean string) string {
+	if p.warning != "" {
+		return p.warning
+	}
+	return clean
+}
+
+// names reports whether warning is already the sentence sentences() emits for one of the artifacts
+// this close published, so a refusal that carries both names each artifact exactly once (CRW-930,
+// c6: the warning is kept, not repeated).
+func (p promptDclosePublishedArtifacts) names(warning string) bool {
+	if warning == "" {
+		return false
+	}
+	return (p.marker.landed && p.marker.warning == warning) || (p.plan.landed && p.plan.warning == warning)
+}
+
+// warningLines are the durability lines of the artifacts that published and then failed a step
+// after the rename, in write order. A clean publication contributes nothing.
+func (p promptDclosePublishedArtifacts) warningLines() []string {
+	lines := []string{}
+	if p.marker.warning != "" {
+		lines = append(lines, p.marker.warning)
+	}
+	if p.plan.warning != "" {
+		lines = append(lines, p.plan.warning)
+	}
+	return lines
+}
+
+// promptDcloseMarkerPublishedSentence is the fixed sentence naming a recovery marker this close
+// published cleanly, so a later refusal of the same close names it instead of denying it
+// (CRW-930, c6).
+func promptDcloseMarkerPublishedSentence() string {
+	return "the recovery marker was published."
+}
+
+// promptDcloseGoalplanPublishedSentence is the fixed sentence naming a goalplan this close
+// published cleanly, so a later refusal of the same close names it instead of denying it
+// (CRW-930, c6).
+func promptDcloseGoalplanPublishedSentence() string {
+	return "the goalplan was published."
 }
 
 // promptDcloseGoalplanRow is one goalplan ledger row the close owes, in the oracle's order.
@@ -283,11 +364,15 @@ func promptDcloseClose(p PromptSubmitPayload, held state.State, turn, closePhase
 		return promptDcloseOutcome{refusal: locked.Value.output}
 	}
 	plan := locked.Value
+	// published is what the first lock wrote - the recovery marker and the goalplan - so every
+	// refusal below names each artifact this close actually published, whether or not it carried a
+	// directory-sync warning (CRW-930, c6).
+	published := plan.published
 	// warnings collects every durability line of a write that published its artifact and then
 	// failed a step after the rename: the marker and plan writes the first lock made (CRW-869,
 	// finding 2), the resting state write below and the marker cleanup. A slice rather than one
 	// string, so a state warning is not silently overwritten by the cleanup warning.
-	warnings := append([]string{}, plan.warnings...)
+	warnings := append([]string{}, published.warningLines()...)
 
 	// §40 Z3: the bound D-close owns its own state write. The write keeps every field the ordinary
 	// D-close write sets - dropping injectedTurns would break same-turn dedup and dropping the
@@ -312,18 +397,18 @@ func promptDcloseClose(p PromptSubmitPayload, held state.State, turn, closePhase
 	if refusal := guard(); refusal != "" {
 		// The guard re-reads the session file, so it can fail on a read error even though the
 		// identical guard accepted before the marker write: the marker and the plan may already be on
-		// disk, with a directory-sync warning collected for either. An answer that denied that would
-		// hide a partial commit the operator has to know about, so the refusal names the published
-		// artifacts through the same partial-refusal text the state write below uses (CRW-930). With
-		// no earlier warning the bare refusal is returned unchanged.
-		return promptDcloseOutcome{refusal: promptDclosePartialRefusal(refusal, warnings)}
+		// disk. An answer that denied that would hide a partial commit the operator has to know about,
+		// so the refusal names every artifact this close published and keeps their warnings
+		// (CRW-930, c6). With nothing published and no warning the bare refusal is unchanged.
+		return promptDcloseOutcome{refusal: promptDclosePartialRefusal(refusal, published, warnings)}
 	}
 	landed, stateWarning := promptDcloseWriteLanded(state.WriteState(p.Cwd, next))
 	if !landed {
 		// An earlier write of this close may already have published its artifact (the marker or the
 		// plan), so the refusal must name it rather than deny that anything was written (CRW-869,
-		// the review finding on the mixed-failure path).
-		return promptDcloseOutcome{refusal: promptDclosePartialRefusal(promptDcloseStateRefusal(), warnings)}
+		// the review finding on the mixed-failure path; CRW-930, c6, extended it to a clean
+		// publication).
+		return promptDcloseOutcome{refusal: promptDclosePartialRefusal(promptDcloseStateRefusal(), published, warnings)}
 	}
 	if stateWarning != "" {
 		warnings = append(warnings, stateWarning)
@@ -454,7 +539,14 @@ func promptDclosePlanWork(p PromptSubmitPayload, held state.State, plan *goalpla
 	if seams != nil && seams.writePlan != nil {
 		writePlan = seams.writePlan
 	}
-	warnings := []string{}
+	// published records which artifacts this close wrote as it writes them, so a later refusal names
+	// each of them whether or not a directory-sync warning was collected for it (CRW-930, c6). A
+	// recovery retry continues a close whose marker is already on the session, so that marker counts
+	// as published too.
+	published := promptDclosePublishedArtifacts{}
+	if recovering {
+		published.marker = promptDclosePublication{landed: true}
+	}
 
 	// §5: integrity is checked inside the lock, before marker or any write.
 	integrityReasons := goalplan.GoalplanDefinitionIntegrityReasons(plan)
@@ -522,27 +614,30 @@ func promptDclosePlanWork(p PromptSubmitPayload, held state.State, plan *goalpla
 		}
 		markerLanded, markerWarning := promptDcloseWriteLanded(writeMarker(p.Cwd, held, closePhaseID, markerNext))
 		if !markerLanded {
+			// The marker never reached its final path, so this close published nothing and the bare
+			// refusal is exact.
 			return promptDclosePlanOutcome{output: promptDcloseStateRefusal()}, nil
 		}
-		if markerWarning != "" {
-			warnings = append(warnings, markerWarning)
-		}
+		published.marker = promptDclosePublication{landed: true, warning: markerWarning}
 		promptDcloseSeam(seams, func(s *promptDcloseSeams) func() { return s.afterRecoveryMarkerWrite })
 	}
 	if writeClosedPlan {
 		planErr := writePlan(p.Cwd, closeResult.plan)
 		switch {
 		case planErr == nil:
+			published.plan = promptDclosePublication{landed: true}
 		case state.Published(planErr):
 			// The artifact is the goalplan, not the session state, so the warning names the file whose
 			// durability is in question while keeping the sentence shape of the state warning.
-			warnings = append(warnings, promptDcloseGoalplanPublishedWarning(planErr))
+			published.plan = promptDclosePublication{landed: true, warning: promptDcloseGoalplanPublishedWarning(planErr)}
 		default:
-			// The plan write did not land, but the marker write before it may have published its own
-			// artifact; the refusal then names that partial commit instead of denying it (CRW-869,
-			// the review finding on the mixed-failure path).
+			// The plan write did not land, but the marker write before it did; the refusal names that
+			// partial commit instead of denying it, whether or not the marker carried a warning
+			// (CRW-869, the review finding on the mixed-failure path; CRW-930, c6, which extended it to
+			// a clean publication).
 			return promptDclosePlanOutcome{output: promptDclosePartialRefusal(
-				promptOrchestrateRefusal("the goalplan could not be written: "+planErr.Error()+" Nothing was written."), warnings)}, nil
+				promptOrchestrateRefusal("the goalplan could not be written: "+planErr.Error()+" Nothing was written."),
+				published, published.warningLines())}, nil
 		}
 		promptDcloseSeam(seams, func(s *promptDcloseSeams) func() { return s.afterGoalplanCommit })
 	}
@@ -558,7 +653,7 @@ func promptDclosePlanWork(p PromptSubmitPayload, held state.State, plan *goalpla
 	if startedID != "" {
 		rows = append(rows, promptDcloseGoalplanRow{event: goalplan.EventWorkphaseStarted, detail: "started " + startedID})
 	}
-	return promptDclosePlanOutcome{markerNext: markerNext, rows: rows, warnings: warnings}, nil
+	return promptDclosePlanOutcome{markerNext: markerNext, rows: rows, published: published}, nil
 }
 
 // promptDcloseWriteLanded says whether a state write reached the file. state.WriteState reports a
@@ -584,16 +679,28 @@ func promptDcloseGoalplanPublishedWarning(err error) string {
 	return "the goalplan was published but its directory could not be synced: " + err.Error()
 }
 
-// promptDclosePartialRefusal is a refusal whose trailing "Nothing was written." claim is replaced
-// when an earlier write of the same close already published its artifact (CRW-869, the review
-// finding on the mixed-failure path). The close still did not apply, but an answer that denied the
-// published marker or plan would hide a partial commit the operator has to know about. With no such
-// warning the refusal is returned exactly as it was.
-func promptDclosePartialRefusal(refusal string, warnings []string) string {
-	if len(warnings) == 0 {
+// promptDclosePartialRefusal is a refusal whose trailing "Nothing was written." claim is replaced by
+// what this close actually published: published names each artifact that landed (the recovery
+// marker and the goalplan, one fixed sentence each) and warnings are the durability lines of the
+// writes that published and then failed a step after the rename, plus the later steps' own. The
+// close still did not apply, but an answer that denied a published artifact would hide a partial
+// commit the operator has to know about, and an artifact that published cleanly carries no warning
+// to recover it from (CRW-930, c6; the mixed-failure path was CRW-869). With nothing published and
+// no warning the refusal is returned exactly as it was.
+func promptDclosePartialRefusal(refusal string, published promptDclosePublishedArtifacts, warnings []string) string {
+	named := published.sentences()
+	for _, warning := range warnings {
+		if published.names(warning) {
+			// The artifact sentences already name this one; adding its durability line again would
+			// name the same file twice.
+			continue
+		}
+		named = append(named, warning)
+	}
+	if len(named) == 0 {
 		return refusal
 	}
-	return strings.Replace(refusal, "Nothing was written.", strings.Join(warnings, " ")+" Nothing else was written.", 1)
+	return strings.Replace(refusal, "Nothing was written.", strings.Join(named, " ")+" Nothing else was written.", 1)
 }
 
 // promptDcloseSameOptionalText compares two optional texts, where an absent one differs from any

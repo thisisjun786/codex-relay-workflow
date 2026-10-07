@@ -10,15 +10,163 @@
 package hook
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/goalplan"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
 )
+
+// promptDcloseSessionsDir is the directory the close writes its session file into.
+func promptDcloseSessionsDir(cwd string) string {
+	return filepath.Join(cwd, crwdir.DirName, state.SessionsSubdir)
+}
+
+// promptDcloseMakeDirUnwritable takes write permission from dir and answers the restore, so a write
+// into it fails while its files stay readable. Root ignores the mode, so the caller skips there.
+func promptDcloseMakeDirUnwritable(t *testing.T, dir string) func() {
+	t.Helper()
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores the file mode this case needs")
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		t.Fatalf("the directory to make unwritable: %v", err)
+	}
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	restore := func() { _ = os.Chmod(dir, info.Mode().Perm()) }
+	t.Cleanup(restore)
+	return restore
+}
+
+// TestPromptDcloseGuardRefusalNamesTheCleanlyPublishedMarkerAndPlan is the c6 case for the guard
+// before the IDLE state write: the marker and the plan both publish with no error at all, so no
+// directory-sync warning is collected, and the guard then refuses on an unreadable session file.
+// The refusal must still name both artifacts; the generation-1 head answers "Nothing was written."
+// because its partial refusal only ever named an artifact that carried a warning.
+func TestPromptDcloseGuardRefusalNamesTheCleanlyPublishedMarkerAndPlan(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores the file mode this case needs")
+	}
+	cwd := promptDcloseRepo(t)
+	slug := "chat-guard-clean"
+	promptDcloseTwoPhases(t, cwd, slug)
+	promptDcloseSeedState(t, cwd, "s1", slug, "c-guard-clean")
+	receipt := promptDcloseReceipt(t, cwd, "s1", "c-guard-clean")
+	sessionPath := filepath.Join(promptDcloseSessionsDir(cwd), "s1.json")
+	seams := &promptDcloseSeams{
+		afterGoalplanCommit: func() {
+			// Both writes landed cleanly; the guard re-reads the session file, so make that read fail.
+			if err := os.Chmod(sessionPath, 0o200); err != nil {
+				t.Fatalf("chmod the session file: %v", err)
+			}
+			t.Cleanup(func() { _ = os.Chmod(sessionPath, 0o644) })
+		},
+	}
+	answer, panicked := promptDcloseRunWith(t, cwd, "s1", "t1", promptDcloseAttest("wp-1", receipt), seams)
+	if panicked != nil {
+		t.Fatalf("the close panicked: %v", panicked)
+	}
+	if err := os.Chmod(sessionPath, 0o644); err != nil {
+		t.Fatalf("restore the session file mode: %v", err)
+	}
+	if !strings.Contains(answer, "cannot be rewritten without losing a stored record") {
+		t.Errorf("the guard did not refuse: %q", answer)
+	}
+	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
+		t.Errorf("the guard refusal did not name the cleanly published marker: %q", answer)
+	}
+	if !strings.Contains(answer, promptDcloseGoalplanPublishedSentence()) {
+		t.Errorf("the guard refusal did not name the cleanly published plan: %q", answer)
+	}
+	if strings.Contains(answer, "Nothing was written.") {
+		t.Errorf("the guard refusal denied the cleanly published artifacts: %q", answer)
+	}
+	if s := state.ReadState(cwd, "s1"); s.DcloseRecovery == nil {
+		t.Errorf("the guard refusal lost the recovery marker: %+v", s)
+	}
+}
+
+// TestPromptDclosePlanFailureAfterACleanMarkerNamesTheMarker is the c6 case for the plan write: the
+// marker publishes with no error, then the plan write fails before its rename. The refusal must name
+// the marker the close published, not deny it.
+func TestPromptDclosePlanFailureAfterACleanMarkerNamesTheMarker(t *testing.T) {
+	cwd := promptDcloseRepo(t)
+	slug := "chat-plan-after-clean-marker"
+	promptDcloseTwoPhases(t, cwd, slug)
+	promptDcloseSeedState(t, cwd, "s1", slug, "c-plan-after-clean-marker")
+	receipt := promptDcloseReceipt(t, cwd, "s1", "c-plan-after-clean-marker")
+	seams := &promptDcloseSeams{writePlan: func(string, *goalplan.Goalplan) error {
+		return errors.New("the goalplan could not be written before the rename")
+	}}
+	answer, panicked := promptDcloseRunWith(t, cwd, "s1", "t1", promptDcloseAttest("wp-1", receipt), seams)
+	if panicked != nil {
+		t.Fatalf("the close panicked: %v", panicked)
+	}
+	if !strings.Contains(answer, "refused") {
+		t.Errorf("the failed plan write did not refuse: %q", answer)
+	}
+	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
+		t.Errorf("the refusal did not name the cleanly published marker: %q", answer)
+	}
+	if strings.Contains(answer, "Nothing was written.") {
+		t.Errorf("the refusal denied the cleanly published marker: %q", answer)
+	}
+	if s := state.ReadState(cwd, "s1"); s.DcloseRecovery == nil {
+		t.Errorf("the failed plan write lost the published marker: %+v", s)
+	}
+}
+
+// TestPromptDcloseStateWriteFailureNamesTheCleanMarkerAndPlan is the c6 case for the IDLE state
+// write: the marker and the plan publish with no error, then the resting state write itself fails
+// because the sessions directory cannot be written. The refusal must name both published artifacts.
+func TestPromptDcloseStateWriteFailureNamesTheCleanMarkerAndPlan(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores the file mode this case needs")
+	}
+	cwd := promptDcloseRepo(t)
+	slug := "chat-state-after-clean-writes"
+	promptDcloseTwoPhases(t, cwd, slug)
+	promptDcloseSeedState(t, cwd, "s1", slug, "c-state-after-clean-writes")
+	receipt := promptDcloseReceipt(t, cwd, "s1", "c-state-after-clean-writes")
+	sessions := promptDcloseSessionsDir(cwd)
+	seams := &promptDcloseSeams{
+		afterGoalplanCommit: func() {
+			// Both writes landed cleanly; the session file stays readable so the guard passes and the
+			// resting state write is the step that fails.
+			if err := os.Chmod(sessions, 0o555); err != nil {
+				t.Fatalf("chmod the sessions directory: %v", err)
+			}
+			t.Cleanup(func() { _ = os.Chmod(sessions, 0o777) })
+		},
+	}
+	answer, panicked := promptDcloseRunWith(t, cwd, "s1", "t1", promptDcloseAttest("wp-1", receipt), seams)
+	if panicked != nil {
+		t.Fatalf("the close panicked: %v", panicked)
+	}
+	if err := os.Chmod(sessions, 0o777); err != nil {
+		t.Fatalf("restore the sessions directory mode: %v", err)
+	}
+	if !strings.Contains(answer, "cannot be rewritten without losing a stored record") {
+		t.Errorf("the failed state write did not answer the state refusal: %q", answer)
+	}
+	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
+		t.Errorf("the refusal did not name the cleanly published marker: %q", answer)
+	}
+	if !strings.Contains(answer, promptDcloseGoalplanPublishedSentence()) {
+		t.Errorf("the refusal did not name the cleanly published plan: %q", answer)
+	}
+	if strings.Contains(answer, "Nothing was written.") {
+		t.Errorf("the refusal denied the cleanly published artifacts: %q", answer)
+	}
+}
 
 // TestPromptDcloseGuardRefusalNamesThePublishedPlan is the CRW-930 case: a wp-1 -> wp-2 bound close
 // publishes the goalplan (the real write, then the post-rename directory-sync failure a
