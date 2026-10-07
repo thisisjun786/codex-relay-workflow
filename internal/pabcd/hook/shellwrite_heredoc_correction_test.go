@@ -15,18 +15,27 @@ import (
 // before and after the verb. A here-document attached to a command that names one of the interpreters, which the
 // reader cannot positively decide, is denied (fail closed).
 
-// shellWriteHeredocCorrectionHeaderRows are the header-shape rows: a redirection, a pipe or a control operator beside
-// the << word must not hide the interpreter or turn a redirection into the verb.
+// shellWriteHeredocCorrectionHeaderRows are the header-shape rows the generation-2 ruling named that stay readable: a
+// redirection beside the << word must not hide the interpreter or turn a redirection into the verb.
 func shellWriteHeredocCorrectionHeaderRows(mem string) []struct{ name, command string } {
 	return []struct{ name, command string }{
 		{"a redirect after the operator", "bash <<'EOF' 2>/dev/null\necho x > " + mem + "/a\nEOF"},
-		{"a pipe after the operator", "bash <<'EOF' | cat\necho x > " + mem + "/a\nEOF"},
 		{"a redirect before the verb", "2>&1 python3 - <<'EOF'\nopen('" + mem + "/a','w')\nEOF"},
 		{"an input redirect before the operator", "bash </dev/null <<'EOF'\necho x > " + mem + "/a\nEOF"},
 		{"a redirect and the interpreter after the operator", "<<'EOF' >out.log python3 -\nopen('" + mem + "/a','w')\nEOF"},
-		{"a redirect then a pipe after the operator", "python3 - <<'EOF' 2>&1 | tee x.log\nopen('" + mem + "/a','w')\nEOF"},
 		{"an append redirect after the operator", "bash <<'EOF' >>out.log\necho x > " + mem + "/a\nEOF"},
 		{"a stderr-to-stdout redirect after the operator", "node <<'EOF' 2>&1\nrequire('fs').writeFileSync('" + mem + "/a','x')\nEOF"},
+	}
+}
+
+// shellWriteHeredocCorrectionFailClosedRows are the generation-2 rows whose header line carries a pipe. Correction 4's
+// rule G1 proves a header only when its physical line holds no ;, &, |, && or ||, so these rows are now denied as
+// unreadable instead of being read: the reader cannot tell which command the shell attaches the here-document to. They
+// are the rows whose expectation this correction changes, and the pull request body lists them.
+func shellWriteHeredocCorrectionFailClosedRows(mem string) []struct{ name, command string } {
+	return []struct{ name, command string }{
+		{"a pipe after the operator", "bash <<'EOF' | cat\necho x > " + mem + "/a\nEOF"},
+		{"a redirect then a pipe after the operator", "python3 - <<'EOF' 2>&1 | tee x.log\nopen('" + mem + "/a','w')\nEOF"},
 	}
 }
 
@@ -51,6 +60,17 @@ func TestShellWriteHeredocCorrectionGate(t *testing.T) {
 			got := memoryGateClassify("Bash", map[string]any{"command": row.command}, cwd, env)
 			if got.Surface != "shell" || got.Target != root+"/a" {
 				t.Errorf("%+v, want the shell surface and %s", got, root+"/a")
+			}
+		})
+	}
+	// Correction 4 (rule G1): a header line holding a pipe is unproven, so these rows are denied as unreadable rather
+	// than read.
+	wantUnproven := "(a program the gate cannot read: " + shellWriteHeredocWhatWant + ")"
+	for _, row := range shellWriteHeredocCorrectionFailClosedRows(root) {
+		t.Run(row.name+" (fail closed)", func(t *testing.T) {
+			got := memoryGateClassify("Bash", map[string]any{"command": row.command}, cwd, env)
+			if got.Surface != "shell" || got.Target != wantUnproven {
+				t.Errorf("%+v, want the shell surface and %s", got, wantUnproven)
 			}
 		})
 	}

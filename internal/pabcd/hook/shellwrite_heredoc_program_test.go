@@ -43,7 +43,8 @@ func TestShellWriteHeredocReads(t *testing.T) {
 	}
 	for _, c := range []struct{ name, command string }{
 		{"double-quoted delimiter", "python3 <<\"EOF\"\nopen('/m/a', 'w')\nEOF"},
-		{"backslash-escaped delimiter", "python3 <<\\EOF\nopen('/m/a', 'w')\nEOF"},
+		// The backslash-escaped delimiter row moved to TestShellWriteHeredocUnreadable: correction 4's rule G1 proves a
+		// header only when its physical line holds no backslash, so `python3 <<\\EOF` now fails closed.
 		{"dash operand for node", "node - <<'EOF'\nrequire('fs').writeFileSync('/m/a','x')\nEOF"},
 		{"sh -s", "sh -s <<'EOF'\necho x > /m/a\nEOF"},
 		{"versioned python", "python3.11 <<'EOF'\nopen('/m/a','w')\nEOF"},
@@ -98,6 +99,8 @@ func TestShellWriteHeredocUnreadable(t *testing.T) {
 		{"a backtick expansion", "python3 <<EOF\nopen('`p`','w')\nEOF"},
 		{"a shell body with an expansion", "bash <<EOF\necho x > $P\nEOF"},
 		{"a node body with an expansion", "node <<EOF\nrequire('fs').writeFileSync('$P','x')\nEOF"},
+		{"a backslash-escaped delimiter is an unproven header", "python3 <<\\EOF\nopen('/m/a', 'w')\nEOF"},
+		{"a line continuation inside the command word", "bas\\\nh <<'EOF'\necho x > /m/a\nEOF"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			got, ok := shellWriteHeredocUnreadable(c.command)

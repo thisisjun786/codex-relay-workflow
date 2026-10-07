@@ -51,18 +51,19 @@ type shellWriteHeredoc struct {
 	body    []uint16
 	quoted  bool
 	tabs    bool
+	joined  bool // the previous physical line ends with a backslash, so this header is a line continuation
 }
 
 // shellWriteHeredocs enumerates the here-documents of a command without changing the oracle's own stripHeredocBodies:
 // it walks the same text with the same quote, operator and line helpers (skipQuoted, skipHeredoc, shellNewline) and
 // records each body instead of deleting it. A header may declare several << operators, and the shell reads their bodies
-// in operator order, so every declaration of the header is recorded (CRW-765 review). The header is the whole logical
-// line, not only the words before the first operator, because a redirect may precede the command it feeds
-// (<<'PY' python3) and because the tokenizer already skips the operator and delimiter words. A body's leading tabs are
-// removed when the operator was <<-, before the interpreter reads the line.
+// in operator order, so every declaration of the header is recorded (CRW-765 review). The header is the whole physical
+// line that holds the operator, not only the words before the first operator, because a redirect may precede the
+// command it feeds (<<'PY' python3), a redirect or a pipe may follow it, and a second command may follow on the same
+// line (CRW-765 corrections 2 and 4); the tokenizer already skips the operator and delimiter words. A body's leading
+// tabs are removed when the operator was <<-, before the interpreter reads the line.
 func shellWriteHeredocs(command []uint16) []shellWriteHeredoc {
 	out := []shellWriteHeredoc{}
-	start := 0
 	for i := 0; i < len(command); {
 		ch := command[i]
 		if ch == '\'' || ch == '"' {
@@ -74,7 +75,11 @@ func shellWriteHeredocs(command []uint16) []shellWriteHeredoc {
 			if eol == -1 {
 				eol = len(command)
 			}
-			header := command[start:eol]
+			lineStart := shellWriteHeredocLineStart(command, i)
+			// The physical line before this one ends with a backslash: the shell joins the two lines before it reads
+			// them, so this header is a continuation and is not proven (CRW-765 correction 4, rule G1).
+			joined := lineStart >= 2 && command[lineStart-2] == '\\'
+			header := command[lineStart:eol]
 			decls := shellWriteHeredocDecls(header)
 			j := eol
 			if j < len(command) {
@@ -85,18 +90,27 @@ func shellWriteHeredocs(command []uint16) []shellWriteHeredoc {
 					continue // no delimiter word at all (the oracle's absent-delimiter case)
 				}
 				body, next := shellWriteHeredocBody(command, j, d)
-				out = append(out, shellWriteHeredoc{command: header, delim: d.delim, body: body, quoted: d.quoted, tabs: d.tabs})
+				out = append(out, shellWriteHeredoc{command: header, delim: d.delim, body: body, quoted: d.quoted, tabs: d.tabs, joined: joined})
 				j = next
 			}
-			i, start = j, j
+			i = j
 			continue
-		}
-		if ch == '\n' || ch == ';' || ch == '|' && shellAt(command, i-1) != '>' || ch == '&' && shellAt(command, i-1) != '>' && shellAt(command, i-1) != '<' && shellAt(command, i+1) != '>' {
-			start = i + 1
 		}
 		i++
 	}
 	return out
+}
+
+// shellWriteHeredocLineStart is the offset of the physical line that holds at: the byte after the last newline before it.
+// The header a here-document is judged by is that physical line, so a backslash, a control operator or a second command
+// beside the operator is seen by the header proof (CRW-765 correction 4, rule G1).
+func shellWriteHeredocLineStart(s []uint16, at int) int {
+	for i := at - 1; i >= 0; i-- {
+		if s[i] == '\n' {
+			return i + 1
+		}
+	}
+	return 0
 }
 
 // shellWriteHeredocDecls reads every << operator declared in one header line, in order, skipping quoted spans so a
@@ -219,50 +233,92 @@ func shellWriteHeredocInterpreterName(word string) bool {
 	return shellVerbVersioned(name)
 }
 
-// shellWriteHeredocOwningSegment is the part of a header between the last control operator before the here-document
-// operator and the first one after it: the simple command the here-document is attached to.
-func shellWriteHeredocOwningSegment(header []uint16) []uint16 {
-	at := -1
-	for i := 0; i < len(header); {
-		ch := header[i]
-		if ch == '\'' || ch == '"' {
-			i = skipQuoted(header, i)
+// shellWriteHeredocHeaderProven reports whether a here-document's header is proven to be exactly one simple command the way the shell reads it (CRW-765 correction 4, rule G1). The proof is narrow on purpose: the header's physical line must hold no backslash at all (an escape or a line continuation would change what the shell executes), the physical line before it must not end with a backslash (the shell joins the two lines first), and outside quotes the line must hold no ;, &, |, && or || (so exactly one command stands on it). A header that defines a function in any form is not proven either (rule G3). Only a proven header is decided as data or program; anything else is an unprovable header and the here-document fails closed when the command text names an interpreter.
+func shellWriteHeredocHeaderProven(h shellWriteHeredoc) bool {
+	if h.joined {
+		return false
+	}
+	line := h.command
+	for i := 0; i < len(line); {
+		c := line[i]
+		if c == '\\' {
+			return false
+		}
+		if c == '\'' || c == '"' {
+			i = skipQuoted(line, i)
 			continue
 		}
-		if ch == '<' && shellAt(header, i+1) == '<' && shellAt(header, i+2) != '<' {
-			at = i
-			break
+		if shellWriteHeredocSeparator(line, i) {
+			return false
 		}
 		i++
 	}
-	if at < 0 {
-		return header
-	}
-	start, end := 0, len(header)
-	for i := 0; i < at; {
-		ch := header[i]
-		if ch == '\'' || ch == '"' {
-			i = skipQuoted(header, i)
+	return !shellWriteHeredocDefinesFunction(line)
+}
+
+// shellWriteHeredocDefinesFunction reports whether a header line defines a function in any form (CRW-765 correction 4, rule G3): name(), function name and function name() all make the header unprovable.
+func shellWriteHeredocDefinesFunction(header []uint16) bool {
+	return len(shellWriteHeredocFunctionNames(header)) > 0
+}
+
+// shellWriteHeredocHiddenOperator reports whether the command holds a here-document operator the collector cannot reach: a << inside a $( ... ) or backtick command substitution that a double-quoted word encloses (CRW-765 correction 4, rule G4). The shell reads that operator as a here-document, so a command holding one is an unprovable header and fails closed when the command text names an interpreter.
+func shellWriteHeredocHiddenOperator(command []uint16) bool {
+	for i := 0; i < len(command); {
+		if command[i] == '\'' {
+			i = skipQuoted(command, i)
 			continue
 		}
-		if shellWriteHeredocSeparator(header, i) {
-			start = i + 1
+		if command[i] == '"' {
+			end := skipQuoted(command, i)
+			if shellWriteHeredocSubstitutionOperator(command[i:end]) {
+				return true
+			}
+			i = end
+			continue
 		}
 		i++
 	}
-	for i := at; i < len(header); {
-		ch := header[i]
-		if ch == '\'' || ch == '"' {
-			i = skipQuoted(header, i)
+	return false
+}
+
+// shellWriteHeredocSubstitutionOperator reports whether a double-quoted span holds a << inside one of its $( ... ) or backtick command substitutions. A backslash escapes the character after it inside double quotes, so an escaped character is not read as part of a substitution.
+func shellWriteHeredocSubstitutionOperator(span []uint16) bool {
+	depth, tick := 0, false
+	for i := 0; i < len(span); i++ {
+		c := span[i]
+		if c == '\\' {
+			i++
 			continue
 		}
-		if shellWriteHeredocSeparator(header, i) {
-			end = i
-			break
+		if c == '$' && shellAt(span, i+1) == '(' {
+			depth++
+			i++
+			continue
 		}
-		i++
+		if tick {
+			if c == '\x60' {
+				tick = false
+			} else if c == '<' && shellAt(span, i+1) == '<' && shellAt(span, i+2) != '<' {
+				return true
+			}
+			continue
+		}
+		if c == '\x60' {
+			tick = true
+			continue
+		}
+		if depth > 0 {
+			switch {
+			case c == '(':
+				depth++
+			case c == ')':
+				depth--
+			case c == '<' && shellAt(span, i+1) == '<' && shellAt(span, i+2) != '<':
+				return true
+			}
+		}
 	}
-	return header[start:end]
+	return false
 }
 
 // shellWriteHeredocSeparator reports whether a byte is a shell control operator that ends a simple command: ;, | and &,

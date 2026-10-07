@@ -1872,14 +1872,18 @@ const (
 )
 
 // shellWriteHeredocClassify classifies one here-document under the closed rule (CRW-765 correction 3) and returns the
-// reader to use when it is a program. The rule proves the owning simple command: it must be made only of literal words,
-// allowed redirections and here-document operators (shellWriteHeredocSimpleCommand), and its verb must be neither an
-// interpreter nor a function the same command defines. A proven interpreter verb that reads standard input is a
-// program; a proven interpreter verb that does not is data (its here-document feeds the interpreter's own stdin); a
-// proven non-interpreter verb is data. Everything the rule cannot prove is unknown, and unknown fails closed when the
-// command text names an interpreter.
+// reader to use when it is a program. The header's physical line must first be proven to be exactly one simple command
+// the way the shell reads it (shellWriteHeredocHeaderProven; correction 4, rules G1 and G3); then the rule proves that
+// command: it must be made only of literal words, allowed redirections and here-document operators
+// (shellWriteHeredocSimpleCommand), and its verb must be neither an interpreter nor a function the same command defines.
+// A proven interpreter verb that reads standard input is a program; a proven interpreter verb that does not is data (its
+// here-document feeds the interpreter's own stdin); a proven non-interpreter verb is data. Everything the rule cannot
+// prove is unknown, and unknown fails closed when the command text names an interpreter.
 func shellWriteHeredocClassify(h shellWriteHeredoc, funcs map[string]bool) (shellWriteHeredocReading, shellWriteHeredocKind) {
-	words, ok := shellWriteHeredocSimpleCommand(shellWriteHeredocOwningSegment(h.command))
+	if !shellWriteHeredocHeaderProven(h) {
+		return shellWriteHeredocUnknown, 0
+	}
+	words, ok := shellWriteHeredocSimpleCommand(h.command)
 	if !ok {
 		return shellWriteHeredocUnknown, 0
 	}
@@ -1937,8 +1941,9 @@ func shellWriteHeredocStdin(verb string, args []string) (kind shellWriteHeredocK
 	return 0, false, true
 }
 
-// shellWriteHeredocFunctionNames is the function names the command defines (name() or name ()), so a here-document
-// attached to a call of one is not proven to feed an interpreter (CRW-765 correction 3).
+// shellWriteHeredocFunctionNames is the function names the command defines in any form - name(), name (), function name
+// and function name() (CRW-765 correction 4, rule G3) - so a here-document attached to a call of one is not proven to
+// feed an interpreter.
 func shellWriteHeredocFunctionNames(command []uint16) map[string]bool {
 	out := map[string]bool{}
 	s := stripHeredocBodies(command)
@@ -1962,7 +1967,40 @@ func shellWriteHeredocFunctionNames(command []uint16) map[string]bool {
 			out[shellVerbName(name)] = true
 		}
 	}
+	for i := 0; i+len("function") <= len(s); i++ {
+		if !shellWriteHeredocWordAt(s, i, "function") {
+			continue
+		}
+		j := i + len("function")
+		for j < len(s) && shellSpace(s[j]) {
+			j++
+		}
+		k := j
+		for k < len(s) && shellWriteHeredocWordRune(rune(s[k])) && s[k] != '(' && s[k] != ')' {
+			k++
+		}
+		if name := shellString(s[j:k]); name != "" {
+			out[shellVerbName(name)] = true
+		}
+	}
 	return out
+}
+
+// shellWriteHeredocWordAt reports whether the word at i is exactly word, delimited by characters that are not part of a
+// command word.
+func shellWriteHeredocWordAt(s []uint16, i int, word string) bool {
+	if i > 0 && shellWriteHeredocWordRune(rune(s[i-1])) {
+		return false
+	}
+	if i+len(word) > len(s) {
+		return false
+	}
+	for k := 0; k < len(word); k++ {
+		if s[i+k] != uint16(word[k]) {
+			return false
+		}
+	}
+	return i+len(word) >= len(s) || !shellWriteHeredocWordRune(rune(s[i+len(word)]))
 }
 
 // shellWriteHeredocWordRune reports whether a byte is part of a command word's text: the characters of a name or a
@@ -1972,10 +2010,35 @@ func shellWriteHeredocWordRune(c rune) bool {
 	return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '-' || c == '.' || c == '/' || c >= 128
 }
 
+// shellWriteHeredocCanonical is the canonical text rule 3 reads (CRW-765 correction 4, rule G2): every quote character
+// and every backslash (and the newline after it) is deleted and ASCII letters are lowercased, so a spelling the shell
+// unescapes or a quoted word - bas\h, pytho\n3, PYTHON3, a path - is still read as the interpreter it names.
+func shellWriteHeredocCanonical(s string) string {
+	out := make([]byte, 0, len(s))
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c == '\\':
+			if i+1 < len(s) && s[i+1] == '\n' {
+				i++ // a backslash-newline is a line continuation: both characters are deleted
+			}
+		case c == '\'' || c == '"' || c == '\x60':
+			// deleted: quoting does not hide the word
+		default:
+			if c >= 'A' && c <= 'Z' {
+				c += 'a' - 'A'
+			}
+			out = append(out, c)
+		}
+	}
+	return string(out)
+}
+
 // shellWriteHeredocNamesInterpreter reports whether the command text outside here-document bodies names an interpreter
-// anywhere: a word whose last path element is an interpreter name (CRW-765 correction 3, rule 3).
+// anywhere: a word whose last path element is an interpreter name, read from the canonical text (CRW-765 correction 4,
+// rules G2 and 3).
 func shellWriteHeredocNamesInterpreter(command []uint16) bool {
-	s := shellString(stripHeredocBodies(command))
+	s := shellWriteHeredocCanonical(shellString(stripHeredocBodies(command)))
 	start := -1
 	check := func(end int) bool {
 		if start < 0 {
@@ -2112,6 +2175,9 @@ func shellWriteHeredocNodeStdin(args []string) (stdin bool, certain bool) {
 	}
 	if sawScript && unknown {
 		return false, false
+	}
+	if sawScript {
+		return false, true // a script operand: the body is that program's standard input, not its text
 	}
 	return true, true
 }
@@ -2287,6 +2353,12 @@ func shellWriteHeredocUnreadableIn(command string, depth int, budget *int) (stri
 				return what, true
 			}
 		}
+	}
+	// A here-document operator the collector cannot reach - a << inside a $( ... ) or backtick command substitution a
+	// double-quoted word encloses (correction 4, rule G4) - is read as a here-document by the shell, so a command
+	// holding one fails closed when the command text names an interpreter.
+	if named && shellWriteHeredocHiddenOperator(u) {
+		return shellWriteHeredocUnreadableWhat, true
 	}
 	return shellWriteHeredocUnreadableNested(command, depth, budget)
 }
