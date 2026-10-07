@@ -142,7 +142,62 @@ func configLockPathsSameTarget(spelling, pinned string) bool {
 	if !ok {
 		return false
 	}
-	return real == pinned
+	return configLockPathsSameEntry(real, pinned)
+}
+
+// configLockPathsSameEntry reports whether two resolved paths name one directory entry. Equal strings
+// are the plain case. Beyond that, a case-insensitive filesystem names one entry with two spellings
+// and filepath.EvalSymlinks follows links without canonicalising the case of ordinary components, so
+// the strings differ while the entry is the same one — still the same target, because a rename over
+// it replaces the entry both spellings name. A hard link is a different entry that a rename would not
+// follow, so it stays refused. The two are told apart by asking the directory itself: the paths must
+// be one file and one parent directory, the names must match without case, and the spelling must not
+// be present as its own entry (which is what a hard link, or a case-sensitive sibling, would be).
+func configLockPathsSameEntry(real, pinned string) bool {
+	if real == pinned {
+		return true
+	}
+	base, pinnedBase := filepath.Base(real), filepath.Base(pinned)
+	if !strings.EqualFold(base, pinnedBase) {
+		return false
+	}
+	realInfo, err := os.Stat(real)
+	if err != nil {
+		return false
+	}
+	pinnedInfo, err := os.Stat(pinned)
+	if err != nil {
+		return false
+	}
+	if !os.SameFile(realInfo, pinnedInfo) {
+		return false
+	}
+	realDir, err := os.Stat(filepath.Dir(real))
+	if err != nil {
+		return false
+	}
+	pinnedDir, err := os.Stat(filepath.Dir(pinned))
+	if err != nil {
+		return false
+	}
+	if !os.SameFile(realDir, pinnedDir) {
+		return false
+	}
+	// Same inode, same parent directory. Whether this is one entry or two depends on the
+	// filesystem: a case-insensitive directory lists the name once, so both spellings are one
+	// entry; a case-sensitive one that holds both spellings lists them separately, and they are
+	// two entries (a hard link) that a rename over one would not reach.
+	entries, err := os.ReadDir(filepath.Dir(pinned))
+	if err != nil {
+		return false
+	}
+	matches := 0
+	for _, entry := range entries {
+		if strings.EqualFold(entry.Name(), base) {
+			matches++
+		}
+	}
+	return matches == 1
 }
 
 // DecideKeyRestore is deactivate.ts's per-key decision table. backupKnown=false means

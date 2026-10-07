@@ -221,6 +221,56 @@ func TestConfigLockPathsPinnedRefusesARetargetedDirectoryAlias(t *testing.T) {
 
 // configLockPathsRenameRunner is the issue's reproduction: the injected CLI writes the new settings
 
+// A case-insensitive spelling of the locked entry is the same target and is accepted. The test needs
+// a filesystem that folds case; where the filesystem distinguishes the two spellings it skips, and
+// the refusal pinned above is the correct answer there.
+func TestConfigLockPathsAcceptsACaseVariantSpelling(t *testing.T) {
+	home := configLockActivationHome(t)
+	real := filepath.Join(home, "real")
+	if err := os.MkdirAll(real, 0700); err != nil {
+		t.Fatal(err)
+	}
+	cfg := filepath.Join(real, "config.toml")
+	activationWrite(t, cfg, deactivationConfig)
+	pinned, ok := configLockPathsRealPath(cfg)
+	if !ok {
+		t.Fatal("the pinned path did not resolve")
+	}
+	// The same directory and the same file through a differently cased spelling.
+	upperDir := filepath.Join(home, "REAL")
+	dirInfo, err := os.Stat(upperDir)
+	if err != nil {
+		t.Skipf("this filesystem does not fold directory case: %v", err)
+	}
+	realDirInfo, err := os.Stat(real)
+	if err != nil || !os.SameFile(dirInfo, realDirInfo) {
+		t.Skip("this filesystem distinguishes the two directory spellings")
+	}
+	upperCfg := filepath.Join(upperDir, "CONFIG.TOML")
+	if _, err := os.Stat(upperCfg); err != nil {
+		t.Skipf("this filesystem does not fold file case: %v", err)
+	}
+	if !configLockPathsSameTarget(upperCfg, pinned) {
+		t.Fatal("a case-insensitive spelling of the locked entry was refused")
+	}
+}
+
+// A hard link whose name differs only by case is still a different directory entry, and a rename over
+// the locked path would not reach it, so it stays refused even though the inode and the directory are
+// the same. This is the case that separates a hard link from a case-insensitive spelling.
+func TestConfigLockPathsRefusesACaseVariantHardLink(t *testing.T) {
+	home := configLockActivationHome(t)
+	lower := filepath.Join(home, "config.toml")
+	upper := filepath.Join(home, "CONFIG.TOML")
+	activationWrite(t, lower, deactivationConfig)
+	if err := os.Link(lower, upper); err != nil {
+		t.Skipf("this filesystem does not support hard links: %v", err)
+	}
+	if configLockPathsSameTarget(upper, lower) {
+		t.Fatal("a case-variant hard link was accepted as the locked directory entry")
+	}
+}
+
 // The root-parent boundary: a config named directly at the filesystem root must resolve through
 // "/". Dropping the trailing separator unconditionally would leave an empty parent and resolve the
 // working directory instead, so the pin would reject a correctly held root sidecar.
