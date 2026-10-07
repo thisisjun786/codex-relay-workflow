@@ -86,6 +86,95 @@ func goalplanLockVanishedOpenHeld(parent *os.File, dir string) (*os.File, error)
 
 func sleepGoalplanLock(ms int) { time.Sleep(time.Duration(ms) * time.Millisecond) }
 
+// goalplanLockAcquire takes slug's write lock inside parent, the plan directory, waiting on the
+// oracle's retry schedule. It returns the held directory, or a "locked" outcome when the whole
+// schedule ran out with another holder's directory still there, or the acquisition error as it is.
+// It is the one acquisition path, so a creator and a mutator queue on the same mkdir.
+func goalplanLockAcquire(parent *os.File, real, slug string, o *GoalplanWriteLockOptions) (*os.File, *GoalplanWriteLockResult[struct{}], error) {
+	delays, sleep, now := GoalplanLockRetryDelaysMs(), sleepGoalplanLock, func() string { return time.Now().UTC().Format("2006-01-02T15:04:05.000Z") }
+	if o != nil {
+		if o.RetryDelaysMs != nil {
+			delays = o.RetryDelaysMs
+		}
+		if o.Sleep != nil {
+			sleep = o.Sleep
+		}
+		if o.Now != nil {
+			now = o.Now
+		}
+	}
+	dir := filepath.Join(real, GoalplanLockDir)
+	for attempt := 0; ; attempt++ {
+		if err := boundFile(parent, real, true); err != nil {
+			return nil, nil, err
+		}
+		err := unix.Mkdirat(int(parent.Fd()), GoalplanLockDir, 0o777)
+		if err == nil {
+			lock, err := openAt(parent, GoalplanLockDir, dir, unix.O_RDONLY|unix.O_DIRECTORY, true, 0)
+			if err != nil {
+				return nil, nil, err
+			}
+			writeLockOwner(lock, dir, now)
+			return lock, nil, nil
+		}
+		if err != unix.EEXIST {
+			return nil, nil, err
+		}
+		held, e := goalplanLockVanishedOpenHeld(parent, dir)
+		if e != nil && !pathAbsent(e) {
+			return nil, nil, e
+		}
+		if attempt >= len(delays) {
+			owner := "(owner.json unavailable)"
+			if held != nil {
+				owner = readGoalplanLockOwnerText(held, dir)
+				_ = held.Close()
+			}
+			reason := fmt.Sprintf("goalplan '%s' is busy. Lock directory: %s. owner=%s. Inspect %s. After verifying no writer is active, remove that lock directory with a tool for this platform.", slug, dir, owner, filepath.Join(dir, GoalplanLockOwnerFile))
+			return nil, &GoalplanWriteLockResult[struct{}]{Kind: "locked", Reason: reason}, nil
+		}
+		if held != nil {
+			_ = held.Close()
+		}
+		sleep(delays[attempt])
+	}
+}
+
+// WithGoalplanCreationLock takes slug's goalplan write lock for a creator whose plan does not exist
+// yet. WithGoalplanWriteLock reads the plan under its lock, so it refuses a slug that has none; a
+// creator must instead check for absence AND publish inside one critical section, or two creators on
+// one slug can both see it absent and the second rename replaces the first plan (CRW-646 c1, a
+// data-loss defect). The slug directory is created through the same symlink-safe walk WriteGoalplan
+// uses, so a linked state root is refused with that walk's message; a lock another holder owns comes
+// back as Kind "locked" with the same reason text WithGoalplanWriteLock gives.
+func WithGoalplanCreationLock(cwd, slug string, fn func() error, o *GoalplanWriteLockOptions) (GoalplanWriteLockResult[struct{}], error) {
+	result := GoalplanWriteLockResult[struct{}]{}
+	if _, err := ValidateGoalplanSlug(slug); err != nil {
+		return result, err
+	}
+	checked, err := GoalplanDir(cwd, slug)
+	if err != nil {
+		return result, err
+	}
+	dir, real, err := writeOpenCheckedDir(cwd, checked)
+	if err != nil {
+		return result, err
+	}
+	defer dir.Close()
+	lock, locked, err := goalplanLockAcquire(dir, real, slug, o)
+	if err != nil {
+		return result, err
+	}
+	if locked != nil {
+		return *locked, nil
+	}
+	defer releaseLock(dir, lock, filepath.Join(real, GoalplanLockDir))
+	if err := fn(); err != nil {
+		return result, err
+	}
+	return GoalplanWriteLockResult[struct{}]{Kind: "ok"}, nil
+}
+
 // GoalplanWriteLockDir is the lexical path (:769-771), with an added secure
 // descriptor check for an extant directory. A linked or dangling lock is refused.
 func GoalplanWriteLockDir(cwd, slug string) (string, error) {
@@ -205,55 +294,15 @@ func WithGoalplanWriteLock[T any](cwd, slug string, fn func(*Goalplan) (T, error
 	if st.Mode&unix.S_IFMT == unix.S_IFLNK {
 		return result, fmt.Errorf("goalplan state path must not be a symlink: %s", filepath.Join(real, GoalplanFile))
 	}
-	delays, sleep, now := GoalplanLockRetryDelaysMs(), sleepGoalplanLock, func() string { return time.Now().UTC().Format("2006-01-02T15:04:05.000Z") }
-	if o != nil {
-		if o.RetryDelaysMs != nil {
-			delays = o.RetryDelaysMs
-		}
-		if o.Sleep != nil {
-			sleep = o.Sleep
-		}
-		if o.Now != nil {
-			now = o.Now
-		}
+	lock, locked, err := goalplanLockAcquire(parent, real, slug, o)
+	if err != nil {
+		return result, err
+	}
+	if locked != nil {
+		return GoalplanWriteLockResult[T]{Kind: "locked", Reason: locked.Reason}, nil
 	}
 	dir := filepath.Join(real, GoalplanLockDir)
-	var lock *os.File
-	for attempt := 0; ; attempt++ {
-		if err = boundFile(parent, real, true); err != nil {
-			return result, err
-		}
-		err = unix.Mkdirat(int(parent.Fd()), GoalplanLockDir, 0o777)
-		if err == nil {
-			lock, err = openAt(parent, GoalplanLockDir, dir, unix.O_RDONLY|unix.O_DIRECTORY, true, 0)
-			if err != nil {
-				return result, err
-			}
-			break
-		}
-		if err != unix.EEXIST {
-			return result, err
-		}
-		held, e := goalplanLockVanishedOpenHeld(parent, dir)
-		if e != nil && !pathAbsent(e) {
-			return result, e
-		}
-		if attempt >= len(delays) {
-			owner := "(owner.json unavailable)"
-			if held != nil {
-				owner = readGoalplanLockOwnerText(held, dir)
-				_ = held.Close()
-			}
-			reason := fmt.Sprintf("goalplan '%s' is busy. Lock directory: %s. owner=%s. Inspect %s. After verifying no writer is active, remove that lock directory with a tool for this platform.", slug, dir, owner, filepath.Join(dir, GoalplanLockOwnerFile))
-			return GoalplanWriteLockResult[T]{Kind: "locked", Reason: reason}, nil
-		}
-		if held != nil {
-			_ = held.Close()
-		}
-		sleep(delays[attempt])
-	}
 	defer releaseLock(parent, lock, dir)
-	writeLockOwner(lock, dir, now)
 	read, file := revivalLossReadPlan(parent, real, filepath.Join(real, GoalplanFile), slug)
 	if read.Plan == nil {
 		detail := "goalplan '" + slug + "' could not be read"

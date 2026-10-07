@@ -332,8 +332,11 @@ func ResolveLoopSlug(args LoopCliArgs) *string {
 	if args.Objective != nil && *args.Objective != "" {
 		return loopString(interview.DeriveSlug(*args.Objective))
 	}
-	if args.Session != nil && *args.Session != "" {
-		if bound := state.ReadState(args.Cwd, *args.Session).Slug; bound != "" {
+	// The TRIMMED value, the one RunLoopCli's canonical guard tested (CRW-646 c3): reading the raw
+	// flag here would let a blanks-only --session skip that guard and resolve to the sanitized
+	// 'missing' session's state file, printing a plan the caller never named.
+	if sessionID := loopSessionID(args); sessionID != "" {
+		if bound := state.ReadState(args.Cwd, sessionID).Slug; bound != "" {
 			return &bound
 		}
 	}

@@ -11,7 +11,6 @@
 package cli
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -56,22 +55,43 @@ func loopOpt(value *string) string {
 // loopSessionID is the trimmed --session value, "" when absent.
 func loopSessionID(args LoopCliArgs) string { return text.Trim(loopOpt(args.Session)) }
 
+// loopInitAfterAbsenceCheck is a test seam: it runs after init's outer absence check and before the
+// plan is created, so a test can hold one init there while a second init on the same slug completes
+// and then prove the held init is refused instead of replacing that plan (CRW-646 c1). Production
+// leaves it nil, so no call ever carries it.
+var loopInitAfterAbsenceCheck func()
+
+// loopInitWriteStateHook, when non-nil, replaces the binding write of init's --session branch so a
+// test can drive the commit-order case where the plan and its created ledger row are published and
+// the binding then fails (CRW-646, failure class 2). It is nil in production (an uninitialized
+// variable, no package-level work at start).
+var loopInitWriteStateHook func(string, state.State) error
+
+// loopInitWriteState is init's binding write: the hook when a test set one, state.WriteState otherwise.
+func loopInitWriteState(cwd string, next state.State) error {
+	if loopInitWriteStateHook != nil {
+		return loopInitWriteStateHook(cwd, next)
+	}
+	return state.WriteState(cwd, next)
+}
+
 // RunLoopCli is runGoalplanCli (:751-865) for the verbs this issue owns. A non-nil error is the oracle's
 // uncaught throw: a write that failed, or a lock status that could not be read.
 func RunLoopCli(args LoopCliArgs) (LoopCliResult, error) {
 	if args.Verb == LoopVerbHelp {
 		return LoopCliResult{Output: RenderLoopHelp(), Code: 0}, nil
 	}
+	// Checked BEFORE the verb dispatch, init included, and on the TRIMMED value the verbs themselves
+	// use: state paths sanitize the id, so a blank or non-canonical one would resolve to a DIFFERENT
+	// session's state file and this verb would print or judge a plan the caller never named
+	// (docs/port-cxc/known-defects/CRW-646.md, port: fixed). The oracle guards the ready verb alone
+	// (:802-810) and tests its raw value, so a blanks-only --session skips its guard, reaches
+	// resolveSlug, and reads the 'missing' session's plan (:821-839).
+	if args.Session != nil && !state.IsCanonicalSessionID(loopSessionID(args)) {
+		return LoopCliResult{Output: fmt.Sprintf("loop %s: session id is not canonical", args.Verb), Code: 1}, nil
+	}
 	if args.Verb == LoopVerbInit {
 		return loopInit(args)
-	}
-	// Checked BEFORE ResolveLoopSlug(): state paths sanitize the id, so a non-canonical one would resolve to
-	// a DIFFERENT session's state file and this verb would print or judge a plan the caller never named. The
-	// oracle guards the ready verb alone (:802-810), which leaves show --session a/b reading session a-b's
-	// plan (docs/port-cxc/known-defects/CRW-646.md, port: fixed); the port applies the guard to every verb
-	// that resolves a plan through --session.
-	if id := loopSessionID(args); id != "" && !state.IsCanonicalSessionID(id) {
-		return LoopCliResult{Output: fmt.Sprintf("loop %s: session id is not canonical", args.Verb), Code: 1}, nil
 	}
 	switch args.Verb {
 	case LoopVerbSteer, LoopVerbAsk, LoopVerbDecide, LoopVerbAddCriterion, LoopVerbAddWorkPhase,
@@ -106,6 +126,15 @@ func RunLoopCli(args LoopCliArgs) (LoopCliResult, error) {
 // loopInit is the init branch (:753-800): a real objective, no --surface, no plan of that slug yet, a
 // resolvable source identity when the plan is bound to a session, then the plan, its created ledger row and
 // the session's slug binding.
+//
+// Two write-order defects of the oracle's branch are fixed here (docs/port-cxc/known-defects/CRW-646.md,
+// both port: fixed). The absence check and the plan's publication are one critical section, so of two
+// concurrent inits on one slug exactly one creates the plan (c1, a data loss: the oracle checks first and
+// its replacing rename then overwrites the plan the other init just published). And when --session is
+// given, the session lock comes FIRST and is held across the plan creation, the created ledger row and
+// the binding (c2: the oracle writes the plan and the row and only then takes the lock, so a lock it
+// cannot take leaves an unbound plan that blocks the retry). The lock order is the bound D-close's:
+// session lock outside, goalplan lock inside.
 func loopInit(args LoopCliArgs) (LoopCliResult, error) {
 	objective := text.Trim(loopOpt(args.Objective))
 	if objective == "" {
@@ -117,69 +146,130 @@ func loopInit(args LoopCliArgs) (LoopCliResult, error) {
 			"--surface <logic|web|tui|desktop>\nNothing was written.", Code: 1}, nil
 	}
 	slug := interview.DeriveSlug(objective)
-	// The oracle asks only whether a plan LOADED, so a truncated or structurally invalid plan file reads as
-	// absent and WriteGoalplan's rename replaces its bytes (docs/port-cxc/known-defects/CRW-646.md,
-	// port: fixed). Refuse whenever the plan file is there, so a damaged plan stays for repair.
-	if read := goalplan.ReadGoalplanDetailed(args.Cwd, slug); read.Diagnostic == nil || loopPlanFileExists(args.Cwd, slug) {
-		if read.Diagnostic == nil {
-			return LoopCliResult{Output: fmt.Sprintf("loop init: a plan already exists at slug '%s' (use show/validate)", slug), Code: 1}, nil
-		}
+	if refusal, present := loopInitPlanRefusal(args.Cwd, slug); present {
+		return refusal, nil
+	}
+	if loopInitAfterAbsenceCheck != nil {
+		loopInitAfterAbsenceCheck()
+	}
+	sessionID := loopSessionID(args)
+	if sessionID == "" {
+		return loopInitCreate(args, slug, objective)
+	}
+	var answer LoopCliResult
+	err := state.WithSessionLock(args.Cwd, sessionID, func() error {
+		result, err := loopInitBound(args, slug, objective, sessionID)
+		answer = result
+		return err
+	})
+	if err != nil {
+		return LoopCliResult{}, err
+	}
+	return answer, nil
+}
+
+// loopInitPlanRefusal is the one "a plan of this slug must not be created" predicate: init's outer
+// check and the re-check inside the slug's goalplan write lock both take it, so the answer that
+// refused the earlier check is the answer taken at the write. The oracle asks only whether a plan
+// LOADED, so a truncated or structurally invalid plan file reads as absent and its rename replaces
+// the bytes (docs/port-cxc/known-defects/CRW-646.md, port: fixed); this predicate refuses whenever
+// the file is there, so a damaged plan stays for repair.
+func loopInitPlanRefusal(cwd, slug string) (LoopCliResult, bool) {
+	read := goalplan.ReadGoalplanDetailed(cwd, slug)
+	if read.Diagnostic == nil {
+		return LoopCliResult{Output: fmt.Sprintf("loop init: a plan already exists at slug '%s' (use show/validate)", slug), Code: 1}, true
+	}
+	if loopPlanFileExists(cwd, slug) {
 		return LoopCliResult{Output: fmt.Sprintf(
 			"loop init: a plan file for slug '%s' already exists but could not be read (%s); refusing to overwrite it\nNothing was written.",
-			slug, read.Diagnostic.Kind), Code: 1}, nil
+			slug, read.Diagnostic.Kind), Code: 1}, true
 	}
+	return LoopCliResult{}, false
+}
+
+// loopInitBound is the --session branch of init, run with the session lock already held: the source
+// and state gates the bound cycle needs, then the plan's creation, then the slug binding. Every
+// pre-write check runs under that lock, so nothing it refuses can leave a half-written binding, and
+// a plan it creates is always followed by the binding in the same critical section (CRW-646 c2).
+func loopInitBound(args LoopCliArgs, slug, objective, sessionID string) (LoopCliResult, error) {
 	// #133: a BOUND plan promises a closable cycle. Refuse here when the source identity cannot be resolved,
 	// rather than letting P->A->B->C succeed and then stranding the session at C with no testReceiptPath.
-	// Guarded on --session: an init without one writes the local artifact and binds nothing.
-	sessionID := loopSessionID(args)
-	if sessionID != "" {
-		if verdict := session.CheckBound(args.Cwd, sessionID); !verdict.OK {
-			return LoopCliResult{Output: "loop init: " + verdict.Reason + "\nNothing was written.", Code: 1}, nil
-		}
-		// ReadState answers a fresh IDLE state for a file it cannot decode, so binding a slug through it would
-		// replace a damaged session state with a default and lose the original bytes
-		// (docs/port-cxc/known-defects/CRW-646.md, port: fixed). Refuse before anything is written, and again
-		// under the session lock at the binding itself.
-		next, unreadable := state.ReadStateStrict(args.Cwd, sessionID)
-		if unreadable {
-			return LoopCliResult{Output: "loop init: session " + sessionID + " has unreadable state; refusing to overwrite it\nNothing was written.", Code: 1}, nil
-		}
-		// The strict reader also rebuilds records it cannot keep whole, so the write-back below would replace
-		// them with the rebuilt ones (docs/port-cxc/known-defects/CRW-646.md, port: fixed). Every other writer
-		// of the session file refuses such a rewrite by decision; this one follows the same rule, through the
-		// shared judgement plus the per-writer legacy refusal.
-		if raw, err := os.ReadFile(state.StatePath(args.Cwd, sessionID)); err == nil && (!state.RewriteKeepsStored(raw, next) || state.DcloseRecoveryLegacy(next)) {
-			return LoopCliResult{Output: "loop init: session " + sessionID + " holds records a rewrite would change; refusing to overwrite it\nNothing was written.", Code: 1}, nil
-		}
+	if verdict := session.CheckBound(args.Cwd, sessionID); !verdict.OK {
+		return LoopCliResult{Output: "loop init: " + verdict.Reason + "\nNothing was written.", Code: 1}, nil
 	}
+	// ReadState answers a fresh IDLE state for a file it cannot decode, so binding a slug through it would
+	// replace a damaged session state with a default and lose the original bytes
+	// (docs/port-cxc/known-defects/CRW-646.md, port: fixed). Refuse before anything is written.
+	next, unreadable := state.ReadStateStrict(args.Cwd, sessionID)
+	if unreadable {
+		return LoopCliResult{Output: "loop init: session " + sessionID + " has unreadable state; refusing to overwrite it\nNothing was written.", Code: 1}, nil
+	}
+	// The strict reader also rebuilds records it cannot keep whole, so the write-back below would replace
+	// them with the rebuilt ones (docs/port-cxc/known-defects/CRW-646.md, port: fixed). Every other writer
+	// of the session file refuses such a rewrite by decision; this one follows the same rule, through the
+	// shared judgement plus the per-writer legacy refusal.
+	if raw, err := os.ReadFile(state.StatePath(args.Cwd, sessionID)); err == nil && (!state.RewriteKeepsStored(raw, next) || state.DcloseRecoveryLegacy(next)) {
+		return LoopCliResult{Output: "loop init: session " + sessionID + " holds records a rewrite would change; refusing to overwrite it\nNothing was written.", Code: 1}, nil
+	}
+	result, err := loopInitCreate(args, slug, objective)
+	if err != nil || result.Code != 0 {
+		return result, err
+	}
+	next.Slug = slug
+	writeErr := loopInitWriteState(args.Cwd, next)
+	// The plan and its created ledger row are published before this write, so a failure here is never
+	// "nothing was written": the published plan is a completed effect and is not rolled back (the
+	// state.PublishedError rule). A write that reached the final path but could not sync its directory
+	// is a binding every reader can see, so it is a warning on the answer, as the memory grant and the
+	// D-close answer theirs (CRW-823/CRW-869); a failure before the rename is an error that names the
+	// plan left behind, because a retry is refused with "a plan already exists" and would otherwise
+	// look like the defect this issue fixes.
+	answer := LoopCliResult{Output: RenderLoopPlan(goalplan.ReadGoalplan(args.Cwd, slug), nil), Code: 0}
+	if writeErr != nil {
+		if !state.Published(writeErr) {
+			return LoopCliResult{}, fmt.Errorf(
+				"loop init: the plan and its created ledger row at slug '%s' are published, but the session %s binding could not be written: %w",
+				slug, sessionID, writeErr)
+		}
+		answer.Output += "\n" + cliPublishedStateWarning(writeErr)
+	}
+	return answer, nil
+}
+
+// loopInitCreate builds slug's plan and publishes it, re-checking inside that slug's goalplan write
+// lock that no plan is there. The check and the publish are one critical section, so of two
+// concurrent inits on one slug exactly one creates the plan and the other is refused without writing
+// (CRW-646 c1); WriteGoalplan's replacing rename is therefore never reached for an existing plan.
+// The lock is the one the bound D-close takes, so an init and a close of the same slug queue on the
+// same mkdir.
+func loopInitCreate(args LoopCliArgs, slug, objective string) (LoopCliResult, error) {
 	criteria := make([]goalplan.NewGoalplanCriterion, 0, len(args.Criteria))
 	for _, scenario := range args.Criteria {
 		criteria = append(criteria, goalplan.NewGoalplanCriterion{Scenario: scenario})
 	}
 	plan := goalplan.BuildGoalplan(goalplan.NewGoalplanInput{Objective: objective, Criteria: criteria, SchemaVersion: args.SchemaVersion})
-	if err := goalplan.WriteGoalplan(args.Cwd, plan); err != nil {
-		return LoopCliResult{}, err
-	}
-	if err := goalplan.AppendGoalplanLedger(args.Cwd, slug, goalplan.GoalplanLedgerEntry{
-		Ts: loopNowISO(), Slug: slug, Event: goalplan.EventCreated,
-		Detail: "init objective=\"" + objective + "\" criteria=" + fmt.Sprint(len(args.Criteria)),
-	}); err != nil {
-		return LoopCliResult{}, err
-	}
-	if sessionID != "" {
-		if err := state.WithSessionLock(args.Cwd, sessionID, func() error {
-			next, unreadable := state.ReadStateStrict(args.Cwd, sessionID)
-			if unreadable {
-				return errors.New("session state is unreadable; refusing to overwrite it")
-			}
-			if raw, err := os.ReadFile(state.StatePath(args.Cwd, sessionID)); err == nil && (!state.RewriteKeepsStored(raw, next) || state.DcloseRecoveryLegacy(next)) {
-				return errors.New("session state holds records a rewrite would change; refusing to overwrite it")
-			}
-			next.Slug = slug
-			return state.WriteState(args.Cwd, next)
-		}); err != nil {
-			return LoopCliResult{}, err
+	var refusal *LoopCliResult
+	locked, err := goalplan.WithGoalplanCreationLock(args.Cwd, slug, func() error {
+		if result, present := loopInitPlanRefusal(args.Cwd, slug); present {
+			refusal = &result
+			return nil
 		}
+		if err := goalplan.WriteGoalplan(args.Cwd, plan); err != nil {
+			return err
+		}
+		return goalplan.AppendGoalplanLedger(args.Cwd, slug, goalplan.GoalplanLedgerEntry{
+			Ts: loopNowISO(), Slug: slug, Event: goalplan.EventCreated,
+			Detail: "init objective=\"" + objective + "\" criteria=" + fmt.Sprint(len(args.Criteria)),
+		})
+	}, nil)
+	if err != nil {
+		return LoopCliResult{}, err
+	}
+	if locked.Kind == "locked" {
+		return LoopCliResult{Output: "loop init: " + locked.Reason, Code: 1}, nil
+	}
+	if refusal != nil {
+		return *refusal, nil
 	}
 	return LoopCliResult{Output: RenderLoopPlan(goalplan.ReadGoalplan(args.Cwd, slug), nil), Code: 0}, nil
 }
