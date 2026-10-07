@@ -655,7 +655,7 @@ proof they invalidate. A relevant unresolved finding still matters even if its
 author is an optional reviewer. Use the repository's merge method and the host's
 expected-head guard; preserve required base-update or merge-queue behavior.
 
-`merge-evidence --restate <record>` is that re-read: it takes a fresh reading of its
+For an in-flight pull request, `merge-evidence --restate <record>` is that re-read: it takes a fresh reading of its
 own and grades the child's record against it, rather than reading the child's own
 numbers back. A thread that arrived on the same head and is not in the record's
 `threadsSeen` invalidates the record, which returns to the child that produced it while a correction can
@@ -665,7 +665,7 @@ threads each way covers and what holds when neither is open.
 The reading and the merge are not one act, and the command does not pretend they
 are: the expected-head guard is what closes the gap at the moment of merging, and a
 finding that lands after it is a late finding for the original issue's correction
-path; once the merge has landed it is handled as new work
+path; once the merge has landed, an in-scope finding reopens the same issue key and any other is new work
 ([Late review threads](#late-review-threads)).
 A base that only moved is the one disagreement the parent removes itself, under
 [Refresh the base yourself when only the base moved](#refresh-the-base-yourself-when-only-the-base-moved).

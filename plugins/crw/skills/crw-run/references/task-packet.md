@@ -459,7 +459,7 @@ is fine once the writer has confirmed that the top-level test it names exists in
 build, with an anchored listing such as `go test -list '^Name$' ./pkg` that prints it]
 [Allowed test data and runtime boundaries]
 [Local runs cover the packages the change touches, under the `Go build resources:` line; the whole
-suite is the hosted CI of the same head, which the packet names as the check that settles it]
+suite is the local full verification of the same tree, which the packet names as the check that settles it]
 
 Return:
 - Actual task ID, worktree, branch, baseline SHA, and final commit SHA if committed.
@@ -486,9 +486,9 @@ Return:
   exists. A report that says verified when nothing was compared is the failure this line exists
   to prevent.
 - For CXC Loop: goal/goalplan identifiers, final FSM state, and completion evidence.
-- Delivery artifact: [PR URL, pushed head SHA, and the state of its required checks and
-  reviews, including how each finding was resolved; or the frozen diff bundle for a
-  restricted or narrowed delivery].
+- Delivery artifact: [the pushed head SHA and the local verification record, including how each
+  finding was resolved; for an in-flight pull request, its URL and the state of its checks and
+  reviews; or the frozen diff bundle for a restricted or narrowed delivery].
 - For a pull request: URL, title as published, base and head SHAs, `isDraft`, the review
   receipts for the current head, and any unresolved finding. Record the relay receipt's own outcome
   separately; `ready_for_review` there is not `isDraft=false` here.
