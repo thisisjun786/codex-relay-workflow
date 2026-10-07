@@ -207,9 +207,20 @@ func Capacity(ctx context.Context, e *Env, cfg *Config, dry bool) (CapacityRepor
 			return CapacityReport{}, err
 		}
 	}
+	// The store's DAG zone is read once, before the relay is asked for anything: a store that predates
+	// the zone, or one an interrupted install left partial, cannot answer for a plan's branches, and a
+	// partial zone makes the relay fail with a raw table error rather than a refusal. The reason then
+	// travels with the plan, so the unmeasured reading survives the hold shortcut.
+	zoneReason := ""
+	if len(settings.Plans) > 0 {
+		zoneReason, err = capacityZoneReason(ctx, stateDir)
+		if err != nil {
+			return CapacityReport{}, err
+		}
+	}
 
 	for _, ref := range settings.Plans {
-		waiting, err := capacityWaitingFor(ctx, e, cfg, stateDir, ref.Plan)
+		waiting, err := capacityWaitingFor(ctx, e, cfg, ref.Plan, zoneReason)
 		if err != nil {
 			return CapacityReport{}, err
 		}
@@ -227,7 +238,7 @@ func Capacity(ctx context.Context, e *Env, cfg *Config, dry bool) (CapacityRepor
 
 		plan.WaitingMinutes, plan.Alert = capacityPersist(&next, previous.Plans[ref.Plan], plan, limits, now)
 		plan.Verdict, plan.Reasons = capacityJudge(plan, limits, report.Lane.MergesLastHour, report.Actions.Incident, report.Child429.Count)
-		branches, unmeasured, err := branchAttach(ctx, e, cfg, stateDir, ref.Plan, plan.Verdict, waiting.WaitingNodes)
+		branches, unmeasured, err := branchAttach(ctx, e, cfg, stateDir, ref.Plan, plan.Verdict, waiting.WaitingNodes, zoneReason)
 		if err != nil {
 			return CapacityReport{}, err
 		}

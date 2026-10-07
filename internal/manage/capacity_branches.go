@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"sort"
-	"strings"
 	"sync"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/acceptance"
@@ -250,7 +249,7 @@ func branchIntegratedNodes(ctx context.Context, st *store.Store, plan string, no
 // judged by node id because a plan may hold two nodes with one issue key (a redefinition) and their
 // states must not mix. The second result is why the reading is unmeasured: a store that predates the
 // DAG zone holds no plan to read, so its candidates are unknown rather than none.
-func branchAttach(ctx context.Context, e *Env, cfg *Config, stateDir, plan, verdict string, waitingNodes []string) (*BranchCandidates, string, error) {
+func branchAttach(ctx context.Context, e *Env, cfg *Config, stateDir, plan, verdict string, waitingNodes []string, zoneReason string) (*BranchCandidates, string, error) {
 	// The thresholds are read and validated before the hold shortcut: a malformed section is a
 	// refusal whether or not this plan happens to carry candidates, so a configuration mistake never
 	// hides behind a transient verdict.
@@ -261,6 +260,13 @@ func branchAttach(ctx context.Context, e *Env, cfg *Config, stateDir, plan, verd
 	minNodes, maxBranches, err := branchThresholds(settings)
 	if err != nil {
 		return nil, "", err
+	}
+	// A missing DAG zone is an unmeasured reading whatever the verdict: the plan carries the null
+	// list beside the reason rather than the absent key of a reading nobody asked for, so a hold that
+	// happens to fall out of an unreadable store still says why nothing could be measured.
+	if zoneReason != "" {
+		var unknown BranchCandidates
+		return &unknown, zoneReason, nil
 	}
 	if verdict == capacityHold && !branchAlwaysFor(e) {
 		return nil, "", nil
@@ -277,22 +283,6 @@ func branchAttach(ctx context.Context, e *Env, cfg *Config, stateDir, plan, verd
 	var candidates *BranchCandidates
 	unmeasured := ""
 	err = handle.dagReviewSnapshot(ctx, stateDir, func(ctx context.Context, st *store.Store) error {
-		// A store that predates the DAG zone holds no plan to read, so nothing here can be measured:
-		// the plan reports the reading as unmeasured rather than as a bundle nobody looked for.
-		var missing []string
-		for _, table := range branchZoneTables {
-			present, err := handle.hasTable(ctx, table)
-			if err != nil {
-				return err
-			}
-			if !present {
-				missing = append(missing, table)
-			}
-		}
-		if len(missing) > 0 {
-			unmeasured = "the store predates the DAG zone (no " + strings.Join(missing, ", ") + ")"
-			return nil
-		}
 		q := st.Q(ctx)
 		nodes, edges, err := branchReadPlan(ctx, q, plan)
 		if err != nil {

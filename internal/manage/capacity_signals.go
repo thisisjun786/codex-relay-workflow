@@ -193,23 +193,20 @@ type capacityWaiting struct {
 
 // capacityWaitingFor asks the relay for one plan's ready set: the ready nodes and the nodes
 // deferred for want of capacity, with the pass's slots and host memory bound. A relay that refuses
-// or answers something unreadable is the read failure reported as exit 3, except for the one
-// refusal a store with no DAG zone gives every plan: there the plan's own question has no answer to
-// read, so the reading is unmeasured rather than a failure (capacityZoneAbsent).
-func capacityWaitingFor(ctx context.Context, e *Env, cfg *Config, stateDir, plan string) (capacityWaiting, error) {
+// or answers something unreadable is the read failure reported as exit 3, except when the store
+// itself lacks the DAG zone (zoneReason): there the plan's own question has no answer to read,
+// whatever shape the relay's failure takes — the refusal a store with no zone at all gives, or the
+// raw table error a partially installed one gives — so the pass reads as empty and the branch
+// reading reports the plan's branches as unmeasured rather than the command failing. A relay failure
+// beside a whole zone stays the read failure it is.
+func capacityWaitingFor(ctx context.Context, e *Env, cfg *Config, plan, zoneReason string) (capacityWaiting, error) {
 	stdout, code, err := e.Relay(ctx, cfg, "dag-ready", "--plan", plan)
 	if err != nil {
 		return capacityWaiting{}, err
 	}
 	if code != 0 {
-		if capacityRefusalUnregisteredScope(stdout) {
-			absent, err := capacityZoneAbsent(ctx, stateDir)
-			if err != nil {
-				return capacityWaiting{}, err
-			}
-			if absent {
-				return capacityWaiting{}, nil
-			}
+		if zoneReason != "" && capacityZoneFailure(stdout) {
+			return capacityWaiting{}, nil
 		}
 		return capacityWaiting{}, fmt.Errorf("relay dag-ready --plan %s: exit %d", plan, code)
 	}
@@ -272,43 +269,69 @@ func capacityWaitingFor(ctx context.Context, e *Env, cfg *Config, stateDir, plan
 	return out, nil
 }
 
-// capacityRefusalUnregisteredScope reports whether the relay's answer is its refusal envelope for a
-// plan the store cannot resolve (reason unregistered_scope). Only that answer, with the store check
-// beside it, is the store that predates the DAG zone; a command that failed without the envelope
-// (a relay that did not answer, a store that records another socket) is not this case.
-func capacityRefusalUnregisteredScope(stdout []byte) bool {
-	var refusal struct {
-		Error  string `json:"error"`
-		Reason string `json:"reason"`
+// capacityZoneReason reads the store's DAG zone tables, read-only and without repairing anything, and
+// returns why a branch reading cannot be measured: "" when every table the reading needs is present,
+// otherwise the reason a store that predates the zone — or one an interrupted install left partial —
+// gives. It runs before the relay is asked, because a partially installed zone makes dag-ready fail
+// with a raw table error rather than a refusal, and that failure is the same missing zone. A store
+// that is absent or cannot be opened is not this case, so a relay failure beside it stays the read
+// failure it is rather than reading as an unmeasured answer.
+func capacityZoneReason(ctx context.Context, stateDir string) (string, error) {
+	if stateDir == "" {
+		return "", nil
 	}
-	if err := json.Unmarshal(stdout, &refusal); err != nil {
-		return false
-	}
-	return refusal.Error == "refused" && refusal.Reason == string(contract.RefusalUnregisteredScope)
-}
-
-// capacityZoneAbsent reports whether the store under stateDir holds no DAG zone: one of the tables a
-// branch reading needs is missing. A store that is absent or cannot be opened is not this case, so
-// the relay's refusal stays the read failure it is rather than reading as an unmeasured answer.
-func capacityZoneAbsent(ctx context.Context, stateDir string) (bool, error) {
 	handle, err := dagReviewOpenStore(ctx, stateDir)
 	if err != nil {
 		if errors.Is(err, ErrRelayStoreAbsent) {
-			return false, nil
+			return "", nil
 		}
-		return false, err
+		return "", err
 	}
 	defer handle.Close()
+	var missing []string
 	for _, table := range branchZoneTables {
 		present, err := handle.hasTable(ctx, table)
 		if err != nil {
-			return false, err
+			return "", err
 		}
 		if !present {
-			return true, nil
+			missing = append(missing, table)
 		}
 	}
-	return false, nil
+	return capacityZoneReasonText(missing), nil
+}
+
+// capacityZoneReasonText is the one wording of the missing-zone reason, so the preflight and the
+// reading inside the snapshot say the same thing about the same store.
+func capacityZoneReasonText(missing []string) string {
+	if len(missing) == 0 {
+		return ""
+	}
+	return "the store predates the DAG zone (no " + strings.Join(missing, ", ") + ")"
+}
+
+// capacityZoneFailure reports whether the relay's failed answer is the one a missing DAG zone
+// produces, so that a store the local check already found zone-less can be read as unmeasured rather
+// than as a failure. Two shapes count, and both are the relay's own words for the missing zone: the
+// refusal a store with no zone at all gives (error refused, reason unregistered_scope), and the host
+// failure a partially installed zone gives, whose detail names the table SQLite could not find. The
+// relay's own reading calls a store zone-less when a statement cannot find a dag_ table (isMissingZone
+// in internal/relay/dag), so this asks the same question of the answer. Any other failure — a relay
+// that did not answer, a store that records another socket, a corrupt plan — stays the read failure
+// it is.
+func capacityZoneFailure(stdout []byte) bool {
+	var answer struct {
+		Error  string `json:"error"`
+		Reason string `json:"reason"`
+		Detail string `json:"detail"`
+	}
+	if err := json.Unmarshal(stdout, &answer); err != nil {
+		return false
+	}
+	if answer.Error == "refused" && answer.Reason == string(contract.RefusalUnregisteredScope) {
+		return true
+	}
+	return answer.Error == "host" && strings.Contains(answer.Detail, "no such table: dag_")
 }
 
 // capacityReceiptWaitFor reads the relay store read-only: the median and count of the acknowledged
