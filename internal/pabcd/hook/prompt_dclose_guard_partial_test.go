@@ -10,6 +10,7 @@
 package hook
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -645,5 +646,118 @@ func TestPromptDcloseFreshCloseBusyLockKeepsTheBareText(t *testing.T) {
 	}
 	if strings.Contains(answer, promptDcloseMarkerPublishedSentence()) || strings.Contains(answer, promptDcloseGoalplanPublishedSentence()) {
 		t.Errorf("a fresh close claimed a publication it never made: %q", answer)
+	}
+}
+
+// promptDclosePlanWithExtraField rewrites the bound plan with one unknown top-level field, which the
+// reader keeps but a revival would drop. The write lock classifies that as "unreadable" while the
+// plan itself is structurally readable.
+func promptDclosePlanWithExtraField(t *testing.T, cwd, slug, field, value string) {
+	t.Helper()
+	path := promptDclosePlanPath(t, cwd, slug)
+	raw := promptDcloseFileText(path)
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
+		t.Fatal(err)
+	}
+	parsed[field] = value
+	next, err := json.Marshal(parsed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	promptDcloseWrite(t, cwd, filepath.Join(crwdir.DirName, goalplan.GoalplansSubdir, slug, goalplan.GoalplanFile), string(next))
+}
+
+// TestPromptDcloseRecoveryStartedSuccessorDoesNotProveACommit is the d1 case: the target is still
+// open and only its recorded successor was started, so this close never committed the plan. A retry
+// refused here names the marker it inherited and must not claim a goalplan publication; the
+// generation-2 head judged the commit from the successor alone and named both.
+func TestPromptDcloseRecoveryStartedSuccessorDoesNotProveACommit(t *testing.T) {
+	cwd := promptDcloseRepo(t)
+	slug := "chat-recovery-started-only"
+	attest := promptDcloseRecoverable(t, cwd, "s1", slug, promptDcloseStr("wp-2"))
+	// An operator started the successor by hand and left an open task under the still-open target:
+	// the reference-valid plan CloseFixedWorkPhase refuses with tasks_pending.
+	promptDcloseRecoveryPlan(t, cwd, slug, []goalplan.GoalplanWorkPhase{
+		{ID: "wp-1", Title: "one", Status: goalplan.WorkPhaseInProgress, Tasks: []goalplan.GoalplanTask{{ID: "t-late", Title: "added late", Status: goalplan.TaskPending}}, CriteriaIDs: []string{}},
+		{ID: "wp-2", Title: "two", Status: goalplan.WorkPhaseInProgress, Tasks: []goalplan.GoalplanTask{}, CriteriaIDs: []string{}},
+	}, promptDcloseStr("wp-2"))
+	answer := promptDcloseRun(t, cwd, "s1", "t1", attest)
+	if !strings.Contains(answer, "gained 1 open task(s) after its marker was written") {
+		t.Fatalf("the recovery did not refuse: %q", answer)
+	}
+	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
+		t.Errorf("the refusal did not name the inherited marker: %q", answer)
+	}
+	if strings.Contains(answer, promptDcloseGoalplanPublishedSentence()) {
+		t.Errorf("the refusal claimed a goalplan this close never committed: %q", answer)
+	}
+}
+
+// TestPromptDcloseRecoveryUnreadablePlanStillNamesTheCommittedPlan is the d2 case: the write lock
+// answers "unreadable" for a plan that read cleanly but would lose an unknown field on revival. The
+// committed shape is still on disk, so the refusal must name the goalplan this close published; the
+// generation-2 head named the inherited marker alone.
+func TestPromptDcloseRecoveryUnreadablePlanStillNamesTheCommittedPlan(t *testing.T) {
+	cwd := promptDcloseRepo(t)
+	slug := "chat-recovery-unreadable-plan"
+	attest := promptDcloseRecoverable(t, cwd, "s1", slug, promptDcloseStr("wp-2"))
+	promptDcloseRecoveryCommittedShape(t, cwd, slug, nil)
+	promptDclosePlanWithExtraField(t, cwd, slug, "operatorNote", "hand edit")
+	answer := promptDcloseRun(t, cwd, "s1", "t1", attest)
+	if !strings.Contains(answer, "could not be read") {
+		t.Fatalf("the retry did not answer the unreadable goalplan: %q", answer)
+	}
+	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
+		t.Errorf("the refusal did not name the inherited marker: %q", answer)
+	}
+	if !strings.Contains(answer, promptDcloseGoalplanPublishedSentence()) {
+		t.Errorf("the refusal dropped the goalplan this close committed: %q", answer)
+	}
+}
+
+// TestPromptDcloseFreshUnreadablePlanKeepsTheBareClaim is the control for the case above: a fresh
+// close with no inherited marker published nothing, so its unreadable-goalplan text is unchanged.
+func TestPromptDcloseFreshUnreadablePlanKeepsTheBareClaim(t *testing.T) {
+	cwd := promptDcloseRepo(t)
+	slug := "chat-fresh-unreadable-plan"
+	promptDcloseTwoPhases(t, cwd, slug)
+	promptDcloseSeedState(t, cwd, "s1", slug, "c-fresh-unreadable")
+	receipt := promptDcloseReceipt(t, cwd, "s1", "c-fresh-unreadable")
+	promptDclosePlanWithExtraField(t, cwd, slug, "operatorNote", "hand edit")
+	answer := promptDcloseRun(t, cwd, "s1", "t1", promptDcloseAttest("wp-1", receipt))
+	if !strings.Contains(answer, "could not be read") {
+		t.Fatalf("the close did not answer the unreadable goalplan: %q", answer)
+	}
+	if strings.Contains(answer, promptDcloseMarkerPublishedSentence()) || strings.Contains(answer, promptDcloseGoalplanPublishedSentence()) {
+		t.Errorf("a fresh close claimed a publication it never made: %q", answer)
+	}
+	if !strings.Contains(answer, "Nothing was written.") {
+		t.Errorf("a fresh close lost its bare claim: %q", answer)
+	}
+}
+
+// TestPromptDcloseRecoveryBusySessionLockNamesWhatTheFirstAttemptPublished is the d3 case for the
+// session lock the bound close itself takes: it stays busy, so the close never runs, but the first
+// attempt's marker and committed goalplan are on disk and the answer must name them. The
+// generation-2 head returned the bare busy text.
+func TestPromptDcloseRecoveryBusySessionLockNamesWhatTheFirstAttemptPublished(t *testing.T) {
+	cwd := promptDcloseRepo(t)
+	slug := "chat-recovery-busy-session-lock"
+	attest := promptDcloseRecoverable(t, cwd, "s1", slug, promptDcloseStr("wp-2"))
+	promptDcloseRecoveryCommittedShape(t, cwd, slug, nil)
+	// The stamp takes the session lock, then the bound close's own acquisition finds it busy.
+	answer, panicked := promptDcloseRunLocked(t, cwd, "s1", "t-busy", attest, promptDcloseLockFailingAfter(1))
+	if panicked != nil {
+		t.Fatalf("the close panicked: %v", panicked)
+	}
+	if !strings.Contains(answer, "lock unavailable") {
+		t.Fatalf("the retry did not answer the busy session lock: %q", answer)
+	}
+	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
+		t.Errorf("the busy refusal did not name the inherited marker: %q", answer)
+	}
+	if !strings.Contains(answer, promptDcloseGoalplanPublishedSentence()) {
+		t.Errorf("the busy refusal dropped the goalplan this close committed: %q", answer)
 	}
 }
