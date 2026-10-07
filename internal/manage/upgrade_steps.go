@@ -17,6 +17,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/install"
 )
 
 const (
@@ -27,10 +29,6 @@ const (
 	// which exercises the bridge and may copy a large relay state.
 	upgradeCommandTimeout = 60 * time.Second
 	upgradeInstallTimeout = 30 * time.Minute
-	// upgradeServiceInterval and upgradeServiceBudget are how often, and for how long, the
-	// post-check reads the service status again after starting it.
-	upgradeServiceInterval = 2 * time.Second
-	upgradeServiceBudget   = 60 * time.Second
 	// upgradeInstallOK and upgradeInstallIncomplete are the installer's own statuses for an update
 	// that promoted the runtime: OK, and Incomplete (the candidate is selected and the owned
 	// pointer names it, and only the claim that records it did not settle). Neither is this
@@ -38,6 +36,24 @@ const (
 	// runtime is in service, so the post-check still compares the pointer with it.
 	upgradeInstallOK         = 0
 	upgradeInstallIncomplete = 3
+	// upgradeSumsBytes bounds the SHA256SUMS copy: the file is a list of digests, so a source far
+	// larger than that is not one.
+	upgradeSumsBytes = 1 << 20
+)
+
+// upgradeMaxArchiveBytes bounds what the pre-verification archive copy reads. It matches the
+// installer's own input limit, so a release directory holding something that is not the archive is
+// refused before it can fill the state disk the live relay shares. upgradeCopy removes its partial
+// file on any failure, so a refused or failed copy leaves nothing behind. A variable so a test can
+// reach the bound without writing 256 MiB.
+var upgradeMaxArchiveBytes int64 = install.MaxArchiveBytes
+
+// upgradeServiceInterval and upgradeServiceBudget are how often, and for how long, the post-check
+// reads the service status again after starting it. Variables so a test can pin the wait's timing
+// rather than spend the real budget.
+var (
+	upgradeServiceInterval = 2 * time.Second
+	upgradeServiceBudget   = 60 * time.Second
 )
 
 // upgradeRunCommand runs exe and returns its stdout, stderr and exit status.
@@ -93,11 +109,11 @@ func (r *upgradeRunState) verifySums() (string, int, string) {
 	}
 	name := filepath.Base(matches[0])
 	pinned := filepath.Join(r.dir, name)
-	if err := upgradeCopy(matches[0], pinned); err != nil {
+	if err := upgradeCopy(matches[0], pinned, upgradeMaxArchiveBytes); err != nil {
 		r.note(upgradeStepSums, nil, 1, "", err)
 		return "", upgradeExitRefused, upgradeReasonSumsFailed
 	}
-	if err := upgradeCopy(filepath.Join(r.opts.ReleaseDir, upgradeSumsName), filepath.Join(r.dir, upgradeSumsName)); err != nil {
+	if err := upgradeCopy(filepath.Join(r.opts.ReleaseDir, upgradeSumsName), filepath.Join(r.dir, upgradeSumsName), upgradeSumsBytes); err != nil {
 		r.note(upgradeStepSums, nil, 1, "", err)
 		return "", upgradeExitRefused, upgradeReasonSumsFailed
 	}
@@ -135,8 +151,11 @@ func (r *upgradeRunState) verifySums() (string, int, string) {
 // replacement between those two reads changed the bytes that were executed.
 var upgradeSumsVerified func(releaseDir string)
 
-// upgradeCopy copies src to dst, so a later reader cannot be given different bytes.
-func upgradeCopy(src, dst string) error {
+// upgradeCopy copies src to dst, so a later reader cannot be given different bytes. At most limit
+// bytes are read: a source over it is refused rather than copied, so a release directory holding
+// something that is not the archive cannot fill the state disk before verification. A copy that
+// fails for any reason leaves no partial file behind.
+func upgradeCopy(src, dst string, limit int64) error {
 	in, err := os.Open(src)
 	if err != nil {
 		return err
@@ -146,11 +165,19 @@ func upgradeCopy(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := io.Copy(out, in); err != nil {
-		out.Close()
+	written, err := io.Copy(out, io.LimitReader(in, limit+1))
+	if cerr := out.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil && written > limit {
+		err = fmt.Errorf("%s is larger than %d bytes", filepath.Base(src), limit)
+	}
+	if err != nil {
+		// The partial copy is this call's own file; remove it so a refusal leaves nothing behind.
+		os.Remove(dst)
 		return err
 	}
-	return out.Close()
+	return nil
 }
 
 // upgradeSumsFor is the digest SHA256SUMS lists for name, or "" when it lists none.

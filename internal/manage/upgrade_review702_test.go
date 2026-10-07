@@ -2,12 +2,12 @@ package manage
 
 import (
 	"bytes"
-	"context"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The review-702 cases: the defects the post-merge review of PR #702 found in
@@ -412,27 +412,6 @@ func TestUpgradeReview702PointerBrokenDuringTheWaitIsAMismatch(t *testing.T) {
 	}
 }
 
-// TestUpgradeReview702ServiceWaitBudgetIsRecorded: a service that never reports itself running and
-// matching is a post-check failure, and the wait records the last answer it read rather than
-// returning quietly. The budget is measured on the wall clock, so the case is driven with a context
-// that has already ended: the wait must stop, record and report failure rather than hang or pass.
-func TestUpgradeReview702ServiceWaitBudgetIsRecorded(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	r := &upgradeRunState{ctx: ctx, cfg: &Config{}, state: "/state"}
-	r.cfg.Relay.Socket = "/socket"
-	if r.waitForService(t.TempDir()) {
-		t.Fatal("a service that never reported itself running and matching was reported as up")
-	}
-	if len(r.steps) == 0 {
-		t.Fatal("the wait recorded nothing")
-	}
-	last := r.steps[len(r.steps)-1]
-	if last.Step != upgradeStepPostCheck || last.Exit == 0 {
-		t.Errorf("the wait's last step is %+v, want a failed %s", last, upgradeStepPostCheck)
-	}
-}
-
 // TestUpgradeReview702ServedStoreOpenAttempts: the doctor says which store the relay service serves
 // when discovery selected another directory. The selected directory's contents are not the served
 // store's, so the served store must be asked for its own answer: a served store with open attempts
@@ -458,4 +437,54 @@ func TestUpgradeReview702ServedStoreOpenAttempts(t *testing.T) {
 			t.Errorf("the served store was not asked for its own answer: %q", h.callLines())
 		}
 	})
+}
+
+// TestUpgradeReview702OversizedArchiveIsRefusedBeforeItIsCopied: the pre-verification copy reads at
+// most the installer's own input bound. A release directory holding something larger than the
+// archive is refused, and the partial copy is removed, so a file that is not the archive cannot
+// fill the state disk the live relay shares before the checksum even runs.
+func TestUpgradeReview702OversizedArchiveIsRefusedBeforeItIsCopied(t *testing.T) {
+	h := upgradeHarness(t, upgradeHarnessOptions{gh: upgradeGhPaths(upgradeGoodCommit), pointer: true})
+	old := upgradeMaxArchiveBytes
+	upgradeMaxArchiveBytes = 8
+	t.Cleanup(func() { upgradeMaxArchiveBytes = old })
+	if code := h.run("--release-dir", h.release, "--dry-run"); code != upgradeExitRefused {
+		t.Fatalf("exit %d, want %d; the record is %+v", code, upgradeExitRefused, h.recordOf(t))
+	}
+	if got := h.recordOf(t).Reason; got != upgradeReasonSumsFailed {
+		t.Errorf("reason %q, want %q", got, upgradeReasonSumsFailed)
+	}
+	record := h.recordOf(t)
+	for _, name := range []string{upgradeArchiveName, upgradeSumsName} {
+		if _, err := os.Stat(filepath.Join(record.Directory, name)); err == nil {
+			t.Errorf("the refused copy left %s behind", name)
+		}
+	}
+}
+
+// TestUpgradeReview702ServiceWaitBudgetIsRecorded: a service that never reports itself running and
+// matching is a post-check failure after the real budget, and the wait records the last answer it
+// read. The budget is shrunk here so the test spends it rather than the wall clock's 60 seconds; the
+// product's own budget is the default the run reads.
+func TestUpgradeReview702ServiceWaitBudgetIsRecorded(t *testing.T) {
+	oldBudget, oldInterval := upgradeServiceBudget, upgradeServiceInterval
+	upgradeServiceBudget, upgradeServiceInterval = 20*time.Millisecond, 5*time.Millisecond
+	t.Cleanup(func() { upgradeServiceBudget, upgradeServiceInterval = oldBudget, oldInterval })
+	h := upgradeHarness(t, upgradeHarnessOptions{gh: upgradeGhPaths(upgradeGoodCommit), pointer: true,
+		produceRuntime: true, pointAtIt: true, statusAnswers: []string{upgradeStatusUnknown}})
+	if code := h.run("--release-dir", h.release); code != upgradeExitPostCheck {
+		t.Fatalf("exit %d, want %d; the record is %+v", code, upgradeExitPostCheck, h.recordOf(t))
+	}
+	if got := h.recordOf(t).Reason; got != upgradeReasonPostCheck {
+		t.Errorf("reason %q, want %q", got, upgradeReasonPostCheck)
+	}
+	recorded := ""
+	for _, step := range h.recordOf(t).Steps {
+		if step.Step == upgradeStepPostCheck && strings.Contains(step.Output, "matchesRunning") {
+			recorded = step.Output
+		}
+	}
+	if !strings.Contains(recorded, "unknown") {
+		t.Errorf("the wait did not record its last status answer: %q", recorded)
+	}
 }
