@@ -283,34 +283,6 @@ func TestScenariosRefuseAnAbsoluteSelfLinkThenDotDot(t *testing.T) {
 	}
 }
 
-// c1 (CRW-908): a link k levels deep that points at the case root, followed by k+1 '..', walks above the
-// root. Red first: the lexical check saw the '..' collapse against the link's nominal name and stayed
-// inside, while the kernel followed the link to the root first and then climbed out of it.
-func TestScenariosRefuseADeepLinkToTheRootThenDotDot(t *testing.T) {
-	for _, depth := range []int{1, 2, 3} {
-		t.Run(strconv.Itoa(depth), func(t *testing.T) {
-			base, root := caseRoot(t)
-			entries := make([]pyjson.Object, 0, depth+2)
-			deepest := ""
-			for i := 0; i < depth; i++ {
-				deepest = filepath.Join(deepest, "d"+strconv.Itoa(i))
-				entries = append(entries, fsEntry(deepest, "dir", "", "", 0o755))
-			}
-			link := filepath.Join(deepest, "root")
-			entries = append(entries,
-				fsEntry(link, "symlink", "", rootPlaceholder, 0),
-				fsEntry("esc", "symlink", "", link+"/"+strings.Repeat("../", depth+1)+"q", 0),
-			)
-			if _, err := Scenarios(root, fsInput(entries...)); err == nil {
-				t.Fatalf("a %d-deep link to the root followed by %d '..' was materialised", depth, depth+1)
-			}
-			if err := emptyBase(base); err != nil {
-				t.Fatal(err)
-			}
-		})
-	}
-}
-
 // c1 (CRW-908): the controls stay allowed. A relative link into the case tree, an absolute
 // ROOT-prefixed link, and the 45-link chain the memorygate generator builds all still resolve inside
 // the case root.
@@ -343,5 +315,60 @@ func TestScenariosStillAllowTheConfinedControls(t *testing.T) {
 		if want := filepath.Join(root, "codex-home", "memories"); resolved != want {
 			t.Fatalf("%s resolves to %q, want %q", link, resolved, want)
 		}
+	}
+}
+
+// c1 (CRW-908): a link k levels deep that points at the case root, followed by k+1 '..', walks above the
+// root. The target is written as ${ROOT}/. and not as a bare ${ROOT}: rootSubstitutedPath substitutes
+// only a target that opens with the placeholder AND a separator, so a bare placeholder would be stored
+// literally and the link would be refused as a dangling relative link rather than as a link to the root.
+// The test therefore first proves the link really reaches the root, and only then that the escape is
+// refused. Red first: the lexical check saw the '..' collapse against the link's nominal name and stayed
+// inside, while the kernel followed the link to the root first and then climbed out of it.
+func TestScenariosRefuseADeepLinkToTheRootThenDotDot(t *testing.T) {
+	// First prove the shape really points at the case root: the link is built on its own and resolves
+	// to the root, so the refusal below is about a link to the root and not about a dangling link.
+	_, root := caseRoot(t)
+	if _, err := Scenarios(root, fsInput(
+		fsEntry("d0", "dir", "", "", 0o755),
+		fsEntry("d0/d1", "dir", "", "", 0o755),
+		fsEntry("d0/d1/root", "symlink", "", rootPlaceholder+"/.", 0),
+	)); err != nil {
+		t.Fatalf("the link to the case root was refused: %v", err)
+	}
+	link := filepath.Join(root, "d0", "d1", "root")
+	if resolved, err := filepath.EvalSymlinks(link); err != nil || resolved != root {
+		t.Fatalf("the link resolves to %q, %v; want the case root %q", resolved, err, root)
+	}
+	for _, depth := range []int{1, 2, 3} {
+		t.Run(strconv.Itoa(depth), func(t *testing.T) {
+			deepest := ""
+			entries := make([]pyjson.Object, 0, depth+2)
+			for i := 0; i < depth; i++ {
+				deepest = filepath.Join(deepest, "d"+strconv.Itoa(i))
+				entries = append(entries, fsEntry(deepest, "dir", "", "", 0o755))
+			}
+			link := filepath.Join(deepest, "root")
+			entries = append(entries,
+				fsEntry(link, "symlink", "", rootPlaceholder+"/.", 0),
+				fsEntry("esc", "symlink", "", link+"/"+strings.Repeat("../", depth+1)+"q", 0),
+			)
+			// The link alone is built in its own root, so its resolution is proved for this depth before
+			// the escaping entry is added.
+			_, linkRoot := caseRoot(t)
+			if _, err := Scenarios(linkRoot, fsInput(entries[:len(entries)-1]...)); err != nil {
+				t.Fatalf("the %d-deep link to the case root was refused: %v", depth, err)
+			}
+			if resolved, err := filepath.EvalSymlinks(filepath.Join(linkRoot, link)); err != nil || resolved != linkRoot {
+				t.Fatalf("the %d-deep link resolves to %q, %v; want the case root %q", depth, resolved, err, linkRoot)
+			}
+			base, root := caseRoot(t)
+			if _, err := Scenarios(root, fsInput(entries...)); err == nil {
+				t.Fatalf("a %d-deep link to the root followed by %d '..' was materialised", depth, depth+1)
+			}
+			if err := emptyBase(base); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }

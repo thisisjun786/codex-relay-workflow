@@ -325,9 +325,16 @@ func shellWritePythonLiteralForms(word string) []string {
 }
 
 // shellWriteDoubledBraces writes every brace of a destination doubled, which is what an f literal
-// needs to evaluate to that destination.
+// needs to evaluate to that destination - except the braces of an exact ROOT placeholder. The harness
+// substitutes that token in the decoded input after the program is built, so doubling its braces would
+// leave a literal placeholder in the path instead of the case root, and the write the campaign meant to
+// examine would never be named. Only the destination's own braces are doubled.
 func shellWriteDoubledBraces(word string) string {
-	return strings.NewReplacer("{", "{{", "}", "}}").Replace(word)
+	parts := strings.Split(word, rootPlaceholder)
+	for i, part := range parts {
+		parts[i] = strings.NewReplacer("{", "{{", "}", "}}").Replace(part)
+	}
+	return strings.Join(parts, rootPlaceholder)
 }
 
 // shellWritePythonEscapeForms writes the first slash of a destination as each single-character

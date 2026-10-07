@@ -190,23 +190,66 @@ func TestShellwritePythonLiteralForms(t *testing.T) {
 	}
 }
 
+// c3 (CRW-908): the ROOT placeholder keeps its braces. The harness substitutes that token in the
+// decoded command after the program is built, so doubling the placeholder's own braces would leave a
+// literal placeholder in the path: the substitution would find nothing to replace, the interpreter
+// would name a relative path, and the campaign would agree without ever asking the gate about the
+// protected root. Red first: the brace doubling was applied to the whole destination, placeholder
+// included.
+func TestShellwriteFStringFormsKeepTheRootPlaceholder(t *testing.T) {
+	for _, c := range []struct {
+		word string
+		want []string
+	}{
+		{rootPlaceholder + "/m/a", []string{"f'" + rootPlaceholder + "/m/a'", "f'''" + rootPlaceholder + "/m/a'''", "f\"\"\"" + rootPlaceholder + "/m/a\"\"\""}},
+		{rootPlaceholder + "/codex-home/memories/{x}.md", []string{
+			"f'" + rootPlaceholder + "/codex-home/memories/{{x}}.md'",
+			"f'''" + rootPlaceholder + "/codex-home/memories/{{x}}.md'''",
+			"f\"\"\"" + rootPlaceholder + "/codex-home/memories/{{x}}.md\"\"\"",
+		}},
+	} {
+		var fForms []string
+		for _, form := range shellWritePythonLiteralForms(c.word) {
+			if strings.HasPrefix(form, "f") {
+				fForms = append(fForms, form)
+			}
+		}
+		if len(fForms) != len(c.want) {
+			t.Fatalf("%q: %d f forms, want %d: %v", c.word, len(fForms), len(c.want), fForms)
+		}
+		for i, want := range c.want {
+			if fForms[i] != want {
+				t.Errorf("%q: f form %d is %q, want %q", c.word, i, fForms[i], want)
+			}
+		}
+		if !strings.Contains(fForms[0], rootPlaceholder) {
+			t.Errorf("%q: the f form %q lost the placeholder the harness substitutes", c.word, fForms[0])
+		}
+	}
+}
+
 // c3 (CRW-908): every f form evaluates to the destination, and the generator emits three of them for
 // every destination. The plain f form is not emitted for a brace-holding destination: a single brace
 // there opens a replacement field, which is not the destination at all.
 func TestShellwriteFStringFormsEvaluateToTheDestination(t *testing.T) {
-	for _, dest := range []string{"/m/a", rootPlaceholder + "/codex-home/memories/{x}.md", "{x}.md", "/m/a}b", "/m/{a}b"} {
+	root := t.TempDir()
+	for _, dest := range []string{"/m/a", rootPlaceholder + "/codex-home/memories/{x}.md", "{x}.md", "/m/a}b", "/m/{a}b", rootPlaceholder + "/codex-home/memories/{a}{b}.md"} {
+		// The harness substitutes the placeholder in the decoded command after the program is built and
+		// before any interpreter sees it, so the form is evaluated with the case root in place of the
+		// placeholder - the substitution the campaign makes.
+		want := strings.ReplaceAll(dest, rootPlaceholder, root)
 		seen := 0
 		for _, form := range shellWritePythonLiteralForms(dest) {
 			if !strings.HasPrefix(form, "f") {
 				continue
 			}
 			seen++
-			got, ok := fstringValue(form)
+			got, ok := fstringValue(strings.ReplaceAll(form, rootPlaceholder, root))
 			if !ok {
 				t.Fatalf("the form %q is not an f literal this test can evaluate", form)
 			}
-			if got != dest {
-				t.Fatalf("the form %q evaluates to %q, want %q", form, got, dest)
+			if got != want {
+				t.Fatalf("the form %q evaluates to %q, want %q", form, got, want)
 			}
 		}
 		if seen != 3 {
