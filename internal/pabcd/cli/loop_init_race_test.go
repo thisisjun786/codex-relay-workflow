@@ -315,3 +315,36 @@ func TestLoopInitNamesThePublishedPlanWhenTheBindingFails(t *testing.T) {
 		})
 	}
 }
+
+// TestLoopInitNamesThePublishedPlanWhenTheLedgerRowFails is the other commit-order case inside the
+// creation critical section: the plan is published and the created ledger row then fails. The failure
+// must name the published plan, because a retry answers "a plan already exists" and would otherwise
+// look like the defect this issue fixes.
+func TestLoopInitNamesThePublishedPlanWhenTheLedgerRowFails(t *testing.T) {
+	cwd := loopReadWorkspace(t)
+	const slug = "ship-the-export-feature"
+	loopInitAppendLedgerHook = func(string, string, goalplan.GoalplanLedgerEntry) error {
+		return errors.New("ledger write failed")
+	}
+	t.Cleanup(func() { loopInitAppendLedgerHook = nil })
+
+	args, err := ParseLoopCliArgs([]string{"init", "--objective", "Ship the export feature"}, cwd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, runErr := RunLoopCli(args)
+	if runErr == nil {
+		t.Fatalf("got %d %q, want an error naming the published plan", result.Code, result.Output)
+	}
+	for _, want := range []string{"is published", slug, "ledger write failed"} {
+		if !strings.Contains(runErr.Error(), want) {
+			t.Fatalf("the failure does not name %q: %v", want, runErr)
+		}
+	}
+	if plan := goalplan.ReadGoalplan(cwd, slug); plan == nil {
+		t.Fatalf("the failure denied a plan that is published")
+	}
+	if rows := loopCreatedLedgerRows(t, cwd, slug); len(rows) != 0 {
+		t.Fatalf("a failed row append left a created row: %v", rows)
+	}
+}

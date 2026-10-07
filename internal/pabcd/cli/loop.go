@@ -75,6 +75,20 @@ func loopInitWriteState(cwd string, next state.State) error {
 	return state.WriteState(cwd, next)
 }
 
+// loopInitAppendLedgerHook, when non-nil, replaces the created-row append of init's creation step so a
+// test can drive the case where the plan is published and the row then fails (CRW-646, failure class 2).
+// It is nil in production (an uninitialized variable, no package-level work at start).
+var loopInitAppendLedgerHook func(string, string, goalplan.GoalplanLedgerEntry) error
+
+// loopInitAppendLedger is init's created-row append: the hook when a test set one,
+// goalplan.AppendGoalplanLedger otherwise.
+func loopInitAppendLedger(cwd, slug string, entry goalplan.GoalplanLedgerEntry) error {
+	if loopInitAppendLedgerHook != nil {
+		return loopInitAppendLedgerHook(cwd, slug, entry)
+	}
+	return goalplan.AppendGoalplanLedger(cwd, slug, entry)
+}
+
 // RunLoopCli is runGoalplanCli (:751-865) for the verbs this issue owns. A non-nil error is the oracle's
 // uncaught throw: a write that failed, or a lock status that could not be read.
 func RunLoopCli(args LoopCliArgs) (LoopCliResult, error) {
@@ -257,10 +271,16 @@ func loopInitCreate(args LoopCliArgs, slug, objective string) (LoopCliResult, er
 		if err := goalplan.WriteGoalplan(args.Cwd, plan); err != nil {
 			return err
 		}
-		return goalplan.AppendGoalplanLedger(args.Cwd, slug, goalplan.GoalplanLedgerEntry{
+		if err := loopInitAppendLedger(args.Cwd, slug, goalplan.GoalplanLedgerEntry{
 			Ts: loopNowISO(), Slug: slug, Event: goalplan.EventCreated,
 			Detail: "init objective=\"" + objective + "\" criteria=" + fmt.Sprint(len(args.Criteria)),
-		})
+		}); err != nil {
+			// The plan is published before this row, so a failure here is not "nothing was written":
+			// the retry answers "a plan already exists", which would otherwise look like the defect
+			// this issue fixes. Name the published plan, as the binding failure below does.
+			return fmt.Errorf("loop init: the plan at slug '%s' is published, but its created ledger row could not be appended: %w", slug, err)
+		}
+		return nil
 	}, nil)
 	if err != nil {
 		return LoopCliResult{}, err
