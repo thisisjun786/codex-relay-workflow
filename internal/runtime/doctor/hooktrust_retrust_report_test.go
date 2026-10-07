@@ -406,13 +406,11 @@ func retrustRunWithEnv(f *casFixture, env hostenv.LookupEnv, args ...string) (st
 	return stdout.String(), stderr.String(), code
 }
 
-// The post-publication check must read the very bytes the report was grounded on. DiagnoseHookTrust
-// reads the config path again, so a writer that lands between the read-back and the check can make it
-// read a different document - or fail - and the run then contradicts the content the report just
-// stated. Here the Codex home's config.toml is a symlink: the lock and the read-back use the file it
-// named when the run started, and the seam repoints the symlink after the publication, so a second
-// read of the path sees the drifted document while the published file still holds the trusted one.
-func TestHookTrustRetrustDiagnosesTheReadBackSnapshotNotASecondRead(t *testing.T) {
+// Codex reads the configured path, not the file retrust locked. When a writer repoints that path
+// during the publication, the verified bytes are no longer reachable, so the run must not report
+// success: it must name the change and claim nothing about the document the path now names. Here the
+// Codex home's config.toml is a symlink and the seam repoints it after the publication.
+func TestHookTrustRetrustRefusesWhenTheConfiguredPathIsRepointed(t *testing.T) {
 	f := newCASFixture(t, "")
 	real := filepath.Join(f.root, "real-config.toml")
 	f.write(real, f.installed())
@@ -422,7 +420,7 @@ func TestHookTrustRetrustDiagnosesTheReadBackSnapshotNotASecondRead(t *testing.T
 	drifted := filepath.Join(f.root, "drifted.toml")
 	f.write(drifted, "model = \"drifted-after-the-publication\"\n")
 
-	result, verification, err := hookTrustRetrustWith(f.home, f.plugin, f.key, true, okRunner, f.env(), f.now(), &hookTrustRetrustSeams{
+	result, _, err := hookTrustRetrustWith(f.home, f.plugin, f.key, true, okRunner, f.env(), f.now(), &hookTrustRetrustSeams{
 		publish: func(target string, expected, next []byte, backupPath string) ([]byte, error) {
 			if werr := os.WriteFile(backupPath, expected, 0o644); werr != nil {
 				t.Fatal(werr)
@@ -440,21 +438,31 @@ func TestHookTrustRetrustDiagnosesTheReadBackSnapshotNotASecondRead(t *testing.T
 			return expected, nil
 		},
 	})
-	if err != nil {
-		t.Fatalf("the check contradicted the content the report read: %v", err)
+	if err == nil {
+		t.Fatal("a publication whose configured path moved was reported as a success")
 	}
-	if !result.Published || result.Conflict || result.LateWrite || result.RecheckFailed {
+	if !result.Published || !result.ConfigPathMoved {
 		t.Fatalf("the publication state is wrong: %+v", result)
 	}
-	if len(verification) != len(f.entries) {
-		t.Fatalf("the diagnosis did not run on the published content: %+v", verification)
+	if !strings.Contains(err.Error(), f.config()) || !strings.Contains(err.Error(), drifted) || !strings.Contains(err.Error(), real) {
+		t.Fatalf("the refusal does not name the change: %v", err)
 	}
-	for _, item := range verification {
-		if item.Status != "trusted" {
-			t.Fatalf("the published content is not trusted: %+v", item)
+
+	var stdout bytes.Buffer
+	hookTrustRetrustReport(&stdout, result)
+	report := stdout.String()
+	if strings.Contains(report, "holds the rewritten config") {
+		t.Fatalf("the report claims the configured path holds the rewritten config:\n%s", report)
+	}
+	for _, want := range []string{f.config(), drifted, real, "no longer reaches the file retrust published"} {
+		if !strings.Contains(report, want) {
+			t.Fatalf("the report does not carry %q:\n%s", want, report)
 		}
 	}
 	if got := f.read(real); !strings.Contains(got, f.entries[1].Hash) {
 		t.Fatalf("the published file does not hold the rewritten config: %q", got)
+	}
+	if got := f.read(drifted); strings.Contains(got, f.entries[1].Hash) {
+		t.Fatalf("the document the path now names was written: %q", got)
 	}
 }
