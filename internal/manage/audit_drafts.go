@@ -792,6 +792,16 @@ func auditDraftsRun(e *Env, cfg *Config, scope auditDraftScope) (auditDraftRepor
 			report.Skipped = append(report.Skipped, auditDraftSkip{Mode: row.Mode, Subject: row.Subject, Head: row.Head, Reason: err.Error()})
 			continue
 		}
+		// A grade marks its bundle before its grader can leave a file and clears the mark once
+		// its ledger row is on disk. A bundle that still carries the mark holds the result of a
+		// run nothing names, so no row is drafted from it: the file may belong to a run that
+		// timed out, failed or was killed, and attributing it to this older row would report
+		// defects the row never found.
+		if auditPending(row.Bundle) {
+			report.Skipped = append(report.Skipped, auditDraftSkip{Mode: row.Mode, Subject: row.Subject, Head: row.Head,
+				Reason: "the bundle carries an unrecorded grade, so its " + auditGradeFile + " is not this row's"})
+			continue
+		}
 		doc, ok := auditParseResult(filepath.Join(row.Bundle, auditGradeFile))
 		if !ok {
 			report.Skipped = append(report.Skipped, auditDraftSkip{Mode: row.Mode, Subject: row.Subject, Head: row.Head, Reason: "no usable " + auditGradeFile})

@@ -512,9 +512,9 @@ func TestAuditDraftsReview744GradeRefusesAliasedJobs(t *testing.T) {
 }
 
 // C1: a grade whose ledger row was never recorded leaves no result for an older ok row to be
-// drafted from. The row and the grade file are one record, and this run replaced the file
-// before its append failed, so the file is removed rather than left where the older row's
-// reader looks: the bundle then reports no usable grade.json instead of the newer run's defect.
+// drafted from. The run marks its bundle before the grader can leave a file and clears the mark
+// once its row is on disk, so the file it left is still there for the operator to read while the
+// drafts surface refuses to read it as the result of a row.
 func TestAuditDraftsReview744FailedRecordVoidsTheBundle(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("the file permission this test needs does not stop root")
@@ -542,6 +542,9 @@ func TestAuditDraftsReview744FailedRecordVoidsTheBundle(t *testing.T) {
 	if _, err := AuditGrade(context.Background(), e, cfg, []AuditJob{{Bundle: bundle, Round: "r2"}}); err == nil {
 		t.Fatal("a grade whose ledger row could not be recorded reported success")
 	}
+	if _, err := os.Stat(filepath.Join(bundle, auditGradeFile)); err != nil {
+		t.Errorf("the unrecorded result's file must stay for the operator to read: %v", err)
+	}
 	report, err := auditDraftsRun(e, auditDraftSectionOfState(t, state, nil, 0), auditDraftScope{Round: "r1"})
 	if err != nil {
 		t.Fatal(err)
@@ -549,7 +552,83 @@ func TestAuditDraftsReview744FailedRecordVoidsTheBundle(t *testing.T) {
 	if len(report.Created) != 0 || len(report.Updated) != 0 {
 		t.Fatalf("the unrecorded regrade still produced a draft: %+v", report)
 	}
-	if len(report.Skipped) != 1 || !strings.Contains(report.Skipped[0].Reason, auditGradeFile) {
-		t.Fatalf("the ok row is not named as carrying no usable grade: %+v", report.Skipped)
+	if len(report.Skipped) != 1 || !strings.Contains(report.Skipped[0].Reason, "unrecorded grade") {
+		t.Fatalf("the ok row is not named as carrying an unrecorded grade: %+v", report.Skipped)
+	}
+}
+
+// C1: the record is per result. A failure that comes after some rows are on disk (an alert write,
+// for one) must not throw away the results that were recorded: each recorded bundle keeps its
+// file for the row that names it, and only the results whose rows are missing stay unreadable.
+func TestAuditDraftsReview744RecordedResultsSurviveALaterRecordFailure(t *testing.T) {
+	state := t.TempDir()
+	dir := filepath.Join(state, "audit")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// The alert queue is where a P1 result goes, and this host's full device refuses every write to
+	// it, so the run records its ledger rows and then fails on the first alert.
+	if err := os.Symlink("/dev/full", filepath.Join(dir, auditAlertFile)); err != nil {
+		t.Skipf("this host cannot make the failing alert target: %v", err)
+	}
+	first := filepath.Join(t.TempDir(), "bundle-first")
+	second := filepath.Join(t.TempDir(), "bundle-second")
+	auditDraftsReview744BundleAt(t, first)
+	auditDraftsReview744BundleAt(t, second)
+	cfg := auditSectionConfig(t, state, map[string]any{"grader": auditDraftsReview744Grader(t), "grader_timeout_seconds": 5})
+	e, _, errOut := auditTestEnv(t)
+	t.Setenv("AUDIT_JSON", auditJSONWithP1)
+	t.Setenv("AUDIT_SLOW", "")
+	if _, err := AuditGrade(context.Background(), e, cfg, []AuditJob{{Bundle: first}, {Bundle: second}}); err == nil {
+		t.Fatal("a grade whose alert could not be written reported success")
+	}
+	if _, err := os.Stat(filepath.Join(first, auditGradeFile)); err != nil {
+		t.Errorf("the first result was recorded, so its file must stay: %v", err)
+	}
+	report, err := auditDraftsRun(e, auditDraftSectionOfState(t, state, nil, 0), auditDraftScope{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Created) != 1 {
+		t.Fatalf("the recorded result must still draft and the unrecorded one must not: %+v (stderr %s)", report, errOut.String())
+	}
+}
+
+// C1: the ledger records the directory a grade really graded, so a link used for one regrade is
+// the same bundle after it is gone: the older ok row stays skipped rather than drafting the file
+// the timed-out regrade left.
+func TestAuditDraftsReview744ResolvedBundleSurvivesItsLink(t *testing.T) {
+	state := t.TempDir()
+	base := t.TempDir()
+	bundle := filepath.Join(base, "real-bundle")
+	auditDraftsReview744BundleAt(t, bundle)
+	link := filepath.Join(base, "linked-bundle")
+	if err := os.Symlink(bundle, link); err != nil {
+		t.Skipf("this host cannot make a symlink: %v", err)
+	}
+	cfg := auditSectionConfig(t, state, map[string]any{"grader": auditDraftsReview744Grader(t), "grader_timeout_seconds": 1})
+	e, _, _ := auditTestEnv(t)
+	t.Setenv("AUDIT_JSON", auditJSONClean)
+	t.Setenv("AUDIT_SLOW", "")
+	if _, err := AuditGrade(context.Background(), e, cfg, []AuditJob{{Bundle: bundle, Round: "r1"}}); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AUDIT_JSON", auditJSONWithP1)
+	t.Setenv("AUDIT_SLOW", "1")
+	if _, err := AuditGrade(context.Background(), e, cfg, []AuditJob{{Bundle: link, Round: "r2"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(link); err != nil {
+		t.Fatal(err)
+	}
+	report, err := auditDraftsRun(e, auditDraftSectionOfState(t, state, nil, 0), auditDraftScope{Round: "r1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Created) != 0 || len(report.Updated) != 0 {
+		t.Fatalf("the resolved regrade still produced a draft after its link went: %+v", report)
+	}
+	if len(report.Skipped) != 1 || !strings.Contains(report.Skipped[0].Reason, "graded again") {
+		t.Fatalf("the older ok row is not named as graded again: %+v", report.Skipped)
 	}
 }

@@ -354,6 +354,18 @@ func auditPkgResetDir(root, dir string) error {
 	if err != nil || rel == "." || strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
 		return fmt.Errorf("bundle %s is outside %s", dir, root)
 	}
+	// A grade holds the bundle's marker for its whole run, and the builder would delete the
+	// grade.json and the inputs that run is working with. The marker is what tells the two
+	// apart, so a bundle whose marker is held is refused here rather than emptied under the
+	// grader. A marker a run left behind after failing to record is not held, so a rebuild
+	// replaces that bundle as usual.
+	held, err := auditPendingHeld(filepath.Join(dir, auditPendingFile))
+	if err != nil {
+		return err
+	}
+	if held {
+		return fmt.Errorf("bundle_locked: %s is being graded", dir)
+	}
 	if err := os.RemoveAll(dir); err != nil {
 		return err
 	}

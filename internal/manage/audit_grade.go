@@ -108,25 +108,24 @@ func AuditGrade(ctx context.Context, e *Env, cfg *Config, jobs []AuditJob) ([]Au
 		return nil, auditGraderUnconfiguredError{}
 	}
 	bundles := make([]*auditBundle, len(jobs))
-	seen := make([]auditBundleID, 0, len(jobs))
+	resolved := make([]string, len(jobs))
+	seen := make(map[string]int, len(jobs))
 	for i, job := range jobs {
 		bundle, err := auditReadBundle(job.Bundle)
 		if err != nil {
 			return nil, err
 		}
+		path := auditBundleResolvedPath(job.Bundle)
 		// Two jobs naming one bundle would race over the same grade.json and the same
 		// prompt, so the second is refused rather than silently sharing the directory. The
-		// spelling does not decide that: a link to a bundle, a relative form and a trailing
-		// separator all name the one directory the jobs would write into, so the same
-		// resolution the drafts surface groups ledger rows by is used here too.
-		key := auditBundleIDOf(job.Bundle)
-		for first, have := range seen {
-			if auditBundleIDSame(have, key) {
-				return nil, fmt.Errorf("jobs %d and %d name the same bundle %s", first, i, job.Bundle)
-			}
+		// spelling does not decide that: the path is resolved to the directory it is, so a
+		// link, a relative form and a trailing separator are one job target.
+		if first, ok := seen[path]; ok {
+			return nil, fmt.Errorf("jobs %d and %d name the same bundle %s", first, i, job.Bundle)
 		}
-		seen = append(seen, key)
+		seen[path] = i
 		bundles[i] = bundle
+		resolved[i] = path
 	}
 	// The grade file and the ledger row that names it are one record: this run replaces
 	// grade.json and then appends the row. The drafts surface reads that pair, the ledger
@@ -138,6 +137,22 @@ func AuditGrade(ctx context.Context, e *Env, cfg *Config, jobs []AuditJob) ([]Au
 		return nil, err
 	}
 	defer release()
+	// Each bundle is marked as carrying a run whose ledger row is not recorded yet, before any
+	// grader can leave a file in it. The mark is what a later reader fails closed on, so a run
+	// that is killed, or one whose row cannot be appended, leaves a bundle the drafts surface
+	// refuses to read a result from rather than one that silently hands an older row another
+	// run's defects. A mark that cannot be written stops the batch before anything is graded.
+	marks := make([]*os.File, len(jobs))
+	for i := range jobs {
+		mark, err := auditPendingMark(resolved[i])
+		if err != nil {
+			for j := 0; j < i; j++ {
+				auditPendingRelease(marks[j])
+			}
+			return nil, err
+		}
+		marks[i] = mark
+	}
 	results := make([]AuditResult, len(jobs))
 	logs := make([]auditLog, len(jobs))
 	sem := make(chan struct{}, section.Workers)
@@ -148,7 +163,7 @@ func AuditGrade(ctx context.Context, e *Env, cfg *Config, jobs []AuditJob) ([]Au
 		go func(i int) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			results[i] = auditGradeOne(ctx, e, section, bundles[i], jobs[i], &logs[i])
+			results[i] = auditGradeOne(ctx, e, section, bundles[i], resolved[i], jobs[i], &logs[i])
 		}(i)
 	}
 	wg.Wait()
@@ -157,53 +172,168 @@ func AuditGrade(ctx context.Context, e *Env, cfg *Config, jobs []AuditJob) ([]Au
 			fmt.Fprintf(e.Stderr, "crw manage audit: %s: %s: %s\n", results[i].Bundle, results[i].Status, auditFirstLine(logs[i].String()))
 		}
 	}
+	// auditRecord appends one ledger row per result in order, so the rows it managed to append are
+	// a prefix of the results. The marker is removed for exactly that prefix: a row on disk names its
+	// file and its result is complete, while a result whose row is missing keeps its marker and
+	// stays unreadable. A recorded result is never thrown away, so a failure that comes after some
+	// rows (an alert write, for one) costs only the results it actually lost.
+	mark, torn := auditLedgerProgress(e, cfg)
 	if err := auditRecord(e, cfg, results); err != nil {
-		// The grade file and the ledger row that names it are one record, and this run has
-		// already replaced the file. A row that was never recorded must not leave a file an
-		// older ok row of the same bundle would be drafted from, so the replacement is taken
-		// back and the bundle reports no usable grade at all: failing to record is not a
-		// result, and a later reader fails closed rather than reading another run's defects.
+		recorded := auditLedgerRowsRecorded(e, cfg, mark, torn)
 		for i := range results {
-			auditDiscardUnrecordedGrade(e, results[i].Bundle)
+			if i >= recorded {
+				auditPendingRelease(marks[i])
+				continue
+			}
+			auditPendingClear(e, marks[i], resolved[i])
 		}
 		return nil, err
+	}
+	for i := range resolved {
+		auditPendingClear(e, marks[i], resolved[i])
 	}
 	return results, nil
 }
 
-// auditDiscardUnrecordedGrade removes the grade file a run that could not record its ledger
-// row left in a bundle, so the file and the row stay one record. A bundle that is already gone
-// or carries no file is left alone, and a removal that fails is reported on stderr rather than
-// silently swallowed: the caller has already failed, and a stale file is the one state a later
-// reader must not be able to draft from.
-func auditDiscardUnrecordedGrade(e *Env, bundle string) {
-	if bundle == "" {
+// auditLedgerProgress is where a run's own ledger rows begin: the offset just past the last line
+// feed, and whether a partial row an earlier writer left sits before it. A row exists once its
+// terminating line feed reached the file, so counting line feeds after this mark counts exactly
+// the rows this run appended, even when a write stopped in the middle of one.
+func auditLedgerProgress(e *Env, cfg *Config) (int64, bool) {
+	data, err := os.ReadFile(filepath.Join(auditStateDir(e, cfg), "audit", auditLedgerFile))
+	if err != nil {
+		return 0, false
+	}
+	mark := int64(bytes.LastIndexByte(data, '\n') + 1)
+	return mark, int64(len(data)) > mark
+}
+
+// auditLedgerRowsRecorded counts the ledger rows a run appended after the mark.
+func auditLedgerRowsRecorded(e *Env, cfg *Config, mark int64, torn bool) int {
+	data, err := os.ReadFile(filepath.Join(auditStateDir(e, cfg), "audit", auditLedgerFile))
+	if err != nil || int64(len(data)) < mark {
+		return 0
+	}
+	rows := bytes.Count(data[mark:], []byte{'\n'})
+	if torn {
+		rows--
+	}
+	if rows < 0 {
+		return 0
+	}
+	return rows
+}
+
+// auditBundleResolvedPath is the directory a bundle really is: the absolute path with every link
+// resolved. The ledger records this rather than the spelling the caller passed, so two grades of
+// one directory are one bundle to a later reader even after a link used for one of them is gone
+// or repointed, and so a reader anywhere names the same directory.
+func auditBundleResolvedPath(bundle string) string {
+	abs, err := filepath.Abs(bundle)
+	if err != nil {
+		return filepath.Clean(bundle)
+	}
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		return resolved
+	}
+	return abs
+}
+
+// auditPendingFile is the marker a grade leaves in the bundle it is grading until the ledger row
+// that names the bundle's grade.json is on disk. It lives in the bundle, so the row alone is
+// enough to find it, and it is hidden because it is the product's own bookkeeping and not part of
+// the audit the prompt describes.
+const auditPendingFile = ".crw-audit-pending"
+
+// auditPendingMark creates the bundle's marker and holds an exclusive lock on it for the whole
+// grade. The file stays behind when a run cannot record its row, so a later reader can tell that
+// the bundle's grade.json belongs to a run nothing names; the lock is what tells a builder that a
+// run is in flight right now, so a marker a killed run left never blocks a rebuild.
+func auditPendingMark(bundle string) (*os.File, error) {
+	f, err := os.OpenFile(filepath.Join(bundle, auditPendingFile), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		_ = f.Close()
+		if errors.Is(err, syscall.EWOULDBLOCK) {
+			return nil, fmt.Errorf("bundle_locked: %s is being graded", bundle)
+		}
+		return nil, err
+	}
+	return f, nil
+}
+
+// auditPendingRelease gives up the marker's lock and keeps the file, so the bundle stays marked as
+// carrying a grade no ledger row names.
+func auditPendingRelease(f *os.File) {
+	if f == nil {
 		return
 	}
-	if err := os.Remove(filepath.Join(bundle, auditGradeFile)); err != nil && !errors.Is(err, os.ErrNotExist) {
-		fmt.Fprintf(e.Stderr, "crw manage audit: %s: %s could not be discarded: %v\n", bundle, auditGradeFile, err)
+	_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	_ = f.Close()
+}
+
+// auditPendingClear removes the marker once the ledger row that names the bundle's file is on
+// disk. A marker that cannot be removed is reported rather than swallowed: the bundle then stays
+// unusable to the drafts surface, which is the fail-closed direction, and a later run that
+// records clears it.
+func auditPendingClear(e *Env, f *os.File, bundle string) {
+	if f == nil {
+		return
 	}
+	if err := os.Remove(filepath.Join(bundle, auditPendingFile)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		fmt.Fprintf(e.Stderr, "crw manage audit: %s: the in-flight marker could not be cleared: %v\n", bundle, err)
+	}
+	auditPendingRelease(f)
+}
+
+// auditPending reports whether a bundle carries the marker of a run whose ledger row was never
+// recorded, so the drafts surface reads no result from it: the file it holds belongs to a run
+// nothing names, and attributing it to an older ok row would report defects that row never found.
+// A grade holds the drafts lock for its whole run, so a reader never sees a live run's marker,
+// only the one a run that died left behind.
+func auditPending(bundle string) bool {
+	if bundle == "" {
+		return false
+	}
+	_, err := os.Stat(filepath.Join(bundle, auditPendingFile))
+	return err == nil
+}
+
+// auditPendingHeld reports whether a bundle's marker is held by a grade that is still running. A
+// marker that is present but not held is one a run left behind when it could not record its row,
+// which a rebuild may replace.
+func auditPendingHeld(path string) (bool, error) {
+	f, err := os.OpenFile(path, os.O_RDWR, 0o600)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, err
+	}
+	defer func() { _ = f.Close() }()
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		if errors.Is(err, syscall.EWOULDBLOCK) {
+			return true, nil
+		}
+		return false, err
+	}
+	_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	return false, nil
 }
 
 // auditGradeOne writes the prompt into the bundle, runs the grader there under the time
 // limit, and reads what it wrote.
-func auditGradeOne(ctx context.Context, e *Env, section auditSection, bundle *auditBundle, job AuditJob, log *auditLog) AuditResult {
+func auditGradeOne(ctx context.Context, e *Env, section auditSection, bundle *auditBundle, absBundle string, job AuditJob, log *auditLog) AuditResult {
 	// The grader's own paths are absolute, because the grader runs with the bundle as its
-	// working directory and a relative argument would be resolved against it twice. The
-	// ledger records that same absolute directory, not the spelling the caller passed: a
-	// later reader (audit drafts, for one) resolves the row's bundle from its own working
-	// directory, and a relative spelling would name a different directory there, so two
-	// grades of one bundle would read as two bundles.
-	absBundle, err := filepath.Abs(job.Bundle)
+	// working directory and a relative argument would be resolved against it twice, and the
+	// ledger records that same resolved directory, not the spelling the caller passed, so two
+	// grades of one bundle read as one bundle wherever a later reader runs.
 	result := AuditResult{
 		Mode: bundle.Mode, Subject: bundle.Subject, Head: bundle.Head, Issue: bundle.Issue,
 		Pair: job.Pair, Phase: job.Phase, Round: job.Round,
 		Bundle: absBundle, GradedAt: e.Now().UTC().Format(auditTimeFormat),
-	}
-	if err != nil {
-		result.Bundle = job.Bundle
-		result.Status = auditStatusInvalid
-		return result
 	}
 	grade := filepath.Join(absBundle, auditGradeFile)
 	// The grader is told to write this file, so a file an earlier run left is not this
