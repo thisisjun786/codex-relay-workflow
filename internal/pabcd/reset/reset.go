@@ -289,15 +289,7 @@ func resetLinkWalkTarget(dir *os.File, name, target string) (exists, inside bool
 			// there, so ask the kernel here and answer absent when it cannot search. This is the
 			// question the last dot component has always asked, now asked at every dot component: the
 			// kernel answers EACCES for a directory it cannot search and the link is kept.
-			searchable, asked := resetLinkWalkSearchable(dir, walked)
-			if !asked {
-				// The walked pathname itself has reached the kernel's single-pathname limit, so the
-				// search question cannot be asked. The walk cannot decide this target: it keeps the
-				// descriptor stat and the root-path judgement, the flow for a target the walk cannot
-				// keep inside the root.
-				return false, false
-			}
-			if !searchable {
+			if !resetLinkWalkSearchable(dir, walked) {
 				return false, true
 			}
 			if component == ".." {
@@ -311,14 +303,6 @@ func resetLinkWalkTarget(dir *os.File, name, target string) (exists, inside bool
 		path := resetLinkWalkPath(walked, component)
 		st, err := resetLinkWalkLstat(dir, path)
 		if err != nil {
-			// The walk resolves the target through one concatenated pathname, and the kernel applies its
-			// own limit to a single pathname. ENAMETOOLONG therefore reports the walk's own limit, not
-			// the kernel's answer about the target: the target may still resolve, so it keeps the
-			// descriptor stat and the root-path judgement, the flow for a target the walk cannot keep
-			// inside the root. Every other error is the kernel's answer about the target and is absent.
-			if errors.Is(err, unix.ENAMETOOLONG) {
-				return false, false
-			}
 			return false, true
 		}
 		if st.Mode&unix.S_IFMT == unix.S_IFLNK {
@@ -376,11 +360,10 @@ func resetLinkWalkReadlink(dir *os.File, path string) (string, error) {
 }
 
 // resetLinkWalkSearchable reports whether the kernel may search the directory the walked components
-// name, which is what resolving a "." or ".." component relative to that directory needs, and whether
-// the question could be asked at all. It asks the kernel's own search question with faccessat(X_OK)
-// through the descriptor resetPin took, relative to that descriptor: the answer is EACCES for a
-// directory the kernel cannot search and success for one it can, and it opens no file or directory
-// (CRW-554) and creates nothing.
+// name, which is what resolving a "." or ".." component relative to that directory needs. It asks
+// the kernel's own search question with faccessat(X_OK) through the descriptor resetPin took,
+// relative to that descriptor: the answer is EACCES for a directory the kernel cannot search and
+// success for one it can, and it opens no file or directory (CRW-554) and creates nothing.
 //
 // The question is asked about the directory itself rather than about a synthetic name inside it. A
 // probe name is appended to the walked components, so it can push the concatenated pathname past the
@@ -388,17 +371,11 @@ func resetLinkWalkReadlink(dir *os.File, path string) (string, error) {
 // ENAMETOOLONG says nothing about search permission, and reading it as "not searchable" answered
 // absent for a directory the kernel can search (keeping a link the oracle removes), while reading it
 // as searchable removed the link of a directory the kernel cannot search (losing one the oracle
-// keeps).
-//
-// The second result reports that the walked pathname itself has reached that limit, where the
-// question cannot be asked: the walk then hands the target to the descriptor stat and the root-path
-// judgement like any other target it cannot decide.
-func resetLinkWalkSearchable(dir *os.File, walked []string) (searchable, asked bool) {
+// keeps). A walked pathname that has itself reached the limit answers ENAMETOOLONG, which is one of
+// the errors the walk decides as absent.
+func resetLinkWalkSearchable(dir *os.File, walked []string) bool {
 	err := unix.Faccessat(int(dir.Fd()), resetLinkWalkSearchPath(walked), unix.X_OK, unix.AT_EACCESS)
-	if errors.Is(err, unix.ENAMETOOLONG) {
-		return false, false
-	}
-	return err == nil, true
+	return err == nil
 }
 
 // resetLinkWalkSearchPath is the pathname the search question is asked about: the components the walk
