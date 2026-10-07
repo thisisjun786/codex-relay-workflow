@@ -90,11 +90,6 @@ type dagReviewSection struct {
 	StallMinutes int      `json:"stall_minutes"`
 }
 
-// dagReviewSource reads one group of anomalies from one place. A source appends to in.review. The
-// two sources a review runs are called from the two places their reads belong: the store source
-// inside the store's snapshot, and the host-record source outside it.
-type dagReviewSource func(ctx context.Context, in *dagReviewInput) error
-
 // dagReviewInput is what a source reads: the open store, the plan facts, the lanes, the clock
 // and the review being built.
 type dagReviewInput struct {
