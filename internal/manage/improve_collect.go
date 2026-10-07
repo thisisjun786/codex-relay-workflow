@@ -56,9 +56,10 @@ const (
 	improveReasonOutputIsInput = "improve_output_is_input"
 )
 
-// improveInputBeforeRename runs between the output plan taken immediately before the rename
-// and the refusal check that follows it. Production leaves it nil; a test sets it to replace
-// the destination inside that window and prove the second comparison refuses the new one.
+// improveInputBeforeRename runs after the bundle has been written to its temporary file and
+// before the destination is resolved again and compared with the recorded input identities. It is
+// the seam a test uses to change the destination inside that window and prove the second
+// comparison refuses the new one. Production leaves it nil.
 var improveInputBeforeRename func(improveOutputPlan)
 
 // improveStoreFile is the relay store's file name inside a state directory.
@@ -314,7 +315,9 @@ func improveRunCollect(ctx context.Context, e *Env, args []string) int {
 			return 1
 		}
 	}
-	bundle, ids, err := improveCollect(ctx, section)
+	// Only a run that writes a file needs the identity set: a run that writes to stdout has no
+	// destination to protect, so it opens nothing and holds no descriptor.
+	bundle, ids, err := improveCollect(ctx, section, out != "")
 	if err != nil {
 		fmt.Fprintf(e.Stderr, "crw manage improve collect: error: %v\n", err)
 		return 1
@@ -401,9 +404,11 @@ func improvePlanOutput(out string) (improveOutputPlan, error) {
 // sources — so a destination is compared against recorded identities rather than against two
 // spellings of one name.
 func improveRefuseInputOutput(dest string, section improveSection) error {
-	ids := improveIdentityNew()
+	ids := improveIdentityNew(true)
 	defer ids.improveIdentityClose()
-	ids.improveIdentityRecord(section)
+	if err := ids.improveIdentityRecord(section); err != nil {
+		return err
+	}
 	return ids.improveIdentityRefuse(dest, nil)
 }
 
@@ -432,14 +437,7 @@ func improveResolvedPath(path string) (string, error) { return store.Realpath(pa
 // still caught. The window between that last check and os.Rename itself is accepted: nothing
 // closes it without holding the destination's directory against every other writer.
 func improveWriteFile(plan improveOutputPlan, ids *improveIdentitySet, data []byte) error {
-	fresh, err := improvePlanOutput(plan.Out)
-	if err != nil {
-		return err
-	}
-	if plan.parent != nil && fresh.parent != nil && !os.SameFile(plan.parent, fresh.parent) {
-		return fmt.Errorf("%s: the parent directory of %s is not the directory the plan named", improveReasonOutputParent, plan.Out)
-	}
-	temp, err := os.CreateTemp(fresh.Parent, "improve-bundle-*")
+	temp, err := os.CreateTemp(plan.Parent, "improve-bundle-*")
 	if err != nil {
 		return err
 	}
@@ -463,7 +461,21 @@ func improveWriteFile(plan improveOutputPlan, ids *improveIdentitySet, data []by
 		return err
 	}
 	if improveInputBeforeRename != nil {
-		improveInputBeforeRename(fresh)
+		improveInputBeforeRename(plan)
+	}
+	// The destination is resolved again here, after the bundle has been written and immediately
+	// before the last comparison and the rename, so a parent directory replaced while the bundle
+	// was written is caught rather than written through. The parent's identity is compared with
+	// the one the plan recorded. The window between this check and os.Rename itself is accepted:
+	// nothing closes it without holding the destination's directory against every other writer.
+	fresh, err := improvePlanOutput(plan.Out)
+	if err != nil {
+		os.Remove(name)
+		return err
+	}
+	if plan.parent != nil && fresh.parent != nil && !os.SameFile(plan.parent, fresh.parent) {
+		os.Remove(name)
+		return fmt.Errorf("%s: the parent directory of %s is not the directory the plan named", improveReasonOutputParent, plan.Out)
 	}
 	if err := ids.improveIdentityRefuse(fresh.Dest, fresh.parent); err != nil {
 		os.Remove(name)
@@ -543,18 +555,26 @@ func improveLoadSection(e *Env) (improveSection, error) {
 //
 // Every input is opened and its identity recorded before any reader runs, and each descriptor
 // stays open until the caller has written and renamed the bundle, so an input moved aside between
-// the read and the rename is still recognised for what it is. After each reader returns the paths
-// it read are examined again, and one that names a different file refuses the run with
-// improveReasonInputChanged rather than writing a bundle of bytes that are no longer there. A
-// source the configuration names but the reader cannot read is reported as before; the caller
-// closes the set.
-func improveCollect(ctx context.Context, section improveSection) (improveBundle, *improveIdentitySet, error) {
-	ids := improveIdentityNew()
-	ids.improveIdentityRecord(section)
+// the read and the rename is still recognised for what it is. After each reader returns, that
+// source's inputs are recorded again and every recorded path is examined: a draft or a store
+// sidecar that appeared while the reader ran is an input too, and a path that no longer names the
+// file the collection read refuses the run with improveReasonInputChanged rather than writing a
+// bundle of bytes that are no longer there. A source the configuration names but the reader cannot
+// read is reported as before; the caller closes the set.
+func improveCollect(ctx context.Context, section improveSection, guarded bool) (improveBundle, *improveIdentitySet, error) {
+	ids := improveIdentityNew(guarded)
+	if err := ids.improveIdentityRecord(section); err != nil {
+		ids.improveIdentityClose()
+		return improveBundle{}, nil, err
+	}
 	fail := func(err error) (improveBundle, *improveIdentitySet, error) {
 		ids.improveIdentityClose()
 		return improveBundle{}, nil, err
 	}
+	// after records the inputs again and examines them, so a source that appeared or changed while
+	// a reader ran is still an input of the set, and one that no longer names the file that was
+	// read is refused rather than written over.
+	after := func() error { return ids.improveIdentityRefresh(section) }
 	acc := improveNewAccumulator()
 	sources := []improveSourceRow{}
 
@@ -570,7 +590,7 @@ func improveCollect(ctx context.Context, section improveSection) (improveBundle,
 		if err != nil {
 			return fail(improveUnreadable(improveKindRelay, relayPath, err))
 		}
-		if err := ids.improveIdentityVerify(); err != nil {
+		if err := after(); err != nil {
 			return fail(err)
 		}
 		sources = append(sources, improveSourceRow{Kind: improveKindRelay, Path: relayPath, State: improveStateRead, Rows: rows})
@@ -588,7 +608,7 @@ func improveCollect(ctx context.Context, section improveSection) (improveBundle,
 		if err != nil {
 			return fail(improveUnreadable(improveKindDag, dagSource.Path, err))
 		}
-		if err := ids.improveIdentityVerify(); err != nil {
+		if err := after(); err != nil {
 			return fail(err)
 		}
 		sources = append(sources, improveSourceRow{Kind: improveKindDag, Path: dagSource.Path, State: improveStateRead, Rows: rows})
@@ -602,7 +622,7 @@ func improveCollect(ctx context.Context, section improveSection) (improveBundle,
 		if err != nil {
 			return fail(improveUnreadable(improveKindAudit, auditPath, err))
 		}
-		if err := ids.improveIdentityVerify(); err != nil {
+		if err := after(); err != nil {
 			return fail(err)
 		}
 		sources = append(sources, improveSourceRow{Kind: improveKindAudit, Path: auditPath, State: improveStateRead, Rows: rows})
@@ -616,7 +636,7 @@ func improveCollect(ctx context.Context, section improveSection) (improveBundle,
 		if err != nil {
 			return fail(improveUnreadable(improveKindIntervention, interventionPath, err))
 		}
-		if err := ids.improveIdentityVerify(); err != nil {
+		if err := after(); err != nil {
 			return fail(err)
 		}
 		sources = append(sources, improveSourceRow{Kind: improveKindIntervention, Path: interventionPath, State: improveStateRead, Rows: rows})
@@ -630,7 +650,7 @@ func improveCollect(ctx context.Context, section improveSection) (improveBundle,
 		if err != nil {
 			return fail(improveUnreadable(improveKindDraft, draftPath, err))
 		}
-		if err := ids.improveIdentityVerify(); err != nil {
+		if err := after(); err != nil {
 			return fail(err)
 		}
 		sources = append(sources, improveSourceRow{Kind: improveKindDraft, Path: draftPath, State: improveStateRead, Rows: rows})
@@ -643,7 +663,7 @@ func improveCollect(ctx context.Context, section improveSection) (improveBundle,
 		if err != nil {
 			return fail(improveUnreadable(improveKindIssue, section.IssueList, err))
 		}
-		if err := ids.improveIdentityVerify(); err != nil {
+		if err := after(); err != nil {
 			return fail(err)
 		}
 		sources = append(sources, improveSourceRow{Kind: improveKindIssue, Path: section.IssueList, State: improveStateRead, Rows: rows})

@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -19,8 +18,8 @@ import (
 // the read name the same file.
 
 // improveReasonInputChanged is the named refusal of a path that no longer names the file the
-// collection read: the descriptor it opened is the evidence, and a path that reaches a different
-// file after the read is a different input.
+// collection read, or that could not be pinned at all. The descriptor it opened is the evidence,
+// and a path that reaches a different file after the read is a different input.
 const improveReasonInputChanged = "improve_input_changed"
 
 // improveReasonOutputUnreadable is the named refusal of a destination the collection cannot examine
@@ -28,26 +27,36 @@ const improveReasonInputChanged = "improve_input_changed"
 const improveReasonOutputUnreadable = "improve_output_unreadable"
 
 // improveIdentityEntry is one input the collection opens: the path it opens, that path resolved the
-// way the reader resolves it, and the descriptor held open until the bundle is renamed. A configured
-// path that cannot be opened keeps its resolved spelling and no descriptor: the read reports that
-// failure itself, and the spelling still lets the output guard compare the destination against the
-// name the read would use.
+// way the reader resolves it, and the descriptor held open until the bundle is renamed.
+//
+// sidecar marks a store's write-ahead log and shared-memory index. SQLite unlinks both when the last
+// connection checkpoints and closes, which is routine and leaves the database's committed state
+// alone, so a sidecar path that no longer exists is not a changed input; a sidecar that now names a
+// different file still is.
 type improveIdentityEntry struct {
 	path     string
 	resolved string
 	info     os.FileInfo
 	file     *os.File
+	sidecar  bool
 }
 
-// improveIdentitySet is every input one collection opens. It is recorded once, before any reader
-// runs, and compared against after the readers return and again immediately before the rename, so
-// the comparison never rebuilds the name list it replaced.
+// improveIdentitySet is every input one collection opens. It is recorded before the readers run and
+// recorded again after each of them returns, so a file that appears while a reader runs is still an
+// input of the set by the time the bundle is renamed. The comparison never rebuilds the recorded
+// identities from names.
+//
+// guarded is false for a collection that writes to stdout: it has no destination to protect, so it
+// opens nothing and holds no descriptor.
 type improveIdentitySet struct {
 	entries []improveIdentityEntry
+	guarded bool
 }
 
-// improveIdentityNew is an empty set.
-func improveIdentityNew() *improveIdentitySet { return &improveIdentitySet{} }
+// improveIdentityNew is an empty set that records its inputs when guard is true.
+func improveIdentityNew(guard bool) *improveIdentitySet {
+	return &improveIdentitySet{guarded: guard}
+}
 
 // improveIdentityClose releases every descriptor the set holds open.
 func (ids *improveIdentitySet) improveIdentityClose() {
@@ -69,101 +78,149 @@ func improveIdentityResolved(path string) string {
 	return resolved
 }
 
-// improveIdentityRecorded reports whether a resolved path is already an input of the set, so one
-// file reached under two spellings is opened once and held once.
-func (ids *improveIdentitySet) improveIdentityRecorded(resolved string) bool {
+// improveIdentityRecorded reports whether a path is already an input of the set. The comparison is
+// on the spelling, never on the resolved name: two configured paths that resolve to the same file
+// are two inputs, because a link at either spelling can be retargeted after recording while each
+// reader still opens the spelling its source was configured with.
+func (ids *improveIdentitySet) improveIdentityRecorded(path string) bool {
 	for _, entry := range ids.entries {
-		if entry.resolved == resolved {
+		if entry.path == path {
 			return true
 		}
 	}
 	return false
 }
 
-// improveIdentityAdd opens a path and records it under its resolved spelling. A path that cannot be
-// opened keeps the resolved spelling and no descriptor.
-func (ids *improveIdentitySet) improveIdentityAdd(path, resolved string) {
-	if path == "" {
-		return
+// improveIdentityAdd opens a path and records it. A path that is absent is recorded by name alone,
+// because the read reports it. A path that exists but cannot be opened or examined is a refusal: an
+// input the collection cannot pin is one it cannot prove it will not overwrite, and a failure to
+// pin is never a pass.
+func (ids *improveIdentitySet) improveIdentityAdd(path, resolved string, sidecar bool) error {
+	if path == "" || !ids.guarded || ids.improveIdentityRecorded(path) {
+		return nil
 	}
 	if resolved == "" {
 		resolved = improveIdentityResolved(path)
 	}
-	if ids.improveIdentityRecorded(resolved) {
-		return
-	}
-	entry := improveIdentityEntry{path: path, resolved: resolved}
-	if file, err := os.Open(path); err == nil {
-		if info, statErr := file.Stat(); statErr == nil {
-			entry.info, entry.file = info, file
-		} else {
+	entry := improveIdentityEntry{path: path, resolved: resolved, sidecar: sidecar}
+	file, err := os.Open(path)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+	case err != nil:
+		return fmt.Errorf("%s: the input %s could not be opened to record its identity: %w", improveReasonInputChanged, path, err)
+	default:
+		info, statErr := file.Stat()
+		if statErr != nil {
 			_ = file.Close()
+			return fmt.Errorf("%s: the input %s could not be examined to record its identity: %w", improveReasonInputChanged, path, statErr)
 		}
+		entry.info, entry.file = info, file
 	}
 	ids.entries = append(ids.entries, entry)
+	return nil
 }
 
 // improveIdentityRecordStore records a relay or DAG source: the configured path, the store file the
 // reader opens, and the store's write-ahead log and shared-memory index when they exist. The store
 // file is the path store.InPlaceRead returns, which is the file OpenInPlace opens, so the recorded
 // identity is the one the read itself uses.
-func (ids *improveIdentitySet) improveIdentityRecordStore(configured string) {
-	ids.improveIdentityAdd(configured, "")
+func (ids *improveIdentitySet) improveIdentityRecordStore(configured string) error {
+	if err := ids.improveIdentityAdd(configured, "", false); err != nil {
+		return err
+	}
 	storePath, err := improveStorePath(configured)
 	if err != nil {
 		// The configured path does not name a store the reader can open; the read reports that.
-		return
+		return nil
 	}
-	resolved := improveIdentityResolved(storePath)
-	if examined, _, err := store.InPlaceRead(storePath); err == nil {
-		resolved = examined
+	// The store file is the path store.InPlaceRead returns, which is the file OpenInPlace opens, so
+	// the recorded spelling and identity are the ones the read itself uses.
+	examined := improveIdentityResolved(storePath)
+	if inPlace, _, err := store.InPlaceRead(storePath); err == nil {
+		examined = inPlace
 	}
-	ids.improveIdentityAdd(storePath, resolved)
-	for _, sidecar := range []string{resolved + "-wal", resolved + "-shm"} {
+	if err := ids.improveIdentityAdd(storePath, examined, false); err != nil {
+		return err
+	}
+	for _, sidecar := range []string{examined + "-wal", examined + "-shm"} {
 		if _, err := os.Lstat(sidecar); err == nil {
-			ids.improveIdentityAdd(sidecar, sidecar)
+			if err := ids.improveIdentityAdd(sidecar, sidecar, true); err != nil {
+				return err
+			}
 		}
 	}
+	return nil
 }
 
-// improveIdentityRecordDrafts records every entry of a drafts directory the collection reads, so a
-// link to a file elsewhere is an input too.
-func (ids *improveIdentitySet) improveIdentityRecordDrafts(configured string) {
-	resolved := improveIdentityResolved(configured)
-	entries, err := os.ReadDir(resolved)
+// improveIdentityRecordDrafts records every draft the drafts reader will open. The candidate files
+// come from improveParseDraftFiles, the reader's own enumeration, so the guard records the exact
+// paths that read opens: a configured directory spelled through a link and ".." is enumerated at
+// one place while the reader opens the joined spelling, and recording only the resolved spelling
+// would leave the file that was read unprotected.
+func (ids *improveIdentitySet) improveIdentityRecordDrafts(configured string) error {
+	files, err := improveParseDraftFiles(configured)
 	if err != nil {
-		return
+		// The drafts source could not be enumerated; the reader reports that.
+		return nil
 	}
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
-			continue
+	for _, file := range files {
+		if err := ids.improveIdentityAdd(file, "", false); err != nil {
+			return err
 		}
-		ids.improveIdentityAdd(resolved+string(filepath.Separator)+entry.Name(), "")
 	}
+	return nil
 }
 
-// improveIdentityRecord records every input the collection reads, before any reader runs: for a
-// relay or DAG source the store file the reader opens and its sidecars, the configured relay and
-// DAG directories themselves, the drafts directory and every .json entry read from it, and the
-// audit, intervention and issue-list files.
-func (ids *improveIdentitySet) improveIdentityRecord(section improveSection) {
+// improveIdentityRecord records every input the collection reads: for a relay or DAG source the
+// store file the reader opens and its sidecars, the configured relay and DAG directories
+// themselves, the drafts directory and every entry the reader would take from it, and the audit,
+// intervention and issue-list files. It is called before the readers run and again after each of
+// them, so an entry that appeared in the meantime is still an input.
+func (ids *improveIdentitySet) improveIdentityRecord(section improveSection) error {
+	if !ids.guarded {
+		return nil
+	}
 	for _, kind := range []string{improveKindRelay, improveKindDag} {
 		if configured := section.Sources[kind].Path; configured != "" {
-			ids.improveIdentityRecordStore(configured)
+			if err := ids.improveIdentityRecordStore(configured); err != nil {
+				return err
+			}
 		}
 	}
 	for _, kind := range []string{improveKindAudit, improveKindIntervention} {
 		if path := section.Sources[kind].Path; path != "" {
-			ids.improveIdentityAdd(path, "")
+			if err := ids.improveIdentityAdd(path, "", false); err != nil {
+				return err
+			}
 		}
 	}
 	if path := section.Sources[improveKindDraft].Path; path != "" {
-		ids.improveIdentityAdd(path, "")
-		ids.improveIdentityRecordDrafts(path)
+		if err := ids.improveIdentityAdd(path, "", false); err != nil {
+			return err
+		}
+		if err := ids.improveIdentityRecordDrafts(path); err != nil {
+			return err
+		}
 	}
 	if section.IssueList != "" {
-		ids.improveIdentityAdd(section.IssueList, "")
+		if err := ids.improveIdentityAdd(section.IssueList, "", false); err != nil {
+			return err
+		}
 	}
+	return nil
+}
+
+// improveIdentityRefresh records the inputs again and then examines every recorded path, so an input
+// that appeared or changed while a reader ran is still caught. It is the step the collection runs
+// after each reader returns.
+func (ids *improveIdentitySet) improveIdentityRefresh(section improveSection) error {
+	if !ids.guarded {
+		return nil
+	}
+	if err := ids.improveIdentityRecord(section); err != nil {
+		return err
+	}
+	return ids.improveIdentityVerify()
 }
 
 // improveIdentityRefusal is the one refusal of an output that is, or lies under, an input.
@@ -199,9 +256,10 @@ func (ids *improveIdentitySet) improveIdentityRefuse(dest string, parent os.File
 }
 
 // improveIdentityVerify examines every recorded path again and refuses when it no longer reaches the
-// file the descriptor holds. It runs after the readers return and again immediately before the
+// file the descriptor holds. It runs after each reader returns and again immediately before the
 // rename, so an input replaced, moved or removed between the read and the write is refused rather
-// than silently replaced by the bundle.
+// than silently replaced by the bundle. A store sidecar SQLite checkpointed away is the one absence
+// that is not a refusal: the database still holds its committed state.
 func (ids *improveIdentitySet) improveIdentityVerify() error {
 	for _, entry := range ids.entries {
 		if entry.info == nil {
@@ -209,6 +267,9 @@ func (ids *improveIdentitySet) improveIdentityVerify() error {
 		}
 		current, err := os.Stat(entry.path)
 		if err != nil {
+			if entry.sidecar && errors.Is(err, os.ErrNotExist) {
+				continue
+			}
 			return fmt.Errorf("%s: the input %s no longer names the file the collection read: %w", improveReasonInputChanged, entry.path, err)
 		}
 		if !os.SameFile(entry.info, current) {
