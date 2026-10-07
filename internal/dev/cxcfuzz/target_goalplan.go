@@ -219,7 +219,7 @@ func goalplanCompare(goOut, oracleOut any) Verdict {
 // duplicate ids, null and unknown fields, a task without a title, an empty planFiles sha256,
 // reviewRounds and their planFiles, a roundId near 2^53, a lone surrogate and a deep dependsOn.
 func goalplanPlans(rng *rand.Rand) string {
-	switch rng.Intn(18) {
+	switch rng.Intn(20) {
 	case 0:
 		return `{`
 	case 1:
@@ -254,6 +254,14 @@ func goalplanPlans(rng *rand.Rand) string {
 		return goalplanDuplicateIDs(rng)
 	case 16:
 		return goalplanDeepChain(rng)
+	case 17:
+		// An unknown top-level key the oracle discards and the port's write lock refuses to drop, the
+		// boundary the issue body names (CRW-708 generation 5, d4 of the pre-merge evaluation).
+		return `{"objective": "o", "slug": "rec-plan", "workPhases": [], "criteria": [], "host": {"armed": false, "armedAt": null, "source": "none"}, "unknownKey": {"a": 1}}`
+	case 18:
+		// A null where the oracle's reviver substitutes a value, so the port's write lock meets a
+		// replacement rather than a loss.
+		return `{"objective": "o", "slug": "rec-plan", "workPhases": null, "criteria": null, "host": null, "createdAt": null, "finalGate": null}`
 	default:
 		return goalplanPlan(rng)
 	}

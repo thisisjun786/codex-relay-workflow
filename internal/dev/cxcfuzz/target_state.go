@@ -282,6 +282,10 @@ func collectWrittenLosses(goValue, oracleValue any, path string, lost *[]string)
 	case pyjson.Object:
 		goObject, ok := goValue.(pyjson.Object)
 		if !ok {
+			// The oracle holds an object here and the Go document does not: every key below this path
+			// is gone, so the path itself is the loss (CRW-708 generation 5, d2 of the pre-merge
+			// evaluation). Returning instead would report the whole subtree as a plain difference.
+			*lost = append(*lost, path)
 			return
 		}
 		for _, item := range oracle {
@@ -299,6 +303,7 @@ func collectWrittenLosses(goValue, oracleValue any, path string, lost *[]string)
 	case []any:
 		goArray, ok := goValue.([]any)
 		if !ok {
+			*lost = append(*lost, path)
 			return
 		}
 		for i, item := range oracle {

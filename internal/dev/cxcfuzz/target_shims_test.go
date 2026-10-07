@@ -32,10 +32,29 @@ func TestShimsAnswerTheStartupHandshakeInertly(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			requireOracleModule(t, name)
 			dir := t.TempDir()
+			// The shim's homes go in a sibling directory, not in dir: dir is the worker's working
+			// directory, and this test proves the handshake writes nothing there.
+			envDir := t.TempDir()
+			// c3 requires every test that can reach a shim to point HOME, CODEX_HOME, CRW_HOME and TMPDIR
+			// at a temporary directory before it starts one: the shim imports the oracle at its top level,
+			// and an inherited real home would be read by that import (CRW-708 generation 5, d6 of the
+			// pre-merge evaluation).
+			env := append(os.Environ(),
+				"HOME="+filepath.Join(envDir, "home"),
+				"CODEX_HOME="+filepath.Join(envDir, "codex-home"),
+				"CRW_HOME="+filepath.Join(envDir, "crw-home"),
+				"TMPDIR="+filepath.Join(envDir, "tmp"),
+				"ORACLE_ROOT="+DefaultOracleRoot,
+			)
+			for _, sub := range []string{"home", "codex-home", "crw-home", "tmp"} {
+				if err := os.MkdirAll(filepath.Join(envDir, sub), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
 			shim := filepath.Join(root, "internal", "dev", "cxcfuzz", "testdata", name, "shim.mjs")
 			cmd := exec.Command("node", shim)
 			cmd.Dir = dir
-			cmd.Env = append(os.Environ(), "ORACLE_ROOT="+DefaultOracleRoot)
+			cmd.Env = env
 			stdin, err := cmd.StdinPipe()
 			if err != nil {
 				t.Fatal(err)

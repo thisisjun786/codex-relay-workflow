@@ -14,8 +14,18 @@
 // root's .codexclaw/goalplans/rec-plan/goalplan.json by the harness's fs scenario; the shim reads it,
 // rewrites it, and answers the read kind, field and plan text, and the rewritten bytes.
 import { createInterface } from "node:readline";
-import { copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import {
+  copyFileSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  readlinkSync,
+  rmSync,
+  symlinkSync,
+} from "node:fs";
+import { dirname, join } from "node:path";
 
 // The harness always sets ORACLE_ROOT to the target's Oracle.Root; no host path is committed here.
 const oracleRoot = process.env.ORACLE_ROOT;
@@ -27,6 +37,35 @@ const { readGoalplanDetailed, writeGoalplan, goalplanDir, GOALPLAN_FILE } = awai
 const goalplanPath = (cwd, slug) => join(goalplanDir(cwd, slug), GOALPLAN_FILE);
 
 const SLUG = "rec-plan";
+
+// mirrorTree copies source to target, preserving a symlink as a symlink (with the same target text)
+// rather than following it. A link whose target is absent is recreated as it is, so the oracle sees the
+// same dangling link the port does.
+function mirrorTree(source, target) {
+  if (!existsSync(source) && !isLink(source)) return;
+  const stat = lstatSync(source, { throwIfNoEntry: false });
+  if (stat === undefined) return;
+  rmSync(target, { recursive: true, force: true });
+  if (stat.isSymbolicLink()) {
+    mkdirSync(dirname(target), { recursive: true });
+    symlinkSync(readlinkSync(source), target);
+    return;
+  }
+  if (!stat.isDirectory()) {
+    mkdirSync(dirname(target), { recursive: true });
+    copyFileSync(source, target);
+    return;
+  }
+  mkdirSync(target, { recursive: true });
+  for (const name of readdirSync(source)) {
+    mirrorTree(join(source, name), join(target, name));
+  }
+}
+
+// isLink reports whether path exists as a symlink, including a dangling one, which existsSync misses.
+function isLink(path) {
+  return lstatSync(path, { throwIfNoEntry: false })?.isSymbolicLink() === true;
+}
 
 // writeGoalplan restamps the plan's updatedAt from the wall clock, so the two sides' written values
 // can never match; each is rewritten to one placeholder before the answers compare. Only that key is
@@ -112,14 +151,15 @@ function run(request) {
     process.env.TMPDIR = root + "/tmp";
   }
   // The case stores the plan once, at the port's own path. The oracle reads .codexclaw/goalplans, so
-  // the shim mirrors the file there first: the document is one value in the input, and the shrinker
+  // the shim mirrors that tree there first: the document is one value in the input, and the shrinker
   // can never leave the two sides reading different documents.
-  const source = join(root, ".crw", "goalplans", SLUG, "goalplan.json");
-  const target = join(root, ".codexclaw", "goalplans", SLUG, "goalplan.json");
-  if (existsSync(source)) {
-    mkdirSync(join(root, ".codexclaw", "goalplans", SLUG), { recursive: true });
-    copyFileSync(source, target);
-  }
+  //
+  // The mirror preserves symlinks as symlinks rather than following them (CRW-708 generation 5, d1 of
+  // the pre-merge evaluation): the generator draws a plan reached through a linked slug directory and a
+  // slug directory that is a dangling link, and copying the file a link resolves to would hand the
+  // oracle a plain directory where the port sees a link, so the two readers would not be reading the
+  // same filesystem at all.
+  mirrorTree(join(root, ".crw", "goalplans"), join(root, ".codexclaw", "goalplans"));
   const read = readGoalplanDetailed(root, SLUG);
   const answer = { kind: "ok" };
   if (read.diagnostic) {

@@ -257,6 +257,23 @@ func TestStateCompareKeepsAPlainDifferencePlain(t *testing.T) {
 	}
 }
 
+// An object the Go rewrite replaced by null, or by a different kind, loses every key below that path:
+// the whole subtree is named as the loss rather than reported as a plain difference (CRW-708
+// generation 5, d2 of the pre-merge evaluation).
+func TestStateCompareSeesAReplacedSubtree(t *testing.T) {
+	oracleDoc := `{"phase": "P", "flags": {"auditPassed": true, "checkPassed": false}}`
+	for _, replaced := range []string{
+		`{"phase": "P", "flags": null}`,
+		`{"phase": "P", "flags": 5}`,
+		`{"phase": "P", "flags": "gone"}`,
+	} {
+		verdict := stateCompare(stateAnswerWith(replaced, replaced), stateAnswerWith(oracleDoc, oracleDoc))
+		if verdict.Kind != Differ || !strings.Contains(verdict.Detail, "data-loss") || !strings.Contains(verdict.Detail, "flags") {
+			t.Errorf("a replaced subtree %s compared %v (%s), want a data-loss naming flags", replaced, verdict.Kind, verdict.Detail)
+		}
+	}
+}
+
 // The generator reaches the receiptClaimed boundary the issue body names: 255, 256 and 257 UTF-16
 // units ending in an emoji, so the reader's 256-unit cut falls inside the pair at 257 units (CRW-708
 // generation 5, d2).

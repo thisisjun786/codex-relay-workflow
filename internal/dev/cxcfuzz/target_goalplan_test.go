@@ -181,6 +181,17 @@ func TestGoalplanCompareKeepsTheRefusalAndTheSame(t *testing.T) {
 	}
 }
 
+// An array the Go rewrite replaced by null loses every element: the path is named as the loss
+// (CRW-708 generation 5, d2 of the pre-merge evaluation).
+func TestGoalplanCompareSeesAReplacedArray(t *testing.T) {
+	oracleDoc := `{"objective": "o", "workPhases": [{"id": "wp1", "tasks": [{"title": "keep"}]}]}`
+	replaced := `{"objective": "o", "workPhases": null}`
+	verdict := goalplanCompare(goalplanAnswerWith(replaced, replaced), goalplanAnswerWith(oracleDoc, oracleDoc))
+	if verdict.Kind != Differ || !strings.Contains(verdict.Detail, "data-loss") || !strings.Contains(verdict.Detail, "workPhases") {
+		t.Fatalf("a replaced array compared %v (%s), want a data-loss naming workPhases", verdict.Kind, verdict.Detail)
+	}
+}
+
 // goalplanInputPlan is one generated input's plan text and whether its fs scenario links the slug
 // directory to another directory under the case root.
 func goalplanInputPlan(t *testing.T, input any) (string, bool) {
