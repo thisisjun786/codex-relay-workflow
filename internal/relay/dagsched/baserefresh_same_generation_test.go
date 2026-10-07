@@ -263,3 +263,43 @@ func TestSameGenerationRefreshNeedsTheHandResolvedFilesNamedExactly(t *testing.T
 		t.Fatalf("record = %v %+v", err, res)
 	}
 }
+
+// The acceptance's own generation is refreshed against the ruling that generation still holds: a newer report of that
+// generation supersedes the accepted event, so the refresh is refused as the superseded revision it is and not recorded
+// against a head no ruling covers.
+func TestSameGenerationRefreshIsRefusedWhenANewerReportSupersedesTheAcceptedEvent(t *testing.T) {
+	t.Parallel()
+	s := newRefreshScenario(t)
+	s.sameGenerationRefresh()
+	a := s.accepted.Acceptance
+	// a later report of the same generation, declared as replacing the accepted revision, acknowledged and ruled
+	// verified under the same criteria: the generation's head is that report now.
+	s.supersedeSameGenerationReport()
+	if _, err := s.record(); refusalReason(err) != "superseded_revision" || s.refreshRows() != 0 {
+		t.Fatalf("record = %v (rows %d), want superseded_revision and no row", err, s.refreshRows())
+	}
+	// the ruling on the acceptance is untouched: the refusal wrote nothing
+	if got := rvRecords(s.releaseKit, "g", "I"); !strings.Contains(got, a.AcceptanceID) {
+		t.Fatalf("the acceptance rows changed: %s", got)
+	}
+}
+
+// supersedeSameGenerationReport adds a later report of the acceptance's generation that declares it replaces the
+// accepted revision, acknowledged and ruled verified under the plan's criteria, so the generation's head is that
+// report and the accepted event is history.
+func (s *refreshScenario) supersedeSameGenerationReport() {
+	s.t.Helper()
+	a := s.accepted.Acceptance
+	revision := dig("a newer report of the accepted generation " + s.rid)
+	event := "evt-same-generation-newer-" + s.rid
+	now := s.clock()
+	s.exec("INSERT INTO events (event_id, relationship_id, execution_generation, revision_hash, outcome, producer, turn_thread_id, turn_id, turn_status, receipt, stage, first_seen_at, last_seen_at)"+
+		" VALUES (?, ?, ?, ?, 'ready_for_review', 'child', 'child', 'turn-2', 'completed', '{}', 'final', ?, ?)", event, s.rid, a.ExecutionGeneration, revision, now, now)
+	s.exec("INSERT INTO revision_lineage (relationship_id, execution_generation, event_id, revision_hash, supersedes_hash, declared_by, recorded_at) VALUES (?, ?, ?, ?, ?, 'child', ?)",
+		s.rid, a.ExecutionGeneration, event, revision, a.RevisionHash, now)
+	s.exec("INSERT INTO acks (event_id, record, ack_turn_id, accepted, verified, ack_at) VALUES (?, '{}', 'ack-turn-2', 1, 'verified', ?)", event, now)
+	s.exec("INSERT INTO ack_evidence (event_id, tier, observed_at) VALUES (?, 'host_read', ?)", event, now)
+	s.exec("INSERT INTO verdicts (event_id, record, verdict, verdict_turn_id, decided_at) VALUES (?, '{}', 'verified', 'verdict-turn-2', ?)", event, now)
+	s.exec("INSERT INTO verdict_context (event_id, set_digest, coverage, currency, head_event_id, head_revision, ack_evidence, recorded_at) VALUES (?, ?, '{}', 'current', ?, ?, '{}', ?)",
+		event, s.criteria, event, revision, now)
+}
