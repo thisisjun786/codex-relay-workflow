@@ -114,6 +114,14 @@ func (a *anchorStore) head() registry.Head {
 	return head
 }
 
+// exec runs one statement on the temporary store.
+func (a *anchorStore) exec(query string, args ...any) {
+	a.t.Helper()
+	if _, err := a.store.Querier(a.ctx).ExecContext(a.ctx, query, args...); err != nil {
+		a.t.Fatalf("%v\n%s", err, query)
+	}
+}
+
 // The evaluation's BLOB case: a correction anchor whose verdict turn id the store holds as a BLOB
 // reads as its bytes' text, so the revision that names it is the head, exactly as the delivery
 // reader read it before CRW-827 moved the judgment into registry. The same fixture stored as TEXT
@@ -202,6 +210,22 @@ func TestAnchorTextRefuseNewForkLeavesAnUnreadableGenerationAlone(t *testing.T) 
 				t.Fatalf("RefuseNewFork refused: %v", err)
 			}
 		})
+	}
+}
+
+// The anchor statement joins every revision_request row of the generation, so a generation holding
+// two of them lists an unreadable ruling once per row. The detail names each ruling once: the list
+// is sorted and compacted, so the answer is the same on every run.
+func TestAnchorTextUnreadableRulingIsNamedOnce(t *testing.T) {
+	t.Parallel()
+	a := newAnchorStore(t, anchorCase{name: "unreadable", turnSQL: "''"})
+	a.exec("INSERT INTO events (event_id, relationship_id, execution_generation, revision_hash, outcome, producer, turn_thread_id, turn_id, turn_status, receipt, stage, first_seen_at, last_seen_at) VALUES ('request-2-928', ?, 2, '-', 'revision_request', 'relay', 'child-928', 'turn-request-2', 'completed', '{}', 'final', 'x', 'x')", a.rid)
+	head := a.head()
+	if head.Evidence != registry.EvidenceUnknownPredecessor {
+		t.Fatalf("evidence %q, want %q", head.Evidence, registry.EvidenceUnknownPredecessor)
+	}
+	if n := strings.Count(head.Detail, a.ruling); n != 1 {
+		t.Fatalf("detail names the ruling %d times: %q", n, head.Detail)
 	}
 }
 

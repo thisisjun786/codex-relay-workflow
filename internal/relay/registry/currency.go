@@ -200,9 +200,11 @@ func RequestedPredecessors(ctx context.Context, q store.Querier, rid string, gen
 			anchors[hash] = append(anchors[hash], event)
 		}
 	}
-	// The statement has no ORDER BY, and every identifier list this file prints is sorted first, so
-	// the detail a caller prints is the same on every run.
+	// The statement has no ORDER BY and the joins can list one ruling's row more than once, so the
+	// list is sorted and de-duplicated: the detail a caller prints is the same on every run and
+	// names each ruling once.
 	slices.Sort(unreadable)
+	unreadable = slices.Compact(unreadable)
 	return anchors, unreadable, nil
 }
 
