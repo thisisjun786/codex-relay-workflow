@@ -439,7 +439,6 @@ var (
 	dagHostDagSubcommand  = regexp.MustCompile(`^dag-[a-z-]+$`)
 	dagHostVariableWord   = regexp.MustCompile(`^\$\{?[A-Za-z_][A-Za-z0-9_]*\}?$`)
 	dagHostAssignmentWord = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=`)
-	dagHostHeredocName    = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.-]*$`)
 	// dagHostSubstitutionWord stands for a command substitution in a word: this reader cannot expand
 	// it, so it is one opaque word that is neither an option, a dag- subcommand nor a variable word.
 	dagHostSubstitutionWord = "<substitution>"
@@ -523,7 +522,7 @@ func dagHostScanUnits(text string, units *[]string) {
 			end := dagHostParenEnd(text, i+1)
 			unit.WriteString(text[i:end])
 			if end > i+2 {
-				dagHostScanUnits(text[i+2:end-1], units)
+				dagHostScanUnits(dagHostStripHeredocs(text[i+2:end-1]), units)
 			}
 			i = end
 			wordStart = false
@@ -537,7 +536,7 @@ func dagHostScanUnits(text string, units *[]string) {
 			}
 			unit.WriteString(text[i:end])
 			if end > i+1 {
-				dagHostScanUnits(text[i+1:end-1], units)
+				dagHostScanUnits(dagHostStripHeredocs(text[i+1:end-1]), units)
 			}
 			i = end
 			wordStart = false
@@ -728,7 +727,10 @@ func dagHostHeredocOpeners(line string, quoteIn byte) ([]dagHostHeredoc, byte) {
 }
 
 // dagHostHeredocAt reads the here-document that starts at the first < of line[i], and the index just
-// past its delimiter. A here-string (<<<) or a << that does not name a delimiter starts none.
+// past its delimiter word. The delimiter is the word the shell reads, with its quotes and backslashes
+// removed, so <<\EOF and <<E'OF' both name EOF; the body is expanded only when no part of the word is
+// quoted. A here-string (<<<), a << with no delimiter word, and a word the shell would expand (a $ or
+// a substitution) start no document this reader can end.
 func dagHostHeredocAt(line string, i int) (dagHostHeredoc, bool, int) {
 	if i+2 < len(line) && line[i+2] == '<' {
 		return dagHostHeredoc{}, false, i + 3
@@ -741,26 +743,65 @@ func dagHostHeredocAt(line string, i int) (dagHostHeredoc, bool, int) {
 	for j < len(line) && (line[j] == ' ' || line[j] == '\t') {
 		j++
 	}
-	if j >= len(line) {
-		return dagHostHeredoc{}, false, i + 2
-	}
-	if line[j] == '\'' || line[j] == '"' {
-		end := dagHostQuotedEnd(line, j, line[j])
-		if end > j+1 && end <= len(line) && line[end-1] == line[j] {
-			return dagHostHeredoc{delimiter: line[j+1 : end-1], stripTabs: strip}, true, end
-		}
-		return dagHostHeredoc{}, false, i + 2
-	}
 	end := j
 	for end < len(line) && !dagHostWordBreak(line[end]) {
-		end++
+		switch line[end] {
+		case '\\':
+			end += 2
+		case '\'', '"':
+			end = dagHostQuotedEnd(line, end, line[end])
+		default:
+			end++
+		}
 	}
-	word := line[j:end]
-	// A bare delimiter is a word: <<2)) in an arithmetic expansion is not a here-document.
-	if !dagHostHeredocName.MatchString(word) {
+	if end > len(line) {
+		end = len(line)
+	}
+	if end == j {
 		return dagHostHeredoc{}, false, i + 2
 	}
-	return dagHostHeredoc{delimiter: word, stripTabs: strip, expanded: true}, true, end
+	raw := line[j:end]
+	if strings.ContainsAny(raw, "$("+"\x60") {
+		return dagHostHeredoc{}, false, i + 2
+	}
+	name, quoted, ok := dagHostUnquoteWord(raw)
+	if !ok || name == "" {
+		return dagHostHeredoc{}, false, i + 2
+	}
+	// A word closed by ) is arithmetic (x<<2)), not a here-document.
+	if end < len(line) && line[end] == ')' {
+		return dagHostHeredoc{}, false, i + 2
+	}
+	return dagHostHeredoc{delimiter: name, stripTabs: strip, expanded: !quoted}, true, end
+}
+
+// dagHostUnquoteWord is the text a shell word reads as: quotes are removed, a backslash quotes the
+// character after it, and quoted reports whether any part of the word was quoted. ok is false when a
+// quote is never closed.
+func dagHostUnquoteWord(raw string) (name string, quoted bool, ok bool) {
+	var out strings.Builder
+	for i := 0; i < len(raw); {
+		switch c := raw[i]; c {
+		case '\\':
+			quoted = true
+			if i+1 < len(raw) {
+				out.WriteByte(raw[i+1])
+			}
+			i += 2
+		case '\'', '"':
+			quoted = true
+			closing := strings.IndexByte(raw[i+1:], c)
+			if closing < 0 {
+				return "", false, false
+			}
+			out.WriteString(raw[i+1 : i+1+closing])
+			i += closing + 2
+		default:
+			out.WriteByte(c)
+			i++
+		}
+	}
+	return out.String(), quoted, true
 }
 
 // dagHostWordBreak reports whether c ends a shell word: whitespace, or a metacharacter that starts

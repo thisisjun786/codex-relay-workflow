@@ -203,6 +203,11 @@ func TestDagHostReview775DocsReadIsNotRelayCall(t *testing.T) {
 		{"an indented line in an ordinary here-document body", "cat <<'EOF'\n  EOF\ncrw relay dag-release --plan p1\nEOF", false},
 		{"a relay command in a <<- document body", "cat <<-'EOF'\ncrw relay dag-release --plan p1\n\tEOF", false},
 		{"a relay command after a <<- document ends", "cat <<-'EOF'\n\tEOF\ncrw relay dag-release --plan p1", true},
+		{"an escaped here-document delimiter", "cat <<\\EOF\ncrw relay dag-ready --plan p1\nEOF", false},
+		{"a partly quoted here-document delimiter", "cat <<E'OF'\ncrw relay dag-ready --plan p1\nEOF", false},
+		{"a relay command after a partly quoted delimiter ends", "cat <<E'OF'\nbody\nEOF\ncrw relay dag-ready --plan p1", true},
+		{"a here-document inside a substitution in a double-quoted string", "echo \"$(cat <<'EOF'\ncrw relay dag-release --plan p1\nEOF\n)\"", false},
+		{"a relay command after a substitution holding a here-document", "echo \"$(cat <<'EOF'\nbody\nEOF\n)\"\ncrw relay dag-ready --plan p1", true},
 		// A quoted string inside a word still opens a quote, so a << in it starts no document; and an
 		// unquoted here-document body is expanded, so a substitution in it runs while a quoted one's
 		// body does not.
@@ -631,5 +636,36 @@ func TestDagHostReview775HistoryRefusalDuplicateIsNotNew(t *testing.T) {
 	second := dagReviewFind(dagHostRun(t, context.Background(), f, cfg), dagHostKindParentDagRefusals)
 	if len(second) != 0 {
 		t.Fatalf("the next check reported the historical refusal: %+v", second)
+	}
+}
+
+// d4 (C2): an answer line that was still being written when the reading began is not history. The
+// seam completes it, and the refusal it carries is reported, because it arrived with this reading.
+func TestDagHostReview775AnswerCompletedDuringTheScanIsReported(t *testing.T) {
+	f := dagReviewNewFixture(t)
+	stateDir := filepath.Join(t.TempDir(), "state")
+	call := dagHostToolCall(t, "call-A", "crw relay dag-release --plan p1")
+	answer := dagHostToolOutput(t, "call-A", `{"error":"refused","reason":"stale_coordinator_epoch"}`)
+	half := len(answer) / 2
+	rollout := filepath.Join(f.dir, "parent.jsonl")
+	if err := os.WriteFile(rollout, []byte(call+"\n"+answer[:half]), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f.close()
+	cfg := dagHostReview775Parent(t, f, rollout, stateDir)
+
+	completed := false
+	dagHostAfterBoundary = func(path string) {
+		if path != rollout || completed {
+			return
+		}
+		completed = true
+		dagHostAppendRollout(t, rollout, answer[half:])
+	}
+	t.Cleanup(func() { dagHostAfterBoundary = nil })
+
+	found := dagReviewFind(dagHostRun(t, context.Background(), f, cfg), dagHostKindParentDagRefusals)
+	if len(found) != 1 || !strings.Contains(found[0].Detail, "stale_coordinator_epoch") {
+		t.Fatalf("an answer completed during the scan was not reported: %+v", found)
 	}
 }
