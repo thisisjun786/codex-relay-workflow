@@ -49,21 +49,21 @@ func review818Options(holdReply, mergeReply string) []Option {
 // one out can never be applied.
 func TestReview818RaiseNeedsRepliesForARelationship(t *testing.T) {
 	withoutReplies := review818Record(Authority{Kind: AuthorityUser}, review818Relationship(), review818Options("", ""))
-	if err := Validate(withoutReplies); !errors.Is(err, ErrOptionReplyRequired) {
+	if err := ValidateRaise(withoutReplies); !errors.Is(err, ErrOptionReplyRequired) {
 		t.Fatalf("a relationship-blocking record with no option replies: %v", err)
 	}
 	// One option carrying a reply and one without is still refused.
 	halfAnswered := review818Record(Authority{Kind: AuthorityUser}, review818Relationship(), review818Options(ReplyStop, ""))
-	if err := Validate(halfAnswered); !errors.Is(err, ErrOptionReplyRequired) {
+	if err := ValidateRaise(halfAnswered); !errors.Is(err, ErrOptionReplyRequired) {
 		t.Fatalf("a half-answered option set: %v", err)
 	}
 	// Every option carrying a reply validates.
-	if err := Validate(review818Record(Authority{Kind: AuthorityUser}, review818Relationship(), review818Options(ReplyStop, ReplyAnswer))); err != nil {
+	if err := ValidateRaise(review818Record(Authority{Kind: AuthorityUser}, review818Relationship(), review818Options(ReplyStop, ReplyAnswer))); err != nil {
 		t.Fatalf("a relationship-blocking record with a reply on every option: %v", err)
 	}
 	// A record that blocks no relationship needs no reply.
 	plain := review818Record(Authority{Kind: AuthorityUser}, nil, review818Options("", ""))
-	if err := Validate(plain); err != nil {
+	if err := ValidateRaise(plain); err != nil {
 		t.Fatalf("a record that blocks no relationship: %v", err)
 	}
 	// A reply outside the vocabulary is refused wherever it appears.
@@ -71,12 +71,45 @@ func TestReview818RaiseNeedsRepliesForARelationship(t *testing.T) {
 	if err := Validate(plain); !errors.Is(err, ErrUnknownReply) {
 		t.Fatalf("an option reply outside the vocabulary: %v", err)
 	}
+	// A record written before the reply field existed carries relationship-blocking options with
+	// no reply: the reader must still accept it, so it can be listed, answered and withdrawn. It
+	// can never be applied, because its options name no reply to match the reply event against.
+	if err := Validate(withoutReplies); err != nil {
+		t.Fatalf("a stored relationship-blocking record without option replies: %v", err)
+	}
 	// The reply is not part of the question's identity: two records that differ only in reply are
 	// one question.
 	withReplies := review818Record(Authority{Kind: AuthorityUser}, review818Relationship(), review818Options(ReplyStop, ReplyAnswer))
 	withoutReply := review818Record(Authority{Kind: AuthorityUser}, review818Relationship(), review818Options("", ""))
 	if withReplies.Fingerprint != withoutReply.Fingerprint {
 		t.Fatalf("the reply changed the fingerprint: %s and %s", withReplies.Fingerprint, withoutReply.Fingerprint)
+	}
+}
+
+// A second statement of one question is folded into the record that carries it, and the stored
+// option replies survive the fold. The reply is not part of the question's identity (the issue
+// fixes the fingerprint that way), so the stored mapping is the one an answer is applied against:
+// the first raise's reply for an option is the reply that option makes, and a later raise cannot
+// rewrite it silently. What a later raise offers differently is therefore not applied, which is
+// the same fail-closed direction the apply takes everywhere else.
+func TestReview818AFoldKeepsTheStoredOptionReplies(t *testing.T) {
+	first := review818Record(Authority{Kind: AuthorityUser}, review818Relationship(), review818Options(ReplyStop, ReplyAnswer))
+	second := review818Record(Authority{Kind: AuthorityUser}, review818Relationship(), review818Options(ReplyAnswer, ReplyStop))
+	if first.Fingerprint != second.Fingerprint {
+		t.Fatalf("the two statements are not one question: %s and %s", first.Fingerprint, second.Fingerprint)
+	}
+	merged, err := Merge(first, second)
+	if err != nil {
+		t.Fatalf("Merge: %v", err)
+	}
+	for _, option := range merged.Options {
+		want := ReplyStop
+		if option.ID == "merge" {
+			want = ReplyAnswer
+		}
+		if option.Reply != want {
+			t.Fatalf("option %q carries reply %q after the fold, want the stored %q", option.ID, option.Reply, want)
+		}
 	}
 }
 

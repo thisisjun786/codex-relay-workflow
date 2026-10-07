@@ -147,7 +147,10 @@ func runDecisionRaise(ctx context.Context, services dispatch.Services, args disp
 		Seen:           []decisions.Seen{{At: now, Source: "project:" + originProject}},
 	}
 	record.Fingerprint = decisions.Fingerprint(record.Context, record.Blocking, record.Options)
-	if err := decisions.Validate(record); err != nil {
+	// The raise is held to the reply requirement the reader is not: a relationship-blocking
+	// question raised now names a reply on every option, while a record written before the reply
+	// field existed is still read, listed and answered.
+	if err := decisions.ValidateRaise(record); err != nil {
 		return nil, decisionRefusal(err)
 	}
 	opened, err := decisionStore(ctx, services)
@@ -592,6 +595,13 @@ func decisionAuthority(value string) (decisions.Authority, error) {
 	}
 	if !decisions.IsAuthorityKind(kind) {
 		return decisions.Authority{}, decisionBadInvocation(fmt.Sprintf("--authority %q is not a decision authority; it is one of %s", kind, decisionAuthorityList()))
+	}
+	// The parent class is the one class whose ref is part of what it is: an answer of it must name
+	// the parent authority it used, and a question raised without that ref can never take a
+	// checkable parent-class answer. Refusing it here keeps the requirement on the question rather
+	// than only on the answer.
+	if kind == decisions.AuthorityParent && ref == "" {
+		return decisions.Authority{}, decisionBadInvocation("--authority parent=ref names the parent authority this question takes; the parent class carries its ref")
 	}
 	return decisions.Authority{Kind: kind, Ref: ref}, nil
 }

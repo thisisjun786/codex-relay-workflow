@@ -214,6 +214,30 @@ func IsBlockingKind(kind string) bool  { return contains(blockingKinds, kind) }
 // IsReply reports whether reply is one of the option-reply vocabulary.
 func IsReply(reply string) bool { return contains(Replies(), reply) }
 
+// ValidateRaise refuses a raise whose options could never be applied: a decision that blocks a
+// relationship must name, on every option, the reply that option makes, because applying it
+// compares the chosen option's reply with the decision_reply the relay recorded for the receipt
+// the question answered. Validate deliberately does not carry this requirement: Validate is also
+// the check a record already in the table is read under, and a record written before the reply
+// field existed carries relationship-blocking options without one, which must not fail the read
+// (the same reason a legacy raised_at is read as it stands). Such a record can be listed,
+// answered and withdrawn; it can never be applied, because its options name no reply for the
+// reply event's decision to match, and the apply refuses rather than guessing.
+func ValidateRaise(record Record) error {
+	if err := Validate(record); err != nil {
+		return err
+	}
+	if !decisionBlocksRelationship(record) {
+		return nil
+	}
+	for _, option := range record.Options {
+		if strings.TrimSpace(option.Reply) == "" {
+			return fmt.Errorf("%w: option %q", ErrOptionReplyRequired, option.ID)
+		}
+	}
+	return nil
+}
+
 // decisionBlocksRelationship reports whether the record names a relationship among its blocking
 // subjects. That is the subject whose decision_reply event applies the record, so it is the one
 // whose options must carry the reply they make.
@@ -350,16 +374,6 @@ func Validate(record Record) error {
 		ids[id] = true
 		if reply := strings.TrimSpace(option.Reply); reply != "" && !contains(Replies(), reply) {
 			return fmt.Errorf("%w: %q", ErrUnknownReply, option.Reply)
-		}
-	}
-	// A decision that blocks a relationship is applied by comparing the reply of the option the
-	// answer chose with the decision_reply the relay recorded, so an option without a reply can
-	// never be applied. The raise is refused rather than stored unapplicable.
-	if decisionBlocksRelationship(record) {
-		for _, option := range record.Options {
-			if strings.TrimSpace(option.Reply) == "" {
-				return fmt.Errorf("%w: option %q", ErrOptionReplyRequired, option.ID)
-			}
 		}
 	}
 	for _, entry := range record.Blocking {

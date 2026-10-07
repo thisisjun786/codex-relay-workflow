@@ -227,6 +227,59 @@ func TestReview818UserAnswerNeedsTheSupervisor(t *testing.T) {
 		"--by", "task-sup", "--via", "dots", "--authority", "user"), "authority_unverified")
 }
 
+// A relationship-blocking question written before the reply field existed is still readable: the
+// reader accepts it (Validate, not ValidateRaise), so it can be listed and withdrawn, while it can
+// never be applied because its options name no reply for the reply event's decision to match.
+func TestReview818ALegacyRelationshipDecisionIsStillReadable(t *testing.T) {
+	state := crw737Store(t)
+	review818SeedSupervisor(t, state, "task-sup")
+	decision := review818RaiseBlocker(t, state)
+	// Strip the replies the raise stored, as a row written by the previous runtime has none.
+	ctx := context.Background()
+	opened, err := store.Open(ctx, filepath.Join(state, "relay.sqlite3"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer opened.Close()
+	if _, err := opened.Querier(ctx).ExecContext(ctx,
+		"UPDATE dag_user_decisions SET options_json = ? WHERE decision_id = ?",
+		`[{"id":"hold","label":"hold","effect":"hold the merge"},{"id":"merge","label":"merge","effect":"merge now"}]`, decision); err != nil {
+		t.Fatal(err)
+	}
+	// decision-list reads it, and it can be withdrawn.
+	if records := crw737List(t, state); len(records) != 1 || records[0].(map[string]any)["state"] != "raised" {
+		t.Fatalf("decision-list read back %v", records)
+	}
+	if got := crw737Run(t, "--state", state, "decision-withdraw", "--decision", decision, "--reason", "superseded"); got.code != 0 {
+		t.Fatalf("decision-withdraw: exit %d %s %s", got.code, got.stdout, got.stderr)
+	}
+}
+
+// A parent-class question carries the ref its answer must cite, so a raise that names the class
+// without one is refused rather than stored as a question whose parent answer cannot be checked.
+func TestReview818AParentGradeQuestionNamesItsRef(t *testing.T) {
+	state := crw737Store(t)
+	crw737Refused(t, crw737Run(t, "--state", state, "decision-raise", "--kind", "policy",
+		"--context", "Which parent authority decides the window?", "--option", "now=now:at once",
+		"--option", "later=later:deferred", "--origin-project", "PRJ-A", "--source", "report=1",
+		"--authority", "parent"), "bad_invocation")
+	// With its ref, the raise is accepted and an answer citing another ref is refused.
+	raised := crw737JSON(t, crw737Run(t, "--state", state, "decision-raise", "--kind", "policy",
+		"--context", "Which parent authority decides the window?", "--option", "now=now:at once",
+		"--option", "later=later:deferred", "--origin-project", "PRJ-A", "--source", "report=1",
+		"--authority", "parent=plan-1"))
+	decision, _ := raised["decisionId"].(string)
+	crw737Refused(t, crw737Run(t, "--state", state, "decision-answer", "--decision", decision,
+		"--option", "now", "--by", "task-a", "--via", "direct-ask", "--authority", "parent=plan-2"), "bad_invocation")
+	if got := crw737Run(t, "--state", state, "decision-answer", "--decision", decision, "--option", "now",
+		"--by", "task-a", "--via", "direct-ask", "--authority", "parent=plan-1"); got.code != 0 {
+		t.Fatalf("an answer citing the question's own ref: exit %d %s %s", got.code, got.stdout, got.stderr)
+	}
+	if record := crw737List(t, state)[0].(map[string]any); record["state"] != "answered" {
+		t.Fatalf("the answered record is %v", record)
+	}
+}
+
 // The generation the record carries is the reply event's own execution generation.
 func TestReview818AppliedGenerationIsRead(t *testing.T) {
 	state := crw737Store(t)
