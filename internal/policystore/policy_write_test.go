@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/install"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/scope"
 )
@@ -838,7 +839,9 @@ func TestAPolicyWhoseNameIsNotUTF8CanBeWritten(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		surrogateRecord(t, codexHome, path, digestOfFile(t, encoded))
+		// The registration is handed the kernel spelling (R1), so the record's surrogate spelling is
+		// built from the bytes it names rather than from the path as it arrived.
+		surrogateRecord(t, codexHome, pyvalue.FSDecode(path), digestOfFile(t, encoded))
 		return answer("record_updated", 0)
 	}}
 	result := Write(context.Background(), envOf(env), opts,
@@ -915,9 +918,11 @@ func TestAnUnlistedRegistrationOutcomeFallsToTheDistrustPath(t *testing.T) {
 	}
 }
 
-// TestARecordThatCannotBeReadBackIsNotReportedAsTheFileDigest pins the stored answer's honesty: a
-// registration that reported success and a record that then cannot be read is a warning, not a
-// registered digest taken from the file.
+// TestARecordThatCannotBeReadBackIsNotReportedAsTheFileDigest pins the (c) decision for a
+// registration that reported success and a record that then cannot be read back: whether the file
+// and the record describe one document was not established, so the answer is a recovery carrying
+// the file's digest, the backup and the repair advice, never a 200 with the record's digest taken
+// from the file.
 func TestARecordThatCannotBeReadBackIsNotReportedAsTheFileDigest(t *testing.T) {
 	env, _ := host(t, policyText, true)
 	opts := WriteOptions{Register: func(_ context.Context, path string) RegisterAnswer {
@@ -930,20 +935,20 @@ func TestARecordThatCannotBeReadBackIsNotReportedAsTheFileDigest(t *testing.T) {
 	}, Running: unavailableRunning()}
 	result := Write(context.Background(), envOf(env), opts,
 		WriteRequest{ExpectedDigest: digestOf(policyText), Change: removeLegacy()})
-	if result.Kind != WriteStored {
-		t.Fatalf("kind = %q (%v)", result.Kind, result.Errors)
-	}
-	if len(result.Warnings) == 0 {
-		t.Fatal("a record that could not be read back carries no warning")
+	if result.Kind != WriteRecoveryNeeded {
+		t.Fatalf("kind = %q (%v), want %q: the record could not be read back", result.Kind, result.Errors, WriteRecoveryNeeded)
 	}
 	if result.RegisteredDigest != "" {
 		t.Fatalf("registered = %q, want it unestablished rather than taken from the file", result.RegisteredDigest)
 	}
-	if result.Applied != AppliedUnverifiable {
-		t.Fatalf("applied = %q, want %q", result.Applied, AppliedUnverifiable)
+	if result.FileDigest == "" {
+		t.Fatal("the file's digest is not reported")
 	}
-	if result.StoredDigest == "" {
-		t.Fatal("the stored digest is not reported")
+	if result.Backup == "" || result.Recovery == "" {
+		t.Fatalf("the recovery does not name the backup and the repair: backup=%q recovery=%q", result.Backup, result.Recovery)
+	}
+	if len(result.Errors) == 0 || !strings.Contains(strings.Join(result.Errors, " "), "read") {
+		t.Fatalf("the recovery does not say the record could not be read: %v", result.Errors)
 	}
 }
 

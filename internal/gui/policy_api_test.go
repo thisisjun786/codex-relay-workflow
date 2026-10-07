@@ -617,10 +617,12 @@ func TestPolicyWriteIsGuarded(t *testing.T) {
 	}
 }
 
-// TestPolicyWriteOmitsRegisteredWhenTheRecordCannotBeReadBack is the route-level half of the stored
-// answer's honesty: the record's digest is left out of the body when it could not be established,
-// and applied says so too, so a handler that always reported a registered digest would fail here.
-func TestPolicyWriteOmitsRegisteredWhenTheRecordCannotBeReadBack(t *testing.T) {
+// TestPolicyWriteReportsRecoveryWhenTheRecordCannotBeReadBack is the route-level half of the (c)
+// decision: a registration that reported success and a record that then cannot be read back is a
+// state where the file and the record may no longer describe one document, so the route answers
+// recovery_needed with the file's digest, the backup and the repair rather than a 200 that presents
+// the unestablished record as applied.
+func TestPolicyWriteReportsRecoveryWhenTheRecordCannotBeReadBack(t *testing.T) {
 	policyHost(t, policyWritableText, true)
 	policyWriteSeamsFor(t, func(_ context.Context, path string) policystore.RegisterAnswer {
 		raw, err := os.ReadFile(path)
@@ -636,18 +638,13 @@ func TestPolicyWriteOmitsRegisteredWhenTheRecordCannotBeReadBack(t *testing.T) {
 	}, unavailablePolicyRunning)
 	payload := "{\"expectedDigest\":\"" + digestOf(policyWritableText) + "\",\"change\":{\"kind\":\"removeException\",\"id\":\"legacy\"}}"
 	code, body := policyWriteResponse(t, policyServer(t), payload)
-	if code != http.StatusOK {
-		t.Fatalf("POST /api/policy: %d %v", code, body)
+	if code != http.StatusInternalServerError || body["error"] != "recovery_needed" {
+		t.Fatalf("POST /api/policy: %d %v, want a 500 recovery_needed", code, body)
 	}
-	if _, present := body["registered"]; present {
-		t.Fatalf("the body names a registered digest the write could not establish: %v", body["registered"])
-	}
-	if body["applied"] != policystore.AppliedUnverifiable {
-		t.Fatalf("applied = %v, want %q", body["applied"], policystore.AppliedUnverifiable)
-	}
-	stored, _ := body["stored"].(map[string]any)
-	if digest, _ := stored["digest"].(string); digest == "" {
-		t.Fatal("the stored digest is not reported")
+	for _, field := range []string{"fileDigest", "backup", "recovery"} {
+		if value, _ := body[field].(string); value == "" {
+			t.Fatalf("the recovery answer does not carry %s: %v", field, body)
+		}
 	}
 }
 
@@ -782,7 +779,9 @@ func TestPolicyWriteNamesAnUnspellableBackupWithItsBytes(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		policySurrogateRecord(t, codexHome, path, digestOf(string(body)))
+		// The registration is handed the kernel spelling, so the record's surrogate spelling is built
+		// from the bytes it names rather than from the path as it arrived.
+		policySurrogateRecord(t, codexHome, pyvalue.FSDecode(path), digestOf(string(body)))
 		return policystore.RegisterAnswer{ExitCode: 0, Stdout: []byte("{\"outcome\": \"record_updated\"}")}
 	}, unavailablePolicyRunning)
 	payload := "{\"expectedDigest\":\"" + digestOf(policyWritableText) + "\",\"change\":{\"kind\":\"removeException\",\"id\":\"legacy\"}}"

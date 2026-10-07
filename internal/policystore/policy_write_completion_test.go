@@ -475,3 +475,60 @@ func TestAConfirmedRestoreWithKeptBytesIsNotAnUnresolvableRecovery(t *testing.T)
 		t.Fatalf("the next write: kind = %q (%v), want %q", second.Kind, second.Errors, WriteStored)
 	}
 }
+
+// TestARecordThatWentAwayAfterTheRegistrationIsARecovery is the pre-merge evaluation's finding that
+// a registration reporting success was trusted even when the record could not be read back
+// afterwards. The file and the record may then no longer describe one document, so the answer is the
+// (c) recovery with the file's digest, the backup and the repair, never a 200 whose applied state
+// was never established.
+func TestARecordThatWentAwayAfterTheRegistrationIsARecovery(t *testing.T) {
+	env, _ := host(t, policyText, true)
+	opts := WriteOptions{Register: func(_ context.Context, path string) RegisterAnswer {
+		rewriteRecord(t, env, path, digestOfFile(t, path))
+		// The record is removed after the registration reported success.
+		if err := os.Remove(recordOf(env)); err != nil {
+			t.Fatal(err)
+		}
+		return answer("record_updated", 0)
+	}, Running: unavailableRunning()}
+	result := Write(context.Background(), envOf(env), opts,
+		WriteRequest{ExpectedDigest: digestOf(policyText), Change: removeLegacy()})
+	if result.Kind != WriteRecoveryNeeded {
+		t.Fatalf("kind = %q (%v), want %q: the record no longer names the policy", result.Kind, result.Errors, WriteRecoveryNeeded)
+	}
+	if result.FileDigest == "" {
+		t.Fatal("the file's digest is not reported")
+	}
+	if result.RegisteredDigest != "" {
+		t.Fatalf("registered = %q, want it unestablished", result.RegisteredDigest)
+	}
+	if result.Backup == "" || result.Recovery == "" {
+		t.Fatalf("the recovery does not name the backup and the repair: backup=%q recovery=%q", result.Backup, result.Recovery)
+	}
+}
+
+// TestARecordNamingAnotherPolicyIsARecovery is the pre-merge evaluation's finding that only the
+// digest was compared when the record was read back. A record that names another policy file says
+// nothing about the bytes this run replaced, even when the two digests happen to agree: a launcher
+// reading that record opens the other file.
+func TestARecordNamingAnotherPolicyIsARecovery(t *testing.T) {
+	env, file := host(t, policyText, true)
+	other := filepath.Join(filepath.Dir(file), "other-policy.json")
+	opts := WriteOptions{Register: func(_ context.Context, path string) RegisterAnswer {
+		rewriteRecord(t, env, path, digestOfFile(t, path))
+		// The record is moved to another policy file that holds the same bytes.
+		if err := os.WriteFile(other, []byte(policyText), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		rewriteRecord(t, env, other, digestOf(policyText))
+		return answer("record_updated", 0)
+	}, Running: unavailableRunning()}
+	result := Write(context.Background(), envOf(env), opts,
+		WriteRequest{ExpectedDigest: digestOf(policyText), Change: removeLegacy()})
+	if result.Kind != WriteRecoveryNeeded {
+		t.Fatalf("kind = %q (%v), want %q: the record names another policy file", result.Kind, result.Errors, WriteRecoveryNeeded)
+	}
+	if !strings.Contains(strings.Join(result.Errors, " "), other) {
+		t.Fatalf("the recovery does not name the policy the record now points at: %v", result.Errors)
+	}
+}

@@ -468,19 +468,32 @@ func storedResult(ctx context.Context, env LookupEnv, running func(context.Conte
 			Errors: []string{"the execution policy could not be read back after the registration: " + readErr.Error()}}
 	}
 	stored := digestOfBytes(current)
-	registered := stored
 	located := Locate(env)
-	established := located.State == Registered && located.RegisteredDigest != ""
-	if established {
-		registered = located.RegisteredDigest
-	} else {
-		// The record could not be read back after the registration reported success. The file is the
-		// bytes this run wrote, but what the record now names was not established, so the answer leaves
-		// registered empty rather than reporting the file's digest as the record's.
-		registered = ""
-		warnings = append(warnings, "the execution policy was written and the wiring record could not be read back afterwards, so the digest it names was not established: "+located.Reason)
+	// The record must still name this policy file, not only a digest: a registration that ran
+	// elsewhere while this one finished can have moved the record to another path, and a record that
+	// names another file says nothing about the bytes this run replaced. Comparing digests alone would
+	// read the two as one policy.
+	established := located.State == Registered && located.RegisteredDigest != "" && located.Path == path
+	if !established {
+		// Whether the file and the record now describe one document was not established: the record
+		// could not be read back, or it names another policy file. That is the (c) decision whatever the
+		// registration answered, because a bridge started from these bytes compares them against the
+		// record and refuses a pair that does not match. Answering a success would present a state no
+		// bridge can start under as an applied policy.
+		reason := located.Reason
+		registered := ""
+		if located.State == Registered {
+			registered = located.RegisteredDigest
+			if located.Path != path {
+				reason = "the wiring record now names " + located.Path + ", not the policy this write replaced"
+			}
+		}
+		return WriteResult{Kind: WriteRecoveryNeeded, FileDigest: stored, RegisteredDigest: registered, Backup: backup,
+			Recovery: recoveryAdvice(path, backup), Warnings: warnings,
+			Errors: []string{"the registration reported success, but whether the policy file and the wiring record describe one document could not be established: " + reason}}
 	}
-	if established && registered != stored {
+	registered := located.RegisteredDigest
+	if registered != stored {
 		// The record was read back and names bytes the file does not hold: the two no longer describe
 		// one document, which is the (c) decision whatever the registration answered. Reporting it as a
 		// success would present a state no bridge can start under as an applied policy.
@@ -491,11 +504,6 @@ func storedResult(ctx context.Context, env LookupEnv, running func(context.Conte
 	file := Reading{State: Registered, Path: path, Digest: stored, RegisteredDigest: registered}
 	observed := running(ctx, env)
 	applied := Applied(file, observed)
-	if !established {
-		// Whether the host enforces these bytes was not established either, so the applied rule's
-		// unverifiable answer is the honest one rather than one taken from the file alone.
-		applied = AppliedUnverifiable
-	}
 	return WriteResult{
 		Kind:             WriteStored,
 		StoredDigest:     stored,
@@ -598,6 +606,13 @@ func restoreResult(ctx context.Context, swap SwapFunc, env LookupEnv, encoded, p
 		return WriteResult{Kind: WriteRecoveryNeeded, FileDigest: confirmed, RegisteredDigest: after.RegisteredDigest, Backup: backup,
 			Kept: pyvalue.FSDecode(keptPath), Recovery: recoveryAdviceKept(path, backup, pyvalue.FSDecode(keptPath)), Warnings: warnings,
 			Errors: []string{detail + "; the wiring record names " + after.RegisteredDigest + ", not the bytes that were put back"}}
+	case after.Path != path:
+		// The record names another policy file now, so the bytes put back here are not the ones it
+		// describes however the two digests compare: a launcher reading the record would open that other
+		// file, not this one.
+		return WriteResult{Kind: WriteRecoveryNeeded, FileDigest: confirmed, RegisteredDigest: after.RegisteredDigest, Backup: backup,
+			Kept: pyvalue.FSDecode(keptPath), Recovery: recoveryAdviceKept(path, backup, pyvalue.FSDecode(keptPath)), Warnings: warnings,
+			Errors: []string{detail + "; the wiring record now names " + after.Path + ", not the policy that was put back"}}
 	}
 	if keptPath != "" {
 		// The file and the record agree again, so this is the (b) outcome, not a recovery: a recovery
