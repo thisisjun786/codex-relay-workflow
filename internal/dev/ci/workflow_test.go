@@ -257,11 +257,12 @@ var (
 	// skillRootValue matches an assignment whose value is exactly a skills root, quoted or not:
 	// the root followed by the end of the line, a quote, or a blank. The roots alone are no skill
 	// path (a listing names them), but a job that carries one as a value names where the skill
-	// scripts live, so it is the other shape this detector has to see (CRW-353). The key may be
-	// quoted too: YAML reads `"SKILLS_ROOT": port/cxc/skills` as the same assignment, and a quoted
-	// key that carried the root past the check would let a job assemble a skill path from the
-	// variable and run it (CRW-939, the generation-2 evaluation's d1).
-	skillRootValue = regexp.MustCompile(`^\s*(?:[A-Za-z_][A-Za-z0-9_-]*|"[^"]*"|'[^']*'):\s*["']?(?:` + alternation(skillAssetRoots) + `)/?["']?(?:\s|$)`)
+	// scripts live, so it is the other shape this detector has to see (CRW-353). YAML accepts more
+	// spellings of the same assignment than a bare key: a single- or double-quoted key, and blanks
+	// before the colon (`SKILLS_ROOT : port/cxc/skills`). Each one carried the root past the check
+	// would let a job assemble a skill path from the variable and run it, and the run statement names
+	// no literal skill path for the other pattern to catch (CRW-939, the generation-2 evaluations).
+	skillRootValue = regexp.MustCompile(`^\s*(?:[A-Za-z_][A-Za-z0-9_-]*|"[^"]*"|'[^']*')[ \t]*:\s*["']?(?:` + alternation(skillAssetRoots) + `)/?["']?(?:\s|$)`)
 )
 
 // skillScriptsNodeJob is the one job whose subject is the staged skills' Node tests (the
@@ -628,6 +629,8 @@ func TestWorkflow_python_detector(t *testing.T) {
 		{"      SKILLS_ROOT: port/cxc/skills # the staged skills", true},                       // and so is the form a trailing blank ends
 		{"      \"SKILLS_ROOT\": port/cxc/skills", true},                                       // a quoted key carries the same value
 		{"      'SKILLS_ROOT': port/cxc/skills", true},                                         // in either quote
+		{"      SKILLS_ROOT : port/cxc/skills", true},                                          // a blank before the colon is the same assignment
+		{"      \"SKILLS_ROOT\" : port/cxc/skills", true},                                      // and so is a quoted key with one
 		{"      - run: node --test port/cxc/skills/x/tests/a.test.mjs", true},                  // a skill path in any other job
 		{"      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0", false},
 	} {

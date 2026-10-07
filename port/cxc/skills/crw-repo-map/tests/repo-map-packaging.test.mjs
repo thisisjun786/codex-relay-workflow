@@ -153,11 +153,13 @@ function codeLines(source) {
 }
 
 /**
- * True when the import at `code[i]` sits inside a `def` or `class` body, which is what defers it
- * past the parse. The enclosing blocks are walked by indentation: a `def`/`class` header defers the
- * import, another header (`if`, `try`, `with`, `for`, ...) is stepped over and the walk continues,
- * and a plain statement at a smaller indent -- or the top of the file -- means module level, which
- * runs while the module loads (CRW-939, the generation-2 evaluation's d2 and d3).
+ * True when the import at `code[i]` sits inside a `def` body, which is what defers it past the
+ * parse. The enclosing blocks are walked by indentation: a `def` header defers the import, another
+ * header (`class`, `if`, `try`, `with`, `for`, ...) is stepped over and the walk continues, and a
+ * plain statement at a smaller indent -- or the top of the file -- means module level, which runs
+ * while the module loads (CRW-939, the generation-2 evaluations). A `class` body is stepped over
+ * rather than treated as deferring: a module-level class body runs when the class statement runs,
+ * which is while the module loads, and only a `class` nested in a `def` is deferred with it.
  */
 function deferredImport(code, i) {
   let indent = code[i].match(/^[ \t]*/)[0].length;
@@ -166,8 +168,8 @@ function deferredImport(code, i) {
     const narrower = code[j].match(/^[ \t]*/)[0].length;
     if (narrower >= indent) continue;
     const text = code[j].trim();
-    if (/^(?:async[ \t]+def|def|class)[ \t]/.test(text)) return true;
-    if (/^(?:if|elif|else|try|except|finally|with|for|while|match|case)\b/.test(text) && /:[ \t]*$/.test(text)) {
+    if (/^(?:async[ \t]+def|def)[ \t]/.test(text)) return true;
+    if (/^(?:class|if|elif|else|try|except|finally|with|for|while|match|case)\b/.test(text) && /:[ \t]*$/.test(text)) {
       indent = narrower;
       continue;
     }
@@ -283,6 +285,15 @@ test("the parser-import check reads module-level imports placed after the parse"
     const { offenders: got } = parserImportsBeforeParsing(parse + shape);
     assert.ok(got.length > 0, `${JSON.stringify(shape)}: an import under a module-level block runs before the parse`);
   }
+  // A `class` body is not deferred either: a module-level class statement runs while the module
+  // loads, so an optional import inside one placed after the parse still runs before main(). Only a
+  // `class` nested inside a `def` is deferred with it (CRW-939, the second generation-2 evaluation).
+  const classShape = "class Probe:\n    import networkx\n";
+  assert.ok(parserImportsBeforeParsing(parse + classShape).offenders.length > 0,
+    "an import in a module-level class body runs before the parse");
+  const classInFunction = "def main():\n    args = parser.parse_args()\n    class Probe:\n        import networkx\n";
+  assert.deepEqual(parserImportsBeforeParsing(classInFunction).offenders, [],
+    "a class body inside the function after the parse stays clean");
 });
 
 test("find_src_files skips compiled-output dirs", () => {
