@@ -1,6 +1,7 @@
 package supervisor
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"testing"
@@ -162,5 +163,29 @@ func TestNoticeYield_a_busy_backoff_head_for_another_recipient_does_not_hold_a_n
 	// Then: it goes out: the yield is per recipient.
 	if after := w.message(t, id); after.State != "dispatched" || w.attempts(t, id) != 1 {
 		t.Fatalf("row %+v, attempts %d", after, w.attempts(t, id))
+	}
+}
+
+func TestNoticeYield_a_head_that_appears_after_the_attempts_check_is_refused_under_the_claim(t *testing.T) {
+	t.Parallel()
+	// Given: a staged notice with no head yet, and a writer that inserts the holding delivery
+	// between the attempt's check and the claim's read - the window the claim's write lock closes.
+	w := newNoticeYieldWorld(t)
+	id := w.stagedNotice(t)
+	w.c.beforeClaimRead = func(tx context.Context) {
+		if _, err := w.s.Q(tx).ExecContext(tx, "INSERT INTO deliveries (event_id,relationship_id,kind,recipient_task_id,recipient_thread_id,state,attempt_count,next_eligible_at,created_at,updated_at) VALUES ('event-1','rel-1','receipt','supervisor','supervisor','deferred_busy',1,?,'t','t')", w.now+60); err != nil {
+			t.Error(err)
+		}
+		w.c.beforeClaimRead = nil
+	}
+	before := w.message(t, id)
+	// When: the notice is attempted.
+	err := w.channel.Attempt(w.ctx, id, w.now, "relay")
+	// Then: the claim refuses under its lock with the same reason, and nothing of the attempt is left
+	// behind: no attempt row, no state change.
+	refusal := noticeYieldRefusal(t, err)
+	after := w.message(t, id)
+	if after != before || w.attempts(t, id) != 0 || after.State != "queued" {
+		t.Fatalf("refusal %+v, row %+v -> %+v, attempts %d", refusal, before, after, w.attempts(t, id))
 	}
 }
