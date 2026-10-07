@@ -123,6 +123,11 @@ func TestReservationAdmitsADistinctPacketBesideAnActiveRelationship(t *testing.T
 	if _, err := r.Reserve(ctx, other); err != nil {
 		t.Fatalf("a distinct packet beside an active relationship is refused: %v", err)
 	}
+	// The reservation above is pending; the next case needs the issue to hold only attached relationships,
+	// so it is attached the way the managed start leaves it.
+	if _, err := r.Store.DB.ExecContext(ctx, "UPDATE managed_start_requests SET state = 'attached' WHERE request_id = ?", other.RequestID); err != nil {
+		t.Fatal(err)
+	}
 
 	// The same packet as the live relationship is refused.
 	same := first
@@ -132,6 +137,29 @@ func TestReservationAdmitsADistinctPacketBesideAnActiveRelationship(t *testing.T
 		t.Fatal("the same packet as the live relationship was reserved")
 	} else {
 		reasonIs(t, err, "duplicate_assignment")
+	}
+
+	// EVERY live relationship is a rival, not only the first: a second live relationship whose packet
+	// cannot be resolved holds the issue, so a reservation for yet another packet is refused. Reading only
+	// the first relationship would resolve the newcomer against rel-live (a distinct registered packet of
+	// the same plan) and admit it, which is the defect this case pins.
+	packetRelationshipOrphan(t, r, "rel-zz-orphan", first.IssueKey)
+	third := first
+	third.RequestID, third.Fingerprint, third.CreateRequestID, third.DispatchRequestID = "req-5", "fp-5", "create-5", "business-5"
+	packetRelease(t, r, "PL", "n5", first.IssueKey, "p5", third.RequestID)
+	if _, err := r.Reserve(ctx, third); err == nil {
+		t.Fatal("a second live relationship the plan cannot account for was ignored")
+	} else {
+		reasonIs(t, err, "duplicate_assignment")
+	}
+}
+
+// packetRelationshipOrphan records a live relationship of an issue with NO dag_execution_packets row: its
+// packet cannot be resolved, so it holds the issue exactly as it did before there were packets.
+func packetRelationshipOrphan(t *testing.T, r Reservation, relationship, issueKey string) {
+	t.Helper()
+	if _, err := r.Store.DB.ExecContext(context.Background(), "INSERT INTO relationships (relationship_id, issue_key, status, parent_task_id, parent_host_id, child_task_id, child_host_id, execution_generation, artifact_roots, allowed_recipients, created_at, updated_at) VALUES (?,?,'active','p','h','c','h',1,'[]','[]','t','t')", relationship, issueKey); err != nil {
+		t.Fatal(err)
 	}
 }
 
