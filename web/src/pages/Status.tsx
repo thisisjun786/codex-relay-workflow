@@ -107,10 +107,6 @@ function RelaySection({ source }: { source: StatusSource<RelayDocument> }) {
   const failures = document?.failures ?? [];
   // A section named in failures, or one the document omitted, was not read: its reason is the
   // read's own, so the section shows unknown rather than the empty-state sentence.
-  const sectionReason = (section: string): string =>
-    failures.find((entry) => entry.section === section)?.reason ?? source.reason ?? "the section was not read";
-  const sectionItems = <T,>(section: string, items: T[] | null | undefined): T[] | null | undefined =>
-    failures.some((entry) => entry.section === section) ? null : items;
   const section = <T,>(name: string, items: T[] | null | undefined) =>
     sectionReading<T>(name, items, failures, source.reason);
   return (
