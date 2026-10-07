@@ -106,16 +106,28 @@ func TestSupervisorReview780PlainHelpStaysZero(t *testing.T) {
 // and every argument this test passes is a fixed literal with no newline in it.
 const supervisorReview780HelpPipeEnv = "CRW_MANAGE_TEST_HELP_PIPE"
 
-// TestSupervisorReview780HelpPipeChild is not a test of its own. The parent test re-executes this
-// binary with supervisorReview780HelpPipeEnv set (the way core_testhelp_test.go starts the fake
-// crw), and this function then runs the named command line against the process's own stdout and
-// stderr, so the write reaches the real fd 1 instead of a fake writer.
-func TestSupervisorReview780HelpPipeChild(t *testing.T) {
+// supervisorReview780ReportPipeEnv names the child mode that writes a JSON report to the process's
+// own stdout, so the report path reaches the real fd 1 the same way the usage path does.
+const supervisorReview780ReportPipeEnv = "CRW_MANAGE_TEST_REPORT_PIPE"
+
+// TestSupervisorReview780OutputPipeChild is not a test of its own. The parent tests re-execute this
+// binary with one of the two env names below (the way core_testhelp_test.go starts the fake crw),
+// and this function then writes to the process's own stdout and stderr, so the write reaches the
+// real fd 1 and fd 2 instead of a fake writer.
+func TestSupervisorReview780OutputPipeChild(t *testing.T) {
 	spec := os.Getenv(supervisorReview780HelpPipeEnv)
-	if spec == "" {
-		t.Skip("only runs as the re-executed child of TestSupervisorReview780HelpPipeEpipeExitsOne")
+	if spec != "" {
+		os.Exit(Run(context.Background(), strings.Split(spec, "\n"), strings.NewReader(""), os.Stdout, os.Stderr))
 	}
-	os.Exit(Run(context.Background(), strings.Split(spec, "\n"), strings.NewReader(""), os.Stdout, os.Stderr))
+	if os.Getenv(supervisorReview780ReportPipeEnv) != "" {
+		// The report path the issue names alongside the usage: one JSON value on stdout. A write
+		// that cannot leave must come back as an error, not as a signal.
+		if err := supervisorWrite(os.Stdout, supervisorRecord{OK: true, TaskID: "task-supervisor"}); err != nil {
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
+	t.Skip("only runs as the re-executed child of the pipe tests")
 }
 
 // supervisorReview780HelpPipeChild runs one supervisor command line in a child process whose
@@ -135,7 +147,7 @@ func supervisorReview780HelpPipeChild(t *testing.T, args []string, closeReadEnd,
 			t.Fatal(err)
 		}
 	}
-	cmd := exec.Command(os.Args[0], "-test.run=^TestSupervisorReview780HelpPipeChild$")
+	cmd := exec.Command(os.Args[0], "-test.run=^TestSupervisorReview780OutputPipeChild$")
 	cmd.Env = append(os.Environ(),
 		supervisorReview780HelpPipeEnv+"="+strings.Join(args, "\n"),
 		"TMPDIR="+t.TempDir())
@@ -255,5 +267,58 @@ func TestSupervisorReview780HelpPipeBothStreamsClosedExitsOne(t *testing.T) {
 				t.Fatalf("exit %d, want 1", code)
 			}
 		})
+	}
+}
+
+// supervisorReview780ReportPipeChild runs the JSON report write in a child whose stdout is a pipe
+// the parent has already closed. It reuses the same harness as the usage cases, with the report
+// child mode selected instead of a command line.
+func supervisorReview780ReportPipeChild(t *testing.T) (code int, signaled bool) {
+	t.Helper()
+	read, write, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := read.Close(); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=^TestSupervisorReview780OutputPipeChild$")
+	cmd.Env = append(os.Environ(), supervisorReview780ReportPipeEnv+"=1", "TMPDIR="+t.TempDir())
+	cmd.Stdout = write
+	var errOut bytes.Buffer
+	cmd.Stderr = &errOut
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	if err := write.Close(); err != nil {
+		t.Fatal(err)
+	}
+	err = cmd.Wait()
+	code = cmd.ProcessState.ExitCode()
+	if err != nil {
+		var exitErr *exec.ExitError
+		if !errors.As(err, &exitErr) {
+			t.Fatalf("the child: %v", err)
+		}
+	}
+	if ws, ok := cmd.ProcessState.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
+		signaled = true
+	}
+	return code, signaled
+}
+
+// C2 (the decided answer names the JSON report as well as the usage): a report written to a closed
+// pipe is an ordinary error the caller can act on, not a signal that ends the process first. The
+// report path is exercised directly rather than through register so the write is the only thing
+// under test. The child exits 1 when the write reports an error and 0 when it does not, so the
+// parent asserts both that no signal arrived and that the error really came back: a regression that
+// swallowed the write error would exit 0 and fail here.
+func TestSupervisorReview780ReportPipeIsAnErrorNotASignal(t *testing.T) {
+	code, signaled := supervisorReview780ReportPipeChild(t)
+	if signaled {
+		t.Fatalf("the child died on a signal (exit %d): a report written to a closed pipe must return an error, not raise SIGPIPE", code)
+	}
+	if code != 1 {
+		t.Fatalf("exit %d, want 1: the report write must report the closed pipe as an error", code)
 	}
 }
