@@ -550,9 +550,10 @@ var migrateOwnedDirIdentityFchmodat2 = func(fd int, perm uint32) error {
 // migrateOwnedDirIdentityFchmod gives the pinned directory exactly perm through its descriptor. The
 // descriptor is used rather than the name so a name swapped in the meantime cannot redirect the mode,
 // and a descriptor needs no read permission, so a umask that removed the owner's read or write bit
-// cannot stop this. Linux takes fchmodat2 where the kernel has it (6.5 and later) and the /proc/self/fd
-// path otherwise, which is the same call a libc fchmod makes on a descriptor. It is a variable so a case
-// can model each answer; no other code replaces it.
+// cannot stop this. Linux takes fchmodat2 where the kernel has it (6.5 and later); any other error it
+// answers is tried on the /proc/self/fd path, which is the same call a libc fchmod makes on a
+// descriptor, so a kernel or filesystem that lacks the flag is still served and its own failure is
+// reported. It is a variable so a case can model each answer; no other code replaces it.
 var migrateOwnedDirIdentityFchmod = func(fd int, perm uint32) error {
 	err := migrateOwnedDirIdentityFchmodat2(fd, perm)
 	switch {
