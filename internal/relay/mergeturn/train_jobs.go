@@ -27,16 +27,20 @@ func TrainJobsFromWorkflow(workflow string) ([]string, error) {
 	}
 	out := make([]string, 0, len(names))
 	for _, name := range names {
-		if name != trainProductJob {
-			out = append(out, name)
-			continue
-		}
-		parts, err := trainWorkflowMatrixParts(workflow)
+		// a job with a strategy.matrix reports one leg per combination ("go-product (lint)"), so its
+		// legs are expanded here rather than the job id alone; a matrix this reader cannot compute
+		// legs from is an error, never a plain job id that would hide the added legs
+		// (CRW-897, answer 2).
+		parts, hasMatrix, err := trainJobMatrixParts(workflow, name)
 		if err != nil {
 			return nil, err
 		}
+		if !hasMatrix {
+			out = append(out, name)
+			continue
+		}
 		for _, part := range parts {
-			out = append(out, trainProductJob+" ("+part+")")
+			out = append(out, name+" ("+part+")")
 		}
 	}
 	return out, nil
@@ -114,30 +118,41 @@ func trainJobsBlock(workflow string) (body string, inline bool, found bool) {
 // answers ok=false only for a line whose key cannot be read at all (no colon, an empty key, a quoted
 // key with no closing quote), which the caller answers as unreadable.
 func trainJobKey(line string) (string, bool) {
+	key, _, ok := trainJobKeyValue(line)
+	return key, ok
+}
+
+// trainJobKeyValue reads one line's key and the rest of the line after the key's colon: "audit:" gives
+// ("audit", ""), "audit: {runs-on: x}" gives ("audit", "{runs-on: x}") and a quoted key gives its own
+// text and the rest. The caller that must judge a key's value uses the second result rather than
+// trimming a literal prefix, so a quoted key is read the same as an unquoted one.
+func trainJobKeyValue(line string) (string, string, bool) {
 	if line == "" || strings.HasPrefix(line, "#") {
-		return "", false
+		return "", "", false
 	}
-	var key string
+	var key, value string
 	if quote := line[0]; quote == '"' || quote == '\'' {
 		end := strings.IndexByte(line[1:], quote)
 		if end < 0 {
-			return "", false
+			return "", "", false
 		}
 		key = line[1 : 1+end]
-		if !strings.HasPrefix(strings.TrimSpace(line[2+end:]), ":") {
-			return "", false
+		rest := strings.TrimSpace(line[2+end:])
+		if !strings.HasPrefix(rest, ":") {
+			return "", "", false
 		}
+		value = strings.TrimSpace(rest[1:])
 	} else {
-		cut, _, found := strings.Cut(line, ":")
+		cut, rest, found := strings.Cut(line, ":")
 		if !found {
-			return "", false
+			return "", "", false
 		}
-		key = strings.TrimSpace(cut)
+		key, value = strings.TrimSpace(cut), strings.TrimSpace(rest)
 	}
 	if key == "" || strings.ContainsAny(key, "{}[]") {
-		return "", false
+		return "", "", false
 	}
-	return key, true
+	return key, value, true
 }
 
 // trainStripComment removes a trailing YAML comment (a '#' at the start of the line or preceded by
@@ -171,14 +186,22 @@ func trainStripComment(line string) string {
 // rather than by searching the job text for a key name. A name inside a scalar (a run script or an
 // env value) is therefore never taken for a mapping key, and a part: elsewhere in the job is never
 // read as the matrix's list (CRW-897, answer 2; pre-merge evaluation d1, d2).
-func trainWorkflowMatrixParts(workflow string) ([]string, error) {
-	body, found := trainJobBody(workflow, trainProductJob)
+func trainJobMatrixParts(workflow, job string) ([]string, bool, error) {
+	body, found := trainJobBody(workflow, job)
 	if !found {
-		return nil, errors.New("the workflow holds no " + trainProductJob + " job")
+		return nil, false, errors.New("the workflow holds no " + job + " job")
 	}
-	matrix, found := trainMatrixBlock(body)
-	if !found {
-		return nil, errors.New("the workflow's " + trainProductJob + " job has no strategy.matrix block")
+	matrix, hasMatrix, err := trainMatrixBlock(body)
+	if err != nil {
+		return nil, false, err
+	}
+	if !hasMatrix {
+		// the product job reports one leg per matrix combination, so a product job with no matrix
+		// has no leg names this reader can compute; another job without a matrix is just its id
+		if job == trainProductJob {
+			return nil, false, errors.New("the workflow's " + trainProductJob + " job has no matrix")
+		}
+		return nil, false, nil
 	}
 	var part string
 	for _, line := range matrix {
@@ -186,31 +209,30 @@ func trainWorkflowMatrixParts(workflow string) ([]string, error) {
 		if strings.TrimSpace(bare) == "" {
 			continue
 		}
-		key, ok := trainJobKey(strings.TrimSpace(bare))
+		key, value, ok := trainJobKeyValue(strings.TrimSpace(bare))
 		if !ok {
-			return nil, errors.New("the workflow's matrix holds a line whose key this reader cannot read")
+			return nil, false, errors.New("the workflow's " + job + " matrix holds a line whose key this reader cannot read")
 		}
 		if key != "part" {
-			return nil, errors.New("the workflow's " + trainProductJob + " matrix carries the key " + pyvalue.StrRepr(key) + ", and this reader can compute leg names only from a part list")
+			return nil, false, errors.New("the workflow's " + job + " matrix carries the key " + pyvalue.StrRepr(key) + ", and this reader can compute leg names only from a part list")
 		}
-		part = strings.TrimSpace(bare)
+		part = value
 	}
 	if part == "" {
-		return nil, errors.New("the workflow's " + trainProductJob + " job has no matrix part list")
+		return nil, false, errors.New("the workflow's " + job + " job has no matrix part list")
 	}
-	_, list, found := strings.Cut(part, "part: [")
-	if !found {
-		return nil, errors.New("the workflow's matrix part list is not an inline list")
+	if !strings.HasPrefix(part, "[") {
+		return nil, false, errors.New("the workflow's " + job + " matrix part list is not an inline list")
 	}
-	list, _, found = strings.Cut(list, "]")
+	list, _, found := strings.Cut(part[1:], "]")
 	if !found {
-		return nil, errors.New("the workflow's matrix part list is unterminated")
+		return nil, false, errors.New("the workflow's " + job + " matrix part list is unterminated")
 	}
 	parts := strings.Split(list, ",")
 	for i := range parts {
 		parts[i] = strings.TrimSpace(parts[i])
 	}
-	return parts, nil
+	return parts, true, nil
 }
 
 // trainMatrixBlock answers the go-product job body's strategy.matrix lines: the keys at the matrix's
@@ -219,7 +241,7 @@ func trainWorkflowMatrixParts(workflow string) ([]string, error) {
 // strategy: or matrix: inside a scalar is at another indent and is not read. A matrix key whose value
 // sits on the matrix: line itself ("matrix: &anchor" or "matrix: {part: [...]}") carries no readable
 // key block, so the block is reported as absent and the caller refuses it.
-func trainMatrixBlock(body string) ([]string, bool) {
+func trainMatrixBlock(body string) ([]string, bool, error) {
 	lines := strings.Split(body, "\n")
 	// the job header sits at two spaces, so its own keys (strategy among them) sit at four and the
 	// matrix at six. Requiring those exact indents is what keeps a key name inside a scalar — a run
@@ -231,7 +253,7 @@ func trainMatrixBlock(body string) ([]string, bool) {
 			continue
 		}
 		indent := len(bare) - len(strings.TrimLeft(bare, " "))
-		key, ok := trainJobKey(strings.TrimSpace(bare))
+		key, value, ok := trainJobKeyValue(strings.TrimSpace(bare))
 		if !ok {
 			continue
 		}
@@ -248,15 +270,15 @@ func trainMatrixBlock(body string) ([]string, bool) {
 		if key == "matrix" && indent == 6 {
 			// a matrix key whose value sits on the matrix: line itself ("matrix: &anchor" or
 			// "matrix: {part: [...]}") carries no readable key block
-			if value := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(bare), "matrix:")); value != "" {
-				return nil, false
+			if value != "" {
+				return nil, false, errors.New("the workflow's job carries its matrix on the matrix: line, whose legs this reader cannot read key by key")
 			}
 			matrixAt = i
 			break
 		}
 	}
 	if matrixAt < 0 {
-		return nil, false
+		return nil, false, nil
 	}
 	var block []string
 	for _, line := range lines[matrixAt+1:] {
@@ -269,7 +291,7 @@ func trainMatrixBlock(body string) ([]string, bool) {
 		}
 		block = append(block, line)
 	}
-	return block, true
+	return block, true, nil
 }
 
 // trainJobBody is the text of one job's block: from its header line to the next job's header, or to

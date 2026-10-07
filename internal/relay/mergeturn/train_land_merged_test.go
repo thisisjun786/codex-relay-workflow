@@ -437,6 +437,34 @@ func intsToStrs(list []int64) []string {
 	return out
 }
 
+// TestTrainJobReaderCountsAQuotedMatrixKey: a quoted "matrix": key is read like an unquoted one, so a
+// workflow that quotes its keys is not refused (CRW-897, answer 2; pre-merge evaluation d2).
+func TestTrainJobReaderCountsAQuotedMatrixKey(t *testing.T) {
+	job := "\njobs:\n  validate:\n    runs-on: ubuntu\n  go-product:\n    \"strategy\":\n      \"matrix\":\n        \"part\": [lint, test-1]\n"
+	jobs, err := TrainJobsFromWorkflow(job)
+	if err != nil {
+		t.Fatalf("a workflow with quoted keys: %v", err)
+	}
+	if strings.Join(jobs, ",") != "validate,go-product (lint),go-product (test-1)" {
+		t.Fatalf("jobs = %v, want the part legs", jobs)
+	}
+}
+
+// TestTrainJobReaderExpandsEveryMatrixJob: a job other than go-product that gains explicitly named
+// matrix legs reports those legs, so an added leg cannot pass unnoticed
+// (CRW-897, answer 2; pre-merge evaluation d1).
+func TestTrainJobReaderExpandsEveryMatrixJob(t *testing.T) {
+	job := "\njobs:\n  validate:\n    runs-on: ubuntu\n  audit:\n    strategy:\n      matrix:\n        part: [one, two]\n  go-product:\n    strategy:\n      matrix:\n        part: [lint]\n"
+	jobs, err := TrainJobsFromWorkflow(job)
+	if err != nil {
+		t.Fatalf("a workflow with a second matrix job: %v", err)
+	}
+	want := "validate,audit (one),audit (two),go-product (lint)"
+	if strings.Join(jobs, ",") != want {
+		t.Fatalf("jobs = %v, want %v", jobs, want)
+	}
+}
+
 // TestTrainVerifyRefusesAMergedMember: verify keeps taking open pull requests only, so a member the
 // forge already marked merged is refused there with nothing written (CRW-897, answer 1).
 func TestTrainVerifyRefusesAMergedMember(t *testing.T) {
@@ -578,9 +606,12 @@ func TestTrainJobBodyEndsAtTheNextJob(t *testing.T) {
 	if strings.Contains(body, "  dev-gate:") {
 		t.Fatalf("the go-product body ran past the next job header:\n%s", body)
 	}
-	parts, err := trainWorkflowMatrixParts(string(data))
+	parts, hasMatrix, err := trainJobMatrixParts(string(data), trainProductJob)
 	if err != nil {
 		t.Fatalf("the matrix of the repository's ci.yml: %v", err)
+	}
+	if !hasMatrix {
+		t.Fatal("the go-product job holds no matrix")
 	}
 	if len(parts) != 7 {
 		t.Fatalf("matrix parts = %v, want 7", parts)
