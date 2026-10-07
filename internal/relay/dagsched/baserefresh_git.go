@@ -152,7 +152,16 @@ func (p *refreshProof) applyMechanical(ctx context.Context, g *refreshRepo, chec
 			if r.Path == pluginversion.ManifestRepoPath {
 				paths = append(paths, r.Path)
 				descriptions = append(descriptions, r.Path)
-				decided[r.Path] = RefreshDecisionBuiltin
+				// The candidate"s own declaration still has its say when the contributors do not
+				// agree with it (CRW-898, item 6): the relay hands the checker the rule the candidate
+				// declared, so the checker tries that rule and leaves the path to the parent"s name
+				// when it cannot prove it. Only a candidate that declares no rule for the manifest
+				// leaves it to the built-in rule, which needs no declaration at all.
+				if rule, ok := MechanicalRuleFor([][]Region{regions}, r.Path); ok {
+					decided[r.Path] = rule
+				} else {
+					decided[r.Path] = RefreshDecisionBuiltin
+				}
 			}
 		}
 		if len(paths) == 0 {

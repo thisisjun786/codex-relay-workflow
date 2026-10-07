@@ -61,9 +61,17 @@ func settleRelayRefresh(ctx context.Context, checkout string, st dagsched.Refres
 			return nil, fmt.Errorf("%s is not a conflict in the mechanical check's reading", p)
 		}
 	}
+	// The command each path is settled by is the relay"s decision for it (CRW-898, item 6):
+	// the relay weighed the candidate"s declaration and every contributing node"s, and a
+	// candidate-only declaration must not block the built-in rule. An empty decision is the
+	// built-in plugin-version rule, which is not a regenerate command run over the file.
 	commands := map[string][]string{}
 	for _, p := range paths {
-		if rule, ok := cov.ruleFor(p); ok && strings.HasPrefix(rule, dagsched.RuleRegeneratePref) {
+		rule, decided := decided[p]
+		if !decided {
+			continue
+		}
+		if strings.HasPrefix(rule, dagsched.RuleRegeneratePref) {
 			command := strings.TrimPrefix(rule, dagsched.RuleRegeneratePref)
 			commands[command] = append(commands[command], p)
 		}
@@ -96,7 +104,9 @@ func settleRelayRefresh(ctx context.Context, checkout string, st dagsched.Refres
 	// the place keeps its say: ruleFor answered for it above.
 	builtin := map[string]builtinResolution{}
 	for _, p := range eligible {
-		if _, ok := cov.ruleFor(p); ok {
+		// The relay decided which paths the built-in rule settles (CRW-898, item 6): an empty
+		// decision for the manifest is that decision, whatever the candidate declared alone.
+		if rule, ok := decided[p]; !ok || rule != dagsched.RefreshDecisionBuiltin {
 			continue
 		}
 		if p != pluginversion.ManifestRepoPath {
