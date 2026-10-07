@@ -307,6 +307,11 @@ func storedResult(ctx context.Context, env LookupEnv, running func(context.Conte
 	registered := stored
 	if located := Locate(env); located.State == Registered && located.RegisteredDigest != "" {
 		registered = located.RegisteredDigest
+	} else {
+		// The record could not be read back after the registration reported success. The file is the
+		// bytes this run wrote, but what the record now names was not established, so the answer says
+		// so rather than reporting the file's digest as the record's.
+		warnings = append(warnings, "the execution policy was written and the wiring record could not be read back afterwards, so the digest it names was not established: "+located.Reason)
 	}
 	file := Reading{State: Registered, Path: path, Digest: stored, RegisteredDigest: registered}
 	observed := running(ctx, env)

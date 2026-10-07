@@ -838,3 +838,46 @@ func TestThePublishParentIsTheKernelResolvedDirectory(t *testing.T) {
 		t.Fatalf("publishParent(%q) = %q, want the kernel-resolved %q", spelled, got, want)
 	}
 }
+
+// TestAnUnlistedRegistrationOutcomeFallsToTheDistrustPath pins the shipped behaviour for the one
+// outcome the decided answer allows only on a dry run: the production registration never passes
+// --dry-run, so record_would_update is unlisted here and is decided by re-reading, never trusted.
+func TestAnUnlistedRegistrationOutcomeFallsToTheDistrustPath(t *testing.T) {
+	env, file := host(t, policyText, true)
+	// The record is left as it was, which the re-read establishes, so the original bytes come back.
+	opts := WriteOptions{Register: func(context.Context, string) RegisterAnswer {
+		return answer("record_would_update", 0)
+	}}
+	result := Write(context.Background(), envOf(env), opts,
+		WriteRequest{ExpectedDigest: digestOf(policyText), Change: removeLegacy()})
+	if result.Kind != WriteRegisterFailed || !result.Restored {
+		t.Fatalf("kind = %q restored = %v (%v), want %q with restored", result.Kind, result.Restored, result.Errors, WriteRegisterFailed)
+	}
+	after, _ := os.ReadFile(file)
+	if string(after) != policyText {
+		t.Fatal("the original bytes were not restored")
+	}
+}
+
+// TestARecordThatCannotBeReadBackIsNotReportedAsTheFileDigest pins the stored answer's honesty: a
+// registration that reported success and a record that then cannot be read is a warning, not a
+// registered digest taken from the file.
+func TestARecordThatCannotBeReadBackIsNotReportedAsTheFileDigest(t *testing.T) {
+	env, _ := host(t, policyText, true)
+	opts := WriteOptions{Register: func(_ context.Context, path string) RegisterAnswer {
+		rewriteRecord(t, env, path, digestOfFile(t, path))
+		// The record becomes unreadable after the registration reported success.
+		if err := os.WriteFile(recordOf(env), []byte("{not json"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return answer("record_updated", 0)
+	}, Running: unavailableRunning()}
+	result := Write(context.Background(), envOf(env), opts,
+		WriteRequest{ExpectedDigest: digestOf(policyText), Change: removeLegacy()})
+	if result.Kind != WriteStored {
+		t.Fatalf("kind = %q (%v)", result.Kind, result.Errors)
+	}
+	if len(result.Warnings) == 0 {
+		t.Fatal("a record that could not be read back carries no warning")
+	}
+}
