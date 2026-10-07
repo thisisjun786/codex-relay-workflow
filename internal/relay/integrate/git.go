@@ -96,11 +96,6 @@ func hasCommit(ctx context.Context, dir, commit string) bool {
 	return code == 0
 }
 
-// treeOf reads the tree object of a commit.
-func treeOf(ctx context.Context, dir, commit string) (string, error) {
-	return gitText(ctx, dir, "rev-parse", commit+"^{tree}")
-}
-
 // isAncestor reports whether ancestor is contained in descendant. merge-base --is-ancestor answers with
 // its exit status: 0 contained, 1 not, anything else a read failure.
 func isAncestor(ctx context.Context, dir, ancestor, descendant string) (bool, error) {
