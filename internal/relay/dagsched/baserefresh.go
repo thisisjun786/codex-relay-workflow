@@ -11,8 +11,8 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/acceptance"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -47,61 +47,25 @@ type RefreshResult struct {
 }
 
 // acceptanceStand is what an acceptance currently stands on: the relationship, generation, event, revision and head integration is judged against. It is the acceptance's own unless a base refresh was recorded
-// for it, and then the newest valid refresh's.
-type acceptanceStand struct {
-	RelationshipID string
-	Generation     int64
-	EventID        string
-	RevisionHash   string
-	Head           string
-	RefreshID      string // "" when the acceptance stands on itself
-}
+// for it, and then the newest valid refresh's. The rule lives in internal/relay/acceptance, which the
+// merge train reads through the same code; this name is that type, so every reader here is unchanged.
+type acceptanceStand = acceptance.Stand
 
-// refreshDigest is the identity of a refresh: its refresh_id is the digest of everything it records but the time and the author, so a row written by hand under another content is not read as one.
-func refreshDigest(acceptance, relationship string, generation int64, event, revision, head, baseRepository, baseRef, baseTip, proofJSON, resolvedJSON string) string {
-	return registry.CoordinationID("dbr", dag.Canonical(map[string]any{"schema": SchemaBaseRefresh, "acceptance_id": acceptance, "relationship_id": relationship, "execution_generation": generation,
-		"event_id": event, "revision_hash": revision, "head_sha": head, "base_repository": baseRepository, "base_ref": baseRef, "base_tip_sha": baseTip, "proof": proofJSON, "resolved_paths": resolvedJSON}))
-}
-
-// ownStand is what an acceptance stands on before any base refresh was recorded for it: its own relationship, generation, event, revision and head.
-func ownStand(a Acceptance) acceptanceStand {
-	return acceptanceStand{RelationshipID: a.RelationshipID, Generation: a.ExecutionGeneration, EventID: a.EventID, RevisionHash: a.RevisionHash, Head: a.HeadSHA}
+// refreshDigest is the identity of a refresh: its refresh_id is the digest of everything it records but the time and the author, so a row written by hand under another content is not read as one. The
+// spelling lives in internal/relay/acceptance so the merge train produces and reads the same ids.
+func refreshDigest(acc, relationship string, generation int64, event, revision, head, baseRepository, baseRef, baseTip, proofJSON, resolvedJSON string) string {
+	return acceptance.RefreshDigest(acc, relationship, generation, event, revision, head, baseRepository, baseRef, baseTip, proofJSON, resolvedJSON)
 }
 
 // validStands are the base refreshes recorded for an acceptance that digest to their ids, newest first. The table arrived after the first zone, so a store opened read-only that predates it has none; a row
-// that does not digest to its id is ignored.
+// that does not digest to its id is ignored. The reading itself lives in internal/relay/acceptance.
 func (s *Scheduler) validStands(ctx context.Context, q store.Querier, a Acceptance) ([]acceptanceStand, error) {
-	present, err := tableExists(ctx, q, "dag_base_refreshes")
-	if err != nil || !present {
-		return nil, err
-	}
-	rows, err := q.QueryContext(ctx, "SELECT refresh_id, relationship_id, execution_generation, event_id, revision_hash, head_sha, base_repository, base_ref, base_tip_sha, proof_json, resolved_paths_json"+
-		" FROM dag_base_refreshes WHERE acceptance_id = ? ORDER BY refresh_seq DESC", a.AcceptanceID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []acceptanceStand
-	for rows.Next() {
-		var id, rid, event, revision, head, baseRepo, baseRef, baseTip, proof, resolved string
-		var generation int64
-		if err := rows.Scan(&id, &rid, &generation, &event, &revision, &head, &baseRepo, &baseRef, &baseTip, &proof, &resolved); err != nil {
-			return nil, err
-		}
-		if rid == a.RelationshipID && generation > a.ExecutionGeneration && id == refreshDigest(a.AcceptanceID, rid, generation, event, revision, head, baseRepo, baseRef, baseTip, proof, resolved) {
-			out = append(out, acceptanceStand{RelationshipID: rid, Generation: generation, EventID: event, RevisionHash: revision, Head: head, RefreshID: id})
-		}
-	}
-	return out, rows.Err()
+	return acceptance.Stands(ctx, q, a.AcceptanceID, a.RelationshipID, a.ExecutionGeneration)
 }
 
 // standOf reads what an acceptance stands on now: the newest valid base refresh recorded for it, else its own.
 func (s *Scheduler) standOf(ctx context.Context, q store.Querier, a Acceptance) (acceptanceStand, error) {
-	stands, err := s.validStands(ctx, q, a)
-	if err != nil || len(stands) == 0 {
-		return ownStand(a), err
-	}
-	return stands[0], nil
+	return acceptance.StandOf(ctx, q, a.AcceptanceID, a.RelationshipID, a.ExecutionGeneration, a.EventID, a.RevisionHash, a.HeadSHA)
 }
 
 // stoodOn is every head the acceptance has stood on: its own and the head of each valid base refresh recorded for it, newest first. A merge turn of the node, or a check of its pull request, made for any

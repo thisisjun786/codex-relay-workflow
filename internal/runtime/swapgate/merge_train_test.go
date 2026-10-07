@@ -25,6 +25,8 @@ func TestTheMergeTrainTablesAreZoneObjects(t *testing.T) {
 		"table merge_trains", "trigger merge_trains_no_update", "trigger merge_trains_no_delete",
 		"table merge_train_members", "trigger merge_train_members_no_update", "trigger merge_train_members_no_delete",
 		"table merge_train_events", "trigger merge_train_events_no_update", "trigger merge_train_events_no_delete",
+		// CRW-768 decision 9 appends the NULL-id guard to the same objects, so it is the zone's too
+		"trigger merge_trains_train_id_not_null",
 	} {
 		if _, ok := zoneNames(zone)[key]; !ok {
 			t.Fatalf("the declared zone does not hold %s", key)

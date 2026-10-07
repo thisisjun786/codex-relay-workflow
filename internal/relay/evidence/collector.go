@@ -377,10 +377,10 @@ func jobNeverRan(j map[string]any) bool {
 // only job name the collector marks testSkipped and the only one the reading accepts (CRW-824).
 const lightLegPrefix = "go-product (test-"
 
-// lightTestStepPrefix is the step every go-product test leg runs. CRW-790's temporary light mode
+// LightTestStepPrefix is the step every go-product test leg runs. CRW-790's temporary light mode
 // skips its work (the step's if excludes CRW_LIGHT_LEG) while the job still concludes success, so a
 // leg that did not run its tests is told from one that did by this step's conclusion.
-const lightTestStepPrefix = "Test and replay the contract corpus ("
+const LightTestStepPrefix = "Test and replay the contract corpus ("
 
 // lightMirrorStep is the step the body-only edit mirror runs. A leg whose earlier run of the same
 // head already ran its tests successfully is mirrored: the job concludes success with its test step
@@ -416,7 +416,7 @@ func jobTestSkipped(j map[string]any, runText string) (skipped bool, detail stri
 		if stepName == lightMirrorStep && step.Get("conclusion") == "success" {
 			mirrored = true
 		}
-		if strings.HasPrefix(stepName, lightTestStepPrefix) {
+		if strings.HasPrefix(stepName, LightTestStepPrefix) {
 			testStep = stepName
 			conclusion, isString := step.Get("conclusion").(string)
 			testConclusion, testReadable = conclusion, isString
