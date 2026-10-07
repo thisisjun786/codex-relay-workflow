@@ -42,25 +42,101 @@ func TrainJobsFromWorkflow(workflow string) ([]string, error) {
 	return out, nil
 }
 
-// trainWorkflowJobNames reads the two-space-indented keys under the workflow's jobs block.
+// trainWorkflowJobNames reads the two-space-indented keys under the workflow's jobs block. A key
+// whose value sits on the same line as the key (a flow mapping, "  audit: {runs-on: ubuntu,
+// steps: [...]}") is a job just as a key whose block follows on the next lines is; missing it would
+// let a head add a job this runtime never checks. A jobs block this reader cannot read key by key — a
+// flow mapping on the jobs: line, or a block that yields no job key — is an error, never an empty pass.
 func trainWorkflowJobNames(workflow string) ([]string, error) {
-	_, after, found := strings.Cut(workflow, "\njobs:\n")
+	body, inline, found := trainJobsBlock(workflow)
 	if !found {
 		return nil, errors.New("the workflow holds no jobs block")
 	}
+	if inline {
+		return nil, errors.New("the workflow's jobs block carries its value on the jobs: line, which this reader cannot read key by key")
+	}
 	var names []string
-	for _, line := range strings.Split(after, "\n") {
+	keys := 0
+	for _, line := range strings.Split(body, "\n") {
 		line = trainStripComment(line)
 		if line != "" && !strings.HasPrefix(line, " ") {
 			break
 		}
-		if strings.HasPrefix(line, "  ") && !strings.HasPrefix(line, "   ") && strings.HasSuffix(line, ":") {
-			if name := strings.TrimSuffix(strings.TrimPrefix(line, "  "), ":"); name != "" {
+		// the two-space gate is what keeps a nested key ("    runs-on: ubuntu") from being read as a
+		// job: trainJobKey reads a key, not an indentation level.
+		if !strings.HasPrefix(line, "  ") || strings.HasPrefix(line, "   ") {
+			continue
+		}
+		if name, ok := trainJobKey(strings.TrimPrefix(line, "  ")); ok {
+			keys++
+			if name != "" {
 				names = append(names, name)
 			}
 		}
 	}
+	if len(names) == 0 {
+		// a block this reader cannot read key by key is never an empty pass
+		if keys > 0 {
+			return nil, errors.New("the workflow's jobs block declares no job name this reader can read")
+		}
+		return nil, errors.New("the workflow's jobs block holds no job key")
+	}
 	return names, nil
+}
+
+// trainJobsBlock splits the workflow at its top-level jobs: line and answers the text that follows the
+// key's own line, plus whether the key carried its value on that same line (a flow mapping or any
+// other same-line value, which this reader cannot read key by key).
+func trainJobsBlock(workflow string) (body string, inline bool, found bool) {
+	_, after, found := strings.Cut(workflow, "\njobs:")
+	if !found {
+		return "", false, false
+	}
+	head, rest, hasLine := strings.Cut(after, "\n")
+	if value := strings.TrimSpace(head); value != "" {
+		return value, true, true
+	}
+	if !hasLine {
+		return "", false, true
+	}
+	return rest, false, true
+}
+
+// trainJobKey reads one jobs-block line's key. A key whose value sits on the same line as the key (a
+// flow mapping) is a job just as a key whose block follows on the next lines is. A quoted key is cut
+// at its closing quote, so a key that itself contains a colon is read whole rather than split at the
+// wrong colon; a quoted key with no closing quote is not a job key at all. It answers ok=false for a
+// line that is not a job key.
+func trainJobKey(line string) (string, bool) {
+	if line == "" || strings.HasPrefix(line, "#") {
+		return "", false
+	}
+	var key, value string
+	if quote := line[0]; quote == '"' || quote == '\'' {
+		end := strings.IndexByte(line[1:], quote)
+		if end < 0 {
+			return "", false
+		}
+		key = line[1 : 1+end]
+		rest := strings.TrimSpace(line[2+end:])
+		if !strings.HasPrefix(rest, ":") {
+			return "", false
+		}
+		value = strings.TrimSpace(rest[1:])
+	} else {
+		cut, rest, found := strings.Cut(line, ":")
+		if !found {
+			return "", false
+		}
+		key, value = strings.TrimSpace(cut), strings.TrimSpace(rest)
+	}
+	if key == "" || strings.ContainsAny(key, "{}[]") {
+		return "", false
+	}
+	if value != "" && !strings.HasPrefix(value, "{") {
+		return "", false
+	}
+	return key, true
 }
 
 // trainStripComment removes a trailing YAML comment (a '#' at the start of the line or preceded by
@@ -119,7 +195,7 @@ func trainJobBody(workflow, job string) (string, bool) {
 	offset := 0
 	for i, line := range lines {
 		bare := trainStripComment(strings.TrimSuffix(line, "\n"))
-		if bare == "  "+job+":" {
+		if name, ok := trainJobKey(strings.TrimPrefix(bare, "  ")); ok && name == job && strings.HasPrefix(bare, "  ") && !strings.HasPrefix(bare, "   ") {
 			start = offset + len(line)
 			lines = lines[i+1:]
 			break
@@ -132,7 +208,7 @@ func trainJobBody(workflow, job string) (string, bool) {
 	end := 0
 	for _, line := range lines {
 		bare := trainStripComment(strings.TrimSuffix(line, "\n"))
-		if strings.HasPrefix(bare, "  ") && !strings.HasPrefix(bare, "   ") && strings.HasSuffix(bare, ":") {
+		if _, ok := trainJobKey(strings.TrimPrefix(bare, "  ")); ok && strings.HasPrefix(bare, "  ") && !strings.HasPrefix(bare, "   ") {
 			break
 		}
 		end += len(line)

@@ -81,6 +81,10 @@ type TrainPullRequest struct {
 	BaseRef string
 	HeadSHA string
 	Labels  []string
+	// Merged is the forge's merged fact. It is a pointer because "the forge answered no merged field"
+	// and "the forge answered not merged" are different statements, and a closed answer that carries
+	// no merged field must never be read as a merge (CRW-897, answer 1).
+	Merged *bool
 }
 
 // TrainStep is one step of a job, as the forge reports it.
@@ -487,20 +491,41 @@ func trainMemberRefusal(ctx context.Context, forge TrainForge, repository, baseR
 		if err != nil {
 			return trainUnreadable("member pull request %d of %s was not read: %v", m.PRNumber, pyvalue.StrRepr(repository), err)
 		}
-		if pull.Number != m.PRNumber {
-			return trainUnreadable("the forge's answer for member pull request %d names %d", m.PRNumber, pull.Number)
-		}
-		if !SameCommit(pull.HeadSHA, m.MemberHead) {
-			return trainConflict("member pull request %d reads head %s and the bundle carries %s, so the member moved after the train opened", m.PRNumber, pyvalue.StrRepr(pull.HeadSHA), pyvalue.StrRepr(m.MemberHead))
-		}
-		if pull.State != "open" {
-			return trainConflict("member pull request %d is %s and the bundle carries its head %s, so the member no longer proposes this landing", m.PRNumber, pull.State, pyvalue.StrRepr(m.MemberHead))
-		}
-		if pull.BaseRef != baseRef {
-			return trainConflict("member pull request %d targets %s and the bundle's base is %s, so the member no longer proposes this landing", m.PRNumber, pyvalue.StrRepr(pull.BaseRef), pyvalue.StrRepr(baseRef))
+		if err := trainMemberDisposition(m.PRNumber, m.MemberHead, baseRef, pull, false); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+// trainMemberDisposition judges one member pull request the forge just read against what the bundle
+// carries. admitMerged is land's rule: a member the bundle has already merged reads closed with merged
+// true, which is the very landing the bundle recorded, so land admits it; verify passes false and
+// takes open pull requests only. The head and base checks are unchanged by the merged fact, so a
+// member that moved or retargeted still refuses disposition_conflict, and a closed answer that carries
+// no merged field is not a merge, so it refuses too (CRW-897, answer 1).
+func trainMemberDisposition(prNumber int64, memberHead, baseRef string, pull TrainPullRequest, admitMerged bool) error {
+	if pull.Number != prNumber {
+		return trainUnreadable("the forge's answer for member pull request %d names %d", prNumber, pull.Number)
+	}
+	if !SameCommit(pull.HeadSHA, memberHead) {
+		return trainConflict("member pull request %d reads head %s and the bundle carries %s, so the member moved after the train opened", prNumber, pyvalue.StrRepr(pull.HeadSHA), pyvalue.StrRepr(memberHead))
+	}
+	if pull.State != "open" && !trainMemberAdmitsMerged(pull, admitMerged) {
+		return trainConflict("member pull request %d is %s and the bundle carries its head %s, so the member no longer proposes this landing", prNumber, pull.State, pyvalue.StrRepr(memberHead))
+	}
+	if pull.BaseRef != baseRef {
+		return trainConflict("member pull request %d targets %s and the bundle's base is %s, so the member no longer proposes this landing", prNumber, pyvalue.StrRepr(pull.BaseRef), pyvalue.StrRepr(baseRef))
+	}
+	return nil
+}
+
+// trainMemberAdmitsMerged is the one rule that admits a member pull request that is not open: land,
+// and only land, takes a member the forge read as merged (state closed with merged true), because the
+// bundle merge put its head in the base. A closed answer the forge gave no merged field for is not a
+// merge, so it is refused like any other closed pull request.
+func trainMemberAdmitsMerged(pull TrainPullRequest, admitMerged bool) bool {
+	return admitMerged && pull.State == "closed" && pull.Merged != nil && *pull.Merged
 }
 
 // trainMemberMapping is the per-member mapping decision 10 requires, built the same way at open,
@@ -687,6 +712,18 @@ func (s *Service) Verify(ctx context.Context, train, actor, bundlePR, head, run,
 	if proof == nil {
 		return nil, trainUnreadable("this relay has no checkout prover configured, so the bundle's first-parent chain cannot be proved")
 	}
+	// the head's own job set, read from the checkout at H (never its working tree, which may sit on
+	// another branch), is compared with the set this runtime verifies BEFORE the run's own jobs
+	// (CRW-897, answer 3). A head that renamed or added a ci.yml job must be refused naming what it
+	// lost and what it added, and the run — which carries only the new name — cannot say that; the
+	// run's own check would refuse first with "holds no job named X" and hide the diagnosis. The read
+	// runs after --head was compared with the forge's bundle head above, so the commit named here is
+	// the forge's own; a checkout that cannot resolve H is merge_target_unreadable here just as the
+	// chain proof would answer. A workflow that cannot be read or parsed is merge_target_unreadable,
+	// never a pass.
+	if err := trainWorkflowRefusal(ctx, proof, checkout, head); err != nil {
+		return nil, err
+	}
 	reading, err := forge.Run(ctx, row.Repository, run)
 	if err != nil {
 		return nil, trainUnreadable("workflow run %s of %s was not read: %v", run, pyvalue.StrRepr(row.Repository), err)
@@ -700,13 +737,6 @@ func (s *Service) Verify(ctx context.Context, train, actor, bundlePR, head, run,
 	}
 	chain, err := proof.Chain(ctx, checkout, head, row.BaseSHA, expected)
 	if err != nil {
-		return nil, err
-	}
-	// the head's own job set, read from the checkout at H (never its working tree, which may sit on
-	// another branch), must be the set this runtime verifies (CRW-897, answer 6). The read runs after
-	// --head was compared with the forge's bundle head and after the chain proof has established that
-	// the checkout holds H, so the commit named here is the forge's own and git can resolve it.
-	if err := trainWorkflowRefusal(ctx, proof, checkout, head); err != nil {
 		return nil, err
 	}
 	at := s.now()
@@ -900,18 +930,29 @@ func (s *Service) TrainLand(ctx context.Context, train, actor, landed, observed 
 	if err != nil {
 		return nil, err
 	}
-	// every member pull request's head is reread from the forge before anything is written
-	// (CRW-897, answer 1): the stored member head is the snapshot the train opened on, and a member
-	// that moved while the bundle was in CI must not be recorded landed with its new commits left
-	// behind. A moved member whose turn is still live is disposition_conflict and nothing is written;
-	// a member whose turn left the lane is handled inside the transaction below, where it is named as
-	// excluded rather than refused.
+	// every member pull request is reread from the forge before anything is written (CRW-897,
+	// answer 1): the stored member head is the snapshot the train opened on, and a member that moved
+	// while the bundle was in CI must not be recorded landed with its new commits left behind. A
+	// member the bundle has already merged reads closed with merged true and is admitted here, since
+	// its head is in the base through this very landing; a member closed without a merge, one whose
+	// answer carries no merged field, and one that moved are refused disposition_conflict with
+	// nothing written. A member whose turn left the lane is excluded from the landing and is not read
+	// at all.
 	left, err := s.membersWhoLeftTheLane(ctx, members)
 	if err != nil {
 		return nil, err
 	}
-	if err := trainMemberRefusal(ctx, forge, row.Repository, row.BaseRef, members, left); err != nil {
-		return nil, err
+	for _, m := range members {
+		if left[m.TurnID] {
+			continue
+		}
+		pull, err := forge.PullRequest(ctx, row.Repository, m.PRNumber)
+		if err != nil {
+			return nil, trainUnreadable("member pull request %d of %s was not read: %v", m.PRNumber, pyvalue.StrRepr(row.Repository), err)
+		}
+		if err := trainMemberDisposition(m.PRNumber, m.MemberHead, row.BaseRef, pull, true); err != nil {
+			return nil, err
+		}
 	}
 	for _, m := range members {
 		status, err := forge.Compare(ctx, row.Repository, m.MemberHead, landed)
@@ -1451,6 +1492,9 @@ func (r TrainForgeReader) PullRequest(ctx context.Context, repository string, nu
 	}
 	out := TrainPullRequest{Number: number}
 	out.State, _ = data["state"].(string)
+	if merged, ok := data["merged"].(bool); ok {
+		out.Merged = &merged
+	}
 	if base, ok := data["base"].(map[string]any); ok {
 		out.BaseRef, _ = base["ref"].(string)
 	}
