@@ -2534,7 +2534,7 @@ func (w *shellWriteUnnamedWalk) read(rs []rune, depth int, outer shellWriteCopyI
 				continue
 			}
 			end := shellWriteTripleScanRegion(rs, i, true)
-			w.literal(rs[i:end])
+			w.literal(shellWriteUnnamedLiteralSpan(rs, i, end))
 			i = end - 1
 		case c == '\n' || c == ';':
 			if len(stack) == 0 {
@@ -2641,8 +2641,11 @@ func (w *shellWriteUnnamedWalk) close(rs []rune, f shellWriteUnnamedFrame, spans
 		// A method named open writes to its receiver, which this reader names for no open() method at all, so the
 		// destination is unnamed; the mode decides whether it writes. Path(...).open(mode) gives the mode as its
 		// only argument, and module.open(path, mode) as its second; mode= names it in either form. A variable
-		// receiver may hold either, so a lone argument is read as a mode only when it is shaped like one: anything
-		// else there is the module's path, which reads. A mode the reader cannot read as a literal fails closed.
+		// receiver may hold either, so the call is read in the form its arguments fit: a second argument that is no
+		// number is the mode of module.open(path, mode), and otherwise a lone mode-like first argument is the mode
+		// of Path.open. A number in a mode's place is the buffering count of Path.open, which is no mode at all, so
+		// a read-only open with buffering is not refused; an argument the reader can read as neither a mode nor a
+		// path still fails closed.
 		if shellWriteUnnamedUnpacked(rs, spans) {
 			w.wrote = true
 			w.unnamed = true // a * or ** argument may supply the mode this reader cannot read
@@ -2653,12 +2656,12 @@ func (w *shellWriteUnnamedWalk) close(rs []rune, f shellWriteUnnamedFrame, spans
 		switch {
 		case f.recvPath:
 			writes = shellWriteUnnamedWrites(first)
-		case !shellVerbBlank(second):
+		case !shellVerbBlank(second) && !shellWriteUnnamedNumber(second):
 			writes = shellWriteUnnamedWrites(second) || !shellWriteUnnamedLiteral(second)
 		case shellWriteUnnamedModeLike(first):
 			writes = shellWriteUnnamedWrites(first)
-		case !shellVerbBlank(first) && !shellWriteUnnamedLiteral(first):
-			writes = true // a mode this reader cannot read
+		case !shellVerbBlank(first) && !shellWriteUnnamedLiteral(first) && !shellWriteUnnamedNumber(first):
+			writes = true // an argument the reader can read as neither a mode nor a path
 		}
 		if writes {
 			w.wrote = true
@@ -2713,6 +2716,22 @@ func (w *shellWriteUnnamedWalk) literal(arg []rune) {
 	}
 }
 
+// shellWriteUnnamedLiteralSpan is the whole string literal whose opening quote stands at rs[i] and whose body ends at
+// end: the quote and its body, with the prefix runes that stand before it (r, b, u, f) when they are the literal's own.
+// The walk reaches the quote after its identifier branch consumed those prefix runes, so a raw literal is read as a
+// raw literal: without the prefix a body such as \N{foo} would decode as an unsupported escape and be dropped, hiding
+// a protected-area literal the program really holds.
+func shellWriteUnnamedLiteralSpan(rs []rune, i, end int) []rune {
+	start := i
+	for start > 0 && strings.ContainsRune("rRuUbBfF", rs[start-1]) {
+		if start-2 >= 0 && (rs[start-2] >= 128 || rs[start-2] == '_' || shellVerbLetter(byte(rs[start-2]), true)) {
+			break // the rune before the prefix is an identifier: the prefix is part of that name, not of the literal
+		}
+		start--
+	}
+	return rs[start:end]
+}
+
 // identifier reads one identifier: the program naming CODEX_HOME can point at the protected area, and a write function
 // the program does not call - the open builtin, a copy, rename or link function of shutil or os, a from-imported bare
 // name - is a write whose destination the reader cannot name. A name inside an import statement binds a name and calls
@@ -2762,11 +2781,12 @@ func (w *shellWriteUnnamedWalk) identifier(rs []rune, i, j int, importStmt, inDe
 }
 
 // shellWriteUnnamedValueMethod reports whether a method name is one of the write methods this check reads whose value
-// names no destination: the Path write methods, rename and the two links. replace is left out, because a string's own
-// replace is far more common than a Path's and a value carries no argument count to tell the two apart by.
+// names no destination: the Path write methods, rename, replace and the two links. A method named replace taken as a
+// value names no destination either; the argument-count rule that separates a Path.replace call from a string's own
+// replace cannot apply to a value, and a Path write that reaches the protected area is the reading to fail on.
 func shellWriteUnnamedValueMethod(name string) bool {
 	switch name {
-	case "write_text", "write_bytes", "touch", "mkdir", "open", "rename", "symlink_to", "hardlink_to":
+	case "write_text", "write_bytes", "touch", "mkdir", "open", "rename", "replace", "symlink_to", "hardlink_to":
 		return true
 	}
 	return false
@@ -2847,8 +2867,10 @@ func shellWriteUnnamedUnpacked(rs []rune, spans [][2]int) bool {
 	return false
 }
 
-// shellWriteUnnamedAttribute is the name the attribute whose identifier starts at rs[i] hangs off, and whether the text
-// before the dot is a bare name at all (a.shutil.copy is an attribute chain, not the module).
+// shellWriteUnnamedAttribute is the name the attribute whose identifier starts at rs[i] hangs off, and whether a
+// receiver expression stands before the dot at all. The name is empty when the receiver is not a bare name (a call, a
+// subscript or a bracketed expression), and the second result is false when there is no dot, or when a dotted name
+// precedes it (a.shutil.copy is an attribute chain of a, not the module shutil).
 func shellWriteUnnamedAttribute(rs []rune, i int) (string, bool) {
 	j := i - 1
 	for j >= 0 && shellVerbSpaceRune(rs[j]) {
@@ -2861,12 +2883,28 @@ func shellWriteUnnamedAttribute(rs []rune, i int) (string, bool) {
 	for j >= 0 && shellVerbSpaceRune(rs[j]) {
 		j--
 	}
+	if j >= 0 && (rs[j] == ')' || rs[j] == ']' || rs[j] == '}') {
+		return "", true // a call, a subscript or a bracketed expression: a receiver, but not a bare name
+	}
 	end := j + 1
 	for j >= 0 && shellWriteCopyIdentRune(rs[j]) {
 		j--
 	}
-	if end == j+1 || j >= 0 && rs[j] == '.' {
+	if end == j+1 {
 		return "", false
+	}
+	if j >= 0 && rs[j] == '.' {
+		// A dot before the name makes it an attribute chain only when a name stands before that dot
+		// (a.shutil.copy): a dot after a bracket, such as Path(...).parent.write_text or p[0].write_text,
+		// names a method of the expression that closed there, which is still this name's receiver.
+		k := j - 1
+		for k >= 0 && shellVerbSpaceRune(rs[k]) {
+			k--
+		}
+		if k >= 0 && shellWriteCopyIdentRune(rs[k]) {
+			return "", false
+		}
+		return "", true
 	}
 	return string(rs[j+1 : end]), true
 }
@@ -2967,24 +3005,32 @@ func shellWriteUnnamedMethodAt(rs []rune, i int, binds shellWriteCopyImports) by
 	return shellWriteUnnamedMethodKind(name)
 }
 
-// shellWriteUnnamedArgs counts the arguments of the call whose opening bracket is at rs[i]: the top-level commas plus
-// one when the call is not empty.
+// shellWriteUnnamedArgs counts the arguments of the call whose opening bracket is at rs[i]: the top-level commas that
+// separate them, plus one when the call is not empty. A comma inside a string literal or a nested bracket separates
+// nothing, and a trailing comma before the closing bracket adds no argument (Python binds one argument for
+// p.replace("x",)).
 func shellWriteUnnamedArgs(rs []rune, i int) int {
-	depth, commas := 0, 0
+	depth, args, lastComma := 0, 0, -1
 	for j := i; j < len(rs); j++ {
-		switch rs[j] {
-		case '(', '[', '{':
+		switch c := rs[j]; {
+		case c == '\'' || c == '"':
+			j = shellWriteTripleScanRegion(rs, j, true) - 1
+		case c == '(' || c == '[' || c == '{':
 			depth++
-		case ')', ']', '}':
+		case c == ')' || c == ']' || c == '}':
 			if depth--; depth == 0 {
-				if commas == 0 && shellVerbBlank(rs[i+1:j]) {
+				if lastComma >= 0 && shellVerbBlank(rs[lastComma+1:j]) {
+					return args // a trailing comma binds no argument of its own
+				}
+				if args == 0 && shellVerbBlank(rs[i+1:j]) {
 					return 0
 				}
-				return commas + 1
+				return args + 1
 			}
-		case ',':
+		case c == ',':
 			if depth == 1 {
-				commas++
+				args++
+				lastComma = j
 			}
 		}
 	}
@@ -3141,6 +3187,28 @@ func shellWriteUnnamedModeLike(arg []rune) bool {
 func shellWriteUnnamedLiteral(arg []rune) bool {
 	_, ok := shellVerbLiteral(arg)
 	return ok
+}
+
+// shellWriteUnnamedNumber reports whether an argument is a number literal: an optional sign, digits and one dot. It
+// separates Path.open's buffering count (p.open("r", -1)) from module.open's mode, which is never a bare number.
+func shellWriteUnnamedNumber(arg []rune) bool {
+	i, digits := 0, 0
+	for i < len(arg) && shellVerbSpaceRune(arg[i]) {
+		i++
+	}
+	if i < len(arg) && (arg[i] == '-' || arg[i] == '+') {
+		i++
+	}
+	for ; i < len(arg) && !shellVerbSpaceRune(arg[i]); i++ {
+		if arg[i] == '.' {
+			continue
+		}
+		if arg[i] < '0' || arg[i] > '9' {
+			return false
+		}
+		digits++
+	}
+	return digits > 0
 }
 
 // shellWriteUnnamedFunc reports whether a name is a write function of this reader: open, a Path write method, or a copy,

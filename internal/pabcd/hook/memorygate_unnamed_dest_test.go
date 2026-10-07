@@ -366,6 +366,45 @@ func TestMemoryGateUnnamedDestinationPremergeFixes(t *testing.T) {
 	}
 }
 
+// TestMemoryGateUnnamedDestinationReceiverAndLiteralShapes pins the shapes the second pre-merge evaluation found: a
+// write method on a receiver the reader must still place (an attribute or a subscript), replace taken as a value, a
+// trailing comma and a comma inside a literal in a one-argument replace call, and a raw literal whose body holds a
+// backslash-N the raw reading keeps. The controls pin the read-only opens the same reading must leave allowed.
+func TestMemoryGateUnnamedDestinationReceiverAndLiteralShapes(t *testing.T) {
+	cwd, root, env := gateScene(t)
+	m := root + "/n.md"
+	py := func(program string) string { return "python3 -c " + shellWriteUnnamedQuote(program) }
+	for _, c := range []struct{ name, command string }{
+		{"attribute receiver", py("from pathlib import Path; Path(\"" + m + "/child\").parent.write_text(\"x\")")},
+		{"subscript receiver", py("from pathlib import Path; [Path(\"" + m + "\")][0].write_text(\"x\")")},
+		{"replace taken as a value", py("from pathlib import Path; p = Path(\"/w/a\"); f = p.replace; f(\"" + m + "\")")},
+		{"replace with a trailing comma", py("from pathlib import Path; p = Path(\"/w/a\"); p.replace(\"" + m + "\",)")},
+		{"replace with a comma inside the literal", py("from pathlib import Path; p = Path(\"/w/a\"); p.replace(\"" + root + "/a,b.md\")")},
+		{"raw literal with a backslash-N", py("m = r\"" + root + "/\\N{foo}.md\"; open(m, \"w\").write(\"x\")")},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got := memoryGateClassify("Bash", map[string]any{"command": c.command}, cwd, env)
+			if got.Surface != "shell" || got.Target != unnamedDestWant {
+				t.Errorf("%q: %+v, want the shell surface and %s", c.command, got, unnamedDestWant)
+			}
+		})
+	}
+	for _, c := range []struct{ name, command string }{
+		// A read-only open with a buffering count is no write: the second argument is a number, not a mode.
+		{"read-only open with buffering", py("from pathlib import Path; p = Path(\"" + m + "\"); p.open(\"r\", -1).read()")},
+		{"read-only literal receiver open with buffering", py("from pathlib import Path; Path(\"" + m + "\").open(\"r\", -1)")},
+		{"read-only open with a keyword buffering count", py("from pathlib import Path; Path(\"" + m + "\").open(\"r\", buffering=-1)")},
+		// A module's read-only open with a numeric position is a read, not a mode.
+		{"module open read with a number", py("import tarfile; tarfile.open(\"memories/a.tar\", \"r\", 5)")},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got := memoryGateClassify("Bash", map[string]any{"command": c.command}, cwd, env); got.Surface != "" {
+				t.Errorf("%q must pass: %+v", c.command, got)
+			}
+		})
+	}
+}
+
 // TestMemoryGateUnnamedDestinationControlShapes is the matching /w control set the pre-merge evaluation asked for: the
 // computed shapes of the issue body that write under /w with no protected-area literal must stay allowed, so the
 // protected-area condition alone decides.
