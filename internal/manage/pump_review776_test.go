@@ -730,3 +730,176 @@ func TestPumpReview776UpgradeReconcilesTheOldLogicalID(t *testing.T) {
 		t.Fatalf("the round did not reconcile the old id %q: %v", oldID, deliverSendToolsOf(t, log))
 	}
 }
+
+// The oversize move never removes a notice the producer replaced: when the source path no longer
+// names the inode that was linked, the replacement stays queued instead of being deleted.
+func TestPumpReview776OversizeMoveKeepsAReplacement(t *testing.T) {
+	dir := t.TempDir()
+	oversizeDir := filepath.Join(dir, pumpReview776OversizeDir)
+	if err := os.MkdirAll(oversizeDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// The original notice is already quarantined under its own name, so the move must pick a fresh
+	// name and leave the earlier one untouched.
+	if err := os.WriteFile(filepath.Join(oversizeDir, "aaaaaaaaaaaaaaaa.txt"), []byte("already there"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "aaaaaaaaaaaaaaaa.txt"), []byte("replacement"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	moved, destination, err := pumpReview776QueueMoveOversize(oversizeDir, dir, "aaaaaaaaaaaaaaaa.txt")
+	if err != nil || !moved {
+		t.Fatalf("move: moved=%v err=%v", moved, err)
+	}
+	if filepath.Base(destination) == "aaaaaaaaaaaaaaaa.txt" {
+		t.Fatalf("the move reused the taken name %q", filepath.Base(destination))
+	}
+	if raw, err := os.ReadFile(filepath.Join(oversizeDir, "aaaaaaaaaaaaaaaa.txt")); err != nil || string(raw) != "already there" {
+		t.Errorf("the earlier quarantined notice was replaced: %q %v", raw, err)
+	}
+	if raw, err := os.ReadFile(destination); err != nil || string(raw) != "replacement" {
+		t.Errorf("the moved notice is wrong: %q %v", raw, err)
+	}
+}
+
+// The source is removed only while it still names the linked inode, so a notice the producer
+// replaced after the link stays queued instead of being deleted undelivered.
+func TestPumpReview776OversizeRemoveKeepsAReplacedSource(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "aaaaaaaaaaaaaaaa.txt")
+	destination := filepath.Join(dir, "quarantined.txt")
+	if err := os.WriteFile(source, []byte("original"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(source, destination); err != nil {
+		t.Fatal(err)
+	}
+	// The producer atomically replaces the notice after the link: a new inode now sits at source.
+	replacement := filepath.Join(dir, "replacement.tmp")
+	if err := os.WriteFile(replacement, []byte("replacement"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(replacement, source); err != nil {
+		t.Fatal(err)
+	}
+	pumpReview776QueueRemoveLinked(source, destination)
+	if raw, err := os.ReadFile(source); err != nil || string(raw) != "replacement" {
+		t.Fatalf("the replacement was deleted: %q %v", raw, err)
+	}
+	// With the same inode at both paths the source is removed, which is the move completing.
+	if err := os.Remove(source); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(source, []byte("same"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(destination); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(source, destination); err != nil {
+		t.Fatal(err)
+	}
+	pumpReview776QueueRemoveLinked(source, destination)
+	if _, err := os.Stat(source); !os.IsNotExist(err) {
+		t.Errorf("the linked source was not removed: %v", err)
+	}
+}
+
+// A pre-change accepted record for a batch that has no pin is completed, not sent again.
+func TestPumpReview776LegacyAcceptedRecordIsCompletedNotResent(t *testing.T) {
+	now := pumpTestNow
+	e := pumpTestEnv(t, &now)
+	bridge, log := deliverFakeBridge(t, []map[string]any{})
+	cfg := pumpTestConfig(t, bridge)
+	pumpQueueTestNotice(t, cfg, "parent-1", "aaaaaaaaaaaaaaaa.txt", "a-body")
+	oldID := pumpBatchIDStrings([]string{"parent-1", "aaaaaaaaaaaaaaaa.txt"})
+	if err := deliverSave(cfg, deliverRecord{
+		LogicalID: oldID, RequestID: oldID, Tool: deliverToolSend, TargetThread: "parent-1",
+		MessageSHA256: deliverMessageSHA256("a-body"), CreatedAt: deliverNow(e), State: deliverStateAccepted}); err != nil {
+		t.Fatal(err)
+	}
+	if err := pumpQueueFlush(context.Background(), e, cfg, pumpTestReadStatePtr(t, cfg), pumpSettingsFrom(cfg), false); err != nil {
+		t.Fatal(err)
+	}
+	for _, call := range deliverSendCallsOf(t, log) {
+		if call["tool"] == deliverToolSteer || call["tool"] == deliverToolSend {
+			t.Errorf("an accepted pre-change batch was sent again: %v", deliverSendToolsOf(t, log))
+		}
+	}
+	if _, err := os.Stat(filepath.Join(cfg.StateDir, pumpQueueDir, "parent-1", pumpSentDir, "aaaaaaaaaaaaaaaa.txt")); err != nil {
+		t.Errorf("the accepted notice was not completed: %v", err)
+	}
+}
+
+// A pre-change unknown record for a batch that has no pin is reconciled under the old id.
+func TestPumpReview776LegacyUnknownRecordIsReconciled(t *testing.T) {
+	now := pumpTestNow
+	e := pumpTestEnv(t, &now)
+	bridge, log := deliverFakeBridge(t, []map[string]any{
+		{"payload": map[string]any{"observation": "active", "activeTurnId": "turn-1"}},
+	})
+	cfg := pumpTestConfig(t, bridge)
+	pumpQueueTestNotice(t, cfg, "parent-1", "aaaaaaaaaaaaaaaa.txt", "a-body")
+	oldID := pumpBatchIDStrings([]string{"parent-1", "aaaaaaaaaaaaaaaa.txt"})
+	newID := pumpBatchIDStrings([]string{"parent-1", "aaaaaaaaaaaaaaaa.txt", "a-body"})
+	if err := deliverSave(cfg, deliverRecord{
+		LogicalID: oldID, RequestID: oldID, Tool: deliverToolSend, TargetThread: "parent-1",
+		MessageSHA256: deliverMessageSHA256("a-body"), CreatedAt: deliverNow(e), State: deliverStateUnknown}); err != nil {
+		t.Fatal(err)
+	}
+	if err := pumpQueueFlush(context.Background(), e, cfg, pumpTestReadStatePtr(t, cfg), pumpSettingsFrom(cfg), false); err != nil {
+		t.Fatal(err)
+	}
+	calls := deliverSendCallsOf(t, log)
+	reconciled := false
+	for _, call := range calls {
+		if call["tool"] == deliverToolOperation && deliverSendRequestIDOf(t, call) == oldID {
+			reconciled = true
+		}
+		if (call["tool"] == deliverToolSteer || call["tool"] == deliverToolSend) && deliverSendRequestIDOf(t, call) == newID {
+			t.Errorf("the round sent under the new id %q instead of reconciling the old one", newID)
+		}
+	}
+	if !reconciled {
+		t.Fatalf("the round did not reconcile the old id %q: %v", oldID, deliverSendToolsOf(t, log))
+	}
+}
+
+// A dry run with an accepted pin prints only the would-complete line.
+func TestPumpReview776DryRunAcceptedPinPrintsOnlyTheLine(t *testing.T) {
+	now := pumpTestNow
+	e := pumpTestEnv(t, &now)
+	cfg := pumpTestConfig(t, "")
+	pumpTestSwapSources(t, &pumpTestSource{name: "fake"})
+	notice := pumpQueueTestNotice(t, cfg, "parent-1", "aaaaaaaaaaaaaaaa.txt", "a-body")
+	st := pumpTestReadState(t, cfg)
+	st.QueueAttempt["parent-1"] = pumpReview776QueuePin{
+		LogicalID: "pinid", Names: []string{"aaaaaaaaaaaaaaaa.txt"}, Body: "a-body",
+		SHA256: map[string]string{"aaaaaaaaaaaaaaaa.txt": pumpReview776TestDigest("a-body")}, Accepted: true}
+	if err := st.pumpSave(cfg); err != nil {
+		t.Fatal(err)
+	}
+	statePath := filepath.Join(cfg.StateDir, pumpStateFile)
+	before, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out strings.Builder
+	e.Stdout = &out
+	if code, err := pumpRound(context.Background(), e, cfg, pumpSettingsFrom(cfg), true); code != 0 || err != nil {
+		t.Fatalf("the dry round: code=%d err=%v", code, err)
+	}
+	if strings.Count(out.String(), "queue parent-1") != 1 || !strings.Contains(out.String(), "would complete 1 accepted notices") {
+		t.Errorf("the dry run printed %q, want the would-complete line only", out.String())
+	}
+	if _, err := os.Stat(notice); err != nil {
+		t.Errorf("the dry run moved the notice: %v", err)
+	}
+	after, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Errorf("the dry run rewrote the state")
+	}
+}
