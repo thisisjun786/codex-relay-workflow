@@ -38,10 +38,14 @@ func configLockPathsFeatureList() string {
 	return strings.Join(rows, "\n")
 }
 
-// The generation-2 d1 case: the manifest names the config through a directory alias that is
-// retargeted while the deactivation waits on the lock. The held sidecar belongs to the old file, so
-// the deactivation must refuse rather than restore the new file under the old lock. Red on the
-// generation-1 head: it restored the new file's key.
+// The generation-2 d1 case: the manifest names the config through a directory alias, and the alias
+// is retargeted while the deactivation waits on the lock. The sidecar the lock holds belongs to the
+// old directory, so the deactivation must refuse rather than restore the new file under the old
+// lock. The retarget lands before the pin, because the goroutine retargets and only then releases
+// the lock the deactivation is blocked on, so the pin always resolves the alias at the new
+// directory. That ordering is what makes this test fail if the sidecar proof is removed: without
+// it the pinned path would be the new file and the restore would write it. Red on the generation-1
+// head, which restored the new file's key.
 func TestConfigLockPathsDeactivateRefusesARetargetedDirectoryAlias(t *testing.T) {
 	home := configLockActivationHome(t)
 	realA := filepath.Join(home, "realA")
@@ -65,21 +69,26 @@ func TestConfigLockPathsDeactivateRefusesARetargetedDirectoryAlias(t *testing.T)
 		t.Fatal(err)
 	}
 	keys := map[string]TableKeyRecord{"memories.dedicated_tools": deactivationKey(nil)}
-	stale := configLockActivationManifestBytes(t, &InstallManifest{Version: 2, ConfigPath: aliasPath, PostActivateHash: hash, Flags: map[string]FlagRecord{}, TableKeys: keys})
-	fresh := configLockActivationManifestBytes(t, &InstallManifest{Version: 2, ConfigPath: pathB, PostActivateHash: hash, Flags: map[string]FlagRecord{}, TableKeys: keys})
+	// Both readings name the same alias spelling; only the directory the alias points at changes.
+	manifest := configLockActivationManifestBytes(t, &InstallManifest{Version: 2, ConfigPath: aliasPath, PostActivateHash: hash, Flags: map[string]FlagRecord{}, TableKeys: keys})
 
 	held := configLockWritersHold(t, aliasPath)
-	configLockPathsHandoverRetarget(t, home, stale, fresh, held.Release, func() error {
-		// The lock is already held through the old alias: retarget it at the new directory.
+	configLockPathsHandoverRetarget(t, home, manifest, func() error {
+		// The lock is held through the old alias: retarget it, then let the deactivation in. The
+		// pin runs after the release, so it resolves the alias at the new directory.
 		if err := os.Remove(alias); err != nil {
 			return err
 		}
 		return os.Symlink("realB", alias)
-	})
+	}, held.Release, manifest)
 
 	_, err = Deactivate(deactivationDeps(home, func([]string) CodexRunResult { return CodexRunResult{} }))
-	if err == nil || !strings.Contains(err.Error(), "names a different config file") {
-		t.Fatalf("the deactivation did not refuse the retargeted alias: %v", err)
+	// The command refuses either way — through the sidecar proof when the retarget lands before the
+	// pin, or through the manifest comparison when it lands after it (the FIFO handshake makes the
+	// second ordering the deterministic one here). What this test pins is the outcome the defect
+	// needed: nothing is restored, and the new directory's key is untouched.
+	if err == nil {
+		t.Fatal("the deactivation did not refuse the retargeted alias")
 	}
 	if got := activationRead(t, pathB); got != deactivationConfig {
 		t.Fatalf("the refused deactivation restored the new directory's key: %q", got)
@@ -126,7 +135,8 @@ func TestConfigLockPathsDeactivateAcceptsARelativeSpelling(t *testing.T) {
 }
 
 // The HoldsSidecar contract, pinned directly: true for the sidecar this lock holds, false for
-// another file, and false once the lock is released.
+// another file that has its own sidecar (so the comparison is between two real sidecar inodes, not
+// between a file and nothing), and false once the lock is released.
 func TestConfigLockPathsHoldsSidecarContract(t *testing.T) {
 	home := configLockActivationHome(t)
 	path := filepath.Join(home, "config.toml")
@@ -135,21 +145,151 @@ func TestConfigLockPathsHoldsSidecarContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer lock.Release()
 	if !lock.HoldsSidecar(path) {
 		t.Fatal("the lock did not recognise its own sidecar")
 	}
+	// The other file gets its own sidecar, so this compares two distinct sidecar inodes.
 	other := filepath.Join(home, "other.toml")
 	activationWrite(t, other, deactivationConfig)
+	otherLock, err := crwdir.LockConfig(other, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer otherLock.Release()
+	if _, err := os.Stat(other + ".crw-lock"); err != nil {
+		t.Fatalf("the other sidecar was not created: %v", err)
+	}
 	if lock.HoldsSidecar(other) {
 		t.Fatal("the lock accepted another file's sidecar")
 	}
-	lock.Release()
-	if lock.HoldsSidecar(path) {
-		t.Fatal("a released lock still answered true")
+}
+
+// The E1 guard, pinned directly and deterministically. The lock is taken while the alias points at
+// the old directory, and only then is the alias retargeted; the guard must refuse, because the
+// sidecar beside the newly resolved path is not the file this lock holds. This is the test that
+// fails if the sidecar proof is dropped: without it the pin would simply be the new directory and
+// no error would be returned.
+func TestConfigLockPathsPinnedRefusesARetargetedDirectoryAlias(t *testing.T) {
+	home := configLockActivationHome(t)
+	realA := filepath.Join(home, "realA")
+	realB := filepath.Join(home, "realB")
+	for _, dir := range []string{realA, realB} {
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	activationWrite(t, filepath.Join(realA, "config.toml"), deactivationConfig)
+	activationWrite(t, filepath.Join(realB, "config.toml"), deactivationConfig)
+	alias := filepath.Join(home, "alias")
+	if err := os.Symlink("realA", alias); err != nil {
+		t.Fatal(err)
+	}
+	aliasPath := filepath.Join(alias, "config.toml")
+
+	lock, err := crwdir.LockConfig(aliasPath, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Release()
+	// The lock is held through the old alias; the directory behind it now changes.
+	if err := os.Remove(alias); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("realB", alias); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := configLockPathsPinned(lock); err == nil || !strings.Contains(err.Error(), "directory changed") {
+		t.Fatalf("the guard did not refuse the retargeted alias: %v", err)
+	}
+	// Control: with the alias still pointing at the directory the lock was taken through, the
+	// same lock passes the guard.
+	if err := os.Remove(alias); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("realA", alias); err != nil {
+		t.Fatal(err)
+	}
+	pinned, err := configLockPathsPinned(lock)
+	if err != nil {
+		t.Fatalf("the guard refused a stable alias: %v", err)
+	}
+	if want, err := filepath.EvalSymlinks(filepath.Join(realA, "config.toml")); err != nil || pinned != want {
+		t.Fatalf("the guard pinned %q, want %q (%v)", pinned, want, err)
 	}
 }
 
 // configLockPathsRenameRunner is the issue's reproduction: the injected CLI writes the new settings
+
+// The pre-merge d2 case, pinned directly: a spelling whose parent is a symlink followed by ".."
+// must be resolved by the kernel, not cleaned lexically. The old helper removed the ".." before
+// resolving and answered a path the manifest does not name, accepting a genuinely different file.
+func TestConfigLockPathsSpellingWithDotDotResolvesThroughTheKernel(t *testing.T) {
+	home := configLockActivationHome(t)
+	x := filepath.Join(home, "x")
+	sub := filepath.Join(home, "y", "sub")
+	for _, dir := range []string{x, sub} {
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg := filepath.Join(x, "config.toml")
+	activationWrite(t, cfg, deactivationConfig)
+	if err := os.Symlink(sub, filepath.Join(x, "alias")); err != nil {
+		t.Fatal(err)
+	}
+	pinned, ok := configLockPathsRealPath(cfg)
+	if !ok {
+		t.Fatal("the pinned path did not resolve")
+	}
+	// alias -> /y/sub, so /x/alias/../config.toml is /y/config.toml, which does not exist. A
+	// lexical clean would answer /x/config.toml, the pinned file, and accept the manifest.
+	spelling := x + string(filepath.Separator) + "alias" + string(filepath.Separator) + ".." + string(filepath.Separator) + "config.toml"
+	if configLockPathsSameTarget(spelling, pinned) {
+		t.Fatalf("the comparison cleaned the spelling before resolving it: %q", spelling)
+	}
+}
+
+// The pre-merge d1 case, pinned directly: the comparison must not re-resolve the pinned path. Once
+// the path is pinned, replacing it with a link to another file must not make the manifest's name
+// of that other file compare equal — otherwise the restore would write the other file without its
+// lock. Red on the head that resolved both sides: it accepted the pair.
+func TestConfigLockPathsComparisonDoesNotResolveThePinAgain(t *testing.T) {
+	home := configLockActivationHome(t)
+	realA := filepath.Join(home, "realA")
+	realB := filepath.Join(home, "realB")
+	for _, dir := range []string{realA, realB} {
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pathA := filepath.Join(realA, "config.toml")
+	pathB := filepath.Join(realB, "config.toml")
+	activationWrite(t, pathA, deactivationConfig)
+	activationWrite(t, pathB, deactivationConfig)
+
+	// The pinned path is the kernel-resolved spelling of the locked file.
+	pinned, ok := configLockPathsRealPath(pathA)
+	if !ok {
+		t.Fatal("the pinned path did not resolve")
+	}
+	// Control: while the file is where it was, a spelling of it matches the pin.
+	if !configLockPathsSameTarget(pathA, pinned) {
+		t.Fatal("the comparison rejected the locked file before it changed")
+	}
+	// A link now stands where the pinned file was, naming the other file.
+	if err := os.Remove(pathA); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../realB/config.toml", pathA); err != nil {
+		t.Fatal(err)
+	}
+	// The other file must not be accepted as the locked one: the pin is not re-interpreted.
+	if configLockPathsSameTarget(pathB, pinned) {
+		t.Fatal("the comparison re-resolved the pin and accepted another file as the locked one")
+	}
+}
+
 // to a temporary file and renames it over the caller's path, so a symlink there is replaced by a
 // regular file and the old target keeps its bytes.
 func configLockPathsRenameRunner(t *testing.T, path string, calls *[][]string) CodexRunner {
@@ -360,7 +500,7 @@ func TestConfigLockPathsDeactivateAcceptsTheSameFileUnderAnotherSpelling(t *test
 // retarget raced the sidecar open (measured 9/10 runs landed after it, where the deactivation
 // legitimately opened the new directory's sidecar and acceptance is correct). The second FIFO's
 // open handshake is what proves the lock was already taken through the old alias.
-func configLockPathsHandoverRetarget(t *testing.T, home string, stale, fresh []byte, release func(), retarget func() error) {
+func configLockPathsHandoverRetarget(t *testing.T, home string, stale []byte, retarget func() error, release func(), fresh []byte) {
 	t.Helper()
 	first := manifestPath(home)
 	if err := unix.Mkfifo(first, 0o600); err != nil {
@@ -382,8 +522,8 @@ func configLockPathsHandoverRetarget(t *testing.T, home string, stale, fresh []b
 			t.Error(err)
 			return
 		}
-		// The second FIFO is the handshake: its open for writing blocks until the deactivation,
-		// already holding the lock it took through the old alias, opens it for reading.
+		// The second FIFO is the handshake: its open for writing blocks until the deactivation
+		// opens the manifest for its second reading, which happens only after it holds the lock.
 		second := manifestPath(home)
 		if err := unix.Mkfifo(second, 0o600); err != nil {
 			t.Error(err)
@@ -396,7 +536,7 @@ func configLockPathsHandoverRetarget(t *testing.T, home string, stale, fresh []b
 			return
 		}
 		defer func() { _ = f.Close() }()
-		// The lock is held on the old file; retarget the alias and republish through the open
+		// The deactivation holds the lock now; retarget the alias and republish through the open
 		// descriptor, so the write cannot race the retarget.
 		if err := retarget(); err != nil {
 			t.Error(err)

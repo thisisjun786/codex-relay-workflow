@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
@@ -36,6 +37,22 @@ type DeactivateResult struct {
 	SkippedExternal          []SkippedExternal `json:"skippedExternal"`
 	FileDrifted              bool              `json:"fileDrifted"`
 	FeaturesStateUnavailable bool              `json:"featuresStateUnavailable"`
+}
+
+// configLockPathsPinned answers the path this deactivation must work on, and refuses when the file
+// the lock guards cannot be proven. The lock is keyed by the file it guards, but its spelling was
+// resolved before this command waited, and a directory symlink in the path can be retargeted during
+// the wait. The path is therefore pinned to the file the held sidecar belongs to: the sidecar beside
+// the resolved real path must be the very file this lock holds (fstat), or the directory changed
+// under the wait and acting now would edit a file this lock does not guard (CRW-899 E1, fail
+// closed). Everything downstream — the drift hash, the read, the restore and the injected CLI calls
+// — works on the pinned path, never on a spelling re-resolved after the wait.
+func configLockPathsPinned(lock *crwdir.ConfigLock) (string, error) {
+	pinned, ok := configLockPathsRealPath(lock.Target)
+	if !ok || !lock.HoldsSidecar(pinned) {
+		return "", fmt.Errorf("the config file's directory changed while the lock was being taken (%s); run the deactivation again", lock.Target)
+	}
+	return pinned, nil
 }
 
 func readTextOrNull(path string) (*string, error) {
@@ -71,37 +88,45 @@ func configLockPathsRealPath(p string) (string, bool) {
 		}
 		return filepath.Join(realCwd, resolved), true
 	}
-	parent := filepath.Dir(p)
-	if parent == p {
+	// The final component is not there — an install whose config.toml was removed. It is named
+	// through its parent, resolved the same way. The split is lexical and does NOT clean: a
+	// filepath.Dir here would remove a ".." before the kernel resolved it, so a spelling whose
+	// parent is a symlink could be answered as a path the manifest does not name (E2 forbids
+	// cleaning before the resolution, and the caller treats a failed resolution as a different
+	// file).
+	dir, base := filepath.Split(p)
+	if dir == "" {
 		return "", false
 	}
-	realParent, ok := configLockPathsRealPath(parent)
+	realDir, ok := configLockPathsRealPath(strings.TrimSuffix(dir, string(filepath.Separator)))
 	if !ok {
 		return "", false
 	}
-	return filepath.Join(realParent, filepath.Base(p)), true
+	if base == "" {
+		return realDir, true
+	}
+	return filepath.Join(realDir, base), true
 }
 
-// configLockPathsSameTarget reports whether two spellings name one directory entry, comparing their
-// resolved real paths. The manifest is allowed to name the config file through a different spelling
-// — CODEX_HOME behind a directory symlink, for example, which crwdir's lock resolution leaves spelled
-// through the alias because it follows only a symlink in the final component — and a deactivation
-// that treated that as a different file would refuse to restore an install it owns. The comparison
-// is deliberately directory-entry identity, not inode identity: the restore publishes through the
-// pinned path with an atomic rename, which replaces that one pathname, so a hard link to the same
-// inode under another name would keep the managed key while this command reported it restored (fail
-// open). A hard link therefore stays refused, and a path that cannot be resolved is not the same
-// target, so the comparison never accepts a spelling it could not prove.
-func configLockPathsSameTarget(a, b string) bool {
-	ra, aok := configLockPathsRealPath(a)
-	if !aok {
+// configLockPathsSameTarget reports whether a spelling names the file the pinned path names.
+// Only the spelling is resolved; the pinned path is already kernel-resolved and is compared as it
+// is. Re-resolving the pinned path would follow a link that appeared after it was pinned, which is
+// exactly how a path that now names another file would be accepted as the locked one, so the pin is
+// never re-interpreted (CRW-899 E1). The manifest is allowed to name the config file through a
+// different spelling — CODEX_HOME behind a directory symlink, for example, which crwdir's lock
+// resolution leaves spelled through the alias because it follows only a symlink in the final
+// component — and a deactivation that treated that as a different file would refuse to restore an
+// install it owns. The comparison is deliberately directory-entry identity, not inode identity: the
+// restore publishes through the pinned path with an atomic rename, which replaces that one pathname,
+// so a hard link to the same inode under another name would keep the managed key while this command
+// reported it restored (fail open). A hard link therefore stays refused, and a spelling that cannot
+// be resolved is not the same target, so the comparison never accepts what it could not prove.
+func configLockPathsSameTarget(spelling, pinned string) bool {
+	real, ok := configLockPathsRealPath(spelling)
+	if !ok {
 		return false
 	}
-	rb, bok := configLockPathsRealPath(b)
-	if !bok {
-		return false
-	}
-	return ra == rb
+	return real == pinned
 }
 
 // DecideKeyRestore is deactivate.ts's per-key decision table. backupKnown=false means
@@ -185,16 +210,9 @@ func Deactivate(deps DeactivateDeps) (*DeactivateResult, error) {
 			return nil, err
 		}
 		defer lock.Release()
-		// The lock is keyed by the file it guards, but its spelling was resolved before this command
-		// waited, and a directory symlink in the path can be retargeted during the wait. The path is
-		// therefore pinned to the file the held sidecar belongs to: the sidecar beside the resolved
-		// real path must be the very file this lock holds (fstat), or the directory changed under the
-		// wait and acting now would edit a file this lock does not guard (CRW-899 E1, fail closed).
-		// Everything below — the drift hash, the read, the restore and the injected CLI calls —
-		// works on that pinned path, never on a spelling re-resolved after the wait.
-		pinned, pinnedOK := configLockPathsRealPath(lock.Target)
-		if !pinnedOK || !lock.HoldsSidecar(pinned) {
-			return nil, fmt.Errorf("the config file's directory changed while the lock was being taken (%s); run the deactivation again", lock.Target)
+		pinned, pinErr := configLockPathsPinned(lock)
+		if pinErr != nil {
+			return nil, pinErr
 		}
 		path = pinned
 		// The manifest read before the lock answered only whether and where to lock. An activation
