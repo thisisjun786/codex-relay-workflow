@@ -4,12 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
+	"github.com/coder/websocket"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
 )
 
@@ -109,11 +113,14 @@ func resumeHost(t *testing.T, status string) *fakehost.Server {
 	return host
 }
 
-// resumeHostMethods is the App Server methods a run called, without the connection's handshake.
+// resumeHostMethods is the App Server methods a run called, without the connection's handshake and
+// without the subscription release. The handshake and thread/unsubscribe belong to the client and
+// the watch it admits rather than to the resume's own steps, and the release is not deterministic
+// here: it is asked for when the watch finishes, while the run closes its client on the way out.
 func resumeHostMethods(host *fakehost.Server) []string {
 	var methods []string
 	for _, request := range host.Requests() {
-		if request.Method != "initialize" && request.Method != "initialized" {
+		if request.Method != "initialize" && request.Method != "initialized" && request.Method != "thread/unsubscribe" {
 			methods = append(methods, request.Method)
 		}
 	}
@@ -344,6 +351,13 @@ func TestResumeDryRunSendsNothing(t *testing.T) {
 	if calls := resumeRelayCommands(t, resumeCalls(t, record)); !slices.Equal(calls, []string{"assignment-show", "settings-show"}) {
 		t.Errorf("dry-run asked the relay for %q", calls)
 	}
+	// A read-only run must not mutate the host. thread/read never subscribed this connection, so the
+	// finished watch must retain the root rather than queue a thread/unsubscribe. Before the fix the
+	// watch was finished with retain=false, making it eligible for release: the subscription
+	// worker raced client.Close and occasionally sent the unsubscribe anyway.
+	if n := host.Count("thread/unsubscribe"); n != 0 {
+		t.Errorf("the dry run sent thread/unsubscribe %d times; a read-only run changes nothing on the host", n)
+	}
 }
 
 // The command line: a missing option and an unreadable message file are usage errors, -h prints
@@ -535,5 +549,263 @@ func TestResumeAdmitTurnNamesTheResolvedProgram(t *testing.T) {
 func TestResumeIsRegistered(t *testing.T) {
 	if !slices.Contains(coreNames(), "child-resume") {
 		t.Fatalf("child-resume is not registered: %q", coreNames())
+	}
+}
+
+// resumeHostLog records the App Server methods a fake host answered, across every connection it
+// accepted, so a test can count handshakes and prove a step was never sent.
+type resumeHostLog struct {
+	mu      sync.Mutex
+	methods []string
+}
+
+func (l *resumeHostLog) add(method string) {
+	l.mu.Lock()
+	l.methods = append(l.methods, method)
+	l.mu.Unlock()
+}
+
+func (l *resumeHostLog) count(method string) int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	n := 0
+	for _, one := range l.methods {
+		if one == method {
+			n++
+		}
+	}
+	return n
+}
+
+// resumeDroppingHost is a fake App Server that answers the handshake and the steps up to and
+// including dropAfter, then drops the connection immediately after that step's answer. A later
+// step on that socket fails; a client that reconnects is answered again on a second connection,
+// which is exactly what the one-connection fence must prevent.
+func resumeDroppingHost(t *testing.T, dropAfter string) (string, *resumeHostLog) {
+	t.Helper()
+	log := &resumeHostLog{}
+	socket := fakehost.SocketPath(t, "app.sock")
+	listener, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{CompressionMode: websocket.CompressionDisabled})
+		if err != nil {
+			return
+		}
+		defer conn.CloseNow()
+		for {
+			_, raw, err := conn.Read(r.Context())
+			if err != nil {
+				return
+			}
+			var message struct {
+				ID     json.RawMessage `json:"id"`
+				Method string          `json:"method"`
+			}
+			if json.Unmarshal(raw, &message) != nil || message.Method == "" {
+				continue
+			}
+			log.add(message.Method)
+			answer := func(result map[string]any) {
+				frame, _ := json.Marshal(map[string]any{"id": message.ID, "result": result})
+				_ = conn.Write(r.Context(), websocket.MessageText, frame)
+			}
+			switch message.Method {
+			case "initialize":
+				answer(map[string]any{"userAgent": "dropping-host"})
+			case "initialized":
+			case "thread/read":
+				answer(map[string]any{"thread": map[string]any{"model": "m", "reasoningEffort": "xhigh", "status": map[string]any{"type": "idle"}}})
+				if dropAfter == "thread/read" {
+					return
+				}
+			case "thread/resume":
+				answer(map[string]any{"model": "m", "reasoningEffort": "xhigh"})
+				if dropAfter == "thread/resume" {
+					return
+				}
+			case "mcpServerStatus/list":
+				answer(map[string]any{"data": []any{map[string]any{"name": "alpha", "runtimeStatus": "disabled"}}, "nextCursor": nil})
+			case "turn/start":
+				answer(map[string]any{"turn": map[string]any{"id": "turn-1"}})
+			default:
+				frame, _ := json.Marshal(map[string]any{"id": message.ID, "error": map[string]any{"code": -32601, "message": message.Method}})
+				_ = conn.Write(r.Context(), websocket.MessageText, frame)
+			}
+		}
+	})}
+	go func() { _ = server.Serve(listener) }()
+	t.Cleanup(func() { _ = server.Close(); _ = listener.Close() })
+	return socket, log
+}
+
+// C1: a connection that drops after the thread/resume answer ends the run as host_error naming
+// the step it failed at, sends no turn/start on any connection and initializes once. Before the
+// fence the client silently dialed a second connection and started the turn there.
+func TestResumeFailsWhenTheConnectionDropsAfterResume(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		dropAfter string
+		step      string
+	}{
+		// A drop after the resume answer is the reported defect: the next step must fail on that
+		// socket rather than run on a second one.
+		{"after thread/resume", "thread/resume", "mcpServerStatus/list"},
+		// A drop after the first read is the same fence at the earliest step, before anything is
+		// resumed: it must fail as host_error naming thread/resume and never reach the host again.
+		{"after thread/read", "thread/read", "thread/resume"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			socket, log := resumeDroppingHost(t, test.dropAfter)
+			exe, _ := resumeRelayScript(t, resumeTestAssignment, resumeTestSettings, 0)
+			e, _, _ := resumeEnv(t, exe)
+			cfg := hostReadConfig(socket)
+			cfg.Relay.State = "/tmp/relay-store"
+			list, err := json.Marshal(map[string]any{"disabled_servers": []string{"alpha"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			cfg.raw["child_check"] = list
+			_, err = resumeRun(context.Background(), e, cfg, resumeOptions{relationship: "rel-1", message: "m"})
+			failure, ok := err.(*resumeFailure)
+			if !ok || failure.Reason != string(hostReadHostError) {
+				t.Fatalf("err = %v, want host_error", err)
+			}
+			if !strings.Contains(failure.Detail, test.step) {
+				t.Errorf("the refusal does not name the step it failed at: %q", failure.Detail)
+			}
+			if n := log.count("initialize"); n != 1 {
+				t.Errorf("initialize ran %d times, want 1", n)
+			}
+			if n := log.count("turn/start"); n != 0 {
+				t.Errorf("turn/start was sent %d times, want 0", n)
+			}
+		})
+	}
+}
+
+// C2: the normal path runs the four steps on one connection, in order, and returns with the turn
+// the watch followed, so the run finishes the watch it admitted instead of leaving it holding the
+// root. The thread/unsubscribe a finished watch asks for is not asserted here: the run closes its
+// client on the way out, and that close cancels an in-flight release before it can be observed
+// (internal/bridge/appserver/subscription.go, the release worker and Close). The release contract
+// is the bridge's own test; the turn/completed notification below is what the watch would follow.
+func TestResumeRunsTheFourStepsOnOneConnection(t *testing.T) {
+	host := resumeHost(t, "idle")
+	started := make(chan struct{})
+	host.Handle("turn/start", func(json.RawMessage) fakehost.Reply {
+		close(started)
+		return fakehost.Reply{Result: map[string]any{"turn": map[string]any{"id": "turn-1"}},
+			Before: []fakehost.Notification{{Method: "turn/completed", Params: map[string]any{
+				"threadId": "01child", "turn": map[string]any{"id": "turn-1", "status": "completed"}}}}}
+	})
+	exe, _ := resumeRelayScript(t, resumeTestAssignment, resumeTestSettings, 0)
+	e, _, _ := resumeEnv(t, exe)
+	report, err := resumeRun(context.Background(), e, resumeConfig(host, "alpha"), resumeOptions{relationship: "rel-1", message: "m"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-started:
+	default:
+		t.Fatal("turn/start never reached the host")
+	}
+	if report.TurnID != "turn-1" {
+		t.Fatalf("report %+v", report)
+	}
+	if methods := resumeHostMethods(host); !slices.Equal(methods, []string{"thread/read", "thread/resume", "mcpServerStatus/list", "turn/start"}) {
+		t.Fatalf("the host saw %q", methods)
+	}
+	if n := resumeHostConnections(host); n != 1 {
+		t.Fatalf("the four steps used %d connections, want 1", n)
+	}
+}
+
+// C3: a recorded runtimeWorkspaceRoots of [] is a value, not a missing setting: the resume
+// proceeds and the thread/resume parameters carry the empty array rather than omitting it.
+func TestResumeSendsAnEmptyRuntimeWorkspaceRoots(t *testing.T) {
+	host := resumeHost(t, "idle")
+	empty := `{"settings":{"sandbox":{"type":"readOnly","networkAccess":false},"approvalPolicy":"never","cwd":"/w","runtimeWorkspaceRoots":[],"model":"m","reasoningEffort":"xhigh"}}`
+	exe, _ := resumeRelayScript(t, resumeTestAssignment, empty, 0)
+	e, _, _ := resumeEnv(t, exe)
+	report, err := resumeRun(context.Background(), e, resumeConfig(host, "alpha"), resumeOptions{relationship: "rel-1", message: "m"})
+	if err != nil {
+		t.Fatalf("an empty runtimeWorkspaceRoots was refused: %v", err)
+	}
+	if !report.OK || report.TurnID != "turn-1" {
+		t.Fatalf("report %+v", report)
+	}
+	raw := string(resumeHostRequests(host)[1].Params)
+	if !strings.Contains(raw, `"runtimeWorkspaceRoots":[]`) {
+		t.Fatalf("the resume params did not carry an empty array: %s", raw)
+	}
+	var resume map[string]any
+	if err := json.Unmarshal([]byte(raw), &resume); err != nil {
+		t.Fatal(err)
+	}
+	roots, ok := resume["runtimeWorkspaceRoots"].([]any)
+	if !ok || len(roots) != 0 {
+		t.Fatalf("runtimeWorkspaceRoots = %#v, want an empty array", resume["runtimeWorkspaceRoots"])
+	}
+}
+
+// C3 control: a runtimeWorkspaceRoots key that is absent or null supplied nothing and is still
+// missing, so the resume is refused rather than sending a host default.
+func TestResumeRefusesMissingOrNullRuntimeWorkspaceRoots(t *testing.T) {
+	host := resumeHost(t, "idle")
+	for name, document := range map[string]string{
+		"absent": `{"settings":{"sandbox":{"type":"readOnly","networkAccess":false},"approvalPolicy":"never","cwd":"/w","model":"m","reasoningEffort":"xhigh"}}`,
+		"null":   `{"settings":{"sandbox":{"type":"readOnly","networkAccess":false},"approvalPolicy":"never","cwd":"/w","runtimeWorkspaceRoots":null,"model":"m","reasoningEffort":"xhigh"}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			exe, _ := resumeRelayScript(t, resumeTestAssignment, document, 0)
+			e, _, _ := resumeEnv(t, exe)
+			_, err := resumeRun(context.Background(), e, resumeConfig(host, "alpha"), resumeOptions{relationship: "rel-1", message: "m"})
+			failure, ok := err.(*resumeFailure)
+			if !ok || failure.Reason != resumeSettingsUnavailable || !strings.Contains(failure.Detail, "runtimeWorkspaceRoots") {
+				t.Fatalf("err = %v", err)
+			}
+			if n := host.Count("thread/read"); n != 0 {
+				t.Errorf("the host was contacted %d times before the record was refused", n)
+			}
+		})
+	}
+}
+
+// C4: the crw configuration file supplies the run: its child_check.disabled_servers names the
+// servers to stop and its relay.socket names the App Server, and resumeRunCommand runs the four
+// steps against the fake host from those values alone.
+func TestResumeCommandRunsTheFourStepsFromTheConfigFile(t *testing.T) {
+	host := resumeHost(t, "idle")
+	exe, _ := resumeRelayScript(t, resumeTestAssignment, resumeTestSettings, 0)
+	e, out, errOut := resumeEnv(t, exe)
+	configHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	t.Setenv("CRW_CONFIG", "")
+	document := coreConfigMarshal(t, map[string]any{
+		"schema": "crw-config/1",
+		"manage": map[string]any{
+			"relay":       map[string]string{"socket": host.SocketPath},
+			"child_check": map[string]any{"disabled_servers": []string{"alpha", "beta"}},
+		},
+	})
+	coreConfigWrite(t, filepath.Join(configHome, "crw", "config.json"), document)
+	messageFile := filepath.Join(t.TempDir(), "message.txt")
+	if err := os.WriteFile(messageFile, []byte("go on"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if code := resumeRunCommand(context.Background(), e, []string{"--relationship", "rel-1", "--message-file", messageFile}); code != 0 {
+		t.Fatalf("exit %d: %s", code, errOut.String())
+	}
+	if methods := resumeHostMethods(host); !slices.Equal(methods, []string{"thread/read", "thread/resume", "mcpServerStatus/list", "turn/start"}) {
+		t.Fatalf("the host saw %q", methods)
+	}
+	if n := resumeHostConnections(host); n != 1 {
+		t.Fatalf("the four steps used %d connections, want 1", n)
+	}
+	if !strings.Contains(out.String(), `"turnId":"turn-1"`) {
+		t.Fatalf("the command reported %q", out.String())
 	}
 }

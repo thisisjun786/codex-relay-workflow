@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"syscall"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/cli"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/projectcfg"
 )
 
@@ -329,4 +331,50 @@ func divergenceWrites(args []string) bool {
 		verb = args[1]
 	}
 	return topic == "mode" && (verb == "on" || verb == "off") || topic == "candidate" && verb == "add"
+}
+
+// orchestrateVerb is the orchestrate row (cli.ts:143-152). The terminal entry is the only caller
+// that supplies the native environment: the oracle hands runOrchestrateCli its process.env, which is
+// what drives the implicit CODEX_THREAD_ID status selection and the homedir scan, while every other
+// row keeps the library's empty env. The parse refusal is the one answer the oracle writes to
+// STDERR (cli.ts:146-149) and it never reaches runOrchestrateCli, so it is rendered here instead of
+// letting RunOrchestrateRead answer it on stdout. Everything else is the library's own stream, code
+// and trailing newline, and a delegated mutation is RunOrchestrateTransition's answer the same way.
+// The row takes the invocation's context (CRW-871): the oracle's process dies at the first SIGINT and
+// records nothing, so a mutation whose lock wait or pre-write check ends with that context answers
+// Interrupted (130) with nothing printed. Once the first write has started the command finishes and its
+// own answer is printed, because a published change is never relabelled as interrupted.
+func orchestrateVerb(ctx context.Context, args []string, _ io.Reader, stdout, stderr io.Writer) int {
+	cwd, err := syscall.Getwd()
+	if err != nil {
+		fmt.Fprintln(stderr, "crw cli failed: "+err.Error())
+		return 1
+	}
+	parsed := cli.ParseOrchestrateCliArgs(args, cwd)
+	if parsed.Error != nil {
+		fmt.Fprintln(stderr, cli.RenderOrchestrateParseError(*parsed.Error))
+		return 1
+	}
+	env := host.LookupEnv(os.LookupEnv)
+	read, err := cli.RunOrchestrateRead(parsed, cli.ReadEnv{Native: env, Process: env})
+	if err != nil {
+		fmt.Fprintln(stderr, "crw cli failed: "+err.Error())
+		return 1
+	}
+	if read.Result != nil {
+		fmt.Fprintln(stdout, read.Result.Output)
+		return read.Result.Code
+	}
+	result, err := cli.RunOrchestrateTransitionContext(ctx, *parsed.Args, read.SessionID)
+	if err != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
+		// The mutation chose to cancel before its first write; a completed one returned a CliResult and
+		// must print it, even if the context ended after the write started.
+		return Interrupted
+	}
+	if err != nil {
+		fmt.Fprintln(stderr, "crw cli failed: "+err.Error())
+		return 1
+	}
+	fmt.Fprintln(stdout, result.Output)
+	return result.Code
 }

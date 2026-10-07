@@ -20,7 +20,7 @@ follows is about what is read before anything moves and what is put back when it
 | `crw install install`, `crw install update` | Verify a release archive, install it as a new runtime directory, exercise it and move the owned pointer to it | OPS-2.4 |
 | `crw install rollback [<dir>]` | Point the owned pointer back at the runtime the last promotion replaced, or at a runtime directory the host record lists | OPS-2.4 |
 | `crw install remove <dir>` | Delete one runtime directory nothing selects, points at or runs out of | OPS-2.4 |
-| `crw install register-mcp [--owner plugin]` | Write the bridge record the plugin's declared server reads | OPS-2.2 |
+| `crw install register-mcp [--owner plugin] [--re-register-policy]` | Write the bridge record the plugin's declared server reads; with `--re-register-policy`, replace only its execution policy ([re-registering a changed execution policy](#re-registering-a-changed-execution-policy)) | OPS-2.2 |
 | `crw install hook [--owner plugin]` | Write the Stop settings the plugin's declared hook reads | OPS-6.3 |
 | `crw install register-service [--remove]` | Write and enable the one systemd user unit that starts the relay service when the user manager starts; with `--remove`, disable and delete it | OPS-4.1, OPS-6.1 |
 | `crw install status`, `crw doctor` | Read the installation, classify it and report the six check results; write nothing (the relay readings behind them are the relay's `doctor` without `--probe-write`, which creates no file of its own and never opens its write gate; what it still does is named under [Installing the runtime](#installing-the-runtime)) | OPS-2.1, OPS-2.2, OPS-6.1 |
@@ -417,8 +417,18 @@ operator's acknowledgement, and under it the command itself takes the OPS-4.5 ba
 anyone's memory. Inside the promotion lock, after the daemon-stopped and no-open-attempt cells have answered and before anything is promoted,
 it copies the whole state directory the gate read to `DIR`: copy only, byte for byte, the source opened read-only and nothing moved, recreated
 or deleted, here or on a failure. Directories and regular files are copied with their bytes and, once every byte is in place and verified, their permission bits, each synced after its mode is set so the mode and not only the bytes survives a power loss (the directory the backup is made in stays 0700, and a copy always keeps its owner able to open it: a source the installer could read only through its group gets the owner's read bit, and the manifest records both modes); a symbolic link to a regular file is copied as the
-file's bytes under the link's name (a link alone would back up nothing), and when `relay.sqlite3` is such a link the real file's `-wal` and `-shm`
-are copied beside it, so a restore opens with the commits only the log held; a socket, a FIFO or a device is listed as skipped. Each file is
+file's bytes under the link's name (a link alone would back up nothing), and when `relay.sqlite3` is such a link the real file's `-wal`
+is copied beside it, so a restore opens with the commits only the log held; a socket, a FIFO or a device is listed as skipped. The store's two
+sidecars follow SQLite's WAL mode: `relay.sqlite3-shm` is never listed, copied or compared, because SQLite rebuilds that index from the log on
+open, and `relay.sqlite3-wal` is copied when it is there at its copy, while an empty one that goes or appears between the listing and the copy is
+not a refusal (a log listed and gone is dropped, one that appeared after the listing is not copied, and the manifest's `storeSidecars` records which
+of the four happened). An empty log is the case this route exists for: a read-only open of a store no connection holds leaves one. A log that was
+not copied and holds frames in the second listing refuses instead, because a commit that stays in the log does not touch `relay.sqlite3` until a
+checkpoint, so the digest check alone would not see it and the backup would claim success while the live store held a row the copy lacks.
+`relay.sqlite3` itself and every other file keep the rule above, so a store that was written under the copy still refuses, and a copied `-wal` that
+is still there at the verification must digest to what was copied: one that a checkpoint has taken away by then is not a refusal either, and
+`relay.sqlite3` is the consistency the verification keeps.
+Each file is
 hashed while it is read and synced; then the state directory is read again, and the listing, every size and every file's digest, and the digest of
 every file in the copy, must be what was copied. Any difference, in any file, refuses the swap ("the state directory changed under the copy"):
 the copy is of one moment or it is not made. The backup, its manifest and the directories made for them are synced in their parents after the manifest is written, so a power loss cannot keep the files and lose the names that reach them. `DIR` and its manifest must not exist, must not lie inside the state directory, and must not lie
@@ -926,18 +936,61 @@ the bridge with the environment the launcher was given.
 The policy is part of the registration's identity, so the only rerun that succeeds is an identical
 one, answered `record_unchanged`. Any other difference is refused as `record_differs` and nothing is
 written: another file, the same file with other contents, a rerun that drops the flag, or adding a
-policy to a version-1 record. The refusal names the repair: move the record aside by hand, then run
-`crw install register-mcp` again. Every edit to the policy file, including adding an exception,
-therefore has two consequences. The relay picks the edit up when its daemon restarts. The bridge
-record has to be moved aside and registered again, and a thread started in between has no bridge
-tools. The digest is what lets a changed file fail visibly instead of being enforced unregistered.
+policy to a version-1 record. The refusal names the repair it has always named - move the record
+aside by hand, then register again - and that answer is unchanged. For the ordinary case, a policy
+file whose bytes changed, there is now a path that does not need the record moved at all:
+[re-registering a changed execution policy](#re-registering-a-changed-execution-policy). A version-1
+record still has to be moved aside, because giving it a policy changes its `recordVersion` as well.
+
+### Re-registering a changed execution policy
+
+The policy file is part of the registration's identity, so an edit to it - adding an exception, for
+example - leaves the record naming a digest the launcher refuses. `--re-register-policy` is the path
+that replaces that one field:
+
+    crw install register-mcp --re-register-policy --execution-policy /path/to/execution-policy.json
+
+It takes the file from the same `--execution-policy` flag the create path spells, reads and writes
+under the ownership lock beside the record, and replaces `executionPolicy` alone: `path` and
+`digest` become the new file's values and every other field keeps its bytes and its order. That
+promise holds for a record this installer wrote: a record in another spelling is refused as
+`record_not_canonical`, because publishing it would reserialize the fields this path leaves alone.
+The record must also be a regular file at that path: a symbolic link is refused as
+`record_symlinked`, because the replacement renames a file over the path itself and would turn the
+link into a regular file.
+The new file goes through the bridge's own parser first, exactly as the create path checks it, so a
+policy the bridge would refuse to start under answers `execution_policy_unreadable` and nothing is
+written. The bridge's second owner is refused here too: a `config.toml` entry that also starts this
+bridge answers `CONFLICT`, as it does on the create path.
+
+Before the replacement the record is copied, byte for byte as this run read it, to
+`<record>.crw-<timestamp>.bak` beside it; the new record is then published durably (a temporary file
+in the same directory, fsync of its contents, rename, and a directory fsync), read back, and the
+policy file hashed once more. The answer is `record_updated` and names the replaced field, the new
+policy's mode and role pairs, and the backup path. A read-back that does not match answers
+`record_applied_unverified` (exit 1, the record is in place and must not be relied on); a policy
+file that changed while the record was being published answers `record_policy_changed` with
+`applied` true, because the record was written and the launcher will refuse its digest.
+
+The other answers are the create path's own: a record that already names this policy is left as it is
+and answered `record_unchanged`, a host with no record at all is answered `record_absent` (register
+it first), a record whose bytes change between the decision and the write is answered
+`record_changed_underneath`, and a version-1 record is answered `record_differs`, because naming a
+policy also changes `recordVersion`. A `--dry-run` reports `record_would_update` and writes nothing.
+
+Nothing here touches a bridge or the relay service. The record is read at every bridge start, so a
+thread started afterwards picks the new policy up, while a relay service already running keeps the
+policy it started under and needs a restart to read the new one; the answer says so. Every edit to
+the policy file therefore has two consequences, and no longer needs the record to be moved aside: the
+relay picks the edit up when its daemon restarts, and the record is re-registered so the next bridge
+starts under the new digest. The digest is what lets a changed file fail visibly instead of being
+enforced unregistered.
 
 A created record is reported only after the policy file has been hashed again, following the write,
 and still matched. A mismatch immediately before the write writes nothing and answers
-`record_policy_changed`; a mismatch after it gets the same answer and the move-aside repair, and the
-record stays, because the launcher refuses its stale digest at every start. A removal by path cannot
-exclude a writer that does not take the ownership lock, such as an editor, so nothing here removes a
-record.
+`record_policy_changed`; a mismatch after it gets the same answer, and the record stays, because the
+launcher refuses its stale digest at every start. A removal by path cannot exclude a writer that does
+not take the ownership lock, such as an editor, so nothing here removes a record.
 
 Codex starts the server once for each thread it loads. That was observed on Codex Desktop 0.154.0:
 one App Server process with a separate bridge child per thread, and the child's start time matching

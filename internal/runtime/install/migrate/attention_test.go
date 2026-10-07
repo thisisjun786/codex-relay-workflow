@@ -86,7 +86,9 @@ func TestAttentionReportsOnlyBAndCSessions(t *testing.T) {
 }
 
 func TestAttentionReportsARecordItCannotDecode(t *testing.T) {
-	_, r, p := apPlan(t, map[string]string{"sessions/rec-1.json": "not json"}, nil)
+	// The record is a JSONL row: a session file that is not JSON is refused by the preflight before this report runs
+	// (CRW-682), so the undecodable case moves to a ledger whose reader skips a damaged line.
+	_, r, p := apPlan(t, map[string]string{"divergence/candidates.jsonl": "not json\n"}, nil)
 	got := attention(r, p)
 	if len(got) != 1 || got[0].Kind != "" || !strings.Contains(got[0].Detail, "cannot be decoded") {
 		t.Fatalf("got %v, want one undecoded entry", got)
@@ -125,7 +127,8 @@ func TestAttentionReportsTheInstallManifestTableKeys(t *testing.T) {
 }
 
 func TestAttentionBoundsWhatItReads(t *testing.T) {
-	_, r, p := apPlan(t, map[string]string{"sessions/rec-1.json": "{\"note\":\"" + strings.Repeat("x", attentionReadCap) + "\"}"}, nil)
+	// The session keeps a real phase so the preflight accepts it (CRW-682); P raises no freshness entry of its own.
+	_, r, p := apPlan(t, map[string]string{"sessions/rec-1.json": "{\"phase\":\"P\",\"note\":\"" + strings.Repeat("x", attentionReadCap) + "\"}"}, nil)
 	got := attention(r, p)
 	if len(got) != 1 || !strings.Contains(got[0].Detail, "larger than") {
 		t.Fatalf("got %v, want one entry naming the size bound", got)

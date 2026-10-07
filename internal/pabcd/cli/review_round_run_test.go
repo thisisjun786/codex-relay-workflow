@@ -506,6 +506,10 @@ type reviewRoundRunOracle struct {
 var reviewRoundRunChanged = map[string]string{
 	"open_drops_an_unreadable_round":  "review-round open: goalplan '" + reviewRoundRunSlug + "' holds reviewRounds[1] that this build cannot keep; refusing to rewrite it; retry",
 	"abort_drops_an_unreadable_round": "review-round abort: goalplan '" + reviewRoundRunSlug + "' holds reviewRounds[1] that this build cannot keep; refusing to rewrite it; retry",
+	// CRW-871: the oracle sanitises the id, so "open --session a/b" opened a round on session a-b's
+	// state and rewrote ITS goalplan while the caller named a different session. open and abort now
+	// refuse a non-canonical id before the state read, and the seeded plan is left untouched.
+	"open_unsafe_session_id": "review-round open: session id is not canonical",
 }
 
 var (

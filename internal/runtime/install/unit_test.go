@@ -79,7 +79,7 @@ func newUnitHost(t *testing.T) *unitHost {
 	t.Helper()
 	home := t.TempDir()
 	u := &unitHost{t: t, home: home, dest: filepath.Join(home, ".local", "share", "crw-runtime"), dir: filepath.Join(home, "units"), out: filepath.Join(home, "stub-out"), manager: &fakeManager{show: notLoaded}}
-	put(t, filepath.Join(u.dest, "bin-stub", "bin", "codex-session-relay"), "#!/bin/sh\necho \"$@\" >> \"$STUB_OUT/argv\"\nenv | sort > \"$STUB_OUT/env\"\ncat \"$STUB_OUT/status.json\"\n", 0o755)
+	writeExecutable(t, filepath.Join(u.dest, "bin-stub", "bin", "codex-session-relay"), []byte("#!/bin/sh\necho \"$@\" >> \"$STUB_OUT/argv\"\nenv | sort > \"$STUB_OUT/env\"\ncat \"$STUB_OUT/status.json\"\n"), 0o755)
 	if err := os.Symlink(filepath.Join(u.dest, "bin-stub"), filepath.Join(u.dest, "current")); err != nil {
 		t.Fatal(err)
 	}
