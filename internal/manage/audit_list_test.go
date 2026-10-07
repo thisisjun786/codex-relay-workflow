@@ -391,6 +391,22 @@ func TestAuditListUnreadableSourceIsUnknown(t *testing.T) {
 			},
 			want: "drafts", listKey: "drafts", reason: "dddddddddddddddd.json",
 		},
+		{
+			// JSON null decodes into the schema probe without an error and leaves the schema
+			// empty, so it takes the same branch as a draft that names no schema: a document
+			// that is not an object at all is not a foreign schema either.
+			name: "a draft that is JSON null",
+			break_: func(t *testing.T, state string) {
+				dir := filepath.Join(state, "drafts")
+				if err := os.MkdirAll(dir, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(dir, "eeeeeeeeeeeeeeee.json"), []byte("null"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: "drafts", listKey: "drafts", reason: "eeeeeeeeeeeeeeee.json",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
