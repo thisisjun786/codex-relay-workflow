@@ -421,157 +421,130 @@ func auditPRScrub(data []byte, scrubs []string) []byte {
 	return data
 }
 
-// auditPRDiffPaths is the paths a patch changes, in the order the patch names them. A
-// deletion is left out, because a deleted path has no content at the merge commit; a rename
-// is the target it became; a block with neither a `+++` line nor a rename is a binary hunk,
-// whose path only the `diff --git` header names.
-//
-// Only the block's header is read: once a hunk begins, a line that looks like a header is a
-// content line. A patch that adds a line whose own text starts with `++ ` renders it as
-// `+++ ...`, and reading that as a path would send the bundle to a file that does not exist.
-func auditPRDiffPaths(patch []byte) []string {
-	var out []string
-	seen := map[string]bool{}
-	add := func(path string) {
-		if path == "" || path == "/dev/null" || seen[path] {
-			return
+// auditPRScrubDocument scrubs every string value of a decoded JSON document, the keys
+// excepted and nested maps and slices included. It runs before the document is encoded,
+// because encoding/json escapes &, < and > as their \u00XX forms and a configured string that
+// carries one of those bytes would otherwise never match the encoded text.
+func auditPRScrubDocument(value any, scrubs []string) any {
+	switch typed := value.(type) {
+	case string:
+		return string(auditPRScrub([]byte(typed), scrubs))
+	case []string:
+		out := make([]string, len(typed))
+		for i, item := range typed {
+			out[i] = string(auditPRScrub([]byte(item), scrubs))
 		}
-		seen[path] = true
-		out = append(out, path)
+		return out
+	case []map[string]any:
+		out := make([]map[string]any, len(typed))
+		for i, item := range typed {
+			out[i] = auditPRScrubObject(item, scrubs)
+		}
+		return out
+	case []any:
+		out := make([]any, len(typed))
+		for i, item := range typed {
+			out[i] = auditPRScrubDocument(item, scrubs)
+		}
+		return out
+	case map[string]any:
+		return auditPRScrubObject(typed, scrubs)
+	default:
+		return value
 	}
-	var header, newPath, renameTo string
-	deleted := false
-	inHunk := false
-	flush := func() {
-		if deleted {
-			return
-		}
-		if newPath != "" {
-			add(newPath)
-			return
-		}
-		if renameTo != "" {
-			add(renameTo)
-			return
-		}
-		add(header)
+}
+
+// auditPRScrubObject scrubs the values of one decoded JSON object, leaving its keys as they
+// are: a key is the document's own field name, not a value a configuration can name.
+func auditPRScrubObject(value map[string]any, scrubs []string) map[string]any {
+	out := make(map[string]any, len(value))
+	for key, item := range value {
+		out[key] = auditPRScrubDocument(item, scrubs)
 	}
-	for _, line := range strings.Split(string(patch), "\n") {
-		switch {
-		case strings.HasPrefix(line, "diff --git "):
-			flush()
-			header, newPath, renameTo, deleted, inHunk = auditPRGitHeader(strings.TrimPrefix(line, "diff --git ")), "", "", false, false
-		case strings.HasPrefix(line, "deleted file mode "):
-			// A deleted file has no `+++ /dev/null` line when it is binary or empty, so the
-			// extended header is the only mark the block carries. Without this, the block
-			// falls back to the header path, and reading a deleted path at the merge commit
-			// fails the whole run on a pull request that can never be recorded.
-			deleted = true
-		case strings.HasPrefix(line, "@@"):
-			// The hunk's content follows; nothing after this is a header until the next block.
-			inHunk = true
-		case inHunk:
-			// A hunk's content is data, never a path.
-		case strings.HasPrefix(line, "rename to "):
-			renameTo = auditPRUnquote(strings.TrimPrefix(line, "rename to "))
-		case strings.HasPrefix(line, "+++ "):
-			path := auditPRUnquote(strings.TrimPrefix(line, "+++ "))
-			if path == "/dev/null" {
-				deleted = true
-				continue
-			}
-			newPath = strings.TrimPrefix(path, "b/")
-		}
-	}
-	flush()
 	return out
 }
 
-// auditPRGitHeader reads the new path out of a `diff --git` header, honouring a quoted
-// path. The header names the old path first, so the second token is the one a bundle reads.
-func auditPRGitHeader(rest string) string {
-	_, remainder, ok := auditPRToken(rest)
-	if !ok {
-		return ""
+// auditPRDiffPaths is the paths a merge commit changes, read from git rather than from the
+// patch text. A patch spells a path in more than one place and adds a tab after a `+++` line
+// whose path carries a space, so reading the paths back out of it means re-implementing git's
+// own quoting rules; `diff-tree --name-status -z` answers the paths themselves, NUL-delimited,
+// with nothing to unquote.
+//
+// A deletion is left out, because a deleted path has no content at the merge commit; a rename
+// or a copy contributes the path it became.
+func auditPRDiffPaths(ctx context.Context, co auditPkgCheckout, merge string) ([]string, error) {
+	if co.Repository == "" {
+		return nil, errors.New("checkout_unconfigured: the checkout section names no repository")
 	}
-	second, _, ok := auditPRToken(remainder)
-	if !ok {
-		return ""
+	if merge == "" {
+		return nil, errors.New("the pull request names no merge commit")
 	}
-	return strings.TrimPrefix(second, "b/")
+	out, err := auditPkgGit(ctx, co.Repository, "diff-tree", "-r", "-z", "--no-commit-id", "--name-status", "-M", merge+"^1", merge)
+	if err != nil {
+		return nil, err
+	}
+	return auditPRNameStatusPaths(out)
 }
 
-// auditPRToken reads one whitespace-delimited token, honouring a C-quoted token that holds
-// spaces, and returns it and the rest of the line.
-func auditPRToken(line string) (token, rest string, ok bool) {
-	line = strings.TrimLeft(line, " ")
-	if line == "" {
-		return "", "", false
-	}
-	if line[0] != '"' {
-		if at := strings.IndexByte(line, ' '); at >= 0 {
-			return line[:at], line[at:], true
+// auditPRNameStatusPaths reads the NUL-delimited records of `git diff-tree --name-status -z`.
+// Each change is a status record and its path; a rename or a copy carries two paths and
+// contributes the second, the path it became. A deletion is skipped, because a deleted path
+// has no content at the merge commit.
+//
+// A record that is not well formed is an error rather than the end of the list: the answer is
+// not the one that was asked for, and half-reading it would build a bundle missing a file the
+// change carries while the bundle still reads as complete.
+func auditPRNameStatusPaths(out []byte) ([]string, error) {
+	records := auditPkNulRecords(out)
+	var paths []string
+	seen := map[string]bool{}
+	add := func(path string) {
+		if path == "" || seen[path] {
+			return
 		}
-		return line, "", true
+		seen[path] = true
+		paths = append(paths, path)
 	}
-	for i := 1; i < len(line); i++ {
-		switch line[i] {
-		case '\\':
-			i++
-		case '"':
-			return auditPRUnquote(line[:i+1]), line[i+1:], true
-		}
-	}
-	return "", "", false
-}
-
-// auditPRUnquote reads a path a patch may have written C-quoted, because git quotes a path
-// that carries a space, a tab, a quote or a byte outside ASCII. A token that is not quoted
-// is returned as it stands.
-func auditPRUnquote(token string) string {
-	if len(token) < 2 || token[0] != '"' || token[len(token)-1] != '"' {
-		return token
-	}
-	body := token[1 : len(token)-1]
-	var out strings.Builder
-	for i := 0; i < len(body); i++ {
-		if body[i] != '\\' || i+1 >= len(body) {
-			out.WriteByte(body[i])
-			continue
+	for i := 0; i < len(records); {
+		status := records[i]
+		if !auditPRNameStatus(status) {
+			return nil, fmt.Errorf("the git diff-tree record %d is %q, not a status", i+1, status)
 		}
 		i++
-		switch body[i] {
-		case 'a':
-			out.WriteByte('\a')
-		case 'b':
-			out.WriteByte('\b')
-		case 'f':
-			out.WriteByte('\f')
-		case 'n':
-			out.WriteByte('\n')
-		case 'r':
-			out.WriteByte('\r')
-		case 't':
-			out.WriteByte('\t')
-		case 'v':
-			out.WriteByte('\v')
-		case '0', '1', '2', '3', '4', '5', '6', '7':
-			octal := string(body[i])
-			for len(octal) < 3 && i+1 < len(body) && body[i+1] >= '0' && body[i+1] <= '7' {
-				i++
-				octal += string(body[i])
+		if status[0] == 'R' || status[0] == 'C' {
+			// A rename or a copy names the path it came from and the path it became; the
+			// bundle reads the latter.
+			if i+1 >= len(records) {
+				return nil, fmt.Errorf("the git diff-tree record %q names no target path", status)
 			}
-			value, err := strconv.ParseUint(octal, 8, 8)
-			if err != nil {
-				out.WriteString(octal)
-				continue
-			}
-			out.WriteByte(byte(value))
-		default:
-			out.WriteByte(body[i])
+			i++
+			add(records[i])
+			i++
+			continue
+		}
+		if i >= len(records) {
+			return nil, fmt.Errorf("the git diff-tree record %q names no path", status)
+		}
+		if status[0] != 'D' {
+			add(records[i])
+		}
+		i++
+	}
+	return paths, nil
+}
+
+// auditPRNameStatus reports whether a record is a `git diff-tree --name-status` status: one
+// letter of the set git writes, followed by the similarity score a rename or a copy carries.
+func auditPRNameStatus(record string) bool {
+	if record == "" || !strings.ContainsRune("ACDMRTUXB", rune(record[0])) {
+		return false
+	}
+	for i := 1; i < len(record); i++ {
+		if record[i] < '0' || record[i] > '9' {
+			return false
 		}
 	}
-	return out.String()
+	return true
 }
 
 // auditPRFetch brings the integration branch's commits into the configured checkout, so the
@@ -620,8 +593,9 @@ func auditPRTask(source auditPRSource) string {
 
 // auditPRBuild assembles one pull request bundle at the merge commit and returns its
 // directory. The bundle is rebuilt from scratch, because the grader reads whatever the
-// directory holds, and bundle.json is written last, so a run that fails part way leaves no
-// bundle that reads as complete.
+// directory holds. A build that fails part way removes the directory it was writing: bundle.json
+// is written last, so a partial directory would already read as incomplete, and the caller's
+// per-target skip relies on a failed target leaving nothing behind.
 func auditPRBuild(ctx context.Context, e *Env, cfg *Config, section auditPRSection, co auditPkgCheckout, source auditPRSource) (string, error) {
 	if co.Repository == "" {
 		return "", errors.New("checkout_unconfigured: the checkout section names no repository")
@@ -631,6 +605,15 @@ func auditPRBuild(ctx context.Context, e *Env, cfg *Config, section auditPRSecti
 	if err := auditPkgResetDir(root, dir); err != nil {
 		return "", err
 	}
+	// A failure anywhere below leaves no half-built directory for the next run, and no directory
+	// the grader could mistake for a bundle. The path was proved strictly below the root by
+	// auditPkgResetDir just above, so this removal cannot reach anything else.
+	complete := false
+	defer func() {
+		if !complete {
+			_ = os.RemoveAll(dir)
+		}
+	}()
 	// Every file the bundle holds goes through the scrub, so no model, pair or child id the
 	// configuration names reaches the grader through a description, a criterion or a patch.
 	if err := auditPRWriteFile(filepath.Join(dir, auditPRDiffFile), auditPRScrub(source.Patch, section.Scrub)); err != nil {
@@ -640,7 +623,11 @@ func auditPRBuild(ctx context.Context, e *Env, cfg *Config, section auditPRSecti
 	// as the bytes inside it: a changed path that carries a configured string would otherwise
 	// hand the grader by directory listing exactly the value every file's content redacts.
 	placed := map[string]string{}
-	for _, path := range auditPRDiffPaths(source.Patch) {
+	paths, err := auditPRDiffPaths(ctx, co, source.Target.Merge)
+	if err != nil {
+		return "", err
+	}
+	for _, path := range paths {
 		name := string(auditPRScrub([]byte(path), section.Scrub))
 		if other, taken := placed[name]; taken {
 			return "", fmt.Errorf("the pull request paths %q and %q both redact to %q", other, path, name)
@@ -661,15 +648,11 @@ func auditPRBuild(ctx context.Context, e *Env, cfg *Config, section auditPRSecti
 	if err := auditPRWriteFile(filepath.Join(dir, auditPRTaskFile), auditPRScrub([]byte(auditPRTask(source)), section.Scrub)); err != nil {
 		return "", err
 	}
-	criteriaDoc := map[string]any{
-		"issue": source.Target.Issue, "criteria": source.Criteria,
-		"criteria_unavailable": source.CriteriaUnavailable,
-	}
-	criteria, err := json.MarshalIndent(criteriaDoc, "", "  ")
+	criteria, err := auditPRCriteriaDocument(source, section.Scrub)
 	if err != nil {
 		return "", err
 	}
-	if err := auditPRWriteFile(filepath.Join(dir, auditPRCriteriaFile), auditPRScrub(append(criteria, '\n'), section.Scrub)); err != nil {
+	if err := auditPRWriteFile(filepath.Join(dir, auditPRCriteriaFile), criteria); err != nil {
 		return "", err
 	}
 	bundle := map[string]any{
@@ -685,7 +668,29 @@ func auditPRBuild(ctx context.Context, e *Env, cfg *Config, section auditPRSecti
 	if err := auditPRWriteFile(filepath.Join(dir, auditBundleFile), append(data, '\n')); err != nil {
 		return "", err
 	}
+	complete = true
 	return dir, nil
+}
+
+// auditPRCriteriaDocument encodes the criteria document the grader reads. Every string value
+// is scrubbed before the document is encoded, because encoding/json escapes &, < and > as
+// \u0026 and the like: a scrub applied only to the encoded bytes would never match a name that
+// carries one of them, and the grader would read the name itself back out of the JSON. The
+// encoder writes no HTML escape, and the encoded bytes go through the byte scrub once more, so
+// a value that reached the document by another route is still replaced.
+func auditPRCriteriaDocument(source auditPRSource, scrubs []string) ([]byte, error) {
+	doc := map[string]any{
+		"issue": source.Target.Issue, "criteria": source.Criteria,
+		"criteria_unavailable": source.CriteriaUnavailable,
+	}
+	var encoded bytes.Buffer
+	encoder := json.NewEncoder(&encoded)
+	encoder.SetEscapeHTML(false)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(auditPRScrubDocument(doc, scrubs)); err != nil {
+		return nil, err
+	}
+	return auditPRScrub(encoded.Bytes(), scrubs), nil
 }
 
 // auditPRWriteBlob writes one changed file into the bundle. The open refuses to follow a
@@ -833,6 +838,7 @@ func auditPRRunWith(ctx context.Context, e *Env, cfg *Config, max int, dryRun bo
 	if dryRun {
 		return auditPRWriteDryRun(e, targets)
 	}
+	failed := false
 	if len(targets) > 0 {
 		co, err := auditPkgCheckoutOf(cfg)
 		if err != nil {
@@ -863,8 +869,13 @@ func auditPRRunWith(ctx context.Context, e *Env, cfg *Config, max int, dryRun bo
 				RelationshipUnavailable: target.Child.Relationship == "", Relationship: target.Child.Relationship,
 			})
 			if err != nil {
-				fmt.Fprintf(e.Stderr, "crw manage audit pr: error: %v\n", err)
-				return 1
+				// One pull request whose bundle cannot be built does not cost the audit of the rest:
+				// the target is named and skipped, its half-built directory is gone and no ledger row
+				// is written, so the next run picks it up again. The run still reports the failure
+				// at the end, so a caller that wants to know does not have to read stderr.
+				fmt.Fprintf(e.Stderr, "crw manage audit pr: #%d: %v\n", target.Number, err)
+				failed = true
+				continue
 			}
 			results, err := AuditGrade(ctx, e, cfg, []AuditJob{{Bundle: dir, Pair: target.Pair, Phase: target.Phase}})
 			if err != nil {
@@ -879,6 +890,9 @@ func auditPRRunWith(ctx context.Context, e *Env, cfg *Config, max int, dryRun bo
 	}
 	if err := auditReportWrite(e, cfg); err != nil {
 		fmt.Fprintf(e.Stderr, "crw manage audit pr: error: %v\n", err)
+		return 1
+	}
+	if failed {
 		return 1
 	}
 	return 0
