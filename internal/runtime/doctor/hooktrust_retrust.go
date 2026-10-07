@@ -479,7 +479,18 @@ func hookTrustRetrustWith(codexHome, pluginRoot, pluginKey string, bootstrapOK b
 		result.LateWrite = true
 		return result, nil, fmt.Errorf("%s changed again after retrust published it; the newer content was left in place", targetPath)
 	}
-	verification, err := DiagnoseHookTrust(codexHome, pluginRoot, pluginKey)
+	if !displacedKnown {
+		// The target was read and holds the published content, so the report can say so; but the content
+		// the exchange displaced could not be read, so whether a writer raced the exchange could not be
+		// decided. That is a failure, not a success with a warning: the publication cannot be called
+		// verified when the comparison it depends on never ran (CRW-936).
+		return result, nil, fmt.Errorf("retrust published %s but the content the exchange displaced at %s could not be read back, so whether another writer raced the exchange could not be verified (%s)", targetPath, result.displacedPath(), result.DisplacedError)
+	}
+	// The diagnosis runs on the bytes just read rather than on a fresh read of the path: the two would
+	// be the same file, but a second read can fail or see different content, and the report has already
+	// grounded what config.toml holds on this snapshot. Reading it again could only make the report
+	// contradict itself (CRW-936).
+	verification, err := hookTrustRetrustDiagnoseContent(pluginRoot, pluginKey, hookTrustEntriesUTF8(after))
 	if err != nil {
 		return result, nil, err
 	}
@@ -497,6 +508,37 @@ func hookTrustRetrustWith(codexHome, pluginRoot, pluginKey string, bootstrapOK b
 		return result, verification, errors.New("post-publication verification failed for " + strings.Join(drifted, ", ") + "; the hooks changed after the pre-write verification")
 	}
 	return result, verification, nil
+}
+
+// hookTrustRetrustDiagnoseContent is DiagnoseHookTrust's answer for content already in hand. The
+// post-publication check runs on the bytes the report was grounded on rather than reading the path a
+// second time (CRW-936): the same file read twice can differ, and a second read that failed would let
+// the report claim the target holds the rewritten config while the check that contradicts it never
+// ran. The reading step is the only difference; the listing and the per-entry rule are the same.
+func hookTrustRetrustDiagnoseContent(pluginRoot, pluginKey, content string) ([]HookTrustResult, error) {
+	entries, err := ListHookTrustEntries(pluginRoot, pluginKey)
+	if err != nil {
+		return nil, err
+	}
+	results := make([]HookTrustResult, 0, len(entries))
+	for _, entry := range entries {
+		sections := hookTrustTomlExactHookSections(content, entry.Key)
+		var hashes []hookTrustTomlTrustedHash
+		for _, section := range sections {
+			hashes = append(hashes, hookTrustTomlTrustedHashLines(content[section.BodyStart:section.End])...)
+		}
+		result := HookTrustResult{HookTrustEntry: entry, Status: "untrusted"}
+		if len(sections) == 1 && len(hashes) == 1 {
+			actual := hashes[0].Value
+			result.Actual = &actual
+			result.Status = "drifted"
+			if actual == entry.Hash {
+				result.Status = "trusted"
+			}
+		}
+		results = append(results, result)
+	}
+	return results, nil
 }
 
 // hookTrustRetrustExec is the real HookTrustRetrustRunner: run file with argv under env and answer

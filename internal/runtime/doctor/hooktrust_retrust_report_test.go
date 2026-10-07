@@ -312,7 +312,9 @@ func TestHookTrustRetrustReportsAnUnreadableDisplacedFileWithALaterSave(t *testi
 
 // The same branch with a cooperative-looking target: config.toml still holds what retrust published,
 // but the displaced content was never read, so the report must not say the displaced path holds the
-// content it displaced. Before the fix it said exactly that.
+// content it displaced, and the run must not be called a success: the comparison the publication's
+// verification depends on never ran. Before the fix the report claimed the displaced content and the
+// command exited 0.
 func TestHookTrustRetrustReportsAnUnreadableDisplacedFileWithoutNamingItsContent(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("the fault is a permission one, and root reads a write-only file")
@@ -332,10 +334,11 @@ func TestHookTrustRetrustReportsAnUnreadableDisplacedFileWithoutNamingItsContent
 			return nil, &crwdir.PublishedError{Err: errors.New("injected move failure"), DisplacedAt: kept}
 		},
 	})
-	// The publication itself succeeded and only the displaced read failed, so this stays the warning
-	// CRW-844 defined: the publication counts as done and the command exits 0.
-	if err != nil {
-		t.Fatalf("a post-exchange failure was reported as a refusal: %v", err)
+	// The publication counts as done (the exchange ran and config.toml holds the published content),
+	// but the run must not report success: the displaced bytes were never read, so whether a writer
+	// raced the exchange was never decided.
+	if err == nil {
+		t.Fatal("an unverified publication was reported as a success")
 	}
 	if !result.Published || result.Warning == "" || !result.DisplacedUnreadable {
 		t.Fatalf("the unreadable displaced file was not recorded: %+v", result)
@@ -401,4 +404,57 @@ func retrustRunWithEnv(f *casFixture, env hostenv.LookupEnv, args ...string) (st
 	var stdout, stderr bytes.Buffer
 	code := HookTrustRetrustCLI(args, &stdout, &stderr, env, okRunner, f.plugin, f.now())
 	return stdout.String(), stderr.String(), code
+}
+
+// The post-publication check must read the very bytes the report was grounded on. DiagnoseHookTrust
+// reads the config path again, so a writer that lands between the read-back and the check can make it
+// read a different document - or fail - and the run then contradicts the content the report just
+// stated. Here the Codex home's config.toml is a symlink: the lock and the read-back use the file it
+// named when the run started, and the seam repoints the symlink after the publication, so a second
+// read of the path sees the drifted document while the published file still holds the trusted one.
+func TestHookTrustRetrustDiagnosesTheReadBackSnapshotNotASecondRead(t *testing.T) {
+	f := newCASFixture(t, "")
+	real := filepath.Join(f.root, "real-config.toml")
+	f.write(real, f.installed())
+	if err := os.Symlink(real, f.config()); err != nil {
+		t.Fatal(err)
+	}
+	drifted := filepath.Join(f.root, "drifted.toml")
+	f.write(drifted, "model = \"drifted-after-the-publication\"\n")
+
+	result, verification, err := hookTrustRetrustWith(f.home, f.plugin, f.key, true, okRunner, f.env(), f.now(), &hookTrustRetrustSeams{
+		publish: func(target string, expected, next []byte, backupPath string) ([]byte, error) {
+			if werr := os.WriteFile(backupPath, expected, 0o644); werr != nil {
+				t.Fatal(werr)
+			}
+			if werr := os.WriteFile(target, next, 0o644); werr != nil {
+				t.Fatal(werr)
+			}
+			// The publication is done; the path the Codex home names is repointed afterwards.
+			if werr := os.Remove(f.config()); werr != nil {
+				t.Fatal(werr)
+			}
+			if werr := os.Symlink(drifted, f.config()); werr != nil {
+				t.Fatal(werr)
+			}
+			return expected, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("the check contradicted the content the report read: %v", err)
+	}
+	if !result.Published || result.Conflict || result.LateWrite || result.RecheckFailed {
+		t.Fatalf("the publication state is wrong: %+v", result)
+	}
+	if len(verification) != len(f.entries) {
+		t.Fatalf("the diagnosis did not run on the published content: %+v", verification)
+	}
+	for _, item := range verification {
+		if item.Status != "trusted" {
+			t.Fatalf("the published content is not trusted: %+v", item)
+		}
+	}
+	if got := f.read(real); !strings.Contains(got, f.entries[1].Hash) {
+		t.Fatalf("the published file does not hold the rewritten config: %q", got)
+	}
 }
