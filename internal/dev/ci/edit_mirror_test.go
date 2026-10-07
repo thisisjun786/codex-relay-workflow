@@ -169,13 +169,21 @@ func editMirrorGuiSteps(conclusion string) []editMirrorStepFixture {
 	return steps
 }
 
-// editMirrorGuiStepsFrom is editMirrorGuiSteps with one step's conclusion changed.
-func editMirrorGuiStepsFrom(name, conclusion string) []editMirrorStepFixture {
+// editMirrorGuiStepsFrom is editMirrorGuiSteps with one step's conclusion changed. A name that
+// matches no step is a test that would otherwise assert a different scenario than it reads, so it
+// fails loudly rather than returning the all-success fixture.
+func editMirrorGuiStepsFrom(t *testing.T, name, conclusion string) []editMirrorStepFixture {
+	t.Helper()
 	steps := editMirrorGuiSteps("success")
+	found := false
 	for i := range steps {
 		if steps[i].name == name {
 			steps[i].conclusion = conclusion
+			found = true
 		}
+	}
+	if !found {
+		t.Fatalf("no gui screen step is named %q", name)
 	}
 	return steps
 }
@@ -949,7 +957,7 @@ func TestEditMirror_the_gui_job_is_mirrored_only_when_the_screens_were_verified(
 		{
 			name:    "the screen tests failed",
 			runs:    []editMirrorRunFixture{run},
-			jobs:    map[int][]editMirrorJobFixture{1111: {editMirrorJobWithSteps("gui", "success", 1, editMirrorGuiStepsFrom(editMirrorGuiStepNames[1], "failure")...)}},
+			jobs:    map[int][]editMirrorJobFixture{1111: {editMirrorJobWithSteps("gui", "success", 1, editMirrorGuiStepsFrom(t, editMirrorGuiStepNames[1], "failure")...)}},
 			jobName: "gui",
 			want:    "false",
 		},
@@ -976,8 +984,10 @@ func TestEditMirror_the_gui_job_is_mirrored_only_when_the_screens_were_verified(
 }
 
 // edit_mirror.sh looks for the gui job's screen steps by name, so the names it holds have to be the
-// ones ci.yml's gui job gives those steps: a rename on either side is a red test here rather than a
-// gui job mirrored without its screens verified.
+// ones ci.yml's gui job gives those steps. The two sets are compared as sets: the gui job's steps
+// that run only when the changed-path decision said true are exactly what verifies the screens, so a
+// rename in either file, a removal, and a newly added screen step each go red here rather than a gui
+// job mirrored without all of its screens verified.
 func TestEditMirror_the_gui_screen_step_names_match_the_workflow(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(editMirrorRepoRoot(), "scripts", "ci", "edit_mirror.sh"))
 	if err != nil {
@@ -987,15 +997,15 @@ func TestEditMirror_the_gui_screen_step_names_match_the_workflow(t *testing.T) {
 	editMirrorExpectEqual(t, "the screen steps the script watches", names, editMirrorGuiStepNames)
 
 	jobs, _ := editMirrorJobs(t)
-	inWorkflow := map[string]bool{}
+	var inWorkflow []string
 	for _, step := range editMirrorSteps(t, jobs["gui"]) {
-		inWorkflow[step["name"]] = true
-	}
-	for _, name := range names {
-		if !inWorkflow[name] {
-			t.Errorf("edit_mirror.sh watches the gui step %q, which ci.yml's gui job does not name", name)
+		// The screen steps are the job's run steps behind the changed-path decision; setup-go and
+		// setup-node carry the same condition but are actions, not verification steps.
+		if step["run"] != "" && strings.Contains(step["if"], "steps.paths.outputs.changed == 'true'") {
+			inWorkflow = append(inWorkflow, step["name"])
 		}
 	}
+	editMirrorExpectEqual(t, "the screen steps ci.yml's gui job runs", editMirrorSorted(inWorkflow), editMirrorSorted(names))
 }
 
 // editMirrorScriptGuiStepNames reads the screen step names edit_mirror.sh holds: the quoted lines
