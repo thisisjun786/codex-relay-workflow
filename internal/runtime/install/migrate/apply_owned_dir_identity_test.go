@@ -14,6 +14,7 @@ package migrate
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -309,10 +310,10 @@ func TestMigrateOwnedDirIdentityHostileUmaskAfterAnInterruption(t *testing.T) {
 	}
 }
 
-// C1: a kernel whose fchmodat cannot express no-follow (Linux before fchmodat2) answers EOPNOTSUPP. The
-// name is this run's own unguessable temporary, so the same chmod without the flag is used and the
-// creation still ends at the requested mode, on a host whose mkdir dropped the sticky bit included.
-func TestMigrateOwnedDirIdentityChmodWithoutNoFollowOnAnOlderKernel(t *testing.T) {
+// C1: a kernel whose fchmodat cannot express no-follow (Linux before fchmodat2) is refused rather than
+// falling back to a chmod that would follow a link another actor could put at the temporary name. The
+// refusal stops the run, and the directory this run made is removed so no unmarked directory is left.
+func TestMigrateOwnedDirIdentityChmodWithoutNoFollowIsRefused(t *testing.T) {
 	restore := migrateOwnedDirIdentityFchmodat
 	t.Cleanup(func() { migrateOwnedDirIdentityFchmodat = restore })
 	var flags []int
@@ -323,13 +324,48 @@ func TestMigrateOwnedDirIdentityChmodWithoutNoFollowOnAnOlderKernel(t *testing.T
 		}
 		return restore(dirfd, name, mode, fl)
 	}
-	migrateOwnedDirIdentityDarwinMkdir(t)
 	ws, r, p := apPlan(t, migrateOwnedDirIdentityEntries(), nil)
-	if _, err := apply(r, p); err != nil {
-		t.Fatal(err)
+	_, err := apply(r, p)
+	wantRefusal(t, err, ReasonUnsupported)
+	if len(flags) == 0 || flags[0] != unix.AT_SYMLINK_NOFOLLOW {
+		t.Errorf("the by-name chmod was asked with flags %v; want no-follow first", flags)
 	}
-	if len(flags) < 2 || flags[0] != unix.AT_SYMLINK_NOFOLLOW || flags[1] != 0 {
-		t.Errorf("the by-name chmod was asked with flags %v; want no-follow first and then no flag", flags)
+	for _, f := range flags {
+		if f == 0 {
+			t.Error("the run fell back to a chmod that follows a link")
+		}
 	}
+	if _, err := os.Lstat(apDst(ws, "")); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("a refused creation must leave no directory: %v", err)
+	}
+}
+
+// C1: a creation that reached its rename and then failed is this run's directory, so a retry with the
+// same pinned pair finishes its mode instead of reading it as another actor's. On the code before the
+// retry fix the second apply reported the root as a denied creation and left it at the marker mode.
+func TestMigrateOwnedDirIdentityRerunWithTheSamePinnedPairFinishesTheRoot(t *testing.T) {
+	ws, r, p := apPlan(t, migrateOwnedDirIdentityEntries(), nil)
+	syncs := 0
+	clearAt := migrateOwnedDirIdentitySteps(t, func(step string) error {
+		if step == "sync" {
+			if syncs++; syncs == 1 { // the project root's creation, which this case stops
+				return errApplyInterrupted
+			}
+		}
+		return nil
+	})
+	if _, err := apply(r, p); !errors.Is(err, errApplyInterrupted) {
+		t.Fatalf("the interrupted run: %v", err)
+	}
+	// The rename put the root at its name before the sync failed, so the root is this run's and keeps
+	// the mode its own creation was asked for; the marker chmod that follows it never ran.
+	migrateOwnedDirIdentityWantRaw(t, apDst(ws, ""), 0o700)
+	clearAt()
+	res, err := apply(r, p)
+	must(t, err)
+	migrateOwnedDirIdentityWantRaw(t, apDst(ws, ""), 0o755)
 	migrateOwnedDirIdentityWantRaw(t, apDst(ws, "sessions"), 0o755)
+	if ai := apItem(t, res, "."); strings.Contains(ai.Note, "kept its mode") {
+		t.Errorf("the retry must finish the root this run made, note = %q", ai.Note)
+	}
 }
