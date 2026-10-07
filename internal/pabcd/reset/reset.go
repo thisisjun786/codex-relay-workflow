@@ -288,15 +288,7 @@ func resetLinkWalkTarget(dir *os.File, name, target string) (exists, inside bool
 			// there, so ask the kernel here and answer absent when it cannot search. This is the
 			// question the last dot component has always asked, now asked at every dot component: the
 			// kernel answers EACCES for a directory it cannot search and the link is kept.
-			searchable, asked := resetLinkWalkSearchable(dir, walked)
-			if !asked {
-				// The walked pathname itself has reached the kernel's single-pathname limit, so the
-				// search question cannot be asked. That is not an answer about search permission: the
-				// walk cannot decide this target, so the caller keeps the descriptor stat and the
-				// root-path judgement, which answer as the kernel does for the link.
-				return false, false
-			}
-			if !searchable {
+			if !resetLinkWalkSearchable(dir, walked) {
 				return false, true
 			}
 			if component == ".." {
@@ -310,14 +302,6 @@ func resetLinkWalkTarget(dir *os.File, name, target string) (exists, inside bool
 		path := resetLinkWalkPath(walked, component)
 		st, err := resetLinkWalkLstat(dir, path)
 		if err != nil {
-			// The walk resolves the target through one concatenated pathname, and the kernel applies its
-			// own limit to a single pathname. ENAMETOOLONG therefore reports the walk's own limit, not
-			// the kernel's answer about the target, which may still resolve: the walk cannot decide it,
-			// so it keeps the descriptor stat and the root-path judgement. Every other error is the
-			// kernel's answer about the target and is absent.
-			if errors.Is(err, unix.ENAMETOOLONG) {
-				return false, false
-			}
 			return false, true
 		}
 		if st.Mode&unix.S_IFMT == unix.S_IFLNK {
@@ -389,15 +373,10 @@ func resetLinkWalkReadlink(dir *os.File, path string) (string, error) {
 // existence or executability check on the pathname would accept an executable file.
 //
 // A directory the kernel cannot search, and one that stopped being a directory, are both reported as
-// not searchable, which is the kernel's answer for the link. The second result reports that the
-// walked pathname itself has reached the kernel's single-pathname limit, where the question cannot
-// be asked and the walk cannot decide the target.
-func resetLinkWalkSearchable(dir *os.File, walked []string) (searchable, asked bool) {
+// not searchable, which is the kernel's answer for the link.
+func resetLinkWalkSearchable(dir *os.File, walked []string) bool {
 	_, err := resetLinkWalkLstat(dir, resetLinkWalkSearchPath(walked))
-	if errors.Is(err, unix.ENAMETOOLONG) {
-		return false, false
-	}
-	return err == nil, true
+	return err == nil
 }
 
 // resetLinkWalkSearchPath is the pathname the search question asks about: the walked directory
