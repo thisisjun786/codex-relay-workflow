@@ -45,6 +45,20 @@ func (w *TurnWatch) Context(ctx context.Context) context.Context {
 	return context.WithValue(ctx, watchContextKey{}, w)
 }
 
+// Transmitted reports whether this watch's turn/start frame was written to the connection. The
+// flag is set immediately before the write (client.request), so a call the client withheld before
+// writing -- a connection that already ended, or a retired watch -- reports false and no turn can
+// have started. Read under the subscription lock the writer holds, so a caller on another
+// goroutine reads the write's own verdict rather than a torn one.
+func (w *TurnWatch) Transmitted() bool {
+	if w.manager == nil {
+		return false
+	}
+	w.manager.mu.Lock()
+	defer w.manager.mu.Unlock()
+	return w.transmitted
+}
+
 type subscriptionManager struct {
 	client            *Client
 	mu                sync.Mutex

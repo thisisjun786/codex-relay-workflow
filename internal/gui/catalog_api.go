@@ -11,9 +11,10 @@ import (
 // process, so the server shares one reader across its requests rather than building one per call.
 var catalogReader role.CatalogReader
 
-// catalogHandler answers GET /api/catalog[?refresh=1] with the model catalog. The three states the
-// reader distinguishes are returned unchanged: a catalog that could not be read is not reported as
-// an unsupported one.
+// catalogHandler answers GET /api/catalog[?refresh=1] with the model catalog. The reader owns the
+// judgement, and this route returns its answer unchanged: unsupported (this host's OCX does not
+// read the live catalog), a read failure, and stale (a failed refresh behind a cached list) are
+// three states the reader tells apart, and re-deciding any of them here would be a second reader.
 func catalogHandler(_ *Env, r *http.Request) (Response, error) {
 	force := r.URL.Query().Get("refresh") == "1"
 	catalog, err := catalogReader.ReadCatalog(role.CatalogOptions{
