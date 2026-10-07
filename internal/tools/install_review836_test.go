@@ -307,9 +307,10 @@ func TestToolsReview836IdentityRefusesALocationThatNamesAnotherObject(t *testing
 	}
 }
 
-// C2, not-a-directory side: only a directory is ever this call's to remove. The record here claims
-// the identity of the regular file itself, so nothing but the directory check keeps the removal
-// from deleting it; a record whose identity matches is not by itself a licence to remove a file.
+// C2, not-a-directory side: only a directory is ever this call's to remove. The record here names
+// the regular file standing at the path and claims that file's own identity, so nothing but the
+// directory check keeps the removal from deleting it: a record whose identity matches is not by
+// itself a licence to remove whatever is there.
 func TestToolsReview836RemoveCreatedLeavesANonDirectoryAlone(t *testing.T) {
 	base := t.TempDir()
 	target := filepath.Join(base, "a", "b")
@@ -325,6 +326,9 @@ func TestToolsReview836RemoveCreatedLeavesANonDirectoryAlone(t *testing.T) {
 	info, err := os.Lstat(target)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if info.IsDir() {
+		t.Fatal("the test did not place a regular file at the recorded path")
 	}
 	created := []createRootRecord{{path: target, resolved: target, info: info}}
 
