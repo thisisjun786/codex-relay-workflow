@@ -77,7 +77,7 @@ func CheckCase(target Target, c Case) (problem string) {
 	// The cleanup error is reported rather than discarded: a case root that survived replay says the
 	// harness left a tree on the host, which is not a replay result.
 	defer func() {
-		if err := RemoveCaseRoot(root); err != nil {
+		if err := CleanupCaseRoot(root); err != nil {
 			problem = joinProblem(problem, fmt.Sprintf("the case root was not removed: %v", err))
 		}
 	}()

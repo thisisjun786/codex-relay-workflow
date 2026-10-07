@@ -244,8 +244,12 @@ func TestShellwriteLiteralFormsEvaluateInPython(t *testing.T) {
 func shellWriteDests() []string {
 	dests := append([]string{}, shellWritePathFragments()...)
 	// The memorygate destinations, taken from the generator's own pool so every alias form, home form and
-	// link-chain path is included.
+	// link-chain path is included. The link-dependent destinations are added here because this list feeds
+	// the interpreter check, which evaluates a form on its own and never builds the tree the link stands
+	// in; the campaign's own pool adds them only in the branch that builds those links.
 	dests = append(dests, memoryGateDests()...)
+	dests = append(dests, memoryGateLinkDests()...)
+	dests = append(dests, memoryGateChainDests()...)
 	return dests
 }
 

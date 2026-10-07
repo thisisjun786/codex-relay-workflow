@@ -222,6 +222,12 @@ func Campaign(cfg Config) (Summary, error) {
 			summary.Refused++
 			continue
 		case err != nil:
+			// A cleanup failure is never a transient worker death: it says a root outlived the run that
+			// owned it, which the caller must see.
+			var removal RemovalError
+			if errors.As(err, &removal) {
+				return summary, err
+			}
 			// The worker died, or its reply was unreadable: the issue records that input as a
 			// timeout case and carries on with the replacement worker, so one transient death
 			// does not discard the run. It is not an agreement either.
@@ -315,12 +321,12 @@ func (c *campaign) evaluate(input any) (verdict Verdict, goText, oracleText stri
 	if err != nil {
 		return Verdict{}, "", "", err
 	}
-	defer func() { err = joinCleanup(err, RemoveCaseRoot(goRoot)) }()
+	defer func() { err = joinCleanup(err, CleanupCaseRoot(goRoot)) }()
 	oracleRoot, err := os.MkdirTemp("", "cxcfuzz-oracle-")
 	if err != nil {
 		return Verdict{}, "", "", err
 	}
-	defer func() { err = joinCleanup(err, RemoveCaseRoot(oracleRoot)) }()
+	defer func() { err = joinCleanup(err, CleanupCaseRoot(oracleRoot)) }()
 	for _, root := range []string{goRoot, oracleRoot} {
 		if err := PrepareRoot(root); err != nil {
 			return Verdict{}, "", "", err

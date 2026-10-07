@@ -150,7 +150,7 @@ func memoryGateGenerate(rng *rand.Rand, size int) any {
 		// link they follow stands there; the work/link entry gives the absolute and relative forms a
 		// second link to reach.
 		fs = append(fs, memoryGateLink("home/link", "../codex-home/memories"), memoryGateLink("work/link", memories))
-		dests = append(dests, "~/link/x.md", "$HOME/link/x.md", "$CODEX_HOME/memories/n.md", rootPlaceholder+"/work/link/x.md", "work/link/x.md")
+		dests = append(dests, memoryGateLinkDests()...)
 	}
 	if rng.Intn(2) == 0 {
 		depth := 1 + rng.Intn(45)
@@ -161,7 +161,7 @@ func memoryGateGenerate(rng *rand.Rand, size int) any {
 			}
 			fs = append(fs, memoryGateLink("work/c"+memoryGateInt(i), target))
 		}
-		dests = append(dests, "c0/x.md")
+		dests = append(dests, memoryGateChainDests()...)
 	}
 	return pyjson.Object{{Key: "fs", Value: fs}, {Key: "payload", Value: memoryGatePayload(rng, dests, size)}}
 }
@@ -172,10 +172,11 @@ func memoryGateAliases() []string {
 	return []string{"alias", "alias\n", "alias\r", "alias ", "alias'", "alias\""}
 }
 
-// memoryGateDests is the destination pool the generator draws from, so a test can walk the pool itself
-// instead of copying entries by hand. The relative and home forms are always listed; the link-chain path
-// is added only when the generator builds a chain, so the pool here is the whole of what a generated
-// command can be handed.
+// memoryGateDests is the destination pool every generated payload draws from, so a test can walk the pool
+// itself instead of copying entries by hand. The link-dependent destinations are NOT here: they are added
+// by memoryGateLinkDests and memoryGateChainDests only in the branch that builds the links they follow,
+// because a destination whose link the tree does not hold is not a memory write at all and would change
+// what the campaign compares.
 func memoryGateDests() []string {
 	memories := rootPlaceholder + "/codex-home/memories"
 	backup := rootPlaceholder + "/codex-home/memories-backup"
@@ -189,8 +190,19 @@ func memoryGateDests() []string {
 	for _, alias := range memoryGateAliases() {
 		dests = append(dests, alias+"/x.md", "./"+alias+"/x.md")
 	}
-	dests = append(dests, "~/link/x.md", "$HOME/link/x.md", "$CODEX_HOME/memories/n.md", rootPlaceholder+"/work/link/x.md", "work/link/x.md", "c0/x.md")
 	return dests
+}
+
+// memoryGateLinkDests are the destinations that reach the memories root through the home and work links,
+// added to a payload only in the branch that builds those links.
+func memoryGateLinkDests() []string {
+	return []string{"~/link/x.md", "$HOME/link/x.md", "$CODEX_HOME/memories/n.md", rootPlaceholder + "/work/link/x.md", "work/link/x.md"}
+}
+
+// memoryGateChainDests are the destinations that reach the memories root through the link chain, added to
+// a payload only in the branch that builds the chain.
+func memoryGateChainDests() []string {
+	return []string{"c0/x.md"}
 }
 
 // memoryGateTarget alternates a link target between the relative form and the case root's absolute

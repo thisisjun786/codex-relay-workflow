@@ -63,6 +63,9 @@ type RemovalError struct {
 }
 
 func (e RemovalError) Error() string {
+	if e.Refused == nil {
+		return "the case root " + e.Root + " was not removed: " + e.Err.Error()
+	}
 	return "the case root " + e.Root + " was not removed after " + e.Refused.Error() + ": " + e.Err.Error()
 }
 
@@ -90,6 +93,16 @@ func RemoveCaseRoot(root string) error {
 		return err
 	}
 	return os.RemoveAll(root)
+}
+
+// CleanupCaseRoot removes a case root a run owned and reports a failure as a RemovalError, so a caller
+// that preserves removal failures preserves a deferred cleanup failure too: the root outlived the run
+// that owned it either way.
+func CleanupCaseRoot(root string) error {
+	if err := RemoveCaseRoot(root); err != nil {
+		return RemovalError{Root: root, Err: err}
+	}
+	return nil
 }
 
 // makeDirectoriesRemovable gives every directory under root the owner's read, write and search bits,
