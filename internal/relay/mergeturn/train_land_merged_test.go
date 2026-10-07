@@ -12,6 +12,7 @@ package mergeturn
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -323,59 +324,6 @@ func TestTrainLandDoesNotRepromoteAnOccupiedTarget(t *testing.T) {
 	}
 }
 
-// TestTrainMatrixGuardReadsOnlyTheMatrixBlock: the guard must judge the matrix's own keys, not any
-// "include"/"exclude" text elsewhere in the job — a step input or an env entry named that way is not
-// a matrix change, and a normal head must not be refused merge_target_unreadable for it
-// (CRW-897, answer 2; pre-merge evaluation d2).
-func TestTrainMatrixGuardReadsOnlyTheMatrixBlock(t *testing.T) {
-	repository, err := os.ReadFile(filepath.Join("..", "..", "..", ".github", "workflows", "ci.yml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	// an env entry and a step input named include, beside the unchanged matrix
-	withNoise := strings.Replace(string(repository), "    strategy:", "\n    env:\n      include: ci\n    strategy:", 1)
-	if withNoise == string(repository) {
-		t.Fatal("the fixture did not add an env include")
-	}
-	jobs, err := TrainJobsFromWorkflow(withNoise)
-	if err != nil {
-		t.Fatalf("a workflow with an env include key: %v", err)
-	}
-	if strings.Join(jobs, ",") != strings.Join(TrainExpectedJobs, ",") {
-		t.Fatalf("jobs = %v, want the workflow's own jobs", jobs)
-	}
-	// and through verify the head is accepted
-	w := newTr(t)
-	train := w.openedTrain()
-	w.pr(900, "head-bundle", TrainLaneLabel)
-	w.forge.runs["run-1"] = runFor("head-bundle")
-	w.proof.workflow = withNoise
-	if _, err := w.m.Verify(w.ctx, train, trLeader, "900", "head-bundle", "run-1", "/checkout", w.forge, w.proof); err != nil {
-		t.Fatalf("a head with an env include key: %v", err)
-	}
-}
-
-// TestTrainMatrixGuardRefusesAnExtraAxis: any matrix key that is not part adds or recombines legs the
-// part list does not name, so it is refused rather than read as the part list alone
-// (CRW-897, answer 2; pre-merge evaluation d1).
-func TestTrainMatrixGuardRefusesAnExtraAxis(t *testing.T) {
-	base := "\njobs:\n  validate:\n    runs-on: ubuntu\n  go-product:\n    strategy:\n      matrix:\n        part: [lint, test-1]\n"
-	if _, err := TrainJobsFromWorkflow(base); err != nil {
-		t.Fatalf("a part-only matrix: %v", err)
-	}
-	for _, tc := range []struct{ name, added string }{
-		{"an extra axis", "        os: [ubuntu, macos]\n"},
-		{"a block include", "        include:\n          - part: audit\n"},
-		{"an inline include", "        include: [{part: audit}]\n"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			if _, err := TrainJobsFromWorkflow(base + tc.added); err == nil {
-				t.Fatal("a matrix key that is not part was read as the part list alone")
-			}
-		})
-	}
-}
-
 // TestTrainMatrixGuardScopesToTheMatrixKeys: the guard must judge the matrix's own keys, not an
 // "include" that appears in a step input, an env value or a run script elsewhere in the job. Those
 // are not matrix keys, and a normal head must still be verified (CRW-897, answer 2; evaluation d2).
@@ -428,6 +376,65 @@ func TestTrainMatrixGuardRefusesANonPartKey(t *testing.T) {
 			}
 		})
 	}
+	// the matrix header may carry a comment or an anchor; the keys under it are still judged
+	commented := "\njobs:\n  validate:\n    runs-on: ubuntu\n  go-product:\n    strategy:\n      matrix: # CI legs\n        part: [lint, test-1]\n        include: [{part: audit}]\n"
+	if _, err := TrainJobsFromWorkflow(commented); err == nil {
+		t.Fatal("a commented matrix header hid the include list")
+	}
+	anchored := "\njobs:\n  validate:\n    runs-on: ubuntu\n  go-product:\n    strategy:\n      matrix: &legs\n        part: [lint, test-1]\n        include: [{part: audit}]\n"
+	if _, err := TrainJobsFromWorkflow(anchored); err == nil {
+		t.Fatal("an anchored matrix header hid the include list")
+	}
+	// and through verify a head whose commented matrix added a leg is refused, not verified
+	repository, err := os.ReadFile(filepath.Join("..", "..", "..", ".github", "workflows", "ci.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	head := strings.Replace(string(repository), "      matrix:\n", "      matrix: # CI legs\n", 1)
+	head = strings.Replace(head, "        part: [lint, test-1, test-2, test-3, test-4, test-rest, dist]\n",
+		"        part: [lint, test-1, test-2, test-3, test-4, test-rest, dist]\n        include: [{part: audit}]\n", 1)
+	if head == string(repository) {
+		t.Fatal("the fixture did not comment the matrix header")
+	}
+	w := newTr(t)
+	train := w.openedTrain()
+	w.pr(900, "head-bundle", TrainLaneLabel)
+	w.forge.runs["run-1"] = runFor("head-bundle")
+	w.proof.workflow = head
+	if _, err := w.m.Verify(w.ctx, train, trLeader, "900", "head-bundle", "run-1", "/checkout", w.forge, w.proof); trReason(err) != "merge_target_unreadable" {
+		t.Fatalf("a commented matrix header with an include leg at verify: %v", err)
+	}
+}
+
+// TestTrainHalveIsAPrefixOfTheOrderedGroups: the first half is the ordered groups taken whole until
+// the next would exceed half, so a smaller group after the overflow stays in the second half
+// (CRW-897, answer 3; pre-merge evaluation d2). The review's case: groups of 2, 3, 1, 1, 1 with half
+// 4 give first = the first group only, and the rest — the 1-sized groups included — go second.
+func TestTrainHalveIsAPrefixOfTheOrderedGroups(t *testing.T) {
+	nodes := []TrainMemberNode{
+		{PRNumber: 101, NodeID: "A"}, {PRNumber: 102, NodeID: "B"}, {PRNumber: 103, NodeID: "C"},
+		{PRNumber: 104, NodeID: "D"}, {PRNumber: 105, NodeID: "E"}, {PRNumber: 106, NodeID: "F"},
+		{PRNumber: 107, NodeID: "G"}, {PRNumber: 108, NodeID: "H"},
+	}
+	order := []int64{101, 102, 103, 104, 105, 106, 107, 108}
+	// groups by place: {A,B} {C,D,E} {F} {G} {H}; half = 4, so the first half takes {A,B} and stops
+	edges := []TrainPlanEdge{{FromNodeID: "A", ToNodeID: "B"}, {FromNodeID: "C", ToNodeID: "D"}, {FromNodeID: "D", ToNodeID: "E"}}
+	first, second := TrainHalve(order, nodes, edges)
+	if strings.Join(intsToStrs(first), ",") != "101,102" {
+		t.Fatalf("first = %v, want the first whole group only", first)
+	}
+	if strings.Join(intsToStrs(second), ",") != "103,104,105,106,107,108" {
+		t.Fatalf("second = %v, want everything from the first overflow on", second)
+	}
+}
+
+// intsToStrs renders a pull request list for comparison.
+func intsToStrs(list []int64) []string {
+	out := make([]string, 0, len(list))
+	for _, v := range list {
+		out = append(out, strconv.FormatInt(v, 10))
+	}
+	return out
 }
 
 // TestTrainVerifyRefusesAMergedMember: verify keeps taking open pull requests only, so a member the

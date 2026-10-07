@@ -200,20 +200,49 @@ func trainWorkflowMatrixParts(workflow string) ([]string, error) {
 // exists to close (CRW-897, answer 2). Only the matrix block's own keys are judged, so an "include:"
 // in a step input or an env entry elsewhere in the job is not a matrix key.
 func trainMatrixHasUnreadableKey(body string) bool {
-	_, after, found := strings.Cut(body, "\n      matrix:\n")
-	if !found {
+	lines := strings.Split(body, "\n")
+	strategyIndent, matrixIndent := -1, -1
+	for i, line := range lines {
+		bare := trainStripComment(line)
+		if bare == "" || !strings.HasPrefix(bare, " ") {
+			continue
+		}
+		indent := len(bare) - len(strings.TrimLeft(bare, " "))
+		key, ok := trainJobKey(strings.TrimSpace(bare))
+		if !ok {
+			continue
+		}
+		if key == "strategy" {
+			strategyIndent = indent
+			continue
+		}
+		// matrix is the strategy's own key: a matrix: at any other depth is not the job's matrix
+		if key != "matrix" || strategyIndent < 0 || indent <= strategyIndent {
+			continue
+		}
+		// a matrix key whose value sits on its own line ("matrix: # legs") is a mapping; one that
+		// carries a value ("matrix: &anchor" or "matrix: {part: [lint]}") is not a shape this reader
+		// can take keys from, so it is refused rather than skipped.
+		if value := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(bare), "matrix:")); value != "" {
+			return true
+		}
+		matrixIndent = indent
+		lines = lines[i+1:]
+		break
+	}
+	if matrixIndent < 0 {
 		return false
 	}
-	for _, line := range strings.Split(after, "\n") {
+	for _, line := range lines {
 		bare := trainStripComment(line)
 		if bare == "" {
 			continue
 		}
-		if !strings.HasPrefix(bare, "        ") || strings.HasPrefix(bare, "         ") {
+		if len(bare)-len(strings.TrimLeft(bare, " ")) <= matrixIndent {
 			// the matrix block ends at the first line at or above its own key indent
 			return false
 		}
-		if key, ok := trainJobKey(strings.TrimPrefix(bare, "        ")); ok && key != "part" {
+		if key, ok := trainJobKey(strings.TrimSpace(bare)); ok && key != "part" {
 			return true
 		}
 	}
