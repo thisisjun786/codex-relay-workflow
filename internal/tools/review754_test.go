@@ -163,6 +163,45 @@ func TestToolsReviewDigestMismatchLeavesNoCreatedParents(t *testing.T) {
 	}
 }
 
+// C3, success side: when temp_root sits under a tools_root that did not exist yet, a successful
+// install still removes the download tree it created and leaves a complete install behind. The
+// download root is a directory this call made, so it is not left for the next run to trip over.
+func TestToolsReviewSuccessfulInstallLeavesNoCreatedParents(t *testing.T) {
+	tree := newTestTree(t)
+	archive := syntheticArchive(t, []byte("gitleaks\n"))
+	sum := sha256.Sum256(archive)
+	pin := testPin(hex.EncodeToString(sum[:]))
+	withPin(t, pin)
+	release := newFakeRelease(t, archive)
+	absent := filepath.Join(tree.home, "absent")
+	toolsRoot := filepath.Join(absent, "tools")
+	tree = review754ConfigTree(t, map[string]string{"tools_root": toolsRoot, "temp_root": toolsRoot + "/downloads"})
+
+	code, out, errOut := runTools(t, context.Background(), tree, &Seams{URLBase: release.server.URL}, "install", "gitleaks")
+	if code != 0 || errOut != "" || out != pin.ExecutablePath(toolsRoot)+"\n" {
+		t.Fatalf("install: exit %d stdout %q stderr %q", code, out, errOut)
+	}
+	if _, err := os.Stat(toolsRoot + "/downloads"); !os.IsNotExist(err) {
+		t.Fatalf("the download root this call created was left behind: %v", err)
+	}
+	// The tools root holds only the install directory and the pin's lock file: no staging copy and
+	// no download tree survived the successful install.
+	entries, err := os.ReadDir(toolsRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, entry := range entries {
+		names = append(names, entry.Name())
+	}
+	if strings.Join(names, ",") != "."+pin.DirName()+".lock,"+pin.DirName() {
+		t.Fatalf("the tools root holds %v after a successful install", names)
+	}
+	if _, err := installedPath(pin, toolsRoot); err != nil {
+		t.Fatalf("the successful install is not readable as an install: %v", err)
+	}
+}
+
 // C4: the archive is written to a file under temp_root while the download runs, and that file is
 // gone once the install has finished.
 func TestToolsReviewArchiveIsWrittenUnderTempRoot(t *testing.T) {
