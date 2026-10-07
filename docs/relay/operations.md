@@ -613,9 +613,11 @@ that reports no status, a recipient the relay could not subscribe, and a recipie
 before the attempt lands. The min send interval and the hourly budget pace the send as before, and a
 busy recipient is still never interrupted: the wake only decides when the relay looks.
 
-The two store failures this pass can meet end the tick with their error: a failed wake write, and a failed
-read of the waiting heads that the subscription hold needs. Either one returns before the delivery pass and
-the supervisor channel write anything, so no statement follows a failed one in that tick. A failed wake
+The two store failures this pass can meet end the tick with their error. A failed wake write returns before
+the delivery pass and the supervisor channel write anything. A failed read of the waiting heads that the
+subscription hold needs comes after the delivery pass, so the deliveries and deferrals written earlier in that
+tick stay written, and the supervisor channel does not write after it. In both cases no statement follows the
+failed one in that tick. A failed wake
 write leaves the report unapplied, and the head keeps its timer. The daemon's own halt (CRW-848) is not
 on this baseline; when it lands, these two sites are the ones it classifies.
 

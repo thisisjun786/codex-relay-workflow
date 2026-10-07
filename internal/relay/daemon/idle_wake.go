@@ -128,7 +128,7 @@ func (w *idleWake) hold(ctx context.Context, r *Report, host Host, now float64) 
 	heads, err := w.daemon.Delivery.IdleWakeRecipients(ctx, now)
 	if err != nil {
 		// The waiting heads are read out of the store: a failed read ends the tick, as the idle pass's write
-		// does, so the delivery pass that follows is not run on a store that could not be read (CRW-904 d1).
+		// does: the delivery pass ran before it, and the supervisor channel does not write after it (CRW-904 d1).
 		return fmt.Errorf("busy heads not read: %w", err)
 	}
 	wanted := map[string]string{}
