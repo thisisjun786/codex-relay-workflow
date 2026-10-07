@@ -146,8 +146,9 @@ func loopInit(args LoopCliArgs) (LoopCliResult, error) {
 		}
 		// The strict reader also rebuilds records it cannot keep whole, so the write-back below would replace
 		// them with the rebuilt ones (docs/port-cxc/known-defects/CRW-646.md, port: fixed). Every other writer
-		// of the session file refuses such a rewrite by decision; this one follows the same rule.
-		if raw, err := os.ReadFile(state.StatePath(args.Cwd, sessionID)); err == nil && !loopStateRewritable(raw, next) {
+		// of the session file refuses such a rewrite by decision; this one follows the same rule, through the
+		// shared judgement plus the per-writer legacy refusal.
+		if raw, err := os.ReadFile(state.StatePath(args.Cwd, sessionID)); err == nil && (!state.RewriteKeepsStored(raw, next) || state.DcloseRecoveryLegacy(next)) {
 			return LoopCliResult{Output: "loop init: session " + sessionID + " holds records a rewrite would change; refusing to overwrite it\nNothing was written.", Code: 1}, nil
 		}
 	}
@@ -171,7 +172,7 @@ func loopInit(args LoopCliArgs) (LoopCliResult, error) {
 			if unreadable {
 				return errors.New("session state is unreadable; refusing to overwrite it")
 			}
-			if raw, err := os.ReadFile(state.StatePath(args.Cwd, sessionID)); err == nil && !loopStateRewritable(raw, next) {
+			if raw, err := os.ReadFile(state.StatePath(args.Cwd, sessionID)); err == nil && (!state.RewriteKeepsStored(raw, next) || state.DcloseRecoveryLegacy(next)) {
 				return errors.New("session state holds records a rewrite would change; refusing to overwrite it")
 			}
 			next.Slug = slug
@@ -181,23 +182,6 @@ func loopInit(args LoopCliArgs) (LoopCliResult, error) {
 		}
 	}
 	return LoopCliResult{Output: RenderLoopPlan(goalplan.ReadGoalplan(args.Cwd, slug), nil), Code: 0}, nil
-}
-
-// loopStateRewritable says whether writing next back over raw would keep every record the file stores. The reader
-// normalises what it handles, so a write-back that only means to bind a slug can still drop or change records:
-// ReconstructUnverified stops at MaxUnverifiedSubagents, cuts a receiptClaimed to MaxReceiptClaimLen and replaces a
-// field of the wrong type (state.RewriteKeepsUnverified); ReconstructInterview caps contradictions, assumptions, each
-// dimension's known/unknown lists and each ontology entry's fields and relationships at interview.MaxTrackerArray, and
-// drops an unnamed entity and a relationship with no target (state.RewriteKeepsInterview); and a legacy D-close marker
-// loses its distinction. All three live in the state package, so nothing here is copied from the hook package.
-func loopStateRewritable(raw []byte, next state.State) bool {
-	if next.DcloseRecovery != nil && next.DcloseRecovery.Legacy {
-		return false
-	}
-	if !state.RewriteKeepsUnverified(raw, next.UnverifiedSubagents) {
-		return false
-	}
-	return state.RewriteKeepsInterview(raw, next.Interview)
 }
 
 // loopPlanFileExists reports whether slug's plan file is there as a regular file. A path the slug resolver
