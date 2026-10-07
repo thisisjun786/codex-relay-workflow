@@ -784,8 +784,7 @@ publication keeps the same parts, and its TASK, DELIVERABLE and STOP WHEN name t
 
 ```text
 TASK
-<ISSUE-ID>: <the bounded result>. Deliver exactly one pull request into <integration branch> of <owner/name> from <branch>, ready
-for the coordinator to merge.
+<ISSUE-ID>: <the bounded result>. Deliver exactly one delivery, ready for the coordinator to integrate: a pull request into <integration branch> of <owner/name> from <branch> where the assignment names one, otherwise the pushed branch with its verification record.
 Context: <project and coordinator task; the execution mode: relay-managed with its state directory and exact issue identity, or
   explicitly direct with the reason>.
 Codex task title (not the pull request's title): <ISSUE-ID · short Korean title>
@@ -816,7 +815,7 @@ VERIFY
 - <local runs on the packages the change touches; what hosted CI on the same head stands in for, and what this child does not verify>
 
 STOP WHEN
-- Done: <the pull request is open, the repository's named verification passes on its head, the one-time reviews are finished or
+- Done: <the delivery is in place (a pull request open where one is named), the repository's named verification passes on its head, the one-time reviews are finished or
   skipped, every thread is answered, the receipt is emitted>. Then publish the ready_for_review disposition and end the turn.
 - Blocked: <the size passes the cap, an input mismatch, a question only a person can answer, anything you cannot clear under
   the assignment>. Write the blocked file, emit blocked_needs_input without `--artifact` (it carries no file) and name the blocked file in your final message, then end the turn.
