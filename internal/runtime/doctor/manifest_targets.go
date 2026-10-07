@@ -253,7 +253,16 @@ func manifestTargetsFollow(path string, depth int) (string, error) {
 // targetEscapesRoot keeps the paired realpath fallback exact: either failure
 // makes BOTH paths lexical. A missing leaf below a link is a missing target.
 func targetEscapesRoot(root, target string) bool {
-	r, e1 := manifestTargetsRealpath(root)
+	// The ROOT is normalized lexically, exactly as targetResolve normalizes it to build the target and
+	// as the oracle's path.resolve normalizes it: the root is the caller's own spelling, not a link
+	// target and not a remaining path, so its '.' and '..' components are dropped before the walk
+	// (CRW-937). Only the components AFTER the root -- the target's -- are walked in kernel order. The
+	// normalized root is still handed to the walk, so a symlink IN the root is resolved as before.
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		rootAbs = root
+	}
+	r, e1 := manifestTargetsRealpath(rootAbs)
 	p, e2 := manifestTargetsRealpath(target)
 	if e1 != nil || e2 != nil {
 		r, _ = filepath.Abs(root)
@@ -272,12 +281,19 @@ func targetResolve(root, rel string) string {
 	if filepath.IsAbs(rel) {
 		return manifestTargetsCollapseDots(rel)
 	}
-	// Concatenated, not joined: filepath.Join would Clean the result and drop a '..' the caller
-	// spelled after a symlink, so the containment check would resolve a different file than the
-	// kernel does (CRW-937). manifestTargetsRealpath walks every component in order, so only the
-	// components the oracle's path.resolve drops for a '..'-free path are dropped here.
+	// The ROOT is normalized the way the oracle's resolve normalizes it -- its own '.' and '..'
+	// components are dropped -- so the manifest lookup and every target are built from ONE root
+	// (CRW-937). The TARGET's spelling is kept: filepath.Join would Clean the whole result and drop a
+	// '..' the target spelled after a symlink before the walk could resolve it, so the verdict would
+	// describe a different file than the kernel opens. manifestTargetsCollapseDots drops only what the
+	// oracle's resolve drops for a path that holds no '..'; the walk resolves every component that is
+	// left, '..' included, in kernel order.
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		rootAbs = root
+	}
 	sep := string(filepath.Separator)
-	return manifestTargetsCollapseDots(strings.TrimRight(root, sep) + sep + rel)
+	return manifestTargetsCollapseDots(strings.TrimRight(rootAbs, sep) + sep + rel)
 }
 func targetCheck(issues *[]TargetIssue, kind TargetKind, root, rel, missing string) error {
 	abs := targetResolve(root, rel)
@@ -394,10 +410,7 @@ func targetString(v any) string {
 // manifest has no findings; malformed JSON stops validation with its kind.
 func ValidateManifestTargets(pluginRoot string) ([]TargetIssue, error) {
 	issues := []TargetIssue{}
-	// The manifest is read through the SAME resolution as every target it declares, so one root
-	// governs the whole validation (CRW-937): joining it here would clean a root spelled through a
-	// link and a '..' back to its lexical directory and mix two roots in one judgement.
-	path := targetResolve(pluginRoot, ".codex-plugin/plugin.json")
+	path := filepath.Join(pluginRoot, ".codex-plugin/plugin.json")
 	if _, err := os.Stat(targetNodeText(path)); err != nil {
 		return issues, nil
 	}
