@@ -247,20 +247,40 @@ func TestManifestTargetsKernelOrderAgreesWithEvalSymlinks(t *testing.T) {
 	}
 }
 
-// TestManifestTargetsKernelOrderDriftMCPCaller drives the same fixture through harnessDriftMCPCheck,
-// the drift:mcp check, so the shared resolution is visible at its other caller as well.
+// TestManifestTargetsKernelOrderDriftMCPCaller drives the same resolution through harnessDriftMCPCheck,
+// the drift:mcp check, so it is visible at its other caller as well. Both rows matter:
+//
+//   - the link-target row hides the '..' inside a link's target, so it is already refused by the walk
+//     and passes even if this caller cleans the reference first;
+//   - the caller-spelling row puts the '..' in the REFERENCE itself (`./sublink/../mcp.json`), which is
+//     the shape filepath.Join would clean to the inside `root/mcp.json` before the containment check.
+//     It is the row that fails when this caller goes back to joining, so the two judgements of one
+//     manifest field cannot disagree again.
 func TestManifestTargetsKernelOrderDriftMCPCaller(t *testing.T) {
-	root, _ := kernelOrderFixture(t)
+	root, outside := kernelOrderFixture(t)
 	kernelOrderBadLink(t, root)
-	manifestPath := filepath.Join(root, ".codex-plugin", "plugin.json")
-	targetTestWrite(t, root, ".codex-plugin/plugin.json", `{"mcpServers":"./bad.json"}`)
-	manifest, err := harnessDriftReadJSON(manifestPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	check := harnessDriftMCPCheck(root, manifest)
-	if check.Severity != HarnessFail || !strings.Contains(check.Evidence, "resolves outside the plugin root") {
-		t.Fatalf("drift:mcp check: %+v; want a FAIL naming the escape", check)
+	// The file the caller-spelling reference really reaches, and an inside decoy of the same name.
+	targetTestWrite(t, outside, "mcp.json", `{"mcpServers":{"real":{}}}`)
+	targetTestWrite(t, root, "mcp.json", `{"mcpServers":{"decoy":{}}}`)
+	for _, tc := range []struct {
+		name string
+		ref  string
+	}{
+		{"link_target_hides_the_dotdot", "./bad.json"},
+		{"the_reference_itself_spells_the_dotdot", "./sublink/../mcp.json"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			manifestPath := filepath.Join(root, ".codex-plugin", "plugin.json")
+			targetTestWrite(t, root, ".codex-plugin/plugin.json", `{"mcpServers":"`+tc.ref+`"}`)
+			manifest, err := harnessDriftReadJSON(manifestPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			check := harnessDriftMCPCheck(root, manifest)
+			if check.Severity != HarnessFail || !strings.Contains(check.Evidence, "resolves outside the plugin root") {
+				t.Fatalf("drift:mcp check: %+v; want a FAIL naming the escape", check)
+			}
+		})
 	}
 }
 
