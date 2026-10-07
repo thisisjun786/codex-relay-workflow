@@ -6,6 +6,8 @@ import (
 	"os"
 	"strings"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -85,25 +87,39 @@ func improveIdentityResolved(path string) string {
 	return resolved
 }
 
-// improveIdentityPin opens the path and fills the entry's identity from the descriptor it opened,
-// keeping that descriptor open so the inode cannot be reused and the identity stays comparable
-// until the rename. A path that is absent leaves the entry with its name alone; a path that exists
-// but cannot be opened or examined is a refusal, because an input the collection cannot pin is one
-// it cannot prove it will not overwrite.
+// improveIdentityPin fills the entry's identity. A directory is recorded by the identity the
+// kernel reports for it, with no descriptor held: the readers open files rather than the configured
+// directories themselves, and a directory that may be searched but not read is a valid
+// configuration this must not refuse. A file is pinned through a descriptor, so its inode cannot be
+// reused before the rename; the open does not block on a FIFO, so a special file cannot hang the
+// collection before the reader reaches it. A path that is absent leaves the entry with its name
+// alone; a path that exists but cannot be examined is a refusal, because an input the collection
+// cannot pin is one it cannot prove it will not overwrite.
 func improveIdentityPin(entry *improveIdentityEntry) error {
-	file, err := os.Open(entry.path)
+	info, err := os.Stat(entry.path)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
 		return nil
 	case err != nil:
+		return fmt.Errorf("%s: the input %s could not be examined to record its identity: %w", improveReasonInputChanged, entry.path, err)
+	case info.IsDir():
+		entry.info = info
+		return nil
+	}
+	fd, err := unix.Open(entry.path, unix.O_RDONLY|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
+	switch {
+	case errors.Is(err, unix.ENOENT):
+		return nil
+	case err != nil:
 		return fmt.Errorf("%s: the input %s could not be opened to record its identity: %w", improveReasonInputChanged, entry.path, err)
 	}
-	info, statErr := file.Stat()
+	file := os.NewFile(uintptr(fd), entry.path)
+	pinned, statErr := file.Stat()
 	if statErr != nil {
 		_ = file.Close()
 		return fmt.Errorf("%s: the input %s could not be examined to record its identity: %w", improveReasonInputChanged, entry.path, statErr)
 	}
-	entry.info, entry.file = info, file
+	entry.info, entry.file = pinned, file
 	return nil
 }
 

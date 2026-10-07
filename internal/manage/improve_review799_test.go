@@ -8,6 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 // The tests here are the two P0s of the review of the pull request that added the input
@@ -707,6 +710,80 @@ func TestImproveReview799UnreadableOutputSpellingFailsClosed(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(reachable, "bundle.json")); !os.IsNotExist(err) {
 		t.Errorf("the refused run wrote the bundle through the loose resolution (stat err %v)", err)
+	}
+}
+
+// TestImproveReview799FifoInputDoesNotHangTheRecording covers a special file: recording a
+// configured source that is a FIFO must not block, which would hang the collection before any
+// reader or refusal is reached. The identity is taken without waiting for a writer. (The reader
+// still blocks on a FIFO, as it always did; this pins only the recording.)
+func TestImproveReview799FifoInputDoesNotHangTheRecording(t *testing.T) {
+	s := improveTestSetup(t)
+	fifo := filepath.Join(s.root, "audit.fifo")
+	if err := unix.Mkfifo(fifo, 0o600); err != nil {
+		t.Skipf("FIFOs are unavailable here: %v", err)
+	}
+	section := improveSection{Sources: map[string]improveSourceConfig{improveKindAudit: {Path: fifo}}}
+	done := make(chan error, 1)
+	go func() {
+		ids := improveIdentityNew(true)
+		defer ids.improveIdentityClose()
+		done <- ids.improveIdentityRecord(section)
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("recording a FIFO source: %v", err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatalf("recording a FIFO source blocked instead of reaching a decision")
+	}
+}
+
+// TestImproveReview799SearchOnlyDirectoriesAreAccepted covers the permission each step actually
+// needs. A configured store directory may be searched but not read, because the reader opens the
+// store file inside it; an output directory needs write and search, because the temporary file is
+// created in it. Neither needs the directory to be readable, so neither is refused. root ignores
+// the bits, so the test skips there.
+func TestImproveReview799SearchOnlyDirectoriesAreAccepted(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores the permission bits this test relies on")
+	}
+	s := improveTestSetup(t)
+	improveReview799Store(t, s)
+	state := filepath.Join(s.root, "search-only-state")
+	if err := os.MkdirAll(state, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	improveInputSeedPlanAt(t, filepath.Join(state, improveStoreFile), "p1", "a")
+	out := filepath.Join(s.root, "write-only-out")
+	if err := os.MkdirAll(out, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chmod(state, 0o755)
+		_ = os.Chmod(out, 0o755)
+	})
+	improveTestConfig(t, s, map[string]any{"manage": map[string]any{"improve": map[string]any{
+		"sources": map[string]any{
+			"relay": map[string]any{"path": s.stateDir},
+			"dag":   map[string]any{"path": state, "pattern": "p1"},
+		},
+	}}})
+	// The store directory may be searched but not read; the output directory may be written and
+	// searched but not read.
+	if err := os.Chmod(state, 0o111); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(out, 0o333); err != nil {
+		t.Fatal(err)
+	}
+	bundle := filepath.Join(out, "bundle.json")
+	if code, _, stderr := improveTestRun(t, s, "--out", bundle); code != 0 {
+		t.Fatalf("a search-only store directory and a write-only output directory: exit %d, stderr %q", code, stderr)
+	}
+	if _, err := os.Stat(bundle); err != nil {
+		t.Errorf("the bundle was not written: %v", err)
 	}
 }
 

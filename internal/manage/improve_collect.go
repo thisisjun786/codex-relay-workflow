@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -453,6 +454,26 @@ func improvePrefix(dir string) string {
 // filepath.Clean would name.
 func improveResolvedPath(path string) (string, error) { return store.Realpath(path) }
 
+// improveOpenDirectory opens a directory for the *at calls this file makes on it: creating the
+// temporary file, removing it and renaming it into place. The open needs only search permission on
+// the directory, which is what writing a file inside it requires, so a directory that may be
+// searched but not read is a valid output location rather than a refusal. The platform headers give
+// the search-only bit different names, and named numeric constants keep this one file buildable for
+// both release platforms: Linux O_PATH is 0x200000, and Darwin's O_EXEC is 0x40000000.
+func improveOpenDirectory(path string) (*os.File, error) {
+	const linuxOPath = 0x200000
+	const darwinOExec = 0x40000000
+	search := linuxOPath
+	if runtime.GOOS == "darwin" {
+		search = darwinOExec
+	}
+	fd, err := unix.Open(path, search|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, &os.PathError{Op: "open", Path: path, Err: err}
+	}
+	return os.NewFile(uintptr(fd), path), nil
+}
+
 // improveWriteFile writes the bundle in the resolved parent directory and renames it onto the
 // resolved destination.
 //
@@ -465,7 +486,7 @@ func improveResolvedPath(path string) (string, error) { return store.Realpath(pa
 // accepted: nothing closes it without holding the destination's directory against every other
 // writer.
 func improveWriteFile(plan improveOutputPlan, ids *improveIdentitySet, data []byte) error {
-	parent, err := os.Open(plan.Parent)
+	parent, err := improveOpenDirectory(plan.Parent)
 	if err != nil {
 		return err
 	}
