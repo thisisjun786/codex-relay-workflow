@@ -1,6 +1,7 @@
 package manage
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -17,6 +18,39 @@ import (
 func dagReviewReview826ReleaseTurn(f *dagReviewFixture, turnID, relationshipID string, prNumber int, at string) {
 	f.exec("INSERT INTO merge_turns (turn_id, target_key, repository, base_ref, project_key, holder_task_id, holder_host_id, relationship_id, pr_number, candidate_head, declared_ready, state, tenure, requested_at, held_at, closed_at, updated_at) VALUES (?,?,'owner/repo','release','project',?,'host',?,?,'head',1,'landed',1,?,?,?,?)",
 		turnID, "owner/repo#release", "holder-"+turnID, relationshipID, prNumber, at, at, dagReviewNull(at), at)
+}
+
+// Both targets observed is the negative control for the two-target path: nothing is reported when
+// every target the node landed on was observed.
+func TestDagReviewReview826BothTargetsObservedIsClean(t *testing.T) {
+	f := dagReviewNewFixture(t)
+	dagReviewOnePlan(t, f, "A")
+	f.acceptanceHead("plan-1", "A", "acceptance-A", "relationship-A", "head-A", dagReviewAt(5))
+	f.laneTurn("turn-dev", "owner/repo#dev", "holder-dev", "landed", "relationship-A", 42, dagReviewAt(30), dagReviewAt(30), dagReviewAt(30))
+	dagReviewReview826ReleaseTurn(f, "turn-release", "relationship-A", 43, dagReviewAt(35))
+	dagReviewReview826Observe(f, "acceptance-A", "owner/repo", "dev", dagReviewAt(40), 1)
+	dagReviewReview826Observe(f, "acceptance-A", "owner/repo", "release", dagReviewAt(41), 2)
+	f.close()
+
+	if found := dagReviewFind(dagReviewRunReview(t, f, nil, 15), dagReviewKindLandedNotObserved); len(found) != 0 {
+		t.Errorf("landed_not_observed = %+v, want none: both targets were observed", found)
+	}
+}
+
+// dagReviewReview826Observe records one integration observation in a named target with an explicit
+// observation id. The shared observationIn helper numbers a new observation by the count already
+// stored for the (acceptance, target) pair, so its first observation of each of two targets of one
+// acceptance both become observation-<acceptance>-1 and the second insert violates the primary key.
+// This helper takes the sequence directly, which is what two targets of one acceptance need.
+func dagReviewReview826Observe(f *dagReviewFixture, acceptanceID, repository, baseRef, observedAt string, seq int) {
+	f.t.Helper()
+	f.writePlans()
+	var head string
+	if err := f.store.DB.QueryRow("SELECT COALESCE(head_sha, '') FROM dag_acceptances WHERE acceptance_id = ?", acceptanceID).Scan(&head); err != nil {
+		f.t.Fatalf("read the accepted head of %s: %v", acceptanceID, err)
+	}
+	f.exec("INSERT INTO dag_integration_observations (observation_id, acceptance_id, repository, base_ref, subject_sha, tip_sha, is_ancestor, method, observed_seq, reverted_by, observed_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+		fmt.Sprintf("observation-%s-%d", acceptanceID, seq), acceptanceID, repository, baseRef, head, "tip", dagReviewFlag(true), "ancestry", seq, nil, observedAt)
 }
 
 // The issue's example: t1 landed owner/repo#dev at 09:30Z and t2 owner/repo#release at 09:35Z for
