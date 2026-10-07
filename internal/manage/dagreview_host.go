@@ -255,25 +255,47 @@ func dagHostParentRollout(in *dagReviewInput, parent dagHostParent, path string,
 		})
 		return
 	}
+	if reading.tooLong {
+		// A line over the limit is a reading this check could not take; the reading still continues
+		// after it, so a refusal later in the rollout is reported and the offset still advances.
+		in.review.Checks = append(in.review.Checks, Check{
+			Name: "parent_refusals:" + parent.id, State: dagReviewUnmeasured,
+			Detail: fmt.Sprintf("a rollout line over %d bytes was not read", dagHostLineLimit),
+		})
+	}
 	reported := map[string]bool{}
 	for _, callID := range offsets.Reported[path] {
 		reported[callID] = true
 	}
-	if !firstSight {
-		for _, refusal := range reading.refusals {
-			if reported[refusal.callID] {
-				continue
-			}
-			in.review.Anomalies = append(in.review.Anomalies, DagReviewAnomaly{
-				Kind: dagHostKindParentDagRefusals, Issue: parent.label,
-				Detail: fmt.Sprintf("the relay command %s was refused: %s", strings.Join(refusal.commands, ","), refusal.reason),
-			})
-		}
+	for _, refusal := range dagHostNewRefusals(reading, reported, firstSight) {
+		in.review.Anomalies = append(in.review.Anomalies, DagReviewAnomaly{
+			Kind: dagHostKindParentDagRefusals, Issue: parent.label,
+			Detail: fmt.Sprintf("the relay command %s was refused: %s", strings.Join(refusal.commands, ","), refusal.reason),
+		})
 	}
 	if offsetsRead {
 		offsets.Offsets[path] = reading.resume
 		offsets.Reported[path] = dagHostResumeRefusalIDs(reading)
 	}
+}
+
+// dagHostNewRefusals is the refusals of one reading this check has not reported yet. A rollout seen
+// for the first time reports only the refusals written after the reading began (the file size at
+// that moment), so its history is not replayed while a refusal the parent appended during the scan
+// still is; a known rollout reports every refusal the reading found that is not in the reported
+// list. The ids the next check re-reads stay in that list, so a refusal is reported once.
+func dagHostNewRefusals(reading dagHostRolloutReading, reported map[string]bool, firstSight bool) []dagHostRefusal {
+	out := []dagHostRefusal{}
+	for _, refusal := range reading.refusals {
+		if reported[refusal.callID] {
+			continue
+		}
+		if firstSight && refusal.lineStart < reading.boundary {
+			continue
+		}
+		out = append(out, refusal)
+	}
+	return out
 }
 
 // dagHostResumeRefusalIDs is the call ids of the refusals a check resuming at reading.resume reads
@@ -360,11 +382,15 @@ type dagHostRefusal struct {
 	lineStart int64
 }
 
-// dagHostRolloutReading is one reading of a rollout: the refusals it shows and the offset the next
-// check resumes from.
+// dagHostRolloutReading is one reading of a rollout: the refusals it shows, the offset the next
+// check resumes from, the size the rollout had when the reading began, and whether a line was too
+// long to read. boundary is what separates a first-sight rollout's history from a refusal the parent
+// appended while this reading ran.
 type dagHostRolloutReading struct {
 	refusals []dagHostRefusal
 	resume   int64
+	boundary int64
+	tooLong  bool
 }
 
 // A relay dag- invocation names the relay program and a dag- subcommand at the subcommand position;
@@ -376,7 +402,7 @@ var (
 	dagHostDagSubcommand   = regexp.MustCompile(`^dag-[a-z-]+$`)
 	dagHostVariableWord    = regexp.MustCompile(`^\$\{?[A-Za-z_][A-Za-z0-9_]*\}?$`)
 	dagHostAssignmentWord  = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=`)
-	dagHostCommandSplitter = regexp.MustCompile(`\$\(|&&|\|\||;|\|`)
+	dagHostCommandSplitter = regexp.MustCompile(`\$\(|&&|\|\||;|\||\n`)
 	dagHostRefusedAnswer   = regexp.MustCompile(`"ok"\s*:\s*false`)
 	dagHostRefusedEnvelope = regexp.MustCompile(`"error"\s*:\s*"refused"`)
 	dagHostRefusedReason   = regexp.MustCompile(`"reason"\s*:\s*"([a-z_]+)"`)
@@ -398,7 +424,7 @@ func dagHostRelaySubcommands(text string) []string {
 		if len(words) == 0 || !dagHostRelayProgram(words) {
 			continue
 		}
-		if words[0] == "crw" {
+		if path.Base(words[0]) == "crw" {
 			words = words[2:]
 		} else {
 			words = words[1:]
@@ -426,12 +452,14 @@ func dagHostRelaySubcommands(text string) []string {
 }
 
 // dagHostRelayProgram reports whether the first word names the relay: codex-session-relay by
-// basename, crw followed by relay, or a variable expansion a shell would substitute.
+// basename, crw (or its absolute path) followed by relay, or a variable expansion a shell would
+// substitute. The absolute form is the relay's own recovery command, which names this binary's
+// resolved executable followed by relay (internal/relay/cli/status.go relayProgram).
 func dagHostRelayProgram(words []string) bool {
 	switch {
 	case path.Base(words[0]) == "codex-session-relay":
 		return true
-	case words[0] == "crw":
+	case path.Base(words[0]) == "crw":
 		return len(words) > 1 && words[1] == "relay"
 	case dagHostVariableWord.MatchString(words[0]):
 		return true
@@ -477,17 +505,24 @@ func dagHostRolloutRefusals(path string, start int64) (dagHostRolloutReading, er
 		return dagHostRolloutReading{resume: start}, err
 	}
 	reader := bufio.NewReaderSize(f, 64*1024)
+	// boundary is the size the rollout had when this reading began. The caller uses it to tell a
+	// first-sight rollout's history from a refusal the parent appended while this reading ran.
+	reading := dagHostRolloutReading{resume: start, boundary: size}
 	offset, resume := start, start
 	calls := map[string]dagHostCall{}
 	var refusals []dagHostRefusal
 	for {
 		lineStart := offset
-		line, tooLong, readErr := dagHostReadLine(reader, dagHostLineLimit)
-		if len(line) > 0 {
-			offset += int64(len(line))
+		line, consumed, tooLong, readErr := dagHostReadLine(reader, dagHostLineLimit)
+		if consumed > 0 {
+			offset += consumed
 			resume = lineStart
 			if tooLong {
-				return dagHostRolloutReading{resume: start}, fmt.Errorf("a rollout line over %d bytes was not read", dagHostLineLimit)
+				// A line over the limit is a reading this check cannot take. It is not parsed, but the
+				// reading continues after it, so the lines that follow are still read and the offset
+				// still advances; the caller reports the unmeasured line.
+				reading.tooLong = true
+				continue
 			}
 			var entry dagHostRolloutEntry
 			if json.Unmarshal(bytes.TrimRight(line, "\r\n"), &entry) == nil && entry.Type == "response_item" {
@@ -531,26 +566,37 @@ func dagHostRolloutRefusals(path string, start int64) (dagHostRolloutReading, er
 			resume = call.lineStart
 		}
 	}
-	return dagHostRolloutReading{refusals: refusals, resume: resume}, nil
+	reading.refusals = refusals
+	reading.resume = resume
+	return reading, nil
 }
 
-// dagHostReadLine reads one line bounded by limit bytes. The second result is true when the line
-// exceeds the limit, which the caller reports as an unmeasured reading rather than growing with it.
-func dagHostReadLine(reader *bufio.Reader, limit int) ([]byte, bool, error) {
+// dagHostReadLine reads one line bounded by limit bytes. The second result is the line's length in
+// bytes, so a caller that cannot use an over-long line still advances past the whole of it rather
+// than leaving its tail to be read as a line of its own. The third result is true when the line
+// exceeds the limit, in which case the returned bytes are its first limit bytes and the rest is
+// discarded: the caller reports an unmeasured reading rather than growing with it.
+func dagHostReadLine(reader *bufio.Reader, limit int) ([]byte, int64, bool, error) {
 	var line []byte
+	var consumed int64
+	over := false
 	for {
 		chunk, err := reader.ReadSlice('\n')
-		line = append(line, chunk...)
-		if len(line) > limit {
-			return line[:limit], true, nil
+		consumed += int64(len(chunk))
+		if !over {
+			line = append(line, chunk...)
+			if len(line) > limit {
+				line = line[:limit]
+				over = true
+			}
 		}
 		if err == nil {
-			return line, false, nil
+			return line, consumed, over, nil
 		}
 		if errors.Is(err, bufio.ErrBufferFull) {
 			continue
 		}
-		return line, false, err
+		return line, consumed, over, err
 	}
 }
 

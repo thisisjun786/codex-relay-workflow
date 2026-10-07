@@ -27,32 +27,6 @@ func dagHostReview775Refusal(t *testing.T, callID, arguments string) []string {
 	}
 }
 
-// C1's migration claim: a state file that carries only offsets (no reported member) reads as an
-// empty list, so the refusal after its offset is reported once, and the rewrite adds the member.
-func TestDagHostReview775OldStateFileReadsEmptyReported(t *testing.T) {
-	f := dagReviewNewFixture(t)
-	stateDir := filepath.Join(t.TempDir(), "state")
-	rollout := dagHostWriteRollout(t, f.dir, "parent.jsonl", dagHostReview775Refusal(t, "call-1", "crw relay dag-release --plan p1")...)
-	f.close()
-	dagHostReview775SeedOffsets(t, stateDir, rollout, 0)
-	cfg := dagHostReview775Parent(t, f, rollout, stateDir)
-
-	if found := dagReviewFind(dagHostRun(t, context.Background(), f, cfg), dagHostKindParentDagRefusals); len(found) != 1 {
-		t.Fatalf("an old state file without a reported member hid the refusal: %+v", found)
-	}
-	data, err := os.ReadFile(filepath.Join(stateDir, dagHostStateFile))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var document map[string]json.RawMessage
-	if err := json.Unmarshal(data, &document); err != nil {
-		t.Fatalf("the state file is not a JSON object: %v, %s", err, data)
-	}
-	if _, ok := document["reported"]; !ok {
-		t.Fatalf("the rewrite did not add the reported member: %s", data)
-	}
-}
-
 // dagHostReview775SeedOffsets writes a state file that already knows path at offset, so the rollout
 // is read as a known one from that byte rather than as first-seen.
 func dagHostReview775SeedOffsets(t *testing.T, stateDir, path string, offset int64) {
@@ -224,5 +198,120 @@ func TestDagHostReview775SilentTurnsStayQuiet(t *testing.T) {
 				t.Fatalf("a silent reading was left unmeasured: %+v", review.Checks)
 			}
 		})
+	}
+}
+
+// C1's migration claim: a state file that carries only offsets (no reported member) reads as an
+// empty list, so the refusal after its offset is reported once, and the rewrite adds the member.
+func TestDagHostReview775OldStateFileReadsEmptyReported(t *testing.T) {
+	f := dagReviewNewFixture(t)
+	stateDir := filepath.Join(t.TempDir(), "state")
+	rollout := dagHostWriteRollout(t, f.dir, "parent.jsonl", dagHostReview775Refusal(t, "call-1", "crw relay dag-release --plan p1")...)
+	f.close()
+	dagHostReview775SeedOffsets(t, stateDir, rollout, 0)
+	cfg := dagHostReview775Parent(t, f, rollout, stateDir)
+
+	if found := dagReviewFind(dagHostRun(t, context.Background(), f, cfg), dagHostKindParentDagRefusals); len(found) != 1 {
+		t.Fatalf("an old state file without a reported member hid the refusal: %+v", found)
+	}
+	data, err := os.ReadFile(filepath.Join(stateDir, dagHostStateFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document map[string]json.RawMessage
+	if err := json.Unmarshal(data, &document); err != nil {
+		t.Fatalf("the state file is not a JSON object: %v, %s", err, data)
+	}
+	if _, ok := document["reported"]; !ok {
+		t.Fatalf("the rewrite did not add the reported member: %s", data)
+	}
+}
+
+// A relay call whose command follows another command on an earlier line is still a relay call:
+// a newline starts a command unit, so the program word is the relay's, not the first line's.
+func TestDagHostReview775NewlineSeparatedRelayCall(t *testing.T) {
+	f := dagReviewNewFixture(t)
+	stateDir := filepath.Join(t.TempDir(), "state")
+	rollout := dagHostWriteRollout(t, f.dir, "parent.jsonl",
+		dagHostReview775Refusal(t, "call-1", "set -e\ncrw relay dag-release --plan p1")...)
+	f.close()
+	dagHostReview775SeedOffsets(t, stateDir, rollout, 0)
+	cfg := dagHostReview775Parent(t, f, rollout, stateDir)
+
+	if found := dagReviewFind(dagHostRun(t, context.Background(), f, cfg), dagHostKindParentDagRefusals); len(found) != 1 {
+		t.Fatalf("a relay call after a newline was not reported: %+v", found)
+	}
+}
+
+// The relay's own recovery command is the resolved executable followed by relay, so an absolute
+// program word names the relay exactly as the bare name does.
+func TestDagHostReview775AbsoluteRelayProgram(t *testing.T) {
+	cases := []struct {
+		name      string
+		arguments string
+	}{
+		{"an absolute crw followed by relay", "/opt/crw/bin/crw relay dag-release --plan p1"},
+		{"an absolute codex-session-relay", "/opt/crw/bin/codex-session-relay dag-ready --plan p1"},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			f := dagReviewNewFixture(t)
+			stateDir := filepath.Join(t.TempDir(), "state")
+			rollout := dagHostWriteRollout(t, f.dir, "parent.jsonl", dagHostReview775Refusal(t, "call-1", test.arguments)...)
+			f.close()
+			dagHostReview775SeedOffsets(t, stateDir, rollout, 0)
+			cfg := dagHostReview775Parent(t, f, rollout, stateDir)
+
+			if found := dagReviewFind(dagHostRun(t, context.Background(), f, cfg), dagHostKindParentDagRefusals); len(found) != 1 {
+				t.Fatalf("%q was not reported as a relay call: %+v", test.arguments, found)
+			}
+		})
+	}
+}
+
+// A rollout line over the limit is an unmeasured reading, not the end of the reading: a refusal
+// written after it is still reported and the offset still advances.
+func TestDagHostReview775OversizeLineDoesNotBlockLaterRefusals(t *testing.T) {
+	f := dagReviewNewFixture(t)
+	stateDir := filepath.Join(t.TempDir(), "state")
+	lines := append([]string{dagHostToolOutput(t, "call-big", strings.Repeat("z", dagHostLineLimit+1024))},
+		dagHostReview775Refusal(t, "call-1", "crw relay dag-release --plan p1")...)
+	rollout := dagHostWriteRollout(t, f.dir, "parent.jsonl", lines...)
+	f.close()
+	dagHostReview775SeedOffsets(t, stateDir, rollout, 0)
+	cfg := dagHostReview775Parent(t, f, rollout, stateDir)
+
+	review := dagHostRun(t, context.Background(), f, cfg)
+	if found := dagReviewFind(review, dagHostKindParentDagRefusals); len(found) != 1 {
+		t.Fatalf("the refusal after an oversize line was not reported: %+v", found)
+	}
+	if !dagHostUnmeasured(review, "parent_refusals:parent-1") {
+		t.Fatalf("the oversize line was not left unmeasured: %+v", review.Checks)
+	}
+}
+
+// On a rollout seen for the first time only the refusals written after the reading began are
+// reported: an older one is history, while one the parent appended during the scan is new.
+func TestDagHostReview775FirstSightReportsOnlyRefusalsWrittenAfterTheReading(t *testing.T) {
+	reading := dagHostRolloutReading{
+		boundary: 100,
+		resume:   250,
+		refusals: []dagHostRefusal{
+			{callID: "history", lineStart: 10, commands: []string{"dag-release"}, reason: "old"},
+			{callID: "appended", lineStart: 120, commands: []string{"dag-ready"}, reason: "new"},
+		},
+	}
+
+	first := dagHostNewRefusals(reading, map[string]bool{}, true)
+	if len(first) != 1 || first[0].callID != "appended" {
+		t.Fatalf("a first-sight reading reported %+v, want only the refusal written after it began", first)
+	}
+	known := dagHostNewRefusals(reading, map[string]bool{}, false)
+	if len(known) != 2 {
+		t.Fatalf("a known rollout reported %+v, want both refusals", known)
+	}
+	suppressed := dagHostNewRefusals(reading, map[string]bool{"appended": true}, false)
+	if len(suppressed) != 1 || suppressed[0].callID != "history" {
+		t.Fatalf("an already reported refusal was reported again: %+v", suppressed)
 	}
 }
