@@ -7,11 +7,13 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/interview"
+	"golang.org/x/sys/unix"
 )
 
 // ErrNonCanonicalSessionID is the TypeError ensureState throws for an id that sanitising would rewrite.
@@ -235,12 +237,101 @@ func writeState(cwd string, next State, now time.Time, rename func(tmp, finalPat
 	return nil
 }
 
-// makeSessionsDir is ensureCodexclawDir(cwd) then mkdirSync(sessionsDir, { recursive: true }), in that order.
+// makeSessionsDir is ensureCodexclawDir(cwd) then mkdirSync(sessionsDir, { recursive: true }), in that
+// order, with one addition: the two directories are created through a descriptor walk that refuses a
+// symbolic link at any step (CRW-646). Without it a linked .crw would send the sessions directory and
+// the lock file outside the workspace, because the pathname creates follow the link; the plan write
+// path already refuses such a root through its own walk, and this is the same judgement for the
+// session side, taken at the moment of creation rather than from an earlier observation.
 func makeSessionsDir(cwd string) error {
-	if _, err := crwdir.EnsureDir(cwd); err != nil {
+	dir, err := openSessionsDir(cwd)
+	if err != nil {
 		return err
 	}
-	return os.MkdirAll(filepath.Join(cwd, crwdir.DirName, SessionsSubdir), 0o777)
+	return dir.Close()
+}
+
+// openSessionsDir is ensureCodexclawDir(cwd) then the sessions directory, returned as an open
+// descriptor. Every step of the walk from the filesystem root is opened with O_NOFOLLOW, so a
+// symbolic link in the way is refused (ErrStateRootSymlink) instead of followed, and a caller that
+// writes through the returned descriptor cannot be redirected by a later rename of a path component.
+// The .crw directory is left as crwdir.EnsureDir made it (an existing directory, a file or a link in
+// its place is returned untouched and refused by the walk below); only the sessions directory is
+// created here, and an existing one that is a real directory is accepted.
+func openSessionsDir(cwd string) (*os.File, error) {
+	if _, err := crwdir.EnsureDir(cwd); err != nil {
+		return nil, err
+	}
+	base, err := filepath.Abs(cwd)
+	if err != nil {
+		return nil, err
+	}
+	base, err = filepath.EvalSymlinks(base)
+	if err != nil {
+		return nil, err
+	}
+	fd, err := unix.Open("/", unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, err
+	}
+	parent := os.NewFile(uintptr(fd), "/")
+	expected := "/"
+	for _, part := range append(strings.Split(strings.TrimPrefix(base, "/"), "/"), crwdir.DirName, SessionsSubdir) {
+		if part == "" {
+			continue
+		}
+		expected = filepath.Join(expected, part)
+		next, err := openDirNoFollow(parent, part, expected)
+		if err != nil {
+			if !errors.Is(err, fs.ErrNotExist) {
+				_ = parent.Close()
+				return nil, err
+			}
+			if err := unix.Mkdirat(int(parent.Fd()), part, 0o777); err != nil && !errors.Is(err, fs.ErrExist) {
+				_ = parent.Close()
+				return nil, err
+			}
+			if next, err = openDirNoFollow(parent, part, expected); err != nil {
+				_ = parent.Close()
+				return nil, err
+			}
+		}
+		_ = parent.Close()
+		parent = next
+	}
+	return parent, nil
+}
+
+// ErrStateRootSymlink reports a state root (cwd/.crw) or its sessions directory that is a symbolic
+// link. A caller can tell this refusal apart from an ordinary IO failure and answer it as its own
+// refusal rather than a generic error.
+var ErrStateRootSymlink = errors.New("state path must not be a symlink")
+
+// openDirNoFollow opens name under parent as a directory, refusing a symbolic link at that step. A
+// link is reported as ErrStateRootSymlink so the caller can name the refusal.
+func openDirNoFollow(parent *os.File, name, expected string) (*os.File, error) {
+	fd, err := unix.Openat(int(parent.Fd()), name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		// The open answers ENOTDIR (or ELOOP) for a symbolic link, because O_NOFOLLOW stops at the link
+		// and a link is not a directory. Ask the kernel whether the entry IS a link, so the refusal can
+		// name it, and let any other failure stand as it is.
+		var st unix.Stat_t
+		if e := unix.Fstatat(int(parent.Fd()), name, &st, unix.AT_SYMLINK_NOFOLLOW); e == nil && st.Mode&unix.S_IFMT == unix.S_IFLNK {
+			return nil, fmt.Errorf("%w: %s", ErrStateRootSymlink, expected)
+		}
+		return nil, &os.PathError{Op: "open", Path: expected, Err: err}
+	}
+	f := os.NewFile(uintptr(fd), expected)
+	info, err := f.Stat()
+	if err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	if !info.IsDir() {
+		_ = f.Close()
+		return nil, errors.New("state path is not a directory: " + expected)
+	}
+	return f, nil
 }
 
 // createExclusive is writeFileSync(path, data, { flag: "wx" }): the file exists before it is written, and a failed write

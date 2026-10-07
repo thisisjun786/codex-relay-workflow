@@ -202,20 +202,6 @@ func StatePath(cwd, sessionID string) string {
 	return filepath.Join(cwd, crwdir.DirName, SessionsSubdir, SanitizeKey(sessionID)+".json")
 }
 
-// CheckStateRootNotSymlink refuses a state root (cwd/.crw) that is a symbolic link. Every writer of
-// the session state creates .crw and .crw/sessions before it writes, and those creates follow a link,
-// so a linked root would send the lock file and the session files outside the workspace. The plan
-// path already refuses a linked root through its own walk (goalplan.GoalplanDir); this is the same
-// judgement for the session side, so a caller can refuse before its first write (CRW-646).
-func CheckStateRootNotSymlink(cwd string) error {
-	root := filepath.Join(cwd, crwdir.DirName)
-	info, err := os.Lstat(root)
-	if err != nil || info.Mode()&os.ModeSymlink == 0 {
-		return nil
-	}
-	return errors.New("state path must not be a symlink: " + root)
-}
-
 // ReadLockOwnerBytes reads a lock's small owner/metadata file without following a symbolic link and
 // without blocking on a special file: the open refuses a link (O_NOFOLLOW) and a FIFO or device
 // (O_NONBLOCK with a regular-file check), so a hostile or accidental special file at the path cannot
