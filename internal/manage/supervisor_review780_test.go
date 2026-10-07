@@ -110,6 +110,10 @@ const supervisorReview780HelpPipeEnv = "CRW_MANAGE_TEST_HELP_PIPE"
 // own stdout, so the report path reaches the real fd 1 the same way the usage path does.
 const supervisorReview780ReportPipeEnv = "CRW_MANAGE_TEST_REPORT_PIPE"
 
+// supervisorReview780PassThroughPipeEnv names the child mode that writes a relay answer through
+// supervisorPassThrough, the third stdout path this command has.
+const supervisorReview780PassThroughPipeEnv = "CRW_MANAGE_TEST_PASSTHROUGH_PIPE"
+
 // TestSupervisorReview780OutputPipeChild is not a test of its own. The parent tests re-execute this
 // binary with one of the two env names below (the way core_testhelp_test.go starts the fake crw),
 // and this function then writes to the process's own stdout and stderr, so the write reaches the
@@ -126,6 +130,13 @@ func TestSupervisorReview780OutputPipeChild(t *testing.T) {
 			os.Exit(1)
 		}
 		os.Exit(0)
+	}
+	if os.Getenv(supervisorReview780PassThroughPipeEnv) != "" {
+		// The relay pass-through, the third stdout path this command writes through: the relay's
+		// own answer is written unchanged and a write that fails ends the run with 1 instead of the
+		// status it was about to return.
+		e := &Env{Stdin: strings.NewReader(""), Stdout: os.Stdout, Stderr: os.Stderr, Getenv: os.Getenv}
+		os.Exit(supervisorPassThrough(e, []byte("{\"error\":\"refused\"}\n"), supervisorExitRefused))
 	}
 	t.Skip("only runs as the re-executed child of the pipe tests")
 }
@@ -270,10 +281,10 @@ func TestSupervisorReview780HelpPipeBothStreamsClosedExitsOne(t *testing.T) {
 	}
 }
 
-// supervisorReview780ReportPipeChild runs the JSON report write in a child whose stdout is a pipe
-// the parent has already closed. It reuses the same harness as the usage cases, with the report
-// child mode selected instead of a command line.
-func supervisorReview780ReportPipeChild(t *testing.T) (code int, signaled bool) {
+// supervisorReview780ChildOnClosedPipe re-executes the test binary in one of the named child modes
+// with stdout on a pipe whose read end this parent has already closed, so the child's write reaches
+// a pipe nobody reads. It returns the child's exit status and whether a signal ended it.
+func supervisorReview780ChildOnClosedPipe(t *testing.T, mode string) (code int, signaled bool) {
 	t.Helper()
 	read, write, err := os.Pipe()
 	if err != nil {
@@ -283,7 +294,7 @@ func supervisorReview780ReportPipeChild(t *testing.T) (code int, signaled bool) 
 		t.Fatal(err)
 	}
 	cmd := exec.Command(os.Args[0], "-test.run=^TestSupervisorReview780OutputPipeChild$")
-	cmd.Env = append(os.Environ(), supervisorReview780ReportPipeEnv+"=1", "TMPDIR="+t.TempDir())
+	cmd.Env = append(os.Environ(), mode+"=1", "TMPDIR="+t.TempDir())
 	cmd.Stdout = write
 	var errOut bytes.Buffer
 	cmd.Stderr = &errOut
@@ -314,11 +325,25 @@ func supervisorReview780ReportPipeChild(t *testing.T) (code int, signaled bool) 
 // parent asserts both that no signal arrived and that the error really came back: a regression that
 // swallowed the write error would exit 0 and fail here.
 func TestSupervisorReview780ReportPipeIsAnErrorNotASignal(t *testing.T) {
-	code, signaled := supervisorReview780ReportPipeChild(t)
+	code, signaled := supervisorReview780ChildOnClosedPipe(t, supervisorReview780ReportPipeEnv)
 	if signaled {
 		t.Fatalf("the child died on a signal (exit %d): a report written to a closed pipe must return an error, not raise SIGPIPE", code)
 	}
 	if code != 1 {
 		t.Fatalf("exit %d, want 1: the report write must report the closed pipe as an error", code)
+	}
+}
+
+// C2 (the third stdout path): supervisorPassThrough writes the relay's own answer unchanged, and it
+// was routed through the same helper as the usage and the report. A closed pipe there must end the
+// run with the write failure's status, not with a signal, and the status it was about to return
+// (the relay's own refusal) must not survive a write that never happened.
+func TestSupervisorReview780PassThroughPipeIsAnErrorNotASignal(t *testing.T) {
+	code, signaled := supervisorReview780ChildOnClosedPipe(t, supervisorReview780PassThroughPipeEnv)
+	if signaled {
+		t.Fatalf("the child died on a signal (exit %d): the relay pass-through must report a closed pipe as an error", code)
+	}
+	if code != 1 {
+		t.Fatalf("exit %d, want 1: the pass-through write failure must end the run with 1, not with the status it was about to return (%d)", code, supervisorExitRefused)
 	}
 }
