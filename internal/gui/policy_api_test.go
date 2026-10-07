@@ -1,14 +1,18 @@
 package gui
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/policystore"
 )
 
 // policyText is a policy with two roles, an allowlist and one exception.
@@ -318,7 +322,7 @@ func TestPolicyCheckNeedsTheGuard(t *testing.T) {
 
 // catalogHost isolates the catalog tests: the reader resolves the model catalog below the home and
 // runs the OCX probe, so HOME and CRW_HOME are pointed at a temporary directory before either runs.
-func catalogHost(t *testing.T) {
+func catalogHost(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
 	t.Setenv("HOME", root)
@@ -328,6 +332,7 @@ func catalogHost(t *testing.T) {
 	// The catalog reader probes the OCX binary on PATH and reads the Codex home's model catalog,
 	// so both are pointed at an empty directory: the test is about this route, not the host.
 	t.Setenv("PATH", filepath.Join(root, "bin"))
+	return root
 }
 
 // TestCatalogIsRegistered is C5: the catalog route answers and keeps the reader's status apart.
@@ -395,4 +400,251 @@ func sameList(one, other []string) bool {
 		}
 	}
 	return true
+}
+
+// policyWriteResponse drives POST /api/policy and decodes the body whatever the status.
+func policyWriteResponse(t *testing.T, server *Server, payload string) (int, map[string]any) {
+	t.Helper()
+	recorder := request(server, http.MethodPost, "/api/policy", guardHost, payload, writeHeaders())
+	var body map[string]any
+	if recorder.Body.Len() > 0 {
+		if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+			t.Fatalf("write body %q: %v", recorder.Body.String(), err)
+		}
+	}
+	return recorder.Code, body
+}
+
+// policyWriteSeamsFor installs the seams the route's write runs with: a registration the test
+// chooses and a running digest that cannot be read, so no installer runs and no real relay is
+// touched. The previous seams are restored when the test ends.
+func policyWriteSeamsFor(t *testing.T, register policystore.RegisterFunc, running func(context.Context, policystore.LookupEnv) policystore.Running) {
+	t.Helper()
+	if register == nil {
+		// A test that does not expect the registration step must not fall through to the real
+		// installer.
+		register = func(context.Context, string) policystore.RegisterAnswer {
+			t.Fatal("the registration step ran where the test did not expect it")
+			return policystore.RegisterAnswer{}
+		}
+	}
+	if running == nil {
+		running = unavailablePolicyRunning
+	}
+	previous := policyWriteSeams
+	policyWriteSeams = policystore.WriteOptions{Register: register, Running: running}
+	t.Cleanup(func() { policyWriteSeams = previous })
+}
+
+// rewritePolicyRecord writes the wiring record naming file with digest, the durable effect a
+// successful re-registration leaves.
+func rewritePolicyRecord(t *testing.T, file, digest string) {
+	t.Helper()
+	record := map[string]any{
+		"recordVersion": 2, "owner": "plugin", "serverName": "codex-thread-bridge",
+		"bridgeExecutable": "/usr/local/bin/codex-thread-bridge", "args": []string{},
+		"executionPolicy": map[string]any{"path": file, "digest": digest},
+	}
+	raw, err := json.Marshal(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(os.Getenv("CODEX_HOME"), "crw-bridge-mcp.json"), raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// updatingPolicyRegister is a registration that rewrites the record to the file's current digest
+// and answers record_updated, as crw install register-mcp --re-register-policy does.
+func updatingPolicyRegister(t *testing.T) policystore.RegisterFunc {
+	return func(_ context.Context, path string) policystore.RegisterAnswer {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rewritePolicyRecord(t, path, digestOf(string(raw)))
+		return policystore.RegisterAnswer{ExitCode: 0, Stdout: []byte("{\"outcome\": \"record_updated\"}")}
+	}
+}
+
+// unavailablePolicyRunning is a running digest that could not be read.
+func unavailablePolicyRunning(context.Context, policystore.LookupEnv) policystore.Running {
+	return policystore.Running{State: policystore.RunningUnavailable, Reason: "worker_policy_unreadable"}
+}
+
+// TestPolicyWriteStoresAndReportsSeparateFields is C4 at the route: stored, registered and applied
+// come back as three separate answers, and a relay that holds the old bytes is needs_user_action.
+func TestPolicyWriteStoresAndReportsSeparateFields(t *testing.T) {
+	file := policyHost(t, policyWritableText, true)
+	policyWriteSeamsFor(t, updatingPolicyRegister(t), func(context.Context, policystore.LookupEnv) policystore.Running {
+		return policystore.Running{State: policystore.RunningObserved, Digest: digestOf(policyWritableText)}
+	})
+	payload := "{\"expectedDigest\":\"" + digestOf(policyWritableText) + "\",\"change\":{\"kind\":\"removeException\",\"id\":\"legacy\"}}"
+	code, body := policyWriteResponse(t, policyServer(t), payload)
+	if code != http.StatusOK {
+		t.Fatalf("POST /api/policy: %d %v", code, body)
+	}
+	raw, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newDigest := digestOf(string(raw))
+	stored, _ := body["stored"].(map[string]any)
+	registered, _ := body["registered"].(map[string]any)
+	if stored["digest"] != newDigest || registered["digest"] != newDigest {
+		t.Fatalf("stored = %v registered = %v, want %q", body["stored"], body["registered"], newDigest)
+	}
+	if newDigest == digestOf(policyWritableText) {
+		t.Fatal("the policy file was not replaced")
+	}
+	if body["applied"] != policystore.AppliedNeedsAction {
+		t.Fatalf("applied = %v, want %q", body["applied"], policystore.AppliedNeedsAction)
+	}
+	actions, _ := body["actions"].([]any)
+	if len(actions) != 1 || actions[0] != policystore.AppliedActionRestart {
+		t.Fatalf("actions = %v, want the restart", body["actions"])
+	}
+}
+
+// TestPolicyWriteRefusesAStaleDigest is C1 at the route: the digest on disk comes back with the
+// refusal and the file is untouched.
+func TestPolicyWriteRefusesAStaleDigest(t *testing.T) {
+	file := policyHost(t, policyWritableText, true)
+	policyWriteSeamsFor(t, nil, unavailablePolicyRunning)
+	payload := "{\"expectedDigest\":\"0000\",\"change\":{\"kind\":\"removeException\",\"id\":\"legacy\"}}"
+	code, body := policyWriteResponse(t, policyServer(t), payload)
+	if code != http.StatusConflict || body["error"] != "stale_digest" {
+		t.Fatalf("stale write: %d %v", code, body)
+	}
+	if body["currentDigest"] != digestOf(policyWritableText) {
+		t.Fatalf("currentDigest = %v", body["currentDigest"])
+	}
+	raw, _ := os.ReadFile(file)
+	if string(raw) != policyWritableText {
+		t.Fatal("a refused write changed the policy file")
+	}
+}
+
+// TestPolicyWriteRefusesAnInvalidChange is C2 at the route: the check's own reasons come back.
+func TestPolicyWriteRefusesAnInvalidChange(t *testing.T) {
+	policyHost(t, policyWritableText, true)
+	policyWriteSeamsFor(t, nil, unavailablePolicyRunning)
+	payload := "{\"expectedDigest\":\"" + digestOf(policyWritableText) + "\",\"change\":{\"kind\":\"setAllowed\",\"model\":\"gpt-6.1-sol\",\"efforts\":[\"max\"]}}"
+	code, body := policyWriteResponse(t, policyServer(t), payload)
+	if code != http.StatusUnprocessableEntity || body["error"] != "invalid_policy" {
+		t.Fatalf("invalid write: %d %v", code, body)
+	}
+	errors, _ := body["errors"].([]any)
+	if len(errors) == 0 {
+		t.Fatalf("an invalid change carries no reason: %v", body)
+	}
+}
+
+// TestPolicyWriteRestoresWhenTheRegistrationRefuses is C3's (b) at the route: the refusal is a 502
+// with restored, and the file is back to the bytes it had.
+func TestPolicyWriteRestoresWhenTheRegistrationRefuses(t *testing.T) {
+	file := policyHost(t, policyWritableText, true)
+	policyWriteSeamsFor(t, func(context.Context, string) policystore.RegisterAnswer {
+		return policystore.RegisterAnswer{ExitCode: 1, Stdout: []byte("{\"outcome\": \"record_absent\"}")}
+	}, unavailablePolicyRunning)
+	payload := "{\"expectedDigest\":\"" + digestOf(policyWritableText) + "\",\"change\":{\"kind\":\"removeException\",\"id\":\"legacy\"}}"
+	code, body := policyWriteResponse(t, policyServer(t), payload)
+	if code != http.StatusBadGateway || body["error"] != "register_failed" || body["restored"] != true {
+		t.Fatalf("failed registration: %d %v", code, body)
+	}
+	raw, _ := os.ReadFile(file)
+	if string(raw) != policyWritableText {
+		t.Fatal("the original bytes were not restored")
+	}
+}
+
+// TestPolicyWriteReportsRecoveryNeeded is C3's (c) at the route: both digests and the recovery
+// command come back, and the response is not a success.
+func TestPolicyWriteReportsRecoveryNeeded(t *testing.T) {
+	file := policyHost(t, policyWritableText, true)
+	third := digestOf("a document neither the file nor the record holds\n")
+	policyWriteSeamsFor(t, func(_ context.Context, path string) policystore.RegisterAnswer {
+		rewritePolicyRecord(t, path, third)
+		return policystore.RegisterAnswer{Err: errors.New("the registration response was lost")}
+	}, unavailablePolicyRunning)
+	payload := "{\"expectedDigest\":\"" + digestOf(policyWritableText) + "\",\"change\":{\"kind\":\"removeException\",\"id\":\"legacy\"}}"
+	code, body := policyWriteResponse(t, policyServer(t), payload)
+	if code != http.StatusInternalServerError || body["error"] != "recovery_needed" {
+		t.Fatalf("recovery: %d %v", code, body)
+	}
+	for _, field := range []string{"fileDigest", "registeredDigest", "backup", "recovery"} {
+		if value, _ := body[field].(string); value == "" {
+			t.Fatalf("the recovery answer does not carry %s: %v", field, body)
+		}
+	}
+	if body["registeredDigest"] != third {
+		t.Fatalf("registeredDigest = %v, want %q", body["registeredDigest"], third)
+	}
+	raw, _ := os.ReadFile(file)
+	if string(raw) == policyWritableText {
+		t.Fatal("the file was put back where the write could not reconcile it")
+	}
+}
+
+// TestPolicyWriteRejectsAMalformedBody is the route's own input check.
+func TestPolicyWriteRejectsAMalformedBody(t *testing.T) {
+	policyHost(t, policyWritableText, true)
+	policyWriteSeamsFor(t, nil, unavailablePolicyRunning)
+	code, body := policyWriteResponse(t, policyServer(t), "{not json")
+	if code != http.StatusBadRequest || body["error"] != "bad_request" {
+		t.Fatalf("malformed write: %d %v", code, body)
+	}
+}
+
+// TestPolicyWriteIsGuarded is the write rules at the route: the route is registered, and a write
+// that presents no token is refused before it can reach the handler.
+func TestPolicyWriteIsGuarded(t *testing.T) {
+	policyHost(t, policyWritableText, true)
+	policyWriteSeamsFor(t, nil, unavailablePolicyRunning)
+	server := policyServer(t)
+	payload := "{\"expectedDigest\":\"0000\",\"change\":{\"kind\":\"removeException\",\"id\":\"legacy\"}}"
+	// The route exists: the guard lets a token-bearing write through to it, and the handler's own
+	// refusal is a JSON error rather than the 404 an unregistered path answers.
+	if code, body := policyWriteResponse(t, server, payload); code != http.StatusConflict || body["error"] != "stale_digest" {
+		t.Fatalf("the route is not registered or is not reached: %d %v", code, body)
+	}
+	// No token: the guard refuses it.
+	recorder := request(server, http.MethodPost, "/api/policy", guardHost, payload, map[string]string{"Content-Type": "application/json"})
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("a write without the token: %d %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+// TestPolicyWriteOmitsRegisteredWhenTheRecordCannotBeReadBack is the route-level half of the stored
+// answer's honesty: the record's digest is left out of the body when it could not be established,
+// and applied says so too, so a handler that always reported a registered digest would fail here.
+func TestPolicyWriteOmitsRegisteredWhenTheRecordCannotBeReadBack(t *testing.T) {
+	policyHost(t, policyWritableText, true)
+	policyWriteSeamsFor(t, func(_ context.Context, path string) policystore.RegisterAnswer {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rewritePolicyRecord(t, path, digestOf(string(raw)))
+		// The record becomes unreadable after the registration reported success.
+		if err := os.WriteFile(filepath.Join(os.Getenv("CODEX_HOME"), "crw-bridge-mcp.json"), []byte("{not json"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return policystore.RegisterAnswer{ExitCode: 0, Stdout: []byte("{\"outcome\": \"record_updated\"}")}
+	}, unavailablePolicyRunning)
+	payload := "{\"expectedDigest\":\"" + digestOf(policyWritableText) + "\",\"change\":{\"kind\":\"removeException\",\"id\":\"legacy\"}}"
+	code, body := policyWriteResponse(t, policyServer(t), payload)
+	if code != http.StatusOK {
+		t.Fatalf("POST /api/policy: %d %v", code, body)
+	}
+	if _, present := body["registered"]; present {
+		t.Fatalf("the body names a registered digest the write could not establish: %v", body["registered"])
+	}
+	if body["applied"] != policystore.AppliedUnverifiable {
+		t.Fatalf("applied = %v, want %q", body["applied"], policystore.AppliedUnverifiable)
+	}
+	stored, _ := body["stored"].(map[string]any)
+	if digest, _ := stored["digest"].(string); digest == "" {
+		t.Fatal("the stored digest is not reported")
+	}
 }
