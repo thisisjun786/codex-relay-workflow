@@ -106,7 +106,6 @@ func ProbeWith(ctx context.Context, selection StateSelection, opts ProbeOptions)
 		notes = append(notes, "the database could not be held open: "+refused)
 		return result
 	}
-	defer file.Close()
 	held, ok := measureHeld(ctx, file)
 	if !ok {
 		notes = append(notes, "the held database could not be identified, so it was not read")

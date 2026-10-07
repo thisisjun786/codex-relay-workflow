@@ -66,6 +66,19 @@ func unreadableTarget(r store.MergeTurnsRow, actor, why, what string) *registry.
 	return coordination(r, contract.RefusalMergeTargetUnreadable, "the base branch "+pyvalue.StrRepr(r.BaseRef)+" of "+pyvalue.StrRepr(r.Repository)+" was not read, so "+what+": "+why, r.TurnID, actor)
 }
 
+// trainMemberRefusal is CRW-768's member guard: a turn that is a member of a live train does not land
+// on its own. Its merge is the bundle's, recorded with merge-train-land, so merge-turn-check and
+// merge-turn-land refuse it (disposition_conflict) while the train is opened or verified. A turn
+// outside a train, and a member of a train that already landed, was done or was abandoned, is
+// unchanged: MergeTrainOfTurn answers found=false for those.
+func (s *Service) trainMemberRefusal(ctx context.Context, turn, actor, what string) (*registry.CoordinationRefusal, error) {
+	row, _, found, err := store.MergeTrainOfTurn(ctx, s.Store, turn)
+	if err != nil || !found {
+		return nil, err
+	}
+	return &registry.CoordinationRefusal{Reason: contract.RefusalDispositionConflict, Detail: "turn " + pyvalue.StrRepr(turn) + " is a member of train " + pyvalue.StrRepr(row.TrainID) + "; it lands with merge-train-land, so it cannot " + what, Domain: registry.DomainMergeTarget, Subject: row.TargetKey, Incumbent: row.TrainID, Challenger: actor}, nil
+}
+
 // mismatch is MergeTurn._mismatch.
 func mismatch(r store.MergeTurnsRow, actor, stated string, tip Tip, what string, optional bool) *registry.CoordinationRefusal {
 	tail := ""

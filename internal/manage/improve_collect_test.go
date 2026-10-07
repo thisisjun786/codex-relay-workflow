@@ -452,10 +452,13 @@ func TestImproveCollectReadsTheStoreInPlaceWithoutSidecars(t *testing.T) {
 	}
 }
 
-// TestImproveCollectNormalizesDagMeasurements covers the dag source.
+// TestImproveCollectNormalizesDagMeasurements covers the dag source. The plan is registered in
+// the synthetic store and the measurements are read from it in place, so the fake crw stands
+// for a relay CLI the collector must not call: the record is what the store holds, and the
+// absence of the fake's argument record and of any sidecar is part of the check.
 func TestImproveCollectNormalizesDagMeasurements(t *testing.T) {
 	s := improveTestSetup(t)
-	improveTestStore(t, s, func(t *testing.T, db *sql.DB) {})
+	improveInputSeedPlan(t, s, "p1", "a", "b")
 	improveTestFakeCRW(t, s, improveTestMeasurementDoc)
 	improveTestConfig(t, s, map[string]any{"manage": map[string]any{"improve": map[string]any{
 		"sources": map[string]any{
@@ -469,25 +472,33 @@ func TestImproveCollectNormalizesDagMeasurements(t *testing.T) {
 	}
 	bundle := improveTestReadBundle(t, out)
 	records := improveTestRecordsOf(bundle, improveKindDag)
-	if len(records) != 7 {
-		t.Fatalf("dag records = %d, want 7: %+v", len(records), records)
+	// Six of the document's metrics carry their own samples; base_refresh is a container whose
+	// parts carry them, so it contributes no record — the same document from the relay CLI was
+	// read the same way.
+	if len(records) != 6 {
+		t.Fatalf("dag records = %d, want 6: %+v", len(records), records)
 	}
 	byKey := map[string]improveRecord{}
 	for _, record := range records {
 		byKey[record.Key] = record
 	}
-	if got, ok := byKey["p1:cancelled_after_release"]; !ok || got.Count != 1 {
+	// The plan's own record has real values: no node was cancelled after a child was created,
+	// over the two nodes the plan holds.
+	if got, ok := byKey["p1:cancelled_after_release"]; !ok || got.Count != 2 || !strings.Contains(got.What, "\"nodes\":0") {
 		t.Errorf("the cancelled_after_release record = %+v", got)
 	}
-	if got, ok := byKey["p1:parallelism"]; !ok || got.Count != 4 {
+	// A plan nobody recorded a pass for has no parallelism: the record is the absence and its
+	// reason, never a zero sample count that looks like a measurement.
+	if got, ok := byKey["p1:parallelism"]; !ok || got.Count != 0 || !strings.Contains(got.What, "no_recorded_pass") {
 		t.Errorf("the parallelism record = %+v", got)
 	}
-	recorded, err := os.ReadFile(s.record)
-	if err != nil {
-		t.Fatal(err)
+	if _, err := os.Stat(s.record); !os.IsNotExist(err) {
+		t.Errorf("the dag source ran the relay CLI (stat err %v)", err)
 	}
-	if !strings.Contains(string(recorded), "dag-measurements --plan p1") {
-		t.Errorf("the relay CLI was not called with the plan: %s", recorded)
+	for _, sidecar := range []string{s.dbPath + "-wal", s.dbPath + "-shm"} {
+		if _, err := os.Stat(sidecar); !os.IsNotExist(err) {
+			t.Errorf("the dag read left the sidecar %s (stat err %v)", sidecar, err)
+		}
 	}
 }
 
@@ -584,7 +595,7 @@ func TestImproveCollectNormalizesCriteriaAndDrafts(t *testing.T) {
 	if err := os.MkdirAll(drafts, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	improveTestWrite(t, filepath.Join(drafts, "one.json"), "{\"issue\":\"CRW-1\",\"project\":\"project-a\",\"title\":\"one\"}")
+	improveTestWrite(t, filepath.Join(drafts, "one.json"), "{\"schema\":\"crw-issue-draft/1\",\"fingerprint\":\"one\",\"project\":\"project-a\",\"title\":\"one\"}")
 	improveTestConfig(t, s, map[string]any{"manage": map[string]any{"improve": map[string]any{
 		"sources": map[string]any{
 			"relay": map[string]any{"path": s.stateDir},
@@ -603,8 +614,8 @@ func TestImproveCollectNormalizesCriteriaAndDrafts(t *testing.T) {
 	if criteria[0].Where != "digest-1" || criteria[0].Count != 2 || criteria[0].FirstAt != "2026-10-06T01:00:00Z" || criteria[0].LastAt != "2026-10-06T02:00:00Z" {
 		t.Errorf("the digest-1 record = %+v", criteria[0])
 	}
-	if got := improveTestRecordsOf(bundle, improveKindDraft); len(got) != 1 || got[0].Key != "CRW-1" || got[0].Where != "project-a" {
-		t.Errorf("draft records = %+v, want one CRW-1 at project-a", got)
+	if got := improveTestRecordsOf(bundle, improveKindDraft); len(got) != 1 || got[0].Key != "one" || got[0].Where != "project-a" {
+		t.Errorf("draft records = %+v, want the one fingerprint at project-a", got)
 	}
 	if got := improveTestSourceOf(t, bundle, improveKindIntervention); got.State != improveStateMissing {
 		t.Errorf("the unconfigured intervention source = %+v, want missing", got)
@@ -760,12 +771,22 @@ func TestImproveCollectRefusesAnEmptyOutValue(t *testing.T) {
 }
 
 // TestImproveCollectDagKeepsMetricValues covers the dag record's description: the metric's
-// values and absence reason survive, so equal sample counts stay distinguishable.
+// values and absence reason survive, so equal sample counts stay distinguishable. The plan and
+// its passes are in the synthetic store, so the values are the ones the scheduler measures: a
+// metric with data carries its values, and one without carries its reason and not a zero.
 func TestImproveCollectDagKeepsMetricValues(t *testing.T) {
 	s := improveTestSetup(t)
-	improveTestStore(t, s, func(t *testing.T, db *sql.DB) {})
-	doc := "{\"ok\":true,\"schema\":\"dag-measurements/1\",\"plan_id\":\"p1\",\"parallelism\":{\"samples\":0,\"absent\":\"no_recorded_pass\"},\"conflicts_by_grade\":{\"samples\":3,\"by_grade\":{\"mechanical\":3}}}"
-	improveTestFakeCRW(t, s, doc)
+	improveInputSeedPlan(t, s, "p1", "a", "b")
+	improveTestStore(t, s, func(t *testing.T, db *sql.DB) {
+		passes := []struct {
+			held, free, ceiling int
+			limit               string
+		}{{2, 1, 3, "none"}, {1, 2, 3, "no_capacity"}}
+		for i, pass := range passes {
+			improveTestInsert(t, db, "INSERT INTO dag_passes (plan_id, pass_seq, plan_revision, input_digest, ready_count, free_slots, ceiling, held, deciding_limit, order_json, dispositions_json, recorded_by, recorded_at) VALUES ('p1',?,1,'digest',2,?,?,?,?,'[]','[]','parent','2026-10-06T01:00:00Z')",
+				i+1, pass.free, pass.ceiling, pass.held, pass.limit)
+		}
+	})
 	improveTestConfig(t, s, map[string]any{"manage": map[string]any{"improve": map[string]any{
 		"sources": map[string]any{
 			"relay": map[string]any{"path": s.stateDir},
@@ -782,11 +803,12 @@ func TestImproveCollectDagKeepsMetricValues(t *testing.T) {
 	for _, record := range records {
 		byKey[record.Key] = record
 	}
-	if got, ok := byKey["p1:parallelism"]; !ok || !strings.Contains(got.What, "no_recorded_pass") {
-		t.Errorf("the absent parallelism metric lost its reason: %+v", got)
+	// Two passes held two slots and one, so the mean is 1.5 and the latest is 1.
+	if got, ok := byKey["p1:parallelism"]; !ok || got.Count != 2 || !strings.Contains(got.What, "\"mean\":1.5") {
+		t.Errorf("the parallelism metric lost its values: %+v", got)
 	}
-	if got, ok := byKey["p1:conflicts_by_grade"]; !ok || !strings.Contains(got.What, "mechanical") {
-		t.Errorf("the conflicts metric lost its values: %+v", got)
+	if got, ok := byKey["p1:conflicts_by_grade"]; !ok || !strings.Contains(got.What, "no_observations") {
+		t.Errorf("the absent conflicts metric lost its reason: %+v", got)
 	}
 }
 

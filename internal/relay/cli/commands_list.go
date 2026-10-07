@@ -3,7 +3,9 @@ package cli
 // Reported by doctor, copied from cli.py OFFLINE_COMMANDS and HOST_REQUIRED_COMMANDS.
 var offlineCommands = []string{
 	"ack", "ack-proof", "admit-turn", "assignment-show", "claim", "criteria-register",
-	"criteria-show", "decision-reply", "decision-show", "doctor", "emit", "generation-bind", "generation-open", "intervention-show", "register",
+	"criteria-show", "decision-answer", "decision-apply", "decision-list", "decision-raise", "decision-reply",
+	"decision-show", "decision-withdraw", "doctor", "emit", "generation-bind", "generation-open",
+	"intervention-show", "register",
 	"relationship-resume", "relationship-status", "revision-head", "settings-record", "settings-show",
 	"show", "status", "store-challenge", "store-identity", "verdict", "linkage-attach",
 	"linkage-bind", "linkage-counterpart", "linkage-directive", "linkage-completion", "linkage-down",
@@ -29,6 +31,9 @@ var offlineCommands = []string{
 	"packet-check", "merge-evidence", "intent-declare", "intent-attempt", "intent-bind",
 	"intent-register", "intent-claim", "intent-disposition", "intent-resolve", "intent-show",
 	"dag-plan-put", "dag-plan-show", "dag-plan-log", "merge-turn-progress", "merge-turn-pass",
+	// CRW-768: the merge train's five commands are offline like the merge-turn ones: they read the
+	// forge and git themselves and need no host.
+	"merge-train-open", "merge-train-verify", "merge-train-land", "merge-train-close", "merge-train-show",
 }
 var hostRequiredCommands = []string{
 	"daemon", "deliver", "reconcile", "recover", "service run", "service start", "service restart",
