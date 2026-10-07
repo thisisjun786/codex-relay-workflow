@@ -795,7 +795,7 @@ Model/effort: <the pair requested through the creation call; the coordinator rea
 Language: English for everything you write (messages, commits, pull request title, body and replies, handoff and receipt text).
 
 DELIVERABLE
-- <the pull request: non-draft, English title ISSUE-ID: <short English summary>, a non-empty body>
+- <the pull request: non-draft, English title ISSUE-ID: <short English summary>, a non-empty body; internal work may instead deliver commits on a task branch, and the body rule applies only where a pull request is the delivery>
 - <the handoff record and the completion receipt over it, and a final return that states what `Return:` lists: task id, baseline and
   final head, model and effort as observed, goal ids, per-criterion evidence, remaining defects, and the resource delta: what you
   created, changed, retained or started, each with its owner, release condition and next action, and any process with its working
@@ -816,7 +816,7 @@ VERIFY
 - <local runs on the packages the change touches; what hosted CI on the same head stands in for, and what this child does not verify>
 
 STOP WHEN
-- Done: <the pull request is open with its body, every required check is green on its head, the one-time reviews are finished or
+- Done: <the pull request is open, the repository's named verification passes on its head, the one-time reviews are finished or
   skipped, every thread is answered, the receipt is emitted>. Then publish the ready_for_review disposition and end the turn.
 - Blocked: <the size passes the cap, an input mismatch, a question only a person can answer, anything you cannot clear under
   the assignment>. Write the blocked file, emit blocked_needs_input without `--artifact` (it carries no file) and name the blocked file in your final message, then end the turn.
@@ -868,12 +868,13 @@ host values filled in.
    Source: new here, because no Launch packet rule gives a child a line count. The nearest are the parent's pre-dispatch check
    ([Check the size before dispatch](../SKILL.md#check-the-size-before-dispatch)), "Do not absorb another issue into this task or
    PR" and the `blocked_needs_input` route of `Execution:`. The figure is this project's; a packet may carry another.
-3. **Text on GitHub.** The title, body, commit messages and replies are English. The pull request title is
-   `<ISSUE-ID>: <short English summary>`, never the Codex task title, and the pull request targets the integration branch SCOPE
+3. **Text on GitHub.** The title, body, commit messages and replies are English. Where the delivery is a pull request, its
+   title is `<ISSUE-ID>: <short English summary>`, never the Codex task title, and it targets the integration branch SCOPE
    names (`dev` in this repository). The only Linear issue id you write in any of them is the one you deliver: name another issue
-   by its pull request number or its title, and never write a project id, a plan or node id or a relay id. The body states the
+   by its pull request number or its title, and never write a project id, a plan or node id or a relay id. A body states the
    expected behavior and acceptance criteria, the commands run with their results and what is out of scope, carries no private
-   path, and is read back after the pull request is opened.
+   path, and is read back after the pull request is opened. Under the push-only procedure the same facts go in the handoff and
+   the coordination record instead, and the body is not the place a rule is recorded.
 
    Source: `Language:`, `Title:` and `Issue/PR mapping:` (one issue, one pull request), [Child task titles](#child-task-titles), and the
    pull request lines of `Return:`. The ban on other ids is new here: Linear's GitHub integration acts on any issue id it reads in
@@ -1031,7 +1032,7 @@ VERIFY
 - Hosted CI on the same head stands in for `make test`; you run the packages you changed, with `-count=1`, not the whole suite.
 
 STOP WHEN
-- Done: the pull request is open with its body, every required check is green on its head (`dev-gate`, which needs every job), the
+- Done: the pull request is open, the repository's named verification passes on its head, the
   one-time reviews are finished or skipped, every thread is answered and the receipt is emitted. Then publish ready_for_review and end the turn.
 - Blocked: the size passes about 1,035 lines, an input mismatch, or anything you cannot clear under this assignment. Write the
   blocked file, emit blocked_needs_input without `--artifact` (it carries no file), name the blocked file in your final message and end the turn.

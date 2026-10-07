@@ -44,51 +44,49 @@ A reviewer that is not a gate does not excuse a confirmed defect or justify reso
 threads without evidence. Refresh stale launch and recovery instructions on the
 same parent and child tasks; preserve their work and dependency gates.
 
-## Check CI for this candidate
+## Check the verification evidence
 
-Inspect both check runs and commit statuses, including their source identities,
-revision coverage, and run/attempt URLs. Select the applicable latest attempt for
-each gate; a later valid rerun may supersede an earlier cancelled or failed attempt.
-Do not collapse distinct jobs or sources merely because their names match.
+Under this repository's push-only procedure the candidate's verification evidence is a
+`verification-record/1` with `result: pass` for the tree that would land, produced by
+`crw-dev ci local` on the merged tree ([POLICY.md](../../../../../POLICY.md#verification)). Read the
+record itself: its schema, its `result`, the `headCommit` and `treeHash` it names, whether it is
+the tree the landing would produce, and whether its `pinMismatch` is empty. A missing record, a
+`fail` result, a record for another tree, a pin mismatch or an unreadable file is unresolved
+evidence, never a pass. Reuse a record only while the tree, the `ci.yml` digest, the tool versions,
+the dependency digests and the OS and architecture all still match, which is what the record's own
+reuse rule checks.
 
-Required CI must satisfy the repository's gates for the candidate, including any
-required merge-result/base compatibility checks. Pending, missing, failed, cancelled,
-or inaccessible required evidence is unresolved. Accept skipped/neutral results
-only when the repository's gate semantics make them legitimate for this change;
-a green PR summary alone is insufficient. Resolve routine failures and recheck.
+Where a repository still runs hosted CI on a pull request, its required checks are the evidence
+instead, and they are read as follows. Inspect both check runs and commit statuses, including their
+source identities, revision coverage, and run/attempt URLs. Select the applicable latest attempt for
+each gate; a later valid rerun may supersede an earlier cancelled or failed attempt. Do not collapse
+distinct jobs or sources merely because their names match. Required CI must satisfy the repository's
+gates for the candidate, including any required merge-result/base compatibility checks. Pending,
+missing, failed, cancelled, or inaccessible required evidence is unresolved. Accept skipped/neutral
+results only when the repository's gate semantics make them legitimate for this change. Resolve
+routine failures and recheck.
 
-A required check that is not a success has two readings, and they call for different
-actions. `checks_not_run` is the reading for a check that did not succeed because its
+**The installed relay still reads the old path.** Until the relay's PR path is replaced, its lane
+and `merge-evidence` read hosted checks, and two of its readings describe that path rather than
+this repository's rule. A required check that is not a success has two readings there, and they call
+for different actions. `checks_not_run` is the reading for a check that did not succeed because its
 workflow run holds a job that concluded `cancelled`, `failure` or `timed_out` without beginning a
 step: no runner ever picked it up, so the commit was never tested. `merge-evidence` names the run
 and the jobs that did not run in the problem's detail, so a rerun can be aimed at them.
 `checks_stale` is the reading for every other non-success, a real failure, and the lane returns
-its turn as before.
+its turn as before. A `go-product (test-*)` leg that concluded `success` while its test step did not
+run (the temporary CI light mode of CRW-790, whose trigger is gone) is `checks_stale` too, never a
+pass and never a rerun. These are the installed tool's readings while it runs the PR path; they are
+not this repository's integration rule, and where the lane refuses the new flow that is missing
+official support to report.
 
-A `go-product (test-*)` leg that concluded `success` while its test step did not run (the temporary
-CI light mode of CRW-790, where a pull request without the `crw-lane` label skips the legs' work)
-is `checks_stale` too, never a pass and never a rerun: the run tested nothing, so the lane labels
-the pull request `crw-lane` and judges the full run.
+Neither reading is ready and neither permits an integration.
 
-What the lane does about `checks_not_run` depends on who owns the retry ledger. Where no
-judge owns it, the lane reruns the failed jobs of that run once on the same head
-(`gh run rerun <run id> --failed`) and waits; when that head already has a queued run it does
-not rerun and waits for that one, and a `checks_not_run` that survives the one rerun is an
-infrastructure failure rather than a code failure, so the lane stops and reports it instead of
-rerunning again. In a DAG-managed project the scheduler owns the one rerun of a head, so the
-lane takes no rerun of its own: it waits for `dag-merge-judge` to record the failure and answer
-`retry_same_sha` first, as [the one rerun of N](#refresh-the-base-yourself-when-only-the-base-moved)
-requires, because a rerun taken before that is invisible to the store and would earn the same
-head a second one.
+No verification evidence is not a pass. Where the repository names no verification, run the checks it
+does name through its permitted local route and report that distinction. Do not invent a new
+requirement, waive an existing one, or claim readiness when necessary validation is still unknown.
 
-Neither reading is ready and neither permits a merge.
-
-No configured CI is not a CI pass. Use the repository's permitted local validation
-route if one exists and report that distinction. Do not invent a new hosted CI
-requirement, waive an existing one, or claim readiness when necessary validation
-is still unknown.
-
-A local validation run the parent starts for that route follows the `Processes you start:` line of
+A local verification run the parent starts for that route follows the `Processes you start:` line of
 the [Launch packet](task-packet.md#launch-packet): it records its pid when it starts or runs under
 `timeout`, and is stopped only by that pid, its own process group or the handle the execution tool
 returned for it, never by pattern or name, because children run their own tests on the same host at
@@ -179,19 +177,24 @@ also reads each reviewer's summary comment again right before it merges.
 
 ### The three gates
 
-A pull request merges when all three hold on one and the same head:
+A candidate integrates when all three hold on one and the same tree:
 
-1. every required CI job succeeds on that head, as
-   [Check CI for this candidate](#check-ci-for-this-candidate) reads required (a skipped or neutral result
-   counts only where the repository's gate semantics make it legitimate); here `dev-gate` needs every other
-   job, so that is every job of the CI workflow, all of them on the head the merge names and not on a mix of
-   heads;
+1. the candidate's verification evidence passes on that tree: under this repository's
+   push-only procedure that is the integrator's `verification-record/1` with `result: pass` for the
+   merged tree, read as [Check the verification evidence](#check-the-verification-evidence) reads it;
+   where a repository still runs hosted CI on a pull request, it is that repository's own gate, and a
+   skipped or neutral result counts only where its gate semantics make it legitimate;
 2. the coordinator verified the candidate by its usual procedure: it read the diff and the code, checked the
    integration part ([Build and vet the merged tree before the verdict](#build-and-vet-the-merged-tree-before-the-verdict)),
    and reran the tests the criteria rest on; it reuses valid evidence rather than rerunning everything without
-   reason, and a result it already holds for this same head, criteria and environment is not run twice;
+   reason, and a result it already holds for this same tree, criteria and environment is not run twice;
 3. the local gates pass: the checks the repository names for the change, run through the repository's
    permitted local validation route.
+
+Gate 1 is the repository's own verification, not a restatement of the child's handoff. Under the
+push-only procedure the integrator produces it on the merged tree and fast-forwards `dev` to that
+tree; the coordinator still checks the criteria and the diff before the landing, and where it runs the
+integration itself it reads the record rather than the child's own numbers.
 
 Gate 2 is the coordinator's own verification, not a restatement of the child's handoff. It is the
 exception to the rule that the coordinator reads a child's result that still applies instead of producing
@@ -205,23 +208,23 @@ that every child builds on, so they take the settings the launch packet gave the
 ([`Go build resources:`](task-packet.md#launch-packet)): the shared build cache, `GOFLAGS=-p=4`, the
 packages the change touches, a `-count` (normally `-count=1`) for a result it will rely on (a
 `(cached)` line can be another task's run), and `-race`, a large `-count` or a load reproduction only
-inside its own memory-limited scope, one at a time. The whole test suite is gate 1's hosted CI on this
-head and is not repeated locally; the checks gate 3 names stay, and a full local test run is replaced
-by this CI only where the packet states the user's scoped override, after confirming that the CI runs
-the whole suite.
+inside its own memory-limited scope, one at a time. The whole test suite is gate 1's verification of this
+tree and is not repeated locally; the checks gate 3 names stay, and a full local test run is replaced
+by gate 1 only where the packet states the user's scoped override, after confirming that the verification
+runs the whole suite.
 
 Nothing else is a gate, and neither reviewer is one. A required review source or a mandatory formal approval
 that the target repository's own rules declare still applies as
 [Inspect review content and coverage](#inspect-review-content-and-coverage) has it; in this repository
-`POLICY.md` requires no particular bot and a human approval count of zero. The merge waits for no Devin or
+`POLICY.md` requires no particular bot and a human approval count of zero. The integration waits for no Devin or
 Codex status or review. Neither inheriting an
 earlier Devin review by patch-id nor writing a substitute review comment is required, and a review against
 a security checklist is not a gate, although a coordinator who finds a security problem while reading the
-diff grades it like any finding ([impact](#judge-a-finding-by-its-impact)). The repository's own merge
+diff grades it like any finding ([impact](#judge-a-finding-by-its-impact)). The repository's own integration
 mechanics stay as [Recheck, integrate, and record](#recheck-integrate-and-record) and `POLICY.md` have
-them: a current base, no conflicts, Ready status, resolved review conversations and the expected-head guard.
-Pull requests that change activation wiring, manifest declarations, the installers, `SECURITY.md` or
-`POLICY.md` merge under the same three gates.
+them: a current destination tip, no conflicts and the landed-commit read-back. A change that touches
+activation wiring, manifest declarations, the installers, `SECURITY.md` or `POLICY.md` integrates under
+the same three gates.
 
 ### The one run of each reviewer, awaited before the receipt
 
@@ -1210,6 +1213,12 @@ and none of them is ever counted as zero.
 
 
 ### Merge a bundle
+
+**The installed relay still runs the PR path.** The lane, the train and `merge-evidence` below read hosted
+checks on a pull request, which is the relay's own mechanism and not this repository's integration rule.
+While the installed relay runs it, its readings describe the relay's path; the repository's rule is the
+integrator's verified fast-forward in [The three gates](#the-three-gates) and [POLICY.md](../../../../../POLICY.md#branches-and-authority).
+Where the lane refuses the new flow, that is missing official support to report.
 
 Under the strict ruleset a lane that merges members one by one needs a green `dev-gate` on every
 prefix tree, so k members cost k CI runs and the runner limit caps a train at 3 to 4. A bundle is the

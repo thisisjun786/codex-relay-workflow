@@ -29,7 +29,7 @@ workflow starts only on a manual dispatch, and integration does not wait on it.
 `make dist` and the release archives never contain it. Its checks have no Python twin: the copies
 under `scripts/ci` and `scripts/check_operations_contract.py` left in refactor R3 (decision R3R-1).
 `crw-dev ci local` runs this same table locally and records the result as a
-`verification-record/1` (CRW-964's command and format; its own section is CRW-964's to write).
+`verification-record/1` (CRW-964's command and format, documented in its own section).
 See the [workflow](../.github/workflows/ci.yml) for the exact job inputs.
 
 ## The workflow

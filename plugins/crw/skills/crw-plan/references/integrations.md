@@ -249,13 +249,13 @@ preserving product labels, context links, unrelated fields and history.
 
 ### Issue-to-PR mapping
 
-Today's operation is one implementation issue per packet and PR, and that PR delivers that
-one issue: several PRs for one issue, or one PR delivering several issues, are reconciled
-through `crw-plan` before new dispatch. Split work requiring several PRs into separate
+Today's operation is one implementation issue per packet, and that packet delivers that one
+issue: several deliveries for one issue, or one delivery covering several issues, are reconciled
+through `crw-plan` before new dispatch. Split work requiring several deliveries into separate
 issues with explicit dependencies, even within one repository. Keep a multi-repository
-outcome in one project when appropriate, with one issue per repository PR.
-Batches coordinate separate issue/PR pairs; they do not combine issues into one
-PR. Referencing a related issue is not claiming to deliver or close it. This is today's
+outcome in one project when appropriate, with one issue per repository delivery.
+Batches coordinate separate issue/delivery pairs; they do not combine issues into one
+delivery. Referencing a related issue is not claiming to deliver or close it. This is today's
 operation under the [work-unit rules](../../../../../POLICY.md#work-units-review-and-integration),
 not a standing one-to-one rule: several packets for one feature are allowed by policy and
 switch on when their support lands.
@@ -1326,6 +1326,14 @@ A value this precedence settles is applied without asking. A value it does not s
 
 ### Publish for review when the work is reviewable
 
+**The repository's integration rule is the push-only procedure.** Internal work integrates by one
+integrator who merges the candidate into a local integration tree over `dev`, verifies that tree
+with the local full verification (`verification-record/1` with `result: pass`) and fast-forwards
+`dev` to it ([POLICY.md](../../../../../POLICY.md#branches-and-authority)). The pull-request route
+below is the relay's own mechanism and the route an external contribution uses; while the installed
+relay runs it, these clauses describe that path, and where the relay refuses the push-only flow that
+is missing official support to report.
+
 This applies where the assignment's scope expressly covers publication. Where it does not, the delivery is local commits or a frozen diff and the question of draft never arises; lacking publication authorization is a reason not to publish, not a reason to publish as a draft.
 
 Where publication IS in scope, draft marks an implementation not yet worth reading. It is not a waiting room until reviewers finish. When the change is complete enough to review, it is published as a pull request that is open for review: created non-draft, or an existing draft transitioned to Ready for review. Ready is review entry, not merge permission and not proof the work is done.
@@ -1348,13 +1356,13 @@ Explicit draft-only, read-only, or no-remote-write limits win, as do the reposit
 
 ### Default dev integration
 
-Jun authorizes a pull request workflow in which the implementation child carries the work to a reviewable pull request and the coordinator decides the merge. The child implements, tests, commits on its branch, pushes, opens the pull request, and then owns every applicable review on that same pull request: intake, triage, fixes, replies, and rechecks. It reports normal completion only once the required checks and reviews on the current head have finished and blocking findings are resolved, with per-finding evidence. Which findings are blocking, and what a recorded acceptance of the rest costs, are defined in [Judge a finding by its impact](../../crw-run/references/merge-readiness.md#judge-a-finding-by-its-impact); a minor separable residue accepted there is a disposition the parent owns, not an unfinished obligation the report hides. A missing mandatory review or check is reported as blocked rather than as completion. The full contract, including the fallback for a task that cannot write git metadata, is [Operations contract](../../crw-run/references/operations.md).
+Jun authorizes a delivery workflow in which the implementation child carries the work to a reviewable state and the coordinator decides the integration. Under the push-only procedure the child implements, tests, commits on its task branch and pushes it, and the repository's local full verification of the delivered tree is its evidence; the integrator merges that tree into the integration tree over `dev`, verifies it and fast-forwards `dev`. Where the delivery is a pull request, the child opens it and then owns every applicable review on it: intake, triage, fixes, replies, and rechecks. It reports normal completion only once the repository's named verification and the applicable reviews on the current head have finished and blocking findings are resolved, with per-finding evidence. Which findings are blocking, and what a recorded acceptance of the rest costs, are defined in [Judge a finding by its impact](../../crw-run/references/merge-readiness.md#judge-a-finding-by-its-impact); a minor separable residue accepted there is a disposition the parent owns, not an unfinished obligation the report hides. A missing mandatory review or check is reported as blocked rather than as completion. The full contract, including the fallback for a task that cannot write git metadata, is [Operations contract](../../crw-run/references/operations.md).
 
 For the child this authorization is also the explicit push approval that CXC `DEV-GIT-PUSH-01` requires. That rule says never `git push` without the user's explicit approval in the current session, and CXC rule text is loaded into every child, so the packet states which approval it carries: where its `Delivery:` line covers publication, the packet carries Jun's standing authorization above, and the child pushes its own task branch and opens the pull request without stopping to ask, then never merges. The authorization covers no force-push, no tag and no push to `dev` or `main`. A packet whose scope excludes publication carries none, and its child pushes nothing. This states which approval satisfies the CXC rule here; it does not change the rule's text.
 
 A child that needs something only a person can give, such as a decision, a credential or an approval its packet does not carry, does not ask with `request_user_input`, which CXC denies while a goal is active. It writes the question out, records `blocked_needs_input` on its turn and, where a relay holds the assignment, emits that outcome without a file, the question being in its blocked file and its final message (see the clause on a child that stopped to ask a question in [OPS-6.2](../../crw-run/references/operations.md#ops-62-record-shape)), so its parent can take the question to Jun.
 
-The coordinator then checks the Linear criteria and the pull request's latest diff, base, head, checks, and review resolution, and merges without another confirmation round when those hold. This is standing user authorization for this workflow, not permission inferred from passing checks, and it supersedes the earlier recommendation that the coordinator avoid merging. Use [Merge readiness](../../crw-run/references/merge-readiness.md) for the gate detail, preserve unrelated work and branch protections, resolve routine in-scope failures and recheck, then verify the actual landing rather than an accepted merge request. An explicit diff-only, no-merge, or narrower instruction still overrides this default, and the child never merges.
+The coordinator then checks the Linear criteria and the candidate's latest diff, destination tip, head, verification evidence and review resolution, and integrates without another confirmation round when those hold. This is standing user authorization for this workflow, not permission inferred from passing checks, and it supersedes the earlier recommendation that the coordinator avoid integrating. Use [Merge readiness](../../crw-run/references/merge-readiness.md) for the gate detail, preserve unrelated work and branch protections, resolve routine in-scope failures and recheck, then verify the actual landing rather than an accepted integration request. An explicit diff-only, no-integration, or narrower instruction still overrides this default, and the child never integrates.
 
 A base that only moved is the coordinator's to refresh, not the child's: where nothing else is wrong it updates the branch itself, for the candidate about to merge only, and checks the result, under [Refresh the base yourself when only the base moved](../../crw-run/references/merge-readiness.md#refresh-the-base-yourself-when-only-the-base-moved), instead of returning the pull request for a base-refresh generation. A conflict only in places the plan declared `mechanical` is settled the same way, by the declared rule and the `base-refresh mechanical` check ([Resolve a mechanical conflict yourself](../../crw-run/references/merge-readiness.md#resolve-a-mechanical-conflict-yourself)).
 

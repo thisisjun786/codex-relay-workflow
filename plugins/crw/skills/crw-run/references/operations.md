@@ -1167,14 +1167,23 @@ settling how every operator-facing reader renders that terminal, which is not do
 
 ## OPS-9 Delivery, review and merge
 
-### OPS-9.1 The child owns the pull request, and opens it for review
+**Which route this describes.** The repository's integration rule is the push-only procedure:
+one integrator merges the candidate into a local integration tree over `dev`, obtains the local
+full verification (`verification-record/1` with `result: pass`) for that tree and fast-forwards `dev` to
+it ([POLICY.md](../../../../../POLICY.md#branches-and-authority)). The pull-request route below is the
+relay's own mechanism, which the installed relay still runs; while it does, these clauses describe
+the relay's path, and the child's obligations under them are the ones its packet carries. Where the
+relay refuses the push-only flow, that is missing official support to report.
 
-A capable child carries its work to a reviewable pull request and then through review. It
-implements, runs the basic checks, commits on its branch, pushes, and puts the pull request into a
-state a reviewer can act on: opened ready for review, or opened as a draft and marked ready before
-any review is requested. Ready for review comes before the review rather than after it, because a
-reviewer treats a draft as not yet asking, and a review that never ran then reads as a pass nobody
-gave.
+### OPS-9.1 The child owns the delivery, and makes it reviewable
+
+A capable child carries its work to a reviewable state and then through review. Under the push-only
+procedure it implements, runs the basic checks, commits on its task branch and pushes it, and its
+evidence is the repository's local full verification of the delivered tree; the integrator merges
+that tree into the integration tree and fast-forwards `dev`. Where the delivery is a pull request,
+the child opens it ready for review, or opens a draft and marks it ready before any review is
+requested: ready for review comes before the review rather than after it, because a reviewer treats
+a draft as not yet asking, and a review that never ran then reads as a pass nobody gave.
 
 Ready for review is not a claim that the work is finished. It says the change is ready to be read.
 Merge readiness is a separate judgement the parent makes later against the criteria and the current
@@ -1188,14 +1197,14 @@ and rechecking.
 
 | Step | Owner |
 |---|---|
-| Implement, basic checks, commit, push | child |
-| Pull request open and ready for review | child |
-| Review requested, hosted review runs | child |
+| Implement, basic checks, commit, push the task branch | child |
+| Deliverable reviewable: a pull request open and ready for review, or the pushed branch with its verification evidence | child |
+| Review requested where a pull request exists, hosted review runs | child |
 | Findings triaged, fixed, replied and rechecked until the applicable gates are met | child |
-| Merge-readiness handoff recorded: the head, the verified base, the check runs, the review coverage and a judged disposition per thread | child |
+| Readiness handoff recorded: the head, the verified base, the verification evidence, the review coverage and a judged disposition per thread | child |
 | Report to the parent | child |
-| Linear criteria checked, and the child's handoff restated against the current diff, base and head | parent |
-| Merge, without asking the user again | parent |
+| Linear criteria checked, and the child's handoff restated against the current tree, base and head | parent |
+| Integrate into `dev` and verify the landing, without asking the user again | parent |
 | Release or deployment | user |
 
 Review handling stays on the pull request that produced it. A second pull request opened to escape
@@ -1221,7 +1230,7 @@ is not requested again or awaited under the [reviewer policy](merge-readiness.md
 its existing findings, and any thread that arrives after the receipt, still require evidence-backed disposition
 ([Late review threads](merge-readiness.md#late-review-threads)).
 
-A missing mandatory review or a required check that has not passed is BLOCKED, and blocked is
+A missing mandatory review or verification evidence that has not passed is BLOCKED, and blocked is
 reported as blocked. It is never reported as completion with a note, because the note is what gets
 skimmed past.
 
@@ -1231,28 +1240,31 @@ threads and nothing objected: the completion path established that the turn had 
 deliverable hashed, and never asked what the review said. So a completion that names a pull request
 carries a handoff record, and recording one is refused when the review coverage is unstated, when
 pagination has not reached the end, when identifiers are blank, repeated or disagree with the count,
-when any thread remains unresolved, when a thread that was seen has no judged disposition, when a
-declared required check is absent or not successful at its highest attempt on this exact head, when
-a check reports a different head, or when the pull request is still a draft. An unstated field is
+when any thread remains unresolved, when a thread that was seen has no judged disposition, when the
+verification evidence the repository names is absent or not a pass for this tree, when it names
+another tree, or when the pull request is still a draft. An unstated field is
 refused as unstated rather than read as zero, because absence used to read as satisfied and a record
 that said nothing passed every check.
 
-Which checks the branch requires is declared rather than assumed. An empty declaration means the
-branch requires none; not having looked is a different fact and is refused as one, because treating
-ignorance as "nothing required" accepts a failing required check sitting beside a passing optional
-one.
+Which verification the branch requires is declared rather than assumed. An empty declaration means
+the branch requires none; not having looked is a different fact and is refused as one, because
+treating ignorance as "nothing required" accepts a failed verification sitting beside a passing
+optional one.
 
 Evidence is reused when it still applies, meaning the same revision, the same criteria and the same
 environment, and it is re-run when any of those three moved. Reusing a result across a changed
 revision is the mistake OPS-9.4 exists to prevent; re-running everything on every push is the waste
 at the other end.
 
-### OPS-9.3 The parent merges, and does not release
+### OPS-9.3 The parent integrates, and does not release
 
-After the child reports, the parent checks the Linear criteria and the pull request's latest diff,
-base, head, checks and review resolution. If those hold, the parent merges without asking the user
-again, because that authority was already granted for this workflow, and then verifies the landing
-rather than trusting an accepted merge request.
+After the child reports, the parent checks the Linear criteria and the candidate's latest diff,
+destination tip, head, verification evidence and review resolution. If those hold, the parent
+integrates without asking the user again, because that authority was already granted for this
+workflow, and then verifies the landing rather than trusting an accepted integration request.
+Under the push-only procedure the integrator merges the candidate into the integration tree,
+verifies it and fast-forwards `dev`; where the relay still runs the PR path, the parent's
+step is the merge it describes.
 
 It RESTATES the child's handoff rather than rebuilding it. The child already read the review to the
 end and enumerated the check runs; a parent that paginates them again is repeating work the contract
