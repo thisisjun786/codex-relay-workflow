@@ -172,7 +172,7 @@ A thread the parent judges minor it dispositions itself
 ([a late thread the parent dispositions itself](#a-late-thread-the-parent-dispositions-itself)); for any
 other the candidate goes back for a round trip while a correction can still reach the child
 ([Recheck, integrate, and record](#recheck-integrate-and-record)). [Late review threads](#late-review-threads)
-says who handles such a thread by its grade and the stage of the candidate, what applies where the installed
+says who handles such a thread by its reading against this issue's scope and the stage of the candidate, what applies where the installed
 relay cannot record that disposition, and what holds once no correction can reach the child. The relay's restatement catches a late
 review thread only: a late finding that lives in a reviewer's summary comment is not caught, so the parent
 also reads each reviewer's summary comment again right before it merges.
@@ -273,16 +273,21 @@ requested again and no later run is awaited.
 
 ### What each finding needs before the receipt
 
-Read the grade as the reviewer wrote it, whoever the reviewer is.
+Read the finding against this issue's scope (its initial specification, its criteria and its promise) whoever
+the reviewer is, and read the grade as the reviewer wrote it only as a label.
 
-- Devin red, Codex P0 and P1, and any security finding (Devin `"kind": "security"`, anything from the Codex
-  security review) are fixed or answered with code evidence before the receipt. A grade is a label, and
-  whether a finding blocks is still decided by [impact](#judge-a-finding-by-its-impact): a defect that is real
+- A finding inside this issue's scope is fixed on this pull request, or answered from the code with evidence,
+  before the receipt, whatever its grade. "Outside the edit region" and "not introduced by this pull request"
+  are not reasons to pass one.
+- A P0 and any security finding (Devin `"kind": "security"`, anything from the Codex security review) are fixed
+  or answered with code evidence before the receipt whether or not they are inside this issue's scope, and
+  `not_applicable` answers one only with code evidence that the reading is wrong.
+- A finding outside this issue's scope is follow-up work only where it is separable, with its own context, its
+  own impact and its own outcome; the reply and the backlog entry follow
+  [the parent's acceptance](#conditional-acceptance-and-what-recording-one-costs), and a P3 is recorded.
+- Whether a finding blocks is still decided by [impact](#judge-a-finding-by-its-impact): a defect that is real
   and blocks is fixed or the candidate is reported blocked, and is never recorded `not_applicable`, and a
   conditional acceptance is not how one of these is cleared.
-- Devin yellow and Codex P2 and P3 get a reply and are resolved, or are listed for the backlog in the
-  handoff. A minor separable residue follows
-  [the parent's acceptance](#conditional-acceptance-and-what-recording-one-costs).
 
 `merge-evidence` refuses the latest submitted `CHANGES_REQUESTED` review of any author, a bot included, until that
 author approves or dismisses it. Devin and Codex post their reviews as `COMMENTED` (every one read so far was,
@@ -292,9 +297,9 @@ reported to the coordinator and is not read as a gate.
 ### What the record says
 
 The handoff and the merge record give each reviewer's reading as one of: finished with N threads, skipped,
-`no signal by <time>`, or the text of a signal the table does not know. They give the disposition of each red,
-P0, P1 and security finding with its commit or its evidence, and they name the three gates. A skipped,
-missing or unrecognised status is never recorded as a pass.
+`no signal by <time>`, or the text of a signal the table does not know. They give the disposition of every
+finding inside this issue's scope and of every P0 and security finding, with its commit or its evidence, and
+they name the three gates. A skipped, missing or unrecognised status is never recorded as a pass.
 
 A packet criterion or gate line that reads "Devin has no red or security finding" is read as: if a Devin
 review exists, its red and security findings are resolved; no new Devin review is awaited. The merge does not
@@ -313,11 +318,13 @@ restatement and that recording read review threads only: a late finding that sit
 is graded by the coordinator by the rule below, and a minor one needs no round trip because the record is not
 invalidated.
 
-The grade decides who handles the thread, read as
-[What each finding needs before the receipt](#what-each-finding-needs-before-the-receipt) reads it and decided by
-[impact](#judge-a-finding-by-its-impact). A Devin yellow, a Codex P2 or a Codex P3 is minor only where it is minor
-and separable under that section. One whose real effect is in a blocking class is handled as red and is never a
-conditional acceptance. A thread from any other reviewer is graded by impact in the same way.
+What decides who handles the thread is its reading against this issue's scope under
+[What each finding needs before the receipt](#what-each-finding-needs-before-the-receipt) and
+[impact](#judge-a-finding-by-its-impact), and then the stage of the candidate. A thread outside this issue's scope
+whose residue is separable is minor for this routing: it reaches none of the blocking classes and leaves a
+detachable follow-up. One whose real effect is in a blocking class is handled as blocking and is never a
+conditional acceptance, and a P0 or a security thread is never minor whatever it touches. A thread from any other
+reviewer is read against this issue's scope in the same way.
 
 **A minor thread** is the coordinator's to triage, because nothing in the code is asked of the child. What the
 coordinator can do depends on the relay it runs, and `codex-session-relay merge-evidence --help` shows which:
@@ -331,9 +338,10 @@ coordinator can do depends on the relay it runs, and `codex-session-relay merge-
 - *It does not.* The option is in this repository's source and the installed relay may be older; installing is a
   separate step. The temporary procedure below applies, and it needs a correction route, so it is limited by stage.
 
-**A red, P0, P1 or security thread**, a blocking P2 or P3, or a thread the coordinator cannot grade without
-reconstructing the child's reasoning, is not recorded by the coordinator. It goes to the child as an ordinary
-correction while a correction can reach the child, and after that the candidate is held.
+**A thread inside this issue's scope**, a P0 or security thread in or out of scope, a blocking thread, or a
+thread the coordinator cannot classify without reconstructing the child's reasoning, is not recorded by the
+coordinator. It goes to the child as an ordinary correction (a fix or an answer from the code) while a correction
+can reach the child, and after that the candidate is held.
 
 **Before the acceptance.** In a DAG-managed project that is a node `dag-ready` does not yet read as accepted; in
 a project with no plan it lasts until the merged mark. A merge turn of the candidate that is merging or of
@@ -349,10 +357,11 @@ the node, as the first way of opening a generation in
 `dag-correct` then binds the generation. Without that, `dag-accept` refuses the child's new result as
 `stale_generation`.
 
-- A red, P0, P1 or security thread, a blocking P2 or P3, or a thread the coordinator cannot grade: an ordinary
-  correction. It carries the restoration block, names the head and each thread, and asks the child to fix the
-  finding or answer it with code evidence. The child pushes and reruns checks only if it changed something, and
-  emits again. The candidate does not merge meanwhile.
+- A thread inside this issue's scope, a P0 or security thread in or out of scope, a blocking thread, or a
+  thread the coordinator cannot classify: an ordinary correction. It carries the restoration block, names the
+  head and each thread, and asks the child to fix the finding or answer it with code evidence, so a thread that
+  needs only a rebuttal takes this route too. The child pushes and reruns checks only if it changed something,
+  and emits again. The candidate does not merge meanwhile.
 - A minor thread where the installed relay cannot record the disposition: the temporary procedure.
   1. Read the late threads to the end (`merge-evidence` on the head lists them) and grade each by impact. A
      thread that needs a change and not an answer is an ordinary correction naming the change.
@@ -374,17 +383,24 @@ the node, as the first way of opening a generation in
 **After the acceptance of a current result.** A DAG node that reads `done:accepted` and is not stale takes no
 second ruling, and `dag-correct` records a correction only for a stale result (step 6 of
 [a base conflict after the ruling and before the acceptance](#a-base-conflict-after-the-ruling-and-before-the-acceptance)).
-No grade has a correction route in this build, and resolving the thread does not release the candidate. A minor
+No thread has a correction route in this build, and resolving the thread does not release the candidate. A minor
 thread that the installed relay can record is dispositioned as above and needs no route. Where it cannot, the
 coordinator still triages the thread as in the temporary procedure so that its disposition is ready, reports the
 case on the coordination record, and holds the candidate: it does not merge, and it opens no generation by hand
-around `dag-correct`. A red, P0, P1 or security thread is reported the same way and the candidate does not merge.
+around `dag-correct`. A thread inside this issue's scope, a P0 or security one, a blocking one, or one the
+coordinator cannot classify is reported the same way and the candidate does not merge.
 The two exceptions of that step are unchanged: a stale result whose reading says `correct` goes through
 `dag-correct`, and an open criteria re-review is decided first. The base-refresh route for an accepted node
 concerns the base only and is no way around a late thread.
 
-**After the merge.** The delivery is not reopened, and a late thread is new work. A minor one is replied to and
-listed for the backlog; a red, P0, P1 or security one is raised at once as a correction issue for the same area.
+**After the merge.** A late thread inside this issue's scope reopens the same issue key: the finding belongs to
+what this issue promised, so the issue carries its own correction rather than a successor. This deliberately
+differs from the general [issue-to-PR mapping](../../crw-plan/references/integrations.md#issue-to-pr-mapping),
+whose "a new change after that delivery has merged gets a new issue and PR" is written for a change outside what
+the issue promised. A late thread outside this issue's scope is new work: a separable one is replied to and
+listed for the backlog with its own context, impact and outcome, a blocking one is raised at once as a correction
+issue for the area it touches, and a P0 or security one is fixed before the merge and raised as a correction
+issue if it arrives after it.
 
 **Why this is not a re-triage, and its limits.** The parent restates the child's handoff and does not judge again
 what the child judged ([OPS-9.3](operations.md#ops-93-the-parent-merges-and-does-not-release)). A late thread is one
@@ -455,6 +471,16 @@ Whether a finding blocks is decided by what it does to this change at its curren
 head. The parent that owns the criteria makes that classification against the list
 below. The child triages, fixes what blocks, prepares the evidence and the
 current-head readiness, and proposes the rest.
+
+Whether a finding is fixed before the merge is decided first by this issue's scope
+(its initial specification, its criteria and its promise): a finding that belongs to
+this issue is fixed on this pull request whatever grade the reviewer gave it, and a
+reviewer's grade never moves a finding into or out of that rule. A P0 and a security
+finding are the standing exceptions the other way: they are fixed before the merge
+whether or not they belong to this issue, and `not_applicable` answers one only with
+code evidence that the reading is wrong. A finding outside this issue's scope is
+follow-up work only where it is separable, with its own context, impact and outcome;
+a P3 is recorded. The list below says what blocking means inside the scope.
 
 A finding BLOCKS, and is never conditionally accepted, when it is any of these:
 
@@ -585,6 +611,37 @@ procedure, and
 [OPS-9.4](operations.md#ops-94-a-new-head-invalidates-the-review-it-outran) for a
 new head invalidating the review it outran.
 
+## Pre-merge evaluation
+
+Once every CI job on the final head has finished, and before the verdict, the parent
+evaluates that head by independent grading rather than by the child's own numbers. It
+grades the head as it stands on a tree merged with the current tip of the candidate's
+destination branch (its `dev` in this repository, as
+[Identify the candidate and gates](#identify-the-candidate-and-gates) pins it), so the
+reading describes what would actually land; the required independent review of the same
+head may run alongside it and does not replace it.
+
+The evaluation reads every criterion and every defect against this issue's scope, and
+records a disposition for each criterion that is not PASS, each defect inside this
+issue's scope whatever its grade, and each P0 to P2 defect outside it. A
+disposition is one of: `blocking` (the candidate waits for a fix or is reported
+blocked), `separable` (outside this issue's scope and standing on its own, so it
+becomes follow-up work with its own context, impact and outcome), `not_applicable`
+(code evidence shows the reading is wrong) or `already_resolved` (the evidence that
+the defect is gone at this head). `separable` is never the disposition of a P0, of a
+security finding, of an unmet criterion, of a defect this change created, or of a
+defect inside this issue's promise: those block. A disposition written to clear the
+gate without assessing what the finding does is the false record this step exists to
+prevent.
+
+The evaluation does not restate the child's handoff. The child judged the findings its
+own rounds produced ([OPS-9.3](operations.md#ops-93-the-parent-merges-and-does-not-release));
+what the parent grades anew is the findings the child never saw (a late thread) and the
+whole candidate as one reading — the criteria against the tree that would land, and any
+defect that reading finds — because that is the independent grading the verdict stands
+on. It does not re-triage a finding the child already judged and disposed of; a
+disagreement between the two readings returns the candidate to the child fail-closed.
+
 ## Recheck, integrate, and record
 
 Immediately before merging, reread the PR's base/head, relevant CI/review state,
@@ -612,9 +669,9 @@ A late thread it has dispositioned is the other, under the heading below.
 ### A late thread the parent dispositions itself
 
 A late review thread that the parent judges minor and separable under
-[impact](#judge-a-finding-by-its-impact) (a Codex P2 or P3, a Devin yellow) need not go back to the
-child. The parent answers it on the thread, resolves it on the forge, and records its judgement in a
-file that the same command reads:
+[impact](#judge-a-finding-by-its-impact) — one outside this issue's scope whose residue stands on its
+own — need not go back to the child. The parent answers it on the thread, resolves it on the forge, and
+records its judgement in a file that the same command reads:
 
     codex-session-relay merge-evidence --repository <owner/name> --pull-request <N> \
       --restate <record.json> --late-dispositions <dispositions.json>
@@ -625,8 +682,9 @@ follow-up or the commit; `head` is the head the record is about; `grade` is the 
 The relay checks that the entries are well formed and name that head, records the grade without
 reading it, and prints each entry under `restatement.lateDispositions`, which the parent copies into
 the merge record. A disposition names one head, so after a push or a base refresh it does not carry
-to the new head. A thread still unresolved on the forge fails the reading, and a P0, P1 or security
-finding is not recorded this way: it returns to the child. The file format and the refusals are in
+to the new head. A thread still unresolved on the forge fails the reading, and a P0 or security
+finding is not recorded this way: it is fixed before the merge whether or not it belongs to this issue,
+and while a correction can still reach the child it returns to the child. The file format and the refusals are in
 `docs/relay/coordination.md`, "A review thread that arrives after the child's record".
 
 Serialize integrations sharing a target. Verify the actual landing and resulting
