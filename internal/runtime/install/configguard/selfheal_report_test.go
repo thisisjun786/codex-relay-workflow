@@ -10,7 +10,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
