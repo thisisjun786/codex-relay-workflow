@@ -800,6 +800,7 @@ func auditPRRun(ctx context.Context, e *Env, args []string) int {
 // auditPRParseArgs reads the pr flags: the target cap and the dry run switch.
 func auditPRParseArgs(args []string) (max int, dryRun, help bool, err error) {
 	max = auditPRDefaultMax
+	maxSet := false
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "-h", "--help", "help":
@@ -825,6 +826,10 @@ func auditPRParseArgs(args []string) (max int, dryRun, help bool, err error) {
 		if key != "max" {
 			return max, false, false, fmt.Errorf("unknown option %s", name)
 		}
+		if maxSet {
+			return max, false, false, fmt.Errorf("the option --%s is given twice", key)
+		}
+		maxSet = true
 		parsed, err := strconv.Atoi(value)
 		if err != nil || parsed < 0 {
 			return max, false, false, fmt.Errorf("--max %q is not a count", value)
