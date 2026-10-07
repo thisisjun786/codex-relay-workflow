@@ -79,7 +79,7 @@ var zoneInventory = map[string][]string{
 	// with the object and array fields as JSON text.
 	"dag_user_decisions": {"decision_id", "fingerprint", "kind", "context", "options_json", "recommendation_json", "blocking_json", "needed_by", "origin_json", "source_json", "authority_json", "state", "raised_at", "raised_via", "seen_json", "answered_at", "answered_by", "answered_via", "answer_text", "applied_at", "applied_event", "applied_generation", "withdrawn_reason", "expired_reason"},
 	// CRW-904 (appended statement): the idle-edge wake of a delivery that waits out a busy backoff.
-	"delivery_wakes": {"event_id", "woken_at"},
+	"delivery_wakes": {"event_id", "woken_at", "original_deadline", "spent_at"},
 }
 
 // rawDB opens path without any of the store's open rules, as an operator's sqlite3 would.

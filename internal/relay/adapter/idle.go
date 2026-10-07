@@ -103,3 +103,14 @@ func (a *Adapter) ThreadSubscribed(thread string) bool {
 	}
 	return false
 }
+
+// ThreadHeld reports whether this relay's own hold stands on the thread. It is not ThreadSubscribed:
+// a watch or the bridge's retention can be subscribed while this relay's hold is gone, and the busy
+// backlog has to take its own hold rather than borrow one whose owner may release it mid-backlog
+// (CRW-904 d4).
+func (a *Adapter) ThreadHeld(thread string) bool {
+	if client, ok := a.rpc.(*appserver.Client); ok {
+		return client.ThreadHeld(thread)
+	}
+	return false
+}

@@ -467,20 +467,27 @@ func (rc *Reconciler) write(ctx context.Context, attempt, delivery Row, record O
 			// below the caps settleFromReceipt compares, and whatever else this attempt turns out to have been
 			// (a busy answer, a rejection before the send) says nothing about it.
 			// CRW-904: a busy answer to an attempt the recipient's idle edge woke keeps the earlier deadline
-			// (due = min(original, recomputed)). The claim left the delivery's own deadline untouched, so the
-			// original is still on the row; a delivery that was simply due carries one in the past, which the
-			// CASE does not take. Only the busy reason takes it: the presend curve is a different retry.
+			// (due = min(original, recomputed)). The wake recorded that deadline and the claim kept the
+			// record, so it is readable here however late this reconciliation runs. Only the busy reason
+			// takes it: the presend curve is a different retry.
 			deadline, deadlineArgs := "?", []any{next}
 			if aggregate == DeferredBusy && next != nil {
-				deadline = "CASE WHEN next_eligible_at IS NOT NULL AND next_eligible_at > ? AND next_eligible_at < ? THEN next_eligible_at ELSE ? END"
-				// The bound is the numeric instant, not the ISO string above: next_eligible_at is REAL, and
-				// SQLite orders every number before every text, so a text bound would never be exceeded.
-				deadlineArgs = []any{rc.Clock.Now(), next, next}
+				var err error
+				if deadline, deadlineArgs, err = rc.Delivery.earlierDeadline(ctx, attempt.S("event_id"), next); err != nil {
+					return err
+				}
 			}
 			promoted, err := execSQL(ctx, rc.Store, "UPDATE deliveries SET state = ?, next_eligible_at = "+deadline+", hold_reason = CASE WHEN ? AND hold_reason IN (?, ?) THEN hold_reason WHEN ? AND hold_reason = ? THEN hold_reason ELSE ? END, dispatch_evidence = CASE WHEN ? THEN NULL ELSE ? END, dispatch_turn_id = CASE WHEN ? THEN NULL ELSE COALESCE(?, dispatch_turn_id) END, lease_owner = NULL, lease_until = NULL, updated_at = ? WHERE event_id = ? AND attempt_count = ? AND state NOT IN (?, 'acknowledged', 'superseded')",
 				append(append([]any{aggregate}, deadlineArgs...), boolFlag(o.keepUnknown), UnknownSendLost, UnknownSendUndecided, boolFlag(aggregate != Dispatched), BusyCap, o.hold, boolFlag(o.clearDispatch), dispatchEvidence, boolFlag(o.clearDispatch), o.dispatchTurn, now, attempt.S("event_id"), attempt.I("attempt_no"), Dispatched)...)
 			if err != nil {
 				return err
+			}
+			// The attempt is answered: the wake that released it is spent with the answer, and an uncertain
+			// outcome still owes an answer, so its wake is kept for the reconciliation that will give it.
+			if promoted == 1 && aggregate != HeldUncertain {
+				if err := rc.Delivery.spendWake(ctx, attempt.S("event_id")); err != nil {
+					return err
+				}
 			}
 			if promoted == 1 && aggregate == Dispatched {
 				if anchor, err = rc.bindPromotedAnchor(ctx, attempt, delivery, o.dispatchTurn); err != nil {

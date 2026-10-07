@@ -595,11 +595,16 @@ subscription on the recipient (the override-free `thread/resume` in
 [subscriptions](subscriptions.md#the-busy-hold-a-subscription-kept-for-the-recipients-idle-edge)),
 and a `thread/status/changed` reporting `idle` or `notLoaded` writes the head's wake, one row in the
 zone's `delivery_wakes` table. A woken head is due at once and is attempted at its parent's next turn,
-and it stays the head of the line until it is claimed: `busyHeadSQL`, the due list, `Attempt` and the
-claim all read the wake, judged against the row still being the `deferred_busy` one the wake was
-written for, and the claim or the next busy answer spends it. The wake never moves
+and it keeps the head of the line until that wake is spent, whatever its own deadline: `busyHeadSQL`
+names the oldest delivery waiting out a busy backoff whose wake has no `spent_at`, the due list,
+`Attempt` and the claim read the same set, and the wake is judged against the row still being the
+`deferred_busy` one it was written for. The claim spends it as the attempt begins, so a woken head
+that was not claimed before its old deadline still cannot be overtaken by a younger delivery of the
+same recipient. The wake never moves
 `next_eligible_at`, so an attempt that is woken early and meets the recipient busy again keeps
-`due = min(original, recomputed)` and the early wake never pushes the safety-net timer later. The
+`due = min(original, recomputed)` and the early wake never pushes the safety-net timer later; the wake
+row is kept until that attempt is answered, so a busy answer that arrives late, after the original
+deadline or after the attempt was first settled uncertain, still takes the earlier deadline. The
 backoff is the trigger for every case the report cannot cover: a report the relay never saw, a host
 that reports no status, a recipient the relay could not subscribe, and a recipient that is busy again
 before the attempt lands. The min send interval and the hourly budget pace the send as before, and a

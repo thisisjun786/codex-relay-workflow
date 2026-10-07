@@ -153,17 +153,18 @@ func (c *Client) HoldThread(ctx context.Context, thread string) error {
 		c.mu.Unlock()
 		return &TransportError{Reason: "subscription connection ended before the hold"}
 	}
-	if r.busyHeld && r.busyOn == conn {
-		// A hold this connection already carries is kept, not subscribed again: the reports it would
-		// make arrive are the ones it is already sending.
-		m.mu.Unlock()
-		c.mu.Unlock()
-		return nil
-	}
+	// A resume this connection does not need: it already receives the thread's reports, from this
+	// relay's own hold, the bridge's retention of a never-run root, or a live watch. The hold is
+	// recorded below either way, because a watch or the retention can release its subscription while
+	// the backlog waits, and this relay's own hold is what keeps the idle edge through that (CRW-904
+	// d4).
+	resume := !m.receivesOn(thread, conn)
 	m.mu.Unlock()
 	c.mu.Unlock()
-	if _, err := c.request(ctx, conn, "thread/resume", map[string]any{"threadId": thread, "excludeTurns": true}); err != nil {
-		return err
+	if resume {
+		if _, err := c.request(ctx, conn, "thread/resume", map[string]any{"threadId": thread, "excludeTurns": true}); err != nil {
+			return err
+		}
 	}
 	c.mu.Lock()
 	m.mu.Lock()
@@ -215,6 +216,32 @@ func (c *Client) ThreadSubscribed(thread string) bool {
 	c.mu.Unlock()
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.subscribedOn(thread, conn)
+}
+
+// ThreadHeld reports whether this relay's own hold stands on thread: the subscription HoldThread took
+// and ReleaseThread drops, which the release worker treats as not releasable. It is not
+// ThreadSubscribed: a watch or the bridge's retention may be subscribed while the relay's own hold is
+// gone, and the backlog has to take its own reference so the idle edge survives that owner releasing
+// mid-backlog (CRW-904 d4).
+func (c *Client) ThreadHeld(thread string) bool {
+	m := c.subscriptions
+	if m == nil {
+		return false
+	}
+	c.mu.Lock()
+	conn := c.conn
+	c.mu.Unlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	r := m.roots[thread]
+	return r != nil && r.busyHeld && r.busyOn != nil && r.busyOn == conn
+}
+
+// subscribedOn reports whether a busy deferral finds a subscription on thread at all: this relay's own
+// hold, the bridge's retention of a never-run root, or any live watch, whichever connection carries it.
+// The caller holds m.mu.
+func (m *subscriptionManager) subscribedOn(thread string, conn *websocket.Conn) bool {
 	r := m.roots[thread]
 	if r == nil {
 		return false
@@ -227,6 +254,29 @@ func (c *Client) ThreadSubscribed(thread string) bool {
 	}
 	for _, w := range r.watches {
 		if w.connection != nil && !w.retired {
+			return true
+		}
+	}
+	return false
+}
+
+// receivesOn reports whether conn already receives thread's reports: this relay's own hold, the
+// bridge's retention of a never-run root, or a live watch, all of them on that same connection. The
+// resume HoldThread would send is exactly what makes conn subscribed, so a subscription carried by
+// another socket is not one and the resume is still owed. The caller holds m.mu.
+func (m *subscriptionManager) receivesOn(thread string, conn *websocket.Conn) bool {
+	r := m.roots[thread]
+	if r == nil {
+		return false
+	}
+	if r.busyHeld && r.busyOn == conn {
+		return true
+	}
+	if r.retainedOn == conn {
+		return true
+	}
+	for _, w := range r.watches {
+		if w.connection == conn && !w.retired {
 			return true
 		}
 	}

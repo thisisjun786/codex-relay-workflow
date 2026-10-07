@@ -121,6 +121,88 @@ func TestThreadHold_a_completed_turn_does_not_drop_the_hold(t *testing.T) {
 	}
 }
 
+// CRW-904 (correction, d4): the busy backlog takes its own hold even when another owner already
+// subscribed the thread, and it is the relay's own hold that keeps the subscription. ThreadHeld answers
+// for that hold alone; ThreadSubscribed also counts a live watch and the bridge's retention, which their
+// own owners release.
+func TestThreadHold_takes_its_own_hold_beside_a_live_watch(t *testing.T) {
+	c, host := holdClient(t)
+	watch, err := c.WatchTurn(context.Background(), "thread-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.ThreadSubscribed("thread-1") {
+		t.Fatal("the live watch did not subscribe the thread")
+	}
+	if c.ThreadHeld("thread-1") {
+		t.Fatal("a watch alone reads as the relay's own hold")
+	}
+	// An admitted watch holds the root's gate until it finishes, so the hold waits for it and is taken
+	// as it ends: the interleaving the release worker and the hold share in production.
+	returned := make(chan error, 1)
+	go func() { returned <- c.HoldThread(context.Background(), "thread-1") }()
+	select {
+	case err := <-returned:
+		t.Fatalf("the hold was taken while the watch still held the root's gate: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	watch.Finish("", false)
+	if err := <-returned; err != nil {
+		t.Fatal(err)
+	}
+	if !c.ThreadHeld("thread-1") {
+		t.Fatal("the backlog did not record its own hold beside the watch")
+	}
+	if !c.ThreadSubscribed("thread-1") {
+		t.Fatal("the thread is not subscribed while the backlog waits")
+	}
+	if got := host.Count("thread/resume"); got != 0 {
+		t.Fatalf("%d resumes reached the host; the watch already subscribes this connection", got)
+	}
+	// The watch is gone and nothing but the backlog's hold keeps the root: no release may drop it.
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	if err := host.WaitCount(ctx, "thread/unsubscribe", 1); err == nil {
+		t.Fatal("the watch's end unsubscribed a thread the busy backlog holds")
+	}
+	if !c.ThreadHeld("thread-1") {
+		t.Fatal("the hold did not survive the watch ending")
+	}
+	// Releasing the backlog's hold drops the subscription it kept.
+	c.ReleaseThread("thread-1")
+	done, cancelDone := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancelDone()
+	if err := host.WaitCount(done, "thread/unsubscribe", 1); err != nil {
+		t.Fatalf("releasing the backlog's hold did not unsubscribe: %v", err)
+	}
+}
+
+// CRW-904 (correction, d4): releasing the backlog's hold drops only its own reference. A live watch
+// that subscribed the thread keeps its subscription, and nothing is sent for it.
+func TestThreadHold_releases_only_its_own_hold(t *testing.T) {
+	c, host := holdClient(t)
+	if err := c.HoldThread(context.Background(), "thread-1"); err != nil {
+		t.Fatal(err)
+	}
+	watch, err := c.WatchTurn(context.Background(), "thread-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.ReleaseThread("thread-1")
+	if c.ThreadHeld("thread-1") {
+		t.Fatal("the released hold is still recorded")
+	}
+	if !c.ThreadSubscribed("thread-1") {
+		t.Fatal("releasing the backlog's hold dropped the watch's subscription")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	if err := host.WaitCount(ctx, "thread/unsubscribe", 1); err == nil {
+		t.Fatal("releasing the backlog's hold unsubscribed a thread a live watch still holds")
+	}
+	watch.Finish("", false)
+}
+
 func TestThreadHold_releases_once_the_backlog_empties(t *testing.T) {
 	c, host := holdClient(t)
 	if err := c.HoldThread(context.Background(), "thread-1"); err != nil {

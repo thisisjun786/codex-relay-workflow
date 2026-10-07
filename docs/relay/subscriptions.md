@@ -35,12 +35,22 @@ as they treat the never-run-root retention: not releasable while it stands. The 
 fields, so releasing one never drops the other, and a completed turn clears the retention without
 clearing the hold. Connection loss ends the hold with the subscription it described.
 
+The hold is the relay's own reference, taken even when a watch or the never-run-root retention has
+already subscribed the thread (`ThreadHeld` answers for it alone, while `ThreadSubscribed` counts
+any owner). Those other owners release their subscriptions on their own schedule — a `turn/completed`
+or the release worker — and the busy backlog has to keep its idle edge through that, so it records a
+hold of its own rather than borrowing theirs. When the thread is already subscribed on this
+connection the resume is skipped, because the reports it would make arrive are the ones already
+arriving; the hold is recorded either way.
+
 The relay releases the hold (`Client.ReleaseThread`) when the recipient's backlog empties or the
 delivery is delivered, and the ordinary release worker then sends `thread/unsubscribe` on the
 original socket, with the existing retries and cleanup. A resume the host refuses leaves the
-doubling backoff as that recipient's only trigger; the backoff is the safety net either way, for a
-report the relay never saw, a host that reports no status, and a recipient that is busy again
-before the attempt lands.
+doubling backoff as that recipient's only trigger, and the refusal is not retried on every tick:
+the relay remembers it until the delivery's own busy deadline, so the existing backoff curve stays
+the pacing rather than the 20-second tick. The backoff is the safety net either way, for a report
+the relay never saw, a host that reports no status, and a recipient that is busy again before the
+attempt lands.
 
 The reader records successful creation and turn acknowledgements before caller
 cancellation can hide them. Matching terminals are retained independently of

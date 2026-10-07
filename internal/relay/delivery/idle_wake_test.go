@@ -1,8 +1,6 @@
 package delivery
 
 import (
-	"context"
-	"database/sql"
 	"slices"
 	"testing"
 )
@@ -244,11 +242,12 @@ func TestIdleWake_only_a_waiting_head_is_woken(t *testing.T) {
 	}
 }
 
-// CRW-904 (review): a woken head holds the line only while it is inside its backoff, which is the rule
-// for every waiting head. Once its own deadline has run out it is due like every other row, so a head
-// that keeps failing before its claim cannot keep its recipient's younger deliveries waiting past that
-// deadline: a line is held for one backoff at a time (I-478).
-func TestIdleWake_a_woken_head_holds_the_line_only_inside_its_backoff(t *testing.T) {
+// CRW-904 (correction, d1): a woken head keeps its recipient's line until that wake is spent, whatever
+// its own deadline. The wake exists to hand this delivery the turn the recipient's idle edge opened; a
+// head whose deadline ran out before the claim would otherwise hand that turn to a younger delivery of
+// the same recipient. The head is spent when it is claimed, so the line is held no longer than the
+// attempt the wake released.
+func TestIdleWake_a_woken_head_holds_the_line_past_its_own_deadline(t *testing.T) {
 	t.Parallel()
 	w := newScaleWorld(t, 1)
 	f := w.f
@@ -260,48 +259,76 @@ func TestIdleWake_a_woken_head_holds_the_line_only_inside_its_backoff(t *testing
 	if !w.wake(scaleParent) {
 		t.Fatal("the idle report woke no head")
 	}
-	if slices.Contains(f.eligible(), younger) {
-		t.Fatal("the younger delivery is due while the woken head waits out its backoff")
+	// The attempt is never made inside the backoff: the head's own deadline passes with the wake still
+	// unspent, which is the state a scheduler budget or an error before the claim leaves behind.
+	f.clock.T = deadline + 5
+	if !slices.Contains(f.eligible(), head) {
+		t.Fatal("a woken head past its own deadline is not due")
 	}
-	// The head is never claimed: its attempt keeps failing before the claim, so the wake row stays.
-	f.clock.T = deadline
+	if slices.Contains(f.eligible(), younger) {
+		t.Fatal("a younger delivery overtook a woken head whose deadline passed unclaimed")
+	}
+	// The recipient is idle when the attempt lands, and the head takes the turn, not the younger row.
+	w.busy(false)
+	w.pass()
+	if got := w.dispatched(); len(got) != 1 || got[0] != head {
+		t.Fatalf("the turn delivered %v, want only the woken head %s", got, head)
+	}
+	if n := f.count("SELECT COUNT(*) AS c FROM delivery_wakes"); n != 0 {
+		t.Fatal("the claimed attempt left its wake behind")
+	}
+	// The wake is spent, so the line it held is gone: the younger delivery is due on its own turn.
 	if !slices.Contains(f.eligible(), younger) {
-		t.Fatal("a woken head that was never claimed still holds the line past its own deadline")
+		t.Fatal("the younger delivery is not due after the wake was spent")
 	}
 }
 
-// CRW-904 (review): the reconciler's busy arm takes the same minimum, and it passes a numeric instant
-// to the CASE. next_eligible_at is REAL and SQLite orders every number before every text, so the ISO
-// string the reconciler also carries would never be exceeded and the earlier deadline would be lost.
+// CRW-904 (correction, d2): the deadline a woken attempt carried survives an uncertain outcome and the
+// busy answer that reconciles it, and it is taken through the real path rather than by writing the row:
+// the wake is recorded, the attempt is claimed, the transport leaves the outcome unknown (the delivery
+// is held with no deadline of its own), and a busy operation receipt is reconciled afterwards. The wake
+// row the claim keeps carries the original deadline until that answer arrives, so due = min(original,
+// recomputed) holds even though the attempt outlived it.
 func TestIdleWake_a_reconciled_busy_answer_keeps_the_earlier_deadline(t *testing.T) {
 	t.Parallel()
-	f := newFixture(t, "")
-	event := f.queuedEvent(regOpts{})
-	f.host.script = []string{"in_progress"}
-	first := f.mustAttempt(event, nil)
-	request := first.Get("requestId").(string)
-	// The woken delivery carried this deadline before the wake and the claim left it alone; it is
-	// still ahead, and earlier than the backoff this busy answer recomputes.
-	original := f.clock.Now() + 5
-	mustDo(t, f.store.Transaction(f.ctx, func(ctx context.Context, _ *sql.Conn) error {
-		_, err := execSQL(ctx, f.store, "UPDATE deliveries SET next_eligible_at = ? WHERE event_id = ?", original, event)
-		return err
-	}))
-	attempt, err := one(f.ctx, f.store, "SELECT * FROM attempts WHERE request_id = ?", request)
-	mustDo(t, err)
-	receipt := Obj{{Key: "status", Value: FailedStatus}, {Key: "rpcError", Value: Obj{{Key: "code", Value: "thread_busy"}, {Key: "message", Value: "Thread is active"}}}, {Key: "retrySafe", Value: true}}
-	if facts := Classify(receipt); facts.DeliveryState != DeferredBusy {
-		t.Fatalf("the fixture receipt is not a busy answer: %+v", facts)
+	w := newScaleWorld(t, 1)
+	f := w.f
+	w.busy(true)
+	event := w.emit(0)
+	deadline := busyFor(t, f, event, 1, 10)
+	if !w.wake(scaleParent) {
+		t.Fatal("the idle report woke no head")
 	}
+	// The attempt is claimed and the transport leaves its outcome unknown: the delivery is held for the
+	// parent with no deadline of its own, and the wake is kept for the answer that will follow.
+	w.busy(false)
+	f.host.script = []string{"transport_unknown"}
+	w.pass()
+	row := f.row(event)
+	if row.S("state") != HeldUncertain || !row.N("next_eligible_at") {
+		t.Fatalf("the uncertain attempt left the delivery %s/%.0f, want %s with no deadline", row.S("state"), row.F("next_eligible_at"), HeldUncertain)
+	}
+	wake := f.one("SELECT original_deadline, spent_at FROM delivery_wakes WHERE event_id = ?", event)
+	if wake == nil || wake.F("original_deadline") != deadline {
+		t.Fatalf("the wake does not carry the original deadline %.0f: %v", deadline, wake)
+	}
+	request := f.one("SELECT request_id FROM attempts WHERE event_id = ?", event).S("request_id")
+	// The recipient answered busy after all, and that answer is reconciled after the original deadline
+	// has passed: the earlier deadline is still the one the answer owes.
+	f.clock.T = deadline + 120
+	f.host.ledger[request] = Obj{{Key: "status", Value: FailedStatus}, {Key: "rpcError", Value: Obj{{Key: "code", Value: "thread_busy"}, {Key: "message", Value: "Thread is active"}}}, {Key: "retrySafe", Value: true}}
 	rc := NewReconciler(f.delivery)
-	if _, err := rc.settleFromReceipt(f.ctx, attempt, f.row(event), Classify(receipt), ConfirmedPreSendRejection, "fixture", f.clock.Now(), false, nil, nil); err != nil {
+	if _, err := rc.ReconcileAttempt(f.ctx, request, f.host, at(f.clock.Now())); err != nil {
 		t.Fatal(err)
 	}
-	row := f.row(event)
+	row = f.row(event)
 	if row.S("state") != DeferredBusy {
 		t.Fatalf("the delivery is %s, want %s", row.S("state"), DeferredBusy)
 	}
-	if row.F("next_eligible_at") != original {
-		t.Fatalf("the reconciled busy answer wrote %.0f, want the earlier deadline %.0f", row.F("next_eligible_at"), original)
+	if row.F("next_eligible_at") != deadline {
+		t.Fatalf("the reconciled busy answer wrote %.0f, want the earlier deadline %.0f", row.F("next_eligible_at"), deadline)
+	}
+	if n := f.count("SELECT COUNT(*) AS c FROM delivery_wakes"); n != 0 {
+		t.Fatal("the answered attempt left its wake behind")
 	}
 }

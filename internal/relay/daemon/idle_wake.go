@@ -35,7 +35,7 @@ type idleReports interface {
 type idleSubscriptions interface {
 	HoldThread(ctx context.Context, thread string) error
 	ReleaseThread(thread string)
-	ThreadSubscribed(thread string) bool
+	ThreadHeld(thread string) bool
 }
 
 // idleWake is the daemon's idle-edge pass. holds is the thread this relay holds a subscription for,
@@ -45,13 +45,19 @@ type idleSubscriptions interface {
 type idleWake struct {
 	daemon *Daemon
 	holds  map[string]string
+	// refused is when a recipient's hold may be tried again, by recipient task id: a resume the host
+	// refused is not retried on every tick, because the backoff is that recipient's trigger until its
+	// own deadline (CRW-904 d3).
+	refused map[string]float64
 	// woken, opened and released are what the pass did, and notes is what it could not do: both are
 	// read by the daemon's own tests and by Tick's report.
 	woken, opened, released int
 	notes                   []string
 }
 
-func newIdleWake(d *Daemon) *idleWake { return &idleWake{daemon: d, holds: map[string]string{}} }
+func newIdleWake(d *Daemon) *idleWake {
+	return &idleWake{daemon: d, holds: map[string]string{}, refused: map[string]float64{}}
+}
 
 // begin starts one tick's pass: the counts and the notes describe this tick alone.
 func (w *idleWake) begin() {
@@ -85,7 +91,10 @@ func (w *idleWake) idle(ctx context.Context, host Host, now float64) {
 
 // hold opens a subscription for every recipient whose head waits out a busy backoff and has none,
 // and releases the ones whose backlog emptied or whose delivery was delivered. A hold the relay
-// cannot open is noted, and the backoff stays that recipient's only trigger, as section 82 says.
+// cannot open is noted once, and the backoff stays that recipient's only trigger until its own busy
+// deadline, as section 82 says. The hold is this relay's own (ThreadHeld): a watch or the bridge's
+// retention may already subscribe the thread, but that owner can release it mid-backlog, so the
+// backlog takes a reference of its own rather than borrowing one (CRW-904 d4).
 func (w *idleWake) hold(ctx context.Context, host Host, now float64) {
 	subscriptions, ok := host.(idleSubscriptions)
 	if !ok {
@@ -97,9 +106,11 @@ func (w *idleWake) hold(ctx context.Context, host Host, now float64) {
 		return
 	}
 	wanted := map[string]string{}
+	deadlines := map[string]float64{}
 	for _, head := range heads {
 		if head.RecipientThreadID != "" {
 			wanted[head.RecipientTaskID] = head.RecipientThreadID
+			deadlines[head.RecipientTaskID] = head.Deadline
 		}
 	}
 	for recipient, thread := range w.holds {
@@ -110,31 +121,49 @@ func (w *idleWake) hold(ctx context.Context, host Host, now float64) {
 		delete(w.holds, recipient)
 		w.released++
 	}
+	for recipient := range w.refused {
+		if _, waiting := wanted[recipient]; !waiting {
+			delete(w.refused, recipient)
+		}
+	}
 	for recipient, thread := range wanted {
 		if held, ok := w.holds[recipient]; ok {
 			// The hold is only real while this connection still carries it: a lost socket drops the
 			// subscription with it, and the recipient is then held again below rather than believed.
-			if held == thread && subscriptions.ThreadSubscribed(thread) {
+			if held == thread && subscriptions.ThreadHeld(thread) {
 				continue
 			}
 			if held != thread {
-				// The recipient's thread changed under the hold: the old subscription is not the one
-				// its reports will arrive on.
+				// The recipient's thread changed under the hold: the old subscription is not the one its
+				// reports will arrive on.
 				subscriptions.ReleaseThread(held)
 				w.released++
 			}
 			delete(w.holds, recipient)
 		}
-		if subscriptions.ThreadSubscribed(thread) {
-			// This connection already receives the thread's reports, so the idle edge is already
-			// visible and there is nothing to open.
+		if until, refused := w.refused[recipient]; refused && now < until {
+			// A hold this relay could not take is not retried before that recipient's own busy
+			// deadline: the backoff alone is its trigger until then (decision 4).
 			continue
 		}
 		if err := subscriptions.HoldThread(ctx, thread); err != nil {
 			w.notes = append(w.notes, "subscription for "+thread+" not opened: "+err.Error())
+			w.refused[recipient] = w.holdRetryAt(now, deadlines[recipient])
 			continue
 		}
+		delete(w.refused, recipient)
 		w.holds[recipient] = thread
 		w.opened++
 	}
+}
+
+// holdRetryAt is when a hold this relay could not take may be tried again. The delivery's own busy
+// deadline is the relay's next reason to look at that recipient, so a refusal waits for it; when that
+// deadline has already passed, the wait is the busy curve's first step, the same pacing a deferred
+// delivery gets. Either way the backoff alone is the trigger until then (decision 4).
+func (w *idleWake) holdRetryAt(now, deadline float64) float64 {
+	if deadline > now {
+		return deadline
+	}
+	return now + w.daemon.Delivery.Policy.BusyBase
 }

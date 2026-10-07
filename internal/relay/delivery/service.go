@@ -303,7 +303,7 @@ func (d *Service) ClearIntent(ctx context.Context, eventID string) error {
 // written for, so a row that left deferred_busy for another reason (a withhold, a supersession) is not
 // made due by a wake row left behind, and the state is written as the literal DeferredBusy so that the
 // statement takes no argument the readers that replace this predicate do not have.
-const eligibleBase = " WHERE d.state IN (?,?,?) AND d.hold_reason IS NULL AND (d.next_eligible_at IS NULL OR d.next_eligible_at <= ? OR (dw.event_id IS NOT NULL AND d.state = '" + DeferredBusy + "')) AND r.status = 'active' AND r.superseded_by IS NULL AND +e.stage = 'final'"
+const eligibleBase = " WHERE d.state IN (?,?,?) AND d.hold_reason IS NULL AND (d.next_eligible_at IS NULL OR d.next_eligible_at <= ? OR (dw.event_id IS NOT NULL AND dw.spent_at IS NULL AND d.state = '" + DeferredBusy + "')) AND r.status = 'active' AND r.superseded_by IS NULL AND +e.stage = 'final'"
 
 // eligibleOrder is event creation order: when the relay first saw the event, then when its delivery
 // was queued, then the event id. A delivery queued late (a refused enqueue retried) keeps the place
@@ -331,12 +331,19 @@ const eligibleOrder = " ORDER BY e.first_seen_at, d.created_at, d.event_id"
 // is still a head while it is inside its backoff, which is what keeps a younger delivery behind it until
 // the wake is spent (I-478); once the backoff has run out it leaves this set, exactly as it did before,
 // so a head that keeps failing before its claim cannot hold the line past its own deadline.
+//
+// CRW-904 (correction): a delivery the recipient's idle edge woke is a head until that wake is spent,
+// whatever its own deadline. The wake exists to hand this delivery the turn the recipient's idle edge
+// opened, so losing the line when the old deadline passes would hand that turn to a younger delivery
+// instead (d1). The claim spends the wake as it begins the attempt, so a woken head holds the line for
+// exactly as long as the wake it was given is unspent, and never past the claim.
 const busyHeadSQL = "(SELECT recipient_task_id, recipient_thread_id, next_eligible_at, first_seen_at, created_at, event_id FROM (" +
 	"SELECT b.recipient_task_id AS recipient_task_id, b.recipient_thread_id AS recipient_thread_id, b.next_eligible_at AS next_eligible_at, be.first_seen_at AS first_seen_at, b.created_at AS created_at, b.event_id AS event_id," +
 	" ROW_NUMBER() OVER (PARTITION BY b.recipient_task_id ORDER BY be.first_seen_at, b.created_at, b.event_id) AS rn" +
 	" FROM deliveries b JOIN events be ON be.event_id = b.event_id JOIN relationships br ON br.relationship_id = b.relationship_id" +
 	" LEFT JOIN " + store.RelationshipSpentSQL + " bs ON bs.relationship_id = b.relationship_id AND bs.recipient_task_id = b.recipient_task_id" +
-	" WHERE b.state = ? AND b.hold_reason IS NULL AND b.next_eligible_at > ?" +
+	" LEFT JOIN delivery_wakes bw ON bw.event_id = b.event_id" +
+	" WHERE b.state = ? AND b.hold_reason IS NULL AND (b.next_eligible_at > ? OR (bw.event_id IS NOT NULL AND bw.spent_at IS NULL))" +
 	" AND br.status = 'active' AND br.superseded_by IS NULL AND be.stage = 'final'" +
 	" AND NOT (be.outcome NOT IN ('merge_turn_grant') AND be.execution_generation < br.execution_generation)" +
 	" AND COALESCE(bs.spent, 0) < ?) WHERE rn = 1)"
@@ -358,13 +365,59 @@ func (d *Service) behindBusyHead(ctx context.Context, eventID string, now float6
 // wakeOf is the delivery_wakes row of one delivery, or nil when it was never woken. The row says the
 // recipient's idle edge woke this delivery while it waited out a busy backoff (CRW-904).
 func (d *Service) wakeOf(ctx context.Context, eventID string) (Row, error) {
-	return one(ctx, d.Store, "SELECT event_id, woken_at FROM delivery_wakes WHERE event_id = ?", eventID)
+	return one(ctx, d.Store, "SELECT event_id, woken_at, original_deadline, spent_at FROM delivery_wakes WHERE event_id = ?", eventID)
 }
 
-// Woken reports whether this delivery was woken by its recipient's idle edge and not yet claimed.
+// Woken reports whether this delivery carries an unspent wake: its recipient's idle edge woke it and
+// the attempt that wake released has not been claimed yet.
 func (d *Service) Woken(ctx context.Context, eventID string) (bool, error) {
 	row, err := d.wakeOf(ctx, eventID)
-	return row != nil, err
+	if err != nil || row == nil {
+		return false, err
+	}
+	return row.N("spent_at"), nil
+}
+
+// wokenDeadline is the deadline the delivery carried when its recipient's idle edge woke it: the
+// deadline a busy answer to that attempt must not push later (CRW-904). It is read from the wake row,
+// which the claim leaves in place, so it survives the attempt however long the attempt runs. nil when
+// this delivery was never woken, or when the attempt that spent the wake has already been answered.
+func (d *Service) wokenDeadline(ctx context.Context, eventID string) (*float64, error) {
+	row, err := d.wakeOf(ctx, eventID)
+	if err != nil || row == nil || row.N("original_deadline") {
+		return nil, err
+	}
+	deadline := row.F("original_deadline")
+	return &deadline, nil
+}
+
+// earlierDeadline is the SQL expression and its arguments for due = min(original, recomputed): the
+// deadline a busy answer owes, never later than the one the woken delivery carried into its attempt.
+// The recorded deadline is compared as a number and never against now, so an answer that arrives after
+// it has passed still keeps it.
+func (d *Service) earlierDeadline(ctx context.Context, eventID string, when any) (string, []any, error) {
+	recorded, err := d.wokenDeadline(ctx, eventID)
+	if err != nil {
+		return "", nil, err
+	}
+	if recorded == nil {
+		return "?", []any{when}, nil
+	}
+	return "MIN(?, ?)", []any{*recorded, when}, nil
+}
+
+// markWakeSpent is the wake leaving the line: the claim sets it when the attempt it released begins,
+// and the arm that answers that attempt deletes the row once the deadline it carries has been taken.
+// Both run inside the caller's transaction, so a wake is never spent by a write that did not happen.
+func (d *Service) markWakeSpent(ctx context.Context, eventID string) error {
+	_, err := execSQL(ctx, d.Store, "UPDATE delivery_wakes SET spent_at = ? WHERE event_id = ? AND spent_at IS NULL", d.Clock.ISO(), eventID)
+	return err
+}
+
+// spendWake deletes a wake that has been answered.
+func (d *Service) spendWake(ctx context.Context, eventID string) error {
+	_, err := execSQL(ctx, d.Store, "DELETE FROM delivery_wakes WHERE event_id = ?", eventID)
+	return err
 }
 
 // WakeBusyHead wakes the delivery that heads this recipient thread's line while it still waits out a
@@ -372,30 +425,37 @@ func (d *Service) Woken(ctx context.Context, eventID string) (bool, error) {
 // nothing between the read and the write can take the place. The recipient is named by its thread,
 // which is what the App Server's status report carries. It answers whether a wake was written; a
 // thread with no waiting head, or one already woken, writes nothing.
+//
+// The head's own next_eligible_at is recorded with the wake. The wake never moves that column, so the
+// row is where the deadline the woken attempt must not push later survives the claim, which is the one
+// place it would otherwise be lost (CRW-904 correction, d2).
 func (d *Service) WakeBusyHead(ctx context.Context, recipientThread string, now float64) (bool, error) {
-	changed, err := execSQL(ctx, d.Store, "INSERT OR IGNORE INTO delivery_wakes (event_id, woken_at) SELECT bh.event_id, ? FROM "+busyHeadSQL+" bh WHERE bh.recipient_thread_id = ? AND bh.next_eligible_at > ?",
+	changed, err := execSQL(ctx, d.Store, "INSERT OR IGNORE INTO delivery_wakes (event_id, woken_at, original_deadline, spent_at) SELECT bh.event_id, ?, bh.next_eligible_at, NULL FROM "+busyHeadSQL+" bh WHERE bh.recipient_thread_id = ? AND bh.next_eligible_at > ?",
 		append([]any{d.Clock.ISO()}, append(d.busyHeadArgs(now), recipientThread, now)...)...)
 	return changed > 0, err
 }
 
 // BusyHeadHold is one recipient whose head delivery waits out a busy backoff or has been woken and not
 // yet claimed: the recipient the relay has to keep a subscription on for the idle edge to be seen.
+// Deadline is the head's own next_eligible_at, which the daemon reads to know when that recipient is
+// the backoff's business again: a hold it could not take is not retried before then (CRW-904 d3).
 type BusyHeadHold struct {
 	RecipientTaskID   string
 	RecipientThreadID string
+	Deadline          float64
 }
 
 // BusyHeadRecipients is every recipient with such a head at now, one entry per recipient: the
 // recipients the daemon has to hold a subscription for, so an idle report for one of them can be
 // seen at all.
 func (d *Service) BusyHeadRecipients(ctx context.Context, now float64) ([]BusyHeadHold, error) {
-	rows, err := all(ctx, d.Store, "SELECT bh.recipient_task_id AS recipient_task_id, bh.recipient_thread_id AS recipient_thread_id FROM "+busyHeadSQL+" bh", d.busyHeadArgs(now)...)
+	rows, err := all(ctx, d.Store, "SELECT bh.recipient_task_id AS recipient_task_id, bh.recipient_thread_id AS recipient_thread_id, bh.next_eligible_at AS next_eligible_at FROM "+busyHeadSQL+" bh", d.busyHeadArgs(now)...)
 	if err != nil {
 		return nil, err
 	}
 	var out []BusyHeadHold
 	for _, row := range rows {
-		out = append(out, BusyHeadHold{RecipientTaskID: row.S("recipient_task_id"), RecipientThreadID: row.S("recipient_thread_id")})
+		out = append(out, BusyHeadHold{RecipientTaskID: row.S("recipient_task_id"), RecipientThreadID: row.S("recipient_thread_id"), Deadline: row.F("next_eligible_at")})
 	}
 	return out, nil
 }
@@ -802,7 +862,7 @@ func (d *Service) claim(ctx context.Context, eventID string, now float64, owner,
 		}
 		// CRW-904: a delivery its recipient's idle edge woke is claimed now even though its busy backoff
 		// has not run out, and only while it is still the deferred-busy row the wake was written for.
-		changed, err := execSQL(ctx, d.Store, "UPDATE deliveries SET state = ?, lease_owner = ?, lease_until = ?, attempt_count = attempt_count + 1, updated_at = ? WHERE event_id = ? AND state IN (?,?,?) AND hold_reason IS NULL AND (next_eligible_at IS NULL OR next_eligible_at <= ? OR (EXISTS (SELECT 1 FROM delivery_wakes w WHERE w.event_id = deliveries.event_id) AND deliveries.state = '"+DeferredBusy+"')) AND EXISTS (SELECT 1 FROM relationships r WHERE r.relationship_id = deliveries.relationship_id AND r.status = 'active' AND r.superseded_by IS NULL) AND EXISTS (SELECT 1 FROM events e WHERE e.event_id = deliveries.event_id AND e.stage = 'final') AND NOT EXISTS (SELECT 1 FROM events ev JOIN relationships rr ON rr.relationship_id = ev.relationship_id WHERE ev.event_id = deliveries.event_id AND ev.outcome NOT IN ('merge_turn_grant') AND ev.execution_generation < rr.execution_generation)"+
+		changed, err := execSQL(ctx, d.Store, "UPDATE deliveries SET state = ?, lease_owner = ?, lease_until = ?, attempt_count = attempt_count + 1, updated_at = ? WHERE event_id = ? AND state IN (?,?,?) AND hold_reason IS NULL AND (next_eligible_at IS NULL OR next_eligible_at <= ? OR (EXISTS (SELECT 1 FROM delivery_wakes w WHERE w.event_id = deliveries.event_id AND w.spent_at IS NULL) AND deliveries.state = '"+DeferredBusy+"')) AND EXISTS (SELECT 1 FROM relationships r WHERE r.relationship_id = deliveries.relationship_id AND r.status = 'active' AND r.superseded_by IS NULL) AND EXISTS (SELECT 1 FROM events e WHERE e.event_id = deliveries.event_id AND e.stage = 'final') AND NOT EXISTS (SELECT 1 FROM events ev JOIN relationships rr ON rr.relationship_id = ev.relationship_id WHERE ev.event_id = deliveries.event_id AND ev.outcome NOT IN ('merge_turn_grant') AND ev.execution_generation < rr.execution_generation)"+
 			" AND NOT EXISTS (SELECT 1 FROM "+busyHeadSQL+" bh WHERE bh.recipient_task_id = deliveries.recipient_task_id AND (bh.first_seen_at, bh.created_at, bh.event_id) < ((SELECT ce.first_seen_at FROM events ce WHERE ce.event_id = deliveries.event_id), deliveries.created_at, deliveries.event_id))",
 			append([]any{Sending, owner, now + d.Policy.Lease, d.Clock.ISO(), eventID, Queued, DeferredBusy, WithheldPreSend, now}, d.busyHeadArgs(now)...)...)
 		if err != nil {
@@ -811,9 +871,10 @@ func (d *Service) claim(ctx context.Context, eventID string, now float64, owner,
 		if changed != 1 {
 			return errNotClaimable
 		}
-		// The wake is spent by the claim: this attempt is the one it released, and the deadline the
-		// claim left untouched is what a busy answer to it takes the minimum with.
-		if _, err := execSQL(ctx, d.Store, "DELETE FROM delivery_wakes WHERE event_id = ?", eventID); err != nil {
+		// The wake is spent by the claim: this attempt is the one it released, so the wake stops holding
+		// the line. The row stays, because the deadline it carries is what a busy answer to this attempt
+		// takes the minimum with; the arm that answers the attempt deletes it (CRW-904 d2).
+		if err := d.markWakeSpent(ctx, eventID); err != nil {
 			return err
 		}
 		row, err := d.Get(ctx, eventID)
@@ -1189,16 +1250,19 @@ func (d *Service) deferBusy(ctx context.Context, eventID string, row Row, now fl
 		when := now + d.Policy.DelayFor(answers, "busy")
 		// CRW-904: an attempt the recipient's idle edge woke early and that met the recipient busy again
 		// keeps the earlier deadline, so an early wake never pushes the safety-net timer later. The wake
-		// never moved next_eligible_at and the claim leaves it alone, so the deadline still on the row is
-		// the original one; a delivery that was simply due carries a deadline in the past, which the
-		// CASE does not take.
-		changed, err := execSQL(ctx, d.Store, "UPDATE deliveries SET state = ?, next_eligible_at = CASE WHEN next_eligible_at IS NOT NULL AND next_eligible_at > ? AND next_eligible_at < ? THEN next_eligible_at ELSE ? END, hold_reason = ?, updated_at = ? WHERE event_id = ? AND state IN (?,?,?) AND hold_reason IS NULL AND attempt_count = ?", DeferredBusy, now, when, when, hold, stamp, eventID, Queued, DeferredBusy, WithheldPreSend, attempts)
+		// recorded the deadline the delivery carried into the attempt, so this holds however long the
+		// attempt took and whether or not that deadline has already passed.
+		deadline, deadlineArgs, err := d.earlierDeadline(ctx, eventID, when)
+		if err != nil {
+			return err
+		}
+		changed, err := execSQL(ctx, d.Store, "UPDATE deliveries SET state = ?, next_eligible_at = "+deadline+", hold_reason = ?, updated_at = ? WHERE event_id = ? AND state IN (?,?,?) AND hold_reason IS NULL AND attempt_count = ?", append(append([]any{DeferredBusy}, deadlineArgs...), hold, stamp, eventID, Queued, DeferredBusy, WithheldPreSend, attempts)...)
 		if err != nil || changed != 1 {
 			return err
 		}
 		// This answer spent the wake: the delivery waits the backoff again, and a wake row left behind
 		// would make it due on the next tick.
-		if _, err := execSQL(ctx, d.Store, "DELETE FROM delivery_wakes WHERE event_id = ?", eventID); err != nil {
+		if err := d.spendWake(ctx, eventID); err != nil {
 			return err
 		}
 		if err := d.recordFailureIn(ctx, eventID, "parent_busy", stamp, "the recipient is mid-turn and is never interrupted", row.S("relationship_id"), nil, nil, nil, nil, when); err != nil {
@@ -1315,12 +1379,14 @@ func (d *Service) settle(ctx context.Context, eventID, requestID string, record 
 	var stored Row
 	// CRW-904: a busy answer to an attempt the recipient's idle edge woke keeps the earlier deadline
 	// (due = min(original, recomputed)), so an early wake never pushes the safety-net timer later. The
-	// claim left the delivery's own deadline untouched, so the original is still on the row; a delivery
-	// that was simply due carries one in the past, which the CASE does not take.
+	// wake recorded that deadline and the claim kept the record, so it is still readable here even when
+	// the attempt's own outcome was uncertain first and even when the deadline has already passed.
 	deadline, deadlineArgs := "?", []any{when}
 	if state == DeferredBusy && when != nil {
-		deadline = "CASE WHEN next_eligible_at IS NOT NULL AND next_eligible_at > ? AND next_eligible_at < ? THEN next_eligible_at ELSE ? END"
-		deadlineArgs = []any{now, when, when}
+		var err error
+		if deadline, deadlineArgs, err = d.earlierDeadline(ctx, eventID, when); err != nil {
+			return nil, err
+		}
 	}
 	err := d.Store.Transaction(ctx, func(ctx context.Context, _ *sql.Conn) error {
 		settled, err := execSQL(ctx, d.Store, "UPDATE attempts SET internal_state = 'settled', state = ?, record = ?, observed_at = ? WHERE request_id = ? AND internal_state = 'in_flight'", state, dumps(record), pyjson.Text(record.Get("observedAt")), requestID)
@@ -1342,6 +1408,13 @@ func (d *Service) settle(ctx context.Context, eventID, requestID string, record 
 		deadlineValues := append(append([]any{state}, deadlineArgs...), hold, evidence, facts.TurnID, d.Clock.ISO(), eventID)
 		if _, err := execSQL(ctx, d.Store, "UPDATE deliveries SET state = ?, next_eligible_at = "+deadline+", hold_reason = ?, dispatch_evidence = ?, dispatch_turn_id = ?, lease_owner = NULL, lease_until = NULL, updated_at = ? WHERE event_id = ?", deadlineValues...); err != nil {
 			return err
+		}
+		// The attempt is answered: the wake that released it is spent with the answer. An uncertain
+		// outcome still owes an answer, so its wake is kept for the reconciliation that will give it.
+		if state != HeldUncertain {
+			if err := d.spendWake(ctx, eventID); err != nil {
+				return err
+			}
 		}
 		// A keeping decision (answer, stop) continues the child in this turn: the turn is not the
 		// generation's anchor, so nothing else admits it and the daemon's census never reads it. The

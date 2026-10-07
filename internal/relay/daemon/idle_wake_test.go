@@ -44,9 +44,15 @@ type idleHost struct {
 	holds, releases []string
 	// holdErr, when set, is what HoldThread answers.
 	holdErr error
+	// holdTries counts every HoldThread call, refused ones included: a refusal is still an attempt.
+	holdTries int
 	// lost stands for a socket that went away: the subscription the client held went with it, so the
 	// daemon has to hold it again.
 	lost bool
+	// foreign is another owner's subscription on the recipient's thread, as a live watch or the bridge's
+	// retention leaves it. The relay's own hold is a separate reference: the foreign owner can release
+	// its subscription mid-backlog, and the backlog has to take its own (CRW-904 d4).
+	foreign bool
 }
 
 func (h *idleHost) Close() error { return nil }
@@ -84,6 +90,7 @@ func (h *idleHost) IdleReports() []delivery.IdleReport {
 }
 
 func (h *idleHost) HoldThread(_ context.Context, thread string) error {
+	h.holdTries++
 	if h.holdErr != nil {
 		return h.holdErr
 	}
@@ -93,9 +100,14 @@ func (h *idleHost) HoldThread(_ context.Context, thread string) error {
 
 func (h *idleHost) ReleaseThread(thread string) { h.releases = append(h.releases, thread) }
 
-// ThreadSubscribed is whether this connection still carries the subscription: a lost socket takes it
-// with it, and the relay then has to hold it again.
-func (h *idleHost) ThreadSubscribed(thread string) bool {
+// ThreadSubscribed is another owner's subscription on the thread, never the relay's own hold. The idle
+// edge must not read it as one: a watch can be released mid-backlog, and the relay then holds nothing.
+func (h *idleHost) ThreadSubscribed(string) bool { return h.foreign }
+
+// ThreadHeld is whether this relay's own hold still stands: a lost socket takes it with it, and the
+// relay then has to hold it again. A foreign watch or the bridge's retention is deliberately not
+// modelled here: the daemon asks about its own hold, not about any subscription (CRW-904 d4).
+func (h *idleHost) ThreadHeld(thread string) bool {
 	if h.lost {
 		return false
 	}
@@ -256,6 +268,46 @@ func TestIdleWake_a_refused_hold_leaves_the_backoff_as_the_only_trigger(t *testi
 	}
 }
 
+// CRW-904 (correction, d3): a hold the host refused is not retried on every tick. The delivery's own
+// busy deadline is the relay's next reason to look at that recipient, so the resume is tried again
+// then and not before; until then the backoff alone is the trigger, which is management decision 4.
+func TestIdleWake_a_refused_hold_is_not_retried_before_the_busy_deadline(t *testing.T) {
+	t.Parallel()
+	host := &idleHost{holdErr: errors.New("the host refused the resume")}
+	d, _ := idleDaemon(t, host)
+	ctx := context.Background()
+	if _, err := d.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if host.holdTries != 1 {
+		t.Fatalf("the first tick made %d hold attempts, want one", host.holdTries)
+	}
+	// Ticks inside the backoff: the refusal stands, and the relay does not resume again.
+	for _, at := range []float64{idleNow + 20, idleNow + 60, idleNow + 299} {
+		d.Clock.(*delivery.FakeClock).T = at
+		report, err := d.Tick(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, note := range report.Notes {
+			if strings.Contains(note, "not opened") {
+				t.Fatalf("the refused hold was reported again at %.0f: %v", at, note)
+			}
+		}
+	}
+	if host.holdTries != 1 {
+		t.Fatalf("the relay retried the refused resume %d times before the busy deadline, want one", host.holdTries)
+	}
+	// The delivery's own deadline is the next reason to look at that recipient: the hold is tried then.
+	d.Clock.(*delivery.FakeClock).T = idleNow + 301
+	if _, err := d.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if host.holdTries != 2 {
+		t.Fatalf("the hold was not retried at the busy deadline: %d attempts", host.holdTries)
+	}
+}
+
 func TestIdleWake_a_host_without_the_capability_leaves_the_backoff_alone(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -275,6 +327,39 @@ func TestIdleWake_a_host_without_the_capability_leaves_the_backoff_alone(t *test
 	}
 	if n := busyAnswers(t, s); n != 0 {
 		t.Fatal("the head was attempted with no subscription and no report")
+	}
+}
+
+// CRW-904 (correction, d4): a recipient whose thread another owner already subscribes still gets the
+// backlog's own hold. The idle edge must not borrow that subscription: a live watch or the bridge's
+// retention is released by its own owner (turn/completed, the release worker), and the hold is what
+// keeps the recipient's reports arriving through the rest of the backlog.
+func TestIdleWake_takes_its_own_hold_beside_another_owners_subscription(t *testing.T) {
+	t.Parallel()
+	host := &idleHost{foreign: true}
+	d, s := idleDaemon(t, host)
+	ctx := context.Background()
+	if _, err := d.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(host.holds, idleThread) {
+		t.Fatalf("holds %v: the backlog did not take its own hold beside another owner's subscription", host.holds)
+	}
+	// That owner releases its subscription; the relay's own hold is what keeps the idle edge standing.
+	host.foreign = false
+	if _, err := d.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(host.releases) != 0 {
+		t.Fatalf("releases %v while the backlog still waits", host.releases)
+	}
+	// The backlog empties: the relay's own hold is released, once.
+	exec(t, s, "UPDATE deliveries SET state = 'dispatched', next_eligible_at = NULL WHERE event_id = ?", idleEvent)
+	if _, err := d.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(host.releases, []string{idleThread}) {
+		t.Fatalf("releases %v, want one on %s once the backlog emptied", host.releases, idleThread)
 	}
 }
 
@@ -304,11 +389,13 @@ func TestIdleWake_a_note_is_reported_once(t *testing.T) {
 	t.Parallel()
 	host := &idleHost{reports: []delivery.IdleReport{{ThreadID: idleThread, Status: "idle"}}, holdErr: errors.New("the host refused the resume")}
 	d, s := idleDaemon(t, host)
-	// Two failures in one tick: the wake cannot be written, and the hold is refused. (The zone table
-	// is replaced with one this build does not declare, which the wake's insert refuses while the due
-	// list's join still reads it.) The tick's notes name each failure once.
+	// Two failures in one tick: the wake cannot be written, and the hold is refused. (The zone table is
+	// replaced with one this build does not declare: the wake's insert names original_deadline, which
+	// the replacement does not have, while the head set's join reads only event_id and spent_at, so the
+	// recipient is still seen as a waiting head and the hold is still tried.) The tick's notes name
+	// each failure once.
 	exec(t, s, "DROP TABLE delivery_wakes")
-	exec(t, s, "CREATE TABLE delivery_wakes (event_id TEXT PRIMARY KEY)")
+	exec(t, s, "CREATE TABLE delivery_wakes (event_id TEXT PRIMARY KEY, spent_at TEXT)")
 	report, err := d.Tick(context.Background())
 	if err != nil {
 		t.Fatal(err)
