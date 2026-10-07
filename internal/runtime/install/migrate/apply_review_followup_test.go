@@ -214,6 +214,13 @@ func TestMigrateApplyReviewFollowupBoundsTheRecordNotTheObject(t *testing.T) {
 		"entry of another type":      {record: "{\"artifactManifest\":[1,2]}", limit: 40, want: true},
 		"entry of the wrong shape":   {record: "{\"artifactManifest\":[{\"path\":1,\"kind\":2}]}", limit: 60, want: true},
 		"one good entry and one bad": {record: "{\"artifactManifest\":[1,{\"path\":\"v.json\",\"kind\":\"verdict\"}]}", limit: 90, want: true, entries: 1},
+		// A duplicated key is read the way the receipt reader's own map decode reads it: the last value wins.
+		"duplicate key keeps the last": {
+			record:  "{\"artifactManifest\":[{\"path\":\"first.json\",\"kind\":\"verdict\"}],\"artifactManifest\":[{\"path\":\"last.json\",\"kind\":\"verdict\"}]}",
+			limit:   200,
+			want:    true,
+			entries: 1,
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			manifest, ok := migrateReviewFollowupDecodeManifest(strings.NewReader(c.record), c.limit)
@@ -222,6 +229,9 @@ func TestMigrateApplyReviewFollowupBoundsTheRecordNotTheObject(t *testing.T) {
 			}
 			if ok && len(manifest) != c.entries {
 				t.Errorf("manifest = %v, want %d entries", manifest, c.entries)
+			}
+			if name == "duplicate key keeps the last" && ok && manifest[0].Path != "last.json" {
+				t.Errorf("the last value of a duplicated key must win, as the reader's map decode does: %v", manifest)
 			}
 			if !ok && manifest != nil {
 				t.Errorf("a refused record must return no manifest: %v", manifest)
