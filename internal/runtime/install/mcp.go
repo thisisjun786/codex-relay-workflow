@@ -191,6 +191,19 @@ func bridgeComplaints(found any) []string {
 	return wrong
 }
 
+// launcherComplaints is the launcher's own judgement of a decoded bridge record, asked of the
+// package that starts the bridge (pluginwiring.RecordComplaints and pluginwiring.ExecComplaints)
+// rather than copied here, so the re-registration refuses exactly what the launcher refuses: the
+// version, the owner, the serverName the package declares, an absolute executable, string args,
+// the version-1/version-2 policy rule, and an executable and arguments an exec can take. The
+// installer's own reading (bridgeComplaints) is the wider one - it also takes the user-owned
+// record and a relative executable the launcher never starts - so both are asked, and the
+// launcher's answer is what keeps a record the launcher will not start out of the record file.
+// Each answer is worded to follow "the record at <path> ".
+func launcherComplaints(found Object) []string {
+	return append(pluginwiring.RecordComplaints(found), pluginwiring.ExecComplaints(found)...)
+}
+
 // readBridgeRecord is bridgerecord.read: absent, unreadable and unusable stay three answers.
 func readBridgeRecord(path string) (Object, string, string) {
 	found := reading.ReadJSON(path, "the bridge MCP record", nil, nil)
@@ -727,6 +740,14 @@ func UpdateRegisteredPolicy(ctx context.Context, o Options, r PolicyUpdateOption
 			field("detail", "the record at "+recordPath+" changed while it was being read (another file, size, modification time or bytes), so nothing was written"),
 			field("repair", "rerun to decide against the file as it now stands")), "nothing was written")
 	}
+	// The record this run reads is judged by the launcher's own checks (launcherComplaints) before
+	// any decision: a record this package would refuse to start - another serverName, an executable
+	// or an argument no exec can take - is refused here as malformed too, with its bytes unchanged
+	// and no backup written, rather than re-registered into a record the launcher still refuses.
+	if wrong := launcherComplaints(found); len(wrong) > 0 {
+		return refused(append(base, field("outcome", RecordMalformed), field("detail", strings.Join(wrong, "; ")), field("complaints", strs(wrong))),
+			"nothing was written: the record the launcher would start is not one it reads")
+	}
 	if pluginwiring.ReadBridgeRecord(found).Version == BridgeRecordVersion {
 		return refused(append(base, field("outcome", RecordDiffers),
 			field("detail", "the record is version 1 and names no execution policy; replacing one field would give it a policy without the recordVersion that declares one"),
@@ -734,7 +755,7 @@ func UpdateRegisteredPolicy(ctx context.Context, o Options, r PolicyUpdateOption
 			field("repair", strings.ReplaceAll(policyRepair, "%s", recordPath))), "nothing was written")
 	}
 	wanted := reRegistered(found, reading)
-	if wrong := append(bridgeComplaints(wanted), unspellable(wanted)...); len(wrong) > 0 {
+	if wrong := append(append(bridgeComplaints(wanted), unspellable(wanted)...), launcherComplaints(wanted)...); len(wrong) > 0 {
 		return refused(append(base, field("outcome", RecordMalformed), field("detail", strings.Join(wrong, "; ")), field("complaints", strs(wrong))),
 			"nothing was written: the record this run would write is not one the launcher reads")
 	}
@@ -836,7 +857,8 @@ func UpdateRegisteredPolicy(ctx context.Context, o Options, r PolicyUpdateOption
 	}
 	// Read back: the answer names the record this run wrote, not the one it meant to write.
 	readBack, readOutcome, _ := readBridgeRecord(recordPath)
-	if readOutcome != "" || pyjson.Dumps(readBack, pyjson.Options{Compact: true, SortKeys: true, Unicode: true}) != pyjson.Dumps(wanted, pyjson.Options{Compact: true, SortKeys: true, Unicode: true}) {
+	if readOutcome != "" || len(launcherComplaints(readBack)) > 0 ||
+		pyjson.Dumps(readBack, pyjson.Options{Compact: true, SortKeys: true, Unicode: true}) != pyjson.Dumps(wanted, pyjson.Options{Compact: true, SortKeys: true, Unicode: true}) {
 		return append(base, field("outcome", RecordAppliedUnverified),
 			field("detail", "the record was replaced and could not be read back as written ("+readOutcome+"); the next bridge start reads whatever is at "+recordPath),
 			field("replacedField", "executionPolicy"), field("executionPolicy", reading), field("backup", backup),

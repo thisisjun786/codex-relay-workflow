@@ -965,10 +965,14 @@ order, a trailing newline it does or does not have - is the byte it was. A recor
 did not write, hand-edited or written by another tool, is therefore re-registered like any other.
 The document is read the way the launcher reads it, so a value `json.loads` accepts - `NaN` and the
 infinities, in a member this path never replaces - does not make the record unregisterable. What is
-still refused is a record the launcher cannot read at all, which answers `record_malformed`. The
-record must be a regular file at that path: a symbolic link is refused as
-`record_symlinked`, because the replacement renames a file over the path itself and would turn the
-link into a regular file.
+still refused is a record the launcher will not start, which answers `record_malformed`: the record
+is judged by the launcher's own checks - the version, the owner, the `serverName` the package
+declares, an absolute `bridgeExecutable`, string `args`, the version-1/version-2 policy rule, and an
+executable and arguments an `exec` can take (no NUL, encodable as file-system bytes) - so a
+hand-edited record naming another server, or one holding a value no `exec` could be given, is
+refused with its bytes unchanged and no backup written. The record must be a regular file at that
+path: a symbolic link is refused as `record_symlinked`, because the replacement renames a file over
+the path itself and would turn the link into a regular file.
 The new file goes through the bridge's own parser first, exactly as the create path checks it, so a
 policy the bridge would refuse to start under answers `execution_policy_unreadable` and nothing is
 written. The bridge's second owner is refused here too: a `config.toml` entry that also starts this

@@ -31,12 +31,14 @@ func (h *host) reRegisterEnv() scope.Env {
 
 // handEditedRecord is the record a person would write by hand: the same fields as
 // install.BridgeDocument, in another spelling (one line per field, a different key order), so a test
-// can pin what the re-registration path does with a record this installer did not write.
+// can pin what the re-registration path does with a record this installer did not write. Its
+// serverName is install.ServerName, the server this launcher declares: a hand-edited record naming
+// another server is a record the launcher refuses, and that case is pinned separately.
 func handEditedRecord(executable, policy, digest string) string {
 	return "{" + "\n" +
 		"  " + strconv.Quote("recordVersion") + ": 2," + "\n" +
 		"  " + strconv.Quote("owner") + ": " + strconv.Quote("plugin") + "," + "\n" +
-		"  " + strconv.Quote("serverName") + ": " + strconv.Quote("bridge") + "," + "\n" +
+		"  " + strconv.Quote("serverName") + ": " + strconv.Quote(install.ServerName) + "," + "\n" +
 		"  " + strconv.Quote("bridgeExecutable") + ": " + strconv.Quote(executable) + "," + "\n" +
 		"  " + strconv.Quote("args") + ": []," + "\n" +
 		"  " + strconv.Quote("installedBy") + ": " + strconv.Quote("CRW-158") + "," + "\n" +

@@ -48,6 +48,31 @@ func mustDecode(t *testing.T, document string) any {
 	return value
 }
 
+// launcherRecord is a record the launcher reads, with the serverName and the args value written
+// as the caller spells them: the raw text reaches the document, so a test can put a value in it
+// that no encoder would produce (a lone surrogate escape) beside one the launcher refuses.
+func launcherRecord(executable, serverName, args, value string) string {
+	return "{\n" +
+		"  " + strconv.Quote("recordVersion") + ": 2,\n" +
+		"  " + strconv.Quote("owner") + ": " + strconv.Quote("plugin") + ",\n" +
+		"  " + strconv.Quote("serverName") + ": " + serverName + ",\n" +
+		"  " + strconv.Quote("bridgeExecutable") + ": " + executable + ",\n" +
+		"  " + strconv.Quote("args") + ": " + args + ",\n" +
+		"  " + strconv.Quote("executionPolicy") + ": " + value + "\n" +
+		"}\n"
+}
+
+// jsonText is s as a JSON string, the escaping a JSON reader accepts, so a value strconv.Quote
+// would spell the Go way (a NUL as \x00) reaches a record as the escape its reader understands.
+func jsonText(t *testing.T, s string) string {
+	t.Helper()
+	raw, err := json.Marshal(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(raw)
+}
+
 // policyValueBounds is the byte range of a record's top-level executionPolicy value, found by a
 // token walk of the document's own bytes: an independent reading of where the member's value stands,
 // so a test can assert that every byte outside it is the byte it was.
@@ -188,6 +213,62 @@ func TestReRegisterPolicyStillRefusesARecordTheLauncherRefuses(t *testing.T) {
 	}
 	if readFile(t, recordPath) != broken {
 		t.Fatalf("a refused record was rewritten:\n%s", readFile(t, recordPath))
+	}
+}
+
+// The launcher-parity rule of this issue. The refusal that went away was the one for a valid record in
+// another spelling, so a record the launcher will not start must still be refused - as malformed, with
+// its bytes unchanged and no backup beside it. bridgeComplaints judged version, owner, executable
+// shape, args types and the policy reference, but not the serverName the package declares nor whether
+// an exec can take the executable and the arguments, so a hand-edited record naming another server, or
+// one holding a value no exec could be given, was answered record_updated although the launcher refuses
+// it. The checks are the launcher's own (pluginwiring.RecordComplaints, ExecComplaints), asked rather
+// than copied.
+func TestReRegisterPolicyRefusesARecordTheLauncherRefuses(t *testing.T) {
+	realHome := realHomeListings(t)
+	defer reportRealHomeDifference(t, realHome)
+	h := newHost(t)
+	policy, digest := h.policy(t)
+	h.registerPolicyForTest(t, policy)
+	recordPath := filepath.Join(h.codex, install.BridgeRecordName)
+	executable := filepath.Join(h.dest, "current", "bin", "codex-thread-bridge")
+	value := policyValue(policy, digest)
+	write(t, policy, policyTextChanged)
+	os.Chmod(policy, 0o644)
+
+	for _, c := range []struct {
+		name     string
+		document string
+	}{
+		{"a serverName this launcher does not declare",
+			launcherRecord(jsonText(t, executable), jsonText(t, "bridge"), "[]", value)},
+		{"a bridgeExecutable holding a NUL",
+			launcherRecord(jsonText(t, executable+"\x00"), jsonText(t, install.ServerName), "[]", value)},
+		{"an argument holding a lone surrogate outside U+DC80..U+DCFF",
+			launcherRecord(jsonText(t, executable), jsonText(t, install.ServerName), `["\ud800"]`, value)},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			write(t, recordPath, c.document)
+			result, code, _ := h.updatePolicy(t, "--execution-policy", policy)
+			if code != install.Refused || at(result, "outcome") != install.RecordMalformed {
+				t.Fatalf("a record the launcher refuses: exit %d\n%s", code, golden.Canon(result))
+			}
+			if readFile(t, recordPath) != c.document {
+				t.Fatalf("a refused record was rewritten:\n%s", readFile(t, recordPath))
+			}
+			if at(result, "applied") != false || at(result, "wrote") != false {
+				t.Fatalf("a refused record was reported written:\n%s", golden.Canon(result))
+			}
+			if entries, err := os.ReadDir(h.codex); err != nil {
+				t.Fatal(err)
+			} else {
+				for _, entry := range entries {
+					if strings.Contains(entry.Name(), ".bak") {
+						t.Fatalf("a refused record was backed up: %s", entry.Name())
+					}
+				}
+			}
+		})
 	}
 }
 
