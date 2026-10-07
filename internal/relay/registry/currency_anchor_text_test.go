@@ -28,6 +28,12 @@ type anchorCase struct {
 	turnSQL string
 	// declared is the predecessor hash the judged generation's revision r1 declares ("" for none).
 	declared string
+	// noRevision stores no reviewable revision for the judged generation at all: the correction was
+	// opened but the child has emitted nothing into it yet.
+	noRevision bool
+	// suppressed stores the judged generation's only revision as a suppressed receipt, so the
+	// generation reads as one holding no live revision.
+	suppressed bool
 }
 
 // anchorStore is one seeded correction: the relationship, the ruling, the revision_request it
@@ -84,7 +90,14 @@ func newAnchorStore(t *testing.T, c anchorCase) *anchorStore {
 	exec("INSERT INTO events (event_id, relationship_id, execution_generation, revision_hash, outcome, producer, turn_thread_id, turn_id, turn_status, receipt, stage, first_seen_at, last_seen_at) VALUES (?, ?, 2, '-', 'revision_request', 'relay', 'child-928', 'turn-request', 'completed', '{}', 'final', 'x', 'x')", request, a.rid)
 	// The ruling row, with the verdict turn id written as the case's literal.
 	exec("INSERT INTO verdicts (event_id, record, verdict, next_generation, verdict_turn_id, decided_at) VALUES (?, '{}', 'needs_changes', 2, "+c.turnSQL+", 'x')", a.ruling)
-	exec("INSERT INTO events (event_id, relationship_id, execution_generation, revision_hash, outcome, producer, turn_thread_id, turn_id, turn_status, receipt, stage, first_seen_at, last_seen_at) VALUES (?, ?, 2, ?, 'ready_for_review', 'child', 'child-928', ?, 'completed', '{}', 'final', 'x', 'x')", a.revision, a.rid, anchorRevisionHash, "turn-"+a.revision)
+	if c.noRevision {
+		return a
+	}
+	var suppressed any
+	if c.suppressed {
+		suppressed = "the turn ended interrupted"
+	}
+	exec("INSERT INTO events (event_id, relationship_id, execution_generation, revision_hash, outcome, producer, turn_thread_id, turn_id, turn_status, receipt, stage, suppressed_reason, first_seen_at, last_seen_at) VALUES (?, ?, 2, ?, 'ready_for_review', 'child', 'child-928', ?, 'completed', '{}', 'final', ?, 'x', 'x')", a.revision, a.rid, anchorRevisionHash, "turn-"+a.revision, suppressed)
 	var declared any
 	declaredBy := "undeclared"
 	if c.declared != "" {
@@ -226,6 +239,82 @@ func TestAnchorTextUnreadableRulingIsNamedOnce(t *testing.T) {
 	}
 	if n := strings.Count(head.Detail, a.ruling); n != 1 {
 		t.Fatalf("detail names the ruling %d times: %q", n, head.Detail)
+	}
+}
+
+// A correction generation can hold no reviewable revision at all: the ruling that opened it names
+// an eligible ruling the reader cannot identify, and the child has emitted nothing into it yet. The
+// generation still answers unknown_predecessor, naming that ruling, with no competitor: no_revision
+// would be a confident single-head reading this reader cannot give (CRW-928).
+func TestAnchorTextUnreadableRulingFailsClosedWithNoRevision(t *testing.T) {
+	t.Parallel()
+	a := newAnchorStore(t, anchorCase{name: "unreadable, no revision", turnSQL: "''", noRevision: true})
+	head := a.head()
+	if head.Evidence != registry.EvidenceUnknownPredecessor {
+		t.Fatalf("evidence %q, want %q", head.Evidence, registry.EvidenceUnknownPredecessor)
+	}
+	if !head.Ambiguous() {
+		t.Fatalf("%q is not ambiguous", head.Evidence)
+	}
+	if !strings.Contains(head.Detail, a.ruling) {
+		t.Fatalf("detail %q does not name the unreadable ruling %q", head.Detail, a.ruling)
+	}
+	if head.EventID != "" || head.RevisionHash != "" {
+		t.Fatalf("an ambiguous answer names no head: %q/%q", head.EventID, head.RevisionHash)
+	}
+	if len(head.Competitors) != 0 {
+		t.Fatalf("competitors %v, want none", head.Competitors)
+	}
+}
+
+// The same generation whose only revision is a suppressed receipt reads the same way: a suppressed
+// receipt is no revision, and the eligible ruling the reader could not identify is still its
+// problem.
+func TestAnchorTextUnreadableRulingFailsClosedWhenEveryRevisionIsSuppressed(t *testing.T) {
+	t.Parallel()
+	a := newAnchorStore(t, anchorCase{name: "unreadable, all suppressed", turnSQL: "''", suppressed: true})
+	head := a.head()
+	if head.Evidence != registry.EvidenceUnknownPredecessor {
+		t.Fatalf("evidence %q, want %q", head.Evidence, registry.EvidenceUnknownPredecessor)
+	}
+	if !strings.Contains(head.Detail, a.ruling) {
+		t.Fatalf("detail %q does not name the unreadable ruling %q", head.Detail, a.ruling)
+	}
+	if len(head.Competitors) != 0 {
+		t.Fatalf("competitors %v, want none", head.Competitors)
+	}
+}
+
+// The control: an empty correction generation whose eligible ruling reads keeps answering
+// no_revision, before and after the reorder. Only an unreadable ruling changes this answer.
+func TestAnchorTextReadableRulingLeavesAnEmptyGenerationAlone(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []anchorCase{
+		{name: "no revision at all", turnSQL: "'vt'", noRevision: true},
+		{name: "every revision suppressed", turnSQL: "'vt'", suppressed: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			a := newAnchorStore(t, tc)
+			head := a.head()
+			if head.Evidence != registry.EvidenceNone {
+				t.Fatalf("evidence %q, want %q (detail %q)", head.Evidence, registry.EvidenceNone, head.Detail)
+			}
+			if head.Ambiguous() {
+				t.Fatalf("%q is ambiguous", head.Evidence)
+			}
+		})
+	}
+}
+
+// A child's first receipt into a generation whose ruling the relay cannot read is still admitted:
+// the emit-time judgment leaves a generation that reads no single head as it is, so a stored
+// unreadable ruling never stops a child from emitting.
+func TestAnchorTextEmptyGenerationAdmitsAFirstReceipt(t *testing.T) {
+	t.Parallel()
+	a := newAnchorStore(t, anchorCase{name: "unreadable, no revision", turnSQL: "''", noRevision: true})
+	if err := delivery.RefuseNewFork(a.ctx, a.store.Q(a.ctx), a.rid, 2, "candidate-928", "hc", nil); err != nil {
+		t.Fatalf("RefuseNewFork refused a first receipt into an unreadable empty generation: %v", err)
 	}
 }
 
