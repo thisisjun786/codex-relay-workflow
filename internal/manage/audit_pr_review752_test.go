@@ -30,6 +30,46 @@ func auditPRReview752Listing(records ...string) []byte {
 	return out
 }
 
+// C2: the changed paths come from git's own listing, read positionally: a status, then its
+// path, or, for a rename or a copy, the old path and then the new one. A deletion contributes
+// nothing, a path that carries a space arrives as itself because the listing is NUL-delimited,
+// and a record that does not fit the grammar is refused rather than half-read.
+func TestAuditPRReview752NameStatusPaths(t *testing.T) {
+	listing := auditPRReview752Listing(
+		"M", "internal/a.go",
+		"A", "docs/new.md",
+		"D", "docs/gone.md",
+		"R100", "old.go", "new.go",
+		"C100", "src/from.go", "src/to.go",
+		"T", "link",
+		"M", "docs/with space.txt",
+		"M", "internal/a.go",
+	)
+	got, err := auditPRNameStatusPaths(listing)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"internal/a.go", "docs/new.md", "new.go", "src/to.go", "link", "docs/with space.txt"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("the paths are %v, want %v", got, want)
+	}
+	if paths, err := auditPRNameStatusPaths(nil); err != nil || len(paths) != 0 {
+		t.Errorf("an empty listing gave %v (%v)", paths, err)
+	}
+	// A listing read half way would build a bundle that looks complete while a file the
+	// change carries is missing from it, so a record that does not fit is an error.
+	for _, broken := range []string{
+		"M\x00",
+		"R100\x00old.go\x00",
+		"internal/a.go\x00M\x00x\x00",
+		"Z\x00x\x00",
+	} {
+		if _, err := auditPRNameStatusPaths([]byte(broken)); err == nil {
+			t.Errorf("the listing %q was accepted", broken)
+		}
+	}
+}
+
 // auditPRReview752Escaped is the form encoding/json writes by default for a name that carries
 // one of the three bytes it escapes.
 func auditPRReview752Escaped(name string) string {
@@ -286,32 +326,5 @@ func TestAuditPRReview752CancelledRunStopsInsteadOfSkipping(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(state, "audit", "bundles", auditPRSubject(12))); !os.IsNotExist(err) {
 		t.Errorf("a cancelled run left a bundle directory behind: %v", err)
-	}
-}
-
-// The listing git answers with is read positionally: a status, then its path, or, for a
-// rename or a copy, the old path and then the new one. A deletion contributes nothing, and a
-// record that does not fit the shape is refused rather than half-read.
-func TestAuditPRReview752NameStatusPaths(t *testing.T) {
-	listing := auditPRReview752Listing("M", "internal/a.go", "A", "docs/new.md", "D", "docs/gone.md",
-		"R100", "old.go", "new.go", "C100", "src/from.go", "src/to.go", "T", "link",
-		"M", "docs/with space.txt", "M", "img/with space.png")
-	got, err := auditPRNameStatusPaths(listing)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := "internal/a.go,docs/new.md,new.go,src/to.go,link,docs/with space.txt,img/with space.png"
-	if strings.Join(got, ",") != want {
-		t.Errorf("the paths are %v, want %s", got, want)
-	}
-	if paths, err := auditPRNameStatusPaths(nil); err != nil || len(paths) != 0 {
-		t.Errorf("an empty listing gave %v (%v)", paths, err)
-	}
-	// A record that does not fit is refused: a listing read half way would build a bundle
-	// that looks complete while a changed file is missing from it.
-	for _, broken := range []string{"M\x00", "R100\x00old.go\x00", "internal/a.go\x00M\x00x\x00", "Z\x00x\x00"} {
-		if _, err := auditPRNameStatusPaths([]byte(broken)); err == nil {
-			t.Errorf("the listing %q was accepted", broken)
-		}
 	}
 }
