@@ -34,7 +34,11 @@ var doctorCommand = dispatch.Command{Name: "doctor", Exempt: true, ReportsMismat
 func runDoctor(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
 	ctx = store.WithSidecarFreeReads(ctx)
 	probeWrite := args.Bool("probe-write")
-	probed := store.ProbeWith(ctx, services.Selection, store.ProbeOptions{Write: probeWrite})
+	// A write probe takes the store's write lock, which a halted store may not have (CRW-848): the
+	// probe is not run and the answer says so. doctor still answers, and the corruption block below
+	// names the halt.
+	halt := store.HaltStateAt(services.Selection.DBPath())
+	probed := store.ProbeWith(ctx, services.Selection, store.ProbeOptions{Write: probeWrite && !halt.Present})
 	loc := probeStore(probed)
 	report := contract.OrderedObject{
 		{Key: "stateSelection", Value: selectionRecord(services.Selection)},
@@ -119,6 +123,13 @@ func runDoctor(ctx context.Context, services dispatch.Services, args dispatch.Ar
 	// and value, and runtime stays the last of them.
 	add("writeProbe", writeProbeRecord(probeWrite, probed.Access.Measured))
 	add("runtime", runtimeBlock())
+	// The halt marker is a trailing key present only where it has something to say, like issue,
+	// workerReadiness and serviceStore (CRW-848): a store whose writes are halted is reported here
+	// and doctor still answers, which is how an operator reads the halt. An absent marker adds no
+	// key, so every existing answer and golden is unchanged.
+	if halt.Present {
+		add("corruption", corruptionRecord(halt))
+	}
 	// Present only where it has something to say, like issue and workerReadiness (decision 73).
 	served, err := serviceStore(services)
 	if err != nil {
@@ -177,6 +188,29 @@ func serviceStore(services dispatch.Services) (contract.OrderedObject, error) {
 			"  reads the store that service serves",
 		}},
 	), nil
+}
+
+// corruptionRecord is doctor's reading of the halt marker (CRW-848): present is always true here
+// (the key is added only when a marker is there), path names the marker file, and the detection the
+// marker holds follows when it decodes. A marker that cannot be read reports present true with the
+// failure in detail and no detection: doctor answers, and never reads an unreadable marker as a
+// healthy store.
+func corruptionRecord(state store.HaltState) contract.OrderedObject {
+	record := contract.OrderedObject{{Key: "present", Value: true}, {Key: "path", Value: state.Path}}
+	if state.Detail != "" {
+		return append(record, contract.Field{Key: "detail", Value: state.Detail})
+	}
+	marker := state.Marker
+	return append(record,
+		contract.Field{Key: "detectedAt", Value: marker.DetectedAt},
+		contract.Field{Key: "pid", Value: marker.PID},
+		contract.Field{Key: "command", Value: marker.Command},
+		contract.Field{Key: "code", Value: marker.Code},
+		contract.Field{Key: "message", Value: marker.Message},
+		contract.Field{Key: "site", Value: marker.Site},
+		contract.Field{Key: "sequence", Value: marker.Sequence},
+		contract.Field{Key: "detail", Value: nil},
+	)
 }
 
 // sameDirectory is whether a and b name one directory once every symbolic link is followed; a

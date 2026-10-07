@@ -318,7 +318,7 @@ func TestPolicyCheckNeedsTheGuard(t *testing.T) {
 
 // catalogHost isolates the catalog tests: the reader resolves the model catalog below the home and
 // runs the OCX probe, so HOME and CRW_HOME are pointed at a temporary directory before either runs.
-func catalogHost(t *testing.T) {
+func catalogHost(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
 	t.Setenv("HOME", root)
@@ -328,6 +328,7 @@ func catalogHost(t *testing.T) {
 	// The catalog reader probes the OCX binary on PATH and reads the Codex home's model catalog,
 	// so both are pointed at an empty directory: the test is about this route, not the host.
 	t.Setenv("PATH", filepath.Join(root, "bin"))
+	return root
 }
 
 // TestCatalogIsRegistered is C5: the catalog route answers and keeps the reader's status apart.

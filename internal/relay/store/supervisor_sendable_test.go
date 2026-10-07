@@ -255,3 +255,34 @@ func TestSupervisorNeverSentSQL_needs_an_unsent_state_and_no_attempt_that_may_ha
 		t.Fatalf("UPDATE moved %d rows, want 2", moved)
 	}
 }
+
+// CRW-905: only the notice channel's message yields the recipient's line to a delivery waiting out
+// a busy backoff. The condition is the obligation kind the notice staging writes, so a supervisor
+// message of any other kind keeps I-216's oldest-of-the-claimable rule.
+func TestSupervisorMessagesRow_YieldsToBusyHead_only_for_a_fault_notice(t *testing.T) {
+	t.Parallel()
+	// Given: one message per obligation kind the channel stages.
+	cases := []struct {
+		kind  string
+		yield bool
+	}{
+		{"fault_notification", true},
+		{"report", false},
+		{"unreported", false},
+		{"blocked", false},
+		{"decision_request", false},
+		{"", false},
+	}
+	for _, c := range cases {
+		t.Run(c.kind, func(t *testing.T) {
+			row := SupervisorMessagesRow{ObligationKind: c.kind}
+			// Then: only a fault notice yields, which is what the notice staging writes.
+			if row.YieldsToBusyHead() != c.yield {
+				t.Fatalf("obligation_kind %q yields %v, want %v", c.kind, row.YieldsToBusyHead(), c.yield)
+			}
+		})
+	}
+	if SupervisorNoticeObligationKind != "fault_notification" {
+		t.Fatalf("the notice obligation kind is %q, want the value the notice staging stores", SupervisorNoticeObligationKind)
+	}
+}

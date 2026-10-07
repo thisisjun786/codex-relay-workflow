@@ -232,6 +232,18 @@ func (c *Channel) claim(ctx context.Context, id string, r Resolution, now float6
 		if found {
 			return Refusal{"not_claimable", "message " + pyvalue.StrRepr(older) + " was staged for " + pyvalue.StrRepr(r.Recipient) + " first and can be sent now, so this one waits. Two facts reach the level above in the order they arose"}
 		}
+		// A notice yields the recipient's line to a delivery that waits out a busy backoff, asked
+		// again here under the claim's write lock because a head can appear between the attempt's
+		// check and this one. A supervisor message is untouched (I-216).
+		if current.YieldsToBusyHead() {
+			held, err := c.noticeYieldsToBusyHead(tx, service, r.Recipient, now)
+			if err != nil {
+				return err
+			}
+			if held {
+				return Refusal{"not_claimable", noticeYieldsDetail(r.Recipient)}
+			}
+		}
 		attemptNo = current.AttemptCount + 1
 		requestID = "sup-" + id[:min(12, len(id))] + "-a" + strconv.FormatInt(attemptNo, 10)
 		var clash string
@@ -334,13 +346,13 @@ func (c *Channel) attempt(ctx context.Context, id string, adapter SendAdapter, n
 	if err := a.read(ctx); err != nil {
 		return nil, err
 	}
+	a.service = delivery.NewService(c.Store, delivery.SystemClock{})
 	if stop, err := a.eligible(ctx); stop {
 		return nil, err
 	}
 	if err := a.resolve(ctx); err != nil {
 		return nil, err
 	}
-	a.service = delivery.NewService(c.Store, delivery.SystemClock{})
 	if stop, err := a.rateGate(ctx); stop {
 		return nil, err
 	}
@@ -411,7 +423,8 @@ func (a *attemptRun) read(ctx context.Context) error {
 }
 
 // eligible stops quietly for a message that cannot be claimed now (held, not due, not unsent) and
-// refuses one that an older message to the same recipient goes ahead of.
+// refuses one that an older message to the same recipient goes ahead of, or - a notice only - one
+// whose recipient's line a delivery holds under a busy backoff.
 func (a *attemptRun) eligible(ctx context.Context) (stop bool, err error) {
 	row := a.row
 	if !row.ClaimableAt(a.now) {
@@ -423,6 +436,18 @@ func (a *attemptRun) eligible(ctx context.Context) (stop bool, err error) {
 	}
 	if found {
 		return true, Refusal{"not_claimable", "message " + pyvalue.StrRepr(older) + " was staged for " + pyvalue.StrRepr(row.RecipientTaskID) + " first and can be sent now, so this one waits. Two facts reach the level above in the order they arose, which is not a property an ordered selection can have on its own while any caller may name any row"}
+	}
+	// A notice yields the recipient's line to a delivery that waits out a busy backoff, so that
+	// head meets the recipient idle rather than busy again (I-216's notice part, section 82
+	// decision 2). The claim asks it again under its write lock; a supervisor message is untouched.
+	if row.YieldsToBusyHead() {
+		held, err := a.c.noticeYieldsToBusyHead(ctx, a.service, row.RecipientTaskID, a.now)
+		if err != nil {
+			return true, err
+		}
+		if held {
+			return true, Refusal{"not_claimable", noticeYieldsDetail(row.RecipientTaskID)}
+		}
 	}
 	return false, nil
 }
@@ -582,6 +607,9 @@ func (a *attemptRun) fence(tx context.Context, out *transportOutcome) error {
 	if done, err := a.fenceProposal(tx, current, out); done {
 		return err
 	}
+	if done, err := a.fenceBusyHead(tx, current, out); done {
+		return err
+	}
 	if done, err := a.fenceSettings(tx); done {
 		return err
 	}
@@ -651,6 +679,32 @@ func (a *attemptRun) fenceProposal(tx context.Context, current store.SupervisorM
 		return true, err
 	}
 	_, err = c.Store.Q(tx).ExecContext(tx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,'supervisor_message_withheld',?,?)", a.at, a.id, pyjson.Dumps(contract.OrderedObject{{Key: "requestId", Value: requestID}, {Key: "proposal", Value: "restated"}, {Key: "detail", Value: detail}, {Key: "reason", Value: "restated at the transport start; nothing was sent"}}, pyjson.Options{}))
+	return true, err
+}
+
+// fenceBusyHead cancels a notice's claim when a delivery came to hold its recipient's line under a
+// busy backoff between the claim and the transport, so no turn is opened in the gap that delivery
+// is waiting for (I-216's notice part). It runs before the budget is reserved and before the
+// transport stamp, so nothing was sent and nothing was spent, and it only ever looks at a notice.
+func (a *attemptRun) fenceBusyHead(tx context.Context, current store.SupervisorMessagesRow, out *transportOutcome) (done bool, err error) {
+	c, requestID, attemptNo := a.c, a.claimed.requestID, a.claimed.attemptNo
+	if !current.YieldsToBusyHead() {
+		return false, nil
+	}
+	held, err := c.noticeYieldsToBusyHead(tx, a.service, current.RecipientTaskID, a.now)
+	if err != nil {
+		return true, err
+	}
+	if !held {
+		return false, nil
+	}
+	refusal := Refusal{"not_claimable", noticeYieldsDetail(current.RecipientTaskID)}
+	out.refusal = refusal
+	reason := "a delivery came to hold this recipient's line under a busy backoff between this notice's claim and its transport"
+	if err := c.cancelTransport(tx, a.id, requestID, attemptNo, a.at, 0, reason, a.owner); err != nil {
+		return true, err
+	}
+	_, err = c.Store.Q(tx).ExecContext(tx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,'supervisor_message_withheld',?,?)", a.at, a.id, pyjson.Dumps(contract.OrderedObject{{Key: "requestId", Value: requestID}, {Key: "reason", Value: reason}, {Key: "refusal", Value: refusal.Reason}}, pyjson.Options{}))
 	return true, err
 }
 

@@ -108,6 +108,7 @@ const (
 	RefusalStaleGeneration                 RefusalReason = "stale_generation"
 	RefusalStaleMarkContext                RefusalReason = "stale_mark_context"
 	RefusalStoreOwnedByOther               RefusalReason = "store_owned_by_other"
+	RefusalStoreWriteHalted                RefusalReason = "store_write_halted"
 	RefusalSupersededRevision              RefusalReason = "superseded_revision"
 	RefusalSymlinkComponent                RefusalReason = "symlink_component"
 	RefusalSyncNotClaimable                RefusalReason = "sync_not_claimable"
