@@ -10,12 +10,19 @@
  * the reason the command gave, and a value the document did not carry is shown as unknown rather
  * than as a zero or a blank.
  */
+import type { ReactNode } from "react";
 import {
   type CapacityDocument,
+  type CapacityPlanView,
+  type DagAnomalyView,
   type DagDocument,
   type RelayDocument,
+  type RelayMergeTurnView,
+  type RelayPlanView,
+  type RelayRelationshipView,
   type RunState,
   type StatusSource,
+  sectionReading,
 } from "../api.ts";
 import { Card } from "../ui/kit.tsx";
 import type { RunStateView } from "../components/RunStateBar.tsx";
@@ -54,13 +61,58 @@ function Row({ id, sub, state, reason }: { id: string; sub: string; state?: stri
   );
 }
 
+/**
+ * A list section that keeps "could not be read" apart from "read and empty".
+ *
+ * A section the document did not carry, or one the read reported as failed, is unknown with its
+ * reason. Only an array the document really carried and that holds nothing is reported as empty.
+ * Coalescing the two would let a failed read read as a clean one, which is the failure this
+ * screen exists to prevent.
+ */
+function Rows<T>({
+  items,
+  empty,
+  reason,
+  render,
+}: {
+  items: T[] | null | undefined;
+  empty: string;
+  reason: string;
+  render: (item: T, index: number) => ReactNode;
+}) {
+  if (items == null) {
+    return (
+      <div className="list-row">
+        <div className="row-id">
+          <div className="row-name">unknown</div>
+          <div className="row-sub" title={reason}>{reason}</div>
+        </div>
+        <div className="row-actions"><span className="badge">unknown</span></div>
+      </div>
+    );
+  }
+  if (items.length === 0) {
+    return (
+      <div className="list-row">
+        <div className="row-id"><div className="row-sub">{empty}</div></div>
+      </div>
+    );
+  }
+  return <>{items.map(render)}</>;
+}
+
 /** The relay relationships, the DAG plan progress, the merge lanes and the read's failures. */
 function RelaySection({ source }: { source: StatusSource<RelayDocument> }) {
   const document: RelayDocument | null = source.data;
-  const relationships = document?.relationships ?? [];
-  const plans = document?.plans ?? [];
-  const mergeTurns = document?.mergeTurns ?? [];
   const failures = document?.failures ?? [];
+  // A section named in failures, or one the document omitted, was not read: its reason is the
+  // read's own, so the section shows unknown rather than the empty-state sentence.
+  const sectionReason = (section: string): string =>
+    failures.find((entry) => entry.section === section)?.reason ?? source.reason ?? "the section was not read";
+  const sectionItems = <T,>(section: string, items: T[] | null | undefined): T[] | null | undefined =>
+    failures.some((entry) => entry.section === section) ? null : items;
+  const section = <T,>(name: string, items: T[] | null | undefined) =>
+    sectionReading<T>(name, items, failures, source.reason);
   return (
     <Card title="Relay" desc="Relationships, DAG progress and merge lanes, from crw manage relay-read.">
       <SourceHead source={source} />
@@ -79,10 +131,11 @@ function RelaySection({ source }: { source: StatusSource<RelayDocument> }) {
       ) : null}
       <h3 className="card-title">Relationships</h3>
       <div className="row-list">
-        {relationships.length === 0 ? (
-          <div className="list-row"><div className="row-id"><div className="row-sub">No live relationship in the store.</div></div></div>
-        ) : (
-          relationships.map((relationship, index) => (
+        <Rows<RelayRelationshipView>
+          items={section("relationships", document?.relationships).items}
+          empty="No live relationship in the store."
+          reason={section("relationships", document?.relationships).reason}
+          render={(relationship, index) => (
             <Row
               key={`relationship-${index}`}
               id={text(relationship.issueKey)}
@@ -90,15 +143,16 @@ function RelaySection({ source }: { source: StatusSource<RelayDocument> }) {
               state={relationship.read?.state ?? "ok"}
               reason={relationship.read?.reason}
             />
-          ))
-        )}
+          )}
+        />
       </div>
       <h3 className="card-title">DAG progress</h3>
       <div className="row-list">
-        {plans.length === 0 ? (
-          <div className="list-row"><div className="row-id"><div className="row-sub">No DAG plan in the store.</div></div></div>
-        ) : (
-          plans.map((plan, index) => (
+        <Rows<RelayPlanView>
+          items={section("plans", document?.plans).items}
+          empty="No DAG plan in the store."
+          reason={section("plans", document?.plans).reason}
+          render={(plan, index) => (
             <Row
               key={`plan-${index}`}
               id={text(plan.planId)}
@@ -106,15 +160,16 @@ function RelaySection({ source }: { source: StatusSource<RelayDocument> }) {
               state={plan.read?.state ?? "ok"}
               reason={plan.read?.reason}
             />
-          ))
-        )}
+          )}
+        />
       </div>
       <h3 className="card-title">Merge lanes</h3>
       <div className="row-list">
-        {mergeTurns.length === 0 ? (
-          <div className="list-row"><div className="row-id"><div className="row-sub">No open merge turn.</div></div></div>
-        ) : (
-          mergeTurns.map((turn, index) => (
+        <Rows<RelayMergeTurnView>
+          items={section("mergeTurns", document?.mergeTurns).items}
+          empty="No open merge turn."
+          reason={section("mergeTurns", document?.mergeTurns).reason}
+          render={(turn, index) => (
             <Row
               key={`turn-${index}`}
               id={`#${text(turn.prNumber)}`}
@@ -122,8 +177,8 @@ function RelaySection({ source }: { source: StatusSource<RelayDocument> }) {
               state={turn.read?.state ?? "ok"}
               reason={turn.read?.reason}
             />
-          ))
-        )}
+          )}
+        />
       </div>
     </Card>
   );
@@ -136,10 +191,12 @@ function stagesText(stages: Record<string, number> | null | undefined): string {
   return entries.map(([stage, nodes]) => `${stage} ${nodes}`).join(" · ");
 }
 
-/** The capacity judgement. */
+/**
+ * The capacity judgement. A hold carries the command's own reasons, which are the authoritative
+ * explanation of the verdict and cannot be inferred from the other fields.
+ */
 function CapacitySection({ source }: { source: StatusSource<CapacityDocument> }) {
   const document: CapacityDocument | null = source.data;
-  const plans = document?.plans ?? [];
   return (
     <Card title="Capacity" desc="Room to add a parent, from crw manage capacity --dry-run.">
       <SourceHead source={source} />
@@ -149,18 +206,21 @@ function CapacitySection({ source }: { source: StatusSource<CapacityDocument> })
         <span className="hint">child 429 {text(document?.child_429?.state)}</span>
       </div>
       <div className="row-list">
-        {plans.length === 0 ? (
-          <div className="list-row"><div className="row-id"><div className="row-sub">No plan is configured for a capacity judgement.</div></div></div>
-        ) : (
-          plans.map((plan, index) => (
+        <Rows<CapacityPlanView>
+          items={document?.plans}
+          empty="No plan is configured for a capacity judgement."
+          reason={source.reason ?? "the capacity judgement was not read"}
+          render={(plan, index) => (
             <Row
               key={`capacity-${index}`}
               id={text(plan.plan)}
-              sub={`${text(plan.verdict)} · waiting ${text(plan.waiting?.length)} · slots ${text(plan.held)}/${text(plan.ceiling)} · host ${text(plan.host_memory)}`}
+              sub={`${text(plan.verdict)} · waiting ${text(plan.waiting?.length)} · slots ${text(plan.held)}/${text(plan.ceiling)} · host ${text(plan.host_memory)}${
+                (plan.reasons?.length ?? 0) > 0 ? ` · ${(plan.reasons ?? []).join(", ")}` : ""
+              }`}
               state={text(plan.verdict)}
             />
-          ))
-        )}
+          )}
+        />
       </div>
     </Card>
   );
@@ -169,24 +229,24 @@ function CapacitySection({ source }: { source: StatusSource<CapacityDocument> })
 /** The DAG anomalies the review found, and the checks it could not take. */
 function DagSection({ source }: { source: StatusSource<DagDocument> }) {
   const document: DagDocument | null = source.data;
-  const anomalies = document?.anomalies ?? [];
   const checks = document?.checks ?? [];
   return (
     <Card title="DAG anomalies" desc="What crw manage dag-review --no-state found.">
       <SourceHead source={source} />
       <div className="row-list">
-        {anomalies.length === 0 ? (
-          <div className="list-row"><div className="row-id"><div className="row-sub">No anomaly reported.</div></div></div>
-        ) : (
-          anomalies.map((anomaly, index) => (
+        <Rows<DagAnomalyView>
+          items={document?.anomalies}
+          empty="No anomaly reported."
+          reason={source.reason ?? "the DAG review was not read"}
+          render={(anomaly, index) => (
             <Row
               key={`anomaly-${index}`}
               id={text(anomaly.kind)}
               sub={`${text(anomaly.plan)} · ${text(anomaly.node)} · ${text(anomaly.issue)} · ${text(anomaly.detail)}`}
               state="unknown"
             />
-          ))
-        )}
+          )}
+        />
       </div>
       {checks.length > 0 ? (
         <div className="row wrap">

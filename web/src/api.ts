@@ -393,3 +393,37 @@ function digestPart(label: string, digest: string | null | undefined, reason?: s
   }
   return { label, value: "", state: "unknown", reason: reason ?? "not read" };
 }
+
+/**
+ * One section of a manage document: whether it was read, and what it held.
+ *
+ * "Could not be read" and "read and empty" are different facts, and this is where they are kept
+ * apart. A section named in the read's own failures list, or one the document did not carry at
+ * all, is unknown with its reason; only an array the document really carried and that holds
+ * nothing is an empty list. Turning the first into the second would let a failed read pass as a
+ * clean one.
+ */
+export interface SectionReading<T> {
+  state: SourceState;
+  items: T[] | null;
+  reason: string;
+}
+
+/** The reading of one section, from the document, its failures list and the source's own reason. */
+export function sectionReading<T>(
+  section: string,
+  items: T[] | null | undefined,
+  failures: { section?: string; reason?: string }[] | null | undefined,
+  sourceReason?: string | null,
+): SectionReading<T> {
+  const failure = (failures ?? []).find((entry) => entry?.section === section);
+  if (failure || items == null) {
+    const reason = failure?.reason;
+    return {
+      state: "unknown",
+      items: null,
+      reason: reason && reason !== "" ? reason : sourceReason && sourceReason !== "" ? sourceReason : "the section was not read",
+    };
+  }
+  return { state: "ok", items, reason: "" };
+}

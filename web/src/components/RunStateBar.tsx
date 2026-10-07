@@ -8,6 +8,11 @@
  * separately, each with its own dot and its own reason. They are never folded into one green
  * dot, because that would hide which of them could not be read. A reading whose source failed
  * shows unknown with the reason the command gave, never a zero or a blank.
+ *
+ * The execution-policy reading also carries its three digests as separate parts, and they are
+ * rendered: the file on disk, the digest the wiring record names and the digest the running
+ * service published can differ, and that difference is exactly what the reading is for. A part
+ * that could not be read shows unknown with its own reason rather than a blank.
  */
 import { useState } from "react";
 import { fetchStatus, runStateReadings, type RunState } from "../api.ts";
@@ -64,12 +69,28 @@ export function RunStateBar({ view }: { view: RunStateView }) {
   return (
     <div aria-label="status bar">
       {readings.map((reading) => (
-        <div className="row" key={reading.key} title={reading.reason || reading.state}>
-          <StatusDot status={dotFor(reading.state)} />
-          <span className="grow">{reading.label}</span>
-          <span className="badge">{reading.state}</span>
+        <div key={reading.key}>
+          <div className="row" title={reading.reason || reading.state}>
+            <StatusDot status={dotFor(reading.state)} />
+            <span className="grow">{reading.label}</span>
+            <span className="badge">{reading.state}</span>
+          </div>
+          {reading.parts.map((part) => (
+            <div className="row" key={part.label} title={part.reason || part.value}>
+              <StatusDot status={dotFor(part.state)} />
+              <span className="grow">{part.label}</span>
+              <span className="mono cell-path" title={part.value || part.reason}>
+                {part.value ? shortDigest(part.value) : "unknown"}
+              </span>
+            </div>
+          ))}
         </div>
       ))}
     </div>
   );
+}
+
+/** A digest as the sidebar shows it: its first eight characters, which identify it. */
+function shortDigest(digest: string): string {
+  return digest.length > 8 ? digest.slice(0, 8) : digest;
 }

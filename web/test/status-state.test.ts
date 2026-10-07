@@ -8,7 +8,7 @@
 // runStateReadings in src/api.ts, which is the same function the bar component renders.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { runStateReadings, type RunState } from "../src/api.ts";
+import { runStateReadings, sectionReading, type RunState } from "../src/api.ts";
 
 /** The document GET /api/status answers, with one reading overridden per case. */
 function document(overrides: {
@@ -101,4 +101,48 @@ test("no reading is folded into one shared answer", () => {
   );
   // Three readings, three reasons: a single status dot would have hidden which one failed.
   assert.equal(new Set(readings.map((r) => r.reason)).size, 3);
+});
+
+// A section the document did not carry, or one the read reported as failed, must not render as an
+// empty list: that would let a failed read pass as a clean one.
+test("a section that was not read is unknown, not empty", () => {
+  const missing = sectionReading("plans", null, [], "the relay read reported unread values");
+  assert.equal(missing.state, "unknown");
+  assert.equal(missing.items, null);
+  assert.equal(missing.reason, "the relay read reported unread values");
+});
+
+test("a section named in the failures list is unknown with the read own reason", () => {
+  const failed = sectionReading("plans", [], [{ section: "plans", reason: "no such table: dag_plans" }], "fallback");
+  assert.equal(failed.state, "unknown");
+  assert.equal(failed.items, null);
+  assert.equal(failed.reason, "no such table: dag_plans");
+});
+
+test("a section the document carried and that holds nothing is empty, not unknown", () => {
+  const empty = sectionReading("plans", [], [], "the relay read reported unread values");
+  assert.equal(empty.state, "ok");
+  assert.deepEqual(empty.items, []);
+  assert.equal(empty.reason, "");
+});
+
+test("a section with values is ok and keeps them", () => {
+  const read = sectionReading("plans", [{ planId: "p-1" }], [], null);
+  assert.equal(read.state, "ok");
+  assert.equal(read.items?.length, 1);
+});
+
+// The digest parts are what keeps the policy reading honest: a registered file with an unread
+// running digest must not render as one green reading.
+test("the execution policy keeps the file, registered and running digests apart", () => {
+  const readings = runStateReadings(
+    document({
+      executionPolicy: { runningDigest: null, runningReason: "worker_policy_unconfigured", applied: "unverifiable" },
+    }),
+  );
+  const parts = readings[2].parts;
+  assert.equal(parts.length, 3);
+  assert.equal(parts[2].label, "Running digest");
+  assert.equal(parts[2].state, "unknown");
+  assert.equal(parts[2].reason, "worker_policy_unconfigured");
 });
