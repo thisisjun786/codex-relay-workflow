@@ -54,6 +54,11 @@ func pumpQueueFlush(ctx context.Context, e *Env, cfg *Config, st *pumpState, s p
 // pumpQueueFlushThread delivers one thread's queued notices.
 func pumpQueueFlushThread(ctx context.Context, e *Env, cfg *Config, st *pumpState, s pumpSettings, root, thread string, dry bool) error {
 	dir := filepath.Join(root, thread)
+	// A cancelled round makes no durable change: the pin, the membership and the moves are all
+	// writes, and a first SIGINT must not leave one behind for a round that is already over.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	// A pinned batch is reconciled first, under its own frozen logical id and body, before any new
 	// batch is formed: a notice that may already have gone is never re-sent under a different id.
 	if _, pinned := st.QueueAttempt[thread]; pinned {
@@ -133,6 +138,10 @@ func pumpQueueFlushThread(ctx context.Context, e *Env, cfg *Config, st *pumpStat
 // gone. The accepted membership is recorded before the first move, so a move that fails part way
 // is completed by the next round instead of being sent again.
 func pumpQueueSend(ctx context.Context, e *Env, cfg *Config, st *pumpState, dir, thread string, batch pumpReview776QueueBatch) error {
+	if err := ctx.Err(); err != nil {
+		// The pin and the membership are durable effects: a cancelled round makes neither.
+		return err
+	}
 	if !utf8.ValidString(batch.body) {
 		// JSON replaces invalid bytes with the replacement character, so a pinned body would stop
 		// being the text on disk; the delivery core refuses such a message anyway.
@@ -374,8 +383,15 @@ func pumpReview776QueueRetry(ctx context.Context, e *Env, cfg *Config, st *pumpS
 	switch out.Class {
 	case deliverClassAccepted:
 		// The membership is the pin's own names, never a fresh read of the directory: a notice queued
-		// after the pin was taken was not in the delivered body and must not move to sent/.
-		st.QueueAccepted[thread] = append([]string(nil), pin.Names...)
+		// after the pin was taken was not in the delivered body and must not move to sent/. A pinned
+		// name the producer replaced while the delivery was in flight is not moved either: the
+		// delivery carried the pinned text, so moving the replacement would drop a notice nobody has
+		// delivered. That notice stays queued and forms its own batch under its own id.
+		if current, readErr := pumpReview776QueueReadNotices(dir, pin.Names); readErr != nil || pumpReview776QueueBody(current) != pin.Body {
+			pumpLog(cfg, fmt.Sprintf("queue %s: the accepted batch's notices changed; nothing moved to sent/", thread))
+		} else {
+			st.QueueAccepted[thread] = append([]string(nil), pin.Names...)
+		}
 		delete(st.QueueAttempt, thread)
 		if err := st.pumpSave(cfg); err != nil {
 			return true, err

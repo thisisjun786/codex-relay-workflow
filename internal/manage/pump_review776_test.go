@@ -458,3 +458,36 @@ func TestPumpReview776ReplacedPinnedNoticeDropsPin(t *testing.T) {
 		t.Errorf("the batch carried %q, want the replacement body", message)
 	}
 }
+
+// A cancelled round makes no durable change: no pin, no move and no state write.
+func TestPumpReview776CancelledRoundWritesNothing(t *testing.T) {
+	now := pumpTestNow
+	e := pumpTestEnv(t, &now)
+	cfg := pumpTestConfig(t, "")
+	pumpQueueTestNotice(t, cfg, "parent-1", "aaaaaaaaaaaaaaaa.txt", "a-body")
+	st := pumpTestReadState(t, cfg)
+	st.QueueAccepted["parent-1"] = []string{"aaaaaaaaaaaaaaaa.txt"}
+	if err := st.pumpSave(cfg); err != nil {
+		t.Fatal(err)
+	}
+	statePath := filepath.Join(cfg.StateDir, pumpStateFile)
+	before, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := pumpQueueFlush(ctx, e, cfg, pumpTestReadStatePtr(t, cfg), pumpSettingsFrom(cfg), false); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Errorf("a cancelled round rewrote the state:\n%s\n%s", before, after)
+	}
+	if _, err := os.Stat(filepath.Join(cfg.StateDir, pumpQueueDir, "parent-1", pumpSentDir)); !os.IsNotExist(err) {
+		t.Errorf("a cancelled round moved a notice: %v", err)
+	}
+}
