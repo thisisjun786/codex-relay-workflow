@@ -575,7 +575,6 @@ func TestLoopInitDoesNotHangOnASpecialFileAtTheSessionLock(t *testing.T) {
 	cwd := loopReadWorkspace(t)
 	gitInit(t, cwd)
 	const id = "rec-fifo"
-	const slug = "bound-objective"
 	loopSession(t, cwd, id)
 	loopInitFastWaits(t)
 	if err := syscall.Mkfifo(state.StatePath(cwd, id)+".lock", 0o666); err != nil {
