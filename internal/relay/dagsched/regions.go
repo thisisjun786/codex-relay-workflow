@@ -16,6 +16,13 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
+// The rule codes the packet region-owner rule reports when it is asked at plan-write time (CRW-839
+// pre-merge d3). They are the plan writer's rule vocabulary (dag.Violation.Rule), not relay refusals.
+const (
+	RuleRegionOwnerMissing    = "packet_region_owner_missing"
+	RuleRegionOwnerUnreadable = "packet_region_owner_unreadable"
+)
+
 // Region is one place in a repository a node expects to edit (contract 7.2). Kind is tree, file or symbol; Change is edit, rename or delete.
 // Exclusive is the declarer's word that the node holds the whole repository (a repository-wide rename, say): the region conflicts with every other region of its repository. Nothing else sets it (CRW-431): a rename, a
 // delete and a hotspot file are exclusive at their own place and nowhere else (Classify, foldedGrade).
@@ -172,48 +179,57 @@ func checkPacketRegionOwner(ctx context.Context, q store.Querier, plan string, s
 	if len(siblings) == 0 {
 		return nil
 	}
-	for _, mine := range normal {
-		// every packet of the issue that takes this place, and whether it declares the place exclusive
-		type claim struct {
-			node      string
-			packet    string
-			exclusive bool
+	// The judgement is per PLACE, the way the scheduler judges an overlap (commonPlace): a broad
+	// declaration that covers several files touches as many places as it has files under it, and each
+	// is owned separately. Two packets that each own a different file under one tree are therefore not
+	// two owners of one place (CRW-839 pre-merge d4).
+	places := map[string]map[string]bool{} // place key -> node id -> declares that place exclusive
+	var order []string
+	touch := func(key, node string, exclusive bool) {
+		owners, seen := places[key]
+		if !seen {
+			owners = map[string]bool{}
+			places[key] = owners
+			order = append(order, key)
 		}
-		claims := []claim{{n.NodeID, n.PacketID, EffectiveGrade(mine) == GradeExclusive}}
+		owners[node] = owners[node] || exclusive
+	}
+	for _, mine := range normal {
 		for _, id := range sortedNodeIDs(siblings) {
-			takes, exclusive := false, false
 			for _, other := range siblings[id] {
-				if !Overlaps(mine, other) {
+				if mine.Repository != other.Repository {
 					continue
 				}
-				takes = true
-				if EffectiveGrade(other) == GradeExclusive {
-					exclusive = true
+				place, _, ok := commonPlace(mine, other)
+				if !ok {
+					continue
 				}
-			}
-			if takes {
-				claims = append(claims, claim{id, snapPacketID(snap, id), exclusive})
+				touch(mine.Repository+"\x00"+place, n.NodeID, EffectiveGrade(mine) == GradeExclusive)
+				touch(mine.Repository+"\x00"+place, id, EffectiveGrade(other) == GradeExclusive)
 			}
 		}
-		if len(claims) < 2 {
+	}
+	sort.Strings(order)
+	for _, key := range order {
+		owners := places[key]
+		if len(owners) < 2 {
 			continue
 		}
-		owners := 0
-		for _, c := range claims {
-			if c.exclusive {
-				owners++
+		repo, place, _ := strings.Cut(key, "\x00")
+		names := make([]string, 0, len(owners))
+		exclusive := 0
+		for node, owns := range owners {
+			names = append(names, "packet "+snapPacketID(snap, node)+" (node "+node+")")
+			if owns {
+				exclusive++
 			}
-		}
-		names := make([]string, len(claims))
-		for i, c := range claims {
-			names[i] = "packet " + c.packet + " (node " + c.node + ")"
 		}
 		sort.Strings(names)
 		switch {
-		case owners == 0:
-			return refuse(contract.RefusalDispositionConflict, "%s of issue %s all edit %s %s and none declares it exclusive: an overlapping region of several packets of one issue needs exactly one owner, declared with the exclusive grade", strings.Join(names, ", "), n.IssueKey, mine.Repository, mine.Path)
-		case owners > 1:
-			return refuse(contract.RefusalDispositionConflict, "%s of issue %s all edit %s %s and %d of them declare it exclusive: one place has one owner, so one keeps the grade and the others take a grade that settles the overlap", strings.Join(names, ", "), n.IssueKey, mine.Repository, mine.Path, owners)
+		case exclusive == 0:
+			return refuse(contract.RefusalDispositionConflict, "%s of issue %s all edit %s %s and none declares it exclusive: a place several packets of one issue take needs exactly one owner, declared with the exclusive grade", strings.Join(names, ", "), n.IssueKey, repo, place)
+		case exclusive > 1:
+			return refuse(contract.RefusalDispositionConflict, "%s of issue %s all edit %s %s and %d of them declare it exclusive: one place has one owner, so one keeps the grade and the others take a grade that settles the overlap", strings.Join(names, ", "), n.IssueKey, repo, place, exclusive)
 		}
 	}
 	return nil
@@ -238,6 +254,41 @@ func snapPacketID(snap dag.Snapshot, node string) string {
 	}
 	return ""
 }
+
+// regionOwnerViolations is checkPacketRegionOwner as the plan writer asks it (CRW-839 pre-merge d3): the
+// same rule, on the plan a revision would produce, read from the stored declarations. It is installed as
+// dag.RegionOwnerCheck by the scheduler package's init, so a dag-plan-put that would turn nodes with an
+// already-declared ownerless overlap into packets of one issue is refused before anything is written.
+func regionOwnerViolations(ctx context.Context, q store.Querier, plan string, snap dag.Snapshot) []dag.Violation {
+	current, err := loadDeclarations(ctx, q, plan)
+	if err != nil {
+		// a plan write that cannot read the declarations is refused rather than let through: the rule is
+		// fail-closed, and the caller turns this into a rejected revision
+		return []dag.Violation{{Rule: RuleRegionOwnerUnreadable, Path: "plan", Detail: err.Error()}}
+	}
+	var out []dag.Violation
+	ids := make([]string, 0, len(snap.Nodes))
+	for _, n := range snap.Nodes {
+		ids = append(ids, n.NodeID)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		n, ok := nodeOf(snap, id)
+		if !ok {
+			continue
+		}
+		mine, declared := current[n.NodeID]
+		if !declared {
+			continue
+		}
+		if err := checkPacketRegionOwner(ctx, q, plan, snap, n, mine, current); err != nil {
+			out = append(out, dag.Violation{Rule: RuleRegionOwnerMissing, Path: "nodes." + n.NodeID, Detail: err.Error()})
+		}
+	}
+	return out
+}
+
+func init() { dag.RegionOwnerCheck = regionOwnerViolations }
 
 // MaxRegions bounds one declaration.
 const MaxRegions = 64

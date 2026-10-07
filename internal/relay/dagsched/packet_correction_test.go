@@ -151,10 +151,10 @@ func TestThreePacketsMayShareOneOwnedPlace(t *testing.T) {
 	shared("n3", GradeIndependent)
 }
 
-// d4 of the pre-merge evaluation: a plan revision may turn two nodes that already declared a shared place
-// into two packets of one issue without either declaring again, and a re-declaration of the same regions
-// is a replay. The release is where that plan is judged, so an ownerless overlap cannot be released.
-func TestPacketRegionOwnerIsRequiredAtRelease(t *testing.T) {
+// d3 of the pre-merge evaluation: the ownerless overlap a revision creates by turning two nodes that
+// already declared a shared place into two packets of one issue must be refused by PLAN VALIDATION, not
+// only later at release, so no invalid plan is committed.
+func TestPacketRegionOwnerIsRequiredAtPlanWrite(t *testing.T) {
 	t.Parallel()
 	k := newReleaseKit(t)
 	// Two ordinary nodes of DIFFERENT issues, so the packet rule has nothing to say when they declare.
@@ -171,12 +171,64 @@ func TestPacketRegionOwnerIsRequiredAtRelease(t *testing.T) {
 		}
 	}
 	// Now one issue, two packets, and neither of them owns the shared place.
-	putPacketReleasePlan(t, k.fixture, "rp", 1, "rp-r2", []doc{declaredCriteriaDoc("CRW-F", "c1", "c2")},
+	if err := putPacketPlanErr(t, k.fixture, "rp", 1, "rp-r2", []doc{declaredCriteriaDoc("CRW-F", "c1", "c2")},
 		doc{"op": dag.OpUpdateNode, "node": packetRelNode("n1", "CRW-F", "p1", []string{"c1"}, []string{"c1"})["node"]},
-		doc{"op": dag.OpUpdateNode, "node": packetRelNode("n2", "CRW-F", "p2", []string{"c2"}, []string{"c2"})["node"]})
-	if _, err := k.sched.Release(context.Background(), "rp", "n1", "parent", packetRequest(k)); err == nil {
-		t.Fatal("a packet whose issue shares an ownerless place with its sibling was released")
+		doc{"op": dag.OpUpdateNode, "node": packetRelNode("n2", "CRW-F", "p2", []string{"c2"}, []string{"c2"})["node"]}); err == nil {
+		t.Fatal("a plan that leaves two packets of one issue an ownerless shared place was committed")
 	} else if !strings.Contains(err.Error(), "owner") {
 		t.Fatalf("refusal = %v, want it to name the owner", err)
+	}
+}
+
+// d4 of the pre-merge evaluation: the owner judgement is per PLACE. A broad declaration that covers
+// several files touches as many places, and each is owned separately, so two packets that each own a
+// different file under one tree are not two owners of one place.
+func TestRegionOwnerIsJudgedPerPlace(t *testing.T) {
+	t.Parallel()
+	k := newReleaseKit(t)
+	putPacketReleasePlan(t, k.fixture, "rp", 0, "rp-r1", []doc{declaredCriteriaDoc("CRW-F", "c1", "c2", "c3")},
+		packetRelNode("n1", "CRW-F", "p1", []string{"c1"}, []string{"c1"}),
+		packetRelNode("n2", "CRW-F", "p2", []string{"c2"}, []string{"c2"}),
+		packetRelNode("n3", "CRW-F", "p3", []string{"c3"}, []string{"c3"}))
+	declare := func(node string, r Region) {
+		t.Helper()
+		if _, err := k.sched.DeclareRegions(context.Background(), "rp", node, "parent", []Region{r}); err != nil {
+			t.Fatalf("declare %s: %v", node, err)
+		}
+	}
+	declare("n2", Region{Repository: "owner/repo", Path: "pkg/a.go", Kind: "file", Change: "edit", Grade: GradeExclusive})
+	declare("n3", Region{Repository: "owner/repo", Path: "pkg/b.go", Kind: "file", Change: "edit", Grade: GradeExclusive})
+	// The broad declaration comes last, and the two files it covers have different owners: the tree is one
+	// place, each file another, and neither file's owner is the other's.
+	declare("n1", Region{Repository: "owner/repo", Path: "pkg", Kind: "tree", Change: "edit"})
+}
+
+// d2 of the pre-merge evaluation: a criteria-only revision moves the node's slice without moving the
+// accepted output, and dag-accept revalidates the acceptance under the new criteria. The revalidated
+// packet keeps its acceptance and integration in coverage instead of dropping out of the reading.
+func TestCoverageKeepsARevalidatedPacket(t *testing.T) {
+	f := newFixture(t)
+	putPacketPlan(t, f, "plan", 0, "r1", []doc{featureCriteriaDoc("CRW-F", criterionDoc("c1", true))},
+		packetNodeDoc("n1", "CRW-F", "p1", []string{"c1"}, []string{"c1"}))
+	packetExecution(f, "plan", "n1", "rel-1")
+	liveRelationship(f, "plan", "n1", "rel-1")
+	packetAcceptance(f, "acc-1", "plan", "n1", "rel-1")
+	packetRegistered(f, "rel-1", map[string]bool{"c1": true})
+	packetIntegrated(f, "acc-1", "rel-1", "owner/repo", "dev")
+	if cov := coverageOf(t, f, "plan", "CRW-F"); !cov.Complete {
+		t.Fatalf("the landed packet reads incomplete: %+v", cov.Criteria)
+	}
+
+	// A criteria-only revision: the node's slice moves, the output does not, and the acceptance is
+	// revalidated under the new criteria (dag_acceptance_revalidations).
+	putPacketPlan(t, f, "plan", 1, "r2", []doc{featureCriteriaDoc("CRW-F", criterionDoc("c1", true))},
+		doc{"op": dag.OpUpdateNode, "node": packetNodeDoc("n1", "CRW-F", "p1", []string{"c1"}, []string{"c1"})["node"]})
+	f.exec("INSERT INTO dag_acceptance_revalidations (revalidation_id, acceptance_id, criteria_set_digest, event_id, verdict_turn_id, reval_seq, revalidated_by, revalidated_at) VALUES ('rv-1','acc-1',?,'ev','turn',1,'parent','t')", coverageCriteriaDigest)
+	after := coverageOf(t, f, "plan", "CRW-F")
+	if !after.Complete {
+		t.Fatalf("a revalidated packet was dropped from coverage: %+v", after.Packets)
+	}
+	if after.Packets[0].RelationshipID != "rel-1" || after.Packets[0].Integration == nil {
+		t.Fatalf("the revalidated packet lost its execution: %+v", after.Packets[0])
 	}
 }

@@ -39,6 +39,14 @@ func packetRequest(k *releaseKit) ReleaseRequest {
 // nodes carry the criteria digest every release request in these tests registers, so they can be released.
 func putPacketReleasePlan(t *testing.T, f *fixture, plan string, parent int, request string, criteria []doc, changes ...doc) {
 	t.Helper()
+	if err := putPacketPlanErr(t, f, plan, parent, request, criteria, changes...); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+}
+
+// putPacketPlanErr is putPacketReleasePlan for a caller that needs the refusal.
+func putPacketPlanErr(t *testing.T, f *fixture, plan string, parent int, request string, criteria []doc, changes ...doc) error {
+	t.Helper()
 	cs := make([]any, len(changes))
 	for i, c := range changes {
 		cs[i] = c
@@ -61,8 +69,9 @@ func putPacketReleasePlan(t *testing.T, f *fixture, plan string, parent int, req
 		t.Fatalf("decode: %v", err)
 	}
 	if _, err := f.repo.Put(context.Background(), rev); err != nil {
-		t.Fatalf("put: %v", err)
+		return err
 	}
+	return nil
 }
 
 // packetRelNode is a releasable implementation node that carries a packet identity.

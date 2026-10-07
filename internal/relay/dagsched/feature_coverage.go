@@ -158,11 +158,12 @@ func (s *Scheduler) FeatureCoverage(ctx context.Context, plan, issue string) (ou
 		}
 		for _, n := range nodes {
 			p := CoveragePacket{NodeID: n.NodeID, PacketID: n.PacketID, Covers: n.Covers, Owns: n.Owns}
-			// The execution that stands for this node now: the live relationship whose manifest was built
-			// for the node version the plan holds. A node the plan has since edited has no current
-			// execution, so its packet reports none and credits nothing (CRW-839 review: a packet whose
-			// covers moved must not be credited by the pull request that was released for the old spec).
-			if p.RelationshipID, err = currentNodeExecution(txCtx, q, plan, n.NodeID, n.SliceDigest); err != nil {
+			// The execution that stands for this node now. A node whose spec changed since it was released
+			// has no current execution, so its packet reports none and credits nothing (CRW-839 review: a
+			// packet whose covers moved must not be credited by the pull request released for the old
+			// spec) - except that a revalidated acceptance stands under the criteria the plan holds now
+			// even though its execution and manifest are the original ones (CRW-839 pre-merge d2).
+			if p.RelationshipID, err = currentNodeExecution(txCtx, q, plan, n); err != nil {
 				return err
 			}
 			if p.RelationshipID != "" {
@@ -359,24 +360,39 @@ func containsID(list []string, want string) bool {
 // without this, ordinary cleanup would turn a complete feature incomplete. A relationship that was
 // superseded (superseded_by set) or cancelled (abandoned) counts for nothing, whatever it reached, and a
 // live execution is preferred over an archived one for the same node version.
-func currentNodeExecution(ctx context.Context, q store.Querier, plan, node, sliceDigest string) (string, error) {
-	rows, err := q.QueryContext(ctx, "SELECT e.relationship_id, COALESCE(m.body_json, '') FROM dag_node_executions e"+
+func currentNodeExecution(ctx context.Context, q store.Querier, plan string, n dag.SnapNode) (string, error) {
+	// The execution's active acceptance, with the criteria digest it stands on NOW: its newest
+	// revalidation, else the digest it was accepted with (effectiveCriteria, edges.go). A revalidation
+	// is how dag-accept re-judges an unchanged output under a plan whose criteria moved, and it keeps
+	// the original execution and manifest, so the slice digest alone would not see it.
+	rows, err := q.QueryContext(ctx, "SELECT e.relationship_id, COALESCE(m.body_json, ''),"+
+		" COALESCE((SELECT v.criteria_set_digest FROM dag_acceptance_revalidations v"+
+		"   WHERE v.acceptance_id = (SELECT a.acceptance_id FROM dag_acceptances a WHERE a.plan_id = e.plan_id AND a.node_id = e.node_id AND a.relationship_id = e.relationship_id AND a.state = 'active')"+
+		"   ORDER BY v.reval_seq DESC LIMIT 1), '')"+
+		" FROM dag_node_executions e"+
 		" JOIN relationships r ON r.relationship_id = e.relationship_id"+
 		" LEFT JOIN dag_input_manifests m ON m.manifest_digest = e.manifest_digest"+
 		" WHERE e.plan_id = ? AND e.node_id = ? AND r.superseded_by IS NULL"+
 		" AND (r.status IN ('active','paused')"+
 		"   OR (r.status = 'archived' AND EXISTS (SELECT 1 FROM dag_acceptances a WHERE a.relationship_id = e.relationship_id AND a.state = 'active')))"+
-		" ORDER BY CASE WHEN r.status IN ('active','paused') THEN 0 ELSE 1 END, e.execution_generation DESC", plan, node)
+		" ORDER BY CASE WHEN r.status IN ('active','paused') THEN 0 ELSE 1 END, e.execution_generation DESC", plan, n.NodeID)
 	if err != nil {
 		return "", err
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var relationship, body string
-		if err := rows.Scan(&relationship, &body); err != nil {
+		var relationship, body, revalidated string
+		if err := rows.Scan(&relationship, &body, &revalidated); err != nil {
 			return "", err
 		}
-		if manifestSliceDigest(body) == sliceDigest {
+		if manifestSliceDigest(body) == n.SliceDigest {
+			return relationship, nil
+		}
+		// A criteria-only revision moves the node's slice without moving the accepted output: an
+		// acceptance REVALIDATED under the plan's criteria now is the packet's current execution. The
+		// revalidation row itself is what says so, so a node whose spec moved without one is still
+		// credited by nothing.
+		if n.CriteriaSetDigest != "" && revalidated == n.CriteriaSetDigest {
 			return relationship, nil
 		}
 	}

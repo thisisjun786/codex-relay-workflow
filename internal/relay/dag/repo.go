@@ -449,6 +449,15 @@ func (r *Repo) Put(ctx context.Context, rev Revision) (Result, error) {
 			return &PlanRejected{Violations: violations}
 		}
 		snap := next.At(next.Revision)
+		// The packet region-owner rule reads the declarations a plan revision does not carry (they live in
+		// dag_node_regions), so it is asked here, on the plan the revision produces, before anything is
+		// written (CRW-839 pre-merge d3): a revision that turns two nodes which already declared a shared
+		// place into two packets of one issue is refused rather than committed.
+		if RegionOwnerCheck != nil {
+			if regionViolations := RegionOwnerCheck(ctx, conn, rev.PlanID, snap); len(regionViolations) > 0 {
+				return &PlanRejected{Violations: regionViolations}
+			}
+		}
 		now := r.now()
 		if !exists {
 			if _, err := conn.ExecContext(ctx, "INSERT INTO dag_plans (plan_id, project_key, created_by_task_id, created_at) VALUES (?, ?, ?, ?)", rev.PlanID, rev.ProjectKey, rev.AuthorTaskID, now); err != nil {
