@@ -405,8 +405,10 @@ func TestInstallLeavesNoStagingDirectoryWhenAnotherInstallWins(t *testing.T) {
 	for _, entry := range entries {
 		names = append(names, entry.Name())
 	}
-	if strings.Join(names, ",") != pin.DirName() {
-		t.Errorf("the tools root holds %v, want only %q", names, pin.DirName())
+	// The install directory and the pin's lock file are all that remain: the lock file is left in
+	// place on purpose, and the losing install's staging directory is gone.
+	if strings.Join(names, ",") != "."+pin.DirName()+".lock,"+pin.DirName() {
+		t.Errorf("the tools root holds %v, want only %q and its lock file", names, pin.DirName())
 	}
 }
 

@@ -102,13 +102,26 @@ func promptSubmitHandleWith(p PromptSubmitPayload, platform string, env host.Loo
 	if turn != "" && promptSubmitStateExists(p.Cwd, p.SessionID) && (current.StopBlockTurnID == nil || *current.StopBlockTurnID != turn) {
 		// The turn is judged again on the state the lock found, so a participating writer that
 		// stamped this same turn between the read above and the lock is not overwritten.
-		if promptSubmitWriteState(lock, p.Cwd, p.SessionID, func(fresh *state.State) bool {
+		stampOutcome, _, stampErr := promptSubmitWriteStateReason(lock, p.Cwd, p.SessionID, func(fresh *state.State) bool {
 			if fresh.StopBlockTurnID != nil && *fresh.StopBlockTurnID == turn {
 				return false
 			}
 			fresh.StopBlockTotal, fresh.StopBlockTurnID, fresh.StopBlockCapNotified = 0, &turn, false
 			return true
-		}) == promptSubmitFailed {
+		})
+		if stampOutcome == promptSubmitFailed {
+			// CRW-869 finding 3: the stamp takes the session lock before the bound D-close handler, so a
+			// lock that is already busy fails here and the bound close never runs. On a goalplan-bound
+			// "orchestrate D" the answer is the bound close's busy refusal, carrying the lock failure's
+			// reason; every other prompt keeps the oracle's silence. The predicate mirrors the bound-D
+			// dispatch (verb == D and a bound slug) on the same pre-stamp read.
+			if command := fsm.ParseOrchestrateCommand(p.Prompt); command != nil && command.Verb == fsm.VerbD && current.Slug != "" {
+				reason := "the session lock could not be taken"
+				if stampErr != nil {
+					reason = stampErr.Error()
+				}
+				return promptDcloseNotApplied(reason)
+			}
 			return ""
 		}
 	}
@@ -252,6 +265,17 @@ func promptSubmitWriteState(lock func(cwd, sessionID string, fn func() error) er
 // (the Stop-budget stamp, the loop-arm branch, prompt_trigger.go's writes) treats a published write as
 // written too, so it answers as the oracle's successful unlocked write does and simply drops the warning.
 func promptSubmitWriteStateWarning(lock func(cwd, sessionID string, fn func() error) error, cwd, sessionID string, change func(*state.State) bool) (promptSubmitWriteOutcome, string) {
+	outcome, warning, _ := promptSubmitWriteStateReason(lock, cwd, sessionID, change)
+	return outcome, warning
+}
+
+// promptSubmitWriteStateReason is promptSubmitWriteStateWarning with the failure's own error: the
+// second answer is the durability warning of a write that published the state and then failed a
+// step after the rename, and the third is non-nil exactly when the outcome is promptSubmitFailed
+// (the session lock could not be taken, or the write failed before the rename). The bound D-close's
+// Stop-budget stamp reads the reason to answer its busy refusal (CRW-869, finding 3); the other
+// callers keep the two-answer wrapper.
+func promptSubmitWriteStateReason(lock func(cwd, sessionID string, fn func() error) error, cwd, sessionID string, change func(*state.State) bool) (promptSubmitWriteOutcome, string, error) {
 	outcome := promptSubmitSkipped
 	err := lock(cwd, sessionID, func() error {
 		fresh, unreadable := state.ReadStateStrict(cwd, sessionID)
@@ -265,25 +289,25 @@ func promptSubmitWriteStateWarning(lock func(cwd, sessionID string, fn func() er
 		return nil
 	})
 	if err == nil {
-		return outcome, ""
+		return outcome, "", nil
 	}
 	if state.Published(err) {
 		_, warning := promptDcloseWriteLanded(err)
-		return promptSubmitPublished, warning
+		return promptSubmitPublished, warning, nil
 	}
-	return promptSubmitFailed, ""
+	return promptSubmitFailed, "", err
 }
 
-// promptSubmitRewritable says whether writing next back over the session file would keep every record the file stores: each
-// stored unverified subagent must come back as it was stored, a legacy D-close marker would lose its distinction, and an
-// interview tracker longer than the reader keeps would lose its oldest entries (sessionHookStateRewritable). A file that is
-// not there yet stores nothing, so a fresh state loses nothing; a file that cannot be read is refused.
+// promptSubmitRewritable says whether writing next back over the session file would keep every record the file stores (the
+// shared data-loss judgement state.RewriteKeepsStored), and whether it holds no legacy D-close marker (state.DcloseRecoveryLegacy,
+// the per-writer refusal this writer already made). A file that is not there yet stores nothing, so a fresh state loses nothing;
+// a file that cannot be read is refused.
 func promptSubmitRewritable(cwd, sessionID string, next state.State) bool {
 	raw, err := os.ReadFile(state.StatePath(cwd, sessionID))
 	if errors.Is(err, fs.ErrNotExist) {
 		return true
 	}
-	return err == nil && sessionHookStateRewritable(raw, next)
+	return err == nil && state.RewriteKeepsStored(raw, next) && !state.DcloseRecoveryLegacy(next)
 }
 
 // promptSubmitAppendTurn is appendTurn (hook.ts:577-581): the turn is appended and the list is cut to

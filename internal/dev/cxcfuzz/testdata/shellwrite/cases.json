@@ -1,7 +1,7 @@
 [
   {
     "name": "redirect",
-    "input": "{\"command\": \"echo hi \u003e /m/n.md\"}",
+    "input": "{\"command\": \"echo hi > /m/n.md\"}",
     "oracle": "[\"/m/n.md\"]",
     "go": "[\"/m/n.md\"]",
     "tag": "identical",
@@ -9,7 +9,7 @@
   },
   {
     "name": "append-and-clobber",
-    "input": "{\"command\": \"echo hi \u003e\u003e /m/n.md; echo hi \u003e| /m/o.md\"}",
+    "input": "{\"command\": \"echo hi >> /m/n.md; echo hi >| /m/o.md\"}",
     "oracle": "[\"/m/n.md\", \"/m/o.md\"]",
     "go": "[\"/m/n.md\", \"/m/o.md\"]",
     "tag": "identical",
@@ -17,7 +17,7 @@
   },
   {
     "name": "stderr-is-not-a-write",
-    "input": "{\"command\": \"rg foo /m/M.md 2\u003e/dev/null\"}",
+    "input": "{\"command\": \"rg foo /m/M.md 2>/dev/null\"}",
     "oracle": "[]",
     "go": "[]",
     "tag": "identical",
@@ -25,7 +25,7 @@
   },
   {
     "name": "heredoc-body-is-not-a-write",
-    "input": "{\"command\": \"cat \u003c\u003cEOF \u003e /w/x.md\\n/memories/n.md\\nEOF\"}",
+    "input": "{\"command\": \"cat <<EOF > /w/x.md\\n/memories/n.md\\nEOF\"}",
     "oracle": "[\"/w/x.md\"]",
     "go": "[\"/w/x.md\"]",
     "tag": "identical",
@@ -57,7 +57,7 @@
   },
   {
     "name": "quoted-operand",
-    "input": "{\"command\": \"echo hi \u003e '/m/a b.md'\"}",
+    "input": "{\"command\": \"echo hi > '/m/a b.md'\"}",
     "oracle": "[\"/m/a b.md\"]",
     "go": "[\"/m/a b.md\"]",
     "tag": "identical",
@@ -97,7 +97,7 @@
   },
   {
     "name": "campaign-stderr-target",
-    "input": "{\"command\": \"echo hi \u003e /m/n.md 2\u003e /m/err\"}",
+    "input": "{\"command\": \"echo hi > /m/n.md 2> /m/err\"}",
     "oracle": "[\"/m/n.md\"]",
     "go": "[\"/m/n.md\", \"/m/err\"]",
     "tag": "open",
@@ -105,7 +105,7 @@
   },
   {
     "name": "campaign-readwrite-target",
-    "input": "{\"command\": \"cat \u003c\u003e /m/a\"}",
+    "input": "{\"command\": \"cat <> /m/a\"}",
     "oracle": "[]",
     "go": "[\"/m/a\"]",
     "tag": "open",
@@ -113,7 +113,7 @@
   },
   {
     "name": "campaign-nested-shell",
-    "input": "{\"command\": \"bash -c 'echo x \u003e /m/a'\"}",
+    "input": "{\"command\": \"bash -c 'echo x > /m/a'\"}",
     "oracle": "[]",
     "go": "[\"/m/a\"]",
     "tag": "open",
@@ -166,5 +166,53 @@
     "go": "[\"/m/a\\\\nb\", \"/m/a\\nb\"]",
     "tag": "open",
     "record": "known-defects CRW-517 (port: fixed, security): the port deliberately names this destination and the oracle does not; pinned open so the divergence stays visible and the port cannot silently stop reporting it"
+  },
+  {
+    "name": "crw857-escape-x2f-destination",
+    "input": "{\"command\": \"python3 -c 'open(\\\"\\\\x2fm/a\\\",\\\"w\\\")'\"}",
+    "oracle": "[\"\\\\x2fm/a\"]",
+    "go": "[\"\\\\x2fm/a\", \"/m/a\"]",
+    "tag": "open",
+    "record": "known-defects CRW-517/CRW-857 (port: fixed, security): the port decodes the Python literal escape \\x2f in a destination and names the real path, which the oracle misses"
+  },
+  {
+    "name": "crw857-escape-octal-destination",
+    "input": "{\"command\": \"python3 -c 'open(\\\"\\\\057m/a\\\",\\\"w\\\")'\"}",
+    "oracle": "[\"\\\\057m/a\"]",
+    "go": "[\"\\\\057m/a\", \"/m/a\"]",
+    "tag": "open",
+    "record": "known-defects CRW-517/CRW-857 (port: fixed, security): the port decodes the Python literal escape \\057 and names the real path, which the oracle misses"
+  },
+  {
+    "name": "crw857-escape-unicode-destination",
+    "input": "{\"command\": \"python3 -c 'open(\\\"\\\\u002fm/a\\\",\\\"w\\\")'\"}",
+    "oracle": "[\"\\\\u002fm/a\"]",
+    "go": "[\"\\\\u002fm/a\", \"/m/a\"]",
+    "tag": "open",
+    "record": "known-defects CRW-517/CRW-857 (port: fixed, security): the port decodes the Python literal escape \\u002f and names the real path, which the oracle misses"
+  },
+  {
+    "name": "crw857-subshell-write",
+    "input": "{\"command\": \"(echo hi > /m/a)\"}",
+    "oracle": "[\"/m/a)\"]",
+    "go": "[\"/m/a)\", \"/m/a\"]",
+    "tag": "open",
+    "record": "known-defects CRW-517/CRW-857 (port: fixed, security): the port reads a write inside a subshell group, which the oracle misses"
+  },
+  {
+    "name": "crw857-command-substitution-write",
+    "input": "{\"command\": \"x=$(echo hi > /m/a)\"}",
+    "oracle": "[\"/m/a)\"]",
+    "go": "[\"/m/a)\", \"/m/a\"]",
+    "tag": "open",
+    "record": "known-defects CRW-517/CRW-857 (port: fixed, security): the port reads a write inside a command substitution, which the oracle misses"
+  },
+  {
+    "name": "crw857-gap-copy-destination-not-named",
+    "input": "{\"command\": \"python3 -c 'import shutil; shutil.copy(\\\"/w/old.md\\\", \\\"/m/a\\\")'\"}",
+    "oracle": "[]",
+    "go": "[]",
+    "tag": "identical",
+    "record": "known-defects CRW-857 (port: pending, security): the destination of shutil.copy is its second argument and NEITHER reader names it, so a write reached this way is invisible to the memory gate; a follow-up issue owns the reader change in internal/pabcd/hook"
   }
 ]

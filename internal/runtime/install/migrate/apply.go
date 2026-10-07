@@ -36,6 +36,11 @@ const (
 // applyReasonChanged refuses a source that moved between classification and publication, which stops the run.
 const applyReasonChanged Reason = "changed"
 
+// migrateOwnedDirBeforeEnsureChild runs between the lookup that found a destination directory absent
+// and the mkdir that would create it, so a case can put another actor's creation in that window; it is
+// nil in a run, and only a test sets it.
+var migrateOwnedDirBeforeEnsureChild func()
+
 // ApplyItem is one plan item and what the run did with it. Result is empty for a skip row and for an item the run never
 // reached; Note explains a directory that kept its mode, or a destination whose mode a publish left alone.
 type ApplyItem struct {
@@ -227,7 +232,9 @@ func (a *applyRun) rootItem(scope Scope) (Item, bool) {
 // any state is written. The project root is created by EnsureProjectRoot, which must decide the initialization itself
 // before anything has made the root: it captures whether .gitignore was already there when its call began, and a root
 // this run creates cannot have a retained one, so a racer's differing .gitignore is refused instead of swallowed. Only a
-// root this call made is chmodded to the private marker mode afterwards. The Codex scope maps its files in place.
+// root this call's own mkdir made is chmodded to the private marker mode afterwards: whether a root is this run's comes
+// from the mkdir result, never from the absence a lookup saw earlier, so a root another actor creates in that window keeps
+// its mode. The Codex scope maps its files in place.
 func (a *applyRun) ensureRoots() error {
 	if a.plan == nil {
 		return nil
@@ -252,14 +259,22 @@ func (a *applyRun) ensureRoots() error {
 				return refuse(applyReasonChanged, it.Source, "the source root mode changed since classification")
 			}
 		}
-		made := pair.Dest == nil
+		var made bool
 		var err error
 		if scope == ScopeProject {
 			// EnsureProjectRoot creates the root itself and gives it the private marker mode before its .gitignore
 			// publication, so the initialization judgement runs against a root this run created.
-			_, err = a.pub.EnsureProjectRoot(pair)
+			_, made, err = a.pub.EnsureProjectRoot(pair)
 		} else {
-			_, err = pair.EnsureDest(applyTempRaw)
+			var root *Dir
+			root, made, err = pair.EnsureDest(applyTempRaw)
+			if err == nil && made {
+				// mkdir's own result need not keep the sticky bit of the marker mode (Darwin drops it) and a umask can
+				// mask the permission bits, so a root this run made is given the marker explicitly, as ensureDestDir
+				// gives it to a child. Without it a rerun after an interruption would read the root as an existing
+				// directory of another actor and never finish its mode.
+				err = applyChmodRaw(root, applyTempRaw)
+			}
 		}
 		if err != nil {
 			return err
@@ -296,7 +311,8 @@ func (a *applyRun) makeDirectories() error {
 }
 
 // ensureDestDir returns the pinned destination directory, creating it with the private marker mode when it is absent, and
-// records that this run created it.
+// records that this run created it. Only a directory this call's own mkdir made is this run's: a creation that ended in
+// EEXIST is another actor's directory, so it is neither given the marker mode nor finished at the source mode.
 func (a *applyRun) ensureDestDir(scope Scope, rel string) (*Dir, error) {
 	if d, ok := a.dirs[applyKey(scope, rel)]; ok {
 		return d, nil
@@ -314,15 +330,21 @@ func (a *applyRun) ensureDestDir(scope Scope, rel string) (*Dir, error) {
 	case !errors.Is(err, fs.ErrNotExist):
 		return nil, err
 	}
-	if child, err = parent.EnsureChild(base, applyTempRaw); err != nil {
+	if migrateOwnedDirBeforeEnsureChild != nil {
+		migrateOwnedDirBeforeEnsureChild()
+	}
+	var made bool
+	if child, made, err = parent.EnsureChild(base, applyTempRaw); err != nil {
 		return nil, err
 	}
-	if err := applyChmodRaw(child, applyTempRaw); err != nil {
-		_ = child.Close()
-		return nil, err
+	if made {
+		if err := applyChmodRaw(child, applyTempRaw); err != nil {
+			_ = child.Close()
+			return nil, err
+		}
+		a.made[applyKey(scope, rel)] = true
 	}
 	a.dirs[applyKey(scope, rel)] = child
-	a.made[applyKey(scope, rel)] = true
 	return child, nil
 }
 

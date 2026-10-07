@@ -18,6 +18,7 @@ import (
 	"io"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
@@ -43,7 +44,7 @@ const (
 	// AppliedActionReregister is the repair when the file bytes no longer match the digest the
 	// wiring record names: the bridge launcher refuses those bytes, so the record must be brought up
 	// to date before a new bridge can start under them.
-	AppliedActionReregister = "re-register the execution policy with crw install register-mcp --owner plugin --execution-policy <file>"
+	AppliedActionReregister = "re-register the execution policy with crw install register-mcp --re-register-policy --execution-policy <file>"
 )
 
 // LookupEnv is os.LookupEnv: a test supplies a map through it.
@@ -62,28 +63,80 @@ type Located struct {
 // strings: an effort name belongs to the model beside it, so max and xhigh are never substituted
 // for one another. On the wire the effort is spelled reasoningEffort, as the policy document
 // spells it, and effort is accepted as an alias.
-type Pair struct{ Model, Effort string }
+type Pair struct {
+	Model, Effort string
+	// conflict is why the two spellings of the effort could not be reconciled, or "" when they
+	// could. It is unexported because it is not part of the pair: it is how a mismatch reaches the
+	// check as a refused change rather than as a decode failure the API would answer as a bad
+	// request.
+	conflict string
+}
 
-// pairWire is a pair as JSON carries it.
+// pairWire is a pair as JSON carries it, for writing.
 type pairWire struct {
 	Model           string `json:"model"`
 	ReasoningEffort string `json:"reasoningEffort"`
 	Effort          string `json:"effort,omitempty"`
 }
 
+// pairRequest is a pair as a request carries it. The two effort spellings are raw so the reader can
+// tell a key that was absent from one supplied empty: the contract refuses two spellings that
+// disagree, and an empty value beside a non-empty one is a disagreement rather than an absence.
+type pairRequest struct {
+	Model           string          `json:"model"`
+	ReasoningEffort json.RawMessage `json:"reasoningEffort"`
+	Effort          json.RawMessage `json:"effort"`
+}
+
 // UnmarshalJSON reads a pair from either spelling of its effort. A pair that names neither is read
 // with an empty effort, which the parser then refuses, rather than silently matching another pair.
+// A pair that names both with different values records the disagreement instead of silently
+// keeping one of them.
 func (p *Pair) UnmarshalJSON(raw []byte) error {
-	var wire pairWire
+	var wire pairRequest
 	if err := json.Unmarshal(raw, &wire); err != nil {
 		return err
 	}
-	p.Model = wire.Model
-	p.Effort = wire.ReasoningEffort
-	if p.Effort == "" {
-		p.Effort = wire.Effort
+	reasoningEffort, reasoningPresent, err := effortField(wire.ReasoningEffort)
+	if err != nil {
+		return err
 	}
+	effort, effortPresent, err := effortField(wire.Effort)
+	if err != nil {
+		return err
+	}
+	p.Model = wire.Model
+	p.Effort, p.conflict = effortAlias(reasoningEffort, reasoningPresent, effort, effortPresent)
 	return nil
+}
+
+// effortField is one spelling of an effort as a request carried it: its value when the key was
+// present, whether the key was present at all, and why a value that is not a string could not be
+// read. The presence flag is what separates an absent key from one supplied empty.
+func effortField(raw json.RawMessage) (string, bool, error) {
+	if len(raw) == 0 {
+		return "", false, nil
+	}
+	var value string
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return "", true, err
+	}
+	return value, true, nil
+}
+
+// effortAlias resolves the two spellings an effort may be given in: the policy document's
+// reasoningEffort and the shorter effort the check contract uses. It is the one place the alias is
+// resolved, so Pair and Change cannot disagree about it. A request that supplies both spellings
+// with different values is ambiguous, and the returned reason says so rather than silently picking
+// one; an explicitly empty value is a supplied value, so it disagrees with a non-empty one.
+func effortAlias(reasoningEffort string, reasoningPresent bool, effort string, effortPresent bool) (string, string) {
+	if reasoningPresent && effortPresent && reasoningEffort != effort {
+		return "", "reasoningEffort " + strconv.Quote(reasoningEffort) + " and effort " + strconv.Quote(effort) + " disagree; name one"
+	}
+	if reasoningPresent && reasoningEffort != "" {
+		return reasoningEffort, ""
+	}
+	return effort, ""
 }
 
 // MarshalJSON writes a pair as the policy document spells it.
