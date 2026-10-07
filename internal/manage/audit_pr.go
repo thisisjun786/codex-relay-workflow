@@ -869,6 +869,13 @@ func auditPRRunWith(ctx context.Context, e *Env, cfg *Config, max int, dryRun bo
 				RelationshipUnavailable: target.Child.Relationship == "", Relationship: target.Child.Relationship,
 			})
 			if err != nil {
+				// A cancelled run stops here rather than skipping: the interrupt is the run's, not
+				// this target's, and a skip would keep working after it and let the run go on to
+				// rewrite the report.
+				if ctxErr := ctx.Err(); ctxErr != nil {
+					fmt.Fprintf(e.Stderr, "crw manage audit pr: error: %v\n", ctxErr)
+					return 1
+				}
 				// One pull request whose bundle cannot be built does not cost the audit of the rest:
 				// the target is named and skipped, its half-built directory is gone and no ledger row
 				// is written, so the next run picks it up again. The run still reports the failure

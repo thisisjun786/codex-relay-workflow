@@ -251,6 +251,44 @@ func TestAuditPRReview752OneFailedTargetDoesNotStopTheRest(t *testing.T) {
 	}
 }
 
+// C3: a run that is cancelled while a target's bundle is being built stops there rather than
+// skipping that target. The interrupt is the run's, not the target's, and a skip would let the
+// run go on to rewrite the report after the first interrupt.
+func TestAuditPRReview752CancelledRunStopsInsteadOfSkipping(t *testing.T) {
+	state := t.TempDir()
+	cfg := auditPRSectionFixture(t, state, map[string]any{
+		"pr_since": "2026-10-01T00:00:00Z", "grader": auditFake(t, "json", auditJSONClean),
+	})
+	auditPRFakeGh(t, auditPRListJSON(t, auditPRMergeEntry(12, "CRW-12: a change", "2026-10-05T00:00:00Z", "m12")),
+		map[int]string{12: auditPRReview752TextPatch})
+	auditPRFakeRelay(t, map[string]string{"CRW-12": auditPRAssignmentJSON(t, "rel-12", "child-12")},
+		map[string]string{"child-12": auditPRSettingsJSON(t, "inferhub/deepseek-v4.1-flash")},
+		map[string]string{"rel-12": auditPRCriteriaJSON(t, "c1", "it works")})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	previousGit := auditPkgGit
+	auditPkgGit = func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		if len(args) > 0 && args[0] == "fetch" {
+			return nil, nil
+		}
+		// The listing is interrupted: the context is cancelled and the command reports the
+		// interruption the way a killed process does.
+		cancel()
+		return nil, errors.New("signal: killed")
+	}
+	t.Cleanup(func() { auditPkgGit = previousGit })
+	e, _, errOut := auditTestEnv(t)
+	if code := auditPRRunWith(ctx, e, cfg, 9, false); code != 1 {
+		t.Fatalf("a cancelled run: exit %d, want 1: %q", code, errOut.String())
+	}
+	if _, err := os.Stat(filepath.Join(state, "audit", auditReportFile)); !os.IsNotExist(err) {
+		t.Errorf("a cancelled run rewrote the report: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(state, "audit", "bundles", auditPRSubject(12))); !os.IsNotExist(err) {
+		t.Errorf("a cancelled run left a bundle directory behind: %v", err)
+	}
+}
+
 // The listing git answers with is read positionally: a status, then its path, or, for a
 // rename or a copy, the old path and then the new one. A deletion contributes nothing, and a
 // record that does not fit the shape is refused rather than half-read.
