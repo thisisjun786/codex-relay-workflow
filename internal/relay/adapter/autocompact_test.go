@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -196,5 +197,37 @@ func TestARelayDeliveryCitingAnExceptionSendsNoLimit(t *testing.T) {
 	}
 	if _, present := resumeConfig(rpc)[settings.AutoCompactTokenLimitKey]; present {
 		t.Fatalf("an exception carried a pair-derived limit: %v", resumeConfig(rpc))
+	}
+}
+
+// A settings-free resume transmits no pair, and its refusal says so. When the limit did go out, the
+// sentence has to name it: a reader who was told nothing was transmitted would go looking for a
+// different cause, and the limit is exactly what this record could not have carried.
+// autoCompactProfilePolicy is the child role the wording test needs: the record's pair carries the
+// limit and the role declares the MCP profiles its record names.
+func autoCompactProfilePolicy(t *testing.T, record *delivery.TaskSettings) bridge.ExecutionPolicy {
+	t.Helper()
+	model, _ := record.Data.Lookup("model")
+	body := fmt.Sprintf(`{"roles":{"child":{"model":%q,"reasoningEffort":"xhigh","autoCompactTokenLimit":550000,"mcp":{"default":"minimal","profiles":{"minimal":{},"ui-qa":{"servers":["node_repl"]}}}}}}`, model)
+	p, err := execution.FromBytes([]byte(body), "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func TestASettingsFreeRefusalNamesTheLimitItSent(t *testing.T) {
+	for _, profile := range []string{"", "ui-qa"} {
+		t.Run("profile="+profile, func(t *testing.T) {
+			record := childRecord(true, profile)
+			rpc := &mcpRPC{configured: []string{"node_repl", "oracle"}, applied: true, model: "other/model"}
+			a := mcpAdapter(t, rpc, autoCompactProfilePolicy(t, record))
+			receipt := sendRecord(t, a, "send-limit-words", record)
+			rpcError, _ := receipt["rpcError"].(map[string]any)
+			message, _ := rpcError["message"].(string)
+			if receipt["status"] != "failed" || !strings.Contains(message, "auto-compaction limit") || strings.Contains(message, "nothing was transmitted") {
+				t.Fatalf("receipt=%v", receipt)
+			}
+		})
 	}
 }

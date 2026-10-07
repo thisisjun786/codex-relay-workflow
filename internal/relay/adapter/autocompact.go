@@ -59,4 +59,5 @@ func (a *Adapter) withAutoCompactLimit(record *delivery.TaskSettings, params map
 	}
 	config[bridgesettings.AutoCompactTokenLimitKey] = *limit
 	params["config"] = config
+	record.AutoCompactLimitTransmitted = true
 }

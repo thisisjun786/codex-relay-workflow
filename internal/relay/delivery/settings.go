@@ -15,6 +15,10 @@ import (
 type TaskSettings struct {
 	Data               Obj
 	SettingsFreeResume bool
+	// AutoCompactLimitTransmitted is whether this send put the pair's auto-compaction limit in the
+	// resume config. The limit is not in the record (the host never reports it back), so a refusal
+	// that describes what a settings-free resume sent has to be told about it rather than infer it.
+	AutoCompactLimitTransmitted bool
 }
 
 // ResumeParams is the registry's resume_params over this record: only fields ThreadResumeParams
