@@ -436,6 +436,11 @@ func auditPRScrubDocument(value any, scrubs []string) any {
 		}
 		return out
 	case []map[string]any:
+		if typed == nil {
+			// A nil slice is the criteria read's "nothing was registered", which encodes as
+			// null rather than []: the document keeps the shape it had before the walk.
+			return typed
+		}
 		out := make([]map[string]any, len(typed))
 		for i, item := range typed {
 			out[i] = auditPRScrubObject(item, scrubs)
@@ -611,7 +616,12 @@ func auditPRBuild(ctx context.Context, e *Env, cfg *Config, section auditPRSecti
 	complete := false
 	defer func() {
 		if !complete {
-			_ = os.RemoveAll(dir)
+			if err := os.RemoveAll(dir); err != nil {
+				// The invariant this cleanup exists for (no half-built bundle for the next run
+				// or for the grader) is broken if the removal fails, so it is reported rather
+				// than swallowed. The run still reports this target as failed below.
+				fmt.Fprintf(e.Stderr, "crw manage audit pr: %s: %v\n", dir, err)
+			}
 		}
 	}()
 	// Every file the bundle holds goes through the scrub, so no model, pair or child id the

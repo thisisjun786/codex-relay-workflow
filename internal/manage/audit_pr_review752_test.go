@@ -141,9 +141,27 @@ func auditPRReview752Checkout(t *testing.T, listings map[string][]byte, files ma
 // escapes &, < and > as \\u0026 and the like, so a scrub applied only to the encoded bytes
 // never matches a name that carries one of them, and a reader of criteria.json sees exactly
 // the name the scrub exists to hide.
+//
+// A name that carries a byte JSON escapes structurally — a quote, a backslash, a line or
+// paragraph separator — is the case that separates the two defences: with SetEscapeHTML(false)
+// the encoder writes it as \\" or \\\\ or \\u2028, so it never appears literally in the encoded
+// bytes and the byte replacement cannot match it. Only the pre-encode walk removes it, which is
+// why the HTML trio alone would still pass with the walk deleted.
 func TestAuditPRReview752CriteriaScrubbedBeforeEncoding(t *testing.T) {
-	for _, name := range []string{"Pair&A", "Pair<A>", "Pair>A"} {
-		t.Run(name, func(t *testing.T) {
+	for _, tc := range []struct {
+		label   string
+		name    string
+		escaped bool
+	}{
+		{"ampersand", "Pair&A", true},
+		{"angle", "Pair<A>", true},
+		{"greater", "Pair>A", true},
+		{"quote", `Pair"A`, false},
+		{"backslash", `Pair\A`, false},
+		{"separator", "Pair\u2028A", false},
+	} {
+		t.Run(tc.label, func(t *testing.T) {
+			name := tc.name
 			state := t.TempDir()
 			cfg := auditPRSectionFixture(t, state, map[string]any{
 				"pr_since": "2026-10-01T00:00:00Z",
@@ -177,15 +195,51 @@ func TestAuditPRReview752CriteriaScrubbedBeforeEncoding(t *testing.T) {
 					t.Errorf("a reader of %s sees %q in %q", auditPRCriteriaFile, name, value)
 				}
 			}
-			// The escaped form is what the defect leaves behind, because the byte replacement
-			// runs on text the encoder has already escaped.
-			if escaped := auditPRReview752Escaped(name); strings.Contains(string(data), escaped) {
-				t.Errorf("%s carries the escaped name %q", auditPRCriteriaFile, escaped)
+			// For the HTML trio the escaped form is what the original defect left behind, because
+			// the byte replacement runs on text the encoder has already escaped. For the other
+			// cases the encoder writes that form by design, so only the decoded check above can
+			// tell the walk apart from the byte replacement.
+			if tc.escaped {
+				if escaped := auditPRReview752Escaped(name); strings.Contains(string(data), escaped) {
+					t.Errorf("%s carries the escaped name %q", auditPRCriteriaFile, escaped)
+				}
 			}
 			if !strings.Contains(string(data), auditPRRedacted) {
 				t.Errorf("%s carries no redaction:\n%s", auditPRCriteriaFile, data)
 			}
 		})
+	}
+}
+
+// C1: a pull request whose criteria could not be read keeps the shape it had, a null criteria
+// list rather than an empty one: the walk must not turn "nothing was registered" into "the
+// empty list was registered".
+func TestAuditPRReview752EmptyCriteriaKeepsItsShape(t *testing.T) {
+	state := t.TempDir()
+	cfg := auditPRSectionFixture(t, state, map[string]any{
+		"pr_since": "2026-10-01T00:00:00Z", "grader": auditFake(t, "json", auditJSONClean),
+	})
+	auditPRFakeGh(t, auditPRListJSON(t, auditPRMergeEntry(12, "CRW-12: a change", "2026-10-05T00:00:00Z", "m12")),
+		map[int]string{12: auditPRReview752TextPatch})
+	auditPRFakeRelay(t, map[string]string{"CRW-12": `{"issueKey":"CRW-12","responsibleChild":null,"responsibleRelationship":null,"assignments":[]}`}, nil, nil)
+	auditPRFakeCheckout(t, "m12", map[string]string{"internal/a.go": "package a\n"})
+	e, _, errOut := auditTestEnv(t)
+	if code := auditPRRunWith(context.Background(), e, cfg, 9, false); code != 0 {
+		t.Fatalf("audit pr: exit %d %q", code, errOut.String())
+	}
+	data, err := os.ReadFile(filepath.Join(state, "audit", "bundles", "pr-12", auditPRCriteriaFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Criteria            []any `json:"criteria"`
+		CriteriaUnavailable bool  `json:"criteria_unavailable"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if doc.Criteria != nil || !doc.CriteriaUnavailable {
+		t.Errorf("the document is %s, want a null criteria list and criteria_unavailable", data)
 	}
 }
 
