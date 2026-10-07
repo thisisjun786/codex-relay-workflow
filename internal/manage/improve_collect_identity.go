@@ -113,12 +113,15 @@ func improveIdentityPin(entry *improveIdentityEntry) error {
 	return nil
 }
 
-// improveOpenInput opens an input without blocking and without requiring more than reaching it
-// needs. A directory is opened with the search-only bit (Linux O_PATH, Darwin O_EXEC), which needs
-// only search permission on its ancestors; anything else is opened read-only but non-blocking, so a
-// FIFO or a device does not wait for a writer. The platform headers give the search-only bit
-// different names, and named numeric constants keep this one file buildable for both release
-// platforms: Linux O_PATH is 0x200000, and Darwin's O_EXEC is 0x40000000.
+// improveOpenInput opens an input without reading it, without blocking and without requiring more
+// than reaching it needs. A regular file is opened read-only and non-blocking. Everything else — a
+// directory, a FIFO, a socket, a device — is opened with the search-only bit, which pins the inode
+// without attaching to the file: opening a FIFO for reading, even with the non-blocking flag, pairs
+// with a writer that is waiting in open, and the bytes that writer then writes are dropped when this
+// descriptor closes, so the reader that runs afterwards waits for a writer that has already
+// finished. A directory is opened with O_DIRECTORY as well. The platform headers give the
+// search-only bit different names, and named numeric constants keep this one file buildable for both
+// release platforms: Linux O_PATH is 0x200000, and Darwin's O_EXEC is 0x40000000.
 func improveOpenInput(path string) (*os.File, error) {
 	const linuxOPath = 0x200000
 	const darwinOExec = 0x40000000
@@ -129,14 +132,19 @@ func improveOpenInput(path string) (*os.File, error) {
 	// The type is taken from the file the path reaches, not from the spelling: a configured
 	// directory reached through a symbolic link is still a directory, and opening it read-only
 	// would need a read permission the read itself does not.
-	if info, err := os.Stat(path); err == nil && info.IsDir() {
-		fd, err := unix.Open(path, search|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NONBLOCK, 0)
+	info, statErr := os.Stat(path)
+	if statErr == nil && info.Mode().IsRegular() {
+		fd, err := unix.Open(path, unix.O_RDONLY|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
 		if err != nil {
 			return nil, &os.PathError{Op: "open", Path: path, Err: err}
 		}
 		return os.NewFile(uintptr(fd), path), nil
 	}
-	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
+	flags := search | unix.O_CLOEXEC | unix.O_NONBLOCK
+	if statErr == nil && info.IsDir() {
+		flags |= unix.O_DIRECTORY
+	}
+	fd, err := unix.Open(path, flags, 0)
 	if err != nil {
 		return nil, &os.PathError{Op: "open", Path: path, Err: err}
 	}

@@ -936,3 +936,111 @@ func TestImproveReview799OrdinaryCollectStillWrites(t *testing.T) {
 		t.Errorf("the ordinary output was not written: %+v", bundle)
 	}
 }
+
+// TestImproveReview799FifoInputStillReachesTheReader covers what the identity recording must not do
+// to a named pipe: opening one for reading, even with the non-blocking flag, pairs with a writer
+// waiting in open, and the bytes that writer then writes are dropped when the descriptor closes, so
+// the reader that runs afterwards waits for a writer that has already finished. The recording opens
+// a pipe the way it opens anything that is not a regular file, without attaching to it, so the one
+// writer's line still reaches the reader that reads the ledger.
+func TestImproveReview799FifoInputStillReachesTheReader(t *testing.T) {
+	s := improveTestSetup(t)
+	improveReview799Store(t, s)
+	fifo := filepath.Join(s.root, "audit.fifo")
+	if err := unix.Mkfifo(fifo, 0o600); err != nil {
+		t.Skipf("named pipes are unavailable here: %v", err)
+	}
+	improveTestConfig(t, s, map[string]any{"manage": map[string]any{"improve": map[string]any{
+		"sources": map[string]any{
+			"relay": map[string]any{"path": s.stateDir},
+			"audit": map[string]any{"path": fifo},
+		},
+	}}})
+	out := filepath.Join(improveReview799OutDir(t, s), "bundle.json")
+	// One writer writes one graded line and closes. It blocks in open until a reader arrives, so a
+	// recording that opens the pipe for reading wakes it and then throws its line away.
+	written := make(chan error, 1)
+	go func() {
+		f, err := os.OpenFile(fifo, os.O_WRONLY, 0)
+		if err != nil {
+			written <- err
+			return
+		}
+		_, err = f.WriteString("{\"schema\":\"crw-audit/1\",\"issue\":\"CRW-1\",\"grade\":\"A\"}\n")
+		if cerr := f.Close(); err == nil {
+			err = cerr
+		}
+		written <- err
+	}()
+	// A recording that reads the pipe leaves the reader waiting for a writer that has gone, so the
+	// run is bounded: a run that has not finished is the defect, not a slow host.
+	done := make(chan struct{})
+	var code int
+	var stderr string
+	go func() {
+		defer close(done)
+		code, _, stderr = improveTestRun(t, s, "--out", out)
+	}()
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatalf("the collection did not finish: the writer's line was taken by the identity recording, so the reader waits for a writer that has closed")
+	}
+	if err := <-written; err != nil {
+		t.Fatalf("the writer of the pipe: %v", err)
+	}
+	if code != 0 {
+		t.Fatalf("a pipe input: exit %d, stderr %q", code, stderr)
+	}
+	if rows := improveTestRecordsOf(improveTestReadBundle(t, out), improveKindAudit); len(rows) != 1 {
+		t.Errorf("the reader took %d audit records from the pipe, want the one the writer wrote", len(rows))
+	}
+}
+
+// TestImproveReview799UnremovableTemporaryFileIsReported covers the refusal that cannot clean up
+// after itself: removing the temporary file needs write permission on the output directory at the
+// moment of the removal, and a directory whose permission was taken away after the file was created
+// refuses it. The refusal is still named, and the file it could not remove is named with it, so a
+// leftover is reported rather than dropped. root ignores the permission bits this relies on, so the
+// test skips there.
+func TestImproveReview799UnremovableTemporaryFileIsReported(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores the permission bits this test relies on")
+	}
+	s := improveTestSetup(t)
+	improveReview799Store(t, s)
+	improveInputRelayConfig(t, s)
+	out := improveReview799OutDir(t, s)
+	aside := out + "-held"
+	previous := improveInputBeforeRename
+	improveInputBeforeRename = func(improveOutputPlan) {
+		// The directory the bundle was written in is moved aside and the spelling now reaches a
+		// configured source directory, so the last comparison refuses; the directory that holds
+		// the temporary file loses the write permission the removal needs.
+		if err := os.Rename(out, aside); err != nil {
+			t.Errorf("moving the output directory aside: %v", err)
+			return
+		}
+		if err := os.Symlink(s.stateDir, out); err != nil {
+			t.Errorf("relinking the output directory: %v", err)
+			return
+		}
+		if err := os.Chmod(aside, 0o555); err != nil {
+			t.Errorf("taking the write permission off the output directory: %v", err)
+		}
+	}
+	t.Cleanup(func() {
+		improveInputBeforeRename = previous
+		_ = os.Chmod(aside, 0o755)
+	})
+	code, _, stderr := improveTestRun(t, s, "--out", filepath.Join(out, "bundle.json"))
+	if code != 1 || !strings.Contains(stderr, improveReasonOutputParent) {
+		t.Fatalf("a swapped output directory: exit %d, stderr %q, want the named refusal %s", code, stderr, improveReasonOutputParent)
+	}
+	if !strings.Contains(stderr, "could not be removed") {
+		t.Errorf("the refusal did not report the temporary file it could not remove: %q", stderr)
+	}
+	if _, err := os.Stat(aside); err != nil {
+		t.Errorf("the directory the bundle was written in is gone: %v", err)
+	}
+}

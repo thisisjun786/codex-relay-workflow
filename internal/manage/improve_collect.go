@@ -519,28 +519,31 @@ func improveWriteFile(plan improveOutputPlan, ids *improveIdentitySet, data []by
 		return err
 	}
 	// discard removes the temporary file through the descriptor it was created on, so a directory
-	// replaced under the spelling cannot make it miss.
-	discard := func() { _ = unix.Unlinkat(dirfd, name, 0) }
+	// replaced under the spelling cannot make it miss. A removal that fails is reported with the
+	// refusal it belongs to, naming the file that was left: a refusal the caller is told about is
+	// not one that silently leaves a temporary file in the output directory.
+	discard := func(cause error) error {
+		if err := unix.Unlinkat(dirfd, name, 0); err != nil {
+			return fmt.Errorf("%w (the temporary file %s could not be removed: %v)", cause, name, err)
+		}
+		return cause
+	}
 	file := os.NewFile(uintptr(fd), name)
 	if _, err := file.Write(data); err != nil {
 		_ = file.Close()
-		discard()
-		return err
+		return discard(err)
 	}
 	if err := file.Sync(); err != nil {
 		_ = file.Close()
-		discard()
-		return err
+		return discard(err)
 	}
 	// The mode is set on the descriptor, not by spelling the name again.
 	if err := unix.Fchmod(fd, 0o600); err != nil {
 		_ = file.Close()
-		discard()
-		return err
+		return discard(err)
 	}
 	if err := file.Close(); err != nil {
-		discard()
-		return err
+		return discard(err)
 	}
 	if improveInputBeforeRename != nil {
 		improveInputBeforeRename(plan)
@@ -551,31 +554,26 @@ func improveWriteFile(plan improveOutputPlan, ids *improveIdentitySet, data []by
 	// the one the plan recorded.
 	fresh, err := improvePlanOutput(plan.Out)
 	if err != nil {
-		discard()
-		return err
+		return discard(err)
 	}
 	// The rename lands in the directory the descriptor names, so that is the directory the
 	// destination has to still be in: a spelling that now reaches somewhere else is refused.
 	if fresh.parent != nil && !os.SameFile(held, fresh.parent) {
-		discard()
-		return fmt.Errorf("%s: the parent directory of %s is not the directory the plan named", improveReasonOutputParent, plan.Out)
+		return discard(fmt.Errorf("%s: the parent directory of %s is not the directory the plan named", improveReasonOutputParent, plan.Out))
 	}
 	// The destination is compared first, so an input moved onto the output's place is named as the
 	// output it now is (the issue's decided answer 3); a path that reaches a different file without
 	// reaching the destination is named as the changed input (answer 2).
 	if err := ids.improveIdentityRefuse(fresh.Dest, held); err != nil {
-		discard()
-		return err
+		return discard(err)
 	}
 	if err := ids.improveIdentityVerify(); err != nil {
-		discard()
-		return err
+		return discard(err)
 	}
 	// The rename goes through the same descriptor the file was created on, so it lands in the
 	// directory that was checked, whatever the spelling now reaches.
 	if err := unix.Renameat(dirfd, name, dirfd, filepath.Base(fresh.Dest)); err != nil {
-		discard()
-		return err
+		return discard(err)
 	}
 	return nil
 }
