@@ -218,6 +218,13 @@ func configLockPathsSameTarget(spelling string, pinned *configLockPathsPin) bool
 	if err != nil || !os.SameFile(realDir, pinned.dir) {
 		return false
 	}
+	if filepath.Base(real) == filepath.Base(pinned.path) {
+		// The two spellings reach one file and one parent directory under the SAME basename, so
+		// they are one directory entry whatever else the directory holds: a rename over either
+		// spelling replaces that entry, and an unrelated case-differing sibling does not change
+		// that. The folded-name count below is only needed when the basenames differ by case.
+		return true
+	}
 	return configLockPathsOneFoldedEntry(real, pinned)
 }
 

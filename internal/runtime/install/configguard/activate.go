@@ -156,6 +156,12 @@ func activationFailureMessage(s string) string {
 func Activate(deps ActivateDeps) (*InstallManifest, error) {
 	path := deps.ConfigPath
 	if path == "" {
+		// The oracle derives this path the same way (activate.ts:201, deps.configPath ??
+		// join(codexHome, "config.toml")), and Node's path.join folds a ".." lexically exactly as
+		// filepath.Join does. Resolving it through the kernel here would name a different file
+		// from the oracle for a CODEX_HOME that contains a symlink followed by "..", so the port
+		// keeps the oracle's derivation; the shared limitation is recorded in
+		// docs/port-cxc/known-defects/CRW-899.md (parity wins).
 		path = filepath.Join(deps.CodexHome, "config.toml")
 	}
 	now := deps.Now

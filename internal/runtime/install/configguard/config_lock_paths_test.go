@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -674,6 +675,73 @@ func TestConfigLockPathsDeactivateAcceptsACaseVariantWithAHardLinkBackup(t *test
 	}
 }
 
+// The tenth-generation d2 case: the same config file is reachable under two directory spellings (a
+// bind mount, so resolving either spelling follows no link) and a case-differing sibling exists in
+// the directory. Both spellings have the SAME basename and resolve to the same inode and parent, so
+// they are one directory entry and the deactivation must accept the alias and restore the owned key;
+// requiring the whole folded-name count instead refused it. The test re-execs itself inside bwrap;
+// it is skipped where bwrap cannot bind.
+func TestConfigLockPathsDeactivateAcceptsASameBasenameThroughABindMount(t *testing.T) {
+	a, b := os.Getenv("CRW_899_ALIAS_A"), os.Getenv("CRW_899_ALIAS_B")
+	if a == "" {
+		bwrap, err := exec.LookPath("bwrap")
+		if err != nil {
+			t.Skip("no bwrap to mount one directory twice")
+		}
+		scratch := t.TempDir()
+		a, b = filepath.Join(scratch, "a"), filepath.Join(scratch, "b")
+		for _, dir := range []string{a, b} {
+			if err := os.Mkdir(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if out, err := exec.Command(bwrap, "--dev-bind", "/", "/", "--bind", a, b, "true").CombinedOutput(); err != nil {
+			t.Skipf("bwrap cannot bind here: %v %s", err, out)
+		}
+		cmd := exec.Command(bwrap, "--dev-bind", "/", "/", "--bind", a, b, os.Args[0], "-test.run=^TestConfigLockPathsDeactivateAcceptsASameBasenameThroughABindMount$", "-test.count=1", "-test.v")
+		cmd.Env = append(os.Environ(), "CRW_899_ALIAS_A="+a, "CRW_899_ALIAS_B="+b)
+		out, err := cmd.CombinedOutput()
+		if err != nil || !strings.Contains(string(out), "the bound alias was accepted") {
+			t.Fatalf("inside bwrap: %v\n%s", err, out)
+		}
+		return
+	}
+	home := configLockActivationHome(t)
+	pathA := filepath.Join(a, "config.toml")
+	pathB := filepath.Join(b, "config.toml")
+	activationWrite(t, pathA, deactivationConfig)
+	// A case-differing sibling: on this case-sensitive directory it is a second entry, so a
+	// folded-name count would see two and refuse the alias.
+	if err := os.WriteFile(filepath.Join(a, "CONFIG.TOML"), []byte(deactivationConfig), 0600); err != nil {
+		t.Fatal(err)
+	}
+	hash, err := hashOrNull(pathA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys := map[string]TableKeyRecord{"memories.dedicated_tools": deactivationKey(nil)}
+	stale := configLockActivationManifestBytes(t, &InstallManifest{Version: 2, ConfigPath: pathA, PostActivateHash: hash, Flags: map[string]FlagRecord{}, TableKeys: keys})
+	fresh := configLockActivationManifestBytes(t, &InstallManifest{Version: 2, ConfigPath: pathB, PostActivateHash: hash, Flags: map[string]FlagRecord{}, TableKeys: keys})
+
+	held := configLockWritersHold(t, pathA)
+	configLockActivationHandover(t, home, stale, func() error {
+		return os.WriteFile(manifestPath(home), fresh, 0o644)
+	}, held.Release)
+
+	r, err := Deactivate(deactivationDeps(home, func([]string) CodexRunResult { return CodexRunResult{} }))
+	if err != nil {
+		t.Fatalf("the deactivation refused the same file through a bind mount: %v", err)
+	}
+	if r == nil || r.NoManifest || len(r.RestoredKeys) != 1 || r.RestoredKeys[0] != "memories.dedicated_tools" {
+		t.Fatalf("the deactivation did not restore the owned key: %+v", r)
+	}
+	if got := activationRead(t, pathA); strings.Contains(got, "dedicated_tools") {
+		t.Fatalf("the managed key was left behind: %q", got)
+	}
+	t.Log("the bound alias was accepted")
+}
+
+// The root-parent boundary: a config named directly at the filesystem root must resolve through
 // The root-parent boundary: a config named directly at the filesystem root must resolve through
 // "/". Dropping the trailing separator unconditionally would leave an empty parent and resolve the
 // working directory instead, so the pin would reject a correctly held root sidecar.
