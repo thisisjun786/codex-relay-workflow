@@ -1,6 +1,7 @@
 package state
 
 import (
+	"context"
 	"errors"
 	"io/fs"
 	"os"
@@ -14,16 +15,35 @@ import (
 // error of the last create (errors.Is(err, fs.ErrExist)), so a lock left by a dead process costs a denied completion, visible
 // and recoverable, and a stale .lock file is removed by hand. The lock is released by path, errors ignored, also when fn panics.
 func WithSessionLock(cwd, sessionID string, fn func() error) error {
-	return withSessionLock(cwd, sessionID, fn, time.Sleep)
+	return WithSessionLockContext(context.Background(), cwd, sessionID, fn)
 }
 
 func withSessionLock(cwd, sessionID string, fn func() error, sleep func(time.Duration)) error {
+	return orchestrateInterruptLockContext(context.Background(), cwd, sessionID, fn, sleep)
+}
+
+// WithSessionLockContext is WithSessionLock for a caller that can be interrupted (the orchestrate row under cmd/crw
+// serve, whose invocation context the first SIGINT cancels). The retry schedule is the same; a context cancelled
+// before or during the wait creates no lock file, does not run fn and returns the context's own error. A caller with
+// no context passes context.Background(), which is what WithSessionLock does: its behaviour and its sleep seam are
+// unchanged.
+func WithSessionLockContext(ctx context.Context, cwd, sessionID string, fn func() error) error {
+	return orchestrateInterruptLockContext(ctx, cwd, sessionID, fn, time.Sleep)
+}
+
+func orchestrateInterruptLockContext(ctx context.Context, cwd, sessionID string, fn func() error, sleep func(time.Duration)) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := makeSessionsDir(cwd); err != nil {
 		return err
 	}
 	lockPath := StatePath(cwd, sessionID) + ".lock"
 	delays := [...]time.Duration{5, 10, 15, 20, 25, 30, 35, 40, 35, 35} // milliseconds: LOCK_RETRY_DELAYS_MS
 	for attempt := 0; ; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		err := createExclusive(lockPath, strconv.Itoa(os.Getpid()))
 		if err == nil {
 			break
@@ -31,7 +51,18 @@ func withSessionLock(cwd, sessionID string, fn func() error, sleep func(time.Dur
 		if !errors.Is(err, fs.ErrExist) || attempt >= len(delays) {
 			return err
 		}
-		sleep(delays[attempt] * time.Millisecond)
+		delay := delays[attempt] * time.Millisecond
+		if ctx.Done() == nil {
+			sleep(delay) // a context that can never end keeps the caller's seam
+			continue
+		}
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
 	}
 	defer func() { _ = removeFile(lockPath) }()
 	return fn()
