@@ -125,6 +125,9 @@ func PathRepr(path string) string {
 
 var sqliteCodeSuffix = regexp.MustCompile(` \(\d+\)( \(SQLITE_BUSY\))?$`)
 
+// sqliteCodeNumber is the result code inside that suffix, for a caller that holds only the text.
+var sqliteCodeNumber = regexp.MustCompile(` \((\d+)\)(?: \(SQLITE_BUSY\))?$`)
+
 // StoredSQLiteError is a SQLite failure as the stored records word it: Python's
 // f"{type(error).__name__}: {error}" for the sqlite3 module, the class chosen from the primary
 // result code and the message SQLite itself reported without the driver's "errstr: " prefix and
@@ -162,4 +165,46 @@ func sqliteMessage(err error) string {
 		message = detail
 	}
 	return message
+}
+
+// CorruptingFailure is err as a failure of the class that halts the relay's writes (CRW-848,
+// decision CRW-847 section 83 item 1): a SQLite result code whose primary code is SQLITE_CORRUPT
+// (11, every extended code of it), SQLITE_NOTADB (26), or the code SQLITE_IOERR_SHORT_READ (522,
+// an IOERR extended code, so it is the whole code that is matched and not the primary one).
+// The class is read off the result code, never a list of three literals: the same reading
+// StoredSQLiteError classifies with. ok is false for every other failure, including the SQLite
+// failures that are not the class (a busy database, a constraint violation, a plain IOERR).
+func CorruptingFailure(err error) (CorruptingCause, bool) {
+	var failure *sqlite.Error
+	if !errors.As(err, &failure) {
+		return CorruptingCause{}, false
+	}
+	if !corruptingCode(failure.Code()) {
+		return CorruptingCause{}, false
+	}
+	return CorruptingCause{Code: failure.Code(), Message: sqliteMessage(err)}, true
+}
+
+// CorruptingDetail is CorruptingFailure for a caller that holds only the failure's text: the
+// result code the driver appended as " (N)" (sqliteCodeSuffix), the same suffix StoredSQLiteError
+// strips. Text without a readable code is not the class, so a detail the code cannot be read from
+// never halts a store (fail closed toward not halting on an unreadable text, since the marker is a
+// durable stop).
+func CorruptingDetail(detail string) (CorruptingCause, bool) {
+	match := sqliteCodeNumber.FindStringSubmatch(detail)
+	if match == nil {
+		return CorruptingCause{}, false
+	}
+	code, err := strconv.Atoi(match[1])
+	if err != nil || !corruptingCode(code) {
+		return CorruptingCause{}, false
+	}
+	return CorruptingCause{Code: code, Message: sqliteCodeSuffix.ReplaceAllString(detail, "")}, true
+}
+
+// corruptingCode is the class rule. SQLITE_CORRUPT's extended codes share its primary byte, and so
+// does SQLITE_NOTADB's; SQLITE_IOERR_SHORT_READ is matched as the whole code because its primary
+// byte is SQLITE_IOERR (10), whose other extended codes are ordinary I/O failures.
+func corruptingCode(code int) bool {
+	return code == 522 || code&0xff == 11 || code&0xff == 26
 }
