@@ -201,7 +201,14 @@ func improveRoadmapRun(ctx context.Context, e *Env, boundary, ref string) (strin
 	if code := improveRunCollect(ctx, e, []string{"--out", bundlePath}); code != 0 {
 		return "", fmt.Errorf("collect exited with status %d", code)
 	}
-	report, err := improveProposeRun(ctx, e, bundlePath, false)
+	// A boundary and ref that already have a roadmap document are not proposed again: the drafts
+	// that exist still grow their seen list, and the candidates the cap leaves are counted for a
+	// later run rather than drafted now.
+	capOverride := -1
+	if improveRoadmapAlreadyRan(dir, boundary, ref) {
+		capOverride = 0
+	}
+	report, err := improveProposeRunCapped(ctx, e, bundlePath, false, capOverride)
 	if err != nil {
 		return "", err
 	}
@@ -210,6 +217,40 @@ func improveRoadmapRun(ctx context.Context, e *Env, boundary, ref string) (strin
 		return "", err
 	}
 	return path, nil
+}
+
+// improveRoadmapAlreadyRan reports whether the roadmap directory already holds a document for this
+// boundary and ref. The document names both on their own lines, so a run of the same boundary and
+// ref is recognised by the document it wrote, not by a file name a clock chose.
+func improveRoadmapAlreadyRan(dir, boundary, ref string) bool {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	wantBoundary, wantRef := "- boundary: "+boundary, "- ref: "+ref
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasPrefix(name, "roadmap-") || !strings.HasSuffix(name, ".md") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			continue
+		}
+		hasBoundary, hasRef := false, false
+		for _, line := range strings.Split(string(data), "\n") {
+			switch strings.TrimRight(line, "\r") {
+			case wantBoundary:
+				hasBoundary = true
+			case wantRef:
+				hasRef = true
+			}
+		}
+		if hasBoundary && hasRef {
+			return true
+		}
+	}
+	return false
 }
 
 // improveRunRoadmap is crw manage improve run. It prints the roadmap path it wrote.

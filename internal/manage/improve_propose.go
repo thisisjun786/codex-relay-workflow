@@ -56,6 +56,11 @@ type improveProposeCandidate struct {
 	Evidence []string                `json:"evidence"`
 
 	seen []auditDraftSeen
+
+	// seenProjects is the project each sighting was seen in, so an update of a draft that already
+	// exists adds only the sightings this run newly recorded to the project's count. It does not
+	// reach the report: the report names the candidate, not how it is merged.
+	seenProjects map[auditDraftSeen]string
 }
 
 // improveProposeReport is what crw manage improve propose prints: the ranked candidates, the
@@ -188,17 +193,23 @@ func improveProposeImpactOf(record improveRecord) int {
 	return improveProposeImpactLow
 }
 
-// improveProposeSighting is one origin a record was seen at, in the audit draft seen shape the
-// shared crw-issue-draft/1 format carries: the source, what the record is about, where it
-// happened, and when it was last seen. Two records with one origin are one sighting, so a
-// rerun over the same bundle never doubles a seen entry.
-func improveProposeSighting(record improveRecord) auditDraftSeen {
-	return auditDraftSeen{
-		Mode:    improveProposeSource,
-		Subject: strings.TrimSpace(record.Key),
-		Head:    strings.TrimSpace(record.Where),
-		At:      strings.TrimSpace(record.LastAt),
+// improveProposeRecordSightings is the sightings one record makes, in the audit draft seen shape
+// the shared crw-issue-draft/1 format carries: the source, what the record is about, where it was
+// seen, and when it was last seen. A record that merges two or more origin locations was seen
+// once at each of them, so it makes one sighting per location; a record with none or one makes
+// one. Head is the origin location then, because that is what tells the sightings apart, and At
+// stays the record's last sighting. Two records with one origin are one sighting, so a rerun over
+// the same bundle never doubles a seen entry.
+func improveProposeRecordSightings(record improveRecord) []auditDraftSeen {
+	subject, at := strings.TrimSpace(record.Key), strings.TrimSpace(record.LastAt)
+	if len(record.Evidence) < 2 {
+		return []auditDraftSeen{{Mode: improveProposeSource, Subject: subject, Head: strings.TrimSpace(record.Where), At: at}}
 	}
+	out := make([]auditDraftSeen, 0, len(record.Evidence))
+	for _, evidence := range record.Evidence {
+		out = append(out, auditDraftSeen{Mode: improveProposeSource, Subject: subject, Head: strings.TrimSpace(evidence), At: at})
+	}
+	return out
 }
 
 // improveProposeCandidates groups the bundle's records into candidates. Records that share the
@@ -226,7 +237,7 @@ func improveProposeCandidates(bundle improveBundle) []improveProposeCandidate {
 			count = 1
 		}
 		impact := improveProposeImpactOf(record)
-		sighting := improveProposeSighting(record)
+		sightings := improveProposeRecordSightings(record)
 		project := improveProposeProjectOf(record)
 		if at, ok := byKey[key]; ok {
 			current := &candidates[at]
@@ -236,9 +247,7 @@ func improveProposeCandidates(bundle improveBundle) []improveProposeCandidate {
 			}
 			improveProposeAddProject(&current.Projects, project, count)
 			current.Evidence = append(current.Evidence, record.Evidence...)
-			if !auditDraftSeenHas(current.seen, sighting) {
-				current.seen = append(current.seen, sighting)
-			}
+			improveProposeAddSightings(current, project, sightings)
 			continue
 		}
 		byKey[key] = len(candidates)
@@ -246,9 +255,9 @@ func improveProposeCandidates(bundle improveBundle) []improveProposeCandidate {
 			Key: key, Kind: record.Kind, Title: title,
 			Impact: impact, Count: count,
 			Evidence: append([]string(nil), record.Evidence...),
-			seen:     []auditDraftSeen{sighting},
 		}
 		improveProposeAddProject(&candidate.Projects, project, count)
+		improveProposeAddSightings(&candidate, project, sightings)
 		candidates = append(candidates, candidate)
 	}
 	for i := range candidates {
@@ -276,10 +285,7 @@ func improveProposeFingerprint(where, what string) string {
 
 // improveProposeAddProject adds one record's occurrence to a candidate's project list.
 func improveProposeAddProject(projects *[]improveProposeProject, project string, count int) {
-	project = strings.TrimSpace(project)
-	if project == "" {
-		project = auditDraftOwnerUnknown
-	}
+	project = improveProposeProjectKey(project)
 	for i := range *projects {
 		if (*projects)[i].Project == project {
 			(*projects)[i].Count += count
@@ -287,6 +293,35 @@ func improveProposeAddProject(projects *[]improveProposeProject, project string,
 		}
 	}
 	*projects = append(*projects, improveProposeProject{Project: project, Count: count})
+}
+
+// improveProposeProjectKey is a record's project as a candidate names it: the trimmed key, or the
+// marker a record that names no project carries. A split whose relationship has no scope reaches
+// this as the empty string, so an issue key never takes a project's place.
+func improveProposeProjectKey(project string) string {
+	if trimmed := strings.TrimSpace(project); trimmed != "" {
+		return trimmed
+	}
+	return auditDraftOwnerUnknown
+}
+
+// improveProposeAddSightings adds the sightings one record makes to a candidate, once each, and
+// remembers the project each was seen in. A merge counts a project by the sightings this run newly
+// added to it, so the map is what keeps a stored count and a grown seen list in step.
+func improveProposeAddSightings(candidate *improveProposeCandidate, project string, sightings []auditDraftSeen) {
+	if candidate.seenProjects == nil {
+		candidate.seenProjects = map[auditDraftSeen]string{}
+	}
+	owner := improveProposeProjectKey(project)
+	for _, sighting := range sightings {
+		if auditDraftSeenHas(candidate.seen, sighting) {
+			continue
+		}
+		candidate.seen = append(candidate.seen, sighting)
+		if _, ok := candidate.seenProjects[sighting]; !ok {
+			candidate.seenProjects[sighting] = owner
+		}
+	}
 }
 
 // improveProposeRank orders the candidates the issue fixes: by occurrence count, then by
@@ -307,12 +342,14 @@ func improveProposeRank(candidates []improveProposeCandidate) {
 	})
 }
 
-// improveProposeIssueIndex is the exported issue list as the two keys a candidate is matched
-// against: the issue keys, and the normalized issue titles. A candidate that carries either
-// one is already on Linear and is not proposed again.
-func improveProposeIssueIndex(bundle improveBundle) (keys, titles map[string]bool) {
+// improveProposeIssueIndex is the exported issue list as the three keys a candidate is matched
+// against: the draft fingerprints the issues were registered under, the issue keys, and the
+// normalized issue titles. A candidate that carries any one of them is already on Linear and is
+// not proposed again.
+func improveProposeIssueIndex(bundle improveBundle) (keys, titles, fingerprints map[string]bool) {
 	keys = map[string]bool{}
 	titles = map[string]bool{}
+	fingerprints = map[string]bool{}
 	for _, record := range bundle.Records {
 		if record.Kind != improveKindIssue {
 			continue
@@ -323,8 +360,13 @@ func improveProposeIssueIndex(bundle improveBundle) (keys, titles map[string]boo
 		if title := auditDraftNormalizeWhat(record.What); title != "" {
 			titles[title] = true
 		}
+		// The issue list names the fingerprint the issue was registered under, which is the
+		// candidate key itself, so a renamed issue still suppresses its candidate.
+		if fingerprint := strings.TrimSpace(record.Fingerprint); fingerprint != "" {
+			fingerprints[fingerprint] = true
+		}
 	}
-	return keys, titles
+	return keys, titles, fingerprints
 }
 
 // improveProposeParseProjects reads the projects a stored improve body names, so a later run
@@ -376,29 +418,50 @@ func improveProposeParseEvidence(body string) []string {
 }
 
 // improveProposeMergeProjects merges the projects a stored body names with the ones the new
-// candidate reached: a project the new run saw takes the new count, and a project it no longer
-// carries keeps the count the draft already held, so a rewrite never drops a project.
-func improveProposeMergeProjects(stored, current []improveProposeProject) []improveProposeProject {
+// candidate reached: a project's count is the count the draft already held plus the sightings this
+// run newly added to it, and a project the new run no longer carries keeps its count, so a rewrite
+// never drops a project and rerunning one bundle never grows a count.
+func improveProposeMergeProjects(stored, current []improveProposeProject, added map[string]int) []improveProposeProject {
 	out := append([]improveProposeProject(nil), stored...)
+	for i := range out {
+		out[i].Count += added[out[i].Project]
+	}
 	for _, project := range current {
 		found := false
 		for i := range out {
 			if out[i].Project == project.Project {
-				out[i].Count = project.Count
 				found = true
 			}
 		}
 		if !found {
-			out = append(out, project)
+			out = append(out, improveProposeProject{Project: project.Project, Count: added[project.Project]})
 		}
 	}
 	sort.Slice(out, func(a, b int) bool { return out[a].Project < out[b].Project })
 	return out
 }
 
-// improveProposeSuppressed reports whether an exported issue already covers a candidate: the
-// same fingerprint (an issue whose key is the candidate key) or the same title key.
-func improveProposeSuppressed(candidate improveProposeCandidate, keys, titles map[string]bool) bool {
+// improveProposeAddedSightings is how many sightings this run newly adds to each project of a
+// candidate: the sightings the draft does not carry yet, counted by the project each was seen in.
+// A rerun over the same bundle adds none, so every stored count stays as it was.
+func improveProposeAddedSightings(candidate improveProposeCandidate, stored []auditDraftSeen) map[string]int {
+	added := map[string]int{}
+	for _, sighting := range candidate.seen {
+		if auditDraftSeenHas(stored, sighting) {
+			continue
+		}
+		added[improveProposeProjectKey(candidate.seenProjects[sighting])]++
+	}
+	return added
+}
+
+// improveProposeSuppressed reports whether an exported issue already covers a candidate: the issue
+// list registered it under the candidate's own fingerprint, its key is the candidate key, or its
+// title normalizes to the candidate's title.
+func improveProposeSuppressed(candidate improveProposeCandidate, keys, titles, fingerprints map[string]bool) bool {
+	if candidate.Key != "" && fingerprints[candidate.Key] {
+		return true
+	}
 	if keys[candidate.Key] {
 		return true
 	}
@@ -493,6 +556,14 @@ func improveProposeDraft(candidate improveProposeCandidate) *auditDraft {
 // nothing new. A context that ended before the lock or during the write loop produces no new
 // draft: an interrupted run never looks like a completed one.
 func improveProposeRun(ctx context.Context, e *Env, bundlePath string, dryRun bool) (improveProposeReport, error) {
+	return improveProposeRunCapped(ctx, e, bundlePath, dryRun, -1)
+}
+
+// improveProposeRunCapped is improveProposeRun with an override for the new-draft cap. A negative
+// override keeps the configured cap; zero creates no new draft at all, which is how a run whose
+// boundary and ref already have a roadmap leaves the candidates it could not draft for a later
+// run instead of drafting more of them.
+func improveProposeRunCapped(ctx context.Context, e *Env, bundlePath string, dryRun bool, capOverride int) (improveProposeReport, error) {
 	report := improveProposeReport{
 		Schema: improveProposeReportSchema, BundlePath: bundlePath,
 		Candidates: []improveProposeCandidate{},
@@ -513,15 +584,18 @@ func improveProposeRun(ctx context.Context, e *Env, bundlePath string, dryRun bo
 	if maxNew <= 0 {
 		maxNew = auditDraftDefaultMaxNewDrafts
 	}
+	if capOverride >= 0 {
+		maxNew = capOverride
+	}
 	candidates := improveProposeCandidates(bundle)
-	keys, titles := improveProposeIssueIndex(bundle)
+	keys, titles, fingerprints := improveProposeIssueIndex(bundle)
 	kept := make([]improveProposeCandidate, 0, len(candidates))
 	// A candidate the exported issue list already covers creates no new draft, but a draft
 	// that already exists for its fingerprint still grows its seen list: the issue list says
 	// the friction is registered, not that this run did not see it again.
 	suppressedExisting := make([]improveProposeCandidate, 0, len(candidates))
 	for _, candidate := range candidates {
-		if improveProposeSuppressed(candidate, keys, titles) {
+		if improveProposeSuppressed(candidate, keys, titles, fingerprints) {
 			report.Suppressed = append(report.Suppressed, candidate.Key)
 			suppressedExisting = append(suppressedExisting, candidate)
 			continue
@@ -561,7 +635,7 @@ func improveProposeRun(ctx context.Context, e *Env, bundlePath string, dryRun bo
 				return report, err
 			}
 			// A suppressed candidate never creates a draft; only an existing one grows.
-			if improveProposeSuppressed(candidate, keys, titles) {
+			if improveProposeSuppressed(candidate, keys, titles, fingerprints) {
 				continue
 			}
 			if fresh >= maxNew {
@@ -581,7 +655,9 @@ func improveProposeRun(ctx context.Context, e *Env, bundlePath string, dryRun bo
 		}
 		// A draft with this fingerprint already exists, from this feature or from the audit. The
 		// whole record is rewritten, so only fields this command understands may change: the seen
-		// list only grows, and only this feature's own body is re-rendered.
+		// list only grows, and only this feature's own body is re-rendered. The added counts are
+		// read before the seen list grows, so they name only the sightings this run newly added.
+		added := improveProposeAddedSightings(candidate, doc.Seen)
 		changed := false
 		for _, sighting := range candidate.seen {
 			if !auditDraftSeenHas(doc.Seen, sighting) {
@@ -593,13 +669,12 @@ func improveProposeRun(ctx context.Context, e *Env, bundlePath string, dryRun bo
 			continue
 		}
 		if doc.Source == improveProposeSource {
-			// The whole record is rewritten, so the projects and the evidence the new run
-			// reached are folded in rather than dropped: a project the draft already held
-			// keeps its count, a project the new run saw takes the new one, and the evidence
-			// is the union.
+			// The whole record is rewritten, so the projects and the evidence the new run reached
+			// are folded in rather than dropped: a project's count is what the draft already held
+			// plus the sightings this run newly added to it, and the evidence is the union.
 			merged := improveProposeCandidate{
 				Title:    doc.Title,
-				Projects: improveProposeMergeProjects(improveProposeParseProjects(doc.Body), candidate.Projects),
+				Projects: improveProposeMergeProjects(improveProposeParseProjects(doc.Body), candidate.Projects, added),
 				Evidence: improveSortedEvidence(append(improveProposeParseEvidence(doc.Body), candidate.Evidence...)),
 				seen:     doc.Seen,
 			}

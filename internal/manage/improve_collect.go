@@ -101,7 +101,8 @@ type improveSourceRow struct {
 
 // improveRecord is one normalized record: what kind of friction it is, its identity, where
 // it happened, what it was, how many rows it merges, the first and last time it was seen,
-// and the origin locations of the rows behind it.
+// the origin locations of the rows behind it, and the draft fingerprint a source already
+// recorded for the row when it carries one.
 type improveRecord struct {
 	Kind     string   `json:"kind"`
 	Key      string   `json:"key"`
@@ -111,6 +112,11 @@ type improveRecord struct {
 	FirstAt  string   `json:"first_at"`
 	LastAt   string   `json:"last_at"`
 	Evidence []string `json:"evidence"`
+
+	// Fingerprint is the shared draft fingerprint a row already carries, when its source records
+	// one. The issue list a management session exports names it, so a candidate whose fingerprint
+	// an issue already holds is not proposed again; every other kind leaves it empty.
+	Fingerprint string `json:"fingerprint,omitempty"`
 }
 
 // improveAccumulator merges records that share a (kind, key, where) identity, so the same
@@ -143,6 +149,11 @@ func (a *improveAccumulator) improveAdd(r improveRecord) {
 		}
 		if current.What == "" || (improveGenericReason(current.What) && !improveGenericReason(r.What)) {
 			current.What = r.What
+		}
+		// A row that carries the fingerprint keeps it, so a record merged from several rows still
+		// names the draft its source already holds.
+		if current.Fingerprint == "" {
+			current.Fingerprint = r.Fingerprint
 		}
 		current.Evidence = append(current.Evidence, r.Evidence...)
 		return
@@ -792,10 +803,15 @@ func improveReadRelay(ctx context.Context, dbPath string, acc *improveAccumulato
 		// internal/relay/store/receipt_shape.go allows none, so reading one there found no
 		// reason for any real blockage. The reason is the note of the decision reply that
 		// answered the event, and that receipt names the answered event in its answersEvent, so
-		// one prepass indexes the replies before the blocked rows are read.
+		// one prepass indexes the replies before the blocked rows are read. The same prepass
+		// records which events are blockages: a reply that answered one of them is that
+		// blockage's answer, not a second record, so one blockage stays one record.
 		answered := map[improveParseBlockedKey]string{}
+		blocked := map[improveParseBlockedKey]bool{}
 		for _, row := range splits {
-			if row.Text("outcome") != "decision_reply" {
+			key := improveParseBlockedKey{relationship: row.Text("relationship_id"), event: row.Text("event_id")}
+			if row.Text("outcome") == "blocked_needs_input" {
+				blocked[key] = true
 				continue
 			}
 			receipt := improveParseJSONObject(row.Text("receipt"))
@@ -803,10 +819,11 @@ func improveReadRelay(ctx context.Context, dbPath string, acc *improveAccumulato
 			if event == "" {
 				continue
 			}
-			answered[improveParseBlockedKey{relationship: row.Text("relationship_id"), event: event}] = improveStringField(receipt, "note")
+			answered[improveParseBlockedKey{relationship: key.relationship, event: event}] = improveStringField(receipt, "note")
 		}
 		for _, row := range splits {
 			outcome, receipt := row.Text("outcome"), improveParseJSONObject(row.Text("receipt"))
+			relationship := row.Text("relationship_id")
 			project := row.Text("project_key")
 			issue := row.Text("issue_key")
 			var reason string
@@ -815,20 +832,36 @@ func improveReadRelay(ctx context.Context, dbPath string, acc *improveAccumulato
 				if decision != "split_approval" && decision != "scope_change" {
 					continue
 				}
+				// A reply whose answersEvent names a stored blockage is that blockage's own
+				// record: the blocked row already carries the answer's reason, so this row
+				// contributes no record of its own and one blockage counts once.
+				if event := improveStringField(receipt, "answersEvent"); event != "" {
+					if blocked[improveParseBlockedKey{relationship: relationship, event: event}] {
+						continue
+					}
+				}
 				reason = improveStringField(receipt, "reason", "detail", "note", "question", "summary")
 				if reason == "" {
 					reason = improveStringField(receipt, "outcome", "decision")
 				}
 			} else {
-				reason = answered[improveParseBlockedKey{relationship: row.Text("relationship_id"), event: row.Text("event_id")}]
+				reason = answered[improveParseBlockedKey{relationship: relationship, event: row.Text("event_id")}]
 				if reason == "" {
 					reason = string(store.BlockedNeedsInput)
 				}
 			}
+			// The record's identity is the project the issue belongs to; a relationship with no
+			// scope leaves it empty, and the issue key stays in the record's evidence rather than
+			// taking the project's place.
+			key := improveSplitKey(project)
+			evidence := []string{"events:" + row.Text("event_id")}
+			if key == "" && issue != "" {
+				evidence = append(evidence, "issue:"+issue)
+			}
 			rows++
-			acc.improveAdd(improveRecord{Kind: improveKindSplit, Key: improveSplitKey(project, issue), Where: row.Text("relationship_id"),
+			acc.improveAdd(improveRecord{Kind: improveKindSplit, Key: key, Where: relationship,
 				What: reason, Count: 1, FirstAt: row.Text("first_seen_at"), LastAt: row.Text("last_seen_at"),
-				Evidence: []string{"events:" + row.Text("event_id")}})
+				Evidence: evidence})
 		}
 		return nil
 	})
@@ -838,14 +871,12 @@ func improveReadRelay(ctx context.Context, dbPath string, acc *improveAccumulato
 	return rows, nil
 }
 
-// improveSplitKey is a split record's identity: the project key the issue belongs to. The
-// relationship it happened at stays in the record's where, so one issue is one record and
-// the project key is on every one of them.
-func improveSplitKey(project, issue string) string {
-	if project != "" {
-		return project
-	}
-	return issue
+// improveSplitKey is a split record's identity: the project key the issue belongs to, or the
+// empty string when the relationship carries no scope. An issue key is never a project, so it
+// never takes this place; the record's evidence keeps it instead. The relationship it happened at
+// stays in the record's where, so one relationship is one record.
+func improveSplitKey(project string) string {
+	return strings.TrimSpace(project)
 }
 
 // improveParseBlockedKey names one blocked event inside one relationship. The two fields are
@@ -1082,7 +1113,11 @@ func improveReadIssues(path string, acc *improveAccumulator) (int, error) {
 		key := improveStringField(issue, "identifier", "key", "id")
 		acc.improveAdd(improveRecord{Kind: improveKindIssue, Key: key, Where: improveStringField(issue, "state"),
 			What: improveStringField(issue, "title"), Count: 1,
-			FirstAt: improveStringField(issue, "createdAt", "created_at"), LastAt: improveStringField(issue, "updatedAt", "updated_at"),
+			// The issue list names the draft fingerprint it was registered under, so a candidate
+			// whose fingerprint an issue already holds is suppressed by that fingerprint and not
+			// only by its key or its title.
+			Fingerprint: improveStringField(issue, "fingerprint"),
+			FirstAt:     improveStringField(issue, "createdAt", "created_at"), LastAt: improveStringField(issue, "updatedAt", "updated_at"),
 			Evidence: []string{path + ":" + key}})
 	}
 	return len(issues), nil
