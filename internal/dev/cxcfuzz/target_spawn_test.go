@@ -239,23 +239,18 @@ func TestSpawnShimAnswersWithoutTheOracleTree(t *testing.T) {
 // spent on a chain of one-element arrays that both harnesses stripped before the classifier ran, so
 // the case claimed a depth neither side ever exercised.
 func TestSpawnGenerateCarriesTheSizeAsLength(t *testing.T) {
-	seen := map[int]bool{}
+	// One seed draws one message at every size, so the messages differ only by the filler a size adds.
+	// The growth is measured on the built argument, not on spawnMentionBytes: a generator that dropped
+	// the filler would keep every length equal and fail here.
+	seed, base := spawnFirstMentionedArg(t, 0)
 	for size := 0; size < 512; size++ {
-		document := spawnMentionedDocument(t, size)
-		args, _ := document.Lookup("args")
-		list, _ := args.([]any)
-		if len(list) != 1 {
-			t.Fatalf("size %d: the case carries %d arguments, want the message alone", size, len(list))
+		object, ok := spawnMentionedCaseForSeed(t, seed, size)
+		if !ok {
+			t.Fatalf("size %d: seed %d no longer draws a MentionedFolders case", size, seed)
 		}
-		// The argument is the message itself: nothing the harness could strip stands between it and
-		// the classifier, which is what "no depth claim" means here.
-		if _, ok := list[0].(string); !ok {
-			t.Fatalf("size %d: the classifier is handed %T, want the message string", size, list[0])
+		if got := len(spawnArgString(t, object)) - len(base); got != size {
+			t.Fatalf("size %d: the message grew by %d bytes, want %d", size, got, size)
 		}
-		seen[spawnMentionBytes(size)] = true
-	}
-	if len(seen) < 64 {
-		t.Fatalf("the generated length follows size only weakly: %d distinct filler sizes", len(seen))
 	}
 	// The bytes are decided before anything is built: a size far past the cap still builds a case
 	// under it, and no size can make the harness build an unbounded input.
@@ -479,6 +474,34 @@ func writeRecordingSpawnOracle(t *testing.T, record string) string {
 }
 
 // spawnMentionedDocument is the first MentionedFolders case the generator draws.
+// spawnFirstMentionedArg is the first seed that draws a MentionedFolders case at size, and its message.
+func spawnFirstMentionedArg(t *testing.T, size int) (int64, string) {
+	t.Helper()
+	for seed := int64(0); seed < 1000; seed++ {
+		if object, ok := spawnMentionedCaseForSeed(t, seed, size); ok {
+			return seed, spawnArgString(t, object)
+		}
+	}
+	t.Fatalf("no seed drew a MentionedFolders case for size %d", size)
+	return 0, ""
+}
+
+// spawnArgString is the message a MentionedFolders case carries as its one argument. The argument is the
+// message itself: nothing the harness could strip stands between it and the classifier.
+func spawnArgString(t *testing.T, object pyjson.Object) string {
+	t.Helper()
+	args, _ := object.Lookup("args")
+	list, _ := args.([]any)
+	if len(list) != 1 {
+		t.Fatalf("the case carries %d arguments, want the message alone", len(list))
+	}
+	message, ok := list[0].(string)
+	if !ok {
+		t.Fatalf("the classifier is handed %T, want the message string", list[0])
+	}
+	return message
+}
+
 func spawnMentionedDocument(t *testing.T, size int) pyjson.Object {
 	t.Helper()
 	for seed := int64(0); seed < 1000; seed++ {

@@ -71,7 +71,7 @@ function recordLoadRoot(root) {
 // it. mkdtempSync creates a new 0700 directory and fails rather than following a pathname that already
 // exists, so a name another process has since taken over is never inherited and no import ever creates a
 // directory through a path this worker does not own. A root that cannot be completed is removed again
-// before the error is raised, so a failure here leaves nothing behind. The caller removes the root when
+// before the error is raised, on a best-effort basis (see releaseLoadRoot). The caller removes the root when
 // the import ends.
 function makeLoadRoot() {
   const root = mkdtempSync(join(loadBase, "crw-spawn-load-"));
@@ -89,9 +89,10 @@ function makeLoadRoot() {
 }
 
 // releaseLoadRoot removes one attempt's root. The root is this worker's own scratch: a failure to remove
-// it must not stop the worker, so the removal is best-effort and its error is dropped. A root can only
-// be left behind when this process is killed outright - the pool's startup deadline sends SIGKILL, which
-// no finally can run under - and that leftover lives under the harness TMPDIR the caller chose.
+// it must not stop the worker, so the removal is best-effort and its error is dropped. A root is left
+// behind when this process is killed outright (the pool's startup deadline sends SIGKILL, which no finally
+// can run under) or when the removal itself fails; either way the leftover lives under the harness TMPDIR
+// the caller chose.
 function releaseLoadRoot(root) {
   try {
     rmSync(root, { recursive: true, force: true });
