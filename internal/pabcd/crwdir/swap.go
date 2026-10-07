@@ -55,16 +55,17 @@ func Published(err error) bool {
 type crwdirSwapStep int
 
 const (
-	crwdirSwapStepCreate   crwdirSwapStep = iota // the exclusive create of the temp file
-	crwdirSwapStepMode                           // right after the create, before the temp file takes the target's mode
-	crwdirSwapStepWrite                          // before the data is written
-	crwdirSwapStepSync                           // before the temp file is fsynced
-	crwdirSwapStepReserve                        // before the backup path is reserved
-	crwdirSwapStepReread                         // before the last check, the target read again
-	crwdirSwapStepCompare                        // right after the last check passed, before the exchange
-	crwdirSwapStepExchange                       // before the atomic exchange
-	crwdirSwapStepMove                           // before the displaced file is moved to the backup path
-	crwdirSwapStepSyncDir                        // before the directory is fsynced
+	crwdirSwapStepCreate     crwdirSwapStep = iota // the exclusive create of the temp file
+	crwdirSwapStepMode                             // right after the create, before the temp file takes the target's mode
+	crwdirSwapStepWrite                            // before the data is written
+	crwdirSwapStepSync                             // before the temp file is fsynced
+	crwdirSwapStepReserve                          // before the backup path is reserved
+	crwdirSwapStepReread                           // before the last check, the target read again
+	crwdirSwapStepCompare                          // right after the last check passed, before the exchange
+	crwdirSwapStepExchange                         // before the atomic exchange
+	crwdirSwapStepMove                             // before the displaced file is moved to the backup path
+	crwdirSwapStepReadBackup                       // before the displaced file is read back from the backup path
+	crwdirSwapStepSyncDir                          // before the directory is fsynced
 )
 
 // PublishSwap replaces target with next, keeping what it displaced in backupPath, and answers the
@@ -85,10 +86,13 @@ const (
 //   - the file the exchange displaced is moved to backupPath with a rename that refuses to replace,
 //     so the backup is the very file the publication displaced and nothing the caller did not create
 //     is deleted;
-//   - the directory is fsynced. Every failure after the exchange - the move, reading the backup back,
-//     or the sync - is a *PublishedError: the exchange happened, so the caller counts the publication
-//     as done and reports the failure, and PublishedError.DisplacedAt names where the displaced
-//     content is when the backup could not be filled.
+//   - the directories that hold the target and the backup are fsynced (each one once), so both
+//     renames this publication made - the exchange and the move - survive a power failure. Every
+//     failure after the exchange - the move, reading the backup back, or the sync - is a
+//     *PublishedError: the exchange happened, so the caller counts the publication as done and
+//     reports the failure, and PublishedError.DisplacedAt names where the displaced content is when
+//     the backup could not be filled. A sync failure is joined into the same PublishedError, so
+//     errors.Is answers for the original failure and the sync failure alike (CRW-936).
 //
 // The answer is the displaced file's bytes, read from backupPath after the move, so the caller can
 // tell a cooperative writer (they equal expected) from one that saved between the last check and the
@@ -198,22 +202,54 @@ func crwdirSwapPublish(target string, expected, next []byte, backupPath string, 
 		return nil, err
 	}
 	keep = true
+	// Every return below runs after the exchange succeeded, so the target holds next and the file the
+	// exchange displaced is at tmp or at backupPath. Both renames have to reach the disk before the
+	// caller is told anything, so each of them first syncs the directories that hold those paths and
+	// joins a sync failure into the PublishedError it returns.
+	syncPublished := func() error {
+		if err := at(crwdirSwapStepSyncDir); err != nil {
+			return err
+		}
+		return crwdirSwapSyncDirs(syncDir, resolved, backupPath)
+	}
 	if err = at(crwdirSwapStepMove); err == nil {
 		err = crwdirSwapNoReplace(tmp, backupPath)
 	}
 	if err != nil {
-		return nil, &PublishedError{Err: fmt.Errorf("%w (the content the exchange displaced is kept at %s)", err, tmp), DisplacedAt: tmp}
+		err = errors.Join(fmt.Errorf("%w (the content the exchange displaced is kept at %s)", err, tmp), syncPublished())
+		return nil, &PublishedError{Err: err, DisplacedAt: tmp}
 	}
-	if displaced, err = os.ReadFile(backupPath); err != nil {
-		return nil, &PublishedError{Err: err, DisplacedAt: backupPath}
-	}
-	if err = at(crwdirSwapStepSyncDir); err == nil {
-		err = syncDir(filepath.Dir(resolved))
+	if err = at(crwdirSwapStepReadBackup); err == nil {
+		displaced, err = os.ReadFile(backupPath)
 	}
 	if err != nil {
+		err = errors.Join(err, syncPublished())
+		return nil, &PublishedError{Err: err, DisplacedAt: backupPath}
+	}
+	if err = syncPublished(); err != nil {
 		return displaced, &PublishedError{Err: err}
 	}
 	return displaced, nil
+}
+
+// crwdirSwapSyncDirs fsyncs every distinct directory that holds one of the paths, in the order they
+// are named. The publication makes two renames - the exchange of the temp file with the target, and
+// the no-replace move of the displaced file to the backup - and each one is durable only once its
+// directory is synced; the two usually share a directory, and a caller that keeps the backup
+// elsewhere makes them differ. Every directory is attempted even when an earlier one failed, and the
+// failures are joined, so one unwritable directory does not leave the other rename unreported.
+func crwdirSwapSyncDirs(syncDir func(string) error, paths ...string) error {
+	var err error
+	seen := make(map[string]bool, len(paths))
+	for _, path := range paths {
+		dir := filepath.Dir(path)
+		if seen[dir] {
+			continue
+		}
+		seen[dir] = true
+		err = errors.Join(err, syncDir(dir))
+	}
+	return err
 }
 
 // ConfigLock is an exclusive advisory lock on a target's sidecar: every CRW writer of config.toml
