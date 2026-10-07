@@ -602,11 +602,16 @@ func TestSpawnSlowOracleLoadIsChargedToStartup(t *testing.T) {
 }
 
 // c1 (CRW-938): the oracle is loaded eagerly, under the caller's environment, so that load is safe only while
-// the oracle's module initialization does no home I/O. This measures that against the real oracle tree: the
-// five homes point at a decoy directory, the handshake is answered, and nothing may have appeared under the
-// decoy afterwards. The pre-merge evaluation of head 2410f141 found the earlier isolation test could not show
-// this - it read the environment when an oracle function was called, which a later request's reset hides - so
-// this pins the property the eager load depends on instead of the environment at one moment.
+// the oracle's module initialization does no home I/O. This measures what the harness can observe of that,
+// against the real oracle tree: the five homes point at a decoy directory that does not exist yet, the
+// handshake is answered, and afterwards neither the decoy nor anything under it may exist. A load that needed
+// a home would have had to create one, and a load that read one would have had nothing to read.
+//
+// What this cannot observe is a read the oracle swallows: the harness sees a worker's filesystem and answers,
+// not its syscalls, so a failed read under a missing home leaves no trace. The claim the code makes is
+// therefore limited to what is measured here - the load creates nothing and needs no home - and the earlier
+// evaluation's objection that a function-call-time environment check cannot show this is why the check is on
+// the load itself rather than on the environment at one moment.
 func TestSpawnOracleLoadDoesNotTouchTheHomes(t *testing.T) {
 	requireNode(t)
 	hook := filepath.Join(DefaultOracleRoot, "subagent-config", "dist", "spawn-attach-hook.js")
@@ -614,6 +619,13 @@ func TestSpawnOracleLoadDoesNotTouchTheHomes(t *testing.T) {
 		t.Skipf("the CXC oracle tree is not extracted here: %v", err)
 	}
 	decoy := t.TempDir()
+	// The homes are named but do not exist, so a load that required one could not proceed silently.
+	homes := spawnHomePaths(decoy)
+	for _, home := range homes {
+		if _, err := os.Stat(home); err == nil {
+			t.Fatalf("%s exists before the worker starts", home)
+		}
+	}
 	pool := spawnFakePool(t, DefaultOracleRoot, append(os.Environ(), spawnDecoyEnv(decoy)...))
 	defer func() { _ = pool.Close() }()
 	got, err := pool.Call("null", "")
@@ -625,6 +637,22 @@ func TestSpawnOracleLoadDoesNotTouchTheHomes(t *testing.T) {
 	}
 	if files := spawnTree(t, decoy); len(files) != 0 {
 		t.Fatalf("the oracle's initialization wrote under the homes it was handed: %v", files)
+	}
+	// The load also did not need the homes to exist: a case after it still answers, and it still answers
+	// under the case's own root rather than reading the caller's decoy homes.
+	root := t.TempDir()
+	if err := PrepareRoot(root); err != nil {
+		t.Fatal(err)
+	}
+	reply, err := pool.Call(spawnMentionedFoldersCase(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(reply) != canonical([]any{"crw-dev"}) {
+		t.Fatalf("the case answered %s, want the mention the oracle names", reply)
+	}
+	if files := spawnTree(t, decoy); len(files) != 0 {
+		t.Fatalf("a case wrote under the decoy homes: %v", files)
 	}
 }
 
