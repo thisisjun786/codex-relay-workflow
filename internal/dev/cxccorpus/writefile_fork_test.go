@@ -57,7 +57,7 @@ func TestWriteFile_executes_under_concurrent_forks(t *testing.T) {
 		t.Fatal("no fork started before the writes")
 	}
 
-	const writers, copies = 4, 40
+	const writers, copies, maxWrites, minOverlap = 4, 40, 2000, 5
 	var (
 		wg   sync.WaitGroup
 		mu   sync.Mutex
@@ -67,7 +67,7 @@ func TestWriteFile_executes_under_concurrent_forks(t *testing.T) {
 		wg.Add(1)
 		go func(w int) {
 			defer wg.Done()
-			for n := 0; n < copies; n++ {
+			for n := 0; n < copies || (atomic.LoadInt64(&forksInWrite) < minOverlap && n < maxWrites); n++ {
 				path := filepath.Join(dir, fmt.Sprintf("w%d-%d", w, n))
 				atomic.AddInt64(&writesOpen, 1)
 				err := writeFile(path, []byte("#!/bin/sh\nexit 0\n"))
@@ -96,7 +96,9 @@ func TestWriteFile_executes_under_concurrent_forks(t *testing.T) {
 	overlap := atomic.LoadInt64(&forksInWrite)
 	close(stop)
 	forkers.Wait()
-	t.Logf("forks completed while a write was open: %d", overlap)
+	if overlap < minOverlap {
+		t.Errorf("only %d forks completed while a write was open (need %d): the writes never raced a fork", overlap, minOverlap)
+	}
 	for _, f := range fail {
 		t.Error(f)
 	}

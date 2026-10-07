@@ -25,7 +25,10 @@ import (
 // source program's size, so a host whose true(1) is the large BusyBox multi-call binary still
 // runs the exercise.
 const (
-	copyWriters    = 8
+	copyWriters = 8
+	// copyMinOverlap is how many forks must complete while a copy call is open before the run counts as
+	// exercised. Copies keep going past the iteration count, within copyByteBudget, until it is reached.
+	copyMinOverlap = 5
 	copyIterations = 40
 	copyForkers    = 4
 	// copyBudget is the issue's design budget for the exercise. It is measured and reported, never
@@ -82,7 +85,9 @@ func TestCopyBinarySurvivesConcurrentForks(t *testing.T) {
 	if result.Forked == 0 {
 		t.Fatalf("no forker started a process: the exercise did not establish the concurrent-fork pressure it needs")
 	}
-	t.Logf("forks completed while a copy was open: %d", result.Overlap)
+	if result.Overlap < copyMinOverlap {
+		t.Fatalf("only %d forks completed while a copy was open (need %d): the copies never raced a fork", result.Overlap, copyMinOverlap)
+	}
 	if result.Busy != 0 {
 		t.Fatalf("%d of the %d copies could not be run: ETXTBSY", result.Busy, result.Attempted)
 	}
@@ -219,7 +224,7 @@ func copyRace(t *testing.T, copyFile func(source, path string) error, source str
 	if iterations < 1 {
 		iterations = 1
 	}
-	attempted := copyWriters * iterations
+	var attemptedCopies int64
 	// The counters the writers and forkers add to are local and read only through atomic.LoadInt64
 	// when the result is built, so marshalling the result can never race a writer that the timeout
 	// left running.
@@ -230,7 +235,7 @@ func copyRace(t *testing.T, copyFile func(source, path string) error, source str
 		return copyRaceResult{
 			Busy:      atomic.LoadInt64(&busy),
 			Written:   atomic.LoadInt64(&written),
-			Attempted: attempted,
+			Attempted: atomic.LoadInt64(&attemptedCopies),
 			Forked:    atomic.LoadInt64(&forkStarts),
 		}
 	}
@@ -281,8 +286,9 @@ func copyRace(t *testing.T, copyFile func(source, path string) error, source str
 		writers.Add(1)
 		go func(writer int) {
 			defer writers.Done()
-			for n := int64(0); n < iterations; n++ {
+			for n := int64(0); n < iterations || (atomic.LoadInt64(&forksInCopy) < copyMinOverlap && atomic.LoadInt64(&written)+info.Size() <= copyByteBudget); n++ {
 				target := filepath.Join(root, fmt.Sprintf("copy-%d-%d", writer, n))
+				atomic.AddInt64(&attemptedCopies, 1)
 				atomic.AddInt64(&copiesOpen, 1)
 				err := copyFile(source, target)
 				atomic.AddInt64(&copiesOpen, -1)
