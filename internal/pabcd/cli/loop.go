@@ -308,6 +308,9 @@ func loopInit(args LoopCliArgs) (LoopCliResult, error) {
 // The round limit is a backstop for a holder that lives but never finishes: c2 fixes that a lock held
 // by another holder must answer rather than hang, so the wait cannot be unbounded.
 func loopInitAfterSessionLock(args LoopCliArgs, slug, objective, sessionID string, lockErr error) (LoopCliResult, error) {
+	// The wait's entry seam: this call runs only after the session lock's own acquisition budget ran out,
+	// so the seam marks exactly the post-budget moment a test synchronizes a competing publication at
+	// (CRW-646 d4).
 	if loopInitPlanWaitEntered != nil {
 		loopInitPlanWaitEntered()
 	}
@@ -439,9 +442,7 @@ func loopInitCreate(args LoopCliArgs, slug, objective string) (LoopCliResult, er
 	// stays alive but never finishes, so a reused pid cannot make init hang forever. At 200 ms a round
 	// the backstop is five minutes, far longer than any real init's write, so a slow but live winner
 	// still gets its plan seen and the loser still answers the criterion's refusal.
-	if loopInitPlanWaitEntered != nil {
-		loopInitPlanWaitEntered()
-	}
+	entered := false
 	for round := 0; round < loopInitPlanWaitLimit; round++ {
 		var refusal *LoopCliResult
 		warnings := []string{}
@@ -480,6 +481,12 @@ func loopInitCreate(args LoopCliArgs, slug, objective string) (LoopCliResult, er
 				return *refusal, nil
 			}
 			return loopInitAppendWarnings(LoopCliResult{Output: RenderLoopPlan(goalplan.ReadGoalplan(args.Cwd, slug), nil), Code: 0}, warnings), nil
+		}
+		if !entered {
+			entered = true
+			if loopInitPlanWaitEntered != nil {
+				loopInitPlanWaitEntered()
+			}
 		}
 		if result, present := loopInitPlanRefusal(args.Cwd, slug); present {
 			return result, nil

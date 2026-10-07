@@ -561,27 +561,25 @@ func TestLoopInitAnswersAlreadyExistsWhenTheSessionLockTimesOut(t *testing.T) {
 	// The competing init is a LIVE holder — this test process, whose pid the lock file names — that
 	// publishes the plan only after the loser's session-lock budget has run out. The loser must keep
 	// waiting for a live holder and then answer the criterion's refusal, not the raw lock error.
-	published := make(chan error, 1)
 	if err := os.WriteFile(state.StatePath(cwd, id)+".lock", []byte(strconv.Itoa(os.Getpid())), 0o666); err != nil {
 		t.Fatal(err)
 	}
-	loopInitAfterAbsenceCheck = func() {
-		go func() {
-			// Publish after the session lock's own budget (about 285 ms), so the loser has already run
-			// out of acquisition and is in its post-budget wait when the plan appears.
-			time.Sleep(400 * time.Millisecond)
-			plan := goalplan.BuildGoalplan(goalplan.NewGoalplanInput{Objective: "Bound objective"})
-			published <- goalplan.WriteGoalplan(cwd, plan)
-		}()
+	// The publication is synchronized at the post-budget entry (loopInitPlanWaitEntered), so it lands
+	// exactly when the loser gives up on acquisition and cannot be pulled earlier by a scheduler delay
+	// (CRW-646 d4).
+	publish := make(chan error, 1)
+	loopInitPlanWaitEntered = func() {
+		plan := goalplan.BuildGoalplan(goalplan.NewGoalplanInput{Objective: "Bound objective"})
+		publish <- goalplan.WriteGoalplan(cwd, plan)
 	}
-	t.Cleanup(func() { loopInitAfterAbsenceCheck = nil })
+	t.Cleanup(func() { loopInitPlanWaitEntered = nil })
 
 	result := loopRun(t, cwd, "init", "--objective", "Bound objective", "--session", id)
 	want := "loop init: a plan already exists at slug '" + slug + "' (use show/validate)"
 	if result.Code != 1 || result.Output != want {
 		t.Fatalf("got %d %q\nwant 1 %q", result.Code, result.Output, want)
 	}
-	if err := <-published; err != nil {
+	if err := <-publish; err != nil {
 		t.Fatalf("the competing init could not publish: %v", err)
 	}
 }
@@ -732,6 +730,7 @@ func TestLoopInitAnswersTheLockRecoveryWhenALiveWriterNeverPublishes(t *testing.
 // refused instead of followed, and neither the lock file nor a session file lands in the link's target.
 func TestLoopInitRefusesALinkedSessionsDirectory(t *testing.T) {
 	cwd := loopReadWorkspace(t)
+	gitInit(t, cwd) // so the refusal is the link, not the source-identity gate that follows it
 	target := filepath.Join(cwd, "elsewhere")
 	if err := os.MkdirAll(filepath.Join(target, "sessions"), 0o755); err != nil {
 		t.Fatal(err)
