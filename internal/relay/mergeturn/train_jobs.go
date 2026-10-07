@@ -268,6 +268,11 @@ func trainMatrixBlock(body string) ([]string, bool, error) {
 		}
 		if strategyAt < 0 {
 			if key == "strategy" && indent == 4 {
+				// a strategy whose value sits on its own line ("strategy: &base") hides its matrix
+				// from this reader, so it is refused rather than read as a job with no matrix
+				if value != "" {
+					return nil, false, errors.New("the workflow's job carries its strategy on the strategy: line, whose matrix this reader cannot read key by key")
+				}
 				strategyAt = i
 			}
 			continue
@@ -351,7 +356,13 @@ func trainJobBody(workflow, job string) (string, bool) {
 	end := 0
 	for _, line := range lines {
 		bare := trainStripComment(strings.TrimSuffix(line, "\n"))
-		if _, ok := trainJobKey(strings.TrimPrefix(bare, "  ")); ok && strings.HasPrefix(bare, "  ") && !strings.HasPrefix(bare, "   ") {
+		// the body ends at the next job key or at the first line at or above the jobs block's own
+		// indent, so a top-level property after the last job ("env:", "permissions:") is never read
+		// as part of that job
+		if strings.HasPrefix(bare, "  ") && !strings.HasPrefix(bare, "   ") {
+			break
+		}
+		if bare != "" && !strings.HasPrefix(bare, " ") {
 			break
 		}
 		end += len(line)

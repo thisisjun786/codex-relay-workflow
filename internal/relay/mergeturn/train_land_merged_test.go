@@ -617,7 +617,9 @@ func TestTrainJobReaderCountsAnchoredAndAliasedJobs(t *testing.T) {
 	train := w.openedTrain()
 	w.pr(900, "head-bundle", TrainLaneLabel)
 	w.forge.runs["run-1"] = runFor("head-bundle")
-	w.proof.workflow = strings.Replace(string(repository), "\n  gui:\n", "\n  gui: &gui_job\n  gui-copy: *gui_job\n", 1)
+	// an alias job whose value points at an anchored job defined beside it
+	withAlias := strings.Replace(string(repository), "\n  gui:\n", "\n  gui-extra: &gui_extra\n    runs-on: ubuntu\n  gui-copy: *gui_extra\n  gui:\n", 1)
+	w.proof.workflow = withAlias
 	if w.proof.workflow == string(repository) {
 		t.Fatal("the fixture did not add an aliased job")
 	}
