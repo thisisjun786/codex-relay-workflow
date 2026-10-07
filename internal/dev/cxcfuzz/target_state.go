@@ -9,7 +9,6 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"sort"
 	"strconv"
@@ -74,13 +73,38 @@ func stateGo(input any, env Env) (any, error) {
 	return maskTimestamps(stateAnswer(unreadable, s, string(written), nil), readDefaultedUpdatedAt(raw)), nil
 }
 
-// timestampText is an ISO-8601 instant with milliseconds, the shape a wall-clock stamp takes. Only a
-// value of exactly this shape under a write-stamped key is masked; every other timestamp-shaped value
-// (a persisted updatedAt, a recordedAt, a capturedAt, a review round's openedAt, a plan's
-// finalGate.updatedAt) is compared as stored, because masking it by shape would hide a persisted
-// timestamp the port rewrites to another instant — exactly the difference this target exists to catch
-// (CRW-708 generation 3, c8). The mask is by key, at the document's top level, not by text shape.
-var timestampText = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$`)
+// isTimestampText reports whether text is an ISO-8601 instant with milliseconds, the shape a
+// wall-clock stamp takes. Only a value of exactly this shape under a write-stamped key is masked;
+// every other timestamp-shaped value (a persisted updatedAt, a recordedAt, a capturedAt, a review
+// round's openedAt, a plan's finalGate.updatedAt) is compared as stored, because masking it by shape
+// would hide a persisted timestamp the port rewrites to another instant — exactly the difference this
+// target exists to catch (CRW-708 generation 3, c8). The mask is by key, at the document's top level,
+// not by text shape.
+//
+// It is a hand-written matcher rather than a compiled regexp, and in particular not a package-level
+// `var timestampText = regexp.MustCompile(...)`: that initializer runs in every dev binary that
+// imports this package, whether or not it fuzzes anything, and this package must do no work at
+// program start (c4; CRW-708 generation 5, d4).
+func isTimestampText(text string) bool {
+	// The reference layout is the whole matcher: a digit in it stands for any digit and every other
+	// byte stands for itself, which is exactly the pattern the mask needs.
+	const layout = "2006-01-02T15:04:05.000Z"
+	if len(text) != len(layout) {
+		return false
+	}
+	for i := 0; i < len(layout); i++ {
+		if layout[i] >= '0' && layout[i] <= '9' {
+			if text[i] < '0' || text[i] > '9' {
+				return false
+			}
+			continue
+		}
+		if text[i] != layout[i] {
+			return false
+		}
+	}
+	return true
+}
 
 // timestampPlaceholder stands where a write timestamp was. It holds no regexp metacharacter, because
 // ReplaceAllString reads $ in the replacement as a group reference (and ${TS} would expand to
@@ -149,7 +173,7 @@ func maskTopLevelTimestamp(text string) string {
 			continue
 		}
 		var stamp string
-		if json.Unmarshal(raw, &stamp) != nil || !timestampText.MatchString(stamp) {
+		if json.Unmarshal(raw, &stamp) != nil || !isTimestampText(stamp) {
 			return text
 		}
 		end := int(dec.InputOffset())
@@ -192,64 +216,136 @@ func readDefaultedUpdatedAt(raw []byte) bool {
 	return !isText
 }
 
-// stateCompare compares the answers. A rewritten file that drops a key the oracle kept is a data-loss
-// differ and is named first in the detail, as the issue asks. Both sides mask their write timestamps
-// before answering, so the comparison is a plain canonical one.
+// stateCompare compares the answers. A rewritten file that drops something the oracle kept is a
+// data-loss differ and is named first in the detail, as the issue asks. Both sides mask their write
+// timestamps before answering, so the comparison is a plain canonical one.
 func stateCompare(goOut, oracleOut any) Verdict {
 	if canonical(goOut) == canonical(oracleOut) {
 		return Verdict{Kind: Same}
 	}
-	if lost := stateLostKeys(goOut, oracleOut); len(lost) > 0 {
-		return Verdict{Kind: Differ, Detail: "data-loss: the Go rewrite drops " + strings.Join(lost, ", ")}
+	if lost := writtenLosses(writtenText(goOut), writtenText(oracleOut)); len(lost) > 0 {
+		return Verdict{Kind: Differ, Detail: "data-loss: the Go rewrite does not keep " + strings.Join(lost, ", ")}
 	}
 	return Verdict{Kind: Differ, Detail: "the read state or the rewritten bytes differ"}
 }
 
-// stateLostKeys names the keys of the oracle written state that the Go written state lacks, sorted.
-func stateLostKeys(goOut, oracleOut any) []string {
-	goWritten := stateWrittenKeys(goOut)
-	oracleWritten := stateWrittenKeys(oracleOut)
-	if goWritten == nil || oracleWritten == nil {
+// writtenText is an answer's published document text, or "" when the answer carries none (a refused
+// write publishes nothing, and nothing to lose is not a loss).
+func writtenText(out any) string {
+	text, _ := field(out, "written")
+	raw, ok := text.(string)
+	if !ok {
+		return ""
+	}
+	return raw
+}
+
+// writtenLosses names the paths at which the oracle's published document holds something the Go
+// document does not keep, sorted. A value is lost when the Go document omits an object key or an
+// array element the oracle kept, or replaces the code units of a string the oracle kept (a lone
+// surrogate the Go reader turns into U+FFFD). It walks the oracle's whole document rather than its
+// top level: a rewrite that loses one nested field, or the tail of a list, is the data loss this
+// target exists to catch (CRW-708 generation 5, d1). A value that merely differs — a moved number, a
+// changed string that is not the lossy form of the oracle's — is not a loss and stays a plain
+// difference. An unparseable document on either side yields no verdict here, so a refusal stays the
+// refusal the comparators name above.
+//
+// It is shared by the state and goalplan comparators: both compare a read-and-rewrite document, and
+// the loss has the same shape in both (the issue's own example is a plan's
+// workPhases[0].tasks[0].title).
+func writtenLosses(goText, oracleText string) []string {
+	if goText == "" || oracleText == "" {
+		return nil
+	}
+	goValue, err := decode(goText)
+	if err != nil {
+		return nil
+	}
+	oracleValue, err := decode(oracleText)
+	if err != nil {
 		return nil
 	}
 	lost := []string{}
-	for key := range oracleWritten {
-		if !goWritten[key] {
-			lost = append(lost, key)
-		}
-	}
+	collectWrittenLosses(goValue, oracleValue, "$", &lost)
 	sort.Strings(lost)
 	return lost
 }
 
-// stateWrittenKeys parses one answer written field as a JSON object and returns its keys, or nil.
-func stateWrittenKeys(out any) map[string]bool {
-	text, _ := field(out, "written")
-	raw, ok := text.(string)
-	if !ok || raw == "" {
-		return nil
+// collectWrittenLosses appends every path under which the oracle's value holds something the Go value
+// does not keep. path is the JSON path of the two values, rooted at "$". Only the two shapes the
+// criterion names count: a key or array element the Go document omits, and a string whose code units
+// it replaced. Two values of different kinds, or two different scalars, are a plain difference — the
+// comparators name those below — so this walk never turns an ordinary behaviour difference into a
+// data-loss claim.
+func collectWrittenLosses(goValue, oracleValue any, path string, lost *[]string) {
+	switch oracle := oracleValue.(type) {
+	case pyjson.Object:
+		goObject, ok := goValue.(pyjson.Object)
+		if !ok {
+			return
+		}
+		for _, item := range oracle {
+			child := item.Key
+			if path != "$" {
+				child = path + "." + item.Key
+			}
+			goChild, found := goObject.Lookup(item.Key)
+			if !found {
+				*lost = append(*lost, child)
+				continue
+			}
+			collectWrittenLosses(goChild, item.Value, child, lost)
+		}
+	case []any:
+		goArray, ok := goValue.([]any)
+		if !ok {
+			return
+		}
+		for i, item := range oracle {
+			child := path + "[" + strconv.Itoa(i) + "]"
+			if i >= len(goArray) {
+				*lost = append(*lost, child)
+				continue
+			}
+			collectWrittenLosses(goArray[i], item, child, lost)
+		}
+	case string:
+		goText, ok := goValue.(string)
+		if ok && lossyString(oracle, goText) {
+			*lost = append(*lost, path)
+		}
 	}
-	value, err := decode(raw)
-	if err != nil {
-		return nil
-	}
-	keys := map[string]bool{}
-	for _, item := range pyjsonFields(value) {
-		keys[item] = true
-	}
-	return keys
 }
 
-func pyjsonFields(value any) []string {
-	obj, ok := value.(pyjson.Object)
-	if !ok {
-		return nil
+// lossyString reports whether got is oracle with every unpaired UTF-16 surrogate replaced by U+FFFD,
+// which is what a decoder that refuses a lone surrogate leaves behind (the CRW-556 class this target
+// pins). A string that is equal, or that differs in any other way, is not a loss.
+func lossyString(oracle, got string) bool {
+	if oracle == got {
+		return false
 	}
-	out := make([]string, 0, len(obj))
-	for _, item := range obj {
-		out = append(out, item.Key)
+	var rebuilt strings.Builder
+	rebuilt.Grow(len(got))
+	for i := 0; i < len(oracle); {
+		if size := unpairedSurrogateAt(oracle, i); size > 0 {
+			rebuilt.WriteRune('�')
+			i += size
+			continue
+		}
+		rebuilt.WriteByte(oracle[i])
+		i++
 	}
-	return out
+	return rebuilt.String() == got
+}
+
+// unpairedSurrogateAt is the byte length of the WTF-8 encoding of an unpaired UTF-16 surrogate at
+// position i of s, or 0 when the bytes there are not one. A properly paired surrogate is the astral
+// code point's own four-byte UTF-8 form and is never matched here.
+func unpairedSurrogateAt(s string, i int) int {
+	if i+3 > len(s) || s[i] != 0xED || s[i+1] < 0xA0 || s[i+1] > 0xBF || s[i+2] < 0x80 || s[i+2] > 0xBF {
+		return 0
+	}
+	return 3
 }
 
 // stateTexts are the session documents the issue names: valid states and the mutations a stored file
@@ -317,18 +413,31 @@ func stateUnverified(rng *rand.Rand) string {
 	count := 63 + rng.Intn(4)
 	entries := make([]string, 0, count)
 	for i := 0; i < count; i++ {
-		claim := "r"
-		switch rng.Intn(4) {
-		case 0:
-			claim = strings.Repeat("\u00e9", 255+rng.Intn(3))
-		case 1:
-			claim = strings.Repeat("a", 254) + "\\ud83d\\ude00" + "b"
-		case 2:
-			claim = "\\ud800"
-		}
-		entries = append(entries, `{"agentId": "a`+strconv.Itoa(i)+`", "turnId": "t", "agentType": "executor", "attempts": 3, "receiptClaimed": "`+claim+`", "recordedAt": "2026-01-01T00:00:00Z", "resolvable": true}`)
+		entries = append(entries, `{"agentId": "a`+strconv.Itoa(i)+`", "turnId": "t", "agentType": "executor", "attempts": 3, "receiptClaimed": "`+stateReceiptClaim(rng)+`", "recordedAt": "2026-01-01T00:00:00Z", "resolvable": true}`)
 	}
 	return `{"phase": "P", "unverifiedSubagents": [` + strings.Join(entries, ", ") + `]}`
+}
+
+// stateReceiptClaim is one receiptClaimed value. The issue body names the UTF-16 boundary of the
+// reader's 256-unit cut: 255, 256 and 257 units ending in an emoji. The first two survive the cut
+// whole and the third is cut inside the surrogate pair, which leaves a lone high surrogate the
+// oracle keeps and the port writes as U+FFFD (CRW-708 generation 5, d2).
+func stateReceiptClaim(rng *rand.Rand) string {
+	const emoji = `\ud83d\ude00` // U+1F600, two UTF-16 units, written the way the file spells it
+	switch rng.Intn(6) {
+	case 0:
+		return strings.Repeat("a", 253) + emoji // 255 units: below the cut
+	case 1:
+		return strings.Repeat("a", 254) + emoji // 256 units: exactly the cut
+	case 2:
+		return strings.Repeat("a", 255) + emoji // 257 units: the cut splits the pair
+	case 3:
+		return `\ud800`
+	case 4:
+		return strings.Repeat("\u00e9", 255+rng.Intn(3))
+	default:
+		return "r"
+	}
 }
 
 // stateInterview is a state whose interview tracker sits near the 49-to-51 cap the issue names.

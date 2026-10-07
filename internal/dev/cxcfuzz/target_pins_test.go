@@ -78,6 +78,7 @@ func TestPinnedOracleAnswersMatchTheOracle(t *testing.T) {
 	for _, name := range shimTargets() {
 		t.Run(name, func(t *testing.T) {
 			requireOracleModule(t, name)
+			requireOracleCommands(t, name)
 			target, ok := Lookup(name)
 			if !ok {
 				t.Fatalf("%s is not registered", name)

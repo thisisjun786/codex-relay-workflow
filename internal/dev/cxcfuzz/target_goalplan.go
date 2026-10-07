@@ -5,10 +5,10 @@ package cxcfuzz
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"math/rand"
 	"os"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -18,6 +18,82 @@ import (
 
 // goalplanSlug is the plan every generated case writes and rewrites.
 const goalplanSlug = "rec-plan"
+
+// goalplanLinkedDir is the real directory a linked case stores its plan in; goalplanSlug is the
+// directory the readers use, so the case reaches the plan through a symlink that stays inside the case
+// root (CRW-708 generation 5, d2).
+const goalplanLinkedDir = "real-plan"
+
+// The deep shapes the generator draws and the bytes they may build up to. Each shape's total size is
+// computed from its per-item length before anything is built, so a deep shape can never pass
+// goalplanShapeByteCap (the operator's memory rule of 2026-10-06 18:0x).
+const (
+	goalplanMaxDuplicateIDs   = 256
+	goalplanMaxDependsOnChain = 512
+	goalplanShapeByteCap      = 64 << 10
+)
+
+// goalplanDuplicatePhase and goalplanDuplicateCriterion are one repetition of the duplicate-id shape,
+// and goalplanChainPhase is one link of the dependsOn chain; their lengths are the generator's
+// per-item byte estimate.
+const (
+	goalplanDuplicatePhase     = `{"id": "wp1", "title": "t", "tasks": [{"id": "t1", "title": "a"}, {"id": "t1", "title": "b"}]}`
+	goalplanDuplicateCriterion = `{"id": "c-1", "scenario": "s", "surface": "logic", "expectedEvidence": "", "capturedEvidence": "", "status": "open"}`
+	goalplanChainPhase         = `{"id": "wp000", "title": "t", "status": "pending", "dependsOn": ["wp000"]}`
+)
+
+// goalplanShapeItems is how many repetitions of a duplicate-id shape the generator builds: at least
+// two, so the shape really repeats an id, and never more than the byte cap allows or the shape's own
+// bound. The cap is applied to the count before anything is built, so a shape can never allocate past
+// goalplanShapeByteCap.
+func goalplanShapeItems(rng *rand.Rand, perItem, max int) int {
+	if perItem <= 0 {
+		perItem = 1
+	}
+	limit := goalplanShapeByteCap / perItem
+	if limit > max {
+		limit = max
+	}
+	if limit < 2 {
+		limit = 2
+	}
+	return 2 + rng.Intn(limit-1)
+}
+
+// goalplanDuplicateIDs is a plan whose work phases repeat an id, whose tasks repeat an id and whose
+// criteria repeat an id — the duplicate-id boundary the issue body names, which the small shapes only
+// reach one at a time (CRW-708 generation 5, d2).
+func goalplanDuplicateIDs(rng *rand.Rand) string {
+	phases := make([]string, 0, goalplanMaxDuplicateIDs)
+	for i := 0; i < goalplanShapeItems(rng, len(goalplanDuplicatePhase), goalplanMaxDuplicateIDs); i++ {
+		phases = append(phases, goalplanDuplicatePhase)
+	}
+	criteria := make([]string, 0, goalplanMaxDuplicateIDs)
+	for i := 0; i < goalplanShapeItems(rng, len(goalplanDuplicateCriterion), goalplanMaxDuplicateIDs); i++ {
+		criteria = append(criteria, goalplanDuplicateCriterion)
+	}
+	return `{"objective": "o", "slug": "rec-plan", "workPhases": [` + strings.Join(phases, ", ") + `], "criteria": [` + strings.Join(criteria, ", ") + `], "host": {"armed": false, "armedAt": null, "source": "none"}}`
+}
+
+// goalplanChainID is the id of link i of the deep dependsOn chain the issue body names.
+func goalplanChainID(i int) string { return fmt.Sprintf("wp%03d", i) }
+
+// goalplanDeepChain is a plan whose work phases form one dependsOn chain: phase i depends on phase
+// i-1, so a reader that walks dependencies meets a chain far deeper than the two links the small
+// shapes carry (CRW-708 generation 5, d2).
+func goalplanDeepChain(rng *rand.Rand) string {
+	perItem := len(goalplanChainPhase) + 1
+	links := goalplanShapeItems(rng, perItem, goalplanMaxDependsOnChain)
+	phases := make([]string, 0, links)
+	for i := 0; i < links; i++ {
+		dependency := ""
+		if i > 0 {
+			dependency = `, "dependsOn": ["` + goalplanChainID(i-1) + `"]`
+		}
+		phases = append(phases, `{"id": "`+goalplanChainID(i)+`", "title": "t", "status": "pending"`+dependency+`}`)
+	}
+	return `{"objective": "o", "slug": "rec-plan", "workPhases": [` + strings.Join(phases, ", ") + `], "criteria": [], "host": {"armed": false, "armedAt": null, "source": "none"}}`
+}
 
 // goalplanTarget is the goalplan read and rewrite (CRW-709, absorbed into CRW-708):
 // goalplan.ReadGoalplanDetailed and, under the write lock, goalplan.WriteGoalplan against the oracle
@@ -129,8 +205,8 @@ func goalplanCompare(goOut, oracleOut any) Verdict {
 		if oracleKind, ok := field(oracleOut, "written"); ok {
 			if goText, ok := goKind.(string); ok {
 				if oracleText, ok := oracleKind.(string); ok {
-					if lost := goalplanLostKeys(goText, oracleText); len(lost) > 0 {
-						return Verdict{Kind: Differ, Detail: "data-loss: the Go rewrite drops " + strings.Join(lost, ", ")}
+					if lost := writtenLosses(goText, oracleText); len(lost) > 0 {
+						return Verdict{Kind: Differ, Detail: "data-loss: the Go rewrite does not keep " + strings.Join(lost, ", ")}
 					}
 				}
 			}
@@ -139,35 +215,11 @@ func goalplanCompare(goOut, oracleOut any) Verdict {
 	return Verdict{Kind: Differ, Detail: "the read result or the rewritten bytes differ"}
 }
 
-// goalplanLostKeys names the top-level keys of the oracle written plan that the Go written plan lacks.
-func goalplanLostKeys(goText, oracleText string) []string {
-	goValue, err := decode(goText)
-	if err != nil {
-		return nil
-	}
-	oracleValue, err := decode(oracleText)
-	if err != nil {
-		return nil
-	}
-	goKeys := map[string]bool{}
-	for _, key := range pyjsonFields(goValue) {
-		goKeys[key] = true
-	}
-	lost := []string{}
-	for _, key := range pyjsonFields(oracleValue) {
-		if !goKeys[key] {
-			lost = append(lost, key)
-		}
-	}
-	sort.Strings(lost)
-	return lost
-}
-
 // goalplanPlans are the plan documents the issue names: schemaVersion 1 to 4 and 1.0 and 1e21,
 // duplicate ids, null and unknown fields, a task without a title, an empty planFiles sha256,
 // reviewRounds and their planFiles, a roundId near 2^53, a lone surrogate and a deep dependsOn.
 func goalplanPlans(rng *rand.Rand) string {
-	switch rng.Intn(16) {
+	switch rng.Intn(18) {
 	case 0:
 		return `{`
 	case 1:
@@ -198,6 +250,10 @@ func goalplanPlans(rng *rand.Rand) string {
 		return `{"objective": "o", "slug": "rec-plan", "workPhases": [{"id": "wp1", "title": "t", "dependsOn": ["wp2"]}], "criteria": [], "host": {"armed": false, "armedAt": null, "source": "none"}}`
 	case 14:
 		return `{"objective": "o\ud800", "slug": "rec-plan", "workPhases": [], "criteria": [], "host": {"armed": false, "armedAt": null, "source": "none"}}`
+	case 15:
+		return goalplanDuplicateIDs(rng)
+	case 16:
+		return goalplanDeepChain(rng)
 	default:
 		return goalplanPlan(rng)
 	}
@@ -224,9 +280,18 @@ func goalplanPlan(rng *rand.Rand) string {
 // goalplanGenerate builds one case: the plan bytes at the Go side's own path,
 // .crw/goalplans/rec-plan/goalplan.json. The document is stored once: the shim mirrors it to the
 // oracle's .codexclaw path, so the shrinker cannot drop one copy and leave the two sides reading
-// different documents.
+// different documents. One case in six instead stores the plan under goalplanLinkedDir and reads it
+// through a symlink at the slug: the linked slug directory the issue body names, whose target stays
+// inside the case root, so the harness's own scenario confinement accepts it (CRW-708 generation 5,
+// d2).
 func goalplanGenerate(rng *rand.Rand, size int) any {
 	text := goalplanPlans(rng)
+	if rng.Intn(6) == 0 {
+		return pyjson.Object{{Key: "fs", Value: []any{
+			pyjson.Object{{Key: "path", Value: filepath.Join(".crw", "goalplans", goalplanLinkedDir, "goalplan.json")}, {Key: "kind", Value: "file"}, {Key: "content", Value: text}},
+			pyjson.Object{{Key: "path", Value: filepath.Join(".crw", "goalplans", goalplanSlug)}, {Key: "kind", Value: "symlink"}, {Key: "target", Value: goalplanLinkedDir}},
+		}}}
+	}
 	return pyjson.Object{{Key: "fs", Value: []any{
 		pyjson.Object{{Key: "path", Value: filepath.Join(".crw", "goalplans", goalplanSlug, "goalplan.json")}, {Key: "kind", Value: "file"}, {Key: "content", Value: text}},
 	}}}

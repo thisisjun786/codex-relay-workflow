@@ -238,19 +238,25 @@ func (p *Pool) roundTrip(w *worker, request string, timeout time.Duration) (stri
 	}
 }
 
-// Close stops every idle worker.
 // lookPathIn resolves a command against an explicit environment's PATH, the way exec.LookPath does
-// against this process's own. An environment with no PATH falls back to the process PATH, as a
-// child would inherit.
+// against this process's own. Only an environment with no PATH entry at all falls back to the process
+// PATH, as a child would inherit it; a PATH entry that is present and empty is an empty search path,
+// where nothing is found. The two must not be conflated: the worker is launched with this very
+// environment, so a check that fell back to the process PATH for an explicitly empty one would accept
+// a dependency the worker cannot reach and the campaign would record the worker's failure as a
+// fuzzing difference instead of refusing the target before any case runs (CRW-708 generation 5, d5).
 func lookPathIn(env []string, command string) (string, error) {
-	path := ""
+	path, found := "", false
 	for _, entry := range env {
 		if value, ok := strings.CutPrefix(entry, "PATH="); ok {
-			path = value
+			path, found = value, true
 		}
 	}
-	if path == "" {
+	if !found {
 		return exec.LookPath(command)
+	}
+	if path == "" {
+		return "", exec.ErrNotFound
 	}
 	if strings.ContainsRune(command, filepath.Separator) {
 		return command, nil

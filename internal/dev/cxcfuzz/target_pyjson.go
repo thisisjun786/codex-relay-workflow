@@ -145,10 +145,42 @@ var pyjsonDocuments = []string{
 // spaces) has no pyjson.Options spelling and is not drawn.
 var pyjsonIndents = []int{4, 0, 2, 3, 8}
 
+// pyjsonRecursionDepth is the nesting the issue body names: Python's json module recurses once per
+// container it opens, so a document at this depth sits at the interpreter's default recursion limit
+// (1000). The generator draws depths around it, so both the last accepted and the first refused
+// document appear (CRW-708 generation 5, d2).
+const pyjsonRecursionDepth = 1000
+
+// pyjsonDocumentByteCap bounds the bytes one generated document may hold. The deepest document the
+// generator draws is a few kilobytes, so the cap is never met today; it is checked against the
+// computed size before anything is built, so a future change cannot turn the generator into a memory
+// hazard (the operator's memory rule of 2026-10-06 18:0x).
+const pyjsonDocumentByteCap = 64 << 10
+
+// pyjsonDeepDocument builds a document of depth nested arrays around one string scalar, or "" when
+// the bytes it would hold pass pyjsonDocumentByteCap. The size is computed before the document is
+// built, so an over-large shape is refused rather than allocated.
+func pyjsonDeepDocument(depth int) string {
+	const scalar = `""`
+	if depth < 1 {
+		return scalar
+	}
+	if bytes := 2*depth + len(scalar); bytes > pyjsonDocumentByteCap {
+		return ""
+	}
+	return strings.Repeat("[", depth) + scalar + strings.Repeat("]", depth)
+}
+
 // pyjsonGenerate builds one case: a boundary document or a small generated one, and the options.
 func pyjsonGenerate(rng *rand.Rand, size int) any {
 	text := pyjsonDocuments[rng.Intn(len(pyjsonDocuments))]
-	if rng.Intn(3) == 0 {
+	switch {
+	case rng.Intn(6) == 0:
+		// The nesting the issue body names, near Python's recursion limit.
+		if deep := pyjsonDeepDocument(pyjsonRecursionDepth - 3 + rng.Intn(7)); deep != "" {
+			text = deep
+		}
+	case rng.Intn(3) == 0:
 		text = pyjsonDocument(rng, 1+rng.Intn(3))
 	}
 	value := pyjson.Object{{Key: "text", Value: text}}

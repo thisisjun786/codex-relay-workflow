@@ -3,6 +3,7 @@
 package cxcfuzz
 
 import (
+	"math/rand"
 	"slices"
 	"strings"
 	"testing"
@@ -69,5 +70,68 @@ func TestPyjsonGeneratedIndentsAreExpressible(t *testing.T) {
 		if indent < 0 {
 			t.Fatalf("indent %d is not a json.tool spelling the port can print", indent)
 		}
+	}
+}
+
+// pyjsonNesting is the deepest container nesting of one document text, counting only the containers
+// the document actually opens.
+func pyjsonNesting(text string) int {
+	depth, deepest := 0, 0
+	inText, escaped := false, false
+	for _, r := range text {
+		switch {
+		case inText:
+			switch {
+			case escaped:
+				escaped = false
+			case r == '\\':
+				escaped = true
+			case r == '"':
+				inText = false
+			}
+		case r == '"':
+			inText = true
+		case r == '{' || r == '[':
+			depth++
+			if depth > deepest {
+				deepest = depth
+			}
+		case r == '}' || r == ']':
+			depth--
+		}
+	}
+	return deepest
+}
+
+// pyjsonRecursionBound and pyjsonDocumentByteBound are the two numbers the issue body names for the
+// generator's deep shape: Python's default recursion limit (1000), and a byte cap the generator must
+// respect by computing a shape's size before it builds one. The test states them itself so it pins the
+// requirement rather than the generator's own constants (CRW-708 generation 5, d2).
+const (
+	pyjsonRecursionBound    = 1000
+	pyjsonDocumentByteBound = 64 << 10
+)
+
+// The generator reaches the nesting the issue body names: a document nested near Python's recursion
+// limit, with its total bytes computed and capped before it is built (CRW-708 generation 5, d2).
+func TestPyjsonGenerateReachesTheRecursionBoundary(t *testing.T) {
+	rng := rand.New(rand.NewSource(708))
+	deepest, widest := 0, 0
+	for i := 0; i < 4000 && deepest < pyjsonRecursionBound; i++ {
+		input := pyjsonGenerate(rng, 1)
+		value, _ := field(input, "text")
+		text, _ := value.(string)
+		if n := pyjsonNesting(text); n > deepest {
+			deepest = n
+		}
+		if len(text) > widest {
+			widest = len(text)
+		}
+	}
+	if deepest < pyjsonRecursionBound {
+		t.Fatalf("the deepest generated document nests %d levels, want at least %d", deepest, pyjsonRecursionBound)
+	}
+	if widest > pyjsonDocumentByteBound {
+		t.Fatalf("a generated document holds %d bytes, past the %d-byte cap", widest, pyjsonDocumentByteBound)
 	}
 }

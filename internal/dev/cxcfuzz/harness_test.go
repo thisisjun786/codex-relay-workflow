@@ -144,6 +144,25 @@ func requireOracleModule(t *testing.T, target string) {
 	}
 }
 
+// requireOracleCommands skips a test that starts one of this issue's shims when a command that shim's
+// worker needs besides its interpreter is not on PATH. The pyjson shim drives python3's json.tool, so a
+// host with node but no python3 must skip that target's oracle replay exactly as a host with no node
+// skips every target: without this the test reports the worker's start-up failure instead of the
+// command the host is missing, which is a red test on a host that is merely short one optional tool
+// (CRW-708 generation 5, d3). The skip message names the missing command.
+func requireOracleCommands(t *testing.T, target string) {
+	t.Helper()
+	entry, ok := Lookup(target)
+	if !ok {
+		return
+	}
+	for _, required := range entry.Oracle.Requires {
+		if _, err := exec.LookPath(required); err != nil {
+			t.Skipf("the oracle worker command %q is not on PATH: %v", required, err)
+		}
+	}
+}
+
 // A campaign over the echo target with the committed shim agrees everywhere.
 func TestCampaignEchoAgreesWithTheShim(t *testing.T) {
 	requireNode(t)

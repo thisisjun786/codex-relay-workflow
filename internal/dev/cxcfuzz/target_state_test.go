@@ -3,6 +3,7 @@
 package cxcfuzz
 
 import (
+	"math/rand"
 	"os"
 	"path/filepath"
 	"slices"
@@ -200,6 +201,99 @@ func TestMaskTopLevelTimestampLeavesEverythingElse(t *testing.T) {
 	} {
 		if got := maskTopLevelTimestamp(text); got != text {
 			t.Errorf("maskTopLevelTimestamp(%q) = %q, want it unchanged", text, got)
+		}
+	}
+}
+
+// stateAnswerWith is one state answer built from the documents a test gives, masked the way stateGo
+// masks them.
+func stateAnswerWith(stateText, writtenText string) any {
+	return maskTimestamps(pyjson.Object{
+		{Key: "unreadable", Value: false},
+		{Key: "state", Value: stateText},
+		{Key: "written", Value: writtenText},
+	}, false)
+}
+
+// A loss below the top level is data-loss too: a key the oracle's written document keeps and the Go
+// document drops at depth is named at its path, not reported as a plain difference (CRW-708
+// generation 5, d1).
+func TestStateCompareSeesANestedLoss(t *testing.T) {
+	document := `{"phase": "P", "unverifiedSubagents": [{"agentId": "a", "recordedAt": "2026-01-01T00:00:00.000Z"}]}`
+	dropped := `{"phase": "P", "unverifiedSubagents": [{"agentId": "a"}]}`
+	verdict := stateCompare(stateAnswerWith(dropped, dropped), stateAnswerWith(document, document))
+	if verdict.Kind != Differ {
+		t.Fatalf("a nested loss compared %v (%s), want Differ", verdict.Kind, verdict.Detail)
+	}
+	if !strings.Contains(verdict.Detail, "data-loss") || !strings.Contains(verdict.Detail, "unverifiedSubagents[0].recordedAt") {
+		t.Fatalf("a nested loss was not named as data-loss at its path: %q", verdict.Detail)
+	}
+}
+
+// The string the port replaces is a loss as well: the pinned lone-surrogate case writes the oracle's
+// surrogate as U+FFFD, and the comparison must call that data-loss rather than a plain difference
+// (CRW-708 generation 5, d1).
+func TestStateCompareSeesAReplacedStringAsLoss(t *testing.T) {
+	oracle := stateAnswerWith(`{"phase": "P", "slug": "\ud800"}`, `{"phase": "P", "slug": "\ud800"}`)
+	goAnswer := stateAnswerWith(`{"phase": "P", "slug": "\ufffd"}`, `{"phase": "P", "slug": "\ufffd"}`)
+	verdict := stateCompare(goAnswer, oracle)
+	if verdict.Kind != Differ || !strings.Contains(verdict.Detail, "data-loss") || !strings.Contains(verdict.Detail, "slug") {
+		t.Fatalf("a replaced surrogate compared %v (%s), want a data-loss naming slug", verdict.Kind, verdict.Detail)
+	}
+}
+
+// The controls the criterion names: an identical rewrite is Same, and a value that merely moved is a
+// plain difference rather than data-loss (CRW-708 generation 5, d1).
+func TestStateCompareKeepsAPlainDifferencePlain(t *testing.T) {
+	same := stateAnswerWith(`{"phase": "P", "slug": "s"}`, `{"phase": "P", "slug": "s"}`)
+	if verdict := stateCompare(same, same); verdict.Kind != Same {
+		t.Fatalf("an identical rewrite compared %v (%s)", verdict.Kind, verdict.Detail)
+	}
+	moved := stateAnswerWith(`{"phase": "P", "slug": "s"}`, `{"phase": "P", "slug": "s"}`)
+	other := stateAnswerWith(`{"phase": "P", "slug": "t"}`, `{"phase": "P", "slug": "t"}`)
+	verdict := stateCompare(other, moved)
+	if verdict.Kind != Differ || strings.Contains(verdict.Detail, "data-loss") {
+		t.Fatalf("a moved value compared %v (%s), want a plain difference", verdict.Kind, verdict.Detail)
+	}
+}
+
+// The generator reaches the receiptClaimed boundary the issue body names: 255, 256 and 257 UTF-16
+// units ending in an emoji, so the reader's 256-unit cut falls inside the pair at 257 units (CRW-708
+// generation 5, d2).
+func TestStateGenerateReachesTheReceiptClaimBoundary(t *testing.T) {
+	seen := map[int]bool{}
+	rng := rand.New(rand.NewSource(708))
+	for i := 0; i < 4000 && len(seen) < 3; i++ {
+		text := stateTexts(rng)
+		for _, units := range []int{255, 256, 257} {
+			if strings.Contains(text, `"receiptClaimed": "`+strings.Repeat("a", units-2)+`\ud83d\ude00"`) {
+				seen[units] = true
+			}
+		}
+	}
+	for _, units := range []int{255, 256, 257} {
+		if !seen[units] {
+			t.Errorf("no generated state holds a receiptClaimed of %d UTF-16 units ending in an emoji", units)
+		}
+	}
+}
+
+// The state seed cases the issue body names are present and replay Node-free: a truncated
+// receiptClaimed rewrite and the 65th verdict (CRW-708 generation 5, d6).
+func TestStateSeedCasesCoverTheNamedRegressions(t *testing.T) {
+	cases, err := LoadCases(filepath.Join("testdata", "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"truncated-receipt-claimed", "sixty-fifth-verdict"} {
+		found := false
+		for _, c := range cases {
+			if c.Name == name {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("the state seed case %q the issue body names is missing", name)
 		}
 	}
 }
