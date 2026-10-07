@@ -130,8 +130,8 @@ outside those directories.
 
 A record answers a run only when every key above matches and the record is sound: its digest
 is valid, it is sealed, it was made from the plan the commit's table gives (planDigest), it
-matches that plan one job and one step at a time, every step passed (or is a not-applicable
-step the plan marks as such), its result equals the result its steps recompute to, and it has
+matches that plan one job and one step at a time (name, command and scope), every job and
+step passed (or is a not-applicable step the plan marks as such), its result equals the result its steps recompute to, and it has
 no pinMismatch. Any other record is not reused: the engine runs the table again and says why.
 
 ### Reuse
