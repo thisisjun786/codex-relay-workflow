@@ -138,6 +138,11 @@ func (s *Scheduler) IntegrateBatch(ctx context.Context, in IntegrationBatchInput
 		return out, nil
 	}
 	out.NewHead, out.Verification, out.VerificationDigest = settled.head, settled.record, settled.digest
+	// the coordinator-epoch fence is checked again right before the branch moves: verification can take long, and a
+	// session that lost its epoch in the meantime must not move the branch (finding d3)
+	if err := s.IntegrationWrite(ctx, in.Plan, in.Actor, func(context.Context) error { return nil }); err != nil {
+		return out, err
+	}
 	if err := deps.Update(ctx, in.Checkout, in.IntegrationRef, settled.head, old); err != nil {
 		return out, refuse(contract.RefusalStaleMarkContext, "%s moved while the merged tree was being verified (the batch read %s): read it again and run the batch again", in.IntegrationRef, old)
 	}

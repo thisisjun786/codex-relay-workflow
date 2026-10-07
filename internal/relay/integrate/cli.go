@@ -179,6 +179,12 @@ func refuse(reason contract.RefusalReason, format string, args ...any) error {
 // the update instead of being overwritten.
 func updateRef(ctx context.Context, checkout, ref, newCommit, oldCommit string) error {
 	cmd := exec.CommandContext(ctx, "git", "-C", checkout, "update-ref", "refs/heads/"+ref, newCommit, oldCommit)
+	// inherited GIT_* variables would redirect the write to another repository (finding d4)
+	for _, kv := range os.Environ() {
+		if !strings.HasPrefix(kv, "GIT_") {
+			cmd.Env = append(cmd.Env, kv)
+		}
+	}
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
