@@ -51,6 +51,13 @@ func TestGitHubPostGuardReadsAShellProgramWithAnOption(t *testing.T) {
 		"bash -o errexit post.sh",
 		"sh -o errexit post.sh",
 		"bash -O extglob post.sh",
+		"bash -oerrexit post.sh",
+		"bash -Oextglob post.sh",
+		"zsh -oerrexit post.sh",
+		"bash --rcfile=x post.sh",
+		"bash --init-file=x post.sh",
+		"bash --posix post.sh",
+		"bash -p post.sh",
 		"bash --rcfile clean.sh post.sh",
 		"bash --init-file clean.sh post.sh",
 		"bash -- post.sh",
@@ -61,6 +68,8 @@ func TestGitHubPostGuardReadsAShellProgramWithAnOption(t *testing.T) {
 	for _, command := range []string{
 		"bash -o errexit clean.sh",
 		"bash -O extglob clean.sh",
+		"bash -oerrexit clean.sh",
+		"zsh -oerrexit clean.sh",
 		"bash --rcfile clean.sh clean.sh",
 	} {
 		githubPostWant(t, githubPostShell(t, cwd, command), command, "", "")

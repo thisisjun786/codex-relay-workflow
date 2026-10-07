@@ -596,7 +596,10 @@ func githubPostScriptCommand(tokens []string, cwd string) (githubPostSite, bool)
 	// ('timeout' 30 bash post.sh, 'bash' post.sh, (bash post.sh)) is the word the shell runs.
 	normal := make([]string, len(tokens))
 	for i, token := range tokens {
-		normal[i] = strings.TrimRight(githubPostNormal(token), ")}")
+		// A grouping close is stripped from the token as written, before quote removal, so a quoted operand
+		// keeps it: 'evil.sh)' ends in a quote and names the file evil.sh), while the post.sh of
+		// (bash post.sh) ends in the grouping close and is post.sh.
+		normal[i] = githubPostNormal(strings.TrimRight(token, ")}"))
 	}
 	rest := shellVerbSkipWrappers(normal)
 	for len(rest) > 0 && rest[0] == "--" {
@@ -797,9 +800,13 @@ func githubPostShellValueOption(w string) bool {
 	if strings.HasPrefix(w, "--") {
 		return w == "--rcfile" || w == "--init-file"
 	}
-	// A single-dash bundle: o and O take the next word as their value, alone or inside a bundle
-	// (bash -o errexit, bash -eo errexit).
-	return strings.ContainsAny(w, "oO")
+	// A single-dash bundle: o and O take their value from the next word only when they end the bundle
+	// (bash -o errexit, bash -eo errexit). With more of the bundle after them the value is attached
+	// (zsh -oerrexit post.sh, zsh -Oextglob post.sh), so the next word is still the program file.
+	if len(w) < 2 || w[0] != '-' && w[0] != '+' || w[1] == '-' {
+		return false
+	}
+	return strings.ContainsAny(w[len(w)-1:], "oO")
 }
 
 // githubPostJudgeScript reads the program file and judges it: a file it cannot read is refused at the file
@@ -859,11 +866,12 @@ func githubPostScriptBadLine(content, cwd string) (int, bool) {
 }
 
 // githubPostReadScriptFile reads a directly executed script (D2). The path is joined with the payload's
-// working directory. A regular file whose first 4 KiB hold a NUL byte is a binary the shell does not run as
-// a script, and it is the one case that is not a target. Any other regular file is text the shell runs with
-// sh, and its whole text (at most 1 MiB) is returned. A name the guard cannot read as a text script - an
-// absent file, a directory, a FIFO, a file over 1 MiB, a read error - reports unreadable, which the caller
-// refuses at the name, exactly as generation 1 refuses a shell program file it cannot read.
+// working directory. The file is a script when it starts with #! or has no NUL byte in its first 4 KiB;
+// only a file that does neither (a binary) is not a target, because a #! script runs under its interpreter
+// whatever bytes follow the shebang line. Its whole text (at most 1 MiB) is returned. A name the guard
+// cannot read as a text script - an absent file, a directory, a FIFO, a file over 1 MiB, a read error -
+// reports unreadable, which the caller refuses at the name, exactly as generation 1 refuses a shell
+// program file it cannot read.
 func githubPostReadScriptFile(name, cwd string) (content string, binary, unreadable bool) {
 	path := name
 	if !filepath.IsAbs(path) {
@@ -878,7 +886,8 @@ func githubPostReadScriptFile(name, cwd string) (content string, binary, unreada
 	path = filepath.Clean(path)
 	// A name that is not a regular file is refused before any open: a FIFO would wait for a writer, and an
 	// absent file, a directory or a link to nothing is not a text script the guard can rule out.
-	if st, err := os.Stat(path); err != nil || !st.Mode().IsRegular() {
+	st, err := os.Stat(path)
+	if err != nil || !st.Mode().IsRegular() {
 		return "", false, true
 	}
 	file, err := os.Open(path)
@@ -892,8 +901,12 @@ func githubPostReadScriptFile(name, cwd string) (content string, binary, unreada
 		return "", false, true
 	}
 	head = head[:n]
-	if bytes.IndexByte(head, 0) >= 0 {
+	if bytes.IndexByte(head, 0) >= 0 && !bytes.HasPrefix(head, []byte("#!")) {
 		return "", true, false
+	}
+	// The handle must be the file the path names now, as generation 1's open-handle checks require.
+	if now, err := os.Stat(path); err != nil || !os.SameFile(st, now) {
+		return "", false, true
 	}
 	rest, err := io.ReadAll(io.LimitReader(file, githubPostMaxFileBytes+1))
 	if err != nil || int64(len(head))+int64(len(rest)) > githubPostMaxFileBytes {
