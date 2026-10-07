@@ -77,7 +77,7 @@ type policyWriteBody struct {
 	Registered *policyWriteDigest `json:"registered,omitempty"`
 	Applied    string             `json:"applied"`
 	Actions    []string           `json:"actions"`
-	Backup     string             `json:"backup,omitempty"`
+	Backup     pathText           `json:"backup,omitempty"`
 	Warnings   []string           `json:"warnings,omitempty"`
 }
 
@@ -92,7 +92,7 @@ type policyWriteErrorBody struct {
 	Restored         bool     `json:"restored,omitempty"`
 	FileDigest       string   `json:"fileDigest,omitempty"`
 	RegisteredDigest string   `json:"registeredDigest,omitempty"`
-	Backup           string   `json:"backup,omitempty"`
+	Backup           pathText `json:"backup,omitempty"`
 	Recovery         string   `json:"recovery,omitempty"`
 	Step             string   `json:"step,omitempty"`
 	// Warnings carry what the outcome could not establish: a restore whose directory was not synced,
@@ -194,7 +194,7 @@ func policyWriteHandler(_ *Env, r *http.Request) (Response, error) {
 			Registered: registered,
 			Applied:    result.Applied,
 			Actions:    emptyIfNil(result.Actions),
-			Backup:     result.Backup,
+			Backup:     pathText(result.Backup),
 			Warnings:   result.Warnings,
 		}}, nil
 	case policystore.WriteStaleDigest:
@@ -208,15 +208,15 @@ func policyWriteHandler(_ *Env, r *http.Request) (Response, error) {
 		// restore could not establish (a directory that was not synced, say) and the backup names the
 		// bytes that were put back.
 		return Response{Status: http.StatusBadGateway, Body: policyWriteErrorBody{
-			Error: "register_failed", Restored: result.Restored, Backup: result.Backup,
+			Error: "register_failed", Restored: result.Restored, Backup: pathText(result.Backup),
 			Warnings: result.Warnings, Errors: emptyIfNil(result.Errors)}}, nil
 	case policystore.WriteRecoveryNeeded:
 		return Response{Status: http.StatusInternalServerError, Body: policyWriteErrorBody{
 			Error: "recovery_needed", FileDigest: result.FileDigest, RegisteredDigest: result.RegisteredDigest,
-			Backup: result.Backup, Recovery: result.Recovery, Errors: emptyIfNil(result.Errors)}}, nil
+			Backup: pathText(result.Backup), Recovery: result.Recovery, Errors: emptyIfNil(result.Errors)}}, nil
 	case policystore.WriteCancelled:
 		return Response{Status: http.StatusInternalServerError, Body: policyWriteErrorBody{
-			Error: "cancelled", Step: result.Step, Backup: result.Backup, FileDigest: result.FileDigest}}, nil
+			Error: "cancelled", Step: result.Step, Backup: pathText(result.Backup), FileDigest: result.FileDigest}}, nil
 	case policystore.WriteFailed:
 		return Response{Status: http.StatusInternalServerError, Body: policyWriteErrorBody{
 			Error: "failed", Reason: firstReason(result.Errors)}}, nil

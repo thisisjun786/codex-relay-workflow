@@ -12,7 +12,21 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
+
+// pathText is a filesystem path in a response body. A path whose bytes are not UTF-8 is spelled by
+// the installer as a surrogate escape (os.fsdecode: the byte becomes \\udcXX), and encoding/json
+// would replace that surrogate with U+FFFD, naming a file that does not exist. This type keeps the
+// installer's spelling on the wire, so a caller that follows an answer's path reaches the file the
+// write really made. pyjson writes a surrogate as its \\u escape, which is valid JSON and is what
+// the record itself carries.
+type pathText string
+
+func (p pathText) MarshalJSON() ([]byte, error) {
+	return pyjson.Encode(string(p), pyjson.Options{Unicode: true})
+}
 
 // The decided answers this file enforces. Every response the Handler writes carries the three
 // headers below; an /api/ response is never cached; no response carries a CORS allow header,

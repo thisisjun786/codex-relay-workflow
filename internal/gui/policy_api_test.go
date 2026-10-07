@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/policystore"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 )
 
 // policyText is a policy with two roles, an allowlist and one exception.
@@ -709,17 +710,21 @@ func TestPolicyWriteReportsTheRestoreWarning(t *testing.T) {
 	}, unavailablePolicyRunning)
 	previous := policyWriteSeams
 	calls := 0
-	policyWriteSeams.Publish = func(_ context.Context, path string, data []byte, mode os.FileMode) (bool, error) {
+	policyWriteSeams.Swap = func(_ context.Context, path string, expected, next []byte, mode os.FileMode) ([]byte, error) {
 		calls++
-		// The GUI package cannot reach policystore's unexported publishPolicy, so the seam writes the
+		// The GUI package cannot reach policystore's unexported swapPolicy, so the seam exchanges the
 		// bytes itself: the first call publishes the candidate, the second restores the original.
-		if err := os.WriteFile(path, data, mode.Perm()); err != nil {
-			return false, err
+		displaced, err := os.ReadFile(path)
+		if err != nil {
+			return nil, err
+		}
+		if err := os.WriteFile(path, next, mode.Perm()); err != nil {
+			return nil, err
 		}
 		if calls == 2 {
-			return true, errors.New("the directory could not be synced")
+			return displaced, errors.New("the directory could not be synced")
 		}
-		return true, nil
+		return displaced, nil
 	}
 	t.Cleanup(func() { policyWriteSeams = previous })
 	payload := "{\"expectedDigest\":\"" + digestOf(policyWritableText) + "\",\"change\":{\"kind\":\"removeException\",\"id\":\"legacy\"}}"
@@ -742,4 +747,113 @@ func TestPolicyWriteReportsTheRestoreWarning(t *testing.T) {
 	if body["backup"] == nil || body["backup"] == "" {
 		t.Fatalf("the restore does not name the backup: %v", body)
 	}
+}
+
+// TestPolicyWriteNamesAnUnspellableBackupWithItsBytes is the pre-merge evaluation's finding: a policy
+// whose filename is not UTF-8 has a backup whose name holds the same byte. The installer spells such
+// a byte as its surrogate escape, and the response must spell it the same way; the standard JSON
+// encoder would write U+FFFD, naming a file that does not exist, so a caller following the answer
+// could not recover.
+func TestPolicyWriteNamesAnUnspellableBackupWithItsBytes(t *testing.T) {
+	root := t.TempDir()
+	codexHome := filepath.Join(root, ".codex")
+	if err := os.MkdirAll(codexHome, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", root)
+	t.Setenv("CODEX_HOME", codexHome)
+	t.Setenv("XDG_STATE_HOME", filepath.Join(root, "state"))
+	t.Setenv("CRW_CONFIG", filepath.Join(root, "crw-config.json"))
+	raw := append([]byte("policy"), 0x80)
+	raw = append(raw, []byte(".json")...)
+	real := filepath.Join(root, string(raw))
+	if err := os.WriteFile(real, []byte(policyWritableText), 0o644); err != nil {
+		t.Skipf("this filesystem refuses a non-UTF-8 name: %v", err)
+	}
+	surrogate := string([]byte{0xED, 0xB2, 0x80})
+	escaped := filepath.Join(root, "policy"+surrogate+".json")
+	policySurrogateRecord(t, codexHome, escaped, digestOf(policyWritableText))
+	policyWriteSeamsFor(t, func(_ context.Context, path string) policystore.RegisterAnswer {
+		encoded, ok := pyvalue.FSEncode(path)
+		if !ok {
+			t.Fatalf("the path cannot be encoded to bytes: %q", path)
+		}
+		body, err := os.ReadFile(encoded)
+		if err != nil {
+			t.Fatal(err)
+		}
+		policySurrogateRecord(t, codexHome, path, digestOf(string(body)))
+		return policystore.RegisterAnswer{ExitCode: 0, Stdout: []byte("{\"outcome\": \"record_updated\"}")}
+	}, unavailablePolicyRunning)
+	payload := "{\"expectedDigest\":\"" + digestOf(policyWritableText) + "\",\"change\":{\"kind\":\"removeException\",\"id\":\"legacy\"}}"
+	// The raw body is read rather than decoded through a map: Go's decoder turns a \\udcXX escape
+	// into U+FFFD itself, which would hide the very corruption this test pins.
+	recorder := request(policyServer(t), http.MethodPost, "/api/policy", guardHost, payload, writeHeaders())
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("POST /api/policy: %d %s", recorder.Code, recorder.Body.String())
+	}
+	bodyText := recorder.Body.String()
+	if strings.ContainsRune(bodyText, 0xfffd) {
+		t.Fatalf("the answer spells the path as a replacement character: %s", bodyText)
+	}
+	if !strings.Contains(bodyText, `\udc80`) {
+		t.Fatalf("the answer does not spell the byte as its surrogate escape: %s", bodyText)
+	}
+	// The escape is read from the raw body: Go's map decoder turns \udc80 into U+FFFD itself, which
+	// would name a file that does not exist and hide the corruption this test pins.
+	const prefix = `"backup":"`
+	start := strings.Index(bodyText, prefix)
+	if start < 0 {
+		t.Fatalf("the answer names no backup: %s", bodyText)
+	}
+	rest := bodyText[start+len(prefix):]
+	end := strings.Index(rest, `"`)
+	if end < 0 {
+		t.Fatalf("the backup path is not terminated: %s", bodyText)
+	}
+	backup := rest[:end]
+	if !strings.Contains(backup, `\udc80`) {
+		t.Fatalf("the backup path is not spelled as its surrogate escape: %q", backup)
+	}
+	// Following the answer must reach the file the write really made: the escape stands for 0x80.
+	encoded := strings.Replace(backup, `\udc80`, string([]byte{0x80}), 1)
+	original, err := os.ReadFile(encoded)
+	if err != nil {
+		t.Fatalf("the answer's backup path names no readable file: %v", err)
+	}
+	if string(original) != policyWritableText {
+		t.Fatal("the answer's backup does not hold the original bytes")
+	}
+}
+
+// policySurrogateRecord writes the wiring record naming a surrogate-escaped policy path, the way a
+// Python writer spells a byte that is not UTF-8, so the GUI tests can drive a policy whose filename
+// is not UTF-8.
+func policySurrogateRecord(t *testing.T, codexHome, escaped, digest string) {
+	t.Helper()
+	document := "{\n" +
+		"  \"recordVersion\": 2,\n" +
+		"  \"owner\": \"plugin\",\n" +
+		"  \"serverName\": \"codex-thread-bridge\",\n" +
+		"  \"bridgeExecutable\": \"/usr/local/bin/codex-thread-bridge\",\n" +
+		"  \"args\": [],\n" +
+		"  \"executionPolicy\": {\"path\": \"" + surrogateJSONEscape(escaped) + "\", \"digest\": \"" + digest + "\"}\n" +
+		"}\n"
+	if err := os.WriteFile(filepath.Join(codexHome, "crw-bridge-mcp.json"), []byte(document), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// surrogateJSONEscape spells a WTF-8 surrogate (ED B2 80) as the JSON escape a Python writer emits.
+func surrogateJSONEscape(value string) string {
+	out := make([]byte, 0, len(value))
+	for i := 0; i < len(value); i++ {
+		if value[i] == 0xED && i+2 < len(value) && value[i+1] == 0xB2 && value[i+2] == 0x80 {
+			out = append(out, []byte("\\udc80")...)
+			i += 2
+			continue
+		}
+		out = append(out, value[i])
+	}
+	return string(out)
 }
