@@ -33,6 +33,7 @@ var (
 	ErrUnknownAnswer     = errors.New("decisions: the answer names no option of the record")
 	ErrAuthorityGrade    = errors.New("decisions: the answer's authority is above the decision's")
 	ErrAnswerState       = errors.New("decisions: the record is not in a state that takes an answer")
+	ErrAnswerNeedsOption = errors.New("decisions: a relationship-blocking decision is answered with an option")
 )
 
 // authorityRank orders the answer classes user > delegated-management > parent. The record's
@@ -57,7 +58,10 @@ type Answer struct {
 	By     string
 	Via    string
 	// Authority is the class the answer cites. Its kind may be empty, which is the record's own
-	// class; a non-empty kind must be one of the vocabulary and must not outrank the record's.
+	// class when the record states no requirement; a non-empty kind must be one of the vocabulary
+	// and must be the record's own class. A record that names a class takes an answer of that
+	// class: an answer path that requires the class to be stated (decision-answer, for the user and
+	// delegated-management grades) refuses an answer that leaves it empty.
 	Authority Authority
 }
 
@@ -107,6 +111,11 @@ func ValidateAnswer(record Record, answer Answer) (Record, error) {
 	if option != "" && !ids[option] {
 		return Record{}, fmt.Errorf("%w: %q", ErrUnknownAnswer, option)
 	}
+	// A decision that blocks a relationship is applied by the reply its chosen option makes, so
+	// free text alone states no choice: the option is what names the reply the relay must match.
+	if decisionBlocksRelationship(record) && option == "" {
+		return Record{}, fmt.Errorf("%w: %q is a relationship-blocking decision", ErrAnswerNeedsOption, record.DecisionID)
+	}
 	required := strings.TrimSpace(record.Authority.Kind)
 	kind := strings.TrimSpace(answer.Authority.Kind)
 	if kind == "" {
@@ -129,6 +138,11 @@ func ValidateAnswer(record Record, answer Answer) (Record, error) {
 		if kind == AuthorityParent && strings.TrimSpace(answer.Authority.Ref) == "" {
 			return Record{}, fmt.Errorf("%w: a parent-class answer names its authority ref", ErrUnknownAuthority)
 		}
+		// The ref the answer cites is the ref the record holds: an answer that cites another ref
+		// answers a different authority than the one the question was raised under.
+		if held := strings.TrimSpace(record.Authority.Ref); held != "" && strings.TrimSpace(answer.Authority.Ref) != held {
+			return Record{}, fmt.Errorf("%w: the answer cites ref %q and the record holds %q", ErrAuthorityGrade, answer.Authority.Ref, record.Authority.Ref)
+		}
 	}
 	answered, err := answerTransition(record)
 	if err != nil {
@@ -141,9 +155,9 @@ func ValidateAnswer(record Record, answer Answer) (Record, error) {
 	if option != "" && text == "" {
 		answered.AnswerText = option
 	}
-	if kind != "" {
-		answered.Authority = Authority{Kind: kind, Ref: answer.Authority.Ref}
-	}
+	// The answer cites a class; it never rewrites the authority of the question it answers. The
+	// stored record keeps the class and the ref it was raised with, so what a question required is
+	// read back unchanged whatever an answer cited.
 	return answered, nil
 }
 
@@ -157,13 +171,16 @@ func Withdraw(record Record, reason string) (Record, error) {
 	return withdrawn, nil
 }
 
-// Apply moves an answered record to applied, naming the event that unblocked it.
-func Apply(record Record, event string) (Record, error) {
+// Apply moves an answered record to applied, naming the event that unblocked it and the execution
+// generation that event belongs to. The generation is read from the event itself by the caller,
+// so what the record holds is the generation the reply was made in rather than a default.
+func Apply(record Record, event string, generation int64) (Record, error) {
 	applied := record
 	if err := Transition(&applied, StateApplied); err != nil {
 		return Record{}, err
 	}
 	applied.AppliedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	applied.AppliedEvent = event
+	applied.AppliedGeneration = generation
 	return applied, nil
 }

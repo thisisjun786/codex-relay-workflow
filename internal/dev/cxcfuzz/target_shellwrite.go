@@ -231,40 +231,73 @@ func shellWriteVerb(rng *rand.Rand, paths []string) string {
 
 // shellWriteProgram is a python or node one-liner whose program text names the write. It carries
 // every Python spelling the issue required: open/Path writes, os.rename and shutil.copy/copyfile
-// with the destination second, each Python literal quoting form (including the f form around a
-// doubled brace), and a destination whose slash is written as one of the single-character escapes.
+// with the destination second, each Python literal quoting form, and a destination whose slash is
+// written as one of the single-character escapes. The program it emits is one of
+// shellWritePrograms, which the literal-form test walks in full.
 func shellWriteProgram(rng *rand.Rand, paths []string) string {
-	dest := shellWritePath(rng, paths)
+	commands := shellWritePrograms(shellWritePath(rng, paths))
+	chosen := commands[rng.Intn(len(commands))]
+	return chosen.interpreter + " " + chosen.flag + chosen.sep + shellWriteShellQuote(chosen.program)
+}
+
+// shellWriteCommand is one program the generator can emit and the interpreter that runs it. The
+// interpreter, its flag and the separator between the flag and the program are kept apart from the
+// program so a test can hand the program to the real interpreter without re-reading the shell quoting.
+// The separator is part of the form: `-c` and `-e` take the program joined to the flag, while `--eval`
+// takes it as a separate word, and a reader of the command reads one or the other.
+type shellWriteCommand struct {
+	interpreter string
+	flag        string
+	sep         string
+	program     string
+}
+
+// shellWritePrograms is every program the generator can emit for a destination, in a fixed order.
+// Every Python program it returns names the destination in a literal that evaluates to that
+// destination; the literal-form test evaluates each one with the real interpreter.
+func shellWritePrograms(dest string) []shellWriteCommand {
+	// Every Python literal that embeds the destination is written so it evaluates to the destination:
+	// a quote or a backslash in the pool would otherwise make the literal a syntax error or decode the
+	// backslash to another character, and the program would not name the path the case chose.
+	quoted := shellWritePythonEscaped(dest, "'", false)
+	appendProgram := "open('" + quoted + "','a')"
+	if raw, ok := shellWritePythonRaw(dest); ok {
+		appendProgram = "open(" + raw + ",'a')"
+	}
 	// Every program goes through shellWriteShellQuote: a destination from the pool may hold a double
 	// quote, a dollar, a backslash or a backtick, and a fixed double-quoted argument would let the
 	// shell rewrite the program before the interpreter ever saw it.
-	programs := []string{
-		"python3 -c " + shellWriteShellQuote("open('"+dest+"','w').write('x')"),
-		"python3 -c " + shellWriteShellQuote("from pathlib import Path; Path('"+dest+"').write_text('x')"),
-		"python3 -c " + shellWriteShellQuote("from pathlib import Path; Path('/m','"+dest+"').write_bytes(b'x')"),
-		"python3 -c " + shellWriteShellQuote("open(r'"+dest+"','a')"),
-		"py -c " + shellWriteShellQuote("open('"+dest+"','w')"),
-		"python3 -c" + shellWriteShellQuote("open('"+dest+"','w')"),
-		"node -e " + shellWriteShellQuote("require('fs').writeFileSync('"+dest+"','x')"),
-		"node --eval " + shellWriteShellQuote("require('fs').createWriteStream('"+dest+"')"),
-		"node -e" + shellWriteShellQuote("require('fs').appendFileSync('"+dest+"','x')"),
-		"node -e " + shellWriteShellQuote("require('fs').open('"+dest+"','w',()=>{})"),
+	commands := []shellWriteCommand{
+		// The separated and attached spellings of the interpreter flag are both emitted, exactly as the
+		// generator emitted them before: a reader that reads only one of the two would miss the other.
+		{"python3", "-c", " ", "open('" + quoted + "','w').write('x')"},
+		{"python3", "-c", " ", "from pathlib import Path; Path('" + quoted + "').write_text('x')"},
+		{"python3", "-c", " ", "from pathlib import Path; Path('/m','" + quoted + "').write_bytes(b'x')"},
+		{"python3", "-c", " ", appendProgram},
+		{"py", "-c", " ", "open('" + quoted + "','w')"},
+		{"python3", "-c", "", "open('" + quoted + "','w')"},
+		{"node", "-e", " ", "require('fs').writeFileSync('" + dest + "','x')"},
+		{"node", "--eval", " ", "require('fs').createWriteStream('" + dest + "')"},
+		{"node", "-e", "", "require('fs').appendFileSync('" + dest + "','x')"},
+		{"node", "-e", " ", "require('fs').open('" + dest + "','w',()=>{})"},
 	}
 	// The destination is the second argument of os.rename and shutil.copy/copyfile, so a reader
 	// that only reads the first argument of a call names the source and misses the write.
 	for _, literal := range shellWritePythonLiteralForms(dest) {
-		programs = append(programs,
-			"python3 -c "+shellWriteShellQuote("import os; os.rename(\"/w/old.md\", "+literal+")"),
-			"python3 -c "+shellWriteShellQuote("import shutil; shutil.copy(\"/w/old.md\", "+literal+")"),
-			"python3 -c "+shellWriteShellQuote("import shutil; shutil.copyfile(\"/w/old.md\", "+literal+")"),
+		commands = append(commands,
+			shellWriteCommand{"python3", "-c", " ", "import os; os.rename(\"/w/old.md\", " + literal + ")"},
+			shellWriteCommand{"python3", "-c", " ", "import shutil; shutil.copy(\"/w/old.md\", " + literal + ")"},
+			shellWriteCommand{"python3", "-c", " ", "import shutil; shutil.copyfile(\"/w/old.md\", " + literal + ")"},
 		)
 	}
 	// The slash of a destination written as an escape: a reader that does not decode the escape
-	// names no path, or names the raw text.
+	// names no path, or names the raw text. The escape IS the literal body: its leading backslash is
+	// the escape Python decodes to the destination's slash, so it is embedded as written. Escaping it
+	// again would double that backslash and Python would read the escape's letters as the path.
 	for _, escaped := range shellWritePythonEscapeForms(dest) {
-		programs = append(programs, "python3 -c "+shellWriteShellQuote("open(\""+escaped+"\",\"w\")"))
+		commands = append(commands, shellWriteCommand{"python3", "-c", " ", "open(\"" + escaped + "\",\"w\")"})
 	}
-	return programs[rng.Intn(len(programs))]
+	return commands
 }
 
 // shellWriteShellQuote wraps a program so a real shell hands it to the interpreter unchanged. The
@@ -273,31 +306,124 @@ func shellWriteProgram(rng *rand.Rand, paths []string) string {
 // at that quote, and the interpreter then receives a truncated program. A program without a single
 // quote takes the plain single-quoted form; otherwise it takes a double-quoted form with the four
 // characters the shell still reads inside double quotes escaped.
+//
+// The ROOT placeholder is never escaped. The program is split around each occurrence and only the
+// rest of each part is escaped, so the placeholder reaches the harness's substitution byte for byte
+// and the destination the program names after substitution is the path the case chose: escaping the
+// placeholder first turned \${ROOT} into \<the case root>, and a reader then named a path with a
+// stray backslash in front of it. The placeholder carries no character a shell reads inside double
+// quotes, and a campaign root is an os.MkdirTemp path with no shell-special character either; a root
+// that did hold one is covered by the value-substitution unit test CRW-857 added (the harness
+// substitutes the decoded input value, never the serialized text).
 func shellWriteShellQuote(program string) string {
 	if !strings.Contains(program, "'") {
 		return "'" + program + "'"
 	}
-	escaped := strings.NewReplacer(`\`, `\\`, `"`, `\"`, "$", `\$`, "`", "\\`").Replace(program)
-	return "\"" + escaped + "\""
+	parts := strings.Split(program, rootPlaceholder)
+	for i, part := range parts {
+		parts[i] = shellWriteDoubleQuoteEscape(part)
+	}
+	return "\"" + strings.Join(parts, rootPlaceholder) + "\""
 }
 
-// shellWritePythonLiteralForms is every quoting form the generator uses for a Python string
-// literal: the four quote characters Python accepts, and the r, b, u and f prefixes. An f literal
-// is sometimes wrapped in a doubled brace, because a brace inside an f-string is an expression
-// unless it is doubled, and a reader that walks replacement fields must still find the path.
+// shellWriteDoubleQuoteEscape escapes the four characters a shell still reads inside a double-quoted
+// word, so the text it returns is passed through unchanged.
+func shellWriteDoubleQuoteEscape(text string) string {
+	return strings.NewReplacer(`\`, `\\`, `"`, `\"`, "$", `\$`, "`", "\\`").Replace(text)
+}
+
+// shellWritePythonLiteralForms is every quoting form the generator uses for a Python string literal:
+// the four quote characters Python accepts, and the r, b, u and f prefixes. Every form it returns
+// evaluates in Python 3 to exactly the destination it was built for, so a reader that walks the
+// destination out of a generated program names the path the case chose. A form that cannot hold the
+// destination is not returned: a raw form only where the destination has no quote it would have to
+// escape and does not end in a backslash, and a b form only for an ASCII destination, because a bytes
+// literal cannot hold a non-ASCII character. The f forms keep the brace rule: a brace inside the
+// destination is written doubled, so the literal evaluates to the destination instead of opening a
+// replacement field, while the braces of an exact ROOT placeholder are left alone for the harness's
+// substitution.
 func shellWritePythonLiteralForms(word string) []string {
-	return []string{
-		"'" + word + "'",
-		"\"" + word + "\"",
-		"'''" + word + "'''",
-		"\"\"\"" + word + "\"\"\"",
-		"r'" + word + "'",
-		"b'" + word + "'",
-		"u'" + word + "'",
-		"f'" + word + "'",
-		"f'{{" + word + "}}'",
-		"f\"\"\"{{" + word + "}}\"\"\"",
+	forms := []string{
+		"'" + shellWritePythonEscaped(word, "'", false) + "'",
+		"\"" + shellWritePythonEscaped(word, "\"", false) + "\"",
+		"'''" + shellWritePythonEscaped(word, "'", false) + "'''",
+		"\"\"\"" + shellWritePythonEscaped(word, "\"", false) + "\"\"\"",
 	}
+	if raw, ok := shellWritePythonRaw(word); ok {
+		forms = append(forms, raw)
+	}
+	if shellWritePythonASCII(word) {
+		forms = append(forms, "b'"+shellWritePythonEscaped(word, "'", false)+"'")
+	}
+	return append(forms,
+		"u'"+shellWritePythonEscaped(word, "'", false)+"'",
+		"f'"+shellWritePythonEscaped(word, "'", true)+"'",
+		"f'''"+shellWritePythonEscaped(word, "'", true)+"'''",
+		"f\"\"\""+shellWritePythonEscaped(word, "\"", true)+"\"\"\"",
+	)
+}
+
+// shellWritePythonEscaped writes a destination so a non-raw Python literal delimited by quote holds it
+// unchanged: a backslash is doubled, the delimiter is escaped, and a line break is written as its
+// escape, because Python reads a physical line break inside a literal as a newline and normalizes a
+// carriage return. braces additionally doubles every brace that is not part of an exact ROOT
+// placeholder, which is what an f literal needs to evaluate to the destination. The placeholder is
+// split out and rejoined untouched, because the harness substitutes that token in the decoded command
+// after the program is built.
+func shellWritePythonEscaped(word, quote string, braces bool) string {
+	parts := strings.Split(word, rootPlaceholder)
+	for i, part := range parts {
+		var out strings.Builder
+		for _, r := range part {
+			switch {
+			case r == '\\':
+				out.WriteString(`\\`)
+			case r == '\n':
+				out.WriteString(`\n`)
+			case r == '\r':
+				out.WriteString(`\r`)
+			case braces && r == '{':
+				out.WriteString("{{")
+			case braces && r == '}':
+				out.WriteString("}}")
+			case string(r) == quote:
+				out.WriteByte('\\')
+				out.WriteRune(r)
+			default:
+				out.WriteRune(r)
+			}
+		}
+		parts[i] = out.String()
+	}
+	return strings.Join(parts, rootPlaceholder)
+}
+
+// shellWritePythonRaw is the raw form of a destination, and whether the destination can be held in it
+// unchanged. A raw literal processes no escape, so it holds a backslash as written; it cannot hold the
+// delimiter it would have to escape, cannot span a line, and cannot end in a backslash, which would
+// escape its own closing quote.
+func shellWritePythonRaw(word string) (string, bool) {
+	if strings.ContainsAny(word, "'\n\r") || strings.HasSuffix(word, `\`) {
+		return "", false
+	}
+	return "r'" + word + "'", true
+}
+
+// shellWritePythonASCII reports whether a destination holds only ASCII characters, which is what a
+// bytes literal can carry: Python refuses a non-ASCII character in a b literal. A destination still
+// holding the ROOT placeholder answers no, because the harness substitutes the case root into it after
+// the program is built and a root is not promised to be ASCII - a non-ASCII root inside a b literal is
+// a source error, so the bytes form is simply not emitted for such a destination.
+func shellWritePythonASCII(word string) bool {
+	if strings.Contains(word, rootPlaceholder) {
+		return false
+	}
+	for _, r := range word {
+		if r > 0x7f {
+			return false
+		}
+	}
+	return true
 }
 
 // shellWritePythonEscapeForms writes the first slash of a destination as each single-character
@@ -308,7 +434,12 @@ func shellWritePythonEscapeForms(word string) []string {
 	if at < 0 {
 		return nil
 	}
-	head, tail := word[:at], word[at+1:]
+	// The parts around the slash are ordinary literal text, so they are escaped the way any literal
+	// escapes them - a quote the form's delimiter would close, or a backslash Python would decode -
+	// while the escape itself is written as its own backslash sequence. The caller wraps the body in
+	// double quotes, which is the delimiter these parts are escaped for.
+	head := shellWritePythonEscaped(word[:at], "\"", false)
+	tail := shellWritePythonEscaped(word[at+1:], "\"", false)
 	return []string{
 		head + `\x2f` + tail,
 		head + `\u002f` + tail,

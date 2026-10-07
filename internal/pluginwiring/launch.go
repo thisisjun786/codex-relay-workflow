@@ -13,6 +13,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/mcp"
+	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -130,32 +131,17 @@ func canonical(path string) string {
 }
 
 // policyEnvironment is crw_bridge_mcp.py policy_environment: the two variables the bridge starts
-// under, or a refusal naming the record.
+// under, or a refusal naming the record. The reference's own shape is RecordComplaints' answer, so
+// only the environment and the file it names are judged here.
 func policyEnvironment(env map[string]string, record string, reference any) (string, string, error) {
 	repair := " Run " + RepairCommand + " --execution-policy <file>" +
 		" again after moving " + record + " aside, so the record names the policy as" +
 		" it now stands."
 	policy := ReadPolicyReference(reference)
-	if !policy.Shaped {
-		return "", "", fail("the record at " + record + " is version 2 and must name " + policyField +
-			" as an object with exactly digest and path")
-	}
-	if !policy.File.OK() {
-		return "", "", fail("the record at " + record + " must name the execution policy as an absolute" +
-			" path with no surrounding whitespace or control characters, found " + reading.Show(policy.File.Value))
-	}
 	path, digest := policy.File.Text, policy.Digest
 	// What open and exec use: the path's bytes, a surrogate-escaped byte (as the Python installer
 	// recorded one) that byte again.
-	encoded, encodable := pyvalue.FSEncode(path)
-	if !encodable {
-		return "", "", fail("the record at " + record + " names an execution policy path this system" +
-			" cannot encode, found " + strconv.Quote(path))
-	}
-	if !policy.DigestOK {
-		return "", "", fail("the record at " + record + " must name the execution policy digest as 64" +
-			" lowercase hexadecimal characters")
-	}
+	encoded, _ := pyvalue.FSEncode(path)
 	if named, set := inherited(env, execution.EnvPolicy); set && canonical(named) != canonical(encoded) {
 		return "", "", fail("the record at " + record + " names the execution policy " + strconv.Quote(path) +
 			" and this process was started with " + execution.EnvPolicy + "=" + strconv.Quote(named) +
@@ -183,6 +169,108 @@ func policyEnvironment(env map[string]string, record string, reference any) (str
 	}
 	return encoded, digest, nil
 }
+
+// RecordComplaints is the launcher's own judgement of a decoded bridge record, short of opening the
+// policy file: every check Prepare makes on the record before it looks at the policy, in Prepare's
+// order, each worded to follow "the record at <path> ". An empty answer is a record whose policy
+// Prepare then opens.
+//
+// Prepare words its refusals from this, and the installer's re-registration reports the same answer
+// (internal/runtime/install UpdateRegisteredPolicy), so a record the launcher refuses is refused
+// there too rather than by a second copy of the checks.
+func RecordComplaints(document contract.OrderedObject) []string {
+	read := ReadBridgeRecord(document)
+	var wrong []string
+	if read.Version == 0 {
+		wrong = append(wrong, "is version "+reading.Show(read.VersionValue)+
+			", and this package reads versions 1 and 2. Rewrite it with "+RepairCommand+
+			" rather than starting a runtime under a contract this launcher does not implement.")
+	}
+	if read.Owner != pluginOwner {
+		wrong = append(wrong, "names "+reading.Show(read.Owner)+
+			" as the owner of this server, so the Codex configuration registers it and this"+
+			" package must not start a second one")
+	}
+	if read.ServerName != nil && read.ServerName != declaredServer {
+		wrong = append(wrong, "names the server "+reading.Show(read.ServerName)+
+			", and this package declares "+strconv.Quote(declaredServer)+
+			"; the record belongs to a registration this launcher does not start")
+	}
+	if !read.IsString || !strings.HasPrefix(read.Executable, "/") {
+		wrong = append(wrong, "must name bridgeExecutable as an absolute path")
+	}
+	if !read.ArgsOK {
+		wrong = append(wrong, "must list args as strings")
+	}
+	switch read.Version {
+	case 1:
+		if read.HasPolicy {
+			wrong = append(wrong, "is version 1 and names an execution policy,"+
+				" which only a version 2 record carries. Starting it as version 1 would start the"+
+				" bridge without that policy.")
+		}
+	case 2:
+		wrong = append(wrong, policyShapeComplaints(read.Policy)...)
+	}
+	return wrong
+}
+
+// policyShapeComplaints is the launcher's judgement of a version-2 record's executionPolicy object
+// short of opening the file it names, each worded to follow "the record at <path> ": an object with
+// exactly digest and path, an absolute path with no surrounding whitespace or control characters
+// that this system can encode, and 64 lowercase hexadecimal characters of digest.
+func policyShapeComplaints(reference any) []string {
+	policy := ReadPolicyReference(reference)
+	if !policy.Shaped {
+		return []string{"is version 2 and must name " + policyField + " as an object with exactly digest and path"}
+	}
+	if !policy.File.OK() {
+		return []string{"must name the execution policy as an absolute path with no surrounding whitespace or control characters, found " + reading.Show(policy.File.Value)}
+	}
+	if _, encodable := pyvalue.FSEncode(policy.File.Text); !encodable {
+		return []string{"names an execution policy path this system cannot encode, found " + strconv.Quote(policy.File.Text)}
+	}
+	if !policy.DigestOK {
+		return []string{"must name the execution policy digest as 64 lowercase hexadecimal characters"}
+	}
+	return nil
+}
+
+// ExecComplaints is the launcher's own judgement of the executable and the arguments a record hands
+// to exec, each worded to follow "the record at <path> ". An exec takes each as bytes: a lone
+// surrogate in U+DC80..U+DCFF, how the Python installer recorded a byte that is not UTF-8, becomes
+// that byte again, and a lone surrogate outside that range, or a NUL, cannot be passed at all. The
+// executable is not run here, but a record no exec could start is refused all the same. Prepare
+// words its refusals from this, and the installer's re-registration reports it.
+func ExecComplaints(document contract.OrderedObject) []string {
+	read := ReadBridgeRecord(document)
+	if _, encodable := pyvalue.FSEncode(read.Executable); !encodable || strings.ContainsRune(read.Executable, 0) {
+		return []string{"names bridgeExecutable " + strconv.Quote(read.Executable) +
+			", which this system cannot pass to exec. Rewrite it with " + RepairCommand + "."}
+	}
+	for _, word := range read.Args {
+		if _, encodable := pyvalue.FSEncode(word); !encodable || strings.ContainsRune(word, 0) {
+			return []string{"lists the argument " + strconv.Quote(word) +
+				", which this system cannot pass to exec. Rewrite it with " + RepairCommand + "."}
+		}
+	}
+	return nil
+}
+
+// ArgumentsStartTheLauncher is whether an argument list handed to the bridge's exec begins with
+// Flag: the exec below would read that as another plugin launch and start this launcher again
+// rather than the bridge. Bridge refuses such a list, and the installer's re-registration asks this
+// same question of the record it reads and the record it would write, so a record the launcher
+// refuses is refused there too rather than by a second copy of the check.
+func ArgumentsStartTheLauncher(arguments []string) bool {
+	return len(arguments) > 0 && arguments[0] == Flag
+}
+
+// ArgumentStartsTheLauncher is the launcher's own reason for refusing a list that
+// ArgumentsStartTheLauncher accepts as starting it again. Bridge and the installer's
+// re-registration both word their refusal from it, so the sentence a record gets from either names
+// one reason, and a change here reaches both.
+const ArgumentStartsTheLauncher = "would start this launcher again instead of the bridge"
 
 // Prepare is the launcher up to its exec: the record read and judged, then the bridge arguments
 // (the record's, as bytes, then the launcher's own) and the environment it starts under.
@@ -214,37 +302,12 @@ func Prepare(env map[string]string, extra []string) ([]string, map[string]string
 		return nil, nil, fail("the record at " + record + " is not an object")
 	}
 	read := ReadBridgeRecord(document)
-	if read.Version == 0 {
-		return nil, nil, fail("the record at " + record + " is version " + reading.Show(read.VersionValue) +
-			", and this package reads versions 1 and 2. Rewrite it with " + RepairCommand +
-			" rather than starting a runtime under a contract this launcher does not implement.")
-	}
-	if read.Owner != pluginOwner {
-		return nil, nil, fail("the record at " + record + " names " + reading.Show(read.Owner) +
-			" as the owner of this server, so the Codex configuration registers it and this" +
-			" package must not start a second one")
-	}
-	if read.ServerName != nil && read.ServerName != declaredServer {
-		return nil, nil, fail("the record at " + record + " names the server " + reading.Show(read.ServerName) +
-			", and this package declares " + strconv.Quote(declaredServer) +
-			"; the record belongs to a registration this launcher does not start")
-	}
-	executable := read.Executable
-	if !read.IsString || !strings.HasPrefix(executable, "/") {
-		return nil, nil, fail("the record at " + record + " must name bridgeExecutable as an absolute path")
-	}
-	if !read.ArgsOK {
-		return nil, nil, fail("the record at " + record + " must list args as strings")
+	if wrong := RecordComplaints(document); len(wrong) > 0 {
+		return nil, nil, fail("the record at " + record + " " + wrong[0])
 	}
 	arguments := append([]string{}, read.Args...)
 	environment := env
-	if read.Version == 1 {
-		if read.HasPolicy {
-			return nil, nil, fail("the record at " + record + " is version 1 and names an execution policy," +
-				" which only a version 2 record carries. Starting it as version 1 would start the" +
-				" bridge without that policy.")
-		}
-	} else {
+	if read.Version == 2 {
 		path, digest, err := policyEnvironment(env, record, read.Policy)
 		if err != nil {
 			return nil, nil, err
@@ -256,20 +319,12 @@ func Prepare(env map[string]string, extra []string) ([]string, map[string]string
 		environment[execution.EnvPolicy] = path
 		environment[execution.EnvDigest] = digest
 	}
-	// An exec takes the executable and each argument as bytes: a lone surrogate in U+DC80..U+DCFF,
-	// how the Python installer recorded a byte that is not UTF-8, becomes that byte again, and a
-	// lone surrogate outside that range, or a NUL, cannot be passed at all. The executable is not
-	// run here, but a record no exec could start is refused all the same.
-	if _, encodable := pyvalue.FSEncode(executable); !encodable || strings.ContainsRune(executable, 0) {
-		return nil, nil, fail("the record at " + record + " names bridgeExecutable " + strconv.Quote(executable) +
-			", which this system cannot pass to exec. Rewrite it with " + RepairCommand + ".")
+	if wrong := ExecComplaints(document); len(wrong) > 0 {
+		return nil, nil, fail("the record at " + record + " " + wrong[0])
 	}
+	// ExecComplaints has judged every argument encodable, so each is handed on as its bytes.
 	for i, word := range arguments {
-		encoded, encodable := pyvalue.FSEncode(word)
-		if !encodable || strings.ContainsRune(word, 0) {
-			return nil, nil, fail("the record at " + record + " lists the argument " + strconv.Quote(word) +
-				", which this system cannot pass to exec. Rewrite it with " + RepairCommand + ".")
-		}
+		encoded, _ := pyvalue.FSEncode(word)
 		arguments[i] = encoded
 	}
 	return append(arguments, extra...), environment, nil
@@ -283,10 +338,9 @@ func Prepare(env map[string]string, extra []string) ([]string, map[string]string
 // in a map handed to the server.
 func Bridge(program string, args []string) int {
 	arguments, environment, err := Prepare(mcp.Environ(os.Environ()), args)
-	if err == nil && len(arguments) > 0 && arguments[0] == Flag {
+	if err == nil && ArgumentsStartTheLauncher(arguments) {
 		// The exec below would read this as another plugin launch and start this launcher again.
-		err = fail("the bridge's arguments begin with " + Flag + ", which would start this launcher" +
-			" again instead of the bridge")
+		err = fail("the bridge's arguments begin with " + Flag + ", which " + ArgumentStartsTheLauncher)
 	}
 	var self string
 	if err == nil {
