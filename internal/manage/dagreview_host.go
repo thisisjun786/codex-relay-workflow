@@ -436,7 +436,7 @@ var (
 	dagHostDagSubcommand   = regexp.MustCompile(`^dag-[a-z-]+$`)
 	dagHostVariableWord    = regexp.MustCompile(`^\$\{?[A-Za-z_][A-Za-z0-9_]*\}?$`)
 	dagHostAssignmentWord  = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=`)
-	dagHostHeredocName     = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+	dagHostHeredocName     = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.-]*$`)
 	dagHostRefusedAnswer   = regexp.MustCompile(`"ok"\s*:\s*false`)
 	dagHostRefusedEnvelope = regexp.MustCompile(`"error"\s*:\s*"refused"`)
 	dagHostRefusedReason   = regexp.MustCompile(`"reason"\s*:\s*"([a-z_]+)"`)
@@ -558,6 +558,59 @@ func dagHostQuotedEnd(s string, i int, q byte) int {
 		}
 	}
 	return len(s)
+}
+
+// dagHostWords splits one command unit into the words a shell would pass as argv. A run of
+// unquoted characters up to whitespace is one word, a quoted run contributes its own text without
+// the quotes, a backslash quotes the character after it, and a backslash before a newline removes
+// both. So a quoted option value with a space stays one word, a quoted program word still names the
+// program, and a line continued with a backslash does not leave a stray word behind. The program
+// word and its options are read from these words, never from the unit's raw text.
+func dagHostWords(unit string) []string {
+	var words []string
+	var word strings.Builder
+	started := false
+	flush := func() {
+		if started {
+			words = append(words, word.String())
+		}
+		word.Reset()
+		started = false
+	}
+	for i := 0; i < len(unit); {
+		switch c := unit[i]; {
+		case c == ' ' || c == '\t' || c == '\r' || c == '\n':
+			flush()
+			i++
+		case c == '\\':
+			if i+1 < len(unit) && unit[i+1] == '\n' {
+				i += 2
+				continue
+			}
+			if i+1 < len(unit) {
+				word.WriteByte(unit[i+1])
+				started = true
+				i += 2
+				continue
+			}
+			i++
+		case c == '\'' || c == '"':
+			end := dagHostQuotedEnd(unit, i, c)
+			inner := unit[i+1 : end]
+			if len(inner) > 0 && inner[len(inner)-1] == c {
+				inner = inner[:len(inner)-1]
+			}
+			word.WriteString(inner)
+			started = true
+			i = end
+		default:
+			word.WriteByte(c)
+			started = true
+			i++
+		}
+	}
+	flush()
+	return words
 }
 
 // dagHostWithoutHeredocs is the text with every here-document body removed: the line that carries
@@ -715,7 +768,7 @@ func dagHostHeredocDelimiter(line string) (string, bool, bool) {
 func dagHostRelaySubcommands(text string) []string {
 	var subcommands []string
 	for _, unit := range dagHostCommandUnits(text) {
-		words := strings.Fields(unit)
+		words := dagHostWords(unit)
 		for len(words) > 0 && (dagHostAssignmentWord.MatchString(words[0]) || words[0] == "exec") {
 			words = words[1:]
 		}

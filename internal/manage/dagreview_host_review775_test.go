@@ -215,6 +215,15 @@ func TestDagHostReview775DocsReadIsNotRelayCall(t *testing.T) {
 		{"a relay command in a subshell", "(crw relay dag-release --plan p1)", true},
 		{"a relay command in a substitution inside a word", "echo x\"$(crw relay dag-release --plan p1)\"y", true},
 		{"a relay command in an assignment substitution", "out=\"$(crw relay dag-release --plan p1)\"", true},
+		// The program word and its options are read as shell words, so a quoted option value with a
+		// space stays one word, a quoted program still names the program, and a line continued with a
+		// backslash leaves no stray word.
+		{"a quoted option value with a space", `crw relay --state '/tmp/relay state' dag-ready --plan p1`, true},
+		{"a quoted program word", `"codex-session-relay" dag-ready --plan p1`, true},
+		{"a backslash-continued call", "crw relay \\\n  --state S dag-ready --plan p1", true},
+		// A here-document delimiter is any word the shell accepts, not only a variable name.
+		{"a hyphenated here-document delimiter", "cat <<END-EXAMPLE\ncrw relay dag-ready --plan p1\nEND-EXAMPLE", false},
+		{"a dotted here-document delimiter", "cat <<E.O.F\ncrw relay dag-ready --plan p1\nE.O.F", false},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
