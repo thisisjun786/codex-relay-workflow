@@ -144,15 +144,60 @@ func TestEvidenceReview759MirrorStepIsNotEvidence(t *testing.T) {
 		t.Fatalf("a skipped test step is testSkipped whatever the mirror step says: %v", skipped["handoff"])
 	}
 
-	// The contrast: the earlier run of the same head that ran that leg's tests is what exempts a
-	// leg the mirror carried over.
-	checks := []any{
-		crw824Entry("workflow-run:600:dev-gate#0", "dev-gate", "success", 1, false),
-		crw824Entry("workflow-run:600:go-product (test-1)#0", "go-product (test-1)", "success", 1, false),
-		crw824Entry("workflow-run:601:dev-gate#0", "dev-gate", "success", 1, false),
-		crw824Entry("workflow-run:601:go-product (test-1)#0", "go-product (test-1)", "success", 1, true),
+	// The contrast, end to end: a real body-only edit produces a run whose leg is marked (mirror
+	// step success, test step skipped) beside an earlier run of the same head that ran that leg's
+	// tests. The substitute rule exempts it, so the collector's own reading finds nothing.
+	exempted, _ := Collect(fixedForge(&collectorScript{
+		threads: 1, unresolved: map[int]bool{},
+		runs: []any{
+			map[string]any{"id": 8, "name": "CI", "head_sha": collectorHead, "workflow_id": 100, "event": "pull_request", "run_started_at": "2026-10-07T06:00:00Z"},
+			map[string]any{"id": 9, "name": "CI", "head_sha": collectorHead, "workflow_id": 100, "event": "pull_request", "run_started_at": "2026-10-07T07:00:00Z"},
+		},
+		jobs: map[int][]any{
+			8: {review759RanLeg(61)},
+			9: {review759MirroredJob(62, "skipped")},
+		},
+	}), "owner/name", 7)
+	if exempted["verdict"] != Ready {
+		t.Fatalf("the earlier run's own test run exempts the mirrored leg, want %s, got %s: %v",
+			Ready, exempted["verdict"], exempted["problems"])
 	}
-	if problems := ChecksProblems(crw824Head, []string{"dev-gate"}, checks); len(problems) != 0 {
-		t.Fatalf("the earlier run's own test run exempts the mirrored leg, want no problem, got %v", problems)
+}
+
+// review759RanLeg is a go-product test leg whose test step ran and concluded success.
+func review759RanLeg(id int) map[string]any {
+	return map[string]any{"id": id, "name": "go-product (test-1)", "run_attempt": 1, "status": "completed", "conclusion": "success", "started_at": "2026-10-07T06:00:00Z", "steps": []any{
+		map[string]any{"name": "Test and replay the contract corpus (test-1)", "conclusion": "success", "started_at": "2026-10-07T06:00:02Z"},
+	}}
+}
+
+// Where the branch rule pins no integration the lenient rule stands: an unknown on either side is
+// not evidence of a different integration, so a substitute that ran the skipped leg is the
+// evidence, while two known and differing integrations are a refusal.
+func TestEvidenceReview759UnpinnedProviderKeepsTheLenientRule(t *testing.T) {
+	build := func(judged, substitute string) []any {
+		checks := []any{
+			crw824Entry("workflow-run:600:dev-gate#0", "dev-gate", "success", 1, false),
+			crw824Entry("workflow-run:600:go-product (test-1)#0", "go-product (test-1)", "success", 1, true),
+			crw824Entry("workflow-run:601:dev-gate#0", "dev-gate", "success", 1, false),
+			crw824Entry("workflow-run:601:go-product (test-1)#0", "go-product (test-1)", "success", 1, false),
+		}
+		// The judged light gate and the substitute run's gate, as the collector records them.
+		checks[0].(map[string]any)["provider"] = judged
+		checks[2].(map[string]any)["provider"] = substitute
+		return checks
+	}
+	// Nothing is pinned: an unknown on either side does not refuse the substitute.
+	for _, pair := range [][2]string{{"", ""}, {"", "42"}, {"42", ""}} {
+		if problems := ChecksProblems(crw824Head, []string{"dev-gate"}, build(pair[0], pair[1])); len(problems) != 0 {
+			t.Fatalf("with no integration pinned, providers %q/%q must not refuse the substitute, got %v",
+				pair[0], pair[1], problems)
+		}
+	}
+	// Two known and differing integrations are a refusal.
+	problems := ChecksProblems(crw824Head, []string{"dev-gate"}, build("42", "99"))
+	if len(problems) != 1 || problems[0].Code != ChecksStale {
+		t.Fatalf("two known differing integrations must refuse the substitute, want one %s, got %v",
+			ChecksStale, problems)
 	}
 }
