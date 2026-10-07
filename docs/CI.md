@@ -79,7 +79,7 @@ step, and the runner refuses a ci.yml the table does not cover.
 
 The record is `verification-record/1`: `repository`, `baseCommit`,
 `headCommit`, `treeHash`, `ciDigest` (the sha256 of ci.yml),
-`tools` (Go and Node as observed on the host; gitleaks and staticcheck at the version
+`tools` (Go as the module at the commit selects it, probed with the steps' isolation, and Node as observed on the host; gitleaks and staticcheck at the version
 their step runs, which is the pin, because secrets.sh runs its own pinned Gitleaks and the lint
 leg runs the staticcheck the tree requires), `pins` (the versions the tree
 pins: go.mod's toolchain and staticcheck, ci.yml's Node, secrets.sh's Gitleaks),
@@ -111,10 +111,7 @@ or lacks its tool fails the run, and the record names it with its reason.
 `--reuse <record>` answers an existing record instead of running only when the **tree**, the
 **ci.yml digest**, the **tool versions**, the **dependency digests**, the **OS and
 architecture** and the **base commit** and the **commit range** all match,
-and the record passed with no pin mismatch. The head commit is deliberately not a key: a rebase
-that keeps the tree and the base reuses the record. The commits between base and head are not
-compared one by one, so a record reused across a history rewrite that keeps the tree and the
-base judges the same content. Changing any one key re-runs.
+and the record passed with no pin mismatch. The head commit is not a key on its own. The commit range (the commits between base and head) is one: a rebase or an amend that changes that list reruns the checks, and a record is reused only when the list and the tree both match. Changing any one key re-runs.
 
 ### The heavy-check gate and TMPDIR
 

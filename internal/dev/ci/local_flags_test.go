@@ -13,7 +13,7 @@ import (
 // A full run keeps only the GOFLAGS that do not select or skip tests, so a host GOFLAGS with -run
 // cannot make a step pass while running part of the suite.
 func TestLocal_a_step_keeps_no_test_selection_from_the_callers_GOFLAGS(t *testing.T) {
-	t.Setenv("GOFLAGS", "-run=Nothing -p=4")
+	t.Setenv("GOFLAGS", "-run=Nothing -count=0 -list=. -p=4")
 	repo := newLocalFixture(t)
 	record := filepath.Join(t.TempDir(), "record.json")
 	opts := localRunOptions(repo, localFixturePlan(`test "$GOFLAGS" = "-p=4"`), record)
@@ -66,5 +66,26 @@ func TestLocalCurrentKeys_a_short_base_is_recorded_as_a_full_commit(t *testing.T
 	}
 	if current.BaseCommit != full {
 		t.Errorf("the base is recorded as %q, want the full commit %q", current.BaseCommit, full)
+	}
+}
+
+// The Go probe runs inside a module that carries the verified commit's go.mod, so the toolchain it
+// reports is the one a step in that module selects.
+func TestLocalTools_the_go_probe_sees_the_commits_go_mod(t *testing.T) {
+	bin := t.TempDir()
+	log := filepath.Join(t.TempDir(), "probe.log")
+	script := "#!/bin/sh\n{ if [ -f go.mod ]; then echo gomod=yes; else echo gomod=no; fi; } > \"" + log + "\"\necho 'go version go1.27.1 linux/amd64'\n"
+	if err := os.WriteFile(filepath.Join(bin, "go"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := localObserveToolIn("go", bin, []byte("module probe\n\ngo 1.27\n")); got != "1.27.1" {
+		t.Fatalf("the probe reads %q, want 1.27.1", got)
+	}
+	data, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "gomod=yes") {
+		t.Errorf("the probe does not run in a module with the commit's go.mod: %q", data)
 	}
 }

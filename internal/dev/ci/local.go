@@ -212,6 +212,8 @@ func localCurrentKeys(opts localOptions) (verificationRecord, error) {
 		return verificationRecord{}, err
 	}
 	rangeSum := sha256.Sum256(commits)
+	// The Go probe runs in a module holding the commit's go.mod, so it reports the toolchain the steps select.
+	goMod, _ := runGit(opts.Root, "show", head+":go.mod")
 	pins, err := localToolPinsFrom(func(path string) ([]byte, error) { return runGit(opts.Root, "show", head+":"+path) })
 	if err != nil {
 		return verificationRecord{}, err
@@ -225,7 +227,7 @@ func localCurrentKeys(opts localOptions) (verificationRecord, error) {
 		HeadCommit:   head,
 		TreeHash:     tree,
 		CiDigest:     ciDigest,
-		Tools:        localObservedVersions(localToolVersions(localPathEnv(opts.Env)), pins),
+		Tools:        localObservedVersions(localToolVersionsIn(localPathEnv(opts.Env), goMod), pins),
 		GoFlags:      localFullRunFlags(os.Getenv("GOFLAGS")),
 		GoEnv:        localIsolatedGoEnv,
 		Dependencies: dependencies,
@@ -248,7 +250,7 @@ func localFullRunFlags(flags string) string {
 
 // localSelectsTests reports whether a GOFLAGS field selects, skips or shortens tests.
 func localSelectsTests(field string) bool {
-	for _, name := range []string{"-run", "-skip", "-short", "-failfast", "-test.run", "-test.skip", "-test.short", "-test.failfast"} {
+	for _, name := range []string{"-run", "-skip", "-short", "-failfast", "-count", "-list", "-test.run", "-test.skip", "-test.short", "-test.failfast", "-test.count", "-test.list"} {
 		if field == name || strings.HasPrefix(field, name+"=") {
 			return true
 		}
