@@ -7,6 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"golang.org/x/sys/unix"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 )
@@ -33,6 +36,117 @@ func configLockPathsFeatureList() string {
 		rows = append(rows, string(key)+" stable false")
 	}
 	return strings.Join(rows, "\n")
+}
+
+// The generation-2 d1 case: the manifest names the config through a directory alias that is
+// retargeted while the deactivation waits on the lock. The held sidecar belongs to the old file, so
+// the deactivation must refuse rather than restore the new file under the old lock. Red on the
+// generation-1 head: it restored the new file's key.
+func TestConfigLockPathsDeactivateRefusesARetargetedDirectoryAlias(t *testing.T) {
+	home := configLockActivationHome(t)
+	realA := filepath.Join(home, "realA")
+	realB := filepath.Join(home, "realB")
+	for _, dir := range []string{realA, realB} {
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pathA := filepath.Join(realA, "config.toml")
+	pathB := filepath.Join(realB, "config.toml")
+	activationWrite(t, pathA, deactivationConfig)
+	activationWrite(t, pathB, deactivationConfig)
+	alias := filepath.Join(home, "alias")
+	if err := os.Symlink("realA", alias); err != nil {
+		t.Fatal(err)
+	}
+	aliasPath := filepath.Join(alias, "config.toml")
+	hash, err := hashOrNull(pathA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys := map[string]TableKeyRecord{"memories.dedicated_tools": deactivationKey(nil)}
+	stale := configLockActivationManifestBytes(t, &InstallManifest{Version: 2, ConfigPath: aliasPath, PostActivateHash: hash, Flags: map[string]FlagRecord{}, TableKeys: keys})
+	fresh := configLockActivationManifestBytes(t, &InstallManifest{Version: 2, ConfigPath: pathB, PostActivateHash: hash, Flags: map[string]FlagRecord{}, TableKeys: keys})
+
+	held := configLockWritersHold(t, aliasPath)
+	configLockPathsHandoverRetarget(t, home, stale, fresh, held.Release, func() error {
+		// The lock is already held through the old alias: retarget it at the new directory.
+		if err := os.Remove(alias); err != nil {
+			return err
+		}
+		return os.Symlink("realB", alias)
+	})
+
+	_, err = Deactivate(deactivationDeps(home, func([]string) CodexRunResult { return CodexRunResult{} }))
+	if err == nil || !strings.Contains(err.Error(), "names a different config file") {
+		t.Fatalf("the deactivation did not refuse the retargeted alias: %v", err)
+	}
+	if got := activationRead(t, pathB); got != deactivationConfig {
+		t.Fatalf("the refused deactivation restored the new directory's key: %q", got)
+	}
+	if got := activationRead(t, pathA); got != deactivationConfig {
+		t.Fatalf("the refused deactivation wrote the old file: %q", got)
+	}
+}
+
+// The generation-2 d2 case: one file named absolutely and then relatively. Red on the generation-1
+// head, where EvalSymlinks kept the relative result relative and the two never compared equal.
+func TestConfigLockPathsDeactivateAcceptsARelativeSpelling(t *testing.T) {
+	home := configLockActivationHome(t)
+	real := filepath.Join(home, "real")
+	if err := os.MkdirAll(real, 0700); err != nil {
+		t.Fatal(err)
+	}
+	abs := filepath.Join(real, "config.toml")
+	activationWrite(t, abs, deactivationConfig)
+	hash, err := hashOrNull(abs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys := map[string]TableKeyRecord{"memories.dedicated_tools": deactivationKey(nil)}
+	stale := configLockActivationManifestBytes(t, &InstallManifest{Version: 2, ConfigPath: abs, PostActivateHash: hash, Flags: map[string]FlagRecord{}, TableKeys: keys})
+	fresh := configLockActivationManifestBytes(t, &InstallManifest{Version: 2, ConfigPath: filepath.Join("real", "config.toml"), PostActivateHash: hash, Flags: map[string]FlagRecord{}, TableKeys: keys})
+
+	t.Chdir(home)
+	held := configLockWritersHold(t, abs)
+	configLockActivationHandover(t, home, stale, func() error {
+		return os.WriteFile(manifestPath(home), fresh, 0o644)
+	}, held.Release)
+
+	r, err := Deactivate(deactivationDeps(home, func([]string) CodexRunResult { return CodexRunResult{} }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r == nil || r.NoManifest || len(r.RestoredKeys) != 1 || r.RestoredKeys[0] != "memories.dedicated_tools" {
+		t.Fatalf("the deactivation did not accept the relative spelling: %+v", r)
+	}
+	if got := activationRead(t, abs); strings.Contains(got, "dedicated_tools") {
+		t.Fatalf("the managed key was left behind: %q", got)
+	}
+}
+
+// The HoldsSidecar contract, pinned directly: true for the sidecar this lock holds, false for
+// another file, and false once the lock is released.
+func TestConfigLockPathsHoldsSidecarContract(t *testing.T) {
+	home := configLockActivationHome(t)
+	path := filepath.Join(home, "config.toml")
+	activationWrite(t, path, deactivationConfig)
+	lock, err := crwdir.LockConfig(path, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !lock.HoldsSidecar(path) {
+		t.Fatal("the lock did not recognise its own sidecar")
+	}
+	other := filepath.Join(home, "other.toml")
+	activationWrite(t, other, deactivationConfig)
+	if lock.HoldsSidecar(other) {
+		t.Fatal("the lock accepted another file's sidecar")
+	}
+	lock.Release()
+	if lock.HoldsSidecar(path) {
+		t.Fatal("a released lock still answered true")
+	}
 }
 
 // configLockPathsRenameRunner is the issue's reproduction: the injected CLI writes the new settings
@@ -239,6 +353,61 @@ func TestConfigLockPathsDeactivateAcceptsTheSameFileUnderAnotherSpelling(t *test
 }
 
 // Control C: a manifest that names a really different config file is still refused, and the
+
+// configLockPathsHandoverRetarget is the generation-2 d1 rendezvous. The deactivation must be
+// provably past LockConfig, with the alias still pointing at the old directory, before the alias is
+// retargeted: the generation-1 single-FIFO handover gates only the first manifest read, so the
+// retarget raced the sidecar open (measured 9/10 runs landed after it, where the deactivation
+// legitimately opened the new directory's sidecar and acceptance is correct). The second FIFO's
+// open handshake is what proves the lock was already taken through the old alias.
+func configLockPathsHandoverRetarget(t *testing.T, home string, stale, fresh []byte, release func(), retarget func() error) {
+	t.Helper()
+	first := manifestPath(home)
+	if err := unix.Mkfifo(first, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		f, err := os.OpenFile(first, os.O_WRONLY, 0)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		if _, err := f.Write(stale); err != nil {
+			t.Error(err)
+		}
+		if err := f.Close(); err != nil {
+			t.Error(err)
+		}
+		if err := os.Remove(first); err != nil {
+			t.Error(err)
+			return
+		}
+		// The second FIFO is the handshake: its open for writing blocks until the deactivation,
+		// already holding the lock it took through the old alias, opens it for reading.
+		second := manifestPath(home)
+		if err := unix.Mkfifo(second, 0o600); err != nil {
+			t.Error(err)
+			return
+		}
+		release()
+		f, err = os.OpenFile(second, os.O_WRONLY, 0)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer func() { _ = f.Close() }()
+		// The lock is held on the old file; retarget the alias and republish through the open
+		// descriptor, so the write cannot race the retarget.
+		if err := retarget(); err != nil {
+			t.Error(err)
+			return
+		}
+		if _, err := f.Write(fresh); err != nil {
+			t.Error(err)
+		}
+	}()
+}
+
 // refusal keeps the message the operator already knows. Both files exist, so the identity
 // comparison runs and answers false rather than failing to stat.
 func TestConfigLockPathsDeactivateRefusesAReallyDifferentConfigFile(t *testing.T) {

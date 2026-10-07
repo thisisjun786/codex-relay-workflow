@@ -2,6 +2,7 @@ package configguard
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -46,28 +47,58 @@ func readTextOrNull(path string) (*string, error) {
 	return &s, nil
 }
 
-// configLockPathsSameTarget reports whether two spellings name one directory entry once symlinks
-// are resolved. The manifest is allowed to name the config file through a different spelling —
-// CODEX_HOME behind a directory symlink, for example, which crwdir's lock resolution leaves spelled
+// configLockPathsRealPath answers the path a config file really has on disk once every symlink in it
+// is followed, so two spellings of one file compare equal. Links are resolved first and only then is
+// a relative result joined to the resolved working directory: cleaning or absolutising the input
+// before the resolution would compare spellings instead of the file, which is the defect CRW-899
+// fixes (a relative CODEX_HOME and an absolute manifest path named one file and compared unequal).
+// A final component that is not there — an install whose config.toml was removed — is named through
+// its resolved parent, so the caller still pins a real path for the directory entry it will use.
+// The second answer is false when nothing can be resolved, and every caller treats that as "not the
+// same file": the comparison only ever widens acceptance to spellings that name one path.
+func configLockPathsRealPath(p string) (string, bool) {
+	if resolved, err := filepath.EvalSymlinks(p); err == nil {
+		if filepath.IsAbs(resolved) {
+			return resolved, true
+		}
+		cwd, err := os.Getwd()
+		if err != nil {
+			return "", false
+		}
+		realCwd, err := filepath.EvalSymlinks(cwd)
+		if err != nil {
+			return "", false
+		}
+		return filepath.Join(realCwd, resolved), true
+	}
+	parent := filepath.Dir(p)
+	if parent == p {
+		return "", false
+	}
+	realParent, ok := configLockPathsRealPath(parent)
+	if !ok {
+		return "", false
+	}
+	return filepath.Join(realParent, filepath.Base(p)), true
+}
+
+// configLockPathsSameTarget reports whether two spellings name one directory entry, comparing their
+// resolved real paths. The manifest is allowed to name the config file through a different spelling
+// — CODEX_HOME behind a directory symlink, for example, which crwdir's lock resolution leaves spelled
 // through the alias because it follows only a symlink in the final component — and a deactivation
 // that treated that as a different file would refuse to restore an install it owns. The comparison
-// is deliberately directory-entry identity, not inode identity: the restore publishes through
-// lock.Target with an atomic rename, which replaces that one pathname, so a hard link to the same
-// inode under another name would keep the managed key while this command reported it restored
-// (fail open). A hard link is therefore refused, exactly as it was before this comparison existed,
-// and anything that cannot be resolved (a path that does not exist, or one whose symlinks do not
-// resolve) is not the same target: the comparison only ever widens acceptance to spellings that
-// name the path this deactivation will actually publish to.
+// is deliberately directory-entry identity, not inode identity: the restore publishes through the
+// pinned path with an atomic rename, which replaces that one pathname, so a hard link to the same
+// inode under another name would keep the managed key while this command reported it restored (fail
+// open). A hard link therefore stays refused, and a path that cannot be resolved is not the same
+// target, so the comparison never accepts a spelling it could not prove.
 func configLockPathsSameTarget(a, b string) bool {
-	if a == b {
-		return true
-	}
-	ra, err := filepath.EvalSymlinks(a)
-	if err != nil {
+	ra, aok := configLockPathsRealPath(a)
+	if !aok {
 		return false
 	}
-	rb, err := filepath.EvalSymlinks(b)
-	if err != nil {
+	rb, bok := configLockPathsRealPath(b)
+	if !bok {
 		return false
 	}
 	return ra == rb
@@ -154,7 +185,18 @@ func Deactivate(deps DeactivateDeps) (*DeactivateResult, error) {
 			return nil, err
 		}
 		defer lock.Release()
-		path = lock.Target
+		// The lock is keyed by the file it guards, but its spelling was resolved before this command
+		// waited, and a directory symlink in the path can be retargeted during the wait. The path is
+		// therefore pinned to the file the held sidecar belongs to: the sidecar beside the resolved
+		// real path must be the very file this lock holds (fstat), or the directory changed under the
+		// wait and acting now would edit a file this lock does not guard (CRW-899 E1, fail closed).
+		// Everything below — the drift hash, the read, the restore and the injected CLI calls —
+		// works on that pinned path, never on a spelling re-resolved after the wait.
+		pinned, pinnedOK := configLockPathsRealPath(lock.Target)
+		if !pinnedOK || !lock.HoldsSidecar(pinned) {
+			return nil, fmt.Errorf("the config file's directory changed while the lock was being taken (%s); run the deactivation again", lock.Target)
+		}
+		path = pinned
 		// The manifest read before the lock answered only whether and where to lock. An activation
 		// that published while this command waited would otherwise be ignored, and the restore would
 		// be computed from a manifest that no longer describes the install: the drift hash, the table
@@ -171,7 +213,7 @@ func Deactivate(deps DeactivateDeps) (*DeactivateResult, error) {
 		// config file would have this deactivation apply one file's ownership records to another, so
 		// it refuses rather than acting under the wrong lock (fail closed). An explicit ConfigPath
 		// overrides the manifest in both readings, so only the derived path can disagree.
-		if deps.ConfigPath == "" && !configLockPathsSameTarget(m.ConfigPath, lock.Target) {
+		if deps.ConfigPath == "" && !configLockPathsSameTarget(m.ConfigPath, path) {
 			return nil, fmt.Errorf("the install manifest now names a different config file (%s, was %s); run the deactivation again", m.ConfigPath, lockedPath)
 		}
 	}

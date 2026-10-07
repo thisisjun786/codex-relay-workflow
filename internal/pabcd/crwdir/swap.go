@@ -286,6 +286,31 @@ func crwdirSwapResolvePath(target string) (string, error) {
 	return target, nil
 }
 
+// HoldsSidecar reports whether the sidecar beside resolvedPath is the very file this lock holds
+// open. It is the proof a writer needs before it acts on a path it resolved *after* the lock wait:
+// a directory symlink retargeted while the writer waited makes that path name another file, whose
+// sidecar is a different inode from the one this lock flocked, so the writer must refuse rather than
+// edit a file the lock does not guard (CRW-899). The comparison is fstat of the held descriptor
+// against os.Stat of the sidecar path, never a path comparison, because a path is only a spelling.
+// It answers false for a nil or released lock and for a sidecar that does not stat, so a caller that
+// cannot prove the identity fails closed. The sidecar is created once and never unlinked
+// (docs/port/decisions.md 7), so while the lock is held the held descriptor is the same file the
+// path names unless something replaced that path.
+func (l *ConfigLock) HoldsSidecar(resolvedPath string) bool {
+	if l == nil || l.file == nil {
+		return false
+	}
+	held, err := l.file.Stat()
+	if err != nil || held == nil {
+		return false
+	}
+	side, err := os.Stat(resolvedPath + crwdirSwapLockSuffix)
+	if err != nil || side == nil {
+		return false
+	}
+	return os.SameFile(held, side)
+}
+
 // Release unlocks and closes the sidecar. The file is never unlinked.
 func (l *ConfigLock) Release() {
 	if l == nil || l.file == nil {
