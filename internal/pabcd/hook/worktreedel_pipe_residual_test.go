@@ -83,6 +83,42 @@ func TestWorktreeDelPipeStdinAliasOperandDenied(t *testing.T) {
 	r.intact(t)
 }
 
+// TestWorktreeDelPipeResidualC10g is the sixth round: the pre-merge evaluation of head be21a322c and this change's
+// own independent review found six more forms inside this issue's promise, and two over-denials this change
+// introduced. Each was reproduced with a harmless stand-in for the deletion in bash 5.3.9 and zsh 5.9; no row runs a
+// deletion, and the guard reads text and runs nothing.
+func TestWorktreeDelPipeResidualC10g(t *testing.T) {
+	r := newDelRig(t)
+	// (d1) an exec-only redirection inside a subshell or after a failing condition does not reach the outer shell.
+	worktreeDelPipeDenied(t, r, `printf 'rm -rf ../repo' | ( (exec </dev/null); bash; : )`)
+	worktreeDelPipeDenied(t, r, `printf 'rm -rf ../repo' | (false && exec </dev/null; bash; : )`)
+	// (d2) MULTIOS keeps every input, so a later redirection that feeds the pipe still reaches the descriptor.
+	worktreeDelPipeInterpreterDenied(t, r, `printf x | python3 /dev/fd/3 3</dev/null 3</dev/fd/0`)
+	// (d3) a compound written over several lines is read whole.
+	worktreeDelUnreadableDenied(t, r, "(\n  python3\n) <<'PY'\nimport os\nPY", "an interpreter program read from a here-document")
+	// (d4) a subshell opener written without a blank does not hide the interpreter owner of a here-string.
+	worktreeDelUnreadableDenied(t, r, `(python3) <<< 'import os'`, "an interpreter program read from a here-string")
+	// (B1-B4) a wrapper whose own options start a shell, and a dash or sh -s that beats its -c program.
+	worktreeDelPipeDenied(t, r, `printf 'rm -rf ../repo' | env -S bash`)
+	worktreeDelPipeDenied(t, r, `printf 'rm -rf ../repo' | env --split-string 'bash'`)
+	worktreeDelPipeDenied(t, r, `printf 'rm -rf ../repo' | sudo -n -s`)
+	worktreeDelPipeDenied(t, r, `printf 'rm -rf ../repo' | strace -o /dev/null bash`)
+	worktreeDelPipeDenied(t, r, `printf 'rm -rf ../repo' | sh -s -c 'echo hi'`)
+	worktreeDelPipeDenied(t, r, `printf 'rm -rf ../repo' | dash -s -c 'echo hi'`)
+	// (d5) a command that redirects its own descriptor 0 from a file reads no compound here-document, and a
+	// harmless compound keeps its answer.
+	r.allowed(t,
+		`python3 </dev/null; { cat; } <<'EOF'`+"\nhello\nEOF",
+		`while cat; do :; done <<'EOF'`+"\nhello\nEOF",
+		`printf x | bash -c 'exec </dev/null; bash'`,
+		`printf x | strace -o /dev/null echo hi`,
+		`printf x | sudo -n cat`,
+		`printf x | env -S 'echo hi'`,
+		`printf x | bash -s -c 'echo hi'`,
+	)
+	r.intact(t)
+}
+
 // TestWorktreeDelPipeExecOptionDenied is c2: the shared wrapper table reads exec's -a NAME, so the pipe rule and the
 // removal check both name the command behind it.
 func TestWorktreeDelPipeExecOptionDenied(t *testing.T) {

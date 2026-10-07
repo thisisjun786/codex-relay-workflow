@@ -67,6 +67,13 @@ func TestMemoryGatePipeResidual(t *testing.T) {
 		"printf 'echo x > " + root + "/a' | env -u '>/dev/null' bash",
 		"printf 'echo x > " + root + "/a' | python3 /dev/fd/3 3<&0 3</dev/null",
 		"while python3; do :; done <<'PYEOF'\nopen('" + root + "/a','w')\nPYEOF",
+		// CRW-894 c10, sixth round: (a) a wrapper whose own options start a shell (env -S, sudo -s); (b) a
+		// dash or sh -s that beats its -c program; (c) a compound here-document written over several lines.
+		"printf 'echo x > " + root + "/a' | env -S bash",
+		"printf 'echo x > " + root + "/a' | sudo -n -s",
+		"printf 'echo x > " + root + "/a' | strace -o /dev/null bash",
+		"printf 'echo x > " + root + "/a' | sh -s -c 'echo hi'",
+		"(\n  python3\n) <<'PY'\nopen('" + root + "/a','w')\nPY",
 	} {
 		got := memoryGateClassify("Bash", map[string]any{"command": command}, cwd, env)
 		if got.Surface != "shell" || !strings.HasPrefix(got.Target, "(a program the gate cannot read: ") {
