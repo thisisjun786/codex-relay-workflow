@@ -395,8 +395,11 @@ func storedResult(ctx context.Context, env LookupEnv, running func(context.Conte
 // was established. A restore that cannot be made, or whose durability was not established, is a
 // recovery rather than a confirmed restore.
 // A restore whose rename happened and whose directory could not be synced is still a restore: the
-// original bytes are on disk and the record names them, so the answer says so and warns that a power
-// loss may bring the new bytes back, in which case the next write refuses on the digest disagreement.
+// answer is register_failed only when the bytes read back are the ones the restore put there; when
+// another writer moved them the file and the record disagree and the answer is a recovery. A restore
+// whose rename happened and whose directory could not be synced is still a restore - the original
+// bytes are on disk and the record names them - and its answer warns that a power loss may bring the
+// new bytes back, in which case the next write refuses on the digest disagreement.
 func restoreResult(publish PublishFunc, encoded, path string, raw []byte, mode os.FileMode, original, backup string, warnings []string, detail string) WriteResult {
 	renamed, err := publish(encoded, raw, mode)
 	if err != nil && !renamed {
@@ -411,19 +414,22 @@ func restoreResult(publish PublishFunc, encoded, path string, raw []byte, mode o
 		return WriteResult{Kind: WriteRecoveryNeeded, RegisteredDigest: original, Backup: backup,
 			Recovery: recoveryAdvice(path, backup), Warnings: warnings,
 			Errors: []string{detail + "; the bytes could not be read back after the restore: " + readErr.Error()}}
-	case err != nil:
-		// The rename happened and the directory could not be synced: the original bytes are on disk and
-		// the record names them, so the two again describe one document. Their survival through a power
-		// loss was not established, and a host that loses power now may find the new bytes back - in
-		// which case the file and the record disagree and the next write is refused on that
-		// disagreement rather than acting on it.
-		return WriteResult{Kind: WriteRegisterFailed, Restored: true, FileDigest: confirmed, RegisteredDigest: original,
-			Backup: backup, Warnings: append(warnings, "the original bytes are back and the directory could not be synced ("+err.Error()+"), so a host that loses power now may find the new bytes; the next write is then refused because the file and the wiring record name different digests"),
-			Errors: []string{detail}, Step: "restored"}
 	case confirmed != original:
+		// The bytes on disk are not the ones the restore put back (another writer replaced them, or the
+		// rename did not land where it was read). The file and the record disagree, so this is a
+		// recovery, whatever the publication reported about the directory sync.
 		return WriteResult{Kind: WriteRecoveryNeeded, FileDigest: confirmed, RegisteredDigest: original, Backup: backup,
 			Recovery: recoveryAdvice(path, backup), Warnings: warnings,
 			Errors: []string{detail + "; the bytes read back after the restore are not the ones that were backed up"}}
+	case err != nil:
+		// The rename happened, the original bytes are back, and the directory could not be synced, so
+		// the file and the record again describe one document. Their survival through a power loss was
+		// not established, and a host that loses power now may find the new bytes back - in which case
+		// the file and the record disagree and the next write is refused on that disagreement rather
+		// than acting on it.
+		return WriteResult{Kind: WriteRegisterFailed, Restored: true, FileDigest: confirmed, RegisteredDigest: original,
+			Backup: backup, Warnings: append(warnings, "the original bytes are back and the directory could not be synced ("+err.Error()+"), so a host that loses power now may find the new bytes; the next write is then refused because the file and the wiring record name different digests"),
+			Errors: []string{detail}, Step: "restored"}
 	}
 	return WriteResult{Kind: WriteRegisterFailed, Restored: true, FileDigest: original, RegisteredDigest: original,
 		Backup: backup, Warnings: warnings, Errors: []string{detail}, Step: "restored"}

@@ -1120,3 +1120,43 @@ func TestARecoveryWhoseFileCannotBeReadReportsNoFileDigest(t *testing.T) {
 		t.Fatalf("the recovery hides the read error: %v", result.Errors)
 	}
 }
+
+// TestARestoreWhoseBytesMovedAfterTheRenameNeedsRecovery is the Codex review finding: the rename
+// happened and the directory could not be synced, but the bytes on disk are no longer the ones the
+// restore put there (an editor wrote them). The file and the wiring record disagree, so the answer
+// must be recovery_needed with both digests, not restored - a bridge refuses those bytes.
+func TestARestoreWhoseBytesMovedAfterTheRenameNeedsRecovery(t *testing.T) {
+	env, file := host(t, policyText, true)
+	third := "a document another writer put there after the restore\n"
+	restore := writePublish
+	calls := 0
+	writePublish = func(path string, data []byte, mode os.FileMode) (bool, error) {
+		calls++
+		renamed, err := restore(path, data, mode)
+		if calls == 2 {
+			// The restore's rename is done and its directory was not synced; another writer then
+			// replaces the bytes before the write reads them back.
+			if err := os.WriteFile(file, []byte(third), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			return renamed, errors.New("the directory could not be synced")
+		}
+		return renamed, err
+	}
+	t.Cleanup(func() { writePublish = restore })
+	opts := WriteOptions{Register: func(context.Context, string) RegisterAnswer { return answer("record_absent", 1) }}
+	result := Write(context.Background(), envOf(env), opts,
+		WriteRequest{ExpectedDigest: digestOf(policyText), Change: removeLegacy()})
+	if result.Kind != WriteRecoveryNeeded {
+		t.Fatalf("kind = %q (%v), want %q: the file and the record disagree", result.Kind, result.Errors, WriteRecoveryNeeded)
+	}
+	if result.Restored {
+		t.Fatal("a restore was reported although the bytes on disk are not the ones it put back")
+	}
+	if result.FileDigest != digestOf(third) {
+		t.Fatalf("fileDigest = %q, want the digest of the bytes now on disk", result.FileDigest)
+	}
+	if result.RegisteredDigest != digestOf(policyText) {
+		t.Fatalf("registeredDigest = %q, want the digest the record still names", result.RegisteredDigest)
+	}
+}
