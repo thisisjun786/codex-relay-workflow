@@ -743,6 +743,39 @@ func TestMigrateOwnedDirIdentityPinIsHeldAcrossTheReadHandle(t *testing.T) {
 	}
 }
 
+// C1a(2): the identity of the directory this run created is read from the descriptor the creation holds
+// on it, never from the name before that descriptor exists. A name read first can describe an entry
+// another actor put at the temporary name between the read and the pin, and its device and inode would
+// then be recorded as this run's - the identity every later comparison and the cleanup trust. The case
+// observes the order at the seams: no temporary name is read while the run holds no descriptor on it.
+func TestMigrateOwnedDirIdentityIdentityIsReadFromTheHeldDescriptor(t *testing.T) {
+	_, r, p := apPlan(t, migrateOwnedDirIdentityEntries(), nil)
+	realPin := migrateOwnedDirIdentityPin
+	pinned := false
+	migrateOwnedDirIdentityPin = func(dirfd int, name string) (int, error) {
+		pinned = true
+		return realPin(dirfd, name)
+	}
+	t.Cleanup(func() { migrateOwnedDirIdentityPin = realPin })
+	realLstat := migrateOwnedDirIdentityLstat
+	readBeforePin := ""
+	migrateOwnedDirIdentityLstat = func(dirfd int, name string, st *unix.Stat_t) error {
+		if !pinned {
+			if _, ok := tempRun(name); ok {
+				readBeforePin = name
+			}
+		}
+		return realLstat(dirfd, name, st)
+	}
+	t.Cleanup(func() { migrateOwnedDirIdentityLstat = realLstat })
+	if _, err := apply(r, p); err != nil {
+		t.Fatal(err)
+	}
+	if readBeforePin != "" {
+		t.Errorf("the identity of %s was read before this run held a descriptor on that directory", readBeforePin)
+	}
+}
+
 // C2(2): on a platform whose pin open cannot give a handle, the by-name path keeps its own verified
 // descriptor across the rename and returns the child built on it. The case proves the property that
 // matters: the identity the pair records is the identity of the descriptor the returned child holds, and

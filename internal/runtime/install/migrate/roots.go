@@ -617,8 +617,17 @@ func (d *Dir) EnsureChild(name string, perm uint32) (child *Dir, made bool, err 
 	if err := checkName(name); err != nil {
 		return nil, false, err
 	}
-	tmp, tmpID, err := d.migrateOwnedDirIdentityTemp(perm)
+	tmp, tmpID, pin, err := d.migrateOwnedDirIdentityTemp(perm)
 	if err != nil {
+		// The creation reported the temporary it made together with the failure, so this run still removes
+		// its own directory: the removal is addressed by the identity read for it, and an entry another
+		// actor put at that name is refused and reported instead of deleted. A failure before the
+		// temporary existed reports no name and leaves nothing behind.
+		if tmp != "" {
+			if rm := d.migrateOwnedDirIdentityDrop(tmp, tmpID); rm != nil {
+				err = errors.Join(err, rm)
+			}
+		}
 		return nil, false, err
 	}
 	// cleanup removes this run's temporary unless the rename put it at name. The removal is addressed by
@@ -626,7 +635,7 @@ func (d *Dir) EnsureChild(name string, perm uint32) (child *Dir, made bool, err 
 	// the temporary name. The pin on that directory stays open until the removal has run: the removal
 	// compares the identity it recorded, and with the pin closed first the kernel could free that inode
 	// and hand it to another directory, which the comparison would then take for this run's.
-	fd := -1
+	fd := pin
 	cleanup := true
 	defer func() {
 		if cleanup {
@@ -642,7 +651,7 @@ func (d *Dir) EnsureChild(name string, perm uint32) (child *Dir, made bool, err 
 			_ = unix.Close(fd)
 		}
 	}()
-	fd, err = d.migrateOwnedDirIdentityClaim(tmp, tmpID, perm)
+	fd, err = d.migrateOwnedDirIdentityClaim(tmp, tmpID, perm, pin)
 	if err != nil {
 		// fd is the pin the claim still holds, or -1 where it holds none. It is kept so the deferred
 		// cleanup removes the temporary while that directory is still referenced, and closed after it.
@@ -713,24 +722,63 @@ func migrateOwnedDirIdentityStep(step string) error {
 // leaves that directory in place and refuses with its path: this run cannot show the entry is the
 // directory it made, so removing the name could delete another actor's entry, and the leftover is
 // reported instead.
-func (d *Dir) migrateOwnedDirIdentityTemp(perm uint32) (string, fileID, error) {
+func (d *Dir) migrateOwnedDirIdentityTemp(perm uint32) (string, fileID, int, error) {
 	var last error
 	for range 2 {
 		tmp := tempName(rand.Text(), 1)
 		if err := migrateOwnedDirMkdirat(d.fd(), tmp, perm); err != nil {
 			if !errors.Is(err, unix.EEXIST) {
-				return "", fileID{}, &fs.PathError{Op: "mkdir", Path: d.join(tmp), Err: err}
+				return "", fileID{}, -1, &fs.PathError{Op: "mkdir", Path: d.join(tmp), Err: err}
 			}
 			last = &fs.PathError{Op: "mkdir", Path: d.join(tmp), Err: err}
 			continue
 		}
+		// The name is pinned before its identity is read, so the inode this run created is referenced from
+		// the syscall right after the mkdirat: no comparison later in the creation can be satisfied by a
+		// different directory that reused that inode. The one window left is between the mkdirat and this
+		// open, which no POSIX call closes - no call returns a handle to a directory it creates - and it
+		// is the residual the issue's defect record names.
+		if err := migrateOwnedDirIdentityStep("open"); err != nil {
+			// Nothing has been given a mode. The identity is read here only so that the caller's cleanup
+			// can address the removal of this run's own temporary.
+			var st unix.Stat_t
+			if lerr := migrateOwnedDirIdentityLstat(d.fd(), tmp, &st); lerr == nil {
+				return tmp, fileID{uint64(st.Dev), uint64(st.Ino)}, -1, err
+			}
+			return "", fileID{}, -1, err
+		}
+		pin, perr := migrateOwnedDirIdentityPin(d.fd(), tmp)
+		switch {
+		case perr == nil:
+		case ownedDirIdentityNoHandle(perr), errors.Is(perr, unix.EINVAL), errors.Is(perr, unix.ENOTSUP), errors.Is(perr, unix.EOPNOTSUPP), errors.Is(perr, unix.EACCES), errors.Is(perr, unix.EPERM):
+			// This platform cannot pin a directory without permission on it. The creation falls back to
+			// the checked by-name path, whose two-syscall window the defect record names as a residual.
+			pin = -1
+		default:
+			return "", fileID{}, -1, perr
+		}
 		var st unix.Stat_t
 		if err := migrateOwnedDirIdentityLstat(d.fd(), tmp, &st); err != nil {
-			return "", fileID{}, refuse(ReasonUnreadable, d.join(tmp), "the identity of the directory this run created could not be read, so it is left in place: "+err.Error())
+			if pin >= 0 {
+				_ = unix.Close(pin)
+			}
+			return "", fileID{}, -1, refuse(ReasonUnreadable, d.join(tmp), "the identity of the directory this run created could not be read, so it is left in place: "+err.Error())
 		}
-		return tmp, fileID{uint64(st.Dev), uint64(st.Ino)}, nil
+		id := fileID{uint64(st.Dev), uint64(st.Ino)}
+		if pin >= 0 {
+			var pinSt unix.Stat_t
+			if err := unix.Fstat(pin, &pinSt); err != nil {
+				_ = unix.Close(pin)
+				return "", fileID{}, -1, &fs.PathError{Op: "stat", Path: d.join(tmp), Err: err}
+			}
+			if (fileID{uint64(pinSt.Dev), uint64(pinSt.Ino)}) != id {
+				_ = unix.Close(pin)
+				return "", fileID{}, -1, refuse(applyReasonChanged, d.join(tmp), "the temporary name is not the directory this run created")
+			}
+		}
+		return tmp, id, pin, nil
 	}
-	return "", fileID{}, last
+	return "", fileID{}, -1, last
 }
 
 // migrateOwnedDirIdentityClaim gives the temporary directory this run created exactly perm and returns a
@@ -751,24 +799,28 @@ func (d *Dir) migrateOwnedDirIdentityTemp(perm uint32) (string, fileID, error) {
 // Where no such handle can be opened - a platform without one, or an open that needs the permission a
 // umask removed - the name is checked with fstatat immediately before a by-name no-follow chmod, and
 // again after it; that path carries the two-syscall window the defect record names as a residual.
-func (d *Dir) migrateOwnedDirIdentityClaim(tmp string, want fileID, perm uint32) (int, error) {
-	if err := migrateOwnedDirIdentityStep("open"); err != nil {
-		return -1, err
-	}
-	fd, err := migrateOwnedDirIdentityPin(d.fd(), tmp)
-	switch {
-	case err == nil:
-	case ownedDirIdentityNoHandle(err), errors.Is(err, unix.EINVAL), errors.Is(err, unix.ENOTSUP), errors.Is(err, unix.EOPNOTSUPP), errors.Is(err, unix.EACCES), errors.Is(err, unix.EPERM):
+// pin is the descriptor the creation took on the directory it made, which is the handle this step gives the
+// mode through; it is -1 where the platform could not give one at the creation.
+func (d *Dir) migrateOwnedDirIdentityClaim(tmp string, want fileID, perm uint32, pin int) (int, error) {
+	if pin < 0 {
 		return d.migrateOwnedDirIdentityClaimByName(tmp, want, perm)
-	default:
-		return -1, err
 	}
+	fd := pin
 	var st unix.Stat_t
 	if err := unix.Fstat(fd, &st); err != nil {
 		return fd, &fs.PathError{Op: "stat", Path: d.join(tmp), Err: err}
 	}
 	if err := migrateOwnedDirIdentityOwned(d.join(tmp), &st, want); err != nil {
 		return fd, err
+	}
+	// The name must still hold the directory this run pinned at its creation before any mode is given, so a
+	// name another actor took over in the meantime is refused while the mode goes through the descriptor.
+	var nameSt unix.Stat_t
+	if err := migrateOwnedDirIdentityLstat(d.fd(), tmp, &nameSt); err != nil {
+		return fd, &fs.PathError{Op: "lstat", Path: d.join(tmp), Err: err}
+	}
+	if (fileID{uint64(nameSt.Dev), uint64(nameSt.Ino)}) != (fileID{uint64(st.Dev), uint64(st.Ino)}) {
+		return fd, refuse(applyReasonChanged, d.join(tmp), "the temporary name is not the directory this run created")
 	}
 	if err := ownedDirIdentityFchmod(fd, perm); err != nil {
 		return fd, &fs.PathError{Op: "chmod", Path: d.join(tmp), Err: err}
