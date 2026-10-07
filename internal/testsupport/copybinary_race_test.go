@@ -57,10 +57,13 @@ const (
 // copyRaceResult is what the child hands back: the ETXTBSY count, the bytes copied, the copies
 // attempted and the wall clock the child measured.
 type copyRaceResult struct {
-	Busy      int64         `json:"busy"`
-	Written   int64         `json:"written"`
-	Attempted int64         `json:"attempted"`
-	Elapsed   time.Duration `json:"elapsed"`
+	Busy      int64 `json:"busy"`
+	Written   int64 `json:"written"`
+	Attempted int64 `json:"attempted"`
+	// Forked is how many forker program starts succeeded. A green run whose forkers never started a
+	// process would prove nothing about the race, so the parent requires it to be non-zero.
+	Forked  int64         `json:"forked"`
+	Elapsed time.Duration `json:"elapsed"`
 }
 
 // TestCopyBinarySurvivesConcurrentForks is this issue's regression. CopyBinary opens the copy for
@@ -72,11 +75,14 @@ type copyRaceResult struct {
 func TestCopyBinarySurvivesConcurrentForks(t *testing.T) {
 	t.Parallel()
 	result := copyRaceInChild(t, "locked")
+	if result.Forked == 0 {
+		t.Fatalf("no forker started a process: the exercise did not establish the concurrent-fork pressure it needs")
+	}
 	if result.Busy != 0 {
 		t.Fatalf("%d of the %d copies could not be run: ETXTBSY", result.Busy, result.Attempted)
 	}
-	t.Logf("locked: %d copies in %s (the issue's design budget is %s), %d bytes, no ETXTBSY",
-		result.Attempted, result.Elapsed, copyBudget, result.Written)
+	t.Logf("locked: %d copies in %s (the issue's design budget is %s), %d bytes, %d forks, no ETXTBSY",
+		result.Attempted, result.Elapsed, copyBudget, result.Written, result.Forked)
 }
 
 // The same exercise through the copy the package did before this issue - the same open, copy and
@@ -85,8 +91,8 @@ func TestCopyBinarySurvivesConcurrentForks(t *testing.T) {
 func TestACopyWithoutTheLockRacesConcurrentForks(t *testing.T) {
 	t.Parallel()
 	result := copyRaceInChild(t, "plain")
-	t.Logf("unlocked: %d of %d copies hit ETXTBSY in %s (%d bytes written)",
-		result.Busy, result.Attempted, result.Elapsed, result.Written)
+	t.Logf("unlocked: %d of %d copies hit ETXTBSY in %s (%d bytes written, %d forks)",
+		result.Busy, result.Attempted, result.Elapsed, result.Written, result.Forked)
 }
 
 // TestCopyBinaryRaceExercise is the exercise itself. It runs only in the child process the two
@@ -149,14 +155,17 @@ func copyRaceInChild(t *testing.T, mode string) copyRaceResult {
 		close(killed)
 	})
 	waitErr := cmd.Wait()
-	if !timer.Stop() {
+	timedOut := !timer.Stop()
+	if timedOut {
 		<-killed
 	}
-	select {
-	case <-killed:
+	// Whatever ended the child, every process it started belongs to this test: the group is killed
+	// here so a copy or fork the child left running (its own bounds fire before this one) does not
+	// outlive the test and its temporary files.
+	_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	if timedOut {
 		t.Fatalf("the exercise did not finish within %s and its process group was killed: a copy or fork is stuck\n%s",
 			copyChildBudget, output.String())
-	default:
 	}
 	if waitErr != nil {
 		t.Fatalf("the exercise failed: %v\n%s", waitErr, output.String())
@@ -219,7 +228,9 @@ func copyRace(t *testing.T, copyFile func(source, path string) error, source str
 					return
 				default:
 				}
-				_ = exec.Command(source).Run()
+				if err := exec.Command(source).Run(); err == nil {
+					atomic.AddInt64(&result.Forked, 1)
+				}
 			}
 		}()
 	}
