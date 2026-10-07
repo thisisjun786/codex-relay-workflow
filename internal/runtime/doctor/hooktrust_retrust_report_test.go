@@ -10,6 +10,44 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 )
 
+// The retrust subcommand reads the wall clock unless a build links an instant into retrustTestClock
+// (cli.go): the cxc domain of internal/contracttest links the recorder's epoch so a fixture that
+// records a clock-minted backup name can replay (contract/notes/cxc/CRW-936.json). These three cases
+// are the recall seam's (cmd/crw/recall_clock_test.go) for this one.
+func TestRetrustNowReadsTheWallClockWithoutASeam(t *testing.T) {
+	if retrustTestClock != "" {
+		t.Fatalf("retrustTestClock = %q, want empty: only a test build links it", retrustTestClock)
+	}
+	before := time.Now()
+	got := retrustNow()
+	if delta := got.Sub(before); delta < -time.Second || delta > time.Second {
+		t.Fatalf("retrustNow() = %s, want within one second of %s", got.UTC().Format(time.RFC3339Nano), before.UTC().Format(time.RFC3339Nano))
+	}
+}
+
+func TestRetrustNowUsesTheLinkedClock(t *testing.T) {
+	previous := retrustTestClock
+	retrustTestClock = "1767225600000"
+	t.Cleanup(func() { retrustTestClock = previous })
+	want := time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC)
+	got := retrustNow()
+	if !got.Equal(want) || got.Location() != time.UTC {
+		t.Fatalf("retrustNow() = %s (%s), want %s (UTC)", got, got.Location(), want)
+	}
+}
+
+func TestRetrustNowPanicsOnAMalformedSeam(t *testing.T) {
+	previous := retrustTestClock
+	retrustTestClock = "not milliseconds"
+	t.Cleanup(func() { retrustTestClock = previous })
+	defer func() {
+		if recover() == nil {
+			t.Fatal("retrustNow() did not panic on a malformed retrustTestClock")
+		}
+	}()
+	_ = retrustNow()
+}
+
 // CRW-936's cases for the two report gaps the CRW-844 evaluation found. On dev a save that lands
 // just after the publication is reported as retrust's own content (the displaced-differs branch
 // returns before reading the target again), a refusal before the plan prints nothing at all, and a
