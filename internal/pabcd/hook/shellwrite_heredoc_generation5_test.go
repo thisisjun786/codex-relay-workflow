@@ -64,11 +64,8 @@ func TestShellWriteHeredocGeneration5Controls(t *testing.T) {
 		{"jq with its filter operand", "jq . <<'EOF'\n" + mem + "\nEOF"},
 		{"an unmodelled verb naming no interpreter", "mytool --input - <<'EOF'\n" + mem + "\nEOF"},
 		{"a commit message that mentions an interpreter", "git commit -F - <<'EOF'\nrun python3 -c pass\nEOF"},
-		{"a node script operand makes the body data", "node script.js <<'EOF'\nrequire('fs').writeFileSync('" + mem + "/a','x')\nEOF"},
 		{"a body written to a script file then run", "cat > x.py <<'EOF'\nopen('" + mem + "/a','w')\nEOF\npython3 x.py"},
 		{"a note quoting the memories path", "cat > note.md <<'EOF'\n" + mem + "\nEOF"},
-		{"a python script operand", "python3 script.py <<'EOF' 2>/dev/null\nopen('" + mem + "/a','w')\nEOF"},
-		{"a shell parsing without running", "bash -n <<'EOF'\necho x > " + mem + "/a\nEOF"},
 		{"a read loop with no interpreter outside the body", "while read l; do echo $l; done <<'EOF'\n" + mem + "\nEOF"},
 		{"a body alone naming an interpreter", "cat <<'EOF' > x.md\nrun python3 -c pass\nEOF"},
 	} {
@@ -78,6 +75,20 @@ func TestShellWriteHeredocGeneration5Controls(t *testing.T) {
 			}
 			if got, ok := shellWriteHeredocUnreadable(c.command); ok {
 				t.Errorf("%q reported unreadable %q", c.command, got)
+			}
+		})
+	}
+	// Correction 6 (rule H1): a script operand and a syntax check no longer make the body data, so these rows are read
+	// as the interpreter's program and denied (they stood in the allowed list before this correction; the node row is
+	// the accepted over-blocking the ruling records).
+	for _, c := range []struct{ name, command string }{
+		{"a node script operand makes the body data", "node script.js <<'EOF'\nrequire('fs').writeFileSync('" + mem + "/a','x')\nEOF"},
+		{"a python script operand", "python3 script.py <<'EOF' 2>/dev/null\nopen('" + mem + "/a','w')\nEOF"},
+		{"a shell parsing without running", "bash -n <<'EOF'\necho x > " + mem + "/a\nEOF"},
+	} {
+		t.Run(c.name+" (read now)", func(t *testing.T) {
+			if got := ShellWriteDestinations(c.command); !slices.Contains(got, mem+"/a") {
+				t.Errorf("%q named %q, want %q", c.command, got, mem+"/a")
 			}
 		})
 	}

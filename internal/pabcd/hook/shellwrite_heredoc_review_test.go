@@ -52,24 +52,27 @@ func TestShellWriteHeredocReviewUnreadable(t *testing.T) {
 	}
 }
 
-// TestShellWriteHeredocReviewUnchanged pins the findings where the shell runs nothing, so the body is not a program and
-// must not be denied.
+// TestShellWriteHeredocReviewUnchanged pins the row that stays read. Correction 6 (rule H1) removed the -n/-o noexec
+// exception: a here-document an interpreter owns is always that interpreter's program whatever its flags, so the three
+// syntax-check rows that stood here now name the protected path (pinned below), and only the +o noexec row, which turns
+// execution back on, is left in this list.
 func TestShellWriteHeredocReviewUnchanged(t *testing.T) {
 	const mem = "/h/memories"
+	// +o noexec turns execution back on, so the body runs and is read.
+	if got := ShellWriteDestinations("bash +o noexec <<'EOF'\necho hi > " + mem + "/a\nEOF"); !slices.Contains(got, mem+"/a") {
+		t.Errorf("+o noexec named %q, want the protected path", got)
+	}
+	// Correction 6: a syntax check no longer makes the body data, because the interpreter still owns the here-document.
 	for _, c := range []struct{ name, command string }{
 		{"-n parses without running", "bash -n <<'EOF'\necho hi > " + mem + "/a\nEOF"},
 		{"-o noexec parses without running", "bash -o noexec <<'EOF'\necho hi > " + mem + "/a\nEOF"},
 		{"a bundle carrying n parses without running", "bash -ne <<'EOF'\necho hi > " + mem + "/a\nEOF"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			if got := ShellWriteDestinations(c.command); slices.Contains(got, mem+"/a") {
-				t.Errorf("%q named the protected path: %q", c.command, got)
+			if got := ShellWriteDestinations(c.command); !slices.Contains(got, mem+"/a") {
+				t.Errorf("%q named %q, want %q", c.command, got, mem+"/a")
 			}
 		})
-	}
-	// +o noexec turns execution back on, so the body runs and is read.
-	if got := ShellWriteDestinations("bash +o noexec <<'EOF'\necho hi > " + mem + "/a\nEOF"); !slices.Contains(got, mem+"/a") {
-		t.Errorf("+o noexec named %q, want the protected path", got)
 	}
 }
 

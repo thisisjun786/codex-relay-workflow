@@ -1875,15 +1875,15 @@ const (
 	shellWriteHeredocRefused
 )
 
-// shellWriteHeredocClassify classifies one here-document under the reader's allow list (CRW-765 corrections 3 to 5) and
+// shellWriteHeredocClassify classifies one here-document under the reader's allow list (CRW-765 corrections 3 to 6) and
 // returns the reader to use when it is a program. The header's physical line must first be proven to be exactly one
 // simple command the way the shell reads it (shellWriteHeredocHeaderProven; correction 4, rules G1 and G3), and its verb
 // must be literal (shellWriteHeredocVerbExpanded; correction 5, rule R0), because a verb that still holds an expansion
 // can be any program. A verb on the data list (shellWriteHeredocNeverReadsStdin; rule R1) makes the body data
-// unconditionally. An interpreter verb is a program when it reads its program from standard input, and data when it runs
-// an inline or script program (the body is then that program's standard input). Every other verb is unknown: it is data
+// unconditionally. A modelled interpreter verb is always a program, whatever its flags and operands (rule H1), and an
+// interpreter whose language the reader does not model is refused (rule H2). Every other verb is unknown: it is data
 // only when the command text names no interpreter and holds no name-binding construct, which the caller decides
-// (correction 5, rule R2), so proving a command is not an interpreter never opens a here-document a bound name feeds.
+// (rule R2), so proving a command is not an interpreter never opens a here-document a bound name feeds.
 func shellWriteHeredocClassify(h shellWriteHeredoc) (shellWriteHeredocReading, shellWriteHeredocKind) {
 	if !shellWriteHeredocHeaderProven(h) {
 		return shellWriteHeredocUnknown, 0
@@ -1908,19 +1908,15 @@ func shellWriteHeredocClassify(h shellWriteHeredoc) (shellWriteHeredocReading, s
 	if shellWriteHeredocNeverReadsStdin(verb) {
 		return shellWriteHeredocData, 0 // rule R1: this program never executes its standard input
 	}
-	if !shellWriteHeredocInterpreterName(verb) {
-		// Rule R2: any other verb is data only when the command text names no interpreter and holds no name-binding
-		// construct, which the caller decides against the whole command text.
-		return shellWriteHeredocUnknown, 0
+	if shellWriteHeredocUnmodelledInterpreter(verb, args) {
+		return shellWriteHeredocRefused, 0 // rule H2: an interpreter whose language this reader does not model
 	}
-	kind, stdin, certain := shellWriteHeredocStdin(verb, args)
-	if !certain {
-		return shellWriteHeredocUnknown, 0
+	if shellWriteHeredocInterpreterName(verb) {
+		return shellWriteHeredocProgram, shellWriteHeredocKindOf(verb) // rule H1: always this interpreter's program
 	}
-	if !stdin {
-		return shellWriteHeredocData, 0 // the interpreter runs an inline or script program; the body is its stdin data
-	}
-	return shellWriteHeredocProgram, kind
+	// Rule R2: any other verb is data only when the command text names no interpreter and holds no name-binding
+	// construct, which the caller decides against the whole command text.
+	return shellWriteHeredocUnknown, 0
 }
 
 // shellWriteHeredocReservedWord reports whether a word is a shell reserved word, which is never a simple command's verb
@@ -1934,21 +1930,40 @@ func shellWriteHeredocReservedWord(word string) bool {
 	return false
 }
 
-// shellWriteHeredocStdin reports the reader for an interpreter verb and whether it reads its program from standard
-// input. certain is false when an option the reader does not model leaves the program's source undecidable.
-func shellWriteHeredocStdin(verb string, args []string) (kind shellWriteHeredocKind, stdin bool, certain bool) {
+// shellWriteHeredocKindOf is the reader of an interpreter verb (CRW-765 correction 6, rule H1). The verb has already
+// been matched by shellWriteHeredocInterpreterName, so a here-document it owns is always read as its program whatever
+// its flags, operands or environment: a -c program, an -e program, a module, a script file operand and a syntax-check
+// flag are all positions where the interpreter still reads this here-document, so none of them makes the body data.
+func shellWriteHeredocKindOf(verb string) shellWriteHeredocKind {
 	switch {
 	case verb == "python" || verb == "python3" || shellVerbVersioned(verb):
-		stdin, certain = shellWriteHeredocPythonStdin(args)
-		return shellWriteHeredocPython, stdin, certain
+		return shellWriteHeredocPython
 	case verb == "node" || verb == "nodejs":
-		stdin, certain = shellWriteHeredocNodeStdin(args)
-		return shellWriteHeredocNode, stdin, certain
+		return shellWriteHeredocNode
 	case shellWriteHeredocIsShell(verb):
-		stdin, certain = shellWriteHeredocShellStdin(args)
-		return shellWriteHeredocShell, stdin, certain
+		return shellWriteHeredocShell
 	}
-	return 0, false, true
+	return 0
+}
+
+// shellWriteHeredocUnmodelledInterpreter reports whether a verb is an interpreter whose language this reader does not
+// model (CRW-765 correction 6, rule H2): awk, gawk, mawk and nawk read their program from standard input when no
+// program operand is given, perl, ruby, php, lua, Rscript, tclsh and osascript take a program from standard input in
+// several forms, and sed takes its script from standard input in its -f form. A here-document one of these owns is a
+// program the reader cannot read, so the gate refuses it. The R1 data list is checked before this list, and sed without
+// -f is not an interpreter here: it falls to rule R2, which keeps the body data unless the command text names one.
+func shellWriteHeredocUnmodelledInterpreter(verb string, args []string) bool {
+	switch verb {
+	case "awk", "gawk", "mawk", "nawk", "perl", "ruby", "php", "lua", "rscript", "tclsh", "osascript":
+		return true
+	case "sed":
+		for _, a := range args {
+			if a == "-f" || a == "--file" || strings.HasPrefix(a, "--file=") || strings.HasPrefix(a, "-f") && len(a) > 2 {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // shellWriteHeredocFunctionNames is the function names the command defines in any form - name(), name (), function name
@@ -2125,178 +2140,6 @@ func shellWriteHeredocIsShell(verb string) bool {
 		return true
 	}
 	return false
-}
-
-// shellWriteHeredocPythonStdin reports whether the python command words read their program from standard input. A -c
-// (or a bundle carrying c) or -m gives the program inline or from a module, and -i (PYTHONINSPECT) then reads further
-// statements from standard input even without a terminal, so the body is still executable input; the first non-option
-// word is a script operand, and - alone (or a script path that resolves to standard input, /dev/stdin and the fd
-// aliases) is stdin. A script operand that is not stdin makes the body data.
-func shellWriteHeredocPythonStdin(args []string) (stdin bool, certain bool) {
-	interactive, inline, sawScript, unknown := false, false, false, false
-	for i := 0; i < len(args); i++ {
-		a := args[i]
-		switch {
-		case a == "-":
-			return true, true
-		case a == "--":
-			for _, later := range args[i+1:] {
-				if shellWriteHeredocStdinPath(later) {
-					return true, true
-				}
-				sawScript = true
-			}
-			i = len(args)
-		case a == "-c" || a == "--command" || a == "-m" || strings.HasPrefix(a, "-c") && len(a) > 2 || strings.HasPrefix(a, "-m") && len(a) > 2:
-			inline = true
-		case a == "-W" || a == "-X" || a == "--check-hash-based-pycs":
-			i++ // takes the next word as its value
-		case len(a) > 1 && a[0] == '-':
-			if shellVerbBundleHas(a, 'c', false) {
-				inline = true
-			}
-			if shellVerbBundleHas(a, 'i', false) {
-				interactive = true
-			}
-			unknown = true
-		default:
-			if shellWriteHeredocStdinPath(a) {
-				return true, true
-			}
-			sawScript = true
-		}
-	}
-	// -i inspects after the initial program even when stdin is not a terminal, so the body is read as statements.
-	if interactive {
-		return true, true
-	}
-	if !inline && !sawScript {
-		return true, true
-	}
-	// A script operand after an option this reader does not model could be that option's value, so the reader cannot
-	// tell whether the body is the program: it is uncertain and fails closed.
-	if unknown && sawScript {
-		return false, false
-	}
-	return false, true
-}
-
-// shellWriteHeredocStdinPath reports whether a script operand names standard input: - and the /dev/stdin and
-// /dev/fd/0, /proc/self/fd/0 aliases the platforms this runtime runs on expose.
-func shellWriteHeredocStdinPath(p string) bool {
-	switch p {
-	case "-", "/dev/stdin", "/dev/fd/0", "/proc/self/fd/0":
-		return true
-	}
-	return false
-}
-
-// shellWriteHeredocNodeStdin reports whether the node command words read their program from standard input. -e/--eval,
-// -p/--print and a bundled -pe give the program inline; the first non-option word is a script operand, and - alone is
-// stdin. -C/--conditions, -r/--require and the loader options take the next word as their value.
-func shellWriteHeredocNodeStdin(args []string) (stdin bool, certain bool) {
-	unknown, sawScript := false, false
-	for i := 0; i < len(args); i++ {
-		a := args[i]
-		switch {
-		case a == "-":
-			return true, true
-		case a == "--":
-			for _, later := range args[i+1:] {
-				if shellWriteHeredocStdinPath(later) {
-					return true, true
-				}
-				sawScript = true
-			}
-			i = len(args)
-		case a == "-e" || a == "--eval" || a == "-p" || a == "--print" || a == "-pe",
-			strings.HasPrefix(a, "--eval=") || strings.HasPrefix(a, "--print="),
-			strings.HasPrefix(a, "-e") && len(a) > 2 && !strings.HasPrefix(a, "--"),
-			strings.HasPrefix(a, "-p") && len(a) > 2 && !strings.HasPrefix(a, "--"):
-			return false, true
-		case a == "-C" || a == "--conditions" || a == "-r" || a == "--require" || a == "--loader" || a == "--experimental-loader" || a == "--input-type" || a == "--import":
-			i++ // takes the next word as its value
-		case strings.HasPrefix(a, "--conditions=") || strings.HasPrefix(a, "--require=") || strings.HasPrefix(a, "--loader=") || strings.HasPrefix(a, "--experimental-loader=") || strings.HasPrefix(a, "--input-type="):
-			// the value is attached
-		case strings.HasPrefix(a, "-C") && len(a) > 2 && !strings.HasPrefix(a, "--"):
-			// the value is attached
-		case len(a) > 1 && a[0] == '-':
-			unknown = true // another option; the program may still be read from standard input
-		default:
-			if shellWriteHeredocStdinPath(a) {
-				return true, true
-			}
-			sawScript = true
-		}
-	}
-	if sawScript && unknown {
-		return false, false
-	}
-	if sawScript {
-		return false, true // a script operand: the body is that program's standard input, not its text
-	}
-	return true, true
-}
-
-// shellWriteHeredocShellStdin reports whether a shell reads its program from standard input. -c (a bundle carrying c)
-// gives the program inline, so it wins; -s forces standard input; -n and -o noexec parse without running anything, so
-// the body is not a program that writes and is not read (their +n and +o noexec forms turn it off); otherwise a script
-// operand is the program, and its absence means the shell reads standard input.
-func shellWriteHeredocShellStdin(args []string) (stdin bool, certain bool) {
-	sawC, sawS, sawScript, noExec, unknown := false, false, false, false, false
-	for i := 0; i < len(args); i++ {
-		a := args[i]
-		switch {
-		case a == "--":
-			for _, later := range args[i+1:] {
-				if shellWriteHeredocStdinPath(later) {
-					return true, true
-				}
-				sawScript = true
-			}
-			i = len(args)
-		case a == "-o" || a == "+o":
-			if i+1 < len(args) {
-				if args[i+1] == "noexec" {
-					noExec = a[0] == '-'
-				}
-				i++
-			}
-		case a == "-O" || a == "+O" || a == "--rcfile" || a == "--init-file":
-			i++ // takes the next word as its value
-		case len(a) > 1 && a[0] == '-' && a[1] == '-':
-			unknown = true // a long option this reader does not model
-		case len(a) > 1 && (a[0] == '-' || a[0] == '+'):
-			on := a[0] == '-'
-			if on && strings.ContainsRune(a[1:], 'c') {
-				sawC = true
-			}
-			if on && strings.ContainsRune(a[1:], 's') {
-				sawS = true
-			}
-			if strings.ContainsRune(a[1:], 'n') {
-				noExec = on
-			}
-		default:
-			if shellWriteHeredocStdinPath(a) {
-				return true, true
-			}
-			sawScript = true
-		}
-	}
-	if noExec {
-		return false, true // the shell parses without running, so the body executes nothing
-	}
-	if sawC {
-		return false, true
-	}
-	if sawS {
-		return true, true
-	}
-	if sawScript && unknown {
-		return false, false
-	}
-	return !sawScript, true
 }
 
 // shellWriteHeredocBodyExpands reports whether an unquoted here-document body holds a shell expansion the reader cannot

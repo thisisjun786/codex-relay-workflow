@@ -82,8 +82,10 @@ func TestShellWriteHeredocCorrectionGate(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			want := "(a program the gate cannot read: " + shellWriteHeredocWhatWant + ")"
-			if got := memoryGateClassify("Bash", map[string]any{"command": c.command}, cwd, env); got.Surface != "shell" || got.Target != want {
-				t.Errorf("%q: %+v, want the shell surface and %s", c.command, got, want)
+			// CRW-726's guard answers first for a here-document a listed shell reads as its program, so the reason is
+			// either reader's; both deny.
+			if got := memoryGateClassify("Bash", map[string]any{"command": c.command}, cwd, env); !shellWriteHeredocGateDenied(got, want) {
+				t.Errorf("%q: %+v, want a deny naming %s", c.command, got, want)
 			}
 		})
 	}
@@ -96,8 +98,6 @@ func TestShellWriteHeredocCorrectionControls(t *testing.T) {
 	const mem = "/h/memories"
 	for _, c := range []struct{ name, command string }{
 		{"a note quoting the memories path", "cat > note.md <<'EOF'\n" + mem + " is where notes live\nEOF"},
-		{"a script operand means the body is data", "python3 script.py <<'EOF' 2>/dev/null\nopen('" + mem + "/a','w')\nEOF"},
-		{"a shell parsing without running reads no program", "bash -n <<'EOF'\necho x > " + mem + "/a\nEOF"},
 		{"a note documenting a -c command with an expansion", "cat > note.md <<'EOF'\nbash -c \"python3 <<X\nopen('$P','w')\nX\"\nEOF"},
 		{"a note documenting a plain -c command", "cat > note.md <<'EOF'\nbash -c \"echo x > " + mem + "/a\"\nEOF"},
 	} {
@@ -114,11 +114,23 @@ func TestShellWriteHeredocCorrectionControls(t *testing.T) {
 	if got := ShellWriteDestinations("cat > note.md <<'EOF'\n" + mem + "\nEOF"); !slices.Equal(got, []string{"note.md"}) {
 		t.Errorf("the note row named %q, want [note.md]", got)
 	}
+	// Correction 6 (rule H1): a script operand and a syntax check no longer make the body data, so these two rows are
+	// read as the interpreter's program (they stood in the allowed list before this correction).
+	for _, c := range []struct{ name, command string }{
+		{"a script operand means the body is data", "python3 script.py <<'EOF' 2>/dev/null\nopen('" + mem + "/a','w')\nEOF"},
+		{"a shell parsing without running reads no program", "bash -n <<'EOF'\necho x > " + mem + "/a\nEOF"},
+	} {
+		t.Run(c.name+" (read now)", func(t *testing.T) {
+			if got := ShellWriteDestinations(c.command); !slices.Contains(got, mem+"/a") {
+				t.Errorf("%q named %q, want %q", c.command, got, mem+"/a")
+			}
+		})
+	}
 }
 
-// TestShellWriteHeredocCorrectionUncertain is the fail-closed default: a here-document attached to a command that names
-// one of the interpreters, whose program source an option the reader does not model leaves undecidable, is denied; a
-// non-interpreter command with the same option is untouched.
+// TestShellWriteHeredocCorrectionUncertain pins that an option the reader does not model no longer leaves the program's
+// source undecidable: correction 6 (rule H1) makes a modelled interpreter's here-document its program whatever the
+// flags, so both rows are read and name the protected path; a non-interpreter command with the same option is untouched.
 func TestShellWriteHeredocCorrectionUncertain(t *testing.T) {
 	const mem = "/h/memories"
 	for _, c := range []struct{ name, command string }{
@@ -126,8 +138,8 @@ func TestShellWriteHeredocCorrectionUncertain(t *testing.T) {
 		{"a shell long option before a script operand", "bash --norc script.sh <<'EOF'\necho x > " + mem + "/a\nEOF"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			if got, ok := shellWriteHeredocUnreadable(c.command); !ok || got != shellWriteHeredocWhatWant {
-				t.Errorf("%q: got %q, %v; want %q, true", c.command, got, ok, shellWriteHeredocWhatWant)
+			if got := ShellWriteDestinations(c.command); !slices.Contains(got, mem+"/a") {
+				t.Errorf("%q named %q, want %q", c.command, got, mem+"/a")
 			}
 		})
 	}

@@ -190,16 +190,19 @@ func memoryGateClassify(tool string, input any, cwd string, env host.LookupEnv) 
 		if what, ok := shellWriteFStringUnreadable(command); ok {
 			return MemoryWriteAttempt{Surface: "shell", Target: "(a program the gate cannot read: " + what + ")"}
 		}
-		// A here-document that feeds an interpreter's program may hold a write the reader never sees: an unquoted
-		// body the outer shell expands, or a program nested past the reader's depth limit, is a write attempt of its
-		// own and the gate fails closed (CRW-765).
-		if what, ok := shellWriteHeredocUnreadable(command); ok {
-			return MemoryWriteAttempt{Surface: "shell", Target: "(a program the gate cannot read: " + what + ")"}
-		}
 		// A shell program position the outer shell builds at run time - a -c program, an eval operand, a source
 		// operand, a shell reading a pipe, a here-string or a here-document - may hold a write the destination reader
 		// never sees, so it is a write attempt of its own and the gate fails closed (CRW-726, beside CRW-741's check).
+		// Its here-document rule covers only a here-document a listed shell reads as its program, so the CRW-765
+		// check below still decides every other interpreter's here-document; the CRW-726 check runs first because the
+		// two overlap exactly there, and the merge keeps CRW-726's own reason for that case.
 		if what, ok := worktreeDelUnreadableProgram(command); ok {
+			return MemoryWriteAttempt{Surface: "shell", Target: "(a program the gate cannot read: " + what + ")"}
+		}
+		// A here-document that feeds an interpreter's program may hold a write the reader never sees: an unquoted
+		// body the outer shell expands, a program nested past the reader's depth limit, or an interpreter whose
+		// language the reader does not model, is a write attempt of its own and the gate fails closed (CRW-765).
+		if what, ok := shellWriteHeredocUnreadable(command); ok {
 			return MemoryWriteAttempt{Surface: "shell", Target: "(a program the gate cannot read: " + what + ")"}
 		}
 	}

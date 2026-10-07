@@ -46,8 +46,8 @@ func TestShellWriteHeredocClosedRuleDenied(t *testing.T) {
 			if got.Surface != "shell" {
 				t.Fatalf("%q must be an attempt: %+v", row.command, got)
 			}
-			if got.Target != root+"/a" && got.Target != "(a program the gate cannot read: "+shellWriteHeredocWhatWant+")" {
-				t.Errorf("%q named %q, want the protected path or the fail-closed reason", row.command, got.Target)
+			if !shellWriteHeredocGateDenied(got, root+"/a") {
+				t.Errorf("%q: %+v, want a deny naming the protected path or the fail-closed reason", row.command, got)
 			}
 		})
 	}
@@ -59,8 +59,6 @@ func TestShellWriteHeredocClosedRuleControls(t *testing.T) {
 	const mem = "/h/memories"
 	for _, c := range []struct{ name, command string }{
 		{"a note quoting the memories path", "cat > note.md <<'EOF'\n" + mem + "\nEOF"},
-		{"a script operand makes the body data", "python3 script.py <<'EOF' 2>/dev/null\nopen('" + mem + "/a','w')\nEOF"},
-		{"a shell parsing without running reads no program", "bash -n <<'EOF'\necho x > " + mem + "/a\nEOF"},
 		{"a read loop with no interpreter outside the body", "while read l; do echo $l; done <<'EOF'\n" + mem + "\nEOF"},
 		{"a body alone naming an interpreter", "cat <<'EOF' > x.md\nrun python3 -c pass\nEOF"},
 	} {
@@ -70,6 +68,18 @@ func TestShellWriteHeredocClosedRuleControls(t *testing.T) {
 			}
 			if got, ok := shellWriteHeredocUnreadable(c.command); ok {
 				t.Errorf("%q reported unreadable %q", c.command, got)
+			}
+		})
+	}
+	// Correction 6 (rule H1): a script operand and a syntax check no longer make the body data, so these two rows are
+	// read as the interpreter's program (they stood in the allowed list before this correction).
+	for _, c := range []struct{ name, command string }{
+		{"a script operand makes the body data", "python3 script.py <<'EOF' 2>/dev/null\nopen('" + mem + "/a','w')\nEOF"},
+		{"a shell parsing without running reads no program", "bash -n <<'EOF'\necho x > " + mem + "/a\nEOF"},
+	} {
+		t.Run(c.name+" (read now)", func(t *testing.T) {
+			if got := ShellWriteDestinations(c.command); !slices.Contains(got, mem+"/a") {
+				t.Errorf("%q named %q, want %q", c.command, got, mem+"/a")
 			}
 		})
 	}

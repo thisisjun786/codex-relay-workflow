@@ -63,18 +63,17 @@ func TestShellWriteHeredocReads(t *testing.T) {
 	}
 }
 
-// TestShellWriteHeredocUnchanged is the invariant case: a non-interpreter command's body is data, a script operand
-// means the body is the script's input, and a heredoc that supplies the program inline (-c, -e) is not a program.
+// TestShellWriteHeredocUnchanged is the invariant case: a non-interpreter command's body is data.
+//
+// Correction 6 (rule H1) changed five rows that stood here: a here-document attached to an interpreter is always read as
+// that interpreter's program, whatever its flags and operands, so `python3 script.py <<'EOF'`, `python3 -c ... <<'EOF'`,
+// `python3 -m ... <<'EOF'`, `node -e ... <<'EOF'` and `bash -c ... <<'EOF'` now name the protected path instead of
+// passing. They are pinned by TestShellWriteHeredocInterpreterAlwaysReads below, and the pull request body lists them.
 func TestShellWriteHeredocUnchanged(t *testing.T) {
 	const mem = "/h/memories"
 	for _, c := range []struct{ name, command string }{
 		{"cat quoting the memories path", "cat > note.md <<'EOF'\n" + mem + " is where notes live\nEOF"},
-		{"a script operand means the body is data", "python3 script.py <<'EOF'\nopen('" + mem + "/a','w')\nEOF"},
-		{"-c supplies the program inline", "python3 -c 'print(1)' <<'EOF'\nopen('" + mem + "/a','w')\nEOF"},
-		{"-m supplies the program inline", "python3 -m json.tool <<'EOF'\nopen('" + mem + "/a','w')\nEOF"},
-		{"node -e supplies the program inline", "node -e 'console.log(1)' <<'EOF'\nrequire('fs').writeFileSync('" + mem + "/a','x')\nEOF"},
 		{"tee body is data", "tee note.md <<'EOF'\n" + mem + "\nEOF"},
-		{"bash -c supplies the program inline", "bash -c 'echo hi' <<'EOF'\necho x > " + mem + "/a\nEOF"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			if got := ShellWriteDestinations(c.command); slices.Contains(got, mem+"/a") {
@@ -101,6 +100,11 @@ func TestShellWriteHeredocUnreadable(t *testing.T) {
 		{"a node body with an expansion", "node <<EOF\nrequire('fs').writeFileSync('$P','x')\nEOF"},
 		{"a backslash-escaped delimiter is an unproven header", "python3 <<\\EOF\nopen('/m/a', 'w')\nEOF"},
 		{"a line continuation inside the command word", "bas\\\nh <<'EOF'\necho x > /m/a\nEOF"},
+		// Correction 6 (rule H1): an interpreter's here-document is a program whatever its flags and operands, so the
+		// body is read and an unquoted one that the outer shell expands is unreadable. These two rows stood in the
+		// reports-nothing list before this correction.
+		{"an inline -c program still reads the here-document", "python3 -c 'print(1)' <<EOF\n$P\nEOF"},
+		{"a script operand still reads the here-document", "python3 script.py <<EOF\n$P\nEOF"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			got, ok := shellWriteHeredocUnreadable(c.command)
@@ -117,8 +121,6 @@ func TestShellWriteHeredocUnreadable(t *testing.T) {
 	for _, command := range []string{
 		"python3 <<EOF\nopen('/m/a','w')\nEOF",
 		"cat <<EOF\n/memories\nEOF",
-		"python3 -c 'print(1)' <<EOF\n$P\nEOF",
-		"python3 script.py <<EOF\n$P\nEOF",
 	} {
 		if got, ok := shellWriteHeredocUnreadable(command); ok {
 			t.Errorf("%q reported unreadable %q", command, got)
@@ -145,11 +147,16 @@ func TestShellWriteHeredocGate(t *testing.T) {
 	}
 	for _, command := range []string{
 		"cat > note.md <<'EOF'\n" + root + "\nEOF",
-		"python3 script.py <<'EOF'\nopen('" + root + "/a','w')\nEOF",
 	} {
 		if got := memoryGateClassify("Bash", map[string]any{"command": command}, cwd, env); got.Surface != "" {
 			t.Errorf("%q must pass: %+v", command, got)
 		}
+	}
+	// Correction 6 (rule H1): a script operand no longer makes the body data, so this row is denied and names the
+	// protected path (it stood in the must-pass list before this correction).
+	script := "python3 script.py <<'EOF'\nopen('" + root + "/a','w')\nEOF"
+	if got := memoryGateClassify("Bash", map[string]any{"command": script}, cwd, env); !shellWriteHeredocGateDenied(got, root+"/a") {
+		t.Errorf("a script operand: %+v, want a deny naming %s", got, root+"/a")
 	}
 }
 
