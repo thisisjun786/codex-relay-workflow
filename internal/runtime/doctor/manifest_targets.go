@@ -137,14 +137,16 @@ func manifestTargetsRealpath(path string) (string, error) {
 	return manifestTargetsFollow(abs, 0)
 }
 
-// manifestTargetsAbsolute makes a path absolute WITHOUT cleaning it. filepath.Abs would Clean the
+// manifestTargetsAbsolute makes a path absolute without resolving '..'. filepath.Abs would Clean the
 // result, and a '..' in the argument -- after a symlink or not -- would be dropped before the walk
 // reached its own component, so the walk would answer a different file than the kernel does (CRW-937).
 // The walk resolves every component, '..' included, in kernel order, so the argument has to reach it
-// spelled as the caller gave it.
+// spelled as the caller gave it. What the oracle's path.resolve does drop for a path with no '..' --
+// '.' components, doubled separators and a trailing separator -- is dropped here too, so such a path is
+// judged exactly as before.
 func manifestTargetsAbsolute(path string) (string, error) {
 	if filepath.IsAbs(path) {
-		return path, nil
+		return manifestTargetsCollapseDots(path), nil
 	}
 	wd, err := os.Getwd()
 	if err != nil {
@@ -153,7 +155,32 @@ func manifestTargetsAbsolute(path string) (string, error) {
 	if path == "" {
 		return wd, nil
 	}
-	return wd + string(filepath.Separator) + path, nil
+	return manifestTargetsCollapseDots(wd + string(filepath.Separator) + path), nil
+}
+
+// manifestTargetsCollapseDots drops the components the oracle's path.resolve drops for a path that
+// holds no '..': '.' components, doubled separators and a trailing separator. A '..' component is kept,
+// because the walk resolves it in kernel order. This is not filepath.Clean: Clean would also resolve
+// '..' lexically, which is the defect CRW-937 fixes.
+func manifestTargetsCollapseDots(path string) string {
+	sep := string(filepath.Separator)
+	volume := filepath.VolumeName(path)
+	parts := strings.Split(path[len(volume):], sep)
+	out := make([]string, 0, len(parts))
+	for i, part := range parts {
+		if part == "." {
+			continue
+		}
+		if part == "" && i != 0 {
+			continue
+		}
+		out = append(out, part)
+	}
+	joined := volume + strings.Join(out, sep)
+	if joined == "" {
+		return sep
+	}
+	return joined
 }
 
 // manifestTargetsFollow is one walk of manifestTargetsRealpath: the components are walked in kernel
@@ -243,20 +270,14 @@ func targetResolve(root, rel string) string {
 	// follows decides whether the result is absolute.
 	rel = strings.TrimPrefix(rel, "./")
 	if filepath.IsAbs(rel) {
-		return filepath.Clean(rel)
+		return manifestTargetsCollapseDots(rel)
 	}
 	// Concatenated, not joined: filepath.Join would Clean the result and drop a '..' the caller
 	// spelled after a symlink, so the containment check would resolve a different file than the
-	// kernel does (CRW-937). manifestTargetsRealpath walks every component in order.
+	// kernel does (CRW-937). manifestTargetsRealpath walks every component in order, so only the
+	// components the oracle's path.resolve drops for a '..'-free path are dropped here.
 	sep := string(filepath.Separator)
-	abs := strings.TrimRight(root, sep) + sep + rel
-	// A trailing separator names the same file to the oracle's path.resolve, which drops it, so
-	// leaving it on the Stat below would report a present file as missing. harnessDriftMCPCheck
-	// keeps its own separator, because its oracle call is path.join, which keeps one.
-	if strings.HasSuffix(abs, sep) {
-		abs = strings.TrimRight(abs, sep)
-	}
-	return abs
+	return manifestTargetsCollapseDots(strings.TrimRight(root, sep) + sep + rel)
 }
 func targetCheck(issues *[]TargetIssue, kind TargetKind, root, rel, missing string) error {
 	abs := targetResolve(root, rel)
