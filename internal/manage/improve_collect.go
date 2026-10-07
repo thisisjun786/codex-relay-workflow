@@ -2,6 +2,7 @@ package manage
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -63,6 +64,13 @@ const (
 // the seam a test uses to change the destination inside that window and prove the second
 // comparison refuses the new one. Production leaves it nil.
 var improveInputBeforeRename func(improveOutputPlan)
+
+// improveOutputBeforeCreate runs after the parent directory has been opened and the output checked,
+// and before the temporary file is created on that descriptor. It is the seam a test uses to
+// replace the directory the destination's spelling reaches inside that window, and prove the
+// temporary file is still created, cleaned up and renamed through the directory that was opened.
+// Production leaves it nil.
+var improveOutputBeforeCreate func(improveOutputPlan)
 
 // improveStoreFile is the relay store's file name inside a state directory.
 const improveStoreFile = "relay.sqlite3"
@@ -433,41 +441,57 @@ func improvePrefix(dir string) string {
 func improveResolvedPath(path string) (string, error) { return store.Realpath(path) }
 
 // improveWriteFile writes the bundle in the resolved parent directory and renames it onto the
-// resolved destination. The temporary file is fsynced, and the output check runs again
-// immediately before the rename against the identities recorded when the inputs were read, so a
-// parent replaced, or an input moved onto the destination, between the plan and the rename is
-// still caught. The window between that last check and os.Rename itself is accepted: nothing
-// closes it without holding the destination's directory against every other writer.
+// resolved destination.
+//
+// The parent directory is opened once and every step uses that descriptor rather than the spelling
+// again: the destination is checked before the temporary file is created, the file is created with
+// openat(O_CREAT|O_EXCL), and the write, the fsync, the cleanup and the rename go through the same
+// descriptor. A parent replaced under the spelling therefore cannot make the cleanup unlink or the
+// rename reach a different directory, which is what left a temporary file behind, or touched an
+// input directory, before. The window between the last comparison and the rename itself is
+// accepted: nothing closes it without holding the destination's directory against every other
+// writer.
 func improveWriteFile(plan improveOutputPlan, ids *improveIdentitySet, data []byte) error {
-	// The directory the temporary file is created in is held open, so a refusal unlinks the file
-	// through that descriptor even when the destination's directory has since been replaced and
-	// the spelling the file was created under no longer reaches it.
 	parent, err := os.Open(plan.Parent)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = parent.Close() }()
-	temp, err := os.CreateTemp(plan.Parent, "improve-bundle-*")
+	dirfd := int(parent.Fd())
+	// The check runs before the temporary file is created, against the identities the read
+	// recorded, so a destination that is one of them is refused without writing anything at all.
+	if err := ids.improveIdentityRefuse(plan.Dest, plan.parent); err != nil {
+		return err
+	}
+	if improveOutputBeforeCreate != nil {
+		improveOutputBeforeCreate(plan)
+	}
+	name := "improve-bundle-" + rand.Text()
+	fd, err := unix.Openat(dirfd, name, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0o600)
 	if err != nil {
 		return err
 	}
-	name := temp.Name()
-	discard := func() { _ = unix.Unlinkat(int(parent.Fd()), filepath.Base(name), 0) }
-	if _, err := temp.Write(data); err != nil {
-		temp.Close()
+	// discard removes the temporary file through the descriptor it was created on, so a directory
+	// replaced under the spelling cannot make it miss.
+	discard := func() { _ = unix.Unlinkat(dirfd, name, 0) }
+	file := os.NewFile(uintptr(fd), name)
+	if _, err := file.Write(data); err != nil {
+		_ = file.Close()
 		discard()
 		return err
 	}
-	if err := temp.Sync(); err != nil {
-		temp.Close()
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
 		discard()
 		return err
 	}
-	if err := temp.Close(); err != nil {
+	// The mode is set on the descriptor, not by spelling the name again.
+	if err := unix.Fchmod(fd, 0o600); err != nil {
+		_ = file.Close()
 		discard()
 		return err
 	}
-	if err := os.Chmod(name, 0o600); err != nil {
+	if err := file.Close(); err != nil {
 		discard()
 		return err
 	}
@@ -477,8 +501,7 @@ func improveWriteFile(plan improveOutputPlan, ids *improveIdentitySet, data []by
 	// The destination is resolved again here, after the bundle has been written and immediately
 	// before the last comparison and the rename, so a parent directory replaced while the bundle
 	// was written is caught rather than written through. The parent's identity is compared with
-	// the one the plan recorded. The window between this check and os.Rename itself is accepted:
-	// nothing closes it without holding the destination's directory against every other writer.
+	// the one the plan recorded.
 	fresh, err := improvePlanOutput(plan.Out)
 	if err != nil {
 		discard()
@@ -496,7 +519,9 @@ func improveWriteFile(plan improveOutputPlan, ids *improveIdentitySet, data []by
 		discard()
 		return err
 	}
-	if err := os.Rename(name, fresh.Dest); err != nil {
+	// The rename goes through the same descriptor the file was created on, so it lands in the
+	// directory that was checked, whatever the spelling now reaches.
+	if err := unix.Renameat(dirfd, name, dirfd, filepath.Base(fresh.Dest)); err != nil {
 		discard()
 		return err
 	}

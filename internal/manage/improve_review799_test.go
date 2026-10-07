@@ -490,6 +490,116 @@ func TestImproveReview799SwappedParentLeavesNoTemporaryFile(t *testing.T) {
 	}
 }
 
+// TestImproveReview799AbsentInputThatAppearsIsRefused covers d1: an input that was absent when the
+// collection recorded it is a name the bundle must not be written to. The name is examined again at
+// every comparison, so once a link at that name reaches the output's database the run refuses at
+// the comparison and at the destination check, and the database is never the bundle.
+//
+// The window has no seam of its own: every reader reports an absent configured source before the
+// bundle would be written, so an input that appears during a read is driven here through the same
+// steps the collection runs — record, then examine again — as the refresh after each reader does.
+func TestImproveReview799AbsentInputThatAppearsIsRefused(t *testing.T) {
+	s := improveTestSetup(t)
+	out := filepath.Join(improveReview799OutDir(t, s), "bundle.json")
+	improveTestWrite(t, out, "{\"schema\":\"the database the bundle must not replace\"}\n")
+	absent := filepath.Join(s.root, "dag-absent")
+	section := improveSection{Sources: map[string]improveSourceConfig{improveKindAudit: {Path: absent}}}
+	ids := improveIdentityNew(true)
+	defer ids.improveIdentityClose()
+	if err := ids.improveIdentityRecord(section); err != nil {
+		t.Fatalf("the recording: %v", err)
+	}
+	if err := ids.improveIdentityRefuse(out, nil); err != nil {
+		t.Fatalf("the destination was refused before the input appeared: %v", err)
+	}
+	if err := os.Symlink(out, absent); err != nil {
+		t.Skipf("symbolic links are unavailable here: %v", err)
+	}
+	if err := ids.improveIdentityVerify(); err == nil {
+		t.Errorf("an input that was absent and appeared was not refused by the comparison")
+	} else if !strings.Contains(err.Error(), improveReasonInputChanged) {
+		t.Errorf("the comparison named %v, want %s", err, improveReasonInputChanged)
+	}
+	if err := ids.improveIdentityRefuse(out, nil); err == nil {
+		t.Errorf("an absent input that came to reach the destination was not refused by the destination check")
+	}
+	before, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(before), "the database the bundle must not replace") {
+		t.Errorf("the destination the absent input came to name was replaced: %q", before)
+	}
+}
+
+// TestImproveReview799AbsentSidecarNameIsRefusedAsOutput covers d2: the sidecar names of a store are
+// refused as outputs whether or not they exist, because SQLite creates one beside the store while
+// the store is read. The store here has no sidecar, so only the name check can refuse.
+func TestImproveReview799AbsentSidecarNameIsRefusedAsOutput(t *testing.T) {
+	s := improveTestSetup(t)
+	improveReview799Store(t, s)
+	for _, sidecar := range []string{s.dbPath + "-wal", s.dbPath + "-shm", s.dbPath + "-journal"} {
+		if _, err := os.Lstat(sidecar); !os.IsNotExist(err) {
+			t.Fatalf("the fixture left the sidecar %s behind (stat err %v)", sidecar, err)
+		}
+	}
+	improveInputRelayConfig(t, s)
+	for _, sidecar := range []string{s.dbPath + "-wal", s.dbPath + "-shm", s.dbPath + "-journal"} {
+		code, _, stderr := improveTestRun(t, s, "--out", sidecar)
+		if code != 1 || !strings.Contains(stderr, improveReasonOutputIsInput) {
+			t.Fatalf("an output naming the absent sidecar %s: exit %d, stderr %q, want the named refusal %s", sidecar, code, stderr, improveReasonOutputIsInput)
+		}
+		if _, err := os.Lstat(sidecar); !os.IsNotExist(err) {
+			t.Errorf("the refused run created %s (stat err %v)", sidecar, err)
+		}
+	}
+}
+
+// TestImproveReview799ParentSwappedBeforeCreationIsRefused covers d3: the destination's directory
+// is replaced with a link into a configured source directory just before the temporary file is
+// created. The file is created on the descriptor of the directory that was checked, so the refusal
+// leaves no temporary file in either directory.
+func TestImproveReview799ParentSwappedBeforeCreationIsRefused(t *testing.T) {
+	s := improveTestSetup(t)
+	improveReview799Store(t, s)
+	out := improveReview799OutDir(t, s)
+	moved := filepath.Join(s.root, "out-moved")
+	improveInputRelayConfig(t, s)
+	swapped := false
+	previous := improveOutputBeforeCreate
+	improveOutputBeforeCreate = func(improveOutputPlan) {
+		swapped = true
+		if err := os.Rename(out, moved); err != nil {
+			t.Errorf("moving the output directory aside: %v", err)
+		}
+		if err := os.Symlink(s.stateDir, out); err != nil {
+			t.Errorf("relinking the output directory: %v", err)
+		}
+	}
+	t.Cleanup(func() { improveOutputBeforeCreate = previous })
+	code, _, stderr := improveTestRun(t, s, "--out", filepath.Join(out, "bundle.json"))
+	if !swapped {
+		t.Fatalf("the pre-creation check ran without the seam: exit %d, stderr %q", code, stderr)
+	}
+	if code != 1 {
+		t.Fatalf("an output whose directory was replaced before creation: exit %d, stderr %q, want a refusal", code, stderr)
+	}
+	for _, dir := range []string{moved, s.stateDir} {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, entry := range entries {
+			if strings.HasPrefix(entry.Name(), "improve-bundle-") {
+				t.Errorf("the refusal left the temporary file %s in %s", entry.Name(), dir)
+			}
+		}
+	}
+	if _, err := os.Stat(filepath.Join(s.stateDir, "bundle.json")); !os.IsNotExist(err) {
+		t.Errorf("the refused run wrote the bundle into the source directory (stat err %v)", err)
+	}
+}
+
 // TestImproveReview799OrdinaryCollectStillWrites is the control: a link-free path with its own
 // output directory still writes the bundle.
 func TestImproveReview799OrdinaryCollectStillWrites(t *testing.T) {

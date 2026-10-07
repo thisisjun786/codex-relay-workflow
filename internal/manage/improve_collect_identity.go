@@ -16,10 +16,17 @@ import (
 // recorded here is the descriptor the collection opened and the file that descriptor names, which
 // no rename changes; the paths are resolved the way the readers resolve theirs, so the guard and
 // the read name the same file.
+//
+// An input that was absent when it was recorded is still a name the bundle must not be written to,
+// and it is examined again at every comparison: a path that is there by the time the collection is
+// ready to write is an input it never pinned, and the run is refused rather than reading or
+// overwriting it. A store's write-ahead log, shared-memory index and rollback journal are the one
+// exception: SQLite creates and removes them as it checkpoints, so their names are refused as
+// outputs whether or not they exist, while appearing or disappearing is not a change to the
+// store's committed state.
 
 // improveReasonInputChanged is the named refusal of a path that no longer names the file the
-// collection read, or that could not be pinned at all. The descriptor it opened is the evidence,
-// and a path that reaches a different file after the read is a different input.
+// collection read, or that was absent when it was recorded and is there now.
 const improveReasonInputChanged = "improve_input_changed"
 
 // improveReasonOutputUnreadable is the named refusal of a destination the collection cannot examine
@@ -29,10 +36,10 @@ const improveReasonOutputUnreadable = "improve_output_unreadable"
 // improveIdentityEntry is one input the collection opens: the path it opens, that path resolved the
 // way the reader resolves it, and the descriptor held open until the bundle is renamed.
 //
-// sidecar marks a store's write-ahead log and shared-memory index. SQLite unlinks both when the last
-// connection checkpoints and closes, which is routine and leaves the database's committed state
-// alone, so a sidecar path that no longer exists is not a changed input; a sidecar that now names a
-// different file still is.
+// sidecar marks a store's write-ahead log, shared-memory index and rollback journal. Their names
+// are refused as outputs whether or not they exist, because SQLite may create one while the store
+// is read; a sidecar that is there is pinned like any other input, and one that is not is not a
+// reason to refuse, because a clean checkpoint removes them.
 type improveIdentityEntry struct {
 	path     string
 	resolved string
@@ -78,52 +85,64 @@ func improveIdentityResolved(path string) string {
 	return resolved
 }
 
-// improveIdentityRecorded reports whether a path is already an input of the set. The comparison is
-// on the spelling, never on the resolved name: two configured paths that resolve to the same file
-// are two inputs, because a link at either spelling can be retargeted after recording while each
-// reader still opens the spelling its source was configured with.
-func (ids *improveIdentitySet) improveIdentityRecorded(path string) bool {
-	for _, entry := range ids.entries {
-		if entry.path == path {
-			return true
-		}
+// improveIdentityPin opens the path and fills the entry's identity from the descriptor it opened,
+// keeping that descriptor open so the inode cannot be reused and the identity stays comparable
+// until the rename. A path that is absent leaves the entry with its name alone; a path that exists
+// but cannot be opened or examined is a refusal, because an input the collection cannot pin is one
+// it cannot prove it will not overwrite.
+func improveIdentityPin(entry *improveIdentityEntry) error {
+	file, err := os.Open(entry.path)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		return nil
+	case err != nil:
+		return fmt.Errorf("%s: the input %s could not be opened to record its identity: %w", improveReasonInputChanged, entry.path, err)
 	}
-	return false
+	info, statErr := file.Stat()
+	if statErr != nil {
+		_ = file.Close()
+		return fmt.Errorf("%s: the input %s could not be examined to record its identity: %w", improveReasonInputChanged, entry.path, statErr)
+	}
+	entry.info, entry.file = info, file
+	return nil
 }
 
-// improveIdentityAdd opens a path and records it. A path that is absent is recorded by name alone,
-// because the read reports it. A path that exists but cannot be opened or examined is a refusal: an
-// input the collection cannot pin is one it cannot prove it will not overwrite, and a failure to
-// pin is never a pass.
+// improveIdentityAdd records a path as an input. A path already recorded keeps the identity it was
+// recorded with; the comparison is on the spelling, never on the resolved name, because two
+// configured paths that resolve to the same file are two inputs and a link at either spelling can
+// be retargeted after recording while each reader still opens the spelling its source was
+// configured with. The one path examined again is a store sidecar recorded while it was absent:
+// SQLite creates the write-ahead log and the shared-memory index as it works, so one that appeared
+// beside the store is pinned here rather than left as a bare name.
 func (ids *improveIdentitySet) improveIdentityAdd(path, resolved string, sidecar bool) error {
-	if path == "" || !ids.guarded || ids.improveIdentityRecorded(path) {
+	if path == "" || !ids.guarded {
 		return nil
 	}
 	if resolved == "" {
 		resolved = improveIdentityResolved(path)
 	}
-	entry := improveIdentityEntry{path: path, resolved: resolved, sidecar: sidecar}
-	file, err := os.Open(path)
-	switch {
-	case errors.Is(err, os.ErrNotExist):
-	case err != nil:
-		return fmt.Errorf("%s: the input %s could not be opened to record its identity: %w", improveReasonInputChanged, path, err)
-	default:
-		info, statErr := file.Stat()
-		if statErr != nil {
-			_ = file.Close()
-			return fmt.Errorf("%s: the input %s could not be examined to record its identity: %w", improveReasonInputChanged, path, statErr)
+	for i := range ids.entries {
+		if ids.entries[i].path != path {
+			continue
 		}
-		entry.info, entry.file = info, file
+		if ids.entries[i].info != nil || !sidecar {
+			return nil
+		}
+		ids.entries[i].resolved = resolved
+		return improveIdentityPin(&ids.entries[i])
+	}
+	entry := improveIdentityEntry{path: path, resolved: resolved, sidecar: sidecar}
+	if err := improveIdentityPin(&entry); err != nil {
+		return err
 	}
 	ids.entries = append(ids.entries, entry)
 	return nil
 }
 
 // improveIdentityRecordStore records a relay or DAG source: the configured path, the store file the
-// reader opens, and the store's write-ahead log and shared-memory index when they exist. The store
-// file is the path store.InPlaceRead returns, which is the file OpenInPlace opens, so the recorded
-// identity is the one the read itself uses.
+// reader opens, and the store's write-ahead log, shared-memory index and rollback journal. The
+// store file is the path store.InPlaceRead returns, which is the file OpenInPlace opens, so the
+// recorded identity is the one the read itself uses.
 func (ids *improveIdentitySet) improveIdentityRecordStore(configured string) error {
 	if err := ids.improveIdentityAdd(configured, "", false); err != nil {
 		return err
@@ -142,11 +161,12 @@ func (ids *improveIdentitySet) improveIdentityRecordStore(configured string) err
 	if err := ids.improveIdentityAdd(storePath, examined, false); err != nil {
 		return err
 	}
-	for _, sidecar := range []string{examined + "-wal", examined + "-shm"} {
-		if _, err := os.Lstat(sidecar); err == nil {
-			if err := ids.improveIdentityAdd(sidecar, sidecar, true); err != nil {
-				return err
-			}
+	// The three sidecar names are inputs whether or not they exist: SQLite creates a write-ahead
+	// log, a shared-memory index or a rollback journal beside the store as it works, so a bundle
+	// written to one of those names would corrupt a store that is being read.
+	for _, sidecar := range []string{examined + "-wal", examined + "-shm", examined + "-journal"} {
+		if err := ids.improveIdentityAdd(sidecar, sidecar, true); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -231,25 +251,31 @@ func improveIdentityRefusal(dest, input string) error {
 // improveIdentityRefuse refuses a resolved destination that is one of the recorded inputs, lies
 // under one, or shares its parent directory with one. The destination is compared against the
 // identity the descriptor reports rather than against a name, so an input moved onto the output's
-// place is still recognised. A destination that cannot be examined for a reason other than its
-// absence is refused too: a comparison that cannot be made is never a pass.
+// place is still recognised. An input that was absent when it was recorded is compared at its
+// spelling resolved again now, so a link that appeared at that name is seen as the file it reaches.
+// A destination that cannot be examined for a reason other than its absence is refused too: a
+// comparison that cannot be made is never a pass.
 func (ids *improveIdentitySet) improveIdentityRefuse(dest string, parent os.FileInfo) error {
 	destInfo, err := os.Lstat(dest)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("%s: the output %s could not be examined: %w", improveReasonOutputUnreadable, dest, err)
 	}
 	for _, entry := range ids.entries {
-		if entry.resolved == "" {
+		resolved := entry.resolved
+		if entry.info == nil {
+			resolved = improveIdentityResolved(entry.path)
+		}
+		if resolved == "" {
 			continue
 		}
-		if dest == entry.resolved || strings.HasPrefix(dest, improvePrefix(entry.resolved)) {
-			return improveIdentityRefusal(dest, entry.resolved)
+		if dest == resolved || strings.HasPrefix(dest, improvePrefix(resolved)) {
+			return improveIdentityRefusal(dest, resolved)
 		}
 		if entry.info != nil && destInfo != nil && os.SameFile(entry.info, destInfo) {
-			return improveIdentityRefusal(dest, entry.resolved)
+			return improveIdentityRefusal(dest, resolved)
 		}
 		if entry.info != nil && entry.info.IsDir() && parent != nil && os.SameFile(entry.info, parent) {
-			return improveIdentityRefusal(dest, entry.resolved)
+			return improveIdentityRefusal(dest, resolved)
 		}
 	}
 	return nil
@@ -258,11 +284,23 @@ func (ids *improveIdentitySet) improveIdentityRefuse(dest string, parent os.File
 // improveIdentityVerify examines every recorded path again and refuses when it no longer reaches the
 // file the descriptor holds. It runs after each reader returns and again immediately before the
 // rename, so an input replaced, moved or removed between the read and the write is refused rather
-// than silently replaced by the bundle. A store sidecar SQLite checkpointed away is the one absence
-// that is not a refusal: the database still holds its committed state.
+// than silently replaced by the bundle.
+//
+// An input that was absent when it was recorded and is there now is refused as well: it is a file
+// this collection never pinned, so the bundle is not written over it. A store sidecar is the one
+// exception to both rules: SQLite checkpoints it away and recreates it, so its absence is not a
+// change and its appearance is pinned when the inputs are recorded again.
 func (ids *improveIdentitySet) improveIdentityVerify() error {
 	for _, entry := range ids.entries {
 		if entry.info == nil {
+			if entry.sidecar {
+				continue
+			}
+			if _, err := os.Lstat(entry.path); err == nil {
+				return fmt.Errorf("%s: the input %s was absent when it was recorded and is there now, so the collection never pinned it", improveReasonInputChanged, entry.path)
+			} else if !errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("%s: the input %s could not be examined after it was recorded: %w", improveReasonInputChanged, entry.path, err)
+			}
 			continue
 		}
 		current, err := os.Stat(entry.path)
