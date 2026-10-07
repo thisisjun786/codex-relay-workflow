@@ -23,32 +23,148 @@ type Entry struct {
 }
 
 // Scenarios materialises an input's "fs" array under root and returns how many entries it built.
-// An input without an "fs" array builds nothing. A path outside root, or a symlink whose target
-// resolves outside it, is refused before anything is written, so a refused case leaves no tree.
+// An input without an "fs" array builds nothing.
+//
+// The entries are built in order, and each symlink is judged right after it is created against the tree
+// built so far, resolved the way the kernel resolves it: an existing component is followed through its
+// link and a '..' is applied after the link it follows, so a link an earlier entry created cannot carry
+// a later entry out of the root. After the last entry every symlink under the root is resolved once
+// more. A path outside root, or a link that resolves outside it, is refused, and the case root is then
+// removed before any target runs, so a refused case leaves no tree.
 func Scenarios(root string, input any) (int, error) {
 	entries, err := fsEntries(input)
 	if err != nil {
-		return 0, err
+		// An input the harness cannot read is a refusal of the case, so it leaves no tree either: the
+		// caller prepared the root before this call.
+		return 0, refuse(root, err)
 	}
 	if len(entries) == 0 {
 		return 0, nil
 	}
-	for _, entry := range entries {
-		if _, err := confine(root, entry.Path); err != nil {
-			return 0, err
-		}
-		if entry.Kind == "symlink" {
-			if _, err := linkTarget(root, entry); err != nil {
-				return 0, err
-			}
-		}
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return 0, refuse(root, err)
 	}
 	for _, entry := range entries {
-		if err := build(root, entry); err != nil {
-			return 0, err
+		if err := build(root, resolvedRoot, entry); err != nil {
+			return 0, refuse(root, err)
 		}
+	}
+	if err := sweepLinks(root, resolvedRoot); err != nil {
+		return 0, refuse(root, err)
 	}
 	return len(entries), nil
+}
+
+// RemovalError is a case root that survived a refused build. It is not a refused case: the root it
+// names was not removed for certain, so a caller must never read it as a case a target may run on.
+type RemovalError struct {
+	Root    string
+	Refused error
+	Err     error
+}
+
+func (e RemovalError) Error() string {
+	if e.Refused == nil {
+		return "the case root " + e.Root + " was not removed: " + e.Err.Error()
+	}
+	return "the case root " + e.Root + " was not removed after " + e.Refused.Error() + ": " + e.Err.Error()
+}
+
+// Unwrap is the removal failure, so errors.Is and errors.As see the cause of the removal itself.
+func (e RemovalError) Unwrap() error { return e.Err }
+
+// refuse removes the case root of a refused build and returns the refusal. The root is removed for
+// certain before Scenarios returns, so a refused case leaves no tree at all - not an empty root, and
+// not a sealed directory holding an escaping link. A removal that still fails is returned as its own
+// RemovalError, named for the root, so it is never taken for a refusal a target may run on.
+func refuse(root string, refused error) error {
+	if err := RemoveCaseRoot(root); err != nil {
+		return RemovalError{Root: root, Refused: refused, Err: err}
+	}
+	return refused
+}
+
+// RemoveCaseRoot removes a case root for certain. Every directory under it is first made
+// owner-readable, writable and searchable, because an entry may have created a directory with a mode
+// that keeps it from being listed, and a directory that cannot be listed keeps its contents - an
+// escaping link included. Only then is the root removed. A root that is already gone is not an error,
+// so the helper is safe to call again from a caller's cleanup.
+func RemoveCaseRoot(root string) error {
+	if err := makeDirectoriesRemovable(root); err != nil {
+		return err
+	}
+	return os.RemoveAll(root)
+}
+
+// CleanupCaseRoot removes a case root a run owned and reports a failure as a RemovalError, so a caller
+// that preserves removal failures preserves a deferred cleanup failure too: the root outlived the run
+// that owned it either way.
+func CleanupCaseRoot(root string) error {
+	if err := RemoveCaseRoot(root); err != nil {
+		return RemovalError{Root: root, Err: err}
+	}
+	return nil
+}
+
+// makeDirectoriesRemovable gives every directory under root the owner's read, write and search bits,
+// descending by hand because filepath.Walk lists a directory before it calls the callback for it: a
+// directory whose mode hides its entries would make the walk itself fail, and its contents - an
+// escaping link included - would never be reached. Each directory is made listable before it is read,
+// and the descent uses Lstat, so it never follows a link out of the tree. A root that is already gone
+// is not an error.
+func makeDirectoriesRemovable(root string) error {
+	info, err := os.Lstat(root)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if !info.IsDir() {
+		return nil
+	}
+	return makeDirectoryRemovable(root)
+}
+
+// makeDirectoryRemovable makes one directory listable and then recurses into the directories under it.
+func makeDirectoryRemovable(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if perm := info.Mode().Perm(); perm&0o700 != 0o700 {
+		if err := os.Chmod(path, perm|0o700); err != nil {
+			return err
+		}
+	}
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	for _, entry := range entries {
+		child := filepath.Join(path, entry.Name())
+		childInfo, err := os.Lstat(child)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return err
+		}
+		if !childInfo.IsDir() {
+			continue
+		}
+		if err := makeDirectoryRemovable(child); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // fsEntries reads the "fs" array of an input.
@@ -149,15 +265,37 @@ func confine(root, path string) (string, error) {
 	if filepath.IsAbs(path) {
 		return "", fmt.Errorf("the fs path %q is absolute", path)
 	}
-	joined := filepath.Join(root, path)
-	rel, err := filepath.Rel(root, joined)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("the fs path %q leaves the case root", path)
+	if hasDotDotComponent(path) {
+		return "", fmt.Errorf("the fs path %q walks up with a '..' component", path)
 	}
-	if err := withinRoot(root, joined); err != nil {
+	joined := filepath.Join(root, path)
+	if err := confineInside(root, joined); err != nil {
 		return "", fmt.Errorf("the fs path %q %w", path, err)
 	}
 	return joined, nil
+}
+
+// hasDotDotComponent reports whether a path holds a '..' component. A '..' in an entry path is refused
+// outright rather than cleaned away: the path decides where a file or a link is created, and a path
+// whose text and whose kernel resolution disagree is the shape that let a link leave the case root.
+func hasDotDotComponent(path string) bool {
+	for _, part := range pathComponents(path) {
+		if part == ".." {
+			return true
+		}
+	}
+	return false
+}
+
+// confineInside refuses a joined path that is lexically outside root or whose existing part
+// resolves outside it. The lexical check is the one that decides a path a symlink cannot carry away,
+// and the resolve is what refuses a path that reaches out through a link standing under the root.
+func confineInside(root, joined string) error {
+	rel, err := filepath.Rel(root, joined)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return errors.New("leaves the case root")
+	}
+	return withinRoot(root, joined)
 }
 
 // withinRoot refuses a joined path whose existing part resolves outside root, so a symlink standing
@@ -188,22 +326,154 @@ func withinRoot(root, joined string) error {
 	}
 }
 
-// linkTarget is a symlink entry's target resolved under root, refused when it leaves root.
-func linkTarget(root string, entry Entry) (string, error) {
-	target := entry.Target
-	if !filepath.IsAbs(target) {
-		target = filepath.Join(filepath.Dir(entry.Path), target)
+// judgeLink resolves a symlink that already exists and refuses a resolution that leaves the case root.
+// filepath.EvalSymlinks resolves each component through its link and applies a '..' after the link it
+// follows, the way the kernel does, so the text stored in the link and the location the kernel reaches
+// from it are judged together. A target that does not exist yet makes it answer IsNotExist, and the
+// resolution then continues by hand, because that is the case a '..' in a not-yet-existing remainder
+// has to be refused in.
+func judgeLink(resolvedRoot, linkPath string) error {
+	resolved, err := filepath.EvalSymlinks(linkPath)
+	switch {
+	case err == nil:
+		return requireInside(resolvedRoot, resolved)
+	case os.IsNotExist(err):
+		return judgeDanglingLink(resolvedRoot, linkPath)
+	default:
+		return err
 	}
-	resolved, err := confine(root, target)
+}
+
+// judgeDanglingLink resolves a link whose target does not exist yet. The walk starts from the link's own
+// directory RESOLVED, so a directory that is itself a link is followed first and the lexical dir of the
+// link never decides the answer.
+func judgeDanglingLink(resolvedRoot, linkPath string) error {
+	target, err := os.Readlink(linkPath)
 	if err != nil {
-		return "", fmt.Errorf("the symlink %s target %q leaves the case root", entry.Path, entry.Target)
+		return err
 	}
-	return resolved, nil
+	base, err := filepath.EvalSymlinks(filepath.Dir(linkPath))
+	if err != nil {
+		return err
+	}
+	resolved, _, err := resolveUnder(base, target)
+	if err != nil {
+		return err
+	}
+	return requireInside(resolvedRoot, resolved)
+}
+
+// resolveUnder walks target from base, following every existing symlink component and applying each '..'
+// to the path resolved so far. The first component that does not exist opens a remainder: a '..' inside
+// that remainder is refused, because the kernel cannot apply it to a name it cannot resolve. base must
+// already be resolved, and the result is the path resolved so far together with whether a remainder is
+// open. The hop cap bounds a cycle, and it is the same generous bound filepath.EvalSymlinks uses, so the
+// deep link chains a generator builds still resolve.
+func resolveUnder(base, target string) (string, bool, error) {
+	const maxHops = 255
+	current := base
+	if filepath.IsAbs(target) {
+		current = string(filepath.Separator)
+	}
+	pending := pathComponents(target)
+	missing := false
+	for hops := 0; len(pending) > 0; {
+		name := pending[0]
+		pending = pending[1:]
+		switch name {
+		case ".":
+			continue
+		case "..":
+			if missing {
+				return "", false, errors.New("a '..' follows a component that does not exist")
+			}
+			current = filepath.Dir(current)
+			continue
+		}
+		next := filepath.Join(current, name)
+		info, err := os.Lstat(next)
+		if err != nil {
+			if !os.IsNotExist(err) {
+				return "", false, err
+			}
+			missing = true
+			current = next
+			continue
+		}
+		if info.Mode()&os.ModeSymlink == 0 {
+			current = next
+			continue
+		}
+		if hops++; hops > maxHops {
+			return "", false, errors.New("too many links")
+		}
+		dest, err := os.Readlink(next)
+		if err != nil {
+			return "", false, err
+		}
+		if filepath.IsAbs(dest) {
+			current = string(filepath.Separator)
+		} else {
+			current = filepath.Dir(next)
+		}
+		pending = append(pathComponents(dest), pending...)
+	}
+	return current, missing, nil
+}
+
+// pathComponents splits a path into its components, dropping the empty ones an absolute path or a
+// repeated separator produces.
+func pathComponents(path string) []string {
+	var out []string
+	for _, part := range strings.Split(path, string(filepath.Separator)) {
+		if part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
+}
+
+// requireInside refuses a resolved path that is not the root and does not lie under it.
+func requireInside(resolvedRoot, resolved string) error {
+	rel, err := filepath.Rel(resolvedRoot, resolved)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return errors.New("resolves outside the case root")
+	}
+	return nil
+}
+
+// sweepLinks resolves every symlink under root once more, after the whole tree is built, and refuses one
+// that leaves it. filepath.Walk lists a link instead of following it, so the sweep sees every link
+// exactly once and cannot walk out of the tree; the root itself is skipped.
+func sweepLinks(root, resolvedRoot string) error {
+	return filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if path == root || info.Mode()&os.ModeSymlink == 0 {
+			return nil
+		}
+		if err := judgeLink(resolvedRoot, path); err != nil {
+			return fmt.Errorf("the symlink %s %w", path, err)
+		}
+		return nil
+	})
+}
+
+// rootSubstitutedPath is a path or link target with the case root in place of an opening ROOT
+// placeholder. Text that does not open with the placeholder is returned unchanged, so a relative
+// target stays relative and the two sides' trees compare equal. Each side substitutes its own root,
+// and it is the substituted text that is checked and created, never the placeholder itself.
+func rootSubstitutedPath(root, text string) string {
+	if root != "" && strings.HasPrefix(text, rootPlaceholder+"/") {
+		return root + text[len(rootPlaceholder):]
+	}
+	return text
 }
 
 // build writes one entry. Content is written as content and never executed.
-func build(root string, entry Entry) error {
-	path, err := confine(root, entry.Path)
+func build(root, resolvedRoot string, entry Entry) error {
+	path, err := confine(root, rootSubstitutedPath(root, entry.Path))
 	if err != nil {
 		return err
 	}
@@ -216,13 +486,20 @@ func build(root string, entry Entry) error {
 		}
 		return os.WriteFile(path, []byte(entry.Content), modeOf(entry.Mode, 0o644))
 	case "symlink":
-		if _, err := linkTarget(root, entry); err != nil {
-			return err
-		}
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			return err
 		}
-		return os.Symlink(entry.Target, path)
+		// The link stores exactly the target text that was checked - the substituted text, so a
+		// ROOT-prefixed entry becomes a real absolute link into the case root - and it is judged right
+		// after it is created, against the tree built so far.
+		target := rootSubstitutedPath(root, entry.Target)
+		if err := os.Symlink(target, path); err != nil {
+			return err
+		}
+		if err := judgeLink(resolvedRoot, path); err != nil {
+			return fmt.Errorf("the symlink %s target %q %w", entry.Path, entry.Target, err)
+		}
+		return nil
 	default:
 		return fmt.Errorf("unknown fs kind %q", entry.Kind)
 	}
@@ -242,6 +519,49 @@ func ReplaceRoot(out, root string) string {
 		return out
 	}
 	return strings.ReplaceAll(out, root, "${ROOT}")
+}
+
+// substituteRootValue replaces the ROOT placeholder in every string of a decoded value, object keys
+// included, and leaves every other value as it is. It is the one substitution both Go sides use, and
+// it runs on the DECODED input, before any serialization, exactly as the oracle's shim does
+// (testdata/memorygate/shim.mjs substitute(), :19-27): substituting into serialized JSON instead
+// corrupted the text whenever the case root held a quote, a backslash or a line break, and the two
+// sides then read different inputs. New containers are built rather than the receiver mutated, so a
+// caller's decoded input survives unchanged; an empty root is left alone, as the text-level
+// ReplaceRoot is.
+func substituteRootValue(value any, root string) any {
+	if root == "" {
+		return value
+	}
+	switch v := value.(type) {
+	case string:
+		return substituteRootText(v, root)
+	case pyjson.Object:
+		out := make(pyjson.Object, 0, len(v))
+		for _, item := range v {
+			out = append(out, pyjson.Field{Key: substituteRootText(item.Key, root), Value: substituteRootValue(item.Value, root)})
+		}
+		return out
+	case []any:
+		out := make([]any, 0, len(v))
+		for _, item := range v {
+			out = append(out, substituteRootValue(item, root))
+		}
+		return out
+	case map[string]any:
+		out := make(map[string]any, len(v))
+		for key, item := range v {
+			out[substituteRootText(key, root)] = substituteRootValue(item, root)
+		}
+		return out
+	default:
+		return value
+	}
+}
+
+// substituteRootText is the string leaf of substituteRootValue.
+func substituteRootText(text, root string) string {
+	return strings.ReplaceAll(text, rootPlaceholder, root)
 }
 
 // stripRoot applies ReplaceRoot to every string inside a value, keys included: a target may key an

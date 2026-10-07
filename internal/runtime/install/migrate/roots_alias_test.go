@@ -46,7 +46,7 @@ func TestOpenRefusesDestinationBehindAnAlias(t *testing.T) {
 	before := tree(t, src)
 	r, err := Open(Options{Scope: ScopeUser, FromHome: src, ToHome: alias + "/new"})
 	if err == nil {
-		_, derr := r.User.EnsureDest(0o700)
+		_, _, derr := r.User.EnsureDest(0o700)
 		r.Close()
 		t.Fatalf("Open accepted a destination whose ancestor %s reports the identity of %s (a bind mount); EnsureDest returned %v", alias, src+"/sub", derr)
 	}

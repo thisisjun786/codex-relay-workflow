@@ -58,6 +58,22 @@ const (
 	BlockingProject      = "project"
 )
 
+// The replies a decision's option makes when it is chosen: the decision_reply the relay records
+// for a relationship the option unblocks. A decision that blocks a relationship carries one per
+// option, because applying it is a comparison of the chosen option's reply with the reply the
+// relay recorded; a decision that blocks nothing makes no reply and carries none.
+const (
+	ReplyAnswer        = "answer"
+	ReplyStop          = "stop"
+	ReplySplitApproval = "split_approval"
+	ReplyScopeChange   = "scope_change"
+)
+
+// Replies is the option-reply vocabulary, in declaration order.
+func Replies() []string {
+	return []string{ReplyAnswer, ReplyStop, ReplySplitApproval, ReplyScopeChange}
+}
+
 // MinOptions and MaxOptions bound an option set: one option is no choice, four are no decision.
 const (
 	MinOptions = 2
@@ -76,7 +92,10 @@ var (
 	ErrUnknownBlockingKind = errors.New("decisions: unknown blocking kind")
 	ErrUnknownAuthority    = errors.New("decisions: unknown authority kind")
 	ErrBadNeededBy         = errors.New("decisions: needed_by is not an RFC3339 timestamp")
+	ErrBadRaisedAt         = errors.New("decisions: raised_at is not an RFC3339 timestamp")
 	ErrRecommendation      = errors.New("decisions: the recommendation names no option")
+	ErrUnknownReply        = errors.New("decisions: unknown option reply")
+	ErrOptionReplyRequired = errors.New("decisions: every option of a relationship-blocking decision names its reply")
 	ErrAmbiguousField      = errors.New("decisions: a field holds one of the fingerprint's delimiters")
 	ErrControlCharacter    = errors.New("decisions: a field holds a control character")
 	ErrTransition          = errors.New("decisions: that transition is not allowed")
@@ -89,6 +108,11 @@ type Option struct {
 	ID     string `json:"id"`
 	Label  string `json:"label"`
 	Effect string `json:"effect"`
+	// Reply is the decision_reply this option makes when it is chosen (answer, stop,
+	// split_approval or scope_change). It is empty for a decision that blocks no relationship, and
+	// it is not part of the fingerprint: two statements of one question that differ only in the
+	// reply are the same question.
+	Reply string `json:"reply,omitempty"`
 }
 
 // Recommendation is the raiser's own suggestion: advice, not a decision.
@@ -186,6 +210,45 @@ func IsKind(kind Kind) bool            { return contains(Kinds(), kind) }
 func IsState(state State) bool         { return contains(States(), state) }
 func IsAuthorityKind(kind string) bool { return contains(authorityKinds, kind) }
 func IsBlockingKind(kind string) bool  { return contains(blockingKinds, kind) }
+
+// IsReply reports whether reply is one of the option-reply vocabulary.
+func IsReply(reply string) bool { return contains(Replies(), reply) }
+
+// ValidateRaise refuses a raise whose options could never be applied: a decision that blocks a
+// relationship must name, on every option, the reply that option makes, because applying it
+// compares the chosen option's reply with the decision_reply the relay recorded for the receipt
+// the question answered. Validate deliberately does not carry this requirement: Validate is also
+// the check a record already in the table is read under, and a record written before the reply
+// field existed carries relationship-blocking options without one, which must not fail the read
+// (the same reason a legacy raised_at is read as it stands). Such a record can be listed,
+// answered and withdrawn; it can never be applied, because its options name no reply for the
+// reply event's decision to match, and the apply refuses rather than guessing.
+func ValidateRaise(record Record) error {
+	if err := Validate(record); err != nil {
+		return err
+	}
+	if !decisionBlocksRelationship(record) {
+		return nil
+	}
+	for _, option := range record.Options {
+		if strings.TrimSpace(option.Reply) == "" {
+			return fmt.Errorf("%w: option %q", ErrOptionReplyRequired, option.ID)
+		}
+	}
+	return nil
+}
+
+// decisionBlocksRelationship reports whether the record names a relationship among its blocking
+// subjects. That is the subject whose decision_reply event applies the record, so it is the one
+// whose options must carry the reply they make.
+func decisionBlocksRelationship(record Record) bool {
+	for _, entry := range record.Blocking {
+		if entry.Kind == BlockingRelationship {
+			return true
+		}
+	}
+	return false
+}
 
 // AllowedTransitions is the state machine: applied, withdrawn and expired are terminal.
 func AllowedTransitions() map[State][]State {
@@ -309,6 +372,9 @@ func Validate(record Record) error {
 			return fmt.Errorf("%w: %q", ErrDuplicateOptionID, id)
 		}
 		ids[id] = true
+		if reply := strings.TrimSpace(option.Reply); reply != "" && !contains(Replies(), reply) {
+			return fmt.Errorf("%w: %q", ErrUnknownReply, option.Reply)
+		}
 	}
 	for _, entry := range record.Blocking {
 		if !IsBlockingKind(entry.Kind) {
@@ -321,18 +387,33 @@ func Validate(record Record) error {
 	if record.Authority.Kind != "" && !IsAuthorityKind(record.Authority.Kind) {
 		return fmt.Errorf("%w: %q", ErrUnknownAuthority, record.Authority.Kind)
 	}
-	if record.NeededBy != "" {
-		// RFC 3339's fraction separator is ".", but Go's parser also takes a comma; refuse the
-		// comma explicitly and otherwise keep the value as written, fractional seconds included.
-		if strings.Contains(record.NeededBy, ",") {
-			return fmt.Errorf("%w: %q", ErrBadNeededBy, record.NeededBy)
-		}
-		if _, err := time.Parse(time.RFC3339Nano, record.NeededBy); err != nil {
-			return fmt.Errorf("%w: %q", ErrBadNeededBy, record.NeededBy)
-		}
+	if err := checkRFC3339Field(record.NeededBy, ErrBadNeededBy); err != nil {
+		return err
+	}
+	// raised_at is a timestamp too, checked the same way and kept as written: the value a Raise
+	// returns and the value List reads back must be the same text, and only its instant orders.
+	if err := checkRFC3339Field(record.RaisedAt, ErrBadRaisedAt); err != nil {
+		return err
 	}
 	if record.Recommendation != nil && !ids[strings.TrimSpace(record.Recommendation.Option)] {
 		return fmt.Errorf("%w: %q", ErrRecommendation, record.Recommendation.Option)
+	}
+	return nil
+}
+
+// checkRFC3339Field refuses a timestamp field that is not RFC 3339. RFC 3339's fraction separator is
+// ".", but Go's parser also takes a comma, so the comma is refused explicitly; the value is
+// otherwise kept as written, fractional seconds included, because a stored value must read back as
+// the text it was stored with.
+func checkRFC3339Field(value string, refusal error) error {
+	if value == "" {
+		return nil
+	}
+	if strings.Contains(value, ",") {
+		return fmt.Errorf("%w: %q", refusal, value)
+	}
+	if _, err := time.Parse(time.RFC3339Nano, value); err != nil {
+		return fmt.Errorf("%w: %q", refusal, value)
 	}
 	return nil
 }
@@ -377,6 +458,7 @@ func checkControlCharacters(record Record) error {
 			{"option.id", option.ID},
 			{"option.label", option.Label},
 			{"option.effect", option.Effect},
+			{"option.reply", option.Reply},
 		} {
 			if err := refuse(field.name, field.value, false); err != nil {
 				return err
@@ -454,6 +536,23 @@ func sameAnswer(first, second Record) bool {
 // and its stored fingerprint must match its content. The identity and answer checks run before the
 // per-record validation so that a differing answer is reported as the conflict it is, rather than
 // masked by a format refusal in one of the very fields the comparison covers.
+//
+// The two statements are held to the format differently, because they are not the same kind of
+// thing. The second is this raise's own fields, and it is checked whole. The first is the row the
+// question is already stored as, and it is checked with the one exemption the store's read uses
+// (decodeUserDecision): a raised_at an older build could write is kept as it stands, so a question
+// that lists, answers and withdraws also takes a second observation. Everything the fold newly
+// writes — the appended observations, the state the caller moves, and a raised_at this raise filled
+// in — is checked as the format requires.
+//
+// An option's reply is folded the one way the identity rule allows. The fingerprint excludes the
+// reply, so two raises of one question that name different replies for the same option are the same
+// question and cannot become two records; the fold is therefore refused when the stored reply and
+// the incoming one are both named and differ, because applying the record compares the chosen
+// option's reply with the reply the relay recorded, and a silent fold would apply the later raise's
+// answer against a mapping it never offered. A stored reply an older build could not have written
+// (the field is this format's) is filled from the incoming raise, and an incoming raise that names
+// no reply keeps the stored one. The merged options are then checked as the format requires.
 func Merge(first, second Record) (Record, error) {
 	if first.Fingerprint != second.Fingerprint {
 		return Record{}, fmt.Errorf("%w: %s and %s", ErrFingerprintMismatch, first.Fingerprint, second.Fingerprint)
@@ -461,15 +560,108 @@ func Merge(first, second Record) (Record, error) {
 	if !sameAnswer(first, second) {
 		return Record{}, fmt.Errorf("%w: %s and %s", ErrMergeConflict, first.State, second.State)
 	}
+	if err := Validate(second); err != nil {
+		return Record{}, err
+	}
+	if err := validateStoredRaisedAt(first); err != nil {
+		return Record{}, err
+	}
+	options, err := mergeOptionReplies(first.Options, second.Options)
+	if err != nil {
+		return Record{}, err
+	}
 	for _, record := range []Record{first, second} {
-		if err := Validate(record); err != nil {
-			return Record{}, err
-		}
 		if content := Fingerprint(record.Context, record.Blocking, record.Options); content != record.Fingerprint {
 			return Record{}, fmt.Errorf("%w: %s is not its content's %s", ErrFingerprintMismatch, record.Fingerprint, content)
 		}
 	}
 	merged := first
+	merged.Options = options
 	merged.Seen = append(append([]Seen{}, first.Seen...), second.Seen...)
+	if merged.RaisedAt == first.RaisedAt {
+		if err := validateStoredRaisedAt(merged); err != nil {
+			return Record{}, err
+		}
+	} else if err := Validate(merged); err != nil {
+		return Record{}, err
+	}
 	return merged, nil
+}
+
+// mergeOptionReplies folds the incoming raise's option replies into the stored set. The two raises
+// are one question because their fingerprints match, and the fingerprint identifies an option by its
+// normalized id (Normalize: ASCII-lowercased, whitespace runs collapsed), so the fold matches ids the
+// same way: an option stored as HOLD is the option an incoming hold names. Matching on the raw text
+// would skip the fold for a spelling the fingerprint calls the same question, silently leaving a
+// reply unfilled and a conflict unseen. A stored reply and an incoming reply that are both named and
+// differ is ErrMergeConflict: the stored mapping is the one an answer is applied against, and the
+// fingerprint cannot separate the two raises, so the second raise is refused rather than silently
+// dropped. A stored reply that is empty — a record written before the reply field existed — takes the
+// incoming one, and an incoming reply that is empty keeps the stored one. A stored option set that
+// two of whose ids normalize alike cannot say which option an incoming reply belongs to, so it is
+// refused as the ambiguity it is rather than guessed. A reply is never written where the option it
+// belongs to is not in the stored set, because the stored option set is the one the record keeps.
+func mergeOptionReplies(stored, incoming []Option) ([]Option, error) {
+	merged := append([]Option{}, stored...)
+	at := make(map[string][]int, len(merged))
+	for i, option := range merged {
+		key := Normalize(option.ID)
+		at[key] = append(at[key], i)
+	}
+	for _, option := range incoming {
+		indexes := at[Normalize(option.ID)]
+		if len(indexes) == 0 {
+			continue
+		}
+		incomingReply := strings.TrimSpace(option.Reply)
+		// Each incoming option is matched with the stored option that carries the same id, so a
+		// repeat raise of a set that holds two ids the fingerprint calls one identity compares like
+		// with like. An id that matches no single stored option cannot say where a named reply
+		// belongs, and that is refused rather than guessed at; a raise that names no reply for it
+		// writes nothing and folds as it did.
+		if len(indexes) > 1 {
+			if exact := exactOptionIndexes(merged, indexes, option.ID); len(exact) == 1 {
+				indexes = exact
+			} else if incomingReply == "" {
+				continue
+			} else {
+				return nil, fmt.Errorf("%w: the stored options %q and %q are one id to the fingerprint, so the reply %q this raise names for %q cannot be placed", ErrMergeConflict, merged[indexes[0]].ID, merged[indexes[1]].ID, option.Reply, option.ID)
+			}
+		}
+		index := indexes[0]
+		storedReply := strings.TrimSpace(merged[index].Reply)
+		switch {
+		case storedReply == "":
+			merged[index].Reply = incomingReply
+		case incomingReply == "" || storedReply == incomingReply:
+			// The stored reply stands: the raise names none, or names the same one.
+		default:
+			return nil, fmt.Errorf("%w: option %q is stored with reply %q and this raise names %q", ErrMergeConflict, merged[index].ID, merged[index].Reply, option.Reply)
+		}
+	}
+	return merged, nil
+}
+
+// exactOptionIndexes narrows candidates to the stored options whose id is the incoming id as
+// written, which is the one an incoming reply for that spelling belongs to.
+func exactOptionIndexes(stored []Option, candidates []int, id string) []int {
+	exact := make([]int, 0, len(candidates))
+	for _, index := range candidates {
+		if strings.TrimSpace(stored[index].ID) == strings.TrimSpace(id) {
+			exact = append(exact, index)
+		}
+	}
+	return exact
+}
+
+// validateStoredRaisedAt is Validate with the one exemption the store's read uses (decodeUserDecision):
+// a stored raised_at that is not an RFC 3339 timestamp is kept as it stands rather than failing the
+// record. Every other field is checked, and the writer path still refuses a raised_at it is asked to
+// store: this exemption exists only so a row an older build wrote stays readable.
+func validateStoredRaisedAt(record Record) error {
+	kept := record.RaisedAt
+	record.RaisedAt = ""
+	err := Validate(record)
+	record.RaisedAt = kept
+	return err
 }

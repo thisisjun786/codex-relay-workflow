@@ -7,6 +7,7 @@ import { ToastHost } from "./ui/toast.tsx";
 import { Icon } from "./ui/icons.tsx";
 import { EmptyState } from "./ui/kit.tsx";
 import { HelpDrawer, HelpTopicButton, useHelp } from "./ui/help.tsx";
+import { HelperRolesPage } from "./pages/HelperRoles.tsx";
 
 export function App() {
   const route = useRoute();
@@ -43,21 +44,27 @@ export function App() {
       </aside>
 
       <main className="main">
-        <div className="page-header">
-          <span className="page-header-title">{active.label}</span>
-          <HelpTopicButton topic={active.topic} onOpen={openHelp} />
-        </div>
-        <div className="page-head">
-          <div>
-            <h1>{active.label}</h1>
-            <div className="sub">{active.subtitle}</div>
-          </div>
-        </div>
-        <div className="page-body">
-          <EmptyState icon={active.icon} title="Not available yet">
-            This screen arrives with the issue that implements it.
-          </EmptyState>
-        </div>
+        {active.path === "/helper-roles" ? (
+          <HelperRolesPage />
+        ) : (
+          <>
+            <div className="page-header">
+              <span className="page-header-title">{active.label}</span>
+              <HelpTopicButton topic={active.topic} onOpen={openHelp} />
+            </div>
+            <div className="page-head">
+              <div>
+                <h1>{active.label}</h1>
+                <div className="sub">{active.subtitle}</div>
+              </div>
+            </div>
+            <div className="page-body">
+              <EmptyState icon={active.icon} title="Not available yet">
+                This screen arrives with the issue that implements it.
+              </EmptyState>
+            </div>
+          </>
+        )}
       </main>
       <ToastHost />
       <HelpDrawer open={helpOpen} topic={helpTopic} onClose={closeHelp} />

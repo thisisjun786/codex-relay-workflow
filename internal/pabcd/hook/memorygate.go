@@ -136,15 +136,16 @@ func memoryGateConsume(cwd, sid, turn string, write func(string, state.State) er
 }
 
 // memoryGateRewritable says whether writing back the state the reader rebuilt would keep every record: each stored unverified
-// subagent must come back as it was stored (the reader drops malformed entries, caps the list, cuts a long receiptClaimed and
-// replaces a field of the wrong type, see state.RewriteKeepsUnverified), and a legacy D-close marker would lose its
-// distinction. The memory allow-write command and the scan and evidence commands refuse on the same judgement.
+// subagent must come back as it was stored, an interview tracker longer than the reader keeps would lose its oldest entries, and
+// no record class the shared judgement covers would change (state.RewriteKeepsStored). A legacy D-close marker is refused
+// separately, as this writer always has (state.DcloseRecoveryLegacy). The memory allow-write command and the scan and evidence
+// commands refuse on the same judgement.
 func memoryGateRewritable(file string, s state.State) bool {
-	if s.DcloseRecovery != nil && s.DcloseRecovery.Legacy {
+	if state.DcloseRecoveryLegacy(s) {
 		return false
 	}
 	raw, err := os.ReadFile(file)
-	return err == nil && state.RewriteKeepsUnverified(raw, s.UnverifiedSubagents)
+	return err == nil && state.RewriteKeepsStored(raw, s)
 }
 
 // memoryGateClassify is classifyMemoryWrite with the protected root worked out from env.
@@ -188,6 +189,12 @@ func memoryGateClassify(tool string, input any, cwd string, env host.LookupEnv) 
 		// A Python program the reader cannot finish - an f-string replacement field it cannot walk - may hold a write
 		// it never sees, so it is a write attempt of its own and the gate fails closed (CRW-741).
 		if what, ok := shellWriteFStringUnreadable(command); ok {
+			return MemoryWriteAttempt{Surface: "shell", Target: "(a program the gate cannot read: " + what + ")"}
+		}
+		// A shell program position the outer shell builds at run time - a -c program, an eval operand, a source
+		// operand, a shell reading a pipe, a here-string or a here-document - may hold a write the destination reader
+		// never sees, so it is a write attempt of its own and the gate fails closed (CRW-726, beside CRW-741's check).
+		if what, ok := worktreeDelUnreadableProgram(command); ok {
 			return MemoryWriteAttempt{Surface: "shell", Target: "(a program the gate cannot read: " + what + ")"}
 		}
 	}

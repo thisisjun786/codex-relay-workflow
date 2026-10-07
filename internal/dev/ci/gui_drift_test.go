@@ -381,3 +381,35 @@ func TestGUIDriftReadsTheNamedRevision(t *testing.T) {
 		t.Fatalf("HEAD was not judged: %v %v", problems, err)
 	}
 }
+
+// A screen asset must stay under 2 MiB (2,097,152 bytes): the bound is exclusive, so 2,097,151
+// bytes pass and exactly 2,097,152 are refused. Both sides apply it, the committed tree through
+// git ls-tree's size and a fresh build through the bytes read off disk, so an asset that grew to
+// the ceiling is refused whether the commit holds it or a rebuild produced it.
+func TestGUIDriftRefusesAnAssetAtTheSizeLimit(t *testing.T) {
+	const limit = 2 << 20
+	r := guiDriftRepo(t)
+
+	// One byte under the limit passes on both sides.
+	r.write("internal/gui/assets/assets/index-BIG.js", strings.Repeat("a", limit-1))
+	r.commit()
+	if _, err := guiDriftCommitted(r.root, "HEAD"); err != nil {
+		t.Fatalf("a committed asset of %d bytes was refused: %v", limit-1, err)
+	}
+	built := guiDriftBuild(t, r)
+	guiDriftBuildWrite(t, built, "assets/index-BIG.js", strings.Repeat("a", limit-1))
+	if _, err := guiDriftFresh(built); err != nil {
+		t.Fatalf("a built asset of %d bytes was refused: %v", limit-1, err)
+	}
+
+	// Exactly the limit is refused on both sides.
+	r.write("internal/gui/assets/assets/index-BIG.js", strings.Repeat("a", limit))
+	r.commit()
+	if _, err := guiDriftCommitted(r.root, "HEAD"); err == nil {
+		t.Errorf("a committed asset of %d bytes was accepted", limit)
+	}
+	guiDriftBuildWrite(t, built, "assets/index-BIG.js", strings.Repeat("a", limit))
+	if _, err := guiDriftFresh(built); err == nil {
+		t.Errorf("a built asset of %d bytes was accepted", limit)
+	}
+}
