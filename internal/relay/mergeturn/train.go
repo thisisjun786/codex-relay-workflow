@@ -284,7 +284,10 @@ func (s *Service) Open(ctx context.Context, turn, actor, base string, members []
 		if err != nil {
 			return acceptance.Active{}, "", "", "", trainUnreadable("what acceptance %s stands on was not read: %v", pyvalue.StrRepr(active.AcceptanceID), err)
 		}
-		if err := trainStandRefusal(pr, relationship, memberHead, active, stand.Head); err != nil {
+		// The turn's own head must be one the acceptance covers (its head the acceptance was taken
+		// on, or a recorded refresh head); the head the bundle carries is the stand head, which the
+		// caller compares with the pull request (CRW-898, item 4).
+		if err := trainTurnHeadRefusal(ctx, s.Store.Querier(ctx), relationship, memberHead); err != nil {
 			return acceptance.Active{}, "", "", "", err
 		}
 		rulingHead, rulingSource, err := acceptance.RulingHead(ctx, s.Store.Querier(ctx), active.EventID, active.HeadSHA)
@@ -427,7 +430,7 @@ func (s *Service) trainMembershipRefusal(ctx context.Context, actor string, memb
 		if !SameCommit(stand.Head, m.AcceptedHead) {
 			return trainConflict("pull request %d stands on %s now and the bundle was opened on %s, so it changed while the bundle was being read; call again", m.PRNumber, pyvalue.StrRepr(stand.Head), pyvalue.StrRepr(m.AcceptedHead))
 		}
-		if err := trainStandRefusal(m.PRNumber, m.RelationshipID, turn.CandidateHead, active, stand.Head); err != nil {
+		if err := trainTurnHeadRefusal(ctx, s.Store.Querier(ctx), m.RelationshipID, turn.CandidateHead); err != nil {
 			return err
 		}
 	}
@@ -495,43 +498,46 @@ func waitingTurnFor(turns []store.MergeTurnsRow, pr int64) (store.MergeTurnsRow,
 }
 
 // trainStandRefusal is Blocking 1's gate: the member must have an active acceptance whose stand head
-// is the head its pull request shows. The turn's own head may be that stand head, or the head the
-// acceptance was originally taken on when a recorded base refresh moved the stand past it (CRW-898,
-// item 4): the bundle carries the stand head, so a waiting member the parent refreshed and recorded
-// keeps its eligibility without restating its turn, while a head that moved with no record is still
-// refused, because then the stand head is the acceptance's own head and the turn has to hold it.
+// is the head its pull request shows and the head the bundle carries. It is deliberately strict: the
+// frozen member head a train records must always be the head the acceptance stands on now, so a
+// stand that moved after the train opened refuses verify and land rather than landing a stale bundle.
 func trainStandRefusal(pr int64, relationship, memberHead string, active acceptance.Active, standHead string) error {
 	if active.AcceptanceID == "" {
 		return trainConflict("pull request %d's relationship %s has no active acceptance, so the member is not a verified, accepted candidate this bundle may carry; run dag-accept on its head first", pr, pyvalue.StrRepr(relationship))
 	}
-	if !SameCommit(standHead, memberHead) && !SameCommit(active.HeadSHA, memberHead) {
-		return trainConflict("pull request %d holds %s and its acceptance %s stands on %s, so the member's head is not the head the ruling covers", pr, pyvalue.StrRepr(memberHead), pyvalue.StrRepr(active.AcceptanceID), pyvalue.StrRepr(standHead))
+	if !SameCommit(standHead, memberHead) {
+		return trainConflict("pull request %d stands on %s and its acceptance %s stands on %s, so the member's head is not the head the ruling covers", pr, pyvalue.StrRepr(memberHead), pyvalue.StrRepr(active.AcceptanceID), pyvalue.StrRepr(standHead))
 	}
 	return nil
 }
 
-// trainTurnHeadRefusal checks that a member turn still holds a head the member's acceptance covers
-// (CRW-898, item 4). The head the bundle carries is the acceptance's stand head, so the turn may
-// hold either that stand head (nothing moved, or the turn was restated) or the head the acceptance
-// was originally taken on, which is what a waiting member the parent refreshed and recorded still
-// holds: the record moved the stand, not the turn. Any other head is a member that moved with no
-// record and is refused. A withdrawn or moved acceptance refuses too, naming the member.
-func (s *Service) trainTurnHeadRefusal(ctx context.Context, m store.MergeTrainMemberRow, turnHead string) error {
-	active, found, err := acceptance.ActiveForRelationship(ctx, s.Store.Querier(ctx), m.RelationshipID)
+// trainTurnHeadRefusal is the turn-side half of Blocking 1 (CRW-898, item 4): the head a member's
+// own merge turn holds must be one the acceptance covers, which is its current stand head or any
+// head a recorded base refresh of that acceptance named (the head the acceptance was taken on, or an
+// earlier recorded refresh the parent has since moved past). The bundle carries the current stand
+// head, so a waiting member whose branch the parent refreshed and recorded keeps its eligibility
+// without restating its turn, while a head that moved with no record is refused.
+func trainTurnHeadRefusal(ctx context.Context, q store.Querier, relationship, turnHead string) error {
+	active, found, err := acceptance.ActiveForRelationship(ctx, q, relationship)
 	if err != nil {
-		return trainUnreadable("the acceptance of relationship %s was not read: %v", pyvalue.StrRepr(m.RelationshipID), err)
+		return trainUnreadable("the acceptance of relationship %s was not read: %v", pyvalue.StrRepr(relationship), err)
 	}
 	if !found {
-		return trainConflict("pull request %d's relationship %s has no active acceptance, so the member is no longer a verified, accepted candidate", m.PRNumber, pyvalue.StrRepr(m.RelationshipID))
+		return trainConflict("relationship %s has no active acceptance, so the member is no longer a verified, accepted candidate", pyvalue.StrRepr(relationship))
 	}
-	stand, err := acceptance.StandOf(ctx, s.Store.Querier(ctx), active.AcceptanceID, m.RelationshipID, active.Generation, active.EventID, active.RevisionHash, active.HeadSHA)
-	if err != nil {
-		return trainUnreadable("what acceptance %s stands on was not read: %v", pyvalue.StrRepr(active.AcceptanceID), err)
-	}
-	if SameCommit(turnHead, stand.Head) || SameCommit(turnHead, active.HeadSHA) {
+	if SameCommit(active.HeadSHA, turnHead) {
 		return nil
 	}
-	return trainConflict("member turn %s of pull request %d now holds %s and the bundle carries %s, so the member changed after the train opened", pyvalue.StrRepr(m.TurnID), m.PRNumber, pyvalue.StrRepr(turnHead), pyvalue.StrRepr(m.MemberHead))
+	stands, err := acceptance.Stands(ctx, q, active.AcceptanceID, relationship, active.Generation)
+	if err != nil {
+		return trainUnreadable("the base refreshes of acceptance %s were not read: %v", pyvalue.StrRepr(active.AcceptanceID), err)
+	}
+	for _, stand := range stands {
+		if SameCommit(stand.Head, turnHead) {
+			return nil
+		}
+	}
+	return trainConflict("the member turn holds %s and its acceptance %s covers neither that head nor a head a recorded base refresh named, so the member's head is not the head the ruling covers", pyvalue.StrRepr(turnHead), pyvalue.StrRepr(active.AcceptanceID))
 }
 
 // trainMemberRefusal rereads every member pull request from the forge and refuses one that no
@@ -779,7 +785,7 @@ func (s *Service) Verify(ctx context.Context, train, actor, bundlePR, head, run,
 		return nil, err
 	}
 	at := s.now()
-	detail := trainVerifiedDetail(row.BaseSHA, pr, head, chain.Tree, run, expected)
+	detail := trainVerifiedDetail(row.BaseSHA, pr, head, chain.Tree, run, expected, chain.Steps)
 	seq, err := s.nextTrainEventSeq(ctx, train)
 	if err != nil {
 		return nil, err
@@ -891,9 +897,16 @@ func trainTestStepRefusal(name, runID string, job TrainJob) error {
 }
 
 // trainVerifiedDetail is the verified event's body: the bundle pull request, the head, the tree, the
-// run, and the per-member mapping (CRW-768 c2, decision 10) that verify and land both record.
-func trainVerifiedDetail(base string, pr int64, head, tree, run string, members []TrainMemberExpectation) map[string]any {
-	return map[string]any{"bundlePr": pr, "baseSha": base, "head": head, "tree": tree, "run": run, "members": trainMemberMapping(members)}
+// run, the per-member mapping (CRW-768 c2, decision 10) that verify and land both record, and the
+// built-in version-line proof of every chain step git did not write from its parents by itself
+// (CRW-898, item 2). A reader can then tell a normal merge from one the built-in rule admitted, and
+// the evidence the exception rests on stays with the train rather than only in the chain proof.
+func trainVerifiedDetail(base string, pr int64, head, tree, run string, members []TrainMemberExpectation, steps []TrainChainStep) map[string]any {
+	list := make([]any, 0, len(steps))
+	for _, st := range steps {
+		list = append(list, map[string]any{"commit": st.Commit, "path": st.Path, "rule": st.Rule, "blob": st.Blob})
+	}
+	return map[string]any{"bundlePr": pr, "baseSha": base, "head": head, "tree": tree, "run": run, "members": trainMemberMapping(members), "steps": list}
 }
 
 // TrainLand is merge-train-land: the bundle merge commit M is on dev, its parents are the bundle's base D
@@ -1022,7 +1035,7 @@ func (s *Service) TrainLand(ctx context.Context, train, actor, landed, observed 
 				excluded = append(excluded, map[string]any{"seq": m.Seq, "turnId": m.TurnID, "prNumber": m.PRNumber, "relationshipId": m.RelationshipID, "state": turn.State, "closeReason": value(turn.CloseReason)})
 				continue
 			}
-			if e := s.trainTurnHeadRefusal(tx, m, turn.CandidateHead); e != nil {
+			if e := trainTurnHeadRefusal(tx, s.Store.Querier(tx), m.RelationshipID, turn.CandidateHead); e != nil {
 				return e
 			}
 			turns[m.TurnID] = turn

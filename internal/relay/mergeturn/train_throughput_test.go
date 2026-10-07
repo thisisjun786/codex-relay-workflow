@@ -257,7 +257,7 @@ func TestMemberOnlyWaitingTurn(t *testing.T) {
 		}
 	})
 
-	t.Run("the solo grant still takes only the oldest turn of each parent", func(t *testing.T) {
+	t.Run("a member-only turn never takes the solo grant, even when the target frees", func(t *testing.T) {
 		w := newTr(t)
 		first := w.claim(trLane, trLeader, "head-101", 101)["turnId"].(string)
 		w.pr(101, "head-101")
@@ -275,10 +275,11 @@ func TestMemberOnlyWaitingTurn(t *testing.T) {
 		if _, err := w.m.Release(w.ctx, first, trLeader, "returned", "the lane is free", ""); err != nil {
 			t.Fatal(err)
 		}
-		// the lane is free and the member-only turn is now the parent"s oldest live turn, so the
-		// solo grant order takes it - one turn per parent, oldest first, unchanged by CRW-898
-		if state := w.turn(second["turnId"].(string)).State; state != Holding {
-			t.Fatalf("the oldest live turn did not take the free lane: %s", state)
+		// The lane is free and the parent now has no waiting turn, so promotion has nothing to take.
+		// The member-only turn stays member-only: it rides bundles and never becomes the solo holder
+		// (CRW-898 item 1), so a parent cannot reserve a later solo position with an extra candidate.
+		if state := w.turn(second["turnId"].(string)).State; state != MemberWaiting {
+			t.Fatalf("a member-only turn took the free lane as %s, and it must ride bundles only", state)
 		}
 	})
 
@@ -324,5 +325,51 @@ func TestMemberOnlyWaitingTurn(t *testing.T) {
 		if len(members) != 3 {
 			t.Fatalf("the bundle carries %d members, want 3 (one parent twice)", len(members))
 		}
+		// the bundle is verified and landed with the member-only turn riding it: its own turn ledger
+		// records the landing, which is what item 1 requires of every member (CRW-898)
+		w.pr(900, "head-bundle", TrainLaneLabel)
+		w.forge.runs["run-1"] = runFor("head-bundle")
+		if _, err := w.m.Verify(w.ctx, train, trLeader, "900", "head-bundle", "run-1", "/checkout", w.forge, w.proof); err != nil {
+			t.Fatalf("verify over a bundle carrying a member-only turn: %v", err)
+		}
+		w.tip.set(trRepo, trBase, "merge-1")
+		w.forge.commits["merge-1"] = TrainCommit{SHA: "merge-1", Parents: []string{"base-0", "head-bundle"}, Tree: "tree-bundle"}
+		if _, err := w.m.TrainLand(w.ctx, train, trLeader, "merge-1", "merge-1", w.tip, w.forge); err != nil {
+			t.Fatalf("land over a bundle carrying a member-only turn: %v", err)
+		}
+		if state := w.turn(w.turnIDOf(103)).State; state != "landed" {
+			t.Fatalf("the member-only turn is %s after the landing, want landed on its own turn", state)
+		}
 	})
+}
+
+// TestVerifiedEventRecordsTheVersionLineSteps is criterion c1 item 2 on the train record: a chain
+// step the built-in version-line rule settled is recorded with the verified event, so a reader can
+// tell a normal git merge from one the rule admitted. The prover here reports a step directly, which
+// is the shape TrainChain carries; the real git shape is exercised by TestChainVersionLineStep.
+func TestVerifiedEventRecordsTheVersionLineSteps(t *testing.T) {
+	w := newTr(t)
+	train := w.openedTrain()
+	w.proof.steps = []TrainChainStep{{Commit: "merge-m2", Path: "plugins/crw/.codex-plugin/plugin.json", Rule: TrainVersionLineRule, Blob: "blob-m2"}}
+	w.pr(900, "head-bundle", TrainLaneLabel)
+	w.forge.runs["run-1"] = runFor("head-bundle")
+	if _, err := w.m.Verify(w.ctx, train, trLeader, "900", "head-bundle", "run-1", "/checkout", w.forge, w.proof); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := w.s.All(w.ctx, "SELECT detail_json FROM merge_train_events WHERE train_id = ? AND kind = 'verified'", train)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("the verified event: %v %d", err, len(rows))
+	}
+	var detail map[string]any
+	if err := json.Unmarshal([]byte(rows[0].Get("detail_json").(string)), &detail); err != nil {
+		t.Fatal(err)
+	}
+	steps, ok := detail["steps"].([]any)
+	if !ok || len(steps) != 1 {
+		t.Fatalf("the verified event records %v, want one step", detail["steps"])
+	}
+	step, _ := steps[0].(map[string]any)
+	if step["commit"] != "merge-m2" || step["path"] != "plugins/crw/.codex-plugin/plugin.json" || step["rule"] != TrainVersionLineRule || step["blob"] != "blob-m2" {
+		t.Fatalf("the recorded step = %v, want the commit, path, rule and blob the chain proved", step)
+	}
 }

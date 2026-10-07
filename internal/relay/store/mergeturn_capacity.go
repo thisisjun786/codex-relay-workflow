@@ -69,13 +69,12 @@ func (s *Store) HighestMergeTenure(ctx context.Context, targetKey, holderTaskID 
 	return highest.Int64, err
 }
 
-// ReadyMergeWaiters is mergeturn.py:1302 _promote_in: the promotion order, widened by CRW-898 to hold
-// the member-only waiting turns too. It lists every ready waiter in request order; the promotion
-// itself takes only each parent's oldest live turn (promote), so a member-only turn rides a bundle
-// while an older turn of the same parent stands on the target.
+// ReadyMergeWaiters is mergeturn.py:1302 _promote_in: the promotion order. A member-only waiting turn
+// (CRW-898) is deliberately absent: it rides bundles and never takes the solo grant, so it is not a
+// promotion candidate at all. MergeTurnsForTarget is the reader that lists it for a bundle.
 func (s *Store) ReadyMergeWaiters(ctx context.Context, targetKey string) ([]MergeTurnsRow, error) {
 	return queryRows(ctx, s, scanMergeTurns, "SELECT "+mergeTurnsColumns+" FROM merge_turns"+
-		"  WHERE target_key = ? AND state IN ('member_waiting','waiting') AND declared_ready = 1"+
+		"  WHERE target_key = ? AND state = 'waiting' AND declared_ready = 1"+
 		"  ORDER BY requested_at, turn_id", targetKey)
 }
 

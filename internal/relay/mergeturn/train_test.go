@@ -104,6 +104,9 @@ func (f *trForge) Compare(_ context.Context, _, base, head string) (string, erro
 type trProof struct {
 	tree string
 	err  error
+	// steps is what the chain proof reports for the merges git does not write from their parents by
+	// itself, so a test can pin that verify records the version-line proof with the train (CRW-898).
+	steps []TrainChainStep
 	// workflow is the text .github/workflows/ci.yml holds at the head, and fileErr the refusal the
 	// stand-in answers with instead. Empty means the repository's own workflow, which is what the
 	// bundle's head normally holds (CRW-897, answer 6).
@@ -115,7 +118,7 @@ func (p *trProof) Chain(_ context.Context, _ string, _, _ string, _ []TrainMembe
 	if p.err != nil {
 		return TrainChain{}, p.err
 	}
-	return TrainChain{Tree: p.tree}, nil
+	return TrainChain{Tree: p.tree, Steps: p.steps}, nil
 }
 
 func (p *trProof) File(_ context.Context, _, _, _ string) (string, error) {

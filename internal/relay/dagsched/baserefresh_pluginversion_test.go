@@ -262,6 +262,40 @@ func pluginVersionContributor(t *testing.T, s *refreshScenario, rule string) {
 // identified-contributor form of the same invariant, and it reaches applyMechanical by a different
 // branch (the selector agrees on the declared rule, so the path is not one the built-in rule is tried
 // on).
+// TestManifestRefreshDecisionIsTheRelaysOwn is criterion c1 item 6 on the producer itself: the relay
+// decides, per path, whether the declarations settle the plugin manifest with one agreed rule or
+// whether the built-in rule is what the checker is handed. A candidate-only declaration keeps its
+// say (CRW-732, so an unprovable rule still leaves the path to the parent's --resolved name), but a
+// declaration that an identified contributor disagrees with, by naming another rule or none, is no
+// agreement at all: the decision is the built-in rule, so the candidate's lone command can never
+// block the built-in proof. The fourth case is the one the pre-CRW-898 producer got wrong: it put
+// the candidate's own rule into the decision, ran that command, and left the path manual.
+func TestManifestRefreshDecisionIsTheRelaysOwn(t *testing.T) {
+	manifest := func(rule string) Region {
+		return Region{Path: pluginversion.ManifestRepoPath, Kind: "file", Change: "edit", Grade: GradeMechanical, Rule: rule}
+	}
+	builtin := RefreshDecisionBuiltin
+	cases := []struct {
+		name        string
+		candidate   []Region
+		contributor [][]Region
+		want        string
+	}{
+		{"the candidate declares no rule and no contributor touches the path", nil, nil, builtin},
+		{"the candidate alone declares a rule", []Region{manifest("regenerate:sh candidate.sh")}, nil, "regenerate:sh candidate.sh"},
+		{"the candidate and the contributor agree", []Region{manifest("regenerate:sh same.sh")}, [][]Region{{manifest("regenerate:sh same.sh")}}, "regenerate:sh same.sh"},
+		{"the contributor declares another rule", []Region{manifest("regenerate:sh candidate.sh")}, [][]Region{{manifest("regenerate:false")}}, builtin},
+		{"the contributor declares no rule at all", []Region{manifest("regenerate:sh candidate.sh")}, [][]Region{{{Path: "other.txt", Kind: "file", Change: "edit", Grade: GradeMechanical, Rule: "union"}}}, builtin},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := manifestRefreshDecision(c.candidate, c.contributor); got != c.want {
+				t.Fatalf("the decision for the manifest = %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
 func TestBaseRefreshPluginVersionDeclaredRuleWithContributorStaysManual(t *testing.T) {
 	s := newPluginVersionRefreshScenarioDeclaring(t, true, []Region{{Path: pluginversion.ManifestRepoPath, Kind: "file", Change: "edit", Grade: GradeMechanical, Rule: "regenerate:false"}})
 	pluginVersionContributor(t, s, "regenerate:false")

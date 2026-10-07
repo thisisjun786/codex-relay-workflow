@@ -34,18 +34,10 @@ func (s *Service) promote(ctx context.Context, target, at string) (string, error
 		return "", err
 	}
 	for _, candidate := range waiters {
-		// The solo grant order takes each parent's oldest live turn (CRW-898): a member-only waiting
-		// turn takes the lane only once no older live turn of the same holder stands on the target, so
-		// a holder whose own older turn is still waiting, merging or held back by a paused owner does
-		// not take the lane with a later one. Outside this feature a holder has one live turn per
-		// target, so this never skips a candidate it used to promote.
-		oldest, err := s.Store.MergeLiveClaimsForHolder(ctx, target, candidate.HolderTaskID)
-		if err != nil {
-			return "", err
-		}
-		if len(oldest) == 0 || oldest[0].TurnID != candidate.TurnID {
-			continue
-		}
+		// The solo grant order is unchanged (CRW-898): ReadyMergeWaiters lists only the waiting
+		// turns, in request order, so each parent's oldest waiting turn takes the lane first. A
+		// member-only waiting turn is not among them at all - it rides bundles and never takes a
+		// solo grant - so it cannot be promoted here however the target frees.
 		owner, refusal, err := s.ownership(ctx, candidate.ProjectKey, target, candidate.HolderTaskID)
 		if err != nil {
 			return "", err
@@ -408,20 +400,11 @@ func (s *Service) Withdraw(ctx context.Context, turn, actor string) (map[string]
 		if refusal != nil {
 			return s.Registry.RecordCoordinationConflict(tx, *refusal, at)
 		}
-		if err = s.close(tx, r, "withdrawn", "withdrawn by its claimant", actor, at); err != nil {
-			return err
-		}
-		// A withdrawn turn may have been the older one that held a member-only waiting turn of the
-		// same holder back, so a free target is offered the next eligible waiter here (CRW-898). A
-		// target another turn still holds is left alone: promotion is only ever a free target's.
-		occupant, err := s.Store.MergeTargetOccupant(tx, r.TargetKey)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return err
-		}
-		if occupant.TurnID == "" {
-			_, err = s.promote(tx, r.TargetKey, at)
-		}
-		return err
+		// Withdrawing a turn is not a release: the turn never held the lane (a holding turn is
+		// returned, not withdrawn), so the solo grant order is left exactly as it was and no
+		// promotion is started here (CRW-898). A member-only waiting turn is withdrawn like any
+		// other waiter; it was never a promotion candidate in the first place.
+		return s.close(tx, r, "withdrawn", "withdrawn by its claimant", actor, at)
 	})
 	if err != nil {
 		return nil, err

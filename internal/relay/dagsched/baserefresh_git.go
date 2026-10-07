@@ -152,16 +152,15 @@ func (p *refreshProof) applyMechanical(ctx context.Context, g *refreshRepo, chec
 			if r.Path == pluginversion.ManifestRepoPath {
 				paths = append(paths, r.Path)
 				descriptions = append(descriptions, r.Path)
-				// The candidate"s own declaration still has its say when the contributors do not
-				// agree with it (CRW-898, item 6): the relay hands the checker the rule the candidate
-				// declared, so the checker tries that rule and leaves the path to the parent"s name
-				// when it cannot prove it. Only a candidate that declares no rule for the manifest
-				// leaves it to the built-in rule, which needs no declaration at all.
-				if rule, ok := MechanicalRuleFor([][]Region{regions}, r.Path); ok {
-					decided[r.Path] = rule
-				} else {
-					decided[r.Path] = RefreshDecisionBuiltin
-				}
+				// The manifest is the one place no declaration has to settle with one agreed rule.
+				// A rule the candidate declares still has its say (CRW-732): an unprovable declared
+				// rule leaves the path to the parent"s --resolved name rather than being stamped
+				// with the built-in rule. What must not survive is a disagreement: when an
+				// identified contributor declares a different rule for the path, no rule is agreed
+				// across the declarations and the built-in rule is handed over instead (CRW-898,
+				// item 6).
+				decided[r.Path] = RefreshDecisionBuiltin
+				decided[r.Path] = manifestRefreshDecision(regions, sets[r.Path])
 			}
 		}
 		if len(paths) == 0 {
@@ -623,6 +622,24 @@ func refreshPathsText(paths []string) string {
 func declaresRegenerate(declared []Region, path string) bool {
 	rule, ok := MechanicalRuleFor([][]Region{declared}, path)
 	return ok && strings.HasPrefix(rule, RuleRegeneratePref)
+}
+
+// manifestRefreshDecision is the relay's decision for the plugin manifest, the one path where a
+// declaration does not have to settle the place on its own (CRW-732). A rule the candidate declares
+// is used only when the declarations settle the path by one rule: the candidate alone when no
+// identified contributor touches it, or the candidate and every contributor together. When a
+// contributor touches the path with a different rule - or with none - no rule is agreed, and the
+// built-in rule is handed to the checker instead, so a candidate-only declaration cannot block the
+// built-in proof (CRW-898, item 6).
+func manifestRefreshDecision(candidate []Region, contributors [][]Region) string {
+	sets := [][]Region{candidate}
+	if len(contributors) > 0 {
+		sets = append(sets, contributors...)
+	}
+	if rule, ok := MechanicalRuleFor(sets, pluginversion.ManifestRepoPath); ok {
+		return rule
+	}
+	return RefreshDecisionBuiltin
 }
 
 // proveBaseRefresh walks the first parents from head back to accepted. Every commit on the way must be a merge of exactly two parents, the previous commit first and a commit on the first-parent line of baseTip

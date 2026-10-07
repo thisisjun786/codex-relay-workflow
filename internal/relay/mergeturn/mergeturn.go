@@ -583,6 +583,13 @@ func (s *Service) Target(ctx context.Context, repository, base string) (map[stri
 			continue
 		}
 		peer := map[string]any{"turnId": waiter["turnId"], "holderTaskId": waiter["holderTaskId"], "candidateHead": waiter["candidateHead"], "prNumber": waiter["prNumber"]}
+		if waiter["state"] == MemberWaiting {
+			// A member-only waiting turn is never the next solo holder (CRW-898 item 1): it rides
+			// bundles only, so it is reported as withheld however the target stands.
+			peer["reason"] = "a member-only waiting turn rides bundles and never takes the solo grant"
+			withheldPeers = append(withheldPeers, peer)
+			continue
+		}
 		why, err := s.withheld(ctx, waiter["projectKey"].(string), waiter["holderTaskId"].(string))
 		if err != nil {
 			return nil, err

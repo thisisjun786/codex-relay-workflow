@@ -1246,9 +1246,13 @@ parent owns the threads on its own pull request:
   costs the whole bundle.
 - A blocking finding that points at the **leader** cannot be answered by dropping the leader:
   `merge-train-open` requires the leader's own pull request to be the first member, so a list that
-  omits it is refused. The leader either fixes the finding and re-verifies, or returns the lane turn
-  (`merge-turn-release --disposition returned`) so another parent's turn becomes the leader and the
-  bundle is reopened under it. The leader never merges over a blocking finding about its own member.
+  omits it is refused. The leader either fixes the finding and re-verifies, or hands the lane over in
+  two steps: abandon the live train first (`merge-train-close --train <id> --state abandoned`), which
+  is what frees the remaining member turns, and only then return its lane turn
+  (`merge-turn-release --disposition returned`). Releasing without abandoning leaves the train live
+  and the other members still riding it, so the next leader's open refuses them as already belonging
+  to a train. Once the turn is returned another parent's turn becomes the leader and the bundle is
+  reopened under it. The leader never merges over a blocking finding about its own member.
 - A blocking finding that points at **no** member stops the bundle as before: there is no member to
   remove, so the leader abandons it and reports.
 - A non-blocking finding (Devin yellow, Codex P2 or P3) is answered on its thread with the member pull
