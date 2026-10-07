@@ -2,6 +2,7 @@ package hook
 
 import (
 	"slices"
+	"strings"
 	"unicode/utf16"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
@@ -258,14 +259,57 @@ func shellWriteHeredocVerbExpanded(line []uint16) bool {
 	return false
 }
 
-// shellWriteHeredocNeverReadsStdin is the reader's data list (CRW-765 correction 5, rule R1): the programs whose
-// standard input is never executed, so a here-document they are attached to is data and its body is not read. The verb
-// is compared by its last path element and case-insensitively, which shellVerbName has already applied. Every other
-// verb is off the list, so rule R2 decides the here-document from the command text instead.
+// shellWriteHeredocNeverReadsStdin is the reader's data list (CRW-765 corrections 5 and 7, rules R1 and C1): the
+// programs whose standard input is never executed, so a here-document they are attached to is data and its body is not
+// read. The verb is compared by its last path element and case-insensitively, which shellVerbName has already applied.
 func shellWriteHeredocNeverReadsStdin(verb string) bool {
 	switch verb {
 	case "cat", "tee", "head", "tail", "wc", "grep", "egrep", "fgrep", "sort", "uniq", "cut", "tr", "jq", "base64", "read":
 		return true
+	}
+	return false
+}
+
+// shellWriteHeredocGitCommitStdin reports whether a git command takes its commit message from standard input (CRW-765
+// correction 7, rule C1): `git commit -F -`, `--file=-`, `--file -` and their attached forms. The message is data, so a
+// here-document that carries it is not read as a program; every other git invocation falls to rule C3.
+func shellWriteHeredocGitCommitStdin(args []string) bool {
+	if len(args) == 0 || shellVerbName(args[0]) != "commit" {
+		return false
+	}
+	for i := 1; i < len(args); i++ {
+		switch a := args[i]; {
+		case a == "-F" || a == "--file":
+			// The next word names the message source; - is standard input.
+			if i+1 < len(args) && args[i+1] == "-" {
+				return true
+			}
+		case a == "-F-" || a == "--file=-":
+			return true
+		case strings.HasPrefix(a, "-F") && len(a) > 2:
+			return true
+		case strings.HasPrefix(a, "--file="):
+			return true
+		}
+	}
+	return false
+}
+
+// shellWriteHeredocSedReadsScript reports whether a sed command reads its script from a file (CRW-765 correction 7, the
+// sed exception): its options are read letter by letter through every bundle, so -nf, -Ef and an attached -f- are all
+// seen, and --file or --file= is seen too. With one of those the script is the here-document body, which the reader
+// cannot read, so the gate refuses it; without one the here-document is input data.
+func shellWriteHeredocSedReadsScript(args []string) bool {
+	for _, a := range args {
+		switch {
+		case a == "--file" || strings.HasPrefix(a, "--file="):
+			return true
+		case len(a) > 1 && a[0] == '-' && a[1] != '-':
+			// A short-option bundle. sed's -f takes the script from a file, and - names standard input.
+			if strings.ContainsRune(a[1:], 'f') {
+				return true
+			}
+		}
 	}
 	return false
 }

@@ -75,7 +75,6 @@ func TestShellWriteHeredocGeneration6Controls(t *testing.T) {
 		{"a read loop with no interpreter outside the body", "while read l; do echo $l; done <<'EOF'\n" + mem + "\nEOF"},
 		{"a body alone naming an interpreter", "cat <<'EOF' > x.md\nrun python3 -c pass\nEOF"},
 		{"a body written to a script file then run", "cat > x.py <<'EOF'\nopen('" + mem + "/a','w')\nEOF\npython3 x.py"},
-		{"an unmodelled verb naming no interpreter", "mytool --input - <<'EOF'\n" + mem + "\nEOF"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			if got := ShellWriteDestinations(c.command); slices.Contains(got, mem+"/a") {
@@ -109,37 +108,23 @@ func TestShellWriteHeredocGeneration6InterpreterAlwaysReads(t *testing.T) {
 	}
 }
 
-// TestShellWriteHeredocGeneration6UnmodelledInterpreter pins rule H2: an unmodelled interpreter's here-document is
-// refused, and a verb that is not one of them is not.
-func TestShellWriteHeredocGeneration6UnmodelledInterpreter(t *testing.T) {
+// TestShellWriteHeredocGeneration6SedScript pins the sed half of rule H2, which correction 7 keeps as its own exception:
+// a -f option in any spelling makes the script the here-document body, and no -f leaves the body as input data. Rule H2's
+// name list for the other interpreters is superseded by rule C3 (see TestShellWriteHeredocGeneration7ClosedRule), so
+// those rows moved there.
+func TestShellWriteHeredocGeneration6SedScript(t *testing.T) {
 	for _, c := range []struct {
-		verb string
 		args []string
 		want bool
 	}{
-		{"awk", nil, true},
-		{"gawk", []string{"{print}"}, true},
-		{"mawk", nil, true},
-		{"nawk", nil, true},
-		{"perl", nil, true},
-		{"ruby", nil, true},
-		{"php", nil, true},
-		{"lua", nil, true},
-		{"rscript", nil, true},
-		{"tclsh", nil, true},
-		{"osascript", nil, true},
-		{"sed", []string{"-f", "-"}, true},
-		{"sed", []string{"--file=/dev/stdin"}, true},
-		{"sed", []string{"-f", "script.sed"}, true},
-		{"sed", []string{"s/a/b/"}, false},
-		{"cat", nil, false},
-		{"bash", nil, false},
-		{"python3", nil, false},
-		{"mytool", nil, false},
+		{[]string{"-f", "-"}, true},
+		{[]string{"--file=/dev/stdin"}, true},
+		{[]string{"-f", "script.sed"}, true},
+		{[]string{"s/a/b/"}, false},
 	} {
-		t.Run(c.verb+" "+strings.Join(c.args, " "), func(t *testing.T) {
-			if got := shellWriteHeredocUnmodelledInterpreter(c.verb, c.args); got != c.want {
-				t.Errorf("%q %q: got %v, want %v", c.verb, c.args, got, c.want)
+		t.Run(strings.Join(c.args, " "), func(t *testing.T) {
+			if got := shellWriteHeredocSedReadsScript(c.args); got != c.want {
+				t.Errorf("%q: got %v, want %v", c.args, got, c.want)
 			}
 		})
 	}

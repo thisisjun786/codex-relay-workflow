@@ -1875,15 +1875,18 @@ const (
 	shellWriteHeredocRefused
 )
 
-// shellWriteHeredocClassify classifies one here-document under the reader's allow list (CRW-765 corrections 3 to 6) and
+// shellWriteHeredocClassify classifies one here-document under the reader's closed rule (CRW-765 corrections 3 to 7) and
 // returns the reader to use when it is a program. The header's physical line must first be proven to be exactly one
 // simple command the way the shell reads it (shellWriteHeredocHeaderProven; correction 4, rules G1 and G3), and its verb
 // must be literal (shellWriteHeredocVerbExpanded; correction 5, rule R0), because a verb that still holds an expansion
-// can be any program. A verb on the data list (shellWriteHeredocNeverReadsStdin; rule R1) makes the body data
-// unconditionally. A modelled interpreter verb is always a program, whatever its flags and operands (rule H1), and an
-// interpreter whose language the reader does not model is refused (rule H2). Every other verb is unknown: it is data
-// only when the command text names no interpreter and holds no name-binding construct, which the caller decides
-// (rule R2), so proving a command is not an interpreter never opens a here-document a bound name feeds.
+// can be any program. The verb then falls into one of three closed sets (correction 7): C1, the data verbs whose standard
+// input is never executed, so the body is data; C2, the modelled interpreters (the python, node and sh families), whose
+// here-document is always read as that interpreter's program whatever its flags and operands (rule H1); and C3, every
+// other verb, which is an interpreter the reader cannot rule out, so the here-document is refused. sed is the one
+// exception: with a -f option its script comes from the here-document, so it is refused, and without one the body is
+// input data. Only an unproven header or a reserved word is still unknown, and the caller decides that from the command
+// text (the name-binding check of rule R2), so proving a command is not an interpreter never opens a here-document a
+// bound name feeds.
 func shellWriteHeredocClassify(h shellWriteHeredoc) (shellWriteHeredocReading, shellWriteHeredocKind) {
 	if !shellWriteHeredocHeaderProven(h) {
 		return shellWriteHeredocUnknown, 0
@@ -1906,17 +1909,23 @@ func shellWriteHeredocClassify(h shellWriteHeredoc) (shellWriteHeredocReading, s
 		return shellWriteHeredocUnknown, 0
 	}
 	if shellWriteHeredocNeverReadsStdin(verb) {
-		return shellWriteHeredocData, 0 // rule R1: this program never executes its standard input
+		return shellWriteHeredocData, 0 // rule C1: this program never executes its standard input
 	}
-	if shellWriteHeredocUnmodelledInterpreter(verb, args) {
-		return shellWriteHeredocRefused, 0 // rule H2: an interpreter whose language this reader does not model
+	if verb == "git" && shellWriteHeredocGitCommitStdin(args) {
+		return shellWriteHeredocData, 0 // rule C1: the here-document carries the commit message
+	}
+	if verb == "sed" {
+		// The sed exception: -f reads the script from the here-document, and without it the body is input data.
+		if shellWriteHeredocSedReadsScript(args) {
+			return shellWriteHeredocRefused, 0
+		}
+		return shellWriteHeredocData, 0
 	}
 	if shellWriteHeredocInterpreterName(verb) {
-		return shellWriteHeredocProgram, shellWriteHeredocKindOf(verb) // rule H1: always this interpreter's program
+		return shellWriteHeredocProgram, shellWriteHeredocKindOf(verb) // rule C2: always this interpreter's program
 	}
-	// Rule R2: any other verb is data only when the command text names no interpreter and holds no name-binding
-	// construct, which the caller decides against the whole command text.
-	return shellWriteHeredocUnknown, 0
+	// Rule C3: every other verb may be an interpreter this reader cannot rule out, so the here-document is refused.
+	return shellWriteHeredocRefused, 0
 }
 
 // shellWriteHeredocReservedWord reports whether a word is a shell reserved word, which is never a simple command's verb
@@ -1944,26 +1953,6 @@ func shellWriteHeredocKindOf(verb string) shellWriteHeredocKind {
 		return shellWriteHeredocShell
 	}
 	return 0
-}
-
-// shellWriteHeredocUnmodelledInterpreter reports whether a verb is an interpreter whose language this reader does not
-// model (CRW-765 correction 6, rule H2): awk, gawk, mawk and nawk read their program from standard input when no
-// program operand is given, perl, ruby, php, lua, Rscript, tclsh and osascript take a program from standard input in
-// several forms, and sed takes its script from standard input in its -f form. A here-document one of these owns is a
-// program the reader cannot read, so the gate refuses it. The R1 data list is checked before this list, and sed without
-// -f is not an interpreter here: it falls to rule R2, which keeps the body data unless the command text names one.
-func shellWriteHeredocUnmodelledInterpreter(verb string, args []string) bool {
-	switch verb {
-	case "awk", "gawk", "mawk", "nawk", "perl", "ruby", "php", "lua", "rscript", "tclsh", "osascript":
-		return true
-	case "sed":
-		for _, a := range args {
-			if a == "-f" || a == "--file" || strings.HasPrefix(a, "--file=") || strings.HasPrefix(a, "-f") && len(a) > 2 {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 // shellWriteHeredocFunctionNames is the function names the command defines in any form - name(), name (), function name

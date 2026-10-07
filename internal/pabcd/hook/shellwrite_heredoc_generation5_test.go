@@ -62,7 +62,6 @@ func TestShellWriteHeredocGeneration5Controls(t *testing.T) {
 	for _, c := range []struct{ name, command string }{
 		{"a data program on the allow list", "sort <<'EOF'\n" + mem + "\nEOF"},
 		{"jq with its filter operand", "jq . <<'EOF'\n" + mem + "\nEOF"},
-		{"an unmodelled verb naming no interpreter", "mytool --input - <<'EOF'\n" + mem + "\nEOF"},
 		{"a commit message that mentions an interpreter", "git commit -F - <<'EOF'\nrun python3 -c pass\nEOF"},
 		{"a body written to a script file then run", "cat > x.py <<'EOF'\nopen('" + mem + "/a','w')\nEOF\npython3 x.py"},
 		{"a note quoting the memories path", "cat > note.md <<'EOF'\n" + mem + "\nEOF"},
