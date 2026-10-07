@@ -186,6 +186,16 @@ func configLockPathsSameTarget(spelling string, pinned *configLockPathsPin) bool
 	if !configLockPathsPinHolds(pinned) {
 		return false
 	}
+	// The pinned pathname itself must still name the pinned file. The restore publishes through
+	// pin.path, so an entry renamed away — leaving only a folded-name sibling that still matches the
+	// captured file and directory identities — would be accepted here and then restored to a path
+	// that no longer exists: the command would report the owned keys restored while the file the
+	// manifest actually names kept them (CRW-899's thirteenth evaluation).
+	if pinned.file != nil {
+		if live, err := os.Stat(pinned.path); err != nil || !os.SameFile(live, pinned.file) {
+			return false
+		}
+	}
 	real, ok := configLockPathsRealPath(spelling)
 	if !ok {
 		return false

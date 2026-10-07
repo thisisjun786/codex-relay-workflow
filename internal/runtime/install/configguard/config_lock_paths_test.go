@@ -1298,3 +1298,41 @@ func TestConfigLockPathsDeactivateRefusesAFinalComponentSwappedForASymlink(t *te
 }
 
 // The root-parent boundary: a config named directly at the filesystem root must resolve through
+
+// The thirteenth-generation d1 case, through the public entry point: the pinned file is renamed to a
+// folded-name sibling, so only that sibling still matches the captured file and directory identities
+// and it becomes the sole folded-name match. The manifest then names the sibling. Accepting it would
+// have the restore publish to the pinned pathname, which no longer exists, while the file the
+// manifest names kept the owned key; the comparison must refuse instead.
+func TestConfigLockPathsDeactivateRefusesAnEntryRenamedToAFoldedSibling(t *testing.T) {
+	home := configLockActivationHome(t)
+	dir := filepath.Join(home, "x")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "config.toml")
+	sibling := filepath.Join(dir, "CONFIG.TOML")
+	activationWrite(t, path, deactivationConfig)
+	hash, err := hashOrNull(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys := map[string]TableKeyRecord{"memories.dedicated_tools": deactivationKey(nil)}
+	stale := configLockActivationManifestBytes(t, &InstallManifest{Version: 2, ConfigPath: path, PostActivateHash: hash, Flags: map[string]FlagRecord{}, TableKeys: keys})
+	fresh := configLockActivationManifestBytes(t, &InstallManifest{Version: 2, ConfigPath: sibling, PostActivateHash: hash, Flags: map[string]FlagRecord{}, TableKeys: keys})
+
+	held := configLockWritersHold(t, path)
+	configLockPathsHandoverRetarget(t, home, stale, func() error {
+		return os.Rename(path, sibling)
+	}, held.Release, fresh)
+
+	_, err = Deactivate(deactivationDeps(home, func([]string) CodexRunResult { return CodexRunResult{} }))
+	if err == nil || !strings.Contains(err.Error(), "names a different config file") {
+		t.Fatalf("the deactivation accepted an entry renamed to a folded sibling: %v", err)
+	}
+	if got := activationRead(t, sibling); got != deactivationConfig {
+		t.Fatalf("the refused deactivation wrote the renamed entry: %q", got)
+	}
+}
+
+// The root-parent boundary: a config named directly at the filesystem root must resolve through
