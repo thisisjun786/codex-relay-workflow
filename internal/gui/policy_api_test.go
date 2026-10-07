@@ -613,3 +613,37 @@ func TestPolicyWriteIsGuarded(t *testing.T) {
 		t.Fatalf("a write without the token: %d %s", recorder.Code, recorder.Body.String())
 	}
 }
+
+// TestPolicyWriteOmitsRegisteredWhenTheRecordCannotBeReadBack is the route-level half of the stored
+// answer's honesty: the record's digest is left out of the body when it could not be established,
+// and applied says so too, so a handler that always reported a registered digest would fail here.
+func TestPolicyWriteOmitsRegisteredWhenTheRecordCannotBeReadBack(t *testing.T) {
+	policyHost(t, policyWritableText, true)
+	policyWriteSeamsFor(t, func(_ context.Context, path string) policystore.RegisterAnswer {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rewritePolicyRecord(t, path, digestOf(string(raw)))
+		// The record becomes unreadable after the registration reported success.
+		if err := os.WriteFile(filepath.Join(os.Getenv("CODEX_HOME"), "crw-bridge-mcp.json"), []byte("{not json"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return policystore.RegisterAnswer{ExitCode: 0, Stdout: []byte("{\"outcome\": \"record_updated\"}")}
+	}, unavailablePolicyRunning)
+	payload := "{\"expectedDigest\":\"" + digestOf(policyWritableText) + "\",\"change\":{\"kind\":\"removeException\",\"id\":\"legacy\"}}"
+	code, body := policyWriteResponse(t, policyServer(t), payload)
+	if code != http.StatusOK {
+		t.Fatalf("POST /api/policy: %d %v", code, body)
+	}
+	if _, present := body["registered"]; present {
+		t.Fatalf("the body names a registered digest the write could not establish: %v", body["registered"])
+	}
+	if body["applied"] != policystore.AppliedUnverifiable {
+		t.Fatalf("applied = %v, want %q", body["applied"], policystore.AppliedUnverifiable)
+	}
+	stored, _ := body["stored"].(map[string]any)
+	if digest, _ := stored["digest"].(string); digest == "" {
+		t.Fatal("the stored digest is not reported")
+	}
+}
