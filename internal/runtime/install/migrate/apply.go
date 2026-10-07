@@ -68,7 +68,7 @@ func apply(r *Roots, plan *Plan) (*ApplyResult, error) {
 
 // applyWith is apply with a publisher the caller supplies, so a test can give it its own seams.
 func applyWith(r *Roots, plan *Plan, pub *Publisher) (*ApplyResult, error) {
-	a := &applyRun{roots: r, plan: plan, pub: pub, dirs: map[string]*Dir{}, srcs: map[string]*Dir{}, made: map[string]bool{}, result: &ApplyResult{}}
+	a := &applyRun{roots: r, plan: plan, pub: pub, dirs: map[string]*Dir{}, srcs: map[string]*Dir{}, made: map[string]bool{}, denied: map[string]bool{}, result: &ApplyResult{}}
 	if plan != nil {
 		a.result.Items = make([]ApplyItem, len(plan.Items))
 		for i, it := range plan.Items {
@@ -90,6 +90,7 @@ type applyRun struct {
 	dirs   map[string]*Dir
 	srcs   map[string]*Dir
 	made   map[string]bool
+	denied map[string]bool
 }
 
 func applyKey(scope Scope, rel string) string { return string(scope) + "\x00" + rel }
@@ -259,6 +260,11 @@ func (a *applyRun) ensureRoots() error {
 				return refuse(applyReasonChanged, it.Source, "the source root mode changed since classification")
 			}
 		}
+		// Whether the root was there when the pair was pinned decides whether a directory this
+		// run did not create may still be adopted below: a root that was absent then, and whose
+		// creation this run's own mkdir refused with EEXIST, is another actor's,
+		// whatever its mode.
+		absent := pair.Dest == nil
 		var made bool
 		var err error
 		if scope == ScopeProject {
@@ -279,7 +285,7 @@ func (a *applyRun) ensureRoots() error {
 		if err != nil {
 			return err
 		}
-		a.made[applyKey(scope, "")] = made
+		a.recordOwnership(scope, "", made, absent)
 	}
 	return nil
 }
@@ -342,8 +348,11 @@ func (a *applyRun) ensureDestDir(scope Scope, rel string) (*Dir, error) {
 			_ = child.Close()
 			return nil, err
 		}
-		a.made[applyKey(scope, rel)] = true
 	}
+	// The lookup above found the name absent, so a creation this run's own mkdir
+	// refused with EEXIST made another actor's directory: record it so finishModes
+	// never adopts it.
+	a.recordOwnership(scope, rel, made, true)
 	a.dirs[applyKey(scope, rel)] = child
 	return child, nil
 }
@@ -596,6 +605,8 @@ func (a *applyRun) destMode(parent *Dir, leaf string) (fs.FileMode, error) {
 
 // finishModes applies the source mode to every directory the plan names, deepest first. A directory this run created, or
 // one an interrupted run left at the private marker mode, is finished; any other directory keeps its mode and is reported.
+// A directory whose creation this run's own mkdir refused with EEXIST is another actor's, so
+// it keeps its mode whatever that mode is and is reported too, never adopted through the marker branch.
 // The marker is the raw mode, sticky bit included, which nothing else in this repository writes, so a directory this
 // migration did not create is never chmodded.
 func (a *applyRun) finishModes() error {
@@ -624,7 +635,14 @@ func (a *applyRun) finishModes() error {
 			return err
 		}
 		switch cur := fs.FileMode(raw).Perm(); {
-		case a.made[applyKey(it.Scope, rel)], raw == applyTempRaw && a.entriesExpected(it.Scope, rel, dir):
+		case a.made[applyKey(it.Scope, rel)]:
+			err = applyChmod(dir, it.Mode.Perm())
+		case a.denied[applyKey(it.Scope, rel)]:
+			// This run's own creation ended in EEXIST, so the directory is another
+			// actor's whatever its mode is: it is never adopted through the marker
+			// branch below, only reported.
+			a.result.Items[i].Note = "existing directory kept its mode " + cur.String()
+		case raw == applyTempRaw && a.entriesExpected(it.Scope, rel, dir):
 			err = applyChmod(dir, it.Mode.Perm())
 		case cur == it.Mode.Perm():
 		default:
@@ -635,6 +653,20 @@ func (a *applyRun) finishModes() error {
 		}
 	}
 	return nil
+}
+
+// recordOwnership records what a lookup saw and what this run's own creation then reported for a
+// destination directory. made marks a directory this run created; a directory the lookup saw absent
+// whose creation ended in EEXIST is another actor's, so it is marked denied and finishModes
+// never adopts it; a directory that was already there at the lookup keeps neither mark, so the
+// marker-mode adoption stays available to one an interrupted earlier run may have left.
+func (a *applyRun) recordOwnership(scope Scope, rel string, made, absent bool) {
+	switch {
+	case made:
+		a.made[applyKey(scope, rel)] = true
+	case absent:
+		a.denied[applyKey(scope, rel)] = true
+	}
 }
 
 // entriesExpected reports whether every entry of an existing destination directory is one the plan accounts for: a
