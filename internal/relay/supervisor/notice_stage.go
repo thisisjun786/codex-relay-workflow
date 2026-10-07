@@ -39,7 +39,7 @@ func (n NoticeChannel) StageNotice(ctx context.Context, notice map[string]any) (
 		if live["sender"] != resolution["sender"] || live["recipient"] != resolution["recipient"] || live["projectKey"] != resolution["projectKey"] {
 			return &faults.NoticeError{Kind: "relation_owner_drift", Detail: "the hierarchy moved while this was being decided: it was read as '" + noticeString(resolution, "sender") + "' reporting to '" + noticeString(resolution, "recipient") + "', and under the write lock it is '" + noticeString(live, "sender") + "' reporting to '" + noticeString(live, "recipient") + "'. Nothing was written; staging again addresses the report to the live supervisor"}
 		}
-		r, err := l.Store.One(ctx, "SELECT * FROM supervisor_messages WHERE obligation_kind='fault_notification' AND obligation_id=?", notice["notificationId"])
+		r, err := l.Store.One(ctx, "SELECT * FROM supervisor_messages WHERE obligation_kind='"+store.SupervisorNoticeObligationKind+"' AND obligation_id=?", notice["notificationId"])
 		if err != nil {
 			return err
 		}
