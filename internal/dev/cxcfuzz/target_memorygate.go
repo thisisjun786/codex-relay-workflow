@@ -145,6 +145,9 @@ func memoryGateGenerate(rng *rand.Rand, size int) any {
 	dests := []string{
 		memories + "/n.md", memories, memories + "/extensions/ad_hoc/notes/x.md",
 		backup + "/n.md", "../codex-home/memories/n.md", memories + "/a b.md", memories + "/a'b.md",
+		// A destination holding a brace pair, so the doubled-brace f literal the shell-write program
+		// builder emits for a brace reaches a generated command (CRW-908).
+		memories + "/{x}.md",
 	}
 	for i, alias := range []string{"alias", "alias\n", "alias\r", "alias ", "alias'", "alias\""} {
 		fs = append(fs, memoryGateLink("work/"+alias, memoryGateTarget(i, "../codex-home/memories", memories)))

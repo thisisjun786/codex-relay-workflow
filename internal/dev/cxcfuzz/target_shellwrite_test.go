@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/hook"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
@@ -159,24 +160,119 @@ func TestShellwriteSeedCasesReplay(t *testing.T) {
 	}
 }
 
-// c2 (CRW-857): the shared generator emits every Python literal spelling the issue required, with
-// the f form sometimes holding a doubled brace.
+// c3 (CRW-908): the shared generator emits every Python literal spelling, and an f form writes the
+// destination's braces doubled so the literal evaluates to the destination itself. Red first: the
+// doubled-brace form was emitted around the destination, so it evaluated to '{<destination>}' - a
+// leading brace, a relative path, and a destination the memory gate is never asked about.
 func TestShellwritePythonLiteralForms(t *testing.T) {
-	forms := shellWritePythonLiteralForms("/m/a")
-	for _, want := range []string{
-		"'/m/a'", "\"/m/a\"", "'''/m/a'''", "\"\"\"/m/a\"\"\"",
-		"r'/m/a'", "b'/m/a'", "u'/m/a'", "f'/m/a'", "f'{{/m/a}}'", "f\"\"\"{{/m/a}}\"\"\"",
+	for _, c := range []struct {
+		word string
+		want []string
+	}{
+		{"/m/a", []string{
+			"'/m/a'", "\"/m/a\"", "'''/m/a'''", "\"\"\"/m/a\"\"\"",
+			"r'/m/a'", "b'/m/a'", "u'/m/a'", "f'/m/a'", "f'''/m/a'''", "f\"\"\"/m/a\"\"\"",
+		}},
+		{"{x}.md", []string{
+			"'{x}.md'", "\"{x}.md\"", "'''{x}.md'''", "\"\"\"{x}.md\"\"\"",
+			"r'{x}.md'", "b'{x}.md'", "u'{x}.md'", "f'{{x}}.md'", "f'''{{x}}.md'''", "f\"\"\"{{x}}.md\"\"\"",
+		}},
 	} {
-		found := false
-		for _, form := range forms {
-			if form == want {
-				found = true
-				break
+		forms := shellWritePythonLiteralForms(c.word)
+		if len(forms) != len(c.want) {
+			t.Fatalf("%q: %d forms, want %d: %v", c.word, len(forms), len(c.want), forms)
+		}
+		for i, want := range c.want {
+			if forms[i] != want {
+				t.Errorf("%q: form %d is %q, want %q", c.word, i, forms[i], want)
 			}
 		}
-		if !found {
-			t.Errorf("the literal forms do not include %q: %v", want, forms)
+	}
+}
+
+// c3 (CRW-908): every f form evaluates to the destination, and the generator emits three of them for
+// every destination. The plain f form is not emitted for a brace-holding destination: a single brace
+// there opens a replacement field, which is not the destination at all.
+func TestShellwriteFStringFormsEvaluateToTheDestination(t *testing.T) {
+	for _, dest := range []string{"/m/a", rootPlaceholder + "/codex-home/memories/{x}.md", "{x}.md", "/m/a}b", "/m/{a}b"} {
+		seen := 0
+		for _, form := range shellWritePythonLiteralForms(dest) {
+			if !strings.HasPrefix(form, "f") {
+				continue
+			}
+			seen++
+			got, ok := fstringValue(form)
+			if !ok {
+				t.Fatalf("the form %q is not an f literal this test can evaluate", form)
+			}
+			if got != dest {
+				t.Fatalf("the form %q evaluates to %q, want %q", form, got, dest)
+			}
 		}
+		if seen != 3 {
+			t.Fatalf("the destination %q produced %d f forms, want 3", dest, seen)
+		}
+	}
+}
+
+// fstringValue is the value Python gives an f literal the generator emits, by the same rule: the prefix
+// and the quotes come off and a doubled brace is one brace. The generator emits no replacement field, so
+// that rule is the whole of it; a single brace is reported as unreadable rather than guessed at.
+func fstringValue(literal string) (string, bool) {
+	body, ok := strings.CutPrefix(literal, "f")
+	if !ok {
+		return "", false
+	}
+	quote := ""
+	for _, candidate := range []string{"'''", "\"\"\"", "'", "\""} {
+		if strings.HasPrefix(body, candidate) {
+			quote = candidate
+			break
+		}
+	}
+	if quote == "" || len(body) < 2*len(quote) || !strings.HasSuffix(body, quote) {
+		return "", false
+	}
+	inner := body[len(quote) : len(body)-len(quote)]
+	var out strings.Builder
+	for i := 0; i < len(inner); i++ {
+		if inner[i] != '{' && inner[i] != '}' {
+			out.WriteByte(inner[i])
+			continue
+		}
+		if i+1 < len(inner) && inner[i+1] == inner[i] {
+			out.WriteByte(inner[i])
+			i++
+			continue
+		}
+		return "", false
+	}
+	return out.String(), true
+}
+
+// c2 (CRW-908): the ROOT placeholder is left unescaped, so after the harness substitutes the case root
+// the destination of a double-quoted program is byte for byte the chosen path. Red first: the
+// placeholder's dollar was escaped before the substitution, so the destination the interpreter was
+// handed began with a backslash and the reader named a different path.
+func TestShellwriteShellQuoteLeavesTheRootPlaceholderUnescaped(t *testing.T) {
+	root := t.TempDir()
+	for _, dest := range []string{
+		rootPlaceholder + "/m/n.md",
+		rootPlaceholder + "/codex-home/memories/a b.md",
+		rootPlaceholder + "/codex-home/memories/a'b.md",
+	} {
+		program := "open('" + dest + "','w').write('x')"
+		quoted := shellWriteShellQuote(program)
+		if want := "\"" + program + "\""; quoted != want {
+			t.Fatalf("the quoted program is %q, want %q", quoted, want)
+		}
+	}
+	// End to end: once the root is substituted, the reader the port ships names the chosen destination.
+	dest := rootPlaceholder + "/m/n.md"
+	command := "python3 -c " + shellWriteShellQuote("open('"+dest+"','w').write('x')")
+	got := hook.ShellWriteDestinations(strings.ReplaceAll(command, rootPlaceholder, root))
+	if len(got) != 1 || got[0] != root+"/m/n.md" {
+		t.Fatalf("the reader names %v, want [%s]", got, root+"/m/n.md")
 	}
 }
 

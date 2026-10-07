@@ -273,19 +273,43 @@ func shellWriteProgram(rng *rand.Rand, paths []string) string {
 // at that quote, and the interpreter then receives a truncated program. A program without a single
 // quote takes the plain single-quoted form; otherwise it takes a double-quoted form with the four
 // characters the shell still reads inside double quotes escaped.
+//
+// The ROOT placeholder is never escaped. The program is split around each occurrence and only the
+// rest of each part is escaped, so the placeholder reaches the harness's substitution byte for byte
+// and the destination the program names after substitution is the path the case chose: escaping the
+// placeholder first turned \${ROOT} into \<the case root>, and a reader then named a path with a
+// stray backslash in front of it. The placeholder carries no character a shell reads inside double
+// quotes, and a campaign root is an os.MkdirTemp path with no shell-special character either; a root
+// that did hold one is covered by the value-substitution unit test CRW-857 added (the harness
+// substitutes the decoded input value, never the serialized text).
 func shellWriteShellQuote(program string) string {
 	if !strings.Contains(program, "'") {
 		return "'" + program + "'"
 	}
-	escaped := strings.NewReplacer(`\`, `\\`, `"`, `\"`, "$", `\$`, "`", "\\`").Replace(program)
-	return "\"" + escaped + "\""
+	parts := strings.Split(program, rootPlaceholder)
+	for i, part := range parts {
+		parts[i] = shellWriteDoubleQuoteEscape(part)
+	}
+	return "\"" + strings.Join(parts, rootPlaceholder) + "\""
+}
+
+// shellWriteDoubleQuoteEscape escapes the four characters a shell still reads inside a double-quoted
+// word, so the text it returns is passed through unchanged.
+func shellWriteDoubleQuoteEscape(text string) string {
+	return strings.NewReplacer(`\`, `\\`, `"`, `\"`, "$", `\$`, "`", "\\`").Replace(text)
 }
 
 // shellWritePythonLiteralForms is every quoting form the generator uses for a Python string
 // literal: the four quote characters Python accepts, and the r, b, u and f prefixes. An f literal
-// is sometimes wrapped in a doubled brace, because a brace inside an f-string is an expression
-// unless it is doubled, and a reader that walks replacement fields must still find the path.
+// evaluates its braces, so a brace inside the destination is written doubled ({{ or }}); the
+// literal then evaluates to the destination itself instead of opening a replacement field, and a
+// reader that walks replacement fields still finds the path. A destination with no brace takes the
+// plain f forms, because doubling a brace it does not hold would write a brace into the path.
 func shellWritePythonLiteralForms(word string) []string {
+	literal := word
+	if strings.ContainsAny(word, "{}") {
+		literal = shellWriteDoubledBraces(word)
+	}
 	return []string{
 		"'" + word + "'",
 		"\"" + word + "\"",
@@ -294,10 +318,16 @@ func shellWritePythonLiteralForms(word string) []string {
 		"r'" + word + "'",
 		"b'" + word + "'",
 		"u'" + word + "'",
-		"f'" + word + "'",
-		"f'{{" + word + "}}'",
-		"f\"\"\"{{" + word + "}}\"\"\"",
+		"f'" + literal + "'",
+		"f'''" + literal + "'''",
+		"f\"\"\"" + literal + "\"\"\"",
 	}
+}
+
+// shellWriteDoubledBraces writes every brace of a destination doubled, which is what an f literal
+// needs to evaluate to that destination.
+func shellWriteDoubledBraces(word string) string {
+	return strings.NewReplacer("{", "{{", "}", "}}").Replace(word)
 }
 
 // shellWritePythonEscapeForms writes the first slash of a destination as each single-character
