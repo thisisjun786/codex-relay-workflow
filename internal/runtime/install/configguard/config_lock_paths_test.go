@@ -399,27 +399,62 @@ func TestConfigLockPathsRefusesACaseVariantHardLink(t *testing.T) {
 }
 
 // The fallback that keeps a case-insensitive alias acceptable when the parent cannot be enumerated.
-// A parent without read permission still allows the create, stat and remove the probe needs, so the
-// filesystem can be asked directly whether it folds case (CRW-899's seventh evaluation, a mode-0300
-// parent). On a case-sensitive directory the probe does not resolve and the answer is false, which is
-// the fail-closed direction (the ninth evaluation's d1).
-func TestConfigLockPathsDirFoldsCaseNeedsNoDirectoryReadPermission(t *testing.T) {
+// It asks only os.Stat of a known name, so a parent with SEARCH permission alone answers — the same
+// permission the restore needs, and no directory read or write (CRW-899's thirteenth evaluation: a
+// probe that created a file refused a no-op deactivation on a search-only parent). On a
+// case-sensitive directory the flipped name does not resolve to the locked file, which is the
+// fail-closed direction.
+func TestConfigLockPathsCaseFlippedResolvesNeedsNoDirectoryReadOrWrite(t *testing.T) {
 	if os.Geteuid() == 0 {
-		t.Skip("root reads a mode-0300 directory")
+		t.Skip("root reads a mode-0100 directory")
 	}
-	home := configLockActivationHome(t)
-	dir := filepath.Join(home, "locked")
-	if err := os.MkdirAll(dir, 0300); err != nil {
+	// The case-folding filesystem the suite runs on is taken from CRW_899_CASE_INSENSITIVE_DIR
+	// when a runner provides one; otherwise this test has nothing to exercise and skips.
+	root := os.Getenv("CRW_899_CASE_INSENSITIVE_DIR")
+	if root == "" {
+		t.Skip("set CRW_899_CASE_INSENSITIVE_DIR to a case-insensitive directory to exercise this")
+	}
+	configLockActivationHome(t)
+	dir, err := os.MkdirTemp(root, "locked-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	cfg := filepath.Join(dir, "config.toml")
+	activationWrite(t, cfg, deactivationConfig)
+	pin := configLockPathsTestPin(t, cfg)
+	if !configLockPathsCaseFlippedResolvesToThePin(pin) {
+		t.Fatalf("the flipped name did not resolve on the case-insensitive directory %s", root)
+	}
+	// Search permission alone: no read, no write.
+	if err := os.Chmod(dir, 0100); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(dir, 0700) })
 	if _, err := os.ReadDir(dir); err == nil {
 		t.Fatal("the directory was still readable; the test would not prove anything")
 	}
-	// This temporary directory is case-sensitive on the platforms the suite runs on, so the probe
-	// must answer false; a filesystem that folds case answers true, and both are correct.
-	if configLockPathsDirFoldsCase(dir) {
-		t.Skip("this filesystem folds case, so the refusal cannot be exercised here")
+	if !configLockPathsCaseFlippedResolvesToThePin(pin) {
+		t.Fatal("the fallback needed more than search permission")
+	}
+}
+
+// configLockPathsRequiresCaseSensitive skips the test when the directory folds case: on such a
+// filesystem a differently cased name is the SAME entry, so a rename to it is not a second entry and
+// an os.Link to it cannot create one. The probe is this test's own file, created and removed inside
+// the temporary directory it is given.
+func configLockPathsRequiresCaseSensitive(t *testing.T, dir string) {
+	t.Helper()
+	probe := filepath.Join(dir, "CaseProbe-"+filepath.Base(t.Name()))
+	if err := os.WriteFile(probe, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Remove(probe) })
+	folded, err := os.Stat(filepath.Join(dir, strings.ToUpper(filepath.Base(probe))))
+	if err == nil {
+		if info, err := os.Stat(probe); err == nil && os.SameFile(info, folded) {
+			t.Skip("this filesystem folds case, so a differently cased name is the same entry")
+		}
 	}
 }
 
@@ -541,6 +576,7 @@ func TestConfigLockPathsDeactivateRefusesAHardLinkCreatedAfterThePin(t *testing.
 	path := filepath.Join(dir, "config.toml")
 	activationWrite(t, path, deactivationConfig)
 	sibling := filepath.Join(dir, "CONFIG.TOML")
+	configLockPathsRequiresCaseSensitive(t, dir)
 	hash, err := hashOrNull(path)
 	if err != nil {
 		t.Fatal(err)
@@ -1313,6 +1349,7 @@ func TestConfigLockPathsDeactivateRefusesAnEntryRenamedToAFoldedSibling(t *testi
 	path := filepath.Join(dir, "config.toml")
 	sibling := filepath.Join(dir, "CONFIG.TOML")
 	activationWrite(t, path, deactivationConfig)
+	configLockPathsRequiresCaseSensitive(t, dir)
 	hash, err := hashOrNull(path)
 	if err != nil {
 		t.Fatal(err)

@@ -1,7 +1,6 @@
 package configguard
 
 import (
-	"crypto/rand"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -256,7 +255,7 @@ func configLockPathsOneFoldedEntry(real string, pinned *configLockPathsPin) bool
 	dir := filepath.Dir(real)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return configLockPathsDirFoldsCase(dir)
+		return configLockPathsCaseFlippedResolvesToThePin(pinned)
 	}
 	matches := 0
 	for _, entry := range entries {
@@ -267,28 +266,45 @@ func configLockPathsOneFoldedEntry(real string, pinned *configLockPathsPin) bool
 	return matches == 1
 }
 
-// configLockPathsDirFoldsCase reports whether a directory resolves two spellings of one name to the
-// same entry, by creating a probe and reading it back under a different case. It needs only the
-// write and search permission the restore itself needs, so it answers where the directory cannot be
-// enumerated. Anything that prevents the probe — a create that fails, a name that cannot be removed
-// — leaves the question unproven and the answer false, so the comparison refuses (fail closed).
-func configLockPathsDirFoldsCase(dir string) bool {
-	probe := filepath.Join(dir, "crw-899-CaseProbe-"+rand.Text())
-	f, err := os.OpenFile(probe, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+// configLockPathsCaseFlippedResolvesToThePin reports whether a directory resolves a differently
+// cased spelling of the locked file's name to that very file. It asks only os.Stat of a known name,
+// so it needs no directory read and no directory write — a parent with search permission alone
+// answers, which is exactly what the restore needs (CRW-899's thirteenth evaluation: a probe that
+// created a file needed write permission and refused a no-op deactivation on a search-only parent).
+// A filesystem that folds case resolves the flipped name to the locked file, so the two spellings
+// are one entry and the alias is accepted; one that does not cannot, and the comparison refuses. The
+// caller only reaches here with basenames that fold equal but differ in case, so the name has a
+// letter to flip; a name with no letter to flip answers false.
+func configLockPathsCaseFlippedResolvesToThePin(pinned *configLockPathsPin) bool {
+	if pinned == nil || pinned.file == nil {
+		return false
+	}
+	if pinned.lock == nil {
+		return false
+	}
+	// The held sidecar's own name is known to exist, so its case-flipped spelling resolves to it
+	// only on a filesystem that folds case. That is a property of the FILESYSTEM rather than of
+	// the config entry, so an unrelated hard link to the config file does not affect the answer,
+	// and the probe needs neither a directory read nor a directory write — os.Stat of two known
+	// names is all it asks (CRW-899's fourteenth evaluation).
+	held := pinned.lock.Path
+	base := filepath.Base(held)
+	flipped := strings.ToUpper(base)
+	if flipped == base {
+		flipped = strings.ToLower(base)
+	}
+	if flipped == base {
+		return false
+	}
+	other, err := os.Stat(filepath.Join(filepath.Dir(held), flipped))
 	if err != nil {
 		return false
 	}
-	_ = f.Close()
-	defer func() { _ = os.Remove(probe) }()
-	info, err := os.Stat(probe)
+	self, err := os.Stat(held)
 	if err != nil {
 		return false
 	}
-	folded, err := os.Stat(filepath.Join(dir, strings.ToLower(filepath.Base(probe))))
-	if err != nil {
-		return false
-	}
-	return os.SameFile(info, folded)
+	return os.SameFile(other, self)
 }
 
 // DecideKeyRestore is deactivate.ts's per-key decision table. backupKnown=false means
