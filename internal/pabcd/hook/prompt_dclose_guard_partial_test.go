@@ -27,25 +27,6 @@ func promptDcloseSessionsDir(cwd string) string {
 	return filepath.Join(cwd, crwdir.DirName, state.SessionsSubdir)
 }
 
-// promptDcloseMakeDirUnwritable takes write permission from dir and answers the restore, so a write
-// into it fails while its files stay readable. Root ignores the mode, so the caller skips there.
-func promptDcloseMakeDirUnwritable(t *testing.T, dir string) func() {
-	t.Helper()
-	if os.Geteuid() == 0 {
-		t.Skip("root ignores the file mode this case needs")
-	}
-	info, err := os.Stat(dir)
-	if err != nil {
-		t.Fatalf("the directory to make unwritable: %v", err)
-	}
-	if err := os.Chmod(dir, 0o555); err != nil {
-		t.Fatal(err)
-	}
-	restore := func() { _ = os.Chmod(dir, info.Mode().Perm()) }
-	t.Cleanup(restore)
-	return restore
-}
-
 // TestPromptDcloseGuardRefusalNamesTheCleanlyPublishedMarkerAndPlan is the c6 case for the guard
 // before the IDLE state write: the marker and the plan both publish with no error at all, so no
 // directory-sync warning is collected, and the guard then refuses on an unreadable session file.
