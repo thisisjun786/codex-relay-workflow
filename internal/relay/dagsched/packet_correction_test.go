@@ -4,6 +4,8 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 )
 
 // The correction findings of CRW-839 generation 4 (d2, d3, d6, d7): each test below fails without its fix
@@ -125,4 +127,56 @@ func TestPacketRegionOwnerIsRequired(t *testing.T) {
 			t.Fatalf("a declared owner did not settle the overlap: %v", err)
 		}
 	})
+}
+
+// d5 of the pre-merge evaluation: three packets may share one place as long as exactly one of them owns
+// it. The judgement is over all the packets that take the place, not over each pair, so the second
+// non-owner is not refused for overlapping the first non-owner.
+func TestThreePacketsMayShareOneOwnedPlace(t *testing.T) {
+	t.Parallel()
+	k := newReleaseKit(t)
+	putPacketReleasePlan(t, k.fixture, "rp", 0, "rp-r1", []doc{declaredCriteriaDoc("CRW-F", "c1", "c2", "c3")},
+		packetRelNode("n1", "CRW-F", "p1", []string{"c1"}, []string{"c1"}),
+		packetRelNode("n2", "CRW-F", "p2", []string{"c2"}, []string{"c2"}),
+		packetRelNode("n3", "CRW-F", "p3", []string{"c3"}, []string{"c3"}))
+	shared := func(node string, grade string) {
+		t.Helper()
+		r := Region{Repository: "owner/repo", Path: "shared.go", Kind: "file", Change: "edit", Grade: grade}
+		if _, err := k.sched.DeclareRegions(context.Background(), "rp", node, "parent", []Region{r}); err != nil {
+			t.Fatalf("declare %s: %v", node, err)
+		}
+	}
+	shared("n1", GradeExclusive)
+	shared("n2", GradeIndependent)
+	shared("n3", GradeIndependent)
+}
+
+// d4 of the pre-merge evaluation: a plan revision may turn two nodes that already declared a shared place
+// into two packets of one issue without either declaring again, and a re-declaration of the same regions
+// is a replay. The release is where that plan is judged, so an ownerless overlap cannot be released.
+func TestPacketRegionOwnerIsRequiredAtRelease(t *testing.T) {
+	t.Parallel()
+	k := newReleaseKit(t)
+	// Two ordinary nodes of DIFFERENT issues, so the packet rule has nothing to say when they declare.
+	plain := func(id, issue string) doc {
+		n := relNode(id, dag.NodeImplementation)
+		n["issue_key"] = issue
+		return doc{"op": dag.OpAddNode, "node": n}
+	}
+	putPacketReleasePlan(t, k.fixture, "rp", 0, "rp-r1", nil, plain("n1", "CRW-F"), plain("n2", "CRW-G"))
+	for _, node := range []string{"n1", "n2"} {
+		if _, err := k.sched.DeclareRegions(context.Background(), "rp", node, "parent",
+			[]Region{{Repository: "owner/repo", Path: "shared.go", Kind: "file", Change: "edit"}}); err != nil {
+			t.Fatalf("declare %s: %v", node, err)
+		}
+	}
+	// Now one issue, two packets, and neither of them owns the shared place.
+	putPacketReleasePlan(t, k.fixture, "rp", 1, "rp-r2", []doc{declaredCriteriaDoc("CRW-F", "c1", "c2")},
+		doc{"op": dag.OpUpdateNode, "node": packetRelNode("n1", "CRW-F", "p1", []string{"c1"}, []string{"c1"})["node"]},
+		doc{"op": dag.OpUpdateNode, "node": packetRelNode("n2", "CRW-F", "p2", []string{"c2"}, []string{"c2"})["node"]})
+	if _, err := k.sched.Release(context.Background(), "rp", "n1", "parent", packetRequest(k)); err == nil {
+		t.Fatal("a packet whose issue shares an ownerless place with its sibling was released")
+	} else if !strings.Contains(err.Error(), "owner") {
+		t.Fatalf("refusal = %v, want it to name the owner", err)
+	}
 }

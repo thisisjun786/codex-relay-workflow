@@ -84,6 +84,11 @@ func TestPacketGuardResolvesASuccessorRelease(t *testing.T) {
 		"PL", "n2", "manifest-n2", "req-n2-old", "req-2", "sha", "{}", "/m", "/s", "/st", "released again", parent, fakeISO); err != nil {
 		t.Fatal(err)
 	}
+	// the successor intent froze the manifest of the node version it released
+	if _, err := s.DB.ExecContext(ctx, "INSERT OR IGNORE INTO dag_input_manifests (manifest_digest, node_id, body_json, rule_version_json, coordinator_epoch, created_at) VALUES (?,?,?,'{}',0,?)",
+		"manifest-n2", "n2", "{\"node_slice_digest\":\"slice-n2\"}", fakeISO); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := r.Register(ctx, second); err != nil {
 		t.Fatalf("a distinct packet whose release is a successor intent is refused: %v", err)
 	}

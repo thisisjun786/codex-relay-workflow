@@ -3,6 +3,7 @@ package dagsched
 import (
 	"context"
 	"encoding/json"
+	"sort"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
@@ -45,6 +46,10 @@ func packetNodeDoc(id, issue, packet string, covers, owns []string) doc {
 	n := nodeDoc(id, dag.NodeImplementation)
 	n["issue_key"] = issue
 	n["packet_id"] = packet
+	// The plan fixes the criteria digest the release registered (coverageCriteriaDigest): the coverage
+	// reading credits a packet only while the acceptance's effective criteria, the registration's and the
+	// node's all agree (CRW-839 pre-merge d2).
+	n["criteria_set_digest"] = coverageCriteriaDigest
 	cs := make([]any, len(covers))
 	for i, s := range covers {
 		cs[i] = s
@@ -58,6 +63,17 @@ func packetNodeDoc(id, issue, packet string, covers, owns []string) doc {
 		n["owns"] = os
 	}
 	return doc{"op": dag.OpAddNode, "node": n}
+}
+
+// coverageCriteriaDigest is the criteria set every packet of these coverage tests is registered with and
+// every acceptance stands on.
+const coverageCriteriaDigest = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+
+// plainNodeDoc is a node with no packet identity whose plan fixes the same criteria digest.
+func plainNodeDoc(id string) doc {
+	n := nodeDoc(id, dag.NodeImplementation)
+	n["criteria_set_digest"] = coverageCriteriaDigest
+	return n
 }
 
 func featureCriteriaDoc(issue string, criteria ...doc) doc {
@@ -112,7 +128,7 @@ func acceptanceHead(relationship string) string { return "head-" + relationship 
 
 // packetAcceptance records the active acceptance of a relationship's output.
 func packetAcceptance(f *fixture, id, plan, node, relationship string) {
-	f.exec("INSERT INTO dag_acceptances (acceptance_id, plan_id, node_id, manifest_digest, relationship_id, execution_generation, event_id, revision_hash, criteria_set_digest, verdict, head_sha, repository, pr_number, output_manifest_ref, evidence_digest, ack_tier, verdict_turn_id, rule_version_json, accepted_by_task_id, coordinator_epoch, accepted_at, supersedes_acceptance_id, state) VALUES (?,?,?,'m',?,1,'ev','rev','c','verified',?,'owner/repo',7,NULL,NULL,'host','turn','{}','parent',0,'2026-10-02T00:00:00.000000+00:00',NULL,'active')", id, plan, node, relationship, acceptanceHead(relationship))
+	f.exec("INSERT INTO dag_acceptances (acceptance_id, plan_id, node_id, manifest_digest, relationship_id, execution_generation, event_id, revision_hash, criteria_set_digest, verdict, head_sha, repository, pr_number, output_manifest_ref, evidence_digest, ack_tier, verdict_turn_id, rule_version_json, accepted_by_task_id, coordinator_epoch, accepted_at, supersedes_acceptance_id, state) VALUES (?,?,?,'m',?,1,'ev','rev',?,'verified',?,'owner/repo',7,NULL,NULL,'host','turn','{}','parent',0,'2026-10-02T00:00:00.000000+00:00',NULL,'active')", id, plan, node, relationship, coverageCriteriaDigest, acceptanceHead(relationship))
 }
 
 // packetLanded records a bundle that carried the relationship and landed.
@@ -137,12 +153,18 @@ func packetIntegrated(f *fixture, acceptance, relationship, repository, baseRef 
 // packetRegistered records the criteria a packet's relationship registered, with the required flag the
 // coverage reader compares against the feature's declaration (CRW-839 d4).
 func packetRegistered(f *fixture, relationship string, required map[string]bool) {
-	for id, ok := range required {
+	ids := make([]string, 0, len(required))
+	for id := range required {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		ok := required[id]
 		n := 0
 		if ok {
 			n = 1
 		}
-		f.exec("INSERT INTO canonical_criteria (relationship_id, criterion_id, title, required, source_ref, set_digest, recorded_at) VALUES (?,?,? ,? ,NULL,'d','t')", relationship, id, id, n)
+		f.exec("INSERT INTO canonical_criteria (relationship_id, criterion_id, title, required, source_ref, set_digest, recorded_at) VALUES (?,?,?,?,NULL,?,'t')", relationship, id, id, n, coverageCriteriaDigest)
 	}
 }
 
@@ -207,11 +229,11 @@ func TestFeatureCoverageNeedsEveryRequiredCriterionIntegrated(t *testing.T) {
 // are the ones the relay registered for its relationship.
 func TestFeatureCoverageSingleNodePlanAnswersAsToday(t *testing.T) {
 	f := newFixture(t)
-	putPacketPlan(t, f, "plan", 0, "r1", nil, addNode("solo", dag.NodeImplementation))
+	putPacketPlan(t, f, "plan", 0, "r1", nil, doc{"op": dag.OpAddNode, "node": plainNodeDoc("solo")})
 	packetExecution(f, "plan", "solo", "rel-solo")
 	liveRelationship(f, "plan", "solo", "rel-solo")
 	packetAcceptance(f, "acc-solo", "plan", "solo", "rel-solo")
-	f.exec("INSERT INTO canonical_criteria (relationship_id, criterion_id, title, required, source_ref, set_digest, recorded_at) VALUES ('rel-solo','c1','one',1,NULL,'d','t')")
+	f.exec("INSERT INTO canonical_criteria (relationship_id, criterion_id, title, required, source_ref, set_digest, recorded_at) VALUES ('rel-solo','c1','one',1,NULL,?,'t')", coverageCriteriaDigest)
 
 	before := coverageOf(t, f, "plan", "CRW-solo")
 	if before.Complete {

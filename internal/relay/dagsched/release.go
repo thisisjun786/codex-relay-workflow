@@ -256,6 +256,13 @@ func (s *Scheduler) Release(ctx context.Context, plan, node, actor string, req R
 	if err := s.checkCriteria(snap, n, req.Criteria); err != nil {
 		return out, err
 	}
+	// The edit-region owner rule is asked again here, on the plan as it stands at release (CRW-839 d7,
+	// pre-merge d4): a plan revision may turn two nodes that already declared a shared place into two
+	// packets of one issue without either declaring again, and a re-declaration of the same regions is a
+	// replay. A node whose declaration predates its packet identity is therefore judged before it runs.
+	if err := s.checkPacketRegionsAtRelease(ctx, q, plan, snap, n); err != nil {
+		return out, err
+	}
 	preds, err := s.pinnedPredecessors(ctx, q, plan, incomingEdges(snap, node))
 	if err != nil {
 		return out, err
@@ -479,6 +486,28 @@ func declaredRequired(snap dag.Snapshot, issue, id string) bool {
 		}
 	}
 	return false
+}
+
+// checkPacketRegionsAtRelease asks the packet region-owner rule on the declarations as they stand at
+// release (CRW-839 pre-merge d4): a plan revision can make two nodes that already declared an overlapping
+// place into two packets of one issue without either declaring again, and a re-declaration of the same
+// regions is a replay that never re-judges them. A node without a packet_id, or one that never declared,
+// is not judged here.
+func (s *Scheduler) checkPacketRegionsAtRelease(ctx context.Context, q store.Querier, plan string, snap dag.Snapshot, n dag.SnapNode) error {
+	if n.PacketID == "" {
+		return nil
+	}
+	current, err := loadDeclarations(ctx, q, plan)
+	if err != nil {
+		return err
+	}
+	mine, declared := current[n.NodeID]
+	if !declared {
+		// an undeclared node's regions are unknown: it overlaps everything and is deferred by the
+		// ordinary edit-region rule, so there is no owner question to ask yet
+		return nil
+	}
+	return checkPacketRegionOwner(ctx, q, plan, snap, n, mine, current)
 }
 
 // rejudge repeats, under the lock, what the store half of the judgement said before it (a plan revision, an acceptance or a registration may have moved in between): the node is
@@ -839,9 +868,18 @@ func (s *Scheduler) startAndBind(ctx context.Context, plan, node, actor string, 
 		// not with the release intent, because the relationship id exists only after the managed start has
 		// created the relationship: the intent (dag_releases) is what the duplicate guard resolves the
 		// newcomer's packet by, and this row is what it resolves the rival's by.
+		// The packet is the one the RELEASE froze, not whatever packet the node carries at bind time
+		// (CRW-839 d3). The managed start runs outside this transaction, so the plan may move while it
+		// runs: resolving the packet from the live node would record the request and the child under a
+		// packet the release never named. The frozen manifest names the node version the release built
+		// its request for, so the packet is looked up by that version's slice digest.
+		var sliceDigest string
+		if _, err := queryOne(txCtx, q, "SELECT json_extract(body_json, '$.node_slice_digest') FROM dag_input_manifests WHERE manifest_digest = ?", []any{out.ManifestDigest}, &sliceDigest); err != nil {
+			return err
+		}
 		var nodePacket string
 		packeted, err := queryOne(txCtx, q, "SELECT p.packet_id FROM dag_node_packets p JOIN dag_nodes n ON n.plan_id = p.plan_id AND n.node_id = p.node_id AND n.introduced_rev = p.introduced_rev"+
-			" WHERE p.plan_id = ? AND p.node_id = ? AND n.retired_rev IS NULL", []any{plan, node}, &nodePacket)
+			" WHERE p.plan_id = ? AND p.node_id = ? AND n.slice_digest = ?", []any{plan, node, sliceDigest}, &nodePacket)
 		if err != nil {
 			return err
 		}

@@ -280,10 +280,12 @@ track of which packet each belongs to. The plan is the registry: the packet rule
   `Register`, before the packet-aware guard below is reached. Turning the issue scope packet-aware is a v1 change, so multi-packet delivery
   waits for the activation step the issue names; the guard and the reservation rules below are what the relay does where a plan has no project
   key, and what it will do for every plan once the scope identity can hold several packets.
-* Two packets of one issue must declare edit regions that do not overlap without a declared owner: the owner is the packet that declares the
-  shared place exclusive. A plain overlap between two packets of one issue is refused `disposition_conflict` at `dag-region-declare`, and so
-  are two exclusive claims on one shared place. A node without a `packet_id` is never judged against a sibling, and a packet whose sibling has
-  not declared its regions yet is judged when that sibling declares.
+* Packets of one issue must not take an overlapping edit region without exactly one declared owner: the owner is the packet that declares the
+  shared place exclusive. The judgement is over every packet that takes the place, so any number of packets may share it as long as exactly one
+  of them owns it; none is refused `disposition_conflict` at `dag-region-declare`, and so is more than one exclusive claim. A node without a
+  `packet_id` is never judged against a sibling, and a packet whose sibling has not declared its regions yet is judged when that sibling
+  declares. `dag-release` asks the same question again on the declarations as they stand, because a plan revision can turn two nodes that
+  already declared a shared place into two packets of one issue without either declaring again.
 * `dag-feature-coverage --plan --issue` is the reading: the packets, each packet's acceptance and integration (the merge train's member
   mapping, or a landing the relay observed), and the packet owning each criterion. A feature is complete only when every required
   criterion is covered by an integrated packet.
@@ -298,6 +300,13 @@ track of which packet each belongs to. The plan is the registry: the packet rule
 * A criterion counts as covered only when the packet that landed it registered it required with the same id — a packet that covers a
   feature-required criterion must register it required at release (`criteria_set_changed` otherwise) — so a criterion downgraded to optional
   in the packet's own criteria set is never read as covered by its landing.
+* The landing must also still be current: the acceptance's effective criteria digest — its newest revalidation, else the digest it was
+  accepted with — must be the node's and the one its registered criteria rows carry, the same test the scheduler's edge judgement makes. A
+  criterion strengthened to required after the landing, and re-registered required, is therefore not credited by a landing whose verdicts
+  never judged it.
+* A release resolves the packet it records from the node version its own frozen manifest was built for, not from whatever packet the node
+  carries when the managed start returns: the plan may move while a start runs, and the request, the child and the duplicate guard must all
+  read the identity the release was made under.
 * Plan validation refuses a multi-packet issue that declares no `feature_criteria`, and a packet node that declares no `covers`, so a
   required criterion assigned to no packet cannot disappear from the completion test. The legacy reading — the criteria registered for the
   node's own relationship — is the meaning of an issue with one node and no `packet_id`, and of nothing else.

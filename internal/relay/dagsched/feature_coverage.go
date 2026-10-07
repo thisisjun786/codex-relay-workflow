@@ -72,6 +72,30 @@ type CoverageIntegration struct {
 // commit when a train carried the member (its own members mapping, so an excluded member is not credited,
 // CRW-839 d3), else the stand head a direct observation proved contained in every target.
 func (s *Scheduler) coverageIntegrationOf(ctx context.Context, q store.Querier, snap dag.Snapshot, a Acceptance) (*CoverageIntegration, error) {
+	// The acceptance must still stand under the criteria the plan and the relationship hold now (CRW-839
+	// pre-merge d2), the same test the scheduler's own edge judgement makes (standing, edges.go): the
+	// effective criteria digest of the acceptance is the node's, and every registered criterion row
+	// carries it. Without this a criterion strengthened to required after the landing - and re-registered
+	// required - would be credited by a landing whose verdicts never judged it.
+	node, ok := nodeOf(snap, a.NodeID)
+	if !ok {
+		return nil, nil
+	}
+	effective, err := effectiveCriteria(ctx, q, a)
+	if err != nil {
+		return nil, err
+	}
+	var rows, distinct int
+	var canonical sql.NullString
+	if _, err := queryOne(ctx, q, "SELECT COUNT(*), COUNT(DISTINCT set_digest), MIN(set_digest) FROM canonical_criteria WHERE relationship_id = ?", []any{a.RelationshipID}, &rows, &distinct, &canonical); err != nil {
+		return nil, err
+	}
+	// The registered set must still be the one the acceptance was judged under. A node whose plan never
+	// fixed a criteria set (an empty digest) is judged by the registered set alone, which is the legacy
+	// meaning; a node whose plan fixed one must agree with the registration too.
+	if rows == 0 || distinct != 1 || canonical.String != effective || (node.CriteriaSetDigest != "" && effective != node.CriteriaSetDigest) {
+		return nil, nil
+	}
 	landed, targets, err := s.nodeIntegrated(ctx, q, a.PlanID, snap, a)
 	if err != nil || !landed {
 		return nil, err

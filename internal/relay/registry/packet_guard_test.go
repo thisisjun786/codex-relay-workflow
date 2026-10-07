@@ -57,6 +57,10 @@ func packetPlanRow(t *testing.T, s *store.Store, plan, node, issueKey, packet, r
 		plan, node, "slice-"+node, issueKey, "criteria-"+node)
 	exec("INSERT INTO dag_node_packets (plan_id, node_id, introduced_rev, packet_id, covers_json, owns_json) VALUES (?,?,1,?,'[]','[]')", plan, node, packet)
 	exec("INSERT INTO dag_releases (plan_id, node_id, manifest_digest, managed_request_id, coordinator_epoch, decided_at) VALUES (?,?,?,?,0,?)", plan, node, "manifest-"+node, requestID, fakeISO)
+	// The release froze a manifest built for this node version, and the guard resolves the packet through
+	// that frozen version rather than through whatever packet the node carries now (CRW-839 pre-merge d3).
+	exec("INSERT INTO dag_input_manifests (manifest_digest, node_id, body_json, rule_version_json, coordinator_epoch, created_at) VALUES (?,?,?,'{}',0,?)",
+		"manifest-"+node, node, "{\"node_slice_digest\":\"slice-"+node+"\"}", fakeISO)
 	if relationship != "" {
 		exec("INSERT INTO dag_execution_packets (relationship_id, plan_id, node_id, issue_key, packet_id, branch, recorded_at) VALUES (?,?,?,?,?,NULL,?)", relationship, plan, node, issueKey, packet, fakeISO)
 	}

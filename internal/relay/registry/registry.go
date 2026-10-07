@@ -600,17 +600,22 @@ func packetRivalOf(ctx context.Context, q store.Querier, relationshipID, issueKe
 // carries no packet - a store that predates the packet tables answers false, and a second relationship of
 // the issue is then refused as it always was.
 func releasedPacket(ctx context.Context, q store.Querier, managedRequestID, issueKey string) (plan, packet string, found bool) {
+	// The packet is the one the release FROZE (its manifest's node version), not whatever packet the
+	// node carries now (CRW-839 d3): the plan may move while the managed start runs, and the guard must
+	// read the identity the release was made under.
 	err := q.QueryRowContext(ctx, "SELECT r.plan_id, p.packet_id FROM dag_releases r"+
-		" JOIN dag_node_packets p ON p.plan_id = r.plan_id AND p.node_id = r.node_id"+
-		" JOIN dag_nodes n ON n.plan_id = p.plan_id AND n.node_id = p.node_id AND n.introduced_rev = p.introduced_rev"+
+		" JOIN dag_input_manifests m ON m.manifest_digest = r.manifest_digest"+
+		" JOIN dag_nodes n ON n.plan_id = r.plan_id AND n.node_id = r.node_id AND n.slice_digest = json_extract(m.body_json, '$.node_slice_digest')"+
+		" JOIN dag_node_packets p ON p.plan_id = n.plan_id AND p.node_id = n.node_id AND p.introduced_rev = n.introduced_rev"+
 		" WHERE r.managed_request_id = ? AND n.retired_rev IS NULL AND n.issue_key = ?", managedRequestID, issueKey).Scan(&plan, &packet)
 	if err == nil {
 		return plan, packet, packet != ""
 	}
 	// a successor release: the intent that created this request id is the rereleased row of its manifest.
 	err = q.QueryRowContext(ctx, "SELECT c.plan_id, p.packet_id FROM dag_release_recoveries c"+
-		" JOIN dag_node_packets p ON p.plan_id = c.plan_id AND p.node_id = c.node_id"+
-		" JOIN dag_nodes n ON n.plan_id = p.plan_id AND n.node_id = p.node_id AND n.introduced_rev = p.introduced_rev"+
+		" JOIN dag_input_manifests m ON m.manifest_digest = c.manifest_digest"+
+		" JOIN dag_nodes n ON n.plan_id = c.plan_id AND n.node_id = c.node_id AND n.slice_digest = json_extract(m.body_json, '$.node_slice_digest')"+
+		" JOIN dag_node_packets p ON p.plan_id = n.plan_id AND p.node_id = n.node_id AND p.introduced_rev = n.introduced_rev"+
 		" WHERE c.successor_request_id = ? AND c.action = 'rereleased' AND n.retired_rev IS NULL AND n.issue_key = ?", managedRequestID, issueKey).Scan(&plan, &packet)
 	if err != nil {
 		return "", "", false
