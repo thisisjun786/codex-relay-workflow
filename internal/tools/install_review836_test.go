@@ -284,8 +284,8 @@ func TestToolsReview836IdentityRefusesALocationThatNamesAnotherObject(t *testing
 	}
 
 	// first is the parent read before the mkdir; the mkdir then ran through the repointed link, so
-	// the parent the mkdir used is the other one and the stale location names the peer's directory.
-	location, info, err := componentIdentity(filepath.Join(link, "q"), first, false)
+	// the stale location names the peer's directory while the spelling names this call's.
+	location, info, err := componentIdentity(filepath.Join(link, "q"), first)
 	if err != nil {
 		t.Fatalf("componentIdentity under a repointed parent: %v", err)
 	}
@@ -422,9 +422,9 @@ func TestToolsReview836IdentityFailsClosedWhenTheSpelledPathIsUnreadable(t *test
 	// The component this call made is not at the spelled path any more.
 	spelled := filepath.Join(base, "gone", "q")
 
-	// The component was already standing at the parent's location before the mkdir, so that location
-	// cannot be the one this call's mkdir made and must be refused.
-	location, info, err := componentIdentity(spelled, parent, false)
+	// The parent location was read before the mkdir, so it may now name a peer's directory; it must
+	// be refused.
+	location, info, err := componentIdentity(spelled, parent)
 	if err == nil {
 		t.Fatalf("componentIdentity accepted the parent's location %q with %v while the spelled path could not be read", location, info)
 	}
@@ -434,17 +434,19 @@ func TestToolsReview836IdentityFailsClosedWhenTheSpelledPathIsUnreadable(t *test
 	if location != "" {
 		t.Fatalf("componentIdentity answered the location %q while the spelled path could not be read", location)
 	}
-	// The peer's directory is untouched and is not what the record would have named.
-	if os.SameFile(peerInfo, info) {
-		t.Fatalf("componentIdentity recorded the peer's directory %s", peer)
+	// The peer's directory is untouched.
+	if _, statErr := os.Lstat(peer); statErr != nil {
+		t.Fatalf("the peer's directory was disturbed: %v", statErr)
 	}
+	_ = peerInfo
 }
 
-// C1, C3, the read-failure side: a segment above the parent can vanish between a successful mkdir
-// and the identity read, which leaves the directory this call just made in place but no longer
-// reachable by the spelling. It is still this call's, so the record must keep it and the cleanup
-// must remove it. The parent is read before the mkdir, so the location survives the vanish.
-func TestToolsReview836KeepsADirectoryTheSpellingCanNoLongerReach(t *testing.T) {
+// C1, fail-closed side of the unreadable spelling: a segment above the parent can vanish between a
+// successful mkdir and the identity read, which leaves the directory this call just made in place
+// but no longer reachable by the spelling. No identity can then be established -- the parent read
+// before the mkdir may have been repointed, so it cannot stand in for the spelling -- and nothing
+// is recorded. The walk recomputes; the directory is left behind rather than removed on a guess.
+func TestToolsReview836RecordsNothingWhenTheSpellingCannotBeResolved(t *testing.T) {
 	component, root, target := review836RaceHost(t)
 	spelledP := component + "/../p"
 
@@ -467,34 +469,21 @@ func TestToolsReview836KeepsADirectoryTheSpellingCanNoLongerReach(t *testing.T) 
 	if err != nil {
 		t.Fatalf("createRoot with an ancestor removed after p's mkdir: %v", err)
 	}
-	var found *createRootRecord
-	for i := range created {
-		if created[i].path == spelledP {
-			found = &created[i]
+	// The identity read at p failed because the spelling stopped resolving, and nothing stands in
+	// for it, so base/p is not recorded even though the walk carried on and re-made x.
+	for _, made := range created {
+		if made.path == spelledP {
+			t.Fatalf("createRoot recorded %v, want no record for the path it could not read", created)
 		}
 	}
-	if found == nil {
-		t.Fatalf("createRoot recorded %v, want p, which the spelling can no longer reach", created)
-	}
-	madeP := target
-	madeInfo, statErr := os.Lstat(madeP)
-	if statErr != nil {
-		t.Fatal(statErr)
-	}
-	recorded, statErr := os.Lstat(found.resolved)
-	if statErr != nil || !os.SameFile(madeInfo, recorded) {
-		t.Fatalf("the record reaches %q, which is not the directory this call made (%s): %v", found.resolved, madeP, statErr)
-	}
-	// The location is what keeps the cleanup able to remove what this call made.
-	removeCreated(created)
-	for _, path := range []string{madeP, filepath.Join(madeP, "q")} {
-		if _, statErr := os.Lstat(path); !errors.Is(statErr, fs.ErrNotExist) {
-			t.Errorf("%s survived the cleanup: %v", path, statErr)
-		}
+	// The directory this call made is left alone rather than removed on a guess: the failure is a
+	// leak, never another install's directory removed.
+	if _, statErr := os.Lstat(target); statErr != nil {
+		t.Errorf("the directory this call made is not the one left behind: %v", statErr)
 	}
 }
 
-// C1, C3, the EEXIST read-failure side: a component this call recorded can be reached again with its
+// C1, the EEXIST read-failure side: a component this call recorded can be reached again with its
 // spelling unresolvable, so the EEXIST identity read fails. That failure proves nothing about
 // ownership, so the record this call holds must be kept -- it still carries the identity and
 // location taken when the directory was made, and removeCreated verifies both before removing.
@@ -526,7 +515,7 @@ func TestToolsReview836KeepsItsRecordWhenAnEexistReadCannotReachTheSpelling(t *t
 	}
 
 	// An EEXIST whose identity read cannot reach the spelling leaves the record as it was.
-	location, info, statErr := componentIdentity(spelledP, parentLocation(spelledP), false)
+	location, info, statErr := componentIdentity(spelledP, parentLocation(spelledP))
 	if statErr == nil {
 		t.Fatalf("componentIdentity read %q with %v while the spelling could not be resolved", location, info)
 	}
