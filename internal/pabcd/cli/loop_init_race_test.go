@@ -17,6 +17,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -424,4 +425,52 @@ func TestLoopInitNamesThePublishedPlanWhenTheLedgerRowFails(t *testing.T) {
 	if rows := loopCreatedLedgerRows(t, cwd, slug); len(rows) != 0 {
 		t.Fatalf("a failed row append left a created row: %v", rows)
 	}
+}
+
+// TestLoopInitWritesNothingWhenTheBoundCycleIsRefused is the Devin finding on this pull request:
+// taking the session lock creates the state directory, so a bound cycle the workspace cannot close
+// (no resolvable git source identity) would leave a fresh .crw behind while answering "Nothing was
+// written". The source gate therefore runs before the lock too, and the workspace must be untouched.
+func TestLoopInitWritesNothingWhenTheBoundCycleIsRefused(t *testing.T) {
+	cwd := loopReadWorkspace(t)
+	const id = "019a0000-0000-7000-8000-000000000177"
+	// No session state file: the workspace is untouched when the case starts, so a state directory
+	// the lock acquisition creates would show up as a difference.
+	before := loopTreeSnapshot(t, cwd)
+
+	result := loopRun(t, cwd, "init", "--objective", "bound probe in a non-git tree", "--session", id)
+	if result.Code != 1 || !strings.Contains(result.Output, "no resolvable git source identity") {
+		t.Fatalf("got %d %q", result.Code, result.Output)
+	}
+	if !strings.Contains(result.Output, "Nothing was written") {
+		t.Fatalf("the refusal does not claim nothing was written: %q", result.Output)
+	}
+	if after := loopTreeSnapshot(t, cwd); after != before {
+		t.Fatalf("the refused bound init changed the workspace:\nbefore %q\nafter  %q", before, after)
+	}
+}
+
+// loopTreeSnapshot lists every path under cwd, so a case can prove a refused command left the
+// workspace exactly as it found it.
+func loopTreeSnapshot(t *testing.T, cwd string) string {
+	t.Helper()
+	paths := []string{}
+	err := filepath.WalkDir(cwd, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(cwd, path)
+		if err != nil {
+			return err
+		}
+		if rel != "." {
+			paths = append(paths, rel)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	slices.Sort(paths)
+	return strings.Join(paths, "\n")
 }

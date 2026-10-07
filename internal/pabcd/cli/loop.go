@@ -170,6 +170,14 @@ func loopInit(args LoopCliArgs) (LoopCliResult, error) {
 	if sessionID == "" {
 		return loopInitCreate(args, slug, objective)
 	}
+	// The source-identity gate runs BEFORE the session lock as well, because taking that lock creates
+	// the state directory: a bound cycle this workspace cannot close would otherwise leave a fresh
+	// .crw behind while the command answered "Nothing was written" (the oracle checks before any
+	// write). The check inside the lock below stays authoritative, so a state that changed in between
+	// is still judged there (CRW-646 c2).
+	if verdict := session.CheckBound(args.Cwd, sessionID); !verdict.OK {
+		return LoopCliResult{Output: "loop init: " + verdict.Reason + "\nNothing was written.", Code: 1}, nil
+	}
 	var answer LoopCliResult
 	err := state.WithSessionLock(args.Cwd, sessionID, func() error {
 		result, err := loopInitBound(args, slug, objective, sessionID)
