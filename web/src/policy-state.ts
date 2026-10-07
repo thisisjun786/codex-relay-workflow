@@ -587,19 +587,25 @@ export function previewChange(reading: PolicyReading, change: PolicyChange): Pol
       const existing = reading.exceptions.find((row) => row.id === change.id);
       const scope = existing && existing.cwd.length > 0 ? existing.cwd.join(", ") : "the exception's scope";
       items.push(...exceptionRows(`exception ${change.id}`, existing ?? null, null));
-      // What the removal actually does depends on whether the exception's role has a default to fall
-      // back to. A role with no pair in this file has none: the bridge refuses a request whose role it
-      // does not know (internal/bridge/execution/execution.go role lookup), so removing the only
-      // authorization for that scope leaves it refused rather than falling back. Promising a default
-      // that does not exist would misstate the impact of the change.
+      // What the removal actually does depends on the exception's ROLE EXPECTATION, not on whether the
+      // role happens to list a pair. The bridge skips the pair check for a record role
+      // (internal/bridge/execution/execution.go Authorize: the pair branch runs only when the
+      // expectation is "pair"), so a request that no longer cites the removed exception falls through
+      // to the allowed list - for the supervisor exactly as for a role-less exception. A record role
+      // never has a pair to fall back to and the server refuses it declaring one
+      // (internal/bridge/execution/roles.go parseRole), so telling the operator to add one would name
+      // a repair the server will not accept.
       const role = existing?.role;
-      const declared = role !== undefined && reading.roles.some((entry) => entry.name === role && entry.pairs.length > 0);
+      const declared = role !== undefined ? reading.roles.find((entry) => entry.name === role) : undefined;
+      const record = declared?.expectation === "record";
       if (role === undefined) {
         preview.fallback = `Removing this exception removes the scope ${scope} for requests that cite no role; such a request is then checked against the allowed list, and a request still citing this exception is refused as unknown.`;
-      } else if (declared) {
+      } else if (record) {
+        preview.fallback = `Removing this exception returns ${scope} to the allowed list: a request that still cites the removed exception id is refused as unknown, and one that does not cite it is checked against the allowed list. A ${role} role is declared with a record expectation, so it has no pair default to return to.`;
+      } else if (declared !== undefined) {
         preview.fallback = `Removing this exception returns ${scope} to the ${role} role default. A request that still cites the removed exception id is refused as unknown before that default is reached.`;
       } else {
-        preview.fallback = `This file declares no ${role} role pair, so ${scope} has no default to return to: a request under that scope is refused until the role is given a pair.`;
+        preview.fallback = `This file declares no ${role} role, so ${scope} has no default to return to: a request that cites ${role} is refused as unknown, and one that does not is checked against the allowed list.`;
       }
       break;
     }
@@ -650,10 +656,18 @@ export function policyEfforts(reading: PolicyReading, catalog: ModelCatalog | nu
  * modelLadder is the effort ladder the catalog advertises for one model, with the same three-state
  * meaning the effort control uses: an array is the advertised ladder, and null means the catalog did
  * not report one (which is not evidence that the model refuses anything).
+ *
+ * Only a FRESH answer is current evidence. The reader answers status "stale" with the last successful
+ * list exactly when the live read failed or this host's OCX does not support the command
+ * (internal/role/livecatalog.go), so that cached ladder describes a moment that has passed; treating
+ * it as evidence would disable an effort the policy file still allows, which is the one thing the
+ * issue says a catalog that could not be read must never do. A non-fresh answer therefore advertises
+ * no ladder at all, and every effort name stays selectable.
  */
 export function modelLadder(catalog: ModelCatalog | null, model: string | null | undefined): readonly string[] | null {
   if (!model) return null;
-  return catalog?.entries.find((entry) => entry.id === model)?.reasoningEfforts ?? null;
+  if (catalog === null || catalog.status !== "fresh") return null;
+  return catalog.entries.find((entry) => entry.id === model)?.reasoningEfforts ?? null;
 }
 
 /** everyModel names every model the reading mentions, in the order the document declares them. */
@@ -875,6 +889,21 @@ export function unreachableNotice(): PolicyNotice {
   return notice;
 }
 
+/**
+ * checkRefusedNotice is the sentence a check call that the server ANSWERED with a non-2xx status
+ * becomes. The guard refuses a write whose token is missing, stale or repeated with 403 forbidden
+ * (internal/gui/guard.go), and a route can answer 404 or 405; none of those is an unreachable
+ * backend, and reporting them as one would hide the operator's actual repair. The status and the
+ * server's own error member are kept.
+ */
+export function checkRefusedNotice(status: number, body: unknown): PolicyNotice {
+  const code = isObject(body) ? stringOf(body.error) : "";
+  const notice = emptyNotice("err", `The policy check was refused (${status}${code === "" ? "" : ` ${code}`}), so nothing was written.`);
+  if (code !== "") notice.errors = [code];
+  notice.keepInputs = true;
+  return notice;
+}
+
 /* ---- the screen's state transitions ---- */
 
 /** One policy call's raw answer, as the client returns it. */
@@ -924,11 +953,29 @@ export async function runSave(state: PolicyScreenState, transports: PolicyWriteT
   // controls while the check and the write are in flight rather than only after they have answered.
   onStart?.(started);
   const payload = { expectedDigest: reading.digest ?? "", change };
-  let checked: PolicyCheckResult;
+  // The check call's own answer is kept whole: a non-2xx status is a refusal the server sent, not a
+  // backend that could not be reached, so it is reported as that refusal. Only a transport failure
+  // (the promise rejecting) is the unreachable case.
+  let checkAnswer: PolicyRawResponse;
   try {
-    checked = decodeCheck((await transports.check(payload)).body);
+    checkAnswer = await transports.check(payload);
   } catch {
     return { state: screenSaveFinished(started, change, unreachableNotice()), reread: false, rereadKeepsInputs: false, saved: false };
+  }
+  if (checkAnswer.status < 200 || checkAnswer.status >= 300) {
+    return { state: screenSaveFinished(started, change, checkRefusedNotice(checkAnswer.status, checkAnswer.body)), reread: false, rereadKeepsInputs: true, saved: false };
+  }
+  let checked: PolicyCheckResult;
+  try {
+    checked = decodeCheck(checkAnswer.body);
+  } catch {
+    // A 2xx whose body is not the check answer is a malformed answer, not a refusal and not an
+    // unreachable backend: the server accepted the request, and the screen cannot read its verdict.
+    // It says exactly that and keeps the operator's inputs rather than guessing the change was
+    // refused or claiming nothing was sent.
+    const malformed = emptyNotice("err", "The policy check was answered with a body this screen could not read, so nothing was written. Try saving again.");
+    malformed.keepInputs = true;
+    return { state: screenSaveFinished(started, change, malformed), reread: false, rereadKeepsInputs: true, saved: false };
   }
   if (!checked.valid || checked.stale) {
     const refused = checkNotice(checked);

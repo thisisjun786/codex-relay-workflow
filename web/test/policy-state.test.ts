@@ -25,8 +25,8 @@ import {
   draftForNewException,
   exceptionRoleOptions,
   lostWriteNotice,
-  modelOptions,
   modelLadder,
+  modelOptions,
   noticeForWrite,
   pairEffortLabel,
   pairModelLabel,
@@ -654,6 +654,86 @@ test("one pending change at a time: another row's edit cannot replace the live o
 });
 
 // The five defects the eighth pre-merge evaluation found.
+
+// The three defects the tenth pre-merge evaluation found, fixed under the parent decision of
+// 2026-10-07 (event 17ed771c38dcc02a0dabc30ad3f25002).
+
+test("a record role's exception removal returns the scope to the allowed list, never to a pair", () => {
+  // d1: the preview used pairs.length > 0 as the test for whether a role has a default. The bridge
+  // skips the pair check for a record role (internal/bridge/execution/execution.go Authorize runs the
+  // pair branch only when the expectation is "pair"), so a request that no longer cites the removed
+  // exception falls through to the allowed list. A record role never has a pair and the server
+  // refuses it declaring one (internal/bridge/execution/roles.go parseRole), so the screen must not
+  // tell the operator to add one.
+  const supervisorScoped = reading({
+    roles: [
+      { name: "child", expectation: "pair", pairs: [{ model: "m", reasoningEffort: "high" }] },
+      { name: "supervisor", expectation: "record", pairs: [] },
+    ],
+    exceptions: [{ id: "legacy", role: "supervisor", model: "m", reasoningEffort: "max", cwd: ["/srv/a"] }],
+  });
+  const preview = previewChange(supervisorScoped, { kind: "removeException", id: "legacy" });
+  assert.ok(preview.fallback, "the preview carries a sentence");
+  assert.ok(!preview.fallback?.includes("role default"), "a record role has no pair default");
+  assert.ok(!preview.fallback?.includes("given a pair"), "never tell the operator to add a supervisor pair");
+  assert.ok(preview.fallback?.includes("allowed list"), "the fall-through is named");
+  assert.ok(preview.fallback?.includes("refused as unknown"), "the stale-id refusal is named");
+  // A pair role keeps its default sentence.
+  const pairScoped = reading({ exceptions: [{ id: "legacy", role: "child", model: "m", reasoningEffort: "max", cwd: ["/srv/a"] }] });
+  const pairPreview = previewChange(pairScoped, { kind: "removeException", id: "legacy" });
+  assert.ok(pairPreview.fallback?.includes("child role default"), "a pair role returns to its default");
+});
+
+test("a catalog that is not fresh advertises no ladder, so it cannot disable an allowed effort", () => {
+  // d2: the reader answers status "stale" with the last successful list exactly when the live read
+  // failed or OCX is unsupported (internal/role/livecatalog.go). That cached ladder describes a
+  // moment that has passed, so treating it as evidence would disable an effort the policy allows -
+  // the one thing the issue says a catalog that could not be read must never do.
+  const entry = [{ id: "m", label: "M", reasoningEfforts: ["high"] }];
+  assert.equal(modelLadder({ state: "ocx-active", status: "stale", entries: entry }, "m"), null, "a stale ladder is not evidence");
+  assert.equal(modelLadder({ state: "unavailable", status: "unavailable", entries: entry }, "m"), null, "an unavailable ladder is not evidence");
+  assert.equal(modelLadder({ state: "unsupported-ocx-catalog", status: "stale", entries: entry }, "m"), null, "an unsupported host's cached ladder is not evidence");
+  assert.deepEqual(modelLadder({ state: "ocx-active", status: "fresh", entries: entry }, "m"), ["high"], "only a fresh ladder is evidence");
+  // A non-fresh catalog therefore leaves an effort the policy allows selectable for a pair and for an
+  // exception, which is the screen's promise.
+  const stale = { ...initialScreen(), reading: reading(), catalog: { state: "ocx-active", status: "stale" as const, entries: entry } };
+  assert.equal(screenEffortUnavailable(stale, "m", "max"), false, "a stale ladder does not disable max");
+  const fresh = { ...initialScreen(), reading: reading(), catalog: { state: "ocx-active", status: "fresh" as const, entries: entry } };
+  assert.equal(screenEffortUnavailable(fresh, "m", "max"), true, "a fresh ladder still judges the effort");
+});
+
+test("a check call the server refuses is reported as that refusal, not as unreachable", async () => {
+  // d3: runSave discarded the check response status, so a guard refusal (403 forbidden for a missing
+  // or stale token, internal/gui/guard.go) was reported as a backend that could not be reached. That
+  // hides the operator's actual repair and claims nothing was sent when the server answered.
+  let state = initialScreen();
+  state = screenLoaded(state, reading());
+  state = screenAllowedDraft(state, "anthropic/opus", ["max"]);
+  const forbidden = await runSave(state, {
+    check: async () => ({ status: 403, body: { error: "forbidden" } }),
+    write: async () => { throw new Error("the write must not run after a refused check"); },
+  });
+  assert.equal(forbidden.saved, false);
+  assert.ok(!forbidden.state.notice?.text.includes("could not be reached"), "not reported as unreachable");
+  assert.ok(forbidden.state.notice?.text.includes("403"), "the status is named");
+  assert.ok(forbidden.state.notice?.text.includes("forbidden"), "the server's own code is named");
+  assert.equal(forbidden.state.notice?.tone, "err");
+  assert.equal(forbidden.reread, false, "a refusal is not a conflict, so it does not re-read");
+  // A 2xx whose body is not the check answer is a malformed answer, not an unreachable backend.
+  const malformed = await runSave(state, {
+    check: async () => ({ status: 200, body: { nope: true } }),
+    write: async () => { throw new Error("the write must not run"); },
+  });
+  assert.equal(malformed.saved, false);
+  assert.ok(!malformed.state.notice?.text.includes("could not be reached"));
+  assert.ok(malformed.state.notice?.text.toLowerCase().includes("could not read"));
+  // A transport failure is still the unreachable case.
+  const unreachable = await runSave(state, {
+    check: async () => { throw new Error("connection refused"); },
+    write: async () => { throw new Error("must not run"); },
+  });
+  assert.ok(unreachable.state.notice?.text.includes("could not be reached"));
+});
 
 test("runSave reports the started state before its first await", async () => {
   // d1: the started state was only ever applied to runSave's own local copy, so the page could not
