@@ -63,6 +63,18 @@ type orchestrateDcloseSeam struct {
 	// interrupt runs immediately before this close's pre-write cancellation check inside each
 	// critical section (CRW-871). A field, never package state; nil means no hook.
 	interrupt func()
+	// afterLedgerRead runs in the all-done branch immediately after the PABCD ledger has been read
+	// and parsed, before the pre-write check that guards the row that branch may append. A test
+	// cancels the context here to order the cancellation after the read and before the first write,
+	// which a check that had run before the read cannot see. Nil means no hook.
+	afterLedgerRead func()
+	// goalplanLockSeam runs immediately before each goalplan write lock this close takes, with
+	// finalize telling the first lock and the finalization lock apart, and its answer replaces that
+	// lock's own seams (goalplan.GoalplanWriteLockOptions). A test arranges the lock's outcome there -
+	// taking the lock directory, or removing the plan file - and cancels the context from the returned
+	// Sleep, which the lock calls only once its wait has begun; zero retry delays keep that wait free
+	// of real sleeps. Nil means the lock's own defaults.
+	goalplanLockSeam func(finalize bool) *goalplan.GoalplanWriteLockOptions
 }
 
 // orchestrateDcloseRunHook runs one hook, or nothing when the test left it nil.
@@ -71,6 +83,22 @@ func orchestrateDcloseRunHook(hook func() error) error {
 		return nil
 	}
 	return hook()
+}
+
+// orchestrateDcloseRunVoid runs a test seam that answers nothing, or nothing when it is nil.
+func orchestrateDcloseRunVoid(seam func()) {
+	if seam != nil {
+		seam()
+	}
+}
+
+// orchestrateDcloseLockOptions is the options the seam supplies for one of this close's two goalplan
+// write locks; nil leaves the lock's own retry and clock seams in place.
+func orchestrateDcloseLockOptions(seam orchestrateDcloseSeam, finalize bool) *goalplan.GoalplanWriteLockOptions {
+	if seam.goalplanLockSeam == nil {
+		return nil
+	}
+	return seam.goalplanLockSeam(finalize)
 }
 
 // orchestrateDcloseCancelCheck is the pre-write cancellation check of CRW-871, run again by CRW-922
@@ -479,6 +507,7 @@ func orchestrateDcloseContext(ctx context.Context, cwd, sessionID, closePhaseID 
 					if err != nil {
 						return orchestrateDcloseLockAnswer{}, err
 					}
+					orchestrateDcloseRunVoid(seam.afterLedgerRead)
 					if !have {
 						// CRW-922: the ledger read above is the read that precedes this close's first
 						// durable effect in the all-done branch, so the check runs here, after it.
@@ -614,7 +643,7 @@ func orchestrateDcloseContext(ctx context.Context, cwd, sessionID, closePhaseID 
 			wrote = true
 		}
 		return orchestrateDcloseLockAnswer{Code: 0, AllDone: false}, nil
-	}, nil)
+	}, orchestrateDcloseLockOptions(seam, false))
 	if err != nil {
 		return CliResult{}, err
 	}
@@ -719,11 +748,22 @@ func orchestrateDcloseContext(ctx context.Context, cwd, sessionID, closePhaseID 
 				}
 			}
 			return struct{}{}, nil
-		}, nil)
+		}, orchestrateDcloseLockOptions(seam, true))
 		if err != nil {
 			return CliResult{}, err
 		}
 		if finalize.Kind != "ok" {
+			// CRW-922 (F1): the close's second and last lock can be the first thing to fail for an
+			// invocation that has written nothing of its own - a recovery retry whose session is already
+			// IDLE, so the state write above did not run. A context that ended while this lock waited
+			// answers Interrupted (130) with no output, exactly as the first lock's give-up does. Once
+			// this invocation has written, the answer below stands: its effects are visible and the
+			// marker the next request resumes from is on the session.
+			if !wrote {
+				if err := ctx.Err(); err != nil {
+					return CliResult{}, err
+				}
+			}
 			// §39 Y3: not a refusal. The state write above already moved the FSM to IDLE outside the
 			// lock, so returning code 1 here would report a failure for a cycle that is functionally
 			// closed. The marker survives and the next D request for the same tuple finishes cleanup.

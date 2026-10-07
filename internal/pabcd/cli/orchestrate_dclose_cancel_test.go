@@ -2,7 +2,7 @@ package cli
 
 // CRW-922: the D close honours the first SIGINT at every durable effect that can still be its first one,
 // and a goalplan write lock that gives up after the invocation was cancelled answers 130 with no output
-// instead of the busy or unreadable text with code 1. CRW-871 (PR #796) put the check at the goalplan
+// instead of the busy, unreadable or pending text. CRW-871 (PR #796) put the check at the goalplan
 // callback's entry only, and the close then reads and parses the whole PABCD ledger before its first
 // append. The timing of every case below is pinned by a seam or by the lock the case takes, never a sleep.
 
@@ -19,9 +19,9 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
 )
 
-// orchestrateDcloseCancelAllDoneAtC seeds the all-done bound session of the first case: every work-phase
-// is already done, so the close takes the all-done branch, whose first durable effect is the PABCD done
-// row it appends after it has read and parsed the ledger.
+// orchestrateDcloseCancelAllDoneAtC seeds the all-done bound session of the ledger-read case: every
+// work-phase is already done, so the close takes the all-done branch, whose first durable effect is the
+// PABCD done row it appends after it has read and parsed the ledger.
 func orchestrateDcloseCancelAllDoneAtC(t *testing.T, cwd, id, slug string) {
 	t.Helper()
 	plan := goalplan.BuildGoalplan(goalplan.NewGoalplanInput{Objective: "all phases done"})
@@ -40,16 +40,123 @@ func orchestrateDcloseCancelAllDoneAtC(t *testing.T, cwd, id, slug string) {
 	orchestrateDcloseSeedReceipt(t, cwd, id, epoch)
 }
 
-// TestOrchestrateDcloseCancelAfterTheLedgerReadWritesNothing is the first red case: a cancellation that
-// lands after the all-done close has read and parsed the PABCD ledger and before its first append leaves
-// the ledger, the state and the plan untouched and ends the close with 130 (the context's own error and
-// no answer). On the baseline the close appended the done row, wrote IDLE and answered 0.
+// orchestrateDcloseCancelIdleRetrySeed seeds the recovery retry that owes only the PABCD close row: the
+// target work-phase is already closed and its goalplan row already recorded, the state is already IDLE
+// with the marker that names it, and the C -> IDLE row the finalization pass still owes was never
+// appended. Nothing in the invocation that follows writes, so a goalplan lock that gives up is its first
+// and only failure and the close has no first write of its own to have started.
+func orchestrateDcloseCancelIdleRetrySeed(t *testing.T, cwd, id, slug string) {
+	t.Helper()
+	plan := goalplan.BuildGoalplan(goalplan.NewGoalplanInput{Objective: "cycle completion gate"})
+	plan.Slug = slug
+	plan.WorkPhases = []goalplan.GoalplanWorkPhase{
+		{ID: "wp-1", Title: "first", Status: goalplan.WorkPhaseDone, Tasks: []goalplan.GoalplanTask{}, CriteriaIDs: []string{}},
+		{ID: "wp-2", Title: "second", Status: goalplan.WorkPhasePending, Tasks: []goalplan.GoalplanTask{}, CriteriaIDs: []string{}},
+	}
+	plan.ActiveWorkPhaseID = nil
+	if err := goalplan.WriteGoalplan(cwd, plan); err != nil {
+		t.Fatal(err)
+	}
+	if err := goalplan.AppendGoalplanLedger(cwd, slug, goalplan.GoalplanLedgerEntry{
+		Ts: "2026-01-01T00:00:00.000Z", Slug: slug, Event: goalplan.EventWorkphaseDone, Detail: "closed wp-1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	epoch := "c-test-epoch"
+	s := state.DefaultState(id, slug)
+	s.Phase, s.CheckEpoch, s.OrchestrationActive = state.PhaseIdle, &epoch, true
+	s.DcloseRecovery = &state.DcloseRecoveryMarker{SessionID: id, CheckEpoch: epoch, ClosedWorkPhaseID: "wp-1"}
+	if err := state.WriteState(cwd, s); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// orchestrateDcloseCancelLockDir is the lock directory this close's two goalplan write locks contend
+// with, so a case can make a lock wait and then give up without sleeping on a real holder.
+func orchestrateDcloseCancelLockDir(t *testing.T, cwd, slug string) string {
+	t.Helper()
+	dir, err := goalplan.GoalplanWriteLockDir(cwd, slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+// orchestrateDcloseCancelPlanRel and orchestrateDcloseCancelLockRel name the two artefacts a case may
+// take or remove itself, relative to the case root.
+func orchestrateDcloseCancelPlanRel(slug string) string {
+	return filepath.Join(".crw", "goalplans", slug, goalplan.GoalplanFile)
+}
+
+func orchestrateDcloseCancelLockRel(slug string) string {
+	return filepath.Join(".crw", "goalplans", slug, goalplan.GoalplanLockDir)
+}
+
+// orchestrateDcloseCancelTreeExcept is statusTree without those two artefacts. They belong to the case -
+// the lock directory it makes a lock contend with, and the plan file it removes to make a lock answer
+// unreadable - so they say nothing about whether the close under test wrote.
+func orchestrateDcloseCancelTreeExcept(t *testing.T, root, slug string) map[string]string {
+	t.Helper()
+	tree := statusTree(t, root)
+	plan, lock := orchestrateDcloseCancelPlanRel(slug), orchestrateDcloseCancelLockRel(slug)
+	for path := range tree {
+		if path == plan || path == lock || strings.HasPrefix(path, lock+string(filepath.Separator)) {
+			delete(tree, path)
+		}
+	}
+	return tree
+}
+
+// orchestrateDcloseCancelLockSeam pins a cancellation inside the goalplan write lock a case names. take
+// runs as the close enters that lock, which is where a case takes the lock directory so the lock has to
+// wait at all; sleep, which the lock calls only once its wait has begun, fires the cancellation for the
+// shapes that need it inside the wait rather than before it. The options give that lock zero retry
+// delays, so a lock that has to wait reaches its give-up branch at once with no real sleep; the other
+// lock keeps a single attempt and no hook, because the case is about exactly one of the two.
+func orchestrateDcloseCancelLockSeam(wantFinalize bool, take func(), sleep func(int)) func(bool) *goalplan.GoalplanWriteLockOptions {
+	return func(finalize bool) *goalplan.GoalplanWriteLockOptions {
+		if finalize != wantFinalize {
+			return &goalplan.GoalplanWriteLockOptions{RetryDelaysMs: []int{0}}
+		}
+		take()
+		return &goalplan.GoalplanWriteLockOptions{RetryDelaysMs: []int{0}, Sleep: sleep}
+	}
+}
+
+// orchestrateDcloseCancelLockCases is the two shapes a goalplan write lock gives up in: locked, which
+// this case makes by taking the lock directory, and unreadable, which it makes by releasing that
+// directory and removing the plan file so the attempt that follows acquires the lock and then finds the
+// plan gone.
+func orchestrateDcloseCancelLockCases() []struct {
+	name   string
+	mutate func(t *testing.T, cwd, slug, lockDir string)
+	want   string
+} {
+	return []struct {
+		name   string
+		mutate func(t *testing.T, cwd, slug, lockDir string)
+		want   string
+	}{
+		{"locked", func(t *testing.T, cwd, slug, lockDir string) {}, "is busy."},
+		{"unreadable", func(t *testing.T, cwd, slug, lockDir string) {
+			if err := os.Remove(lockDir); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Remove(filepath.Join(cwd, orchestrateDcloseCancelPlanRel(slug))); err != nil {
+				t.Fatal(err)
+			}
+		}, "could not be read (CYCLE-COMPLETION-01)"},
+	}
+}
+
+// TestOrchestrateDcloseCancelAfterTheLedgerReadWritesNothing is the F2 case: a cancellation that lands
+// after the all-done close has read and parsed the PABCD ledger and before its first append leaves the
+// ledger, the state and the plan untouched and ends the close with 130 (the context's own error and no
+// answer). On the pre-fix code the close appended the done row, wrote IDLE and answered 0.
 //
-// The check count pins the window without a sleep. The close's pre-write checks run in order: the goalplan
-// callback's entry check first (CRW-871), then the check this issue adds immediately before the all-done
-// row append, which is the first one to run after the ledger read. Cancelling at the second is exactly
-// "after the read, before the first write"; on the baseline that second check does not exist, so the hook
-// never cancels the close and it completes.
+// The cancellation is fired by a seam that runs immediately after the ledger read returns, not by a count
+// of the close's checks, so an implementation that ran the check before that read - where the check cannot
+// see this cancellation - completes the close and fails here.
 func TestOrchestrateDcloseCancelAfterTheLedgerReadWritesNothing(t *testing.T) {
 	cwd := orchestrateDcloseTestCwd(t)
 	id, slug := "dclose-cancel-read", "dclose-cancel-read-plan"
@@ -58,75 +165,100 @@ func TestOrchestrateDcloseCancelAfterTheLedgerReadWritesNothing(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	checks := 0
-	seam := orchestrateDcloseSeam{interrupt: func() {
-		checks++
-		if checks == 2 {
-			cancel()
-		}
+	reads := 0
+	seam := orchestrateDcloseSeam{afterLedgerRead: func() {
+		reads++
+		cancel()
 	}}
 	got, err := orchestrateDcloseContext(ctx, cwd, id, "wp-1", state.ReadState(cwd, id), orchestrateDcloseAttest(id), false, seam)
 	after := statusTree(t, cwd)
 	if !errors.Is(err, context.Canceled) || got != (CliResult{}) || !reflect.DeepEqual(before, after) {
-		t.Fatalf("a close cancelled after the ledger read answered (%+v, %v) after %d check(s), leaving %d done row(s) and phase %s; want context.Canceled with the zero result and the ledger, the state and the plan unchanged",
-			got, err, checks, orchestrateDcloseDoneRows(t, cwd, id), state.ReadState(cwd, id).Phase)
+		t.Fatalf("a close cancelled after the ledger read answered (%+v, %v), leaving %d done row(s) and phase %s; want context.Canceled with the zero result and the ledger, the state and the plan unchanged",
+			got, err, orchestrateDcloseDoneRows(t, cwd, id), state.ReadState(cwd, id).Phase)
 	}
-	if checks != 2 {
-		t.Fatalf("the close ran %d pre-write check(s); want the goalplan callback's entry check and the check before its first append", checks)
+	if reads != 1 {
+		t.Fatalf("the close ran the after-read seam %d time(s); want the all-done branch's ledger read once", reads)
 	}
 }
 
-// TestOrchestrateDcloseCancelWhileTheGoalplanLockGivesUpAnswersInterrupted is the second red case: the
-// close's goalplan write lock gives up while the invocation's context is cancelled - the state the close
-// sees when a SIGINT lands during that wait - and the close answers 130 with no output instead of the
-// busy or unreadable text with code 1. On the baseline both answered the busy or unreadable text with
-// code 1, because those branches never read ctx.Err().
-//
-// Neither case needs a sleep: "locked" is a lock directory this test takes, so the real lock exhausts its
-// retry budget and gives up; "unreadable" is the plan file removed, which the real lock reports at once.
-// The lock takes no context by design, so the close can only observe the cancellation after it gives up,
-// which is why the context is cancelled before the call.
+// TestOrchestrateDcloseCancelWhileTheGoalplanLockGivesUpAnswersInterrupted is the F3 case for the close's
+// first goalplan write lock: the lock gives up with locked or unreadable while the invocation's context is
+// cancelled from inside that lock's wait, and the close answers 130 with no output instead of the busy or
+// unreadable text with code 1. On the pre-fix code both answered that text with code 1, because the
+// branches never read ctx.Err().
 func TestOrchestrateDcloseCancelWhileTheGoalplanLockGivesUpAnswersInterrupted(t *testing.T) {
-	cases := []struct {
-		name  string
-		given func(t *testing.T, cwd, slug string)
-	}{
-		{"locked", func(t *testing.T, cwd, slug string) {
-			dir, err := goalplan.GoalplanWriteLockDir(cwd, slug)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := os.Mkdir(dir, 0o700); err != nil {
-				t.Fatal(err)
-			}
-		}},
-		{"unreadable", func(t *testing.T, cwd, slug string) {
-			if err := os.Remove(filepath.Join(cwd, ".crw", "goalplans", slug, "goalplan.json")); err != nil {
-				t.Fatal(err)
-			}
-		}},
-	}
-	for _, tc := range cases {
+	for _, tc := range orchestrateDcloseCancelLockCases() {
 		t.Run(tc.name, func(t *testing.T) {
 			cwd := orchestrateDcloseTestCwd(t)
 			id, slug := "dclose-cancel-"+tc.name, "dclose-cancel-"+tc.name+"-plan"
 			orchestrateDcloseSeedAtC(t, cwd, id, slug, goalplan.TaskDone)
-			tc.given(t, cwd, slug)
-			before := statusTree(t, cwd)
+			lockDir := orchestrateDcloseCancelLockDir(t, cwd, slug)
+			before := orchestrateDcloseCancelTreeExcept(t, cwd, slug)
 
 			ctx, cancel := context.WithCancel(context.Background())
-			cancel()
-			got, err := orchestrateDcloseContext(ctx, cwd, id, "wp-1", state.ReadState(cwd, id), orchestrateDcloseAttest(id), false, orchestrateDcloseSeam{})
-			after := statusTree(t, cwd)
+			defer cancel()
+			var takeErr error
+			seam := orchestrateDcloseSeam{goalplanLockSeam: orchestrateDcloseCancelLockSeam(false,
+				func() { takeErr = os.Mkdir(lockDir, 0o700) },
+				func(int) {
+					cancel()
+					tc.mutate(t, cwd, slug, lockDir)
+				})}
+			got, err := orchestrateDcloseContext(ctx, cwd, id, "wp-1", state.ReadState(cwd, id), orchestrateDcloseAttest(id), false, seam)
+			after := orchestrateDcloseCancelTreeExcept(t, cwd, slug)
+			if takeErr != nil {
+				t.Fatal(takeErr)
+			}
 			if !errors.Is(err, context.Canceled) || got != (CliResult{}) || !reflect.DeepEqual(before, after) {
-				t.Fatalf("a close whose goalplan lock answered %s after the context ended answered (%+v, %v); want context.Canceled with the zero result and the workspace unchanged", tc.name, got, err)
+				t.Fatalf("a close whose goalplan lock answered %s after the context ended during its wait answered (%+v, %v); want context.Canceled with the zero result and no write of the close",
+					tc.name, got, err)
 			}
 		})
 	}
 }
 
-// TestOrchestrateDcloseCancelAfterTheFirstWriteAnswersAsToday is the control: a cancellation that lands
-// once the close's first durable effect is on disk does not undo it, and the close answers the same
+// TestOrchestrateDcloseCancelWhileTheFinalizationLockGivesUpAnswersInterrupted is the F1 case: on a
+// recovery retry that wrote nothing in this invocation, a cancellation that lands while the finalization
+// lock waits and that lock then gives up answers 130 with no output, not the pending text with code 0.
+// On the pre-fix code it answered code 0 with the pending text, because the finalization branch never read
+// ctx.Err() and answered the lock's failure as a code-0 pending result.
+func TestOrchestrateDcloseCancelWhileTheFinalizationLockGivesUpAnswersInterrupted(t *testing.T) {
+	for _, tc := range orchestrateDcloseCancelLockCases() {
+		t.Run(tc.name, func(t *testing.T) {
+			cwd := orchestrateDcloseTestCwd(t)
+			id, slug := "dclose-cancel-finalize-"+tc.name, "dclose-cancel-finalize-"+tc.name+"-plan"
+			orchestrateDcloseCancelIdleRetrySeed(t, cwd, id, slug)
+			lockDir := orchestrateDcloseCancelLockDir(t, cwd, slug)
+			before := orchestrateDcloseCancelTreeExcept(t, cwd, slug)
+
+			cur := state.ReadState(cwd, id)
+			if !state.MatchesDcloseRecovery(cur, "wp-1") {
+				t.Fatalf("the seeded retry does not match the request: %+v", cur.DcloseRecovery)
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			var takeErr error
+			seam := orchestrateDcloseSeam{goalplanLockSeam: orchestrateDcloseCancelLockSeam(true,
+				func() { takeErr = os.Mkdir(lockDir, 0o700) },
+				func(int) {
+					cancel()
+					tc.mutate(t, cwd, slug, lockDir)
+				})}
+			got, err := orchestrateDcloseContext(ctx, cwd, id, "wp-1", cur, orchestrateDcloseAttest(id), true, seam)
+			after := orchestrateDcloseCancelTreeExcept(t, cwd, slug)
+			if takeErr != nil {
+				t.Fatal(takeErr)
+			}
+			if !errors.Is(err, context.Canceled) || got != (CliResult{}) || !reflect.DeepEqual(before, after) {
+				t.Fatalf("a recovery retry that wrote nothing and was cancelled during the finalization lock wait answered (%+v, %v); want context.Canceled with the zero result and no write of the close",
+					got, err)
+			}
+		})
+	}
+}
+
+// TestOrchestrateDcloseCancelAfterTheFirstWriteAnswersAsToday is the first control: a cancellation that
+// lands once the close's first durable effect is on disk does not undo it, and the close answers the same
 // success text it answered before.
 func TestOrchestrateDcloseCancelAfterTheFirstWriteAnswersAsToday(t *testing.T) {
 	cwd := orchestrateDcloseTestCwd(t)
@@ -154,4 +286,91 @@ func TestOrchestrateDcloseCancelAfterTheFirstWriteAnswersAsToday(t *testing.T) {
 	if n := orchestrateDcloseDoneRows(t, cwd, id); n != 1 {
 		t.Fatalf("done rows = %d, want 1", n)
 	}
+}
+
+// TestOrchestrateDcloseCancelAfterTheFirstWriteKeepsThePendingAnswer is F1's other half: when this
+// invocation has already written, a cancellation that lands as the finalization lock waits does not
+// change the answer. The close still reports the pending finalization with code 0, because its effects
+// are visible and the marker is what the next request resumes from.
+func TestOrchestrateDcloseCancelAfterTheFirstWriteKeepsThePendingAnswer(t *testing.T) {
+	cwd := orchestrateDcloseTestCwd(t)
+	id, slug := "dclose-cancel-written", "dclose-cancel-written-plan"
+	orchestrateDcloseSeedAtC(t, cwd, id, slug, goalplan.TaskDone)
+	lockDir := orchestrateDcloseCancelLockDir(t, cwd, slug)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	seam := orchestrateDcloseSeam{goalplanLockSeam: orchestrateDcloseCancelLockSeam(true,
+		func() {
+			cancel()
+			if err := os.Mkdir(lockDir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+		},
+		func(int) {})}
+	got, err := orchestrateDcloseContext(ctx, cwd, id, "wp-1", state.ReadState(cwd, id), orchestrateDcloseAttest(id), false, seam)
+	if err != nil {
+		t.Fatalf("a close whose first write had started returned %v; want the pending answer", err)
+	}
+	if got.Code != 0 || !strings.Contains(got.Output, "finalization is pending") ||
+		!strings.Contains(got.Output, "The recovery marker is still on the session") {
+		t.Fatalf("pending finalization under a cancelled context: %+v", got)
+	}
+	if after := state.ReadState(cwd, id); after.Phase != state.PhaseIdle || after.DcloseRecovery == nil {
+		t.Fatalf("state: %+v", after)
+	}
+	if err := os.Remove(lockDir); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestOrchestrateDcloseLockGiveUpWithALiveContextAnswersAsToday is the second control: the answers a live
+// invocation gets are unchanged by this issue. The first lock answers the busy or unreadable text with
+// code 1, and the finalization lock keeps the section 39 Y3 code-0 pending answer, because the state write
+// that precedes it already moved the FSM to IDLE outside the lock.
+func TestOrchestrateDcloseLockGiveUpWithALiveContextAnswersAsToday(t *testing.T) {
+	for _, tc := range orchestrateDcloseCancelLockCases() {
+		t.Run("first-lock-"+tc.name, func(t *testing.T) {
+			cwd := orchestrateDcloseTestCwd(t)
+			id, slug := "dclose-live-"+tc.name, "dclose-live-"+tc.name+"-plan"
+			orchestrateDcloseSeedAtC(t, cwd, id, slug, goalplan.TaskDone)
+			lockDir := orchestrateDcloseCancelLockDir(t, cwd, slug)
+			var takeErr error
+			seam := orchestrateDcloseSeam{goalplanLockSeam: orchestrateDcloseCancelLockSeam(false,
+				func() { takeErr = os.Mkdir(lockDir, 0o700) },
+				func(int) { tc.mutate(t, cwd, slug, lockDir) })}
+			got, err := orchestrateDcloseRun(t, cwd, id, seam)
+			if takeErr != nil {
+				t.Fatal(takeErr)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Code != 1 || !strings.Contains(got.Output, tc.want) || !strings.Contains(got.Output, "Nothing was written.") {
+				t.Fatalf("a live close whose first lock answered %s gave %+v; want that text with code 1", tc.name, got)
+			}
+		})
+	}
+	t.Run("finalization-lock-pending", func(t *testing.T) {
+		cwd := orchestrateDcloseTestCwd(t)
+		id, slug := "dclose-live-pending", "dclose-live-pending-plan"
+		orchestrateDcloseCancelIdleRetrySeed(t, cwd, id, slug)
+		lockDir := orchestrateDcloseCancelLockDir(t, cwd, slug)
+		cur := state.ReadState(cwd, id)
+		var takeErr error
+		seam := orchestrateDcloseSeam{goalplanLockSeam: orchestrateDcloseCancelLockSeam(true,
+			func() { takeErr = os.Mkdir(lockDir, 0o700) },
+			func(int) {})}
+		got, err := orchestrateDcloseContext(context.Background(), cwd, id, "wp-1", cur, orchestrateDcloseAttest(id), true, seam)
+		if takeErr != nil {
+			t.Fatal(takeErr)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Code != 0 || !strings.Contains(got.Output, "finalization is pending") ||
+			!strings.Contains(got.Output, "The recovery marker is still on the session") {
+			t.Fatalf("a live retry whose finalization lock is busy answered %+v; want the code-0 pending text", got)
+		}
+	})
 }
