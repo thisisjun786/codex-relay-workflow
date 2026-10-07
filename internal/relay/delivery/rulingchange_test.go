@@ -237,10 +237,12 @@ func TestRC04_acceptance_and_a_merge_mark_close_the_change(t *testing.T) {
 		event := h.managedVerified()
 		h.rcAccept(event)
 		detail := h.rcRefused(event, "needs_changes", "v2", rcRestoration(), nil, DispositionConflict)
-		rcMentions(t, detail, "acceptance-1", "plan-1", "node-1", "dag-correct --prepare", "stale", "no recorded correction route", "generation dag-correct will refuse")
+		rcMentions(t, detail, "acceptance-1", "plan-1", "node-1", "dag-correct --prepare", "stale", "accepted_result_correction", "dag-correct --manifest-digest", "dag-accept --supersedes")
 		rcMentions(t, detail, "a base that moved after the acceptance", "dag-base-refresh", "merges of the base")
-		if strings.Contains(detail, "a base that moved after the acceptance is such a case") {
-			t.Fatalf("the refusal still files the moved base under the case that has no route: %s", detail)
+		// CRW-906: a defect found in a current accepted result has a recorded route, so the refusal must not
+		// tell the coordinator that no route exists for it
+		if strings.Contains(detail, "no recorded correction route") {
+			t.Fatalf("the refusal still says a current accepted result has no correction route: %s", detail)
 		}
 	})
 	t.Run("merged", func(t *testing.T) {
