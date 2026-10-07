@@ -77,6 +77,8 @@ type IntegrationBatchResult struct {
 	MarkedEvents                          []string
 	Pending                               []string
 	Targets                               []string
+	AlreadyContained                      []IntegrationBatchContained
+	ContainedUnverified                   []IntegrationBatchContained
 }
 
 // IntegrateBatch runs one batch: it completes the marks earlier batches left pending when their commit is on the
@@ -125,9 +127,39 @@ func (s *Scheduler) IntegrateBatch(ctx context.Context, in IntegrationBatchInput
 	if err := s.recordIntent(ctx, in, batch, old, baseTip, candidates); err != nil {
 		return out, err
 	}
-	settled, err := s.settleCandidates(ctx, in, deps, start, baseTip, candidates)
-	if err != nil {
-		return out, err
+	// A candidate whose head the branch already contains is never merged again (CRW-965). When the branch head is a head
+	// this relay verified, the candidate is marked from its frozen row; otherwise it is reported and stays ready.
+	var fresh, contained []Candidate
+	for _, c := range candidates {
+		inside, err := isAncestorOf(ctx, in.Checkout, c.HeadSHA, in.IntegrationRef)
+		if err != nil {
+			return out, err
+		}
+		if inside {
+			contained = append(contained, c)
+		} else {
+			fresh = append(fresh, c)
+		}
+	}
+	var covered []Candidate
+	if len(contained) > 0 {
+		verified, err := s.headVerified(ctx, in, start)
+		if err != nil {
+			return out, err
+		}
+		for _, c := range contained {
+			if verified {
+				covered = append(covered, c)
+				continue
+			}
+			out.ContainedUnverified = append(out.ContainedUnverified, IntegrationBatchContained{NodeID: c.NodeID, AcceptanceID: c.AcceptanceID, HeadSHA: c.HeadSHA, ContainedIn: start})
+		}
+	}
+	var settled settledIntegration
+	if len(fresh) > 0 {
+		if settled, err = s.settleCandidates(ctx, in, deps, start, baseTip, fresh); err != nil {
+			return out, err
+		}
 	}
 	out.Split = settled.split
 	for _, m := range settled.merged {
@@ -135,35 +167,44 @@ func (s *Scheduler) IntegrateBatch(ctx context.Context, in IntegrationBatchInput
 	}
 	if len(settled.merged) == 0 {
 		out.NewHead = old
-		return out, nil
-	}
-	out.NewHead, out.Verification, out.VerificationDigest = settled.head, settled.record, settled.digest
-	// the coordinator-epoch fence is checked again right before the branch moves: verification can take long, and a
-	// session that lost its epoch in the meantime must not move the branch (finding d3)
-	if err := s.IntegrationWrite(ctx, in.Plan, in.Actor, func(context.Context) error { return nil }); err != nil {
-		return out, err
-	}
-	if err := deps.Update(ctx, in.Checkout, in.IntegrationRef, settled.head, old); err != nil {
-		return out, refuse(contract.RefusalStaleMarkContext, "%s moved while the merged tree was being verified (the batch read %s): read it again and run the batch again", in.IntegrationRef, old)
-	}
-	if err := s.recordMoved(ctx, in, batch, out); err != nil {
-		return out, err
-	}
-	for _, m := range settled.merged {
-		event, err := s.MarkFrozen(ctx, m.Candidate, in.Actor, settled.digest)
-		if err != nil {
-			out.Pending = append(out.Pending, m.NodeID)
-			if rerr := s.recordMark(ctx, in, batch, m.Candidate, "mark_pending", err.Error()); rerr != nil {
+	} else {
+		out.NewHead, out.Verification, out.VerificationDigest = settled.head, settled.record, settled.digest
+		// the coordinator-epoch fence is checked again right before the branch moves: verification can take long, and a
+		// session that lost its epoch in the meantime must not move the branch (finding d3)
+		if err := s.IntegrationWrite(ctx, in.Plan, in.Actor, func(context.Context) error { return nil }); err != nil {
+			return out, err
+		}
+		// the verified head is recorded before the branch moves, so a batch that dies after the move leaves its head known
+		if err := s.recordVerifiedHead(ctx, in, batch, settled.head, settled.digest); err != nil {
+			return out, err
+		}
+		if err := deps.Update(ctx, in.Checkout, in.IntegrationRef, settled.head, old); err != nil {
+			return out, refuse(contract.RefusalStaleMarkContext, "%s moved while the merged tree was being verified (the batch read %s): read it again and run the batch again", in.IntegrationRef, old)
+		}
+		if err := s.recordMoved(ctx, in, batch, out); err != nil {
+			return out, err
+		}
+		for _, m := range settled.merged {
+			event, err := s.MarkFrozen(ctx, m.Candidate, in.Actor, settled.digest)
+			if err != nil {
+				out.Pending = append(out.Pending, m.NodeID)
+				if rerr := s.recordMark(ctx, in, batch, m.Candidate, "mark_pending", err.Error()); rerr != nil {
+					return out, rerr
+				}
+				continue
+			}
+			out.MarkedEvents = append(out.MarkedEvents, event)
+			if rerr := s.recordMark(ctx, in, batch, m.Candidate, "marked", event); rerr != nil {
 				return out, rerr
 			}
-			continue
-		}
-		out.MarkedEvents = append(out.MarkedEvents, event)
-		if rerr := s.recordMark(ctx, in, batch, m.Candidate, "marked", event); rerr != nil {
-			return out, rerr
 		}
 	}
-	out.Targets, err = s.mergedTargetsOf(ctx, in, settled.merged)
+	if err := s.markContained(ctx, in, batch, covered, start, &out); err != nil {
+		return out, err
+	}
+	if len(settled.merged) > 0 {
+		out.Targets, err = s.mergedTargetsOf(ctx, in, settled.merged)
+	}
 	return out, err
 }
 
@@ -225,19 +266,6 @@ func (s *Scheduler) readyIntegrationCandidates(ctx context.Context, in Integrati
 		}
 	}
 	sort.Slice(pick, func(i, j int) bool { return pick[i].NodeID < pick[j].NodeID })
-	// a candidate whose head the integration branch already contains was merged by an earlier run (before its containment
-	// observation); it is not merged or verified again, and its mark completes from the batch that recorded it
-	var fresh []Candidate
-	for _, c := range pick {
-		contained, err := isAncestorOf(ctx, in.Checkout, c.HeadSHA, in.IntegrationRef)
-		if err != nil {
-			return nil, err
-		}
-		if !contained {
-			fresh = append(fresh, c)
-		}
-	}
-	pick = fresh
 	return pick, nil
 }
 
@@ -441,7 +469,7 @@ func (w *integrationWorktree) merge(ctx context.Context, c Candidate) (bool, str
 	if code != 0 {
 		if code != 1 {
 			// git answers 1 for a conflict; anything else (for example 128, a head this checkout does not hold) is a host failure, not a conflict
-			return false, "", fmt.Errorf("git merge of %s exited %d: it is not mergeable in this checkout", c.HeadSHA, code)
+			return false, "", fmt.Errorf("git merge of %s exited %d: %v", c.HeadSHA, code, err)
 		}
 		_, _, _ = runGitExit(ctx, w.dir, integrationIdentity, "merge", "--abort")
 		return false, "", nil
@@ -720,4 +748,61 @@ func isAncestorOf(ctx context.Context, checkout, commit, branch string) (bool, e
 func sha256Digest(raw []byte) string {
 	sum := sha256.Sum256(raw)
 	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+// IntegrationBatchContained is one candidate the branch already contained when the batch ran. A covered one is marked
+// (MarkedEvent) or refused (Reason); an uncovered one is only reported and stays ready (ContainedUnverified).
+type IntegrationBatchContained struct {
+	NodeID, AcceptanceID, HeadSHA, ContainedIn string
+	MarkedEvent, Reason                        string
+}
+
+// markContained writes the merged marks of the candidates the branch already contained, from their frozen rows (CRW-965).
+func (s *Scheduler) markContained(ctx context.Context, in IntegrationBatchInput, batch string, candidates []Candidate, tip string, out *IntegrationBatchResult) error {
+	for _, c := range candidates {
+		row := IntegrationBatchContained{NodeID: c.NodeID, AcceptanceID: c.AcceptanceID, HeadSHA: c.HeadSHA, ContainedIn: tip}
+		event, err := s.MarkFrozen(ctx, c, in.Actor, tip)
+		if err != nil {
+			row.Reason = err.Error()
+			out.AlreadyContained = append(out.AlreadyContained, row)
+			continue
+		}
+		row.MarkedEvent = event
+		out.AlreadyContained = append(out.AlreadyContained, row)
+		out.MarkedEvents = append(out.MarkedEvents, event)
+		if rerr := s.recordMark(ctx, in, batch, c, "marked", event); rerr != nil {
+			return rerr
+		}
+	}
+	return nil
+}
+
+// headVerified is whether this relay recorded a verified head equal to the commit: a batch intent row for the integration
+// ref names it before the batch moved the branch to it, so the tree the branch holds passed its verification (CRW-965).
+func (s *Scheduler) headVerified(ctx context.Context, in IntegrationBatchInput, head string) (bool, error) {
+	rows, err := store.IntegrationStagesOfPlan(ctx, s.Store, in.Plan)
+	if err != nil {
+		return false, err
+	}
+	for _, r := range rows {
+		if r.Stage != "intent" || r.NodeID != "" {
+			continue
+		}
+		var d map[string]string
+		if json.Unmarshal([]byte(r.Detail), &d) == nil && d["verified_head"] == head && d["integration_ref"] == in.IntegrationRef {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// recordVerifiedHead writes the batch's intent to move the branch to a verified head, before the branch moves.
+func (s *Scheduler) recordVerifiedHead(ctx context.Context, in IntegrationBatchInput, batch, head, digest string) error {
+	detail, err := json.Marshal(map[string]string{"verified_head": head, "verification_digest": digest, "integration_ref": in.IntegrationRef})
+	if err != nil {
+		return err
+	}
+	return s.IntegrationWrite(ctx, in.Plan, in.Actor, func(txCtx context.Context) error {
+		return s.stageRow(txCtx, in, batch, "intent", Candidate{}, string(detail))
+	})
 }
