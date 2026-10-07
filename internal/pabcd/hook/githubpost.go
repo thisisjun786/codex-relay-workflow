@@ -4,6 +4,12 @@ package hook
 // GitHub post only when the command is one simple command of literal words in the one form the guard
 // reads whole (the closed rule), and refuses every other text that names a post. The deny reason names
 // only the rule and the place, never a value.
+//
+// The program word is read the way the shell builds it (quote removal and backslash removal) and
+// compared by its last path element, so /usr/bin/gh, ./gh, g''h and 'g'h are the same word as gh, and
+// the form checks and the mention test call that one function. A program word that still holds an
+// expansion after that (a variable, a substitution, a backtick, a glob) names a command the guard
+// cannot judge, so a text that names a post through it is refused rather than passed.
 
 import (
 	"io"
