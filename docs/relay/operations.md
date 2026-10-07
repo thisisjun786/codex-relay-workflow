@@ -596,7 +596,7 @@ subscription on the recipient (the override-free `thread/resume` in
 and a `thread/status/changed` reporting `idle` or `notLoaded` writes the head's wake, one row in the
 zone's `delivery_wakes` table. A woken head is due at once and is attempted at its parent's next turn,
 and it keeps the head of the line until that wake is spent, whatever its own deadline: `busyHeadSQL`
-names the oldest delivery waiting out a busy backoff whose wake has no `spent_at`, the due list,
+names the oldest delivery that is waiting out a busy backoff or whose wake has no `spent_at`, the due list,
 `Attempt` and the claim read the same set, and the wake is judged against the row still being the
 `deferred_busy` one it was written for. The claim spends it as the attempt begins, so a woken head
 that was not claimed before its old deadline still cannot be overtaken by a younger delivery of the
@@ -613,11 +613,11 @@ that reports no status, a recipient the relay could not subscribe, and a recipie
 before the attempt lands. The min send interval and the hourly budget pace the send as before, and a
 busy recipient is still never interrupted: the wake only decides when the relay looks.
 
-The two store failures this pass can meet are handed to the daemon's own halt rather than recorded as
-notes: the wake is the pass's own write and the read of the waiting heads is an observation, so a
-failure of the class that stops the store (`SQLITE_CORRUPT`, `SQLITE_NOTADB`, `SQLITE_IOERR_SHORT_READ`,
-CRW-848) ends the tick there, before the delivery pass and the supervisor channel would write into a
-store the relay has just seen damaged. Every other failure keeps the note it already had.
+The two store failures this pass can meet end the tick with their error: a failed wake write, and a failed
+read of the waiting heads that the subscription hold needs. Either one returns before the delivery pass and
+the supervisor channel write anything, so no statement follows a failed one in that tick. A failed wake
+write leaves the report unapplied, and the head keeps its timer. The daemon's own halt (CRW-848) is not
+on this baseline; when it lands, these two sites are the ones it classifies.
 
 A delivery that has reached its busy or pre-send attempt cap is annotated when its generation
 advances. Once a cap sets a hold, `attempt` returns before the pre-send supersession check, so

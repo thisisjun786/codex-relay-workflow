@@ -385,32 +385,20 @@ func TestIdleWake_a_lost_socket_is_held_again(t *testing.T) {
 	}
 }
 
-func TestIdleWake_a_note_is_reported_once(t *testing.T) {
+func TestIdleWake_a_failed_wake_write_ends_the_tick_before_any_hold(t *testing.T) {
 	t.Parallel()
-	host := &idleHost{reports: []delivery.IdleReport{{ThreadID: idleThread, Status: "idle"}}, holdErr: errors.New("the host refused the resume")}
+	host := &idleHost{reports: []delivery.IdleReport{{ThreadID: idleThread, Status: "idle"}}}
 	d, s := idleDaemon(t, host)
-	// Two failures in one tick: the wake cannot be written, and the hold is refused. (The zone table is
-	// replaced with one this build does not declare: the wake's insert names original_deadline, which
-	// the replacement does not have, while the head set's join reads only event_id and spent_at, so the
-	// recipient is still seen as a waiting head and the hold is still tried.) The tick's notes name
-	// each failure once.
+	// The wake cannot be written: the zone table is replaced with one this build does not declare, so
+	// the wake's insert fails while the waiting-head read still answers. The tick ends with that error,
+	// and no subscription is attempted after the failed write (CRW-904 d1).
 	exec(t, s, "DROP TABLE delivery_wakes")
 	exec(t, s, "CREATE TABLE delivery_wakes (event_id TEXT PRIMARY KEY, spent_at TEXT)")
-	report, err := d.Tick(context.Background())
-	if err != nil {
-		t.Fatal(err)
+	if _, err := d.Tick(context.Background()); err == nil {
+		t.Fatal("a failed wake write returned no error")
 	}
-	wakes, holds := 0, 0
-	for _, note := range report.Notes {
-		if strings.Contains(note, "not applied") {
-			wakes++
-		}
-		if strings.Contains(note, "not opened") {
-			holds++
-		}
-	}
-	if wakes != 1 || holds != 1 {
-		t.Fatalf("the tick reported %d wake notes and %d hold notes, want one of each: %v", wakes, holds, report.Notes)
+	if host.holdTries != 0 {
+		t.Fatalf("%d hold attempts after a failed wake write, want none", host.holdTries)
 	}
 }
 
