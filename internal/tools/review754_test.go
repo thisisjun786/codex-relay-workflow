@@ -14,6 +14,26 @@ import (
 	"testing"
 )
 
+// C4: a body that is not the pinned archive is refused as a digest mismatch even when it is also
+// malformed. The digest covers the whole download before the extraction error is reported, so an
+// invalid response keeps the pinned refusal and its exit status instead of becoming a host failure.
+func TestToolsReviewMalformedArchiveIsADigestMismatch(t *testing.T) {
+	tree := newTestTree(t)
+	withPin(t, testPin(strings.Repeat("0", 64)))
+	release := newFakeRelease(t, []byte("not gzip data"))
+
+	code, out, errOut := runTools(t, context.Background(), tree, &Seams{URLBase: release.server.URL}, "install", "gitleaks")
+	if code != 3 || out != "" || !strings.Contains(errOut, "digest_mismatch") {
+		t.Fatalf("a malformed download: exit %d stdout %q stderr %q", code, out, errOut)
+	}
+	if entries, err := os.ReadDir(tree.toolsRoot); err == nil && len(entries) != 0 {
+		t.Errorf("tools_root holds %v after a malformed download", entries)
+	}
+	if entries, err := os.ReadDir(tree.tempRoot); err == nil && len(entries) != 0 {
+		t.Errorf("temp_root holds %v after a malformed download", entries)
+	}
+}
+
 // review754ConfigTree is a temporary host whose configuration names the given roots with the
 // exact spelling given, so a test proves the command keeps that spelling rather than cleaning it.
 func review754ConfigTree(t *testing.T, paths map[string]string) testTree {
@@ -199,6 +219,72 @@ func TestToolsReviewSuccessfulInstallLeavesNoCreatedParents(t *testing.T) {
 	}
 	if _, err := installedPath(pin, toolsRoot); err != nil {
 		t.Fatalf("the successful install is not readable as an install: %v", err)
+	}
+}
+
+// C3: a concurrent install that made the shared download root first can remove it again as it
+// finishes, right between this call creating the root and this call's own directory. The install
+// re-creates what is missing and retries, so the overlap does not turn a valid install into a host
+// failure. Only the components this call itself made are recorded, so the other install's root is
+// never this call's to remove.
+func TestToolsReviewInstallRecoversWhenTheSharedRootIsRemoved(t *testing.T) {
+	tree := newTestTree(t)
+	archive := syntheticArchive(t, []byte("gitleaks\n"))
+	sum := sha256.Sum256(archive)
+	pin := testPin(hex.EncodeToString(sum[:]))
+	withPin(t, pin)
+	release := newFakeRelease(t, archive)
+	absent := filepath.Join(tree.home, "absent")
+	toolsRoot := filepath.Join(absent, "tools")
+	tree = review754ConfigTree(t, map[string]string{"tools_root": toolsRoot, "temp_root": toolsRoot + "/downloads"})
+
+	// The first attempt finds the root gone, the way it is when the concurrent creator finishes
+	// and cleans up in the same instant; every later attempt behaves normally.
+	calls := 0
+	seams := &Seams{URLBase: release.server.URL}
+	seams.MkdirTemp = func(dir, pattern string) (string, error) {
+		calls++
+		if calls == 1 {
+			_ = os.Remove(dir)
+		}
+		return os.MkdirTemp(dir, pattern)
+	}
+	code, out, errOut := runTools(t, context.Background(), tree, seams, "install", "gitleaks")
+	if code != 0 || errOut != "" || out != pin.ExecutablePath(toolsRoot)+"\n" {
+		t.Fatalf("install under a removed shared root: exit %d stdout %q stderr %q", code, out, errOut)
+	}
+	if _, err := os.Stat(toolsRoot + "/downloads"); !os.IsNotExist(err) {
+		t.Fatalf("the download root was left behind: %v", err)
+	}
+	if _, err := installedPath(pin, toolsRoot); err != nil {
+		t.Fatalf("the install is not readable as an install: %v", err)
+	}
+}
+
+// createRoot records only the components this call itself made: a directory that already exists is
+// never answered as this call's, so the caller cannot remove a directory it did not create.
+func TestToolsReviewCreateRootRecordsOnlyItsOwnDirectories(t *testing.T) {
+	base := t.TempDir()
+	existing := filepath.Join(base, "existing")
+	if err := os.Mkdir(existing, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(existing, "a", "b")
+	created, err := createRoot(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{filepath.Join(existing, "a"), filepath.Join(existing, "a", "b")}
+	if strings.Join(created, ",") != strings.Join(want, ",") {
+		t.Fatalf("createRoot recorded %v, want only the components it made %v", created, want)
+	}
+	// A directory that already exists is not recorded, even when the deeper component is missing.
+	again, err := createRoot(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(again) != 0 {
+		t.Fatalf("createRoot recorded %v for a root that already exists", again)
 	}
 }
 

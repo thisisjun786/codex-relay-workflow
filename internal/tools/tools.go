@@ -66,6 +66,10 @@ type Seams struct {
 	// deterministically. It must not wait on work that is itself blocked on the lock. nil means no
 	// hook, which is the production value.
 	BeforeRepair func()
+	// MkdirTemp makes a directory under dir; nil means os.MkdirTemp. A test replaces it to
+	// reproduce the moment a concurrent install removes the shared download root between its
+	// creation and this call's own directory.
+	MkdirTemp func(dir, pattern string) (string, error)
 }
 
 func (s *Seams) platform() (string, string) {
@@ -105,6 +109,15 @@ func (s *Seams) urlBase() string {
 		return strings.TrimSuffix(s.URLBase, "/")
 	}
 	return ReleaseBase
+}
+
+// mkdirTemp makes a directory under dir; a test replaces it to reproduce the moment a concurrent
+// install removes the shared download root between its creation and this call.
+func (s *Seams) mkdirTemp(dir, pattern string) (string, error) {
+	if s.MkdirTemp != nil {
+		return s.MkdirTemp(dir, pattern)
+	}
+	return os.MkdirTemp(dir, pattern)
 }
 
 // supported reports whether this host has an archive for the pin. It is the single platform rule

@@ -94,20 +94,30 @@ func install(ctx context.Context, pin Pin, seams *Seams, toolsRoot, tempRoot str
 // between the digest and the unpack. Every directory this call creates under tempRoot is removed
 // before it returns, whatever the answer, and a directory that was already there is left alone.
 func fetch(ctx context.Context, pin Pin, seams *Seams, tempRoot string) ([]byte, error) {
-	// Learn which directories MkdirAll will create before it creates them, so only those can be
-	// removed. A path that already exists is not this call's to remove, including a dangling
-	// symbolic link, which Lstat sees but Stat does not.
-	created := createdParents(tempRoot)
-	if err := os.MkdirAll(tempRoot, 0o755); err != nil {
-		removeCreated(created)
+	// Only the components this call's own os.Mkdir creates are recorded, so a directory another
+	// install made is never this call's to remove.
+	created, err := createRoot(tempRoot)
+	if err != nil {
 		return nil, hostFail("the download root %s could not be made: %v", tempRoot, err)
 	}
-	// The download directory is removed before the created parents are, so the parents are empty
-	// when they are reached.
-	defer removeCreated(created)
-	dir, err := os.MkdirTemp(tempRoot, pin.Name+"-")
+	// removeCreated is a closure so it reads the list after the retry below may extend it.
+	defer func() { removeCreated(created) }()
+	dir, err := seams.mkdirTemp(tempRoot, pin.Name+"-")
 	if err != nil {
-		return nil, hostFail("the download directory under %s could not be made: %v", tempRoot, err)
+		if !errors.Is(err, fs.ErrNotExist) {
+			return nil, hostFail("the download directory under %s could not be made: %v", tempRoot, err)
+		}
+		// A concurrent install removed the shared download root between this call creating it and
+		// here. The root is made again, recording only what this call makes, and the directory is
+		// tried once more, so the overlap does not turn a valid install into a host failure.
+		again, mkErr := createRoot(tempRoot)
+		if mkErr != nil {
+			return nil, hostFail("the download root %s could not be made: %v", tempRoot, mkErr)
+		}
+		created = append(created, again...)
+		if dir, err = seams.mkdirTemp(tempRoot, pin.Name+"-"); err != nil {
+			return nil, hostFail("the download directory under %s could not be made: %v", tempRoot, err)
+		}
 	}
 	defer func() { _ = os.RemoveAll(dir) }()
 
@@ -124,19 +134,21 @@ func fetch(ctx context.Context, pin Pin, seams *Seams, tempRoot string) ([]byte,
 	defer file.Close()
 	hasher := sha256.New()
 	tee := io.TeeReader(file, hasher)
-	body, err := member(tee, pin.Executable)
-	if err != nil {
-		return nil, err
-	}
-	// Drain the rest of the file so the digest covers every byte, not only the member that was
-	// unpacked. A member or extract failure above answers before the digest is compared, because
-	// that failure names what went wrong more precisely than a digest that cannot match.
+	body, memberErr := member(tee, pin.Executable)
+	// The rest of the file is drained into the hash even when the member could not be read, so the
+	// digest always covers the whole archive. A malformed body is usually the wrong archive as
+	// well, and the pinned refusal names what went wrong more precisely than the extraction error,
+	// so the digest is compared first and the extraction error is reported only for a matching
+	// digest. The file is still read exactly once.
 	if _, err := io.Copy(io.Discard, tee); err != nil {
 		return nil, hostFail("the downloaded archive %s could not be read: %v", archive, err)
 	}
 	digest := hex.EncodeToString(hasher.Sum(nil))
 	if digest != pin.SHA256 {
 		return nil, refuse("digest_mismatch", digestMismatchExit, "the archive %s has sha256 %s, not the pinned %s", pin.Archive, digest, pin.SHA256)
+	}
+	if memberErr != nil {
+		return nil, memberErr
 	}
 	return body, nil
 }
@@ -182,14 +194,38 @@ func download(ctx context.Context, pin Pin, seams *Seams, dir string) (string, e
 	return path, nil
 }
 
-// createdParents lists the directories os.MkdirAll(tempRoot) would create: the components of
-// tempRoot that do not exist yet, outermost first, stopping at the first ancestor that does exist.
-// The path is walked by its raw spelling, the way MkdirAll walks it, so a configured root that
-// mixes a symbolic link and ".." is not rewritten. Lstat is used so a dangling symbolic link counts
-// as existing rather than as a directory this call made and may remove.
-func createdParents(tempRoot string) []string {
+// createRoot makes dir and every missing ancestor of it, recording only the components this call
+// created: an os.Mkdir that succeeds is this call's, and one that answers EEXIST was already there
+// or was made by another call in the same instant and is not this call's to remove. The list is
+// outermost first, the order removeCreated walks backwards. The path is walked by its raw spelling,
+// the way os.MkdirAll walks it, so a configured root that mixes a symbolic link and ".." is not
+// rewritten. Lstat is used so a dangling symbolic link counts as existing rather than as a
+// directory this call may make and remove.
+func createRoot(dir string) ([]string, error) {
+	components := rootComponents(dir)
+	created := make([]string, 0, len(components))
+	for _, component := range components {
+		err := os.Mkdir(component, 0o755)
+		switch {
+		case err == nil:
+			created = append(created, component)
+		case errors.Is(err, fs.ErrExist):
+			// Already there, or another call made it in the same instant; either way it is not
+			// this call's to remove.
+		default:
+			removeCreated(created)
+			return nil, err
+		}
+	}
+	return created, nil
+}
+
+// rootComponents lists the components of dir that do not exist yet, outermost first, stopping at
+// the first ancestor that does exist. A dangling symbolic link counts as existing, so it is never
+// recorded as a directory this call made.
+func rootComponents(dir string) []string {
 	var missing []string
-	for path := tempRoot; path != ""; {
+	for path := dir; path != ""; {
 		if _, err := os.Lstat(path); err == nil {
 			break
 		}
@@ -201,7 +237,7 @@ func createdParents(tempRoot string) []string {
 		}
 		path = trimmed[:cut]
 	}
-	// missing holds the innermost component first; reverse it so the outermost is removed last.
+	// missing holds the innermost component first; reverse it so the outermost is created first.
 	for i, j := 0, len(missing)-1; i < j; i, j = i+1, j-1 {
 		missing[i], missing[j] = missing[j], missing[i]
 	}
@@ -225,7 +261,10 @@ func member(reader io.Reader, name string) ([]byte, error) {
 		return nil, hostFail("the archive is not a gzip stream: %v", err)
 	}
 	defer compressed.Close()
-	entries := tar.NewReader(compressed)
+	// The decompressed volume is bounded as well as the compressed one: an archive whose expansion
+	// is far larger than any pinned release is refused rather than decompressed in full, so a
+	// mismatched or hostile body cannot turn a small download into unbounded work.
+	entries := tar.NewReader(io.LimitReader(compressed, maxArchiveBytes+1))
 	for {
 		header, err := entries.Next()
 		if errors.Is(err, io.EOF) {
