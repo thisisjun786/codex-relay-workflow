@@ -117,12 +117,13 @@ type WriteOptions struct {
 	// Publish replaces the policy file durably. It is the seam a caller in another package (the GUI
 	// route) uses to reach the publication and the restore, which the package-level writePublish seam
 	// cannot reach from outside policystore. A nil field takes publishPolicy.
-	Publish publishFunc
+	Publish PublishFunc
 }
 
-// publishFunc is the shape of the publication step: the temporary file, the fsync, the rename and
-// the directory fsync, answering whether the path now holds the new bytes.
-type publishFunc func(path string, data []byte, mode os.FileMode) (renamed bool, err error)
+// PublishFunc is the shape of the publication step: the temporary file, the fsync, the rename and
+// the directory fsync, answering whether the path now holds the new bytes. It is exported so a caller
+// outside policystore can name the type of the WriteOptions.Publish seam.
+type PublishFunc func(path string, data []byte, mode os.FileMode) (renamed bool, err error)
 
 // WriteRequest is one proposed write: the digest the caller read and the change it proposes.
 type WriteRequest struct {
@@ -396,7 +397,7 @@ func storedResult(ctx context.Context, env LookupEnv, running func(context.Conte
 // A restore whose rename happened and whose directory could not be synced is still a restore: the
 // original bytes are on disk and the record names them, so the answer says so and warns that a power
 // loss may bring the new bytes back, in which case the next write refuses on the digest disagreement.
-func restoreResult(publish publishFunc, encoded, path string, raw []byte, mode os.FileMode, original, backup string, warnings []string, detail string) WriteResult {
+func restoreResult(publish PublishFunc, encoded, path string, raw []byte, mode os.FileMode, original, backup string, warnings []string, detail string) WriteResult {
 	renamed, err := publish(encoded, raw, mode)
 	if err != nil && !renamed {
 		digest, _ := digestAt(path)

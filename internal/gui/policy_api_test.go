@@ -699,6 +699,9 @@ func TestPolicyWriteReturnsTheRecordBackupAndRestartAdvice(t *testing.T) {
 // TestPolicyWriteReportsTheRestoreWarning is the route half of R2: a restore whose directory could
 // not be synced answers register_failed with restored and the power-loss warning, and the caller
 // sees it. The seam fails only the SECOND publication (the restore); the first one really writes.
+// This test proves the body mapping (restored, warnings, backup reaching the caller); the durability
+// of the restore itself is pinned by TestARestoreWhoseDirectorySyncFailedIsStillARestore, which wraps
+// the real publishPolicy.
 func TestPolicyWriteReportsTheRestoreWarning(t *testing.T) {
 	policyHost(t, policyWritableText, true)
 	policyWriteSeamsFor(t, func(context.Context, string) policystore.RegisterAnswer {
