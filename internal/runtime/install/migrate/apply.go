@@ -513,10 +513,15 @@ func (a *applyRun) migrateReviewFollowupReceiptManifest(it Item) ([]migrateRevie
 	return migrateReviewFollowupDecodeManifest(f, migrateReviewFollowupReceiptReadCap)
 }
 
-// migrateReviewFollowupManifestTrigger is the byte run that makes a record worth decoding: the opening quote and the
-// start of the manifest key. The receipt reader spells the key `artifactManifest`, and a key written with an escape
-// (`artifact\u004danifest`) starts with the same bytes, so a record holding the key in either spelling trips this.
-const migrateReviewFollowupManifestTrigger = "\"artifact"
+// migrateReviewFollowupManifestMarkers are the byte runs that make a record worth decoding. A record is a receipt only if
+// one of its keys is the manifest key, and any raw spelling of that key either carries the literal run "Manifest" (when
+// those characters are written as themselves) or carries at least one backslash-u escape (when any character of the key is
+// escaped). A record holding neither run cannot hold the key in any spelling, so it cannot be a receipt, and the scan
+// refuses it without reading it: the scan looks at every planned file under evidence/, and an ordinary artifact of
+// hundreds of megabytes must not be pulled into memory to find out it holds no manifest. A record holding either run is
+// read within the bound the receipt reader itself applies and decoded by encoding/json, the same decoder that reader uses,
+// so no cap of this order's own can drop a reference of a receipt the reader can read.
+var migrateReviewFollowupManifestMarkers = [][]byte{[]byte("Manifest"), []byte("\\u")}
 
 // migrateReviewFollowupManifestKey is the member a receipt's references live in, as the receipt reader spells it.
 const migrateReviewFollowupManifestKey = "artifactManifest"
@@ -595,27 +600,29 @@ func migrateReviewFollowupDecodeManifest(rs io.ReadSeeker, limit int64) ([]migra
 	return manifest, true
 }
 
-// migrateReviewFollowupMentionsManifestKey reports whether a record's bytes hold the run the manifest key starts with,
-// within the receipt reader's bound. It keeps a window of that run's length rather than the record, so a large artifact
-// that is not a receipt costs no memory here; a record that does mention the key is read and decoded by the caller.
+// migrateReviewFollowupMentionsManifestKey reports whether a record's bytes hold a run any spelling of the manifest key
+// must carry, within the receipt reader's bound. It keeps a window the length of the longest run rather than the record,
+// so a large artifact that is not a receipt costs no memory here; a record that does hold a run is read and decoded by the
+// caller, which is what decides whether it really is a receipt.
 func migrateReviewFollowupMentionsManifestKey(rs io.ReadSeeker, limit int64) bool {
-	trigger := []byte(migrateReviewFollowupManifestTrigger)
 	limited := &io.LimitedReader{R: rs, N: limit + 1}
 	buf := make([]byte, 64<<10)
-	matched := 0
+	seen := make([]int, len(migrateReviewFollowupManifestMarkers))
 	for {
 		n, err := limited.Read(buf)
 		for _, c := range buf[:n] {
-			if c == trigger[matched] {
-				matched++
-				if matched == len(trigger) {
-					return true
+			for i, marker := range migrateReviewFollowupManifestMarkers {
+				if c == marker[seen[i]] {
+					seen[i]++
+					if seen[i] == len(marker) {
+						return true
+					}
+					continue
 				}
-				continue
-			}
-			matched = 0
-			if c == trigger[0] {
-				matched = 1
+				seen[i] = 0
+				if c == marker[0] {
+					seen[i] = 1
+				}
 			}
 		}
 		if err != nil {

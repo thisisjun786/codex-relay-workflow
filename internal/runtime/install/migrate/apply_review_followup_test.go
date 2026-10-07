@@ -351,26 +351,32 @@ func TestMigrateApplyReviewFollowupWalksAsTheDecoderWould(t *testing.T) {
 		record string
 		want   bool
 	}{
-		"a plain manifest":             {"{\"artifactManifest\":[{\"path\":\"v.json\",\"kind\":\"verdict\"}]}", true},
-		"the member after another":     {"{\"a\":1,\"artifactManifest\":[{\"path\":\"v.json\",\"kind\":\"verdict\"}],\"b\":2}", true},
-		"an escaped key":               {"{\"artifact\\u004danifest\":[{\"path\":\"v.json\",\"kind\":\"verdict\"}]}", true},
-		"a duplicate key, last wins":   {"{\"artifactManifest\":[{\"path\":\"v.json\",\"kind\":\"verdict\"}],\"artifactManifest\":[{\"path\":\"w.json\",\"kind\":\"verdict\"}]}", true},
-		"an empty array then a member": {"{\"artifactManifest\":[],\"artifactManifest\":[{\"path\":\"w.json\",\"kind\":\"verdict\"}]}", true},
-		"an empty array":               {"{\"artifactManifest\":[]}", false},
-		"a null member":                {"{\"artifactManifest\":null}", false},
-		"a string member":              {"{\"artifactManifest\":\"x\"}", false},
-		"a number member":              {"{\"artifactManifest\":1}", false},
-		"an object member":             {"{\"artifactManifest\":{}}", false},
-		"a brace inside a string":      {"{\"artifactManifest\":[{\"path\":\"a}\"}]}", true},
-		"a bracket inside a string":    {"{\"artifactManifest\":[{\"path\":\"a]\"}]}", true},
-		"a nested object holding it":   {"{\"nested\":{\"artifactManifest\":[{\"path\":\"v.json\",\"kind\":\"verdict\"}]}}", false},
-		"nested values before it":      {"{\"outer\":{\"x\":{\"y\":[1,2,{\"z\":\"}\"}]}},\"artifactManifest\":[{\"path\":\"v.json\",\"kind\":\"verdict\"}]}", true},
-		"data after the object":        {"{\"artifactManifest\":[{\"path\":\"v.json\",\"kind\":\"verdict\"}]} {}", false},
-		"an empty object":              {"{}", false},
-		"not an object":                {"[]", false},
-		"not JSON at all":              {"", false},
-		"an unterminated array":        {"{\"artifactManifest\":[}", false},
-		"a trailing comma":             {"{\"a\":1,}", false},
+		"a plain manifest":         {"{\"artifactManifest\":[{\"path\":\"v.json\",\"kind\":\"verdict\"}]}", true},
+		"the member after another": {"{\"a\":1,\"artifactManifest\":[{\"path\":\"v.json\",\"kind\":\"verdict\"}],\"b\":2}", true},
+		"an escaped key":           {"{\"artifact\\u004danifest\":[{\"path\":\"v.json\",\"kind\":\"verdict\"}]}", true},
+		// Every spelling of the key that decodes to it must be caught before the record is decoded, or a receipt the
+		// reader can read would keep the name judgement instead of its content.
+		"a fully escaped first character": {"{\"\\u0061rtifactManifest\":[{\"path\":\"v.json\",\"kind\":\"verdict\"}]}", true},
+		// An escape that decodes to a different key is not the manifest key, and the decoder is what decides: this one
+		// is \u006d, a lower-case m, so it spells artifactmanifest.
+		"an escape spelling another key": {"{\"artifact\\u006danifest\":[{\"path\":\"v.json\",\"kind\":\"verdict\"}]}", false},
+		"a duplicate key, last wins":     {"{\"artifactManifest\":[{\"path\":\"v.json\",\"kind\":\"verdict\"}],\"artifactManifest\":[{\"path\":\"w.json\",\"kind\":\"verdict\"}]}", true},
+		"an empty array then a member":   {"{\"artifactManifest\":[],\"artifactManifest\":[{\"path\":\"w.json\",\"kind\":\"verdict\"}]}", true},
+		"an empty array":                 {"{\"artifactManifest\":[]}", false},
+		"a null member":                  {"{\"artifactManifest\":null}", false},
+		"a string member":                {"{\"artifactManifest\":\"x\"}", false},
+		"a number member":                {"{\"artifactManifest\":1}", false},
+		"an object member":               {"{\"artifactManifest\":{}}", false},
+		"a brace inside a string":        {"{\"artifactManifest\":[{\"path\":\"a}\"}]}", true},
+		"a bracket inside a string":      {"{\"artifactManifest\":[{\"path\":\"a]\"}]}", true},
+		"a nested object holding it":     {"{\"nested\":{\"artifactManifest\":[{\"path\":\"v.json\",\"kind\":\"verdict\"}]}}", false},
+		"nested values before it":        {"{\"outer\":{\"x\":{\"y\":[1,2,{\"z\":\"}\"}]}},\"artifactManifest\":[{\"path\":\"v.json\",\"kind\":\"verdict\"}]}", true},
+		"data after the object":          {"{\"artifactManifest\":[{\"path\":\"v.json\",\"kind\":\"verdict\"}]} {}", false},
+		"an empty object":                {"{}", false},
+		"not an object":                  {"[]", false},
+		"not JSON at all":                {"", false},
+		"an unterminated array":          {"{\"artifactManifest\":[}", false},
+		"a trailing comma":               {"{\"a\":1,}", false},
 	}
 	for name, c := range records {
 		t.Run(name, func(t *testing.T) {
