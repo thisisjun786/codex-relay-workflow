@@ -440,3 +440,48 @@ func TestResetLinkPermVerdictsMatchStatWithoutARename(t *testing.T) {
 		})
 	}
 }
+
+// TestResetLinkPermReadsALongTargetWhole: readlinkat answers a target of 128 bytes or more by
+// filling the buffer and reporting its size, not by failing, so a read that stopped at the first
+// buffer would judge a cut-off path. A target longer than that buffer that exists must be judged as
+// os.Stat judges the link.
+func TestResetLinkPermReadsALongTargetWhole(t *testing.T) {
+	root := t.TempDir()
+	crw := filepath.Join(root, ".crw")
+	sessions := filepath.Join(crw, "sessions")
+	if err := os.MkdirAll(sessions, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	long := strings.Repeat("n", 150) + ".txt"
+	if err := os.WriteFile(filepath.Join(sessions, long), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(long, filepath.Join(sessions, "a.json")); err != nil {
+		t.Fatal(err)
+	}
+	parent, err := os.OpenRoot(crw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer parent.Close()
+	observed, err := parent.Lstat("sessions")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pinned, err := resetPin(parent, "sessions", observed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pinned.Close()
+	_, oracleErr := os.Stat(filepath.Join(sessions, "a.json"))
+	if oracleErr != nil {
+		t.Fatalf("the control must resolve: %v", oracleErr)
+	}
+	got, err := resetLinkTargetExists(pinned, "a.json")
+	if err != nil {
+		t.Fatalf("resetLinkTargetExists: %v", err)
+	}
+	if got != (oracleErr == nil) {
+		t.Errorf("exists = %v, but os.Stat on the same link answers %v", got, oracleErr)
+	}
+}

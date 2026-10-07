@@ -312,19 +312,19 @@ func resetLinkWalkLstat(dir *os.File, path string) (unix.Stat_t, error) {
 }
 
 // resetLinkWalkReadlink reads the link target of a path in the pinned directory with readlinkat
-// relative to the descriptor. The buffer grows because a target longer than the first size answers
-// ERANGE.
+// relative to the descriptor. readlinkat fills the buffer and reports how much it wrote instead of
+// failing when the target is longer, so a read whose buffer came back full is repeated with a
+// larger one: stopping at the first buffer would judge a cut-off path.
 func resetLinkWalkReadlink(dir *os.File, path string) (string, error) {
 	for size := 128; ; size *= 2 {
 		buf := make([]byte, size)
 		n, err := unix.Readlinkat(int(dir.Fd()), path, buf)
-		if errors.Is(err, unix.ERANGE) {
-			continue
-		}
 		if err != nil {
 			return "", err
 		}
-		return string(buf[:n]), nil
+		if n < size {
+			return string(buf[:n]), nil
+		}
 	}
 }
 
