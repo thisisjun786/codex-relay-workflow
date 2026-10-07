@@ -223,22 +223,24 @@ func TestCRW737C6AnswerRefusals(t *testing.T) {
 	if got := crw737Run(t, "--state", state, "decision-answer", "--decision", decision, "--option", "now", "--via", "direct-ask"); got.code != 2 {
 		t.Fatalf("an answer without --by: exit %d %s", got.code, got.stdout)
 	}
-	crw737Refused(t, crw737Run(t, "--state", state, "decision-answer", "--decision", decision, "--option", "now",
-		"--by", "task-a", "--via", "   "), "bad_invocation")
-	crw737Refused(t, crw737Run(t, "--state", state, "decision-answer", "--decision", decision, "--option", "now",
-		"--by", "task-a", "--via", "carrier-pigeon"), "bad_invocation")
-	crw737Refused(t, crw737Run(t, "--state", state, "decision-answer", "--decision", decision, "--option", "nosuch",
-		"--by", "task-a", "--via", "direct-ask"), "bad_invocation")
-	crw737Refused(t, crw737Run(t, "--state", state, "decision-answer", "--decision", decision,
-		"--by", "task-a", "--via", "direct-ask"), "bad_invocation")
+	// CRW-903: the recorder, the class and the via are named on every line below, so each case
+	// reaches the check it is about instead of being stopped by the provenance gate first.
+	review818RefusedFor(t, crw737Run(t, "--state", state, "decision-answer", "--decision", decision, "--option", "now",
+		"--by", "task-sup", "--via", "   ", "--authority", "user"), "bad_invocation", "is answered through")
+	review818RefusedFor(t, crw737Run(t, "--state", state, "decision-answer", "--decision", decision, "--option", "now",
+		"--by", "task-sup", "--via", "carrier-pigeon", "--authority", "user"), "bad_invocation", "is answered through")
+	review818RefusedFor(t, crw737Run(t, "--state", state, "decision-answer", "--decision", decision, "--option", "nosuch",
+		"--by", "task-sup", "--via", "direct-ask", "--authority", "user"), "bad_invocation", "names no option of the record")
+	review818RefusedFor(t, crw737Run(t, "--state", state, "decision-answer", "--decision", decision,
+		"--by", "task-sup", "--via", "direct-ask", "--authority", "user"), "bad_invocation", "names no option of the record")
 	// A user-grade question answered by a weaker class is an answer below the grade.
-	crw737Refused(t, crw737Run(t, "--state", state, "decision-answer", "--decision", decision,
-		"--option", "now", "--by", "task-a", "--via", "direct-ask", "--authority", "delegated-management"), "bad_invocation")
-	crw737Refused(t, crw737Run(t, "--state", state, "decision-answer", "--decision", decision,
-		"--option", "now", "--by", "task-a", "--via", "direct-ask", "--authority", "parent=plan-1"), "bad_invocation")
+	review818RefusedFor(t, crw737Run(t, "--state", state, "decision-answer", "--decision", decision,
+		"--option", "now", "--by", "task-sup", "--via", "direct-ask", "--authority", "delegated-management"), "bad_invocation", "takes an answer that names its own class")
+	review818RefusedFor(t, crw737Run(t, "--state", state, "decision-answer", "--decision", decision,
+		"--option", "now", "--by", "task-sup", "--via", "direct-ask", "--authority", "parent=plan-1"), "bad_invocation", "takes an answer that names its own class")
 	// A parent-class answer without its reference is refused.
-	crw737Refused(t, crw737Run(t, "--state", state, "decision-answer", "--decision", decision,
-		"--option", "now", "--by", "task-a", "--via", "direct-ask", "--authority", "parent"), "bad_invocation")
+	review818RefusedFor(t, crw737Run(t, "--state", state, "decision-answer", "--decision", decision,
+		"--option", "now", "--by", "task-sup", "--via", "direct-ask", "--authority", "parent"), "bad_invocation", "takes an answer that names its own class")
 
 	if got := crw737Run(t, "--state", state, "decision-answer", "--decision", decision, "--option", "now",
 		"--by", "task-sup", "--via", "direct-ask", "--authority", "user"); got.code != 0 {
