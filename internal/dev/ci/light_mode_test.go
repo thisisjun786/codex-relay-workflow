@@ -143,14 +143,11 @@ func TestLightMode_the_notice_step_is_first_and_every_other_step_is_guarded(t *t
 	}
 }
 
-// pull_request.types gains labeled after the five earlier types, so the merge lane's label starts a
-// full run on the same head; the concurrency expression is unchanged, so that labeled run joins the
-// pull request's main group and cancels the light run in progress.
-func TestLightMode_the_labeled_trigger_is_added_and_the_concurrency_is_unchanged(t *testing.T) {
+// The concurrency expression is unchanged. CRW-966 removed the pull_request trigger, so the
+// labeled event this test used to require no longer exists; the concurrency pins stay, because the
+// block itself is kept for the manual dispatch.
+func TestLightMode_the_concurrency_is_unchanged(t *testing.T) {
 	workflow := lightWorkflow(t)
-	if !strings.Contains(workflow, "    types: [opened, reopened, synchronize, ready_for_review, edited, labeled]\n") {
-		t.Error("pull_request.types does not carry labeled after its five earlier types")
-	}
 	_, concurrency, found := strings.Cut(workflow, "\nconcurrency:\n")
 	if !found {
 		t.Fatal("the workflow has no concurrency block")
