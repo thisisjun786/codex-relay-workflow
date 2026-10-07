@@ -225,17 +225,19 @@ func createRootReach(made createRootRecord) []string {
 	return []string{made.path, crwconfig.JoinRoot(made.parent, made.name)}
 }
 
-// createRootMatch answers the name at which the directory a record holds is still standing, and
-// whether any name reaches it. Identity, not the name, decides: a directory another install made at
-// the same name is a different directory, and a name that now names something else is passed over
-// for the record's other name rather than taken as proof that the directory is gone.
-func createRootMatch(made createRootRecord) (string, bool) {
+// createRootMatch answers the name at which the directory a record holds is still standing, the
+// identity read there, and whether any name reaches it. Identity, not the name, decides: a directory
+// another install made at the same name is a different directory, and a name that now names
+// something else is passed over for the record's other name rather than taken as proof that the
+// directory is gone. The identity is answered from the same read the caller decides on, so a caller
+// that removes needs no second look at a name that may have changed in between.
+func createRootMatch(made createRootRecord) (string, os.FileInfo, bool) {
 	for _, reach := range createRootReach(made) {
 		if info, err := os.Lstat(reach); err == nil && os.SameFile(made.info, info) {
-			return reach, true
+			return reach, info, true
 		}
 	}
-	return "", false
+	return "", nil, false
 }
 
 // componentParent is component's parent as text: everything before the last separator, with nothing
@@ -289,7 +291,9 @@ func componentName(component string) string {
 // time it is read, which is how a peer's replacement could otherwise be recorded as this call's. The
 // parent location is a directory this call is about to make an entry in, so it can be opened only
 // when it is readable as well as searchable; a parent that cannot be opened keeps the caller's
-// spelling, which needs no more than making a directory in it does.
+// spelling, which needs no more than making a directory in it does. The parent location is recorded
+// either way, because it is the second name by which the cleanup reaches a directory whose spelling
+// has stopped resolving.
 //
 // On EEXIST the record describes the object standing there, which is not this call's to make; the
 // error is returned with it so the caller can compare that identity with the one it recorded. A
@@ -305,25 +309,13 @@ func createRootComponent(component string) (createRootRecord, error) {
 	}
 	if made.parent != "" {
 		if parentRoot, err := os.OpenRoot(made.parent); err == nil {
-			mkErr := parentRoot.Mkdir(made.name, 0o755)
-			if mkErr != nil && !errors.Is(mkErr, fs.ErrExist) {
-				parentRoot.Close()
-				return createRootRecord{}, mkErr
+			if createRootAfterParentOpened != nil {
+				createRootAfterParentOpened(component)
 			}
-			info, readErr := parentRoot.Lstat(made.name)
+			record, err := createRootUnderParent(parentRoot, made)
 			parentRoot.Close()
-			if readErr != nil {
-				if mkErr != nil {
-					return createRootRecord{}, mkErr
-				}
-				return createRootRecord{}, readErr
-			}
-			made.info = info
-			return made, mkErr
+			return record, err
 		}
-		// The parent cannot be opened, so its location cannot be used as a second name either: the
-		// caller's spelling is all there is.
-		made.parent = ""
 	}
 	err := os.Mkdir(component, 0o755)
 	if err != nil && !errors.Is(err, fs.ErrExist) {
@@ -341,6 +333,37 @@ func createRootComponent(component string) (createRootRecord, error) {
 	return made, err
 }
 
+// createRootUnderParent makes the component's entry through an open handle on its parent location
+// and reads the identity of what that mkdir acted on through the same handle.
+//
+// The handle pins one directory, while the names a record keeps are text. When the directory the
+// handle pins is no longer the one the parent location names -- a peer renamed it after the walk
+// resolved it -- the entry this mkdir made stands somewhere neither recorded name reaches, so it is
+// removed through the handle rather than left behind, and the walk is told the ancestor is not there
+// so it recomputes. An entry the mkdir did not make is left alone.
+func createRootUnderParent(parentRoot *os.Root, made createRootRecord) (createRootRecord, error) {
+	mkErr := parentRoot.Mkdir(made.name, 0o755)
+	if mkErr != nil && !errors.Is(mkErr, fs.ErrExist) {
+		return createRootRecord{}, mkErr
+	}
+	info, readErr := parentRoot.Lstat(made.name)
+	if readErr != nil {
+		if mkErr != nil {
+			return createRootRecord{}, mkErr
+		}
+		return createRootRecord{}, readErr
+	}
+	named, namedErr := os.Lstat(made.parent)
+	if held, heldErr := parentRoot.Stat("."); heldErr != nil || namedErr != nil || !os.SameFile(held, named) {
+		if mkErr == nil {
+			_ = parentRoot.Remove(made.name)
+		}
+		return createRootRecord{}, fs.ErrNotExist
+	}
+	made.info = info
+	return made, mkErr
+}
+
 // dropGone drops the record of a component the scan found missing when the component is really
 // gone. A failed read of the component is evidence of absence only while its parent is reachable: a
 // component below a segment that has vanished is unreachable rather than absent, and its record is
@@ -355,7 +378,7 @@ func dropGone(created []createRootRecord, component string) []createRootRecord {
 		// The directory this call recorded at that path is still standing where it was recorded, so
 		// the record stays whatever the spelling says now: a link above the path can have been pointed
 		// elsewhere, which makes the spelling unreadable while the directory is untouched.
-		if _, ok := createRootMatch(made); ok {
+		if _, _, ok := createRootMatch(made); ok {
 			return created
 		}
 	}
@@ -491,7 +514,7 @@ func recordCreated(created []createRootRecord, made createRootRecord) []createRo
 			}
 			continue
 		}
-		if _, ok := createRootMatch(held); ok {
+		if _, _, ok := createRootMatch(held); ok {
 			kept = append(kept, held)
 		}
 	}
@@ -526,7 +549,7 @@ func dropCreated(created []createRootRecord, path string) []createRootRecord {
 		if made.path != path {
 			return false
 		}
-		_, ok := createRootMatch(made)
+		_, _, ok := createRootMatch(made)
 		return !ok
 	})
 }
@@ -535,6 +558,11 @@ func dropCreated(created []createRootRecord, path string) []createRootRecord {
 // so a test can remove an ancestor at exactly the moment a concurrent install would instead of
 // relying on timing. nil is the production value.
 var createRootBeforeMkdir func(path string)
+
+// createRootAfterParentOpened is a test seam called immediately after a component's parent location
+// has been opened and before its entry is made, so a test can move that parent at exactly the moment
+// a concurrent install would instead of relying on timing. nil is the production value.
+var createRootAfterParentOpened func(component string)
 
 // rootComponents lists the components of dir that do not exist yet, outermost first, stopping at
 // the first ancestor that does exist. A dangling symbolic link counts as existing, so it is never
@@ -570,15 +598,13 @@ func rootComponents(dir string) []string {
 // The removal is unix.Rmdir and never a name-based unlink, so only a directory can be removed: a
 // peer that replaces the directory between the identity read and the removal cannot make this call
 // delete a file, and a directory that is not empty is left alone, which is exactly the wanted
-// behaviour -- a directory another call has since filled is not this call's error to report.
+// behaviour -- a directory another call has since filled is not this call's error to report. The
+// type is taken from the very read that matched the identity, so no second look at the name can
+// decide on a different object than the one the identity check accepted.
 func removeCreated(created []createRootRecord) {
 	for i := len(created) - 1; i >= 0; i-- {
-		made := created[i]
-		reach, ok := createRootMatch(made)
-		if !ok {
-			continue
-		}
-		if info, err := os.Lstat(reach); err != nil || !info.IsDir() {
+		reach, info, ok := createRootMatch(created[i])
+		if !ok || !info.IsDir() {
 			continue
 		}
 		_ = unix.Rmdir(reach)

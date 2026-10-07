@@ -541,3 +541,76 @@ func TestToolsReview836RecordsALocationThatSurvivesAVanishedComponent(t *testing
 		t.Errorf("the pre-existing link was removed: %v", statErr)
 	}
 }
+
+// C3, the parent-handle side: the walk resolves a parent location and opens it, and the parent is then
+// renamed away while a new directory takes the old name before the entry is made. The mkdir then fills
+// the moved directory, which neither recorded name reaches, so the entry must not be left behind: it is
+// removed through the very handle it was made with, and the walk recomputes instead of keeping a record
+// that names a directory it cannot reach.
+func TestToolsReview836RemovesWhatItMadeUnderAMovedParent(t *testing.T) {
+	base := t.TempDir()
+	parent := filepath.Join(base, "p")
+	if err := os.Mkdir(parent, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	moved := filepath.Join(base, "moved")
+	target := filepath.Join(parent, "q")
+
+	movedOnce := false
+	saved := createRootAfterParentOpened
+	createRootAfterParentOpened = func(component string) {
+		if component != target || movedOnce {
+			return
+		}
+		movedOnce = true
+		if err := os.Rename(parent, moved); err != nil {
+			t.Errorf("the seam could not move the parent: %v", err)
+		}
+		if err := os.Mkdir(parent, 0o755); err != nil {
+			t.Errorf("the seam could not put a new parent in its place: %v", err)
+		}
+	}
+	t.Cleanup(func() { createRootAfterParentOpened = saved })
+
+	created, err := createRoot(target)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("createRoot across a moved parent: %v", err)
+	}
+	removeCreated(created)
+	// The entry the mkdir made in the moved directory is not this walk's to leave behind.
+	if _, statErr := os.Lstat(filepath.Join(moved, "q")); !errors.Is(statErr, fs.ErrNotExist) {
+		t.Errorf("the entry made under the moved parent survived: %v", statErr)
+	}
+}
+
+// C3, the fallback side: a parent location that cannot be opened must still be recorded, because it is
+// the second name the cleanup reaches the directory by when the spelling has stopped resolving. Dropping
+// it abandons a directory this call made and cannot reach again.
+func TestToolsReview836KeepsTheParentLocationWhenItCannotBeOpened(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("permission bits do not apply to root")
+	}
+	base := t.TempDir()
+	drop := filepath.Join(base, "drop")
+	if err := os.Mkdir(drop, 0o300); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(drop, 0o700) })
+	target := filepath.Join(drop, "downloads")
+
+	created, err := createRoot(target)
+	if err != nil {
+		t.Fatalf("createRoot under a write and search only parent: %v", err)
+	}
+	made, found := review836RecordFor(created, target)
+	if !found {
+		t.Fatalf("createRoot recorded %v, want %s", created, target)
+	}
+	if made.parent != drop || made.name != "downloads" {
+		t.Fatalf("the record kept parent %q and name %q, want %q and \"downloads\"", made.parent, made.name, drop)
+	}
+	removeCreated(created)
+	if _, statErr := os.Lstat(target); !errors.Is(statErr, fs.ErrNotExist) {
+		t.Errorf("%s survived the cleanup of %v: %v", target, created, statErr)
+	}
+}
