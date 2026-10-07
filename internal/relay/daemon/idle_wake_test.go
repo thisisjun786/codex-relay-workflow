@@ -445,3 +445,30 @@ func TestIdleWake_an_unanswered_hold_is_retried_and_released(t *testing.T) {
 		t.Fatalf("releases %v, want the unanswered hold released once the backlog emptied", host.releases)
 	}
 }
+
+// CRW-904 (correction, d1): an unconfirmed hold on a thread the recipient leaves is released, not
+// overwritten. The resume may have subscribed the old thread, and only a release can unsubscribe it.
+func TestIdleWake_an_unanswered_hold_on_a_replaced_thread_is_released(t *testing.T) {
+	t.Parallel()
+	host := &idleHost{holdErr: errors.New("the resume answer never arrived")}
+	d, s := idleDaemon(t, host)
+	ctx := context.Background()
+	if _, err := d.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, attempted := d.idle.attempted[idleParent]; !attempted {
+		t.Fatal("the unanswered resume was not owned")
+	}
+	// The recipient's thread changes while the backlog continues: the old subscription is not the one
+	// its reports will arrive on, so it is released rather than replaced.
+	exec(t, s, "UPDATE deliveries SET recipient_thread_id = ? WHERE event_id = ?", "parent-thread-two", idleEvent)
+	if _, err := d.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(host.releases, idleThread) {
+		t.Fatalf("releases %v, want the unanswered hold on the old thread released", host.releases)
+	}
+	if _, still := d.idle.attempted[idleParent]; still {
+		t.Fatal("the old unconfirmed hold is still owned after the thread changed")
+	}
+}

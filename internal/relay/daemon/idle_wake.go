@@ -234,6 +234,15 @@ func (w *idleWake) hold(ctx context.Context, r *Report, host Host, now float64) 
 		}
 	}
 	for recipient, thread := range wanted {
+		// The recipient's thread changed under a hold this pass owns, held or not: the old
+		// subscription is not the one its reports will arrive on, so it is released rather than
+		// replaced, exactly as a held thread is. Without this an unconfirmed resume on the old thread
+		// would be overwritten and left with nobody owning it (CRW-904 correction, d1).
+		if old, ok := w.attempted[recipient]; ok && old != thread {
+			subscriptions.ReleaseThread(old)
+			delete(w.attempted, recipient)
+			w.released++
+		}
 		if held, ok := w.holds[recipient]; ok {
 			// The hold is only real while this connection still carries it: a lost socket drops the
 			// subscription with it, and the recipient is then held again below rather than believed.
