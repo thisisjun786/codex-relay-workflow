@@ -619,12 +619,17 @@ const checkpointPairEvalRowLimit = 5
 // unmeasured: a reading that silently dropped such a row would report a partly read file as a
 // complete measurement. The error names the file and the unreadable row numbers (up to
 // checkpointPairEvalRowLimit of them). Blank lines carry no finding and are skipped.
+//
+// A file that was given and read with no unreadable row is a measured reading even when it holds no
+// finding at all, so the result is an empty slice and never nil: the caller tells "the file was
+// given and read" from "no file was given" by nil alone, and a whitespace-only file would otherwise
+// be reported as no evaluation having been given.
 func checkpointReadPairEval(path string) ([]checkpointPairEval, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	var out []checkpointPairEval
+	out := []checkpointPairEval{}
 	var unreadable []int
 	for i, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)

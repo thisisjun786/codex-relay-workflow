@@ -5,6 +5,7 @@ package manage
 // project cannot collide with it.
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"path/filepath"
@@ -41,6 +42,47 @@ func (f *checkpointFixture) checkpointReview788Mark(relationshipID, event, revis
 	f.t.Helper()
 	f.exec("INSERT INTO assignment_marks (relationship_id, mark, event_id, execution_generation, revision_hash, evidence, actor, marked_at) VALUES (?,'merged',?,?,?,'{}','parent',?)",
 		relationshipID, event, generation, revision, at)
+}
+
+// checkpointReview788BaseRefreshedFixture builds the world the landed-turn cases share: an
+// acceptance accepted at generation 1 that a valid base refresh moved onto generation 2, whose
+// merged mark stands on generation 2, with one target to contain the head it stands on now. The
+// caller records the observations, which are the only thing that differs between the cases.
+func checkpointReview788BaseRefreshedFixture(t *testing.T) *checkpointFixture {
+	t.Helper()
+	f := checkpointNewFixture(t)
+	f.scope("relationship-1", "project-1")
+	f.plan("plan-1", "project-1", "node", [2]string{"owner/repo", "dev"})
+	f.execution("plan-1", "node", "relationship-1")
+	f.acceptance("plan-1", "node", "relationship-1", "acceptance-1", "event-1", "head-1", checkpointAt(1))
+	// The refresh: the same acceptance now stands on generation 2, whose head is head-2.
+	f.checkpointReview788Refresh("acceptance-1", "relationship-1", 2, "event-2", "revision-2", "head-2", checkpointAt(2))
+	// The parent's merged mark stands on the refreshed generation, not the acceptance's own.
+	f.checkpointReview788Mark("relationship-1", "event-2", "revision-2", 2, checkpointAt(2))
+	f.record("project-1", checkpointAt(1), "a checkpoint before the base refresh")
+	return f
+}
+
+// checkpointReview788LandedTurn records a merge turn that landed a named head on the target. The
+// instant SQL ties an observation to the turn it came from and requires that turn to have landed
+// the very head the acceptance stands on, so a test that wants to exercise that binding has to
+// choose the turn's candidate_head rather than take the shared fixture's fixed one.
+func (f *checkpointFixture) checkpointReview788LandedTurn(turnID, project, candidateHead, at string) {
+	f.t.Helper()
+	f.exec("INSERT INTO merge_turns (turn_id, target_key, repository, base_ref, project_key, holder_task_id, holder_host_id, candidate_head, state, tenure, requested_at, closed_at, updated_at) VALUES (?,?,'owner/repo','dev',?,'parent','host',?,'landed',1,?,?,?)",
+		turnID, "owner/repo#dev", project, candidateHead, at, checkpointNull(at), at)
+}
+
+// checkpointReview788ObservationFromTurn records an ancestry observation that came from a landed
+// merge turn, which is the shape whose candidate_head binding the instant SQL has to honour.
+func (f *checkpointFixture) checkpointReview788ObservationFromTurn(acceptanceID, head, repository, baseRef, turnID, at string, seq int, isAncestor bool) {
+	f.t.Helper()
+	flag := 0
+	if isAncestor {
+		flag = 1
+	}
+	f.exec("INSERT INTO dag_integration_observations (observation_id, acceptance_id, repository, base_ref, subject_sha, tip_sha, is_ancestor, method, observed_seq, observed_at, merge_turn_id) VALUES (?,?,?,?,?,'tip',?,'ancestry',?,?,?)",
+		fmt.Sprintf("observation-%s-%s-%s-%d", acceptanceID, repository, baseRef, seq), acceptanceID, repository, baseRef, head, flag, seq, at, turnID)
 }
 
 // checkpointReview788Numbers is every integer the text carries, in order. A test uses it to ask
@@ -311,6 +353,136 @@ func TestCheckpointReview788ReadablePairEvalStillCounts(t *testing.T) {
 	}
 	if report.Counts.PairEvalP0P1SinceCheckpoint == nil || *report.Counts.PairEvalP0P1SinceCheckpoint != 2 {
 		t.Errorf("pair P0/P1 = %v, want 2", report.Counts.PairEvalP0P1SinceCheckpoint)
+	}
+}
+
+// A pair-eval file that was given and read with no unreadable row is a measured reading even when
+// it holds no finding at all: zero rows is a measured 0, not "no pair evaluation was given". A file
+// of spaces and newlines is given and read, so the reason that says none was given is wrong for it.
+func TestCheckpointReview788WhitespaceOnlyPairEvalIsMeasuredZero(t *testing.T) {
+	f := checkpointNewFixture(t)
+	f.scope("relationship-1", "project-1")
+	f.close()
+	f.record("project-1", checkpointAt(1), "a checkpoint")
+	pairEval := checkpointWriteInput(t, t.TempDir(), "pair-eval.jsonl", "   \n\t\n\n  \n")
+
+	report := checkpointReport(t, checkpointRead(t, f, CheckpointOptions{PairEval: pairEval}, nil), "project-1")
+	if checkpointHasUnmeasured(report, checkpointSignalPairEval) {
+		t.Fatalf("a given but empty pair evaluation is unmeasured: %+v %+v", report.Unmeasured, report.UnmeasuredReasons)
+	}
+	if report.Counts.PairEvalP0P1SinceCheckpoint == nil {
+		t.Fatalf("a given but empty pair evaluation carries no count: %+v", report.Counts)
+	}
+	if got := *report.Counts.PairEvalP0P1SinceCheckpoint; got != 0 {
+		t.Errorf("pair P0/P1 = %d, want a measured 0", got)
+	}
+}
+
+// The instant SQL's landed-turn check binds the turn's candidate_head to the head the acceptance
+// stands on now. An observation that came from a turn which landed the refreshed head counts; one
+// that came from a turn which landed the acceptance's OLD head does not, even though the
+// observation itself names the refreshed head.
+func TestCheckpointReview788LandedTurnCandidateHeadMustBeTheStandHead(t *testing.T) {
+	counted := checkpointReview788BaseRefreshedFixture(t)
+	counted.checkpointReview788LandedTurn("turn-h2", "project-1", "head-2", checkpointAt(3))
+	counted.checkpointReview788ObservationFromTurn("acceptance-1", "head-2", "owner/repo", "dev", "turn-h2", checkpointAt(3), 1, true)
+	counted.close()
+
+	report := checkpointReport(t, checkpointRead(t, counted, CheckpointOptions{}, nil), "project-1")
+	if report.Counts.IntegrationsSinceCheckpoint == nil {
+		t.Fatalf("the integration reading is unmeasured: %+v %+v", report.Unmeasured, report.UnmeasuredReasons)
+	}
+	if got := *report.Counts.IntegrationsSinceCheckpoint; got != 1 {
+		t.Fatalf("an observation from the turn that landed the stand's head counted %d integrations, want 1", got)
+	}
+
+	// The control: the observation names the refreshed head, but the turn it came from landed the
+	// old head, so the turn does not carry the head the acceptance stands on.
+	control := checkpointReview788BaseRefreshedFixture(t)
+	control.checkpointReview788LandedTurn("turn-h1", "project-1", "head-1", checkpointAt(3))
+	control.checkpointReview788ObservationFromTurn("acceptance-1", "head-2", "owner/repo", "dev", "turn-h1", checkpointAt(3), 1, true)
+	control.close()
+
+	report = checkpointReport(t, checkpointRead(t, control, CheckpointOptions{}, nil), "project-1")
+	if report.Counts.IntegrationsSinceCheckpoint == nil {
+		t.Fatalf("the control's integration reading is unmeasured: %+v %+v", report.Unmeasured, report.UnmeasuredReasons)
+	}
+	if got := *report.Counts.IntegrationsSinceCheckpoint; got != 0 {
+		t.Fatalf("an observation from a turn that landed the old head counted %d integrations, want 0", got)
+	}
+}
+
+// The case above is decided by the scheduler's own candidate_head gate before the instant query
+// runs, so on its own it cannot tell whether the INSTANT query binds the head too. This case can: a
+// target whose first observation came from a turn that landed the old head (so that observation is
+// not a satisfying one) and whose later observation came from the turn that landed the refreshed
+// head. The scheduler is satisfied by the later one either way, but the instant is that later one's
+// only while the instant query also binds the head: a query that dropped the binding would take the
+// first row in sequence order, whose instant predates the checkpoint baseline, and the integration
+// would silently vanish from the count.
+func TestCheckpointReview788InstantQueryBindsTheLandedTurnHead(t *testing.T) {
+	f := checkpointReview788BaseRefreshedFixture(t)
+	f.checkpointReview788LandedTurn("turn-h1", "project-1", "head-1", checkpointAt(3))
+	f.checkpointReview788LandedTurn("turn-h2", "project-1", "head-2", checkpointAt(7))
+	// The first observation in the target came from the turn that landed the OLD head, so it does
+	// not satisfy the landed-turn rule at all.
+	f.checkpointReview788ObservationFromTurn("acceptance-1", "head-2", "owner/repo", "dev", "turn-h1", checkpointAt(3), 1, true)
+	// The later one came from the turn that landed the head the acceptance stands on.
+	f.checkpointReview788ObservationFromTurn("acceptance-1", "head-2", "owner/repo", "dev", "turn-h2", checkpointAt(7), 2, true)
+	f.close()
+	// A baseline between the two instants: the integration is counted only while the instant query
+	// picks the satisfying observation's instant.
+	f.record("project-1", checkpointAt(5), "a checkpoint between the two observations")
+
+	report := checkpointReport(t, checkpointRead(t, f, CheckpointOptions{}, nil), "project-1")
+	if report.Counts.IntegrationsSinceCheckpoint == nil {
+		t.Fatalf("the integration reading is unmeasured: %+v %+v", report.Unmeasured, report.UnmeasuredReasons)
+	}
+	if got := *report.Counts.IntegrationsSinceCheckpoint; got != 1 {
+		t.Fatalf("the instant query did not pick the satisfying observation's instant: counted %d integrations, want 1", got)
+	}
+}
+
+// The --project filter narrows the acceptance read itself, not only the report. Judging project-1's
+// acceptance is made a hard error by pointing a second execution row of its relationship at a plan
+// the store does not hold, so an unfiltered read fails outright while --project project-2 still
+// measures project-2. A regression test that leaned on per-project reasons alone would stay green
+// if the project_key condition were deleted; this one does not.
+func TestCheckpointReview788ProjectFilterSkipsAnotherProjectsUnreadableAcceptance(t *testing.T) {
+	f := checkpointNewFixture(t)
+	// project-1: a healthy integration whose judgement is then made to fail.
+	f.scope("relationship-1", "project-1")
+	f.plan("plan-1", "project-1", "node", [2]string{"owner/repo", "dev"})
+	f.execution("plan-1", "node", "relationship-1")
+	f.acceptance("plan-1", "node", "relationship-1", "acceptance-1", "event-1", "head-1", checkpointAt(1))
+	f.mark("relationship-1", "event-1", "acceptance-1", checkpointAt(2))
+	f.observation("acceptance-1", "head-1", "owner/repo", "dev", checkpointAt(3), 1, true)
+	// A second execution of the same relationship names a plan the store does not hold, so judging
+	// project-1's acceptance returns an error instead of answering not-integrated.
+	f.exec("INSERT INTO dag_node_executions (plan_id, node_id, relationship_id, execution_generation, manifest_digest, kind) VALUES ('plan-absent','node','relationship-1',2,'manifest','initial')")
+	// project-2: a healthy integration.
+	f.scope("relationship-2", "project-2")
+	f.plan("plan-2", "project-2", "node", [2]string{"owner/repo", "dev"})
+	f.execution("plan-2", "node", "relationship-2")
+	f.acceptance("plan-2", "node", "relationship-2", "acceptance-2", "event-2", "head-2", checkpointAt(1))
+	f.mark("relationship-2", "event-2", "acceptance-2", checkpointAt(2))
+	f.observation("acceptance-2", "head-2", "owner/repo", "dev", checkpointAt(3), 1, true)
+	f.close()
+	f.record("project-1", checkpointAt(1), "a checkpoint")
+	f.record("project-2", checkpointAt(1), "a checkpoint")
+
+	// The full read really does fail: that is what makes the narrowed read below meaningful.
+	if _, err := Checkpoint(context.Background(), checkpointEnv(t), checkpointConfig(t, f.dir, nil), CheckpointOptions{}); err == nil {
+		t.Fatal("judging project-1's acceptance did not fail, so the fixture does not exercise the filter")
+	}
+
+	// --project narrows the acceptance read, so project-1's acceptance is never judged.
+	narrowed := checkpointReport(t, checkpointRead(t, f, CheckpointOptions{Project: "project-2"}, nil), "project-2")
+	if checkpointHasUnmeasured(narrowed, checkpointSignalIntegrations) {
+		t.Errorf("--project project-2 is unmeasured: %+v %+v", narrowed.Unmeasured, narrowed.UnmeasuredReasons)
+	}
+	if narrowed.Counts.IntegrationsSinceCheckpoint == nil || *narrowed.Counts.IntegrationsSinceCheckpoint != 1 {
+		t.Errorf("--project project-2 integrations = %v, want 1", narrowed.Counts.IntegrationsSinceCheckpoint)
 	}
 }
 
