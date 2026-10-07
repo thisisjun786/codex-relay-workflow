@@ -6,6 +6,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   defaultHelperRoleSettings,
+  effortSelectable,
   getHelperRoleSettings,
   getModelCatalog,
   helperRoleEfforts,
@@ -153,4 +154,11 @@ test("the effort names come from the catalog and the policy and keep none and ma
   assert.deepEqual(floored, ["low", "medium", "high", "xhigh"]);
   // A model whose ladder the catalog does not report contributes no names rather than an empty set.
   assert.deepEqual(helperRoleEfforts([{ id: "c", label: "c", reasoningEfforts: null }], []), ["low", "medium", "high", "xhigh"]);
+
+  // A name the store does not hold is listed but is not offered for selection: choosing it could
+  // only be refused, so the screen shows it and disables it rather than promising a write.
+  assert.equal(effortSelectable("none"), false);
+  assert.equal(effortSelectable("max"), false);
+  assert.equal(effortSelectable("xhigh"), true);
+  assert.equal(effortSelectable("low"), true);
 });

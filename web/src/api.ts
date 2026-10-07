@@ -409,3 +409,15 @@ export function helperRoleEfforts(catalog: readonly CatalogEntry[], policyEffort
   for (const effort of EFFORTS) add(effort);
   return names;
 }
+
+/**
+ * Whether the helper-role store accepts this effort name. The store's own set is the authority, and
+ * it is narrower than what a catalog or an execution policy may advertise: a policy legitimately
+ * names an effort the helper-role store does not hold. Such a name is still listed, so the screen
+ * shows the sources as they are, but it is not offered for selection, because choosing it could
+ * only produce a refusal. This is a statement about the store's contract, not a second list of
+ * acceptable values.
+ */
+export function effortSelectable(name: string): boolean {
+  return (EFFORTS as readonly string[]).includes(name);
+}

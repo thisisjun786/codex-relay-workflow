@@ -16,10 +16,16 @@ import (
 // neither reuses the other's names or wording.
 //
 // The route is a thin passthrough. role.GetSettings and role.UpdateSettings already answer the
-// status and the message the issue requires (a 400 carrying the store's own error text for every
-// failure, including an unreadable store), so nothing here decodes the request into a second Go
+// status and the message the issue requires, so nothing here decodes the request into a second Go
 // type and re-encodes an answer: a copy of those semantics would drift from the store's. For the
 // same reason neither handler returns a non-nil error; that path is the server's 500.
+//
+// The two directions answer a damaged store differently, and that is the store's design rather than
+// this route's choice. A write refuses: role.UpdateSettings reads the store for update and answers
+// a 400 with the store's own message when the file cannot be understood, so a damaged store is
+// never overwritten. A read reports the store's defaults, because role.ReadSettings tolerates an
+// unreadable file and serves the empty config. The screen therefore shows the defaults for a store
+// it could not read, and the first write against it is refused rather than silently flattening it.
 //
 // Two consequences worth naming rather than leaving to be discovered. First, role.Settings is
 // served through encoding/json, which escapes <, >, & and U+2028/U+2029 as a backslash-u form.

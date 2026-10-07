@@ -6,6 +6,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   HELPER_ROLES,
+  effortSelectable,
   getHelperRoleSettings,
   getModelCatalog,
   getPolicyEffortNames,
@@ -50,21 +51,29 @@ export function HelperRolesPage() {
   const [savingRole, setSavingRole] = useState<HelperRole | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
-  const [prompts, setPrompts] = useState<Record<HelperRole, string>>({ explorer: "", reviewer: "", executor: "", architect: "" });
+  // The prompt draft is string-or-null, not a string: null is the store's "inherit" and the empty
+  // string is a value the user stored, and collapsing the two here would lose that distinction
+  // before the write even leaves the screen.
+  const [prompts, setPrompts] = useState<Record<HelperRole, string | null>>({ explorer: null, reviewer: null, executor: null, architect: null });
   const saving = useRef(false);
   const generation = useRef(0);
   const catalogLoading = useRef(false);
+  const catalogGeneration = useRef(0);
   const { helpOpen, helpTopic, openHelp, closeHelp } = useHelp("helper-roles");
 
   const entries = catalog?.entries ?? [];
   const efforts = helperRoleEfforts(entries, policyEfforts);
-  const dirty = (role: HelperRole) => prompts[role] !== (config?.roles[role].promptOverride ?? "");
+  const dirty = (role: HelperRole) => prompts[role] !== (config?.roles[role].promptOverride ?? null);
 
   async function refreshCatalog(force = false) {
     if (catalogLoading.current) return;
     catalogLoading.current = true;
     setRefreshing(true);
+    // A refresh can outlive the visit that started it. The generation marks the run this screen is
+    // waiting for, so a response from an earlier visit cannot repaint the new one.
+    const current = ++catalogGeneration.current;
     const [next, names] = await Promise.all([getModelCatalog(force), getPolicyEffortNames()]);
+    if (current !== catalogGeneration.current) return;
     setCatalog(next);
     setPolicyEfforts(names);
     catalogLoading.current = false;
@@ -77,6 +86,10 @@ export function HelperRolesPage() {
     window.addEventListener("focus", onFocus);
     const interval = window.setInterval(() => void refreshCatalog(), CATALOG_REFRESH_MS);
     return () => {
+      // Abandon any in-flight refresh with the visit, so a late response is dropped rather than
+      // applied to the next one.
+      catalogGeneration.current++;
+      catalogLoading.current = false;
       window.removeEventListener("focus", onFocus);
       window.clearInterval(interval);
     };
@@ -92,10 +105,10 @@ export function HelperRolesPage() {
         if (controller.signal.aborted || current !== generation.current) return;
         setConfig(next);
         setPrompts({
-          explorer: next.roles.explorer.promptOverride ?? "",
-          reviewer: next.roles.reviewer.promptOverride ?? "",
-          executor: next.roles.executor.promptOverride ?? "",
-          architect: next.roles.architect.promptOverride ?? "",
+          explorer: next.roles.explorer.promptOverride,
+          reviewer: next.roles.reviewer.promptOverride,
+          executor: next.roles.executor.promptOverride,
+          architect: next.roles.architect.promptOverride,
         });
       })
       .catch((err) => {
@@ -229,8 +242,8 @@ export function HelperRolesPage() {
                         <option value="">session effort</option>
                         {savedEffortMissing ? <option value={r.effort ?? ""}>{r.effort} (saved, not offered)</option> : null}
                         {efforts.map((effort) => (
-                          <option key={effort} value={effort} disabled={effortExcluded(supported, effort)}>
-                            {effort}
+                          <option key={effort} value={effort} disabled={effortExcluded(supported, effort) || !effortSelectable(effort)}>
+                            {effortSelectable(effort) ? effort : `${effort} (not accepted by the helper-role store)`}
                           </option>
                         ))}
                       </select>
@@ -242,7 +255,7 @@ export function HelperRolesPage() {
                         emptyLabel="No fallback"
                         value={r.fallback?.model ?? null}
                         disabled={savingRole !== null}
-                        entries={entries}
+                        entries={effectiveModel ? entries.filter((entry) => entry.id !== effectiveModel) : entries}
                         onChange={(model) => void save(role, { fallback: model ? { model, effort: r.fallback?.effort ?? null } : null })}
                       />
                       <select
@@ -257,8 +270,8 @@ export function HelperRolesPage() {
                       >
                         <option value="">session effort</option>
                         {efforts.map((effort) => (
-                          <option key={effort} value={effort} disabled={effortExcluded(fallbackSupported, effort)}>
-                            {effort}
+                          <option key={effort} value={effort} disabled={effortExcluded(fallbackSupported, effort) || !effortSelectable(effort)}>
+                            {effortSelectable(effort) ? effort : `${effort} (not accepted by the helper-role store)`}
                           </option>
                         ))}
                       </select>
@@ -270,18 +283,18 @@ export function HelperRolesPage() {
                       </p>
                     ) : null}
                     <PromptOverrideEditor
-                      value={r.promptOverride}
+                      value={prompts[role]}
                       disabled={savingRole !== null}
                       label={`${role} prompt override`}
-                      onChange={(next) => setPrompts((previous) => ({ ...previous, [role]: next ?? "" }))}
+                      onChange={(next) => setPrompts((previous) => ({ ...previous, [role]: next }))}
                     />
                     <div className="role-selects">
                       {dirty(role) ? (
                         <>
-                          <button className="btn" disabled={savingRole !== null} onClick={() => void save(role, { promptOverride: prompts[role].trim() ? prompts[role] : null })}>
+                          <button className="btn" disabled={savingRole !== null} onClick={() => void save(role, { promptOverride: prompts[role] })}>
                             Save prompt
                           </button>
-                          <button className="btn" onClick={() => setPrompts((previous) => ({ ...previous, [role]: r.promptOverride ?? "" }))}>
+                          <button className="btn" onClick={() => setPrompts((previous) => ({ ...previous, [role]: r.promptOverride }))}>
                             Discard prompt changes
                           </button>
                         </>
