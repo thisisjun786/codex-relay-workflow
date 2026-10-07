@@ -63,9 +63,14 @@ func trainWorkflowJobNames(workflow string) ([]string, error) {
 		if line != "" && !strings.HasPrefix(line, " ") {
 			break
 		}
+		// a blank or comment-only line is nothing to read; a line this reader cannot read the key of
+		// is an error, never a job silently skipped.
+		if line == "" {
+			continue
+		}
 		// the two-space gate is what keeps a nested key ("    runs-on: ubuntu") from being read as a
 		// job: trainJobKey reads a key, not an indentation level. A job's own block scalar cannot sit
-		// at exactly this indent, so every two-space line here is a job key.
+		// at exactly this indent, so every other two-space line here is a job key.
 		if !strings.HasPrefix(line, "  ") || strings.HasPrefix(line, "   ") {
 			continue
 		}
@@ -101,12 +106,13 @@ func trainJobsBlock(workflow string) (body string, inline bool, found bool) {
 
 // trainJobKey reads one line's key. Within a jobs block a two-space-indented key is a job whatever
 // its value looks like — a block on the following lines, a flow mapping on the same line
-// ("audit: {runs-on: ubuntu, steps: [...]}"), a whole-job anchor ("audit: &base_job") or an alias
-// ("audit-copy: *base_job") — so the value is deliberately not inspected: the key names the job, and
-// a reader that judged the value could let an added job through unnoticed. A quoted key is cut at its
-// closing quote, so a key that itself contains a colon is read whole rather than split at the wrong
-// colon. It answers ok=false for a line whose key cannot be read at all (no colon, an empty key, a
-// quoted key with no closing quote), which the caller answers as unreadable.
+// ("audit: {runs-on: ubuntu, steps: [...]}"), a whole-job YAML anchor ("audit: &base_job") or an
+// alias ("audit-copy: *base_job"), all of which GitHub Actions accepts — so the value is deliberately
+// not inspected. The key names the job; a reader that judged the value could let an added job through
+// unnoticed, which is the fail-open this reader exists to close. A quoted key is cut at its closing
+// quote, so a key that itself contains a colon is read whole rather than split at the wrong colon. It
+// answers ok=false only for a line whose key cannot be read at all (no colon, an empty key, a quoted
+// key with no closing quote), which the caller answers as unreadable.
 func trainJobKey(line string) (string, bool) {
 	if line == "" || strings.HasPrefix(line, "#") {
 		return "", false
