@@ -203,6 +203,13 @@ func TestDagHostReview775DocsReadIsNotRelayCall(t *testing.T) {
 		{"an indented line in an ordinary here-document body", "cat <<'EOF'\n  EOF\ncrw relay dag-release --plan p1\nEOF", false},
 		{"a relay command in a <<- document body", "cat <<-'EOF'\ncrw relay dag-release --plan p1\n\tEOF", false},
 		{"a relay command after a <<- document ends", "cat <<-'EOF'\n\tEOF\ncrw relay dag-release --plan p1", true},
+		// A quoted string inside a word still opens a quote, so a << in it starts no document; and an
+		// unquoted here-document body is expanded, so a substitution in it runs while a quoted one's
+		// body does not.
+		{"a here-document opener inside a quoted assignment", "note=\"example <<EOF text\"\ncrw relay dag-release --plan p1", true},
+		{"a substitution in an unquoted here-document body", "cat <<EOF\n$(crw relay dag-release --plan p1)\nEOF", true},
+		{"a substitution in a quoted here-document body", "cat <<'EOF'\n$(crw relay dag-release --plan p1)\nEOF", false},
+		{"a relay example line in an unquoted here-document body", "cat <<EOF\ncrw relay dag-release --plan p1\nEOF", false},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {

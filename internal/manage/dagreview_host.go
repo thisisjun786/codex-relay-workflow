@@ -553,15 +553,18 @@ func dagHostQuotedEnd(s string, i int, q byte) int {
 
 // dagHostWithoutHeredocs is the text with every here-document body removed: the line that carries
 // <<DELIM (or <<-DELIM) stays and the lines up to and including the one that ends the document are
-// dropped. The body is data the parent read or wrote, so a relay command inside one is not a relay
-// invocation. The end is the delimiter line itself: an ordinary << ends at a line equal to the
-// delimiter, and only <<- strips the leading tabs the shell strips, so an indented line that is not
-// a <<- document's end is body text and stays removed. Only the first here-document of a line is
-// read, which is what the review needs.
+// dropped. The body is data the parent read or wrote, so a relay command written in one is not a
+// command the parent ran, and the end is the delimiter line itself: an ordinary << ends at a line
+// equal to the delimiter, and only <<- strips the leading tabs the shell strips, so an indented line
+// that is not a <<- document's end is body text and stays removed. One exception keeps a real
+// invocation: an unquoted delimiter leaves the body expanded, so a command substitution in the body
+// still runs, and its text is kept for the command reading. A quoted delimiter expands nothing, so
+// its body is dropped whole. Only the first here-document of a line is read, which is what the
+// review needs.
 func dagHostWithoutHeredocs(text string) string {
 	var out strings.Builder
 	delimiter := ""
-	stripTabs := false
+	stripTabs, expanded := false, false
 	for _, line := range strings.SplitAfter(text, "\n") {
 		content := strings.TrimRight(line, "\n")
 		content = strings.TrimRight(content, "\r")
@@ -571,62 +574,110 @@ func dagHostWithoutHeredocs(text string) string {
 				end = strings.TrimLeft(end, "\t")
 			}
 			if end == delimiter {
-				delimiter, stripTabs = "", false
+				delimiter, stripTabs, expanded = "", false, false
+				continue
+			}
+			if expanded {
+				out.WriteString(dagHostSubstitutionText(content))
+				out.WriteString("\n")
 			}
 			continue
 		}
 		out.WriteString(line)
-		delimiter, stripTabs = dagHostHeredocDelimiter(content)
+		delimiter, stripTabs, expanded = dagHostHeredocDelimiter(content)
 	}
 	return out.String()
 }
 
-// dagHostHeredocDelimiter is the delimiter of the here-document a line starts and whether it is a
-// <<- document, or "" and false when the line starts none. << and <<- are both read; the delimiter
-// may be bare or quoted. A << inside a comment, a single- or double-quoted string, or a here-string
-// (<<<) starts no document, so a commented example does not swallow the commands that follow it.
-func dagHostHeredocDelimiter(line string) (string, bool) {
-	wordStart := true
+// dagHostSubstitutionText is the command substitutions an unquoted here-document body runs: the
+// shell expands such a body, so a $( ... ) or ` ... ` in it executes its commands even though the
+// rest of the body is data. A body the reader cannot read to the end of a substitution is left as
+// it stands, so an unreadable body is never split into a command it would report.
+func dagHostSubstitutionText(body string) string {
+	var out strings.Builder
+	for i := 0; i < len(body); i++ {
+		switch {
+		case body[i] == '\\' && i+1 < len(body):
+			i++
+		case body[i] == '$' && i+1 < len(body) && body[i+1] == '(':
+			end := dagHostParenEnd(body, i+1)
+			out.WriteString(body[i:end])
+			i = end - 1
+		case body[i] == '`':
+			end := i + 1
+			for end < len(body) && body[end] != '`' {
+				end++
+			}
+			if end < len(body) {
+				end++
+			}
+			out.WriteString(body[i:end])
+			i = end - 1
+		}
+	}
+	return out.String()
+}
+
+// dagHostParenEnd is the index just past the ) that closes the ( at index open, counting nested
+// parentheses and skipping the quoted strings between them.
+func dagHostParenEnd(s string, open int) int {
+	depth := 0
+	for i := open; i < len(s); i++ {
+		switch s[i] {
+		case '\'', '"':
+			i = dagHostQuotedEnd(s, i, s[i]) - 1
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth == 0 {
+				return i + 1
+			}
+		}
+	}
+	return len(s)
+}
+
+// dagHostHeredocDelimiter is the delimiter of the here-document a line starts, whether it is a <<-
+// document, and whether the delimiter is unquoted (so the shell expands the body), or "", false,
+// false when the line starts none. << and <<- are both read. A << inside a comment, a single- or
+// double-quoted string, or a here-string (<<<) starts no document, so a commented example does not
+// swallow the commands that follow it.
+func dagHostHeredocDelimiter(line string) (string, bool, bool) {
 	for i := 0; i+1 < len(line); i++ {
 		switch line[i] {
-		case '#':
-			if wordStart {
-				return "", false
-			}
-			wordStart = false
 		case '\'', '"':
-			if !wordStart {
-				wordStart = false
-				continue
-			}
 			i = dagHostQuotedEnd(line, i, line[i]) - 1
 			continue
 		case '\\':
 			i++
-			wordStart = false
 			continue
+		case '#':
+			// A # that starts a word begins a comment, and a here-document opener inside one is
+			// not read. A # inside a word (a#b) is not a comment start.
+			if i == 0 || line[i-1] == ' ' || line[i-1] == '\t' {
+				return "", false, false
+			}
 		case '<':
 			if line[i+1] != '<' {
-				wordStart = false
 				continue
 			}
 			if i+2 < len(line) && line[i+2] == '<' {
 				// A here-string (<<<) is ordinary text, not a document.
 				i += 2
-				wordStart = false
 				continue
 			}
 			rest := line[i+2:]
 			strip := strings.HasPrefix(rest, "-")
 			rest = strings.TrimLeft(strings.TrimPrefix(rest, "-"), " \t")
 			if rest == "" {
-				return "", false
+				return "", false, false
 			}
 			if rest[0] == '\'' || rest[0] == '"' {
 				if end := dagHostQuotedEnd(rest, 0, rest[0]); end > 1 && rest[end-1] == rest[0] {
-					return rest[1 : end-1], strip
+					return rest[1 : end-1], strip, false
 				}
-				return "", false
+				return "", false, false
 			}
 			word := rest
 			if end := strings.IndexAny(rest, " \t"); end >= 0 {
@@ -634,14 +685,12 @@ func dagHostHeredocDelimiter(line string) (string, bool) {
 			}
 			// A bare delimiter is a name: <<2)) in an arithmetic expansion is not a here-document.
 			if dagHostHeredocName.MatchString(word) {
-				return word, strip
+				return word, strip, true
 			}
-			return "", false
-		default:
-			wordStart = line[i] == ' ' || line[i] == '\t'
+			return "", false, false
 		}
 	}
-	return "", false
+	return "", false, false
 }
 
 // dagHostRelaySubcommands reads the dag- subcommands of the relay invocations in a tool call's
