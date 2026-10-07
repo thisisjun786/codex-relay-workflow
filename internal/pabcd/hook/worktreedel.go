@@ -2703,14 +2703,49 @@ func worktreeDelUnreadableScriptOperand(operands []string) int {
 }
 
 // worktreeDelUnreadableHereString is the index, in a shell's operands, of the word a here-string operator feeds it: the
-// word after a <<< operand. -1 when the shell takes no here-string.
+// word after a <<< operand, which may carry a descriptor (3<<<). -1 when the shell takes no here-string.
 func worktreeDelUnreadableHereString(operands []string) int {
 	for i, word := range operands {
-		if word == "<<<" && i+1 < len(operands) {
+		if worktreeDelUnreadableHereStringOperator(word) && i+1 < len(operands) {
 			return i + 1
 		}
 	}
 	return -1
+}
+
+// worktreeDelUnreadableHereStringOperator says whether a word is a here-string operator, with or without the
+// descriptor written before it: <<< and 3<<< both feed a here-string (CRW-894, the pre-merge evaluation's seventh
+// round). A word that only starts with the operator is read as one, which is the fail-closed answer.
+func worktreeDelUnreadableHereStringOperator(word string) bool {
+	return strings.HasPrefix(strings.TrimLeft(word, "0123456789"), "<<<")
+}
+
+// worktreeDelUnreadableHereDescriptorOf is the descriptor a here-document operator feeds: the digits written before it
+// (3<<PY feeds descriptor 3), or 0 when none stands (CRW-894, the pre-merge evaluation's seventh round, d3).
+func worktreeDelUnreadableHereDescriptorOf(op worktreeDelUnreadableHereOperator) string {
+	if op.descriptor == "" {
+		return "0"
+	}
+	return op.descriptor
+}
+
+// worktreeDelUnreadableHereStringDescriptor is the descriptor the here-string operator that feeds the word at index
+// here writes to: the digits written before <<< (3<<<), or 0 when none stands. The here-string feeds descriptor 0
+// unless the operator names another one.
+func worktreeDelUnreadableHereStringDescriptor(operands []string, here int) string {
+	if here <= 0 || here > len(operands) {
+		return "0"
+	}
+	// The tokenizer splits 3<<< x into the word 3 and the operator <<< (python3 /dev/fd/3 3<<< x), so the digits may
+	// stand in the word before a bare operator (CRW-894, the pre-merge evaluation's seventh round, d3).
+	if here >= 2 && operands[here-1] == "<<<" && operands[here-2] != "" && strings.Trim(operands[here-2], "0123456789") == "" {
+		return operands[here-2]
+	}
+	digits := strings.TrimSuffix(operands[here-1], "<<<")
+	if digits != "" && strings.Trim(digits, "0123456789") == "" {
+		return digits
+	}
+	return "0"
 }
 
 // worktreeDelUnreadableHereOperator is one here-document operator of a command line.
@@ -2947,7 +2982,7 @@ func (s *worktreeDelUnreadableScan) read(text, cwd string, depth int, named bool
 				continue
 			}
 			plain := worktreeDelUnreadablePlainTexts(words)
-			if what, ok := worktreeDelUnreadableStdin(cut, words, plain); ok {
+			if what, ok := worktreeDelUnreadableStdin(cut, words, plain, reading); ok {
 				return worktreeDelUnreadableRefusal{what: what}, true
 			}
 			for _, position := range worktreeDelUnreadablePositions(words) {
@@ -2988,7 +3023,7 @@ func (s *worktreeDelUnreadableScan) read(text, cwd string, depth int, named bool
 // -c program is. The shell must have no -c program and no script operand. The here-string operator is looked for in the
 // whole command, not only in the operands after the command word: a redirection written before the command name belongs
 // to that command (CRW-894 c10(d)).
-func worktreeDelUnreadableStdin(cut worktreeDelUnreadableCut, words []worktreeDelUnreadableWord, plain []string) (string, bool) {
+func worktreeDelUnreadableStdin(cut worktreeDelUnreadableCut, words []worktreeDelUnreadableWord, plain []string, reading string) (string, bool) {
 	// The shell's condition syntax in front of the command is taken off the way the pipe reading takes it off, so the
 	// owner of the condition command is the interpreter, not the 'if' keyword (CRW-894, the pre-merge evaluation's
 	// fifth round).
@@ -3017,13 +3052,26 @@ func worktreeDelUnreadableStdin(cut worktreeDelUnreadableCut, words []worktreeDe
 	// An interpreter reads its program from a here-string whatever the word holds, so the word needs no expansion
 	// (CRW-894, c5).
 	if worktreeDelUnreadableInterpreter(name) {
-		reads, _, unknown := worktreeDelUnreadableInterpreterStdin(name, operands)
+		reads, alias, unknown := worktreeDelUnreadableInterpreterStdin(name, operands)
 		// A here-string feeds descriptor 0, so an interpreter whose script operand names another descriptor is the
 		// pipe rule's business; here only the interpreter that reads its program from standard input counts
 		// (CRW-894, c5).
 		if (reads || unknown) && here >= 0 {
 			return "an interpreter program read from a here-string", true
 		}
+		// A script operand naming a process descriptor file reads that descriptor, and the here-string feeds it when
+		// its operator writes to that descriptor: python3 /dev/stdin <<< x reads the here-string, and so does
+		// python3 /dev/fd/3 3<<< x (CRW-894, the pre-merge evaluation's seventh round).
+		if alias >= 0 && here >= 0 && worktreeDelUnreadableHereStringDescriptor(cond, here) == strconv.Itoa(alias) {
+			return "an interpreter program read from a here-string", true
+		}
+	}
+	// A here-string written after the word that closes a compound or a group feeds the whole compound, so a listed
+	// shell or interpreter inside it that reads standard input reads the here-string even when its own cut holds no
+	// operator: (python3; :) <<< 'x' runs python3 on the here-string (CRW-894, the pre-merge evaluation's seventh
+	// round).
+	if worktreeDelUnreadableCompoundHereString(cut, name) {
+		return worktreeDelUnreadableCompoundReadsKind(reading, 0, "a here-string")
 	}
 	return "", false
 }
@@ -3190,18 +3238,18 @@ func worktreeDelUnreadablePipeEnd(text string, from int, r *worktreeDelQuoteRead
 // stdin is what descriptor 0 holds for the commands in this region: the outer pipe, or the file the shell that owns
 // this region put on its own descriptor 0, which its program's commands inherit (CRW-894 c10(g)).
 func worktreeDelUnreadablePipeRegion(text string, depth int, multios bool, stdin int) (string, bool) {
-	pieces, depths := worktreeDelUnreadablePipePieces(text)
+	pieces, depths, conditional := worktreeDelUnreadablePipePieces(text)
 	for j, piece := range pieces {
 		if what, ok := worktreeDelUnreadablePipePiece(piece, depth, multios, stdin); ok {
 			return what, true
 		}
 		// An exec builtin with no command word and only redirections changes the shell's own descriptors for every
 		// command after it, so `exec </dev/null; bash` hands the following shell the file, not the pipe (CRW-894,
-		// the pre-merge evaluation's fifth round). Only the first piece carries that change: an exec inside a
-		// subshell or after a conditional operator replaces the subshell's or the failed branch's descriptors, not
-		// the outer shell's, so the pipe still reaches the commands after it (CRW-894, the pre-merge evaluation's
-		// sixth round).
-		if depths[j] == 0 {
+		// the pre-merge evaluation's fifth round). Only a piece the shell reaches unconditionally carries that
+		// change: an exec inside a subshell or behind a condition replaces that context's descriptors, not the outer
+		// shell's, and an exec after a failing && or || never runs at all, so the pipe still reaches the commands
+		// after it (CRW-894, the pre-merge evaluation's sixth and seventh rounds).
+		if depths[j] == 0 && !conditional[j] {
 			if next, ok := worktreeDelUnreadableExecStdin(piece, stdin); ok {
 				stdin = next
 			}
@@ -3247,21 +3295,27 @@ func worktreeDelUnreadableExecStdin(piece string, stdin int) (int, bool) {
 }
 
 // worktreeDelUnreadablePipePieces is the text one | feeds, split at every separator and at every delimiter that is
-// no part of a word, with the parenthesis depth each piece stands at: a piece inside a subshell or a group runs in a
-// context of its own, so a redirection it makes to the shell's own descriptors does not reach the pieces after it
-// (CRW-894, the pre-merge evaluation's sixth round).
-func worktreeDelUnreadablePipePieces(region string) ([]string, []int) {
+// no part of a word, with the parenthesis depth each piece stands at and whether the shell reaches it conditionally:
+// a piece inside a subshell or a group runs in a context of its own, so a redirection it makes to the shell's own
+// descriptors does not reach the pieces after it (CRW-894, the pre-merge evaluation's sixth round), and a piece that
+// stands after a && or a || runs only when the shell's own test says so, so a redirection it makes is not one the
+// commands after it inherit (CRW-894, the pre-merge evaluation's seventh round).
+func worktreeDelUnreadablePipePieces(region string) ([]string, []int, []bool) {
 	var pieces []string
 	var depths []int
+	var conditional []bool
 	r := worktreeDelQuoteReader{prev: ' '}
 	start := 0
 	depth := 0
-	cut := func(i int) {
+	reached := false // whether the piece that begins at start is reached unconditionally
+	cut := func(i int, doubled bool) {
 		if piece := text.Trim(region[start:i]); piece != "" {
 			pieces = append(pieces, piece)
 			depths = append(depths, depth)
+			conditional = append(conditional, reached)
 		}
 		start = i + 1
+		reached = doubled
 	}
 	for i := 0; i < len(region); i++ {
 		c := region[i]
@@ -3277,9 +3331,18 @@ func worktreeDelUnreadablePipePieces(region string) ([]string, []int) {
 			if c == '&' && worktreeDelUnreadableRedirectionAmp(region, i, prev) {
 				break // part of a redirection (<&3, 2>&1, &>f), not the end of a command
 			}
-			cut(i)
+			// && and || run the command after them only when the shell's own test says so; a doubled byte is one
+			// operator, so the piece after it is the conditional one and the operator is consumed whole.
+			doubled := i+1 < len(region) && region[i+1] == c
+			cut(i, doubled)
+			if doubled {
+				// The second byte belongs to the same operator, so the next piece starts two bytes on, and the
+				// loop step below must skip both bytes (the loop overwrites i with next-1).
+				start = i + 2
+				next = i + 2
+			}
 		case (c == '(' || c == '{' || c == ')' || c == '}') && worktreeDelUnreadableDelimiterEdge(region, i):
-			cut(i)
+			cut(i, false)
 			if c == '(' || c == '{' {
 				depth++
 			} else if depth > 0 {
@@ -3291,8 +3354,9 @@ func worktreeDelUnreadablePipePieces(region string) ([]string, []int) {
 	if piece := text.Trim(region[start:]); piece != "" {
 		pieces = append(pieces, piece)
 		depths = append(depths, depth)
+		conditional = append(conditional, reached)
 	}
-	return pieces, depths
+	return pieces, depths, conditional
 }
 
 // worktreeDelUnreadableRedirectionAmp says whether the & at i belongs to a redirection rather than ending a command:
@@ -3476,11 +3540,24 @@ func worktreeDelUnreadableSplitRunsStdin(split string) bool {
 	name := basename(plain[i])
 	operands := plain[i+1:]
 	if strings.Contains(worktreeDelUnreadableShells, " "+name+" ") {
-		return worktreeDelUnreadableStdinShell(name, operands)
+		if worktreeDelUnreadableStdinShell(name, operands) || worktreeDelUnreadableScriptAlias(name, operands) {
+			return true
+		}
+		// The program a -c option or an eval operand carries runs in another shell, which reads the pipe the wrapper
+		// handed the first one: env -S 'bash -c bash' reads the piped program although the split command itself has
+		// a -c program (CRW-894, the pre-merge evaluation's seventh round).
+		for _, program := range worktreeDelUnreadablePipePrograms(name, operands, true) {
+			if _, found := worktreeDelUnreadablePipeRegion(program, 1, false, worktreeDelStdinPipe); found {
+				return true
+			}
+		}
+		return false
 	}
 	if worktreeDelUnreadableInterpreter(name) {
-		reads, _, unknown := worktreeDelUnreadableInterpreterStdin(name, operands)
-		return reads || unknown
+		// A script operand naming a process descriptor file reads that descriptor, which the wrapper's own standard
+		// input feeds: env -S 'python3 /dev/stdin' reads the pipe (CRW-894, the pre-merge evaluation's seventh round).
+		reads, alias, unknown := worktreeDelUnreadableInterpreterStdin(name, operands)
+		return reads || unknown || alias >= 0
 	}
 	return false
 }
@@ -3491,14 +3568,25 @@ func worktreeDelUnreadableSplitRunsStdin(split string) bool {
 // command word is looked for, because those options consume the shell word as their own argument and leave the
 // shared prefix walk with no command to name (CRW-894, the independent review's sixth round).
 func worktreeDelUnreadableWrapperShellPiece(plain []string) (string, bool) {
-	for i := 0; i < len(plain); i++ {
+	// Only the wrappers that stand in the command prefix are read: a word that is ordinary data of another command
+	// (printf '%s\\n' sudo -s) names no shell, and reading every word of the piece denied a harmless pipeline
+	// (CRW-894, the pre-merge evaluation's seventh round).
+	i := 0
+	for i < len(plain) && isAssignment(plain[i]) {
+		i++
+	}
+	for i < len(plain) {
 		name := basename(plain[i])
-		if name != "env" && name != "sudo" {
-			continue
+		if !strings.Contains(worktreeDelQuoteWrappers, " "+name+" ") {
+			return "", false
 		}
 		if worktreeDelUnreadableWrapperShell(name, plain[i+1:]) {
 			return "a shell program read from a pipe", true
 		}
+		if name != "env" && name != "sudo" {
+			return "", false
+		}
+		i++ // env sudo -s: the wrapper's own command word is another wrapper
 	}
 	return "", false
 }
@@ -3646,14 +3734,14 @@ func (s *worktreeDelUnreadableScan) heredocs(text, cwd string, depth int, named 
 				// A here-document whose owner is a compound closer (done, fi, esac, } or )) feeds the whole compound,
 				// and every command inside it that reads standard input reads the body (CRW-894, the independent
 				// review's fifth round).
-				if what, found := worktreeDelUnreadableCompoundReads(worktreeDelUnreadableCompoundText(text, i, line), body.op.at); found {
+				if what, found := worktreeDelUnreadableCompoundReadsKind(worktreeDelUnreadableCompoundText(text, i, line), body.op.at, "a here-document"); found {
 					return worktreeDelUnreadableRefusal{what: what}, true
 				}
 				continue
 			}
 
 			if worktreeDelUnreadableCompoundCloser(name) {
-				if what, found := worktreeDelUnreadableCompoundReads(worktreeDelUnreadableCompoundText(text, i, line), body.op.at); found {
+				if what, found := worktreeDelUnreadableCompoundReadsKind(worktreeDelUnreadableCompoundText(text, i, line), body.op.at, "a here-document"); found {
 					return worktreeDelUnreadableRefusal{what: what}, true
 				}
 				continue
@@ -3673,11 +3761,16 @@ func (s *worktreeDelUnreadableScan) heredocs(text, cwd string, depth int, named 
 			// reaches standard input follows every descriptor, so a later redirection that copies the operator's
 			// descriptor onto descriptor 0 (<&3) brings the body back (CRW-894 c10, third round).
 			if worktreeDelUnreadableInterpreter(name) {
-				reads, _, unknown := worktreeDelUnreadableInterpreterStdin(name, operands)
+				reads, alias, unknown := worktreeDelUnreadableInterpreterStdin(name, operands)
 				// The here-document reaches descriptor 0 only when the owning command's own redirections put it
 				// there (worktreeDelUnreadableStdinProgramAt), so a here-document on another descriptor that stays
 				// away from standard input is no program (CRW-894 c5, c10).
 				if (reads || unknown) && worktreeDelUnreadableStdinProgramAt(line, body.op.at) {
+					return worktreeDelUnreadableRefusal{what: "an interpreter program read from a here-document"}, true
+				}
+				// A script operand naming the descriptor this here-document feeds reads the body: python3 /dev/stdin <<'PY'
+				// and python3 /dev/fd/3 3<<'PY' (CRW-894, the pre-merge evaluation's seventh round, d3).
+				if alias >= 0 && strconv.Itoa(alias) == worktreeDelUnreadableHereDescriptorOf(body.op) {
 					return worktreeDelUnreadableRefusal{what: "an interpreter program read from a here-document"}, true
 				}
 			}
@@ -3699,6 +3792,29 @@ func worktreeDelUnreadableCompoundCloser(name string) bool {
 // standard input of the whole compound, so every listed shell or interpreter inside the compound that reads its
 // program from standard input reads it, and a shell inside reads the body as its program too (CRW-894, the
 // independent review's fifth round).
+// worktreeDelUnreadableCompoundHereString says whether the here-string this cut holds feeds a compound or a group
+// rather than the simple command the cut names: the cut opens with the closer of a subshell or a group
+// ((python3; :) <<< x), or the here-string stands after such a closer ({ python3; } <<< x). A here-string of a simple
+// command is judged by that command's own branch, and the scan this opens only refuses when it finds a shell or
+// interpreter inside the compound that reads standard input (CRW-894, the pre-merge evaluation's seventh round).
+func worktreeDelUnreadableCompoundHereString(cut worktreeDelUnreadableCut, name string) bool {
+	// Only a cut that holds the operator is judged: the compound reading judges the body's consumers, and a cut with
+	// no here-string has no body to read (printf x | (python3 </dev/null) stays allowed). The operator feeds a
+	// compound when the command word is a compound closer ((python3; :) <<< x), when the closer ends the cut before
+	// it ({ python3; } <<< x), or when a closer stands between the compound's head and the operator.
+	at := strings.Index(cut.text, "<<<")
+	if at < 0 {
+		return false
+	}
+	if worktreeDelUnreadableCompoundCloser(name) {
+		return true
+	}
+	if sep := strings.TrimSpace(cut.sep); strings.HasPrefix(sep, ")") || strings.HasPrefix(sep, "}") {
+		return true
+	}
+	return strings.ContainsAny(cut.text[:at], ")}")
+}
+
 // worktreeDelUnreadableCompoundText is the text of the compound the here-document belongs to: from the line that
 // opens the compound or the group, through the line that holds the operator. A compound written over several lines
 // (an opener on one line and the interpreter on the next) is read whole, so its earlier lines are not invisible
@@ -3724,7 +3840,7 @@ func worktreeDelUnreadableCompoundText(text string, from int, line string) strin
 	}
 	return strings.Join(before[begin:], "") + line
 }
-func worktreeDelUnreadableCompoundReads(line string, at int) (string, bool) {
+func worktreeDelUnreadableCompoundReadsKind(line string, at int, kind string) (string, bool) {
 	// The compound runs from the opener that begins it to the closer that holds the operator. Every command the
 	// compound runs is judged: the text is cut at its separators, so python3; and :; are the commands python3 and :.
 	// A command that redirects its own descriptor 0 from a file does not read the body, so an unrelated earlier
@@ -3755,12 +3871,12 @@ func worktreeDelUnreadableCompoundReads(line string, at int) (string, bool) {
 		}
 		if strings.Contains(worktreeDelUnreadableHereShells, " "+name+" ") {
 			if worktreeDelUnreadableStdinShell(name, operands) {
-				return "a shell program read from a here-document", true
+				return "a shell program read from " + kind, true
 			}
 			continue
 		}
 		if reads, _, unknown := worktreeDelUnreadableInterpreterStdin(name, operands); reads || unknown {
-			return "an interpreter program read from a here-document", true
+			return "an interpreter program read from " + kind, true
 		}
 	}
 	return "", false

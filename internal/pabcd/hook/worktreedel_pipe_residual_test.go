@@ -12,6 +12,36 @@ import (
 // them, so each is a security fix (port: fixed). Every row was checked in bash 5.3.9 with a harmless stand-in for rm (a
 // touch in a temporary directory); no row runs a deletion, and the guard reads text and runs nothing.
 
+// TestWorktreeDelPipeResidualSeventhRound is the pre-merge evaluation of head 50ea729e9 (CRW-894, defects d1 to d5).
+// Each form was reproduced with a harmless stand-in for the deletion; no row runs a command, and the guard reads text.
+func TestWorktreeDelPipeResidualSeventhRound(t *testing.T) {
+	r := newDelRig(t)
+	// (d1) an exec behind a failing && or || never runs, so it does not replace the descriptor the commands after it read.
+	worktreeDelPipeDenied(t, r, `printf 'rm -rf ../repo' | if true; then false && exec </dev/null; bash; fi`)
+	worktreeDelPipeDenied(t, r, `printf 'rm -rf ../repo' | bash -c 'false && exec </dev/null; bash'`)
+	// (d2) a here-string written after the closer of a compound feeds the whole compound.
+	worktreeDelUnreadableDenied(t, r, `(python3; :) <<< 'import shutil; shutil.rmtree("../repo")'`, "an interpreter program read from a here-string")
+	// (d3) a script operand naming a standard-input alias reads the here-string or here-document its descriptor holds.
+	worktreeDelUnreadableDenied(t, r, `python3 /dev/stdin <<< 'import shutil; shutil.rmtree("../repo")'`, "an interpreter program read from a here-string")
+	worktreeDelUnreadableDenied(t, r, `python3 /dev/fd/3 3<<< 'import shutil; shutil.rmtree("../repo")'`, "an interpreter program read from a here-string")
+	worktreeDelUnreadableDenied(t, r, `php -f /dev/stdin <<< 'echo 1'`, "an interpreter program read from a here-string")
+	worktreeDelUnreadableDenied(t, r, "python3 /dev/stdin <<'PY'\nimport shutil; shutil.rmtree(\"../repo\")\nPY", "an interpreter program read from a here-document")
+	worktreeDelUnreadableDenied(t, r, "python3 /dev/fd/3 3<<'PY'\nimport shutil; shutil.rmtree(\"../repo\")\nPY", "an interpreter program read from a here-document")
+	// (d4) env -S hands its command line to a shell, and the shell's program or script reads the pipe.
+	worktreeDelPipeDenied(t, r, `printf 'rm -rf ../repo' | env -S 'bash -c bash'`)
+	worktreeDelPipeDenied(t, r, `printf 'rm -rf ../repo' | env -S 'bash /dev/stdin'`)
+	// (d5) the wrapper reading starts at the command word, so printf's operands name no shell; these stay allowed.
+	r.allowed(t,
+		`printf x | printf '%s\n' sudo -s`,
+		`printf x | printf '%s\n' env -S bash`,
+		`printf x | env -S 'bash -c "echo hi"'`,
+		`(python3; :) </dev/null`,
+		"python3 /dev/stdin 3<<'PY'\nprint(1)\nPY",
+		`printf x | bash -c 'exec </dev/null; bash'`,
+	)
+	r.intact(t)
+}
+
 // worktreeDelPipeInterpreterDenied asserts a deny of the interpreter pipe position.
 func worktreeDelPipeInterpreterDenied(t *testing.T, r delRig, cmd string) {
 	t.Helper()

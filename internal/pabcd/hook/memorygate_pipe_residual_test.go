@@ -74,6 +74,15 @@ func TestMemoryGatePipeResidual(t *testing.T) {
 		"printf 'echo x > " + root + "/a' | strace -o /dev/null bash",
 		"printf 'echo x > " + root + "/a' | sh -s -c 'echo hi'",
 		"(\n  python3\n) <<'PY'\nopen('" + root + "/a','w')\nPY",
+		// CRW-894 c10, seventh round (pre-merge evaluation of 50ea729e9): (d1) an exec behind a failing &&; (d2) a
+		// here-string after a compound closer; (d3) a standard-input alias that a here-string or here-document feeds;
+		// (d4) env -S with a shell or an alias inside.
+		"printf 'echo x > " + root + "/a' | bash -c 'false && exec </dev/null; bash'",
+		"(python3; :) <<< 'open(\"" + root + "/a\",\"w\")'",
+		"python3 /dev/stdin <<< 'open(\"" + root + "/a\",\"w\")'",
+		"python3 /dev/stdin <<'PY'\nopen('" + root + "/a','w')\nPY",
+		"printf 'echo x > " + root + "/a' | env -S 'bash /dev/stdin'",
+		"printf 'echo x > " + root + "/a' | env -S 'bash -c bash'",
 	} {
 		got := memoryGateClassify("Bash", map[string]any{"command": command}, cwd, env)
 		if got.Surface != "shell" || !strings.HasPrefix(got.Target, "(a program the gate cannot read: ") {
@@ -96,6 +105,7 @@ func TestMemoryGatePipeResidual(t *testing.T) {
 		"printf x | cat",
 		"printf x | node --no-warnings script.js",
 		"python3 3<<EOF\nignored\nEOF",
+		"printf x | printf '%s\\n' sudo -s",
 	} {
 		if got := memoryGateClassify("Bash", map[string]any{"command": command}, cwd, env); got.Surface != "" {
 			t.Errorf("%q: %+v, want no write attempt", command, got)
