@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The status tests drive GET /api/status through the real guard over the package registry,
@@ -467,5 +468,60 @@ func TestStatusReadsWriteNothing(t *testing.T) {
 	after := statusTree(t, root)
 	if strings.Join(before, "\n") != strings.Join(after, "\n") {
 		t.Fatalf("the request changed the tree:\nbefore: %v\nafter:  %v", before, after)
+	}
+}
+
+// TestStatusCancelledRequestDoesNotQueue pins that a request whose context ended while another
+// read held the gate returns at once instead of waiting for a read it can no longer use. Without
+// this, a cancelled poll would sit behind a slow read and hold the endpoint open.
+func TestStatusCancelledRequestDoesNotQueue(t *testing.T) {
+	// Hold the gate as a read in flight does.
+	statusManageGate <- struct{}{}
+	defer func() { <-statusManageGate }()
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	done := make(chan statusResult, 1)
+	go func() {
+		code, stdout, stderr := statusManageCall(cancelled, statusArgRelay)
+		done <- statusResult{code: code, stdout: stdout, stderr: stderr}
+	}()
+	select {
+	case result := <-done:
+		if result.stderr == "" {
+			t.Fatalf("a call that did not start carries no reason: %#v", result)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the cancelled call waited for the gate instead of returning")
+	}
+}
+
+// TestStatusCancelledRequestIsUnknown pins the same property through the handler: a cancelled
+// request produces unknown readings with a reason, never a document that reads as ok.
+func TestStatusCancelledRequestIsUnknown(t *testing.T) {
+	policyHost(t, policyText, true)
+	fakeStatusManage(t, okStatusSources())
+	server := statusServer(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	req := httptest.NewRequest(http.MethodGet, "/api/status", nil).WithContext(ctx)
+	req.Host = guardHost
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("GET /api/status: %d %s", recorder.Code, recorder.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("status body %q: %v", recorder.Body.String(), err)
+	}
+	readings := bar(t, body)
+	for _, key := range []string{"relayStore", "appServer"} {
+		state, reason := mark(t, readings, key)
+		if state != "unknown" {
+			t.Fatalf("%s state = %q, want unknown", key, state)
+		}
+		if reason == "" {
+			t.Fatalf("%s reason is blank", key)
+		}
 	}
 }

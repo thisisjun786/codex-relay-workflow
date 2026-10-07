@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/manage"
@@ -70,17 +69,22 @@ const (
 // real host and the argument list each source uses is asserted from the fake.
 type statusManageRunner func(ctx context.Context, args []string) (code int, stdout, stderr string)
 
-// statusManageMu serializes the in-process manage calls: one at a time, as the decided answer
+// statusManageGate serializes the in-process manage calls: one at a time, as the decided answer
 // requires. A manage call may run the same executable's relay mode, and the endpoint serves one
 // poll at a time rather than a burst.
-var statusManageMu sync.Mutex
+//
+// It is a channel rather than a mutex so a caller can stop waiting for its turn: a request whose
+// context ended while another read held the gate returns without starting a call, instead of
+// queueing behind a read it can no longer use. That is the only cancellation this layer can
+// offer, because a manage read that has already started is pre-empted only where it honours the
+// context, and internal/manage is out of this issue's scope with readers that are not all
+// ctx-aware.
+var statusManageGate = make(chan struct{}, 1)
 
 var statusManage statusManageRunner = statusRunManage
 
 // statusRunManage is the production seam: crw manage, in this process, with the output captured.
 func statusRunManage(ctx context.Context, args []string) (int, string, string) {
-	statusManageMu.Lock()
-	defer statusManageMu.Unlock()
 	var stdout, stderr bytes.Buffer
 	code := manage.Run(ctx, args, nil, &stdout, &stderr)
 	return code, stdout.String(), stderr.String()
@@ -258,6 +262,21 @@ func statusPolicyRead(ctx context.Context) statusPolicyReading {
 func statusManageCall(ctx context.Context, args ...string) (int, string, string) {
 	callCtx, cancel := context.WithTimeout(ctx, statusSourceTimeout)
 	defer cancel()
+	// A context that already ended starts no call at all. The check is made before the gate as
+	// well as while waiting for it, because a select over a free gate and a done context would
+	// otherwise choose between them at random.
+	if err := callCtx.Err(); err != nil {
+		return 0, "", "the read did not start: " + err.Error()
+	}
+	// Take the gate before the call. A context that ended while another read held it is this
+	// call's own failure: it is reported rather than waited on, so a cancelled request does not
+	// queue behind a read it can no longer use.
+	select {
+	case statusManageGate <- struct{}{}:
+	case <-callCtx.Done():
+		return 0, "", "the read did not start: " + callCtx.Err().Error()
+	}
+	defer func() { <-statusManageGate }()
 	return statusManage(callCtx, args)
 }
 
