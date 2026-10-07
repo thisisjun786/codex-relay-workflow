@@ -104,10 +104,9 @@ func supervisorRun(ctx context.Context, e *Env, args []string) int {
 	}
 	switch args[0] {
 	case "-h", "--help", "help":
-		fmt.Fprintln(e.Stdout, supervisorUsage)
-		fmt.Fprintln(e.Stdout, "  register\tbind the management thread as the store supervisor and record its pair")
-		fmt.Fprintln(e.Stdout, "  show\t\tprint the recorded binding and the recorded settings")
-		return 0
+		return supervisorUsageWrite(e, supervisorUsage,
+			"  register\tbind the management thread as the store supervisor and record its pair",
+			"  show\t\tprint the recorded binding and the recorded settings")
 	case "register":
 		return supervisorRegister(ctx, e, args[1:])
 	case "show":
@@ -159,24 +158,24 @@ func supervisorHostValueOptionNamed(arg string) (string, bool) {
 	return "", false
 }
 
-// supervisorRegisterArgs reads register's own arguments: no option at all is the accepted command
-// line, -h and --help report the usage and stop the run there, and an option that names a host value
-// is refused with the note that says where host values come from. The refusal happens here, before
-// any relay call, so a run that passes one neither binds nor records anything. help is reported
+// supervisorRegisterArgs reads register's own arguments, and the order is the contract: an option
+// that names a host value is refused first, with the note that says where host values come from,
+// even when -h or --help is present; then a help request prints the usage and stops the run there;
+// then anything left is an unexpected argument. Every refusal happens here, before any relay call,
+// so a run that passes a removed option neither binds nor records anything. help is reported
 // separately from the status, because a run that asked for the usage must not fall through to the
 // bind: the caller returns before the configuration is even read.
 func supervisorRegisterArgs(e *Env, args []string) (help bool, code int) {
-	for _, arg := range args {
-		if arg == "-h" || arg == "--help" {
-			fmt.Fprintln(e.Stdout, supervisorRegisterUsage)
-			return true, 0
-		}
-	}
 	for _, arg := range args {
 		if _, removed := supervisorHostValueOptionNamed(arg); removed {
 			fmt.Fprintln(e.Stderr, supervisorRegisterUsage)
 			fmt.Fprintf(e.Stderr, "crw manage supervisor: error: %s\n", supervisorHostValuesNote)
 			return false, usageExit
+		}
+	}
+	for _, arg := range args {
+		if arg == "-h" || arg == "--help" {
+			return true, supervisorUsageWrite(e, supervisorRegisterUsage)
 		}
 	}
 	if len(args) > 0 {
@@ -511,6 +510,20 @@ func supervisorRefuse(e *Env, reason string, linkage []byte) int {
 		return supervisorWriteFailure(e, err)
 	}
 	return supervisorExitRefused
+}
+
+// supervisorUsageWrite writes the usage lines a help request prints and reports a write that failed,
+// so a help request whose usage never reached the caller ends with exit 1 rather than reading as a
+// success. The message names the usage rather than the report: the JSON report this command writes
+// is a different output and keeps its own failure message (supervisorWriteFailure).
+func supervisorUsageWrite(e *Env, lines ...string) int {
+	for _, line := range lines {
+		if _, err := fmt.Fprintln(e.Stdout, line); err != nil {
+			fmt.Fprintf(e.Stderr, "crw manage supervisor: error: write the usage: %v\n", err)
+			return 1
+		}
+	}
+	return 0
 }
 
 // supervisorWrite writes one JSON value and a newline, and reports a write that failed so a command
