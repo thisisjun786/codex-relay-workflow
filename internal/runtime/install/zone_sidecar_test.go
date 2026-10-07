@@ -1,8 +1,10 @@
 package install_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +12,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/golden"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/install"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // The store's two sidecars under the state backup. SQLite keeps a write-ahead log and a shared-memory index beside the
@@ -35,6 +38,363 @@ func withoutShm(tree map[string]string) map[string]string {
 		out[k] = v
 	}
 	return out
+}
+
+// pipeCollision builds the pair the GLM review names for failure class 6: two (link target, resolved source) pairs
+// whose "|"-joined strings are identical although both fields moved. base is the state directory. It returns
+// target1/source1 (the first reading) and target2/source2 (the retarget), all under base.
+//
+// target1|source1 = base/a | base/b|base/c  and  target2|source2 = base/a|base/b | base/c, which join to the same
+// string because "|" is a legal byte in a path.
+func pipeCollision(t *testing.T, base string) (target1, source1, target2, source2 string) {
+	t.Helper()
+	trim := strings.TrimPrefix(base, "/")
+	source1 = filepath.Join(base, "b|", trim, "c")
+	source2 = filepath.Join(base, "c")
+	write(t, source1, "")
+	write(t, source2, "")
+	target1 = base + "/a"
+	target2 = base + "/a|" + base + "/b"
+	if err := os.Symlink(source1, filepath.Join(base, "a")); err != nil {
+		t.Fatal(err)
+	}
+	second := filepath.Join(base, "a|", trim, "b")
+	if err := os.MkdirAll(filepath.Dir(second), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(source2, second); err != nil {
+		t.Fatal(err)
+	}
+	return target1, source1, target2, source2
+}
+
+// Failure class 6: the store log is compared by its identity, and the identity must not be a "|"-joined string, because
+// "|" is a legal byte in a link target and in a resolved path. With the review pair both readings join to the same
+// string, so a delimiter-joined comparison sees no change and the backup succeeds although the log moved. Refuses
+// after the fix.
+//
+// sequential: replaces the state-backup seam.
+func TestTheBackupRefusesALogRetargetedToAPathThatCollidesUnderTheDelimiter(t *testing.T) {
+	h, _, second, old, _ := zoneInstalled(t)
+	zoneStore(t, h)
+	target1, source1, target2, source2 := pipeCollision(t, h.relayState)
+	if got := target1 + "|" + source1; got != target2+"|"+source2 {
+		t.Fatalf("the fixture does not collide: %q against %q", got, target2+"|"+source2)
+	}
+	wal := filepath.Join(h.relayState, sidecarWalName)
+	// zoneStore leaves no log; the store's log is this link now
+	_ = os.Remove(wal)
+	if err := os.Symlink(target1, wal); err != nil {
+		t.Fatal(err)
+	}
+	restore := install.ReplaceStateBackupListed(func() error {
+		if err := os.Remove(wal); err != nil {
+			return err
+		}
+		return os.Symlink(target2, wal)
+	})
+	defer restore()
+	o := h.options()
+	o.StateBackup = backupOf(h, "pipe-wal")
+	result, code := install.Install(context.Background(), o, "update", install.Source{From: second})
+	if code != install.Refused || at(result, "swapGate", "verdict") != "BLOCKED" || h.pointerTarget(t) != old {
+		t.Fatalf("a retarget that collides under the delimiter must refuse: exit %d\n%s", code, golden.Canon(at(result, "swapGate")))
+	}
+	if !strings.Contains(text(at(result, "swapGate", "stateBackup", "error")), "write-ahead log changed") {
+		t.Fatalf("the refusal must name the changed log: %s", golden.Canon(at(result, "swapGate", "stateBackup")))
+	}
+}
+
+// The same construction for an ordinary symlinked file in the state directory: the two full keys (Path, Kind, Size,
+// LinkTarget, source) join to the same string although the link moved. Refuses after the fix.
+//
+// sequential: replaces the state-backup seam.
+func TestTheBackupRefusesAnOrdinaryLinkRetargetedToAPathThatCollidesUnderTheDelimiter(t *testing.T) {
+	h, _, second, old, _ := zoneInstalled(t)
+	zoneStore(t, h)
+	putSidecar(t, h, sidecarWalName, 32)
+	target1, source1, target2, source2 := pipeCollision(t, h.relayState)
+	if got := "linked.txt|link-file|0|" + target1 + "|" + source1; got != "linked.txt|link-file|0|"+target2+"|"+source2 {
+		t.Fatalf("the fixture does not collide: %q", got)
+	}
+	link := filepath.Join(h.relayState, "linked.txt")
+	// zoneStore already places a linked.txt; this test's link replaces it
+	_ = os.Remove(link)
+	if err := os.Symlink(target1, link); err != nil {
+		t.Fatal(err)
+	}
+	restore := install.ReplaceStateBackupListed(func() error {
+		if err := os.Remove(link); err != nil {
+			return err
+		}
+		return os.Symlink(target2, link)
+	})
+	defer restore()
+	o := h.options()
+	o.StateBackup = backupOf(h, "pipe-link")
+	result, code := install.Install(context.Background(), o, "update", install.Source{From: second})
+	if code != install.Refused || at(result, "swapGate", "verdict") != "BLOCKED" || h.pointerTarget(t) != old {
+		t.Fatalf("an ordinary link retarget that collides under the delimiter must refuse: exit %d\n%s", code, golden.Canon(at(result, "swapGate")))
+	}
+}
+
+// ---- CRW-862 review fixes ----
+
+// The store sidecars are classified by the resolved database path even when the log cannot be read in place: an
+// unclean shutdown leaves a linked store with a -wal holding frames and no -shm, and InPlaceRead refuses that state,
+// but the sidecars still sit beside the file the link names. Before the fix sidecarsFor fell back to the top-level
+// names, so the real log was walked as an ordinary nested file and the copy could lose its committed frames.
+//
+// sequential: none (a white-box reading).
+func TestTheSidecarsAreResolvedEvenWhenTheLogCannotBeReadInPlace(t *testing.T) {
+	h, _, _, _, _ := zoneInstalled(t)
+	zoneStore(t, h)
+	real := filepath.Join(h.relayState, "data", "real.sqlite3")
+	testsupport.Create(t, real, "", "go")
+	// frames in the log, no index: InPlaceRead refuses this state
+	write(t, real+"-wal", strings.Repeat("x", 64))
+	if err := os.Remove(filepath.Join(h.relayState, "relay.sqlite3")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(real, filepath.Join(h.relayState, "relay.sqlite3")); err != nil {
+		t.Fatal(err)
+	}
+	wal, shm := install.SidecarsFor(h.relayState, filepath.Join(h.relayState, "relay.sqlite3"))
+	if wal != real+"-wal" || shm != real+"-shm" {
+		t.Fatalf("sidecars = (%q, %q), want (%q, %q): the resolved file sidecars, not the top-level names", wal, shm, real+"-wal", real+"-shm")
+	}
+}
+
+// A log that goes during the SECOND listing walk is absence, not a change: the comparison must not read its empty
+// vanished entry as a moved identity. Before the fix that entry identity (with no source) differed from the copied
+// log identity and the backup refused, so the same checkpoint race passed or failed on timing.
+//
+// sequential: replaces the state-backup walk seam.
+func TestTheBackupDoesNotRefuseALogThatGoesDuringTheSecondListing(t *testing.T) {
+	h, _, second, _, next := zoneInstalled(t)
+	zoneStore(t, h)
+	putSidecar(t, h, sidecarWalName, 32)
+	wal := filepath.Join(h.relayState, sidecarWalName)
+	listings := 0
+	restore := install.ReplaceStateBackupWalk(func(path string) error {
+		if path == wal {
+			listings++
+			// the first listing and the copy see the log; the second listing loses it between its read and its Info
+			if listings >= 2 {
+				return os.Remove(path)
+			}
+		}
+		return nil
+	})
+	defer restore()
+	o := h.options()
+	o.StateBackup = backupOf(h, "second-listing-gone")
+	result, code := install.Install(context.Background(), o, "update", install.Source{From: second})
+	if code != install.OK || at(result, "promoted") != true || h.pointerTarget(t) != next {
+		t.Fatalf("a log that goes during the second listing must not refuse: exit %d\n%s", code, golden.Canon(at(result, "swapGate")))
+	}
+}
+
+// The integrity gate scratch duplicate is charged against the destination free space: the preflight must hold the
+// backup and the duplicate at once, so a destination that fits the backup alone refuses before it copies.
+//
+// sequential: none (a white-box reading).
+func TestTheSpacePreflightCoversTheIntegrityScratchDuplicate(t *testing.T) {
+	need := install.ScratchNeed(map[string]int64{
+		"relay.sqlite3":     90 << 20,
+		"relay.sqlite3-wal": 4 << 20,
+		"ledger.log":        1 << 20,
+	})
+	if want := int64(94 << 20); need != want {
+		t.Fatalf("scratch need = %d, want %d (the store and its log, not the other files)", need, want)
+	}
+}
+
+// ---- CRW-862: the three PR #735 P1s and the integrity gate ----
+
+// P1 1: the store's write-ahead log is compared by its identity, not dropped from the comparison. A log that is
+// itself a symbolic link and is retargeted between the two listings is a change: the copy would hold bytes from a file
+// the state directory no longer names. Before the fix the whole WAL entry was dropped from listingDiff and this passed.
+//
+// sequential: replaces the state-backup seam.
+func TestTheBackupRefusesAWALLinkRetargetedBetweenTheListings(t *testing.T) {
+	h, _, second, old, _ := zoneInstalled(t)
+	zoneStore(t, h)
+	// the store's log is a link to a file inside the state directory (an empty log, so the gate's own read of the
+	// store still succeeds), and the link is retargeted between the first listing and the copy
+	first := filepath.Join(h.relayState, "wal-one")
+	secondTarget := filepath.Join(h.relayState, "wal-two")
+	write(t, first, "")
+	write(t, secondTarget, "")
+	if err := os.Symlink(first, filepath.Join(h.relayState, sidecarWalName)); err != nil {
+		t.Fatal(err)
+	}
+	restore := install.ReplaceStateBackupListed(func() error {
+		if err := os.Remove(filepath.Join(h.relayState, sidecarWalName)); err != nil {
+			return err
+		}
+		return os.Symlink(secondTarget, filepath.Join(h.relayState, sidecarWalName))
+	})
+	defer restore()
+	o := h.options()
+	o.StateBackup = backupOf(h, "wal-retargeted")
+	result, code := install.Install(context.Background(), o, "update", install.Source{From: second})
+	if code != install.Refused || at(result, "swapGate", "verdict") != "BLOCKED" || h.pointerTarget(t) != old {
+		t.Fatalf("a retargeted WAL link must refuse: exit %d\n%s", code, golden.Canon(at(result, "swapGate")))
+	}
+	if !strings.Contains(text(at(result, "swapGate", "stateBackup", "error")), "write-ahead log changed") {
+		t.Fatalf("the refusal must name the changed log: %s", golden.Canon(at(result, "swapGate", "stateBackup")))
+	}
+}
+
+// P1 2: the store's sidecars are recognised by the path SQLite resolves the database to, not by the top-level name.
+// With relay.sqlite3 linked to data/real.sqlite3 inside the state directory, that file's -shm going is not a refusal
+// and is never listed (SQLite rebuilds it from the log on open), and its -wal follows the sidecar rules (a log that
+// goes before its copy is recorded as gone, not refused). Before the fix both were walked as ordinary files, so the
+// -shm vanishing refused.
+//
+// sequential: replaces the state-backup seam.
+func TestTheBackupRecognisesTheSidecarsOfAStoreLinkedInsideTheStateDirectory(t *testing.T) {
+	for name, gone := range map[string]string{
+		"the index goes after the listing": "data/real.sqlite3-shm",
+		"the log goes before its copy":     "data/real.sqlite3-wal",
+	} {
+		t.Run(name, func(t *testing.T) {
+			h, _, second, _, next := zoneInstalled(t)
+			zoneStore(t, h)
+			real := filepath.Join(h.relayState, "data", "real.sqlite3")
+			testsupport.Create(t, real, "", "go")
+			putSidecar(t, h, filepath.Join("data", "real.sqlite3-shm"), 32768)
+			putSidecar(t, h, filepath.Join("data", "real.sqlite3-wal"), 32)
+			if err := os.Remove(filepath.Join(h.relayState, "relay.sqlite3")); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(real, filepath.Join(h.relayState, "relay.sqlite3")); err != nil {
+				t.Fatal(err)
+			}
+			restore := install.ReplaceStateBackupListed(func() error { return os.Remove(filepath.Join(h.relayState, filepath.FromSlash(gone))) })
+			defer restore()
+			o := h.options()
+			o.StateBackup = backupOf(h, "linked-inside")
+			result, code := install.Install(context.Background(), o, "update", install.Source{From: second})
+			if code != install.OK || at(result, "promoted") != true || h.pointerTarget(t) != next {
+				t.Fatalf("exit %d\n%s", code, golden.Canon(at(result, "swapGate")))
+			}
+			backup := backupOf(h, "linked-inside")
+			nothingAt(t, filepath.Join(backup, "data", "real.sqlite3-shm"))
+		})
+	}
+}
+
+// P1 3: an ENOENT from the walk's Info on the store's log is recorded as gone before its copy, not a refusal. The
+// seam makes the log go between the directory read and the entry's own information. Another file removed the same way
+// still refuses.
+//
+// sequential: replaces the state-backup walk seam.
+func TestTheBackupRecordsALogThatGoesDuringTheWalk(t *testing.T) {
+	t.Run("the store's log", func(t *testing.T) {
+		h, _, second, _, next := zoneInstalled(t)
+		zoneStore(t, h)
+		putSidecar(t, h, sidecarWalName, 32)
+		wal := filepath.Join(h.relayState, sidecarWalName)
+		removed := false
+		restore := install.ReplaceStateBackupWalk(func(path string) error {
+			if path == wal && !removed {
+				removed = true
+				return os.Remove(path)
+			}
+			return nil
+		})
+		defer restore()
+		o := h.options()
+		o.StateBackup = backupOf(h, "walk-gone")
+		result, code := install.Install(context.Background(), o, "update", install.Source{From: second})
+		if code != install.OK || at(result, "promoted") != true || h.pointerTarget(t) != next {
+			t.Fatalf("a log that goes during the walk is not a refusal: exit %d\n%s", code, golden.Canon(at(result, "swapGate")))
+		}
+		backup := backupOf(h, "walk-gone")
+		nothingAt(t, filepath.Join(backup, sidecarWalName))
+		if got := storeSidecarsOf(t, backup)[sidecarWalName]; got != "gone before its copy" {
+			t.Errorf("storeSidecars[%s] = %q, want %q", sidecarWalName, got, "gone before its copy")
+		}
+	})
+	t.Run("another file", func(t *testing.T) {
+		h, _, second, old, _ := zoneInstalled(t)
+		zoneStore(t, h)
+		ledger := filepath.Join(h.relayState, "ledger.log")
+		removed := false
+		restore := install.ReplaceStateBackupWalk(func(path string) error {
+			if path == ledger && !removed {
+				removed = true
+				return os.Remove(path)
+			}
+			return nil
+		})
+		defer restore()
+		o := h.options()
+		o.StateBackup = backupOf(h, "walk-gone-other")
+		result, code := install.Install(context.Background(), o, "update", install.Source{From: second})
+		if code != install.Refused || at(result, "swapGate", "verdict") != "BLOCKED" || h.pointerTarget(t) != old {
+			t.Fatalf("another file's ENOENT must still refuse: exit %d\n%s", code, golden.Canon(at(result, "swapGate")))
+		}
+	})
+}
+
+// The integrity gate: a copy that fails PRAGMA integrity_check is not a restore candidate. The manifest records
+// integrityCheck and restoreCandidate, the command refuses, and the copy's bytes are not changed by the check (it runs
+// on a scratch duplicate). A healthy copy records ok and true.
+//
+// sequential: replaces the state-backup integrity seam.
+func TestTheBackupRecordsIntegrityAndRefusesACorruptedCopy(t *testing.T) {
+	t.Run("a corrupted copy", func(t *testing.T) {
+		h, _, second, old, _ := zoneInstalled(t)
+		zoneStore(t, h)
+		restore := install.ReplaceIntegrityCheck(func(_ context.Context, dest string, copied []install.BackedUp) (string, error) {
+			return "Page 5 is never used", errors.New("PRAGMA integrity_check answered a corruption")
+		})
+		defer restore()
+		o := h.options()
+		o.StateBackup = backupOf(h, "corrupt")
+		result, code := install.Install(context.Background(), o, "update", install.Source{From: second})
+		if code != install.Refused || at(result, "swapGate", "verdict") != "BLOCKED" || h.pointerTarget(t) != old {
+			t.Fatalf("a corrupted copy must refuse: exit %d\n%s", code, golden.Canon(at(result, "swapGate")))
+		}
+		backup := backupOf(h, "corrupt")
+		var manifest struct {
+			IntegrityCheck   string `json:"integrityCheck"`
+			RestoreCandidate bool   `json:"restoreCandidate"`
+		}
+		if err := json.Unmarshal(mustRead(t, backup+install.ManifestSuffix), &manifest); err != nil {
+			t.Fatal(err)
+		}
+		if manifest.RestoreCandidate || !strings.Contains(manifest.IntegrityCheck, "never used") {
+			t.Fatalf("manifest: %+v", manifest)
+		}
+	})
+	t.Run("a healthy copy", func(t *testing.T) {
+		h, _, second, _, next := zoneInstalled(t)
+		zoneStore(t, h)
+		o := h.options()
+		o.StateBackup = backupOf(h, "healthy")
+		result, code := install.Install(context.Background(), o, "update", install.Source{From: second})
+		if code != install.OK || at(result, "promoted") != true || h.pointerTarget(t) != next {
+			t.Fatalf("a healthy copy must pass: exit %d\n%s", code, golden.Canon(at(result, "swapGate")))
+		}
+		backup := backupOf(h, "healthy")
+		var manifest struct {
+			IntegrityCheck   string `json:"integrityCheck"`
+			RestoreCandidate bool   `json:"restoreCandidate"`
+		}
+		if err := json.Unmarshal(mustRead(t, backup+install.ManifestSuffix), &manifest); err != nil {
+			t.Fatal(err)
+		}
+		if !manifest.RestoreCandidate || manifest.IntegrityCheck != "ok" {
+			t.Fatalf("manifest: %+v", manifest)
+		}
+		if !bytes.Equal(mustRead(t, filepath.Join(backup, "relay.sqlite3")), mustRead(t, filepath.Join(h.relayState, "relay.sqlite3"))) {
+			t.Fatal("the integrity check changed the copy of the store")
+		}
+	})
 }
 
 // storeSidecarsOf is the storeSidecars record of a backup's manifest, read from the file.
