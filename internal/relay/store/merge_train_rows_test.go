@@ -90,6 +90,86 @@ func mergeTrainEventRow(train string, seq int, kind string) string {
 		" VALUES ('%s',%d,'%s','task-leader','{}','2026-10-06T00:00:00Z')", train, seq, kind)
 }
 
+// CRW-768 decision 9: merge_trains is a SQLite rowid table, so TEXT PRIMARY KEY does not mean NOT
+// NULL and the shipped CHECK (train_id <> '') lets a NULL through. Two NULL rows were inserted into
+// one table before the trigger (the CRW-767 post-merge finding P1), and a NULL row cannot be found
+// by the string id every train command looks a train up by. The guard is appended as one BEFORE
+// INSERT trigger; no shipped statement is edited and an existing row is never deleted or rewritten.
+
+// mergeTrainsCreate is the shipped CRW-767 CREATE TABLE, repeated here as a 767-era store holds it,
+// so this file can build a zone that predates the trigger without opening the current one.
+const mergeTrainsCreate = "CREATE TABLE IF NOT EXISTS merge_trains (\n" +
+	"    train_id       TEXT PRIMARY KEY CHECK (train_id <> ''),\n" +
+	"    target_key     TEXT NOT NULL CHECK (target_key <> ''),\n" +
+	"    repository     TEXT NOT NULL CHECK (repository <> ''),\n" +
+	"    base_ref       TEXT NOT NULL CHECK (base_ref <> ''),\n" +
+	"    base_sha       TEXT NOT NULL CHECK (base_sha <> ''),\n" +
+	"    leader_task_id TEXT NOT NULL CHECK (leader_task_id <> ''),\n" +
+	"    created_at     TEXT NOT NULL\n" +
+	")"
+
+// A NULL train_id is refused once the trigger is in the zone, an empty id by the existing CHECK, a
+// valid id inserts and its repeat is the PRIMARY KEY's refusal. Every one of these is the DDL's own
+// answer, so the command layer never pre-checks them.
+func TestDAGZoneMergeTrainsRefuseANullTrainID(t *testing.T) {
+	t.Parallel()
+	db := zoneOpenedDB(t)
+	zoneRefuses(t, db, "a NULL train id", "INSERT INTO merge_trains (train_id, target_key, repository, base_ref, base_sha, leader_task_id, created_at)"+
+		" VALUES (NULL,'o/r|dev','o/r','dev','"+zoneDigest+"','task-leader','2026-10-06T00:00:00Z')")
+	zoneRefuses(t, db, "a second NULL train id", "INSERT INTO merge_trains (train_id, target_key, repository, base_ref, base_sha, leader_task_id, created_at)"+
+		" VALUES (NULL,'o/r|dev','o/r','dev','"+zoneDigest+"','task-leader','2026-10-06T00:00:00Z')")
+	zoneRefuses(t, db, "an empty train id", mergeTrainRow(""))
+	zoneMustExec(t, db, mergeTrainRow("train-1"))
+	zoneRefuses(t, db, "a second row of one train", mergeTrainRow("train-1"))
+	// the trigger is a BEFORE INSERT guard and never touches a row that already exists: no DELETE or
+	// UPDATE of merge_trains can run anyway (the append-only triggers), so the count is what is read.
+	var trains int
+	if err := db.QueryRow("SELECT count(*) FROM merge_trains").Scan(&trains); err != nil || trains != 1 {
+		t.Fatalf("trains = %d (%v), want 1", trains, err)
+	}
+}
+
+// A 767-era store (the shipped CREATE, no trigger) holding one NULL row upgrades with the row
+// preserved: it is not deleted, not rewritten, and a new NULL insert is refused afterwards. The row
+// is never read as a train because every reader addresses a train by a non-empty id.
+func TestDAGZoneUpgradePreservesAnExistingNullTrainRow(t *testing.T) {
+	t.Parallel()
+	path := zonePreDAGStore(t)
+	db := zoneRawDB(t, path)
+	if _, err := db.Exec(mergeTrainsCreate); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("INSERT INTO merge_trains (train_id, target_key, repository, base_ref, base_sha, leader_task_id, created_at)" +
+		" VALUES (NULL,'o/r|dev','o/r','dev','" + zoneDigest + "','task-leader','2026-10-06T00:00:00Z')"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	// opening the store runs the zone statements: the CREATE is skipped (IF NOT EXISTS) and the
+	// trigger is appended, so the pre-existing row is left exactly as it was
+	s, err := Open(context.Background(), path, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	upgraded := zoneRawDB(t, path)
+	var preserved int
+	if err := upgraded.QueryRow("SELECT count(*) FROM merge_trains WHERE train_id IS NULL").Scan(&preserved); err != nil || preserved != 1 {
+		t.Fatalf("the NULL row after the upgrade = %d (%v), want 1 preserved", preserved, err)
+	}
+	zoneRefuses(t, upgraded, "a new NULL train id after the upgrade", "INSERT INTO merge_trains (train_id, target_key, repository, base_ref, base_sha, leader_task_id, created_at)"+
+		" VALUES (NULL,'o/r|dev','o/r','dev','"+zoneDigest+"','task-leader','2026-10-06T00:00:01Z')")
+	// no reader finds it: MergeTrain looks a train up by its non-empty id, and the writer never
+	// writes one, so the row is invisible to open and show alike
+	if _, found, err := MergeTrain(context.Background(), s, "train-1"); err != nil || found {
+		t.Fatalf("the NULL row was read as a train: found=%v (%v)", found, err)
+	}
+}
+
 // The three tables are append-only: an UPDATE and a DELETE abort on each, a train is written once,
 // a member and an event are unique at their sequence number, the kind is one of the five the decision
 // names, and a member or an event of a train that does not exist is the foreign key's refusal.

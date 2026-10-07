@@ -1,9 +1,8 @@
 {
-  "schema": "crw-issue-size-check/1",
+  "schema": "crw-issue-size-check/2",
   "issue": "CRW-184",
   "title": "CRW-184 (structure of the recorded issue, synthetic wording)",
-  "decision": "split_recommended",
-  "assignable": false,
+  "decision": "over_line",
   "reasons": [
     "criteria_total 14 exceeds the limit 8 (7 completion + 7 research-reinforcement criteria)",
     "research_criteria 7 exceeds the limit 3"
@@ -26,6 +25,12 @@
     "verification_kinds": [],
     "unread_headings": []
   },
+  "concept_questions": [
+    "Does every part belong to one concept: the same fault class or contract, one package or a shared test fixture, follow-ups of one merged pull request, pieces with no independent value alone, or one package's test reinforcement?",
+    "Does any part need an open decision, mix a decision document with implementation, attach work unrelated to a security fix, reach another project's exclusive area, or block the merge of the rest?",
+    "Can each part pass its own verification, or must the parts land together?",
+    "Is a direct defect found in a pull request about that pull request's own change fixed in that pull request rather than split off?"
+  ],
   "proposal": {
     "status": "draft",
     "note": "Draft only. Bundles keep the order of the issue's criteria; a research-reinforcement row joins the bundle whose criteria share the most wording with it, or the latest bundle among the criteria the planner declared it needs. A bundle becomes its own issue only where the crw-plan boundary rules hold (an observable result of its own, verifiable apart or landing after a prerequisite). Order edges come from the prerequisites the planner declared and from the regions the criteria name, with unknown regions counted as overlapping; crw-plan decides the real relations.",

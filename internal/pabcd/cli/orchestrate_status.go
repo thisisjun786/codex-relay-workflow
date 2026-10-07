@@ -161,6 +161,13 @@ func RunOrchestrateRead(parsed OrchestrateCliParsed, env ReadEnv) (OrchestrateRe
 		return readAnswer(1, RenderOrchestrateParseError(*parsed.Error)), nil
 	}
 	a := parsed.Args
+	// CRW-871: a mutating verb's explicit id is judged before anything else, the attestation-error
+	// branch included: that branch renders the sanitised session's phase with RenderPhaseContext, which
+	// reads a DIFFERENT session's file for a raw id. status and the reset/attest-exempt paths below keep
+	// the oracle's order; only the mutating verbs move their canonical check ahead.
+	if a.Verb != fsm.VerbStatus && nonemptySession(a.Session) && !state.IsCanonicalSessionID(*a.Session) {
+		return readAnswer(1, sessionAliasRefusalOutput(a.Verb)), nil
+	}
 	if a.AttestError != "" && a.Verb != fsm.VerbStatus && a.Verb != fsm.VerbReset {
 		context, hint := "", ""
 		var from *state.Phase

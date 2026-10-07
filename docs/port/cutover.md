@@ -361,6 +361,13 @@ Each step names what the controller does, then its failure branch and recovery. 
    gate within the bound Lock order names. Anything partial - a
    `write-gate.lock` with no `D` that this opener found rather than created - is refused and
    never repaired by a runtime.
+   The creator never lets that description go: `createAbsent` hands the gate it placed, still
+   held EX, to the writable open, which binds the store under it when the open names a socket and
+   then downgrades that same open file description to `SH` in place (`holdGate`), the store's
+   hold for its lifetime. Closing the EX and taking `SH` on a second description would leave the
+   first alive for any child forked during the creation that has not exec'd yet - flock belongs
+   to the open file description - and the creator's own store would be refused with the fence's
+   contention words.
 5. Confirm every launch path reaches the fence build: `doctor --json` shows
    `python_compatibility_build` equal to the fence build for every running relay process.
 

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"path/filepath"
@@ -301,21 +302,45 @@ func (r *startRun) abandon(base reconciliation, thread, why string) decision {
 // abandoned under the same request. Only this path archives; observe()'s abandonment is unchanged.
 func (r *startRun) abandonOrphan(ctx context.Context, base reconciliation, thread, errText string) (decision, error) {
 	if err := r.archiveOrphan(ctx, thread, errText); err != nil {
+		var inconclusive *orphanReadInconclusive
+		if errors.As(err, &inconclusive) {
+			// The orphan could not be read again, so nothing is decided about it: this call stops
+			// with the existing unobservable state and creates nothing. A repeat decides again.
+			return base.stopped(reconUnobserved, "%s", inconclusive.Error()), nil
+		}
 		return decision{}, err
 	}
 	return r.abandon(base, thread, "the host refused to resume it"), nil
 }
 
+// orphanReadInconclusive is an orphan re-read that ended without a conclusion: the host answered
+// with an error that is neither a cancellation nor one of the texts that say it does not hold the
+// thread. Nothing is decided from it, so the call stops rather than creating the next attempt, and
+// the detail says what the host answered.
+type orphanReadInconclusive struct {
+	thread string
+	err    error
+}
+
+func (e *orphanReadInconclusive) Error() string {
+	return fmt.Sprintf("the orphan %s could not be read again before its archive: %s; nothing was created; a repeat decides again", e.thread, e.err)
+}
+
 // archiveOrphan tries thread/archive once on the orphan and records the attempt in one
-// managed_orphan_archive row. A row already written for this request and attempt stops a second
-// archive, as the resend unload's row does. An error naming a thread the host does not hold is not
-// attempted at all.
+// managed_orphan_archive row, the result in a second: a row already written for this request and
+// attempt stops a second archive, as the resend unload's row does. An error naming a thread the
+// host does not hold is not attempted at all.
 //
 // thread/archive unloads an active thread and the sub-threads under it, so the orphan is read again
 // immediately before the call, as the resend unload reads the child it lowers, and the readiness
 // policy and the ledger are asked again with it because the archive is a host effect. A thread that
 // has become active is left alone, and an archive that fails or is withheld is recorded and never
 // stops the recreation.
+//
+// The attempt is marked in its own row before the host effect, on a context the caller's
+// cancellation cannot take away, and the result is recorded after the reply. The mark is what makes
+// an archive that was sent and never answered leave a durable trace, so the next repeat neither
+// archives the orphan again nor loses the attempt.
 func (r *startRun) archiveOrphan(ctx context.Context, thread, errText string) error {
 	archived, err := r.orphanArchived(ctx)
 	if err != nil {
@@ -335,11 +360,6 @@ func (r *startRun) archiveOrphan(ctx context.Context, thread, errText string) er
 			return err
 		}
 		if !turnless {
-			if why == "" {
-				// The read was inconclusive: nothing is decided and no row is written, so a later
-				// repeat may still archive the orphan.
-				return nil
-			}
 			detail["archive"], detail["error"] = "skipped", why
 			break
 		}
@@ -353,6 +373,13 @@ func (r *startRun) archiveOrphan(ctx context.Context, thread, errText string) er
 			return nil
 		}
 		if err := r.m.Adapter.RequireLedger(ctx, r.ledger); err != nil {
+			return err
+		}
+		// The attempt is marked before the host effect, on a context the caller's cancellation
+		// cannot take away, so an archive that was sent and never answered leaves the mark behind
+		// and the next repeat does not send thread/archive a second time.
+		mark := map[string]any{"attempt": r.attempt, "thread": thread, "error": "", "archive": "attempting"}
+		if err := r.recordOrphanArchive(context.WithoutCancel(ctx), mark); err != nil {
 			return err
 		}
 		if _, err := r.m.Adapter.HostCall(ctx, "thread/archive", map[string]any{"threadId": thread}); err != nil {
@@ -372,7 +399,7 @@ func (r *startRun) archiveOrphan(ctx context.Context, thread, errText string) er
 // orphanStillTurnless reads the orphan immediately before the archive. A thread the host still
 // cannot read has no rollout and no turn; a thread that now carries a turn, or that the host
 // reports active, has become someone's work and is left alone. An inconclusive read answers with
-// no reason, and the caller then archives nothing and records nothing.
+// orphanReadInconclusive, and the caller then stops the call rather than creating the next attempt.
 func (r *startRun) orphanStillTurnless(ctx context.Context, thread string) (bool, string, error) {
 	read, err := r.m.Adapter.HostCall(ctx, "thread/read", map[string]any{"threadId": thread, "includeTurns": false})
 	if err != nil {
@@ -382,7 +409,7 @@ func (r *startRun) orphanStillTurnless(ctx context.Context, thread string) (bool
 		if unreadable(err) {
 			return true, "", nil
 		}
-		return false, "", nil
+		return false, "", &orphanReadInconclusive{thread: thread, err: err}
 	}
 	facts := pyjson.Map(read["thread"])
 	if pyjson.Text(pyjson.Map(facts["status"])["type"]) == "active" || strings.TrimSpace(pyjson.Text(facts["preview"])) != "" {
@@ -396,7 +423,7 @@ func (r *startRun) orphanStillTurnless(ctx context.Context, thread string) (bool
 		if noTurnAnswer(err) {
 			return true, "", nil
 		}
-		return false, "", nil
+		return false, "", &orphanReadInconclusive{thread: thread, err: err}
 	}
 	if rows, _ := turns["data"].([]any); len(rows) > 0 {
 		return false, "thread/turns/list: the thread has a turn", nil

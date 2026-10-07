@@ -33,6 +33,18 @@ func TestScanArgsNodeOracle(t *testing.T) {
 		t.Run(c.ID, func(t *testing.T) {
 			before := append([]string{}, c.Argv...)
 			p := ParseScanCliArgs(c.Argv, c.Cwd)
+			// CRW-871: a recorded case whose --session value is not canonical (the value flag consumes
+			// the next token, even a flag, and the sanitiser would map the id to a different session's
+			// file). The oracle accepted it; the port refuses it before the runner reads or writes.
+			if want, changed := sessionAliasScanArgsChanged[c.ID]; changed {
+				if p.Args != nil || p.Error != want {
+					t.Fatalf("changed case %s: %+v, want error %q", c.ID, p, want)
+				}
+				if !reflect.DeepEqual(before, c.Argv) {
+					t.Error("parser changed argv")
+				}
+				return
+			}
 			if (p.Args != nil) == (p.Error != "") {
 				t.Fatalf("expected exactly one parser outcome: %+v", p)
 			}
@@ -81,6 +93,15 @@ func TestScanArgsNodeOracle(t *testing.T) {
 }
 
 // Ported B-class assertions from scan-cli.test.ts:27-70,179-198,340-357.
+// sessionAliasScanArgsChanged lists the recorded scan-args cases the port answers differently on purpose
+// (CRW-871): the oracle's parser accepted a non-canonical --session value, which the runner then
+// sanitised into a DIFFERENT session's key, so scan record rewrote another session's state file.
+var sessionAliasScanArgsChanged = map[string]string{
+	"session_consumes_flag": "scan record: " + sessionAliasRefusalText,
+	"flag_value_session":    "scan record: " + sessionAliasRefusalText,
+	"whitespace_session":    "scan record: " + sessionAliasRefusalText,
+}
+
 func TestScanArgsParserCases(t *testing.T) {
 	for _, c := range []struct {
 		argv []string
