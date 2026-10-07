@@ -114,7 +114,9 @@ func featureCriteriaObject(r FeatureCriteriaRow) map[string]any {
 //   - covers and owns are part of the packet identity: a node that declares either declares a packet_id;
 //   - every cover names a criterion the feature declared, and every own is one of that node's covers;
 //   - every required declared criterion is taken by at least one live packet of its issue;
-//   - a criterion two or more live packets of one issue take has exactly one owner among them.
+//   - a criterion two or more live packets of one issue take has exactly one owner among them;
+//   - an issue delivered by packets declares its criteria and every packet declares its covers, so a
+//     required criterion assigned to no packet cannot disappear from the completion test (CRW-839 d5).
 //
 // nodePath names a node the way the other rules of the fold do (the change that introduced it, else its
 // place in the plan), so a refusal points at the document the caller can fix.
@@ -174,6 +176,27 @@ func checkPackets(live map[string]liveNode, decls map[string][]Criterion, nodePa
 		declaredIDs := map[string]bool{}
 		for _, c := range declared {
 			declaredIDs[c.ID] = true
+		}
+		// An issue delivered by packets is judged against a declaration, and every packet says which
+		// criteria it takes (CRW-839 d5): without either, a required criterion assigned to no packet
+		// would simply not appear in the completion test. The legacy reading (the criteria the relay
+		// registered for the node's own relationship) stays the meaning of an issue with one node and
+		// no packet_id, and nothing else.
+		var packets []string
+		for _, id := range nodes {
+			if live[id].PacketID != "" {
+				packets = append(packets, id)
+			}
+		}
+		if len(packets) > 0 {
+			if len(declared) == 0 {
+				add(RuleFeatureCriteriaRequired, "plan", "issue %s is delivered by %d packet(s) and declares no feature_criteria; a packet issue declares the criteria its packets are judged against", issue, len(packets))
+			}
+			for _, id := range packets {
+				if len(live[id].Covers) == 0 {
+					add(RulePacketCoversRequired, nodePath(id), "packet node %s of issue %s declares no covers; a packet declares the criteria it takes, so a required criterion is never assigned to no packet", id, issue)
+				}
+			}
 		}
 		if len(nodes) > 1 {
 			for _, id := range nodes {

@@ -139,6 +139,64 @@ type holder struct {
 	Unknown bool
 }
 
+// checkPacketRegionOwner refuses an edit region two packets of one feature issue both take without a
+// declared owner (CRW-839 d7). The issue's parent decision 1 requires the plan validation to demand an
+// owner for an overlapping region, and the owner is declared with the grade: the packet that declares the
+// shared place exclusive owns it, and a plain overlap between two packets of one issue - no side exclusive
+// at the shared place - has no owner and is refused. Two sides both exclusive at one shared place is the
+// same defect from the other side: one place, two owners. A node without a packet_id is the single packet
+// its issue always was, so it is never judged against a sibling; a packet whose sibling has not declared
+// its regions yet is judged when that sibling declares, because an undeclared node's regions are unknown.
+func checkPacketRegionOwner(ctx context.Context, q store.Querier, plan string, snap dag.Snapshot, n dag.SnapNode, normal []Region, current map[string][]Region) error {
+	if n.PacketID == "" {
+		return nil
+	}
+	siblings := make([]string, 0, len(snap.Nodes))
+	for _, other := range snap.Nodes {
+		if other.NodeID == n.NodeID || other.Kind != dag.NodeImplementation || other.Lifecycle != "" {
+			continue
+		}
+		if other.IssueKey != n.IssueKey || other.PacketID == "" || other.PacketID == n.PacketID {
+			continue
+		}
+		siblings = append(siblings, other.NodeID)
+	}
+	sort.Strings(siblings)
+	for _, sibling := range siblings {
+		theirs, declared := current[sibling]
+		if !declared {
+			// the sibling's regions are unknown: nothing to compare yet
+			continue
+		}
+		for _, mine := range normal {
+			for _, other := range theirs {
+				if !Overlaps(mine, other) {
+					continue
+				}
+				mineExclusive := EffectiveGrade(mine) == GradeExclusive
+				otherExclusive := EffectiveGrade(other) == GradeExclusive
+				switch {
+				case mineExclusive && otherExclusive:
+					return refuse(contract.RefusalDispositionConflict, "packet %s (node %s) and packet %s (node %s) of issue %s both declare %s %s exclusive: one place has one owner, so one of them keeps the grade and the other takes a grade that settles the overlap", n.PacketID, n.NodeID, snapPacketID(snap, sibling), sibling, n.IssueKey, mine.Repository, mine.Path)
+				case !mineExclusive && !otherExclusive:
+					return refuse(contract.RefusalDispositionConflict, "packet %s (node %s) and packet %s (node %s) of issue %s both edit %s %s and neither declares it exclusive: an overlapping region of two packets of one issue needs one owner, declared with the exclusive grade", n.PacketID, n.NodeID, snapPacketID(snap, sibling), sibling, n.IssueKey, mine.Repository, mine.Path)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// snapPacketID is a plan node's packet id, empty when the node is not in the snapshot.
+func snapPacketID(snap dag.Snapshot, node string) string {
+	for _, n := range snap.Nodes {
+		if n.NodeID == node {
+			return n.PacketID
+		}
+	}
+	return ""
+}
+
 // MaxRegions bounds one declaration.
 const MaxRegions = 64
 
@@ -186,6 +244,17 @@ func (s *Scheduler) DeclareRegions(ctx context.Context, plan, node, actor string
 		}
 		latest, declared := current[node]
 		replay := declared && slices.Equal(latest, normal)
+		// Two packets of one feature issue must not declare an overlapping edit region without a declared
+		// owner (CRW-839 d7, the issue body's parent decision 1): the owner is the packet that declares
+		// the shared place exclusive, so a shared place has exactly one owner among the packets that
+		// take it, and a plain overlap between two packets of one issue is refused. A node without a
+		// packet_id keeps the meaning it had, and a packet whose sibling has not declared yet is judged
+		// when that sibling declares (an undeclared node's regions are unknown).
+		if !replay {
+			if err := checkPacketRegionOwner(txCtx, q, plan, snap, n, normal, current); err != nil {
+				return err
+			}
+		}
 		if !replay {
 			// regions are held until the node lands (contract 7.2): once a release or an execution holds them a different declaration may only narrow them.
 			state, err := s.stateOf(txCtx, q, plan, snap, n)

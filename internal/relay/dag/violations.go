@@ -55,6 +55,11 @@ const (
 	RuleCriterionOwnerMissing    = "criterion_owner_missing"
 	RuleCriterionOwnerConflict   = "criterion_owner_conflict"
 	RuleFeatureCriteriaNoNode    = "feature_criteria_without_node"
+	// A multi-packet issue must declare its criteria and every packet must declare its covers
+	// (CRW-839 generation 4, d5): a plan that leaves either out would let a required criterion
+	// assigned to no packet disappear from the completion test.
+	RuleFeatureCriteriaRequired = "feature_criteria_required"
+	RulePacketCoversRequired    = "packet_covers_required"
 )
 
 // Violation is one broken rule.

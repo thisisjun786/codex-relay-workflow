@@ -126,6 +126,22 @@ func TestPacketRulesRefuse(t *testing.T) {
 			rule:   RulePacketFieldNotApplicable,
 			detail: "a packet is an implementation node",
 		},
+		{
+			// d5: without a declaration the fold has no required criteria to reject as uncovered, so the
+			// legacy fallback would let a required criterion assigned to no packet disappear.
+			name:   "a packet issue declares no feature criteria",
+			doc:    revWith("plan", "r", 0, nil, addPacketNode("n1", "CRW-F", "p1", []string{"c1"}, []string{"c1"})),
+			rule:   RuleFeatureCriteriaRequired,
+			detail: "declares no feature_criteria",
+		},
+		{
+			// d5: a packet that declares no covers takes nothing, so a required criterion could be
+			// assigned to no packet while the plan still validates.
+			name:   "a packet declares no covers",
+			doc:    revWith("plan", "r", 0, criteria, addPacketNode("n1", "CRW-F", "p1", nil, nil)),
+			rule:   RulePacketCoversRequired,
+			detail: "declares no covers",
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

@@ -557,6 +557,25 @@ func packetsApart(ctx context.Context, q store.Querier, managedRequestID, rivalR
 	return rivalPacket != packet && rivalPlan == plan
 }
 
+// packetsApartFromRelationship is packetsApart for two relationships that both exist: each side resolves
+// its packet from its own execution row (dag_execution_packets), which is what resume has and a
+// registration does not. Two relationships are apart only when both resolve to distinct packets of one
+// plan and one issue; anything unresolvable is not two packets and the caller refuses as it always did.
+func packetsApartFromRelationship(ctx context.Context, q store.Querier, mine, rival, issueKey string) bool {
+	if mine == "" || rival == "" {
+		return false
+	}
+	plan, packet, ok := packetRivalOf(ctx, q, mine, issueKey)
+	if !ok {
+		return false
+	}
+	rivalPlan, rivalPacket, ok := packetRivalOf(ctx, q, rival, issueKey)
+	if !ok {
+		return false
+	}
+	return rivalPacket != packet && rivalPlan == plan
+}
+
 // packetRivalOf is the plan and packet a live relationship was bound under, resolved only when its
 // execution row is a packet the plan still registers for a live node of that same issue. A row that names
 // another issue or another plan, a packet no live node version carries, or a node the plan has retired
@@ -1105,16 +1124,21 @@ func (r *Registry) Resume(ctx context.Context, rid string, expectGeneration int6
 		if len(mismatches) > 0 {
 			return refuse(contract.RefusalRelationshipNotActive, "resume refused: %s", strings.Join(mismatches, "; "))
 		}
-		var owner struct{ id, child, status string }
-		err = q.QueryRowContext(ctx, "SELECT relationship_id, child_task_id, status FROM relationships"+
-			"  WHERE issue_key = ? AND relationship_id != ?    AND status IN ('active','paused') AND superseded_by IS NULL",
-			x.Issue, rid).Scan(&owner.id, &owner.child, &owner.status)
-		if err == nil {
-			return refuse(contract.RefusalDuplicateAssignment, "issue %s is now assigned to child %s under %s (%s); resuming %s would leave the issue with two owners. Replace that assignment deliberately instead",
-				strconv.Quote(x.Issue), strconv.Quote(owner.child), strconv.Quote(owner.id), owner.status, strconv.Quote(rid))
-		}
-		if !errors.Is(err, sql.ErrNoRows) {
+		// Every live relationship of the issue is a rival, and resume applies the same packet-aware
+		// guard Register does (CRW-839 d8): a paused packet resumes beside a distinct registered
+		// sibling of the same plan, and a rival that cannot be resolved as another packet refuses
+		// exactly as it always did. Resuming is not a registration, so the newcomer side resolves
+		// from the relationship's own execution row rather than a managed request.
+		rivals, err := rivalRelationships(ctx, q, x.Issue, rid)
+		if err != nil {
 			return err
+		}
+		for _, rival := range rivals {
+			if packetsApartFromRelationship(ctx, q, rid, rival.id, x.Issue) {
+				continue
+			}
+			return refuse(contract.RefusalDuplicateAssignment, "issue %s is now assigned to child %s under %s (%s); resuming %s would leave the issue with two owners. Replace that assignment deliberately instead",
+				strconv.Quote(x.Issue), strconv.Quote(rival.child), strconv.Quote(rival.id), rival.status, strconv.Quote(rid))
 		}
 		if !isLive(x.Status) {
 			if err := r.guardIssueReservation(ctx, x.Issue); err != nil {

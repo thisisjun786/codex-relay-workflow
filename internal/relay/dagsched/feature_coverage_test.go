@@ -90,8 +90,8 @@ func packetExecution(f *fixture, plan, node, relationship string) {
 	f.exec("INSERT INTO dag_node_executions (plan_id, node_id, relationship_id, execution_generation, manifest_digest, kind, managed_request_id) VALUES (?,?,?,1,?,'initial',NULL)", plan, node, relationship, digest)
 }
 
-// liveRelationship records the live relationship a node's execution belongs to: the reading only credits a
-// node whose relationship is still active (an archived one is never the current child).
+// liveRelationship records the live relationship a node's execution belongs to: the reading credits the
+// execution of a relationship that is still active.
 func liveRelationship(f *fixture, plan, node, relationship string) {
 	issue := nodeIssue(f, plan, node)
 	f.exec("INSERT INTO relationships (relationship_id, issue_key, status, parent_task_id, parent_host_id, parent_cwd, parent_cxc_session, child_task_id, child_host_id, child_cwd, child_cxc_session, execution_generation, artifact_roots, allowed_recipients, scope_ref, supersedes, superseded_by, created_at, updated_at) VALUES (?,?,'active','parent','host','/p','cxc',?,'host','/c','cxc',1,'[]','[]','scope',NULL,NULL,'t','t')", relationship, issue, "child-"+relationship)
@@ -119,7 +119,31 @@ func packetAcceptance(f *fixture, id, plan, node, relationship string) {
 func packetLanded(f *fixture, train, relationship, memberHead, landed string) {
 	f.exec("INSERT INTO merge_trains (train_id, target_key, repository, base_ref, base_sha, leader_task_id, created_at) VALUES (?,?,?,?,?,?,?)", train, "tk", "owner/repo", "dev", "base", "leader", "t")
 	f.exec("INSERT INTO merge_train_members (train_id, seq, turn_id, pr_number, relationship_id, member_head) VALUES (?,1,?,1,?,?)", train, "turn-"+train, relationship, memberHead)
-	f.exec("INSERT INTO merge_train_events (train_id, seq, kind, actor, detail_json, recorded_at) VALUES (?,1,'landed','parent',?,?)", train, `{"landedSha":"`+landed+`"}`, "t")
+	// The landed event carries its OWN members mapping, which is what the coverage reader credits a member
+	// by (CRW-839 d3): the mapping and not the train's member rows, so a member the bundle excluded is not read.
+	detail := `{"landedSha":"` + landed + `","members":[{"seq":1,"relationshipId":"` + relationship + `","memberHead":"` + memberHead + `"}]}`
+	f.exec("INSERT INTO merge_train_events (train_id, seq, kind, actor, detail_json, recorded_at) VALUES (?,1,'landed','parent',?,?)", train, detail, "2026-10-02T00:02:00.000000+00:00")
+}
+
+// packetIntegrated records the integration evidence the scheduler's own predicate needs (CRW-839 d2): a
+// positive ancestry observation of the packet's accepted head in a target - which is also what makes the
+// target required - and the parent's merged mark on the same acceptance event, generation and revision.
+func packetIntegrated(f *fixture, acceptance, relationship, repository, baseRef string) {
+	f.exec("INSERT INTO dag_integration_observations (observation_id, acceptance_id, repository, base_ref, subject_sha, tip_sha, is_ancestor, method, observed_seq, observed_at) VALUES (?,?,?,?,?, 'tip', 1, 'git merge-base --is-ancestor', 1, ?)",
+		"obs-"+relationship+"-"+baseRef, acceptance, repository, baseRef, acceptanceHead(relationship), "2026-10-02T00:01:00.000000+00:00")
+	f.exec("INSERT OR IGNORE INTO assignment_marks (relationship_id, mark, event_id, execution_generation, revision_hash, evidence, actor, marked_at) VALUES (?, 'merged', 'ev', 1, 'rev', 'merged', 'parent', '2026-10-02T00:01:00.000000+00:00')", relationship)
+}
+
+// packetRegistered records the criteria a packet's relationship registered, with the required flag the
+// coverage reader compares against the feature's declaration (CRW-839 d4).
+func packetRegistered(f *fixture, relationship string, required map[string]bool) {
+	for id, ok := range required {
+		n := 0
+		if ok {
+			n = 1
+		}
+		f.exec("INSERT INTO canonical_criteria (relationship_id, criterion_id, title, required, source_ref, set_digest, recorded_at) VALUES (?,?,? ,? ,NULL,'d','t')", relationship, id, id, n)
+	}
 }
 
 func coverageOf(t *testing.T, f *fixture, plan, issue string) FeatureCoverage {
@@ -144,6 +168,9 @@ func TestFeatureCoverageNeedsEveryRequiredCriterionIntegrated(t *testing.T) {
 	liveRelationship(f, "plan", "n2", "rel-2")
 	packetAcceptance(f, "acc-1", "plan", "n1", "rel-1")
 	packetAcceptance(f, "acc-2", "plan", "n2", "rel-2")
+	packetRegistered(f, "rel-1", map[string]bool{"c1": true, "c3": true})
+	packetRegistered(f, "rel-2", map[string]bool{"c2": true, "c3": true})
+	packetIntegrated(f, "acc-1", "rel-1", "owner/repo", "dev")
 	packetLanded(f, "train-1", "rel-1", acceptanceHead("rel-1"), "landed-1")
 
 	first := coverageOf(t, f, "plan", "CRW-F")
@@ -169,6 +196,7 @@ func TestFeatureCoverageNeedsEveryRequiredCriterionIntegrated(t *testing.T) {
 	}
 
 	packetLanded(f, "train-2", "rel-2", acceptanceHead("rel-2"), "landed-2")
+	packetIntegrated(f, "acc-2", "rel-2", "owner/repo", "dev")
 	second := coverageOf(t, f, "plan", "CRW-F")
 	if !second.Complete {
 		t.Fatalf("both packets integrated still reads incomplete: %+v", second.Criteria)
@@ -197,6 +225,7 @@ func TestFeatureCoverageSingleNodePlanAnswersAsToday(t *testing.T) {
 	}
 
 	packetLanded(f, "train-solo", "rel-solo", acceptanceHead("rel-solo"), "landed-solo")
+	packetIntegrated(f, "acc-solo", "rel-solo", "owner/repo", "dev")
 	if after := coverageOf(t, f, "plan", "CRW-solo"); !after.Complete {
 		t.Fatalf("the landed single node still reads incomplete: %+v", after.Criteria)
 	}
@@ -212,6 +241,8 @@ func TestFeatureCoverageCreditsNothingForAnExecutionThePlanHasMovedPast(t *testi
 	packetExecution(f, "plan", "n1", "rel-1")
 	liveRelationship(f, "plan", "n1", "rel-1")
 	packetAcceptance(f, "acc-1", "plan", "n1", "rel-1")
+	packetRegistered(f, "rel-1", map[string]bool{"c1": true})
+	packetIntegrated(f, "acc-1", "rel-1", "owner/repo", "dev")
 	packetLanded(f, "train-1", "rel-1", acceptanceHead("rel-1"), "landed-1")
 	if cov := coverageOf(t, f, "plan", "CRW-F"); !cov.Complete {
 		t.Fatalf("the released packet reads incomplete: %+v", cov)

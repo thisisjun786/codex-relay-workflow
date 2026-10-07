@@ -253,7 +253,7 @@ func (s *Scheduler) Release(ctx context.Context, plan, node, actor string, req R
 		}
 		return out, refusalOfReading(r)
 	}
-	if err := s.checkCriteria(n, req.Criteria); err != nil {
+	if err := s.checkCriteria(snap, n, req.Criteria); err != nil {
 		return out, err
 	}
 	preds, err := s.pinnedPredecessors(ctx, q, plan, incomingEdges(snap, node))
@@ -420,7 +420,7 @@ func (s *Scheduler) Release(ctx context.Context, plan, node, actor string, req R
 }
 
 // checkCriteria is B-10 at release: the criteria the child will be registered with are the plan's.
-func (s *Scheduler) checkCriteria(n dag.SnapNode, criteria []Criterion) error {
+func (s *Scheduler) checkCriteria(snap dag.Snapshot, n dag.SnapNode, criteria []Criterion) error {
 	list := make([]delivery.Criterion, len(criteria))
 	for i, c := range criteria {
 		list[i] = delivery.Criterion{ID: strings.TrimSpace(c.ID), Title: strings.TrimSpace(c.Title), Required: c.Required}
@@ -429,11 +429,20 @@ func (s *Scheduler) checkCriteria(n dag.SnapNode, criteria []Criterion) error {
 		return refuse(contract.RefusalCriteriaSetChanged, "the request's criteria digest to %s and the plan fixed %s for node %s", got, n.CriteriaSetDigest, n.NodeID)
 	}
 	// A packet's covers name the criteria it takes from the feature, so the child registered for it must
-	// actually be judged against them (CRW-839): a cover the request does not register is refused here.
+	// actually be judged against them (CRW-839): a cover the request does not register is refused here,
+	// and a cover of a criterion the feature DECLARES REQUIRED must be registered required with the same
+	// id (CRW-839 d4). Without the second half a packet could cover a required feature criterion while
+	// its own criteria set registered it optional, so a verified verdict would never have judged it and
+	// the coverage reading would still count the criterion covered.
 	if len(n.Covers) > 0 {
 		registered := map[string]bool{}
+		registeredRequired := map[string]bool{}
 		for _, c := range criteria {
-			registered[strings.TrimSpace(c.ID)] = true
+			id := strings.TrimSpace(c.ID)
+			registered[id] = true
+			if c.Required {
+				registeredRequired[id] = true
+			}
 		}
 		var missing []string
 		for _, c := range n.Covers {
@@ -444,8 +453,32 @@ func (s *Scheduler) checkCriteria(n dag.SnapNode, criteria []Criterion) error {
 		if len(missing) > 0 {
 			return refuse(contract.RefusalCriteriaSetChanged, "node %s covers criteria the release request does not register: %s", n.NodeID, strings.Join(missing, ", "))
 		}
+		var optional []string
+		for _, c := range n.Covers {
+			if declaredRequired(snap, n.IssueKey, c) && !registeredRequired[c] {
+				optional = append(optional, c)
+			}
+		}
+		if len(optional) > 0 {
+			return refuse(contract.RefusalCriteriaSetChanged, "node %s covers required criteria of issue %s and the release request registers them optional: %s; a packet's criteria set must register a feature-required criterion as required", n.NodeID, n.IssueKey, strings.Join(optional, ", "))
+		}
 	}
 	return nil
+}
+
+// declaredRequired is whether a feature issue's live declaration marks a criterion required.
+func declaredRequired(snap dag.Snapshot, issue, id string) bool {
+	for _, row := range snap.FeatureCriteria {
+		if row.IssueKey != issue {
+			continue
+		}
+		for _, c := range row.Criteria {
+			if c.ID == id {
+				return c.Required
+			}
+		}
+	}
+	return false
 }
 
 // rejudge repeats, under the lock, what the store half of the judgement said before it (a plan revision, an acceptance or a registration may have moved in between): the node is
