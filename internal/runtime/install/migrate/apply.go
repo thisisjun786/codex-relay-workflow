@@ -260,11 +260,12 @@ func (a *applyRun) ensureRoots() error {
 				return refuse(applyReasonChanged, it.Source, "the source root mode changed since classification")
 			}
 		}
-		// Whether the root was there when the pair was pinned decides whether a directory this
-		// run did not create may still be adopted below: a root that was absent then, and whose
-		// creation this run's own mkdir refused with EEXIST, is another actor's,
-		// whatever its mode.
-		absent := pair.Dest == nil
+		// Whether the root was there when the pair was pinned decides whether a directory this run did
+		// not create may still be adopted below: a root that was absent then is another actor's when
+		// this run's own creation does not end up owning it, whatever its mode, and that lookup is not
+		// repeated - a retry reaches this with the pair's pinned root already set, so the answer has to
+		// come from the pair rather than from a fresh look at Dest.
+		absent := pair.pinnedAbsent
 		var made bool
 		var err error
 		if scope == ScopeProject {

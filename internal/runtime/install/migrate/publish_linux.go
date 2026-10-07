@@ -32,6 +32,10 @@ var ownedDirIdentityFchmodat2 = func(fd int, perm uint32) error {
 	return unix.Fchmodat(fd, "", perm, 0x1000)
 }
 
+// ownedDirIdentityFchmodUsesFchmodat2 says the mode call above consults ownedDirIdentityFchmodat2, so a
+// case can replace that seam here and expect it to run.
+const ownedDirIdentityFchmodUsesFchmodat2 = true
+
 // ownedDirIdentityFchmod gives the pinned directory exactly perm through its descriptor. fchmodat2 is
 // used where the kernel has it (6.5 and later); any other error it answers is tried on the
 // /proc/self/fd path, which is the same call a libc fchmod makes on a descriptor, so a kernel or

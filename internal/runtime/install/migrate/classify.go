@@ -35,14 +35,13 @@ type classifier struct {
 }
 
 // classifyDest is a destination directory that received a mapped item, in first-seen order; classifyDestTemps reports the
-// temporaries of older runs left there. A destination that does not exist yet is reported through the directory that holds
-// it (holds is that directory's destination-relative path), because a run whose root creation was interrupted leaves its
-// temporary there and no destination directory exists to be walked.
+// temporaries of older runs left there. A destination root that does not exist yet has no directory to walk, so the scope's
+// holder - the directory that holds the root - is read instead, wherever a run interrupted while creating that root left its
+// temporary.
 type classifyDest struct {
-	scope  Scope
-	root   *Dir
-	path   string
-	holder *Dir // the directory that holds the destination root, for a root that does not exist yet
+	scope Scope
+	root  *Dir
+	path  string
 }
 
 // classify returns the ordered dry plan of the selected roots. On a refusal the plan holds the items examined so far, and the
@@ -381,8 +380,7 @@ func (c *classifier) skipItem(scope Scope, dir *Dir, childPath, name, reason str
 
 func (c *classifier) noteDest(scope Scope, dirPath string) {
 	root := c.destRoot(scope)
-	holder := c.destHolder(scope)
-	if root == nil && holder == nil {
+	if root == nil && c.destHolder(scope) == nil {
 		return
 	}
 	key := string(scope) + ":" + dirPath
@@ -390,7 +388,7 @@ func (c *classifier) noteDest(scope Scope, dirPath string) {
 		return
 	}
 	c.seen[key] = true
-	c.dests = append(c.dests, classifyDest{scope: scope, root: root, path: dirPath, holder: holder})
+	c.dests = append(c.dests, classifyDest{scope: scope, root: root, path: dirPath})
 }
 
 // destHolder is the pinned directory that holds a scope's destination root, where a run whose root creation was
@@ -412,13 +410,24 @@ func (c *classifier) destHolder(scope Scope) *Dir {
 // classifyDestTemps reports the .migrate-<26>-<n>.tmp names an older run left in a destination directory. They are named and put
 // in the plan, never adopted, moved or removed (M1's Publisher does the same for a run of its own).
 func (c *classifier) classifyDestTemps() error {
+	// The directory that holds a scope's destination root is read once for every scope the plan covers,
+	// whatever that root's own state. A run interrupted while creating the root leaves its temporary there,
+	// and that leftover is retained independently of whether the root exists by the next run: another actor,
+	// or a later attempt, can create the root without touching the temporary beside it.
+	holders := map[Scope]bool{}
 	for _, d := range c.dests {
-		// A scope whose destination root does not exist yet has no directory to walk, so the directory
-		// that holds the root is read instead.
+		if holders[d.scope] {
+			continue
+		}
+		holders[d.scope] = true
+		if err := c.classifyHolderTemps(d.scope); err != nil {
+			return err
+		}
+	}
+	for _, d := range c.dests {
+		// A scope whose destination root does not exist yet has no directory to walk; its holder was read
+		// above.
 		if d.root == nil {
-			if err := c.classifyHolderTemps(d); err != nil {
-				return err
-			}
 			continue
 		}
 		dir, opened, err := classifyOpenDest(d.root, d.path)
@@ -427,13 +436,7 @@ func (c *classifier) classifyDestTemps() error {
 			return err
 		}
 		if dir == nil {
-			// The destination root does not exist yet, so a run whose creation of it was interrupted left
-			// its temporary in the directory that holds the root rather than under it. That directory is
-			// read too, so the leftover is reported to the next run and never adopted.
 			classifyCloseAll(opened)
-			if err := c.classifyHolderTemps(d); err != nil {
-				return err
-			}
 			continue
 		}
 		names, err := dir.Names()
@@ -457,12 +460,16 @@ func (c *classifier) classifyDestTemps() error {
 
 // classifyHolderTemps reports the temporaries a run that was interrupted while creating a scope's destination
 // root left in the directory that holds that root. They are named, reported and never adopted, moved or
-// removed, the same rule the destination directories' temporaries get.
-func (c *classifier) classifyHolderTemps(d classifyDest) error {
-	if d.holder == nil {
+// removed, the same rule the destination directories' temporaries get. That directory is beside the destination
+// root, not inside it, so the item carries the leftover's own location in Source, as the literal-home fallback
+// does for the same reason, and leaves Destination empty rather than spelling a destination-root-relative path
+// that would place the leftover inside the root.
+func (c *classifier) classifyHolderTemps(scope Scope) error {
+	holder := c.destHolder(scope)
+	if holder == nil {
 		return nil
 	}
-	names, err := d.holder.Names()
+	names, err := holder.Names()
 	if err != nil {
 		return err
 	}
@@ -470,7 +477,7 @@ func (c *classifier) classifyHolderTemps(d classifyDest) error {
 		if _, ok := tempRun(name); !ok {
 			continue
 		}
-		c.add(Item{Scope: d.scope, Destination: name, Disposition: DispSkip, Reason: inventoryReasonOldTemp})
+		c.add(Item{Scope: scope, Source: holder.join(name), Disposition: DispSkip, Reason: inventoryReasonOldTemp})
 	}
 	return nil
 }

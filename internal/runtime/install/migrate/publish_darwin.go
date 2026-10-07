@@ -31,6 +31,10 @@ var ownedDirIdentityFchmodat2 = func(fd int, perm uint32) error {
 	return errors.ErrUnsupported
 }
 
+// ownedDirIdentityFchmodUsesFchmodat2 says the mode call below does not consult ownedDirIdentityFchmodat2,
+// so the Linux fallback case must not expect that seam to run here.
+const ownedDirIdentityFchmodUsesFchmodat2 = false
+
 // ownedDirIdentityFchmod gives the pinned directory exactly perm through its descriptor, with the
 // fchmod a descriptor takes. The handle was opened without read permission, which fchmod does not need.
 func ownedDirIdentityFchmod(fd int, perm uint32) error {

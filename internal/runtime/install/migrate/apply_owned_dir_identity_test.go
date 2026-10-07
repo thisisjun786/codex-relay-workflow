@@ -298,8 +298,8 @@ func TestMigrateOwnedDirIdentityUnreadableTemporaryIsLeftAndReported(t *testing.
 // the descriptor by swapping the name for a hard link right after the mode is set, which the reopen
 // then refuses. The head before this cycle refused such a kernel as unsupported.
 func TestMigrateOwnedDirIdentityFchmodat2AbsentUsesTheDescriptorPath(t *testing.T) {
-	if !ownedDirIdentityHandleOK {
-		t.Skip("this platform has no descriptor-bound mode handle")
+	if !ownedDirIdentityHandleOK || !ownedDirIdentityFchmodUsesFchmodat2 {
+		t.Skip("this platform has no descriptor-bound mode handle that consults fchmodat2")
 	}
 	restore2 := ownedDirIdentityFchmodat2
 	t.Cleanup(func() { ownedDirIdentityFchmodat2 = restore2 })
@@ -536,7 +536,7 @@ func TestMigrateOwnedDirIdentityRootTemporaryIsReportedOnTheNextRun(t *testing.T
 	must(t, err)
 	found := false
 	for _, it := range plan.Items {
-		if _, ok := tempRun(it.Destination); ok && it.Disposition == DispSkip {
+		if _, ok := tempRun(filepath.Base(it.Source)); ok && it.Disposition == DispSkip {
 			found = true
 		}
 	}
@@ -594,13 +594,23 @@ func TestMigrateOwnedDirIdentityCreatedRootHandleIsOpen(t *testing.T) {
 
 // C2(1): a retry that fails at the parent sync twice still finishes the root this run created on the
 // third attempt. The root is pinned from the second attempt on, so the retry path must report it as
-// this run's own from the identity it recorded rather than as an existing directory.
+// this run's own from the identity it recorded rather than as an existing directory, and that retry's
+// own parent sync must be the one this case fails second - not a child's creation later in the run.
+// The head before this cycle failed a child's sync as the second error, so the case passed without
+// exercising the repeated root sync it names.
 func TestMigrateOwnedDirIdentityRepeatedSyncFailureStillFinishesTheRoot(t *testing.T) {
 	ws, r, p := apPlan(t, migrateOwnedDirIdentityEntries(), nil)
 	syncs := 0
+	rootSyncs := 0
 	migrateOwnedDirIdentitySteps(t, func(step string) error {
 		if step == "sync" {
-			if syncs++; syncs <= 2 {
+			syncs++
+			// The root's own sync is the first sync of an attempt: it runs before any child directory
+			// is created, so a sync that arrives before any child exists is the root's.
+			if syncs <= 2 {
+				if _, err := os.Lstat(apDst(ws, "sessions")); err != nil {
+					rootSyncs++
+				}
 				return errApplyInterrupted
 			}
 		}
@@ -610,6 +620,9 @@ func TestMigrateOwnedDirIdentityRepeatedSyncFailureStillFinishesTheRoot(t *testi
 		if _, err := apply(r, p); !errors.Is(err, errApplyInterrupted) {
 			t.Fatalf("attempt %d: %v", i+1, err)
 		}
+	}
+	if rootSyncs != 2 {
+		t.Fatalf("the case must fail the root's own parent sync twice, it failed it %d times", rootSyncs)
 	}
 	res, err := apply(r, p)
 	must(t, err)
@@ -632,4 +645,144 @@ func TestMigrateOwnedDirIdentityPinAnswersThePlatform(t *testing.T) {
 	if !ownedDirIdentityNoHandle(err) {
 		t.Errorf("a platform without a handle must answer ownedDirIdentityNoHandle, got %v", err)
 	}
+}
+
+// C2(1): a same-Pair retry must not adopt a root another actor put at the name, even when the retry
+// itself pinned that replacement before a later step failed. The lookup that saw the root absent is not
+// repeated, so the pair has to remember it: without that the third attempt reads the replacement as a
+// directory that merely existed already and adopts it through the marker branch. The head before this
+// cycle took the adoption path and left the replacement at the source mode with no note.
+func TestMigrateOwnedDirIdentityReplacedRootIsNotAdoptedOnALaterRetry(t *testing.T) {
+	ws, r, p := apPlan(t, migrateOwnedDirIdentityEntries(), nil)
+	root := apDst(ws, "")
+	syncs := 0
+	clearAt := migrateOwnedDirIdentitySteps(t, func(step string) error {
+		if step == "sync" {
+			if syncs++; syncs == 1 { // the project root's creation, which this case stops
+				return errApplyInterrupted
+			}
+		}
+		return nil
+	})
+	if _, err := apply(r, p); !errors.Is(err, errApplyInterrupted) {
+		t.Fatalf("the interrupted run: %v", err)
+	}
+	migrateOwnedDirIdentityWantRaw(t, root, 0o700)
+	// Another actor takes the name: this run's root is moved aside and a 01700 root is put there.
+	must(t, os.Rename(root, root+".ours"))
+	mkdirs(t, root)
+	migrateOwnedDirIdentitySetRaw(t, root, applyTempRaw)
+	// The second attempt pins the replacement and then fails at the publisher's root step, so the
+	// replacement is the root the pair holds when the third attempt begins.
+	pub := newPub(t)
+	pub.at = func(step string) error {
+		if step == "root" {
+			return errApplyInterrupted
+		}
+		return nil
+	}
+	if _, err := applyWith(r, p, pub); !errors.Is(err, errApplyInterrupted) {
+		t.Fatalf("the second attempt: %v", err)
+	}
+	clearAt()
+	res, err := apply(r, p)
+	must(t, err)
+	migrateOwnedDirIdentityWantRaw(t, root, applyTempRaw)
+	migrateOwnedDirIdentityWantKeptNote(t, res, ".")
+}
+
+// C2(2): the pin this run takes on its temporary is held across the read handle's open, so device and
+// inode equality proves the handle names the directory the mode was just given to. The head before this
+// cycle released the pin first, so a replacement that took the name could be handed back as this run's.
+// The swap is driven through the creation-step seam, never a sleep.
+func TestMigrateOwnedDirIdentityPinIsHeldAcrossTheReadHandle(t *testing.T) {
+	ws, r, p := apPlan(t, migrateOwnedDirIdentityEntries(), nil)
+	swapped := false
+	migrateOwnedDirIdentitySteps(t, func(step string) error {
+		if step != "held" || swapped {
+			return nil
+		}
+		swapped = true
+		// The temporary this run created is the only entry of the package's naming rule in the workspace.
+		entries, err := os.ReadDir(ws)
+		must(t, err)
+		target := ""
+		for _, e := range entries {
+			if _, ok := tempRun(e.Name()); ok {
+				target = filepath.Join(ws, e.Name())
+			}
+		}
+		if target == "" {
+			t.Fatal("the case found no temporary to swap")
+		}
+		var before unix.Stat_t
+		must(t, unix.Lstat(target, &before))
+		// The racer removes the directory this run created and puts its own at the same name. While the
+		// run holds its pin, the removed directory's inode is still referenced and cannot be handed out
+		// again, so the replacement cannot carry the identity this run recorded.
+		must(t, os.Remove(target))
+		mkdirs(t, target)
+		var after unix.Stat_t
+		must(t, unix.Lstat(target, &after))
+		if (fileID{uint64(after.Dev), uint64(after.Ino)}) == (fileID{uint64(before.Dev), uint64(before.Ino)}) {
+			t.Skip("this filesystem reused the inode of the removed directory")
+		}
+		return nil
+	})
+	if _, err := apply(r, p); err == nil {
+		t.Fatal("a replacement put at the temporary while the pin was held must stop the run")
+	}
+	if !swapped {
+		t.Fatal("the run never held the pin across the read handle's open")
+	}
+}
+
+// C2(3): the leftover a run interrupted while creating the destination root is reported at its own
+// location. It sits beside the root, not inside it, so the item carries that location rather than a
+// destination-root-relative path that would place it inside the root. The head before this cycle
+// reported it with the holder's leaf name as a destination inside the root.
+func TestMigrateOwnedDirIdentityRootTemporaryIsReportedAtItsOwnLocation(t *testing.T) {
+	ws, _, _ := apPlan(t, migrateOwnedDirIdentityEntries(), nil)
+	leftover := filepath.Join(ws, tempName("ABCDEFGHIJKLMNOPQRSTUVWXYZ", 1))
+	mkdirs(t, leftover)
+	again, err := Open(Options{Scope: ScopeProject, Cwd: ws})
+	must(t, err)
+	t.Cleanup(func() { _ = again.Close() })
+	plan, err := classify(again)
+	must(t, err)
+	for _, it := range plan.Items {
+		if it.Reason != inventoryReasonOldTemp || filepath.Base(it.Source) != filepath.Base(leftover) {
+			continue
+		}
+		if it.Source != leftover {
+			t.Errorf("the leftover must be reported at %q, got source %q", leftover, it.Source)
+		}
+		if it.Destination != "" {
+			t.Errorf("a leftover beside the root has no destination-root-relative path, got %q", it.Destination)
+		}
+		return
+	}
+	t.Errorf("the next run must report the root's leftover temporary, got %d items", len(plan.Items))
+}
+
+// C2(3): that leftover is reported whatever the destination root's own state. Another actor can create
+// the root after the interrupted run left the temporary beside it, and the report must still name it.
+// The head before this cycle read the holder only while the root or its mapped directory was missing, so
+// the leftover vanished from the report once the root existed.
+func TestMigrateOwnedDirIdentityRootTemporaryIsReportedAfterTheRootExists(t *testing.T) {
+	ws, _, _ := apPlan(t, migrateOwnedDirIdentityEntries(), nil)
+	leftover := filepath.Join(ws, tempName("ABCDEFGHIJKLMNOPQRSTUVWXYZ", 1))
+	mkdirs(t, leftover)
+	mkdirs(t, apDst(ws, ""))
+	again, err := Open(Options{Scope: ScopeProject, Cwd: ws})
+	must(t, err)
+	t.Cleanup(func() { _ = again.Close() })
+	plan, err := classify(again)
+	must(t, err)
+	for _, it := range plan.Items {
+		if it.Reason == inventoryReasonOldTemp && filepath.Base(it.Source) == filepath.Base(leftover) {
+			return
+		}
+	}
+	t.Errorf("the leftover must be reported even when the root exists, got %d items", len(plan.Items))
 }

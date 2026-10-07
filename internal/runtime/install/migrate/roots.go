@@ -29,6 +29,7 @@ type Pair struct {
 	SourcePath, DestPath string
 	Source, Dest         *Dir
 	parent               *Dir   // holds Dest, where EnsureDest creates it
+	pinnedAbsent         bool   // Dest did not exist when this pair was pinned
 	created              fileID // the identity of Dest when this process's own creation put it there
 	createdDir           *Dir   // the handle held on that directory, so its inode cannot be reused
 }
@@ -101,6 +102,10 @@ func Open(o Options) (_ *Roots, err error) {
 		if p.parent, p.Dest, dst.chain, err = pinRoot(p.DestPath); err != nil {
 			return nil, err
 		}
+		// Whether the root was there when the pair was pinned is remembered on the pair: a root that was
+		// absent then and that another actor's directory now holds stays another actor's on every retry,
+		// because the lookup that saw it absent is not repeated.
+		p.pinnedAbsent = p.Dest == nil
 		src.dir, dst.dir = p.Source, p.Dest
 		pins = append(pins, src, dst)
 	}
@@ -151,7 +156,7 @@ func (p *Pair) EnsureDest(perm uint32) (*Dir, bool, error) {
 		// it is this run's and the caller must still finish its mode - a retry after a failed step
 		// reaches here with the root pinned from the previous attempt.
 		made := p.created != (fileID{}) && p.Dest.id == p.created
-		return p.Dest, made, p.parent.Sync()
+		return p.Dest, made, p.syncParent()
 	}
 	name := filepath.Base(p.DestPath)
 	// A retry with this pinned pair must not read the root this process already created as another
@@ -161,7 +166,7 @@ func (p *Pair) EnsureDest(perm uint32) (*Dir, bool, error) {
 	if cur, err := p.parent.Child(name); err == nil {
 		if cur.id == p.created {
 			p.Dest = cur
-			return cur, true, p.parent.Sync()
+			return cur, true, p.syncParent()
 		}
 		_ = cur.Close()
 	}
@@ -180,6 +185,16 @@ func (p *Pair) EnsureDest(perm uint32) (*Dir, bool, error) {
 	}
 	p.Dest = d
 	return d, made, nil
+}
+
+// syncParent makes the entry of this pair's destination root durable. It runs the creation-step seam first,
+// so the retry paths that reach this without going through EnsureChild's own sync are exercised by the same
+// cases as the first attempt, and a failure here is reported like any other step of the creation.
+func (p *Pair) syncParent() error {
+	if err := migrateOwnedDirIdentityStep("sync"); err != nil {
+		return err
+	}
+	return p.parent.Sync()
 }
 
 // resolveRoot picks the explicit root, else the environment variable, else the default under the home directory.
@@ -514,9 +529,9 @@ func (d *Dir) Child(name string) (*Dir, error) {
 var migrateOwnedDirMkdirat = unix.Mkdirat
 
 // migrateOwnedDirIdentityAt runs at a named step of the creation EnsureChild performs and fails that
-// step by returning an error: "open" before the temporary name is pinned, "rename" before the
-// no-replace rename, and "sync" before the directory that holds the new entry is synced. It is nil in a
-// run, and only a test sets it.
+// step by returning an error: "open" before the temporary name is pinned, "held" after the mode was
+// given and while the pin still holds the directory, "rename" before the no-replace rename, and "sync"
+// before the directory that holds the new entry is synced. It is nil in a run, and only a test sets it.
 var migrateOwnedDirIdentityAt func(step string) error
 
 // migrateOwnedDirIdentityLstat reads the identity of a name inside a directory without following a link
@@ -728,28 +743,47 @@ func (d *Dir) migrateOwnedDirIdentityClaim(tmp string, want fileID, perm uint32)
 		_ = unix.Close(fd)
 		return -1, &fs.PathError{Op: "chmod", Path: d.join(tmp), Err: err}
 	}
-	_ = unix.Close(fd)
+	// The read handle is opened and checked while the pin is still held. Closing the pin first would free
+	// this directory's inode for reuse, and a replacement that took the name and the recycled inode would
+	// then pass every check below; holding the pin across the open is what makes device and inode equality
+	// prove the handle names the very directory the mode was just given to.
+	if err := migrateOwnedDirIdentityStep("held"); err != nil {
+		_ = unix.Close(fd)
+		return -1, err
+	}
 	held, err := unix.Openat(d.fd(), tmp, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	if err != nil {
+		_ = unix.Close(fd)
 		return -1, &fs.PathError{Op: "open", Path: d.join(tmp), Err: err}
 	}
 	var heldSt unix.Stat_t
 	if err := unix.Fstat(held, &heldSt); err != nil {
 		_ = unix.Close(held)
+		_ = unix.Close(fd)
 		return -1, &fs.PathError{Op: "stat", Path: d.join(tmp), Err: err}
+	}
+	if (fileID{uint64(heldSt.Dev), uint64(heldSt.Ino)}) != (fileID{uint64(st.Dev), uint64(st.Ino)}) {
+		_ = unix.Close(held)
+		_ = unix.Close(fd)
+		return -1, refuse(applyReasonChanged, d.join(tmp), "the temporary name is not the directory this run created")
 	}
 	if err := migrateOwnedDirIdentityOwned(d.join(tmp), &heldSt, want); err != nil {
 		_ = unix.Close(held)
+		_ = unix.Close(fd)
 		return -1, err
 	}
 	if uint32(heldSt.Mode)&0o7777 != perm {
 		_ = unix.Close(held)
+		_ = unix.Close(fd)
 		return -1, refuse(applyReasonChanged, d.join(tmp), fmt.Sprintf("the temporary directory is %#o, want %#o", uint32(heldSt.Mode)&0o7777, perm))
 	}
 	if err := unix.Fsync(held); err != nil {
 		_ = unix.Close(held)
+		_ = unix.Close(fd)
 		return -1, &fs.PathError{Op: "fsync", Path: d.join(tmp), Err: err}
 	}
+	// The read handle is verified; the pin has done its work and is released.
+	_ = unix.Close(fd)
 	return held, nil
 }
 

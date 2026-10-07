@@ -23,6 +23,9 @@ var ownedDirIdentityFchmodat2 = func(fd int, perm uint32) error {
 	return errors.ErrUnsupported
 }
 
+// ownedDirIdentityFchmodUsesFchmodat2 says the mode call below does not consult ownedDirIdentityFchmodat2.
+const ownedDirIdentityFchmodUsesFchmodat2 = false
+
 // ownedDirIdentityFchmod is unreachable: ownedDirIdentityHandleOK is false, so the creation never pins
 // a handle to give a mode through.
 func ownedDirIdentityFchmod(fd int, perm uint32) error { return errors.ErrUnsupported }
