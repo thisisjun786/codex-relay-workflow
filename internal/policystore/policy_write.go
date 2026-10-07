@@ -55,6 +55,13 @@ const (
 	writeTempPrefix = ".crw-policy-"
 )
 
+// writeDecisionTimeout bounds the post-publication phase: the registration, the (a)/(b)/(c)
+// decision and any restore. It is a var so a test can shorten it. The phase runs on a context
+// detached from the request, because a client that goes away must not be able to leave the policy
+// file and the wiring record naming different digests - the launcher refuses such a policy, so
+// every bridge would fail to start until a person repaired it.
+var writeDecisionTimeout = 2 * time.Minute
+
 // The outcome spellings of crw install register-mcp --re-register-policy that mean the wiring record
 // names the new policy: the registration succeeded.
 var registrationSucceeded = map[string]bool{"record_updated": true, "record_unchanged": true}
@@ -135,6 +142,12 @@ type WriteResult struct {
 // original bytes are backed up, the candidate is published atomically, and the registration step
 // runs in this process while the lock is still held. A registration the write cannot trust is
 // decided by reading the file and the record again rather than by believing the answer.
+//
+// Cancellation is honoured only before the candidate is published: once the file holds the new
+// bytes, the registration and the decision must finish, because stopping there would leave the file
+// and the wiring record naming different digests and no bridge would start until a person repaired
+// it. That final sequence therefore runs on a context detached from the caller's, bounded by this
+// write's own timeout; a bound that runs out is decided like any other untrusted answer.
 func Write(ctx context.Context, env LookupEnv, opts WriteOptions, request WriteRequest) WriteResult {
 	now := opts.Now
 	if now == nil {
@@ -244,20 +257,19 @@ func Write(ctx context.Context, env LookupEnv, opts WriteOptions, request WriteR
 		warnings = append(warnings, "the execution policy was replaced and its directory could not be synced ("+err.Error()+"); a host that loses power now may find the previous file")
 	}
 	stored := digestOfBytes(updated)
-	if err := ctx.Err(); err != nil {
-		// The replacement has happened and the registration has not, so the file and the record no
-		// longer describe one document: that is the (c) state however it arose. The decided answer
-		// stops before the next durable effect, so the registration is not run; the state is reported
-		// with everything a person needs to reconcile it rather than as a bare cancellation.
-		return WriteResult{Kind: WriteRecoveryNeeded, FileDigest: stored, RegisteredDigest: original,
-			Backup: reported, Recovery: recoveryAdvice(path, reported), Warnings: warnings, Step: "stored",
-			Errors: []string{"the request was cancelled after the policy was replaced and before it was registered: " + err.Error()}}
-	}
-	answer := register(ctx, path)
+	// The replacement has happened, so the sequence must run to completion: cancellation is honoured
+	// only before it. A request context that ends here (a closed browser tab, an aborted fetch) would
+	// otherwise leave the file and the wiring record naming different digests, which is a policy no
+	// bridge will start under. The registration, the decision and any restore therefore run under a
+	// context detached from the request and bounded by this write's own budget; a budget that runs out
+	// is decided as an untrusted answer by re-reading the file and the record, never left half-done.
+	decision, stop := context.WithTimeout(context.WithoutCancel(ctx), writeDecisionTimeout)
+	defer stop()
+	answer := register(decision, path)
 	outcome, parsed := registrationOutcome(answer)
 	switch {
 	case answer.Err == nil && parsed && registrationSucceeded[outcome]:
-		return storedResult(ctx, env, running, path, stored, reported, warnings, nil)
+		return storedResult(decision, env, running, path, stored, reported, warnings, nil)
 	case answer.Err == nil && parsed && registrationUnchanged[outcome]:
 		// The outcome says the registration did not update the record. Whether the record still names
 		// the bytes this run replaced is a separate fact, and only that fact makes a restore correct:
@@ -275,7 +287,7 @@ func Write(ctx context.Context, env LookupEnv, opts WriteOptions, request WriteR
 	switch {
 	case fileErr == nil && fileNow == stored && recordNow.State == Registered && recordNow.RegisteredDigest == stored:
 		// (a) both durable effects happened; only the answer was lost.
-		return storedResult(ctx, env, running, path, stored, reported, warnings, []string{detail})
+		return storedResult(decision, env, running, path, stored, reported, warnings, []string{detail})
 	case recordNow.State == Registered && recordNow.RegisteredDigest == original:
 		// (b) the record still names the old bytes: put them back.
 		return restoreResult(encoded, path, raw, info.Mode(), original, reported, warnings, detail)

@@ -647,13 +647,11 @@ func TestAQueuedWriteThatLostThePolicyRefuses(t *testing.T) {
 	}
 }
 
-// TestACancellationAfterTheReplacementReportsRecovery is the cancellation finding: a request
-// cancelled between the replacement and the registration stops there, as the decided answer says,
-// and reports the state it left rather than a bare cancellation.
-func TestACancellationAfterTheReplacementReportsRecovery(t *testing.T) {
-	env, file := host(t, policyText, true)
+// cancelAfterPublish is the request context a client that closes its connection produces: the
+// context ends the moment the policy file has been replaced.
+func cancelAfterPublish(t *testing.T) (context.Context, func()) {
+	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 	restore := writePublish
 	writePublish = func(path string, data []byte, mode os.FileMode) (bool, error) {
 		renamed, err := restore(path, data, mode)
@@ -661,20 +659,78 @@ func TestACancellationAfterTheReplacementReportsRecovery(t *testing.T) {
 		return renamed, err
 	}
 	t.Cleanup(func() { writePublish = restore })
-	result := Write(ctx, envOf(env), WriteOptions{Register: neverRegisters(t)},
+	return ctx, cancel
+}
+
+// TestACancellationAfterTheReplacementStillRegisters is the corrected C3 answer: a client that
+// goes away between the replacement and the registration must not leave the file and the wiring
+// record naming different digests, so the registration runs to completion under a context detached
+// from the request and the answer is stored with the two agreeing.
+func TestACancellationAfterTheReplacementStillRegisters(t *testing.T) {
+	env, file := host(t, policyText, true)
+	ctx, cancel := cancelAfterPublish(t)
+	defer cancel()
+	opts := WriteOptions{Register: updatingRegisters(t, env), Running: unavailableRunning()}
+	result := Write(ctx, envOf(env), opts,
 		WriteRequest{ExpectedDigest: digestOf(policyText), Change: removeLegacy()})
-	if result.Kind != WriteRecoveryNeeded || result.Step != "stored" {
-		t.Fatalf("kind = %q step = %q (%v), want %q at stored", result.Kind, result.Step, result.Errors, WriteRecoveryNeeded)
+	if result.Kind != WriteStored {
+		t.Fatalf("kind = %q (%v), want %q: a cancelled request must not strand the policy", result.Kind, result.Errors, WriteStored)
 	}
-	if result.FileDigest == "" || result.RegisteredDigest != digestOf(policyText) || result.Backup == "" || result.Recovery == "" {
-		t.Fatalf("a cancellation after the replacement is not reported with everything needed to reconcile it: %+v", result)
+	if result.FileDigest != digestOfFile(t, file) || result.RegisteredDigest != result.FileDigest {
+		t.Fatalf("the file and the record do not agree: file %q registered %q", result.FileDigest, result.RegisteredDigest)
 	}
-	if result.FileDigest == digestOf(policyText) {
-		t.Fatal("the file digest is the old one, so the replacement did not happen")
+	if located := Locate(envOf(env)); located.RegisteredDigest != result.FileDigest {
+		t.Fatalf("the record names %q, the file hashes to %q", located.RegisteredDigest, result.FileDigest)
+	}
+}
+
+// TestACancellationAfterTheReplacementStillRestores is the same shape when the registration cannot
+// take the new policy: the restore still runs, so the two durable artifacts agree again.
+func TestACancellationAfterTheReplacementStillRestores(t *testing.T) {
+	env, file := host(t, policyText, true)
+	ctx, cancel := cancelAfterPublish(t)
+	defer cancel()
+	opts := WriteOptions{Register: func(context.Context, string) RegisterAnswer { return answer("record_absent", 1) }}
+	result := Write(ctx, envOf(env), opts,
+		WriteRequest{ExpectedDigest: digestOf(policyText), Change: removeLegacy()})
+	if result.Kind != WriteRegisterFailed || !result.Restored {
+		t.Fatalf("kind = %q restored = %v (%v), want %q with restored", result.Kind, result.Restored, result.Errors, WriteRegisterFailed)
 	}
 	after, _ := os.ReadFile(file)
-	if string(after) == policyText {
-		t.Fatal("the file is the original, so the test did not cancel after the replacement")
+	if string(after) != policyText {
+		t.Fatal("the original bytes were not restored")
+	}
+	if located := Locate(envOf(env)); located.RegisteredDigest != digestOf(policyText) {
+		t.Fatalf("the record names %q, the file hashes to %q", located.RegisteredDigest, digestOf(policyText))
+	}
+}
+
+// shortenDecisionTimeout makes the post-publication bound small enough for a test to outlast it.
+func shortenDecisionTimeout(t *testing.T, bound time.Duration) {
+	t.Helper()
+	previous := writeDecisionTimeout
+	writeDecisionTimeout = bound
+	t.Cleanup(func() { writeDecisionTimeout = previous })
+}
+
+// TestADecisionBoundThatRunsOutIsDecidedByReReading is the bound's own test: when the detached
+// decision runs out of time, the answer is not trusted and the write re-reads the file and the
+// record and decides, so the two are never left half-done.
+func TestADecisionBoundThatRunsOutIsDecidedByReReading(t *testing.T) {
+	env, file := host(t, policyText, true)
+	shortenDecisionTimeout(t, 50*time.Millisecond)
+	opts := WriteOptions{Register: func(ctx context.Context, path string) RegisterAnswer {
+		<-ctx.Done()
+		return RegisterAnswer{}
+	}}
+	result := Write(context.Background(), envOf(env), opts,
+		WriteRequest{ExpectedDigest: digestOf(policyText), Change: removeLegacy()})
+	if result.Kind != WriteRegisterFailed || !result.Restored {
+		t.Fatalf("kind = %q restored = %v (%v), want %q with restored", result.Kind, result.Restored, result.Errors, WriteRegisterFailed)
+	}
+	after, _ := os.ReadFile(file)
+	if string(after) != policyText {
+		t.Fatal("the original bytes are not on disk")
 	}
 }
 
