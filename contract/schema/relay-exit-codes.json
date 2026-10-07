@@ -35,6 +35,7 @@
     "MALFORMED_RECEIPT": "malformed_receipt",
     "OUTCOME_INCONSISTENT": "outcome_inconsistent",
     "PRODUCER_NOT_PERMITTED": "producer_not_permitted",
+    "STORE_WRITE_HALTED": "store_write_halted",
     "DUPLICATE_EVENT": "duplicate_event",
     "NOT_CLAIMABLE": "not_claimable",
     "WRONG_DELIVERY_KIND": "wrong_delivery_kind",

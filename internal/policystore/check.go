@@ -3,6 +3,7 @@ package policystore
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -31,8 +32,49 @@ type Change struct {
 	Model   string   `json:"model,omitempty"`
 	Efforts []string `json:"efforts,omitempty"`
 	ID      string   `json:"id,omitempty"`
-	Effort  string   `json:"reasoningEffort,omitempty"`
+	Effort  string   `json:"effort,omitempty"`
 	CWD     []string `json:"cwd,omitempty"`
+	// conflict is why the request's two effort spellings could not be reconciled, or "" when they
+	// could. It is unexported so it is not part of the wire shape: Check turns it into a refused
+	// change, which keeps a disagreement a check answer rather than a bad request.
+	conflict string
+}
+
+// changeWire is a change as JSON carries it. It exists so Change can decode the two effort
+// spellings through the same resolver Pair uses without recursing into its own UnmarshalJSON. The
+// spellings are raw so an absent key is distinguishable from one supplied empty.
+type changeWire struct {
+	Kind            string          `json:"kind"`
+	Role            string          `json:"role,omitempty"`
+	Pairs           []Pair          `json:"pairs,omitempty"`
+	Model           string          `json:"model,omitempty"`
+	Efforts         []string        `json:"efforts,omitempty"`
+	ID              string          `json:"id,omitempty"`
+	ReasoningEffort json.RawMessage `json:"reasoningEffort"`
+	Effort          json.RawMessage `json:"effort"`
+	CWD             []string        `json:"cwd,omitempty"`
+}
+
+// UnmarshalJSON reads a change from the wire, resolving its effort through the same alias resolver
+// Pair uses. The contract names the field effort and the policy document names it reasoningEffort;
+// a request that uses both with different values is recorded as a conflict and refused by Check.
+func (c *Change) UnmarshalJSON(raw []byte) error {
+	var wire changeWire
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		return err
+	}
+	reasoningEffort, reasoningPresent, err := effortField(wire.ReasoningEffort)
+	if err != nil {
+		return err
+	}
+	effort, effortPresent, err := effortField(wire.Effort)
+	if err != nil {
+		return err
+	}
+	resolved, conflict := effortAlias(reasoningEffort, reasoningPresent, effort, effortPresent)
+	*c = Change{Kind: wire.Kind, Role: wire.Role, Pairs: wire.Pairs, Model: wire.Model,
+		Efforts: wire.Efforts, ID: wire.ID, Effort: resolved, CWD: wire.CWD, conflict: conflict}
+	return nil
 }
 
 // CheckResult is what a check answers. It carries the file's current digest and whether the
@@ -57,12 +99,25 @@ func Check(raw []byte, expectedDigest string, change Change) CheckResult {
 		result.Errors = append(result.Errors, err.Error())
 		return result
 	}
+	// A request whose two effort spellings disagree is refused here, before the file is read: the
+	// disagreement is about the request, not about the document it would be applied to.
+	if change.conflict != "" {
+		result.Errors = append(result.Errors, change.conflict)
+		return result
+	}
+	for _, pair := range change.Pairs {
+		if pair.conflict != "" {
+			result.Errors = append(result.Errors, pair.conflict)
+			return result
+		}
+	}
 	document, err := decode(raw)
 	if err != nil {
 		result.Errors = append(result.Errors, err.Error())
 		return result
 	}
-	if _, err := execution.FromBytes(raw, "the execution policy"); err != nil {
+	original, err := execution.FromBytes(raw, "the execution policy")
+	if err != nil {
 		result.Errors = append(result.Errors, err.Error())
 		return result
 	}
@@ -75,8 +130,17 @@ func Check(raw []byte, expectedDigest string, change Change) CheckResult {
 		return result
 	}
 	encoded := []byte(encode(updated))
-	if _, err := execution.FromBytes(encoded, "the candidate execution policy"); err != nil {
+	candidate, err := execution.FromBytes(encoded, "the candidate execution policy")
+	if err != nil {
 		result.Errors = append(result.Errors, err.Error())
+		return result
+	}
+	// A change may not move the policy's mode. An absent allowed key is presence_only, which allows
+	// every model the bridge's own parser accepts, so a change that turns an allowlist into a
+	// presence_only document widens what this host allows without saying so. The comparison is on
+	// the parser's own reading of both documents, not on a projection of them.
+	if original.Mode() != candidate.Mode() {
+		result.Errors = append(result.Errors, "the change turns this policy from "+original.Mode()+" into "+candidate.Mode()+", which changes what this host allows; a change may not move the policy's mode")
 		return result
 	}
 	if err := onlyTheTargetMoved(before, updated, change); err != nil {
@@ -243,8 +307,10 @@ func allowedEntry(model string, efforts []string) pyjson.Object {
 }
 
 // applyRemoveAllowed removes one model from the allowlist. Removing a model that is not listed
-// moves nothing, so it is refused rather than reported as a change. Removing the last one drops the
-// key instead of leaving an empty list, which the bridge's parser refuses.
+// moves nothing, so it is refused rather than reported as a change. Removing the last one leaves an
+// empty list: the key is kept so the bridge's own parser judges the candidate as it stands, and an
+// empty list is what that parser refuses. Dropping the key would instead turn the document into a
+// presence_only one, which widens what this host allows.
 func applyRemoveAllowed(document pyjson.Object, change Change) (pyjson.Object, []string, error) {
 	entries, _ := document.Get("allowed").([]any)
 	list := make([]any, 0, len(entries))
@@ -260,9 +326,6 @@ func applyRemoveAllowed(document pyjson.Object, change Change) (pyjson.Object, [
 	}
 	if !removed {
 		return document, nil, fmt.Errorf("model %q is not in this file's allowed list", change.Model)
-	}
-	if len(list) == 0 {
-		return withoutKey(document, "allowed"), []string{"allowed." + change.Model}, nil
 	}
 	return document.Set("allowed", list), []string{"allowed." + change.Model}, nil
 }
@@ -320,18 +383,6 @@ func applyRemoveException(document pyjson.Object, change Change) (pyjson.Object,
 		remaining = append(remaining, field)
 	}
 	return document.Set("exceptions", remaining), []string{"exceptions." + change.ID}, nil
-}
-
-// withoutKey is the document with one top-level key removed.
-func withoutKey(document pyjson.Object, key string) pyjson.Object {
-	out := make(pyjson.Object, 0, len(document))
-	for _, field := range document {
-		if field.Key == key {
-			continue
-		}
-		out = append(out, field)
-	}
-	return out
 }
 
 // sections is the document before the edit: each of the three declared sections as canonical JSON,
