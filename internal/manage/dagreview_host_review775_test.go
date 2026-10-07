@@ -224,6 +224,15 @@ func TestDagHostReview775DocsReadIsNotRelayCall(t *testing.T) {
 		// A here-document delimiter is any word the shell accepts, not only a variable name.
 		{"a hyphenated here-document delimiter", "cat <<END-EXAMPLE\ncrw relay dag-ready --plan p1\nEND-EXAMPLE", false},
 		{"a dotted here-document delimiter", "cat <<E.O.F\ncrw relay dag-ready --plan p1\nE.O.F", false},
+		// A substitution keeps its text inside the word it belongs to, so an option value built by
+		// one does not split the enclosing invocation; and a word after a substitution is still an
+		// argument, not a program position.
+		{"a substitution as an option value", `crw relay --state "$(printf '%s' S)" dag-ready --plan p1`, true},
+		{"a bare substitution as an option value", "crw relay --state $(printf '%s' S) dag-ready --plan p1", true},
+		{"a printed example after a substitution", `printf '%s\n' $(printf '%s' example) crw relay dag-ready '{"error":"refused","reason":"stale_coordinator_epoch"}'`, false},
+		// A here-document opener inside a quoted argument that spans lines starts no document, so
+		// the real relay command after the quoted argument is still read.
+		{"a here-document opener inside a multiline quoted argument", "printf '%s\\n' 'example:\ncat <<EOF\nbody'\ncrw relay dag-ready --plan p1", true},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {

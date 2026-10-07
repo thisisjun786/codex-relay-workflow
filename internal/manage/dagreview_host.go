@@ -433,105 +433,119 @@ type dagHostRolloutReading struct {
 // {"ok": false, "reason": ...}, and the scheduler's own envelope {"error": "refused", "reason": ...}
 // (internal/relay/dispatch/answer.go emit). Either shape with a reason is a refusal.
 var (
-	dagHostDagSubcommand   = regexp.MustCompile(`^dag-[a-z-]+$`)
-	dagHostVariableWord    = regexp.MustCompile(`^\$\{?[A-Za-z_][A-Za-z0-9_]*\}?$`)
-	dagHostAssignmentWord  = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=`)
-	dagHostHeredocName     = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.-]*$`)
-	dagHostRefusedAnswer   = regexp.MustCompile(`"ok"\s*:\s*false`)
-	dagHostRefusedEnvelope = regexp.MustCompile(`"error"\s*:\s*"refused"`)
-	dagHostRefusedReason   = regexp.MustCompile(`"reason"\s*:\s*"([a-z_]+)"`)
+	dagHostDagSubcommand  = regexp.MustCompile(`^dag-[a-z-]+$`)
+	dagHostVariableWord   = regexp.MustCompile(`^\$\{?[A-Za-z_][A-Za-z0-9_]*\}?$`)
+	dagHostAssignmentWord = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=`)
+	dagHostHeredocName    = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.-]*$`)
+	// dagHostSubstitutionWord stands for a command substitution in a word: this reader cannot expand
+	// it, so it is one opaque word that is neither an option, a dag- subcommand nor a variable word.
+	dagHostSubstitutionWord = "<substitution>"
+	dagHostRefusedAnswer    = regexp.MustCompile(`"ok"\s*:\s*false`)
+	dagHostRefusedEnvelope  = regexp.MustCompile(`"error"\s*:\s*"refused"`)
+	dagHostRefusedReason    = regexp.MustCompile(`"reason"\s*:\s*"([a-z_]+)"`)
 )
 
-// dagHostUnitFrame is one shell context the unit splitter is inside: a plain command, a
-// double-quoted string, or a command substitution started by $( or by a backtick. A substitution
-// runs its own commands, so its own frame starts unquoted whatever the frame around it was, and the
-// quote resumes when the substitution closes.
-type dagHostUnitFrame struct {
-	inDouble bool
-	tick     bool
+// dagHostHeredoc is one here-document a command line opens: its delimiter, whether it is a <<-
+// document (whose end line the shell matches with the leading tabs stripped), and whether the
+// delimiter is unquoted, so the shell expands the body.
+type dagHostHeredoc struct {
+	delimiter string
+	stripTabs bool
+	expanded  bool
 }
 
-// dagHostCommandUnits splits a tool call's argument text into the simple command units a shell would
-// run: a newline, ;, &&, ||, |, $( or a backtick starts one. A separator inside a single-quoted
-// string, or inside a double-quoted string that is not itself inside a command substitution, is
-// data, and a here-document's body is not a command at all, so a relay command written inside an
-// example the parent only read (rg's pattern, cat's document) is never mistaken for a command the
-// parent ran. A command substitution runs its own commands even inside a double-quoted string, so
-// "$(relay ...)" is an invocation and a separator inside the substitution separates. A # that
-// starts a word begins a comment to the end of the line. A unit keeps its own text, quotes
-// included, for the word reading that follows; text the reader cannot read to its end (an
-// unterminated quote) is never split.
+// dagHostCommandUnits splits a tool call's argument text into the command units a shell would run,
+// reading the text once. A newline, ;, &&, ||, | or a subshell's ( starts a unit, and a
+// here-document body is not a command at all. A separator inside a single-quoted string, or inside a
+// double-quoted string that is not itself inside a command substitution, is data, so a relay command
+// written in an example the parent only read (rg's pattern, cat's document) is never mistaken for one
+// the parent ran. A command substitution runs its own commands: its text stays inside the word it
+// belongs to, so "crw relay --state \"$(...)\" dag-ready" still names the relay, and the commands
+// inside it are read as units of their own. A # that starts a word begins a comment to the end of the
+// line. A unit keeps its own text, quotes included, for the word reading that follows; text the
+// reader cannot read to its end (an unterminated quote) is never split.
 func dagHostCommandUnits(text string) []string {
 	var units []string
+	dagHostScanUnits(dagHostStripHeredocs(text), &units)
+	return units
+}
+
+// dagHostScanUnits reads one level of command text into units, recursing into the commands a
+// substitution runs. It reads the substitution's text as part of the word it sits in, so the word
+// reading sees the enclosing command whole.
+func dagHostScanUnits(text string, units *[]string) {
 	var unit strings.Builder
 	flush := func() {
 		if strings.TrimSpace(unit.String()) != "" {
-			units = append(units, unit.String())
+			*units = append(*units, unit.String())
 		}
 		unit.Reset()
 	}
-	body := dagHostWithoutHeredocs(text)
-	frames := []dagHostUnitFrame{{}}
+	inDouble := false
 	wordStart := true
-	for i := 0; i < len(body); {
-		c := body[i]
-		quoted := frames[len(frames)-1].inDouble
+	for i := 0; i < len(text); {
+		c := text[i]
 		switch {
-		case c == '\\' && i+1 < len(body):
-			unit.WriteString(body[i : i+2])
+		case c == '\\' && i+1 < len(text):
+			unit.WriteString(text[i : i+2])
 			i += 2
 			wordStart = false
-		case !quoted && c == '\'':
-			end := dagHostQuotedEnd(body, i, '\'')
-			unit.WriteString(body[i:end])
+		case !inDouble && c == '\'':
+			end := dagHostQuotedEnd(text, i, '\'')
+			unit.WriteString(text[i:end])
 			i = end
 			wordStart = false
 		case c == '"':
 			unit.WriteByte(c)
-			frames[len(frames)-1].inDouble = !quoted
+			inDouble = !inDouble
 			i++
 			wordStart = false
-		case c == '#' && wordStart && !quoted:
+		case c == '#' && wordStart && !inDouble:
 			// A comment runs to the end of the line; the newline that ends it still separates units.
-			for i < len(body) && body[i] != '\n' {
+			for i < len(text) && text[i] != '\n' {
 				i++
 			}
-		case !quoted && (c == '\n' || c == ';'):
+		case !inDouble && (c == '\n' || c == ';'):
 			flush()
 			i++
 			wordStart = true
-		case !quoted && (c == '|' || c == '&'):
+		case !inDouble && (c == '|' || c == '&'):
 			flush()
 			i++
-			if i < len(body) && (body[i] == '|' || body[i] == '&') {
+			if i < len(text) && (text[i] == '|' || text[i] == '&') {
 				i++
 			}
 			wordStart = true
-		case c == '$' && i+1 < len(body) && body[i+1] == '(':
-			flush()
-			frames = append(frames, dagHostUnitFrame{})
-			i += 2
-			wordStart = true
-		case !quoted && c == '(' && wordStart:
-			// A subshell's ( starts a command unit, so "(crw relay dag-ready ...)" names the relay and
-			// not "(crw". A ( that does not start a word (an array assignment, say) is left alone.
-			flush()
-			i++
-			wordStart = true
+		case c == '$' && i+1 < len(text) && text[i+1] == '(':
+			end := dagHostParenEnd(text, i+1)
+			unit.WriteString(text[i:end])
+			if end > i+2 {
+				dagHostScanUnits(text[i+2:end-1], units)
+			}
+			i = end
+			wordStart = false
 		case c == '`':
-			flush()
-			if frames[len(frames)-1].tick {
-				frames = frames[:len(frames)-1]
-			} else {
-				frames = append(frames, dagHostUnitFrame{tick: true})
+			end := i + 1
+			for end < len(text) && text[end] != '`' {
+				end++
 			}
+			if end < len(text) {
+				end++
+			}
+			unit.WriteString(text[i:end])
+			if end > i+1 {
+				dagHostScanUnits(text[i+1:end-1], units)
+			}
+			i = end
+			wordStart = false
+		case !inDouble && c == '(' && wordStart:
+			// A subshell runs its own commands, so it starts a unit of its own.
+			flush()
 			i++
 			wordStart = true
-		case !quoted && c == ')' && len(frames) > 1 && !frames[len(frames)-1].tick:
-			// The substitution's last command ends here; the text after the ) is the outer command's
-			// again, so it starts a unit of its own and a word is never glued to the ).
+		case !inDouble && c == ')':
+			// The subshell's last command ends here.
 			flush()
-			frames = frames[:len(frames)-1]
 			i++
 			wordStart = true
 		default:
@@ -541,7 +555,6 @@ func dagHostCommandUnits(text string) []string {
 		}
 	}
 	flush()
-	return units
 }
 
 // dagHostQuotedEnd is the index just past the quoted string that starts at i with quote q. A single
@@ -560,12 +573,12 @@ func dagHostQuotedEnd(s string, i int, q byte) int {
 	return len(s)
 }
 
-// dagHostWords splits one command unit into the words a shell would pass as argv. A run of
-// unquoted characters up to whitespace is one word, a quoted run contributes its own text without
-// the quotes, a backslash quotes the character after it, and a backslash before a newline removes
-// both. So a quoted option value with a space stays one word, a quoted program word still names the
-// program, and a line continued with a backslash does not leave a stray word behind. The program
-// word and its options are read from these words, never from the unit's raw text.
+// dagHostWords splits one command unit into the words a shell would pass as argv. A run of unquoted
+// characters up to whitespace is one word, a quoted run contributes its own text without the quotes,
+// a backslash quotes the character after it, and a backslash before a newline removes both. So a
+// quoted option value with a space stays one word, a quoted program word still names the program,
+// and a line continued with a backslash leaves no stray word behind. The program word and its
+// options are read from these words, never from the unit's raw text.
 func dagHostWords(unit string) []string {
 	var words []string
 	var word strings.Builder
@@ -603,6 +616,25 @@ func dagHostWords(unit string) []string {
 			word.WriteString(inner)
 			started = true
 			i = end
+		case c == '$' && i+1 < len(unit) && unit[i+1] == '(':
+			// A command substitution is one word whatever its output, and this reader cannot expand
+			// it, so it becomes one opaque word: the words around it are neither glued together nor
+			// split apart, and the substitution's own text is never read as a program or a subcommand.
+			end := dagHostParenEnd(unit, i+1)
+			word.WriteString(dagHostSubstitutionWord)
+			started = true
+			i = end
+		case c == '`':
+			end := i + 1
+			for end < len(unit) && unit[end] != '`' {
+				end++
+			}
+			if end < len(unit) {
+				end++
+			}
+			word.WriteString(dagHostSubstitutionWord)
+			started = true
+			i = end
 		default:
 			word.WriteByte(c)
 			started = true
@@ -613,42 +645,117 @@ func dagHostWords(unit string) []string {
 	return words
 }
 
-// dagHostWithoutHeredocs is the text with every here-document body removed: the line that carries
-// <<DELIM (or <<-DELIM) stays and the lines up to and including the one that ends the document are
-// dropped. The body is data the parent read or wrote, so a relay command written in one is not a
-// command the parent ran, and the end is the delimiter line itself: an ordinary << ends at a line
-// equal to the delimiter, and only <<- strips the leading tabs the shell strips, so an indented line
-// that is not a <<- document's end is body text and stays removed. One exception keeps a real
-// invocation: an unquoted delimiter leaves the body expanded, so a command substitution in the body
-// still runs, and its text is kept for the command reading. A quoted delimiter expands nothing, so
-// its body is dropped whole. Only the first here-document of a line is read, which is what the
-// review needs.
-func dagHostWithoutHeredocs(text string) string {
+// dagHostStripHeredocs is the text with every here-document body removed. A body is data the parent
+// read or wrote, so a relay command written in one is not a command the parent ran; the end is the
+// delimiter line itself, an ordinary << ending at a line equal to the delimiter and only <<-
+// stripping the leading tabs the shell strips. One exception keeps a real invocation: an unquoted
+// delimiter leaves the body expanded, so a command substitution in the body still runs and its text
+// is kept for the command reading. A quoted delimiter expands nothing, so its body is dropped whole.
+// The scan carries an unclosed quote from one line to the next, so a << inside a quoted string that
+// spans lines starts no document and does not hide the commands after it.
+func dagHostStripHeredocs(text string) string {
 	var out strings.Builder
-	delimiter := ""
-	stripTabs, expanded := false, false
+	var pending []dagHostHeredoc
+	quote := byte(0)
 	for _, line := range strings.SplitAfter(text, "\n") {
-		content := strings.TrimRight(line, "\n")
-		content = strings.TrimRight(content, "\r")
-		if delimiter != "" {
+		content := strings.TrimRight(strings.TrimRight(line, "\n"), "\r")
+		if len(pending) > 0 {
 			end := content
-			if stripTabs {
+			if pending[0].stripTabs {
 				end = strings.TrimLeft(end, "\t")
 			}
-			if end == delimiter {
-				delimiter, stripTabs, expanded = "", false, false
+			if end == pending[0].delimiter {
+				pending = pending[1:]
 				continue
 			}
-			if expanded {
+			if pending[0].expanded {
 				out.WriteString(dagHostSubstitutionText(content))
 				out.WriteString("\n")
 			}
 			continue
 		}
 		out.WriteString(line)
-		delimiter, stripTabs, expanded = dagHostHeredocDelimiter(content)
+		openers, next := dagHostHeredocOpeners(content, quote)
+		quote = next
+		pending = append(pending, openers...)
 	}
 	return out.String()
+}
+
+// dagHostHeredocOpeners is the here-documents a line opens, given the quote it starts inside, and the
+// quote it leaves open. A << inside a comment, a quoted string or a here-string (<<<) starts none, so
+// a commented or quoted example does not swallow the commands that follow it.
+func dagHostHeredocOpeners(line string, quoteIn byte) ([]dagHostHeredoc, byte) {
+	var openers []dagHostHeredoc
+	quote := quoteIn
+	for i := 0; i < len(line); i++ {
+		c := line[i]
+		if quote != 0 {
+			if c == '\\' && quote == '"' && i+1 < len(line) {
+				i++
+				continue
+			}
+			if c == quote {
+				quote = 0
+			}
+			continue
+		}
+		switch {
+		case c == '\\':
+			i++
+		case c == '\'' || c == '"':
+			quote = c
+		case c == '#':
+			// A # that starts a word begins a comment; a # inside a word (a#b) does not.
+			if i == 0 || line[i-1] == ' ' || line[i-1] == '\t' {
+				return openers, quote
+			}
+		case c == '<' && i+1 < len(line) && line[i+1] == '<':
+			heredoc, ok, next := dagHostHeredocAt(line, i)
+			if !ok {
+				continue
+			}
+			openers = append(openers, heredoc)
+			i = next - 1
+		}
+	}
+	return openers, quote
+}
+
+// dagHostHeredocAt reads the here-document that starts at the first < of line[i], and the index just
+// past its delimiter. A here-string (<<<) or a << that does not name a delimiter starts none.
+func dagHostHeredocAt(line string, i int) (dagHostHeredoc, bool, int) {
+	if i+2 < len(line) && line[i+2] == '<' {
+		return dagHostHeredoc{}, false, i + 3
+	}
+	j := i + 2
+	strip := j < len(line) && line[j] == '-'
+	if strip {
+		j++
+	}
+	for j < len(line) && (line[j] == ' ' || line[j] == '\t') {
+		j++
+	}
+	if j >= len(line) {
+		return dagHostHeredoc{}, false, i + 2
+	}
+	if line[j] == '\'' || line[j] == '"' {
+		end := dagHostQuotedEnd(line, j, line[j])
+		if end > j+1 && end <= len(line) && line[end-1] == line[j] {
+			return dagHostHeredoc{delimiter: line[j+1 : end-1], stripTabs: strip}, true, end
+		}
+		return dagHostHeredoc{}, false, i + 2
+	}
+	end := j
+	for end < len(line) && line[end] != ' ' && line[end] != '\t' {
+		end++
+	}
+	word := line[j:end]
+	// A bare delimiter is a word: <<2)) in an arithmetic expansion is not a here-document.
+	if !dagHostHeredocName.MatchString(word) {
+		return dagHostHeredoc{}, false, i + 2
+	}
+	return dagHostHeredoc{delimiter: word, stripTabs: strip, expanded: true}, true, end
 }
 
 // dagHostSubstitutionText is the command substitutions an unquoted here-document body runs: the
@@ -698,61 +805,6 @@ func dagHostParenEnd(s string, open int) int {
 		}
 	}
 	return len(s)
-}
-
-// dagHostHeredocDelimiter is the delimiter of the here-document a line starts, whether it is a <<-
-// document, and whether the delimiter is unquoted (so the shell expands the body), or "", false,
-// false when the line starts none. << and <<- are both read. A << inside a comment, a single- or
-// double-quoted string, or a here-string (<<<) starts no document, so a commented example does not
-// swallow the commands that follow it.
-func dagHostHeredocDelimiter(line string) (string, bool, bool) {
-	for i := 0; i+1 < len(line); i++ {
-		switch line[i] {
-		case '\'', '"':
-			i = dagHostQuotedEnd(line, i, line[i]) - 1
-			continue
-		case '\\':
-			i++
-			continue
-		case '#':
-			// A # that starts a word begins a comment, and a here-document opener inside one is
-			// not read. A # inside a word (a#b) is not a comment start.
-			if i == 0 || line[i-1] == ' ' || line[i-1] == '\t' {
-				return "", false, false
-			}
-		case '<':
-			if line[i+1] != '<' {
-				continue
-			}
-			if i+2 < len(line) && line[i+2] == '<' {
-				// A here-string (<<<) is ordinary text, not a document.
-				i += 2
-				continue
-			}
-			rest := line[i+2:]
-			strip := strings.HasPrefix(rest, "-")
-			rest = strings.TrimLeft(strings.TrimPrefix(rest, "-"), " \t")
-			if rest == "" {
-				return "", false, false
-			}
-			if rest[0] == '\'' || rest[0] == '"' {
-				if end := dagHostQuotedEnd(rest, 0, rest[0]); end > 1 && rest[end-1] == rest[0] {
-					return rest[1 : end-1], strip, false
-				}
-				return "", false, false
-			}
-			word := rest
-			if end := strings.IndexAny(rest, " \t"); end >= 0 {
-				word = rest[:end]
-			}
-			// A bare delimiter is a name: <<2)) in an arithmetic expansion is not a here-document.
-			if dagHostHeredocName.MatchString(word) {
-				return word, strip, true
-			}
-			return "", false, false
-		}
-	}
-	return "", false, false
 }
 
 // dagHostRelaySubcommands reads the dag- subcommands of the relay invocations in a tool call's
