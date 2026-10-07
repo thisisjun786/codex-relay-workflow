@@ -100,6 +100,56 @@ func TestReservationRefusesASecondPendingPacket(t *testing.T) {
 	}
 }
 
+// A second packet of one issue is reserved beside an ACTIVE relationship of the same issue when both
+// resolve to distinct registered packets of one plan, and refused when the rival is not such a packet.
+// This is the admission the reservation makes; the pending-rival rule above is the other half.
+func TestReservationAdmitsADistinctPacketBesideAnActiveRelationship(t *testing.T) {
+	t.Parallel()
+	r, first := fixtureReservation(t)
+	ctx := context.Background()
+	if _, err := r.Reserve(ctx, first); err != nil {
+		t.Fatal(err)
+	}
+	packetRelease(t, r, "PL", "n1", first.IssueKey, "p1", first.RequestID)
+	// The first packet's start attached: its relationship is live and bound to packet p1.
+	if _, err := r.Store.DB.ExecContext(ctx, "UPDATE managed_start_requests SET state = 'attached' WHERE request_id = ?", first.RequestID); err != nil {
+		t.Fatal(err)
+	}
+	packetRelationship(t, r, "rel-live", first.IssueKey, "PL", "n1", "p1")
+
+	other := first
+	other.RequestID, other.Fingerprint, other.CreateRequestID, other.DispatchRequestID = "req-3", "fp-3", "create-3", "business-3"
+	packetRelease(t, r, "PL", "n3", first.IssueKey, "p2", other.RequestID)
+	if _, err := r.Reserve(ctx, other); err != nil {
+		t.Fatalf("a distinct packet beside an active relationship is refused: %v", err)
+	}
+
+	// The same packet as the live relationship is refused.
+	same := first
+	same.RequestID, same.Fingerprint, same.CreateRequestID, same.DispatchRequestID = "req-4", "fp-4", "create-4", "business-4"
+	packetRelease(t, r, "PL", "n4", first.IssueKey, "p1", same.RequestID)
+	if _, err := r.Reserve(ctx, same); err == nil {
+		t.Fatal("the same packet as the live relationship was reserved")
+	} else {
+		reasonIs(t, err, "duplicate_assignment")
+	}
+}
+
+// packetRelationship records a live relationship of an issue and the packet its execution row names, the
+// way dag-release writes both at bind.
+func packetRelationship(t *testing.T, r Reservation, relationship, issueKey, plan, node, packet string) {
+	t.Helper()
+	ctx := context.Background()
+	exec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := r.Store.DB.ExecContext(ctx, q, args...); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+	exec("INSERT INTO relationships (relationship_id, issue_key, status, parent_task_id, parent_host_id, child_task_id, child_host_id, execution_generation, artifact_roots, allowed_recipients, created_at, updated_at) VALUES (?,?,'active','p','h','c','h',1,'[]','[]','t','t')", relationship, issueKey)
+	exec("INSERT INTO dag_execution_packets (relationship_id, plan_id, node_id, issue_key, packet_id, branch, recorded_at) VALUES (?,?,?,?,?,NULL,'t')", relationship, plan, node, issueKey, packet)
+}
+
 // pendingStarts counts the reserved or armed managed requests of an issue.
 func pendingStarts(t *testing.T, r Reservation, issueKey string) int {
 	t.Helper()

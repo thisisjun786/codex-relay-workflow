@@ -533,36 +533,66 @@ func rivalRelationships(ctx context.Context, q store.Querier, issueKey, except s
 	return out, rows.Err()
 }
 
-// The newcomer's packet is resolved from the release intent its managed request recorded (dag_releases
-// to the live node's dag_node_packets row), because the relationship it registers does not exist yet
-// when the guard runs; the rival's is the packet its own relationship was bound under
-// (dag_execution_packets). Two packets are apart only when both resolve, name non-empty distinct packet
-// ids and belong to one plan. Anything else - no release intent, no packet on either side, a pair in
-// different plans - is not two packets, and the caller refuses as it always did.
-func packetsApart(ctx context.Context, q store.Querier, managedRequestID, rivalRelationship string) bool {
+// The newcomer's packet is resolved from the release intent its managed request recorded, because the
+// relationship it registers does not exist yet when the guard runs; the rival's is the packet its own
+// relationship was bound under (dag_execution_packets). Both sides resolve through the SAME registration:
+// a live node version of the plan that carries the packet (dag_node_packets joined to dag_nodes). Two
+// packets are apart only when both resolve, name non-empty distinct packet ids and belong to one plan and
+// one issue. Anything else - no release intent, no packet on either side, a packet the plan no longer
+// registers, a row that names another issue or another plan - is not two packets, and the caller refuses
+// as it always did. The rival side is deliberately as strict as the newcomer side: a row the plan cannot
+// account for must hold the issue, never release it.
+func packetsApart(ctx context.Context, q store.Querier, managedRequestID, rivalRelationship, issueKey string) bool {
 	if managedRequestID == "" || rivalRelationship == "" {
 		return false
 	}
-	plan, packet, ok := releasedPacket(ctx, q, managedRequestID)
+	plan, packet, ok := releasedPacket(ctx, q, managedRequestID, issueKey)
 	if !ok {
 		return false
 	}
-	var rivalPlan, rivalPacket string
-	if err := q.QueryRowContext(ctx, "SELECT plan_id, packet_id FROM dag_execution_packets WHERE relationship_id = ?", rivalRelationship).Scan(&rivalPlan, &rivalPacket); err != nil {
+	rivalPlan, rivalPacket, ok := packetRivalOf(ctx, q, rivalRelationship, issueKey)
+	if !ok {
 		return false
 	}
-	return rivalPacket != "" && rivalPacket != packet && rivalPlan == plan
+	return rivalPacket != packet && rivalPlan == plan
+}
+
+// packetRivalOf is the plan and packet a live relationship was bound under, resolved only when its
+// execution row is a packet the plan still registers for a live node of that same issue. A row that names
+// another issue or another plan, a packet no live node version carries, or a node the plan has retired
+// resolves to nothing, and the relationship then holds the issue exactly as it did before there were
+// packets.
+func packetRivalOf(ctx context.Context, q store.Querier, relationshipID, issueKey string) (plan, packet string, found bool) {
+	err := q.QueryRowContext(ctx, "SELECT e.plan_id, e.packet_id FROM dag_execution_packets e"+
+		" JOIN dag_node_packets p ON p.plan_id = e.plan_id AND p.node_id = e.node_id AND p.packet_id = e.packet_id"+
+		" JOIN dag_nodes n ON n.plan_id = p.plan_id AND n.node_id = p.node_id AND n.introduced_rev = p.introduced_rev"+
+		" WHERE e.relationship_id = ? AND e.issue_key = ? AND e.packet_id <> '' AND n.retired_rev IS NULL AND n.issue_key = ?",
+		relationshipID, issueKey, issueKey).Scan(&plan, &packet)
+	if err != nil {
+		return "", "", false
+	}
+	return plan, packet, true
 }
 
 // releasedPacket is the plan and packet a managed request was released under: the node its release
-// intent names, and that node's live packet. found is false when the request has no release intent, the
-// node is no longer live, or the node carries no packet - a store that predates the packet tables
-// answers false, and a second relationship of the issue is then refused as it always was.
-func releasedPacket(ctx context.Context, q store.Querier, managedRequestID string) (plan, packet string, found bool) {
+// intent names, and that node's live packet. A rerelease takes a successor request id, which is recorded
+// in dag_release_recoveries rather than in dag_releases, so both places are read. found is false when the
+// request has no release intent, the node is no longer live, the node is not of this issue, or the node
+// carries no packet - a store that predates the packet tables answers false, and a second relationship of
+// the issue is then refused as it always was.
+func releasedPacket(ctx context.Context, q store.Querier, managedRequestID, issueKey string) (plan, packet string, found bool) {
 	err := q.QueryRowContext(ctx, "SELECT r.plan_id, p.packet_id FROM dag_releases r"+
 		" JOIN dag_node_packets p ON p.plan_id = r.plan_id AND p.node_id = r.node_id"+
 		" JOIN dag_nodes n ON n.plan_id = p.plan_id AND n.node_id = p.node_id AND n.introduced_rev = p.introduced_rev"+
-		" WHERE r.managed_request_id = ? AND n.retired_rev IS NULL", managedRequestID).Scan(&plan, &packet)
+		" WHERE r.managed_request_id = ? AND n.retired_rev IS NULL AND n.issue_key = ?", managedRequestID, issueKey).Scan(&plan, &packet)
+	if err == nil {
+		return plan, packet, packet != ""
+	}
+	// a successor release: the intent that created this request id is the rereleased row of its manifest.
+	err = q.QueryRowContext(ctx, "SELECT c.plan_id, p.packet_id FROM dag_release_recoveries c"+
+		" JOIN dag_node_packets p ON p.plan_id = c.plan_id AND p.node_id = c.node_id"+
+		" JOIN dag_nodes n ON n.plan_id = p.plan_id AND n.node_id = p.node_id AND n.introduced_rev = p.introduced_rev"+
+		" WHERE c.successor_request_id = ? AND c.action = 'rereleased' AND n.retired_rev IS NULL AND n.issue_key = ?", managedRequestID, issueKey).Scan(&plan, &packet)
 	if err != nil {
 		return "", "", false
 	}
@@ -573,15 +603,15 @@ func releasedPacket(ctx context.Context, q store.Querier, managedRequestID strin
 // same plan (CRW-839). It is packetsApart for a pair of requests rather than a request and a
 // relationship: both sides resolve through the release intent they recorded. Anything unresolvable is
 // not two packets, and the caller refuses as it always did.
-func differentPackets(ctx context.Context, q store.Querier, mine, other string) bool {
+func differentPackets(ctx context.Context, q store.Querier, mine, other, issueKey string) bool {
 	if mine == "" || other == "" {
 		return false
 	}
-	plan, packet, ok := releasedPacket(ctx, q, mine)
+	plan, packet, ok := releasedPacket(ctx, q, mine, issueKey)
 	if !ok {
 		return false
 	}
-	otherPlan, otherPacket, ok := releasedPacket(ctx, q, other)
+	otherPlan, otherPacket, ok := releasedPacket(ctx, q, other, issueKey)
 	if !ok {
 		return false
 	}
@@ -625,7 +655,7 @@ func (r *Registry) registerInTransaction(ctx context.Context, rid string, in Reg
 			if rival.id == in.Supersedes {
 				continue
 			}
-			if !packetsApart(ctx, q, in.ManagedRequestID, rival.id) {
+			if !packetsApart(ctx, q, in.ManagedRequestID, rival.id, in.IssueKey) {
 				return refuse(contract.RefusalDuplicateAssignment, "issue %s is already assigned to child %s under %s (%s, parent %s); reuse that assignment, or pass supersedes to replace it deliberately",
 					strconv.Quote(in.IssueKey), strconv.Quote(rival.child), strconv.Quote(rival.id), rival.status, strconv.Quote(rival.parent))
 			}

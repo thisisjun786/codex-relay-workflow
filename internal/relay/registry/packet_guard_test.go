@@ -72,6 +72,17 @@ func liveRelationshipOf(t *testing.T, s *store.Store, issueKey string) string {
 	return id
 }
 
+// liveRelationshipOfOther is the issue's live relationship whose id is not the one already known: with two
+// packets registered, both rows must be recorded for the guard to resolve either of them.
+func liveRelationshipOfOther(t *testing.T, s *store.Store, issueKey, known string) string {
+	t.Helper()
+	var id string
+	if err := s.DB.QueryRowContext(context.Background(), "SELECT relationship_id FROM relationships WHERE issue_key = ? AND status IN ('active','paused') AND superseded_by IS NULL AND relationship_id != ? ORDER BY relationship_id", issueKey, known).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
 func refusalReasonOf(t *testing.T, err error) string {
 	t.Helper()
 	var refused *store.RefusedError
@@ -116,6 +127,14 @@ func TestPacketGuardAdmitsADistinctRegisteredPacket(t *testing.T) {
 	packetPlanRow(t, s, "PL", "n2", issue, "p2", "req-2", "")
 	if _, err := r.Register(ctx, second); err != nil {
 		t.Fatalf("a distinct packet of one issue is refused: %v", err)
+	}
+	// The second relationship's execution row is recorded so that BOTH rivals resolve: the third
+	// registration's refusal must then come from the same-packet comparison with the first rival, not
+	// from a rival whose packet cannot be resolved at all.
+	secondRelationship := liveRelationshipOfOther(t, s, issue, firstRelationship)
+	if _, err := s.DB.ExecContext(ctx, "INSERT INTO dag_execution_packets (relationship_id, plan_id, node_id, issue_key, packet_id, branch, recorded_at) VALUES (?,?,?,?,?,NULL,?)",
+		secondRelationship, "PL", "n2", issue, "p2", fakeISO); err != nil {
+		t.Fatal(err)
 	}
 
 	third := packetRegistration(t, s, "req-3", "01third-child")

@@ -350,13 +350,19 @@ func openRelationshipHolds(ctx context.Context, q store.Querier, plan string, n 
 		return open > 0, nil
 	}
 	// A rival relationship holds the node unless it is the execution of another distinct packet of the
-	// same plan and issue: the predicate the registry's duplicate-assignment guard resolves the rival by,
-	// so a node this reading admits is a node that guard admits too. A rival with no packet row, an empty
-	// packet, a row of another plan or another issue, or this node's own packet holds the node.
+	// same plan and issue, resolved exactly as the registry's duplicate-assignment guard resolves it
+	// (registry.packetRivalOf): the packet must be one the plan still registers for a live node of that same
+	// issue. A rival with no packet row, an empty packet, a packet no live node version carries, a row of
+	// another plan or another issue, or this node's own packet holds the node, so a node this reading admits
+	// is a node that guard admits too.
 	var rivals int
 	_, err = queryOne(ctx, q, "SELECT COUNT(*) FROM relationships r WHERE r.issue_key = ? AND r.status IN ('active','paused') AND r.superseded_by IS NULL"+
-		" AND NOT EXISTS (SELECT 1 FROM dag_execution_packets e WHERE e.relationship_id = r.relationship_id AND e.plan_id = ? AND e.issue_key = ? AND e.packet_id <> ?)",
-		[]any{n.IssueKey, plan, n.IssueKey, n.PacketID}, &rivals)
+		" AND NOT EXISTS (SELECT 1 FROM dag_execution_packets e"+
+		" JOIN dag_node_packets p ON p.plan_id = e.plan_id AND p.node_id = e.node_id AND p.packet_id = e.packet_id"+
+		" JOIN dag_nodes n ON n.plan_id = p.plan_id AND n.node_id = p.node_id AND n.introduced_rev = p.introduced_rev"+
+		" WHERE e.relationship_id = r.relationship_id AND e.plan_id = ? AND e.issue_key = ? AND e.packet_id <> '' AND e.packet_id <> ?"+
+		" AND n.retired_rev IS NULL AND n.issue_key = ?)",
+		[]any{n.IssueKey, plan, n.IssueKey, n.PacketID, n.IssueKey}, &rivals)
 	return rivals > 0, err
 }
 

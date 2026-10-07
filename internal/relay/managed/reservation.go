@@ -34,42 +34,77 @@ func refusal(reason, detail string) error { return &store.RefusedError{Reason: r
 // DAG release, a node without a packet, a store that predates the packet tables. A false is the
 // caller's refusal, so an unresolvable pair never slips through.
 
-// releasedPacket is the plan and packet a managed request was released under.
-func (r Reservation) releasedPacket(ctx context.Context, requestID string) (plan, packet string, found bool) {
-	err := r.Store.Querier(ctx).QueryRowContext(ctx, "SELECT r.plan_id, p.packet_id FROM dag_releases r"+
+// releasedPacket is the plan and packet a managed request was released under, resolved through the SAME
+// registration the registry guard uses (registry.releasedPacket): a live node version of the plan that
+// carries the packet, for this issue, whether the release intent is the initial one (dag_releases) or the
+// successor a rerelease took (dag_release_recoveries). found is false when anything cannot be resolved, and
+// the caller then refuses as it always did.
+func (r Reservation) releasedPacket(ctx context.Context, requestID, issueKey string) (plan, packet string, found bool) {
+	q := r.Store.Querier(ctx)
+	err := q.QueryRowContext(ctx, "SELECT r.plan_id, p.packet_id FROM dag_releases r"+
 		" JOIN dag_node_packets p ON p.plan_id = r.plan_id AND p.node_id = r.node_id"+
 		" JOIN dag_nodes n ON n.plan_id = p.plan_id AND n.node_id = p.node_id AND n.introduced_rev = p.introduced_rev"+
-		" WHERE r.managed_request_id = ? AND n.retired_rev IS NULL", requestID).Scan(&plan, &packet)
+		" WHERE r.managed_request_id = ? AND n.retired_rev IS NULL AND n.issue_key = ?", requestID, issueKey).Scan(&plan, &packet)
+	if err == nil {
+		return plan, packet, packet != ""
+	}
+	err = q.QueryRowContext(ctx, "SELECT c.plan_id, p.packet_id FROM dag_release_recoveries c"+
+		" JOIN dag_node_packets p ON p.plan_id = c.plan_id AND p.node_id = c.node_id"+
+		" JOIN dag_nodes n ON n.plan_id = p.plan_id AND n.node_id = p.node_id AND n.introduced_rev = p.introduced_rev"+
+		" WHERE c.successor_request_id = ? AND c.action = 'rereleased' AND n.retired_rev IS NULL AND n.issue_key = ?", requestID, issueKey).Scan(&plan, &packet)
 	if err != nil {
 		return "", "", false
 	}
 	return plan, packet, packet != ""
 }
 
-// relationshipPacket is the plan and packet a live relationship was bound under.
-func (r Reservation) relationshipPacket(ctx context.Context, relationshipID string) (plan, packet string, found bool) {
-	err := r.Store.Querier(ctx).QueryRowContext(ctx, "SELECT plan_id, packet_id FROM dag_execution_packets WHERE relationship_id = ?", relationshipID).Scan(&plan, &packet)
+// liveRelationships are the live relationships of an issue, in relationship id order: every one of them
+// is a rival a reservation must resolve. found is false when the store predates the packet tables, and the
+// caller then treats every relationship as unresolved.
+type packetLiveRelationship struct{ id, status string }
+
+func (r Reservation) packetLiveRelationships(ctx context.Context, issueKey string) ([]packetLiveRelationship, error) {
+	rows, err := r.Store.Querier(ctx).QueryContext(ctx, "SELECT relationship_id, status FROM relationships"+
+		" WHERE issue_key = ? AND status IN ('active','paused') AND superseded_by IS NULL ORDER BY relationship_id", issueKey)
 	if err != nil {
-		return "", "", false
+		return nil, err
 	}
-	return plan, packet, packet != ""
+	defer rows.Close()
+	var out []packetLiveRelationship
+	for rows.Next() {
+		var rel packetLiveRelationship
+		if err := rows.Scan(&rel.id, &rel.status); err != nil {
+			return nil, err
+		}
+		out = append(out, rel)
+	}
+	return out, rows.Err()
 }
 
-// packetBesideRelationship is whether this request is a different packet of the same plan as the live
-// relationship it would sit beside.
-func (r Reservation) packetBesideRelationship(ctx context.Context, requestID, relationshipID string) bool {
-	if requestID == "" || relationshipID == "" {
-		return false
+// relationshipPackets is the plan and packet of every live relationship of the issue whose execution row
+// is a packet the plan still registers for a live node of that same issue, keyed by relationship id. A
+// row the plan cannot account for - another issue, another plan, a packet no live node carries, a retired
+// node - is absent from the map, and its relationship then holds the issue exactly as it did before there
+// were packets.
+func (r Reservation) packetRelationshipRows(ctx context.Context, issueKey string) (map[string]struct{ plan, packet string }, error) {
+	rows, err := r.Store.Querier(ctx).QueryContext(ctx, "SELECT e.relationship_id, e.plan_id, e.packet_id FROM dag_execution_packets e"+
+		" JOIN dag_node_packets p ON p.plan_id = e.plan_id AND p.node_id = e.node_id AND p.packet_id = e.packet_id"+
+		" JOIN dag_nodes n ON n.plan_id = p.plan_id AND n.node_id = p.node_id AND n.introduced_rev = p.introduced_rev"+
+		" JOIN relationships r ON r.relationship_id = e.relationship_id AND r.issue_key = ? AND r.status IN ('active','paused') AND r.superseded_by IS NULL"+
+		" WHERE e.issue_key = ? AND e.packet_id <> '' AND n.retired_rev IS NULL AND n.issue_key = ?", issueKey, issueKey, issueKey)
+	if err != nil {
+		return nil, err
 	}
-	plan, packet, ok := r.releasedPacket(ctx, requestID)
-	if !ok {
-		return false
+	defer rows.Close()
+	out := map[string]struct{ plan, packet string }{}
+	for rows.Next() {
+		var id, plan, packet string
+		if err := rows.Scan(&id, &plan, &packet); err != nil {
+			return nil, err
+		}
+		out[id] = struct{ plan, packet string }{plan, packet}
 	}
-	rivalPlan, rivalPacket, ok := r.relationshipPacket(ctx, relationshipID)
-	if !ok {
-		return false
-	}
-	return rivalPacket != packet && rivalPlan == plan
+	return out, rows.Err()
 }
 func (r Reservation) get(ctx context.Context, id string) (store.ManagedStartRequestsRow, error) {
 	return r.Store.ManagedStartRequest(ctx, id)
@@ -90,16 +125,29 @@ func (r Reservation) Reserve(ctx context.Context, in Identity) (out store.Manage
 		if !errors.Is(e, sql.ErrNoRows) {
 			return e
 		}
-		live, e := r.Store.One(ctx, "SELECT relationship_id,status FROM relationships WHERE issue_key=? AND status IN ('active','paused') AND superseded_by IS NULL", in.IssueKey)
+		// CRW-839: a second packet of one feature issue may be reserved beside the first. Every live
+		// relationship of the issue is a rival and every one of them must be a distinct registered packet of
+		// this request's own plan; a rival that cannot be resolved, or that resolves to this same packet, is
+		// refused as it always was. Reading all of them and not just the first is what keeps a third packet
+		// from being admitted beside the first while a second already holds it.
+		minePlan, minePacket, mineOK := r.releasedPacket(ctx, in.RequestID, in.IssueKey)
+		live, e := r.packetLiveRelationships(ctx, in.IssueKey)
 		if e != nil {
 			return e
 		}
-		if live != nil {
-			// CRW-839: a second packet of one feature issue may be reserved beside the first. The pair is
-			// admitted only when both resolve to distinct packets of the same plan; anything else, a packet
-			// that cannot be resolved included, is refused as it always was.
-			if !r.packetBesideRelationship(ctx, in.RequestID, fmt.Sprint(live.Get("relationship_id"))) {
-				return refusal("duplicate_assignment", fmt.Sprintf("issue %q is already assigned under %q (%s); a reservation cannot take it", in.IssueKey, fmt.Sprint(live.Get("relationship_id")), live.Get("status")))
+		if len(live) > 0 {
+			rivals, e := r.packetRelationshipRows(ctx, in.IssueKey)
+			if e != nil {
+				return e
+			}
+			for _, rel := range live {
+				if !mineOK {
+					return refusal("duplicate_assignment", fmt.Sprintf("issue %q is already assigned under %q (%s); a reservation cannot take it", in.IssueKey, rel.id, rel.status))
+				}
+				rival, ok := rivals[rel.id]
+				if !ok || rival.packet == minePacket || rival.plan != minePlan {
+					return refusal("duplicate_assignment", fmt.Sprintf("issue %q is already assigned under %q (%s); a reservation cannot take it", in.IssueKey, rel.id, rel.status))
+				}
 			}
 		}
 		// Every other request in flight for the issue is a rival, and a packet does not get past one

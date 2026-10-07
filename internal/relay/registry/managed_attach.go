@@ -59,7 +59,7 @@ func (r *Registry) guardManagedRegistration(ctx context.Context, in Registration
 		if other.RequestID == in.ManagedRequestID {
 			continue
 		}
-		if !differentPackets(ctx, r.Store.Querier(ctx), in.ManagedRequestID, other.RequestID) {
+		if !differentPackets(ctx, r.Store.Querier(ctx), in.ManagedRequestID, other.RequestID, in.IssueKey) {
 			return refuse(contract.RefusalDuplicateAssignment, "issue %s is already held by request %s (%s)", strconv.Quote(in.IssueKey), strconv.Quote(other.RequestID), other.State)
 		}
 	}
