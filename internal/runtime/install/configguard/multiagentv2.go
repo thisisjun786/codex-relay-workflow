@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 )
 
@@ -176,6 +177,26 @@ func multiAgentV2Preserve(pre, post string, enabled bool) (string, bool) {
 // atomically. The injected runner remains responsible for its own settings writes.
 func SetMultiAgentV2State(deps MultiAgentV2Deps, version MultiAgentVersion) (*MultiAgentV2Change, error) {
 	path := multiAgentV2ConfigPath(deps)
+	// The pre-image read, the injected runner that rewrites config.toml, the repair and its publish
+	// are one critical section under the sidecar lock every CRW writer of config.toml takes
+	// (CRW-866), the shape of activate.go's activationSetKeyLocked: a retrust or an activation that
+	// published in that window would otherwise be overwritten by the repair, which is computed from
+	// the pre-image this read took. An explicitly empty config path names no file, so it is not
+	// given a sidecar and keeps its missing-path no-op behaviour.
+	if path != "" {
+		lock, err := crwdir.LockConfig(path, activationLockWait)
+		if err != nil {
+			return nil, err
+		}
+		defer lock.Release()
+		// The lock is keyed by lock.Target, the caller's path with a symlink followed, so two writers
+		// reaching one file through different spellings share one lock. The content path stays the
+		// caller's (CRW-891), unlike the other writers of config.toml: the runner below may atomically
+		// replace the caller's pathname, and the post-image read and the repair publish must then
+		// follow the path that names the live config rather than the target the link pointed at when
+		// the lock was taken. When that replacement happened the lock guarded the old target while the
+		// repair went to the caller's path; the result reports the state read through that path.
+	}
 	pre, _, err := activationReadFile(path)
 	if err != nil {
 		return nil, err

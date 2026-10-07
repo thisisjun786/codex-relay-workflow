@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
 )
 
@@ -45,16 +46,42 @@ func ApplyManagedKey(deps ConfigSetDeps, id string, value *bool) (ConfigSetOutco
 	if entry == nil {
 		return ConfigSetOutcome{Reason: reason}, nil
 	}
+	path := deps.ConfigPath
+	if path == "" {
+		path = filepath.Join(deps.CodexHome, "config.toml")
+	}
+	// A refusal writes nothing, so it takes no lock and leaves no sidecar: this first read only
+	// answers whether there is a manifest at all. The manifest that decides the edit and records
+	// the ownership is read again under the lock below.
+	if m, err := readPriorManifest(deps.CodexHome); err != nil || m == nil {
+		return ConfigSetOutcome{Reason: "no readable install manifest under this codex home; run 'crw install features enable' first. " +
+			"Without it there is nowhere to record the previous value, and 'crw install features disable' could not revert this key."}, nil
+	}
+	// The whole command is one critical section under the sidecar lock every CRW writer of
+	// config.toml takes (CRW-866), the shape of activate.go's activationSetKeyLocked: the read, the
+	// decision, the backup and the activationPublish of config.toml, and the install manifest that
+	// records the key's ownership, are serialized against retrust, the activation and every other
+	// CRW writer. Reading the manifest before the lock, or publishing it after the release, lets an
+	// overlapping writer publish in that window: its change is overwritten with content built from
+	// the pre-change bytes, and the manifest this command writes describes a value that is no
+	// longer live, so a later unset restores the wrong prior value (failure class 3, the
+	// check-then-act race). The manifest keeps activationPublish; only the boundary moved.
+	lock, err := crwdir.LockConfig(path, activationLockWait)
+	if err != nil {
+		return ConfigSetOutcome{}, err
+	}
+	defer lock.Release()
+	// target is the file the lock guards: the caller's path with a symlink followed, so two
+	// writers reaching one file through different spellings share one lock.
+	target := lock.Target
+	// The authoritative manifest, read inside the lock so a concurrent writer's manifest is seen
+	// rather than a copy that is already stale.
 	m, err := readPriorManifest(deps.CodexHome)
 	if err != nil || m == nil {
 		return ConfigSetOutcome{Reason: "no readable install manifest under this codex home; run 'crw install features enable' first. " +
 			"Without it there is nowhere to record the previous value, and 'crw install features disable' could not revert this key."}, nil
 	}
-	path := deps.ConfigPath
-	if path == "" {
-		path = filepath.Join(deps.CodexHome, "config.toml")
-	}
-	pre, exists, err := activationReadFile(path)
+	pre, exists, err := activationReadFile(target)
 	if err != nil {
 		return ConfigSetOutcome{}, err
 	}
@@ -100,7 +127,7 @@ func ApplyManagedKey(deps ConfigSetDeps, id string, value *bool) (ConfigSetOutco
 			}
 			backup = &name
 		}
-		if err := activationPublish(path, []byte(res.Content)); err != nil {
+		if err := activationPublish(target, []byte(res.Content)); err != nil {
 			return ConfigSetOutcome{}, err
 		}
 	}

@@ -39,6 +39,9 @@ func hooksRepairString(p *string) string {
 	return *p
 }
 
+// hooksOptionsPtr is the pointer a HarnessOptions field takes: a value becomes a pointer to itself.
+func hooksOptionsPtr(value string) *string { return &value }
+
 type hooksOracle struct {
 	T0       int64             `json:"t0"`
 	Manifest string            `json:"manifest"`
@@ -216,7 +219,7 @@ func TestHarnessHooksReplayTheOracleReader(t *testing.T) {
 						t.Errorf("query %d reader: got %+v, oracle %+v ignored %d reason %q", i, got, want, q.Reader.Ignored, reason)
 					}
 				}
-				options := doctor.HarnessOptions{CodexHome: home, SessionID: q.SessionID, AgentID: q.AgentID, ObservationNow: &now, ObservationMaxAgeMS: q.MaxAgeMS}
+				options := doctor.HarnessOptions{CodexHome: hooksOptionsPtr(home), SessionID: q.SessionID, AgentID: q.AgentID, ObservationNow: &now, ObservationMaxAgeMS: q.MaxAgeMS}
 				env := map[string]string{}
 				if q.SessionFromEnv != nil {
 					env["CODEX_THREAD_ID"] = *q.SessionFromEnv
@@ -250,13 +253,12 @@ func TestHarnessHooksReplayTheOracleTrustCheck(t *testing.T) {
 			if c.Config != nil {
 				hooksWrite(t, filepath.Join(home, "config.toml"), *c.Config)
 			}
-			options, env := doctor.HarnessOptions{CodexHome: home}, map[string]string{}
+			options, env := doctor.HarnessOptions{CodexHome: hooksOptionsPtr(home)}, map[string]string{}
 			if c.CodexHomeFromEnv {
-				options.CodexHome, env["CODEX_HOME"] = "", home
+				// The recorded case reads the home from the environment: the option is absent.
+				options.CodexHome, env["CODEX_HOME"] = nil, home
 			}
-			if c.Key != nil {
-				options.PluginKey = *c.Key
-			}
+			options.PluginKey = c.Key
 			got := doctor.HarnessHookTrustCheck(plugin, options, hooksLookup(env))
 			names := strings.NewReplacer("@@CODEX_HOME@@", home, "cxc hooks retrust", "crw doctor retrust")
 			if got.Name != "hook-trust" || string(got.Severity) != c.Expect.Severity || hooksRepairString(got.Repair) != names.Replace(c.Expect.Repair) {
@@ -333,7 +335,7 @@ func TestHarnessHookTrustCheckRefusesAManifestLinkedOutOfThePlugin(t *testing.T)
 	if err := os.Symlink(filepath.Join(dir, "outside.json"), filepath.Join(plugin, ".codex-plugin", "plugin.json")); err != nil {
 		t.Fatal(err)
 	}
-	got := doctor.HarnessHookTrustCheck(plugin, doctor.HarnessOptions{CodexHome: home}, hooksLookup(nil))
+	got := doctor.HarnessHookTrustCheck(plugin, doctor.HarnessOptions{CodexHome: hooksOptionsPtr(home)}, hooksLookup(nil))
 	if got.Severity != doctor.HarnessFail || !strings.Contains(got.Evidence, "symlink escapes plugin root") {
 		t.Errorf("%+v", got)
 	}

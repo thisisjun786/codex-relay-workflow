@@ -512,6 +512,46 @@ func MergeTrainState(ctx context.Context, s *Store, trainID string) (string, boo
 	return kind, true, nil
 }
 
+// MergeTrainOfTurn is the train a turn is a member of, and its state, when that train is still live:
+// CRW-768's member guard reads it so a member turn refuses merge-turn-check and merge-turn-land while
+// the train is opened or verified, and is left alone once the train landed, was done or abandoned.
+// found is false when the turn is in no live train, or when the store predates the zone. The state
+// is the newest event's kind (MergeTrainState); a train with no event yet is opened by definition.
+func MergeTrainOfTurn(ctx context.Context, s *Store, turnID string) (MergeTrainRow, string, bool, error) {
+	present, err := dagZoneTable(ctx, s, "merge_train_members")
+	if err != nil || !present {
+		return MergeTrainRow{}, "", false, err
+	}
+	// every membership of the turn is read, newest train first, and the newest event's kind decides:
+	// a turn that was in an abandoned train and now waits in a replacement must be answered by the
+	// replacement, so the first historical membership is not enough (finding 4)
+	members, err := queryRows(ctx, s, scanMergeTrainMember, "SELECT "+mergeTrainMemberColumns+" FROM merge_train_members WHERE turn_id = ? ORDER BY train_id DESC", turnID)
+	if err != nil {
+		return MergeTrainRow{}, "", false, err
+	}
+	for _, member := range members {
+		state, found, err := MergeTrainState(ctx, s, member.TrainID)
+		if err != nil {
+			return MergeTrainRow{}, "", false, err
+		}
+		if !found {
+			state = MergeTrainOpened
+		}
+		if state != MergeTrainOpened && state != MergeTrainVerified {
+			continue
+		}
+		row, found, err := MergeTrain(ctx, s, member.TrainID)
+		if err != nil {
+			return MergeTrainRow{}, "", false, err
+		}
+		if !found {
+			continue
+		}
+		return row, state, true, nil
+	}
+	return MergeTrainRow{}, "", false, nil
+}
+
 // ProductBindingsRow is one product_bindings row, every column in DDL order.
 type ProductBindingsRow struct {
 	ProductKey string

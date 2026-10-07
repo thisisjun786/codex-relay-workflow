@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dagsched"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -46,11 +48,18 @@ const (
 const improveReasonSourceUnreadable = "improve_source_unreadable"
 
 // The named refusals of an output path: its parent directory is missing or cannot be
-// resolved, or the destination is an existing symbolic link.
+// resolved, or the destination is an existing symbolic link, or the destination is a file the
+// collection itself opens.
 const (
 	improveReasonOutputParent  = "improve_output_parent_missing"
 	improveReasonOutputSymlink = "improve_output_symlink"
+	improveReasonOutputIsInput = "improve_output_is_input"
 )
+
+// improveInputBeforeRename runs between the output plan taken immediately before the rename
+// and the refusal check that follows it. Production leaves it nil; a test sets it to replace
+// the destination inside that window and prove the second comparison refuses the new one.
+var improveInputBeforeRename func(improveOutputPlan)
 
 // improveStoreFile is the relay store's file name inside a state directory.
 const improveStoreFile = "relay.sqlite3"
@@ -118,16 +127,17 @@ func improveNewAccumulator() *improveAccumulator {
 // improveAdd merges one record. A record's what is kept from the first row of its identity,
 // so the value does not depend on which row a later read happened to reach first. The
 // identity is a JSON array rather than joined text, so a key that carries a delimiter
-// cannot make two different identities read as one.
+// cannot make two different identities read as one. The two times are compared as the
+// instants they name, so a fractional second or a different offset cannot reverse them.
 func (a *improveAccumulator) improveAdd(r improveRecord) {
 	identity := improveIdentity(r.Kind, r.Key, r.Where)
 	if at, ok := a.index[identity]; ok {
 		current := &a.records[at]
 		current.Count += r.Count
-		if r.FirstAt != "" && (current.FirstAt == "" || r.FirstAt < current.FirstAt) {
+		if improveParseEarlier(r.FirstAt, current.FirstAt) {
 			current.FirstAt = r.FirstAt
 		}
-		if r.LastAt > current.LastAt {
+		if improveParseLater(r.LastAt, current.LastAt) {
 			current.LastAt = r.LastAt
 		}
 		if current.What == "" || (improveGenericReason(current.What) && !improveGenericReason(r.What)) {
@@ -138,6 +148,67 @@ func (a *improveAccumulator) improveAdd(r improveRecord) {
 	}
 	a.index[identity] = len(a.records)
 	a.records = append(a.records, r)
+}
+
+// improveParseInstant parses a stored time as the instant it names. The second result is false
+// when the text is empty or is not an RFC3339Nano instant this build can read.
+func improveParseInstant(value string) (time.Time, bool) {
+	if value == "" {
+		return time.Time{}, false
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return parsed, true
+}
+
+// improveParseEarlier reports whether candidate is the earlier of two stored times and should
+// replace current as a record's first_at. An empty candidate never does and an empty current
+// always does. A value that is not an instant goes after one that is, because comparing the text
+// instead reverses "…00:00:00.5Z" and "…00:00:00Z": '.' sorts before 'Z'. Two values that are
+// both unreadable fall back to their text, so the same input still writes the same bytes.
+func improveParseEarlier(candidate, current string) bool {
+	if candidate == "" {
+		return false
+	}
+	if current == "" {
+		return true
+	}
+	parsed, ok := improveParseInstant(candidate)
+	if !ok {
+		if _, currentOK := improveParseInstant(current); currentOK {
+			return false
+		}
+		return candidate < current
+	}
+	if currentParsed, currentOK := improveParseInstant(current); currentOK {
+		return parsed.Before(currentParsed)
+	}
+	return true
+}
+
+// improveParseLater reports whether candidate is the later of two stored times and should replace
+// current as a record's last_at. It is improveParseEarlier's mirror, including where a value that
+// is not an instant sits: after every value that is one.
+func improveParseLater(candidate, current string) bool {
+	if candidate == "" {
+		return false
+	}
+	if current == "" {
+		return true
+	}
+	parsed, ok := improveParseInstant(candidate)
+	if !ok {
+		if _, currentOK := improveParseInstant(current); currentOK {
+			return true
+		}
+		return candidate > current
+	}
+	if currentParsed, currentOK := improveParseInstant(current); currentOK {
+		return parsed.After(currentParsed)
+	}
+	return false
 }
 
 // improveGenericReason reports whether a split record description is only the bare outcome
@@ -237,7 +308,7 @@ func improveRunCollect(ctx context.Context, e *Env, args []string) int {
 			return 1
 		}
 	}
-	bundle, err := improveCollect(ctx, e, section)
+	bundle, err := improveCollect(ctx, section)
 	if err != nil {
 		fmt.Fprintf(e.Stderr, "crw manage improve collect: error: %v\n", err)
 		return 1
@@ -296,9 +367,11 @@ func improvePlanOutput(out string) (improveOutputPlan, error) {
 	return improveOutputPlan{Dest: dest, Parent: parent}, nil
 }
 
-// improveRefuseInputOutput refuses a resolved destination that is a configured source or
-// lies under one. Both sides are resolved, and an existing pair is also compared with
-// os.SameFile, so a hard link cannot pass the spelling comparison.
+// improveRefuseInputOutput refuses a resolved destination that is an input the collection
+// opens or lies under one. Both sides are resolved, and an existing pair is also compared
+// with os.SameFile, so a hard link cannot pass the spelling comparison. The inputs include
+// the store file inside a configured relay or DAG directory, which is the file the collection
+// actually opens there and is not the configured path itself.
 func improveRefuseInputOutput(dest string, section improveSection) error {
 	for _, source := range improveInputPaths(section) {
 		if source == "" {
@@ -310,10 +383,10 @@ func improveRefuseInputOutput(dest string, section improveSection) error {
 			continue
 		}
 		if dest == resolved || strings.HasPrefix(dest, improvePrefix(resolved)) {
-			return fmt.Errorf("the output %s is the configured source %s: a bundle never overwrites its own evidence", dest, source)
+			return fmt.Errorf("%s: the output %s is the input %s the collection opens: a bundle never overwrites its own evidence", improveReasonOutputIsInput, dest, source)
 		}
 		if same, err := improveSameFile(dest, resolved); err == nil && same {
-			return fmt.Errorf("the output %s is the configured source %s: a bundle never overwrites its own evidence", dest, source)
+			return fmt.Errorf("%s: the output %s is the input %s the collection opens: a bundle never overwrites its own evidence", improveReasonOutputIsInput, dest, source)
 		}
 	}
 	return nil
@@ -343,27 +416,72 @@ func improveSameFile(a, b string) (bool, error) {
 	return os.SameFile(ai, bi), nil
 }
 
-// improveInputPaths is every path the configuration names.
+// improveInputPaths is every path the collection opens: every path the configuration names,
+// plus the files it reaches that the configuration does not name. For a relay or DAG source
+// that is the store file inside its directory, and for either source the database's own
+// write-ahead log and shared-memory index when they exist, because a store read examines them
+// and reads their committed frames. For a drafts directory, every entry the collection would
+// read, so a link to a file outside the directory is an input too.
 func improveInputPaths(section improveSection) []string {
-	paths := make([]string, 0, len(section.Sources)+1)
+	paths := make([]string, 0, len(section.Sources)+8)
 	for _, source := range section.Sources {
 		paths = append(paths, source.Path)
 	}
-	return append(paths, section.IssueList)
+	paths = append(paths, section.IssueList)
+	for _, kind := range []string{improveKindRelay, improveKindDag} {
+		source := section.Sources[kind]
+		if source.Path == "" {
+			continue
+		}
+		opened, err := improveStorePath(source.Path)
+		if err != nil {
+			// A source path that cannot be resolved is reported by the source read itself.
+			continue
+		}
+		// The sidecars are the ones beside the resolved store, which is the file the read
+		// examines them next to (store.InPlaceRead resolves the path the same way).
+		resolved, err := improveResolvedPath(opened)
+		if err != nil {
+			resolved = opened
+		}
+		paths = append(paths, opened, resolved+"-wal", resolved+"-shm")
+	}
+	// A drafts source that is a directory is enumerated, so every entry the collection would
+	// read is an input; a link to a file elsewhere is reached that way.
+	if drafts := section.Sources[improveKindDraft].Path; drafts != "" {
+		if info, err := os.Stat(drafts); err == nil && info.IsDir() {
+			if entries, err := os.ReadDir(drafts); err == nil {
+				for _, entry := range entries {
+					if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".json") {
+						paths = append(paths, filepath.Join(drafts, entry.Name()))
+					}
+				}
+			}
+		}
+	}
+	return paths
 }
 
 // improveResolvedPath is a path with its symlinks followed, so two spellings of one file
-// compare equal. A path that does not exist yet keeps its absolute spelling.
+// compare equal. A path that does not exist yet is its resolved parent directory joined with
+// its final name, so a name reached through a symlinked directory still compares equal to the
+// same name spelled through that directory's target; EvalSymlinks alone fails on the missing
+// final component and would leave the parent's symlinks unresolved. A path whose parent cannot
+// be resolved either keeps its absolute spelling, which the source read reports.
 func improveResolvedPath(path string) (string, error) {
 	absolute, err := filepath.Abs(path)
 	if err != nil {
 		return "", err
 	}
 	resolved, err := filepath.EvalSymlinks(absolute)
-	if err != nil {
+	if err == nil {
+		return resolved, nil
+	}
+	parent, parentErr := filepath.EvalSymlinks(filepath.Dir(absolute))
+	if parentErr != nil {
 		return absolute, nil
 	}
-	return resolved, nil
+	return filepath.Join(parent, filepath.Base(absolute)), nil
 }
 
 // improveWriteFile writes the bundle in the resolved parent directory and renames it onto
@@ -405,6 +523,9 @@ func improveWriteFile(out string, data []byte, section improveSection) error {
 	if err != nil {
 		os.Remove(name)
 		return err
+	}
+	if improveInputBeforeRename != nil {
+		improveInputBeforeRename(fresh)
 	}
 	if err := improveRefuseInputOutput(fresh.Dest, section); err != nil {
 		os.Remove(name)
@@ -474,8 +595,10 @@ func improveLoadSection(e *Env) (improveSection, error) {
 	return section, nil
 }
 
-// improveCollect reads every source and returns the bundle.
-func improveCollect(ctx context.Context, e *Env, section improveSection) (improveBundle, error) {
+// improveCollect reads every source and returns the bundle. It needs no Env of its own: the
+// relay and DAG sources are read from the store file each names, and every other source is a
+// file the configuration names.
+func improveCollect(ctx context.Context, section improveSection) (improveBundle, error) {
 	acc := improveNewAccumulator()
 	sources := []improveSourceRow{}
 
@@ -498,7 +621,11 @@ func improveCollect(ctx context.Context, e *Env, section improveSection) (improv
 	if dagSource.Path == "" {
 		sources = append(sources, improveSourceRow{Kind: improveKindDag, State: improveStateMissing})
 	} else {
-		rows, err := improveReadDag(ctx, e, dagSource, acc)
+		dbPath, err := improveStorePath(dagSource.Path)
+		if err != nil {
+			return improveBundle{}, improveUnreadable(improveKindDag, dagSource.Path, err)
+		}
+		rows, err := improveReadDag(ctx, dbPath, dagSource, acc)
 		if err != nil {
 			return improveBundle{}, improveUnreadable(improveKindDag, dagSource.Path, err)
 		}
@@ -660,19 +787,42 @@ func improveReadRelay(ctx context.Context, dbPath string, acc *improveAccumulato
 		if err != nil {
 			return err
 		}
+		// A child's blocked_needs_input receipt carries no reason field: receiptFields in
+		// internal/relay/store/receipt_shape.go allows none, so reading one there found no
+		// reason for any real blockage. The reason is the note of the decision reply that
+		// answered the event, and that receipt names the answered event in its answersEvent, so
+		// one prepass indexes the replies before the blocked rows are read.
+		answered := map[improveParseBlockedKey]string{}
+		for _, row := range splits {
+			if row.Text("outcome") != "decision_reply" {
+				continue
+			}
+			receipt := improveParseJSONObject(row.Text("receipt"))
+			event := improveStringField(receipt, "answersEvent")
+			if event == "" {
+				continue
+			}
+			answered[improveParseBlockedKey{relationship: row.Text("relationship_id"), event: event}] = improveStringField(receipt, "note")
+		}
 		for _, row := range splits {
 			outcome, receipt := row.Text("outcome"), improveParseJSONObject(row.Text("receipt"))
+			project := row.Text("project_key")
+			issue := row.Text("issue_key")
+			var reason string
 			if outcome == "decision_reply" {
 				decision := improveStringField(receipt, "decision")
 				if decision != "split_approval" && decision != "scope_change" {
 					continue
 				}
-			}
-			project := row.Text("project_key")
-			issue := row.Text("issue_key")
-			reason := improveStringField(receipt, "reason", "detail", "note", "question", "summary")
-			if reason == "" {
-				reason = improveStringField(receipt, "outcome", "decision")
+				reason = improveStringField(receipt, "reason", "detail", "note", "question", "summary")
+				if reason == "" {
+					reason = improveStringField(receipt, "outcome", "decision")
+				}
+			} else {
+				reason = answered[improveParseBlockedKey{relationship: row.Text("relationship_id"), event: row.Text("event_id")}]
+				if reason == "" {
+					reason = string(store.BlockedNeedsInput)
+				}
 			}
 			rows++
 			acc.improveAdd(improveRecord{Kind: improveKindSplit, Key: improveSplitKey(project, issue), Where: row.Text("relationship_id"),
@@ -697,55 +847,84 @@ func improveSplitKey(project, issue string) string {
 	return issue
 }
 
-// improveReadDag runs the relay's dag-measurements for each plan the source's pattern
-// names and normalizes each metric of the document into one record.
-func improveReadDag(ctx context.Context, e *Env, source improveSourceConfig, acc *improveAccumulator) (int, error) {
-	cfg := coreDefaults(e)
-	cfg.Relay.State = source.Path
+// improveParseBlockedKey names one blocked event inside one relationship. The two fields are
+// compared as themselves rather than joined, so a value that carries a delimiter cannot make two
+// different events read as one.
+type improveParseBlockedKey struct {
+	relationship string
+	event        string
+}
+
+// improveReadDag reads each plan the source's pattern names out of the store at dbPath and
+// normalizes each metric of the measurements into one record.
+//
+// The store is opened with store.OpenInPlace and read inside ReadSnapshot, the rule decision
+// 36 states for a tool that reads the operational store: a read creates no -wal or -shm beside
+// the database, and one whose committed state cannot be read that way is an error rather than
+// a repair. The relay CLI is not called: its own read path opens mode=ro, which can create
+// both sidecars. The scheduler reads through the snapshot's own connection, so a plan is read
+// from one state.
+func improveReadDag(ctx context.Context, dbPath string, source improveSourceConfig, acc *improveAccumulator) (int, error) {
 	plans := improvePatterns(source.Pattern)
 	if len(plans) == 0 {
 		return 0, errors.New("the dag source names no plan pattern")
 	}
+	read, err := store.OpenInPlace(ctx, dbPath, improveStoreTimeout)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = read.Close() }()
 	rows := 0
-	for _, plan := range plans {
-		stdout, code, err := e.Relay(ctx, cfg, "dag-measurements", "--plan", plan)
-		if err != nil {
-			return 0, err
-		}
-		if code != 0 {
-			return 0, fmt.Errorf("relay dag-measurements --plan %s exited with status %d", plan, code)
-		}
-		doc := improveParseJSONObject(string(stdout))
-		if doc == nil {
-			return 0, errors.New("relay dag-measurements printed no JSON document")
-		}
-		planID := improveStringField(doc, "plan_id")
-		if planID == "" {
-			planID = plan
-		}
-		names := make([]string, 0, len(doc))
-		for name := range doc {
-			names = append(names, name)
-		}
-		sort.Strings(names)
-		for _, name := range names {
-			metric, ok := doc[name].(map[string]any)
-			if !ok {
-				continue
-			}
-			samples, ok := improveNumberField(metric, "samples")
-			if !ok {
-				continue
-			}
-			values, err := json.Marshal(metric)
+	err = read.ReadSnapshot(ctx, func(ctx context.Context, st *store.Store) error {
+		scheduler := &dagsched.Scheduler{Store: st}
+		for _, plan := range plans {
+			measured, err := scheduler.Measure(ctx, st.Q(ctx), plan)
 			if err != nil {
-				return 0, err
+				return err
 			}
-			rows++
-			acc.improveAdd(improveRecord{Kind: improveKindDag, Key: planID + ":" + name, Where: planID,
-				What: string(values), Count: samples,
-				Evidence: []string{"relay:dag-measurements --plan " + plan}})
+			// The measurements are read into the document dag-measurements prints, so a
+			// metric's name, values and absence reason reach the record as they did when the
+			// relay CLI answered.
+			printed, err := pyjson.Encode(measured.Object(), pyjson.Options{})
+			if err != nil {
+				return err
+			}
+			doc := improveParseJSONObject(string(printed))
+			if doc == nil {
+				return errors.New("the dag measurements did not read as a JSON document")
+			}
+			planID := improveStringField(doc, "plan_id")
+			if planID == "" {
+				planID = plan
+			}
+			names := make([]string, 0, len(doc))
+			for name := range doc {
+				names = append(names, name)
+			}
+			sort.Strings(names)
+			for _, name := range names {
+				metric, ok := doc[name].(map[string]any)
+				if !ok {
+					continue
+				}
+				samples, ok := improveNumberField(metric, "samples")
+				if !ok {
+					continue
+				}
+				values, err := json.Marshal(metric)
+				if err != nil {
+					return err
+				}
+				rows++
+				acc.improveAdd(improveRecord{Kind: improveKindDag, Key: planID + ":" + name, Where: planID,
+					What: string(values), Count: samples,
+					Evidence: []string{"store:dag-measurements --plan " + plan}})
+			}
 		}
+		return nil
+	})
+	if err != nil {
+		return 0, err
 	}
 	return rows, nil
 }
@@ -793,27 +972,22 @@ func improveReadInterventions(path string, acc *improveAccumulator) (int, error)
 	return len(lines), nil
 }
 
-// improveReadDrafts reads the audit drafts a management session keeps: one JSON file per
-// draft, under a directory or a single file, and normalizes each by the issue it drafts.
+// improveReadDrafts reads the audit drafts a management session keeps: one crw-issue-draft/1
+// document per draft, under a directory or as a single file. A candidate that decodes to an object
+// of another schema — the directory's index.json, or any other document — is skipped and not
+// counted, so the listing is never read as a draft of its own. Each draft becomes one record keyed
+// by its fingerprint, whose first and last sighting are the earliest and latest seen[].at. A
+// document whose schema is right but whose fingerprint is empty is refused, because a record keyed
+// on nothing would merge two different drafts.
+//
+// A candidate that is not a JSON object at all is refused rather than skipped: it is not a
+// document of another schema, so reading it as nothing would report a complete bundle over a file
+// the drafts directory could not be read from. That is the rule improveReadJSONLines already
+// applies to a null line, and it is what this reader did before the schema gate existed.
 func improveReadDrafts(path string, acc *improveAccumulator) (int, error) {
-	info, err := os.Stat(path)
+	files, err := improveParseDraftFiles(path)
 	if err != nil {
 		return 0, err
-	}
-	var files []string
-	if info.IsDir() {
-		entries, err := os.ReadDir(path)
-		if err != nil {
-			return 0, err
-		}
-		for _, entry := range entries {
-			if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".json") {
-				files = append(files, filepath.Join(path, entry.Name()))
-			}
-		}
-		sort.Strings(files)
-	} else {
-		files = []string{path}
 	}
 	rows := 0
 	for _, file := range files {
@@ -821,17 +995,75 @@ func improveReadDrafts(path string, acc *improveAccumulator) (int, error) {
 		if err != nil {
 			return 0, err
 		}
-		draft := improveParseJSONObject(string(data))
-		if draft == nil {
-			return 0, fmt.Errorf("%s: not a JSON object", file)
+		schema, err := improveParseDraftSchema(file, data)
+		if err != nil {
+			return 0, err
 		}
+		if schema != auditDraftSchema {
+			continue
+		}
+		// auditDraftLoad (CRW-695) is the writer's own reader: it refuses an empty or mismatched
+		// fingerprint and a key this build does not know, so a document that claims to be a draft
+		// but is not one is named rather than read as something else.
+		draft, err := auditDraftLoad(file)
+		if err != nil {
+			return 0, err
+		}
+		first, last := improveParseSeenBounds(draft.Seen)
 		rows++
-		acc.improveAdd(improveRecord{Kind: improveKindDraft, Key: improveStringField(draft, "issue", "identifier"),
-			Where: improveStringField(draft, "project", "project_key"), What: improveStringField(draft, "title", "summary"), Count: 1,
-			FirstAt: improveStringField(draft, "created_at", "recorded_at", "graded_at"), LastAt: improveStringField(draft, "created_at", "recorded_at", "graded_at"),
-			Evidence: []string{file}})
+		acc.improveAdd(improveRecord{Kind: improveKindDraft, Key: draft.Fingerprint, Where: draft.Project, What: draft.Title, Count: 1,
+			FirstAt: first, LastAt: last, Evidence: []string{file}})
 	}
 	return rows, nil
+}
+
+// improveParseDraftFiles is the candidate draft files of a configured path: the .json files
+// directly inside a directory, or the path itself when it is a file.
+func improveParseDraftFiles(path string) ([]string, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !info.IsDir() {
+		return []string{path}, nil
+	}
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return nil, err
+	}
+	files := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".json") {
+			files = append(files, filepath.Join(path, entry.Name()))
+		}
+	}
+	sort.Strings(files)
+	return files, nil
+}
+
+// improveParseDraftSchema is the schema a candidate file declares. A file that is not a JSON
+// object carries no schema and is refused, because the drafts directory could not be read as what
+// it holds rather than as a document of another schema.
+func improveParseDraftSchema(path string, data []byte) (string, error) {
+	object := improveParseJSONObject(string(data))
+	if object == nil {
+		return "", fmt.Errorf("%s: not a JSON object", path)
+	}
+	return improveStringField(object, "schema"), nil
+}
+
+// improveParseSeenBounds is the earliest and latest sighting of a draft's seen list, compared as
+// instants so a fractional second or a different offset cannot reverse them.
+func improveParseSeenBounds(seen []auditDraftSeen) (first, last string) {
+	for _, entry := range seen {
+		if improveParseEarlier(entry.At, first) {
+			first = entry.At
+		}
+		if improveParseLater(entry.At, last) {
+			last = entry.At
+		}
+	}
+	return first, last
 }
 
 // improveReadIssues reads the issue list a management session exported: an array of issues,
