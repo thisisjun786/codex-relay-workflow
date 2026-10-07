@@ -682,7 +682,6 @@ func improveProposeSightingCount(candidate improveProposeCandidate, sighting aud
 	return 1
 }
 
-
 // improveProposeSuppressed reports whether an exported issue already covers a candidate: the issue
 // list registered it under the candidate's own fingerprint, its key is the candidate key, or its
 // title normalizes to the candidate's title.
