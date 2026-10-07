@@ -103,8 +103,11 @@ func TestMigrateApplyReviewRefusesAnIgnoreRaceInANewRoot(t *testing.T) {
 	if got := get(t, apDst(ws, ".gitignore")); got != "mine" {
 		t.Errorf("the racer's .gitignore changed: %q", got)
 	}
-	if fi, err := os.Stat(apDst(ws, "")); err != nil || fi.Mode().Perm() != applyTempMode || fi.Mode()&fs.ModeSticky == 0 {
-		t.Errorf("the root this run made must be left at the private marker mode, not widened: %v %v", fi, err)
+	// CRW-813: the racer made the root as well as its ignore, so the root is not this run's and its mode must be
+	// left exactly as the racer made it. Before CRW-813 this run tightened it to the private marker mode, which is
+	// the ownership defect the issue fixes.
+	if fi, err := os.Stat(apDst(ws, "")); err != nil || fi.Mode().Perm() != 0o755 || fi.Mode()&fs.ModeSticky != 0 {
+		t.Errorf("the root another actor made must keep its mode: %v %v", fi, err)
 	}
 }
 

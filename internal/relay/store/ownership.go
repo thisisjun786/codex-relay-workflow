@@ -166,9 +166,22 @@ func openFenced(ctx context.Context, path, socket string, options OpenOptions) (
 	if err != nil {
 		return nil, err
 	}
-	if err = createAbsent(ctx, resolved, socket, options); err != nil {
+	// The description a creating open placed EX, when this open created the store. It is handed
+	// to the writable open so the store's shared hold is a downgrade of that very description
+	// rather than a second one: flock belongs to the open file description, so a child forked
+	// during the creation that has not exec'd yet keeps the EX alive past the creator's close
+	// and would refuse the creator's own store (CRW-853). It is closed exactly once: here until
+	// the writable open takes it, then by the writable open's own failure paths, or by Store.Close
+	// once the store holds it.
+	handed, err := createAbsent(ctx, resolved, socket, options)
+	if err != nil {
 		return nil, err
 	}
+	defer func() {
+		if err != nil && handed != nil {
+			err = errors.Join(err, handed.Close())
+		}
+	}()
 	if err = readGateless(ctx, resolved); err != nil {
 		return nil, err
 	}
@@ -178,7 +191,11 @@ func openFenced(ctx context.Context, path, socket string, options OpenOptions) (
 		return nil, err
 	}
 	options.verify = func(ctx context.Context, db *sql.DB) (*os.File, error) {
-		return verifyWritable(ctx, db, resolved, socket)
+		// The writable open owns the handed description from this call on, failure paths
+		// included, so this opener stops owning it here.
+		gate := handed
+		handed = nil
+		return verifyWritable(ctx, db, resolved, socket, gate)
 	}
 	return open(ctx, path, socket, options)
 }
@@ -458,42 +475,63 @@ func validateByTableInfo(ctx context.Context, db ownership.Queryer, required []r
 // instead of seeing a gate without a database. The database is built and stamped under a
 // temporary name in S and linked into place with link(2), which never replaces: D never
 // exists without its six ownership keys, so no other opener can take it for a legacy store.
-func createAbsent(ctx context.Context, path, socket string, options OpenOptions) (err error) {
+//
+// When this opener created the store it returns the gate it placed, still held EX on the open
+// file description it placed it with; the caller hands that description to the writable open so
+// the store's shared hold is an in-place downgrade of it (holdGate), never a second description.
+// flock belongs to the open file description, so a description closed here could still be held
+// EX by a child forked during the creation that has not exec'd yet, and the creator's own store
+// would then be refused with the fence's contention words (CRW-853). When it did not create the
+// store - another opener placed the gate first, or the store appeared while it created it - it
+// returns a nil gate, and every failure path closes the gate it placed itself.
+func createAbsent(ctx context.Context, path, socket string, options OpenOptions) (gate *os.File, err error) {
 	dir := filepath.Dir(path)
 	if !storeAbsent(path) {
-		return awaitCreation(ctx, path, options)
+		return nil, awaitCreation(ctx, path, options)
 	}
 	if err = os.MkdirAll(dir, 0700); err != nil {
-		return err
+		return nil, err
 	}
-	gate, err := placeGate(dir)
+	placed, err := placeGate(dir)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if gate == nil {
+	if placed == nil {
 		// Another first opener placed the gate first, already held EX.
-		return awaitCreation(ctx, path, options)
+		return nil, awaitCreation(ctx, path, options)
 	}
-	defer func() { err = errors.Join(err, gate.Close()) }()
+	// The description is this open's until it is handed back, and the hand-over happens only when
+	// the creation fully succeeded. This defer runs after the temporary-database cleanup defer
+	// below, so a failure anywhere - that cleanup included, which can fail after the store was
+	// published - is visible here: the description is then closed and no gate is handed back, so
+	// the caller never receives a gate together with an error and nothing holds the gate EX.
+	defer func() {
+		if err != nil {
+			gate = nil
+		}
+		if gate == nil {
+			err = errors.Join(err, placed.Close())
+		}
+	}()
 	// Held EX since before any other opener could find it.
 	if _, e := os.Lstat(path); e == nil {
-		return nil // not created here; the writable open decides
+		return nil, nil // not created here; the writable open decides
 	}
 	if _, e := os.Lstat(filepath.Join(dir, "takeover.json")); e == nil {
-		return nil
+		return nil, nil
 	}
 	if err = createFault("gate-placed"); err != nil {
-		return err
+		return nil, err
 	}
 	suffix, err := randomBytes(8)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	// The owner-only file mode is the one Go has always created (0600).
 	temp := filepath.Join(dir, ".relay-create-"+hex.EncodeToString(suffix)+".sqlite3")
 	file, err := os.OpenFile(temp, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0600)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer func() {
 		for _, name := range []string{temp, temp + "-wal", temp + "-shm"} {
@@ -503,31 +541,35 @@ func createAbsent(ctx context.Context, path, socket string, options OpenOptions)
 		}
 	}()
 	if err = file.Close(); err != nil {
-		return err
+		return nil, err
 	}
 	stamp, err := buildAbsent(ctx, temp, socket, options)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if err = syncFile(temp); err != nil {
-		return err
+		return nil, err
 	}
 	if err = createFault("built"); err != nil {
-		return err
+		return nil, err
 	}
 	if err = os.Link(temp, path); err != nil {
 		if errors.Is(err, os.ErrExist) {
-			return nil // another creator won; the writable open decides
+			return nil, nil // another creator won; the writable open decides
 		}
-		return err
+		return nil, err
 	}
 	if err = syncFile(dir); err != nil {
-		return err
+		return nil, err
 	}
 	if err = createFault("linked"); err != nil {
-		return err
+		return nil, err
 	}
-	return publishAbsent(path, stamp)
+	if err = publishAbsent(path, stamp); err != nil {
+		return nil, err
+	}
+	// Created here: hand the description on, still held EX, for the writable open to downgrade.
+	return placed, nil
 }
 
 // placeGate creates S/write-gate.lock already held EX (Python ownership._create_gate): a
