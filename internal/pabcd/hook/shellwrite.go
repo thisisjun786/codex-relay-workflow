@@ -143,9 +143,22 @@ func shellWriteHeredocCommentStart(s []uint16, i int) bool {
 	}
 	switch prev := s[i-1]; {
 	case shellSpace(prev), prev == ';', prev == '&', prev == '|', prev == '(', prev == ')':
-		return true
+		// The boundary must be the shell's own: a blank or an operator the previous backslash escaped is part of the
+		// word before the #, so the # is a literal character and begins no comment (CRW-765 correction 9).
+		return !shellWriteHeredocEscaped(s, i-1)
 	}
 	return false
+}
+
+// shellWriteHeredocEscaped reports whether the character at i is escaped by an odd run of backslashes immediately
+// before it (CRW-765 correction 9). The shell reads `\ ` as a literal blank, so that blank is no word boundary and the
+// # after it is part of the same word.
+func shellWriteHeredocEscaped(s []uint16, i int) bool {
+	n := 0
+	for j := i - 1; j >= 0 && s[j] == '\\'; j-- {
+		n++
+	}
+	return n%2 == 1
 }
 
 // shellWriteHeredocLineStart is the offset of the physical line that holds at: the byte after the last newline before it.
@@ -276,15 +289,35 @@ func shellWriteHeredocDelimiter(s []uint16, i int) (delim []uint16, quoted bool)
 			break
 		}
 		switch c {
-		case '\'', '"':
+		case '\'':
+			// A single-quoted span is literal: no escape applies inside it.
 			quoted = true
-			q := c
 			i++
-			for i < len(s) && s[i] != q {
+			for i < len(s) && s[i] != '\'' {
 				out = append(out, s[i])
 				i++
 			}
-			if shellAt(s, i) == q {
+			if shellAt(s, i) == '\'' {
+				i++
+			}
+		case '"':
+			// The shell removes a backslash inside double quotes only before $, `, " and \ (and before a newline,
+			// which it removes with the backslash). Any other backslash is a literal character of the word, so the
+			// delimiter is the word the shell spells out, not the raw text (CRW-765 correction 9).
+			quoted = true
+			i++
+			for i < len(s) && s[i] != '"' {
+				if s[i] == '\\' && i+1 < len(s) && shellWriteHeredocDoubleQuoteEscape(s[i+1]) {
+					if s[i+1] != '\n' {
+						out = append(out, s[i+1])
+					}
+					i += 2
+					continue
+				}
+				out = append(out, s[i])
+				i++
+			}
+			if shellAt(s, i) == '"' {
 				i++
 			}
 		case '\\':
@@ -300,6 +333,17 @@ func shellWriteHeredocDelimiter(s []uint16, i int) (delim []uint16, quoted bool)
 		}
 	}
 	return out, quoted
+}
+
+// shellWriteHeredocDoubleQuoteEscape reports whether the shell removes a backslash that precedes c inside a
+// double-quoted word: it lets a backslash escape only $, `, " and \ there, and a backslash-newline is a line
+// continuation the shell removes with both characters (CRW-765 correction 9).
+func shellWriteHeredocDoubleQuoteEscape(c uint16) bool {
+	switch c {
+	case '$', '\x60', '"', '\\', '\n':
+		return true
+	}
+	return false
 }
 
 // shellWriteHeredocTrimTabs removes the leading tabs of one here-document body line, as <<- does before the terminator
@@ -463,6 +507,12 @@ func shellWriteHeredocCuts(line []uint16) (cuts [][2]int, ok bool) {
 	start := 0
 	for i := 0; i < len(line); {
 		c := line[i]
+		if c == '#' && shellWriteHeredocCommentStart(line, i) {
+			// A word-initial # begins a comment, so the rest of the physical line is inert and belongs to no command:
+			// an apostrophe or a quote inside it is a literal character, not the unbalanced quote that made this
+			// splitter refuse an ordinary data here-document (CRW-765 correction 9).
+			break
+		}
 		if c == '\'' || c == '"' {
 			next := skipQuoted(line, i)
 			if next <= i || next > len(line) || line[next-1] != c {
@@ -606,6 +656,12 @@ func shellWriteHeredocDefinesFunction(header []uint16) bool {
 // shellWriteHeredocHiddenOperator reports whether the command holds a here-document operator the collector cannot reach: a << inside a $( ... ) or backtick command substitution that a double-quoted word encloses (CRW-765 correction 4, rule G4). The shell reads that operator as a here-document, so a command holding one is an unprovable header and fails closed when the command text names an interpreter.
 func shellWriteHeredocHiddenOperator(command []uint16) bool {
 	for i := 0; i < len(command); {
+		if command[i] == '#' && shellWriteHeredocCommentStart(command, i) {
+			// A word-initial # begins a comment, so the rest of the physical line is inert: a quoted command
+			// substitution written inside it is documentation, not a here-document the shell would read (CRW-765
+			// correction 9).
+			break
+		}
 		if command[i] == '\'' {
 			i = skipQuoted(command, i)
 			continue

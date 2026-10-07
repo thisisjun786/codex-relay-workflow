@@ -189,3 +189,114 @@ func TestShellWriteHeredocGeneration9Controls(t *testing.T) {
 		})
 	}
 }
+
+// The blind pre-merge evaluation of head 6f0fcf3f1 (score 4) found three more defects inside rule K1's own promise -
+// the collector and the command reader must read the same text - so the same generation closes them. The rows below are
+// red on 6f0fcf3f1: an escaped blank before a # is no comment boundary, the shell's own quote removal applies inside a
+// double-quoted delimiter, and a word-initial # makes the rest of the physical line inert for the header splitter and
+// the hidden-operator scan too.
+
+// TestShellWriteHeredocGeneration9EscapedHashDenied is the denied case for d1: `arg\ #text` is one word, so the # is a
+// literal character, the here-document operator after it is real, and bash -s runs the body as its program.
+func TestShellWriteHeredocGeneration9EscapedHashDenied(t *testing.T) {
+	cwd, root, env := gateScene(t)
+	mem := root
+	for _, row := range []struct{ name, command string }{
+		{"an escaped blank before a hash keeps the heredoc", "bash -s arg\\ #text <<'EOF'\necho x > " + mem + "/a\nEOF"},
+		{"the same with a plain bash verb", "bash arg\\ #text <<'EOF'\necho x > " + mem + "/a\nEOF"},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			got := memoryGateClassify("Bash", map[string]any{"command": row.command}, cwd, env)
+			if !shellWriteHeredocGateDenied(got, mem+"/a") {
+				t.Errorf("%q: %+v, want a deny naming the protected path", row.command, got)
+			}
+		})
+	}
+}
+
+// TestShellWriteHeredocGeneration9EscapedHashControls pins the two sides of rule K1's comment boundary: a real comment
+// declares no here-document, and an escaped blank before a hash keeps one.
+func TestShellWriteHeredocGeneration9EscapedHashControls(t *testing.T) {
+	cwd, root, env := gateScene(t)
+	mem := root
+	// A real comment after the header declares no here-document, so the body lines are not a program.
+	if n := len(shellWriteHeredocs(utf16.Encode([]rune("bash -s arg #text <<'EOF'")))); n != 0 {
+		t.Errorf("a real comment: collected %d here-documents, want 0", n)
+	}
+	// The escaped blank keeps the here-document, so its body is read and the write is denied.
+	if n := len(shellWriteHeredocs(utf16.Encode([]rune("bash -s arg\\ #text <<'EOF'")))); n != 1 {
+		t.Errorf("an escaped blank: collected %d here-documents, want 1", n)
+	}
+	// A commented-out operator is inert: the following line is an ordinary command of the outer script, not a body.
+	if got := memoryGateClassify("Bash", map[string]any{"command": "echo start #text <<'EOF'\necho done"}, cwd, env); got.Surface != "" {
+		t.Errorf("a commented-out here-document must pass: %+v", got)
+	}
+	// The escaped blank keeps the operator, so the body is the interpreter's program and the write is read.
+	if got := memoryGateClassify("Bash", map[string]any{"command": "bash -s arg\\ #text <<'EOF'\necho x > " + mem + "/a\nEOF"}, cwd, env); !shellWriteHeredocGateDenied(got, mem+"/a") {
+		t.Errorf("an escaped blank must deny the write: %+v", got)
+	}
+}
+
+// TestShellWriteHeredocGeneration9DoubleQuotedDelimiterDenied is the denied case for d2: the shell removes one backslash
+// of a pair inside a double-quoted word, so the delimiter is E\OF, the document closes there, and the Python program
+// after it is its own command and is read.
+func TestShellWriteHeredocGeneration9DoubleQuotedDelimiterDenied(t *testing.T) {
+	cwd, root, env := gateScene(t)
+	mem := root
+	command := "cat <<\"E\\\\OF\"\ntext\nE\\OF\npython3 <<'PY'\nopen('" + mem + "/a','w')\nPY"
+	// The delimiter the shell spells out is E\OF (one backslash), not the raw E\\OF.
+	hss := shellWriteHeredocs(utf16.Encode([]rune(command)))
+	if len(hss) != 2 {
+		t.Fatalf("collected %d here-documents, want 2: %+v", len(hss), hss)
+	}
+	if got := string(utf16.Decode(hss[0].delim)); got != `E\OF` {
+		t.Errorf("delimiter %q, want %q", got, `E\OF`)
+	}
+	got := memoryGateClassify("Bash", map[string]any{"command": command}, cwd, env)
+	if !shellWriteHeredocGateDenied(got, mem+"/a") {
+		t.Errorf("%q: %+v, want a deny naming the protected path", command, got)
+	}
+}
+
+// TestShellWriteHeredocGeneration9DoubleQuotedDelimiterControls pins the quote removal that fix needs: the shell removes
+// a backslash only before $, `, " and \ inside a double-quoted word, and keeps every other one.
+func TestShellWriteHeredocGeneration9DoubleQuotedDelimiterControls(t *testing.T) {
+	for _, row := range []struct{ name, header, delim string }{
+		{"a doubled backslash removes one", `cat <<"E\\OF"`, `E\OF`},
+		{"a backslash before an ordinary letter stays", `cat <<"E\QOF"`, `E\QOF`},
+		{"a backslash before a double quote removes it", `cat <<"E\"OF"`, `E"OF`},
+		{"a single-quoted word is literal", `cat <<'E\\OF'`, `E\\OF`},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			hss := shellWriteHeredocs(utf16.Encode([]rune(row.header + "\nx\n" + row.delim)))
+			if len(hss) != 1 {
+				t.Fatalf("collected %d here-documents, want 1: %+v", len(hss), hss)
+			}
+			if got := string(utf16.Decode(hss[0].delim)); got != row.delim {
+				t.Errorf("delimiter %q, want %q", got, row.delim)
+			}
+		})
+	}
+}
+
+// TestShellWriteHeredocGeneration9CommentSyntaxControls is the invariant case for d3: a word-initial # makes the rest of
+// the physical line inert, so an apostrophe or a quoted command substitution written in a comment is no syntax and no
+// here-document. Each row is an ordinary command an operator may run, and each must pass without a grant.
+func TestShellWriteHeredocGeneration9CommentSyntaxControls(t *testing.T) {
+	cwd, root, env := gateScene(t)
+	mem := root
+	for _, row := range []struct{ name, command string }{
+		{"an apostrophe in a comment after a data heredoc", "cat > note.md <<'EOF' # don't parse this\nhello\nEOF"},
+		{"a quoted substitution example inside a comment", "echo hi # \"$(cat <<INNER)\""},
+		{"an apostrophe in a comment naming the memories path", "cat > note.md <<'EOF' # don't write " + mem + "/a\nhello\nEOF"},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			if got, ok := shellWriteHeredocUnreadable(row.command); ok {
+				t.Errorf("%q reported unreadable %q, want data", row.command, got)
+			}
+			if got := memoryGateClassify("Bash", map[string]any{"command": row.command}, cwd, env); got.Surface != "" {
+				t.Errorf("%q must pass: %+v", row.command, got)
+			}
+		})
+	}
+}
