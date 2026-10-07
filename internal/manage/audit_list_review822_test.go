@@ -136,6 +136,20 @@ func TestAuditListReview822NullRoundIsUnknown(t *testing.T) {
 	if doc.Round != "r2" || len(doc.Packages) != 1 || doc.Packages[0].Package != "pkg/a" {
 		t.Errorf("a whole round read %+v", doc)
 	}
+	// A field this build does not know must not make the read fail, even when its number is
+	// outside what a float64 holds: the shape probe reads the document, not its values.
+	extra := filepath.Join(dir, "extra.json")
+	body := "{\"round\":\"r3\",\"started_at\":\"2026-01-01T00:00:00Z\",\"unknown\":1e400,\"packages\":[{\"package\":\"pkg/a\",\"state\":\"pending\"}]}"
+	if err := os.WriteFile(extra, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	doc, err = auditRoundLoad(extra)
+	if err != nil {
+		t.Fatalf("auditRoundLoad over a round with an unknown numeric field: %v", err)
+	}
+	if doc.Round != "r3" || len(doc.Packages) != 1 {
+		t.Errorf("a round with an unknown numeric field read %+v", doc)
+	}
 }
 
 // C2: the word after --round, --issue and --since is a value whatever it is, so "help" names

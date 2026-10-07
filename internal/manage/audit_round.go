@@ -1,6 +1,7 @@
 package manage
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -130,11 +131,16 @@ func auditRoundLoad(path string) (*auditRoundFile, error) {
 	if err != nil {
 		return nil, err
 	}
-	var probe any
-	if err := json.Unmarshal(data, &probe); err != nil {
+	// The probe reads the document's shape only. UseNumber keeps a number outside float64
+	// (1e400) as the token it was written as instead of failing the read, so a round file
+	// this build could read before stays readable.
+	probe := json.NewDecoder(bytes.NewReader(data))
+	probe.UseNumber()
+	var shape any
+	if err := probe.Decode(&shape); err != nil {
 		return nil, fmt.Errorf("round %s: %w", path, err)
 	}
-	if _, ok := probe.(map[string]any); !ok {
+	if _, ok := shape.(map[string]any); !ok {
 		return nil, fmt.Errorf("round %s: not a round document", path)
 	}
 	var doc auditRoundFile
