@@ -272,9 +272,14 @@ func TestLoopInitNamesThePublishedPlanWhenTheBindingFails(t *testing.T) {
 		name    string
 		err     error
 		publish bool
+		want    []string
 	}{
-		{"a failure before the rename", errors.New("disk full"), false},
-		{"a published but unsynced write", &state.PublishedError{Err: errors.New("directory sync failed")}, true},
+		{"a failure before the rename", errors.New("disk full"), false, []string{"are published", "disk full"}},
+		{"a published but unsynced write", &state.PublishedError{Err: errors.New("directory sync failed")}, true, nil},
+		// A link refusal from the binding write is a failure AFTER the plan and its created row were
+		// published, so the answer must name them. On the pre-fix code the lock-acquisition branch caught
+		// this error too and answered "Nothing was written." beside the published plan (CRW-646).
+		{"a link refusal from the binding write", state.ErrStateRootSymlink, false, []string{"are published", "symlink"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cwd := loopReadWorkspace(t)
@@ -303,7 +308,7 @@ func TestLoopInitNamesThePublishedPlanWhenTheBindingFails(t *testing.T) {
 				if runErr == nil {
 					t.Fatalf("got %d %q, want an error naming the published plan", result.Code, result.Output)
 				}
-				for _, want := range []string{"are published", slug, id, "disk full"} {
+				for _, want := range append(tc.want, slug, id) {
 					if !strings.Contains(runErr.Error(), want) {
 						t.Fatalf("the failure does not name %q: %v", want, runErr)
 					}
