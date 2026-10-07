@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -101,24 +102,19 @@ func pumpQueueFlushThread(ctx context.Context, e *Env, cfg *Config, st *pumpStat
 	if err != nil {
 		return err
 	}
-	// A notice that alone exceeds the batch limit, or one that carries nothing once trimmed, is
-	// moved aside first, so the longest fitting prefix always has something to carry and one such
-	// notice cannot hold the queue.
-	names, texts, err = pumpReview776QueueQuarantine(ctx, e, cfg, dir, thread, names, texts, dry)
-	if err != nil {
-		return err
-	}
-	if len(names) == 0 {
-		return nil
-	}
 	// An upgraded state has no pin, but the ledger may still hold a record under the pre-change
-	// logical id of the whole queued set. That lookup runs on the full set, before the size split,
-	// because the pre-change id hashed every queued name: looking it up on the split prefix alone
-	// would miss an old record and re-send an attempt that may already have gone.
+	// logical id of the whole queued set. That lookup runs on the full set as it stands before any
+	// notice is moved aside and before the size split, because the pre-change id hashed every queued
+	// name: a narrower set would miss an old record and re-send an attempt that may already have gone.
 	whole := pumpReview776QueueBatch{names: names, texts: texts, body: pumpReview776QueueBody(texts)}
 	if dry {
-		// A dry run makes no durable change, so it does not adopt a legacy record or save state.
-		preview := pumpReview776QueueFit(names, texts)
+		// A dry run makes no durable change, so it does not adopt a legacy record or save state. It
+		// reports the notices it would move aside and the batch it would send.
+		keptNames, keptTexts, err := pumpReview776QueueQuarantine(ctx, e, cfg, dir, thread, names, texts, true)
+		if err != nil {
+			return err
+		}
+		preview := pumpReview776QueueFit(keptNames, keptTexts)
 		if len(preview.names) > 0 {
 			fmt.Fprintf(e.Stdout, "queue %s %d notices\n%s\n", thread, len(preview.names), preview.body)
 		}
@@ -141,11 +137,27 @@ func pumpQueueFlushThread(ctx context.Context, e *Env, cfg *Config, st *pumpStat
 		}
 	case pumpReview776QueueLegacyComplete:
 		// The pre-change ledger already accepted this batch, so its notices are moved to sent/ instead
-		// of being delivered a second time.
+		// of being delivered a second time. The accepted pin is written before the first move, so a
+		// crash part way through leaves the membership recoverable instead of letting the remaining
+		// notices form a new batch and be delivered again.
 		pin := pumpReview776QueuePin{
 			LogicalID: pumpQueueLegacyBatchID(thread, whole.names), Names: append([]string(nil), whole.names...),
 			Body: whole.body, SHA256: pumpReview776QueueDigests(whole.names, whole.texts), Accepted: true}
-		return pumpReview776QueueFinishAccepted(ctx, e, cfg, st, dir, thread, pin, dry)
+		st.QueueAttempt[thread] = pin
+		if err := st.pumpSave(cfg); err != nil {
+			return err
+		}
+		return pumpReview776QueueFinishAccepted(ctx, e, cfg, st, dir, thread, pin, false)
+	}
+	// A notice that alone exceeds the batch limit, or one that carries nothing once trimmed, is
+	// moved aside, so the longest fitting prefix always has something to carry and one such notice
+	// cannot hold the queue.
+	names, texts, err = pumpReview776QueueQuarantine(ctx, e, cfg, dir, thread, names, texts, false)
+	if err != nil {
+		return err
+	}
+	if len(names) == 0 {
+		return nil
 	}
 	batch := pumpReview776QueueFit(names, texts)
 	if len(batch.names) == 0 {
@@ -329,9 +341,11 @@ func pumpReview776QueueQuarantine(ctx context.Context, e *Env, cfg *Config, dir,
 		if err := os.MkdirAll(oversizeDir, 0o700); err != nil {
 			return keptNames, keptTexts, err
 		}
-		// The move never replaces a notice already quarantined and never unlinks a notice the
-		// producer wrote: see pumpReview776QueueMoveOversize.
-		moved, destination, err := pumpReview776QueueMoveOversize(oversizeDir, dir, name)
+		// The move is verified against the text this round read, so a notice the producer replaced
+		// with a normal-sized one is put back in the queue instead of being quarantined, and no move
+		// ever unlinks a notice the producer wrote.
+		destination := pumpReview776QueueOversizeName(oversizeDir, name)
+		moved, err := pumpReview776QueueMoveVerified(dir, name, destination, pumpReview776BodyDigest(texts[i]))
 		if err != nil {
 			return keptNames, keptTexts, err
 		}
@@ -350,32 +364,17 @@ func pumpReview776QueueQuarantine(ctx context.Context, e *Env, cfg *Config, dir,
 	return keptNames, keptTexts, nil
 }
 
-// pumpReview776QueueMoveOversize moves one notice out of the queue into oversize/ with a single
-// rename to a name that cannot already exist, so it never replaces a notice quarantined earlier and
-// it never deletes a notice the producer wrote.
-//
-// A link followed by a remove would not be safe here: the remove resolves the source path again, so
-// a producer that atomically replaced the notice in between would lose its new notice. One rename
-// moves whichever file the kernel resolves at the source path, and the destination carries the
-// source's inode and a nanosecond stamp, so two notices can never choose the same name.
-func pumpReview776QueueMoveOversize(oversizeDir, dir, name string) (bool, string, error) {
-	source := filepath.Join(dir, name)
-	info, err := os.Lstat(source)
-	if err != nil {
-		// The notice is gone, so there is nothing to move.
-		return false, "", nil
-	}
+// pumpReview776QueueOversizeName is the destination a quarantined notice is moved to. The name
+// carries a UTC stamp and the current time in nanoseconds, so two moves can never choose the same
+// destination and an earlier quarantined notice is never replaced.
+func pumpReview776QueueOversizeName(oversizeDir, name string) string {
 	base := name
 	if ext := filepath.Ext(name); ext != "" {
 		base = strings.TrimSuffix(name, ext)
 	}
-	stamp := time.Now().UTC().Format("20060102T150405")
-	destination := filepath.Join(oversizeDir, fmt.Sprintf("%s.%s.%d.%d%s",
-		base, stamp, pumpReview776QueueInode(info), time.Now().UnixNano(), filepath.Ext(name)))
-	if err := os.Rename(source, destination); err != nil {
-		return false, "", nil
-	}
-	return true, destination, nil
+	now := time.Now()
+	return filepath.Join(oversizeDir, fmt.Sprintf("%s.%s.%d%s",
+		base, now.UTC().Format("20060102T150405"), now.UnixNano(), filepath.Ext(name)))
 }
 
 // pumpReview776QueueInode is a file's inode number, part of a quarantine name so two notices can
@@ -500,7 +499,13 @@ func pumpReview776QueueSettle(ctx context.Context, e *Env, cfg *Config, st *pump
 		}
 		return pumpReview776QueueFinishAccepted(ctx, e, cfg, st, dir, thread, pin, false)
 	case deliverClassRefused:
-		// A refusal is terminal and nothing was sent, so the pin clears and the notices stay queued.
+		// A refusal clears the pin only when the ledger proves the pinned attempt itself was refused.
+		// The delivery core reports a local refusal (an unconfigured bridge policy, for example)
+		// before it reads the ledger at all, and that says nothing about the attempt that may already
+		// have gone: the pin then stays and the next round reconciles it again.
+		if !pumpReview776QueueRefusalSettled(cfg, pin.LogicalID) {
+			return err
+		}
 		return pumpReview776QueuePinLift(cfg, st, thread, err)
 	default:
 		// Unknown: the pin stays, so the next round reconciles the same logical id and body.
@@ -524,33 +529,77 @@ func pumpReview776QueueFinishAccepted(ctx context.Context, e *Env, cfg *Config, 
 	sent := filepath.Join(dir, pumpSentDir)
 	created := false
 	for _, name := range pin.Names {
-		raw, err := os.ReadFile(filepath.Join(dir, name))
-		if err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				// The name is gone, so there is nothing to move and nothing to keep.
-				continue
-			}
-			return err
-		}
-		if pumpReview776BodyDigest(string(raw)) != pin.SHA256[name] {
-			// The file no longer carries what was sent, so moving it would take a notice to sent/ that
-			// nobody delivered. It stays queued for a later batch.
-			pumpLog(cfg, fmt.Sprintf("queue %s: the accepted notice %s was replaced; left queued", thread, name))
-			continue
-		}
 		if !created {
 			if err := os.MkdirAll(sent, 0o700); err != nil {
 				return err
 			}
 			created = true
 		}
-		if err := os.Rename(filepath.Join(dir, name), filepath.Join(sent, name)); err != nil {
+		// Only a member whose file still carries the text that was sent moves to sent/. The move
+		// verifies the content through an open handle and confirms the file it moved is the one it
+		// verified, so a notice the producer replaced is left queued rather than taken to sent/.
+		moved, err := pumpReview776QueueMoveVerified(dir, name, filepath.Join(sent, name), pin.SHA256[name])
+		if err != nil {
 			return err
+		}
+		if !moved {
+			pumpLog(cfg, fmt.Sprintf("queue %s: the accepted notice %s was replaced or is gone; left queued", thread, name))
 		}
 	}
 	delete(st.QueueAttempt, thread)
 	delete(st.QueueAccepted, thread)
 	return st.pumpSave(cfg)
+}
+
+// pumpReview776QueueRefusalSettled reports whether the ledger holds a record for a logical id that
+// the delivery core settled as refused. A refusal the core reports before it reads the ledger (an
+// unconfigured bridge policy) leaves the record untouched, so it is not evidence about the attempt.
+func pumpReview776QueueRefusalSettled(cfg *Config, logicalID string) bool {
+	record, known, err := deliverLoad(cfg, logicalID)
+	if err != nil || !known {
+		return false
+	}
+	return record.State == deliverStateRefused
+}
+
+// pumpReview776QueueMoveVerified moves one notice to dest only while it still carries the expected
+// text, and never unlinks a file. It opens the notice, verifies the digest of what it read, renames,
+// then confirms the moved file is the one it opened; a notice the producer replaced in the meantime
+// is renamed back to the queue and the move reports false, so a replacement is neither quarantined
+// nor taken to sent/ undelivered.
+func pumpReview776QueueMoveVerified(dir, name, dest, expectedDigest string) (bool, error) {
+	source := filepath.Join(dir, name)
+	file, err := os.Open(source)
+	if err != nil {
+		return false, nil
+	}
+	defer file.Close()
+	opened, err := file.Stat()
+	if err != nil {
+		return false, nil
+	}
+	raw, err := io.ReadAll(file)
+	if err != nil {
+		return false, err
+	}
+	if pumpReview776BodyDigest(string(raw)) != expectedDigest {
+		return false, nil
+	}
+	if err := os.Rename(source, dest); err != nil {
+		return false, nil
+	}
+	moved, err := os.Lstat(dest)
+	if err == nil && !os.SameFile(opened, moved) {
+		// The producer replaced the notice while it was moving, so the file that moved is not the one
+		// this round verified: it goes back to the queue and the next round handles it.
+		back := source
+		if _, err := os.Lstat(back); err == nil {
+			back = filepath.Join(dir, fmt.Sprintf("%s.%d.%d", name, pumpReview776QueueInode(moved), time.Now().UnixNano()))
+		}
+		_ = os.Rename(dest, back)
+		return false, nil
+	}
+	return true, nil
 }
 
 // pumpReview776QueueDigests is each member's delivered body digest, stored in the pin so an
