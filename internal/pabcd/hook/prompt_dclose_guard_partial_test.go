@@ -23,6 +23,24 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
 )
 
+// promptDcloseGoalplanUnknownWant is the exact sentence a refusal of a retry must carry instead of
+// a definite claim or denial about the goalplan: the plan on disk cannot prove who wrote its shape,
+// so the answer says the plan may already hold this close's commit and tells the operator to read
+// it. It is pinned as a literal here (not read from the production helper) so a wording change is
+// caught by the suite (CRW-930, generation-2 decision on d2/d3).
+const promptDcloseGoalplanUnknownWant = "the goalplan may already hold this close's commit from the first attempt; read it before retrying."
+
+// promptDclosePlanUnreadableMode makes the bound plan unreadable to a retry that could not take the
+// write lock: the plan file is still there, so the close can neither read its shape nor rewrite it.
+func promptDclosePlanUnreadableMode(t *testing.T, cwd, slug string) {
+	t.Helper()
+	path := promptDclosePlanPath(t, cwd, slug)
+	if err := os.Chmod(path, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(path, 0o644) })
+}
+
 // promptDcloseSessionsDir is the directory the close writes its session file into.
 func promptDcloseSessionsDir(cwd string) string {
 	return filepath.Join(cwd, crwdir.DirName, state.SessionsSubdir)
@@ -167,6 +185,12 @@ func TestPromptDcloseRecoveryEarlyRefusalNamesTheInheritedMarker(t *testing.T) {
 	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
 		t.Errorf("the early refusal did not name the inherited marker: %q", answer)
 	}
+	if !strings.Contains(answer, promptDcloseGoalplanUnknownWant) {
+		t.Errorf("the refusal did not say the goalplan may already hold the commit: %q", answer)
+	}
+	if strings.Contains(answer, "Nothing else was written.") {
+		t.Errorf("the refusal denied a goalplan it cannot prove: %q", answer)
+	}
 	if strings.Contains(answer, "Nothing was written.") {
 		t.Errorf("the early refusal denied the marker on the session: %q", answer)
 	}
@@ -176,7 +200,7 @@ func TestPromptDcloseRecoveryEarlyRefusalNamesTheInheritedMarker(t *testing.T) {
 // marker recorded no successor answers the absent-target cleanup, but that answer is not proof the
 // first attempt's plan commit landed. A later refusal must name the marker alone, never claim the
 // goalplan was published.
-func TestPromptDcloseRecoveryRefusalWithoutASuccessorNamesOnlyTheMarker(t *testing.T) {
+func TestPromptDcloseRecoveryRefusalWithoutASuccessorDoesNotClaimThePlan(t *testing.T) {
 	cwd := promptDcloseRepo(t)
 	slug := "chat-recovery-no-successor"
 	// wp-1 is gone and the marker recorded no successor, so the resume answers cleanup; a plan left
@@ -199,8 +223,11 @@ func TestPromptDcloseRecoveryRefusalWithoutASuccessorNamesOnlyTheMarker(t *testi
 	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
 		t.Errorf("the refusal did not name the inherited marker: %q", answer)
 	}
-	if strings.Contains(answer, promptDcloseGoalplanPublishedSentence()) {
-		t.Errorf("the refusal claimed a goalplan this close never proved it published: %q", answer)
+	if !strings.Contains(answer, promptDcloseGoalplanUnknownWant) {
+		t.Errorf("the refusal did not say the goalplan may already hold the commit: %q", answer)
+	}
+	if strings.Contains(answer, "Nothing else was written.") {
+		t.Errorf("the refusal denied a goalplan it cannot prove: %q", answer)
 	}
 }
 
@@ -209,7 +236,7 @@ func TestPromptDcloseRecoveryRefusalWithoutASuccessorNamesOnlyTheMarker(t *testi
 // disk), and the operator then left an open task under it, so the retry refuses. The refusal must
 // name the artifacts this close published - the inherited marker and the committed plan - instead of
 // ending in "Nothing was written." (CRW-930, d1).
-func TestPromptDcloseRecoveryRefusalNamesTheCommittedMarkerAndPlan(t *testing.T) {
+func TestPromptDcloseRecoveryRefusalLeavesThePlanUnknown(t *testing.T) {
 	cwd := promptDcloseRepo(t)
 	slug := "chat-recovery-refusal-names"
 	attest := promptDcloseRecoverable(t, cwd, "s1", slug, promptDcloseStr("wp-2"))
@@ -226,8 +253,11 @@ func TestPromptDcloseRecoveryRefusalNamesTheCommittedMarkerAndPlan(t *testing.T)
 	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
 		t.Errorf("the recovery refusal did not name the inherited marker: %q", answer)
 	}
-	if !strings.Contains(answer, promptDcloseGoalplanPublishedSentence()) {
-		t.Errorf("the recovery refusal did not name the committed goalplan: %q", answer)
+	if !strings.Contains(answer, promptDcloseGoalplanUnknownWant) {
+		t.Errorf("the refusal did not say the goalplan may already hold the commit: %q", answer)
+	}
+	if strings.Contains(answer, "Nothing else was written.") {
+		t.Errorf("the refusal denied a goalplan it cannot prove: %q", answer)
 	}
 	if strings.Contains(answer, "Nothing was written.") {
 		t.Errorf("the recovery refusal denied the artifacts this close published: %q", answer)
@@ -238,7 +268,7 @@ func TestPromptDcloseRecoveryRefusalNamesTheCommittedMarkerAndPlan(t *testing.T)
 // is gone and its recorded successor is already running, so the retry settles the plan with no write
 // of its own - the first attempt had committed it. The resting state write then fails, and that
 // refusal must name the plan this close published as well as the marker (CRW-930, d2).
-func TestPromptDcloseRecoveryCleanupNamesTheCommittedPlan(t *testing.T) {
+func TestPromptDcloseRecoveryCleanupDoesNotClaimThePlan(t *testing.T) {
 	cwd := promptDcloseRepo(t)
 	slug := "chat-recovery-cleanup-names"
 	// The target wp-1 is gone and the recorded successor wp-2 is running on the cursor, which is the
@@ -262,8 +292,11 @@ func TestPromptDcloseRecoveryCleanupNamesTheCommittedPlan(t *testing.T) {
 	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
 		t.Errorf("the refusal did not name the inherited marker: %q", answer)
 	}
-	if !strings.Contains(answer, promptDcloseGoalplanPublishedSentence()) {
-		t.Errorf("the refusal did not name the committed goalplan: %q", answer)
+	if !strings.Contains(answer, promptDcloseGoalplanUnknownWant) {
+		t.Errorf("the refusal did not say the goalplan may already hold the commit: %q", answer)
+	}
+	if strings.Contains(answer, "Nothing else was written.") {
+		t.Errorf("the refusal denied a goalplan it cannot prove: %q", answer)
 	}
 	if strings.Contains(answer, "Nothing was written.") {
 		t.Errorf("the refusal denied the artifacts this close published: %q", answer)
@@ -294,7 +327,7 @@ func promptDcloseCommittedRecoveryStateNext(slug, epoch, next string) string {
 // nothing) continues the same close, so a later refusal must name the goalplan that close published
 // as well as the marker. The plan is committed by the first attempt and only the marker is inherited,
 // so a branch that recorded the plan only when this invocation rewrote it would drop it.
-func TestPromptDcloseRecoveryAlreadyCommittedPlanIsNamedByALaterRefusal(t *testing.T) {
+func TestPromptDcloseRecoveryCommittedPlanIsNotClaimedByALaterRefusal(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root ignores the file mode this case needs")
 	}
@@ -334,8 +367,11 @@ func TestPromptDcloseRecoveryAlreadyCommittedPlanIsNamedByALaterRefusal(t *testi
 	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
 		t.Errorf("the refusal did not name the marker this close published: %q", answer)
 	}
-	if !strings.Contains(answer, promptDcloseGoalplanPublishedSentence()) {
-		t.Errorf("the refusal did not name the goalplan this close already committed: %q", answer)
+	if !strings.Contains(answer, promptDcloseGoalplanUnknownWant) {
+		t.Errorf("the refusal did not say the goalplan may already hold the commit: %q", answer)
+	}
+	if strings.Contains(answer, "Nothing else was written.") {
+		t.Errorf("the refusal denied a goalplan it cannot prove: %q", answer)
 	}
 	if strings.Contains(answer, "Nothing was written.") {
 		t.Errorf("the refusal denied the artifacts this close published: %q", answer)
@@ -391,6 +427,12 @@ func TestPromptDcloseRecoveryPlanFailureNamesTheMarkerAlreadyOnTheSession(t *tes
 	}
 	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
 		t.Errorf("the recovery plan failure did not name the marker already on the session: %q", answer)
+	}
+	if !strings.Contains(answer, promptDcloseGoalplanUnknownWant) {
+		t.Errorf("the refusal did not say the goalplan may already hold the commit: %q", answer)
+	}
+	if strings.Contains(answer, "Nothing else was written.") {
+		t.Errorf("the refusal denied a goalplan it cannot prove: %q", answer)
 	}
 	if strings.Contains(answer, "Nothing was written.") {
 		t.Errorf("the recovery plan failure denied the marker on the session: %q", answer)
@@ -534,8 +576,11 @@ func TestPromptDcloseRecoveryCorruptMarkerDoesNotClaimThePlan(t *testing.T) {
 	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
 		t.Errorf("the refusal did not name the inherited marker: %q", answer)
 	}
-	if strings.Contains(answer, promptDcloseGoalplanPublishedSentence()) {
-		t.Errorf("the refusal claimed a goalplan this close never committed: %q", answer)
+	if !strings.Contains(answer, promptDcloseGoalplanUnknownWant) {
+		t.Errorf("the refusal did not say the goalplan may already hold the commit: %q", answer)
+	}
+	if strings.Contains(answer, "Nothing else was written.") {
+		t.Errorf("the refusal denied a goalplan it cannot prove: %q", answer)
 	}
 	if strings.Contains(answer, "Nothing was written.") {
 		t.Errorf("the refusal denied the marker this close published: %q", answer)
@@ -547,7 +592,7 @@ func TestPromptDcloseRecoveryCorruptMarkerDoesNotClaimThePlan(t *testing.T) {
 // operator then broke the plan's definition, so the retry refuses at the integrity check - which runs
 // before the recovery accounting. The refusal must still name the goalplan this close published; the
 // generation-1 head names the marker alone and denies the rest.
-func TestPromptDcloseRecoveryIntegrityRefusalNamesTheCommittedPlan(t *testing.T) {
+func TestPromptDcloseRecoveryIntegrityRefusalDoesNotClaimThePlan(t *testing.T) {
 	cwd := promptDcloseRepo(t)
 	slug := "chat-recovery-integrity"
 	attest := promptDcloseRecoverable(t, cwd, "s1", slug, promptDcloseStr("wp-2"))
@@ -561,8 +606,11 @@ func TestPromptDcloseRecoveryIntegrityRefusalNamesTheCommittedPlan(t *testing.T)
 	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
 		t.Errorf("the integrity refusal did not name the inherited marker: %q", answer)
 	}
-	if !strings.Contains(answer, promptDcloseGoalplanPublishedSentence()) {
-		t.Errorf("the integrity refusal dropped the goalplan this close committed: %q", answer)
+	if !strings.Contains(answer, promptDcloseGoalplanUnknownWant) {
+		t.Errorf("the refusal did not say the goalplan may already hold the commit: %q", answer)
+	}
+	if strings.Contains(answer, "Nothing else was written.") {
+		t.Errorf("the refusal denied a goalplan it cannot prove: %q", answer)
 	}
 	if strings.Contains(answer, "Nothing was written.") {
 		t.Errorf("the integrity refusal denied the artifacts this close published: %q", answer)
@@ -599,7 +647,7 @@ func TestPromptDcloseRecoveryIntegrityRefusalWithoutACommitKeepsTheBareClaim(t *
 // take the goalplan lock, so it never reads the plan, but its first attempt's marker and committed
 // goalplan are still on disk. The busy refusal must name both; the generation-1 head returns the busy
 // text alone, so the operator cannot tell that a partial close is waiting.
-func TestPromptDcloseRecoveryBusyLockNamesWhatTheFirstAttemptPublished(t *testing.T) {
+func TestPromptDcloseRecoveryBusyLockNamesTheMarkerAndLeavesThePlanUnknown(t *testing.T) {
 	cwd := promptDcloseRepo(t)
 	slug := "chat-recovery-busy-lock"
 	attest := promptDcloseRecoverable(t, cwd, "s1", slug, promptDcloseStr("wp-2"))
@@ -620,8 +668,11 @@ func TestPromptDcloseRecoveryBusyLockNamesWhatTheFirstAttemptPublished(t *testin
 	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
 		t.Errorf("the busy refusal did not name the inherited marker: %q", answer)
 	}
-	if !strings.Contains(answer, promptDcloseGoalplanPublishedSentence()) {
-		t.Errorf("the busy refusal dropped the goalplan this close committed: %q", answer)
+	if !strings.Contains(answer, promptDcloseGoalplanUnknownWant) {
+		t.Errorf("the refusal did not say the goalplan may already hold the commit: %q", answer)
+	}
+	if strings.Contains(answer, "Nothing else was written.") {
+		t.Errorf("the refusal denied a goalplan it cannot prove: %q", answer)
 	}
 }
 
@@ -672,7 +723,7 @@ func promptDclosePlanWithExtraField(t *testing.T, cwd, slug, field, value string
 // open and only its recorded successor was started, so this close never committed the plan. A retry
 // refused here names the marker it inherited and must not claim a goalplan publication; the
 // generation-2 head judged the commit from the successor alone and named both.
-func TestPromptDcloseRecoveryStartedSuccessorDoesNotProveACommit(t *testing.T) {
+func TestPromptDcloseRecoveryStartedSuccessorDoesNotClaimThePlan(t *testing.T) {
 	cwd := promptDcloseRepo(t)
 	slug := "chat-recovery-started-only"
 	attest := promptDcloseRecoverable(t, cwd, "s1", slug, promptDcloseStr("wp-2"))
@@ -689,8 +740,11 @@ func TestPromptDcloseRecoveryStartedSuccessorDoesNotProveACommit(t *testing.T) {
 	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
 		t.Errorf("the refusal did not name the inherited marker: %q", answer)
 	}
-	if strings.Contains(answer, promptDcloseGoalplanPublishedSentence()) {
-		t.Errorf("the refusal claimed a goalplan this close never committed: %q", answer)
+	if !strings.Contains(answer, promptDcloseGoalplanUnknownWant) {
+		t.Errorf("the refusal did not say the goalplan may already hold the commit: %q", answer)
+	}
+	if strings.Contains(answer, "Nothing else was written.") {
+		t.Errorf("the refusal denied a goalplan it cannot prove: %q", answer)
 	}
 }
 
@@ -698,7 +752,7 @@ func TestPromptDcloseRecoveryStartedSuccessorDoesNotProveACommit(t *testing.T) {
 // answers "unreadable" for a plan that read cleanly but would lose an unknown field on revival. The
 // committed shape is still on disk, so the refusal must name the goalplan this close published; the
 // generation-2 head named the inherited marker alone.
-func TestPromptDcloseRecoveryUnreadablePlanStillNamesTheCommittedPlan(t *testing.T) {
+func TestPromptDcloseRecoveryUnreadablePlanDoesNotClaimThePlan(t *testing.T) {
 	cwd := promptDcloseRepo(t)
 	slug := "chat-recovery-unreadable-plan"
 	attest := promptDcloseRecoverable(t, cwd, "s1", slug, promptDcloseStr("wp-2"))
@@ -711,8 +765,11 @@ func TestPromptDcloseRecoveryUnreadablePlanStillNamesTheCommittedPlan(t *testing
 	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
 		t.Errorf("the refusal did not name the inherited marker: %q", answer)
 	}
-	if !strings.Contains(answer, promptDcloseGoalplanPublishedSentence()) {
-		t.Errorf("the refusal dropped the goalplan this close committed: %q", answer)
+	if !strings.Contains(answer, promptDcloseGoalplanUnknownWant) {
+		t.Errorf("the refusal did not say the goalplan may already hold the commit: %q", answer)
+	}
+	if strings.Contains(answer, "Nothing else was written.") {
+		t.Errorf("the refusal denied a goalplan it cannot prove: %q", answer)
 	}
 }
 
@@ -741,7 +798,7 @@ func TestPromptDcloseFreshUnreadablePlanKeepsTheBareClaim(t *testing.T) {
 // session lock the bound close itself takes: it stays busy, so the close never runs, but the first
 // attempt's marker and committed goalplan are on disk and the answer must name them. The
 // generation-2 head returned the bare busy text.
-func TestPromptDcloseRecoveryBusySessionLockNamesWhatTheFirstAttemptPublished(t *testing.T) {
+func TestPromptDcloseRecoveryBusySessionLockNamesTheMarkerAndLeavesThePlanUnknown(t *testing.T) {
 	cwd := promptDcloseRepo(t)
 	slug := "chat-recovery-busy-session-lock"
 	attest := promptDcloseRecoverable(t, cwd, "s1", slug, promptDcloseStr("wp-2"))
@@ -757,8 +814,11 @@ func TestPromptDcloseRecoveryBusySessionLockNamesWhatTheFirstAttemptPublished(t 
 	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
 		t.Errorf("the busy refusal did not name the inherited marker: %q", answer)
 	}
-	if !strings.Contains(answer, promptDcloseGoalplanPublishedSentence()) {
-		t.Errorf("the busy refusal dropped the goalplan this close committed: %q", answer)
+	if !strings.Contains(answer, promptDcloseGoalplanUnknownWant) {
+		t.Errorf("the refusal did not say the goalplan may already hold the commit: %q", answer)
+	}
+	if strings.Contains(answer, "Nothing else was written.") {
+		t.Errorf("the refusal denied a goalplan it cannot prove: %q", answer)
 	}
 }
 
@@ -788,7 +848,7 @@ func TestPromptDcloseBusyRefusalSeparatesThePublicationSentences(t *testing.T) {
 	if !strings.Contains(answer, "changed. the recovery marker was published.") {
 		t.Errorf("the busy refusal did not separate the marker sentence: %q", answer)
 	}
-	if !strings.Contains(answer, "the recovery marker was published. the goalplan was published.") {
+	if !strings.Contains(answer, "the recovery marker was published. "+promptDcloseGoalplanUnknownWant) {
 		t.Errorf("the busy refusal did not separate the plan sentence: %q", answer)
 	}
 }
@@ -818,8 +878,11 @@ func TestPromptDcloseLegacyMarkerDoesNotClaimACommittedPlan(t *testing.T) {
 	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
 		t.Errorf("the legacy refusal did not name the inherited marker: %q", answer)
 	}
-	if strings.Contains(answer, promptDcloseGoalplanPublishedSentence()) {
-		t.Errorf("the legacy refusal claimed a goalplan it cannot prove this close wrote: %q", answer)
+	if !strings.Contains(answer, promptDcloseGoalplanUnknownWant) {
+		t.Errorf("the refusal did not say the goalplan may already hold the commit: %q", answer)
+	}
+	if strings.Contains(answer, "Nothing else was written.") {
+		t.Errorf("the refusal denied a goalplan it cannot prove: %q", answer)
 	}
 }
 
@@ -828,7 +891,7 @@ func TestPromptDcloseLegacyMarkerDoesNotClaimACommittedPlan(t *testing.T) {
 // file became unreadable before the close's locked reread, which refuses. The first attempt's marker
 // and committed goalplan are on disk, so the refusal names them; the generation-3 head answered the
 // bare state refusal.
-func TestPromptDcloseRecoveryUnreadableRereadNamesWhatTheFirstAttemptPublished(t *testing.T) {
+func TestPromptDcloseRecoveryUnreadableRereadNamesTheMarkerAndLeavesThePlanUnknown(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root ignores the file mode this case needs")
 	}
@@ -856,8 +919,11 @@ func TestPromptDcloseRecoveryUnreadableRereadNamesWhatTheFirstAttemptPublished(t
 	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
 		t.Errorf("the strict-reread refusal did not name the inherited marker: %q", answer)
 	}
-	if !strings.Contains(answer, promptDcloseGoalplanPublishedSentence()) {
-		t.Errorf("the strict-reread refusal dropped the goalplan this close committed: %q", answer)
+	if !strings.Contains(answer, promptDcloseGoalplanUnknownWant) {
+		t.Errorf("the refusal did not say the goalplan may already hold the commit: %q", answer)
+	}
+	if strings.Contains(answer, "Nothing else was written.") {
+		t.Errorf("the refusal denied a goalplan it cannot prove: %q", answer)
 	}
 }
 
@@ -866,7 +932,7 @@ func TestPromptDcloseRecoveryUnreadableRereadNamesWhatTheFirstAttemptPublished(t
 // bound handler runs. A matching retry's first attempt may already have published its marker and
 // committed its goalplan, so the refusal names them; the generation-3 head returned the bare
 // SOURCE-ROOT text.
-func TestPromptDcloseRecoverySourceRootRefusalNamesWhatTheFirstAttemptPublished(t *testing.T) {
+func TestPromptDcloseRecoverySourceRootRefusalNamesTheMarkerAndLeavesThePlanUnknown(t *testing.T) {
 	cwd := promptDcloseRepo(t)
 	slug := "chat-recovery-source-root"
 	attest := promptDcloseRecoverable(t, cwd, "s1", slug, promptDcloseStr("wp-2"))
@@ -881,8 +947,11 @@ func TestPromptDcloseRecoverySourceRootRefusalNamesWhatTheFirstAttemptPublished(
 	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
 		t.Errorf("the entry refusal did not name the inherited marker: %q", answer)
 	}
-	if !strings.Contains(answer, promptDcloseGoalplanPublishedSentence()) {
-		t.Errorf("the entry refusal dropped the goalplan this close committed: %q", answer)
+	if !strings.Contains(answer, promptDcloseGoalplanUnknownWant) {
+		t.Errorf("the refusal did not say the goalplan may already hold the commit: %q", answer)
+	}
+	if strings.Contains(answer, "Nothing else was written.") {
+		t.Errorf("the refusal denied a goalplan it cannot prove: %q", answer)
 	}
 }
 
@@ -902,5 +971,143 @@ func TestPromptDcloseFreshSourceRootRefusalKeepsTheBareText(t *testing.T) {
 	}
 	if strings.Contains(answer, promptDcloseMarkerPublishedSentence()) || strings.Contains(answer, promptDcloseGoalplanPublishedSentence()) {
 		t.Errorf("a fresh close claimed a publication it never made: %q", answer)
+	}
+}
+
+// --- CRW-930 generation 2, second correction: a retry neither claims nor denies the goalplan ------
+
+// TestPromptDcloseRecoveryUnreadablePlanLeavesThePlanUnknown is the d2 case for a plan the retry
+// cannot read at all: the write lock refuses and the fallback read returns nothing, so the shape on
+// disk is unknowable rather than absent. The refusal names the marker it inherited and says the
+// goalplan may already hold the first attempt's commit; it must not deny that a goalplan was written.
+func TestPromptDcloseRecoveryUnreadablePlanLeavesThePlanUnknown(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores the file mode this case needs")
+	}
+	cwd := promptDcloseRepo(t)
+	slug := "chat-recovery-plan-unreadable"
+	attest := promptDcloseRecoverable(t, cwd, "s1", slug, promptDcloseStr("wp-2"))
+	promptDcloseRecoveryCommittedShape(t, cwd, slug, nil)
+	promptDclosePlanUnreadableMode(t, cwd, slug)
+	answer := promptDcloseRun(t, cwd, "s1", "t1", attest)
+	if !strings.Contains(answer, "could not be read") {
+		t.Fatalf("the retry did not answer the unreadable goalplan: %q", answer)
+	}
+	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
+		t.Errorf("the refusal did not name the inherited marker: %q", answer)
+	}
+	if !strings.Contains(answer, promptDcloseGoalplanUnknownWant) {
+		t.Errorf("the refusal did not leave the goalplan unknown: %q", answer)
+	}
+	if strings.Contains(answer, "Nothing else was written.") {
+		t.Errorf("the refusal denied a goalplan it cannot prove: %q", answer)
+	}
+}
+
+// TestPromptDcloseRecoveryChangedSuccessorLeavesThePlanUnknown is the second d2 trigger: the
+// recorded successor changed state after the marker was written, so the retry refuses successor_lost.
+// That refusal cannot tell whether the first attempt's commit landed, so it must leave the goalplan
+// unknown instead of denying it.
+func TestPromptDcloseRecoveryChangedSuccessorLeavesThePlanUnknown(t *testing.T) {
+	cwd := promptDcloseRepo(t)
+	slug := "chat-recovery-successor-changed"
+	attest := promptDcloseRecoverable(t, cwd, "s1", slug, promptDcloseStr("wp-2"))
+	// The successor the marker recorded is blocked: the retry refuses, and the plan's shape proves
+	// nothing about who wrote it.
+	promptDcloseRecoveryPlan(t, cwd, slug, []goalplan.GoalplanWorkPhase{
+		{ID: "wp-1", Title: "one", Status: goalplan.WorkPhaseInProgress, Tasks: []goalplan.GoalplanTask{}, CriteriaIDs: []string{}},
+		{ID: "wp-2", Title: "two", Status: goalplan.WorkPhaseBlocked, Tasks: []goalplan.GoalplanTask{}, CriteriaIDs: []string{}},
+	}, promptDcloseStr("wp-1"))
+	answer := promptDcloseRun(t, cwd, "s1", "t1", attest)
+	if !strings.Contains(answer, "CYCLE-COMPLETION-01") {
+		t.Fatalf("the retry did not refuse the changed successor: %q", answer)
+	}
+	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
+		t.Errorf("the refusal did not name the inherited marker: %q", answer)
+	}
+	if !strings.Contains(answer, promptDcloseGoalplanUnknownWant) {
+		t.Errorf("the refusal did not leave the goalplan unknown: %q", answer)
+	}
+	if strings.Contains(answer, "Nothing else was written.") {
+		t.Errorf("the refusal denied a goalplan it cannot prove: %q", answer)
+	}
+}
+
+// TestPromptDcloseRecoveryAbsentTargetHandStartDoesNotClaimThePlan is the d3 case: an operator
+// removed the target and started the recorded successor by hand, which is the same plan shape a
+// real commit leaves. The retry settles that cleanup without writing a plan, so a later refusal
+// must not claim this close published the goalplan; it leaves the plan unknown.
+func TestPromptDcloseRecoveryAbsentTargetHandStartDoesNotClaimThePlan(t *testing.T) {
+	cwd := promptDcloseRepo(t)
+	slug := "chat-recovery-hand-start"
+	// wp-1 is gone and wp-2 runs on the cursor: the shape of a commit, but also of a hand repair
+	// after a marker-only failure. The marker records wp-2, so the resume answers cleanup.
+	plan := goalplan.BuildGoalplan(goalplan.NewGoalplanInput{Objective: "hand start " + slug})
+	plan.Slug = slug
+	plan.WorkPhases = []goalplan.GoalplanWorkPhase{
+		{ID: "wp-2", Title: "two", Status: goalplan.WorkPhaseInProgress, Tasks: []goalplan.GoalplanTask{}, CriteriaIDs: []string{}},
+	}
+	plan.ActiveWorkPhaseID = promptDcloseStr("wp-2")
+	if err := goalplan.WriteGoalplan(cwd, plan); err != nil {
+		t.Fatal(err)
+	}
+	promptDcloseWrite(t, cwd, filepath.Join(".crw", "sessions", "s1.json"),
+		promptDcloseCommittedRecoveryState(slug, "c-hand-start"))
+	answer := promptDcloseRun(t, cwd, "s1", "t1", promptDcloseAttest("wp-1", ""))
+	if !strings.Contains(answer, "cannot be rewritten without losing a stored record") {
+		t.Fatalf("the retry did not refuse at the IDLE-write guard: %q", answer)
+	}
+	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
+		t.Errorf("the refusal did not name the inherited marker: %q", answer)
+	}
+	if strings.Contains(answer, promptDcloseGoalplanPublishedSentence()) {
+		t.Errorf("the refusal claimed a goalplan this close never proved it wrote: %q", answer)
+	}
+	if !strings.Contains(answer, promptDcloseGoalplanUnknownWant) {
+		t.Errorf("the refusal did not leave the goalplan unknown: %q", answer)
+	}
+	if strings.Contains(answer, "Nothing else was written.") {
+		t.Errorf("the refusal denied a goalplan it cannot prove: %q", answer)
+	}
+}
+
+// TestPromptDcloseBusyStopBudgetStampNamesTheInheritedMarker is the d1 case: the Stop-budget stamp
+// takes the session lock before the bound close, so a busy lock fails there and the close never
+// runs. A matching retry's first attempt already published its marker, so that return must name it
+// and leave the goalplan unknown; the generation-2 head returned the bare busy text.
+func TestPromptDcloseBusyStopBudgetStampNamesTheInheritedMarker(t *testing.T) {
+	cwd := promptDcloseRepo(t)
+	slug := "chat-recovery-busy-stamp"
+	attest := promptDcloseRecoverable(t, cwd, "s1", slug, promptDcloseStr("wp-2"))
+	promptDcloseRecoveryCommittedShape(t, cwd, slug, nil)
+	answer, panicked := promptDcloseRunLocked(t, cwd, "s1", "t-busy", attest, promptDcloseLockFailingAfter(0))
+	if panicked != nil {
+		t.Fatalf("the close panicked: %v", panicked)
+	}
+	if !strings.Contains(answer, "lock unavailable") {
+		t.Fatalf("the retry did not answer the busy stamp: %q", answer)
+	}
+	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
+		t.Errorf("the busy stamp did not name the inherited marker: %q", answer)
+	}
+	if !strings.Contains(answer, promptDcloseGoalplanUnknownWant) {
+		t.Errorf("the busy stamp did not leave the goalplan unknown: %q", answer)
+	}
+}
+
+// TestPromptDcloseBusyStopBudgetStampFreshCloseKeepsTheBareText is the control for the case above: a
+// fresh close published nothing of this close, so its stamp's busy text stays exactly as it was.
+func TestPromptDcloseBusyStopBudgetStampFreshCloseKeepsTheBareText(t *testing.T) {
+	cwd := promptDcloseRepo(t)
+	slug := "chat-fresh-busy-stamp"
+	promptDclosePlan(t, cwd, slug, nil)
+	promptDcloseSeedState(t, cwd, "s1", slug, "c-fresh-busy-stamp")
+	receipt := promptDcloseReceipt(t, cwd, "s1", "c-fresh-busy-stamp")
+	answer, panicked := promptDcloseRunLocked(t, cwd, "s1", "t-busy", promptDcloseAttest("wp-1", receipt), promptDcloseLockFailingAfter(0))
+	if panicked != nil {
+		t.Fatalf("the close panicked: %v", panicked)
+	}
+	if want := promptDcloseNotApplied("lock unavailable"); answer != want {
+		t.Errorf("a fresh close's busy stamp\n got %q\nwant %q", answer, want)
 	}
 }

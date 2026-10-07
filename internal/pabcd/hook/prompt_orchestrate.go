@@ -82,7 +82,7 @@ func promptOrchestrateHandle(p PromptSubmitPayload, current state.State, turn st
 				// The entry text carries no "Nothing was written." claim of its own, so the publication
 				// sentences are appended rather than substituted.
 				return promptDcloseRefusalNaming(promptOrchestrateRefusal("SOURCE-ROOT: "+err.Error()),
-					promptDcloseRecoveryPublishedAt(p.Cwd, current.Slug, closePhaseID, current, state.MatchesDcloseRecovery(current, closePhaseID))), true
+					promptDcloseRecoveryPublishedAt(state.MatchesDcloseRecovery(current, closePhaseID))), true
 			}
 			return promptOrchestrateRefusal("SOURCE-ROOT: " + err.Error()), true
 		}
