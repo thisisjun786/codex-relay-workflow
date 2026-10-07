@@ -363,18 +363,34 @@ func TestMigrateApplyReviewFollowupJudgesALargeRecordWithoutHoldingIt(t *testing
 	})
 }
 
-// R1g2: the residual the streaming judgement leaves is one token, not the record: a single string member larger than the
-// bound of this order's own would have to be held to be skipped. That is recorded as a kept limitation in the issue's
-// defect record, and this case pins what it means, so a later change to the judgement has to face it.
+// R1g2: the residual the streaming judgement leaves is one token, not the record. A member other than the manifest is
+// skipped through encoding/json's token API, which materialises the bytes of the single token it hands back, so a record
+// whose only member is a string of a few hundred megabytes still costs that string once. That is recorded as a kept
+// limitation in the issue's defect record, and this case pins the bound so a change that starts holding the record whole,
+// or holding a skipped member more than once, fails here. The record is streamed from disk, so the test's own heap never
+// holds it and the growth measured is the judgement's own.
 func TestMigrateApplyReviewFollowupHoldsOneTokenNotTheRecord(t *testing.T) {
 	const token = 16 << 20
-	record := "{\"payload\":\"" + strings.Repeat("x", token) + "\"}"
-	_, peak, ok := migrateReviewFollowupJudgePeakHeapRecord(t, record)
+	path := migrateReviewFollowupStreamRecord(t, t.TempDir(), "one token", func(w io.Writer) error {
+		if _, err := io.WriteString(w, "{\"payload\":\""); err != nil {
+			return err
+		}
+		if _, err := io.CopyN(w, &migrateReviewFollowupSpaces{n: token}, token); err != nil {
+			return err
+		}
+		_, err := io.WriteString(w, "\"}")
+		return err
+	})
+	before, peak, ok := migrateReviewFollowupJudgePeakHeap(t, path)
 	if ok {
 		t.Error("a record with no manifest array is not a receipt")
 	}
-	if peak < token {
-		t.Errorf("the one token the walk must read was not held: peak %d, token %d", peak, token)
+	grew := peak - before
+	if grew < token/2 {
+		t.Errorf("the one token the walk reads must be held: grew %d, token %d", grew, token)
+	}
+	if grew > 8*token {
+		t.Errorf("the judgement must hold a few copies of one token, not the record: grew %d, token %d", grew, token)
 	}
 }
 
@@ -622,20 +638,25 @@ func TestMigrateApplyReviewFollowupWalksAsTheDecoderWould(t *testing.T) {
 		"a duplicate key, last wins":     {"{\"artifactManifest\":[{\"path\":\"v.json\",\"kind\":\"verdict\"}],\"artifactManifest\":[{\"path\":\"w.json\",\"kind\":\"verdict\"}]}", true},
 		"an empty array then a member":   {"{\"artifactManifest\":[],\"artifactManifest\":[{\"path\":\"w.json\",\"kind\":\"verdict\"}]}", true},
 		"an empty array":                 {"{\"artifactManifest\":[]}", false},
-		"a null member":                  {"{\"artifactManifest\":null}", false},
-		"a string member":                {"{\"artifactManifest\":\"x\"}", false},
-		"a number member":                {"{\"artifactManifest\":1}", false},
-		"an object member":               {"{\"artifactManifest\":{}}", false},
-		"a brace inside a string":        {"{\"artifactManifest\":[{\"path\":\"a}\"}]}", true},
-		"a bracket inside a string":      {"{\"artifactManifest\":[{\"path\":\"a]\"}]}", true},
-		"a nested object holding it":     {"{\"nested\":{\"artifactManifest\":[{\"path\":\"v.json\",\"kind\":\"verdict\"}]}}", false},
-		"nested values before it":        {"{\"outer\":{\"x\":{\"y\":[1,2,{\"z\":\"}\"}]}},\"artifactManifest\":[{\"path\":\"v.json\",\"kind\":\"verdict\"}]}", true},
-		"data after the object":          {"{\"artifactManifest\":[{\"path\":\"v.json\",\"kind\":\"verdict\"}]} {}", false},
-		"an empty object":                {"{}", false},
-		"not an object":                  {"[]", false},
-		"not JSON at all":                {"", false},
-		"an unterminated array":          {"{\"artifactManifest\":[}", false},
-		"a trailing comma":               {"{\"a\":1,}", false},
+		// A record the receipt reader's own decode refuses for nesting is refused here too, and it is refused by a
+		// walk with a depth count rather than by recursing until the stack runs out: json.Decoder.Token enforces no nesting
+		// limit of its own, so a member nested past the reader's limit must end the walk.
+		"a member nested past the reader's limit": {record: "{\"payload\":" + strings.Repeat("[", 10001) + strings.Repeat("]", 10001) + "}", want: false},
+		"a member at the reader's limit":          {record: "{\"payload\":" + strings.Repeat("[", 9998) + strings.Repeat("]", 9998) + ",\"artifactManifest\":[{\"path\":\"v.json\",\"kind\":\"verdict\"}]}", want: true},
+		"a null member":                           {"{\"artifactManifest\":null}", false},
+		"a string member":                         {"{\"artifactManifest\":\"x\"}", false},
+		"a number member":                         {"{\"artifactManifest\":1}", false},
+		"an object member":                        {"{\"artifactManifest\":{}}", false},
+		"a brace inside a string":                 {"{\"artifactManifest\":[{\"path\":\"a}\"}]}", true},
+		"a bracket inside a string":               {"{\"artifactManifest\":[{\"path\":\"a]\"}]}", true},
+		"a nested object holding it":              {"{\"nested\":{\"artifactManifest\":[{\"path\":\"v.json\",\"kind\":\"verdict\"}]}}", false},
+		"nested values before it":                 {"{\"outer\":{\"x\":{\"y\":[1,2,{\"z\":\"}\"}]}},\"artifactManifest\":[{\"path\":\"v.json\",\"kind\":\"verdict\"}]}", true},
+		"data after the object":                   {"{\"artifactManifest\":[{\"path\":\"v.json\",\"kind\":\"verdict\"}]} {}", false},
+		"an empty object":                         {"{}", false},
+		"not an object":                           {"[]", false},
+		"not JSON at all":                         {"", false},
+		"an unterminated array":                   {"{\"artifactManifest\":[}", false},
+		"a trailing comma":                        {"{\"a\":1,}", false},
 	}
 	for name, c := range records {
 		t.Run(name, func(t *testing.T) {
@@ -676,5 +697,77 @@ func TestMigrateApplyReviewFollowupReadsAPathAsTheReceiptReaderDoes(t *testing.T
 	}
 	if identity > verdict {
 		t.Errorf("the identity the verdict names must publish before the verdict: %v", got)
+	}
+}
+
+// R1k: a record the receipt reader refuses for nesting is not a receipt here either, however deep the nesting sits. The
+// reader's own decode allows 10000 levels, and encoding/json's token API enforces none, so a walk that recursed per level
+// would run out of stack on a record of a few megabytes. The case streams 12 Mi nested arrays from disk and must end the
+// walk with a refusal; a positive control inside the limit still reads its manifest.
+func TestMigrateApplyReviewFollowupRefusesAMemberNestedPastTheReaderLimit(t *testing.T) {
+	const depth = 12 << 20
+	path := migrateReviewFollowupStreamRecord(t, t.TempDir(), "deep", func(w io.Writer) error {
+		if _, err := io.WriteString(w, "{\"payload\":"); err != nil {
+			return err
+		}
+		for _, b := range []byte{'[', ']'} {
+			chunk := bytes.Repeat([]byte{b}, 1<<20)
+			for n := 0; n < depth; n += len(chunk) {
+				if _, err := w.Write(chunk); err != nil {
+					return err
+				}
+			}
+		}
+		_, err := io.WriteString(w, ",\"artifactManifest\":[{\"path\":\"v.json\",\"kind\":\"verdict\"}]}")
+		return err
+	})
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if _, ok := migrateReviewFollowupDecodeManifest(f, migrateReviewFollowupReceiptReadCap); ok {
+		t.Error("a record nested past the receipt reader's limit must not be judged a receipt")
+	}
+	inside := "{\"payload\":" + strings.Repeat("[", 9000) + strings.Repeat("]", 9000) + ",\"artifactManifest\":[{\"path\":\"v.json\",\"kind\":\"verdict\"}]}"
+	if manifest, ok := migrateReviewFollowupDecodeManifest(strings.NewReader(inside), migrateReviewFollowupReceiptReadCap); !ok || len(manifest) != 1 {
+		t.Errorf("a record inside the reader's limit must keep its manifest: %v %v", manifest, ok)
+	}
+}
+
+// R1l: a manifest that is not an array is refused without being held. The judgement reads the first token of the value and
+// skips a non-array one token at a time, so a 128 MiB object under the key costs the bytes of one token, not the object.
+func TestMigrateApplyReviewFollowupHoldsNoNonArrayManifest(t *testing.T) {
+	const size = 128 << 20
+	path := migrateReviewFollowupStreamRecord(t, t.TempDir(), "object manifest", func(w io.Writer) error {
+		if _, err := io.WriteString(w, "{\"artifactManifest\":{\"items\":["); err != nil {
+			return err
+		}
+		const member = 64 << 10
+		for written := 0; written < size; written += member {
+			if written > 0 {
+				if _, err := io.WriteString(w, ","); err != nil {
+					return err
+				}
+			}
+			if _, err := io.WriteString(w, "\""); err != nil {
+				return err
+			}
+			if _, err := io.CopyN(w, &migrateReviewFollowupSpaces{n: member}, member); err != nil {
+				return err
+			}
+			if _, err := io.WriteString(w, "\""); err != nil {
+				return err
+			}
+		}
+		_, err := io.WriteString(w, "]}}")
+		return err
+	})
+	before, peak, ok := migrateReviewFollowupJudgePeakHeap(t, path)
+	if ok {
+		t.Error("a manifest that is an object is not a receipt's array")
+	}
+	if grew := peak - before; grew > size/8 {
+		t.Errorf("the judgement grew the live heap by %d bytes of a %d byte manifest object", grew, size)
 	}
 }

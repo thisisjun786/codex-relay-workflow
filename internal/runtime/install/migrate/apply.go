@@ -12,6 +12,7 @@ package migrate
 
 import (
 	"bufio"
+	"bytes"
 	"cmp"
 	"crypto/sha256"
 	"encoding/json"
@@ -602,12 +603,12 @@ func migrateReviewFollowupDecodeManifest(rs io.ReadSeeker, limit int64) ([]migra
 			return nil, false
 		}
 		if name != migrateReviewFollowupManifestKey {
-			if err := migrateReviewFollowupSkipValue(dec); err != nil {
+			if err := migrateReviewFollowupSkipValue(dec, 1); err != nil {
 				return nil, false
 			}
 			continue
 		}
-		entries, ok, err := migrateReviewFollowupReadManifest(dec)
+		entries, ok, err := migrateReviewFollowupReadManifest(dec, 1)
 		if err != nil {
 			return nil, false
 		}
@@ -643,78 +644,166 @@ func migrateReviewFollowupDecodeManifest(rs io.ReadSeeker, limit int64) ([]migra
 	return manifest, true
 }
 
-// migrateReviewFollowupSkipValue consumes the value of a member this order does not use, token by token, so a member of
-// any size costs one token at a time rather than a copy of itself. It refuses anything encoding/json refuses, which is
-// what makes the whole record valid JSON: a trailing comma, a missing colon or a malformed literal ends the walk here and
-// the record is not a receipt, exactly as the receipt reader's own decode of it would fail.
-func migrateReviewFollowupSkipValue(dec *json.Decoder) error {
+// migrateReviewFollowupMaxDepth is the nesting encoding/json itself accepts, and so the deepest record the receipt reader
+// can read: its own Decode refuses a value nested past this (encoding/json's maxNestingDepth). A record past it is one the
+// reader refuses, so this order must refuse it too rather than walk it.
+const migrateReviewFollowupMaxDepth = 10000
+
+// migrateReviewFollowupTooDeep is the refusal of a record nested deeper than the receipt reader accepts.
+func migrateReviewFollowupTooDeep() error {
+	return errors.New("the record nests deeper than the receipt reader accepts")
+}
+
+// migrateReviewFollowupSkipValue consumes the value of a member this order does not use, one token at a time, so a member
+// of any size costs the bytes of one token rather than a copy of itself. It refuses anything encoding/json refuses, which
+// is what makes the whole record valid JSON: a trailing comma, a missing colon or a malformed literal ends the walk here
+// and the record is not a receipt, exactly as the receipt reader's own decode of it would fail. depth is the nesting of
+// the object holding the member, so the count of containers this walk has open is what the reader's own limit is applied
+// to; the walk is iterative, because json.Decoder.Token enforces no nesting limit of its own and a record the reader
+// refuses must not be walked into a stack overflow here.
+func migrateReviewFollowupSkipValue(dec *json.Decoder, depth int) error {
 	tok, err := dec.Token()
 	if err != nil {
 		return err
 	}
-	return migrateReviewFollowupSkipAfter(dec, tok)
+	return migrateReviewFollowupSkipRest(dec, tok, depth)
 }
 
-// migrateReviewFollowupSkipAfter consumes the rest of a value whose first token is tok: nothing more for a scalar, and for
-// an array or object every member and its own value until the matching close.
-func migrateReviewFollowupSkipAfter(dec *json.Decoder, tok json.Token) error {
+// migrateReviewFollowupSkipRest consumes the rest of a value whose first token is tok: nothing more for a scalar, and for
+// an array or object every token up to its matching close. It carries its own count of the containers it has opened,
+// because Token elides the separators and enforces no depth of its own, and refuses a record the receipt reader's own
+// Decode would refuse for nesting too deeply.
+func migrateReviewFollowupSkipRest(dec *json.Decoder, tok json.Token, depth int) error {
 	delim, ok := tok.(json.Delim)
 	if !ok || (delim != '{' && delim != '[') {
 		return nil
 	}
-	for dec.More() {
+	for open := 1; open > 0; {
+		if depth+open > migrateReviewFollowupMaxDepth {
+			return migrateReviewFollowupTooDeep()
+		}
 		tok, err := dec.Token()
 		if err != nil {
 			return err
 		}
-		if err := migrateReviewFollowupSkipAfter(dec, tok); err != nil {
-			return err
+		if d, ok := tok.(json.Delim); ok {
+			switch d {
+			case '{', '[':
+				open++
+			case '}', ']':
+				open--
+			}
 		}
 	}
-	_, err := dec.Token() // the matching close, which Token guarantees is the right one
-	return err
+	return nil
 }
 
-// migrateReviewFollowupReadManifest consumes the artifactManifest member of the object being walked and returns the
-// entries it names, read from the member's own text through the receipt reader's UTF-8 normalisation (source.DecodeUTF8,
-// which gate/js.go:36-53 applies to the whole record before it parses it) and decoded by encoding/json, the same decoder
-// that reader uses. A path that holds bytes which are not UTF-8 therefore names the plan file the reader's own text holds
-// rather than a file that is not in the plan, so the reference the reader resolves is the reference this order keeps. ok
-// is false when the member is not a non-empty array, which is what the receipt reader's own judgement refuses
-// (gate/manifest.go:110-139), and err is non-nil only for a malformed stream, which refuses the whole record. The
-// judgement is the array's presence and length, never the shape of its entries: an entry this order cannot use names no
-// dependency and never refuses the receipt, so a receipt whose entries are of an unexpected shape keeps the referrer's
-// place instead of falling back to plan order.
-func migrateReviewFollowupReadManifest(dec *json.Decoder) ([]migrateReviewFollowupManifestEntry, bool, error) {
-	var raw json.RawMessage
-	if err := dec.Decode(&raw); err != nil {
+// migrateReviewFollowupReadManifest reads the artifactManifest member of the object being walked and returns the entries it
+// names. The first token of the value decides: anything that is not an array is refused as the receipt reader refuses it
+// (gate/manifest.go:110-139) and skipped token by token, so an object or a string under the key costs the bytes of one
+// token and never the value. An array is walked element by element, and each element keeps only its path and kind strings,
+// so an element of any size costs the bytes of its own two strings. depth is the number of containers open around the
+// member, so the nesting is counted against the receipt reader's own limit. ok is false for a member that is not a
+// non-empty array; err is non-nil only for a malformed stream, which refuses the record.
+func migrateReviewFollowupReadManifest(dec *json.Decoder, depth int) ([]migrateReviewFollowupManifestEntry, bool, error) {
+	tok, err := dec.Token()
+	if err != nil {
 		return nil, false, err
 	}
-	// The member's own text goes through the reader's UTF-8 normalisation, so a path that holds bytes which are not UTF-8
-	// names the plan file the reader's text holds, and every element is decoded on its own so one element of an unexpected
-	// shape names no dependency without refusing the receipt.
-	var items []json.RawMessage
-	if err := json.Unmarshal([]byte(source.DecodeUTF8(raw)), &items); err != nil || len(items) == 0 {
+	if delim, ok := tok.(json.Delim); !ok || delim != '[' {
+		return nil, false, migrateReviewFollowupSkipRest(dec, tok, depth)
+	}
+	if depth+1 > migrateReviewFollowupMaxDepth {
+		return nil, false, migrateReviewFollowupTooDeep()
+	}
+	var manifest []migrateReviewFollowupManifestEntry
+	items := 0
+	for dec.More() {
+		items++
+		entry, err := migrateReviewFollowupReadEntry(dec, depth+1)
+		if err != nil {
+			return nil, false, err
+		}
+		if entry != nil {
+			manifest = append(manifest, *entry)
+		}
+	}
+	if _, err := dec.Token(); err != nil { // the closing bracket
+		return nil, false, err
+	}
+	// The judgement is the array's presence and length, never the shape of its entries.
+	if items == 0 {
 		return nil, false, nil
 	}
-	manifest := make([]migrateReviewFollowupManifestEntry, 0, len(items))
-	for _, item := range items {
-		var fields map[string]json.RawMessage
-		if json.Unmarshal(item, &fields) != nil {
-			continue
-		}
-		// Each field is read by its exact spelling, as the receipt reader's own map lookups read them, so a field spelled
-		// differently names no dependency rather than a false one.
-		var entry migrateReviewFollowupManifestEntry
-		if raw, present := fields["path"]; !present || json.Unmarshal(raw, &entry.Path) != nil || entry.Path == "" {
-			continue
-		}
-		if raw, present := fields["kind"]; !present || json.Unmarshal(raw, &entry.Kind) != nil || entry.Kind == "" {
-			continue
-		}
-		manifest = append(manifest, entry)
-	}
 	return manifest, true, nil
+}
+
+// migrateReviewFollowupReadEntry walks one artifactManifest element. depth counts the containers open around the element,
+// the array included. An element that is not an object names no dependency and is skipped; an object keeps the last value
+// of its path and of its kind, as the receipt reader's own map lookup does, and skips every other member.
+func migrateReviewFollowupReadEntry(dec *json.Decoder, depth int) (*migrateReviewFollowupManifestEntry, error) {
+	tok, err := dec.Token()
+	if err != nil {
+		return nil, err
+	}
+	if delim, ok := tok.(json.Delim); !ok || delim != '{' {
+		return nil, migrateReviewFollowupSkipRest(dec, tok, depth)
+	}
+	var entry migrateReviewFollowupManifestEntry
+	for dec.More() {
+		key, err := dec.Token()
+		if err != nil {
+			return nil, err
+		}
+		name, _ := key.(string)
+		if name != "path" && name != "kind" {
+			if err := migrateReviewFollowupSkipValue(dec, depth+1); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		// The value is read as its own bytes through the reader's UTF-8 normalisation (source.DecodeUTF8, gate/js.go:36-53),
+		// so a path holding invalid bytes names the plan file the reader's text holds. A value that is not a string names
+		// nothing, and it replaces an earlier value of the same key, as the reader's last-value map decode does.
+		var raw json.RawMessage
+		if err := dec.Decode(&raw); err != nil {
+			return nil, err
+		}
+		if err := migrateReviewFollowupNestingWithin(raw, depth+1); err != nil {
+			return nil, err
+		}
+		var text string
+		if json.Unmarshal([]byte(source.DecodeUTF8(raw)), &text) != nil {
+			text = ""
+		}
+		if name == "path" {
+			entry.Path = text
+		} else {
+			entry.Kind = text
+		}
+	}
+	if _, err := dec.Token(); err != nil { // the closing brace
+		return nil, err
+	}
+	if entry.Path == "" || entry.Kind == "" {
+		return nil, nil
+	}
+	return &entry, nil
+}
+
+// migrateReviewFollowupNestingWithin counts the nesting of one value the walk has already read as bytes, so a path or kind
+// value nested past the receipt reader's limit is refused as the reader refuses it. depth is the containers open around
+// the value. A scalar has no nesting and passes.
+func migrateReviewFollowupNestingWithin(raw json.RawMessage, depth int) error {
+	d := json.NewDecoder(bytes.NewReader(raw))
+	tok, err := d.Token()
+	if err != nil {
+		return err
+	}
+	if _, ok := tok.(json.Delim); !ok {
+		return nil
+	}
+	return migrateReviewFollowupSkipRest(d, tok, depth)
 }
 
 // migrateApplyReviewSubRank is the ordering key inside a rank: 0 for the artifacts an evidence manifest names and for the
