@@ -846,4 +846,48 @@ BEGIN SELECT RAISE(ABORT, 'merge_trains.train_id is NULL: a train is addressed b
     expired_reason      TEXT NOT NULL
 )`,
 	`CREATE INDEX IF NOT EXISTS dag_user_decisions_fingerprint ON dag_user_decisions (fingerprint)`,
+
+	// CRW-839: the packet identity of a feature issue's implementation node. A side table of dag_nodes keyed like it, appended because a shipped
+	// statement is never edited (an ALTER TABLE ADD COLUMN would rewrite the shipped text of dag_nodes): a node version with no row here is the
+	// single packet an issue always was, and covers_json and owns_json hold the criterion ids the packet takes and, of those, the ones it owns.
+	`CREATE TABLE IF NOT EXISTS dag_node_packets (
+    plan_id        TEXT NOT NULL,
+    node_id        TEXT NOT NULL,
+    introduced_rev INTEGER NOT NULL,
+    packet_id      TEXT NOT NULL CHECK (packet_id <> ''),
+    covers_json    TEXT NOT NULL,
+    owns_json      TEXT NOT NULL,
+    PRIMARY KEY (plan_id, node_id, introduced_rev),
+    FOREIGN KEY (plan_id, node_id, introduced_rev) REFERENCES dag_nodes (plan_id, node_id, introduced_rev)
+)`,
+
+	// CRW-839: the criteria a feature issue declares, one row per revision that declared them. A side table of dag_plan_revisions for the same
+	// reason: the declarations belong to the revision, and the fold reads them back from the log. A revision that declares none has no row here,
+	// so a plan that never declared criteria stores none.
+	`CREATE TABLE IF NOT EXISTS dag_feature_criteria (
+    plan_id       TEXT NOT NULL REFERENCES dag_plans (plan_id),
+    revision_no   INTEGER NOT NULL,
+    issue_key     TEXT NOT NULL CHECK (issue_key <> ''),
+    criteria_json TEXT NOT NULL,
+    PRIMARY KEY (plan_id, revision_no, issue_key),
+    FOREIGN KEY (plan_id, revision_no) REFERENCES dag_plan_revisions (plan_id, revision_no)
+)`,
+
+	// CRW-839: the packet a released node is executed under, one row per relationship. relationship_id is the primary key because a relationship
+	// is what the registry's duplicate-assignment guard and the coverage reading resolve a packet by. The row is written when the managed start has
+	// created the relationship and the node is bound (dag_node_executions), which is the first moment the relationship id exists. branch is the
+	// child's work branch when the release request named one, and NULL otherwise. Append-only: a packet is recorded once and never re-recorded.
+	`CREATE TABLE IF NOT EXISTS dag_execution_packets (
+    relationship_id TEXT PRIMARY KEY CHECK (relationship_id <> ''),
+    plan_id         TEXT NOT NULL CHECK (plan_id <> ''),
+    node_id         TEXT NOT NULL CHECK (node_id <> ''),
+    issue_key       TEXT NOT NULL CHECK (issue_key <> ''),
+    packet_id       TEXT NOT NULL CHECK (packet_id <> ''),
+    branch          TEXT CHECK (branch IS NULL OR branch <> ''),
+    recorded_at     TEXT NOT NULL
+)`,
+	`CREATE TRIGGER IF NOT EXISTS dag_execution_packets_no_update BEFORE UPDATE ON dag_execution_packets
+BEGIN SELECT RAISE(ABORT, 'dag_execution_packets rows are append-only: never updated'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_execution_packets_no_delete BEFORE DELETE ON dag_execution_packets
+BEGIN SELECT RAISE(ABORT, 'dag_execution_packets rows are append-only: never deleted'); END`,
 }

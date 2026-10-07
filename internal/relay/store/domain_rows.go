@@ -1022,3 +1022,50 @@ func VerifiedHead(ctx context.Context, s *Store, eventID string) (VerifiedHeadRo
 	}
 	return row, true, nil
 }
+
+// DagExecutionPacketRow is one dag_execution_packets row, every column in DDL order (CRW-839): the
+// packet a released node is executed under. Branch is NULL when the release request named no work
+// branch, so it is a sql.NullString rather than an empty string.
+type DagExecutionPacketRow struct {
+	RelationshipID string
+	PlanID         string
+	NodeID         string
+	IssueKey       string
+	PacketID       string
+	Branch         sql.NullString
+	RecordedAt     string
+}
+
+const dagExecutionPacketColumns = "relationship_id, plan_id, node_id, issue_key, packet_id, branch, recorded_at"
+
+func scanDagExecutionPacket(row scanner) (DagExecutionPacketRow, error) {
+	var r DagExecutionPacketRow
+	err := row.Scan(&r.RelationshipID, &r.PlanID, &r.NodeID, &r.IssueKey, &r.PacketID, &r.Branch, &r.RecordedAt)
+	return r, err
+}
+
+// RecordDagExecutionPacket appends one dag_execution_packets row through the caller's transaction. The
+// table is append-only and relationship_id is its primary key, so a second row for one relationship is
+// the primary key's refusal rather than a re-recording of the same packet.
+func RecordDagExecutionPacket(ctx context.Context, s *Store, r DagExecutionPacketRow) error {
+	_, err := s.exec(ctx, "INSERT INTO dag_execution_packets ("+dagExecutionPacketColumns+") VALUES (?,?,?,?,?,?,?)",
+		r.RelationshipID, r.PlanID, r.NodeID, r.IssueKey, r.PacketID, r.Branch, r.RecordedAt)
+	return err
+}
+
+// DagExecutionPacket reads the packet of one relationship. found is false when the relationship has no
+// row, or when the store predates the zone: neither is an error, the way VerifiedHead answers.
+func DagExecutionPacket(ctx context.Context, s *Store, relationshipID string) (DagExecutionPacketRow, bool, error) {
+	present, err := dagZoneTable(ctx, s, "dag_execution_packets")
+	if err != nil || !present {
+		return DagExecutionPacketRow{}, false, err
+	}
+	row, err := queryRow(ctx, s, scanDagExecutionPacket, "SELECT "+dagExecutionPacketColumns+" FROM dag_execution_packets WHERE relationship_id = ?", relationshipID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return DagExecutionPacketRow{}, false, nil
+	}
+	if err != nil {
+		return DagExecutionPacketRow{}, false, err
+	}
+	return row, true, nil
+}
