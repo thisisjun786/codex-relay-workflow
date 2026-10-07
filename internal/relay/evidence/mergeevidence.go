@@ -383,6 +383,48 @@ func testSkippedJobs(checks []any, run string, highest map[string]*big.Int) []st
 	return names
 }
 
+// testUnreadableJobs lists the names of the entries of one workflow run that the collector marked
+// testUnreadable: go-product test legs that concluded success while their test step could not be
+// read, so whether they ran cannot be told (CRW-946). It is read exactly as testSkippedJobs is -- a
+// strict boolean, a test leg name, and each leg at its own newest attempt -- so a restated record
+// cannot make the lane treat an unconfirmed leg as one that ran.
+func testUnreadableJobs(checks []any, run string, highest map[string]*big.Int) []string {
+	if run == "" {
+		return nil
+	}
+	var names []string
+	for _, entry := range checks {
+		runId := textField(entry, "runId")
+		if workflowRun(runId) != run {
+			continue
+		}
+		if newest, seen := highest[runId]; seen && attempt(entry).Cmp(newest) != 0 {
+			continue
+		}
+		if !isLightLegName(entry) {
+			continue
+		}
+		o, _ := Object(entry)
+		if o.Get("conclusion") != "success" {
+			continue
+		}
+		flag, isBool := o.Get("testUnreadable").(bool)
+		if !isBool || !flag {
+			continue
+		}
+		names = append(names, textField(entry, "name"))
+	}
+	slices.Sort(names)
+	return names
+}
+
+// unconfirmedTestLegs is every leg of one workflow run whose tests the run did not confirm it ran:
+// the legs the collector marked testSkipped and the legs it marked testUnreadable (CRW-946). A run
+// that holds any of them is not evidence that the head was tested, whatever its gate concluded.
+func unconfirmedTestLegs(checks []any, run string, highest map[string]*big.Int) []string {
+	return append(append([]string{}, testSkippedJobs(checks, run, highest)...), testUnreadableJobs(checks, run, highest)...)
+}
+
 // testedElsewhere reports whether another workflow run on this head actually ran the tests the
 // judged run skipped: the lane's own repair for a light run is to label the pull request crw-lane,
 // which starts a full run on the same head, and that run's evidence is what the head should be
@@ -440,7 +482,7 @@ func testedElsewhere(checks []any, head, name, provider string, pinned, skipped 
 			continue
 		}
 		// A run that skipped a leg of its own is itself a light run: it cannot vouch for another.
-		if len(testSkippedJobs(checks, candidate, highest)) > 0 {
+		if ownSkipped, ownUnreadable := testSkippedJobs(checks, candidate, highest), testUnreadableJobs(checks, candidate, highest); len(ownSkipped) > 0 || len(ownUnreadable) > 0 {
 			continue
 		}
 		if ranEverySkippedLeg(checks, candidate, head, skipped, highest) {
@@ -619,7 +661,7 @@ func ChecksProblemsWith(head string, required []string, checks []any, requireDec
 			return stale("check run "+pyvalue.StrRepr(run)+" reports head "+pyvalue.Repr(o.Get("headSha"))+", not "+pyvalue.StrRepr(head), run)
 		}
 		name := textField(entry, "name")
-		if !isRequired(name) || !answers(entry, name) {
+		if !isRequired(name) {
 			continue
 		}
 		// A required check whose own run attempt holds a go-product test leg that concluded
@@ -628,16 +670,26 @@ func ChecksProblemsWith(head string, required []string, checks []any, requireDec
 		// five test legs skipped their work (CRW-824). The answer is the existing checks_stale: a
 		// light leg makes the run no merge evidence, never a rerun. The lowest (run, name) pair is
 		// kept, so the detail does not move with the enumeration (CRW-661).
-		if skipped := testSkippedJobs(checks, workflowRun(run), highest); len(skipped) > 0 {
+		//
+		// This is read before the integration filter, because whether the run's tests ran is a
+		// fact about the head and not about which integration answered the gate: the collector
+		// fills an entry's provider from the check-run listing filtered to the LATEST run, so the
+		// gate of an older light run carries none, and filtering first would drop the very run
+		// whose tests did not run (CRW-946). A leg whose test step could not be read is the same
+		// shape: the run says nothing about the commit (CRW-946).
+		if unconfirmed := unconfirmedTestLegs(checks, workflowRun(run), highest); len(unconfirmed) > 0 {
 			// Another run of the same required check on this head that actually ran those legs'
 			// tests is the evidence: the lane's repair for a light run is a labeled full run on the
 			// same head. Where the branch rule pins the integrations that answer this check, the
 			// substitute run's gate must carry one of them (CRW-946).
-			if !testedElsewhere(checks, head, name, providerField(entry), providers[name], skipped, workflowRun(run), highest) {
+			if !testedElsewhere(checks, head, name, providerField(entry), providers[name], unconfirmed, workflowRun(run), highest) {
 				if key := run + "\x00" + name; lightKey == "" || key < lightKey {
-					lightKey, lightRun, lightName = key, run, skipped[0]
+					lightKey, lightRun, lightName = key, run, unconfirmed[0]
 				}
 			}
+		}
+		if !answers(entry, name) {
+			continue
 		}
 		if o.Get("conclusion") == "success" {
 			continue
@@ -666,7 +718,10 @@ func ChecksProblemsWith(head string, required []string, checks []any, requireDec
 		}
 	}
 	if lightRun != "" {
-		return []Problem{{Code: ChecksStale, Detail: pyvalue.Repr(lightName) + " skipped its tests (CI light mode); label the pull request crw-lane and judge the full run", Incumbent: lightRun}}
+		// The named leg is one whose tests the run did not confirm it ran: CI light mode left its test
+		// step skipped, or its test step could not be read. Both are refused the same way, because
+		// the repair is the same -- label the pull request crw-lane and judge the full run (CRW-946).
+		return []Problem{{Code: ChecksStale, Detail: pyvalue.Repr(lightName) + " did not confirm that its tests ran (CI light mode, or a test step that could not be read); label the pull request crw-lane and judge the full run", Incumbent: lightRun}}
 	}
 	if notRunRun != "" && !unexplained {
 		return []Problem{{Code: ChecksNotRun, Detail: "required check " + pyvalue.Repr(notRunName) + " (run " + pyvalue.StrRepr(notRunRun) + ") concluded " + pyvalue.Repr(notRunConclusion) + " on its newest attempt, and workflow run " + pyvalue.StrRepr(workflowRun(notRunRun)) + " holds jobs that began no step, so no runner picked them up rather than the code failing: " + pyvalue.Repr(notRunNames) + ". Rerun the failed jobs of that run once on the same head", Incumbent: notRunRun}}
@@ -674,27 +729,31 @@ func ChecksProblemsWith(head string, required []string, checks []any, requireDec
 	if firstRun != "" {
 		return stale("required check "+pyvalue.Repr(firstName)+" (run "+pyvalue.StrRepr(firstRun)+") concluded "+pyvalue.Repr(firstConclusion)+" on its newest attempt", firstRun)
 	}
+	// runUsable reports whether the gate of one run may be counted for an integration: the run left
+	// no leg of its own unconfirmed. A run holding a leg whose tests were skipped, or could not be
+	// read, concluded its gate without running those tests, so its gate answers no integration -- even
+	// where a substitute exempted the run, because the substitute answers the integration through its
+	// own gate and not through this one (CRW-946). A run that holds no job at all -- a published check
+	// run or a commit status -- has no legs to leave unconfirmed, and is read as before.
+	usable := map[string]bool{}
+	runUsable := func(run string) bool {
+		if run == "" {
+			return true
+		}
+		if _, seen := usable[run]; !seen {
+			usable[run] = len(unconfirmedTestLegs(checks, run, highest)) == 0
+		}
+		return usable[run]
+	}
 	present := map[string]bool{}
 	for _, entry := range checks {
 		o, _ := Object(entry)
-		if attempt(entry).Cmp(highest[textField(entry, "runId")]) == 0 && o.Get("conclusion") == "success" && answers(entry, textField(entry, "name")) {
+		if attempt(entry).Cmp(highest[textField(entry, "runId")]) == 0 && o.Get("conclusion") == "success" && answers(entry, textField(entry, "name")) && runUsable(workflowRun(textField(entry, "runId"))) {
 			present[textField(entry, "name")] = true
 		}
 	}
 	var unanswered []string
 	incumbent := ""
-	// skippedRun marks the workflow runs that hold a testSkipped leg of their own: a run whose gate
-	// concluded success without running the tests. Its gate answers no integration, even where the run
-	// was itself exempted by a substitute, because the substitute answers the integration through its
-	// own gate and not through this one (CRW-946). Without this, a light run from one integration and
-	// a full run from another would together satisfy both, although neither ran the whole suite.
-	skippedRun := map[string]bool{}
-	for _, entry := range checks {
-		run := workflowRun(textField(entry, "runId"))
-		if _, seen := skippedRun[run]; run != "" && !seen {
-			skippedRun[run] = len(testSkippedJobs(checks, run, highest)) > 0
-		}
-	}
 	for _, name := range required {
 		for _, provider := range providers[name] {
 			found := false
@@ -702,8 +761,11 @@ func ChecksProblemsWith(head string, required []string, checks []any, requireDec
 				if textField(entry, "name") == name && textField(entry, "provider") == provider && attempt(entry).Cmp(highest[textField(entry, "runId")]) == 0 {
 					o, _ := Object(entry)
 					// The success counted for a pinned integration is the gate of a run that
-					// actually ran its tests (CRW-946).
-					if o.Get("conclusion") == "success" && !skippedRun[workflowRun(textField(entry, "runId"))] {
+					// actually ran its tests -- or that a substitute answered for. The gate of a
+					// run holding a leg whose tests were skipped, or could not be read, answers
+					// no integration, even where a substitute exempted the run: the substitute
+					// answers the integration through its own gate (CRW-946).
+					if o.Get("conclusion") == "success" && runUsable(workflowRun(textField(entry, "runId"))) {
 						found = true
 					}
 				}

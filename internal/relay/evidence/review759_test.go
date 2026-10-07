@@ -344,6 +344,82 @@ func review759SkippedLeg(id int) map[string]any {
 	}}
 }
 
+// review759Entry is one check entry of the collector's shape with the given marks.
+func review759Entry(run, name, conclusion string, marks map[string]bool) map[string]any {
+	entry := map[string]any{"runId": run, "name": name, "headSha": crw824Head, "conclusion": conclusion, "attempt": 1}
+	for mark, set := range marks {
+		if set {
+			entry[mark] = true
+		}
+	}
+	return entry
+}
+
+// The provider the collector fills is read from the check-run listing filtered to the LATEST run, so
+// the gate of an older light run carries none. Filtering the required check by integration before
+// asking whether that run's tests ran drops exactly the run whose tests did not run, and a later
+// gate-only run then answers both the required name and the integration. The run's tests are read
+// before the integration filter, so the light refusal stays (CRW-946, the pre-merge evaluation's d1).
+func TestEvidenceReview759LightGateWithUnknownProviderIsStillRefused(t *testing.T) {
+	pinned := map[string][]string{"dev-gate": {"42"}}
+	checks := []any{
+		// The light run: its gate is the pinned integration, but the collector could not fill the
+		// provider from the latest check-run listing, so the row carries none.
+		review759Entry("workflow-run:600:dev-gate#0", "dev-gate", "success", nil),
+		review759Entry("workflow-run:600:go-product (test-1)#0", "go-product (test-1)", "success", map[string]bool{"testSkipped": true}),
+		// A later run on the same head holding only the gate, from the pinned integration.
+		review759Entry("workflow-run:601:dev-gate#0", "dev-gate", "success", nil),
+	}
+	checks[2].(map[string]any)["provider"] = "42"
+	problems := ChecksProblemsWith(crw824Head, []string{"dev-gate"}, checks, true, pinned)
+	if len(problems) != 1 || problems[0].Code != ChecksStale {
+		t.Fatalf("a light run whose gate provider is unknown must still be refused, want one %s, got %v", ChecksStale, problems)
+	}
+	if !strings.Contains(problems[0].Detail, "crw-lane") {
+		t.Fatalf("the light refusal is the answer, got %q", problems[0].Detail)
+	}
+	// The contrast: the same shape with the later run actually running the leg the light run
+	// skipped is the evidence, whatever the light gate's provider reads.
+	checks[2] = review759Entry("workflow-run:601:go-product (test-1)#0", "go-product (test-1)", "success", nil)
+	checks[2].(map[string]any)["provider"] = "42"
+	checks = append(checks, review759Entry("workflow-run:601:dev-gate#0", "dev-gate", "success", nil))
+	checks[3].(map[string]any)["provider"] = "42"
+	if problems := ChecksProblemsWith(crw824Head, []string{"dev-gate"}, checks, true, pinned); len(problems) != 0 {
+		t.Fatalf("the labeled full run is the evidence, want no problem, got %v", problems)
+	}
+}
+
+// A run whose test step could not be read did not confirm that it ran the tests, so it is not merge
+// evidence by itself: the merge turn receives only the check rows, and a row that says nothing about
+// whether the tests ran must not read as a head that was tested (CRW-946, the evaluation's d2).
+func TestEvidenceReview759UnreadableRunIsNoEvidenceOnItsOwn(t *testing.T) {
+	checks := []any{
+		review759Entry("workflow-run:600:dev-gate#0", "dev-gate", "success", nil),
+		review759Entry("workflow-run:600:go-product (test-1)#0", "go-product (test-1)", "success", map[string]bool{"testUnreadable": true}),
+	}
+	problems := ChecksProblems(crw824Head, []string{"dev-gate"}, checks)
+	if len(problems) != 1 || problems[0].Code != ChecksStale {
+		t.Fatalf("a run that could not confirm its tests ran is no evidence, want one %s, got %v", ChecksStale, problems)
+	}
+	if VerdictOf(problems) != NotReady {
+		t.Fatalf("checks_stale must stay not ready, got %s", VerdictOf(problems))
+	}
+	// The contrast: a leg that ran its tests leaves the run as evidence.
+	checks[1] = review759Entry("workflow-run:600:go-product (test-1)#0", "go-product (test-1)", "success", nil)
+	if problems := ChecksProblems(crw824Head, []string{"dev-gate"}, checks); len(problems) != 0 {
+		t.Fatalf("a run that confirmed its tests is evidence, want no problem, got %v", problems)
+	}
+	// And an unreadable leg beside a substitute that ran that leg is answered by the substitute.
+	checks[1] = review759Entry("workflow-run:600:go-product (test-1)#0", "go-product (test-1)", "success", map[string]bool{"testUnreadable": true})
+	checks = append(checks,
+		review759Entry("workflow-run:601:dev-gate#0", "dev-gate", "success", nil),
+		review759Entry("workflow-run:601:go-product (test-1)#0", "go-product (test-1)", "success", nil),
+	)
+	if problems := ChecksProblems(crw824Head, []string{"dev-gate"}, checks); len(problems) != 0 {
+		t.Fatalf("a run that ran the unconfirmed leg is the evidence, want no problem, got %v", problems)
+	}
+}
+
 // The light gate a substitute exempted is not an integration success. The success counted for a
 // pinned integration is the gate of a run that actually ran its tests, so the judged light run's own
 // gate answers no integration (CRW-946, the parent's correction of a regression PR #875 introduced).
