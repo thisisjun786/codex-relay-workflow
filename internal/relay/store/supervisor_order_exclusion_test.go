@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -79,16 +81,68 @@ func TestSupervisorOrderConditions_leave_out_a_claimable_notice_to_a_held_recipi
 	}
 }
 
-// TestSupervisorHeldNoticeArgs_bind_now_then_the_recipients_then_now pins the order the three order
-// conditions bind their arguments in, which is what lets a caller pass them one way for all three.
-func TestSupervisorHeldNoticeArgs_bind_now_then_the_recipients_then_now(t *testing.T) {
+// TestSupervisorHeldNoticeArgs_bind_now_then_the_set_then_now pins the order the three order
+// conditions bind their arguments in, and that the held set costs ONE binding however large it is.
+// That is the property a large store depends on: the head selection carries the fragment twice, so
+// one binding per recipient would let the pass exceed the connection's bind-variable limit and fail
+// every recipient, including the ones whose lines are free.
+func TestSupervisorHeldNoticeArgs_bind_now_then_the_set_then_now(t *testing.T) {
 	t.Parallel()
 	got := SupervisorHeldNoticeArgs([]string{"a", "b"}, sendableNow)
-	want := []any{sendableNow, "a", "b", sendableNow}
-	if !slices.Equal(got, want) {
-		t.Fatalf("held args %v, want %v", got, want)
+	if len(got) != 3 {
+		t.Fatalf("held args %v, want three bindings: now, the set, now", got)
+	}
+	if got[0] != sendableNow || got[2] != sendableNow {
+		t.Fatalf("held args %v, want now at both ends", got)
+	}
+	if set, ok := got[1].(string); !ok || set != "[\"a\",\"b\"]" {
+		t.Fatalf("held args bind %#v in the middle, want the set as one JSON array", got[1])
 	}
 	if empty := SupervisorHeldNoticeArgs(nil, sendableNow); !slices.Equal(empty, []any{sendableNow, sendableNow}) {
 		t.Fatalf("no held recipient binds %v, want now twice", empty)
+	}
+}
+
+// TestSupervisorOrderConditions_stay_within_the_bind_limit_for_a_large_held_set is the regression the
+// daemon pass needs. The held set is every recipient a busy-backoff delivery holds, bounded by the
+// store and not by the page being read, and the head selection carries the exclusion twice. This asks
+// the condition twice the way that selection does, with a set past SQLite's 32766-variable limit: one
+// binding per recipient would fail the query outright, and one binding for the whole set runs it.
+func TestSupervisorOrderConditions_stay_within_the_bind_limit_for_a_large_held_set(t *testing.T) {
+	t.Parallel()
+	s := recordStore(t)
+	// Given: a held set far past the connection's bind-variable limit, and one free recipient with a
+	// queued notice.
+	held := make([]string, 0, 20000)
+	for i := 0; i < 20000; i++ {
+		held = append(held, fmt.Sprintf("busy-%d", i))
+	}
+	seedOrderProbes(t, s, []orderProbe{{"free-notice", SupervisorNoticeObligationKind, "free", "queued"}})
+	// When: the condition is asked twice over the whole set, with the two aliases and the older-row
+	// restriction the head selection and its inner NOT EXISTS ask it with.
+	query := "SELECT m.message_id FROM supervisor_messages m WHERE " + SupervisorAttemptableExceptYieldingSQL("m", held) +
+		" AND NOT EXISTS (SELECT 1 FROM supervisor_messages o WHERE o.recipient_task_id=m.recipient_task_id AND " + SupervisorAttemptableExceptYieldingSQL("o", held) +
+		" AND (o.staged_at<m.staged_at OR (o.staged_at=m.staged_at AND o.message_id<m.message_id)))"
+	args := append(SupervisorHeldNoticeArgs(held, sendableNow), SupervisorHeldNoticeArgs(held, sendableNow)...)
+	got := selectedIDs(t, s, query, args...)
+	// Then: it runs, and the free recipient's notice is still the head - the same answer the
+	// selection gives with no held set at all. One binding per recipient would have failed the
+	// query outright rather than answering it.
+	want := []string{"free-notice"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("a large held set selected %v, want %v", got, want)
+	}
+}
+
+// TestSupervisorHeldNoticeExclusion_is_absent_when_nothing_is_held pins that a caller which read no
+// busy head asks byte for byte what it asked before the exclusion existed.
+func TestSupervisorHeldNoticeExclusion_is_absent_when_nothing_is_held(t *testing.T) {
+	t.Parallel()
+	plain := SupervisorAheadSQL("")
+	if strings.Contains(plain, "json_each") {
+		t.Fatalf("the plain condition carries the exclusion: %s", plain)
+	}
+	if want := "(" + SupervisorClaimableSQL("") + " OR " + supervisorLeaseLiveSQL("") + ")"; plain != want {
+		t.Fatalf("the plain condition changed:\n got %s\nwant %s", plain, want)
 	}
 }

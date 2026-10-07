@@ -1,6 +1,7 @@
 package store
 
 import (
+	"encoding/json"
 	"slices"
 	"strings"
 )
@@ -72,8 +73,8 @@ func (r SupervisorMessagesRow) YieldsToBusyHead() bool {
 	return r.ObligationKind == SupervisorNoticeObligationKind
 }
 
-// supervisorHeldNoticeExclusion is the exception an order condition carries for the recipients named in
-// held, whose line a delivery holds under a busy backoff at now. The notice channel yields such a
+// supervisorHeldNoticeExclusion is the exception an order condition carries for the recipients named
+// in held, whose line a delivery holds under a busy backoff at now. The notice channel yields such a
 // recipient's line to that delivery (I-216's notice part, section 82 decision 2), and a notice that
 // yields cannot be claimed where its claim happens. So it is not a claimable row either, and a
 // judgement that counts it as one lets it stand in front of a younger message to that recipient:
@@ -87,28 +88,43 @@ func (r SupervisorMessagesRow) YieldsToBusyHead() bool {
 // send is already under way goes ahead whatever the line does (I-216's in-flight clause), and one
 // whose lease ran out is still recovered by the attempt that follows.
 //
-// It is a fragment to place after AND, not a condition: it binds one "?" per recipient, in the order
-// given, exactly where it is placed. With none named it is empty and binds nothing, so a caller that
-// holds no such reading asks exactly what it asked before this exclusion existed.
+// It is a fragment to place after AND, not a condition, and it takes the whole set as ONE binding -
+// a JSON array read with json_each, the form this repository already uses for a set the caller
+// holds. That matters: the set is every recipient a busy-backoff delivery holds, which is bounded by
+// the store and not by the page being read, and the head selection carries this fragment twice. One
+// "?" per recipient would therefore let a large enough store exceed the connection's bind-variable
+// limit and fail the whole pass, including the recipients whose lines are free. With none named the
+// fragment is empty and binds nothing, so a caller that holds no such reading asks exactly what it
+// asked before this exclusion existed.
 func supervisorHeldNoticeExclusion(alias string, held []string) string {
 	if len(held) == 0 {
 		return ""
 	}
-	marks := strings.TrimSuffix(strings.Repeat("?,", len(held)), ",")
-	return " AND NOT (" + supervisorColumn(alias, "obligation_kind") + "='" + SupervisorNoticeObligationKind + "' AND " + supervisorColumn(alias, "recipient_task_id") + " IN (" + marks + "))"
+	return " AND NOT (" + supervisorColumn(alias, "obligation_kind") + "='" + SupervisorNoticeObligationKind + "' AND " + supervisorColumn(alias, "recipient_task_id") + " IN (SELECT value FROM json_each(?)))"
 }
 
 // SupervisorHeldNoticeArgs are the values the three order conditions below bind for held, in text
-// order: now once (the claimable test's own due), then one per recipient named (the yield
-// exception), then now once (the in-flight or the stranded test). With none named it is now twice
-// and nothing else, which is exactly what those conditions bound before the yield was excepted.
+// order: now once (the claimable test's own due), the held set as one JSON array (the exclusion), then
+// now once (the in-flight or the stranded test). With none named it is now twice and nothing else,
+// which is exactly what those conditions bound before the yield was excepted.
 func SupervisorHeldNoticeArgs(held []string, now float64) []any {
 	args := make([]any, 0, len(held)+2)
 	args = append(args, now)
-	for _, recipient := range held {
-		args = append(args, recipient)
+	if len(held) > 0 {
+		args = append(args, supervisorHeldNoticeJSON(held))
 	}
 	return append(args, now)
+}
+
+// supervisorHeldNoticeJSON is held as the JSON array json_each reads. The set is identifiers the
+// delivery path named, so encoding it cannot fail for a value it could hold.
+func supervisorHeldNoticeJSON(held []string) string {
+	encoded, err := json.Marshal(held)
+	if err != nil {
+		// Unreachable for []string; the empty array keeps a caller safe rather than binding nothing.
+		return "[]"
+	}
+	return string(encoded)
 }
 
 func supervisorColumn(alias, name string) string {
