@@ -77,7 +77,7 @@ func resumeSentClosingHost(t *testing.T) (string, *resumeHostLog) {
 func resumeSentConfig(t *testing.T, socket string) *Config {
 	t.Helper()
 	cfg := hostReadConfig(socket)
-	cfg.Relay.State = "/tmp/relay-store"
+	cfg.Relay.State = "/nonexistent/crw-883-test-state" // only read to build an admit-turn line this run never reaches
 	list, err := json.Marshal(map[string]any{"disabled_servers": []string{"alpha"}})
 	if err != nil {
 		t.Fatal(err)
