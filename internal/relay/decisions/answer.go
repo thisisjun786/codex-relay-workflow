@@ -171,7 +171,6 @@ func Withdraw(record Record, reason string) (Record, error) {
 	return withdrawn, nil
 }
 
-// Apply moves an answered record to applied, naming the event that unblocked it.
 // Apply moves an answered record to applied, naming the event that unblocked it and the execution
 // generation that event belongs to. The generation is read from the event itself by the caller,
 // so what the record holds is the generation the reply was made in rather than a default.

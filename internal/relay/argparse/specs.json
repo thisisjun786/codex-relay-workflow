@@ -266,8 +266,8 @@
   {"flag":"--option","help":"the option id the answer chooses"},
   {"flag":"--text","help":"the answer as text, for a free-form answer"},
   {"flag":"--by","required":true,"help":"the task id that answered"},
-	  {"flag":"--via","required":true,"help":"file-import|management-message|supervisor-readback|dots|direct-ask. A user-grade or delegated-management-grade answer is one of file-import, management-message, dots or direct-ask: supervisor-readback reads the parent's report, not the user's answer"},
-	  {"flag":"--authority","help":"kind[=ref]: the class the answer cites, which must be the record's own. A user-grade or delegated-management-grade decision requires it; its --by must be the task the relay's store-scope supervisor binding holds"}]},
+  {"flag":"--via","required":true,"help":"file-import|management-message|supervisor-readback|dots|direct-ask. A user-grade or delegated-management-grade answer is one of file-import, management-message, dots or direct-ask: supervisor-readback reads the parent's report, not the user's answer"},
+  {"flag":"--authority","help":"kind[=ref]: the class the answer cites, which must be the record's own. A user-grade or delegated-management-grade decision requires it; its --by must be the task the relay's store-scope supervisor binding holds"}]},
 {"name":"decision-apply","summary":"mark an answered user-decision record applied, once the decision_reply event of a relationship the decision blocks has been observed. Delivery alone never applies a decision","options":[
   {"flag":"--decision","required":true},
   {"flag":"--event","required":true,"help":"the decision_reply event the relay recorded for the blocked relationship"}]},
