@@ -396,24 +396,33 @@ func TestWorktreeDelPipeResidualC9(t *testing.T) {
 
 // TestWorktreeDelUnreadableStdinHoldings pins the descriptor walk CRW-894 c9(a) asks for: a redirection that opens a
 // descriptor from an alias of the current standard input makes that descriptor hold the pipe, a duplication copies the
-// descriptor it names, a plain file opens a file, and a descriptor the guard cannot follow is unknown.
+// descriptor it names, a plain file opens a file, and a descriptor the guard cannot follow is unknown. multios is off
+// here, so a redirection on descriptor 0 applies as written; the pipe rule passes it on only for the simple command
+// the user's shell feeds directly (CRW-894 c9(b)).
 func TestWorktreeDelUnreadableStdinHoldings(t *testing.T) {
 	pipe, file, unknown := worktreeDelStdinPipe, worktreeDelStdinFile, worktreeDelStdinUnknown
 	for _, c := range []struct {
-		cmd  string
-		want map[int]int
+		cmd     string
+		multios bool
+		want    map[int]int
 	}{
-		{"bash 3</dev/fd/0 </dev/null <&3", map[int]int{0: pipe, 3: pipe}},
-		{"bash 3</dev/stdin", map[int]int{0: pipe, 3: pipe}},
-		{"bash 3</proc/self/fd/0", map[int]int{0: pipe, 3: pipe}},
-		{"bash 3<&0", map[int]int{0: pipe, 3: pipe}},
-		{"bash 4</dev/fd/0 3<&4", map[int]int{0: pipe, 3: pipe, 4: pipe}},
-		{"bash 3</dev/null", map[int]int{0: pipe, 3: file}},
-		{"bash 3<&2", map[int]int{0: pipe, 3: unknown}},
-		{"bash 3<&-", map[int]int{0: pipe, 3: unknown}},
-		{"bash 2</dev/null", map[int]int{0: pipe, 2: file}},
+		{"bash 3</dev/fd/0 </dev/null <&3", false, map[int]int{0: pipe, 3: pipe}},
+		// <&3 puts the pipe back on descriptor 0, so it holds the pipe again.
+		{"bash 3</dev/fd/0 </dev/null <&3", false, map[int]int{0: pipe, 3: pipe}},
+		{"bash 3</dev/fd/0 </dev/null", false, map[int]int{0: file, 3: pipe}},
+		{"bash 3</dev/stdin", false, map[int]int{0: pipe, 3: pipe}},
+		{"bash 3</proc/self/fd/0", false, map[int]int{0: pipe, 3: pipe}},
+		{"bash 3<&0", false, map[int]int{0: pipe, 3: pipe}},
+		{"bash 4</dev/fd/0 3<&4", false, map[int]int{0: pipe, 3: pipe, 4: pipe}},
+		{"bash 3</dev/null", false, map[int]int{0: pipe, 3: file}},
+		{"bash 3<&2", false, map[int]int{0: pipe, 3: unknown}},
+		{"bash 3<&-", false, map[int]int{0: pipe, 3: unknown}},
+		{"bash 2</dev/null", false, map[int]int{0: pipe, 2: file}},
+		// MULTIOS: descriptor 0 keeps the pipe whatever is written on it.
+		{"bash </dev/null", true, map[int]int{0: pipe}},
+		{"bash 3</dev/fd/0 </dev/null <&3", true, map[int]int{0: pipe, 3: pipe}},
 	} {
-		got := worktreeDelUnreadableStdinHoldings(worktreeDelUnreadablePlainTexts(worktreeDelUnreadableWords(c.cmd)))
+		got := worktreeDelUnreadableStdinHoldings(worktreeDelUnreadablePlainTexts(worktreeDelUnreadableWords(c.cmd)), c.multios)
 		if len(got) != len(c.want) {
 			t.Errorf("%q: %v, want %v", c.cmd, got, c.want)
 			continue
@@ -424,4 +433,49 @@ func TestWorktreeDelUnreadableStdinHoldings(t *testing.T) {
 			}
 		}
 	}
+}
+
+// TestWorktreeDelPipeResidualMultiosScope pins where zsh's multios option reaches (CRW-894 c9(b), generation-2 review).
+// The option belongs to the user's shell, so it applies to the simple command the shell feeds directly: there a
+// descriptor-0 file does not replace the pipe. It does not reach a subshell, a brace group, a shell compound or a
+// program handed to -c or eval, where the redirection is performed by the subshell or by the inner shell. zsh 5.9
+// runs `printf 'echo X' | bash </dev/null` and prints nothing for the other four forms.
+func TestWorktreeDelPipeResidualMultiosScope(t *testing.T) {
+	r := newDelRig(t)
+	// Direct: multios, so the descriptor-0 file does not replace the pipe.
+	worktreeDelPipeDenied(t, r, "printf 'rm -rf ../repo' | bash </dev/null")
+	// Not reached: the file does replace the pipe, so nothing runs it.
+	r.allowed(t,
+		"printf x | (bash </dev/null)",
+		"printf x | { bash </dev/null; }",
+		"printf x | if true; then bash </dev/null; fi",
+		"printf x | bash -c 'bash </dev/null'",
+		"printf x | (python3 </dev/null)",
+		"printf x | bash -c 'python3 </dev/null'",
+	)
+	// The outer redirection is still the user's shell's, so the pipe reaches the -c program.
+	worktreeDelPipeDenied(t, r, "printf 'rm -rf ../repo' | bash -c 'bash' </dev/null")
+	r.intact(t)
+}
+
+// TestWorktreeDelPipeResidualGeneration2Findings pins the independent review of head 97f78bb2e: three fail-opens and
+// one over-denial, each verified in zsh 5.9.
+func TestWorktreeDelPipeResidualGeneration2Findings(t *testing.T) {
+	r := newDelRig(t)
+	// An interpreter option that takes an argument inside a cluster: python3 -OW ignore reads the pipe.
+	worktreeDelPipeInterpreterDenied(t, r, "printf x | python3 -OW ignore")
+	// The last letter of the cluster takes the next word, so -WO ignore reads a script named ignore, and
+	// -WOignore carries its argument attached; both forms leave the interpreter with no script operand of its
+	// own, so the guard still reads the pipe there (fail closed; python3 -WOignore prints the piped program).
+	r.allowed(t, "printf x | python3 -WO ignore")
+	worktreeDelPipeInterpreterDenied(t, r, "printf x | python3 -WOignore")
+	// A -c program that names $0 runs it: bash -c 'exec \"$0\"' bash runs bash with the pipe.
+	worktreeDelPipeDenied(t, r, "printf 'rm -rf ../repo' | bash -c 'exec \"$0\"' bash")
+	// A source operand behind a redirection is still the source's operand.
+	worktreeDelPipeDenied(t, r, "printf 'rm -rf ../repo' | source 2>/dev/null /dev/stdin")
+	worktreeDelPipeDenied(t, r, "printf 'rm -rf ../repo' | . 2>/dev/null /dev/stdin")
+	// The same source form with no redirection, and a source file, stay as they were.
+	worktreeDelPipeDenied(t, r, "printf 'rm -rf ../repo' | source /dev/stdin")
+	r.allowed(t, "printf x | source ./env.sh", "printf x | bash script.sh")
+	r.intact(t)
 }
