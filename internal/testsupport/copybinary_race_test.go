@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -25,7 +26,7 @@ const (
 	copyIterations = 40
 	copyForkers    = 4
 	// copyBudget is the issue's design budget for the exercise. It is measured and reported, never
-	// asserted: the exercise runs 320 copies while four goroutines fork, so its wall clock is a
+	// asserted: the exercise runs its copies while four goroutines fork, so its wall clock is a
 	// property of the host and its load, not of the lock. A hard budget would fail a slow or busy
 	// machine whose locking is correct.
 	copyBudget     = 2 * time.Second
@@ -43,14 +44,11 @@ const (
 // across the copy, so no fork lands inside it and every copy runs.
 func TestCopyBinarySurvivesConcurrentForks(t *testing.T) {
 	t.Parallel()
-	busy, written, elapsed := copyRace(t, testsupport.CopyBinary)
+	busy, written, attempted, elapsed := copyRace(t, testsupport.CopyBinary)
 	if busy != 0 {
-		t.Fatalf("%d of the %d copies could not be run: ETXTBSY", busy, copyWriters*copyIterations)
+		t.Fatalf("%d of the %d copies could not be run: ETXTBSY", busy, attempted)
 	}
-	if elapsed > copyRunaway {
-		t.Fatalf("the exercise took %s, over the %s runaway ceiling: it did not finish", elapsed, copyRunaway)
-	}
-	t.Logf("locked: %d copies in %s (the issue's design budget is %s), %d bytes, no ETXTBSY", copyWriters*copyIterations, elapsed, copyBudget, written)
+	t.Logf("locked: %d copies in %s (the issue's design budget is %s), %d bytes, no ETXTBSY", attempted, elapsed, copyBudget, written)
 }
 
 // The same exercise through the copy the package did before this issue - the same open, copy and
@@ -58,30 +56,42 @@ func TestCopyBinarySurvivesConcurrentForks(t *testing.T) {
 // host and this moment, so the count is reported, never asserted.
 func TestACopyWithoutTheLockRacesConcurrentForks(t *testing.T) {
 	t.Parallel()
-	busy, written, elapsed := copyRace(t, plainCopy)
-	t.Logf("unlocked: %d of %d copies hit ETXTBSY in %s (%d bytes written)", busy, copyWriters*copyIterations, elapsed, written)
+	busy, written, attempted, elapsed := copyRace(t, plainCopy)
+	t.Logf("unlocked: %d of %d copies hit ETXTBSY in %s (%d bytes written)", busy, attempted, elapsed, written)
 }
 
-// copyRace copies and runs copyWriters x copyIterations fresh copies of source through copy while
-// copyForkers goroutines fork and run a program of their own, and answers how many of those
-// executions failed with ETXTBSY, how many bytes of copies were written and how long the exercise
-// took.
+// copyRace copies and runs fresh copies of source through copy while copyForkers goroutines fork
+// and run a program of their own, and answers how many of those executions failed with ETXTBSY,
+// how many bytes of copies were written, how many copies were attempted and how long the exercise
+// took. It fails when the exercise does not finish within copyRunaway, so a hang is this test's
+// failure and not the test binary's timeout.
 //
 // A fork copies every descriptor that is not close-on-exec into the child, and the child holds
 // them until it execs. A path a fork inherited that way is open for writing in another process,
 // and Linux refuses to execute a file open for writing with ETXTBSY, "text file busy"
 // (golang/go#22315). The forkers here are the concurrent forks; each copier writes a fresh path
 // and then runs it.
-func copyRace(t *testing.T, copy func(source, path string) error) (busy, written int64, elapsed time.Duration) {
+func copyRace(t *testing.T, copy func(source, path string) error) (busy, written, attempted int64, elapsed time.Duration) {
 	t.Helper()
 	source := forkProgramPath(t)
 	info, err := os.Stat(source)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if size := info.Size() * copyWriters * copyIterations; size > copyByteBudget {
-		t.Fatalf("the exercise would write %d bytes of copies, over the %d it is bounded to", size, copyByteBudget)
+	// The program is whatever true(1) this host has, and on a BusyBox system that is the multi-call
+	// binary rather than a tiny program. The copy count comes down from the source's own size so the
+	// exercise stays inside the byte ceiling below on any host, rather than failing a correct host
+	// whose true(1) is large.
+	iterations := int64(copyIterations)
+	if size := info.Size(); size > 0 {
+		if affordable := copyByteBudget / (size * copyWriters); affordable < iterations {
+			iterations = affordable
+		}
 	}
+	if iterations < 1 {
+		iterations = 1
+	}
+	attempted = copyWriters * iterations
 	root := t.TempDir()
 	stop := make(chan struct{})
 	var forkers sync.WaitGroup
@@ -99,16 +109,25 @@ func copyRace(t *testing.T, copy func(source, path string) error) (busy, written
 			}
 		}()
 	}
+	// The writers never call testing.T: the runaway ceiling below can end the test while one of them
+	// is still stuck, and a call on t from a goroutine that outlives its test panics.
+	var failuresMu sync.Mutex
+	var failures []string
+	fail := func(format string, args ...any) {
+		failuresMu.Lock()
+		defer failuresMu.Unlock()
+		failures = append(failures, fmt.Sprintf(format, args...))
+	}
 	start := time.Now()
 	var writers sync.WaitGroup
 	for i := 0; i < copyWriters; i++ {
 		writers.Add(1)
 		go func(writer int) {
 			defer writers.Done()
-			for n := 0; n < copyIterations; n++ {
+			for n := int64(0); n < iterations; n++ {
 				target := filepath.Join(root, fmt.Sprintf("copy-%d-%d", writer, n))
 				if err := copy(source, target); err != nil {
-					t.Errorf("copying to %s: %v", target, err)
+					fail("copying to %s: %v", target, err)
 					return
 				}
 				atomic.AddInt64(&written, info.Size())
@@ -117,17 +136,31 @@ func copyRace(t *testing.T, copy func(source, path string) error) (busy, written
 						atomic.AddInt64(&busy, 1)
 						continue
 					}
-					t.Errorf("running %s: %v", target, err)
+					fail("running %s: %v", target, err)
 					return
 				}
 			}
 		}(i)
 	}
-	writers.Wait()
+	done := make(chan struct{})
+	go func() { writers.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(copyRunaway):
+		// A stuck copy holds syscall.ForkLock, so the forkers are not waited for here: they could not
+		// fork again while it is held. The failure is the answer either way.
+		close(stop)
+		t.Fatalf("the exercise did not finish within the %s runaway ceiling: a copy is stuck", copyRunaway)
+	}
 	elapsed = time.Since(start)
 	close(stop)
 	forkers.Wait()
-	return busy, written, elapsed
+	failuresMu.Lock()
+	defer failuresMu.Unlock()
+	if len(failures) > 0 {
+		t.Fatalf("%s", strings.Join(failures, "; "))
+	}
+	return busy, written, attempted, elapsed
 }
 
 // plainCopy is the copy the package did before this issue: the same open, copy and close, with no
@@ -162,7 +195,7 @@ func forkProgramPath(t *testing.T) string {
 }
 
 // The helper's callers rely on three properties beyond the lock, and the lock must not change any
-// of them: the copy is the source's bytes, it carries the owner's execute bit, and a path that
+// of them: the copy is the source's bytes, it carries the mode the open asks for, and a path that
 // already exists is refused rather than overwritten. The install package's writeExecutable pins
 // the same three for its callers (execwrite_test.go TestWriteExecutableKeepsItsCallersContract);
 // CopyBinary had none, and this issue is the first change to it.
@@ -185,14 +218,27 @@ func TestCopyBinaryKeepsItsCallersContract(t *testing.T) {
 	if !bytes.Equal(got, body) {
 		t.Fatalf("the copy holds %q, want the source's %q", got, body)
 	}
+	// The mode is the one the open asks for, less whatever this process's umask clears: a fixed
+	// expectation would be wrong under a umask that clears the owner's execute bit, so the reference
+	// is the same open with the same flags in this process.
+	reference := filepath.Join(root, "reference")
+	ref, err := os.OpenFile(reference, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o755)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ref.Close(); err != nil {
+		t.Fatal(err)
+	}
 	info, err := os.Stat(target)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The mode is the one asked for, less whatever the process's umask clears: the owner's execute
-	// bit is the one every caller needs, and it survives any umask.
-	if info.Mode().Perm()&0o100 == 0 {
-		t.Fatalf("%s came out mode %v, without the owner's execute bit", target, info.Mode().Perm())
+	refInfo, err := os.Stat(reference)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != refInfo.Mode().Perm() {
+		t.Fatalf("the copy came out mode %v, want the %v the same open gives in this process", info.Mode().Perm(), refInfo.Mode().Perm())
 	}
 	if err := testsupport.CopyBinary(source, target); err == nil {
 		t.Fatal("a second copy over an existing file was allowed")
