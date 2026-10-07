@@ -322,6 +322,14 @@ func (s *Service) Open(ctx context.Context, turn, actor, base string, members []
 		if row.HolderTaskID != actor || row.State != Holding {
 			return trainConflict("turn %s changed while the bundle was being read, so it is not the holding turn this open began on; call again", pyvalue.StrRepr(turn))
 		}
+		// CRW-906: every member's correction state is read again on this transaction's snapshot. The
+		// reads above happen before it, and a generation opened in that gap would otherwise be recorded
+		// as an opened train: nothing is written for a member whose accepted result is under correction.
+		for _, m := range expectations {
+			if e := trainMemberCorrectionRefusal(tx, s.Store.Querier(tx), m.PRNumber, m.RelationshipID, m.AcceptedHead); e != nil {
+				return e
+			}
+		}
 		// a train id names one opening, not the candidate: a turn that abandons a train and reopens
 		// one for the same head gets a fresh id rather than colliding with the abandoned record
 		for suffix := 2; ; suffix++ {
@@ -374,7 +382,7 @@ func trainStandRefusal(pr int64, relationship, memberHead string, active accepta
 		return trainConflict("pull request %d stands on %s and its acceptance %s stands on %s, so the member's head is not the head the ruling covers", pr, pyvalue.StrRepr(memberHead), pyvalue.StrRepr(active.AcceptanceID), pyvalue.StrRepr(standHead))
 	}
 	if underCorrection {
-		return trainConflict("pull request %d's relationship %s is under correction: generation %d is open over the accepted result, which stands on generation %d, so the member is not a candidate a bundle may carry or land; accept the corrected result with dag-accept --supersedes, or withdraw the generation", pr, pyvalue.StrRepr(relationship), liveGeneration, standGeneration)
+		return trainUnderCorrectionRefusal(pr, relationship, liveGeneration, standGeneration)
 	}
 	return nil
 }
@@ -580,6 +588,14 @@ func (s *Service) Verify(ctx context.Context, train, actor, bundlePR, head, run,
 		}
 		if !found || (current != store.MergeTrainOpened && current != store.MergeTrainVerified) {
 			return trainConflict("train %s changed while the bundle was being read, so it is no longer a train a verify may advance; call again", pyvalue.StrRepr(train))
+		}
+		// CRW-906: each member's correction state is read again on this transaction's snapshot. The
+		// expectations above were read before the run and the chain were proved, and a generation opened
+		// in that gap would otherwise be recorded as verified: nothing is written for such a member.
+		for _, m := range expected {
+			if e := trainMemberCorrectionRefusal(tx, s.Store.Querier(tx), m.PRNumber, m.RelationshipID, m.AcceptedHead); e != nil {
+				return e
+			}
 		}
 		return store.RecordMergeTrainEvent(tx, s.Store, store.MergeTrainEventRow{TrainID: train, Seq: seq, Kind: store.MergeTrainVerified, Actor: actor, DetailJSON: pythonJSON(detail), RecordedAt: at})
 	})

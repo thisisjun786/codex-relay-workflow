@@ -1,6 +1,7 @@
 package mergeturn
 
 import (
+	"database/sql"
 	"fmt"
 	"strings"
 	"testing"
@@ -98,4 +99,112 @@ func TestTrainCarriesTheMemberAgainAfterTheCorrectionCloses(t *testing.T) {
 	if answer["train"] == nil {
 		t.Fatalf("the bundle after the correction was withdrawn = %v, want a train", answer)
 	}
+}
+
+// ucLaneReport is the work report the lane's head comparison reads: the assignment the turn names has a
+// report naming the head, so the check has something to compare the restated head with.
+func (w *fx) ucLaneReport(relationship, head string) {
+	w.t.Helper()
+	w.exec("INSERT INTO work_reports (event_id, submission_no, relationship_id, execution_generation, revision_hash, repository, head_sha, cxc_status, cxc_reason, contract_version, summary, next_action, recorded_at)"+
+		" VALUES (?, 1, ?, 1, ?, ?, ?, 'DONE', 'proved', 'v1', 'done', 'merge', '2023-11-14T22:13:20.000000+00:00')",
+		"ev-report-"+relationship, relationship, "rev-"+relationship, fxRepo, head)
+}
+
+// ucLaneRelationship writes the relationship the turn names at the generation given, and (when the
+// generation is 2) the correction generation opened over the accepted result. The fx fixture seeds no
+// relationship row, so one is written for the turn the test holds.
+func (w *fx) ucLaneRelationship(relationship string, generation int64) {
+	w.t.Helper()
+	w.exec("INSERT INTO relationships (relationship_id, issue_key, status, parent_task_id, parent_host_id, child_task_id, child_host_id, execution_generation, artifact_roots, allowed_recipients, created_at, updated_at)"+
+		" VALUES (?, 'ISS-1', 'active', ?, 'host-a', 'child-1', 'host-c', ?, '[]', ?, '2023-11-14T22:13:20.000000+00:00', '2023-11-14T22:13:20.000000+00:00')",
+		relationship, alpha.TaskID, generation, fmt.Sprintf("[%q]", alpha.TaskID))
+	if generation > 1 {
+		w.exec("INSERT INTO generations (relationship_id, execution_generation, dispatch_request_id, anchor_state, dispatch_turn_id, reason, opened_at, bound_at)"+
+			" VALUES (?, ?, ?, 'bound', 'turn-dispatch-2', 'needs_changes_revision', '2023-11-14T22:13:20.000000+00:00', '2023-11-14T22:13:20.000000+00:00')",
+			relationship, generation, "correction-"+relationship)
+		// the acceptance the correction is opened over: the gate compares the live generation with the
+		// generation this acceptance stands on
+		w.exec("INSERT INTO dag_acceptances (acceptance_id, plan_id, node_id, manifest_digest, relationship_id, execution_generation, event_id, revision_hash, criteria_set_digest, verdict, head_sha, repository, pr_number, ack_tier, verdict_turn_id, rule_version_json, accepted_by_task_id, coordinator_epoch, accepted_at, state)"+
+			" VALUES (?, 'plan-x', 'node-1', ?, ?, 1, ?, ?, 'crit-1', 'verified', 'head-a', ?, 1, 'bound', 'turn-1', '{}', ?, 0, '2023-11-14T22:13:20.000000+00:00', 'active')",
+			"acc-"+relationship, "manifest-"+relationship, relationship, "ev-"+relationship, "rev-"+relationship, fxRepo, alpha.TaskID)
+	}
+}
+
+// ucHeldOn is a held, acknowledged turn on a head whose claim records a relationship.
+func (w *fx) ucHeldOn(relationship, head string) string {
+	w.t.Helper()
+	options := ClaimOptions{Relationship: sql.NullString{String: relationship, Valid: true}}
+	turn := w.must(w.m.Request(w.ctx, fxRepo, fxBase, fxA, alpha.TaskID, alpha.HostID, head, true, options))["turnId"].(string)
+	w.answer(turn, alpha.TaskID)
+	return turn
+}
+
+// CRW-906 generation 2, the lane's own half: a merge turn can have been granted before the correction was
+// opened, so the check that moves it to merging and the land that records the merge read the correction
+// state themselves, inside the transaction that writes. Both refuse disposition_conflict naming the open
+// generation, the check writes no current row and the turn stays holding, and the land records no landing
+// and leaves the turn merging.
+func TestTheLaneRefusesATurnWhoseAcceptedResultIsUnderCorrection(t *testing.T) {
+	t.Run("the check refuses and the turn stays holding", func(t *testing.T) {
+		w := newFx(t)
+		turn := w.ucHeldOn("rel-lane", "head-a")
+		w.ucLaneReport("rel-lane", "head-a")
+		w.ucLaneRelationship("rel-lane", 2)
+		_, err := w.check(turn, "head-a", "base-0", "")
+		if err == nil || trReason(err) != "disposition_conflict" {
+			t.Fatalf("check under correction: %v", err)
+		}
+		for _, want := range []string{"under correction", "generation 2", "generation 1"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("the refusal does not name %q: %v", want, err)
+			}
+		}
+		if got := w.must(w.m.Turn(w.ctx, turn))["state"]; got != "holding" {
+			t.Fatalf("the turn is %v after the refused check, want holding", got)
+		}
+		if n := w.ucCount("SELECT count(*) FROM merge_turn_checks WHERE result = 'current'"); n != 0 {
+			t.Fatalf("the refused check wrote %d current row(s)", n)
+		}
+	})
+	t.Run("the land refuses and records no landing", func(t *testing.T) {
+		w := newFx(t)
+		turn := w.ucHeldOn("rel-lane", "head-a")
+		w.ucLaneReport("rel-lane", "head-a")
+		w.must(w.check(turn, "head-a", "base-0", ""))
+		w.merged("merge-1")
+		w.ucLaneRelationship("rel-lane", 2)
+		_, err := w.land(turn, "merge-1", "", "")
+		if err == nil || trReason(err) != "disposition_conflict" {
+			t.Fatalf("land under correction: %v", err)
+		}
+		if !strings.Contains(err.Error(), "under correction") {
+			t.Fatalf("the refusal does not say why: %v", err)
+		}
+		if got := w.must(w.m.Turn(w.ctx, turn))["state"]; got != "merging" {
+			t.Fatalf("the turn is %v after the refused land, want merging", got)
+		}
+		if n := w.ucCount("SELECT count(*) FROM merge_turns WHERE state = 'landed'"); n != 0 {
+			t.Fatalf("the refused land landed %d turn(s)", n)
+		}
+	})
+	t.Run("a turn whose relationship is not under correction is unchanged", func(t *testing.T) {
+		w := newFx(t)
+		turn := w.ucHeldOn("rel-lane", "head-a")
+		// the relationship stands on the generation its acceptance stands on: no correction is open
+		w.ucLaneReport("rel-lane", "head-a")
+		w.ucLaneRelationship("rel-lane", 1)
+		if _, err := w.check(turn, "head-a", "base-0", ""); err != nil {
+			t.Fatalf("a turn with no correction open was refused: %v", err)
+		}
+	})
+}
+
+// ucCount is the number of rows a query answers, for the writes a refusal must not leave behind.
+func (w *fx) ucCount(query string, args ...any) int64 {
+	w.t.Helper()
+	var n int64
+	if err := w.s.DB.QueryRowContext(w.ctx, query, args...).Scan(&n); err != nil {
+		w.t.Fatal(err)
+	}
+	return n
 }
