@@ -215,15 +215,15 @@ func improveProposeRecordSightings(record improveRecord) []auditDraftSeen {
 }
 
 // improveProposeOrigins is the origin locations of one record: the evidence entries that name
-// where the friction was seen. An entry that is context rather than an occurrence — the issue a
-// split without a scope belongs to, or the decision reply that answered a blockage — is carried in
-// the record's evidence for a reader but is not a place the friction happened, so it makes no
-// sighting of its own and never counts as one.
+// where the friction was seen. Only a split record attaches evidence that is context rather than an
+// occurrence — the issue a split without a scope belongs to, or the decision reply that answered a
+// blockage — so the exclusion is asked of the record kind. For every other kind each non-empty
+// evidence entry is a place the friction happened, however its text begins.
 func improveProposeOrigins(record improveRecord) []string {
 	locations := make([]string, 0, len(record.Evidence))
 	for _, evidence := range record.Evidence {
 		trimmed := strings.TrimSpace(evidence)
-		if trimmed == "" || improveProposeContextEvidence(trimmed) {
+		if trimmed == "" || improveProposeContextEvidence(record.Kind, trimmed) {
 			continue
 		}
 		locations = append(locations, trimmed)
@@ -231,10 +231,15 @@ func improveProposeOrigins(record improveRecord) []string {
 	return locations
 }
 
-// improveProposeContextEvidence reports whether an evidence entry is context for a record rather
-// than an origin location: the issue a scopeless split belongs to, or the decision reply whose note
-// gave a blockage its reason.
-func improveProposeContextEvidence(entry string) bool {
+// improveProposeContextEvidence reports whether one evidence entry of a record of this kind is
+// context rather than an origin location. Only a split record attaches such evidence: the issue a
+// split without a scope belongs to, or the decision reply whose note gave a blockage its reason.
+// Another kind's real location may begin with either prefix, so the kind decides and the text alone
+// never does.
+func improveProposeContextEvidence(kind, entry string) bool {
+	if kind != improveKindSplit {
+		return false
+	}
 	return strings.HasPrefix(entry, improveEvidenceIssuePrefix) || strings.HasPrefix(entry, improveEvidenceAnswerPrefix)
 }
 

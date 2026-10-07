@@ -104,12 +104,23 @@ func improveRoadmapParseArgs(args []string) (boundary, ref string, help bool, er
 }
 
 // improveRoadmapPlainRef reports whether a boundary ref is one plain path segment: a non-empty
-// name that is neither "." nor ".." and carries no path separator.
+// name that is neither "." nor "..", carries no path separator, and holds no control character. A
+// control character (U+0000 to U+001F, U+007F) is refused because the roadmap document writes the
+// ref verbatim and the header reader compares it line by line: an embedded newline would let one
+// ref's document stand in for another's, suppressing a first run or spending the cap on a rerun.
 func improveRoadmapPlainRef(ref string) bool {
 	if ref == "" || ref == "." || ref == ".." {
 		return false
 	}
-	return !strings.ContainsRune(ref, '/') && !strings.ContainsRune(ref, '\\')
+	if strings.ContainsRune(ref, '/') || strings.ContainsRune(ref, '\\') {
+		return false
+	}
+	for _, r := range ref {
+		if r <= 0x1F || r == 0x7F {
+			return false
+		}
+	}
+	return true
 }
 
 // improveRoadmapDir is where the improvement pass keeps its bundles and roadmap documents:

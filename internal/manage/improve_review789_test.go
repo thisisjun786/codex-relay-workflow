@@ -147,6 +147,26 @@ func TestImproveReview789EightCasesAreOneCandidate(t *testing.T) {
 		t.Errorf("the eight cases count %d, want 8", total)
 	}
 
+	// The issue's fixed input alternates the other way from a first-guess reading: its 2nd, 4th,
+	// 6th and 8th entries are a blocked receipt plus the answer that resolved it, and the others are
+	// the parent's own split decision. Only an answered blockage cites the reply, so the answer:
+	// evidence marks exactly those four.
+	answered := map[string]bool{}
+	for _, record := range splits {
+		for _, evidence := range record.Evidence {
+			if strings.HasPrefix(evidence, improveEvidenceAnswerPrefix) {
+				answered[record.Where] = true
+			}
+		}
+	}
+	for i, c := range improveTestEightCases {
+		// A 1-based even entry is a 0-based odd index.
+		wantAnswered := i%2 == 1
+		if answered["rel-"+c.issue] != wantAnswered {
+			t.Errorf("the case %s at 1-based position %d: answered=%v, want %v", c.issue, i+1, answered["rel-"+c.issue], wantAnswered)
+		}
+	}
+
 	report := improveReview789Propose(t, s, improveReview789BundlePath(s))
 	if len(report.Candidates) != 1 {
 		t.Fatalf("candidates = %+v, want one", report.Candidates)
@@ -159,13 +179,23 @@ func TestImproveReview789EightCasesAreOneCandidate(t *testing.T) {
 		t.Fatalf("created = %+v, want one draft", report.Created)
 	}
 
-	// CRW-739 already covers the friction, so a run with it in the issue list creates no draft.
+	// CRW-739 already covers the friction. The run below collects again with the issue list in
+	// place and proposes into an empty drafts directory, so the zero drafts come from the
+	// suppression path rather than from the draft the earlier run already wrote.
 	issues := filepath.Join(s.root, "issues.json")
 	improveTestWrite(t, issues, improveReview789IssueList("CRW-739", "size overrun", ""))
-	improveReview789Configure(t, s, manageState, map[string]any{"issue_list": issues})
+	empty := filepath.Join(s.root, "manage-state-suppressed")
+	improveReview789Configure(t, s, empty, map[string]any{"issue_list": issues})
+	improveReview789Collect(t, s)
 	report = improveReview789Propose(t, s, improveReview789BundlePath(s))
+	if len(report.Suppressed) != 1 {
+		t.Errorf("suppressed = %+v, want one for the registered fingerprint", report.Suppressed)
+	}
 	if len(report.Created) != 0 {
 		t.Errorf("created = %+v, want none with CRW-739 in the issue list", report.Created)
+	}
+	if drafts := improveRoadmapTestDrafts(t, empty); len(drafts) != 0 {
+		t.Errorf("the suppression run wrote %v into empty drafts", drafts)
 	}
 }
 
@@ -492,5 +522,58 @@ func TestImproveReview789AggregateCountIsNotUnderstated(t *testing.T) {
 	doc := improveProposeTestDraft(t, w, report.Updated[0].Fingerprint)
 	if !strings.Contains(doc.Body, "- owner_unknown (8)") {
 		t.Errorf("the merged draft understates the aggregated count:\n%s", doc.Body)
+	}
+}
+
+// TestImproveReview789ContextEvidenceIsPerKind covers the review finding that the context exclusion
+// must look at the record kind, not only at the evidence prefix: only a split record attaches the
+// issue: and answer: context, so for every other kind each non-empty evidence entry is an origin
+// location. An intervention whose real locations begin with answer: keeps both of them.
+func TestImproveReview789ContextEvidenceIsPerKind(t *testing.T) {
+	w := improveProposeTestSetup(t)
+	improveProposeTestConfigure(t, w, map[string]any{})
+	bundle := improveProposeTestBundle(t, w, []improveRecord{
+		improveProposeTestRecord(improveKindIntervention, "stalled", "", "a signal", 1,
+			"answer:first", "answer:second"),
+	})
+	code, stdout, stderr := improveProposeTestRun(t, w, "--bundle", bundle)
+	if code != 0 {
+		t.Fatalf("propose: exit %d, stderr %s", code, stderr)
+	}
+	report := improveProposeTestReport(t, stdout)
+	if len(report.Created) != 1 {
+		t.Fatalf("created = %+v, want one draft", report.Created)
+	}
+	doc := improveProposeTestDraft(t, w, report.Created[0].Fingerprint)
+	if len(doc.Seen) != 2 {
+		t.Errorf("the intervention draft carries %d seen entries, want one per location (2): %+v", len(doc.Seen), doc.Seen)
+	}
+}
+
+// TestImproveReview789RefWithAControlCharacterIsRefused covers the review finding that a --ref
+// holding a control character must be refused as a usage error: the roadmap writes the ref
+// verbatim and the header reader compares line by line, so an embedded newline could make one ref's
+// document stand in for another's.
+func TestImproveReview789RefWithAControlCharacterIsRefused(t *testing.T) {
+	s := improveTestSetup(t)
+	manageState := filepath.Join(s.root, "manage-state")
+	improveTestStore(t, s, func(t *testing.T, db *sql.DB) {
+		improveReview789SeedSplit(t, db, "rel-a", "CRW-1", "project-a", "size overrun", "ev-a")
+	})
+	improveRoadmapTestConfigure(t, s, manageState, map[string]any{})
+	var stdout, stderr strings.Builder
+	e := improveRoadmapTestEnv(s, &stdout, &stderr)
+	for _, ref := range []string{"a\nb", "a\rb", "a\tb", "a\x00b", "a\x7fb"} {
+		code, _, errOut := improveRoadmapTestRun(t, e, "--boundary", "milestone", "--ref", ref)
+		if code != usageExit {
+			t.Errorf("the ref %q: exit %d, want %d (stderr %q)", ref, code, usageExit, errOut)
+		}
+	}
+	// A plain ref is unchanged.
+	if code, _, errOut := improveRoadmapTestRun(t, e, "--boundary", "milestone", "--ref", "M2"); code != 0 {
+		t.Fatalf("a plain ref: exit %d, stderr %q", code, errOut)
+	}
+	if roadmaps := improveRoadmapTestRoadmaps(t, manageState); len(roadmaps) != 1 {
+		t.Errorf("the improve directory holds %v, want one roadmap for the plain ref", roadmaps)
 	}
 }

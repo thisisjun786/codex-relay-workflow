@@ -264,8 +264,9 @@ func improveTestSeedEightCases(t *testing.T, db *sql.DB) {
 		improveTestInsert(t, db, "INSERT INTO relationships (relationship_id, issue_key, status, parent_task_id, parent_host_id, child_task_id, child_host_id, execution_generation, artifact_roots, allowed_recipients, created_at, updated_at) VALUES (?,?,'active','parent','host','child','host',1,'[]','[]','2026-10-06T00:00:00Z','2026-10-06T00:00:00Z')", rid, c.issue)
 		improveTestInsert(t, db, "INSERT INTO relationship_scope (relationship_id, project_key, recorded_at) VALUES (?,?,'2026-10-06T00:00:00Z')", rid, c.project)
 		at := fmt.Sprintf("2026-10-06T%02d:00:00Z", i+1)
-		if i%2 == 0 {
-			// An even 1-based case: the child blocked and the parent answered that event.
+		if i%2 == 1 {
+			// The issue's fixed input: the 2nd, 4th, 6th and 8th entries are a blocked receipt plus
+			// the answer that resolved it. A 1-based even case is a 0-based odd index.
 			blocked := "ev-blocked-" + c.issue
 			improveTestInsert(t, db, "INSERT INTO events (event_id, relationship_id, execution_generation, revision_hash, outcome, producer, turn_thread_id, turn_id, turn_status, receipt, stage, first_seen_at, last_seen_at) VALUES (?,?,1,?,'blocked_needs_input','child','t','turn-1','completed',?,'final',?,?)",
 				blocked, rid, strings.Repeat("0", 64), improveTestBlockedReceipt(t), at, at)
@@ -273,7 +274,7 @@ func improveTestSeedEightCases(t *testing.T, db *sql.DB) {
 				"ev-answer-"+c.issue, rid, strings.Repeat("0", 64), improveTestAnswerReceipt(t, blocked, c.reason), at, at)
 			continue
 		}
-		// An odd 1-based case: the parent's own split decision, with no receipt to answer.
+		// The issue's remaining entries: the parent's own split decision, with no receipt to answer.
 		improveTestInsert(t, db, "INSERT INTO events (event_id, relationship_id, execution_generation, revision_hash, outcome, producer, turn_thread_id, turn_id, turn_status, receipt, stage, first_seen_at, last_seen_at) VALUES (?,?,1,?,'decision_reply','parent','t','turn-1','completed',?,'final',?,?)",
 			"ev-"+c.issue, rid, strings.Repeat("0", 64), improveTestReceiptBody(t, true, c.reason), at, at)
 	}
