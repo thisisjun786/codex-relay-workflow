@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -30,8 +31,9 @@ const (
 // overrides it.
 const dagHostReceiptDefaultMinutes = 20
 
-// dagHostStateFile is the offset file below the state directory: one resume offset per rollout, so
-// a refusal the review reported once is not reported again.
+// dagHostStateFile is the offset file below the state directory: one resume offset per rollout plus
+// the call ids of the refusals already reported for it, so a refusal the review reported once is not
+// reported again.
 const dagHostStateFile = "dag-review-state.json"
 
 // dagHostLineLimit bounds one rollout line this review reads; a longer line is a reading it cannot
@@ -140,7 +142,7 @@ func dagHostSortedParents(parents map[string]string) []dagHostParent {
 // start there would re-report refusals an earlier check already reported.
 func dagHostParentsRead(ctx context.Context, in *dagReviewInput, scope dagHostScope) error {
 	cfg := scope.config()
-	offsets := dagHostOffsets{Offsets: map[string]int64{}, raw: map[string]json.RawMessage{}}
+	offsets := dagHostOffsets{Offsets: map[string]int64{}, Reported: map[string][]string{}, raw: map[string]json.RawMessage{}}
 	offsetsRead, refusalsMeasured := false, false
 	if scope.noState {
 		refusalsMeasured = true
@@ -208,8 +210,9 @@ func dagHostParentsRead(ctx context.Context, in *dagReviewInput, scope dagHostSc
 }
 
 // dagHostParentRollout reads one parent's rollout: the call ids whose tool results repeat, and the
-// relay dag- refusals written since this rollout's resume offset. The offsets map is updated with
-// the offset the next check resumes from.
+// relay dag- refusals this check has not reported yet. The offsets map is updated with the offset
+// the next check resumes from and with the call ids that offset will read again, so a refusal is
+// reported once even while an earlier call of the same rollout still waits for its answer.
 func dagHostParentRollout(in *dagReviewInput, parent dagHostParent, path string, offsets *dagHostOffsets, offsetsRead, refusalsMeasured bool) {
 	duplicates, err := dagHostDuplicateOutputs(path)
 	if err != nil {
@@ -233,39 +236,60 @@ func dagHostParentRollout(in *dagReviewInput, parent dagHostParent, path string,
 		return
 	}
 	start := int64(0)
+	firstSight := false
 	if offsetsRead {
 		seen, ok := offsets.Offsets[path]
 		if !ok {
-			// A rollout this review has not seen before starts at its end: its earlier refusals were
-			// reported by an earlier check or are history this run does not re-report.
-			size, err := dagHostFileSize(path)
-			if err != nil {
-				in.review.Checks = append(in.review.Checks, Check{
-					Name: "parent_refusals:" + parent.id, State: dagReviewUnmeasured, Detail: err.Error(),
-				})
-				return
-			}
-			offsets.Offsets[path] = size
-			return
+			// A rollout this review has not seen before is read once from its start: the call whose
+			// answer has not arrived is then remembered, so a refusal that arrives after this check is
+			// still reported. The refusals already in its history are not.
+			firstSight = true
+		} else {
+			start = seen
 		}
-		start = seen
 	}
-	refusals, resume, err := dagHostRolloutRefusals(path, start)
+	reading, err := dagHostRolloutRefusals(path, start)
 	if err != nil {
 		in.review.Checks = append(in.review.Checks, Check{
 			Name: "parent_refusals:" + parent.id, State: dagReviewUnmeasured, Detail: err.Error(),
 		})
 		return
 	}
-	for _, refusal := range refusals {
-		in.review.Anomalies = append(in.review.Anomalies, DagReviewAnomaly{
-			Kind: dagHostKindParentDagRefusals, Issue: parent.label,
-			Detail: fmt.Sprintf("the relay command %s was refused: %s", strings.Join(refusal.commands, ","), refusal.reason),
-		})
+	reported := map[string]bool{}
+	for _, callID := range offsets.Reported[path] {
+		reported[callID] = true
+	}
+	if !firstSight {
+		for _, refusal := range reading.refusals {
+			if reported[refusal.callID] {
+				continue
+			}
+			in.review.Anomalies = append(in.review.Anomalies, DagReviewAnomaly{
+				Kind: dagHostKindParentDagRefusals, Issue: parent.label,
+				Detail: fmt.Sprintf("the relay command %s was refused: %s", strings.Join(refusal.commands, ","), refusal.reason),
+			})
+		}
 	}
 	if offsetsRead {
-		offsets.Offsets[path] = resume
+		offsets.Offsets[path] = reading.resume
+		offsets.Reported[path] = dagHostResumeRefusalIDs(reading)
 	}
+}
+
+// dagHostResumeRefusalIDs is the call ids of the refusals a check resuming at reading.resume reads
+// again: the refusals whose call line is at or after that offset. A refusal before the offset is
+// never read again, so it drops out of the list and keeps the file bounded; the ids the next check
+// reads are exactly the ones it must not report twice.
+func dagHostResumeRefusalIDs(reading dagHostRolloutReading) []string {
+	ids := []string{}
+	for _, refusal := range reading.refusals {
+		if refusal.lineStart < reading.resume {
+			continue
+		}
+		ids = append(ids, refusal.callID)
+	}
+	sort.Strings(ids)
+	return ids
 }
 
 // dagHostDuplicate is one call id whose tool results repeat in a rollout.
@@ -327,46 +351,130 @@ func dagHostDuplicateOutputs(path string) ([]dagHostDuplicate, error) {
 	return duplicates, nil
 }
 
-// dagHostRefusal is one relay dag- command a parent's rollout shows refused.
+// dagHostRefusal is one relay dag- command a parent's rollout shows refused, with the line its call
+// started on so a later check can tell whether it will read that call again.
 type dagHostRefusal struct {
-	callID   string
-	commands []string
-	reason   string
+	callID    string
+	commands  []string
+	reason    string
+	lineStart int64
 }
 
-// A relay dag- invocation names the relay (crw relay, codex-session-relay) and a dag- subcommand;
+// dagHostRolloutReading is one reading of a rollout: the refusals it shows and the offset the next
+// check resumes from.
+type dagHostRolloutReading struct {
+	refusals []dagHostRefusal
+	resume   int64
+}
+
+// A relay dag- invocation names the relay program and a dag- subcommand at the subcommand position;
 // the review requires both, so a filename or a search term that merely contains "dag-" is not a
 // relay command. The relay answers a refusal in two shapes: a command that reports its own answer as
 // {"ok": false, "reason": ...}, and the scheduler's own envelope {"error": "refused", "reason": ...}
 // (internal/relay/dispatch/answer.go emit). Either shape with a reason is a refusal.
 var (
-	dagHostRelayInvocation = regexp.MustCompile(`\brelay\b`)
-	dagHostDagCommand      = regexp.MustCompile(`\bdag-[a-z-]+`)
+	dagHostDagSubcommand   = regexp.MustCompile(`^dag-[a-z-]+$`)
+	dagHostVariableWord    = regexp.MustCompile(`^\$\{?[A-Za-z_][A-Za-z0-9_]*\}?$`)
+	dagHostAssignmentWord  = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=`)
+	dagHostCommandSplitter = regexp.MustCompile(`\$\(|&&|\|\||;|\|`)
 	dagHostRefusedAnswer   = regexp.MustCompile(`"ok"\s*:\s*false`)
 	dagHostRefusedEnvelope = regexp.MustCompile(`"error"\s*:\s*"refused"`)
 	dagHostRefusedReason   = regexp.MustCompile(`"reason"\s*:\s*"([a-z_]+)"`)
 )
 
+// dagHostRelaySubcommands reads the dag- subcommands of the relay invocations in a tool call's
+// argument text. The text is split into simple command units (a newline, ;, &&, ||, | or $( starts
+// one) and each into words; leading VAR=value assignments and exec are skipped; the program word
+// must be the relay (codex-session-relay by basename, crw relay, or a variable expansion). Only
+// option words and their values may then pass before a dag- subcommand word, so reading a relay
+// document with cat or searching for a dag- word with rg is not a relay invocation.
+func dagHostRelaySubcommands(text string) []string {
+	var subcommands []string
+	for _, unit := range dagHostCommandSplitter.Split(text, -1) {
+		words := strings.Fields(unit)
+		for len(words) > 0 && (dagHostAssignmentWord.MatchString(words[0]) || words[0] == "exec") {
+			words = words[1:]
+		}
+		if len(words) == 0 || !dagHostRelayProgram(words) {
+			continue
+		}
+		if words[0] == "crw" {
+			words = words[2:]
+		} else {
+			words = words[1:]
+		}
+		for len(words) > 0 {
+			word := words[0]
+			if dagHostDagSubcommand.MatchString(word) {
+				subcommands = append(subcommands, word)
+				break
+			}
+			if !strings.HasPrefix(word, "-") {
+				break
+			}
+			// An option word consumes the next word as its value, unless that word is another option
+			// or the subcommand itself: a value-less flag such as the relay's own --json must not
+			// swallow the subcommand that follows it.
+			if len(words) < 2 || strings.HasPrefix(words[1], "-") || dagHostDagSubcommand.MatchString(words[1]) {
+				words = words[1:]
+				continue
+			}
+			words = words[2:]
+		}
+	}
+	return subcommands
+}
+
+// dagHostRelayProgram reports whether the first word names the relay: codex-session-relay by
+// basename, crw followed by relay, or a variable expansion a shell would substitute.
+func dagHostRelayProgram(words []string) bool {
+	switch {
+	case path.Base(words[0]) == "codex-session-relay":
+		return true
+	case words[0] == "crw":
+		return len(words) > 1 && words[1] == "relay"
+	case dagHostVariableWord.MatchString(words[0]):
+		return true
+	}
+	return false
+}
+
+// dagHostCallText is a tool call's command line: a function_call's arguments is a JSON object whose
+// cmd member carries it; any other text (a custom_tool_call's input, or a rollout that stores the
+// command line directly) is used as it stands.
+func dagHostCallText(arguments, input string) string {
+	if arguments != "" {
+		var parsed struct {
+			Cmd string `json:"cmd"`
+		}
+		if err := json.Unmarshal([]byte(arguments), &parsed); err == nil && parsed.Cmd != "" {
+			return parsed.Cmd
+		}
+		return arguments
+	}
+	return input
+}
+
 // dagHostRolloutRefusals reads the rollout from start to its end and reports the relay dag-
 // refusals it finds, with the offset the next check resumes from. The resume offset never advances
 // past a relay call whose output has not been seen, so a call and its output split across two checks
 // are still paired; a rollout shorter than the saved offset was replaced, so it is read from its
-// start rather than skipped.
-func dagHostRolloutRefusals(path string, start int64) ([]dagHostRefusal, int64, error) {
+// start rather than skipped. A reading that cannot be taken is an error, never a partial answer.
+func dagHostRolloutRefusals(path string, start int64) (dagHostRolloutReading, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, start, err
+		return dagHostRolloutReading{resume: start}, err
 	}
 	defer f.Close()
 	size, err := f.Seek(0, io.SeekEnd)
 	if err != nil {
-		return nil, start, err
+		return dagHostRolloutReading{resume: start}, err
 	}
 	if start > size {
 		start = 0
 	}
 	if _, err := f.Seek(start, io.SeekStart); err != nil {
-		return nil, start, err
+		return dagHostRolloutReading{resume: start}, err
 	}
 	reader := bufio.NewReaderSize(f, 64*1024)
 	offset, resume := start, start
@@ -379,18 +487,14 @@ func dagHostRolloutRefusals(path string, start int64) ([]dagHostRefusal, int64, 
 			offset += int64(len(line))
 			resume = lineStart
 			if tooLong {
-				return nil, start, fmt.Errorf("a rollout line over %d bytes was not read", dagHostLineLimit)
+				return dagHostRolloutReading{resume: start}, fmt.Errorf("a rollout line over %d bytes was not read", dagHostLineLimit)
 			}
 			var entry dagHostRolloutEntry
 			if json.Unmarshal(bytes.TrimRight(line, "\r\n"), &entry) == nil && entry.Type == "response_item" {
 				switch entry.Payload.Type {
 				case "function_call", "custom_tool_call":
-					text := entry.Payload.Arguments
-					if text == "" {
-						text = entry.Payload.Input
-					}
-					if dagHostRelayInvocation.MatchString(text) && dagHostDagCommand.MatchString(text) {
-						calls[entry.Payload.CallID] = dagHostCall{commands: dagHostDagCommand.FindAllString(text, 3), lineStart: lineStart}
+					if commands := dagHostRelaySubcommands(dagHostCallText(entry.Payload.Arguments, entry.Payload.Input)); len(commands) > 0 {
+						calls[entry.Payload.CallID] = dagHostCall{commands: commands, lineStart: lineStart}
 					}
 				case "function_call_output", "custom_tool_call_output":
 					call, ok := calls[entry.Payload.CallID]
@@ -409,7 +513,7 @@ func dagHostRolloutRefusals(path string, start int64) ([]dagHostRefusal, int64, 
 					if found := dagHostRefusedReason.FindStringSubmatch(output); found != nil {
 						reason = found[1]
 					}
-					refusals = append(refusals, dagHostRefusal{callID: entry.Payload.CallID, commands: call.commands, reason: reason})
+					refusals = append(refusals, dagHostRefusal{callID: entry.Payload.CallID, commands: call.commands, reason: reason, lineStart: call.lineStart})
 				}
 			}
 		}
@@ -417,7 +521,7 @@ func dagHostRolloutRefusals(path string, start int64) ([]dagHostRefusal, int64, 
 			if errors.Is(readErr, io.EOF) {
 				break
 			}
-			return nil, start, fmt.Errorf("read the rollout: %w", readErr)
+			return dagHostRolloutReading{resume: start}, fmt.Errorf("read the rollout: %w", readErr)
 		}
 	}
 	// A relay call whose output has not arrived stays pending: the next check re-reads it from its
@@ -427,7 +531,7 @@ func dagHostRolloutRefusals(path string, start int64) ([]dagHostRefusal, int64, 
 			resume = call.lineStart
 		}
 	}
-	return refusals, resume, nil
+	return dagHostRolloutReading{refusals: refusals, resume: resume}, nil
 }
 
 // dagHostReadLine reads one line bounded by limit bytes. The second result is true when the line
@@ -471,29 +575,25 @@ func dagHostOutputText(raw json.RawMessage) string {
 	return string(raw)
 }
 
-// dagHostFileSize is a rollout's size in bytes.
-func dagHostFileSize(path string) (int64, error) {
-	info, err := os.Stat(path)
-	if err != nil {
-		return 0, err
-	}
-	return info.Size(), nil
-}
-
-// dagHostOffsets is the offset file's content: the resume offset of each rollout, plus the
-// document's other keys verbatim, so a rewrite does not drop a key this build does not name.
+// dagHostOffsets is the offset file's content: the resume offset of each rollout and the call ids
+// of the refusals already reported for it, plus the document's other keys verbatim, so a rewrite
+// does not drop a key this build does not name. A file written before this build holds no
+// "reported" member and reads as an empty list.
 type dagHostOffsets struct {
-	Offsets map[string]int64
-	raw     map[string]json.RawMessage
+	Offsets  map[string]int64
+	Reported map[string][]string
+	raw      map[string]json.RawMessage
 }
 
 // dagHostLoadOffsets reads the offset file; an absent file is no offsets yet, and an unreadable one
 // is an error rather than an empty set, so a corrupt file cannot silently re-report every refusal
-// or clobber the offsets it holds. The document's other keys are kept verbatim.
+// or clobber the offsets it holds. The document's other keys are kept verbatim. A missing
+// "reported" member is an empty list; one this build cannot read is an error, so a file this build
+// cannot fully understand never becomes a reason to re-report a refusal.
 func dagHostLoadOffsets(stateDir string) (dagHostOffsets, error) {
 	data, err := os.ReadFile(filepath.Join(stateDir, dagHostStateFile))
 	if errors.Is(err, os.ErrNotExist) {
-		return dagHostOffsets{Offsets: map[string]int64{}, raw: map[string]json.RawMessage{}}, nil
+		return dagHostOffsets{Offsets: map[string]int64{}, Reported: map[string][]string{}, raw: map[string]json.RawMessage{}}, nil
 	}
 	if err != nil {
 		return dagHostOffsets{}, err
@@ -502,13 +602,21 @@ func dagHostLoadOffsets(stateDir string) (dagHostOffsets, error) {
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return dagHostOffsets{}, fmt.Errorf("the offset file %s is not readable: %w", dagHostStateFile, err)
 	}
-	state := dagHostOffsets{Offsets: map[string]int64{}, raw: raw}
+	state := dagHostOffsets{Offsets: map[string]int64{}, Reported: map[string][]string{}, raw: raw}
 	if held, ok := raw["offsets"]; ok {
 		if err := json.Unmarshal(held, &state.Offsets); err != nil {
 			return dagHostOffsets{}, fmt.Errorf("the offset file %s holds an unreadable offsets member: %w", dagHostStateFile, err)
 		}
 		if state.Offsets == nil {
 			state.Offsets = map[string]int64{}
+		}
+	}
+	if held, ok := raw["reported"]; ok {
+		if err := json.Unmarshal(held, &state.Reported); err != nil {
+			return dagHostOffsets{}, fmt.Errorf("the offset file %s holds an unreadable reported member: %w", dagHostStateFile, err)
+		}
+		if state.Reported == nil {
+			state.Reported = map[string][]string{}
 		}
 	}
 	return state, nil
@@ -528,11 +636,16 @@ func dagHostSaveOffsets(ctx context.Context, stateDir string, state dagHostOffse
 	if err != nil {
 		return err
 	}
+	reported, err := json.Marshal(state.Reported)
+	if err != nil {
+		return err
+	}
 	document := map[string]json.RawMessage{}
 	for key, value := range state.raw {
 		document[key] = value
 	}
 	document["offsets"] = offsets
+	document["reported"] = reported
 	data, err := json.Marshal(document)
 	if err != nil {
 		return err
@@ -636,7 +749,7 @@ func dagHostChildrenRead(ctx context.Context, in *dagReviewInput, scope dagHostS
 		if len(scope.plans) > 0 && !released[child.relationshipID] {
 			continue
 		}
-		ended, measured, err := dagHostNewestTurnEnd(ctx, cfg, child.threadID)
+		reading, err := dagHostNewestTurnEnd(ctx, cfg, child.threadID)
 		if err != nil {
 			in.review.Checks = append(in.review.Checks, Check{
 				Name: "child_turn:" + child.threadID, State: dagReviewUnmeasured,
@@ -644,7 +757,15 @@ func dagHostChildrenRead(ctx context.Context, in *dagReviewInput, scope dagHostS
 			})
 			continue
 		}
-		if !measured || in.now.Sub(ended) <= scope.receipt {
+		if reading.detail != "" {
+			// A turn that has ended but whose end this reading cannot measure is not a silent child
+			// and not an anomaly: it is a reading this review could not take.
+			in.review.Checks = append(in.review.Checks, Check{
+				Name: "child_turn:" + child.threadID, State: dagReviewUnmeasured, Detail: reading.detail,
+			})
+			continue
+		}
+		if !reading.measured || in.now.Sub(reading.ended) <= scope.receipt {
 			continue
 		}
 		receipt, err := in.store.dagHostReceiptExists(ctx, child.relationshipID, child.generation)
@@ -660,20 +781,30 @@ func dagHostChildrenRead(ctx context.Context, in *dagReviewInput, scope dagHostS
 		in.review.Anomalies = append(in.review.Anomalies, DagReviewAnomaly{
 			Kind: dagHostKindChildTurnWithoutReceipt, Issue: child.issueKey,
 			Detail: fmt.Sprintf("the newest turn ended %s ago and generation %d holds no accepted receipt",
-				in.now.Sub(ended).Round(time.Minute), child.generation),
+				in.now.Sub(reading.ended).Round(time.Minute), child.generation),
 		})
 	}
 	return nil
 }
 
-// dagHostNewestTurnEnd reads the child thread's newest turn and reports when it ended. The second
-// result is false when no end can be measured: an empty thread, a turn still in progress, or a
-// terminal turn whose timestamps do not give an end all raise nothing, so a silent reading is never
-// reported as a silent child.
-func dagHostNewestTurnEnd(ctx context.Context, cfg *Config, threadID string) (time.Time, bool, error) {
+// dagHostTurnReading is one reading of a child's newest turn. measured is false when the turn has
+// no end this reading can use, and detail is set only when the turn HAS ended and the end could not
+// be measured, which is the one case the caller reports as an unmeasured check rather than passing
+// over in silence.
+type dagHostTurnReading struct {
+	ended    time.Time
+	measured bool
+	detail   string
+}
+
+// dagHostNewestTurnEnd reads the child thread's newest turn and reports when it ended. An empty
+// thread and a turn still in progress raise nothing. A terminal turn whose timestamps do not give an
+// end is unmeasured with the state named, so a reading the review could not take is never mistaken
+// for a silent child.
+func dagHostNewestTurnEnd(ctx context.Context, cfg *Config, threadID string) (dagHostTurnReading, error) {
 	raw, err := HostRead(ctx, cfg, "thread/turns/list", map[string]any{"threadId": threadID, "limit": 1, "itemsView": "summary"})
 	if err != nil {
-		return time.Time{}, false, err
+		return dagHostTurnReading{}, err
 	}
 	var page struct {
 		Data []struct {
@@ -685,27 +816,27 @@ func dagHostNewestTurnEnd(ctx context.Context, cfg *Config, threadID string) (ti
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(raw, &page); err != nil {
-		return time.Time{}, false, fmt.Errorf("the thread/turns/list answer is not readable: %w", err)
+		return dagHostTurnReading{}, fmt.Errorf("the thread/turns/list answer is not readable: %w", err)
 	}
 	if len(page.Data) == 0 {
-		return time.Time{}, false, nil
+		return dagHostTurnReading{}, nil
 	}
 	turn := page.Data[0]
 	if turn.Status != "completed" && turn.Status != "failed" && turn.Status != "interrupted" {
-		return time.Time{}, false, nil
+		return dagHostTurnReading{}, nil
 	}
 	if end, ok := dagHostEpochSeconds(turn.CompletedAt); ok {
-		return time.Unix(int64(end), 0).UTC(), true, nil
+		return dagHostTurnReading{ended: time.Unix(int64(end), 0).UTC(), measured: true}, nil
 	}
 	started, ok := dagHostEpochSeconds(turn.StartedAt)
 	if !ok {
-		return time.Time{}, false, nil
+		return dagHostTurnReading{detail: fmt.Sprintf("the newest turn is %s and carries no readable startedAt, so its end cannot be measured", turn.Status)}, nil
 	}
 	duration, ok := dagHostEpochSeconds(turn.DurationMs)
 	if !ok {
-		return time.Time{}, false, nil
+		return dagHostTurnReading{detail: fmt.Sprintf("the newest turn is %s, carries no completedAt, and its durationMs is not readable, so its end cannot be measured", turn.Status)}, nil
 	}
-	return time.Unix(int64(started+duration/1000), 0).UTC(), true, nil
+	return dagHostTurnReading{ended: time.Unix(int64(started+duration/1000), 0).UTC(), measured: true}, nil
 }
 
 // dagHostEpochSeconds reads a host timestamp: epoch seconds as a number or a numeric string.
