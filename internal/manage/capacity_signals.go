@@ -178,10 +178,14 @@ func capacityChild429Count(logPath string, models []string, since time.Time) (st
 }
 
 type capacityWaiting struct {
-	Waiting    []string
-	Held       int
-	Ceiling    int
-	HostMemory string
+	Waiting []string
+	// Nodes are the node ids the pass counts as waiting: the ready nodes and the nodes deferred for
+	// want of a slot. The branch reading judges readiness by node id, because a plan may hold two
+	// nodes with one issue key (a redefinition) and their states must not mix.
+	WaitingNodes []string
+	Held         int
+	Ceiling      int
+	HostMemory   string
 }
 
 // capacityWaitingFor asks the relay for one plan's ready set: the ready nodes and the nodes
@@ -204,9 +208,11 @@ func capacityWaitingFor(ctx context.Context, e *Env, cfg *Config, plan string) (
 			} `json:"host_memory"`
 		} `json:"pass"`
 		Ready []struct {
+			NodeID   string `json:"node_id"`
 			IssueKey string `json:"issue_key"`
 		} `json:"ready"`
 		Nodes []struct {
+			NodeID   string `json:"node_id"`
 			IssueKey string `json:"issue_key"`
 			Reason   string `json:"reason"`
 		} `json:"nodes"`
@@ -215,14 +221,24 @@ func capacityWaitingFor(ctx context.Context, e *Env, cfg *Config, plan string) (
 		return capacityWaiting{}, fmt.Errorf("relay dag-ready --plan %s: %w", plan, err)
 	}
 	set := map[string]struct{}{}
+	nodes := map[string]struct{}{}
 	for _, node := range reading.Ready {
 		if node.IssueKey != "" {
 			set[node.IssueKey] = struct{}{}
 		}
+		if node.NodeID != "" {
+			nodes[node.NodeID] = struct{}{}
+		}
 	}
 	for _, node := range reading.Nodes {
-		if node.Reason == capacityDeferNoCapacity && node.IssueKey != "" {
+		if node.Reason != capacityDeferNoCapacity {
+			continue
+		}
+		if node.IssueKey != "" {
 			set[node.IssueKey] = struct{}{}
+		}
+		if node.NodeID != "" {
+			nodes[node.NodeID] = struct{}{}
 		}
 	}
 	waiting := make([]string, 0, len(set))
@@ -230,7 +246,12 @@ func capacityWaitingFor(ctx context.Context, e *Env, cfg *Config, plan string) (
 		waiting = append(waiting, key)
 	}
 	sort.Strings(waiting)
-	out := capacityWaiting{Waiting: waiting, Held: reading.Pass.Held, Ceiling: reading.Pass.Ceiling}
+	waitingNodes := make([]string, 0, len(nodes))
+	for id := range nodes {
+		waitingNodes = append(waitingNodes, id)
+	}
+	sort.Strings(waitingNodes)
+	out := capacityWaiting{Waiting: waiting, WaitingNodes: waitingNodes, Held: reading.Pass.Held, Ceiling: reading.Pass.Ceiling}
 	if reading.Pass.HostMemory != nil {
 		out.HostMemory = reading.Pass.HostMemory.State
 	}

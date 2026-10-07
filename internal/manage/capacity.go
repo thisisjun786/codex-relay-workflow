@@ -74,6 +74,34 @@ type CapacityPlan struct {
 	Reasons         []string            `json:"reasons"`
 	Alert           bool                `json:"alert"`
 	Branches        *BranchCandidates   `json:"branches,omitempty"`
+	// BranchesUnmeasured is why the plan's branches were not measured: a store that predates the DAG
+	// zone holds no plan to read. The branches field is null beside it, which is how a reader tells
+	// "nobody could look" from the empty list of a plan nothing can be detached from.
+	BranchesUnmeasured string `json:"branches_unmeasured,omitempty"`
+}
+
+// MarshalJSON keeps a plan's three answers about its branches apart in the document: the key is
+// absent when nobody looked (a hold plan without --branches-always), null beside
+// branches_unmeasured when the store holds no DAG zone to measure them from, and a list otherwise.
+// A reader can then tell "nobody could look" from "nothing was there".
+func (p CapacityPlan) MarshalJSON() ([]byte, error) {
+	type plan CapacityPlan
+	wire := struct {
+		plan
+		Branches           json.RawMessage `json:"branches,omitempty"`
+		BranchesUnmeasured string          `json:"branches_unmeasured,omitempty"`
+	}{plan: plan(p), BranchesUnmeasured: p.BranchesUnmeasured}
+	switch {
+	case p.BranchesUnmeasured != "":
+		wire.Branches = json.RawMessage("null")
+	case p.Branches != nil:
+		encoded, err := json.Marshal(p.Branches)
+		if err != nil {
+			return nil, err
+		}
+		wire.Branches = encoded
+	}
+	return json.Marshal(wire)
 }
 
 type capacityPlanRef struct {
@@ -199,9 +227,11 @@ func Capacity(ctx context.Context, e *Env, cfg *Config, dry bool) (CapacityRepor
 
 		plan.WaitingMinutes, plan.Alert = capacityPersist(&next, previous.Plans[ref.Plan], plan, limits, now)
 		plan.Verdict, plan.Reasons = capacityJudge(plan, limits, report.Lane.MergesLastHour, report.Actions.Incident, report.Child429.Count)
-		if plan.Branches, err = branchAttach(ctx, e, cfg, stateDir, ref.Plan, plan.Verdict, plan.Waiting); err != nil {
+		branches, unmeasured, err := branchAttach(ctx, e, cfg, stateDir, ref.Plan, plan.Verdict, waiting.WaitingNodes)
+		if err != nil {
 			return CapacityReport{}, err
 		}
+		plan.Branches, plan.BranchesUnmeasured = branches, unmeasured
 		if plan.Verdict != capacityExpand {
 			plan.Alert = false
 		} else if plan.Alert {
@@ -391,6 +421,28 @@ func capacityLines(report CapacityReport) []string {
 			" slots %d/%d; host %s; receipts %s of %d; merges %s", plan.Plan, plan.Parent, plan.Family, plan.Verdict,
 			alert, len(plan.Waiting), strings.Join(plan.Waiting, ","), plan.WaitingMinutes, plan.Held, plan.Ceiling,
 			plan.HostMemory, median, plan.ReceiptWait.Count, merges))
+		lines = append(lines, branchTextLines(plan)...)
+	}
+	return lines
+}
+
+// branchTextLines is one plan's branch reading in text: one line per candidate, in the order the
+// document carries them, and one line naming why the reading is unmeasured.
+func branchTextLines(plan CapacityPlan) []string {
+	if plan.BranchesUnmeasured != "" {
+		return []string{"branches unmeasured: " + plan.BranchesUnmeasured}
+	}
+	if plan.Branches == nil {
+		return nil
+	}
+	lines := make([]string, 0, len(*plan.Branches))
+	for i, candidate := range *plan.Branches {
+		ids := make([]string, len(candidate.Nodes))
+		for j, node := range candidate.Nodes {
+			ids[j] = node.NodeID
+		}
+		lines = append(lines, fmt.Sprintf("capacity: %s branch %d: nodes %s ready %d/%d regions %s",
+			plan.Plan, i+1, strings.Join(ids, ","), candidate.ReadyCount, len(candidate.Nodes), strings.Join(candidate.Regions, ",")))
 	}
 	return lines
 }
