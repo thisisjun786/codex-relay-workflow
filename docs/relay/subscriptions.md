@@ -17,6 +17,31 @@ delivery establishes a new connection through its ordinary read/resume path.
 Release sends `thread/unsubscribe` on the original socket and never reconnects.
 A retired reader cannot complete or retire a replacement socket's watches.
 
+## The busy hold: a subscription kept for the recipient's idle edge
+
+A delivery that finds its recipient mid-turn waits a doubling backoff, and that timer used to be
+the only thing that ended the wait: the head of a parent's receipt line held every younger
+delivery behind it for up to five minutes at a time. While such a head waits, the relay holds a
+subscription on the recipient, so the App Server reports that recipient's `thread/status/changed`
+to this connection, and a report of `idle` or `notLoaded` releases the head (CRW-904, section 82
+of the CRW-781 decision).
+
+The hold is `Client.HoldThread`: one `thread/resume` carrying only `threadId` and `excludeTurns`,
+with no overrides and no settings, on a thread that is usually loaded already. It starts no turn
+and changes nothing about the recipient, so a busy recipient is never interrupted. It admits no
+watch, because an admitted watch holds the root's mutation gate until `Finish` and would block the
+delivery's own send; instead the root is marked busy-held, which `ready` and `prune` treat exactly
+as they treat the never-run-root retention: not releasable while it stands. The two are separate
+fields, so releasing one never drops the other, and a completed turn clears the retention without
+clearing the hold. Connection loss ends the hold with the subscription it described.
+
+The relay releases the hold (`Client.ReleaseThread`) when the recipient's backlog empties or the
+delivery is delivered, and the ordinary release worker then sends `thread/unsubscribe` on the
+original socket, with the existing retries and cleanup. A resume the host refuses leaves the
+doubling backoff as that recipient's only trigger; the backoff is the safety net either way, for a
+report the relay never saw, a host that reports no status, and a recipient that is busy again
+before the attempt lands.
+
 The reader records successful creation and turn acknowledgements before caller
 cancellation can hide them. Matching terminals are retained independently of
 the public notification buffer, including completion before the start reply.

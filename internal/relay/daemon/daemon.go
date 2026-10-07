@@ -69,6 +69,9 @@ type Daemon struct {
 	// mono is the clock the observation time limit runs on; nil is time.Now, whose monotonic reading no wall
 	// clock step can change. Tests move it by hand.
 	mono func() time.Time
+	// idle is the idle-edge pass of CRW-904: the status reports the host pushed for recipients whose
+	// head delivery waits out a busy backoff, and the subscription held on each of them.
+	idle *idleWake
 	// beforeSettle is called, when set, once the end of a turn is judged and before the settlement commits.
 	// Tests move the store in that gap by hand; production leaves it nil.
 	beforeSettle func(store.TurnReference)
@@ -78,7 +81,9 @@ func New(s *store.Store, host Host, clock delivery.Clock, channel *supervisor.Ch
 	d := delivery.NewService(s, clock)
 	ack := delivery.NewAck(d)
 	rc := delivery.NewReconciler(d)
-	return &Daemon{Store: s, Host: host, Clock: clock, Delivery: d, Ack: ack, Reconciler: rc, Intake: store.ReceiptIntake{Store: s, Now: clock.ISO}, Channel: channel, Policy: DefaultPolicy(), checks: &delivery.TurnChecks{Reconciler: rc, Budget: 4}}
+	daemon := &Daemon{Store: s, Host: host, Clock: clock, Delivery: d, Ack: ack, Reconciler: rc, Intake: store.ReceiptIntake{Store: s, Now: clock.ISO}, Channel: channel, Policy: DefaultPolicy(), checks: &delivery.TurnChecks{Reconciler: rc, Budget: 4}}
+	daemon.idle = newIdleWake(daemon)
+	return daemon
 }
 func (d *Daemon) Tick(ctx context.Context) (Report, error) {
 	d.mu.Lock()
@@ -128,10 +133,18 @@ func (d *Daemon) Tick(ctx context.Context) (Report, error) {
 	r.TurnsLost += tc.TurnsLost
 	r.TurnsUndecided += tc.TurnsUndecided
 	r.Notes = append(r.Notes, tc.Notes...)
+	// The idle edge (CRW-904). The status reports the host pushed since the last tick release the
+	// heads they name before this tick's delivery pass, and the subscription below is opened for
+	// every recipient the pass leaves waiting out a busy backoff. Both are no-ops on a host that
+	// does not offer them: every scripted double, and every transport that is not the App Server.
+	d.idle.idle(ctx, d.Host, now)
+	r.Notes = append(r.Notes, d.idle.notes...)
 	var sent delivery.TickCounts
 	if err := (&delivery.Scheduler{Delivery: d.Delivery, Ack: d.Ack, MaxSendsTick: d.Policy.MaxSends}).Deliver(ctx, d.Host, now, &sent); err != nil {
 		return r, err
 	}
+	d.idle.hold(ctx, d.Host, now)
+	r.Notes = append(r.Notes, d.idle.notes...)
 	r.Delivered += sent.Delivered
 	r.Deferred += sent.Deferred
 	r.Skipped += sent.Skipped

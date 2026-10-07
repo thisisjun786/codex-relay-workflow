@@ -585,11 +585,25 @@ event is of an earlier generation, or whose relationship has spent its hourly bu
 holds nothing back, so one relationship's trouble cannot keep its siblings waiting (CRW-259). A delivery
 that supervision has overtaken (an obsolete merge-turn grant, a superseded revision) is only found when it
 is attempted, so it can still head a line until its backoff ends. A line is
-held for one backoff at a time, at most `BusyMax` ahead; a recipient that turns idle is reached when the
-oldest waiting delivery's backoff ends, up to five minutes and a tick later, and a delivery held at
-`busy_cap` stops holding. Two limits remain: a refusal marker an earlier tick left still starts the next
+held for one backoff at a time, at most `BusyMax` ahead, and a delivery held at `busy_cap` stops
+holding. Two limits remain: a refusal marker an earlier tick left still starts the next
 walk after the refused row, and a relay CLI `deliver` can still send a delivery ahead of one that is
 sending under a live lease.
+
+The timer is not what ends the wait. While the head waits out its backoff the relay holds a
+subscription on the recipient (the override-free `thread/resume` in
+[subscriptions](subscriptions.md#the-busy-hold-a-subscription-kept-for-the-recipients-idle-edge)),
+and a `thread/status/changed` reporting `idle` or `notLoaded` writes the head's wake, one row in the
+zone's `delivery_wakes` table. A woken head is due at once and is attempted at its parent's next turn,
+and it stays the head of the line until it is claimed: `busyHeadSQL`, the due list, `Attempt` and the
+claim all read the wake, judged against the row still being the `deferred_busy` one the wake was
+written for, and the claim or the next busy answer spends it. The wake never moves
+`next_eligible_at`, so an attempt that is woken early and meets the recipient busy again keeps
+`due = min(original, recomputed)` and the early wake never pushes the safety-net timer later. The
+backoff is the trigger for every case the report cannot cover: a report the relay never saw, a host
+that reports no status, a recipient the relay could not subscribe, and a recipient that is busy again
+before the attempt lands. The min send interval and the hourly budget pace the send as before, and a
+busy recipient is still never interrupted: the wake only decides when the relay looks.
 
 A delivery that has reached its busy or pre-send attempt cap is annotated when its generation
 advances. Once a cap sets a hold, `attempt` returns before the pre-send supersession check, so
