@@ -18,7 +18,8 @@ import (
 	// also link internal/testsupport: that package refuses a database below a live relay state
 	// directory before any TestMain runs, so a test that forgot isolation is refused rather than
 	// reading the operator's live state (internal/testsupport/livestate_test.go).
-	_ "github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // The fixture clock: every row this file writes is placed relative to one base instant, so a
@@ -42,11 +43,35 @@ func dagReviewAt(minutes int) string {
 // dagReviewFixture is a temporary relay store built row by row. It is created through the
 // exported store schema, so the fixture has the real store shape and internal/relay is never
 // edited to make a test possible.
+//
+// A plan is described as a header, its revisions, its nodes and its edges, and written through the
+// DAG repository (dag.Repo.Put) when the fixture closes: the scheduler's own reading verifies every
+// node's slice digest and the plan's state digest against the revision log, so a review that reads
+// a plan through the scheduler needs a plan that reads back. Every other row is inserted directly.
 type dagReviewFixture struct {
 	t     *testing.T
 	dir   string
 	path  string
 	store *store.Store
+	plans map[string]*dagReviewPlanFixture
+	order []string
+	// written is set by the first writePlans, so a test that needs raw plan rows afterwards can
+	// write them itself and the close does not write the plan a second time.
+	written bool
+}
+
+// dagReviewPlanFixture is one plan a test described: its header and its revisions in order.
+type dagReviewPlanFixture struct {
+	planID, project string
+	createdAt       string
+	revisions       []dagReviewRevisionFixture
+}
+
+// dagReviewRevisionFixture is one revision of a described plan: the instant it is recorded at and
+// the changes it carries.
+type dagReviewRevisionFixture struct {
+	at      string
+	changes []dag.Change
 }
 
 func dagReviewNewFixture(t *testing.T) *dagReviewFixture {
@@ -58,24 +83,30 @@ func dagReviewNewFixture(t *testing.T) *dagReviewFixture {
 	if err != nil {
 		t.Fatalf("create the fixture store: %v", err)
 	}
-	f := &dagReviewFixture{t: t, dir: dir, path: path, store: st}
+	f := &dagReviewFixture{t: t, dir: dir, path: path, store: st, plans: map[string]*dagReviewPlanFixture{}}
 	t.Cleanup(f.close)
 	return f
 }
 
 func (f *dagReviewFixture) exec(query string, args ...any) {
 	f.t.Helper()
+	// A row that names a plan or one of its nodes needs the plan written first, and the DAG
+	// repository is the only writer that leaves rows the scheduler's reading accepts. Every raw
+	// insert therefore materializes the described plans before it runs.
+	f.writePlans()
 	if _, err := f.store.DB.Exec(query, args...); err != nil {
 		f.t.Fatalf("fixture insert: %v\n%s", err, query)
 	}
 }
 
-// close releases the writer, so the read-only review under test sees a settled file.
+// close writes every plan the test described and releases the writer, so the read-only review
+// under test sees a settled file.
 func (f *dagReviewFixture) close() {
 	f.t.Helper()
 	if f.store == nil {
 		return
 	}
+	f.writePlans()
 	if err := f.store.Close(); err != nil {
 		f.t.Fatalf("close the fixture store: %v", err)
 	}
@@ -96,24 +127,97 @@ func dagReviewNull(value string) any {
 	return value
 }
 
-func (f *dagReviewFixture) plan(planID, project string) {
-	f.exec("INSERT INTO dag_plans (plan_id, project_key, created_by_task_id, created_at) VALUES (?,?,?,?)",
-		planID, project, "task-parent", dagReviewAt(0))
+// planFixture is the described plan, created on first mention.
+func (f *dagReviewFixture) planFixture(planID string) *dagReviewPlanFixture {
+	if p, seen := f.plans[planID]; seen {
+		return p
+	}
+	p := &dagReviewPlanFixture{planID: planID, project: "project-1", createdAt: dagReviewAt(0)}
+	f.plans[planID] = p
+	f.order = append(f.order, planID)
+	return p
 }
 
+func (f *dagReviewFixture) plan(planID, project string) {
+	f.planFixture(planID).project = project
+}
+
+// revision records that the plan has a revision at the given instant. A node or an edge added
+// afterwards goes into the newest revision the test named, which is how the fixture reads: a test
+// that adds a node after naming revision 2 is adding a node of revision 2.
 func (f *dagReviewFixture) revision(planID string, rev int, at string) {
-	f.exec("INSERT INTO dag_plan_revisions (plan_id, revision_no, parent_revision_no, request_id, request_digest, change_json, state_digest, coordinator_epoch, author_task_id, recorded_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
-		planID, rev, rev-1, fmt.Sprintf("%s-request-%d", planID, rev), "digest", "{}", "state", 0, "task-parent", at)
+	p := f.planFixture(planID)
+	for len(p.revisions) < rev {
+		p.revisions = append(p.revisions, dagReviewRevisionFixture{at: at})
+	}
+	p.revisions[rev-1].at = at
+}
+
+// revisionIndex is the newest revision the test named, creating revision 1 when it named none.
+func (f *dagReviewFixture) revisionIndex(planID string) int {
+	p := f.planFixture(planID)
+	if len(p.revisions) == 0 {
+		p.revisions = append(p.revisions, dagReviewRevisionFixture{at: dagReviewAt(0)})
+	}
+	return len(p.revisions) - 1
 }
 
 func (f *dagReviewFixture) node(planID, nodeID, issue string) {
-	f.exec("INSERT INTO dag_nodes (plan_id, node_id, introduced_rev, retired_rev, slice_digest, issue_key, node_kind, title, criteria_set_digest, supersedes_node_id) VALUES (?,?,1,NULL,?,?,?,?,?,NULL)",
-		planID, nodeID, "slice-"+nodeID, issue, "implementation", issue, "criteria")
+	p := f.planFixture(planID)
+	i := f.revisionIndex(planID)
+	p.revisions[i].changes = append(p.revisions[i].changes, dag.Change{Op: dag.OpAddNode, Node: &dag.Node{
+		NodeID: nodeID, IssueKey: issue, Kind: dag.NodeImplementation, CriteriaSetDigest: testsupport.Dig("criteria " + nodeID)}})
+}
+
+// retire adds the change that takes a node out of the plan at the named revision.
+func (f *dagReviewFixture) retire(planID, nodeID string, rev int) {
+	p := f.planFixture(planID)
+	p.revisions[rev-1].changes = append(p.revisions[rev-1].changes, dag.Change{Op: dag.OpRetireNode, NodeID: nodeID})
 }
 
 func (f *dagReviewFixture) edge(planID, edgeID, from, to, kind string, introducedRev int) {
-	f.exec("INSERT INTO dag_edges (plan_id, edge_id, introduced_rev, retired_rev, from_node_id, to_node_id, kind, target_repository, target_base_ref, pins_code_head) VALUES (?,?,?,NULL,?,?,?,?,?,0)",
-		planID, edgeID, introducedRev, from, to, kind, "owner/repo", "dev")
+	f.addEdge(planID, edgeID, from, to, kind, introducedRev, "", "")
+}
+
+// addEdge adds one edge to the named revision. An integrated edge names the target it orders; the
+// other kinds carry none, because only an integrated edge hands a result to a branch.
+func (f *dagReviewFixture) addEdge(planID, edgeID, from, to, kind string, introducedRev int, repository, baseRef string) {
+	p := f.planFixture(planID)
+	for len(p.revisions) < introducedRev {
+		p.revisions = append(p.revisions, dagReviewRevisionFixture{at: dagReviewAt(0)})
+	}
+	edge := &dag.Edge{EdgeID: edgeID, FromNodeID: from, ToNodeID: to, Kind: kind}
+	if kind == dag.EdgeIntegrated {
+		edge.TargetRepository, edge.TargetBaseRef = "owner/repo", "dev"
+	}
+	if repository != "" {
+		edge.TargetRepository, edge.TargetBaseRef = repository, baseRef
+	}
+	p.revisions[introducedRev-1].changes = append(p.revisions[introducedRev-1].changes, dag.Change{Op: dag.OpAddEdge, Edge: edge})
+}
+
+// writePlans puts every plan the test described through the DAG repository, then moves the plan
+// header and each revision onto the fixture clock. The repository stamps them with the wall clock,
+// and a threshold test reads as "older than the stall" only against the fixture's base instant.
+func (f *dagReviewFixture) writePlans() {
+	f.t.Helper()
+	if f.written {
+		return
+	}
+	f.written = true
+	ctx := context.Background()
+	for _, planID := range f.order {
+		p := f.plans[planID]
+		for i, rv := range p.revisions {
+			at := rv.at
+			repo := &dag.Repo{Store: f.store, Now: func() string { return at }}
+			rev := dag.Revision{PlanID: p.planID, ProjectKey: p.project, RequestID: fmt.Sprintf("%s-request-%d", p.planID, i+1),
+				ExpectedParent: int64(i), AuthorTaskID: "task-parent", Changes: rv.changes}
+			if _, err := repo.Put(ctx, rev); err != nil {
+				f.t.Fatalf("put revision %d of %s: %v", i+1, p.planID, err)
+			}
+		}
+	}
 }
 
 func (f *dagReviewFixture) release(planID, nodeID, digest, at string) {
@@ -122,13 +226,49 @@ func (f *dagReviewFixture) release(planID, nodeID, digest, at string) {
 }
 
 func (f *dagReviewFixture) acceptance(planID, nodeID, acceptanceID, relationshipID, at string) {
-	f.exec("INSERT INTO dag_acceptances (acceptance_id, plan_id, node_id, manifest_digest, relationship_id, execution_generation, event_id, revision_hash, criteria_set_digest, verdict, ack_tier, verdict_turn_id, rule_version_json, accepted_by_task_id, coordinator_epoch, accepted_at, state) VALUES (?,?,?,?,?,1,'event','revision','criteria','verified','verified','turn','{}','task-parent',0,?,'active')",
-		acceptanceID, planID, nodeID, "manifest-"+nodeID, relationshipID, at)
+	f.acceptanceHead(planID, nodeID, acceptanceID, relationshipID, "", at)
 }
 
+// acceptanceHead records an active acceptance of a node whose accepted head is a commit. The
+// scheduler integrates a node only when it has a head, so a test of a landing needs one; the event
+// and the revision are the fixed pair the mergedMark helper names.
+func (f *dagReviewFixture) acceptanceHead(planID, nodeID, acceptanceID, relationshipID, headSHA, at string) {
+	f.exec("INSERT INTO dag_acceptances (acceptance_id, plan_id, node_id, manifest_digest, relationship_id, execution_generation, event_id, revision_hash, criteria_set_digest, verdict, head_sha, ack_tier, verdict_turn_id, rule_version_json, accepted_by_task_id, coordinator_epoch, accepted_at, state) VALUES (?,?,?,?,?,1,'event','revision','criteria','verified',?,'verified','turn','{}','task-parent',0,?,'active')",
+		acceptanceID, planID, nodeID, "manifest-"+nodeID, relationshipID, dagReviewNull(headSHA), at)
+}
+
+// observation records one integration observation of the acceptance in the default target
+// (owner/repo#dev). The sequence counts up per acceptance and target, so a later call is a later
+// observation of the same target, which is what tells a withdrawn landing from a fresh one.
 func (f *dagReviewFixture) observation(acceptanceID, observedAt string, isAncestor bool, revertedBy string) {
-	f.exec("INSERT INTO dag_integration_observations (observation_id, acceptance_id, repository, base_ref, subject_sha, tip_sha, is_ancestor, method, observed_seq, reverted_by, observed_at) VALUES (?,?,?,?,?,?,?,?,1,?,?)",
-		"observation-"+acceptanceID, acceptanceID, "owner/repo", "dev", "subject", "tip", dagReviewFlag(isAncestor), "ancestry", dagReviewNull(revertedBy), observedAt)
+	f.observationIn(acceptanceID, "owner/repo", "dev", observedAt, isAncestor, revertedBy)
+}
+
+// observationIn records one integration observation in a named target. The subject it observes is
+// the acceptance's own accepted head, because that is what the scheduler's integration rule
+// compares an observation against; the sequence counts up per acceptance and target, so a later
+// call is a later observation of the same target.
+func (f *dagReviewFixture) observationIn(acceptanceID, repository, baseRef, observedAt string, isAncestor bool, revertedBy string) {
+	f.t.Helper()
+	f.writePlans()
+	var head string
+	if err := f.store.DB.QueryRow("SELECT COALESCE(head_sha, '') FROM dag_acceptances WHERE acceptance_id = ?", acceptanceID).Scan(&head); err != nil {
+		f.t.Fatalf("read the accepted head of %s: %v", acceptanceID, err)
+	}
+	var seq int
+	if err := f.store.DB.QueryRow("SELECT COALESCE(MAX(observed_seq), 0) + 1 FROM dag_integration_observations WHERE acceptance_id = ? AND repository = ? AND base_ref = ?",
+		acceptanceID, repository, baseRef).Scan(&seq); err != nil {
+		f.t.Fatalf("count the observations of %s: %v", acceptanceID, err)
+	}
+	f.exec("INSERT INTO dag_integration_observations (observation_id, acceptance_id, repository, base_ref, subject_sha, tip_sha, is_ancestor, method, observed_seq, reverted_by, observed_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+		fmt.Sprintf("observation-%s-%d", acceptanceID, seq), acceptanceID, repository, baseRef, head, "tip", dagReviewFlag(isAncestor), "ancestry", seq, dagReviewNull(revertedBy), observedAt)
+}
+
+// mergedMark records the parent's merged mark on the acceptance's event, generation and revision,
+// which is half of what the scheduler's integration rule needs beside a contained observation.
+func (f *dagReviewFixture) mergedMark(relationshipID, at string) {
+	f.exec("INSERT OR IGNORE INTO assignment_marks (relationship_id, mark, event_id, execution_generation, revision_hash, evidence, actor, marked_at) VALUES (?, 'merged', 'event', 1, 'revision', 'merged', 'parent', ?)",
+		relationshipID, at)
 }
 
 func (f *dagReviewFixture) region(planID, nodeID, path, kind, key, change string, exclusive bool) {
@@ -142,13 +282,42 @@ func (f *dagReviewFixture) grade(planID, nodeID, path, kind, key, grade, rule st
 }
 
 func (f *dagReviewFixture) execution(planID, nodeID, relationshipID string) {
-	f.exec("INSERT INTO dag_node_executions (plan_id, node_id, relationship_id, execution_generation, manifest_digest, kind) VALUES (?,?,?,1,'manifest','initial')",
-		planID, nodeID, relationshipID)
+	f.executionKind(planID, nodeID, relationshipID, 1, dagReviewExecutionInitial)
 }
 
+// executionKind records one execution of a node: the generation it ran and the kind of run it was
+// (initial, correction, or a parent_handover from dag-adopt).
+func (f *dagReviewFixture) executionKind(planID, nodeID, relationshipID string, generation int, kind string) {
+	f.exec("INSERT INTO dag_node_executions (plan_id, node_id, relationship_id, execution_generation, manifest_digest, kind) VALUES (?,?,?,?,?,?)",
+		planID, nodeID, relationshipID, generation, "manifest", kind)
+}
+
+// boundExecution records a node released to an active relationship: the relationship with its
+// bound generation (the registry refuses one whose generation the store does not carry), and the
+// execution row that binds them. It returns the relationship id.
+func (f *dagReviewFixture) boundExecution(planID, nodeID, kind string, generation int) string {
+	relationshipID := "relationship-" + nodeID
+	f.relayReadRelationship(relationshipID, "CRW-"+nodeID, "active", "parent", "child-"+nodeID, generation)
+	f.executionKind(planID, nodeID, relationshipID, generation, kind)
+	return relationshipID
+}
+
+// closedRelease records a release whose managed start was abandoned and then ended by
+// dag-release-close: the intent no longer owns the node, so the scheduler reads it as planned.
+func (f *dagReviewFixture) closedRelease(planID, nodeID, digest, at string) {
+	f.release(planID, nodeID, digest, at)
+	f.exec("INSERT INTO dag_release_recoveries (plan_id, node_id, manifest_digest, abandoned_request_id, action, slot_released, reason, recorded_by, recorded_at) VALUES (?,?,?,?,'closed',1,'the managed start was abandoned','parent',?)",
+		planID, nodeID, digest, "request-"+digest, at)
+}
+
+// relationship records a live relationship and the generation it stands on. The generation row is
+// written with it because the registry refuses a relationship whose generation the store does not
+// carry, and the scheduler reads a node's relationship through the registry.
 func (f *dagReviewFixture) relationship(relationshipID, issue, createdAt string) {
 	f.exec("INSERT INTO relationships (relationship_id, issue_key, status, parent_task_id, parent_host_id, child_task_id, child_host_id, execution_generation, artifact_roots, allowed_recipients, created_at, updated_at) VALUES (?,?,'active','parent','host','child','host',1,'[]','[]',?,?)",
 		relationshipID, issue, createdAt, createdAt)
+	f.exec("INSERT INTO generations (relationship_id, execution_generation, dispatch_request_id, anchor_state, dispatch_turn_id, reason, opened_at, bound_at) VALUES (?,1,?,'bound',?,NULL,?,?)",
+		relationshipID, "dispatch-"+relationshipID, "turn-"+relationshipID, createdAt, createdAt)
 }
 
 func (f *dagReviewFixture) scope(relationshipID, project string) {

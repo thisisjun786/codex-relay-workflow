@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dagsched"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 // dagReviewUnmeasured is the state of a reading the store cannot support: the table the check
@@ -27,6 +28,15 @@ const (
 	dagReviewKindLandedNotObserved         = "landed_not_observed"
 	dagReviewKindChildWithoutRelease       = "child_without_release"
 	dagReviewKindLaneTurnStalled           = "lane_turn_stalled"
+)
+
+// The execution kinds that are a re-execution of a node. A correction generation leaves a
+// dag_node_executions row of kind correction and no dag_releases row, so the scheduler's own
+// execution links are what tell a node that ran twice from one that ran once. A parent_handover
+// (dag-adopt binding a replacement parent to the same generation) is not a re-execution.
+const (
+	dagReviewExecutionInitial    = "initial"
+	dagReviewExecutionCorrection = "correction"
 )
 
 // dagReviewAnomalyExit is the status of a review that found something; a review that found
@@ -100,6 +110,10 @@ type dagReviewInput struct {
 	facts  []dagReviewFacts
 	lanes  []dagReviewLaneTurn
 	review *Review
+	// edgeReadingReported is whether the one reading this review cannot take was already named.
+	// It is a property of the scheduler's exported surface rather than of a plan, so it is
+	// recorded once for the review rather than once per plan.
+	edgeReadingReported bool
 }
 
 // DagReview is crw manage dag-review: it reads the relay store read-only and reports the DAG
@@ -123,33 +137,42 @@ func DagReview(ctx context.Context, e *Env, cfg *Config) (Review, error) {
 	if err != nil {
 		return review, err
 	}
-	store, err := dagReviewOpenStore(ctx, state)
+	handle, err := dagReviewOpenStore(ctx, state)
 	if err != nil {
 		return review, err
 	}
-	defer store.Close()
-	plans, err := store.dagReviewReadPlans(ctx, section.Plans)
-	if err != nil {
-		return review, fmt.Errorf("read the plans: %w", err)
-	}
-	if err := dagReviewCheckConfigured(section.Plans, plans); err != nil {
-		return review, err
-	}
-	in := &dagReviewInput{store: store, now: e.Now(), stall: time.Duration(stall) * time.Minute, review: &review}
-	for _, plan := range plans {
-		facts, err := store.dagReviewReadFacts(ctx, plan, &review.Checks)
+	defer handle.Close()
+	in := &dagReviewInput{store: handle, now: e.Now(), stall: time.Duration(stall) * time.Minute, review: &review}
+	// One open, one snapshot: the plans, the scheduler's own reading of each plan beside this
+	// review's list queries, the merge lanes and the six checks all run inside the same deferred
+	// snapshot, so no reading of the review sees a different store state from another. The open is
+	// the relay-read helper's (CRW-836), so the review creates no write-ahead log or index either.
+	if err := handle.dagReviewSnapshot(ctx, state, func(ctx context.Context, st *store.Store) error {
+		plans, err := handle.dagReviewReadPlans(ctx, section.Plans)
 		if err != nil {
-			return review, fmt.Errorf("read plan %s: %w", plan.planID, err)
+			return fmt.Errorf("read the plans: %w", err)
 		}
-		in.facts = append(in.facts, facts)
-	}
-	if in.lanes, err = store.dagReviewReadLanes(ctx, section.Plans); err != nil {
-		return review, fmt.Errorf("read the merge lanes: %w", err)
-	}
-	for _, source := range dagReviewSources {
-		if err := source(ctx, in); err != nil {
-			return review, err
+		if err := dagReviewCheckConfigured(section.Plans, plans); err != nil {
+			return err
 		}
+		for _, plan := range plans {
+			facts, err := handle.dagReviewReadFacts(ctx, st, plan, &review.Checks)
+			if err != nil {
+				return fmt.Errorf("read plan %s: %w", plan.planID, err)
+			}
+			in.facts = append(in.facts, facts)
+		}
+		if in.lanes, err = handle.dagReviewReadLanes(ctx, section.Plans); err != nil {
+			return fmt.Errorf("read the merge lanes: %w", err)
+		}
+		for _, source := range dagReviewSources {
+			if err := source(ctx, in); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		return review, err
 	}
 	sort.SliceStable(review.Anomalies, func(i, j int) bool {
 		if review.Anomalies[i].Kind != review.Anomalies[j].Kind {
@@ -186,7 +209,7 @@ func dagReviewCheckConfigured(wanted []string, plans []dagReviewPlanRef) error {
 func dagReviewStoreSources(ctx context.Context, in *dagReviewInput) error {
 	for _, facts := range in.facts {
 		dagReviewPlanShape(in, facts)
-		dagReviewReleasedBeforePredecessor(in, facts)
+		dagReviewReleasedBeforePredecessor(in)
 		dagReviewReleasedRepeatedly(in, facts)
 		dagReviewExclusiveOverlapRunning(in, facts)
 		dagReviewLandedNotObserved(in, facts)
@@ -197,156 +220,108 @@ func dagReviewStoreSources(ctx context.Context, in *dagReviewInput) error {
 	return dagReviewLaneTurnStalled(in)
 }
 
-// dagReviewPlanShape records what the review counted for one plan.
+// dagReviewPlanShape records what the review counted for one plan. Every count is the scheduler's
+// own: the denominator, the accepted and integrated measures and the stages come from Progress.
+// Only the edge count is this review's, and an edge is counted rather than judged.
 func dagReviewPlanShape(in *dagReviewInput, facts dagReviewFacts) {
-	integrated := 0
-	for _, acceptance := range facts.acceptances {
-		if dagReviewIntegratedAt(facts, acceptance.nodeID, "", "") != "" {
-			integrated++
+	progress := facts.progress
+	released := 0
+	for _, node := range progress.Nodes {
+		if dagReviewNodeReleased(node.Stage) {
+			released++
 		}
 	}
 	in.review.Plans = append(in.review.Plans, DagReviewPlan{
-		Plan: facts.plan.planID, Revision: facts.revision, Nodes: len(facts.nodes), Edges: len(facts.edges),
-		Released: len(facts.releases), Accepted: len(facts.acceptances), Integrated: integrated,
+		Plan: progress.Reading.PlanID, Revision: int(progress.Denominator.Revision),
+		Nodes: progress.Denominator.Nodes, Edges: len(facts.edges),
+		Released: released, Accepted: progress.Cumulative.Accepted.Nodes, Integrated: progress.Cumulative.Integrated.Nodes,
 	})
 }
 
-// dagReviewIssueByNode maps every live node id of the plan to its issue.
+// dagReviewNodeReleased is whether the plan has released the node. Progress places a node nobody
+// owns yet in one of four stages, and a node reaches any other stage only after a release, so the
+// released count is the nodes outside those four.
+func dagReviewNodeReleased(stage string) bool {
+	switch stage {
+	case dagsched.StageWaitingPredecessor, dagsched.StageWaitingDecision, dagsched.StageWaitingResource, dagsched.StageReady:
+		return false
+	}
+	return true
+}
+
+// dagReviewIssueByNode maps every live node id of the plan to its issue, as the scheduler's own
+// reading of the plan spells it.
 func dagReviewIssueByNode(facts dagReviewFacts) map[string]string {
 	issue := map[string]string{}
-	for _, node := range facts.nodes {
-		issue[node.nodeID] = node.issueKey
+	for _, node := range facts.progress.Nodes {
+		issue[node.NodeID] = node.IssueKey
 	}
 	return issue
 }
 
-// dagReviewFirstRelease is each node's first release instant, which is when the node was
-// released for execution.
-func dagReviewFirstRelease(facts dagReviewFacts) map[string]time.Time {
-	first := map[string]time.Time{}
-	for _, release := range facts.releases {
-		instant, ok := dagReviewInstant(release.decidedAt)
-		if !ok {
-			continue
-		}
-		if existing, seen := first[release.nodeID]; !seen || instant.Before(existing) {
-			first[release.nodeID] = instant
-		}
+// dagReviewReleasedBeforePredecessor records that this review cannot take the reading. When an
+// edge became satisfied is known only to the scheduler's unexported edgeStatus and integratedAt,
+// and it exports no reading of that time yet, so the review names the gap as an unmeasured check
+// and reports no anomaly rather than judging edge satisfaction with a second implementation of
+// the scheduler's rule. internal/relay is not edited for it: the export is a follow-up elsewhere.
+func dagReviewReleasedBeforePredecessor(in *dagReviewInput) {
+	if in.edgeReadingReported {
+		return
 	}
-	return first
+	in.edgeReadingReported = true
+	in.review.Checks = append(in.review.Checks, Check{
+		Name: dagReviewKindReleasedBeforePredecessor, State: dagReviewUnmeasured,
+		Detail: "the scheduler exports no edge reading with the time it became satisfied",
+	})
 }
 
-// dagReviewIntegratedAt is the node's earliest effective integration observation, or "" when it
-// has none: an observation that is not an ancestor or that was reverted does not integrate. An
-// empty repository means any target; a named one narrows the reading to that repository and base
-// ref, which is how an integrated edge is judged, because the edge names the target it orders.
-func dagReviewIntegratedAt(facts dagReviewFacts, nodeID, repository, baseRef string) string {
-	byAcceptance := map[string]string{}
-	for _, acceptance := range facts.acceptances {
-		byAcceptance[acceptance.acceptanceID] = acceptance.nodeID
-	}
-	best := ""
-	for _, observation := range facts.observations {
-		if !observation.isAncestor || observation.revertedBy != "" {
-			continue
-		}
-		if byAcceptance[observation.acceptanceID] != nodeID {
-			continue
-		}
-		if repository != "" && (observation.repository != repository || observation.baseRef != baseRef) {
-			continue
-		}
-		if best == "" || observation.observedAt < best {
-			best = observation.observedAt
-		}
-	}
-	return best
-}
-
-// dagReviewReleasedBeforePredecessor reports an integrated edge whose successor was released
-// before the predecessor was observed integrated. An edge introduced after the release orders
-// the merge rather than the release, so the release could not have waited for it.
-func dagReviewReleasedBeforePredecessor(in *dagReviewInput, facts dagReviewFacts) {
+// dagReviewReleasedRepeatedly reports a node the relay executed more than once. The executions are
+// the scheduler's own (Progress node links): a correction generation leaves a row in
+// dag_node_executions and no dag_releases row, so counting releases would read a node that ran
+// twice as run once. The detail carries how many times, because a correction and a redefinition
+// are not the same thing.
+func dagReviewReleasedRepeatedly(in *dagReviewInput, facts dagReviewFacts) {
 	issue := dagReviewIssueByNode(facts)
-	first := dagReviewFirstRelease(facts)
-	for _, edge := range facts.edges {
-		if edge.kind != "integrated" {
-			continue
+	for _, node := range facts.progress.Nodes {
+		initial, correction := 0, 0
+		for _, execution := range node.Links.Executions {
+			switch execution.Kind {
+			case dagReviewExecutionInitial:
+				initial++
+			case dagReviewExecutionCorrection:
+				correction++
+			}
 		}
-		releasedAt, released := first[edge.to]
-		if !released {
+		if initial+correction < 2 {
 			continue
-		}
-		if introduced, ok := dagReviewInstant(edge.introducedAt); ok && introduced.After(releasedAt) {
-			continue
-		}
-		observed := dagReviewIntegratedAt(facts, edge.from, edge.repository, edge.baseRef)
-		instant, ok := dagReviewInstant(observed)
-		if ok && !instant.After(releasedAt) {
-			continue
-		}
-		detail := "the predecessor was never observed integrated"
-		if ok {
-			detail = "the predecessor was observed integrated at " + observed
 		}
 		in.review.Anomalies = append(in.review.Anomalies, DagReviewAnomaly{
-			Kind: dagReviewKindReleasedBeforePredecessor, Plan: facts.plan.planID, Node: edge.to,
-			Issue: issue[edge.to], Detail: detail,
+			Kind: dagReviewKindReleasedRepeatedly, Plan: facts.plan.planID, Node: node.NodeID, Issue: issue[node.NodeID],
+			Detail: fmt.Sprintf("executed %d times (initial %d, correction %d)", initial+correction, initial, correction),
 		})
 	}
 }
 
-// dagReviewReleasedRepeatedly reports a node released more than once; the detail carries how
-// many times, because a correction and a redefinition are not the same thing.
-func dagReviewReleasedRepeatedly(in *dagReviewInput, facts dagReviewFacts) {
-	issue := dagReviewIssueByNode(facts)
-	count := map[string]int{}
-	for _, release := range facts.releases {
-		count[release.nodeID]++
-	}
-	for _, node := range dagReviewSortedKeys(count) {
-		if count[node] > 1 {
-			in.review.Anomalies = append(in.review.Anomalies, DagReviewAnomaly{
-				Kind: dagReviewKindReleasedRepeatedly, Plan: facts.plan.planID, Node: node, Issue: issue[node],
-				Detail: fmt.Sprintf("released %d times", count[node]),
-			})
-		}
-	}
-}
-
-// dagReviewExclusiveOverlapRunning reports two nodes in flight at once whose declared regions
-// the scheduler grades exclusive. Local and mechanical overlaps are released on purpose and
-// settled at merge time, so they are not anomalies.
+// dagReviewExclusiveOverlapRunning reports two nodes in flight at once whose declared regions the
+// scheduler grades exclusive. The in-flight set is the scheduler's own stage of each node: a node
+// holds its edit regions from its release until its accepted head lands, which is exactly the span
+// between the releasing and integrated stages, and a release ended by dag-release-close owns
+// nothing (the scheduler reads such a node planned, then ready). A node whose stage is ambiguous
+// cannot be placed, so it is named as an unmeasured check instead of being reported. Local and
+// mechanical overlaps are released on purpose and settled at merge time, so they are not anomalies.
 func dagReviewExclusiveOverlapRunning(in *dagReviewInput, facts dagReviewFacts) {
 	issue := dagReviewIssueByNode(facts)
-	first := dagReviewFirstRelease(facts)
-	live := map[string]bool{}
-	for _, node := range facts.nodes {
-		live[node.nodeID] = true
-	}
-	landed := map[string]bool{}
-	for _, turn := range in.lanes {
-		if turn.state == "landed" {
-			landed[turn.relationshipID] = true
-		}
-	}
-	relationship := map[string]string{}
-	for _, execution := range facts.executions {
-		relationship[execution.nodeID] = execution.relationshipID
-	}
 	var inflight []string
-	for node := range first {
-		// A node retired by a later revision is no longer in the plan, so it holds nothing.
-		if !live[node] {
+	for _, node := range facts.progress.Nodes {
+		if node.Stage == dagsched.StageAmbiguous {
+			in.review.Checks = append(in.review.Checks, Check{
+				Name: dagReviewKindExclusiveOverlapRunning, State: dagReviewUnmeasured,
+				Detail: fmt.Sprintf("node %s is in the ambiguous stage, so whether it holds its regions cannot be read", node.NodeID),
+			})
 			continue
 		}
-		// A node whose relationship is closed or cancelled no longer holds its regions, and one
-		// whose lane already landed released them at the landing (the scheduler's bound state).
-		if id := relationship[node]; id != "" && (!facts.liveRelationships[id] || landed[id]) {
-			continue
-		}
-		if dagReviewIntegratedAt(facts, node, "", "") == "" {
-			inflight = append(inflight, node)
+		if dagReviewNodeInFlight(node.Stage) {
+			inflight = append(inflight, node.NodeID)
 		}
 	}
 	sort.Strings(inflight)
@@ -364,6 +339,17 @@ func dagReviewExclusiveOverlapRunning(in *dagReviewInput, facts dagReviewFacts) 
 			}
 		}
 	}
+}
+
+// dagReviewNodeInFlight is whether a Progress stage means the node holds its edit regions now: the
+// plan has released it and its accepted head has not landed.
+func dagReviewNodeInFlight(stage string) bool {
+	switch stage {
+	case dagsched.StageReleasing, dagsched.StageCreationUnknown, dagsched.StageRunning, dagsched.StageReported,
+		dagsched.StageVerifying, dagsched.StageCorrecting, dagsched.StageAccepted, dagsched.StageStale, dagsched.StagePaused:
+		return true
+	}
+	return false
 }
 
 // dagReviewExclusivePair grades every pair of the two nodes' regions with the scheduler's own
@@ -388,9 +374,13 @@ func dagReviewRegionOf(region dagReviewRegion) dagsched.Region {
 	}
 }
 
-// dagReviewLandedNotObserved reports a lane that landed an acceptance whose node was never
-// observed integrated, once the landing has stood still past the threshold. The turn names the
-// node through its relationship, which is the link the relay itself keeps.
+// dagReviewLandedNotObserved reports a lane that landed an acceptance whose node was never observed
+// integrated in the target that lane landed on, once the landing has stood still past the
+// threshold. The turn names the node through its relationship, which is the link the relay itself
+// keeps, and the observation is looked for in the turn's own repository and base ref: an
+// observation of another target does not resolve this landing, because a landing is observed in the
+// branch it landed on. Only whether a landing was observed at all is read here; whether the node is
+// integrated is the scheduler's reading (Progress), and this check does not judge it again.
 func dagReviewLandedNotObserved(in *dagReviewInput, facts dagReviewFacts) {
 	issue := dagReviewIssueByNode(facts)
 	landed := map[string]string{}
@@ -405,22 +395,43 @@ func dagReviewLandedNotObserved(in *dagReviewInput, facts dagReviewFacts) {
 		if !ok || in.now.Sub(instant) <= in.stall {
 			continue
 		}
+		target := turn.repository + "#" + turn.baseRef
 		for _, acceptance := range facts.acceptances {
 			if acceptance.relationshipID != turn.relationshipID {
 				continue
 			}
-			if dagReviewIntegratedAt(facts, acceptance.nodeID, "", "") != "" {
+			if dagReviewObservedIn(facts, acceptance.acceptanceID, turn.repository, turn.baseRef, instant) {
 				continue
 			}
-			landed[acceptance.nodeID] = turn.turnID
+			landed[acceptance.nodeID] = target
 		}
 	}
 	for _, node := range dagReviewSortedKeys(landed) {
 		in.review.Anomalies = append(in.review.Anomalies, DagReviewAnomaly{
 			Kind: dagReviewKindLandedNotObserved, Plan: facts.plan.planID, Node: node, Issue: issue[node],
-			Detail: fmt.Sprintf("the lane landed and no integration was observed within %s", in.stall),
+			Detail: fmt.Sprintf("the lane landed and no integration was observed in %s within %s", landed[node], in.stall),
 		})
 	}
+}
+
+// dagReviewObservedIn is whether an integration observation row exists for the acceptance in
+// exactly the turn's target, recorded no earlier than the turn's close. It reads the row's
+// existence alone: what the observation says about containment, and whether the node is
+// integrated, are the scheduler's readings.
+func dagReviewObservedIn(facts dagReviewFacts, acceptanceID, repository, baseRef string, closed time.Time) bool {
+	for _, observation := range facts.observations {
+		if observation.acceptanceID != acceptanceID || observation.repository != repository || observation.baseRef != baseRef {
+			continue
+		}
+		instant, ok := dagReviewInstant(observation.observedAt)
+		if !ok {
+			continue
+		}
+		if !instant.Before(closed) {
+			return true
+		}
+	}
+	return false
 }
 
 // dagReviewChildWithoutRelease reports a relationship of the plan's project, opened after the
