@@ -22,15 +22,17 @@ import (
 // noticeYieldWorld is the notice fixture with the delivery line the yield is about.
 type noticeYieldWorld struct {
 	*noticeWorld
-	now float64
+	now  float64
+	host *sendHost
 }
 
 func newNoticeYieldWorld(t *testing.T) *noticeYieldWorld {
 	t.Helper()
 	w := newNoticeWorld(t)
 	w.c.Settings = &delivery.TaskSettings{}
-	w.channel.Host = &sendHost{status: "idle"}
-	return &noticeYieldWorld{noticeWorld: w, now: nsNow}
+	host := &sendHost{status: "idle"}
+	w.channel.Host = host
+	return &noticeYieldWorld{noticeWorld: w, now: nsNow, host: host}
 }
 
 // line inserts the delivery that holds recipient's line until due: the row busyHeadSQL names, a
@@ -187,5 +189,35 @@ func TestNoticeYield_a_head_that_appears_after_the_attempts_check_is_refused_und
 	after := w.message(t, id)
 	if after != before || w.attempts(t, id) != 0 || after.State != "queued" {
 		t.Fatalf("refusal %+v, row %+v -> %+v, attempts %d", refusal, before, after, w.attempts(t, id))
+	}
+}
+
+func TestNoticeYield_a_head_that_appears_after_the_claim_cancels_the_notices_transport(t *testing.T) {
+	t.Parallel()
+	// Given: a staged notice with no head yet, and a writer that inserts the holding delivery after
+	// the claim committed but before the transport start - the window the transport fence closes.
+	w := newNoticeYieldWorld(t)
+	id := w.stagedNotice(t)
+	w.c.beforeTransport = func() {
+		if _, err := w.s.DB.ExecContext(w.ctx, "INSERT INTO deliveries (event_id,relationship_id,kind,recipient_task_id,recipient_thread_id,state,attempt_count,next_eligible_at,created_at,updated_at) VALUES ('event-1','rel-1','receipt','supervisor','supervisor','deferred_busy',1,?,'t','t')", w.now+60); err != nil {
+			t.Error(err)
+		}
+		w.c.beforeTransport = nil
+	}
+	// When: the notice is attempted.
+	err := w.channel.Attempt(w.ctx, id, w.now, "relay")
+	// Then: the transport is cancelled with the same reason, no turn is opened, the attempt is
+	// recorded as sending nothing and the message goes back to the queue with nothing spent.
+	refusal := noticeYieldRefusal(t, err)
+	after := w.message(t, id)
+	attempts, aerr := w.s.SupervisorAttempts(w.ctx, id)
+	if aerr != nil || len(attempts) != 1 {
+		t.Fatalf("attempts %v %v", attempts, aerr)
+	}
+	if after.State != "queued" || attempts[0].State != "withheld_pre_send" || attempts[0].SendAttempted != "no" || after.HoldReason.Valid {
+		t.Fatalf("refusal %+v, row %+v, attempt %+v", refusal, after, attempts[0])
+	}
+	if len(w.host.sends) != 0 {
+		t.Fatalf("the notice opened %d turns while a delivery held the line", len(w.host.sends))
 	}
 }

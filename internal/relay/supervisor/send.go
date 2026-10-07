@@ -607,6 +607,9 @@ func (a *attemptRun) fence(tx context.Context, out *transportOutcome) error {
 	if done, err := a.fenceProposal(tx, current, out); done {
 		return err
 	}
+	if done, err := a.fenceBusyHead(tx, current, out); done {
+		return err
+	}
 	if done, err := a.fenceSettings(tx); done {
 		return err
 	}
@@ -676,6 +679,32 @@ func (a *attemptRun) fenceProposal(tx context.Context, current store.SupervisorM
 		return true, err
 	}
 	_, err = c.Store.Q(tx).ExecContext(tx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,'supervisor_message_withheld',?,?)", a.at, a.id, pyjson.Dumps(contract.OrderedObject{{Key: "requestId", Value: requestID}, {Key: "proposal", Value: "restated"}, {Key: "detail", Value: detail}, {Key: "reason", Value: "restated at the transport start; nothing was sent"}}, pyjson.Options{}))
+	return true, err
+}
+
+// fenceBusyHead cancels a notice's claim when a delivery came to hold its recipient's line under a
+// busy backoff between the claim and the transport, so no turn is opened in the gap that delivery
+// is waiting for (I-216's notice part). It runs before the budget is reserved and before the
+// transport stamp, so nothing was sent and nothing was spent, and it only ever looks at a notice.
+func (a *attemptRun) fenceBusyHead(tx context.Context, current store.SupervisorMessagesRow, out *transportOutcome) (done bool, err error) {
+	c, requestID, attemptNo := a.c, a.claimed.requestID, a.claimed.attemptNo
+	if !current.YieldsToBusyHead() {
+		return false, nil
+	}
+	held, err := c.noticeYieldsToBusyHead(tx, current.RecipientTaskID, a.now)
+	if err != nil {
+		return true, err
+	}
+	if !held {
+		return false, nil
+	}
+	refusal := Refusal{"not_claimable", noticeYieldsDetail(current.RecipientTaskID)}
+	out.refusal = refusal
+	reason := "a delivery came to hold this recipient's line under a busy backoff between this notice's claim and its transport"
+	if err := c.cancelTransport(tx, a.id, requestID, attemptNo, a.at, 0, reason, a.owner); err != nil {
+		return true, err
+	}
+	_, err = c.Store.Q(tx).ExecContext(tx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,'supervisor_message_withheld',?,?)", a.at, a.id, pyjson.Dumps(contract.OrderedObject{{Key: "requestId", Value: requestID}, {Key: "reason", Value: reason}, {Key: "refusal", Value: refusal.Reason}}, pyjson.Options{}))
 	return true, err
 }
 
