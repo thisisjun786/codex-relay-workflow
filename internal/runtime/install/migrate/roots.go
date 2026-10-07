@@ -177,6 +177,14 @@ func (p *Pair) EnsureDest(perm uint32) (*Dir, bool, error) {
 		// the inode this identity names cannot be freed and reused by another directory before the run
 		// ends: a name whose entry carries this identity is the directory this process created. That
 		// holds on a failed step too, which is exactly when the identity is needed most.
+		//
+		// A second direct creation by this pair replaces the handle it kept of an earlier one. The
+		// recorded identity is replaced with it in the same step, so the earlier handle no longer backs
+		// any comparison and is closed here rather than left open until Close, which tracks only the
+		// current handle: repeated retries would otherwise accumulate a descriptor each.
+		if prev := p.createdDir; prev != nil && prev != d && prev != p.Dest {
+			_ = prev.Close()
+		}
 		p.created = d.id
 		p.createdDir = d
 	}
@@ -554,6 +562,10 @@ var migrateOwnedDirIdentityLstat = func(dirfd int, name string, st *unix.Stat_t)
 	return unix.Fstatat(dirfd, name, st, unix.AT_SYMLINK_NOFOLLOW)
 }
 
+// migrateOwnedDirIdentityFsync makes a directory's entry durable. It is a variable so a case can model a
+// host whose fsync of the directory this run created fails; no other code replaces it.
+var migrateOwnedDirIdentityFsync = unix.Fsync
+
 // ownedDirIdentityNoHandleErr is the answer of a platform whose open cannot pin a directory without read
 // permission. It is a type rather than a package-level errors.New call, so this package adds no
 // initializer that runs at program start.
@@ -789,7 +801,7 @@ func (d *Dir) migrateOwnedDirIdentityClaim(tmp string, want fileID, perm uint32)
 		_ = unix.Close(held)
 		return fd, refuse(applyReasonChanged, d.join(tmp), fmt.Sprintf("the temporary directory is %#o, want %#o", uint32(heldSt.Mode)&0o7777, perm))
 	}
-	if err := unix.Fsync(held); err != nil {
+	if err := migrateOwnedDirIdentityFsync(held); err != nil {
 		_ = unix.Close(held)
 		return fd, &fs.PathError{Op: "fsync", Path: d.join(tmp), Err: err}
 	}
@@ -849,20 +861,16 @@ func (d *Dir) migrateOwnedDirIdentitySyncMode(tmp string, want fileID, perm uint
 	}
 	var fdSt unix.Stat_t
 	if err := unix.Fstat(fd, &fdSt); err != nil {
-		_ = unix.Close(fd)
-		return -1, &fs.PathError{Op: "stat", Path: d.join(tmp), Err: err}
+		return fd, &fs.PathError{Op: "stat", Path: d.join(tmp), Err: err}
 	}
 	if (fileID{uint64(fdSt.Dev), uint64(fdSt.Ino)}) != want {
-		_ = unix.Close(fd)
-		return -1, refuse(applyReasonChanged, d.join(tmp), "the temporary name is not the directory this run created")
+		return fd, refuse(applyReasonChanged, d.join(tmp), "the temporary name is not the directory this run created")
 	}
 	if uint32(fdSt.Mode)&0o7777 != perm {
-		_ = unix.Close(fd)
-		return -1, refuse(applyReasonChanged, d.join(tmp), fmt.Sprintf("the temporary directory is %#o, want %#o", uint32(fdSt.Mode)&0o7777, perm))
+		return fd, refuse(applyReasonChanged, d.join(tmp), fmt.Sprintf("the temporary directory is %#o, want %#o", uint32(fdSt.Mode)&0o7777, perm))
 	}
-	if err := unix.Fsync(fd); err != nil {
-		_ = unix.Close(fd)
-		return -1, &fs.PathError{Op: "fsync", Path: d.join(tmp), Err: err}
+	if err := migrateOwnedDirIdentityFsync(fd); err != nil {
+		return fd, &fs.PathError{Op: "fsync", Path: d.join(tmp), Err: err}
 	}
 	return fd, nil
 }

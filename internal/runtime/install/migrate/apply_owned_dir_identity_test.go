@@ -973,3 +973,84 @@ func TestMigrateOwnedDirIdentityRootTemporaryIsReportedAfterTheRootExists(t *tes
 	}
 	t.Errorf("the leftover must be reported even when the root exists, got %d items", len(plan.Items))
 }
+
+// C2(2): on the by-name path a failure of the last step - the fsync that makes the mode durable - must
+// not release the pin before the caller's cleanup has run. The cleanup removes the temporary this run
+// created by comparing the identity recorded when the name was made, and with the pin closed first the
+// kernel could free that inode and hand it to another directory, which the comparison would then take
+// for this run's and delete. The case pins the property the removal depends on: the descriptor the claim
+// opened on the temporary is still open when the cleanup reads the name. The head before this cycle
+// closed it and answered -1, so the removal had nothing holding the inode it compares.
+func TestMigrateOwnedDirIdentityByNameFsyncFailureKeepsThePinForTheCleanup(t *testing.T) {
+	_, r, p := apPlan(t, migrateOwnedDirIdentityEntries(), nil)
+	restorePin := migrateOwnedDirIdentityPin
+	t.Cleanup(func() { migrateOwnedDirIdentityPin = restorePin })
+	migrateOwnedDirIdentityPin = func(dirfd int, name string) (int, error) {
+		return -1, ownedDirIdentityNoHandleErr{}
+	}
+	restoreFsync := migrateOwnedDirIdentityFsync
+	t.Cleanup(func() { migrateOwnedDirIdentityFsync = restoreFsync })
+	pin, failed := -1, false
+	migrateOwnedDirIdentityFsync = func(fd int) error {
+		pin, failed = fd, true
+		return unix.EIO
+	}
+	restoreLstat := migrateOwnedDirIdentityLstat
+	t.Cleanup(func() { migrateOwnedDirIdentityLstat = restoreLstat })
+	sawCleanup, openAtCleanup := false, false
+	migrateOwnedDirIdentityLstat = func(dirfd int, name string, st *unix.Stat_t) error {
+		if failed && pin >= 0 {
+			if _, ok := tempRun(name); ok {
+				sawCleanup = true
+				var held unix.Stat_t
+				openAtCleanup = unix.Fstat(pin, &held) == nil
+			}
+		}
+		return restoreLstat(dirfd, name, st)
+	}
+	if _, err := apply(r, p); err == nil {
+		t.Fatal("the fsync failure must stop the run")
+	}
+	if !sawCleanup {
+		t.Fatal("the case never reached the cleanup of the temporary this run created")
+	}
+	if !openAtCleanup {
+		t.Error("the pin on the temporary was released before the cleanup read its identity, so the removal cannot tell this run's directory from another actor's")
+	}
+}
+
+// C2(1): a second direct creation of the destination root by the same pinned pair replaces the handle
+// the pair kept of the first one. The recorded identity is replaced in the same step, so the earlier
+// handle backs no comparison any more and must be released there: Close tracks only the current handle,
+// so repeated retries would otherwise accumulate one descriptor each until the run hits the file
+// descriptor limit. The head before this cycle overwrote createdDir and left the earlier handle open.
+func TestMigrateOwnedDirIdentitySecondCreationReleasesTheFirstHandle(t *testing.T) {
+	ws, pair := migrateRootPrivateWorkspace(t)
+	fail := true
+	migrateOwnedDirIdentitySteps(t, func(step string) error {
+		if step == "sync" && fail {
+			return errApplyInterrupted
+		}
+		return nil
+	})
+	if _, _, err := pair.EnsureDest(0o700); !errors.Is(err, errApplyInterrupted) {
+		t.Fatalf("the first creation must fail at the parent sync: %v", err)
+	}
+	first := pair.createdDir
+	if first == nil {
+		t.Fatal("the failed creation must keep the handle of the directory it made")
+	}
+	// Another actor removes the root this run created, so the pair's own creation runs a second time and
+	// records a second handle in place of the first.
+	must(t, os.Remove(apDst(ws, "")))
+	fail = false
+	if _, made, err := pair.EnsureDest(0o700); err != nil || !made {
+		t.Fatalf("the second creation must succeed: made=%v err=%v", made, err)
+	}
+	if pair.createdDir == nil || pair.createdDir == first {
+		t.Fatal("the second creation must record the handle of the directory it made")
+	}
+	if got := first.f.Fd(); got != ^uintptr(0) {
+		t.Errorf("the handle of the first creation is still open (fd %d): a repeated retry would accumulate one descriptor each", got)
+	}
+}
