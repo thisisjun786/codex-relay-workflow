@@ -1,8 +1,14 @@
 package manage
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"io"
+	"os"
+	"os/exec"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -89,6 +95,126 @@ func TestSupervisorReview780PlainHelpStaysZero(t *testing.T) {
 			}
 			if calls := supervisorRecordedCalls(t, record); len(calls) != 0 {
 				t.Errorf("a help request called the relay %q", calls)
+			}
+		})
+	}
+}
+
+// supervisorReview780HelpPipeEnv names the child mode of the re-executed test binary. It carries the
+// command line the child must run against its own stdout, one argument per line. A newline is the
+// separator because an environment variable cannot hold the NUL byte that would be natural here,
+// and every argument this test passes is a fixed literal with no newline in it.
+const supervisorReview780HelpPipeEnv = "CRW_MANAGE_TEST_HELP_PIPE"
+
+// TestSupervisorReview780HelpPipeChild is not a test of its own. The parent test re-executes this
+// binary with supervisorReview780HelpPipeEnv set (the way core_testhelp_test.go starts the fake
+// crw), and this function then runs the named command line against the process's own stdout and
+// stderr, so the write reaches the real fd 1 instead of a fake writer.
+func TestSupervisorReview780HelpPipeChild(t *testing.T) {
+	spec := os.Getenv(supervisorReview780HelpPipeEnv)
+	if spec == "" {
+		t.Skip("only runs as the re-executed child of TestSupervisorReview780HelpPipeEpipeExitsOne")
+	}
+	os.Exit(Run(context.Background(), strings.Split(spec, "\n"), strings.NewReader(""), os.Stdout, os.Stderr))
+}
+
+// supervisorReview780HelpPipeChild runs one supervisor command line in a child process whose
+// stdout is a pipe. With the read end closed first, the write reaches a pipe nobody reads, which is
+// the case a fake writer cannot produce. The child's TMPDIR points at the parent's temporary
+// directory, so the child's own isolation root is removed with it rather than left behind.
+func supervisorReview780HelpPipeChild(t *testing.T, args []string, closeReadEnd bool) (code int, stdout, stderr string, signaled bool) {
+	t.Helper()
+	read, write, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if closeReadEnd {
+		// Close the read end before the child starts, so its first write finds no reader: this is
+		// the closed pipe the process must survive.
+		if err := read.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=^TestSupervisorReview780HelpPipeChild$")
+	cmd.Env = append(os.Environ(),
+		supervisorReview780HelpPipeEnv+"="+strings.Join(args, "\n"),
+		"TMPDIR="+t.TempDir())
+	cmd.Stdout = write
+	var errOut bytes.Buffer
+	cmd.Stderr = &errOut
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	// The parent's copy of the write end must go, or the read below never sees EOF.
+	if err := write.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var out []byte
+	if !closeReadEnd {
+		out, _ = io.ReadAll(read)
+		if err := read.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	err = cmd.Wait()
+	code = cmd.ProcessState.ExitCode()
+	if err != nil {
+		var exitErr *exec.ExitError
+		if !errors.As(err, &exitErr) {
+			t.Fatalf("the child: %v", err)
+		}
+	}
+	// A process killed by a signal reports exit code -1; that is the failure this test exists to
+	// rule out, so it is reported rather than folded into the status.
+	if ws, ok := cmd.ProcessState.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
+		signaled = true
+	}
+	return code, string(out), errOut.String(), signaled
+}
+
+// C2 (parent addition, pre-merge evaluation d1): the real stdout connected to a pipe whose read
+// end is closed. os.File.Write turns EPIPE into a fatal SIGPIPE, so a command that only checks the
+// error a writer returns ends with a signal status and no note at all. The write must reach the
+// kernel through syscall.Write instead, which hands EPIPE back as an ordinary error: the help
+// request then ends with exit 1 and the usage write failure on stderr, exactly as it does for a
+// writer that refuses.
+func TestSupervisorReview780HelpPipeEpipeExitsOne(t *testing.T) {
+	for _, args := range [][]string{
+		{"supervisor", "--help"},
+		{"supervisor", "register", "--help"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			code, _, errOut, signaled := supervisorReview780HelpPipeChild(t, args, true)
+			if signaled {
+				t.Fatalf("the child died on a signal (exit %d, stderr %q): the EPIPE from a closed stdout pipe must be reported, not raised", code, errOut)
+			}
+			if code != 1 {
+				t.Fatalf("exit %d, want 1 (stderr %q)", code, errOut)
+			}
+			if !strings.Contains(errOut, "crw manage supervisor: error: write the usage:") {
+				t.Errorf("stderr %q does not carry the usage write failure", errOut)
+			}
+		})
+	}
+}
+
+// The contrast: with the pipe's read end open the same child writes the whole usage and exits 0.
+// Without it the rule above could be satisfied by failing every help request.
+func TestSupervisorReview780HelpPipeOpenPipeStaysZero(t *testing.T) {
+	for _, args := range [][]string{
+		{"supervisor", "--help"},
+		{"supervisor", "register", "--help"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			code, out, errOut, signaled := supervisorReview780HelpPipeChild(t, args, false)
+			if signaled {
+				t.Fatalf("the child died on a signal (exit %d, stderr %q)", code, errOut)
+			}
+			if code != 0 {
+				t.Fatalf("exit %d, want 0 (stderr %q)", code, errOut)
+			}
+			if !strings.Contains(out, "usage: crw manage supervisor") {
+				t.Errorf("stdout %q does not carry the usage", out)
 			}
 		})
 	}

@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"strings"
+	"syscall"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 )
@@ -492,7 +494,7 @@ func supervisorPassThrough(e *Env, stdout []byte, code int) int {
 	if len(stdout) == 0 {
 		return code
 	}
-	if _, err := e.Stdout.Write(stdout); err != nil {
+	if err := supervisorOutputWrite(e.Stdout, stdout); err != nil {
 		return supervisorWriteFailure(e, err)
 	}
 	return code
@@ -518,7 +520,7 @@ func supervisorRefuse(e *Env, reason string, linkage []byte) int {
 // is a different output and keeps its own failure message (supervisorWriteFailure).
 func supervisorUsageWrite(e *Env, lines ...string) int {
 	for _, line := range lines {
-		if _, err := fmt.Fprintln(e.Stdout, line); err != nil {
+		if err := supervisorOutputWrite(e.Stdout, []byte(line+"\n")); err != nil {
 			fmt.Fprintf(e.Stderr, "crw manage supervisor: error: write the usage: %v\n", err)
 			return 1
 		}
@@ -534,12 +536,44 @@ func supervisorWrite(w io.Writer, value any) error {
 		// The value could not be encoded, so what is written is the encode failure itself: the
 		// caller must still learn that its report was not the one it meant to send, so the error is
 		// returned whether or not that fallback line reached the writer.
-		if _, werr := fmt.Fprintf(w, "{\"ok\":false,\"reason\":\"encode_failed\",\"detail\":%q}\n", err.Error()); werr != nil {
+		if werr := supervisorOutputWrite(w, []byte(fmt.Sprintf("{\"ok\":false,\"reason\":\"encode_failed\",\"detail\":%q}\n", err.Error()))); werr != nil {
 			return werr
 		}
 		return err
 	}
-	_, err = fmt.Fprintf(w, "%s\n", data)
+	return supervisorOutputWrite(w, append(data, '\n'))
+}
+
+// supervisorOutputWrite is the one place this command's stdout output is written, so a caller can
+// tell a report that left from one that did not. os.File.Write on fd 1 or 2 turns an EPIPE into a
+// fatal runtime SIGPIPE (os/file_unix.go epipecheck), so a run whose stdout is a pipe nobody reads
+// would die on a signal before any error branch could report it; a direct syscall keeps EPIPE an
+// ordinary error, the way internal/relay/job/envelope.go writeHookOutput does for the hook output.
+// Any other writer, and any file on another descriptor, is written with io.Writer as before. The
+// process's signal policy is left alone either way.
+func supervisorOutputWrite(w io.Writer, body []byte) error {
+	if file, ok := w.(*os.File); ok && file.Fd() <= 2 {
+		fd := int(file.Fd())
+		for len(body) > 0 {
+			n, err := syscall.Write(fd, body)
+			if n > 0 {
+				body = body[n:]
+			}
+			if err == syscall.EINTR {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			if n == 0 {
+				// A write of nothing that reported no error would spin here, so it is reported as
+				// the failure it is rather than retried forever.
+				return io.ErrShortWrite
+			}
+		}
+		return nil
+	}
+	_, err := w.Write(body)
 	return err
 }
 
