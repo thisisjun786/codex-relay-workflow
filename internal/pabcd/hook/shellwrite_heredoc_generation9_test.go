@@ -3,6 +3,7 @@ package hook
 import (
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"unicode/utf16"
 )
@@ -396,6 +397,143 @@ func TestShellWriteHeredocGeneration9HeaderCommentControls(t *testing.T) {
 			}
 			if got := memoryGateClassify("Bash", map[string]any{"command": row.command}, cwd, env); got.Surface != "" {
 				t.Errorf("%q must pass: %+v", row.command, got)
+			}
+		})
+	}
+}
+
+// The blind pre-merge evaluation of head a9ca76947 (score 4) found three more bypasses inside the same promise and one
+// regression this change had introduced, so the same generation closes them: the ANSI-C delimiter reader did not decode
+// every escape the shell decodes (and kept the backslash of one it does not), the comment boundary used the oracle's
+// JavaScript blank set instead of the shell's ASCII blanks, the name-binding rule was not applied to the command text
+// that carries a data here-document, and sed's short-bundle reader took the argument of -e for an option bundle. The
+// rows below are red on a9ca76947.
+
+// TestShellWriteHeredocGeneration9AnsiCEscapeDenied is the denied case for the escape forms: a delimiter the shell
+// builds with a Unicode or control escape, or one holding an escape the shell does not decode, is the word the shell
+// spells out, so the terminator closes there and the Python program after it is read.
+func TestShellWriteHeredocGeneration9AnsiCEscapeDenied(t *testing.T) {
+	cwd, root, env := gateScene(t)
+	mem := root
+	for _, row := range []struct{ name, delim, term string }{
+		{"a Unicode escape", `$'\u0045OF'`, "EOF"},
+		{"an eight-digit Unicode escape", `$'\U00000045OF'`, "EOF"},
+		{"an unknown escape keeps its backslash", `$'E\qOF'`, `E\qOF`},
+		{"a hex escape with no digit keeps the backslash", `$'\xOF'`, `\xOF`},
+		{"a control escape", `$'\cA'`, "\x01"},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			command := "cat <<" + row.delim + "\ntext\n" + row.term + "\npython3 <<'PY'\nopen('" + mem + "/a','w')\nPY"
+			hss := shellWriteHeredocs(utf16.Encode([]rune(command)))
+			if len(hss) != 2 {
+				t.Fatalf("collected %d here-documents, want 2: %+v", len(hss), hss)
+			}
+			got := memoryGateClassify("Bash", map[string]any{"command": command}, cwd, env)
+			if !shellWriteHeredocGateDenied(got, mem+"/a") {
+				t.Errorf("%q: %+v, want a deny naming the protected path", command, got)
+			}
+		})
+	}
+}
+
+// TestShellWriteHeredocGeneration9AnsiCEscapeControls pins the escapes the reader must still decode the shell's way.
+func TestShellWriteHeredocGeneration9AnsiCEscapeControls(t *testing.T) {
+	for _, row := range []struct{ name, header, delim string }{
+		{"a plain ANSI-C word", `cat <<$'EOF'`, "EOF"},
+		{"a two-digit hex escape", `cat <<$'\x45OF'`, "EOF"},
+		{"a three-digit octal escape", `cat <<$'\101'`, "A"},
+		{"a doubled backslash", `cat <<$'E\\F'`, `E\F`},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			hss := shellWriteHeredocs(utf16.Encode([]rune(row.header + "\nx\n" + row.delim)))
+			if len(hss) != 1 {
+				t.Fatalf("collected %d here-documents, want 1: %+v", len(hss), hss)
+			}
+			if got := string(utf16.Decode(hss[0].delim)); got != row.delim {
+				t.Errorf("delimiter %q, want %q", got, row.delim)
+			}
+		})
+	}
+}
+
+// TestShellWriteHeredocGeneration9NonASCIISpaceDenied is the denied case for the comment boundary: the shell splits a
+// word at an ASCII blank only, so a non-breaking space before a # keeps the # inside the argument and the command after
+// the semicolon still runs.
+func TestShellWriteHeredocGeneration9NonASCIISpaceDenied(t *testing.T) {
+	cwd, root, env := gateScene(t)
+	mem := root
+	for _, blank := range []struct{ name, c string }{
+		{"a non-breaking space", "\u00a0"},
+		{"an em space", "\u2003"},
+		{"a vertical tab", "\v"},
+		{"a form feed", "\f"},
+	} {
+		t.Run(blank.name, func(t *testing.T) {
+			command := "echo x" + blank.c + "#; python3 - <<'PY'\nopen('" + mem + "/a','w')\nPY"
+			got := memoryGateClassify("Bash", map[string]any{"command": command}, cwd, env)
+			if !shellWriteHeredocGateDenied(got, mem+"/a") {
+				t.Errorf("%q: %+v, want a deny naming the protected path", command, got)
+			}
+		})
+	}
+	// An ASCII blank before the # still begins a comment, so nothing after it runs.
+	for _, command := range []string{"echo x #; python3 - <<'PY'\nopen('" + mem + "/a','w')\nPY", "echo x\t#; python3 - <<'PY'\nopen('" + mem + "/a','w')\nPY"} {
+		t.Run("an ASCII blank begins a comment: "+command[:8], func(t *testing.T) {
+			if got := memoryGateClassify("Bash", map[string]any{"command": command}, cwd, env); got.Surface != "" {
+				t.Errorf("%q must pass: %+v", command, got)
+			}
+		})
+	}
+}
+
+// TestShellWriteHeredocGeneration9NameBindingInCommandDenied is the denied case for a name the same command text binds
+// to a program: a function definition or a hash entry that makes a data verb run the body.
+func TestShellWriteHeredocGeneration9NameBindingInCommandDenied(t *testing.T) {
+	cwd, root, env := gateScene(t)
+	mem := root
+	for _, row := range []struct{ name, command string }{
+		{"a function definition reusing a data verb", "cat() { python3 -; }\ncat <<'PY'\nopen('" + mem + "/a','w')\nPY"},
+		{"a hash entry reusing a data verb", "hash -p /usr/bin/python3 cat\ncat <<'PY'\nopen('" + mem + "/a','w')\nPY"},
+		{"a function definition on the header line", "f() { python3 -; }; cat <<'PY'\nopen('" + mem + "/a','w')\nPY"},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			got := memoryGateClassify("Bash", map[string]any{"command": row.command}, cwd, env)
+			if !shellWriteHeredocGateDenied(got, mem+"/a") {
+				t.Errorf("%q: %+v, want a deny naming the protected path or the fail-closed reason", row.command, got)
+			}
+		})
+	}
+}
+
+// TestShellWriteHeredocGeneration9SedOptionArgumentControls is the invariant case for the sed option reader: the
+// argument of -e, -i and -l is the script, not an option bundle, so its letters decide nothing, while a real -f bundle
+// still refuses the here-document. Each row is an ordinary filter and must pass without a grant.
+func TestShellWriteHeredocGeneration9SedOptionArgumentControls(t *testing.T) {
+	cwd, root, env := gateScene(t)
+	mem := root
+	for _, row := range []struct{ name, command string }{
+		{"an attached -e script holding an f", "sed -e's/foo/bar/' <<'EOF'\nfoo\nEOF"},
+		{"an attached -e script holding f and l", "sed -es/foo/bar/l <<'EOF'\nfoo\nEOF"},
+		{"an attached -i suffix", "sed -i.bak -es/foo/bar/ <<'EOF'\nfoo\nEOF"},
+		{"a separated -e script", "sed -e 's/foo/bar/' <<'EOF'\nfoo\nEOF"},
+		{"the -n and -p options", "sed -n p <<'EOF'\nfoo\nEOF"},
+		{"a data here-document for jq", "jq . <<'EOF'\n" + mem + "\nEOF"},
+		{"a pipe downstream to jq", "cat <<'EOF' | jq .\n" + mem + "\nEOF"},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			if got, ok := shellWriteHeredocUnreadable(row.command); ok {
+				t.Errorf("%q reported unreadable %q, want data", row.command, got)
+			}
+			if got := memoryGateClassify("Bash", map[string]any{"command": row.command}, cwd, env); got.Surface != "" {
+				t.Errorf("%q must pass: %+v", row.command, got)
+			}
+		})
+	}
+	// A real -f bundle keeps refusing the here-document, however it is spelled.
+	for _, args := range [][]string{{"-nf", "-"}, {"-nf-"}, {"-Ef", "-", "x.txt"}, {"-f", "-"}, {"--fil", "-"}} {
+		t.Run("a -f bundle refuses: "+strings.Join(args, " "), func(t *testing.T) {
+			if !shellWriteHeredocSedReadsScript(args) {
+				t.Errorf("%q: got false, want true", args)
 			}
 		})
 	}

@@ -142,12 +142,21 @@ func shellWriteHeredocCommentStart(s []uint16, i int) bool {
 		return true
 	}
 	switch prev := s[i-1]; {
-	case shellSpace(prev), prev == ';', prev == '&', prev == '|', prev == '(', prev == ')':
+	case shellWriteHeredocBlank(prev), prev == ';', prev == '&', prev == '|', prev == '(', prev == ')':
 		// The boundary must be the shell's own: a blank or an operator the previous backslash escaped is part of the
 		// word before the #, so the # is a literal character and begins no comment (CRW-765 correction 9).
 		return !shellWriteHeredocEscaped(s, i-1)
 	}
 	return false
+}
+
+// shellWriteHeredocBlank reports whether a character is a blank the shell itself uses to separate words: a space, a tab
+// or a newline. The repository's literal shell reader uses the same ASCII set; the oracle's JavaScript blank set (which
+// strips U+00A0 and the other Unicode spaces) must not decide a comment boundary, because the shell does not split a
+// word at a non-breaking space: `echo x #; python3 ...` keeps the # inside the argument and runs the command after
+// the semicolon (CRW-765 correction 9).
+func shellWriteHeredocBlank(c uint16) bool {
+	return c == ' ' || c == '\t' || c == '\n'
 }
 
 // shellWriteHeredocEscaped reports whether the character at i is escaped by an odd run of backslashes immediately
@@ -457,9 +466,32 @@ func shellWriteHeredocAnsiC(s []uint16, i int) (out []uint16, next int) {
 			j++
 		}
 		if j == i+2 {
-			return []uint16{'x'}, i + 2 // \x with no digit: the shell keeps the x
+			return []uint16{'\\', 'x'}, i + 2 // \x with no digit: the shell keeps the backslash and the x
 		}
 		return []uint16{v}, j
+	case 'u', 'U':
+		// The shell decodes a Unicode escape: \u takes one to four hex digits and \U takes one to eight. A word
+		// that builds a delimiter out of one is a word the reader must read the same way, or the terminator it
+		// expects is not the shell's and the following program is absorbed as data (CRW-765 correction 9).
+		width := 4
+		if c == 'U' {
+			width = 8
+		}
+		j, v := i+2, uint32(0)
+		for j < len(s) && shellWriteHeredocHexDigit(s[j]) && j < i+2+width {
+			v = v*16 + uint32(shellWriteHeredocHexValue(s[j]))
+			j++
+		}
+		if j == i+2 {
+			return []uint16{'\\', c}, i + 2
+		}
+		return utf16.Encode([]rune{rune(v)}), j
+	case 'c':
+		// \cX is a control character: the shell takes X's uppercase value with the top bits cleared.
+		if i+2 >= len(s) {
+			return []uint16{'\\', 'c'}, i + 2
+		}
+		return []uint16{(s[i+2] &^ 0x20) ^ 0x40}, i + 3
 	case '0', '1', '2', '3', '4', '5', '6', '7':
 		j, v := i+1, uint16(0)
 		for j < len(s) && s[j] >= '0' && s[j] <= '7' && j < i+1+3 {
@@ -468,7 +500,8 @@ func shellWriteHeredocAnsiC(s []uint16, i int) (out []uint16, next int) {
 		}
 		return []uint16{v}, j
 	}
-	return []uint16{s[i+1]}, i + 2
+	// An escape the shell does not decode keeps its backslash: the word is the two characters, not the second one.
+	return []uint16{'\\', s[i+1]}, i + 2
 }
 
 // shellWriteHeredocHexDigit reports whether c is a hexadecimal digit.
@@ -605,12 +638,76 @@ func shellWriteHeredocSedReadsScript(args []string) bool {
 				return true
 			}
 		case len(n) > 1 && n[0] == '-':
-			if strings.ContainsRune(n[1:], 'f') {
-				return true
+			// A short bundle is read letter by letter, from the word with its case kept: -E is the no-argument
+			// extended-regexp option while -e takes the script as its argument, and the normalisation above lowers
+			// the letters, so it cannot tell them apart. The letters e, i and l take an argument, so the rest of the
+			// word is that argument and holds no option: the f in -e's/foo/bar/' is the script, not a -f, and reading
+			// it as one refused an ordinary filter (CRW-765 correction 9, after the blind pre-merge evaluation of
+			// head a9ca76947).
+			raw, _ := shellWriteHeredocStripQuotes(a)
+			if len(raw) < 2 || raw[0] != '-' {
+				continue
+			}
+			for _, letter := range raw[1:] {
+				if letter == 'f' {
+					return true
+				}
+				if letter == 'e' || letter == 'i' || letter == 'l' {
+					break
+				}
 			}
 		}
 	}
 	return false
+}
+
+// shellWriteHeredocStripQuotes removes a word's quote characters and backslashes the way the shell does before the
+// program sees the word, and keeps its case: -\f reads as -f and -n'p' as -np, while -E stays -E. It is rule S8's
+// reader for the letters of a short option bundle, which the lowercase normalisation cannot classify.
+func shellWriteHeredocStripQuotes(word string) (stripped string, ok bool) {
+	out := make([]byte, 0, len(word))
+	var quote byte
+	for i := 0; i < len(word); i++ {
+		c := word[i]
+		if quote == 0 {
+			switch c {
+			case '\'', '"':
+				quote = c
+				continue
+			case '\\':
+				if i+1 < len(word) && word[i+1] == '\n' {
+					i++
+					continue
+				}
+				i++
+				if i >= len(word) {
+					return "", false
+				}
+				out = append(out, word[i])
+				continue
+			}
+			out = append(out, c)
+			continue
+		}
+		if c == quote {
+			quote = 0
+			continue
+		}
+		if quote == '"' && c == '\\' {
+			if i+1 < len(word) && shellWriteHeredocDoubleQuoteEscape(uint16(word[i+1])) {
+				if word[i+1] != '\n' {
+					out = append(out, word[i+1])
+				}
+				i++
+				continue
+			}
+		}
+		out = append(out, c)
+	}
+	if quote != 0 {
+		return string(out), false
+	}
+	return string(out), true
 }
 
 // shellWriteHeredocNormalizeWord applies the CRW-783 normalisation to one word (rule S8): its quote characters and

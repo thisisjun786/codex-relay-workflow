@@ -2124,30 +2124,35 @@ func shellWriteHeredocNameBinding(command []uint16) bool {
 			return true
 		}
 	}
-	start := -1
-	check := func(end int) bool {
-		if start < 0 {
-			return false
+	// A name-binding verb binds a name only where a command's verb stands, so the check reads each command of the text
+	// and looks at its own verb: `.` in `jq .` is an operand and binds nothing, while `. file`, `eval bash` and
+	// `hash -p /bin/bash b` are bindings (CRW-765 correction 9, after the blind pre-merge evaluation of head
+	// a9ca76947, where scanning every word refused an ordinary `jq . <<'EOF'`).
+	for _, sub := range shellVerbSubsegments(s) {
+		tokens := shellTokenize(sub)
+		words := shellVerbSkipWrappers(tokens)
+		for len(words) > 0 && shellVerbAssignment(words[0]) {
+			words = words[1:]
 		}
-		switch shellVerbName(s[start:end]) {
-		case "eval", "source", ".", "alias", "hash", "ln", "exec", "enable":
-			return true
-		}
-		return false
-	}
-	for i := 0; i < len(s); i++ {
-		if shellWriteHeredocWordRune(rune(s[i])) {
-			if start < 0 {
-				start = i
+		// The verb of the command as the shell reads it, and the word that stands where a verb would after the wrappers
+		// are stripped (exec and sudo are wrappers, and `exec /tmp/x` binds nothing while `exec` itself is a builtin
+		// that replaces the shell): both are checked, and an operand such as the `.` of `jq .` is neither.
+		for _, word := range []string{shellWriteHeredocFirstWord(tokens), shellWriteHeredocFirstWord(words)} {
+			switch shellVerbName(word) {
+			case "eval", "source", ".", "alias", "hash", "ln", "exec", "enable":
+				return true
 			}
-			continue
 		}
-		if check(i) {
-			return true
-		}
-		start = -1
 	}
-	return check(len(s))
+	return false
+}
+
+// shellWriteHeredocFirstWord is the first word of a token list, or the empty string when the list is empty.
+func shellWriteHeredocFirstWord(words []string) string {
+	if len(words) == 0 {
+		return ""
+	}
+	return words[0]
 }
 
 // shellWriteHeredocIsShell is the closed rule's shell set (CRW-765 correction 3): the shells whose program may come
@@ -2331,7 +2336,16 @@ func shellWriteHeredocUnreadableIn(command string, depth int, budget *int) (stri
 			return shellWriteHeredocUnreadableWhat, true
 		}
 		if reading != shellWriteHeredocProgram {
-			continue // data: the body is not read as a program, and its text is not a command either (rule K5)
+			// Data: the body is not read as a program, and its text is not a command either (rule K5). Rule R2 still
+			// applies to the command text outside the bodies, because a name the same command text binds to a program
+			// - eval, source, ., alias, hash, ln, exec, enable, a function definition or an assignment to PATH - can
+			// make the verb the reader called a data verb run the body after all (CRW-765 correction 9, after the
+			// blind pre-merge evaluation of head a9ca76947: `cat() { python3 -; }` then `cat <<'PY'` ran the body while
+			// the reader called it cat data).
+			if shellWriteHeredocNameBinding(u) {
+				return shellWriteHeredocUnreadableWhat, true
+			}
+			continue
 		}
 		if !h.quoted && shellWriteHeredocBodyExpands(h.body) {
 			return shellWriteHeredocUnreadableWhat, true
