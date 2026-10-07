@@ -340,7 +340,11 @@ func divergenceWrites(args []string) bool {
 // STDERR (cli.ts:146-149) and it never reaches runOrchestrateCli, so it is rendered here instead of
 // letting RunOrchestrateRead answer it on stdout. Everything else is the library's own stream, code
 // and trailing newline, and a delegated mutation is RunOrchestrateTransition's answer the same way.
-func orchestrateVerb(args []string, _ io.Reader, stdout, stderr io.Writer) int {
+// The row takes the invocation's context (CRW-871): the oracle's process dies at the first SIGINT and
+// records nothing, so a mutation whose lock wait or pre-write check ends with that context answers
+// Interrupted (130) with nothing printed. Once the first write has started the command finishes and its
+// own answer is printed, because a published change is never relabelled as interrupted.
+func orchestrateVerb(ctx context.Context, args []string, _ io.Reader, stdout, stderr io.Writer) int {
 	cwd, err := syscall.Getwd()
 	if err != nil {
 		fmt.Fprintln(stderr, "crw cli failed: "+err.Error())
@@ -361,7 +365,12 @@ func orchestrateVerb(args []string, _ io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, read.Result.Output)
 		return read.Result.Code
 	}
-	result, err := cli.RunOrchestrateTransition(*parsed.Args, read.SessionID)
+	result, err := cli.RunOrchestrateTransitionContext(ctx, *parsed.Args, read.SessionID)
+	if err != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
+		// The mutation chose to cancel before its first write; a completed one returned a CliResult and
+		// must print it, even if the context ended after the write started.
+		return Interrupted
+	}
 	if err != nil {
 		fmt.Fprintln(stderr, "crw cli failed: "+err.Error())
 		return 1
