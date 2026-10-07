@@ -198,6 +198,13 @@ func localCurrentKeys(opts localOptions) (verificationRecord, error) {
 			return verificationRecord{}, err
 		}
 	}
+	// The base is recorded as the full commit it names, however it was given.
+	if base != "" {
+		base, err = localRev(opts.Root, base+"^{commit}")
+		if err != nil {
+			return verificationRecord{}, err
+		}
+	}
 	// The commits between base and head are the input the blob and secret steps judge, so the record
 	// names them: a different commit list is a different verification even at the same tree.
 	commits, err := runGit(opts.Root, "rev-list", base+".."+head)
@@ -219,12 +226,34 @@ func localCurrentKeys(opts localOptions) (verificationRecord, error) {
 		TreeHash:     tree,
 		CiDigest:     ciDigest,
 		Tools:        localObservedVersions(localToolVersions(localPathEnv(opts.Env)), pins),
-		GoFlags:      os.Getenv("GOFLAGS"),
+		GoFlags:      localFullRunFlags(os.Getenv("GOFLAGS")),
 		GoEnv:        localIsolatedGoEnv,
 		Dependencies: dependencies,
 		OS:           localHostOS(),
 		Arch:         localHostArch(),
 	}, nil
+}
+
+// localFullRunFlags is GOFLAGS without the flags that select or skip tests, so a full run runs every
+// test whatever the caller's GOFLAGS say.
+func localFullRunFlags(flags string) string {
+	var kept []string
+	for _, field := range strings.Fields(flags) {
+		if !localSelectsTests(field) {
+			kept = append(kept, field)
+		}
+	}
+	return strings.Join(kept, " ")
+}
+
+// localSelectsTests reports whether a GOFLAGS field selects, skips or shortens tests.
+func localSelectsTests(field string) bool {
+	for _, name := range []string{"-run", "-skip", "-short", "-failfast", "-test.run", "-test.skip", "-test.short", "-test.failfast"} {
+		if field == name || strings.HasPrefix(field, name+"=") {
+			return true
+		}
+	}
+	return false
 }
 
 // localRepository is the origin remote's URL, the identity a record names. It is read from the
@@ -460,11 +489,13 @@ func localStepEnv(home, temp string, opts localOptions) ([]string, error) {
 	// The host's caches, PATH and the user runtime directory are inherited: they decide how fast a
 	// step runs and whether the heavy-check gate can reach the user's systemd, not what it
 	// decides. GOFLAGS is left as the host set it, and GOCACHE is never cleared.
-	for _, name := range []string{"PATH", "TMPDIR", "GOCACHE", "GOMODCACHE", "GOPATH", "GOFLAGS", "GOPROXY", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS"} {
+	for _, name := range []string{"PATH", "TMPDIR", "GOCACHE", "GOMODCACHE", "GOPATH", "GOPROXY", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS"} {
 		if value, ok := os.LookupEnv(name); ok {
 			env = append(env, name+"="+value)
 		}
 	}
+	// GOFLAGS is inherited without the flags that select or skip tests: a full run runs every test.
+	env = append(env, "GOFLAGS="+localFullRunFlags(os.Getenv("GOFLAGS")))
 	env = append(env, opts.Env...)
 	return env, nil
 }

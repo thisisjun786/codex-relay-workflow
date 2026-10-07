@@ -83,7 +83,7 @@ The record is `verification-record/1`: `repository`, `baseCommit`,
 their step runs, which is the pin, because secrets.sh runs its own pinned Gitleaks and the lint
 leg runs the staticcheck the tree requires), `pins` (the versions the tree
 pins: go.mod's toolchain and staticcheck, ci.yml's Node, secrets.sh's Gitleaks),
-`pinMismatch`, `goFlags` (the GOFLAGS the steps inherit; a record whose GOFLAGS name a modfile or an overlay is never reused), `range` (the sha256 of the commits between base and head, the input of the blob and secret steps), `goEnv` (GOENV is unset in the
+`pinMismatch`, `goFlags` (the GOFLAGS the steps inherit, without the flags that select or skip tests, so a full run runs every test; a record whose GOFLAGS name a modfile or an overlay is never reused), `range` (the sha256 of the commits between base and head, the input of the blob and secret steps), `goEnv` (GOENV is unset in the
 steps, so Go reads its default file under the run's own empty home, and the host's GOENV never
 applies),
 `dependencies` (the sha256 of `go.sum` and
