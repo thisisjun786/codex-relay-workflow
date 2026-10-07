@@ -250,6 +250,18 @@
           ]
         }
       ]
+    },
+    {
+      "file": "tests/repo-map-packaging.test.mjs",
+      "reason": "CRW-939: port the skill's own Node test from CXC v0.2.40 plugins/codexclaw/test/ into the staged skill's tests/, with the name substitution applied and the paths adapted to the staged skill; the test travels with the script it protects.",
+      "add": true,
+      "sha256": "be5a166a4b7f13f8d8745b1cec64c574e2351ab5594b926d1d188e6ef0a4ce6d"
+    },
+    {
+      "file": "tests/repo-map-smoke.test.mjs",
+      "reason": "CRW-939: port the skill's own Node test from CXC v0.2.40 plugins/codexclaw/test/ into the staged skill's tests/, with the name substitution applied and the paths adapted to the staged skill; the test travels with the script it protects.",
+      "add": true,
+      "sha256": "1b4781faea06d06e4da967cce7197b685e47e67de61ad48c4b8f7f90d1943ac0"
     }
   ]
 }
