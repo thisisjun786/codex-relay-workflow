@@ -133,12 +133,6 @@ var branchZoneTables = []string{"dag_plans", "dag_nodes", "dag_node_regions", "d
 // while the reading is in flight, which is how the reading's one snapshot is pinned.
 var branchReadSeam func()
 
-// branchPassSeam runs once at the start of one plan's branch reading, after the plan's ready pass has
-// been read and before the reading takes its snapshot. It is nil in production; a test replaces it to
-// commit a revision between the pass and the snapshot, which is how the reading's head read is pinned:
-// the reading reports the plan as the snapshot finds it, not as the pass saw it.
-var branchPassSeam func()
-
 // branchPlanNode and branchPlanEdge are one live node and one live edge of the plan, as the relay's
 // own reading of the plan carries them. A node the plan cancelled or archived is not live; a paused
 // one is.
@@ -147,14 +141,12 @@ type branchPlanEdge struct{ from, to string }
 
 // branchReadPlan reads the plan through the relay canon: the live nodes and the live edges as of one
 // revision, from dag.SnapshotAt over the reading's own snapshot querier, at the head the snapshot
-// holds. It also returns that revision, so the reading can tell whether the plan's ready pass, which
-// is a reading of its own, answered for the same plan revision. The canon recomputes every node's
-// slice digest and the plan's state digest from the rows it read, so a plan that does not agree with
-// itself is refused rather than reported as a bundle.
-func branchReadPlan(ctx context.Context, q store.Querier, plan string) ([]branchPlanNode, []branchPlanEdge, int64, error) {
+// holds. The canon recomputes every node's slice digest and the plan's state digest from the rows it
+// read, so a plan that does not agree with itself is refused rather than reported as a bundle.
+func branchReadPlan(ctx context.Context, q store.Querier, plan string) ([]branchPlanNode, []branchPlanEdge, error) {
 	snap, _, err := dag.SnapshotAt(ctx, q, plan, 0)
 	if err != nil {
-		return nil, nil, 0, err
+		return nil, nil, err
 	}
 	nodes := make([]branchPlanNode, 0, len(snap.Nodes))
 	for _, node := range snap.Nodes {
@@ -167,7 +159,7 @@ func branchReadPlan(ctx context.Context, q store.Querier, plan string) ([]branch
 	for _, edge := range snap.Edges {
 		edges = append(edges, branchPlanEdge{from: edge.FromNodeID, to: edge.ToNodeID})
 	}
-	return nodes, edges, snap.Revision, nil
+	return nodes, edges, nil
 }
 
 // branchReadReleased reads the nodes the relay released or executed. A bundle that holds one of them
@@ -257,7 +249,7 @@ func branchIntegratedNodes(ctx context.Context, st *store.Store, plan string, no
 // judged by node id because a plan may hold two nodes with one issue key (a redefinition) and their
 // states must not mix. The second result is why the reading is unmeasured: a store that predates the
 // DAG zone holds no plan to read, so its candidates are unknown rather than none.
-func branchAttach(ctx context.Context, e *Env, cfg *Config, stateDir, plan, verdict string, waitingNodes []string, planRevision int64, zoneReason string) (*BranchCandidates, string, error) {
+func branchAttach(ctx context.Context, e *Env, cfg *Config, stateDir, plan, verdict string, waitingNodes []string, zoneReason string) (*BranchCandidates, string, error) {
 	// The thresholds are read and validated before the hold shortcut: a malformed section is a
 	// refusal whether or not this plan happens to carry candidates, so a configuration mistake never
 	// hides behind a transient verdict.
@@ -279,9 +271,6 @@ func branchAttach(ctx context.Context, e *Env, cfg *Config, stateDir, plan, verd
 	if verdict == capacityHold && !branchAlwaysFor(e) {
 		return nil, "", nil
 	}
-	if branchPassSeam != nil {
-		branchPassSeam()
-	}
 	// The whole reading is one snapshot of the review's own read-only handle: the plan (through the
 	// canon's own dag.SnapshotAt), the declared regions, the release and execution marks and the
 	// integration judgement all run on that snapshot's querier, so a revision that commits while the
@@ -295,23 +284,9 @@ func branchAttach(ctx context.Context, e *Env, cfg *Config, stateDir, plan, verd
 	unmeasured := ""
 	err = handle.dagReviewSnapshot(ctx, stateDir, func(ctx context.Context, st *store.Store) error {
 		q := st.Q(ctx)
-		nodes, edges, revision, err := branchReadPlan(ctx, q, plan)
+		nodes, edges, err := branchReadPlan(ctx, q, plan)
 		if err != nil {
 			return err
-		}
-		// The plan's ready pass is a reading of its own, taken before this snapshot. When it answered for
-		// another revision its readiness describes a plan this snapshot does not hold, so the reading
-		// re-reads the ready set from the snapshot itself: a node the pass marked ready in a graph that
-		// no longer holds it, or one cleared to a false the reading never measured, would both be claims
-		// about a plan that is not there. The re-read runs on this snapshot's querier, so the readiness
-		// and the graph come from one revision. The plan's own waiting list and verdict are the pass's
-		// answer and are unchanged (CRW-865).
-		if planRevision != 0 && planRevision != revision {
-			reading, err := (&dagsched.Scheduler{Store: st}).Ready(ctx, q, plan, dagsched.ReadyOptions{})
-			if err != nil {
-				return err
-			}
-			waitingNodes = capacityWaitingNodeIDs(reading)
 		}
 		if branchReadSeam != nil {
 			branchReadSeam()
