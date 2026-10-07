@@ -264,6 +264,14 @@ type upgradeDoctorAnswer struct {
 		Available    bool   `json:"available"`
 		OpenAttempts *int64 `json:"openAttempts"`
 	} `json:"contents"`
+	// ServiceStore is present only when the relay service registered for this socket serves another
+	// directory than the one discovery selected: the contents above then belong to the selected
+	// directory, not to the store the service reads and writes, so they are not the served store's
+	// open attempts.
+	ServiceStore *struct {
+		StateDirectory string `json:"stateDirectory"`
+		SocketPath     string `json:"socketPath"`
+	} `json:"serviceStore"`
 }
 
 // upgradeParseDoctorAnswer reads the doctor's answer; an answer that is not JSON is an error, so a
@@ -279,7 +287,10 @@ func upgradeParseDoctorAnswer(out string) (upgradeDoctorAnswer, error) {
 // checkOpenAttempts is step 4: ask the running runtime's own relay for its doctor answer and refuse
 // while any attempt is still open. The count is the doctor's contents.openAttempts alone; contents
 // that are unavailable, or that carry no count, are refused rather than read as an absence, so a
-// store nobody could read never looks like a store with nothing open.
+// store nobody could read never looks like a store with nothing open. When the doctor says the
+// service serves another directory than the one discovery selected, that other store is the one
+// whose attempts matter, so it is asked for its own answer; a served store whose answer cannot be
+// read is refused rather than passed over.
 func (r *upgradeRunState) checkOpenAttempts() (int, string) {
 	pointer, err := upgradePointerTarget(r.e)
 	if err != nil {
@@ -287,21 +298,31 @@ func (r *upgradeRunState) checkOpenAttempts() (int, string) {
 		// snapshot reported for this host before this step moved ahead of it.
 		return r.refuse(upgradeStepAttempts, upgradeReasonPointer, "", err)
 	}
-	args := []string{"--socket", r.cfg.Relay.Socket}
-	if r.cfg.Relay.State != "" {
-		args = append([]string{"--state", r.cfg.Relay.State}, args...)
-	}
-	args = append(args, "doctor")
-	out, code, err := r.command(r.ctx, upgradeCommandTimeout, upgradeStepAttempts,
-		filepath.Join(pointer, "bin", "codex-session-relay"), args...)
+	relay := filepath.Join(pointer, "bin", "codex-session-relay")
+	state := r.cfg.Relay.State
+	socket := r.cfg.Relay.Socket
+	answer, out, code, err := r.doctorAnswer(relay, state, socket)
 	if err != nil || code != 0 {
 		return upgradeExitRefused, upgradeReasonStoreRead
 	}
-	answer, err := upgradeParseDoctorAnswer(out)
+	if served := answer.ServiceStore; served != nil && served.StateDirectory != "" {
+		// The doctor adds serviceStore only when the directory it read is not the one the service
+		// serves, so these contents are another store's. Ask the served store for its own answer;
+		// anything unreadable there is refused rather than read as none.
+		servedSocket := served.SocketPath
+		if servedSocket == "" {
+			servedSocket = socket
+		}
+		answer, out, code, err = r.doctorAnswer(relay, served.StateDirectory, servedSocket)
+		if err != nil || code != 0 {
+			return upgradeExitRefused, upgradeReasonStoreRead
+		}
+		state = served.StateDirectory
+	}
+	answer, err = upgradeParseDoctorAnswer(out)
 	if err != nil {
 		return r.refuse(upgradeStepAttempts, upgradeReasonStoreRead, out, err)
 	}
-	state := r.cfg.Relay.State
 	if state == "" {
 		state = answer.StateSelection.Path
 	}
@@ -316,6 +337,22 @@ func (r *upgradeRunState) checkOpenAttempts() (int, string) {
 		return upgradeExitOpenAttempts, upgradeReasonOpenAttempts
 	}
 	return 0, ""
+}
+
+// doctorAnswer runs the relay's doctor for one state directory (or discovery when state is empty)
+// and parses its answer, recording the call.
+func (r *upgradeRunState) doctorAnswer(relay, state, socket string) (upgradeDoctorAnswer, string, int, error) {
+	args := []string{"--socket", socket}
+	if state != "" {
+		args = append([]string{"--state", state}, args...)
+	}
+	args = append(args, "doctor")
+	out, code, err := r.command(r.ctx, upgradeCommandTimeout, upgradeStepAttempts, relay, args...)
+	if err != nil || code != 0 {
+		return upgradeDoctorAnswer{}, out, code, err
+	}
+	answer, err := upgradeParseDoctorAnswer(out)
+	return answer, out, code, err
 }
 
 // snapshot is step 5: what the run must be able to compare afterwards.

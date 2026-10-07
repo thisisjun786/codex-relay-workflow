@@ -93,7 +93,13 @@ type upgradeHarnessOptions struct {
 	// doctorNoCount makes the doctor answer report readable contents that carry no open attempt
 	// count, which is the other half of the fail-closed guard.
 	doctorNoCount bool
-	gh            map[string]upgradeGhAnswer
+	// doctorServesAnotherStore makes the doctor answer name a store the relay service serves that is
+	// not the directory discovery selected, so the contents it read are not the served store's.
+	doctorServesAnotherStore bool
+	// servedStoreOpenAttempts is the open attempt count the served store reports when the doctor names
+	// another store than the selected directory.
+	servedStoreOpenAttempts int
+	gh                      map[string]upgradeGhAnswer
 	// pointer is whether the owned pointer exists before the run.
 	pointer bool
 	// installExit is the status the fake update ends with.
@@ -217,6 +223,11 @@ func (h *upgradeEnv) fakeScript(opts upgradeHarnessOptions) string {
 	if opts.doctorNoCount {
 		doctor = "{\"stateSelection\":{\"path\":" + jsonString(h.state) + "},\"contents\":{\"available\":true,\"openAttempts\":null}}"
 	}
+	if opts.doctorServesAnotherStore {
+		doctor = "{\"stateSelection\":{\"path\":" + jsonString(h.state) + "},\"contents\":{\"available\":true,\"openAttempts\":0}," +
+			"\"serviceStore\":{\"stateDirectory\":" + jsonString(h.state+"-served") + ",\"live\":true}}"
+	}
+	doctorServed := "{\"stateSelection\":{\"path\":" + jsonString(h.state+"-served") + "},\"contents\":{\"available\":true,\"openAttempts\":" + strconv.Itoa(opts.servedStoreOpenAttempts) + "}}"
 	answers := opts.statusAnswers
 	if len(answers) == 0 {
 		answers = []string{upgradeStatusSame}
@@ -261,7 +272,8 @@ func (h *upgradeEnv) fakeScript(opts upgradeHarnessOptions) string {
 	b.WriteString("  printf '%s\\n' \"$n\" > " + coreShellQuote(h.statusCounter) + "\n")
 	b.WriteString("  sed -n \"" + "$" + "{n}p\" " + coreShellQuote(h.statusAnswers) + "\n")
 	b.WriteString("  ;;\n")
-	b.WriteString("*doctor*) printf '%s\\n' " + coreShellQuote(doctor) + " ;;\n")
+	b.WriteString("*doctor*)\n")
+	b.WriteString("  case \"$*\" in *" + h.state + "-served*) printf '%s\\n' " + coreShellQuote(doctorServed) + ";; *) printf '%s\\n' " + coreShellQuote(doctor) + ";; esac ;;\n")
 	b.WriteString("*\"install update\"*)\n")
 	if opts.breakPointer {
 		b.WriteString("  rm -f " + coreShellQuote(h.pointerLink) + "\n")

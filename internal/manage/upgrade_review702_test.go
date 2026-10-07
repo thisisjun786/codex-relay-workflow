@@ -432,3 +432,30 @@ func TestUpgradeReview702ServiceWaitBudgetIsRecorded(t *testing.T) {
 		t.Errorf("the wait's last step is %+v, want a failed %s", last, upgradeStepPostCheck)
 	}
 }
+
+// TestUpgradeReview702ServedStoreOpenAttempts: the doctor says which store the relay service serves
+// when discovery selected another directory. The selected directory's contents are not the served
+// store's, so the served store must be asked for its own answer: a served store with open attempts
+// refuses, and one that cannot be read is refused too rather than read as none.
+func TestUpgradeReview702ServedStoreOpenAttempts(t *testing.T) {
+	t.Run("the served store refuses", func(t *testing.T) {
+		h := upgradeHarness(t, upgradeHarnessOptions{gh: upgradeGhPaths(upgradeGoodCommit),
+			pointer: true, doctorServesAnotherStore: true, servedStoreOpenAttempts: 2})
+		if code := h.run("--release-dir", h.release, "--dry-run"); code != upgradeExitOpenAttempts {
+			t.Fatalf("exit %d, want %d; the record is %+v", code, upgradeExitOpenAttempts, h.recordOf(t))
+		}
+		if got := h.recordOf(t).Reason; got != upgradeReasonOpenAttempts {
+			t.Errorf("reason %q, want %q", got, upgradeReasonOpenAttempts)
+		}
+	})
+	t.Run("the served store is read, not the selected one", func(t *testing.T) {
+		h := upgradeHarness(t, upgradeHarnessOptions{gh: upgradeGhPaths(upgradeGoodCommit),
+			pointer: true, doctorServesAnotherStore: true, servedStoreOpenAttempts: 0})
+		if code := h.run("--release-dir", h.release, "--dry-run"); code != 0 {
+			t.Fatalf("exit %d, want 0; the served store has nothing open: %+v", code, h.recordOf(t))
+		}
+		if !h.calledFrom(filepath.Join(h.previous, "bin", "codex-session-relay"), h.state+"-served") {
+			t.Errorf("the served store was not asked for its own answer: %q", h.callLines())
+		}
+	})
+}
