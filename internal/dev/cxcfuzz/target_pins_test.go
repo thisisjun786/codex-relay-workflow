@@ -89,34 +89,44 @@ func TestPinnedOracleAnswersMatchTheOracle(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		defer func() { _ = pool.Close() }()
 		for _, c := range cases {
-			input, err := decode(c.Input)
-			if err != nil {
-				t.Fatalf("%s/%s: %v", name, c.Name, err)
+			if problem := caseOracleMatches(target, pool, c); problem != "" {
+				t.Errorf("%s/%s: %s", name, c.Name, problem)
 			}
-			root, err := os.MkdirTemp("", "cxcfuzz-oracle-pin-")
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := PrepareRoot(root); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := Scenarios(root, input); err != nil {
-				t.Fatalf("%s/%s: %v", name, c.Name, err)
-			}
-			answer, err := pool.Call(canonical(input), root)
-			if err != nil {
-				t.Fatalf("%s/%s: the oracle did not answer: %v", name, c.Name, err)
-			}
-			value, err := decode(answer)
-			if err != nil {
-				t.Fatalf("%s/%s: the oracle answer is not JSON: %v", name, c.Name, err)
-			}
-			if got := canonical(stripRoot(value, root)); got != canonicalText(c.Oracle) {
-				t.Errorf("%s/%s: the oracle answers %s, pinned %s", name, c.Name, got, canonicalText(c.Oracle))
-			}
-			_ = os.RemoveAll(root)
 		}
-		_ = pool.Close()
 	}
+}
+
+// caseOracleMatches replays one case through the real oracle worker and reports whether its answer
+// still equals the case's stored oracle field. It builds the case root and calls the pool the way a
+// campaign does, and removes the root however it returns, so a failure inside it leaks nothing.
+func caseOracleMatches(target Target, pool *Pool, c Case) string {
+	input, err := decode(c.Input)
+	if err != nil {
+		return "the input is not JSON: " + err.Error()
+	}
+	root, err := os.MkdirTemp("", "cxcfuzz-oracle-pin-")
+	if err != nil {
+		return err.Error()
+	}
+	defer func() { _ = os.RemoveAll(root) }()
+	if err := PrepareRoot(root); err != nil {
+		return "the case root was not prepared: " + err.Error()
+	}
+	if _, err := Scenarios(root, input); err != nil {
+		return "the scenario is refused: " + err.Error()
+	}
+	answer, err := pool.Call(canonical(input), root)
+	if err != nil {
+		return "the oracle did not answer: " + err.Error()
+	}
+	value, err := decode(answer)
+	if err != nil {
+		return "the oracle answer is not JSON: " + err.Error()
+	}
+	if got := canonical(stripRoot(value, root)); got != canonicalText(c.Oracle) {
+		return "the oracle answers " + got + ", pinned " + canonicalText(c.Oracle)
+	}
+	return ""
 }
