@@ -36,10 +36,11 @@ type CommitRef struct {
 // VerificationRecordSchema is the schema tag a verification record must carry.
 const VerificationRecordSchema = "verification-record/1"
 
-// verificationRecord is the part of verification-record/1 this path reads. The writer of the full
+// VerificationRecord is the part of verification-record/1 this build reads. The writer of the full
 // record belongs to the local-verification tooling issue; the field names below are the ones that issue
-// fixes, and this decoder is the single place they are pinned.
-type verificationRecord struct {
+// fixes, and DecodeVerificationRecord is the single place they are pinned. The integration command
+// reads the same document through this decoder, so a record means one thing in the relay.
+type VerificationRecord struct {
 	Schema   string `json:"schema"`
 	Head     string `json:"head_commit"`
 	Base     string `json:"base_commit"`
@@ -57,10 +58,10 @@ type verificationRecord struct {
 	Arch       string `json:"arch"`
 }
 
-// decodeVerificationRecord reads a verification-record/1 and refuses a document that is not one or that
+// DecodeVerificationRecord reads a verification-record/1 and refuses a document that is not one or that
 // lacks a field the decision needs.
-func decodeVerificationRecord(raw []byte) (verificationRecord, error) {
-	var record verificationRecord
+func DecodeVerificationRecord(raw []byte) (VerificationRecord, error) {
+	var record VerificationRecord
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	if err := decoder.Decode(&record); err != nil {
 		return record, refuse(contract.RefusalMalformedReceipt, "the verification record is not a JSON document: %v", err)
@@ -121,7 +122,7 @@ func commitIsAncestor(ctx context.Context, checkout, ancestor, descendant string
 type acceptCommitInput struct {
 	ref       CommitRef
 	recordRaw []byte
-	record    verificationRecord
+	record    VerificationRecord
 	tree      string
 }
 
@@ -143,7 +144,7 @@ func (s *Scheduler) prepareCommitAcceptance(ctx context.Context, in CommitRef, h
 	if err != nil {
 		return out, err
 	}
-	record, err := decodeVerificationRecord(raw)
+	record, err := DecodeVerificationRecord(raw)
 	if err != nil {
 		return out, err
 	}

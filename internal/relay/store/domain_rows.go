@@ -1145,3 +1145,22 @@ func IntegrationBatchesOfPlan(ctx context.Context, s *Store, planID string) ([]I
 	}
 	return out, rows.Err()
 }
+
+// AcceptanceVerificationByTree is the newest verification record stored for a tree (CRW-965): the
+// record the integration batch reuses when the merged tree is one an acceptance was already verified
+// at, so the same tree and environment are not verified twice. found is false when no row names the
+// tree, or when the store predates the table.
+func AcceptanceVerificationByTree(ctx context.Context, s *Store, tree string) (AcceptanceVerificationRow, bool, error) {
+	present, err := dagZoneTable(ctx, s, "dag_acceptance_verifications")
+	if err != nil || !present {
+		return AcceptanceVerificationRow{}, false, err
+	}
+	row, err := queryRow(ctx, s, scanAcceptanceVerification, "SELECT "+acceptanceVerificationColumns+" FROM dag_acceptance_verifications WHERE tree_sha = ? ORDER BY recorded_at DESC, acceptance_id DESC LIMIT 1", tree)
+	if errors.Is(err, sql.ErrNoRows) {
+		return AcceptanceVerificationRow{}, false, nil
+	}
+	if err != nil {
+		return AcceptanceVerificationRow{}, false, err
+	}
+	return row, true, nil
+}
