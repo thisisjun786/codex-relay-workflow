@@ -263,6 +263,48 @@ func TestAHandOpenedGenerationOfAnAcceptedCurrentResultIsStillRefused(t *testing
 }
 
 // The reason a generation was opened under is what states the correction, and the stale route keeps its own
+// Criterion c1, the safety bound of the accepted-current route: a correction is not recorded over an
+// accepted head a merge turn of the same relationship is already carrying to the base. The relay reads the
+// forge, not the merge, so a turn that is merging or of unknown effect may already have landed the head
+// outside the relay; naming that head as the one being repaired would leave the merge unrecorded and the
+// correction unmergeable. The turn is resolved first.
+func TestACorrectionIsNotRecordedOverAnAcceptedHeadAlreadyOnItsWayToTheBase(t *testing.T) {
+	t.Parallel()
+	for _, state := range []string{"merging", "unknown", "landed"} {
+		t.Run("a merge turn that is "+state, func(t *testing.T) {
+			k, accepted := rvSettledSharedRoot(t)
+			rid := accepted["B"].RelationshipID
+			prepared := k.rvPrepare("sr", "B")
+			acOpenByHand(t, k, rid, prepared.DispatchRequestID, "needs_changes_revision", 2, true)
+			k.exec("INSERT INTO merge_turns (turn_id, target_key, repository, base_ref, project_key, holder_task_id, holder_host_id, relationship_id, candidate_head, state, tenure, requested_at, updated_at)"+
+				" VALUES ('mtn-"+state+"', 'tgt', 'owner/repo', 'dev', 'P-TEST', 'parent', 'host', ?, ?, ?, 1, 't', 't')", rid, accepted["B"].HeadSHA, state)
+			_, err := k.sched.RecordCorrection(context.Background(), "sr", "B", "parent", prepared.ManifestDigest)
+			if refusalReason(err) != "disposition_conflict" {
+				t.Fatalf("a correction over a turn that is %s = %v, want disposition_conflict", state, err)
+			}
+			if !strings.Contains(err.Error(), "on its way to the base") || !strings.Contains(err.Error(), "mtn-"+state) {
+				t.Fatalf("the refusal does not name the turn and the reason: %v", err)
+			}
+			if got := acExecution(k, "B", 2); got != "" {
+				t.Fatalf("the refused correction wrote the execution %q", got)
+			}
+		})
+	}
+	t.Run("a turn that only holds the lane does not block the correction", func(t *testing.T) {
+		k, accepted := rvSettledSharedRoot(t)
+		rid := accepted["B"].RelationshipID
+		prepared := k.rvPrepare("sr", "B")
+		acOpenByHand(t, k, rid, prepared.DispatchRequestID, "needs_changes_revision", 2, true)
+		// a held turn cannot progress: the lane's own check and land refuse it under correction
+		k.exec("INSERT INTO merge_turns (turn_id, target_key, repository, base_ref, project_key, holder_task_id, holder_host_id, relationship_id, candidate_head, state, tenure, requested_at, updated_at)"+
+			" VALUES ('mtn-held', 'tgt', 'owner/repo', 'dev', 'P-TEST', 'parent', 'host', ?, ?, 'holding', 1, 't', 't')", rid, accepted["B"].HeadSHA)
+		if _, err := k.sched.RecordCorrection(context.Background(), "sr", "B", "parent", prepared.ManifestDigest); err != nil {
+			t.Fatalf("a held turn blocked the correction: %v", err)
+		}
+	})
+}
+
+// The reason a generation was opened under is what states the correction, and the stale route keeps its own
 // gate: a stale node whose route says correct is recorded under either reason (the new value is a correction
 // reason like the default, not a route of its own), and one whose route is anything else is still refused
 // whatever reason it carries. This pins that the change admits one case rather than loosening the gate.

@@ -168,6 +168,33 @@ func TestTheLaneGateResolvesTheRelationshipFromThePullRequest(t *testing.T) {
 	}
 }
 
+// CRW-906 generation 2: --relationship and --pr are both optional on merge-turn-request, so a claim can
+// carry neither and hold only the head. The accepted head of a node under correction is then the one
+// identity left, and the acceptance that recorded it is what the head belongs to: the turn is refused on
+// the head the correction is repairing rather than exempted by the two selectors it omits.
+func TestTheLaneGateResolvesTheRelationshipFromTheHeadItHolds(t *testing.T) {
+	w := newFx(t)
+	w.ucLaneRelationship("rel-lane", 2)
+	turn := store.MergeTurnsRow{TurnID: "mtn-bare", TargetKey: "tgt-x", Repository: fxRepo, BaseRef: fxBase, ProjectKey: fxA,
+		HolderTaskID: alpha.TaskID, CandidateHead: "head-a", State: Holding}
+	refusal, err := underCorrectionRefusal(w.ctx, w.s.Querier(w.ctx), turn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if refusal == nil || refusal.Reason != contract.RefusalDispositionConflict {
+		t.Fatalf("a turn naming neither selector, holding an accepted head under correction, was not refused: %+v", refusal)
+	}
+	if !strings.Contains(refusal.Detail, "under correction") || !strings.Contains(refusal.Detail, "rel-lane") {
+		t.Fatalf("the refusal does not name the relationship and the reason: %s", refusal.Detail)
+	}
+	// a head no active acceptance of that repository stands on is left to the lane's own rules
+	other := turn
+	other.CandidateHead = "head-unaccepted"
+	if refusal, err := underCorrectionRefusal(w.ctx, w.s.Querier(w.ctx), other); err != nil || refusal != nil {
+		t.Fatalf("a turn whose head no acceptance stands on = %+v %v, want no refusal", refusal, err)
+	}
+}
+
 // ucHeldOn is a held, acknowledged turn on a head whose claim records a relationship.
 func (w *fx) ucHeldOn(relationship, head string) string {
 	w.t.Helper()

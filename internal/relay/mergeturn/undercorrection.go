@@ -28,25 +28,57 @@ import (
 // instead, and a node under correction would otherwise be carried on the head the correction is
 // repairing by the very route that omits the relationship. The acceptance's forge identity is the
 // mapping from that pull request back to the relationship (dag_acceptance_forge, written with the
-// acceptance), and it is read here so both routes meet the same gate. A turn whose pull request has no
-// accepted result is left to the lane's own rules.
+// acceptance), and it is read here so both routes meet the same gate. The forge slug is compared
+// case-insensitively, as every other repository identity comparison in the relay is: GitHub slugs are
+// case-insensitive, so a turn that spells the repository differently names the same pull request.
+//
+// A turn that names neither is not exempt either: --relationship and --pr are both optional on
+// merge-turn-request, so the head alone is left, and a turn holding the accepted head of a node under
+// correction would slip through the very route that omits both selectors. The active acceptance
+// records its own repository and head (dag_acceptances.repository, head_sha), so a turn whose head is
+// an accepted head of its repository resolves to that acceptance's relationship. A turn whose head no
+// active acceptance of that repository stands on is left to the lane's own rules.
 //
 // The refusal is the existing disposition_conflict and it names the open generation: no new refusal
 // name, no column, no schema change.
 func underCorrectionRefusal(ctx context.Context, q store.Querier, r store.MergeTurnsRow) (*registry.CoordinationRefusal, error) {
 	relationship := r.RelationshipID.String
 	if !r.RelationshipID.Valid || relationship == "" {
-		if !r.PRNumber.Valid {
+		// The DAG zone arrives with the first write open (D-01), and the lane serves projects that
+		// have none: a store that predates the table has no accepted result for this turn, which is
+		// absence and not an error.
+		present, err := ucZoneTable(ctx, q, "dag_acceptances")
+		if err != nil {
+			return nil, err
+		}
+		if !present {
 			return nil, nil
 		}
 		var found string
-		if err := q.QueryRowContext(ctx, "SELECT a.relationship_id FROM dag_acceptance_forge f JOIN dag_acceptances a ON a.acceptance_id = f.acceptance_id"+
-			" WHERE f.forge_repository = ? AND f.pr_number = ? AND a.state = 'active' ORDER BY a.accepted_at DESC, a.acceptance_id DESC LIMIT 1",
-			r.Repository, r.PRNumber.Int64).Scan(&found); err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				return nil, nil
+		switch {
+		case r.PRNumber.Valid:
+			// the turn names the pull request: the acceptance's recorded forge identity maps it back
+			if err := q.QueryRowContext(ctx, "SELECT a.relationship_id FROM dag_acceptance_forge f JOIN dag_acceptances a ON a.acceptance_id = f.acceptance_id"+
+				" WHERE lower(f.forge_repository) = lower(?) AND f.pr_number = ? AND a.state = 'active' ORDER BY a.accepted_at DESC, a.acceptance_id DESC LIMIT 1",
+				r.Repository, r.PRNumber.Int64).Scan(&found); err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					return nil, nil
+				}
+				return nil, err
 			}
-			return nil, err
+		case r.CandidateHead != "":
+			// the turn names neither selector: the head it holds is the only identity left, and the
+			// acceptance that recorded it is what the head belongs to
+			if err := q.QueryRowContext(ctx, "SELECT a.relationship_id FROM dag_acceptances a"+
+				" WHERE a.state = 'active' AND lower(a.repository) = lower(?) AND a.head_sha = ? ORDER BY a.accepted_at DESC, a.acceptance_id DESC LIMIT 1",
+				r.Repository, r.CandidateHead).Scan(&found); err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					return nil, nil
+				}
+				return nil, err
+			}
+		default:
+			return nil, nil
 		}
 		relationship = found
 	}
@@ -63,6 +95,22 @@ func underCorrectionRefusal(ctx context.Context, q store.Querier, r store.MergeT
 			strconv.FormatInt(stand, 10)+", so the head this turn holds is the result being repaired and is not merged. "+
 			"Accept the corrected result with dag-accept --supersedes, or withdraw the generation, and request the turn again",
 		r.CandidateHead, r.HolderTaskID), nil
+}
+
+// trainUnderCorrectionRefusal is the bundle member's refusal: the member's relationship has a correction
+// ucZoneTable reports whether the store holds the named DAG zone table. The zone arrives with the first
+// write open (D-01), so a store that predates it holds no acceptance and the lane's turn is left to the
+// lane's own rules; that is absence and not an error, the way acceptance.Stands reads dag_base_refreshes.
+func ucZoneTable(ctx context.Context, q store.Querier, table string) (bool, error) {
+	var name string
+	err := q.QueryRowContext(ctx, "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?", table).Scan(&name)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return name == table, nil
 }
 
 // trainUnderCorrectionRefusal is the bundle member's refusal: the member's relationship has a correction

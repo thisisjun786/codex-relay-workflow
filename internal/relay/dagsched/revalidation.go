@@ -171,6 +171,16 @@ func (s *Scheduler) recordHandOpened(ctx context.Context, q store.Querier, plan 
 		case !correctionOpenReason(reason):
 			return refuse(contract.RefusalDispositionConflict, "%s, and the accepted result of %s is current: a generation opened by hand corrects it only when the reason it was opened under states a correction, and generation %d reads %q. Open the generation with generation-open --reason needs_changes_revision or %s, or, when it only merged the base into the branch, record it with dag-base-refresh", notRuled, n.NodeID, rel.Generation, reason, AcceptedResultCorrection)
 		}
+		// CRW-906: a turn of this node that is merging or of unknown effect may already have carried the
+		// accepted head to the base on the forge, outside the relay. Recording a correction now would name
+		// a head that is on its way to landing as the one being repaired, and no later refusal can undo a
+		// merge the forge already made: the turn is resolved first (merge-turn-resolve, or merge-turn-unknown
+		// then merge-turn-resolve). A turn that only waits or holds the lane is not this case: the lane's own
+		// check and land refuse it under correction, so it cannot progress. This is the same conservative
+		// reading the verdict writer makes when a ruling rests on a merge turn (registry.RestsOn).
+		if err := s.refuseAcceptedHeadOnItsWayToTheBase(ctx, q, acc); err != nil {
+			return err
+		}
 	}
 	// the same route a stale node has without the generation: a change of the criteria alone is ruled again (a revalidation, no generation), and what rests on a stale predecessor or an input that is not
 	// there waits; only a result that must be reworked is corrected
@@ -462,6 +472,29 @@ func (s *Scheduler) refuseRevalidation(ctx context.Context, q store.Querier, pla
 		return err
 	}
 	return refuse(contract.RefusalDispositionConflict, "the accepted result of %s is stale (%s) and ruling the same output again would not make it current; its route is %s: %s", n.NodeID, st.Reason(), action, detail)
+}
+
+// refuseAcceptedHeadOnItsWayToTheBase is the guard CRW-906 adds to the accepted-current correction: a
+// merge turn of the node's relationship that is merging or of unknown effect may already have carried the
+// accepted head to the base on the forge. The relay reads the forge, not the merge itself, so the merge
+// is a fact the relay may not have recorded; recording a correction over it would name a head that is on
+// its way to landing as the one being repaired, and no later refusal can undo a merge the forge already
+// made. The turn is resolved first (merge-turn-resolve, or merge-turn-unknown then merge-turn-resolve).
+//
+// A turn that only waits or holds the lane is not this case: the lane's own check and land refuse it
+// under correction (mergeturn.underCorrectionRefusal), so it cannot progress to the base while the
+// generation is open. The reading is the same conservative one the verdict writer makes when a ruling
+// rests on a merge turn (registry.RestsOn): a turn of the assignment that is merging, unknown or landed
+// counts, whatever head it names.
+func (s *Scheduler) refuseAcceptedHeadOnItsWayToTheBase(ctx context.Context, q store.Querier, acc Acceptance) error {
+	var turn, state, head string
+	found, err := queryOne(ctx, q, "SELECT turn_id, state, candidate_head FROM merge_turns"+
+		" WHERE relationship_id = ? AND state IN ('merging','unknown','landed') ORDER BY requested_at, turn_id LIMIT 1", []any{acc.RelationshipID}, &turn, &state, &head)
+	if err != nil || !found {
+		return err
+	}
+	return refuse(contract.RefusalDispositionConflict, "the accepted result of %s is on its way to the base already: merge turn %s of the relationship is %s on head %s, and a correction cannot be recorded over a head the forge may already have merged. Resolve that turn first (merge-turn-resolve, or merge-turn-unknown then merge-turn-resolve) and open the generation again",
+		acc.NodeID, short(turn), state, short(head))
 }
 
 // refuseLanded is the guard of a correction (contract 8.4, E-20): a node whose accepted head landed in every target it lands on is never run again, whatever changed above it and whatever the plan now
