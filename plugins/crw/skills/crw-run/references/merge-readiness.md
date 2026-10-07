@@ -1197,15 +1197,18 @@ its correction; the operator page is `docs/relay/README.md`).
 6. `merge-train-land --train <id> --actor <leader> --landed-sha <M> --observed-base-sha <M>`. The
    relay reads the dev tip and M's parents from the forge; anything but M with parents (D, H) and every
    member head an ancestor of M is refused and writes nothing. On success every member turn is recorded
-   landed with M.
-7. For each member pull request, check it shows merged; if it does not, comment "landed via bundle
-   <merge sha>" and close it.
+   landed with M, except the members the landed event names in its `excluded` list.
+7. For each member pull request **the landed event did not exclude**, check it shows merged; if it does
+   not, comment "landed via bundle <merge sha>" and close it. An excluded member's pull request is left
+   alone: the bundle carried the head it moved away from, so the pull request still has to land on its
+   own.
 8. `merge-train-close --train <id> --actor <leader> --state done --reason <...>` and delete the
    bundle branch.
 
 **Each member's parent.** Once the landing is recorded, the member's own parent records
-`assignment-mark` (merged) and `dag-integration-observe` on its relationship. The ruling and the
-integration observation stay the parent's work.
+`assignment-mark` (merged) and `dag-integration-observe` on its relationship — except for a member the
+landed event's `excluded` list names, whose work did not land and which therefore gets neither mark.
+The ruling and the integration observation stay the parent's work.
 
 **Failure handling.**
 
@@ -1222,13 +1225,17 @@ integration observation stay the parent's work.
 - A set that failed twice goes one by one through the lane.
 - A removed member rides alone.
 - **A member that moves while the bundle is up.** `merge-train-verify` and `merge-train-land` each
-  reread every member pull request's head from the forge before writing; a member whose pull request no
-  longer shows the head the bundle carries is refused `disposition_conflict` naming the pull request and
-  both heads, with nothing written. At verify, abandon and reopen without that member. Between verify
-  and land (the window the bundle merge opens) the member's parent returns its turn
-  (`merge-turn-release returned`), and `merge-train-land` then records the rest and names the excluded
-  member in its landed event with the turn state and close reason. A member that moved while its turn is
-  still live is refused, not excluded.
+  reread every member pull request from the forge before writing; a member whose pull request no
+  longer shows the head the bundle carries, or is no longer open on the bundle's base, is refused
+  `disposition_conflict` naming the pull request and what changed, with nothing written. At verify,
+  abandon and reopen without that member. Between verify and land (the window the bundle merge opens)
+  the member's own parent takes its turn out of the lane — `merge-turn-withdraw` for a waiting member,
+  `merge-turn-release --disposition returned` for the leader, which is the turn that holds the lane —
+  and `merge-train-land` then records the rest and names the excluded member in its landed event with
+  the turn state and close reason. A member that moved while its turn is still in the lane is refused,
+  not excluded. The leader's post-land steps must read that `excluded` list: an excluded member's pull
+  request is not merged and is not closed as landed, and its parent records no `assignment-mark` for
+  it, because the bundle carries only the head it moved away from.
 - If a merge outside the lane moves dev, abandon the bundle and open a new one.
 
 **The lane script** changes only after the bundle merge is in the runtime; until then the lane goes one

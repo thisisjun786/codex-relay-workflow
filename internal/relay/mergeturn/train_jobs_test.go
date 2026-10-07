@@ -59,6 +59,32 @@ func TestTrainJobsFromWorkflowReadsTheMatrix(t *testing.T) {
 	if _, err := TrainJobsFromWorkflow("name: nothing\n"); err == nil {
 		t.Fatal("a workflow with no jobs block was read")
 	}
+	// a job header with a trailing YAML comment is still a job: missing it would let a head add a job
+	// the runtime never checks, and a comment on an expected header would refuse a legitimate bundle
+	commented := "\njobs:\n  validate: # the first gate\n    runs-on: ubuntu\n  go-product:\n    strategy:\n      matrix:\n        part: [lint]\n  audit: # added gate\n    runs-on: ubuntu\n"
+	jobs, err = TrainJobsFromWorkflow(commented)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(jobs, []string{"validate", "go-product (lint)", "audit"}) {
+		t.Fatalf("jobs with trailing comments = %v", jobs)
+	}
+	// a '#' outside a quoted scalar opens a comment; one inside quotes is part of the key
+	if got := trainStripComment("  name: build #1"); got != "  name: build" {
+		t.Fatalf("a trailing comment was not stripped: %q", got)
+	}
+	if got := trainStripComment("  \"a # b\":"); got != "  \"a # b\":" {
+		t.Fatalf("a '#' inside a quoted key was stripped: %q", got)
+	}
+	// a comment on the go-product header does not hide the matrix that follows
+	commentedProduct := "\njobs:\n  validate:\n    runs-on: ubuntu\n  go-product: # the matrix\n    strategy:\n      matrix:\n        part: [dist]\n"
+	jobs, err = TrainJobsFromWorkflow(commentedProduct)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(jobs, []string{"validate", "go-product (dist)"}) {
+		t.Fatalf("jobs of a commented go-product header = %v", jobs)
+	}
 	// a go-product job with no matrix part list is unreadable, never an empty leg list
 	if _, err := TrainJobsFromWorkflow("\njobs:\n  go-product:\n    runs-on: ubuntu\n"); err == nil {
 		t.Fatal("a go-product job with no matrix was read")

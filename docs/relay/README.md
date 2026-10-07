@@ -653,11 +653,12 @@ The steps, with the command names:
    `merge-train-verify --train <id> --actor <leader> --bundle-pr <n> --head <H> --run <R> --repo
    <checkout>`; then `gh pr merge <bundle pr> --merge --match-head-commit <H>`; then
    `merge-train-land --train <id> --actor <leader> --landed-sha <M> --observed-base-sha <M>`; then
-   check every member pull request shows merged (comment "landed via bundle <merge sha>" and close it
-   if not); then `merge-train-close --train <id> --actor <leader> --state done --reason <...>` and
-   delete the bundle branch.
+   check every member pull request the landed event did not exclude shows merged (comment "landed via
+   bundle <merge sha>" and close it if not) and leave an excluded one alone; then `merge-train-close
+   --train <id> --actor <leader> --state done --reason <...>` and delete the bundle branch.
 3. **Each member's parent.** Once the landing is recorded, the member's own parent records
-   `assignment-mark` (merged) and `dag-integration-observe` on its relationship.
+   `assignment-mark` (merged) and `dag-integration-observe` on its relationship — except for a member
+   the landed event's `excluded` list names, whose work did not land and which gets neither mark.
 4. **Failure handling.** A member touching a failed job's packages is removed and the rest re-bundled
    (the old train abandoned); when no member can be named the bundle is halved with a predecessor and
    its successors kept on the same side; a known flaky test's jobs are rerun once; a set that failed

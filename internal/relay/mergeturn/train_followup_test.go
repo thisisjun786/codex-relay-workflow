@@ -124,6 +124,76 @@ func TestTrainLandRefusesAMovedMemberWhoseTurnIsLive(t *testing.T) {
 	}
 }
 
+// TestTrainVerifyAndLandRefuseAMemberPullRequestThatStoppedProposingTheBundle: the head is not the
+// only thing a member pull request proposes. One closed to cancel it, or retargeted away from the
+// bundle's base, no longer proposes this landing even with the same head, and Open's own invariants
+// apply to the fresh read too (CRW-897, answer 1).
+func TestTrainVerifyAndLandRefuseAMemberPullRequestThatStoppedProposingTheBundle(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		pull TrainPullRequest
+	}{
+		{"a member closed to cancel it", TrainPullRequest{Number: 102, State: "closed", BaseRef: trBase, HeadSHA: "head-m2"}},
+		{"a member retargeted away from the bundle's base", TrainPullRequest{Number: 102, State: "open", BaseRef: "main", HeadSHA: "head-m2"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newTr(t)
+			train := w.verifiedTrain()
+			w.tip.set(trRepo, trBase, "merge-1")
+			w.forge.commits["merge-1"] = TrainCommit{SHA: "merge-1", Parents: []string{"base-0", "head-bundle"}, Tree: "tree-bundle"}
+			w.forge.pulls[102] = tc.pull
+			if _, err := w.m.TrainLand(w.ctx, train, trLeader, "merge-1", "", w.tip, w.forge); err == nil || trReason(err) != "disposition_conflict" {
+				t.Fatalf("a member that stopped proposing the bundle: %v", err)
+			}
+			if n := w.count("SELECT count(*) FROM merge_turns WHERE state = 'landed'"); n != 0 {
+				t.Fatalf("a refused land landed %d turn(s)", n)
+			}
+		})
+	}
+	// the same at verify, where the member's own head is unchanged
+	w := newTr(t)
+	train := w.openedTrain()
+	w.pr(900, "head-bundle", TrainLaneLabel)
+	w.forge.runs["run-1"] = runFor("head-bundle")
+	w.forge.pulls[102] = TrainPullRequest{Number: 102, State: "closed", BaseRef: trBase, HeadSHA: "head-m2"}
+	if _, err := w.m.Verify(w.ctx, train, trLeader, "900", "head-bundle", "run-1", "/checkout", w.forge, w.proof); err == nil || trReason(err) != "disposition_conflict" {
+		t.Fatalf("a closed member at verify: %v", err)
+	}
+	if n := w.count("SELECT count(*) FROM merge_train_events WHERE kind = 'verified'"); n != 0 {
+		t.Fatalf("a refused verify wrote %d verified event(s)", n)
+	}
+}
+
+// TestTrainLandRecordsTheRestWhenAnExcludedMembersPullRequestCannotBeRead: an excluded member is
+// out of the landing, so its pull request is not read at all and neither an unreadable one nor a
+// closed one can refuse the rest of the bundle (CRW-897, answer 1).
+func TestTrainLandRecordsTheRestWhenAnExcludedMembersPullRequestCannotBeRead(t *testing.T) {
+	w := newTr(t)
+	train := w.verifiedTrain()
+	rows, err := w.s.All(w.ctx, "SELECT turn_id FROM merge_train_members WHERE train_id = ? AND seq = 2", train)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("member 2: %v", err)
+	}
+	memberTurn := rows[0].Get("turn_id").(string)
+	if _, err := w.m.Withdraw(w.ctx, memberTurn, "task-m2"); err != nil {
+		t.Fatal(err)
+	}
+	// the excluded member's pull request is closed and its head moved: neither is read
+	w.forge.pulls[102] = TrainPullRequest{Number: 102, State: "closed", BaseRef: "main", HeadSHA: "head-m2-moved"}
+	w.tip.set(trRepo, trBase, "merge-1")
+	w.forge.commits["merge-1"] = TrainCommit{SHA: "merge-1", Parents: []string{"base-0", "head-bundle"}, Tree: "tree-bundle"}
+	answer, err := w.m.TrainLand(w.ctx, train, trLeader, "merge-1", "", w.tip, w.forge)
+	if err != nil {
+		t.Fatalf("land with an unreadable excluded member: %v", err)
+	}
+	if answer["state"] != "landed" {
+		t.Fatalf("state after land = %v, want landed", answer["state"])
+	}
+	if n := w.count("SELECT count(*) FROM merge_turns WHERE state = 'landed'"); n != 2 {
+		t.Fatalf("landed turns = %d, want 2", n)
+	}
+}
+
 // TestTrainOrderRefusalFindsAMemberThroughItsAcceptance: the review's order case. The leader is
 // independent (no plan node), an edge A->B joins two other members, and B's acceptance was
 // base-refreshed so its stand head is no longer dag_acceptances.head_sha. The reversed bundle (B
@@ -223,6 +293,22 @@ func TestTrainHalveTerminatesAndKeepsJoinedMembers(t *testing.T) {
 	if len(first)+len(second) != 4 {
 		t.Fatalf("an edge-free bundle halved into %v / %v", first, second)
 	}
+
+	// each half keeps the bundle's order, even when a group's members are not adjacent in it: the
+	// first half here is {A,H} and {B,C}, and emitting them group by group would put H before B
+	wide := []TrainMemberNode{{PRNumber: 101, NodeID: "A"}, {PRNumber: 102, NodeID: "B"}, {PRNumber: 103, NodeID: "C"}, {PRNumber: 104, NodeID: "D"}, {PRNumber: 105, NodeID: "E"}, {PRNumber: 106, NodeID: "F"}, {PRNumber: 107, NodeID: "G"}, {PRNumber: 108, NodeID: "H"}}
+	spread := []TrainPlanEdge{{FromNodeID: "A", ToNodeID: "H"}, {FromNodeID: "B", ToNodeID: "C"}}
+	first, second = halveWithin(t, []int64{101, 102, 103, 104, 105, 106, 107, 108}, wide, spread)
+	for _, half := range [][]int64{first, second} {
+		for i := 1; i < len(half); i++ {
+			if half[i-1] >= half[i] {
+				t.Fatalf("a half is out of bundle order: %v (in %v / %v)", half, first, second)
+			}
+		}
+	}
+	if sideOf(t, first, second, 101) != sideOf(t, first, second, 108) {
+		t.Fatalf("the spread join was split: %v / %v", first, second)
+	}
 }
 
 // halveWithin runs TrainHalve with a deadline, so a loop fails rather than hangs.
@@ -307,5 +393,43 @@ func TestTrainOpenRefusesAMemberOfALiveTrainInsideTheTransaction(t *testing.T) {
 	}
 	if n := w.count("SELECT count(*) FROM merge_trains"); n != 1 {
 		t.Fatalf("trains = %d, want only the pre-existing one", n)
+	}
+}
+
+// TestTrainOpenMembershipGuardRereadsTheMemberTurn: the in-transaction guard refuses a member turn
+// that left the lane or restated its head while the bundle was being read (the check-then-act
+// window between open's early reads and its recording transaction). The guard is exercised directly
+// with the expectations open would carry, because the window itself is what cannot be scheduled.
+func TestTrainOpenMembershipGuardRereadsTheMemberTurn(t *testing.T) {
+	w := newTr(t)
+	_, members := w.threeMembers()
+	// the expectations open would carry, built from the turns as they stand (no train opened yet)
+	expectations := make([]TrainMemberExpectation, 0, len(members))
+	for _, pr := range members {
+		rows, err := w.s.All(w.ctx, "SELECT turn_id, relationship_id, candidate_head FROM merge_turns WHERE pr_number = ?", pr)
+		if err != nil || len(rows) != 1 {
+			t.Fatalf("turn of pull request %d: %v", pr, err)
+		}
+		expectations = append(expectations, TrainMemberExpectation{
+			TurnID: rows[0].Get("turn_id").(string), PRNumber: pr,
+			RelationshipID: rows[0].Get("relationship_id").(string), AcceptedHead: rows[0].Get("candidate_head").(string),
+		})
+	}
+	// the guard passes for a bundle whose members still wait on the heads open chose
+	if err := w.m.trainMembershipRefusal(w.ctx, trLeader, expectations); err != nil {
+		t.Fatalf("the guard refused an unchanged bundle: %v", err)
+	}
+	// a member turn withdrawn while the bundle was being read
+	memberTurn := expectations[1].TurnID
+	if _, err := w.m.Withdraw(w.ctx, memberTurn, "task-m2"); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.m.trainMembershipRefusal(w.ctx, trLeader, expectations); err == nil || trReason(err) != "disposition_conflict" {
+		t.Fatalf("a member withdrawn during open: %v", err)
+	}
+	// a member turn that restated its head while the bundle was being read
+	w.exec("UPDATE merge_turns SET state = 'waiting', candidate_head = 'head-moved' WHERE turn_id = ?", memberTurn)
+	if err := w.m.trainMembershipRefusal(w.ctx, trLeader, expectations); err == nil || trReason(err) != "disposition_conflict" {
+		t.Fatalf("a member that restated its head during open: %v", err)
 	}
 }

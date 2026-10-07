@@ -370,13 +370,26 @@ func (s *Service) Open(ctx context.Context, turn, actor, base string, members []
 
 // trainMembershipRefusal is answer 4's in-transaction check: no member turn (the leader's included)
 // belongs to a live train, and the leader task leads none. It reads through the transaction's
-// connection, so the rows it sees are the ones the recording transaction will write beside.
+// connection, so the rows it sees are the ones the recording transaction will write beside. Each
+// member turn is also reread here: open read the members' turns and their pull requests before this
+// transaction, and a claimant can withdraw or restate one during those reads (Devin's
+// check-then-act finding), so the turn that will be recorded must still be the one open chose.
 func (s *Service) trainMembershipRefusal(ctx context.Context, actor string, members []TrainMemberExpectation) error {
 	for _, m := range members {
 		if _, _, live, err := store.MergeTrainOfTurn(ctx, s.Store, m.TurnID); err != nil {
 			return err
 		} else if live {
 			return trainConflict("turn %s of pull request %d already belongs to a live train, so it cannot ride another", pyvalue.StrRepr(m.TurnID), m.PRNumber)
+		}
+		turn, err := s.Store.MergeTurn(ctx, m.TurnID)
+		if err != nil {
+			return err
+		}
+		if turn.State != Holding && turn.State != Waiting {
+			return trainConflict("turn %s of pull request %d is %s, so it left the lane while the bundle was being read; call again", pyvalue.StrRepr(m.TurnID), m.PRNumber, turn.State)
+		}
+		if !SameCommit(turn.CandidateHead, m.AcceptedHead) {
+			return trainConflict("turn %s of pull request %d now holds %s and the bundle was opened on %s, so it changed while the bundle was being read; call again", pyvalue.StrRepr(m.TurnID), m.PRNumber, pyvalue.StrRepr(turn.CandidateHead), pyvalue.StrRepr(m.AcceptedHead))
 		}
 	}
 	if live, err := s.trainLedBy(ctx, actor); err != nil {
@@ -452,19 +465,24 @@ func trainStandRefusal(pr int64, relationship, memberHead string, active accepta
 	return nil
 }
 
-// trainMemberHeadsRefusal rereads every member pull request's head from the forge and refuses a
-// member that moved after the train opened (CRW-897, answer 1). The head the train carries is a
-// snapshot taken at open, and both verify and land write against it: a member whose pull request
-// moved must not be verified into a bundle whose CI ran on the old head, nor recorded landed while
-// its new commits are left behind. disposition_conflict names the pull request and both heads, and
+// trainMemberRefusal rereads every member pull request from the forge and refuses one that no
+// longer proposes what the train carries (CRW-897, answer 1). The train's member rows are a
+// snapshot taken at open, and both verify and land write against it: a member that moved must not
+// be verified into a bundle whose CI ran on the old head, nor recorded landed while its new commits
+// are left behind; and a member whose pull request was closed to cancel it or retargeted away from
+// the bundle's base no longer proposes this landing at all, so it is refused too, on the same
+// invariants Open applies. disposition_conflict names the pull request and what changed, and
 // nothing is written; a forge that cannot answer is merge_target_unreadable.
 //
 // exempt names the member turns that left the lane (a parent returned or withdrew them): land
-// excludes those from the landing and names them in the landed event, so a moved head there is not
-// a reason to refuse the rest of the bundle. A nil exempt refuses every moved member, which is what
-// verify wants.
-func trainMemberHeadsRefusal(ctx context.Context, forge TrainForge, repository string, members []store.MergeTrainMemberRow, exempt map[string]bool) error {
+// excludes those from the landing and names them in the landed event, so their pull request is not
+// read at all and neither a moved head nor an unreadable pull request there can refuse the rest of
+// the bundle. A nil exempt refuses every member that disagrees, which is what verify wants.
+func trainMemberRefusal(ctx context.Context, forge TrainForge, repository, baseRef string, members []store.MergeTrainMemberRow, exempt map[string]bool) error {
 	for _, m := range members {
+		if exempt[m.TurnID] {
+			continue
+		}
 		pull, err := forge.PullRequest(ctx, repository, m.PRNumber)
 		if err != nil {
 			return trainUnreadable("member pull request %d of %s was not read: %v", m.PRNumber, pyvalue.StrRepr(repository), err)
@@ -472,10 +490,15 @@ func trainMemberHeadsRefusal(ctx context.Context, forge TrainForge, repository s
 		if pull.Number != m.PRNumber {
 			return trainUnreadable("the forge's answer for member pull request %d names %d", m.PRNumber, pull.Number)
 		}
-		if SameCommit(pull.HeadSHA, m.MemberHead) || exempt[m.TurnID] {
-			continue
+		if !SameCommit(pull.HeadSHA, m.MemberHead) {
+			return trainConflict("member pull request %d reads head %s and the bundle carries %s, so the member moved after the train opened", m.PRNumber, pyvalue.StrRepr(pull.HeadSHA), pyvalue.StrRepr(m.MemberHead))
 		}
-		return trainConflict("member pull request %d reads head %s and the bundle carries %s, so the member moved after the train opened", m.PRNumber, pyvalue.StrRepr(pull.HeadSHA), pyvalue.StrRepr(m.MemberHead))
+		if pull.State != "open" {
+			return trainConflict("member pull request %d is %s and the bundle carries its head %s, so the member no longer proposes this landing", m.PRNumber, pull.State, pyvalue.StrRepr(m.MemberHead))
+		}
+		if pull.BaseRef != baseRef {
+			return trainConflict("member pull request %d targets %s and the bundle's base is %s, so the member no longer proposes this landing", m.PRNumber, pyvalue.StrRepr(pull.BaseRef), pyvalue.StrRepr(baseRef))
+		}
 	}
 	return nil
 }
@@ -658,17 +681,11 @@ func (s *Service) Verify(ctx context.Context, train, actor, bundlePR, head, run,
 	// the train opened on is a snapshot, and a member that moved after it must not be verified into
 	// the bundle whose CI ran on the old head. A moved member is disposition_conflict naming the
 	// pull request and both heads, and nothing is written.
-	if err := trainMemberHeadsRefusal(ctx, forge, row.Repository, members, nil); err != nil {
+	if err := trainMemberRefusal(ctx, forge, row.Repository, row.BaseRef, members, nil); err != nil {
 		return nil, err
 	}
-	// the head's own job set, read from the checkout at H (never its working tree, which may sit on
-	// another branch), must be the set this runtime verifies (CRW-897, answer 6). The read runs after
-	// --head was compared with the forge's bundle head, so the commit named here is the forge's own.
 	if proof == nil {
 		return nil, trainUnreadable("this relay has no checkout prover configured, so the bundle's first-parent chain cannot be proved")
-	}
-	if err := trainWorkflowRefusal(ctx, proof, checkout, head); err != nil {
-		return nil, err
 	}
 	reading, err := forge.Run(ctx, row.Repository, run)
 	if err != nil {
@@ -683,6 +700,13 @@ func (s *Service) Verify(ctx context.Context, train, actor, bundlePR, head, run,
 	}
 	chain, err := proof.Chain(ctx, checkout, head, row.BaseSHA, expected)
 	if err != nil {
+		return nil, err
+	}
+	// the head's own job set, read from the checkout at H (never its working tree, which may sit on
+	// another branch), must be the set this runtime verifies (CRW-897, answer 6). The read runs after
+	// --head was compared with the forge's bundle head and after the chain proof has established that
+	// the checkout holds H, so the commit named here is the forge's own and git can resolve it.
+	if err := trainWorkflowRefusal(ctx, proof, checkout, head); err != nil {
 		return nil, err
 	}
 	at := s.now()
@@ -886,7 +910,7 @@ func (s *Service) TrainLand(ctx context.Context, train, actor, landed, observed 
 	if err != nil {
 		return nil, err
 	}
-	if err := trainMemberHeadsRefusal(ctx, forge, row.Repository, members, left); err != nil {
+	if err := trainMemberRefusal(ctx, forge, row.Repository, row.BaseRef, members, left); err != nil {
 		return nil, err
 	}
 	for _, m := range members {
@@ -1235,19 +1259,33 @@ func TrainHalve(order []int64, nodes []TrainMemberNode, edges []TrainPlanEdge) (
 		index[root] = len(groups)
 		groups = append(groups, trainGroup{root: root, members: []int64{pr}})
 	}
-	half := (len(order) + 1) / 2
 	// one group holding every member cannot be split
 	if len(groups) == 1 {
 		return append([]int64{}, order...), nil
 	}
-	first = []int64{}
-	second = []int64{}
+	half := (len(order) + 1) / 2
+	// the groups are filled into the first half in order, each whole group while it still fits;
+	// the rest go to the second. Each half is then emitted in the bundle's order, so the two sides
+	// stay in the order the bundle named (the halving moves members between halves, never within one).
+	inFirst := map[int64]bool{}
+	taken := 0
 	for _, g := range groups {
-		if len(first)+len(g.members) <= half {
-			first = append(first, g.members...)
+		if taken+len(g.members) > half {
 			continue
 		}
-		second = append(second, g.members...)
+		taken += len(g.members)
+		for _, pr := range g.members {
+			inFirst[pr] = true
+		}
+	}
+	first = []int64{}
+	second = []int64{}
+	for _, pr := range order {
+		if inFirst[pr] {
+			first = append(first, pr)
+			continue
+		}
+		second = append(second, pr)
 	}
 	return first, second
 }

@@ -50,6 +50,7 @@ func trainWorkflowJobNames(workflow string) ([]string, error) {
 	}
 	var names []string
 	for _, line := range strings.Split(after, "\n") {
+		line = trainStripComment(line)
 		if line != "" && !strings.HasPrefix(line, " ") {
 			break
 		}
@@ -62,16 +63,37 @@ func trainWorkflowJobNames(workflow string) ([]string, error) {
 	return names, nil
 }
 
+// trainStripComment removes a trailing YAML comment (a '#' at the start of the line or preceded by
+// whitespace, outside a quoted scalar) and the whitespace before it. A job header such as
+// "  audit: # added gate" is a real job, and a scanner that misses it would let a head add a job
+// without verify naming it; a '#' inside a quoted key is part of the key and stays.
+func trainStripComment(line string) string {
+	quote := byte(0)
+	for i := 0; i < len(line); i++ {
+		c := line[i]
+		if quote != 0 {
+			if c == quote {
+				quote = 0
+			}
+			continue
+		}
+		if c == '\'' || c == '"' {
+			quote = c
+			continue
+		}
+		if c == '#' && (i == 0 || line[i-1] == ' ' || line[i-1] == '\t') {
+			return strings.TrimRight(line[:i], " \t")
+		}
+	}
+	return line
+}
+
 // trainWorkflowMatrixParts reads the go-product job's strategy.matrix.part list as text. The list is
 // looked for inside that job's own block, so a workflow that declares no job after it still reads.
 func trainWorkflowMatrixParts(workflow string) ([]string, error) {
-	_, after, found := strings.Cut(workflow, "\n  "+trainProductJob+":\n")
+	body, found := trainJobBody(workflow, trainProductJob)
 	if !found {
 		return nil, errors.New("the workflow holds no " + trainProductJob + " job")
-	}
-	body := after
-	if i := trainNextJobHeader(after); i >= 0 {
-		body = after[:i]
 	}
 	_, matrix, found := strings.Cut(body, "\n        part: [")
 	if !found {
@@ -88,16 +110,34 @@ func trainWorkflowMatrixParts(workflow string) ([]string, error) {
 	return parts, nil
 }
 
-// trainNextJobHeader is where the next job key starts in a job's body, or -1 when the job is last.
-func trainNextJobHeader(body string) int {
+// trainJobBody is the text of one job's block: from its header line to the next job's header, or to
+// the end of the workflow. The header is matched with a trailing YAML comment stripped, so a
+// workflow that comments its job keys still reads.
+func trainJobBody(workflow, job string) (string, bool) {
+	lines := strings.SplitAfter(workflow, "\n")
+	start := -1
 	offset := 0
-	for _, line := range strings.SplitAfter(body, "\n") {
-		if strings.HasPrefix(line, "  ") && !strings.HasPrefix(line, "   ") && strings.HasSuffix(strings.TrimSuffix(line, "\n"), ":") {
-			return offset
+	for i, line := range lines {
+		bare := trainStripComment(strings.TrimSuffix(line, "\n"))
+		if bare == "  "+job+":" {
+			start = offset + len(line)
+			lines = lines[i+1:]
+			break
 		}
 		offset += len(line)
 	}
-	return -1
+	if start < 0 {
+		return "", false
+	}
+	end := 0
+	for _, line := range lines {
+		bare := trainStripComment(strings.TrimSuffix(line, "\n"))
+		if strings.HasPrefix(bare, "  ") && !strings.HasPrefix(bare, "   ") && strings.HasSuffix(bare, ":") {
+			break
+		}
+		end += len(line)
+	}
+	return workflow[start : start+end], true
 }
 
 // trainWorkflowRefusal is answer 6's gate: the job set the head's .github/workflows/ci.yml declares
