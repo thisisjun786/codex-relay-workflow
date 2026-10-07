@@ -6713,3 +6713,65 @@ Only `docs/port/decisions.md` changes: one section at its end. No product code, 
 file, golden, skill document or `plugin.json` changes, and no ruleset, repository setting or
 branch is touched. The implementation, the subscription lifetime, the ordering rule and the
 batching contract ship as the follow-ups above, each as its own issue.
+
+## 84. The creating open keeps its EX gate and downgrades that description to SH in place (CRW-853)
+
+Decision: a writable open that creates an absent store keeps the write gate's open file
+description it placed `EX` and hands it to the store's shared hold instead of closing it and
+taking `SH` on a second description. `createAbsent` returns the gate it placed, still held `EX`,
+when it created the store, and `nil` when it did not (another opener placed the gate first, or the
+store appeared while it created it); every failure path before the hand-over still closes the
+description it placed. `openFenced` carries the returned gate to the writable open and closes it
+on every failure until the writable open takes ownership. `holdGate`, handed that description,
+takes no lock, binds the socket under it first when the opening binds one (`bindSocket`, unchanged),
+and downgrades that same description to `SH` with `unix.Flock(fd, LOCK_SH|LOCK_NB)` - the
+in-place downgrade the socket-binding branch already did. With no handed gate `holdGate` behaves
+exactly as before.
+
+Why: `flock` belongs to the open file description, not to the process. Closing the creator's
+description and taking `SH` on a fresh one leaves the first description held `EX` for as long as
+any surviving reference to it exists, and a child forked during the creation that has not yet
+`exec`ed holds exactly such a reference. The creator's own writable open then refused the store it
+had just created with reason `store_owned_by_other` and detail `write gate: resource temporarily
+unavailable`. That refusal reached two unrelated CI runs of `internal/relay/routing`
+(`Test23_PRD_22_ProposalRotation` on 2026-10-05, `Test23_PR_9_ProjectMembers` on 2026-10-06) through
+`binary_qa_test.go`, which runs the built relay with `exec.Command` under `t.Parallel()`: the
+fork's `exec` window is the race. The cause is the product, not the tests' isolation, so the lock
+handling is what changes.
+
+Measured: with a `dup` of the creating description alive, a fresh open's `LOCK_SH` answers
+`EWOULDBLOCK` (the observed refusal), `LOCK_SH` on the duplicated description itself succeeds, a
+fresh open's `LOCK_EX` then answers `EWOULDBLOCK`, and after every reference is closed `LOCK_EX`
+succeeds. The probe is recorded with the issue's evidence.
+
+*What does not change.* No refusal reason, output field, exit code, CLI option, contract file or
+golden changes, and no zone statement is appended: this is a change to how an existing lock is
+taken, not to the store's shape. `awaitCreation`'s wait is untouched, the lock file keeps its path,
+mode and inode (`placeGate` and `ownership.Lock` are unchanged; only a close and a second open are
+removed), and no retry, wait or sleep is added to hide a refusal. A creating open now holds `EX`
+from placement through its writable open, so a concurrent opener arriving in that window waits in
+`awaitCreation` bounded by the busy timeout - the same waiting shape the socket-binding window
+already had, and what "never let go between the creation and the store's shared hold" requires.
+
+*Red first.* `Test853CreatingOpenKeepsItsGateAndDowngradesItInPlace` in the new
+`internal/relay/store/creation_gate_test.go` (Linux; other systems skip). It dups the creation
+gate's description at the `createFault("gate-placed")` seam and holds it until `Open` returns:
+before this change `Open` refuses with `store_owned_by_other` and the detail above, after it
+succeeds. While the store is open a fresh exclusive lock of the gate answers `EWOULDBLOCK` and a
+fresh shared one succeeds (the shared probe is the discriminating one: an exclusive probe cannot
+tell `SH` from `EX`); after `Close` and releasing the dup an exclusive lock succeeds. The socket
+case runs the same sequence for a store opened with an App Server socket, which also exercises the
+binding under the handed gate. `Test853CreationRefusalWordsAreUnchanged` pins that a genuine `EX`
+holder still meets the same reason and words.
+
+Evidence: `internal/relay/store/ownership.go` (`createAbsent`, `openFenced`),
+`internal/relay/store/stamp.go` (`verifyWritable`, `holdGate`, `refuseWithHanded`),
+`internal/relay/store/creation_gate_test.go`; the existing
+`Test30ConcurrentFirstOpenersNeverSeeAPartialStore`, `Test30CreateAbsentNeverExposesUnstampedDatabase`
+and `Test30SocketBindingBindsAnUnboundStoreOnce` still hold the creation, crash and binding
+contracts around it.
+
+*Not in this slice.* `awaitCreation` and the socket binding of an already-existing store are
+unchanged, as are the write stop and the store file handles, which neighbouring issues own. No
+live-service, installation or activation behaviour is verified here; the installed runtime is
+older than this tree and M4 owns that acceptance.
