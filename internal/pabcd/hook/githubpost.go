@@ -154,7 +154,7 @@ func githubPostJudgeWords(words []string, cwd string) (githubPostSite, bool) {
 	if site, denied, handled := githubPostForm(words, cwd); handled {
 		return site, denied
 	}
-	if site, denied := githubPostScriptCommand(words, cwd); denied {
+	if site, denied := githubPostScriptCommand(words, cwd, true); denied {
 		return site, true
 	}
 	if githubPostQuiet(words) {
@@ -537,6 +537,7 @@ func githubPostPost(args []string, cwd string) (githubPostSite, bool, bool) {
 			if !ok {
 				return githubPostSite{githubPostRuleUnread, githubPostWhereCommand}, true, true
 			}
+			v = githubPostNormal(v)
 			if v == "-" {
 				return githubPostSite{githubPostRuleInline, githubPostWhereCommand}, true, true
 			}
@@ -545,7 +546,7 @@ func githubPostPost(args []string, cwd string) (githubPostSite, bool, bool) {
 			}
 			file, fileSet = v, true
 		case strings.HasPrefix(w, "--body-file="):
-			v := strings.TrimPrefix(w, "--body-file=")
+			v := githubPostNormal(strings.TrimPrefix(w, "--body-file="))
 			if v == "-" {
 				return githubPostSite{githubPostRuleInline, githubPostWhereCommand}, true, true
 			}
@@ -590,16 +591,19 @@ func githubPostPost(args []string, cwd string) (githubPostSite, bool, bool) {
 // shell runs directly (D2). A command whose wrapper runs nothing is not a target, and an allowed script
 // leaves the command text to the closed rule, because the shell's own arguments may run a post the script
 // passes on.
-func githubPostScriptCommand(tokens []string, cwd string) (githubPostSite, bool) {
-	// The words are read as the shell builds them (quote removal) and with a trailing grouping close removed
-	// (a subshell or a brace group ends on the same word), so a wrapper or a shell in quote pieces
-	// ('timeout' 30 bash post.sh, 'bash' post.sh, (bash post.sh)) is the word the shell runs.
+func githubPostScriptCommand(tokens []string, cwd string, quoted bool) (githubPostSite, bool) {
+	// The words are read as the shell builds them (quote removal), so a wrapper or a shell in quote pieces
+	// ('timeout' 30 bash post.sh, 'bash' post.sh) is the word the shell runs.
 	normal := make([]string, len(tokens))
 	for i, token := range tokens {
-		// A grouping close is stripped from the token as written, before quote removal, so a quoted operand
-		// keeps it: 'evil.sh)' ends in a quote and names the file evil.sh), while the post.sh of
-		// (bash post.sh) ends in the grouping close and is post.sh.
-		normal[i] = githubPostNormal(strings.TrimRight(token, ")}"))
+		if quoted {
+			// The token still carries its quotes, as the strict word reader keeps them.
+			normal[i] = githubPostNormal(token)
+		} else {
+			// The tokenizer already removed the quotes, so removing them again would strip quote
+			// characters that are part of the file name (bash \"'post.sh'\" runs the file 'post.sh').
+			normal[i] = token
+		}
 	}
 	rest := shellVerbSkipWrappers(normal)
 	for len(rest) > 0 && rest[0] == "--" {
@@ -623,7 +627,10 @@ func githubPostScriptCommand(tokens []string, cwd string) (githubPostSite, bool)
 // (cd . && bash post.sh, true; bash post.sh, bash post.sh &) no longer hides a posting script file.
 func githubPostScriptList(command, cwd string) (githubPostSite, bool) {
 	for _, part := range shellVerbSubsegments(command) {
-		if site, denied := githubPostScriptCommand(shellTokenize(part), cwd); denied {
+		// A subshell or brace group closes with an unquoted ) or } glued to the last word; it is dropped
+		// from the raw text, so a quoted operand keeps a literal close ('evil.sh)' names evil.sh)).
+		part = strings.TrimRight(part, ")}")
+		if site, denied := githubPostScriptCommand(shellTokenize(part), cwd, false); denied {
 			return site, true
 		}
 	}
@@ -671,17 +678,13 @@ func githubPostDirectScript(words []string, cwd string) (githubPostSite, bool) {
 // command text still carries the shell's own arguments, which the script may run ("$@"), so the caller
 // keeps judging it.
 func githubPostShellScript(words []string, cwd string) (githubPostSite, bool, bool) {
-	if len(words) < 2 {
+	name, program, ok := githubPostShellProgramFile(words)
+	if !ok {
 		return githubPostSite{}, false, false
 	}
-	program := githubPostProgram(words[0])
 	switch program {
 	case "bash", "sh", "zsh", "dash", "ksh", "source", ".":
 	default:
-		return githubPostSite{}, false, false
-	}
-	name, ok := githubPostShellProgramFile(words)
-	if !ok {
 		return githubPostSite{}, false, false
 	}
 	if site, denied := githubPostJudgeScript(name, cwd); denied {
@@ -690,7 +693,7 @@ func githubPostShellScript(words []string, cwd string) (githubPostSite, bool, bo
 	// source and the dot builtin search PATH for a name with no slash before the working directory, so a
 	// file the working directory names may not be the one that runs. That file is judged too, and either
 	// one failing refuses the command.
-	if path, ok := githubPostSourcedPath(program, name); ok {
+	if path, ok := githubPostSourcedPath(program, name, cwd); ok {
 		if site, denied := githubPostJudgeScript(path, cwd); denied {
 			return site, true, true
 		}
@@ -698,22 +701,28 @@ func githubPostShellScript(words []string, cwd string) (githubPostSite, bool, bo
 	return githubPostSite{}, false, false
 }
 
-// githubPostShellProgramFile is the program file operand of a shell command, and whether the command takes
-// its program from a file at all. -c takes a program string and -s takes it from standard input, so
-// neither names a file; -- ends the options, so the word after it is the program whatever it looks like;
-// an option written as its own word is skipped, and a value-taking one (-o, +o, -O, +O, --rcfile,
-// --init-file) also consumes the word after it, so an option's value is never read as the program file.
-func githubPostShellProgramFile(words []string) (string, bool) {
+// githubPostShellProgramFile is the program file operand of a shell command, the shell word itself, and
+// whether the command takes its program from a file at all. -c takes a program string and -s takes it from
+// standard input, so neither names a file; -- ends the options, so the word after it is the program
+// whatever it looks like; an option written as its own word is skipped, and a value-taking one (-o, +o,
+// -O, +O, --rcfile, --init-file) also consumes the word after it, so an option's value is never read as
+// the program file. The shell word is the first word after the wrappers, so a source or dot command is
+// recognised even when it is spelled as a path.
+func githubPostShellProgramFile(words []string) (name, program string, ok bool) {
+	if len(words) < 2 {
+		return "", "", false
+	}
+	program = githubPostProgram(words[0])
 	for i := 1; i < len(words); i++ {
 		w := words[i]
 		if w == "--" {
 			if i+1 < len(words) {
-				return githubPostNormal(words[i+1]), true
+				return words[i+1], program, true
 			}
-			return "", false
+			return "", program, false
 		}
 		if githubPostShellProgramWord(w) {
-			return "", false
+			return "", program, false
 		}
 		if operator, consumesNext := githubPostRedirection(w); operator {
 			// A redirection is not the program operand. A bare operator takes the word after it (the
@@ -730,9 +739,9 @@ func githubPostShellProgramFile(words []string) (string, bool) {
 			}
 			continue
 		}
-		return githubPostNormal(w), true
+		return w, program, true
 	}
-	return "", false
+	return "", program, false
 }
 
 // githubPostRedirection is whether a word is a shell redirection operator, and whether it takes the word
@@ -758,7 +767,7 @@ func githubPostRedirection(w string) (operator, consumesNext bool) {
 // searches PATH first and falls back to the name in the working directory. The guard reads this file as
 // well as the working-directory one, so neither can hide a posting script from the other. PATH is the
 // guard's own environment, because the payload carries none, so this is a superset of what the shell runs.
-func githubPostSourcedPath(program, name string) (string, bool) {
+func githubPostSourcedPath(program, name, cwd string) (string, bool) {
 	if program != "source" && program != "." {
 		return "", false
 	}
@@ -768,6 +777,10 @@ func githubPostSourcedPath(program, name string) (string, bool) {
 	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
 		if dir == "" {
 			continue
+		}
+		if !filepath.IsAbs(dir) {
+			// A relative PATH entry is relative to the payload's working directory, where the shell runs.
+			dir = githubPostAbsPath(dir, cwd)
 		}
 		// The first regular file of that name is the one a shell reads; it need not be executable, as a
 		// sourced file is read rather than run.
@@ -784,9 +797,23 @@ func githubPostSourcedPath(program, name string) (string, bool) {
 
 // githubPostShellProgramWord is whether a word is a single-dash option bundle that keeps the first operand
 // from being the program file: c takes the program as its own word (bash -c, sh -ec) and s reads it from
-// standard input (bash -s, bash -es). A long option such as --norc is not one.
+// standard input (bash -s, bash -es). The bundle is read as the shell reads it, so a letter inside the
+// attached value of o or O is not a flag (zsh -ocorrect post.sh has no c flag); a long option such as
+// --norc is not a bundle at all.
 func githubPostShellProgramWord(w string) bool {
-	return len(w) > 1 && w[0] == '-' && w[1] != '-' && strings.ContainsAny(w[1:], "cs")
+	if len(w) < 2 || w[0] != '-' || w[1] == '-' {
+		return false
+	}
+	for i := 1; i < len(w); i++ {
+		switch w[i] {
+		case 'c', 's':
+			return true
+		case 'o', 'O':
+			// The rest of the word is this option's attached value, not more flags.
+			return false
+		}
+	}
+	return false
 }
 
 // githubPostShellValueOption is whether a shell option written as its own word takes the next word as its
@@ -865,6 +892,27 @@ func githubPostScriptBadLine(content, cwd string) (int, bool) {
 	return 0, false
 }
 
+// githubPostAbsPath is the path a name denotes for the payload's working directory: an absolute name as
+// written, a relative one joined with the payload cwd (or the guard's own when the payload carries none).
+// The name is joined without cleaning, so a `..` in it is resolved by the kernel against the real
+// directory tree rather than collapsed here: a link in the middle of the name is followed before the `..`
+// applies, exactly as the shell would. Cleaning first would inspect a different file than the one opened.
+func githubPostAbsPath(name, cwd string) string {
+	if filepath.IsAbs(name) {
+		return name
+	}
+	base := cwd
+	if base == "" {
+		if wd, err := os.Getwd(); err == nil {
+			base = wd
+		}
+	}
+	if base == "" {
+		return name
+	}
+	return base + string(filepath.Separator) + name
+}
+
 // githubPostReadScriptFile reads a directly executed script (D2). The path is joined with the payload's
 // working directory. The file is a script when it starts with #! or has no NUL byte in its first 4 KiB;
 // only a file that does neither (a binary) is not a target, because a #! script runs under its interpreter
@@ -873,17 +921,7 @@ func githubPostScriptBadLine(content, cwd string) (int, bool) {
 // reports unreadable, which the caller refuses at the name, exactly as generation 1 refuses a shell
 // program file it cannot read.
 func githubPostReadScriptFile(name, cwd string) (content string, binary, unreadable bool) {
-	path := name
-	if !filepath.IsAbs(path) {
-		base := cwd
-		if base == "" {
-			if wd, err := os.Getwd(); err == nil {
-				base = wd
-			}
-		}
-		path = filepath.Join(base, path)
-	}
-	path = filepath.Clean(path)
+	path := githubPostAbsPath(name, cwd)
 	// A name that is not a regular file is refused before any open: a FIFO would wait for a writer, and an
 	// absent file, a directory or a link to nothing is not a text script the guard can rule out.
 	st, err := os.Stat(path)
@@ -895,6 +933,12 @@ func githubPostReadScriptFile(name, cwd string) (content string, binary, unreada
 		return "", false, true
 	}
 	defer file.Close()
+	// The open handle is the file that will be read, so its own stat is what the identity check compares
+	// against the pathname: a file swapped in between the stat above and the open is refused.
+	handle, err := file.Stat()
+	if err != nil || !os.SameFile(st, handle) {
+		return "", false, true
+	}
 	head := make([]byte, 4096)
 	n, err := io.ReadFull(file, head)
 	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
@@ -903,10 +947,6 @@ func githubPostReadScriptFile(name, cwd string) (content string, binary, unreada
 	head = head[:n]
 	if bytes.IndexByte(head, 0) >= 0 && !bytes.HasPrefix(head, []byte("#!")) {
 		return "", true, false
-	}
-	// The handle must be the file the path names now, as generation 1's open-handle checks require.
-	if now, err := os.Stat(path); err != nil || !os.SameFile(st, now) {
-		return "", false, true
 	}
 	rest, err := io.ReadAll(io.LimitReader(file, githubPostMaxFileBytes+1))
 	if err != nil || int64(len(head))+int64(len(rest)) > githubPostMaxFileBytes {
@@ -920,17 +960,7 @@ func githubPostReadScriptFile(name, cwd string) (content string, binary, unreada
 // guard can read. Unlike a body file it is not confined to a temporary root: the guard reads it only to
 // judge it, and the refusal names the file and never a value.
 func githubPostReadScript(name, cwd string) (string, bool) {
-	path := name
-	if !filepath.IsAbs(path) {
-		base := cwd
-		if base == "" {
-			if wd, err := os.Getwd(); err == nil {
-				base = wd
-			}
-		}
-		path = filepath.Join(base, path)
-	}
-	path = filepath.Clean(path)
+	path := githubPostAbsPath(name, cwd)
 	// A path that is not a regular file is refused before the open: opening a FIFO read-only waits for a
 	// writer, which would hang the hook instead of denying the command. Stat follows a link without
 	// blocking, so a script reached through a link is still read.
@@ -993,6 +1023,7 @@ func githubPostAPI(args []string, cwd string) (githubPostSite, bool, bool) {
 				}
 				v = next
 			}
+			v = githubPostNormal(v)
 			if v == "-" {
 				// A standard-input body is refused explicitly, as --body-file - already was.
 				return githubPostSite{githubPostRuleInline, githubPostWhereCommand}, true, true
@@ -1006,6 +1037,7 @@ func githubPostAPI(args []string, cwd string) (githubPostSite, bool, bool) {
 			if !ok {
 				return githubPostSite{}, false, false
 			}
+			v = githubPostNormal(v)
 			name, value, found := strings.Cut(v, "=")
 			if !found || name != "body" {
 				return githubPostSite{}, false, false
@@ -1026,6 +1058,7 @@ func githubPostAPI(args []string, cwd string) (githubPostSite, bool, bool) {
 			if !ok {
 				return githubPostSite{}, false, false
 			}
+			v = githubPostNormal(v)
 			if name, _, found := strings.Cut(v, "="); found && name == "body" {
 				return githubPostSite{githubPostRuleInline, githubPostWhereCommand}, true, true
 			}
@@ -1268,19 +1301,9 @@ func githubPostExpands(s string) bool {
 // githubPostReadFile reads the text a post names: a literal path that lies under a temporary root, is a
 // regular file of at most 1 MiB, and whose bytes the guard can read.
 func githubPostReadFile(name, cwd string) (string, bool) {
-	path := name
-	if !filepath.IsAbs(path) {
-		base := cwd
-		if base == "" {
-			if wd, err := os.Getwd(); err == nil {
-				base = wd
-			}
-		}
-		path = filepath.Join(base, path)
-	}
 	// The containment check reads the file the kernel would read, so the path is resolved through its
-	// links first; a link under a root that points outside it is refused.
-	path, err := filepath.EvalSymlinks(filepath.Clean(path))
+	// links before any cleaning; a link under a root that points outside it is refused.
+	path, err := filepath.EvalSymlinks(githubPostAbsPath(name, cwd))
 	if err != nil || !githubPostUnderRoots(path) {
 		return "", false
 	}
