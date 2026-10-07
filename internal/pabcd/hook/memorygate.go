@@ -121,7 +121,9 @@ func memoryGateConsume(cwd, sid, turn string, write func(string, state.State) er
 		} else {
 			s.MemoryWriteRequested, s.MemoryWriteTurn = false, nil
 		}
-		if err := write(cwd, s); err != nil {
+		// The authorization is spent in the state every reader sees once the write published it, so a failure after the
+		// rename (state.Published) is a spent authorization and this call, which it authorized, goes ahead.
+		if err := write(cwd, s); err != nil && !state.Published(err) {
 			return err
 		}
 		allowed = true
@@ -182,6 +184,17 @@ func memoryGateClassify(tool string, input any, cwd string, env host.LookupEnv) 
 			if target, ok := g.hit(token, cwd, root); ok {
 				return MemoryWriteAttempt{Surface: "shell", Target: target}
 			}
+		}
+		// A Python program the reader cannot finish - an f-string replacement field it cannot walk - may hold a write
+		// it never sees, so it is a write attempt of its own and the gate fails closed (CRW-741).
+		if what, ok := shellWriteFStringUnreadable(command); ok {
+			return MemoryWriteAttempt{Surface: "shell", Target: "(a program the gate cannot read: " + what + ")"}
+		}
+		// A shell program position the outer shell builds at run time - a -c program, an eval operand, a source
+		// operand, a shell reading a pipe, a here-string or a here-document - may hold a write the destination reader
+		// never sees, so it is a write attempt of its own and the gate fails closed (CRW-726, beside CRW-741's check).
+		if what, ok := worktreeDelUnreadableProgram(command); ok {
+			return MemoryWriteAttempt{Surface: "shell", Target: "(a program the gate cannot read: " + what + ")"}
 		}
 	}
 	return MemoryWriteAttempt{}

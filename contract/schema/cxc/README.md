@@ -222,5 +222,7 @@ status and the presence of the error rather than V8's wording.
 Recording surfaced behaviour that looks unintended in v0.2.40. The fixtures keep it as the
 oracle does (only the destructive `reset --help` is fixed by the port, decision 9); the port
 issues decide each one. The list, one line per defect with its fixture or source pointer, is
-[docs/port-cxc/known-defects.md](../../../docs/port-cxc/known-defects.md); a port issue that finds
-another adds a line there.
+[docs/port-cxc/known-defects.md](../../../docs/port-cxc/known-defects.md), the read-only record up to
+CRW-684, and [docs/port-cxc/known-defects/](../../../docs/port-cxc/known-defects/), one file per issue
+whose rules are in that directory's README; a port issue that finds a defect writes it to its own
+issue file.

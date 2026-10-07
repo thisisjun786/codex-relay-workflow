@@ -23,6 +23,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
@@ -33,7 +34,7 @@ const harnessInstallSessionsDir = ".crw/sessions"
 
 // harnessInstallCheck is one install-root check, the only check shape the oracle builds there.
 func harnessInstallCheck(severity HarnessSeverity, evidence, repair string) HarnessCheck {
-	return HarnessCheck{Name: "install-root", Severity: severity, Evidence: evidence, Repair: repair}
+	return HarnessCheck{Name: "install-root", Severity: severity, Evidence: evidence, Repair: harnessReportRepair(repair)}
 }
 
 // HarnessPabcdCheck is checkPabcdHealth (doctor.ts:166-181): the sessions directory of the
@@ -72,7 +73,7 @@ func HarnessPabcdCheck(projectRoot string) HarnessCheck {
 			Name:     "pabcd-state",
 			Severity: HarnessWarn,
 			Evidence: fmt.Sprintf("%d corrupt session file(s): %s", len(corrupt), strings.Join(corrupt, ", ")),
-			Repair:   "crw pabcd reset --state",
+			Repair:   harnessReportRepair("crw pabcd reset --state"),
 		}
 	}
 	return HarnessCheck{Name: "pabcd-state", Severity: HarnessPass, Evidence: fmt.Sprintf("%d session file(s), all parseable", total)}
@@ -131,11 +132,13 @@ func HarnessManifestTargetChecks(pluginRoot string) []HarnessCheck {
 // HarnessInstalledRootCheck is runInstalledRootCheck (doctor.ts:401-445): the STALE-ROOT-01 check
 // that compares the payload's declared version with the version directories the plugin cache
 // holds. A throw inside its try is a WARN whose evidence is the oracle's message; a homedir that
-// cannot be established is outside that try and aborts, as the port panics.
-func HarnessInstalledRootCheck(pluginRoot string, options HarnessOptions) HarnessCheck {
+// cannot be established is outside that try and aborts, as the port panics. env is the ambient
+// read the report passes to every check, so one report resolves one Codex home (the oracle reads
+// process.env here, doctor.ts:402).
+func HarnessInstalledRootCheck(pluginRoot string, options HarnessOptions, env host.LookupEnv) HarnessCheck {
 	return harnessInstallInstalledRootCheck(pluginRoot,
 		func() (string, error) {
-			return harnessInstallCodexHome(options.CodexHome, os.LookupEnv, harnessInstallPasswdHome)
+			return harnessInstallCodexHome(options.CodexHome, record.Environ(env), harnessInstallPasswdHome)
 		},
 		os.ReadFile)
 }
@@ -231,14 +234,14 @@ func harnessInstallManifestString(manifest any, key string) (string, error) {
 	return value, nil
 }
 
-// harnessInstallCodexHome is doctor.ts:402's option ?? CODEX_HOME ?? join(homedir(), ".codex"):
-// only the option and CODEX_HOME are used verbatim, the home results always get the `.codex`
-// suffix, and a variable that is present but empty is present (so an empty HOME gives the
-// relative ".codex"). The Go options cannot express an explicitly empty codexHome, which the
-// oracle would use verbatim; the PR body states that limitation.
-func harnessInstallCodexHome(codexHome string, lookup record.Environ, passwdHome func() (string, error)) (string, error) {
-	if codexHome != "" {
-		return codexHome, nil
+// harnessInstallCodexHome is doctor.ts:402's option ?? CODEX_HOME ?? join(homedir(), ".codex"): a
+// nil option is absent and falls through, a non-nil option -- the empty string included -- is used
+// verbatim, and CODEX_HOME is used verbatim as well. The home results always get the .codex
+// suffix, and a variable that is present but empty is present (so an empty HOME gives the relative
+// ".codex").
+func harnessInstallCodexHome(codexHome *string, lookup record.Environ, passwdHome func() (string, error)) (string, error) {
+	if codexHome != nil {
+		return *codexHome, nil
 	}
 	if value, ok := lookup("CODEX_HOME"); ok {
 		return value, nil

@@ -16,6 +16,7 @@ import (
 // python-internal (cli.Services wiring by identity) and not ported.
 
 func Test21_USL12_a_persisting_hold_opens_its_fault_as_broken(t *testing.T) {
+	t.Parallel()
 	const cls = "APersistingHoldReachesTheOperator."
 	t.Run("lost", func(t *testing.T) {
 		mirror(t, usl, cls+"test_a_lost_hold_opens_its_fault_instead_of_staying_observed", func(h *hl) {
@@ -41,6 +42,7 @@ func Test21_USL12_a_persisting_hold_opens_its_fault_as_broken(t *testing.T) {
 }
 
 func Test21_USL13_a_revision_request_left_without_trace_is_held_not_resent(t *testing.T) {
+	t.Parallel()
 	mirror(t, usl, "ACorrectionLostTheSameWayIsTheParentsToRecover.test_a_revision_request_left_without_trace_is_held_not_resent", func(h *hl) {
 		_, correction := h.correctionAfterNeedsChanges()
 		h.host.startTurn(child, "child-earlier", "completed", "")
@@ -75,6 +77,7 @@ func (h *hl) fillWindow(now float64) float64 {
 }
 
 func Test21_USL14_the_four_K5_cases_read_apart(t *testing.T) {
+	t.Parallel()
 	const cls = "TheFourCasesReadApart."
 	t.Run("death before the answer, turn lost", func(t *testing.T) {
 		mirror(t, usl, cls+"test_death_before_the_answer_with_the_turn_lost", func(h *hl) {
@@ -130,6 +133,7 @@ func (h *hl) capped() (string, float64, float64) {
 func pacingOf(item Obj) Obj { return sub(item, "pacing") }
 
 func Test21_USL15_the_hourly_cap_is_named_with_its_reopen_time(t *testing.T) {
+	t.Parallel()
 	const cls = "TheHourlyCapIsNamedWithItsReopenTime."
 	t.Run("status names the cap and a reopen time that does not move", func(t *testing.T) {
 		mirror(t, usl, cls+"test_status_names_the_cap_and_a_reopen_time_that_does_not_move", func(h *hl) {
@@ -193,6 +197,7 @@ func Test21_USL15_the_hourly_cap_is_named_with_its_reopen_time(t *testing.T) {
 }
 
 func Test21_USL16_a_raised_or_lifted_cap_releases_the_delivery_within_a_minute(t *testing.T) {
+	t.Parallel()
 	const cls = "TheHourlyCapIsNamedWithItsReopenTime."
 	t.Run("cap raised", func(t *testing.T) {
 		mirror(t, usl, cls+"test_a_raised_cap_releases_the_delivery_within_a_minute", func(h *hl) {
@@ -223,6 +228,7 @@ func Test21_USL16_a_raised_or_lifted_cap_releases_the_delivery_within_a_minute(t
 }
 
 func Test21_USL17_a_cap_of_zero_names_the_operator(t *testing.T) {
+	t.Parallel()
 	const cls = "TheHourlyCapIsNamedWithItsReopenTime."
 	t.Run("pacing says only a changed policy reopens it", func(t *testing.T) {
 		mirror(t, usl, cls+"test_a_cap_of_zero_says_nothing_reopens_it_but_a_changed_policy", func(h *hl) {
@@ -258,6 +264,7 @@ func Test21_USL17_a_cap_of_zero_names_the_operator(t *testing.T) {
 }
 
 func Test21_USL19_a_delivery_held_by_its_own_later_backoff_is_not_paced(t *testing.T) {
+	t.Parallel()
 	mirror(t, usl, "TheHourlyCapIsNamedWithItsReopenTime.test_a_delivery_held_by_its_own_later_backoff_is_not_reported_as_paced", func(h *hl) {
 		event, _, window := h.capped()
 		later := window + 3600 + 1800
@@ -316,6 +323,7 @@ func publishedWith(pubs []any, trigger string) []string {
 }
 
 func Test21_USL20_a_hold_reaches_its_fault_whatever_the_sweep_saw_first(t *testing.T) {
+	t.Parallel()
 	const cls = "AHoldReachesItsFaultWhateverTheSweepSawFirst."
 	t.Run("lost after the sweep", func(t *testing.T) {
 		mirror(t, usl, cls+"test_a_hold_named_after_the_sweep_recorded_its_attempt_breaks_the_fault", func(h *hl) {
@@ -433,6 +441,7 @@ func (h *hl) dropTurn(turn string) {
 }
 
 func Test21_USL21_a_hold_that_changes_name_stays_on_its_one_fault(t *testing.T) {
+	t.Parallel()
 	const cls = "AHoldReachesItsFaultWhateverTheSweepSawFirst."
 	t.Run("undecided then lost", func(t *testing.T) {
 		mirror(t, usl, cls+"test_a_hold_that_changes_name_updates_the_one_fault_it_is_on", func(h *hl) {
@@ -513,6 +522,7 @@ func Test21_USL21_a_hold_that_changes_name_stays_on_its_one_fault(t *testing.T) 
 }
 
 func Test21_USL22_a_superseded_hold_names_the_supersession(t *testing.T) {
+	t.Parallel()
 	const cls = "ASupersededHoldNamesTheSupersession."
 	openGenerationTwo := func(h *hl) {
 		h.host.startTurn(child, "turn-dispatch-2", "inProgress", "")

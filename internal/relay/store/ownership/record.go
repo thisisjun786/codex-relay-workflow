@@ -494,11 +494,35 @@ func SnapshotMeta(ctx context.Context, path string) (Stamp, error) {
 	return stamp, errors.Join(err, db.Close())
 }
 
+// HoldStoreFile, when non-nil, opens the store file at path and returns a descriptor this process
+// keeps for its whole life: the caller must NOT close it. Package store installs it (storefile.go,
+// CRW-846): a POSIX lock is held per process and per file, so closing any descriptor of a store
+// file in a process that holds a SQLite WAL connection on it drops that connection's lock, and the
+// next process to close deletes -wal and -shm under the live connection. A nil hook (a build that
+// links this package without package store, such as these tests) opens the file the old way and
+// the caller owns the descriptor.
+var HoldStoreFile func(path string) (*os.File, error)
+
+// openStoreFile opens a store file through the process's held-handle registry when package store
+// installed it, else as a plain open. held reports whether the descriptor is the process's to keep,
+// so a caller never closes a borrowed handle.
+func openStoreFile(path string) (file *os.File, held bool, err error) {
+	if HoldStoreFile != nil {
+		file, err = HoldStoreFile(path)
+		return file, err == nil, err
+	}
+	file, err = os.Open(path)
+	return file, false, err
+}
+
 // CopySnapshot is for read-only preflight only, NOT the transfer backup. The
 // latter uses sqlite3_backup under the complete transfer barrier. Each source is copied as
 // ownership.metadata's shutil.copyfile copies it: a source that is a directory fails at its
 // open, naming that source (IsADirectoryError), where Go's open would succeed and the copy
 // fail later, naming the temporary destination.
+//
+// The sources are read with ReadAt from the handles this process holds (openStoreFile), never
+// closed here: CRW-846.
 func CopySnapshot(path string) (dst string, cleanup func() error, err error) {
 	dir, err := os.MkdirTemp("", "crw-ownership-")
 	if err != nil {
@@ -512,22 +536,36 @@ func CopySnapshot(path string) (dst string, cleanup func() error, err error) {
 	}()
 	dst = filepath.Join(dir, filepath.Base(path))
 	for _, suffix := range []string{"", "-wal"} {
-		src, e := os.Open(path + suffix)
+		src, held, e := openStoreFile(path + suffix)
 		if errors.Is(e, os.ErrNotExist) && suffix != "" {
 			continue
 		}
 		if e != nil {
 			return "", nil, e
 		}
-		if info, e := src.Stat(); e == nil && info.IsDir() {
-			return "", nil, errors.Join(&os.PathError{Op: "open", Path: path + suffix, Err: unix.EISDIR}, src.Close())
+		// A held handle is the process's and is never closed; a fallback open is the caller's.
+		closeSource := func() error {
+			if held {
+				return nil
+			}
+			return src.Close()
+		}
+		info, e := src.Stat()
+		if e != nil {
+			return "", nil, errors.Join(e, closeSource())
+		}
+		if info.IsDir() {
+			return "", nil, errors.Join(&os.PathError{Op: "open", Path: path + suffix, Err: unix.EISDIR}, closeSource())
 		}
 		out, e := os.OpenFile(dst+suffix, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 		if e != nil {
-			return "", nil, errors.Join(e, src.Close())
+			return "", nil, errors.Join(e, closeSource())
 		}
-		_, e = io.Copy(out, src)
-		e = errors.Join(e, src.Close(), out.Close())
+		// ReadAt from the shared handle: a position-independent read of the size taken just
+		// above, so a file that grew after the stat is copied to a coherent prefix and the
+		// handle's own offset is never moved.
+		_, e = io.Copy(out, io.NewSectionReader(src, 0, info.Size()))
+		e = errors.Join(e, closeSource(), out.Close())
 		if e != nil {
 			return "", nil, e
 		}

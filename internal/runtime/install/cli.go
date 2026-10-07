@@ -15,6 +15,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/doctor"
+	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/install/migrate"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/reading"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/scope"
@@ -28,13 +29,14 @@ const DefaultIssue = "CRW-158"
 const backupHelp = "the directory the whole relay state directory is copied to (copy only, byte for byte, recorded) before a swap that brings the additive DAG zone, or ordinary indexes on tables the store already holds, to a store that lacks them; the acknowledgement that route needs"
 
 // Commands are `crw install`'s subcommands.
-var Commands = []string{"install", "update", "rollback", "remove", "status", "register-mcp", "hook", "register-service", "features", "config"}
+var Commands = []string{"install", "update", "rollback", "remove", "status", "register-mcp", "hook", "register-service", "features", "config", "migrate-state"}
 
 func usage(w io.Writer) {
-	// The installer help is a frozen contract; features has its own help surface.
+	// The installer help is a frozen contract; features, config and migrate-state have their own help
+	// surfaces, so the frozen line still names only the commands it named before.
 	var legacy []string
 	for _, command := range Commands {
-		if command != "features" && command != "config" {
+		if command != "features" && command != "config" && command != "migrate-state" {
 			legacy = append(legacy, command)
 		}
 	}
@@ -90,6 +92,11 @@ func Main(ctx context.Context, args []string, env scope.Env, stdout, stderr io.W
 	if command == "config" {
 		return runConfig(rest, env, stdout, stderr)
 	}
+	if command == "migrate-state" {
+		// Routed before the generic install options, as features and config are: it takes its own
+		// flags and prints its own text or JSON report, not the installer's envelope.
+		return migrate.Run(ctx, rest, env, stdout, stderr)
+	}
 	flags := flag.NewFlagSet("crw install "+command, flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	codexHome := flags.String("codex-home", "", "the Codex home (default $CODEX_HOME or ~/.codex)")
@@ -101,7 +108,7 @@ func Main(ctx context.Context, args []string, env scope.Env, stdout, stderr io.W
 	var unitName, unitDir, scopeDir *string
 	var bridgeArgs repeated
 	var policy, backup given
-	var dryRun, removeUnit *bool
+	var dryRun, removeUnit, reRegisterPolicy *bool
 	var guardTimeout, timeout *int64
 	switch command {
 	case "install", "update":
@@ -119,6 +126,7 @@ func Main(ctx context.Context, args []string, env scope.Env, stdout, stderr io.W
 		bridgeCommand = flags.String("bridge-command", "", "the bridge executable (default ~/.local/share/crw-runtime/current/bin/codex-thread-bridge)")
 		flags.Var(&bridgeArgs, "bridge-arg", "an argument the launcher passes the bridge (repeatable)")
 		flags.Var(&policy, "execution-policy", "the host's execution policy file, named by path and digest in the record")
+		reRegisterPolicy = flags.Bool("re-register-policy", false, "replace only the executionPolicy of the record that is already installed, after the same check the bridge makes at start (takes the file from --execution-policy)")
 		dryRun = flags.Bool("dry-run", false, "report what would be written and write nothing")
 	case "hook":
 		owner = flags.String("owner", OwnerPlugin, "who registers the Stop adapter: plugin (the only supported owner)")
@@ -236,7 +244,13 @@ func Main(ctx context.Context, args []string, env scope.Env, stdout, stderr io.W
 	case "status":
 		result, code = Status(ctx, o)
 	case "register-mcp":
-		result, code = RegisterMCP(ctx, o, RegisterOptions{Owner: *owner, Name: *name, BridgeCommand: *bridgeCommand, BridgeArgs: bridgeArgs, ExecutionPolicy: policy.value, PolicyGiven: policy.set, DryRun: *dryRun})
+		if *reRegisterPolicy {
+			// Dispatched before the create path: this operation keeps every field of the record that
+			// is already installed, so the owner the create path would apply does not govern here.
+			result, code = UpdateRegisteredPolicy(ctx, o, PolicyUpdateOptions{ExecutionPolicy: policy.value, PolicyGiven: policy.set, DryRun: *dryRun})
+		} else {
+			result, code = RegisterMCP(ctx, o, RegisterOptions{Owner: *owner, Name: *name, BridgeCommand: *bridgeCommand, BridgeArgs: bridgeArgs, ExecutionPolicy: policy.value, PolicyGiven: policy.set, DryRun: *dryRun})
+		}
 	case "hook":
 		result, code = Hook(ctx, o, HookOptions{Owner: *owner, Relay: *relayCommand, MarkerRoot: *markerRoot, Database: *dbPath, Socket: *socket,
 			JournalRoot: *journalRoot, Mode: *mode, Isolation: *isolation, GuardTimeout: *guardTimeout, Timeout: *timeout, DryRun: *dryRun})

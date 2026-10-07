@@ -338,6 +338,24 @@ described under [authorized execution settings](#authorized-execution-settings).
 pair is the exact model and reasoning effort declared for that role by the execution policy;
 both the caller and live worker must report the same policy digest.
 
+The name the engine gives the child is `child.title` normalized with the request's `issueKey`:
+a title that already starts with the key, followed by the end of the title or a character that
+is neither a letter nor a digit, is sent as it is; any other nonempty title is sent as
+`<issueKey> · <title>` (middle dot U+00B7, one space each side) while that value is at most 500
+bytes, the limit the bridge applies to a create's title, and is otherwise sent unchanged, so the
+prefix never makes a request the bridge refuses. A `managed-start` request cannot carry an empty
+title, because `child.title` is required and non-blank, and `child.title` is itself at most 500
+bytes, the same bound the bridge applies to a create's title: a title of fewer than 500 characters
+whose UTF-8 encoding is longer is refused before the request is armed, so the request and the
+bridge agree on the limit. The rule applies to the name the host is
+given on `thread/start` and again when the engine renames the thread after an adopted standby. It
+never rewrites the stored request or its fingerprint, so a repeat of the same request is still the
+same replay.
+
+A create's parameters carry the title, so a create that a runtime without this rule recorded
+`not_attempted` conflicts when the same request is retried on a runtime with it. The runtime swap
+that brings this rule in is made only while no managed request holds a `not_attempted` create.
+
 The entry reserves the issue before asking the bridge to create a standby task. It then binds
 the returned task and turn to the marker, registry, criteria and settings before sending the
 business prompt. The standby prompt does no implementation work. A missing or mismatching live
@@ -592,6 +610,64 @@ Global options come BEFORE the subcommand:
 Every command prints JSON. Exit 0 success, 2 a refusal with a machine-readable `reason`, 3 a host
 problem, 4 usage.
 
+## The merge lane: landing a bundle
+
+The merge lane's own commands are `merge-turn-*` (one candidate at a time) and, since CRW-768,
+`merge-train-*` (a bundle of several verified candidates landing as one). A bundle exists because a
+strict lane that merges members one by one needs a green `dev-gate` on every prefix tree, so k
+members cost k CI runs and the runner limit caps the count; a bundle's one pull request gets **one**
+full CI run on its single tree and lands as **one merge commit**, whatever the size. The parent
+procedure is in the crw-run skill's
+[merge-readiness](https://github.com/thisisjun786/codex-relay-workflow/blob/dev/plugins/crw/skills/crw-run/references/merge-readiness.md#merge-a-bundle).
+
+| Command | Purpose |
+|---|---|
+| `merge-train-open` | the leader's holding turn opens a train over the members in the given order; one member is today's lane and opens no train |
+| `merge-train-verify` | the leader reads the bundle pull request, this repository's `ci.yml` run and the first-parent chain in the given checkout, and appends a verified event |
+| `merge-train-land` | record that the bundle landed as one merge commit M and close every member turn landed |
+| `merge-train-close` | close the train done, or abandon it and return its member turns to waiting |
+| `merge-train-show` | the train's members in order, its event log, the state its newest event derives, and a reconcile reading of a lost landing |
+
+The relay reads the pull request, the run, the jobs, the commits and the ancestry from the forge
+itself, and the chain from the given checkout; the caller's values are compared and never trusted.
+A bundle that disagrees or is out of order is `disposition_conflict` and a forge or git that cannot
+answer is `merge_target_unreadable`, and a refusal writes no event. The five commands are offline
+like the `merge-turn-*` ones.
+
+The steps, with the command names:
+
+1. **Choose the members.** Every member must be a verified, accepted candidate: each member's own
+   parent runs `dag-accept` on the member pull request's head before the leader opens the bundle, and
+   the leader takes members whose `dag-ready` reads `done:accepted` on the head their turn holds.
+   `merge-train-open` refuses the rest (a member with no active acceptance, or one whose acceptance
+   stands on another head, is `disposition_conflict` naming the member, with no event); a member whose
+   acceptance stands on a recorded base-refresh head is accepted. Among those, take the pull requests
+   that merge onto the current dev in order without a conflict; related ones (the same package) first,
+   and non-overlapping packages may ride together. Leave out a member that needs a base-refresh
+   correction. Members may belong to different parents. There is no count cap. The order follows the
+   plan's precedence edges.
+2. **The leader.** `merge-train-open --turn <the leader's turn> --actor <leader> --base-sha <D>
+   --member <pr>...`; then build the bundle branch `refs/heads/crw-train/<train_id>` from D by
+   `git merge --no-ff` of each member head in order (no hand resolution); open the one bundle pull
+   request through a file scanned by gitleaks and label it `crw-lane`; after its CI finishes,
+   `merge-train-verify --train <id> --actor <leader> --bundle-pr <n> --head <H> --run <R> --repo
+   <checkout>`; then `gh pr merge <bundle pr> --merge --match-head-commit <H>`; then
+   `merge-train-land --train <id> --actor <leader> --landed-sha <M> --observed-base-sha <M>`; then
+   check every member pull request shows merged (comment "landed via bundle <merge sha>" and close it
+   if not); then `merge-train-close --train <id> --actor <leader> --state done --reason <...>` and
+   delete the bundle branch.
+3. **Each member's parent.** Once the landing is recorded, the member's own parent records
+   `assignment-mark` (merged) and `dag-integration-observe` on its relationship.
+4. **Failure handling.** A member touching a failed job's packages is removed and the rest re-bundled
+   (the old train abandoned); when no member can be named the bundle is halved with a predecessor and
+   its successors kept on the same side; a known flaky test's jobs are rerun once; a set that failed
+   twice goes one by one; a removed member rides alone; a train whose base moved outside the lane is
+   abandoned and reopened.
+5. **The lane script** changes only after the bundle merge is in the runtime. The `plugin.json`
+   version line is re-recorded mechanically.
+
+
+
 ## The normal flow
 
 A child completing work from inside its own live turn:
@@ -631,6 +707,16 @@ outcomes, and the emit is refused `contradictory_observation`; the refusal's det
 to pass. With `--socket` the relay reads the status from the host and ignores `--turn-status`, so a
 live turn reads `inProgress` there: such an emit is made without `--socket`, with `--state` naming the
 store this emit used. `blocked_needs_input` takes no `--turn-status` and stays staged.
+
+A `ready_for_review` receipt is also judged on its lineage, inside the transaction that stores it:
+the relay reads the generation with the receipt and without it, and refuses `revision_ambiguous`,
+writing no event and no lineage row, when the generation reads one head without the receipt and no
+single head with it (a second root, a cycle, an unknown predecessor or a disconnected revision).
+The refusal's detail names the revision the generation reads now, so the child fixes it in the same
+turn by naming that revision with `--supersedes-revision`. A first receipt, a duplicate, and a
+generation that already reads no single head are answered as they were; recovering such a generation
+is the route the refusal table of [Ruling an event that is already ruled](#ruling-an-event-that-is-already-ruled)
+records for a plan node.
 
 A loop spanning several turns completes on a turn that is not the anchor, and says so in the same
 call:
@@ -693,6 +779,38 @@ passing it, and the assignment reports `re_review_needed` instead of `verified`.
 
 There is no parameter that turns any of this off.
 
+## Fixing the head a verified ruling handled
+
+A `verified` ruling may carry the head it handled:
+
+    codex-session-relay --socket $SOCK verdict --event <eventId> --verdict verified --verdict-turn <my turn id> --verified-head <40-hex commit id>
+
+`--verified-head` takes the 40 lowercase hex digits of one commit id and is optional. When it is
+given with `--verdict verified`, the ruling writes one `dag_verified_heads` row — the event, the
+relationship, the generation the event belongs to, the verdict turn, the head, the recorder and the
+time — in the same transaction that writes the ruling, so the two cannot disagree and a failure of
+either rolls both back. The recorder is the relationship's registered parent, which is the only task
+that can rule the event. This is the head a later `dag-accept` starts its parent-made-refresh proof
+from, instead of the head the forge shows at accept time.
+
+The ruling's own answer does not change: the record is read back from `dag_verified_heads`, never
+returned, so no output field and no refusal reason is added.
+
+| Case | Answer |
+| --- | --- |
+| `verified` with `--verified-head H`, first ruling | the ruling is recorded and one row holds `H` |
+| `verified` with `--verified-head H` again | the replay of the recorded ruling: nothing is written, and the row still holds `H` |
+| `verified` with `--verified-head H` after a `verified` ruling that fixed no head | refused `disposition_conflict`: the head is recorded with the ruling that fixes it, and a replay writes nothing |
+| `verified` with `--verified-head H2` when the event already records `H` | refused `disposition_conflict`, and the row still holds `H`: one event keeps the head its verified ruling fixed |
+| a verdict other than `verified` with `--verified-head` | refused `disposition_conflict`, and neither a verdict nor a row is written: a verified head is recorded only with a verified ruling |
+| `verified` without `--verified-head` | exactly what it was before, and no row |
+
+A re-review ruled `verified` under a re-registered criteria set keeps the head the event already
+records; it does not write a second row, because one event has one verified head.
+
+A value that is not 40 lowercase hex digits is a usage error (exit 4), like any other option value
+this command refuses.
+
 ## Ruling an event that is already ruled
 
 An event has one standing ruling, and a second `verdict` call on it is never answered with a ruling it was not asked for. What the call does depends on the verdict already recorded and the verdict asked:
@@ -710,7 +828,7 @@ No refusal reason is added: `disposition_conflict` already means a ruling that c
 
 1. An open re-review is decided first, exactly as above (a criteria set that moved since the ruling), whether or not the head was accepted.
 2. The transition table above.
-3. Nothing may rest on the verified ruling: no plan acceptance of the event (`dag_acceptances`, whatever its state), no merged mark of it (`assignment_marks`), and no merge turn of the assignment that is merging, of unknown effect or landed. A turn that only waits for the lane or holds it does not count, because the parent that found the base conflict holds that very turn. The turn is read per assignment and not per head, because no head of an event is recorded.
+3. Nothing may rest on the verified ruling: no plan acceptance of the event (`dag_acceptances`, whatever its state), no merged mark of it (`assignment_marks`), and no merge turn of the assignment that is merging, of unknown effect or landed. A turn that only waits for the lane or holds it does not count, because the parent that found the base conflict holds that very turn. The turn is read per assignment and not per head: a merge turn is recorded per assignment (`merge_turns`), while the head an event's verified ruling fixed is the head an acceptance proves against ([Fixing the head a verified ruling handled](#fixing-the-head-a-verified-ruling-handled)), which is a different question from whether a turn of the assignment is merging. A head recorded by a ruling that was later replaced stays as the record of what that ruling handled, so a reader of it checks the event's standing ruling before trusting it.
 4. The existing path of a first `needs_changes` ruling: the event is the head of the generation the relationship stands on and the relationship is active (`stale_generation`, `superseded_revision`, `revision_ambiguous`, `relationship_not_active`), the finding marked `needs_changes` carries a note and the criteria set is the one the review is bound to, the child is an allowed recipient, and a declared restoration block can be carried.
 
 When all four hold, the writer replaces the ruling in the transaction that opens the next generation and queues the revision request to the same child, exactly as a first `needs_changes` ruling does. The replaced record stays: the journal records `verdict_superseded` with the replaced record and `reason: ruling_changed` (a re-review's entry has no reason). The answer is the new ruling plus `_supersedes`, the verdict, verdict turn and time of the ruling it replaced; like `_replay` it is an annotation of the answer and is not stored. The summary owed to the coordination document is a new job, because its identity carries the verdict, and it counts the rulings (`ruling 2`).
@@ -726,7 +844,7 @@ When a step refuses, the refusal names what to do:
 | the work is marked merged, or a turn landed it | `disposition_conflict` | a merged result is corrected by new work, not by a second ruling |
 | a merge turn is merging or of unknown effect | `disposition_conflict` | resolve the turn (`merge-turn-resolve` reads the branch), then rule again |
 | the event is not the head | `stale_generation` or `superseded_revision` | rule the head the assignment shows |
-| the head is ambiguous | `revision_ambiguous` | outside a plan, a fresh execution generation; for a plan node this build records no route, so report it (read `revision-head` first: a re-emit that named a suppressed receipt of its own generation may read a head) |
+| the head is ambiguous | `revision_ambiguous` | outside a plan, a fresh execution generation; for a plan node whose result is not accepted yet, the generation opened by hand: `dag-correct --prepare` prints the instruction and the dispatch request id, the generation is opened under that id (`generation-open`), the instruction line is sent to the child, the turn that carried it is bound (`generation-bind`) and `dag-correct --manifest-digest` records it as a correction, after which the child emits one receipt in that generation; a plan node whose accepted result is stale has its own route above (read `revision-head` first: a re-emit that named a suppressed receipt of its own generation may read a head) |
 | the relationship is not active | `relationship_not_active` | `relationship-resume`, then rule again |
 
 Two limits are part of the contract. The same verdict again is a replay even when its findings differ, so a `needs_changes` ruling that was already given cannot be given again with other words: the verdict does not resend (see [Return corrections to the existing task](../../plugins/crw/skills/crw-run/SKILL.md#return-corrections-to-the-existing-task)). And an installed relay older than this change answers a different verdict with the recorded ruling marked `_replay` and exit 0; read the answer (a ruling that is still `verified` and marked `_replay` changed nothing) and `assignment-show`, never the exit code.
@@ -749,7 +867,7 @@ The daemon does not assert an observation for a turn that already holds its own 
 | `split_approval` | advances to g+1 | a note and `--criteria-digest`, equal to the set registered for the relationship | the criteria changed: here is the set (as registered when the decision was made); continue on the same node under it |
 | `scope_change` | advances to g+1 | the same | the same |
 
-The rule is fixed by the kind. `answer` and `stop` change nothing the child's attempt stands on, so generation g goes on. The child's next turn is not the generation's anchor, so the message prints the continuation claim that admits it (`--continues-anchor <anchor of g> --continuation-actor <child> --continuation-reason ...`); the anchor binding is not offered the reply's turn, which would be refused `anchor_already_bound` and reported on every tick. `split_approval` and `scope_change` change the criteria the output is judged against, so they open generation g+1 (reason `decision_reply`, dispatch request id `decision-<event id>`) in the same transaction, the reply is an event of g+1, and the turn it opens becomes the anchor of g+1 through the same binding a correction uses (a generation that was bound by hand to another turn first is reported as `anchor_already_bound`, as it is for a correction). The child's first receipt there needs no claim and passes no `--supersedes-revision` (the generation holds no earlier revision to replace). The parent registers the new set first (`criteria-register`) and names its digest, so a reply that names a stale set is refused. The record keeps the set as it was registered when the decision was made, and the message prints it (the first ten criteria, an optional one marked, with a count of the rest), so the child works from what the parent approved even if the set is registered again before the message is sent; the child's output is still judged against the set registered when it is ruled, by the re-review rule. `stop` does not change the relationship status: `relationship-status` still pauses, cancels or archives. Opening g+1 marks the older undelivered deliveries `stale_generation`, the blocked receipt's delivery to the parent among them unless the parent acknowledged it.
+The rule is fixed by the kind. `answer` and `stop` change nothing the child's attempt stands on, so generation g goes on. The child's next turn is not the generation's anchor, so the message prints the continuation claim that admits it (`--continues-anchor <anchor of g> --continuation-actor <child> --continuation-reason ...`); the anchor binding is not offered the reply's turn, which would be refused `anchor_already_bound` and reported on every tick. The relay admits that turn itself when the reply is dispatched into it: whether the send settles `dispatched` with the turn id the child's next turn got, or the daemon's reconciliation recovers that turn after a lost response, the same transaction writes the `generation_turns` admission (evidence `explicit_admission_bound:<anchor of g>`, actor `relay`, detail `decision reply <event id>`) and its `turn_admitted` journal row, so the daemon's census reads the continuation turn and observes an end that carries no receipt; it is the relay's own admission of the message it carried, not a parent intervention, and an existing admission of that turn is left as it is. The claim the message prints is still accepted, and is no longer required. `split_approval` and `scope_change` change the criteria the output is judged against, so they open generation g+1 (reason `decision_reply`, dispatch request id `decision-<event id>`) in the same transaction, the reply is an event of g+1, and the turn it opens becomes the anchor of g+1 through the same binding a correction uses (a generation that was bound by hand to another turn first is reported as `anchor_already_bound`, as it is for a correction). The child's first receipt there needs no claim and passes no `--supersedes-revision` (the generation holds no earlier revision to replace). The parent registers the new set first (`criteria-register`) and names its digest, so a reply that names a stale set is refused. The record keeps the set as it was registered when the decision was made, and the message prints it (the first ten criteria, an optional one marked, with a count of the rest), so the child works from what the parent approved even if the set is registered again before the message is sent; the child's output is still judged against the set registered when it is ruled, by the re-review rule. `stop` does not change the relationship status: `relationship-status` still pauses, cancels or archives. Opening g+1 marks the older undelivered deliveries `stale_generation`, the blocked receipt's delivery to the parent among them unless the parent acknowledged it.
 
 **What a decision answers.** A final, unsuppressed receipt of the relationship's current generation, on an active relationship whose child is an allowed recipient, that is the newest final receipt the decision is weighed against (newest in the order the relay saw the receipts: when it first saw each, and for receipts first seen at one instant the order they were stored in, because an event id is a hash and not a sequence): the child's own `blocked_needs_input`, which every kind answers, or a receipt the relay itself observed ending `interrupted` or `failed` (producer `daemon_observation`), which `answer` alone answers and the other kinds are refused for. One decision per receipt: the same decision again (same kind, note and criteria digest) is a replay (the record marked `_replay`, nothing written); any other is refused `disposition_conflict`. The record is the event (outcome `decision_reply`, producer `relay`, id the first 32 hex characters of `sha256(relationship|receipt|decision_reply)`), its delivery, and a `decision_recorded` journal row; it carries `answersOutcome`, the outcome of the receipt it answers (`blocked_needs_input`, `interrupted` or `failed`). A reply that the child has moved past is not sent: a later final receipt of the same generation (the child's own, or the relay's own observation of a later end), later than the receipt that was answered (a receipt staged before the reply and made final after it counts), supersedes it (`superseded_revision`), as a newer generation does (`stale_generation`).
 

@@ -1,0 +1,139 @@
+#!/usr/bin/env bash
+# A body-only edit of a pull request (the "edited" action with no base change) reruns no job
+# that already succeeded on the same head. ci.yml runs this script as the first step of
+# validate, secrets, skill-scripts-node, gui and go-product on such an edit only, and guards every later step of those
+# jobs with its answer. It reads the newest created run of this workflow, of this pull
+# request, of this repository, for this head, other than the run it is in, and mirrors the job
+# when that run's same-named job concluded success. Creation order is run_number and then id, the
+# two values a rerun never rewrites: run_started_at moves forward when only the failed jobs are
+# rerun, so ordering by it can mistake an older run for the newest one. A go-product (test-*) job
+# is mirrored only when that job's test step concluded success too: CRW-790's light mode lets a leg succeed
+# with its tests skipped, and such a leg must not be carried into a later run.
+#
+# The gui job is mirrored only when its four screen steps concluded success too: gui_paths.sh lets
+# the job end, before Node is installed, with every screen step skipped and the check still reads
+# success, and such a run is not screen evidence a later body-only edit may carry forward.
+#
+# The lookup never fails the job. No candidate, a failure, a cancellation, a skip, a missing
+# job, another head, pull request, workflow or repository, an unreadable API and this run
+# itself all answer mirrored=false, and the job then runs in full as it did before this script
+# existed. Skipping a job is not an option: GitHub reports a skipped job's check as success, so
+# a skipped dev-gate could hide an earlier red run.
+set -euo pipefail
+
+job_name=${JOB_NAME:-}
+head_sha=${HEAD_SHA:-}
+pull_number=${PR_NUMBER:-}
+self_run=${RUN_ID:-}
+repository=${REPOSITORY:-}
+summary=${GITHUB_STEP_SUMMARY:-/dev/null}
+output=${GITHUB_OUTPUT:-}
+# The ci.yml step a go-product test leg runs, up to the leg's part; internal/dev/ci/light_mode_test.go
+# holds this name and ci.yml's step name to each other, so a rename on either side is a red test.
+test_step_prefix='Test and replay the contract corpus ('
+# The four steps the gui job runs when it verifies the screens, in ci.yml's order, named exactly as
+# ci.yml names them. internal/dev/ci/edit_mirror_test.go holds this list and ci.yml's gui job step
+# names to each other, so a rename on either side is a red test.
+screen_steps=(
+  'Install the screen dependencies from the committed lockfile'
+  'Run the screen tests'
+  'Build the screens into a fresh tree'
+  'Refuse a committed tree that is not a fresh build'
+)
+
+mirrored=false
+mirror_run=
+reason='the head, pull request, repository or job name is missing'
+
+if [[ -n $job_name && -n $head_sha && -n $pull_number && -n $self_run && -n $repository ]]; then
+  reason='no completed run of this workflow for this pull request and head'
+  # Every page is read and the newest candidate is picked by the order it was created in
+  # (run_number, then id), so the answer never rests on the API's page order and a rerun of an
+  # older run's failed jobs cannot promote that run past a newer one.
+  runs=$(gh api --paginate \
+    "repos/$repository/actions/workflows/ci.yml/runs?head_sha=$head_sha&event=pull_request&status=completed&per_page=100" \
+    --jq '.workflow_runs[] | {id, number: .run_number, path, event, status, head: .head_sha, repository: .head_repository.full_name, pulls: [.pull_requests[]? | {number, head: .head.sha}]}' 2>/dev/null) || runs=
+  # A run of this workflow is judged by what it is, not only by the request that listed it: its
+  # path (a ref-qualified one is the same workflow), its event and completed state, its head
+  # sha, its head repository, its pull request and its head inside that pull request. Two pull
+  # requests can share a head sha and two pull requests against different bases test different
+  # merge trees, so the pull request number is what makes the run this one's. A fork's run
+  # carries the same head sha and would otherwise look like this repository's.
+  mirror_run=$(printf '%s' "$runs" | jq -s -r \
+    --arg repository "$repository" --arg head "$head_sha" --arg pull "$pull_number" --arg self "$self_run" '
+    [ .[]
+      | select((.path | split("@")[0]) == ".github/workflows/ci.yml")
+      | select(.event == "pull_request")
+      | select(.status == "completed")
+      | select(.head == $head)
+      | select(.repository == $repository)
+      | select([.pulls[]? | select((.number | tostring) == $pull and .head == $head)] | length > 0)
+      | select((.id | tostring) != $self) ]
+    | sort_by(.number, .id) | last | .id // empty') || mirror_run=
+
+  if [[ -n $mirror_run ]]; then
+    reason="run $mirror_run has no successful $job_name job"
+    # A re-run leaves every attempt in the list; the newest attempt is the job's answer.
+    jobs=$(gh api --paginate "repos/$repository/actions/runs/$mirror_run/jobs?filter=all&per_page=100" \
+      --jq '.jobs[] | {name, attempt: .run_attempt, conclusion, steps: [.steps[]? | {name, conclusion}]}' 2>/dev/null) || jobs=
+    conclusion=$(printf '%s' "$jobs" | jq -s -r --arg name "$job_name" '
+      [ .[] | select(.name == $name) ] | sort_by(.attempt) | last | .conclusion // empty') || conclusion=
+    if [[ $conclusion == success ]]; then
+      mirrored=true
+      reason="run $mirror_run concluded success for $job_name"
+      # A light test leg concludes success while its test step is skipped, so the leg is mirrored
+      # only when that step also succeeded. The step is read from the same newest attempt the
+      # conclusion came from, so an earlier attempt's green test step cannot vouch for a leg that
+      # was retried and skipped its tests. A skipped, missing or absent step answers mirrored=false.
+      if [[ $job_name == "go-product (test-"* ]]; then
+        part=${job_name#"go-product ("}
+        part=${part%)}
+        step_name="${test_step_prefix}${part})"
+        step_conclusion=$(printf '%s' "$jobs" | jq -s -r --arg name "$job_name" --arg step "$step_name" '
+          [ .[] | select(.name == $name) ] | sort_by(.attempt) | last | (.steps // [])
+          | map(select(.name == $step)) | last | .conclusion // empty') || step_conclusion=
+        if [[ $step_conclusion == success ]]; then
+          reason="run $mirror_run concluded success for $job_name and its test step $step_name"
+        else
+          mirrored=false
+          reason="run $mirror_run did not conclude $job_name's test step $step_name as success (${step_conclusion:-missing})"
+          mirror_run=
+        fi
+      elif [[ $job_name == gui ]]; then
+        # A gui job concludes success with the screens unverified when gui_paths.sh answered
+        # changed=false: the four screen steps are skipped and the check still reads success. The
+        # job is mirrored only when all four concluded success in the same newest attempt the
+        # conclusion came from, so a skipped, failed or missing step, and an earlier attempt's
+        # green screens, each answer mirrored=false.
+        screen_failed=
+        for screen_step in "${screen_steps[@]}"; do
+          screen_conclusion=$(printf '%s' "$jobs" | jq -s -r --arg name "$job_name" --arg step "$screen_step" '
+            [ .[] | select(.name == $name) ] | sort_by(.attempt) | last | (.steps // [])
+            | map(select(.name == $step)) | last | .conclusion // empty') || screen_conclusion=
+          if [[ $screen_conclusion != success ]]; then
+            screen_failed="$screen_step (${screen_conclusion:-missing})"
+            break
+          fi
+        done
+        if [[ -z $screen_failed ]]; then
+          reason="run $mirror_run concluded success for $job_name and its four screen steps"
+        else
+          mirrored=false
+          reason="run $mirror_run did not conclude $job_name's screen step $screen_failed as success"
+          mirror_run=
+        fi
+      fi
+    else
+      mirror_run=
+    fi
+  fi
+fi
+if [[ -n $output ]]; then
+  printf 'mirrored=%s\nrun-id=%s\n' "$mirrored" "$mirror_run" >>"$output"
+fi
+
+if [[ $mirrored == true ]]; then
+  printf 'Mirrored: %s; this body-only edit does not run %s again.\n' "$reason" "$job_name" >>"$summary"
+else
+  printf 'Not mirrored: %s runs in full (%s).\n' "$job_name" "$reason" >>"$summary"
+fi

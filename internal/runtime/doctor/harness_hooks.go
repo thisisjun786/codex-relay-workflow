@@ -25,11 +25,12 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
-// harnessHooksCodexHome is options.codexHome ?? process.env.CODEX_HOME ?? join(homedir(), ".codex"). An
-// empty CodexHome counts as unset: HarnessOptions has no way to tell it from an empty string the oracle keeps.
+// harnessHooksCodexHome is options.codexHome ?? process.env.CODEX_HOME ?? join(homedir(), ".codex")
+// (doctor.ts:469). A nil CodexHome is absent and falls through; a non-nil one, the empty string
+// included, is the value the oracle keeps and uses verbatim.
 func harnessHooksCodexHome(options HarnessOptions, env host.LookupEnv) (string, error) {
-	if options.CodexHome != "" {
-		return options.CodexHome, nil
+	if options.CodexHome != nil {
+		return *options.CodexHome, nil
 	}
 	if home, set := env("CODEX_HOME"); set {
 		return home, nil
@@ -130,8 +131,13 @@ func HarnessHookTrustCheck(pluginRoot string, options HarnessOptions, env host.L
 	if err != nil {
 		return failed(err.Error())
 	}
-	key := options.PluginKey
-	if key == "" && len(candidates) == 1 {
+	// options.pluginKey ?? (candidates.length === 1 ? candidates[0] : null) (doctor.ts:476): a nil
+	// key is absent and may adopt the single candidate, while an explicitly empty key is kept and
+	// leaves the check with no key at all.
+	key := ""
+	if options.PluginKey != nil {
+		key = *options.PluginKey
+	} else if len(candidates) == 1 {
 		key = candidates[0]
 	}
 	if key == "" {
@@ -174,11 +180,12 @@ func HarnessHookTrustCheck(pluginRoot string, options HarnessOptions, env host.L
 			"The host excludes both from execution unless hook trust is bypassed, so these need approval. Execution itself was not verified here. %s",
 			len(untrusted), len(results), key, neverTrusted, len(untrusted)-neverTrusted, strings.Join(detail, "; "))
 		// A fresh install has no [hooks.state.*] section: only the host writes them, and nothing here forges them.
-		check.Repair = fmt.Sprintf("crw doctor retrust --key %s --codex-home %s", key, codexHome)
+		repair := fmt.Sprintf("crw doctor retrust --key %s --codex-home %s", key, codexHome)
 		if neverTrusted == len(untrusted) {
-			check.Repair = fmt.Sprintf("%d hook(s) have no trust entry in %s; only Codex itself writes those on hook approval. Approve this plugin's hooks in Codex, or record them explicitly with: %s --bootstrap-ok",
-				len(untrusted), filepath.Join(codexHome, "config.toml"), check.Repair)
+			repair = fmt.Sprintf("%d hook(s) have no trust entry in %s; only Codex itself writes those on hook approval. Approve this plugin's hooks in Codex, or record them explicitly with: %s --bootstrap-ok",
+				len(untrusted), filepath.Join(codexHome, "config.toml"), repair)
 		}
+		check.Repair = harnessReportRepair(repair)
 	}
 	return check
 }

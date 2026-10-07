@@ -32,6 +32,7 @@ func baselineScopeOf(path string, roots []string) string {
 
 // c1 (red for the root "/"): the same question store.IsWithin answers is answered the same way, a root of "/" holds every absolute path.
 func TestScopeOfFollowsTheStoresContainmentRule(t *testing.T) {
+	t.Parallel()
 	rows := []struct {
 		name  string
 		roots []string
@@ -70,6 +71,7 @@ func TestScopeOfFollowsTheStoresContainmentRule(t *testing.T) {
 // scope, its digest, or the route of a criteria-only revalidation. The row set includes the spellings that make the baseline's comparison odd (repeated trailing slashes, a root of "/", a root the
 // raw prefix test does not read).
 func TestScopeOfKeepsEveryAnswerTheBaselineGaveForANormalisedPath(t *testing.T) {
+	t.Parallel()
 	roots := []string{"/", "/r", "/r/", "/r//", "/r/a", "/r/a/", "/r/b", "/rr", "/a", "///", "/r//a"}
 	paths := []string{"/", "/r", "/r/a", "/r/a/f", "/r/b/f", "/rr/f", "/a/x", "/x"}
 	var rows int
@@ -104,6 +106,7 @@ func TestScopeOfKeepsEveryAnswerTheBaselineGaveForANormalisedPath(t *testing.T) 
 
 // c1: the inputs whose answer changes, one by one, each with its reason. The baseline answer is asserted too, so the table says what changed.
 func TestScopeOfChangesOnlyForInputsTheStoreReadsDifferently(t *testing.T) {
+	t.Parallel()
 	rows := []struct {
 		name         string
 		roots        []string
@@ -128,6 +131,7 @@ func TestScopeOfChangesOnlyForInputsTheStoreReadsDifferently(t *testing.T) {
 // c1 (red): a predecessor whose relationship holds a root of "/" can be consumed: the manifest builds and names "/" as the scope of the artifact. On the baseline the artifact "lies under none
 // of the predecessor's artifact roots" (B-05).
 func TestAManifestOverARootOfSlashBuilds(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	forkJoinPlan(f, "p1")
 	a := f.acceptNode("p1", "research", acceptOpts{})
@@ -144,6 +148,7 @@ func TestAManifestOverARootOfSlashBuilds(t *testing.T) {
 // c1 (guard): the scope a manifest records is still the baseline's for roots whose comparison is odd. The enclosing root is spelled with so many trailing slashes that the baseline's
 // raw-length comparison keeps it over the root that is exactly the artifact: that answer is in the digest of the manifests already stored, and it must not move.
 func TestTheScopeOfAStoredManifestDoesNotMove(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	forkJoinPlan(f, "p1")
 	a := f.acceptNode("p1", "research", acceptOpts{})
@@ -169,6 +174,7 @@ func TestTheScopeOfAStoredManifestDoesNotMove(t *testing.T) {
 // c1 (red): a volatile snapshot that leaves the artifact root by .. is refused as out of scope by the scope check itself. On the baseline the raw prefix passes it, and only the later hash (which the
 // store half of a release skips) would refuse it.
 func TestAVolatileSnapshotThatLeavesTheRootByDotDotIsOutOfScope(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	finding := f.sched.verifyVolatile(context.Background(), []Volatile{{Source: "linear:comment", SnapshotURI: "/r/../o/f", SHA256: dig("x"), CapturedAt: "2026-10-02T00:00:00Z"}},
 		VerifyOptions{SkipFileBytes: true, ArtifactRoots: []string{"/r"}})
@@ -246,6 +252,7 @@ func crw310StoredBase(t *testing.T, k *releaseKit, digest string) map[string]any
 }
 
 // c2 (red): a correction names the repository and the ref and the relay reads the commit from the target, as a release does. On the baseline the sha stays empty and the manifest is refused.
+// sequential: assigns the package variable crw310Notes.
 func TestACorrectionReadsItsBaseFromTheTargetTip(t *testing.T) {
 	k, _ := crw310CorrectionKit(t)
 	prepared, err := crw310Prepare(k, &BaseRef{Repository: "owner/repo", Ref: "dev"})
@@ -258,6 +265,7 @@ func TestACorrectionReadsItsBaseFromTheTargetTip(t *testing.T) {
 }
 
 // c2 (red): a base the caller states that is not what the target reads is refused with the existing reason that means exactly that, and nothing is stored. On the baseline it was stored as given.
+// sequential: assigns the package variable crw310Notes.
 func TestACorrectionRefusesABaseThatIsNotTheTip(t *testing.T) {
 	k, _ := crw310CorrectionKit(t)
 	manifests, copies := k.count("SELECT COUNT(*) FROM dag_input_manifests"), len(k.copies())
@@ -276,6 +284,7 @@ func TestACorrectionRefusesABaseThatIsNotTheTip(t *testing.T) {
 
 // c2: the sha the caller states may be the tip (a guard, green on the baseline) and then the manifest is the one built without it (red on the baseline, where the omission is refused); the stored
 // commit is the relay's reading, not the caller's spelling.
+// sequential: assigns the package variable crw310Notes.
 func TestACorrectionWithTheTipStatedIsTheCorrectionWithoutIt(t *testing.T) {
 	k, _ := crw310CorrectionKit(t)
 	tip := "abcdef0123456789abcdef0123456789abcdef01"
@@ -301,6 +310,7 @@ func TestACorrectionWithTheTipStatedIsTheCorrectionWithoutIt(t *testing.T) {
 }
 
 // c2 (red): a tip that cannot be read, or a scheduler that cannot read one, never stores a manifest. On the baseline neither is consulted.
+// sequential: assigns the package variable crw310Notes.
 func TestACorrectionNeedsTheTipItRecords(t *testing.T) {
 	t.Run("the tip is unreadable", func(t *testing.T) {
 		k, _ := crw310CorrectionKit(t)
@@ -327,6 +337,7 @@ func TestACorrectionNeedsTheTipItRecords(t *testing.T) {
 }
 
 // c2 (guard, green on the baseline): a base that names no repository or no ref never reaches the target reader: the manifest check refuses it as before.
+// sequential: assigns the package variable crw310Notes.
 func TestACorrectionWithAnIncompleteBaseIsRefusedWithoutReadingTheTarget(t *testing.T) {
 	k, _ := crw310CorrectionKit(t)
 	k.tips.err = errors.New("the tip must not be read for an incomplete base")
@@ -340,6 +351,7 @@ func TestACorrectionWithAnIncompleteBaseIsRefusedWithoutReadingTheTarget(t *test
 
 // c3 (red): the same situation, an actor that is not the parent of the relationship, is one refusal reason in both steps of a correction, with one text.
 func TestBothStepsOfACorrectionRefuseANonParentUnderOneReason(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	rid := k.correctionKit()
 	_, prepareErr := k.sched.PrepareCorrection(context.Background(), "rp", "A", "intruder", ManifestInput{RuleVersion: k.request(false).RuleVersion}, VerifyOptions{ArtifactRoots: []string{k.root}})
@@ -373,6 +385,7 @@ func crw310GH(t *testing.T, body string) string {
 }
 
 // c4 (red): a compare call that does not answer is cut at the bound and says so. The stand-in execs sleep, so the kill reaches the process that holds the pipe.
+// sequential: asserts a 1.5-second wall-clock bound on the call, which a host running the package's tests in parallel can exceed.
 func TestTheAncestryCompareCallHasADeadline(t *testing.T) {
 	gh := crw310GH(t, "exec sleep 3")
 	started := time.Now()
@@ -386,6 +399,7 @@ func TestTheAncestryCompareCallHasADeadline(t *testing.T) {
 }
 
 // c4 (guard once the seam is there): the bound is the one the other forge read has, by construction, and it is the 30 seconds that read always had.
+// sequential: writes a stand-in gh script and execs it: a concurrent fork in another test can still hold the write descriptor, and Linux refuses such an exec with ETXTBSY.
 func TestTheAncestryBoundIsTheBranchReadBound(t *testing.T) {
 	got := (GitAncestry{}).forgeTimeout()
 	if got != mergeturn.ForgeCallTimeout {
@@ -424,6 +438,7 @@ func crw310ReadRow(t *testing.T, state, digest string) map[string]any {
 // merge_base_mismatch, and answers a branch it cannot read as the host failure the same read is in dag-release (exit 3, "error":"host", no reason). The wiring of the target reader in the command is
 // observed here: a library test that injects its own reader cannot see it.
 func TestCLICorrectPrepareReadsTheTipOfTheBase(t *testing.T) {
+	t.Parallel()
 	state := filepath.Join(t.TempDir(), "state")
 	k := newReleaseKitAt(t, state)
 	releasePlan(k.fixture, "rp")

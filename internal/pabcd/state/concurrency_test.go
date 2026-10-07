@@ -242,6 +242,9 @@ func TestSecondProcessWaitsForTheHolderAndEntersAfterIt(t *testing.T) { // recor
 	}
 }
 
+// The writers share the lock, and the wait budget is widened through the sleep seam (lockBudgetSleep):
+// the six writers here are decided by the lock rather than by how long one fsync takes, so a slow
+// disk no longer turns a correct lock into a failed test.
 func TestLockedReadModifyWriteLosesNoUpdate(t *testing.T) {
 	cwd, errs := t.TempDir(), make(chan error, 6)
 	var wg sync.WaitGroup
@@ -249,11 +252,11 @@ func TestLockedReadModifyWriteLosesNoUpdate(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			errs <- WithSessionLock(cwd, "counter", func() error {
+			errs <- withSessionLock(cwd, "counter", func() error {
 				s := ReadState(cwd, "counter")
 				s.IdleEditNudges++
 				return WriteState(cwd, s)
-			})
+			}, lockBudgetSleep())
 		}()
 	}
 	wg.Wait()

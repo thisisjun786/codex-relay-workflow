@@ -21,6 +21,10 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/hook"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+	"github.com/thisisjun786/codex-relay-workflow/internal/role"
 )
 
 type classifier struct {
@@ -47,8 +51,12 @@ func classify(r *Roots) (*Plan, error) {
 			return c.plan, err
 		}
 	}
-	if u := r.User; u != nil && u.Source != nil {
-		if err := c.classifyUser(u); err != nil {
+	if u := r.User; u != nil {
+		if u.Source != nil {
+			if err := c.classifyUser(u); err != nil {
+				return c.plan, err
+			}
+		} else if err := c.classifyUserFallback(u); err != nil { // an absent source copies nothing but still reports the literal fallback home
 			return c.plan, err
 		}
 	}
@@ -89,6 +97,7 @@ func (c *classifier) classifyProject(p *Pair) error {
 	}
 	c.add(Item{Scope: ScopeProject, Source: ".", Destination: ".", Disposition: DispTransform,
 		Reason: "container to " + crwdir.DirName + "; created only after the preflight", Mode: mode})
+	c.noteDest(ScopeProject, "") // the destination root itself, whatever the source root holds
 	return c.classifyTree(ScopeProject, p.Source, "", inventoryProjectRows, nil)
 }
 
@@ -98,6 +107,7 @@ func (c *classifier) classifyUser(u *Pair) error {
 		return err
 	}
 	c.add(Item{Scope: ScopeUser, Source: ".", Destination: ".", Disposition: DispCopy, Reason: "user root container", Mode: mode})
+	c.noteDest(ScopeUser, "") // the destination root itself, whatever the source root holds
 	if err := c.classifyTree(ScopeUser, u.Source, "", inventoryUserRows, nil); err != nil {
 		return err
 	}
@@ -207,7 +217,7 @@ func (c *classifier) classifyChild(scope Scope, dir *Dir, dirPath, name string, 
 		return refuse(ReasonLocked, path, row.reason)
 	}
 	if typ == unix.S_IFREG && !classifyUserTree(childPath) {
-		if reason := classifyIntermediate(name); reason != "" {
+		if reason := classifyIntermediate(scope, dirPath, name); reason != "" {
 			return c.skipItem(scope, dir, childPath, name, reason)
 		}
 	}
@@ -287,7 +297,8 @@ func (c *classifier) classifyBranch(scope Scope, dir *Dir, childPath, name strin
 }
 
 // emitDir records a directory item. A copied directory's mode is what M3 applies after its children are published; a skip row
-// writes nothing and takes no destination check.
+// writes nothing, takes no destination check and is not registered as a destination directory, so a container that holds only
+// skip rows never refuses on what lies at its nominal destination.
 func (c *classifier) emitDir(scope Scope, dir *Dir, childPath, name string, disp Disposition, reason string) error {
 	if disp != DispSkip {
 		if err := inventoryNameSupported(dir.join(name), name); err != nil {
@@ -296,12 +307,12 @@ func (c *classifier) emitDir(scope Scope, dir *Dir, childPath, name string, disp
 		if err := c.checkDestDir(c.destRoot(scope), childPath); err != nil {
 			return err
 		}
+		c.noteDest(scope, childPath)
 	}
 	st, err := classifyLstat(dir, name)
 	if err != nil {
 		return err
 	}
-	c.noteDest(scope, childPath)
 	c.add(Item{Scope: scope, Source: childPath, Destination: childPath, Disposition: disp, Reason: reason, Mode: fs.FileMode(st.Mode).Perm()})
 	return nil
 }
@@ -384,9 +395,11 @@ func (c *classifier) classifyDestTemps() error {
 	for _, d := range c.dests {
 		dir, opened, err := classifyOpenDest(d.root, d.path)
 		if err != nil {
+			classifyCloseAll(opened)
 			return err
 		}
 		if dir == nil {
+			classifyCloseAll(opened)
 			continue
 		}
 		names, err := dir.Names()
@@ -544,12 +557,15 @@ func classifyDirMode(d *Dir) (fs.FileMode, error) {
 }
 
 // classifyIntermediate names the producer-intermediate shape of a file in a producer-owned directory, or "" when the name is
-// ordinary. The older run's .migrate-<26>-<n>.tmp is recognized first, before the generic .tmp rule, and is only ever reported.
-func classifyIntermediate(name string) string {
+// ordinary. The older run's .migrate-<26>-<n>.tmp is recognized first, before the producer shapes, and is only ever reported.
+// The producer shapes are the exact temporaries row 105 of docs/port-cxc/state-migration.md names, each matched only inside
+// the directory of the producer that writes it (inventoryIntermediateRows), so a durable record whose own name holds a
+// temp-like substring (for example bg/job.tmp-live.json) is judged by its own row instead of being skipped here.
+func classifyIntermediate(scope Scope, dirPath, name string) string {
 	if _, ok := tempRun(name); ok {
 		return inventoryReasonOldTemp
 	}
-	if strings.HasSuffix(name, tempSuffix) || strings.Contains(name, ".tmp-") || strings.HasPrefix(name, ".probe-") {
+	if inventoryIntermediateShape(scope, dirPath, name) {
 		return inventoryReasonIntermediate
 	}
 	return ""
@@ -570,7 +586,8 @@ func classifyEvidenceTree(path string) bool {
 // classifyProducerTemp reports whether name is exactly the temporary shape a producer writes beside its final file: the CRW
 // shape "." + final + "." + 26 base32 characters + ".tmp" (crwdir/atomic.go:92) and the CXC shapes final + "." + pid + "." +
 // ms + ".tmp" and final + "." + pid + "." + uuid + ".tmp" (subagent-evidence.ts:221, state.ts:387,625). Every other ".tmp"
-// name is ordinary data.
+// name is ordinary data. The final-name part must be non-empty, so a user file such as .123.1760000000000.tmp (an empty final
+// name) stays ordinary data; a dotfile final name such as .receipt.json is not empty and keeps its previous disposition.
 func classifyProducerTemp(name string) bool {
 	core, ok := strings.CutSuffix(name, tempSuffix)
 	if !ok || core == "" {
@@ -589,7 +606,7 @@ func classifyProducerTemp(name string) bool {
 		return true
 	}
 	if classifyMillis(last) {
-		if _, pid, cut := classifyCutLast(head, "."); cut && classifyPid(pid) {
+		if base, pid, cut := classifyCutLast(head, "."); cut && base != "" && classifyPid(pid) {
 			return true
 		}
 	}
@@ -650,94 +667,84 @@ func classifyJudge(kind, path string, data []byte) error {
 		return classifyJudgeDispatch(path, data)
 	case "bg":
 		return classifyJudgeBG(path, data)
+	case "session":
+		return classifyJudgeSession(path, data)
+	case "object":
+		return classifyJudgeObject(path, data)
+	case "render-observations":
+		return classifyJudgeRenderObservations(path, data)
 	}
 	return refuse(ReasonUnreadable, path, "unknown record kind "+kind)
 }
 
-// classifyJudgeDispatch judges a dispatch record by the shape internal/role/dispatch_ledger.go:52-85 writes: version the number
-// 1, sessionId and id equal to the path, a non-empty role, a candidates array, and non-empty attempts each with id, claimed,
-// candidate and status. Terminal statuses copy; active or in-flight ones refuse ReasonActive; anything else ReasonUnreadable.
+// classifyJudgeDispatch judges a dispatch record the way internal/role/dispatch_ledger.go reads it: the store's own
+// decoder decides the shape (DispatchRecordStatuses calls dispatchPinnedDecode unchanged), and this function only
+// decides the disposition. A record the reader refuses, or whose status is not one the store writes, is unreadable.
+// A record that is still active, or that has an attempt ready, claimed, running or in reconcile, refuses the scope:
+// reconcile is unresolved (dispatch_ledger.go:779-780, 808, 841 checks whether a child exists and stops). Only a
+// record stopped, complete or main-direct whose attempts are all failed or complete is a record the copy may carry.
 func classifyJudgeDispatch(path string, data []byte) error {
-	var rec map[string]json.RawMessage
-	if err := json.Unmarshal(data, &rec); err != nil {
-		return refuse(ReasonUnreadable, path, "the dispatch record is not readable JSON")
-	}
-	var version int
-	if err := json.Unmarshal(rec["version"], &version); err != nil || version != 1 {
-		return refuse(ReasonUnreadable, path, "the dispatch record names no version 1")
-	}
 	session, id := filepath.Base(filepath.Dir(path)), strings.TrimSuffix(filepath.Base(path), ".json")
-	gotSession, err := classifyString(rec["sessionId"])
-	if err != nil || gotSession != session {
-		return refuse(ReasonUnreadable, path, "the dispatch record sessionId does not match its directory")
-	}
-	gotID, err := classifyString(rec["id"])
-	if err != nil || gotID != id {
-		return refuse(ReasonUnreadable, path, "the dispatch record id does not match its file name")
-	}
-	role, err := classifyString(rec["role"])
-	if err != nil || role == "" {
-		return refuse(ReasonUnreadable, path, "the dispatch record names no role")
-	}
-	if !classifyRawIs(rec, "candidates", 0x5b) {
-		return refuse(ReasonUnreadable, path, "the dispatch record candidates is not an array")
-	}
-	if !classifyRawIs(rec, "attempts", 0x5b) {
-		return refuse(ReasonUnreadable, path, "the dispatch record attempts is not an array")
-	}
-	var attempts []map[string]json.RawMessage
-	if err := json.Unmarshal(rec["attempts"], &attempts); err != nil || len(attempts) == 0 {
-		return refuse(ReasonUnreadable, path, "the dispatch record names no attempt")
-	}
-	status, err := classifyString(rec["status"])
+	record, attempts, err := role.DispatchRecordStatuses(data, session, id)
 	if err != nil {
-		return refuse(ReasonUnreadable, path, "the dispatch record names no status")
+		return refuse(ReasonUnreadable, path, err.Error())
 	}
-	switch status {
+	switch record {
 	case "stopped", "complete", "main-direct":
 	case "active":
 		return refuse(ReasonActive, path, "the dispatch record is still active")
 	default:
-		return refuse(ReasonUnreadable, path, "the dispatch record status is not one the store writes: "+status)
+		return refuse(ReasonUnreadable, path, "the dispatch record status is not one the store writes: "+record)
 	}
-	for _, a := range attempts {
-		if _, err := classifyString(a["id"]); err != nil {
-			return refuse(ReasonUnreadable, path, "an attempt names no id")
-		}
-		if !classifyRawIs(a, "claimed", 0x74) && !classifyRawIs(a, "claimed", 0x66) {
-			return refuse(ReasonUnreadable, path, "an attempt names no claimed boolean")
-		}
-		if !classifyRawIs(a, "candidate", 0x7b) {
-			return refuse(ReasonUnreadable, path, "an attempt names no candidate object")
-		}
-		as, err := classifyString(a["status"])
-		if err != nil {
-			return refuse(ReasonUnreadable, path, "an attempt names no status")
-		}
-		switch as {
-		case "reconcile", "failed", "complete":
-		case "ready", "claimed", "running":
-			return refuse(ReasonActive, path, "an attempt is still "+as)
+	for _, status := range attempts {
+		switch status {
+		case "failed", "complete":
+		case "ready", "claimed", "running", "reconcile":
+			return refuse(ReasonActive, path, "an attempt is still "+status)
 		default:
-			return refuse(ReasonUnreadable, path, "an attempt status is not one the store writes: "+as)
+			return refuse(ReasonUnreadable, path, "an attempt status is not one the store writes: "+status)
 		}
 	}
 	return nil
 }
 
-// classifyRawIs reports whether the key is present and its JSON value starts with the given byte.
-func classifyRawIs(m map[string]json.RawMessage, key string, first byte) bool {
-	v := m[key]
-	return len(v) > 0 && v[0] == first
+// classifyJudgeSession judges a session record with the state package's own verdict (state.RecordUnreadable, which is
+// what ReadStateStrict says after reading the same bytes). A session file the state reader would call unreadable - one
+// that is not a JSON object, or whose phase is not a known phase - refuses the scope. The session id is the file name
+// without ".json", as StatePath names it.
+func classifyJudgeSession(path string, data []byte) error {
+	session := strings.TrimSuffix(filepath.Base(path), ".json")
+	if state.RecordUnreadable(session, data) {
+		return refuse(ReasonUnreadable, path, "the session record is not one the state reader can read")
+	}
+	return nil
 }
 
-// classifyString decodes a JSON string value; a missing key or another type is an error.
-func classifyString(v json.RawMessage) (string, error) {
-	var s string
-	if err := json.Unmarshal(v, &s); err != nil {
-		return "", err
+// classifyJudgeObject judges a single-object JSON record by the shape every reader of these records needs before it
+// reads a field: the whole bytes are one JSON object and nothing follows it (pyjson's strict reading, so an array, a
+// scalar, an incomplete document or trailing data is refused). The reader then applies its own, typed checks; this
+// function decides only that there is an object to read.
+func classifyJudgeObject(path string, data []byte) error {
+	value, err := pyjson.Loads(string(data), pyjson.LoadOptions{Map: true})
+	if err != nil {
+		return refuse(ReasonUnreadable, path, "the record is not one JSON object")
 	}
-	return s, nil
+	if _, ok := value.(map[string]any); !ok {
+		return refuse(ReasonUnreadable, path, "the record is not one JSON object")
+	}
+	return nil
+}
+
+// classifyJudgeRenderObservations judges the render-observation ledger with the hook package's own rule
+// (hook.RenderObsLedgerMalformed, the check NativeObservationLedgerMalformed applies). This is the one JSONL row this
+// change judges: the row reader skips a damaged line, but the hook's own malformed check refuses the whole file for one,
+// and the oracle's Stop hook consults that check before it trusts the ledger (render-observations.ts:161, hook.ts:1910),
+// so a copy would carry a ledger the hook already calls unusable. Every other JSONL row stays unjudged.
+func classifyJudgeRenderObservations(path string, data []byte) error {
+	if hook.RenderObsLedgerMalformed(data) {
+		return refuse(ReasonUnreadable, path, "the render-observation ledger has a line the hook reader calls malformed")
+	}
+	return nil
 }
 
 // classifyJudgeBG judges a job record by the store of internal/relay/job (registry.go): the record must be the shape the store

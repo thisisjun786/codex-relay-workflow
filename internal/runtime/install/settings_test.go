@@ -38,6 +38,7 @@ func settingsInputs(t *testing.T, section string) record.Object {
 // json.dumps(indent=2, sort_keys=True) writes it, version 1 without a policy and version 2 with
 // one: the golden began as scripts/crw_runtime's bytes.
 func TestBridgeRecordBytesArePythons(t *testing.T) {
+	t.Parallel()
 	for _, f := range settingsInputs(t, "bridgeRecords") {
 		given := golden.Obj(f.Value)
 		var policy record.Object
@@ -52,6 +53,7 @@ func TestBridgeRecordBytesArePythons(t *testing.T) {
 // adapterInterpreter and adapterEntryPoint (decision 66): the golden began as those bytes. The
 // Go hook's own reader accepts them.
 func TestHookSettingsBytesArePythons(t *testing.T) {
+	t.Parallel()
 	for _, f := range settingsInputs(t, "hookSettings") {
 		given := golden.Obj(f.Value)
 		timeout, _ := record.Get(given, "timeout").(int64)

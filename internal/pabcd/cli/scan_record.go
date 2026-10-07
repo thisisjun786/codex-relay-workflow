@@ -24,8 +24,22 @@ func RunScanCli(args ScanCliArgs) CliResult {
 }
 
 func scanRecordRun(a ScanCliArgs, appendEvent func(string, state.InterviewEvent) error) CliResult {
+	return cliPublishedScanRecordRun(a, appendEvent, state.WriteState)
+}
+
+// cliPublishedScanRecordRun is the CRW-823 write seam, a third argument rather than a change to
+// scanRecordRun's existing two-argument signature, so every existing test still compiles. writeState
+// is an argument, never package state, so a test can drive the published-but-unsynced path without
+// changing what any other caller does; scanRecordRun passes state.WriteState.
+func cliPublishedScanRecordRun(a ScanCliArgs, appendEvent func(string, state.InterviewEvent) error, writeState func(string, state.State) error) CliResult {
 	if a.Action == ScanActionHelp {
 		return CliResult{Output: scanRecordHelp}
+	}
+	// CRW-871: a direct caller builds ScanCliArgs and bypasses ParseScanCliArgs, and this runner locks,
+	// reads and writes through the sanitised key, so a non-canonical id would rewrite a DIFFERENT
+	// session's file. The judgement runs before the lock is taken, as the parser's does for the CLI.
+	if !state.IsCanonicalSessionID(a.SessionID) {
+		return CliResult{Code: 1, Output: "scan record: " + sessionAliasRefusalText}
 	}
 	var round float64
 	derivedCount := 0
@@ -36,6 +50,10 @@ func scanRecordRun(a ScanCliArgs, appendEvent func(string, state.InterviewEvent)
 		}
 		if !cliVerdictsIntact(a.Cwd, a.SessionID, len(s.UnverifiedSubagents)) {
 			return errors.New("session state holds unreadable unverified records; refusing to rewrite it")
+		}
+		// Intentionally changed: publishing a capped/repaired read loses interview records too.
+		if !cliInterviewIntact(a.Cwd, a.SessionID) {
+			return errors.New(cliInterviewRefusalReason)
 		}
 		tracker := s.Interview
 		if tracker == nil {
@@ -100,9 +118,13 @@ func scanRecordRun(a ScanCliArgs, appendEvent func(string, state.InterviewEvent)
 		}
 		next.LastScanRoundID = next.ScanRounds
 		s.Interview = &next
-		return state.WriteState(a.Cwd, s)
+		return writeState(a.Cwd, s)
 	})
-	if err != nil {
+	// A write that published the state at the final path and then failed the directory sync is a
+	// written round: the round is visible and the ledger row it appended is already there, so a retry
+	// would record the same round twice. The durability failure is carried as a warning instead. A
+	// failure before the rename published nothing and stays the failure it was.
+	if err != nil && !state.Published(err) {
 		return CliResult{Code: 1, Output: "scan record failed: " + cliErrorMessage(err)}
 	}
 	derived := ""
@@ -116,7 +138,11 @@ func scanRecordRun(a ScanCliArgs, appendEvent func(string, state.InterviewEvent)
 			}
 		}
 	}
-	return CliResult{Output: fmt.Sprintf("scan record: round %s recorded for session %s (contradictions=%s, high=%s%s)", scanRecordNumberText(round), a.SessionID, scanRecordNumberText(a.ContradictionCount), scanRecordNumberText(a.HighContradictionCount), derived)}
+	recorded := fmt.Sprintf("scan record: round %s recorded for session %s (contradictions=%s, high=%s%s)", scanRecordNumberText(round), a.SessionID, scanRecordNumberText(a.ContradictionCount), scanRecordNumberText(a.HighContradictionCount), derived)
+	if err != nil {
+		return CliResult{Output: recorded + "\n" + cliPublishedStateWarning(err)}
+	}
+	return CliResult{Output: recorded}
 }
 
 // Working values stay raw until write-side normalization, like the oracle.

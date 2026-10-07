@@ -8,6 +8,7 @@ import (
 // Criterion c3 (exclusive list), the places a list of files could be slipped past: the overlap of two regions is judged on the place they share. A symbol key means nothing on a
 // listed path, and a tree that holds a listed path hands it to whoever else may edit under it.
 func TestSharedContractOverlapIsJudgedOnTheCommonPlace(t *testing.T) {
+	t.Parallel()
 	const specs = "internal/relay/argparse/specs.json"
 	tree := func(path, grade string) Region {
 		return Region{Repository: "owner/repo", Path: path, Kind: "tree", Change: "edit", Grade: grade}
@@ -53,6 +54,7 @@ func TestSharedContractOverlapIsJudgedOnTheCommonPlace(t *testing.T) {
 
 // Regions of two repositories never overlap, a shared contract path included.
 func TestSharedContractPathsOfTwoRepositoriesDoNotOverlap(t *testing.T) {
+	t.Parallel()
 	other := Region{Repository: "owner/other", Path: "internal", Kind: "tree", Change: "edit", Grade: "local"}
 	_, reading := gradedFixture(t, map[string][]Region{"p": {{Repository: "owner/repo", Path: "internal", Kind: "tree", Change: "edit", Grade: "local"}}, "q": {other}}, "p", "q")
 	if got := strings.Join(reading.readyIDs(), ","); got != "p,q" || reading.node("q").Release.Rule != RuleIndependent {

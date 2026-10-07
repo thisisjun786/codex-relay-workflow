@@ -77,6 +77,7 @@ func idxExec(t *testing.T, h *host, statements ...string) {
 }
 
 func TestAnIndexArrivalIsRefusedWithoutTheRouteAndPassesWithIt(t *testing.T) {
+	// sequential: replaces the state-backup seam through atCopy.
 	h, second, old, next := idxHost(t)
 	before := digestTree(t, h.relayState)
 	o := h.options()
@@ -113,7 +114,10 @@ func TestAnIndexArrivalIsRefusedWithoutTheRouteAndPassesWithIt(t *testing.T) {
 // The route carries ordinary indexes and nothing that merely resembles them: whatever else arrives, alone or beside an
 // ordinary index, refuses with the acknowledgement as without it, and no backup is made for a swap that does not happen.
 func TestTheRouteDoesNotCarryAUniqueIndexANewTableAColumnChangeATriggerOrAFunction(t *testing.T) {
-	changeColumns := func(objects record.Object) record.Object {
+	t.Parallel()
+	// The subtests below run in parallel, so each closure is given its own test: a case that
+	// reports a failure must report it on the case that failed, not on this function.
+	changeColumns := func(t *testing.T, objects record.Object) record.Object {
 		out := make(record.Object, len(objects))
 		copy(out, objects)
 		for i, field := range out {
@@ -127,22 +131,27 @@ func TestTheRouteDoesNotCarryAUniqueIndexANewTableAColumnChangeATriggerOrAFuncti
 		}
 		return append(out, record.Object{{Key: "index crw472_extra_index", Value: "CREATE INDEX crw472_extra_index ON deliveries (crw472_extra)"}}...)
 	}
+	// plain adapts a mutation that needs no test of its own.
+	plain := func(mutate func(record.Object) record.Object) func(*testing.T, record.Object) record.Object {
+		return func(_ *testing.T, objects record.Object) record.Object { return mutate(objects) }
+	}
 	for name, tc := range map[string]struct {
-		mutate func(record.Object) record.Object
+		mutate func(*testing.T, record.Object) record.Object
 		answer string
 	}{
-		"a unique index":                        {idxAdding("index crw472_u", "CREATE UNIQUE INDEX crw472_u ON attempts (request_id, observed_at)"), swapgate.Extends},
-		"an ordinary index beside a unique one": {idxAdding(idxOrdinary, idxOrdinarySQL, "index crw472_u", "CREATE UNIQUE INDEX crw472_u ON attempts (request_id, observed_at)"), swapgate.Extends},
-		"a new table":                           {idxAdding("table crw472_new", "CREATE TABLE crw472_new (x)"), swapgate.Extends},
-		"an index beside a new table":           {idxAdding(idxOrdinary, idxOrdinarySQL, "table crw472_new", "CREATE TABLE crw472_new (x)"), swapgate.Extends},
-		"a trigger":                             {idxAdding("trigger crw472_t", "CREATE TRIGGER crw472_t AFTER INSERT ON attempts BEGIN SELECT 1; END"), swapgate.Extends},
-		"an index that calls a function":        {idxAdding("index crw472_f", "CREATE INDEX crw472_f ON refusals (json_extract(reason, '$.code'))"), swapgate.Extends},
+		"a unique index":                        {plain(idxAdding("index crw472_u", "CREATE UNIQUE INDEX crw472_u ON attempts (request_id, observed_at)")), swapgate.Extends},
+		"an ordinary index beside a unique one": {plain(idxAdding(idxOrdinary, idxOrdinarySQL, "index crw472_u", "CREATE UNIQUE INDEX crw472_u ON attempts (request_id, observed_at)")), swapgate.Extends},
+		"a new table":                           {plain(idxAdding("table crw472_new", "CREATE TABLE crw472_new (x)")), swapgate.Extends},
+		"an index beside a new table":           {plain(idxAdding(idxOrdinary, idxOrdinarySQL, "table crw472_new", "CREATE TABLE crw472_new (x)")), swapgate.Extends},
+		"a trigger":                             {plain(idxAdding("trigger crw472_t", "CREATE TRIGGER crw472_t AFTER INSERT ON attempts BEGIN SELECT 1; END")), swapgate.Extends},
+		"an index that calls a function":        {plain(idxAdding("index crw472_f", "CREATE INDEX crw472_f ON refusals (json_extract(reason, '$.code'))")), swapgate.Extends},
 		"a column change with an index on it":   {changeColumns, swapgate.Differs},
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			h, second, old, _ := idxHost(t)
 			o := h.options()
-			o.CandidateSchema = idxCandidate(tc.mutate)
+			o.CandidateSchema = idxCandidate(func(objects record.Object) record.Object { return tc.mutate(t, objects) })
 			o.StateBackup = backupOf(h, "refused")
 			result, code := install.Install(context.Background(), o, "update", install.Source{From: second})
 			if code != install.Refused || at(result, "swapGate", "verdict") != "BLOCKED" || at(result, "swapGate", "cells", "storeSchema", "answer") != tc.answer {
@@ -163,7 +172,9 @@ func TestTheRouteDoesNotCarryAUniqueIndexANewTableAColumnChangeATriggerOrAFuncti
 // An ordinary index the candidate does not declare leaves with an update and with a rollback, with no acknowledgement and no
 // backup; an index that is unique, or calls a function, still refuses.
 func TestAnIndexDepartureIsNotRefused(t *testing.T) {
+	t.Parallel()
 	t.Run("an update", func(t *testing.T) {
+		t.Parallel()
 		h, second, _, next := idxHost(t)
 		idxExec(t, h, "CREATE INDEX crw472_extra ON attempts (observed_at)")
 		result, code := install.Install(context.Background(), h.options(), "update", install.Source{From: second})
@@ -175,6 +186,7 @@ func TestAnIndexDepartureIsNotRefused(t *testing.T) {
 		}
 	})
 	t.Run("a rollback", func(t *testing.T) {
+		t.Parallel()
 		h, _, second, old, _ := zoneInstalled(t)
 		h.mustInstall(t, "update", second)
 		openedByThisBuild(t, h)
@@ -189,6 +201,7 @@ func TestAnIndexDepartureIsNotRefused(t *testing.T) {
 		"an index that calls a function": "CREATE INDEX crw472_extra ON refusals (json_extract(reason, '$.code'))",
 	} {
 		t.Run(name+" still refuses", func(t *testing.T) {
+			t.Parallel()
 			h, second, old, _ := idxHost(t)
 			idxExec(t, h, statement)
 			result, code := install.Install(context.Background(), h.options(), "update", install.Source{From: second})
@@ -243,6 +256,7 @@ func idxArchive(t *testing.T, binary []byte, version string) string {
 //
 //	CRW_INDEX_CANDIDATE_BINARY=/path/to/crw go test ./internal/runtime/install -run TestAReleaseBuildThatDeclaresIndexes -v
 func TestAReleaseBuildThatDeclaresIndexesInstallsThroughTheClass(t *testing.T) {
+	t.Parallel()
 	path := os.Getenv("CRW_INDEX_CANDIDATE_BINARY")
 	if path == "" {
 		t.Skip("CRW_INDEX_CANDIDATE_BINARY names no candidate build")

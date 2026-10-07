@@ -254,10 +254,11 @@ func spawnHookRouteScalar(doc string, i int) (int, bool) {
 }
 
 // spawnHookRoute is :991-1115 without the managed and final-gate legs: routing, the message, the items, the notices and the envelope.
+// The final-gate prerequisite check (:1072-1079) runs before the depth return, as the oracle's check runs before the JSON.stringify
+// at :1103 whose RangeError a tool_input nested too deep causes; the depth judgement is computed first and only its result is
+// applied after the gate, so a refusal wins and nothing computed before the gate recurses without bound over a deep tool_input.
 func spawnHookRoute(a spawnHookAssembly, env host.LookupEnv) string {
-	if spawnHookRouteDeep(a.toolInput) {
-		return "" // the oracle's JSON.stringify throws a RangeError here, which its outer catch turns into nothing
-	}
+	tooDeep := spawnHookRouteDeep(a.toolInput)
 	prompt, model, effort := spawnHookRouteSettings(a)
 	message := a.updatedMessage
 	if prompt != "" && !(a.validItems && (message == a.guard+"\n\n"+prompt || strings.HasPrefix(message, a.guard+"\n\n"+prompt+"\n\n"))) {
@@ -272,10 +273,17 @@ func spawnHookRoute(a spawnHookAssembly, env host.LookupEnv) string {
 	changed := message != a.message || promptChanged
 	if a.validItems {
 		items = spawnHookRouteItems(a, message)
-		changed = spawnHookRouteStringify(items) != spawnHookRouteStringify(a.itemInput)
+		if !tooDeep {
+			changed = spawnHookRouteStringify(items) != spawnHookRouteStringify(a.itemInput)
+		}
 	}
 	// Final-gate prerequisites (:1072-1079): the packet's text items joined, or the message, and the session. A refusal is the
-	// deny envelope; every other path fails open. It runs before the allow and no-op below so a denial reaches the caller.
+	// deny envelope; every other path fails open. It runs before the depth return below so a denial reaches the caller, as the
+	// oracle's check runs before the JSON.stringify at :1103. Only the item/input comparison recurses over the whole value, so it is
+	// skipped for a tool_input nested past the depth limit; spawnHookRouteItems reads each item's type and text shallowly, so the
+	// gate text is the same joined item text (or message) a shallow packet yields and the gate still decides. A deep packet the
+	// gate refuses is denied, where the oracle's JSON.stringify throws before its own gate and its outer catch allows it: the gate
+	// first and fail closed, as the issue answers.
 	gateText := message
 	if a.validItems {
 		var texts []string
@@ -292,6 +300,9 @@ func spawnHookRoute(a spawnHookAssembly, env host.LookupEnv) string {
 			reason = "final gate prerequisites are missing"
 		}
 		return DenyEnvelope(reason)
+	}
+	if tooDeep {
+		return "" // the oracle's JSON.stringify throws a RangeError here, which its outer catch turns into nothing
 	}
 	config, err := role.ReadConfig(env)
 	if err != nil {
@@ -324,7 +335,7 @@ func spawnHookRoute(a spawnHookAssembly, env host.LookupEnv) string {
 		// Issue the managed spawn (:1094-1097): a failure is the deny envelope. The candidate's model and effort then replace
 		// whatever the caller sent, a null candidate field deleting the key.
 		if _, err := role.IssueManagedSpawn(a.cwd, a.sessionID, a.dispatchSource, a.toolUseID); err != nil {
-			return DenyEnvelope("managed dispatch: " + err.Error())
+			return DenyEnvelope("managed dispatch: " + spawnParityNodeError(err))
 		}
 		if a.managed.Candidate.Model == nil {
 			updated = spawnHookWithout(updated, "model")

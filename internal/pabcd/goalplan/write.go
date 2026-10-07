@@ -15,6 +15,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/interview"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
 	"golang.org/x/sys/unix"
 )
 
@@ -138,7 +139,51 @@ func writeEncodeJSON(value any, indent string) ([]byte, error) {
 // WriteGoalplan is low-level atomic publication (:915-942). New-plan creation
 // may call directly; existing mutations MUST run inside WithGoalplanWriteLock.
 // Only a shallow copy receives the refreshed timestamp, as in the oracle.
+// A failure after the rename published the plan, so it is returned as a
+// *state.PublishedError (CRW-744's type, CRW-793 here) and a caller that has a
+// reconciling step still runs it. The one exception is a path-identity failure
+// at the post-rename directory open: the plan directory moved or was replaced,
+// so the plan is not at its path and the write returns a plain error instead
+// (CRW-856).
 func WriteGoalplan(cwd string, plan *Goalplan) error {
+	return goalplanPublishedWriteGoalplan(cwd, plan, nil)
+}
+
+// goalplanPublishedOptions is the CRW-793 durability seam: the sync the write path performs on the
+// staged plan and on the directory that holds it. A nil Sync is (*os.File).Sync, so a production call
+// never carries the seam; a caller that passes one drives the published-but-unsynced path. It is an
+// argument, never package state, so one test cannot fault another's write.
+type goalplanPublishedOptions struct {
+	Sync func(*os.File) error
+
+	// AfterRename runs immediately after the Renameat that publishes the plan, before the
+	// post-rename directory open. It is a test seam: production passes nil, so no call ever
+	// carries it, and it is an argument rather than package state so one test cannot affect
+	// another's write (CRW-856).
+	AfterRename func()
+	// OpenDir replaces the post-rename directory open that the fsync reads. Nil is the real
+	// openAt(dir, ".", expected, unix.O_RDONLY|unix.O_DIRECTORY, true, 0). It is a test seam,
+	// an argument rather than package state (CRW-856).
+	OpenDir func(dir *os.File, expected string) (*os.File, error)
+}
+
+// goalplanPublishedOpenDir is the post-rename directory open, defaulting to the real one.
+func goalplanPublishedOpenDir(o *goalplanPublishedOptions, dir *os.File, expected string) (*os.File, error) {
+	if o != nil && o.OpenDir != nil {
+		return o.OpenDir(dir, expected)
+	}
+	return openAt(dir, ".", expected, unix.O_RDONLY|unix.O_DIRECTORY, true, 0)
+}
+
+// goalplanPublishedSync is the configured sync, defaulting to the real one.
+func goalplanPublishedSync(o *goalplanPublishedOptions) func(*os.File) error {
+	if o != nil && o.Sync != nil {
+		return o.Sync
+	}
+	return (*os.File).Sync
+}
+
+func goalplanPublishedWriteGoalplan(cwd string, plan *Goalplan, o *goalplanPublishedOptions) error {
 	checked, err := GoalplanDir(cwd, plan.Slug)
 	if err != nil {
 		return err
@@ -154,7 +199,7 @@ func WriteGoalplan(cwd string, plan *Goalplan) error {
 	if err != nil {
 		return err
 	}
-	return writePublishAt(dir, real, data)
+	return goalplanPublishedWritePublishAt(dir, real, data, o)
 }
 
 // AppendGoalplanLedger ports :945-963. Existing-plan callers append under their
@@ -278,6 +323,11 @@ func writeIgnoreAt(dir *os.File, real string) error {
 }
 
 func writePublishAt(dir *os.File, real string, data []byte) error {
+	return goalplanPublishedWritePublishAt(dir, real, data, nil)
+}
+
+func goalplanPublishedWritePublishAt(dir *os.File, real string, data []byte, o *goalplanPublishedOptions) error {
+	sync := goalplanPublishedSync(o)
 	if err := boundFile(dir, real, true); err != nil {
 		return err
 	}
@@ -289,7 +339,7 @@ func writePublishAt(dir *os.File, real string, data []byte) error {
 	defer func() { _ = unix.Unlinkat(int(dir.Fd()), name, 0) }()
 	_, err = file.Write(data)
 	if err == nil {
-		err = file.Sync()
+		err = sync(file)
 	}
 	err = errors.Join(err, file.Close())
 	if err != nil {
@@ -303,17 +353,46 @@ func writePublishAt(dir *os.File, real string, data []byte) error {
 	if err = unix.Renameat(int(dir.Fd()), name, int(dir.Fd()), GoalplanFile); err != nil {
 		return err
 	}
-	reader, err := openAt(dir, ".", real, unix.O_RDONLY|unix.O_DIRECTORY, true, 0)
+	if o != nil && o.AfterRename != nil {
+		o.AfterRename()
+	}
+	reader, err := goalplanPublishedOpenDir(o, dir, real)
 	// File fsync and rename remain available to a search/write-only directory,
 	// as in the oracle. Directory fsync additionally runs when readable.
 	if errors.Is(err, os.ErrPermission) {
+		// The open failed only because the directory is not readable, which a search/write-only
+		// plan directory legitimately is. The held descriptor's own identity is checked first
+		// without needing read permission on the directory, so a directory that moved or was
+		// replaced after the rename is refused however its open failed (CRW-856).
+		if identity := boundFile(dir, real, true); identity != nil {
+			var relocated *goalplanRelocatedError
+			if errors.As(identity, &relocated) {
+				return fmt.Errorf("goalplan '%s' directory moved after publication; the plan at its path is not the one written", filepath.Base(real))
+			}
+		}
 		return nil
 	}
+	// A path-identity failure means the descriptor the plan was written into is no longer the
+	// plan directory at its path: the directory was moved or replaced after the rename, so the
+	// plan is not at the slug path and the write is not published. It is returned as a plain
+	// error, not a PublishedError, so a caller with a reconciling step (steering) answers an
+	// error and appends no ledger row, and a retry applies to the plan now at the path
+	// (CRW-856). A genuine open failure (any other cause) still published the plan, so it
+	// stays a PublishedError as before.
 	if err != nil {
-		return err
+		var relocated *goalplanRelocatedError
+		if errors.As(err, &relocated) {
+			// filepath.Base(real) is the slug: writeOpenCheckedDir builds real as
+			// <base>/.crw/goalplans/<slug> from the validated checked path.
+			return fmt.Errorf("goalplan '%s' directory moved after publication; the plan at its path is not the one written", filepath.Base(real))
+		}
+		return &state.PublishedError{Err: err}
 	}
 	defer reader.Close()
-	return reader.Sync()
+	if err := sync(reader); err != nil {
+		return &state.PublishedError{Err: err}
+	}
+	return nil
 }
 func writeAppendAt(dir *os.File, real string, data []byte) error {
 	if err := boundFile(dir, real, true); err != nil {

@@ -81,6 +81,7 @@
 {"name":"linkage-bind","options":[
   {"flag":"--role","required":true,"choices":["supervisor","parent","child"]},
   {"flag":"--scope","required":true},
+  {"flag":"--scope-kind","choices":["store"],"help":"the store seat, the one scope no Linear level owns: only the supervisor may name it, and its key is 'store'. Omit it and the binding takes the role's own level (supervisor initiative, parent project, child issue)"},
   {"flag":"--task","required":true},
   {"flag":"--host","required":true},
   {"flag":"--cwd"},
@@ -115,6 +116,7 @@
 {"name":"linkage-handover","options":[
   {"flag":"--role","required":true,"choices":["supervisor","parent"],"help":"a child is replaced by registering its successor with --supersedes, which moves the assignment and its issue scope together"},
   {"flag":"--scope","required":true},
+  {"flag":"--scope-kind","choices":["store"],"help":"the store seat, the one scope no Linear level owns: only the supervisor may name it, and its key is 'store'. Omit it and the handover takes the role's own level (supervisor initiative, parent project)"},
   {"flag":"--expect-task","required":true},
   {"flag":"--task","required":true},
   {"flag":"--host","required":true},
@@ -241,7 +243,36 @@
   {"flag":"--criteria","help":"a JSON array of findings, or @path to one"},
   {"flag":"--restoration","help":"the criterion id whose finding carries this correction's restoration block. The verdict is refused if that finding would not reach the child."},
   {"flag":"--reason","help":"why an aborted or unverified verdict could not conclude"},
-  {"flag":"--expect-criteria-digest","help":"refuse unless the canonical criteria set still has this digest"}]},
+  {"flag":"--expect-criteria-digest","help":"refuse unless the canonical criteria set still has this digest"},
+  {"flag":"--verified-head","help":"the head this ruling verified, as 40 lowercase hex digits. Recorded with the ruling in the same transaction, so a later dag-accept proves a parent-made refresh against it instead of the head the forge shows. Only with --verdict verified, and the same event keeps one head"}]},
+{"name":"decision-raise","summary":"record a user decision: the question, its options, its blocking subjects and its authority, in the relay store. A second raise of the same question (the same fingerprint) folds into the record that already carries it, appending the observation and answering merged true; an identical raise is not a new record. Answers {decisionId, fingerprint, merged, state}","options":[
+  {"flag":"--kind","required":true,"help":"design_choice|dependency|merge_approval|cleanup_approval|blocked_escalation|policy"},
+  {"flag":"--context","required":true,"help":"one paragraph: what the question is and why it is asked"},
+  {"flag":"--option","kind":"append","required":true,"help":"id=label:effect, 2 or 3 times"},
+  {"flag":"--recommend","help":"id:one line, the raiser's own suggestion"},
+  {"flag":"--blocking","kind":"append","help":"kind=ref, repeatable: relationship|issue|plan_node|project"},
+  {"flag":"--needed-by","help":"RFC3339 deadline, or omitted"},
+  {"flag":"--origin-project","required":true},
+  {"flag":"--origin-issue"},
+  {"flag":"--source","required":true,"help":"kind=ref: the report, event or message the question was read from"},
+  {"flag":"--authority","required":true,"help":"kind[=ref]: the answer class this question requires (user|delegated-management|parent)"},
+  {"flag":"--raised-via","help":"how the question reached the record"}]},
+{"name":"decision-list","summary":"the user-decision records the filters select, oldest first by the real instant of raised_at. A read: it records nothing","options":[
+  {"flag":"--state","help":"open|raised|answered|applied|withdrawn|expired"},
+  {"flag":"--project","help":"a record whose origin project is this key, or one of whose observations names it"}]},
+{"name":"decision-answer","summary":"record an answer on a user-decision record, with its provenance. --by and --via are required; the answer must name an option of the record or carry free text; and the authority it cites may not outrank the record's. A withdrawn, applied or expired record takes no answer","options":[
+  {"flag":"--decision","required":true},
+  {"flag":"--option","help":"the option id the answer chooses"},
+  {"flag":"--text","help":"the answer as text, for a free-form answer"},
+  {"flag":"--by","required":true,"help":"the task id that answered"},
+  {"flag":"--via","required":true,"help":"file-import|management-message|supervisor-readback|dots|direct-ask"},
+  {"flag":"--authority","help":"kind[=ref]: the class the answer cites, which may not outrank the record's"}]},
+{"name":"decision-apply","summary":"mark an answered user-decision record applied, once the decision_reply event of a relationship the decision blocks has been observed. Delivery alone never applies a decision","options":[
+  {"flag":"--decision","required":true},
+  {"flag":"--event","required":true,"help":"the decision_reply event the relay recorded for the blocked relationship"}]},
+{"name":"decision-withdraw","summary":"retract a user-decision record with its reason. A withdrawn record takes no further answer","options":[
+  {"flag":"--decision","required":true},
+  {"flag":"--reason","required":true}]},
 {"name":"decision-reply","summary":"record the parent's decision on a child's blocked_needs_input receipt, or an answer on a receipt the relay itself observed ending interrupted or failed, and queue it to the child. answer and stop keep the generation; split_approval and scope_change open the next one and name the criteria digest registered for the relationship","options":[
   {"flag":"--event","required":true,"help":"the blocked_needs_input receipt this answers, or a receipt the relay itself observed ending interrupted or failed, which answer alone answers"},
   {"flag":"--decision","required":true,"choices":["answer","stop","split_approval","scope_change"]},
@@ -677,6 +708,30 @@
   {"flag":"--repository"},
   {"flag":"--base-ref"},
   {"flag":"--parent-task","help":"every live claim one task holds, across targets. What a parent that just restarted can ask with the only identifier it still has"}]},
+{"name":"merge-train-open","summary":"open a merge train over the verified pull requests the leader's turn carries, one bundle pull request whose single tree gets one CI run","options":[
+  {"flag":"--turn","required":true,"help":"the leader's holding turn; its pull request is the bundle's first member"},
+  {"flag":"--actor","required":true,"help":"the leader, the holder of that turn"},
+  {"flag":"--base-sha","required":true,"help":"the dev tip D the bundle is built on. The relay reads the base branch itself and refuses a different value"},
+  {"flag":"--member","kind":"append","required":true,"help":"a member pull request, in bundle order; repeat once per member. Every member but the leader's own must have a waiting turn on the same target whose head is that pull request's head. One member opens no train and the answer says so"}]},
+{"name":"merge-train-verify","summary":"the leader proves the bundle pull request's run and first-parent chain and appends a verified event","options":[
+  {"flag":"--train","required":true},
+  {"flag":"--actor","required":true,"help":"the train's leader; another task is refused disposition_conflict"},
+  {"flag":"--bundle-pr","required":true,"help":"the open bundle pull request on dev, labelled crw-lane, whose head is H"},
+  {"flag":"--head","required":true,"help":"the bundle head H; the relay reads the pull request's head and the run's head_sha itself and compares"},
+  {"flag":"--run","required":true,"help":"the ci.yml run for H whose newest attempt is completed/success with every expected job a success and every go-product test leg's test step a success"},
+  {"flag":"--repo","required":true,"help":"a checkout holding H's first-parent chain down to D, where the chain proof runs from git objects alone"}]},
+{"name":"merge-train-land","summary":"record that the bundle landed as one merge commit M and close every member turn landed","options":[
+  {"flag":"--train","required":true},
+  {"flag":"--actor","required":true,"help":"the train's leader"},
+  {"flag":"--landed-sha","required":true,"help":"the bundle's merge commit M; the relay reads the dev tip and M's parents from the forge and refuses anything else"},
+  {"flag":"--observed-base-sha","help":"optional cross-check: the dev tip you read after the merge. The relay reads the branch itself and refuses a value that disagrees"}]},
+{"name":"merge-train-close","summary":"close a train done, or abandon it and return its member turns to waiting","options":[
+  {"flag":"--train","required":true},
+  {"flag":"--actor","required":true,"help":"the train's leader"},
+  {"flag":"--state","required":true,"choices":["done","abandoned"],"help":"the event kind this appends; abandoned returns the member turns to waiting"},
+  {"flag":"--reason","required":true}]},
+{"name":"merge-train-show","summary":"read one train: its members in order, its event log and the state its newest event derives","options":[
+  {"flag":"--train","required":true}]},
 {"name":"slot-reserve","options":[
   {"flag":"--kind","required":true},
   {"flag":"--subject","required":true},
