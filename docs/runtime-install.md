@@ -950,14 +950,30 @@ that replaces that one field:
 
     crw install register-mcp --re-register-policy --execution-policy /path/to/execution-policy.json
 
-It takes the file from the same `--execution-policy` flag the create path spells, reads and writes
-under the ownership lock beside the record, and replaces `executionPolicy` alone: `path` and
-`digest` become the new file's values and every other field keeps its bytes and its order. That
-promise holds for a record this installer wrote: a record in another spelling is refused as
-`record_not_canonical`, because publishing it would reserialize the fields this path leaves alone.
-The record must also be a regular file at that path: a symbolic link is refused as
-`record_symlinked`, because the replacement renames a file over the path itself and would turn the
-link into a regular file.
+It takes the file from the same `--execution-policy` flag the create path spells, and reads and
+writes under the ownership lock beside the record. The policy file is read inside that lock, so the
+digest the record is given is the one the launcher would read now: a file edited while the command
+waited for the lock is what it registers, rather than a `record_unchanged` answer over a digest the
+launcher already refuses, and a file another run repaired during the wait is judged as it stands
+rather than as it stood when the command started. The file is hashed once more immediately before
+the decision, so an edit between the two readings answers `record_policy_changed` and nothing is
+written.
+
+`executionPolicy` alone is replaced, and it is replaced in the record's own bytes: the member's
+value is spliced in the installer's form and every other byte - the document's whitespace, its key
+order, a trailing newline it does or does not have - is the byte it was. A record this installer
+did not write, hand-edited or written by another tool, is therefore re-registered like any other.
+The document is read the way the launcher reads it, so a value `json.loads` accepts - `NaN` and the
+infinities, in a member this path never replaces - does not make the record unregisterable. What is
+still refused is a record the launcher will not start, which answers `record_malformed`: the record
+is judged by the launcher's own checks - the version, the owner, the `serverName` the package
+declares, an absolute `bridgeExecutable`, string `args`, the version-1/version-2 policy rule, an
+executable and arguments an `exec` can take (no NUL, encodable as file-system bytes), and an
+argument list that does not begin with the plugin-launch flag (which would start the launcher again
+instead of the bridge) - so a hand-edited record naming another server, or one holding a value no
+`exec` could be given, is refused with its bytes unchanged and no backup written. The record must be
+a regular file at that path: a symbolic link is refused as `record_symlinked`, because the
+replacement renames a file over the path itself and would turn the link into a regular file.
 The new file goes through the bridge's own parser first, exactly as the create path checks it, so a
 policy the bridge would refuse to start under answers `execution_policy_unreadable` and nothing is
 written. The bridge's second owner is refused here too: a `config.toml` entry that also starts this
@@ -972,11 +988,12 @@ policy's mode and role pairs, and the backup path. A read-back that does not mat
 file that changed while the record was being published answers `record_policy_changed` with
 `applied` true, because the record was written and the launcher will refuse its digest.
 
-The other answers are the create path's own: a record that already names this policy is left as it is
-and answered `record_unchanged`, a host with no record at all is answered `record_absent` (register
-it first), a record whose bytes change between the decision and the write is answered
-`record_changed_underneath`, and a version-1 record is answered `record_differs`, because naming a
-policy also changes `recordVersion`. A `--dry-run` reports `record_would_update` and writes nothing.
+The other answers are the create path's own: a record that already names the policy the file holds
+under the lock is left as it is and answered `record_unchanged`, a host with no record at all is
+answered `record_absent` (register it first), a record whose bytes change between the decision and
+the write is answered `record_changed_underneath`, and a version-1 record is answered
+`record_differs`, because naming a policy also changes `recordVersion`. A `--dry-run` reports
+`record_would_update` and writes nothing.
 
 Nothing here touches a bridge or the relay service. The record is read at every bridge start, so a
 thread started afterwards picks the new policy up, while a relay service already running keeps the

@@ -45,6 +45,10 @@ const (
 	// that does not exist (no D, takeover.json or write-gate.lock); like "store_absent" in
 	// declarations.py it is a literal there, not a member of errors.RefusalReason.
 	ReasonStoreAbsent = "store_absent"
+	// ReasonStoreWriteHalted is the refusal a writable path answers with while S/corruption.json
+	// exists: the store was seen damaged (halt.go, CRW-848) and no command may write to it until
+	// the marker is cleared by hand after a restore. It is a member of the frozen enum.
+	ReasonStoreWriteHalted = string(contract.RefusalStoreWriteHalted)
 )
 
 // RefusedError is a refusal with a machine-readable reason, as Python's RelayError.

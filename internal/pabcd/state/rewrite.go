@@ -11,6 +11,33 @@ import (
 // rewriteNumberMaxLen bounds the text of an attempts value the guard will compare exactly; a longer literal is read as a loss.
 const rewriteNumberMaxLen = 64
 
+// RewriteKeepsStored says whether writing next back over the session file raw would keep every record the file stores: the one
+// data-loss judgement every writer that rewrites the whole state asks, so no writer can carry a narrower copy. It is false when
+// RewriteKeepsUnverified refuses the stored unverified-subagent list, otherwise RewriteKeepsInterview's answer for the stored
+// interview tracker. A document that is not one JSON object is false: both checks read it as ReadStateStrict does and refuse it.
+//
+// A legacy D-close recovery marker is NOT part of this judgement (decision 2026-10-07): since CRW-648 the shared reader restores
+// the stored legacy flag, so a rewrite no longer loses the marker's distinction, and the CLI reset, which is the recovery for such
+// a marker, must stay able to clear it. The writers that refuse such a state do so through DcloseRecoveryLegacy, each exactly as
+// it did before this function existed.
+//
+// Each caller keeps its own handling of an absent file and of a read failure, and its own refusal sentence; this function only
+// answers the question about the bytes it is given.
+func RewriteKeepsStored(raw []byte, next State) bool {
+	if !RewriteKeepsUnverified(raw, next.UnverifiedSubagents) {
+		return false
+	}
+	return RewriteKeepsInterview(raw, next.Interview)
+}
+
+// DcloseRecoveryLegacy says whether next holds a D-close recovery marker the reader restored as legacy, whose successor was absent
+// or malformed. It is the separate predicate the writers that refuse such a state share, kept out of RewriteKeepsStored: the marker
+// survives a write since CRW-648, so refusing it is a per-writer decision about recovery (a legacy marker cannot be read safely by
+// the D-close retry), not a data loss. A marker with an explicit null successor is authoritative and is not legacy.
+func DcloseRecoveryLegacy(next State) bool {
+	return next.DcloseRecovery != nil && next.DcloseRecovery.Legacy
+}
+
 // RewriteKeepsUnverified says whether writing kept back over the session file raw would lose nothing the file stores under
 // unverifiedSubagents. kept is the list ReadStateStrict rebuilt from raw: ReconstructUnverified drops a malformed entry, stops at
 // MaxUnverifiedSubagents, cuts receiptClaimed to MaxReceiptClaimLen units and replaces a field of the wrong type by its default,
