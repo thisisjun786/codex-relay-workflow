@@ -219,32 +219,33 @@ func promptDcloseGoalplanUnknownSentence() string {
 // imported because the harness leg imports this package (CRW-930, c6).
 const promptDcloseHarnessBudget = 31936
 
-// promptDcloseKeepAccounting trims an over-long refusal's own detail so the accounting this close
-// appended survives the harness's cut. accounting is the joined publication sentences: everything
-// from it on is kept whole, and the detail before it is cut at a rune boundary and marked. A refusal
-// that already fits, or one whose accounting is not found, is returned unchanged. The bound is on
-// the decorated answer rather than on each detail source, because the refusal's own text - a lock
-// diagnostic that carries an owner file, for example - is not this close's to size (CRW-930, c6).
-func promptDcloseKeepAccounting(text, accounting string) string {
-	if accounting == "" || len(utf16.Encode([]rune(text))) <= promptDcloseHarnessBudget {
-		return text
+// promptDcloseKeepAccounting bounds an over-long refusal so the publication accounting this close
+// appended survives the harness's cut. The caller passes the three parts it built: before is the
+// refusal's own text, accounting is the publication sentences (with the claim that follows them),
+// and after is the rest. The boundary is the caller's, not a search, so a diagnostic that already
+// contains the same sentence cannot move it (CRW-930, c6; the first-match search was found by the
+// pre-merge evaluation of the head 2564da03). accounting and after are kept whole, and before is cut
+// at a rune boundary and marked. A refusal that already fits is returned unchanged.
+func promptDcloseKeepAccounting(before, accounting, after string) string {
+	whole := before + accounting + after
+	if accounting == "" || len(utf16.Encode([]rune(whole))) <= promptDcloseHarnessBudget {
+		return whole
 	}
-	at := strings.Index(text, accounting)
-	if at < 0 {
-		return text
-	}
-	before, after := text[:at], text[at:]
 	const marker = "\u2026 [detail truncated] "
-	room := promptDcloseHarnessBudget - len(utf16.Encode([]rune(after))) - len(utf16.Encode([]rune(marker)))
-	if room <= 0 {
-		return text
+	room := promptDcloseHarnessBudget - len(utf16.Encode([]rune(accounting))) - len(utf16.Encode([]rune(after))) - len(utf16.Encode([]rune(marker)))
+	if room < 0 {
+		room = 0
 	}
-	units := utf16.Encode([]rune(before))[:room]
+	units := utf16.Encode([]rune(before))
+	if len(units) <= room {
+		return whole
+	}
+	units = units[:room]
 	if n := len(units); n > 0 && units[n-1] >= 0xD800 && units[n-1] < 0xDC00 {
 		// The cut would leave a high surrogate with no low one; drop it rather than emit U+FFFD.
 		units = units[:n-1]
 	}
-	return string(utf16.Decode(units)) + marker + after
+	return string(utf16.Decode(units)) + marker + accounting + after
 }
 
 // promptDcloseGoalplanRow is one goalplan ledger row the close owes, in the oracle's order.
@@ -837,7 +838,7 @@ func promptDclosePartialRefusal(refusal string, published promptDclosePublishedA
 		tail = ""
 	}
 	joined := strings.Join(named, " ")
-	return promptDcloseKeepAccounting(refusal[:at]+joined+tail+refusal[at+len(claim):], joined)
+	return promptDcloseKeepAccounting(refusal[:at], joined+tail, refusal[at+len(claim):])
 }
 
 // promptDcloseSameOptionalText compares two optional texts, where an absent one differs from any
@@ -1270,7 +1271,7 @@ func promptDcloseRefusalNaming(refusal string, published promptDclosePublishedAr
 		return refusal
 	}
 	joined := strings.Join(named, " ")
-	return promptDcloseKeepAccounting(refusal[:at]+" "+joined+refusal[at:], joined)
+	return promptDcloseKeepAccounting(refusal[:at]+" ", joined, refusal[at:])
 }
 
 // promptDcloseGoalplanUnreadable is the unreadable-goalplan text (:1275-1281).

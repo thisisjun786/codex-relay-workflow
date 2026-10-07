@@ -43,6 +43,16 @@ func promptDclosePlanUnreadableMode(t *testing.T, cwd, slug string) {
 	t.Cleanup(func() { _ = os.Chmod(path, 0o644) })
 }
 
+// The published-artifact sentences and durability lines the tests expect are written out here, not
+// read from the production helpers: a wording change in a helper is then caught by these tests
+// instead of moving the expectation with it (CRW-930, d2).
+const (
+	promptDcloseTestMarkerSentence    = "the recovery marker was published."
+	promptDcloseTestGoalplanSentence  = "the goalplan was published."
+	promptDcloseTestPlanWarningLine   = "the goalplan was published but its directory could not be synced: input/output error"
+	promptDcloseTestMarkerWarningLine = "the recovery marker was published but its directory could not be synced: input/output error"
+)
+
 // promptDcloseSessionsDir is the directory the close writes its session file into.
 func promptDcloseSessionsDir(cwd string) string {
 	return filepath.Join(cwd, crwdir.DirName, state.SessionsSubdir)
@@ -82,10 +92,10 @@ func TestPromptDcloseGuardRefusalNamesTheCleanlyPublishedMarkerAndPlan(t *testin
 	if !strings.Contains(answer, "cannot be rewritten without losing a stored record") {
 		t.Errorf("the guard did not refuse: %q", answer)
 	}
-	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
+	if !strings.Contains(answer, promptDcloseTestMarkerSentence) {
 		t.Errorf("the guard refusal did not name the cleanly published marker: %q", answer)
 	}
-	if !strings.Contains(answer, promptDcloseGoalplanPublishedSentence()) {
+	if !strings.Contains(answer, promptDcloseTestGoalplanSentence) {
 		t.Errorf("the guard refusal did not name the cleanly published plan: %q", answer)
 	}
 	if strings.Contains(answer, "Nothing was written.") {
@@ -115,7 +125,7 @@ func TestPromptDclosePlanFailureAfterACleanMarkerNamesTheMarker(t *testing.T) {
 	if !strings.Contains(answer, "refused") {
 		t.Errorf("the failed plan write did not refuse: %q", answer)
 	}
-	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
+	if !strings.Contains(answer, promptDcloseTestMarkerSentence) {
 		t.Errorf("the refusal did not name the cleanly published marker: %q", answer)
 	}
 	if strings.Contains(answer, "Nothing was written.") {
@@ -159,10 +169,10 @@ func TestPromptDcloseStateWriteFailureNamesTheCleanMarkerAndPlan(t *testing.T) {
 	if !strings.Contains(answer, "cannot be rewritten without losing a stored record") {
 		t.Errorf("the failed state write did not answer the state refusal: %q", answer)
 	}
-	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
+	if !strings.Contains(answer, promptDcloseTestMarkerSentence) {
 		t.Errorf("the refusal did not name the cleanly published marker: %q", answer)
 	}
-	if !strings.Contains(answer, promptDcloseGoalplanPublishedSentence()) {
+	if !strings.Contains(answer, promptDcloseTestGoalplanSentence) {
 		t.Errorf("the refusal did not name the cleanly published plan: %q", answer)
 	}
 	if strings.Contains(answer, "Nothing was written.") {
@@ -184,7 +194,7 @@ func TestPromptDcloseRecoveryEarlyRefusalNamesTheInheritedMarker(t *testing.T) {
 	if !strings.Contains(answer, "has no active work-phase to close") {
 		t.Fatalf("the recovery did not refuse at the empty-plan check: %q", answer)
 	}
-	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
+	if !strings.Contains(answer, promptDcloseTestMarkerSentence) {
 		t.Errorf("the early refusal did not name the inherited marker: %q", answer)
 	}
 	if !strings.Contains(answer, promptDcloseGoalplanUnknownWant) {
@@ -222,7 +232,7 @@ func TestPromptDcloseRecoveryRefusalWithoutASuccessorDoesNotClaimThePlan(t *test
 	if !strings.Contains(answer, "cannot be rewritten without losing a stored record") {
 		t.Fatalf("the retry did not refuse at the IDLE-write guard: %q", answer)
 	}
-	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
+	if !strings.Contains(answer, promptDcloseTestMarkerSentence) {
 		t.Errorf("the refusal did not name the inherited marker: %q", answer)
 	}
 	if !strings.Contains(answer, promptDcloseGoalplanUnknownWant) {
@@ -252,7 +262,7 @@ func TestPromptDcloseRecoveryRefusalLeavesThePlanUnknown(t *testing.T) {
 	if !strings.Contains(answer, "gained 1 open task(s) after its marker was written") {
 		t.Fatalf("the recovery did not refuse: %q", answer)
 	}
-	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
+	if !strings.Contains(answer, promptDcloseTestMarkerSentence) {
 		t.Errorf("the recovery refusal did not name the inherited marker: %q", answer)
 	}
 	if !strings.Contains(answer, promptDcloseGoalplanUnknownWant) {
@@ -291,7 +301,7 @@ func TestPromptDcloseRecoveryCleanupDoesNotClaimThePlan(t *testing.T) {
 	if !strings.Contains(answer, "cannot be rewritten without losing a stored record") {
 		t.Fatalf("the retry did not refuse at the IDLE-write guard: %q", answer)
 	}
-	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
+	if !strings.Contains(answer, promptDcloseTestMarkerSentence) {
 		t.Errorf("the refusal did not name the inherited marker: %q", answer)
 	}
 	if !strings.Contains(answer, promptDcloseGoalplanUnknownWant) {
@@ -366,7 +376,7 @@ func TestPromptDcloseRecoveryCommittedPlanIsNotClaimedByALaterRefusal(t *testing
 	if !strings.Contains(answer, "cannot be rewritten without losing a stored record") {
 		t.Errorf("the retry did not refuse at the IDLE-write guard: %q", answer)
 	}
-	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
+	if !strings.Contains(answer, promptDcloseTestMarkerSentence) {
 		t.Errorf("the refusal did not name the marker this close published: %q", answer)
 	}
 	if !strings.Contains(answer, promptDcloseGoalplanUnknownWant) {
@@ -398,7 +408,7 @@ func TestPromptDclosePlanFailureWhoseReasonHoldsTheDenialKeepsTheTrailingClaim(t
 	if panicked != nil {
 		t.Fatalf("the close panicked: %v", panicked)
 	}
-	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
+	if !strings.Contains(answer, promptDcloseTestMarkerSentence) {
 		t.Errorf("the refusal did not name the published marker: %q", answer)
 	}
 	if !strings.HasSuffix(answer, "Nothing else was written.]") {
@@ -427,7 +437,7 @@ func TestPromptDcloseRecoveryPlanFailureNamesTheMarkerAlreadyOnTheSession(t *tes
 	if !strings.Contains(answer, "refused") {
 		t.Errorf("the recovery plan failure did not refuse: %q", answer)
 	}
-	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
+	if !strings.Contains(answer, promptDcloseTestMarkerSentence) {
 		t.Errorf("the recovery plan failure did not name the marker already on the session: %q", answer)
 	}
 	if !strings.Contains(answer, promptDcloseGoalplanUnknownWant) {
@@ -489,13 +499,13 @@ func TestPromptDcloseGuardRefusalNamesThePublishedPlan(t *testing.T) {
 	if !strings.Contains(answer, "cannot be rewritten without losing a stored record") {
 		t.Errorf("the guard did not refuse: %q", answer)
 	}
-	warning := promptDcloseGoalplanPublishedWarning(&state.PublishedError{Err: syscall.EIO})
+	warning := promptDcloseTestPlanWarningLine
 	if !strings.Contains(answer, warning) {
 		t.Errorf("the guard refusal did not name the published plan and its warning\n got %q\nwant it to contain %q", answer, warning)
 	}
 	// The marker published cleanly in this case, so it carries no warning and is named by the fixed
 	// sentence: a branch that reported only warned artifacts would drop it (CRW-930, d2).
-	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
+	if !strings.Contains(answer, promptDcloseTestMarkerSentence) {
 		t.Errorf("the guard refusal did not name the cleanly published marker: %q", answer)
 	}
 	if strings.Contains(answer, "Nothing was written.") {
@@ -575,7 +585,7 @@ func TestPromptDcloseRecoveryCorruptMarkerDoesNotClaimThePlan(t *testing.T) {
 	if !strings.Contains(answer, "names that same work-phase as its successor") {
 		t.Fatalf("the recovery did not refuse the corrupt marker: %q", answer)
 	}
-	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
+	if !strings.Contains(answer, promptDcloseTestMarkerSentence) {
 		t.Errorf("the refusal did not name the inherited marker: %q", answer)
 	}
 	if !strings.Contains(answer, promptDcloseGoalplanUnknownWant) {
@@ -605,7 +615,7 @@ func TestPromptDcloseRecoveryIntegrityRefusalDoesNotClaimThePlan(t *testing.T) {
 	if !strings.Contains(answer, "invalid goalplan:") {
 		t.Fatalf("the recovery did not refuse at the integrity check: %q", answer)
 	}
-	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
+	if !strings.Contains(answer, promptDcloseTestMarkerSentence) {
 		t.Errorf("the integrity refusal did not name the inherited marker: %q", answer)
 	}
 	if !strings.Contains(answer, promptDcloseGoalplanUnknownWant) {
@@ -637,7 +647,7 @@ func TestPromptDcloseRecoveryIntegrityRefusalWithoutACommitKeepsTheBareClaim(t *
 	if !strings.Contains(answer, "invalid goalplan:") {
 		t.Fatalf("the close did not refuse at the integrity check: %q", answer)
 	}
-	if strings.Contains(answer, promptDcloseMarkerPublishedSentence()) || strings.Contains(answer, promptDcloseGoalplanPublishedSentence()) {
+	if strings.Contains(answer, promptDcloseTestMarkerSentence) || strings.Contains(answer, promptDcloseTestGoalplanSentence) {
 		t.Errorf("a fresh close claimed a publication it never made: %q", answer)
 	}
 	if !strings.Contains(answer, "Nothing was written.") {
@@ -667,7 +677,7 @@ func TestPromptDcloseRecoveryBusyLockNamesTheMarkerAndLeavesThePlanUnknown(t *te
 	if !strings.Contains(answer, "is busy") {
 		t.Fatalf("the retry did not answer the busy lock: %q", answer)
 	}
-	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
+	if !strings.Contains(answer, promptDcloseTestMarkerSentence) {
 		t.Errorf("the busy refusal did not name the inherited marker: %q", answer)
 	}
 	if !strings.Contains(answer, promptDcloseGoalplanUnknownWant) {
@@ -697,7 +707,7 @@ func TestPromptDcloseFreshCloseBusyLockKeepsTheBareText(t *testing.T) {
 	if !strings.Contains(answer, "is busy") {
 		t.Fatalf("the close did not answer the busy lock: %q", answer)
 	}
-	if strings.Contains(answer, promptDcloseMarkerPublishedSentence()) || strings.Contains(answer, promptDcloseGoalplanPublishedSentence()) {
+	if strings.Contains(answer, promptDcloseTestMarkerSentence) || strings.Contains(answer, promptDcloseTestGoalplanSentence) {
 		t.Errorf("a fresh close claimed a publication it never made: %q", answer)
 	}
 }
@@ -739,7 +749,7 @@ func TestPromptDcloseRecoveryStartedSuccessorDoesNotClaimThePlan(t *testing.T) {
 	if !strings.Contains(answer, "gained 1 open task(s) after its marker was written") {
 		t.Fatalf("the recovery did not refuse: %q", answer)
 	}
-	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
+	if !strings.Contains(answer, promptDcloseTestMarkerSentence) {
 		t.Errorf("the refusal did not name the inherited marker: %q", answer)
 	}
 	if !strings.Contains(answer, promptDcloseGoalplanUnknownWant) {
@@ -764,7 +774,7 @@ func TestPromptDcloseRecoveryUnreadablePlanDoesNotClaimThePlan(t *testing.T) {
 	if !strings.Contains(answer, "could not be read") {
 		t.Fatalf("the retry did not answer the unreadable goalplan: %q", answer)
 	}
-	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
+	if !strings.Contains(answer, promptDcloseTestMarkerSentence) {
 		t.Errorf("the refusal did not name the inherited marker: %q", answer)
 	}
 	if !strings.Contains(answer, promptDcloseGoalplanUnknownWant) {
@@ -788,7 +798,7 @@ func TestPromptDcloseFreshUnreadablePlanKeepsTheBareClaim(t *testing.T) {
 	if !strings.Contains(answer, "could not be read") {
 		t.Fatalf("the close did not answer the unreadable goalplan: %q", answer)
 	}
-	if strings.Contains(answer, promptDcloseMarkerPublishedSentence()) || strings.Contains(answer, promptDcloseGoalplanPublishedSentence()) {
+	if strings.Contains(answer, promptDcloseTestMarkerSentence) || strings.Contains(answer, promptDcloseTestGoalplanSentence) {
 		t.Errorf("a fresh close claimed a publication it never made: %q", answer)
 	}
 	if !strings.Contains(answer, "Nothing was written.") {
@@ -813,7 +823,7 @@ func TestPromptDcloseRecoveryBusySessionLockNamesTheMarkerAndLeavesThePlanUnknow
 	if !strings.Contains(answer, "lock unavailable") {
 		t.Fatalf("the retry did not answer the busy session lock: %q", answer)
 	}
-	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
+	if !strings.Contains(answer, promptDcloseTestMarkerSentence) {
 		t.Errorf("the busy refusal did not name the inherited marker: %q", answer)
 	}
 	if !strings.Contains(answer, promptDcloseGoalplanUnknownWant) {
@@ -877,7 +887,7 @@ func TestPromptDcloseLegacyMarkerDoesNotClaimACommittedPlan(t *testing.T) {
 	if !strings.Contains(answer, "predates the successor field") {
 		t.Fatalf("the retry did not answer the legacy marker: %q", answer)
 	}
-	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
+	if !strings.Contains(answer, promptDcloseTestMarkerSentence) {
 		t.Errorf("the legacy refusal did not name the inherited marker: %q", answer)
 	}
 	if !strings.Contains(answer, promptDcloseGoalplanUnknownWant) {
@@ -918,7 +928,7 @@ func TestPromptDcloseRecoveryUnreadableRereadNamesTheMarkerAndLeavesThePlanUnkno
 	if !strings.Contains(answer, "cannot be rewritten without losing a stored record") {
 		t.Fatalf("the retry did not refuse at the strict reread: %q", answer)
 	}
-	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
+	if !strings.Contains(answer, promptDcloseTestMarkerSentence) {
 		t.Errorf("the strict-reread refusal did not name the inherited marker: %q", answer)
 	}
 	if !strings.Contains(answer, promptDcloseGoalplanUnknownWant) {
@@ -946,7 +956,7 @@ func TestPromptDcloseRecoverySourceRootRefusalNamesTheMarkerAndLeavesThePlanUnkn
 	if !strings.Contains(answer, "SOURCE-ROOT") {
 		t.Fatalf("the retry did not refuse at the entry gate: %q", answer)
 	}
-	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
+	if !strings.Contains(answer, promptDcloseTestMarkerSentence) {
 		t.Errorf("the entry refusal did not name the inherited marker: %q", answer)
 	}
 	if !strings.Contains(answer, promptDcloseGoalplanUnknownWant) {
@@ -971,7 +981,7 @@ func TestPromptDcloseFreshSourceRootRefusalKeepsTheBareText(t *testing.T) {
 	if !strings.Contains(answer, "SOURCE-ROOT") {
 		t.Fatalf("the close did not refuse at the entry gate: %q", answer)
 	}
-	if strings.Contains(answer, promptDcloseMarkerPublishedSentence()) || strings.Contains(answer, promptDcloseGoalplanPublishedSentence()) {
+	if strings.Contains(answer, promptDcloseTestMarkerSentence) || strings.Contains(answer, promptDcloseTestGoalplanSentence) {
 		t.Errorf("a fresh close claimed a publication it never made: %q", answer)
 	}
 }
@@ -995,7 +1005,7 @@ func TestPromptDcloseRecoveryUnreadablePlanLeavesThePlanUnknown(t *testing.T) {
 	if !strings.Contains(answer, "could not be read") {
 		t.Fatalf("the retry did not answer the unreadable goalplan: %q", answer)
 	}
-	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
+	if !strings.Contains(answer, promptDcloseTestMarkerSentence) {
 		t.Errorf("the refusal did not name the inherited marker: %q", answer)
 	}
 	if !strings.Contains(answer, promptDcloseGoalplanUnknownWant) {
@@ -1024,7 +1034,7 @@ func TestPromptDcloseRecoveryChangedSuccessorLeavesThePlanUnknown(t *testing.T) 
 	if !strings.Contains(answer, "CYCLE-COMPLETION-01") {
 		t.Fatalf("the retry did not refuse the changed successor: %q", answer)
 	}
-	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
+	if !strings.Contains(answer, promptDcloseTestMarkerSentence) {
 		t.Errorf("the refusal did not name the inherited marker: %q", answer)
 	}
 	if !strings.Contains(answer, promptDcloseGoalplanUnknownWant) {
@@ -1059,10 +1069,10 @@ func TestPromptDcloseRecoveryAbsentTargetHandStartDoesNotClaimThePlan(t *testing
 	if !strings.Contains(answer, "cannot be rewritten without losing a stored record") {
 		t.Fatalf("the retry did not refuse at the IDLE-write guard: %q", answer)
 	}
-	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
+	if !strings.Contains(answer, promptDcloseTestMarkerSentence) {
 		t.Errorf("the refusal did not name the inherited marker: %q", answer)
 	}
-	if strings.Contains(answer, promptDcloseGoalplanPublishedSentence()) {
+	if strings.Contains(answer, promptDcloseTestGoalplanSentence) {
 		t.Errorf("the refusal claimed a goalplan this close never proved it wrote: %q", answer)
 	}
 	if !strings.Contains(answer, promptDcloseGoalplanUnknownWant) {
@@ -1089,7 +1099,7 @@ func TestPromptDcloseBusyStopBudgetStampNamesTheInheritedMarker(t *testing.T) {
 	if !strings.Contains(answer, "lock unavailable") {
 		t.Fatalf("the retry did not answer the busy stamp: %q", answer)
 	}
-	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
+	if !strings.Contains(answer, promptDcloseTestMarkerSentence) {
 		t.Errorf("the busy stamp did not name the inherited marker: %q", answer)
 	}
 	if !strings.Contains(answer, promptDcloseGoalplanUnknownWant) {
@@ -1140,7 +1150,7 @@ func TestPromptDcloseRecoveryMovedSessionNamesTheInheritedMarker(t *testing.T) {
 	if !strings.Contains(answer, "changed while this close was being applied") {
 		t.Fatalf("the retry did not refuse at the state-moved check: %q", answer)
 	}
-	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
+	if !strings.Contains(answer, promptDcloseTestMarkerSentence) {
 		t.Errorf("the state-moved refusal did not name the inherited marker: %q", answer)
 	}
 	if !strings.Contains(answer, promptDcloseGoalplanUnknownWant) {
@@ -1182,7 +1192,7 @@ func TestPromptDcloseHugePendingListKeepsThePublicationAccounting(t *testing.T) 
 	if units := len(utf16.Encode([]rune(answer))); units > 31936 {
 		t.Errorf("the refusal is %d UTF-16 units, so the harness would cut its accounting", units)
 	}
-	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
+	if !strings.Contains(answer, promptDcloseTestMarkerSentence) {
 		t.Errorf("the refusal did not name the inherited marker: %q", answer[:min(len(answer), 200)])
 	}
 	if !strings.Contains(answer, promptDcloseGoalplanUnknownWant) {
@@ -1251,7 +1261,7 @@ func TestPromptDcloseHugeIntegrityReasonsKeepThePublicationAccounting(t *testing
 	if units := len(utf16.Encode([]rune(answer))); units > 31936 {
 		t.Errorf("the refusal is %d UTF-16 units, so the harness would cut its accounting", units)
 	}
-	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
+	if !strings.Contains(answer, promptDcloseTestMarkerSentence) {
 		t.Errorf("the refusal did not name the inherited marker: %q", answer[:min(len(answer), 300)])
 	}
 	if !strings.Contains(answer, promptDcloseGoalplanUnknownWant) {
@@ -1286,7 +1296,7 @@ func TestPromptDcloseWarnedMarkerIsNamedAsTheMarker(t *testing.T) {
 	if panicked != nil {
 		t.Fatalf("the close panicked: %v", panicked)
 	}
-	want := promptDcloseMarkerPublishedWarning(&state.PublishedError{Err: syscall.EIO})
+	want := promptDcloseTestMarkerWarningLine
 	if !strings.Contains(answer, want) {
 		t.Errorf("the refusal did not name the warned marker\n got %q\nwant it to contain %q", answer, want)
 	}
@@ -1325,7 +1335,7 @@ func TestPromptDcloseHugeDependencyListKeepsThePublicationAccounting(t *testing.
 	if units := len(utf16.Encode([]rune(answer))); units > 31936 {
 		t.Errorf("the refusal is %d UTF-16 units, so the harness would cut its accounting", units)
 	}
-	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
+	if !strings.Contains(answer, promptDcloseTestMarkerSentence) {
 		t.Errorf("the refusal did not name the inherited marker: %q", answer[:min(len(answer), 300)])
 	}
 	if !strings.Contains(answer, promptDcloseGoalplanUnknownWant) {
@@ -1363,7 +1373,7 @@ func TestPromptDcloseHugeLockDiagnosticKeepsThePublicationAccounting(t *testing.
 	if units := len(utf16.Encode([]rune(answer))); units > 31936 {
 		t.Errorf("the refusal is %d UTF-16 units, so the harness would cut its accounting", units)
 	}
-	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
+	if !strings.Contains(answer, promptDcloseTestMarkerSentence) {
 		t.Errorf("the refusal did not name the inherited marker: %q", answer[:min(len(answer), 300)])
 	}
 	if !strings.Contains(answer, promptDcloseGoalplanUnknownWant) {
@@ -1371,5 +1381,37 @@ func TestPromptDcloseHugeLockDiagnosticKeepsThePublicationAccounting(t *testing.
 	}
 	if !strings.Contains(answer, "[detail truncated]") {
 		t.Errorf("the trimmed refusal did not mark what it cut: %q", answer[:min(len(answer), 400)])
+	}
+}
+
+// TestPromptDcloseLockDiagnosticContainingTheAccountingKeepsIt is the d1 case from the pre-merge
+// evaluation of the head 2564da03: a busy-lock diagnostic that already contains the publication
+// sentence, followed by a very long owner note. The trim must anchor on the accounting this close
+// appended, not on the first copy of the sentence inside the diagnostic, so the real accounting
+// survives the harness's cut at the end of the answer.
+func TestPromptDcloseLockDiagnosticContainingTheAccountingKeepsIt(t *testing.T) {
+	cwd := promptDcloseRepo(t)
+	slug := "chat-recovery-embedded-accounting"
+	attest := promptDcloseRecoverable(t, cwd, "s1", slug, promptDcloseStr("wp-2"))
+	promptDcloseRecoveryCommittedShape(t, cwd, slug, nil)
+	planDir, err := goalplan.GoalplanDir(cwd, slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(planDir, goalplan.GoalplanLockDir), 0o777); err != nil {
+		t.Fatal(err)
+	}
+	owner := "{\"pid\":1,\"note\":\"the recovery marker was published. the goalplan may already hold this close's commit from the first attempt; read it before retrying. " + strings.Repeat("o", 60000) + "\"}"
+	promptDcloseWrite(t, cwd, filepath.Join(crwdir.DirName, goalplan.GoalplansSubdir, slug, goalplan.GoalplanLockDir, goalplan.GoalplanLockOwnerFile), owner)
+	answer := promptDcloseRun(t, cwd, "s1", "t1", attest)
+	if !strings.Contains(answer, "is busy") {
+		t.Fatalf("the retry did not answer the busy lock: %q", answer[:min(len(answer), 200)])
+	}
+	if units := len(utf16.Encode([]rune(answer))); units > 31936 {
+		t.Errorf("the refusal is %d UTF-16 units, so the harness would cut its accounting", units)
+	}
+	want := "the recovery marker was published. the goalplan may already hold this close's commit from the first attempt; read it before retrying.]"
+	if !strings.HasSuffix(answer, want) {
+		t.Errorf("the real accounting is not at the end of the refusal\n got tail %q\nwant suffix %q", answer[max(0, len(answer)-200):], want)
 	}
 }
