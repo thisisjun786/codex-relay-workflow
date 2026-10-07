@@ -929,7 +929,24 @@ func TestAuditDraftsReview744GradeFailureStopsTheRun(t *testing.T) {
 	if !strings.Contains(errOut.String(), "grader_unconfigured") {
 		t.Errorf("the run did not report the shared failure: %s", errOut.String())
 	}
-	// The second pull request was never built or graded: the run stopped on the first failure.
+	// Only one bundle was built: the run stopped on the first failure instead of rebuilding the
+	// second target. The bundle directories are that record, so they are asserted directly rather
+	// than through the ledger, which is empty for both an immediate stop and a loop that continues.
+	section, err := auditPRSectionOf(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundles, err := os.ReadDir(auditPRBundleRoot(e, cfg, section))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bundles) != 1 {
+		names := make([]string, 0, len(bundles))
+		for _, entry := range bundles {
+			names = append(names, entry.Name())
+		}
+		t.Errorf("the run built %d bundles (%v), want only the one it stopped on", len(bundles), names)
+	}
 	if _, err := os.Stat(filepath.Join(state, "audit", auditLedgerFile)); !os.IsNotExist(err) {
 		t.Errorf("a ledger was written for a run that stopped before recording: %v", err)
 	}
