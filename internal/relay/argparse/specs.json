@@ -249,6 +249,7 @@
   {"flag":"--kind","required":true,"help":"design_choice|dependency|merge_approval|cleanup_approval|blocked_escalation|policy"},
   {"flag":"--context","required":true,"help":"one paragraph: what the question is and why it is asked"},
   {"flag":"--option","kind":"append","required":true,"help":"id=label:effect, 2 or 3 times"},
+  {"flag":"--option-reply","kind":"append","help":"id=action, repeatable: the decision_reply an option makes when it is chosen (answer|stop|split_approval|scope_change). A decision that blocks a relationship names one for every option"},
   {"flag":"--recommend","help":"id:one line, the raiser's own suggestion"},
   {"flag":"--blocking","kind":"append","help":"kind=ref, repeatable: relationship|issue|plan_node|project"},
   {"flag":"--needed-by","help":"RFC3339 deadline, or omitted"},
@@ -265,8 +266,8 @@
   {"flag":"--option","help":"the option id the answer chooses"},
   {"flag":"--text","help":"the answer as text, for a free-form answer"},
   {"flag":"--by","required":true,"help":"the task id that answered"},
-  {"flag":"--via","required":true,"help":"file-import|management-message|supervisor-readback|dots|direct-ask"},
-  {"flag":"--authority","help":"kind[=ref]: the class the answer cites, which may not outrank the record's"}]},
+	  {"flag":"--via","required":true,"help":"file-import|management-message|supervisor-readback|dots|direct-ask. A user-grade or delegated-management-grade answer is one of file-import, management-message, dots or direct-ask: supervisor-readback reads the parent's report, not the user's answer"},
+	  {"flag":"--authority","help":"kind[=ref]: the class the answer cites, which must be the record's own. A user-grade or delegated-management-grade decision requires it; its --by must be the task the relay's store-scope supervisor binding holds"}]},
 {"name":"decision-apply","summary":"mark an answered user-decision record applied, once the decision_reply event of a relationship the decision blocks has been observed. Delivery alone never applies a decision","options":[
   {"flag":"--decision","required":true},
   {"flag":"--event","required":true,"help":"the decision_reply event the relay recorded for the blocked relationship"}]},

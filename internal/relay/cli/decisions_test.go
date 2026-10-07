@@ -214,6 +214,9 @@ func TestCRW737C5AFoldedRecordIsVisibleFromBothProjects(t *testing.T) {
 // the decision was withdrawn are refused.
 func TestCRW737C6AnswerRefusals(t *testing.T) {
 	state := crw737Store(t)
+	// CRW-903: a user-grade answer names its own class and comes from the store-scope supervisor
+	// seat, so the fixtures below bind that seat.
+	review818SeedSupervisor(t, state, "task-sup")
 	raised := crw737JSON(t, crw737Raise(t, state, "PRJ-A", "Which window does the host update take?"))
 	decision, _ := raised["decisionId"].(string)
 
@@ -238,23 +241,24 @@ func TestCRW737C6AnswerRefusals(t *testing.T) {
 		"--option", "now", "--by", "task-a", "--via", "direct-ask", "--authority", "parent"), "bad_invocation")
 
 	if got := crw737Run(t, "--state", state, "decision-answer", "--decision", decision, "--option", "now",
-		"--by", "task-a", "--via", "direct-ask"); got.code != 0 {
+		"--by", "task-sup", "--via", "direct-ask", "--authority", "user"); got.code != 0 {
 		t.Fatalf("a well-formed answer: exit %d %s %s", got.code, got.stdout, got.stderr)
 	}
 	if got := crw737Run(t, "--state", state, "decision-withdraw", "--decision", decision, "--reason", "the plan moved on"); got.code != 0 {
 		t.Fatalf("decision-withdraw: exit %d %s %s", got.code, got.stdout, got.stderr)
 	}
 	crw737Refused(t, crw737Run(t, "--state", state, "decision-answer", "--decision", decision, "--option", "later",
-		"--by", "task-a", "--via", "direct-ask"), "disposition_conflict")
+		"--by", "task-sup", "--via", "direct-ask", "--authority", "user"), "disposition_conflict")
 }
 
 // C8: the answer's provenance is stored on the record.
 func TestCRW737C8TheAnswerProvenanceIsStored(t *testing.T) {
 	state := crw737Store(t)
+	review818SeedSupervisor(t, state, "task-sup")
 	raised := crw737JSON(t, crw737Raise(t, state, "PRJ-A", "Which window does the host update take?"))
 	decision, _ := raised["decisionId"].(string)
 	if got := crw737Run(t, "--state", state, "decision-answer", "--decision", decision, "--text", "between runs",
-		"--by", "task-a", "--via", "management-message"); got.code != 0 {
+		"--by", "task-sup", "--via", "management-message", "--authority", "user"); got.code != 0 {
 		t.Fatalf("decision-answer: exit %d %s %s", got.code, got.stdout, got.stderr)
 	}
 	records := crw737List(t, state)
@@ -262,7 +266,7 @@ func TestCRW737C8TheAnswerProvenanceIsStored(t *testing.T) {
 		t.Fatalf("decision-list returned %d records", len(records))
 	}
 	record := records[0].(map[string]any)
-	if record["state"] != "answered" || record["answered_by"] != "task-a" ||
+	if record["state"] != "answered" || record["answered_by"] != "task-sup" ||
 		record["answered_via"] != "management-message" || record["answer_text"] != "between runs" {
 		t.Fatalf("the answer's provenance is not on the record: %v", record)
 	}
@@ -276,13 +280,15 @@ func TestCRW737C8TheAnswerProvenanceIsStored(t *testing.T) {
 func TestCRW737C7ApplyNeedsTheDecisionReplyEvent(t *testing.T) {
 	state := crw737Store(t)
 	crw737SeedRelationship(t, state)
+	review818SeedSupervisor(t, state, "task-sup")
 	raised := crw737JSON(t, crw737Run(t, "--state", state, "decision-raise", "--kind", "merge_approval",
 		"--context", "Hold the merge until the retention decision?", "--option", "hold=h:hold the merge",
-		"--option", "merge=m:merge now", "--blocking", "relationship=rel-737",
+		"--option", "merge=m:merge now", "--option-reply", "hold=stop", "--option-reply", "merge=answer",
+		"--blocking", "relationship=rel-737",
 		"--origin-project", "PRJ-A", "--source", "receipt=ev-blocked", "--authority", "user"))
 	decision, _ := raised["decisionId"].(string)
 	if got := crw737Run(t, "--state", state, "decision-answer", "--decision", decision, "--option", "hold",
-		"--by", "task-a", "--via", "direct-ask"); got.code != 0 {
+		"--by", "task-sup", "--via", "direct-ask", "--authority", "user"); got.code != 0 {
 		t.Fatalf("decision-answer: exit %d %s %s", got.code, got.stdout, got.stderr)
 	}
 	// The answer alone does not apply it.
@@ -346,7 +352,9 @@ func crw737SeedRelationship(t *testing.T, state string) {
 	}
 	defer opened.Close()
 	receipt := "{\"eventId\":\"ev-reply\",\"relationshipId\":\"rel-737\",\"executionGeneration\":1,\"kind\":\"decision_reply\"," +
-		"\"decision\":\"answer\",\"answersEvent\":\"ev-blocked\",\"note\":\"hold it\",\"generationEffect\":\"stays\"," +
+		// CRW-903: the reply the relay recorded is the reply the chosen option makes, and this
+		// fixture's answer chose the hold option, whose reply is stop.
+		"\"decision\":\"stop\",\"answersEvent\":\"ev-blocked\",\"note\":\"hold it\",\"generationEffect\":\"stays\"," +
 		"\"anchorTurnId\":\"turn-1\",\"childTaskId\":\"child\",\"decidedAt\":\"2026-10-06T00:00:00Z\"}"
 	for _, statement := range []struct {
 		query string
@@ -432,14 +440,16 @@ func TestCRW737UnknownDecisionAndUnansweredApplyAreRefused(t *testing.T) {
 func TestCRW737ApplyRefusesAReplyOfAnotherRelationship(t *testing.T) {
 	state := crw737Store(t)
 	crw737SeedRelationship(t, state)
+	review818SeedSupervisor(t, state, "task-sup")
 	// A decision that blocks a relationship nothing answers.
 	raised := crw737JSON(t, crw737Run(t, "--state", state, "decision-raise", "--kind", "merge_approval",
 		"--context", "Hold the merge of another relationship?", "--option", "hold=h:hold it",
-		"--option", "merge=m:merge now", "--blocking", "relationship=rel-other",
+		"--option", "merge=m:merge now", "--option-reply", "hold=stop", "--option-reply", "merge=answer",
+		"--blocking", "relationship=rel-other",
 		"--origin-project", "PRJ-A", "--source", "receipt=ev-blocked", "--authority", "user"))
 	decision, _ := raised["decisionId"].(string)
 	if got := crw737Run(t, "--state", state, "decision-answer", "--decision", decision, "--option", "hold",
-		"--by", "task-a", "--via", "direct-ask"); got.code != 0 {
+		"--by", "task-sup", "--via", "direct-ask", "--authority", "user"); got.code != 0 {
 		t.Fatalf("decision-answer: exit %d %s %s", got.code, got.stdout, got.stderr)
 	}
 	// The seeded reply is the relay's own, answers the right receipt, but belongs to rel-737.

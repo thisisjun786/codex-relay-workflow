@@ -58,6 +58,22 @@ const (
 	BlockingProject      = "project"
 )
 
+// The replies a decision's option makes when it is chosen: the decision_reply the relay records
+// for a relationship the option unblocks. A decision that blocks a relationship carries one per
+// option, because applying it is a comparison of the chosen option's reply with the reply the
+// relay recorded; a decision that blocks nothing makes no reply and carries none.
+const (
+	ReplyAnswer        = "answer"
+	ReplyStop          = "stop"
+	ReplySplitApproval = "split_approval"
+	ReplyScopeChange   = "scope_change"
+)
+
+// Replies is the option-reply vocabulary, in declaration order.
+func Replies() []string {
+	return []string{ReplyAnswer, ReplyStop, ReplySplitApproval, ReplyScopeChange}
+}
+
 // MinOptions and MaxOptions bound an option set: one option is no choice, four are no decision.
 const (
 	MinOptions = 2
@@ -78,6 +94,8 @@ var (
 	ErrBadNeededBy         = errors.New("decisions: needed_by is not an RFC3339 timestamp")
 	ErrBadRaisedAt         = errors.New("decisions: raised_at is not an RFC3339 timestamp")
 	ErrRecommendation      = errors.New("decisions: the recommendation names no option")
+	ErrUnknownReply        = errors.New("decisions: unknown option reply")
+	ErrOptionReplyRequired = errors.New("decisions: every option of a relationship-blocking decision names its reply")
 	ErrAmbiguousField      = errors.New("decisions: a field holds one of the fingerprint's delimiters")
 	ErrControlCharacter    = errors.New("decisions: a field holds a control character")
 	ErrTransition          = errors.New("decisions: that transition is not allowed")
@@ -90,6 +108,11 @@ type Option struct {
 	ID     string `json:"id"`
 	Label  string `json:"label"`
 	Effect string `json:"effect"`
+	// Reply is the decision_reply this option makes when it is chosen (answer, stop,
+	// split_approval or scope_change). It is empty for a decision that blocks no relationship, and
+	// it is not part of the fingerprint: two statements of one question that differ only in the
+	// reply are the same question.
+	Reply string `json:"reply,omitempty"`
 }
 
 // Recommendation is the raiser's own suggestion: advice, not a decision.
@@ -187,6 +210,21 @@ func IsKind(kind Kind) bool            { return contains(Kinds(), kind) }
 func IsState(state State) bool         { return contains(States(), state) }
 func IsAuthorityKind(kind string) bool { return contains(authorityKinds, kind) }
 func IsBlockingKind(kind string) bool  { return contains(blockingKinds, kind) }
+
+// IsReply reports whether reply is one of the option-reply vocabulary.
+func IsReply(reply string) bool { return contains(Replies(), reply) }
+
+// decisionBlocksRelationship reports whether the record names a relationship among its blocking
+// subjects. That is the subject whose decision_reply event applies the record, so it is the one
+// whose options must carry the reply they make.
+func decisionBlocksRelationship(record Record) bool {
+	for _, entry := range record.Blocking {
+		if entry.Kind == BlockingRelationship {
+			return true
+		}
+	}
+	return false
+}
 
 // AllowedTransitions is the state machine: applied, withdrawn and expired are terminal.
 func AllowedTransitions() map[State][]State {
@@ -310,6 +348,19 @@ func Validate(record Record) error {
 			return fmt.Errorf("%w: %q", ErrDuplicateOptionID, id)
 		}
 		ids[id] = true
+		if reply := strings.TrimSpace(option.Reply); reply != "" && !contains(Replies(), reply) {
+			return fmt.Errorf("%w: %q", ErrUnknownReply, option.Reply)
+		}
+	}
+	// A decision that blocks a relationship is applied by comparing the reply of the option the
+	// answer chose with the decision_reply the relay recorded, so an option without a reply can
+	// never be applied. The raise is refused rather than stored unapplicable.
+	if decisionBlocksRelationship(record) {
+		for _, option := range record.Options {
+			if strings.TrimSpace(option.Reply) == "" {
+				return fmt.Errorf("%w: option %q", ErrOptionReplyRequired, option.ID)
+			}
+		}
 	}
 	for _, entry := range record.Blocking {
 		if !IsBlockingKind(entry.Kind) {
@@ -393,6 +444,7 @@ func checkControlCharacters(record Record) error {
 			{"option.id", option.ID},
 			{"option.label", option.Label},
 			{"option.effect", option.Effect},
+			{"option.reply", option.Reply},
 		} {
 			if err := refuse(field.name, field.value, false); err != nil {
 				return err

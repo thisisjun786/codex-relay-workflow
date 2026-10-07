@@ -13,6 +13,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/decisions"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -94,6 +95,12 @@ func runDecisionRaise(ctx context.Context, services dispatch.Services, args disp
 		return nil, decisionBadInvocation(fmt.Sprintf("--kind %q is not a decision kind; it is one of %s", string(kind), decisionKindList()))
 	}
 	options, err := decisionOptions(args)
+	if err != nil {
+		return nil, err
+	}
+	// --option-reply names the decision_reply each option makes when it is chosen, so the apply
+	// can match the reply the relay recorded against the option the answer chose.
+	options, err = decisionOptionReplies(args, options)
 	if err != nil {
 		return nil, err
 	}
@@ -186,9 +193,16 @@ func runDecisionList(ctx context.Context, services dispatch.Services, args dispa
 // runDecisionAnswer is decision-answer: it records the answer and its provenance on the record.
 func runDecisionAnswer(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
 	decisionID := strings.TrimSpace(args.Text("decision"))
+	option, text := strings.TrimSpace(args.Text("option")), args.Text("text")
+	// An option chooses one of the offered replies and free text states the answer in prose: one
+	// stored answer cannot carry both, and keeping the text while dropping the choice would lose
+	// the reply the apply matches. The answer names one of them.
+	if option != "" && strings.TrimSpace(text) != "" {
+		return nil, decisionBadInvocation("--option and --text answer a decision one way or the other: --option chooses one of the offered replies and --text states the answer in prose; give one of them")
+	}
 	answer := decisions.Answer{
-		Option: strings.TrimSpace(args.Text("option")),
-		Text:   args.Text("text"),
+		Option: option,
+		Text:   text,
 		By:     strings.TrimSpace(args.Text("by")),
 		Via:    strings.TrimSpace(args.Text("via")),
 	}
@@ -201,6 +215,9 @@ func runDecisionAnswer(ctx context.Context, services dispatch.Services, args dis
 	}
 	defer opened.Close()
 	stored, err := opened.Update(ctx, decisionID, func(txCtx context.Context, record decisions.Record) (decisions.Record, error) {
+		if err := decisionAnswerProvenance(txCtx, opened, record, answer); err != nil {
+			return decisions.Record{}, err
+		}
 		answered, err := decisions.ValidateAnswer(record, answer)
 		if err != nil {
 			return decisions.Record{}, decisionRefusal(err)
@@ -216,6 +233,62 @@ func runDecisionAnswer(ctx context.Context, services dispatch.Services, args dis
 		{Key: "answeredBy", Value: stored.AnsweredBy},
 		{Key: "answeredVia", Value: stored.AnsweredVia},
 	}, nil
+}
+
+// decisionAnswerProvenance judges who may answer a user-grade or delegated-management-grade
+// decision. The class the answer cites is the class the record requires, so the answer states it
+// rather than inheriting it; the recorder must be the task the relay's store-scope supervisor seat
+// holds, because those grades are the ones the decision document reserves for the user (deletion,
+// a new mandatory requirement, Done judgement, a host restart, hook trust, a global instruction and
+// the acceptance of a security or data-loss finding); and the via is a way the user's answer
+// reached the record rather than the parent's report read back. A grade below them states no such
+// requirement here. Every refusal is made inside the record's transaction, so the record the
+// judgment read is the row the write replaces.
+func decisionAnswerProvenance(ctx context.Context, opened *store.Store, record decisions.Record, answer decisions.Answer) error {
+	grade := strings.TrimSpace(record.Authority.Kind)
+	if grade != decisions.AuthorityUser && grade != decisions.AuthorityDelegatedManagement {
+		return nil
+	}
+	if strings.TrimSpace(answer.Authority.Kind) != grade {
+		return decisionBadInvocation(fmt.Sprintf("a %s-class decision takes an answer that names its own class: give --authority %s", grade, grade))
+	}
+	if !containsString(decisionUserAnswerVias(), answer.Via) {
+		return decisionBadInvocation(fmt.Sprintf("a %s-class decision is answered through %s; --via %q reads the parent's report, not the user's answer", grade, strings.Join(decisionUserAnswerVias(), ", "), answer.Via))
+	}
+	bound, err := (&registry.Registry{Store: opened}).StoreScopeSupervisor(ctx)
+	if err != nil {
+		// A store that cannot be read is a host failure, not a verdict on the recorder: the answer
+		// is not recorded either way, so nothing is accepted.
+		return err
+	}
+	// Fail closed on every shape but one: no store-scope supervisor seat bound, a contested seat
+	// (more than one row, which the schema's per-role unique index should not allow), or a seat
+	// held by another task all refuse. The answer comes from the seat this grade is answered from
+	// or it is not accepted.
+	if len(bound) != 1 {
+		return decisionConflict("authority_unverified", fmt.Sprintf("a %s-class decision is answered by the task the relay's store-scope supervisor binding holds, and %d such binding(s) are live", grade, len(bound)))
+	}
+	if taskID, _ := get(bound[0], "taskId").(string); strings.TrimSpace(taskID) == answer.By {
+		return nil
+	}
+	return decisionConflict("authority_unverified", fmt.Sprintf("a %s-class decision is answered by the task the relay's store-scope supervisor binding holds, and %q is not it", grade, answer.By))
+}
+
+// decisionUserAnswerVias is the via vocabulary a user-grade or delegated-management-grade answer
+// arrives through. supervisor-readback is not one of them: it is the parent's report read back,
+// which is what a supervisor observed rather than what the user answered.
+func decisionUserAnswerVias() []string {
+	return []string{decisions.ViaDots, decisions.ViaDirectAsk, decisions.ViaFileImport, decisions.ViaManagementMessage}
+}
+
+// containsString reports whether list holds value.
+func containsString(list []string, value string) bool {
+	for _, item := range list {
+		if item == value {
+			return true
+		}
+	}
+	return false
 }
 
 // runDecisionApply is decision-apply: it moves an answered record to applied once the event that
@@ -234,15 +307,11 @@ func runDecisionApply(ctx context.Context, services dispatch.Services, args disp
 	}
 	defer opened.Close()
 	stored, err := opened.Update(ctx, decisionID, func(txCtx context.Context, record decisions.Record) (decisions.Record, error) {
-		matches, err := decisionReplyEvent(txCtx, opened, record, event)
+		generation, err := decisionReplyEvent(txCtx, opened, record, event)
 		if err != nil {
 			return decisions.Record{}, err
 		}
-		if !matches {
-			return decisions.Record{}, decisionConflict("disposition_conflict",
-				fmt.Sprintf("%q is not the decision_reply event of a relationship this decision blocks: the record applies when the relay has recorded that reply", event))
-		}
-		applied, err := decisions.Apply(record, event)
+		applied, err := decisions.Apply(record, event, generation)
 		if err != nil {
 			return decisions.Record{}, decisionRefusal(err)
 		}
@@ -277,33 +346,79 @@ const decisionReplyProducer = "relay"
 // so an older reply to another receipt of the same relationship cannot apply a later decision. The
 // relay's own id for that reply is delivery.DecisionEventID(relationship, answersEvent), read from
 // the delivery package rather than re-derived, because decision.go belongs to another project.
-func decisionReplyEvent(ctx context.Context, opened *store.Store, record decisions.Record, event string) (bool, error) {
-	row, err := opened.One(ctx, "SELECT relationship_id, outcome, producer, receipt FROM events WHERE event_id = ?", event)
+//
+// A fourth thing must hold, and it is the answer's own: the decision the reply carries must be the
+// reply the option the answer chose makes. The relay records one decision_reply per receipt, so a
+// question whose hold option replies stop is not applied by a reply that decided answer, however
+// well the reply answers the right receipt. An answer whose chosen option carries no reply, or that
+// names no option at all, cannot be matched and is refused the same way. What it returns is the
+// execution generation the reply event itself was recorded under, which the record then carries as
+// the generation the decision was applied in.
+func decisionReplyEvent(ctx context.Context, opened *store.Store, record decisions.Record, event string) (int64, error) {
+	row, err := opened.One(ctx, "SELECT relationship_id, outcome, producer, receipt, execution_generation FROM events WHERE event_id = ?", event)
 	if err != nil {
-		return false, err
+		return 0, err
 	}
 	if row == nil || row.Text("outcome") != decisionReplyOutcome || row.Text("producer") != decisionReplyProducer {
-		return false, nil
+		return 0, decisionNotTheReplyEvent(event)
 	}
 	relationship := row.Text("relationship_id")
 	if !decisionBlocks(record, decisions.BlockingRelationship, relationship) {
-		return false, nil
+		return 0, decisionNotTheReplyEvent(event)
 	}
 	receipt, err := decodeJSON([]byte(row.Text("receipt")))
 	if err != nil {
-		return false, decisionBadInvocation("the decision_reply event's receipt cannot be read: " + err.Error())
+		return 0, decisionBadInvocation("the decision_reply event's receipt cannot be read: " + err.Error())
 	}
 	answers, _ := get(receipt, "answersEvent").(string)
 	if answers == "" {
-		return false, nil
+		return 0, decisionNotTheReplyEvent(event)
 	}
 	// The reply must answer the receipt this decision was raised on, not merely some receipt of
 	// the blocked relationship: decision-raise names that receipt as the record's source, so an
 	// older reply to another receipt on the same relationship cannot apply a later decision.
 	if strings.TrimSpace(record.Source.Ref) != answers {
-		return false, nil
+		return 0, decisionNotTheReplyEvent(event)
 	}
-	return delivery.DecisionEventID(relationship, answers) == event, nil
+	if delivery.DecisionEventID(relationship, answers) != event {
+		return 0, decisionNotTheReplyEvent(event)
+	}
+	decision, _ := get(receipt, "decision").(string)
+	option, chosen := decisionChosenOption(record)
+	if !chosen {
+		return 0, decisionConflict("reply_contradicts_answer", fmt.Sprintf("the answer %q names no option of the decision, so the reply %q the relay recorded cannot be matched against the reply the answer chose", record.AnswerText, decision))
+	}
+	if strings.TrimSpace(option.Reply) != strings.TrimSpace(decision) {
+		return 0, decisionConflict("reply_contradicts_answer", fmt.Sprintf("the answer chose option %q, whose reply is %q, and the relay recorded the decision %q: a decision is applied by the reply its chosen option makes", option.ID, option.Reply, decision))
+	}
+	generation, ok := row.Get("execution_generation").(int64)
+	if !ok {
+		return 0, dispatch.Host(fmt.Sprintf("the decision_reply event %q carries no execution generation", event))
+	}
+	return generation, nil
+}
+
+// decisionNotTheReplyEvent is the refusal of an event that is not the decision_reply the relay
+// recorded for the receipt this decision answered.
+func decisionNotTheReplyEvent(event string) error {
+	return decisionConflict("disposition_conflict",
+		fmt.Sprintf("%q is not the decision_reply event of a relationship this decision blocks: the record applies when the relay has recorded that reply", event))
+}
+
+// decisionChosenOption is the option the record's answer chose. An answer that names an option
+// stores that option's id as the answer text, so the id is what identifies the reply the answer
+// made.
+func decisionChosenOption(record decisions.Record) (decisions.Option, bool) {
+	chosen := strings.TrimSpace(record.AnswerText)
+	if chosen == "" {
+		return decisions.Option{}, false
+	}
+	for _, option := range record.Options {
+		if strings.TrimSpace(option.ID) == chosen {
+			return option, true
+		}
+	}
+	return decisions.Option{}, false
 }
 
 // decisionBlocks reports whether the record names subject as a blocking subject of that kind.
@@ -354,6 +469,8 @@ func decisionRefusal(err error) error {
 		errors.Is(err, decisions.ErrUnknownAuthority), errors.Is(err, decisions.ErrUnknownBlockingKind),
 		errors.Is(err, decisions.ErrUnknownVia), errors.Is(err, decisions.ErrMissingProvenance),
 		errors.Is(err, decisions.ErrUnknownAnswer), errors.Is(err, decisions.ErrAuthorityGrade),
+		errors.Is(err, decisions.ErrUnknownReply), errors.Is(err, decisions.ErrOptionReplyRequired),
+		errors.Is(err, decisions.ErrAnswerNeedsOption),
 		errors.Is(err, decisions.ErrEmptyContext), errors.Is(err, decisions.ErrOptionCount),
 		errors.Is(err, decisions.ErrEmptyOptionID), errors.Is(err, decisions.ErrDuplicateOptionID),
 		errors.Is(err, decisions.ErrBadNeededBy), errors.Is(err, decisions.ErrBadRaisedAt),
@@ -420,6 +537,31 @@ func decisionBlockings(args dispatch.Args) ([]decisions.Blocking, error) {
 	return blockings, nil
 }
 
+// decisionOptionReplies reads --option-reply id=action, repeated, and attaches each reply to the
+// option it names. A reply that names no option of this raise is refused: the reply belongs to one
+// of the choices the question offers, and an option id the raise does not carry names none.
+func decisionOptionReplies(args dispatch.Args, options []decisions.Option) ([]decisions.Option, error) {
+	for _, value := range args.Strings("option-reply") {
+		id, action, ok := strings.Cut(value, "=")
+		if !ok {
+			return nil, decisionBadInvocation(fmt.Sprintf("--option-reply %q is id=action", value))
+		}
+		id = strings.TrimSpace(id)
+		index := -1
+		for i := range options {
+			if strings.TrimSpace(options[i].ID) == id {
+				index = i
+				break
+			}
+		}
+		if index < 0 {
+			return nil, decisionBadInvocation(fmt.Sprintf("--option-reply %q names no option of this raise", id))
+		}
+		options[index].Reply = strings.TrimSpace(action)
+	}
+	return options, nil
+}
+
 // decisionRecommendation reads --recommend id:one line.
 func decisionRecommendation(args dispatch.Args, options []decisions.Option) (*decisions.Recommendation, error) {
 	value, given := args.String("recommend")
@@ -471,7 +613,11 @@ func decisionAuthorityList() string {
 func decisionRecordObject(record decisions.Record) contract.OrderedObject {
 	options := make([]any, 0, len(record.Options))
 	for _, option := range record.Options {
-		options = append(options, contract.OrderedObject{{Key: "id", Value: option.ID}, {Key: "label", Value: option.Label}, {Key: "effect", Value: option.Effect}})
+		entry := contract.OrderedObject{{Key: "id", Value: option.ID}, {Key: "label", Value: option.Label}, {Key: "effect", Value: option.Effect}}
+		if option.Reply != "" {
+			entry = append(entry, contract.Field{Key: "reply", Value: option.Reply})
+		}
+		options = append(options, entry)
 	}
 	blocking := make([]any, 0, len(record.Blocking))
 	for _, entry := range record.Blocking {
