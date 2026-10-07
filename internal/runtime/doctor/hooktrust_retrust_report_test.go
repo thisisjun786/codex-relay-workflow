@@ -2,7 +2,9 @@ package doctor
 
 import (
 	"bytes"
+	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -253,6 +255,101 @@ func TestHookTrustRetrustReportsAFailedReadBackOnTheOrdinaryPath(t *testing.T) {
 		t.Fatalf("the report claims config.toml holds the rewritten config after a failed read back:\n%s", report)
 	}
 	for _, want := range []string{f.config(), "could not be read again", f.backupName(), "holds the content it displaced"} {
+		if !strings.Contains(report, want) {
+			t.Fatalf("the report does not carry %q:\n%s", want, report)
+		}
+	}
+}
+
+// The recovery read is the other place the branch can stop early: when the displaced content cannot
+// be read back, nothing can be said about whether another writer raced the exchange, but what the
+// target holds is still knowable. The branch must read it rather than fall through to the success
+// wording. Before the fix it returned at once, so a target holding a later save was reported as
+// holding the rewritten config without ever being looked at.
+func TestHookTrustRetrustReportsAnUnreadableDisplacedFileWithALaterSave(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("the fault is a permission one, and root reads a write-only file")
+	}
+	f := newCASFixture(t, "")
+	f.write(f.config(), f.installed())
+	kept := filepath.Join(f.root, "displaced.toml")
+	later := "model = \"saved-after-the-publication\"\n"
+
+	result, _, err := hookTrustRetrustWith(f.home, f.plugin, f.key, true, okRunner, f.env(), f.now(), &hookTrustRetrustSeams{
+		publish: func(target string, expected, next []byte, backupPath string) ([]byte, error) {
+			// The exchange ran, the move to the backup name failed and left the displaced content at a
+			// path that cannot be read back, and a second save replaced the target before retrust
+			// returned.
+			if werr := os.WriteFile(kept, expected, 0o000); werr != nil {
+				t.Fatal(werr)
+			}
+			if werr := os.WriteFile(target, []byte(later), 0o644); werr != nil {
+				t.Fatal(werr)
+			}
+			return nil, &crwdir.PublishedError{Err: errors.New("injected move failure"), DisplacedAt: kept}
+		},
+	})
+	if err == nil || !result.Published || !result.LateWrite {
+		t.Fatalf("the later save was not reported: result=%+v err=%v", result, err)
+	}
+	if got := f.read(f.config()); got != later {
+		t.Fatalf("config.toml holds %q, want the save that landed after the publication", got)
+	}
+
+	var stdout bytes.Buffer
+	hookTrustRetrustReport(&stdout, result)
+	report := stdout.String()
+	if strings.Contains(report, "holds the rewritten config") {
+		t.Fatalf("the report claims config.toml holds the rewritten config without reading it:\n%s", report)
+	}
+	for _, want := range []string{f.config(), kept, "newer save, not retrust's config"} {
+		if !strings.Contains(report, want) {
+			t.Fatalf("the report does not carry %q:\n%s", want, report)
+		}
+	}
+}
+
+// The same branch with a cooperative-looking target: config.toml still holds what retrust published,
+// but the displaced content was never read, so the report must not say the displaced path holds the
+// content it displaced. Before the fix it said exactly that.
+func TestHookTrustRetrustReportsAnUnreadableDisplacedFileWithoutNamingItsContent(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("the fault is a permission one, and root reads a write-only file")
+	}
+	f := newCASFixture(t, "")
+	f.write(f.config(), f.installed())
+	kept := filepath.Join(f.root, "displaced.toml")
+
+	result, _, err := hookTrustRetrustWith(f.home, f.plugin, f.key, true, okRunner, f.env(), f.now(), &hookTrustRetrustSeams{
+		publish: func(target string, expected, next []byte, backupPath string) ([]byte, error) {
+			if werr := os.WriteFile(kept, expected, 0o000); werr != nil {
+				t.Fatal(werr)
+			}
+			if werr := os.WriteFile(target, next, 0o644); werr != nil {
+				t.Fatal(werr)
+			}
+			return nil, &crwdir.PublishedError{Err: errors.New("injected move failure"), DisplacedAt: kept}
+		},
+	})
+	// The publication itself succeeded and only the displaced read failed, so this stays the warning
+	// CRW-844 defined: the publication counts as done and the command exits 0.
+	if err != nil {
+		t.Fatalf("a post-exchange failure was reported as a refusal: %v", err)
+	}
+	if !result.Published || result.Warning == "" || !result.DisplacedUnreadable {
+		t.Fatalf("the unreadable displaced file was not recorded: %+v", result)
+	}
+	if result.Conflict || result.LateWrite {
+		t.Fatalf("an undecidable race was reported as decided: %+v", result)
+	}
+
+	var stdout bytes.Buffer
+	hookTrustRetrustReport(&stdout, result)
+	report := stdout.String()
+	if strings.Contains(report, "holds the content it displaced") {
+		t.Fatalf("the report claims the displaced path holds content it never read:\n%s", report)
+	}
+	for _, want := range []string{f.config(), kept, "could not be read back", "holds the rewritten config"} {
 		if !strings.Contains(report, want) {
 			t.Fatalf("the report does not carry %q:\n%s", want, report)
 		}

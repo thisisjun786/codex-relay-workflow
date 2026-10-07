@@ -97,6 +97,12 @@ type HookTrustRetrustResult struct {
 	// about what the target holds, and RecheckError carries why.
 	RecheckFailed bool
 	RecheckError  string
+	// DisplacedUnreadable records that the content the publication displaced could not be read back,
+	// so whether another writer raced the exchange cannot be decided. The report then says so and does
+	// not claim the displaced path holds that content; what the target holds is still read and reported
+	// (CRW-936). DisplacedError carries why the read failed.
+	DisplacedUnreadable bool
+	DisplacedError      string
 	// Reason is the refusal's message, set by the command line for a refusal that came before the
 	// plan existed. The report prints it as the "no plan" reason.
 	Reason  string
@@ -291,7 +297,10 @@ func hookTrustRetrustVerifyNext(pluginRoot, pluginKey, next string, runner HookT
 //   - a sync-only failure is a *crwdir.PublishedError: the publication counts as done and the
 //     failure is reported as a warning;
 //   - config.toml is read back; a value that is not next is reported and left in place, and a read
-//     that fails is reported with nothing claimed about what the file holds (CRW-936).
+//     that fails is reported with nothing claimed about what the file holds (CRW-936). When the
+//     displaced content itself could not be read back, whether another writer raced the exchange is
+//     undecidable, so the conflict comparison is skipped, the target is still read, and the report
+//     names the unreadable displaced path with its reason instead of claiming what it holds.
 //
 // The refusals, in the oracle's order and words: a missing config.toml; a plugin that declares no
 // synchronous command hooks; a duplicate exact section header; more than one, or no, trusted_hash in
@@ -413,20 +422,31 @@ func hookTrustRetrustWith(codexHome, pluginRoot, pluginKey string, bootstrapOK b
 		return result, nil, err
 	}
 	result.Published = true
+	displacedKnown := true
 	if err != nil {
-		result.Warning = err.Error()
 		// The backup could not be filled, so the displaced content is wherever PublishSwap says it
 		// is; the report must not claim the backup path holds it, and the displaced bytes must be
 		// read from there so the conflict comparison is against the real content.
 		var published *crwdir.PublishedError
 		if errors.As(err, &published) && published.DisplacedAt != "" {
 			result.DisplacedAt = published.DisplacedAt
-			if displaced, err = os.ReadFile(published.DisplacedAt); err != nil {
-				return result, nil, fmt.Errorf("%w (the content the publication displaced is at %s and could not be read back)", err, published.DisplacedAt)
+			read, readErr := os.ReadFile(published.DisplacedAt)
+			if readErr != nil {
+				// Whether another writer raced the exchange cannot be decided without those bytes, but
+				// what the target holds still can, and the report must not claim either without looking
+				// (CRW-936). Keep going and read the target; the displaced path and its reason are named
+				// by the report and the warning.
+				displacedKnown = false
+				result.DisplacedUnreadable = true
+				result.DisplacedError = readErr.Error()
+				err = fmt.Errorf("%w (the content the publication displaced is at %s and could not be read back: %s)", err, published.DisplacedAt, readErr)
+			} else {
+				displaced = read
 			}
 		}
+		result.Warning = err.Error()
 	}
-	if !bytes.Equal(displaced, raw) {
+	if displacedKnown && !bytes.Equal(displaced, raw) {
 		result.Conflict = true
 		// The displaced content is not what retrust read, so a save landed between the last check and
 		// the exchange. Read the target again before answering: a second save may have landed right
@@ -783,23 +803,22 @@ func hookTrustRetrustReport(stdout io.Writer, result HookTrustRetrustResult) {
 	}
 	fmt.Fprintf(stdout, "updated keys: %s\n", hookTrustRetrustList(result.UpdatedKeys))
 	fmt.Fprintf(stdout, "appended keys: %s\n", hookTrustRetrustList(result.AppendedKeys))
-	displaced := result.displacedPath()
 	switch {
 	case result.Conflict && result.RecheckFailed:
-		fmt.Fprintf(stdout, "%s could not be read again to say what it holds now (%s); %s holds the content that was saved in between\n", result.ConfigPath, result.RecheckError, displaced)
+		fmt.Fprintf(stdout, "%s could not be read again to say what it holds now (%s); %s\n", result.ConfigPath, result.RecheckError, result.displacedClause("holds the content that was saved in between"))
 	case result.Conflict && result.LateWrite:
-		fmt.Fprintf(stdout, "%s holds a newer save, not retrust's config; %s holds the content that was saved in between\n", result.ConfigPath, displaced)
+		fmt.Fprintf(stdout, "%s holds a newer save, not retrust's config; %s\n", result.ConfigPath, result.displacedClause("holds the content that was saved in between"))
 	case result.Conflict:
-		fmt.Fprintf(stdout, "%s holds retrust's config; %s holds the content that was saved in between\n", result.ConfigPath, displaced)
+		fmt.Fprintf(stdout, "%s holds retrust's config; %s\n", result.ConfigPath, result.displacedClause("holds the content that was saved in between"))
 	case result.Published && result.RecheckFailed:
 		// The publication happened and the displaced content was what retrust read, so there is no
 		// conflict to report; but the read back failed, so the report must not claim the target holds the
 		// rewritten config (CRW-936, the same rule as the conflict branch).
-		fmt.Fprintf(stdout, "%s could not be read again to say what it holds now (%s); %s holds the content it displaced\n", result.ConfigPath, result.RecheckError, displaced)
+		fmt.Fprintf(stdout, "%s could not be read again to say what it holds now (%s); %s\n", result.ConfigPath, result.RecheckError, result.displacedClause("holds the content it displaced"))
 	case result.Published && result.LateWrite:
-		fmt.Fprintf(stdout, "%s holds the newer save, not retrust's config; %s holds the content retrust displaced\n", result.ConfigPath, displaced)
+		fmt.Fprintf(stdout, "%s holds the newer save, not retrust's config; %s\n", result.ConfigPath, result.displacedClause("holds the content retrust displaced"))
 	case result.Published:
-		fmt.Fprintf(stdout, "%s holds the rewritten config; %s holds the content it displaced\n", result.ConfigPath, displaced)
+		fmt.Fprintf(stdout, "%s holds the rewritten config; %s\n", result.ConfigPath, result.displacedClause("holds the content it displaced"))
 	default:
 		fmt.Fprintf(stdout, "%s unchanged; nothing was published\n", result.ConfigPath)
 		fmt.Fprintf(stdout, "backup: %s (not created)\n", result.BackupPath)
@@ -815,6 +834,16 @@ func (r HookTrustRetrustResult) displacedPath() string {
 		return r.DisplacedAt
 	}
 	return r.BackupPath
+}
+
+// displacedClause names the displaced file and what it holds, or, when that file could not be read
+// back, says so with the reason and claims nothing about its content (CRW-936): the file roles the
+// report prints must be the ones the run actually observed.
+func (r HookTrustRetrustResult) displacedClause(holds string) string {
+	if r.DisplacedUnreadable {
+		return fmt.Sprintf("%s could not be read back to say what it holds (%s)", r.displacedPath(), r.DisplacedError)
+	}
+	return fmt.Sprintf("%s %s", r.displacedPath(), holds)
 }
 
 // hookTrustRetrustList spells the keys of one plan item list, or "(none)".
