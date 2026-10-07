@@ -73,6 +73,7 @@ type CapacityPlan struct {
 	Verdict         string              `json:"verdict"`
 	Reasons         []string            `json:"reasons"`
 	Alert           bool                `json:"alert"`
+	Branches        *BranchCandidates   `json:"branches,omitempty"`
 }
 
 type capacityPlanRef struct {
@@ -198,6 +199,9 @@ func Capacity(ctx context.Context, e *Env, cfg *Config, dry bool) (CapacityRepor
 
 		plan.WaitingMinutes, plan.Alert = capacityPersist(&next, previous.Plans[ref.Plan], plan, limits, now)
 		plan.Verdict, plan.Reasons = capacityJudge(plan, limits, report.Lane.MergesLastHour, report.Actions.Incident, report.Child429.Count)
+		if plan.Branches, err = branchAttach(ctx, e, cfg, stateDir, ref.Plan, plan.Verdict, plan.Waiting); err != nil {
+			return CapacityReport{}, err
+		}
 		if plan.Verdict != capacityExpand {
 			plan.Alert = false
 		} else if plan.Alert {
@@ -324,16 +328,20 @@ func init() { Register(capacityCommand) }
 // management session's file is a later issue's job (config.go).
 var capacityConfig = func(e *Env) *Config { return coreDefaults(e) }
 
-const capacityUsage = "usage: crw manage capacity [--text] [--dry-run]"
+const capacityUsage = "usage: crw manage capacity [--text] [--dry-run] [--branches-always]"
 
 func capacityRun(ctx context.Context, e *Env, args []string) int {
 	asText, dry := false, false
+	branchAlwaysSet(e, false)
+	defer branchAlwaysForget(e)
 	for _, arg := range args {
 		switch arg {
 		case "--text":
 			asText = true
 		case "--dry-run":
 			dry = true
+		case "--branches-always":
+			branchAlwaysSet(e, true)
 		case "-h", "--help", "help":
 			fmt.Fprintln(e.Stdout, capacityUsage)
 			return 0
