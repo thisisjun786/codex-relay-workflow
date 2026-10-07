@@ -132,6 +132,11 @@ func (p *refreshProof) applyMechanical(ctx context.Context, g *refreshRepo, chec
 		var paths, descriptions []string
 		rules := map[string]string{}
 		decided := map[string]string{}
+		// A clean difference under a regenerate declaration that the declarations do not agree on is
+		// refused rather than left to a --resolved name: git merged the path, so no hand resolution can
+		// exist there, and admitting it unproved would accept content beyond git's merge of the accepted
+		// candidate and the base (CRW-898, item 9).
+		var cleanUnproved []string
 		for _, r := range st.Resolved {
 			// A conflict needs every contributing node to agree, because two sides edited the place. A
 			// clean difference the head produced by regenerating (CRW-898, item 9) has no such second
@@ -141,13 +146,19 @@ func (p *refreshProof) applyMechanical(ctx context.Context, g *refreshRepo, chec
 			// declaration only the candidate makes, or one the contributors disagree with, is not an
 			// agreement and leaves the path refused as before. Everything else keeps the contributor
 			// requirement.
-			admitted := len(sets[r.Path]) > 0 || (!r.Conflicted && agreedRegenerate(append([][]Region{regions}, sets[r.Path]...), r.Path))
+			// The manifest is never admitted by the clean-regeneration extension below: it has its own
+			// branch, because a declaration the contributors do not agree with must fall to the
+			// built-in rule rather than being taken as an agreement of one (CRW-898, item 6).
+			admitted := len(sets[r.Path]) > 0 || (!r.Conflicted && r.Path != pluginversion.ManifestRepoPath && agreedRegenerate(append([][]Region{regions}, sets[r.Path]...), r.Path))
 			if rule, ok := MechanicalRuleFor(append([][]Region{regions}, sets[r.Path]...), r.Path); ok && admitted {
 				paths = append(paths, r.Path)
 				descriptions = append(descriptions, fmt.Sprintf("%s (%s)", r.Path, rule))
 				rules[r.Path] = rule
 				decided[r.Path] = rule
 				continue
+			}
+			if !r.Conflicted && r.Path != pluginversion.ManifestRepoPath {
+				cleanUnproved = append(cleanUnproved, r.Path)
 			}
 			// The plugin manifest's version line is the one place no declaration has to settle with one
 			// agreed rule: the line is derived from the payload, and the checker applies its built-in
@@ -168,7 +179,13 @@ func (p *refreshProof) applyMechanical(ctx context.Context, g *refreshRepo, chec
 			}
 		}
 		if len(paths) == 0 {
-			continue
+			if len(cleanUnproved) == 0 {
+				continue
+			}
+			return &refreshRefusal{Code: RefreshTreeDiffers, Detail: fmt.Sprintf("the head differs from git's merge of %s and %s in %s, and the declarations given do not agree on one regenerate rule for it, so it is not a regeneration of the base", st.Previous, st.BaseParent, refreshPathsText(cleanUnproved))}, nil
+		}
+		if len(cleanUnproved) > 0 {
+			return &refreshRefusal{Code: RefreshTreeDiffers, Detail: fmt.Sprintf("the head differs from git's merge of %s and %s in %s, and the declarations given do not agree on one regenerate rule for it, so it is not a regeneration of the base", st.Previous, st.BaseParent, refreshPathsText(cleanUnproved))}, nil
 		}
 		why, err := refreshMechanical(ctx, checkout, *st, regions, decided)
 		if err != nil {
