@@ -6,11 +6,42 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 )
+
+// TestMakeSessionsDirNeedsOnlyTraversalOnTheStateRoot is CRW-646 d1: the state root is opened with the
+// platform's search-only flag (O_PATH on Linux), so a .crw the caller may traverse but not read still
+// works. dev's pathname creates needed only traversal of the root, and an O_RDONLY walk regressed that
+// for every EnsureState, WriteState and WithSessionLock caller. Darwin has no O_PATH, so a search-only
+// root fails closed there by design and the case does not apply.
+func TestMakeSessionsDirNeedsOnlyTraversalOnTheStateRoot(t *testing.T) {
+	if runtime.GOOS == "darwin" {
+		t.Skip("Darwin has no O_PATH: a search-only state root fails closed there by design")
+	}
+	cwd := t.TempDir()
+	if err := makeSessionsDir(cwd); err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(cwd, crwdir.DirName)
+	if err := os.Chmod(root, 0o111); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(root, 0o777) }) // so t.TempDir can remove it
+
+	if err := makeSessionsDir(cwd); err != nil {
+		t.Fatalf("makeSessionsDir on a search-only state root: %v", err)
+	}
+	if err := WithSessionLock(cwd, "s", func() error { return nil }); err != nil {
+		t.Fatalf("WithSessionLock on a search-only state root: %v", err)
+	}
+	if err := WriteState(cwd, DefaultState("s", "")); err != nil {
+		t.Fatalf("WriteState on a search-only state root: %v", err)
+	}
+}
 
 // CRW-871: WithSessionLockContext is WithSessionLock for a caller that can be interrupted (the
 // orchestrate row under cmd/crw serve). A context cancelled before or during the wait creates no

@@ -352,13 +352,6 @@ func writeIgnoreAt(dir *os.File, dirPath string) error {
 // refusal rather than a generic error.
 var ErrStateRootSymlink = errors.New("state path must not be a symlink")
 
-// sessionsDirOpenFlags opens a state directory for reading its entries. O_RDONLY|O_DIRECTORY is what
-// the oracle's fs.open uses and needs only search permission on the ancestors the caller already
-// traverses; O_NOFOLLOW refuses a symbolic link at the opened component.
-func sessionsDirOpenFlags() int {
-	return unix.O_RDONLY | unix.O_DIRECTORY | unix.O_NOFOLLOW | unix.O_CLOEXEC
-}
-
 // openDirNoFollow opens name under parent as a directory, refusing a symbolic link at that step. A
 // link is reported as ErrStateRootSymlink so the caller can name the refusal.
 func openDirNoFollow(parent *os.File, name, expected string) (*os.File, error) {

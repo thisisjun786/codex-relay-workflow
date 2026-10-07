@@ -663,10 +663,8 @@ func TestLoopInitRefusesALinkedStateRootBeforeWriting(t *testing.T) {
 func loopInitFastWaits(t *testing.T) {
 	t.Helper()
 	pause := loopInitPlanWaitPause
-	deadline := loopInitPlanWaitDeadline
 	loopInitPlanWaitPause = func() { time.Sleep(time.Millisecond) }
-	loopInitPlanWaitDeadline = 5 * time.Second
-	t.Cleanup(func() { loopInitPlanWaitPause, loopInitPlanWaitDeadline = pause, deadline })
+	t.Cleanup(func() { loopInitPlanWaitPause = pause })
 }
 
 // loopDeadPID returns the pid of a process that has already exited, so a lock file naming it is an
@@ -721,6 +719,49 @@ func TestLoopInitDoesNotWaitForAReleasedSessionLock(t *testing.T) {
 	}
 	if bound := state.ReadState(cwd, id).Slug; bound != slug {
 		t.Fatalf("the init after the release bound %q, want %q", bound, slug)
+	}
+}
+
+// TestLoopInitNamesThePublishedPlanWhenTheReacquiredBindingFails is the reacquisition branch of d4's
+// fix: when init reaches its post-budget wait with the session lock already released, it takes the lock
+// itself and runs the bound creation. A binding failure there happens AFTER the plan and its created
+// row are published, so it must name them; the branch must not rewrite that error as a lock answer or
+// as "Nothing was written." (CRW-646).
+func TestLoopInitNamesThePublishedPlanWhenTheReacquiredBindingFails(t *testing.T) {
+	cwd := loopReadWorkspace(t)
+	gitInit(t, cwd)
+	const id = "rec-reacquire"
+	const slug = "bound-objective"
+	loopSession(t, cwd, id)
+	loopInitFastWaits(t)
+	// An abandoned lock (a dead owner) makes the first acquisition fail, and the wait then meets a gone
+	// lock and takes it itself.
+	lockPath := state.StatePath(cwd, id) + ".lock"
+	if err := os.WriteFile(lockPath, []byte(strconv.Itoa(loopDeadPID(t))), 0o666); err != nil {
+		t.Fatal(err)
+	}
+	loopInitPlanWaitEntered = func() { _ = os.Remove(lockPath) }
+	loopInitWriteStateHook = func(string, state.State) error { return errors.New("binding disk full") }
+	t.Cleanup(func() { loopInitPlanWaitEntered, loopInitWriteStateHook = nil, nil })
+
+	args, err := ParseLoopCliArgs([]string{"init", "--objective", "Bound objective", "--session", id}, cwd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, runErr := RunLoopCli(args)
+	if runErr == nil {
+		t.Fatalf("got %d %q, want an error naming the published plan", result.Code, result.Output)
+	}
+	for _, want := range []string{"are published", slug, id, "binding disk full"} {
+		if !strings.Contains(runErr.Error(), want) {
+			t.Fatalf("the failure does not name %q: %v", want, runErr)
+		}
+	}
+	if strings.Contains(runErr.Error(), "Nothing was written") {
+		t.Fatalf("the failure denies a plan that is published: %v", runErr)
+	}
+	if plan := goalplan.ReadGoalplan(cwd, slug); plan == nil {
+		t.Fatalf("the failure denied a plan that is published")
 	}
 }
 
