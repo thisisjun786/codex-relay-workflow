@@ -736,8 +736,8 @@ func TestPumpReview776UpgradeReconcilesTheOldLogicalID(t *testing.T) {
 }
 
 // The quarantining move verifies the notice against the text the round read, so a notice the
-// producer replaced with different content is put back in the queue rather than quarantined, and an
-// earlier quarantine is never disturbed.
+// producer replaced with different content stays in the queue rather than being quarantined, and
+// nothing is left behind in oversize/.
 func TestPumpReview776QuarantineKeepsAReplacedNotice(t *testing.T) {
 	dir := t.TempDir()
 	oversizeDir := filepath.Join(dir, pumpReview776OversizeDir)
@@ -749,19 +749,23 @@ func TestPumpReview776QuarantineKeepsAReplacedNotice(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The round read "old text"; the file now carries something else, so the move must not happen.
-	destination := pumpReview776QueueOversizeName(oversizeDir, "aaaaaaaaaaaaaaaa.txt")
-	moved, err := pumpReview776QueueMoveVerified(dir, "aaaaaaaaaaaaaaaa.txt", destination, pumpReview776TestDigest("old text"))
+	dest, moved, err := pumpReview776QueueMoveVerified(dir, "aaaaaaaaaaaaaaaa.txt", oversizeDir, pumpReview776TestDigest("old text"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if moved {
 		t.Fatalf("a replaced notice was quarantined")
 	}
+	if dest != "" {
+		t.Errorf("a replaced notice reported a destination: %q", dest)
+	}
 	if raw, err := os.ReadFile(source); err != nil || string(raw) != "new text" {
 		t.Errorf("the replacement was disturbed: %q %v", raw, err)
 	}
-	if _, err := os.Stat(destination); !os.IsNotExist(err) {
-		t.Errorf("the replacement reached oversize/: %v", err)
+	if entries, err := os.ReadDir(oversizeDir); err != nil {
+		t.Fatal(err)
+	} else if len(entries) != 0 {
+		t.Errorf("the replacement reached oversize/: %v", entries)
 	}
 }
 
@@ -777,8 +781,7 @@ func TestPumpReview776QuarantineMoveIsVerifiedAndUnique(t *testing.T) {
 	if err := os.WriteFile(source, []byte("first"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	first := pumpReview776QueueOversizeName(oversizeDir, "aaaaaaaaaaaaaaaa.txt")
-	moved, err := pumpReview776QueueMoveVerified(dir, "aaaaaaaaaaaaaaaa.txt", first, pumpReview776TestDigest("first"))
+	first, moved, err := pumpReview776QueueMoveVerified(dir, "aaaaaaaaaaaaaaaa.txt", oversizeDir, pumpReview776TestDigest("first"))
 	if err != nil || !moved {
 		t.Fatalf("the first move failed: moved=%v err=%v", moved, err)
 	}
@@ -788,13 +791,12 @@ func TestPumpReview776QuarantineMoveIsVerifiedAndUnique(t *testing.T) {
 	if err := os.WriteFile(source, []byte("second"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	second := pumpReview776QueueOversizeName(oversizeDir, "aaaaaaaaaaaaaaaa.txt")
-	if second == first {
-		t.Fatalf("the second destination reused the first")
-	}
-	moved, err = pumpReview776QueueMoveVerified(dir, "aaaaaaaaaaaaaaaa.txt", second, pumpReview776TestDigest("second"))
+	second, moved, err := pumpReview776QueueMoveVerified(dir, "aaaaaaaaaaaaaaaa.txt", oversizeDir, pumpReview776TestDigest("second"))
 	if err != nil || !moved {
 		t.Fatalf("the second move failed: moved=%v err=%v", moved, err)
+	}
+	if second == first {
+		t.Fatalf("the second destination reused the first")
 	}
 	if raw, err := os.ReadFile(first); err != nil || string(raw) != "first" {
 		t.Errorf("the earlier quarantine was disturbed: %q %v", raw, err)
@@ -1043,5 +1045,186 @@ func TestPumpReview776AcceptedPinCompletesAfterACrash(t *testing.T) {
 	}
 	if _, ok := pumpReview776QueueAttempt(t, cfg, "parent-1"); ok {
 		t.Error("the accepted pin was not cleared after the moves")
+	}
+}
+
+// A pre-change accepted record whose text no longer matches the queue is not completed by name: a
+// member the producer replaced was never sent, so it must not be taken to sent/.
+func TestPumpReview776LegacyAcceptedWithAChangedBodyIsNotCompleted(t *testing.T) {
+	now := pumpTestNow
+	e := pumpTestEnv(t, &now)
+	bridge, _ := deliverFakeBridge(t, []map[string]any{})
+	cfg := pumpTestConfig(t, bridge)
+	dir := filepath.Join(cfg.StateDir, pumpQueueDir, "parent-1")
+	pumpQueueTestNotice(t, cfg, "parent-1", "aaaaaaaaaaaaaaaa.txt", "A2")
+	oldID := pumpBatchIDStrings([]string{"parent-1", "aaaaaaaaaaaaaaaa.txt"})
+	if err := deliverSave(cfg, deliverRecord{
+		LogicalID: oldID, RequestID: oldID, Tool: deliverToolSend, TargetThread: "parent-1",
+		MessageSHA256: deliverMessageSHA256("the accepted body"), CreatedAt: deliverNow(e), State: deliverStateAccepted}); err != nil {
+		t.Fatal(err)
+	}
+	if err := pumpQueueFlush(context.Background(), e, cfg, pumpTestReadStatePtr(t, cfg), pumpSettingsFrom(cfg), false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, pumpSentDir, "aaaaaaaaaaaaaaaa.txt")); !os.IsNotExist(err) {
+		t.Errorf("an undelivered replacement was completed to sent/: %v", err)
+	}
+	if names := pumpQueueTestNames(t, cfg, "parent-1"); len(names) != 1 || names[0] != "aaaaaaaaaaaaaaaa.txt" {
+		t.Errorf("the replacement left the queue: %v", names)
+	}
+}
+
+// A move never replaces an entry that is already there: a second same-named notice takes a name of
+// its own and the earlier one survives untouched.
+func TestPumpReview776MoveNeverReplacesAnExistingEntry(t *testing.T) {
+	dir := t.TempDir()
+	oversizeDir := filepath.Join(dir, pumpReview776OversizeDir)
+	if err := os.MkdirAll(oversizeDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(dir, "aaaaaaaaaaaaaaaa.txt")
+	if err := os.WriteFile(source, []byte("new"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// An earlier quarantine already holds this name.
+	if err := os.WriteFile(filepath.Join(oversizeDir, "aaaaaaaaaaaaaaaa.txt"), []byte("already there"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dest, moved, err := pumpReview776QueueMoveVerified(dir, "aaaaaaaaaaaaaaaa.txt", oversizeDir, pumpReview776TestDigest("new"))
+	if err != nil || !moved {
+		t.Fatalf("the move failed: moved=%v err=%v", moved, err)
+	}
+	if dest == filepath.Join(oversizeDir, "aaaaaaaaaaaaaaaa.txt") {
+		t.Fatalf("the move chose the taken name %q", dest)
+	}
+	if raw, err := os.ReadFile(filepath.Join(oversizeDir, "aaaaaaaaaaaaaaaa.txt")); err != nil || string(raw) != "already there" {
+		t.Errorf("the earlier quarantine was disturbed: %q %v", raw, err)
+	}
+	if raw, err := os.ReadFile(dest); err != nil || string(raw) != "new" {
+		t.Errorf("the moved notice is wrong: %q %v", raw, err)
+	}
+	if _, err := os.Stat(source); !os.IsNotExist(err) {
+		t.Errorf("the source name survived a completed move: %v", err)
+	}
+}
+
+// A move that did not happen leaves the queue exactly as it was: no stray name the collector would
+// ignore, and no notice removed.
+func TestPumpReview776FailedMoveLeavesNoStrayName(t *testing.T) {
+	dir := t.TempDir()
+	oversizeDir := filepath.Join(dir, pumpReview776OversizeDir)
+	if err := os.MkdirAll(oversizeDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(dir, "aaaaaaaaaaaaaaaa.txt")
+	if err := os.WriteFile(source, []byte("replacement"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// The round read "verified text"; the file now carries a replacement, so nothing moves.
+	if _, moved, err := pumpReview776QueueMoveVerified(dir, "aaaaaaaaaaaaaaaa.txt", oversizeDir, pumpReview776TestDigest("verified text")); err != nil || moved {
+		t.Fatalf("a replaced notice moved: moved=%v err=%v", moved, err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, entry := range entries {
+		names = append(names, entry.Name())
+	}
+	if len(names) != 2 || names[0] != "aaaaaaaaaaaaaaaa.txt" || names[1] != pumpReview776OversizeDir {
+		t.Errorf("the queue holds %v, want the notice and oversize/ only", names)
+	}
+	if raw, err := os.ReadFile(source); err != nil || string(raw) != "replacement" {
+		t.Errorf("the replacement was disturbed: %q %v", raw, err)
+	}
+}
+
+// An accepted completion whose move cannot be made keeps the pin, so the notices are neither
+// dropped nor sent again: the completion is retried instead of being forgotten.
+func TestPumpReview776AcceptedCompletionFailureKeepsThePin(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("the test needs a permission failure, which root does not get")
+	}
+	now := pumpTestNow
+	e := pumpTestEnv(t, &now)
+	cfg := pumpTestConfig(t, "")
+	dir := filepath.Join(cfg.StateDir, pumpQueueDir, "parent-1")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "aaaaaaaaaaaaaaaa.txt"), []byte("sent-body"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sent := filepath.Join(dir, pumpSentDir)
+	if err := os.MkdirAll(sent, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(sent, 0o700) })
+	pin := pumpReview776QueuePin{LogicalID: "pinid", Names: []string{"aaaaaaaaaaaaaaaa.txt"}, Body: "sent-body",
+		SHA256: map[string]string{"aaaaaaaaaaaaaaaa.txt": pumpReview776TestDigest("sent-body")}, Accepted: true}
+	st := pumpTestReadState(t, cfg)
+	st.QueueAttempt["parent-1"] = pin
+	if err := st.pumpSave(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := pumpReview776QueueFinishAccepted(context.Background(), e, cfg, pumpTestReadStatePtr(t, cfg), dir, "parent-1", pin, false); err == nil {
+		t.Fatal("a completion whose move failed reported success")
+	}
+	if _, ok := pumpReview776QueueAttempt(t, cfg, "parent-1"); !ok {
+		t.Error("a failed completion dropped the pin, so the notices would be sent again")
+	}
+	if names := pumpQueueTestNames(t, cfg, "parent-1"); len(names) != 1 || names[0] != "aaaaaaaaaaaaaaaa.txt" {
+		t.Errorf("the notice left the queue on a failed completion: %v", names)
+	}
+}
+
+// An unsettled pre-change record whose text the ledger does not store is reconciled under the old
+// id through the bridge's own receipt, not sent under the new id.
+func TestPumpReview776LegacyUnsettledRecordIsReconciledDespiteAChangedBody(t *testing.T) {
+	now := pumpTestNow
+	e := pumpTestEnv(t, &now)
+	bridge, log := deliverFakeBridge(t, []map[string]any{
+		{"payload": map[string]any{"observation": "active", "activeTurnId": "turn-1"}},
+		{"payload": map[string]any{"status": "outcome_unknown"}},
+	})
+	cfg := pumpTestConfig(t, bridge)
+	pumpQueueTestNotice(t, cfg, "parent-1", "aaaaaaaaaaaaaaaa.txt", "A2")
+	pumpQueueTestNotice(t, cfg, "parent-1", "bbbbbbbbbbbbbbbb.txt", "b-body")
+	oldID := pumpBatchIDStrings([]string{"parent-1", "aaaaaaaaaaaaaaaa.txt", "bbbbbbbbbbbbbbbb.txt"})
+	// The pre-change attempt's text is not recoverable: the ledger holds a digest of a body nobody
+	// can rebuild from the notices now on disk.
+	if err := deliverSave(cfg, deliverRecord{
+		LogicalID: oldID, RequestID: oldID, Tool: deliverToolSend, TargetThread: "parent-1",
+		MessageSHA256: deliverMessageSHA256("the old body nobody can rebuild"), CreatedAt: deliverNow(e), State: deliverStateUnknown}); err != nil {
+		t.Fatal(err)
+	}
+	if err := pumpQueueFlush(context.Background(), e, cfg, pumpTestReadStatePtr(t, cfg), pumpSettingsFrom(cfg), false); err != nil {
+		t.Fatal(err)
+	}
+	reconciled := false
+	for _, call := range deliverSendCallsOf(t, log) {
+		if call["tool"] == deliverToolOperation && deliverSendRequestIDOf(t, call) == oldID {
+			reconciled = true
+		}
+		if call["tool"] == deliverToolSteer || call["tool"] == deliverToolSend {
+			t.Errorf("the round sent instead of reconciling the old id: %v", deliverSendToolsOf(t, log))
+		}
+	}
+	if !reconciled {
+		t.Fatalf("the old id %q was not reconciled: %v", oldID, deliverSendToolsOf(t, log))
+	}
+	pin, ok := pumpReview776QueueAttempt(t, cfg, "parent-1")
+	if !ok {
+		t.Fatal("the unsettled old attempt was not pinned")
+	}
+	if pin["logical_id"] != oldID {
+		t.Errorf("the pin names %v, want the old id %q", pin["logical_id"], oldID)
+	}
+	if legacy, _ := pin["legacy"].(bool); !legacy {
+		t.Errorf("the pin is not marked legacy: %v", pin)
+	}
+	if names := pumpQueueTestNames(t, cfg, "parent-1"); len(names) != 2 {
+		t.Errorf("a notice left the queue during the reconciliation: %v", names)
 	}
 }

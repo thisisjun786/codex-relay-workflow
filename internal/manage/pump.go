@@ -143,6 +143,10 @@ type pumpReview776QueuePin struct {
 	Body      string            `json:"body"`
 	SHA256    map[string]string `json:"sha256,omitempty"`
 	Accepted  bool              `json:"accepted,omitempty"`
+	// Legacy marks a pin taken for a pre-change ledger record whose body the ledger does not store.
+	// Such an attempt is reconciled through the bridge's own receipt instead of being replayed with
+	// the text on disk, which a notice the producer replaced no longer matches.
+	Legacy bool `json:"legacy,omitempty"`
 }
 
 // pumpAttempt is one frozen batch: the logical id it was tried under, the ids it carried, and its
