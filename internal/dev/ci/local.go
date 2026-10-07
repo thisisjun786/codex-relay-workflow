@@ -441,7 +441,7 @@ func localStepEnv(home, temp string, opts localOptions) ([]string, error) {
 	// The host's caches, PATH and the user runtime directory are inherited: they decide how fast a
 	// step runs and whether the heavy-check gate can reach the user's systemd, not what it
 	// decides. GOFLAGS is left as the host set it, and GOCACHE is never cleared.
-	for _, name := range []string{"PATH", "GOCACHE", "GOMODCACHE", "GOPATH", "GOFLAGS", "GOPROXY", "GOENV", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS"} {
+	for _, name := range []string{"PATH", "TMPDIR", "GOCACHE", "GOMODCACHE", "GOPATH", "GOFLAGS", "GOPROXY", "GOENV", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS"} {
 		if value, ok := os.LookupEnv(name); ok {
 			env = append(env, name+"="+value)
 		}
@@ -564,29 +564,64 @@ func localStepLabel(step localStep) string {
 // localTimeoutMark is the line a Go test binary prints when a test run outlives its -timeout.
 const localTimeoutMark = "panic: test timed out"
 
-// localReason is the end of a command's output for a failure's reason: the last localReasonLines
-// lines, cut to localReasonBytes, so a failing test's line reaches the record and the record stays
-// bounded.
+// localReason is the reason a failed command's output gives: the failing test lines that come
+// before the last lines (so a test that failed early still reaches the record), then the last
+// localReasonLines lines, cut to localReasonBytes. The reason stays bounded however long the output.
 func localReason(output string) string {
 	text := strings.TrimRight(output, "\n")
 	if text == "" {
 		return ""
 	}
 	all := strings.Split(text, "\n")
-	if len(all) > localReasonLines {
-		all = all[len(all)-localReasonLines:]
+	cut := len(all) - localReasonLines
+	if cut < 0 {
+		cut = 0
 	}
-	tail := strings.Join(all, "\n")
-	if len(tail) > localReasonBytes {
-		tail = strings.ToValidUTF8(tail[len(tail)-localReasonBytes:], "")
+	var marked []string
+	for _, line := range all[:cut] {
+		if localMarkedLine(line) {
+			marked = append(marked, localCut(line, localReasonLine))
+			if len(marked) == localReasonMarked {
+				break
+			}
+		}
+	}
+	tail := localCutEnd(strings.Join(all[cut:], "\n"), localReasonBytes)
+	if len(marked) > 0 {
+		tail = strings.Join(marked, "\n") + "\n...\n" + tail
 	}
 	return ": " + tail
 }
 
-// The bounds of a failure's reason: the last lines of the output, and at most this many bytes.
+// localMarkedLine reports whether a line of a test run names a failing test or a panic.
+func localMarkedLine(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	return strings.HasPrefix(trimmed, "--- FAIL") || strings.HasPrefix(trimmed, "FAIL") || strings.HasPrefix(trimmed, "panic:")
+}
+
+// localCut is the first n bytes of a line, valid UTF-8.
+func localCut(line string, n int) string {
+	if len(line) > n {
+		return strings.ToValidUTF8(line[:n], "")
+	}
+	return line
+}
+
+// localCutEnd is the last n bytes of the text, valid UTF-8.
+func localCutEnd(text string, n int) string {
+	if len(text) > n {
+		return strings.ToValidUTF8(text[len(text)-n:], "")
+	}
+	return text
+}
+
+// The bounds of a failure's reason: the last lines of the output and at most this many bytes of
+// them, plus up to localReasonMarked failing lines from earlier in the output.
 const (
-	localReasonLines = 40
-	localReasonBytes = 4096
+	localReasonLines  = 40
+	localReasonBytes  = 4096
+	localReasonMarked = 20
+	localReasonLine   = 300
 )
 
 // shortHash is a commit hash's first twelve characters.
