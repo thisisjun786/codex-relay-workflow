@@ -48,12 +48,20 @@ func (r *Registry) guardManagedRegistration(ctx context.Context, in Registration
 	if named.StandbyTurnID.String != in.DispatchTurnID.String {
 		return refuse(contract.RefusalRelationshipConflict, "managed request %s published standby %s, not %s", strconv.Quote(in.ManagedRequestID), strconv.Quote(named.StandbyTurnID.String), strconv.Quote(in.DispatchTurnID.String))
 	}
-	pending, err := r.Store.PendingManagedStart(ctx, in.IssueKey)
+	// Every other request in flight for the issue is a rival. Two packets of one feature issue may be
+	// in flight at once (CRW-839): the other request is admitted beside this one only when both resolve
+	// to distinct packets of the same plan, and anything else is refused as it always was.
+	pending, err := r.Store.PendingManagedStarts(ctx, in.IssueKey)
 	if err != nil {
 		return err
 	}
-	if pending.RequestID != in.ManagedRequestID {
-		return refuse(contract.RefusalDuplicateAssignment, "issue %s is already held by request %s (%s)", strconv.Quote(in.IssueKey), strconv.Quote(pending.RequestID), pending.State)
+	for _, other := range pending {
+		if other.RequestID == in.ManagedRequestID {
+			continue
+		}
+		if !differentPackets(ctx, r.Store.Querier(ctx), in.ManagedRequestID, other.RequestID) {
+			return refuse(contract.RefusalDuplicateAssignment, "issue %s is already held by request %s (%s)", strconv.Quote(in.IssueKey), strconv.Quote(other.RequestID), other.State)
+		}
 	}
 	return nil
 }

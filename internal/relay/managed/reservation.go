@@ -25,6 +25,68 @@ func (r Reservation) now() string {
 	return ""
 }
 func refusal(reason, detail string) error { return &store.RefusedError{Reason: reason, Detail: detail} }
+
+// The packet identity of a managed reservation (CRW-839). A feature issue may be delivered by several
+// packets, so a second reservation of one issue is admitted when it is a different packet of the same
+// plan. A packet is resolved from the release intent the request recorded (dag_releases to the live
+// node's dag_node_packets row) or, for a relationship that already exists, from dag_execution_packets.
+// Every one of these reads answers false when anything cannot be resolved: a managed start that is not a
+// DAG release, a node without a packet, a store that predates the packet tables. A false is the
+// caller's refusal, so an unresolvable pair never slips through.
+
+// releasedPacket is the plan and packet a managed request was released under.
+func (r Reservation) releasedPacket(ctx context.Context, requestID string) (plan, packet string, found bool) {
+	err := r.Store.Querier(ctx).QueryRowContext(ctx, "SELECT r.plan_id, p.packet_id FROM dag_releases r"+
+		" JOIN dag_node_packets p ON p.plan_id = r.plan_id AND p.node_id = r.node_id"+
+		" JOIN dag_nodes n ON n.plan_id = p.plan_id AND n.node_id = p.node_id AND n.introduced_rev = p.introduced_rev"+
+		" WHERE r.managed_request_id = ? AND n.retired_rev IS NULL", requestID).Scan(&plan, &packet)
+	if err != nil {
+		return "", "", false
+	}
+	return plan, packet, packet != ""
+}
+
+// relationshipPacket is the plan and packet a live relationship was bound under.
+func (r Reservation) relationshipPacket(ctx context.Context, relationshipID string) (plan, packet string, found bool) {
+	err := r.Store.Querier(ctx).QueryRowContext(ctx, "SELECT plan_id, packet_id FROM dag_execution_packets WHERE relationship_id = ?", relationshipID).Scan(&plan, &packet)
+	if err != nil {
+		return "", "", false
+	}
+	return plan, packet, packet != ""
+}
+
+// packetsApart is whether two managed requests are two distinct packets of one feature issue in the same plan.
+func (r Reservation) packetsApart(ctx context.Context, mine, other string) bool {
+	if mine == "" || other == "" {
+		return false
+	}
+	plan, packet, ok := r.releasedPacket(ctx, mine)
+	if !ok {
+		return false
+	}
+	otherPlan, otherPacket, ok := r.releasedPacket(ctx, other)
+	if !ok {
+		return false
+	}
+	return otherPacket != packet && otherPlan == plan
+}
+
+// packetBesideRelationship is whether this request is a different packet of the same plan as the live
+// relationship it would sit beside.
+func (r Reservation) packetBesideRelationship(ctx context.Context, requestID, relationshipID string) bool {
+	if requestID == "" || relationshipID == "" {
+		return false
+	}
+	plan, packet, ok := r.releasedPacket(ctx, requestID)
+	if !ok {
+		return false
+	}
+	rivalPlan, rivalPacket, ok := r.relationshipPacket(ctx, relationshipID)
+	if !ok {
+		return false
+	}
+	return rivalPacket != packet && rivalPlan == plan
+}
 func (r Reservation) get(ctx context.Context, id string) (store.ManagedStartRequestsRow, error) {
 	return r.Store.ManagedStartRequest(ctx, id)
 }
@@ -49,14 +111,26 @@ func (r Reservation) Reserve(ctx context.Context, in Identity) (out store.Manage
 			return e
 		}
 		if live != nil {
-			return refusal("duplicate_assignment", fmt.Sprintf("issue %q is already assigned under %q (%s); a reservation cannot take it", in.IssueKey, fmt.Sprint(live.Get("relationship_id")), live.Get("status")))
+			// CRW-839: a second packet of one feature issue may be reserved beside the first. The pair is
+			// admitted only when both resolve to distinct packets of the same plan; anything else, a packet
+			// that cannot be resolved included, is refused as it always was.
+			if !r.packetBesideRelationship(ctx, in.RequestID, fmt.Sprint(live.Get("relationship_id"))) {
+				return refusal("duplicate_assignment", fmt.Sprintf("issue %q is already assigned under %q (%s); a reservation cannot take it", in.IssueKey, fmt.Sprint(live.Get("relationship_id")), live.Get("status")))
+			}
 		}
-		other, e := r.Store.PendingManagedStart(ctx, in.IssueKey)
-		if e == nil {
-			return refusal("duplicate_assignment", fmt.Sprintf("issue %q is already held by request %q (%s)", in.IssueKey, other.RequestID, other.State))
-		}
-		if !errors.Is(e, sql.ErrNoRows) {
+		// Every other request in flight for the issue is a rival: a second packet of the issue may be
+		// reserved beside them, anything else is refused as it always was (CRW-839).
+		others, e := r.Store.PendingManagedStarts(ctx, in.IssueKey)
+		if e != nil {
 			return e
+		}
+		for _, other := range others {
+			if other.RequestID == in.RequestID {
+				continue
+			}
+			if !r.packetsApart(ctx, in.RequestID, other.RequestID) {
+				return refusal("duplicate_assignment", fmt.Sprintf("issue %q is already held by request %q (%s)", in.IssueKey, other.RequestID, other.State))
+			}
 		}
 		at := r.now()
 		e = r.Store.ReserveManagedStart(ctx, store.ManagedStartRequestsRow{RequestID: in.RequestID, IssueKey: in.IssueKey, RequestFingerprint: in.Fingerprint, FingerprintVersion: in.Version, Workspace: in.Workspace, MarkerRoot: in.MarkerRoot, SocketIdentity: in.SocketIdentity, CreateRequestID: in.CreateRequestID, DispatchRequestID: in.DispatchRequestID, CreatedAt: at, UpdatedAt: at})

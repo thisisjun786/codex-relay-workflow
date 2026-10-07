@@ -506,6 +506,88 @@ func (r *Registry) guardIssueReservation(ctx context.Context, issue string) erro
 	return refuse(contract.RefusalDuplicateAssignment, "issue %s is held by managed request %s (%s); raw registration cannot acquire it", strconv.Quote(issue), strconv.Quote(request), state)
 }
 
+// packetsApart is whether the relationship a registration would create and the live relationship it
+// sits beside are two distinct packets of one feature issue, registered in the same plan (CRW-839).
+//
+// rivalRelationship is one live relationship of an issue, as the duplicate-assignment guard reads it.
+type rivalRelationship struct{ id, child, parent, status string }
+
+// rivalRelationships are the live relationships of an issue other than the one being registered, in
+// relationship id order, so a refusal names the same rival however the rows came back.
+func rivalRelationships(ctx context.Context, q store.Querier, issueKey, except string) ([]rivalRelationship, error) {
+	rows, err := q.QueryContext(ctx, "SELECT relationship_id, child_task_id, parent_task_id, status FROM relationships"+
+		" WHERE issue_key = ? AND status IN ('active','paused') AND superseded_by IS NULL AND relationship_id != ?"+
+		" ORDER BY relationship_id", issueKey, except)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []rivalRelationship
+	for rows.Next() {
+		var r rivalRelationship
+		if err := rows.Scan(&r.id, &r.child, &r.parent, &r.status); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// The newcomer's packet is resolved from the release intent its managed request recorded (dag_releases
+// to the live node's dag_node_packets row), because the relationship it registers does not exist yet
+// when the guard runs; the rival's is the packet its own relationship was bound under
+// (dag_execution_packets). Two packets are apart only when both resolve, name non-empty distinct packet
+// ids and belong to one plan. Anything else - no release intent, no packet on either side, a pair in
+// different plans - is not two packets, and the caller refuses as it always did.
+func packetsApart(ctx context.Context, q store.Querier, managedRequestID, rivalRelationship string) bool {
+	if managedRequestID == "" || rivalRelationship == "" {
+		return false
+	}
+	plan, packet, ok := releasedPacket(ctx, q, managedRequestID)
+	if !ok {
+		return false
+	}
+	var rivalPlan, rivalPacket string
+	if err := q.QueryRowContext(ctx, "SELECT plan_id, packet_id FROM dag_execution_packets WHERE relationship_id = ?", rivalRelationship).Scan(&rivalPlan, &rivalPacket); err != nil {
+		return false
+	}
+	return rivalPacket != "" && rivalPacket != packet && rivalPlan == plan
+}
+
+// releasedPacket is the plan and packet a managed request was released under: the node its release
+// intent names, and that node's live packet. found is false when the request has no release intent, the
+// node is no longer live, or the node carries no packet - a store that predates the packet tables
+// answers false, and a second relationship of the issue is then refused as it always was.
+func releasedPacket(ctx context.Context, q store.Querier, managedRequestID string) (plan, packet string, found bool) {
+	err := q.QueryRowContext(ctx, "SELECT r.plan_id, p.packet_id FROM dag_releases r"+
+		" JOIN dag_node_packets p ON p.plan_id = r.plan_id AND p.node_id = r.node_id"+
+		" JOIN dag_nodes n ON n.plan_id = p.plan_id AND n.node_id = p.node_id AND n.introduced_rev = p.introduced_rev"+
+		" WHERE r.managed_request_id = ? AND n.retired_rev IS NULL", managedRequestID).Scan(&plan, &packet)
+	if err != nil {
+		return "", "", false
+	}
+	return plan, packet, packet != ""
+}
+
+// differentPackets is whether two managed requests are two distinct packets of one feature issue in the
+// same plan (CRW-839). It is packetsApart for a pair of requests rather than a request and a
+// relationship: both sides resolve through the release intent they recorded. Anything unresolvable is
+// not two packets, and the caller refuses as it always did.
+func differentPackets(ctx context.Context, q store.Querier, mine, other string) bool {
+	if mine == "" || other == "" {
+		return false
+	}
+	plan, packet, ok := releasedPacket(ctx, q, mine)
+	if !ok {
+		return false
+	}
+	otherPlan, otherPacket, ok := releasedPacket(ctx, q, other)
+	if !ok {
+		return false
+	}
+	return otherPacket != packet && otherPlan == plan
+}
+
 func (r *Registry) registerInTransaction(ctx context.Context, rid string, in Registration, now string) (Relationship, error) {
 	link := r.linkage()
 	err := r.Store.Transaction(ctx, func(ctx context.Context, _ *sql.Conn) error {
@@ -530,16 +612,23 @@ func (r *Registry) registerInTransaction(ctx context.Context, rid string, in Reg
 		if err := r.guardManagedRegistration(ctx, in); err != nil {
 			return err
 		}
-		var rival struct{ id, child, parent, status string }
-		err = q.QueryRowContext(ctx, "SELECT relationship_id, child_task_id, parent_task_id, status  FROM relationships"+
-			"  WHERE issue_key = ? AND status IN ('active','paused')    AND superseded_by IS NULL AND relationship_id != ?",
-			in.IssueKey, rid).Scan(&rival.id, &rival.child, &rival.parent, &rival.status)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		// Every live relationship of the issue is a rival. A second relationship is admitted only when
+		// it is a distinct packet of the same plan from all of them (CRW-839); a rival that cannot be
+		// resolved as another packet is refused as it always was, with no new reason. There is more
+		// than one rival only where packets already made room for them, so this is the same single
+		// comparison for an issue that never had a packet.
+		rivals, err := rivalRelationships(ctx, q, in.IssueKey, rid)
+		if err != nil {
 			return err
 		}
-		if err == nil && rival.id != in.Supersedes {
-			return refuse(contract.RefusalDuplicateAssignment, "issue %s is already assigned to child %s under %s (%s, parent %s); reuse that assignment, or pass supersedes to replace it deliberately",
-				strconv.Quote(in.IssueKey), strconv.Quote(rival.child), strconv.Quote(rival.id), rival.status, strconv.Quote(rival.parent))
+		for _, rival := range rivals {
+			if rival.id == in.Supersedes {
+				continue
+			}
+			if !packetsApart(ctx, q, in.ManagedRequestID, rival.id) {
+				return refuse(contract.RefusalDuplicateAssignment, "issue %s is already assigned to child %s under %s (%s, parent %s); reuse that assignment, or pass supersedes to replace it deliberately",
+					strconv.Quote(in.IssueKey), strconv.Quote(rival.child), strconv.Quote(rival.id), rival.status, strconv.Quote(rival.parent))
+			}
 		}
 		if in.Supersedes != "" {
 			var before sql.NullString
