@@ -278,17 +278,45 @@ func GoalplanLockHolderAlive(cwd, slug string) bool {
 	if err != nil {
 		return false
 	}
-	raw, err := os.ReadFile(filepath.Join(dir, GoalplanLockDir, GoalplanLockOwnerFile))
+	raw, err := readLockOwnerBytes(filepath.Join(dir, GoalplanLockDir, GoalplanLockOwnerFile))
 	if err != nil {
-		return false
+		// The lock directory exists but its owner.json is absent or unreadable. mkdir acquires the lock
+		// and owner.json is written right after, so this is the ordinary state of a holder that has
+		// just started; it is also what a foreign or corrupt lock looks like. Treat it as a live holder
+		// (the caller's wait is bounded), because the opposite default would refuse a competing creator
+		// that is about to publish (CRW-646 c1).
+		return true
 	}
 	var owner struct {
 		PID int `json:"pid"`
 	}
 	if json.Unmarshal(raw, &owner) != nil || owner.PID <= 0 {
-		return false
+		return true
 	}
 	return processAlive(owner.PID)
+}
+
+// readLockOwnerBytes reads a lock's small owner/metadata file without following a symbolic link and
+// without blocking on a special file: the open refuses a link (O_NOFOLLOW) and a FIFO or device
+// (O_NONBLOCK with a regular-file check), so a hostile or accidental special file at the path cannot
+// turn a bounded lock wait into an indefinite hang.
+func readLockOwnerBytes(path string) ([]byte, error) {
+	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC|unix.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	f := os.NewFile(uintptr(fd), path)
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, errors.New("lock metadata is not a regular file: " + path)
+	}
+	// A small cap: the file this reads is a pid or one short JSON object, so a file that claims to be
+	// huge is not one this call should spend memory on.
+	return io.ReadAll(io.LimitReader(f, 4096))
 }
 
 // processAlive reports whether pid names a running process: signal 0 reaches it, and a permission

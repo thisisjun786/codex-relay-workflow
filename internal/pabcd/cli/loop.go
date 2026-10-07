@@ -100,12 +100,19 @@ func loopInitGoalplanHolderAlive(cwd, slug string) bool {
 // loopInitSessionHolderAlive reports whether the process holding the session's lock is still running.
 // It reads the pid the lock file holds, which is what state's lock writes.
 func loopInitSessionHolderAlive(cwd, sessionID string) bool {
-	raw, err := os.ReadFile(state.StatePath(cwd, sessionID) + ".lock")
+	raw, err := state.ReadLockOwnerBytes(state.StatePath(cwd, sessionID) + ".lock")
 	if err != nil {
-		return false
+		// The lock file exists but could not be read as a small regular file. state's lock writes the
+		// pid right after creating the file, so a momentary empty read is the ordinary state of a holder
+		// that has just started; treat it as alive (the wait is bounded) rather than refusing a
+		// competing creator that is about to publish.
+		return true
 	}
 	pid, err := strconv.Atoi(strings.TrimSpace(string(raw)))
-	return err == nil && pid > 0 && loopInitProcessAlive(pid)
+	if err != nil || pid <= 0 {
+		return true
+	}
+	return loopInitProcessAlive(pid)
 }
 
 // loopInitAwaitPlan waits for slug's plan while the competing init that holds the lock is still
@@ -380,10 +387,11 @@ func loopInitCreate(args LoopCliArgs, slug, objective string) (LoopCliResult, er
 	// refusal (CRW-646 c1), so it keeps going while the holder is a LIVE process — the winner's own
 	// lifetime, however long that is — re-checking the plan and re-attempting the acquisition each
 	// round; a round that takes the lock runs the same check-and-publish body, so a holder that
-	// released without publishing is simply followed. Only an abandoned lock (its holder gone) ends
-	// the wait, and it ends with the shared lock's own busy message, which is that lock's documented
-	// recovery for a directory nobody is holding.
-	for {
+	// released without publishing is simply followed. The wait ends when the plan appears, when the
+	// holder is gone (an abandoned lock, answered with the shared lock's own busy message, that lock's
+	// documented recovery), or after loopInitPlanWaitLimit rounds — the backstop for a holder that
+	// stays alive but never finishes, so a reused pid cannot make init hang forever.
+	for round := 0; round < loopInitPlanWaitLimit; round++ {
 		var refusal *LoopCliResult
 		warnings := []string{}
 		locked, err := goalplan.WithGoalplanCreationLock(args.Cwd, slug, func() error {
@@ -430,6 +438,7 @@ func loopInitCreate(args LoopCliArgs, slug, objective string) (LoopCliResult, er
 		}
 		loopInitPlanWaitPause()
 	}
+	return LoopCliResult{}, fmt.Errorf("loop init: slug '%s' is still held by a live writer that has not published a plan", slug)
 }
 
 // loopPlanFileExists reports whether anything occupies slug's plan path. A regular file is the plan; a

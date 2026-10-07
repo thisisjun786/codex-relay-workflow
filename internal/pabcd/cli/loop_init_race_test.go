@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -381,7 +382,7 @@ func TestLoopInitAnswersAlreadyExistsWhenTheLockTimesOut(t *testing.T) {
 	// The competing init is a LIVE holder — this test process, whose pid the lock's owner.json names —
 	// that publishes the plan only after the loser's acquisition budget has run out. The loser must
 	// keep waiting for a live holder and then answer the criterion's refusal, not the busy message.
-	holder := startLoopPlanHolder(t, cwd, dir, slug, "Ship the export feature", 200*time.Millisecond)
+	holder := startLoopPlanHolder(t, cwd, dir, slug, "Ship the export feature", 300*time.Millisecond)
 	loopInitAfterAbsenceCheck = func() { holder.hold() }
 	t.Cleanup(func() { loopInitAfterAbsenceCheck = nil })
 
@@ -547,7 +548,9 @@ func TestLoopInitAnswersAlreadyExistsWhenTheSessionLockTimesOut(t *testing.T) {
 	}
 	loopInitAfterAbsenceCheck = func() {
 		go func() {
-			time.Sleep(200 * time.Millisecond)
+			// Publish after the session lock's own budget (about 285 ms), so the loser has already run
+			// out of acquisition and is in its post-budget wait when the plan appears.
+			time.Sleep(400 * time.Millisecond)
 			plan := goalplan.BuildGoalplan(goalplan.NewGoalplanInput{Objective: "Bound objective"})
 			published <- goalplan.WriteGoalplan(cwd, plan)
 		}()
@@ -561,6 +564,45 @@ func TestLoopInitAnswersAlreadyExistsWhenTheSessionLockTimesOut(t *testing.T) {
 	}
 	if err := <-published; err != nil {
 		t.Fatalf("the competing init could not publish: %v", err)
+	}
+}
+
+// TestLoopInitDoesNotHangOnASpecialFileAtTheSessionLock is the hardening finding on this pull
+// request: the liveness probe reads the lock file, and a FIFO with no writer at that path would block
+// the read forever. The probe opens with O_NOFOLLOW|O_NONBLOCK and refuses a non-regular file, so the
+// command answers instead of hanging.
+func TestLoopInitDoesNotHangOnASpecialFileAtTheSessionLock(t *testing.T) {
+	cwd := loopReadWorkspace(t)
+	gitInit(t, cwd)
+	const id = "rec-fifo"
+	const slug = "bound-objective"
+	loopSession(t, cwd, id)
+	loopInitFastWaits(t)
+	if err := syscall.Mkfifo(state.StatePath(cwd, id)+".lock", 0o666); err != nil {
+		t.Skipf("mkfifo is unavailable here: %v", err)
+	}
+
+	done := make(chan LoopCliResult, 1)
+	go func() {
+		args, err := ParseLoopCliArgs([]string{"init", "--objective", "Bound objective", "--session", id}, cwd)
+		if err != nil {
+			done <- LoopCliResult{Code: -1, Output: err.Error()}
+			return
+		}
+		result, runErr := RunLoopCli(args)
+		if runErr != nil {
+			done <- LoopCliResult{Code: -2, Output: runErr.Error()}
+			return
+		}
+		done <- result
+	}()
+	select {
+	case result := <-done:
+		if result.Code == 0 {
+			t.Fatalf("init succeeded against a FIFO lock: %q", result.Output)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("init hung on a FIFO at the session lock path")
 	}
 }
 
@@ -591,12 +633,14 @@ func TestLoopInitRefusesALinkedStateRootBeforeWriting(t *testing.T) {
 	}
 }
 
-// loopInitFastWaits removes the pause between init's post-lock wait rounds, so a case that drives
-// that wait does not spend real time in it. The wait itself follows the competing holder's liveness,
-// which the cases control, so this only removes the sleep. It restores the seam when the test ends.
+// loopInitFastWaits shortens the pause between init's post-lock wait rounds so a case that drives
+// that wait does not spend the production budget in it, while leaving the wait long enough (limit x
+// pause) for a competing publication scheduled just after the lock's own budget to land inside it.
+// The wait itself follows the competing holder's liveness, which the cases control. It restores the
+// seam when the test ends.
 func loopInitFastWaits(t *testing.T) {
 	t.Helper()
 	pause := loopInitPlanWaitPause
-	loopInitPlanWaitPause = func() {}
+	loopInitPlanWaitPause = func() { time.Sleep(time.Millisecond) }
 	t.Cleanup(func() { loopInitPlanWaitPause = pause })
 }
