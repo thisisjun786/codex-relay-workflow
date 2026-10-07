@@ -436,6 +436,7 @@ func TestToolsReview836IdentityFailsClosedWhenTheSpelledPathIsUnreadable(t *test
 		t.Fatalf("componentIdentity recorded the peer's directory %s", peer)
 	}
 }
+
 // C1, the read-failure side: a segment above the parent can vanish between the mkdir and the
 // identity read, which leaves the directory this call just made in place but no longer reachable by
 // the spelling. It is still this call's, so the record must keep it -- reached through the parent
