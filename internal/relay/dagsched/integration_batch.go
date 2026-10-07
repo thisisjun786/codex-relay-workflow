@@ -33,6 +33,12 @@ import (
 // zeroObjectID is git's create-only expected value for update-ref.
 const zeroObjectID = "0000000000000000000000000000000000000000"
 
+// IntegrationVerifierHostError is a verify command that could not be started at all (a missing executable, a bad
+// directory): not a failed verification, so the batch stops instead of splitting every candidate out.
+type IntegrationVerifierHostError struct{ Detail string }
+
+func (e *IntegrationVerifierHostError) Error() string { return e.Detail }
+
 // IntegrationBatchVerifier runs the one verification command in dir with the extra environment. A non-nil error is a
 // failing run (a non-zero exit); the command decides the result only together with the record it writes.
 type IntegrationBatchVerifier func(ctx context.Context, dir string, env []string) error
@@ -222,6 +228,16 @@ func integrationBatchID(in IntegrationBatchInput, old string, candidates []Candi
 
 // recordIntent writes the intent before any git call: one batch-level row and one row per frozen candidate.
 func (s *Scheduler) recordIntent(ctx context.Context, in IntegrationBatchInput, batch, old, baseTip string, candidates []Candidate) error {
+	rows, err := store.IntegrationStagesOfPlan(ctx, s.Store, in.Plan)
+	if err != nil {
+		return err
+	}
+	for _, r := range rows {
+		if r.BatchID == batch && r.Stage == "intent" {
+			// the same batch recorded its intent before: the identity is the same, so the rows stand
+			return nil
+		}
+	}
 	detail, err := json.Marshal(map[string]string{"integration_ref": in.IntegrationRef, "base": baseTip, "old_head": old})
 	if err != nil {
 		return err
@@ -320,7 +336,7 @@ func (s *Scheduler) completePendingMarks(ctx context.Context, in IntegrationBatc
 		moved := false
 		for _, x := range rows {
 			if x.BatchID == r.BatchID && x.Stage == "ref_moved" {
-				ok, err := isAncestorOf(ctx, in.Checkout, x.HeadSHA, in.IntegrationRef)
+				ok, err := isAncestorOf(ctx, in.Checkout, x.Detail, in.IntegrationRef)
 				if err != nil {
 					return err
 				}
@@ -440,6 +456,10 @@ func (w *integrationWorktree) verify(ctx context.Context) (VerificationRecord, s
 	recordPath := filepath.Join(dir, "verification-record.json")
 	env := []string{"CRW_VERIFY_RECORD=" + recordPath, "CRW_VERIFY_BASE=" + w.baseTip, "CRW_VERIFY_HEAD=" + commit}
 	if err := w.deps.Verify(ctx, w.dir, env); err != nil {
+		var host *IntegrationVerifierHostError
+		if errors.As(err, &host) {
+			return VerificationRecord{}, "", false, err
+		}
 		return VerificationRecord{}, "", false, nil
 	}
 	raw, err := os.ReadFile(recordPath)

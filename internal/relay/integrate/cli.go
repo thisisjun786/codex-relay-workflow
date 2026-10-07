@@ -3,6 +3,7 @@ package integrate
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -100,10 +101,21 @@ func commandVerifier(argv []string) dagsched.IntegrationBatchVerifier {
 	return func(ctx context.Context, dir string, env []string) error {
 		cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 		cmd.Dir = dir
-		cmd.Env = append(os.Environ(), env...)
+		// inherited GIT_* variables would redirect the command's git reads to another repository, so they are dropped
+		for _, kv := range os.Environ() {
+			if !strings.HasPrefix(kv, "GIT_") {
+				cmd.Env = append(cmd.Env, kv)
+			}
+		}
+		cmd.Env = append(cmd.Env, env...)
 		var stderr bytes.Buffer
 		cmd.Stderr = &stderr
 		if err := cmd.Run(); err != nil {
+			var exitErr *exec.ExitError
+			if !errors.As(err, &exitErr) {
+				// the command never ran: a host failure, not a verification result
+				return &dagsched.IntegrationVerifierHostError{Detail: fmt.Sprintf("the verification command could not start: %v", err)}
+			}
 			return fmt.Errorf("the verification command failed: %v: %s", err, strings.TrimSpace(stderr.String()))
 		}
 		return nil

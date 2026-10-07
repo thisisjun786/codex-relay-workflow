@@ -375,3 +375,59 @@ func TestIntegrationBatchRefusesAStaleEpoch(t *testing.T) {
 		t.Fatal("the integration branch was created under a stale epoch")
 	}
 }
+
+// P1-1: a mark that could not be written leaves its batch visible as ref_moved with a pending mark, and the next run
+// completes it from the frozen row without an error. The candidate is made stale between the verification and the
+// mark, so its mark is refused; restoring it lets the completion write the mark.
+func TestIntegrationBatchCompletesAPendingMarkFromItsFrozenRow(t *testing.T) {
+	k := newBatchKit(t, batchNode{name: "a", files: map[string]string{"a.txt": "a\n"}})
+	k.acceptByCommit("a")
+	deps := IntegrationBatchDeps{Verify: stubVerifier(writeStubVerifier(t)), Update: func(ctx context.Context, checkout, ref, newCommit, oldCommit string) error {
+		k.invRevise("g", "a", "g-r2", invTitle("changed before the mark"))
+		return updateIntegrationRef(ctx, checkout, ref, newCommit, oldCommit)
+	}}
+	res, err := k.sched.IntegrateBatch(context.Background(), k.batchIn(), deps)
+	if err != nil {
+		t.Fatalf("batch: %v", err)
+	}
+	if len(res.Pending) != 1 || res.Pending[0] != "a" {
+		t.Fatalf("pending %+v; want a", res.Pending)
+	}
+	if countStage(k.stageRows(), "mark_pending") != 1 {
+		t.Fatal("the pending mark was not recorded")
+	}
+	in := k.batchIn()
+	if err := k.sched.completePendingMarks(context.Background(), in); err != nil {
+		t.Fatalf("completion while the candidate is still stale: %v", err)
+	}
+	if countStage(k.stageRows(), "marked") != 0 {
+		t.Fatal("a stale candidate's mark was written")
+	}
+	k.invRevise("g", "a", "g-r3", func(n doc) {})
+	if err := k.sched.completePendingMarks(context.Background(), in); err != nil {
+		t.Fatalf("completion: %v", err)
+	}
+	if countStage(k.stageRows(), "marked") != 1 {
+		t.Fatal("the pending mark was not completed from its frozen row")
+	}
+}
+
+// P1-2: a batch that split every candidate moved nothing; running the same batch again is the same identity and must
+// not collide with its own intent rows. The second run, with the verifier fixed, integrates the candidate.
+func TestIntegrationBatchReRunsAfterAnUnmovedBatch(t *testing.T) {
+	k := newBatchKit(t, batchNode{name: "a", files: map[string]string{"a.txt": "a\n"}})
+	k.acceptByCommit("a")
+	t.Setenv("CRW_TEST_WRONG_TREE", "1")
+	first, err := k.sched.IntegrateBatch(context.Background(), k.batchIn(), IntegrationBatchDeps{Verify: stubVerifier(writeStubVerifier(t)), Update: updateIntegrationRef})
+	if err != nil || len(first.Merged) != 0 {
+		t.Fatalf("first run: %+v, %v; want nothing merged", first, err)
+	}
+	t.Setenv("CRW_TEST_WRONG_TREE", "")
+	second, err := k.sched.IntegrateBatch(context.Background(), k.batchIn(), IntegrationBatchDeps{Verify: stubVerifier(writeStubVerifier(t)), Update: updateIntegrationRef})
+	if err != nil {
+		t.Fatalf("re-run of the same batch: %v", err)
+	}
+	if len(second.Merged) != 1 || second.Merged[0].NodeID != "a" {
+		t.Fatalf("re-run merged %+v; want a", second.Merged)
+	}
+}
