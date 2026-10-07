@@ -300,6 +300,16 @@ func resetLinkWalkTarget(dir *os.File, name, target string) (exists, inside bool
 			continue
 		}
 		path := resetLinkWalkPath(walked, component)
+		if resetLinkWalkPathTooLong(path) {
+			// The walk resolves the target through one concatenated pathname, and the kernel applies
+			// its own limit to a single pathname (ENAMETOOLONG). A target the walk cannot express in
+			// one pathname is one it cannot keep inside the root, so it goes to the descriptor stat and
+			// the root-path judgement: those resolve the candidate's own short link name through the
+			// kernel, which keeps an in-root target's verdict equal to the oracle's, and they refuse a
+			// target that leaves the root once the pinned directory was renamed. Answering absent here
+			// instead would keep a link the oracle removes and would miss that refusal.
+			return false, false
+		}
 		st, err := resetLinkWalkLstat(dir, path)
 		if err != nil {
 			return false, true
@@ -379,6 +389,25 @@ func resetLinkWalkSearchableName(walked []string) string {
 		return resetLinkWalkSearchProbe
 	}
 	return strings.Join(walked, string(filepath.Separator)) + string(filepath.Separator) + resetLinkWalkSearchProbe
+}
+
+// resetLinkWalkPathTooLong reports whether a pathname the walk would hand to one fstatat has
+// reached the limit the kernel applies to a single pathname, where that call answers ENAMETOOLONG.
+// The walk concatenates the target's components into one pathname, while the kernel resolves the
+// candidate's short link name component by component, so a target past this limit is one the walk
+// cannot keep inside the root and must hand to the descriptor stat and the root-path judgement
+// instead of deciding it.
+func resetLinkWalkPathTooLong(path string) bool {
+	return len(path) >= resetLinkWalkPathMax()
+}
+
+// resetLinkWalkPathMax is the longest pathname one fstatat call may carry: the kernel's own PATH_MAX,
+// which is 4096 on Linux and 1024 on XNU.
+func resetLinkWalkPathMax() int {
+	if runtime.GOOS == "darwin" {
+		return 1024
+	}
+	return 4096
 }
 
 // resetLinkWalkSearchProbe is the name the search probe looks up. It is never created: the point
