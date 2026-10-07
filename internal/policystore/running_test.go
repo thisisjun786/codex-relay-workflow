@@ -155,6 +155,40 @@ func TestRunningDigestUsesTheRelayTheManageConfigNames(t *testing.T) {
 	}
 }
 
+// TestRunningDigestRefusesAConfigurationItCannotRead is C2 for a configuration the management
+// command cannot read at all, which is a different failure from a document that is not JSON: the
+// path is a directory, so opening it fails before any parsing. The reading must answer unavailable
+// with that reason and must not fall back to the default relay.
+func TestRunningDigestRefusesAConfigurationItCannotRead(t *testing.T) {
+	socket, state := stubRunningSeams(t, "same-digest")
+	root := t.TempDir()
+	codexHome := filepath.Join(root, ".codex")
+	if err := os.MkdirAll(codexHome, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	config := filepath.Join(root, "crw-config.json")
+	if err := os.Mkdir(config, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	values := map[string]string{
+		"HOME": root, "CODEX_HOME": codexHome, "CRW_CONFIG": config,
+		"XDG_CONFIG_HOME": filepath.Join(root, "config"), "XDG_STATE_HOME": filepath.Join(root, "state"),
+	}
+	for key, value := range values {
+		t.Setenv(key, value)
+	}
+	running := RunningDigest(context.Background(), envOf(values))
+	if running.State != RunningUnavailable || running.Digest != "" {
+		t.Fatalf("reading = %+v", running)
+	}
+	if running.Reason == "" {
+		t.Fatal("an unreadable configuration carries no reason")
+	}
+	if *socket != "" || *state != "" {
+		t.Fatalf("the relay %q/%q was used although the configuration could not be read", *state, *socket)
+	}
+}
+
 // TestRunningDigestUsesTheDefaultSocketTheManageConfigFills is C1 for every configuration the
 // management command accepts without naming a relay: the socket is the App Server default the
 // command itself fills, compared with the command own report.
