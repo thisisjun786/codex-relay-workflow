@@ -141,6 +141,14 @@ func copyRace(t *testing.T, copy func(source, path string) error) (busy, written
 					return
 				}
 				atomic.AddInt64(&written, info.Size())
+				// CopyBinary asks for 0755 and this process's umask may clear the owner's execute bit,
+				// which would make running the copy fail with EACCES and be read as a copy failure. The
+				// exercise is the inherited write descriptor, not the mode (the caller-contract test
+				// pins the mode against a same-flags reference open), so the bit is restored here.
+				if err := os.Chmod(target, 0o755); err != nil {
+					fail("making %s executable: %v", target, err)
+					return
+				}
 				run := exec.Command(target)
 				// A multicall program chooses its applet from argv[0]. The copy is named after the
 				// copy, not the program, so running it under that name asks a BusyBox true(1) for an
