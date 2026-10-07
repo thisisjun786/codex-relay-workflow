@@ -140,14 +140,24 @@ func validWorkBranch(s string) error {
 		return errors.New("it holds '//'")
 	case strings.Contains(s, "@{"):
 		return errors.New("it holds '@{'")
-	case strings.HasSuffix(s, ".lock"):
-		return errors.New("it ends with '.lock'")
 	case strings.ContainsAny(s, " ~^:?*[\\"):
 		return errors.New("it holds a character git refuses in a ref name")
 	}
 	for _, r := range s {
 		if r < 0x20 || r == 0x7f {
 			return errors.New("it holds a control character")
+		}
+	}
+	// git judges every slash-delimited component, not only the whole name: a component may not begin with
+	// '.' or end with '.lock', so foo/.bar and foo/bar.lock/baz are refused here as git refuses them.
+	for _, part := range strings.Split(s, "/") {
+		switch {
+		case part == "":
+			return errors.New("it holds an empty path component")
+		case strings.HasPrefix(part, "."):
+			return errors.New("it holds a path component that begins with '.'")
+		case strings.HasSuffix(part, ".lock"):
+			return errors.New("it holds a path component that ends with '.lock'")
 		}
 	}
 	return nil
@@ -408,7 +418,7 @@ func (s *Scheduler) Release(ctx context.Context, plan, node, actor string, req R
 		return s.replay(ctx, plan, node, actor, row)
 	}
 	recorded = true
-	return s.startAndBind(ctx, plan, node, actor, out, raw, false)
+	return s.startAndBind(ctx, plan, node, actor, out, raw, req.WorkBranch, false)
 }
 
 // checkCriteria is B-10 at release: the criteria the child will be registered with are the plan's.
@@ -419,6 +429,23 @@ func (s *Scheduler) checkCriteria(n dag.SnapNode, criteria []Criterion) error {
 	}
 	if got := delivery.SetDigest(list); got != n.CriteriaSetDigest {
 		return refuse(contract.RefusalCriteriaSetChanged, "the request's criteria digest to %s and the plan fixed %s for node %s", got, n.CriteriaSetDigest, n.NodeID)
+	}
+	// A packet's covers name the criteria it takes from the feature, so the child registered for it must
+	// actually be judged against them (CRW-839): a cover the request does not register is refused here.
+	if len(n.Covers) > 0 {
+		registered := map[string]bool{}
+		for _, c := range criteria {
+			registered[strings.TrimSpace(c.ID)] = true
+		}
+		var missing []string
+		for _, c := range n.Covers {
+			if !registered[c] {
+				missing = append(missing, c)
+			}
+		}
+		if len(missing) > 0 {
+			return refuse(contract.RefusalCriteriaSetChanged, "node %s covers criteria the release request does not register: %s", n.NodeID, strings.Join(missing, ", "))
+		}
 	}
 	return nil
 }
@@ -695,11 +722,11 @@ func (s *Scheduler) replay(ctx context.Context, plan, node, actor string, row re
 	if frozenReq.Marker != s.Selectors.MarkerRoot || frozenReq.Socket != s.Selectors.Socket || frozenReq.Selector != s.Selectors.StateSelector {
 		return out, refuse(contract.RefusalDispositionConflict, "the release of %s was frozen under marker root %q, socket %q and state %q and is replayed under other spellings", node, frozenReq.Marker, frozenReq.Socket, frozenReq.Selector)
 	}
-	return s.startAndBind(ctx, plan, node, actor, out, []byte(frozenReq.Raw), true)
+	return s.startAndBind(ctx, plan, node, actor, out, []byte(frozenReq.Raw), workBranchOf([]byte(frozenReq.Raw)), true)
 }
 
 // startAndBind runs the managed start with the frozen bytes and binds the child it admitted to the node.
-func (s *Scheduler) startAndBind(ctx context.Context, plan, node, actor string, out ReleaseResult, raw []byte, replayed bool) (ReleaseResult, error) {
+func (s *Scheduler) startAndBind(ctx context.Context, plan, node, actor string, out ReleaseResult, raw []byte, workBranch string, replayed bool) (ReleaseResult, error) {
 	out.Replayed = replayed
 	if s.Start == nil {
 		return out, errors.New("this scheduler has no managed-start engine")
@@ -788,10 +815,14 @@ func (s *Scheduler) startAndBind(ctx context.Context, plan, node, actor string, 
 			return err
 		} else if had && hadPacket != nodePacket {
 			return refuse(contract.RefusalRelationshipConflict, "relationship %s is already recorded under packet %s, not %s", rid, hadPacket, nodePacket)
+		} else if had {
+			// the same packet again: this bind is the replay of the one that recorded it, so it writes nothing
+			// (the insert below is unconditional otherwise, and a second binder would fail the primary key)
+			return nil
 		}
 		branch := sql.NullString{}
-		if b := workBranchOf(raw); b != "" {
-			branch = sql.NullString{String: b, Valid: true}
+		if workBranch != "" {
+			branch = sql.NullString{String: workBranch, Valid: true}
 		}
 		return store.RecordDagExecutionPacket(txCtx, s.Store, store.DagExecutionPacketRow{
 			RelationshipID: rid, PlanID: plan, NodeID: node, IssueKey: nodeIssue, PacketID: nodePacket, Branch: branch, RecordedAt: s.now()})

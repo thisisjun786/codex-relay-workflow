@@ -89,6 +89,7 @@ The packet rules ([the packet identity](#the-packet-identity)) are judged with t
 | `owns_not_covered` | `owns` names a criterion id the node does not cover |
 | `criterion_uncovered` | a criterion the declaration marks `required` is taken by no live node of its issue |
 | `criterion_owner_missing`, `criterion_owner_conflict` | two or more live nodes of one issue take a criterion and not exactly one of them names it in `owns` |
+| `feature_criteria_without_node` | a declaration names an issue the plan holds no live implementation node for, so its criteria would be judged by nobody |
 
 The limits bound a plan's size. They are not execution limits (how many nodes may run at once), which are the scheduler's.
 

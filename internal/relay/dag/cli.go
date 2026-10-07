@@ -252,6 +252,16 @@ func runLog(ctx context.Context, services dispatch.Services, args dispatch.Args)
 			{Key: "coordinator_epoch", Value: ev.CoordinatorEpoch}, {Key: "author_task_id", Value: ev.AuthorTaskID},
 			{Key: "recorded_at", Value: ev.RecordedAt}, {Key: "state_digest", Value: ev.StateDigest}, {Key: "changes", Value: changes},
 		}
+		if len(ev.FeatureCriteria) > 0 {
+			// The declaration is part of the revision, so a reader that follows the cursor can rebuild the
+			// plan (and its recorded state digests) from the log (CRW-839).
+			decls := make([]any, len(ev.FeatureCriteria))
+			for j, d := range ev.FeatureCriteria {
+				decls[j] = map[string]any{"issue_key": d.IssueKey, "criteria": criteriaList(d.Criteria)}
+			}
+			entry := events[i].(contract.OrderedObject)
+			events[i] = append(entry, contract.Field{Key: "feature_criteria", Value: decls})
+		}
 	}
 	return contract.OrderedObject{
 		{Key: "ok", Value: true}, {Key: "schema", Value: "dag-plan-log/1"}, {Key: "plan_id", Value: page.PlanID},

@@ -154,6 +154,19 @@ func checkPackets(live map[string]liveNode, decls map[string][]Criterion, nodePa
 		issues = append(issues, issue)
 	}
 	sort.Strings(issues)
+	// A declaration for an issue the plan holds no live implementation node for would leave its criteria
+	// judged by nobody: it is a typo or a plan that lost its node, and either way it is refused rather
+	// than read as a feature with no packets.
+	declaredIssues := make([]string, 0, len(decls))
+	for issue := range decls {
+		declaredIssues = append(declaredIssues, issue)
+	}
+	sort.Strings(declaredIssues)
+	for _, issue := range declaredIssues {
+		if _, ok := byIssue[issue]; !ok {
+			add(RuleFeatureCriteriaNoNode, "plan", "issue %s declares %d criteria and the plan holds no live implementation node for it; a declaration is judged against the packets of its issue", issue, len(decls[issue]))
+		}
+	}
 	for _, issue := range issues {
 		nodes := byIssue[issue]
 		sort.Strings(nodes)

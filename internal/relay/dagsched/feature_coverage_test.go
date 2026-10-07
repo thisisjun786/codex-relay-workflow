@@ -70,14 +70,49 @@ func featureCriteriaDoc(issue string, criteria ...doc) doc {
 
 func criterionDoc(id string, required bool) doc { return doc{"id": id, "required": required} }
 
-// packetExecution binds a node to the relationship that executes it.
-func packetExecution(f *fixture, plan, node, relationship string) {
-	f.exec("INSERT INTO dag_node_executions (plan_id, node_id, relationship_id, execution_generation, manifest_digest, kind, managed_request_id) VALUES (?,?,?,1,'m','initial',NULL)", plan, node, relationship)
+// nodeSlice is the slice digest the plan holds for a node: the manifest of a current execution is built
+// for exactly this.
+func nodeSlice(f *fixture, plan, node string) string {
+	for _, n := range f.snapshot(plan).Nodes {
+		if n.NodeID == node {
+			return n.SliceDigest
+		}
+	}
+	f.t.Fatalf("no node %s in plan %s", node, plan)
+	return ""
 }
+
+// packetExecution binds a node to the relationship that executes it, through a manifest built for the node
+// version the plan holds (a node whose spec has moved since has no current execution).
+func packetExecution(f *fixture, plan, node, relationship string) {
+	digest := "manifest-" + relationship
+	f.exec("INSERT INTO dag_input_manifests (manifest_digest, node_id, body_json, rule_version_json, coordinator_epoch, created_at) VALUES (?,?,?,'{}',0,'t')", digest, node, `{"node_slice_digest":"`+nodeSlice(f, plan, node)+`"}`)
+	f.exec("INSERT INTO dag_node_executions (plan_id, node_id, relationship_id, execution_generation, manifest_digest, kind, managed_request_id) VALUES (?,?,?,1,?,'initial',NULL)", plan, node, relationship, digest)
+}
+
+// liveRelationship records the live relationship a node's execution belongs to: the reading only credits a
+// node whose relationship is still active (an archived one is never the current child).
+func liveRelationship(f *fixture, plan, node, relationship string) {
+	issue := nodeIssue(f, plan, node)
+	f.exec("INSERT INTO relationships (relationship_id, issue_key, status, parent_task_id, parent_host_id, parent_cwd, parent_cxc_session, child_task_id, child_host_id, child_cwd, child_cxc_session, execution_generation, artifact_roots, allowed_recipients, scope_ref, supersedes, superseded_by, created_at, updated_at) VALUES (?,?,'active','parent','host','/p','cxc',?,'host','/c','cxc',1,'[]','[]','scope',NULL,NULL,'t','t')", relationship, issue, "child-"+relationship)
+}
+
+func nodeIssue(f *fixture, plan, node string) string {
+	for _, n := range f.snapshot(plan).Nodes {
+		if n.NodeID == node {
+			return n.IssueKey
+		}
+	}
+	f.t.Fatalf("no node %s in plan %s", node, plan)
+	return ""
+}
+
+// acceptanceHead is the head a packet's acceptance stands on, which its landing must match.
+func acceptanceHead(relationship string) string { return "head-" + relationship }
 
 // packetAcceptance records the active acceptance of a relationship's output.
 func packetAcceptance(f *fixture, id, plan, node, relationship string) {
-	f.exec("INSERT INTO dag_acceptances (acceptance_id, plan_id, node_id, manifest_digest, relationship_id, execution_generation, event_id, revision_hash, criteria_set_digest, verdict, head_sha, repository, pr_number, output_manifest_ref, evidence_digest, ack_tier, verdict_turn_id, rule_version_json, accepted_by_task_id, coordinator_epoch, accepted_at, supersedes_acceptance_id, state) VALUES (?,?,?,'m',?,1,'ev','rev','c','verified','head-'||?,'owner/repo',7,NULL,NULL,'host','turn','{}','parent',0,'2026-10-02T00:00:00.000000+00:00',NULL,'active')", id, plan, node, relationship, relationship)
+	f.exec("INSERT INTO dag_acceptances (acceptance_id, plan_id, node_id, manifest_digest, relationship_id, execution_generation, event_id, revision_hash, criteria_set_digest, verdict, head_sha, repository, pr_number, output_manifest_ref, evidence_digest, ack_tier, verdict_turn_id, rule_version_json, accepted_by_task_id, coordinator_epoch, accepted_at, supersedes_acceptance_id, state) VALUES (?,?,?,'m',?,1,'ev','rev','c','verified',?,'owner/repo',7,NULL,NULL,'host','turn','{}','parent',0,'2026-10-02T00:00:00.000000+00:00',NULL,'active')", id, plan, node, relationship, acceptanceHead(relationship))
 }
 
 // packetLanded records a bundle that carried the relationship and landed.
@@ -105,9 +140,11 @@ func TestFeatureCoverageNeedsEveryRequiredCriterionIntegrated(t *testing.T) {
 		packetNodeDoc("n2", "CRW-F", "p2", []string{"c2", "c3"}, nil))
 	packetExecution(f, "plan", "n1", "rel-1")
 	packetExecution(f, "plan", "n2", "rel-2")
+	liveRelationship(f, "plan", "n1", "rel-1")
+	liveRelationship(f, "plan", "n2", "rel-2")
 	packetAcceptance(f, "acc-1", "plan", "n1", "rel-1")
 	packetAcceptance(f, "acc-2", "plan", "n2", "rel-2")
-	packetLanded(f, "train-1", "rel-1", "head-1", "landed-1")
+	packetLanded(f, "train-1", "rel-1", acceptanceHead("rel-1"), "landed-1")
 
 	first := coverageOf(t, f, "plan", "CRW-F")
 	if first.Complete {
@@ -131,7 +168,7 @@ func TestFeatureCoverageNeedsEveryRequiredCriterionIntegrated(t *testing.T) {
 		t.Fatalf("c2 = %+v, want a required criterion whose packet is not integrated", got)
 	}
 
-	packetLanded(f, "train-2", "rel-2", "head-2", "landed-2")
+	packetLanded(f, "train-2", "rel-2", acceptanceHead("rel-2"), "landed-2")
 	second := coverageOf(t, f, "plan", "CRW-F")
 	if !second.Complete {
 		t.Fatalf("both packets integrated still reads incomplete: %+v", second.Criteria)
@@ -144,6 +181,7 @@ func TestFeatureCoverageSingleNodePlanAnswersAsToday(t *testing.T) {
 	f := newFixture(t)
 	putPacketPlan(t, f, "plan", 0, "r1", nil, addNode("solo", dag.NodeImplementation))
 	packetExecution(f, "plan", "solo", "rel-solo")
+	liveRelationship(f, "plan", "solo", "rel-solo")
 	packetAcceptance(f, "acc-solo", "plan", "solo", "rel-solo")
 	f.exec("INSERT INTO canonical_criteria (relationship_id, criterion_id, title, required, source_ref, set_digest, recorded_at) VALUES ('rel-solo','c1','one',1,NULL,'d','t')")
 
@@ -158,13 +196,59 @@ func TestFeatureCoverageSingleNodePlanAnswersAsToday(t *testing.T) {
 		t.Fatalf("criteria = %+v", before.Criteria)
 	}
 
-	packetLanded(f, "train-solo", "rel-solo", "head-solo", "landed-solo")
+	packetLanded(f, "train-solo", "rel-solo", acceptanceHead("rel-solo"), "landed-solo")
 	if after := coverageOf(t, f, "plan", "CRW-solo"); !after.Complete {
 		t.Fatalf("the landed single node still reads incomplete: %+v", after.Criteria)
 	}
 }
 
 // An issue the plan does not hold is the refusal unregistered_scope, as every read of a plan is.
+// A packet the plan has moved past credits nothing: the node's spec changed after it was released, so the
+// execution that consumed the old spec is not the packet's current one.
+func TestFeatureCoverageCreditsNothingForAnExecutionThePlanHasMovedPast(t *testing.T) {
+	f := newFixture(t)
+	putPacketPlan(t, f, "plan", 0, "r1", []doc{featureCriteriaDoc("CRW-F", criterionDoc("c1", true))},
+		packetNodeDoc("n1", "CRW-F", "p1", []string{"c1"}, []string{"c1"}))
+	packetExecution(f, "plan", "n1", "rel-1")
+	liveRelationship(f, "plan", "n1", "rel-1")
+	packetAcceptance(f, "acc-1", "plan", "n1", "rel-1")
+	packetLanded(f, "train-1", "rel-1", acceptanceHead("rel-1"), "landed-1")
+	if cov := coverageOf(t, f, "plan", "CRW-F"); !cov.Complete {
+		t.Fatalf("the released packet reads incomplete: %+v", cov)
+	}
+
+	// The packet now covers another criterion, so the node gets a new version and the old execution is stale.
+	putPacketPlan(t, f, "plan", 1, "r2",
+		[]doc{featureCriteriaDoc("CRW-F", criterionDoc("c1", true), criterionDoc("c2", true))},
+		doc{"op": dag.OpUpdateNode, "node": packetNodeDoc("n1", "CRW-F", "p1", []string{"c1", "c2"}, []string{"c1", "c2"})["node"]})
+	after := coverageOf(t, f, "plan", "CRW-F")
+	if after.Complete {
+		t.Fatalf("a packet whose spec moved still reads complete: %+v", after)
+	}
+	if len(after.Packets) != 1 || after.Packets[0].RelationshipID != "" || after.Packets[0].Integration != nil {
+		t.Fatalf("the moved packet still credits its old execution: %+v", after.Packets)
+	}
+}
+
+// A landing of an earlier head does not credit a later acceptance of the same relationship.
+func TestFeatureCoverageIgnoresALandingOfAnEarlierHead(t *testing.T) {
+	f := newFixture(t)
+	putPacketPlan(t, f, "plan", 0, "r1", []doc{featureCriteriaDoc("CRW-F", criterionDoc("c1", true))},
+		packetNodeDoc("n1", "CRW-F", "p1", []string{"c1"}, []string{"c1"}))
+	packetExecution(f, "plan", "n1", "rel-1")
+	liveRelationship(f, "plan", "n1", "rel-1")
+	packetAcceptance(f, "acc-1", "plan", "n1", "rel-1")
+	// The bundle carried the head the node had BEFORE this acceptance.
+	packetLanded(f, "train-old", "rel-1", "head-before", "landed-before")
+	cov := coverageOf(t, f, "plan", "CRW-F")
+	if cov.Complete {
+		t.Fatalf("a landing of an earlier head completed the feature: %+v", cov.Packets)
+	}
+	if len(cov.Packets) != 1 || cov.Packets[0].Integration != nil {
+		t.Fatalf("the earlier landing was credited: %+v", cov.Packets)
+	}
+}
+
 func TestFeatureCoverageRefusesAnIssueThePlanDoesNotHold(t *testing.T) {
 	f := newFixture(t)
 	putPacketPlan(t, f, "plan", 0, "r1", nil, addNode("solo", dag.NodeImplementation))

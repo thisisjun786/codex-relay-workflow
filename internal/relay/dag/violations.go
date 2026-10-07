@@ -54,6 +54,7 @@ const (
 	RuleCriterionUncovered       = "criterion_uncovered"
 	RuleCriterionOwnerMissing    = "criterion_owner_missing"
 	RuleCriterionOwnerConflict   = "criterion_owner_conflict"
+	RuleFeatureCriteriaNoNode    = "feature_criteria_without_node"
 )
 
 // Violation is one broken rule.
