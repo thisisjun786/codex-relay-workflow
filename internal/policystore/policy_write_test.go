@@ -424,6 +424,9 @@ func TestAFailedRestoreNeedsRecovery(t *testing.T) {
 	if result.Backup == "" {
 		t.Fatal("the recovery answer names no backup")
 	}
+	if result.FileDigest == "" {
+		t.Fatal("a failed restore does not name the digest that is on disk")
+	}
 }
 
 // TestAFailedWriteLeavesTheFileByteIdentical is C3: a write that could not even back the file up
@@ -578,5 +581,260 @@ func TestTheStoredBytesAreTheCandidateTheCheckJudged(t *testing.T) {
 	}
 	if result.StoredDigest != digestOf(want) {
 		t.Fatalf("stored digest = %q, want the digest of the encoded candidate", result.StoredDigest)
+	}
+}
+
+// TestAQueuedWriteDecidesAgainstTheRecordUnderTheLock is the queued-write finding: a request that
+// read the old record before it waited must not refuse a policy another writer has since registered.
+func TestAQueuedWriteDecidesAgainstTheRecordUnderTheLock(t *testing.T) {
+	env, _ := host(t, policyText, true)
+	old := digestOf(policyText)
+	// The first locate is answered as the request saw the record before it waited; the second, under
+	// the lock, is the real one, which another writer has already moved to the new digest.
+	first := true
+	restore := writeLocate
+	writeLocate = func(env LookupEnv) Located {
+		located := restore(env)
+		if first {
+			first = false
+			located.RegisteredDigest = old
+		}
+		return located
+	}
+	t.Cleanup(func() { writeLocate = restore })
+	opts := WriteOptions{Register: updatingRegisters(t, env), Running: unavailableRunning()}
+	result := Write(context.Background(), envOf(env), opts,
+		WriteRequest{ExpectedDigest: old, Change: removeLegacy()})
+	if result.Kind != WriteStored {
+		t.Fatalf("kind = %q (%v), want %q: a queued write refused against a record it had already outlived", result.Kind, result.Errors, WriteStored)
+	}
+}
+
+// TestAQueuedWriteThatLostThePolicyRefuses is the other half: when the record now names a different
+// policy, this write must not replace the file it locked.
+func TestAQueuedWriteThatLostThePolicyRefuses(t *testing.T) {
+	env, _ := host(t, policyText, true)
+	restore := writeLocate
+	calls := 0
+	writeLocate = func(env LookupEnv) Located {
+		located := restore(env)
+		calls++
+		if calls > 1 {
+			// Under the lock the record names a different policy than the one this run locked.
+			located.Path = located.Path + "-another"
+		}
+		return located
+	}
+	t.Cleanup(func() { writeLocate = restore })
+	result := Write(context.Background(), envOf(env), WriteOptions{Register: neverRegisters(t)},
+		WriteRequest{ExpectedDigest: digestOf(policyText), Change: removeLegacy()})
+	if result.Kind != WriteRecoveryNeeded {
+		t.Fatalf("kind = %q (%v), want %q", result.Kind, result.Errors, WriteRecoveryNeeded)
+	}
+	if result.Restored {
+		t.Fatal("a write that lost the policy claims a restore")
+	}
+}
+
+// TestACancellationAfterTheReplacementReportsRecovery is the cancellation finding: a request
+// cancelled between the replacement and the registration stops there, as the decided answer says,
+// and reports the state it left rather than a bare cancellation.
+func TestACancellationAfterTheReplacementReportsRecovery(t *testing.T) {
+	env, file := host(t, policyText, true)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	restore := writePublish
+	writePublish = func(path string, data []byte, mode os.FileMode) (bool, error) {
+		renamed, err := restore(path, data, mode)
+		cancel()
+		return renamed, err
+	}
+	t.Cleanup(func() { writePublish = restore })
+	result := Write(ctx, envOf(env), WriteOptions{Register: neverRegisters(t)},
+		WriteRequest{ExpectedDigest: digestOf(policyText), Change: removeLegacy()})
+	if result.Kind != WriteRecoveryNeeded || result.Step != "stored" {
+		t.Fatalf("kind = %q step = %q (%v), want %q at stored", result.Kind, result.Step, result.Errors, WriteRecoveryNeeded)
+	}
+	if result.FileDigest == "" || result.RegisteredDigest != digestOf(policyText) || result.Backup == "" || result.Recovery == "" {
+		t.Fatalf("a cancellation after the replacement is not reported with everything needed to reconcile it: %+v", result)
+	}
+	if result.FileDigest == digestOf(policyText) {
+		t.Fatal("the file digest is the old one, so the replacement did not happen")
+	}
+	after, _ := os.ReadFile(file)
+	if string(after) == policyText {
+		t.Fatal("the file is the original, so the test did not cancel after the replacement")
+	}
+}
+
+// TestARefusalWhoseRecordNamesSomethingElseNeedsRecovery is the restore-safety finding: an outcome
+// that did not update the record does not establish that the record still names the old bytes, so a
+// record naming something else is a recovery rather than a restore.
+func TestARefusalWhoseRecordNamesSomethingElseNeedsRecovery(t *testing.T) {
+	env, file := host(t, policyText, true)
+	third := digestOf("a document the record was moved to by another writer\n")
+	opts := WriteOptions{Register: func(_ context.Context, path string) RegisterAnswer {
+		rewriteRecord(t, env, path, third)
+		return answer("record_changed_underneath", 1)
+	}}
+	result := Write(context.Background(), envOf(env), opts,
+		WriteRequest{ExpectedDigest: digestOf(policyText), Change: removeLegacy()})
+	if result.Kind != WriteRecoveryNeeded {
+		t.Fatalf("kind = %q (%v), want %q", result.Kind, result.Errors, WriteRecoveryNeeded)
+	}
+	if result.Restored {
+		t.Fatal("a restore was reported against a record that names another document")
+	}
+	if result.RegisteredDigest != third {
+		t.Fatalf("registeredDigest = %q, want %q", result.RegisteredDigest, third)
+	}
+	after, _ := os.ReadFile(file)
+	if string(after) == policyText {
+		t.Fatal("the file was put back against a record that names another document")
+	}
+}
+
+// TestAFailedRestoreDirectorySyncIsNotAConfirmedRestore is the restore-durability finding: the
+// original bytes are back and their survival through a power loss was not established, so the
+// answer is a recovery rather than a confirmed restore.
+func TestAFailedRestoreDirectorySyncIsNotAConfirmedRestore(t *testing.T) {
+	env, file := host(t, policyText, true)
+	restore := writePublish
+	calls := 0
+	writePublish = func(path string, data []byte, mode os.FileMode) (bool, error) {
+		calls++
+		renamed, err := restore(path, data, mode)
+		if calls == 2 {
+			return renamed, errors.New("the directory could not be synced")
+		}
+		return renamed, err
+	}
+	t.Cleanup(func() { writePublish = restore })
+	opts := WriteOptions{Register: func(context.Context, string) RegisterAnswer { return answer("record_absent", 1) }}
+	result := Write(context.Background(), envOf(env), opts,
+		WriteRequest{ExpectedDigest: digestOf(policyText), Change: removeLegacy()})
+	if result.Kind != WriteRecoveryNeeded {
+		t.Fatalf("kind = %q (%v), want %q", result.Kind, result.Errors, WriteRecoveryNeeded)
+	}
+	if result.Restored {
+		t.Fatal("a restore whose durability was not established is reported as restored")
+	}
+	after, _ := os.ReadFile(file)
+	if string(after) != policyText {
+		t.Fatal("the original bytes are not on disk")
+	}
+}
+
+// TestABackupNeverFollowsASymbolicLink is the backup security finding: a name that is already a
+// symbolic link is refused like any other existing name, so a backup never writes through a link.
+func TestABackupNeverFollowsASymbolicLink(t *testing.T) {
+	env, file := host(t, policyText, true)
+	victim := filepath.Join(filepath.Dir(file), "victim.txt")
+	if err := os.WriteFile(victim, []byte("do not touch\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stamp := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	taken := file + writeBackupPrefix + "2026-01-02T03-04-05Z"
+	if err := os.Symlink(victim, taken); err != nil {
+		t.Fatal(err)
+	}
+	opts := WriteOptions{Register: updatingRegisters(t, env), Running: unavailableRunning(),
+		Now: func() time.Time { return stamp }}
+	result := Write(context.Background(), envOf(env), opts,
+		WriteRequest{ExpectedDigest: digestOf(policyText), Change: removeLegacy()})
+	if result.Kind != WriteStored {
+		t.Fatalf("kind = %q (%v)", result.Kind, result.Errors)
+	}
+	if result.Backup == taken {
+		t.Fatal("the backup took a name that is a symbolic link")
+	}
+	body, err := os.ReadFile(victim)
+	if err != nil || string(body) != "do not touch\n" {
+		t.Fatalf("the backup wrote through a symbolic link: %q %v", body, err)
+	}
+	backup, err := os.ReadFile(result.Backup)
+	if err != nil || string(backup) != policyText {
+		t.Fatalf("the backup does not hold the original bytes: %v", err)
+	}
+}
+
+// TestAPolicyWhoseNameIsNotUTF8CanBeWritten is the encoded-path finding: the read path opens a
+// surrogate-escaped name as the byte it stands for, so the write path must replace that same file
+// and must not create a second file under the surrogate spelling.
+func TestAPolicyWhoseNameIsNotUTF8CanBeWritten(t *testing.T) {
+	root := t.TempDir()
+	codexHome := filepath.Join(root, ".codex")
+	if err := os.MkdirAll(codexHome, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	raw := append([]byte("policy"), 0x80)
+	raw = append(raw, []byte(".json")...)
+	real := filepath.Join(root, string(raw))
+	if err := os.WriteFile(real, []byte(policyText), 0o644); err != nil {
+		t.Skipf("this filesystem refuses a non-UTF-8 name: %v", err)
+	}
+	surrogate := string([]byte{0xED, 0xB2, 0x80})
+	escaped := filepath.Join(root, "policy"+surrogate+".json")
+	surrogateRecord(t, codexHome, escaped, digestOf(policyText))
+	env := map[string]string{"HOME": root, "CODEX_HOME": codexHome}
+	opts := WriteOptions{Running: unavailableRunning(), Register: func(_ context.Context, path string) RegisterAnswer {
+		encoded, err := encodedPath(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		surrogateRecord(t, codexHome, path, digestOfFile(t, encoded))
+		return answer("record_updated", 0)
+	}}
+	result := Write(context.Background(), envOf(env), opts,
+		WriteRequest{ExpectedDigest: digestOf(policyText), Change: removeLegacy()})
+	if result.Kind != WriteStored {
+		t.Fatalf("kind = %q (%v)", result.Kind, result.Errors)
+	}
+	after, err := os.ReadFile(real)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) == policyText {
+		t.Fatal("the policy was not replaced")
+	}
+	if _, err := os.Lstat(escaped); err == nil {
+		t.Fatal("a file was created under the surrogate spelling")
+	}
+}
+
+// surrogateRecord writes the wiring record naming a surrogate-escaped path, spelled the way a
+// Python writer spells a byte that is not UTF-8.
+func surrogateRecord(t *testing.T, codexHome, escaped, digest string) {
+	t.Helper()
+	document := "{\n" +
+		"  \"recordVersion\": 2,\n" +
+		"  \"owner\": \"plugin\",\n" +
+		"  \"serverName\": \"codex-thread-bridge\",\n" +
+		"  \"bridgeExecutable\": \"/usr/local/bin/codex-thread-bridge\",\n" +
+		"  \"args\": [],\n" +
+		"  \"executionPolicy\": {\"path\": \"" + jsonEscaped(escaped) + "\", \"digest\": \"" + digest + "\"}\n" +
+		"}\n"
+	if err := os.WriteFile(filepath.Join(codexHome, "crw-bridge-mcp.json"), []byte(document), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestThePublishParentIsTheKernelResolvedDirectory is the temp-parent finding: a path carrying a
+// ".." after a symbolic link names a different directory to the kernel than filepath.Dir computes,
+// and the temporary file and the directory fsync must use the kernel's.
+func TestThePublishParentIsTheKernelResolvedDirectory(t *testing.T) {
+	root := t.TempDir()
+	real := filepath.Join(root, "real")
+	if err := os.MkdirAll(filepath.Join(real, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "link")
+	if err := os.Symlink(filepath.Join(real, "sub"), link); err != nil {
+		t.Skipf("this filesystem refuses a symbolic link: %v", err)
+	}
+	// <root>/link/../policy.json resolves, component by component, to <root>/real/policy.json.
+	spelled := link + "/../policy.json"
+	if got, want := publishParent(spelled), real; got != want {
+		t.Fatalf("publishParent(%q) = %q, want the kernel-resolved %q", spelled, got, want)
 	}
 }

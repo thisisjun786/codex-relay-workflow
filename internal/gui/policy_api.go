@@ -198,7 +198,7 @@ func policyWriteHandler(_ *Env, r *http.Request) (Response, error) {
 			Backup: result.Backup, Recovery: result.Recovery}}, nil
 	case policystore.WriteCancelled:
 		return Response{Status: http.StatusInternalServerError, Body: policyWriteErrorBody{
-			Error: "cancelled", Step: result.Step}}, nil
+			Error: "cancelled", Step: result.Step, Backup: result.Backup, FileDigest: result.FileDigest}}, nil
 	case policystore.WriteFailed:
 		return Response{Status: http.StatusInternalServerError, Body: policyWriteErrorBody{
 			Error: "failed", Reason: firstReason(result.Errors)}}, nil
