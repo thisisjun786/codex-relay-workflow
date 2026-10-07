@@ -329,12 +329,6 @@ func worktreeDelWrapperClusterArg(name, option string) bool {
 	return k >= 0 && k == len(option)-2
 }
 
-// worktreeDelCommandPrefixEnv is worktreeDelCommandPrefix over the same table: the wrapper words are read there, and
-// env's own NAME=value operands are assignments, so `env FOO=1 rm -rf x` names rm.
-func worktreeDelCommandPrefixEnv(words []string, i int) (next int, ok bool) {
-	return worktreeDelCommandPrefix(words, nil, i)
-}
-
 // stripPrefixes drops leading sudo, command and builtin, and env with the NAME=value words that follow it. A prefix is
 // recognised by its basename; sudo's and env's own options are not understood (known defect). The oracle's first walk
 // must stay byte for byte (worktree-guard.ts:262-267), so this keeps the oracle's own prefix set: the wider set is
