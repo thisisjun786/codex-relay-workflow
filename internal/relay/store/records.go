@@ -78,6 +78,16 @@ func (s *Store) Transaction(ctx context.Context, run func(context.Context, *sql.
 			}
 		}
 	}()
+	// The marker is read again inside the writer lock, on the opened store rather than on the
+	// pathname the preflight judged (halt.go, CRW-848): a marker that appeared between the two is
+	// found here, and the deferred ROLLBACK unwinds the empty transaction. A read-only store takes
+	// no writer lock and answers as it always has.
+	if !s.readOnly {
+		if state := HaltStateAt(s.Path); state.Present {
+			err = HaltRefusal(state)
+			return err
+		}
+	}
 	if err = run(context.WithValue(ctx, openTxKey{}, openTx{store: s, conn: conn}), conn); err != nil {
 		return fmt.Errorf("transaction body: %w", err)
 	}

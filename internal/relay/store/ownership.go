@@ -106,6 +106,12 @@ func CheckStartLikeFence(ctx context.Context, dbPath string) error {
 			return fenceRefused(why)
 		}
 	}
+	// A store whose writes are halted is refused before the in-place stamp read, so no statement is
+	// issued against a store the relay has already seen damaged (halt.go, CRW-848): the marker is a
+	// durable fact beside the store, and it stays until an operator clears it after a restore.
+	if state := HaltStateAt(resolved); state.Present {
+		return HaltRefusal(state)
+	}
 	// A command's preflight waits for a writer as its own open would.
 	meta, err := inPlaceMetadata(ctx, dbPath, ownership.LockWait)
 	if err != nil {
