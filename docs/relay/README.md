@@ -344,7 +344,10 @@ is neither a letter nor a digit, is sent as it is; any other nonempty title is s
 `<issueKey> · <title>` (middle dot U+00B7, one space each side) while that value is at most 500
 bytes, the limit the bridge applies to a create's title, and is otherwise sent unchanged, so the
 prefix never makes a request the bridge refuses. A `managed-start` request cannot carry an empty
-title, because `child.title` is required and non-blank. The rule applies to the name the host is
+title, because `child.title` is required and non-blank, and `child.title` is itself at most 500
+bytes, the same bound the bridge applies to a create's title: a title of fewer than 500 characters
+whose UTF-8 encoding is longer is refused before the request is armed, so the request and the
+bridge agree on the limit. The rule applies to the name the host is
 given on `thread/start` and again when the engine renames the thread after an adopted standby. It
 never rewrites the stored request or its fingerprint, so a repeat of the same request is still the
 same replay.
@@ -607,6 +610,64 @@ Global options come BEFORE the subcommand:
 Every command prints JSON. Exit 0 success, 2 a refusal with a machine-readable `reason`, 3 a host
 problem, 4 usage.
 
+## The merge lane: landing a bundle
+
+The merge lane's own commands are `merge-turn-*` (one candidate at a time) and, since CRW-768,
+`merge-train-*` (a bundle of several verified candidates landing as one). A bundle exists because a
+strict lane that merges members one by one needs a green `dev-gate` on every prefix tree, so k
+members cost k CI runs and the runner limit caps the count; a bundle's one pull request gets **one**
+full CI run on its single tree and lands as **one merge commit**, whatever the size. The parent
+procedure is in the crw-run skill's
+[merge-readiness](https://github.com/thisisjun786/codex-relay-workflow/blob/dev/plugins/crw/skills/crw-run/references/merge-readiness.md#merge-a-bundle).
+
+| Command | Purpose |
+|---|---|
+| `merge-train-open` | the leader's holding turn opens a train over the members in the given order; one member is today's lane and opens no train |
+| `merge-train-verify` | the leader reads the bundle pull request, this repository's `ci.yml` run and the first-parent chain in the given checkout, and appends a verified event |
+| `merge-train-land` | record that the bundle landed as one merge commit M and close every member turn landed |
+| `merge-train-close` | close the train done, or abandon it and return its member turns to waiting |
+| `merge-train-show` | the train's members in order, its event log, the state its newest event derives, and a reconcile reading of a lost landing |
+
+The relay reads the pull request, the run, the jobs, the commits and the ancestry from the forge
+itself, and the chain from the given checkout; the caller's values are compared and never trusted.
+A bundle that disagrees or is out of order is `disposition_conflict` and a forge or git that cannot
+answer is `merge_target_unreadable`, and a refusal writes no event. The five commands are offline
+like the `merge-turn-*` ones.
+
+The steps, with the command names:
+
+1. **Choose the members.** Every member must be a verified, accepted candidate: each member's own
+   parent runs `dag-accept` on the member pull request's head before the leader opens the bundle, and
+   the leader takes members whose `dag-ready` reads `done:accepted` on the head their turn holds.
+   `merge-train-open` refuses the rest (a member with no active acceptance, or one whose acceptance
+   stands on another head, is `disposition_conflict` naming the member, with no event); a member whose
+   acceptance stands on a recorded base-refresh head is accepted. Among those, take the pull requests
+   that merge onto the current dev in order without a conflict; related ones (the same package) first,
+   and non-overlapping packages may ride together. Leave out a member that needs a base-refresh
+   correction. Members may belong to different parents. There is no count cap. The order follows the
+   plan's precedence edges.
+2. **The leader.** `merge-train-open --turn <the leader's turn> --actor <leader> --base-sha <D>
+   --member <pr>...`; then build the bundle branch `refs/heads/crw-train/<train_id>` from D by
+   `git merge --no-ff` of each member head in order (no hand resolution); open the one bundle pull
+   request through a file scanned by gitleaks and label it `crw-lane`; after its CI finishes,
+   `merge-train-verify --train <id> --actor <leader> --bundle-pr <n> --head <H> --run <R> --repo
+   <checkout>`; then `gh pr merge <bundle pr> --merge --match-head-commit <H>`; then
+   `merge-train-land --train <id> --actor <leader> --landed-sha <M> --observed-base-sha <M>`; then
+   check every member pull request shows merged (comment "landed via bundle <merge sha>" and close it
+   if not); then `merge-train-close --train <id> --actor <leader> --state done --reason <...>` and
+   delete the bundle branch.
+3. **Each member's parent.** Once the landing is recorded, the member's own parent records
+   `assignment-mark` (merged) and `dag-integration-observe` on its relationship.
+4. **Failure handling.** A member touching a failed job's packages is removed and the rest re-bundled
+   (the old train abandoned); when no member can be named the bundle is halved with a predecessor and
+   its successors kept on the same side; a known flaky test's jobs are rerun once; a set that failed
+   twice goes one by one; a removed member rides alone; a train whose base moved outside the lane is
+   abandoned and reopened.
+5. **The lane script** changes only after the bundle merge is in the runtime. The `plugin.json`
+   version line is re-recorded mechanically.
+
+
+
 ## The normal flow
 
 A child completing work from inside its own live turn:
@@ -718,6 +779,38 @@ passing it, and the assignment reports `re_review_needed` instead of `verified`.
 
 There is no parameter that turns any of this off.
 
+## Fixing the head a verified ruling handled
+
+A `verified` ruling may carry the head it handled:
+
+    codex-session-relay --socket $SOCK verdict --event <eventId> --verdict verified --verdict-turn <my turn id> --verified-head <40-hex commit id>
+
+`--verified-head` takes the 40 lowercase hex digits of one commit id and is optional. When it is
+given with `--verdict verified`, the ruling writes one `dag_verified_heads` row — the event, the
+relationship, the generation the event belongs to, the verdict turn, the head, the recorder and the
+time — in the same transaction that writes the ruling, so the two cannot disagree and a failure of
+either rolls both back. The recorder is the relationship's registered parent, which is the only task
+that can rule the event. This is the head a later `dag-accept` starts its parent-made-refresh proof
+from, instead of the head the forge shows at accept time.
+
+The ruling's own answer does not change: the record is read back from `dag_verified_heads`, never
+returned, so no output field and no refusal reason is added.
+
+| Case | Answer |
+| --- | --- |
+| `verified` with `--verified-head H`, first ruling | the ruling is recorded and one row holds `H` |
+| `verified` with `--verified-head H` again | the replay of the recorded ruling: nothing is written, and the row still holds `H` |
+| `verified` with `--verified-head H` after a `verified` ruling that fixed no head | refused `disposition_conflict`: the head is recorded with the ruling that fixes it, and a replay writes nothing |
+| `verified` with `--verified-head H2` when the event already records `H` | refused `disposition_conflict`, and the row still holds `H`: one event keeps the head its verified ruling fixed |
+| a verdict other than `verified` with `--verified-head` | refused `disposition_conflict`, and neither a verdict nor a row is written: a verified head is recorded only with a verified ruling |
+| `verified` without `--verified-head` | exactly what it was before, and no row |
+
+A re-review ruled `verified` under a re-registered criteria set keeps the head the event already
+records; it does not write a second row, because one event has one verified head.
+
+A value that is not 40 lowercase hex digits is a usage error (exit 4), like any other option value
+this command refuses.
+
 ## Ruling an event that is already ruled
 
 An event has one standing ruling, and a second `verdict` call on it is never answered with a ruling it was not asked for. What the call does depends on the verdict already recorded and the verdict asked:
@@ -735,7 +828,7 @@ No refusal reason is added: `disposition_conflict` already means a ruling that c
 
 1. An open re-review is decided first, exactly as above (a criteria set that moved since the ruling), whether or not the head was accepted.
 2. The transition table above.
-3. Nothing may rest on the verified ruling: no plan acceptance of the event (`dag_acceptances`, whatever its state), no merged mark of it (`assignment_marks`), and no merge turn of the assignment that is merging, of unknown effect or landed. A turn that only waits for the lane or holds it does not count, because the parent that found the base conflict holds that very turn. The turn is read per assignment and not per head, because no head of an event is recorded.
+3. Nothing may rest on the verified ruling: no plan acceptance of the event (`dag_acceptances`, whatever its state), no merged mark of it (`assignment_marks`), and no merge turn of the assignment that is merging, of unknown effect or landed. A turn that only waits for the lane or holds it does not count, because the parent that found the base conflict holds that very turn. The turn is read per assignment and not per head: a merge turn is recorded per assignment (`merge_turns`), while the head an event's verified ruling fixed is the head an acceptance proves against ([Fixing the head a verified ruling handled](#fixing-the-head-a-verified-ruling-handled)), which is a different question from whether a turn of the assignment is merging. A head recorded by a ruling that was later replaced stays as the record of what that ruling handled, so a reader of it checks the event's standing ruling before trusting it.
 4. The existing path of a first `needs_changes` ruling: the event is the head of the generation the relationship stands on and the relationship is active (`stale_generation`, `superseded_revision`, `revision_ambiguous`, `relationship_not_active`), the finding marked `needs_changes` carries a note and the criteria set is the one the review is bound to, the child is an allowed recipient, and a declared restoration block can be carried.
 
 When all four hold, the writer replaces the ruling in the transaction that opens the next generation and queues the revision request to the same child, exactly as a first `needs_changes` ruling does. The replaced record stays: the journal records `verdict_superseded` with the replaced record and `reason: ruling_changed` (a re-review's entry has no reason). The answer is the new ruling plus `_supersedes`, the verdict, verdict turn and time of the ruling it replaced; like `_replay` it is an annotation of the answer and is not stored. The summary owed to the coordination document is a new job, because its identity carries the verdict, and it counts the rulings (`ruling 2`).

@@ -30,6 +30,8 @@ func Verbs() []Verb {
 		{Name: "review-round", Run: reviewRoundVerb},
 		{Name: "metric", RunContext: metricVerb},
 		{Name: "divergence", RunContext: divergenceVerb},
+		{Name: "loop", Run: loopVerb},
+		{Name: "orchestrate", RunContext: orchestrateVerb},
 	}
 }
 
