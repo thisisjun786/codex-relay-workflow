@@ -149,6 +149,35 @@ func TestPromptDcloseStateWriteFailureNamesTheCleanMarkerAndPlan(t *testing.T) {
 	}
 }
 
+// TestPromptDcloseRecoveryPlanFailureNamesTheMarkerAlreadyOnTheSession is the c6 case for a recovery
+// retry: the marker of the first attempt is already on the session, so the retry's plan write failing
+// must name that marker instead of claiming nothing was written. It is the recovering branch of
+// promptDclosePlanWork's record of what this close published.
+func TestPromptDcloseRecoveryPlanFailureNamesTheMarkerAlreadyOnTheSession(t *testing.T) {
+	cwd := promptDcloseRepo(t)
+	slug := "chat-recovery-plan-failure"
+	attest := promptDcloseRecoverable(t, cwd, "s1", slug, nil)
+	seams := &promptDcloseSeams{writePlan: func(string, *goalplan.Goalplan) error {
+		return errors.New("the goalplan could not be written before the rename")
+	}}
+	answer, panicked := promptDcloseRunWith(t, cwd, "s1", "t1", attest, seams)
+	if panicked != nil {
+		t.Fatalf("the close panicked: %v", panicked)
+	}
+	if !strings.Contains(answer, "refused") {
+		t.Errorf("the recovery plan failure did not refuse: %q", answer)
+	}
+	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
+		t.Errorf("the recovery plan failure did not name the marker already on the session: %q", answer)
+	}
+	if strings.Contains(answer, "Nothing was written.") {
+		t.Errorf("the recovery plan failure denied the marker on the session: %q", answer)
+	}
+	if s := state.ReadState(cwd, "s1"); s.DcloseRecovery == nil {
+		t.Errorf("the recovery plan failure lost the marker: %+v", s)
+	}
+}
+
 // TestPromptDcloseGuardRefusalNamesThePublishedPlan is the CRW-930 case: a wp-1 -> wp-2 bound close
 // publishes the goalplan (the real write, then the post-rename directory-sync failure a
 // *state.PublishedError reports), the session file then becomes unreadable to the IDLE-write guard,
