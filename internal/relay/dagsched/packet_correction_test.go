@@ -329,3 +329,47 @@ func TestRegionOwnerDistinguishesSymbols(t *testing.T) {
 	owner("n3", "Beta")
 	sym("n1", "Alpha", "Beta")
 }
+
+// d3 of the third pre-merge round: a packet id is unique only WITHIN an issue, so a revalidated execution
+// of ANOTHER issue's node carrying the same packet id and criteria digest must not be credited to this
+// feature. The check reads the issue the packet zone recorded for the execution.
+func TestCoverageDoesNotCreditARevalidatedExecutionOfAnotherIssue(t *testing.T) {
+	f := newFixture(t)
+	putPacketPlan(t, f, "plan", 0, "r1", []doc{featureCriteriaDoc("CRW-F", criterionDoc("c1", true))},
+		packetNodeDoc("n1", "CRW-F", "p1", []string{"c1"}, []string{"c1"}))
+	packetExecution(f, "plan", "n1", "rel-1")
+	liveRelationship(f, "plan", "n1", "rel-1")
+	packetAcceptance(f, "acc-1", "plan", "n1", "rel-1")
+	packetRegistered(f, "rel-1", map[string]bool{"c1": true})
+	packetIntegrated(f, "acc-1", "rel-1", "owner/repo", "dev")
+	// The execution is recorded under ANOTHER issue's packet p1 (same packet id, different issue), and
+	// the node's slice has since moved, so only the revalidation fallback could credit it.
+	f.exec("INSERT INTO dag_execution_packets (relationship_id, plan_id, node_id, issue_key, packet_id, branch, recorded_at) VALUES ('rel-1','plan','n1','CRW-OTHER','p1',NULL,'t')")
+	updated := packetNodeDoc("n1", "CRW-F", "p1", []string{"c1"}, []string{"c1"})["node"].(doc)
+	updated["title"] = "moved"
+	putPacketPlan(t, f, "plan", 1, "r2", []doc{featureCriteriaDoc("CRW-F", criterionDoc("c1", true))},
+		doc{"op": dag.OpUpdateNode, "node": updated})
+	f.exec("INSERT INTO dag_acceptance_revalidations (revalidation_id, acceptance_id, criteria_set_digest, event_id, verdict_turn_id, reval_seq, revalidated_by, revalidated_at) VALUES ('rv-x','acc-1',?,'ev','turn',1,'parent','t')", coverageCriteriaDigest)
+	if cov := coverageOf(t, f, "plan", "CRW-F"); cov.Complete {
+		t.Fatalf("another issue's revalidated execution was credited: %+v", cov.Packets)
+	}
+}
+
+// d4 of the third pre-merge round: a store that predates the packet zone must still answer the legacy
+// single-node reading. Read-only opening installs nothing, so the packet column cannot be referenced
+// unconditionally.
+func TestFeatureCoverageReadsAPrePacketStore(t *testing.T) {
+	f := newFixture(t)
+	putPacketPlan(t, f, "plan", 0, "r1", nil, doc{"op": dag.OpAddNode, "node": plainNodeDoc("solo")})
+	packetExecution(f, "plan", "solo", "rel-solo")
+	liveRelationship(f, "plan", "solo", "rel-solo")
+	packetAcceptance(f, "acc-solo", "plan", "solo", "rel-solo")
+	f.exec("INSERT INTO canonical_criteria (relationship_id, criterion_id, title, required, source_ref, set_digest, recorded_at) VALUES ('rel-solo','c1','one',1,NULL,?,'t')", coverageCriteriaDigest)
+	// A store whose zone predates the packet tables: the reader must not reference them at all.
+	f.exec("DROP TABLE dag_execution_packets")
+	if cov, err := f.sched.FeatureCoverage(context.Background(), "plan", "CRW-solo"); err != nil {
+		t.Fatalf("a pre-packet store was not readable: %v", err)
+	} else if len(cov.Packets) != 1 || cov.Packets[0].PacketID != "" || cov.Packets[0].Acceptance == nil {
+		t.Fatalf("the legacy reading changed: %+v", cov.Packets)
+	}
+}

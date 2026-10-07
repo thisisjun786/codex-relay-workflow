@@ -370,11 +370,22 @@ func currentNodeExecution(ctx context.Context, q store.Querier, plan string, n d
 	// revalidation, else the digest it was accepted with (effectiveCriteria, edges.go). A revalidation
 	// is how dag-accept re-judges an unchanged output under a plan whose criteria moved, and it keeps
 	// the original execution and manifest, so the slice digest alone would not see it.
+	//
+	// The packet column is read only where the zone has the table (CRW-839 pre-merge d4): a store that
+	// predates it has no dag_execution_packets, and a read-only open installs nothing (store.Open), so
+	// an unconditional reference would turn the legacy single-node answer into a missing-table host
+	// error. A store without the table answers as it always did.
+	packetColumn := "''"
+	if present, err := tableExists(ctx, q, "dag_execution_packets"); err != nil {
+		return "", err
+	} else if present {
+		packetColumn = "COALESCE((SELECT x.packet_id FROM dag_execution_packets x WHERE x.relationship_id = e.relationship_id), '')"
+	}
 	rows, err := q.QueryContext(ctx, "SELECT e.relationship_id, COALESCE(m.body_json, ''),"+
 		" COALESCE((SELECT v.criteria_set_digest FROM dag_acceptance_revalidations v"+
 		"   WHERE v.acceptance_id = (SELECT a.acceptance_id FROM dag_acceptances a WHERE a.plan_id = e.plan_id AND a.node_id = e.node_id AND a.relationship_id = e.relationship_id AND a.state = 'active')"+
 		"   ORDER BY v.reval_seq DESC LIMIT 1), ''),"+
-		" COALESCE((SELECT x.packet_id FROM dag_execution_packets x WHERE x.relationship_id = e.relationship_id), '')"+
+		" "+packetColumn+
 		" FROM dag_node_executions e"+
 		" JOIN relationships r ON r.relationship_id = e.relationship_id"+
 		" LEFT JOIN dag_input_manifests m ON m.manifest_digest = e.manifest_digest"+
@@ -396,15 +407,25 @@ func currentNodeExecution(ctx context.Context, q store.Querier, plan string, n d
 		}
 		// A criteria-only revision moves the node's slice without moving the accepted output: an
 		// acceptance REVALIDATED under the plan's criteria now is the packet's current execution. The
-		// revalidation row alone does not say the output is still THIS packet's (CRW-839 pre-merge d2):
-		// the execution must also still execute the packet the node carries, so a node whose packet
-		// identity moved - or whose node version was replaced by a different packet's - is credited by
-		// nothing. For a node with no packet_id both sides are empty and the rule is unchanged.
-		if n.CriteriaSetDigest != "" && revalidated == n.CriteriaSetDigest && packet == n.PacketID {
+		// revalidation row alone does not say the output is still THIS packet's (CRW-839 pre-merge d2,
+		// d3): the execution must also still execute the packet the node carries, and, because a packet
+		// id is unique only WITHIN an issue, the execution's recorded issue must be the node's too - a
+		// node whose issue_key was edited could otherwise be credited with another feature's revalidated
+		// execution carrying the same packet id and criteria digest. Both checks bind only where the
+		// execution records a packet; a node with no packet_id keeps the legacy meaning.
+		if n.CriteriaSetDigest != "" && revalidated == n.CriteriaSetDigest && packet == n.PacketID && (packet == "" || executionIssueIs(ctx, q, relationship, n.IssueKey)) {
 			return relationship, nil
 		}
 	}
 	return "", rows.Err()
+}
+
+// executionIssueIs is whether the packet zone records this relationship as executing a node of issueKey.
+// It is asked only where the zone has already named a packet for the relationship.
+func executionIssueIs(ctx context.Context, q store.Querier, relationship, issueKey string) bool {
+	var recorded string
+	found, err := queryOne(ctx, q, "SELECT issue_key FROM dag_execution_packets WHERE relationship_id = ?", []any{relationship}, &recorded)
+	return err == nil && found && recorded == issueKey
 }
 
 // manifestSliceDigest is the node slice digest a stored manifest was built for, empty when the manifest

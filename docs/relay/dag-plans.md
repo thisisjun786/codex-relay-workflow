@@ -267,19 +267,21 @@ track of which packet each belongs to. The plan is the registry: the packet rule
 * A packet node is released beside the other packets of its feature, not against them: `dag-ready` counts an open relationship of the issue
   as ownership only when that relationship is not the execution of another distinct registered packet of the same plan (`dag_execution_packets`),
   and a node with no `packet_id` keeps the rule it always had.
-* The packets of one issue start one after the other, never at once. The shipped unique partial index `managed_start_one_pending_issue`
-  allows a single `reserved` or `create_armed` managed start per issue key, so a second packet's reservation is refused while another start
-  of the same issue is pending — with the existing `duplicate_assignment` shape, not the index's constraint error — and `dag-ready` keeps
-  deferring the packet node (`skip:already_owned`) until that start has attached. The admission beside an *active* relationship stays: it is
-  the attached case, and where the issue scope can hold more than one packet the two do run side by side once both have attached (see the
-  project-scope limitation below).
-* A project-scoped plan cannot attach the second packet yet, and this is a v1 limitation rather than a packet rule. Project linkage binds the
-  live child of a scope keyed by the issue, and the v1 unique index `scope_bindings_one_live_owner` (`contract/schema/relay-sqlite.sql`)
-  allows one live child binding per `(scope_kind, scope_key, role)`; the execution link is keyed by the issue too
-  (`registry/linkage.go`). A second packet of an issue whose plan carries a project key is therefore refused `duplicate_scope_owner` at
-  `Register`, before the packet-aware guard below is reached. Turning the issue scope packet-aware is a v1 change, so multi-packet delivery
-  waits for the activation step the issue names; the guard and the reservation rules below are what the relay does where a plan has no project
-  key, and what it will do for every plan once the scope identity can hold several packets.
+* **Multi-packet delivery is not available yet on the normal path, and that is a v1 limitation rather than a packet rule.** A plan revision
+  requires a non-empty `project_key` (`dag-plan-revision/1`), and a release of a project-scoped plan goes through project linkage: the live
+  child of the issue scope is unique, both by the v1 index `scope_bindings_one_live_owner` (`contract/schema/relay-sqlite.sql`) and by the
+  execution link keyed on the issue (`registry/linkage.go`). A second packet of one issue is therefore refused `duplicate_scope_owner` at
+  `Register`, before the packet-aware guard below is reached, and there is no projectless route to fall back on: readiness needs a registered
+  project parent. So the packet rules in this section — the narrowed guard, the packet-aware readiness, the per-place region owner — are what the
+  relay will do once the issue scope can hold several packets; today the ordinary multi-packet release is refused there, and
+  `TestPacketSecondReleaseOnTheProjectScopedPathIsRefusedByProjectLinkage` pins that state. Turning the issue scope packet-aware is a v1 change,
+  so it is the activation step the issue names, not something this change decides.
+* The packets of one issue start one after the other, never at once, and a reservation in flight is still keyed by the ISSUE. The shipped unique
+  partial index `managed_start_one_pending_issue` allows a single `reserved` or `create_armed` managed start per issue key, so a second
+  packet's reservation is refused while another start of the same issue is pending — with the existing `duplicate_assignment` shape, not the
+  index's constraint error — and `dag-ready` keeps deferring the packet node (`skip:already_owned`) until that start has attached. The
+  admission beside an *active* relationship is the per-(issue, packet) half, and it applies once both starts have attached. Widening the pending
+  window to two packets is the same v1 change as the issue-scope limitation above.
 * Packets of one issue must not take an overlapping edit region without exactly one declared owner: the owner is the packet that declares the
   shared place exclusive. The judgement is over every packet that takes the place, so any number of packets may share it as long as exactly one
   of them owns it; none is refused `disposition_conflict` at `dag-region-declare`, and so is more than one exclusive claim. A node without a
