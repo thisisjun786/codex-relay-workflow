@@ -2625,7 +2625,10 @@ func (w *shellWriteUnnamedWalk) read(rs []rune, depth int, outer shellWriteCopyI
 			case pending.name != "" && pending.at == i:
 				kind, recvNamed, name = shellWriteUnnamedMethodKind(pending.name), pending.recvNamed, pending.name
 				pending = shellWriteUnnamedCall{}
-				recvPath = true // the receiver is the Path(...) call the pending method hangs off
+				// recvPath says the receiver is a Path(<literal>) call, so the method's own argument is its mode.
+				// A receiver the reader cannot place ((io).open(...), a variable) is not one, so its argument is
+				// read in both positions instead.
+				recvPath = recvNamed
 			case c == '(' && shellWriteUnnamedDefHeader(rs, i):
 				kind = 'd' // a def or async def header binds a name; its parenthesis runs nothing
 			default:
@@ -2855,10 +2858,12 @@ func (w *shellWriteUnnamedWalk) literal(arg []rune) {
 func shellWriteUnnamedLiteralSpan(rs []rune, i, end int) []rune {
 	start := i
 	for start > 0 && strings.ContainsRune("rRuUbBfF", rs[start-1]) {
-		if start-2 >= 0 && (rs[start-2] >= 128 || rs[start-2] == '_' || shellVerbLetter(byte(rs[start-2]), true)) {
-			break // the rune before the prefix is an identifier: the prefix is part of that name, not of the literal
-		}
 		start--
+	}
+	// The whole prefix run belongs to the literal only when no identifier rune stands before it; otherwise the run
+	// is the tail of a name (myrb"..." is the name myrb followed by a literal, not an rb literal).
+	if start > 0 && (rs[start-1] >= 128 || rs[start-1] == '_' || shellVerbLetter(byte(rs[start-1]), true)) {
+		return rs[i:end]
 	}
 	return rs[start:end]
 }
@@ -3092,6 +3097,11 @@ func shellWriteUnnamedAttribute(rs []rune, i int) (string, bool) {
 	if end == j+1 {
 		return "", false
 	}
+	if j >= 0 && rs[j] == '.' {
+		// The name hangs off a longer attribute chain (p.parent.write_text, a.shutil.copy): it is an attribute of
+		// something else, not a bare module name, so a module this reader reads its own way does not claim it.
+		return "", true
+	}
 	return string(rs[j+1 : end]), true
 }
 
@@ -3193,7 +3203,9 @@ func shellWriteUnnamedMethodAt(rs []rune, i int, binds shellWriteCopyImports, as
 	// arguments say. A receiver the reader does know (a string's own replace, a list's copy) is left to the rules
 	// above, so the common false positive of a dict's or list's copy is only reached when the program names nothing
 	// the reader can place.
-	if shellWriteCopyFunc("shutil", name) || shellWriteCopyFunc("os", name) {
+	// Every one of these functions takes two arguments, so a call with fewer is a same-named method of something
+	// else (a dict's or list's own copy() takes none) and is no filesystem write.
+	if shellWriteUnnamedArgs(rs, i) >= 2 && (shellWriteCopyFunc("shutil", name) || shellWriteCopyFunc("os", name)) {
 		if name == "renames" {
 			return 'N'
 		}

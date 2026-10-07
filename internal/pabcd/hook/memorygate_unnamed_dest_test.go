@@ -560,6 +560,41 @@ func TestMemoryGateUnnamedDestinationFifthPassShapes(t *testing.T) {
 	}
 }
 
+// TestMemoryGateUnnamedDestinationSixthPassShapes pins the shapes the sixth pre-merge evaluation found: an imported
+// alias that shadows an attribute receiver, a raw bytes literal whose backslash-N body the prefix reading keeps, a
+// bracketed receiver's read-only open, and a literal dict's or list's own copy. The controls pin the read-only shapes
+// the same reading must leave allowed.
+func TestMemoryGateUnnamedDestinationSixthPassShapes(t *testing.T) {
+	cwd, root, env := gateScene(t)
+	m := root + "/n.md"
+	py := func(program string) string { return "python3 -c " + shellWriteUnnamedQuote(program) }
+	for _, c := range []struct{ name, command string }{
+		{"imported alias shadowing an attribute receiver", py("import os as parent; from pathlib import Path; p = Path(\"" + m + "\"); p.parent.write_text(\"x\")")},
+		{"raw bytes literal with a backslash-N", py("m = rb\"" + root + "/\\N{foo}.md\"; open(m, \"w\").write(b\"x\")")},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got := memoryGateClassify("Bash", map[string]any{"command": c.command}, cwd, env)
+			if got.Surface != "shell" || got.Target != unnamedDestWant {
+				t.Errorf("%q: %+v, want the shell surface and %s", c.command, got, unnamedDestWant)
+			}
+		})
+	}
+	for _, c := range []struct{ name, command string }{
+		// A bracketed receiver's open takes (path, mode), so a read mode is no write.
+		{"bracketed receiver read mode", py("import io, os; (io).open(os.path.join(\"" + root + "\", \"n.md\"), \"r\").read()")},
+		{"bracketed receiver read by keyword", py("import io, os; (io).open(os.path.join(\"" + root + "\", \"n.md\"), mode=\"r\").read()")},
+		// A literal dict's or list's own copy() writes no file.
+		{"literal dict copy", py("d = {'a': 'memories'}; e = d.copy(); print(e)")},
+		{"literal list copy", py("l = ['memories']; e = l.copy(); print(e)")},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got := memoryGateClassify("Bash", map[string]any{"command": c.command}, cwd, env); got.Surface != "" {
+				t.Errorf("%q must pass: %+v", c.command, got)
+			}
+		})
+	}
+}
+
 // TestMemoryGateUnnamedDestinationControlShapes is the matching /w control set the pre-merge evaluation asked for: the
 // computed shapes of the issue body that write under /w with no protected-area literal must stay allowed, so the
 // protected-area condition alone decides.
