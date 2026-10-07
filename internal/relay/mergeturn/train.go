@@ -996,6 +996,11 @@ func (s *Service) TrainLand(ctx context.Context, train, actor, landed, observed 
 		// or moved after open refuses the landing with nothing written (Blocking 1). A member that
 		// left the lane is excluded above and is not re-read, so its parent revoking the acceptance
 		// does not refuse the rest of the bundle.
+		for _, m := range survivors {
+			if e := trainMemberCorrectionRefusal(tx, s.Store.Querier(tx), row.Repository, m.PRNumber, m.RelationshipID, m.MemberHead); e != nil {
+				return e
+			}
+		}
 		for _, m := range leftMembers {
 			if e := trainExcludedMemberRefusal(tx, s.Store.Querier(tx), row.Repository, m.PRNumber, m.RelationshipID, m.MemberHead); e != nil {
 				return e

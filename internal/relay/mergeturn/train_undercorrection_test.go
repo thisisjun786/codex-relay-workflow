@@ -294,6 +294,58 @@ func TestTheLaneGateResolvesARefreshedHead(t *testing.T) {
 }
 
 // CRW-906 generation 2: a member whose turn left the lane is excluded from the landing, but its code is
+// CRW-906 generation 2, round 6 d2: a recorded base refresh outlives the acceptance it was recorded for,
+// so a turn held for a refreshed head must still resolve once dag-accept --supersedes replaced the
+// acceptance: otherwise the obsolete result merges after the correction was accepted over.
+func TestTheLaneGateRefusesAReplacedHeadThatWasOnceRefreshed(t *testing.T) {
+	w := newFx(t)
+	w.ucLaneRelationship("rel-lane", 2)
+	w.ucLaneForge("rel-lane", 7)
+	// the acceptance stood on head-a, a base refresh moved it to head-refreshed, and then the whole
+	// acceptance was replaced by the corrected one
+	refresh := "dbr-" + strings.Repeat("b", 60)
+	w.exec("INSERT INTO dag_base_refreshes (refresh_id, acceptance_id, refresh_seq, relationship_id, execution_generation, event_id, revision_hash, head_sha, base_repository, base_ref, base_tip_sha, proof_json, resolved_paths_json, recorded_by_task_id, coordinator_epoch, recorded_at)"+
+		" VALUES (?, ?, 1, ?, 1, 'ev-refresh', 'rev-refresh', 'head-refreshed', ?, ?, 'base-0', '{}', '[]', ?, 0, '2023-11-14T22:13:20.000000+00:00')",
+		refresh, "acc-rel-lane", "rel-lane", fxRepo, fxBase, alpha.TaskID)
+	w.exec("UPDATE dag_acceptances SET state = 'superseded' WHERE relationship_id = 'rel-lane'")
+	turn := store.MergeTurnsRow{TurnID: "mtn-refreshed-replaced", TargetKey: "tgt-x", Repository: fxRepo, BaseRef: fxBase, ProjectKey: fxA,
+		HolderTaskID: alpha.TaskID, CandidateHead: "head-refreshed", State: Holding}
+	refusal, err := underCorrectionRefusal(w.ctx, w.s.Querier(w.ctx), turn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if refusal == nil || refusal.Reason != contract.RefusalDispositionConflict {
+		t.Fatalf("a turn holding a refreshed head whose acceptance was replaced was not refused: %+v", refusal)
+	}
+	if !strings.Contains(refusal.Detail, "rel-lane") {
+		t.Fatalf("the refusal does not name the relationship: %s", refusal.Detail)
+	}
+}
+
+// CRW-906 generation 2, round 6 d3: an acceptance written before the forge rule keeps whatever target it
+// was accepted against (a local checkout included) while dag_acceptance_forge holds the owner/name a merge
+// turn is requested against. The in-flight guard must match the forge identity too, not the stored target.
+func TestTheInFlightGuardMatchesTheForgeIdentityNotTheStoredTarget(t *testing.T) {
+	w := newFx(t)
+	w.ucLaneRelationship("rel-local", 2)
+	w.ucLaneForge("rel-local", 7)
+	w.exec("UPDATE dag_acceptances SET repository = '/synthetic/checkout' WHERE relationship_id = 'rel-local'")
+	// a turn of the real forge repository, naming neither selector, already merging on the accepted head
+	turn := store.MergeTurnsRow{TurnID: "mtn-legacy", TargetKey: "tgt-x", Repository: fxRepo, BaseRef: fxBase, ProjectKey: fxA,
+		HolderTaskID: alpha.TaskID, CandidateHead: "head-a", State: Merging}
+	refusal, err := underCorrectionRefusal(w.ctx, w.s.Querier(w.ctx), turn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if refusal == nil || refusal.Reason != contract.RefusalDispositionConflict {
+		t.Fatalf("a legacy acceptance's forge turn was not refused: %+v", refusal)
+	}
+	if !strings.Contains(refusal.Detail, "rel-local") {
+		t.Fatalf("the refusal does not name the relationship: %s", refusal.Detail)
+	}
+}
+
+// CRW-906 generation 2: a member whose turn left the lane is excluded from the landing, but its code is
 // still in the merge commit the bundle lands (every member head is checked as an ancestor of it), so the
 // bundle must not record a landing of a tree that still carries a result the plan is repairing. The
 // CRW-897 carve-out keeps holding for what it is about: a revoked acceptance or a moved head of a member
@@ -360,6 +412,31 @@ func TestTheLaneGateAsksEveryMatchingAcceptance(t *testing.T) {
 // CRW-906 generation 2, d3: the excluded member's hold must not clear just because the correction was
 // CRW-906 generation 2, d3: the recheck inside the write transaction asks about the head the bundle
 // CRW-906 generation 2, d1: naming a relationship must not suppress the other identities. Acceptance
+// CRW-906 generation 2: a bundle member is refused when the head it carries is the result another
+// CRW-906 generation 2, round 6 d1: the landing transaction must apply the same identity-based gate the
+// open and verify use. A correction of another relationship that accepts the same head, opened after the
+// bundle was verified, is refused at land: otherwise the landing records the exact result being repaired.
+func TestTrainLandRefusesAMemberWhoseHeadAnotherRelationshipIsRepairing(t *testing.T) {
+	w := newTr(t)
+	train := w.verifiedTrain()
+	w.ucOtherCorrection("rel-other", "head-m2")
+	w.tip.set(trRepo, trBase, "merge-1")
+	w.forge.commits["merge-1"] = TrainCommit{SHA: "merge-1", Parents: []string{"base-0", "head-bundle"}, Tree: "tree-bundle"}
+	_, err := w.m.TrainLand(w.ctx, train, trLeader, "merge-1", "", w.tip, w.forge)
+	if err == nil || trReason(err) != "disposition_conflict" {
+		t.Fatalf("a land whose member's head another relationship is repairing: %v", err)
+	}
+	if !strings.Contains(err.Error(), "rel-other") {
+		t.Fatalf("the refusal does not name the repairing relationship: %v", err)
+	}
+	if n := w.count("SELECT count(*) FROM merge_train_events WHERE kind = 'landed'"); n != 0 {
+		t.Fatalf("a refused land wrote %d landed event(s)", n)
+	}
+	if n := w.count("SELECT count(*) FROM merge_turns WHERE state = 'landed'"); n != 0 {
+		t.Fatalf("a refused land landed %d turn(s)", n)
+	}
+}
+
 // CRW-906 generation 2: a bundle member is refused when the head it carries is the result another
 // relationship is repairing, even though the member's own relationship is live. Acceptance uniqueness is
 // per node and output, so two accepted nodes can name the same commit, and the bundle must apply the same

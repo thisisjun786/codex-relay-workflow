@@ -1309,7 +1309,9 @@ disposition for that head (`merge-evidence --restate <record> --late-disposition
 [a late thread the parent dispositions itself](merge-readiness.md#a-late-thread-the-parent-dispositions-itself)).
 An invalidated record is not a verdict and is not a merge candidate. It
 returns to the child that produced it, through the correction path the assignment already uses, for as long as
-that path is open: once the node is accepted no correction can reach the child, and
+that path is open: a node that is not accepted yet takes the ordinary correction, and a node whose result is
+accepted and still current takes the generation opened by hand under a reason that states the correction; once
+the node has landed no correction reaches it, and
 [Late review threads](merge-readiness.md#late-review-threads) says what holds then.
 
 The one head the parent makes itself, a base refresh under that rule, is a head the child's evidence

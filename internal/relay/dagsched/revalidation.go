@@ -498,16 +498,26 @@ func (s *Scheduler) refuseAcceptedHeadOnItsWayToTheBase(ctx context.Context, q s
 	}
 	clauses := []string{"relationship_id = ?"}
 	args := []any{acc.RelationshipID}
+	// The turn's repository predicate is the acceptance's FORGE identity where one was recorded: an
+	// acceptance written before the forge rule keeps whatever target it was accepted against, a local
+	// checkout included, while dag_acceptance_forge names the owner/name a merge turn is requested
+	// against. Without this a PR-only or bare-head turn of a legacy acceptance is never found.
+	forge := acc.Repository
+	if has, err := queryOne(ctx, q, "SELECT forge_repository FROM dag_acceptance_forge WHERE acceptance_id = ?", []any{acc.AcceptanceID}, &forge); err != nil {
+		return err
+	} else if !has {
+		forge = acc.Repository
+	}
 	for _, head := range heads {
 		if head == "" {
 			continue
 		}
 		clauses = append(clauses, "(lower(repository) = lower(?) AND candidate_head = ?)")
-		args = append(args, acc.Repository, head)
+		args = append(args, forge, head)
 	}
 	if acc.PRNumber > 0 {
 		clauses = append(clauses, "(lower(repository) = lower(?) AND pr_number = ?)")
-		args = append(args, acc.Repository, acc.PRNumber)
+		args = append(args, forge, acc.PRNumber)
 	}
 	var turn, state, head string
 	found, err := queryOne(ctx, q, "SELECT turn_id, state, candidate_head FROM merge_turns"+

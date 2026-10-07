@@ -198,9 +198,22 @@ func ucReplacedHead(ctx context.Context, q store.Querier, repository, head strin
 	} else if hasForge {
 		identity = "lower(COALESCE((SELECT g.forge_repository FROM dag_acceptance_forge g WHERE g.acceptance_id = a.acceptance_id), a.repository))"
 	}
+	// A head the acceptance once stood on through a recorded base refresh is covered too: the refresh
+	// rows outlive the acceptance they were recorded for, and a turn held for a refreshed head would
+	// otherwise resolve to nothing once dag-accept --supersedes replaced the acceptance.
 	query := "SELECT a.relationship_id FROM dag_acceptances a" +
-		" WHERE " + identity + " = lower(?) AND a.head_sha = ? ORDER BY a.accepted_at DESC, a.acceptance_id DESC LIMIT 1"
+		" WHERE " + identity + " = lower(?) AND a.head_sha = ?"
 	args := []any{repository, head}
+	if refreshed, err := ucZoneTable(ctx, q, "dag_base_refreshes"); err != nil {
+		return "", err
+	} else if refreshed {
+		query = "SELECT a.relationship_id FROM dag_acceptances a" +
+			" WHERE " + identity + " = lower(?) AND a.head_sha = ?" +
+			" UNION ALL SELECT f.relationship_id FROM dag_base_refreshes f JOIN dag_acceptances a ON a.acceptance_id = f.acceptance_id" +
+			" WHERE " + identity + " = lower(?) AND f.head_sha = ?"
+		args = []any{repository, head, repository, head}
+	}
+	query = "SELECT relationship_id FROM (" + query + ") ORDER BY relationship_id LIMIT 1"
 	var relationship string
 	if err := q.QueryRowContext(ctx, query, args...).Scan(&relationship); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
