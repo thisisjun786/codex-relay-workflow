@@ -13,31 +13,34 @@ import { appendFileSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-// The oracle is loaded once here, before the stdin listener exists, so its module initialization is
-// paid by the worker's start-up budget rather than by a case's timeout: the pool charges everything up
-// to the handshake reply to the startup deadline (worker.go ready/acquire) and only what follows to
-// the per-case one, so a load moved into the first case would be charged to that case and a slow
-// import would time out a worker that answered its handshake.
+// The oracle is loaded once here, before the stdin listener exists, so its module initialization is paid
+// by the worker's start-up budget rather than by a case's timeout: the pool charges everything up to the
+// handshake reply to the startup deadline (worker.go ready/acquire) and only what follows to the per-case
+// one, so a load moved into a case would be charged to that case and a slow import would time out a
+// worker that answered its handshake. There is exactly one attempt: a later attempt, made while a case
+// waits, would put that same cost on the case, so a worker whose load failed keeps listening and answers
+// every later request with the remembered error instead of trying again.
 //
 // The load must not run under the caller's environment. The pool hands the worker the caller's
-// environment (Campaign passes os.Environ() through NewPool), so before every import attempt the worker
-// creates a fresh temporary root of its own under the harness TMPDIR and points HOME, CODEX_HOME,
-// CRW_HOME, CODEXCLAW_HOME and TMPDIR at it. The oracle's module initialization therefore runs under a
-// root this worker owns and removes again when the attempt ends. Each case then gets its own homes: run
-// puts the five variables under request.root before the classifier is called, after the load has
-// finished, so a case's own work reads the case's tree and not the load root.
+// environment (Campaign passes os.Environ() through NewPool), so before the import the worker creates a
+// temporary root of its own under the harness TMPDIR and points HOME, CODEX_HOME, CRW_HOME,
+// CODEXCLAW_HOME and TMPDIR at it. The oracle's module initialization therefore runs under a root this
+// worker owns and removes again when the attempt ends. Each case then gets its own homes: run puts the
+// five variables under request.root before the classifier is called, after the load has finished, so a
+// case's own work reads the case's tree and not the load root.
 //
 // A load that fails is remembered, not fatal: the worker still starts, still answers the pool's
 // start-up handshake (a null input with an empty root) with the refusal, and answers a later request
 // with an error envelope, so a missing or hidden oracle tree reads as an answer rather than as a dead
-// worker. A retry for a tree that appears later makes a new owned root of its own; a name an earlier
-// attempt used is never reused.
+// worker.
 //
-// The directories the load root may be created under, captured here before any request can replace
-// TMPDIR. The harness TMPDIR comes first; Node's own temporary directory and the conventional /tmp are
-// the fallbacks, because Node's tmpdir() also reads TMPDIR and a caller that named a TMPDIR which does
-// not exist would otherwise leave the worker no place to make its root.
-const loadBases = [process.env.TMPDIR, tmpdir(), "/tmp"].filter((path) => typeof path === "string" && path !== "");
+// The harness temporary directory the pool handed this worker, captured here before any request can
+// replace TMPDIR, so the load root is always created under the harness's own scratch directory. A TMPDIR
+// the worker cannot make its root under is an initialization failure it remembers and answers; it is
+// never a reason to create the root somewhere else, which would put the oracle's initialization outside
+// the boundary the harness selected. When the caller named no TMPDIR at all, the process's own temporary
+// directory is that scratch.
+const loadBase = typeof process.env.TMPDIR === "string" && process.env.TMPDIR !== "" ? process.env.TMPDIR : tmpdir();
 const loadHomes = ["home", "codex-home", "crw-home", "codexclaw-home", "tmp"];
 let oracleTable = null;
 let oracleLoadError = null;
@@ -64,34 +67,31 @@ function recordLoadRoot(root) {
   }
 }
 
-// ownLoadRoot creates a fresh, exclusively owned root for one import attempt and points the five
-// variables at it. Every attempt calls mkdtempSync, which creates a new 0700 directory and fails rather
-// than following a pathname that already exists: a name an earlier attempt used is never reused, so a
-// retry cannot inherit a pathname another process has since replaced with a symlink, and no import ever
-// creates a directory through a path this worker does not own. The caller removes the root again when
-// the attempt ends, so its lifetime is exactly the import.
-function ownLoadRoot() {
-  let lastError = null;
-  for (const base of loadBases) {
-    let root = null;
-    try {
-      root = mkdtempSync(join(base, "crw-spawn-load-"));
-    } catch (error) {
-      lastError = error;
-      continue;
-    }
-    recordLoadRoot(root);
+// makeLoadRoot creates a fresh, exclusively owned root for the import and points the five variables at
+// it. mkdtempSync creates a new 0700 directory and fails rather than following a pathname that already
+// exists, so a name another process has since taken over is never inherited and no import ever creates a
+// directory through a path this worker does not own. A root that cannot be completed is removed again
+// before the error is raised, so a failure here leaves nothing behind. The caller removes the root when
+// the import ends.
+function makeLoadRoot() {
+  const root = mkdtempSync(join(loadBase, "crw-spawn-load-"));
+  try {
     for (const name of loadHomes) {
       mkdirSync(join(root, name), { recursive: true });
     }
-    setHomes(root);
-    return root;
+  } catch (error) {
+    releaseLoadRoot(root);
+    throw error;
   }
-  throw lastError ?? new Error("no temporary directory to create the oracle load root under");
+  recordLoadRoot(root);
+  setHomes(root);
+  return root;
 }
 
-// releaseLoadRoot removes one attempt's root. The root is this worker's own scratch: a failure to
-// remove it must not stop the worker.
+// releaseLoadRoot removes one attempt's root. The root is this worker's own scratch: a failure to remove
+// it must not stop the worker, so the removal is best-effort and its error is dropped. A root can only
+// be left behind when this process is killed outright - the pool's startup deadline sends SIGKILL, which
+// no finally can run under - and that leftover lives under the harness TMPDIR the caller chose.
 function releaseLoadRoot(root) {
   try {
     rmSync(root, { recursive: true, force: true });
@@ -101,7 +101,7 @@ function releaseLoadRoot(root) {
 }
 
 async function loadOracle() {
-  const root = ownLoadRoot();
+  const root = makeLoadRoot();
   try {
     const base = process.env.ORACLE_ROOT;
     if (!base) throw new Error("ORACLE_ROOT is not set");
@@ -117,11 +117,12 @@ try {
   oracleLoadError = error;
 }
 
-async function oracle() {
+// oracle is the table the one load attempt produced, or the error it left. There is no second attempt
+// (see the note on the load above): a worker whose load failed answers every later request with the
+// remembered error and keeps listening.
+function oracle() {
   if (oracleTable) return oracleTable;
-  if (!process.env.ORACLE_ROOT) throw oracleLoadError ?? new Error("ORACLE_ROOT is not set");
-  oracleTable = await loadOracle();
-  return oracleTable;
+  throw oracleLoadError ?? new Error("the oracle was not loaded");
 }
 
 // The exported functions the issue names: each has an exported counterpart here. The Go side's
@@ -228,7 +229,7 @@ async function run(request) {
   // initialization under the worker's own root (see loadOracle). Setting the case's homes first would be
   // overwritten by that root and then left pointing at a directory this worker has already removed, so
   // the classifier would read a tree that is not the case's.
-  const table = await oracle();
+  const table = oracle();
   const root = typeof request.root === "string" ? request.root : "";
   if (root !== "") {
     setHomes(root);

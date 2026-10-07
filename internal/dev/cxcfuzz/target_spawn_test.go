@@ -151,7 +151,7 @@ func TestSpawnShimIsolatesTheCaseRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	decoy := t.TempDir()
-	pool := spawnFakePool(t, writeFakeSpawnOracle(t), append(os.Environ(), spawnDecoyEnv(decoy)...))
+	pool := spawnFakePool(t, writeFakeSpawnOracle(t), append(os.Environ(), spawnDecoyEnv(t, decoy)...))
 	defer func() { _ = pool.Close() }()
 	reply, err := pool.Call(spawnMentionedFoldersCase(), root)
 	if err != nil {
@@ -187,7 +187,7 @@ func TestSpawnShimAnswersTheHandshakeInertly(t *testing.T) {
 		t.Fatal(err)
 	}
 	decoy := t.TempDir()
-	pool := spawnFakePool(t, writeFakeSpawnOracle(t), append(os.Environ(), spawnDecoyEnv(decoy)...))
+	pool := spawnFakePool(t, writeFakeSpawnOracle(t), append(os.Environ(), spawnDecoyEnv(t, decoy)...))
 	defer func() { _ = pool.Close() }()
 	got, err := pool.Call("null", "")
 	if err != nil {
@@ -214,7 +214,7 @@ func TestSpawnShimAnswersTheHandshakeInertly(t *testing.T) {
 func TestSpawnShimAnswersWithoutTheOracleTree(t *testing.T) {
 	requireNode(t)
 	decoy := t.TempDir()
-	pool := spawnFakePool(t, filepath.Join(decoy, "no-such-oracle"), append(os.Environ(), spawnDecoyEnv(decoy)...))
+	pool := spawnFakePool(t, filepath.Join(decoy, "no-such-oracle"), append(os.Environ(), spawnDecoyEnv(t, decoy)...))
 	defer func() { _ = pool.Close() }()
 	got, err := pool.Call("null", "")
 	if err != nil {
@@ -369,15 +369,31 @@ func spawnMentionedFoldersCase() string {
 	return canonical(pyjson.Object{{Key: "fn", Value: spawnFnMentionedFolders}, {Key: "args", Value: []any{"$crw-dev"}}})
 }
 
-// spawnDecoyEnv is a caller's environment: five paths that are not the case root's, so a shim that
-// isolates answers the case root's instead.
-func spawnDecoyEnv(decoy string) []string {
+// spawnDecoyEnv is a caller's environment: four homes that are not the case root's, so a shim that
+// isolates answers the case root's instead, and the harness temporary directory the worker makes its load
+// root under. The temporary directory is created, because the harness hands the worker a TMPDIR that
+// exists; the homes are left absent, so a shim that read one would have nothing to read.
+func spawnDecoyEnv(t *testing.T, decoy string) []string {
+	t.Helper()
+	return spawnDecoyEnvAt(t, decoy, filepath.Join(decoy, "tmp"), true)
+}
+
+// spawnDecoyEnvAt is spawnDecoyEnv with the harness temporary directory chosen by the caller: the
+// directory the worker makes its load root under. create makes it first, so a test can hand the worker a
+// TMPDIR that exists (as the harness does) or one that does not (a caller's mistake).
+func spawnDecoyEnvAt(t *testing.T, decoy, tmpdir string, create bool) []string {
+	t.Helper()
+	if create {
+		if err := os.MkdirAll(tmpdir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
 	return []string{
 		"HOME=" + filepath.Join(decoy, "home"),
 		"CODEX_HOME=" + filepath.Join(decoy, "codex-home"),
 		"CRW_HOME=" + filepath.Join(decoy, "crw-home"),
 		"CODEXCLAW_HOME=" + filepath.Join(decoy, "codexclaw-home"),
-		"TMPDIR=" + filepath.Join(decoy, "tmp"),
+		"TMPDIR=" + tmpdir,
 	}
 }
 
@@ -536,7 +552,7 @@ func TestSpawnSlowOracleLoadIsChargedToStartup(t *testing.T) {
 	// answers only if the load is paid by startup.
 	pool, err := NewPool(
 		Oracle{Command: "node", Shim: shimPath("spawn"), Root: writeSlowSpawnOracle(t, 750*time.Millisecond)},
-		1, 50*time.Millisecond, 20*time.Second, append(os.Environ(), spawnDecoyEnv(decoy)...))
+		1, 50*time.Millisecond, 20*time.Second, append(os.Environ(), spawnDecoyEnv(t, decoy)...))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -565,7 +581,7 @@ func TestSpawnOracleLoadRunsUnderAnOwnedRoot(t *testing.T) {
 	workerTmp := t.TempDir()
 	record := filepath.Join(t.TempDir(), "load-env.json")
 	pool := spawnFakePool(t, writeRecordingSpawnOracle(t, record),
-		append(append(os.Environ(), spawnDecoyEnv(decoy)...), "TMPDIR="+workerTmp, "CXCFUZZ_LOAD_RECORD="+record))
+		append(append(os.Environ(), spawnDecoyEnvAt(t, decoy, workerTmp, true)...), "CXCFUZZ_LOAD_RECORD="+record))
 	defer func() { _ = pool.Close() }()
 
 	got, err := pool.Call("null", "")
@@ -587,7 +603,7 @@ func TestSpawnOracleLoadRunsUnderAnOwnedRoot(t *testing.T) {
 	if err := json.Unmarshal(raw, &seen); err != nil {
 		t.Fatalf("the oracle's initialization recorded %s: %v", raw, err)
 	}
-	caller := spawnDecoyEnv(decoy)
+	caller := spawnDecoyEnv(t, decoy)
 	wantHome := strings.TrimPrefix(caller[0], "HOME=")
 	wantCodex := strings.TrimPrefix(caller[1], "CODEX_HOME=")
 	if seen.Home == wantHome {
@@ -610,24 +626,21 @@ func TestSpawnOracleLoadRunsUnderAnOwnedRoot(t *testing.T) {
 	}
 }
 
-// c8 (CRW-938): a retry makes a fresh, exclusively owned root, so a name an earlier attempt used is never
-// reused. The first attempt's root is removed when its import fails; a later process that replaces that
-// pathname with a symlink must not be followed, because mkdtempSync never reuses a name and the retry takes
-// a new one. Red against a worker that kept its root pathname and recreated directories through it: the
-// symlink target would receive the five homes. The same call also pins that a case after a successful retry
-// answers under its own request root rather than under the import root.
-func TestSpawnRetryMakesAFreshOwnedRoot(t *testing.T) {
+// c8 (CRW-938): a load that failed is remembered, and the worker makes no second attempt. A second
+// attempt, made while a case waits, would charge the oracle's initialization to that case's timeout
+// instead of to the start-up budget, so a healthy classifier request could be reported as a timeout
+// only because the oracle appeared late (the pre-merge evaluation of head 4f1d14b1, d2). Red against a
+// worker that retried: it would record a second load root here.
+func TestSpawnFailedLoadKeepsAnsweringWithoutASecondRoot(t *testing.T) {
 	requireNode(t)
 	workerTmp := t.TempDir()
 	record := filepath.Join(t.TempDir(), "load-roots.txt")
-	victim := t.TempDir()
 	oracle := filepath.Join(t.TempDir(), "late-oracle")
-
-	pool := spawnFakePool(t, oracle, append(append(os.Environ(), spawnDecoyEnv(t.TempDir())...),
-		"TMPDIR="+workerTmp, "CXCFUZZ_LOAD_ROOTS="+record))
+	pool := spawnFakePool(t, oracle, append(append(os.Environ(), spawnDecoyEnvAt(t, t.TempDir(), workerTmp, true)...),
+		"CXCFUZZ_LOAD_ROOTS="+record))
 	defer func() { _ = pool.Close() }()
 
-	// The first import fails: the oracle tree is not there yet. The handshake is still answered.
+	// The import fails: the oracle tree is not there. The handshake is still answered.
 	got, err := pool.Call("null", "")
 	if err != nil {
 		t.Fatalf("the handshake answered no reply: %v", err)
@@ -642,98 +655,55 @@ func TestSpawnRetryMakesAFreshOwnedRoot(t *testing.T) {
 	if !strings.HasPrefix(first[0], workerTmp+string(os.PathSeparator)) {
 		t.Fatalf("the load root %s is not under the harness TMPDIR %s", first[0], workerTmp)
 	}
-	// The failed attempt's root is gone, and another process takes the name over with a symlink.
 	if _, err := os.Stat(first[0]); !os.IsNotExist(err) {
-		t.Fatalf("the first load root %s was not removed (stat: %v)", first[0], err)
-	}
-	if err := os.Symlink(victim, first[0]); err != nil {
-		t.Fatal(err)
+		t.Fatalf("the load root %s was not removed (stat: %v)", first[0], err)
 	}
 
-	// The tree appears, so the next request retries the import and answers the case.
+	// The tree appears, and the worker still answers from the remembered failure rather than loading.
 	writeSpawnOracleAt(t, oracle)
-	root := t.TempDir()
-	if err := PrepareRoot(root); err != nil {
-		t.Fatal(err)
-	}
-	reply, err := pool.Call(spawnMentionedFoldersCase(), root)
+	reply, err := pool.Call(spawnMentionedFoldersCase(), t.TempDir())
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("the case after a failed load answered no reply: %v", err)
 	}
-	// The classifier ran under the case's own root, not under the import root: the fake oracle answers
-	// the five variables in place, so the answer is the case root's five paths.
-	value, err := decode(reply)
-	if err != nil {
-		t.Fatal(err)
+	if !strings.Contains(reply, "\"error\"") {
+		t.Fatalf("the case after a failed load answered %s, want the remembered error", reply)
 	}
-	list, ok := value.([]any)
-	if !ok {
-		t.Fatalf("the case after the retry answered %s, want the case root's five paths", reply)
-	}
-	want := spawnHomePaths(root)
-	sort.Strings(want)
-	if len(list) != len(want) {
-		t.Fatalf("the case after the retry answered %v, want the case root's %v", list, want)
-	}
-	for i, item := range list {
-		if name, _ := item.(string); name != want[i] {
-			t.Fatalf("the case after the retry answered %v, want the case root's %v", list, want)
-		}
-	}
-
-	// The retry made its own new root and never reused the taken-over name: the symlink target is untouched.
-	roots := spawnLoadRoots(t, record)
-	if len(roots) != 2 {
-		t.Fatalf("the worker recorded %v, want a second load root", roots)
-	}
-	if roots[0] == roots[1] {
-		t.Fatalf("the retry reused the load root %s", roots[0])
-	}
-	if files := spawnTree(t, victim); len(files) != 0 {
-		t.Fatalf("the retry created directories through the taken-over pathname: %v", files)
+	if roots := spawnLoadRoots(t, record); len(roots) != 1 {
+		t.Fatalf("the worker made a second load root: %v", roots)
 	}
 }
 
-// c8 (CRW-938): a case that follows a successful import retry answers under its own request root. The
-// import runs under a root of the worker's own, and that root is removed before the classifier is called,
-// so a worker that set the case's homes first and then loaded would hand the classifier the import root's
-// paths instead of the case's. Red against that order: the answer names the removed import root.
-func TestSpawnCaseAfterRetryAnswersUnderItsOwnRoot(t *testing.T) {
+// c8 (CRW-938): an unusable harness TMPDIR is an initialization failure, not a reason to make the load
+// root somewhere else. The worker remembers the failure, keeps answering the handshake and later
+// requests, and writes nothing under the TMPDIR it was given (the pre-merge evaluation of head
+// 4f1d14b1, d1). Red against a loader that fell back to another directory: it would create a root
+// outside the harness's scratch boundary.
+func TestSpawnUnusableTmpdirFailsClosed(t *testing.T) {
 	requireNode(t)
-	workerTmp := t.TempDir()
-	oracle := filepath.Join(t.TempDir(), "late-oracle")
-	pool := spawnFakePool(t, oracle, append(append(os.Environ(), spawnDecoyEnv(t.TempDir())...), "TMPDIR="+workerTmp))
+	decoy := t.TempDir()
+	missing := filepath.Join(t.TempDir(), "no-such-tmpdir")
+	pool := spawnFakePool(t, writeFakeSpawnOracle(t), append(os.Environ(), spawnDecoyEnvAt(t, decoy, missing, false)...))
 	defer func() { _ = pool.Close() }()
 
-	if _, err := pool.Call("null", ""); err != nil {
-		t.Fatalf("the handshake answered no reply: %v", err)
-	}
-	writeSpawnOracleAt(t, oracle)
-	root := t.TempDir()
-	if err := PrepareRoot(root); err != nil {
-		t.Fatal(err)
-	}
-	reply, err := pool.Call(spawnMentionedFoldersCase(), root)
+	got, err := pool.Call("null", "")
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("the handshake with an unusable TMPDIR answered no reply: %v", err)
 	}
-	value, err := decode(reply)
+	if strings.TrimSpace(got) != canonical(spawnRefusal) {
+		t.Fatalf("the handshake answered %s, want the refusal %s", got, canonical(spawnRefusal))
+	}
+	reply, err := pool.Call(spawnMentionedFoldersCase(), t.TempDir())
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("the case with an unusable TMPDIR answered no reply: %v", err)
 	}
-	list, ok := value.([]any)
-	if !ok {
-		t.Fatalf("the case answered %s, want the five paths", reply)
+	if !strings.Contains(reply, "\"error\"") {
+		t.Fatalf("the case answered %s, want the remembered error", reply)
 	}
-	want := spawnHomePaths(root)
-	sort.Strings(want)
-	if len(list) != len(want) {
-		t.Fatalf("the case answered %v, want the case root's %v", list, want)
+	if entries := spawnTree(t, filepath.Dir(missing)); len(entries) != 0 {
+		t.Fatalf("the worker created %v beside the TMPDIR it was given", entries)
 	}
-	for i, item := range list {
-		if name, _ := item.(string); name != want[i] {
-			t.Fatalf("the case answered %v, want the case root's %v", list, want)
-		}
+	if _, err := os.Stat(missing); !os.IsNotExist(err) {
+		t.Fatalf("the worker created the TMPDIR it was given (stat: %v)", err)
 	}
 }
 
@@ -784,7 +754,7 @@ func TestSpawnOracleLoadRootIsRemoved(t *testing.T) {
 	workerTmp := t.TempDir()
 	record := filepath.Join(t.TempDir(), "load-env.json")
 	pool := spawnFakePool(t, writeRecordingSpawnOracle(t, record),
-		append(append(os.Environ(), spawnDecoyEnv(t.TempDir())...), "TMPDIR="+workerTmp, "CXCFUZZ_LOAD_RECORD="+record))
+		append(append(os.Environ(), spawnDecoyEnvAt(t, t.TempDir(), workerTmp, true)...), "CXCFUZZ_LOAD_RECORD="+record))
 	if _, err := pool.Call("null", ""); err != nil {
 		t.Fatalf("the handshake answered no reply: %v", err)
 	}
@@ -817,7 +787,10 @@ func TestSpawnOracleLoadDoesNotTouchTheHomes(t *testing.T) {
 			t.Fatalf("%s exists before the worker starts", home)
 		}
 	}
-	pool := spawnFakePool(t, DefaultOracleRoot, append(os.Environ(), spawnDecoyEnv(decoy)...))
+	// The harness TMPDIR is a directory of its own, so the decoy holds only the four homes the load must
+	// leave alone.
+	workerTmp := t.TempDir()
+	pool := spawnFakePool(t, DefaultOracleRoot, append(os.Environ(), spawnDecoyEnvAt(t, decoy, workerTmp, true)...))
 	defer func() { _ = pool.Close() }()
 	got, err := pool.Call("null", "")
 	if err != nil {
