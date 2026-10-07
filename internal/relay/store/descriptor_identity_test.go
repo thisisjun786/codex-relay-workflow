@@ -336,16 +336,15 @@ func TestDescriptorIdentity_python_properties(t *testing.T) {
 			t.Fatalf("alias %+v", answer)
 		}
 	})
-	t.Run("test_the_descriptor_is_released_on_every_path", func(t *testing.T) {
+	// CRW-846 inverted this case. It used to assert that a descriptor was RELEASED on every path;
+	// releasing one is the defect now (a POSIX lock is held per process and per file, so closing
+	// any descriptor of a store file drops the lock of the SQLite connection this process holds on
+	// it). The catchable regression the old form protected -- per-call descriptor growth -- is
+	// still caught, as growth of the held set rather than of the process's descriptor count, and
+	// the case adds the grading that a never-closed stale handle can never be mistaken for the
+	// store now at the pathname.
+	t.Run("test_the_held_set_does_not_grow_per_read", func(t *testing.T) {
 		f := newDescriptorFixture(t)
-		held := func() int {
-			entries, err := os.ReadDir("/proc/self/fd")
-			if err != nil {
-				t.Fatal(err)
-			}
-			return len(entries)
-		}
-		before := held()
 		// The refusal path: the descriptor is opened and then refused as moved, which is the one
 		// branch that returns without ever reaching a connection.
 		refusing := context.WithValue(context.Background(), diagnosticSeamsKey{}, diagnosticSeams{afterOpen: func(string) {
@@ -363,7 +362,7 @@ func TestDescriptorIdentity_python_properties(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(broken, "relay.sqlite3"), []byte("not a database"), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		for range 25 {
+		round := func() {
 			_ = ReadChallengeRows(context.Background(), f.selection())
 			_ = ReadChallengeRows(context.Background(), StateSelection{Path: broken})
 			_ = NonceLookup(context.Background(), f.selection(), "absent")
@@ -377,9 +376,35 @@ func TestDescriptorIdentity_python_properties(t *testing.T) {
 			}
 			restore()
 		}
-		if after := held(); after > before+1 {
-			t.Fatalf("a descriptor was not released: %d -> %d", before, after)
+		round()
+		baseline := heldStoreFileCount()
+		for range 25 {
+			round()
 		}
+		if after := heldStoreFileCount(); after != baseline {
+			t.Fatalf("the held set grew over repeated reads: %d -> %d", baseline, after)
+		}
+	})
+	t.Run("test_a_stale_held_handle_is_never_the_store_at_the_path", func(t *testing.T) {
+		f := newDescriptorFixture(t)
+		held, err := holdStoreFile(f.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		stale, ok := measureHeld(context.Background(), held)
+		if !ok {
+			t.Fatal("the held handle could not be identified")
+		}
+		// The store is replaced at the pathname. The handle this process still holds names the
+		// old inode and is never closed; the store at the path is now another file.
+		f.rename(f.path, filepath.Join(f.tmp, "moved-away.sqlite3"))
+		f.rename(f.interloperPath, f.path)
+		now := Probe(context.Background(), f.selection())
+		if now.Store.Inode == stale.inode {
+			t.Fatal("the replacement store is the held inode, so nothing is stale here")
+		}
+		fromStale := Location{Device: stale.device, Inode: stale.inode, Links: stale.links}
+		requireVerdict(t, CompareStore(fromStale, CompareExpectations{Inode: now.Store.PhysicalIdentity()}), Mismatch)
 	})
 	t.Run("test_a_missing_store_is_answered_rather_than_raised", func(t *testing.T) {
 		t.Parallel()
