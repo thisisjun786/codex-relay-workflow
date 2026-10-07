@@ -324,8 +324,8 @@ func TestTheLaneGateRefusesAReplacedHeadThatWasOnceRefreshed(t *testing.T) {
 
 // CRW-906 generation 2, round 6 d3: an acceptance written before the forge rule keeps whatever target it
 // was accepted against (a local checkout included) while dag_acceptance_forge holds the owner/name a merge
-// turn is requested against. The in-flight guard must match the forge identity too, not the stored target.
-func TestTheInFlightGuardMatchesTheForgeIdentityNotTheStoredTarget(t *testing.T) {
+// turn is requested against. The lane gate must match the forge identity too, not the stored target.
+func TestTheLaneGateMatchesATurnByItsForgeIdentityNotTheStoredTarget(t *testing.T) {
 	w := newFx(t)
 	w.ucLaneRelationship("rel-local", 2)
 	w.ucLaneForge("rel-local", 7)
