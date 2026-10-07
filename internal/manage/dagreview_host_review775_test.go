@@ -189,9 +189,20 @@ func TestDagHostReview775DocsReadIsNotRelayCall(t *testing.T) {
 		{"a relay command in a double-quoted substitution", `printf '%s\n' "$(codex-session-relay dag-ready --plan p1)"`, true},
 		{"a relay command in a bare substitution", "out=$(crw relay dag-release --plan p1)", true},
 		{"a relay command in a backtick substitution", "out=`crw relay dag-release --plan p1`", true},
+		// A substitution runs its own commands, so a separator inside one separates even when the
+		// substitution itself sits inside a double-quoted string.
+		{"a relay command after another in a double-quoted substitution", `printf '%s\n' "$(true; crw relay dag-release --plan p1)"`, true},
+		{"a relay command after a pipe in a substitution", `echo "$(cat x | crw relay dag-release --plan p1)"`, true},
 		{"a relay command after a comment on the line", "cat docs/relay/example.md # example; crw relay dag-release --plan p1", false},
 		{"a commented relay command at the start of a line", "true\n# crw relay dag-release --plan p1\ntrue", false},
 		{"a relay command before a comment", "crw relay dag-release --plan p1 # note; crw relay dag-ready --plan p2", true},
+		// A here-document opener inside a comment starts no document, so the commands after it are
+		// still read; an ordinary << ends only at a line equal to its delimiter, so an indented
+		// line is body text and the example after it is not a command.
+		{"a commented here-document opener", "# Example: cat <<EOF\ncrw relay dag-release --plan p1", true},
+		{"an indented line in an ordinary here-document body", "cat <<'EOF'\n  EOF\ncrw relay dag-release --plan p1\nEOF", false},
+		{"a relay command in a <<- document body", "cat <<-'EOF'\ncrw relay dag-release --plan p1\n\tEOF", false},
+		{"a relay command after a <<- document ends", "cat <<-'EOF'\n\tEOF\ncrw relay dag-release --plan p1", true},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
