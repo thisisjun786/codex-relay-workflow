@@ -3,6 +3,7 @@ package hook
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 // CRW-894: the residual forms of the program-read-from-a-pipe position that CRW-726's pipe rule left open — a
@@ -477,5 +478,29 @@ func TestWorktreeDelPipeResidualGeneration2Findings(t *testing.T) {
 	// The same source form with no redirection, and a source file, stay as they were.
 	worktreeDelPipeDenied(t, r, "printf 'rm -rf ../repo' | source /dev/stdin")
 	r.allowed(t, "printf x | source ./env.sh", "printf x | bash script.sh")
+	r.intact(t)
+}
+
+// TestWorktreeDelUnreadableStdinHoldingsBound pins the two bounds the generation-2 review asked about: the descriptor
+// walk saturates instead of overflowing (a run of digits longer than a descriptor can be names no descriptor, so the
+// caller fails closed), and the pipe rule's recursion is bounded by the reading-depth budget rather than by the input.
+func TestWorktreeDelUnreadableStdinHoldingsBound(t *testing.T) {
+	r := newDelRig(t)
+	// A descriptor number too large to be one is no descriptor the guard can follow: both forms fail closed.
+	big := strings.Repeat("9", 30)
+	worktreeDelPipeDenied(t, r, "printf 'rm -rf ../repo' | bash 3<&"+big+" <&3")
+	worktreeDelPipeDenied(t, r, "printf 'rm -rf ../repo' | bash "+big+"</dev/fd/0 <&"+big)
+	// The recursion is bounded: a nest deeper than the reading-depth budget is refused and returns at once, whatever
+	// the program names, so its cost does not grow with the depth.
+	program := "true"
+	for range worktreeDelQuoteDepth + 4 {
+		program = "bash -c '" + program + " \"$@\" \"$0\"' _ bash"
+	}
+	cmd := "printf 'rm -rf ../repo' | " + program
+	if got, ok := worktreeDelVerdictWithin(t, r, cmd, 10*time.Second); !ok {
+		t.Fatal("the nest did not return within 10s")
+	} else if !got.Deny {
+		t.Errorf("the nest must fail closed: %+v", got)
+	}
 	r.intact(t)
 }

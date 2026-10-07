@@ -1,6 +1,7 @@
 package hook
 
 import (
+	"math"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -2271,6 +2272,9 @@ func worktreeDelUnreadableStdinAliasPath(path string) bool {
 }
 
 // worktreeDelUnreadableDescriptor is the descriptor a bare run of digits names, and false when s is no such number.
+// A run longer than a descriptor can be is no descriptor: the value saturates instead of overflowing, so a word such
+// as `3<&99999999999999999999999` names no descriptor the guard can follow and the caller fails closed (CRW-894
+// generation-2 review).
 func worktreeDelUnreadableDescriptor(s string) (int, bool) {
 	if s == "" {
 		return 0, false
@@ -2280,7 +2284,11 @@ func worktreeDelUnreadableDescriptor(s string) (int, bool) {
 		if s[i] < '0' || s[i] > '9' {
 			return 0, false
 		}
-		n = n*10 + int(s[i]-'0')
+		digit := int(s[i] - '0')
+		if n > (math.MaxInt-digit)/10 {
+			return 0, false
+		}
+		n = n*10 + digit
 	}
 	return n, true
 }
