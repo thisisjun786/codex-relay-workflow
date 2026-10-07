@@ -5,11 +5,18 @@ package hook
 // reads whole (the closed rule), and refuses every other text that names a post. The deny reason names
 // only the rule and the place, never a value.
 //
-// The program word is read the way the shell builds it (quote removal and backslash removal) and
-// compared by its last path element, so /usr/bin/gh, ./gh, g''h and 'g'h are the same word as gh, and
-// the form checks and the mention test call that one function. A program word that still holds an
-// expansion after that (a variable, a substitution, a backtick, a glob) names a command the guard
-// cannot judge, so a text that names a post through it is refused rather than passed.
+// The program word is read the way the shell builds it (quote removal and backslash removal), compared
+// by its last path element and in ASCII lower case (a case-insensitive file system runs gh for GH), so
+// /usr/bin/gh, ./gh, g''h, 'g'h and GH are the same word as gh; the form checks, the mention test, the
+// unknown-gh check and the read-and-record exception all call that one function. A program word that
+// still holds an expansion after that (a variable, a substitution, a backtick, a glob) names a command
+// the guard cannot judge, so a text that names a post through it is refused rather than passed.
+//
+// A text that is not one simple command is read through its canonical words: every quote character and
+// every backslash removed from the whole text, the ASCII letters lowered, then split on whitespace. The
+// canonical words name a post when a pr or issue word is followed by a word outside the read list, when
+// an api word sits with a body or method flag, or when a release word sits with a text flag, whether or
+// not gh appears; that is what refuses a program word built in quote pieces or one quoting level down.
 
 import (
 	"io"
@@ -151,33 +158,36 @@ func githubPostJudgeWords(words []string, cwd string) (githubPostSite, bool) {
 	if site, denied := githubPostUnknownGh(words); denied {
 		return site, true
 	}
-	// A command word that still holds an expansion cannot be judged, and a word list that names a post
-	// in any spelling is refused: the program is normalised first, so a path or quote pieces are seen.
-	if githubPostMentionsWords(words) {
+	// A command word that still holds an expansion cannot be judged, and a command whose text names a
+	// post in any spelling is refused: the mention test reads the canonical words, so the program is
+	// normalised and lowered first and a path, quote pieces or a mixed case are all seen.
+	if githubPostMentions(strings.Join(words, " ")) {
 		return githubPostSite{githubPostRuleUnread, githubPostWhereCommand}, true
 	}
 	return githubPostSite{}, false
 }
 
-// githubPostUnread is the fail-closed judgement for a text that is not one simple command: a text naming
-// a post is refused, and one whose text holds an outer-shell expansion says so.
+// githubPostUnread is the fail-closed judgement for a text that is not one simple command: rule 2's
+// canonical words are the gate, so a text that names a post is refused whatever its quoting depth, its
+// case or its number of commands, and a text that names no post is not a target.
 func githubPostUnread(command string) (githubPostSite, bool) {
-	if !githubPostMentions(command) && !githubPostMentionsWords(githubPostSplitWords(command)) {
-		// A text that names no post in any spelling is not a target, unless its command word is one the
-		// guard cannot judge (a word that still holds an expansion after quote removal) and the rest of
-		// its words name a post verb: rule 1's program identity refuses that command word.
+	// A text that spells an inline body is the inline-body rule, wherever the body sits.
+	if githubPostInlineShape(command) {
+		return githubPostSite{githubPostRuleInline, githubPostWhereCommand}, true
+	}
+	// A text that holds an outer-shell expansion and mentions a gh post in any spelling keeps the
+	// generation-6 refusal: the expansion may build the post the guard cannot read.
+	if githubPostExpands(command) && githubPostMentionsBroad(command) {
+		return githubPostSite{githubPostRuleExpand, githubPostWhereCommand}, true
+	}
+	if !githubPostCanonicalNamesPost(githubPostCanonicalWords(command)) {
+		// A command word that still holds an expansion after quote removal cannot be judged, and the rest
+		// of its words name a post verb: rule 1's program identity refuses that command word.
 		if words := githubPostSplitWords(command); len(words) > 0 &&
 			githubPostHoldsExpansion(githubPostNormal(words[0])) && githubPostNamesPost(words[1:]) {
 			return githubPostSite{githubPostRuleUnread, githubPostWhereCommand}, true
 		}
 		return githubPostSite{}, false
-	}
-	// A text that spells an inline body is the inline-body rule, wherever the body sits.
-	if githubPostInlineShape(command) {
-		return githubPostSite{githubPostRuleInline, githubPostWhereCommand}, true
-	}
-	if githubPostExpands(command) {
-		return githubPostSite{githubPostRuleExpand, githubPostWhereCommand}, true
 	}
 	return githubPostSite{githubPostRuleUnread, githubPostWhereCommand}, true
 }
@@ -290,14 +300,109 @@ func githubPostNormal(word string) string {
 }
 
 // githubPostProgram is the program word of a command: the word as the shell reads it, compared by its
-// last path element. The form checks and the mention test share this one function, so a program spelled
-// as a path (/usr/bin/gh, ./gh) or in quote pieces (g”h, g""h, 'g'h) is the same word either way.
+// last path element and in ASCII lower case. The form checks, the mention test, the unknown-gh check
+// and the read-and-record exception share this one function, so a program spelled as a path
+// (/usr/bin/gh, ./gh), in quote pieces (g”h, g""h, 'g'h) or in another case (GH, Gh) is the same word.
 func githubPostProgram(word string) string {
-	normal := githubPostNormal(word)
+	normal := githubPostLower(githubPostNormal(word))
 	if i := strings.LastIndexByte(normal, '/'); i >= 0 {
 		return normal[i+1:]
 	}
 	return normal
+}
+
+// githubPostLower is the ASCII lower case of a text, the case rule 1 compares a program or subcommand
+// word in, because a case-insensitive file system runs gh for GH.
+func githubPostLower(s string) string {
+	b := []byte(s)
+	for i := range b {
+		if b[i] >= 'A' && b[i] <= 'Z' {
+			b[i] += 'a' - 'A'
+		}
+	}
+	return string(b)
+}
+
+// githubPostCanonicalWords is rule 2's canonical words: every quote character and every backslash removed
+// from the whole text, the ASCII letters lowered, then split on whitespace. It is what the guard reads
+// when a text is not one simple command, so a program word built in quote pieces, holding a backslash or
+// sitting one quoting level down is read as the word the shell builds.
+func githubPostCanonicalWords(s string) []string {
+	cleaned := strings.Map(func(r rune) rune {
+		switch r {
+		case '\'', '"', '\\':
+			return -1
+		}
+		return r
+	}, s)
+	return strings.Fields(githubPostLower(cleaned))
+}
+
+// githubPostCanonicalNamesPost is rule 2's post test on the canonical words: a pr or issue word whose
+// next word is not one of the read subcommands, an api word with a body or method flag, or a release
+// word with a text flag. It names a post whether or not gh appears, so a program word the guard cannot
+// place is refused.
+func githubPostCanonicalNamesPost(words []string) bool {
+	for i, w := range words {
+		switch w {
+		case "pr", "issue":
+			if i+1 >= len(words) || !githubPostCanonicalRead(words[i+1]) {
+				return true
+			}
+		case "api":
+			for _, flag := range words {
+				if githubPostCanonicalAPIFlag(flag) {
+					return true
+				}
+			}
+		case "release":
+			for _, flag := range words {
+				if githubPostCanonicalReleaseText(flag) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// githubPostCanonicalRead is the read subcommand list of rule 2: a pr or issue word followed by one of
+// these is a read, whatever text sits around it.
+func githubPostCanonicalRead(w string) bool {
+	for _, name := range [...]string{"list", "view", "status", "checks", "diff"} {
+		if w == name {
+			return true
+		}
+	}
+	return false
+}
+
+// githubPostCanonicalAPIFlag is a gh api body or method flag of rule 2, written attached or as its own
+// word (the canonical words are already in lower case, so -F and -X read as -f and -x).
+func githubPostCanonicalAPIFlag(w string) bool {
+	switch {
+	case w == "-x" || w == "--method" || w == "-f" || w == "--field" || w == "--raw-field" ||
+		w == "--input" || w == "mutation":
+		return true
+	case strings.HasPrefix(w, "--method=") || strings.HasPrefix(w, "--field=") ||
+		strings.HasPrefix(w, "--raw-field=") || strings.HasPrefix(w, "--input="):
+		return true
+	case strings.HasPrefix(w, "-f") || strings.HasPrefix(w, "-x"):
+		return len(w) > 2 // an attached value, as -fbody=plain or -xget
+	}
+	return false
+}
+
+// githubPostCanonicalReleaseText is a gh release text flag of rule 2, attached or as its own word.
+func githubPostCanonicalReleaseText(w string) bool {
+	switch {
+	case w == "--notes" || w == "--notes-file" || w == "--title":
+		return true
+	case strings.HasPrefix(w, "--notes=") || strings.HasPrefix(w, "--notes-file=") ||
+		strings.HasPrefix(w, "--title="):
+		return true
+	}
+	return false
 }
 
 // githubPostSplitWords is one command's words as the shell reads them, without the strict reader's
@@ -366,10 +471,10 @@ func githubPostAssignmentWord(w string) bool {
 // gh post shape at all, so the caller keeps judging; a gh read and every other known gh command are
 // handled and allowed, whatever words follow.
 func githubPostForm(words []string, cwd string) (site githubPostSite, denied, handled bool) {
-	if len(words) < 2 || githubPostProgram(words[0]) != "gh" || !githubPostGhCommand(githubPostNormal(words[1])) {
+	if len(words) < 2 || githubPostProgram(words[0]) != "gh" || !githubPostGhCommand(githubPostProgram(words[1])) {
 		return githubPostSite{}, false, false
 	}
-	sub := githubPostNormal(words[1])
+	sub := githubPostProgram(words[1])
 	switch sub {
 	case "alias":
 		// An alias may expand to a post, so the guard never reads it.
@@ -380,7 +485,7 @@ func githubPostForm(words []string, cwd string) (site githubPostSite, denied, ha
 		if len(words) < 3 {
 			return githubPostSite{}, false, true // a gh pr or gh issue with no subcommand
 		}
-		switch githubPostNormal(words[2]) {
+		switch githubPostProgram(words[2]) {
 		case "comment", "create", "edit", "review", "new":
 			// new is the built-in alias of create, so it is read as the post it is.
 			return githubPostPost(words[3:], cwd)
@@ -624,11 +729,15 @@ func githubPostQuiet(words []string) bool {
 		return true
 	case "git":
 		// No option before its subcommand, and the subcommand only reads or records.
-		if len(words) < 2 || strings.HasPrefix(words[1], "-") {
+		if len(words) < 2 {
 			return false
 		}
-		for _, sub := range [...]string{"log", "show", "diff", "grep", "status", "commit"} {
-			if words[1] == sub {
+		sub := githubPostProgram(words[1])
+		if strings.HasPrefix(sub, "-") {
+			return false
+		}
+		for _, name := range [...]string{"log", "show", "diff", "grep", "status", "commit"} {
+			if sub == name {
 				return true
 			}
 		}
@@ -640,7 +749,7 @@ func githubPostQuiet(words []string) bool {
 // githubPostUnknownGh is a simple gh command whose first word after gh is not a known gh command: an
 // alias or a program the guard cannot place may expand to a post.
 func githubPostUnknownGh(words []string) (githubPostSite, bool) {
-	if len(words) < 2 || githubPostProgram(words[0]) != "gh" || githubPostGhCommand(githubPostNormal(words[1])) {
+	if len(words) < 2 || githubPostProgram(words[0]) != "gh" || githubPostGhCommand(githubPostProgram(words[1])) {
 		return githubPostSite{}, false
 	}
 	return githubPostSite{githubPostRuleUnread, githubPostWhereCommand}, true
@@ -671,45 +780,42 @@ func githubPostInlineShape(s string) bool {
 	return false
 }
 
-// githubPostMentions is the raw-text test: the word gh with pr, issue or api anywhere. It is the
-// fail-closed test for a text the guard cannot take as one simple command.
+// githubPostMentions is the mention test on any text: the word gh, by the normalised program of the first
+// word or as a word anywhere, and then a post — pr or issue with one of the posting verbs, or api, or
+// release. It reads the text as written and again through rule 2's canonical form, so a program word
+// built in quote pieces, holding a backslash, one quoting level down or in another case is seen as well
+// as one the shell builds by removing quotes. A read such as gh pr view is no mention.
 func githubPostMentions(s string) bool {
-	return githubPostWord(s, "gh") && (githubPostWord(s, "pr") || githubPostWord(s, "issue") || githubPostWord(s, "api"))
+	return githubPostMentionsIn(s, false) || githubPostMentionsIn(strings.Join(githubPostCanonicalWords(s), " "), false)
 }
 
-// githubPostMentionsWords is rule 2's mention test on a word list: the words hold gh, by the normalised
-// program of the first word (so a path or quote pieces are seen) or as a word anywhere, and a posting
-// subcommand, or api with a field flag, or release with a text flag.
-func githubPostMentionsWords(words []string) bool {
+// githubPostMentionsBroad is the generation-6 mention test, kept for a text that holds an outer-shell
+// expansion: the word gh with pr, issue or api anywhere, no posting verb required, because the expansion
+// may build the post the guard cannot read.
+func githubPostMentionsBroad(s string) bool {
+	return githubPostMentionsIn(s, true) || githubPostMentionsIn(strings.Join(githubPostCanonicalWords(s), " "), true)
+}
+
+// githubPostMentionsIn is the mention test on one spelling of a text.
+func githubPostMentionsIn(s string, broad bool) bool {
+	words := strings.Fields(s)
 	if len(words) == 0 {
 		return false
 	}
-	joined := strings.Join(words, " ")
-	if !githubPostWord(joined, "gh") && githubPostProgram(words[0]) != "gh" {
+	if !githubPostWord(s, "gh") && githubPostProgram(words[0]) != "gh" {
 		return false
 	}
-	if githubPostWord(joined, "pr") || githubPostWord(joined, "issue") {
+	if broad {
+		return githubPostWord(s, "pr") || githubPostWord(s, "issue") || githubPostWord(s, "api")
+	}
+	if githubPostWord(s, "pr") || githubPostWord(s, "issue") {
 		for _, verb := range [...]string{"comment", "create", "edit", "review"} {
-			if githubPostWord(joined, verb) {
+			if githubPostWord(s, verb) {
 				return true
 			}
 		}
 	}
-	if githubPostWord(joined, "api") {
-		for _, flag := range [...]string{"-X", "--method", "-f", "-F", "--field", "--raw-field", "--input", "mutation"} {
-			if strings.Contains(joined, flag) {
-				return true
-			}
-		}
-	}
-	if githubPostWord(joined, "release") {
-		for _, flag := range [...]string{"--notes", "--notes-file", "--title"} {
-			if strings.Contains(joined, flag) {
-				return true
-			}
-		}
-	}
-	return false
+	return githubPostWord(s, "api") || githubPostWord(s, "release")
 }
 
 // githubPostNamesPost is whether the word list holds a post verb, for the unreadable-program rule.
