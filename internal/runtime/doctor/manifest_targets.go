@@ -137,16 +137,27 @@ func manifestTargetsRealpath(path string) (string, error) {
 	return manifestTargetsFollow(abs, 0)
 }
 
-// manifestTargetsFollow is one walk of manifestTargetsRealpath: the components before the first symlink
-// keep their spelling, that symlink is replaced by its target resolved against the directory reached so
-// far, and the walk restarts there with the components still left.
+// manifestTargetsFollow is one walk of manifestTargetsRealpath: the components are walked in kernel
+// order, and a symlink component is replaced by its target's components, put in front of the components
+// still left, so the directory reached is always fully resolved and its lexical parent is its physical
+// parent.
 //
 // A symlink component is stat'ed before its target is read, exactly as Node's realpathSync calls
 // binding.stat(base) before binding.readlink (CRW-840): the stat follows the link, so a link whose target
 // cannot be reached answers that error instead of a resolved path, and targetEscapesRoot then takes its
-// paired lexical fallback. The target itself is resolved lexically, as pathModule.resolve(previous,
-// linkTarget) does, so a '..' inside the target is dropped by Clean rather than walked physically. A
-// component that cannot be read, and a link chain past the depth a realpath follows, answer an error,
+// paired lexical fallback.
+//
+// The link target is not joined or cleaned before its components are walked: it is concatenated as it
+// stands, so the next walk splits it and steps through its components ahead of the components still
+// left. That is the order the kernel resolves in, so a '..' in the target climbs from the directory the
+// walk has physically reached -- not from a lexical prefix. This deliberately diverges from the oracle,
+// whose realpathSync resolves the target with pathModule.resolve(previous, linkTarget) and therefore
+// drops that '..' lexically (CRW-937): this walk answers the plugin-root containment check, and the
+// oracle's answer would judge a target that reaches outside the root as one inside it. The prefix already
+// walked is compacted with filepath.Clean, which cannot change the answer because a component reaches it
+// only after Lstat found it is not a symlink, so its lexical parent is its physical parent; without that
+// the accumulated string would grow without bound and an over-long path would answer an error instead.
+// A component that cannot be read, and a link chain past the depth a realpath follows, answer an error,
 // which sends both paths to the caller's lexical fallback as the oracle's throw does.
 func manifestTargetsFollow(path string, depth int) (string, error) {
 	if depth > 40 {
@@ -166,7 +177,7 @@ func manifestTargetsFollow(path string, depth int) (string, error) {
 			return "", err
 		}
 		if info.Mode()&os.ModeSymlink == 0 {
-			dir = next
+			dir = filepath.Clean(next)
 			continue
 		}
 		// Node's realpathSync stats the link before reading it, so a target it cannot reach is the
@@ -180,12 +191,12 @@ func manifestTargetsFollow(path string, depth int) (string, error) {
 			return "", err
 		}
 		if !filepath.IsAbs(target) {
-			target = filepath.Join(dir+sep, target)
+			target = dir + sep + target
 		}
 		if rest := strings.Join(parts[i+1:], sep); rest != "" {
-			target = filepath.Join(target, rest)
+			target = target + sep + rest
 		}
-		return manifestTargetsFollow(filepath.Clean(target), depth+1)
+		return manifestTargetsFollow(target, depth+1)
 	}
 	if dir == "" {
 		return sep, nil
