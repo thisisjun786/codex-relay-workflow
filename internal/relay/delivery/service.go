@@ -447,27 +447,32 @@ func (d *Service) WakeBusyHead(ctx context.Context, recipientThread string, now 
 	return changed > 0, err
 }
 
-// BusyHeadHold is one recipient whose head delivery waits out a busy backoff or has been woken and not
+// IdleWakeHold is one recipient whose head delivery waits out a busy backoff or has been woken and not
 // yet claimed: the recipient the relay has to keep a subscription on for the idle edge to be seen.
 // Deadline is the head's own next_eligible_at, which the daemon reads to know when that recipient is
 // the backoff's business again: a hold it could not take is not retried before then (CRW-904 d3).
-type BusyHeadHold struct {
+//
+// It is named after this node's own subject rather than after the head predicate: a sibling merged
+// its own BusyHeadRecipients and BusyHeadHoldsRecipientLine (CRW-943) while this node ran, and a
+// method with the same name and a different signature in the same package breaks the merged build
+// without any git conflict. The head predicate itself is still busyHeadSQL.
+type IdleWakeHold struct {
 	RecipientTaskID   string
 	RecipientThreadID string
 	Deadline          float64
 }
 
-// BusyHeadRecipients is every recipient with such a head at now, one entry per recipient: the
+// IdleWakeRecipients is every recipient with such a head at now, one entry per recipient: the
 // recipients the daemon has to hold a subscription for, so an idle report for one of them can be
 // seen at all.
-func (d *Service) BusyHeadRecipients(ctx context.Context, now float64) ([]BusyHeadHold, error) {
+func (d *Service) IdleWakeRecipients(ctx context.Context, now float64) ([]IdleWakeHold, error) {
 	rows, err := all(ctx, d.Store, "SELECT bh.recipient_task_id AS recipient_task_id, bh.recipient_thread_id AS recipient_thread_id, bh.next_eligible_at AS next_eligible_at FROM "+busyHeadSQL+" bh", d.busyHeadArgs(now)...)
 	if err != nil {
 		return nil, err
 	}
-	var out []BusyHeadHold
+	var out []IdleWakeHold
 	for _, row := range rows {
-		out = append(out, BusyHeadHold{RecipientTaskID: row.S("recipient_task_id"), RecipientThreadID: row.S("recipient_thread_id"), Deadline: row.F("next_eligible_at")})
+		out = append(out, IdleWakeHold{RecipientTaskID: row.S("recipient_task_id"), RecipientThreadID: row.S("recipient_thread_id"), Deadline: row.F("next_eligible_at")})
 	}
 	return out, nil
 }

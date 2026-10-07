@@ -160,7 +160,7 @@ func (w *idleWake) hold(ctx context.Context, host Host, now float64) {
 	if !ok {
 		return
 	}
-	heads, err := w.daemon.Delivery.BusyHeadRecipients(ctx, now)
+	heads, err := w.daemon.Delivery.IdleWakeRecipients(ctx, now)
 	if err != nil {
 		w.notes = append(w.notes, "busy heads not read: "+err.Error())
 		// The waiting heads are read out of the store: a corrupting read is the observation site, as
