@@ -10,7 +10,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -24,8 +23,12 @@ const (
 	pumpQueueDir             = "parent-queue"
 	pumpSentDir              = "sent"
 	pumpReview776OversizeDir = "oversize"
-	pumpReview776AsideDir    = ".reclaim"
-	pumpQueueWait            = "queued"
+	// pumpReview776AsideDir holds the notices a move has taken out of the queue but not yet
+	// published. It is a directory of its own because a notice is always written as
+	// <logical id>.txt directly in the thread directory: the producer can create neither this
+	// directory nor a file inside it, so nothing it writes can be mistaken for a move's aside.
+	pumpReview776AsideDir = ".reclaim"
+	pumpQueueWait         = "queued"
 )
 
 // pumpQueueFlush delivers the queued notices of every thread. It first completes any accepted
@@ -65,10 +68,10 @@ func pumpQueueFlushThread(ctx context.Context, e *Env, cfg *Config, st *pumpStat
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	// A move that an earlier round was interrupted in the middle of left a notice under this move's
-	// own aside name; it is put back before anything is read, so an interrupted move never hides a
-	// notice from the queue.
-	if err := pumpReview776QueueRecoverAsides(dir); err != nil {
+	// A move that an earlier round was interrupted in the middle of left a notice in the aside
+	// directory; it is put back before anything is read, so an interrupted move never hides a notice
+	// from the queue. A dry run reports it instead of moving it.
+	if err := pumpReview776QueueRecoverAsides(e, dir, dry); err != nil {
 		return err
 	}
 	// A pinned batch is reconciled first, under its own frozen logical id and body, before any new
@@ -152,12 +155,22 @@ func pumpQueueFlushThread(ctx context.Context, e *Env, cfg *Config, st *pumpStat
 		matched := st.QueueAttempt[thread]
 		pin := pumpReview776QueuePin{
 			LogicalID: matched.LogicalID, Names: append([]string(nil), matched.Names...),
-			Body: matched.Body, SHA256: matched.SHA256, Accepted: true}
+			Body: matched.Body, SHA256: matched.SHA256, Accepted: true, Held: matched.Held}
 		st.QueueAttempt[thread] = pin
 		if err := st.pumpSave(cfg); err != nil {
 			return err
 		}
+		if pin.Held {
+			// The pre-change attempt was accepted but its text is not recoverable, so the pin holds the
+			// thread: completing by name could archive a notice it never carried, and sending under a new
+			// id could deliver one it did carry a second time.
+			return nil
+		}
 		return pumpReview776QueueFinishAccepted(ctx, e, cfg, st, dir, thread, pin, false)
+	case pumpReview776QueueLegacyHold:
+		// An accepted attempt whose text is not the text on disk: the pin is written and the thread
+		// waits, so nothing is archived undelivered and nothing is delivered twice.
+		return nil
 	}
 	// A notice that alone exceeds the batch limit, or one that carries nothing once trimmed, is
 	// moved aside, so the longest fitting prefix always has something to carry and one such notice
@@ -451,6 +464,12 @@ func pumpReview776QueueRetry(ctx context.Context, e *Env, cfg *Config, st *pumpS
 		fmt.Fprintf(e.Stdout, "queue %s %d notices\n%s\n", thread, len(pin.Names), pin.Body)
 		return true, nil
 	}
+	if pin.Held {
+		// The pre-change attempt was accepted but its text is not recoverable, so no queued notice can
+		// be told apart from one it already carried. The thread waits, which loses nothing and
+		// duplicates nothing; nothing is sent and no bridge process starts.
+		return true, nil
+	}
 	// A pinned name that is gone is left out of the age and the move, but it never cancels the
 	// reconciliation: the answer still decides the pin, and the removed name is handled after it.
 	present := pumpReview776QueuePresent(dir, pin.Names)
@@ -544,21 +563,34 @@ func pumpReview776QueueSettleLegacy(ctx context.Context, e *Env, cfg *Config, st
 	defer bridge.close()
 	switch verdict := deliverReconcile(ctx, bridge, record); verdict {
 	case deliverReconcileAccepted:
-		// The old attempt was dispatched. Its text is not recoverable, so no queued notice can be
-		// shown to be one it carried: completing by name would move a notice nobody has evidence was
-		// delivered. The ledger is settled as accepted instead, so the record is not adopted again
-		// next round, the pin goes, and the notices that are still queued are delivered under the
-		// batch's own id.
+		// The old attempt was dispatched. It covered exactly the names the pin holds, because the pin was
+		// taken for the pre-change id of those names, so those notices are already delivered and must not
+		// be sent again.
+		//
+		// When the pin carries the digests of the text the attempt sent, every queued member is provably
+		// one it carried, so completing them by name archives nothing undelivered. When it does not (a
+		// legacy pin, whose attempt's text the ledger does not store), a queued notice cannot be told
+		// apart from one the attempt never carried: completing by name could archive an undelivered
+		// notice, and sending under a new id could deliver a carried one twice. The pin holds the thread
+		// instead, which loses nothing and duplicates nothing.
 		if err := ctx.Err(); err != nil {
 			return true, err
 		}
-		record.State, record.Received, record.Applied = deliverStateAccepted, true, false
-		record.Attempts = append(record.Attempts, deliverAttempt{At: deliverNow(e), Class: deliverClassAccepted, ReceiptExcerpt: "get_operation: the pre-change attempt was dispatched"})
-		if err := deliverSave(cfg, record); err != nil {
+		if pin.Legacy || len(pin.SHA256) == 0 {
+			pin.Held = true
+			st.QueueAttempt[thread] = pin
+			if err := st.pumpSave(cfg); err != nil {
+				return true, err
+			}
+			pumpLog(cfg, fmt.Sprintf("queue %s: the pre-change attempt %s was accepted and its text is not recoverable; the notices stay queued", thread, pin.LogicalID))
+			return true, nil
+		}
+		pin.Accepted = true
+		st.QueueAttempt[thread] = pin
+		if err := st.pumpSave(cfg); err != nil {
 			return true, err
 		}
-		pumpLog(cfg, fmt.Sprintf("queue %s: the pre-change attempt %s was accepted; the queued notices take a new id", thread, pin.LogicalID))
-		return false, pumpReview776QueuePinLift(cfg, st, thread, nil)
+		return true, pumpReview776QueueFinishAccepted(ctx, e, cfg, st, dir, thread, pin, false)
 	case deliverReconcileRefused, deliverReconcileResendSame, deliverReconcileResendNew:
 		// Nothing was sent under the old id, so the batch may take its current id this round.
 		pumpLog(cfg, fmt.Sprintf("queue %s: the pre-change attempt %s settled without a delivery", thread, pin.LogicalID))
@@ -695,20 +727,24 @@ func pumpReview776QueueMoveVerified(dir, name, destDir, expectedDigest string) (
 	return dest, true, nil
 }
 
-// pumpReview776QueueAsideName is the name a notice takes while a move holds it. It carries the
-// notice's own name, so an interrupted move can be recovered to where the notice came from, and it
-// is dot-prefixed and does not end in .txt, so the queue collector never reads it. Only one pump
-// runs per state directory (the pump lock), so one name per notice is enough.
-func pumpReview776QueueAsideName(name string) string {
-	return pumpReview776AsideDir + "-" + name
+// pumpReview776QueueAsideDir is the directory a move holds a notice in between taking it out of the
+// queue and publishing it. It sits inside the thread directory, so the take-aside rename never
+// crosses a filesystem, and the producer writes only <logical id>.txt there, so it can neither
+// create this directory nor a file inside it.
+func pumpReview776QueueAsideDir(dir string) string {
+	return filepath.Join(dir, pumpReview776AsideDir)
 }
 
-// pumpReview776QueueTakeAside takes the queue name aside with one atomic rename and reports the name
-// it landed under, or the empty string when the name was already gone. The rename is the only step
-// that touches the queue name, so whatever the producer last wrote is moved whole; it lives in the
-// queue directory, so it never crosses a filesystem.
+// pumpReview776QueueTakeAside takes the queue name into the aside directory with one atomic rename
+// and reports the name it landed under, or the empty string when the name was already gone. The
+// rename is the only step that touches the queue name, so whatever the producer last wrote is moved
+// whole.
 func pumpReview776QueueTakeAside(dir, name string) (string, error) {
-	aside := filepath.Join(dir, pumpReview776QueueAsideName(name))
+	asideDir := pumpReview776QueueAsideDir(dir)
+	if err := os.MkdirAll(asideDir, 0o700); err != nil {
+		return "", err
+	}
+	aside := filepath.Join(asideDir, name)
 	if err := os.Rename(filepath.Join(dir, name), aside); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return "", nil
@@ -718,14 +754,16 @@ func pumpReview776QueueTakeAside(dir, name string) (string, error) {
 	return aside, nil
 }
 
-// pumpReview776QueueRecoverAsides resolves the aside names a move left behind when its process died
-// between the take-aside and the publish. A notice is published by linking the aside to its
-// destination, so the aside's inode is also present under sent/ or oversize/ exactly when the
+// pumpReview776QueueRecoverAsides resolves the notices a move left in the aside directory when its
+// process died between the take-aside and the publish. A notice is published by linking the aside to
+// its destination, so the aside's inode is also present under sent/ or oversize/ exactly when the
 // publish already happened: the aside is then dropped, because putting it back would deliver the
 // notice twice. Otherwise the notice never left the queue, and it goes back to the name it came
-// from. A notice written in the meantime keeps the queue name and the aside is dropped.
-func pumpReview776QueueRecoverAsides(dir string) error {
-	entries, err := os.ReadDir(dir)
+// from. A notice written in the meantime keeps the queue name and the aside is dropped. A dry run
+// reports what it would do instead of moving anything.
+func pumpReview776QueueRecoverAsides(e *Env, dir string, dry bool) error {
+	asideDir := pumpReview776QueueAsideDir(dir)
+	entries, err := os.ReadDir(asideDir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
@@ -734,11 +772,7 @@ func pumpReview776QueueRecoverAsides(dir string) error {
 	}
 	for _, entry := range entries {
 		name := entry.Name()
-		if !strings.HasPrefix(name, pumpReview776AsideDir+"-") {
-			continue
-		}
-		original := strings.TrimPrefix(name, pumpReview776AsideDir+"-")
-		aside := filepath.Join(dir, name)
+		aside := filepath.Join(asideDir, name)
 		info, err := os.Lstat(aside)
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
@@ -750,13 +784,21 @@ func pumpReview776QueueRecoverAsides(dir string) error {
 		if err != nil {
 			return err
 		}
+		if dry {
+			action := "restore"
+			if published {
+				action = "drop"
+			}
+			fmt.Fprintf(e.Stdout, "queue: would %s the notice %s an interrupted move set aside\n", action, name)
+			continue
+		}
 		if published {
 			if err := os.Remove(aside); err != nil && !errors.Is(err, os.ErrNotExist) {
 				return err
 			}
 			continue
 		}
-		if err := pumpReview776QueuePutBack(aside, filepath.Join(dir, original)); err != nil {
+		if err := pumpReview776QueuePutBack(aside, filepath.Join(dir, name)); err != nil {
 			return err
 		}
 	}
@@ -897,16 +939,24 @@ const (
 	// pumpReview776QueueLegacyComplete: an accepted record whose text is this batch. The notices were
 	// delivered before the upgrade, so they are moved to sent/ instead of being sent again.
 	pumpReview776QueueLegacyComplete
+	// pumpReview776QueueLegacyHold: an accepted record whose text is not the text on disk. The attempt
+	// covered the batch's names, but a queued notice cannot be told apart from one it never carried, so
+	// the thread waits while the pin holds rather than archiving an undelivered notice or delivering a
+	// covered one twice.
+	pumpReview776QueueLegacyHold
 )
 
-// pumpReview776QueueAdoptLegacy looks at the outbox records that target a thread and have no pin, so
-// an upgrade neither re-sends a delivery that may already have gone nor sends an accepted one again.
-// It answers with the action the caller takes.
+// pumpReview776QueueAdoptLegacy looks for a pre-change attempt a batch that has no pin still has to
+// answer for, so an upgrade neither re-sends a delivery that may already have gone nor sends an
+// accepted one again. It answers with the action the caller takes.
 //
-// The record is found by its target thread, never by rebuilding the pre-change logical id from the
-// names on disk: those names are the producer's own (a hash or a chosen id) and a notice queued
-// later can sort anywhere among them, so any reconstruction from the current queue can miss the
-// attempt that was actually made.
+// The pre-change id hashed the thread and the sorted notice names of the batch that was actually
+// sent, so a record is only acted on when its logical id is exactly the pre-change id of the names
+// it is being applied to. The candidate name sets are the name-ordered prefixes of today's queue,
+// longest first: the pre-change pump had no size split, so it always sent the whole queue, and a
+// notice queued afterwards extends the set rather than changing it. The id check is what keeps a
+// record for another batch -- a direct send-parent delivery, or one over different names -- from
+// completing notices it never carried.
 //
 // An unsettled record is adopted whatever its message digest says. The digest is not evidence that
 // the attempt never went: a record whose text is not the text now on disk is still an attempt that
@@ -917,41 +967,49 @@ const (
 // legacy, and it is reconciled through the receipt alone.
 //
 // A settled accepted record is completed only while its own text is still the text on disk, because
-// that is the only case where every member is known to have been delivered; otherwise it is settled
-// and the batch takes its current id.
+// that is the only case where every member is known to have been delivered.
 func pumpReview776QueueAdoptLegacy(cfg *Config, st *pumpState, thread string, batch pumpReview776QueueBatch) (pumpReview776QueueLegacyAction, error) {
-	records, err := pumpReview776QueueThreadRecords(cfg, thread)
-	if err != nil {
-		return pumpReview776QueueLegacyNone, err
-	}
-	sameBody := func(record deliverRecord) bool {
-		return record.MessageSHA256 == deliverMessageSHA256(batch.body)
-	}
-	for _, record := range records {
+	for cut := len(batch.names); cut >= 1; cut-- {
+		names, texts := batch.names[:cut], batch.texts[:cut]
+		oldID := pumpQueueLegacyBatchID(thread, names)
+		record, known, err := deliverLoad(cfg, oldID)
+		if err != nil {
+			return pumpReview776QueueLegacyNone, err
+		}
+		if !known {
+			continue
+		}
+		body := pumpReview776QueueBody(texts)
+		sameBody := record.MessageSHA256 == deliverMessageSHA256(body)
 		switch record.State {
 		case deliverStateAccepted:
-			if !sameBody(record) {
-				// The text this attempt was accepted with is not the text on disk, so a queued notice was
-				// never delivered by it. Completing by name would take an undelivered notice to sent/.
-				continue
+			// The record's logical id is the pre-change id of exactly these names, so the attempt was
+			// made over them. When the text on disk is still the text the attempt was accepted with, every
+			// member is provably one it carried, and completing them is what keeps the promise that no
+			// notice is sent twice. When it is not, a queued notice cannot be told apart from one the
+			// attempt never carried, so the pin holds the thread rather than archiving an undelivered
+			// notice or delivering a covered one again.
+			pin := pumpReview776QueuePin{
+				LogicalID: oldID, Names: append([]string(nil), names...), Body: body}
+			if sameBody {
+				pin.SHA256 = pumpReview776QueueDigests(names, texts)
+				pin.Accepted = true
+				st.QueueAttempt[thread] = pin
+				return pumpReview776QueueLegacyComplete, st.pumpSave(cfg)
 			}
-			// The attempt's own text is still on disk, so its notices are the ones that were delivered.
-			// The accepted pin is written before the first move, so a crash part way through is
-			// completed by the next round.
-			st.QueueAttempt[thread] = pumpReview776QueuePin{
-				LogicalID: record.LogicalID, Names: append([]string(nil), batch.names...), Body: batch.body,
-				SHA256: pumpReview776QueueDigests(batch.names, batch.texts), Accepted: true}
-			return pumpReview776QueueLegacyComplete, st.pumpSave(cfg)
+			pin.Held = true
+			st.QueueAttempt[thread] = pin
+			return pumpReview776QueueLegacyHold, st.pumpSave(cfg)
 		case deliverStateRefused:
 			// A refusal is terminal and nothing was sent, so the batch takes its current id as usual.
 			continue
 		default:
-			// pending or unknown: an unsettled attempt. Pin it so the next step reconciles the attempt
-			// that was actually made instead of sending under a new id.
+			// pending or unknown: an unsettled attempt over exactly these names. Pin it so the next step
+			// reconciles the attempt that was actually made instead of sending under a new id.
 			pin := pumpReview776QueuePin{
-				LogicalID: record.LogicalID, Names: append([]string(nil), batch.names...), Body: batch.body}
-			if sameBody(record) {
-				pin.SHA256 = pumpReview776QueueDigests(batch.names, batch.texts)
+				LogicalID: oldID, Names: append([]string(nil), names...), Body: body}
+			if sameBody {
+				pin.SHA256 = pumpReview776QueueDigests(names, texts)
 			} else {
 				// The attempt's text is not recoverable from the ledger, so the pin is reconciled through
 				// the bridge's own receipt. It carries no per-member digest, because the text the old
@@ -963,23 +1021,39 @@ func pumpReview776QueueAdoptLegacy(cfg *Config, st *pumpState, thread string, ba
 			return pumpReview776QueueLegacyReconcile, st.pumpSave(cfg)
 		}
 	}
-	return pumpReview776QueueLegacyNone, nil
+	// No prefix of today's queue is the pre-change id of an attempt. The pre-change id hashed the
+	// sorted names of the whole queue at the time, and a notice the producer added later carries a
+	// name it chose, so the old set need not be a prefix of today's. The outbox is scanned for an
+	// unsettled attempt on this thread: its own text is not stored, so it is pinned as a legacy
+	// attempt and reconciled through the bridge's receipt, which tells an attempt that went from one
+	// that did not without re-sending anything.
+	record, known, err := pumpReview776QueueThreadAttempt(cfg, thread)
+	if err != nil {
+		return pumpReview776QueueLegacyNone, err
+	}
+	if !known {
+		return pumpReview776QueueLegacyNone, nil
+	}
+	st.QueueAttempt[thread] = pumpReview776QueuePin{
+		LogicalID: record.LogicalID, Names: append([]string(nil), batch.names...), Body: batch.body,
+		Legacy: true}
+	return pumpReview776QueueLegacyReconcile, st.pumpSave(cfg)
 }
 
-// pumpReview776QueueThreadRecords is the outbox records that target one thread, oldest first, so an
-// upgrade acts on the attempt that was actually made rather than on a name set rebuilt from disk.
-// A record for another thread, or one this code cannot decode, is skipped: it says nothing about
-// this thread's queue.
-func pumpReview776QueueThreadRecords(cfg *Config, thread string) ([]deliverRecord, error) {
+// pumpReview776QueueThreadAttempt is the newest outbox record that targets one thread and is still
+// unsettled: the attempt the thread's queue may still have to answer for. A record for another
+// thread, a settled one, or one this code cannot decode is skipped.
+func pumpReview776QueueThreadAttempt(cfg *Config, thread string) (deliverRecord, bool, error) {
 	dir := filepath.Join(cfg.StateDir, "outbox")
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, nil
+			return deliverRecord{}, false, nil
 		}
-		return nil, err
+		return deliverRecord{}, false, err
 	}
-	var records []deliverRecord
+	var best deliverRecord
+	found := false
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
 			continue
@@ -989,7 +1063,7 @@ func pumpReview776QueueThreadRecords(cfg *Config, thread string) ([]deliverRecor
 			if errors.Is(err, os.ErrNotExist) {
 				continue
 			}
-			return nil, err
+			return deliverRecord{}, false, err
 		}
 		var record deliverRecord
 		if err := json.Unmarshal(raw, &record); err != nil {
@@ -998,15 +1072,22 @@ func pumpReview776QueueThreadRecords(cfg *Config, thread string) ([]deliverRecor
 		if record.TargetThread != thread || record.LogicalID == "" {
 			continue
 		}
-		records = append(records, record)
-	}
-	sort.Slice(records, func(i, j int) bool {
-		if records[i].CreatedAt != records[j].CreatedAt {
-			return records[i].CreatedAt < records[j].CreatedAt
+		if record.State != deliverStatePending && record.State != deliverStateUnknown {
+			continue
 		}
-		return records[i].LogicalID < records[j].LogicalID
-	})
-	return records, nil
+		if !found || record.CreatedAt > best.CreatedAt ||
+			(record.CreatedAt == best.CreatedAt && record.LogicalID > best.LogicalID) {
+			best, found = record, true
+		}
+	}
+	return best, found, nil
+}
+
+// pumpQueueLegacyBatchID is the pre-change queue batch id: the thread and the sorted notice names,
+// without the body. It is read only to find an attempt an upgrade left behind, so the record that is
+// adopted is bound to the names it was actually sent over.
+func pumpQueueLegacyBatchID(thread string, names []string) string {
+	return pumpBatchIDStrings(append([]string{thread}, names...))
 }
 
 // pumpReview776QueuePinLift drops a pin whose delivery settled without an acceptance: a refusal is

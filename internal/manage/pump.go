@@ -147,6 +147,11 @@ type pumpReview776QueuePin struct {
 	// Such an attempt is reconciled through the bridge's own receipt instead of being replayed with
 	// the text on disk, which a notice the producer replaced no longer matches.
 	Legacy bool `json:"legacy,omitempty"`
+	// Held marks a pin whose pre-change attempt the ledger accepted but whose text is not
+	// recoverable. The attempt covered the pin's names, so completing them by name could archive a
+	// notice it never carried, and sending them under a new id could deliver one twice; the thread
+	// waits while the pin holds, which is the queue's rule for a pin.
+	Held bool `json:"held,omitempty"`
 }
 
 // pumpAttempt is one frozen batch: the logical id it was tried under, the ids it carried, and its

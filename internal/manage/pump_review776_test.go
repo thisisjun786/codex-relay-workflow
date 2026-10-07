@@ -1048,6 +1048,69 @@ func TestPumpReview776AcceptedPinCompletesAfterACrash(t *testing.T) {
 	}
 }
 
+// A notice whose producer-chosen logical id starts with the aside directory's name is an ordinary
+// notice: the aside area is a directory the producer cannot create, so nothing it writes is ever
+// mistaken for a move's aside and deleted.
+func TestPumpReview776ProducerNameLikeTheAsideDirIsDelivered(t *testing.T) {
+	now := pumpTestNow
+	e := pumpTestEnv(t, &now)
+	bridge, log := deliverFakeBridge(t, []map[string]any{
+		{"payload": map[string]any{"observation": "active", "activeTurnId": "turn-1"}},
+		{"payload": map[string]any{"status": "accepted", "delivery": "accepted_not_applied"}},
+	})
+	cfg := pumpTestConfig(t, bridge)
+	// The producer wrote a.txt and then, under --logical-id .reclaim-a, a second notice whose name
+	// merely starts the way a move's aside used to be named. Both are ordinary notices.
+	pumpQueueTestNotice(t, cfg, "parent-1", "aaaaaaaaaaaaaaaa.txt", "first body")
+	pumpQueueTestNotice(t, cfg, "parent-1", ".reclaim-aaaaaaaaaaaaaaaa.txt", "second body")
+	if err := pumpQueueFlush(context.Background(), e, cfg, pumpTestReadStatePtr(t, cfg), pumpSettingsFrom(cfg), false); err != nil {
+		t.Fatal(err)
+	}
+	delivered := map[string]bool{}
+	for _, call := range deliverSendCallsOf(t, log) {
+		if call["tool"] == deliverToolSteer || call["tool"] == deliverToolSend {
+			args, _ := call["args"].(map[string]any)
+			message, _ := args["message"].(string)
+			for _, body := range []string{"first body", "second body"} {
+				if strings.Contains(message, body) {
+					delivered[body] = true
+				}
+			}
+		}
+	}
+	if !delivered["first body"] || !delivered["second body"] {
+		t.Errorf("a notice was lost to the aside recovery: delivered=%v tools=%v", delivered, deliverSendToolsOf(t, log))
+	}
+}
+
+// A dry run never touches an aside a previous move left behind: the whole round moves no file.
+func TestPumpReview776DryRunLeavesAnAsideInPlace(t *testing.T) {
+	now := pumpTestNow
+	e := pumpTestEnv(t, &now)
+	cfg := pumpTestConfig(t, "")
+	pumpTestSwapSources(t, &pumpTestSource{name: "fake"})
+	dir := filepath.Join(cfg.StateDir, pumpQueueDir, "parent-1")
+	asideDir := filepath.Join(dir, pumpReview776AsideDir)
+	if err := os.MkdirAll(asideDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(asideDir, "aaaaaaaaaaaaaaaa.txt"), []byte("a-body"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// A notice whose name begins the way an aside does is an ordinary queued notice, and a dry run
+	// must leave it where it is too.
+	if err := os.WriteFile(filepath.Join(dir, ".reclaim-aaaaaaaaaaaaaaaa.txt"), []byte("b-body"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	before := pumpReview776Tree(t, dir)
+	if code, err := pumpRound(context.Background(), e, cfg, pumpSettingsFrom(cfg), true); code != 0 || err != nil {
+		t.Fatalf("the dry round: code=%d err=%v", code, err)
+	}
+	if after := pumpReview776Tree(t, dir); after != before {
+		t.Errorf("a dry run changed the queue tree")
+	}
+}
+
 // The pre-pin membership completion never replaces an entry already under sent/ and never deletes a
 // notice the producer wrote.
 func TestPumpReview776LegacyMembershipCompletionNeverReplaces(t *testing.T) {
@@ -1189,11 +1252,11 @@ func TestPumpReview776InterruptedMoveIsRecovered(t *testing.T) {
 	})
 	cfg := pumpTestConfig(t, bridge)
 	dir := filepath.Join(cfg.StateDir, pumpQueueDir, "parent-1")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, pumpReview776AsideDir), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	// A previous move died after it took the notice aside, so only the aside name is on disk.
-	aside := filepath.Join(dir, ".reclaim-aaaaaaaaaaaaaaaa.txt")
+	aside := filepath.Join(dir, pumpReview776AsideDir, "aaaaaaaaaaaaaaaa.txt")
 	if err := os.WriteFile(aside, []byte("a-body"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -1233,7 +1296,11 @@ func TestPumpReview776PublishedMoveIsNotPutBack(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A previous move published the notice to sent/ and died before it dropped the aside name.
-	aside := filepath.Join(dir, ".reclaim-aaaaaaaaaaaaaaaa.txt")
+	asideDir := filepath.Join(dir, pumpReview776AsideDir)
+	if err := os.MkdirAll(asideDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	aside := filepath.Join(asideDir, "aaaaaaaaaaaaaaaa.txt")
 	if err := os.WriteFile(aside, []byte("a-body"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -1259,19 +1326,17 @@ func TestPumpReview776PublishedMoveIsNotPutBack(t *testing.T) {
 	}
 }
 
-// A legacy pin reconciled as accepted settles the ledger, so the next round does not adopt the same
-// record again and the queued notices are delivered under the batch's own id.
-func TestPumpReview776LegacyAcceptedReconciliationSettlesTheLedger(t *testing.T) {
+// A legacy pin whose pre-change attempt the ledger accepted, but whose text is not recoverable,
+// holds the thread: nothing is archived undelivered and nothing is sent again under a new id.
+func TestPumpReview776LegacyAcceptedWithUnrecoverableTextHoldsTheQueue(t *testing.T) {
 	now := pumpTestNow
 	e := pumpTestEnv(t, &now)
 	// The old attempt is accepted; the notice on disk is a replacement the attempt never carried. The
-	// fake scenario counter restarts with each bridge process, so the first step answers the
-	// reconciliation's get_operation and the queue's active-turn probe, and the second answers the
-	// steer of the follow-on send.
+	// fake scenario counter restarts with each bridge process, so the first step answers both the
+	// queue's active-turn probe and the reconciliation's get_operation.
 	bridge, log := deliverFakeBridge(t, []map[string]any{
 		{"payload": map[string]any{"observation": "active", "activeTurnId": "turn-1",
 			"status": "accepted", "delivery": "accepted_not_applied"}},
-		{"payload": map[string]any{"status": "accepted", "delivery": "accepted_not_applied"}},
 	})
 	cfg := pumpTestConfig(t, bridge)
 	pumpQueueTestNotice(t, cfg, "parent-1", "aaaaaaaaaaaaaaaa.txt", "A2")
@@ -1284,30 +1349,23 @@ func TestPumpReview776LegacyAcceptedReconciliationSettlesTheLedger(t *testing.T)
 	if err := pumpQueueFlush(context.Background(), e, cfg, pumpTestReadStatePtr(t, cfg), pumpSettingsFrom(cfg), false); err != nil {
 		t.Fatal(err)
 	}
-	record, known, err := deliverLoad(cfg, oldID)
-	if err != nil || !known {
-		t.Fatalf("the old record is gone: known=%v err=%v", known, err)
+	pin, ok := pumpReview776QueueAttempt(t, cfg, "parent-1")
+	if !ok {
+		t.Fatal("the pin was dropped instead of holding the thread")
 	}
-	if record.State != deliverStateAccepted {
-		t.Errorf("the reconciled old record is %q, want accepted so it is not adopted again", record.State)
+	if held, _ := pin["held"].(bool); !held {
+		t.Errorf("the pin does not hold: %v", pin)
 	}
-	if _, ok := pumpReview776QueueAttempt(t, cfg, "parent-1"); ok {
-		t.Error("the pin survived the accepted reconciliation")
-	}
-	// The notices are delivered under the batch's own id, never completed by the old attempt's name:
-	// the old attempt's text is not recoverable, so no queued notice can be shown to be one it carried.
-	sent := false
 	for _, call := range deliverSendCallsOf(t, log) {
 		if call["tool"] == deliverToolSteer || call["tool"] == deliverToolSend {
-			if id := deliverSendRequestIDOf(t, call); id == oldID {
-				t.Errorf("the round sent under the old attempt's id %q", oldID)
-			} else {
-				sent = true
-			}
+			t.Errorf("a notice was sent while the attempt's text is unrecoverable: %v", deliverSendToolsOf(t, log))
 		}
 	}
-	if !sent {
-		t.Fatalf("the queued notice was not delivered under the batch's own id: %v", deliverSendToolsOf(t, log))
+	if _, err := os.Stat(filepath.Join(cfg.StateDir, pumpQueueDir, "parent-1", pumpSentDir, "aaaaaaaaaaaaaaaa.txt")); !os.IsNotExist(err) {
+		t.Errorf("a notice nobody can show was delivered was completed: %v", err)
+	}
+	if names := pumpQueueTestNames(t, cfg, "parent-1"); len(names) != 1 || names[0] != "aaaaaaaaaaaaaaaa.txt" {
+		t.Errorf("the notice left the queue: %v", names)
 	}
 }
 
