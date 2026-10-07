@@ -210,7 +210,7 @@ func resetLinkTargetExistsWith(pinned *resetLinkWalkPin, name string, statRoot f
 	// that may only be searched where the kernel answers with the target.
 	target, readErr := resetLinkWalkReadlink(pinned.dir, name)
 	if readErr == nil {
-		if exists, inside := resetLinkWalkTarget(pinned.dir, target); inside {
+		if exists, inside := resetLinkWalkTarget(pinned.dir, name, target); inside {
 			return exists, nil
 		}
 	}
@@ -257,7 +257,7 @@ func resetLinkTargetExistsWith(pinned *resetLinkWalkPin, name string, statRoot f
 // the kernel counts that link as the first traversal it allows for the whole resolution, so a chain
 // of resetLinkWalkLimit() links inside the target makes one more than the ceiling and must not
 // resolve.
-func resetLinkWalkTarget(dir *os.File, target string) (exists, inside bool) {
+func resetLinkWalkTarget(dir *os.File, name, target string) (exists, inside bool) {
 	// A target that does not resolve against the pinned directory keeps the OS-path judgement: an
 	// absolute one, and on Windows a rooted-without-volume one (backslash keep backslash dot, which
 	// filepath.IsAbs does not report) or a drive-relative one (C:keep backslash dot, whose VolumeName
@@ -283,7 +283,7 @@ func resetLinkWalkTarget(dir *os.File, target string) (exists, inside bool) {
 			// question the last dot component has always asked, now asked at every dot component: the
 			// kernel answers EACCES for a directory it cannot search and the link is kept.
 			if resetLinkWalkPathTooLong(resetLinkWalkSearchableName(walked)) {
-				return false, false // the walk cannot ask this through one pathname; let the caller answer
+				return resetLinkWalkFollowPresent(dir, name), true
 			}
 			if !resetLinkWalkSearchable(dir, walked) {
 				return false, true
@@ -300,10 +300,11 @@ func resetLinkWalkTarget(dir *os.File, target string) (exists, inside bool) {
 		if resetLinkWalkPathTooLong(path) {
 			// The walk resolves the target through one concatenated pathname, and this one has reached
 			// the limit the kernel applies to a single pathname (ENAMETOOLONG). The kernel resolves the
-			// candidate's short link name component by component instead, so it can still reach a
-			// target the walk cannot: the walk must not answer absent here, and hands the target back
-			// for the caller's descriptor stat, which resolves it the way the kernel does.
-			return false, false
+			// candidate's own short link name through its chain instead, so it can still reach a target
+			// the walk cannot, and answering absent here would keep a link the oracle removes. Ask the
+			// kernel the same question it answers for the oracle — one following stat of the leaf, which
+			// issues no open from this code — and take its verdict.
+			return resetLinkWalkFollowPresent(dir, name), true
 		}
 		st, err := resetLinkWalkLstat(dir, path)
 		if err != nil {
@@ -393,6 +394,17 @@ func resetLinkWalkSearchableName(walked []string) string {
 // and must hand back rather than answer absent for.
 func resetLinkWalkPathTooLong(path string) bool {
 	return len(path) >= resetLinkWalkPathMax()
+}
+
+// resetLinkWalkFollowPresent answers whether the kernel can resolve the candidate link, by asking it
+// the same question the oracle's existsSync asks: one stat of the leaf name that follows the link.
+// The kernel resolves the link's own short target chain component by component, so it reaches targets
+// the walk cannot express in one pathname, and it needs no open from this code. Only the candidate's
+// own verdict is taken; the removal still acts on the leaf through the pinned descriptor, which
+// refuses a name that escapes the root.
+func resetLinkWalkFollowPresent(dir *os.File, name string) bool {
+	var st unix.Stat_t
+	return unix.Fstatat(int(dir.Fd()), name, &st, 0) == nil
 }
 
 // resetLinkWalkPathMax is the longest pathname one fstatat call may carry: the kernel's own PATH_MAX,

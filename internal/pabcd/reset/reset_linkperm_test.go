@@ -669,11 +669,38 @@ func TestResetLinkPermALongChainOfShortLinksIsStillResolved(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer pinned.Close()
-	got, err := resetLinkTargetExists(pinned, "a.json")
+	// The verdict must be the kernel's, the descriptor stat must not be asked for an in-root target,
+	// and a renamed pinned directory must not turn the answer into a refusal.
+	calls := 0
+	stat := func(name string) (os.FileInfo, error) {
+		calls++
+		return pinned.Stat(name)
+	}
+	got, err := resetLinkTargetExistsWith(pinned, "a.json", stat)
 	if err != nil {
-		t.Fatalf("resetLinkTargetExists: %v", err)
+		t.Fatalf("resetLinkTargetExists: %v (a long chain must be absent or present, not a refusal)", err)
 	}
 	if got != (oracleErr == nil) {
 		t.Errorf("exists = %v, but os.Stat on the same link answers %v", got, oracleErr)
+	}
+	if calls != 0 {
+		t.Errorf("root stat calls = %d, want 0: an in-root target must be decided without it", calls)
+	}
+	// A renamed pinned directory must not change that verdict.
+	if err := os.Rename(sessions, filepath.Join(root, ".crw", "moved")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(sessions, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	again, err := resetLinkTargetExistsWith(pinned, "a.json", stat)
+	if err != nil {
+		t.Fatalf("resetLinkTargetExists after the rename: %v (it must not refuse)", err)
+	}
+	if again != got {
+		t.Errorf("after the rename exists = %v, want %v", again, got)
+	}
+	if calls != 0 {
+		t.Errorf("root stat calls = %d after the rename, want 0", calls)
 	}
 }
