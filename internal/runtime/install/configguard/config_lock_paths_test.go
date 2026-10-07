@@ -252,6 +252,104 @@ func TestConfigLockPathsRefusesAPinnedDirectoryReplacedAfterThePin(t *testing.T)
 	}
 }
 
+// The sixth-generation d1 case, through the public entry point: the manifest names the config
+// through an alias whose directory is replaced after the pin, and the replacement now sits at the
+// very path the alias resolves to. The resolved string equals the pinned one, so a comparison that
+// answered true on the string alone would accept it and restore the replacement's key under the
+// moved file's lock. The comparison must also prove the pinned file and parent directory still are
+// the ones that path holds.
+func TestConfigLockPathsDeactivateRefusesAPinnedDirectoryReplacedUnderTheSameSpelling(t *testing.T) {
+	home := configLockActivationHome(t)
+	dirA := filepath.Join(home, "A")
+	dirB := filepath.Join(home, "B")
+	for _, dir := range []string{dirA, dirB} {
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	activationWrite(t, filepath.Join(dirA, "config.toml"), deactivationConfig)
+	activationWrite(t, filepath.Join(dirB, "config.toml"), deactivationConfig)
+	alias := filepath.Join(home, "alias")
+	if err := os.Symlink("A", alias); err != nil {
+		t.Fatal(err)
+	}
+	aliasPath := filepath.Join(alias, "config.toml")
+	hash, err := hashOrNull(filepath.Join(dirA, "config.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys := map[string]TableKeyRecord{"memories.dedicated_tools": deactivationKey(nil)}
+	// Both readings name the same spelling; only the directory behind the alias changes, and the
+	// replacement holds a config with the same owned key and the same hash.
+	manifest := configLockActivationManifestBytes(t, &InstallManifest{Version: 2, ConfigPath: aliasPath, PostActivateHash: hash, Flags: map[string]FlagRecord{}, TableKeys: keys})
+
+	held := configLockWritersHold(t, aliasPath)
+	configLockPathsHandoverRetarget(t, home, manifest, func() error {
+		if err := os.Rename(dirA, dirA+".saved"); err != nil {
+			return err
+		}
+		return os.Rename(dirB, dirA)
+	}, held.Release, manifest)
+
+	_, err = Deactivate(deactivationDeps(home, func([]string) CodexRunResult { return CodexRunResult{} }))
+	if err == nil || !strings.Contains(err.Error(), "names a different config file") {
+		t.Fatalf("the deactivation accepted a directory replaced under the pinned spelling: %v", err)
+	}
+	if got := activationRead(t, filepath.Join(dirA, "config.toml")); got != deactivationConfig {
+		t.Fatalf("the refused deactivation restored the replacement's key: %q", got)
+	}
+	if got := activationRead(t, filepath.Join(dirA+".saved", "config.toml")); got != deactivationConfig {
+		t.Fatalf("the refused deactivation wrote the moved file: %q", got)
+	}
+}
+
+// The sixth-generation d2 case, through the public entry point: the manifest names the OLD file at
+// its new location after the directory was swapped. That spelling's file and parent directory are
+// still the pinned ones, so a comparison that judged only the candidate's two identities would
+// accept it while the restore publishes to the pinned path, which now holds another file. The
+// comparison must also prove the pinned path's own parent is still the pinned directory.
+func TestConfigLockPathsDeactivateRefusesAManifestNamingTheMovedDirectory(t *testing.T) {
+	home := configLockActivationHome(t)
+	dirA := filepath.Join(home, "A")
+	dirB := filepath.Join(home, "B")
+	for _, dir := range []string{dirA, dirB} {
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfgA := filepath.Join(dirA, "config.toml")
+	activationWrite(t, cfgA, deactivationConfig)
+	activationWrite(t, filepath.Join(dirB, "config.toml"), deactivationConfig)
+	hash, err := hashOrNull(cfgA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys := map[string]TableKeyRecord{"memories.dedicated_tools": deactivationKey(nil)}
+	stale := configLockActivationManifestBytes(t, &InstallManifest{Version: 2, ConfigPath: cfgA, PostActivateHash: hash, Flags: map[string]FlagRecord{}, TableKeys: keys})
+	// The fresh reading names the file the lock guards at the location it moved to, whose file and
+	// parent identities both still match the pin.
+	fresh := configLockActivationManifestBytes(t, &InstallManifest{Version: 2, ConfigPath: filepath.Join(dirA+".saved", "config.toml"), PostActivateHash: hash, Flags: map[string]FlagRecord{}, TableKeys: keys})
+
+	held := configLockWritersHold(t, cfgA)
+	configLockPathsHandoverRetarget(t, home, stale, func() error {
+		if err := os.Rename(dirA, dirA+".saved"); err != nil {
+			return err
+		}
+		return os.Rename(dirB, dirA)
+	}, held.Release, fresh)
+
+	_, err = Deactivate(deactivationDeps(home, func([]string) CodexRunResult { return CodexRunResult{} }))
+	if err == nil || !strings.Contains(err.Error(), "names a different config file") {
+		t.Fatalf("the deactivation accepted a manifest naming the moved directory: %v", err)
+	}
+	if got := activationRead(t, filepath.Join(dirA+".saved", "config.toml")); got != deactivationConfig {
+		t.Fatalf("the refused deactivation restored the moved file's key: %q", got)
+	}
+	if got := activationRead(t, filepath.Join(dirA, "config.toml")); got != deactivationConfig {
+		t.Fatalf("the refused deactivation wrote the replacement: %q", got)
+	}
+}
+
 // A case-insensitive spelling of the locked entry is the same target and is accepted. The test needs
 // a filesystem that folds case; where the filesystem distinguishes the two spellings it skips, and
 // the refusal pinned above is the correct answer there.

@@ -71,18 +71,34 @@ func configLockPathsPinned(lock *crwdir.ConfigLock) (*configLockPathsPin, error)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return nil, fmt.Errorf("the config file could not be inspected (%s); run the deactivation again", pinned)
 	}
-	return &configLockPathsPin{path: pinned, file: file, dir: dir, dirPath: dirPath}, nil
+	return &configLockPathsPin{lock: lock, path: pinned, file: file, dir: dir, dirPath: dirPath}, nil
 }
 
 // configLockPathsPin is the locked config file as it was when the lock was proven: its resolved path
 // and the identities of the file and of its parent directory at that moment. A comparison against a
 // later manifest is judged against these captured values, so a path replaced after the pin cannot be
-// accepted as the locked file.
+// accepted as the locked file. The lock itself is kept so the pin can re-prove, at the moment of the
+// decision, that the pinned path still names the sidecar the lock holds; without that proof the
+// captured identities describe a file the lock no longer guards.
 type configLockPathsPin struct {
+	lock    *crwdir.ConfigLock
 	path    string
 	file    os.FileInfo
 	dir     os.FileInfo
 	dirPath string
+}
+
+// configLockPathsPinHolds reports whether the pinned path still names the very sidecar this lock
+// holds. The pin is captured while the sidecar proof holds, but the directory behind the pinned path
+// can be replaced afterwards: swapping the pinned directory with another one makes the pinned
+// pathname name a different file while the held sidecar now lives beside the moved directory. The
+// captured identities alone cannot see that — the replacement's file and directory are a different
+// pair, but a manifest naming the moved directory still matches the captured pair — so the comparison
+// re-proves the lock's own sidecar identity here and refuses when it no longer holds (CRW-899 E1,
+// fail closed). This re-stat is the lock's identity check, not a re-interpretation of the pin as a
+// comparison target: a stale pin makes the answer false, never a different acceptance.
+func configLockPathsPinHolds(pinned *configLockPathsPin) bool {
+	return pinned != nil && pinned.lock.HoldsSidecar(pinned.path)
 }
 
 func readTextOrNull(path string) (*string, error) {
@@ -153,21 +169,23 @@ func configLockPathsAbsolute(resolved string) (string, bool) {
 	return filepath.Join(realCwd, resolved), true
 }
 
-// configLockPathsSameTarget reports whether a manifest's spelling names the locked file. Only the
-// SPELLING is read from the filesystem; the locked side is the pin captured when the lock was
-// proven, and the pinned path is never resolved or stat'ed again, because doing so would follow a
-// directory replaced after the pin and accept the replacement as the locked file (CRW-899 E1, and
-// the fifth-generation evaluation that found exactly that). The manifest is allowed to name the
-// config file through a different spelling — CODEX_HOME behind a directory symlink, for example,
-// which crwdir's lock resolution leaves spelled through the alias because it follows only a symlink
-// in the final component — and a deactivation that treated that as a different file would refuse to
-// restore an install it owns. The comparison is deliberately directory-entry identity, not inode
-// identity: the restore publishes through the pinned path with an atomic rename, which replaces that
-// one pathname, so a hard link to the same inode under another name would keep the managed key while
-// this command reported it restored (fail open). A hard link therefore stays refused, and a spelling
-// that cannot be resolved is not the same target, so the comparison never accepts what it could not
-// prove.
+// configLockPathsSameTarget reports whether a manifest's spelling names the file the lock still
+// guards. It first re-proves that the pinned path still names the held sidecar
+// (configLockPathsPinHolds): a directory replaced after the pin moves the held sidecar away from the
+// pinned pathname, so the answer is false whatever the manifest names (CRW-899 E1). The manifest is
+// allowed to name the config file through a different spelling — CODEX_HOME behind a directory
+// symlink, for example, which crwdir's lock resolution leaves spelled through the alias because it
+// follows only a symlink in the final component — and a deactivation that treated that as a different
+// file would refuse to restore an install it owns. The comparison is deliberately directory-entry
+// identity, not inode identity: the restore publishes through the pinned path with an atomic rename,
+// which replaces that one pathname, so a hard link to the same inode under another name would keep
+// the managed key while this command reported it restored (fail open). A hard link therefore stays
+// refused, and a spelling that cannot be resolved is not the same target, so the comparison never
+// accepts what it could not prove.
 func configLockPathsSameTarget(spelling string, pinned *configLockPathsPin) bool {
+	if !configLockPathsPinHolds(pinned) {
+		return false
+	}
 	real, ok := configLockPathsRealPath(spelling)
 	if !ok {
 		return false
@@ -184,9 +202,10 @@ func configLockPathsSameTarget(spelling string, pinned *configLockPathsPin) bool
 	// entry, and filepath.EvalSymlinks follows links without canonicalising the case of ordinary
 	// components. That is the same target — a rename over it replaces the entry both spellings
 	// name — but a hard link is a DIFFERENT entry a rename would not reach, so it stays refused.
-	// The two are told apart with the identities captured at pin time, never by reading the pinned
-	// path again: the candidate must be the pinned file, in the pinned directory, and that
-	// directory must hold one entry for the name.
+	// The two are told apart with the identities captured at pin time: the candidate must be the
+	// pinned file, in the pinned directory, and that directory must hold one entry for the name.
+	// The pin itself is proven live by configLockPathsPinHolds above, so the captured directory is
+	// the one the pinned path still names.
 	if !strings.EqualFold(filepath.Base(real), filepath.Base(pinned.path)) {
 		return false
 	}
