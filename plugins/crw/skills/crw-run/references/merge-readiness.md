@@ -1220,13 +1220,13 @@ and none of them is ever counted as zero.
 
 ## In-flight pull requests (transition)
 
-This section is the one place in this procedure that describes a pull request lane. It covers relay pull requests that were already open when the push-only procedure took effect (after CRW-965 is installed), and nothing else. Internal work never opens a pull request: its candidate is a task branch whose head the integrator verifies and fast-forwards to ~dev~.
+This section is the one place in this procedure that describes a pull request lane. It covers relay pull requests that were already open when the push-only procedure took effect (after CRW-965 is installed), and nothing else. Internal work never opens a pull request: its candidate is a task branch whose head the integrator verifies and fast-forwards to `dev`.
 
 The rules for that transition:
 
 - An in-flight pull request is not merged before CRW-965 is installed, and no open pull request is closed or switched while its lane is running.
-- After ~ci.yml~ declares only ~workflow_dispatch~, an open pull request gets hosted CI only from a manual dispatch of its branch, ~gh workflow run ci.yml --ref <branch>~. No step waits for a run that no event can create: a step that needs hosted CI dispatches it itself, or the pull request leaves the lane.
-- To leave the lane, the pull request's commits go to the integrator: the head is verified locally with the verification record and fast-forwarded to ~dev~, and the pull request is closed with a comment that names the landing commit.
+- After `ci.yml` declares only `workflow_dispatch`, an open pull request gets hosted CI only from a manual dispatch of its branch, `gh workflow run ci.yml --ref <branch>`. No step waits for a run that no event can create: a step that needs hosted CI dispatches it itself, or the pull request leaves the lane.
+- To leave the lane, the pull request's commits go to the integrator: the head is verified locally with the verification record and fast-forwarded to `dev`, and the pull request is closed with a comment that names the landing commit.
 - The one run each external reviewer makes on a pull request that is still open follows [The one run of each reviewer](#the-one-run-of-each-reviewer-awaited-before-the-receipt).
 
 The subsections below are the lane's mechanics (bundles, the merge lane and its base conflicts) and apply only while such a pull request exists.
