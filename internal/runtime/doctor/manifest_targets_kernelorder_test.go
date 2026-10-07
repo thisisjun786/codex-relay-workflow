@@ -20,6 +20,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 // kernelOrderFixture builds root/sub/deep, root/outside-free layout the escape rows share: a root, a
@@ -351,23 +352,43 @@ func TestManifestTargetsKernelOrderCallerPathEscapes(t *testing.T) {
 	})
 	t.Run("absolute_after_the_leading_dot_slash", func(t *testing.T) {
 		// One leading "./" is removed before the absolute test, exactly as the oracle's
-		// rel.replace(/^\.\//, "") does, so this spelling is an absolute path whose '..' must still
-		// be walked rather than cleaned away.
-		outside := t.TempDir()
-		if err := os.MkdirAll(filepath.Join(outside, "deep"), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Symlink(filepath.Join("..", "deep"), filepath.Join(outside, "sublink")); err != nil {
-			t.Fatal(err)
-		}
-		root := t.TempDir()
-		targetTestWrite(t, root, ".codex-plugin/plugin.json", `{"hooks":["./`+filepath.Join(outside, "sublink", "..", "hook.sh")+`"]}`)
-		got, err := ValidateManifestTargets(root)
+		// rel.replace(/^\.\//, "") does, so what follows is an absolute path. It names a link
+		// inside the root and then '..': the kernel climbs from the directory the link really
+		// reached, outside the root, while a lexical Clean answers the inside decoy of the same
+		// name. Both spellings are built by hand -- filepath.Join would clean the '..' away before
+		// the validation ever saw it, which is the defect this row has to keep pinned.
+		base, err := filepath.EvalSymlinks(t.TempDir())
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(got) != 1 || got[0].Kind != TargetHook || !strings.HasPrefix(got[0].Message, "manifest hook file escapes plugin root:") {
-			t.Fatalf("issues: %+v; want one hook escape", got)
+		root := filepath.Join(base, "root")
+		outside := filepath.Join(base, "outside")
+		for _, dir := range []string{filepath.Join(root, "sub", "deep"), filepath.Join(outside, "deep")} {
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+		// The file the spelling really reaches, and the inside decoy the lexical answer would pick.
+		if err := os.WriteFile(filepath.Join(outside, "hook.json"), []byte(`{"hooks":{}}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, "hook.json"), []byte(`{"hooks":{}}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(filepath.Join("..", "outside", "deep"), filepath.Join(root, "sublink")); err != nil {
+			t.Fatal(err)
+		}
+		sep := string(filepath.Separator)
+		spelling := root + sep + "sublink" + sep + ".." + sep + "hook.json"
+		// The kernel's own answer for the spelling, so the expectation is not self-referential.
+		resolved, err := filepath.EvalSymlinks(spelling)
+		if err != nil || resolved != filepath.Join(outside, "hook.json") {
+			t.Fatalf("EvalSymlinks(%q) = %q, %v; want %q", spelling, resolved, err, filepath.Join(outside, "hook.json"))
+		}
+		targetTestWrite(t, root, ".codex-plugin/plugin.json", `{"hooks":["./`+spelling+`"]}`)
+		want := []TargetIssue{{TargetHook, "manifest hook file escapes plugin root: ./" + spelling}}
+		if got, err := ValidateManifestTargets(root); err != nil || !reflect.DeepEqual(got, want) {
+			t.Fatalf("issues: %+v %v; want %+v", got, err, want)
 		}
 	})
 }
@@ -449,5 +470,63 @@ func TestManifestTargetsKernelOrderOneRootGoverning(t *testing.T) {
 	got, err = ValidateManifestTargets(root)
 	if err != nil || !reflect.DeepEqual(got, []TargetIssue{}) {
 		t.Fatalf("issues: %+v %v; want none (the lexical manifest must not be read)", got, err)
+	}
+}
+
+// TestManifestTargetsKernelOrderDoctorAssemblesOneRoot is the same property at the doctor assembly:
+// RunHarnessDoctor must read the manifest of the ONE root it judges targets against, so a root spelled
+// through a link and a '..' cannot report the physical root's targets beside the lexical root's version.
+func TestManifestTargetsKernelOrderDoctorAssemblesOneRoot(t *testing.T) {
+	base := t.TempDir()
+	lexical := filepath.Join(base, "root")
+	physical := filepath.Join(base, "outside")
+	for _, dir := range []string{lexical, filepath.Join(physical, "deep")} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(filepath.Join("..", "outside", "deep"), filepath.Join(lexical, "sublink")); err != nil {
+		t.Fatal(err)
+	}
+	// The two roots declare different versions, so which manifest was read is observable.
+	targetTestWrite(t, physical, ".codex-plugin/plugin.json", `{"name":"crw","version":"physical","hooks":[]}`)
+	targetTestWrite(t, lexical, ".codex-plugin/plugin.json", `{"name":"crw","version":"lexical","hooks":[]}`)
+	root := lexical + string(filepath.Separator) + "sublink" + string(filepath.Separator) + ".."
+	states := map[string]bool{"multi_agent": true, "goals": true, "hooks": true, "default_mode_request_user_input": true}
+	report := RunHarnessDoctor(root, harnessRunStub(states, "codex-cli 1.2.3\n"), HarnessOptions{}, t.TempDir(), harnessRunEnv(map[string]string{}), time.Now())
+	if report.PluginVersion == nil || *report.PluginVersion != "physical" {
+		t.Fatalf("PluginVersion = %v; want the physical root's version", report.PluginVersion)
+	}
+	for _, check := range report.Checks {
+		if check.Name == "manifest" && check.Severity == HarnessFail {
+			t.Fatalf("manifest check: %+v; want the physical root's manifest", check)
+		}
+	}
+	// The gate itself. With only the physical root's manifest left, the report must still run that
+	// root's target checks: reading the lexical root's manifest would report it missing and skip them,
+	// and the escape the physical manifest declares would go unreported.
+	if err := os.Remove(filepath.Join(lexical, ".codex-plugin", "plugin.json")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(base, "secret.json"), []byte(`{"hooks":{}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(base, "secret.json"), filepath.Join(physical, "out.json")); err != nil {
+		t.Fatal(err)
+	}
+	targetTestWrite(t, physical, ".codex-plugin/plugin.json", `{"name":"crw","version":"physical","hooks":["./out.json"]}`)
+	report = RunHarnessDoctor(root, harnessRunStub(states, "codex-cli 1.2.3\n"), HarnessOptions{}, t.TempDir(), harnessRunEnv(map[string]string{}), time.Now())
+	seen := false
+	for _, check := range report.Checks {
+		if check.Name != "hooks" {
+			continue
+		}
+		seen = true
+		if check.Severity != HarnessFail || !strings.Contains(check.Evidence, "escapes plugin root") {
+			t.Fatalf("hooks check: %+v; want the physical root's escaping hook", check)
+		}
+	}
+	if !seen {
+		t.Fatalf("no hooks check in the report; the lexical manifest gate skipped the target checks")
 	}
 }

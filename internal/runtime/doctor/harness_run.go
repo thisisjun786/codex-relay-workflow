@@ -63,6 +63,14 @@ const (
 // the ambient reads the oracle makes (doctor.ts:369, :452).
 func RunHarnessDoctor(pluginRoot string, runner HarnessRunner, options HarnessOptions, projectRoot string, env host.LookupEnv, now time.Time) HarnessReport {
 	checks := make([]HarnessCheck, 0, 15)
+	// One root governs the whole report (CRW-937). The manifest-target validator resolves a root
+	// through manifestTargetsRealpath, so a root spelled through a symlink and a '..' would otherwise
+	// be read physically by that check and lexically by every join below -- two different plugin
+	// packages in one report. Resolving it once here keeps them the same root; a root that cannot be
+	// resolved is left as the caller gave it, which is what the checks already do with a bad root.
+	if resolved, err := manifestTargetsRealpath(pluginRoot); err == nil {
+		pluginRoot = resolved
+	}
 	manifestPath := filepath.Join(pluginRoot, harnessRunManifestRelative)
 	checks = append(checks, harnessRunManifestCheck(manifestPath))
 	if harnessRunExists(manifestPath) {
