@@ -308,6 +308,63 @@ func pythonLiteralValue(python, literal string) (string, error) {
 	return string(out), nil
 }
 
+// c7 d1 (CRW-908 generation 2): the generator emits BOTH the separated and the attached spelling of the
+// interpreter flag, exactly as it did before the program list was restructured: `python3 -c <program>`
+// and `python3 -c<program>`, `node -e <program>` and `node -e<program>`, and `node --eval <program>`,
+// which has no attached form. A reader that reads only one spelling would miss the other, so a regression
+// that dropped one of them would go unnoticed by a test that reads the program alone.
+func TestShellwriteProgramsEmitBothFlagSpellings(t *testing.T) {
+	commands := shellWritePrograms("/m/a")
+	separated := map[string]bool{}
+	attached := map[string]bool{}
+	for _, c := range commands {
+		key := c.interpreter + " " + c.flag
+		if c.sep == "" {
+			attached[key] = true
+		} else {
+			separated[key] = true
+		}
+	}
+	for _, want := range []string{"python3 -c", "py -c", "node -e"} {
+		if !separated[want] {
+			t.Errorf("the separated form %q is not emitted", want)
+		}
+	}
+	for _, want := range []string{"python3 -c", "node -e"} {
+		if !attached[want] {
+			t.Errorf("the attached form %q is not emitted", want)
+		}
+	}
+	if !separated["node --eval"] {
+		t.Errorf("the node --eval form is not emitted separated, so the flag and the program would be one word")
+	}
+	if attached["node --eval"] {
+		t.Errorf("the node --eval form is emitted attached, which is not a flag node accepts")
+	}
+}
+
+// c7 d2 (CRW-908 generation 2): a destination that still holds the ROOT placeholder never takes a bytes
+// form, because the harness substitutes the case root into the program afterwards and a root is not
+// promised to be ASCII - a non-ASCII root inside a b literal is a Python source error.
+func TestShellwriteBytesFormsAreASCIIOnly(t *testing.T) {
+	if shellWritePythonASCII(rootPlaceholder + "/codex-home/memories/n.md") {
+		t.Error("a ROOT-prefixed destination was called ASCII, so a bytes form would carry an unknown root")
+	}
+	for _, dest := range []string{"/m/a", "rel", "/m/a b"} {
+		if !shellWritePythonASCII(dest) {
+			t.Errorf("the ASCII destination %q was refused a bytes form", dest)
+		}
+	}
+	if shellWritePythonASCII("/m/\u00e9") {
+		t.Error("a non-ASCII destination was called ASCII")
+	}
+	for _, form := range shellWritePythonLiteralForms(rootPlaceholder + "/codex-home/memories/n.md") {
+		if strings.HasPrefix(form, "b") {
+			t.Errorf("a ROOT-prefixed destination emitted the bytes form %q", form)
+		}
+	}
+}
+
 // c3 (CRW-908): the ROOT placeholder keeps its braces. The harness substitutes that token in the
 // decoded command after the program is built, so doubling the placeholder's own braces would leave a
 // literal placeholder in the path: the substitution would find nothing to replace, the interpreter

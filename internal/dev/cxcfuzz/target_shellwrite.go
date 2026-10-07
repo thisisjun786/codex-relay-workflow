@@ -268,24 +268,26 @@ func shellWritePrograms(dest string) []shellWriteCommand {
 	// quote, a dollar, a backslash or a backtick, and a fixed double-quoted argument would let the
 	// shell rewrite the program before the interpreter ever saw it.
 	commands := []shellWriteCommand{
-		{"python3", "-c", "", "open('" + quoted + "','w').write('x')"},
-		{"python3", "-c", "", "from pathlib import Path; Path('" + quoted + "').write_text('x')"},
-		{"python3", "-c", "", "from pathlib import Path; Path('/m','" + quoted + "').write_bytes(b'x')"},
-		{"python3", "-c", "", appendProgram},
-		{"py", "-c", "", "open('" + quoted + "','w')"},
+		// The separated and attached spellings of the interpreter flag are both emitted, exactly as the
+		// generator emitted them before: a reader that reads only one of the two would miss the other.
+		{"python3", "-c", " ", "open('" + quoted + "','w').write('x')"},
+		{"python3", "-c", " ", "from pathlib import Path; Path('" + quoted + "').write_text('x')"},
+		{"python3", "-c", " ", "from pathlib import Path; Path('/m','" + quoted + "').write_bytes(b'x')"},
+		{"python3", "-c", " ", appendProgram},
+		{"py", "-c", " ", "open('" + quoted + "','w')"},
 		{"python3", "-c", "", "open('" + quoted + "','w')"},
-		{"node", "-e", "", "require('fs').writeFileSync('" + dest + "','x')"},
+		{"node", "-e", " ", "require('fs').writeFileSync('" + dest + "','x')"},
 		{"node", "--eval", " ", "require('fs').createWriteStream('" + dest + "')"},
 		{"node", "-e", "", "require('fs').appendFileSync('" + dest + "','x')"},
-		{"node", "-e", "", "require('fs').open('" + dest + "','w',()=>{})"},
+		{"node", "-e", " ", "require('fs').open('" + dest + "','w',()=>{})"},
 	}
 	// The destination is the second argument of os.rename and shutil.copy/copyfile, so a reader
 	// that only reads the first argument of a call names the source and misses the write.
 	for _, literal := range shellWritePythonLiteralForms(dest) {
 		commands = append(commands,
-			shellWriteCommand{"python3", "-c", "", "import os; os.rename(\"/w/old.md\", " + literal + ")"},
-			shellWriteCommand{"python3", "-c", "", "import shutil; shutil.copy(\"/w/old.md\", " + literal + ")"},
-			shellWriteCommand{"python3", "-c", "", "import shutil; shutil.copyfile(\"/w/old.md\", " + literal + ")"},
+			shellWriteCommand{"python3", "-c", " ", "import os; os.rename(\"/w/old.md\", " + literal + ")"},
+			shellWriteCommand{"python3", "-c", " ", "import shutil; shutil.copy(\"/w/old.md\", " + literal + ")"},
+			shellWriteCommand{"python3", "-c", " ", "import shutil; shutil.copyfile(\"/w/old.md\", " + literal + ")"},
 		)
 	}
 	// The slash of a destination written as an escape: a reader that does not decode the escape
@@ -293,7 +295,7 @@ func shellWritePrograms(dest string) []shellWriteCommand {
 	// the escape Python decodes to the destination's slash, so it is embedded as written. Escaping it
 	// again would double that backslash and Python would read the escape's letters as the path.
 	for _, escaped := range shellWritePythonEscapeForms(dest) {
-		commands = append(commands, shellWriteCommand{"python3", "-c", "", "open(\"" + escaped + "\",\"w\")"})
+		commands = append(commands, shellWriteCommand{"python3", "-c", " ", "open(\"" + escaped + "\",\"w\")"})
 	}
 	return commands
 }
@@ -408,8 +410,14 @@ func shellWritePythonRaw(word string) (string, bool) {
 }
 
 // shellWritePythonASCII reports whether a destination holds only ASCII characters, which is what a
-// bytes literal can carry: Python refuses a non-ASCII character in a b literal.
+// bytes literal can carry: Python refuses a non-ASCII character in a b literal. A destination still
+// holding the ROOT placeholder answers no, because the harness substitutes the case root into it after
+// the program is built and a root is not promised to be ASCII - a non-ASCII root inside a b literal is
+// a source error, so the bytes form is simply not emitted for such a destination.
 func shellWritePythonASCII(word string) bool {
+	if strings.Contains(word, rootPlaceholder) {
+		return false
+	}
 	for _, r := range word {
 		if r > 0x7f {
 			return false
