@@ -20,7 +20,7 @@ TEST_TIMEOUT := -timeout 10m
 TEST_BINARY := $(CURDIR)/dist/test/crw
 TEST_ENV := CRW_TEST_BINARY=$(TEST_BINARY)
 
-.PHONY: build test test-binary test-part lint dist crw-dev gui gui-assets
+.PHONY: build test test-binary test-part lint dist crw-dev gui gui-assets ci-local
 
 build:
 	@if ! $(GO) list ./... 2>/dev/null | grep -q .; then echo "no Go packages yet: build skipped"; else $(GO) build -o $(BINARY) -trimpath -ldflags="$(LDFLAGS)" ./cmd/crw; fi
@@ -82,6 +82,13 @@ endif
 # The development binary: CI checks as `crw-dev ci <check>`. Never part of a release.
 crw-dev:
 	$(GO) build -tags dev -o dist/crw-dev ./cmd/crw-dev
+
+# The local full verification (CRW-964): every job and step of .github/workflows/ci.yml, in a
+# clean worktree of HEAD, with the result written to a verification-record/1. A heavy step goes
+# through the gate CRW_CI_HEAVY_GATE names when it is set. make ci-local and
+# go run -tags dev ./cmd/crw-dev ci local are the same run; docs/CI.md has the mapping.
+ci-local:
+	$(GO) run -tags dev ./cmd/crw-dev ci local
 
 # The screens: install from the committed lockfile, run the screen tests, build them into a
 # temporary tree under dist/ (gitignored, and never the committed internal/gui/assets), and refuse

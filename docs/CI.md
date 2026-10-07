@@ -25,6 +25,106 @@ Installing and operating the runtime is [runtime installation](runtime-install.m
 under `scripts/ci` and `scripts/check_operations_contract.py` left in refactor R3 (decision R3R-1).
 See the [workflow](../.github/workflows/ci.yml) for the exact job inputs.
 
+## The local run
+
+`crw-dev ci local` (and `make ci-local`) runs every job and step of
+[the workflow](../.github/workflows/ci.yml) locally, in the same order and at the same pinned
+versions, and writes a `verification-record/1`. It exists so the whole verification can be
+run without GitHub; the hosted run stays the merge evidence.
+
+The run makes a **clean worktree** of the commit being verified under `TMPDIR`
+(`git worktree add --detach`), with `HOME` and the XDG directories pointed into a
+temporary home and `TZ=UTC`, so uncommitted changes in the caller's checkout and the host's
+caches cannot change the result. The record names the commit and its tree, never the caller's
+working state. The worktree is removed afterwards. `GOCACHE`, `GOMODCACHE` and
+`GOFLAGS` are inherited: they decide how fast a step runs, not what it decides.
+
+Light mode and the body-only edit mirror are never applied: the local run is always full.
+
+### The local step to GitHub job mapping
+
+| ci.yml job | ci.yml step | local |
+| --- | --- | --- |
+| `validate` | the sparse `scripts/ci` checkout and the edit mirror | not run: a hosted body-only edit lookup |
+| `validate` | checkout | the clean worktree of the verified commit |
+| `validate` | `setup-go` | the pinned Go is resolved and recorded |
+| `validate` | `go build -tags dev -o "$RUNNER_TEMP/crw-dev" ./cmd/crw-dev` | run |
+| `validate` | `"$RUNNER_TEMP/crw-dev" ci validate` | run, over the record's range (`BLOB_RANGE_BASE`) |
+| `validate` | `"$RUNNER_TEMP/crw-dev" ci plugin` | run |
+| `validate` | `"$RUNNER_TEMP/crw-dev" ci contracts` | run |
+| `secrets` | the mirror pair, checkout | as above |
+| `secrets` | `bash scripts/ci/secrets.sh` | run, with `GITHUB_EVENT_NAME=pull_request` and `PR_BASE_SHA`, so it scans base..head as a pull request run does |
+| `skill-scripts-node` | the mirror pair, checkout | as above |
+| `skill-scripts-node` | the changed-path decision | run: the same script, its answer recorded; the local run performs every step either way |
+| `skill-scripts-node` | `setup-node` | the pinned Node is resolved and recorded |
+| `skill-scripts-node` | the staged skill-script tests | run |
+| `gui` | the mirror pair, checkout | as above |
+| `gui` | the changed-path decision (`scripts/ci/gui_paths.sh`) | run, its answer recorded |
+| `gui` | `setup-go`, `setup-node` | as above |
+| `gui` | `npm ci`, `npm test`, `npm run build -- --outDir "$RUNNER_TEMP/gui-built" --emptyOutDir` | run (in `web/`) |
+| `gui` | `ci gui-drift --built "$RUNNER_TEMP/gui-built"` | run |
+| `go-product` | the light mode notice | not run: light mode is never applied |
+| `go-product` | the mirror pair, checkout, `setup-go` | as above |
+| `go-product` | `make lint` (leg `lint`) | run |
+| `go-product` | `make test-part TEST_PART=<n>` (legs `test-1`..`test-rest`) | run, one leg at a time |
+| `go-product` | the three `make dist` builds and `sha256sum` (leg `dist`) | run |
+| `go-product` | `CRW_TEST_BINARY=... go test -tags integration ./internal/runtime/integration/...` (leg `dist`) | run |
+| `go-product` | the four `upload-artifact` steps | not run: nothing is uploaded locally |
+| `dev-gate` | "Require every prerequisite to succeed" | run: every prerequisite job must have passed |
+
+`internal/dev/ci/local_plan_test.go` holds the table to the workflow job by job and step by
+step, and the runner refuses a ci.yml the table does not cover.
+
+### The verification record
+
+The record is `verification-record/1`: `repository`, `baseCommit`,
+`headCommit`, `treeHash`, `ciDigest` (the sha256 of ci.yml),
+`tools` (Go, Node, gitleaks, staticcheck as observed), `pins` (the versions the tree
+pins: go.mod's toolchain and staticcheck, ci.yml's Node, secrets.sh's Gitleaks),
+`pinMismatch`, `dependencies` (the sha256 of `go.sum` and
+`web/package-lock.json`), `os`, `arch`, `result`, and `jobs`
+— one entry per GitHub check, each with its steps' `command`, `scope`,
+`result`, `seconds` and `reason`. `digest` is the sha256 of the
+canonical serialization: the record as JSON with its keys sorted, no indentation and no HTML
+escaping, and the `digest` member removed. A tool whose observed version differs from its
+pin is named in `pinMismatch`, and such a record is never reused.
+
+A step's result is `passed`, `failed`, `missing_tool`,
+`skipped` or `not_applicable`. The whole result is `pass` only when no step
+is `failed`, `missing_tool` or `skipped`: one step that fails, does not run
+or lacks its tool fails the run, and the record names it with its reason.
+
+### Reuse
+
+`--reuse <record>` answers an existing record instead of running only when the **tree**, the
+**ci.yml digest**, the **tool versions**, the **dependency digests** and the **OS and
+architecture** all match, and the record passed with no pin mismatch. The head commit is
+deliberately not a key: a rebase that keeps the tree reuses the record. Changing any one key
+re-runs.
+
+### The heavy-check gate and TMPDIR
+
+A heavy step (a Go build, vet, test, the dist builds, the integration test, `npm ci`) runs
+through the command named by `CRW_CI_HEAVY_GATE` when it is set — `<gate> <command>`
+— and directly when it is unset. The gate is the host's; no host path is written into the
+repository. Temporary files go under `TMPDIR`, which the caller sets.
+
+### The pre-push hook
+
+`crw-dev ci local hook install` writes a `pre-push` hook into the repository the
+working directory belongs to (`git rev-parse --git-path hooks/pre-push`), and
+`... hook status` reports `installed`, `absent` or `foreign`. The hook
+refuses a push whose range (`<remote sha>..<local sha>`, or the whole local sha for a new
+ref) brings in a blob over 2 MiB or a secret Gitleaks finds — the same two checks the hosted
+`secrets` and `validate` jobs run, moved before the push because a public history
+cannot drop what has already been pushed. It fails closed: a missing Gitleaks or an unreadable
+range blocks the push. An existing `pre-push` this tool did not write is left untouched and
+the install refuses; the tool writes no git config. The hook's size rule carries no allow list,
+unlike `crw-dev ci validate`: the list is empty today, and a future entry must be paired
+with the hook at that time. Tests install the hook only into temporary repositories; the real
+shared checkout is the operator's to install.
+
+
 ## The workflow
 
 Every job runs on every event: a pull request (GitHub's merge candidate), a push to `dev` (the
