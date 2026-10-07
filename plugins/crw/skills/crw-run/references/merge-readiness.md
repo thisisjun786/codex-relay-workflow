@@ -1191,13 +1191,19 @@ its correction; the operator page is `docs/relay/README.md`).
    refused with no event. It also reads `.github/workflows/ci.yml` **at H** from the checkout (the git
    object, never the working tree, which may sit on another branch) and refuses a head whose job set
    differs from the one this runtime verifies, naming the jobs the head lost and the ones it added; a
-   workflow it cannot read is `merge_target_unreadable`. So a member that changes the workflow's jobs
-   cannot ride a bundle unnoticed.
+   workflow it cannot read is `merge_target_unreadable`. That comparison runs **before** the run's own
+   jobs are checked, so a head that renamed or added a job is refused with the missing and added names
+   even when the run carries the new name. So a member that changes the workflow's jobs cannot ride a
+   bundle unnoticed.
 5. `gh pr merge <bundle pr> --merge --match-head-commit <H>`.
 6. `merge-train-land --train <id> --actor <leader> --landed-sha <M> --observed-base-sha <M>`. The
    relay reads the dev tip and M's parents from the forge; anything but M with parents (D, H) and every
-   member head an ancestor of M is refused and writes nothing. On success every member turn is recorded
-   landed with M, except the members the landed event names in its `excluded` list.
+   member head an ancestor of M is refused and writes nothing. It also rereads each member pull request
+   and admits one GitHub already marked **merged** (closed with `merged: true`), because the bundle
+   merge put that member's head in the base; a member closed *without* a merge, one whose head moved,
+   and a closed answer that carries no `merged` field are still refused `disposition_conflict` with
+   nothing written. On success every member turn is recorded landed with M, except the members the
+   landed event names in its `excluded` list.
 7. For each member pull request **the landed event did not exclude**, check it shows merged; if it does
    not, comment "landed via bundle <merge sha>" and close it. An excluded member's pull request is left
    alone: the bundle carried the head it moved away from, so the pull request still has to land on its
@@ -1226,8 +1232,10 @@ The ruling and the integration observation stay the parent's work.
 - A removed member rides alone.
 - **A member that moves while the bundle is up.** `merge-train-verify` and `merge-train-land` each
   reread every member pull request from the forge before writing; a member whose pull request no
-  longer shows the head the bundle carries, or is no longer open on the bundle's base, is refused
-  `disposition_conflict` naming the pull request and what changed, with nothing written. At verify,
+  longer shows the head the bundle carries, or is closed without a merge on the bundle's base, is
+  refused `disposition_conflict` naming the pull request and what changed, with nothing written. (At
+  land, a member GitHub marked merged is admitted — see step 6 — because the bundle merge put its head
+  in the base; at verify the bundle has not merged yet, so every member must still read open.) At verify,
   abandon and reopen without that member. Between verify and land (the window the bundle merge opens)
   the member's own parent takes its turn out of the lane — `merge-turn-withdraw` for a waiting member,
   `merge-turn-release --disposition returned` for the leader, which is the turn that holds the lane —
