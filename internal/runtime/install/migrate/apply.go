@@ -341,6 +341,9 @@ func (a *applyRun) ensureDestDir(scope Scope, rel string) (*Dir, error) {
 	}
 	var made bool
 	if child, made, err = parent.EnsureChild(base, applyTempRaw); err != nil {
+		if child != nil {
+			_ = child.Close()
+		}
 		return nil, err
 	}
 	if made {

@@ -4,17 +4,15 @@ package migrate
 // directory was this run's from the result of this run's own mkdir, but that mkdir still happened at the
 // directory's final name, the private marker mode was still given by the caller after a fallible open and
 // parent sync, and finishModes still adopted a foreign directory that happened to carry exactly the marker
-// mode. These cases pin the creation under a temporary name of this run, the mode given to that name
-// before anything opens the directory, the fstat check that proves the pinned descriptor is the one this
-// run created, and the record that keeps finishModes from adopting a directory another actor made inside
-// the run's own window. Each case names the behaviour it pins; the ownership cases and the umask cases
-// fail on the code before CRW-887, and the interrupted-creation cases fail there too, with the directory
-// left without the marker and never finished.
+// mode. These cases pin the creation under a temporary name of this run, the identity of the directory
+// that creation made, the mode given through a handle that needs no permission on it and no name that can
+// be redirected, the record that keeps finishModes from adopting a directory this run's own creation was
+// refused by, and the cleanup that removes only this run's own directory. Each case names the behaviour
+// it pins.
 
 import (
 	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -33,8 +31,8 @@ func migrateOwnedDirIdentityEntries() map[string]string {
 }
 
 // migrateOwnedDirIdentityDarwinMkdir models the host whose mkdir keeps the permission bits of a directory
-// creation mode and drops the sticky bit, which is what Darwin does and the reason the mode is given to
-// the temporary name before the directory is opened. The returned function restores the real mkdir, so a
+// creation mode and drops the sticky bit, which is what Darwin does and the reason the mode is given
+// through the handle before the name is published. The returned function restores the real mkdir, so a
 // case can run its rerun against the host's own mkdir. The seam is process-wide; no case here runs in
 // parallel.
 func migrateOwnedDirIdentityDarwinMkdir(t *testing.T) func() {
@@ -56,9 +54,28 @@ func migrateOwnedDirIdentitySteps(t *testing.T, at func(step string) error) func
 	return func() { migrateOwnedDirIdentityAt = nil }
 }
 
+// migrateOwnedDirIdentityAfterFirstRead installs a seam that swaps the name the creation just read, once,
+// right after that first identity read returns. This is the window the review names: the entry at the
+// temporary name is observable in its parent, so another same-uid writer can put a regular file or a hard
+// link there after the read and before the mode step. It returns the function that removes the seam.
+func migrateOwnedDirIdentityAfterFirstRead(t *testing.T, ws string, swap func(target string)) func() {
+	t.Helper()
+	real := migrateOwnedDirIdentityLstat
+	done := false
+	migrateOwnedDirIdentityLstat = func(dirfd int, name string, st *unix.Stat_t) error {
+		err := real(dirfd, name, st)
+		if err == nil && !done {
+			done = true
+			swap(filepath.Join(ws, name))
+		}
+		return err
+	}
+	t.Cleanup(func() { migrateOwnedDirIdentityLstat = real })
+	return func() { migrateOwnedDirIdentityLstat = real }
+}
+
 // migrateOwnedDirIdentityUnderUmask runs fn with the process umask set to um and restores it before
-// returning, so no other case of this package sees it. The umask is process-wide, and no case here runs
-// in parallel.
+// returning, so no other case of this package sees it.
 func migrateOwnedDirIdentityUnderUmask(t *testing.T, um int, fn func()) {
 	t.Helper()
 	old := unix.Umask(um)
@@ -104,6 +121,24 @@ func migrateOwnedDirIdentityWantNoTemp(t *testing.T, dir string) {
 	}
 }
 
+// migrateOwnedDirIdentityTempIn returns the name of the one temporary of this run's naming rule directly
+// inside dir, failing when there is not exactly one.
+func migrateOwnedDirIdentityTempIn(t *testing.T, dir string) string {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	must(t, err)
+	var names []string
+	for _, e := range entries {
+		if _, ok := tempRun(e.Name()); ok {
+			names = append(names, e.Name())
+		}
+	}
+	if len(names) != 1 {
+		t.Fatalf("want exactly one temporary in %s, found %v", dir, names)
+	}
+	return names[0]
+}
+
 // migrateOwnedDirIdentityRerun opens the same project roots again and applies them: a rerun is a new
 // process with its own pinned roots and its own publisher.
 func migrateOwnedDirIdentityRerun(t *testing.T, ws string) (*ApplyResult, error) {
@@ -129,9 +164,7 @@ func migrateOwnedDirIdentityUserRerun(t *testing.T, u, v string) (*ApplyResult, 
 
 // C1a: a racer that creates the destination directory at exactly the private marker mode in the window
 // between the lookup that found it absent and this run's own creation is still another actor's
-// directory, so the run must not adopt it through the marker branch: it keeps 01700 and is reported. On
-// the code before CRW-887 finishModes read it as an interrupted run's own directory and finished it at
-// the source mode, 0755 with no note.
+// directory, so the run must not adopt it through the marker branch: it keeps 01700 and is reported.
 func TestMigrateOwnedDirIdentityRacerMarkerModeIsNotAdopted(t *testing.T) {
 	ws, r, p := apPlan(t, migrateOwnedDirIdentityEntries(), nil)
 	seam := migrateOwnedDirBeforeEnsureChild
@@ -167,9 +200,7 @@ func TestMigrateOwnedDirIdentityRacerRootMarkerModeIsNotAdopted(t *testing.T) {
 }
 
 // C1b: a racer that creates the final name between this run's temporary creation and the rename leaves
-// made false, leaves no temporary behind, and keeps the mode the racer gave the directory. On the code
-// before CRW-887 there was no temporary: the racer's directory stood at the name itself, so the run read
-// it as its own and chmodded it.
+// made false, leaves no temporary behind, and keeps the mode the racer gave the directory.
 func TestMigrateOwnedDirIdentityRacerAtTheRenameIsNotAdopted(t *testing.T) {
 	ws, r, p := apPlan(t, migrateOwnedDirIdentityEntries(), nil)
 	renames := 0
@@ -196,11 +227,115 @@ func TestMigrateOwnedDirIdentityRacerAtTheRenameIsNotAdopted(t *testing.T) {
 	}
 }
 
-// C1c: an interruption at the open of this run's temporary must not leave a directory a rerun then fails
+// C2(2): a regular file put at the temporary name after the creation and before the mode step is
+// refused with no mode changed. The mode goes through a handle on the directory this run created, and
+// the handle cannot be opened on a regular file, so nothing chmods it. The head before this cycle
+// chmodded the name before any type check.
+func TestMigrateOwnedDirIdentityRegularFileAtTheTemporaryIsNotChmodded(t *testing.T) {
+	ws, r, p := apPlan(t, migrateOwnedDirIdentityEntries(), nil)
+	target := ""
+	migrateOwnedDirIdentityAfterFirstRead(t, ws, func(name string) {
+		target = name
+		must(t, os.Rename(name, name+".moved"))
+		must(t, os.WriteFile(name, []byte("not a directory"), 0o644))
+	})
+	if _, err := apply(r, p); err == nil {
+		t.Fatal("a regular file at the temporary name must stop the run")
+	}
+	if target == "" {
+		t.Fatal("the case never swapped the temporary")
+	}
+	fi, err := os.Stat(target)
+	must(t, err)
+	if fi.Mode().Perm() != 0o644 {
+		t.Errorf("a regular file at the temporary name is %v; the run must not chmod it", fi.Mode().Perm())
+	}
+}
+
+// C2(2): the same for a hard link to another file. AT_SYMLINK_NOFOLLOW stops a link being followed, not
+// a hard link being put at the name, so the identity check on the opened handle is what refuses it
+// before any mode is given.
+func TestMigrateOwnedDirIdentityHardLinkAtTheTemporaryIsNotChmodded(t *testing.T) {
+	ws, r, p := apPlan(t, migrateOwnedDirIdentityEntries(), nil)
+	other := filepath.Join(ws, "other-file")
+	must(t, os.WriteFile(other, []byte("x"), 0o640))
+	target := ""
+	migrateOwnedDirIdentityAfterFirstRead(t, ws, func(name string) {
+		target = name
+		must(t, os.Remove(name))
+		must(t, os.Link(other, name))
+	})
+	if _, err := apply(r, p); err == nil {
+		t.Fatal("a hard link at the temporary name must stop the run")
+	}
+	if target == "" {
+		t.Fatal("the case never swapped the temporary")
+	}
+	fi, err := os.Stat(other)
+	must(t, err)
+	if fi.Mode().Perm() != 0o640 {
+		t.Errorf("the hard link's inode is %v; the run must not chmod it", fi.Mode().Perm())
+	}
+}
+
+// C2(3): when the identity of the name this run just created cannot be read, that directory is left in
+// place and the refusal names it. Nothing is removed, so a directory another actor put at the same name
+// can never be deleted. The head before this cycle treated a matching owner as proof and removed it.
+func TestMigrateOwnedDirIdentityUnreadableTemporaryIsLeftAndReported(t *testing.T) {
+	restore := migrateOwnedDirIdentityLstat
+	t.Cleanup(func() { migrateOwnedDirIdentityLstat = restore })
+	calls := 0
+	var target string
+	migrateOwnedDirIdentityLstat = func(dirfd int, name string, st *unix.Stat_t) error {
+		if calls++; calls == 1 {
+			target = name
+			return unix.EIO
+		}
+		return restore(dirfd, name, st)
+	}
+	ws, r, p := apPlan(t, migrateOwnedDirIdentityEntries(), nil)
+	_, err := apply(r, p)
+	wantRefusal(t, err, ReasonUnreadable)
+	if target == "" {
+		t.Fatal("the case never reached the identity read of the temporary")
+	}
+	// The temporary this run made is still there, so an entry another actor could have put at that
+	// name was never a removal target either, and the refusal names the leftover.
+	if _, err := os.Lstat(filepath.Join(ws, target)); err != nil {
+		t.Errorf("the unreadable temporary must be left in place: %v", err)
+	}
+	if !strings.Contains(err.Error(), target) {
+		t.Errorf("the refusal must name the leftover %q, got %v", target, err)
+	}
+}
+
+// C2(4): a kernel whose fchmodat2 is absent (Linux before 6.5 answers ENOSYS, which the runtime call
+// reports as EOPNOTSUPP) still creates the directory, through the descriptor-bound /proc/self/fd chmod
+// rather than a by-name chmod a swapped link could redirect. The head before this cycle refused such a
+// kernel as unsupported.
+func TestMigrateOwnedDirIdentityFchmodat2AbsentUsesTheDescriptorPath(t *testing.T) {
+	restore2 := migrateOwnedDirIdentityFchmodat2
+	t.Cleanup(func() { migrateOwnedDirIdentityFchmodat2 = restore2 })
+	tries := 0
+	migrateOwnedDirIdentityFchmodat2 = func(fd int, perm uint32) error {
+		tries++
+		return unix.EOPNOTSUPP
+	}
+	ws, r, p := apPlan(t, migrateOwnedDirIdentityEntries(), nil)
+	if _, err := apply(r, p); err != nil {
+		t.Fatalf("a kernel without fchmodat2 must still create the directory: %v", err)
+	}
+	if tries == 0 {
+		t.Error("the creation never tried the descriptor-bound chmod")
+	}
+	migrateOwnedDirIdentityWantRaw(t, apDst(ws, ""), 0o755)
+	migrateOwnedDirIdentityWantRaw(t, apDst(ws, "sessions"), 0o755)
+	migrateOwnedDirIdentityWantNoTemp(t, apDst(ws, ""))
+}
+
+// C1c: an interruption at the pin of this run's temporary must not leave a directory a rerun then fails
 // to recognise. The mkdir seam models Darwin, so the directory would have been left without the marker
-// had the mode not been given to the temporary name before the open. The rerun recognises the directory
-// this run made and finishes it at the source mode; on the code before CRW-887 the interruption left it
-// unmarked and the rerun never finished it.
+// had the mode not been given through the handle before the name is published.
 func TestMigrateOwnedDirIdentityRerunAfterAFailedOpen(t *testing.T) {
 	darwin := migrateOwnedDirIdentityDarwinMkdir(t)
 	ws, r, p := apPlan(t, migrateOwnedDirIdentityEntries(), nil)
@@ -257,8 +392,6 @@ func TestMigrateOwnedDirIdentityRerunAfterAFailedParentSync(t *testing.T) {
 // C1d: a umask that removes owner read or write must neither stop the creation before its mode is given
 // nor leave a directory without the marker. With 0477 and, separately, 0777 the project root, its child
 // directory and the user root are created, end at the source mode, and a rerun finds each already at it.
-// On the code before CRW-887 mkdirat(0o1700) produced a directory its owner could not read, the
-// following open failed with EACCES and the run stopped before any mode was given.
 func TestMigrateOwnedDirIdentityHostileUmask(t *testing.T) {
 	for _, um := range []int{0o477, 0o777} {
 		t.Run(fmt.Sprintf("umask %#o", um), func(t *testing.T) {
@@ -310,40 +443,8 @@ func TestMigrateOwnedDirIdentityHostileUmaskAfterAnInterruption(t *testing.T) {
 	}
 }
 
-// C1: a kernel whose fchmodat cannot express no-follow (Linux before fchmodat2) is refused rather than
-// falling back to a chmod that would follow a link another actor could put at the temporary name. The
-// refusal stops the run, and the directory this run made is removed so no unmarked directory is left.
-func TestMigrateOwnedDirIdentityChmodWithoutNoFollowIsRefused(t *testing.T) {
-	restore := migrateOwnedDirIdentityFchmodat
-	t.Cleanup(func() { migrateOwnedDirIdentityFchmodat = restore })
-	var flags []int
-	migrateOwnedDirIdentityFchmodat = func(dirfd int, name string, mode uint32, fl int) error {
-		flags = append(flags, fl)
-		if fl != 0 {
-			return unix.EOPNOTSUPP
-		}
-		return restore(dirfd, name, mode, fl)
-	}
-	ws, r, p := apPlan(t, migrateOwnedDirIdentityEntries(), nil)
-	_, err := apply(r, p)
-	wantRefusal(t, err, ReasonUnsupported)
-	if len(flags) == 0 || flags[0] != unix.AT_SYMLINK_NOFOLLOW {
-		t.Errorf("the by-name chmod was asked with flags %v; want no-follow first", flags)
-	}
-	for _, f := range flags {
-		if f == 0 {
-			t.Error("the run fell back to a chmod that follows a link")
-		}
-	}
-	if _, err := os.Lstat(apDst(ws, "")); !errors.Is(err, fs.ErrNotExist) {
-		t.Errorf("a refused creation must leave no directory: %v", err)
-	}
-	migrateOwnedDirIdentityWantNoTemp(t, ws)
-}
-
 // C1: a creation that reached its rename and then failed is this run's directory, so a retry with the
-// same pinned pair finishes its mode instead of reading it as another actor's. On the code before the
-// retry fix the second apply reported the root as a denied creation and left it at the marker mode.
+// same pinned pair finishes its mode instead of reading it as another actor's.
 func TestMigrateOwnedDirIdentityRerunWithTheSamePinnedPairFinishesTheRoot(t *testing.T) {
 	ws, r, p := apPlan(t, migrateOwnedDirIdentityEntries(), nil)
 	syncs := 0
@@ -371,27 +472,33 @@ func TestMigrateOwnedDirIdentityRerunWithTheSamePinnedPairFinishesTheRoot(t *tes
 	}
 }
 
-// C1: a creation whose name this run cannot read back leaves no directory behind. The read that takes
-// the identity of the name this run just made is the one step between the mkdirat and the cleanup
-// defer, so a failure there must remove the directory this run made rather than leave it.
-func TestMigrateOwnedDirIdentityUnreadableTemporaryLeavesNothing(t *testing.T) {
-	restore := migrateOwnedDirIdentityLstat
-	t.Cleanup(func() { migrateOwnedDirIdentityLstat = restore })
-	calls := 0
-	migrateOwnedDirIdentityLstat = func(dirfd int, name string, st *unix.Stat_t) error {
-		if calls++; calls == 1 {
-			return unix.EIO
-		}
-		return restore(dirfd, name, st)
-	}
+// C2(1): the same-Pair retry must not transfer ownership to a replacement root. The first parent sync
+// fails, the root this run created is moved aside, and a different 0700 root is put at the same path.
+// The retry must leave that root 0700 and report it as one whose mode was kept. The head before this
+// cycle remembered only a flag, so the retry took the replacement for this run's and finished it at the
+// source mode, 0755.
+func TestMigrateOwnedDirIdentityReplacedRootIsNotAdoptedOnRetry(t *testing.T) {
 	ws, r, p := apPlan(t, migrateOwnedDirIdentityEntries(), nil)
-	if _, err := apply(r, p); err == nil {
-		t.Fatal("a temporary this run cannot read back must stop the run")
+	syncs := 0
+	clearAt := migrateOwnedDirIdentitySteps(t, func(step string) error {
+		if step == "sync" {
+			if syncs++; syncs == 1 { // the project root's creation, which this case stops
+				return errApplyInterrupted
+			}
+		}
+		return nil
+	})
+	if _, err := apply(r, p); !errors.Is(err, errApplyInterrupted) {
+		t.Fatalf("the interrupted run: %v", err)
 	}
-	// The root's own creation is what failed, so the root does not exist and nothing of this run's is
-	// left in the worktree.
-	if _, err := os.Lstat(apDst(ws, "")); !errors.Is(err, fs.ErrNotExist) {
-		t.Errorf("a failed creation must leave no directory: %v", err)
-	}
-	migrateOwnedDirIdentityWantNoTemp(t, ws)
+	root := apDst(ws, "")
+	// Another actor takes the name: this run's root is moved aside and a 0700 root is put there.
+	must(t, os.Rename(root, root+".ours"))
+	mkdirs(t, root)
+	migrateOwnedDirIdentitySetRaw(t, root, 0o700)
+	clearAt()
+	res, err := apply(r, p)
+	must(t, err)
+	migrateOwnedDirIdentityWantRaw(t, root, 0o700)
+	migrateOwnedDirIdentityWantKeptNote(t, res, ".")
 }

@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -28,8 +29,8 @@ type Options struct {
 type Pair struct {
 	SourcePath, DestPath string
 	Source, Dest         *Dir
-	parent               *Dir // holds Dest, where EnsureDest creates it
-	created              bool // this process's own creation of Dest reached its rename
+	parent               *Dir   // holds Dest, where EnsureDest creates it
+	created              fileID // the identity of Dest when this process's own creation put it there
 }
 
 // Roots are the pinned roots of a scope: Project (W/.codexclaw to W/.crw), User (U to V) and Codex (C, whose files are mapped in place).
@@ -133,24 +134,40 @@ func (r *Roots) Close() error {
 
 // EnsureDest returns the pinned destination root, creating it with perm (under the umask) when absent, and reports whether this
 // call's own creation made it. A creation that ended in EEXIST is not this run's, so made is false then and the caller must not
-// give the directory a mode. A creation of this pair by this process that reached its rename is remembered, so a retry with the
-// same pinned pair reports that root as this run's even when a later step failed and left the handle unpinned. The directory
-// that holds it is synced either way, so a run interrupted between the mkdir and its sync finishes the entry on the next one.
+// give the directory a mode. What this process's own creation of this pair put there is remembered by the directory's identity,
+// not by a flag, so a retry with the same pinned pair reports that root as this run's only while the name still holds that very
+// directory: a root another actor moved aside and replaced keeps its own mode and is reported. The directory that holds it is
+// synced either way, so a run interrupted between the mkdir and its sync finishes the entry on the next one.
 func (p *Pair) EnsureDest(perm uint32) (*Dir, bool, error) {
 	if p.Dest != nil {
 		return p.Dest, false, p.parent.Sync()
 	}
-	d, made, err := p.parent.EnsureChild(filepath.Base(p.DestPath), perm)
-	if made {
-		// The rename put this pair's own directory at the name, so the root is this run's from here on,
-		// whether or not a later step of the creation succeeded.
-		p.created = true
+	name := filepath.Base(p.DestPath)
+	// A retry with this pinned pair must not read the root this process already created as another
+	// actor's, and must not adopt a root another actor put in its place. The identity recorded when
+	// this pair's own creation renamed the root into place decides both: only the name still holding
+	// that very directory is this run's, and it is this run's even when a later step failed.
+	if cur, err := p.parent.Child(name); err == nil {
+		if cur.id == p.created {
+			p.Dest = cur
+			return cur, true, p.parent.Sync()
+		}
+		_ = cur.Close()
+	}
+	d, made, err := p.parent.EnsureChild(name, perm)
+	if made && d != nil {
+		// The rename put this pair's own directory at the name, so this identity is this run's from here
+		// on, whether or not a later step of the creation succeeded.
+		p.created = d.id
 	}
 	if err != nil {
+		if d != nil {
+			_ = d.Close()
+		}
 		return nil, made, err
 	}
 	p.Dest = d
-	return d, made || p.created, nil
+	return d, made, nil
 }
 
 // resolveRoot picks the explicit root, else the environment variable, else the default under the home directory.
@@ -484,7 +501,7 @@ func (d *Dir) Child(name string) (*Dir, error) {
 var migrateOwnedDirMkdirat = unix.Mkdirat
 
 // migrateOwnedDirIdentityAt runs at a named step of the creation EnsureChild performs and fails that
-// step by returning an error: "open" before the temporary name is opened, "rename" before the
+// step by returning an error: "open" before the temporary name is pinned, "rename" before the
 // no-replace rename, and "sync" before the directory that holds the new entry is synced. It is nil in a
 // run, and only a test sets it.
 var migrateOwnedDirIdentityAt func(step string) error
@@ -496,28 +513,70 @@ var migrateOwnedDirIdentityLstat = func(dirfd int, name string, st *unix.Stat_t)
 	return unix.Fstatat(dirfd, name, st, unix.AT_SYMLINK_NOFOLLOW)
 }
 
-// migrateOwnedDirIdentityFchmodat gives a name a mode without following a link at it. It is a variable
-// so a case can model a kernel whose fchmodat cannot express no-follow - Linux before fchmodat2 answers
-// EOPNOTSUPP, which the creation refuses rather than falling back to a chmod that follows a link; no
-// other code replaces it.
-var migrateOwnedDirIdentityFchmodat = func(dirfd int, name string, mode uint32, flags int) error {
-	return unix.Fchmodat(dirfd, name, mode, flags)
+// migrateOwnedDirIdentityHandleFlag opens a directory as a handle with no permission on the directory
+// itself. It is O_PATH on Linux; the constant is written here because the port builds for platforms that
+// do not declare it, and migrateOwnedDirIdentityPin never passes it anywhere but Linux.
+const migrateOwnedDirIdentityHandleFlag = 0x200000
+
+// migrateOwnedDirIdentityEmptyPath names the empty path fchmodat2 takes with AT_EMPTY_PATH, so the mode
+// is changed through the descriptor. Written here for the same reason as the handle flag.
+const migrateOwnedDirIdentityEmptyPath = 0x1000
+
+// errMigrateOwnedDirIdentityNoHandle says this platform has no open that returns a directory handle
+// without permission on the directory, so the creation uses the checked by-name chmod instead.
+var errMigrateOwnedDirIdentityNoHandle = errors.New("this platform cannot pin a directory without read permission")
+
+// migrateOwnedDirIdentityPin opens the temporary name as a directory, following no link at it, without
+// needing any permission on the directory itself, and returns the pinned descriptor. A regular file, a
+// link, or a directory this run did not create is refused by the open or by the check that follows it,
+// before any mode is given, so a mode is never changed on an entry this run did not create. A platform
+// with no such open answers errMigrateOwnedDirIdentityNoHandle, and the creation then checks the name
+// immediately before a by-name no-follow chmod and records the two-syscall window that leaves.
+// It is a variable so a case can model a host whose pin fails; no other code replaces it.
+var migrateOwnedDirIdentityPin = func(dirfd int, name string) (int, error) {
+	if runtime.GOOS != "linux" {
+		return -1, errMigrateOwnedDirIdentityNoHandle
+	}
+	return unix.Openat(dirfd, name, migrateOwnedDirIdentityHandleFlag|unix.O_NOFOLLOW|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+}
+
+// migrateOwnedDirIdentityFchmodat2 changes a directory's mode through its descriptor with fchmodat2 and
+// AT_EMPTY_PATH. It is a variable so a case can model a kernel that does not have fchmodat2 (Linux before
+// 6.5 answers ENOSYS, which the runtime call reports as EOPNOTSUPP); no other code replaces it.
+var migrateOwnedDirIdentityFchmodat2 = func(fd int, perm uint32) error {
+	return unix.Fchmodat(fd, "", perm, migrateOwnedDirIdentityEmptyPath)
+}
+
+// migrateOwnedDirIdentityFchmod gives the pinned directory exactly perm through its descriptor. The
+// descriptor is used rather than the name so a name swapped in the meantime cannot redirect the mode,
+// and a descriptor needs no read permission, so a umask that removed the owner's read or write bit
+// cannot stop this. Linux takes fchmodat2 where the kernel has it (6.5 and later) and the /proc/self/fd
+// path otherwise, which is the same call a libc fchmod makes on a descriptor. It is a variable so a case
+// can model each answer; no other code replaces it.
+var migrateOwnedDirIdentityFchmod = func(fd int, perm uint32) error {
+	err := migrateOwnedDirIdentityFchmodat2(fd, perm)
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, unix.ENOSYS), errors.Is(err, unix.EOPNOTSUPP), errors.Is(err, unix.ENOTSUP), errors.Is(err, unix.EINVAL):
+	}
+	return unix.Chmod("/proc/self/fd/"+strconv.Itoa(fd), perm)
 }
 
 // EnsureChild creates the subdirectory name unless it exists, pins it, and syncs this directory so the
 // new entry survives a crash, and reports whether this call's own creation made the directory.
 //
 // The creation runs under a temporary name of this run in this directory, and the name becomes visible
-// only once it carries perm: mkdirat the temporary, fchmodat that name to exactly perm before anything
-// opens it (so a umask that masks the owner's read or write bit cannot stop the open, and a mkdir that
-// drops the sticky bit from a directory's creation mode, as Darwin's does, cannot leave an unmarked
-// directory), openat it as a directory with no link followed, fstat the pinned descriptor and check it
-// is a directory of this process at exactly perm, syncs that descriptor so the mode survives with the
-// name, and then the package's no-replace rename of the temporary to name. A rename that ended in
-// EEXIST is another actor's directory: made is false, this run's temporary is removed, and name is
-// opened as it is. Any other failure removes this run's temporary too, and the removal is addressed by
-// the identity read when the name was created, so an entry another actor swapped onto that name is
-// left alone rather than deleted. The sync also runs when the entry already existed.
+// only once it carries perm. mkdirat the temporary; open it as a handle with no link followed and no
+// permission needed on it; check with fstat that the pinned handle is the directory this run created, by
+// the identity read at the name right after the mkdirat; give exactly perm through that handle; sync it
+// so the mode survives with the name; then the package's no-replace rename to name, and pin the name
+// again and check it is still the same directory. A name that is not a directory, is another inode or
+// belongs to another user is refused with no mode changed. A rename that ended in EEXIST is another
+// actor's directory: made is false, this run's temporary is removed, and name is opened as it is. Any
+// other failure removes this run's temporary too, addressed by the identity read when it was created, so
+// an entry another actor swapped onto that name is left alone rather than deleted. The sync also runs
+// when the entry already existed.
 func (d *Dir) EnsureChild(name string, perm uint32) (child *Dir, made bool, err error) {
 	if err := checkName(name); err != nil {
 		return nil, false, err
@@ -526,9 +585,9 @@ func (d *Dir) EnsureChild(name string, perm uint32) (child *Dir, made bool, err 
 	if err != nil {
 		return nil, false, err
 	}
-	// cleanup removes this run's temporary unless the rename put it at name. The removal is addressed
-	// by the identity of the directory this call created, so it never deletes an entry another actor
-	// put at the temporary name.
+	// cleanup removes this run's temporary unless the rename put it at name. The removal is addressed by
+	// the identity of the directory this call created, so it never deletes an entry another actor put at
+	// the temporary name.
 	cleanup := true
 	defer func() {
 		if !cleanup {
@@ -542,26 +601,10 @@ func (d *Dir) EnsureChild(name string, perm uint32) (child *Dir, made bool, err 
 			err = errors.Join(err, rm)
 		}
 	}()
-	if err := migrateOwnedDirIdentityChmod(d, tmp, perm); err != nil {
+	if err := d.migrateOwnedDirIdentityClaim(tmp, tmpID, perm); err != nil {
 		return nil, false, err
-	}
-	if err := migrateOwnedDirIdentityStep("open"); err != nil {
-		return nil, false, err
-	}
-	pinned, err := d.migrateOwnedDirIdentityOpen(tmp)
-	if err != nil {
-		return nil, false, err
-	}
-	if err := d.migrateOwnedDirIdentityVerify(pinned, perm, tmpID); err != nil {
-		_ = pinned.Close()
-		return nil, false, err
-	}
-	if err := pinned.Sync(); err != nil {
-		_ = pinned.Close()
-		return nil, false, &fs.PathError{Op: "fsync", Path: pinned.path, Err: err}
 	}
 	if err := migrateOwnedDirIdentityStep("rename"); err != nil {
-		_ = pinned.Close()
 		return nil, false, err
 	}
 	switch err = noReplaceRename(d.fd(), tmp, name); {
@@ -573,25 +616,18 @@ func (d *Dir) EnsureChild(name string, perm uint32) (child *Dir, made bool, err 
 		// not this run's, so this run neither gives it a mode nor reports that it created it.
 		made = false
 	case errors.Is(err, errors.ErrUnsupported) || errors.Is(err, unix.EINVAL):
-		_ = pinned.Close()
 		return nil, false, refuse(ReasonUnsupported, d.join(name), "no-replace rename: "+err.Error())
 	default:
-		_ = pinned.Close()
 		return nil, false, &fs.PathError{Op: "rename", Path: d.join(name), Err: err}
 	}
 	if made {
-		// The name was absent when the rename ran, so the entry now at it is the one this call renamed;
-		// the check proves the handle this run keeps still pins that directory.
-		child = pinned
-		child.path = d.join(name)
-		if err := d.migrateOwnedDirIdentityRenamed(child, name); err != nil {
-			_ = child.Close()
-			// The rename succeeded, so the directory is this run's and made stays true: a caller that
-			// retries with the same pinned pair must not read the root as another actor's.
+		// The rename put this run's own directory at name. Pinning the name again and checking it is
+		// still that directory closes the interval between the rename and this point; a swap there is
+		// refused rather than published into.
+		if child, err = d.migrateOwnedDirIdentityReopen(name, tmpID, perm); err != nil {
 			return nil, made, err
 		}
 	} else {
-		_ = pinned.Close()
 		if child, err = d.Child(name); err != nil {
 			return nil, false, err
 		}
@@ -600,8 +636,9 @@ func (d *Dir) EnsureChild(name string, perm uint32) (child *Dir, made bool, err 
 		err = d.Sync()
 	}
 	if err != nil {
-		_ = child.Close()
-		return nil, made, err
+		// The directory is this run's - the rename put it at the name - so it is handed back with
+		// made true and the caller records its identity before closing it. Only the sync failed.
+		return child, made, err
 	}
 	return child, made, nil
 }
@@ -618,8 +655,12 @@ func migrateOwnedDirIdentityStep(step string) error {
 // the name it took with the identity of the directory created there. The name is a temporary of this
 // package's own rule, so OlderTemps reports a leftover one, and it is unguessable to another actor. A
 // name already taken is not the destination's business - a freak collision with a leftover of another
-// run, or a squatter - so one fresh name is tried before the run is stopped. The identity is read at the
-// name just created, so a later cleanup can prove the entry it removes is still this run's directory.
+// run, or a squatter - so one fresh name is tried before the run is stopped.
+//
+// The identity is read at the name right after the mkdirat, before anything else runs. A read that fails
+// leaves that directory in place and refuses with its path: this run cannot show the entry is the
+// directory it made, so removing the name could delete another actor's entry, and the leftover is
+// reported instead.
 func (d *Dir) migrateOwnedDirIdentityTemp(perm uint32) (string, fileID, error) {
 	var last error
 	for range 2 {
@@ -631,97 +672,121 @@ func (d *Dir) migrateOwnedDirIdentityTemp(perm uint32) (string, fileID, error) {
 			last = &fs.PathError{Op: "mkdir", Path: d.join(tmp), Err: err}
 			continue
 		}
-		// This run's own name exists now, and it is read back before anything else runs. A read that
-		// fails removes the directory this run just made, so a creation it cannot account for leaves no
-		// directory behind for a later run to have to recognise.
 		var st unix.Stat_t
 		if err := migrateOwnedDirIdentityLstat(d.fd(), tmp, &st); err != nil {
-			rm := d.migrateOwnedDirIdentityDrop(tmp, fileID{})
-			return "", fileID{}, errors.Join(&fs.PathError{Op: "lstat", Path: d.join(tmp), Err: err}, rm)
+			return "", fileID{}, refuse(ReasonUnreadable, d.join(tmp), "the identity of the directory this run created could not be read, so it is left in place: "+err.Error())
 		}
 		return tmp, fileID{uint64(st.Dev), uint64(st.Ino)}, nil
 	}
 	return "", fileID{}, last
 }
 
-// migrateOwnedDirIdentityChmod gives the temporary name exactly perm through a chmod that asks for no
-// link to be followed. The flag is required rather than a convenience: a by-name chmod that followed a
-// link would let another actor who put a link at the name have this process change an unrelated file's
-// mode, so a kernel whose fchmodat cannot express no-follow (Linux before fchmodat2) is refused as an
-// unsupported platform, the way a platform without a no-replace rename is refused, instead of falling
-// back to a chmod that follows.
-func migrateOwnedDirIdentityChmod(d *Dir, name string, perm uint32) error {
-	err := migrateOwnedDirIdentityFchmodat(d.fd(), name, perm, unix.AT_SYMLINK_NOFOLLOW)
+// migrateOwnedDirIdentityClaim pins the temporary directory this run created, checks the pinned handle is
+// that directory, and gives it exactly perm through the handle. The handle is opened before any mode is
+// given and needs no permission on the directory, so a regular file, a link or another owner's directory
+// at the name is refused with no mode changed. A platform whose open cannot give such a handle checks the
+// name with fstatat immediately before a by-name no-follow chmod instead, which leaves the two-syscall
+// window the defect record carries as a residual.
+func (d *Dir) migrateOwnedDirIdentityClaim(tmp string, want fileID, perm uint32) error {
+	if err := migrateOwnedDirIdentityStep("open"); err != nil {
+		return err
+	}
+	fd, err := migrateOwnedDirIdentityPin(d.fd(), tmp)
+	switch {
+	case err == nil:
+	case errors.Is(err, errMigrateOwnedDirIdentityNoHandle), errors.Is(err, unix.EINVAL), errors.Is(err, unix.ENOTSUP), errors.Is(err, unix.EOPNOTSUPP):
+		return d.migrateOwnedDirIdentityClaimByName(tmp, want, perm)
+	default:
+		return err
+	}
+	defer unix.Close(fd)
+	var st unix.Stat_t
+	if err := unix.Fstat(fd, &st); err != nil {
+		return &fs.PathError{Op: "stat", Path: d.join(tmp), Err: err}
+	}
+	if err := migrateOwnedDirIdentityOwned(d.join(tmp), &st, want); err != nil {
+		return err
+	}
+	if err := migrateOwnedDirIdentityFchmod(fd, perm); err != nil {
+		return &fs.PathError{Op: "chmod", Path: d.join(tmp), Err: err}
+	}
+	return nil
+}
+
+// migrateOwnedDirIdentityClaimByName is the mode step where no descriptor-bound handle is available: the
+// name is read with no link followed and checked to be the directory this run created, and only then is
+// the by-name no-follow chmod made. A name that is not a directory, is another inode or belongs to
+// another user is refused with no mode changed.
+func (d *Dir) migrateOwnedDirIdentityClaimByName(tmp string, want fileID, perm uint32) error {
+	var st unix.Stat_t
+	if err := migrateOwnedDirIdentityLstat(d.fd(), tmp, &st); err != nil {
+		return &fs.PathError{Op: "lstat", Path: d.join(tmp), Err: err}
+	}
+	if err := migrateOwnedDirIdentityOwned(d.join(tmp), &st, want); err != nil {
+		return err
+	}
+	err := unix.Fchmodat(d.fd(), tmp, perm, unix.AT_SYMLINK_NOFOLLOW)
 	switch {
 	case err == nil:
 		return nil
 	case errors.Is(err, unix.EOPNOTSUPP), errors.Is(err, unix.ENOTSUP):
-		return refuse(ReasonUnsupported, d.join(name), "this kernel cannot chmod a name without following a link")
+		return refuse(ReasonUnsupported, d.join(tmp), "this kernel cannot chmod a name without following a link")
 	}
-	return &fs.PathError{Op: "chmod", Path: d.join(name), Err: err}
+	return &fs.PathError{Op: "chmod", Path: d.join(tmp), Err: err}
 }
 
-// migrateOwnedDirIdentityOpen opens the temporary name as a directory, following no link at it.
-func (d *Dir) migrateOwnedDirIdentityOpen(tmp string) (*Dir, error) {
-	fd, err := unix.Openat(d.fd(), tmp, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
-	if err != nil {
-		return nil, &fs.PathError{Op: "open", Path: d.join(tmp), Err: err}
+// migrateOwnedDirIdentityOwned refuses a descriptor or a name that is not the directory this run created:
+// not a directory, another inode, or another owner.
+func migrateOwnedDirIdentityOwned(path string, st *unix.Stat_t, want fileID) error {
+	switch {
+	case uint32(st.Mode)&unix.S_IFMT != unix.S_IFDIR:
+		return refuse(ReasonNotDirectory, path, "the temporary name is not a directory")
+	case (fileID{uint64(st.Dev), uint64(st.Ino)}) != want:
+		return refuse(applyReasonChanged, path, "the temporary name is not the directory this run created")
+	case st.Uid != uint32(os.Geteuid()):
+		return refuse(applyReasonChanged, path, "the temporary directory belongs to another user")
 	}
-	child, err := newDir(fd, d.join(tmp))
+	return nil
+}
+
+// migrateOwnedDirIdentityReopen pins the directory this run renamed to name and checks it is still that
+// directory at exactly perm, so a swap between the rename and this point is refused rather than published
+// into. The mode was set through the handle before the rename, so the directory is readable here whatever
+// the umask was.
+func (d *Dir) migrateOwnedDirIdentityReopen(name string, want fileID, perm uint32) (*Dir, error) {
+	fd, err := unix.Openat(d.fd(), name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, &fs.PathError{Op: "open", Path: d.join(name), Err: err}
+	}
+	child, err := newDir(fd, d.join(name))
 	if err != nil {
 		return nil, err
+	}
+	var st unix.Stat_t
+	if err := unix.Fstat(child.fd(), &st); err != nil {
+		_ = child.Close()
+		return nil, &fs.PathError{Op: "stat", Path: child.path, Err: err}
+	}
+	if err := migrateOwnedDirIdentityOwned(child.path, &st, want); err != nil {
+		_ = child.Close()
+		return nil, err
+	}
+	if uint32(st.Mode)&0o7777 != perm {
+		_ = child.Close()
+		return nil, refuse(applyReasonChanged, child.path, fmt.Sprintf("the directory is %#o, want %#o", uint32(st.Mode)&0o7777, perm))
 	}
 	return child, nil
 }
 
-// migrateOwnedDirIdentityVerify checks the pinned descriptor against what this run just created: the
-// very inode the mkdirat made at the temporary name, a directory of this process, at exactly perm.
-// Anything else is not this run's directory, so the run refuses rather than publishing it, and the
-// entry is left where it is. The identity read at the name when it was created comes first, so the
-// proof that the descriptor is this run's own directory does not rest on the owner alone.
-func (d *Dir) migrateOwnedDirIdentityVerify(child *Dir, perm uint32, want fileID) error {
-	var st unix.Stat_t
-	if err := unix.Fstat(child.fd(), &st); err != nil {
-		return &fs.PathError{Op: "stat", Path: child.path, Err: err}
-	}
-	switch {
-	case uint32(st.Mode)&unix.S_IFMT != unix.S_IFDIR:
-		return refuse(ReasonNotDirectory, child.path, "the temporary name is not a directory")
-	case (fileID{uint64(st.Dev), uint64(st.Ino)}) != want:
-		return refuse(applyReasonChanged, child.path, "the temporary name is not the directory this run created")
-	case st.Uid != uint32(os.Geteuid()):
-		return refuse(applyReasonChanged, child.path, "the temporary directory belongs to another user")
-	case uint32(st.Mode)&0o7777 != perm:
-		return refuse(applyReasonChanged, child.path, fmt.Sprintf("the temporary directory is %#o, want %#o", uint32(st.Mode)&0o7777, perm))
-	}
-	return nil
-}
-
-// migrateOwnedDirIdentityRenamed checks that the entry at name is still the directory this run renamed
-// there, by comparing the identity of the name with the identity of the pinned descriptor. Without it a
-// swap between the rename and the sync would let the run publish into a directory another actor put at
-// the name, or into one this run no longer has there.
-func (d *Dir) migrateOwnedDirIdentityRenamed(child *Dir, name string) error {
-	var st unix.Stat_t
-	if err := unix.Fstatat(d.fd(), name, &st, unix.AT_SYMLINK_NOFOLLOW); err != nil {
-		return &fs.PathError{Op: "stat", Path: d.join(name), Err: err}
-	}
-	if uint32(st.Mode)&unix.S_IFMT != unix.S_IFDIR || (fileID{uint64(st.Dev), uint64(st.Ino)}) != child.id {
-		return refuse(applyReasonChanged, d.join(name), "the entry at the name is not the directory this run created")
-	}
-	return nil
-}
-
-// migrateOwnedDirIdentityDrop removes this run's temporary directory, and removes nothing it cannot show
-// is this run's. want is the identity read at the name when this run created it; the entry must still be
-// that directory. A zero want means that read did not happen, which is only the case when it failed
-// immediately after this run's own mkdirat made the name: the entry must then be a directory of this
-// process, which is the best proof available for a name created a moment ago, and it is the same
-// directory-of-this-process fact the creation itself is checked against. A name already gone, and a name
-// whose entry is not this run's, are both the outcome wanted - that entry is not this run's to remove,
-// and OlderTemps reports it like any other leftover. A read that fails otherwise is reported, because a
-// temporary left behind is a directory a later run would have to recognise and never does.
+// migrateOwnedDirIdentityDrop removes this run's temporary directory, addressed by the identity read when
+// the name was created. A name already gone is the outcome wanted, and so is a name whose entry is no
+// longer that directory - something else took the name, so it is not this run's to remove, and
+// OlderTemps reports it like any other leftover. Anything else is reported, because a temporary left
+// behind is a directory a later run would have to recognise and never does.
 func (d *Dir) migrateOwnedDirIdentityDrop(tmp string, want fileID) error {
+	if tmp == "" {
+		return nil
+	}
 	var st unix.Stat_t
 	switch err := migrateOwnedDirIdentityLstat(d.fd(), tmp, &st); {
 	case errors.Is(err, unix.ENOENT):
@@ -730,11 +795,7 @@ func (d *Dir) migrateOwnedDirIdentityDrop(tmp string, want fileID) error {
 		return &fs.PathError{Op: "lstat", Path: d.join(tmp), Err: err}
 	case uint32(st.Mode)&unix.S_IFMT != unix.S_IFDIR:
 		return nil
-	case want != (fileID{}):
-		if (fileID{uint64(st.Dev), uint64(st.Ino)}) != want {
-			return nil
-		}
-	case st.Uid != uint32(os.Geteuid()):
+	case (fileID{uint64(st.Dev), uint64(st.Ino)}) != want:
 		return nil
 	}
 	if err := unix.Unlinkat(d.fd(), tmp, unix.AT_REMOVEDIR); err != nil && !errors.Is(err, unix.ENOENT) {
