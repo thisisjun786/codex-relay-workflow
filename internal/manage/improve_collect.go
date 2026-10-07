@@ -79,6 +79,12 @@ var improveOutputBeforeCreate func(improveOutputPlan)
 // Production leaves it nil.
 var improveInputAfterRead func()
 
+// improveTemporaryLink gives an unnamed temporary file its one name through the directory descriptor.
+// It is the link immediately before the rename, and the seam a test uses to make that link fail and
+// prove the run still writes the bundle, as a named temporary file, rather than failing. Production
+// leaves it nil.
+var improveTemporaryLink func(fd, dirfd int, name string) error
+
 // improveStoreFile is the relay store's file name inside a state directory.
 const improveStoreFile = "relay.sqlite3"
 
@@ -332,9 +338,12 @@ func improveRunCollect(ctx context.Context, e *Env, args []string) int {
 			return 1
 		}
 	}
-	// Only a run that writes a file needs the identity set: a run that writes to stdout has no
-	// destination to protect, so it opens nothing and holds no descriptor.
-	bundle, ids, err := improveCollect(ctx, section, out != "")
+	// Every run records and re-examines the identity of the inputs it reads, whether it writes a file
+	// or prints the bundle: the promise is about the inputs the collection read, not only about the
+	// destination. A run that writes to stdout has no destination to compare against, so the output
+	// checks below are skipped for it, but a path that no longer names the file that was read is
+	// refused either way.
+	bundle, ids, err := improveCollect(ctx, section)
 	if err != nil {
 		fmt.Fprintf(e.Stderr, "crw manage improve collect: error: %v\n", err)
 		return 1
@@ -428,7 +437,7 @@ func improvePlanOutput(out string) (improveOutputPlan, error) {
 // sources — so a destination is compared against recorded identities rather than against two
 // spellings of one name.
 func improveRefuseInputOutput(dest string, section improveSection) error {
-	ids := improveIdentityNew(true)
+	ids := improveIdentityNew()
 	defer ids.improveIdentityClose()
 	if err := ids.improveIdentityRecord(section); err != nil {
 		return err
@@ -520,14 +529,38 @@ func improveWriteFile(plan improveOutputPlan, ids *improveIdentitySet, data []by
 	if improveOutputBeforeCreate != nil {
 		improveOutputBeforeCreate(plan)
 	}
-	// The temporary file is created unnamed when the platform has that form. Nothing names it until
-	// the link below, so a refusal anywhere after this point releases it by closing the descriptor,
-	// whatever the output directory's permissions have become.
-	fd, err := improveCreateTemporary(dirfd)
-	unnamed := err == nil
-	name := ""
-	if !unnamed {
-		name = "improve-bundle-" + rand.Text()
+	// The bundle is written to a temporary file in the directory the descriptor names and renamed onto
+	// the destination. The unnamed form is tried first, because a refusal releases an unnamed file by
+	// closing its descriptor and cannot leave it behind. A kernel or filesystem that will not give the
+	// unnamed file its one name is answered by writing the bundle again as a named temporary file,
+	// whose refusal removes that name through the same descriptor; the sequence runs at most twice.
+	for attempt := 0; ; attempt++ {
+		err := improveWriteTemporary(dirfd, held, plan, ids, data, attempt == 0)
+		if errors.Is(err, improveErrNoUnnamedName) && attempt == 0 {
+			continue
+		}
+		return err
+	}
+}
+
+// improveErrNoUnnamedName is the internal answer of a kernel or filesystem that will not give an
+// unnamed temporary file its one name. It never reaches the caller: improveWriteFile answers it by
+// writing the bundle again as a named temporary file.
+var improveErrNoUnnamedName = errors.New("the unnamed temporary file could not be given a name")
+
+// improveWriteTemporary writes the bundle to one temporary file in the directory dirfd names and
+// renames it onto the destination. With unnamed the file is created unnamed and receives its one
+// name immediately before the rename, so a refusal releases it by closing the descriptor alone;
+// otherwise it is created under a name, and every refusal removes that name through the same
+// descriptor, so a directory replaced under the spelling cannot make the removal miss. A failed
+// removal is reported with the refusal it belongs to, naming the file that was left.
+func improveWriteTemporary(dirfd int, held os.FileInfo, plan improveOutputPlan, ids *improveIdentitySet, data []byte, unnamed bool) error {
+	name := "improve-bundle-" + rand.Text()
+	fd := -1
+	var err error
+	if unnamed {
+		fd, err = improveCreateTemporary(dirfd)
+	} else {
 		fd, err = unix.Openat(dirfd, name, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0o600)
 	}
 	if err != nil {
@@ -537,11 +570,8 @@ func improveWriteFile(plan improveOutputPlan, ids *improveIdentitySet, data []by
 	// named tracks whether the temporary file carries a name on disk. An unnamed file has none until
 	// the link immediately before the rename, so a refusal up to that point releases it by closing
 	// the descriptor alone; once it has a name, the refusal removes it through the descriptor the
-	// file was created on, which a directory replaced under the spelling cannot make miss.
+	// file was created on.
 	named := !unnamed
-	// discard releases the temporary file and reports the refusal it belongs to. A removal that fails
-	// is reported with it, naming the file that was left: a refusal the caller is told about is not
-	// one that silently leaves a temporary file in the output directory.
 	discard := func(cause error) error {
 		_ = file.Close()
 		if !named {
@@ -598,8 +628,11 @@ func improveWriteFile(plan improveOutputPlan, ids *improveIdentitySet, data []by
 	// held descriptor.
 	if unnamed {
 		name = "improve-bundle-" + rand.Text()
-		if err := unix.Linkat(fd, "", dirfd, name, improveAtEmptyPath); err != nil {
-			return discard(err)
+		if err := improveLinkTemporary(fd, dirfd, name); err != nil {
+			// The file is still unnamed and is released by closing the descriptor. The caller writes
+			// the bundle again as a named temporary file rather than failing the run.
+			_ = file.Close()
+			return improveErrNoUnnamedName
 		}
 		named = true
 	}
@@ -608,6 +641,17 @@ func improveWriteFile(plan improveOutputPlan, ids *improveIdentitySet, data []by
 	}
 	_ = file.Close()
 	return nil
+}
+
+// improveLinkTemporary gives the unnamed temporary file its one name through the directory
+// descriptor. Linux's linkat with an empty old path names the file a descriptor holds, which is the
+// only way an unnamed file receives a name; a kernel or filesystem that refuses it is answered by
+// writing the bundle again as a named temporary file.
+func improveLinkTemporary(fd, dirfd int, name string) error {
+	if improveTemporaryLink != nil {
+		return improveTemporaryLink(fd, dirfd, name)
+	}
+	return unix.Linkat(fd, "", dirfd, name, improveAtEmptyPath)
 }
 
 // improveCreateTemporary creates the bundle's temporary file unnamed in the directory the
@@ -700,8 +744,8 @@ func improveLoadSection(e *Env) (improveSection, error) {
 // file the collection read refuses the run with improveReasonInputChanged rather than writing a
 // bundle of bytes that are no longer there. A source the configuration names but the reader cannot
 // read is reported as before; the caller closes the set.
-func improveCollect(ctx context.Context, section improveSection, guarded bool) (improveBundle, *improveIdentitySet, error) {
-	ids := improveIdentityNew(guarded)
+func improveCollect(ctx context.Context, section improveSection) (improveBundle, *improveIdentitySet, error) {
+	ids := improveIdentityNew()
 	if err := ids.improveIdentityRecord(section); err != nil {
 		ids.improveIdentityClose()
 		return improveBundle{}, nil, err

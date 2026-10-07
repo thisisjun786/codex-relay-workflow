@@ -469,7 +469,7 @@ func TestImproveReview799ConfiguredDirectoryIsPinned(t *testing.T) {
 		t.Fatal(err)
 	}
 	section := improveSection{Sources: map[string]improveSourceConfig{improveKindDraft: {Path: drafts}}}
-	ids := improveIdentityNew(true)
+	ids := improveIdentityNew()
 	defer ids.improveIdentityClose()
 	if err := ids.improveIdentityRecord(section); err != nil {
 		t.Fatalf("the recording: %v", err)
@@ -502,7 +502,7 @@ func TestImproveReview799CollectHoldsTheDraftTheReaderOpened(t *testing.T) {
 	draft := filepath.Join(drafts, "one.json")
 	improveTestWrite(t, draft, "{\"schema\":\"crw-issue-draft/1\",\"fingerprint\":\"one\",\"project\":\"p\",\"title\":\"t\"}\n")
 	section := improveSection{Sources: map[string]improveSourceConfig{improveKindDraft: {Path: drafts}}}
-	_, ids, err := improveCollect(context.Background(), section, true)
+	_, ids, err := improveCollect(context.Background(), section)
 	if err != nil {
 		t.Fatalf("collect: %v", err)
 	}
@@ -565,7 +565,7 @@ func TestImproveReview799AbsentInputThatAppearsIsRefused(t *testing.T) {
 	improveTestWrite(t, out, "{\"schema\":\"the database the bundle must not replace\"}\n")
 	absent := filepath.Join(s.root, "dag-absent")
 	section := improveSection{Sources: map[string]improveSourceConfig{improveKindAudit: {Path: absent}}}
-	ids := improveIdentityNew(true)
+	ids := improveIdentityNew()
 	defer ids.improveIdentityClose()
 	if err := ids.improveIdentityRecord(section); err != nil {
 		t.Fatalf("the recording: %v", err)
@@ -708,7 +708,7 @@ func TestImproveReview799ParentReplacedBeforeTheWriteIsRefused(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the plan: %v", err)
 	}
-	ids := improveIdentityNew(true)
+	ids := improveIdentityNew()
 	defer ids.improveIdentityClose()
 	if err := ids.improveIdentityRecord(section); err != nil {
 		t.Fatalf("the recording: %v", err)
@@ -784,7 +784,7 @@ func TestImproveReview799FifoInputDoesNotHangTheRecording(t *testing.T) {
 	section := improveSection{Sources: map[string]improveSourceConfig{improveKindAudit: {Path: fifo}}}
 	done := make(chan error, 1)
 	go func() {
-		ids := improveIdentityNew(true)
+		ids := improveIdentityNew()
 		defer ids.improveIdentityClose()
 		done <- ids.improveIdentityRecord(section)
 	}()
@@ -864,7 +864,7 @@ func TestImproveReview799OutputUnderARepointedInputDirectoryIsRefused(t *testing
 	}
 	// A configured directory input: the guard records the directory the spelling reaches.
 	section := improveSection{Sources: map[string]improveSourceConfig{improveKindDraft: {Path: link}}}
-	ids := improveIdentityNew(true)
+	ids := improveIdentityNew()
 	defer ids.improveIdentityClose()
 	if err := ids.improveIdentityRecord(section); err != nil {
 		t.Fatalf("the recording: %v", err)
@@ -907,7 +907,7 @@ func TestImproveReview799LinkedSearchOnlyDirectoryIsAccepted(t *testing.T) {
 		t.Fatal(err)
 	}
 	section := improveSection{Sources: map[string]improveSourceConfig{improveKindDraft: {Path: link}}}
-	ids := improveIdentityNew(true)
+	ids := improveIdentityNew()
 	defer ids.improveIdentityClose()
 	if err := ids.improveIdentityRecord(section); err != nil {
 		t.Fatalf("recording a directory reached through a link to a search-only directory: %v", err)
@@ -1105,5 +1105,87 @@ func TestImproveReview799ManyDraftsDoNotExhaustDescriptors(t *testing.T) {
 	}
 	if rows := improveTestRecordsOf(improveTestReadBundle(t, out), improveKindDraft); len(rows) != count {
 		t.Errorf("the bundle carries %d draft records, want %d", len(rows), count)
+	}
+}
+
+// TestImproveReview799UnnameableTemporaryFileStillWrites covers the fallback for a kernel or
+// filesystem that will not give the unnamed temporary file its one name: the run writes the bundle
+// again as a named temporary file instead of failing, and the bundle is complete. The named file is
+// removed through the descriptor it was created on, so a plain run leaves no temporary file.
+// TestImproveReview799StdoutRunStillChecksInputIdentity covers the promise for a run that prints the
+// bundle instead of writing it: C2 is about the inputs the collection read, so a path that no longer
+// names the file that was read is refused whether or not there is a destination to compare against.
+// A run without --out used to record nothing and skip the check, so it printed a bundle over inputs
+// it had just read from somewhere else.
+func TestImproveReview799StdoutRunStillChecksInputIdentity(t *testing.T) {
+	s := improveTestSetup(t)
+	improveReview799Store(t, s)
+	ledger := filepath.Join(s.root, "audit.jsonl")
+	improveTestWrite(t, ledger, "{\"schema\":\"crw-audit/1\",\"issue\":\"CRW-1\",\"grade\":\"A\"}\n")
+	improveTestConfig(t, s, map[string]any{"manage": map[string]any{"improve": map[string]any{
+		"sources": map[string]any{
+			"relay": map[string]any{"path": s.stateDir},
+			"audit": map[string]any{"path": ledger},
+		},
+	}}})
+	replaced := false
+	previous := improveInputAfterRead
+	improveInputAfterRead = func() {
+		if replaced {
+			return
+		}
+		replaced = true
+		if err := os.Remove(ledger); err != nil {
+			t.Errorf("removing the ledger: %v", err)
+			return
+		}
+		if err := os.WriteFile(ledger, []byte("{\"schema\":\"crw-audit/1\",\"issue\":\"CRW-2\",\"grade\":\"B\"}\n"), 0o600); err != nil {
+			t.Errorf("replacing the ledger: %v", err)
+		}
+	}
+	t.Cleanup(func() { improveInputAfterRead = previous })
+	code, stdout, stderr := improveTestRun(t, s)
+	if !replaced {
+		t.Fatalf("the post-read check ran without the seam: exit %d, stderr %q", code, stderr)
+	}
+	if code != 1 || !strings.Contains(stderr, improveReasonInputChanged) {
+		t.Fatalf("a stdout run whose input changed during the read: exit %d, stderr %q, want the named refusal %s", code, stderr, improveReasonInputChanged)
+	}
+	if stdout != "" {
+		t.Errorf("the refused run printed a bundle: %q", stdout)
+	}
+}
+
+// TestImproveReview799UnnameableTemporaryFileStillWrites covers the fallback for a kernel or
+func TestImproveReview799UnnameableTemporaryFileStillWrites(t *testing.T) {
+	s := improveTestSetup(t)
+	improveReview799Store(t, s)
+	improveInputRelayConfig(t, s)
+	out := filepath.Join(improveReview799OutDir(t, s), "bundle.json")
+	previous := improveTemporaryLink
+	forced := false
+	improveTemporaryLink = func(fd, dirfd int, name string) error {
+		forced = true
+		return fmt.Errorf("the platform refuses to name an unnamed file")
+	}
+	t.Cleanup(func() { improveTemporaryLink = previous })
+	code, _, stderr := improveTestRun(t, s, "--out", out)
+	if !forced {
+		t.Fatalf("the run never tried to name the temporary file: exit %d, stderr %q", code, stderr)
+	}
+	if code != 0 {
+		t.Fatalf("a run whose unnamed temporary file cannot be named: exit %d, stderr %q, want the bundle", code, stderr)
+	}
+	if bundle := improveTestReadBundle(t, out); bundle.Schema != improveBundleSchema {
+		t.Errorf("the fallback did not write the bundle: %+v", bundle)
+	}
+	entries, err := os.ReadDir(filepath.Dir(out))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), "improve-bundle-") {
+			t.Errorf("the run left the temporary file %s", entry.Name())
+		}
 	}
 }

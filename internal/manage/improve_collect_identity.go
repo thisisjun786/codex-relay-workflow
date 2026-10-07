@@ -56,16 +56,18 @@ type improveIdentityEntry struct {
 // input of the set by the time the bundle is renamed. The comparison never rebuilds the recorded
 // identities from names.
 //
-// guarded is false for a collection that writes to stdout: it has no destination to protect, so it
-// opens nothing and holds no descriptor.
+// Every collection records and re-examines its inputs, whether it writes a file or prints the
+// bundle, because the promise covers the inputs that were read and not only the destination. The
+// output comparison itself is made only by a run that has a destination.
 type improveIdentitySet struct {
 	entries []improveIdentityEntry
-	guarded bool
+	// heldLimit is the descriptor bound, computed once from the process limit.
+	heldLimit int
 }
 
-// improveIdentityNew is an empty set that records its inputs when guard is true.
-func improveIdentityNew(guard bool) *improveIdentitySet {
-	return &improveIdentitySet{guarded: guard}
+// improveIdentityNew is an empty set.
+func improveIdentityNew() *improveIdentitySet {
+	return &improveIdentitySet{}
 }
 
 // improveIdentityClose releases every descriptor the set holds open.
@@ -117,7 +119,7 @@ func (ids *improveIdentitySet) improveIdentityPin(entry *improveIdentityEntry) e
 		return fmt.Errorf("%s: the input %s could not be examined to record its identity: %w", improveReasonInputChanged, entry.path, statErr)
 	}
 	entry.info = info
-	if ids.improveIdentityHeld() < improveIdentityHeldLimit {
+	if ids.improveIdentityHeld() < ids.improveIdentityHeldLimit() {
 		entry.file = file
 		return nil
 	}
@@ -125,11 +127,35 @@ func (ids *improveIdentitySet) improveIdentityPin(entry *improveIdentityEntry) e
 	return nil
 }
 
-// improveIdentityHeldLimit bounds how many inputs hold a descriptor until the bundle is renamed.
-// The bound is far above the handful of store files, sidecars and configured directories one
-// collection opens, and far below the default descriptor limit, so a large drafts directory is
-// still read one document after another as it was before.
-const improveIdentityHeldLimit = 48
+// improveIdentityHeldReserve is the room left for the descriptors the rest of the collection and the
+// runtime need when the bound is taken from the process's own limit.
+const improveIdentityHeldReserve = 32
+
+// improveIdentityHeldFloor is the smallest bound, so the store files, their sidecars and the
+// configured directories are always pinned even when the process limit leaves almost no room.
+const improveIdentityHeldFloor = 16
+
+// improveIdentityHeldLimit is how many inputs may hold a descriptor at once. Every input the
+// collection reads is pinned by a descriptor, as the decided answer requires; the bound exists only
+// so that a drafts directory larger than the process's own descriptor limit degrades instead of
+// failing, because a collection that used to read each document in turn must not begin to fail with
+// "too many open files" as the file count grows. The bound is taken from the process limit less a
+// reserve, so it does not bind at any ordinary limit; only a genuinely low limit reaches it, and
+// there the inputs past it keep the identity their fstat recorded, which every comparison still
+// uses.
+func (ids *improveIdentitySet) improveIdentityHeldLimit() int {
+	if ids.heldLimit != 0 {
+		return ids.heldLimit
+	}
+	ids.heldLimit = improveIdentityHeldFloor
+	var limit unix.Rlimit
+	if err := unix.Getrlimit(unix.RLIMIT_NOFILE, &limit); err == nil {
+		if limit.Cur > uint64(improveIdentityHeldReserve) {
+			ids.heldLimit = int(limit.Cur) - improveIdentityHeldReserve
+		}
+	}
+	return ids.heldLimit
+}
 
 // improveIdentityHeld counts the descriptors the set holds open.
 func (ids *improveIdentitySet) improveIdentityHeld() int {
@@ -188,7 +214,7 @@ func improveOpenInput(path string) (*os.File, error) {
 // SQLite creates the write-ahead log and the shared-memory index as it works, so one that appeared
 // beside the store is pinned here rather than left as a bare name.
 func (ids *improveIdentitySet) improveIdentityAdd(path, resolved string, sidecar bool) error {
-	if path == "" || !ids.guarded {
+	if path == "" {
 		return nil
 	}
 	if resolved == "" {
@@ -270,9 +296,6 @@ func (ids *improveIdentitySet) improveIdentityRecordDrafts(configured string) er
 // intervention and issue-list files. It is called before the readers run and again after each of
 // them, so an entry that appeared in the meantime is still an input.
 func (ids *improveIdentitySet) improveIdentityRecord(section improveSection) error {
-	if !ids.guarded {
-		return nil
-	}
 	for _, kind := range []string{improveKindRelay, improveKindDag} {
 		if configured := section.Sources[kind].Path; configured != "" {
 			if err := ids.improveIdentityRecordStore(configured); err != nil {
@@ -307,9 +330,6 @@ func (ids *improveIdentitySet) improveIdentityRecord(section improveSection) err
 // that appeared or changed while a reader ran is still caught. It is the step the collection runs
 // after each reader returns.
 func (ids *improveIdentitySet) improveIdentityRefresh(section improveSection) error {
-	if !ids.guarded {
-		return nil
-	}
 	if err := ids.improveIdentityRecord(section); err != nil {
 		return err
 	}
