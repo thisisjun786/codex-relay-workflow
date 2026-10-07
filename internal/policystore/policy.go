@@ -1,9 +1,13 @@
-// Package policystore reads the host's execution policy and checks a proposed change against it.
+// Package policystore reads the host's execution policy, checks a proposed change against it, and
+// applies one to the file the plugin wiring record names.
 //
-// The policy is never written here: the one file the plugin wiring record names is the only source
-// of a policy value, and every function in this package is read-only. A change is applied to an
-// in-memory copy of the document and judged with the bridge's own parser, so a caller can learn
-// whether the host would accept it without touching a byte of the file.
+// Reading and checking never write: the one file the wiring record names is the only source of a
+// policy value, a change is applied to an in-memory copy of the document and judged with the
+// bridge's own parser, and a caller can learn whether the host would accept it without touching a
+// byte of the file. The write path is the one exception, and it is deliberately narrow (Write, in
+// policy_write.go): it takes the lock beside the policy file, judges the candidate with the same
+// check, backs the original bytes up, replaces the file atomically, and re-registers it through
+// the installer so the wiring record and the file never disagree for longer than that operation.
 package policystore
 
 import (

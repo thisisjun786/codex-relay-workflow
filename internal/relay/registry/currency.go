@@ -60,10 +60,12 @@ func ambiguousHead(evidence string, nodes []string, detail string) Head {
 	return Head{Evidence: evidence, Competitors: sorted, Detail: detail}
 }
 
-func colString(row store.Row, name string) string {
-	s, _ := row.Get(name).(string)
-	return s
-}
+// colString reads a column as store.Row.Text does: a TEXT value's string, a BLOB value's bytes as
+// text, and "" for NULL, a number or an absent column. CRW-928: the correction anchor is read this
+// way, so a verdict turn id the store holds as a BLOB reads as its bytes, exactly as the delivery
+// reader read it before CRW-827 moved the judgment into this package. One rule, so no read in this
+// package can drop a value another read keeps.
+func colString(row store.Row, name string) string { return row.Text(name) }
 
 // textOf reads a column as Row.Text does: text, or "" for NULL and for any other type.
 func textOf(v any) string {
@@ -151,14 +153,22 @@ func ReadRevisions(ctx context.Context, q store.Querier, rid string, generation 
 }
 
 // RequestedPredecessors is currency._requested_predecessors: only the result whose ruling opened
-// this correction is an external root. A row whose request identity cannot be read is skipped, as
-// delivery read it: the naming then resolves to nothing, so the generation reads
-// unknown_predecessor (ambiguous) rather than a silent single head.
-func RequestedPredecessors(ctx context.Context, q store.Querier, rid string, generation int64) (map[string][]string, error) {
+// this correction is an external root. Its columns are read as Row.Text does (CRW-928), so an
+// anchor the store holds with a BLOB verdict turn id reads as it did before CRW-827 moved the
+// judgment here.
+//
+// The second result names the eligible rulings whose request identity cannot be computed. A row
+// whose request identity cannot be read used to be skipped, and the comment here claimed the naming
+// then resolves to nothing and the generation reads unknown_predecessor; that is not what happened,
+// because a revision that declares no predecessor reads sole_revision whether or not an anchor was
+// dropped. So the row is not dropped: the caller reads a generation holding one as
+// unknown_predecessor and names the ruling it could not read. It is empty for a store that holds
+// only rulings it can read, which is every store the product writes.
+func RequestedPredecessors(ctx context.Context, q store.Querier, rid string, generation int64) (map[string][]string, []string, error) {
 	// the generation a ruling's correction follows: the one before it, or the nearest one that was not withdrawn (CRW-446)
 	before, err := store.LiveGenerationBefore(ctx, q, rid, generation)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	rows, err := allRows(ctx, q, "SELECT p.event_id, p.revision_hash, v.verdict_turn_id, r.event_id AS request_id,"+
 		" g.dispatch_request_id"+
@@ -174,20 +184,28 @@ func RequestedPredecessors(ctx context.Context, q store.Querier, rid string, gen
 		" AND r.outcome = 'revision_request' AND r.producer = 'relay'"+
 		" AND r.stage = 'final' AND r.suppressed_reason IS NULL", rid, generation, before, reviewable)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	anchors := map[string][]string{}
+	var unreadable []string
 	for _, row := range rows {
-		request, err := store.RevisionRequestEventID(rid, colString(row, "event_id"), colString(row, "verdict_turn_id"))
+		event := colString(row, "event_id")
+		request, err := store.RevisionRequestEventID(rid, event, colString(row, "verdict_turn_id"))
 		if err != nil {
+			unreadable = append(unreadable, event)
 			continue
 		}
 		if colString(row, "request_id") == request && colString(row, "dispatch_request_id") == "revision-"+request {
 			hash := colString(row, "revision_hash")
-			anchors[hash] = append(anchors[hash], colString(row, "event_id"))
+			anchors[hash] = append(anchors[hash], event)
 		}
 	}
-	return anchors, nil
+	// The statement has no ORDER BY and the joins can list one ruling's row more than once, so the
+	// list is sorted and de-duplicated: the detail a caller prints is the same on every run and
+	// names each ruling once.
+	slices.Sort(unreadable)
+	unreadable = slices.Compact(unreadable)
+	return anchors, unreadable, nil
 }
 
 // ReadThroughSuppressed returns the revisions with each declared predecessor that names a suppressed
@@ -351,6 +369,24 @@ func JudgeHead(revisions []Revision, anchors map[string][]string) Head {
 	return Head{EventID: tip, RevisionHash: hashOf[tip], Evidence: evidence, Competitors: []string{}}
 }
 
+// unreadableAnchorHead is what a generation reads when an eligible ruling's request identity could
+// not be computed: unknown_predecessor (the existing name, no new evidence word), the generation's
+// revisions as competitors, and a detail naming each ruling that could not be read. A reader that
+// has seen the store hold an eligible ruling it cannot identify does not answer sole_revision
+// (CRW-928), whether or not the revision declares a predecessor.
+func unreadableAnchorHead(revisions []Revision, unreadable []string) Head {
+	nodes := make([]string, 0, len(revisions))
+	seen := make(map[string]bool, len(revisions))
+	for _, r := range revisions {
+		if !seen[r.ID] {
+			seen[r.ID] = true
+			nodes = append(nodes, r.ID)
+		}
+	}
+	return ambiguousHead(EvidenceUnknownPredecessor, nodes,
+		"an eligible needs_changes ruling whose correction anchor cannot be identified: "+strings.Join(unreadable, ", "))
+}
+
 // HeadRevisionFrom is currency.head_revision, read through the caller's snapshot, including a
 // read-only guard connection.
 func HeadRevisionFrom(ctx context.Context, q store.Querier, rid string, generation int64) (Head, error) {
@@ -358,12 +394,20 @@ func HeadRevisionFrom(ctx context.Context, q store.Querier, rid string, generati
 	if err != nil {
 		return Head{}, err
 	}
-	if len(revisions) == 0 {
-		return Head{Evidence: EvidenceNone, Competitors: []string{}, Detail: "no reviewable revision in this generation"}, nil
-	}
-	anchors, err := RequestedPredecessors(ctx, q, rid, generation)
+	anchors, unreadable, err := RequestedPredecessors(ctx, q, rid, generation)
 	if err != nil {
 		return Head{}, err
+	}
+	if len(unreadable) > 0 {
+		// The store holds an eligible ruling this read cannot identify, so no revision's naming can
+		// be resolved against it and the generation reads unknown_predecessor rather than a
+		// confident single head (CRW-928). A generation holding no reviewable revision takes the
+		// same answer: no_revision is a confident single-head reading this reader cannot give, and
+		// the competitors are then empty because there is no revision to name.
+		return unreadableAnchorHead(revisions, unreadable), nil
+	}
+	if len(revisions) == 0 {
+		return Head{Evidence: EvidenceNone, Competitors: []string{}, Detail: "no reviewable revision in this generation"}, nil
 	}
 	return JudgeHead(ReadThroughSuppressed(revisions, suppressed, anchors), anchors), nil
 }
