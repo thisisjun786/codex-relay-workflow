@@ -472,3 +472,44 @@ func TestIdleWake_an_unanswered_hold_on_a_replaced_thread_is_released(t *testing
 		t.Fatal("the old unconfirmed hold is still owned after the thread changed")
 	}
 }
+
+// CRW-904 (correction, d1): a hold the host keeps refusing on a delivery whose own deadline has
+// already passed is not retried on every tick. There is no deadline left to wait for then - the
+// delivery is overdue and the scheduler has not reached it, or its relationship is at its hourly cap
+// - so the resume waits the same doubling curve a busy answer gets: the first refusal waits BusyBase
+// and each further one doubles it, rather than restarting at the first step on every tick, which is
+// what management decision 4 keeps. Ticks every 20 s (the daemon's own interval) are used, so a
+// reset-to-BusyBase curve would attempt on every one of them.
+func TestIdleWake_a_refused_hold_on_an_overdue_delivery_waits_the_curve(t *testing.T) {
+	t.Parallel()
+	host := &idleHost{holdErr: errors.New("the host refused the resume")}
+	d, s := idleDaemon(t, host)
+	ctx := context.Background()
+	// The delivery's own deadline has passed and nothing has advanced it, because the relationship is
+	// at its hourly cap: the scheduler never attempts the row, so no busy answer moves the deadline.
+	// The idle edge still reads the waiting head, so the hold is tried on the overdue path.
+	d.Delivery.Policy.MaxSendsPerRelationshipPerHour = 0
+	exec(t, s, "UPDATE deliveries SET next_eligible_at = ? WHERE event_id = ?", idleNow-100, idleEvent)
+	tries := 0
+	for _, at := range []float64{idleNow, idleNow + 20, idleNow + 40, idleNow + 60, idleNow + 80, idleNow + 100} {
+		d.Clock.(*delivery.FakeClock).T = at
+		if _, err := d.Tick(ctx); err != nil {
+			t.Fatal(err)
+		}
+		tries = host.holdTries
+	}
+	// BusyBase is 15 s, so the curve is 15, 30, 60, 120, 240: five refusals inside 100 s, not one
+	// every tick (which would be six).
+	if tries != 3 {
+		t.Fatalf("the refused resume was attempted %d times over 100 s, want 3 on the doubling curve", tries)
+	}
+	// The curve is the safety net, not a stop: the third refusal waits 60 s, so a tick after that
+	// does try again rather than the recipient being abandoned.
+	d.Clock.(*delivery.FakeClock).T = idleNow + 121
+	if _, err := d.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if host.holdTries != 4 {
+		t.Fatalf("the curve never retried after its third wait: %d attempts", host.holdTries)
+	}
+}

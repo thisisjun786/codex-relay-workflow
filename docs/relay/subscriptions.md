@@ -246,7 +246,12 @@ can use the next bounded successor. No fourth operation is created. Initial guar
 recorded as `outcome_unknown` are not recovered by this path.
 
 The inspected bridge and relay resume paths transmit the profile; subscription retirement
-only unsubscribes, and their read paths do not issue an unprofiled resume. The copied
+only unsubscribes, and their read paths do not issue an unprofiled resume. The idle edge's
+own hold is the one exception: while a head delivery waits out its recipient's busy backoff
+the relay opens a subscription with an override-free `thread/resume` carrying no model,
+effort or settings override and starting no turn (CRW-904; the subscription is a reference
+the backlog takes and releases, and the recipient stays busy, so nothing here is the
+business resume these paths guard). The copied
 incident receipts show profiled creation followed by an idle, unprofiled MCP status at
 business resume, with overrides transmitted and a settings refusal. They do not attribute
 the intervening load to a client. An external client's identity and the live same-request

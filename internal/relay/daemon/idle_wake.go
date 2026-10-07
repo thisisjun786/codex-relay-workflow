@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"math"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 )
@@ -66,6 +67,12 @@ type idleWake struct {
 	// refused is not retried on every tick, because the backoff is that recipient's trigger until its
 	// own deadline (CRW-904 d3).
 	refused map[string]float64
+	// holdBackoff is the interval a repeatedly refused hold waits, by recipient task id: the same
+	// doubling curve the delivery path uses for a busy answer, so a host that keeps refusing resumes is
+	// not retried every tick once the delivery's own deadline has passed and there is no deadline left
+	// to wait for. It is reset when a hold is taken or the recipient leaves the backlog (CRW-904
+	// correction, d1).
+	holdBackoff map[string]float64
 	// unappliedErr and unappliedSite are the first store failure this pass could not apply, kept for
 	// the daemon's own halt: a store the relay has seen damaged takes no more writes (I-564), so a
 	// failure of that class must end the tick rather than become a note (CRW-904 d1). The site is the
@@ -89,7 +96,7 @@ type idleWake struct {
 }
 
 func newIdleWake(d *Daemon) *idleWake {
-	w := &idleWake{daemon: d, holds: map[string]string{}, attempted: map[string]string{}, refused: map[string]float64{}}
+	w := &idleWake{daemon: d, holds: map[string]string{}, attempted: map[string]string{}, refused: map[string]float64{}, holdBackoff: map[string]float64{}}
 	if halter, ok := any(d).(interface {
 		halted(context.Context, *Report, string, error) bool
 	}); ok {
@@ -231,6 +238,7 @@ func (w *idleWake) hold(ctx context.Context, r *Report, host Host, now float64) 
 	for recipient := range w.refused {
 		if _, waiting := wanted[recipient]; !waiting {
 			delete(w.refused, recipient)
+			delete(w.holdBackoff, recipient)
 		}
 	}
 	for recipient, thread := range wanted {
@@ -267,23 +275,36 @@ func (w *idleWake) hold(ctx context.Context, r *Report, host Host, now float64) 
 			// The resume may have reached the host even though its answer did not: the recipient stays
 			// in the release sweep, so the backlog emptying unsubscribes it (CRW-904 correction, d1).
 			w.attempted[recipient] = thread
-			w.refused[recipient] = w.holdRetryAt(now, deadlines[recipient])
+			w.refused[recipient] = w.holdRetryAt(recipient, now, deadlines[recipient])
 			continue
 		}
 		delete(w.refused, recipient)
+		delete(w.holdBackoff, recipient)
 		delete(w.attempted, recipient)
 		w.holds[recipient] = thread
 		w.opened++
 	}
 }
 
-// holdRetryAt is when a hold this relay could not take may be tried again. The delivery's own busy
-// deadline is the relay's next reason to look at that recipient, so a refusal waits for it; when that
-// deadline has already passed, the wait is the busy curve's first step, the same pacing a deferred
-// delivery gets. Either way the backoff alone is the trigger until then (decision 4).
-func (w *idleWake) holdRetryAt(now, deadline float64) float64 {
+// holdRetryAt is when a hold this relay could not take may be tried again, by recipient. The delivery's
+// own busy deadline is the relay's next reason to look at that recipient, so a refusal waits for it.
+// When that deadline has already passed - the delivery is overdue and the scheduler has not reached it,
+// or its relationship is at its hourly cap and cannot advance it - there is no deadline left to wait
+// for, so the wait is the same doubling curve the delivery path gives a busy answer: the first refusal
+// waits BusyBase and each further refusal doubles it up to BusyMax, rather than restarting at the first
+// step on every tick (CRW-904 correction, d1). The curve is cleared when a hold is taken and when the
+// recipient leaves the backlog.
+func (w *idleWake) holdRetryAt(recipient string, now, deadline float64) float64 {
 	if deadline > now {
+		delete(w.holdBackoff, recipient)
 		return deadline
 	}
-	return now + w.daemon.Delivery.Policy.BusyBase
+	step := w.holdBackoff[recipient]
+	if step == 0 {
+		step = w.daemon.Delivery.Policy.BusyBase
+	} else {
+		step = math.Min(w.daemon.Delivery.Policy.BusyMax, step*2)
+	}
+	w.holdBackoff[recipient] = step
+	return now + step
 }
