@@ -307,7 +307,7 @@ func (s *dagReviewStore) dagReviewChildren(ctx context.Context, plan dagReviewPl
 func (s *dagReviewStore) dagReviewReadLanes(ctx context.Context, plans []string) ([]dagReviewLaneTurn, error) {
 	query := "SELECT t.turn_id, t.target_key, t.holder_task_id, t.state, COALESCE(t.pr_number, 0), COALESCE(t.relationship_id, '')," +
 		" t.repository, t.base_ref, COALESCE(t.closed_at, ''), t.updated_at, COALESCE(t.held_at, '')," +
-		" (SELECT COUNT(*) FROM merge_turns w WHERE w.target_key = t.target_key AND w.state = 'waiting')" +
+		" (SELECT COUNT(*) FROM merge_turns w WHERE w.target_key = t.target_key AND w.state IN ('waiting','member_waiting'))" +
 		" FROM merge_turns t"
 	var args []any
 	if len(plans) > 0 {

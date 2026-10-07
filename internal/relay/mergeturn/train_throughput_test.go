@@ -9,7 +9,37 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pluginversion"
 )
+
+// trainRecordDerivedVersion resolves the manifest conflict by recording the version the plugin
+// payload derives, the way the lane re-records it when two members both touched the manifest.
+func trainRecordDerivedVersion(t *testing.T, repo string) {
+	t.Helper()
+	path := filepath.Join(repo, filepath.FromSlash(pluginversion.ManifestRepoPath))
+	// a clean manifest first: the merge left conflict markers, which the payload reader refuses
+	clean := "{\n  \"name\": \"crw\",\n  \"version\": \"0.4.0\",\n  \"description\": \"base\"\n}\n"
+	if err := os.WriteFile(path, []byte(clean), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	payload, errs := pluginversion.DirectoryPayload(filepath.Join(repo, filepath.FromSlash(pluginversion.PluginRelative)))
+	if len(errs) > 0 {
+		t.Fatalf("the plugin payload: %v", errs)
+	}
+	recorded, err := pluginversion.ManifestVersion(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	next, err := pluginversion.PayloadVersion(payload, recorded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := "{\n  \"name\": \"crw\",\n  \"version\": \"" + next + "\",\n  \"description\": \"base\"\n}\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
 
 // trainGitIn is the git runner the chain tests use: one temporary repository, no ambient config.
 func trainGitIn(t *testing.T, repo string) func(args ...string) string {
@@ -26,9 +56,95 @@ func trainGitIn(t *testing.T, repo string) func(args ...string) string {
 	}
 }
 
+// trainGitTry runs git in the same environment as trainGitIn and returns its error, for a command
+// the fixture expects to fail (a merge that stops on a conflict).
+func trainGitTry(repo string, args ...string) error {
+	cmd := exec.Command("git", append([]string{"-C", repo}, args...)...)
+	cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@e", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@e", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null")
+	return cmd.Run()
+}
+
 // CRW-898: bundle throughput inside the existing proofs. These tests use a temporary store, a forge
 // stand-in and a temporary git repository, never the live relay service, the production store or a
 // real Codex task.
+
+// turnIDOf is the live turn of one pull request on the fixture's target, read from the store.
+func (w *tr) turnIDOf(pr int64) string {
+	w.t.Helper()
+	rows, err := w.s.All(w.ctx, "SELECT turn_id FROM merge_turns WHERE pr_number = ?", pr)
+	if err != nil || len(rows) != 1 {
+		w.t.Fatalf("the turn of pull request %d: %v %d", pr, err, len(rows))
+	}
+	return rows[0].Get("turn_id").(string)
+}
+
+// TestBundleCarriesAMemberRefreshedWithoutRestatingItsTurn is criterion c1 item 4: a waiting member
+// whose acceptance stands on a recorded base-refresh head keeps its eligibility even though its turn
+// still holds the head the acceptance was originally taken on. The bundle carries the stand head (the
+// head the member's pull request shows), so open, the in-transaction guard and land must all read the
+// stand rather than the turn's own candidate head. A member whose head moved with no record still
+// drops, which the sibling subtest pins.
+func TestBundleCarriesAMemberRefreshedWithoutRestatingItsTurn(t *testing.T) {
+	t.Run("a recorded refresh keeps the member eligible without restating its turn", func(t *testing.T) {
+		w := newTr(t)
+		leader := w.claim(trLane, trLeader, "head-lead", 101)["turnId"].(string)
+		w.pr(101, "head-lead")
+		w.waiting("PRJ-M2", "task-m2", "head-m2", 102)
+		// the parent refreshed the member's branch and recorded it: the stand head is the refreshed
+		// head, the member's pull request shows it, and the waiting turn is left where it was
+		w.refreshStand("acc-rel-task-m2", "rel-task-m2", "head-m2-refreshed")
+		w.pr(102, "head-m2-refreshed")
+		if head := w.turn(w.turnIDOf(102)).CandidateHead; head != "head-m2" {
+			t.Fatalf("the fixture restated the turn to %s, and this case is about a turn that did not move", head)
+		}
+		answer, err := w.open(leader, trLeader, "base-0", 101, 102)
+		if err != nil {
+			t.Fatalf("a member whose acceptance stands on a recorded refresh head: %v", err)
+		}
+		train := answer["train"].(map[string]any)["trainId"].(string)
+		rows, err := w.s.All(w.ctx, "SELECT detail_json FROM merge_train_events WHERE train_id = ? AND kind = 'opened'", train)
+		if err != nil || len(rows) != 1 {
+			t.Fatalf("the opened event: %v %d", err, len(rows))
+		}
+		var detail map[string]any
+		if err := json.Unmarshal([]byte(rows[0].Get("detail_json").(string)), &detail); err != nil {
+			t.Fatal(err)
+		}
+		memberList, _ := detail["members"].([]any)
+		second, _ := memberList[1].(map[string]any)
+		if second["acceptedHead"] != "head-m2-refreshed" {
+			t.Fatalf("the opened mapping records acceptedHead %v, want the refresh head", second["acceptedHead"])
+		}
+		// verify and land reread the same stand: the bundle's head is the refreshed head, so the member
+		// turn lands although it still holds the accepted head
+		w.pr(900, "head-bundle", TrainLaneLabel)
+		w.forge.runs["run-1"] = runFor("head-bundle")
+		if _, err := w.m.Verify(w.ctx, train, trLeader, "900", "head-bundle", "run-1", "/checkout", w.forge, w.proof); err != nil {
+			t.Fatalf("verify over a member refreshed without restating its turn: %v", err)
+		}
+		w.tip.set(trRepo, trBase, "merge-1")
+		w.forge.commits["merge-1"] = TrainCommit{SHA: "merge-1", Parents: []string{"base-0", "head-bundle"}, Tree: "tree-bundle"}
+		if _, err := w.m.TrainLand(w.ctx, train, trLeader, "merge-1", "merge-1", w.tip, w.forge); err != nil {
+			t.Fatalf("land over a member refreshed without restating its turn: %v", err)
+		}
+		if state := w.turn(w.turnIDOf(102)).State; state != "landed" {
+			t.Fatalf("the member turn is %s after the landing, want landed", state)
+		}
+	})
+
+	t.Run("a member whose head moved with no record still drops", func(t *testing.T) {
+		w := newTr(t)
+		leader, members := w.threeMembers()
+		// the member's pull request moved to a head no record names, and the turn did not
+		w.pr(102, "head-m2-moved")
+		if _, err := w.open(leader, trLeader, "base-0", members...); err == nil || trReason(err) != "disposition_conflict" {
+			t.Fatalf("a member whose head moved with no record: %v", err)
+		}
+		if n := w.trainEvents(); n != 0 {
+			t.Fatalf("a refused open wrote %d event(s)", n)
+		}
+	})
+}
 
 // requestOn asks for a turn for one pull request of a parent, the way dag-merge-request does.
 func (w *tr) requestOn(project, task, relationship, head string, pr int64) (map[string]any, error) {
@@ -70,25 +186,49 @@ func TestChainVersionLineStep(t *testing.T) {
 	git("checkout", "-q", "dev")
 	git("merge", "-q", "--no-ff", "-m", "merge m1", "m1")
 
-	// member two: its own file and the manifest's version line re-recorded, so git merges the
-	// manifest cleanly and the head's merge commit holds a tree git does not write from its parents
+	// member two and member three both branch from the same point and both re-record the manifest,
+	// so git cannot merge the version line: the chain step resolves by recording the version the
+	// step's own payload derives, which is what the lane does. The merge's tree is then not
+	// what git writes from its parents, and the only difference is the manifest.
+	proof := TrainCheckoutProver{}
 	git("checkout", "-q", "-b", "m2")
 	write("m2.txt", "two\n")
+	write("plugins/crw/.codex-plugin/plugin.json", manifest("0.4.0+222222222222", "base"))
 	git("add", "-A")
 	git("commit", "-q", "-m", "member two")
 	m2 := git("rev-parse", "HEAD")
 	git("checkout", "-q", "dev")
+	git("checkout", "-q", "-b", "m3")
+	write("m3.txt", "three\n")
+	write("plugins/crw/.codex-plugin/plugin.json", manifest("0.4.0+333333333333", "base"))
+	git("add", "-A")
+	git("commit", "-q", "-m", "member three")
+	m3 := git("rev-parse", "HEAD")
+	git("checkout", "-q", "dev")
 	git("merge", "-q", "--no-ff", "-m", "merge m2", "m2")
-	head := git("rev-parse", "HEAD")
-
-	proof := TrainCheckoutProver{}
-	members := []TrainMemberExpectation{{AcceptedHead: m1}, {AcceptedHead: m2}}
-	chain, err := proof.Chain(context.Background(), repo, head, base, members)
-	if err != nil {
-		t.Fatalf("a clean chain was refused: %v", err)
+	if err := trainGitTry(repo, "merge", "-q", "--no-ff", "-m", "merge m3", "m3"); err == nil {
+		t.Fatalf("the fixture's merge was meant to conflict on the manifest")
 	}
-	if len(chain.Steps) != 0 {
-		t.Fatalf("a chain git writes itself carries no version-line step: %+v", chain.Steps)
+	// the step records the version its own merged payload derives, which is what the lane does
+	trainRecordDerivedVersion(t, repo)
+	git("add", "-A")
+	git("commit", "-q", "-m", "Merge branch 'dev' into m3")
+	merged := git("rev-parse", "HEAD")
+	chain3, err := proof.Chain(context.Background(), repo, merged, base, []TrainMemberExpectation{{AcceptedHead: m1}, {AcceptedHead: m2}, {AcceptedHead: m3}})
+	if err != nil {
+		t.Fatalf("a version-line step the payload derives was refused: %v", err)
+	}
+	if len(chain3.Steps) != 1 || chain3.Steps[0].Commit != merged || chain3.Steps[0].Rule != TrainVersionLineRule || chain3.Steps[0].Path != pluginversion.ManifestRepoPath {
+		t.Fatalf("the version-line proof was not recorded with the chain: %+v", chain3.Steps)
+	}
+	// a version the step's own payload does not derive is still a hand resolution: the built-in rule
+	// proves only the line the payload derives, so the chain refuses it and records no step
+	write("plugins/crw/.codex-plugin/plugin.json", manifest("0.4.0+999999999999", "base"))
+	git("add", "-A")
+	git("commit", "-q", "--amend", "--no-edit")
+	forged := git("rev-parse", "HEAD")
+	if _, err := proof.Chain(context.Background(), repo, forged, base, []TrainMemberExpectation{{AcceptedHead: m1}, {AcceptedHead: m2}, {AcceptedHead: m3}}); err == nil || trReason(err) != "disposition_conflict" {
+		t.Fatalf("a version line the payload does not derive = %v, want a refusal", err)
 	}
 }
 
@@ -100,7 +240,7 @@ func TestMemberOnlyWaitingTurn(t *testing.T) {
 		w := newTr(t)
 		first := w.claim(trLane, trLeader, "head-101", 101)["turnId"].(string)
 		w.pr(101, "head-101")
-		w.acceptOn("rel-"+trLeader+"-2", "head-102")
+		w.acceptOnFor("rel-"+trLeader+"-2", "head-102", 102)
 		w.pr(102, "head-102")
 		second, err := w.requestOn(trLane, trLeader, "rel-"+trLeader+"-2", "head-102", 102)
 		if err != nil {
@@ -121,7 +261,7 @@ func TestMemberOnlyWaitingTurn(t *testing.T) {
 		w := newTr(t)
 		first := w.claim(trLane, trLeader, "head-101", 101)["turnId"].(string)
 		w.pr(101, "head-101")
-		w.acceptOn("rel-"+trLeader+"-2", "head-102")
+		w.acceptOnFor("rel-"+trLeader+"-2", "head-102", 102)
 		w.pr(102, "head-102")
 		second, err := w.requestOn(trLane, trLeader, "rel-"+trLeader+"-2", "head-102", 102)
 		if err != nil {
@@ -162,7 +302,7 @@ func TestMemberOnlyWaitingTurn(t *testing.T) {
 		w.pr(101, "head-lead")
 		w.waiting("PRJ-M2", "task-m2", "head-m2", 102)
 		w.pr(102, "head-m2")
-		w.acceptOn("rel-"+trLeader+"-2", "head-103")
+		w.acceptOnFor("rel-"+trLeader+"-2", "head-103", 103)
 		w.pr(103, "head-103")
 		if _, err := w.requestOn(trLane, trLeader, "rel-"+trLeader+"-2", "head-103", 103); err != nil {
 			t.Fatal(err)

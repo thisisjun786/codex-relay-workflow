@@ -274,21 +274,9 @@ func (s *Scheduler) RecordBaseRefresh(ctx context.Context, plan, node, actor str
 			regions = append(regions, r)
 		}
 	}
-	proof, refusal, err := proveBaseRefresh(ctx, g, acc.HeadSHA, pr.HeadSHA, tip.SHA, regions)
-	if err != nil {
-		return out, refuse(contract.RefusalMergeTargetUnreadable, "git could not answer for %s: %v", checkout, err)
-	}
-	if refusal != nil {
-		return out, refusedProof(refusal)
-	}
-	// Check authority before executing any declared regeneration command; the write
-	// checks it again in its transaction, as every deciding write does.
-	if err := s.fence(ctx, q, plan, actor); err != nil {
-		return out, err
-	}
-	// A recorded proof is immutable evidence. Replay its stored classification,
-	// including manual-only proofs made before the checker was linked, without
-	// running candidate code again or making the caller change the original names.
+	// A recorded proof is immutable evidence. It is read before the proof runs, so a stored
+	// classification replays whatever the declarations say now, and the proof itself never
+	// runs again for a head a record already covers (CRW-898).
 	var existing, baseRepo, baseRef, baseTip, storedProof, storedResolved string
 	var recordedGeneration int64
 	var recordedRel, recordedRevision string
@@ -297,6 +285,7 @@ func (s *Scheduler) RecordBaseRefresh(ctx context.Context, plan, node, actor str
 	if err != nil {
 		return out, err
 	}
+	proof := &refreshProof{}
 	var resolved []string
 	var contributors map[string][][]Region
 	if has {
@@ -308,6 +297,19 @@ func (s *Scheduler) RecordBaseRefresh(ctx context.Context, plan, node, actor str
 			return out, err
 		}
 	} else {
+		var refusal *refreshRefusal
+		proof, refusal, err = proveBaseRefresh(ctx, g, acc.HeadSHA, pr.HeadSHA, tip.SHA, regions)
+		if err != nil {
+			return out, refuse(contract.RefusalMergeTargetUnreadable, "git could not answer for %s: %v", checkout, err)
+		}
+		if refusal != nil {
+			return out, refusedProof(refusal)
+		}
+		// Check authority before executing any declared regeneration command; the write
+		// checks it again in its transaction, as every deciding write does.
+		if err := s.fence(ctx, q, plan, actor); err != nil {
+			return out, err
+		}
 		contributors, err = s.refreshContributors(ctx, q, plan, node, canonical, names, declarations)
 		if err != nil {
 			return out, err

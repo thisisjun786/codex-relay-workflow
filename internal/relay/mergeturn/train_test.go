@@ -193,6 +193,14 @@ func (w *tr) waiting(project, task, head string, pr int64) {
 // leaves: the acceptance row plus its forge row.
 func (w *tr) acceptOn(relationship, head string) {
 	w.t.Helper()
+	w.acceptOnFor(relationship, head, 1)
+}
+
+// acceptOnFor is acceptOn with the forge pull request the acceptance is of: a member-only waiting
+// turn must name the pull request the acceptance covers (CRW-898), so a fixture that asks for
+// another pull request records it here.
+func (w *tr) acceptOnFor(relationship, head string, pr int64) {
+	w.t.Helper()
 	var existing int64
 	if err := w.s.DB.QueryRowContext(w.ctx, "SELECT count(*) FROM dag_acceptances WHERE relationship_id = ? AND state = 'active'", relationship).Scan(&existing); err != nil {
 		w.t.Fatal(err)
@@ -205,7 +213,7 @@ func (w *tr) acceptOn(relationship, head string) {
 		" VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
 		id, "plan-x", "node-"+relationship, "manifest-"+relationship, relationship, int64(1), "ev-"+relationship, "rev-"+relationship, "crit-"+relationship, "verified",
 		head, trRepo, int64(1), "bound", "turn-"+relationship, "{}", trLeader, int64(0), "2026-10-01T00:00:00Z", "active")
-	w.exec("INSERT INTO dag_acceptance_forge (acceptance_id, forge_repository, pr_number) VALUES (?, 'owner/repo', 1)", id)
+	w.exec("INSERT INTO dag_acceptance_forge (acceptance_id, forge_repository, pr_number) VALUES (?, 'owner/repo', ?)", id, pr)
 }
 
 // pr registers a pull request the forge answers with.

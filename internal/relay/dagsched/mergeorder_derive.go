@@ -41,7 +41,7 @@ func (s *Scheduler) lanePosition(ctx context.Context, q store.Querier, plan stri
 	inLane := head != "" && !h.Held && h.HasAcc && h.Acc.HeadSHA != ""
 	if inLane {
 		var requested, turn string
-		found, err := queryOne(ctx, q, "SELECT requested_at, turn_id FROM merge_turns WHERE relationship_id = ? AND candidate_head = ? AND state IN ('waiting','holding','merging','unknown') ORDER BY requested_at, turn_id LIMIT 1",
+		found, err := queryOne(ctx, q, "SELECT requested_at, turn_id FROM merge_turns WHERE relationship_id = ? AND candidate_head = ? AND state IN ('member_waiting','waiting','holding','merging','unknown') ORDER BY requested_at, turn_id LIMIT 1",
 			[]any{h.Acc.RelationshipID, head}, &requested, &turn)
 		if err != nil {
 			return lanePos{}, err

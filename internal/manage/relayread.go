@@ -321,7 +321,15 @@ func relayReadIDs(ctx context.Context, st *store.Store, query string, args []any
 // readers and the merge turn service use.
 const (
 	relayReadLiveRelationshipFilter = "status IN ('active', 'paused') AND superseded_by IS NULL"
-	relayReadOpenTurnFilter         = "state IN ('waiting', 'holding', 'merging', 'unknown')"
+	// relayReadOpenTurnFilter is the guard index's own predicate (merge_turns_one_live_claim),
+	// kept pinned to it by TestRelayReadPredicatesMatchTheShippedSchema. It is the lane's live
+	// vocabulary and deliberately does not list member_waiting: that state is outside the index
+	// and the store's own readers cover it.
+	relayReadOpenTurnFilter = "state IN ('waiting', 'holding', 'merging', 'unknown')"
+	// relayReadLiveTurnFilter is every live turn, the guard index's states plus the
+	// member-only waiting turns a bundle carries (CRW-898). The projection reads this, so a
+	// same-parent extra turn is not hidden from operators and state consumers.
+	relayReadLiveTurnFilter = "(" + relayReadOpenTurnFilter + " OR state = 'member_waiting')"
 )
 
 // relayReadRelationships reads the assignment state of each chosen relationship.
@@ -494,7 +502,7 @@ func relayReadMergeTurns(ctx context.Context, st *store.Store, opts RelayReadOpt
 	var conditions []string
 	var args []any
 	if !opts.IncludeClosed {
-		conditions = append(conditions, relayReadOpenTurnFilter)
+		conditions = append(conditions, relayReadLiveTurnFilter)
 	}
 	if len(opts.Plans) > 0 {
 		// A plan selector narrows the turns to the ones whose relationship executes a node of that

@@ -213,6 +213,16 @@ func (s *Service) memberOnlyRequest(ctx context.Context, asked ClaimOptions, hea
 	if !found {
 		return false, nil
 	}
+	// The acceptance must be of the pull request the request names, not merely stand on the same
+	// head: two pull requests can point at one commit, and admitting the second under the first'
+	// acceptance would bundle a pull request no ruling covers (CRW-898).
+	row, err := s.Store.One(ctx, "SELECT pr_number FROM dag_acceptance_forge WHERE acceptance_id = ?", active.AcceptanceID)
+	if err != nil {
+		return false, trainUnreadable("the forge identity of acceptance %s was not read: %v", pyvalue.StrRepr(active.AcceptanceID), err)
+	}
+	if row == nil || fmt.Sprint(row.Get("pr_number")) != fmt.Sprint(asked.PR.Int64) {
+		return false, nil
+	}
 	stand, err := acceptance.StandOf(ctx, s.Store.Querier(ctx), active.AcceptanceID, asked.Relationship.String, active.Generation, active.EventID, active.RevisionHash, active.HeadSHA)
 	if err != nil {
 		return false, trainUnreadable("what acceptance %s stands on was not read: %v", pyvalue.StrRepr(active.AcceptanceID), err)
@@ -548,7 +558,7 @@ func (s *Service) Target(ctx context.Context, repository, base string) (map[stri
 	var holder any
 	var holderRow store.MergeTurnsRow
 	for _, row := range rows {
-		if row.State == Waiting {
+		if row.State == Waiting || row.State == MemberWaiting {
 			waiters = append(waiters, record(row))
 		}
 		if row.State == Holding || row.State == Merging || row.State == Unknown {

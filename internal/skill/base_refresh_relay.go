@@ -44,7 +44,11 @@ func settleRelayRefresh(ctx context.Context, checkout string, st dagsched.Refres
 		if _, ok := merged.conflicts[p]; ok {
 			continue
 		}
-		if p != pluginversion.ManifestRepoPath {
+		// A clean difference is one this check settles only when the relay decided a rule for
+		// it: the built-in version line, or a declared regenerate command. A clean difference
+		// with no such decision is not one this check may look at.
+		rule, decided := decided[p]
+		if !decided || (p != pluginversion.ManifestRepoPath && !strings.HasPrefix(rule, dagsched.RuleRegeneratePref)) {
 			return nil, fmt.Errorf("%s is not a conflict in the mechanical check's reading", p)
 		}
 		if differing == nil {
@@ -67,11 +71,7 @@ func settleRelayRefresh(ctx context.Context, checkout string, st dagsched.Refres
 	// built-in plugin-version rule, which is not a regenerate command run over the file.
 	commands := map[string][]string{}
 	for _, p := range paths {
-		rule, decided := decided[p]
-		if !decided {
-			continue
-		}
-		if strings.HasPrefix(rule, dagsched.RuleRegeneratePref) {
+		if rule, ok := decided[p]; ok && strings.HasPrefix(rule, dagsched.RuleRegeneratePref) {
 			command := strings.TrimPrefix(rule, dagsched.RuleRegeneratePref)
 			commands[command] = append(commands[command], p)
 		}

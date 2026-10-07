@@ -408,7 +408,20 @@ func (s *Service) Withdraw(ctx context.Context, turn, actor string) (map[string]
 		if refusal != nil {
 			return s.Registry.RecordCoordinationConflict(tx, *refusal, at)
 		}
-		return s.close(tx, r, "withdrawn", "withdrawn by its claimant", actor, at)
+		if err = s.close(tx, r, "withdrawn", "withdrawn by its claimant", actor, at); err != nil {
+			return err
+		}
+		// A withdrawn turn may have been the older one that held a member-only waiting turn of the
+		// same holder back, so a free target is offered the next eligible waiter here (CRW-898). A
+		// target another turn still holds is left alone: promotion is only ever a free target's.
+		occupant, err := s.Store.MergeTargetOccupant(tx, r.TargetKey)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		if occupant.TurnID == "" {
+			_, err = s.promote(tx, r.TargetKey, at)
+		}
+		return err
 	})
 	if err != nil {
 		return nil, err
