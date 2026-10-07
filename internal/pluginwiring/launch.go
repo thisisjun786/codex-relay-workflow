@@ -266,6 +266,12 @@ func ArgumentsStartTheLauncher(arguments []string) bool {
 	return len(arguments) > 0 && arguments[0] == Flag
 }
 
+// ArgumentStartsTheLauncher is the launcher's own reason for refusing a list that
+// ArgumentsStartTheLauncher accepts as starting it again. Bridge and the installer's
+// re-registration both word their refusal from it, so the sentence a record gets from either names
+// one reason, and a change here reaches both.
+const ArgumentStartsTheLauncher = "would start this launcher again instead of the bridge"
+
 // Prepare is the launcher up to its exec: the record read and judged, then the bridge arguments
 // (the record's, as bytes, then the launcher's own) and the environment it starts under.
 // bridgeExecutable is checked as an exec would take it, and not executed: the Go runtime behind
@@ -334,8 +340,7 @@ func Bridge(program string, args []string) int {
 	arguments, environment, err := Prepare(mcp.Environ(os.Environ()), args)
 	if err == nil && ArgumentsStartTheLauncher(arguments) {
 		// The exec below would read this as another plugin launch and start this launcher again.
-		err = fail("the bridge's arguments begin with " + Flag + ", which would start this launcher" +
-			" again instead of the bridge")
+		err = fail("the bridge's arguments begin with " + Flag + ", which " + ArgumentStartsTheLauncher)
 	}
 	var self string
 	if err == nil {

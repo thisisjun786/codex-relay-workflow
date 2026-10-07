@@ -209,8 +209,8 @@ func launcherComplaints(found Object) []string {
 	// launcher refuses is refused here too, and Prepare's own answer for the launcher is unchanged.
 	if pluginwiring.ArgumentsStartTheLauncher(pluginwiring.ReadBridgeRecord(found).Args) {
 		wrong = append(wrong, "lists "+strconv.Quote(pluginwiring.Flag)+
-			" as the first argument the bridge would be started with, which would start this launcher"+
-			" again instead of the bridge")
+			" as the first argument the bridge would be started with, which "+
+			pluginwiring.ArgumentStartsTheLauncher)
 	}
 	return wrong
 }
