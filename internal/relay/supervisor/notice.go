@@ -50,13 +50,14 @@ func (n NoticeChannel) Measure(ctx context.Context, task string) error {
 // noticeYieldsToBusyHead reports whether a notice to recipient must wait: a delivery to that
 // recipient is waiting out a busy backoff, so the notice channel yields the recipient's line to it
 // and that head meets the recipient idle rather than busy again (I-216's notice part, section 82
-// decision 2). It asks the delivery path's own predicate, so the two channels cannot disagree about
-// which deliveries hold a line. The supervisor channel never asks it.
+// decision 2). The supervisor channel never asks it.
 //
-// It reads on ctx's querier: the claim asks it under its write lock, and the attempt's check before
-// any host work asks it on the store.
-func (c *Channel) noticeYieldsToBusyHead(ctx context.Context, recipient string, now float64) (bool, error) {
-	return delivery.NewService(c.Store, delivery.SystemClock{}).BusyHeadHoldsRecipientLine(ctx, recipient, now)
+// It asks the predicate on the caller's own delivery service, the same one the claim paces and
+// reserves against, so the two channels cannot disagree about which deliveries hold a line down to
+// the policy the predicate reads. It reads on ctx's querier: the claim asks it under its write lock
+// and the attempt's checks ask it on the store.
+func (c *Channel) noticeYieldsToBusyHead(ctx context.Context, service *delivery.Service, recipient string, now float64) (bool, error) {
+	return service.BusyHeadHoldsRecipientLine(ctx, recipient, now)
 }
 
 // noticeYieldsDetail is why a notice waits for a delivery that holds its recipient's line. Both the

@@ -236,7 +236,7 @@ func (c *Channel) claim(ctx context.Context, id string, r Resolution, now float6
 		// again here under the claim's write lock because a head can appear between the attempt's
 		// check and this one. A supervisor message is untouched (I-216).
 		if current.YieldsToBusyHead() {
-			held, err := c.noticeYieldsToBusyHead(tx, r.Recipient, now)
+			held, err := c.noticeYieldsToBusyHead(tx, service, r.Recipient, now)
 			if err != nil {
 				return err
 			}
@@ -346,13 +346,13 @@ func (c *Channel) attempt(ctx context.Context, id string, adapter SendAdapter, n
 	if err := a.read(ctx); err != nil {
 		return nil, err
 	}
+	a.service = delivery.NewService(c.Store, delivery.SystemClock{})
 	if stop, err := a.eligible(ctx); stop {
 		return nil, err
 	}
 	if err := a.resolve(ctx); err != nil {
 		return nil, err
 	}
-	a.service = delivery.NewService(c.Store, delivery.SystemClock{})
 	if stop, err := a.rateGate(ctx); stop {
 		return nil, err
 	}
@@ -441,7 +441,7 @@ func (a *attemptRun) eligible(ctx context.Context) (stop bool, err error) {
 	// head meets the recipient idle rather than busy again (I-216's notice part, section 82
 	// decision 2). The claim asks it again under its write lock; a supervisor message is untouched.
 	if row.YieldsToBusyHead() {
-		held, err := a.c.noticeYieldsToBusyHead(ctx, row.RecipientTaskID, a.now)
+		held, err := a.c.noticeYieldsToBusyHead(ctx, a.service, row.RecipientTaskID, a.now)
 		if err != nil {
 			return true, err
 		}
@@ -691,7 +691,7 @@ func (a *attemptRun) fenceBusyHead(tx context.Context, current store.SupervisorM
 	if !current.YieldsToBusyHead() {
 		return false, nil
 	}
-	held, err := c.noticeYieldsToBusyHead(tx, current.RecipientTaskID, a.now)
+	held, err := c.noticeYieldsToBusyHead(tx, a.service, current.RecipientTaskID, a.now)
 	if err != nil {
 		return true, err
 	}
