@@ -11,9 +11,16 @@ import (
 // them, so each is a security fix (port: fixed). Every row was checked in bash 5.3.9 with a harmless stand-in for rm (a
 // touch in a temporary directory); no row runs a deletion, and the guard reads text and runs nothing.
 
+// worktreeDelPipeInterpreterDenied asserts a deny of the interpreter pipe position.
+func worktreeDelPipeInterpreterDenied(t *testing.T, r delRig, cmd string) {
+	t.Helper()
+	worktreeDelUnreadableDenied(t, r, cmd, "an interpreter program read from a pipe")
+}
+
 // TestWorktreeDelPipeStdinAliasDenied is c1's redirection half: a redirection on descriptor 0 whose target is
 // /dev/stdin, /dev/fd/N, /proc/self/fd/N or /proc/<anything>/fd/N does not replace the pipe, because the guard cannot
-// know what that descriptor holds (fail closed).
+// know what that descriptor holds (fail closed). The path is read as the kernel resolves it, so a lexical `.` or a
+// repeated separator is dropped first.
 func TestWorktreeDelPipeStdinAliasDenied(t *testing.T) {
 	r := newDelRig(t)
 	for _, cmd := range []string{
@@ -26,15 +33,21 @@ func TestWorktreeDelPipeStdinAliasDenied(t *testing.T) {
 		"printf 'rm -rf ../repo' | bash </proc/1/fd/0",
 		"printf 'rm -rf ../repo' | bash </proc/self/fd/3",
 		"printf 'rm -rf ../repo' | sh </dev/stdin",
+		"printf 'rm -rf ../repo' | bash </dev/./stdin",
+		"printf 'rm -rf ../repo' | bash </dev//stdin",
+		"printf 'rm -rf ../repo' | bash </proc/self/../self/fd/0",
 		"printf 'rm -rf ../repo' | bash 2</dev/null", // descriptor 2 is not stdin: the shell still reads the pipe
 	} {
 		worktreeDelPipeDenied(t, r, cmd)
 	}
-	// A file on descriptor 0 that is no alias still replaces the pipe.
+	// A file on descriptor 0 that is no alias still replaces the pipe, in any order: an alias reopens the descriptor as
+	// it already stands, so `bash </dev/null </dev/stdin` still reads /dev/null (checked in bash 5.3.9).
 	r.allowed(t,
 		"printf 'echo hi' | bash </dev/null",
 		"printf 'echo hi' | bash 0</dev/null",
 		"printf 'echo hi' | bash < /dev/null",
+		"printf 'echo hi' | bash </dev/stdin </dev/null",
+		"printf 'echo hi' | bash </dev/null </dev/stdin",
 	)
 	r.intact(t)
 }
@@ -48,6 +61,7 @@ func TestWorktreeDelPipeStdinAliasOperandDenied(t *testing.T) {
 		"printf 'rm -rf ../repo' | bash /proc/self/fd/0",
 		"printf 'rm -rf ../repo' | sh /dev/fd/0",
 		"printf 'rm -rf ../repo' | sh /proc/1/fd/0",
+		"printf 'rm -rf ../repo' | bash /dev/./stdin",
 		"printf 'rm -rf ../repo' | source /dev/stdin",
 		"printf 'rm -rf ../repo' | . /dev/stdin",
 		"printf 'rm -rf ../repo' | . /dev/fd/0",
@@ -111,7 +125,8 @@ func TestWorktreeDelPipeShellInsideProgramDenied(t *testing.T) {
 }
 
 // TestWorktreeDelPipeBusyboxDenied is c4's first half: busybox is a wrapper whose first operand names the applet, so
-// busybox sh is a listed shell reading the pipe.
+// busybox sh is a listed shell reading the pipe. A busybox global mode dispatches no applet, so the word after it is no
+// command.
 func TestWorktreeDelPipeBusyboxDenied(t *testing.T) {
 	r := newDelRig(t)
 	for _, cmd := range []string{
@@ -125,11 +140,15 @@ func TestWorktreeDelPipeBusyboxDenied(t *testing.T) {
 	// as its own input.
 	r.denied(t, "busybox rm -rf ../repo", "rm -r ../repo")
 	r.allowed(t, "busybox rm -rf ../other", "printf x | busybox cat")
+	// A global mode takes no applet: --help, --list, --list-full, --install and --show.
+	r.allowed(t, "busybox --help rm -rf ../repo", "busybox --list", "busybox --list-full", "busybox --install -s ../repo", "busybox --show rm -rf ../repo")
 	r.intact(t)
 }
 
 // TestWorktreeDelPipeInterpreterDenied is c4's second half: an interpreter called with no program argument reads its
-// program from the pipe.
+// program from the pipe. The option parse skips the argument of an option that takes one (python3 -W ignore) and reads
+// the versioned and alternate names the repository already knows (python3.11, py, nodejs), and a script operand that
+// names the process's own standard input is a program read from the pipe.
 func TestWorktreeDelPipeInterpreterDenied(t *testing.T) {
 	r := newDelRig(t)
 	for _, cmd := range []string{
@@ -141,22 +160,33 @@ func TestWorktreeDelPipeInterpreterDenied(t *testing.T) {
 		"printf x | php",
 		"printf x | python3 -",
 		"printf x | python3 -O",
-		"printf x | node --eval",
+		"printf x | python3 -W ignore",
+		"printf x | python3 -X dev",
+		"printf x | python3 -Wignore",
+		"printf x | node -r module",
+		"printf x | node --require module",
+		"printf x | python3.11",
+		"printf x | python2",
+		"printf x | py",
+		"printf x | nodejs",
+		"printf x | python3 /dev/stdin",
+		"printf x | python3 /dev/fd/0",
 	} {
-		w := "an interpreter program read from a pipe"
-		if got := r.verdict(cmd); !got.Deny || !strings.Contains(got.Reason, w) {
-			t.Errorf("%q: got %+v, want a deny naming %q", cmd, got, w)
-		}
+		worktreeDelPipeInterpreterDenied(t, r, cmd)
 	}
-	// A program argument (-c, -e, -r, -m) and a script operand are readable positions and stay allowed.
+	// A program argument (-c, -e, -r, -m), a script operand and a file on descriptor 0 are readable positions and stay
+	// allowed.
 	r.allowed(t,
 		"printf x | python3 -c 'print(1)'",
 		"printf x | python3 -m json.tool",
 		"printf x | perl -e 'print 1'",
 		"printf x | ruby -e 'puts 1'",
 		"printf x | node script.js",
-		"printf x | php -r 'echo 1;'",
 		"printf x | node -e 'console.log(1)'",
+		"printf x | node --eval 'console.log(1)'",
+		"printf x | php -r 'echo 1;'",
+		"printf x | python3 </dev/null",
+		"printf x | python3 -c 'print(1)' -",
 	)
 	r.intact(t)
 }
@@ -182,8 +212,9 @@ func TestWorktreeDelHereStringInterpreterDenied(t *testing.T) {
 	r.intact(t)
 }
 
-// TestWorktreeDelHeredocInterpreterDenied is c4's here-document half: an interpreter with no program argument reads the
-// here-document as its program.
+// TestWorktreeDelHeredocInterpreterDenied is c4's here-document half: an interpreter with no program argument reads a
+// here-document on its standard input as its program, in both the attached (<<EOF) and the spaced (<< EOF) form. A
+// descriptor other than 0 feeds another descriptor, so it is no program: python3 3<<EOF still reads standard input.
 func TestWorktreeDelHeredocInterpreterDenied(t *testing.T) {
 	r := newDelRig(t)
 	for _, cmd := range []string{
@@ -191,13 +222,22 @@ func TestWorktreeDelHeredocInterpreterDenied(t *testing.T) {
 		"python3 <<'EOF'\nimport os\nEOF",
 		"perl <<EOF\nprint 1\nEOF",
 		"python3 - <<EOF\nimport os\nEOF",
+		"python3 << EOF\nimport os\nEOF",
+		"python3 <<- EOF\n\timport os\n\tEOF",
+		"python3 0<< EOF\nimport os\nEOF",
+		"python3.11 << EOF\nimport os\nEOF",
 	} {
 		worktreeDelUnreadableDenied(t, r, cmd, "an interpreter program read from a here-document")
 	}
-	// A here-document that feeds something else, and an interpreter with a program argument, stay allowed.
+	// A here-document that feeds something else, an interpreter with a program argument, and a here-document on another
+	// descriptor stay allowed.
 	r.allowed(t,
 		"cat <<EOF\nimport os\nEOF",
+		"cat << EOF\nimport os\nEOF",
 		"python3 -c 'print(1)' <<EOF\nx\nEOF",
+		"python3 3<<EOF\nignored\nEOF",
+		"python3 3<< EOF\nignored\nEOF",
+		"python3 2<<EOF\nignored\nEOF",
 	)
 	r.intact(t)
 }
