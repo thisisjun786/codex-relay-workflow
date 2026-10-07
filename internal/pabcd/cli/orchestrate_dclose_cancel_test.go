@@ -78,8 +78,9 @@ func TestOrchestrateDcloseCancelBeforeTheIdleStateWriteWritesNothing(t *testing.
 // TestOrchestrateDcloseCancelBeforeTheFinalizationRowWritesNothing pins the check that guards the
 // finalization pass's own PABCD row, which is that pass's first durable effect on a recovery retry that
 // owes only that row. The first lock writes nothing and the state is already IDLE, so the finalization
-// callback is entered with wrote false; the seam cancels at its pre-write check, which is the second
-// check of this invocation (the first lock callback's entry check is the first).
+// callback is entered with wrote false. The cancellation is fired by the seam that runs immediately after
+// that pass's ledger read returns, not by a count of the invocation's checks, so a check moved in front of
+// the read - where it cannot see this cancellation - writes the row and fails here.
 func TestOrchestrateDcloseCancelBeforeTheFinalizationRowWritesNothing(t *testing.T) {
 	cwd := orchestrateDcloseTestCwd(t)
 	id, slug := "dclose-cancel-finrow", "dclose-cancel-finrow-plan"
@@ -92,21 +93,19 @@ func TestOrchestrateDcloseCancelBeforeTheFinalizationRowWritesNothing(t *testing
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	checks := 0
-	seam := orchestrateDcloseSeam{interrupt: func() {
-		checks++
-		if checks == 2 {
-			cancel()
-		}
+	reads := 0
+	seam := orchestrateDcloseSeam{afterLedgerRead: func() {
+		reads++
+		cancel()
 	}}
 	got, err := orchestrateDcloseContext(ctx, cwd, id, "wp-1", cur, orchestrateDcloseAttest(id), true, seam)
 	after := statusTree(t, cwd)
 	if !errors.Is(err, context.Canceled) || got != (CliResult{}) || !reflect.DeepEqual(before, after) {
-		t.Fatalf("a recovery retry cancelled before its finalization row answered (%+v, %v) after %d check(s); want context.Canceled with the zero result and nothing written",
-			got, err, checks)
+		t.Fatalf("a recovery retry cancelled after the finalization pass read the ledger answered (%+v, %v) after %d read(s); want context.Canceled with the zero result and nothing written",
+			got, err, reads)
 	}
-	if checks != 2 {
-		t.Fatalf("the close ran %d pre-write check(s); want the first lock's entry check and the finalization row's", checks)
+	if reads != 1 {
+		t.Fatalf("the close ran the after-read seam %d time(s); want the finalization pass's ledger read once", reads)
 	}
 	if n := orchestrateDcloseDoneRows(t, cwd, id); n != 0 {
 		t.Fatalf("the cancelled finalization wrote %d PABCD close row(s)", n)

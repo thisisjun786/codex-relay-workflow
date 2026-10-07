@@ -18,6 +18,11 @@ func WithSessionLock(cwd, sessionID string, fn func() error) error {
 	return WithSessionLockContext(context.Background(), cwd, sessionID, fn)
 }
 
+// sessionLockBeforeGiveUp is a test seam: it runs inside orchestrateInterruptLockContext immediately
+// before an acquisition failure is returned, so a test can cancel the invocation's context in that
+// window without a sleep. Production leaves it nil.
+var sessionLockBeforeGiveUp func()
+
 func withSessionLock(cwd, sessionID string, fn func() error, sleep func(time.Duration)) error {
 	return orchestrateInterruptLockContext(context.Background(), cwd, sessionID, fn, sleep)
 }
@@ -49,6 +54,17 @@ func orchestrateInterruptLockContext(ctx context.Context, cwd, sessionID string,
 			break
 		}
 		if !errors.Is(err, fs.ErrExist) || attempt >= len(delays) {
+			if sessionLockBeforeGiveUp != nil {
+				sessionLockBeforeGiveUp()
+			}
+			// CRW-922 (c1-3): the give-up is reported after the invocation's context is read once more, so
+			// a cancellation that landed as the wait ended answers the context's own error (130) rather
+			// than the busy error with code 1 - the same rule the D close's goalplan locks follow. A
+			// caller with no context (context.Background, which WithSessionLock passes) is unchanged: its
+			// ctx.Err() is always nil.
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return ctxErr
+			}
 			return err
 		}
 		delay := delays[attempt] * time.Millisecond

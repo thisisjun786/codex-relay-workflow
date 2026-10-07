@@ -33,6 +33,62 @@ func TestWithSessionLockContextCancelledCreatesNoLock(t *testing.T) {
 	}
 }
 
+// TestWithSessionLockContextCancelledAtTheGiveUpAnswersInterrupted is the CRW-922 (c1-3) case: a holder
+// owns the lock, the waiter exhausts its retry budget, and the invocation's context is cancelled in the
+// window just before the acquisition failure is returned. The call must answer the context's own error,
+// not fs.ErrExist, because a cancelled invocation that never took the lock writes nothing and answers 130
+// rather than reporting the busy error with code 1. The cancellation is fired from the give-up seam, so
+// the case needs no sleep and does not depend on the retry schedule.
+func TestWithSessionLockContextCancelledAtTheGiveUpAnswersInterrupted(t *testing.T) {
+	cwd := t.TempDir()
+	if err := makeSessionsDir(cwd); err != nil {
+		t.Fatal(err)
+	}
+	lockPath := StatePath(cwd, "s") + ".lock"
+	if err := createExclusive(lockPath, "999999"); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = removeFile(lockPath) }()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	previous := sessionLockBeforeGiveUp
+	sessionLockBeforeGiveUp = func() { cancel() }
+	defer func() { sessionLockBeforeGiveUp = previous }()
+
+	ran := false
+	err := WithSessionLockContext(ctx, cwd, "s", func() error { ran = true; return nil })
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("a lock that gave up under a cancelled invocation returned %v; want context.Canceled", err)
+	}
+	if ran {
+		t.Fatal("the cancelled give-up ran fn")
+	}
+}
+
+// TestWithSessionLockContextGiveUpWithALiveContextKeepsTheBusyError is the control: the same give-up
+// under a live context still reports the acquisition error, so WithSessionLock's contract is unchanged.
+func TestWithSessionLockContextGiveUpWithALiveContextKeepsTheBusyError(t *testing.T) {
+	cwd := t.TempDir()
+	if err := makeSessionsDir(cwd); err != nil {
+		t.Fatal(err)
+	}
+	lockPath := StatePath(cwd, "s") + ".lock"
+	if err := createExclusive(lockPath, "999999"); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = removeFile(lockPath) }()
+
+	ran := false
+	err := WithSessionLockContext(context.Background(), cwd, "s", func() error { ran = true; return nil })
+	if !errors.Is(err, fs.ErrExist) {
+		t.Fatalf("a live lock that gave up returned %v; want fs.ErrExist", err)
+	}
+	if ran {
+		t.Fatal("the live give-up ran fn")
+	}
+}
+
 // TestWithSessionLockContextCancelledDuringTheWait pins the wait: a holder owns the lock, the
 // waiter is cancelled while it retries, and the waiter returns the context's error without
 // entering fn or creating a second lock file.

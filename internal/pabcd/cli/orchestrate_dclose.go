@@ -63,10 +63,11 @@ type orchestrateDcloseSeam struct {
 	// interrupt runs immediately before this close's pre-write cancellation check inside each
 	// critical section (CRW-871). A field, never package state; nil means no hook.
 	interrupt func()
-	// afterLedgerRead runs in the all-done branch immediately after the PABCD ledger has been read
-	// and parsed, before the pre-write check that guards the row that branch may append. A test
-	// cancels the context here to order the cancellation after the read and before the first write,
-	// which a check that had run before the read cannot see. Nil means no hook.
+	// afterLedgerRead runs immediately after the PABCD ledger has been read and parsed, in each branch
+	// whose first durable effect is the row that read guards - the all-done branch and the finalization
+	// pass - before the pre-write check that guards that row. A test cancels the context here to order
+	// the cancellation after the read and before the first write, which a check that had run before the
+	// read cannot see. Nil means no hook.
 	afterLedgerRead func()
 	// goalplanLockSeam runs immediately before each goalplan write lock this close takes, with
 	// finalize telling the first lock and the finalization lock apart, and its answer replaces that
@@ -716,6 +717,7 @@ func orchestrateDcloseContext(ctx context.Context, cwd, sessionID, closePhaseID 
 			if err != nil {
 				return struct{}{}, err
 			}
+			orchestrateDcloseRunVoid(seam.afterLedgerRead)
 			if !have {
 				if err := orchestrateDcloseCancelCheck(ctx, seam.interrupt, wrote); err != nil {
 					return struct{}{}, err
