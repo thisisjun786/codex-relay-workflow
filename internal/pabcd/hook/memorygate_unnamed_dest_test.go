@@ -695,6 +695,38 @@ func TestMemoryGateUnnamedDestinationNinthPassShapes(t *testing.T) {
 	}
 }
 
+// TestMemoryGateUnnamedDestinationTenthPassShapes pins the shapes the tenth pre-merge evaluation found: a lambda
+// parameter that shadows an imported module, a descriptor duplication before a here-document, and a read-only open
+// through a variable the program bound to a module.
+func TestMemoryGateUnnamedDestinationTenthPassShapes(t *testing.T) {
+	cwd, root, env := gateScene(t)
+	m := root + "/n.md"
+	py := func(program string) string { return "python3 -c " + shellWriteUnnamedQuote(program) }
+	for _, c := range []struct{ name, command string }{
+		{"lambda parameter shadowing an imported module", py("import io\nfrom pathlib import Path\nf = lambda io: io.write_text(\"x\")\nf(Path(\"" + m + "\"))")},
+		{"descriptor duplication before a here-document", "python3 <<'PY' 2>&1\nimport os\nopen(os.path.join(\"" + root + "\", \"n.md\"), \"w\").write(\"x\")\nPY"},
+		{"descriptor duplication before the interpreter", "2>&1 python3 -c " + shellWriteUnnamedQuote("import os; open(os.path.join(\""+root+"\", \"n.md\"), \"w\").write(\"x\")")},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got := memoryGateClassify("Bash", map[string]any{"command": c.command}, cwd, env)
+			if got.Surface != "shell" || got.Target != unnamedDestWant {
+				t.Errorf("%q: %+v, want the shell surface and %s", c.command, got, unnamedDestWant)
+			}
+		})
+	}
+	for _, c := range []struct{ name, command string }{
+		// A variable the program bound to a module reads by default when its open names no mode.
+		{"read-only open through a module variable", py("import io, os\ns = io\ns.open(os.path.join(\"" + root + "\", \"n.md\")).read()")},
+		{"read-only open through a module variable with a mode", py("import io, os\ns = io\ns.open(os.path.join(\"" + root + "\", \"n.md\"), \"r\").read()")},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got := memoryGateClassify("Bash", map[string]any{"command": c.command}, cwd, env); got.Surface != "" {
+				t.Errorf("%q must pass: %+v", c.command, got)
+			}
+		})
+	}
+}
+
 // TestMemoryGateUnnamedDestinationControlShapes is the matching /w control set the pre-merge evaluation asked for: the
 // computed shapes of the issue body that write under /w with no protected-area literal must stay allowed, so the
 // protected-area condition alone decides.

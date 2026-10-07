@@ -2433,7 +2433,7 @@ func shellWriteUnnamedOwnerStart(line string, at int) int {
 			r.pair()
 			continue
 		}
-		if r.state == worktreeDelQuotePlain && shellWriteUnnamedSeparator(line[i]) {
+		if r.state == worktreeDelQuotePlain && shellWriteUnnamedSeparatorAt(line, i) {
 			start = i + 1
 		}
 		r.step(line[i])
@@ -2459,7 +2459,7 @@ func shellWriteUnnamedOwnerEnd(line string, at int) int {
 			r.pair()
 			continue
 		}
-		if r.state == worktreeDelQuotePlain && shellWriteUnnamedSeparator(line[i]) {
+		if r.state == worktreeDelQuotePlain && shellWriteUnnamedSeparatorAt(line, i) {
 			return i
 		}
 		r.step(line[i])
@@ -2548,6 +2548,20 @@ func shellWriteUnnamedPythonStdin(args []string) bool {
 // that reads here-documents cuts commands.
 func shellWriteUnnamedSeparator(c byte) bool {
 	return c == ';' || c == '&' || c == '|' || c == '\n'
+}
+
+// shellWriteUnnamedSeparatorAt reports whether the byte at i ends the command, read with its neighbours: the & and |
+// of a redirection (2>&1, >&2, &>out, <&0) belong to that redirection and cut nothing, while a bare & or | does.
+func shellWriteUnnamedSeparatorAt(line string, i int) bool {
+	switch c := line[i]; c {
+	case ';', '\n':
+		return true
+	case '&':
+		return (i == 0 || line[i-1] != '>' && line[i-1] != '<') && (i+1 >= len(line) || line[i+1] != '>')
+	case '|':
+		return i == 0 || line[i-1] != '>'
+	}
+	return false
 }
 
 // shellWriteUnnamedPython reports whether a command name is a Python interpreter, as shellWriteFStringPythonScript reads
@@ -2819,8 +2833,11 @@ func (w *shellWriteUnnamedWalk) close(rs []rune, f shellWriteUnnamedFrame, spans
 			writes = shellWriteUnnamedWrites(first)
 		case !shellVerbBlank(second) && !shellWriteUnnamedNumber(second):
 			writes = shellWriteUnnamedWrites(second) || !shellWriteUnnamedLiteral(second)
-		case !shellVerbBlank(first) && !shellWriteUnnamedLiteral(first) && !shellWriteUnnamedNumber(first):
-			writes = true // an argument the reader can read as neither a mode nor a path
+		case !shellVerbBlank(first) && !shellWriteUnnamedLiteral(first) && !shellWriteUnnamedNumber(first) && !shellWriteUnnamedCallArg(first):
+			// A lone argument the reader can read as neither a mode nor a path leaves the call's own form unknown,
+			// so it fails closed. An argument that is a call is a path (module.open(path) reads by default), and a
+			// missing mode reads in every form, so neither is a write.
+			writes = true
 		}
 		if writes {
 			w.wrote = true
@@ -3185,6 +3202,9 @@ func shellWriteUnnamedDottedModule(rs []rune, i int, binds shellWriteCopyImports
 // an annotated assignment (io: Path = ...), a loop or comprehension target (for io in ...), or a lambda parameter
 // (lambda io: ...). Each binds the name in its scope, so an import's meaning for it no longer holds there.
 func shellWriteUnnamedBinds(rs []rune, i, j int) bool {
+	if shellWriteUnnamedLambdaParam(rs, i) {
+		return true // a lambda's parameter binds the name in the lambda's body
+	}
 	k := j
 	for k < len(rs) && shellVerbSpaceRune(rs[k]) {
 		k++
@@ -3202,6 +3222,40 @@ func shellWriteUnnamedBinds(rs []rune, i, j int) bool {
 		}
 		if rs[m] == ':' {
 			return false // a second colon: a slice or a nested annotation, not this name's assignment
+		}
+	}
+	return false
+}
+
+// shellWriteUnnamedLambdaParam reports whether the name that starts at rs[i] is a lambda's parameter: it stands after
+// the lambda keyword of its own clause, before that clause's colon, and no other colon or bracket of the clause's own
+// level stands between them. A lambda parameter binds the name in the lambda's body, so an import's meaning for it no
+// longer holds there (lambda io: io.write_text(...) is a Path's method, not the io module's).
+func shellWriteUnnamedLambdaParam(rs []rune, i int) bool {
+	depth := 0
+	for b := i - 1; b >= 0 && rs[b] != '\n' && rs[b] != '\r' && rs[b] != ';'; b-- {
+		switch c := rs[b]; {
+		case c == ')' || c == ']' || c == '}':
+			depth++
+		case c == '(' || c == '[' || c == '{':
+			if depth > 0 {
+				depth--
+			}
+		case depth == 0 && c == '=':
+			// A default value follows the parameter's =, so this name is the value, not a parameter
+			// (lambda g=open: ...): the name before the = is the parameter.
+			return false
+		case depth == 0 && c == ':':
+			return false // the clause's colon: this name stands after it, in the lambda's body
+		case depth == 0 && shellWriteCopyIdentRune(c):
+			e := b
+			for b >= 0 && shellWriteCopyIdentRune(rs[b]) {
+				b--
+			}
+			if string(rs[b+1:e+1]) == "lambda" {
+				return true
+			}
+			b++
 		}
 	}
 	return false
@@ -3645,6 +3699,23 @@ func shellWriteUnnamedModeLike(arg []rune) bool {
 func shellWriteUnnamedLiteral(arg []rune) bool {
 	_, ok := shellVerbLiteral(arg)
 	return ok
+}
+
+// shellWriteUnnamedCallArg reports whether an argument is a call: a name or an attribute chain that ends in a call
+// bracket (os.path.join(root, "n.md"), Path(...)). Such an argument is a value the program computes, which is what a
+// module's own open() takes as its path, so it is not a mode this reader cannot read.
+func shellWriteUnnamedCallArg(arg []rune) bool {
+	for i := len(arg) - 1; i >= 0; i-- {
+		switch c := arg[i]; {
+		case c == ')' || c == ']':
+			return true
+		case shellVerbSpaceRune(c):
+			continue
+		default:
+			return false
+		}
+	}
+	return false
 }
 
 // shellWriteUnnamedNumber reports whether an argument is a number literal: an optional sign, digits and one dot. It
