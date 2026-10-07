@@ -202,6 +202,9 @@ func worktreeDelWrapperOptionArg(name, option string) bool {
 		return strings.ContainsRune("ioe", rune(option[1]))
 	case "xargs":
 		return strings.ContainsRune("nIadELsP", rune(option[1]))
+	case "exec":
+		// exec -a NAME names the command's argv[0]; -c and -l take no argument (CRW-894, c2).
+		return option[1] == 'a'
 	}
 	return false
 }
@@ -772,10 +775,11 @@ func worktreeDelReadings(command string) []string {
 	return []string{scan}
 }
 
-// The shell names, and the words that may stand before one without making it text (worktreeDelQuoteProgram).
+// The shell names, and the words that may stand before one without making it text (worktreeDelQuoteProgram). busybox is
+// a wrapper whose first operand names the applet, so busybox sh is a shell and busybox rm a removal (CRW-894, c4).
 const (
 	worktreeDelQuoteShells   = " sh bash dash zsh ksh mksh ash csh tcsh fish su "
-	worktreeDelQuoteWrappers = " sudo env nohup xargs command builtin exec time timeout nice setsid stdbuf ionice "
+	worktreeDelQuoteWrappers = " sudo env nohup xargs command builtin exec time timeout nice setsid stdbuf ionice busybox "
 )
 
 // worktreeDelUnreadableCompoundKeywords are the shell keywords that open a compound whose body continues past a
@@ -1568,10 +1572,34 @@ func HandleWorktreeGuardPreTool(raw string, env host.LookupEnv) string {
 // worktreeDelUnreadableShells are the shells this reading finds a program position for: the -c program of each of them,
 // and the program each of them reads from standard input. worktreeDelUnreadableHereShells are the ones that also read a
 // here-document as a program (su reads its standard input through the shell it starts, so it is not among them).
+// worktreeDelUnreadableInterpreters are the interpreters that read their program from standard input when they are
+// called with no program argument (CRW-894, c5).
 const (
-	worktreeDelUnreadableShells     = " sh bash dash ash zsh ksh su "
-	worktreeDelUnreadableHereShells = " sh bash dash ash zsh ksh "
+	worktreeDelUnreadableShells       = " sh bash dash ash zsh ksh su "
+	worktreeDelUnreadableHereShells   = " sh bash dash ash zsh ksh "
+	worktreeDelUnreadableInterpreters = " python python3 perl ruby node php "
 )
+
+// worktreeDelUnreadableInterpreterStdin says whether an interpreter named name reads its program from standard input:
+// it has no -c, -e, -r or -m program and no script operand. A lone - asks for standard input, so it is no program
+// operand either. A name that is no interpreter is false (CRW-894, c5).
+func worktreeDelUnreadableInterpreterStdin(name string, operands []string) bool {
+	if !strings.Contains(worktreeDelUnreadableInterpreters, " "+name+" ") {
+		return false
+	}
+	args := worktreeDelQuoteDropRedirects(worktreeDelUnreadableHereArgs(operands))
+	for _, word := range args {
+		switch {
+		case word == "-": // - asks for standard input
+		case len(word) > 1 && word[0] == '-' && word[1] != '-' && strings.ContainsAny(word[1:], "cerm"):
+			return false // a -c, -e, -r or -m program
+		case len(word) > 1 && word[0] == '-': // any other option takes no program argument
+		default:
+			return false // a script operand
+		}
+	}
+	return true
+}
 
 // worktreeDelUnreadableWord is one word of a command as the outer shell reads it: text is the word with the outer
 // shell's quotes and escaping backslashes removed, raw is the word as written, outer says the word holds an expansion
@@ -2062,7 +2090,42 @@ func worktreeDelUnreadableStdinFile(word, next string, hasNext bool) bool {
 		}
 		rest = next
 	}
-	return !strings.HasPrefix(rest, "&") // <&N and <&- duplicate or close the descriptor, they open no file
+	// <&N and <&- duplicate or close the descriptor, they open no file. A path that names the process's own standard
+	// input reopens the pipe the command came from, so it replaces no pipe either (CRW-894, c1).
+	return !strings.HasPrefix(rest, "&") && !worktreeDelUnreadableStdinAlias(rest)
+}
+
+// worktreeDelUnreadableStdinAlias says whether a path names a process's own standard input: /dev/stdin, /dev/fd/N,
+// /proc/self/fd/N or /proc/<anything>/fd/N. A redirection to such a path reopens the pipe the command came from and a
+// shell that reads it reads that pipe, and the guard cannot know what the descriptor holds, so it refuses (CRW-894, c1).
+func worktreeDelUnreadableStdinAlias(path string) bool {
+	switch {
+	case path == "/dev/stdin":
+		return true
+	case strings.HasPrefix(path, "/dev/fd/"):
+		return worktreeDelUnreadableDescriptor(path[len("/dev/fd/"):])
+	case strings.HasPrefix(path, "/proc/"):
+		rest := path[len("/proc/"):]
+		i := strings.Index(rest, "/fd/")
+		if i <= 0 || strings.Contains(rest[:i], "/") {
+			return false
+		}
+		return worktreeDelUnreadableDescriptor(rest[i+len("/fd/"):])
+	}
+	return false
+}
+
+// worktreeDelUnreadableDescriptor says whether s is a bare descriptor number.
+func worktreeDelUnreadableDescriptor(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // worktreeDelUnreadableStdinRedirected says whether a shell's operands replace its standard input with a file, so that
@@ -2427,11 +2490,17 @@ func worktreeDelUnreadableStdin(cut worktreeDelUnreadableCut, words []worktreeDe
 		return "", false
 	}
 	name := basename(plain[i])
-	if !strings.Contains(worktreeDelUnreadableShells, " "+name+" ") || !worktreeDelUnreadableStdinShell(name, plain[i+1:]) {
+	operands := plain[i+1:]
+	if strings.Contains(worktreeDelUnreadableShells, " "+name+" ") && worktreeDelUnreadableStdinShell(name, operands) {
+		if j := worktreeDelUnreadableHereString(operands); j >= 0 && worktreeDelUnreadableOuter(words[i+1+j].raw) {
+			return "a shell program read from a here-string", true
+		}
 		return "", false
 	}
-	if j := worktreeDelUnreadableHereString(plain[i+1:]); j >= 0 && worktreeDelUnreadableOuter(words[i+1+j].raw) {
-		return "a shell program read from a here-string", true
+	// An interpreter reads its program from a here-string whatever the word holds, so the word needs no expansion
+	// (CRW-894, c5).
+	if worktreeDelUnreadableInterpreterStdin(name, operands) && worktreeDelUnreadableHereString(operands) >= 0 {
+		return "an interpreter program read from a here-string", true
 	}
 	return "", false
 }
@@ -2473,7 +2542,7 @@ func worktreeDelUnreadablePipes(text string) (string, bool) {
 				end = len(text) // a compound keeps the pipe to its own end, which a separator or a case pattern can hide
 				region = strings.TrimSpace(text[start:end])
 			}
-			if what, ok := worktreeDelUnreadablePipeRegion(region); ok {
+			if what, ok := worktreeDelUnreadablePipeRegion(region, 0); ok {
 				return what, true
 			}
 			i = end
@@ -2583,9 +2652,11 @@ func worktreeDelUnreadablePipeEnd(text string, from int, r *worktreeDelQuoteRead
 // region is cut at its separators and at its delimiters, and every simple command the shell would run with the pipe on
 // its standard input is judged. `(bash) 2>/dev/null`, `( ( bash ) )`, `{ (bash); }` and `if true; then bash; fi` all
 // reach bash, so all are refused (CRW-726, c15(b)).
-func worktreeDelUnreadablePipeRegion(text string) (string, bool) {
+// depth is how many programs deep this region stands: a shell's -c program or an eval operand hands the pipe on
+// to the shells inside it, and the nesting uses the reading-depth budget (CRW-894, c3).
+func worktreeDelUnreadablePipeRegion(text string, depth int) (string, bool) {
 	for _, piece := range worktreeDelUnreadablePipePieces(text) {
-		if what, ok := worktreeDelUnreadablePipePiece(piece); ok {
+		if what, ok := worktreeDelUnreadablePipePiece(piece, depth); ok {
 			return what, true
 		}
 	}
@@ -2640,21 +2711,46 @@ func worktreeDelUnreadableDelimiterEdge(text string, i int) bool {
 	return false
 }
 
-// worktreeDelUnreadablePipePiece is the pipe rule for one piece of a pipe region: a listed shell that reads its program
-// from the pipe, or a piece that is no command of its own and is skipped.
-func worktreeDelUnreadablePipePiece(piece string) (string, bool) {
-	if _, operands, ok := worktreeDelUnreadableShellCommand(piece); ok {
-		if !worktreeDelUnreadableStdinRedirected(operands) {
-			return "a shell program read from a pipe", true
+// worktreeDelUnreadablePipePiece is the pipe rule for one piece of a pipe region: the program a listed shell reads from
+// the pipe, a script operand or a source or . operand that names the process's own standard input, an interpreter that
+// reads its program from standard input, or a program a -c program or eval hands on to a shell inside it (CRW-894).
+func worktreeDelUnreadablePipePiece(piece string, depth int) (string, bool) {
+	name, operands, ok := worktreeDelUnreadablePieceCommand(piece)
+	if ok {
+		if strings.Contains(worktreeDelUnreadableShells, " "+name+" ") {
+			if worktreeDelUnreadableStdinShell(name, operands) {
+				if !worktreeDelUnreadableStdinRedirected(operands) {
+					return "a shell program read from a pipe", true
+				}
+			} else if worktreeDelUnreadableScriptAlias(name, operands) {
+				return "a shell program read from a pipe", true
+			}
+		} else if name == "source" || name == "." {
+			if j := worktreeDelUnreadableSourceIndex(operands); j >= 0 && worktreeDelUnreadableStdinAlias(operands[j]) {
+				return "a shell program read from a pipe", true
+			}
+		} else if worktreeDelUnreadableInterpreterStdin(name, operands) {
+			return "an interpreter program read from a pipe", true
+		}
+	}
+	programs := worktreeDelUnreadablePipePrograms(name, operands, ok)
+	if len(programs) == 0 {
+		return "", false
+	}
+	if depth >= worktreeDelQuoteDepth {
+		return "a shell program nested past the reading depth", true // fail closed at the reading-depth limit
+	}
+	for _, program := range programs {
+		if what, found := worktreeDelUnreadablePipeRegion(program, depth+1); found {
+			return what, true
 		}
 	}
 	return "", false
 }
 
-// worktreeDelUnreadableShellCommand is the name and operands of the listed shell that opens a text, when it opens with
-// one that has no -c program and no script operand: the command word may stand after the wrappers, the redirections and
-// the compound keywords that may precede it.
-func worktreeDelUnreadableShellCommand(text string) (name string, operands []string, ok bool) {
+// worktreeDelUnreadablePieceCommand is the name and operands of the command that opens a pipe region piece: the command
+// word may stand after the wrappers, the redirections and the compound keywords that may precede it.
+func worktreeDelUnreadablePieceCommand(text string) (name string, operands []string, ok bool) {
 	plain := worktreeDelUnreadablePlainTexts(worktreeDelUnreadableWords(text))
 	if i, found := worktreeDelUnreadableCompoundKeyword(plain); found {
 		plain = plain[i:]
@@ -2663,11 +2759,46 @@ func worktreeDelUnreadableShellCommand(text string) (name string, operands []str
 	if i < 0 {
 		return "", nil, false
 	}
-	name = basename(plain[i])
-	if !strings.Contains(worktreeDelUnreadableShells, " "+name+" ") || !worktreeDelUnreadableStdinShell(name, plain[i+1:]) {
-		return "", nil, false
+	return basename(plain[i]), plain[i+1:], true
+}
+
+// worktreeDelUnreadableScriptAlias says whether a listed shell's script operand names the process's own standard input,
+// so the shell reads the pipe it stands to the right of rather than a file: bash /dev/stdin, sh /proc/self/fd/0. su takes
+// its program with -c and has no script operand (CRW-894, c1).
+func worktreeDelUnreadableScriptAlias(name string, operands []string) bool {
+	if name == "su" {
+		return false
 	}
-	return name, plain[i+1:], true
+	args := worktreeDelQuoteDropRedirects(worktreeDelUnreadableHereArgs(operands))
+	j := worktreeDelUnreadableScriptOperand(args)
+	return j >= 0 && worktreeDelUnreadableStdinAlias(args[j])
+}
+
+// worktreeDelUnreadablePipePrograms is the program texts a pipe region piece hands on to a shell inside it: the -c
+// program of a listed shell, or the operands eval joins into its program. A shell to the right of the pipe hands the
+// pipe to whatever reads standard input inside that program (CRW-894, c3).
+func worktreeDelUnreadablePipePrograms(name string, operands []string, ok bool) []string {
+	if !ok {
+		return nil
+	}
+	if name == "eval" {
+		var args []string
+		for _, j := range worktreeDelUnreadableEvalIndices(operands) {
+			args = append(args, operands[j])
+		}
+		if len(args) == 0 {
+			return nil
+		}
+		return []string{strings.Join(args, " ")}
+	}
+	if !strings.Contains(worktreeDelUnreadableShells, " "+name+" ") {
+		return nil
+	}
+	dropped := worktreeDelQuoteDropRedirects(worktreeDelUnreadableHereArgs(operands))
+	if j := worktreeDelUnreadableProgramIndex(name, dropped); j >= 0 && j < len(dropped) {
+		return []string{dropped[j]}
+	}
+	return nil
 }
 
 // worktreeDelUnreadableCompoundKeyword is the index of the first word after a shell compound keyword and its clause
@@ -2708,14 +2839,22 @@ func (s *worktreeDelUnreadableScan) heredocs(text, cwd string, depth int, named 
 		for _, body := range bodies {
 			// Each here-document belongs to the command that holds its operator: cat <<EOF; bash </dev/null feeds cat, not the
 			// bash that reads /dev/null (CRW-726).
-			if !worktreeDelUnreadableLineShellAt(line, body.op.at) {
+			name, operands, ok := worktreeDelUnreadableLineCommandAt(line, body.op.at)
+			if !ok {
 				continue
 			}
-			if !body.closed || !body.op.literal && worktreeDelUnreadableHereExpansion(body.body) {
-				return worktreeDelUnreadableRefusal{what: "a shell program read from a here-document"}, true
+			if strings.Contains(worktreeDelUnreadableHereShells, " "+name+" ") && worktreeDelUnreadableStdinShell(name, operands) {
+				if !body.closed || !body.op.literal && worktreeDelUnreadableHereExpansion(body.body) {
+					return worktreeDelUnreadableRefusal{what: "a shell program read from a here-document"}, true
+				}
+				if refusal, ok := s.read(body.body, cwd, depth+1, named); ok {
+					return refusal, true
+				}
+				continue
 			}
-			if refusal, ok := s.read(body.body, cwd, depth+1, named); ok {
-				return refusal, true
+			// An interpreter with no program argument reads the here-document as its program (CRW-894, c5).
+			if worktreeDelUnreadableInterpreterStdin(name, operands) {
+				return worktreeDelUnreadableRefusal{what: "an interpreter program read from a here-document"}, true
 			}
 		}
 		i = next
@@ -2723,10 +2862,11 @@ func (s *worktreeDelUnreadableScan) heredocs(text, cwd string, depth int, named 
 	return worktreeDelUnreadableRefusal{}, false
 }
 
-// worktreeDelUnreadableLineShellAt says whether the command that holds the here-document operator at byte at is a listed
-// shell reading its program from standard input. Only the segment that holds the operator is examined, so a shell that
-// stands after a separator on the same line does not claim another command's here-document (CRW-726).
-func worktreeDelUnreadableLineShellAt(line string, at int) bool {
+// worktreeDelUnreadableLineCommandAt is the command word that owns the here-document operator at byte at, with its
+// operands: the command runs from the separator before the operator to the separator after it. Only the segment that
+// holds the operator is examined, so a command that stands after a separator on the same line does not claim another
+// command's here-document (CRW-726).
+func worktreeDelUnreadableLineCommandAt(line string, at int) (string, []string, bool) {
 	// The command that owns the operator runs from the separator before it to the separator after it.
 	start, end := 0, len(line)
 	for i := at - 1; i >= 0; i-- {
@@ -2744,10 +2884,7 @@ func worktreeDelUnreadableLineShellAt(line string, at int) bool {
 	// The here-document operators and the descriptors before them are redirections, not words of the command.
 	words := worktreeDelUnreadableWords(line[start:end])
 	plain := make([]string, 0, len(words))
-	for i := 0; i < len(plain) || i < len(words); i++ {
-		if i >= len(words) {
-			break
-		}
+	for i := 0; i < len(words); i++ {
 		word := words[i].text
 		if strings.HasPrefix(word, "<<") {
 			continue
@@ -2760,10 +2897,9 @@ func worktreeDelUnreadableLineShellAt(line string, at int) bool {
 	}
 	i := worktreeDelUnreadableCommandWord(plain)
 	if i < 0 {
-		return false
+		return "", nil, false
 	}
-	name := basename(plain[i])
-	return strings.Contains(worktreeDelUnreadableHereShells, " "+name+" ") && worktreeDelUnreadableStdinShell(name, plain[i+1:])
+	return basename(plain[i]), plain[i+1:], true
 }
 
 // worktreeDelUnreadableLineShell says whether a command line runs a listed shell that reads its program from standard
