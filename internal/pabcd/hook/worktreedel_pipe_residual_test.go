@@ -586,3 +586,51 @@ func TestWorktreeDelPipeResidualC10(t *testing.T) {
 	)
 	r.intact(t)
 }
+
+// TestWorktreeDelPipeResidualC10b is the pre-merge evaluation's second round on head 918798df1, red first there. Four
+// forms inside this issue's promise still reached the piped program: (d1) the & of a descriptor duplication ended the
+// pipe region before the command word was read; (d2) a program letter inside a short-option cluster did not name its
+// program, so python -Im code and php -nf /dev/stdin were not read; (d3) a ! written after the compound keyword was
+// read as the command; (d4) the here-document owner scan cut at a separator inside a quote. Each was reproduced with a
+// harmless stand-in for the deletion in the host's zsh.
+func TestWorktreeDelPipeResidualC10b(t *testing.T) {
+	r := newDelRig(t)
+	// (d1) the & of a descriptor duplication is no separator for the pipe region either.
+	worktreeDelPipeDenied(t, r, "printf 'rm -rf ../repo' | exec -a x 2>&1 bash")
+	worktreeDelPipeDenied(t, r, "printf 'rm -rf ../repo' | exec -a x >/dev/null 2>&1 bash")
+	worktreeDelPipeDenied(t, r, "printf 'rm -rf ../repo' | 2>&1 bash")
+	r.denied(t, "exec -a x 2>&1 rm -rf ../repo", "rm -r ../repo")
+	// (d2) the program letter of a cluster names its program wherever it stands in the cluster.
+	worktreeDelPipeInterpreterDenied(t, r, "printf x | python3 -Im code")
+	worktreeDelPipeInterpreterDenied(t, r, "printf x | python3 -Em code")
+	worktreeDelPipeInterpreterDenied(t, r, "printf x | php -nf /dev/stdin")
+	worktreeDelPipeInterpreterDenied(t, r, "printf x | python3 -Imcode")
+	// php -rf names the program r with the argument f, so it reads no script from the pipe: the program letter that
+	// counts is the one that carries the argument, and -r carries it.
+	r.allowed(t, "printf x | php -rf /dev/stdin")
+	// (d3) a ! written after the compound keyword is stripped too.
+	for _, cmd := range []string{
+		"printf 'rm -rf ../repo' | bash -c 'if ! bash; then :; fi'",
+		"printf 'rm -rf ../repo' | bash -c 'elif ! bash; then :; fi'",
+		"printf 'rm -rf ../repo' | bash -c 'while ! bash; do :; done'",
+		"printf 'rm -rf ../repo' | bash -c 'until ! bash; do :; done'",
+		"printf 'rm -rf ../repo' | bash -c 'if ! bash -c bash; then :; fi'",
+	} {
+		worktreeDelPipeDenied(t, r, cmd)
+	}
+	// (d4) the here-document owner scan reads the shell's separators, not the raw bytes.
+	worktreeDelUnreadableDenied(t, r, "python3 2>'a;b' <<'PY'\nimport os\nPY", "an interpreter program read from a here-document")
+	worktreeDelUnreadableDenied(t, r, "python3 2>'x|y' <<EOF\nimport os\nEOF", "an interpreter program read from a here-document")
+	worktreeDelUnreadableDenied(t, r, "python3 3>'a;b' <<EOF\nimport os\nEOF", "an interpreter program read from a here-document")
+	// The controls keep their answers.
+	r.allowed(t,
+		"printf x | python3 -Im json.tool",
+		"printf x | php -nf script.php",
+		"printf x | bash -c 'if true; then :; fi'",
+		"printf x | bash -c '! true'",
+		"printf x | exec -a x 2>&1 cat",
+		"printf x | python3 -c 'print(1)'",
+		"cat 'x;y' <<EOF\nimport os\nEOF",
+	)
+	r.intact(t)
+}

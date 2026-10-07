@@ -153,9 +153,10 @@ func worktreeDelCommandPrefix(words []string, i int) (next int, ok bool) {
 		}
 		if worktreeDelRedirectWord(word) {
 			// A redirection written between the wrapper's options and its executable belongs to the wrapper's
-			// command, not to the command word: `exec -a x >/dev/null bash` runs bash (CRW-894 c10(b)). A lone
-			// operator takes the next word as its target.
-			if strings.Trim(word, "0123456789&<>|") == "" && i+1 < len(words) {
+			// command, not to the command word: `exec -a x >/dev/null bash` runs bash (CRW-894 c10(b), and
+			// `exec -a x 2>&1 bash` the same in the criterion's second round). A lone operator takes the next
+			// word as its target.
+			if worktreeDelUnreadableRedirectAlone(word) && i+1 < len(words) {
 				i++
 			}
 			continue
@@ -964,6 +965,22 @@ func worktreeDelOptionWord(word string) bool {
 	return word != "" && (word[0] == '-' || word[0] == '+')
 }
 
+// worktreeDelUnreadableRedirectAlone says whether a redirection word stands alone, its target in the next word
+// (`< f`, `> f`, `2> f`): such a word carries no target of its own, so the word after it is that target and no command.
+// A word that carries its target attached (`</dev/null`, `2>&1`, `>&2`, `&>f`) is not alone.
+func worktreeDelUnreadableRedirectAlone(word string) bool {
+	rest := strings.TrimLeft(word, "0123456789&")
+	if strings.HasPrefix(rest, "{") {
+		if end := strings.IndexByte(rest, '}'); end > 0 {
+			rest = rest[end+1:]
+		}
+	}
+	if rest == "" || rest[0] != '<' && rest[0] != '>' {
+		return false
+	}
+	return strings.Trim(rest, "<>|&") == ""
+}
+
 // worktreeDelCertainProgram says whether a shell program is a plain command that cannot reach the operands the shell hands it as
 // $0, $1 and so on. A program that holds a substitution, a separator, a pipe, a redirection or a parenthesis, or that names the
 // arguments (a dollar sign, a backtick, or ARGV, ARGC, argv or the BASH_AR* variables), is not certain, so the walk reads every
@@ -1637,32 +1654,32 @@ func worktreeDelUnreadableInterpreterStdin(name string, operands []string) bool 
 	args := worktreeDelQuoteDropRedirects(worktreeDelUnreadableHereArgs(operands))
 	for i := 0; i < len(args); i++ {
 		word := args[i]
-		program, next, known := worktreeDelUnreadableInterpreterOption(name, word)
-		value := "" // the word after the option, which is its argument when it takes one
-		if i+1 < len(args) {
+		option := worktreeDelUnreadableInterpreterOption(name, word)
+		value := option.value // the program the option carries, attached or in the next word
+		if value == "" && option.next && i+1 < len(args) {
 			value = args[i+1]
 		}
 		switch {
 		case word == "-": // - is the program operand itself: the interpreter reads standard input and the words
 			// after it are its own arguments (python3 - ignored.py reads the pipe)
 			return true
-		case program:
-			// The option carries a program of its own, attached or in the next word. Two such programs still
-			// read the pipe: python's -m code runs the standard library console, which executes standard
-			// input, and php's -f/--file naming a standard-input alias names that alias as the script it runs
-			// (CRW-894 c10(h)).
-			if worktreeDelUnreadablePython(name) && worktreeDelUnreadableInterpreterModule(word, value) == "code" {
+		case option.program:
+			// The option carries a program of its own, attached or in the next word, wherever its letter stands in
+			// a cluster (-Im code names the module code). Two such programs still read the pipe: python's -m code
+			// runs the standard library console, which executes standard input, and php's -f/--file naming a
+			// standard-input alias names that alias as the script it runs (CRW-894 c10(h) and its second round).
+			if option.module && worktreeDelUnreadablePython(name) && value == "code" {
 				return true
 			}
-			if name == "php" && worktreeDelUnreadableStdinAliasPath(worktreeDelUnreadableInterpreterFile(word, value)) {
+			if option.file && name == "php" && worktreeDelUnreadableStdinAliasPath(value) {
 				return true
 			}
 			return false
-		case next:
+		case option.next:
 			// The option takes the next word as its own argument, so that word is no script operand — unless the
 			// guard does not know the option's arity and that word is an option of its own: a word that starts with
 			// - is never the argument of an option whose arity the guard does not know (CRW-894 c10(f)).
-			if i+1 < len(args) && (known || !worktreeDelOptionWord(args[i+1])) {
+			if i+1 < len(args) && (option.known || !worktreeDelOptionWord(args[i+1])) {
 				i++
 			}
 		case len(word) > 1 && word[0] == '-': // any other option takes no program argument
@@ -1675,6 +1692,20 @@ func worktreeDelUnreadableInterpreterStdin(name string, operands []string) bool 
 	return true
 }
 
+// worktreeDelUnreadableInterpreterOpt is what one option word of an interpreter means: program says the option carries
+// a program of its own, so the interpreter does not read standard input; next says it takes the following word as its
+// own argument, so that word is no script operand; known says the guard knows that arity; value is the program the
+// option carries attached ("" when it takes the next word); and module and file say the program is a python module or
+// a php script file, which two programs still read the pipe (CRW-894 c10(h)).
+type worktreeDelUnreadableInterpreterOpt struct {
+	program bool
+	next    bool
+	known   bool
+	value   string
+	module  bool
+	file    bool
+}
+
 // worktreeDelUnreadableInterpreterOption reads one option word of the interpreter named name: program says the
 // option carries a program of its own, so the interpreter does not read standard input, next says it takes the
 // following word as its own argument, so that word is no script operand, and known says the guard knows that arity.
@@ -1683,9 +1714,9 @@ func worktreeDelUnreadableInterpreterStdin(name string, operands []string) bool 
 // generous: an option read as taking an argument or a program leaves the interpreter with no script operand, which is
 // the fail-closed answer (CRW-894, c5 and its generation-2 review). known is false only for a long option whose arity
 // the guard does not know: there a word that starts with - is no argument but an option of its own (CRW-894 c10(f)).
-func worktreeDelUnreadableInterpreterOption(name, option string) (program, next, known bool) {
+func worktreeDelUnreadableInterpreterOption(name, option string) worktreeDelUnreadableInterpreterOpt {
 	if len(option) < 2 || option[0] != '-' {
-		return false, false, true
+		return worktreeDelUnreadableInterpreterOpt{known: true}
 	}
 	if strings.HasPrefix(option, "--") {
 		value, attached := option, false
@@ -1696,61 +1727,49 @@ func worktreeDelUnreadableInterpreterOption(name, option string) (program, next,
 		case "node", "nodejs":
 			switch value {
 			case "--eval", "--print":
-				return true, false, true
+				return worktreeDelUnreadableInterpreterOpt{program: true, known: true}
 			}
 		case "php":
 			switch value {
-			case "--run", "--file":
-				return true, false, true
+			case "--run":
+				return worktreeDelUnreadableInterpreterOpt{program: true, known: true}
+			case "--file":
+				// php --file FILE names the script php runs; --file=FILE carries it attached (CRW-894 c10(h)).
+				carried := ""
+				if attached {
+					carried = option[len("--file="):]
+				}
+				return worktreeDelUnreadableInterpreterOpt{program: true, next: !attached, known: true, file: true, value: carried}
 			}
 		}
 		// A long option whose arity the guard does not know takes the next word: the fail-closed reading
 		// (python3 --check-hash-based-pycs default reads the pipe). --opt=value carries its own argument.
-		return false, !attached, false
+		return worktreeDelUnreadableInterpreterOpt{next: !attached, known: false}
 	}
 	letters, argLetters := worktreeDelUnreadableInterpreterClusters(name)
 	// getopt reads the cluster left to right: the first option that takes an argument consumes the rest of the
-	// cluster (-Wignore), and the one that stands last takes the next word instead (-OW ignore reads the pipe).
+	// cluster (-Wignore), and the one that stands last takes the next word instead (-OW ignore reads the pipe). A
+	// program letter that consumes the rest of the cluster names the program itself, wherever it stands (-Imcode
+	// names the module code, -Im code names it in the next word), so the letter decides what the program is and not
+	// only that one exists (CRW-894 c10(f) and its second round).
 	for i := 1; i < len(option); i++ {
 		letter := rune(option[i])
 		if letters != "" && strings.ContainsRune(letters, letter) {
-			return true, false, true
+			rest := option[i+1:]
+			return worktreeDelUnreadableInterpreterOpt{
+				program: true,
+				next:    rest == "",
+				known:   true,
+				value:   rest,
+				module:  letter == 'm',
+				file:    letter == 'f',
+			}
 		}
 		if argLetters != "" && strings.ContainsRune(argLetters, letter) {
-			return false, i == len(option)-1, true
+			return worktreeDelUnreadableInterpreterOpt{next: i == len(option)-1, known: true}
 		}
 	}
-	return false, false, true
-}
-
-// worktreeDelUnreadableInterpreterModule is the module name a python program option names: -m MODULE, or the attached
-// -mMODULE. The standard library's code module runs the console, which executes standard input, so the interpreter
-// reads the pipe after all (CRW-894 c10(h)). "" when the option names no module.
-func worktreeDelUnreadableInterpreterModule(option, value string) string {
-	if !strings.HasPrefix(option, "-m") || strings.HasPrefix(option, "--") {
-		return ""
-	}
-	if rest := option[2:]; rest != "" {
-		return rest
-	}
-	return value
-}
-
-// worktreeDelUnreadableInterpreterFile is the script file a php program option names: -f FILE, --file FILE or
-// --file=FILE. A file that is a standard-input alias is the program php reads from the pipe (CRW-894 c10(h)). "" when
-// the option names no file.
-func worktreeDelUnreadableInterpreterFile(option, value string) string {
-	switch {
-	case option == "--file":
-		return value
-	case strings.HasPrefix(option, "--file="):
-		return option[len("--file="):]
-	case option == "-f":
-		return value
-	case strings.HasPrefix(option, "-f") && len(option) > 2:
-		return option[2:]
-	}
-	return ""
+	return worktreeDelUnreadableInterpreterOpt{known: true}
 }
 
 // worktreeDelUnreadableInterpreterClusters is the program letters and the argument-taking letters of the interpreter
@@ -2934,8 +2953,14 @@ func worktreeDelUnreadablePipeEnd(text string, from int, r *worktreeDelQuoteRead
 				}
 				i++
 				continue
-			case ';', '&', '\n', '|':
+			case ';', '\n', '|':
 				if *depth <= start {
+					return i
+				}
+			case '&':
+				// The & of a redirection (2>&1, >&2, &>f, <&3) is no separator, so the command word behind it is
+				// still read (CRW-894 c10(e), second round).
+				if !worktreeDelUnreadableRedirectionAmp(text, i, r.prev) && *depth <= start {
 					return i
 				}
 			}
@@ -3100,27 +3125,25 @@ func worktreeDelUnreadablePieceCommand(text string) (name string, operands []str
 // introducer, and the command the shell runs there is bash. When the introducer (then, do) does stand in the piece, the
 // body is read instead, which is what worktreeDelUnreadableCompoundKeyword answers.
 func worktreeDelUnreadableConditionWords(words []string) []string {
-	for len(words) > 0 && words[0] == "!" {
-		words = words[1:]
-	}
-	if len(words) == 0 {
-		return words
-	}
-	switch basename(words[0]) {
-	case "if", "elif", "while", "until":
-		for _, word := range words {
-			if word == "then" || word == "do" {
-				break // the introducer stands in this piece: the body after it is the command, below
+	for {
+		for len(words) > 0 && words[0] == "!" {
+			words = words[1:] // a negated condition is the command after the !, wherever the ! stands
+		}
+		if len(words) == 0 {
+			return words
+		}
+		switch basename(words[0]) {
+		case "if", "elif", "while", "until":
+			if !slices.Contains(words, "then") && !slices.Contains(words, "do") {
+				words = words[1:] // the head of the compound: the condition command follows the keyword
+				continue
 			}
 		}
-		if !slices.Contains(words, "then") && !slices.Contains(words, "do") {
-			return words[1:] // the head of the compound: the condition command follows the keyword
+		if i, found := worktreeDelUnreadableCompoundKeyword(words); found {
+			return words[i:]
 		}
+		return words
 	}
-	if i, found := worktreeDelUnreadableCompoundKeyword(words); found {
-		return words[i:]
-	}
-	return words
 }
 
 // worktreeDelUnreadableScriptAlias says whether a listed shell's script operand names the process's own standard input,
@@ -3276,17 +3299,13 @@ func worktreeDelUnreadableHereOperatorAlone(word string) bool {
 func worktreeDelUnreadableLineCommandAt(line string, at int) (string, []string, bool) {
 	// The command that owns the operator runs from the separator before it to the separator after it.
 	start, end := 0, len(line)
-	for i := at - 1; i >= 0; i-- {
-		if worktreeDelUnreadableSeparatorAt(line, i) {
+	for _, i := range worktreeDelUnreadableLineSeparators(line) {
+		if i < at {
 			start = i + 1
-			break
+			continue
 		}
-	}
-	for i := at; i < len(line); i++ {
-		if worktreeDelUnreadableSeparatorAt(line, i) {
-			end = i
-			break
-		}
+		end = i
+		break
 	}
 	// The here-document operators and the descriptors before them are redirections, not words of the command.
 	words := worktreeDelUnreadableWords(line[start:end])
@@ -3317,21 +3336,35 @@ func worktreeDelUnreadableLineCommandAt(line string, at int) (string, []string, 
 	return basename(plain[i]), plain[i+1:], true
 }
 
-// worktreeDelUnreadableSeparatorAt says whether the byte at i ends a command on a line: ;, | and a newline do, and so
-// does an & that is no part of a redirection. The & of a descriptor duplication (2>&1, >&2, <&3) and of &>f belongs to
-// the redirection, so it is no separator and the command that owns a here-document is found across it (CRW-894 c10(e)).
-func worktreeDelUnreadableSeparatorAt(line string, i int) bool {
-	switch line[i] {
-	case ';', '|', '\n':
-		return true
-	case '&':
-		prev := byte(0)
-		if i > 0 {
-			prev = line[i-1]
+// worktreeDelUnreadableLineSeparators is the bytes of a line that end a command, in order: ;, | and a newline, and an &
+// that is no part of a redirection. Two bytes are data, not separators: the & of a descriptor duplication (2>&1, >&2,
+// <&3) or of &>f, so the command that owns a here-document is found across it (CRW-894 c10(e)), and any separator
+// inside a quote, an escape or a substitution, so python3 'x;y' <<EOF is one command and not two (the same
+// criterion's second round). The scan carries the quoting reader, so it reads the line the shell reads.
+func worktreeDelUnreadableLineSeparators(line string) []int {
+	var out []int
+	r := worktreeDelQuoteReader{prev: ' '}
+	for i := 0; i < len(line); {
+		if r.escapes(line, i) {
+			r.pair()
+			i += 2
+			continue
 		}
-		return !worktreeDelUnreadableRedirectionAmp(line, i, prev)
+		state, prev := r.state, r.prev
+		r.step(line[i])
+		if state == worktreeDelQuotePlain {
+			switch line[i] {
+			case ';', '|', '\n':
+				out = append(out, i)
+			case '&':
+				if !worktreeDelUnreadableRedirectionAmp(line, i, prev) {
+					out = append(out, i)
+				}
+			}
+		}
+		i++
 	}
-	return false
+	return out
 }
 
 // worktreeDelUnreadableLineShell says whether a command line runs a listed shell that reads its program from standard
