@@ -268,3 +268,41 @@ func TestConfigLockPathsDeactivateRefusesAReallyDifferentConfigFile(t *testing.T
 		t.Fatalf("the refused deactivation wrote: %q", got)
 	}
 }
+
+// Control D: a hard link is the same inode under another name, but the restore publishes through
+// the locked path with an atomic rename, so accepting the manifest's name would leave the managed
+// key in place while the command reported it restored. The comparison is directory-entry identity,
+// so a hard link is refused exactly as it was before this change. This is the case the reviewer
+// raised against a device-and-inode comparison.
+func TestConfigLockPathsDeactivateRefusesAHardLinkedConfigFile(t *testing.T) {
+	home := configLockActivationHome(t)
+	path := filepath.Join(home, "config.toml")
+	activationWrite(t, path, deactivationConfig)
+	linked := filepath.Join(home, "linked.toml")
+	if err := os.Link(path, linked); err != nil {
+		t.Skipf("this filesystem does not support hard links: %v", err)
+	}
+	hash, err := hashOrNull(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys := map[string]TableKeyRecord{"memories.dedicated_tools": deactivationKey(nil)}
+	stale := configLockActivationManifestBytes(t, &InstallManifest{Version: 2, ConfigPath: path, PostActivateHash: hash, Flags: map[string]FlagRecord{}, TableKeys: keys})
+	fresh := configLockActivationManifestBytes(t, &InstallManifest{Version: 2, ConfigPath: linked, PostActivateHash: hash, Flags: map[string]FlagRecord{}, TableKeys: keys})
+
+	held := configLockWritersHold(t, path)
+	configLockActivationHandover(t, home, stale, func() error {
+		return os.WriteFile(manifestPath(home), fresh, 0o644)
+	}, held.Release)
+
+	_, err = Deactivate(deactivationDeps(home, func([]string) CodexRunResult { return CodexRunResult{} }))
+	if err == nil || !strings.Contains(err.Error(), "names a different config file") {
+		t.Fatalf("the deactivation did not refuse the hard-linked manifest: %v", err)
+	}
+	if got := activationRead(t, path); got != deactivationConfig {
+		t.Fatalf("the refused deactivation wrote: %q", got)
+	}
+	if got := activationRead(t, linked); got != deactivationConfig {
+		t.Fatalf("the refused deactivation wrote through the hard link: %q", got)
+	}
+}
