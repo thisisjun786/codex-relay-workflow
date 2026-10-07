@@ -133,7 +133,8 @@ func TestWorkflow_downloaded_tooling_is_pinned(t *testing.T) {
 }
 
 // Each check runs once: the contract and plugin checks in validate, never again in a Go leg,
-// and nothing runs the Python implementation's suites, which left in todo 44.
+// and nothing runs the Python implementation's suites, which left in todo 44. The screen-drift
+// check (CRW-831) runs once too, in the one job whose subject is the screens.
 func TestWorkflow_each_check_runs_once(t *testing.T) {
 	jobs, _ := workflowJobs(t)
 	for _, check := range []string{"ci validate", "ci plugin", "ci contracts"} {
@@ -147,6 +148,14 @@ func TestWorkflow_each_check_runs_once(t *testing.T) {
 			}
 		}
 	}
+	if !regexp.MustCompile(`(?m)^        run: .*crw-dev ci gui-drift --built .*$`).MatchString(jobs["gui"]) {
+		t.Error("gui does not run crw-dev ci gui-drift")
+	}
+	for name, body := range jobs {
+		if name != "gui" && strings.Contains(body, "ci gui-drift") {
+			t.Errorf("%s runs crw-dev ci gui-drift again", name)
+		}
+	}
 	for name, body := range jobs {
 		for _, word := range []string{"setup-uv", "uv sync", "uv run", "pytest", "unittest", "ci scope", "ci gate"} {
 			if strings.Contains(body, word) {
@@ -154,6 +163,86 @@ func TestWorkflow_each_check_runs_once(t *testing.T) {
 			}
 		}
 	}
+}
+
+// The gui job decides whether to verify the screens from the changed files, before it installs
+// Node, and every step that needs Node or the Go toolchain carries that answer. The build goes to
+// a temporary tree, never to the committed internal/gui/assets, so the drift check compares the
+// commit against a real rebuild rather than against itself (CRW-831).
+func TestWorkflow_the_gui_job_gates_the_screen_verification(t *testing.T) {
+	jobs, _ := workflowJobs(t)
+	steps := workflowSteps(t, jobs["gui"])
+	guard := "steps.paths.outputs.changed == 'true'"
+	gate := -1
+	for i, step := range steps {
+		if step["run"] == "bash scripts/ci/gui_paths.sh" {
+			gate = i
+			if step["id"] != "paths" {
+				t.Errorf("the path gate has id %q, want paths", step["id"])
+			}
+			if !strings.Contains(step["if"], "steps.mirror.outputs.mirrored != 'true'") {
+				t.Errorf("the path gate runs if %q, which does not carry the mirror guard", step["if"])
+			}
+		}
+	}
+	if gate < 0 {
+		t.Fatal("the gui job does not run bash scripts/ci/gui_paths.sh")
+	}
+	// Nothing before the gate may install Node or Go: the point of the gate is that an unrelated
+	// change never pays for a runner's toolchain setup.
+	for i, step := range steps[:gate] {
+		if strings.Contains(step["uses"], "setup-node") || strings.Contains(step["uses"], "setup-go") {
+			t.Errorf("step %d (%q) installs a toolchain before the path gate", i, step["name"])
+		}
+	}
+	built, drift := "", ""
+	for i, step := range steps[gate+1:] {
+		if !strings.Contains(step["if"], guard) {
+			t.Errorf("step %d (%q) after the gate runs if %q, which does not carry %q", gate+1+i, step["name"], step["if"], guard)
+		}
+		if strings.Contains(step["run"], "npm run build") {
+			built = step["run"]
+			if strings.Contains(step["run"], "internal/gui/assets") {
+				t.Errorf("the build writes the committed tree: %q", step["run"])
+			}
+			if !strings.Contains(step["run"], "RUNNER_TEMP") {
+				t.Errorf("the build does not write a temporary tree: %q", step["run"])
+			}
+		}
+		if strings.Contains(step["run"], "ci gui-drift") {
+			drift = step["run"]
+		}
+	}
+	if built == "" {
+		t.Error("the gui job never builds the screens")
+	}
+	// The drift check must read the very directory the build wrote: a typo in either the --outDir
+	// or the --built value would otherwise compare something else and still pass this test.
+	builtDir := workflowFlagValue(t, built, "--outDir")
+	driftDir := workflowFlagValue(t, drift, "--built")
+	if builtDir == "" || builtDir != driftDir {
+		t.Errorf("the build writes %q but the drift check reads %q", builtDir, driftDir)
+	}
+}
+
+// workflowFlagValue reads the value a shell command passes to a flag, quoted or bare, up to the
+// next blank. It is how a test holds two steps to the same directory without matching prose.
+func workflowFlagValue(t *testing.T, command, flag string) string {
+	t.Helper()
+	for _, field := range strings.Fields(command) {
+		if rest, ok := strings.CutPrefix(field, flag+"="); ok {
+			return strings.Trim(rest, `"'`)
+		}
+	}
+	for i, field := range strings.Fields(command) {
+		if field != flag {
+			continue
+		}
+		if i+1 < len(strings.Fields(command)) {
+			return strings.Trim(strings.Fields(command)[i+1], `"'`)
+		}
+	}
+	return ""
 }
 
 var (
@@ -164,7 +253,19 @@ var (
 	// validate.go): a step cannot run a skill's script without naming where it lives, in a
 	// working-directory or a cd as well as in the command.
 	skillStep = regexp.MustCompile(`(?:^|[^A-Za-z0-9_-])(?:` + alternation(skillAssetRoots) + `)/[^/\s]`)
+	// skillRootValue matches an assignment whose value is exactly a skills root, quoted or not:
+	// the root followed by the end of the line, a quote, or a blank. The roots alone are no skill
+	// path (a listing names them), but a job that carries one as a value names where the skill
+	// scripts live, so it is the other shape this detector has to see (CRW-353).
+	skillRootValue = regexp.MustCompile(`^\s*[A-Za-z_][A-Za-z0-9_-]*:\s*["']?(?:` + alternation(skillAssetRoots) + `)/?["']?(?:\s|$)`)
 )
+
+// skillScriptsNodeJob is the one job whose subject is the staged skills' Node tests (the
+// 2026-10-06 decision, CRW-353). A skill-path line is admitted only inside it.
+const skillScriptsNodeJob = "skill-scripts-node"
+
+// jobHeaderLine is a job header: two spaces, the name, a colon. workflowJobs reads the same shape.
+var jobHeaderLine = regexp.MustCompile(`^  ([a-z][a-z0-9-]*):$`)
 
 // alternation is words as a regular expression alternative, each taken literally.
 func alternation(words []string) string {
@@ -178,21 +279,45 @@ func alternation(words []string) string {
 // pythonInWorkflow is the lines of a workflow, numbered, that install or run Python or name a
 // path below a skills directory. A line that starts with # is a comment and is skipped; a trailing
 // # is read as part of the line, because a # inside quotes hides nothing from the shell.
+//
+// The staged skills' Node tests run in one named job, and a skill-path line is admitted only
+// inside it: the job names its root once and runs the tests it finds there, so neither the root
+// value nor a path below it is a skill script running anywhere else. The Python rule is unchanged
+// in every job, that one included. A job header is the shape workflowJobs reads, so a job cannot
+// be added in a form this detector misses.
 func pythonInWorkflow(text string) []string {
 	var found []string
+	inSkillScriptsNode := false
 	for number, line := range lines(text) {
+		if name, ok := workflowJobHeader(line); ok {
+			inSkillScriptsNode = name == skillScriptsNodeJob
+			continue
+		}
 		code := strings.TrimSpace(line)
-		if !strings.HasPrefix(code, "#") && (pythonStep.MatchString(code) || skillStep.MatchString(code)) {
+		skillPath := skillStep.MatchString(code) || skillRootValue.MatchString(code)
+		if !strings.HasPrefix(code, "#") && (pythonStep.MatchString(code) || (skillPath && !inSkillScriptsNode)) {
 			found = append(found, fmt.Sprintf("%d: %s", number+1, code))
 		}
 	}
 	return found
 }
 
-// CI installs no Python and runs no skill script (CRW-483): the checks are Go only, so no workflow
-// sets up an interpreter, calls python or pip, or names a path below a skills directory, whose
-// helper scripts are original assets an agent runs and no CI step does. Whether CI should test
-// skill scripts is a decision of its own; it starts by changing this test.
+// workflowJobHeader is a job's name when line is a job header: two spaces, the name, a colon.
+func workflowJobHeader(line string) (string, bool) {
+	m := jobHeaderLine.FindStringSubmatch(line)
+	if m == nil {
+		return "", false
+	}
+	return m[1], true
+}
+
+// CI installs no Python (CRW-483), and the only skill scripts it runs are the staged skills' Node
+// tests in the one skill-scripts-node job (the 2026-10-06 decision, CRW-353): the checks are Go
+// only, so no workflow sets up an interpreter or calls python or pip, and a helper script in a
+// skill's scripts/ or examples/ stays an original asset an agent runs. The job names its root once
+// and runs the tests it finds below it, so pythonInWorkflow admits a skill-path line only inside
+// that job — a skill path or a skills-root value in any other job is still refused, which is what
+// stops a job from reaching a skill script by moving the path into a variable.
 func TestWorkflow_installs_no_python(t *testing.T) {
 	files, err := filepath.Glob(filepath.Join(repoRoot(), ".github", "workflows", "*.y*ml"))
 	if err != nil || len(files) < 2 {
@@ -240,7 +365,13 @@ func TestWorkflow_python_detector(t *testing.T) {
 		{"      # python is installed by nobody", false},
 		{"          set -euo pipefail", false},
 		{"      - run: echo pipeline cpython", false},
-		{"      - run: ls plugins/crw/skills port/cxc/skills/ plugins/crw/skillset/x", false}, // the roots themselves are no skill path
+		{"      - run: ls plugins/crw/skills port/cxc/skills/ plugins/crw/skillset/x", false},   // the roots themselves are no skill path
+		{"      SKILLS_ROOT: port/cxc/skills", true},                                            // a value that is exactly a skills root, outside the one job allowed to name it
+		{"jobs:\n  skill-scripts-node:\n    steps:\n      SKILLS_ROOT: port/cxc/skills", false}, // inside that job it is the job's own root
+		{"jobs:\n  other:\n    steps:\n      SKILLS_ROOT: port/cxc/skills", true},               // the same value in another named job
+		{"      SKILLS_ROOT: 'port/cxc/skills'", true},                                          // the quoted form is the same value
+		{"      SKILLS_ROOT: port/cxc/skills # the staged skills", true},                        // and so is the form a trailing blank ends
+		{"      - run: node --test port/cxc/skills/x/tests/a.test.mjs", true},                   // a skill path in any other job
 		{"      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0", false},
 	} {
 		if got := pythonInWorkflow(row.line + "\n"); (len(got) > 0) != row.found {

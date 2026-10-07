@@ -31,6 +31,9 @@ var offlineCommands = []string{
 	"packet-check", "merge-evidence", "intent-declare", "intent-attempt", "intent-bind",
 	"intent-register", "intent-claim", "intent-disposition", "intent-resolve", "intent-show",
 	"dag-plan-put", "dag-plan-show", "dag-plan-log", "merge-turn-progress", "merge-turn-pass",
+	// CRW-768: the merge train's five commands are offline like the merge-turn ones: they read the
+	// forge and git themselves and need no host.
+	"merge-train-open", "merge-train-verify", "merge-train-land", "merge-train-close", "merge-train-show",
 }
 var hostRequiredCommands = []string{
 	"daemon", "deliver", "reconcile", "recover", "service run", "service start", "service restart",

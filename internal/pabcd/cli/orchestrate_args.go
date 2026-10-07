@@ -12,6 +12,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/fsm"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
 // OrchestrateCliArgs is a structurally parsed command, before runtime/session gates.
@@ -91,17 +92,21 @@ func cliVerb(token string) fsm.OrchestrateVerb {
 }
 
 // Read exactly one complete JSON value, retaining number text for Coerce (1e999 is accepted
-// by JSON.parse but dropped by Coerce). As in the attest/fsm ports, a lone surrogate becomes
-// U+FFFD and nesting beyond 10000 containers is refused by encoding/json.
+// by JSON.parse but dropped by Coerce) and keeping a lone surrogate escape, which JSON.parse
+// preserves and pyjson.Loads reads back as the WTF-8 bytes lowerJS keeps. The syntax check stays
+// encoding/json's, so its error text is unchanged; the value reading is pyjson's, because
+// encoding/json would turn the surrogate into U+FFFD before Coerce ever sees it.
 func decodeCliAttest(s string) (*attest.Attestation, error) {
 	var raw json.RawMessage
 	if err := json.Unmarshal([]byte(s), &raw); err != nil {
 		return nil, err
 	}
-	dec := json.NewDecoder(strings.NewReader(string(raw)))
-	dec.UseNumber()
-	var v any
-	if err := dec.Decode(&v); err != nil {
+	v, err := pyjson.Loads(string(raw), pyjson.LoadOptions{
+		Surrogates: true,
+		Numbers:    pyjson.SpelledNumbers,
+		Map:        true,
+	})
+	if err != nil {
 		return nil, err
 	}
 	return attest.Coerce(v), nil

@@ -29,6 +29,12 @@ const DefaultOutRoot = "/scratch/crw/fuzz"
 const (
 	DefaultWorkers = 4
 	DefaultTimeout = 5 * time.Second
+	// DefaultStartupTimeout bounds how long a freshly started oracle worker may take to boot and
+	// answer its handshake, separately from the per-case DefaultTimeout. Starting a worker costs an
+	// interpreter boot and its top-level imports (measured 19 ms idle, 3 s under a 1% CPU quota),
+	// which is a property of the worker program rather than of a case, so a slow runner cannot turn
+	// it into a timeout case. It is paid once per worker start.
+	DefaultStartupTimeout = 60 * time.Second
 )
 
 // Config is one campaign.
@@ -40,9 +46,12 @@ type Config struct {
 	Workers int
 	Out     string
 	Timeout time.Duration
-	Env     []string
-	Now     time.Time
-	DevSHA  string
+	// StartupTimeout bounds one worker's start-up (see DefaultStartupTimeout). Zero takes the
+	// default; the per-case Timeout is not affected.
+	StartupTimeout time.Duration
+	Env            []string
+	Now            time.Time
+	DevSHA         string
 }
 
 // Summary is <out>/summary.json: what one campaign did.
@@ -182,7 +191,7 @@ func Campaign(cfg Config) (Summary, error) {
 	if env == nil {
 		env = os.Environ()
 	}
-	pool, err := NewPool(cfg.Target.Oracle, cfg.Workers, cfg.Timeout, env)
+	pool, err := NewPool(cfg.Target.Oracle, cfg.Workers, cfg.Timeout, cfg.StartupTimeout, env)
 	if err != nil {
 		return Summary{}, err
 	}
