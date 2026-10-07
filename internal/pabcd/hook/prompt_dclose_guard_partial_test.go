@@ -1111,3 +1111,40 @@ func TestPromptDcloseBusyStopBudgetStampFreshCloseKeepsTheBareText(t *testing.T)
 		t.Errorf("a fresh close's busy stamp\n got %q\nwant %q", answer, want)
 	}
 }
+
+// TestPromptDcloseRecoveryMovedSessionNamesTheInheritedMarker is the c6 case for the state-moved
+// refusal: the session moved between the leading read and the close's own locked read, so the close
+// writes nothing. A matching retry's first attempt has already published its marker, so that refusal
+// must name it and leave the goalplan unknown instead of denying that anything was written.
+func TestPromptDcloseRecoveryMovedSessionNamesTheInheritedMarker(t *testing.T) {
+	cwd := promptDcloseRepo(t)
+	slug := "chat-recovery-moved-session"
+	attest := promptDcloseRecoverable(t, cwd, "s1", slug, promptDcloseStr("wp-2"))
+	promptDcloseRecoveryCommittedShape(t, cwd, slug, nil)
+	// The stamp takes the session lock first; on the close's own acquisition the session has moved to
+	// another slug, which is the state-moved refusal.
+	moved := false
+	lock := func(cwd, sessionID string, fn func() error) error {
+		if !moved {
+			moved = true
+			promptSubmitStateFile(t, cwd, sessionID, func(s *state.State) { s.Slug = "chat-recovery-moved-elsewhere" })
+		}
+		return state.WithSessionLock(cwd, sessionID, fn)
+	}
+	answer, panicked := promptDcloseRunLocked(t, cwd, "s1", "t1", attest, lock)
+	if panicked != nil {
+		t.Fatalf("the close panicked: %v", panicked)
+	}
+	if !strings.Contains(answer, "changed while this close was being applied") {
+		t.Fatalf("the retry did not refuse at the state-moved check: %q", answer)
+	}
+	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
+		t.Errorf("the state-moved refusal did not name the inherited marker: %q", answer)
+	}
+	if !strings.Contains(answer, promptDcloseGoalplanUnknownWant) {
+		t.Errorf("the state-moved refusal did not leave the goalplan unknown: %q", answer)
+	}
+	if strings.Contains(answer, "Nothing was written.") {
+		t.Errorf("the state-moved refusal denied the marker this close published: %q", answer)
+	}
+}

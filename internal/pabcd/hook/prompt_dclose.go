@@ -262,7 +262,12 @@ func promptOrchestrateBoundDclose(p PromptSubmitPayload, current state.State, tu
 		if held.Phase != current.Phase || held.Slug != current.Slug ||
 			!promptDcloseSameOptionalText(held.CheckEpoch, current.CheckEpoch) ||
 			state.MatchesDcloseRecovery(held, closePhaseID) != recovering {
-			outcome.refusal = promptDcloseStateMovedRefusal()
+			// A matching retry's first attempt already published its marker before the session moved,
+			// so the refusal names it and leaves the goalplan unknown rather than denying that
+			// anything was written (CRW-930, c6: this arm was the last one that did not). A fresh
+			// close published nothing of this close and keeps the bare text.
+			outcome.refusal = promptDclosePartialRefusal(promptDcloseStateMovedRefusal(),
+				promptDcloseRecoveryPublishedAt(recovering), nil)
 			return nil
 		}
 		// An outstanding marker this request does not match belongs to a close that is still
@@ -291,7 +296,10 @@ func promptOrchestrateBoundDclose(p PromptSubmitPayload, current state.State, tu
 		// refusal here means the session moved between the two reads.
 		fresh := promptDcloseTransition(held, command, recovering)
 		if !fresh.OK || fresh.State == nil {
-			outcome.refusal = promptDcloseStateMovedRefusal()
+			// The same accounting as the moved-state check above: a retry inherited its first
+			// attempt's marker (CRW-930, c6).
+			outcome.refusal = promptDclosePartialRefusal(promptDcloseStateMovedRefusal(),
+				promptDcloseRecoveryPublishedAt(recovering), nil)
 			return nil
 		}
 		// The rewrite guard runs where a write is about to happen, so a refusal the oracle answers
