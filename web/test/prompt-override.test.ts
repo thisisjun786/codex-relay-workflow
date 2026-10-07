@@ -28,10 +28,14 @@ test("a role stored as inherit can be given an empty-string override", () => {
 });
 
 test("only the explicit switch to inherit sends null", () => {
+  // An override draft with text is a value, not null...
+  const withText = editText("text");
+  assert.deepEqual(saveBody(withText), { promptOverride: "text" });
+  // ...and the explicit inherit switch is the only transition that produces null. It replaces the
+  // draft wholesale, so the text the draft held before the switch does not reach the wire.
   assert.deepEqual(saveBody(inheritState()), { promptOverride: null });
-  // A draft that had text still sends null once the user switches to inherit explicitly.
-  assert.deepEqual(saveBody(inheritState()), { promptOverride: null });
-  assert.notDeepEqual(saveBody(editText("text")), { promptOverride: null });
+  assert.notDeepEqual(saveBody(withText), { promptOverride: null });
+  assert.notDeepEqual(saveBody(editText("")), { promptOverride: null });
 });
 
 test("whitespace-only text is sent verbatim, with no trim", () => {
