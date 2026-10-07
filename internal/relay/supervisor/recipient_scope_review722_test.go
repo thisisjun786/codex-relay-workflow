@@ -2,6 +2,7 @@ package supervisor
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 
@@ -215,6 +216,116 @@ func (w *review722World) stageNotice(notification string) string {
 		w.t.Fatalf("stage notice returned no messageId: %v", answer)
 	}
 	return id
+}
+
+// stageNoticeForProject stages a fault notice whose fault is anchored to no relationship this store
+// holds, so the notice is addressed to the project alone (the resolveNoticeProject path). It returns
+// the message id, or the refusal when nothing was staged.
+func (w *review722World) stageNoticeForProject(notification string) (string, error) {
+	w.t.Helper()
+	ledger := &faults.Ledger{Store: w.s, Clock: &delivery.FakeClock{T: 1700000000}}
+	channel := NoticeChannel{Channel: &Channel{Store: w.s, Linkage: StoreLinkage{w.s}}, Ledger: ledger}
+	notice, err := ledger.NoticeFacts(w.ctx, notification)
+	if err != nil || notice == nil {
+		w.t.Fatalf("notice facts %q: %v, %v", notification, notice, err)
+	}
+	notice["anchor"] = "project:" + w.project
+	answer, err := channel.StageNotice(w.ctx, notice)
+	if err != nil {
+		return "", err
+	}
+	id, _ := answer["messageId"].(string)
+	return id, nil
+}
+
+// TestSupervisorReview722StoreFallbackNoticeByProjectIsRecorded: a notice addressed to a project
+// alone takes the same store-seat fallback as one addressed to a relationship. When no initiative
+// supervises the project and the store seat answers, the resolution and the stored packet say so
+// rather than refusing with nowhere to send.
+func TestSupervisorReview722StoreFallbackNoticeByProjectIsRecorded(t *testing.T) {
+	t.Parallel()
+	w := newReview722World(t)
+	w.seat()
+	w.notice("abc123", "n-722")
+	id, err := w.stageNoticeForProject("n-722")
+	if err != nil {
+		t.Fatalf("a project-only notice was refused although a store supervisor answers: %v", err)
+	}
+	recipient := w.recipientOf(id)
+	if recipient["scopeKind"] != "store" {
+		t.Fatalf("a project-only store-scope notice recipient is not recorded as coming from the store: recipient %v", recipient)
+	}
+	if recipient["taskId"] != w.seatTask {
+		t.Fatalf("notice recipient task %v, want the store seat %q", recipient["taskId"], w.seatTask)
+	}
+}
+
+// seatForInitiative binds the store seat to the same task that supervises the initiative, so a
+// hierarchy change can move the recipient's seat without moving the recipient's task.
+func (w *review722World) seatForInitiative() {
+	w.t.Helper()
+	if err := storeseed.InsertScopeBinding(w.ctx, w.s, store.ScopeBindingsRow{BindingID: "bnd-722-store",
+		Role: "supervisor", ScopeKind: "store", ScopeKey: "store", TaskID: w.supervisor, HostID: "host",
+		Status: "active", Revision: 1, CreatedAt: "t", UpdatedAt: "t"}); err != nil {
+		w.t.Fatal(err)
+	}
+}
+
+// TestSupervisorReview722NoticeRefusesScopeKindDrift: the recipient's scope kind is compared with
+// the rest of the resolution under the write lock. The same task supervises the initiative and holds
+// the store seat, so when the initiative level goes between the pre-lock read and the lock the
+// recipient task does not move at all - only its seat does. The packet was composed from the
+// pre-lock read, and committing it would freeze the stale kind into what supervisor-show returns.
+func TestSupervisorReview722NoticeRefusesScopeKindDrift(t *testing.T) {
+	t.Parallel()
+	w := newReview722World(t)
+	w.superviseInitiative()
+	w.seatForInitiative()
+	w.notice("abc123", "n-722")
+	ledger := &faults.Ledger{Store: w.s, Clock: &delivery.FakeClock{T: 1700000000}}
+	notice, err := ledger.NoticeFacts(w.ctx, "n-722")
+	if err != nil || notice == nil {
+		t.Fatalf("notice facts: %v, %v", notice, err)
+	}
+	// The linkage answers the initiative level on the first read and only the store seat on the
+	// second, which is the interleaving a real hierarchy change can produce.
+	base := StoreLinkage{w.s}
+	call := 0
+	linkage := &scriptedLinkage{inner: base, script: func(n int, reading map[string]any) (map[string]any, error) {
+		call = n
+		if n == 1 {
+			return reading, nil
+		}
+		levels := make([]any, 0)
+		for _, raw := range reading["levels"].([]any) {
+			if level, ok := raw.(map[string]any); ok && level["scopeKind"] == "initiative" {
+				continue
+			}
+			levels = append(levels, raw)
+		}
+		folded := map[string]any{}
+		for key, value := range reading {
+			folded[key] = value
+		}
+		folded["levels"] = levels
+		return folded, nil
+	}}
+	channel := NoticeChannel{Channel: &Channel{Store: w.s, Linkage: linkage}, Ledger: ledger}
+	_, err = channel.StageNotice(w.ctx, notice)
+	if call < 2 {
+		t.Fatalf("the notice was not read under the write lock (reads: %d)", call)
+	}
+	var noticeErr *faults.NoticeError
+	if !errors.As(err, &noticeErr) || noticeErr.Kind != "relation_owner_drift" {
+		t.Fatalf("a scope-only hierarchy change was not refused: %v", err)
+	}
+	var staged int
+	if err = w.s.DB.QueryRowContext(w.ctx, "SELECT COUNT(*) FROM supervisor_messages").Scan(&staged); err != nil {
+		t.Fatal(err)
+	}
+	if staged != 0 {
+		t.Fatalf("a message was staged from a resolution the lock had already contradicted: %d", staged)
+	}
 }
 
 // TestSupervisorReview722StoreFallbackNoticeIsRecorded: a fault notification is stored as a
