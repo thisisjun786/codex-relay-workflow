@@ -25,13 +25,7 @@ func must(t *testing.T, err error) {
 func put(t *testing.T, path, data string, mode os.FileMode) {
 	t.Helper()
 	must(t, os.MkdirAll(filepath.Dir(path), 0o755))
-	// The mode may make this a program, so the descriptor is open only under syscall.ForkLock:
-	// a fork in that window would inherit it and leave the path unexecutable (ETXTBSY,
-	// golang/go#22315).
-	syscall.ForkLock.RLock()
-	writeErr := os.WriteFile(path, []byte(data), mode)
-	syscall.ForkLock.RUnlock()
-	must(t, writeErr)
+	must(t, os.WriteFile(path, []byte(data), mode))
 	must(t, os.Chmod(path, mode))
 }
 
