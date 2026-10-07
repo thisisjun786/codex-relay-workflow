@@ -718,3 +718,33 @@ func TestTheLaneGateKeepsAHeadThatTheActiveAcceptanceReachesByARefresh(t *testin
 		t.Fatalf("a head the active acceptance reaches by its own refresh was refused: %s", refusal.Detail)
 	}
 }
+
+// CRW-906 evaluation 7f7b39ca D1: a member that left the lane with no acceptance of its own (revoked) still carries
+// its head in the bundle's tree, so another node's open correction over that head refuses the landing. The
+// carve-out for a revoked acceptance does not cover another node's correction.
+func TestTrainLandRefusesAnExcludedMemberWhoseHeadAnotherNodeIsRepairing(t *testing.T) {
+	w := newTr(t)
+	train := w.verifiedTrain()
+	rows, err := w.s.All(w.ctx, "SELECT turn_id FROM merge_train_members WHERE train_id = ? AND seq = 2", train)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("member 2: %v", err)
+	}
+	memberTurn := rows[0].Get("turn_id").(string)
+	if _, err := w.m.Withdraw(w.ctx, memberTurn, "task-m2"); err != nil {
+		t.Fatalf("withdrawing the member's turn: %v", err)
+	}
+	w.exec("UPDATE dag_acceptances SET state = 'revoked' WHERE relationship_id = 'rel-task-m2'")
+	w.ucOtherCorrection("rel-other", "head-m2")
+	w.tip.set(trRepo, trBase, "merge-1")
+	w.forge.commits["merge-1"] = TrainCommit{SHA: "merge-1", Parents: []string{"base-0", "head-bundle"}, Tree: "tree-bundle"}
+	_, err = w.m.TrainLand(w.ctx, train, trLeader, "merge-1", "", w.tip, w.forge)
+	if err == nil || trReason(err) != "disposition_conflict" {
+		t.Fatalf("a land whose excluded member's head another node is repairing: %v", err)
+	}
+	if !strings.Contains(err.Error(), "rel-other") {
+		t.Fatalf("the refusal does not name the repairing relationship: %v", err)
+	}
+	if n := w.count("SELECT count(*) FROM merge_train_events WHERE kind = 'landed'"); n != 0 {
+		t.Fatalf("a refused land wrote %d landed event(s)", n)
+	}
+}

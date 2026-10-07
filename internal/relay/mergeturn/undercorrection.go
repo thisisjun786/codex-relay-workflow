@@ -202,18 +202,18 @@ func ucReplacedHead(ctx context.Context, q store.Querier, repository, head strin
 	// rows outlive the acceptance they were recorded for, and a turn held for a refreshed head would
 	// otherwise resolve to nothing once dag-accept --supersedes replaced the acceptance.
 	query := "SELECT a.relationship_id FROM dag_acceptances a" +
-		" WHERE a.state <> 'active' AND " + identity + " = lower(?) AND lower(trim(a.head_sha)) = lower(trim(?))"
+		" WHERE a.state = 'superseded' AND " + identity + " = lower(?) AND lower(trim(a.head_sha)) = lower(trim(?))"
 	args := []any{repository, head}
 	if refreshed, err := ucZoneTable(ctx, q, "dag_base_refreshes"); err != nil {
 		return "", err
 	} else if refreshed {
 		query = "SELECT a.relationship_id FROM dag_acceptances a" +
-			" WHERE a.state <> 'active' AND " + identity + " = lower(?) AND lower(trim(a.head_sha)) = lower(trim(?))" +
+			" WHERE a.state = 'superseded' AND " + identity + " = lower(?) AND lower(trim(a.head_sha)) = lower(trim(?))" +
 			" UNION ALL SELECT f.relationship_id FROM dag_base_refreshes f JOIN dag_acceptances a ON a.acceptance_id = f.acceptance_id" +
-			" WHERE a.state <> 'active' AND " + identity + " = lower(?) AND lower(trim(f.head_sha)) = lower(trim(?))"
+			" WHERE a.state = 'superseded' AND " + identity + " = lower(?) AND lower(trim(f.head_sha)) = lower(trim(?))"
 		args = []any{repository, head, repository, head}
 	}
-	// A relationship that still holds the head actively, as its acceptance's head or through a base refresh of
+	// A head is replaced only when a correction was accepted over it (superseded): a revoked acceptance is a parent's withdrawal, not a replacement. A relationship that still holds the head actively, as its acceptance's head or through a base refresh of
 	// it, is not replaced by it: the head is that relationship's own current result.
 	held := "lower(trim(a2.head_sha)) = lower(trim(?))"
 	args = append(args, head)
@@ -317,8 +317,9 @@ func trainExcludedMemberRefusal(ctx context.Context, q store.Querier, repository
 		return trainUnreadable("the acceptance of relationship %s was not read: %v", pyvalue.StrRepr(relationship), err)
 	}
 	if !found {
-		// the carve-out: a revoked acceptance does not refuse the rest of the bundle
-		return nil
+		// the carve-out: a revoked acceptance does not refuse the rest of the bundle. Another node's correction over
+		// the head the bundle still carries for this member is a different question, and it refuses the landing.
+		return trainMemberCorrectionRefusal(ctx, q, repository, pr, relationship, memberHead)
 	}
 	stand, err := acceptance.StandOf(ctx, q, active.AcceptanceID, relationship, active.Generation, active.EventID, active.RevisionHash, active.HeadSHA)
 	if err != nil {
