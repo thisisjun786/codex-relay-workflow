@@ -253,3 +253,106 @@ func TestReRegisterPolicyReadsThePolicyFileUnderTheLock(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// A record the launcher reads whose unrelated member holds a JSON constant. The record is read with
+// the launcher's own reading, which accepts NaN and the infinities as json.loads does, so such a
+// record is one the bridge starts from; replacing its executionPolicy must not fail over a value
+// this path never touches.
+func TestReRegisterPolicyKeepsARecordHoldingAJSONConstant(t *testing.T) {
+	realHome := realHomeListings(t)
+	defer reportRealHomeDifference(t, realHome)
+	h := newHost(t)
+	policy, digest := h.policy(t)
+	executable := filepath.Join(h.dest, "current", "bin", "codex-thread-bridge")
+	recordPath := filepath.Join(h.codex, install.BridgeRecordName)
+
+	write(t, policy, policyTextChanged)
+	os.Chmod(policy, 0o644)
+	old := policyValue(policy, digest)
+	before := "{\n" +
+		"  " + strconv.Quote("recordVersion") + ": 2,\n" +
+		"  " + strconv.Quote("owner") + ": " + strconv.Quote("plugin") + ",\n" +
+		"  " + strconv.Quote("serverName") + ": " + strconv.Quote(install.ServerName) + ",\n" +
+		"  " + strconv.Quote("bridgeExecutable") + ": " + strconv.Quote(executable) + ",\n" +
+		"  " + strconv.Quote("args") + ": [],\n" +
+		"  " + strconv.Quote("installedBy") + ": NaN,\n" +
+		"  " + strconv.Quote("executionPolicy") + ": " + old + "\n" +
+		"}\n"
+	write(t, recordPath, before)
+
+	result, code, stderr := h.updatePolicy(t, "--execution-policy", policy)
+	if code != install.OK || at(result, "outcome") != install.RecordUpdated {
+		t.Fatalf("a record whose unrelated member is a JSON constant: exit %d stderr=%q\n%s", code, stderr, golden.Canon(result))
+	}
+	after := readFile(t, recordPath)
+	// The record is the input with only the executionPolicy member's value replaced: the bytes
+	// before the old value and the bytes after it are the bytes they were, the constant included.
+	head, tail := before[:strings.Index(before, old)], before[strings.Index(before, old)+len(old):]
+	if !strings.HasPrefix(after, head) || !strings.HasSuffix(after, tail) || !strings.Contains(after, "NaN") {
+		t.Fatalf("the record is not the input with only executionPolicy replaced:\n%s", after)
+	}
+	want := record.Set(golden.Obj(mustDecode(t, before)), "executionPolicy",
+		record.Object{{Key: "digest", Value: digestOf(policyTextChanged)}, {Key: "path", Value: policy}})
+	if got, wantJSON := golden.Canon(golden.Obj(mustDecode(t, after))), golden.Canon(want); got != wantJSON {
+		t.Fatalf("the record decodes to\n%s\nwant\n%s", got, wantJSON)
+	}
+	if backup := text(at(result, "backup")); backup == "" || readFile(t, backup) != before {
+		t.Fatalf("the backup is not the record as it was: %q", backup)
+	} else if err := os.Remove(backup); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A policy another run is repairing while this one waits for the lock. The policy file is read under
+// the lock, so a file that is malformed when the run starts and valid when it finally holds the lock
+// is registered; refusing from a reading taken before the wait would decide on a file the wait
+// invalidated, which is the same stale-read defect as answering record_unchanged from it.
+func TestReRegisterPolicyWaitsForAPolicyRepair(t *testing.T) {
+	// sequential: it lengthens record.LockTimeout for the whole process.
+	realHome := realHomeListings(t)
+	defer reportRealHomeDifference(t, realHome)
+	h := newHost(t)
+	policy, _ := h.policy(t)
+	h.registerPolicyForTest(t, policy)
+	recordPath := filepath.Join(h.codex, install.BridgeRecordName)
+	before := readFile(t, recordPath)
+
+	// The policy file is malformed, and another run holds the ownership lock while it replaces the
+	// file with a valid one.
+	write(t, policy, `{"allowed": "everything"}`)
+	os.Chmod(policy, 0o644)
+	saved := record.LockTimeout
+	record.LockTimeout = 10 * time.Second
+	defer func() { record.LockTimeout = saved }()
+	held, err := record.Lock(context.Background(), filepath.Join(h.codex, install.OwnershipLockName), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	type answer struct {
+		result record.Object
+		code   int
+	}
+	done := make(chan answer, 1)
+	go func() {
+		result, code := install.UpdateRegisteredPolicy(context.Background(), h.options(), install.PolicyUpdateOptions{ExecutionPolicy: policy, PolicyGiven: true})
+		done <- answer{result, code}
+	}()
+	// Give the run the time to reach the lock it cannot take, then repair the file and let it through.
+	time.Sleep(150 * time.Millisecond)
+	write(t, policy, policyTextChanged)
+	os.Chmod(policy, 0o644)
+	held.Release()
+
+	got := <-done
+	if got.code != install.OK || at(got.result, "outcome") != install.RecordUpdated {
+		t.Fatalf("a policy repaired while the run waited for the lock: exit %d\n%s", got.code, golden.Canon(got.result))
+	}
+	if at(got.result, "executionPolicy", "digest") != digestOf(policyTextChanged) {
+		t.Fatalf("the answer does not name the repaired policy:\n%s", golden.Canon(got.result))
+	}
+	if backup := text(at(got.result, "backup")); backup == "" || readFile(t, backup) != before {
+		t.Fatalf("the backup is not the record this run replaced: %q", backup)
+	} else if err := os.Remove(backup); err != nil {
+		t.Fatal(err)
+	}
+}

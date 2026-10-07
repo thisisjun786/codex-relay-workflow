@@ -1,7 +1,6 @@
 package install
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -677,11 +676,6 @@ func UpdateRegisteredPolicy(ctx context.Context, o Options, r PolicyUpdateOption
 		return append(base, field("outcome", Conflict), field("detail", "the re-registration path names the policy to register with --execution-policy; the record's other fields are kept, so no other option is needed"),
 			field("applied", false), field("wrote", false), field("note", "nothing was written")), Usage
 	}
-	reading, why := executionPolicyReading(r.ExecutionPolicy)
-	if reading == nil {
-		return refused(append(base, field("outcome", PolicyUnreadable), field("detail", why)),
-			"nothing was written: a record naming a policy the bridge would refuse is a bridge that never starts")
-	}
 	lock, err := record.Lock(ctx, filepath.Join(o.CodexHome, OwnershipLockName), 0)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -696,16 +690,17 @@ func UpdateRegisteredPolicy(ctx context.Context, o Options, r PolicyUpdateOption
 		// neither, so an interrupted command leaves the record as it was.
 		return refused(append(base, field("outcome", Interrupted), field("detail", interrupted(err))), "nothing was written")
 	}
-	// The policy file is read again under the lock, and the digest this decision is made from is the
-	// one the launcher would read now. A policy that moved while this run waited for the lock is
-	// therefore what the record is given, instead of a record_unchanged answer over a digest the
-	// launcher already refuses.
-	locked, lockedWhy := executionPolicyReading(r.ExecutionPolicy)
-	if locked == nil {
-		return refused(append(base, field("outcome", PolicyUnreadable), field("detail", lockedWhy)),
-			"nothing was written: the policy the re-registration names is no longer one the bridge would start under")
+	// The policy file is read under the lock, and that one reading drives every decision below. A
+	// policy that moved while this run waited for the lock is therefore what the record is given,
+	// instead of a record_unchanged answer over a digest the launcher already refuses; a policy
+	// another run is repairing is registered rather than refused from a reading the wait invalidated;
+	// and a policy the bridge would still refuse is refused here, where the file the launcher will
+	// open is the file this run read.
+	reading, why := executionPolicyReading(r.ExecutionPolicy)
+	if reading == nil {
+		return refused(append(base, field("outcome", PolicyUnreadable), field("detail", why)),
+			"nothing was written: a record naming a policy the bridge would refuse is a bridge that never starts")
 	}
-	reading = locked
 	// The look is taken before the record is read and compared again under the lock: a record that
 	// changed between the two, or after them, is a document this decision never saw.
 	before := lookAt(recordPath)
@@ -869,43 +864,140 @@ func reRegistered(found Object, policy Object) Object {
 	return out
 }
 
-// memberValueSpan is the byte range of the last top-level member named key in a raw JSON document,
-// found by a token walk: first is the offset of the value's own first byte and last the offset just
-// past its last byte, so the member's key, the colon between them, any whitespace and every other
-// member stay outside the range. The last member is the one a dict keeps (the decoded Object is
-// built by assignment), so the value the walk names is the value the record holds.
+// memberValueSpan is the byte range of the value of the last top-level member named key in a raw JSON
+// document: first is the offset of the value's own first byte and last the offset just past its last
+// byte, so the member's key, the colon between them, any whitespace and every other member stay
+// outside the range. The last member named key is the one a dict keeps, which is the one the decoded
+// record holds.
+//
+// The walk reads the document's own bytes rather than a decoded value, and it accepts the grammar the
+// launcher's reader accepts - json.loads, NaN and the infinities included - so a member this
+// operation never replaces cannot make the document unreadable to it. A byte it cannot account for
+// ends the walk with found false, so an unreadable document is refused rather than guessed at.
 func memberValueSpan(raw []byte, key string) (first, last int, found bool) {
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	if token, err := decoder.Token(); err != nil || token != json.Delim('{') {
+	i := skipJSONSpace(raw, 0)
+	if i >= len(raw) || raw[i] != '{' {
 		return 0, 0, false
 	}
-	for decoder.More() {
-		token, err := decoder.Token()
-		if err != nil {
-			return 0, 0, false
+	i++
+	for {
+		i = skipJSONSpace(raw, i)
+		if i < len(raw) && raw[i] == '}' {
+			return first, last, found
 		}
-		name, ok := token.(string)
+		name, next, ok := scanJSONString(raw, i)
 		if !ok {
 			return 0, 0, false
 		}
-		var value json.RawMessage
-		if err := decoder.Decode(&value); err != nil {
+		i = skipJSONSpace(raw, next)
+		if i >= len(raw) || raw[i] != ':' {
 			return 0, 0, false
 		}
-		if name != key {
-			continue
-		}
-		// The decoder answers the value's bytes and where the value ended, so the value's own first
-		// byte is that many bytes back from there. A value the decoder respelled is not the
-		// document's, and the walk refuses rather than splice bytes it did not read.
-		end := int(decoder.InputOffset())
-		begin := end - len(value)
-		if begin < 0 || !bytes.Equal(raw[begin:end], value) {
+		i = skipJSONSpace(raw, i+1)
+		start := i
+		end, ok := skipJSONValue(raw, i)
+		if !ok {
 			return 0, 0, false
 		}
-		first, last, found = begin, end, true
+		if name == key {
+			first, last, found = start, end, true
+		}
+		i = skipJSONSpace(raw, end)
+		switch {
+		case i < len(raw) && raw[i] == ',':
+			i++
+		case i < len(raw) && raw[i] == '}':
+			return first, last, found
+		default:
+			return 0, 0, false
+		}
 	}
-	return first, last, found
+}
+
+// skipJSONSpace answers the offset of the first byte at or after i that is not JSON whitespace.
+func skipJSONSpace(raw []byte, i int) int {
+	for i < len(raw) {
+		switch raw[i] {
+		case ' ', '\t', '\n', '\r':
+			i++
+		default:
+			return i
+		}
+	}
+	return i
+}
+
+// scanJSONString answers the decoded text of the JSON string at i and the offset just past its
+// closing quote. A backslash escapes the byte behind it, so an escaped quote does not end the string.
+func scanJSONString(raw []byte, i int) (text string, next int, ok bool) {
+	if i >= len(raw) || raw[i] != '"' {
+		return "", 0, false
+	}
+	for j := i + 1; j < len(raw); j++ {
+		switch raw[j] {
+		case '\\':
+			j++
+		case '"':
+			if err := json.Unmarshal(raw[i:j+1], &text); err != nil {
+				return "", 0, false
+			}
+			return text, j + 1, true
+		}
+	}
+	return "", 0, false
+}
+
+// skipJSONValue answers the offset just past the JSON value at i. A string is scanned as one; a
+// container is walked to the bracket that closes it, its own strings skipped; anything else is a bare
+// token - a number, true, false, null, or one of json.loads' constants - and ends at the first
+// delimiter.
+func skipJSONValue(raw []byte, i int) (int, bool) {
+	if i >= len(raw) {
+		return 0, false
+	}
+	switch raw[i] {
+	case '"':
+		_, next, ok := scanJSONString(raw, i)
+		return next, ok
+	case '{', '[':
+		depth := 0
+		for ; i < len(raw); i++ {
+			switch raw[i] {
+			case '"':
+				_, next, ok := scanJSONString(raw, i)
+				if !ok {
+					return 0, false
+				}
+				i = next - 1
+			case '{', '[':
+				depth++
+			case '}', ']':
+				depth--
+				if depth == 0 {
+					return i + 1, true
+				}
+			}
+		}
+		return 0, false
+	}
+	start := i
+	for i < len(raw) && !endsJSONToken(raw[i]) {
+		i++
+	}
+	if i == start {
+		return 0, false
+	}
+	return i, true
+}
+
+// endsJSONToken is whether c ends a bare JSON token: JSON whitespace, or the punctuation between
+// members and elements.
+func endsJSONToken(c byte) bool {
+	switch c {
+	case ' ', '\t', '\n', '\r', ',', '}', ']':
+		return true
+	}
+	return false
 }
 
 // reRegisteredBytes is the record's own bytes with only its executionPolicy member's value replaced

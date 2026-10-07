@@ -951,18 +951,22 @@ that replaces that one field:
     crw install register-mcp --re-register-policy --execution-policy /path/to/execution-policy.json
 
 It takes the file from the same `--execution-policy` flag the create path spells, and reads and
-writes under the ownership lock beside the record. The policy file is read again inside that lock,
-so the digest the record is given is the one the launcher would read now: a policy edited while the
-command waited for the lock is what it registers, rather than a `record_unchanged` answer over a
-digest the launcher already refuses. The file is hashed once more immediately before the decision,
-so an edit between the two readings answers `record_policy_changed` and nothing is written.
+writes under the ownership lock beside the record. The policy file is read inside that lock, so the
+digest the record is given is the one the launcher would read now: a file edited while the command
+waited for the lock is what it registers, rather than a `record_unchanged` answer over a digest the
+launcher already refuses, and a file another run repaired during the wait is judged as it stands
+rather than as it stood when the command started. The file is hashed once more immediately before
+the decision, so an edit between the two readings answers `record_policy_changed` and nothing is
+written.
 
 `executionPolicy` alone is replaced, and it is replaced in the record's own bytes: the member's
 value is spliced in the installer's form and every other byte - the document's whitespace, its key
 order, a trailing newline it does or does not have - is the byte it was. A record this installer
 did not write, hand-edited or written by another tool, is therefore re-registered like any other.
-What is still refused is a record the launcher cannot read at all, which answers
-`record_malformed`. The record must be a regular file at that path: a symbolic link is refused as
+The document is read the way the launcher reads it, so a value `json.loads` accepts - `NaN` and the
+infinities, in a member this path never replaces - does not make the record unregisterable. What is
+still refused is a record the launcher cannot read at all, which answers `record_malformed`. The
+record must be a regular file at that path: a symbolic link is refused as
 `record_symlinked`, because the replacement renames a file over the path itself and would turn the
 link into a regular file.
 The new file goes through the bridge's own parser first, exactly as the create path checks it, so a
