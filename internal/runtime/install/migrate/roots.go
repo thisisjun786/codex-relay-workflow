@@ -498,8 +498,8 @@ var migrateOwnedDirIdentityLstat = func(dirfd int, name string, st *unix.Stat_t)
 
 // migrateOwnedDirIdentityFchmodat gives a name a mode without following a link at it. It is a variable
 // so a case can model a kernel whose fchmodat cannot express no-follow - Linux before fchmodat2 answers
-// EOPNOTSUPP - which the creation answers with the same chmod and no flag, after checking that no link
-// took the name; no other code replaces it.
+// EOPNOTSUPP, which the creation refuses rather than falling back to a chmod that follows a link; no
+// other code replaces it.
 var migrateOwnedDirIdentityFchmodat = func(dirfd int, name string, mode uint32, flags int) error {
 	return unix.Fchmodat(dirfd, name, mode, flags)
 }

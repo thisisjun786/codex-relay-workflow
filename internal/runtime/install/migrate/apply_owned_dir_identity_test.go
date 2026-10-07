@@ -338,6 +338,7 @@ func TestMigrateOwnedDirIdentityChmodWithoutNoFollowIsRefused(t *testing.T) {
 	if _, err := os.Lstat(apDst(ws, "")); !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("a refused creation must leave no directory: %v", err)
 	}
+	migrateOwnedDirIdentityWantNoTemp(t, ws)
 }
 
 // C1: a creation that reached its rename and then failed is this run's directory, so a retry with the
