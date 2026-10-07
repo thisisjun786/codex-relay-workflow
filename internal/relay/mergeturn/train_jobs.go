@@ -27,6 +27,16 @@ func TrainJobsFromWorkflow(workflow string) ([]string, error) {
 	}
 	out := make([]string, 0, len(names))
 	for _, name := range names {
+		// a job reports the name its own name: key declares, not its key, so a head that renames a
+		// job through that key must be caught by the comparison (CRW-897, answer 2).
+		body, found := trainJobBody(workflow, name)
+		if !found {
+			return nil, errors.New("the workflow holds no " + name + " job")
+		}
+		display, err := trainJobDisplayName(body, name)
+		if err != nil {
+			return nil, err
+		}
 		// a job with a strategy.matrix reports one leg per combination ("go-product (lint)"), so its
 		// legs are expanded here rather than the job id alone; a matrix this reader cannot compute
 		// legs from is an error, never a plain job id that would hide the added legs
@@ -36,11 +46,11 @@ func TrainJobsFromWorkflow(workflow string) ([]string, error) {
 			return nil, err
 		}
 		if !hasMatrix {
-			out = append(out, name)
+			out = append(out, display)
 			continue
 		}
 		for _, part := range parts {
-			out = append(out, name+" ("+part+")")
+			out = append(out, display+" ("+part+")")
 		}
 	}
 	return out, nil
@@ -186,6 +196,35 @@ func trainStripComment(line string) string {
 // rather than by searching the job text for a key name. A name inside a scalar (a run script or an
 // env value) is therefore never taken for a mapping key, and a part: elsewhere in the job is never
 // read as the matrix's list (CRW-897, answer 2; pre-merge evaluation d1, d2).
+// trainJobDisplayName answers the name a job reports to the forge: the value of the job's own
+// "name:" key when it declares one ("  gui:" with "    name: gui-renamed" reports gui-renamed), and
+// the job key otherwise. A run's jobs carry the display name, so the set comparison must use it
+// (CRW-897, answer 2).
+func trainJobDisplayName(body, job string) (string, error) {
+	for _, line := range strings.Split(body, "\n") {
+		bare := trainStripComment(line)
+		if strings.TrimSpace(bare) == "" {
+			continue
+		}
+		indent := len(bare) - len(strings.TrimLeft(bare, " "))
+		if indent == 0 {
+			break
+		}
+		if indent != 4 {
+			continue
+		}
+		key, value, ok := trainJobKeyValue(strings.TrimSpace(bare))
+		if !ok || key != "name" {
+			continue
+		}
+		if value == "" {
+			return "", errors.New("the workflow's " + job + " job carries its name on the name: line, which this reader cannot read")
+		}
+		return value, nil
+	}
+	return job, nil
+}
+
 func trainJobMatrixParts(workflow, job string) ([]string, bool, error) {
 	// a job whose definition sits on its own header line ("  gui: {runs-on: x, strategy: {...}}")
 	// keeps its matrix inside that line, where this text scan cannot read legs from. A plain

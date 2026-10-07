@@ -503,6 +503,41 @@ func TestTrainCheckoutProverFileReadsTheCommitNotTheWorkingTree(t *testing.T) {
 	}
 }
 
+// TestTrainJobReaderReadsAJobDisplayName: a run's jobs carry a job's own name: value, so a head that
+// renames a job through that key must be caught by the set comparison rather than passing under the
+// job's key (CRW-897, answer 2; pre-merge evaluation d2).
+func TestTrainJobReaderReadsAJobDisplayName(t *testing.T) {
+	job := "\njobs:\n  validate:\n    runs-on: ubuntu\n  gui:\n    name: gui-renamed\n    runs-on: ubuntu\n  go-product:\n    strategy:\n      matrix:\n        part: [lint]\n"
+	jobs, err := TrainJobsFromWorkflow(job)
+	if err != nil {
+		t.Fatalf("a job with a display name: %v", err)
+	}
+	if strings.Join(jobs, ",") != "validate,gui-renamed,go-product (lint)" {
+		t.Fatalf("jobs = %v, want the display name", jobs)
+	}
+	// and through verify the renamed job is refused naming the missing and added names
+	repository, err := os.ReadFile(filepath.Join("..", "..", "..", ".github", "workflows", "ci.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	renamed := strings.Replace(string(repository), "\n  gui:\n", "\n  gui:\n    name: gui-renamed\n", 1)
+	if renamed == string(repository) {
+		t.Fatal("the fixture did not add a display name")
+	}
+	w := newTr(t)
+	train := w.openedTrain()
+	w.pr(900, "head-bundle", TrainLaneLabel)
+	w.forge.runs["run-1"] = runFor("head-bundle")
+	w.proof.workflow = renamed
+	_, err = w.m.Verify(w.ctx, train, trLeader, "900", "head-bundle", "run-1", "/checkout", w.forge, w.proof)
+	if err == nil || trReason(err) != "disposition_conflict" {
+		t.Fatalf("a job renamed through its name key: %v", err)
+	}
+	if !strings.Contains(err.Error(), "gui") || !strings.Contains(err.Error(), "gui-renamed") {
+		t.Fatalf("the refusal does not name both names: %v", err)
+	}
+}
+
 // TestTrainVerifyRefusesAMergedMember: verify keeps taking open pull requests only, so a member the
 // forge already marked merged is refused there with nothing written (CRW-897, answer 1).
 func TestTrainVerifyRefusesAMergedMember(t *testing.T) {
