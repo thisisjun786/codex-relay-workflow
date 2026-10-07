@@ -302,19 +302,27 @@ func TestIdleWake_a_lost_socket_is_held_again(t *testing.T) {
 
 func TestIdleWake_a_note_is_reported_once(t *testing.T) {
 	t.Parallel()
-	host := &idleHost{holdErr: errors.New("the host refused the resume")}
-	d, _ := idleDaemon(t, host)
+	host := &idleHost{reports: []delivery.IdleReport{{ThreadID: idleThread, Status: "idle"}}, holdErr: errors.New("the host refused the resume")}
+	d, s := idleDaemon(t, host)
+	// Two failures in one tick: the wake cannot be written, and the hold is refused. (The zone table
+	// is replaced with one this build does not declare, which the wake's insert refuses while the due
+	// list's join still reads it.) The tick's notes name each failure once.
+	exec(t, s, "DROP TABLE delivery_wakes")
+	exec(t, s, "CREATE TABLE delivery_wakes (event_id TEXT PRIMARY KEY)")
 	report, err := d.Tick(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	seen := 0
+	wakes, holds := 0, 0
 	for _, note := range report.Notes {
+		if strings.Contains(note, "not applied") {
+			wakes++
+		}
 		if strings.Contains(note, "not opened") {
-			seen++
+			holds++
 		}
 	}
-	if seen != 1 {
-		t.Fatalf("the refused hold was reported %d times, want once: %v", seen, report.Notes)
+	if wakes != 1 || holds != 1 {
+		t.Fatalf("the tick reported %d wake notes and %d hold notes, want one of each: %v", wakes, holds, report.Notes)
 	}
 }
