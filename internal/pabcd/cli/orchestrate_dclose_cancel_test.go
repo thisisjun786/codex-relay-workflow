@@ -359,6 +359,30 @@ func TestOrchestrateDcloseCancelAfterTheFirstWriteAnswersAsToday(t *testing.T) {
 	if n := orchestrateDcloseDoneRows(t, cwd, id); n != 1 {
 		t.Fatalf("done rows = %d, want 1", n)
 	}
+	// The whole close must finish, not only the FSM write: the closed phase stays done, the successor is
+	// activated and becomes the cursor, both goalplan rows land, and the recovery marker and its check
+	// epoch are cleared. A regression that skipped any of them for a cancelled context would still satisfy
+	// the three assertions above.
+	if got := orchestrateDclosePhaseStatus(t, cwd, slug, "wp-1"); got != goalplan.WorkPhaseDone {
+		t.Fatalf("wp-1 status = %s; want done", got)
+	}
+	if got := orchestrateDclosePhaseStatus(t, cwd, slug, "wp-2"); got != goalplan.WorkPhaseInProgress {
+		t.Fatalf("wp-2 status = %s; want in_progress", got)
+	}
+	plan := orchestrateDcloseGoalplan(t, cwd, slug)
+	if plan.ActiveWorkPhaseID == nil || *plan.ActiveWorkPhaseID != "wp-2" {
+		t.Fatalf("active work phase = %v; want wp-2", plan.ActiveWorkPhaseID)
+	}
+	var events []string
+	for _, row := range orchestrateDcloseGoalplanRows(t, cwd, slug) {
+		events = append(events, row["event"].(string))
+	}
+	if want := []string{string(goalplan.EventWorkphaseDone), string(goalplan.EventWorkphaseStarted)}; !reflect.DeepEqual(events, want) {
+		t.Fatalf("goalplan ledger events = %v; want %v", events, want)
+	}
+	if after := state.ReadState(cwd, id); after.DcloseRecovery != nil || after.CheckEpoch != nil {
+		t.Fatalf("the finished close left a recovery marker or its epoch: %+v", after)
+	}
 }
 
 // TestOrchestrateDcloseCancelAfterTheFirstWriteKeepsThePendingAnswer is F1's other half: when this
