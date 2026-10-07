@@ -156,13 +156,14 @@ func githubPostJudgeWords(words []string, cwd string) (githubPostSite, bool) {
 // githubPostUnread is the fail-closed judgement for a text that is not one simple command: a text naming
 // a post is refused, and one whose text holds an outer-shell expansion says so.
 func githubPostUnread(command string) (githubPostSite, bool) {
-	// A command word that still holds an expansion after quote removal cannot be judged, so a command
-	// whose program is such a word and whose rest names a post verb is refused.
-	if words := githubPostSplitTolerant(command); len(words) > 0 &&
-		githubPostHoldsExpansion(githubPostNormal(words[0])) && githubPostNamesPost(words[1:]) {
-		return githubPostSite{githubPostRuleUnread, githubPostWhereCommand}, true
-	}
-	if !githubPostMentions(command) && !githubPostMentionsWords(githubPostSplitTolerant(command)) {
+	if !githubPostMentions(command) && !githubPostMentionsWords(githubPostSplitWords(command)) {
+		// A text that names no post in any spelling is not a target, unless its command word is one the
+		// guard cannot judge (a word that still holds an expansion after quote removal) and the rest of
+		// its words name a post verb: rule 1's program identity refuses that command word.
+		if words := githubPostSplitWords(command); len(words) > 0 &&
+			githubPostHoldsExpansion(githubPostNormal(words[0])) && githubPostNamesPost(words[1:]) {
+			return githubPostSite{githubPostRuleUnread, githubPostWhereCommand}, true
+		}
 		return githubPostSite{}, false
 	}
 	// A text that spells an inline body is the inline-body rule, wherever the body sits.
@@ -194,9 +195,8 @@ func githubPostSimple(command string) ([]string, bool) {
 }
 
 // githubPostWords splits one simple command into its words, keeping each word as written, and reports
-// false when a word or the text as a whole is not literal: an unquoted $, backtick, *, ?, [, ], ~, {, },
-// (, ), < or >, or a quote that never closes. A backslash escapes the character after it, so the pair is
-// literal too.
+// false when a word or the text as a whole is not literal: an unquoted $, backtick, backslash, *, ?, [,
+// ], ~, {, }, (, ), < or >, or a quote that never closes.
 func githubPostWords(s string) ([]string, bool) {
 	words, cur := []string{}, strings.Builder{}
 	started := false
@@ -223,13 +223,9 @@ func githubPostWords(s string) ([]string, bool) {
 		case c == '"':
 			j := i + 1
 			for j < len(s) && s[j] != '"' {
-				// A double-quoted word is literal only without $ or a backtick; a backslash escapes the
-				// character after it, which the shell removes.
-				if s[j] == '$' || s[j] == 0x60 {
+				// A double-quoted word is literal only without $, a backtick or a backslash.
+				if s[j] == '$' || s[j] == 0x60 || s[j] == '\\' {
 					return nil, false
-				}
-				if s[j] == '\\' && j+1 < len(s) {
-					j++
 				}
 				j++
 			}
@@ -239,11 +235,7 @@ func githubPostWords(s string) ([]string, bool) {
 			started = true
 			cur.WriteString(s[i : j+1])
 			i = j
-		case c == '\\' && i+1 < len(s):
-			started = true
-			cur.WriteString(s[i : i+2])
-			i++
-		case c == '$' || c == 0x60 || c == '*' || c == '?' || c == '[' || c == ']' ||
+		case c == '$' || c == 0x60 || c == '\\' || c == '*' || c == '?' || c == '[' || c == ']' ||
 			c == '~' || c == '{' || c == '}' || c == '(' || c == ')' || c == '<' || c == '>':
 			return nil, false
 		default:
@@ -729,30 +721,6 @@ func githubPostNamesPost(words []string) bool {
 // would act on, so the guard cannot know the command it names.
 func githubPostHoldsExpansion(word string) bool {
 	return strings.ContainsAny(word, "$`*?[]~{}()<>")
-}
-
-// githubPostSplitTolerant is githubPostSplitWords, kept for the call sites that name it.
-func githubPostSplitTolerant(s string) []string {
-	return githubPostSplitWords(s)
-}
-
-// api with a field flag.
-func githubPostMentionsPost(s string) bool {
-	if githubPostWord(s, "gh") && (githubPostWord(s, "pr") || githubPostWord(s, "issue")) {
-		for _, w := range [...]string{"comment", "create", "edit", "review"} {
-			if githubPostWord(s, w) {
-				return true
-			}
-		}
-	}
-	if githubPostWord(s, "api") {
-		for _, f := range [...]string{"-X", "--method", "-f", "-F", "--field", "--raw-field", "--input", "mutation"} {
-			if strings.Contains(s, f) {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 // githubPostWord is whether the text holds the word with a boundary on either side.
