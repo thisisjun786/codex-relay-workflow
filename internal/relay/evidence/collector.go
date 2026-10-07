@@ -382,19 +382,24 @@ const lightLegPrefix = "go-product (test-"
 // leg that did not run its tests is told from one that did by this step's conclusion.
 const LightTestStepPrefix = "Test and replay the contract corpus ("
 
-// lightMirrorStep is the step the body-only edit mirror runs. A leg whose earlier run of the same
-// head already ran its tests successfully is mirrored: the job concludes success with its test step
-// skipped, which is the shape a light leg has, so the mirror's own step tells the two apart. A
-// mirrored leg's tests ran on this head, so it is not a leg that skipped them (CRW-824).
+// lightMirrorStep is the step the body-only edit mirror runs. Its success is not evidence that the
+// leg's tests ran: scripts/ci/edit_mirror.sh answers mirrored=false and exits 0 whenever the lookup
+// fails or finds no candidate, so the step concludes success either way (CRW-946). The leg's own
+// test step decides, and a leg the mirror carried over is exempted by the substitute-run rule in
+// mergeevidence.go, which requires an earlier run of the same head that ran that leg's tests.
 const lightMirrorStep = "Mirror the jobs this head already ran"
 
 // jobTestSkipped reports whether a go-product test leg concluded success while its test step did
 // not: CRW-790's light mode leaves the job success and skips the step, so the leg says nothing
-// about the commit (CRW-824). A job whose steps the collector cannot read is not called a skipped
-// leg: the returned detail names it and the caller records the existing unreadable problem
-// instead, so a success leg whose test run cannot be confirmed is never merge evidence either way.
-// The detail is empty when the job is not this at all. The conclusion is read through outcome, the
-// same read the entry's own conclusion uses, so the mark can never disagree with the entry.
+// about the commit (CRW-824). The leg's own test step decides and nothing else does: the body-only
+// edit mirror's step concludes success whether or not it actually carried the leg's tests over, so
+// it is not evidence that they ran (CRW-946). A test step that concluded success is a leg that ran
+// its tests, one that concluded skipped or is absent from a readable list is a leg that skipped
+// them, and one whose conclusion cannot be read is neither: the leg is left unmarked and the
+// returned detail names it, so the caller records the existing unreadable problem instead and a
+// success leg whose test run cannot be confirmed is never merge evidence either way. The detail is
+// empty when the job is not this at all. The conclusion is read through outcome, the same read the
+// entry's own conclusion uses, so the mark can never disagree with the entry.
 func jobTestSkipped(j map[string]any, runText string) (skipped bool, detail string) {
 	name := strOf(j["name"])
 	if !strings.HasPrefix(name, lightLegPrefix) || outcome(j) != "success" {
@@ -405,7 +410,6 @@ func jobTestSkipped(j map[string]any, runText string) (skipped bool, detail stri
 	if !ok {
 		return false, unreadable
 	}
-	mirrored := false
 	testStep, testConclusion, testReadable := "", "", false
 	for _, raw := range steps {
 		step, isObject := Object(raw)
@@ -413,19 +417,11 @@ func jobTestSkipped(j map[string]any, runText string) (skipped bool, detail stri
 			return false, unreadable
 		}
 		stepName := strOf(step.Get("name"))
-		if stepName == lightMirrorStep && step.Get("conclusion") == "success" {
-			mirrored = true
-		}
 		if strings.HasPrefix(stepName, LightTestStepPrefix) {
 			testStep = stepName
 			conclusion, isString := step.Get("conclusion").(string)
 			testConclusion, testReadable = conclusion, isString
 		}
-	}
-	if mirrored {
-		// The leg's tests ran in an earlier run of this head: the mirror vouched for it, so this is
-		// not a leg that skipped its tests.
-		return false, ""
 	}
 	if testStep == "" {
 		// The test step is absent from a readable list: the leg's test run did not conclude success.

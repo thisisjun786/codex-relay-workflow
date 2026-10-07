@@ -465,9 +465,11 @@ func TestCRW824CollectorMarksTheLightLeg(t *testing.T) {
 
 // A body-only pull request edit mirrors a leg whose earlier run of this head already ran its tests:
 // the job concludes success with its test step skipped, which is the shape a light leg has. The
-// mirror's own step tells the two apart, so a mirrored leg is not marked and editing a description
-// after a full run cannot turn the head into merge evidence.
-func TestCRW824AMirroredLegIsNotALightLeg(t *testing.T) {
+// mirror step's own success is not evidence that the tests ran -- scripts/ci/edit_mirror.sh answers
+// mirrored=false and exits 0 when its lookup fails or finds no candidate -- so the leg is marked
+// testSkipped and the exemption comes from the substitute-run rule in mergeevidence.go, which
+// requires an earlier run of the same head that ran that leg's tests (CRW-946).
+func TestCRW824AMirroredLegIsStillALightLeg(t *testing.T) {
 	jobs := []any{
 		map[string]any{"id": 41, "name": "go-product (test-1)", "run_attempt": 1, "status": "completed", "conclusion": "success", "started_at": "2026-10-06T07:00:00Z", "steps": []any{
 			map[string]any{"name": "Check out scripts/ci for the body-only edit mirror", "conclusion": "success", "started_at": "2026-10-06T07:00:01Z"},
@@ -483,15 +485,19 @@ func TestCRW824AMirroredLegIsNotALightLeg(t *testing.T) {
 		runs: []any{map[string]any{"id": 9, "name": "CI", "head_sha": collectorHead, "workflow_id": 100, "event": "pull_request"}},
 		jobs: map[int][]any{9: jobs},
 	}), "owner/name", 7)
+	marked := false
 	for _, raw := range listOf(mapOf(snapshot["handoff"])["checks"]) {
-		if _, present := mapOf(raw)["testSkipped"]; present {
-			t.Fatalf("a mirrored leg ran its tests on this head and must not be marked: %v", raw)
+		if flag, isBool := mapOf(raw)["testSkipped"].(bool); isBool && flag {
+			marked = true
 		}
+	}
+	if !marked {
+		t.Fatalf("a mirrored leg's own test step was skipped and it must be marked: %v", snapshot["handoff"])
 	}
 }
 
-// A leg whose mirror step did not succeed is not mirrored: its test step skipped without a mirror
-// vouching for it, so it is a light leg.
+// A leg whose mirror step did not succeed has a skipped test step like any other: the mirror step
+// is not read, so the leg is marked either way.
 func TestCRW824AMirrorThatDidNotSucceedIsStillALightLeg(t *testing.T) {
 	job := map[string]any{"id": 43, "name": "go-product (test-1)", "run_attempt": 1, "status": "completed", "conclusion": "success", "started_at": "2026-10-06T07:02:00Z", "steps": []any{
 		map[string]any{"name": lightMirrorStep, "conclusion": "failure", "started_at": "2026-10-06T07:02:01Z"},

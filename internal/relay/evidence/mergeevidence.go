@@ -366,25 +366,32 @@ func testSkippedJobs(checks []any, run string, highest map[string]*big.Int) []st
 	return names
 }
 
-// testedElsewhere reports whether another workflow run on this head answered the same required
-// check, for the same integration the branch rule names, successfully and with its tests actually
-// run: the lane's own repair for a light run is to label the pull request crw-lane, which starts a
-// full run on the same head, and that run's evidence is what the head should be judged on. Without
-// this the earlier light run's entry would refuse the head forever, and the documented repair could
-// never produce merge evidence (CRW-824).
+// testedElsewhere reports whether another workflow run on this head actually ran the tests the
+// judged run skipped: the lane's own repair for a light run is to label the pull request crw-lane,
+// which starts a full run on the same head, and that run's evidence is what the head should be
+// judged on. Without this the earlier light run's entry would refuse the head forever, and the
+// documented repair could never produce merge evidence (CRW-824).
 //
 // The substitute must be a workflow run: a published check run or a commit status holds no jobs at
 // all, so reading either as the evidence that repaired a light run would let an untested head
-// through. It must also not be known to come from another integration than the judged entry, since a
-// namesake from elsewhere does not answer this branch's gate. The provider is read leniently on
-// purpose: the collector fills it from the check-run listing filtered to the LATEST run, so an older
-// workflow run whose check-run a newer one replaced carries none, and a strict equality would refuse
-// the labeled full run that is the documented repair. Two known, differing providers are a refusal; an
-// unknown one on either side is not evidence of a different integration. A candidate that holds a
-// skipped leg of its own is not the evidence either, and a leg whose step list the collector could
-// not read leaves its own unreadable problem, which refuses the whole reading before this predicate
-// is consulted.
-func testedElsewhere(checks []any, head, name, provider, run string, highest map[string]*big.Int) bool {
+// through. It must answer the same required check name at the same head, successfully. And it must
+// have run the tests the judged run skipped: for every leg name the judged run marked testSkipped,
+// the substitute run holds that leg at its own newest attempt with conclusion success and no
+// testSkipped mark (CRW-946). A run that holds no leg of that name answers none of them, so a run
+// with no test leg at all -- the shape a dev-gate-only workflow has -- is never the evidence, and
+// the absence of a mark on such a run says nothing about whether the head was tested. A leg whose
+// step list the collector could not read leaves its own unreadable problem, which refuses the whole
+// reading before this predicate is consulted.
+//
+// The provider is read strictly where the branch rule pins the integration that answers the judged
+// check: the substitute run's gate must then carry a known provider inside that pinned set, because
+// a namesake from another integration does not answer this branch's gate and an unknown provider is
+// not evidence that it does (CRW-946). Where nothing is pinned the read stays lenient: the collector
+// fills an entry's provider from the check-run listing filtered to the LATEST run, so an older
+// workflow run whose check-run a newer one replaced carries none, and a strict equality would
+// refuse the labeled full run that is the documented repair. Two known, differing providers are a
+// refusal; an unknown one on either side is not evidence of a different integration.
+func testedElsewhere(checks []any, head, name, provider string, pinned, skipped []string, run string, highest map[string]*big.Int) bool {
 	for _, entry := range checks {
 		runId := textField(entry, "runId")
 		candidate := workflowRun(runId)
@@ -398,14 +405,55 @@ func testedElsewhere(checks []any, head, name, provider, run string, highest map
 		if o.Get("headSha") != any(head) || o.Get("conclusion") != "success" {
 			continue
 		}
-		if candidateProvider := providerField(entry); provider != "" && candidateProvider != "" && candidateProvider != provider {
+		candidateProvider := providerField(entry)
+		if len(pinned) > 0 {
+			// The branch rule names the integrations that answer this check, so the substitute run's
+			// gate must be one of them: an unknown provider is not evidence that it is.
+			if candidateProvider == "" || !slices.Contains(pinned, candidateProvider) {
+				continue
+			}
+		} else if provider != "" && candidateProvider != "" && candidateProvider != provider {
 			continue
 		}
-		if len(testSkippedJobs(checks, candidate, highest)) == 0 {
+		if ranEverySkippedLeg(checks, candidate, head, skipped, highest) {
 			return true
 		}
 	}
 	return false
+}
+
+// ranEverySkippedLeg reports whether the candidate workflow run holds, for every leg name the
+// judged run marked testSkipped, that leg at its own newest attempt within the candidate run: the
+// same head, conclusion success, and no testSkipped mark (CRW-946). A run that holds no leg of that
+// name answers none of them, so a run with no test leg at all is never a substitute. The judged
+// run's skipped leg names come from testSkippedJobs, which already reads each leg at its own newest
+// attempt.
+func ranEverySkippedLeg(checks []any, candidate, head string, skipped []string, highest map[string]*big.Int) bool {
+	for _, leg := range skipped {
+		answered := false
+		for _, entry := range checks {
+			runId := textField(entry, "runId")
+			if workflowRun(runId) != candidate || textField(entry, "name") != leg {
+				continue
+			}
+			if newest, seen := highest[runId]; seen && attempt(entry).Cmp(newest) != 0 {
+				continue
+			}
+			o, _ := Object(entry)
+			if o.Get("headSha") != any(head) || o.Get("conclusion") != "success" {
+				continue
+			}
+			if flag, isBool := o.Get("testSkipped").(bool); isBool && flag {
+				continue
+			}
+			answered = true
+			break
+		}
+		if !answered {
+			return false
+		}
+	}
+	return true
 }
 
 // beganFailureBeside reports whether the same workflow run and attempt as a required check holds a
@@ -547,9 +595,11 @@ func ChecksProblemsWith(head string, required []string, checks []any, requireDec
 		// light leg makes the run no merge evidence, never a rerun. The lowest (run, name) pair is
 		// kept, so the detail does not move with the enumeration (CRW-661).
 		if skipped := testSkippedJobs(checks, workflowRun(run), highest); len(skipped) > 0 {
-			// Another run of the same required check on this head that ran its tests is the
-			// evidence: the lane's repair for a light run is a labeled full run on the same head.
-			if !testedElsewhere(checks, head, name, providerField(entry), workflowRun(run), highest) {
+			// Another run of the same required check on this head that actually ran those legs'
+			// tests is the evidence: the lane's repair for a light run is a labeled full run on the
+			// same head. Where the branch rule pins the integrations that answer this check, the
+			// substitute run's gate must carry one of them (CRW-946).
+			if !testedElsewhere(checks, head, name, providerField(entry), providers[name], skipped, workflowRun(run), highest) {
 				if key := run + "\x00" + name; lightKey == "" || key < lightKey {
 					lightKey, lightRun, lightName = key, run, skipped[0]
 				}
