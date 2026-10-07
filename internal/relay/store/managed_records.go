@@ -32,6 +32,14 @@ func (s *Store) PendingManagedStart(ctx context.Context, issueKey string) (Manag
 		" AND state IN ('reserved','create_armed')", issueKey)
 }
 
+// PendingManagedStarts is every reserved or armed request of an issue, in request id order. A feature
+// issue may have more than one in flight once packets exist (CRW-839), so a caller that must tell one
+// reservation from another reads all of them and not just the first.
+func (s *Store) PendingManagedStarts(ctx context.Context, issueKey string) ([]ManagedStartRequestsRow, error) {
+	return queryRows(ctx, s, scanManagedStartRequests, "SELECT "+managedStartRequestsColumns+" FROM managed_start_requests WHERE issue_key = ?"+
+		" AND state IN ('reserved','create_armed') ORDER BY request_id", issueKey)
+}
+
 // ArmManagedStart is registry.py:1169; it reports whether the expected revision was current.
 func (s *Store) ArmManagedStart(ctx context.Context, requestID string, expectedRevision int64, at string) (bool, error) {
 	return s.changedOne(ctx, "UPDATE managed_start_requests SET state = 'create_armed', revision = revision + 1,"+

@@ -14,6 +14,11 @@ DAG execution contract (CRW-182, sections 1, 2, 4, 5 and 6.2); where this page r
 * A **node** is one deliverable: an issue key, a kind, a title, and the digest of its completion criteria. Kind
   `implementation` is one issue, one child, one PR; kind `non_pr` is research, design, verification or operation with no
   PR. Node ids are plan-local.
+* A **packet** is how a feature issue is delivered when one pull request is not enough ([the packet identity](#the-packet-identity)).
+  An implementation node may carry a `packet_id`, and several nodes that share one issue key must carry distinct ones. A
+  packet declares the feature criteria it takes (`covers`) and, where more than one packet takes a criterion, which of
+  them owns it (`owns`). A node without a `packet_id` is the single packet its issue always was, and nothing about it
+  changes.
 * An **edge** orders two nodes and says what satisfies it. `artifact_verified`: the predecessor's artifact was verified
   (for an implementation node it is a code artifact and the edge pins the verified head, naming the repository and base
   ref); `integrated`: the predecessor's PR landed on a named repository and base ref; `decision`: a named decision, by digest, was
@@ -39,8 +44,10 @@ this one names the field and says that nodes and edges are changes.)
 | `expected_parent_revision` | the revision this one is applied to; 0 for the first |
 | `coordinator_epoch` | optional, a whole number: the epoch the writing session holds, 0 when none is named. A plan that has been claimed ([the coordinator epoch](dag-scheduler.md#the-coordinator-epoch)) takes only its newest epoch from the task that claimed it, and refuses any other write as `stale_coordinator_epoch`; a plan nobody has claimed takes 0 |
 | `changes` | the typed changes, 1 to 256 |
+| `feature_criteria` | optional, 1 to 64 entries: `[{issue_key, criteria: [{id, title?, required}]}]`, the completion criteria of a feature issue its packets are judged against. A later declaration replaces the earlier one for its issue (folded like every other change); a revision that declares none leaves every declaration as it was, so a plan written before there were packets reads as it always did |
 
-A node is `{node_id, issue_key, kind, criteria_set_digest, title?}` (`criteria_set_digest` is a sha256 in lowercase hex).
+A node is `{node_id, issue_key, kind, criteria_set_digest, title?}` (`criteria_set_digest` is a sha256 in lowercase hex), plus, on an
+implementation node that is a packet, `packet_id` and the optional `covers` and `owns` (each a list of criterion ids, 1 to 64, distinct).
 An edge is `{edge_id, from_node_id, to_node_id, kind}` plus, by kind: `target_repository`, `target_base_ref`, `pins_code_head`
 (artifact_verified, integrated); `decision_subject`, `decision_digest`, `required_authority` (decision). `required_authority`
 entries are opaque text: the format of an authority is undecided (D-09) and is not invented here.
@@ -72,6 +79,18 @@ always answers the same way. A rejected revision writes nothing.
 | `project_mismatch` | the revision names another project than the plan's |
 | `unknown_field`, `missing_field`, `wrong_type`, `empty_value`, `bad_identifier`, `bad_digest`, `bad_schema`, `bad_text`, `value_too_long`, `duplicate_value`, `duplicate_key`, `unknown_op`, `not_an_object` | the document is not of the shape above (an empty string is a missing value, never an accepted one) |
 
+The packet rules ([the packet identity](#the-packet-identity)) are judged with them, on the plan the changes produce:
+
+| Rule | Rejected when |
+| --- | --- |
+| `duplicate_packet`, `packet_required` | two live nodes share one issue key and their `packet_id`s are not distinct (an id used twice, or one of them missing); a node that declares `covers` or `owns` without a `packet_id` |
+| `packet_field_not_applicable` | a `non_pr` node carries `packet_id`, `covers` or `owns`: a packet is an implementation node |
+| `covers_unknown_criterion` | `covers` names a criterion id the feature's declaration does not have (an issue with no declaration declares no id) |
+| `owns_not_covered` | `owns` names a criterion id the node does not cover |
+| `criterion_uncovered` | a criterion the declaration marks `required` is taken by no live node of its issue |
+| `criterion_owner_missing`, `criterion_owner_conflict` | two or more live nodes of one issue take a criterion and not exactly one of them names it in `owns` |
+| `feature_criteria_without_node` | a declaration names an issue the plan holds no live implementation node for, so its criteria would be judged by nobody |
+
 The limits bound a plan's size. They are not execution limits (how many nodes may run at once), which are the scheduler's.
 
 ## Digests
@@ -80,9 +99,12 @@ Digests are sha256 of canonical JSON (sorted keys, no whitespace), the serializa
 
 * A node's **slice digest** covers the node's spec and its incoming edges, sorted by id. Nothing else: no revision number,
   no other node, no digest of the whole plan. Editing a node changes that node's digest; changing the edges into a node changes
-  that node's digest; no other digest moves.
+  that node's digest; no other digest moves. A packet's identity (`packet_id`, `covers`, `owns`) is part of the node's spec, so it
+  moves that node's slice digest and nothing else; an unset field is absent, so a node without a packet digests exactly as it did
+  before there were packets.
 * A plan's **state digest** covers its live content (plan id, project, nodes with their slice digests, edges). Two revisions
-  that produce the same plan produce the same state digest.
+  that produce the same plan produce the same state digest. The declared feature criteria are part of it only when a plan declares
+  some, so every plan that declares none digests as it always did.
 * A request's digest covers what it asks, not how the JSON was spelled.
 * A node's lifecycle is no part of its slice digest: a pause is neither a change of the node's spec nor of its incoming edges, so it moves no slice digest and invalidates no manifest or
   acceptance. The state digest covers the lifecycle only when it is not the default (a `lifecycle` key on a node that is paused, cancelled or archived, a `plan_state` key while the plan is paused), so
@@ -137,6 +159,7 @@ All three are relay commands (`codex-session-relay [--state DIR] <command>`); ou
 | `dag-plan-put --request <json or @file>` | appends a revision; answers `{ok, replayed, plan_id, project_key, revision_no, parent_revision_no, request_id, request_digest, state_digest, coordinator_epoch, author_task_id, recorded_at, node_digests}` | 0; 2 refused (`malformed_receipt` for a rejected plan, `plan_revision_conflict`, `stale_coordinator_epoch`); 3 host; 4 a document that is not JSON or cannot be read |
 | `dag-plan-show --plan P [--revision N] [--verify]` | the plan as of a revision. `nodes` and `edges` are the top-level lists of the answer, with `schema`, `revision_no`, `head_revision_no`, `state_digest`, `digests_verified`, `log_verified` | 0; 2 `unregistered_scope`; 3 corrupt |
 | `dag-plan-log --plan P [--after C] [--limit N]` | the events after a cursor with their typed changes, and the `cursor` to resume from | 0; 2 `unregistered_scope` |
+| `dag-feature-coverage --plan P --issue I` | the packets that deliver one feature issue, each packet's acceptance and integration, and the packet owning each criterion, with `complete` true only when every required criterion is covered by an integrated packet. Reads only | 0; 2 `unregistered_scope`; 3 corrupt |
 
 `dag-plan-put` validates the document, and the plan it would produce when that needs no store, before it opens the store for
 writing. An invalid first revision, or a revision that names a parent no plan has, on a state directory with no store creates no
@@ -216,6 +239,34 @@ since an older runtime opens a store that has the zone and ignores it. Anything 
 another object arriving or leaving, refuses as it always has, with the acknowledgement as without it. Opening a store with this build for writing
 is itself the schema change and creates the zone, so run no write command of this build against a live state directory outside the install route:
 only the install command takes the backup. The route, its backup and its refusals are written in [runtime installation](../runtime-install.md#why-the-schema-reading-compares-statements-and-not-versions).
+
+## The packet identity
+
+One issue used to be one node, one child and one pull request. A feature issue may now be delivered by several packets, each an
+implementation node with its own `packet_id`, so the relay can hold more than one active relationship for one issue without losing
+track of which packet each belongs to. The plan is the registry: the packet rules above keep the packets of one feature coherent
+(distinct ids, every required criterion taken, one owner for a criterion two packets take), and the execution rows carry the same
+`packet_id` to the release and the child.
+
+* `dag-plan-put` writes a revision's `feature_criteria` into `dag_feature_criteria`, one row per (revision, issue), and the fold reads
+  them back from the log the way it reads the lifecycle, so a read and a write agree by construction.
+* A node's packet identity is a side table of `dag_nodes` (`dag_node_packets`, keyed by plan, node and introduced revision). It is a side
+  table and not a column because a shipped statement is never edited: an `ALTER TABLE ADD COLUMN` would rewrite the frozen text of
+  `dag_nodes`, which the schema gate reads as a changed object.
+* `dag-release` writes one `dag_execution_packets` row when the managed start has created the relationship and the node is bound
+  (`dag_node_executions`): that is the first moment the relationship id exists. The row carries the plan, the node, the issue, the packet
+  and the child's work branch (`work_branch` on the release request, null when the request names none).
+* The registry's duplicate-assignment guard admits a second active relationship of one issue only when both sides resolve to distinct
+  packets registered in the same plan: the newcomer's packet from its release intent (`dag_releases` to the live node) and the rival's from
+  `dag_execution_packets`. Anything unresolvable, an empty packet, or a pair in different plans is `duplicate_assignment` exactly as
+  before, and no new refusal reason is added. Managed reservations are deduplicated per (issue, packet) the same way.
+* `dag-feature-coverage --plan --issue` is the reading: the packets, each packet's acceptance and integration (the merge train's member
+  mapping, or a landing the relay observed), and the packet owning each criterion. A feature is complete only when every required
+  criterion is covered by an integrated packet. An issue whose plan declares no criteria is read from the criteria registered for its
+  node's relationship, which is how a plan without packets has always been judged.
+
+Old rows are never migrated: a node with no `packet_id` keeps the single-packet meaning it had, and an upgraded store keeps every row and
+every active relationship it held.
 
 ## Where this page reads the contract
 

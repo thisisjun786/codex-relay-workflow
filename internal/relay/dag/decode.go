@@ -157,6 +157,130 @@ func (d *decoder) digest(path string, obj map[string]any, key string) (string, b
 	return "", false
 }
 
+// identifiers reads an optional list of identifiers: 1 to max distinct names, sorted, so two spellings
+// of one set compare equal. It is the reader of a node's covers and owns (CRW-839).
+func (d *decoder) identifiers(path string, obj map[string]any, key string, max int) []string {
+	value, present := obj[key]
+	if !present {
+		return nil
+	}
+	p := join(path, key)
+	list, ok := value.([]any)
+	if !ok {
+		d.add(RuleWrongType, p, "must be a list of identifiers")
+		return nil
+	}
+	if len(list) == 0 {
+		d.add(RuleEmptyValue, p, "must name at least one id")
+		return nil
+	}
+	if len(list) > max {
+		d.add(RuleLimitExceeded, p, "names %d ids; the limit is %d", len(list), max)
+		return nil
+	}
+	out := make([]string, 0, len(list))
+	seen := map[string]bool{}
+	for i, item := range list {
+		ip := fmt.Sprintf("%s[%d]", p, i)
+		s, ok := item.(string)
+		switch {
+		case !ok:
+			d.add(RuleWrongType, ip, "must be a string")
+		case s == "":
+			d.add(RuleEmptyValue, ip, "must not be empty")
+		case len(s) > MaxIDLength:
+			d.add(RuleValueTooLong, ip, "is %d characters long; the limit is %d", len(s), MaxIDLength)
+		case !identifierPattern.MatchString(s):
+			d.add(RuleBadIdentifier, ip, "%q must start with a letter or digit and hold only letters, digits, '.', '_', ':' and '-'", s)
+		case seen[s]:
+			d.add(RuleDuplicateValue, ip, "%q is named twice", s)
+		default:
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// criteria reads a feature issue's criteria list (CRW-839): 1 to MaxCriteria entries, each with a
+// distinct id, an optional title and the required flag the coverage rule reads.
+func (d *decoder) criteria(path string, value any) []Criterion {
+	list, ok := value.([]any)
+	if !ok {
+		d.add(RuleWrongType, path, "must be a list of {id, required} objects")
+		return nil
+	}
+	if len(list) == 0 {
+		d.add(RuleEmptyValue, path, "must name at least one criterion")
+		return nil
+	}
+	if len(list) > MaxCriteria {
+		d.add(RuleLimitExceeded, path, "names %d criteria; the limit is %d", len(list), MaxCriteria)
+		return nil
+	}
+	out := make([]Criterion, 0, len(list))
+	seen := map[string]bool{}
+	for i, item := range list {
+		ip := fmt.Sprintf("%s[%d]", path, i)
+		obj, _ := d.object(ip, item, []string{"id", "required"}, []string{"title"})
+		if obj == nil {
+			continue
+		}
+		c := Criterion{}
+		c.ID, _ = d.identifier(ip, obj, "id")
+		c.Title, _ = d.text(ip, obj, "title", MaxTitleLength, false)
+		c.Required, _ = d.boolean(ip, obj, "required")
+		if c.ID != "" {
+			if seen[c.ID] {
+				d.add(RuleDuplicateValue, join(ip, "id"), "criterion %q is named twice", c.ID)
+			} else {
+				seen[c.ID] = true
+			}
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
+// featureCriteria reads a revision's feature criteria declarations (CRW-839).
+func (d *decoder) featureCriteria(path string, value any) []FeatureCriteriaDecl {
+	list, ok := value.([]any)
+	if !ok {
+		d.add(RuleWrongType, path, "must be a list of {issue_key, criteria} objects")
+		return nil
+	}
+	if len(list) == 0 {
+		d.add(RuleEmptyValue, path, "must declare at least one issue")
+		return nil
+	}
+	if len(list) > MaxNodes {
+		d.add(RuleLimitExceeded, path, "declares %d issues; the limit is %d", len(list), MaxNodes)
+		return nil
+	}
+	out := make([]FeatureCriteriaDecl, 0, len(list))
+	seen := map[string]bool{}
+	for i, item := range list {
+		ip := fmt.Sprintf("%s[%d]", path, i)
+		obj, _ := d.object(ip, item, []string{"issue_key", "criteria"}, nil)
+		if obj == nil {
+			continue
+		}
+		decl := FeatureCriteriaDecl{}
+		decl.IssueKey, _ = d.identifier(ip, obj, "issue_key")
+		decl.Criteria = d.criteria(join(ip, "criteria"), obj["criteria"])
+		if decl.IssueKey != "" {
+			if seen[decl.IssueKey] {
+				d.add(RuleDuplicateValue, join(ip, "issue_key"), "issue %q is declared twice in one revision", decl.IssueKey)
+			} else {
+				seen[decl.IssueKey] = true
+			}
+		}
+		out = append(out, decl)
+	}
+	return out
+}
+
 // enum reads a string field that must be one of allowed.
 func (d *decoder) enum(path string, obj map[string]any, key, rule string, allowed []string) (string, bool) {
 	value, present := obj[key]
@@ -255,7 +379,7 @@ func (d *decoder) authorities(path string, obj map[string]any, key string) []str
 }
 
 func (d *decoder) node(path string, value any) *Node {
-	obj, _ := d.object(path, value, []string{"node_id", "issue_key", "kind", "criteria_set_digest"}, []string{"title"})
+	obj, _ := d.object(path, value, []string{"node_id", "issue_key", "kind", "criteria_set_digest"}, []string{"title", "packet_id", "covers", "owns"})
 	if obj == nil {
 		return nil
 	}
@@ -265,6 +389,9 @@ func (d *decoder) node(path string, value any) *Node {
 	n.Kind, _ = d.enum(path, obj, "kind", RuleUnknownNodeKind, nodeKinds)
 	n.CriteriaSetDigest, _ = d.digest(path, obj, "criteria_set_digest")
 	n.Title, _ = d.text(path, obj, "title", MaxTitleLength, false)
+	n.PacketID, _ = d.identifier(path, obj, "packet_id")
+	n.Covers = d.identifiers(path, obj, "covers", MaxCovers)
+	n.Owns = d.identifiers(path, obj, "owns", MaxCovers)
 	return n
 }
 
@@ -379,7 +506,7 @@ func DecodeRevision(raw []byte) (Revision, error) {
 		return Revision{}, &UnreadableError{Detail: err.Error()}
 	}
 	d := &decoder{}
-	obj, _ := d.object("$", value, []string{"schema", "plan_id", "project_key", "request_id", "expected_parent_revision", "author_task_id", "changes"}, []string{"coordinator_epoch"})
+	obj, _ := d.object("$", value, []string{"schema", "plan_id", "project_key", "request_id", "expected_parent_revision", "author_task_id", "changes"}, []string{"coordinator_epoch", "feature_criteria"})
 	var rev Revision
 	if obj != nil {
 		if schema, ok := obj["schema"].(string); !ok || schema != SchemaRevision {
@@ -395,6 +522,9 @@ func DecodeRevision(raw []byte) (Revision, error) {
 		rev.CoordinatorEpoch, _ = d.integer("$", obj, "coordinator_epoch")
 		if changes, present := obj["changes"]; present {
 			rev.Changes = d.changes("$.changes", changes)
+		}
+		if criteria, present := obj["feature_criteria"]; present {
+			rev.FeatureCriteria = d.featureCriteria("$.feature_criteria", criteria)
 		}
 	}
 	if len(d.violations) > 0 {
@@ -453,6 +583,13 @@ func Checked(rev Revision) (Revision, error) {
 		// optional, and left out when zero so the document is no longer than the one a caller could have written
 		// (a document at the size limit without the field must not cross it for being spelled out here)
 		document["coordinator_epoch"] = rev.CoordinatorEpoch
+	}
+	if len(rev.FeatureCriteria) > 0 {
+		decls := make([]any, len(rev.FeatureCriteria))
+		for i, d := range rev.FeatureCriteria {
+			decls[i] = map[string]any{"issue_key": d.IssueKey, "criteria": criteriaList(d.Criteria)}
+		}
+		document["feature_criteria"] = decls
 	}
 	return DecodeRevision([]byte(canonical(document)))
 }

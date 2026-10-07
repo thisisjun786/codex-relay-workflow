@@ -59,6 +59,8 @@ const (
 	MaxTextLength      = 512
 	MaxAuthorities     = 16
 	MaxAuthorityLength = 256
+	MaxCriteria        = 64
+	MaxCovers          = 64
 )
 
 // Node is a node's spec: what the plan says about one deliverable.
@@ -68,6 +70,42 @@ type Node struct {
 	Kind              string
 	Title             string
 	CriteriaSetDigest string
+	// PacketID, Covers and Owns are the packet identity of a feature issue's implementation node
+	// (CRW-839). A feature issue may be delivered by several packets: each packet is a node that carries
+	// its own packet_id, declares the feature criteria it takes (Covers) and, where more than one packet
+	// takes a criterion, which of them owns it (Owns). A node without a packet_id is the single packet
+	// the issue always was, and an absent field is absent from the node's digest.
+	PacketID string
+	Covers   []string
+	Owns     []string
+}
+
+// Criterion is one completion criterion of a feature issue, as the plan declares it (CRW-839). The
+// ids are the ones the feature's registered criteria set uses, so a packet's covers can be read
+// against them.
+type Criterion struct {
+	ID       string
+	Title    string
+	Required bool
+}
+
+// FeatureCriteriaDecl is a revision's declaration of a feature issue's criteria: the set the packets
+// of that issue are judged against. A later declaration for the same issue_key replaces the earlier
+// one, folded like every other change, and an issue nobody declared keeps the meaning it had before
+// there were packets (no criterion is required of it).
+type FeatureCriteriaDecl struct {
+	IssueKey string
+	Criteria []Criterion
+}
+
+// FeatureCriteriaRow is one stretch of a feature issue's declared criteria in the fold, from the
+// revision that declared it to the one that replaced it (RetiredRev, 0 while it is current). An issue
+// that was never declared has no row.
+type FeatureCriteriaRow struct {
+	IssueKey      string
+	Criteria      []Criterion
+	IntroducedRev int64
+	RetiredRev    int64
 }
 
 // Edge is an edge's spec. Which of the optional fields apply depends on Kind (contract 2.4).
@@ -106,6 +144,9 @@ type Revision struct {
 	CoordinatorEpoch int64
 	AuthorTaskID     string
 	Changes          []Change
+	// FeatureCriteria declares the criteria of one or more feature issues (CRW-839). It is optional:
+	// a revision that declares none leaves every issue's declaration as it was.
+	FeatureCriteria []FeatureCriteriaDecl
 }
 
 // NodeVersion is a row of the fold: one version of a node. A node whose spec or incoming edges
@@ -136,6 +177,9 @@ type State struct {
 	// Lifecycle is the history of the plan's and the nodes' lifecycle states (lifecycle.go): not a row of a table, the fold of the lifecycle
 	// changes of the log.
 	Lifecycle []LifeRow
+	// FeatureCriteria is the history of the feature issues' declared criteria (packet.go): the fold of
+	// the revisions' declarations, not a row of the node tables.
+	FeatureCriteria []FeatureCriteriaRow
 }
 
 // SnapNode and SnapEdge are the live rows at a revision, as a snapshot carries them.
@@ -164,6 +208,10 @@ type Snapshot struct {
 	StateDigest string
 	// PlanState is "" while the plan is active, else LifePaused.
 	PlanState string
+	// FeatureCriteria are the feature issues' declared criteria as of Revision, sorted by issue_key.
+	// It is empty for a plan that declares none, so every plan written before packets existed digests
+	// exactly as it did.
+	FeatureCriteria []FeatureCriteriaRow
 }
 
 // Event is a committed revision: the durable event of the log. Its position (RevisionNo) is the
@@ -178,5 +226,6 @@ type Event struct {
 	AuthorTaskID     string
 	RecordedAt       string
 	Changes          []Change
+	FeatureCriteria  []FeatureCriteriaDecl
 	StateDigest      string
 }

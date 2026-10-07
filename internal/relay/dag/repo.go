@@ -105,7 +105,10 @@ func scanEvent(rows *sql.Rows) (Event, error) {
 	return ev, nil
 }
 
-func queryEvents(ctx context.Context, q Queryer, query string, args ...any) ([]Event, error) {
+// queryEvents reads revision rows and attaches the feature criteria declarations of each revision (CRW-839),
+// which live in the side table dag_feature_criteria rather than in a column: a shipped statement is never
+// edited and an ALTER TABLE ADD COLUMN would rewrite the frozen text of dag_plan_revisions.
+func queryEvents(ctx context.Context, q Queryer, planID, query string, args ...any) ([]Event, error) {
 	rows, err := q.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
@@ -119,11 +122,68 @@ func queryEvents(ctx context.Context, q Queryer, query string, args ...any) ([]E
 		}
 		out = append(out, ev)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := attachFeatureCriteria(ctx, q, planID, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// attachFeatureCriteria reads the declarations of a plan's revisions and attaches them to the events by
+// revision number. A store that predates the table holds no declaration, which is the meaning a plan
+// without one keeps.
+func attachFeatureCriteria(ctx context.Context, q Queryer, planID string, events []Event) error {
+	if len(events) == 0 {
+		return nil
+	}
+	rows, err := q.QueryContext(ctx, "SELECT revision_no, issue_key, criteria_json FROM dag_feature_criteria WHERE plan_id = ? ORDER BY revision_no, issue_key", planID)
+	if isMissingZone(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	byRevision := map[int64][]FeatureCriteriaDecl{}
+	for rows.Next() {
+		var rev int64
+		var issue, stored string
+		if err := rows.Scan(&rev, &issue, &stored); err != nil {
+			return err
+		}
+		criteria, err := decodeStoredCriteria(stored)
+		if err != nil {
+			return err
+		}
+		byRevision[rev] = append(byRevision[rev], FeatureCriteriaDecl{IssueKey: issue, Criteria: criteria})
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for i := range events {
+		events[i].FeatureCriteria = byRevision[events[i].RevisionNo]
+	}
+	return nil
+}
+
+// decodeStoredCriteria reads one stored criteria list. A list that does not read is corruption.
+func decodeStoredCriteria(stored string) ([]Criterion, error) {
+	value, err := parse(stored)
+	if err != nil {
+		return nil, &CorruptError{Detail: "a stored feature criteria list is not JSON: " + err.Error()}
+	}
+	d := &decoder{}
+	list := d.criteria("criteria", value)
+	if len(d.violations) > 0 {
+		return nil, &CorruptError{Detail: "a stored feature criteria list does not read: " + (&PlanRejected{Violations: d.violations}).refusal().Detail}
+	}
+	return list, nil
 }
 
 func revisionByRequest(ctx context.Context, q Queryer, planID, requestID string) (Event, bool, error) {
-	events, err := queryEvents(ctx, q, "SELECT "+revisionColumns+" FROM dag_plan_revisions WHERE plan_id = ? AND request_id = ?", planID, requestID)
+	events, err := queryEvents(ctx, q, planID, "SELECT "+revisionColumns+" FROM dag_plan_revisions WHERE plan_id = ? AND request_id = ?", planID, requestID)
 	if isMissingZone(err) || len(events) == 0 {
 		if isMissingZone(err) {
 			err = nil
@@ -187,6 +247,15 @@ func loadState(ctx context.Context, q Queryer, planID, project string, head int6
 	if st.Lifecycle, err = loadLifecycle(ctx, q, planID, head); err != nil {
 		return st, err
 	}
+	if st.FeatureCriteria, err = loadFeatureCriteria(ctx, q, planID, head); err != nil {
+		return st, err
+	}
+	// The packet identity of a node lives in the side table dag_node_packets (CRW-839), not in a column
+	// of dag_nodes: a shipped statement is never edited. A node with no row there is the single packet an
+	// issue always was.
+	if err := loadNodePackets(ctx, q, planID, st.Nodes); err != nil {
+		return st, err
+	}
 	known := map[string]bool{}
 	for _, n := range st.Nodes {
 		known[n.NodeID] = true
@@ -203,7 +272,7 @@ func loadState(ctx context.Context, q Queryer, planID, project string, head int6
 // their fold (lifecycle.go), the same fold the writer applies, so a read and a write agree on it by construction. The state digest each revision
 // recorded covers the result, so a log whose lifecycle changes were edited reads as the corrupt plan it is.
 func loadLifecycle(ctx context.Context, q Queryer, planID string, head int64) ([]LifeRow, error) {
-	events, err := queryEvents(ctx, q, "SELECT "+revisionColumns+" FROM dag_plan_revisions WHERE plan_id = ? AND revision_no <= ? ORDER BY revision_no", planID, head)
+	events, err := queryEvents(ctx, q, planID, "SELECT "+revisionColumns+" FROM dag_plan_revisions WHERE plan_id = ? AND revision_no <= ? ORDER BY revision_no", planID, head)
 	if err != nil {
 		return nil, err
 	}
@@ -214,6 +283,92 @@ func loadLifecycle(ctx context.Context, q Queryer, planID string, head int64) ([
 		}
 	}
 	return rows, nil
+}
+
+// loadFeatureCriteria is the feature criteria history of a plan up to its head revision. Like the
+// lifecycle it is not a row of a node table: the log holds the declarations and this is their fold
+// (packet.go), the same fold the writer applies.
+func loadFeatureCriteria(ctx context.Context, q Queryer, planID string, head int64) ([]FeatureCriteriaRow, error) {
+	events, err := queryEvents(ctx, q, planID, "SELECT "+revisionColumns+" FROM dag_plan_revisions WHERE plan_id = ? AND revision_no <= ? ORDER BY revision_no", planID, head)
+	if err != nil {
+		return nil, err
+	}
+	var rows []FeatureCriteriaRow
+	for _, ev := range events {
+		rows = applyFeatureCriteria(rows, ev.RevisionNo, ev.FeatureCriteria)
+	}
+	return rows, nil
+}
+
+// loadNodePackets attaches each node version's packet identity from dag_node_packets. A store that
+// predates the table holds no packet, and neither does a node version without a row in it.
+func loadNodePackets(ctx context.Context, q Queryer, planID string, nodes []NodeVersion) error {
+	if len(nodes) == 0 {
+		return nil
+	}
+	rows, err := q.QueryContext(ctx, "SELECT node_id, introduced_rev, packet_id, covers_json, owns_json FROM dag_node_packets WHERE plan_id = ?", planID)
+	if isMissingZone(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	type key struct {
+		id  string
+		rev int64
+	}
+	byKey := map[key]Node{}
+	for rows.Next() {
+		var k key
+		var packet, covers, owns string
+		if err := rows.Scan(&k.id, &k.rev, &packet, &covers, &owns); err != nil {
+			return err
+		}
+		n := Node{PacketID: packet}
+		if n.Covers, err = decodeStoredIDs(covers); err != nil {
+			return err
+		}
+		if n.Owns, err = decodeStoredIDs(owns); err != nil {
+			return err
+		}
+		byKey[k] = n
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for i := range nodes {
+		if p, ok := byKey[key{nodes[i].NodeID, nodes[i].IntroducedRev}]; ok {
+			nodes[i].PacketID, nodes[i].Covers, nodes[i].Owns = p.PacketID, p.Covers, p.Owns
+		}
+	}
+	return nil
+}
+
+// decodeStoredIDs reads a stored list of identifiers. A list that does not read is corruption.
+func decodeStoredIDs(stored string) ([]string, error) {
+	if stored == "" {
+		return nil, nil
+	}
+	value, err := parse(stored)
+	if err != nil {
+		return nil, &CorruptError{Detail: "a stored identifier list is not JSON: " + err.Error()}
+	}
+	parsed, ok := value.([]any)
+	if !ok {
+		return nil, &CorruptError{Detail: "a stored identifier list is not a JSON list"}
+	}
+	if len(parsed) == 0 {
+		// a packet with no covers or no owns is stored as an empty list, and it reads back as no list
+		return nil, nil
+	}
+	d := &decoder{}
+	obj := map[string]any{"ids": value}
+	list := d.identifiers("", obj, "ids", MaxCovers)
+	if len(d.violations) > 0 {
+		return nil, &CorruptError{Detail: "a stored identifier list does not read: " + (&PlanRejected{Violations: d.violations}).refusal().Detail}
+	}
+	return list, nil
 }
 
 // Put appends a revision to a plan, in one store transaction:
@@ -304,6 +459,14 @@ func (r *Repo) Put(ctx context.Context, rev Revision) (Result, error) {
 			rev.PlanID, next.Revision, head, rev.RequestID, digest, ChangesJSON(rev.Changes), snap.StateDigest, rev.CoordinatorEpoch, rev.AuthorTaskID, now); err != nil {
 			return err
 		}
+		// The revision's feature criteria declarations, in their own table (CRW-839): a declaration is
+		// read back by the fold, so it belongs to the revision it was made in.
+		for _, d := range rev.FeatureCriteria {
+			if _, err := conn.ExecContext(ctx, "INSERT INTO dag_feature_criteria (plan_id, revision_no, issue_key, criteria_json) VALUES (?, ?, ?, ?)",
+				rev.PlanID, next.Revision, d.IssueKey, CriteriaJSON(d.Criteria)); err != nil {
+				return err
+			}
+		}
 		if err := writeDiff(ctx, conn, rev.PlanID, next.Revision, diff); err != nil {
 			return err
 		}
@@ -365,6 +528,17 @@ func writeDiff(ctx context.Context, conn *sql.Conn, planID string, rev int64, d 
 	for _, n := range d.InsertNodes {
 		if _, err := conn.ExecContext(ctx, "INSERT INTO dag_nodes (plan_id, node_id, introduced_rev, retired_rev, slice_digest, issue_key, node_kind, title, criteria_set_digest, supersedes_node_id) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)",
 			planID, n.NodeID, n.IntroducedRev, n.SliceDigest, n.IssueKey, n.Kind, nullable(n.Title), n.CriteriaSetDigest, nullable(n.SupersedesNodeID)); err != nil {
+			return err
+		}
+	}
+	// The packet identity of a node version, in its own table (CRW-839). A node with no packet_id has no
+	// row here, so a plan that never had a packet stores none.
+	for _, n := range d.InsertNodes {
+		if n.PacketID == "" {
+			continue
+		}
+		if _, err := conn.ExecContext(ctx, "INSERT INTO dag_node_packets (plan_id, node_id, introduced_rev, packet_id, covers_json, owns_json) VALUES (?, ?, ?, ?, ?, ?)",
+			planID, n.NodeID, n.IntroducedRev, n.PacketID, IDsJSON(n.Covers), IDsJSON(n.Owns)); err != nil {
 			return err
 		}
 	}
@@ -449,7 +623,7 @@ func verifiedState(ctx context.Context, q Queryer, planID, project string, head,
 	if err := verifySlices(snap); err != nil {
 		return State{}, Snapshot{}, err
 	}
-	events, err := queryEvents(ctx, q, "SELECT "+revisionColumns+" FROM dag_plan_revisions WHERE plan_id = ? AND revision_no = ?", planID, rev)
+	events, err := queryEvents(ctx, q, planID, "SELECT "+revisionColumns+" FROM dag_plan_revisions WHERE plan_id = ? AND revision_no = ?", planID, rev)
 	if err != nil {
 		return State{}, Snapshot{}, err
 	}
@@ -515,7 +689,7 @@ func EventsAfter(ctx context.Context, q Queryer, planID string, after int64, lim
 	if limit < 1 || limit > MaxPage {
 		limit = MaxPage
 	}
-	events, err := queryEvents(ctx, q, "SELECT "+revisionColumns+" FROM dag_plan_revisions WHERE plan_id = ? AND revision_no > ? ORDER BY revision_no LIMIT ?", planID, after, limit)
+	events, err := queryEvents(ctx, q, planID, "SELECT "+revisionColumns+" FROM dag_plan_revisions WHERE plan_id = ? AND revision_no > ? ORDER BY revision_no LIMIT ?", planID, after, limit)
 	if err != nil {
 		return Page{}, err
 	}
@@ -559,7 +733,7 @@ func VerifyLogOn(ctx context.Context, q Queryer, planID string) error {
 		if ev.ParentRevisionNo != st.Revision || ev.RevisionNo != st.Revision+1 {
 			return &CorruptError{Detail: fmt.Sprintf("revision %d of plan %s does not follow revision %d", ev.RevisionNo, planID, st.Revision)}
 		}
-		next, _, violations := applyChanges(st, ev.Changes, false)
+		next, _, violations := applyChanges(st, ev.Changes, ev.FeatureCriteria, false)
 		if len(violations) > 0 {
 			return &CorruptError{Detail: fmt.Sprintf("revision %d of plan %s does not apply: %s", ev.RevisionNo, planID, (&PlanRejected{Violations: violations}).refusal().Detail)}
 		}
@@ -592,11 +766,11 @@ func sameRows(a, b State) bool {
 	sort.Slice(b.Nodes, func(i, j int) bool { return key(b.Nodes[i]) < key(b.Nodes[j]) })
 	sort.Slice(a.Edges, func(i, j int) bool { return a.Edges[i].EdgeID < a.Edges[j].EdgeID })
 	sort.Slice(b.Edges, func(i, j int) bool { return b.Edges[i].EdgeID < b.Edges[j].EdgeID })
-	if len(a.Nodes) != len(b.Nodes) || len(a.Edges) != len(b.Edges) || !sameLife(a.Lifecycle, b.Lifecycle) {
+	if len(a.Nodes) != len(b.Nodes) || len(a.Edges) != len(b.Edges) || !sameLife(a.Lifecycle, b.Lifecycle) || !sameCriteria(a.FeatureCriteria, b.FeatureCriteria) {
 		return false
 	}
 	for i := range a.Nodes {
-		if a.Nodes[i].NodeID != b.Nodes[i].NodeID || a.Nodes[i].Node != b.Nodes[i].Node || a.Nodes[i].SliceDigest != b.Nodes[i].SliceDigest ||
+		if a.Nodes[i].NodeID != b.Nodes[i].NodeID || !sameNode(a.Nodes[i].Node, b.Nodes[i].Node) || a.Nodes[i].SliceDigest != b.Nodes[i].SliceDigest ||
 			a.Nodes[i].SupersedesNodeID != b.Nodes[i].SupersedesNodeID || a.Nodes[i].IntroducedRev != b.Nodes[i].IntroducedRev || a.Nodes[i].RetiredRev != b.Nodes[i].RetiredRev {
 			return false
 		}

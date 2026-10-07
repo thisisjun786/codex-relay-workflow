@@ -44,6 +44,17 @@ const (
 	RuleBadText                    = "bad_text"
 	RuleConflictingChanges         = "conflicting_changes"
 	RuleInvalidLifecycleTransition = "invalid_lifecycle_transition"
+	// The packet rules of a feature issue (CRW-839, packet.go): the identity of the packets that
+	// deliver one issue, and the coverage of its declared criteria.
+	RuleDuplicatePacket          = "duplicate_packet"
+	RulePacketRequired           = "packet_required"
+	RulePacketFieldNotApplicable = "packet_field_not_applicable"
+	RuleCoversUnknownCriterion   = "covers_unknown_criterion"
+	RuleOwnsNotCovered           = "owns_not_covered"
+	RuleCriterionUncovered       = "criterion_uncovered"
+	RuleCriterionOwnerMissing    = "criterion_owner_missing"
+	RuleCriterionOwnerConflict   = "criterion_owner_conflict"
+	RuleFeatureCriteriaNoNode    = "feature_criteria_without_node"
 )
 
 // Violation is one broken rule.
