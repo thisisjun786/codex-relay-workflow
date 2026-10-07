@@ -64,16 +64,13 @@ func activationPublish(path string, b []byte) error {
 // lock every CRW writer of config.toml takes (CRW-844): the read, the decision and the publish are
 // serialized against retrust and any other CRW writer, so two writers never interleave on one
 // config.toml, and a retrust that publishes between this read and this write cannot be overwritten
-// with content built from the pre-retrust bytes. The lock is taken only for config.toml; the other
-// files this package publishes (the install manifest, the self-heal marker) are not shared with
-// another writer and keep activationPublish.
+// with content built from the pre-retrust bytes. The lock is taken once by Activate and held across
+// the whole flow (CRW-877), so this helper takes no lock of its own: taking one here would be the
+// activation deadlocking on the lock it already holds. The other files this package publishes (the
+// install manifest, the self-heal marker) are not shared with another writer and keep
+// activationPublish.
 func activationSetKeyLocked(path, table, key string) (TomlEditResult, error) {
-	lock, e := crwdir.LockConfig(path, activationLockWait)
-	if e != nil {
-		return TomlEditResult{}, e
-	}
-	defer lock.Release()
-	content, _, e := activationReadFile(lock.Target)
+	content, _, e := activationReadFile(path)
 	if e != nil {
 		return TomlEditResult{}, e
 	}
@@ -81,7 +78,7 @@ func activationSetKeyLocked(path, table, key string) (TomlEditResult, error) {
 	if !res.Changed {
 		return res, nil
 	}
-	if e := activationPublish(lock.Target, []byte(res.Content)); e != nil {
+	if e := activationPublish(path, []byte(res.Content)); e != nil {
 		return TomlEditResult{}, e
 	}
 	return res, nil
@@ -168,17 +165,42 @@ func Activate(deps ActivateDeps) (*InstallManifest, error) {
 	if e := os.MkdirAll(deps.CodexHome, 0777); e != nil {
 		return nil, e
 	}
+	// One critical section for the whole activation, under the sidecar lock every CRW writer of
+	// config.toml takes (CRW-877): the pre-install read, the backup, the injected "codex features
+	// enable" calls that rewrite config.toml themselves, the managed-key read-modify-writes and the
+	// post-activation hash. A CRW writer that published between any two of those would otherwise have
+	// its change discarded by the CLI's own read-modify-write, with neither command reporting it. The
+	// wait and the busy text are the ones the other writers use.
+	lock, e := crwdir.LockConfig(path, activationLockWait)
+	if e != nil {
+		// A file this activation cannot read is refused with the read path's own message, which the
+		// tests and the operator already know ("left unchanged"); LockConfig resolves the target
+		// through a symlink, so a config.toml link that leads nowhere fails here rather than in the
+		// read. Contention (the busy text) is not that case and is returned as it is.
+		if _, _, readErr := activationReadFile(path); readErr != nil {
+			return nil, readErr
+		}
+		return nil, e
+	}
+	defer lock.Release()
+	target := lock.Target
+	// The declared-state probe reads the same config.toml through the injected CLI, and its answer
+	// decides both which flags are enabled below and every flag's priorEnabled, so it runs inside the
+	// critical section too. A probe taken before the wait would let an activation that holds the lock
+	// enable a flag and publish its manifest, after which this activation would enable the flag again,
+	// record it as previously disabled and claim it as its own, and a later deactivation would turn
+	// off a flag the other activation enabled.
 	state, e := ReadDeclaredState(deps.Run)
 	if e != nil {
 		return nil, e
 	}
-	pre, exists, e := activationReadFile(path)
+	pre, exists, e := activationReadFile(target)
 	if e != nil {
 		return nil, e
 	}
 	var backup *string
 	if exists {
-		info, e := os.Stat(path)
+		info, e := os.Stat(target)
 		if e != nil {
 			return nil, e
 		}
@@ -222,7 +244,7 @@ func Activate(deps ActivateDeps) (*InstallManifest, error) {
 		// The whole read-modify-write is under the sidecar lock every CRW writer of config.toml
 		// takes (CRW-844): reading before the lock and publishing after it would let a retrust that
 		// published in that window be overwritten with content built from the pre-retrust bytes.
-		res, e := activationSetKeyLocked(path, entry.Table, entry.Key)
+		res, e := activationSetKeyLocked(target, entry.Table, entry.Key)
 		if e != nil {
 			return nil, e
 		}
@@ -240,7 +262,7 @@ func Activate(deps ActivateDeps) (*InstallManifest, error) {
 		m.tableOrder = append(m.tableOrder, id)
 	}
 	m.ActivatedAt = now()
-	m.PostActivateHash, e = hashOrNull(path)
+	m.PostActivateHash, e = hashOrNull(target)
 	if e != nil {
 		return nil, e
 	}

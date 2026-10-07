@@ -24,6 +24,15 @@ import (
 const CatalogTTLMS = 30_000
 const ocxBufferLimit = 4 * 1024 * 1024
 
+// ErrCatalogUnsupported is the OCX refusing the live-catalog command line itself: this host's OCX
+// does not read the running proxy's model catalog at all. That is a different state from a catalog
+// that could not be read, and RunOcxModels returns it so a caller can tell the two apart without
+// re-deciding the judgement.
+var ErrCatalogUnsupported = sentinel("this OCX does not support reading the live model catalog")
+
+// unsupportedMessage is what a caller shows for that state.
+const unsupportedMessage = "This OCX does not support reading the live model catalog (ocx models live --json)."
+
 // LiveCatalog is live-catalog.ts:12-17. A cached object's unvalidated/unknown
 // members survive the oracle's fresh return and stale spread.
 type LiveCatalog struct {
@@ -176,12 +185,39 @@ func queryCatalog(path, key string, environ []string, env host.LookupEnv, now fu
 	if source == ModelNative {
 		message = "Codex model catalog is unavailable. Check its configured path and refresh."
 	}
+	// An OCX that refuses the command line is not a catalog that could not be read: it is a host
+	// whose OCX does not answer the live-catalog command at all, and the answer must say so.
+	unsupported := errors.Is(err, ErrCatalogUnsupported)
+	if unsupported {
+		message = unsupportedMessage
+	}
 	if cached != nil {
 		c := *cached
 		c.Status, c.Message = "stale", message+" Showing the last successful list."
+		if unsupported {
+			// The cached object is merged into the marshalled answer, so the state has to be
+			// replaced there as well: setting the struct field alone would be overwritten.
+			c.Catalog.State = CatalogUnsupported
+			c.raw = withState(c.raw, CatalogUnsupported)
+		}
 		return c
 	}
+	if unsupported {
+		return LiveCatalog{Catalog: Catalog{State: CatalogUnsupported, Entries: []CatalogEntry{}}, Status: "unavailable", Source: source, Message: message}
+	}
 	return LiveCatalog{Catalog: Catalog{State: CatalogUnavailable, Entries: []CatalogEntry{}}, Status: "unavailable", Source: source, Message: message}
+}
+
+// withState is the raw object with its state member replaced, for a cached catalog whose state the
+// caller is answering differently. A nil raw object is returned unchanged: nothing is merged into
+// the answer then, so the struct's own state is what is marshalled.
+func withState(raw object, state CatalogState) object {
+	if raw == nil {
+		return nil
+	}
+	out := append(object{}, raw...)
+	out.set("state", string(state))
+	return out
 }
 
 // ParseOcxModels is ts:37-53: disabled/pending filtering precedes ID validation;
@@ -494,7 +530,31 @@ func RunOcxModels(environ []string) (string, error) {
 		return "", ctx.Err()
 	}
 	if err != nil {
+		if rejectedCommandLine(err, out.buffer.String(), stderr.buffer.String()) {
+			return "", ErrCatalogUnsupported
+		}
 		return "", err
 	}
 	return out.buffer.String(), nil
+}
+
+// rejectedCommandLine reports whether the OCX refused the command line itself rather than failing
+// while running it. Both cases exit non-zero with nothing on stdout, so the exit status alone cannot
+// tell them apart; the argument rejection is the one that prints the command's usage block. The
+// signal is deliberately narrow, because a failure it does not recognize stays an ordinary read
+// failure rather than being reported as an OCX that cannot answer at all.
+func rejectedCommandLine(err error, stdout, stderr string) bool {
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) {
+		return false
+	}
+	if stdout != "" {
+		return false
+	}
+	for _, line := range strings.Split(stderr, "\n") {
+		if strings.HasPrefix(text.Trim(line), "Usage: ocx models") {
+			return true
+		}
+	}
+	return false
 }
