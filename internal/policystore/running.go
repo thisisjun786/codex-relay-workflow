@@ -2,6 +2,7 @@ package policystore
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -48,8 +49,10 @@ type manageRelay struct {
 }
 
 // manageRelaySettings is the relay block the management session configuration names, read through
-// crwconfig the way crw manage reads it. An absent or unusable file leaves both empty, and the
-// caller falls back to the App Server default socket.
+// crwconfig the way crw manage reads it. An absent file leaves both empty and the caller falls back
+// to the App Server default socket; a file that is there but cannot be read or is not a JSON object
+// is an error, because which relay to observe could not be established and the default relay is not
+// the answer to that question.
 func manageRelaySettings(getenv func(string) string) (manageRelay, error) {
 	file, err := crwconfig.Load(getenv, "")
 	if err != nil {
@@ -70,7 +73,10 @@ func manageRelaySettings(getenv func(string) string) (manageRelay, error) {
 // relaySettings is the socket and the configured state directory of the running service.
 func relaySettings(env LookupEnv) (string, string, error) {
 	getenv := func(key string) string { value, _ := env(key); return value }
-	configured, _ := runningSeams.readManage(getenv)
+	configured, err := runningSeams.readManage(getenv)
+	if err != nil {
+		return "", "", fmt.Errorf("the management configuration could not be read: %w", err)
+	}
 	socket := configured.Socket
 	if socket == "" {
 		home, ok := codexHome(env)
