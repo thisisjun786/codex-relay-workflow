@@ -100,7 +100,7 @@ const (
 	spawnNestingBytesPerLevel = 2
 	// spawnNestingMaxBytes caps what one generated case may build: the byte cost of the deepest case
 	// the bound allows. A depth's bytes are computed from it before anything is built, and a depth
-	// past the cap is refused rather than built.
+	// past the cap is clamped to it rather than built.
 	spawnNestingMaxBytes = spawnNestingFixedBytes + spawnNestingBytesPerLevel*(spawnNestingBound+spawnNestingSpread)
 )
 
