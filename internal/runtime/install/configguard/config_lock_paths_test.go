@@ -221,6 +221,50 @@ func TestConfigLockPathsPinnedRefusesARetargetedDirectoryAlias(t *testing.T) {
 
 // configLockPathsRenameRunner is the issue's reproduction: the injected CLI writes the new settings
 
+// The pre-merge d1 case (second record), pinned directly: only the FINAL component may be missing.
+// A missing intermediate directory must not be synthesised, because the kernel cannot resolve such a
+// path and the answer would otherwise be folded back onto the locked file with a lexical Join.
+func TestConfigLockPathsMissingIntermediateDirectoryIsNotSynthesised(t *testing.T) {
+	home := configLockActivationHome(t)
+	real := filepath.Join(home, "real")
+	if err := os.MkdirAll(real, 0700); err != nil {
+		t.Fatal(err)
+	}
+	cfg := filepath.Join(real, "config.toml")
+	activationWrite(t, cfg, deactivationConfig)
+	pinned, ok := configLockPathsRealPath(cfg)
+	if !ok {
+		t.Fatal("the pinned path did not resolve")
+	}
+	spelling := real + string(filepath.Separator) + "missing" + string(filepath.Separator) + ".." + string(filepath.Separator) + "config.toml"
+	if _, ok := configLockPathsRealPath(spelling); ok {
+		t.Fatalf("a missing intermediate directory was synthesised: %q", spelling)
+	}
+	if configLockPathsSameTarget(spelling, pinned) {
+		t.Fatalf("the unresolvable spelling was accepted as the locked file: %q", spelling)
+	}
+}
+
+// The pre-merge d2 case (second record): a bare relative name whose file was removed must still
+// resolve through the resolved working directory, so an uninstall with a relative CODEX_HOME and a
+// deleted config.toml keeps working instead of failing the new pin.
+func TestConfigLockPathsBareRelativeAbsentConfigResolves(t *testing.T) {
+	home := configLockActivationHome(t)
+	t.Chdir(home)
+	lock, err := crwdir.LockConfig("config.toml", time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Release()
+	pinned, err := configLockPathsPinned(lock)
+	if err != nil {
+		t.Fatalf("the pin refused a bare relative absent config: %v", err)
+	}
+	if want := filepath.Join(home, "config.toml"); pinned != want {
+		t.Fatalf("the pin answered %q, want %q", pinned, want)
+	}
+}
+
 // The pre-merge d2 case, pinned directly: a spelling whose parent is a symlink followed by ".."
 // must be resolved by the kernel, not cleaned lexically. The old helper removed the ".." before
 // resolving and answered a path the manifest does not name, accepting a genuinely different file.

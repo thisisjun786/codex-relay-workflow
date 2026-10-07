@@ -75,37 +75,48 @@ func readTextOrNull(path string) (*string, error) {
 // same file": the comparison only ever widens acceptance to spellings that name one path.
 func configLockPathsRealPath(p string) (string, bool) {
 	if resolved, err := filepath.EvalSymlinks(p); err == nil {
-		if filepath.IsAbs(resolved) {
-			return resolved, true
-		}
-		cwd, err := os.Getwd()
-		if err != nil {
-			return "", false
-		}
-		realCwd, err := filepath.EvalSymlinks(cwd)
-		if err != nil {
-			return "", false
-		}
-		return filepath.Join(realCwd, resolved), true
+		return configLockPathsAbsolute(resolved)
 	}
-	// The final component is not there — an install whose config.toml was removed. It is named
-	// through its parent, resolved the same way. The split is lexical and does NOT clean: a
-	// filepath.Dir here would remove a ".." before the kernel resolved it, so a spelling whose
-	// parent is a symlink could be answered as a path the manifest does not name (E2 forbids
-	// cleaning before the resolution, and the caller treats a failed resolution as a different
-	// file).
+	// Only the final component may be missing — an install whose config.toml was removed. It is
+	// named through its parent, and that parent must resolve completely: synthesising a missing
+	// intermediate directory would let a path the kernel cannot resolve be answered as the locked
+	// file (CRW-899's pre-merge d1). The split is lexical and does NOT clean, so a ".." reaches the
+	// kernel applied to the directory it has already resolved rather than being folded into the
+	// spelling (E2).
 	dir, base := filepath.Split(p)
-	if dir == "" {
+	if base == "" || base == "." || base == ".." {
 		return "", false
 	}
-	realDir, ok := configLockPathsRealPath(strings.TrimSuffix(dir, string(filepath.Separator)))
+	if dir == "" {
+		dir = "."
+	}
+	realDir, err := filepath.EvalSymlinks(strings.TrimSuffix(dir, string(filepath.Separator)))
+	if err != nil {
+		return "", false
+	}
+	absDir, ok := configLockPathsAbsolute(realDir)
 	if !ok {
 		return "", false
 	}
-	if base == "" {
-		return realDir, true
+	return filepath.Join(absDir, base), true
+}
+
+// configLockPathsAbsolute makes a kernel-resolved path absolute in kernel terms: a relative result
+// is joined to the resolved working directory, never to the lexical one, so two spellings of one
+// file compare equal however the process was started.
+func configLockPathsAbsolute(resolved string) (string, bool) {
+	if filepath.IsAbs(resolved) {
+		return resolved, true
 	}
-	return filepath.Join(realDir, base), true
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", false
+	}
+	realCwd, err := filepath.EvalSymlinks(cwd)
+	if err != nil {
+		return "", false
+	}
+	return filepath.Join(realCwd, resolved), true
 }
 
 // configLockPathsSameTarget reports whether a spelling names the file the pinned path names.
