@@ -134,7 +134,7 @@ func underCorrectionRefusal(ctx context.Context, q store.Querier, r store.MergeT
 	// ACTIVE acceptance and the active-only lookups above cannot see it: a turn that was held for the old
 	// head would otherwise proceed to merge exactly the result the correction replaced. The acceptance
 	// that recorded the head is read whatever its state, and a turn holding it is refused.
-	if r.CandidateHead != "" && len(candidates) == 0 {
+	if r.CandidateHead != "" {
 		if replaced, err := ucReplacedHead(ctx, q, r.Repository, r.CandidateHead); err != nil {
 			return nil, err
 		} else if replaced != "" {
@@ -202,18 +202,21 @@ func ucReplacedHead(ctx context.Context, q store.Querier, repository, head strin
 	// rows outlive the acceptance they were recorded for, and a turn held for a refreshed head would
 	// otherwise resolve to nothing once dag-accept --supersedes replaced the acceptance.
 	query := "SELECT a.relationship_id FROM dag_acceptances a" +
-		" WHERE " + identity + " = lower(?) AND lower(trim(a.head_sha)) = lower(trim(?))"
+		" WHERE a.state <> 'active' AND " + identity + " = lower(?) AND lower(trim(a.head_sha)) = lower(trim(?))"
 	args := []any{repository, head}
 	if refreshed, err := ucZoneTable(ctx, q, "dag_base_refreshes"); err != nil {
 		return "", err
 	} else if refreshed {
 		query = "SELECT a.relationship_id FROM dag_acceptances a" +
-			" WHERE " + identity + " = lower(?) AND lower(trim(a.head_sha)) = lower(trim(?))" +
+			" WHERE a.state <> 'active' AND " + identity + " = lower(?) AND lower(trim(a.head_sha)) = lower(trim(?))" +
 			" UNION ALL SELECT f.relationship_id FROM dag_base_refreshes f JOIN dag_acceptances a ON a.acceptance_id = f.acceptance_id" +
-			" WHERE " + identity + " = lower(?) AND lower(trim(f.head_sha)) = lower(trim(?))"
+			" WHERE a.state <> 'active' AND " + identity + " = lower(?) AND lower(trim(f.head_sha)) = lower(trim(?))"
 		args = []any{repository, head, repository, head}
 	}
-	query = "SELECT relationship_id FROM (" + query + ") ORDER BY relationship_id LIMIT 1"
+	// A relationship that still holds the head actively is not replaced by it: its own head is the plan's result.
+	query = "SELECT relationship_id FROM (" + query + ") WHERE relationship_id NOT IN (SELECT a2.relationship_id FROM dag_acceptances a2" +
+		" WHERE a2.state = 'active' AND lower(trim(a2.head_sha)) = lower(trim(?))) ORDER BY relationship_id LIMIT 1"
+	args = append(args, head)
 	var relationship string
 	if err := q.QueryRowContext(ctx, query, args...).Scan(&relationship); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

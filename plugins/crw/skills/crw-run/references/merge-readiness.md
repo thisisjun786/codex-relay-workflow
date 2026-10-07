@@ -380,10 +380,10 @@ route a late thread takes: the coordinator opens the next generation by hand, se
 `dag-correct --prepare` printed, binds the turn with `generation-bind`, records it with `dag-correct --manifest-digest`,
 and takes the corrected result with `dag-accept --supersedes`; the accepted head is held back from the lane and from
 a bundle while that generation is open, so the candidate does not merge meanwhile. A minor thread that the installed
-relay can record is dispositioned as above and needs no route. Where it cannot, the coordinator still triages the
+relay can record is dispositioned as above and needs no route. Where a minor thread cannot be recorded, the coordinator still triages the
 thread as in the temporary procedure so that its disposition is ready, reports the case on the coordination record,
 and holds the candidate: it does not merge, and it opens no generation by hand around `dag-correct`. A red, P0, P1 or
-security thread is handled the same way and the candidate does not merge. The two exceptions of that step are
+security thread takes the hand-opened route above and the candidate does not merge. The two exceptions of that step are
 unchanged: a stale result whose reading says `correct` goes through `dag-correct`, and an open criteria re-review is
 decided first. The base-refresh route for an accepted node concerns the base only and is no way around a late thread.
 

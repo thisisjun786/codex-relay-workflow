@@ -35,3 +35,29 @@ func TestACorrectionIsNotRecordedOverALegacyAcceptanceTurnOfItsForgeRepository(t
 		t.Fatalf("the refused correction wrote the execution %q", got)
 	}
 }
+
+// CRW-906 final round, evaluation 6f79654d D2: a live bundle that carries an accepted head through another
+// node is still the bundle whose merge may already be on the forge, so a correction of the accepted node is
+// refused when the bundle's member holds that head, whichever relationship the member is.
+func TestACorrectionIsNotRecordedOverALiveBundleCarryingTheHeadThroughAnotherNode(t *testing.T) {
+	t.Parallel()
+	k, accepted := rvSettledSharedRoot(t)
+	rid := accepted["B"].RelationshipID
+	prepared := k.rvPrepare("sr", "B")
+	acOpenByHand(t, k, rid, prepared.DispatchRequestID, "needs_changes_revision", 2, true)
+	k.exec("UPDATE dag_acceptances SET repository = 'owner/repo', head_sha = 'head-b' WHERE relationship_id = ?", rid)
+	k.exec("INSERT INTO merge_trains (train_id, target_key, repository, base_ref, base_sha, leader_task_id, created_at) VALUES ('trn-other', 'tgt', 'owner/repo', 'dev', 'base-0', 'parent', 't')")
+	// the member is another relationship that carries the same head
+	k.exec("INSERT INTO merge_train_members (train_id, seq, turn_id, pr_number, relationship_id, member_head) VALUES ('trn-other', 1, 'turn-other', 6, 'rel-other-node', 'head-b')")
+	k.exec("INSERT INTO merge_train_events (train_id, seq, kind, actor, detail_json, recorded_at) VALUES ('trn-other', 1, 'opened', 'parent', '{}', 't')")
+	_, err := k.sched.RecordCorrection(context.Background(), "sr", "B", "parent", prepared.ManifestDigest)
+	if refusalReason(err) != "disposition_conflict" {
+		t.Fatalf("a correction over a live bundle carrying the head through another node = %v, want disposition_conflict", err)
+	}
+	if !strings.Contains(err.Error(), "trn-other") {
+		t.Fatalf("the refusal does not name the bundle: %v", err)
+	}
+	if got := acExecution(k, "B", 2); got != "" {
+		t.Fatalf("the refused correction wrote the execution %q", got)
+	}
+}

@@ -665,3 +665,28 @@ func TestTheLaneGateMatchesAHeadRegardlessOfItsSpelling(t *testing.T) {
 		t.Fatalf("the refusal does not name the relationship: %s", refusal.Detail)
 	}
 }
+
+// CRW-906 final round, evaluation 6f79654d D1: a head an accepted node replaced is not mergeable through another
+// accepted node that still stands on it. The replaced-head check must run whenever the turn holds a head, not
+// only when no relationship matched the head.
+func TestTheLaneGateRefusesAReplacedHeadThatAnotherNodeStillAccepts(t *testing.T) {
+	w := newFx(t)
+	w.ucLaneRelationship("rel-a", 2)
+	w.exec("UPDATE dag_acceptances SET state = 'superseded' WHERE relationship_id = 'rel-a'")
+	w.ucLaneRelationship("rel-b", 1)
+	w.exec("INSERT INTO dag_acceptances (acceptance_id, plan_id, node_id, manifest_digest, relationship_id, execution_generation, event_id, revision_hash, criteria_set_digest, verdict, head_sha, repository, pr_number, ack_tier, verdict_turn_id, rule_version_json, accepted_by_task_id, coordinator_epoch, accepted_at, state)"+
+		" VALUES ('acc-rel-b', 'plan-x', 'node-b', 'manifest-b', 'rel-b', 1, 'ev-b', 'rev-b', 'crit-1', 'verified', 'head-a', ?, 1, 'bound', 'turn-1', '{}', ?, 0, '2023-11-14T22:13:19.000000+00:00', 'active')",
+		fxRepo, alpha.TaskID)
+	turn := store.MergeTurnsRow{TurnID: "mtn-replaced-elsewhere", TargetKey: "tgt-x", Repository: fxRepo, BaseRef: fxBase, ProjectKey: fxA,
+		HolderTaskID: alpha.TaskID, CandidateHead: "head-a", State: Holding}
+	refusal, err := underCorrectionRefusal(w.ctx, w.s.Querier(w.ctx), turn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if refusal == nil || refusal.Reason != contract.RefusalDispositionConflict {
+		t.Fatalf("a head another node accepts, after this node's correction replaced it, was not refused: %+v", refusal)
+	}
+	if !strings.Contains(refusal.Detail, "rel-a") {
+		t.Fatalf("the refusal does not name the replaced relationship: %s", refusal.Detail)
+	}
+}
