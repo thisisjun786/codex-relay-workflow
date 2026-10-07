@@ -238,9 +238,9 @@ func resetLinkTargetExistsWith(pinned *resetLinkWalkPin, name string, statRoot f
 // resetLinkWalkTarget judges a link's readlink text against the pinned directory by walking the
 // target's path components with fstatat(AT_SYMLINK_NOFOLLOW) and readlinkat relative to the
 // descriptor resetPin took, so the walk opens nothing: a component that is not a link is read with
-// fstatat, and the search permission a "." or ".." component needs is asked by looking up a name
-// that is never created. A multi-component path is still resolved by the kernel component by
-// component, the way the OS-path judgement resolves it too.
+// fstatat, and the search permission a "." or ".." component needs is asked of the kernel with
+// faccessat(X_OK) relative to that descriptor, which opens nothing. A multi-component path is still
+// resolved by the kernel component by component, the way the OS-path judgement resolves it too.
 //
 // The walk reports whether the target exists and whether it stayed inside the root at all; a target
 // it cannot keep inside the root — an absolute one, a ".." above it, a spliced link target that is
@@ -255,9 +255,10 @@ func resetLinkTargetExistsWith(pinned *resetLinkWalkPin, name string, statRoot f
 //
 // The walk resolves the target through one concatenated pathname, so a target whose prefix grows
 // past the kernel's own single-pathname limit (PATH_MAX, 4096 on Linux and 1024 on XNU) answers
-// ENAMETOOLONG from the walk's own fstatat. That is one of the errors above: the walk cannot decide
-// the target, and the answer is absent, which keeps the link. The walk never hands such a target to
-// the root-path judgement, which is reserved for a target that really leaves the root.
+// ENAMETOOLONG from the walk's own fstatat. That error reports the walk's own limit rather than the
+// kernel's answer about the target, which may still resolve: the walk cannot decide it, so it is
+// reported as not kept inside the root and the caller keeps the descriptor stat and the root-path
+// judgement, exactly as for an absolute target or a ".." above the root.
 //
 // The hop count starts at one because the caller already read this link's target with readlink:
 // the kernel counts that link as the first traversal it allows for the whole resolution, so a chain
