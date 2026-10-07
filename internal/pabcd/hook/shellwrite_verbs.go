@@ -2500,6 +2500,12 @@ func (w *shellWriteUnnamedWalk) read(rs []rune, depth int, outer shellWriteCopyI
 				kind = 'd' // a def or async def header binds a name; its parenthesis runs nothing
 			default:
 				kind = shellVerbCallKind(rs, i, c)
+				if kind != 0 && shellWriteUnnamedDotted(rs, i) {
+					// A method named open (p.open("w")) is not the builtin: its destination is the receiver,
+					// which this reader names for no open() method at all. A method named Path (x.Path(...)) is
+					// no pathlib.Path and names no destination. A method of any other name is read below.
+					kind = shellWriteUnnamedDottedKind(rs, i)
+				}
 				if kind == 0 && c == '(' && shellWriteExecCallee(rs, i, c) {
 					kind = 'e'
 				}
@@ -2575,9 +2581,9 @@ func (w *shellWriteUnnamedWalk) close(rs []rune, f shellWriteUnnamedFrame, spans
 			w.unnamed = true
 		}
 	case 'q':
-		// Path(...).open(mode) writes to its receiver, which the reader names for no Path method at all, so it is a
-		// write whose destination the reader cannot name whatever the receiver is; the mode decides whether it
-		// writes.
+		// A Path or other receiver's open(mode) writes to its receiver, and this reader names no destination for
+		// any open() method at all (only write_text and write_bytes are read, and only from a Path(<literal>)
+		// receiver), so the destination is unnamed; the mode decides whether it writes at all.
 		if shellWriteUnnamedWrites(shellWriteUnnamedArg(rs, spans, 0, "mode")) {
 			w.unnamed = true
 		}
@@ -2671,6 +2677,41 @@ func shellWriteUnnamedDefHeader(rs []rune, i int) bool {
 		k--
 	}
 	return k != end && shellWriteExecDefHeader(rs, k-1)
+}
+
+// shellWriteUnnamedDotted reports whether the identifier just before the bracket at rs[i] hangs off a dot, so the call
+// is a method on a receiver rather than a plain call of the name.
+func shellWriteUnnamedDotted(rs []rune, i int) bool {
+	j := i
+	for j > 0 && shellVerbSpaceRune(rs[j-1]) {
+		j--
+	}
+	for j > 0 && shellWriteCopyIdentRune(rs[j-1]) {
+		j--
+	}
+	for j > 0 && shellVerbSpaceRune(rs[j-1]) {
+		j--
+	}
+	return j > 0 && rs[j-1] == '.'
+}
+
+// shellWriteUnnamedDottedKind is the frame kind of a call whose name the builtin reader matched but which hangs off a
+// dot: a method named open writes to its receiver and this reader names no destination for it, and any other name is no
+// such call.
+func shellWriteUnnamedDottedKind(rs []rune, i int) byte {
+	j := i
+	for j > 0 && shellVerbSpaceRune(rs[j-1]) {
+		j--
+	}
+	end := j
+	for j > 0 && shellWriteCopyIdentRune(rs[j-1]) {
+		j--
+	}
+	switch string(rs[j:end]) {
+	case "open":
+		return 'q'
+	}
+	return 0
 }
 
 // shellWriteUnnamedTarget reports whether an assignment binds the name that ends at j: the next rune that is not a blank
@@ -2788,8 +2829,8 @@ func shellWriteUnnamedPathNamed(rs []rune, spans [][2]int) bool {
 // write methods this check reads and its receiver is not a Path(...) call (read by shellWriteUnnamedReceiver): the
 // destination of such a call is its receiver, which the reader cannot name. A name a module the reader reads its own way
 // owns (shutil.copy, os.rename, importlib.import_module) is left to shellWriteCopyModuleKind and
-// shellWriteUnnamedSpecial; rename is read here only for a receiver that is no such module, because an ordinary
-// string's .replace and a module's .rename are no filesystem write of this shape.
+// shellWriteUnnamedSpecial. replace is left out: a str's own .replace is ordinary and names no file, and a Path receiver
+// reaches replace through shellWriteUnnamedReceiver, os.replace through its own call.
 func shellWriteUnnamedMethodAt(rs []rune, i int, binds shellWriteCopyImports) byte {
 	start := i - 1
 	for start >= 0 && shellVerbSpaceRune(rs[start]) {
@@ -2803,15 +2844,15 @@ func shellWriteUnnamedMethodAt(rs []rune, i int, binds shellWriteCopyImports) by
 		return 0
 	}
 	name := string(rs[start+1 : end])
-	if !shellWriteUnnamedMethod(name) {
+	if !shellWriteUnnamedMethod(name) || name == "replace" {
 		return 0
 	}
 	receiver, ok := shellWriteUnnamedAttribute(rs, start+1)
-	if ok && shellWriteUnnamedModuleReceiver(receiver, binds) {
-		return 0
+	if !ok {
+		return 0 // no dot before the name: a plain call, not a method
 	}
-	if !ok && name != "open" {
-		return 0 // a bare name's method: rename, replace and the links are Path methods the receiver's own call reads
+	if shellWriteUnnamedModuleReceiver(receiver, binds) {
+		return 0
 	}
 	return shellWriteUnnamedMethodKind(name)
 }

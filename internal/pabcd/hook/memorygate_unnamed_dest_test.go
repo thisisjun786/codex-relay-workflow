@@ -219,3 +219,34 @@ func TestMemoryGateUnnamedDestinationReviewFixes(t *testing.T) {
 		})
 	}
 }
+
+// TestMemoryGateUnnamedDestinationMethodReceivers pins the two shapes this check's own review of the receiver rule
+// found: a method named open (p.open("w")) writes to its receiver, which this reader names for no open() method, while
+// an ordinary string's own replace names no file and must not be refused.
+func TestMemoryGateUnnamedDestinationMethodReceivers(t *testing.T) {
+	cwd, root, env := gateScene(t)
+	py := func(program string) string { return "python3 -c " + shellWriteUnnamedQuote(program) }
+	for _, c := range []struct{ name, command string }{
+		{"variable receiver open", py("from pathlib import Path; p = Path('/w'); p.open('w'); print('memories')")},
+		{"literal receiver open", py("from pathlib import Path; Path('/w/n.md').open('w'); print('memories')")},
+		{"literal receiver open at the root", py("from pathlib import Path; Path('" + root + "/n.md').open('w')")},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got := memoryGateClassify("Bash", map[string]any{"command": c.command}, cwd, env)
+			if got.Surface != "shell" || got.Target != unnamedDestWant {
+				t.Errorf("%q: %+v, want the shell surface and %s", c.command, got, unnamedDestWant)
+			}
+		})
+	}
+	for _, c := range []struct{ name, command string }{
+		{"string replace literal receiver", py("x = 'memories'.replace('a','b'); print(x)")},
+		{"string replace variable receiver", py("s = 'memories'; x = s.replace('a','b'); print(x)")},
+		{"string method that names no file", py("s = 'memories'; print(s.upper())")},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got := memoryGateClassify("Bash", map[string]any{"command": c.command}, cwd, env); got.Surface != "" {
+				t.Errorf("%q must pass: %+v", c.command, got)
+			}
+		})
+	}
+}
