@@ -261,3 +261,43 @@ func TestAHandOpenedGenerationOfAnAcceptedCurrentResultIsStillRefused(t *testing
 		}
 	})
 }
+
+// The reason a generation was opened under is what states the correction, and the stale route keeps its own
+// gate: a stale node whose route says correct is recorded under either reason (the new value is a correction
+// reason like the default, not a route of its own), and one whose route is anything else is still refused
+// whatever reason it carries. This pins that the change admits one case rather than loosening the gate.
+func TestTheCorrectionReasonDoesNotLoosenTheStaleRouteGate(t *testing.T) {
+	t.Parallel()
+	t.Run("a stale node whose route is correct records under the new reason", func(t *testing.T) {
+		k, _, ridC, prepared := rvHandKit(t)
+		if got := rvAction(t, k.read("sr"), "C"); got != rvCorrect {
+			t.Fatalf("the route of C = %q, want %q: the premise of the stale correction", got, rvCorrect)
+		}
+		acOpenByHand(t, k, ridC, prepared.DispatchRequestID, "accepted_result_correction", 2, true)
+		res, err := k.sched.RecordCorrection(context.Background(), "sr", "C", "parent", prepared.ManifestDigest)
+		if err != nil || res.Replayed || res.OpenedBy != OpenedByGenerationOpen || res.ManifestDigest != prepared.ManifestDigest {
+			t.Fatalf("a stale correction under the new reason = %v %+v", err, res)
+		}
+		if got := acReason(k, ridC, 2); got != "accepted_result_correction" {
+			t.Fatalf("the generation's reason = %q", got)
+		}
+	})
+	t.Run("a stale node whose route is revalidate is refused whatever reason it carries", func(t *testing.T) {
+		k, accepted := rvSettledSharedRoot(t)
+		ridA := accepted["A"].RelationshipID
+		// only A's criteria change: its route is revalidate, which opens no generation
+		k.rvReregister("sr", "A", "sr-r2", ridA, dig("A's new criteria"), nil)
+		if got := rvAction(t, k.read("sr"), "A"); got != rvRevalidate {
+			t.Fatalf("the route of A = %q, want %q: the premise", got, rvRevalidate)
+		}
+		prepared := k.rvPrepare("sr", "A")
+		acOpenByHand(t, k, ridA, prepared.DispatchRequestID, "accepted_result_correction", 2, true)
+		if _, err := k.sched.RecordCorrection(context.Background(), "sr", "A", "parent", prepared.ManifestDigest); refusalReason(err) != "disposition_conflict" {
+			t.Fatalf("a revalidation recorded as a correction = %v, want disposition_conflict", err)
+		} else if !strings.Contains(err.Error(), "revalidate") {
+			t.Fatalf("the refusal does not name the route: %v", err)
+		} else if got := acExecution(k, "A", 2); got != "" {
+			t.Fatalf("the refused correction bound %q", got)
+		}
+	})
+}
