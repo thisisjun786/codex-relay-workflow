@@ -291,11 +291,14 @@ export function PolicyScreen({ state, handlers, help }: { state: PolicyScreenSta
                   const free = models.filter((option) => !view.allowed.some((entry) => entry.model === option.id));
                   if (free.length === 0) return null;
                   const choice = allowedAddChoice(state, free.map((option) => option.id));
+                  // The add control is one more edit: it proposes a setAllowed for `choice`, so it is
+                  // disabled in the same condition as that row's own controls.
+                  const addDisabled = busy || !screenMayEdit(state, `allowed:${choice}`);
                   return (
                     <div className="list-row">
                       <div className="row-id"><span className="row-sub">Add a model to the allowed list</span></div>
                       <div className="row-actions">
-                        <select className="select" style={{ maxWidth: "220px" }} aria-label="model to allow" value={choice} onChange={(e) => handlers.allowedAddModel(e.target.value)}>
+                        <select className="select" style={{ maxWidth: "220px" }} aria-label="model to allow" value={choice} disabled={addDisabled} onChange={(e) => handlers.allowedAddModel(e.target.value)}>
                           {/* The chosen model keeps a matching option even when the refreshed catalog
                               no longer lists it, so the control can never display one model while Add
                               proposes another. */}
@@ -303,7 +306,7 @@ export function PolicyScreen({ state, handlers, help }: { state: PolicyScreenSta
                             <option key={id} value={id}>{id}</option>
                           ))}
                         </select>
-                        <button className="btn" disabled={busy || choice === "" || efforts.length === 0} aria-label="Add allowed model" onClick={() => handlers.propose({ kind: "setAllowed", model: choice, efforts: [efforts[0] ?? ""] })}>Add</button>
+                        <button className="btn" disabled={addDisabled || choice === "" || efforts.length === 0} aria-label="Add allowed model" onClick={() => handlers.propose({ kind: "setAllowed", model: choice, efforts: [efforts[0] ?? ""] })}>Add</button>
                       </div>
                     </div>
                   );

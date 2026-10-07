@@ -353,6 +353,26 @@ test("a save in flight disables the screen's other edit controls", async () => {
   assert.equal(parentControls?.props.disabled, true, "the role controls are disabled during a save");
 });
 
+test("one live edit disables the other rows on the screen", async () => {
+  const pure = await import("../src/policy-state.ts");
+  // Decided answer 4, observed through the screen: with a pending change for one allowed model, the
+  // other allowed row and the add control are disabled, so the single change the API applies cannot
+  // be silently replaced by a second edit.
+  const twoRows = readingBody({ allowed: [{ model: "anthropic/opus", efforts: ["max"] }, { model: "gpt-6.1-sol", efforts: ["high"] }] });
+  const state = loadedState(pure, twoRows, catalogBody([{ id: "anthropic/opus", label: "Opus" }, { id: "gpt-6.1-sol", label: "Sol" }, { id: "fresh/model", label: "Fresh" }]));
+  const owned = pure.screenAllowedDraft(state as never, "anthropic/opus", ["max", "xhigh"]) as unknown as Record<string, unknown>;
+  const { elements } = await mount(owned);
+  assert.equal(elements.find((el) => el.props["aria-label"] === "allowed anthropic/opus controls")?.props.disabled, false, "the owning row stays live");
+  assert.equal(elements.find((el) => el.props["aria-label"] === "allowed gpt-6.1-sol controls")?.props.disabled, true, "the other allowed row is disabled");
+  assert.equal(elements.find((el) => el.props["aria-label"] === "model to allow")?.props.disabled, true, "the add control is disabled");
+  assert.equal(elements.find((el) => el.props["aria-label"] === "Add allowed model")?.props.disabled, true);
+  // The exception rows are disabled too, since an exception is a different change.
+  assert.equal(elements.find((el) => el.props["aria-label"] === "Edit exception legacy")?.props.disabled, true);
+  // With nothing pending every control is live again.
+  const free = await mount(loadedState(pure, twoRows, catalogBody([{ id: "anthropic/opus", label: "Opus" }, { id: "gpt-6.1-sol", label: "Sol" }, { id: "fresh/model", label: "Fresh" }])) as unknown as Record<string, unknown>);
+  assert.equal(free.elements.find((el) => el.props["aria-label"] === "allowed gpt-6.1-sol controls")?.props.disabled, false);
+});
+
 test("an undeclared role row is not editable for the supervisor but is for the parent", async () => {
   const pure = await import("../src/policy-state.ts");
   const state = loadedState(pure, readingBody({ roles: [], allowed: [], exceptions: [] }), catalogBody([]));
