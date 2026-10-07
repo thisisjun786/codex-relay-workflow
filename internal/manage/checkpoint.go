@@ -11,11 +11,13 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
 	"golang.org/x/sys/unix"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/acceptance"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dagsched"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -361,6 +363,16 @@ type checkpointTargetObservation struct {
 	at         string
 }
 
+// checkpointIntegrationReading is one reading of the integration signal: the instants it counted,
+// and, per project, why that project's reading is unmeasured although the store carries the zone.
+// A project absent from reasons is measured. Keeping the reason per project is what stops one
+// project's unreadable observation instant from blanking every other project's count, and what
+// lets --project read only its own acceptances.
+type checkpointIntegrationReading struct {
+	instants []checkpointProjectInstant
+	reasons  map[string]string
+}
+
 // checkpointIntegrations counts the acceptances the relay scheduler itself calls integrated, and
 // the instant each integrated at. The judgement is dagsched's own ExecutionIntegrated (every
 // target of the node plus the parent's merged mark, targets.go nodeIntegrated), so this reading
@@ -368,61 +380,76 @@ type checkpointTargetObservation struct {
 // is not counted, and neither is one whose merged mark does not stand on its event, generation
 // and revision.
 //
+// Each acceptance is judged on what it stands on now: acceptance.StandOf resolves the newest valid
+// base refresh recorded for it, so an acceptance the parent refreshed onto a later generation is
+// judged on that generation's merged mark rather than the one it was accepted with. The reading is
+// returned per project: an integrated acceptance whose satisfying observation carries an instant
+// this build cannot read leaves only its own project unmeasured, and the other projects keep their
+// counts. Passing project restricts the acceptance read itself, so --project never reads another
+// project's acceptance.
+//
 // The instant is read from the observation records alone: per target, the first satisfying
 // observation of the current containment run, and the acceptance's instant is the latest of those
 // per-target minima. The row selection mirrors dagsched's integratedAt (internal/relay/dagsched/
 // edges.go:395), which is the reference implementation; a later change there does not propagate
 // here, which this issue's scope accepts.
-// The second result is false when the reading is unmeasured: an integrated acceptance whose
-// satisfying observation carries an instant this build cannot read leaves the signal unmeasured,
-// with the third result as the reason, rather than dropping the acceptance or failing the whole
-// reading. The rest of the reading is still computed, exactly as an unreadable input file is
-// handled.
-func (s *checkpointStore) checkpointIntegrations(ctx context.Context) ([]checkpointProjectInstant, bool, string, error) {
+func (s *checkpointStore) checkpointIntegrations(ctx context.Context, project string) (checkpointIntegrationReading, error) {
+	var out checkpointIntegrationReading
 	// The scheduler's judgement runs on the snapshot's own transaction, so it reads the same
 	// committed state as the counts beside it. A caller that reached here without one would have
 	// the judgement read outside the reading, so it is refused rather than served.
 	if s.snapshot == nil {
-		return nil, false, "", errors.New("the integration judgement needs the reading's snapshot")
+		return out, errors.New("the integration judgement needs the reading's snapshot")
 	}
+	// The stand is resolved on the same transaction as the judgement, and StandOf wants the store's
+	// own querier, so it is taken from the snapshot directly.
+	q := s.snapshot.Q(ctx)
 	acceptances, err := checkpointRows(ctx, s.checkpointQuerier(ctx),
 		"SELECT a.acceptance_id, p.project_key, a.relationship_id, a.event_id, a.execution_generation, a.revision_hash, a.head_sha"+
 			" FROM dag_acceptances a JOIN dag_plans p ON p.plan_id = a.plan_id"+
 			" WHERE a.state = 'active' AND a.head_sha IS NOT NULL AND a.head_sha <> ''"+
+			" AND (? = '' OR p.project_key = ?)"+
 			" ORDER BY p.project_key, a.acceptance_id",
-		nil, func(rows *sql.Rows) (checkpointAcceptance, error) {
+		[]any{project, project}, func(rows *sql.Rows) (checkpointAcceptance, error) {
 			var row checkpointAcceptance
 			return row, rows.Scan(&row.acceptanceID, &row.project, &row.relationship, &row.event, &row.generation, &row.revision, &row.head)
 		})
 	if err != nil {
-		return nil, false, "", err
+		return out, err
 	}
 	if len(acceptances) == 0 {
-		return nil, true, "", nil
+		return out, nil
 	}
 	scheduler := &dagsched.Scheduler{Store: s.snapshot}
-	var out []checkpointProjectInstant
-	for _, acceptance := range acceptances {
-		applicable, integrated, err := scheduler.ExecutionIntegrated(ctx, acceptance.relationship, acceptance.event, acceptance.generation, acceptance.revision)
+	for _, acc := range acceptances {
+		stand, err := acceptance.StandOf(ctx, q, acc.acceptanceID, acc.relationship, acc.generation, acc.event, acc.revision, acc.head)
 		if err != nil {
-			return nil, false, "", err
+			return out, err
+		}
+		applicable, integrated, err := scheduler.ExecutionIntegrated(ctx, stand.RelationshipID, stand.EventID, stand.Generation, stand.RevisionHash)
+		if err != nil {
+			return out, err
 		}
 		if !applicable || !integrated {
 			continue
 		}
-		at, measured, err := s.checkpointIntegrationInstant(ctx, acceptance)
+		at, measured, err := s.checkpointIntegrationInstant(ctx, acc, stand)
 		if err != nil {
-			return nil, false, "", err
+			return out, err
 		}
 		if !measured {
 			// The judgement said integrated, so a satisfying observation exists; one whose instant
-			// this build cannot read leaves the whole signal unmeasured rather than dropping the
-			// acceptance silently.
-			return nil, false, "an integrated acceptance of " + acceptance.project + " carries no readable observation instant", nil
+			// this build cannot read leaves only that acceptance's project unmeasured rather than
+			// dropping the acceptance or blanking every other project's reading.
+			if out.reasons == nil {
+				out.reasons = map[string]string{}
+			}
+			out.reasons[acc.project] = "an integrated acceptance of " + acc.project + " carries no readable observation instant"
+			continue
 		}
-		out = append(out, checkpointProjectInstant{project: acceptance.project, at: at})
+		out.instants = append(out.instants, checkpointProjectInstant{project: acc.project, at: at})
 	}
-	return out, true, "", nil
+	return out, nil
 }
 
 // checkpointIntegrationInstant is when one integrated acceptance landed everywhere it had to:
@@ -430,11 +457,15 @@ func (s *checkpointStore) checkpointIntegrations(ctx context.Context) ([]checkpo
 // those across targets (the decided answer's rule). The acceptance is already judged integrated,
 // so this reads the instants of that judgement rather than deciding it again.
 //
+// The merged mark, the observed subject and the landed candidate head are the STAND's, not the
+// acceptance's own: after a base refresh the acceptance stands on the later generation, and its own
+// event, generation, revision and head would match no observation.
+//
 // "First" is by observed_seq, the order the relay writes observations in, exactly as the
 // reference implementation picks its row (internal/relay/dagsched/edges.go:413). The second
 // result is false when the chosen row's instant is not in a form this build reads, which is an
 // unmeasured reading rather than a zero.
-func (s *checkpointStore) checkpointIntegrationInstant(ctx context.Context, acceptance checkpointAcceptance) (string, bool, error) {
+func (s *checkpointStore) checkpointIntegrationInstant(ctx context.Context, acc checkpointAcceptance, stand acceptance.Stand) (string, bool, error) {
 	rows, err := checkpointRows(ctx, s.checkpointQuerier(ctx),
 		"SELECT o.repository, o.base_ref, o.observed_seq, o.observed_at"+
 			" FROM dag_integration_observations o"+
@@ -447,8 +478,8 @@ func (s *checkpointStore) checkpointIntegrationInstant(ctx context.Context, acce
 			"   WHERE o2.acceptance_id = o.acceptance_id AND o2.repository = o.repository"+
 			"    AND o2.base_ref = o.base_ref AND o2.observed_seq > o.observed_seq AND o2.is_ancestor = 0)"+
 			" ORDER BY o.repository, o.base_ref, o.observed_seq",
-		[]any{acceptance.relationship, acceptance.event, acceptance.generation, acceptance.revision,
-			acceptance.acceptanceID, acceptance.head, acceptance.head},
+		[]any{stand.RelationshipID, stand.EventID, stand.Generation, stand.RevisionHash,
+			acc.acceptanceID, stand.Head, stand.Head},
 		func(rows *sql.Rows) (checkpointTargetObservation, error) {
 			var row checkpointTargetObservation
 			return row, rows.Scan(&row.repository, &row.baseRef, &row.seq, &row.at)
@@ -579,34 +610,60 @@ type checkpointPairEval struct {
 	At       string `json:"at"`
 }
 
-// checkpointReadPairEval reads the pair-eval JSONL. A line whose instant cannot be parsed is not
-// counted; a file with no countable line leaves its signal unmeasured.
+// checkpointPairEvalRowLimit is how many unreadable row numbers a reason names, so a file broken
+// on every line still produces a short reason.
+const checkpointPairEvalRowLimit = 5
+
+// checkpointReadPairEval reads the pair-eval JSONL. Any non-empty row this build cannot read — its
+// JSON does not parse, or its instant is in no form this build knows — leaves the whole signal
+// unmeasured: a reading that silently dropped such a row would report a partly read file as a
+// complete measurement. The error names the file and the unreadable row numbers (up to
+// checkpointPairEvalRowLimit of them). Blank lines carry no finding and are skipped.
 func checkpointReadPairEval(path string) ([]checkpointPairEval, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
 	var out []checkpointPairEval
-	content := false
-	for _, line := range strings.Split(string(data), "\n") {
+	var unreadable []int
+	for i, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
 		}
-		content = true
 		var row checkpointPairEval
 		if err := json.Unmarshal([]byte(line), &row); err != nil {
+			unreadable = append(unreadable, i+1)
 			continue
 		}
 		if _, ok := checkpointInstant(row.At); !ok {
+			unreadable = append(unreadable, i+1)
 			continue
 		}
 		out = append(out, row)
 	}
-	if content && len(out) == 0 {
-		return nil, fmt.Errorf("%s: no line of the pair evaluation is a finding this build reads", path)
+	if len(unreadable) > 0 {
+		return nil, fmt.Errorf("%s: %s could not be read", path, checkpointPairEvalRows(unreadable))
 	}
 	return out, nil
+}
+
+// checkpointPairEvalRows renders the row numbers a reading could not read, at most
+// checkpointPairEvalRowLimit of them, so the reason names where the file is broken without growing
+// with the file.
+func checkpointPairEvalRows(rows []int) string {
+	limit := len(rows)
+	if limit > checkpointPairEvalRowLimit {
+		limit = checkpointPairEvalRowLimit
+	}
+	parts := make([]string, limit)
+	for i := 0; i < limit; i++ {
+		parts[i] = "row " + strconv.Itoa(rows[i])
+	}
+	if len(rows) > limit {
+		parts = append(parts, "...")
+	}
+	return strings.Join(parts, ", ")
 }
 
 // checkpointClosedStates is the default set of states that mean an issue left the backlog, the
@@ -783,15 +840,12 @@ func Checkpoint(ctx context.Context, e *Env, cfg *Config, opts CheckpointOptions
 		if err != nil {
 			return fmt.Errorf("read the DAG zone: %w", err)
 		}
-		var integrations []checkpointProjectInstant
-		integrationsReason := ""
+		// The integration read is narrowed to the asked project, so --project never reads another
+		// project's acceptance and that project's unreadable instant cannot reach this report.
+		var integrations checkpointIntegrationReading
 		if zoned {
-			measured := false
-			if integrations, measured, integrationsReason, err = st.checkpointIntegrations(ctx); err != nil {
+			if integrations, err = st.checkpointIntegrations(ctx, opts.Project); err != nil {
 				return fmt.Errorf("read the integration observations: %w", err)
-			}
-			if !measured {
-				integrations = nil
 			}
 		}
 
@@ -810,8 +864,7 @@ func Checkpoint(ctx context.Context, e *Env, cfg *Config, opts CheckpointOptions
 				closedStates: thresholds.ClosedStates,
 				merges:       merges, verdicts: verdicts, decisions: decisions, integrations: integrations,
 				zoned: zoned, records: records[project],
-				integrationsReason: integrationsReason,
-				export:             export, pairEval: pairEval,
+				export: export, pairEval: pairEval,
 				exportReason: exportReason, pairEvalReason: pairEvalReason,
 			}))
 		}
@@ -833,14 +886,11 @@ type checkpointInput struct {
 	merges       []checkpointProjectInstant
 	verdicts     []checkpointProjectInstant
 	decisions    []checkpointProjectInstant
-	integrations []checkpointProjectInstant
+	integrations checkpointIntegrationReading
 	zoned        bool
-	// integrationsReason is why the integration signal could not be measured although the store
-	// carries the zone, so only that signal is left unmeasured.
-	integrationsReason string
-	records            []time.Time
-	export             *checkpointExport
-	pairEval           []checkpointPairEval
+	records      []time.Time
+	export       *checkpointExport
+	pairEval     []checkpointPairEval
 	// exportReason is why the linear export could not be read or parsed, and pairEvalReason the
 	// same for the pair evaluation. Either one leaves only the signals that depend on that input
 	// unmeasured and the rest of the reading computed.
@@ -883,10 +933,10 @@ func checkpointBuildReport(in checkpointInput) CheckpointReport {
 	report.Counts.NeedsChangesSinceCheckpoint = checkpointCountsAfter(in.verdicts, in.project, since, hasSince)
 	report.Counts.SplitDecisionsSinceCheckpoint = checkpointCountsAfter(in.decisions, in.project, since, hasSince)
 	if in.zoned {
-		if in.integrationsReason != "" {
-			unmeasured(checkpointSignalIntegrations, in.integrationsReason)
+		if reason, bad := in.integrations.reasons[in.project]; bad {
+			unmeasured(checkpointSignalIntegrations, reason)
 		} else {
-			count := checkpointCountsAfter(in.integrations, in.project, since, hasSince)
+			count := checkpointCountsAfter(in.integrations.instants, in.project, since, hasSince)
 			report.Counts.IntegrationsSinceCheckpoint = &count
 		}
 	} else {
