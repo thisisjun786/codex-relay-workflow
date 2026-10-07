@@ -337,14 +337,16 @@ func commandWindow(physical []string, i int) string {
 }
 
 // blockScalarKey reports the indentation of the key when line opens a block scalar (`key: |`,
-// `- run: >-`), and whether it does.
+// `- run: >-`), and whether it does. A trailing comment is part of the same header (`- run: >- # a
+// note`), so it is accepted too; missing it would leave the body unjoined and a split command
+// unread (CRW-939, the eighth generation-2 evaluation of d1).
 func blockScalarKey(line string) (int, bool) {
 	trimmed := strings.TrimSpace(line)
 	if trimmed == "" || strings.HasPrefix(trimmed, "#") {
 		return 0, false
 	}
 	value := trimmed[strings.LastIndex(trimmed, ":")+1:]
-	if !regexp.MustCompile(`^[ \t]*[|>][-+]?[ \t]*$`).MatchString(value) {
+	if !regexp.MustCompile(`^[ \t]*[|>][-+]?[ \t]*(?:#.*)?$`).MatchString(value) {
 		return 0, false
 	}
 	return indentOf(line), true
@@ -696,6 +698,28 @@ func TestWorkflow_a_split_node_test_command_is_still_a_finding(t *testing.T) {
 		}
 		if findings := workflowPythonFindings(t, dir); len(findings["extra.yml"]) == 0 {
 			t.Errorf("%s: extra.yml splits a node --test run across lines and is not refused", name)
+		}
+	}
+}
+
+// A block scalar may carry a trailing comment (`- run: >- # the staged tests`), which YAML reads as
+// the same scalar. A reader that only accepts the bare marker does not join the body, and a
+// `node` / `--test` split across its lines then escapes the boundary (CRW-939, the eighth
+// generation-2 evaluation of d1).
+func TestWorkflow_a_commented_block_scalar_is_still_a_finding(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), ".github", "workflows")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{
+		"folded with a comment":  "name: extra\n\njobs:\n  other:\n    steps:\n      - run: >- # the staged tests\n          node\n          --test\n",
+		"literal with a comment": "name: extra\n\njobs:\n  other:\n    steps:\n      - run: | # the staged tests\n          node \\\n            --test\n",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, "extra.yml"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if findings := workflowPythonFindings(t, dir); len(findings["extra.yml"]) == 0 {
+			t.Errorf("%s: extra.yml splits a node --test run inside a commented block scalar and is not refused", name)
 		}
 	}
 }

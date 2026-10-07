@@ -184,10 +184,11 @@ function codeLines(source) {
  */
 /**
  * True when an `except` clause can catch the SystemExit argparse raises to answer --help: a bare
- * handler, `BaseException`, `SystemExit`, or a tuple naming either one. Any other name (the real
- * file's `ImportError`, or `Exception`) cannot, so an import under it is still deferred (CRW-939,
- * the generation-2 evaluations). A clause this reader cannot fully read is treated as catching it,
- * so the check fails closed rather than passing a handler it did not understand.
+ * handler, a name whose last component is `BaseException` or `SystemExit` (a qualifier such as
+ * `builtins.SystemExit` included), or a tuple naming either one. Only the names this reader can
+ * place -- `ImportError` and `Exception`, which cannot catch SystemExit -- are deferred; every
+ * other name, and a clause it cannot fully read, counts as catching it, so the check fails closed
+ * rather than passing a handler it did not understand (CRW-939, the generation-2 evaluations).
  */
 function catchesSystemExit(clause) {
   const rest = clause.replace(/^except\b/, "").trim();
@@ -196,7 +197,7 @@ function catchesSystemExit(clause) {
   if (names === "") return true;
   const listed = names.replace(/^[([]/, "").replace(/[)\]]$/, "").split(",").map((part) => part.trim());
   if (listed.length === 0 || listed.some((name) => name === "")) return true;
-  return listed.some((name) => /^(?:BaseException|SystemExit)(?:[ \t]+as[ \t]+\w+)?$/.test(name));
+  return listed.some((name) => !/^(?:ImportError|Exception)(?:[ \t]+as[ \t]+\w+)?$/.test(name));
 }
 
 function deferredImport(code, i, parseAt) {
@@ -449,6 +450,21 @@ test("the parser-import check reads module-level imports placed after the parse"
   }
   // The control: an inline import in a body that cannot catch SystemExit still defers.
   const inlineImportError = "def main():\n    try:\n        args = parser.parse_args()\n    except ImportError: from repomap_class import RepoMap\n";
+  // A handler may name SystemExit through a qualifier or an alias, and the reader cannot always tell
+  // whether an unfamiliar name reaches it. A name it does not recognize counts as catching it, so the
+  // check fails closed; only the names it can place -- a plain `ImportError` or `Exception`, or a
+  // qualifier it can resolve to something that is not SystemExit -- stay deferred (CRW-939, the
+  // eighth generation-2 evaluation of d2).
+  for (const handler of [
+    "    except builtins.SystemExit:\n        from repomap_class import RepoMap\n",
+    "    except SystemExit as e:\n        from repomap_class import RepoMap\n",
+    "    except (ImportError, builtins.SystemExit):\n        from repomap_class import RepoMap\n",
+    "    except SomeUnfamiliarError:\n        from repomap_class import RepoMap\n",
+  ]) {
+    const shape = "def main():\n    try:\n        args = parser.parse_args()\n" + handler;
+    assert.ok(parserImportsBeforeParsing(shape).offenders.length > 0,
+      `${JSON.stringify(handler.trim())}: an unrecognized or SystemExit-reaching handler fails closed`);
+  }
   assert.deepEqual(parserImportsBeforeParsing(inlineImportError).offenders, [],
     "an inline except ImportError body stays clean");
   // A handler that can catch the SystemExit argparse raises for --help runs before the caller sees
