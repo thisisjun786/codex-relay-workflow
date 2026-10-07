@@ -313,8 +313,8 @@ Execution:
 - Finishing the review is part of finishing the work. Read every applicable review to the
   end of its pagination on the CURRENT head, judge each finding against the code, fix what
   needs fixing, reply where a finding does not apply and say why, and recheck. Then state
-  that result rather than summarising it: a handoff record naming the pull request, the head
-  it is about, the base you verified, the check runs by id and attempt, the review coverage
+  that result rather than summarising it: a handoff record naming the head
+  it is about, the base you verified, the check runs by id and attempt where hosted CI ran on that head, the review coverage
   you actually read, and a judged disposition for every thread you saw. Resolving a thread is
   a button; `fixed`, `accepted`, `not_applicable`, `duplicate`, `already_resolved` and
   `disputed` are judgments. `fixed` names the commit that did it and `accepted` names the

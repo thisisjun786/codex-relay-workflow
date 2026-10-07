@@ -673,7 +673,7 @@ A late thread it has dispositioned is the other, under the heading below.
 
 ### A late thread the parent dispositions itself
 
-A late review thread of P2 or P3 grade that the parent judges minor and separable under
+A late review thread outside this issue's scope whose residue is separable and whose impact is not blocking, that the parent judges minor under
 [impact](#judge-a-finding-by-its-impact) — one outside this issue's scope whose residue stands on its
 own — need not go back to the child. The parent answers it on the thread, resolves it on the forge, and
 records its judgement in a file that the same command reads:
