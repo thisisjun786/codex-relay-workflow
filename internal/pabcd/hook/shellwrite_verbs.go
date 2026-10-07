@@ -1221,7 +1221,10 @@ type shellWriteCopyImports struct {
 }
 
 // shellWriteCopyImportsOf reads the import statements of a program. A string literal is no import text, so a name inside one
-// binds nothing, and a comment was already cut from the program the walk reads.
+// binds nothing, and a comment was already cut from the program the walk reads. A statement ends at a newline or a semicolon
+// outside every bracket; a newline inside one is an implicit line join and a backslash-newline an explicit one, so an import
+// whose names are parenthesised over several lines binds them all (CRW-900 review: dropping it would leave the destination of
+// the call it binds unnamed, which is the fail-open direction).
 func shellWriteCopyImportsOf(rs []rune) shellWriteCopyImports {
 	binds := shellWriteCopyImports{alias: map[string]string{}, from: map[string]bool{}}
 	words := []string{}
@@ -1231,6 +1234,7 @@ func shellWriteCopyImportsOf(rs []rune) shellWriteCopyImports {
 			words = words[:0]
 		}
 	}
+	depth := 0
 	for i := 0; i < len(rs); {
 		switch c := rs[i]; {
 		case c == '\'' || c == '"':
@@ -1239,7 +1243,20 @@ func shellWriteCopyImportsOf(rs []rune) shellWriteCopyImports {
 			for i < len(rs) && rs[i] != '\n' && rs[i] != '\r' {
 				i++
 			}
-		case c == '\n' || c == '\r' || c == ';':
+		case c == '\\' && i+1 < len(rs) && (rs[i+1] == '\n' || rs[i+1] == '\r'):
+			i += 2
+			if rs[i-1] == '\r' && i < len(rs) && rs[i] == '\n' {
+				i++
+			}
+		case c == '(' || c == '[' || c == '{':
+			depth++
+			i++
+		case c == ')' || c == ']' || c == '}':
+			if depth > 0 {
+				depth--
+			}
+			i++
+		case (c == '\n' || c == '\r' || c == ';') && depth == 0:
 			flush()
 			i++
 		case shellWriteCopyIdentRune(c):
