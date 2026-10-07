@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 // CRW-906 generation 2: the bundle half of the issue's decision 2. A node whose accepted result is being
@@ -127,6 +130,41 @@ func (w *fx) ucLaneRelationship(relationship string, generation int64) {
 		w.exec("INSERT INTO dag_acceptances (acceptance_id, plan_id, node_id, manifest_digest, relationship_id, execution_generation, event_id, revision_hash, criteria_set_digest, verdict, head_sha, repository, pr_number, ack_tier, verdict_turn_id, rule_version_json, accepted_by_task_id, coordinator_epoch, accepted_at, state)"+
 			" VALUES (?, 'plan-x', 'node-1', ?, ?, 1, ?, ?, 'crit-1', 'verified', 'head-a', ?, 1, 'bound', 'turn-1', '{}', ?, 0, '2023-11-14T22:13:20.000000+00:00', 'active')",
 			"acc-"+relationship, "manifest-"+relationship, relationship, "ev-"+relationship, "rev-"+relationship, fxRepo, alpha.TaskID)
+	}
+}
+
+// ucLaneForge is the acceptance's forge identity, written with the acceptance: the mapping from a pull
+// request back to the relationship whose result it carries.
+func (w *fx) ucLaneForge(relationship string, pr int64) {
+	w.t.Helper()
+	w.exec("INSERT INTO dag_acceptance_forge (acceptance_id, forge_repository, pr_number) VALUES (?, ?, ?)", "acc-"+relationship, fxRepo, pr)
+}
+
+// CRW-906 generation 2: the lane's CLI lets a claim carry a forge pull request instead of a
+// relationship, and that route must meet the same gate. The acceptance's forge identity is what maps
+// the turn's pull request back to the relationship whose correction is open, so a PR-only turn is
+// refused on the head the correction is repairing rather than exempted by the field it omits.
+func TestTheLaneGateResolvesTheRelationshipFromThePullRequest(t *testing.T) {
+	w := newFx(t)
+	w.ucLaneRelationship("rel-lane", 2)
+	w.ucLaneForge("rel-lane", 7)
+	turn := store.MergeTurnsRow{TurnID: "mtn-pr-only", TargetKey: "tgt-x", Repository: fxRepo, BaseRef: fxBase, ProjectKey: fxA,
+		HolderTaskID: alpha.TaskID, CandidateHead: "head-a", PRNumber: sql.NullInt64{Int64: 7, Valid: true}, State: Holding}
+	refusal, err := underCorrectionRefusal(w.ctx, w.s.Querier(w.ctx), turn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if refusal == nil || refusal.Reason != contract.RefusalDispositionConflict {
+		t.Fatalf("a PR-only turn whose accepted result is under correction was not refused: %+v", refusal)
+	}
+	if !strings.Contains(refusal.Detail, "under correction") || !strings.Contains(refusal.Detail, "rel-lane") {
+		t.Fatalf("the refusal does not name the relationship and the reason: %s", refusal.Detail)
+	}
+	// a turn whose pull request has no accepted result is left to the lane's own rules
+	other := turn
+	other.PRNumber = sql.NullInt64{Int64: 99, Valid: true}
+	if refusal, err := underCorrectionRefusal(w.ctx, w.s.Querier(w.ctx), other); err != nil || refusal != nil {
+		t.Fatalf("a turn whose pull request has no accepted result = %+v %v, want no refusal", refusal, err)
 	}
 }
 

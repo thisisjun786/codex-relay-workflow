@@ -37,13 +37,15 @@ var recordSchemas = []string{"relationship", "completion-receipt", "delivery-att
 // were re-judged unchanged, with new attribution cases in runtime-attempt-verdicts.json.gz.
 // Completion-receipt gained the optional independentReview item the same way: its 18 original
 // cases were re-judged unchanged, with the new cases in independent-review-verdicts.json.gz.
+// Relationship gained the correction reason CRW-906 records the accepted-current route under: its
+// 6 original cases were re-judged unchanged, with the reason cases in relationship-reason-verdicts.json.gz.
 // Schemas hold only internal "#/definitions" references; a "$ref" to another file would escape
 // the pin, and that file would need a pin too.
 var schemaPins = map[string]string{
 	"acknowledgement":      "193c2a1dbdb6197f852aaa38c6b8b4e55ba804ffc66e7b2a73925365b133eb7c",
 	"completion-receipt":   "fd6498fdca80c7e8f4d97e37ceec12935bf1afce10211826fdc232593b9fb0d5",
 	"delivery-attempt":     "ad856f98872952ffc2235acc12ccc5942bbd6e5cae0df1771f063dc74526d24b",
-	"relationship":         "c8ebaf4559fa1ac6df26d98c4214938caf78bd8c61659bce026da6a3595a4b90",
+	"relationship":         "6a994cad6400a07d3e2faaf2161a16818ac7784be651cdcb2d6c9b9439988cbd",
 	"verification-verdict": "0b3f8f4b061cff2992fc60a7c1f45dec6f803116894735751c40df3a8d356af9",
 }
 

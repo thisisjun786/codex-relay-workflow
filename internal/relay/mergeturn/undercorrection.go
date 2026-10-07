@@ -2,6 +2,8 @@ package mergeturn
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"strconv"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
@@ -22,14 +24,33 @@ import (
 // active acceptance stands on here, inside the transaction that writes, so a generation opened while
 // the check was reading the forge is seen and nothing is written for it.
 //
+// A turn that names no relationship is not exempt: the CLI lets a claim carry a forge pull request
+// instead, and a node under correction would otherwise be carried on the head the correction is
+// repairing by the very route that omits the relationship. The acceptance's forge identity is the
+// mapping from that pull request back to the relationship (dag_acceptance_forge, written with the
+// acceptance), and it is read here so both routes meet the same gate. A turn whose pull request has no
+// accepted result is left to the lane's own rules.
+//
 // The refusal is the existing disposition_conflict and it names the open generation: no new refusal
-// name, no column, no schema change. nil means the turn is not under correction (or names no
-// relationship, which the lane's own rules already cover).
+// name, no column, no schema change.
 func underCorrectionRefusal(ctx context.Context, q store.Querier, r store.MergeTurnsRow) (*registry.CoordinationRefusal, error) {
-	if !r.RelationshipID.Valid || r.RelationshipID.String == "" {
-		return nil, nil
+	relationship := r.RelationshipID.String
+	if !r.RelationshipID.Valid || relationship == "" {
+		if !r.PRNumber.Valid {
+			return nil, nil
+		}
+		var found string
+		if err := q.QueryRowContext(ctx, "SELECT a.relationship_id FROM dag_acceptance_forge f JOIN dag_acceptances a ON a.acceptance_id = f.acceptance_id"+
+			" WHERE f.forge_repository = ? AND f.pr_number = ? AND a.state = 'active' ORDER BY a.accepted_at DESC, a.acceptance_id DESC LIMIT 1",
+			r.Repository, r.PRNumber.Int64).Scan(&found); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil, nil
+			}
+			return nil, err
+		}
+		relationship = found
 	}
-	under, live, stand, err := acceptance.UnderCorrection(ctx, q, r.RelationshipID.String)
+	under, live, stand, err := acceptance.UnderCorrection(ctx, q, relationship)
 	if err != nil {
 		return nil, err
 	}
@@ -37,7 +58,7 @@ func underCorrectionRefusal(ctx context.Context, q store.Querier, r store.MergeT
 		return nil, nil
 	}
 	return coordination(r, contract.RefusalDispositionConflict,
-		"the accepted result of this turn's relationship "+pyvalue.StrRepr(r.RelationshipID.String)+
+		"the accepted result of this turn's relationship "+pyvalue.StrRepr(relationship)+
 			" is under correction: generation "+strconv.FormatInt(live, 10)+" is open over the acceptance, which stands on generation "+
 			strconv.FormatInt(stand, 10)+", so the head this turn holds is the result being repaired and is not merged. "+
 			"Accept the corrected result with dag-accept --supersedes, or withdraw the generation, and request the turn again",
