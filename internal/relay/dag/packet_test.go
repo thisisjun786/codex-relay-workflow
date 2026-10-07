@@ -244,6 +244,39 @@ func TestFeatureCriteriaReplaceFoldedLikeAChange(t *testing.T) {
 }
 
 // TestPacketFieldsAreReadStrictly: the reader refuses the shapes a packet field cannot have.
+// TestFeatureCriteriaIdentityIsUnambiguous: a criterion id may hold ':' (the identifier grammar allows
+// it), so the digest and the row comparison must not join ids and titles with delimiters a value can
+// contain. Two declarations that differ only inside such a value must digest differently.
+func TestFeatureCriteriaIdentityIsUnambiguous(t *testing.T) {
+	digestOf := func(t *testing.T, plan, title string) string {
+		t.Helper()
+		r, _, _ := newRepo(t)
+		ctx := context.Background()
+		crit := doc{"id": "a:b", "title": title, "required": true}
+		d := revWith(plan, "r1", 0, []doc{featureCriteria("CRW-F", crit)}, addPacketNode("n1", "CRW-F", "p1", []string{"a:b"}, []string{"a:b"}))
+		if _, err := r.Put(ctx, decode(t, d)); err != nil {
+			t.Fatal(err)
+		}
+		snap, _, err := r.Snapshot(ctx, plan, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(snap.FeatureCriteria) != 1 || snap.FeatureCriteria[0].Criteria[0].ID != "a:b" {
+			t.Fatalf("the criterion did not read back: %+v", snap.FeatureCriteria)
+		}
+		if err := r.VerifyLog(ctx, plan); err != nil {
+			t.Fatalf("the plan does not replay: %v", err)
+		}
+		return snap.StateDigest
+	}
+	one := digestOf(t, "plan-one", "x:y;z=1")
+	two := digestOf(t, "plan-two", "x:y;z=2")
+	if one == two {
+		t.Fatal("two different declared criteria digest the same")
+	}
+}
+
+// TestPacketFieldsAreReadStrictly: the reader refuses the shapes a packet field cannot have.
 func TestPacketFieldsAreReadStrictly(t *testing.T) {
 	base := func(n doc) doc { return revWith("plan", "r", 0, nil, doc{"op": OpAddNode, "node": n}) }
 	cases := []struct {
