@@ -94,4 +94,3 @@ test("skill manifest surface is present and bounded", () => {
   assert.ok(skillMd.split("\n").length <= 500, "SKILL.md exceeds 500 lines");
   assert.ok(existsSync(join(skillDir, "agents", "openai.yaml")), "agents/openai.yaml missing");
 });
-
