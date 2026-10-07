@@ -464,8 +464,9 @@ func (a *applyRun) migrateReviewFollowupReceiptManifest(it Item) ([]migrateRevie
 // exact spelling from the decoded object, as the receipt reader's own map lookup does, so a record whose key differs in case
 // is not judged a receipt here either; the bytes the decoder consumed are compared with limit afterwards, because the
 // decoder consumes the whitespace after the object and a trailing run would otherwise let a record past the bound be judged
-// by content. Only the entries whose kind is verdict or artifact-identity name a dependency; an entry of another kind, or
-// one that is not an object, contributes no key and never fails the run.
+// by content. The judgement is the array's presence and length, never the shape of its entries: an entry that is not an
+// object with a string path and kind names no dependency, and an array of such entries is still a receipt, so a receipt
+// this run cannot read in full keeps the referrer's place instead of falling back to plan order.
 func migrateReviewFollowupDecodeManifest(r io.Reader, limit int64) ([]migrateReviewFollowupManifestEntry, bool) {
 	limited := &io.LimitedReader{R: r, N: limit + 1}
 	dec := json.NewDecoder(limited)
@@ -483,9 +484,18 @@ func migrateReviewFollowupDecodeManifest(r io.Reader, limit int64) ([]migrateRev
 	if !present {
 		return nil, false
 	}
-	var manifest []migrateReviewFollowupManifestEntry
-	if json.Unmarshal(raw, &manifest) != nil || len(manifest) == 0 {
+	// The array itself is decoded element by element, so one entry of an unexpected shape does not refuse the receipt.
+	var items []json.RawMessage
+	if json.Unmarshal(raw, &items) != nil || len(items) == 0 {
 		return nil, false
+	}
+	manifest := make([]migrateReviewFollowupManifestEntry, 0, len(items))
+	for _, item := range items {
+		var entry migrateReviewFollowupManifestEntry
+		if json.Unmarshal(item, &entry) != nil {
+			continue // an entry that is not an object with string fields names no dependency
+		}
+		manifest = append(manifest, entry)
 	}
 	return manifest, true
 }

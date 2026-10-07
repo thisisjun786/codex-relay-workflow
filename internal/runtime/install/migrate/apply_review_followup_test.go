@@ -195,25 +195,33 @@ func TestMigrateApplyReviewFollowupBoundsTheRecordNotTheObject(t *testing.T) {
 		record string
 		limit  int64
 		want   bool
+		// entries is how many of the record's entries name a dependency: a receipt whose entries are all of an
+		// unexpected shape is still a receipt, with none.
+		entries int
 	}{
-		"exactly the bound":             {body, int64(len(body)), true},
-		"past the bound by whitespace":  {body + "\n", int64(len(body)), false},
-		"past the bound by a long tail": {body + strings.Repeat(" ", 8), int64(len(body)), false},
-		"whitespace within the bound":   {body + "\n", int64(len(body)) + 1, true},
-		"truncated below the bound":     {body[:len(body)-1], int64(len(body)), false},
-		"data after the object":         {body + "{}", int64(len(body)) + 2, false},
-		"no manifest array":             {"{\"a\":1}", 8, false},
+		"exactly the bound":             {record: body, limit: int64(len(body)), want: true, entries: 1},
+		"past the bound by whitespace":  {record: body + "\n", limit: int64(len(body))},
+		"past the bound by a long tail": {record: body + strings.Repeat(" ", 8), limit: int64(len(body))},
+		"whitespace within the bound":   {record: body + "\n", limit: int64(len(body)) + 1, want: true, entries: 1},
+		"truncated below the bound":     {record: body[:len(body)-1], limit: int64(len(body))},
+		"data after the object":         {record: body + "{}", limit: int64(len(body)) + 2},
+		"no manifest array":             {record: "{\"a\":1}", limit: 8},
 		// The receipt reader looks the key up by its exact spelling in a decoded object, so a key that differs only in
 		// case is not the manifest it reads, and this order must not treat it as one.
-		"key of another case": {"{\"ArtifactManifest\":[{\"path\":\"v.json\",\"kind\":\"verdict\"}]}", 200, false},
+		"key of another case": {record: "{\"ArtifactManifest\":[{\"path\":\"v.json\",\"kind\":\"verdict\"}]}", limit: 200},
+		// The judgement is the array's presence and length, not the shape of its entries: an array whose entries this
+		// reader cannot use is still a receipt, so it keeps the referrer's place rather than falling back to plan order.
+		"entry of another type":      {record: "{\"artifactManifest\":[1,2]}", limit: 40, want: true},
+		"entry of the wrong shape":   {record: "{\"artifactManifest\":[{\"path\":1,\"kind\":2}]}", limit: 60, want: true},
+		"one good entry and one bad": {record: "{\"artifactManifest\":[1,{\"path\":\"v.json\",\"kind\":\"verdict\"}]}", limit: 90, want: true, entries: 1},
 	} {
 		t.Run(name, func(t *testing.T) {
 			manifest, ok := migrateReviewFollowupDecodeManifest(strings.NewReader(c.record), c.limit)
 			if ok != c.want {
 				t.Errorf("ok = %v, want %v (record %d bytes, limit %d)", ok, c.want, len(c.record), c.limit)
 			}
-			if ok && len(manifest) != 1 {
-				t.Errorf("manifest = %v, want one entry", manifest)
+			if ok && len(manifest) != c.entries {
+				t.Errorf("manifest = %v, want %d entries", manifest, c.entries)
 			}
 			if !ok && manifest != nil {
 				t.Errorf("a refused record must return no manifest: %v", manifest)
