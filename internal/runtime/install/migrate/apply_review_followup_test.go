@@ -6,9 +6,14 @@ package migrate
 // pins and fails on the code before CRW-879 for the reason its name gives.
 
 import (
+	"bufio"
 	"bytes"
 	"errors"
+	"fmt"
+	"io"
 	"maps"
+	"os"
+	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
@@ -299,47 +304,301 @@ func TestMigrateApplyReviewFollowupOrdersACycleTheSameWayOnEveryRun(t *testing.T
 
 // R1g: a record that is not a receipt must be judged without being held. The receipt reader's bound is the size of the
 // largest string the oracle could hold, far larger than any record, and this scan looks at every planned file under
-// evidence/, so an ordinary artifact of tens of megabytes must cost a bounded pass rather than a copy of itself. A
-// record that does mention the manifest key is a receipt the reader itself would read, so it is read the same way.
+// evidence/, so an ordinary artifact of a few hundred megabytes must cost a bounded pass — the bytes of one token, never
+// a copy of the record. Each record is streamed into the test's own directory, so nothing of that size is ever held by
+// the test either. The threshold is generous: the point is that the judgement does not grow with the record, not a
+// particular allocation count.
 func TestMigrateApplyReviewFollowupJudgesALargeRecordWithoutHoldingIt(t *testing.T) {
-	big := bytes.Repeat([]byte{'x'}, 16<<20)
-	notText := bytes.Repeat([]byte{0xff}, 16<<20)
-	for name, c := range map[string]struct {
-		record []byte
-		want   bool
-		// bounded is true when the judgement must not hold the record: it cannot be a receipt, so nothing of it needs
-		// to be kept. A record that mentions the manifest key is read as the receipt reader reads it.
-		bounded bool
+	const recordSize = 256 << 20
+	dir := t.TempDir()
+	cases := map[string]struct {
+		gen  func(w io.Writer) error
+		want bool
 	}{
-		// A record that cannot be a JSON object at all, refused from its first byte.
-		"not text":      {record: notText, bounded: true},
-		"not an object": {record: append([]byte("["), big...), bounded: true},
-		// Leading whitespace that alone is larger than any probe: the walk must stream it, not buffer it.
-		"long leading whitespace": {record: append(bytes.Repeat([]byte{' '}, 8<<20), []byte("{\"a\":1}")...), bounded: true},
-		// A whole JSON object with no manifest: valid, but this order holds nothing of it.
-		"an object with no manifest": {record: []byte("{\"payload\":\"" + string(big) + "\"}"), bounded: true},
-		// A whole JSON object whose manifest is there and large: a receipt, read the way the reader reads it.
-		"a receipt with a large manifest": {
-			record: []byte("{\"artifactManifest\":[{\"path\":\"" + string(big) + "\",\"kind\":\"verdict\"}]}"),
-			want:   true,
-		},
-	} {
+		// A JSON object of a few hundred megabytes whose members are all small, one of them holding the byte run the old
+		// marker scan looked for: the record is not a receipt, and the judgement must find that out without holding it.
+		"an object with many small members": {gen: migrateReviewFollowupManySmallMembers(recordSize)},
+		// A binary of the same size whose first bytes are that run, refused from its first byte without a decode.
+		"not text": {gen: migrateReviewFollowupNotText(recordSize)},
+		// An array of the same size holding that run: a JSON value, but not the object a receipt is.
+		"not an object": {gen: migrateReviewFollowupNotAnObject(recordSize)},
+		// Leading whitespace alone larger than the largest token, then an object holding that run: the walk must stream
+		// the whitespace rather than buffer it, and must not hold the object either.
+		"long leading whitespace": {gen: migrateReviewFollowupLeadingSpace(recordSize)},
+	}
+	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
-			var before, after runtime.MemStats
-			runtime.GC()
-			runtime.ReadMemStats(&before)
-			manifest, ok := migrateReviewFollowupDecodeManifest(bytes.NewReader(c.record), migrateReviewFollowupReceiptReadCap)
-			runtime.ReadMemStats(&after)
+			path := migrateReviewFollowupStreamRecord(t, dir, name, c.gen)
+			before, peak, ok := migrateReviewFollowupJudgePeakHeap(t, path)
 			if ok != c.want {
-				t.Errorf("ok = %v, want %v (manifest %v)", ok, c.want, manifest)
+				t.Errorf("ok = %v, want %v for a %d byte record", ok, c.want, recordSize)
 			}
-			if !c.want && manifest != nil {
-				t.Errorf("a refused record must return no manifest: %v", manifest)
-			}
-			if grew := after.TotalAlloc - before.TotalAlloc; c.bounded && grew > 8<<20 {
-				t.Errorf("the judgement allocated %d bytes of a %d byte record", grew, len(c.record))
+			if grew := peak - before; grew > recordSize/4 {
+				t.Errorf("the judgement grew the live heap by %d bytes of a %d byte record", grew, recordSize)
 			}
 		})
+	}
+	// A receipt whose manifest is there is still read, and its references are kept however large the record is: the
+	// bounded pass above must not be bought by dropping what a readable receipt names.
+	t.Run("a receipt with a large manifest", func(t *testing.T) {
+		path := migrateReviewFollowupStreamRecord(t, dir, "receipt", func(w io.Writer) error {
+			if _, err := io.WriteString(w, "{\"filler\":\""); err != nil {
+				return err
+			}
+			if _, err := io.CopyN(w, &migrateReviewFollowupSpaces{n: recordSize / 2}, recordSize/2); err != nil {
+				return err
+			}
+			_, err := io.WriteString(w, "\",\"artifactManifest\":[{\"path\":\"z/verdict.json\",\"kind\":\"verdict\"}]}")
+			return err
+		})
+		f, err := os.Open(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.Close()
+		manifest, ok := migrateReviewFollowupDecodeManifest(f, migrateReviewFollowupReceiptReadCap)
+		if !ok || len(manifest) != 1 || manifest[0].Path != "z/verdict.json" {
+			t.Errorf("a readable receipt must keep the references its manifest names: %v %v", manifest, ok)
+		}
+	})
+}
+
+// R1g2: the residual the streaming judgement leaves is one token, not the record: a single string member larger than the
+// bound of this order's own would have to be held to be skipped. That is recorded as a kept limitation in the issue's
+// defect record, and this case pins what it means, so a later change to the judgement has to face it.
+func TestMigrateApplyReviewFollowupHoldsOneTokenNotTheRecord(t *testing.T) {
+	const token = 16 << 20
+	record := "{\"payload\":\"" + strings.Repeat("x", token) + "\"}"
+	_, peak, ok := migrateReviewFollowupJudgePeakHeapRecord(t, record)
+	if ok {
+		t.Error("a record with no manifest array is not a receipt")
+	}
+	if peak < token {
+		t.Errorf("the one token the walk must read was not held: peak %d, token %d", peak, token)
+	}
+}
+
+// migrateReviewFollowupManySmallMembers streams a JSON object of about size bytes whose members are all small, so no
+// single token is larger than a few kilobytes. One member holds the byte run the old marker scan looked for, so this
+// case is the one that measured a copy of the whole record before the judgement was streamed.
+func migrateReviewFollowupManySmallMembers(size int) func(w io.Writer) error {
+	return func(w io.Writer) error {
+		if _, err := io.WriteString(w, "{\"items\":["); err != nil {
+			return err
+		}
+		const member = 64 << 10
+		written := 0
+		// The run first, so a judgement that reads the record whole pays for it immediately.
+		if _, err := io.WriteString(w, "\"Manifest\""); err != nil {
+			return err
+		}
+		written += len("\"Manifest\"")
+		for ; written < size; written += member {
+			if written > 0 {
+				if _, err := io.WriteString(w, ","); err != nil {
+					return err
+				}
+			}
+			if _, err := io.WriteString(w, "\""); err != nil {
+				return err
+			}
+			if _, err := io.CopyN(w, &migrateReviewFollowupSpaces{n: member}, member); err != nil {
+				return err
+			}
+			if _, err := io.WriteString(w, "\""); err != nil {
+				return err
+			}
+		}
+		_, err := io.WriteString(w, "]}")
+		return err
+	}
+}
+
+// migrateReviewFollowupNotText streams a record of size bytes that begins with the old marker run and continues with
+// bytes that are not text at all.
+func migrateReviewFollowupNotText(size int) func(w io.Writer) error {
+	return func(w io.Writer) error {
+		if _, err := io.WriteString(w, "Manifest"); err != nil {
+			return err
+		}
+		buf := bytes.Repeat([]byte{0xff}, 64<<10)
+		for written := len("Manifest"); written < size; written += len(buf) {
+			if _, err := w.Write(buf); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+}
+
+// migrateReviewFollowupNotAnObject streams a JSON array of size bytes that holds the old marker run: a JSON value, but
+// not the object a receipt is.
+func migrateReviewFollowupNotAnObject(size int) func(w io.Writer) error {
+	return func(w io.Writer) error {
+		if _, err := io.WriteString(w, "[\"Manifest\","); err != nil {
+			return err
+		}
+		if _, err := io.CopyN(w, &migrateReviewFollowupSpaces{n: int64(size)}, int64(size)); err != nil {
+			return err
+		}
+		_, err := io.WriteString(w, "]")
+		return err
+	}
+}
+
+// migrateReviewFollowupLeadingSpace streams size bytes of whitespace followed by an object holding the old marker run.
+func migrateReviewFollowupLeadingSpace(size int) func(w io.Writer) error {
+	return func(w io.Writer) error {
+		if _, err := io.CopyN(w, &migrateReviewFollowupSpaces{n: int64(size)}, int64(size)); err != nil {
+			return err
+		}
+		_, err := io.WriteString(w, "{\"payload\":\"Manifest\"}")
+		return err
+	}
+}
+
+// migrateReviewFollowupSpaces is an endless stream of JSON whitespace, so a large run of it costs no memory to write.
+type migrateReviewFollowupSpaces struct{ n int64 }
+
+func (s *migrateReviewFollowupSpaces) Read(p []byte) (int, error) {
+	if s.n <= 0 {
+		return 0, io.EOF
+	}
+	if int64(len(p)) > s.n {
+		p = p[:s.n]
+	}
+	for i := range p {
+		p[i] = ' '
+	}
+	s.n -= int64(len(p))
+	return len(p), nil
+}
+
+// migrateReviewFollowupStreamRecord writes a record of the case's own shape to a file in dir and returns its path.
+func migrateReviewFollowupStreamRecord(t *testing.T, dir, name string, gen func(w io.Writer) error) string {
+	t.Helper()
+	p := filepath.Join(dir, strings.ReplaceAll(name, " ", "-")+".json")
+	f, err := os.Create(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bw := bufio.NewWriterSize(f, 1<<20)
+	if err := gen(bw); err != nil {
+		t.Fatal(err)
+	}
+	if err := bw.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// migrateReviewFollowupJudgePeakHeap judges the record at path and returns the live heap before it and the largest live
+// heap the runtime reported while it ran. The record is streamed, so a record that is not a receipt must not raise the
+// peak by its own size.
+func migrateReviewFollowupJudgePeakHeap(t *testing.T, path string) (before, peak uint64, ok bool) {
+	t.Helper()
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	runtime.GC()
+	var b runtime.MemStats
+	runtime.ReadMemStats(&b)
+	before = b.HeapAlloc
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			var m runtime.MemStats
+			runtime.ReadMemStats(&m)
+			if m.HeapAlloc > peak {
+				peak = m.HeapAlloc
+			}
+		}
+	}()
+	_, ok = migrateReviewFollowupDecodeManifest(f, migrateReviewFollowupReceiptReadCap)
+	close(stop)
+	<-done
+	if peak < before {
+		peak = before
+	}
+	return before, peak, ok
+}
+
+// migrateReviewFollowupJudgePeakHeapRecord is migrateReviewFollowupJudgePeakHeap for a record already in memory.
+func migrateReviewFollowupJudgePeakHeapRecord(t *testing.T, record string) (before, peak uint64, ok bool) {
+	t.Helper()
+	runtime.GC()
+	var b runtime.MemStats
+	runtime.ReadMemStats(&b)
+	before = b.HeapAlloc
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			var m runtime.MemStats
+			runtime.ReadMemStats(&m)
+			if m.HeapAlloc > peak {
+				peak = m.HeapAlloc
+			}
+		}
+	}()
+	_, ok = migrateReviewFollowupDecodeManifest(strings.NewReader(record), migrateReviewFollowupReceiptReadCap)
+	close(stop)
+	<-done
+	if peak < before {
+		peak = before
+	}
+	return before, peak, ok
+}
+
+// R1h: a receipt the reader can read keeps every reference it names, however large its manifest is and however long its
+// other keys are. An earlier pass capped the manifest member at 1 MiB and an object key at 64 KiB, and either cap dropped
+// references of a receipt the reader itself reads, which left its artifacts in plan order — the dangling reference this
+// issue exists to remove. There is no cap of this order's own.
+func TestMigrateApplyReviewFollowupKeepsAReceiptPastAnyCapOfItsOwn(t *testing.T) {
+	const entries = 30000
+	var b strings.Builder
+	b.WriteString("{\"")
+	b.WriteString(strings.Repeat("k", 128<<10)) // an unrelated key longer than any 64 KiB key cap
+	b.WriteString("\":\"x\",\"artifactManifest\":[")
+	for i := 0; i < entries; i++ {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		fmt.Fprintf(&b, "{\"path\":\"v%d.json\",\"kind\":\"verdict\"}", i)
+	}
+	b.WriteString("]}")
+	record := b.String()
+	if len(record) <= 1<<20 {
+		t.Fatalf("the case must hold a manifest larger than 1 MiB: %d bytes", len(record))
+	}
+	manifest, ok := migrateReviewFollowupDecodeManifest(strings.NewReader(record), migrateReviewFollowupReceiptReadCap)
+	if !ok {
+		t.Fatal("a receipt the reader can read must be judged by content")
+	}
+	if len(manifest) != entries {
+		t.Errorf("every entry of the manifest must be kept: %d, want %d", len(manifest), entries)
+	}
+	last := fmt.Sprintf("v%d.json", entries-1)
+	if manifest[0].Path != "v0.json" || manifest[len(manifest)-1].Path != last {
+		t.Errorf("the first and last entries must be kept: %v ... %v", manifest[0], manifest[len(manifest)-1])
 	}
 }
 
@@ -388,10 +647,15 @@ func TestMigrateApplyReviewFollowupWalksAsTheDecoderWould(t *testing.T) {
 	}
 }
 
-// R1g2: the end-to-end case: a receipt whose manifest path holds bytes that are not UTF-8 names the plan file the
-// reader's own text holds, so the artifact must publish before a plain record of the same rank. Decoding the raw bytes
-// would name a file that is not in the plan and leave the artifact in plan order.
-func TestMigrateApplyReviewFollowupReadsAPathAsTheReceiptReaderDoes(t *testing.T) {
+// R1g2: the record is decoded from its own bytes, with the decoder's own rule for an invalid UTF-8 run inside a string
+// (one U+FFFD per byte), and not through the receipt reader's whole-input normalisation (source.DecodeUTF8, one U+FFFD
+// per maximal subpart). The parent's answer for CRW-879 chose that, so this case pins it: the invalid run here is the
+// two bytes of a truncated three-byte sequence, which the reader's normalisation would read as one U+FFFD and this
+// judgement reads as two. The plan's own file is named with a single U+FFFD, so the path this judgement derives names no
+// file in the plan: it contributes no reference, and both records keep the plan order. The difference is confined to a
+// name that holds U+FFFD while the receipt spells the path with the invalid bytes, and it is recorded as a kept
+// limitation in the issue's defect record.
+func TestMigrateApplyReviewFollowupDecodesAPathFromItsOwnBytes(t *testing.T) {
 	_, r, p := apPlan(t, map[string]string{
 		"evidence/s/a.json":                "{\"artifactManifest\":[{\"path\":\"z/identit" + string([]byte{0xe2, 0x82}) + "y.json\",\"kind\":\"artifact-identity\"}]}",
 		"evidence/s/b.json":                "{\"plain\":true}",
@@ -406,7 +670,22 @@ func TestMigrateApplyReviewFollowupReadsAPathAsTheReceiptReaderDoes(t *testing.T
 	if identity < 0 || plain < 0 {
 		t.Fatalf("both records must publish: %v", got)
 	}
-	if identity > plain {
-		t.Errorf("the reader's own text names the identity file, so it must publish before a plain record: %v", got)
+	if plain > identity {
+		t.Errorf("a path this judgement cannot resolve names no plan file, so both records keep plan order: %v", got)
+	}
+	// A receipt that names a plan file by a path both decoders read the same way still hoists it, which is the behaviour
+	// this issue exists for and the reason the difference above is confined to the undecodable spelling.
+	_, r2, p2 := apPlan(t, map[string]string{
+		"evidence/s/a.json":         "{\"artifactManifest\":[{\"path\":\"z/verdict.json\",\"kind\":\"verdict\"}]}",
+		"evidence/s/b.json":         "{\"plain\":true}",
+		"evidence/s/z/verdict.json": "v",
+	}, nil)
+	pub2, leaves2 := migrateApplyReviewRenames(t)
+	if _, err := applyWith(r2, p2, pub2); err != nil {
+		t.Fatal(err)
+	}
+	got2 := leaves2()
+	if v, b := slices.Index(got2, "verdict.json"), slices.Index(got2, "b.json"); v < 0 || b < 0 || v > b {
+		t.Errorf("the artifact a receipt names must still publish before a plain record: %v", got2)
 	}
 }
