@@ -3,33 +3,45 @@ package manage
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
 
 	_ "modernc.org/sqlite"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
-	_ "github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
-// The branch candidates are driven through injected inputs only: a fake relay answering
-// dag-plan-show and dag-ready, a temporary relay store built through the exported store schema,
-// and the replaced gh and status-page seams.
+// The branch candidates are driven through injected inputs only: a fake relay answering dag-ready, a
+// temporary relay store, and the replaced gh and status-page seams. A plan is described as revisions
+// and written through the DAG repository, because the branch reading goes through the relay canon
+// (dag.SnapshotAt), which recomputes every node's slice digest and the plan's state digest from the
+// rows: a plan written by hand does not read back, and a plan that does not agree with itself is
+// refused rather than reported as a bundle.
 
 const (
-	branchTestPlan   = "p-branch"
-	branchTestRepo   = "owner/repo"
-	branchTestParent = "parent-1"
+	branchTestPlan    = "p-branch"
+	branchTestProject = "P-BRANCH"
+	branchTestRepo    = "owner/repo"
+	branchTestParent  = "parent-1"
 )
 
 var branchTestNow = time.Date(2026, 10, 7, 9, 0, 0, 0, time.UTC)
 
-// branchFixture is one plan's world: the two relay answers, the store the regions and the
-// releases are written to, and the configuration the judgement reads.
+// branchTestStamp is one instant of the fixture clock in the shape the relay stores timestamps.
+func branchTestStamp(minutes int) string {
+	return branchTestNow.Add(time.Duration(minutes) * time.Minute).UTC().Format("2006-01-02T15:04:05.000000+00:00")
+}
+
+// branchFixture is one plan's world: the relay answer, the store the plan and its marks live in, and
+// the configuration the judgement reads.
 type branchFixture struct {
 	t        *testing.T
 	dir      string
@@ -38,18 +50,33 @@ type branchFixture struct {
 	env      *Env
 	cfg      *Config
 	section  map[string]any
-	ready    []string
-	waiting  []string
-	store    *store.Store
-	planned  bool
-	kind     string
+	// ready is the issue keys the fake dag-ready answer lists as ready; waiting, when set, is the
+	// issue keys the capacity state file remembers.
+	ready   []string
+	waiting []string
+	// kind is the edge kind the next edge is added with, and the node kind the next node is added
+	// with (a decision follows a non_pr node).
+	kind      string
+	store     *store.Store
+	revisions []branchRevisionFixture
+	written   int
+	// nodes is the issue key each node id of the described plan carries.
+	nodes map[string]string
+}
+
+// branchRevisionFixture is one revision of a described plan: the instant it is recorded at and the
+// changes it carries.
+type branchRevisionFixture struct {
+	at      string
+	changes []dag.Change
 }
 
 func branchNewFixture(t *testing.T, ready ...string) *branchFixture {
 	t.Helper()
 	coreTempHome(t)
 	dir := t.TempDir()
-	f := &branchFixture{t: t, dir: dir, stateDir: filepath.Join(dir, "state"), relayDir: filepath.Join(dir, "relay"), ready: ready}
+	f := &branchFixture{t: t, dir: dir, stateDir: filepath.Join(dir, "state"), relayDir: filepath.Join(dir, "relay"),
+		ready: ready, nodes: map[string]string{}}
 	for _, path := range []string{f.stateDir, f.relayDir} {
 		if err := os.MkdirAll(path, 0o755); err != nil {
 			t.Fatal(err)
@@ -63,17 +90,19 @@ func branchNewFixture(t *testing.T, ready ...string) *branchFixture {
 	t.Cleanup(f.close)
 	f.env = &Env{Stdin: strings.NewReader(""), Stdout: io.Discard, Stderr: io.Discard, Getenv: os.Getenv,
 		Now: func() time.Time { return branchTestNow }, Executable: filepath.Join(dir, "crw")}
-	f.section = map[string]any{"plans": []map[string]any{{"plan": branchTestPlan, "project": "P-BRANCH", "parent": branchTestParent}}}
+	f.section = map[string]any{"plans": []map[string]any{{"plan": branchTestPlan, "project": branchTestProject, "parent": branchTestParent}}}
 	f.load()
 	return f
 }
 
-// close releases the writer, so the read-only open under test sees a settled file.
+// close writes every revision the test described and releases the writer, so the read-only open
+// under test sees a settled file.
 func (f *branchFixture) close() {
 	f.t.Helper()
 	if f.store == nil {
 		return
 	}
+	f.writePlan()
 	if err := f.store.Close(); err != nil {
 		f.t.Fatalf("close the fixture store: %v", err)
 	}
@@ -94,49 +123,145 @@ func (f *branchFixture) load() {
 
 func (f *branchFixture) exec(query string, args ...any) {
 	f.t.Helper()
+	// A row that names the plan or one of its nodes needs the plan written first, and the DAG
+	// repository is the only writer that leaves rows the canon's reading accepts.
+	f.writePlan()
 	if _, err := f.store.DB.Exec(query, args...); err != nil {
 		f.t.Fatalf("fixture insert: %v (%s)", err, query)
 	}
 }
 
-// ensurePlan writes the plan and its first revision once, before any row that references them.
-func (f *branchFixture) ensurePlan() {
-	f.t.Helper()
-	if f.planned {
-		return
+// ensurePlan names the revision the next node or edge belongs to, creating the first revision when
+// the test named none.
+func (f *branchFixture) ensurePlan() int {
+	if len(f.revisions) == 0 {
+		f.revisions = append(f.revisions, branchRevisionFixture{at: branchTestStamp(0)})
 	}
-	f.exec("INSERT INTO dag_plans (plan_id, project_key, created_by_task_id, created_at) VALUES (?,?,?,?)",
-		branchTestPlan, "P-BRANCH", "task-parent", branchTestNow.Format(time.RFC3339))
-	f.exec("INSERT INTO dag_plan_revisions (plan_id, revision_no, parent_revision_no, request_id, request_digest, change_json, state_digest, coordinator_epoch, author_task_id, recorded_at) VALUES (?,1,0,?,?,?,?,0,?,?)",
-		branchTestPlan, branchTestPlan+"-request-1", "digest", "{}", "state", "task-parent", branchTestNow.Format(time.RFC3339))
-	f.planned = true
+	return len(f.revisions) - 1
 }
 
-// node adds one live node of the plan, as the plan holds it.
+// revision names the revision the next node, edge or lifecycle change belongs to, so a test can
+// describe a later revision and let a seam write it while a reading is in flight.
+func (f *branchFixture) revision(rev int) {
+	for len(f.revisions) < rev {
+		f.revisions = append(f.revisions, branchRevisionFixture{at: branchTestStamp(0)})
+	}
+}
+
+// change appends one change to the newest revision the test named. A revision the repository has
+// already been given cannot take another change (the writer appends revisions, it never edits one),
+// so the fixture refuses rather than describing a plan nobody writes.
+func (f *branchFixture) change(c dag.Change) {
+	f.t.Helper()
+	i := f.ensurePlan()
+	if i < f.written {
+		f.t.Fatalf("the fixture describes a change of revision %d, which the repository has already been given", i+1)
+	}
+	f.revisions[i].changes = append(f.revisions[i].changes, c)
+}
+
+// node adds one live node of the plan at the newest revision the test named.
 func (f *branchFixture) node(id, issue string) *branchFixture {
 	f.t.Helper()
-	f.ensurePlan()
-	f.exec("INSERT INTO dag_nodes (plan_id, node_id, introduced_rev, retired_rev, slice_digest, issue_key, node_kind, title, criteria_set_digest, supersedes_node_id) VALUES (?,?,1,NULL,?,?,?,?,?,NULL)",
-		branchTestPlan, id, "slice-"+id, issue, "implementation", issue, "criteria")
+	kind := dag.NodeImplementation
+	if f.kind == dag.EdgeDecision {
+		// a decision edge leaves a non_pr node, and the writer refuses one that leaves an
+		// implementation node
+		kind = dag.NodeNonPR
+	}
+	f.change(dag.Change{Op: dag.OpAddNode, Node: &dag.Node{
+		NodeID: id, IssueKey: issue, Kind: kind, CriteriaSetDigest: testsupport.Dig("criteria " + id)}})
+	f.nodes[id] = issue
 	return f
 }
 
-// edge adds one live edge of the plan, of a kind that says nothing about the connection.
+// edge adds one live edge of the plan at the newest revision the test named.
 func (f *branchFixture) edge(id, from, to string) *branchFixture {
 	f.t.Helper()
 	kind := f.kind
 	if kind == "" {
-		kind = "artifact_verified"
+		kind = dag.EdgeArtifactVerified
 	}
+	edge := &dag.Edge{EdgeID: id, FromNodeID: from, ToNodeID: to, Kind: kind}
 	switch kind {
-	case "decision":
-		f.exec("INSERT INTO dag_edges (plan_id, edge_id, introduced_rev, retired_rev, from_node_id, to_node_id, kind, decision_subject, decision_digest, required_authority, pins_code_head) VALUES (?,?,1,NULL,?,?,?,'subject','digest','[\"owner\"]',0)",
-			branchTestPlan, id, from, to, kind)
+	case dag.EdgeDecision:
+		edge.DecisionSubject, edge.DecisionDigest, edge.RequiredAuthority = "subject", testsupport.Dig("decision "+id), []string{"owner"}
 	default:
-		f.exec("INSERT INTO dag_edges (plan_id, edge_id, introduced_rev, retired_rev, from_node_id, to_node_id, kind, target_repository, target_base_ref, pins_code_head) VALUES (?,?,1,NULL,?,?,?,?,?,0)",
-			branchTestPlan, id, from, to, kind, branchTestRepo, "dev")
+		edge.TargetRepository, edge.TargetBaseRef = branchTestRepo, "dev"
+		// an artifact_verified edge leaving an implementation node consumes a code artifact, so it
+		// must pin the verified head
+		edge.PinsCodeHead = kind == dag.EdgeArtifactVerified
 	}
+	f.change(dag.Change{Op: dag.OpAddEdge, Edge: edge})
 	return f
+}
+
+// integratedEdge describes one integrated edge from a node to a named target: the target is one the
+// node's accepted head has to land in.
+func (f *branchFixture) integratedEdge(id, from, to, baseRef string) *branchFixture {
+	f.t.Helper()
+	f.change(dag.Change{Op: dag.OpAddEdge, Edge: &dag.Edge{EdgeID: id, FromNodeID: from, ToNodeID: to,
+		Kind: dag.EdgeIntegrated, TargetRepository: branchTestRepo, TargetBaseRef: baseRef}})
+	return f
+}
+
+// retireEdge takes one edge out of the plan at the newest revision the test named.
+func (f *branchFixture) retireEdge(id string) *branchFixture {
+	f.t.Helper()
+	f.change(dag.Change{Op: dag.OpRetireEdge, EdgeID: id})
+	return f
+}
+
+// cancelNode cancels one node of the plan at the newest revision the test named: a cancelled node is
+// not a live node.
+func (f *branchFixture) cancelNode(id string) *branchFixture {
+	f.t.Helper()
+	f.change(dag.Change{Op: dag.OpCancelNode, NodeID: id})
+	return f
+}
+
+// pauseNode pauses one node of the plan at the newest revision the test named: a paused node is
+// still live.
+func (f *branchFixture) pauseNode(id string) *branchFixture {
+	f.t.Helper()
+	f.change(dag.Change{Op: dag.OpPauseNode, NodeID: id})
+	return f
+}
+
+// writePlan puts every revision the test described that the repository has not been given yet.
+func (f *branchFixture) writePlan() {
+	f.t.Helper()
+	if f.store == nil {
+		return
+	}
+	for f.written < len(f.revisions) {
+		i := f.written
+		at := f.revisions[i].at
+		repo := &dag.Repo{Store: f.store, Now: func() string { return at }}
+		rev := dag.Revision{PlanID: branchTestPlan, ProjectKey: branchTestProject,
+			RequestID: fmt.Sprintf("%s-request-%d", branchTestPlan, i+1), ExpectedParent: int64(i),
+			AuthorTaskID: "task-parent", Changes: f.revisions[i].changes}
+		if _, err := repo.Put(context.Background(), rev); err != nil {
+			f.t.Fatalf("put revision %d of %s: %v", i+1, branchTestPlan, err)
+		}
+		f.written = i + 1
+	}
+}
+
+// nodeIDFor is the node id of the plan node implementing an issue key, so a fixture that names its
+// ready set by issue key still hands the fake relay the node ids the reading judges readiness by.
+func (f *branchFixture) nodeIDFor(key string) string {
+	ids := make([]string, 0, len(f.nodes))
+	for id := range f.nodes {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		if f.nodes[id] == key {
+			return id
+		}
+	}
+	return "n" + key
 }
 
 // region declares one edit region of a node. The stated hold is what a declaration of this build
@@ -145,7 +270,7 @@ func (f *branchFixture) region(node, path, kind, key, change string, stated bool
 	f.t.Helper()
 	f.ensurePlan()
 	f.exec("INSERT INTO dag_node_regions (plan_id, node_id, declaration_seq, repository, path, region_kind, region_key, change, exclusive, declared_by, declared_at) VALUES (?,?,1,?,?,?,?,?,0,?,?)",
-		branchTestPlan, node, branchTestRepo, path, kind, key, change, "task-parent", branchTestNow.Format(time.RFC3339))
+		branchTestPlan, node, branchTestRepo, path, kind, key, change, "task-parent", branchTestStamp(0))
 	f.exec("INSERT INTO dag_node_region_holds (plan_id, node_id, declaration_seq, repository, path, region_kind, region_key, stated) VALUES (?,?,1,?,?,?,?,?)",
 		branchTestPlan, node, branchTestRepo, path, kind, key, stated)
 	return f
@@ -154,41 +279,81 @@ func (f *branchFixture) region(node, path, kind, key, change string, stated bool
 // release records that one node was released for execution.
 func (f *branchFixture) release(node string) *branchFixture {
 	f.exec("INSERT INTO dag_releases (plan_id, node_id, manifest_digest, managed_request_id, coordinator_epoch, decided_at) VALUES (?,?,?,?,0,?)",
-		branchTestPlan, node, "manifest-"+node, "request-"+node, branchTestNow.Format(time.RFC3339))
+		branchTestPlan, node, "manifest-"+node, "request-"+node, branchTestStamp(0))
 	return f
 }
 
-// integrated records a landed node: its accepted head is observed contained in the base.
+// executed records that one node was run by the relationship its acceptance names: the execution row
+// is what the relay's integration judgement walks, so a node without one is not integrated whatever
+// its observations say.
+func (f *branchFixture) executed(node string) *branchFixture {
+	f.exec("INSERT INTO dag_node_executions (plan_id, node_id, relationship_id, execution_generation, manifest_digest, kind) VALUES (?,?,?,1,?, 'initial')",
+		branchTestPlan, node, "rel-"+node, "manifest-"+node)
+	return f
+}
+
+// integrated records a landed node: the relationship ran it, its accepted head is marked merged on
+// the acceptance's own mark, and that head is observed contained in the base. The three are what the
+// relay's integration judgement needs, so the node is not live.
 func (f *branchFixture) integrated(node string) *branchFixture {
 	f.t.Helper()
 	f.accepted(node)
+	f.executed(node)
+	f.mergedMark("rel-" + node)
 	f.observation(node, 1, true)
 	return f
 }
 
-// accepted records the acceptance of one node, without an observation.
+// accepted records the acceptance of one node, with the head it accepted and without an observation.
 func (f *branchFixture) accepted(node string) *branchFixture {
 	f.t.Helper()
-	f.exec("INSERT INTO dag_acceptances (acceptance_id, plan_id, node_id, manifest_digest, relationship_id, execution_generation, event_id, revision_hash, criteria_set_digest, verdict, ack_tier, verdict_turn_id, rule_version_json, accepted_by_task_id, coordinator_epoch, accepted_at, state) VALUES (?,?,?,?,?,1,?,?,?,?,?,?,?,?,0,?,?)",
+	f.exec("INSERT INTO dag_acceptances (acceptance_id, plan_id, node_id, manifest_digest, relationship_id, execution_generation, event_id, revision_hash, criteria_set_digest, verdict, head_sha, ack_tier, verdict_turn_id, rule_version_json, accepted_by_task_id, coordinator_epoch, accepted_at, state) VALUES (?,?,?,?,?,1,?,?,?,?,?,?,?,?,?,0,?,?)",
 		"acceptance-"+node, branchTestPlan, node, "manifest-"+node, "rel-"+node, "event", "revision", "criteria",
-		"verified", "verified", "turn", "{}", "task-parent", branchTestNow.Format(time.RFC3339), "active")
+		"verified", "head-"+node, "verified", "turn", "{}", "task-parent", branchTestStamp(0), "active")
 	return f
 }
 
-// observation records one integration observation of a node's acceptance, at one sequence number.
+// mergedMark records the parent's merged mark on the mark the acceptance carries (event, generation
+// 1, revision), which is half of what the integration judgement needs beside a contained
+// observation.
+func (f *branchFixture) mergedMark(relationship string) *branchFixture {
+	f.exec("INSERT OR IGNORE INTO assignment_marks (relationship_id, mark, event_id, execution_generation, revision_hash, evidence, actor, marked_at) VALUES (?, 'merged', 'event', 1, 'revision', 'merged', 'parent', ?)",
+		relationship, branchTestStamp(0))
+	return f
+}
+
+// observation records one integration observation of a node's acceptance in the default target
+// (owner/repo#dev), of the head the acceptance accepted, at one sequence number.
 func (f *branchFixture) observation(node string, seq int, ancestor bool) *branchFixture {
 	f.t.Helper()
 	f.exec("INSERT INTO dag_integration_observations (observation_id, acceptance_id, repository, base_ref, subject_sha, tip_sha, is_ancestor, method, observed_seq, reverted_by, observed_at) VALUES (?,?,?,?,?,?,?,?,?,NULL,?)",
-		"observation-"+node+"-"+branchItoa(seq), "acceptance-"+node, branchTestRepo, "dev", "subject", "tip",
-		dagReviewFlag(ancestor), "ancestry", seq, branchTestNow.Format(time.RFC3339))
+		"observation-"+node+"-"+branchItoa(seq), "acceptance-"+node, branchTestRepo, "dev", "head-"+node, "tip",
+		dagReviewFlag(ancestor), "ancestry", seq, branchTestStamp(0))
 	return f
 }
 
-// publish writes the relay's answer and the state the judgement reads, then releases the store
-// writer so the read-only open under test sees a settled file.
-func (f *branchFixture) publish() *branchFixture {
+// observationIn records one integration observation of a node's acceptance in a named target.
+func (f *branchFixture) observationIn(node, repository, baseRef string, seq int, ancestor bool) *branchFixture {
 	f.t.Helper()
-	branchWriteReady(f.t, filepath.Join(f.dir, "ready.json"), f.ready, "within")
+	f.exec("INSERT INTO dag_integration_observations (observation_id, acceptance_id, repository, base_ref, subject_sha, tip_sha, is_ancestor, method, observed_seq, reverted_by, observed_at) VALUES (?,?,?,?,?,?,?,?,?,NULL,?)",
+		"observation-"+node+"-"+repository+"-"+baseRef+"-"+branchItoa(seq), "acceptance-"+node, repository, baseRef, "head-"+node, "tip",
+		dagReviewFlag(ancestor), "ancestry", seq, branchTestStamp(0))
+	return f
+}
+
+// publish writes the relay answer and the state the judgement reads, replaces the seams, and
+// releases the store writer so the read-only open under test sees a settled file.
+func (f *branchFixture) publish() *branchFixture {
+	f.publishOpen()
+	f.close()
+	return f
+}
+
+// publishOpen writes the relay answer and the state the judgement reads and replaces the seams, but
+// leaves the writer open, so a test can commit a revision while the reading is in flight.
+func (f *branchFixture) publishOpen() *branchFixture {
+	f.t.Helper()
+	branchWriteReady(f.t, f, filepath.Join(f.dir, "ready.json"), f.ready, "within")
 	script := "#!/bin/sh\ncase \"$*\" in\n" +
 		"  *dag-ready*) cat " + coreShellQuote(filepath.Join(f.dir, "ready.json")) + " ;;\n" +
 		"  *) echo refused >&2; exit 2 ;;\nesac\n"
@@ -203,16 +368,15 @@ func (f *branchFixture) publish() *branchFixture {
 		"since": float64(branchTestNow.Add(-60 * time.Minute).Unix()), "waiting": waiting}}}
 	branchWriteJSON(f.t, filepath.Join(f.stateDir, capacityStateFile), state)
 	branchSeams(f.t)
-	f.close()
 	return f
 }
 
 // branchWriteReady writes one dag-ready answer whose ready set is the given issue keys.
-func branchWriteReady(t *testing.T, path string, keys []string, hostMemory string) {
+func branchWriteReady(t *testing.T, f *branchFixture, path string, keys []string, hostMemory string) {
 	t.Helper()
 	ready := make([]any, len(keys))
 	for i, key := range keys {
-		ready[i] = map[string]any{"node_id": "n" + key, "issue_key": key, "disposition": "ready", "reason": nil}
+		ready[i] = map[string]any{"node_id": f.nodeIDFor(key), "issue_key": key, "disposition": "ready", "reason": nil}
 	}
 	branchWriteJSON(t, path, map[string]any{"ok": true, "schema": "dag-ready/1",
 		"pass":  map[string]any{"free_slots": 0, "ceiling": 12, "held": 12, "host_memory": map[string]any{"state": hostMemory}},
@@ -226,7 +390,7 @@ func branchSeams(t *testing.T) {
 	exec, get := capacityExec, capacityHTTPGet
 	t.Cleanup(func() { capacityExec, capacityHTTPGet = exec, get })
 	capacityExec = func(context.Context, string, ...string) ([]byte, error) { return []byte("[]"), nil }
-	capacityHTTPGet = func(context.Context, string) ([]byte, error) { return []byte("{\"incidents\":[]}"), nil }
+	capacityHTTPGet = func(context.Context, string) ([]byte, error) { return []byte(`{"incidents":[]}`), nil }
 }
 
 func branchWriteJSON(t *testing.T, path string, value any) {
@@ -336,7 +500,7 @@ func TestBranchCandidatesKeepTheOmittedListApartFromTheEmptyOne(t *testing.T) {
 	}
 
 	// The same plan held back by the host memory bound carries no key at all.
-	branchWriteReady(t, filepath.Join(f.dir, "ready.json"), f.ready, "deferring")
+	branchWriteReady(t, f, filepath.Join(f.dir, "ready.json"), f.ready, "deferring")
 	hold := f.run()
 	if hold.Verdict != capacityHold {
 		t.Fatalf("the plan is %s, want %s", hold.Verdict, capacityHold)
@@ -373,7 +537,7 @@ func TestBranchCandidatesRefuseABadThresholdOnAHoldPlan(t *testing.T) {
 	f.region("B", "b.go", "file", "", "edit", false)
 	f.publish()
 	// The host memory bound makes the verdict hold, which is the path that skips the candidates.
-	branchWriteReady(t, filepath.Join(f.dir, "ready.json"), []string{"CRW-1", "CRW-2"}, "deferring")
+	branchWriteReady(t, f, filepath.Join(f.dir, "ready.json"), []string{"CRW-1", "CRW-2"}, "deferring")
 	f.section["min_branch_nodes"] = "two"
 	f.load()
 	config := capacityConfig
@@ -463,8 +627,8 @@ func TestBranchCandidatesCountADeferredNodeAsWaiting(t *testing.T) {
 	f.publish()
 	branchWriteJSON(t, filepath.Join(f.dir, "ready.json"), map[string]any{"ok": true, "schema": "dag-ready/1",
 		"pass":  map[string]any{"free_slots": 0, "ceiling": 12, "held": 12, "host_memory": map[string]any{"state": "within"}},
-		"ready": []any{map[string]any{"node_id": "nCRW-1", "issue_key": "CRW-1", "disposition": "ready", "reason": nil}},
-		"nodes": []any{map[string]any{"node_id": "nCRW-2", "issue_key": "CRW-2", "disposition": "defer", "reason": "defer:no_capacity"}}})
+		"ready": []any{map[string]any{"node_id": "A", "issue_key": "CRW-1", "disposition": "ready", "reason": nil}},
+		"nodes": []any{map[string]any{"node_id": "B", "issue_key": "CRW-2", "disposition": "defer", "reason": "defer:no_capacity"}}})
 	plan := f.run()
 	candidates := branchList(t, plan)
 	if len(candidates) != 1 {
@@ -486,8 +650,8 @@ func TestBranchCandidatesConnectWhateverTheEdgeKind(t *testing.T) {
 	for _, kind := range []string{"artifact_verified", "integrated", "decision"} {
 		t.Run(kind, func(t *testing.T) {
 			f := branchNewFixture(t, "CRW-1", "CRW-2")
-			f.node("A", "CRW-1").node("B", "CRW-2").node("C", "CRW-3")
 			f.kind = kind
+			f.node("A", "CRW-1").node("B", "CRW-2").node("C", "CRW-3")
 			f.edge("e1", "A", "B")
 			for _, node := range []string{"A", "B", "C"} {
 				f.region(node, "pkg/"+node+".go", "file", "", "edit", false)
@@ -575,23 +739,24 @@ func TestBranchCandidatesDoNotConnectThroughAnIntegratedNode(t *testing.T) {
 }
 
 // An integration that a later observation contradicts does not integrate: the node stays live, so
-// the bundle it joins is not detachable. This is the scheduler's own rule (a positive observation
-// with no later negative one), not merely "any ancestor observation ever recorded".
+// the edge it carries still joins. This is the scheduler's own rule (a positive observation with no
+// later negative one), not merely "any ancestor observation ever recorded". C joins D, which joins
+// E, so a C that stays live keeps D and E inside its component and D and E never become a bundle of
+// their own.
 func TestBranchCandidatesKeepANodeWhoseIntegrationWasSuperseded(t *testing.T) {
 	f := branchNewFixture(t, "CRW-1", "CRW-2")
-	f.node("A", "CRW-1").node("B", "CRW-2").node("C", "CRW-3").node("D", "CRW-4")
-	f.edge("e1", "A", "B").edge("e2", "C", "D")
-	for _, node := range []string{"A", "B", "C", "D"} {
+	f.node("A", "CRW-1").node("B", "CRW-2").node("C", "CRW-3").node("D", "CRW-4").node("E", "CRW-5")
+	f.edge("e1", "A", "B").edge("e2", "C", "D").edge("e3", "D", "E")
+	for _, node := range []string{"A", "B", "C", "D", "E"} {
 		f.region(node, "pkg/"+node+".go", "file", "", "edit", false)
 	}
 	// C was observed contained and then, later, observed not contained: it is live again.
-	f.accepted("C")
-	f.observation("C", 1, true)
+	f.integrated("C")
 	f.observation("C", 2, false)
 	got := branchSummaries(branchList(t, f.publish().run()))
-	// C is live, so C+D is a bundle; if C read as integrated it would be dropped and D would stand
-	// alone below the floor, leaving A+B as the only candidate.
-	branchWant(t, got, "A+B pkg/A.go,pkg/B.go ready=2 edges=1", "C+D pkg/C.go,pkg/D.go ready=0 edges=1")
+	// If C read as integrated it would leave the graph and D+E would be a bundle of its own; C stays
+	// live, so A+B is the only candidate.
+	branchWant(t, got, "A+B pkg/A.go,pkg/B.go ready=2 edges=1")
 }
 
 // C1: when the whole plan is one component there is no candidate, and the plan still carries the
@@ -687,7 +852,7 @@ func TestBranchCandidatesDocumentKeysAndTheAlwaysFlag(t *testing.T) {
 
 	// A hold plan carries no branches at all, and --branches-always carries them.
 	// The host memory bound is what makes the plan a hold: the waiting set stays as it is.
-	branchWriteReady(t, filepath.Join(f.dir, "ready.json"), []string{"CRW-1"}, "deferring")
+	branchWriteReady(t, f, filepath.Join(f.dir, "ready.json"), []string{"CRW-1"}, "deferring")
 	hold := f.run()
 	if hold.Verdict != capacityHold || hold.Branches != nil {
 		t.Fatalf("the hold plan = %+v, want a hold that carries no branches", hold)
