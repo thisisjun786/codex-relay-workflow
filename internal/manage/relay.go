@@ -40,8 +40,21 @@ var relayHelperMemoMu sync.Mutex
 // relayHelperMemo is the state directory each Env resolved from the relay's own doctor
 // answer, remembered for the rest of that Env's life. Env is declared in another issue's
 // file and may not gain a field here, and Run builds one Env per invocation, so the map
-// holds one live entry per run; an entry is never removed, which is bounded in practice.
+// holds one live entry per run. Run calls relayHelperForget when the invocation ends, so a
+// process that embeds Run and calls it many times does not grow a map entry per call; within
+// the invocation the one resolution is still reused.
 var relayHelperMemo = map[*Env]string{}
+
+// relayHelperForget drops one Env's remembered state directory. Run calls it when the
+// invocation ends, so a process that embeds Run and calls it many times - the GUI's run-state
+// screen polls the read commands every few seconds - keeps no Env, with the streams and the
+// document it carries, reachable past its run. The memo's other behaviour is unchanged: within
+// one invocation the same Env still asks the doctor once.
+func relayHelperForget(e *Env) {
+	relayHelperMemoMu.Lock()
+	delete(relayHelperMemo, e)
+	relayHelperMemoMu.Unlock()
+}
 
 // Relay runs the same executable's relay mode for cfg and returns its stdout and exit
 // status. The argument order is fixed: relay --state <state> --socket <socket> <args...>,
