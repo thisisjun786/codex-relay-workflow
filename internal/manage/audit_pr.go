@@ -795,6 +795,12 @@ func auditPRParseArgs(args []string) (max int, dryRun, help bool, err error) {
 
 // auditPRRunWith does the work auditPRRun validated the arguments for: it selects the
 // targets, assembles and grades one bundle each, and rewrites the report from the ledger.
+//
+// A failure that belongs to one target (its relay child read, its patch, its criteria, its
+// bundle build) names that pull request on stderr and skips it, leaving no ledger row so a
+// later run retries it, and the run exits 1 at the end when any target failed. A failure
+// common to every target (the configuration, the checkout, the fetch, the grader) still
+// stops the run at once, because retrying the next target would not fix it.
 func auditPRRunWith(ctx context.Context, e *Env, cfg *Config, max int, dryRun bool) int {
 	section, err := auditPRSectionOf(cfg)
 	if err != nil {
@@ -830,11 +836,23 @@ func auditPRRunWith(ctx context.Context, e *Env, cfg *Config, max int, dryRun bo
 		fmt.Fprintf(e.Stderr, "crw manage audit pr: error: %v\n", err)
 		return 1
 	}
+	failed := false
+	// Resolving a target reads the relay for that one pull request, so a failure is that
+	// target's: it is named and skipped, and the run reports the failure at the end. A phase
+	// start is configuration, common to every target, so a bad one still stops the run.
+	resolved := make([]auditPRTarget, 0, len(targets))
 	for i := range targets {
+		if auditPRCancelled(e, ctx) {
+			return 1
+		}
 		child, err := auditPRChildOf(ctx, e, cfg, targets[i].Issue)
 		if err != nil {
-			fmt.Fprintf(e.Stderr, "crw manage audit pr: error: %v\n", err)
-			return 1
+			if auditPRCancelled(e, ctx) {
+				return 1
+			}
+			auditPRSkipTarget(e, targets[i], err)
+			failed = true
+			continue
 		}
 		targets[i].Child = child
 		targets[i].Pair = auditPRPairOf(section.Pairs, child.Model)
@@ -844,12 +862,18 @@ func auditPRRunWith(ctx context.Context, e *Env, cfg *Config, max int, dryRun bo
 			return 1
 		}
 		targets[i].Phase = phase
+		resolved = append(resolved, targets[i])
 	}
 	if dryRun {
-		return auditPRWriteDryRun(e, targets)
+		if code := auditPRWriteDryRun(e, resolved); code != 0 {
+			return code
+		}
+		if failed {
+			return 1
+		}
+		return 0
 	}
-	failed := false
-	if len(targets) > 0 {
+	if len(resolved) > 0 {
 		co, err := auditPkgCheckoutOf(cfg)
 		if err != nil {
 			fmt.Fprintf(e.Stderr, "crw manage audit pr: error: %v\n", err)
@@ -859,38 +883,37 @@ func auditPRRunWith(ctx context.Context, e *Env, cfg *Config, max int, dryRun bo
 			fmt.Fprintf(e.Stderr, "crw manage audit pr: error: %v\n", err)
 			return 1
 		}
-		for _, target := range targets {
-			if err := ctx.Err(); err != nil {
-				fmt.Fprintf(e.Stderr, "crw manage audit pr: error: %v\n", err)
+		for _, target := range resolved {
+			if auditPRCancelled(e, ctx) {
 				return 1
 			}
 			patch, err := auditPRDiff(ctx, cfg, target.Number)
 			if err != nil {
-				fmt.Fprintf(e.Stderr, "crw manage audit pr: error: %v\n", err)
-				return 1
+				if auditPRCancelled(e, ctx) {
+					return 1
+				}
+				auditPRSkipTarget(e, target, err)
+				failed = true
+				continue
 			}
 			criteria, unavailable, err := auditPRCriteria(ctx, e, cfg, target.Child.Relationship)
 			if err != nil {
-				fmt.Fprintf(e.Stderr, "crw manage audit pr: error: %v\n", err)
-				return 1
+				if auditPRCancelled(e, ctx) {
+					return 1
+				}
+				auditPRSkipTarget(e, target, err)
+				failed = true
+				continue
 			}
 			dir, err := auditPRBuild(ctx, e, cfg, section, co, auditPRSource{
 				Target: target, Patch: patch, Criteria: criteria, CriteriaUnavailable: unavailable,
 				RelationshipUnavailable: target.Child.Relationship == "", Relationship: target.Child.Relationship,
 			})
 			if err != nil {
-				// A cancelled run stops here rather than skipping: the interrupt is the run's, not
-				// this target's, and a skip would keep working after it and let the run go on to
-				// rewrite the report.
-				if ctxErr := ctx.Err(); ctxErr != nil {
-					fmt.Fprintf(e.Stderr, "crw manage audit pr: error: %v\n", ctxErr)
+				if auditPRCancelled(e, ctx) {
 					return 1
 				}
-				// One pull request whose bundle cannot be built does not cost the audit of the rest:
-				// the target is named and skipped, its half-built directory is gone and no ledger row
-				// is written, so the next run picks it up again. The run still reports the failure
-				// at the end, so a caller that wants to know does not have to read stderr.
-				fmt.Fprintf(e.Stderr, "crw manage audit pr: #%d: %v\n", target.Number, err)
+				auditPRSkipTarget(e, target, err)
 				failed = true
 				continue
 			}
@@ -913,6 +936,24 @@ func auditPRRunWith(ctx context.Context, e *Env, cfg *Config, max int, dryRun bo
 		return 1
 	}
 	return 0
+}
+
+// auditPRCancelled reports whether the run was interrupted, writing the interrupt to stderr.
+// An interrupt is the run's, not one target's, so it stops the run rather than becoming a skip:
+// a skip would keep working after the first interrupt and let the run rewrite the report.
+func auditPRCancelled(e *Env, ctx context.Context) bool {
+	if err := ctx.Err(); err != nil {
+		fmt.Fprintf(e.Stderr, "crw manage audit pr: error: %v\n", err)
+		return true
+	}
+	return false
+}
+
+// auditPRSkipTarget names one pull request whose bundle could not be built and moves on to the
+// next. The target is left with no ledger row, so a later run picks it up again, and the run
+// reports the failure at the end.
+func auditPRSkipTarget(e *Env, target auditPRTarget, err error) {
+	fmt.Fprintf(e.Stderr, "crw manage audit pr: #%d: %v\n", target.Number, err)
 }
 
 // auditPRWriteDryRun writes the targets, one JSON document per line, and nothing else.

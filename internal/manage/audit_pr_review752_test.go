@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -244,39 +245,32 @@ func TestAuditPRReview752EmptyCriteriaKeepsItsShape(t *testing.T) {
 }
 
 // C2: the changed paths come from git, so a path that carries a space reaches the bundle
-// unchanged. The patch's own header is ambiguous there: git puts a tab after a +++ line whose
-// path holds a space, and a binary block names no path in its body at all.
+// unchanged. The fixture is a real temporary git repository whose merge commit changes a text
+// file and a binary file whose names both carry a space and renames a third file: the paths come
+// from the real `git diff-tree -z --name-status -M` and the file bodies from the real `git show`,
+// with only gh and the relay faked. A patch's own header is ambiguous exactly here: git puts a tab
+// after a `+++` line whose path holds a space, and a binary block names no path in its body at all.
 func TestAuditPRReview752PathsWithSpaces(t *testing.T) {
+	repo, merge := auditPRReview752Repo(t)
 	state := t.TempDir()
 	cfg := auditPRSectionFixture(t, state, map[string]any{
 		"pr_since": "2026-10-01T00:00:00Z", "grader": auditFake(t, "json", auditJSONClean),
 	})
-	patch := "diff --git a/docs/with space.txt b/docs/with space.txt\n" +
-		"index 111..222 100644\n" +
-		"--- a/docs/with space.txt\t\n" +
-		"+++ b/docs/with space.txt\t\n" +
-		"@@ -1 +1 @@\n" +
-		"-old\n" +
-		"+new\n" +
-		"diff --git a/img/with space.png b/img/with space.png\n" +
-		"index 111..222 100644\n" +
-		"Binary files a/img/with space.png and b/img/with space.png differ\n"
-	auditPRFakeGh(t, auditPRListJSON(t, auditPRMergeEntry(12, "CRW-12: a change", "2026-10-05T00:00:00Z", "m12")),
-		map[int]string{12: patch})
+	cfg.raw["checkout"] = auditPkgJSON(t, map[string]any{"repository": repo, "base_ref": "origin/dev"})
+	auditPRFakeGh(t, auditPRListJSON(t, auditPRMergeEntry(12, "CRW-12: a change", "2026-10-05T00:00:00Z", merge)),
+		map[int]string{12: "diff --git a/docs/with space.txt b/docs/with space.txt\n"})
 	auditPRFakeRelay(t, map[string]string{"CRW-12": auditPRAssignmentJSON(t, "rel-1", "child-1")},
 		map[string]string{"child-1": auditPRSettingsJSON(t, "inferhub/deepseek-v4.1-flash")},
 		map[string]string{"rel-1": auditPRCriteriaJSON(t, "c1", "it works")})
-	auditPRReview752Checkout(t,
-		map[string][]byte{"m12": auditPRReview752Listing("M", "docs/with space.txt", "M", "img/with space.png")},
-		map[string]map[string]string{"m12": {"docs/with space.txt": "text\n", "img/with space.png": "\x00\x01binary\n"}})
 	e, _, errOut := auditTestEnv(t)
 	if code := auditPRRunWith(context.Background(), e, cfg, 9, false); code != 0 {
 		t.Fatalf("audit pr: exit %d %q", code, errOut.String())
 	}
 	dir := filepath.Join(state, "audit", "bundles", "pr-12", auditPRFilesDir)
 	for path, want := range map[string]string{
-		"docs/with space.txt": "text\n",
-		"img/with space.png":  "\x00\x01binary\n",
+		"docs/with space.txt":  "after\n",
+		"img/with space.png":   "\x00\x01binary after\n",
+		"src/renamed file.txt": "a line that survives the rename\n",
 	} {
 		body, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(path)))
 		if err != nil {
@@ -286,6 +280,10 @@ func TestAuditPRReview752PathsWithSpaces(t *testing.T) {
 		if string(body) != want {
 			t.Errorf("%s holds %q, want %q", path, body, want)
 		}
+	}
+	// A rename contributes the path it became: the path it came from is not in the bundle.
+	if _, err := os.Stat(filepath.Join(dir, "src", "moved file.txt")); !os.IsNotExist(err) {
+		t.Errorf("the bundle carries the rename's old path: %v", err)
 	}
 }
 
@@ -380,5 +378,184 @@ func TestAuditPRReview752CancelledRunStopsInsteadOfSkipping(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(state, "audit", "bundles", auditPRSubject(12))); !os.IsNotExist(err) {
 		t.Errorf("a cancelled run left a bundle directory behind: %v", err)
+	}
+}
+
+// auditPRReview752Repo builds a temporary git repository and returns it with the merge commit of
+// one real branch merge. The merge changes a text file and a binary file whose names both carry a
+// space, and renames a third file, so `git diff-tree -z --name-status -M` answers a two-path R*
+// record and two paths a patch header could not name. The repository is the real reader the bundle
+// builder uses: auditPkgGit and auditPkgBlob are never replaced here. Every git call runs with its
+// own configuration and identity, so the fixture neither reads nor writes the operator's git
+// configuration, and `origin` is the repository itself, so the builder's fetch succeeds.
+func auditPRReview752Repo(t *testing.T) (repo, merge string) {
+	t.Helper()
+	repo = filepath.Join(t.TempDir(), "checkout")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	run := func(args ...string) string {
+		t.Helper()
+		return auditPRReview752Git(t, repo, args...)
+	}
+	run("init", "--quiet", "-b", "dev")
+	run("remote", "add", "origin", repo)
+	for _, dir := range []string{"docs", "img", "src"} {
+		if err := os.MkdirAll(filepath.Join(repo, dir), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write := func(name, body string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(repo, filepath.FromSlash(name)), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("docs/with space.txt", "before\n")
+	write("img/with space.png", "\x00\x01binary before\n")
+	write("src/moved file.txt", "a line that survives the rename\n")
+	run("add", "-A")
+	run("commit", "--quiet", "-m", "base")
+	run("checkout", "--quiet", "-b", "side")
+	write("docs/with space.txt", "after\n")
+	write("img/with space.png", "\x00\x01binary after\n")
+	run("mv", "src/moved file.txt", "src/renamed file.txt")
+	run("add", "-A")
+	run("commit", "--quiet", "-m", "change")
+	run("checkout", "--quiet", "dev")
+	run("merge", "--quiet", "--no-ff", "-m", "merge", "side")
+	return repo, run("rev-parse", "HEAD")
+}
+
+// auditPRReview752Git runs one git command in a fixture repository with its own configuration
+// and identity, so no fixture reads or writes the operator's git configuration.
+func auditPRReview752Git(t *testing.T, repo string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-C", repo}, args...)...)
+	cmd.Env = append(os.Environ(),
+		"GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_CONFIG_NOSYSTEM=1",
+		"GIT_AUTHOR_NAME=fixture", "GIT_AUTHOR_EMAIL=fixture@example.invalid",
+		"GIT_COMMITTER_NAME=fixture", "GIT_COMMITTER_EMAIL=fixture@example.invalid",
+		"GIT_AUTHOR_DATE=2026-01-01T00:00:00Z", "GIT_COMMITTER_DATE=2026-01-01T00:00:00Z",
+		"LC_ALL=C")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// C3: a target's own patch read failing skips only that target, exactly as a bundle-build
+// failure does: the remaining target is still built and the run exits 1.
+func TestAuditPRReview752PatchReadFailureSkipsOnlyThatTarget(t *testing.T) {
+	state := t.TempDir()
+	cfg := auditPRSectionFixture(t, state, map[string]any{
+		"pr_since": "2026-10-01T00:00:00Z", "grader": auditFake(t, "json", auditJSONClean),
+	})
+	auditPRFakeGh(t, auditPRListJSON(t,
+		auditPRMergeEntry(12, "CRW-12: the first", "2026-10-05T00:00:00Z", "m12"),
+		auditPRMergeEntry(11, "CRW-11: the second", "2026-10-04T00:00:00Z", "m11")),
+		// The first target's patch cannot be read; the second's can.
+		map[int]string{11: auditPRReview752TextPatch})
+	auditPRFakeRelay(t,
+		map[string]string{
+			"CRW-12": auditPRAssignmentJSON(t, "rel-12", "child-12"),
+			"CRW-11": auditPRAssignmentJSON(t, "rel-11", "child-11"),
+		},
+		map[string]string{
+			"child-12": auditPRSettingsJSON(t, "inferhub/deepseek-v4.1-flash"),
+			"child-11": auditPRSettingsJSON(t, "inferhub/deepseek-v4.1-flash"),
+		},
+		map[string]string{
+			"rel-12": auditPRCriteriaJSON(t, "c1", "it works"),
+			"rel-11": auditPRCriteriaJSON(t, "c1", "it works"),
+		})
+	auditPRReview752Checkout(t,
+		map[string][]byte{"m11": auditPRReview752Listing("M", "internal/a.go")},
+		map[string]map[string]string{"m11": {"internal/a.go": "package a\n"}})
+	e, _, errOut := auditTestEnv(t)
+	if code := auditPRRunWith(context.Background(), e, cfg, 9, false); code != 1 {
+		t.Fatalf("audit pr with one unreadable patch: exit %d, want 1: %q", code, errOut.String())
+	}
+	if !strings.Contains(errOut.String(), "#12") {
+		t.Errorf("the skipped target is not named with its number: %q", errOut.String())
+	}
+	if _, err := os.Stat(filepath.Join(state, "audit", "bundles", "pr-11", auditBundleFile)); err != nil {
+		t.Errorf("the second target's bundle was not built: %v", err)
+	}
+	rows, err := auditReportLedger(e, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].Subject != auditPRSubject(11) {
+		t.Errorf("the ledger holds %+v, want the second target only", rows)
+	}
+}
+
+// C3: a target's own criteria read failing skips only that target, the same way.
+func TestAuditPRReview752CriteriaReadFailureSkipsOnlyThatTarget(t *testing.T) {
+	state := t.TempDir()
+	cfg := auditPRSectionFixture(t, state, map[string]any{
+		"pr_since": "2026-10-01T00:00:00Z", "grader": auditFake(t, "json", auditJSONClean),
+	})
+	auditPRFakeGh(t, auditPRListJSON(t,
+		auditPRMergeEntry(12, "CRW-12: the first", "2026-10-05T00:00:00Z", "m12"),
+		auditPRMergeEntry(11, "CRW-11: the second", "2026-10-04T00:00:00Z", "m11")),
+		map[int]string{12: auditPRReview752TextPatch, 11: auditPRReview752TextPatch})
+	auditPRFakeRelay(t,
+		map[string]string{
+			"CRW-12": auditPRAssignmentJSON(t, "rel-12", "child-12"),
+			"CRW-11": auditPRAssignmentJSON(t, "rel-11", "child-11"),
+		},
+		map[string]string{
+			"child-12": auditPRSettingsJSON(t, "inferhub/deepseek-v4.1-flash"),
+			"child-11": auditPRSettingsJSON(t, "inferhub/deepseek-v4.1-flash"),
+		},
+		// The first target's criteria cannot be read; the second's can.
+		map[string]string{"rel-11": auditPRCriteriaJSON(t, "c1", "it works")})
+	auditPRReview752Checkout(t,
+		map[string][]byte{"m11": auditPRReview752Listing("M", "internal/a.go")},
+		map[string]map[string]string{"m11": {"internal/a.go": "package a\n"}})
+	e, _, errOut := auditTestEnv(t)
+	if code := auditPRRunWith(context.Background(), e, cfg, 9, false); code != 1 {
+		t.Fatalf("audit pr with one unreadable criteria set: exit %d, want 1: %q", code, errOut.String())
+	}
+	if !strings.Contains(errOut.String(), "#12") {
+		t.Errorf("the skipped target is not named with its number: %q", errOut.String())
+	}
+	if _, err := os.Stat(filepath.Join(state, "audit", "bundles", "pr-11", auditBundleFile)); err != nil {
+		t.Errorf("the second target's bundle was not built: %v", err)
+	}
+	rows, err := auditReportLedger(e, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].Subject != auditPRSubject(11) {
+		t.Errorf("the ledger holds %+v, want the second target only", rows)
+	}
+}
+
+// C3: the dry run's pre-pass follows the same rule: a target whose relay read fails is named and
+// skipped, the other target is still printed, and the run exits 1.
+func TestAuditPRReview752DryRunSkipsAnUnreadableTarget(t *testing.T) {
+	state := t.TempDir()
+	cfg := auditPRSectionFixture(t, state, map[string]any{"pr_since": "2026-10-01T00:00:00Z"})
+	auditPRFakeGh(t, auditPRListJSON(t,
+		auditPRMergeEntry(12, "CRW-12: the first", "2026-10-05T00:00:00Z", "m12"),
+		auditPRMergeEntry(11, "CRW-11: the second", "2026-10-04T00:00:00Z", "m11")), nil)
+	auditPRFakeRelay(t,
+		// The first target's child cannot be read; the second's can.
+		map[string]string{"CRW-11": auditPRAssignmentJSON(t, "rel-11", "child-11")},
+		map[string]string{"child-11": auditPRSettingsJSON(t, "inferhub/deepseek-v4.1-flash")}, nil)
+	e, out, errOut := auditTestEnv(t)
+	if code := auditPRRunWith(context.Background(), e, cfg, 9, true); code != 1 {
+		t.Fatalf("a dry run with one unreadable target: exit %d, want 1: %q", code, errOut.String())
+	}
+	if !strings.Contains(errOut.String(), "#12") {
+		t.Errorf("the skipped target is not named with its number: %q", errOut.String())
+	}
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	if len(lines) != 1 || !strings.Contains(lines[0], "pr-11") {
+		t.Errorf("the dry run printed %q, want the second target only", out.String())
 	}
 }
