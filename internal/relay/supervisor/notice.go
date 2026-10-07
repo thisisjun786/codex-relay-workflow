@@ -2,6 +2,7 @@ package supervisor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
@@ -64,6 +65,36 @@ func (c *Channel) noticeYieldsToBusyHead(ctx context.Context, service *delivery.
 // attempt's check before any host work and the claim's check under its write lock answer with it.
 func noticeYieldsDetail(recipient string) string {
 	return "a delivery to " + pyvalue.StrRepr(recipient) + " is waiting out a busy backoff and holds that recipient's line, so this notice yields to it and waits: the receipt that head carries reaches the recipient first. This notice is claimable again once that head's backoff ends or the head is delivered"
+}
+
+// noticeLineYield is the refusal a notice raises when a delivery holds its recipient's line under a
+// busy backoff. It carries the not_claimable reason that already exists - no new refusal name is
+// added for it (D-02) - and a type of its own, so the daemon's own pass can tell a notice that is
+// waiting from a refusal that is a failure without reading the detail text (I-216's notice part,
+// section 82 decision 2; CRW-943). It answers errors.As for the Refusal it carries, so every reader
+// that asks for the reason and the detail is unchanged.
+type noticeLineYield struct{ Refusal }
+
+// As answers errors.As for the Refusal this refusal carries.
+func (e noticeLineYield) As(target any) bool {
+	if refusal, ok := target.(*Refusal); ok {
+		*refusal = e.Refusal
+		return true
+	}
+	return false
+}
+
+// noticeLineYieldRefusal is that refusal for a recipient whose delivery holds its line.
+func noticeLineYieldRefusal(recipient string) error {
+	return noticeLineYield{Refusal{"not_claimable", noticeYieldsDetail(recipient)}}
+}
+
+// isNoticeLineYield reports whether err is that refusal: the one answer a daemon pass must not turn
+// into a backoff, because the notice is waiting and is claimable the moment the head is delivered or
+// its backoff ends (CRW-943).
+func isNoticeLineYield(err error) bool {
+	var yielded noticeLineYield
+	return errors.As(err, &yielded)
 }
 
 // A staged notice is not permission to send. Re-derive the reservation under
