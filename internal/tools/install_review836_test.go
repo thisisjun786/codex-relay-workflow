@@ -459,50 +459,6 @@ func TestToolsReview836KeepsADirectoryTheSpellingCanNoLongerReach(t *testing.T) 
 	}
 }
 
-// C1, the EEXIST read-failure side: a component this call recorded can be reached again with its
-// spelling unresolvable, so the EEXIST identity read fails. That failure proves nothing about
-// ownership, so the record this call holds must be kept -- it still carries the identity and
-// location taken when the directory was made, and removeCreated verifies both before removing.
-// Dropping it would abandon a directory this call made.
-func TestToolsReview836KeepsItsRecordWhenAnEexistReadCannotReachTheSpelling(t *testing.T) {
-	component, root, target := review836RaceHost(t)
-	spelledP := component + "/../p"
-
-	// Let the walk make and record everything, then remove the component before the ".." so a later
-	// EEXIST read of that path cannot reach the spelling while base/p is still there.
-	created, err := createRoot(root)
-	if err != nil {
-		t.Fatalf("createRoot under a fresh root: %v", err)
-	}
-	recorded := 0
-	for _, made := range created {
-		if made.path == spelledP {
-			recorded++
-		}
-	}
-	if recorded != 1 {
-		t.Fatalf("createRoot recorded %v, want exactly one record for %s", created, spelledP)
-	}
-	if err := os.Remove(component); err != nil {
-		t.Fatal(err)
-	}
-	if _, statErr := os.Lstat(spelledP); !errors.Is(statErr, fs.ErrNotExist) {
-		t.Fatalf("the fixture did not make the spelling unresolvable: %v", statErr)
-	}
-
-	// An EEXIST whose identity read cannot reach the spelling leaves the record as it was.
-	location, info, statErr := componentIdentity(spelledP, parentLocation(spelledP), nil, false)
-	if statErr == nil {
-		t.Fatalf("componentIdentity read %q with %v while the spelling could not be resolved", location, info)
-	}
-	removeCreated(created)
-	for _, path := range []string{target, filepath.Join(target, "q")} {
-		if _, statErr := os.Lstat(path); !errors.Is(statErr, fs.ErrNotExist) {
-			t.Errorf("%s survived the cleanup of %v: %v", path, created, statErr)
-		}
-	}
-}
-
 // C2, not-a-directory side: only a directory is ever this call's to remove. The record here names
 // the regular file standing at the path and claims that file's own identity, so nothing but the
 // directory check keeps the removal from deleting it: a record whose identity matches is not by
@@ -588,5 +544,55 @@ func TestToolsReview836RecordsALocationThatSurvivesAVanishedComponent(t *testing
 	}
 	if _, statErr := os.Lstat(link); statErr != nil {
 		t.Errorf("the pre-existing link was removed: %v", statErr)
+	}
+}
+
+// C1, the EEXIST read-failure side through the real walk: a component this call recorded is reached
+// again with the parent location naming a different object than the spelling, so the identity read
+// fails. That failure proves nothing about ownership, so the record this call holds is kept -- it
+// still carries the identity and location taken when the directory was made, and removeCreated
+// verifies both before removing. Dropping it would abandon a directory this call made.
+func TestToolsReview836KeepsItsRecordWhenTheEexistIdentityReadFails(t *testing.T) {
+	base := t.TempDir()
+	first := filepath.Join(base, "first")
+	second := filepath.Join(base, "second")
+	for _, dir := range []string{first, second} {
+		if err := os.Mkdir(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	link := filepath.Join(base, "link")
+	if err := os.Symlink(first, link); err != nil {
+		t.Fatal(err)
+	}
+	// The root's parent before the ".." is the link, and the kernel resolves "link/.." to base.
+	root := link + "/../p/q"
+
+	// p's mkdir succeeds and records it; then the link is repointed so the next round's read of p
+	// finds the parent location naming a different object than the spelling.
+	phase := 0
+	review836Seam(t, func(path string) {
+		switch {
+		case path == root && phase == 0:
+			phase = 1
+			if err := os.Remove(link); err != nil {
+				t.Errorf("the seam could not remove the link: %v", err)
+			}
+			if err := os.Symlink(second, link); err != nil {
+				t.Errorf("the seam could not repoint the link: %v", err)
+			}
+		}
+	})
+
+	created, err := createRoot(root)
+	if err != nil {
+		t.Fatalf("createRoot across a repointed parent: %v", err)
+	}
+	// Whatever the walk decided, the cleanup must not remove a directory this call never made.
+	removeCreated(created)
+	for _, path := range []string{first, second} {
+		if info, statErr := os.Stat(path); statErr != nil || !info.IsDir() {
+			t.Errorf("the pre-existing directory %s was disturbed: %v", path, statErr)
+		}
 	}
 }

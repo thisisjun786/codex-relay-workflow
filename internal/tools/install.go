@@ -243,17 +243,17 @@ func parentLocation(component string) string {
 // the parent location read before the mkdir, and parentInfo is that directory's identity then.
 //
 // The spelled path is what the mkdir acted on, so the identity is read there first and is the answer
-// when the parent was not resolved. When a parent location was resolved, the two names are accepted
-// while they agree -- the spelled path is readable and both name the same object by os.SameFile --
-// or while the parent location alone is proven to be this call's: the slot it names was observed
-// empty immediately before the mkdir (childAbsent) and the parent is still the very directory read
-// then (parentInfo). Those two observations together say the mkdir filled that slot, which is what
-// keeps a directory this call made when a segment above the parent vanishes between the mkdir and
-// this read, and what refuses a slot a peer had already filled before the mkdir.
+// whenever it can be read. The parent location is the second name, and it is accepted only while the
+// two agree: both name the same object by os.SameFile. When they disagree, a link or a parent
+// changed between the mkdir and this read, so neither name proves which object the mkdir made and
+// nothing is recorded -- a leak rather than removing an object this call never made.
 //
-// When none of that holds, a link or a parent changed between the mkdir and this read, so neither
-// name proves which object the mkdir made; nothing is recorded, because a record would let the
-// cleanup remove an object this call never made. That is a leak rather than a wrong removal.
+// When the spelled path cannot be read at all, the parent location stands in, and only while it is
+// proven to be the slot the mkdir filled: the slot was observed empty immediately before the mkdir
+// (childAbsent) and the parent is still the very directory read then (parentInfo). That is the case
+// in which a segment above the parent vanished between the mkdir and this read, so the directory
+// this call made stays recorded and the cleanup can still remove it. Without those observations the
+// parent location might name a slot this call never filled, so nothing is recorded.
 func componentIdentity(component, parent string, parentInfo os.FileInfo, childAbsent bool) (string, os.FileInfo, error) {
 	spelled, spelledErr := os.Lstat(component)
 	if parent == "" {
@@ -269,6 +269,9 @@ func componentIdentity(component, parent string, parentInfo os.FileInfo, childAb
 			if os.SameFile(spelled, info) {
 				return location, info, nil
 			}
+			// The two names disagree, so which object the mkdir made is unknown. Nothing is
+			// recorded.
+			return "", nil, errTwoNamesDisagree
 		}
 		if childAbsent && parentInfo != nil {
 			if now, parentErr := os.Lstat(parent); parentErr == nil && os.SameFile(parentInfo, now) {
@@ -279,8 +282,6 @@ func componentIdentity(component, parent string, parentInfo os.FileInfo, childAb
 	if spelledErr != nil {
 		return "", nil, spelledErr
 	}
-	// The two names disagree and neither observation proves the slot is this call's, so which
-	// object the mkdir made is unknown. Nothing is recorded.
 	return "", nil, errTwoNamesDisagree
 }
 
@@ -301,6 +302,17 @@ func childLocation(component, parent string) string {
 // because the filesystem hands a freed directory's inode to the next directory made in its place
 // and the identity alone cannot then tell the peer's directory from this call's.
 func dropGone(created []createRootRecord, component string) []createRootRecord {
+	for _, made := range created {
+		if made.path != component {
+			continue
+		}
+		// The directory this call recorded at that path is still standing at its recorded location,
+		// so the record stays whatever the spelling says now: a link above the path can have been
+		// pointed elsewhere, which makes the spelling unreadable while the directory is untouched.
+		if info, err := os.Lstat(made.resolved); err == nil && os.SameFile(made.info, info) {
+			return created
+		}
+	}
 	if parentLocation(component) == "" {
 		return created
 	}
