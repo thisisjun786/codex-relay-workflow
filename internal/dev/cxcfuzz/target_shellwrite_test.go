@@ -245,9 +245,7 @@ func shellWriteDests() []string {
 	dests := append([]string{}, shellWritePathFragments()...)
 	// The memorygate destinations, taken from the generator's own pool so every alias form, home form and
 	// link-chain path is included.
-	for _, dest := range memoryGateDests() {
-		dests = append(dests, dest)
-	}
+	dests = append(dests, memoryGateDests()...)
 	return dests
 }
 
