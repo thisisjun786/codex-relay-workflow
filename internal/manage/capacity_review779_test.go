@@ -31,6 +31,17 @@ func capacityReview779Seam(t *testing.T, f *branchFixture) {
 	t.Cleanup(func() { branchReadSeam = previous })
 }
 
+// capacityReview779PassSeam installs the reading's pass seam for one test. It runs at the start of the
+// reading, after the plan's ready pass has been read and before the reading takes its snapshot, and
+// writes the revisions the test described but did not write, so a revision lands between the pass and
+// the snapshot.
+func capacityReview779PassSeam(t *testing.T, f *branchFixture) {
+	t.Helper()
+	previous := branchPassSeam
+	branchPassSeam = func() { f.writePlan() }
+	t.Cleanup(func() { branchPassSeam = previous })
+}
+
 // capacityReview779Plan is a four-node plan in two bundles: A and B joined by an edge, C and D
 // joined by an edge, every node declaring a place of its own. Neither bundle is the whole plan, so
 // both are candidates while nothing else changes.
@@ -205,29 +216,47 @@ func TestCapacityReview779OneSnapshot(t *testing.T) {
 	})
 }
 
-// C1: the readiness a plan's pass reports and the nodes and edges the reading reports come from one
-// revision. The pass answers for revision 1, and a revision that cancels D lands after the pass and
-// before the reading's snapshot. A reading that took the snapshot at the head would report a graph the
-// pass never saw: D gone, so C+D no longer a bundle and C alone below the floor, while the pass still
-// counts C and D as nodes of its plan. Reading the revision the pass named keeps the two together, so
-// both bundles survive.
-func TestCapacityReview779PassAndReadingShareOneRevision(t *testing.T) {
-	f := branchNewFixture(t, "CRW-1", "CRW-2")
-	capacityReview779Plan(f)
-	// The pass answers for revision 1; revision 2 cancels D.
-	f.passRevision = 1
-	f.revision(2)
-	f.cancelNode("D")
-	f.publishOpen()
-	previous := branchPassSeam
-	branchPassSeam = func() { f.writePlan() }
-	t.Cleanup(func() { branchPassSeam = previous })
-	plan := f.run()
-	if plan.Verdict != capacityExpand {
-		t.Fatalf("the plan is %s, want %s", plan.Verdict, capacityExpand)
-	}
-	branchWant(t, branchSummaries(branchList(t, plan)),
-		"A+B pkg/A.go,pkg/B.go ready=2 edges=1", "C+D pkg/C.go,pkg/D.go ready=0 edges=1")
+// C1/C2: the reading reports the plan the snapshot holds, at its head. The ready pass answers for
+// revision 1, and a revision that cancels D lands after the pass and before the snapshot. The reading
+// must report the graph it read (D gone, so C+D is not a bundle and C alone is below the floor), and it
+// must not carry the pass's readiness onto a revision the pass never saw: a node the pass counted as
+// ready in a plan that no longer holds it is not evidence about the plan that does.
+func TestCapacityReview779ReadingFollowsTheSnapshotHead(t *testing.T) {
+	t.Run("the graph is the one the snapshot holds", func(t *testing.T) {
+		f := branchNewFixture(t, "CRW-1", "CRW-2")
+		capacityReview779Plan(f)
+		// The pass answers for revision 1; revision 2 cancels D.
+		f.passRevision = 1
+		f.revision(2)
+		f.cancelNode("D")
+		f.publishOpen()
+		capacityReview779PassSeam(t, f)
+		plan := f.run()
+		if plan.Verdict != capacityExpand {
+			t.Fatalf("the plan is %s, want %s", plan.Verdict, capacityExpand)
+		}
+		// The cancelled D is gone, so C+D is no longer a bundle and C alone is below the floor: only
+		// A+B is left. A reading that reconstructed the revision the pass answered for would still
+		// report both bundles.
+		branchWant(t, branchSummaries(branchList(t, plan)), "A+B pkg/A.go,pkg/B.go ready=0 edges=1")
+	})
+
+	t.Run("a readiness from another revision is not carried over", func(t *testing.T) {
+		f := branchNewFixture(t, "CRW-1", "CRW-2")
+		capacityReview779Plan(f)
+		// The pass answers for revision 1; revision 2 pauses C, which leaves both bundles as they
+		// were. The graph is unchanged, so the only thing that could differ is the readiness: the
+		// pass counted A and B as waiting for a plan revision this reading does not hold, so the
+		// reading reports no waiting node rather than a count it cannot support.
+		f.passRevision = 1
+		f.revision(2)
+		f.pauseNode("C")
+		f.publishOpen()
+		capacityReview779PassSeam(t, f)
+		plan := f.run()
+		branchWant(t, branchSummaries(branchList(t, plan)),
+			"A+B pkg/A.go,pkg/B.go ready=0 edges=1", "C+D pkg/C.go,pkg/D.go ready=0 edges=1")
+	})
 }
 
 // C3: readiness is judged by node id. Two nodes implement the same issue, and the pass lists only
