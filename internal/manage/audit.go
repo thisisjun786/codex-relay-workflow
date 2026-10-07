@@ -376,7 +376,46 @@ func auditEndsMidLine(f *os.File, path string) bool {
 }
 
 // auditCommand is crw manage audit.
-var auditCommand = Command{Name: "audit", Summary: "grade an audit bundle and record the result", Run: auditRun}
+var auditCommand = Command{
+	Name: "audit", Summary: "grade an audit bundle and record the result", Run: auditRun,
+	HelpRequested: auditHelpRequested,
+}
+
+// auditHelpRequested reports whether an audit command line asks for the usage. The audit
+// dispatcher and its subcommands accept a bare "help" as well as -h and --help, which is a
+// wider rule than the shared -h/--help check; Run consults it so a command line that really
+// asks for the usage is not refused by the configuration check. A token an option consumes
+// is a value, so "audit list --round -h" is not a help request and the configuration check
+// still applies to it.
+func auditHelpRequested(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	switch args[0] {
+	case "-h", "--help", "help":
+		return true
+	}
+	rest := args[1:]
+	switch args[0] {
+	case "round", "drafts":
+		// These two switch on their first token, so help is that token and nothing else.
+		return len(rest) > 0 && (rest[0] == "-h" || rest[0] == "--help" || rest[0] == "help")
+	case "pr":
+		_, _, help, _ := auditPRParseArgs(rest)
+		return help
+	case "report":
+		for _, arg := range rest {
+			if arg == "-h" || arg == "--help" || arg == "help" {
+				return true
+			}
+		}
+		return false
+	case "list", "package":
+		// These two read their flags the same way: a value slot is not a help position.
+		return auditOptionsHelpRequested(rest)
+	}
+	return false
+}
 
 func init() { Register(auditCommand) }
 
@@ -402,6 +441,19 @@ func auditRun(ctx context.Context, e *Env, args []string) int {
 	if len(args) == 0 {
 		fmt.Fprintln(e.Stderr, auditUsage)
 		return usageExit
+	}
+	// The audit family reads a help request more widely than the shared entry point does (a
+	// bare "help" as the command's or its subcommand's own first argument), and Run skips its
+	// configuration refusal for any -h or --help it sees, including one an option consumes as
+	// a value. A command line the audit family reads as real work — "audit list --round -h",
+	// where the round is named -h — would otherwise run on the defaults of a file this product
+	// cannot use. The refusal is made here, once for every audit subcommand, in Run's words and
+	// with Run's status, so no audit command silently continues with the defaults.
+	if !auditHelpRequested(args) {
+		if err := coreConfigError(e); err != nil {
+			fmt.Fprintf(e.Stderr, "crw manage: error: %v\n", err)
+			return usageExit
+		}
 	}
 	switch args[0] {
 	case "-h", "--help", "help":
@@ -467,6 +519,7 @@ func auditRunGrade(ctx context.Context, e *Env, args []string) int {
 // argument, or a missing --bundle is an error naming what is wrong.
 func auditParseGradeArgs(args []string) (AuditJob, error) {
 	var job AuditJob
+	seen := map[string]bool{}
 	for i := 0; i < len(args); i++ {
 		name := args[i]
 		if !strings.HasPrefix(name, "--") {
@@ -486,12 +539,28 @@ func auditParseGradeArgs(args []string) (AuditJob, error) {
 		}
 		switch key {
 		case "bundle":
+			if seen[key] {
+				return AuditJob{}, fmt.Errorf("the option --%s is given twice", key)
+			}
+			seen[key] = true
 			job.Bundle = value
 		case "pair":
+			if seen[key] {
+				return AuditJob{}, fmt.Errorf("the option --%s is given twice", key)
+			}
+			seen[key] = true
 			job.Pair = value
 		case "phase":
+			if seen[key] {
+				return AuditJob{}, fmt.Errorf("the option --%s is given twice", key)
+			}
+			seen[key] = true
 			job.Phase = value
 		case "round":
+			if seen[key] {
+				return AuditJob{}, fmt.Errorf("the option --%s is given twice", key)
+			}
+			seen[key] = true
 			job.Round = value
 		default:
 			return AuditJob{}, fmt.Errorf("unknown option %s", name)
