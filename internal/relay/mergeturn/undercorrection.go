@@ -156,7 +156,7 @@ func underCorrectionRefusal(ctx context.Context, q store.Querier, r store.MergeT
 			"the accepted result of this turn's relationship "+pyvalue.StrRepr(relationship)+
 				" is under correction: generation "+strconv.FormatInt(live, 10)+" is open over the acceptance, which stands on generation "+
 				strconv.FormatInt(stand, 10)+", so the head this turn holds is the result being repaired and is not merged. "+
-				"Accept the corrected result with dag-accept --supersedes, or withdraw the generation, and request the turn again",
+				"Accept the corrected result with dag-accept --supersedes, or withdraw the generation if it was never bound or sent, and request the turn again",
 			r.CandidateHead, r.HolderTaskID), nil
 	}
 	return nil, nil
@@ -255,7 +255,7 @@ func ucZoneTable(ctx context.Context, q store.Querier, table string) (bool, erro
 // generation open over its accepted result, so the head the bundle would carry is the result being
 // repaired. It is the existing disposition_conflict and it names the open generation.
 func trainUnderCorrectionRefusal(pr int64, relationship string, liveGeneration, standGeneration int64) error {
-	return trainConflict("pull request %d's relationship %s is under correction: generation %d is open over the accepted result, which stands on generation %d, so the member is not a candidate a bundle may carry or land; accept the corrected result with dag-accept --supersedes, or withdraw the generation", pr, pyvalue.StrRepr(relationship), liveGeneration, standGeneration)
+	return trainConflict("pull request %d's relationship %s is under correction: generation %d is open over the accepted result, which stands on generation %d, so the member is not a candidate a bundle may carry or land; accept the corrected result with dag-accept --supersedes, or withdraw the generation if it was never bound or sent", pr, pyvalue.StrRepr(relationship), liveGeneration, standGeneration)
 }
 
 // trainMemberCorrectionRefusal re-reads one member's correction state on the caller's querier and refuses

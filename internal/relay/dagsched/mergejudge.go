@@ -36,7 +36,7 @@ func (r JudgeResult) Eligible() bool { return r.Outcome == OutcomeEligible }
 // merge lane. It is the existing disposition_conflict and it names the open generation, so a parent
 // reading the refusal knows which generation to finish or withdraw; no refusal name is added.
 func refuseUnderCorrection(node string, live, standGeneration int64) error {
-	return refuse(contract.RefusalDispositionConflict, "the accepted result of %s is under correction: generation %d is open over the acceptance, which stands on generation %d, so its head is not judged and does not go to the merge lane; accept the corrected result with dag-accept --supersedes, or withdraw the generation", node, live, standGeneration)
+	return refuse(contract.RefusalDispositionConflict, "the accepted result of %s is under correction: generation %d is open over the acceptance, which stands on generation %d, so its head is not judged and does not go to the merge lane; accept the corrected result with dag-accept --supersedes, or withdraw the generation if it was never bound or sent", node, live, standGeneration)
 }
 
 const maxRounds = 2
