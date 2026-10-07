@@ -298,16 +298,16 @@ func promptSubmitWriteStateReason(lock func(cwd, sessionID string, fn func() err
 	return promptSubmitFailed, "", err
 }
 
-// promptSubmitRewritable says whether writing next back over the session file would keep every record the file stores: each
-// stored unverified subagent must come back as it was stored, a legacy D-close marker would lose its distinction, and an
-// interview tracker longer than the reader keeps would lose its oldest entries (sessionHookStateRewritable). A file that is
-// not there yet stores nothing, so a fresh state loses nothing; a file that cannot be read is refused.
+// promptSubmitRewritable says whether writing next back over the session file would keep every record the file stores (the
+// shared data-loss judgement state.RewriteKeepsStored), and whether it holds no legacy D-close marker (state.DcloseRecoveryLegacy,
+// the per-writer refusal this writer already made). A file that is not there yet stores nothing, so a fresh state loses nothing;
+// a file that cannot be read is refused.
 func promptSubmitRewritable(cwd, sessionID string, next state.State) bool {
 	raw, err := os.ReadFile(state.StatePath(cwd, sessionID))
 	if errors.Is(err, fs.ErrNotExist) {
 		return true
 	}
-	return err == nil && sessionHookStateRewritable(raw, next)
+	return err == nil && state.RewriteKeepsStored(raw, next) && !state.DcloseRecoveryLegacy(next)
 }
 
 // promptSubmitAppendTurn is appendTurn (hook.ts:577-581): the turn is appended and the list is cut to

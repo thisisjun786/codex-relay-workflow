@@ -12,11 +12,12 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
 )
 
-// The cli rewrite guard cliVerdictsIntact only judges unverifiedSubagents, while state.ReadStateStrict rebuilds the interview
-// tracker through interview.ReconstructInterview: contradictions and assumptions are capped at interview.MaxTrackerArray
-// (drop-oldest) and an ontology entity with no name is dropped. A rewrite that passes cliVerdictsIntact therefore publishes a
-// tracker shorter than the stored one and loses those records for good. The hook's post-compact write already refuses this
-// through state.RewriteKeepsInterview; these cases pin the same refusal on the cli writers, the orchestrate transition included.
+// state.ReadStateStrict rebuilds the interview tracker through interview.ReconstructInterview: contradictions and assumptions
+// are capped at interview.MaxTrackerArray (drop-oldest) and an ontology entity with no name is dropped, so a rewrite from that
+// read publishes a tracker shorter than the stored one and loses those records for good. These cases pin the refusal on the cli
+// writers, the orchestrate transition included. CRW-815 moved the judgement itself into state.RewriteKeepsStored, which
+// cliVerdictsIntact now calls (its name and signature unchanged); cliInterviewIntact stays as this file's guard and is checked
+// first, so an interview loss keeps this command's own sentence rather than the unverified-records one.
 
 // cliInterviewRefusal is the reason a cli writer gives when the rewrite would drop stored interview records. Each caller keeps
 // its own refusal sentence frame (memory allow-write, evidence resolve, scan record, orchestrate) and takes this reason.
