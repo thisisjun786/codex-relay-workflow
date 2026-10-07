@@ -207,11 +207,7 @@ func localHookInstall(path string) (string, error) {
 	}
 	// Write to a sibling and rename, so a failure cannot leave a half-written hook that git
 	// would then refuse to run.
-	temp := path + ".tmp"
-	if err := os.WriteFile(temp, []byte(localHookScript), 0o755); err != nil {
-		return "", err
-	}
-	if err := os.Rename(temp, path); err != nil {
+	if err := localWriteAtomic(path, []byte(localHookScript), 0o755); err != nil {
 		return "", err
 	}
 	return "installed", nil

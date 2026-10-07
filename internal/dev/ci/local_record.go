@@ -53,6 +53,7 @@ type verificationRecord struct {
 	Pins         map[string]string `json:"pins"`
 	GoFlags      string            `json:"goFlags"`
 	GoEnv        string            `json:"goEnv"`
+	Range        string            `json:"range"`
 	PinMismatch  []string          `json:"pinMismatch"`
 	Dependencies map[string]string `json:"dependencies"`
 	OS           string            `json:"os"`
@@ -172,19 +173,49 @@ func writeRecord(path string, record verificationRecord) (verificationRecord, er
 			return record, err
 		}
 	}
-	temp := path + ".tmp"
-	if err := os.WriteFile(temp, pretty.Bytes(), 0o644); err != nil {
-		return record, err
-	}
-	if err := os.Rename(temp, path); err != nil {
+	if err := localWriteAtomic(path, pretty.Bytes(), 0o644); err != nil {
 		return record, err
 	}
 	// The canonical bytes are kept beside the record so a reader can compare them byte for
 	// byte without re-deriving the serialization.
-	if err := os.WriteFile(path+".canonical", canonical, 0o644); err != nil {
+	if err := localWriteAtomic(path+".canonical", canonical, 0o644); err != nil {
 		return record, err
 	}
 	return sealed, nil
+}
+
+// localWriteAtomic writes a file through a temporary file of its own name in the same directory and
+// renames it into place, so two runs never share a temporary name and a reader never sees half a file.
+func localWriteAtomic(path string, data []byte, mode os.FileMode) error {
+	file, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.tmp")
+	if err != nil {
+		return err
+	}
+	temp := file.Name()
+	if _, err := file.Write(data); err != nil {
+		file.Close()
+		os.Remove(temp)
+		return err
+	}
+	if err := file.Close(); err != nil {
+		os.Remove(temp)
+		return err
+	}
+	if err := os.Chmod(temp, mode); err != nil {
+		os.Remove(temp)
+		return err
+	}
+	if err := os.Rename(temp, path); err != nil {
+		os.Remove(temp)
+		return err
+	}
+	return nil
+}
+
+// externalGoFlags reports whether GOFLAGS names a modfile or an overlay: the files it reads are
+// inputs the reuse keys do not cover, so a record made with one is never reused.
+func externalGoFlags(flags string) bool {
+	return strings.Contains(flags, "modfile") || strings.Contains(flags, "overlay")
 }
 
 // localReuse decides whether a record already answers for the current state. Every key must
@@ -197,6 +228,8 @@ func localReuse(reused, current verificationRecord) (bool, string) {
 		return false, "the record is not " + recordSchema
 	case reused.Result != localPass:
 		return false, fmt.Sprintf("the record's result is %q, not %q", reused.Result, localPass)
+	case externalGoFlags(reused.GoFlags) || externalGoFlags(current.GoFlags):
+		return false, "GOFLAGS names an external modfile or overlay, whose contents the reuse keys do not cover"
 	case len(reused.PinMismatch) > 0:
 		return false, "the record carries a pin mismatch (" + strings.Join(reused.PinMismatch, ", ") + ")"
 	}
@@ -209,6 +242,7 @@ func localReuse(reused, current verificationRecord) (bool, string) {
 		// The blob and secret steps judge base..head, so a different base is a different
 		// verification even when the tree is the same (the range a record covers).
 		{"base commit", reused.BaseCommit, current.BaseCommit},
+		{"commit range", reused.Range, current.Range},
 		{"os", reused.OS, current.OS},
 		{"arch", reused.Arch, current.Arch},
 	} {

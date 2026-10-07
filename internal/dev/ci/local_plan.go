@@ -379,6 +379,14 @@ func localPlanProblems(plan []localJob, workflow []workflowJob) []string {
 			if want != got {
 				problems = append(problems, fmt.Sprintf("%s step %d: the plan names %q, ci.yml names %q", job.name, n, got, want))
 			}
+			// A step kept under its name but changed underneath would run other work locally, so its run
+			// text and its action are compared too.
+			if entry.steps[n].kind == localRun && strings.TrimSpace(entry.steps[n].command) != strings.TrimSpace(job.steps[n].run) {
+				problems = append(problems, fmt.Sprintf("%s step %d (%s): the plan's command is not the ci.yml run text", job.name, n, want))
+			}
+			if entry.steps[n].uses != "" && entry.steps[n].uses != job.steps[n].uses {
+				problems = append(problems, fmt.Sprintf("%s step %d (%s): the plan's action is not the ci.yml uses", job.name, n, want))
+			}
 		}
 	}
 	for _, entry := range plan {

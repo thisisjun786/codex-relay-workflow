@@ -198,6 +198,13 @@ func localCurrentKeys(opts localOptions) (verificationRecord, error) {
 			return verificationRecord{}, err
 		}
 	}
+	// The commits between base and head are the input the blob and secret steps judge, so the record
+	// names them: a different commit list is a different verification even at the same tree.
+	commits, err := runGit(opts.Root, "rev-list", base+".."+head)
+	if err != nil {
+		return verificationRecord{}, err
+	}
+	rangeSum := sha256.Sum256(commits)
 	pins, err := localToolPinsFrom(func(path string) ([]byte, error) { return runGit(opts.Root, "show", head+":"+path) })
 	if err != nil {
 		return verificationRecord{}, err
@@ -205,6 +212,7 @@ func localCurrentKeys(opts localOptions) (verificationRecord, error) {
 	return verificationRecord{
 		Schema:       recordSchema,
 		Runner:       opts.Runner,
+		Range:        fmt.Sprintf("sha256:%x", rangeSum),
 		Repository:   localRepository(opts.Root),
 		BaseCommit:   base,
 		HeadCommit:   head,

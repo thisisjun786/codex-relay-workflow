@@ -5,6 +5,7 @@ package ci
 import (
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 )
@@ -88,13 +89,45 @@ func localObserveTool(name, pathEnv string) string {
 	default:
 		return ""
 	}
-	cmd := exec.Command(name, args...)
-	cmd.Env = append(os.Environ(), "PATH="+pathEnv)
+	path := localLookPath(name, pathEnv)
+	if path == "" {
+		return ""
+	}
+	// The probe runs in a directory of its own, without the caller's GOENV, so the version it reads is
+	// the one a step with this PATH runs.
+	dir, err := os.MkdirTemp(localTempDir(), "probe")
+	if err != nil {
+		return ""
+	}
+	defer os.RemoveAll(dir)
+	cmd := exec.Command(path, args...)
+	cmd.Dir = dir
+	env := []string{}
+	for _, kv := range os.Environ() {
+		if !strings.HasPrefix(kv, "GOENV=") && !strings.HasPrefix(kv, "PATH=") {
+			env = append(env, kv)
+		}
+	}
+	cmd.Env = append(env, "PATH="+pathEnv)
 	out, err := cmd.Output()
 	if err != nil {
 		return ""
 	}
 	return localParseToolVersion(name, string(out))
+}
+
+// localLookPath is the executable a PATH names, or "" when no directory on it has one.
+func localLookPath(name, pathEnv string) string {
+	for _, dir := range filepath.SplitList(pathEnv) {
+		if dir == "" {
+			continue
+		}
+		candidate := filepath.Join(dir, name)
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() && info.Mode()&0o111 != 0 {
+			return candidate
+		}
+	}
+	return ""
 }
 
 // localParseToolVersion reads a tool's version out of its own output.

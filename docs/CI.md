@@ -83,7 +83,7 @@ The record is `verification-record/1`: `repository`, `baseCommit`,
 their step runs, which is the pin, because secrets.sh runs its own pinned Gitleaks and the lint
 leg runs the staticcheck the tree requires), `pins` (the versions the tree
 pins: go.mod's toolchain and staticcheck, ci.yml's Node, secrets.sh's Gitleaks),
-`pinMismatch`, `goFlags` (the GOFLAGS the steps inherit), `goEnv` (GOENV is unset in the
+`pinMismatch`, `goFlags` (the GOFLAGS the steps inherit; a record whose GOFLAGS name a modfile or an overlay is never reused), `range` (the sha256 of the commits between base and head, the input of the blob and secret steps), `goEnv` (GOENV is unset in the
 steps, so Go reads its default file under the run's own empty home, and the host's GOENV never
 applies),
 `dependencies` (the sha256 of `go.sum` and
@@ -110,7 +110,7 @@ or lacks its tool fails the run, and the record names it with its reason.
 
 `--reuse <record>` answers an existing record instead of running only when the **tree**, the
 **ci.yml digest**, the **tool versions**, the **dependency digests**, the **OS and
-architecture** and the **base commit** (the range the blob and secret steps judge) all match,
+architecture** and the **base commit** and the **commit range** all match,
 and the record passed with no pin mismatch. The head commit is deliberately not a key: a rebase
 that keeps the tree and the base reuses the record. The commits between base and head are not
 compared one by one, so a record reused across a history rewrite that keeps the tree and the
