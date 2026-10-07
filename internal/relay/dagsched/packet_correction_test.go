@@ -70,6 +70,8 @@ func TestCoverageKeepsCreditForAPacketClosedAfterItsMerge(t *testing.T) {
 	packetAcceptance(f, "acc-1", "plan", "n1", "rel-1")
 	packetRegistered(f, "rel-1", map[string]bool{"c1": true})
 	packetIntegrated(f, "acc-1", "rel-1", "owner/repo", "dev")
+	// the release recorded the packet this execution stands for
+	f.exec("INSERT INTO dag_execution_packets (relationship_id, plan_id, node_id, issue_key, packet_id, branch, recorded_at) VALUES ('rel-1','plan','n1','CRW-F','p1',NULL,'t')")
 	if cov := coverageOf(t, f, "plan", "CRW-F"); !cov.Complete {
 		t.Fatalf("the landed packet reads incomplete: %+v", cov.Criteria)
 	}
@@ -215,14 +217,19 @@ func TestCoverageKeepsARevalidatedPacket(t *testing.T) {
 	packetAcceptance(f, "acc-1", "plan", "n1", "rel-1")
 	packetRegistered(f, "rel-1", map[string]bool{"c1": true})
 	packetIntegrated(f, "acc-1", "rel-1", "owner/repo", "dev")
+	// the release recorded the packet this execution stands for
+	f.exec("INSERT INTO dag_execution_packets (relationship_id, plan_id, node_id, issue_key, packet_id, branch, recorded_at) VALUES ('rel-1','plan','n1','CRW-F','p1',NULL,'t')")
 	if cov := coverageOf(t, f, "plan", "CRW-F"); !cov.Complete {
 		t.Fatalf("the landed packet reads incomplete: %+v", cov.Criteria)
 	}
 
-	// A criteria-only revision: the node's slice moves, the output does not, and the acceptance is
-	// revalidated under the new criteria (dag_acceptance_revalidations).
+	// A criteria-only revision: the node's SLICE moves (a new title is part of the node's spec), the
+	// accepted output does not, and the acceptance is revalidated under the new criteria. The packet
+	// identity and the covers are unchanged, which is what the revalidation fallback must require.
+	updated := packetNodeDoc("n1", "CRW-F", "p1", []string{"c1"}, []string{"c1"})["node"].(doc)
+	updated["title"] = "criteria-only revision"
 	putPacketPlan(t, f, "plan", 1, "r2", []doc{featureCriteriaDoc("CRW-F", criterionDoc("c1", true))},
-		doc{"op": dag.OpUpdateNode, "node": packetNodeDoc("n1", "CRW-F", "p1", []string{"c1"}, []string{"c1"})["node"]})
+		doc{"op": dag.OpUpdateNode, "node": updated})
 	f.exec("INSERT INTO dag_acceptance_revalidations (revalidation_id, acceptance_id, criteria_set_digest, event_id, verdict_turn_id, reval_seq, revalidated_by, revalidated_at) VALUES ('rv-1','acc-1',?,'ev','turn',1,'parent','t')", coverageCriteriaDigest)
 	after := coverageOf(t, f, "plan", "CRW-F")
 	if !after.Complete {
@@ -231,4 +238,94 @@ func TestCoverageKeepsARevalidatedPacket(t *testing.T) {
 	if after.Packets[0].RelationshipID != "rel-1" || after.Packets[0].Integration == nil {
 		t.Fatalf("the revalidated packet lost its execution: %+v", after.Packets[0])
 	}
+}
+
+// The other half of d2: a revalidation does not let a node whose PACKET IDENTITY moved keep crediting
+// the execution of the packet it used to be.
+func TestCoverageDoesNotCreditARevalidatedExecutionOfAnotherPacket(t *testing.T) {
+	f := newFixture(t)
+	putPacketPlan(t, f, "plan", 0, "r1", []doc{featureCriteriaDoc("CRW-F", criterionDoc("c1", true), criterionDoc("c2", true))},
+		packetNodeDoc("n1", "CRW-F", "p1", []string{"c1", "c2"}, []string{"c1", "c2"}))
+	packetExecution(f, "plan", "n1", "rel-1")
+	liveRelationship(f, "plan", "n1", "rel-1")
+	packetAcceptance(f, "acc-1", "plan", "n1", "rel-1")
+	packetRegistered(f, "rel-1", map[string]bool{"c1": true, "c2": true})
+	packetIntegrated(f, "acc-1", "rel-1", "owner/repo", "dev")
+	// the execution is recorded under packet p1
+	f.exec("INSERT INTO dag_execution_packets (relationship_id, plan_id, node_id, issue_key, packet_id, branch, recorded_at) VALUES ('rel-1','plan','n1','CRW-F','p1',NULL,'t')")
+	if cov := coverageOf(t, f, "plan", "CRW-F"); !cov.Complete {
+		t.Fatalf("the landed packet reads incomplete: %+v", cov.Criteria)
+	}
+
+	// The node becomes another packet and the acceptance is revalidated, so the revalidation fallback
+	// would credit p2 with p1's execution and landing. The packet identity check refuses that.
+	putPacketPlan(t, f, "plan", 1, "r2", []doc{featureCriteriaDoc("CRW-F", criterionDoc("c1", true), criterionDoc("c2", true))},
+		doc{"op": dag.OpUpdateNode, "node": packetNodeDoc("n1", "CRW-F", "p2", []string{"c1", "c2"}, []string{"c1", "c2"})["node"]})
+	f.exec("INSERT INTO dag_acceptance_revalidations (revalidation_id, acceptance_id, criteria_set_digest, event_id, verdict_turn_id, reval_seq, revalidated_by, revalidated_at) VALUES ('rv-2','acc-1',?,'ev','turn',1,'parent','t')", coverageCriteriaDigest)
+	after := coverageOf(t, f, "plan", "CRW-F")
+	if after.Complete {
+		t.Fatalf("a revalidated execution of another packet was credited: %+v", after.Packets)
+	}
+	if after.Packets[0].RelationshipID != "" || after.Packets[0].Integration != nil {
+		t.Fatalf("the moved packet kept the old execution: %+v", after.Packets[0])
+	}
+}
+
+// d3 of the second pre-merge round: a lifecycle change does not erase the credit of a landed packet, and
+// an issue whose every node carries a lifecycle word is still the feature's packet set.
+func TestCoverageKeepsCreditForALandedPausedOrArchivedNode(t *testing.T) {
+	f := newFixture(t)
+	putPacketPlan(t, f, "plan", 0, "r1", []doc{featureCriteriaDoc("CRW-F", criterionDoc("c1", true))},
+		packetNodeDoc("n1", "CRW-F", "p1", []string{"c1"}, []string{"c1"}))
+	packetExecution(f, "plan", "n1", "rel-1")
+	liveRelationship(f, "plan", "n1", "rel-1")
+	packetAcceptance(f, "acc-1", "plan", "n1", "rel-1")
+	packetRegistered(f, "rel-1", map[string]bool{"c1": true})
+	packetIntegrated(f, "acc-1", "rel-1", "owner/repo", "dev")
+	if cov := coverageOf(t, f, "plan", "CRW-F"); !cov.Complete {
+		t.Fatalf("the landed packet reads incomplete: %+v", cov.Criteria)
+	}
+	// The node is archived: the plan keeps it, its slice and its landing, so the feature stays complete.
+	putPacketPlan(t, f, "plan", 1, "r2", nil, doc{"op": dag.OpArchiveNode, "node_id": "n1"})
+	after := coverageOf(t, f, "plan", "CRW-F")
+	if !after.Complete {
+		t.Fatalf("archiving a landed packet erased its credit: %+v", after.Criteria)
+	}
+	if len(after.Packets) != 1 || after.Packets[0].Integration == nil {
+		t.Fatalf("the archived packet is gone from the reading: %+v", after.Packets)
+	}
+}
+
+// d4 of the second pre-merge round: two different SYMBOLS of one file are different places, so a packet
+// that touches both does not make their two owners owners of ONE place.
+func TestRegionOwnerDistinguishesSymbols(t *testing.T) {
+	t.Parallel()
+	k := newReleaseKit(t)
+	putPacketReleasePlan(t, k.fixture, "rp", 0, "rp-r1", []doc{declaredCriteriaDoc("CRW-F", "c1", "c2", "c3")},
+		packetRelNode("n1", "CRW-F", "p1", []string{"c1"}, []string{"c1"}),
+		packetRelNode("n2", "CRW-F", "p2", []string{"c2"}, []string{"c2"}),
+		packetRelNode("n3", "CRW-F", "p3", []string{"c3"}, []string{"c3"}))
+	sym := func(node string, keys ...string) {
+		t.Helper()
+		regions := make([]Region, 0, len(keys))
+		for _, key := range keys {
+			regions = append(regions, Region{Repository: "owner/repo", Path: "pkg/a.go", Kind: "symbol", Key: key, Change: "edit"})
+		}
+		if _, err := k.sched.DeclareRegions(context.Background(), "rp", node, "parent", regions); err != nil {
+			t.Fatalf("declare %s: %v", node, err)
+		}
+	}
+	owner := func(node, key string) {
+		t.Helper()
+		r := Region{Repository: "owner/repo", Path: "pkg/a.go", Kind: "symbol", Key: key, Change: "edit", Grade: GradeExclusive}
+		if _, err := k.sched.DeclareRegions(context.Background(), "rp", node, "parent", []Region{r}); err != nil {
+			t.Fatalf("declare %s: %v", node, err)
+		}
+	}
+	// n2 owns Alpha and n3 owns Beta; n1 touches both without owning either. Each SYMBOL is a place with
+	// exactly one owner, so nothing is refused. Read as one place (the file), the same three packets would
+	// have two exclusive owners and be refused - which is the defect this pins.
+	owner("n2", "Alpha")
+	owner("n3", "Beta")
+	sym("n1", "Alpha", "Beta")
 }

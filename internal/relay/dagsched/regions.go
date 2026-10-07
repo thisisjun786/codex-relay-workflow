@@ -200,12 +200,25 @@ func checkPacketRegionOwner(ctx context.Context, q store.Querier, plan string, s
 				if mine.Repository != other.Repository {
 					continue
 				}
-				place, _, ok := commonPlace(mine, other)
+				place, tree, ok := commonPlace(mine, other)
 				if !ok {
 					continue
 				}
-				touch(mine.Repository+"\x00"+place, n.NodeID, EffectiveGrade(mine) == GradeExclusive)
-				touch(mine.Repository+"\x00"+place, id, EffectiveGrade(other) == GradeExclusive)
+				// The key is the PLACE, not merely its path (CRW-839 pre-merge d4): two regions that share
+				// one symbol share that symbol, which is a smaller place than the file two file regions
+				// share. A directory is its own place too, so a tree overlap is not merged with a file
+				// overlap at the same path.
+				key := mine.Repository + "\x00" + place
+				switch {
+				case tree:
+					key += "\x00tree"
+				case mine.Kind == "symbol" && other.Kind == "symbol":
+					key += "\x00symbol\x00" + mine.Key
+				default:
+					key += "\x00file"
+				}
+				touch(key, n.NodeID, EffectiveGrade(mine) == GradeExclusive)
+				touch(key, id, EffectiveGrade(other) == GradeExclusive)
 			}
 		}
 	}

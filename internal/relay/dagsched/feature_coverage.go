@@ -148,7 +148,12 @@ func (s *Scheduler) FeatureCoverage(ctx context.Context, plan, issue string) (ou
 		}
 		var nodes []dag.SnapNode
 		for _, n := range snap.Nodes {
-			if n.IssueKey == issue && n.Kind == dag.NodeImplementation && n.Lifecycle == "" {
+			// Every live node of the issue is one of its packets, whatever lifecycle word it carries
+			// (CRW-839 pre-merge d3): pausing, cancelling or archiving a node leaves the node, its
+			// criteria, its slice and any landing it reached intact, and the scheduler keeps crediting an
+			// integrated edge out of an archived node (edges.go). Dropping a landed packet because of a
+			// lifecycle word would erase its credit and read a delivered feature incomplete.
+			if n.IssueKey == issue && n.Kind == dag.NodeImplementation {
 				nodes = append(nodes, n)
 			}
 		}
@@ -368,7 +373,8 @@ func currentNodeExecution(ctx context.Context, q store.Querier, plan string, n d
 	rows, err := q.QueryContext(ctx, "SELECT e.relationship_id, COALESCE(m.body_json, ''),"+
 		" COALESCE((SELECT v.criteria_set_digest FROM dag_acceptance_revalidations v"+
 		"   WHERE v.acceptance_id = (SELECT a.acceptance_id FROM dag_acceptances a WHERE a.plan_id = e.plan_id AND a.node_id = e.node_id AND a.relationship_id = e.relationship_id AND a.state = 'active')"+
-		"   ORDER BY v.reval_seq DESC LIMIT 1), '')"+
+		"   ORDER BY v.reval_seq DESC LIMIT 1), ''),"+
+		" COALESCE((SELECT x.packet_id FROM dag_execution_packets x WHERE x.relationship_id = e.relationship_id), '')"+
 		" FROM dag_node_executions e"+
 		" JOIN relationships r ON r.relationship_id = e.relationship_id"+
 		" LEFT JOIN dag_input_manifests m ON m.manifest_digest = e.manifest_digest"+
@@ -381,8 +387,8 @@ func currentNodeExecution(ctx context.Context, q store.Querier, plan string, n d
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var relationship, body, revalidated string
-		if err := rows.Scan(&relationship, &body, &revalidated); err != nil {
+		var relationship, body, revalidated, packet string
+		if err := rows.Scan(&relationship, &body, &revalidated, &packet); err != nil {
 			return "", err
 		}
 		if manifestSliceDigest(body) == n.SliceDigest {
@@ -390,9 +396,11 @@ func currentNodeExecution(ctx context.Context, q store.Querier, plan string, n d
 		}
 		// A criteria-only revision moves the node's slice without moving the accepted output: an
 		// acceptance REVALIDATED under the plan's criteria now is the packet's current execution. The
-		// revalidation row itself is what says so, so a node whose spec moved without one is still
-		// credited by nothing.
-		if n.CriteriaSetDigest != "" && revalidated == n.CriteriaSetDigest {
+		// revalidation row alone does not say the output is still THIS packet's (CRW-839 pre-merge d2):
+		// the execution must also still execute the packet the node carries, so a node whose packet
+		// identity moved - or whose node version was replaced by a different packet's - is credited by
+		// nothing. For a node with no packet_id both sides are empty and the rule is unchanged.
+		if n.CriteriaSetDigest != "" && revalidated == n.CriteriaSetDigest && packet == n.PacketID {
 			return relationship, nil
 		}
 	}
