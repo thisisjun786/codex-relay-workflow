@@ -19,6 +19,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/install"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/reading"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/scope"
@@ -278,7 +279,7 @@ func Write(ctx context.Context, env LookupEnv, opts WriteOptions, request WriteR
 		}
 		return WriteResult{Kind: kind, Errors: []string{located.Reason}}
 	}
-	if located.Path != path {
+	if !namesTheSamePolicy(located.Path, path) {
 		// Another writer registered a different policy while this run waited. Replacing the file this
 		// run locked would leave that record naming bytes it does not describe.
 		return WriteResult{Kind: WriteRecoveryNeeded, FileDigest: original, RegisteredDigest: located.RegisteredDigest,
@@ -338,9 +339,16 @@ func Write(ctx context.Context, env LookupEnv, opts WriteOptions, request WriteR
 		if readErr != nil {
 			observed = ""
 		}
-		return WriteResult{Kind: WriteRecoveryNeeded, FileDigest: observed, RegisteredDigest: original, Backup: reported,
+		registered, otherPath, recordReason := recordStateNow(env, path)
+		detail := err.Error()
+		if otherPath != "" {
+			detail += "; the wiring record now names " + otherPath + ", not the policy this write locked"
+		} else if recordReason != "" {
+			detail += "; the wiring record could not be read: " + recordReason
+		}
+		return WriteResult{Kind: WriteRecoveryNeeded, FileDigest: observed, RegisteredDigest: registered, Backup: reported,
 			Kept: pyvalue.FSDecode(kept), Recovery: recoveryAdviceKept(path, reported, pyvalue.FSDecode(kept)),
-			Warnings: warnings, Errors: []string{err.Error()}}
+			Warnings: warnings, Errors: []string{detail}}
 	case err == nil:
 		// The file held the bytes this run read and now holds the candidate.
 	case errors.Is(err, errPolicyMoved):
@@ -348,6 +356,16 @@ func Write(ctx context.Context, env LookupEnv, opts WriteOptions, request WriteR
 		// names those bytes, so the two disagree and the answer says what is on disk.
 		observed, readErr := digestAt(path)
 		detail := "the execution policy changed while this write held its lock, so it was not replaced"
+		registered, otherPath, recordReason := recordStateNow(env, path)
+		if otherPath != "" {
+			detail += "; the wiring record now names " + otherPath + ", not the policy this write locked"
+		} else if recordReason != "" {
+			detail += "; the wiring record could not be read: " + recordReason
+		} else if readErr == nil && observed == registered {
+			// The file and the record name one document again, so nothing needs repairing: the caller
+			// is told the change was not applied and what the document now is.
+			detail += "; the file and the wiring record name the same document, which is not the one this request asked for"
+		}
 		if errors.Is(err, errUndoSync) {
 			// The rollback ran but its directory entry was not synced, so the refusal must not present it
 			// as durable: a power loss may bring this call's candidate back at the policy path.
@@ -357,7 +375,7 @@ func Write(ctx context.Context, env LookupEnv, opts WriteOptions, request WriteR
 			observed = ""
 			detail += "; the policy file could not be read back: " + readErr.Error()
 		}
-		return WriteResult{Kind: WriteRecoveryNeeded, FileDigest: observed, RegisteredDigest: original, Backup: reported,
+		return WriteResult{Kind: WriteRecoveryNeeded, FileDigest: observed, RegisteredDigest: registered, Backup: reported,
 			Kept: pyvalue.FSDecode(kept), Recovery: recoveryAdviceKept(path, reported, pyvalue.FSDecode(kept)), Errors: []string{detail}}
 	case displaced == nil && ctx.Err() != nil:
 		// The publication refused the replacement because the request ended: nothing was replaced.
@@ -473,7 +491,7 @@ func storedResult(ctx context.Context, env LookupEnv, running func(context.Conte
 	// elsewhere while this one finished can have moved the record to another path, and a record that
 	// names another file says nothing about the bytes this run replaced. Comparing digests alone would
 	// read the two as one policy.
-	established := located.State == Registered && located.RegisteredDigest != "" && located.Path == path
+	established := located.State == Registered && located.RegisteredDigest != "" && namesTheSamePolicy(located.Path, path)
 	if !established {
 		// Whether the file and the record now describe one document was not established: the record
 		// could not be read back, or it names another policy file. That is the (c) decision whatever the
@@ -484,7 +502,7 @@ func storedResult(ctx context.Context, env LookupEnv, running func(context.Conte
 		registered := ""
 		if located.State == Registered {
 			registered = located.RegisteredDigest
-			if located.Path != path {
+			if !namesTheSamePolicy(located.Path, path) {
 				reason = "the wiring record now names " + located.Path + ", not the policy this write replaced"
 			}
 		}
@@ -606,7 +624,7 @@ func restoreResult(ctx context.Context, swap SwapFunc, env LookupEnv, encoded, p
 		return WriteResult{Kind: WriteRecoveryNeeded, FileDigest: confirmed, RegisteredDigest: after.RegisteredDigest, Backup: backup,
 			Kept: pyvalue.FSDecode(keptPath), Recovery: recoveryAdviceKept(path, backup, pyvalue.FSDecode(keptPath)), Warnings: warnings,
 			Errors: []string{detail + "; the wiring record names " + after.RegisteredDigest + ", not the bytes that were put back"}}
-	case after.Path != path:
+	case !namesTheSamePolicy(after.Path, path):
 		// The record names another policy file now, so the bytes put back here are not the ones it
 		// describes however the two digests compare: a launcher reading the record would open that other
 		// file, not this one.
@@ -702,6 +720,54 @@ func recoveryAdviceKept(path, backup, kept string) string {
 		advice += "; the bytes this write did not create are kept at " + kept
 	}
 	return advice
+}
+
+// namesTheSamePolicy reports whether two execution-policy spellings name one file. A record written
+// by an earlier registration may spell the same path with a "." component or a repeated slash: the
+// installer records the path through store.ExpandUser and store.PathlibSpelling, which drop those
+// while keeping ".." (folding ".." by text would name another file where a component before it is a
+// symbolic link). Comparing the raw text would read that as a different policy and answer a recovery
+// for a write whose file and record in fact name one document.
+func namesTheSamePolicy(one, other string) bool {
+	if one == other {
+		return true
+	}
+	canonical := func(value string) (string, bool) {
+		kernel, ok := pyvalue.FSEncode(value)
+		if !ok {
+			return "", false
+		}
+		expanded, err := store.ExpandUser(kernel)
+		if err != nil {
+			return "", false
+		}
+		return store.PathlibSpelling(expanded), true
+	}
+	first, ok := canonical(one)
+	if !ok {
+		return false
+	}
+	second, ok := canonical(other)
+	if !ok {
+		return false
+	}
+	return first == second
+}
+
+// recordStateNow is the wiring record as it stands at this moment. A refusal that names a record
+// digest must read the record rather than assume the one this run saw before its publication: a
+// re-registration run through the command line takes only the ownership lock, so the record can move
+// while this write runs. otherPath is set when the record now names a different policy file than the
+// one this write replaced, and reason is set when the record cannot be read at all.
+func recordStateNow(env LookupEnv, path string) (digest, otherPath, reason string) {
+	located := Locate(env)
+	if located.State != Registered {
+		return "", "", located.Reason
+	}
+	if !namesTheSamePolicy(located.Path, path) {
+		return located.RegisteredDigest, located.Path, ""
+	}
+	return located.RegisteredDigest, "", ""
 }
 
 // candidateBytes renders the bytes one change produces, through the same decode, apply and encode

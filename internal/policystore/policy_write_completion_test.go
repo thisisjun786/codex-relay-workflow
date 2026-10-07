@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 // This file holds the tests for the completion round's findings: the three the pre-merge evaluation
@@ -530,5 +531,68 @@ func TestARecordNamingAnotherPolicyIsARecovery(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(result.Errors, " "), other) {
 		t.Fatalf("the recovery does not name the policy the record now points at: %v", result.Errors)
+	}
+}
+
+// TestARecordSpelledDifferentlyForTheSameFileIsNotADisagreement is the pre-merge evaluation's d1:
+// the installer records the policy path through pathlib.Path(value).absolute()'s spelling, so a
+// record written from a path carrying a "." component or a repeated slash names the same file with
+// different text. Comparing the text alone answered a recovery for a write whose file and record in
+// fact describe one document, and told the caller to restore a backup nothing needed.
+func TestARecordSpelledDifferentlyForTheSameFileIsNotADisagreement(t *testing.T) {
+	env, file := host(t, policyText, true)
+	// The record spells the same file with a "." component and a repeated slash in the middle of the
+	// path, which pathlib.Path(value).absolute() drops.
+	dir := filepath.Dir(file)
+	spelled := "/./" + strings.Replace(dir[1:], "/", "//", 1) + "/" + filepath.Base(file)
+	rewriteRecord(t, env, spelled, digestOf(policyText))
+	// The real installer records the path through pathlib.Path(value).absolute()'s spelling, so the
+	// re-registration writes the same file back with that spelling rather than the one it read.
+	opts := WriteOptions{Running: unavailableRunning(), Register: func(_ context.Context, path string) RegisterAnswer {
+		kernel, ok := pyvalue.FSEncode(path)
+		if !ok {
+			t.Fatalf("the registration was handed an unencodable path: %q", path)
+		}
+		rewriteRecord(t, env, pyvalue.FSDecode(store.PathlibSpelling(kernel)), digestOfFile(t, path))
+		return answer("record_updated", 0)
+	}}
+	result := Write(context.Background(), envOf(env), opts,
+		WriteRequest{ExpectedDigest: digestOf(policyText), Change: removeLegacy()})
+	if result.Kind != WriteStored {
+		t.Fatalf("kind = %q (%v), want %q: the record and the file name one document", result.Kind, result.Errors, WriteStored)
+	}
+	after, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) == policyText {
+		t.Fatal("the policy was not replaced")
+	}
+}
+
+// TestAKeptExchangeReportsTheRecordAsItStands is the pre-merge evaluation's d2: the publication's
+// kept and moved branches answered the digest this run read under its lock without reading the
+// record again. A re-registration run through the command line takes only the ownership lock, so the
+// record can move while this write runs; the answer must name the record as it stands, and a state
+// where the file and the record already agree must not be reported as a disagreement.
+func TestAKeptExchangeReportsTheRecordAsItStands(t *testing.T) {
+	env, file := host(t, policyText, true)
+	// The publication displaces a document another writer saved, and the record is moved to name the
+	// digest that writer's document has while the exchange runs.
+	edited := "a document another writer saved\n"
+	opts := WriteOptions{Register: neverRegisters(t), Swap: func(context.Context, string, []byte, []byte, os.FileMode) ([]byte, string, error) {
+		rewriteRecord(t, env, file, digestOf(edited))
+		return nil, "", errPolicyMoved
+	}}
+	result := Write(context.Background(), envOf(env), opts,
+		WriteRequest{ExpectedDigest: digestOf(policyText), Change: removeLegacy()})
+	if result.Kind != WriteRecoveryNeeded {
+		t.Fatalf("kind = %q (%v), want %q", result.Kind, result.Errors, WriteRecoveryNeeded)
+	}
+	if result.RegisteredDigest != digestOf(edited) {
+		t.Fatalf("registeredDigest = %q, want the digest the record now names (%q)", result.RegisteredDigest, digestOf(edited))
+	}
+	if result.RegisteredDigest == digestOf(policyText) {
+		t.Fatal("the answer repeats the digest this run read under its lock, not the one the record now names")
 	}
 }
