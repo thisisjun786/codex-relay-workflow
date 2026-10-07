@@ -1,6 +1,7 @@
 package testsupport_test
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -158,4 +159,49 @@ func forkProgramPath(t *testing.T) string {
 		t.Skip("no true binary to run")
 	}
 	return path
+}
+
+// The helper's callers rely on three properties beyond the lock, and the lock must not change any
+// of them: the copy is the source's bytes, it carries the owner's execute bit, and a path that
+// already exists is refused rather than overwritten. The install package's writeExecutable pins
+// the same three for its callers (execwrite_test.go TestWriteExecutableKeepsItsCallersContract);
+// CopyBinary had none, and this issue is the first change to it.
+func TestCopyBinaryKeepsItsCallersContract(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	source := filepath.Join(root, "source")
+	body := []byte("#!/bin/sh\ntrue\n")
+	if err := os.WriteFile(source, body, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(root, "absent", "deeper", "copy")
+	if err := testsupport.CopyBinary(source, target); err != nil {
+		t.Fatalf("copying into a directory that does not exist yet: %v", err)
+	}
+	got, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, body) {
+		t.Fatalf("the copy holds %q, want the source's %q", got, body)
+	}
+	info, err := os.Stat(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The mode is the one asked for, less whatever the process's umask clears: the owner's execute
+	// bit is the one every caller needs, and it survives any umask.
+	if info.Mode().Perm()&0o100 == 0 {
+		t.Fatalf("%s came out mode %v, without the owner's execute bit", target, info.Mode().Perm())
+	}
+	if err := testsupport.CopyBinary(source, target); err == nil {
+		t.Fatal("a second copy over an existing file was allowed")
+	}
+	raw, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(raw, body) {
+		t.Fatalf("the refused second copy changed the file to %q", raw)
+	}
 }
