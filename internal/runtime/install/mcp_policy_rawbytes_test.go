@@ -226,13 +226,24 @@ func TestReRegisterPolicyReadsThePolicyFileUnderTheLock(t *testing.T) {
 		result record.Object
 		code   int
 	}
+	// The run signals the seam just before it waits for the lock, so the file's change below is
+	// ordered after the run has reached that wait, whatever the scheduler does with the goroutine:
+	// the answer must describe the file as it stands under the lock, not a reading taken before the
+	// wait. Without the seam a loaded runner could change the file before the run starts, and then
+	// even a pre-lock reading would pass.
+	reached := make(chan struct{})
+	restoreSeam := install.ReplaceOwnershipLockWait(func() { close(reached) })
+	defer restoreSeam()
 	done := make(chan answer, 1)
 	go func() {
 		result, code := install.UpdateRegisteredPolicy(context.Background(), h.options(), install.PolicyUpdateOptions{ExecutionPolicy: policy, PolicyGiven: true})
 		done <- answer{result, code}
 	}()
-	// Give the run the time to reach the lock it cannot take, then move the file and let it through.
-	time.Sleep(150 * time.Millisecond)
+	select {
+	case <-reached:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the run never reached the ownership lock")
+	}
 	write(t, policy, policyTextChanged)
 	os.Chmod(policy, 0o644)
 	held.Release()
@@ -332,13 +343,21 @@ func TestReRegisterPolicyWaitsForAPolicyRepair(t *testing.T) {
 		result record.Object
 		code   int
 	}
+	// The run signals the seam just before it waits for the lock, so the repair below is ordered after
+	// the run has reached that wait: what it must judge is the file as it stands under the lock.
+	reached := make(chan struct{})
+	restoreSeam := install.ReplaceOwnershipLockWait(func() { close(reached) })
+	defer restoreSeam()
 	done := make(chan answer, 1)
 	go func() {
 		result, code := install.UpdateRegisteredPolicy(context.Background(), h.options(), install.PolicyUpdateOptions{ExecutionPolicy: policy, PolicyGiven: true})
 		done <- answer{result, code}
 	}()
-	// Give the run the time to reach the lock it cannot take, then repair the file and let it through.
-	time.Sleep(150 * time.Millisecond)
+	select {
+	case <-reached:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the run never reached the ownership lock")
+	}
 	write(t, policy, policyTextChanged)
 	os.Chmod(policy, 0o644)
 	held.Release()

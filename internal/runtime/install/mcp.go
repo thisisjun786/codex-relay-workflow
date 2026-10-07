@@ -676,6 +676,9 @@ func UpdateRegisteredPolicy(ctx context.Context, o Options, r PolicyUpdateOption
 		return append(base, field("outcome", Conflict), field("detail", "the re-registration path names the policy to register with --execution-policy; the record's other fields are kept, so no other option is needed"),
 			field("applied", false), field("wrote", false), field("note", "nothing was written")), Usage
 	}
+	// The seam runs just before the wait for the ownership lock, so a test can order a policy file's
+	// own change against it.
+	beforeOwnershipLock()
 	lock, err := record.Lock(ctx, filepath.Join(o.CodexHome, OwnershipLockName), 0)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -714,6 +717,16 @@ func UpdateRegisteredPolicy(ctx context.Context, o Options, r PolicyUpdateOption
 		return refused(append(base, field("outcome", outcome), field("detail", detail)),
 			"nothing was written: the record that names the policy could not be read")
 	}
+	// The look and the read are two syscalls: a record created, removed or replaced between them is
+	// not the document the look saw. This is decided before the record's own bytes are interpreted,
+	// because those bytes are the look's, not the read's: a record that appeared after the look, or
+	// one that moved, answers record_changed_underneath with the repair advice rather than a splice
+	// attempted over bytes that were never the decision's.
+	if again := lookAt(recordPath); !again.same(before) {
+		return refused(append(base, field("outcome", RecordChangedUnderneath),
+			field("detail", "the record at "+recordPath+" changed while it was being read (another file, size, modification time or bytes), so nothing was written"),
+			field("repair", "rerun to decide against the file as it now stands")), "nothing was written")
+	}
 	if pluginwiring.ReadBridgeRecord(found).Version == BridgeRecordVersion {
 		return refused(append(base, field("outcome", RecordDiffers),
 			field("detail", "the record is version 1 and names no execution policy; replacing one field would give it a policy without the recordVersion that declares one"),
@@ -728,18 +741,14 @@ func UpdateRegisteredPolicy(ctx context.Context, o Options, r PolicyUpdateOption
 	// The bytes this run publishes: the record as it is, with only the executionPolicy member's value
 	// replaced by the installer's form of the new policy. The document is not re-encoded, so every
 	// field this path does not replace keeps its spelling, its whitespace, its key order and its
-	// bytes, and a record in another spelling is re-registered rather than refused.
+	// bytes, and a record in another spelling is re-registered rather than refused. It is taken from
+	// the look the decision was made from, so a record a writer that ignores the ownership lock
+	// replaced while this run was reading it is answered record_changed_underneath above, rather than
+	// reported here as bytes this run cannot splice.
 	published, err := reRegisteredBytes(before.raw, wanted)
 	if err != nil {
 		return refused(append(base, field("outcome", RecordUpdateFailed), field("detail", err.Error())),
 			"nothing was written: the record's own bytes do not hold the executionPolicy member this run replaces")
-	}
-	// The look and the read are two syscalls: a record replaced between them is not the document the
-	// look saw, and the answer says so rather than deciding on a record it never read.
-	if again := lookAt(recordPath); !again.same(before) {
-		return refused(append(base, field("outcome", RecordChangedUnderneath),
-			field("detail", "the record at "+recordPath+" changed while it was being read (another file, size, modification time or bytes), so nothing was written"),
-			field("repair", "rerun to decide against the file as it now stands")), "nothing was written")
 	}
 	// A record reached through a symbolic link is refused: the read and the backup follow the link,
 	// but the replacement renames a file over the path itself, which would turn the link into a
@@ -1021,6 +1030,17 @@ func reRegisteredBytes(raw []byte, wanted Object) ([]byte, error) {
 	out = append(out, raw[:begin]...)
 	out = append(out, installer[first:last]...)
 	out = append(out, raw[end:]...)
+	// The spliced document is read back before anything is published: it must decode to the record
+	// this run means to write, field for field. A walk that mis-located the member - the one way this
+	// byte-level write could differ from the decoded document it was decided on - refuses here rather
+	// than publishing a record whose fields are not the ones the decision was made from.
+	back, err := reading.Decode(out)
+	if err != nil {
+		return nil, errors.New("the record's own bytes with the executionPolicy member replaced do not read as JSON: " + err.Error())
+	}
+	if pyjson.Dumps(back, pyjson.Options{Compact: true, SortKeys: true, Unicode: true}) != pyjson.Dumps(wanted, pyjson.Options{Compact: true, SortKeys: true, Unicode: true}) {
+		return nil, errors.New("the record's own bytes with the executionPolicy member replaced do not read back as the record this run would write")
+	}
 	return out, nil
 }
 
