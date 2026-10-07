@@ -33,6 +33,7 @@ import {
   policyEfforts,
   policyView,
   pendingAllowedModel,
+  pendingExceptionId,
   previewChange,
   removeExceptionLabel,
   roleControlsLabel,
@@ -56,6 +57,7 @@ import {
   screenReread,
   screenRetryRead,
   runSave,
+  runRead,
   screenSaveFinished,
   screenSaveStarted,
   initialScreen,
@@ -670,6 +672,50 @@ test("one pending change at a time: another row's edit cannot replace the live o
 // The three defects the eleventh pre-merge evaluation found.
 
 // The two defects the twelfth pre-merge evaluation found.
+
+// The three defects the thirteenth pre-merge evaluation found.
+
+test("an unfinished allowlist draft keeps the edit, so no other row can discard it", () => {
+  // d1: an all-empty draft cleared the change, and ownership was read from the change, so the row lost
+  // the edit while its field was still on screen and another row could replace the draft map.
+  let state = initialScreen();
+  state = screenLoaded(state, reading({ allowed: [{ model: "A", efforts: ["high"] }, { model: "B", efforts: ["low"] }] }));
+  state = screenAllowedDraft(state, "A", [""]);
+  assert.equal(state.change, null, "an all-empty draft proposes no change");
+  assert.equal(screenEditOwner(state), "allowed:A", "the row being edited still owns the edit");
+  assert.equal(screenMayEdit(state, "allowed:B"), false, "another row cannot take it");
+  assert.equal(screenAllowedDraft(state, "B", ["low", "max"]), state, "and its edit is refused");
+  assert.deepEqual(allowedEntriesOf(state, "A", ["high"]), [""], "so A's draft survives");
+});
+
+test("a re-read does not retain a draft that proposes nothing", () => {
+  let state = initialScreen();
+  state = screenLoaded(state, reading());
+  state = screenAllowedDraft(state, "anthropic/opus", [""]);
+  const after = screenLoaded(state, reading({ digest: "b".repeat(64) }), true);
+  assert.equal(after.allowedDraft.size, 0, "an all-blank draft is not kept across a re-read");
+  assert.deepEqual(allowedEntriesOf(after, "anthropic/opus", ["max", "xhigh"]), ["max", "xhigh"], "the row shows the file again");
+  assert.equal(screenEditOwner(after), null, "and the edit is free");
+});
+
+test("a pending change whose entry left the file is still reported as pending", () => {
+  // d2: the conflict re-read keeps the change, but if another writer removed the entry the file has no
+  // row for it; the screen builds one from the change so the retained work stays visible and editable.
+  let state = initialScreen();
+  state = screenLoaded(state, reading({ allowed: [{ model: "A", efforts: ["high"] }, { model: "B", efforts: ["low"] }] }));
+  state = screenAllowedDraft(state, "A", ["high", "max"]);
+  const allowedAfter = screenLoaded(state, reading({ allowed: [{ model: "B", efforts: ["low"] }], digest: "b".repeat(64) }), true);
+  assert.equal((allowedAfter.change as { kind: string }).kind, "setAllowed");
+  assert.equal(pendingAllowedModel(allowedAfter, allowedAfter.reading as PolicyReading), "A", "the pending model is still shown");
+  // The exception shape is the same.
+  let exceptions = screenLoaded(initialScreen(), reading({ exceptions: [{ id: "legacy", role: "child", model: "m", reasoningEffort: "high", cwd: ["/srv/a"] }] }));
+  exceptions = screenPropose(exceptions, { kind: "setException", id: "legacy", role: "child", model: "m", effort: "max", cwd: ["/srv/a"] });
+  const exceptionAfter = screenLoaded(exceptions, reading({ exceptions: [], digest: "b".repeat(64) }), true);
+  assert.equal((exceptionAfter.change as { kind: string }).kind, "setException");
+  assert.equal(pendingExceptionId(exceptionAfter, exceptionAfter.reading as PolicyReading), "legacy", "the pending exception is still shown");
+  // A change whose entry IS still in the file is not reported as orphaned.
+  assert.equal(pendingExceptionId(exceptions, exceptions.reading as PolicyReading), null);
+});
 
 test("a newly added model's row survives clearing its sole effort entry", () => {
   // d1: an all-empty draft clears the change (the server refuses an empty effort list), and the
@@ -1322,6 +1368,50 @@ test("deriving the view twice from one reading gives the same values and sources
   const first = policyView(decodePolicy(reading()));
   const second = policyView(decodePolicy(reading()));
   assert.deepEqual(first, second);
+});
+
+test("a refresh re-reads the file and shows the same values and provenance", async () => {
+  // C6: this drives the shipped read sequence (runRead) against a fake transport, so it proves the
+  // save-driven GET, the decode and the apply rather than deriving the same view twice from one
+  // fixture. The values and their source after the refresh are the file's own.
+  let state = initialScreen();
+  const firstBody = { ...reading(), path: "/host/one.json", digest: "1".repeat(64), registeredDigest: "1".repeat(64) };
+  const first = await runRead(state, async () => firstBody, false);
+  assert.equal(first.ok, true);
+  state = first.state;
+  const before = policyView(state.reading as PolicyReading);
+  // The file moves; the refresh reads it again and shows the new digest and the same source path.
+  const secondBody = { ...reading(), path: "/host/two.json", digest: "2".repeat(64), registeredDigest: "2".repeat(64) };
+  const second = await runRead(state, async () => secondBody, false);
+  assert.equal(second.ok, true);
+  const after = policyView(second.state.reading as PolicyReading);
+  assert.equal(after.source.path, "/host/two.json", "the source is the file's own path");
+  assert.equal(after.source.digest, "2".repeat(64));
+  assert.deepEqual(after.roles, before.roles, "the role rows are the file's values again");
+  assert.deepEqual(after.allowed, before.allowed);
+  assert.deepEqual(after.exceptions, before.exceptions);
+  // A refresh with nothing pending leaves no draft behind, so the screen shows the file.
+  assert.equal(second.state.change, null);
+  assert.equal(second.state.allowedDraft.size, 0);
+  // A read that fails is the screen's own failure state, not a half-populated screen.
+  const failed = await runRead(state, async () => { throw new Error("read failed"); }, false);
+  assert.equal(failed.ok, false);
+  assert.equal(failed.state.reading, null);
+  assert.ok(failed.state.error?.includes("read failed"));
+  // A malformed answer is refused the same way.
+  const malformed = await runRead(state, async () => ({ nope: true }), false);
+  assert.equal(malformed.ok, false);
+  assert.equal(malformed.state.reading, null);
+});
+
+test("a conflict re-read keeps the operator's inputs through the shipped read sequence", async () => {
+  let state = initialScreen();
+  state = (await runRead(state, async () => reading(), false)).state;
+  state = screenAllowedDraft(state, "anthropic/opus", ["max", "high"]);
+  const kept = await runRead(state, async () => reading({ digest: "b".repeat(64) }), true);
+  assert.equal(kept.ok, true);
+  assert.equal((kept.state.change as { model: string }).model, "anthropic/opus", "the pending change survives");
+  assert.deepEqual(kept.state.allowedDraft.get("anthropic/opus"), ["max", "high"]);
 });
 
 // C6's other half. node:test cannot load the .tsx, so the label a control carries is built by a

@@ -913,6 +913,40 @@ export function checkRefusedNotice(status: number, body: unknown): PolicyNotice 
 
 /* ---- the screen's state transitions ---- */
 
+/**
+ * runRead is the whole read-and-apply sequence, outside React so a test can drive it with a fake
+ * transport and prove what C6 promises: after a refresh the values and their provenance are the same
+ * ones the file declares, and a read that follows a conflict or a lost response keeps the operator's
+ * inputs. It returns the next state; the caller only has to render it.
+ *
+ * The body is decoded here rather than by the caller, so a malformed answer becomes the screen's own
+ * failure state instead of a half-populated screen.
+ */
+export function runRead(
+  state: PolicyScreenState,
+  read: () => Promise<unknown>,
+  keepInputs: boolean,
+): Promise<{ state: PolicyScreenState; ok: boolean }> {
+  // One pending change at a time: the read marks the screen busy before it starts, so no draft can be
+  // begun that this read's answer would silently replace.
+  const started = screenReadStarted(state);
+  return read().then(
+    (body) => {
+      // A malformed answer is refused here rather than rendered as a half-populated screen, so the
+      // decode failure becomes the same failure state a transport failure does.
+      try {
+        return { state: screenLoaded(started, decodePolicy(body), keepInputs), ok: true };
+      } catch (error) {
+        return { state: screenLoadFailed(started, error instanceof Error ? error.message : "The execution policy could not be read."), ok: false };
+      }
+    },
+    (error: unknown) => ({
+      state: screenLoadFailed(started, error instanceof Error ? error.message : "The execution policy could not be read."),
+      ok: false,
+    }),
+  );
+}
+
 /** One policy call's raw answer, as the client returns it. */
 export interface PolicyRawResponse {
   status: number;
@@ -1023,13 +1057,35 @@ export function screenLoaded(state: PolicyScreenState, reading: PolicyReading, k
   // A reading that shows the host repaired lifts the block; any other reading leaves it, because the
   // server still refuses writes while the file and the wiring record disagree.
   const repair = screenRepairCleared(reading) ? null : state.repair;
+  if (!keepInputs) {
+    return {
+      ...state,
+      reading,
+      error: null,
+      busy: false,
+      repair,
+      change: null,
+      allowedDraft: new Map<string, string[]>(),
+      allowedNew: new Map<string, string>(),
+      allowedAddModel: "",
+      pendingAllowed: "",
+      exceptionDraft: null,
+    };
+  }
+  // A keeping re-read keeps what the operator is working on. A draft that proposes NOTHING is not
+  // work in progress: it is a field the operator emptied and left, and keeping it would show an input
+  // disconnected from both the file and any pending change. It is dropped, and the row shows the
+  // file's values again.
+  const drafts = state.change === null
+    ? { allowedDraft: new Map<string, string[]>(), allowedNew: new Map<string, string>(), allowedAddModel: "", pendingAllowed: "" }
+    : {};
   return {
     ...state,
     reading,
     error: null,
     busy: false,
     repair,
-    ...(keepInputs ? {} : { change: null, allowedDraft: new Map<string, string[]>(), allowedNew: new Map<string, string>(), allowedAddModel: "", pendingAllowed: "", exceptionDraft: null }),
+    ...drafts,
   };
 }
 
@@ -1107,6 +1163,17 @@ export function allowedEntriesOf(state: PolicyScreenState, model: string, saved:
 /** allowedNewOf is the text of a row's "add an effort" field. */
 export function allowedNewOf(state: PolicyScreenState, model: string): string {
   return state.allowedNew.get(model) ?? "";
+}
+
+/**
+ * allowedDraftModel is the model whose allowlist row holds the live draft, or "". The screen keeps at
+ * most one row's draft at a time, so the first (and only) key is the row the operator is editing.
+ * The draft can be blank while the operator replaces its only entry, and the row still owns the edit
+ * then: without that, another row's edit would replace the map and silently discard the draft.
+ */
+export function allowedDraftModel(state: PolicyScreenState): string {
+  for (const model of state.allowedDraft.keys()) return model;
+  return "";
 }
 
 /** screenAllowedDraft stores one row's entries and derives the pending change from them. An empty
@@ -1273,10 +1340,25 @@ export function draftForExceptionEdit(state: PolicyScreenState, exception: Polic
  * unwanted approval before they could correct it.
  */
 export function pendingAllowedModel(state: PolicyScreenState, reading: PolicyReading): string | null {
-  // The remembered model, not the change: the row must survive an empty intermediate edit, when the
-  // change is momentarily null because the server refuses an empty effort list.
-  if (state.pendingAllowed === "") return null;
-  return reading.allowed.some((entry) => entry.model === state.pendingAllowed) ? null : state.pendingAllowed;
+  // The model a pending setAllowed targets, or the one the Add control last proposed. The remembered
+  // value matters because the row must survive an empty intermediate edit, when the change is
+  // momentarily null (the server refuses an empty effort list) but the row is still on screen.
+  const change = state.change;
+  const model = change?.kind === "setAllowed" ? change.model : state.pendingAllowed;
+  if (model === "") return null;
+  return reading.allowed.some((entry) => entry.model === model) ? null : model;
+}
+
+/**
+ * pendingExceptionId is the exception a pending setException targets when the file no longer declares
+ * it, or null. Another writer can remove the exception between the read and the save; the conflict
+ * re-read then keeps the change (the operator's work) but the file has no row to show it in, so the
+ * screen renders one from the change. Without it the change would be pending and uneditable.
+ */
+export function pendingExceptionId(state: PolicyScreenState, reading: PolicyReading): string | null {
+  const change = state.change;
+  if (change?.kind !== "setException") return null;
+  return reading.exceptions.some((entry) => entry.id === change.id) ? null : change.id;
 }
 
 /** draftForNewException opens the editor on a new exception, on a real role and a real model. */
@@ -1422,7 +1504,13 @@ export function screenEditOwner(state: PolicyScreenState): string | null {
   // work in progress, and another row's edit would leave it unsubmittable.
   if (state.exceptionDraft !== null) return state.exceptionDraft.isNew ? NEW_EXCEPTION_TOKEN : exceptionEditToken(state.exceptionDraft.id);
   const change = state.change;
-  if (change === null) return null;
+  if (change === null) {
+    // An allowlist row whose draft is still on screen owns the edit even when the draft proposes no
+    // change yet (the operator selected its only entry to replace it): another row's edit would
+    // otherwise replace the draft map and silently discard what they were typing.
+    const draftModel = allowedDraftModel(state);
+    return draftModel === "" ? null : `allowed:${draftModel}`;
+  }
   switch (change.kind) {
     case "setRolePairs":
       return `role:${change.role}`;

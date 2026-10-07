@@ -19,7 +19,6 @@ import {
   allowedNewOf,
   catalogNotice,
   changeFromExceptionDraft,
-  decodePolicy,
   editExceptionLabel,
   draftForExceptionEdit,
   draftForNewException,
@@ -30,6 +29,7 @@ import {
   policyEfforts,
   policyView,
   pendingAllowedModel,
+  pendingExceptionId,
   previewChange,
   removeExceptionLabel,
   roleControlsLabel,
@@ -44,13 +44,12 @@ import {
   screenExceptionDraft,
   screenDraftIsNew,
   screenLoaded,
-  screenLoadFailed,
   screenMayEdit,
   screenPropose,
-  screenReadStarted,
   screenRetryRead,
   screenReread,
   runSave,
+  runRead,
   screenRepairCleared,
   screenSaving,
   initialScreen,
@@ -125,6 +124,11 @@ export function PolicyScreen({ state, handlers, help }: { state: PolicyScreenSta
   const roles = view ? view.roles.filter((role) => role.editable).map((role) => role.name) : [];
   const draftIsNew = screenDraftIsNew(state);
   const pendingModel = state.reading ? pendingAllowedModel(state, state.reading) : null;
+  // The pending exception change the file no longer declares, rendered as its own row from the
+  // change itself (the file has no entry to build it from).
+  const pendingException = state.reading && state.change?.kind === "setException" && pendingExceptionId(state, state.reading) !== null
+    ? { id: state.change.id, role: state.change.role, model: state.change.model, reasoningEffort: state.change.effort, cwd: [...state.change.cwd] }
+    : null;
 
   /** pairsFor is the pair list a role's controls show: the pending change first, then the reading. */
   function pairsFor(name: string, saved: PolicyPair[]): PolicyPair[] {
@@ -366,6 +370,30 @@ export function PolicyScreen({ state, handlers, help }: { state: PolicyScreenSta
                   }}
                 />
               ))}
+              {/* A pending exception change whose id the file no longer declares has no row above: the
+                  conflict re-read kept the operator's change but the file lost the entry. It gets a row
+                  here, built from the change, so the pending work is visible and can still be edited or
+                  cancelled instead of being pending with no control. */}
+              {editable && pendingException !== null ? (
+                <ExceptionRow
+                  key={`${pendingException.id} (pending)`}
+                  exception={pendingException}
+                  roles={roles}
+                  models={models}
+                  efforts={efforts}
+                  editable={editable}
+                  draft={!draftIsNew && state.exceptionDraft?.id === pendingException.id ? state.exceptionDraft : null}
+                  editDraft={draftForExceptionEdit(state, pendingException)}
+                  disabled={busy || !screenMayEdit(state, exceptionEditToken(pendingException.id))}
+                  effortRefused={(model, effort) => screenEffortUnavailable(state, model, effort)}
+                  onDraft={handlers.exceptionDraft}
+                  onRemove={() => handlers.propose(null)}
+                  onApply={(draft) => {
+                    const change = changeFromExceptionDraft(draft);
+                    if (change) handlers.propose(change);
+                  }}
+                />
+              ) : null}
               {editable ? (
                 <ExceptionAdder
                   roles={roles}
@@ -771,19 +799,12 @@ export function PolicyPage() {
     const current = ++generation.current;
     const keep = keepInputs.current;
     keepInputs.current = false;
-    // One pending change at a time: while the read is in flight every edit control is disabled, so
-    // no draft can be started that this read's answer would silently replace.
-    apply(screenReadStarted);
-    void getPolicy(controller.signal)
-      .then((body) => {
-        if (controller.signal.aborted || current !== generation.current) return;
-        // A malformed answer is refused here rather than rendered as a half-populated screen.
-        apply((previous) => screenLoaded(previous, decodePolicy(body), keep));
-      })
-      .catch((err) => {
-        if (controller.signal.aborted) return;
-        apply((previous) => screenLoadFailed(previous, err instanceof Error ? err.message : "The execution policy could not be read."));
-      });
+    // The whole read-and-apply sequence lives in runRead (policy-state.ts), outside React, so the
+    // shipped lifecycle is the one the tests drive with a fake transport rather than a parallel copy.
+    void runRead(stateRef.current, () => getPolicy(controller.signal), keep).then((outcome) => {
+      if (controller.signal.aborted || current !== generation.current) return;
+      apply(() => outcome.state);
+    });
     return () => {
       controller.abort();
       generation.current++;

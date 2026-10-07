@@ -449,3 +449,24 @@ test("a reopened exception editor shows the pending values, not the file's", asy
   assert.equal(editDraft.model, "anthropic/opus", "the editor opens on the pending model");
   assert.deepEqual(editDraft.cwd, ["/srv/new"]);
 });
+
+test("a pending exception the file no longer declares keeps a row the operator can act on", async () => {
+  // d2: the conflict re-read keeps the change but the file lost the entry, so no row was rendered and
+  // the retained change had no control at all. The screen now renders one from the change itself.
+  const pure = await import("../src/policy-state.ts");
+  let state = loadedState(pure, readingBody(), catalogBody([{ id: "anthropic/opus", label: "Opus" }, { id: "gpt-6.1-sol", label: "Sol" }, { id: "devin/swe-2", label: "SWE" }]));
+  state = pure.screenPropose(state as never, { kind: "setException", id: "legacy", role: "parent", model: "anthropic/opus", effort: "max", cwd: ["/srv/new"] }) as unknown as Record<string, unknown>;
+  // Another writer removes the exception; the keeping re-read retains the change.
+  const after = pure.screenLoaded(state as never, pure.decodePolicy(readingBody({ exceptions: [], digest: "b".repeat(64) })), true) as unknown as Record<string, unknown>;
+  assert.equal((after.change as { kind: string })?.kind, "setException", "the change is kept");
+  const { elements } = await mount(after);
+  const row = elements.find((el) => el.props["aria-label"] === "exception legacy");
+  assert.ok(row, "the pending exception still has a row");
+  assert.ok(byLabel(elements, "Edit exception legacy") ?? byLabel(elements, "Remove exception legacy"), "with a control to act on");
+  // An allowed edit whose model left the file is the same shape.
+  let allowedState = loadedState(pure, readingBody(), catalogBody([{ id: "anthropic/opus", label: "Opus" }]));
+  allowedState = pure.screenAllowedDraft(allowedState as never, "anthropic/opus", ["max", "high"]) as unknown as Record<string, unknown>;
+  const allowedAfter = pure.screenLoaded(allowedState as never, pure.decodePolicy(readingBody({ allowed: [{ model: "gpt-6.1-sol", efforts: ["xhigh"] }], digest: "b".repeat(64) })), true) as unknown as Record<string, unknown>;
+  const allowedTree = await mount(allowedAfter);
+  assert.ok(allowedTree.elements.find((el) => el.props["aria-label"] === "allowed anthropic/opus (pending)"), "the pending allowed model still has a row");
+});
