@@ -11,20 +11,38 @@
 import { createInterface } from "node:readline";
 import { join } from "node:path";
 
-// The oracle is imported per request, never at module load. The pool's start-up handshake is a null
-// input with an empty root, and the worker has to answer it - and keep answering - whatever the
-// oracle tree looks like: an import at load time ends the process before its stdin listener exists,
-// so a missing or hidden tree reads as a dead worker instead of as an answer, and a tree that is
-// present would run its module initialization under the caller's homes before any case could be
-// isolated. The doctor shim reads its root the same way, per request.
-let oracleModule = null;
+// The oracle is loaded once here, before the stdin listener exists, so its module initialization is
+// paid by the worker's start-up budget rather than by a case's timeout: the pool charges everything up
+// to the handshake reply to the startup deadline (worker.go ready/acquire) and only what follows to
+// the per-case one, so a load moved into the first case would be charged to that case and a slow
+// import would time out a worker that answered its handshake.
+//
+// A load that fails is remembered, not fatal: the worker still starts, still answers the pool's
+// start-up handshake (a null input with an empty root) with the refusal, and answers a later request
+// with an error envelope, so a missing or hidden oracle tree reads as an answer rather than as a dead
+// worker. The retry per request keeps the doctor shim's property that a tree which appears later is
+// picked up.
+//
+// Loading here runs the oracle's module initialization under the caller's environment, which is safe
+// because that initialization does no home I/O: measured against the real v0.2.40 tree it takes ~12 ms,
+// reads no file and mutates no environment variable (its only env read, CXC_SKILLS_DIR, is inside
+// runtimeSkillsDir(), which no top-level statement calls), and leaves ~/.codex unchanged. Every case's
+// own work still runs after run() has put the five homes under request.root.
 let oracleTable = null;
+let oracleLoadError = null;
+try {
+  const root = process.env.ORACLE_ROOT;
+  if (!root) throw new Error("ORACLE_ROOT is not set");
+  oracleTable = functions(await import("file://" + join(root, "subagent-config", "dist", "spawn-attach-hook.js")));
+} catch (error) {
+  oracleLoadError = error;
+}
+
 async function oracle() {
   if (oracleTable) return oracleTable;
   const root = process.env.ORACLE_ROOT;
-  if (!root) throw new Error("ORACLE_ROOT is not set");
-  oracleModule = await import("file://" + join(root, "subagent-config", "dist", "spawn-attach-hook.js"));
-  oracleTable = functions(oracleModule);
+  if (!root) throw oracleLoadError ?? new Error("ORACLE_ROOT is not set");
+  oracleTable = functions(await import("file://" + join(root, "subagent-config", "dist", "spawn-attach-hook.js")));
   return oracleTable;
 }
 

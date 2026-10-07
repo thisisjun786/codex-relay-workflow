@@ -7,8 +7,10 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/role/spawn"
@@ -419,6 +421,28 @@ func spawnDecoyEnv(decoy string) []string {
 	}
 }
 
+// writeSlowSpawnOracle writes a fake oracle tree whose module takes delay to initialize, so a test can
+// tell a load charged to the worker's start-up budget from one charged to a case's timeout.
+func writeSlowSpawnOracle(t *testing.T, delay time.Duration) string {
+	t.Helper()
+	root := t.TempDir()
+	dir := filepath.Join(root, "subagent-config", "dist")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "await new Promise((resolve) => setTimeout(resolve, " + strconv.FormatInt(delay.Milliseconds(), 10) + "));\n" +
+		"export function mentionedFolders() { return new Set([process.env.HOME, process.env.CODEX_HOME, process.env.CRW_HOME, process.env.CODEXCLAW_HOME, process.env.TMPDIR]); }\n" +
+		"export function inferRole() { return \"\"; }\n" +
+		"export function isV2SpawnInput() { return false; }\n" +
+		"export function isFullHistoryFork() { return false; }\n" +
+		"export function isSpawnToolName() { return false; }\n" +
+		"export function isCollaborationToolName() { return false; }\n"
+	if err := os.WriteFile(filepath.Join(dir, "spawn-attach-hook.js"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
 // spawnHomePaths is the five paths a case root holds.
 func spawnHomePaths(root string) []string {
 	return []string{
@@ -543,4 +567,35 @@ func spawnTextDepth(t *testing.T, text string) int {
 		t.Fatalf("the text is not balanced JSON: %s", text)
 	}
 	return deepest
+}
+
+// c1 (CRW-938): the oracle's module initialization is charged to the worker's start-up budget, not to a
+// case's timeout. The load happens before the stdin listener exists, so the pool's readiness handshake
+// cannot reply until it is done and the time it takes is charged to startup; a load moved into the first
+// case would instead be charged to that case's timeout and a slow import would kill a worker that had
+// already answered its handshake. The pre-merge evaluation of head a9f956c3 found exactly that
+// regression in a per-request import, so this pins the timing rather than only the answers.
+func TestSpawnSlowOracleLoadIsChargedToStartup(t *testing.T) {
+	requireNode(t)
+	root := t.TempDir()
+	if err := PrepareRoot(root); err != nil {
+		t.Fatal(err)
+	}
+	decoy := t.TempDir()
+	// A per-request timeout far below the load time, and a startup budget far above it: the worker
+	// answers only if the load is paid by startup.
+	pool, err := NewPool(
+		Oracle{Command: "node", Shim: shimPath("spawn"), Root: writeSlowSpawnOracle(t, 750*time.Millisecond)},
+		1, 50*time.Millisecond, 20*time.Second, append(os.Environ(), spawnDecoyEnv(decoy)...))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = pool.Close() }()
+	reply, err := pool.Call(spawnMentionedFoldersCase(), root)
+	if err != nil {
+		t.Fatalf("a worker whose oracle took longer than the per-request timeout to load did not answer: %v", err)
+	}
+	if !strings.Contains(reply, filepath.Join(root, "home")) {
+		t.Fatalf("the case answered %s, want the case root's home", reply)
+	}
 }
