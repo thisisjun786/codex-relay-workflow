@@ -25,6 +25,7 @@ package state
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"time"
@@ -197,6 +198,20 @@ func defaultState(sessionID, slug string, now time.Time) State {
 // StatePath is cwd/.crw/sessions/<sanitised id>.json.
 func StatePath(cwd, sessionID string) string {
 	return filepath.Join(cwd, crwdir.DirName, SessionsSubdir, SanitizeKey(sessionID)+".json")
+}
+
+// CheckStateRootNotSymlink refuses a state root (cwd/.crw) that is a symbolic link. Every writer of
+// the session state creates .crw and .crw/sessions before it writes, and those creates follow a link,
+// so a linked root would send the lock file and the session files outside the workspace. The plan
+// path already refuses a linked root through its own walk (goalplan.GoalplanDir); this is the same
+// judgement for the session side, so a caller can refuse before its first write (CRW-646).
+func CheckStateRootNotSymlink(cwd string) error {
+	root := filepath.Join(cwd, crwdir.DirName)
+	info, err := os.Lstat(root)
+	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+		return nil
+	}
+	return errors.New("state path must not be a symlink: " + root)
 }
 
 // FindForeignSessionCopies lists the state files of candidates' trees that hold the same session id as cwd's own, so a

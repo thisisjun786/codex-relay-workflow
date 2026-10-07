@@ -1,10 +1,13 @@
 package goalplan
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
@@ -262,6 +265,37 @@ func writeLockOwner(lock *os.File, dir string, now func() string) {
 	}
 	defer file.Close()
 	_, _ = fmt.Fprintf(file, "{\"pid\":%d,\"acquiredAt\":%s}\n", os.Getpid(), quote(now()))
+}
+
+// GoalplanLockHolderAlive reports whether the process holding slug's goalplan write lock is still
+// running, read from the lock directory's owner.json. The shared lock never expires a directory (a
+// stale one is removed by hand), so this is how a waiter tells a live competing writer from an
+// abandoned lock: it can keep waiting for the former and give up on the latter (CRW-646). A lock
+// whose owner.json is missing or unreadable answers false, so the waiter's wait always ends in
+// something.
+func GoalplanLockHolderAlive(cwd, slug string) bool {
+	dir, err := GoalplanDir(cwd, slug)
+	if err != nil {
+		return false
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, GoalplanLockDir, GoalplanLockOwnerFile))
+	if err != nil {
+		return false
+	}
+	var owner struct {
+		PID int `json:"pid"`
+	}
+	if json.Unmarshal(raw, &owner) != nil || owner.PID <= 0 {
+		return false
+	}
+	return processAlive(owner.PID)
+}
+
+// processAlive reports whether pid names a running process: signal 0 reaches it, and a permission
+// refusal means it exists under another user, which is still alive.
+func processAlive(pid int) bool {
+	err := syscall.Kill(pid, 0)
+	return err == nil || errors.Is(err, syscall.EPERM)
 }
 
 // WithGoalplanWriteLock ports :806-873. The mkdir itself is the lock; owner.json

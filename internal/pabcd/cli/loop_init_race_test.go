@@ -377,24 +377,12 @@ func TestLoopInitAnswersAlreadyExistsWhenTheLockTimesOut(t *testing.T) {
 	cwd := loopReadWorkspace(t)
 	const slug = "ship-the-export-feature"
 	dir := filepath.Join(cwd, ".crw", "goalplans", slug)
-	published := make(chan error, 1)
-	loopInitAfterAbsenceCheck = func() {
-		// The other init holds the slug's lock directory and has not published yet.
-		if err := os.MkdirAll(dir, 0o700); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Mkdir(filepath.Join(dir, ".goalplan.lock"), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		go func() {
-			// Publish well after the lock's own 75 ms budget and after the short budget an earlier
-			// revision used (about 1.9 s), but inside the production wait, so the case proves the wait
-			// holds the criterion's answer rather than the lock's busy message.
-			time.Sleep(5000 * time.Millisecond)
-			plan := goalplan.BuildGoalplan(goalplan.NewGoalplanInput{Objective: "Ship the export feature"})
-			published <- goalplan.WriteGoalplan(cwd, plan)
-		}()
-	}
+	loopInitFastWaits(t)
+	// The competing init is a LIVE holder — this test process, whose pid the lock's owner.json names —
+	// that publishes the plan only after the loser's acquisition budget has run out. The loser must
+	// keep waiting for a live holder and then answer the criterion's refusal, not the busy message.
+	holder := startLoopPlanHolder(t, cwd, dir, slug, "Ship the export feature", 200*time.Millisecond)
+	loopInitAfterAbsenceCheck = func() { holder.hold() }
 	t.Cleanup(func() { loopInitAfterAbsenceCheck = nil })
 
 	result := loopRun(t, cwd, "init", "--objective", "Ship the export feature")
@@ -402,10 +390,49 @@ func TestLoopInitAnswersAlreadyExistsWhenTheLockTimesOut(t *testing.T) {
 	if result.Code != 1 || result.Output != want {
 		t.Fatalf("got %d %q\nwant 1 %q", result.Code, result.Output, want)
 	}
-	if err := <-published; err != nil {
+	if err := holder.waitPublished(); err != nil {
 		t.Fatalf("the competing init could not publish: %v", err)
 	}
 }
+
+// loopPlanHolder is a competing init that holds slug's goalplan creation lock for a while and then
+// publishes the plan, in this test process, so the lock's owner.json names a live pid and the loser's
+// liveness check sees a live holder.
+type loopPlanHolder struct {
+	hold      func()
+	published chan error
+}
+
+// startLoopPlanHolder returns a holder whose hold plants the lock directory (owner.json naming this
+// process) and then publishes the plan after delay, in a goroutine.
+func startLoopPlanHolder(t *testing.T, cwd, dir, slug, objective string, delay time.Duration) *loopPlanHolder {
+	t.Helper()
+	h := &loopPlanHolder{published: make(chan error, 1)}
+	h.hold = func() {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Error(err)
+			return
+		}
+		lock := filepath.Join(dir, ".goalplan.lock")
+		if err := os.Mkdir(lock, 0o755); err != nil {
+			t.Error(err)
+			return
+		}
+		owner := "{\"pid\":" + strconv.Itoa(os.Getpid()) + ",\"acquiredAt\":\"2026-01-01T00:00:00.000Z\"}\n"
+		if err := os.WriteFile(filepath.Join(lock, "owner.json"), []byte(owner), 0o600); err != nil {
+			t.Error(err)
+			return
+		}
+		go func() {
+			time.Sleep(delay)
+			plan := goalplan.BuildGoalplan(goalplan.NewGoalplanInput{Objective: objective})
+			h.published <- goalplan.WriteGoalplan(cwd, plan)
+		}()
+	}
+	return h
+}
+
+func (h *loopPlanHolder) waitPublished() error { return <-h.published }
 
 // TestLoopInitNamesThePublishedPlanWhenTheLedgerRowFails is the other commit-order case inside the
 // creation critical section: the plan is published and the created ledger row then fails. The failure
@@ -510,24 +537,22 @@ func TestLoopInitAnswersAlreadyExistsWhenTheSessionLockTimesOut(t *testing.T) {
 	const id = "rec-slock"
 	const slug = "bound-objective"
 	loopSession(t, cwd, id)
+	loopInitFastWaits(t)
+	// The competing init is a LIVE holder — this test process, whose pid the lock file names — that
+	// publishes the plan only after the loser's session-lock budget has run out. The loser must keep
+	// waiting for a live holder and then answer the criterion's refusal, not the raw lock error.
 	published := make(chan error, 1)
+	if err := os.WriteFile(state.StatePath(cwd, id)+".lock", []byte(strconv.Itoa(os.Getpid())), 0o666); err != nil {
+		t.Fatal(err)
+	}
 	loopInitAfterAbsenceCheck = func() {
-		// The competing init holds the session lock and publishes only after this init's session-lock
-		// budget (about 285 ms) has run out, so the loser is already reporting the lock error when the
-		// plan appears and must still answer the criterion's refusal.
 		go func() {
-			// Publish after the session lock's own budget and after the short budget an earlier revision
-			// used (about 1.5 s), but inside the production wait.
-			time.Sleep(5000 * time.Millisecond)
+			time.Sleep(200 * time.Millisecond)
 			plan := goalplan.BuildGoalplan(goalplan.NewGoalplanInput{Objective: "Bound objective"})
 			published <- goalplan.WriteGoalplan(cwd, plan)
 		}()
 	}
 	t.Cleanup(func() { loopInitAfterAbsenceCheck = nil })
-	// Another holder keeps the session lock file, so acquisition runs out its budget.
-	if err := os.WriteFile(state.StatePath(cwd, id)+".lock", []byte("1"), 0o666); err != nil {
-		t.Fatal(err)
-	}
 
 	result := loopRun(t, cwd, "init", "--objective", "Bound objective", "--session", id)
 	want := "loop init: a plan already exists at slug '" + slug + "' (use show/validate)"
@@ -539,18 +564,39 @@ func TestLoopInitAnswersAlreadyExistsWhenTheSessionLockTimesOut(t *testing.T) {
 	}
 }
 
-// loopInitFastWaits shrinks the bounded post-lock waits so a case that intentionally never publishes
-// a competing plan does not spend the production budget waiting for one. It restores the seams when
-// the test ends.
+// TestLoopInitRefusesALinkedStateRootBeforeWriting is the review finding on this pull request: taking
+// the session lock creates .crw/sessions and the lock file, and those creates follow a symbolic link,
+// so a linked state root would send them outside the workspace before any session check could refuse
+// it. The root's shape is therefore settled before the lock, and nothing is written through the link.
+func TestLoopInitRefusesALinkedStateRootBeforeWriting(t *testing.T) {
+	cwd := loopReadWorkspace(t)
+	target := filepath.Join(cwd, "elsewhere")
+	if err := os.Mkdir(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(cwd, ".crw")); err != nil {
+		t.Fatal(err)
+	}
+	const id = "rec-link"
+
+	result := loopRun(t, cwd, "init", "--objective", "Probe", "--session", id)
+	if result.Code != 1 || !strings.Contains(result.Output, "must not be a symlink") {
+		t.Fatalf("got %d %q", result.Code, result.Output)
+	}
+	// Nothing reached the link's target: no sessions directory, no lock file, no plan.
+	for _, leaked := range []string{"sessions", "goalplans"} {
+		if _, err := os.Stat(filepath.Join(target, leaked)); !os.IsNotExist(err) {
+			t.Fatalf("the refused init wrote %q through the linked root: %v", leaked, err)
+		}
+	}
+}
+
+// loopInitFastWaits removes the pause between init's post-lock wait rounds, so a case that drives
+// that wait does not spend real time in it. The wait itself follows the competing holder's liveness,
+// which the cases control, so this only removes the sleep. It restores the seam when the test ends.
 func loopInitFastWaits(t *testing.T) {
 	t.Helper()
-	rounds, planRounds := loopInitCreationLockRounds, loopInitPlanWaitRounds
-	wait, planWait := loopInitCreationLockWait, loopInitPlanWait
-	loopInitCreationLockRounds, loopInitPlanWaitRounds = 1, 1
-	loopInitCreationLockWait = func() {}
-	loopInitPlanWait = func() {}
-	t.Cleanup(func() {
-		loopInitCreationLockRounds, loopInitPlanWaitRounds = rounds, planRounds
-		loopInitCreationLockWait, loopInitPlanWait = wait, planWait
-	})
+	pause := loopInitPlanWaitPause
+	loopInitPlanWaitPause = func() {}
+	t.Cleanup(func() { loopInitPlanWaitPause = pause })
 }

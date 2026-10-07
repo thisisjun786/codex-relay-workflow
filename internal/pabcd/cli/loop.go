@@ -16,7 +16,9 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/gate"
@@ -77,34 +79,57 @@ func loopInitWriteState(cwd string, next state.State) error {
 	return state.WriteState(cwd, next)
 }
 
-// loopInitCreationLockRounds bounds how many extra times init re-attempts the creation lock after the
-// lock's own retry budget (5+10+20+40 ms) runs out, and loopInitPlanWaitRounds bounds the separate
-// wait for a plan a competing init publishes after the session lock's budget ran out. Each round of
-// either re-checks the plan, so a loser whose winner publishes during the wait answers the criterion's
-// "a plan already exists at slug ..." refusal rather than the shared lock's busy message (CRW-646
-// c1). Their production values give a loser about 15 s of grace: a live competing init is then never
-// mistaken for an abandoned lock directory — a plan write is a staged file, its fsync and the
-// directory fsync, seconds at the very most — while a lock whose holder is truly gone still ends in
-// the busy message, the recovery the shared lock documents. The rounds and the waits are test seams.
+// loopInitPlanWaitPause pauses between the rounds of init's post-lock wait for a competing init's
+// plan, and loopInitPlanWaitLimit bounds how many rounds a wait keeps going while the holder it is
+// waiting on is still running. The wait follows the holder's own lifetime — loopInitGoalplanHolderAlive
+// and the session lock's holder check decide when to stop — so a live competing init is never
+// mistaken for an abandoned lock directory; the limit is a backstop for a holder that lives but never
+// finishes, and reaching it answers the shared lock's own busy message, that lock's documented
+// recovery. Both are test seams.
 var (
-	loopInitCreationLockRounds = 75
-	loopInitPlanWaitRounds     = 150
-
-	loopInitCreationLockWait = func() { time.Sleep(200 * time.Millisecond) }
-	loopInitPlanWait         = func() { time.Sleep(100 * time.Millisecond) }
+	loopInitPlanWaitPause = func() { time.Sleep(200 * time.Millisecond) }
+	loopInitPlanWaitLimit = 450
 )
 
-// loopInitAwaitPlan waits a bounded time for slug's plan to appear, answering its refusal when it
-// does. It is how the loser of a concurrent creation keeps the criterion's "a plan already exists at
-// slug ..." answer when the winner publishes after the loser's lock budget has run out (CRW-646 c1).
-func loopInitAwaitPlan(cwd, slug string) (LoopCliResult, bool) {
-	for attempt := 0; attempt < loopInitPlanWaitRounds; attempt++ {
+// loopInitGoalplanHolderAlive reports whether the process holding slug's goalplan creation lock is
+// still running, so the loser of a concurrent creation can keep waiting for it (CRW-646 c1).
+func loopInitGoalplanHolderAlive(cwd, slug string) bool {
+	return goalplan.GoalplanLockHolderAlive(cwd, slug)
+}
+
+// loopInitSessionHolderAlive reports whether the process holding the session's lock is still running.
+// It reads the pid the lock file holds, which is what state's lock writes.
+func loopInitSessionHolderAlive(cwd, sessionID string) bool {
+	raw, err := os.ReadFile(state.StatePath(cwd, sessionID) + ".lock")
+	if err != nil {
+		return false
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(raw)))
+	return err == nil && pid > 0 && loopInitProcessAlive(pid)
+}
+
+// loopInitAwaitPlan waits for slug's plan while the competing init that holds the lock is still
+// running, answering the criterion's "a plan already exists at slug ..." refusal as soon as the plan
+// appears (CRW-646 c1). alive is asked each round; when it turns false the wait is over, and the
+// caller reports the lock's own message, which is the recovery for an abandoned lock. The limit is a
+// backstop for a holder that stays alive but never finishes.
+func loopInitAwaitPlan(cwd, slug string, alive func() bool) (LoopCliResult, bool) {
+	for round := 0; round < loopInitPlanWaitLimit; round++ {
 		if result, present := loopInitPlanRefusal(cwd, slug); present {
 			return result, true
 		}
-		loopInitPlanWait()
+		if !alive() {
+			break
+		}
+		loopInitPlanWaitPause()
 	}
 	return loopInitPlanRefusal(cwd, slug)
+}
+
+// loopInitProcessAlive reports whether pid names a running process.
+func loopInitProcessAlive(pid int) bool {
+	err := syscall.Kill(pid, 0)
+	return err == nil || errors.Is(err, syscall.EPERM)
 }
 
 // loopInitWriteGoalplanHook, when non-nil, replaces the plan publication of init's creation step so a
@@ -236,6 +261,16 @@ func loopInit(args LoopCliArgs) (LoopCliResult, error) {
 	// concurrent creator may have made it in the window), and acting on that guess could delete another
 	// writer's .gitignore or an empty sessions directory it had just ensured, so the refusal names only
 	// the artifacts it did not write — the plan, the created row and the binding.
+	//
+	// The state root's own shape is settled BEFORE the lock is taken, because taking the lock writes
+	// into that root (it creates .crw/sessions and the lock file). A root that is a symbolic link
+	// would send those writes outside the workspace, so it is refused here, with the same message the
+	// plan write path uses; the oracle's CheckBound reads through the session state and refuses such a
+	// root before any write, and this keeps that ordering while the session checks themselves stay
+	// under the lock (CRW-646 c2, and the review finding on this pull request).
+	if err := state.CheckStateRootNotSymlink(args.Cwd); err != nil {
+		return LoopCliResult{Output: "loop init: " + err.Error() + "\nNothing was written.", Code: 1}, nil
+	}
 	var answer LoopCliResult
 	err := state.WithSessionLock(args.Cwd, sessionID, func() error {
 		result, err := loopInitBound(args, slug, objective, sessionID)
@@ -245,10 +280,12 @@ func loopInit(args LoopCliArgs) (LoopCliResult, error) {
 	if err != nil {
 		// The lock's wait budget ran out (the create's EEXIST is what the lock returns when another
 		// holder keeps its file). The competing init may publish the plan after that budget, so keep
-		// looking for it before reporting the lock file's own error (CRW-646 c1). An error the
-		// callback itself returned is not this case.
+		// looking for it while that holder is still running before reporting the lock file's own error
+		// (CRW-646 c1). An error the callback itself returned is not this case.
 		if errors.Is(err, fs.ErrExist) {
-			if result, present := loopInitAwaitPlan(args.Cwd, slug); present {
+			if result, present := loopInitAwaitPlan(args.Cwd, slug, func() bool {
+				return loopInitSessionHolderAlive(args.Cwd, sessionID)
+			}); present {
 				return result, nil
 			}
 		}
@@ -337,14 +374,16 @@ func loopInitCreate(args LoopCliArgs, slug, objective string) (LoopCliResult, er
 		criteria = append(criteria, goalplan.NewGoalplanCriterion{Scenario: scenario})
 	}
 	plan := goalplan.BuildGoalplan(goalplan.NewGoalplanInput{Objective: objective, Criteria: criteria, SchemaVersion: args.SchemaVersion})
-	// The creation lock's own budget is short (5+10+20+40 ms), and the winner of a concurrent creation
-	// holds it across a staged-file write, its fsync and the directory fsync, so the loser's budget can
-	// run out while the winner is still publishing. The loser then owes the criterion's "already
-	// exists" refusal, not the lock's busy message (CRW-646 c1), so it re-attempts the acquisition a
-	// bounded number of times: each round re-checks the plan, and a round that finally takes the lock
-	// runs the same check-and-publish body. A genuinely stale lock ends with the message the shared
-	// lock builds, which is the recovery path that lock offers.
-	for round := 0; ; round++ {
+	// The creation lock's own budget is short (5+10+20+40 ms), and a competing init holds it across a
+	// staged-file write, its fsync and the directory fsync, so the loser's budget can run out while the
+	// winner is still publishing. The loser owes the criterion's "a plan already exists at slug ..."
+	// refusal (CRW-646 c1), so it keeps going while the holder is a LIVE process — the winner's own
+	// lifetime, however long that is — re-checking the plan and re-attempting the acquisition each
+	// round; a round that takes the lock runs the same check-and-publish body, so a holder that
+	// released without publishing is simply followed. Only an abandoned lock (its holder gone) ends
+	// the wait, and it ends with the shared lock's own busy message, which is that lock's documented
+	// recovery for a directory nobody is holding.
+	for {
 		var refusal *LoopCliResult
 		warnings := []string{}
 		locked, err := goalplan.WithGoalplanCreationLock(args.Cwd, slug, func() error {
@@ -386,10 +425,10 @@ func loopInitCreate(args LoopCliArgs, slug, objective string) (LoopCliResult, er
 		if result, present := loopInitPlanRefusal(args.Cwd, slug); present {
 			return result, nil
 		}
-		if round >= loopInitCreationLockRounds {
+		if !loopInitGoalplanHolderAlive(args.Cwd, slug) {
 			return LoopCliResult{Output: "loop init: " + locked.Reason, Code: 1}, nil
 		}
-		loopInitCreationLockWait()
+		loopInitPlanWaitPause()
 	}
 }
 
