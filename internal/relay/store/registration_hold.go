@@ -62,6 +62,11 @@ func RegistrationHold(ctx context.Context, dbPath string, run func(conn *sql.Con
 		// The stamp's refusal is raised as the fence's admission raised it.
 		return err
 	}
+	// The hold takes the store's write lock, so it is a writable path and refuses a halted store
+	// (halt.go, CRW-848): no BEGIN IMMEDIATE runs against a store the relay has seen damaged.
+	if state := HaltStateAt(absolute); state.Present {
+		return HaltRefusal(state)
+	}
 	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
 		return run(nil, "the relay store's write lock could not be taken: "+err.Error())
 	}
