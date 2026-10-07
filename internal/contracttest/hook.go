@@ -538,14 +538,8 @@ func hookStandIns(t *testing.T) (hookStandInsFor, error) {
 		}
 	}
 	for _, name := range []string{"python3", "python"} {
-		// The stand-ins go on PATH and the hook runs them, so each descriptor is open only under
-		// syscall.ForkLock: a fork in that window would inherit it and leave the stand-in
-		// unexecutable (ETXTBSY, golang/go#22315).
-		syscall.ForkLock.RLock()
-		writeErr := os.WriteFile(filepath.Join(s.bin, name), []byte(pythonStandIn), 0o755)
-		syscall.ForkLock.RUnlock()
-		if writeErr != nil {
-			return hookStandInsFor{}, writeErr
+		if err := os.WriteFile(filepath.Join(s.bin, name), []byte(pythonStandIn), 0o755); err != nil {
+			return hookStandInsFor{}, err
 		}
 	}
 	entry := "# Stand-in for the retired Python completion hook entry point; never executed.\n"
