@@ -599,21 +599,19 @@ func TestResetLinkPermReadsALongTargetWhole(t *testing.T) {
 	}
 }
 
-// TestResetLinkPermALongChainStaysInsideTheWalk: the walk resolves a target through one
-// concatenated pathname, and the kernel applies its own limit to a single pathname
-// (ENAMETOOLONG). The walk cannot express that target, so it cannot decide it, and it has not shown
-// the target to leave the root either: A3's rule for an in-root lstat error applies and the target
-// is absent, which keeps the link. It must not reach the descriptor stat or the root-path
-// judgement, which open the directories A2 forbids, and a renamed pinned directory must not turn
-// the verdict into a reset-wide refusal that skips the remaining candidates.
-func TestResetLinkPermALongChainStaysInsideTheWalk(t *testing.T) {
+// TestResetLinkPermALongChainIsDecidedByTheDescriptorStat: the walk resolves a target through one
+// concatenated pathname, and the kernel applies its own limit to a single pathname, so a chain of
+// nested directories whose cumulative name crosses that limit is one the walk cannot express. That
+// ENAMETOOLONG is the walk's own limit, not the kernel's answer about the target, which still
+// resolves: the walk cannot decide it, so it keeps the descriptor stat and the root-path judgement,
+// which resolve the candidate's own short link name through the kernel. The verdict stays equal to
+// the oracle's, and a renamed pinned directory keeps the refusal rather than answering absent.
+func TestResetLinkPermALongChainIsDecidedByTheDescriptorStat(t *testing.T) {
 	root := t.TempDir()
 	sessions := filepath.Join(root, ".crw", "sessions")
 	if err := os.MkdirAll(sessions, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// Nested directories, each name long enough that the cumulative pathname crosses the limit; the
-	// nesting is built with relative steps so no single mkdir crosses it.
 	const depth = 18
 	name := strings.Repeat("d", 240)
 	wd, err := os.Getwd()
@@ -628,8 +626,6 @@ func TestResetLinkPermALongChainStaysInsideTheWalk(t *testing.T) {
 		if err := os.Mkdir(name, 0o755); err != nil {
 			t.Fatalf("mkdir depth %d: %v", i, err)
 		}
-		// next -> <name>/next, so each link target is short and the kernel resolves the chain step by
-		// step.
 		if err := os.Symlink(name+"/next", "next"); err != nil {
 			t.Fatalf("symlink depth %d: %v", i, err)
 		}
@@ -649,11 +645,9 @@ func TestResetLinkPermALongChainStaysInsideTheWalk(t *testing.T) {
 	if err := os.Symlink("next", "a.json"); err != nil {
 		t.Fatal(err)
 	}
-	// The control: the kernel resolves the short link name component by component and reaches the
-	// file, while the walk cannot express that target in one pathname. That divergence is the one the
-	// defect file records as port: kept, in the direction that keeps the link.
-	if _, err := os.Stat(filepath.Join(sessions, "a.json")); err != nil {
-		t.Fatalf("the control must resolve through the kernel: %v", err)
+	_, oracleErr := os.Stat(filepath.Join(sessions, "a.json"))
+	if oracleErr != nil {
+		t.Fatalf("the control must resolve: %v", oracleErr)
 	}
 	crw := filepath.Join(root, ".crw")
 	parent, err := os.OpenRoot(crw)
@@ -670,22 +664,15 @@ func TestResetLinkPermALongChainStaysInsideTheWalk(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer pinned.Close()
-	calls := 0
-	stat := func(name string) (os.FileInfo, error) {
-		calls++
-		return pinned.Stat(name)
-	}
-	got, err := resetLinkTargetExistsWith(pinned, "a.json", stat)
+	got, err := resetLinkTargetExists(pinned, "a.json")
 	if err != nil {
-		t.Fatalf("resetLinkTargetExists: %v (a target inside the root must be absent or present, not a refusal)", err)
+		t.Fatalf("resetLinkTargetExists: %v", err)
 	}
-	if got {
-		t.Errorf("exists = true, want false: the walk cannot express this target in one pathname and answers absent")
+	if got != (oracleErr == nil) {
+		t.Errorf("exists = %v, but os.Stat on the same link answers %v", got, oracleErr)
 	}
-	if calls != 0 {
-		t.Errorf("root stat calls = %d, want 0: the target must not reach the descriptor stat", calls)
-	}
-	// A renamed pinned directory must not change that verdict, and must not stop the reset.
+	// A renamed pinned directory keeps the root-path judgement's refusal, the same way an
+	// out-of-root target does: the walk could not keep this target inside the root.
 	if err := os.Rename(sessions, filepath.Join(crw, "moved")); err != nil {
 		t.Fatal(err)
 	}
@@ -693,27 +680,20 @@ func TestResetLinkPermALongChainStaysInsideTheWalk(t *testing.T) {
 		t.Fatal(err)
 	}
 	result := ResetResult{Removed: []string{}, Absent: []string{}}
-	if err := resetRmIfExists(pinned, "a.json", "a.json", &result); err != nil {
-		t.Fatalf("the length case must be decided by the walk, not refused: %v", err)
+	err = resetRmIfExists(pinned, "a.json", "a.json", &result)
+	if err == nil {
+		t.Fatalf("the renamed pin must refuse: removed %v absent %v", result.Removed, result.Absent)
 	}
-	if len(result.Removed) != 0 {
-		t.Errorf("removed = %v, want none: the link must be kept", result.Removed)
-	}
-	if len(result.Absent) != 1 {
-		t.Errorf("absent = %v, want the candidate listed once", result.Absent)
-	}
-	if calls != 0 {
-		t.Errorf("root stat calls = %d after the rename, want 0", calls)
+	if !strings.Contains(err.Error(), "reset directory changed") {
+		t.Errorf("err = %v, want the renamed-directory refusal", err)
 	}
 }
 
-// TestResetLinkPermALongChainToAnOutOfRootTargetIsAbsent: the same length case, but the chain really
-// leaves the root. The walk still cannot express the target in one pathname, so it never proves the
-// target leaves the root, and A3 decides it the same way: absent, which keeps the link. The
-// divergence from the oracle (which resolves the short link name and removes the link) is recorded
-// as port: kept; the direction keeps the link, and the removal never touches a target outside the
-// workspace either way.
-func TestResetLinkPermALongChainToAnOutOfRootTargetIsAbsent(t *testing.T) {
+// TestResetLinkPermALongChainToAnOutOfRootTargetRefusesARenamedPin: the same length case, but the
+// chain really leaves the root. The walk cannot express the target in one pathname, so it keeps the
+// root-path judgement, which must refuse once the pinned directory was renamed rather than remove a
+// link whose out-of-root target the contract does not act on.
+func TestResetLinkPermALongChainToAnOutOfRootTargetRefusesARenamedPin(t *testing.T) {
 	root := t.TempDir()
 	outside := filepath.Join(t.TempDir(), "outside.txt")
 	if err := os.WriteFile(outside, []byte("outside"), 0o644); err != nil {
@@ -744,7 +724,6 @@ func TestResetLinkPermALongChainToAnOutOfRootTargetIsAbsent(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// The deepest link leaves the root.
 	if err := os.Symlink(outside, "next"); err != nil {
 		t.Fatal(err)
 	}
@@ -772,27 +751,19 @@ func TestResetLinkPermALongChainToAnOutOfRootTargetIsAbsent(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer pinned.Close()
-	calls := 0
-	stat := func(name string) (os.FileInfo, error) {
-		calls++
-		return pinned.Stat(name)
+	if err := os.Rename(sessions, filepath.Join(crw, "moved")); err != nil {
+		t.Fatal(err)
 	}
-	got, err := resetLinkTargetExistsWith(pinned, "a.json", stat)
-	if err != nil {
-		t.Fatalf("resetLinkTargetExists: %v (it must not refuse)", err)
-	}
-	if got {
-		t.Errorf("exists = true, want false: the walk answers absent for a target it cannot express")
-	}
-	if calls != 0 {
-		t.Errorf("root stat calls = %d, want 0: the target must not reach the descriptor stat", calls)
+	if err := os.Mkdir(sessions, 0o755); err != nil {
+		t.Fatal(err)
 	}
 	result := ResetResult{Removed: []string{}, Absent: []string{}}
-	if err := resetRmIfExists(pinned, "a.json", "a.json", &result); err != nil {
-		t.Fatalf("the walk must decide this candidate, not refuse it: %v", err)
+	err = resetRmIfExists(pinned, "a.json", "a.json", &result)
+	if err == nil {
+		t.Fatalf("the root-path judgement must refuse a renamed pinned directory: removed %v absent %v", result.Removed, result.Absent)
 	}
-	if len(result.Removed) != 0 {
-		t.Errorf("removed = %v, want none: the link must be kept", result.Removed)
+	if !strings.Contains(err.Error(), "reset directory changed") {
+		t.Errorf("err = %v, want the renamed-directory refusal", err)
 	}
 	if _, err := os.Stat(outside); err != nil {
 		t.Errorf("the out-of-root target must be untouched: %v", err)
@@ -802,10 +773,16 @@ func TestResetLinkPermALongChainToAnOutOfRootTargetIsAbsent(t *testing.T) {
 // TestResetLinkPermSearchDeniedAtALongWalkedPrefixIsAbsent: the search question is asked with an
 // fstatat of the walked directory's own ".", which the kernel resolves by looking it up inside that
 // directory. A directory the kernel cannot search answers EACCES there and the link is kept, even
-// when the walked prefix is long: the question adds no synthetic component, so no probe name can
-// push the pathname past the kernel's limit and change the answer. This is the data-loss regression
-// a probe name introduced.
+// when the walked prefix is long: the question adds at most one byte, so no probe name can push the
+// pathname past the kernel's limit and change the answer. This is the data-loss regression a probe
+// name introduced.
 func TestResetLinkPermSearchDeniedAtALongWalkedPrefixIsAbsent(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the walked prefix and the mode-000 denial are exercised on Linux")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root can search a mode-000 directory, so the denial cannot be observed")
+	}
 	root := t.TempDir()
 	sessions := filepath.Join(root, ".crw", "sessions")
 	if err := os.MkdirAll(sessions, 0o755); err != nil {
