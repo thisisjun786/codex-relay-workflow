@@ -320,9 +320,9 @@ Execution:
   ([what the record says](merge-readiness.md#what-the-record-says)). A thread that still reaches the head
   after your receipt is not yours to chase and needs no new review: the coordinator triages a minor one itself,
   and where its relay cannot record that it asks you only to read the review threads again and emit again, and
-  a red, P0, P1 or security one comes back as an ordinary correction, both only while a correction can still
+  one inside your issue's scope, or a P0 or security one anywhere, comes back as an ordinary correction, both only while a correction can still
   reach you: once your result is accepted the coordinator holds the candidate instead, and after the merge it is
-  new work ([Late review threads](merge-readiness.md#late-review-threads)). See
+  new work, except that an in-scope one reopens your issue ([Late review threads](merge-readiness.md#late-review-threads)). See
   [Publish for review when the work is reviewable](../../crw-plan/references/integrations.md#publish-for-review-when-the-work-is-reviewable).
 - Where the assignment names the independent code review, run it once per pull request: `crw review --base <the pull request's base commit> --head <the head you hand off> --issue <this issue> --out <a directory of the task's evidence> --post-summary --pr <number>`,
   after every CI job is green on that head and before you emit. The command keeps the run rules itself: the same
@@ -339,8 +339,9 @@ Execution:
   the same command is the retry) by `crw review ... --post-only --pr <number>`, which runs no review, counts toward neither
   the retry nor the daily cap, and answers `recorded`. The result is a reference opinion and not a merge gate
   ([Devin and Codex reviews are references, not merge gates](merge-readiness.md#devin-and-codex-reviews-are-references-not-merge-gates)
-  keeps the gates): fix a P0, P1 or security finding or answer it from the code, without blocking the merge, and
-  record the rest. A `partial`, `invalid` or `unavailable` run is not "no findings": say what the command reported
+  keeps the gates): fix a finding inside this issue's scope or answer it from the code, fix a P0 or security
+  finding before the merge whether or not it belongs to this issue (`not_applicable` only with code evidence that
+  the reading is wrong), and record the rest as follow-ups with their owner and trigger. A `partial`, `invalid` or `unavailable` run is not "no findings": say what the command reported
   (outcome, status, `retryNotBefore` if any, the comment link) in the handoff. [crw review](../../../../../docs/review/crw-review.md)
   has the rules.
 - Finishing the review is part of finishing the work. Read every applicable review to the
@@ -891,8 +892,8 @@ host values filled in.
    [waiting budget](merge-readiness.md#the-one-run-of-each-reviewer-awaited-before-the-receipt): a
    notice that a review was skipped (no credits, a usage limit) means skipped; past the budget a review still running is recorded as
    pending, not complete; and with no signal of any kind 30 minutes after the pull
-   request is open and ready you record "review unavailable (no signal)" and go on. The independent code review (`crw review`, a reference opinion) is a separate step with its own bullet under `Execution:`; you run it only where the assignment names the independent code review for this task (this rule and that bullet mention it in every packet and are not such a naming), once per pull request after every CI job is green on the head you hand off. A Devin red, a Codex P0 or P1 and any security
-   finding is fixed, or refuted from the code in a reply, and checked again on the new head. Devin yellow and Codex P2 and P3 get your
+   request is open and ready you record "review unavailable (no signal)" and go on. The independent code review (`crw review`, a reference opinion) is a separate step with its own bullet under `Execution:`; you run it only where the assignment names the independent code review for this task (this rule and that bullet mention it in every packet and are not such a naming), once per pull request after every CI job is green on the head you hand off. A finding inside this issue's scope is fixed on this pull request whatever its grade, or refuted from the code in a reply, and a P0 or security
+   finding is fixed before the merge whether or not it belongs to this issue; each is checked again on the new head. The rest get your
    reply with your judgment and are resolved or listed for the backlog where SCOPE says; a finding you would leave unfixed is proposed
    to the parent, not accepted by you, unless SCOPE grants that standing decision. Your own independent review, where your workflow runs
    one, ends on a head and the handoff names it, and a High finding of it that you would not apply is not yours to close: list it
@@ -905,7 +906,7 @@ host values filled in.
    [reviewer policy](merge-readiness.md#reviewer-policy),
    [the one run of each reviewer, awaited before the receipt](merge-readiness.md#the-one-run-of-each-reviewer-awaited-before-the-receipt)
    (skip notices, no signal after 30 minutes),
-   [what each finding needs before the receipt](merge-readiness.md#what-each-finding-needs-before-the-receipt) (the grades) and
+   [what each finding needs before the receipt](merge-readiness.md#what-each-finding-needs-before-the-receipt) (the scope basis) and
    [Judge a finding by its impact](merge-readiness.md#judge-a-finding-by-its-impact) (what blocks, and who accepts a residue).
 
 6. **Relay.** Where a relay holds the assignment (SCOPE carries the state directory, marker root, exact issue identity and routing
