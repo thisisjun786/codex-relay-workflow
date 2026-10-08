@@ -21,7 +21,6 @@ var localToolNames = []string{"go", "node", "gitleaks", "staticcheck"}
 var (
 	goModToolchain = regexp.MustCompile(`(?m)^toolchain go([0-9][^\s]*)$`)
 	goModRequire   = regexp.MustCompile(`(?m)^\s*(honnef\.co/go/tools)\s+v([0-9][^\s]*)$`)
-	ciNodeVersion  = regexp.MustCompile(`(?m)^\s*node-version: '([^']+)'$`)
 	secretsVersion = regexp.MustCompile(`(?m)^scan_version=([0-9][^\s]*)$`)
 	goVersionLine  = regexp.MustCompile(`(?m)^go version go([0-9][^\s]*)`)
 )

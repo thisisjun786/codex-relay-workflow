@@ -155,6 +155,7 @@ func TestLocalReuse_each_key_changed_alone_re_runs_the_table(t *testing.T) {
 		"go.sum":      func(r *verificationRecord) { r.Dependencies["go.sum"] = "sha256:other" },
 		"lockfile":    func(r *verificationRecord) { r.Dependencies["web/package-lock.json"] = "sha256:other" },
 		"GOFLAGS":     func(r *verificationRecord) { r.GoFlags = "-p=9" },
+		"heavy gate":  func(r *verificationRecord) { r.HeavyGate = "sha256:other" },
 	}
 	for name, change := range keys {
 		t.Run(name, func(t *testing.T) {

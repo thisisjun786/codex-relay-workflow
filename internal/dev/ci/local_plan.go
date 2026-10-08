@@ -298,7 +298,9 @@ func parseWorkflow(text string) ([]workflowJob, error) {
 		case "name":
 			step.name = strings.Trim(m[2], `\"'`)
 		case "uses":
-			step.uses = strings.Fields(m[2])[0]
+			if fields := strings.Fields(m[2]); len(fields) > 0 {
+				step.uses = fields[0]
+			}
 		case "run":
 			if m[2] != "|" && m[2] != "|-" && m[2] != ">" && m[2] != ">-" {
 				step.run = localYAMLScalar(m[2])

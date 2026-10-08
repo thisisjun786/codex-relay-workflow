@@ -54,6 +54,7 @@ type verificationRecord struct {
 	GoFlags      string            `json:"goFlags"`
 	GoEnv        string            `json:"goEnv"`
 	Range        string            `json:"range"`
+	HeavyGate    string            `json:"heavyGate"`
 	PinMismatch  []string          `json:"pinMismatch"`
 	Dependencies map[string]string `json:"dependencies"`
 	OS           string            `json:"os"`
@@ -275,6 +276,7 @@ func localReuse(reused, current verificationRecord) (bool, string) {
 		was, isNow string
 	}{
 		{"GOFLAGS", reused.GoFlags, current.GoFlags},
+		{"heavy-check gate", reused.HeavyGate, current.HeavyGate},
 		{"GOENV", reused.GoEnv, current.GoEnv},
 	} {
 		if key.was != key.isNow {
@@ -398,4 +400,13 @@ func localValidateReuse(reused verificationRecord, plan []localJob) (bool, strin
 		return false, fmt.Sprintf("the stored result %q does not match its steps (%q)", reused.Result, recomputed)
 	}
 	return true, "every step passed and the record matches the plan"
+}
+
+// localGateDigest names a heavy-check gate without writing its value: a gated run is reused only under the same gate.
+func localGateDigest(gate string) string {
+	if gate == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(gate))
+	return "sha256:" + hex.EncodeToString(sum[:])
 }

@@ -46,7 +46,9 @@ type localOptions struct {
 	WorkRoot string
 	// Parallel is the Go test parallelism every step runs with (GOFLAGS=-p=N); 0 means 4.
 	Parallel int
-	Plan     []localJob
+	// allowTempRoot lets a test work root sit under TMPDIR. Only tests set it; the command never does.
+	allowTempRoot bool
+	Plan          []localJob
 	// Env is extra environment for every step, after the isolated home and TZ (tests use it).
 	Env []string
 	// output is the file the changed-path decision writes its answer to, set once per run.
@@ -135,6 +137,9 @@ func Local(args []string, stdout, stderr io.Writer) int {
 // localVerify answers a reused record when every key matches, or runs the table and returns the
 // record it made.
 func localVerify(opts localOptions, reusePath string, stdout io.Writer) (verificationRecord, bool, error) {
+	// Replacement refs (refs/replace) would let another object stand in for a commit; the run reads the
+	// objects as they are.
+	os.Setenv("GIT_NO_REPLACE_OBJECTS", "1")
 	plan := opts.Plan
 	if plan == nil {
 		plan = localPlan()
@@ -240,6 +245,7 @@ func localCurrentKeys(opts localOptions) (verificationRecord, error) {
 		CiDigest:     ciDigest,
 		Tools:        localObservedVersions(localToolVersionsIn(localPathEnv(opts.Env), goMod), pins),
 		GoFlags:      localEngineFlags(opts.Parallel),
+		HeavyGate:    localGateDigest(opts.HeavyGate),
 		GoEnv:        localIsolatedGoEnv,
 		Dependencies: dependencies,
 		OS:           localHostOS(),
@@ -595,7 +601,7 @@ func localWorkRoot(opts localOptions) (string, error) {
 		return "", fmt.Errorf("the work root %q is not absolute", root)
 	}
 	root = filepath.Clean(root)
-	for _, banned := range []string{localTempDir(), os.TempDir(), "/tmp", "/var/tmp"} {
+	for _, banned := range localBannedRoots(opts) {
 		if banned == "" {
 			continue
 		}
@@ -604,6 +610,15 @@ func localWorkRoot(opts localOptions) (string, error) {
 		}
 	}
 	return root, nil
+}
+
+// localBannedRoots are the directories a work root may not be inside: TMPDIR, the system temporary
+// directories, and nothing when a test has allowed its own root.
+func localBannedRoots(opts localOptions) []string {
+	if opts.allowTempRoot {
+		return nil
+	}
+	return []string{localTempDir(), os.TempDir(), "/tmp", "/var/tmp"}
 }
 
 // localWithin reports whether path is dir or lies below it.
