@@ -1054,6 +1054,59 @@ func RecordAcceptanceVerification(ctx context.Context, s *Store, r AcceptanceVer
 	return err
 }
 
+// AcceptancePremergeRow is the pre-merge record an acceptance was taken on (CRW-952): the record text as it was
+// read, its digest, the head the evaluation names, the head the acceptance stands on, and who recorded it.
+type AcceptancePremergeRow struct {
+	AcceptanceID     string
+	RecordDigest     string
+	RecordJSON       string
+	EvaluatedHead    string
+	AcceptedHead     string
+	RecordedBy       string
+	CoordinatorEpoch int64
+	RecordedAt       string
+}
+
+const acceptancePremergeColumns = "acceptance_id, record_digest, record_json, evaluated_head, accepted_head, recorded_by, coordinator_epoch, recorded_at"
+
+func scanAcceptancePremerge(row scanner) (AcceptancePremergeRow, error) {
+	var r AcceptancePremergeRow
+	err := row.Scan(&r.AcceptanceID, &r.RecordDigest, &r.RecordJSON, &r.EvaluatedHead, &r.AcceptedHead, &r.RecordedBy, &r.CoordinatorEpoch, &r.RecordedAt)
+	return r, err
+}
+
+// RecordAcceptancePremerge appends the pre-merge record of an acceptance. One acceptance holds one row: a
+// second insert is the table's PRIMARY KEY refusal.
+func RecordAcceptancePremerge(ctx context.Context, s *Store, r AcceptancePremergeRow) error {
+	_, err := s.exec(ctx, "INSERT INTO dag_acceptance_premerge ("+acceptancePremergeColumns+") VALUES (?,?,?,?,?,?,?,?)",
+		r.AcceptanceID, r.RecordDigest, r.RecordJSON, r.EvaluatedHead, r.AcceptedHead, r.RecordedBy, r.CoordinatorEpoch, r.RecordedAt)
+	return err
+}
+
+// AcceptancePremerge reads the pre-merge record stored with an acceptance. found is false when the acceptance has
+// none, or when the store predates the table: neither is an error.
+func AcceptancePremerge(ctx context.Context, s *Store, acceptanceID string) (AcceptancePremergeRow, bool, error) {
+	present, err := dagZoneTable(ctx, s, "dag_acceptance_premerge")
+	if err != nil || !present {
+		return AcceptancePremergeRow{}, false, err
+	}
+	row, err := queryRow(ctx, s, scanAcceptancePremerge, "SELECT "+acceptancePremergeColumns+" FROM dag_acceptance_premerge WHERE acceptance_id = ?", acceptanceID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return AcceptancePremergeRow{}, false, nil
+	}
+	if err != nil {
+		return AcceptancePremergeRow{}, false, err
+	}
+	return row, true, nil
+}
+
+// RecordRevalidationPremerge appends the pre-merge record a re-validation was judged on (CRW-952): one row per revalidation.
+func RecordRevalidationPremerge(ctx context.Context, s *Store, revalidationID string, r AcceptancePremergeRow) error {
+	_, err := s.exec(ctx, "INSERT INTO dag_revalidation_premerge (revalidation_id, acceptance_id, record_digest, record_json, evaluated_head, accepted_head, recorded_by, coordinator_epoch, recorded_at) VALUES (?,?,?,?,?,?,?,?,?)",
+		revalidationID, r.AcceptanceID, r.RecordDigest, r.RecordJSON, r.EvaluatedHead, r.AcceptedHead, r.RecordedBy, r.CoordinatorEpoch, r.RecordedAt)
+	return err
+}
+
 // AcceptanceVerification reads the verification record an acceptance was taken on. found is false when
 // the acceptance has none, or when the store predates the table: neither is an error.
 func AcceptanceVerification(ctx context.Context, s *Store, acceptanceID string) (AcceptanceVerificationRow, bool, error) {

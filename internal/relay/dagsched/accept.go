@@ -36,7 +36,10 @@ type AcceptInput struct {
 	// required for an implementation node accepted without a pull request and forbidden together with
 	// PullRequest. Every check and write it needs lives in accept_commit.go; the guards below only pick
 	// the path, so the pull-request path keeps its own reading and its own writes.
-	Commit      *CommitRef
+	Commit *CommitRef
+	// Premerge is the premerge-record/1 document the parent supplies (CRW-952): required for an implementation node's new
+	// acceptance, its supersession and its re-validation, and for the attach of a record to an acceptance that has none.
+	Premerge    []byte
 	Supersedes  string       // the acceptance this one replaces, when the node already has an active acceptance of another output
 	RuleVersion VerifierRule // every field required
 }
@@ -228,6 +231,9 @@ func (s *Scheduler) accept(ctx context.Context, plan, node, actor string, in Acc
 	if commitPath && !implementation {
 		return out, refuse(contract.RefusalMalformedReceipt, "node %s is a %s node: it has no commit to accept", node, n.Kind)
 	}
+	if len(in.Premerge) > 0 && !implementation {
+		return out, refuse(contract.RefusalMalformedReceipt, "node %s is a %s node: it takes no pre-merge record", node, n.Kind)
+	}
 	if commitPath && in.PullRequest != nil {
 		return out, refuse(contract.RefusalMalformedReceipt, "an acceptance names either a pull request or a commit, never both")
 	}
@@ -384,12 +390,28 @@ func (s *Scheduler) accept(ctx context.Context, plan, node, actor string, in Acc
 			}
 			out.HeadSHA = a.HeadSHA
 			if effective == head.SetDigest {
+				if implementation && len(in.Premerge) > 0 {
+					// the attach path (CRW-952 answer 5): a record for an acceptance that has none is stored once
+					cn, _ := nodeOf(current, node)
+					if err := s.attachPremerge(txCtx, tx, in, existing, node, cn, a.HeadSHA, actor); err != nil {
+						return err
+					}
+				}
 				out.Replayed = true
 				return nil
 			}
 			// ruling the same output again resolves a change of the criteria and nothing else (revalidation.go)
 			if cn, ok := nodeOf(current, node); ok {
 				if err := s.refuseRevalidation(txCtx, tx, plan, current, cn); err != nil {
+					return err
+				}
+			}
+			// a re-validation is judged on its own record against the criteria now registered; that record is not stored, so the
+			// acceptance keeps the record it was accepted with (CRW-952 answer 4)
+			var revalJudged premergeJudgment
+			if implementation {
+				cn, _ := nodeOf(current, node)
+				if revalJudged, err = judgePremerge(txCtx, in.Premerge, node, cn, a.HeadSHA, premergeAttachPath(in)); err != nil {
 					return err
 				}
 			}
@@ -402,12 +424,29 @@ func (s *Scheduler) accept(ctx context.Context, plan, node, actor string, in Acc
 				revalidationID(existing, seq), existing, head.SetDigest, head.EventID, head.VerdictTurn, seq, actor, s.now()); err != nil {
 				return err
 			}
+			if implementation {
+				if err := store.RecordRevalidationPremerge(txCtx, s.Store, revalidationID(existing, seq), store.AcceptancePremergeRow{AcceptanceID: existing, RecordDigest: revalJudged.digest, RecordJSON: string(revalJudged.raw), EvaluatedHead: revalJudged.evaluatedHead, AcceptedHead: a.HeadSHA, RecordedBy: actor, CoordinatorEpoch: s.ExpectedEpoch, RecordedAt: s.now()}); err != nil {
+					return err
+				}
+			}
 			out.Revalidated = true
 			return nil
 		}
 
 		if !bound {
 			return refuse(contract.RefusalStaleGeneration, "generation %d of %s is not recorded as an execution of %s (a correction is recorded with dag-correct before its result is accepted)%s", rel.Generation, rel.ID, node, s.unsentGenerationHint(txCtx, tx, rel))
+		}
+		// the pre-merge record of a new output is judged on the head it stands on (CRW-952 answers 2 and 4); it is stored with the acceptance below
+		var judged premergeJudgment
+		if implementation {
+			acceptedHead := pr.HeadSHA
+			if commitPath {
+				acceptedHead = prepared.ref.Head
+			}
+			cn, _ := nodeOf(current, node)
+			if judged, err = judgePremerge(txCtx, in.Premerge, node, cn, acceptedHead, premergeAttachPath(in)); err != nil {
+				return err
+			}
 		}
 		// a new output: it supersedes the node's active acceptance only explicitly
 		if implementation && !commitPath && (pr.State != "open" || pr.IsDraft) {
@@ -464,6 +503,12 @@ func (s *Scheduler) accept(ctx context.Context, plan, node, actor string, in Acc
 			a.AcceptanceID, a.PlanID, a.NodeID, a.ManifestDigest, a.RelationshipID, a.ExecutionGeneration, a.EventID, a.RevisionHash, a.CriteriaSetDigest, a.Verdict, head2, repo2, pr2, ref, evidence2,
 			a.AckTier, a.VerdictTurnID, a.RuleVersionJSON, a.AcceptedByTask, a.CoordinatorEpoch, a.AcceptedAt, supersedes, a.State); err != nil {
 			return err
+		}
+		// the pre-merge record is appended with its acceptance, which it references
+		if implementation {
+			if err := s.storePremerge(txCtx, a.AcceptanceID, a.HeadSHA, actor, judged, s.ExpectedEpoch); err != nil {
+				return err
+			}
 		}
 		// the acceptance row first: dag_acceptance_forge and dag_acceptance_verifications both reference it with an immediate foreign key
 		if implementation {

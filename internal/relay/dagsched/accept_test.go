@@ -19,7 +19,7 @@ func (k *releaseKit) accept(plan, node string, in AcceptInput) (AcceptResult, er
 	if in.RuleVersion == (VerifierRule{}) {
 		in.RuleVersion = verifier
 	}
-	return k.sched.Accept(context.Background(), plan, node, "parent", in)
+	return k.sched.Accept(context.Background(), plan, node, "parent", premergeWithRecord(k.sched, context.Background(), plan, node, "parent", in))
 }
 
 func (k *releaseKit) acceptCount() int { return k.count("SELECT COUNT(*) FROM dag_acceptances") }
@@ -84,7 +84,7 @@ func TestAcceptRequiresPAV1(t *testing.T) {
 			}
 			in := c.input
 			in.RuleVersion = verifier
-			res, err := k.sched.Accept(context.Background(), "rp", "A", actor, in)
+			res, err := k.sched.Accept(context.Background(), "rp", "A", actor, premergeWithRecord(k.sched, context.Background(), "rp", "A", actor, in))
 			if c.reason == "" {
 				if err != nil || res.AcceptanceID == "" || res.Replayed || k.acceptCount() != 1 {
 					t.Fatalf("accept = %v %+v (%d rows)", err, res, k.acceptCount())

@@ -13,10 +13,11 @@ func (k *batchKit) acceptByCommitForCriteria(node string) AcceptResult {
 	k.t.Helper()
 	head := k.heads[node]
 	record := writeSealedRecord(k.t, k.repo.path, head, k.base, k.treeOf(head), "pass")
-	out, err := k.sched.Accept(context.Background(), "g", node, "parent", AcceptInput{
+	out, err := k.sched.Accept(context.Background(), "g", node, "parent", premergeWithRecord(k.sched, context.Background(), "g", node, "parent", AcceptInput{
 		RuleVersion: VerifierRule{SkillsDigest: dig("skills"), Model: "m", Effort: "none"},
 		Commit:      &CommitRef{Head: head, Base: k.base, Checkout: k.repo.path, Record: record},
-	})
+	}))
+
 	if err != nil {
 		k.t.Fatalf("accept %s: %v", node, err)
 	}
