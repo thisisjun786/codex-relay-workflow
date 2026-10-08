@@ -330,3 +330,17 @@ func shellIRProgramUnreadable(program string) (string, bool) {
 	}
 	return "", false
 }
+
+// ShellWriteDestinations is the destinations a shell command writes, read by the shared command reader with no working
+// directory: a relative destination is named as written. A command the reader cannot read names the unknown destination
+// alone, which a gate asks a grant for.
+func ShellWriteDestinations(command string) []string {
+	dests, ok := shellIRWriteDests(command, "", nil)
+	if !ok {
+		return []string{shellIRUnknownDest}
+	}
+	if dests == nil {
+		return []string{}
+	}
+	return dests
+}
