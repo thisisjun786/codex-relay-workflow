@@ -159,7 +159,7 @@ func inspect(ctx context.Context, dbPath string) (fenceState, error) {
 		return fenceState{}, fmt.Errorf("existing store required: %w", err)
 	}
 	state := fenceState{physical: physical, meta: map[string]string{}}
-	snapshot, cleanup, err := ownership.CopySnapshot(physical.RealPath)
+	snapshot, cleanup, err := snapshotStore(physical.RealPath)
 	if err != nil {
 		return state, err
 	}
@@ -204,7 +204,7 @@ func admitted(ctx context.Context, path string) (ownership.Record, ownership.Sta
 	if err != nil {
 		return record, ownership.Stamp{}, err
 	}
-	stamp, err := ownership.SnapshotMeta(ctx, path)
+	stamp, err := snapshotMeta(ctx, path)
 	if err != nil {
 		return record, stamp, err
 	}
@@ -423,7 +423,7 @@ func rehome(ctx context.Context, dbPath string) (err error) {
 		return fmt.Errorf("not a fenced store (%s): a fixture is Fence", state)
 	}
 	path := state.physical.RealPath
-	stamp, err := ownership.SnapshotMeta(ctx, path)
+	stamp, err := snapshotMeta(ctx, path)
 	if err != nil {
 		return err
 	}
@@ -488,7 +488,7 @@ func restamp(ctx context.Context, dbPath, owner string) (err error) {
 			}
 		}
 	}
-	stamp, err := ownership.SnapshotMeta(ctx, path)
+	stamp, err := snapshotMeta(ctx, path)
 	if err != nil {
 		return err
 	}
@@ -718,4 +718,49 @@ func validate(path string, r ownership.Record, s ownership.Stamp) error {
 		return errors.New("installed transition missing")
 	}
 	return nil
+}
+
+// snapshotStore copies a store file and its write-ahead log into a new temporary directory and returns the
+// copy's path. It reads through os.ReadFile, so the descriptors it uses are closed before it returns.
+// ownership.CopySnapshot reads through the process's held-handle registry instead (CRW-846), which keeps
+// one descriptor per store file for the life of the process; a test that fences several stores would
+// exhaust the descriptor limit of the package run. The price is that closing these descriptors would drop
+// the POSIX locks of a live connection this process holds on the file, so a fixture must not fence a store
+// it has open: Create closes its own connection before it fences.
+func snapshotStore(path string) (string, func() error, error) {
+	dir, err := os.MkdirTemp("", "crw-testsupport-snapshot-")
+	if err != nil {
+		return "", nil, err
+	}
+	cleanup := func() error { return os.RemoveAll(dir) }
+	dst := filepath.Join(dir, filepath.Base(path))
+	for _, suffix := range []string{"", "-wal"} {
+		data, err := os.ReadFile(path + suffix)
+		if errors.Is(err, os.ErrNotExist) && suffix != "" {
+			continue
+		}
+		if err != nil {
+			return "", nil, errors.Join(err, cleanup())
+		}
+		if err := os.WriteFile(dst+suffix, data, 0o600); err != nil {
+			return "", nil, errors.Join(err, cleanup())
+		}
+	}
+	return dst, cleanup, nil
+}
+
+// snapshotMeta reads the durable stamp of a store from a snapshot copy, as ownership.SnapshotMeta does, but
+// through snapshotStore so that no held descriptor is kept (see snapshotStore).
+func snapshotMeta(ctx context.Context, path string) (ownership.Stamp, error) {
+	dst, cleanup, err := snapshotStore(path)
+	if err != nil {
+		return ownership.Stamp{}, err
+	}
+	defer func() { _ = cleanup() }()
+	db, err := ownership.OpenExisting(ctx, dst, "ro")
+	if err != nil {
+		return ownership.Stamp{}, err
+	}
+	stamp, err := ownership.ReadStamp(ctx, db)
+	return stamp, errors.Join(err, db.Close())
 }
