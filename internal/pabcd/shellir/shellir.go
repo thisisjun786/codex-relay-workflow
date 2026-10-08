@@ -321,7 +321,7 @@ func (w *walker) stmt(s *syntax.Stmt, st *state, ctx Context) error {
 	case *syntax.CaseClause:
 		return w.caseClause(c, st, ctx)
 	case *syntax.FuncDecl:
-		return w.funcDecl(c, st)
+		return w.funcDecl(c, st, ctx)
 	case *syntax.ArithmCmd:
 		if err := w.substsIn(c, st, ctx); err != nil {
 			return err
@@ -503,13 +503,15 @@ func (w *walker) caseClause(c *syntax.CaseClause, st *state, ctx Context) error 
 	return nil
 }
 
-func (w *walker) funcDecl(c *syntax.FuncDecl, st *state) error {
+func (w *walker) funcDecl(c *syntax.FuncDecl, st *state, ctx Context) error {
 	name := c.Name.Value
 	if modelledName(name) {
 		return unreadablef("function %s would shadow a modelled program", name)
 	}
 	st.funcs[name] = c.Body
-	return nil
+	fctx := ctx
+	fctx.FuncBody = true
+	return w.stmt(c.Body, st.clone(), fctx)
 }
 
 func (w *walker) callFunc(name string, body *syntax.Stmt, st *state, ctx Context) error {

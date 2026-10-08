@@ -52,7 +52,7 @@ func TestCommandVerdicts(t *testing.T) {
 		{"git unlisted subcommand", "git frob", true, nil},
 		{"npm script shell", "npm --script-shell=/bin/sh install", true, nil},
 		{"zsh repeat", "repeat 2 echo", true, nil},
-		{"function body walked", "f() { echo hi; }; f", false, []string{"f", "echo"}},
+		{"function body walked", "f() { echo hi; }; f", false, []string{"echo", "f", "echo"}},
 		{"function shadows gh", "gh() { :; }", true, nil},
 		{"command substitution", "x=$(gh pr view)", false, []string{"gh", ""}},
 		{"find -exec", "find . -exec rm {} \\;", false, []string{"find", "rm"}},
