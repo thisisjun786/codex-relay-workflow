@@ -301,7 +301,14 @@ func localExecute(opts localOptions, plan []localJob, current verificationRecord
 	}
 	defer cleanup()
 	if out, err := runGit(opts.Root, "-c", "core.hooksPath=/dev/null", "worktree", "add", "--detach", worktree, current.HeadCommit); err != nil {
-		return verificationRecord{}, false, fmt.Errorf("creating the clean worktree: %w%s", err, localReason(string(out)))
+		// A checkout that fails is a failed record, named with its reason, not a missing one.
+		failed := current
+		failed.Sealed = true
+		failed.PlanDigest = planDigest(plan)
+		failed.IgnoredEnv = localIgnoredEnv(os.Environ())
+		failed.Result = localFail
+		failed.Jobs = []recordJob{{Name: "clean worktree", Result: localFail, Steps: []recordStep{{Job: "clean worktree", Name: "git worktree add", Scope: "full", Result: localFailed, Reason: fmt.Sprintf("%v%s", err, localReason(string(out)))}}}}
+		return failed, false, nil
 	}
 	opts.output = filepath.Join(temp, "runner", "output")
 	env, err := localStepEnv(home, temp, opts)
@@ -528,6 +535,7 @@ func localStepEnv(home, temp string, opts localOptions) ([]string, error) {
 		"RUNNER_TEMP=" + runner,
 		"GITHUB_OUTPUT=" + opts.output,
 		"GITHUB_EVENT_NAME=pull_request",
+		"GIT_NO_REPLACE_OBJECTS=1",
 	}
 	for _, name := range localInheritedEnv {
 		if value, ok := os.LookupEnv(name); ok {

@@ -229,3 +229,17 @@ func TestLocal_a_step_never_sees_the_callers_module_cache(t *testing.T) {
 		t.Errorf("the step is %q (%s): the caller's module cache reached it", step.Result, step.Reason)
 	}
 }
+
+// A step runs with replacement refs disabled, as the run's own reads do, so no replaced object can
+// change what a step reads.
+func TestLocal_a_step_reads_git_objects_without_replacement_refs(t *testing.T) {
+	repo := newLocalFixture(t)
+	record := filepath.Join(t.TempDir(), "record.json")
+	made, _, err := localVerify(localRunOptions(repo, localFixturePlan(`test "$GIT_NO_REPLACE_OBJECTS" = 1`), record), "", io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if step := made.Jobs[0].Steps[1]; step.Result != localPassed {
+		t.Errorf("the step is %q (%s): replacement refs are not disabled for it", step.Result, step.Reason)
+	}
+}
