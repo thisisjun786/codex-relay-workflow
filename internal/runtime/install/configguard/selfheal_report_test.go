@@ -16,6 +16,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/harness"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/install/execfile"
 )
 
 // The J4 rule (Jun, 2026-10-06) makes this hook report-only: it diagnoses the declared [features]
@@ -240,7 +241,7 @@ func selfHealReportFakeCodex(t *testing.T, listing string) string {
 		"exit 0\n" +
 		"fi\n" +
 		"exit 1\n"
-	if err := os.WriteFile(filepath.Join(dir, "codex"), []byte(script), 0o755); err != nil {
+	if err := execfile.WriteExecutable(filepath.Join(dir, "codex"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir)
@@ -270,7 +271,7 @@ func selfHealReportFakeCodexAt(t *testing.T) string {
 
 func selfHealReportWriteFakeCodex(t *testing.T, dir, body string) {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(dir, "codex"), []byte("#!/bin/sh\n"+body), 0o755); err != nil {
+	if err := execfile.WriteExecutable(filepath.Join(dir, "codex"), []byte("#!/bin/sh\n"+body), 0o755); err != nil {
 		t.Fatal(err)
 	}
 }

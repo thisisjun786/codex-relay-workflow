@@ -10,6 +10,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 )
 
 // The five changes a caller may propose. Exactly one is applied per request, and nothing outside
@@ -130,6 +131,13 @@ func Check(raw []byte, expectedDigest string, change Change) CheckResult {
 		return result
 	}
 	encoded := []byte(encode(updated))
+	// A change that produces the bytes already on disk moves nothing, so it cannot be published: the
+	// write's promise is that a repeated request ends stale_digest, which needs the digest to advance.
+	// Like removing an unlisted model, such a request is refused rather than reported as a change.
+	if string(encoded) == string(raw) {
+		result.Errors = append(result.Errors, "the change moves nothing: the policy already holds these values")
+		return result
+	}
 	candidate, err := execution.FromBytes(encoded, "the candidate execution policy")
 	if err != nil {
 		result.Errors = append(result.Errors, err.Error())
@@ -248,21 +256,81 @@ func applyRolePairs(document pyjson.Object, change Change) (pyjson.Object, []str
 	existing, _ := roles.Get(change.Role).(pyjson.Object)
 	entry := pyjson.Object{}
 	for _, field := range existing {
-		if field.Key == "model" || field.Key == "pairs" || field.Key == "reasoningEffort" {
+		if field.Key == "model" || field.Key == "pairs" || field.Key == "reasoningEffort" || field.Key == "autoCompactTokenLimit" {
 			continue
 		}
 		entry = append(entry, field)
 	}
+	// The limit belongs to a pair, and this change rebuilds the whole list. Every limit the role
+	// declares today is read here, so a pair the change keeps keeps its limit and a legacy single
+	// declaration's limit follows its one pair into the list rather than being left beside it,
+	// where the parser refuses it. A change may still state a limit of its own for any pair.
+	declared := declaredLimits(existing)
 	if len(change.Pairs) == 1 {
 		entry = append(entry, pyjson.Field{Key: "model", Value: change.Pairs[0].Model}, pyjson.Field{Key: "reasoningEffort", Value: change.Pairs[0].Effort})
+		if limit, ok := limitFor(change.Pairs[0], declared); ok {
+			entry = append(entry, pyjson.Field{Key: "autoCompactTokenLimit", Value: limit})
+		}
 	} else {
 		list := make([]any, 0, len(change.Pairs))
 		for _, pair := range change.Pairs {
-			list = append(list, pyjson.Object{{Key: "model", Value: pair.Model}, {Key: "reasoningEffort", Value: pair.Effort}})
+			built := pyjson.Object{{Key: "model", Value: pair.Model}, {Key: "reasoningEffort", Value: pair.Effort}}
+			if limit, ok := limitFor(pair, declared); ok {
+				built = append(built, pyjson.Field{Key: "autoCompactTokenLimit", Value: limit})
+			}
+			list = append(list, built)
 		}
 		entry = append(entry, pyjson.Field{Key: "pairs", Value: list})
 	}
 	return document.Set("roles", roles.Set(change.Role, entry)), []string{"roles." + change.Role}, nil
+}
+
+// declaredLimits is every autoCompactTokenLimit a role entry declares today: the limit of each pair
+// it lists, and the limit beside a legacy single declaration, which belongs to that one pair. The
+// key is the pair's own model and effort in two nested maps, so no delimiter inside either name can
+// make two different pairs look like one.
+func declaredLimits(entry pyjson.Object) map[string]map[string]any {
+	limits := map[string]map[string]any{}
+	record := func(pair pyjson.Object) {
+		limit, present := pair.Lookup("autoCompactTokenLimit")
+		if !present {
+			return
+		}
+		model, _ := pair.Lookup("model")
+		effort, _ := pair.Lookup("reasoningEffort")
+		byEffort := limits[pyvalue.Str(model)]
+		if byEffort == nil {
+			byEffort = map[string]any{}
+			limits[pyvalue.Str(model)] = byEffort
+		}
+		byEffort[pyvalue.Str(effort)] = limit
+	}
+	if listed, ok := entry.Get("pairs").([]any); ok {
+		for _, item := range listed {
+			if pair, ok := item.(pyjson.Object); ok {
+				record(pair)
+			}
+		}
+		return limits
+	}
+	record(entry)
+	return limits
+}
+
+// limitFor is the limit a rebuilt pair carries: the one the change states for it, or the one the
+// document already declared for that same model and effort. The second value is false when neither
+// has one, and then no key is written at all, so a pair without a limit is written the way it
+// always was rather than gaining an explicit null.
+func limitFor(pair Pair, declared map[string]map[string]any) (any, bool) {
+	if pair.limitPresent {
+		return pair.limit, true
+	}
+	byEffort, ok := declared[pair.Model]
+	if !ok {
+		return nil, false
+	}
+	limit, ok := byEffort[pair.Effort]
+	return limit, ok
 }
 
 // applyAllowed sets one model's approved efforts.

@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -24,8 +25,11 @@ func heldOutput(t *testing.T) {
 	dir := t.TempDir()
 	bridge := filepath.Join(dir, "bridge")
 	// The descendant sleeps with stdout inherited; the bridge itself reads stdin and says nothing.
-	if err := os.WriteFile(bridge, []byte("#!"+sh+"\nsleep 60 &\necho $! > "+filepath.Join(dir, "child")+"\nexec cat >/dev/null\n"), 0o700); err != nil {
-		t.Fatal(err)
+	syscall.ForkLock.RLock()
+	writeErr := os.WriteFile(bridge, []byte("#!"+sh+"\nsleep 60 &\necho $! > "+filepath.Join(dir, "child")+"\nexec cat >/dev/null\n"), 0o700)
+	syscall.ForkLock.RUnlock()
+	if writeErr != nil {
+		t.Fatal(writeErr)
 	}
 	defer func() {
 		if b, err := os.ReadFile(filepath.Join(dir, "child")); err == nil {

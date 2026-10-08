@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -77,7 +78,10 @@ func repo(t *testing.T, config string, tracked bool) string {
 func stubGit(t *testing.T, script string) {
 	t.Helper()
 	dir := t.TempDir()
-	check(t, os.WriteFile(filepath.Join(dir, "git"), []byte("#!/bin/sh\n"+script+"\n"), 0o755))
+	syscall.ForkLock.RLock()
+	writeErr := os.WriteFile(filepath.Join(dir, "git"), []byte("#!/bin/sh\n"+script+"\n"), 0o755)
+	syscall.ForkLock.RUnlock()
+	check(t, writeErr)
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 

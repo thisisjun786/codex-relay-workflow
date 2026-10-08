@@ -1,8 +1,8 @@
 package install
 
 import (
-	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -51,11 +51,14 @@ const (
 	RecordUpdated           = "record_updated"
 	RecordWouldUpdate       = "record_would_update"
 	RecordUpdateFailed      = "record_update_failed"
-	RecordNotCanonical      = "record_not_canonical"
-	RecordSymlinked         = "record_symlinked"
-	Conflict                = "CONFLICT"
-	Busy                    = "BUSY"
-	PolicyUnreadable        = "execution_policy_unreadable"
+	// RecordNotCanonical is no longer answered: CRW-931 replaced the refusal of a record in another
+	// spelling with a write that keeps every byte it does not replace. It stays defined for the
+	// callers that name it.
+	RecordNotCanonical = "record_not_canonical"
+	RecordSymlinked    = "record_symlinked"
+	Conflict           = "CONFLICT"
+	Busy               = "BUSY"
+	PolicyUnreadable   = "execution_policy_unreadable"
 )
 
 var recordSettled = map[string]bool{RecordUnchanged: true, RecordCreated: true, RecordWouldCreate: true}
@@ -184,6 +187,30 @@ func bridgeComplaints(found any) []string {
 			wrong = append(wrong, "only a plugin-owned record names an execution policy")
 		}
 		wrong = append(wrong, policyComplaints(read.Policy)...)
+	}
+	return wrong
+}
+
+// launcherComplaints is the launcher's own judgement of a decoded bridge record, asked of the
+// package that starts the bridge (pluginwiring.RecordComplaints and pluginwiring.ExecComplaints)
+// rather than copied here, so the re-registration refuses exactly what the launcher refuses: the
+// version, the owner, the serverName the package declares, an absolute executable, string args,
+// the version-1/version-2 policy rule, and an executable and arguments an exec can take. The
+// installer's own reading (bridgeComplaints) is the wider one - it also takes the user-owned
+// record and a relative executable the launcher never starts - so both are asked, and the
+// launcher's answer is what keeps a record the launcher will not start out of the record file.
+// Each answer is worded to follow "the record at <path> ".
+func launcherComplaints(found Object) []string {
+	wrong := append(pluginwiring.RecordComplaints(found), pluginwiring.ExecComplaints(found)...)
+	// The launcher's last record-dependent refusal is the one Bridge makes on the argument list it
+	// would exec: a list beginning with the plugin-launch flag would start this launcher again
+	// instead of the bridge. The installer asks the launcher's own predicate
+	// (pluginwiring.ArgumentsStartTheLauncher) about the record's arguments, so a record the
+	// launcher refuses is refused here too, and Prepare's own answer for the launcher is unchanged.
+	if pluginwiring.ArgumentsStartTheLauncher(pluginwiring.ReadBridgeRecord(found).Args) {
+		wrong = append(wrong, "lists "+strconv.Quote(pluginwiring.Flag)+
+			" as the first argument the bridge would be started with, which "+
+			pluginwiring.ArgumentStartsTheLauncher)
 	}
 	return wrong
 }
@@ -649,14 +676,18 @@ type PolicyUpdateOptions struct {
 
 // UpdateRegisteredPolicy re-registers the execution policy of the bridge record that is already
 // installed. It reads and writes under the crw-mcp-ownership lock every writer of that record takes,
-// replaces executionPolicy alone - path and digest, with the file judged by the same check the bridge
-// applies at start (executionPolicyReading) - keeps every other field's bytes and order, backs the
-// record up beside itself before the replacement, publishes the new bytes atomically
-// (record.AtomicWrite: temporary file, fsync, rename) and fsyncs the directory, and answers
-// record_updated with the replaced field, the backup path and the restart the new policy needs. An
-// unchanged policy is left as it is. A record that is absent, unreadable or version 1 writes nothing
-// and answers with its own outcome, as does a policy the bridge would refuse. No bridge and no relay
-// service is started, stopped or signalled: a record written now is read by the next bridge start.
+// reads the policy file under that lock so the digest it decides from is the one the launcher would
+// read now, replaces executionPolicy alone - path and digest, with the file judged by the same check
+// the bridge applies at start (executionPolicyReading) - keeps every other byte of the record, backs
+// it up beside itself before the replacement, publishes the new bytes atomically (record.AtomicWrite:
+// temporary file, fsync, rename) and fsyncs the directory, and answers record_updated with the
+// replaced field, the backup path and the restart the new policy needs. An unchanged policy is left
+// as it is. The record is published as its own bytes with one member's value replaced, so a record
+// this installer did not write - hand-edited, or written by another tool - is re-registered rather
+// than refused; a record the launcher refuses is still refused, as malformed. A record that is
+// absent, unreadable or version 1 writes nothing and answers with its own outcome, as does a policy
+// the bridge would refuse. No bridge and no relay service is started, stopped or signalled: a record
+// written now is read by the next bridge start.
 func UpdateRegisteredPolicy(ctx context.Context, o Options, r PolicyUpdateOptions) (Object, int) {
 	recordPath := filepath.Join(o.CodexHome, BridgeRecordName)
 	base := Object{field("command", "register-mcp"), field("reRegisterPolicy", true), field("record", recordPath)}
@@ -669,11 +700,9 @@ func UpdateRegisteredPolicy(ctx context.Context, o Options, r PolicyUpdateOption
 		return append(base, field("outcome", Conflict), field("detail", "the re-registration path names the policy to register with --execution-policy; the record's other fields are kept, so no other option is needed"),
 			field("applied", false), field("wrote", false), field("note", "nothing was written")), Usage
 	}
-	reading, why := executionPolicyReading(r.ExecutionPolicy)
-	if reading == nil {
-		return refused(append(base, field("outcome", PolicyUnreadable), field("detail", why)),
-			"nothing was written: a record naming a policy the bridge would refuse is a bridge that never starts")
-	}
+	// The seam runs just before the wait for the ownership lock, so a test can order a policy file's
+	// own change against it.
+	beforeOwnershipLock()
 	lock, err := record.Lock(ctx, filepath.Join(o.CodexHome, OwnershipLockName), 0)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -688,6 +717,17 @@ func UpdateRegisteredPolicy(ctx context.Context, o Options, r PolicyUpdateOption
 		// neither, so an interrupted command leaves the record as it was.
 		return refused(append(base, field("outcome", Interrupted), field("detail", interrupted(err))), "nothing was written")
 	}
+	// The policy file is read under the lock, and that one reading drives every decision below. A
+	// policy that moved while this run waited for the lock is therefore what the record is given,
+	// instead of a record_unchanged answer over a digest the launcher already refuses; a policy
+	// another run is repairing is registered rather than refused from a reading the wait invalidated;
+	// and a policy the bridge would still refuse is refused here, where the file the launcher will
+	// open is the file this run read.
+	reading, why := executionPolicyReading(r.ExecutionPolicy)
+	if reading == nil {
+		return refused(append(base, field("outcome", PolicyUnreadable), field("detail", why)),
+			"nothing was written: a record naming a policy the bridge would refuse is a bridge that never starts")
+	}
 	// The look is taken before the record is read and compared again under the lock: a record that
 	// changed between the two, or after them, is a document this decision never saw.
 	before := lookAt(recordPath)
@@ -701,6 +741,24 @@ func UpdateRegisteredPolicy(ctx context.Context, o Options, r PolicyUpdateOption
 		return refused(append(base, field("outcome", outcome), field("detail", detail)),
 			"nothing was written: the record that names the policy could not be read")
 	}
+	// The look and the read are two syscalls: a record created, removed or replaced between them is
+	// not the document the look saw. This is decided before the record's own bytes are interpreted,
+	// because those bytes are the look's, not the read's: a record that appeared after the look, or
+	// one that moved, answers record_changed_underneath with the repair advice rather than a splice
+	// attempted over bytes that were never the decision's.
+	if again := lookAt(recordPath); !again.same(before) {
+		return refused(append(base, field("outcome", RecordChangedUnderneath),
+			field("detail", "the record at "+recordPath+" changed while it was being read (another file, size, modification time or bytes), so nothing was written"),
+			field("repair", "rerun to decide against the file as it now stands")), "nothing was written")
+	}
+	// The record this run reads is judged by the launcher's own checks (launcherComplaints) before
+	// any decision: a record this package would refuse to start - another serverName, an executable
+	// or an argument no exec can take - is refused here as malformed too, with its bytes unchanged
+	// and no backup written, rather than re-registered into a record the launcher still refuses.
+	if wrong := launcherComplaints(found); len(wrong) > 0 {
+		return refused(append(base, field("outcome", RecordMalformed), field("detail", strings.Join(wrong, "; ")), field("complaints", strs(wrong))),
+			"nothing was written: the record the launcher would start is not one it reads")
+	}
 	if pluginwiring.ReadBridgeRecord(found).Version == BridgeRecordVersion {
 		return refused(append(base, field("outcome", RecordDiffers),
 			field("detail", "the record is version 1 and names no execution policy; replacing one field would give it a policy without the recordVersion that declares one"),
@@ -708,16 +766,21 @@ func UpdateRegisteredPolicy(ctx context.Context, o Options, r PolicyUpdateOption
 			field("repair", strings.ReplaceAll(policyRepair, "%s", recordPath))), "nothing was written")
 	}
 	wanted := reRegistered(found, reading)
-	if wrong := append(bridgeComplaints(wanted), unspellable(wanted)...); len(wrong) > 0 {
+	if wrong := append(append(bridgeComplaints(wanted), unspellable(wanted)...), launcherComplaints(wanted)...); len(wrong) > 0 {
 		return refused(append(base, field("outcome", RecordMalformed), field("detail", strings.Join(wrong, "; ")), field("complaints", strs(wrong))),
 			"nothing was written: the record this run would write is not one the launcher reads")
 	}
-	// The look and the read are two syscalls: a record replaced between them is not the document the
-	// look saw, and the answer says so rather than deciding on a record it never read.
-	if again := lookAt(recordPath); !again.same(before) {
-		return refused(append(base, field("outcome", RecordChangedUnderneath),
-			field("detail", "the record at "+recordPath+" changed while it was being read (another file, size, modification time or bytes), so nothing was written"),
-			field("repair", "rerun to decide against the file as it now stands")), "nothing was written")
+	// The bytes this run publishes: the record as it is, with only the executionPolicy member's value
+	// replaced by the installer's form of the new policy. The document is not re-encoded, so every
+	// field this path does not replace keeps its spelling, its whitespace, its key order and its
+	// bytes, and a record in another spelling is re-registered rather than refused. It is taken from
+	// the look the decision was made from, so a record a writer that ignores the ownership lock
+	// replaced while this run was reading it is answered record_changed_underneath above, rather than
+	// reported here as bytes this run cannot splice.
+	published, err := reRegisteredBytes(before.raw, wanted)
+	if err != nil {
+		return refused(append(base, field("outcome", RecordUpdateFailed), field("detail", err.Error())),
+			"nothing was written: the record's own bytes could not be given the policy this run read")
 	}
 	// A record reached through a symbolic link is refused: the read and the backup follow the link,
 	// but the replacement renames a file over the path itself, which would turn the link into a
@@ -728,21 +791,19 @@ func UpdateRegisteredPolicy(ctx context.Context, o Options, r PolicyUpdateOption
 			field("detail", "the record at "+recordPath+" is a symbolic link, and replacing it would turn the link into a regular file rather than update the file it names"),
 			field("repair", "replace the link with the record it names, or register the record at that path afresh")), "nothing was written")
 	}
-	// The bytes of the fields this path keeps are the bytes on disk only when the record is written in
-	// the installer's own canonical form. A record in any other spelling - hand-edited, or written by
-	// another tool - is refused rather than rewritten, because publishing it would reserialize the
-	// fields this operation promises to leave alone.
-	if !bytes.Equal(before.raw, record.Encode(found)) {
-		return refused(append(base, field("outcome", RecordNotCanonical),
-			field("detail", "the record at "+recordPath+" is not in the form this installer writes, so replacing one field would rewrite the others; this path keeps every field it does not replace byte for byte"),
-			field("repair", "move "+recordPath+" aside and run crw install register-mcp --owner plugin --execution-policy <file>, then rerun this command for later policy edits")),
-			"nothing was written")
-	}
 	// One owner registers this surface: a Codex configuration that also starts the bridge is the other
 	// registration, and replacing the plugin record beside it would leave two bridges running.
 	if conflict := competingRegistration(o.CodexHome, wanted); conflict != "" {
 		return refused(append(base, field("outcome", Conflict), field("detail", conflict)),
 			"nothing was written. One owner registers this server; the other is reported with its evidence rather than joined.")
+	}
+	// The policy file is checked before the unchanged answer: the record is already installed, and
+	// worth leaving alone, only while the file still hashes to what the run read under the lock. A
+	// file that moved between that reading and here is reported rather than answered as unchanged.
+	if stale := policyFileComplaints(policyReference(reading)); len(stale) > 0 {
+		return refused(append(base, field("outcome", RecordPolicyChanged),
+			field("detail", "the execution policy changed while this run was deciding: "+strings.Join(stale, "; ")+", so nothing was written"),
+			field("repair", "run crw install register-mcp --re-register-policy again against the file as it now stands")), "nothing was written")
 	}
 	if pyjson.Dumps(record.Get(found, "executionPolicy"), pyjson.Options{Compact: true, SortKeys: true, Unicode: true}) ==
 		pyjson.Dumps(record.Get(wanted, "executionPolicy"), pyjson.Options{Compact: true, SortKeys: true, Unicode: true}) {
@@ -791,7 +852,7 @@ func UpdateRegisteredPolicy(ctx context.Context, o Options, r PolicyUpdateOption
 			field("detail", "the record at "+recordPath+" changed while this run was backing it up (another file, size, modification time or bytes), so it was not replaced"),
 			field("backup", backup), field("repair", "rerun to decide against the file as it now stands")), "the record was not replaced; the backup beside it holds the bytes this run read")
 	}
-	if renamed, err := publishRecord(recordPath, record.Encode(wanted)); err != nil {
+	if renamed, err := publishRecord(recordPath, published); err != nil {
 		if !renamed {
 			return refused(append(base, field("outcome", RecordUpdateFailed),
 				field("detail", "the record could not be written: "+err.Error()), field("backup", backup)),
@@ -807,7 +868,8 @@ func UpdateRegisteredPolicy(ctx context.Context, o Options, r PolicyUpdateOption
 	}
 	// Read back: the answer names the record this run wrote, not the one it meant to write.
 	readBack, readOutcome, _ := readBridgeRecord(recordPath)
-	if readOutcome != "" || pyjson.Dumps(readBack, pyjson.Options{Compact: true, SortKeys: true, Unicode: true}) != pyjson.Dumps(wanted, pyjson.Options{Compact: true, SortKeys: true, Unicode: true}) {
+	if readOutcome != "" || len(launcherComplaints(readBack)) > 0 ||
+		pyjson.Dumps(readBack, pyjson.Options{Compact: true, SortKeys: true, Unicode: true}) != pyjson.Dumps(wanted, pyjson.Options{Compact: true, SortKeys: true, Unicode: true}) {
 		return append(base, field("outcome", RecordAppliedUnverified),
 			field("detail", "the record was replaced and could not be read back as written ("+readOutcome+"); the next bridge start reads whatever is at "+recordPath),
 			field("replacedField", "executionPolicy"), field("executionPolicy", reading), field("backup", backup),
@@ -842,6 +904,177 @@ func reRegistered(found Object, policy Object) Object {
 		out = append(out, f)
 	}
 	return out
+}
+
+// memberValueSpan is the byte range of the value of the last top-level member named key in a raw JSON
+// document: first is the offset of the value's own first byte and last the offset just past its last
+// byte, so the member's key, the colon between them, any whitespace and every other member stay
+// outside the range. The last member named key is the one a dict keeps, which is the one the decoded
+// record holds.
+//
+// The walk reads the document's own bytes rather than a decoded value, and it accepts the grammar the
+// launcher's reader accepts - json.loads, NaN and the infinities included - so a member this
+// operation never replaces cannot make the document unreadable to it. A byte it cannot account for
+// ends the walk with found false, so an unreadable document is refused rather than guessed at.
+func memberValueSpan(raw []byte, key string) (first, last int, found bool) {
+	i := skipJSONSpace(raw, 0)
+	if i >= len(raw) || raw[i] != '{' {
+		return 0, 0, false
+	}
+	i++
+	for {
+		i = skipJSONSpace(raw, i)
+		if i < len(raw) && raw[i] == '}' {
+			return first, last, found
+		}
+		name, next, ok := scanJSONString(raw, i)
+		if !ok {
+			return 0, 0, false
+		}
+		i = skipJSONSpace(raw, next)
+		if i >= len(raw) || raw[i] != ':' {
+			return 0, 0, false
+		}
+		i = skipJSONSpace(raw, i+1)
+		start := i
+		end, ok := skipJSONValue(raw, i)
+		if !ok {
+			return 0, 0, false
+		}
+		if name == key {
+			first, last, found = start, end, true
+		}
+		i = skipJSONSpace(raw, end)
+		switch {
+		case i < len(raw) && raw[i] == ',':
+			i++
+		case i < len(raw) && raw[i] == '}':
+			return first, last, found
+		default:
+			return 0, 0, false
+		}
+	}
+}
+
+// skipJSONSpace answers the offset of the first byte at or after i that is not JSON whitespace.
+func skipJSONSpace(raw []byte, i int) int {
+	for i < len(raw) {
+		switch raw[i] {
+		case ' ', '\t', '\n', '\r':
+			i++
+		default:
+			return i
+		}
+	}
+	return i
+}
+
+// scanJSONString answers the decoded text of the JSON string at i and the offset just past its
+// closing quote. A backslash escapes the byte behind it, so an escaped quote does not end the string.
+func scanJSONString(raw []byte, i int) (text string, next int, ok bool) {
+	if i >= len(raw) || raw[i] != '"' {
+		return "", 0, false
+	}
+	for j := i + 1; j < len(raw); j++ {
+		switch raw[j] {
+		case '\\':
+			j++
+		case '"':
+			if err := json.Unmarshal(raw[i:j+1], &text); err != nil {
+				return "", 0, false
+			}
+			return text, j + 1, true
+		}
+	}
+	return "", 0, false
+}
+
+// skipJSONValue answers the offset just past the JSON value at i. A string is scanned as one; a
+// container is walked to the bracket that closes it, its own strings skipped; anything else is a bare
+// token - a number, true, false, null, or one of json.loads' constants - and ends at the first
+// delimiter.
+func skipJSONValue(raw []byte, i int) (int, bool) {
+	if i >= len(raw) {
+		return 0, false
+	}
+	switch raw[i] {
+	case '"':
+		_, next, ok := scanJSONString(raw, i)
+		return next, ok
+	case '{', '[':
+		depth := 0
+		for ; i < len(raw); i++ {
+			switch raw[i] {
+			case '"':
+				_, next, ok := scanJSONString(raw, i)
+				if !ok {
+					return 0, false
+				}
+				i = next - 1
+			case '{', '[':
+				depth++
+			case '}', ']':
+				depth--
+				if depth == 0 {
+					return i + 1, true
+				}
+			}
+		}
+		return 0, false
+	}
+	start := i
+	for i < len(raw) && !endsJSONToken(raw[i]) {
+		i++
+	}
+	if i == start {
+		return 0, false
+	}
+	return i, true
+}
+
+// endsJSONToken is whether c ends a bare JSON token: JSON whitespace, or the punctuation between
+// members and elements.
+func endsJSONToken(c byte) bool {
+	switch c {
+	case ' ', '\t', '\n', '\r', ',', '}', ']':
+		return true
+	}
+	return false
+}
+
+// reRegisteredBytes is the record's own bytes with only its executionPolicy member's value replaced
+// by the one wanted carries, written the way the installer writes it: the value bytes of the same
+// member in record.Encode(wanted). Every other byte of the document - its whitespace, its key
+// order, a trailing newline it does or does not have - is the byte it was, so a record in a
+// spelling this installer did not write is re-registered rather than reserialized. A document whose
+// member cannot be located, or whose value bytes are not the ones the decoder read, is refused
+// rather than rewritten.
+func reRegisteredBytes(raw []byte, wanted Object) ([]byte, error) {
+	installer := record.Encode(wanted)
+	first, last, ok := memberValueSpan(installer, "executionPolicy")
+	if !ok {
+		return nil, errors.New("the record this run would write names no executionPolicy member")
+	}
+	begin, end, ok := memberValueSpan(raw, "executionPolicy")
+	if !ok {
+		return nil, errors.New("the record's own bytes name no executionPolicy member to replace")
+	}
+	out := make([]byte, 0, len(raw)-(end-begin)+(last-first))
+	out = append(out, raw[:begin]...)
+	out = append(out, installer[first:last]...)
+	out = append(out, raw[end:]...)
+	// The spliced document is read back before anything is published: it must decode to the record
+	// this run means to write, field for field. A walk that mis-located the member - the one way this
+	// byte-level write could differ from the decoded document it was decided on - refuses here rather
+	// than publishing a record whose fields are not the ones the decision was made from.
+	back, err := reading.Decode(out)
+	if err != nil {
+		return nil, errors.New("the record's own bytes with the executionPolicy member replaced do not read as JSON: " + err.Error())
+	}
+	if pyjson.Dumps(back, pyjson.Options{Compact: true, SortKeys: true, Unicode: true}) != pyjson.Dumps(wanted, pyjson.Options{Compact: true, SortKeys: true, Unicode: true}) {
+		return nil, errors.New("the record's own bytes with the executionPolicy member replaced do not read back as the record this run would write")
+	}
+	return out, nil
 }
 
 // policyReference is the two fields the record carries, taken from the reading the bridge's own check

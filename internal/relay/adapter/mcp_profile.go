@@ -42,7 +42,9 @@ func (a *Adapter) withMCP(ctx context.Context, record *delivery.TaskSettings) (*
 			data = append(data, field)
 		}
 	}
-	send := &delivery.TaskSettings{Data: data, SettingsFreeResume: record.SettingsFreeResume}
+	// The bound role travels with the copy: the limit is read from it, and this send is the one that
+	// carries both the profile and the limit.
+	send := &delivery.TaskSettings{Data: data, SettingsFreeResume: record.SettingsFreeResume, BoundRole: record.BoundRole}
 	stated, _ := record.Data.Lookup("mcpProfile")
 	cited, _ := record.Data.Lookup("citedRole")
 	profile, _ := stated.(string)

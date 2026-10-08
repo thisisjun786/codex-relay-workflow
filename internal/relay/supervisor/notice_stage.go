@@ -36,10 +36,13 @@ func (n NoticeChannel) StageNotice(ctx context.Context, notice map[string]any) (
 		if err != nil {
 			return err
 		}
-		if live["sender"] != resolution["sender"] || live["recipient"] != resolution["recipient"] || live["projectKey"] != resolution["projectKey"] {
+		// The recipient's scope kind is compared with the rest of the resolution: the packet was
+		// composed from the pre-lock read, and a hierarchy that moved only in the kind (the seat
+		// answering instead of an initiative's supervisor) would otherwise freeze the stale one.
+		if live["sender"] != resolution["sender"] || live["recipient"] != resolution["recipient"] || live["projectKey"] != resolution["projectKey"] || live["recipientScopeKind"] != resolution["recipientScopeKind"] {
 			return &faults.NoticeError{Kind: "relation_owner_drift", Detail: "the hierarchy moved while this was being decided: it was read as '" + noticeString(resolution, "sender") + "' reporting to '" + noticeString(resolution, "recipient") + "', and under the write lock it is '" + noticeString(live, "sender") + "' reporting to '" + noticeString(live, "recipient") + "'. Nothing was written; staging again addresses the report to the live supervisor"}
 		}
-		r, err := l.Store.One(ctx, "SELECT * FROM supervisor_messages WHERE obligation_kind='fault_notification' AND obligation_id=?", notice["notificationId"])
+		r, err := l.Store.One(ctx, "SELECT * FROM supervisor_messages WHERE obligation_kind='"+store.SupervisorNoticeObligationKind+"' AND obligation_id=?", notice["notificationId"])
 		if err != nil {
 			return err
 		}
@@ -58,7 +61,7 @@ func (n NoticeChannel) StageNotice(ctx context.Context, notice map[string]any) (
 			return nil
 		}
 		if r == nil {
-			result, err := noticeExec(ctx, l.Store, "INSERT OR IGNORE INTO supervisor_messages(message_id,obligation_id,obligation_kind,relationship_id,project_key,purpose,kind,sender_task_id,recipient_task_id,subject,packet,state,attempt_count,next_eligible_at,staged_at,updated_at,event_id,submission_no,reading) VALUES(?,?,'fault_notification',?,?,?,?,?,?,?,?,'queued',0,NULL,?,?,NULL,NULL,NULL)", id, notice["notificationId"], relation, resolution["projectKey"], env["purpose"], env["kind"], resolution["sender"], resolution["recipient"], notice["deliveryKey"], noticeDumps(packet), stamp, stamp)
+			result, err := noticeExec(ctx, l.Store, "INSERT OR IGNORE INTO supervisor_messages(message_id,obligation_id,obligation_kind,relationship_id,project_key,purpose,kind,sender_task_id,recipient_task_id,subject,packet,state,attempt_count,next_eligible_at,staged_at,updated_at,event_id,submission_no,reading) VALUES(?,?,'"+store.SupervisorNoticeObligationKind+"',?,?,?,?,?,?,?,?,'queued',0,NULL,?,?,NULL,NULL,NULL)", id, notice["notificationId"], relation, resolution["projectKey"], env["purpose"], env["kind"], resolution["sender"], resolution["recipient"], notice["deliveryKey"], noticeDumps(packet), stamp, stamp)
 			if err != nil {
 				return err
 			}
@@ -72,7 +75,15 @@ func (n NoticeChannel) StageNotice(ctx context.Context, notice map[string]any) (
 		id = r.Text("message_id")
 		moving := !faults.NoticeAddressed(r, live)
 		moved := moving || r.Text("relationship_id") != relation
-		same := noticeDumps(packet) == r.Text("packet")
+		// A packet stored before recipient.scopeKind existed carries no such field, so the freshly
+		// composed one always differs. Compare without it there, the same way refreshNotice does:
+		// adding the field alone is not a change to the notice, so it is neither rewritten nor
+		// journalled as restated. A restatement made for something else still writes it.
+		staged := packet
+		if !recipientScopeKindRecorded(r.Text("packet")) {
+			staged = packetWithoutRecipientScopeKind(packet)
+		}
+		same := noticeDumps(staged) == r.Text("packet")
 		if same && !moved && r.Get("hold_reason") == nil {
 			return finish(false, "this notification is already staged; one notification is one message", false)
 		}
@@ -123,7 +134,7 @@ func (n NoticeChannel) StageNotice(ctx context.Context, notice map[string]any) (
 func (n NoticeChannel) Park(ctx context.Context, id, reason string) error {
 	l := n.Ledger
 	return l.Store.Compose(ctx, func(ctx context.Context, _ *sql.Conn) error {
-		result, err := noticeExec(ctx, l.Store, "UPDATE supervisor_messages SET hold_reason=?,updated_at=? WHERE message_id=? AND obligation_kind='fault_notification' AND hold_reason IS NULL AND "+store.SupervisorNeverSentSQL(), store.SupervisorHoldSuperseded, l.Clock.ISO(), id)
+		result, err := noticeExec(ctx, l.Store, "UPDATE supervisor_messages SET hold_reason=?,updated_at=? WHERE message_id=? AND obligation_kind='"+store.SupervisorNoticeObligationKind+"' AND hold_reason IS NULL AND "+store.SupervisorNeverSentSQL(), store.SupervisorHoldSuperseded, l.Clock.ISO(), id)
 		if err != nil {
 			return err
 		}

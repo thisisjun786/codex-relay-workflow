@@ -30,6 +30,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -58,8 +59,11 @@ func harnessRunUTF8FakeCodex(t *testing.T, stderr []byte, status int) string {
 	}
 	script := filepath.Join(dir, "codex")
 	body := "#!/bin/sh\nprintf '" + escaped.String() + "' >&2\nexit " + strconv.Itoa(status) + "\n"
-	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
-		t.Fatal(err)
+	syscall.ForkLock.RLock()
+	writeErr := os.WriteFile(script, []byte(body), 0o755)
+	syscall.ForkLock.RUnlock()
+	if writeErr != nil {
+		t.Fatal(writeErr)
 	}
 	return script
 }

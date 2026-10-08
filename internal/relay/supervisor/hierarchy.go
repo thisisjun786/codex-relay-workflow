@@ -33,11 +33,12 @@ type Channel struct {
 }
 
 type Resolution struct {
-	Sender        string `json:"sender"`
-	Recipient     string `json:"recipient"`
-	ProjectKey    string `json:"projectKey"`
-	InitiativeKey string `json:"initiativeKey"`
-	Source        string `json:"source"`
+	Sender             string `json:"sender"`
+	Recipient          string `json:"recipient"`
+	RecipientScopeKind string `json:"recipientScopeKind"`
+	ProjectKey         string `json:"projectKey"`
+	InitiativeKey      string `json:"initiativeKey"`
+	Source             string `json:"source"`
 }
 
 type Refusal struct {
@@ -63,6 +64,12 @@ func (c *Channel) Resolve(ctx context.Context, relationshipID string) (Resolutio
 // exception). resolveReading recognises it so a recipient read from the seat is recorded as
 // coming from the store instead of being given an initiative key it does not have.
 const scopeKindStore = "store"
+
+// scopeKindInitiative is the ordinary recipient's kind: a supervisor bound at the initiative level.
+// resolveReading records whichever kind the level the recipient came from carries, so a resolution
+// never has to be re-derived from the initiative key. Both arms below set it, and a resolution is
+// only returned when Recipient is non-empty, so the kind is always set on success.
+const scopeKindInitiative = "initiative"
 
 // hierarchyReading is the hierarchy a resolution is decided from: the linkage walk, with the
 // store-scope supervisor folded in as a level of its own when the walk named no initiative
@@ -193,14 +200,14 @@ func resolveReading(reading map[string]any, where string) (Resolution, error) {
 			case "project":
 				result.ProjectKey, result.Sender = key, owner
 			case "initiative":
-				result.InitiativeKey, result.Recipient = key, owner
+				result.InitiativeKey, result.Recipient, result.RecipientScopeKind = key, owner, scopeKindInitiative
 			case scopeKindStore:
 				// The seat is not an initiative's. A walk that named an initiative level nobody
 				// holds still records that level's key, so the key is cleared with the recipient:
 				// a resolution must not pair a store recipient with an initiative that supervises
 				// nothing, and a later change to that non-owning initiative must not read as the
 				// recipient moving.
-				result.Recipient, result.InitiativeKey = owner, ""
+				result.Recipient, result.InitiativeKey, result.RecipientScopeKind = owner, "", scopeKindStore
 			}
 		}
 	}

@@ -4,19 +4,27 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"testing"
 )
 
-// resetLinkWalkRoot opens dir as an os.Root and closes it when the test ends.
-func resetLinkWalkRoot(t *testing.T, dir string) *os.Root {
+// resetLinkWalkPinned opens dir as the pinned directory the link judgement reads through — the
+// os.Root the removals act with, plus the descriptor resetPin takes — and closes it when the test
+// ends.
+func resetLinkWalkPinned(t *testing.T, dir string) *resetLinkWalkPin {
 	t.Helper()
 	root, err := os.OpenRoot(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = root.Close() })
-	return root
+	pinned, err := resetLinkWalkPinOf(root)
+	if err != nil {
+		root.Close()
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = pinned.Close() })
+	return pinned
 }
 
 // resetLinkWalkWorkspace makes a directory holding keep/ (with inner.txt), which the links of
@@ -118,13 +126,13 @@ func TestResetLinkWalkChainDoesNotOpenTheTargetDirectory(t *testing.T) {
 			if err := os.Symlink(tc.target, filepath.Join(dir, tc.link)); err != nil {
 				t.Fatal(err)
 			}
-			root := resetLinkWalkRoot(t, dir)
+			pinned := resetLinkWalkPinned(t, dir)
 			calls := 0
 			stat := func(name string) (os.FileInfo, error) {
 				calls++
-				return root.Stat(name)
+				return pinned.Stat(name)
 			}
-			got, err := resetLinkTargetExistsWith(root, tc.link, stat)
+			got, err := resetLinkTargetExistsWith(pinned, tc.link, stat)
 			if err != nil {
 				t.Fatalf("resetLinkTargetExistsWith: %v", err)
 			}
@@ -209,8 +217,8 @@ func TestResetLinkWalkJudgesLikeToday(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			dir, outside := resetLinkWalkWorkspace(t), t.TempDir()
 			link := tc.setup(t, dir, outside)
-			root := resetLinkWalkRoot(t, dir)
-			got, err := resetLinkTargetExists(root, link)
+			pinned := resetLinkWalkPinned(t, dir)
+			got, err := resetLinkTargetExists(pinned, link)
 			if err != nil {
 				t.Fatalf("resetLinkTargetExists: %v", err)
 			}
@@ -221,17 +229,101 @@ func TestResetLinkWalkJudgesLikeToday(t *testing.T) {
 	}
 }
 
-// TestResetLinkWalkKeepsTheDescriptorPathWhenReadlinkFails: resetLinkTargetExists is only reached
-// for a name that exists, and Readlink fails for anything that is not a link, so that case keeps
-// today's flow, the descriptor path. The judgement therefore never uses the root's path name for
-// it, and a renamed pinned directory does not turn a present entry into a refusal.
-func TestResetLinkWalkKeepsTheDescriptorPathWhenReadlinkFails(t *testing.T) {
+// TestResetLinkWalkAnUnreadableLinkTargetIsAbsent: the judgement is only reached for a name the
+// caller saw as a link, and readlink then fails when the leaf stopped being one or when the
+// descriptor cannot reach it. Both are absent — the kernel cannot resolve the link either, which is
+// what existsSync asks — and neither is answered from the root's own path, so a renamed pinned
+// directory cannot turn it into a refusal and the removal never acts on a swapped leaf. This row is
+// the one expectation CRW-927 changes here.
+func TestResetLinkWalkAnUnreadableLinkTargetIsAbsent(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		setup func(t *testing.T, sessions string)
+	}{
+		{"the_leaf_stopped_being_a_link", func(t *testing.T, sessions string) {
+			// The caller saw a link, and by the time the judgement reads it the leaf is a regular
+			// file: readlinkat answers EINVAL. The link is unlinked first, because writing through the
+			// name would follow it and leave the link in place.
+			if err := os.Remove(filepath.Join(sessions, "a.json")); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(sessions, "a.json"), []byte("replaced"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"the_descriptor_cannot_reach_it", func(t *testing.T, sessions string) {
+			if err := os.Chmod(sessions, 0o000); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.Chmod(sessions, 0o755) })
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.name == "the_descriptor_cannot_reach_it" && os.Geteuid() == 0 {
+				t.Skip("mode bits do not deny search to root")
+			}
+			base := t.TempDir()
+			sessions := filepath.Join(base, "sessions")
+			if err := os.Mkdir(sessions, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(sessions, "keep.txt"), []byte("keep"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink("keep.txt", filepath.Join(sessions, "a.json")); err != nil {
+				t.Fatal(err)
+			}
+			parent, err := os.OpenRoot(base)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer parent.Close()
+			observed, err := parent.Lstat("sessions")
+			if err != nil {
+				t.Fatal(err)
+			}
+			pinned, err := resetPin(parent, "sessions", observed)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer pinned.Close()
+			// Rename the pinned directory away and put a fresh one at its path, so the root-path
+			// judgement would refuse.
+			moved := filepath.Join(base, "moved")
+			if err := os.Rename(sessions, moved); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Mkdir(sessions, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			tc.setup(t, moved)
+			got, err := resetLinkTargetExists(pinned, "a.json")
+			if err != nil {
+				t.Fatalf("resetLinkTargetExists: %v (an in-root failure must be absent, not a refusal)", err)
+			}
+			if got {
+				t.Error("exists = true, want false: the target could not be read")
+			}
+		})
+	}
+}
+
+// TestResetLinkWalkAnUnreadableCandidateIsAbsentAndResetContinues: the removal caller records a
+// candidate it cannot lstat as absent rather than returning an error, so one unreadable candidate
+// does not stop the reset before the ones after it.
+func TestResetLinkWalkAnUnreadableCandidateIsAbsentAndResetContinues(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("mode bits do not deny search to root")
+	}
 	base := t.TempDir()
 	sessions := filepath.Join(base, "sessions")
 	if err := os.Mkdir(sessions, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(sessions, "regular.txt"), []byte("regular"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(sessions, "a.json"), []byte("a"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sessions, "b.json"), []byte("b"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	parent, err := os.OpenRoot(base)
@@ -248,18 +340,26 @@ func TestResetLinkWalkKeepsTheDescriptorPathWhenReadlinkFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer pinned.Close()
-	if err := os.Rename(sessions, filepath.Join(base, "moved")); err != nil {
+	if err := os.Chmod(sessions, 0o000); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Mkdir(sessions, 0o755); err != nil {
+	t.Cleanup(func() { _ = os.Chmod(sessions, 0o755) })
+	result := ResetResult{Removed: []string{}, Absent: []string{}}
+	if err := resetRmIfExists(pinned, "a.json", "a.json", &result); err != nil {
+		t.Fatalf("resetRmIfExists: %v (an unreadable candidate must be absent, not an error)", err)
+	}
+	if !slices.Equal(result.Absent, []string{"a.json"}) {
+		t.Errorf("absent = %v, want [a.json]", result.Absent)
+	}
+	// The reset must still reach the candidates after it.
+	if err := os.Chmod(sessions, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	got, err := resetLinkTargetExists(pinned, "regular.txt")
-	if err != nil {
-		t.Fatalf("resetLinkTargetExists: %v", err)
+	if err := resetRmIfExists(pinned, "b.json", "b.json", &result); err != nil {
+		t.Fatalf("b.json: %v (the reset must continue)", err)
 	}
-	if !got {
-		t.Error("exists = false, want true: the descriptor path still names the entry")
+	if !slices.Equal(result.Removed, []string{"b.json"}) {
+		t.Errorf("removed = %v, want [b.json]", result.Removed)
 	}
 }
 
@@ -283,7 +383,7 @@ func TestResetLinkWalkChainEscapingThroughASplicedLink(t *testing.T) {
 		if err := os.Symlink("sub/x", filepath.Join(dir, "a.json")); err != nil {
 			t.Fatal(err)
 		}
-		got, err := resetLinkTargetExists(resetLinkWalkRoot(t, dir), "a.json")
+		got, err := resetLinkTargetExists(resetLinkWalkPinned(t, dir), "a.json")
 		if err != nil {
 			t.Fatalf("resetLinkTargetExists: %v", err)
 		}
@@ -303,7 +403,7 @@ func TestResetLinkWalkChainEscapingThroughASplicedLink(t *testing.T) {
 			t.Fatal(err)
 		}
 		_, statErr := os.Stat(link)
-		got, err := resetLinkTargetExists(resetLinkWalkRoot(t, dir), "a.json")
+		got, err := resetLinkTargetExists(resetLinkWalkPinned(t, dir), "a.json")
 		if err != nil {
 			t.Fatalf("resetLinkTargetExists: %v", err)
 		}
@@ -314,19 +414,21 @@ func TestResetLinkWalkChainEscapingThroughASplicedLink(t *testing.T) {
 }
 
 // TestResetLinkWalkCountsTheCandidateLinkInTheCeiling: the caller already read the candidate
-// link's target, and the kernel counts that link as the first of the 40 traversals it allows for
-// the whole resolution. A chain of 39 links inside the target is 40 and resolves; one of 40 is 41
-// and the OS reports a loop, so the walk must not call the target present either. Each case also
-// compares the walk with os.Stat on the same chain.
+// link's target, and the kernel counts that link as the first traversal it allows for the whole
+// resolution, so the boundary is one less than the kernel's ceiling. The walk must agree with
+// os.Stat on the same chain at every boundary row.
 func TestResetLinkWalkCountsTheCandidateLinkInTheCeiling(t *testing.T) {
+	// The ceiling is the kernel's own whole-resolution limit, so the walk must not resolve a chain
+	// the kernel refuses: Linux allows 40 traversals and XNU allows 32.
+	limit := resetLinkWalkLimit()
 	for _, tc := range []struct {
 		innerLinks int
 		wantExists bool
 	}{
-		{38, true},
-		{39, true},
-		{40, false},
-		{41, false},
+		{limit - 2, true},
+		{limit - 1, true},
+		{limit, false},
+		{limit + 1, false},
 	} {
 		t.Run(strconv.Itoa(tc.innerLinks)+"_inner_links", func(t *testing.T) {
 			dir := resetLinkWalkWorkspace(t)
@@ -338,7 +440,7 @@ func TestResetLinkWalkCountsTheCandidateLinkInTheCeiling(t *testing.T) {
 			link := filepath.Join(dir, "a.json")
 			resetLinksLink(t, "c1", link)
 			_, statErr := os.Stat(link)
-			got, err := resetLinkTargetExists(resetLinkWalkRoot(t, dir), "a.json")
+			got, err := resetLinkTargetExists(resetLinkWalkPinned(t, dir), "a.json")
 			if err != nil {
 				t.Fatalf("resetLinkTargetExists: %v", err)
 			}
@@ -436,26 +538,42 @@ func TestResetLinkWalkKeepsADotEndingLinkWhenSearchIsDenied(t *testing.T) {
 			// into the directory the target names. Concatenated, not joined, so the "." survives.
 			_, oracleErr := os.Stat(dir + "/a.json")
 			wantExists := oracleErr == nil
-			got, err := resetLinkTargetExists(resetLinkWalkRoot(t, dir), "a.json")
+			got, err := resetLinkTargetExists(resetLinkWalkPinned(t, dir), "a.json")
 			if err != nil {
 				t.Fatalf("resetLinkTargetExists: %v", err)
 			}
 			if got != wantExists {
 				t.Errorf("exists = %v, but the oracle's stat answers %v", got, oracleErr)
 			}
-			// The removal itself, through the entry point, must follow the same verdict.
+			// The removal itself, through the entry point, must follow the same verdict. The
+			// candidate's target is relative to the sessions directory it sits in, so the same tree is
+			// mirrored there: a target that names "keep" has to name a keep inside .crw/sessions, or
+			// the link would be dangling for every row and no assertion below could fail.
 			crw := filepath.Join(dir, ".crw")
-			if err := os.MkdirAll(filepath.Join(crw, "sessions"), 0o755); err != nil {
+			ws := filepath.Join(crw, "sessions")
+			if err := os.MkdirAll(filepath.Join(ws, "keep", "sub"), 0o755); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.Symlink(tc.target, filepath.Join(crw, "sessions", "b.json")); err != nil {
+			if err := os.WriteFile(filepath.Join(ws, "keep", "inner.txt"), []byte("keep"), 0o644); err != nil {
 				t.Fatal(err)
 			}
+			if err := os.Symlink(tc.target, filepath.Join(ws, "b.json")); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(filepath.Join(ws, tc.dir), tc.mode); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				_ = os.Chmod(filepath.Join(ws, "keep", "sub"), 0o755)
+				_ = os.Chmod(filepath.Join(ws, "keep"), 0o755)
+			})
 			if _, err := RunReset(dir, State); err != nil {
 				t.Fatalf("RunReset: %v", err)
 			}
-			_, linkErr := os.Lstat(filepath.Join(crw, "sessions", "b.json"))
-			if wantExists && linkErr != nil {
+			// A link whose target exists is removed, so Lstat answers ErrNotExist; one whose target
+			// does not is kept and reset continues.
+			_, linkErr := os.Lstat(filepath.Join(ws, "b.json"))
+			if wantExists && !errors.Is(linkErr, os.ErrNotExist) {
 				t.Errorf("the link must be removed: %v", linkErr)
 			}
 			if !wantExists && linkErr != nil {

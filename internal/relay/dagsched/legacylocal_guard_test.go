@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/mergeturn"
@@ -64,8 +65,11 @@ func legacyLocalFakeGH(t *testing.T) (log string) {
 	dir := t.TempDir()
 	log = filepath.Join(dir, "gh-calls.log")
 	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"$LEGACY_LOCAL_FAKE_GH_LOG\"\nexit 1\n"
-	if err := os.WriteFile(filepath.Join(dir, "gh"), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
+	syscall.ForkLock.RLock()
+	writeErr := os.WriteFile(filepath.Join(dir, "gh"), []byte(script), 0o755)
+	syscall.ForkLock.RUnlock()
+	if writeErr != nil {
+		t.Fatal(writeErr)
 	}
 	t.Setenv("LEGACY_LOCAL_FAKE_GH_LOG", log)
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
