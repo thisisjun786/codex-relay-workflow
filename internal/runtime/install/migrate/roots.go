@@ -151,22 +151,50 @@ func (r *Roots) Close() error {
 // directory: a root another actor moved aside and replaced keeps its own mode and is reported. The directory that holds it is
 // synced either way, so a run interrupted between the mkdir and its sync finishes the entry on the next one.
 func (p *Pair) EnsureDest(perm uint32) (*Dir, bool, error) {
-	if p.Dest != nil {
-		// The root is pinned already. If this process's own creation put that very directory there,
-		// it is this run's and the caller must still finish its mode - a retry after a failed step
-		// reaches here with the root pinned from the previous attempt.
-		made := p.created != (fileID{}) && p.Dest.id == p.created
-		return p.Dest, made, p.syncParent()
-	}
 	name := filepath.Base(p.DestPath)
+	if p.Dest != nil {
+		// The parent is synced first, as a pinned root always was, so a failed sync is reported before the name is read.
+		// The pin is then used only while the name still holds the directory it was taken from: the name is looked up on
+		// every use, because another actor may have moved that directory aside and put another in its place.
+		if err := p.syncParent(); err != nil {
+			return nil, false, err
+		}
+		cur, err := p.parent.Child(name)
+		switch {
+		case err == nil && cur.id == p.Dest.id:
+			_ = cur.Close()
+			return p.Dest, p.created != (fileID{}) && p.Dest.id == p.created, nil
+		case err == nil:
+			// The name holds a directory this pair did not pin: the pinned one was moved aside. Nothing is written through
+			// the old handle. The replacement is an existing root this run did not make, and the pin moves to it only after
+			// the parent sync has made its entry durable.
+			if err := p.syncParent(); err != nil {
+				_ = cur.Close()
+				return nil, false, err
+			}
+			p.repin(cur)
+			return cur, false, nil
+		case errors.Is(err, unix.ENOENT):
+			// The root was removed. The pin is released and the creation below runs again.
+			p.repin(nil)
+		default:
+			return nil, false, err
+		}
+	}
 	// A retry with this pinned pair must not read the root this process already created as another
 	// actor's, and must not adopt a root another actor put in its place. The identity recorded when
 	// this pair's own creation renamed the root into place decides both: only the name still holding
 	// that very directory is this run's, and it is this run's even when a later step failed.
 	if cur, err := p.parent.Child(name); err == nil {
 		if cur.id == p.created {
-			p.Dest = cur
-			return cur, true, p.syncParent()
+			// The pin is taken only after the parent sync has made the entry durable. A sync that fails leaves the pair
+			// unpinned, so the next attempt looks the name up again instead of reusing a handle it never synced.
+			if err := p.syncParent(); err != nil {
+				_ = cur.Close()
+				return nil, true, err
+			}
+			p.repin(cur)
+			return cur, true, nil
 		}
 		_ = cur.Close()
 	}
@@ -198,6 +226,25 @@ func (p *Pair) EnsureDest(perm uint32) (*Dir, bool, error) {
 	}
 	p.Dest = d
 	return d, made, nil
+}
+
+// repin makes next the pinned destination of the pair; nil releases the pin. The handle it replaces is closed here unless
+// the created-directory record keeps it, which Close releases.
+func (p *Pair) repin(next *Dir) {
+	old := p.Dest
+	p.Dest = next
+	if old != nil && old != p.createdDir {
+		_ = old.Close()
+	}
+}
+
+// ownedDirIdentityChmodUnsupported is the refusal of a kernel that offers neither descriptor-chmod mechanism: fchmodat2
+// answers ENOSYS or EOPNOTSUPP and chmod through /proc/self/fd answers ENOENT, EACCES or ENOTDIR. It is a type, not a
+// sentinel value, so no platform file needs a package-level initializer.
+type ownedDirIdentityChmodUnsupported struct{ fchmodat2, proc error }
+
+func (e ownedDirIdentityChmodUnsupported) Error() string {
+	return fmt.Sprintf("neither fchmodat2 (%v) nor chmod through /proc/self/fd (%v) can change the mode of a descriptor on this kernel", e.fchmodat2, e.proc)
 }
 
 // syncParent makes the entry of this pair's destination root durable. It runs the creation-step seam first,
@@ -823,6 +870,10 @@ func (d *Dir) migrateOwnedDirIdentityClaim(tmp string, want fileID, perm uint32,
 		return fd, refuse(applyReasonChanged, d.join(tmp), "the temporary name is not the directory this run created")
 	}
 	if err := ownedDirIdentityFchmod(fd, perm); err != nil {
+		var unsupported ownedDirIdentityChmodUnsupported
+		if errors.As(err, &unsupported) {
+			return fd, refuse(ReasonUnsupported, d.join(tmp), unsupported.Error())
+		}
 		return fd, &fs.PathError{Op: "chmod", Path: d.join(tmp), Err: err}
 	}
 	// The read handle is opened and checked while the pin is still held. Closing the pin first would free

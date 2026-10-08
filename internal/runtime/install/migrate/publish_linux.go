@@ -3,6 +3,8 @@
 package migrate
 
 import (
+	"errors"
+	"fmt"
 	"strconv"
 
 	"golang.org/x/sys/unix"
@@ -36,13 +38,35 @@ var ownedDirIdentityFchmodat2 = func(fd int, perm uint32) error {
 // case can replace that seam here and expect it to run.
 const ownedDirIdentityFchmodUsesFchmodat2 = true
 
+// ownedDirIdentityProcChmod is the /proc/self/fd path of the descriptor chmod. It is a variable so a case can model a
+// kernel whose /proc does not offer the descriptor; no other code replaces it.
+var ownedDirIdentityProcChmod = func(fd int, perm uint32) error {
+	return unix.Chmod("/proc/self/fd/"+strconv.Itoa(fd), perm)
+}
+
 // ownedDirIdentityFchmod gives the pinned directory exactly perm through its descriptor. fchmodat2 is
 // used where the kernel has it (6.5 and later); any other error it answers is tried on the
 // /proc/self/fd path, which is the same call a libc fchmod makes on a descriptor, so a kernel or
 // filesystem without the flag is still served and its own failure is reported.
 func ownedDirIdentityFchmod(fd int, perm uint32) error {
-	if err := ownedDirIdentityFchmodat2(fd, perm); err == nil {
+	first := ownedDirIdentityFchmodat2(fd, perm)
+	if first == nil {
 		return nil
 	}
-	return unix.Chmod("/proc/self/fd/"+strconv.Itoa(fd), perm)
+	second := ownedDirIdentityProcChmod(fd, perm)
+	if second == nil {
+		return nil
+	}
+	// Neither mechanism exists when fchmodat2 answers ENOSYS or EOPNOTSUPP and the /proc path answers ENOENT, EACCES or
+	// ENOTDIR: that is a kernel the mode cannot be set on, refused as unsupported with both answers. Any other answer is a
+	// genuine failure of a mechanism that exists, and its own errno is kept first in the error.
+	firstAbsent := errors.Is(first, unix.ENOSYS) || errors.Is(first, unix.EOPNOTSUPP)
+	secondAbsent := errors.Is(second, unix.ENOENT) || errors.Is(second, unix.EACCES) || errors.Is(second, unix.ENOTDIR)
+	if firstAbsent && secondAbsent {
+		return ownedDirIdentityChmodUnsupported{fchmodat2: first, proc: second}
+	}
+	if firstAbsent {
+		return fmt.Errorf("%w; fchmodat2: %v", second, first)
+	}
+	return fmt.Errorf("%w; /proc/self/fd: %v", first, second)
 }

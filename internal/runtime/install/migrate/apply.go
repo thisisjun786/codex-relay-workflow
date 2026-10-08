@@ -570,10 +570,9 @@ const migrateReviewFollowupManifestKey = "artifactManifest"
 // record, and a record of any size costs a bounded pass. The first byte that is not whitespace decides whether the record
 // can be an object at all, every member other than the manifest key is skipped token by token, and the manifest array is
 // held only when the record really names one: the memory this costs is the size of that array, which is the memory the
-// receipt reader spends on the same record. The record is the receipt reader's own text, so the decoder's own handling of
-// invalid UTF-8 inside a string (one U+FFFD per byte) is used rather than a hand-written normaliser: the only records where
-// that differs from the reader's whole-input normalisation are those whose path holds an invalid run, and such a path names
-// no file in the plan, so it contributes no key and the order is unchanged (recorded in the issue's defect record).
+// receipt reader spends on the same record. The record is the receipt reader's own text. A string is read as its raw bytes and
+// normalised by source.DecodeUTF8, the normalisation the reader applies to its whole input, so an invalid UTF-8 path keeps the
+// text the reader sees, and the order matches it against the plan's file names.
 func migrateReviewFollowupDecodeManifest(rs io.ReadSeeker, limit int64) ([]migrateReviewFollowupManifestEntry, bool) {
 	if _, err := rs.Seek(0, io.SeekStart); err != nil {
 		return nil, false
@@ -601,7 +600,8 @@ func migrateReviewFollowupDecodeManifest(rs io.ReadSeeker, limit int64) ([]migra
 		}
 		break
 	}
-	dec := json.NewDecoder(br)
+	feed := &migrateReviewFollowupFeed{br: br}
+	dec := json.NewDecoder(feed)
 	dec.UseNumber()                        // the receipt reader decodes with UseNumber too (gate/js.go:37), so a huge literal is a number here
 	if _, err := dec.Token(); err != nil { // the opening brace the walk above found
 		return nil, false
@@ -623,7 +623,7 @@ func migrateReviewFollowupDecodeManifest(rs io.ReadSeeker, limit int64) ([]migra
 			}
 			continue
 		}
-		entries, ok, err := migrateReviewFollowupReadManifest(dec, br, 1)
+		entries, ok, err := migrateReviewFollowupReadManifest(dec, feed, 1)
 		if err != nil {
 			return nil, false
 		}
@@ -720,7 +720,7 @@ func migrateReviewFollowupSkipRest(dec *json.Decoder, tok json.Token, depth int)
 // so an element of any size costs the bytes of its own two strings. depth is the number of containers open around the
 // member, so the nesting is counted against the receipt reader's own limit. ok is false for a member that is not a
 // non-empty array; err is non-nil only for a malformed stream, which refuses the record.
-func migrateReviewFollowupReadManifest(dec *json.Decoder, br *bufio.Reader, depth int) ([]migrateReviewFollowupManifestEntry, bool, error) {
+func migrateReviewFollowupReadManifest(dec *json.Decoder, feed *migrateReviewFollowupFeed, depth int) ([]migrateReviewFollowupManifestEntry, bool, error) {
 	tok, err := dec.Token()
 	if err != nil {
 		return nil, false, err
@@ -735,7 +735,7 @@ func migrateReviewFollowupReadManifest(dec *json.Decoder, br *bufio.Reader, dept
 	items := 0
 	for dec.More() {
 		items++
-		entry, err := migrateReviewFollowupReadEntry(dec, br, depth+1)
+		entry, err := migrateReviewFollowupReadEntry(dec, feed, depth+1)
 		if err != nil {
 			return nil, false, err
 		}
@@ -756,7 +756,7 @@ func migrateReviewFollowupReadManifest(dec *json.Decoder, br *bufio.Reader, dept
 // migrateReviewFollowupReadEntry walks one artifactManifest element. depth counts the containers open around the element,
 // the array included. An element that is not an object names no dependency and is skipped; an object keeps the last value
 // of its path and of its kind, as the receipt reader's own map lookup does, and skips every other member.
-func migrateReviewFollowupReadEntry(dec *json.Decoder, br *bufio.Reader, depth int) (*migrateReviewFollowupManifestEntry, error) {
+func migrateReviewFollowupReadEntry(dec *json.Decoder, feed *migrateReviewFollowupFeed, depth int) (*migrateReviewFollowupManifestEntry, error) {
 	tok, err := dec.Token()
 	if err != nil {
 		return nil, err
@@ -777,7 +777,7 @@ func migrateReviewFollowupReadEntry(dec *json.Decoder, br *bufio.Reader, depth i
 			}
 			continue
 		}
-		text, err := migrateReviewFollowupReadField(dec, br, depth+1)
+		text, err := migrateReviewFollowupReadField(dec, feed, depth+1)
 		if err != nil {
 			return nil, err
 		}
@@ -801,12 +801,12 @@ func migrateReviewFollowupReadEntry(dec *json.Decoder, br *bufio.Reader, depth i
 // UTF-8 normalisation (source.DecodeUTF8, gate/js.go:36-53), so a path holding invalid bytes names the plan file the
 // reader's text holds; a string is bounded by its one token, which is the residual the issue's answer records. depth is the
 // containers open around the value.
-func migrateReviewFollowupReadField(dec *json.Decoder, br *bufio.Reader, depth int) (string, error) {
-	c, ok, err := migrateReviewFollowupPeekValue(dec, br)
+func migrateReviewFollowupReadField(dec *json.Decoder, feed *migrateReviewFollowupFeed, depth int) (string, error) {
+	c, err := migrateReviewFollowupPeekValue(dec, feed)
 	if err != nil {
 		return "", err
 	}
-	if ok && (c == '{' || c == '[') {
+	if c == '{' || c == '[' {
 		tok, err := dec.Token() // consumes the colon and opens the container
 		if err != nil {
 			return "", err
@@ -824,30 +824,71 @@ func migrateReviewFollowupReadField(dec *json.Decoder, br *bufio.Reader, depth i
 	return text, nil
 }
 
+// migrateReviewFollowupFeed is the reader the receipt decoder reads through. A byte the value peek takes from the buffered
+// reader and hands back is served first, so the decoder reads it as if the peek had not happened.
+type migrateReviewFollowupFeed struct {
+	br      *bufio.Reader
+	pending []byte
+}
+
+// Read serves the handed-back bytes first, then the buffered reader.
+func (f *migrateReviewFollowupFeed) Read(p []byte) (int, error) {
+	if len(f.pending) > 0 {
+		n := copy(p, f.pending)
+		f.pending = f.pending[n:]
+		return n, nil
+	}
+	return f.br.Read(p)
+}
+
+// readByte takes the next byte of the stream.
+func (f *migrateReviewFollowupFeed) readByte() (byte, error) {
+	if len(f.pending) > 0 {
+		c := f.pending[0]
+		f.pending = f.pending[1:]
+		return c, nil
+	}
+	return f.br.ReadByte()
+}
+
+// unread hands bytes back in front of the stream.
+func (f *migrateReviewFollowupFeed) unread(b []byte) {
+	f.pending = append(append([]byte(nil), b...), f.pending...)
+}
+
 // migrateReviewFollowupPeekValue returns the first byte of the value after the colon the decoder has just read a key for,
-// without consuming anything. The decoder's read-ahead holds the first bytes, and the buffered reader under it holds the rest.
-// ok is false when the whitespace before the value outruns the buffered reader's window; the caller then reads the value.
-func migrateReviewFollowupPeekValue(dec *json.Decoder, br *bufio.Reader) (byte, bool, error) {
+// without the decoder having taken it. The decoder's read-ahead is looked at first. Past it, whitespace is skipped one byte at
+// a time, so a run of any length costs no memory and is not limited by the reader's window. A colon the decoder has not read
+// yet and the value's first byte are handed back to the feed, so the decoder reads the same bytes it would read without the
+// peek.
+func migrateReviewFollowupPeekValue(dec *json.Decoder, feed *migrateReviewFollowupFeed) (byte, error) {
 	ahead, err := io.ReadAll(dec.Buffered())
 	if err != nil {
-		return 0, false, err
+		return 0, err
 	}
 	for _, c := range ahead {
 		if !migrateReviewFollowupJSONSpace(c) && c != ':' {
-			return c, true, nil
+			return c, nil
 		}
 	}
-	for n := 1; ; n++ {
-		p, err := br.Peek(n)
-		if errors.Is(err, bufio.ErrBufferFull) {
-			return 0, false, nil
+	var kept []byte
+	for {
+		c, err := feed.readByte()
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return 0, io.ErrUnexpectedEOF
+			}
+			return 0, err
 		}
-		if len(p) < n {
-			return 0, false, io.ErrUnexpectedEOF
+		if migrateReviewFollowupJSONSpace(c) {
+			continue
 		}
-		if c := p[n-1]; !migrateReviewFollowupJSONSpace(c) && c != ':' {
-			return c, true, nil
+		if c == ':' && len(kept) == 0 {
+			kept = append(kept, c)
+			continue
 		}
+		feed.unread(append(kept, c))
+		return c, nil
 	}
 }
 
