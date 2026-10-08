@@ -60,6 +60,15 @@ func activationPublish(path string, b []byte) error {
 	return crwdir.Publish(path, b)
 }
 
+// configLockPathsPublishChecked is activationPublish with check run at the last step, after the new content
+// is written and synced and immediately before the rename. A refusal publishes nothing (CRW-993 c1).
+func configLockPathsPublishChecked(path string, b []byte, check func() error) error {
+	if _, _, e := activationReadFile(path); e != nil {
+		return e
+	}
+	return crwdir.PublishChecked(path, b, check)
+}
+
 // activationSetKeyLocked is the whole read-modify-write of one auto-enabled key under the sidecar
 // lock every CRW writer of config.toml takes (CRW-844): the read, the decision and the publish are
 // serialized against retrust and any other CRW writer, so two writers never interleave on one

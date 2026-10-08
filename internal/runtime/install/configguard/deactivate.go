@@ -100,6 +100,38 @@ func configLockPathsPinHolds(pinned *configLockPathsPin) bool {
 	return pinned != nil && pinned.lock.HoldsSidecar(pinned.path)
 }
 
+// configLockPathsParentLive reports whether the directory the pinned pathname names is still the
+// directory the pin captured. The sidecar and the file are reached through the pathname, so a
+// directory moved away after the pin and replaced under the old name, with hard links to the file and
+// the sidecar, passes the sidecar and file checks while the pathname now lies in the replacement. The
+// restore would publish there and leave the manifest's file untouched (CRW-899 d1, CRW-993 c1).
+func configLockPathsParentLive(pinned *configLockPathsPin) bool {
+	if pinned == nil || pinned.dir == nil {
+		return false
+	}
+	live, err := os.Stat(filepath.Dir(pinned.path))
+	return err == nil && os.SameFile(live, pinned.dir)
+}
+
+// configLockPathsPublishGuard is the check a restore runs immediately before it publishes: the lock
+// still holds the pinned sidecar and the pinned pathname still lies in the pinned directory. Nothing is
+// published when it refuses. It is called once before the restore is computed and again at the rename
+// (CRW-993 c1).
+func configLockPathsPublishGuard(pinned *configLockPathsPin) error {
+	if !configLockPathsPinHolds(pinned) || !configLockPathsParentLive(pinned) {
+		return fmt.Errorf("the config file's directory changed before the restore was published (%s); nothing was written; run the deactivation again", configLockPathsPinnedName(pinned))
+	}
+	return nil
+}
+
+// configLockPathsPinnedName names the pinned path in a refusal, empty for a nil pin.
+func configLockPathsPinnedName(pinned *configLockPathsPin) string {
+	if pinned == nil {
+		return ""
+	}
+	return pinned.path
+}
+
 func readTextOrNull(path string) (*string, error) {
 	b, exists, err := activationReadFile(path)
 	if err != nil || !exists {
@@ -183,6 +215,12 @@ func configLockPathsAbsolute(resolved string) (string, bool) {
 // accepts what it could not prove.
 func configLockPathsSameTarget(spelling string, pinned *configLockPathsPin) bool {
 	if !configLockPathsPinHolds(pinned) {
+		return false
+	}
+	// The live parent of the pinned pathname must still be the directory the pin captured. Without
+	// this, a directory moved after the pin and replaced under the old name is accepted through the
+	// hard links the replacement holds, and the restore publishes into the replacement (CRW-993 c1).
+	if !configLockPathsParentLive(pinned) {
 		return false
 	}
 	// The pinned pathname itself must still name the pinned file. The restore publishes through
@@ -343,13 +381,15 @@ func Deactivate(deps DeactivateDeps) (*DeactivateResult, error) {
 	// have its change discarded with neither command reporting it. The lock is taken only when this
 	// deactivation writes config.toml, so an uninstall with nothing to restore and no flag CRW
 	// enabled is never gated on it, and an empty config path names no file to guard.
+	var pin *configLockPathsPin
 	if path != "" && configLockWritersDeactivateWrites(m) {
 		lock, err := crwdir.LockConfig(path, activationLockWait)
 		if err != nil {
 			return nil, err
 		}
 		defer lock.Release()
-		pin, pinErr := configLockPathsPinned(lock)
+		var pinErr error
+		pin, pinErr = configLockPathsPinned(lock)
 		if pinErr != nil {
 			return nil, pinErr
 		}
@@ -402,7 +442,15 @@ func Deactivate(deps DeactivateDeps) (*DeactivateResult, error) {
 		return nil, err
 	}
 	if content != nil && len(m.TableKeys) > 0 {
-		if err := deactivateTableKeys(path, *content, m, r); err != nil {
+		// The restore is computed under the lock and published only when the pin still holds at the
+		// rename; the check runs here first so a refusal is reported before the keys are computed.
+		guard := func() error { return configLockPathsPublishGuard(pin) }
+		if pin != nil {
+			if err := guard(); err != nil {
+				return nil, err
+			}
+		}
+		if err := deactivateTableKeys(path, *content, m, r, guard); err != nil {
 			return nil, err
 		}
 	}
@@ -428,7 +476,7 @@ func Deactivate(deps DeactivateDeps) (*DeactivateResult, error) {
 	return r, nil
 }
 
-func deactivateTableKeys(path, content string, m *InstallManifest, r *DeactivateResult) error {
+func deactivateTableKeys(path, content string, m *InstallManifest, r *DeactivateResult, guard func() error) error {
 	var backup *string
 	if m.BackupPath != nil && *m.BackupPath != "" {
 		// A read failure is unknown provenance, not evidence of an absent backup key.
@@ -457,7 +505,7 @@ func deactivateTableKeys(path, content string, m *InstallManifest, r *Deactivate
 		r.RestoredKeys = append(r.RestoredKeys, id)
 	}
 	if changed {
-		return activationPublish(path, []byte(content))
+		return configLockPathsPublishChecked(path, []byte(content), guard)
 	}
 	return nil
 }
