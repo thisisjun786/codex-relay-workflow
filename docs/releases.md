@@ -1,6 +1,7 @@
 # Source releases
 
-Integrate work into `dev` through reviewed PRs. A release publishes one exact
+Integrate work into `dev` by one integrator's verified fast-forward
+([POLICY.md](../POLICY.md#branches-and-authority)). A release publishes one exact
 commit already on dev and fast-forwards `main` to that same commit. Do not open
 a `dev -> main` promotion PR. No new merge commit is created at release time.
 
@@ -11,15 +12,17 @@ with the full commit SHA, an unused version tag such as `v0.4.1`, and user-facin
 release notes. Both the original dispatcher and a rerun's actor must be the owner.
 Keep `dry_run` enabled until publication is explicitly authorized.
 
-The source must belong to dev and include the current main history. The latest
-dev-push CI run and its latest attempt for that exact SHA must have completed
-successfully. A PR merge-candidate run, a manual CI dispatch, an older successful
-attempt, and a cancelled run are not substitutes. If a newer dev push cancelled
-the chosen commit's run, rerun that original push run and inspect its result.
+The source must belong to dev and include the current main history. The workflow
+verifies the selected SHA itself, inside the run: the `verify` job checks out that
+commit and runs the repository's local full verification (`crw-dev ci local`), which
+writes a `verification-record/1`. A missing record, a `fail` result, a pin mismatch or a
+record for another commit refuses publication. The workflow no longer reads a dev
+push CI run, and a manual CI dispatch is not a substitute for the in-workflow
+verification.
 
 Validation checks the remote tag, including annotated tags, and refuses an
-existing tag that identifies another commit. It rechecks CI and ancestry before
-publication. Dry-run uses only a read token and creates no tag, release or branch
+existing tag that identifies another commit. It rechecks the verification and the
+ancestry before publication. Dry-run uses only a read token and creates no tag, release or branch
 update; it does not need a publication credential.
 
 Source-release tags identify repository commits. They are independent of the

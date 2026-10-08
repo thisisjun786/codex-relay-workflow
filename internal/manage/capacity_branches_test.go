@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -192,8 +193,11 @@ func (f *branchFixture) publish() *branchFixture {
 	script := "#!/bin/sh\ncase \"$*\" in\n" +
 		"  *dag-ready*) cat " + coreShellQuote(filepath.Join(f.dir, "ready.json")) + " ;;\n" +
 		"  *) echo refused >&2; exit 2 ;;\nesac\n"
-	if err := os.WriteFile(f.env.Executable, []byte(script), 0o700); err != nil {
-		f.t.Fatal(err)
+	syscall.ForkLock.RLock()
+	writeErr := os.WriteFile(f.env.Executable, []byte(script), 0o700)
+	syscall.ForkLock.RUnlock()
+	if writeErr != nil {
+		f.t.Fatal(writeErr)
 	}
 	waiting := f.ready
 	if f.waiting != nil {

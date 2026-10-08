@@ -49,7 +49,7 @@ func Test24_SCH_22_OlderClaimableBlocksNamedNewer(t *testing.T) {
 	second := f.obligation(t)
 	second.Subject = "different-event"
 	second.ID = hash32(second.Kind + "|" + second.RelationID + "|" + second.Subject)
-	p, err := f.c.Compose(f.ctx, second, Resolution{"parent", "supervisor", "PRJ-1", "INI-1", "linkage"}, f.at)
+	p, err := f.c.Compose(f.ctx, second, Resolution{"parent", "supervisor", "initiative", "PRJ-1", "INI-1", "linkage"}, f.at)
 	if err != nil {
 		t.Fatal(err)
 	}

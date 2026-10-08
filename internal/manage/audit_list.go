@@ -334,11 +334,17 @@ const auditListUsage = "usage: crw manage audit list [--round R] [--issue K] [--
 // document and exits 1; a failed output write is exit 3, because a truncated document must
 // not read as a whole one.
 func auditListRun(ctx context.Context, e *Env, args []string) int {
-	for _, arg := range args {
-		if arg == "-h" || arg == "--help" || arg == "help" {
-			fmt.Fprintln(e.Stdout, auditListUsage)
-			return 0
-		}
+	if auditOptionsHelpRequested(args) {
+		fmt.Fprintln(e.Stdout, auditListUsage)
+		return 0
+	}
+	// This parse decides for itself which tokens are values, so a -h it consumed as a value
+	// is not a help request even though Run saw one and skipped its own refusal. The audit
+	// dispatcher already refuses an unusable file for the whole family; the reader refuses it
+	// again so a direct caller that never passed through the dispatcher is safe too.
+	if err := coreConfigError(e); err != nil {
+		fmt.Fprintf(e.Stderr, "crw manage: error: %v\n", err)
+		return usageExit
 	}
 	opts, err := auditListParseArgs(args)
 	if err != nil {
@@ -366,6 +372,25 @@ func auditListRun(ctx context.Context, e *Env, args []string) int {
 		}
 	}
 	return 0
+}
+
+// auditOptionsHelpRequested reports whether a subcommand's arguments ask for its usage. Help
+// is the first argument being "help", or -h or --help standing where an option is expected.
+// The token an option consumes is a value whatever it is, so --round help names the round
+// help and --round --help is a missing value rather than a help request.
+func auditOptionsHelpRequested(args []string) bool {
+	if len(args) > 0 && args[0] == "help" {
+		return true
+	}
+	for i := 0; i < len(args); i++ {
+		switch arg := args[i]; {
+		case arg == "-h" || arg == "--help":
+			return true
+		case strings.HasPrefix(arg, "--") && !strings.ContainsRune(arg, '='):
+			i++ // this option takes the next token as its value
+		}
+	}
+	return false
 }
 
 // auditListParseArgs reads the three filter flags. A flag that is present with an empty

@@ -214,47 +214,53 @@ func TestCRW737C5AFoldedRecordIsVisibleFromBothProjects(t *testing.T) {
 // the decision was withdrawn are refused.
 func TestCRW737C6AnswerRefusals(t *testing.T) {
 	state := crw737Store(t)
+	// CRW-903: a user-grade answer names its own class and comes from the store-scope supervisor
+	// seat, so the fixtures below bind that seat.
+	review818SeedSupervisor(t, state, "task-sup")
 	raised := crw737JSON(t, crw737Raise(t, state, "PRJ-A", "Which window does the host update take?"))
 	decision, _ := raised["decisionId"].(string)
 
 	if got := crw737Run(t, "--state", state, "decision-answer", "--decision", decision, "--option", "now", "--via", "direct-ask"); got.code != 2 {
 		t.Fatalf("an answer without --by: exit %d %s", got.code, got.stdout)
 	}
-	crw737Refused(t, crw737Run(t, "--state", state, "decision-answer", "--decision", decision, "--option", "now",
-		"--by", "task-a", "--via", "   "), "bad_invocation")
-	crw737Refused(t, crw737Run(t, "--state", state, "decision-answer", "--decision", decision, "--option", "now",
-		"--by", "task-a", "--via", "carrier-pigeon"), "bad_invocation")
-	crw737Refused(t, crw737Run(t, "--state", state, "decision-answer", "--decision", decision, "--option", "nosuch",
-		"--by", "task-a", "--via", "direct-ask"), "bad_invocation")
-	crw737Refused(t, crw737Run(t, "--state", state, "decision-answer", "--decision", decision,
-		"--by", "task-a", "--via", "direct-ask"), "bad_invocation")
+	// CRW-903: the recorder, the class and the via are named on every line below, so each case
+	// reaches the check it is about instead of being stopped by the provenance gate first.
+	review818RefusedFor(t, crw737Run(t, "--state", state, "decision-answer", "--decision", decision, "--option", "now",
+		"--by", "task-sup", "--via", "   ", "--authority", "user"), "bad_invocation", "is answered through")
+	review818RefusedFor(t, crw737Run(t, "--state", state, "decision-answer", "--decision", decision, "--option", "now",
+		"--by", "task-sup", "--via", "carrier-pigeon", "--authority", "user"), "bad_invocation", "is answered through")
+	review818RefusedFor(t, crw737Run(t, "--state", state, "decision-answer", "--decision", decision, "--option", "nosuch",
+		"--by", "task-sup", "--via", "direct-ask", "--authority", "user"), "bad_invocation", "names no option of the record")
+	review818RefusedFor(t, crw737Run(t, "--state", state, "decision-answer", "--decision", decision,
+		"--by", "task-sup", "--via", "direct-ask", "--authority", "user"), "bad_invocation", "names no option of the record")
 	// A user-grade question answered by a weaker class is an answer below the grade.
-	crw737Refused(t, crw737Run(t, "--state", state, "decision-answer", "--decision", decision,
-		"--option", "now", "--by", "task-a", "--via", "direct-ask", "--authority", "delegated-management"), "bad_invocation")
-	crw737Refused(t, crw737Run(t, "--state", state, "decision-answer", "--decision", decision,
-		"--option", "now", "--by", "task-a", "--via", "direct-ask", "--authority", "parent=plan-1"), "bad_invocation")
+	review818RefusedFor(t, crw737Run(t, "--state", state, "decision-answer", "--decision", decision,
+		"--option", "now", "--by", "task-sup", "--via", "direct-ask", "--authority", "delegated-management"), "bad_invocation", "takes an answer that names its own class")
+	review818RefusedFor(t, crw737Run(t, "--state", state, "decision-answer", "--decision", decision,
+		"--option", "now", "--by", "task-sup", "--via", "direct-ask", "--authority", "parent=plan-1"), "bad_invocation", "takes an answer that names its own class")
 	// A parent-class answer without its reference is refused.
-	crw737Refused(t, crw737Run(t, "--state", state, "decision-answer", "--decision", decision,
-		"--option", "now", "--by", "task-a", "--via", "direct-ask", "--authority", "parent"), "bad_invocation")
+	review818RefusedFor(t, crw737Run(t, "--state", state, "decision-answer", "--decision", decision,
+		"--option", "now", "--by", "task-sup", "--via", "direct-ask", "--authority", "parent"), "bad_invocation", "takes an answer that names its own class")
 
 	if got := crw737Run(t, "--state", state, "decision-answer", "--decision", decision, "--option", "now",
-		"--by", "task-a", "--via", "direct-ask"); got.code != 0 {
+		"--by", "task-sup", "--via", "direct-ask", "--authority", "user"); got.code != 0 {
 		t.Fatalf("a well-formed answer: exit %d %s %s", got.code, got.stdout, got.stderr)
 	}
 	if got := crw737Run(t, "--state", state, "decision-withdraw", "--decision", decision, "--reason", "the plan moved on"); got.code != 0 {
 		t.Fatalf("decision-withdraw: exit %d %s %s", got.code, got.stdout, got.stderr)
 	}
 	crw737Refused(t, crw737Run(t, "--state", state, "decision-answer", "--decision", decision, "--option", "later",
-		"--by", "task-a", "--via", "direct-ask"), "disposition_conflict")
+		"--by", "task-sup", "--via", "direct-ask", "--authority", "user"), "disposition_conflict")
 }
 
 // C8: the answer's provenance is stored on the record.
 func TestCRW737C8TheAnswerProvenanceIsStored(t *testing.T) {
 	state := crw737Store(t)
+	review818SeedSupervisor(t, state, "task-sup")
 	raised := crw737JSON(t, crw737Raise(t, state, "PRJ-A", "Which window does the host update take?"))
 	decision, _ := raised["decisionId"].(string)
 	if got := crw737Run(t, "--state", state, "decision-answer", "--decision", decision, "--text", "between runs",
-		"--by", "task-a", "--via", "management-message"); got.code != 0 {
+		"--by", "task-sup", "--via", "management-message", "--authority", "user"); got.code != 0 {
 		t.Fatalf("decision-answer: exit %d %s %s", got.code, got.stdout, got.stderr)
 	}
 	records := crw737List(t, state)
@@ -262,7 +268,7 @@ func TestCRW737C8TheAnswerProvenanceIsStored(t *testing.T) {
 		t.Fatalf("decision-list returned %d records", len(records))
 	}
 	record := records[0].(map[string]any)
-	if record["state"] != "answered" || record["answered_by"] != "task-a" ||
+	if record["state"] != "answered" || record["answered_by"] != "task-sup" ||
 		record["answered_via"] != "management-message" || record["answer_text"] != "between runs" {
 		t.Fatalf("the answer's provenance is not on the record: %v", record)
 	}
@@ -276,13 +282,15 @@ func TestCRW737C8TheAnswerProvenanceIsStored(t *testing.T) {
 func TestCRW737C7ApplyNeedsTheDecisionReplyEvent(t *testing.T) {
 	state := crw737Store(t)
 	crw737SeedRelationship(t, state)
+	review818SeedSupervisor(t, state, "task-sup")
 	raised := crw737JSON(t, crw737Run(t, "--state", state, "decision-raise", "--kind", "merge_approval",
 		"--context", "Hold the merge until the retention decision?", "--option", "hold=h:hold the merge",
-		"--option", "merge=m:merge now", "--blocking", "relationship=rel-737",
-		"--origin-project", "PRJ-A", "--source", "receipt=ev-blocked", "--authority", "user"))
+		"--option", "merge=m:merge now", "--option-reply", "hold=stop", "--option-reply", "merge=answer",
+		"--blocking", "relationship=rel-737",
+		"--origin-project", "PRJ-A", "--source", "event=ev-blocked", "--authority", "user"))
 	decision, _ := raised["decisionId"].(string)
 	if got := crw737Run(t, "--state", state, "decision-answer", "--decision", decision, "--option", "hold",
-		"--by", "task-a", "--via", "direct-ask"); got.code != 0 {
+		"--by", "task-sup", "--via", "direct-ask", "--authority", "user"); got.code != 0 {
 		t.Fatalf("decision-answer: exit %d %s %s", got.code, got.stdout, got.stderr)
 	}
 	// The answer alone does not apply it.
@@ -301,9 +309,11 @@ func TestCRW737C7ApplyNeedsTheDecisionReplyEvent(t *testing.T) {
 		t.Fatalf("a child-written row applied the record: %v", record)
 	}
 	// A reply that answers another receipt of the same relationship does not apply it, even though
-	// its id is internally consistent: the decision names the receipt it was raised on.
-	crw737SeedOtherReceiptReply(t, state)
-	crw737Refused(t, crw737Run(t, "--state", state, "decision-apply", "--decision", decision, "--event", "ev-other-reply"), "disposition_conflict")
+	// its id is internally consistent and its delivery reached the child: the decision names the
+	// receipt it was raised on. The event id is the one the fixture inserted, so the case reaches
+	// the receipt comparison rather than stopping at a missing row.
+	otherReceipt := crw737SeedOtherReceiptReply(t, state)
+	crw737Refused(t, crw737Run(t, "--state", state, "decision-apply", "--decision", decision, "--event", otherReceipt), "disposition_conflict")
 	if record := crw737List(t, state)[0].(map[string]any); record["state"] != "answered" {
 		t.Fatalf("an older reply applied the record: %v", record)
 	}
@@ -346,7 +356,9 @@ func crw737SeedRelationship(t *testing.T, state string) {
 	}
 	defer opened.Close()
 	receipt := "{\"eventId\":\"ev-reply\",\"relationshipId\":\"rel-737\",\"executionGeneration\":1,\"kind\":\"decision_reply\"," +
-		"\"decision\":\"answer\",\"answersEvent\":\"ev-blocked\",\"note\":\"hold it\",\"generationEffect\":\"stays\"," +
+		// CRW-903: the reply the relay recorded is the reply the chosen option makes, and this
+		// fixture's answer chose the hold option, whose reply is stop.
+		"\"decision\":\"stop\",\"answersEvent\":\"ev-blocked\",\"note\":\"hold it\",\"generationEffect\":\"stays\"," +
 		"\"anchorTurnId\":\"turn-1\",\"childTaskId\":\"child\",\"decidedAt\":\"2026-10-06T00:00:00Z\"}"
 	for _, statement := range []struct {
 		query string
@@ -358,6 +370,10 @@ func crw737SeedRelationship(t *testing.T, state string) {
 			[]any{"rel-737", int64(1), "dispatch-1", "bound", "turn-1", "2026-10-06T00:00:00Z"}},
 		{"INSERT INTO events (event_id, relationship_id, execution_generation, revision_hash, outcome, producer, turn_thread_id, turn_id, turn_status, receipt, stage, first_seen_at, last_seen_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
 			[]any{delivery.DecisionEventID("rel-737", "ev-blocked"), "rel-737", int64(1), "no_deliverable", "decision_reply", "relay", "thread", "turn-1", "completed", receipt, "final", "2026-10-06T00:00:00Z", "2026-10-06T00:00:00Z"}},
+		// CRW-903: the relay queues the reply's delivery when it records the event, and the apply
+		// waits for that delivery to be accepted, so the fixture records it as dispatched.
+		{"INSERT INTO deliveries (event_id, relationship_id, kind, recipient_task_id, recipient_thread_id, state, attempt_count, created_at, updated_at) VALUES (?,?,?,?,?,?,0,?,?)",
+			[]any{delivery.DecisionEventID("rel-737", "ev-blocked"), "rel-737", delivery.Revision, "child", "child", delivery.Dispatched, "2026-10-06T00:00:00Z", "2026-10-06T00:00:00Z"}},
 	} {
 		if _, err := opened.Querier(ctx).ExecContext(ctx, statement.query, statement.args...); err != nil {
 			t.Fatalf("%s: %v", statement.query, err)
@@ -382,9 +398,10 @@ func crw737SeedChildReply(t *testing.T, state string) {
 }
 
 // crw737SeedOtherReceiptReply writes the relay's own decision_reply for another receipt of the
-// same relationship: its id hashes its own answersEvent, so only the decision's own source ref
-// keeps it from applying the record.
-func crw737SeedOtherReceiptReply(t *testing.T, state string) {
+// same relationship, with its delivery dispatched: its id hashes its own answersEvent, so only the
+// decision's own source ref keeps it from applying the record. It returns the event id it wrote,
+// which is the id an apply must name to reach that comparison.
+func crw737SeedOtherReceiptReply(t *testing.T, state string) string {
 	t.Helper()
 	ctx := context.Background()
 	opened, err := store.Open(ctx, filepath.Join(state, "relay.sqlite3"), "")
@@ -394,10 +411,22 @@ func crw737SeedOtherReceiptReply(t *testing.T, state string) {
 	defer opened.Close()
 	event := delivery.DecisionEventID("rel-737", "ev-unrelated")
 	receipt := `{"eventId":"` + event + `","relationshipId":"rel-737","executionGeneration":1,"kind":"decision_reply","decision":"answer","answersEvent":"ev-unrelated","note":"n","generationEffect":"stays","anchorTurnId":"turn-1","childTaskId":"child","decidedAt":"2026-10-06T00:00:00Z"}`
-	if _, err := opened.Querier(ctx).ExecContext(ctx, "INSERT INTO events (event_id, relationship_id, execution_generation, revision_hash, outcome, producer, turn_thread_id, turn_id, turn_status, receipt, stage, first_seen_at, last_seen_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
-		event, "rel-737", int64(1), "no_deliverable", "decision_reply", "relay", "thread", "turn-3", "completed", receipt, "final", "2026-10-06T00:00:00Z", "2026-10-06T00:00:00Z"); err != nil {
-		t.Fatal(err)
+	// The delivery row is written inside the relay's transaction in production, so its created_at
+	// is the write order; the fixture records it as dispatched, the state the apply accepts.
+	for _, statement := range []struct {
+		query string
+		args  []any
+	}{
+		{"INSERT INTO events (event_id, relationship_id, execution_generation, revision_hash, outcome, producer, turn_thread_id, turn_id, turn_status, receipt, stage, first_seen_at, last_seen_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+			[]any{event, "rel-737", int64(1), "no_deliverable", "decision_reply", "relay", "thread", "turn-3", "completed", receipt, "final", "2026-10-06T00:00:00Z", "2026-10-06T00:00:00Z"}},
+		{"INSERT INTO deliveries (event_id, relationship_id, kind, recipient_task_id, recipient_thread_id, state, attempt_count, created_at, updated_at) VALUES (?,?,?,?,?,?,0,?,?)",
+			[]any{event, "rel-737", delivery.Revision, "child", "child", delivery.Dispatched, "2026-10-06T00:00:00Z", "2026-10-06T00:00:00Z"}},
+	} {
+		if _, err := opened.Querier(ctx).ExecContext(ctx, statement.query, statement.args...); err != nil {
+			t.Fatalf("%s: %v", statement.query, err)
+		}
 	}
+	return event
 }
 
 // Review findings on PR #778, CLI level: an unknown --decision is the relay's refusal, not a host
@@ -432,14 +461,16 @@ func TestCRW737UnknownDecisionAndUnansweredApplyAreRefused(t *testing.T) {
 func TestCRW737ApplyRefusesAReplyOfAnotherRelationship(t *testing.T) {
 	state := crw737Store(t)
 	crw737SeedRelationship(t, state)
+	review818SeedSupervisor(t, state, "task-sup")
 	// A decision that blocks a relationship nothing answers.
 	raised := crw737JSON(t, crw737Run(t, "--state", state, "decision-raise", "--kind", "merge_approval",
 		"--context", "Hold the merge of another relationship?", "--option", "hold=h:hold it",
-		"--option", "merge=m:merge now", "--blocking", "relationship=rel-other",
-		"--origin-project", "PRJ-A", "--source", "receipt=ev-blocked", "--authority", "user"))
+		"--option", "merge=m:merge now", "--option-reply", "hold=stop", "--option-reply", "merge=answer",
+		"--blocking", "relationship=rel-other",
+		"--origin-project", "PRJ-A", "--source", "event=ev-blocked", "--authority", "user"))
 	decision, _ := raised["decisionId"].(string)
 	if got := crw737Run(t, "--state", state, "decision-answer", "--decision", decision, "--option", "hold",
-		"--by", "task-a", "--via", "direct-ask"); got.code != 0 {
+		"--by", "task-sup", "--via", "direct-ask", "--authority", "user"); got.code != 0 {
 		t.Fatalf("decision-answer: exit %d %s %s", got.code, got.stdout, got.stderr)
 	}
 	// The seeded reply is the relay's own, answers the right receipt, but belongs to rel-737.

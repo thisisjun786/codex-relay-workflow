@@ -93,7 +93,7 @@ reference is recorded as a reference so nobody later reads it as an instruction.
 ### Which task may hold the binding
 
 The supervisor role carries no project's issues and no issue's implementation: it holds no checkout
-and it merges nothing ([OPS-9.3](operations.md#ops-93-the-parent-merges-and-does-not-release)).
+and it merges nothing ([OPS-9.3](operations.md#ops-93-the-parent-integrates-and-does-not-release)).
 That describes the role rather than converting whatever task the designation arrives in, so read
 this task's own current binding before binding anything.
 

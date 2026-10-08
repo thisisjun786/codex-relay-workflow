@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -17,8 +18,11 @@ func fakeGH(t *testing.T, body string) (string, string) {
 	log := filepath.Join(dir, "argv")
 	cmd := filepath.Join(dir, "gh")
 	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > '" + log + "'\n" + body + "\n"
-	if err := os.WriteFile(cmd, []byte(script), 0700); err != nil {
-		t.Fatal(err)
+	syscall.ForkLock.RLock()
+	writeErr := os.WriteFile(cmd, []byte(script), 0700)
+	syscall.ForkLock.RUnlock()
+	if writeErr != nil {
+		t.Fatal(writeErr)
 	}
 	return cmd, log
 }

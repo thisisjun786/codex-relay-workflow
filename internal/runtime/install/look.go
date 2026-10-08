@@ -64,3 +64,9 @@ func (l look) same(other look) bool {
 // is about to lock. It is a variable only so that a test can change the document there, as
 // another writer can.
 var beforeWriteLock = func(string) {}
+
+// beforeOwnershipLock runs just before the re-registration path waits for the ownership lock. It is
+// a variable only so that a test can order a policy file's own change against that wait: a policy
+// that moves while the run waits is the case the in-lock reading exists for, and the test has to
+// know the run reached the wait before it moves the file.
+var beforeOwnershipLock = func() {}
