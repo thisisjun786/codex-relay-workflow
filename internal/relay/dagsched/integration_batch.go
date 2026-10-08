@@ -131,9 +131,13 @@ func (s *Scheduler) IntegrateBatch(ctx context.Context, in IntegrationBatchInput
 	// this relay verified, the candidate is marked from its frozen row; otherwise it is reported and stays ready.
 	var fresh, contained []Candidate
 	for _, c := range candidates {
-		inside, err := isAncestorOf(ctx, in.Checkout, c.HeadSHA, in.IntegrationRef)
-		if err != nil {
-			return out, err
+		// containment is judged against the branch head the batch read once (start), the same head the coverage check reads (CRW-965 review)
+		inside := false
+		if old != zeroObjectID {
+			var err error
+			if inside, err = commitIsAncestor(ctx, in.Checkout, c.HeadSHA, start); err != nil {
+				return out, err
+			}
 		}
 		if inside {
 			contained = append(contained, c)
@@ -480,22 +484,24 @@ func (w *integrationWorktree) merge(ctx context.Context, c Candidate) (bool, str
 
 // build resets the worktree to the start and merges the given candidates in order; a prefix that merged cleanly once
 // merges cleanly again. It answers the merge commits.
-func (w *integrationWorktree) build(ctx context.Context, set []Candidate) ([]string, error) {
+func (w *integrationWorktree) build(ctx context.Context, set []Candidate) ([]string, *Candidate, error) {
 	if err := w.reset(ctx, w.start); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	var commits []string
-	for _, c := range set {
+	for i := range set {
+		c := set[i]
 		ok, commit, err := w.merge(ctx, c)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if !ok {
-			return nil, fmt.Errorf("candidate %s conflicted while the merged set was rebuilt", c.NodeID)
+			// a survivor that no longer merges cleanly is reported, not an error: the settle loop defers it (CRW-965, decision D-A)
+			return nil, &c, nil
 		}
 		commits = append(commits, commit)
 	}
-	return commits, nil
+	return commits, nil, nil
 }
 
 // verify runs the verification in the worktree at its current head, with a fresh record path, and judges the record
@@ -573,8 +579,15 @@ func (w *integrationWorktree) settle(ctx context.Context, candidates []Candidate
 	var digest string
 	for len(kept) > 0 {
 		var err error
-		if commits, err = w.build(ctx, kept); err != nil {
+		var conflicted *Candidate
+		if commits, conflicted, err = w.build(ctx, kept); err != nil {
 			return out, err
+		}
+		if conflicted != nil {
+			// it no longer merges with the set left after a removal: it is deferred and retried on the verified set
+			deferred = append(deferred, *conflicted)
+			kept = withoutCandidateNode(kept, conflicted.NodeID)
+			continue
 		}
 		rec, dig, pass, err := w.verify(ctx)
 		if err != nil {
@@ -663,8 +676,12 @@ func (w *integrationWorktree) firstFailingPrefix(ctx context.Context, kept []Can
 	lo, hi := 1, len(kept)
 	for lo < hi {
 		mid := (lo + hi) / 2
-		if _, err := w.build(ctx, kept[:mid]); err != nil {
+		_, conflicted, err := w.build(ctx, kept[:mid])
+		if err != nil {
 			return 0, err
+		}
+		if conflicted != nil {
+			return 0, fmt.Errorf("candidate %s conflicted while a prefix of a clean set was rebuilt", conflicted.NodeID)
 		}
 		_, _, pass, err := w.verify(ctx)
 		if err != nil {
@@ -805,4 +822,15 @@ func (s *Scheduler) recordVerifiedHead(ctx context.Context, in IntegrationBatchI
 	return s.IntegrationWrite(ctx, in.Plan, in.Actor, func(txCtx context.Context) error {
 		return s.stageRow(txCtx, in, batch, "intent", Candidate{}, string(detail))
 	})
+}
+
+// withoutCandidateNode is the candidates with one node removed, in their order.
+func withoutCandidateNode(set []Candidate, node string) []Candidate {
+	var out []Candidate
+	for _, c := range set {
+		if c.NodeID != node {
+			out = append(out, c)
+		}
+	}
+	return out
 }
