@@ -18,13 +18,9 @@ import (
 func TestSameRepositoryNamesOneCheckoutByItsLocalReading(t *testing.T) {
 	root := t.TempDir()
 	checkout := filepath.Join(root, "checkout")
-	if err := os.MkdirAll(filepath.Join(checkout, ".git"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	riInit(t, checkout)
 	other := filepath.Join(root, "other")
-	if err := os.MkdirAll(filepath.Join(other, ".git"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	riInit(t, other)
 	link := filepath.Join(root, "link")
 	if err := os.Symlink(checkout, link); err != nil {
 		t.Fatal(err)
@@ -59,13 +55,9 @@ func TestSameRepositoryNamesOneCheckoutByItsLocalReading(t *testing.T) {
 func TestTheCorrectionHoldsEverySpellingOfTheAcceptedRepository(t *testing.T) {
 	root := t.TempDir()
 	checkout := filepath.Join(root, "checkout")
-	if err := os.MkdirAll(filepath.Join(checkout, ".git"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	riInit(t, checkout)
 	other := filepath.Join(root, "other")
-	if err := os.MkdirAll(filepath.Join(other, ".git"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	riInit(t, other)
 	link := filepath.Join(root, "link")
 	if err := os.Symlink(checkout, link); err != nil {
 		t.Fatal(err)
@@ -168,10 +160,10 @@ func TestTheLaneReadsASymlinkedSpellingWhereTheIdentityResolvesIt(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, dir := range []string{"r/repo/.git", "r/other/repo/.git", "r/other/deep"} {
-		if err := os.MkdirAll(filepath.Join(root, dir), 0o755); err != nil {
-			t.Fatal(err)
-		}
+	riInit(t, filepath.Join(root, "r", "repo"))
+	riInit(t, filepath.Join(root, "r", "other", "repo"))
+	if err := os.MkdirAll(filepath.Join(root, "r", "other", "deep"), 0o755); err != nil {
+		t.Fatal(err)
 	}
 	if err := os.Symlink(filepath.Join(root, "r", "other", "deep"), filepath.Join(root, "r", "link")); err != nil {
 		t.Fatal(err)

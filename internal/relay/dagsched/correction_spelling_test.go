@@ -3,6 +3,7 @@ package dagsched
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -16,9 +17,7 @@ func TestACorrectionIsNotRecordedOverAMergingTurnSpelledAsTheCheckoutsGitDirecto
 	t.Parallel()
 	root := t.TempDir()
 	checkout := filepath.Join(root, "checkout")
-	if err := os.MkdirAll(filepath.Join(checkout, ".git"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	csInit(t, checkout)
 	k, accepted := rvSettledSharedRoot(t)
 	rid := accepted["B"].RelationshipID
 	prepared := k.rvPrepare("sr", "B")
@@ -45,9 +44,7 @@ func TestACorrectionIsNotHeldByAMergingTurnOfAnUnrelatedCheckout(t *testing.T) {
 	checkout := filepath.Join(root, "checkout")
 	unrelated := filepath.Join(root, "unrelated")
 	for _, dir := range []string{checkout, unrelated} {
-		if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o755); err != nil {
-			t.Fatal(err)
-		}
+		csInit(t, dir)
 	}
 	k, accepted := rvSettledSharedRoot(t)
 	rid := accepted["B"].RelationshipID
@@ -60,5 +57,20 @@ func TestACorrectionIsNotHeldByAMergingTurnOfAnUnrelatedCheckout(t *testing.T) {
 	_, err := k.sched.RecordCorrection(context.Background(), "sr", "B", "parent", prepared.ManifestDigest)
 	if err != nil && strings.Contains(err.Error(), "mtn-unrelated") {
 		t.Fatalf("a merging turn of an unrelated checkout held the correction: %v", err)
+	}
+}
+
+// csInit makes a real git repository with one commit, so git names it as a repository.
+func csInit(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"init", "-q", "-b", "dev"}, {"commit", "-q", "--allow-empty", "-m", "base"}} {
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=crw", "GIT_AUTHOR_EMAIL=crw@example.invalid", "GIT_COMMITTER_NAME=crw", "GIT_COMMITTER_EMAIL=crw@example.invalid")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
 	}
 }
