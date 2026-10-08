@@ -46,6 +46,18 @@ const (
 // file is still there.
 func Publish(finalPath string, data []byte) error { return publish(finalPath, data, nil) }
 
+// PublishChecked is Publish with check run at the last step: after the temp file is written and synced and
+// immediately before the rename. A non-nil check error is returned in place of the rename, so the temp file
+// is removed and finalPath is untouched. A nil check is Publish.
+func PublishChecked(finalPath string, data []byte, check func() error) error {
+	return publish(finalPath, data, func(at publishStep) error {
+		if at == stepRename && check != nil {
+			return check()
+		}
+		return nil
+	})
+}
+
 // PublishContext is Publish with the caller's cancellation: a context cancelled at any point before the rename, the last
 // step, is returned from the rename step instead of moving the temp file over finalPath, so the deferred removal leaves no
 // temp file and finalPath as it was. The context is checked once, at that step: a cancellation that lands between the check
