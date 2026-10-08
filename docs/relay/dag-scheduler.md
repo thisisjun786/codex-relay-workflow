@@ -967,6 +967,26 @@ The commands that decide take `--expect-epoch E`, the epoch the session holds: `
 Refusals use the relay's existing reasons: `unregistered_scope` (a plan or node that is not there), `malformed_receipt` (a region or a request that is not valid),
 `disposition_conflict` (a node that edits no repository, or whose held regions a declaration would widen, or that is not ready), and the reasons of the table above. A write of an epoch that is not the plan's is `stale_coordinator_epoch` (new, decision D-02: the second reason this feature adds to the relay's contract, beside `plan_revision_conflict`). `dag-release-close` refuses with `malformed_receipt`, `unregistered_scope`, `scope_role_mismatch` and `disposition_conflict`. `dag-correct` refuses an actor that is not the parent of the node's relationship with `scope_role_mismatch` in both of its steps, and `dag-correct --prepare` refuses a stated base commit that the branch does not read with `merge_base_mismatch`. Commands can also refuse with `merge_base_mismatch`, `merge_target_unreadable`, `not_acknowledged`, `relationship_conflict`, `relationship_not_active`, `revision_ambiguous`, `scope_role_mismatch`, `slot_unknown` and `unregistered_relationship`. Exit codes are the relay's: 0, 2 refusal, 3 host, 4 usage.
 
+## Bundle candidates (CRW-810)
+
+`dag-bundle-candidates --plan P [--exclude N]...` answers which nodes of the head revision a parent could bundle into one issue. It reads the stored plan and the release records and writes nothing. `dag-ready` carries the same reading, with no exclusions, as `bundleCandidates` (the `bundles` and `excluded` lists).
+
+The candidates are the live implementation nodes with no `dag_releases` and no `dag_release_requests` row for the plan. Every other live node is listed in `excluded` with one reason:
+
+- `non_pr`: the node opens no pull request.
+- `released`: a release or a managed start is on record.
+- `parent_excluded`: named by `--exclude`. The plan carries no urgency or security mark, so the parent passes such a node here. A name the plan does not hold is an argument error (exit 4).
+- `other_plan_exclusive`: an implementation node of another plan that is live and not integrated holds the same repository and path exclusively, by the exclusive flag or the `exclusive` grade of its latest declaration.
+
+Two candidates are joined by one of two rules, and a pair that meets both carries both reasons:
+
+- `same_region`: their latest declarations name the same file, or two files in one directory other than the repository root. A mechanical region does not count, because its rule settles it.
+- `chain_slice`: the plan has an edge A→B where B has no other incoming edge and A has no other outgoing edge.
+
+A bundle is a connected group of two or more candidates. It reports its `nodes`, the `reasons` and `pairs` that join them, the union of the members' regions in the shape `dag-region-declare` answers, and `internalEdges`, the edges whose both ends lie in the group. Every list is sorted, so one store state gives one answer.
+
+The reading merges nothing. Merging nodes is a plan revision the parent writes.
+
 ## The store
 
 The scheduler adds tables to the DAG zone ([DAG plans](dag-plans.md#the-store)) as appended statements. `dag_passes` and `dag_node_regions` are described above; `dag_release_requests` freezes the request of a release with its intent; `dag_release_recoveries` holds the closure of an abandoned release and the successor release of a closed one (see Recovering an abandoned release);
