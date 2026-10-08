@@ -100,13 +100,15 @@ func RunEvidenceCLI(a EvidenceResolveArgs) (string, int) {
 		if index < 0 {
 			return nil
 		}
+		// Intentionally changed: publishing a capped/repaired read loses interview records too. This
+		// check runs first because cliVerdictsIntact now covers the tracker, and the interview loss
+		// keeps this command's own sentence.
+		if !cliInterviewIntact(a.Cwd, a.SessionID) {
+			return errors.New(cliInterviewRefusalReason)
+		}
 		// Intentionally changed: publishing a capped/repaired read loses verdicts.
 		if !cliVerdictsIntact(a.Cwd, a.SessionID, len(s.UnverifiedSubagents)) {
 			return errors.New("session state holds unreadable unverified records; refusing to rewrite it")
-		}
-		// Intentionally changed: publishing a capped/repaired read loses interview records too.
-		if !cliInterviewIntact(a.Cwd, a.SessionID) {
-			return errors.New(cliInterviewRefusalReason)
 		}
 		target := s.UnverifiedSubagents[index]
 		turn := target.TurnID

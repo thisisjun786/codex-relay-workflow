@@ -45,6 +45,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf16"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/fsm"
@@ -98,10 +99,153 @@ type promptDclosePlanOutcome struct {
 	allDone    bool
 	markerNext *string
 	rows       []promptDcloseGoalplanRow
-	// warnings are the durability lines of a marker or plan write that published its artifact and
-	// then failed a step after the rename. The close goes on; the caller reports them on the answer
-	// (CRW-869, finding 2).
-	warnings []string
+	// published records which artifacts this close actually wrote - the recovery marker and the
+	// goalplan - beside their durability warnings, so a later refusal names each of them whether or
+	// not a directory-sync warning was collected for it (CRW-930, c6: the promise CRW-869 left
+	// open). The close goes on; the caller reports the warnings on the answer (CRW-869, finding 2).
+	published promptDclosePublishedArtifacts
+}
+
+// promptDclosePublication is one artifact a close wrote: whether it reached its final path, and the
+// durability warning when the step after its rename failed. A write that never reached its final
+// path leaves landed false and wrote nothing.
+type promptDclosePublication struct {
+	landed  bool
+	warning string
+}
+
+// promptDclosePublishedArtifacts is what one bound close published: its recovery marker and its
+// goalplan. A refusal after either one names it instead of claiming nothing was written, because an
+// artifact that published cleanly carries no warning to be recovered from (CRW-930, c6).
+// "Nothing was written." stays only when neither landed and no other durability warning is
+// outstanding.
+type promptDclosePublishedArtifacts struct {
+	marker promptDclosePublication
+	plan   promptDclosePublication
+	// planUnknown records that the goalplan's publication cannot be decided at all: a retry inherits
+	// the marker its first attempt wrote, but the plan on disk cannot prove who wrote its shape - a
+	// real commit and an operator's hand repair after a marker-only failure leave the same file. The
+	// refusal then says the plan may already hold this close's commit instead of claiming or denying
+	// it (CRW-930, generation-2 decision on d2/d3).
+	planUnknown bool
+}
+
+// sentences name every artifact this close published, one sentence per artifact and in write order:
+// the fixed sentence when it published cleanly, its own durability line when the step after its
+// rename failed (that line already says which file it is). Either way the artifact is named, so the
+// refusal never claims nothing was written. An artifact that never landed contributes nothing, so an
+// empty answer means this close published nothing and the bare refusal is exact (CRW-930, c6).
+func (p promptDclosePublishedArtifacts) sentences() []string {
+	out := []string{}
+	if p.marker.landed {
+		out = append(out, p.marker.sentence(promptDcloseMarkerPublishedSentence()))
+	}
+	if p.plan.landed {
+		out = append(out, p.plan.sentence(promptDcloseGoalplanPublishedSentence()))
+	} else if p.planUnknown {
+		out = append(out, promptDcloseGoalplanUnknownSentence())
+	}
+	return out
+}
+
+// planUnaccounted reports whether the goalplan's publication is unknown to this close: a retry
+// inherited the marker, and this invocation did not write the plan itself. A refusal with this
+// state must not append a sentence that denies a goalplan write, because it cannot know
+// (CRW-930, generation-2 decision on d2/d3).
+func (p promptDclosePublishedArtifacts) planUnaccounted() bool {
+	return p.planUnknown && !p.plan.landed
+}
+
+// sentence is one publication's naming sentence: its durability line when the write published and
+// then failed a step after the rename, the fixed sentence when the write was clean.
+func (p promptDclosePublication) sentence(clean string) string {
+	if p.warning != "" {
+		return p.warning
+	}
+	return clean
+}
+
+// names reports whether warning is already the sentence sentences() emits for one of the artifacts
+// this close published, so a refusal that carries both names each artifact exactly once (CRW-930,
+// c6: the warning is kept, not repeated).
+func (p promptDclosePublishedArtifacts) names(warning string) bool {
+	if warning == "" {
+		return false
+	}
+	return (p.marker.landed && p.marker.warning == warning) || (p.plan.landed && p.plan.warning == warning)
+}
+
+// warningLines are the durability lines of the artifacts that published and then failed a step
+// after the rename, in write order. A clean publication contributes nothing.
+func (p promptDclosePublishedArtifacts) warningLines() []string {
+	lines := []string{}
+	if p.marker.warning != "" {
+		lines = append(lines, p.marker.warning)
+	}
+	if p.plan.warning != "" {
+		lines = append(lines, p.plan.warning)
+	}
+	return lines
+}
+
+// promptDcloseMarkerPublishedSentence is the fixed sentence naming a recovery marker this close
+// published cleanly, so a later refusal of the same close names it instead of denying it
+// (CRW-930, c6).
+func promptDcloseMarkerPublishedSentence() string {
+	return "the recovery marker was published."
+}
+
+// promptDcloseGoalplanPublishedSentence is the fixed sentence naming a goalplan this close
+// published cleanly, so a later refusal of the same close names it instead of denying it
+// (CRW-930, c6).
+func promptDcloseGoalplanPublishedSentence() string {
+	return "the goalplan was published."
+}
+
+// promptDcloseGoalplanUnknownSentence is the sentence a refusal of a retry carries in place of a
+// definite claim or denial about the goalplan. The marker is written before the plan commit, so the
+// plan on disk cannot prove who wrote its shape: an operator's hand repair after a marker-only
+// failure leaves the same file a real commit does. The answer therefore says the plan may already
+// hold this close's commit and asks the operator to read it (CRW-930, generation-2 decision on
+// d2/d3; the settled-shape inference that tried to decide this was removed, not tuned).
+func promptDcloseGoalplanUnknownSentence() string {
+	return "the goalplan may already hold this close's commit from the first attempt; read it before retrying."
+}
+
+// promptDcloseHarnessBudget is how many UTF-16 units the hook envelope keeps before it cuts an
+// answer: harness.ContextOutput cuts at MaxContext (32000) minus 64. A refusal this close decorates
+// with its publication accounting must fit that, or the cut removes the part the operator has to
+// act on - the artifacts this close already published. The budget is restated here rather than
+// imported because the harness leg imports this package (CRW-930, c6).
+const promptDcloseHarnessBudget = 31936
+
+// promptDcloseKeepAccounting bounds an over-long refusal so the publication accounting this close
+// appended survives the harness's cut. The caller passes the three parts it built: before is the
+// refusal's own text, accounting is the publication sentences (with the claim that follows them),
+// and after is the rest. The boundary is the caller's, not a search, so a diagnostic that already
+// contains the same sentence cannot move it (CRW-930, c6; the first-match search was found by the
+// pre-merge evaluation of the head 2564da03). accounting and after are kept whole, and before is cut
+// at a rune boundary and marked. A refusal that already fits is returned unchanged.
+func promptDcloseKeepAccounting(before, accounting, after string) string {
+	whole := before + accounting + after
+	if accounting == "" || len(utf16.Encode([]rune(whole))) <= promptDcloseHarnessBudget {
+		return whole
+	}
+	const marker = "\u2026 [detail truncated] "
+	room := promptDcloseHarnessBudget - len(utf16.Encode([]rune(accounting))) - len(utf16.Encode([]rune(after))) - len(utf16.Encode([]rune(marker)))
+	if room < 0 {
+		room = 0
+	}
+	units := utf16.Encode([]rune(before))
+	if len(units) <= room {
+		return whole
+	}
+	units = units[:room]
+	if n := len(units); n > 0 && units[n-1] >= 0xD800 && units[n-1] < 0xDC00 {
+		// The cut would leave a high surrogate with no low one; drop it rather than emit U+FFFD.
+		units = units[:n-1]
+	}
+	return string(utf16.Decode(units)) + marker + accounting + after
 }
 
 // promptDcloseGoalplanRow is one goalplan ledger row the close owes, in the oracle's order.
@@ -140,7 +284,11 @@ func promptOrchestrateBoundDclose(p PromptSubmitPayload, current state.State, tu
 	err := lock(p.Cwd, p.SessionID, func() error {
 		held, unreadable := state.ReadStateStrict(p.Cwd, p.SessionID)
 		if unreadable {
-			outcome.refusal = promptDcloseStateRefusal()
+			// The leading snapshot already matched this close's marker, so a matching retry may
+			// already have published its marker and committed its goalplan before this stricter
+			// reread failed. The refusal names them instead of denying them (CRW-930, d1).
+			outcome.refusal = promptDclosePartialRefusal(promptDcloseStateRefusal(),
+				promptDcloseRecoveryPublishedAt(recovering), nil)
 			return nil
 		}
 		// The close is judged on the state the lock found, not on the one the leading section read: a
@@ -151,7 +299,12 @@ func promptOrchestrateBoundDclose(p PromptSubmitPayload, current state.State, tu
 		if held.Phase != current.Phase || held.Slug != current.Slug ||
 			!promptDcloseSameOptionalText(held.CheckEpoch, current.CheckEpoch) ||
 			state.MatchesDcloseRecovery(held, closePhaseID) != recovering {
-			outcome.refusal = promptDcloseStateMovedRefusal()
+			// A matching retry's first attempt already published its marker before the session moved,
+			// so the refusal names it and leaves the goalplan unknown rather than denying that
+			// anything was written (CRW-930, c6: this arm was the last one that did not). A fresh
+			// close published nothing of this close and keeps the bare text.
+			outcome.refusal = promptDclosePartialRefusal(promptDcloseStateMovedRefusal(),
+				promptDcloseRecoveryPublishedAt(recovering), nil)
 			return nil
 		}
 		// An outstanding marker this request does not match belongs to a close that is still
@@ -180,7 +333,10 @@ func promptOrchestrateBoundDclose(p PromptSubmitPayload, current state.State, tu
 		// refusal here means the session moved between the two reads.
 		fresh := promptDcloseTransition(held, command, recovering)
 		if !fresh.OK || fresh.State == nil {
-			outcome.refusal = promptDcloseStateMovedRefusal()
+			// The same accounting as the moved-state check above: a retry inherited its first
+			// attempt's marker (CRW-930, c6).
+			outcome.refusal = promptDclosePartialRefusal(promptDcloseStateMovedRefusal(),
+				promptDcloseRecoveryPublishedAt(recovering), nil)
 			return nil
 		}
 		// The rewrite guard runs where a write is about to happen, so a refusal the oracle answers
@@ -197,8 +353,10 @@ func promptOrchestrateBoundDclose(p PromptSubmitPayload, current state.State, tu
 	})
 	if err != nil {
 		// The oracle holds no session lock; a lock that stays busy answers the D-close text with the
-		// busy reason and writes nothing.
-		return promptDcloseNotApplied(err.Error()), true
+		// busy reason and writes nothing. A matching retry's first attempt may already have published
+		// its marker and committed its goalplan, so the answer names them too (CRW-930, d3).
+		return promptDcloseRefusalNaming(promptDcloseNotApplied(err.Error()),
+			promptDcloseRecoveryPublishedAt(recovering)), true
 	}
 	if outcome.refusal != "" {
 		return outcome.refusal, true
@@ -268,26 +426,40 @@ func promptDcloseClose(p PromptSubmitPayload, held state.State, turn, closePhase
 		return promptDclosePlanWork(p, held, plan, closePhaseID, recovering, command, seams, guard)
 	}, nil)
 	if err != nil {
-		return promptDcloseOutcome{refusal: promptDcloseGoalplanUnreadable(err.Error())}
+		return promptDcloseOutcome{refusal: promptDclosePartialRefusal(
+			promptDcloseGoalplanUnreadable(err.Error()),
+			promptDcloseRecoveryPublishedAt(recovering), nil)}
 	}
 	switch locked.Kind {
 	case "locked":
-		return promptDcloseOutcome{refusal: promptDcloseNotApplied(locked.Reason)}
+		return promptDcloseOutcome{refusal: promptDcloseRefusalNaming(promptDcloseNotApplied(locked.Reason),
+			promptDcloseRecoveryPublishedAt(recovering))}
 	case "unreadable":
-		return promptDcloseOutcome{refusal: promptDcloseGoalplanUnreadable(locked.Reason)}
+		// "unreadable" also covers a plan that read cleanly and was refused for what a revival would
+		// lose, so the plan is read here too: its commit is still on disk and the refusal must name it
+		// (CRW-930, d2).
+		return promptDcloseOutcome{refusal: promptDclosePartialRefusal(
+			promptDcloseGoalplanUnreadable(locked.Reason),
+			promptDcloseRecoveryPublishedAt(recovering), nil)}
 	}
 	if locked.Value == nil {
-		return promptDcloseOutcome{refusal: promptDcloseGoalplanUnreadable("the bound goalplan could not be read")}
+		return promptDcloseOutcome{refusal: promptDclosePartialRefusal(
+			promptDcloseGoalplanUnreadable("the bound goalplan could not be read"),
+			promptDcloseRecoveryPublishedAt(recovering), nil)}
 	}
 	if locked.Value.output != "" {
 		return promptDcloseOutcome{refusal: locked.Value.output}
 	}
 	plan := locked.Value
+	// published is what the first lock wrote - the recovery marker and the goalplan - so every
+	// refusal below names each artifact this close actually published, whether or not it carried a
+	// directory-sync warning (CRW-930, c6).
+	published := plan.published
 	// warnings collects every durability line of a write that published its artifact and then
 	// failed a step after the rename: the marker and plan writes the first lock made (CRW-869,
 	// finding 2), the resting state write below and the marker cleanup. A slice rather than one
 	// string, so a state warning is not silently overwritten by the cleanup warning.
-	warnings := append([]string{}, plan.warnings...)
+	warnings := append([]string{}, published.warningLines()...)
 
 	// §40 Z3: the bound D-close owns its own state write. The write keeps every field the ordinary
 	// D-close write sets - dropping injectedTurns would break same-turn dedup and dropping the
@@ -310,17 +482,20 @@ func promptDcloseClose(p PromptSubmitPayload, held state.State, turn, closePhase
 		next.DcloseRecovery = promptDcloseMarker(held, closePhaseID, plan.markerNext)
 	}
 	if refusal := guard(); refusal != "" {
-		// No warning can be outstanding here: this guard evaluates the same state the identical
-		// guard accepted before the marker write, and the marker write preserves every record class
-		// the guard checks, so the bare refusal is exact (CRW-869).
-		return promptDcloseOutcome{refusal: refusal}
+		// The guard re-reads the session file, so it can fail on a read error even though the
+		// identical guard accepted before the marker write: the marker and the plan may already be on
+		// disk. An answer that denied that would hide a partial commit the operator has to know about,
+		// so the refusal names every artifact this close published and keeps their warnings
+		// (CRW-930, c6). With nothing published and no warning the bare refusal is unchanged.
+		return promptDcloseOutcome{refusal: promptDclosePartialRefusal(refusal, published, warnings)}
 	}
 	landed, stateWarning := promptDcloseWriteLanded(state.WriteState(p.Cwd, next))
 	if !landed {
 		// An earlier write of this close may already have published its artifact (the marker or the
 		// plan), so the refusal must name it rather than deny that anything was written (CRW-869,
-		// the review finding on the mixed-failure path).
-		return promptDcloseOutcome{refusal: promptDclosePartialRefusal(promptDcloseStateRefusal(), warnings)}
+		// the review finding on the mixed-failure path; CRW-930, c6, extended it to a clean
+		// publication).
+		return promptDcloseOutcome{refusal: promptDclosePartialRefusal(promptDcloseStateRefusal(), published, warnings)}
 	}
 	if stateWarning != "" {
 		warnings = append(warnings, stateWarning)
@@ -451,16 +626,35 @@ func promptDclosePlanWork(p PromptSubmitPayload, held state.State, plan *goalpla
 	if seams != nil && seams.writePlan != nil {
 		writePlan = seams.writePlan
 	}
-	warnings := []string{}
+	// published records which artifacts this close wrote as it writes them, so a later refusal names
+	// each of them whether or not a directory-sync warning was collected for it (CRW-930, c6). A
+	// recovery retry continues a close whose marker is already on the session, so that marker counts
+	// as published too, while the goalplan it did not write here stays unknown: the plan on disk
+	// cannot prove who wrote its shape (CRW-930, generation-2 decision on d2/d3).
+	published := promptDclosePublishedArtifacts{}
+	if recovering {
+		published.marker = promptDclosePublication{landed: true}
+		published.planUnknown = true
+	}
 
 	// §5: integrity is checked inside the lock, before marker or any write.
 	integrityReasons := goalplan.GoalplanDefinitionIntegrityReasons(plan)
 	integrityReasons = append(integrityReasons, goalplan.GoalplanDependencyCompletionReasons(plan)...)
 	if len(integrityReasons) > 0 {
-		return promptDclosePlanOutcome{output: promptOrchestrateRefusal("invalid goalplan: " + strings.Join(integrityReasons, "; ") + ". Nothing was written.")}, nil
+		// The integrity check runs before the recovery accounting, so a retry reaches this refusal
+		// without having looked at what its first attempt published. The plan on disk cannot prove
+		// whether that attempt committed it, so the refusal leaves it unknown (CRW-930, d2/d3).
+		// The reasons are detail and are bounded, so the accounting appended after them survives the
+		// harness's cut (CRW-930, d1: found by the pre-merge evaluation of the generation-2 head).
+		return promptDclosePlanOutcome{output: promptDclosePartialRefusal(
+			promptOrchestrateRefusal("invalid goalplan: "+promptDcloseDetailFor(published, integrityReasons, "integrity reason(s)")+". Nothing was written."), published, nil)}, nil
 	}
 	if len(plan.WorkPhases) == 0 {
-		return promptDclosePlanOutcome{output: promptOrchestrateRefusal("the bound goalplan " + promptDcloseQuote(slug) + " has no active work-phase to close (CYCLE-COMPLETION-01). Nothing was written.")}, nil
+		// A plan with no work-phase cannot carry a commit of this close, so no shape can decide it;
+		// the refusal names the inherited marker and leaves the goalplan unknown, the same accounting
+		// as the integrity refusal above (CRW-930, d2/d3).
+		return promptDclosePlanOutcome{output: promptDclosePartialRefusal(
+			promptOrchestrateRefusal("the bound goalplan "+promptDcloseQuote(slug)+" has no active work-phase to close (CYCLE-COMPLETION-01). Nothing was written."), published, nil)}, nil
 	}
 
 	// §39 Y2: recovery is checked BEFORE all-done, in the same order as the CLI path. Crashing
@@ -472,8 +666,12 @@ func promptDclosePlanWork(p PromptSubmitPayload, held state.State, plan *goalpla
 
 	if recovering {
 		out, refusal, refused := promptDcloseRecoveryClose(p, held, plan, closePhaseID)
+		// A retry continues the close the first attempt started, so the marker it inherits is an
+		// artifact of this close. Whether that attempt also committed the goalplan cannot be read
+		// from the plan on disk, so it stays unknown for every refusal here and below
+		// (CRW-930, generation-2 decision on d2/d3).
 		if refused {
-			return promptDclosePlanOutcome{output: refusal}, nil
+			return promptDclosePlanOutcome{output: promptDclosePartialRefusal(refusal, published, nil)}, nil
 		}
 		closeResult, writeClosedPlan = out.result, out.writePlan
 	} else {
@@ -517,29 +715,38 @@ func promptDclosePlanWork(p PromptSubmitPayload, held state.State, plan *goalpla
 		if refusal := guard(); refusal != "" {
 			return promptDclosePlanOutcome{output: refusal}, nil
 		}
-		markerLanded, markerWarning := promptDcloseWriteLanded(writeMarker(p.Cwd, held, closePhaseID, markerNext))
+		markerErr := writeMarker(p.Cwd, held, closePhaseID, markerNext)
+		markerLanded, markerWarning := promptDcloseWriteLanded(markerErr)
 		if !markerLanded {
+			// The marker never reached its final path, so this close published nothing and the bare
+			// refusal is exact.
 			return promptDclosePlanOutcome{output: promptDcloseStateRefusal()}, nil
 		}
 		if markerWarning != "" {
-			warnings = append(warnings, markerWarning)
+			// The shared state warning says only "the session state"; the artifact this close published
+			// is the recovery marker, so the line names it (CRW-930, c1).
+			markerWarning = promptDcloseMarkerPublishedWarning(markerErr)
 		}
+		published.marker = promptDclosePublication{landed: true, warning: markerWarning}
 		promptDcloseSeam(seams, func(s *promptDcloseSeams) func() { return s.afterRecoveryMarkerWrite })
 	}
 	if writeClosedPlan {
 		planErr := writePlan(p.Cwd, closeResult.plan)
 		switch {
 		case planErr == nil:
+			published.plan = promptDclosePublication{landed: true}
 		case state.Published(planErr):
 			// The artifact is the goalplan, not the session state, so the warning names the file whose
 			// durability is in question while keeping the sentence shape of the state warning.
-			warnings = append(warnings, promptDcloseGoalplanPublishedWarning(planErr))
+			published.plan = promptDclosePublication{landed: true, warning: promptDcloseGoalplanPublishedWarning(planErr)}
 		default:
-			// The plan write did not land, but the marker write before it may have published its own
-			// artifact; the refusal then names that partial commit instead of denying it (CRW-869,
-			// the review finding on the mixed-failure path).
+			// The plan write did not land, but the marker write before it did; the refusal names that
+			// partial commit instead of denying it, whether or not the marker carried a warning
+			// (CRW-869, the review finding on the mixed-failure path; CRW-930, c6, which extended it to
+			// a clean publication).
 			return promptDclosePlanOutcome{output: promptDclosePartialRefusal(
-				promptOrchestrateRefusal("the goalplan could not be written: "+planErr.Error()+" Nothing was written."), warnings)}, nil
+				promptOrchestrateRefusal("the goalplan could not be written: "+planErr.Error()+" Nothing was written."),
+				published, published.warningLines())}, nil
 		}
 		promptDcloseSeam(seams, func(s *promptDcloseSeams) func() { return s.afterGoalplanCommit })
 	}
@@ -555,7 +762,7 @@ func promptDclosePlanWork(p PromptSubmitPayload, held state.State, plan *goalpla
 	if startedID != "" {
 		rows = append(rows, promptDcloseGoalplanRow{event: goalplan.EventWorkphaseStarted, detail: "started " + startedID})
 	}
-	return promptDclosePlanOutcome{markerNext: markerNext, rows: rows, warnings: warnings}, nil
+	return promptDclosePlanOutcome{markerNext: markerNext, rows: rows, published: published}, nil
 }
 
 // promptDcloseWriteLanded says whether a state write reached the file. state.WriteState reports a
@@ -581,16 +788,57 @@ func promptDcloseGoalplanPublishedWarning(err error) string {
 	return "the goalplan was published but its directory could not be synced: " + err.Error()
 }
 
-// promptDclosePartialRefusal is a refusal whose trailing "Nothing was written." claim is replaced
-// when an earlier write of the same close already published its artifact (CRW-869, the review
-// finding on the mixed-failure path). The close still did not apply, but an answer that denied the
-// published marker or plan would hide a partial commit the operator has to know about. With no such
-// warning the refusal is returned exactly as it was.
-func promptDclosePartialRefusal(refusal string, warnings []string) string {
-	if len(warnings) == 0 {
+// promptDcloseMarkerPublishedWarning is the durability line for the recovery marker write. The
+// marker is published inside the session state, so the shared state warning says only "the session
+// state" and a refusal that carried it would not identify the artifact this close published
+// (CRW-930, c1/c6: each published artifact is named). The file whose durability is in question is
+// still the session state, so the sentence keeps that shape.
+func promptDcloseMarkerPublishedWarning(err error) string {
+	return "the recovery marker was published but its directory could not be synced: " + err.Error()
+}
+
+// promptDclosePartialRefusal is a refusal whose trailing "Nothing was written." claim is replaced by
+// what this close actually published: published names each artifact that landed (the recovery
+// marker and the goalplan, one fixed sentence each) and warnings are the durability lines of the
+// writes that published and then failed a step after the rename, plus the later steps' own. The
+// close still did not apply, but an answer that denied a published artifact would hide a partial
+// commit the operator has to know about, and an artifact that published cleanly carries no warning
+// to recover it from (CRW-930, c6; the mixed-failure path was CRW-869). With nothing published and
+// no warning the refusal is returned exactly as it was.
+//
+// Only the claim this close owns is rewritten: a refusal that embeds a writer's own error text may
+// contain that phrase earlier in the sentence, so the last occurrence - the trailing claim - is the
+// one replaced, never the first (CRW-930, d1).
+func promptDclosePartialRefusal(refusal string, published promptDclosePublishedArtifacts, warnings []string) string {
+	named := published.sentences()
+	for _, warning := range warnings {
+		if published.names(warning) {
+			// The artifact sentences already name this one; adding its durability line again would
+			// name the same file twice.
+			continue
+		}
+		named = append(named, warning)
+	}
+	if len(named) == 0 {
 		return refusal
 	}
-	return strings.Replace(refusal, "Nothing was written.", strings.Join(warnings, " ")+" Nothing else was written.", 1)
+	const claim = "Nothing was written."
+	at := strings.LastIndex(refusal, claim)
+	if at < 0 {
+		// The refusal carries no claim to correct; returning it unchanged is what the first-match form
+		// did too, and every call site's own text ends with the claim.
+		return refusal
+	}
+	// The trailing claim is corrected to what this close can account for. When the goalplan's
+	// publication is unknown - a retry that inherited the marker and did not write the plan itself -
+	// no trailing sentence is added at all, because any denial of a goalplan write would be a claim
+	// this close cannot support (CRW-930, generation-2 decision on d2/d3).
+	tail := " Nothing else was written."
+	if published.planUnaccounted() {
+		tail = ""
+	}
+	joined := strings.Join(named, " ")
+	return promptDcloseKeepAccounting(refusal[:at], joined+tail, refusal[at+len(claim):])
 }
 
 // promptDcloseSameOptionalText compares two optional texts, where an absent one differs from any
@@ -614,6 +862,36 @@ func promptDcloseOutstandingMarkerRefusal(sessionID, closedWorkPhaseID string) s
 	return promptOrchestrateRefusal("this session still carries the D-close recovery marker of work-phase " + closedWorkPhaseID +
 		", which this request does not match. Finish that close by repeating its own D request, or clear the marker with " +
 		promptDcloseResetCommand(sessionID) + ". Nothing was written.")
+}
+
+// promptDcloseRecoveryPublishedAt is what a refusal that never reached the close's own accounting
+// may name. A matching retry inherits the marker its first attempt wrote; whether that attempt's
+// plan commit landed cannot be read from the plan on disk, because an operator's hand repair after
+// a marker-only failure leaves the same file a real commit does. The goalplan is therefore recorded
+// as unknown rather than claimed or denied (CRW-930, generation-2 decision on d2/d3: the
+// settled-shape inference was removed, not tuned). A fresh close published nothing on those paths
+// and names nothing.
+func promptDcloseRecoveryPublishedAt(recovering bool) promptDclosePublishedArtifacts {
+	if !recovering {
+		return promptDclosePublishedArtifacts{}
+	}
+	return promptDclosePublishedArtifacts{
+		marker:      promptDclosePublication{landed: true},
+		planUnknown: true,
+	}
+}
+
+// promptDcloseRecoveryPublishedForPrompt is the same accounting for a raw bound D prompt, read
+// before the bound handler runs: the leading section's Stop-budget stamp takes the session lock
+// first, so a lock that is already busy fails there and the close never runs (CRW-869, finding 3).
+// A matching retry's first attempt has published its marker by then, so that answer names the
+// marker and leaves the goalplan unknown instead of naming nothing (CRW-930, d1).
+func promptDcloseRecoveryPublishedForPrompt(current state.State, command *fsm.OrchestrateCommand) promptDclosePublishedArtifacts {
+	closePhaseID := ""
+	if command != nil && command.Attest != nil {
+		closePhaseID = text.Trim(command.Attest.WorkPhaseID)
+	}
+	return promptDcloseRecoveryPublishedAt(state.MatchesDcloseRecovery(current, closePhaseID))
 }
 
 // promptDcloseRecoveryOutcome is what the recovery arm answered when it did not refuse.
@@ -643,11 +921,12 @@ func promptDcloseRecoveryClose(p PromptSubmitPayload, held state.State, plan *go
 	// ours to redo; present-but-open is the marker-then-crash case and we close exactly that phase.
 	fixed := promptDcloseFindWorkPhase(plan, closePhaseID)
 	resumedAbsent := (*goalplan.Goalplan)(nil)
+	orphan := goalplan.WorkPhaseResumeAbsentTargetResult{}
 	if fixed == nil {
 		// §53: the absent-target decision is shared with the CLI. Leaving it out here let the same
 		// marker activate a pending successor on one surface and silently log started without a plan
 		// write on the other.
-		orphan := goalplan.ResumeAbsentTarget(plan, promptDcloseString(marker.NextWorkPhaseID))
+		orphan = goalplan.ResumeAbsentTarget(plan, promptDcloseString(marker.NextWorkPhaseID))
 		if orphan.Kind == goalplan.WorkPhaseResumeSuccessorLost {
 			return promptDcloseRecoveryOutcome{}, promptOrchestrateRefusal("recovery target " + closePhaseID + " is gone from the plan and the successor " +
 				promptDcloseString(orphan.SuccessorID) + " it recorded " + goalplan.AbsentSuccessorDetail(orphan.Reason) +
@@ -669,13 +948,16 @@ func promptDcloseRecoveryClose(p PromptSubmitPayload, held state.State, plan *go
 	case goalplan.WorkPhaseCloseFixedTasksPending:
 		// §41 W1: the marker stays so the operator can repair the plan and finish with the same request.
 		return promptDcloseRecoveryOutcome{}, promptOrchestrateRefusal("recovery target " + closePhaseID + " gained " + promptDcloseCount(len(closed.Pending)) +
-			" open task(s) after its marker was written (CYCLE-COMPLETION-01): " + promptDclosePendingText(closed.Pending) +
+			" open task(s) after its marker was written (CYCLE-COMPLETION-01): " + promptDcloseBoundedDetail(promptDclosePendingItems(closed.Pending), "task(s)") +
 			". The recovery marker was kept; close those tasks and repeat the same D request. Nothing was written."), true
 	case goalplan.WorkPhaseCloseFixedNotRunnable:
 		return promptDcloseRecoveryOutcome{}, promptOrchestrateRefusal("recovery target " + closePhaseID + " is now " + string(closed.Status) +
 			" (CYCLE-COMPLETION-01). The recovery marker was kept; restore that work-phase and repeat the same D request. Nothing was written."), true
 	case goalplan.WorkPhaseCloseFixedDependenciesUnmet:
-		return promptDcloseRecoveryOutcome{}, promptOrchestrateRefusal("recovery target " + closePhaseID + " now waits for " + strings.Join(closed.Unmet, ", ") +
+		// The dependency list is detail and is bounded: this refusal always carries the inherited
+		// marker, so an unbounded list would push the publication accounting past the harness's cut
+		// (CRW-930, d2).
+		return promptDcloseRecoveryOutcome{}, promptOrchestrateRefusal("recovery target " + closePhaseID + " now waits for " + promptDcloseBoundedDetail(closed.Unmet, "dependency(ies)") +
 			" (CYCLE-COMPLETION-01). The recovery marker was kept; satisfy those work-phases and repeat the same D request. Nothing was written."), true
 	case goalplan.WorkPhaseCloseFixedSuccessorLost:
 		// §51: a corrupt marker points at reset, not at a fix.
@@ -697,6 +979,11 @@ func promptDcloseRecoveryClose(p PromptSubmitPayload, held state.State, plan *go
 			"restore that work-phase and repeat the same D request. Nothing was written."), true
 	case goalplan.WorkPhaseCloseFixedOK:
 		return promptDcloseRecoveryOutcome{result: promptDcloseCloseResult{kind: "ok", closedID: promptDcloseString(closed.ClosedID), plan: closed.Plan}, writePlan: true}, "", false
+	case goalplan.WorkPhaseCloseFixedAlreadyDone:
+		// The settled shape is already on disk, so the first attempt of this close committed the plan:
+		// this invocation rewrites nothing, but the plan is one of the artifacts the close published and
+		// every later refusal must name it (CRW-930, d1).
+		return promptDcloseRecoveryOutcome{result: promptDcloseCloseResult{kind: "ok", closedID: closePhaseID, plan: plan}}, "", false
 	}
 	// already_done and any other answer: the close settled on the fixed target, and the plan is
 	// written only when an absent-target resume activated the recorded successor (§53).
@@ -829,11 +1116,61 @@ func promptDcloseSameJSONString(stored any, want *string) bool {
 
 // promptDclosePendingText is the oracle's pending.map((t) => t.id (t.title)).join("; ").
 func promptDclosePendingText(pending []goalplan.GoalplanTask) string {
-	open := make([]string, 0, len(pending))
+	return strings.Join(promptDclosePendingItems(pending), "; ")
+}
+
+// promptDclosePendingItems is the oracle's per-task text, one item per open task.
+func promptDclosePendingItems(pending []goalplan.GoalplanTask) []string {
+	items := make([]string, 0, len(pending))
 	for _, task := range pending {
-		open = append(open, task.ID+" ("+task.Title+")")
+		items = append(items, task.ID+" ("+task.Title+")")
 	}
-	return strings.Join(open, "; ")
+	return items
+}
+
+// promptDcloseDetailFor joins a refusal's detail items, bounding them only when the refusal will
+// also carry this close's publication accounting. A refusal with no accounting to protect - a fresh
+// close, which published nothing - keeps the oracle's own text byte for byte.
+func promptDcloseDetailFor(published promptDclosePublishedArtifacts, items []string, noun string) string {
+	if len(published.sentences()) == 0 {
+		return strings.Join(items, "; ")
+	}
+	return promptDcloseBoundedDetail(items, noun)
+}
+
+// promptDcloseBoundedDetail joins detail items for a refusal that carries this close's publication
+// accounting after them.
+//
+// The oracle's own listings are unbounded, and the harness cuts an answer over MaxContext (32000
+// UTF-16 units) at 31936 and appends "[truncated]". The port appends the publication accounting
+// after that detail, so an unbounded listing would let a refusal drop exactly the part the operator
+// has to act on - the artifacts this close already published (CRW-930, c6). The count always
+// precedes the listing, so the listing is detail: it is cut at a stated budget in bytes (never
+// below the item's UTF-16 unit count, so the budget is conservative for non-ASCII too) and the
+// items left out are named by their number. Found by the pre-merge evaluation of the generation-2
+// head.
+//
+// Only a refusal that has an accounting to protect bounds its detail. A fresh close publishes
+// nothing, its accounting is empty, and it keeps the oracle's own text byte for byte.
+func promptDcloseBoundedDetail(items []string, noun string) string {
+	// The budget leaves room for the refusal's own text (the count, the guidance, the publication
+	// sentences) inside the harness's 31936-unit cut with a wide margin.
+	const budget = 8000
+	kept := make([]string, 0, len(items))
+	used := 0
+	for i, item := range items {
+		sep := 0
+		if i > 0 {
+			sep = len("; ")
+		}
+		if used+sep+len(item) > budget {
+			kept = append(kept, "... ("+promptDcloseCount(len(items)-i)+" more "+noun+")")
+			break
+		}
+		used += sep + len(item)
+		kept = append(kept, item)
+	}
+	return strings.Join(kept, "; ")
 }
 
 // promptDcloseNoActive is the no_active refusal (:1193-1206): the dependency deadlock diagnosis
@@ -914,6 +1251,27 @@ func promptDcloseStateMovedRefusal() string {
 // promptDcloseNotApplied is the lock-busy text (:1268-1274).
 func promptDcloseNotApplied(reason string) string {
 	return "[crw \u2014 D-close was not applied: " + reason + " The phase and goalplan ledger were not changed.]"
+}
+
+// promptDcloseRefusalNaming is a refusal with what this close already published named before its
+// closing bracket. It is for the texts that carry no "Nothing was written." claim of their own - the
+// busy text says the phase and goalplan ledger were not changed, the entry gate names the broken
+// source binding - so the publication sentences are added rather than substituted, and the text's own
+// claim stays true: this retry changed nothing (CRW-930, d1/d3). The sentences follow the text's
+// final period, separated from it by a space, and keep the lowercase sentence form the partial
+// refusal uses. With nothing published the text is returned exactly as it was.
+func promptDcloseRefusalNaming(refusal string, published promptDclosePublishedArtifacts) string {
+	named := published.sentences()
+	if len(named) == 0 {
+		return refusal
+	}
+	const tail = "]"
+	at := strings.LastIndex(refusal, tail)
+	if at < 0 {
+		return refusal
+	}
+	joined := strings.Join(named, " ")
+	return promptDcloseKeepAccounting(refusal[:at]+" ", joined, refusal[at:])
 }
 
 // promptDcloseGoalplanUnreadable is the unreadable-goalplan text (:1275-1281).

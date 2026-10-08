@@ -216,8 +216,16 @@ func (s *Store) updateUserDecisionObservation(ctx context.Context, record decisi
 	if err != nil {
 		return fmt.Errorf("encode seen: %w", err)
 	}
-	_, err = s.exec(ctx, "UPDATE dag_user_decisions SET state = ?, seen_json = ? WHERE decision_id = ?",
-		string(record.State), string(encoded), record.DecisionID)
+	// The fold's options go back too: a raise that names a reply a stored record does not carry
+	// (one written before the reply field existed) fills it in, and the reply an answer is applied
+	// against is the one the row must carry. The merged set is the stored set with those replies, so
+	// the option ids and the fingerprint are unchanged.
+	options, err := json.Marshal(record.Options)
+	if err != nil {
+		return fmt.Errorf("encode options: %w", err)
+	}
+	_, err = s.exec(ctx, "UPDATE dag_user_decisions SET state = ?, seen_json = ?, options_json = ? WHERE decision_id = ?",
+		string(record.State), string(encoded), string(options), record.DecisionID)
 	return err
 }
 

@@ -31,12 +31,14 @@ func (h *host) reRegisterEnv() scope.Env {
 
 // handEditedRecord is the record a person would write by hand: the same fields as
 // install.BridgeDocument, in another spelling (one line per field, a different key order), so a test
-// can pin what the re-registration path does with a record this installer did not write.
+// can pin what the re-registration path does with a record this installer did not write. Its
+// serverName is install.ServerName, the server this launcher declares: a hand-edited record naming
+// another server is a record the launcher refuses, and that case is pinned separately.
 func handEditedRecord(executable, policy, digest string) string {
 	return "{" + "\n" +
 		"  " + strconv.Quote("recordVersion") + ": 2," + "\n" +
 		"  " + strconv.Quote("owner") + ": " + strconv.Quote("plugin") + "," + "\n" +
-		"  " + strconv.Quote("serverName") + ": " + strconv.Quote("bridge") + "," + "\n" +
+		"  " + strconv.Quote("serverName") + ": " + strconv.Quote(install.ServerName) + "," + "\n" +
 		"  " + strconv.Quote("bridgeExecutable") + ": " + strconv.Quote(executable) + "," + "\n" +
 		"  " + strconv.Quote("args") + ": []," + "\n" +
 		"  " + strconv.Quote("installedBy") + ": " + strconv.Quote("CRW-158") + "," + "\n" +
@@ -302,13 +304,21 @@ func TestReRegisterPolicyRefusesAndWritesNothing(t *testing.T) {
 		t.Fatal(err)
 	}
 	write(t, recordPath, before)
-	// A record in a spelling this installer does not write: the fields this path does not replace
-	// would be reserialized, so it is refused rather than rewritten.
-	handEdited := handEditedRecord(filepath.Join(h.dest, "current", "bin", "codex-thread-bridge"), policy, digestOf(policyTextChanged))
+	// A record in a spelling this installer does not write: this path used to refuse it as
+	// record_not_canonical, because publishing it would reserialize the fields it leaves alone. It
+	// is now re-registered like any other record, and only the executionPolicy member's value bytes
+	// change - the record's own whitespace, key order and trailing newline survive.
+	handEdited := handEditedRecord(filepath.Join(h.dest, "current", "bin", "codex-thread-bridge"), policy, digestOf(policyText))
 	write(t, recordPath, handEdited)
 	nonCanonical, code, _ := h.updatePolicy(t, "--execution-policy", policy)
-	if code != install.Refused || at(nonCanonical, "outcome") != install.RecordNotCanonical || readFile(t, recordPath) != handEdited {
+	if code != install.OK || at(nonCanonical, "outcome") != install.RecordUpdated {
 		t.Fatalf("a record this installer did not write: exit %d\n%s", code, golden.Canon(nonCanonical))
+	}
+	wanted := record.Set(golden.Obj(mustDecode(t, handEdited)), "executionPolicy",
+		record.Object{{Key: "digest", Value: digestOf(policyTextChanged)}, {Key: "path", Value: policy}})
+	assertOnlyThePolicyValueChanged(t, handEdited, readFile(t, recordPath), wanted)
+	if err := os.Remove(text(at(nonCanonical, "backup"))); err != nil {
+		t.Fatal(err)
 	}
 	write(t, recordPath, before)
 	// Another writer removes the record after the decision: there is nothing to back up, so the

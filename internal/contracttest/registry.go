@@ -1,6 +1,7 @@
 package contracttest
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
@@ -34,11 +35,15 @@ var (
 	crwDevBinary = testsupport.CRWDevPath
 
 	// cxcRecallBinary is the crw the cxc corpus replays against: the release-shaped binary plus
-	// the recorder's frozen clock linked into the recall CLI's seam (cmd/crw/recall_clock.go).
-	// 1767225600000 is 2026-01-01T00:00:00Z, the instant the oracle recorded under before its
-	// clock advanced 1 ms per Date read (contract/notes/cxc/README.md "Seams the replay does not
-	// provide").
+	// the recorder's frozen clock linked into the two seams that read the wall clock and print a
+	// value derived from it (cmd/crw/recall_clock.go for recall's recency scores, and
+	// internal/runtime/doctor/cli.go for the retrust backup name). 1767225600000 is
+	// 2026-01-01T00:00:00Z, the instant the oracle recorded under before its clock advanced 1 ms
+	// per Date read (contract/notes/cxc/README.md "Seams the replay does not provide").
 	cxcRecallBinary = func() (string, error) {
-		return testsupport.BuildCRWPath("-trimpath", "-ldflags=-X main.recallTestClock=1767225600000")
+		return testsupport.BuildCRWPath("-trimpath", "-ldflags="+strings.Join([]string{
+			"-X main.recallTestClock=1767225600000",
+			"-X github.com/thisisjun786/codex-relay-workflow/internal/runtime/doctor.retrustTestClock=1767225600000",
+		}, " "))
 	}
 )

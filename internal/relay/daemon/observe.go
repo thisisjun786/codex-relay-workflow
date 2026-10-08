@@ -206,6 +206,10 @@ func (d *Daemon) read(ctx context.Context, until time.Time, r delivery.Relations
 		_, err := d.Store.Q(tx).ExecContext(tx, "INSERT INTO poll_observations (relationship_id,execution_generation,turn_id,last_status,last_polled_at,last_attempt_at,last_error) VALUES (?,?,?,?,?,?,?) ON CONFLICT(relationship_id,execution_generation,turn_id) DO UPDATE SET last_status=excluded.last_status,last_polled_at=COALESCE(excluded.last_polled_at,poll_observations.last_polled_at),last_attempt_at=excluded.last_attempt_at,last_error=excluded.last_error", r.ID, r.Generation, turnID, status, success, now, pollErr)
 		return err
 	}); err != nil {
+		// The observation pass writes this row, so a failure here is the write site (CRW-848): the
+		// marker records where the relay's own statement met the damage, not which sub-pass it was
+		// in. The first detection's site stands, and the pass ends on the returned error.
+		d.halted(ctx, report, store.HaltSiteWrite, err)
 		return nil, err
 	}
 	// Python: turn.status not in ("completed", "failed", "interrupted"); a
@@ -401,11 +405,20 @@ func (d *Daemon) settle(ctx context.Context, r delivery.Relationship, turn store
 			report.Notes = append(report.Notes, "enqueue refused for "+turn.TurnID+": "+err.Error())
 			err = commit(false, err)
 		} else {
+			// The settlement's own failure is judged here, after the rollback, never inside the
+			// transaction body: a damaged store is marked from outside the store it could not write
+			// (halt.go, CRW-848), and the marker is not part of the transaction that rolled back.
+			if d.halted(ctx, report, store.HaltSiteWrite, err) {
+				return
+			}
 			report.Notes = append(report.Notes, "settlement rolled back for "+turn.TurnID+": "+err.Error())
 			return
 		}
 	}
 	if err != nil {
+		if d.halted(ctx, report, store.HaltSiteWrite, err) {
+			return
+		}
 		report.Notes = append(report.Notes, "settlement rolled back for "+turn.TurnID+": "+err.Error())
 		return
 	}

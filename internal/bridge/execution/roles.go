@@ -1,8 +1,9 @@
 package execution
 
 import (
+	"encoding/json"
 	"fmt"
-	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -23,7 +24,15 @@ const supportedRoles = `"child", "parent", "supervisor"`
 // RolePair is one model and reasoning effort a role may run on. A request matches a pair only when
 // both halves are equal: an effort name belongs to the model beside it, so two models that both
 // offer "xhigh" do not thereby offer the same thing.
-type RolePair struct{ Model, Effort string }
+//
+// AutoCompactTokenLimit is the pair's optional model_auto_compact_token_limit. It travels in the
+// thread/start and thread/resume config, and the host never reports it back, so it is a property of
+// the pair's execution and not part of what a request is judged against: the pair's identity stays
+// model and effort, and a nil limit leaves the host's own auto-compaction threshold in place.
+type RolePair struct {
+	Model, Effort         string
+	AutoCompactTokenLimit *int64
+}
 
 // Role is roles.RoleExpectation. Pairs is every pair the role may run on, in the order the policy
 // file declares them (the legacy model and reasoningEffort keys declare one); it is empty for a
@@ -35,9 +44,22 @@ type Role struct {
 	MCP *MCPProfiles
 }
 
+// pairFor is the declared pair whose model and effort a request states. The limit is not part of the
+// identity: two entries that name the same model and effort are the same pair, and the declaration's
+// limit travels with whichever entry matched.
+func (r Role) pairFor(model, effort string) (RolePair, bool) {
+	for _, pair := range r.Pairs {
+		if pair.Model == model && pair.Effort == effort {
+			return pair, true
+		}
+	}
+	return RolePair{}, false
+}
+
 // Allows is whether a request stating model and effort is one of the role's pairs.
 func (r Role) Allows(model, effort string) bool {
-	return slices.Contains(r.Pairs, RolePair{Model: model, Effort: effort})
+	_, ok := r.pairFor(model, effort)
+	return ok
 }
 
 // pairValues is the pairs as the policy description and a refusal carry them.
@@ -115,7 +137,7 @@ func parseRoles(declared any) (map[string]Role, error) {
 		if !ok {
 			return nil, &PolicyError{fmt.Sprintf("role %s must be an object", repr(name))}
 		}
-		if err := only(entry, []string{"expectation", "mcp", "model", "pairs", "reasoningEffort"}, "role "+repr(name)); err != nil {
+		if err := only(entry, []string{"autoCompactTokenLimit", "expectation", "mcp", "model", "pairs", "reasoningEffort"}, "role "+repr(name)); err != nil {
 			return nil, err
 		}
 		role, err := parseRole(name, entry)
@@ -153,14 +175,14 @@ func parseRole(name string, entry object) (Role, error) {
 		return Role{}, &PolicyError{fmt.Sprintf("role %s expectation must be 'pair': only 'supervisor' defers to the recorded authorization, and letting another role do so would exempt it from the role check", repr(name))}
 	}
 	if name == Supervisor {
-		if named := present(entry, "model", "pairs", "reasoningEffort"); len(named) > 0 {
-			return Role{}, &PolicyError{fmt.Sprintf("role 'supervisor' cannot declare %s: its model and effort are the user's own selection, so its expectation is the recorded authorization", repr(named))}
+		if named := present(entry, "autoCompactTokenLimit", "model", "pairs", "reasoningEffort"); len(named) > 0 {
+			return Role{}, &PolicyError{fmt.Sprintf("role 'supervisor' cannot declare %s: its model and effort are the user's own selection, so its expectation is the recorded authorization and it carries no pair for a limit to belong to", repr(named))}
 		}
 		return Role{Expectation: Record}, nil
 	}
 	if has(entry, "pairs") {
-		if named := present(entry, "model", "reasoningEffort"); len(named) > 0 {
-			return Role{}, &PolicyError{fmt.Sprintf("role %s declares both pairs and %s; state one pair as model and reasoningEffort, or several as pairs", repr(name), repr(named))}
+		if named := present(entry, "autoCompactTokenLimit", "model", "reasoningEffort"); len(named) > 0 {
+			return Role{}, &PolicyError{fmt.Sprintf("role %s declares both pairs and %s; state one pair as model, reasoningEffort and autoCompactTokenLimit, or several as pairs", repr(name), repr(named))}
 		}
 		pairs, err := parsePairs(name, entry.Get("pairs"))
 		if err != nil {
@@ -179,11 +201,17 @@ func parseRole(name string, entry object) (Role, error) {
 	if err != nil {
 		return Role{}, err
 	}
-	return Role{Pairs: []RolePair{{Model: model, Effort: effort}}, Expectation: Pair}, nil
+	var limit *int64
+	if has(entry, "autoCompactTokenLimit") {
+		if limit, err = autoCompactTokenLimit(entry.Get("autoCompactTokenLimit"), "role "+repr(name)); err != nil {
+			return Role{}, err
+		}
+	}
+	return Role{Pairs: []RolePair{{Model: model, Effort: effort, AutoCompactTokenLimit: limit}}, Expectation: Pair}, nil
 }
 
 // parsePairs reads the pairs list of a role: a non-empty list of {model, reasoningEffort} objects,
-// none repeated.
+// none repeated, each optionally carrying an autoCompactTokenLimit.
 func parsePairs(name string, declared any) ([]RolePair, error) {
 	list, ok := declared.([]any)
 	if !ok || len(list) == 0 {
@@ -196,7 +224,7 @@ func parsePairs(name string, declared any) ([]RolePair, error) {
 		if !ok {
 			return nil, &PolicyError{where + " must be an object"}
 		}
-		if err := only(entry, []string{"model", "reasoningEffort"}, where); err != nil {
+		if err := only(entry, []string{"autoCompactTokenLimit", "model", "reasoningEffort"}, where); err != nil {
 			return nil, err
 		}
 		if absent := absent(entry, "model", "reasoningEffort"); len(absent) > 0 {
@@ -210,11 +238,32 @@ func parsePairs(name string, declared any) ([]RolePair, error) {
 		if err != nil {
 			return nil, err
 		}
-		pair := RolePair{Model: model, Effort: effort}
-		if slices.Contains(pairs, pair) {
+		var limit *int64
+		if has(entry, "autoCompactTokenLimit") {
+			if limit, err = autoCompactTokenLimit(entry.Get("autoCompactTokenLimit"), where); err != nil {
+				return nil, err
+			}
+		}
+		if _, repeated := (Role{Pairs: pairs}).pairFor(model, effort); repeated {
 			return nil, &PolicyError{fmt.Sprintf("role %s lists the pair %s at %s twice", repr(name), repr(model), repr(effort))}
 		}
-		pairs = append(pairs, pair)
+		pairs = append(pairs, RolePair{Model: model, Effort: effort, AutoCompactTokenLimit: limit})
 	}
 	return pairs, nil
+}
+
+// autoCompactTokenLimit reads a pair's optional model_auto_compact_token_limit. It must be a
+// positive integer: a string, a boolean, a fraction or an exponent, zero and a negative value are
+// all refused while the policy is read, through the same PolicyError every other unusable policy
+// value is refused with. The field is new, so nothing it refuses used to load.
+func autoCompactTokenLimit(value any, where string) (*int64, error) {
+	spelled, ok := value.(json.Number)
+	if !ok || strings.ContainsAny(string(spelled), ".eE") {
+		return nil, &PolicyError{where + " must state autoCompactTokenLimit as a positive integer"}
+	}
+	parsed, err := strconv.ParseInt(string(spelled), 10, 64)
+	if err != nil || parsed <= 0 {
+		return nil, &PolicyError{where + " must state autoCompactTokenLimit as a positive integer"}
+	}
+	return &parsed, nil
 }

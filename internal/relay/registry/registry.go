@@ -23,7 +23,9 @@ const (
 	AnchorPending = "anchor_pending"
 )
 
-var reasons = []string{"initial_assignment", "needs_changes_revision"}
+// reasons are the values generation-open accepts for --reason: the assignment itself, the correction of a stale result, and the correction of a result that is accepted and still current
+// (dagsched's AcceptedResultCorrection, which recordHandOpened admits under the same checks).
+var reasons = []string{"initial_assignment", "needs_changes_revision", "accepted_result_correction"}
 
 func isLive(status string) bool { return status == "active" || status == "paused" }
 

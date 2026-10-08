@@ -68,21 +68,22 @@ func TestCheckRefusesARequestThatSetsTwoKinds(t *testing.T) {
 	}
 }
 
-// TestCheckRemovingTheLastAllowedModelDropsTheKey is a review finding: an empty allowed list is
-// refused by the parser, while an absent key is presence_only.
-func TestCheckRemovingTheLastAllowedModelDropsTheKey(t *testing.T) {
+// TestCheckRemovingTheLastAllowedModelKeepsTheKey is the CRW-134 evaluation finding: dropping the
+// allowed key when its last model is removed turns the document into a presence_only one, which
+// widens what the host allows, so the candidate must keep the key and be refused by the parser.
+func TestCheckRemovingTheLastAllowedModelKeepsTheKey(t *testing.T) {
 	one := "{\"roles\": {\"child\": {\"model\": \"anthropic/opus\", \"reasoningEffort\": \"xhigh\"}}, \"allowed\": [{\"model\": \"anthropic/opus\", \"efforts\": [\"xhigh\"]}]}\n"
 	change := Change{Kind: KindRemoveAllowed, Model: "anthropic/opus"}
 	result := Check([]byte(one), digestOf(one), change)
-	if !result.Valid {
-		t.Fatalf("removing the last allowed model was refused: %+v", result)
+	if result.Valid {
+		t.Fatalf("removing the last allowed model was approved, which widens the policy: %+v", result)
 	}
 	candidate, err := candidateOf(t, one, change)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(candidate, "\"allowed\"") {
-		t.Fatalf("the candidate left an empty allowed list: %s", candidate)
+	if !strings.Contains(candidate, "\"allowed\"") {
+		t.Fatalf("the candidate dropped the allowed key, which is presence_only: %s", candidate)
 	}
 }
 

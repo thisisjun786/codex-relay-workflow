@@ -114,13 +114,17 @@ func promptSubmitHandleWith(p PromptSubmitPayload, platform string, env host.Loo
 			// lock that is already busy fails here and the bound close never runs. On a goalplan-bound
 			// "orchestrate D" the answer is the bound close's busy refusal, carrying the lock failure's
 			// reason; every other prompt keeps the oracle's silence. The predicate mirrors the bound-D
-			// dispatch (verb == D and a bound slug) on the same pre-stamp read.
+			// dispatch (verb == D and a bound slug) on the same pre-stamp read. A matching retry's first
+			// attempt already published its marker, so the answer names it and leaves the goalplan
+			// unknown rather than naming nothing (CRW-930, d1); a fresh close published nothing of this
+			// close and keeps the bare text.
 			if command := fsm.ParseOrchestrateCommand(p.Prompt); command != nil && command.Verb == fsm.VerbD && current.Slug != "" {
 				reason := "the session lock could not be taken"
 				if stampErr != nil {
 					reason = stampErr.Error()
 				}
-				return promptDcloseNotApplied(reason)
+				return promptDcloseRefusalNaming(promptDcloseNotApplied(reason),
+					promptDcloseRecoveryPublishedForPrompt(current, command))
 			}
 			return ""
 		}
@@ -298,16 +302,16 @@ func promptSubmitWriteStateReason(lock func(cwd, sessionID string, fn func() err
 	return promptSubmitFailed, "", err
 }
 
-// promptSubmitRewritable says whether writing next back over the session file would keep every record the file stores: each
-// stored unverified subagent must come back as it was stored, a legacy D-close marker would lose its distinction, and an
-// interview tracker longer than the reader keeps would lose its oldest entries (sessionHookStateRewritable). A file that is
-// not there yet stores nothing, so a fresh state loses nothing; a file that cannot be read is refused.
+// promptSubmitRewritable says whether writing next back over the session file would keep every record the file stores (the
+// shared data-loss judgement state.RewriteKeepsStored), and whether it holds no legacy D-close marker (state.DcloseRecoveryLegacy,
+// the per-writer refusal this writer already made). A file that is not there yet stores nothing, so a fresh state loses nothing;
+// a file that cannot be read is refused.
 func promptSubmitRewritable(cwd, sessionID string, next state.State) bool {
 	raw, err := os.ReadFile(state.StatePath(cwd, sessionID))
 	if errors.Is(err, fs.ErrNotExist) {
 		return true
 	}
-	return err == nil && sessionHookStateRewritable(raw, next)
+	return err == nil && state.RewriteKeepsStored(raw, next) && !state.DcloseRecoveryLegacy(next)
 }
 
 // promptSubmitAppendTurn is appendTurn (hook.ts:577-581): the turn is appended and the list is cut to

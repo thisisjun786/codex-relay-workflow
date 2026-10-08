@@ -18,6 +18,11 @@ const (
 	UnsupportedSandbox  = "unsupported_sandbox_type"
 )
 
+// AutoCompactTokenLimitKey is the config key that carries a pair's optional auto-compaction
+// threshold. It travels in the thread/start and thread/resume config; the host never reports it
+// back, so nothing compares it and its silence withholds nothing.
+const AutoCompactTokenLimitKey = "model_auto_compact_token_limit"
+
 var ErrInvalid = errors.New("invalid settings")
 
 // invalid is a declaration the settings contract refuses; it matches ErrInvalid.
@@ -51,6 +56,10 @@ type Contract struct {
 	ExpectedPolicy                                       map[string]any
 	// MCP is what the role's MCP profile resolved to; nil when the thread has no profile.
 	MCP *MCPExpectation
+	// AutoCompactTokenLimit is the authorized pair's optional model_auto_compact_token_limit, sent
+	// in the config so the host compacts below its own (larger) window. The host never reports it
+	// back, so it is recorded as unobservable rather than compared. Nil leaves the host's default.
+	AutoCompactTokenLimit *int64
 }
 
 var defaults = map[string]map[string]any{
@@ -183,6 +192,9 @@ func (c Contract) Requested() map[string]any {
 	if c.MCP != nil {
 		asked["mcpServers"] = c.MCP.Shape()
 	}
+	if c.AutoCompactTokenLimit != nil {
+		asked[AutoCompactTokenLimitKey] = *c.AutoCompactTokenLimit
+	}
 	return asked
 }
 
@@ -208,6 +220,9 @@ func (c Contract) Config() map[string]any {
 		for key, section := range c.MCP.Overrides() {
 			config[key] = section
 		}
+	}
+	if c.AutoCompactTokenLimit != nil {
+		config[AutoCompactTokenLimitKey] = *c.AutoCompactTokenLimit
 	}
 	return config
 }
