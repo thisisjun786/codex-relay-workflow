@@ -512,12 +512,12 @@ func (s *Scheduler) refuseAcceptedHeadOnItsWayToTheBase(ctx context.Context, q s
 		if head == "" {
 			continue
 		}
-		clauses = append(clauses, "(lower(repository) = lower(?) AND crw_same_commit(candidate_head, ?))")
-		args = append(args, forge, head)
+		clauses = append(clauses, "(lower(repository) IN (lower(?), lower(?)) AND crw_same_commit(candidate_head, ?))")
+		args = append(args, acc.Repository, forge, head)
 	}
 	if acc.PRNumber > 0 {
-		clauses = append(clauses, "(lower(repository) = lower(?) AND pr_number = ?)")
-		args = append(args, forge, acc.PRNumber)
+		clauses = append(clauses, "(lower(repository) IN (lower(?), lower(?)) AND pr_number = ?)")
+		args = append(args, acc.Repository, forge, acc.PRNumber)
 	}
 	var turn, state, head string
 	found, err := queryOne(ctx, q, "SELECT turn_id, state, candidate_head FROM merge_turns"+
@@ -566,9 +566,9 @@ func (s *Scheduler) refuseLiveBundleCarrying(ctx context.Context, q store.Querie
 		}
 		var train string
 		found, err := queryOne(ctx, q, "SELECT m.train_id FROM merge_train_members m JOIN merge_trains t ON t.train_id = m.train_id"+
-			" WHERE (lower(t.repository) = lower(?) OR m.relationship_id = ?) AND crw_same_commit(m.member_head, ?)"+
+			" WHERE (lower(t.repository) IN (lower(?), lower(?)) OR m.relationship_id = ?) AND crw_same_commit(m.member_head, ?)"+
 			" AND (SELECT kind FROM merge_train_events e WHERE e.train_id = m.train_id ORDER BY e.seq DESC LIMIT 1) IN ('opened','verified')"+
-			" ORDER BY m.train_id, m.seq LIMIT 1", []any{forge, acc.RelationshipID, head}, &train)
+			" ORDER BY m.train_id, m.seq LIMIT 1", []any{acc.Repository, forge, acc.RelationshipID, head}, &train)
 		if err != nil {
 			return err
 		}
@@ -580,9 +580,9 @@ func (s *Scheduler) refuseLiveBundleCarrying(ctx context.Context, q store.Querie
 		// whose turn was withdrawn is still a member row, and no integration mark names its node. Its head is on the
 		// base, so the correction is refused whatever the member's relationship.
 		landed, err := queryOne(ctx, q, "SELECT m.train_id FROM merge_train_members m JOIN merge_trains t ON t.train_id = m.train_id"+
-			" WHERE (lower(t.repository) = lower(?) OR m.relationship_id = ?) AND crw_same_commit(m.member_head, ?)"+
+			" WHERE (lower(t.repository) IN (lower(?), lower(?)) OR m.relationship_id = ?) AND crw_same_commit(m.member_head, ?)"+
 			" AND EXISTS (SELECT 1 FROM merge_train_events e WHERE e.train_id = m.train_id AND e.kind = 'landed')"+
-			" ORDER BY m.train_id, m.seq LIMIT 1", []any{forge, acc.RelationshipID, head}, &train)
+			" ORDER BY m.train_id, m.seq LIMIT 1", []any{acc.Repository, forge, acc.RelationshipID, head}, &train)
 		if err != nil {
 			return err
 		}

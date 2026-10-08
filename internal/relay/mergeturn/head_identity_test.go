@@ -101,3 +101,21 @@ func TestNoSQLTrimsOrLowersAHeadOrShaColumn(t *testing.T) {
 		}
 	}
 }
+
+// CRW-906 generation 2, round 11: an acceptance can record a local checkout and a forge identity; a turn held under
+// the local path is the same node, so the lane gate matches it by either name.
+func TestTheLaneGateMatchesALocalPathTurnWhenTheAcceptanceHasAForgeIdentity(t *testing.T) {
+	w := newFx(t)
+	w.ucLaneRelationship("rel-lane", 2)
+	w.exec("UPDATE dag_acceptances SET repository = '/synthetic/checkout' WHERE acceptance_id = 'acc-rel-lane'")
+	w.exec("INSERT INTO dag_acceptance_forge (acceptance_id, forge_repository, pr_number) VALUES ('acc-rel-lane', ?, 1)", fxRepo)
+	turn := store.MergeTurnsRow{TurnID: "mtn-local-path", TargetKey: "tgt-x", Repository: "/synthetic/checkout", BaseRef: fxBase, ProjectKey: fxA,
+		HolderTaskID: alpha.TaskID, CandidateHead: "head-a", State: Holding}
+	refusal, err := underCorrectionRefusal(w.ctx, w.s.Querier(w.ctx), turn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if refusal == nil || refusal.Reason != contract.RefusalDispositionConflict {
+		t.Fatalf("a turn held under the local path of an accepted head with a forge identity was not refused: %+v", refusal)
+	}
+}

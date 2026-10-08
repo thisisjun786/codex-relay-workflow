@@ -90,22 +90,22 @@ func underCorrectionRefusal(ctx context.Context, q store.Querier, r store.MergeT
 			// target it was accepted against — a local checkout included — while only the forge row names
 			// the owner/name a merge turn is requested against. An acceptance with no forge row is
 			// matched by its own repository, so a store that predates the table is unchanged.
-			identity := "lower(a.repository)"
+			identity := "lower(?) IN (lower(a.repository))"
 			if hasForge, err := ucZoneTable(ctx, q, "dag_acceptance_forge"); err != nil {
 				return nil, err
 			} else if hasForge {
-				identity = "lower(COALESCE((SELECT g.forge_repository FROM dag_acceptance_forge g WHERE g.acceptance_id = a.acceptance_id), a.repository))"
+				identity = "lower(?) IN (lower(a.repository), lower(COALESCE((SELECT g.forge_repository FROM dag_acceptance_forge g WHERE g.acceptance_id = a.acceptance_id), a.repository)))"
 			}
 			query := "SELECT DISTINCT a.relationship_id FROM dag_acceptances a" +
-				" WHERE a.state = 'active' AND " + identity + " = lower(?) AND crw_same_commit(a.head_sha, ?)"
+				" WHERE a.state = 'active' AND " + identity + " AND crw_same_commit(a.head_sha, ?)"
 			args := []any{r.Repository, held}
 			if refreshed, err := ucZoneTable(ctx, q, "dag_base_refreshes"); err != nil {
 				return nil, err
 			} else if refreshed {
 				query = "SELECT DISTINCT a.relationship_id FROM dag_acceptances a" +
-					" WHERE a.state = 'active' AND " + identity + " = lower(?) AND crw_same_commit(a.head_sha, ?)" +
+					" WHERE a.state = 'active' AND " + identity + " AND crw_same_commit(a.head_sha, ?)" +
 					" UNION ALL SELECT a.relationship_id FROM dag_base_refreshes f JOIN dag_acceptances a ON a.acceptance_id = f.acceptance_id" +
-					" WHERE a.state = 'active' AND " + identity + " = lower(?) AND crw_same_commit(f.head_sha, ?)"
+					" WHERE a.state = 'active' AND " + identity + " AND crw_same_commit(f.head_sha, ?)"
 				args = []any{r.Repository, held, r.Repository, held}
 			}
 			queries = append(queries, struct {
@@ -194,25 +194,25 @@ func ucReplacedHead(ctx context.Context, q store.Querier, repository, head strin
 	if head == "" {
 		return "", nil
 	}
-	identity := "lower(a.repository)"
+	identity := "lower(?) IN (lower(a.repository))"
 	if hasForge, err := ucZoneTable(ctx, q, "dag_acceptance_forge"); err != nil {
 		return "", err
 	} else if hasForge {
-		identity = "lower(COALESCE((SELECT g.forge_repository FROM dag_acceptance_forge g WHERE g.acceptance_id = a.acceptance_id), a.repository))"
+		identity = "lower(?) IN (lower(a.repository), lower(COALESCE((SELECT g.forge_repository FROM dag_acceptance_forge g WHERE g.acceptance_id = a.acceptance_id), a.repository)))"
 	}
 	// A head the acceptance once stood on through a recorded base refresh is covered too: the refresh
 	// rows outlive the acceptance they were recorded for, and a turn held for a refreshed head would
 	// otherwise resolve to nothing once dag-accept --supersedes replaced the acceptance.
 	query := "SELECT a.relationship_id FROM dag_acceptances a" +
-		" WHERE a.state = 'superseded' AND " + identity + " = lower(?) AND crw_same_commit(a.head_sha, ?)"
+		" WHERE a.state = 'superseded' AND " + identity + " AND crw_same_commit(a.head_sha, ?)"
 	args := []any{repository, head}
 	if refreshed, err := ucZoneTable(ctx, q, "dag_base_refreshes"); err != nil {
 		return "", err
 	} else if refreshed {
 		query = "SELECT a.relationship_id FROM dag_acceptances a" +
-			" WHERE a.state = 'superseded' AND " + identity + " = lower(?) AND crw_same_commit(a.head_sha, ?)" +
+			" WHERE a.state = 'superseded' AND " + identity + " AND crw_same_commit(a.head_sha, ?)" +
 			" UNION ALL SELECT f.relationship_id FROM dag_base_refreshes f JOIN dag_acceptances a ON a.acceptance_id = f.acceptance_id" +
-			" WHERE a.state = 'superseded' AND " + identity + " = lower(?) AND crw_same_commit(f.head_sha, ?)"
+			" WHERE a.state = 'superseded' AND " + identity + " AND crw_same_commit(f.head_sha, ?)"
 		args = []any{repository, head, repository, head}
 	}
 	// A head is replaced only when a correction was accepted over it (superseded): a revoked acceptance is a parent's withdrawal, not a replacement. A relationship that still holds the head actively, as its acceptance's head or through a base refresh of

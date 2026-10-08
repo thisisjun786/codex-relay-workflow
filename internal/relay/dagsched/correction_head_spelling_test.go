@@ -92,3 +92,25 @@ func TestACorrectionIsNotRecordedOverAnExcludedMemberOfALandedBundle(t *testing.
 		t.Fatalf("the refusal does not name the landed bundle: %v", err)
 	}
 }
+
+// CRW-906 generation 2, round 11: a merge turn held under the acceptance's local checkout is the same node as its
+// forge identity, so the in-flight guard finds it by either name.
+func TestACorrectionIsNotRecordedOverAMergingTurnHeldUnderTheLocalPath(t *testing.T) {
+	t.Parallel()
+	k, accepted := rvSettledSharedRoot(t)
+	rid := accepted["B"].RelationshipID
+	prepared := k.rvPrepare("sr", "B")
+	acOpenByHand(t, k, rid, prepared.DispatchRequestID, "needs_changes_revision", 2, true)
+	k.exec("UPDATE dag_acceptances SET repository = '/synthetic/checkout', head_sha = 'head-b' WHERE relationship_id = ?", rid)
+	k.exec("DELETE FROM dag_acceptance_forge WHERE acceptance_id = (SELECT acceptance_id FROM dag_acceptances WHERE relationship_id = ?)", rid)
+	k.exec("INSERT INTO dag_acceptance_forge (acceptance_id, forge_repository, pr_number) VALUES ((SELECT acceptance_id FROM dag_acceptances WHERE relationship_id = ?), 'owner/repo', 5)", rid)
+	k.exec("INSERT INTO merge_turns (turn_id, target_key, repository, base_ref, project_key, holder_task_id, holder_host_id, relationship_id, candidate_head, state, tenure, requested_at, updated_at)" +
+		" VALUES ('mtn-local-path', 'tgt', '/synthetic/checkout', 'dev', 'P-TEST', 'parent', 'host', NULL, 'head-b', 'merging', 1, 't', 't')")
+	_, err := k.sched.RecordCorrection(context.Background(), "sr", "B", "parent", prepared.ManifestDigest)
+	if refusalReason(err) != "disposition_conflict" {
+		t.Fatalf("a correction over a merging turn held under the acceptance's local path = %v, want disposition_conflict", err)
+	}
+	if !strings.Contains(err.Error(), "mtn-local") {
+		t.Fatalf("the refusal does not name the turn: %v", err)
+	}
+}
