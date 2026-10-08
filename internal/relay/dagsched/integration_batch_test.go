@@ -382,9 +382,9 @@ func TestIntegrationBatchRefusesAStaleEpoch(t *testing.T) {
 func TestIntegrationBatchCompletesAPendingMarkFromItsFrozenRow(t *testing.T) {
 	k := newBatchKit(t, batchNode{name: "a", files: map[string]string{"a.txt": "a\n"}})
 	k.acceptByCommit("a")
-	deps := IntegrationBatchDeps{Verify: stubVerifier(writeStubVerifier(t)), Update: func(ctx context.Context, checkout, ref, newCommit, oldCommit string) error {
+	deps := IntegrationBatchDeps{Verify: stubVerifier(writeStubVerifier(t)), Update: updateIntegrationRef, AfterMove: func(context.Context) error {
 		k.invRevise("g", "a", "g-r2", invTitle("changed before the mark"))
-		return updateIntegrationRef(ctx, checkout, ref, newCommit, oldCommit)
+		return nil
 	}}
 	res, err := k.sched.IntegrateBatch(context.Background(), k.batchIn(), deps)
 	if err != nil {

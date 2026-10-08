@@ -48,6 +48,9 @@ type IntegrationBatchVerifier func(ctx context.Context, dir string, env []string
 type IntegrationBatchDeps struct {
 	Verify IntegrationBatchVerifier
 	Update func(ctx context.Context, checkout, ref, newCommit, oldCommit string) error
+	// AfterMove runs once the branch has moved and the moved record is committed, before the marks are written. It is a test seam
+	// for a change that lands between the move and the marks; it runs outside the store transaction (CRW-965, D6).
+	AfterMove func(ctx context.Context) error
 }
 
 // IntegrationBatchInput is what one batch is asked to do.
@@ -79,6 +82,8 @@ type IntegrationBatchResult struct {
 	Targets                               []string
 	AlreadyContained                      []IntegrationBatchContained
 	ContainedUnverified                   []IntegrationBatchContained
+	Reconciled                            []string
+	Abandoned                             []string
 }
 
 // IntegrateBatch runs one batch: it completes the marks earlier batches left pending when their commit is on the
@@ -114,6 +119,11 @@ func (s *Scheduler) IntegrateBatch(ctx context.Context, in IntegrationBatchInput
 	out.OldHead = old
 	if err := s.completePendingMarks(ctx, in); err != nil {
 		return out, err
+	}
+	if old != zeroObjectID {
+		if err := s.reconcilePlannedMoves(ctx, in, old, &out); err != nil {
+			return out, err
+		}
 	}
 	candidates, err := s.readyIntegrationCandidates(ctx, in)
 	if err != nil {
@@ -196,11 +206,19 @@ func (s *Scheduler) IntegrateBatch(ctx context.Context, in IntegrationBatchInput
 		if err := s.recordVerifiedHead(ctx, in, batch, settled.head, settled.digest); err != nil {
 			return out, err
 		}
-		if err := deps.Update(ctx, in.Checkout, in.IntegrationRef, settled.head, old); err != nil {
-			return out, refuse(contract.RefusalStaleMarkContext, "%s moved while the merged tree was being verified (the batch read %s): read it again and run the batch again", in.IntegrationRef, old)
-		}
-		if err := s.recordMoved(ctx, in, batch, out); err != nil {
+		// the compare-and-swap and the moved record share one fenced transaction: the epoch is checked inside it (CRW-965, D6)
+		if err := s.IntegrationWrite(ctx, in.Plan, in.Actor, func(txCtx context.Context) error {
+			if err := deps.Update(txCtx, in.Checkout, in.IntegrationRef, settled.head, old); err != nil {
+				return refuse(contract.RefusalStaleMarkContext, "%s moved while the merged tree was being verified (the batch read %s): read it again and run the batch again", in.IntegrationRef, old)
+			}
+			return s.recordMovedIn(txCtx, in, batch, out)
+		}); err != nil {
 			return out, err
+		}
+		if deps.AfterMove != nil {
+			if err := deps.AfterMove(ctx); err != nil {
+				return out, err
+			}
 		}
 		for _, m := range settled.merged {
 			event, err := s.MarkFrozen(ctx, m.Candidate, in.Actor, settled.digest)
@@ -267,7 +285,7 @@ func (s *Scheduler) readyIntegrationCandidates(ctx context.Context, in Integrati
 				if landed {
 					return nil, refuse(contract.RefusalDispositionConflict, "node %s is already integrated into an integration target, so it has no candidate to merge again", id)
 				}
-				return nil, refuse(contract.RefusalDispositionConflict, "node %s is not a ready accepted candidate of plan %s", id, in.Plan)
+				return nil, refuse(contract.RefusalDispositionConflict, "node %s is not a ready accepted candidate of plan %s in this checkout (a candidate accepted for another repository is judged there)", id, in.Plan)
 			}
 			pick = append(pick, c)
 		}
@@ -329,30 +347,6 @@ func (s *Scheduler) recordIntent(ctx context.Context, in IntegrationBatchInput, 
 }
 
 // recordMoved writes the batch row once the branch moved: the merged and split lists, the verified record's digest and the
-// new head, and a ref_moved stage.
-func (s *Scheduler) recordMoved(ctx context.Context, in IntegrationBatchInput, batch string, out IntegrationBatchResult) error {
-	mergedJSON, err := json.Marshal(out.Merged)
-	if err != nil {
-		return err
-	}
-	splitJSON, err := json.Marshal(out.Split)
-	if err != nil {
-		return err
-	}
-	verification, err := json.Marshal(map[string]string{"result": out.Verification.Result, "treeHash": out.Verification.TreeHash, "digest": out.VerificationDigest})
-	if err != nil {
-		return err
-	}
-	return s.IntegrationWrite(ctx, in.Plan, in.Actor, func(txCtx context.Context) error {
-		row := store.IntegrationBatchRow{BatchID: batch, PlanID: in.Plan, Repository: in.Checkout, IntegrationRef: in.IntegrationRef, BaseRef: in.BaseRef,
-			OldHead: out.OldHead, NewHead: out.NewHead, MergedJSON: string(mergedJSON), SplitJSON: string(splitJSON), VerificationJSON: string(verification),
-			RecordedBy: in.Actor, CoordinatorEpoch: s.ExpectedEpoch, RecordedAt: registry.SystemISO()}
-		if err := store.RecordIntegrationBatch(txCtx, s.Store, row); err != nil {
-			return err
-		}
-		return s.stageRow(txCtx, in, batch, "ref_moved", Candidate{}, out.NewHead)
-	})
-}
 
 // recordMark writes one node's mark outcome: marked with the event it named, or mark_pending with the refusal.
 func (s *Scheduler) recordMark(ctx context.Context, in IntegrationBatchInput, batch string, c Candidate, stage, detail string) error {
@@ -784,7 +778,6 @@ type IntegrationBatchContained struct {
 }
 
 // markContained writes the merged marks of the candidates the branch already contained, from their frozen rows (CRW-965).
-// markContained writes the merged marks of the candidates the branch already contained, from their frozen rows (CRW-965).
 // A mark this batch already recorded (a retried run) is reported from its stage row and is not inserted again.
 func (s *Scheduler) markContained(ctx context.Context, in IntegrationBatchInput, batch string, candidates []Candidate, tip string, out *IntegrationBatchResult) error {
 	rows, err := store.IntegrationStagesOfPlan(ctx, s.Store, in.Plan)
@@ -926,4 +919,67 @@ func (s *Scheduler) verifyHead(ctx context.Context, in IntegrationBatchInput, de
 	}
 	w := &integrationWorktree{s: s, in: in, deps: deps, dir: wt, tmp: tmp, start: head, baseTip: baseTip}
 	return w.verify(ctx)
+}
+
+// recordMovedIn writes the batch row once the branch moved and the ref_moved stage, inside the transaction that moved
+// the branch (CRW-965, parent decision D6).
+func (s *Scheduler) recordMovedIn(txCtx context.Context, in IntegrationBatchInput, batch string, out IntegrationBatchResult) error {
+	mergedJSON, err := json.Marshal(out.Merged)
+	if err != nil {
+		return err
+	}
+	splitJSON, err := json.Marshal(out.Split)
+	if err != nil {
+		return err
+	}
+	verification, err := json.Marshal(map[string]string{"result": out.Verification.Result, "treeHash": out.Verification.TreeHash, "digest": out.VerificationDigest})
+	if err != nil {
+		return err
+	}
+	row := store.IntegrationBatchRow{BatchID: batch, PlanID: in.Plan, Repository: in.Checkout, IntegrationRef: in.IntegrationRef, BaseRef: in.BaseRef,
+		OldHead: out.OldHead, NewHead: out.NewHead, MergedJSON: string(mergedJSON), SplitJSON: string(splitJSON), VerificationJSON: string(verification),
+		RecordedBy: in.Actor, CoordinatorEpoch: s.ExpectedEpoch, RecordedAt: registry.SystemISO()}
+	if err := store.RecordIntegrationBatch(txCtx, s.Store, row); err != nil {
+		return err
+	}
+	return s.stageRow(txCtx, in, batch, "ref_moved", Candidate{}, out.NewHead)
+}
+
+// reconcilePlannedMoves settles the batches that planned a move (CRW-965, parent decision D6). A planned head the branch
+// holds and no ref_moved row records is recorded as moved, once: the batch died after the swap. A planned head the branch
+// does not hold is abandoned and reported.
+func (s *Scheduler) reconcilePlannedMoves(ctx context.Context, in IntegrationBatchInput, tip string, out *IntegrationBatchResult) error {
+	rows, err := store.IntegrationStagesOfPlan(ctx, s.Store, in.Plan)
+	if err != nil {
+		return err
+	}
+	moved := map[string]bool{}
+	for _, r := range rows {
+		if r.Stage == "ref_moved" {
+			moved[r.BatchID] = true
+		}
+	}
+	seen := map[string]bool{}
+	for _, r := range rows {
+		if r.Stage != "intent" || r.NodeID != "" || moved[r.BatchID] || seen[r.BatchID] {
+			continue
+		}
+		var d map[string]string
+		if json.Unmarshal([]byte(r.Detail), &d) != nil || d["verified_head"] == "" || d["integration_ref"] != in.IntegrationRef {
+			continue
+		}
+		seen[r.BatchID] = true
+		if d["verified_head"] != tip {
+			out.Abandoned = append(out.Abandoned, r.BatchID)
+			continue
+		}
+		batch, head := r.BatchID, tip
+		if err := s.IntegrationWrite(ctx, in.Plan, in.Actor, func(txCtx context.Context) error {
+			return s.stageRow(txCtx, in, batch, "ref_moved", Candidate{}, head)
+		}); err != nil {
+			return err
+		}
+		out.Reconciled = append(out.Reconciled, r.BatchID)
+	}
+	return nil
 }
