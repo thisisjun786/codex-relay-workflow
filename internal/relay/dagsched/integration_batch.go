@@ -157,26 +157,26 @@ func (s *Scheduler) IntegrateBatch(ctx context.Context, in IntegrationBatchInput
 	}
 	var covered []Candidate
 	if len(contained) > 0 {
-		rowFound, keysHold, err := s.verifiedHeadState(ctx, in, start)
+		rowFound, coveredNodes, err := s.verifiedHeadState(ctx, in, start, contained)
 		if err != nil {
 			return out, err
 		}
-		// a covering record whose keys no longer hold for the head's tree is verified again, with no merge; only its PASS covers (CRW-965, D2)
-		holds := rowFound && keysHold
-		if rowFound && !keysHold {
+		// a candidate that no stored verification covers (its keys changed, or its criteria set is not the one verified) makes the
+		// head verified again, with no merge; only that PASS covers the candidates (CRW-965, parent decisions D2 and D1)
+		if rowFound && !allNodesCovered(contained, coveredNodes) {
 			_, dig, pass, err := s.verifyHead(ctx, in, deps, start, baseTip)
 			if err != nil {
 				return out, err
 			}
 			if pass {
-				if err := s.recordVerifiedHead(ctx, in, batch, start, dig); err != nil {
+				if err := s.recordVerifiedHead(ctx, in, batch, start, dig, contained); err != nil {
 					return out, err
 				}
-				holds = true
+				coveredNodes = nodesOf(contained)
 			}
 		}
 		for _, c := range contained {
-			if holds {
+			if coveredNodes[c.NodeID] {
 				covered = append(covered, c)
 				continue
 			}
@@ -203,7 +203,7 @@ func (s *Scheduler) IntegrateBatch(ctx context.Context, in IntegrationBatchInput
 			return out, err
 		}
 		// the verified head is recorded before the branch moves, so a batch that dies after the move leaves its head known
-		if err := s.recordVerifiedHead(ctx, in, batch, settled.head, settled.digest); err != nil {
+		if err := s.recordVerifiedHead(ctx, in, batch, settled.head, settled.digest, mergedCandidates(settled.merged)); err != nil {
 			return out, err
 		}
 		// the compare-and-swap and the moved record share one fenced transaction: the epoch is checked inside it (CRW-965, D6)
@@ -805,6 +805,34 @@ func isAncestorOf(ctx context.Context, checkout, commit, branch string) (bool, e
 	return false, err
 }
 
+// allNodesCovered is whether every candidate of the set is among the covered nodes.
+func allNodesCovered(set []Candidate, covered map[string]bool) bool {
+	for _, c := range set {
+		if !covered[c.NodeID] {
+			return false
+		}
+	}
+	return true
+}
+
+// nodesOf is the set of the node ids of the candidates.
+func nodesOf(set []Candidate) map[string]bool {
+	out := map[string]bool{}
+	for _, c := range set {
+		out[c.NodeID] = true
+	}
+	return out
+}
+
+// mergedCandidates are the candidates a settled merge holds, in merge order.
+func mergedCandidates(merged []integrationMerge) []Candidate {
+	out := make([]Candidate, 0, len(merged))
+	for _, m := range merged {
+		out = append(out, m.Candidate)
+	}
+	return out
+}
+
 // sha256Digest is sha256:<hex> of bytes.
 func sha256Digest(raw []byte) string {
 	sum := sha256.Sum256(raw)
@@ -878,13 +906,14 @@ func candidatesInCheckout(set []Candidate, checkout string) []Candidate {
 }
 
 // verifiedHeadState reads the verified-head rows this relay wrote for a head on the integration ref. rowFound is whether any
-// such row exists; keysHold is whether one of them still matches the head's tree, ci.yml and dependency digests now (CRW-965,
-// parent decision D2). A commit's content does not change, so the keys differ only when the verification they were judged
-// under no longer stands for the tree.
-func (s *Scheduler) verifiedHeadState(ctx context.Context, in IntegrationBatchInput, head string) (bool, bool, error) {
+// such row exists. covered names the candidates a stored verification stands for: a row covers a candidate when the keys it
+// was judged under still hold for the head's tree, ci.yml, dependencies and platform, and the row names the candidate's
+// criteria set as the one it verified (CRW-965, parent decisions D2 and D1). A commit's content does not change, so the keys
+// differ only when the verification no longer stands for the tree.
+func (s *Scheduler) verifiedHeadState(ctx context.Context, in IntegrationBatchInput, head string, candidates []Candidate) (bool, map[string]bool, error) {
 	rows, err := store.IntegrationStagesOfPlan(ctx, s.Store, in.Plan)
 	if err != nil {
-		return false, false, err
+		return false, nil, err
 	}
 	var stored []map[string]string
 	for _, r := range rows {
@@ -897,18 +926,34 @@ func (s *Scheduler) verifiedHeadState(ctx context.Context, in IntegrationBatchIn
 		}
 	}
 	if len(stored) == 0 {
-		return false, false, nil
+		return false, map[string]bool{}, nil
 	}
 	now, err := verifiedKeysOf(ctx, in.Checkout, head)
 	if err != nil {
-		return true, false, err
+		return true, map[string]bool{}, err
 	}
+	covered := map[string]bool{}
 	for _, d := range stored {
-		if verifiedKeysHold(d, now) {
-			return true, true, nil
+		if !verifiedKeysHold(d, now) {
+			continue
+		}
+		criteria := map[string]string{}
+		if json.Unmarshal([]byte(d["criteria"]), &criteria) != nil {
+			continue
+		}
+		for _, c := range candidates {
+			if c.CriteriaSetDigest == "" {
+				continue
+			}
+			// a node the row names is covered under the criteria set it names; a node the row does not name is covered only
+			// while its criteria set is still the accepted one (a revalidated set was never verified on this head)
+			named, ok := criteria[c.NodeID]
+			if (ok && named == c.CriteriaSetDigest) || (!ok && c.CriteriaSetDigest == c.AcceptedCriteriaDigest) {
+				covered[c.NodeID] = true
+			}
 		}
 	}
-	return true, false, nil
+	return true, covered, nil
 }
 
 // verifiedKeysHold is whether a stored verification stands for the keys the verifier would judge now: the same tree, ci.yml
@@ -943,12 +988,22 @@ func verifiedKeysOf(ctx context.Context, checkout, head string) (map[string]stri
 }
 
 // recordVerifiedHead writes the batch's intent to move the branch to a verified head, before the branch moves. The row
-// names the tree and the keys the verification stands on, so a later batch compares them without reading old records.
-func (s *Scheduler) recordVerifiedHead(ctx context.Context, in IntegrationBatchInput, batch, head, digest string) error {
+// names the tree and the keys the verification stands on, and the criteria set of each candidate it covers (CRW-965,
+// parent decisions D2 and D1), so a later batch compares them without reading old records.
+func (s *Scheduler) recordVerifiedHead(ctx context.Context, in IntegrationBatchInput, batch, head, digest string, covered []Candidate) error {
 	keys, err := verifiedKeysOf(ctx, in.Checkout, head)
 	if err != nil {
 		return err
 	}
+	criteria := map[string]string{}
+	for _, c := range covered {
+		criteria[c.NodeID] = c.CriteriaSetDigest
+	}
+	criteriaJSON, err := json.Marshal(criteria)
+	if err != nil {
+		return err
+	}
+	keys["criteria"] = string(criteriaJSON)
 	keys["verified_head"], keys["verification_digest"], keys["integration_ref"] = head, digest, in.IntegrationRef
 	detail, err := json.Marshal(keys)
 	if err != nil {
