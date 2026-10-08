@@ -1,0 +1,102 @@
+# Frozen pair-evaluation ledger rows (pair-eval-ledger-rows.json): the defects of ten earlier pull requests of the reader family.
+# A defect that repeats a command already a row is an index line of kind "same" in reproductions.tsv.
+
+=== LEDGER-CRW-639-d1 | R
+--why The outer shell runs the command substitution before bash starts: it removes the checkout.
+bash -c 'echo OK' "$(rm -rf ../repo)"
+
+=== LEDGER-CRW-639-d2 | B
+--why After the program, -c is $0 and the next word is $1: nothing is executed from it.
+bash -c 'echo OK' -c 'rm -rf ../repo'
+
+=== LEDGER-CRW-639-d3 | B
+--why Nine nested sh -c levels are read (the limit is 32 levels): the innermost command is true.
+sh -c "sh -c \"sh -c \\\"sh -c \\\\\\\"sh -c \\\\\\\\\\\\\\\"sh -c \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"sh -c \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"sh -c \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"sh -c \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"true\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\"\\\"\""
+
+=== LEDGER-CRW-678-d1 | W
+--why A write inside a replacement field of a triple-quoted f-string.
+python3 -c "f''' '{open(file='{MEMORY}/a', mode='w')} '''"
+
+=== LEDGER-CRW-754-d1 | E
+--why builtins .exec with a blank before the dot.
+python3 -c 'import builtins; builtins .exec("""open(file="{MEMORY}/a",mode="w")""")'
+
+=== LEDGER-CRW-703-d2 | W
+--why A triple-quoted f-string destination with doubled braces.
+python3 -c 'open(f"""{MEMORY}/a{{b}}""","w")'
+
+=== LEDGER-CRW-703-d2b | W
+--why A hexadecimal escape for the first character of the path.
+python3 -c 'open("\x2f{MEMORY_NOSLASH}","w")'
+
+=== LEDGER-CRW-703-d2c | W
+--why A command substitution that runs tee on the memory file.
+echo $(tee {MEMORY}/a)
+
+=== LEDGER-CRW-703-d3 | W
+--why An absolute link in the working directory points into the memory root; the redirect target goes through it.
+--link abs {MEMORY}
+--cmd
+echo x > abs/n.md
+
+=== LEDGER-CRW-726-d1 | R
+--why echo cd /tmp is an argument, not a cd: the substitution removes the checkout.
+echo cd /tmp "$(rm -rf ../repo)"
+
+=== LEDGER-CRW-726-d2 | R
+--why The redirect before -c does not move the program word.
+X='rm -rf ../repo'; bash </dev/null -c "$X"
+
+=== LEDGER-CRW-726-d2b | W
+--why The same with a memory write program.
+X='echo x > {MEMORY}/a'; bash </dev/null -c "$X"
+
+=== LEDGER-CRW-726-d3 | U
+--why An unquoted here-document body that holds $X is not literal: the shell runs what X holds.
+X='rm -rf ../repo'
+bash << EOF
+$X
+EOF
+
+=== LEDGER-CRW-726-d4 | R
+--why env --ignore-environment takes no operand: rm is the program.
+env --ignore-environment rm -rf ../repo
+
+=== LEDGER-CRW-726-d4b | U
+--why A shell after env --ignore-environment reads the pipe.
+printf 'rm -rf ../repo' | env --ignore-environment bash
+
+=== LEDGER-CRW-726-d4c | R
+--why env -- ends the options.
+env -- rm -rf ../repo
+
+=== LEDGER-CRW-726-d5 | R
+--why The subshell's cd does not leak; the parent shell removes the checkout.
+X=rm; (
+cd /tmp
+); "$X" -rf ../repo
+
+=== LEDGER-CRW-726-d6 | R
+--why eval re-reads $X -rf ../repo with X=rm.
+X=rm; eval '$X' -rf ../repo
+
+=== LEDGER-CRW-726-d7 | R
+--why A parameter expansion with a # inside its default word is no comment.
+X='rm -rf ../repo'; echo ${x:- #}; bash -c "$X"
+
+=== LEDGER-CRW-726-d8 | B
+--why A single-quoted command substitution is a string.
+echo "$(true)x" '$(rm -rf ../repo)'
+
+=== LEDGER-CRW-741-d1 | W
+--why A comment inside a replacement field ends at the carriage return; the write after it runs.
+python3 -c 'f"""{( # comment{CR}open(file="{MEMORY}/a", mode="w"), 0
+)}"""'
+
+=== LEDGER-CRW-741-d4 | T
+--why A replacement field nested 33 levels deep is unreadable to the memory gate (the limit is exact).
+python3 -c "f'{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:z}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}'"
+
+=== LEDGER-CRW-741-d4b | B
+--why Control: 32 levels are read.
+python3 -c "f'{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:z}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}'"

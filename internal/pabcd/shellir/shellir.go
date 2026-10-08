@@ -100,6 +100,10 @@ type Context struct {
 	ProcSubst   bool
 	// Stdin is the source of standard input: one of the Stdin constants.
 	Stdin string
+	// stdinFile is the file the last input redirection names when Stdin is StdinFile and the reader knows it; inTextPipe is
+	// whether the command is the right side of a pipe in the text being read (a carried text starts again at false).
+	stdinFile  string
+	inTextPipe bool
 	// Carrier names the construct that re-read this text, for example "bash -c".
 	Carrier string
 	Depth   int
@@ -285,6 +289,11 @@ func (w *walker) stmt(s *syntax.Stmt, st *state, ctx Context) error {
 		return err
 	}
 	ctx.Stdin = stdinKind(redirs, ctx.Stdin)
+	if ctx.Stdin != StdinFile {
+		ctx.stdinFile = ""
+	} else if f, ok := lastStdinFile(redirs); ok {
+		ctx.stdinFile = f
+	}
 	if isCompound(s.Cmd) && len(redirs) > 0 {
 		// A redirection on a compound command (a block, a subshell, a loop) writes its file as a command does: it
 		// is an empty program with these redirections, judged with the state before the body runs.
@@ -424,6 +433,7 @@ func (w *walker) binary(c *syntax.BinaryCmd, st *state, ctx Context) error {
 		rctx := ctx
 		rctx.Pipeline = true
 		rctx.Stdin = StdinPipe
+		rctx.inTextPipe = true
 		return w.stmt(c.Y, st.clone(), rctx)
 	}
 	return unreadablef("unsupported binary operator %v", c.Op)
@@ -652,6 +662,10 @@ func stdinKind(redirs []Redir, def string) string {
 			def = StdinFile
 		case "<&":
 			def = StdinUnknown
+		case ">&", ">", ">>", ">|":
+			if r.Fd == "0" {
+				def = StdinUnknown // 0>&3 copies a descriptor onto standard input
+			}
 		case "<<", "<<-":
 			def = StdinHeredoc
 		case "<<<":
@@ -716,6 +730,9 @@ func (w *walker) dispatch(words []Word, assigns []Assign, redirs []Redir, st *st
 		return unreadablef("a program word with a colon is not modelled: %q", prog.Value)
 	}
 	name := programName(prog.Value)
+	if w.createdByText(prog.Value, st.dir) {
+		return unreadablef("program %q is created by this text; the file it writes is what runs", prog.Value)
+	}
 	if err := checkAssigns(assigns, st); err != nil {
 		return err
 	}
@@ -729,6 +746,11 @@ func (w *walker) dispatch(words []Word, assigns []Assign, redirs []Redir, st *st
 	}
 	if name == "npm" {
 		if err := checkNpm(words[1:]); err != nil {
+			return err
+		}
+	}
+	if isOpaqueInterpreter(name) {
+		if err := opaqueInterpreter(name, words[1:], redirs, ctx); err != nil {
 			return err
 		}
 	}
@@ -863,6 +885,9 @@ func (w *walker) carried(text string, st *state, ctx Context, carrier string) er
 		return unreadablef("nesting is deeper than %d", MaxNestingDepth)
 	}
 	ctx.Carrier = carrier
+	// A shell that runs the text starts a new text: a pipe of the text around it is not a pipe inside it, so an input
+	// redirection in it replaces the inherited input (zsh with MULTIOS joins a pipe and a file only within one pipeline).
+	ctx.inTextPipe = false
 	file, err := parseText(text)
 	if err != nil {
 		return err

@@ -35,20 +35,26 @@ func shellIRDests(command, cwd string, lookup func(string) (string, bool), resol
 			dests = append(dests, shellIRUnknownDest)
 			continue
 		}
-		var own []string
-		for _, r := range e.Redirs {
-			if shellIRWriteRedir(r.Op) {
-				own = append(own, shellIRWordDest(r.Target))
-			}
-		}
-		own = append(own, shellIRVerbDests(e)...)
-		own = append(own, shellIRLanguageDests(e)...)
+		own := shellIRExecDests(e)
 		if resolve {
 			own = shellIRResolve(own, e.Dir, cwd)
 		}
 		dests = append(dests, own...)
 	}
 	return shellIRUnique(dests), true
+}
+
+// shellIRExecDests returns the destinations one program record writes: its redirections, the files its verb names and the writes
+// of its inline program, as written (relative ones are not joined to a directory).
+func shellIRExecDests(e shellir.Exec) []string {
+	var own []string
+	for _, r := range e.Redirs {
+		if shellIRWriteRedir(r.Op) {
+			own = append(own, shellIRWordDest(r.Target))
+		}
+	}
+	own = append(own, shellIRVerbDests(e)...)
+	return append(own, shellIRLanguageDests(e)...)
 }
 
 // shellIRResolve joins each relative destination to the directory its program runs in. A program in the payload's own
@@ -308,7 +314,7 @@ func shellIRLanguageDests(e shellir.Exec) []string {
 // shellIRDynamicWrite is whether a Node or Python program calls a writer with a first argument that is no string literal,
 // or binds open to a name (f = open) so that its calls are not visible as open(...).
 func shellIRDynamicWrite(src string, python bool) bool {
-	if shellIRNodeDynamicWrite.MatchString(src) || shellIRStructuralWriteUnknown(src) {
+	if shellIRNodeDynamicWrite.MatchString(src) || shellIRStructuralWriteUnknown(src, python) {
 		return true
 	}
 	return python && shellIRPyOpenAlias.MatchString(src)
@@ -316,7 +322,7 @@ func shellIRDynamicWrite(src string, python bool) bool {
 
 var (
 	shellIRNodeDynamicWrite = regexp.MustCompile("\\b(?:writeFileSync|writeFile|appendFileSync|appendFile|createWriteStream)\\s*\\(\\s*[^'\"\x60\\s)]")
-	shellIRPyOpenAlias      = regexp.MustCompile(`=\s*open\s*(?:[,)\n;]|$)`)
+	shellIRPyOpenAlias      = regexp.MustCompile(`[=,(\[:]\s*open\s*(?:[,)\]:;#\r\n]|$)`)
 )
 
 // shellIRSedDests returns the files sed -i rewrites. Every operand is reported, the script included, as the reading of

@@ -1,0 +1,224 @@
+# CRW-894 and CRW-989 (a program position fed by a pipe or a descriptor) and CRW-1011 (the first operand of a removal).
+# ../repo is the managed checkout itself: the worktree guard runs in the checkout.
+
+=== CRW-894-01 | U
+--why A pipe into a shell that re-opens standard input through /dev/stdin is still the pipe (c1 of CRW-894).
+printf 'rm -rf ../repo' | bash </dev/stdin
+
+=== CRW-894-02 | U
+--why A pipe into an interpreter without a program argument (item 5).
+printf 'import shutil; shutil.rmtree("../repo")' | python3
+
+=== CRW-894-03 | U
+--why The 10-07 control (bash </dev/null) was changed to a refusal by c9 (zsh MULTIOS reads the pipe); the reader refuses every pipe into a shell.
+printf 'echo hi' | bash </dev/null
+
+=== CRW-894-04 | B
+--why A subshell that runs cat with the pipe as data.
+printf x | (cd sub; cat)
+
+=== CRW-894-05 | B
+--why nohup cat with the pipe as data.
+printf x | nohup cat
+
+=== CRW-894-06 | B
+--why bash -c with a program: no pipe is read.
+bash -c 'echo hi'
+
+=== CRW-894-07 | B
+--why exec -a with an ordinary program and no pipe.
+exec -a x true
+
+=== CRW-894-08 | U
+--why exec -a NAME bash reads the pipe (item 2).
+printf 'echo x > {MEMORY}/a' | exec -a x bash
+
+=== CRW-894-09 | U
+--why c9(a): any descriptor that copies standard input is the pipe.
+printf 'rm -rf ../repo' | bash 3</dev/fd/0 </dev/null <&3
+
+=== CRW-894-10 | R
+--why c10(b): a redirect between the exec option and the program does not hide the removal.
+exec -a x >/dev/null rm -rf ../repo
+
+=== CRW-894-11 | R
+--why c10(e): the descriptor duplication 2>&1 is no command separator; python3 runs the here-document that removes the checkout.
+python3 2>&1 <<'PY'
+import shutil; shutil.rmtree('../repo')
+PY
+
+=== CRW-894-12 | B
+--why c10(g): the intermediate bash reads /dev/null (the redirection of the carrier shell replaces the inherited input), no shell runs the outer pipe: allowed again.
+printf x | bash -c 'bash -c bash </dev/null'
+
+=== CRW-894-13 | U
+--why c10(h): python3 -m code reads its program from the pipe.
+printf x | python3 -m code
+
+=== CRW-894-14 | B | deviation=attempt/deny/deny
+--why The issue keeps python3 -m json.tool in a pipe allowed; the reader does not model -m modules and refuses them (known-defects: a python -m module is refused as unreadable, port: kept).
+printf x | python3 -m json.tool
+
+=== CRW-894-15 | B
+--why Control: python3 -c with a program after the pipe is read as its program.
+printf x | python3 -c 'print(1)'
+
+=== CRW-894-16 | B
+--why Control: node with a script operand receives the pipe as data.
+printf x | node script.js
+
+=== CRW-894-17 | U
+--why Item 1: a script operand that is /dev/stdin is the pipe.
+printf 'rm -rf ../repo' | bash /dev/stdin
+
+=== CRW-894-18 | U
+--why Item 1: /proc/self/fd/0.
+printf 'rm -rf ../repo' | bash /proc/self/fd/0
+
+=== CRW-894-19 | U
+--why Item 1: source of /dev/stdin.
+printf 'rm -rf ../repo' | source /dev/stdin
+
+=== CRW-894-20 | U
+--why Item 3: bash -c with a nested bash reads the outer pipe.
+printf 'rm -rf ../repo' | bash -c 'bash'
+
+=== CRW-894-21 | U
+--why Item 3: eval of a shell name.
+printf 'rm -rf ../repo' | eval bash
+
+=== CRW-894-22 | U
+--why Item 4: busybox sh reads the pipe.
+printf 'rm -rf ../repo' | busybox sh
+
+=== CRW-894-23 | U
+--why c10(a): another process's descriptor cannot be read.
+printf 'rm -rf ../repo\n' | bash -c 'bash </dev/null </proc/$$/fd/0; :'
+
+=== CRW-894-24 | U
+--why c10(c): a shell that stands in the condition of an if reads the pipe.
+printf 'rm -rf ../repo\n' | bash -c 'if bash; then :; fi'
+
+=== CRW-894-25 | U
+--why c10(c): the negation operator before a shell.
+printf 'rm -rf ../repo\n' | bash -c '! bash'
+
+=== CRW-894-26 | R
+--why c10(d): a redirect written before the command name belongs to that command; the here-string is the program of python3, which removes the checkout.
+<<< 'import shutil; shutil.rmtree("../repo")' python3
+
+=== CRW-894-27 | U
+--why c10(f): a word that starts with a dash is not an argument of an unknown long option.
+printf 'require("fs").rmSync("../repo", {recursive:true, force:true})\n' | node --no-warnings --require fs
+
+=== CRW-989-01 | U
+--why d2: &> between the exec option and the program does not hide the shell that reads the pipe.
+printf 'rm -rf ../repo' | exec -a x &>/dev/null bash
+
+=== CRW-989-02 | U
+--why d2: the same with a memory write program.
+printf 'echo x > {MEMORY}/a' | exec -a x &>/dev/null bash
+
+=== CRW-989-03 | U
+--why d3: a descriptor alias copied by 4<&3 is the here-document.
+python3 /dev/fd/4 3<<'PY' 4<&3
+import shutil; shutil.rmtree('../repo')
+PY
+
+=== CRW-989-04 | U
+--why d3: the here-string form.
+python3 /dev/fd/4 3<<< 'import shutil; shutil.rmtree("../repo")' 4<&3
+
+=== CRW-989-05 | B
+--why d4: a -c program followed by data; cat reads the pipe as data.
+printf x | sh -c 'cat' _ -s
+
+=== CRW-989-06 | B
+--why d4: dash.
+printf x | dash -c 'cat' _ -s
+
+=== CRW-989-07 | U
+--why d1: an exec in the untaken branch of an if does not redirect the shell that runs in the else branch.
+printf 'rm -rf ../repo' | if false; then :; exec </dev/null; else bash; fi
+
+=== CRW-989-08 | U
+--why d1: a background exec redirects only the background job.
+printf 'rm -rf ../repo' | if true; then :; exec </dev/null & bash; fi
+
+=== CRW-989-09 | U
+--why d1: the -c form.
+printf 'rm -rf ../repo' | bash -c 'if false; then :; exec </dev/null; fi; bash'
+
+=== CRW-989-10 | B
+--why d5 of CRW-894 (3113ad91 evaluation): the right command prints its arguments and launches no shell.
+printf x | printf '%s\n' sudo -s
+
+=== CRW-1011-01 | R
+--why The reference row: git worktree remove --force ../repo is refused.
+git worktree remove --force ../repo
+
+=== CRW-1011-02 | R
+--why The evaluation's form: an ANSI-C here-string before the operands must not become the target.
+git worktree remove --force <<<$'..\x2f..\x2f..\x2frepo' ../repo
+
+=== CRW-1011-03 | R
+--why A here-string with an unquoted word before the operand.
+git worktree remove --force <<<x ../repo
+
+=== CRW-1011-04 | R
+--why A quoted here-string word.
+git worktree remove --force <<<'x' ../repo
+
+=== CRW-1011-05 | R
+--why A here-string word that spells the target.
+git worktree remove --force <<<../repo ../repo
+
+=== CRW-1011-06 | R
+--why A here-string word that spells a path above the target.
+git worktree remove --force <<< ../../../repo ../repo
+
+=== CRW-1011-07 | R
+--why The here-string before the option.
+git worktree remove <<<x --force ../repo
+
+=== CRW-1011-08 | R
+--why The here-string after the operand.
+git worktree remove --force ../repo <<<x
+
+=== CRW-1011-09 | B
+--why Control: the same shape aimed at a neighbour of the checkout.
+git worktree remove --force <<<x ../elsewhere
+
+=== CRW-1011-10 | B
+--why Control: git status with a here-string.
+git status <<<x
+
+=== CRW-1011-11 | R
+--why End condition 3: rm has the same first-operand reading; a here-string before the operand does not hide it.
+rm -rf <<<x ../repo
+
+=== CRW-1011-12 | R
+--why End condition 3: the redirect with a descriptor number and a file target before the operand.
+rm -rf 2>/dev/null ../repo
+
+=== CRW-1011-13 | R
+--why End condition 3: a here-document before the operand.
+rm -rf ../repo <<'EOF'
+x
+EOF
+
+=== CRW-1011-14 | R
+--why End condition 3: find with a here-string and -delete.
+find ../repo <<<x -delete
+
+=== CRW-1011-15 | R
+--why End condition 2: a stdout redirect with a file target before the operands does not move the target (attached form).
+git worktree remove --force >/dev/null ../repo
+
+=== CRW-1011-16 | R
+--why End condition 2: a descriptor-numbered redirect between the option and the operand.
+git worktree remove --force 2>/dev/null ../repo
+
+=== CRW-1011-17 | R
+--why End condition 2: an input redirect from a file before the operand.
+git worktree remove --force </dev/null ../repo

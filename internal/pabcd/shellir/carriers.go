@@ -1,6 +1,9 @@
 package shellir
 
-import "strings"
+import (
+	"slices"
+	"strings"
+)
 
 // shellFlagLetters are the single-letter options a shell accepts before its
 // program. A letter outside this set is refused.
@@ -52,10 +55,11 @@ func (w *walker) suCall(args []Word, st *state, ctx Context) error {
 }
 
 type interpSpec struct {
-	code    string // letters whose argument is program text
-	consume string // letters whose argument is not program text
-	flags   string // letters with no argument
-	attach  bool   // a code letter may carry its program in the same word
+	code      string   // letters whose argument is program text
+	consume   string   // letters whose argument is not program text
+	flags     string   // letters with no argument
+	attach    bool     // a code letter may carry its program in the same word
+	longFlags []string // long options that take no value
 }
 
 func interpreterSpec(lang string) interpSpec {
@@ -63,7 +67,7 @@ func interpreterSpec(lang string) interpSpec {
 	case "python":
 		return interpSpec{code: "c", consume: "WX", flags: "BbdEhiIOPqRsSuvxV", attach: true}
 	case "node":
-		return interpSpec{code: "ep", consume: "r", flags: "ci"}
+		return interpSpec{code: "ep", consume: "r", flags: "ci", longFlags: nodeLongFlags}
 	case "perl":
 		return interpSpec{code: "eE", flags: "wWXnpsTtUcSaFlvi", attach: true}
 	case "ruby":
@@ -105,11 +109,94 @@ func (w *walker) interpreterInline(name string, args []Word, redirs []Redir, ctx
 		}
 		return nil, nil, nil
 	}
+	if _, ok := stdinIsFile(ctx); ok {
+		// The program is a file the text names (python3 < prog.py): run like a script file operand, not judged.
+		return nil, nil, nil
+	}
 	text, err := stdinProgram(redirs, ctx.Stdin, name)
 	if err != nil {
 		return nil, nil, err
 	}
 	return &Inline{Language: lang, Source: Word{Known: true, Value: text}}, nil, nil
+}
+
+// nodeLongFlags are the long options of node that take no value; any other long option may take one, which would move the
+// script operand, so it stays unreadable.
+var nodeLongFlags = []string{"--no-warnings", "--no-deprecation", "--trace-warnings", "--trace-deprecation", "--throw-deprecation",
+	"--pending-deprecation", "--enable-source-maps", "--use-strict", "--preserve-symlinks", "--expose-gc", "--harmony"}
+
+// lastStdinFile is the file the last input redirection of a statement names, when it is a file the reader knows and not a
+// descriptor alias.
+func lastStdinFile(redirs []Redir) (string, bool) {
+	for i := len(redirs) - 1; i >= 0; i-- {
+		r := redirs[i]
+		if r.Fd != "" && r.Fd != "0" {
+			continue
+		}
+		switch r.Op {
+		case "<":
+			if r.Target.Known && !fdAliasPath(r.Target.Value) {
+				return r.Target.Value, true
+			}
+			return "", false
+		case "<<", "<<-", "<<<", "<&", "<>":
+			return "", false
+		case ">&", ">", ">>", ">|", "&>":
+			if r.Fd == "0" {
+				return "", false // 0>&3 copies a descriptor onto standard input
+			}
+		}
+	}
+	return "", false
+}
+
+// stdinIsFile reports that the command reads a file the text names (a redirection of its own, or the one a shell around it set,
+// as in bash -c 'bash' </dev/null) and is no right side of a pipe in its own text: zsh with MULTIOS reads the pipe as well as
+// the file there. It returns the file.
+func stdinIsFile(ctx Context) (string, bool) {
+	if ctx.Stdin != StdinFile || ctx.inTextPipe || ctx.stdinFile == "" {
+		return "", false
+	}
+	return ctx.stdinFile, true
+}
+
+// isOpaqueInterpreter names the interpreters of other languages the port has no reader for.
+func isOpaqueInterpreter(name string) bool {
+	switch strings.ToLower(name) {
+	case "php", "lua", "luajit", "rscript", "tclsh", "wish", "osascript", "groovy":
+		return true
+	}
+	return false
+}
+
+// opaqueInterpreter refuses the program positions of an interpreter the port cannot read: a program on standard input, in a
+// descriptor alias, or in an -e or -r option. A script file operand is not judged, as for the interpreters the port reads.
+func opaqueInterpreter(name string, args []Word, redirs []Redir, ctx Context) error {
+	if len(args) == 1 && args[0].Known {
+		switch args[0].Value {
+		case "--version", "-v", "-V", "--help", "-h":
+			return nil
+		}
+	}
+	operand := false
+	for _, a := range args {
+		if !a.Known {
+			operand = true
+			continue
+		}
+		switch v := a.Value; {
+		case v == "-" || fdAliasPath(v):
+			return unreadablef("%s reads its program from standard input or a descriptor alias (%s)", name, v)
+		case v == "-r" || v == "-e" || v == "-E" || v == "-R" || v == "-B" || v == "--run" || v == "--eval" || v == "--expression":
+			return unreadablef("%s receives a program in %s, which the port cannot read", name, v)
+		case !strings.HasPrefix(v, "-"):
+			operand = true
+		}
+	}
+	if _, file := stdinIsFile(ctx); !operand && !file {
+		return unreadablef("%s has no script file, so it reads its program from standard input", name)
+	}
+	return nil
 }
 
 func awkInline(name string, args []Word) (*Inline, *Word, error) {
@@ -321,6 +408,14 @@ loop:
 	if operand != nil {
 		return w.scriptFile(name, *operand, st, ctx)
 	}
+	if file, ok := stdinIsFile(ctx); ok && ctx.Carrier != "" {
+		// A shell in a carried text reads its program from a file the text names: /dev/null holds none, any other file is
+		// a script file. In the top-level text the shell stays unreadable (the corpus keeps cat <<EOF; bash </dev/null refused).
+		if file == "/dev/null" {
+			return nil
+		}
+		return w.scriptFile(name, Word{Known: true, Value: file}, st, ctx)
+	}
 	body, err := stdinProgram(redirs, ctx.Stdin, name)
 	if err != nil {
 		return err
@@ -377,6 +472,10 @@ func clusterInterp(name string, args []Word, spec interpSpec) ([]Word, int, erro
 			continue
 		}
 		if strings.HasPrefix(v, "--") {
+			if slices.Contains(spec.longFlags, v) {
+				i++
+				continue
+			}
 			return nil, 0, unreadablef("%s option %s is not modelled", name, v)
 		}
 		if v == "-" || len(v) < 2 || v[0] != '-' {

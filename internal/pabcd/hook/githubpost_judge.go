@@ -7,6 +7,7 @@ package hook
 // githubPostUnknownMark, so a rule that would read its value refuses it.
 
 import (
+	"bytes"
 	"io"
 	"path/filepath"
 	"strings"
@@ -84,7 +85,20 @@ func githubPostJudgeExecs(execs []shellir.Exec, depth int) (githubPostSite, bool
 	simple := len(execs) == 1 && githubPostPlainContext(execs[0].Ctx)
 	for _, e := range execs {
 		if e.Kind == shellir.KindScriptFile {
+			if githubPostScriptWritten(execs, e.Script.Value, e.Dir) {
+				return githubPostSite{githubPostRuleUnread, githubPostWhereCommand}, true
+			}
 			if site, denied := githubPostJudgeScript(e, depth); denied {
+				return site, true
+			}
+			continue
+		}
+		direct := githubPostDirectPath(e)
+		if direct && githubPostProgram(e.Name) != "gh" {
+			if githubPostScriptWritten(execs, e.Program.Value, e.Dir) {
+				return githubPostSite{githubPostRuleUnread, githubPostWhereCommand}, true
+			}
+			if site, denied := githubPostJudgeDirect(e, depth); denied {
 				return site, true
 			}
 			continue
@@ -115,6 +129,12 @@ func githubPostJudgeExecs(execs []shellir.Exec, depth int) (githubPostSite, bool
 		}
 		if !simple && githubPostPostSub(words) {
 			return githubPostSite{githubPostRuleUnread, githubPostWhereCommand}, true
+		}
+		// ./gh is a file in the directory, which may be a script and not the installed gh: the file is read as well.
+		if direct {
+			if site, denied := githubPostJudgeDirect(e, depth); denied {
+				return site, true
+			}
 		}
 	}
 	return githubPostSite{}, false
@@ -170,11 +190,7 @@ func githubPostInlineNamesPost(src string) bool {
 
 // githubPostReadScript reads a script file of at most 1 MiB; a path that is not a regular file is refused.
 func githubPostReadScript(name, cwd string) (string, bool) {
-	path := name
-	if !filepath.IsAbs(path) {
-		path = filepath.Join(cwd, path)
-	}
-	file, ok := githubPostRegularFile(filepath.Clean(path))
+	file, ok := githubPostRegularFile(githubPostScriptPath(name, cwd))
 	if !ok {
 		return "", false
 	}
@@ -292,4 +308,122 @@ func githubPostRunnerNamesPost(e shellir.Exec) bool {
 	}
 	joined := strings.Join(parts, " ")
 	return strings.Contains(joined, githubPostUnknownMark) || githubPostInlineNamesPost(joined)
+}
+
+// githubPostDirectPath is whether an exec runs a file by a relative path with a slash (./post.sh, scripts/post.sh, ../gh): the
+// file is in the directory the command runs in, not an installed program the guard knows by its name. An absolute path names an
+// installed program (/usr/bin/gh, /usr/bin/env) and is judged by its base name.
+func githubPostDirectPath(e shellir.Exec) bool {
+	return e.Kind == shellir.KindCommand && e.Inline == nil && e.Program.Known &&
+		strings.Contains(e.Program.Value, "/") && !filepath.IsAbs(e.Program.Value)
+}
+
+// githubPostJudgeDirect reads the file a command runs by a relative path, as a script the shell runs: a file that is missing, not
+// a regular file, over 1 MiB, or in a directory the reader does not know is unreadable. A binary (no #! line and a NUL in the
+// first 4 KiB) is not a script and is not judged. A script with a shell shebang, or none (the shell runs it), is judged as shell
+// text; a script of another interpreter that names a post is refused (its lines cannot satisfy the line rule).
+func githubPostJudgeDirect(e shellir.Exec, depth int) (githubPostSite, bool) {
+	unread := githubPostSite{githubPostRuleUnread, githubPostWhereCommand}
+	if depth >= githubPostMaxScriptDepth || !e.Dir.Known {
+		return unread, true
+	}
+	b, ok := githubPostReadScriptBytes(e.Program.Value, e.Dir.Path)
+	if !ok {
+		return unread, true
+	}
+	body := string(b)
+	if !strings.HasPrefix(body, "#!") {
+		head := b
+		if len(head) > 4096 {
+			head = head[:4096]
+		}
+		if bytes.IndexByte(head, 0) >= 0 {
+			return githubPostSite{}, false
+		}
+		return githubPostJudgeTextDepth(body, e.Dir.Path, depth+1)
+	}
+	line, _, _ := strings.Cut(body, "\n")
+	words := strings.Fields(strings.TrimPrefix(line, "#!"))
+	interp := ""
+	if len(words) > 0 {
+		interp = filepath.Base(words[0])
+		if interp == "env" {
+			interp = ""
+			for _, w := range words[1:] {
+				if !strings.HasPrefix(w, "-") {
+					interp = filepath.Base(w)
+					break
+				}
+			}
+		}
+	}
+	switch interp {
+	case "sh", "bash", "dash", "zsh", "ksh", "mksh", "ash":
+		return githubPostJudgeTextDepth(body, e.Dir.Path, depth+1)
+	}
+	if githubPostInlineNamesPost(body) {
+		return unread, true
+	}
+	return githubPostSite{}, false
+}
+
+// githubPostReadScriptBytes is githubPostReadScript's read: the bytes of a regular file of at most 1 MiB.
+func githubPostReadScriptBytes(name, cwd string) ([]byte, bool) {
+	file, ok := githubPostRegularFile(githubPostScriptPath(name, cwd))
+	if !ok {
+		return nil, false
+	}
+	defer file.Close()
+	b, err := io.ReadAll(io.LimitReader(file, githubPostMaxFileBytes+1))
+	if err != nil || len(b) > githubPostMaxFileBytes {
+		return nil, false
+	}
+	return b, true
+}
+
+// githubPostScriptWritten is whether the text itself writes the script file it runs (cp evil.sh post.sh && bash post.sh): the
+// file the guard reads before the command is then not the file that runs. A write to a destination the reader cannot name is
+// taken as a write to the script.
+func githubPostScriptWritten(execs []shellir.Exec, script string, dir shellir.Dir) bool {
+	if !dir.Known {
+		return false // the script is unreadable already
+	}
+	target := script
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(dir.Path, target)
+	}
+	target = filepath.Clean(target)
+	for _, o := range execs {
+		if o.Kind == shellir.KindScriptFile {
+			continue
+		}
+		for _, d := range shellIRExecDests(o) {
+			if d == shellIRUnknownDest {
+				return true
+			}
+			if d == "/dev/null" {
+				continue
+			}
+			if !filepath.IsAbs(d) {
+				if !o.Dir.Known {
+					return true
+				}
+				d = filepath.Join(o.Dir.Path, d)
+			}
+			if filepath.Clean(d) == target {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// githubPostScriptPath is the path a shell opens for a script name in a directory: the name as written, joined to the directory
+// with no lexical clean. A .. after a link steps up from the link's target, which the kernel resolves when the guard opens the
+// path (failure class 5); cleaning first would read another file than the one that runs.
+func githubPostScriptPath(name, cwd string) string {
+	if filepath.IsAbs(name) {
+		return name
+	}
+	return strings.TrimSuffix(cwd, "/") + "/" + name
 }

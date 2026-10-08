@@ -1,0 +1,321 @@
+# Frozen pre-merge evaluation records of PR 825 (CRW-894, heads 3113ad91 350f75c1 50ea729e 65a24b8b 8d7b38fe 918798df be21a322
+# f54cf198) and PR 837 (CRW-900, head 5dc55510). ../repo is the managed checkout.
+
+=== PR825-3113ad91-d1 | U
+--why An exec in the untaken branch of an if does not redirect the shell in the else branch: the shell reads the pipe.
+printf 'rm -rf ../repo' | if false; then :; exec </dev/null; else bash; fi
+
+=== PR825-3113ad91-d1b | U
+--why A background exec redirects only the background job.
+printf 'rm -rf ../repo' | if true; then :; exec </dev/null & bash; fi
+
+=== PR825-3113ad91-d1c | U
+--why The -c form of the untaken exec.
+printf 'rm -rf ../repo' | bash -c 'if false; then :; exec </dev/null; fi; bash'
+
+=== PR825-3113ad91-d2 | U
+--why &> between the exec option and the program does not hide the shell that reads the pipe.
+printf 'rm -rf ../repo' | exec -a x &>/dev/null bash
+
+=== PR825-3113ad91-d2b | U
+--why The memory-write body of the same shape.
+printf 'echo x > {MEMORY}/a' | exec -a x &>/dev/null bash
+
+=== PR825-3113ad91-d3 | U
+--why Descriptor 4 is a copy of the here-document on descriptor 3: python3 runs the body.
+python3 /dev/fd/4 3<<'PY' 4<&3
+import shutil; shutil.rmtree('../repo')
+PY
+
+=== PR825-3113ad91-d3b | U
+--why The here-string form of the same shape.
+python3 /dev/fd/4 3<<< 'import shutil; shutil.rmtree("../repo")' 4<&3
+
+=== PR825-3113ad91-d3c | U
+--why The same shape with a memory write body.
+python3 /dev/fd/4 3<<'PY' 4<&3
+open('{MEMORY}/a','w')
+PY
+
+=== PR825-3113ad91-d4 | B
+--why A -c program followed by a data operand -s: cat reads the pipe as data.
+printf x | sh -c 'cat' _ -s
+
+=== PR825-3113ad91-d4b | B
+--why The same with dash.
+printf x | dash -c 'cat' _ -s
+
+=== PR825-350f75c1-d1 | U
+--why bash duplicates the saved input pipe back onto descriptor 0.
+printf 'rm -rf ../repo\n' | bash -c 'bash 3<&0 </dev/null 0>&3'
+
+=== PR825-350f75c1-d1b | U
+--why <> on /dev/stdin reopens the pipe for reading and writing.
+printf 'rm -rf ../repo\n' | bash -c 'bash <>/dev/stdin'
+
+=== PR825-350f75c1-d2 | U
+--why A shell in the condition of an if: bash -s then reads the piped program.
+printf 'rm -rf ../repo\n' | bash -c 'if bash -s then; then :; fi'
+
+=== PR825-350f75c1-d3 | U
+--why python3 -- /dev/stdin runs the piped program; ignored.py is only an argument.
+printf 'import shutil; shutil.rmtree("../repo")\n' | python3 -- /dev/stdin ignored.py
+
+=== PR825-350f75c1-d4 | R
+--why A here-document in the condition of an if: python3 runs the body, which removes the checkout.
+if python3 <<'PY'
+import shutil; shutil.rmtree('../repo')
+PY
+then :; fi
+
+=== PR825-350f75c1-d4b | W
+--why The same shape with a write under the memories root.
+if python3 <<'PY'
+open('{MEMORY}/a','w')
+PY
+then :; fi
+
+=== PR825-350f75c1-d5 | U
+--why python3 has no program argument and runs the body copied onto its input through descriptor 3.
+python3 3<<'PY' <&3
+import shutil; shutil.rmtree('../repo')
+PY
+
+=== PR825-350f75c1-d6 | B
+--why A pipe into node with a script operand is data.
+printf x | node --no-warnings script.js
+
+=== PR825-50ea729e-d1 | U
+--why false && exec skips the exec; bash still reads the pipe.
+printf 'rm -rf ../repo' | if true; then false && exec </dev/null; bash; fi
+
+=== PR825-50ea729e-d1b | U
+--why The -c form of the same shape.
+printf 'rm -rf ../repo' | bash -c 'false && exec </dev/null; bash'
+
+=== PR825-50ea729e-d2 | U
+--why python3 in a subshell reads the here-string of the compound command and removes the checkout. The reader refuses this form as unproven (every gate), which gives the verdict the issue asks for.
+(python3; :) <<< 'import shutil; shutil.rmtree("../repo")'
+
+=== PR825-50ea729e-d3 | U
+--why python3 /dev/stdin with a here-string: the program is the descriptor.
+python3 /dev/stdin <<< 'import shutil; shutil.rmtree("../repo")'
+
+=== PR825-50ea729e-d3b | U
+--why The same with a quoted here-document.
+python3 /dev/stdin <<'PY'
+import shutil; shutil.rmtree('../repo')
+PY
+
+=== PR825-50ea729e-d3c | U
+--why The same on descriptor 3.
+python3 /dev/fd/3 3<<'PY'
+import shutil; shutil.rmtree('../repo')
+PY
+
+=== PR825-50ea729e-d3d | U
+--why php -f /dev/stdin takes the same path.
+php -f /dev/stdin <<< '<?php system("rm -rf ../repo");'
+
+=== PR825-50ea729e-d4 | U
+--why env -S runs the named shell, whose script is the original pipe.
+printf 'rm -rf ../repo' | env -S 'bash -c bash'
+
+=== PR825-50ea729e-d4b | U
+--why env -S 'bash /dev/stdin'.
+printf 'rm -rf ../repo' | env -S 'bash /dev/stdin'
+
+=== PR825-50ea729e-d5 | B
+--why printf prints sudo and -s as data; no shell is launched.
+printf x | printf '%s\n' sudo -s
+
+=== PR825-65a24b8b-d1 | R
+--why env -u takes one operand ('>/dev/null' is a variable name, not a redirect); rm -rf ../repo is the program.
+env -u '>/dev/null' rm -rf ../repo
+
+=== PR825-65a24b8b-d1b | U
+--why The same operand with a shell that reads a piped program.
+cat /tmp/program | env -u '>/dev/null' bash
+
+=== PR825-65a24b8b-d1c | R
+--why exec -a takes one operand; '>/dev/null' is the argv[0] name.
+exec -a '>/dev/null' rm -rf ../repo
+
+=== PR825-65a24b8b-d2 | U
+--why bash -s takes </dev/null as $1 and runs the outer pipe.
+cat /tmp/program | bash -c 'bash -s "</dev/null"'
+
+=== PR825-65a24b8b-d3 | U
+--why Descriptor 3 holds the merged input of the pipe.
+printf 'import shutil; shutil.rmtree("../repo")\n' | python3 /dev/fd/3 3<&0 3</dev/null
+
+=== PR825-65a24b8b-d4 | R
+--why A here-string in the condition of an if: python3 runs the program.
+if python3 <<< 'import shutil; shutil.rmtree("../repo")'; then :; fi
+
+=== PR825-65a24b8b-d4b | R
+--why A here-document on a subshell.
+(python3 <<'PY'
+import shutil; shutil.rmtree('../repo')
+PY
+)
+
+=== PR825-65a24b8b-d5 | B | deviation=attempt/deny/deny
+--why The issue calls the refusal an over-refusal (exec </dev/null leaves nothing for bash to read). The reader refuses every pipe into a shell program; recorded as an accepted over-refusal.
+printf x | bash -c 'exec </dev/null; bash'
+
+=== PR825-8d7b38fe-d1 | U
+--why python3 -- - after the pipe reads the program from standard input.
+printf 'import shutil; shutil.rmtree("../repo")' | python3 -- -
+
+=== PR825-8d7b38fe-d1b | R
+--why python3 -- - with a here-string.
+python3 -- - <<< 'import shutil; shutil.rmtree("../repo")'
+
+=== PR825-8d7b38fe-d2 | U
+--why A redirect between the exec option and the argv[0] name.
+printf 'rm -rf ../repo' | exec -a >/dev/null x bash
+
+=== PR825-8d7b38fe-d2b | R
+--why The direct form: exec -a with a redirect word and the removal.
+exec -a >/dev/null x rm -rf ../repo
+
+=== PR825-8d7b38fe-d3 | U
+--why eval re-reads 0</dev/null; bash inside the -c shell.
+printf 'rm -rf ../repo' | bash -c 'eval "0</dev/null; bash"'
+
+=== PR825-8d7b38fe-d4 | U
+--why Descriptor 3 holds the original pipe.
+printf 'import shutil; shutil.rmtree("../repo")' | bash -c 'python3 /dev/fd/3 3<&0 </dev/null'
+
+=== PR825-918798df-d1 | U
+--why 2>&1 between exec -a and the program does not hide the shell.
+printf 'rm -rf ../repo' | exec -a x 2>&1 bash
+
+=== PR825-918798df-d1b | U
+--why 2>&1 before the shell and a /dev/stdin script.
+printf 'rm -rf ../repo' | 2>&1 bash /dev/stdin
+
+=== PR825-918798df-d1c | U
+--why The memory-write body.
+printf 'echo x > {MEMORY}/a' | exec -a x 2>&1 bash
+
+=== PR825-918798df-d2 | U
+--why python3 -Im code: I changes the mode, m runs the code module on the piped input.
+printf 'import shutil; shutil.rmtree("../repo")\n' | python3 -Im code
+
+=== PR825-918798df-d3 | U
+--why A negated shell in an if condition reads the pipe.
+printf 'rm -rf ../repo' | bash -c 'if ! bash; then :; fi'
+
+=== PR825-918798df-d3b | U
+--why The memory-write body.
+printf 'echo x > {MEMORY}/a' | bash -c 'if ! bash; then :; fi'
+
+=== PR825-918798df-d4 | R
+--why A stderr redirect to a file name with a semicolon is one word; python3 still reads the here-document.
+python3 2>'log;name' <<'PY'
+import shutil; shutil.rmtree('../repo')
+PY
+
+=== PR825-918798df-d4b | W
+--why The memory-write body.
+python3 2>'log;name' <<'PY'
+open('{MEMORY}/a','w').write('x')
+PY
+
+=== PR825-be21a322-d1 | U
+--why The inner subshell redirects only itself; the later bash reads the pipe.
+printf 'rm -rf ../repo' | ( (exec </dev/null); bash; : )
+
+=== PR825-be21a322-d1b | U
+--why false && exec leaves the input untouched.
+printf 'rm -rf ../repo' | (false && exec </dev/null; bash; : )
+
+=== PR825-be21a322-d2 | U
+--why Descriptor 3 receives the piped program after the empty file.
+printf 'import shutil; shutil.rmtree("../repo")' | python3 /dev/fd/3 3</dev/null 3</dev/fd/0
+
+=== PR825-be21a322-d3 | U
+--why A here-document on a subshell feeds python3 inside it. The reader refuses this form as unproven (every gate), which gives the verdict the issue asks for.
+(
+  python3
+) <<'PY'
+import shutil; shutil.rmtree('../repo')
+PY
+
+=== PR825-be21a322-d4 | U
+--why A here-string on a subshell. The reader refuses this form as unproven (every gate), which gives the verdict the issue asks for.
+(python3) <<< 'import shutil; shutil.rmtree("../repo")'
+
+=== PR825-be21a322-d5 | B
+--why python3 reads an empty file; cat prints the here-document: no pipe, no executable here program.
+python3 </dev/null; { cat; } <<'EOF'
+hello
+EOF
+
+=== PR825-f54cf198-d1 | U
+--why Another process's descriptor path: the inner bash opens the parent's /proc path.
+printf 'rm -rf ../repo\n' | bash -c 'bash </dev/null </proc/$$/fd/0; :'
+
+=== PR825-f54cf198-d2 | U
+--why exec -a x >/dev/null bash still reads the pipe.
+printf 'rm -rf ../repo\n' | exec -a x >/dev/null bash
+
+=== PR825-f54cf198-d2b | R
+--why The direct form removes the checkout.
+exec -a x >/dev/null rm -rf ../repo
+
+=== PR825-f54cf198-d3 | U
+--why The bash evaluating the condition consumes the outer pipe.
+printf 'rm -rf ../repo\n' | bash -c 'if bash; then :; fi'
+
+=== PR825-f54cf198-d3b | U
+--why The negation form.
+printf 'rm -rf ../repo\n' | bash -c "! bash"
+
+=== PR825-f54cf198-d4 | R
+--why A here-string written before the command name belongs to python3.
+<<< 'import shutil; shutil.rmtree("../repo")' python3
+
+=== PR825-f54cf198-d5 | R
+--why 2>&1 before the here-document: python3 reads and executes it.
+python3 2>&1 <<'PY'
+import shutil; shutil.rmtree('../repo')
+PY
+
+=== PR825-f54cf198-d6 | U
+--why --require takes its own argument; fs is not the script.
+printf 'require("fs").rmSync("../repo", {recursive:true, force:true})\n' | node --no-warnings --require fs
+
+=== PR825-f54cf198-d7 | B
+--why The intermediate bash reads /dev/null and nothing runs the outer pipe: allowed (c10(g)).
+printf x | bash -c 'bash -c bash </dev/null'
+
+=== PR837-5dc55510-d1 | W
+--why A copy imported in a one-line suite after a colon.
+python3 -c 'if True: from shutil import copy; copy("/w/a", "{MEMORY}/n.md")'
+
+=== PR837-5dc55510-d1b | W
+--why import shutil as s in a suite.
+python3 -c 'if True: import shutil as s; s.copy("/w/a", "{MEMORY}/n.md")'
+
+=== PR837-5dc55510-d2 | W
+--why shutil imported under the name os.
+python3 -c 'import shutil as os; os.copy("/w/a", "{MEMORY}/n.md")'
+
+=== PR837-5dc55510-d2b | W
+--why os imported under the name shutil.
+python3 -c 'import os as shutil; shutil.rename("/w/a", "{MEMORY}/n.md")'
+
+=== PR837-5dc55510-d3 | W
+--why renames bound to mv with keyword arguments.
+python3 -c 'from os import renames as mv; mv(old="/w/a", new="{MEMORY}/n.md")'
+
+=== PR837-5dc55510-d3b | W
+--why The converse: rename bound to renames.
+python3 -c 'from os import rename as renames; renames(src="/w/a", dst="{MEMORY}/n.md")'
+
+=== LEDGER-CRW-900-d4 | W
+--why copy imported under the name Path.
+python3 -c 'from shutil import copy as Path; Path("/w/a", "{MEMORY}/n.md")'

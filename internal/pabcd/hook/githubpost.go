@@ -422,21 +422,23 @@ func githubPostGhCommand(w string) bool {
 // githubPostReadFile reads the text a post names: a literal path that lies under a temporary root, is a
 // regular file of at most 1 MiB, and whose bytes the guard can read.
 func githubPostReadFile(name, cwd string) (string, bool) {
-	path := name
-	if !filepath.IsAbs(path) {
+	raw := name
+	if !filepath.IsAbs(raw) {
 		// A relative name needs a known directory; the hook's own process directory is never a stand-in for it.
 		if cwd == "" {
 			return "", false
 		}
-		path = filepath.Join(cwd, path)
+		raw = strings.TrimSuffix(cwd, "/") + "/" + raw
 	}
-	path = filepath.Clean(path)
+	// The cleaned path is only a first filter. A .. after a link steps up from the link's target, not from the link's parent
+	// (failure class 5), so the path that is resolved and opened is the one as written.
+	path := filepath.Clean(raw)
 	// "-" is standard input, which the guard cannot read in the file it names.
 	if name == "-" || !githubPostUnderRoots(path) {
 		return "", false
 	}
 	// The trusted root is judged on the file the path resolves to, so a link inside it cannot reach another file.
-	resolved, err := filepath.EvalSymlinks(path)
+	resolved, err := filepath.EvalSymlinks(raw)
 	if err != nil || !githubPostUnderRoots(resolved) {
 		return "", false
 	}

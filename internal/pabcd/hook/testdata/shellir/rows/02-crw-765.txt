@@ -1,0 +1,406 @@
+# CRW-765 (and its generations 3 to 9 and CRW-986): a here-document is the program of an interpreter.
+# Every row is a complete command: header, body and terminator. The fragments of the issue text (a header alone) are completed
+# with a body that writes to the memory root, or a harmless body for a control.
+
+=== CRW-765-01 | B
+--why python3 - with a harmless quoted here-document program: the body is read as Python, it writes nothing.
+python3 - <<'EOF'
+print(1)
+EOF
+
+=== CRW-765-fragment | U
+--why A header with no body and no terminator is an unclosed here-document the reader cannot read: refused by every gate (fail closed).
+python3 - <<'EOF'
+
+=== CRW-765-02 | W
+--why A quoted here-document is the program of python3 -: its open() write names the memory file.
+python3 - <<'EOF'
+open('{MEMORY}/a','w')
+EOF
+
+=== CRW-765-03 | W
+--why An unquoted delimiter with no expansion reads like a quoted one; the keyword-argument open names the memory file.
+python3 <<EOF
+open(file='{MEMORY}/a', mode='w')
+EOF
+
+=== CRW-765-04 | W
+--why A node here-document program is read by the Node reader.
+node <<'EOF'
+require('fs').writeFileSync('{MEMORY}/a','x')
+EOF
+
+=== CRW-765-05 | W
+--why A shell here-document program is read as a shell: its redirect names the memory file.
+bash <<'EOF'
+echo x > {MEMORY}/a
+EOF
+
+=== CRW-765-06 | U
+--why An unquoted here-document with a parameter in the program: the program the shell hands over is unknown, so it is unreadable.
+python3 <<EOF
+open('$P','w')
+EOF
+
+=== CRW-765-07 | B
+--why cat is a data verb: the body that quotes the memory path is text, the only write is note.md.
+cat > note.md <<'EOF'
+{MEMORY}/a 경로를 인용한 글
+EOF
+
+=== CRW-765-08 | B
+--why Every interpreter here-document is read as its program (H1), including one with a script operand; this body only prints.
+python3 script.py <<'EOF'
+print(1)
+EOF
+
+=== CRW-765-09 | B
+--why A project orchestrator command has no program position the reader must prove.
+go test -count=1 ./internal/pabcd/hook ./cmd/crw
+
+=== CRW-765-10 | W
+--why A comment on the header line does not hide the program; the body writes the memory file (third generation).
+python3 <<'PY' # note
+open('{MEMORY}/a','w')
+PY
+
+=== CRW-765-11 | W
+--why A here-document on descriptor 0 is the same input; the body is the shell program (third generation).
+bash 0<<'EOF'
+echo x > {MEMORY}/a
+EOF
+
+=== CRW-765-12 | U
+--why A script operand that is a descriptor alias is the here-document itself, which the reader does not follow: unreadable (CRW-989).
+bash /dev/fd/3 3<<'EOF'
+echo hi
+EOF
+
+=== CRW-765-13 | B
+--why cat > note.md with a quoted here-document: a data body, the only write is note.md (control kept through every generation).
+cat > note.md <<'EOF'
+hello
+EOF
+
+=== CRW-765-14 | B
+--why An interpreter here-document with a harmless program and a stderr redirect to /dev/null is read and allowed.
+python3 script.py <<'EOF' 2>/dev/null
+print(1)
+EOF
+
+=== CRW-765-15 | B
+--why bash -n with a harmless body: the body is read as the shell program and writes nothing.
+bash -n <<'EOF'
+echo hi
+EOF
+
+=== CRW-765-16 | B
+--why A body that names python3 and the memory path is data for cat; the redirect writes x.md.
+cat <<'EOF' > x.md
+python3 -c 'open("{MEMORY}/a","w")'
+EOF
+
+=== CRW-765-17 | B
+--why A backslash-quoted delimiter is a quoted here-document: the body is literal data for cat (the issue calls the over-refusal a sweep item).
+cat <<\EOF
+text with $HOME and python3
+EOF
+
+=== CRW-765-18 | W
+--why A backslash-newline continuation in the header line is read by the parser as bash reads it: the header is bash <<'EOF' 2>/dev/null and the body writes the memory file (G1 of the 4th generation is solved by the parser, not by a refusal).
+bash <<'EOF' \
+2>/dev/null
+echo x > {MEMORY}/a
+EOF
+
+=== CRW-765-19 | W
+--why Two here-documents on one line: the second belongs to python3, whose program writes the memory file (fourth generation).
+cat <<'A'; python3 <<'B'
+text
+A
+open('{MEMORY}/a','w')
+B
+
+=== CRW-765-20 | B
+--why node with a script operand and a harmless here-document body: read as the program, writes nothing.
+node script.js <<'EOF'
+console.log(1)
+EOF
+
+=== CRW-765-21 | B
+--why cat writes the script file; a later python3 of that file is a script operand the reader does not judge (c1e control).
+cat > {TMP}/x.py <<'EOF'
+open('{MEMORY}/a','w')
+EOF
+python3 {TMP}/x.py
+
+=== CRW-765-22 | B
+--why python3 with a script file operand is not judged.
+python3 {TMP}/x.py
+
+=== CRW-765-23 | U
+--why eval with a here-document: eval binds the program to a name the reader cannot prove (fifth generation).
+eval bash <<'EOF'
+echo hi
+EOF
+
+=== CRW-765-24 | B
+--why Same control as 21 with a relative script name.
+cat > x.py <<'EOF'
+open('{MEMORY}/a','w')
+EOF
+python3 x.py
+
+=== CRW-765-25 | B
+--why python3 with a relative script file operand is not judged.
+python3 x.py
+
+=== CRW-765-26 | B
+--why git commit -F - reads the commit message from the here-document: data (C1).
+git commit -F - <<'EOF'
+fix: mention python3 in the note
+EOF
+
+=== CRW-765-27 | B
+--why sort is a data verb (C1).
+sort <<'EOF'
+b
+a
+EOF
+
+=== CRW-765-28 | U
+--why bash -c 'bash' passes the here-document to the inner shell. The issue asks for a refusal (6th generation); the reader refuses the nested standard-input shell outright instead of reading its body, so the memory verdict is the asked one.
+bash -c 'bash' <<'EOF'
+echo x > {MEMORY}/a
+EOF
+
+=== CRW-765-29 | U
+--why sh -c 'exec sh' hands the here-document to the inner shell: refused, as the issue asks.
+sh -c 'exec sh' <<'EOF'
+echo x > {MEMORY}/a
+EOF
+
+=== CRW-765-30 | U
+--why python3 -m code reads its program from the here-document: refused, as the issue asks (a -m module is not modelled).
+python3 -m code <<'EOF'
+open('{MEMORY}/a','w')
+EOF
+
+=== CRW-765-31 | E
+--why node -e whose program evaluates standard input is a run-time name (eval): the write cannot be proven, and the worktree guard refuses the run-time name.
+node -e 'process.stdin.on("data", d => eval(String(d)))' <<'EOF'
+require('fs').writeFileSync('{MEMORY}/a','x')
+EOF
+
+=== CRW-765-32 | W
+--why perl has no reader in this port: its program writes an unknown destination, so the memory gate asks a grant (C3); the GitHub and worktree guards see no post and no removal in the text.
+perl <<'EOF'
+open(F, ">{MEMORY}/a");
+EOF
+
+=== CRW-765-33 | W
+--why ruby has no reader in this port: an unknown destination, a grant is asked (C3).
+ruby <<'EOF'
+File.write("{MEMORY}/a", "x")
+EOF
+
+=== CRW-765-34 | U
+--why sed -nf - reads its script from the here-document, which the reader does not follow (7th generation).
+sed -nf - <<'EOF'
+w {MEMORY}/a
+EOF
+
+=== CRW-765-35 | U
+--why sed -Ef - with an input file: the script still arrives on standard input.
+sed -Ef - x.txt <<'EOF'
+w {MEMORY}/a
+EOF
+
+=== CRW-765-36 | B
+--why make is a project orchestrator, an operator-signed exclusion of criterion c1d and a residual in known-defects; the 7th-generation red row (make -f -) is superseded by it.
+make -f - <<'EOF'
+all:
+	echo x > {MEMORY}/a
+EOF
+
+=== CRW-765-37 | B
+--why git commit -F - with no here-document: the message arrives on standard input, no program position.
+git commit -F -
+
+=== CRW-765-38 | U
+--why sed -nf- (the file name attached) reads its script from standard input.
+sed -nf- <<'EOF'
+w {MEMORY}/a
+EOF
+
+=== CRW-765-39 | B
+--why sed with a program word and a here-document as input data (S8 control).
+sed 's/a/b/' <<'EOF'
+abc
+EOF
+
+=== CRW-765-40 | B
+--why sed -n p with a here-document as input data.
+sed -n p <<'EOF'
+abc
+EOF
+
+=== CRW-765-41 | B
+--why An unknown verb is an ordinary command (criterion c1d): it is not a code position and is not judged; the 7th and 8th generation rule C3 (refuse every other verb) is superseded.
+cd /tmp && mytool <<'EOF'
+data
+EOF
+
+=== CRW-765-42 | U
+--why A backslash inside the sed option word (-\f) hides the f the reader looks for: unreadable.
+sed -\f - <<'EOF'
+w {MEMORY}/a
+EOF
+
+=== CRW-765-43 | U
+--why An expansion in an option word of sed cannot be proven not to be -f.
+F=f; sed -n$F - <<'EOF'
+w {MEMORY}/a
+EOF
+
+=== CRW-765-44 | U
+--why A command substitution in the option word is unreadable.
+sed -n$(printf f) - <<'EOF'
+w {MEMORY}/a
+EOF
+
+=== CRW-765-45 | U
+--why perl reads its program from the pipe (CRW-851 item 4).
+cat <<'EOF' | perl
+open(F, ">{MEMORY}/a");
+EOF
+
+=== CRW-765-46 | W
+--why A program after a list operator is judged like a program at the start: the perl here-document writes an unknown destination.
+echo start; perl <<'EOF'
+open(F, ">{MEMORY}/a");
+EOF
+
+=== CRW-765-47 | U
+--why Same command substitution in the option word, second spelling.
+sed -n$(printf f) - <<'EOF'
+w {MEMORY}/a
+EOF
+
+=== CRW-765-48 | U
+--why GNU getopt abbreviates --file as --fil: the script comes from standard input.
+sed --fil - <<'EOF'
+w {MEMORY}/a
+EOF
+
+=== CRW-765-49 | U
+--why GNU getopt abbreviates --file= as --fi=.
+sed --fi=- <<'EOF'
+w {MEMORY}/a
+EOF
+
+=== CRW-765-50 | B
+--why A cd before a harmless python3 - program: read and allowed.
+cd x; python3 - <<'EOF'
+print(1)
+EOF
+
+=== CRW-765-51 | B
+--why git commit -F - after git add: data body.
+git add -A && git commit -F - <<'EOF'
+message
+EOF
+
+=== CRW-765-52 | B | deviation=attempt/deny/deny
+--why The 8th-generation control sed -n'p' is the word -np (the quotes join the option cluster), where p is no sed option; the reader refuses the option it does not know (fail closed). The intended control is the quoted program word, row CRW-765-52b.
+sed -n'p' <<'EOF'
+abc
+EOF
+
+=== CRW-765-52b | B
+--why The intended control: sed -n with a quoted program word and a here-document as input data.
+sed -n 'p' <<'EOF'
+abc
+EOF
+
+=== CRW-765-53 | B
+--why cat piped into jq: both data verbs.
+cat <<'EOF' | jq .
+{}
+EOF
+
+=== CRW-765-54 | E
+--why A shell here-document whose python3 -c program runs exec on a computed string: the memory gate cannot read it (d3 of the 8th generation); the worktree guard refuses the run-time name exec.
+bash <<'SH'
+python3 -c "p='{MEMORY}/a'; code='open(p, chr(119)).write(chr(120))'; exec(code)"
+SH
+
+=== CRW-765-55 | B
+--why A documentation example with a nested here-document in a data body is no command (d5 of the 9th generation).
+cat > note.md <<'DOC'
+x="$(cat <<'INNER'
+example
+INNER
+)"
+DOC
+
+=== CRW-765-57 | B
+--why A here-string is not a here-document (d4 of the 9th generation).
+cat <<<hello
+
+=== CRW-765-58 | B
+--why A here-string into jq is data.
+jq . <<<'{}'
+
+=== CRW-765-59 | W
+--why A comment on the header line must not hide a later here-document (d1 of the 9th generation): python3 writes the memory file.
+cat <<'DATA' # <<'HIDDEN'
+text
+DATA
+python3 <<'PY'
+open('{MEMORY}/a','w').write('x')
+PY
+
+=== CRW-765-60 | W
+--why Unquoted here-document: the shell turns \\x6d into \x6d, which Node reads as m, so the path is the memory root (d2 of the 9th generation).
+node <<EOF
+require('fs').writeFileSync('{CODEXHOME}/\\x6demories/a','x')
+EOF
+
+=== CRW-765-61 | B
+--why An ordinary here-document example with a plain body (control: no comment, no nesting).
+cat > note.md <<'EOF'
+hello
+EOF
+
+=== CRW-986-01 | U
+--why A binding verb written as an ANSI-C word ($'hash') is still hash: it binds cat to python3, so the here-document is a program (d1 of the 9th generation).
+$'hash' -p /usr/bin/python3 cat
+cat <<'PY'
+open('{MEMORY}/a','w')
+PY
+
+=== CRW-986-02 | U
+--why The \c? escape in an ANSI-C delimiter is DEL; the shell closes the cat document at D{DEL} and runs the python3 here-document (d2 of the 9th generation).
+cat <<$'D\c?'
+text
+D{DEL}
+python3 - <<'PY'
+open('{MEMORY}/a','w')
+PY
+
+=== CRW-986-03 | B
+--why env -S written inside a data body is text, not a program env runs (d3 of the 9th generation).
+cat > note.md <<'EOF'
+env -S 'python3 -' x
+EOF
+
+=== CRW-986-04 | B
+--why env -S as an argument of echo is data.
+echo env -S hello
+
+=== CRW-986-05 | B
+--why A data body that names the memory path beside env -S text writes only note.md.
+cat > note.md <<'EOF'
+env -S 'cat' {MEMORY}
+EOF

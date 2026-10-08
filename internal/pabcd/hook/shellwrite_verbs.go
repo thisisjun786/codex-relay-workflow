@@ -662,6 +662,9 @@ func shellWriteCopyLiteral(arg []rune) []string {
 	if len(arg) == 0 {
 		return nil
 	}
+	if shellWriteEscapeField(arg) {
+		return []string{shellIRUnknownDest}
+	}
 	names := []string{}
 	for _, earlier := range []bool{true, false} {
 		file, ok := shellWriteEscapeLiteral(arg, earlier)
@@ -965,6 +968,13 @@ func shellVerbOpenCall(rs []rune, spans [][2]int) []string {
 			mode = arg
 		}
 		positional++
+	}
+	// An f-string with a replacement field is computed at run time: its value is not the text between the quotes.
+	if shellWriteEscapeField(path) {
+		path = []rune("computed")
+	}
+	if shellWriteEscapeField(mode) {
+		mode = []rune("computed")
 	}
 	names := []string{}
 	_, decodedOK := shellVerbLiteral(mode)

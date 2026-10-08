@@ -7,7 +7,6 @@ package hook
 
 import (
 	"io"
-	"path/filepath"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/shellir"
@@ -40,6 +39,10 @@ func worktreeDelJudgeText(command, cwd string, id WorktreeIdentity, depth int) G
 	for _, e := range res.Execs {
 		var v GuardVerdict
 		if e.Kind == shellir.KindScriptFile {
+			// A script the same text rewrites is not the file the guard reads before the command runs.
+			if githubPostScriptWritten(res.Execs, e.Script.Value, e.Dir) {
+				return worktreeDelUnreadable(id)
+			}
 			v = worktreeDelJudgeScript(e, id, depth)
 		} else {
 			v = worktreeDelJudgeExec(e, id)
@@ -56,11 +59,7 @@ func worktreeDelJudgeScript(e shellir.Exec, id WorktreeIdentity, depth int) Guar
 	if depth >= worktreeDelMaxScriptDepth || !e.Script.Known || !e.Dir.Known {
 		return worktreeDelUnreadable(id)
 	}
-	path := e.Script.Value
-	if !filepath.IsAbs(path) {
-		path = filepath.Join(e.Dir.Path, path)
-	}
-	file, ok := githubPostRegularFile(filepath.Clean(path))
+	file, ok := githubPostRegularFile(githubPostScriptPath(e.Script.Value, e.Dir.Path))
 	if !ok {
 		return worktreeDelUnreadable(id)
 	}

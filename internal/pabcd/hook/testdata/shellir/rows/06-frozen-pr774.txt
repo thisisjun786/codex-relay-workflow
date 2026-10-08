@@ -1,0 +1,169 @@
+# Frozen pre-merge evaluation records of PR 774 (CRW-765, heads 562c59e1 5a36ccca 6f0fcf3f 9709977c a742344d cf4c472b).
+# One row per defect trigger that is a command; the id is PR<number>-<head8>-<defect>.
+
+=== PR774-562c59e1-d1 | U
+--why An ANSI-C spelled hash binds cat to python3, so the here-document of cat is a program.
+$'hash' -p /usr/bin/python3 cat
+cat <<'PY'
+open('{MEMORY}/a','w')
+PY
+
+=== PR774-562c59e1-d2 | U
+--why \c? in an ANSI-C delimiter is DEL; the shell closes cat's document at D{DEL} and runs the python3 here-document.
+cat <<$'D\c?'
+text
+D{DEL}
+python3 - <<'PY'
+open('{MEMORY}/a','w')
+PY
+
+=== PR774-562c59e1-d3 | B
+--why An env -S example inside a data body is text.
+cat > note.md <<'DOC'
+env -S python3
+DOC
+
+=== PR774-5a36ccca-d1 | W
+--why A comment on the header line hides a second declaration from a collector, not from the shell: python3 runs and writes the memory file.
+cat <<'DATA' # <<'HIDDEN'
+text
+DATA
+python3 <<'PY'
+open('{MEMORY}/a','w').write('x')
+PY
+
+=== PR774-5a36ccca-d2 | W
+--why The shell reduces \\ to \ in an unquoted here-document, so Node reads \x6d as m: the path is the memory root.
+node <<EOF
+require('fs').writeFileSync('{CODEXHOME}/\\x6demories/a','x')
+EOF
+
+=== PR774-5a36ccca-d3 | E
+--why exec of a computed string inside a python3 -c in a shell here-document: the memory gate cannot read it; exec is a run-time name for the worktree guard.
+bash <<'SH'
+python3 -c "p='{MEMORY}/a'; code='open(p, chr(119)).write(chr(120))'; exec(code)"
+SH
+
+=== PR774-5a36ccca-d4 | B
+--why A here-string is not a here-document (regression of the collector).
+cat <<<hello
+
+=== PR774-5a36ccca-d4b | B
+--why The second trigger of d4: jq with a here-string.
+jq . <<<'{}'
+
+=== PR774-5a36ccca-d5 | B
+--why A documentation example with a nested here-document inside a data body.
+cat > note.md <<'DOC'
+x="$(cat <<'INNER'
+example
+INNER
+)"
+DOC
+
+=== PR774-6f0fcf3f-d1 | U
+--why bash -s arg\ #text: # is not a comment inside the escaped word, bash -s runs the here-document body. The reader refuses this form as unproven (every gate), which gives the verdict the issue asks for.
+bash -s arg\ #text <<'EOF'
+echo x > {MEMORY}/a
+EOF
+
+=== PR774-6f0fcf3f-d2 | U
+--why The header delimiter "E\\OF" is E\OF; the terminator closes cat's document and python3 runs. The reader refuses this form as unproven (every gate), which gives the verdict the issue asks for.
+cat <<"E\\OF"
+text
+E\OF
+python3 <<'PY'
+open('{MEMORY}/a','w')
+PY
+
+=== PR774-6f0fcf3f-d3 | B
+--why An apostrophe in a comment on the header line is no quote.
+cat > note.md <<'EOF' # don't parse this
+hello
+EOF
+
+=== PR774-6f0fcf3f-d3b | B
+--why Everything after # is inert: the command substitution in the comment is not read.
+echo hi # "$(cat <<INNER)"
+
+=== PR774-9709977c-d1 | W
+--why env -S splits 'python3 -' into program and option: python3 reads the here-document.
+env -S 'python3 -' cat <<'PY'
+open('{MEMORY}/a','w').write('x')
+PY
+
+=== PR774-9709977c-d2 | U
+--why \0 ends an ANSI-C string: the delimiter is DATA, cat's document closes there and python3 runs. The reader refuses this form as unproven (every gate), which gives the verdict the issue asks for.
+cat <<$'DATA\0ignored'
+text
+DATA
+python3 - <<'PY'
+open('{MEMORY}/a','w').write('x')
+PY
+
+=== PR774-9709977c-d3 | B
+--why The delimiter 'E''OF' is EOF; the body holds a nested command text that is data.
+cat > note.md <<'E''OF'
+E
+bash -c 'mytool <<INNER
+example
+INNER'
+EOF
+
+=== PR774-9709977c-d4 | B
+--why printf '%s' 'f()' after a semicolon defines no function.
+cat > note.md <<'DOC'; printf '%s' 'f()'
+hello
+DOC
+
+=== PR774-a742344d-d1 | U
+--why In an unquoted here-document a backslash-newline joins E and OF into the terminator EOF: python3 runs. The reader refuses this form as unproven (every gate), which gives the verdict the issue asks for.
+cat <<EOF
+safe
+E\
+OF
+python3 <<'PY'
+open('{MEMORY}/a','w')
+PY
+
+=== PR774-a742344d-d2 | W
+--why An escaped apostrophe before the here-document is a literal word; python3 runs after cat's document.
+echo \' <<'DATA'
+text
+DATA
+python3 <<'PY'
+open('{MEMORY}/a','w')
+PY
+
+=== PR774-a742344d-d3 | B
+--why A $(cat <<INNER) text inside a node here-document body that only prints is data.
+node <<'EOF'
+console.log("$(cat <<INNER)");
+EOF
+
+=== PR774-cf4c472b-d1 | U
+--why The delimiter $'DATA\0ignored'X is DATAX: the cat document closes at DATAX and python3 runs. The reader refuses this form as unproven (every gate), which gives the verdict the issue asks for.
+cat <<$'DATA\0ignored'X
+text
+DATAX
+python3 - <<'PY'
+open('{MEMORY}/a','w').write('x')
+PY
+
+=== PR774-cf4c472b-d2 | U
+--why GNU env --split-str='python3 -' runs python3 on standard input. The reader refuses this form as unproven (every gate), which gives the verdict the issue asks for.
+env --split-str='python3 -' cat <<'PY'
+open('{MEMORY}/a','w').write('x')
+PY
+
+=== PR774-cf4c472b-d3 | B
+--why An echo operand that spells PATH= is data.
+echo 'PATH=/usr/bin'; cat > note.md <<'EOF'
+hello
+EOF
+
+=== PR774-cf4c472b-d3b | B
+--why An echo operand that spells eval is data.
+echo 'example; eval placeholder'; cat <<'EOF'
+hello
+EOF
