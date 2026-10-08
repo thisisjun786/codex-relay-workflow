@@ -76,7 +76,7 @@ func TestLocalTools_the_version_probe_uses_the_steps_PATH_and_an_isolated_direct
 		t.Fatal(err)
 	}
 	t.Setenv("GOENV", "/caller/goenv")
-	if got := localObserveTool("go", bin); got != "1.27.1" {
+	if got := localObserveTool("go", bin, ""); got != "1.27.1" {
 		t.Fatalf("the probe reads %q from the step's go, want 1.27.1", got)
 	}
 	data, err := os.ReadFile(log)

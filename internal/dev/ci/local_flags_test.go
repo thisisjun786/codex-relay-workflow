@@ -35,7 +35,7 @@ func TestLocalTools_the_version_probe_has_no_host_toolchain_or_home(t *testing.T
 		t.Fatal(err)
 	}
 	t.Setenv("GOTOOLCHAIN", "go1.99.0")
-	if got := localObserveTool("go", bin); got != "1.27.1" {
+	if got := localObserveTool("go", bin, ""); got != "1.27.1" {
 		t.Fatalf("the probe reads %q, want 1.27.1", got)
 	}
 	data, err := os.ReadFile(log)
@@ -78,7 +78,7 @@ func TestLocalTools_the_go_probe_sees_the_commits_go_mod(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(bin, "go"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if got := localObserveToolIn("go", bin, []byte("module probe\n\ngo 1.27\n")); got != "1.27.1" {
+	if got := localObserveToolIn("go", bin, []byte("module probe\n\ngo 1.27\n"), ""); got != "1.27.1" {
 		t.Fatalf("the probe reads %q, want 1.27.1", got)
 	}
 	data, err := os.ReadFile(log)

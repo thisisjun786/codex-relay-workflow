@@ -49,19 +49,19 @@ func localToolPinsFrom(read func(path string) ([]byte, error)) (map[string]strin
 // absent is reported with an empty version, so a step that needs it fails as missing_tool rather
 // than passing.
 func localToolVersions(pathEnv string) map[string]string {
-	return localToolVersionsIn(pathEnv, nil)
+	return localToolVersionsIn(pathEnv, nil, "")
 }
 
 // localToolVersionsIn is localToolVersions with the verified commit's go.mod for the Go probe, so the
 // toolchain it reports is the one a step in that module selects.
-func localToolVersionsIn(pathEnv string, goMod []byte) map[string]string {
+func localToolVersionsIn(pathEnv string, goMod []byte, gate string) map[string]string {
 	versions := map[string]string{}
 	for _, name := range localToolNames {
 		if name == "go" {
-			versions[name] = localObserveToolIn(name, pathEnv, goMod)
+			versions[name] = localObserveToolIn(name, pathEnv, goMod, gate)
 			continue
 		}
-		versions[name] = localObserveTool(name, pathEnv)
+		versions[name] = localObserveTool(name, pathEnv, gate)
 	}
 	return versions
 }
@@ -79,12 +79,12 @@ func localObservedVersions(versions, pins map[string]string) map[string]string {
 }
 
 // localObserveTool is one tool's version, or "" when it is not on PATH or does not answer.
-func localObserveTool(name, pathEnv string) string {
-	return localObserveToolIn(name, pathEnv, nil)
+func localObserveTool(name, pathEnv, gate string) string {
+	return localObserveToolIn(name, pathEnv, nil, gate)
 }
 
 // localObserveToolIn is localObserveTool run in a directory that holds goMod, when given, as go.mod.
-func localObserveToolIn(name, pathEnv string, goMod []byte) string {
+func localObserveToolIn(name, pathEnv string, goMod []byte, gate string) string {
 	var args []string
 	switch name {
 	case "go":
@@ -114,7 +114,7 @@ func localObserveToolIn(name, pathEnv string, goMod []byte) string {
 			return ""
 		}
 	}
-	cmd := exec.Command(path, args...)
+	cmd := localProbeCommand(gate, path, args)
 	cmd.Dir = dir
 	// The probe has the steps' isolation: its own HOME and XDG directories, and no GOENV or GOTOOLCHAIN
 	// from the caller.
@@ -249,4 +249,16 @@ func localRecomputedReuse(opts localOptions, plan []localJob, current verificati
 		return false, "the pins the commit names mismatch (" + strings.Join(mismatch, ", ") + ")"
 	}
 	return true, "the pins the commit names match"
+}
+
+// localProbeCommand is the command a version probe runs. The probe runs through the heavy-check gate when
+// one is configured, as the checks it informs do, so the versions a record names are read under the same
+// gate as the steps (pre-merge finding d1).
+func localProbeCommand(gate, path string, args []string) *exec.Cmd {
+	words := strings.Fields(gate)
+	if len(words) == 0 {
+		return exec.Command(path, args...)
+	}
+	rest := append(append([]string{}, words[1:]...), path)
+	return exec.Command(words[0], append(rest, args...)...)
 }

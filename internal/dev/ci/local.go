@@ -246,7 +246,7 @@ func localCurrentKeys(opts localOptions) (verificationRecord, error) {
 		HeadCommit:   head,
 		TreeHash:     tree,
 		CiDigest:     ciDigest,
-		Tools:        localObservedVersions(localToolVersionsIn(localPathEnv(opts.Env), goMod), pins),
+		Tools:        localObservedVersions(localToolVersionsIn(localPathEnv(opts.Env), goMod, opts.HeavyGate), pins),
 		GoFlags:      localEngineFlags(opts.Parallel),
 		HeavyGate:    localGateDigest(opts.HeavyGate),
 		GoEnv:        localIsolatedGoEnv,
@@ -434,7 +434,7 @@ func localRunStep(opts localOptions, step localStep, worktree, leg string, env [
 	case localCheckout:
 		return localPassed, "the clean worktree of " + shortHash(opts.Commit)
 	case localGo, localNode:
-		return localPassed, step.tool + " " + localObserveTool(step.tool, localPathEnv(env))
+		return localPassed, step.tool + " " + localObserveTool(step.tool, localPathEnv(env), opts.HeavyGate)
 	case localAggregate:
 		// dev-gate: every prerequisite job must have succeeded, judged from the jobs already
 		// recorded rather than from a hosted needs object.

@@ -242,6 +242,7 @@ func localReuse(reused, current verificationRecord) (bool, string) {
 		name       string
 		was, isNow string
 	}{
+		{"repository", reused.Repository, current.Repository},
 		{"tree", reused.TreeHash, current.TreeHash},
 		{"ci.yml digest", reused.CiDigest, current.CiDigest},
 		// The blob and secret steps judge base..head, so a different base is a different
