@@ -37,6 +37,7 @@ func capacityReview779Seam(t *testing.T, f *branchFixture) {
 // joined by an edge, every node declaring a place of its own. Neither bundle is the whole plan, so
 // both are candidates while nothing else changes.
 func capacityReview779Plan(f *branchFixture) *branchFixture {
+	capacityReview779ProjectParent(f)
 	f.node("A", "CRW-1").node("B", "CRW-2").node("C", "CRW-3").node("D", "CRW-4")
 	f.edge("e1", "A", "B").edge("e2", "C", "D")
 	for _, node := range []string{"A", "B", "C", "D"} {
@@ -51,6 +52,7 @@ func capacityReview779Plan(f *branchFixture) *branchFixture {
 // alone, because the relay ran C (its execution row is what the integration judgement walks) and a
 // bundle that holds a released node cannot be taken out.
 func capacityReview779Chain(f *branchFixture, extraTargets ...string) *branchFixture {
+	capacityReview779ProjectParent(f)
 	f.node("A", "CRW-1").node("B", "CRW-2").node("C", "CRW-3").node("D", "CRW-4").node("E", "CRW-5")
 	f.edge("e1", "A", "B").edge("e2", "C", "D").edge("e3", "D", "E")
 	// A second target C's head also has to land in: its base ref is one the plan names, and no
@@ -66,12 +68,12 @@ func capacityReview779Chain(f *branchFixture, extraTargets ...string) *branchFix
 
 // capacityReview779ChainIntegrated is the chain's candidates when its subject node landed.
 func capacityReview779ChainIntegrated() []string {
-	return []string{"A+B pkg/A.go,pkg/B.go ready=2 edges=1", "D+E pkg/D.go,pkg/E.go ready=0 edges=1"}
+	return []string{"A+B pkg/A.go,pkg/B.go ready=1 edges=1", "D+E pkg/D.go,pkg/E.go ready=0 edges=1"}
 }
 
 // capacityReview779ChainLive is the chain's candidates when its subject node did not land.
 func capacityReview779ChainLive() []string {
-	return []string{"A+B pkg/A.go,pkg/B.go ready=2 edges=1"}
+	return []string{"A+B pkg/A.go,pkg/B.go ready=1 edges=1"}
 }
 
 // capacityReview779Relationship is the relationship the fixture binds one node to.
@@ -92,8 +94,7 @@ func capacityReview779PassSeam(t *testing.T, f *branchFixture) {
 // readiness judges a node with no registered parent as defer:ownership_unverified, so a test that reads
 // the ready set from the store rather than from the fake relay registers the parent the release needs.
 func capacityReview779ProjectParent(f *branchFixture) {
-	f.exec("INSERT INTO scope_bindings (binding_id, role, scope_kind, scope_key, task_id, host_id, cwd, cxc_session, status, revision, created_at, updated_at) VALUES ('binding-parent','parent','project',?,'task-parent','host',NULL,NULL,'active',1,?,?)",
-		branchTestProject, branchTestStamp(0), branchTestStamp(0))
+	f.parent()
 }
 
 // capacityReview779MergedMark records the parent's merged mark on one generation of a node's event,
@@ -200,7 +201,7 @@ func TestCapacityReview779OneSnapshot(t *testing.T) {
 			t.Fatalf("the plan is %s, want %s", plan.Verdict, capacityExpand)
 		}
 		branchWant(t, branchSummaries(branchList(t, plan)),
-			"A+B pkg/A.go,pkg/B.go ready=2 edges=1", "C+D pkg/C.go,pkg/D.go ready=0 edges=1")
+			"A+B pkg/A.go,pkg/B.go ready=1 edges=1", "C+D pkg/C.go,pkg/D.go ready=1 edges=1")
 	})
 
 	t.Run("a declaration that joins two bundles while the regions are read", func(t *testing.T) {
@@ -222,7 +223,7 @@ func TestCapacityReview779OneSnapshot(t *testing.T) {
 			t.Fatalf("the plan is %s, want %s", plan.Verdict, capacityExpand)
 		}
 		branchWant(t, branchSummaries(branchList(t, plan)),
-			"A+B pkg/A.go,pkg/B.go ready=2 edges=1", "C+D pkg/C.go,pkg/D.go ready=0 edges=1")
+			"A+B pkg/A.go,pkg/B.go ready=1 edges=1", "C+D pkg/C.go,pkg/D.go ready=1 edges=1")
 	})
 }
 
@@ -356,7 +357,7 @@ func TestCapacityReview779CancelledNodeIsNotLive(t *testing.T) {
 		f.revision(2)
 		f.cancelNode("C")
 		f.publish()
-		branchWant(t, branchSummaries(branchList(t, f.run())), "A+B pkg/A.go,pkg/B.go ready=2 edges=1")
+		branchWant(t, branchSummaries(branchList(t, f.run())), "A+B pkg/A.go,pkg/B.go ready=1 edges=1")
 	})
 
 	t.Run("a paused node is still live", func(t *testing.T) {
@@ -366,7 +367,7 @@ func TestCapacityReview779CancelledNodeIsNotLive(t *testing.T) {
 		f.pauseNode("C")
 		f.publish()
 		branchWant(t, branchSummaries(branchList(t, f.run())),
-			"A+B pkg/A.go,pkg/B.go ready=2 edges=1", "C+D pkg/C.go,pkg/D.go ready=0 edges=1")
+			"A+B pkg/A.go,pkg/B.go ready=1 edges=1", "C+D pkg/C.go,pkg/D.go ready=1 edges=1")
 	})
 }
 
@@ -380,7 +381,7 @@ func TestCapacityReview779TextLinesCarryCandidates(t *testing.T) {
 	}
 	f.publish()
 	text := capacityReview779Text(t, f)
-	want := "capacity: " + branchTestPlan + " branch 1: nodes A,B ready 2/2 regions pkg/A.go,pkg/B.go"
+	want := "capacity: " + branchTestPlan + " branch 1: nodes A,B ready 1/2 regions pkg/A.go,pkg/B.go"
 	if !strings.Contains(text, want) {
 		t.Fatalf("--text carries no candidate line %q:\n%s", want, text)
 	}

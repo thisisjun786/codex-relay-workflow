@@ -250,12 +250,13 @@ func branchIntegratedNodes(ctx context.Context, st *store.Store, plan string, no
 }
 
 // branchAttach computes the candidates of one plan: nil when the plan carries none at all (a hold
-// plan without --branches-always), otherwise a list, empty when nothing can be detached. waitingNodes
-// is the plan's pass's waiting set by node id (ready, or deferred for want of a slot); readiness is
-// judged by node id because a plan may hold two nodes with one issue key (a redefinition) and their
-// states must not mix. The second result is why the reading is unmeasured: a store that predates the
-// DAG zone holds no plan to read, so its candidates are unknown rather than none.
-func branchAttach(ctx context.Context, e *Env, cfg *Config, stateDir, plan, verdict string, waitingNodes []string, planRevision int64, zoneReason string) (*BranchCandidates, string, error) {
+// plan without --branches-always), otherwise a list, empty when nothing can be detached. Readiness is
+// the relay's own dag-ready reading (dagsched Scheduler.Ready, which is what dag-ready runs) taken on
+// this reading's snapshot querier, judged by node id because a plan may hold two nodes with one issue
+// key (a redefinition) and their states must not mix. The second result is why the reading is
+// unmeasured: a store that predates the DAG zone holds no plan to read, so its candidates are unknown
+// rather than none.
+func branchAttach(ctx context.Context, e *Env, cfg *Config, stateDir, plan, verdict, zoneReason string) (*BranchCandidates, string, error) {
 	// The thresholds are read and validated before the hold shortcut: a malformed section is a
 	// refusal whether or not this plan happens to carry candidates, so a configuration mistake never
 	// hides behind a transient verdict.
@@ -293,27 +294,27 @@ func branchAttach(ctx context.Context, e *Env, cfg *Config, stateDir, plan, verd
 	unmeasured := ""
 	err = handle.dagReviewSnapshot(ctx, stateDir, func(ctx context.Context, st *store.Store) error {
 		q := st.Q(ctx)
-		nodes, edges, revision, err := branchReadPlan(ctx, q, plan)
+		nodes, edges, _, err := branchReadPlan(ctx, q, plan)
 		if err != nil {
 			return err
 		}
-		// The ready set is the dag-ready pass's, a reading of its own taken before this snapshot. When it
-		// answered for another plan revision, its readiness describes a plan this snapshot does not hold,
-		// so the reading takes its readiness from the snapshot itself: a node the pass marked ready in a
-		// graph that no longer holds it, or one cleared to a false the reading never measured, would both
-		// be claims about a plan that is not there. The re-read carries the same host memory bound
-		// dag-ready judges with, so a node the pass would defer for host memory is not read as waiting here.
-		if planRevision != 0 && planRevision != revision {
-			scheduler := &dagsched.Scheduler{Store: st}
-			if bound, err := dagsched.HostMemoryFromEnvironment(e.Getenv); err == nil {
-				scheduler.Host = bound
-			}
-			reading, err := scheduler.Ready(ctx, q, plan, dagsched.ReadyOptions{})
-			if err != nil {
-				return err
-			}
-			waitingNodes = capacityWaitingNodeIDs(reading)
+		// Readiness comes from this snapshot, never from the earlier dag-ready pass, so the whole
+		// reading is the answer of one revision. The pass is a transaction of its own, and a plan
+		// revision does not move when an integration observation or a merged mark changes a
+		// downstream node's readiness: judging from the pass then would drop a predecessor from this
+		// graph while the successor's Ready and ReadyCount still came from a graph that held it. The
+		// re-read carries the same host memory bound dag-ready judges with, so a node the pass would
+		// defer for host memory is not read as waiting here. The pass still supplies the waiting
+		// issue_key list the report prints, so the reported shape does not change.
+		scheduler := &dagsched.Scheduler{Store: st}
+		if bound, err := dagsched.HostMemoryFromEnvironment(e.Getenv); err == nil {
+			scheduler.Host = bound
 		}
+		reading, err := scheduler.Ready(ctx, q, plan, dagsched.ReadyOptions{})
+		if err != nil {
+			return err
+		}
+		waitingNodes := capacityWaitingNodeIDs(reading)
 		if branchReadSeam != nil {
 			branchReadSeam()
 		}

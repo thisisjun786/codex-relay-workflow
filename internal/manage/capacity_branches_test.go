@@ -2,7 +2,10 @@ package manage
 
 import (
 	"context"
+	"crypto/sha256"
+	"database/sql"
 	"encoding/json"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
@@ -15,8 +18,10 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dagsched"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/storeseed"
 )
 
 // The branch candidates are driven through injected inputs only: a fake relay answering dag-ready, a
@@ -91,7 +96,33 @@ func branchNewFixture(t *testing.T, ready ...string) *branchFixture {
 	}
 	f.store = opened
 	t.Cleanup(f.close)
-	f.env = &Env{Stdin: strings.NewReader(""), Stdout: io.Discard, Stderr: io.Discard, Getenv: os.Getenv,
+	// The relay's own readiness judges a node with no registered parent as defer:ownership_unverified,
+	// and the branch reading takes its readiness from the store, so every fixture registers the
+	// project's parent: without it no node would read as ready and the readiness would say nothing.
+	f.parent()
+	// The reading also judges the host memory bound (dagsched HostMemoryFromEnvironment over e.Getenv),
+	// so the fixture gives it a fake host with memory to spare: a reading that judged the machine the
+	// test runs on would defer every candidate whenever the host is busy, and the test would say nothing
+	// about the plan. A test that means a held candidate points the same variable at a short fake host.
+	proc := filepath.Join(dir, "proc")
+	if err := os.MkdirAll(filepath.Join(proc, "pressure"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for path, body := range map[string]string{
+		"meminfo":          "MemAvailable: 100000000 kB\nSwapTotal: 2000000 kB\nSwapFree: 2000000 kB\n",
+		"pressure/memory":  "some avg10=0.00 avg60=0.00 avg300=0.00 total=0\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0\n",
+	} {
+		if err := os.WriteFile(filepath.Join(proc, path), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.env = &Env{Stdin: strings.NewReader(""), Stdout: io.Discard, Stderr: io.Discard,
+		Getenv: func(key string) string {
+			if key == dagsched.EnvHostProcRoot {
+				return proc
+			}
+			return os.Getenv(key)
+		},
 		Now: func() time.Time { return branchTestNow }, Executable: filepath.Join(dir, "crw")}
 	f.section = map[string]any{"plans": []map[string]any{{"plan": branchTestPlan, "project": branchTestProject, "parent": branchTestParent}}}
 	f.load()
@@ -132,6 +163,159 @@ func (f *branchFixture) exec(query string, args ...any) {
 	if _, err := f.store.DB.Exec(query, args...); err != nil {
 		f.t.Fatalf("fixture insert: %v (%s)", err, query)
 	}
+}
+
+// parent registers the live parent of the fixture's project. The relay's own readiness judges a node
+// with no registered parent as defer:ownership_unverified, so a reading that takes its readiness from
+// the store needs this row before any node can read as ready.
+func (f *branchFixture) parent() {
+	f.t.Helper()
+	if _, err := f.store.DB.Exec("INSERT OR IGNORE INTO scope_bindings (binding_id, role, scope_kind, scope_key, task_id, host_id, cwd, cxc_session, status, revision, created_at, updated_at) VALUES ('binding-parent','parent','project',?,'task-parent','host',NULL,NULL,'active',1,?,?)",
+		branchTestProject, branchTestStamp(0), branchTestStamp(0)); err != nil {
+		f.t.Fatalf("fixture parent binding: %v", err)
+	}
+}
+
+// readyNode records one node as the relay's own readiness reads it: the node ran on a relationship,
+// that relationship accepted a head under the plan's criteria, and the accepted event carries the
+// artifact list its revision names. The branch reading takes its readiness from the store
+// (dagsched Scheduler.Ready on its own snapshot querier, which is what dag-ready runs), so a node
+// without these rows has no active acceptance and is not ready. The node's own incoming edges are
+// left to the caller: a node with no satisfied predecessor is ready as soon as these rows exist.
+func (f *branchFixture) readyNode(node string) *branchFixture {
+	f.t.Helper()
+	// the plan's own criteria digest for this node (branchFixture.node), which the relay's standing
+	// check compares the acceptance and the registered criteria against.
+	criteria := testsupport.Dig("criteria " + node)
+	// one artifact under the relationship's root: the receipt names it, hashes to the revision the
+	// acceptance records, and the file is really there.
+	root := filepath.Join(f.dir, "artifacts", node)
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		f.t.Fatal(err)
+	}
+	path := filepath.Join(root, node+".md")
+	body := []byte("artifact of " + node + "\n")
+	if err := os.WriteFile(path, body, 0o600); err != nil {
+		f.t.Fatal(err)
+	}
+	sum := sha256.Sum256(body)
+	digest := hex.EncodeToString(sum[:])
+	revision, err := store.ManifestRevision([]store.ManifestEntry{{Path: path, SHA256: digest, Bytes: func() *int64 { n := int64(len(body)); return &n }()}})
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	receipt := `{"manifest":[{"path":` + branchJSONString(path) + `,"sha256":"` + digest + `","bytes":` + branchItoa(len(body)) + `}]}`
+	relationship := "rel-" + node
+	now := branchTestStamp(0)
+	if err := storeseed.RecordRelationship(context.Background(), f.store, store.Relationship{
+		ID: relationship, IssueKey: criteria, Status: "active", ParentTaskID: "task-parent", ChildTaskID: "child-" + node,
+		Generation: 1, ArtifactRoots: "[" + branchJSONString(root) + "]", AllowedRecipients: `["parent"]`,
+		CreatedAt: now, UpdatedAt: now,
+	}, store.Generation{RelationshipID: relationship, Number: 1, DispatchRequestID: "dispatch-" + relationship,
+		AnchorState: store.AnchorBound, DispatchTurnID: sql.NullString{String: "turn-dispatch", Valid: true},
+		OpenedAt: now, BoundAt: sql.NullString{String: now, Valid: true}}, "host", "host"); err != nil {
+		f.t.Fatalf("fixture relationship for %s: %v", node, err)
+	}
+	f.writePlan()
+	event := "event-" + node
+	f.exec("INSERT INTO events (event_id, relationship_id, execution_generation, revision_hash, outcome, producer, turn_thread_id, turn_id, turn_status, receipt, stage, first_seen_at, last_seen_at) VALUES (?,?,1,?, 'ready_for_review','child','child-?','turn-1','completed',?, 'final',?,?)",
+		event, relationship, revision, node, receipt, now, now)
+	f.exec("INSERT INTO revision_lineage (relationship_id, execution_generation, event_id, revision_hash, declared_by, recorded_at) VALUES (?,1,?,?,'child',?)",
+		relationship, event, revision, now)
+	f.exec("INSERT INTO acks (event_id, record, ack_turn_id, accepted, verified, ack_at) VALUES (?,'{}','ack-turn',1,'verified',?)", event, now)
+	f.exec("INSERT INTO ack_evidence (event_id, tier, observed_at) VALUES (?,'host_read',?)", event, now)
+	f.exec("INSERT INTO verdicts (event_id, record, verdict, verdict_turn_id, decided_at) VALUES (?,'{}','verified','verdict-turn',?)", event, now)
+	f.exec("INSERT INTO verdict_context (event_id, set_digest, coverage, currency, head_event_id, head_revision, ack_evidence, recorded_at) VALUES (?,?,'{}','current',?,?,'{}',?)",
+		event, criteria, event, revision, now)
+	f.exec("INSERT INTO canonical_criteria (relationship_id, criterion_id, title, required, set_digest, recorded_at) VALUES (?, 'c1', 'criterion', 1, ?, ?)", relationship, criteria, now)
+	f.exec("INSERT INTO verification_mode (relationship_id, mode, recorded_at) VALUES (?,'managed',?)", relationship, now)
+	snapshot, _, err := dag.SnapshotAt(context.Background(), f.store.Q(context.Background()), branchTestPlan, 0)
+	if err != nil {
+		f.t.Fatalf("fixture snapshot: %v", err)
+	}
+	var planNode dag.SnapNode
+	for _, candidate := range snapshot.Nodes {
+		if candidate.NodeID == node {
+			planNode = candidate
+		}
+	}
+	criteria = planNode.CriteriaSetDigest
+	manifest := f.putManifest(node, criteria, planNode.SliceDigest, revision)
+	f.exec("INSERT INTO dag_node_executions (plan_id, node_id, relationship_id, execution_generation, manifest_digest, kind) VALUES (?,?,?,1,?,'initial')",
+		branchTestPlan, node, relationship, manifest)
+	// The acceptance's id is its own digest (dagsched AcceptanceDigest), which is what the relay's
+	// standing check recomputes: a row whose id is not that digest is a tampered acceptance and opens
+	// nothing, whatever the rest of the row says.
+	acceptance := dagsched.Acceptance{PlanID: branchTestPlan, NodeID: node, ManifestDigest: manifest, RelationshipID: relationship,
+		ExecutionGeneration: 1, EventID: event, RevisionHash: revision, CriteriaSetDigest: criteria, Verdict: "verified",
+		HeadSHA: "head-" + node, Repository: branchTestRepo, PRNumber: 1, EvidenceDigest: "evidence-" + node,
+		AckTier: "host_read", VerdictTurnID: "verdict-turn", RuleVersionJSON: "{}", AcceptedByTask: "task-parent",
+		AcceptedAt: now, State: "active"}
+	acceptance.AcceptanceID = dagsched.AcceptanceDigest(acceptance)
+	f.exec("INSERT INTO dag_acceptances (acceptance_id, plan_id, node_id, manifest_digest, relationship_id, execution_generation, event_id, revision_hash, criteria_set_digest, verdict, head_sha, repository, pr_number, evidence_digest, ack_tier, verdict_turn_id, rule_version_json, accepted_by_task_id, coordinator_epoch, accepted_at, state) VALUES (?,?,?,?,?,1,?,?,?, 'verified', ?, ?, 1, ?, 'host_read','verdict-turn','{}','task-parent',0,?, 'active')",
+		acceptance.AcceptanceID, branchTestPlan, node, manifest, relationship, event, revision, criteria, acceptance.HeadSHA, branchTestRepo, acceptance.EvidenceDigest, now)
+	// an artifact edge leaving an implementation node pins the accepted head, so the relay's reading
+	// asks for the pull request the head came from: the forge row is what a pinned acceptance needs.
+	f.exec("INSERT INTO dag_acceptance_forge (acceptance_id, forge_repository, pr_number) VALUES (?,?,1)",
+		acceptance.AcceptanceID, branchTestRepo)
+	return f
+}
+
+// capacityLimit declares one enforced execution limit of the fixture's project, so the relay's
+// readiness can defer a candidate for want of a slot instead of counting it ready.
+func (f *branchFixture) capacityLimit(dimension string, ceiling float64) *branchFixture {
+	f.t.Helper()
+	if err := f.store.DeclareExecutionLimit(context.Background(), store.ExecutionLimitsRow{
+		LimitID: "limit-" + dimension, ScopeKind: "project", ScopeKey: branchTestProject, Dimension: dimension, Unit: dimension,
+		Ceiling: ceiling, Enforce: 1, DeclaredBy: "task-parent", Source: "test", Revision: 1,
+		DeclaredAt: branchTestStamp(0), UpdatedAt: branchTestStamp(0)}); err != nil {
+		f.t.Fatalf("fixture execution limit: %v", err)
+	}
+	return f
+}
+
+// heldSlots records n held execution slots of the fixture's project, as a release would have reserved
+// them, so an enforced ceiling leaves no free slot and the relay defers every candidate for capacity.
+func (f *branchFixture) heldSlots(n int) *branchFixture {
+	f.t.Helper()
+	for i := 0; i < n; i++ {
+		if err := f.store.InsertExecutionSlot(context.Background(), store.ExecutionSlotsRow{
+			SlotID: "slot-" + branchItoa(i), SubjectKind: "dag_node", SubjectKey: "subject-" + branchItoa(i),
+			ParentTaskID: "task-parent", ProjectKey: branchTestProject, Tenure: 1, State: "held",
+			ReservedBy: "task-parent", ReservedAt: branchTestStamp(0)}); err != nil {
+			f.t.Fatalf("fixture execution slot: %v", err)
+		}
+	}
+	return f
+}
+
+// putManifest stores the input manifest a node consumes, which the relay's reading needs beside the
+// acceptance: its digest is the row the acceptance and the execution both name.
+func (f *branchFixture) putManifest(node, criteria, slice, revision string) string {
+	f.t.Helper()
+	body := map[string]any{
+		"schema": dag.SchemaManifest, "node_id": node, "issue_key": criteria, "node_slice_digest": slice,
+		"criteria_set_digest": criteria, "inputs": []any{}, "rule_version": map[string]any{"model": "m"},
+		"plan_revision_no": 1, "coordinator_epoch": 0, "created_by_task_id": "task-parent", "created_at": branchTestStamp(0),
+	}
+	raw, err := json.Marshal(body)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	digest, err := (&dag.Repo{Store: f.store}).PutManifest(context.Background(), raw)
+	if err != nil {
+		f.t.Fatalf("fixture manifest for %s: %v", node, err)
+	}
+	return digest
+}
+
+// branchJSONString is one string as JSON, for the receipt and the artifact roots.
+func branchJSONString(s string) string {
+	raw, err := json.Marshal(s)
+	if err != nil {
+		return `"` + s + `"`
+	}
+	return string(raw)
 }
 
 // ensurePlan names the revision the next node or edge belongs to, creating the first revision when
