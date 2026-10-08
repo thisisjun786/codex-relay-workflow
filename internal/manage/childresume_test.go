@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 
 	"github.com/coder/websocket"
@@ -44,8 +45,11 @@ func resumeRelayScript(t *testing.T, assignment, settings string, exit int) (exe
 		"  *settings-show*) cat " + resumeShellQuote(settingsPath) + " ;;\n" +
 		"esac\n" +
 		"exit " + fmt.Sprint(exit) + "\n"
-	if err := os.WriteFile(exe, []byte(script), 0o700); err != nil {
-		t.Fatal(err)
+	syscall.ForkLock.RLock()
+	writeErr := os.WriteFile(exe, []byte(script), 0o700)
+	syscall.ForkLock.RUnlock()
+	if writeErr != nil {
+		t.Fatal(writeErr)
 	}
 	return exe, record
 }

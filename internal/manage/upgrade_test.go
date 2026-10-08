@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 
 	_ "modernc.org/sqlite"
@@ -162,8 +163,11 @@ func (h *upgradeEnv) writeFakes(opts upgradeHarnessOptions) {
 		"*\"service status\"*) printf '%s\\n' " + coreShellQuote("{\"running\":true,\"launchPolicy\":{\"matchesRunning\":\"same\"}}") + "; exit 0;;\n" +
 		"esac\n" +
 		"exit 0\n"
-	if err := os.WriteFile(filepath.Join(bin, "crw"), []byte(crw), 0o700); err != nil {
-		h.t.Fatal(err)
+	syscall.ForkLock.RLock()
+	writeErr := os.WriteFile(filepath.Join(bin, "crw"), []byte(crw), 0o700)
+	syscall.ForkLock.RUnlock()
+	if writeErr != nil {
+		h.t.Fatal(writeErr)
 	}
 	var body strings.Builder
 	body.WriteString("#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + coreShellQuote(h.ghCalls) + "\n")
@@ -172,8 +176,11 @@ func (h *upgradeEnv) writeFakes(opts upgradeHarnessOptions) {
 		body.WriteString(coreShellQuote(path) + ") printf '%s\\n' " + coreShellQuote(answer.Body) + "; exit " + fmt.Sprint(answer.Exit) + ";;\n")
 	}
 	body.WriteString("*) exit 1;;\nesac\n")
-	if err := os.WriteFile(filepath.Join(bin, "gh"), []byte(body.String()), 0o700); err != nil {
-		h.t.Fatal(err)
+	syscall.ForkLock.RLock()
+	writeErr = os.WriteFile(filepath.Join(bin, "gh"), []byte(body.String()), 0o700)
+	syscall.ForkLock.RUnlock()
+	if writeErr != nil {
+		h.t.Fatal(writeErr)
 	}
 	h.t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
@@ -194,8 +201,11 @@ func (h *upgradeEnv) installPointer(want bool) {
 		h.t.Fatal(err)
 	}
 	for _, name := range []string{"crw", "codex-session-relay"} {
-		if err := os.WriteFile(filepath.Join(target, "bin", name), body, 0o700); err != nil {
-			h.t.Fatal(err)
+		syscall.ForkLock.RLock()
+		writeErr := os.WriteFile(filepath.Join(target, "bin", name), body, 0o700)
+		syscall.ForkLock.RUnlock()
+		if writeErr != nil {
+			h.t.Fatal(writeErr)
 		}
 	}
 	if err := os.Symlink(target, filepath.Join(h.home, ".local", "share", "crw-runtime", "current")); err != nil {
