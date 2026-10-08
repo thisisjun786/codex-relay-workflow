@@ -14,6 +14,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 	"unsafe"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
@@ -174,13 +175,33 @@ func storeFileDropOwnLock(path string) {
 // line is: idx TYPE ADVISORY READ <pid> <major:minor:inode> <start> <end>. The counting rule is
 // CRW-846's, unchanged: field 4 is the owner pid and field 5 splits on ':' with the inode last. A
 // read failure keeps the -1 count and reports itself as the one uncounted line.
+//
+// CRW-1054: /proc/locks is not a snapshot. It is a seq_file over the kernel's lock list, and a read
+// resumes the walk at the position the previous read reached, so when other processes add or remove
+// locks between two reads a held line can be skipped (reproduced with cross-process lock churn: a
+// read of a held lock missed it and the next read found it, and no miss survived five reads). So the
+// count is taken from the first read that shows a lock. A lock that is really gone reads 0 on every
+// read and still returns 0 after storeFileLockReads reads, with the lines of the last read.
 func storeFileLocks(pid int, inode uint64) (int, []string) {
-	raw, err := readProcLocks()
-	if err != nil {
-		return -1, []string{"read /proc/locks: " + err.Error()}
+	for read := 1; ; read++ {
+		raw, err := readProcLocks()
+		if err != nil {
+			return -1, []string{"read /proc/locks: " + err.Error()}
+		}
+		count, uncounted := storeFileLockCountsFrom(raw, pid, inode)
+		if count >= 1 || read == storeFileLockReads {
+			return count, uncounted
+		}
+		time.Sleep(storeFileLockReadGap)
 	}
-	return storeFileLockCountsFrom(raw, pid, inode)
 }
+
+// storeFileLockReads bounds how many reads of /proc/locks storeFileLocks makes before it reports a
+// count of 0; storeFileLockReadGap is the pause between two of them.
+const (
+	storeFileLockReads   = 5
+	storeFileLockReadGap = 10 * time.Millisecond
+)
 
 // readProcLocks returns the text of one read of /proc/locks. It is a package variable only so the
 // reader test can feed storeFileLocks a recorded sequence of texts.
