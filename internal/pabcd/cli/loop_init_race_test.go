@@ -811,6 +811,22 @@ func TestLoopInitCreatesNothingThroughALinkedStateRoot(t *testing.T) {
 	}
 }
 
+// loopRunWithin runs one loop command and fails the test when it has not answered within bound, so a regression
+// that waits forever fails here instead of stalling the whole test run (CRW-982 post-evaluation D4).
+func loopRunWithin(t *testing.T, bound time.Duration, cwd string, argv ...string) LoopCliResult {
+	t.Helper()
+	select {
+	case out := <-loopInitAsync(cwd, argv...):
+		if out.err != nil {
+			t.Fatalf("run %q: %v", argv, out.err)
+		}
+		return out.result
+	case <-time.After(bound):
+		t.Fatalf("%q did not answer within %v", argv, bound)
+	}
+	return LoopCliResult{}
+}
+
 // TestLoopInitAnswersBusyWhenALiveHolderOutlastsTheLimit is CRW-982 c2 (a): a goalplan lock that a live
 // process keeps past the wait limit ends init within the limit plus a margin, answered busy with nothing
 // written, and the session lock the bound init took is released.
@@ -824,7 +840,7 @@ func TestLoopInitAnswersBusyWhenALiveHolderOutlastsTheLimit(t *testing.T) {
 	newLoopPlanHolder(t, cwd, slug, "Bound objective").plant()
 
 	start := time.Now()
-	result := loopRun(t, cwd, "init", "--objective", "Bound objective", "--session", id)
+	result := loopRunWithin(t, loopInitPlanWaitLimit+2*time.Second, cwd, "init", "--objective", "Bound objective", "--session", id)
 	if elapsed := time.Since(start); elapsed > loopInitPlanWaitLimit+2*time.Second {
 		t.Fatalf("init waited %v for a holder that outlasted the %v limit", elapsed, loopInitPlanWaitLimit)
 	}
@@ -859,7 +875,7 @@ func TestLoopInitAnswersBusyWhenALiveSessionLockOutlastsTheLimit(t *testing.T) {
 	}
 
 	start := time.Now()
-	result := loopRun(t, cwd, "init", "--objective", "Bound objective", "--session", id)
+	result := loopRunWithin(t, loopInitPlanWaitLimit+2*time.Second, cwd, "init", "--objective", "Bound objective", "--session", id)
 	if elapsed := time.Since(start); elapsed > loopInitPlanWaitLimit+2*time.Second {
 		t.Fatalf("init waited %v for a session lock that outlasted the %v limit", elapsed, loopInitPlanWaitLimit)
 	}
@@ -981,6 +997,94 @@ func TestLoopInitOwnerProbeDoesNotBlockOrFollowALinkSwappedInAfterItNamesTheOwne
 				}
 			case <-time.After(10 * time.Second):
 				t.Fatalf("init hung on a %s swapped in at the owner path", kind)
+			}
+		})
+	}
+}
+
+// TestLoopInitAnswersAlreadyExistsWhenThePlanAppearsBeforeTheWaitGivesUp is CRW-982 post-evaluation D2 (P1): the
+// wait checks for the plan before it probes the holder and before it answers the terminal case, so a plan that is
+// published in between must win over the busy or the raw lock answer. The limit is zero, so the probe is the last
+// step before the terminal decision.
+func TestLoopInitAnswersAlreadyExistsWhenThePlanAppearsBeforeTheWaitGivesUp(t *testing.T) {
+	for _, kind := range []string{"live", "dead"} {
+		t.Run(kind, func(t *testing.T) {
+			cwd := loopReadWorkspace(t)
+			gitInit(t, cwd)
+			const id = "rec-late-plan"
+			const slug = "bound-objective"
+			loopSession(t, cwd, id)
+			pid := os.Getpid()
+			if kind == "dead" {
+				pid = loopDeadPID(t)
+			}
+			if err := os.WriteFile(state.StatePath(cwd, id)+".lock", []byte(strconv.Itoa(pid)), 0o666); err != nil {
+				t.Fatal(err)
+			}
+			limit := loopInitPlanWaitLimit
+			loopInitPlanWaitLimit = 0
+			t.Cleanup(func() { loopInitPlanWaitLimit = limit })
+			published := false
+			loopInitSessionProbeSeam = func() {
+				if published {
+					return
+				}
+				published = true
+				plan := goalplan.BuildGoalplan(goalplan.NewGoalplanInput{Objective: "Bound objective"})
+				if err := goalplan.WriteGoalplan(cwd, plan); err != nil {
+					t.Error(err)
+				}
+			}
+			t.Cleanup(func() { loopInitSessionProbeSeam = nil })
+
+			result := loopRunWithin(t, 10*time.Second, cwd, "init", "--objective", "Bound objective", "--session", id)
+			want := "loop init: a plan already exists at slug '" + slug + "' (use show/validate)"
+			if result.Code != 1 || result.Output != want {
+				t.Fatalf("got %d %q\nwant 1 %q", result.Code, result.Output, want)
+			}
+		})
+	}
+}
+
+// TestLoopInitAnswersAlreadyExistsWhenThePlanAppearsDuringTheGoalplanProbe is the goalplan half of CRW-982
+// post-evaluation D2: a plan published while the creation lock's holder is probed wins over the terminal answer.
+func TestLoopInitAnswersAlreadyExistsWhenThePlanAppearsDuringTheGoalplanProbe(t *testing.T) {
+	for _, kind := range []string{"live", "dead"} {
+		t.Run(kind, func(t *testing.T) {
+			cwd := loopReadWorkspace(t)
+			const slug = "ship-the-export-feature"
+			pid := os.Getpid()
+			if kind == "dead" {
+				pid = loopDeadPID(t)
+			}
+			lock := filepath.Join(cwd, ".crw", "goalplans", slug, ".goalplan.lock")
+			if err := os.MkdirAll(lock, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			owner := "{\"pid\":" + strconv.Itoa(pid) + ",\"acquiredAt\":\"2026-01-01T00:00:00.000Z\"}\n"
+			if err := os.WriteFile(filepath.Join(lock, "owner.json"), []byte(owner), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			limit := loopInitPlanWaitLimit
+			loopInitPlanWaitLimit = 0
+			t.Cleanup(func() { loopInitPlanWaitLimit = limit })
+			published := false
+			loopInitGoalplanProbeSeam = func() {
+				if published {
+					return
+				}
+				published = true
+				plan := goalplan.BuildGoalplan(goalplan.NewGoalplanInput{Objective: "Ship the export feature"})
+				if err := goalplan.WriteGoalplan(cwd, plan); err != nil {
+					t.Error(err)
+				}
+			}
+			t.Cleanup(func() { loopInitGoalplanProbeSeam = nil })
+
+			result := loopRunWithin(t, 10*time.Second, cwd, "init", "--objective", "Ship the export feature")
+			want := "loop init: a plan already exists at slug '" + slug + "' (use show/validate)"
+			if result.Code != 1 || result.Output != want {
+				t.Fatalf("got %d %q\nwant 1 %q", result.Code, result.Output, want)
 			}
 		})
 	}

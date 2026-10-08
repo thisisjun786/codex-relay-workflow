@@ -239,13 +239,18 @@ func GoalplanWriteLockStatus(cwd, slug string, o *GoalplanLockStatusOptions) (Go
 	return status, nil
 }
 
+// goalplanLockOwnerTextCap bounds how much of a held lock's owner.json the refusal text reads (CRW-982 D1).
+const goalplanLockOwnerTextCap = 64 << 10
+
 func readGoalplanLockOwnerText(lock *os.File, dir string) string {
 	file, err := openAt(lock, GoalplanLockOwnerFile, filepath.Join(dir, GoalplanLockOwnerFile), unix.O_RDONLY, false, 0)
 	if err != nil {
 		return "(owner.json unavailable)"
 	}
 	defer file.Close()
-	b, err := io.ReadAll(file)
+	// The read is capped (CRW-982 post-evaluation D1). The cap is well above what a refusal can carry, so a busy
+	// answer keeps the owner text that the harness's own trim handles; a file beyond it is not read whole.
+	b, err := io.ReadAll(io.LimitReader(file, goalplanLockOwnerTextCap))
 	if err != nil {
 		return "(owner.json unavailable)"
 	}

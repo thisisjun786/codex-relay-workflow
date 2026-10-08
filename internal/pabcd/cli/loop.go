@@ -97,9 +97,17 @@ var (
 	loopInitPlanWaitEntered func()
 )
 
+// loopInitGoalplanProbeSeam is a test seam: it runs before the goalplan lock's holder is probed, so a test can
+// publish the plan inside the window between the plan check and the terminal answer (CRW-982 post-evaluation D2).
+// Production leaves it nil.
+var loopInitGoalplanProbeSeam func()
+
 // loopInitGoalplanHolder maps slug's goalplan lock onto the shared wait vocabulary, so the goalplan
 // wait and the session wait act on the same four answers.
 func loopInitGoalplanHolder(cwd, slug string) loopInitHolder {
+	if loopInitGoalplanProbeSeam != nil {
+		loopInitGoalplanProbeSeam()
+	}
 	switch goalplan.GoalplanLockHolderState(cwd, slug) {
 	case goalplan.GoalplanHolderLive:
 		return loopInitHolderLive
@@ -390,9 +398,18 @@ func loopInitAfterSessionLock(args LoopCliArgs, slug, objective, sessionID strin
 			}
 			lockErr = err // another init took the lock in the window; keep waiting for its plan
 		case loopInitHolderDead:
+			// A plan published while the dead holder was probed is the answer (CRW-982 post-evaluation D2).
+			if result, present := loopInitPlanRefusal(args.Cwd, slug); present {
+				return result, nil
+			}
 			return LoopCliResult{}, lockErr
 		}
 		if time.Now().After(deadline) {
+			// The plan is checked once more before the terminal busy answer, so a plan published during the probe
+			// wins over it (CRW-982 post-evaluation D2).
+			if result, present := loopInitPlanRefusal(args.Cwd, slug); present {
+				return result, nil
+			}
 			return loopInitSessionBusy(args.Cwd, sessionID), nil
 		}
 		loopInitPlanWaitPause()
@@ -557,9 +574,15 @@ func loopInitCreate(args LoopCliArgs, slug, objective string) (LoopCliResult, er
 		}
 		holder := loopInitGoalplanHolder(args.Cwd, slug)
 		if holder == loopInitHolderDead {
+			if result, present := loopInitPlanRefusal(args.Cwd, slug); present {
+				return result, nil
+			}
 			return LoopCliResult{Output: "loop init: " + locked.Reason, Code: 1}, nil
 		}
 		if time.Now().After(deadline) {
+			if result, present := loopInitPlanRefusal(args.Cwd, slug); present {
+				return result, nil
+			}
 			return loopInitGoalplanBusy(args.Cwd, slug), nil
 		}
 		if holder == loopInitHolderGone {
