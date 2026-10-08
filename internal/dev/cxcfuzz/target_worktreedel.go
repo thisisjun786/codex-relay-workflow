@@ -76,7 +76,12 @@ func worktreeDelLayout() []any {
 		worktreeDelEntry(base+"/line\nbreak", "dir", "", "", 0o755),
 		worktreeDelEntry("home/elsewhere/build", "dir", "", "", 0o755),
 		worktreeDelEntry("home/elsewhere/build/keep", "file", "x", "", 0o644),
-		worktreeDelEntry("home/link-into-slot", "symlink", "", slot+"/"+worktreeDelRepo, 0),
+		// The link into the slot is written with the ROOT-prefixed absolute form, so it names the
+		// managed checkout itself. A relative target would be resolved against the link's own
+		// directory (home/), and "home/.codex/..." would then land on <root>/home/home/.codex/...
+		// - a path that does not exist, so the link would never reach the checkout and the
+		// link-path judgement could not be fuzzed at all.
+		worktreeDelEntry("home/link-into-slot", "symlink", "", rootPlaceholder+"/"+slot+"/"+worktreeDelRepo, 0),
 		// A second managed root, so a case that declares it can be denied there rather than under the
 		// default CODEX_HOME.
 		worktreeDelEntry(worktreeDelOtherRoot+"/"+worktreeDelOtherSlot+"/"+worktreeDelRepo, "dir", "", "", 0o755),
@@ -96,6 +101,7 @@ func worktreeDelCwds() []string {
 		slot + "/" + worktreeDelRepo + "/deep/child",
 		slot,
 		"home/.codex/worktrees",
+		"home/link-into-slot",
 		worktreeDelOtherRoot + "/" + worktreeDelOtherSlot + "/" + worktreeDelRepo,
 		"home/elsewhere/build",
 		"",
@@ -134,7 +140,7 @@ func worktreeDelCommands() []string {
 		"cd /tmp && rm -rf .",
 		"sh -c 'rm -rf .'",
 		"bash -c \"rm -rf ../" + worktreeDelRepo + "\"",
-		"sh -c 'r\nm -rf .'",
+		"sh -c 'r\\\nm -rf .'",
 		"eval 'rm -rf .'",
 		"eval \"eval 'rm -rf .'\"",
 		"su -c 'rm -rf .'",

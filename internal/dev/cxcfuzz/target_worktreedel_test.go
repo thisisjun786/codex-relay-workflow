@@ -206,3 +206,103 @@ func TestWorktreeDelGenerateNeverRunsItsCommand(t *testing.T) {
 		}
 	}
 }
+
+// c2 (CRW-938): the continued-line command carries a real backslash before its line feed, so the
+// shell joins r and m into rm and the guard judges the removal. Red before the fix: the command held
+// a bare line feed, which cuts the command instead of joining it, so the removal was never seen.
+func TestWorktreeDelContinuedLineJoinsTheRemoval(t *testing.T) {
+	const command = "sh -c 'r\\\nm -rf .'"
+	if !strings.Contains(command, "\\\n") {
+		t.Fatal("the command does not carry a backslash before its line feed")
+	}
+	root := t.TempDir()
+	if err := PrepareRoot(root); err != nil {
+		t.Fatal(err)
+	}
+	input := worktreeDelCaseInput(command)
+	if _, err := Scenarios(root, input); err != nil {
+		t.Fatal(err)
+	}
+	value, err := worktreeDelGo(input, RootEnv(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision, reason := worktreeDelDecision(value); decision != "deny" || !strings.Contains(reason, "WORKTREE-GUARD-03") {
+		t.Fatalf("the continued line answered %q %q, want a deny naming the guard", decision, reason)
+	}
+}
+
+// c2 (CRW-938): the generator's command list and the pinned crw-585 case carry the same backslash,
+// so the case that is replayed is the case the generator builds.
+func TestWorktreeDelGeneratorAndPinnedCaseCarryTheBackslash(t *testing.T) {
+	found := false
+	for _, command := range worktreeDelCommands() {
+		if strings.Contains(command, "r\\\nm -rf .") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("the generator's commands hold no continued line with a backslash")
+	}
+	cases, err := LoadCases(filepath.Join("testdata", "worktreedel"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range cases {
+		if c.Name != "crw-585-continued-line-inside-sh-c" {
+			continue
+		}
+		if !strings.Contains(c.Input, "r\\\\\\nm -rf .") {
+			t.Fatalf("the pinned case's input holds no backslash before its line feed: %s", c.Input)
+		}
+		return
+	}
+	t.Fatal("the pinned case crw-585-continued-line-inside-sh-c is missing")
+}
+
+// c4 (CRW-938): home/link-into-slot targets the managed checkout, so the link reaches the slot and
+// a removal through it is judged as a removal inside the slot. Red before the fix: the target was
+// written relative to the link's own directory, so it resolved to <root>/home/home/.codex/... and
+// never reached the checkout.
+func TestWorktreeDelLinkTargetsTheManagedCheckout(t *testing.T) {
+	root := t.TempDir()
+	if err := PrepareRoot(root); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Scenarios(root, worktreeDelCaseInput("rm -rf .")); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "home", "link-into-slot")
+	checkout := filepath.Join(root, "home", ".codex", "worktrees", worktreeDelSlot, worktreeDelRepo)
+	resolved, err := filepath.EvalSymlinks(link)
+	if err != nil {
+		t.Fatalf("the link does not resolve: %v", err)
+	}
+	want, err := filepath.EvalSymlinks(checkout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved != want {
+		t.Fatalf("the link resolves to %q, want the checkout %q", resolved, want)
+	}
+}
+
+// c4 (CRW-938): a removal whose cwd is the link into the slot is denied, because the link reaches
+// the managed checkout.
+func TestWorktreeDelDeniesThroughTheLink(t *testing.T) {
+	root := t.TempDir()
+	if err := PrepareRoot(root); err != nil {
+		t.Fatal(err)
+	}
+	input := worktreeDelCaseInput("rm -rf .").Set("cwd", "home/link-into-slot")
+	if _, err := Scenarios(root, input); err != nil {
+		t.Fatal(err)
+	}
+	value, err := worktreeDelGo(input, RootEnv(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision, reason := worktreeDelDecision(value); decision != "deny" || !strings.Contains(reason, worktreeDelSlot) {
+		t.Fatalf("a removal through the link answered %q %q, want a deny naming the slot", decision, reason)
+	}
+}
