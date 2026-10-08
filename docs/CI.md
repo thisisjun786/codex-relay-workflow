@@ -146,6 +146,8 @@ A heavy step (a Go build, vet, test, the dist builds, the integration test, `npm
 through the command named by `CRW_CI_HEAVY_GATE` when it is set — `<gate> <command>`
 — and directly when it is unset. The gate is the host's; no host path is written into the
 repository. Temporary files go under `TMPDIR`, which the caller sets.
+Only the gate's executable is resolved, once, against the directory the run starts in. Its other
+arguments are not resolved: a relative argument is read in each step's own directory, so give absolute paths.
 
 ### The pre-push hook
 

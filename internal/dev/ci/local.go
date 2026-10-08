@@ -280,7 +280,10 @@ func localRepository(root string) string {
 }
 
 // localWithoutUserinfo removes the credentials from a remote address before the record names it: the user,
-// password and query of a URL, or the user@ of an scp-style address (pre-merge finding d1).
+// password and query of a URL, or the user@ of an scp-style address (pre-merge finding d1). A URL that
+// url.Parse rejects, such as one whose password holds a % or a space that git accepts verbatim, is cut
+// textually at its last @; when the text before that @ holds a slash, the boundary is unknown and the
+// name is empty rather than the raw remote.
 func localWithoutUserinfo(remote string) string {
 	if u, err := url.Parse(remote); err == nil && u.Scheme != "" && u.Host != "" {
 		u.User = nil
@@ -288,8 +291,26 @@ func localWithoutUserinfo(remote string) string {
 		u.Fragment = ""
 		return u.String()
 	}
-	if at := strings.Index(remote, "@"); at >= 0 && !strings.Contains(remote[:at], "/") {
-		return remote[at+1:]
+	if i := strings.Index(remote, "://"); i >= 0 {
+		rest := remote[i+len("://"):]
+		at := strings.LastIndex(rest, "@")
+		tail := rest
+		if at >= 0 {
+			if strings.Contains(rest[:at], "/") {
+				return ""
+			}
+			tail = rest[at+1:]
+		}
+		if cut := strings.IndexAny(tail, "?#"); cut >= 0 {
+			tail = tail[:cut]
+		}
+		return remote[:i+len("://")] + tail
+	}
+	// An scp-style address is [user@]host:path; without the colon the text is a local path and keeps its @.
+	if colon := strings.Index(remote, ":"); colon >= 0 && !strings.Contains(remote[:colon], "/") {
+		if at := strings.LastIndex(remote[:colon], "@"); at >= 0 {
+			return remote[at+1:]
+		}
 	}
 	return remote
 }
