@@ -159,3 +159,35 @@ func TestTrainLandCarriesAnExcludedMemberWhoseStandMovedByABaseRefresh(t *testin
 		t.Fatalf("state after land = %v, want landed", answer["state"])
 	}
 }
+
+// CRW-906 generation 2, round 15 (pre-merge evaluation b3056f57 D1): the reader and the identity resolve a spelling
+// with a symlink followed by a parent segment to the same git directory. The lane's stat follows the link and then
+// the parent segment, so link/../repo is other/repo; filepath.Join alone would have collapsed the segment first.
+func TestTheLaneReadsASymlinkedSpellingWhereTheIdentityResolvesIt(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range []string{"r/repo/.git", "r/other/repo/.git", "r/other/deep"} {
+		if err := os.MkdirAll(filepath.Join(root, dir), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(filepath.Join(root, "r", "other", "deep"), filepath.Join(root, "r", "link")); err != nil {
+		t.Fatal(err)
+	}
+	spelled := filepath.Join(root, "r", "link") + "/../repo"
+	want, err := filepath.EvalSymlinks(filepath.Join(root, "r", "other", "repo", ".git"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := gitDirOf(spelled); got != want {
+		t.Fatalf("the lane reads %q through %q, want %q", got, spelled, want)
+	}
+	if !SameRepository(spelled, filepath.Join(root, "r", "other", "repo")) {
+		t.Fatalf("%q does not name %q", spelled, filepath.Join(root, "r", "other", "repo"))
+	}
+	if SameRepository(spelled, filepath.Join(root, "r", "repo")) {
+		t.Fatalf("%q names the checkout it does not reach", spelled)
+	}
+}

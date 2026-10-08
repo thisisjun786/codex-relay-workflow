@@ -184,8 +184,14 @@ func (r TargetReader) github(ctx context.Context, repository, base string) (Tip,
 
 // excerpt is text[:EXCERPT], counted in characters as Python slices a str.
 // gitDirOf is the git directory the lane reads a local repository through: its .git child when it exists,
-// else the path itself (a bare repository, or a .git directory named directly).
+// else the path itself (a bare repository, or a .git directory named directly). The repository is resolved by
+// the kernel first, as the lane's own stat of it is, so a spelling with a symlink followed by a parent segment
+// (link/../repo) names the same directory here as it does in the reader; filepath.Join alone would collapse the
+// segment before the link was followed.
 func gitDirOf(repository string) string {
+	if resolved, err := filepath.EvalSymlinks(repository); err == nil {
+		repository = resolved
+	}
 	gitdir := filepath.Join(repository, ".git")
 	if _, err := os.Stat(gitdir); os.IsNotExist(err) {
 		return repository
