@@ -3,6 +3,7 @@ package manage
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -1075,47 +1076,6 @@ func TestImproveReview789SymlinkedParentDotDotIsOneLocation(t *testing.T) {
 // row carries the count of every occurrence it merged, at one origin. A later reading that reports
 // a larger count at the same origin grows the stored count by that growth, and a rerun of the same
 // bundle leaves it alone.
-func TestImproveReview789AggregateGrowthIsAdded(t *testing.T) {
-	w := improveProposeTestSetup(t)
-	improveProposeTestConfigure(t, w, map[string]any{})
-
-	// A source that aggregates its occurrences into one row reports its own total at that one
-	// origin: the fault ledger's occurrence_count, at the fault's own id.
-	first := improveProposeTestBundle(t, w, []improveRecord{
-		improveProposeTestRecord(improveKindFault, "observation_stalled", "project-a", "a signature", 5, "fault:store-a:f1"),
-	})
-	if code, _, stderr := improveProposeTestRun(t, w, "--bundle", first); code != 0 {
-		t.Fatalf("the first propose: exit %d, stderr %s", code, stderr)
-	}
-
-	// The same origin now reports six occurrences. The origin is the one the draft already
-	// carries, so no sighting is added; the count the source itself reports is what grows.
-	second := improveProposeTestBundle(t, w, []improveRecord{
-		improveProposeTestRecord(improveKindFault, "observation_stalled", "project-a", "a signature", 6, "fault:store-a:f1"),
-	})
-	code, stdout, stderr := improveProposeTestRun(t, w, "--bundle", second)
-	if code != 0 {
-		t.Fatalf("the second propose: exit %d, stderr %s", code, stderr)
-	}
-	report := improveProposeTestReport(t, stdout)
-	if len(report.Updated) != 1 {
-		t.Fatalf("updated = %+v, want the existing draft to follow the origin's own count", report.Updated)
-	}
-	doc := improveProposeTestDraft(t, w, report.Updated[0].Fingerprint)
-	if !strings.Contains(doc.Body, "- owner_unknown (6)") {
-		t.Errorf("the draft does not carry the count its own origin reports:\n%s", doc.Body)
-	}
-
-	// The same bundle again leaves the count as it is.
-	if code, _, stderr := improveProposeTestRun(t, w, "--bundle", second); code != 0 {
-		t.Fatalf("the repeated propose: exit %d, stderr %s", code, stderr)
-	}
-	again := improveProposeTestDraft(t, w, report.Updated[0].Fingerprint)
-	if !strings.Contains(again.Body, "- owner_unknown (6)") {
-		t.Errorf("rerunning the same bundle changed the aggregate count:\n%s", again.Body)
-	}
-}
-
 // TestImproveReview789EvidenceLessObservationsStayApart covers the rule the issue keeps for a
 // record that names no origin: such a record falls back to one sighting of its where, and nothing
 // else tells its observations apart, so two observations of one where at different times stay two
@@ -1142,5 +1102,283 @@ func TestImproveReview789EvidenceLessObservationsStayApart(t *testing.T) {
 	}
 	if !strings.Contains(doc.Body, "- owner_unknown (2)") {
 		t.Errorf("the draft does not count both observations:\n%s", doc.Body)
+	}
+}
+
+// improveReview988Raw reads one draft file as untyped JSON, so a test reads what the file holds
+// rather than what the reader keeps of it.
+func improveReview988Raw(t *testing.T, path string) map[string]any {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	return doc
+}
+
+// improveReview988Counts lists the project counts a draft file holds in its improve item, as
+// project=count in file order. It is nil when the file carries no item.
+func improveReview988Counts(t *testing.T, path string) []string {
+	t.Helper()
+	item, ok := improveReview988Raw(t, path)["improve"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	projects, _ := item["projects"].([]any)
+	var out []string
+	for _, p := range projects {
+		m, _ := p.(map[string]any)
+		out = append(out, fmt.Sprintf("%v=%v", m["project"], m["count"]))
+	}
+	return out
+}
+
+// improveReview988Body reads the body a draft file holds.
+func improveReview988Body(t *testing.T, path string) string {
+	t.Helper()
+	body, _ := improveReview988Raw(t, path)["body"].(string)
+	return body
+}
+
+// improveReview988DraftPath is the file of one draft below the propose test world.
+func improveReview988DraftPath(w *improveProposeTestWorld, fingerprint string) string {
+	return filepath.Join(w.stateDir, "drafts", fingerprint+".json")
+}
+
+// improveReview988Read returns the bytes of one draft file.
+func improveReview988Read(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+// improveReview988EditRaw rewrites one draft file through an untyped map, so a test can plant a
+// field an earlier build wrote, or change the body a person may have edited.
+func improveReview988EditRaw(t *testing.T, path string, edit func(map[string]any)) {
+	t.Helper()
+	doc := improveReview988Raw(t, path)
+	edit(doc)
+	data, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(data, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// improveReview988Propose runs crw manage improve propose over one bundle and reads the report.
+func improveReview988Propose(t *testing.T, w *improveProposeTestWorld, bundle string) improveProposeReport {
+	t.Helper()
+	code, stdout, stderr := improveProposeTestRun(t, w, "--bundle", bundle)
+	if code != 0 {
+		t.Fatalf("propose: exit %d, stderr %s", code, stderr)
+	}
+	return improveProposeTestReport(t, stdout)
+}
+
+// improveReview988Reason is a reason that quotes this feature's own section headings.
+const improveReview988Reason = "size overrun\n\n## Where\n\n- aaa-fake (10)\n\n## Seen\n\nquoted example"
+
+// TestImproveReview988ReasonSectionsAreNotReadBack covers C1 and C3, the final evaluation's d1: a
+// reason that quotes a Where and a Seen section never changes the project or the count of the
+// draft the identical bundle proposes again, and the draft file stays byte-identical.
+func TestImproveReview988ReasonSectionsAreNotReadBack(t *testing.T) {
+	w := improveProposeTestSetup(t)
+	improveProposeTestConfigure(t, w, map[string]any{})
+	bundle := improveProposeTestBundle(t, w, []improveRecord{
+		improveProposeTestSplit("project-a", improveReview988Reason, "rel-a"),
+	})
+	first := improveReview988Propose(t, w, bundle)
+	if len(first.Created) != 1 {
+		t.Fatalf("created = %+v, want one draft", first.Created)
+	}
+	path := improveReview988DraftPath(w, first.Created[0].Fingerprint)
+	before := improveReview988Read(t, path)
+
+	again := improveReview988Propose(t, w, bundle)
+	if len(again.Updated) != 0 {
+		t.Errorf("the identical bundle updated a draft: %+v", again.Updated)
+	}
+	if after := improveReview988Read(t, path); after != before {
+		t.Errorf("the identical bundle rewrote the draft file:\n--- before\n%s\n--- after\n%s", before, after)
+	}
+	if got := improveReview988Counts(t, path); len(got) != 1 || got[0] != "project-a=1" {
+		t.Errorf("the project counts = %v, want only project-a=1", got)
+	}
+}
+
+// TestImproveReview988BodyCountIsNotReadBack covers C1: a person who edits the Where count in a
+// draft's body does not change what the next run adds. The count comes from the stored item, and
+// the rewritten body shows that count.
+func TestImproveReview988BodyCountIsNotReadBack(t *testing.T) {
+	w := improveProposeTestSetup(t)
+	improveProposeTestConfigure(t, w, map[string]any{})
+	first := improveReview988Propose(t, w, improveProposeTestBundle(t, w, []improveRecord{
+		improveProposeTestSplit("project-a", "size overrun", "rel-a"),
+	}))
+	path := improveReview988DraftPath(w, first.Created[0].Fingerprint)
+	improveReview988EditRaw(t, path, func(doc map[string]any) {
+		doc["body"] = strings.Replace(doc["body"].(string), "- project-a (1)", "- project-a (99)", 1)
+	})
+
+	again := improveReview988Propose(t, w, improveProposeTestBundle(t, w, []improveRecord{
+		improveProposeTestSplit("project-a", "size overrun", "rel-a"),
+		improveProposeTestSplit("project-a", "size overrun", "rel-b"),
+	}))
+	if len(again.Updated) != 1 {
+		t.Fatalf("updated = %+v, want the draft to grow once", again.Updated)
+	}
+	if got := improveReview988Counts(t, path); len(got) != 1 || got[0] != "project-a=2" {
+		t.Errorf("the project counts = %v, want project-a=2 from the stored sightings", got)
+	}
+	if body := improveReview988Body(t, path); !strings.Contains(body, "- project-a (2)") || strings.Contains(body, "(99)") {
+		t.Errorf("the body does not show the stored count:\n%s", body)
+	}
+}
+
+// TestImproveReview988RepeatedRecordKeepsItsCount covers C4 for a record that merges several origins:
+// the draft holds three for one project, the identical bundle leaves that count and the file
+// alone, and a fourth origin of the project adds one.
+func TestImproveReview988RepeatedRecordKeepsItsCount(t *testing.T) {
+	w := improveProposeTestSetup(t)
+	improveProposeTestConfigure(t, w, map[string]any{})
+	three := improveProposeTestBundle(t, w, []improveRecord{
+		improveProposeTestRecord(improveKindSplit, "project-a", "rel-a", "size overrun", 3,
+			"events:rel-a:1", "events:rel-a:2", "events:rel-a:3"),
+	})
+	first := improveReview988Propose(t, w, three)
+	if len(first.Created) != 1 {
+		t.Fatalf("created = %+v, want one draft", first.Created)
+	}
+	path := improveReview988DraftPath(w, first.Created[0].Fingerprint)
+	before := improveReview988Read(t, path)
+	if got := improveReview988Counts(t, path); len(got) != 1 || got[0] != "project-a=3" {
+		t.Fatalf("the project counts = %v, want project-a=3", got)
+	}
+	if again := improveReview988Propose(t, w, three); len(again.Updated) != 0 {
+		t.Errorf("the identical bundle updated the draft: %+v", again.Updated)
+	}
+	if after := improveReview988Read(t, path); after != before {
+		t.Errorf("the identical bundle rewrote the draft file")
+	}
+
+	fourth := improveProposeTestBundle(t, w, []improveRecord{
+		improveProposeTestRecord(improveKindSplit, "project-a", "rel-a", "size overrun", 3,
+			"events:rel-a:1", "events:rel-a:2", "events:rel-a:3"),
+		improveProposeTestRecord(improveKindSplit, "project-a", "rel-b", "size overrun", 1, "events:rel-b:1"),
+	})
+	if grown := improveReview988Propose(t, w, fourth); len(grown.Updated) != 1 {
+		t.Fatalf("updated = %+v, want the draft to grow once", grown.Updated)
+	}
+	if got := improveReview988Counts(t, path); len(got) != 1 || got[0] != "project-a=4" {
+		t.Errorf("the project counts = %v, want project-a=4 after the fourth origin", got)
+	}
+}
+
+// TestImproveReview988LegacyDraftCountsItsSightings covers C5: a draft an earlier build wrote
+// without the improve item takes its counts from the sightings it stored, not from the body it
+// rendered, so a body that says something else does not change what the next run adds.
+func TestImproveReview988LegacyDraftCountsItsSightings(t *testing.T) {
+	w := improveProposeTestSetup(t)
+	improveProposeTestConfigure(t, w, map[string]any{})
+	records := []improveRecord{
+		improveProposeTestSplit("project-a", "size overrun", "rel-a"),
+		improveProposeTestSplit("project-a", "size overrun", "rel-b"),
+		improveProposeTestSplit("project-b", "size overrun", "rel-c"),
+	}
+	first := improveReview988Propose(t, w, improveProposeTestBundle(t, w, records))
+	path := improveReview988DraftPath(w, first.Created[0].Fingerprint)
+	// The earlier build wrote no item, and its body says project-a holds nine occurrences.
+	improveReview988EditRaw(t, path, func(doc map[string]any) {
+		delete(doc, "improve")
+		doc["body"] = strings.Replace(doc["body"].(string), "- project-a (2)", "- project-a (9)", 1)
+	})
+
+	again := improveReview988Propose(t, w, improveProposeTestBundle(t, w, append(records,
+		improveProposeTestSplit("project-a", "size overrun", "rel-d"))))
+	if len(again.Updated) != 1 {
+		t.Fatalf("updated = %+v, want the legacy draft to grow once", again.Updated)
+	}
+	if got := improveReview988Counts(t, path); len(got) != 2 || got[0] != "project-a=3" || got[1] != "project-b=1" {
+		t.Errorf("the project counts = %v, want project-a=3 and project-b=1 from the sightings", got)
+	}
+}
+
+// TestImproveReview988ImproveItemSurvivesARewrite covers C2: the improve item a draft carries
+// survives the load and save the audit drafts command uses to rewrite a draft.
+func TestImproveReview988ImproveItemSurvivesARewrite(t *testing.T) {
+	w := improveProposeTestSetup(t)
+	improveProposeTestConfigure(t, w, map[string]any{})
+	first := improveReview988Propose(t, w, improveProposeTestBundle(t, w, []improveRecord{
+		improveProposeTestSplit("project-a", "size overrun", "rel-a"),
+	}))
+	path := improveReview988DraftPath(w, first.Created[0].Fingerprint)
+	improveReview988EditRaw(t, path, func(doc map[string]any) {
+		doc["improve"] = map[string]any{
+			"projects": []any{map[string]any{"project": "project-a", "count": 1}},
+			"evidence": []any{"events:rel-a"},
+		}
+	})
+	doc, err := auditDraftLoad(path)
+	if err != nil {
+		t.Fatalf("the draft with its improve item does not load: %v", err)
+	}
+	if err := auditDraftSave(path, doc); err != nil {
+		t.Fatal(err)
+	}
+	if got := improveReview988Counts(t, path); len(got) != 1 || got[0] != "project-a=1" {
+		t.Errorf("the rewrite dropped the improve item: counts = %v", got)
+	}
+}
+
+// TestImproveReview789AggregateGrowthIsAdded covers C4, the final evaluation's d2: a source that
+// reports a larger occurrence_count for an origin the draft already carries adds no count and
+// rewrites nothing, while a new origin of the same project adds one.
+func TestImproveReview789AggregateGrowthIsAdded(t *testing.T) {
+	w := improveProposeTestSetup(t)
+	improveProposeTestConfigure(t, w, map[string]any{})
+
+	// A source that aggregates its occurrences into one row reports its own total at that one
+	// origin: the fault ledger's occurrence_count, at the fault's own id.
+	first := improveProposeTestBundle(t, w, []improveRecord{
+		improveProposeTestRecord(improveKindFault, "observation_stalled", "project-a", "a signature", 5, "fault:store-a:f1"),
+	})
+	created := improveReview988Propose(t, w, first)
+	if len(created.Created) != 1 {
+		t.Fatalf("created = %+v, want one draft", created.Created)
+	}
+	path := improveReview988DraftPath(w, created.Created[0].Fingerprint)
+	before := improveReview988Read(t, path)
+
+	// The same origin now reports six occurrences. The origin is already carried, so it adds no
+	// count and the draft is left as it is.
+	second := improveProposeTestBundle(t, w, []improveRecord{
+		improveProposeTestRecord(improveKindFault, "observation_stalled", "project-a", "a signature", 6, "fault:store-a:f1"),
+	})
+	if report := improveReview988Propose(t, w, second); len(report.Updated) != 0 {
+		t.Fatalf("updated = %+v, want the draft kept: a count an origin reports for itself is not a sighting", report.Updated)
+	}
+	if after := improveReview988Read(t, path); after != before {
+		t.Errorf("the grown origin count rewrote the draft file")
+	}
+
+	// A new origin of the same friction adds one to the count the draft holds.
+	third := improveProposeTestBundle(t, w, []improveRecord{
+		improveProposeTestRecord(improveKindFault, "observation_stalled", "project-a", "a signature", 6, "fault:store-a:f1"),
+		improveProposeTestRecord(improveKindFault, "observation_stalled", "project-a", "a signature", 1, "fault:store-a:f2"),
+	})
+	if report := improveReview988Propose(t, w, third); len(report.Updated) != 1 {
+		t.Fatalf("updated = %+v, want the draft to grow for the new origin", report.Updated)
+	}
+	if body := improveReview988Body(t, path); !strings.Contains(body, "- owner_unknown (6)") {
+		t.Errorf("the new origin did not add one to the held count:\n%s", body)
 	}
 }
