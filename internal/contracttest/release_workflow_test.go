@@ -184,6 +184,16 @@ func TestReleaseWorkflow_publication_needs_the_verification(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	for _, form := range []string{
+		"go run -tags dev ./cmd/crw-dev ci local",
+		"--commit \"$RELEASE_SHA\"",
+		"--runner github-release",
+		"--record \"$record\"",
+	} {
+		if !strings.Contains(verify, form) {
+			t.Fatalf("verify does not run the local full verification as %q:\n%s", form, verify)
+		}
+	}
 	if !strings.Contains(verify, "ci local") {
 		t.Fatalf("verify does not run the local full verification:\n%s", verify)
 	}

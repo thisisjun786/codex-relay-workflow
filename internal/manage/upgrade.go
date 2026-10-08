@@ -10,8 +10,8 @@ import (
 	"time"
 )
 
-// runtime-upgrade replaces the relay runtime from a release archive whose commit is green on the
-// dev gate, after proving no relay attempt is still open. Every step's command, exit status and
+// runtime-upgrade replaces the relay runtime from a release archive whose commit has a passing
+// verification record for its own tree, after proving no relay attempt is still open. Every step's command, exit status and
 // output head is left in W/record.json, together with every reason that applied to the run.
 
 // upgradeRecordHead is how many bytes of a command's output the record keeps.
@@ -29,17 +29,19 @@ const (
 const upgradeExitUpdateFailed = upgradeExitUnexpected
 
 const (
-	upgradeReasonRepository    = "repository_unconfigured"
-	upgradeReasonSumsFailed    = "sums_failed"
-	upgradeReasonExtractFailed = "extract_failed"
-	upgradeReasonCommitUnknown = "commit_unknown"
-	upgradeReasonDevGate       = "dev_gate_not_green"
-	upgradeReasonStoreRead     = "store_unreadable"
-	upgradeReasonOpenAttempts  = "open_attempts"
-	upgradeReasonPointer       = "pointer_missing"
-	upgradeReasonStopFailed    = "service_stop_failed"
-	upgradeReasonPostCheck     = "postcheck_failed"
-	upgradeReasonUpdateFailed  = "update_failed"
+	upgradeReasonRepository      = "repository_unconfigured"
+	upgradeReasonSumsFailed      = "sums_failed"
+	upgradeReasonExtractFailed   = "extract_failed"
+	upgradeReasonCommitUnknown   = "commit_unknown"
+	upgradeReasonVerifyMissing   = "verification_record_missing"
+	upgradeReasonVerifyOtherTree = "verification_record_other_tree"
+	upgradeReasonVerifyNotPass   = "verification_record_not_pass"
+	upgradeReasonStoreRead       = "store_unreadable"
+	upgradeReasonOpenAttempts    = "open_attempts"
+	upgradeReasonPointer         = "pointer_missing"
+	upgradeReasonStopFailed      = "service_stop_failed"
+	upgradeReasonPostCheck       = "postcheck_failed"
+	upgradeReasonUpdateFailed    = "update_failed"
 	// The post-check's own findings are named apart from upgradeReasonPostCheck, so the record
 	// says what was found rather than only that the post-check refused.
 	upgradeReasonConfigChanged   = "config_changed"
@@ -50,7 +52,7 @@ const (
 	upgradeStepSums      = "sums"
 	upgradeStepExtract   = "extract"
 	upgradeStepCommit    = "commit"
-	upgradeStepDevGate   = "dev-gate"
+	upgradeStepVerify    = "verification-record"
 	upgradeStepAttempts  = "open-attempts"
 	upgradeStepSnapshot  = "snapshot"
 	upgradeStepStop      = "service-stop"
@@ -59,12 +61,13 @@ const (
 	upgradeStepPostCheck = "post-check"
 )
 
-const upgradeUsage = "usage: crw manage runtime-upgrade --release-dir DIR [--issue KEY] [--dry-run]"
+const upgradeUsage = "usage: crw manage runtime-upgrade --release-dir DIR [--verification FILE] [--issue KEY] [--dry-run]"
 
 type upgradeOptions struct {
-	ReleaseDir string
-	Issue      string
-	DryRun     bool
+	ReleaseDir   string
+	Issue        string
+	Verification string
+	DryRun       bool
 }
 
 // upgradeConfig is the configuration a run reads: a variable, so a test can supply a repository
@@ -132,20 +135,25 @@ func upgradeParse(args []string) (opts upgradeOptions, code int, handled bool) {
 			return opts, 0, true
 		case arg == "--dry-run":
 			opts.DryRun = true
-		case arg == "--release-dir" || arg == "--issue":
+		case arg == "--release-dir" || arg == "--issue" || arg == "--verification":
 			if i+1 >= len(args) {
 				return opts, usageExit, true
 			}
 			i++
-			if arg == "--release-dir" {
+			switch arg {
+			case "--release-dir":
 				opts.ReleaseDir = args[i]
-			} else {
+			case "--issue":
 				opts.Issue = args[i]
+			default:
+				opts.Verification = args[i]
 			}
 		case strings.HasPrefix(arg, "--release-dir="):
 			opts.ReleaseDir = strings.TrimPrefix(arg, "--release-dir=")
 		case strings.HasPrefix(arg, "--issue="):
 			opts.Issue = strings.TrimPrefix(arg, "--issue=")
+		case strings.HasPrefix(arg, "--verification="):
+			opts.Verification = strings.TrimPrefix(arg, "--verification=")
 		default:
 			return opts, usageExit, true
 		}
@@ -166,6 +174,8 @@ type upgradeRunState struct {
 	extract string // W/extract
 	archive string
 	commit  string
+	// tree is the tree of the commit, as the forge reports it; the record must name it.
+	tree    string
 	state   string
 	started time.Time
 
@@ -222,7 +232,7 @@ func (r *upgradeRunState) execute() (int, string) {
 	if code, reason = r.extractAndResolve(); code != 0 {
 		return code, reason
 	}
-	if code, reason = r.checkDevGate(); code != 0 {
+	if code, reason = r.checkVerificationRecord(); code != 0 {
 		return code, reason
 	}
 	if code, reason = r.checkOpenAttempts(); code != 0 {
