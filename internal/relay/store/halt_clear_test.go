@@ -325,3 +325,25 @@ func TestHaltClearFollowsALinkedStateDirectory(t *testing.T) {
 		t.Fatalf("the clear through the link wrote %d rows beside the resolved store", len(rows))
 	}
 }
+
+func TestHaltClearCancelledBeforeTheRowWritesNothing(t *testing.T) {
+	path := haltClearFixture(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	SetHaltFault(func(point string) error {
+		if point == "clear-before-row" {
+			cancel()
+		}
+		return nil
+	})
+	t.Cleanup(func() { SetHaltFault(nil) })
+	if _, err := ClearHalt(ctx, path, haltClearInputs(t, "reconcile reading\n")); !errors.Is(err, context.Canceled) {
+		t.Fatalf("a clear cancelled before its row answered %v, want context.Canceled", err)
+	}
+	if !HaltStateAt(path).Present {
+		t.Fatal("the marker was removed by a cancelled clear")
+	}
+	if rows := haltClearRows(t, path); len(rows) != 0 {
+		t.Fatalf("a cancelled clear wrote %d rows", len(rows))
+	}
+}
