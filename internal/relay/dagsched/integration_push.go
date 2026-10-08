@@ -49,7 +49,8 @@ func PushIntegration(ctx context.Context, checkout, remote, remoteRef, integrati
 		return out, refuse(contract.RefusalMergeTargetUnreadable, "%s names no branch in %s", integrationRef, checkout)
 	}
 	out.LocalHead = local
-	remoteHead, unreachableRemote, err := lsRemoteHead(ctx, checkout, remote, remoteRef)
+	pushTarget := remoteURLForPush(ctx, checkout, remote)
+	remoteHead, unreachableRemote, err := lsRemoteHead(ctx, checkout, pushTarget, remoteRef)
 	if err != nil {
 		if unreachableRemote {
 			out.Outcome, out.Detail = PushDeferred, err.Error()
@@ -74,7 +75,7 @@ func PushIntegration(ctx context.Context, checkout, remote, remoteRef, integrati
 			return out, refuse(contract.RefusalMergeBaseMismatch, "%s on %s points at %s, which %s does not contain: nothing is pushed", remoteRef, remote, remoteHead, integrationRef)
 		}
 	}
-	if err := pushCommit(ctx, checkout, remote, local, remoteRef); err != nil {
+	if err := pushCommit(ctx, checkout, pushTarget, local, remoteRef); err != nil {
 		if _, ok := err.(*pushUnreachable); ok {
 			out.Outcome, out.Detail = PushDeferred, err.Error()
 			return out, nil

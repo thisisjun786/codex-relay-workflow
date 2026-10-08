@@ -7,6 +7,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -101,6 +102,14 @@ func (s *Scheduler) AcceptedCandidates(ctx context.Context, plan string) ([]Cand
 			return nil, err
 		}
 		if stand.Generation != rel.Generation {
+			continue
+		}
+		// the accepted event must still be the head of its generation: a newer receipt makes this acceptance stale (CRW-965 review)
+		head, err := delivery.HeadRevisionFrom(ctx, q, stand.RelationshipID, stand.Generation)
+		if err != nil {
+			return nil, err
+		}
+		if id, _ := objString(head, "eventId"); id != stand.EventID {
 			continue
 		}
 		out = append(out, Candidate{PlanID: plan, NodeID: n.NodeID, AcceptanceID: acc.AcceptanceID, RelationshipID: stand.RelationshipID,

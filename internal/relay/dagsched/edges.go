@@ -333,9 +333,12 @@ func (s *Scheduler) artifactVerified(ctx context.Context, q store.Querier, plan 
 		if err != nil {
 			return EdgeStatus{}, err
 		}
-		hasVerification, err := queryOne(ctx, q, "SELECT 1 FROM dag_acceptance_verifications WHERE acceptance_id = ?", []any{a.AcceptanceID}, &verified)
-		if err != nil {
-			return EdgeStatus{}, err
+		// the verification table is read only for an acceptance without a forge row: a store that predates it still reads its pull requests (CRW-965 review)
+		hasVerification := false
+		if !hasForge {
+			if hasVerification, err = queryOne(ctx, q, "SELECT 1 FROM dag_acceptance_verifications WHERE acceptance_id = ?", []any{a.AcceptanceID}, &verified); err != nil {
+				return EdgeStatus{}, err
+			}
 		}
 		readable := (hasForge && a.PRNumber >= 1) || (hasVerification && !hasForge)
 		if a.HeadSHA == "" || !readable || a.Repository != e.TargetRepository {

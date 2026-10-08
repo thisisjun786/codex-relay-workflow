@@ -526,6 +526,12 @@ func (w *integrationWorktree) verify(ctx context.Context) (VerificationRecord, s
 		}
 		return VerificationRecord{}, "", false, nil
 	}
+	// the verify command may move HEAD; what it verified must still be the commit that would land (CRW-965 review)
+	if moved, err := w.head(ctx); err != nil {
+		return VerificationRecord{}, "", false, err
+	} else if moved != commit {
+		return VerificationRecord{}, "", false, nil
+	}
 	raw, err := os.ReadFile(recordPath)
 	if err != nil {
 		return VerificationRecord{}, "", false, nil
@@ -577,6 +583,7 @@ func (w *integrationWorktree) settle(ctx context.Context, candidates []Candidate
 	var commits []string
 	var record VerificationRecord
 	var digest string
+	excluded := map[string]string{}
 	for len(kept) > 0 {
 		var err error
 		var conflicted *Candidate
@@ -610,6 +617,9 @@ func (w *integrationWorktree) settle(ctx context.Context, candidates []Candidate
 		for _, d := range transitiveSuccessors(edges, failing.NodeID) {
 			left[d] = "depends_on_" + failing.NodeID
 		}
+		for node, reason := range left {
+			excluded[node] = reason
+		}
 		var next []Candidate
 		for _, c := range kept {
 			if reason, gone := left[c.NodeID]; gone {
@@ -631,6 +641,10 @@ func (w *integrationWorktree) settle(ctx context.Context, candidates []Candidate
 	}
 	// the deferred candidates: each is retried once, in order, on top of the verified set
 	for _, d := range deferred {
+		if reason, gone := excluded[d.NodeID]; gone {
+			out.split = append(out.split, IntegrationBatchSplit{NodeID: d.NodeID, AcceptanceID: d.AcceptanceID, HeadSHA: d.HeadSHA, Reason: reason})
+			continue
+		}
 		before, err := w.head(ctx)
 		if err != nil {
 			return out, err
