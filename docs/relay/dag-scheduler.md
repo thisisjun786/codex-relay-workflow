@@ -967,6 +967,35 @@ The commands that decide take `--expect-epoch E`, the epoch the session holds: `
 Refusals use the relay's existing reasons: `unregistered_scope` (a plan or node that is not there), `malformed_receipt` (a region or a request that is not valid),
 `disposition_conflict` (a node that edits no repository, or whose held regions a declaration would widen, or that is not ready), and the reasons of the table above. A write of an epoch that is not the plan's is `stale_coordinator_epoch` (new, decision D-02: the second reason this feature adds to the relay's contract, beside `plan_revision_conflict`). `dag-release-close` refuses with `malformed_receipt`, `unregistered_scope`, `scope_role_mismatch` and `disposition_conflict`. `dag-correct` refuses an actor that is not the parent of the node's relationship with `scope_role_mismatch` in both of its steps, and `dag-correct --prepare` refuses a stated base commit that the branch does not read with `merge_base_mismatch`. Commands can also refuse with `merge_base_mismatch`, `merge_target_unreadable`, `not_acknowledged`, `relationship_conflict`, `relationship_not_active`, `revision_ambiguous`, `scope_role_mismatch`, `slot_unknown` and `unregistered_relationship`. Exit codes are the relay's: 0, 2 refusal, 3 host, 4 usage.
 
+## Bundle candidates (CRW-810)
+
+`dag-bundle-candidates --plan P [--exclude N]...` answers which nodes of the head revision a parent could bundle into one issue. It reads the stored plan and the release records and writes nothing. `dag-ready` carries the same reading, with no exclusions, as `bundleCandidates` (the `bundles` and `excluded` lists). The candidates are read in the same transaction as the ready reading, and with `--record` in the transaction that keeps the pass, so the pass and `bundleCandidates` describe one plan revision and one set of releases.
+
+The candidates are the live implementation nodes with no `dag_releases` and no `dag_release_requests` row for the plan. Every other live node is listed in `excluded` with one reason:
+
+- `non_pr`: the node opens no pull request.
+- `released`: a release or a managed start is on record.
+- `parent_excluded`: named by `--exclude`. The plan carries no urgency or security mark, so the parent passes such a node here. A name the plan does not hold is an argument error (exit 4).
+- `other_plan_exclusive`: a node of another plan that is live and not integrated holds the same repository and path exclusively, by the exclusive flag or the `exclusive` grade of its latest declaration. The holder's node kind does not matter: a node that declared regions and was later made a `non_pr` node by `update_node` keeps its declaration and its hold.
+
+Two candidates are joined by one of two rules, and a pair that meets both carries both reasons:
+
+- `same_region`: their latest declarations name the same file, or two files in one directory other than the repository root. A mechanical region does not count, because its rule settles it.
+- `chain_slice`: the plan has an edge A→B where B has no other incoming edge and A has no other outgoing edge.
+
+A bundle is a connected group of two or more candidates (cut as the `regions` paragraph below says when its union would be too large to declare). It reports its `nodes`, the `reasons` and `pairs` that join them, the union of the members' regions, and `internalEdges`, the edges whose both ends lie in the group. Every list is sorted, so one store state gives one answer.
+
+The `regions` of a bundle hold one entry for each place (repository, path, kind, key), in the shape `dag-region-declare` reads, so a parent can pass the list to it unchanged whenever it is not empty. A bundle is offered only when its union holds at most 64 places (`MaxRegions`, what one declaration takes). The list is empty when none of the members declared a region (two undeclared nodes joined by `chain_slice` are still a bundle): a declaration takes 1 to 64 places and refuses none, so there is nothing to pass on, and the merged node declares the places it edits. A bundle in which some members declared holds exactly their places. A connected group whose union would hold more is cut into groups that each fit: a group starts at the smallest node id not yet placed and takes, one at a time, the smallest unplaced node joined to it by a pair, while the union still fits; a node that fits no group of two or more stays a candidate outside any bundle with its own declaration. No place is dropped from a union to make it fit. Members that declare one place differently are merged so that the entry never holds the place less strictly than any member did:
+
+- `exclusive` is true when any member stated it.
+- `change` is the strictest of `edit`, `rename`, `delete`, in that order.
+- `grade` is the strictest of `mechanical`, `local`, `independent`, `exclusive`, in that order. Two `mechanical` grades keep their `rule` when it is the same one and become `local` when the rules differ, and a rule is kept only on a `mechanical` grade.
+- The result is then folded the way a declaration is: a stated whole-repository hold, a rename, a delete, a hotspot and a shared contract surface hold the place `exclusive` whatever the members said.
+
+The merge is the same whichever member declared which, so one store state gives one answer.
+
+The reading merges nothing. Merging nodes is a plan revision the parent writes.
+
 ## The store
 
 The scheduler adds tables to the DAG zone ([DAG plans](dag-plans.md#the-store)) as appended statements. `dag_passes` and `dag_node_regions` are described above; `dag_release_requests` freezes the request of a release with its intent; `dag_release_recoveries` holds the closure of an abandoned release and the successor release of a closed one (see Recovering an abandoned release);
