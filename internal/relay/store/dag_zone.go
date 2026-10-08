@@ -846,6 +846,30 @@ BEGIN SELECT RAISE(ABORT, 'merge_trains.train_id is NULL: a train is addressed b
     expired_reason      TEXT NOT NULL
 )`,
 	`CREATE INDEX IF NOT EXISTS dag_user_decisions_fingerprint ON dag_user_decisions (fingerprint)`,
+	// CRW-904: the idle-edge wake of a delivery that waits out a busy backoff. A row here says one
+	// thing: this deferred-busy delivery was woken by its recipient's thread/status/changed to idle (or
+	// notLoaded), so it is due now and keeps the head of its recipient's line until the wake is spent,
+	// whatever its own deadline. It is a zone table rather than a column of deliveries because a
+	// shipped statement is never edited (the swap gate compares the stored text of every object) and
+	// because the marker has to survive a daemon restart.
+	//
+	// original_deadline is the deadline the delivery carried when the wake was written. The wake never
+	// moves deliveries.next_eligible_at, so this column is where that deadline survives the attempt:
+	// the claim records the wake as spent and leaves the row in place, and every arm that answers a
+	// busy recipient then takes due = min(original_deadline, the recomputed backoff) from here, however
+	// late the answer arrives and whether or not the original deadline has already passed. The row is
+	// deleted by the arm that takes it, and by the next busy deferral.
+	//
+	// spent_at is when the wake stopped holding the line, which is the claim: the attempt the wake
+	// released has begun, so the head set stops counting the row while its deadline is still readable.
+	// A row with spent_at NULL is the wake a head still holds; a row whose delivery has left
+	// deferred_busy is inert, because every reader of this table pairs it with that state.
+	`CREATE TABLE IF NOT EXISTS delivery_wakes (
+    event_id          TEXT PRIMARY KEY CHECK (event_id <> ''),
+    woken_at          TEXT NOT NULL CHECK (woken_at <> ''),
+    original_deadline REAL NOT NULL,
+    spent_at          TEXT
+)`,
 
 	// CRW-965: the pull-request-less acceptance and integration path. Two appended tables, because a
 	// shipped statement is never edited: the verification record an acceptance was taken on (the body

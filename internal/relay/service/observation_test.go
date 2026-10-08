@@ -66,34 +66,64 @@ func Test29ObservationConsoleTables(t *testing.T) {
 			status := strings.TrimPrefix(scenario, "staged-")
 			staged := strings.HasPrefix(scenario, "staged-")
 			home := t.TempDir()
-			host := fakehost.Start(t)
-			host.Handle("thread/turns/list", func(json.RawMessage) fakehost.Reply {
-				turns := []any{}
-				if status != "absent" {
-					turns = append(turns, map[string]any{"id": "anchor", "status": status})
-				}
-				return fakehost.Reply{Result: map[string]any{"data": turns, "nextCursor": nil}}
-			})
-			host.Handle("thread/read", func(json.RawMessage) fakehost.Reply {
-				return fakehost.Reply{Result: map[string]any{"thread": map[string]any{"id": "parent", "status": map[string]any{"type": "active"}, "canAcceptDirectInput": true}}}
-			})
-			host.Handle("thread/list", func(raw json.RawMessage) fakehost.Reply {
-				var p map[string]any
-				if err := json.Unmarshal(raw, &p); err != nil {
-					panic(err)
-				}
-				data := []any{}
-				if p["archived"] != true {
-					data = append(data, map[string]any{"id": "parent"})
-				}
-				return fakehost.Reply{Result: map[string]any{"data": data, "nextCursor": nil}}
-			})
-			host.Handle("thread/goal/get", func(json.RawMessage) fakehost.Reply { return fakehost.Reply{Result: map[string]any{"goal": nil}} })
+			host := observationIdleFixtureHost(t, status)
 			args := []string{"--socket", host.SocketPath, "daemon", "--max-ticks", "1", "--allow-isolated-scope"}
 			seedObservation(t, home, host.SocketPath, staged)
 			got := invokeFixed(home, args)
 			checkAnswer(t, home, "answer", observationAnswer{normalizedCapture(got), withoutEvidenceDigests(t, home, tables(t, home)), files(t, home)}, host.SocketPath)
 		})
+	}
+}
+
+// observationIdleFixtureHost is the App Server the observation fixture ticks against: the anchor turn reports status,
+// the parent is an active thread, and the idle subscription's thread/resume succeeds (CRW-904), so a
+// successful hold leaves the tick report's notes as the golden holds them.
+func observationIdleFixtureHost(t *testing.T, status string) *fakehost.Server {
+	t.Helper()
+	host := fakehost.Start(t)
+	host.Handle("thread/turns/list", func(json.RawMessage) fakehost.Reply {
+		turns := []any{}
+		if status != "absent" {
+			turns = append(turns, map[string]any{"id": "anchor", "status": status})
+		}
+		return fakehost.Reply{Result: map[string]any{"data": turns, "nextCursor": nil}}
+	})
+	host.Handle("thread/read", func(json.RawMessage) fakehost.Reply {
+		return fakehost.Reply{Result: map[string]any{"thread": map[string]any{"id": "parent", "status": map[string]any{"type": "active"}, "canAcceptDirectInput": true}}}
+	})
+	host.Handle("thread/list", func(raw json.RawMessage) fakehost.Reply {
+		var p map[string]any
+		if err := json.Unmarshal(raw, &p); err != nil {
+			panic(err)
+		}
+		data := []any{}
+		if p["archived"] != true {
+			data = append(data, map[string]any{"id": "parent"})
+		}
+		return fakehost.Reply{Result: map[string]any{"data": data, "nextCursor": nil}}
+	})
+	host.Handle("thread/goal/get", func(json.RawMessage) fakehost.Reply { return fakehost.Reply{Result: map[string]any{"goal": nil}} })
+	host.Handle("thread/resume", func(json.RawMessage) fakehost.Reply {
+		return fakehost.Reply{Result: map[string]any{"thread": map[string]any{"id": "parent", "status": map[string]any{"type": "active"}}}}
+	})
+	return host
+}
+
+// TestObservationIdleSubscriptionFailureLeavesANote: the App Server refuses the idle subscription's
+// thread/resume, so the hold is not opened, and the tick report says so. A failure is never hidden from
+// the report, which is what the golden above relies on for its empty notes.
+func TestObservationIdleSubscriptionFailureLeavesANote(t *testing.T) {
+	invokeFixed := fixedClockRuntime(t)
+	home := t.TempDir()
+	host := observationIdleFixtureHost(t, "interrupted")
+	host.Handle("thread/resume", func(json.RawMessage) fakehost.Reply {
+		return fakehost.Reply{Error: &fakehost.RPCError{Code: -32000, Message: "thread not found"}}
+	})
+	args := []string{"--socket", host.SocketPath, "daemon", "--max-ticks", "1", "--allow-isolated-scope"}
+	seedObservation(t, home, host.SocketPath, false)
+	got := invokeFixed(home, args)
+	if !strings.Contains(got.Out, "subscription for ") || !strings.Contains(got.Out, "not opened") {
+		t.Fatalf("a refused subscription left no note in the tick report: %s", got.Out)
 	}
 }
 

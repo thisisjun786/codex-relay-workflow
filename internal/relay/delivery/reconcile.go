@@ -340,6 +340,12 @@ func (rc *Reconciler) settleFromReceipt(ctx context.Context, attempt, delivery R
 		if attempt.I("attempt_no") >= rc.policy().CapFor(reason) {
 			hold, next = rc.policy().CapReason(reason), nil
 		}
+		// CRW-1007 (replay of a settled answer): a busy answer that already settled this attempt holds the deadline it
+		// took when it was written, the earlier of the original deadline and the recomputed one. Replaying the same
+		// receipt after its wake was spent must keep that deadline, not promote the attempt again with a later one.
+		if hold == nil && facts.DeliveryState == DeferredBusy && delivery.S("state") == DeferredBusy && delivery.Opt("next_eligible_at") != nil {
+			next = delivery.F("next_eligible_at")
+		}
 	}
 	var dispatchEvidence any
 	if facts.DeliveryState == Dispatched {
@@ -466,10 +472,28 @@ func (rc *Reconciler) write(ctx context.Context, attempt, delivery Row, record O
 			// counts the recipient's busy answers beyond this attempt, so it can stand with an attempt number
 			// below the caps settleFromReceipt compares, and whatever else this attempt turns out to have been
 			// (a busy answer, a rejection before the send) says nothing about it.
-			promoted, err := execSQL(ctx, rc.Store, "UPDATE deliveries SET state = ?, next_eligible_at = ?, hold_reason = CASE WHEN ? AND hold_reason IN (?, ?) THEN hold_reason WHEN ? AND hold_reason = ? THEN hold_reason ELSE ? END, dispatch_evidence = CASE WHEN ? THEN NULL ELSE ? END, dispatch_turn_id = CASE WHEN ? THEN NULL ELSE COALESCE(?, dispatch_turn_id) END, lease_owner = NULL, lease_until = NULL, updated_at = ? WHERE event_id = ? AND attempt_count = ? AND state NOT IN (?, 'acknowledged', 'superseded')",
-				aggregate, next, boolFlag(o.keepUnknown), UnknownSendLost, UnknownSendUndecided, boolFlag(aggregate != Dispatched), BusyCap, o.hold, boolFlag(o.clearDispatch), dispatchEvidence, boolFlag(o.clearDispatch), o.dispatchTurn, now, attempt.S("event_id"), attempt.I("attempt_no"), Dispatched)
+			// CRW-904: a busy answer to an attempt the recipient's idle edge woke keeps the earlier deadline
+			// (due = min(original, recomputed)). The wake recorded that deadline and the claim kept the
+			// record, so it is readable here however late this reconciliation runs. Only the busy reason
+			// takes it: the presend curve is a different retry.
+			deadline, deadlineArgs := "?", []any{next}
+			if aggregate == DeferredBusy && next != nil {
+				var err error
+				if deadline, deadlineArgs, err = rc.Delivery.earlierDeadline(ctx, attempt.S("event_id"), next); err != nil {
+					return err
+				}
+			}
+			promoted, err := execSQL(ctx, rc.Store, "UPDATE deliveries SET state = ?, next_eligible_at = "+deadline+", hold_reason = CASE WHEN ? AND hold_reason IN (?, ?) THEN hold_reason WHEN ? AND hold_reason = ? THEN hold_reason ELSE ? END, dispatch_evidence = CASE WHEN ? THEN NULL ELSE ? END, dispatch_turn_id = CASE WHEN ? THEN NULL ELSE COALESCE(?, dispatch_turn_id) END, lease_owner = NULL, lease_until = NULL, updated_at = ? WHERE event_id = ? AND attempt_count = ? AND state NOT IN (?, 'acknowledged', 'superseded')",
+				append(append([]any{aggregate}, deadlineArgs...), boolFlag(o.keepUnknown), UnknownSendLost, UnknownSendUndecided, boolFlag(aggregate != Dispatched), BusyCap, o.hold, boolFlag(o.clearDispatch), dispatchEvidence, boolFlag(o.clearDispatch), o.dispatchTurn, now, attempt.S("event_id"), attempt.I("attempt_no"), Dispatched)...)
 			if err != nil {
 				return err
+			}
+			// The attempt is answered: the wake that released it is spent with the answer, and an uncertain
+			// outcome still owes an answer, so its wake is kept for the reconciliation that will give it.
+			if promoted == 1 && aggregate != HeldUncertain {
+				if err := rc.Delivery.spendWake(ctx, attempt.S("event_id")); err != nil {
+					return err
+				}
 			}
 			if promoted == 1 && aggregate == Dispatched {
 				if anchor, err = rc.bindPromotedAnchor(ctx, attempt, delivery, o.dispatchTurn); err != nil {

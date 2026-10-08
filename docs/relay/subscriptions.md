@@ -17,6 +17,45 @@ delivery establishes a new connection through its ordinary read/resume path.
 Release sends `thread/unsubscribe` on the original socket and never reconnects.
 A retired reader cannot complete or retire a replacement socket's watches.
 
+## The busy hold: a subscription kept for the recipient's idle edge
+
+A delivery that finds its recipient mid-turn waits a doubling backoff, and that timer used to be
+the only thing that ended the wait: the head of a parent's receipt line held every younger
+delivery behind it for up to five minutes at a time. While such a head waits, the relay holds a
+subscription on the recipient, so the App Server reports that recipient's `thread/status/changed`
+to this connection, and a report of `idle` or `notLoaded` releases the head (CRW-904, section 82
+of the CRW-781 decision).
+
+The hold is `Client.HoldThread`: one `thread/resume` carrying only `threadId` and `excludeTurns`,
+with no overrides and no settings, on a thread that is usually loaded already. It starts no turn
+and changes nothing about the recipient, so a busy recipient is never interrupted. It admits no
+watch, because an admitted watch holds the root's mutation gate until `Finish` and would block the
+delivery's own send; instead the root is marked busy-held, which `ready` and `prune` treat exactly
+as they treat the never-run-root retention: not releasable while it stands. The two are separate
+fields, so releasing one never drops the other, and a completed turn clears the retention without
+clearing the hold. Connection loss ends the hold with the subscription it described.
+
+The hold is the relay's own reference, taken even when a watch or the never-run-root retention has
+already subscribed the thread (`ThreadHeld` answers for it alone, while `ThreadSubscribed` counts
+any owner). Those other owners release their subscriptions on their own schedule — a `turn/completed`
+or the release worker — and the busy backlog has to keep its idle edge through that, so it records a
+hold of its own rather than borrowing theirs. The resume is skipped only for a subscription this
+client made and recorded itself — this relay's own hold on this connection, or the bridge's retention
+of a never-run root. A live watch is deliberately not evidence: `WatchTurn` only admits a watch and
+sends no subscribing RPC, so a watch whose resume was refused or cancelled leaves the connection
+receiving nothing while the watch is still live, and reading it as a subscription would let the hold
+record itself on a socket the recipient's idle reports never reach. The cost of the other error is one
+redundant resume on a thread that is already subscribed, which starts no turn and changes nothing.
+
+The relay releases the hold (`Client.ReleaseThread`) when the recipient's backlog empties or the
+delivery is delivered, and the ordinary release worker then sends `thread/unsubscribe` on the
+original socket, with the existing retries and cleanup. A resume the host refuses leaves the
+doubling backoff as that recipient's only trigger, and the refusal is not retried on every tick:
+the relay remembers it until the delivery's own busy deadline, so the existing backoff curve stays
+the pacing rather than the 20-second tick. The backoff is the safety net either way, for a report
+the relay never saw, a host that reports no status, and a recipient that is busy again before the
+attempt lands.
+
 The reader records successful creation and turn acknowledgements before caller
 cancellation can hide them. Matching terminals are retained independently of
 the public notification buffer, including completion before the start reply.
@@ -207,7 +246,12 @@ can use the next bounded successor. No fourth operation is created. Initial guar
 recorded as `outcome_unknown` are not recovered by this path.
 
 The inspected bridge and relay resume paths transmit the profile; subscription retirement
-only unsubscribes, and their read paths do not issue an unprofiled resume. The copied
+only unsubscribes, and their read paths do not issue an unprofiled resume. The idle edge's
+own hold is the one exception: while a head delivery waits out its recipient's busy backoff
+the relay opens a subscription with an override-free `thread/resume` carrying no model,
+effort or settings override and starting no turn (CRW-904; the subscription is a reference
+the backlog takes and releases, and the recipient stays busy, so nothing here is the
+business resume these paths guard). The copied
 incident receipts show profiled creation followed by an idle, unprofiled MCP status at
 business resume, with overrides transmitted and a settings refusal. They do not attribute
 the intervening load to a client. An external client's identity and the live same-request
