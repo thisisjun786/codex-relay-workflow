@@ -9,6 +9,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/mergeturn"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -496,38 +497,63 @@ func (s *Scheduler) refuseAcceptedHeadOnItsWayToTheBase(ctx context.Context, q s
 	if err != nil {
 		return err
 	}
+	// The turn's repository is matched by mergeturn.SameRepository, the lane's one reading of a repository,
+	// against every spelling the acceptance has: the repository it was accepted against, and the forge
+	// repository recorded with it (dag_acceptance_forge). A legacy acceptance keeps whatever target it was
+	// accepted against, a local checkout included, so a PR-only or bare-head turn of it is found through the
+	// forge spelling, and a turn spelled as the checkout, its .git directory or a symlink to it is found
+	// through the path.
+	spellings, err := acceptanceRepositories(ctx, q, acc)
+	if err != nil {
+		return err
+	}
 	clauses := []string{"relationship_id = ?"}
 	args := []any{acc.RelationshipID}
-	// The turn's repository predicate is the acceptance's FORGE identity where one was recorded: an
-	// acceptance written before the forge rule keeps whatever target it was accepted against, a local
-	// checkout included, while dag_acceptance_forge names the owner/name a merge turn is requested
-	// against. Without this a PR-only or bare-head turn of a legacy acceptance is never found.
-	forge := acc.Repository
-	if has, err := queryOne(ctx, q, "SELECT forge_repository FROM dag_acceptance_forge WHERE acceptance_id = ?", []any{acc.AcceptanceID}, &forge); err != nil {
-		return err
-	} else if !has {
-		forge = acc.Repository
-	}
 	for _, head := range heads {
 		if head == "" {
 			continue
 		}
-		clauses = append(clauses, "(lower(repository) IN (lower(?), lower(?)) AND crw_same_commit(candidate_head, ?))")
-		args = append(args, acc.Repository, forge, head)
+		clauses = append(clauses, "crw_same_commit(candidate_head, ?)")
+		args = append(args, head)
 	}
 	if acc.PRNumber > 0 {
-		clauses = append(clauses, "(lower(repository) IN (lower(?), lower(?)) AND pr_number = ?)")
-		args = append(args, acc.Repository, forge, acc.PRNumber)
+		clauses = append(clauses, "pr_number = ?")
+		args = append(args, acc.PRNumber)
 	}
-	var turn, state, head string
-	found, err := queryOne(ctx, q, "SELECT turn_id, state, candidate_head FROM merge_turns"+
-		" WHERE state IN ('merging','unknown','landed') AND ("+strings.Join(clauses, " OR ")+") ORDER BY requested_at, turn_id LIMIT 1", args, &turn, &state, &head)
+	rows, err := q.QueryContext(ctx, "SELECT turn_id, state, candidate_head, repository, relationship_id, pr_number FROM merge_turns"+
+		" WHERE state IN ('merging','unknown','landed') AND ("+strings.Join(clauses, " OR ")+") ORDER BY requested_at, turn_id", args...)
 	if err != nil {
 		return err
 	}
-	if found {
+	type turnRow struct {
+		turn, state, repository string
+		head                    sql.NullString
+		relationship            sql.NullString
+		pr                      sql.NullInt64
+	}
+	var turns []turnRow
+	for rows.Next() {
+		var t turnRow
+		if err := rows.Scan(&t.turn, &t.state, &t.head, &t.repository, &t.relationship, &t.pr); err != nil {
+			rows.Close()
+			return err
+		}
+		turns = append(turns, t)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	for _, t := range turns {
+		byRelationship := t.relationship.Valid && t.relationship.String == acc.RelationshipID
+		bySelector := spelledAs(t.repository, spellings) &&
+			((acc.PRNumber > 0 && t.pr.Valid && t.pr.Int64 == acc.PRNumber) || headIsOneOf(t.head.String, heads))
+		if !byRelationship && !bySelector {
+			continue
+		}
 		return refuse(contract.RefusalDispositionConflict, "the accepted result of %s is on its way to the base already: merge turn %s of the relationship is %s on head %s, and a correction cannot be recorded over a head the forge may already have merged. Resolve that turn first (merge-turn-resolve, or merge-turn-unknown then merge-turn-resolve), then record this same generation again with the manifest digest dag-correct --prepare already printed: it is not yet recorded, and opening another generation would skip it",
-			acc.NodeID, short(turn), state, short(head))
+			acc.NodeID, short(t.turn), t.state, short(t.head.String))
 	}
 	// A live bundle is the second way the head may already be on the base. The parent merges a verified
 	// bundle on the forge and records it with merge-train-land afterwards, so between those two the
@@ -552,46 +578,108 @@ func (s *Scheduler) refuseLiveBundleCarrying(ctx context.Context, q store.Querie
 		return err
 	}
 	// A bundle carries a head through whichever node's member it is: two accepted nodes can name the same
-	// commit, so a member is matched by the repository and its head. The acceptance's own member is matched
-	// wherever its train names the repository, as before.
-	forge := acc.Repository
-	if has, err := queryOne(ctx, q, "SELECT forge_repository FROM dag_acceptance_forge WHERE acceptance_id = ?", []any{acc.AcceptanceID}, &forge); err != nil {
+	// commit, so a member is matched by its head and by the repository its train names (under any spelling
+	// the acceptance has), or by its own relationship.
+	spellings, err := acceptanceRepositories(ctx, q, acc)
+	if err != nil {
 		return err
-	} else if !has {
-		forge = acc.Repository
 	}
 	for _, head := range heads {
 		if head == "" {
 			continue
 		}
-		var train string
-		found, err := queryOne(ctx, q, "SELECT m.train_id FROM merge_train_members m JOIN merge_trains t ON t.train_id = m.train_id"+
-			" WHERE (lower(t.repository) IN (lower(?), lower(?)) OR m.relationship_id = ?) AND crw_same_commit(m.member_head, ?)"+
-			" AND (SELECT kind FROM merge_train_events e WHERE e.train_id = m.train_id ORDER BY e.seq DESC LIMIT 1) IN ('opened','verified')"+
-			" ORDER BY m.train_id, m.seq LIMIT 1", []any{acc.Repository, forge, acc.RelationshipID, head}, &train)
+		train, err := bundleMemberCarrying(ctx, q, acc, spellings, head,
+			"AND (SELECT kind FROM merge_train_events e WHERE e.train_id = m.train_id ORDER BY e.seq DESC LIMIT 1) IN ('opened','verified')")
 		if err != nil {
 			return err
 		}
-		if found {
+		if train != "" {
 			return refuse(contract.RefusalDispositionConflict, "the accepted result of %s is on its way to the base already: bundle %s is live and carries head %s as a member, so its merge may already be on the forge and a correction cannot be recorded over it. Close the bundle first (merge-train-close), then record this same generation again with the manifest digest dag-correct --prepare already printed: it is not yet recorded, and opening another generation would skip it",
 				acc.NodeID, short(train), short(head))
 		}
 		// A landed bundle has merged the tree that holds every member head, excluded members included: a member
 		// whose turn was withdrawn is still a member row, and no integration mark names its node. Its head is on the
 		// base, so the correction is refused whatever the member's relationship.
-		landed, err := queryOne(ctx, q, "SELECT m.train_id FROM merge_train_members m JOIN merge_trains t ON t.train_id = m.train_id"+
-			" WHERE (lower(t.repository) IN (lower(?), lower(?)) OR m.relationship_id = ?) AND crw_same_commit(m.member_head, ?)"+
-			" AND EXISTS (SELECT 1 FROM merge_train_events e WHERE e.train_id = m.train_id AND e.kind = 'landed')"+
-			" ORDER BY m.train_id, m.seq LIMIT 1", []any{acc.Repository, forge, acc.RelationshipID, head}, &train)
+		landed, err := bundleMemberCarrying(ctx, q, acc, spellings, head,
+			"AND EXISTS (SELECT 1 FROM merge_train_events e WHERE e.train_id = m.train_id AND e.kind = 'landed')")
 		if err != nil {
 			return err
 		}
-		if landed {
+		if landed != "" {
 			return refuse(contract.RefusalDispositionConflict, "the accepted result of %s has already landed: bundle %s landed a tree that carries head %s as a member, so the head is on the base and a correction cannot be recorded over it. A node that landed is never run again: what changed above it is carried by a successor node of a new plan revision (contract 8.4, E-20)",
-				acc.NodeID, short(train), short(head))
+				acc.NodeID, short(landed), short(head))
 		}
 	}
 	return nil
+}
+
+// bundleMemberCarrying is the first bundle, in member order, whose member carries head and that the event filter
+// selects, and whose train names the acceptance's repository under one of its spellings or whose member is the
+// acceptance's own relationship. "" means none.
+func bundleMemberCarrying(ctx context.Context, q store.Querier, acc Acceptance, spellings []string, head, eventFilter string) (string, error) {
+	rows, err := q.QueryContext(ctx, "SELECT m.train_id, t.repository, m.relationship_id FROM merge_train_members m JOIN merge_trains t ON t.train_id = m.train_id"+
+		" WHERE crw_same_commit(m.member_head, ?) "+eventFilter+" ORDER BY m.train_id, m.seq", head)
+	if err != nil {
+		return "", err
+	}
+	type member struct {
+		train, repository string
+		relationship      sql.NullString
+	}
+	var members []member
+	for rows.Next() {
+		var m member
+		if err := rows.Scan(&m.train, &m.repository, &m.relationship); err != nil {
+			rows.Close()
+			return "", err
+		}
+		members = append(members, m)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return "", err
+	}
+	rows.Close()
+	for _, m := range members {
+		if (m.relationship.Valid && m.relationship.String == acc.RelationshipID) || spelledAs(m.repository, spellings) {
+			return m.train, nil
+		}
+	}
+	return "", nil
+}
+
+// acceptanceRepositories are every repository spelling of an acceptance: the one it was accepted against and the
+// forge repository recorded with it.
+func acceptanceRepositories(ctx context.Context, q store.Querier, acc Acceptance) ([]string, error) {
+	forge := ""
+	has, err := queryOne(ctx, q, "SELECT forge_repository FROM dag_acceptance_forge WHERE acceptance_id = ?", []any{acc.AcceptanceID}, &forge)
+	if err != nil {
+		return nil, err
+	}
+	if !has {
+		return []string{acc.Repository}, nil
+	}
+	return []string{acc.Repository, forge}, nil
+}
+
+// spelledAs reports whether a stored repository names one of the spellings, by mergeturn.SameRepository.
+func spelledAs(repository string, spellings []string) bool {
+	for _, s := range spellings {
+		if mergeturn.SameRepository(repository, s) {
+			return true
+		}
+	}
+	return false
+}
+
+// headIsOneOf reports whether a stored head names one of the heads, by the one head definition.
+func headIsOneOf(stored string, heads []string) bool {
+	for _, h := range heads {
+		if h != "" && mergeturn.SameCommit(stored, h) {
+			return true
+		}
+	}
+	return false
 }
 
 // refuseLanded is the guard of a correction (contract 8.4, E-20): a node whose accepted head landed in every target it lands on is never run again, whatever changed above it and whatever the plan now

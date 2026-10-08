@@ -95,10 +95,7 @@ func (r TargetReader) Tip(ctx context.Context, repository, base string) (Tip, er
 	if err != nil || !info.IsDir() {
 		return Tip{}, unreadable("repository %s is not a directory here", pyvalue.StrRepr(repository))
 	}
-	gitdir := filepath.Join(repository, ".git")
-	if _, err := os.Stat(gitdir); os.IsNotExist(err) {
-		gitdir = repository
-	}
+	gitdir := gitDirOf(repository)
 	ref := "refs/heads/" + base
 	git := r.Git
 	if git == "" {
@@ -186,6 +183,50 @@ func (r TargetReader) github(ctx context.Context, repository, base string) (Tip,
 }
 
 // excerpt is text[:EXCERPT], counted in characters as Python slices a str.
+// gitDirOf is the git directory the lane reads a local repository through: its .git child when it exists,
+// else the path itself (a bare repository, or a .git directory named directly).
+func gitDirOf(repository string) string {
+	gitdir := filepath.Join(repository, ".git")
+	if _, err := os.Stat(gitdir); os.IsNotExist(err) {
+		return repository
+	}
+	return gitdir
+}
+
+// SameRepository reports whether two repository spellings name one repository, by the lane's own reading of
+// them. Two forge slugs name the same repository when they are equal after trimming and lower-casing. Two
+// absolute paths name the same repository when the git directories they resolve to (symlinks followed, as
+// the lane reads them through gitDirOf) are equal. A slug and a path never name the same repository. A path
+// that cannot be resolved is compared by its exact text, case-insensitively, because the lane cannot read it
+// either. An empty spelling names no repository.
+func SameRepository(a, b string) bool {
+	a, b = strings.TrimSpace(a), strings.TrimSpace(b)
+	if a == "" || b == "" {
+		return false
+	}
+	if filepath.IsAbs(a) != filepath.IsAbs(b) {
+		return false
+	}
+	if !filepath.IsAbs(a) {
+		return strings.EqualFold(a, b)
+	}
+	ga, errA := resolvedGitDir(a)
+	gb, errB := resolvedGitDir(b)
+	if errA != nil || errB != nil {
+		return strings.EqualFold(a, b)
+	}
+	return ga == gb
+}
+
+// resolvedGitDir is the kernel-resolved git directory of a local repository spelling.
+func resolvedGitDir(repository string) (string, error) {
+	checkout, err := filepath.EvalSymlinks(repository)
+	if err != nil {
+		return "", err
+	}
+	return filepath.EvalSymlinks(gitDirOf(checkout))
+}
+
 func excerpt(text string) string {
 	runes := []rune(text)
 	if len(runes) > 400 {

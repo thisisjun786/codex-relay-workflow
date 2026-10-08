@@ -96,6 +96,21 @@ func StandOf(ctx context.Context, q store.Querier, acceptanceID, relationshipID 
 	return stands[0], nil
 }
 
+// Chain is every head an acceptance has stood on, newest first: the head of each valid base refresh
+// recorded for it (Stands), then its own accepted head. It is the one definition of "the same result":
+// a head in the chain is a head the plan still accepts for the node, and a head outside it was replaced.
+func Chain(ctx context.Context, q store.Querier, acceptanceID, relationshipID string, generation int64, head string) ([]string, error) {
+	stands, err := Stands(ctx, q, acceptanceID, relationshipID, generation)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(stands)+1)
+	for _, st := range stands {
+		out = append(out, st.Head)
+	}
+	return append(out, head), nil
+}
+
 // ActiveForRelationship is the newest active acceptance of a relationship, the row the merge train
 // requires before it carries a member. found is false when the relationship has none.
 type Active struct {

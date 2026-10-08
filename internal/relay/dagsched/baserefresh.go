@@ -57,12 +57,6 @@ func refreshDigest(acc, relationship string, generation int64, event, revision, 
 	return acceptance.RefreshDigest(acc, relationship, generation, event, revision, head, baseRepository, baseRef, baseTip, proofJSON, resolvedJSON)
 }
 
-// validStands are the base refreshes recorded for an acceptance that digest to their ids, newest first. The table arrived after the first zone, so a store opened read-only that predates it has none; a row
-// that does not digest to its id is ignored. The reading itself lives in internal/relay/acceptance.
-func (s *Scheduler) validStands(ctx context.Context, q store.Querier, a Acceptance) ([]acceptanceStand, error) {
-	return acceptance.Stands(ctx, q, a.AcceptanceID, a.RelationshipID, a.ExecutionGeneration)
-}
-
 // standOf reads what an acceptance stands on now: the newest valid base refresh recorded for it, else its own.
 func (s *Scheduler) standOf(ctx context.Context, q store.Querier, a Acceptance) (acceptanceStand, error) {
 	return acceptance.StandOf(ctx, q, a.AcceptanceID, a.RelationshipID, a.ExecutionGeneration, a.EventID, a.RevisionHash, a.HeadSHA)
@@ -71,15 +65,7 @@ func (s *Scheduler) standOf(ctx context.Context, q store.Querier, a Acceptance) 
 // stoodOn is every head the acceptance has stood on: its own and the head of each valid base refresh recorded for it, newest first. A merge turn of the node, or a check of its pull request, made for any
 // of them is the node's own (the newest is what it stands on now; the others are what it stood on before a record moved it).
 func (s *Scheduler) stoodOn(ctx context.Context, q store.Querier, a Acceptance) ([]string, error) {
-	stands, err := s.validStands(ctx, q, a)
-	if err != nil {
-		return nil, err
-	}
-	heads := make([]string, 0, len(stands)+1)
-	for _, st := range stands {
-		heads = append(heads, st.Head)
-	}
-	return append(heads, a.HeadSHA), nil
+	return acceptance.Chain(ctx, q, a.AcceptanceID, a.RelationshipID, a.ExecutionGeneration, a.HeadSHA)
 }
 
 // decodeRefreshProof reads back the proof and the resolved paths a record stores.

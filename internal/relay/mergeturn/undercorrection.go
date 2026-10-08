@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -29,9 +30,7 @@ import (
 // instead, and a node under correction would otherwise be carried on the head the correction is
 // repairing by the very route that omits the relationship. The acceptance's forge identity is the
 // mapping from that pull request back to the relationship (dag_acceptance_forge, written with the
-// acceptance), and it is read here so both routes meet the same gate. The forge slug is compared
-// case-insensitively, as every other repository identity comparison in the relay is: GitHub slugs are
-// case-insensitive, so a turn that spells the repository differently names the same pull request.
+// acceptance), and both routes meet the same gate.
 //
 // A turn that names neither is not exempt either: --relationship and --pr are both optional on
 // merge-turn-request, so the head alone is left, and a turn holding the accepted head of a node under
@@ -39,6 +38,11 @@ import (
 // records its own repository and head (dag_acceptances.repository, head_sha), so a turn whose head is
 // an accepted head of its repository resolves to that acceptance's relationship. A turn whose head no
 // active acceptance of that repository stands on is left to the lane's own rules.
+//
+// The repository of a turn is matched by SameRepository, the lane's one reading of a repository, against
+// every spelling the acceptance has (its repository and its forge repository): a local checkout, its .git
+// directory, a symlink to it and the forge slug of the same repository name one repository, and a slug and a
+// path never do. The head is matched by the one head definition (commitid.Same, in SQL crw_same_commit).
 //
 // Acceptance uniqueness is per node and output, not per repository and pull request or per repository
 // and head, so more than one accepted node can name the same pull request or the same commit. Every
@@ -67,58 +71,29 @@ func underCorrectionRefusal(ctx context.Context, q store.Querier, r store.MergeT
 		return nil, err
 	}
 	if present {
-		queries := []struct {
-			query string
-			args  []any
-		}{}
 		if r.PRNumber.Valid {
-			// the acceptance's recorded forge identity maps the pull request back to its relationship
-			queries = append(queries, struct {
-				query string
-				args  []any
-			}{"SELECT DISTINCT a.relationship_id FROM dag_acceptance_forge f JOIN dag_acceptances a ON a.acceptance_id = f.acceptance_id" +
-				" WHERE lower(f.forge_repository) = lower(?) AND f.pr_number = ? AND a.state = 'active'",
-				[]any{r.Repository, r.PRNumber.Int64}})
+			named, err := ucAcceptancesNamed(ctx, q, r.Repository,
+				"SELECT f.acceptance_id, a.relationship_id, a.repository FROM dag_acceptance_forge f"+
+					" JOIN dag_acceptances a ON a.acceptance_id = f.acceptance_id"+
+					" WHERE a.state = 'active' AND f.pr_number = ?", r.PRNumber.Int64)
+			if err != nil {
+				return nil, err
+			}
+			candidates = append(candidates, ucRelationshipsOf(named)...)
 		}
 		if held != "" {
 			// The head the turn holds belongs to the acceptance that recorded it. A recorded base refresh
 			// moves the head the acceptance stands on without changing the accepted head
 			// (dag_base_refreshes carries the refreshed head), so both are read.
-			//
-			// The repository an acceptance is matched by is its FORGE identity where one was recorded
-			// (dag_acceptance_forge), because an acceptance written before the forge rule keeps whatever
-			// target it was accepted against — a local checkout included — while only the forge row names
-			// the owner/name a merge turn is requested against. An acceptance with no forge row is
-			// matched by its own repository, so a store that predates the table is unchanged.
-			identity := "lower(?) IN (lower(a.repository))"
-			if hasForge, err := ucZoneTable(ctx, q, "dag_acceptance_forge"); err != nil {
-				return nil, err
-			} else if hasForge {
-				identity = "lower(?) IN (lower(a.repository), lower(COALESCE((SELECT g.forge_repository FROM dag_acceptance_forge g WHERE g.acceptance_id = a.acceptance_id), a.repository)))"
-			}
-			query := "SELECT DISTINCT a.relationship_id FROM dag_acceptances a" +
-				" WHERE a.state = 'active' AND " + identity + " AND crw_same_commit(a.head_sha, ?)"
-			args := []any{r.Repository, held}
-			if refreshed, err := ucZoneTable(ctx, q, "dag_base_refreshes"); err != nil {
-				return nil, err
-			} else if refreshed {
-				query = "SELECT DISTINCT a.relationship_id FROM dag_acceptances a" +
-					" WHERE a.state = 'active' AND " + identity + " AND crw_same_commit(a.head_sha, ?)" +
-					" UNION ALL SELECT a.relationship_id FROM dag_base_refreshes f JOIN dag_acceptances a ON a.acceptance_id = f.acceptance_id" +
-					" WHERE a.state = 'active' AND " + identity + " AND crw_same_commit(f.head_sha, ?)"
-				args = []any{r.Repository, held, r.Repository, held}
-			}
-			queries = append(queries, struct {
-				query string
-				args  []any
-			}{query, args})
-		}
-		for _, one := range queries {
-			found, err := ucRelationships(ctx, q, one.query, one.args...)
+			query, args, err := ucHeldQuery(ctx, q, "active", held)
 			if err != nil {
 				return nil, err
 			}
-			candidates = append(candidates, found...)
+			named, err := ucAcceptancesNamed(ctx, q, r.Repository, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			candidates = append(candidates, ucRelationshipsOf(named)...)
 		}
 	}
 	seen := map[string]bool{}
@@ -164,84 +139,75 @@ func underCorrectionRefusal(ctx context.Context, q store.Querier, r store.MergeT
 	return nil, nil
 }
 
-// ucRelationships are every relationship a resolution query names, in the query's order. The callers
-// read all of them rather than the newest: acceptance uniqueness is per node and output, so more than
-// one accepted node can name the same pull request or the same head, and the turn is refused when any
-// of them has a correction open.
-func ucRelationships(ctx context.Context, q store.Querier, query string, args ...any) ([]string, error) {
-	rows, err := q.QueryContext(ctx, query, args...)
-	if err != nil {
-		return nil, err
+// ucRelationshipsOf is the relationship of each named acceptance, in the order they were read.
+func ucRelationshipsOf(named []ucNamed) []string {
+	out := make([]string, 0, len(named))
+	for _, n := range named {
+		out = append(out, n.relationship)
 	}
-	defer rows.Close()
-	var out []string
-	for rows.Next() {
-		var relationship string
-		if err := rows.Scan(&relationship); err != nil {
-			return nil, err
-		}
-		out = append(out, relationship)
-	}
-	return out, rows.Err()
+	return out
 }
 
 // ucReplacedHead names a relationship whose acceptance recorded this head and was then replaced, so the
-// head is no longer the result the plan accepts for it. "" means no acceptance ever recorded the head.
+// head is no longer the result the plan accepts for it. "" means no acceptance ever recorded the head, or
+// the relationship that recorded it still holds it actively.
+//
 // It reads the acceptance whatever its state: a superseded or revoked one is exactly the case, because
-// the active-only lookups above cannot see it. A store that predates the forge table falls back to the
-// acceptance's own repository.
+// the active-only lookups above cannot see it. Only a superseded acceptance counts as a replacement: a
+// revoked acceptance is a parent's withdrawal, not a replacement. A head that the relationship still holds
+// through its active acceptance, as the accepted head or through a base refresh of it, is not replaced.
 func ucReplacedHead(ctx context.Context, q store.Querier, repository, head string) (string, error) {
 	if head == "" {
 		return "", nil
 	}
-	identity := "lower(?) IN (lower(a.repository))"
-	if hasForge, err := ucZoneTable(ctx, q, "dag_acceptance_forge"); err != nil {
+	query, args, err := ucHeldQuery(ctx, q, "superseded", head)
+	if err != nil {
 		return "", err
-	} else if hasForge {
-		identity = "lower(?) IN (lower(a.repository), lower(COALESCE((SELECT g.forge_repository FROM dag_acceptance_forge g WHERE g.acceptance_id = a.acceptance_id), a.repository)))"
 	}
-	// A head the acceptance once stood on through a recorded base refresh is covered too: the refresh
-	// rows outlive the acceptance they were recorded for, and a turn held for a refreshed head would
-	// otherwise resolve to nothing once dag-accept --supersedes replaced the acceptance.
-	query := "SELECT a.relationship_id FROM dag_acceptances a" +
-		" WHERE a.state = 'superseded' AND " + identity + " AND crw_same_commit(a.head_sha, ?)"
-	args := []any{repository, head}
-	if refreshed, err := ucZoneTable(ctx, q, "dag_base_refreshes"); err != nil {
+	named, err := ucAcceptancesNamed(ctx, q, repository, query, args...)
+	if err != nil {
 		return "", err
-	} else if refreshed {
-		query = "SELECT a.relationship_id FROM dag_acceptances a" +
-			" WHERE a.state = 'superseded' AND " + identity + " AND crw_same_commit(a.head_sha, ?)" +
-			" UNION ALL SELECT f.relationship_id FROM dag_base_refreshes f JOIN dag_acceptances a ON a.acceptance_id = f.acceptance_id" +
-			" WHERE a.state = 'superseded' AND " + identity + " AND crw_same_commit(f.head_sha, ?)"
-		args = []any{repository, head, repository, head}
 	}
-	// A head is replaced only when a correction was accepted over it (superseded): a revoked acceptance is a parent's withdrawal, not a replacement. A relationship that still holds the head actively, as its acceptance's head or through a base refresh of
-	// it, is not replaced by it: the head is that relationship's own current result.
-	held := "crw_same_commit(a2.head_sha, ?)"
-	args = append(args, head)
+	relationships := ucRelationshipsOf(named)
+	sort.Strings(relationships)
 	stood, err := ucValidStandAcceptances(ctx, q, head)
 	if err != nil {
 		return "", err
 	}
+	for _, relationship := range relationships {
+		held, err := ucRelationshipHoldsHead(ctx, q, relationship, head, stood)
+		if err != nil {
+			return "", err
+		}
+		if !held {
+			return relationship, nil
+		}
+	}
+	return "", nil
+}
+
+// ucRelationshipHoldsHead reports whether an active acceptance of the relationship stands on head: its accepted
+// head, or an acceptance a valid base refresh of the head belongs to (stood).
+func ucRelationshipHoldsHead(ctx context.Context, q store.Querier, relationship, head string, stood []string) (bool, error) {
+	held := "crw_same_commit(a2.head_sha, ?)"
+	args := []any{relationship, head}
 	if len(stood) > 0 {
 		held += " OR a2.acceptance_id IN (" + strings.TrimSuffix(strings.Repeat("?,", len(stood)), ",") + ")"
 		for _, id := range stood {
 			args = append(args, id)
 		}
 	}
-	query = "SELECT relationship_id FROM (" + query + ") WHERE relationship_id NOT IN (SELECT a2.relationship_id FROM dag_acceptances a2" +
-		" WHERE a2.state = 'active' AND (" + held + ")) ORDER BY relationship_id LIMIT 1"
-	var relationship string
-	if err := q.QueryRowContext(ctx, query, args...).Scan(&relationship); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return "", nil
-		}
-		return "", err
+	var one int
+	err := q.QueryRowContext(ctx, "SELECT 1 FROM dag_acceptances a2 WHERE a2.relationship_id = ? AND a2.state = 'active' AND ("+held+") LIMIT 1", args...).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
 	}
-	return relationship, nil
+	if err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
-// trainUnderCorrectionRefusal is the bundle member's refusal: the member's relationship has a correction
 // ucZoneTable reports whether the store holds the named DAG zone table. The zone arrives with the first
 // write open (D-01), so a store that predates it holds no acceptance and the lane's turn is left to the
 // lane's own rules; that is absence and not an error, the way acceptance.Stands reads dag_base_refreshes.
@@ -264,6 +230,23 @@ func trainUnderCorrectionRefusal(pr int64, relationship string, liveGeneration, 
 	return trainConflict("pull request %d's relationship %s is under correction: generation %d is open over the accepted result, which stands on generation %d, so the member is not a candidate a bundle may carry or land; accept the corrected result with dag-accept --supersedes, or withdraw the generation if it was never bound or sent", pr, pyvalue.StrRepr(relationship), liveGeneration, standGeneration)
 }
 
+// ucStandingHead is the head an active acceptance stands on now (the newest valid base refresh's, else its own),
+// and whether the member's head is one of the heads it has stood on. The chain is the one definition of the same
+// result (acceptance.Chain): a member carrying a head of the chain carries the result the plan still accepts for
+// its node, and a head outside it was replaced.
+func ucStandingHead(ctx context.Context, q store.Querier, relationship string, active acceptance.Active, memberHead string) (string, bool, error) {
+	chain, err := acceptance.Chain(ctx, q, active.AcceptanceID, relationship, active.Generation, active.HeadSHA)
+	if err != nil {
+		return "", false, err
+	}
+	for _, head := range chain {
+		if SameCommit(head, memberHead) {
+			return chain[0], true, nil
+		}
+	}
+	return chain[0], false, nil
+}
+
 // trainMemberCorrectionRefusal re-reads one member's correction state on the caller's querier and refuses
 // the member when the head the bundle carries is not a head the plan still accepts for it (CRW-906). Open
 // and verify read each member's acceptance before the transaction that writes, and a generation opened in
@@ -275,20 +258,21 @@ func trainUnderCorrectionRefusal(pr int64, relationship string, liveGeneration, 
 // is live can still carry a head another relationship is repairing. The gate resolves every matching
 // acceptance and asks each one, which is the same rule the single lane applies.
 func trainMemberCorrectionRefusal(ctx context.Context, q store.Querier, repository string, pr int64, relationship, memberHead string) error {
-	// A member whose own relationship still holds an active acceptance is also checked against the head
-	// the plan accepts for it: a correction that was opened AND accepted over inside the gap moves the
-	// acceptance to the corrected head, which makes the live and stand generations equal again, so the
-	// generation comparison alone would let the obsolete bundle through.
+	// A member whose own relationship still holds an active acceptance is also checked against the heads the plan
+	// accepts for it: a correction that was opened AND accepted over inside the gap moves the acceptance to the
+	// corrected head, which makes the live and stand generations equal again, so the generation comparison alone
+	// would let the obsolete bundle through. A base refresh of the same result is not a replacement: its head is in
+	// the acceptance's chain.
 	if active, found, err := acceptance.ActiveForRelationship(ctx, q, relationship); err != nil {
 		return trainUnreadable("the acceptance of relationship %s was not read: %v", pyvalue.StrRepr(relationship), err)
 	} else if found {
-		stand, err := acceptance.StandOf(ctx, q, active.AcceptanceID, relationship, active.Generation, active.EventID, active.RevisionHash, active.HeadSHA)
+		stand, inChain, err := ucStandingHead(ctx, q, relationship, active, memberHead)
 		if err != nil {
 			return trainUnreadable("what acceptance %s stands on was not read: %v", pyvalue.StrRepr(active.AcceptanceID), err)
 		}
-		if stand.Head != "" && !SameCommit(stand.Head, memberHead) {
+		if stand != "" && !inChain {
 			return trainConflict("pull request %d's relationship %s stands on %s and the bundle carries %s for it, so the member's accepted result moved while the bundle was being read: rebuild and verify the bundle on the current result",
-				pr, pyvalue.StrRepr(relationship), pyvalue.StrRepr(stand.Head), pyvalue.StrRepr(memberHead))
+				pr, pyvalue.StrRepr(relationship), pyvalue.StrRepr(stand), pyvalue.StrRepr(memberHead))
 		}
 	}
 	refusal, err := underCorrectionRefusal(ctx, q, store.MergeTurnsRow{
@@ -315,8 +299,9 @@ func trainMemberCorrectionRefusal(ctx context.Context, q store.Querier, reposito
 // the rest of the bundle. This is a different question. A correction of the member's accepted result is
 // accepted over by dag-accept --supersedes, which moves the acceptance to the corrected head; the old
 // bundle's tree still carries the defective head it was verified on, so landing it would land exactly the
-// result the correction repaired. Once the acceptance stands on a head the bundle does not carry, the
-// bundle no longer describes what the plan accepts for that member and must be rebuilt and verified.
+// result the correction repaired. Once the acceptance stands on a head outside its chain, the bundle no
+// longer describes what the plan accepts for that member and must be rebuilt and verified. A base refresh
+// moves the stand head inside the chain, so the bundle still holds the accepted result and may land.
 func trainExcludedMemberRefusal(ctx context.Context, q store.Querier, repository string, pr int64, relationship, memberHead string) error {
 	active, found, err := acceptance.ActiveForRelationship(ctx, q, relationship)
 	if err != nil {
@@ -327,13 +312,13 @@ func trainExcludedMemberRefusal(ctx context.Context, q store.Querier, repository
 		// the head the bundle still carries for this member is a different question, and it refuses the landing.
 		return trainMemberCorrectionRefusal(ctx, q, repository, pr, relationship, memberHead)
 	}
-	stand, err := acceptance.StandOf(ctx, q, active.AcceptanceID, relationship, active.Generation, active.EventID, active.RevisionHash, active.HeadSHA)
+	stand, inChain, err := ucStandingHead(ctx, q, relationship, active, memberHead)
 	if err != nil {
 		return trainUnreadable("what acceptance %s stands on was not read: %v", pyvalue.StrRepr(active.AcceptanceID), err)
 	}
-	if stand.Head != "" && !SameCommit(stand.Head, memberHead) {
+	if stand != "" && !inChain {
 		return trainConflict("pull request %d's relationship %s now stands on %s and the bundle carries %s for it, so this bundle no longer holds the result the plan accepts for that member: rebuild and verify the bundle on the current result before landing it",
-			pr, pyvalue.StrRepr(relationship), pyvalue.StrRepr(stand.Head), pyvalue.StrRepr(memberHead))
+			pr, pyvalue.StrRepr(relationship), pyvalue.StrRepr(stand), pyvalue.StrRepr(memberHead))
 	}
 	// the same question the surviving members get: the excluded member's code is still in the merge
 	// commit, so a correction open over the head the bundle carries for it refuses the landing, whoever
