@@ -9,10 +9,18 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 )
 
-// VerifiedMoveOnto is whether a batch with a passing verification moved integrationRef onto commit (CRW-965, parent decision
-// D6). The move names the ref and its new head, so any plan's batch counts.
+// VerifiedMoveOnto is whether the relay moved integrationRef onto commit after verifying it (CRW-965, parent decision D6). The
+// one source is the move itself: a ref_moved stage row names the new head, and the planned intent of its batch carries the
+// verified head and a verification digest for the same ref. A batch row is not consulted, so a move the reconciliation
+// recorded after a crash counts the same as a move the batch recorded.
 func (s *Scheduler) VerifiedMoveOnto(ctx context.Context, integrationRef, commit string) (bool, error) {
-	rows, err := s.Store.Q(ctx).QueryContext(ctx, "SELECT verification_json FROM dag_integration_batches WHERE integration_ref = ? AND new_head = ?", integrationRef, commit)
+	return s.plannedVerifiedMove(ctx, integrationRef, commit)
+}
+
+// plannedVerifiedMove is whether a move the reconciliation recorded (a ref_moved stage with no batch row) names commit, and its
+// planned intent carries the verified head and a verification digest for integrationRef (CRW-965, parent decision D6).
+func (s *Scheduler) plannedVerifiedMove(ctx context.Context, integrationRef, commit string) (bool, error) {
+	rows, err := s.Store.Q(ctx).QueryContext(ctx, "SELECT i.detail FROM dag_integration_stages m JOIN dag_integration_stages i ON i.batch_id = m.batch_id AND i.stage = 'intent' AND i.node_id = '' WHERE m.stage = 'ref_moved' AND m.detail = ?", commit)
 	if err != nil {
 		return false, err
 	}
@@ -22,8 +30,8 @@ func (s *Scheduler) VerifiedMoveOnto(ctx context.Context, integrationRef, commit
 		if err := rows.Scan(&raw); err != nil {
 			return false, err
 		}
-		var verification map[string]string
-		if json.Unmarshal([]byte(raw), &verification) == nil && verification["result"] == VerificationRecordResultPass {
+		var intent map[string]string
+		if json.Unmarshal([]byte(raw), &intent) == nil && intent["verified_head"] == commit && intent["integration_ref"] == integrationRef && intent["verification_digest"] != "" {
 			return true, nil
 		}
 	}
