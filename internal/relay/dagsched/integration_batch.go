@@ -286,7 +286,12 @@ func (s *Scheduler) readyIntegrationCandidates(ctx context.Context, in Integrati
 			byNode[c.NodeID] = c
 		}
 		pick = nil
+		picked := map[string]bool{}
 		for _, id := range in.Nodes {
+			if picked[id] {
+				continue
+			}
+			picked[id] = true
 			c, ok := byNode[id]
 			if !ok {
 				landed, err := s.alreadyIntegratedNode(ctx, in.Plan, id)
