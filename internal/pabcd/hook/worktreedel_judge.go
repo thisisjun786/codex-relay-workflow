@@ -36,11 +36,15 @@ func worktreeDelJudgeText(command, cwd string, id WorktreeIdentity, depth int) G
 	if err != nil {
 		return worktreeDelUnreadable(id)
 	}
+	var written *githubPostWrites
 	for _, e := range res.Execs {
 		var v GuardVerdict
 		if e.Kind == shellir.KindScriptFile {
 			// A script the same text rewrites is not the file the guard reads before the command runs.
-			if githubPostScriptWritten(res.Execs, e.Script.Value, e.Dir) {
+			if written == nil {
+				written = githubPostWritesOf(res.Execs)
+			}
+			if written.rewrites(e.Script.Value, e.Dir) {
 				return worktreeDelUnreadable(id)
 			}
 			v = worktreeDelJudgeScript(e, id, depth)

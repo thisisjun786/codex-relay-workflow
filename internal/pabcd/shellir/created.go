@@ -13,35 +13,48 @@ func (w *walker) createdByText(prog string, dir Dir) bool {
 	if want == "" {
 		return false
 	}
-	for _, e := range w.out {
-		for _, r := range e.Redirs {
-			switch r.Op {
-			case ">", ">>", ">|", "&>", "&>>":
-				if r.Target.Known && createdKey(r.Target.Value, e.Dir) == want {
-					return true
-				}
-			}
+	if w.created == nil {
+		w.created = map[string]bool{}
+	}
+	for ; w.createdUpTo < len(w.out); w.createdUpTo++ {
+		w.noteCreated(w.out[w.createdUpTo])
+	}
+	return w.created[want]
+}
+
+// noteCreated adds the files one record writes to the created set.
+func (w *walker) noteCreated(e Exec) {
+	add := func(v string, d Dir) {
+		if key := createdKey(v, d); key != "" {
+			w.created[key] = true
 		}
-		var operands []Word
-		for _, a := range e.Args {
-			if !a.Known || !strings.HasPrefix(a.Value, "-") || a.Value == "-" {
-				operands = append(operands, a)
-			}
-		}
-		switch e.Name {
-		case "ln", "cp", "mv", "install":
-			if n := len(operands); n >= 2 && operands[n-1].Known && createdKey(operands[n-1].Value, e.Dir) == want {
-				return true
-			}
-		case "tee":
-			for _, o := range operands {
-				if o.Known && createdKey(o.Value, e.Dir) == want {
-					return true
-				}
+	}
+	for _, r := range e.Redirs {
+		switch r.Op {
+		case ">", ">>", ">|", "&>", "&>>":
+			if r.Target.Known {
+				add(r.Target.Value, e.Dir)
 			}
 		}
 	}
-	return false
+	var operands []Word
+	for _, a := range e.Args {
+		if !a.Known || !strings.HasPrefix(a.Value, "-") || a.Value == "-" {
+			operands = append(operands, a)
+		}
+	}
+	switch e.Name {
+	case "ln", "cp", "mv", "install":
+		if n := len(operands); n >= 2 && operands[n-1].Known {
+			add(operands[n-1].Value, e.Dir)
+		}
+	case "tee":
+		for _, o := range operands {
+			if o.Known {
+				add(o.Value, e.Dir)
+			}
+		}
+	}
 }
 
 // createdKey is a path in a comparable form: relative names lose a leading ./ and keep their directory only when it is known.

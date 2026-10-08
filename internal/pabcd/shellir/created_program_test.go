@@ -1,6 +1,10 @@
 package shellir
 
-import "testing"
+import (
+	"strings"
+	"testing"
+	"time"
+)
 
 // TestProgramCreatedByTheText: a program word that the same text creates (ln -sf /bin/bash X, cp /bin/bash X, a redirect into X)
 // is not the program the reader sees by its name: the file the text wrote is what runs (CRW-765, 5th generation). The text is
@@ -31,5 +35,21 @@ func TestProgramCreatedByTheText(t *testing.T) {
 		if _, err := Analyze(cmd, "/work"); err != nil {
 			t.Errorf("%q: unreadable: %v", cmd, err)
 		}
+	}
+}
+
+// TestCreatedProgramCheckIsLinear: a text of thousands of redirections and commands is read in time proportional to its size.
+func TestCreatedProgramCheckIsLinear(t *testing.T) {
+	var b strings.Builder
+	for b.Len() < MaxCommandBytes-32 {
+		b.WriteString("echo a > f; ./g; ")
+	}
+	start := time.Now()
+	_, err := Analyze(b.String(), "/work")
+	if err != nil {
+		t.Fatalf("unreadable: %v", err)
+	}
+	if d := time.Since(start); d > 5*time.Second {
+		t.Errorf("reading %d bytes took %v", b.Len(), d)
 	}
 }

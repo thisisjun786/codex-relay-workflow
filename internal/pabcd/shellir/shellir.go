@@ -247,6 +247,10 @@ func unknownDir(d Dir) Dir { return Dir{Path: d.Path} }
 type walker struct {
 	out   []Exec
 	calls []string
+	// created is the set of files the records out[:createdUpTo] write (see createdByText); it grows as the walk appends records, so
+	// the check is linear in the text.
+	created     map[string]bool
+	createdUpTo int
 }
 
 func (w *walker) stmts(list []*syntax.Stmt, st *state, ctx Context) error {

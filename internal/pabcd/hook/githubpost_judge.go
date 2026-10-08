@@ -84,9 +84,16 @@ func githubPostJudgeExecs(execs []shellir.Exec, depth int) (githubPostSite, bool
 	// The closed rule: a post is judged only as one simple command. A post that sits behind a wrapper,
 	// a shell, a list, a pipe or a substitution is refused.
 	simple := len(execs) == 1 && githubPostPlainContext(execs[0].Ctx)
+	var written *githubPostWrites
+	writes := func() *githubPostWrites {
+		if written == nil {
+			written = githubPostWritesOf(execs)
+		}
+		return written
+	}
 	for _, e := range execs {
 		if e.Kind == shellir.KindScriptFile {
-			if githubPostScriptWritten(execs, e.Script.Value, e.Dir) {
+			if writes().rewrites(e.Script.Value, e.Dir) {
 				return githubPostSite{githubPostRuleUnread, githubPostWhereCommand}, true
 			}
 			if site, denied := githubPostJudgeScript(e, depth); denied {
@@ -96,7 +103,7 @@ func githubPostJudgeExecs(execs []shellir.Exec, depth int) (githubPostSite, bool
 		}
 		direct := githubPostDirectPath(e)
 		if direct && githubPostProgram(e.Name) != "gh" {
-			if githubPostScriptWritten(execs, e.Program.Value, e.Dir) {
+			if writes().rewrites(e.Program.Value, e.Dir) {
 				return githubPostSite{githubPostRuleUnread, githubPostWhereCommand}, true
 			}
 			if site, denied := githubPostJudgeDirect(e, depth); denied {
@@ -390,10 +397,41 @@ func githubPostReadScriptBytes(name, cwd string) ([]byte, bool) {
 	return b, true
 }
 
-// githubPostScriptWritten is whether the text itself writes the script file it runs (cp evil.sh post.sh && bash post.sh): the
-// file the guard reads before the command is then not the file that runs. A write to a destination the reader cannot name is
-// taken as a write to the script.
-func githubPostScriptWritten(execs []shellir.Exec, script string, dir shellir.Dir) bool {
+// githubPostWrites is the set of files the records of a text write, computed once per text: a text of thousands of script runs
+// must not scan its records for each of them.
+type githubPostWrites struct {
+	files   map[string]bool
+	unknown bool // some write has a destination the reader cannot name
+}
+
+// githubPostWritesOf collects the destinations of every record of a text other than a script file record.
+func githubPostWritesOf(execs []shellir.Exec) *githubPostWrites {
+	w := &githubPostWrites{files: map[string]bool{}}
+	for _, o := range execs {
+		if o.Kind == shellir.KindScriptFile {
+			continue
+		}
+		for _, d := range shellIRExecDests(o) {
+			switch {
+			case d == shellIRUnknownDest:
+				w.unknown = true
+			case d == "/dev/null":
+			case filepath.IsAbs(d):
+				w.files[filepath.Clean(d)] = true
+			case !o.Dir.Known:
+				w.unknown = true
+			default:
+				w.files[filepath.Clean(filepath.Join(o.Dir.Path, d))] = true
+			}
+		}
+	}
+	return w
+}
+
+// rewrites is whether the text itself writes the script file it runs (cp evil.sh post.sh && bash post.sh): the file the guard reads
+// before the command is then not the file that runs. A write to a destination the reader cannot name is taken as a write to the
+// script.
+func (w *githubPostWrites) rewrites(script string, dir shellir.Dir) bool {
 	if !dir.Known {
 		return false // the script is unreadable already
 	}
@@ -401,30 +439,7 @@ func githubPostScriptWritten(execs []shellir.Exec, script string, dir shellir.Di
 	if !filepath.IsAbs(target) {
 		target = filepath.Join(dir.Path, target)
 	}
-	target = filepath.Clean(target)
-	for _, o := range execs {
-		if o.Kind == shellir.KindScriptFile {
-			continue
-		}
-		for _, d := range shellIRExecDests(o) {
-			if d == shellIRUnknownDest {
-				return true
-			}
-			if d == "/dev/null" {
-				continue
-			}
-			if !filepath.IsAbs(d) {
-				if !o.Dir.Known {
-					return true
-				}
-				d = filepath.Join(o.Dir.Path, d)
-			}
-			if filepath.Clean(d) == target {
-				return true
-			}
-		}
-	}
-	return false
+	return w.unknown || w.files[filepath.Clean(target)]
 }
 
 // githubPostScriptPath is the path a shell opens for a script name in a directory: the name as written, joined to the directory
