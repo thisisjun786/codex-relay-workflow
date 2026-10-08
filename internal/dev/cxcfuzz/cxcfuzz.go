@@ -178,7 +178,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 
 // Campaign runs one target: it generates inputs, evaluates each on both sides, shrinks every
 // divergence, and writes the divergence files and summary.json under cfg.Out.
-func Campaign(cfg Config) (Summary, error) {
+func Campaign(cfg Config) (summary Summary, err error) {
 	seed := cfg.Seed
 	if seed == 0 {
 		now := cfg.Now
@@ -195,14 +195,14 @@ func Campaign(cfg Config) (Summary, error) {
 	if err != nil {
 		return Summary{}, err
 	}
-	defer func() { _ = pool.Close() }()
+	defer func() { err = joinCleanup(err, pool.Close()) }()
 	run := &campaign{cfg: cfg, pool: pool, rng: rand.New(rand.NewSource(seed))}
 	start := time.Now()
 	deadline := time.Time{}
 	if cfg.Seconds > 0 {
 		deadline = start.Add(time.Duration(cfg.Seconds) * time.Second)
 	}
-	summary := Summary{Target: cfg.Target.Name, Seed: seed, DevSHA: cfg.DevSHA}
+	summary = Summary{Target: cfg.Target.Name, Seed: seed, DevSHA: cfg.DevSHA}
 	written := map[string]bool{}
 	for n := 0; cfg.Cases <= 0 || n < cfg.Cases; n++ {
 		if !deadline.IsZero() && time.Now().After(deadline) {

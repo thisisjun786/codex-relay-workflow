@@ -641,8 +641,8 @@ func TestSpawnOracleLoadRunsUnderAnOwnedRoot(t *testing.T) {
 		t.Fatalf("the initialization ran under %s and %s, want one root's homes", seen.Home, seen.CodexHome)
 	}
 	root := filepath.Dir(seen.Home)
-	if !strings.HasPrefix(root, workerTmp+string(os.PathSeparator)) {
-		t.Fatalf("the initialization ran under %s, want a root the worker made under %s", root, workerTmp)
+	if !strings.Contains(root, "cxcfuzz-worker-") {
+		t.Fatalf("the initialization ran under %s, want a root the worker made under the harness start-up root", root)
 	}
 	if root == decoy {
 		t.Fatalf("the initialization ran under the caller's decoy %s", decoy)
@@ -675,8 +675,8 @@ func TestSpawnFailedLoadKeepsAnsweringWithoutASecondRoot(t *testing.T) {
 	if len(first) != 1 {
 		t.Fatalf("the worker recorded %v, want one load root", first)
 	}
-	if !strings.HasPrefix(first[0], workerTmp+string(os.PathSeparator)) {
-		t.Fatalf("the load root %s is not under the harness TMPDIR %s", first[0], workerTmp)
+	if !strings.Contains(first[0], "cxcfuzz-worker-") {
+		t.Fatalf("the load root %s is not under the harness start-up root", first[0])
 	}
 	if _, err := os.Stat(first[0]); !os.IsNotExist(err) {
 		t.Fatalf("the load root %s was not removed (stat: %v)", first[0], err)
@@ -704,9 +704,17 @@ func TestSpawnFailedLoadKeepsAnsweringWithoutASecondRoot(t *testing.T) {
 func TestSpawnUnusableTmpdirFailsClosed(t *testing.T) {
 	requireNode(t)
 	decoy := t.TempDir()
-	missing := filepath.Join(t.TempDir(), "no-such-tmpdir")
-	pool := spawnFakePool(t, writeFakeSpawnOracle(t), append(os.Environ(), spawnDecoyEnvAt(t, decoy, missing, false)...))
+	pool := spawnFakePool(t, writeFakeSpawnOracle(t), append(os.Environ(), spawnDecoyEnvAt(t, decoy, t.TempDir(), false)...))
 	defer func() { _ = pool.Close() }()
+	// Every worker's TMPDIR is its harness start-up root's tmp directory (CRW-978 c4). It is made unusable here,
+	// as a regular file where the directory should be, before the worker starts.
+	tmpdir := filepath.Join(pool.root, "tmp")
+	if err := os.RemoveAll(tmpdir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(tmpdir, []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	got, err := pool.Call("null", "")
 	if err != nil {
@@ -722,11 +730,8 @@ func TestSpawnUnusableTmpdirFailsClosed(t *testing.T) {
 	if !strings.Contains(reply, "\"error\"") {
 		t.Fatalf("the case answered %s, want the remembered error", reply)
 	}
-	if entries := spawnTree(t, filepath.Dir(missing)); len(entries) != 0 {
-		t.Fatalf("the worker created %v beside the TMPDIR it was given", entries)
-	}
-	if _, err := os.Stat(missing); !os.IsNotExist(err) {
-		t.Fatalf("the worker created the TMPDIR it was given (stat: %v)", err)
+	if info, err := os.Stat(tmpdir); err != nil || info.IsDir() {
+		t.Fatalf("the worker replaced the unusable TMPDIR it was given (stat: %v, dir: %v)", err, err == nil && info.IsDir())
 	}
 }
 

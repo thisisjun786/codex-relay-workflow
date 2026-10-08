@@ -40,6 +40,7 @@ func (e NoCommand) Unwrap() error { return e.Err }
 type Pool struct {
 	argv    []string
 	env     []string
+	root    string
 	timeout time.Duration
 	startup time.Duration
 	slots   chan *worker
@@ -82,7 +83,15 @@ func NewPool(oracle Oracle, workers int, timeout, startup time.Duration, env []s
 	if startup <= 0 {
 		startup = DefaultStartupTimeout
 	}
-	workerEnv := append([]string{}, env...)
+	root, err := os.MkdirTemp("", "cxcfuzz-worker-")
+	if err != nil {
+		return nil, err
+	}
+	if err := workerRoot(root); err != nil {
+		_ = os.RemoveAll(root)
+		return nil, err
+	}
+	workerEnv := workerEnvironment(env, root)
 	// A worker environment with no PATH entry gets the PATH the requirement check searched, so the
 	// worker finds what the check found (CRW-708 generation 5, d5). An explicit PATH= is kept as it is.
 	if !poolEnvNamesPath(env) {
@@ -91,7 +100,7 @@ func NewPool(oracle Oracle, workers int, timeout, startup time.Duration, env []s
 	if oracle.Root != "" {
 		workerEnv = append(workerEnv, "ORACLE_ROOT="+oracle.Root)
 	}
-	pool := &Pool{argv: argv, env: workerEnv, timeout: timeout, startup: startup, slots: make(chan *worker, workers)}
+	pool := &Pool{argv: argv, env: workerEnv, root: root, timeout: timeout, startup: startup, slots: make(chan *worker, workers)}
 	for i := 0; i < workers; i++ {
 		pool.slots <- nil
 	}
@@ -298,6 +307,9 @@ func (p *Pool) Close() error {
 		if w := <-p.slots; w != nil {
 			w.kill()
 		}
+	}
+	if err := os.RemoveAll(p.root); err != nil {
+		return fmt.Errorf("the worker start-up root %s was not removed: %w", p.root, err)
 	}
 	return nil
 }
