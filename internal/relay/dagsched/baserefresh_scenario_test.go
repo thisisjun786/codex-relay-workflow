@@ -156,8 +156,8 @@ func (s *refreshScenario) slotHeld() bool {
 }
 
 // The state CRW-430 is about, on the code without a record of the refresh: the head the parent accepted is contained in dev, the merged mark sits on generation 2, so the node reads is_ancestor true,
-// integrated false and mark_present false, holds its slot, and the hand-opened generation is refused by dag-correct because the result is current. Nothing here is a defect to fix by itself: the
-// relay does not integrate a node on a generation's mark until a base refresh is recorded.
+// integrated false and mark_present false, holds its slot, and dag-correct binds nothing from the hand-opened generation. Nothing here is a defect to fix by itself: the relay does not integrate a node
+// on a generation's mark until a base refresh is recorded.
 func TestWithoutARecordTheRefreshGenerationLeavesTheNodeUnintegrated(t *testing.T) {
 	t.Parallel()
 	s := newRefreshScenario(t)
@@ -174,8 +174,25 @@ func TestWithoutARecordTheRefreshGenerationLeavesTheNodeUnintegrated(t *testing.
 	if n := s.read("g").node("I"); n.State == StateIntegrated || n.Disposition == DispDone && n.Reason == DoneIntegrated {
 		t.Fatalf("I = %+v, want it not integrated", n)
 	}
+	// CRW-906 admits a generation opened by hand for a correction of a current accepted result, so this one is
+	// refused by what it is not: it was opened for a base refresh (its request id is not the one dag-correct
+	// --prepare prints) and no manifest is named for it. dag-base-refresh is what records it.
 	_, err = s.sched.RecordCorrection(context.Background(), "g", "I", "parent", "")
-	if refusalReason(err) != "disposition_conflict" || !strings.Contains(err.Error(), "is not stale") {
-		t.Fatalf("dag-correct = %v, want disposition_conflict naming that the result is not stale", err)
+	if refusalReason(err) != "disposition_conflict" || !strings.Contains(err.Error(), "--manifest-digest") {
+		t.Fatalf("dag-correct = %v, want disposition_conflict asking for the manifest", err)
+	}
+	roots, err := relationshipRoots(context.Background(), s.s.Q(context.Background()), s.rid)
+	if err != nil || len(roots) == 0 {
+		t.Fatalf("the artifact roots of the child: %v %v", roots, err)
+	}
+	prepared, err := s.sched.PrepareCorrection(context.Background(), "g", "I", "parent", ManifestInput{Base: &BaseRef{Repository: s.target(), Ref: "dev"}, RuleVersion: s.request(false).RuleVersion}, VerifyOptions{ArtifactRoots: roots})
+	if err != nil {
+		t.Fatalf("prepare I: %v", err)
+	}
+	if _, err := s.sched.RecordCorrection(context.Background(), "g", "I", "parent", prepared.ManifestDigest); refusalReason(err) != "disposition_conflict" || !strings.Contains(err.Error(), "not opened for this manifest") {
+		t.Fatalf("dag-correct with a prepared manifest = %v, want the generation not opened for it", err)
+	}
+	if n := s.count("SELECT COUNT(*) FROM dag_node_executions WHERE relationship_id = ? AND execution_generation = 2", s.rid); n != 0 {
+		t.Fatalf("dag-correct bound %d executions of the refresh generation", n)
 	}
 }

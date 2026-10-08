@@ -381,14 +381,29 @@ func dagReviewRegionOf(region dagReviewRegion) dagsched.Region {
 
 // dagReviewLandedNotObserved reports a lane that landed an acceptance whose node was never observed
 // integrated in the target that lane landed on, once the landing has stood still past the
-// threshold. The turn names the node through its relationship, which is the link the relay itself
-// keeps, and the observation is looked for in the turn's own repository and base ref: an
-// observation of another target does not resolve this landing, because a landing is observed in the
-// branch it landed on. Only whether a landing was observed at all is read here; whether the node is
-// integrated is the scheduler's reading (Progress), and this check does not judge it again.
+// threshold. One landing is read per target, a target being the three fields (node, repository,
+// base ref), so a lane whose turns landed a node on more than one target is reported for each of
+// them, and it is the target's earliest landing: several turns of one relationship on the same
+// target are one landing that stood still, not one per turn. The key is those three fields rather
+// than the display string repository#baseRef, because a base ref may contain '#' (git
+// check-ref-format accepts 'release#dev') and a local absolute repository path may too, so two
+// different targets can share one display string. The turn names the node through its
+// relationship, which is the link the relay itself keeps, and the observation is looked for in the
+// turn's own repository and base ref: an observation of another target does not resolve this
+// landing, because a landing is observed in the branch it landed on. Only whether a landing was
+// observed at all is read here; whether the node is integrated is the scheduler's reading
+// (Progress), and this check does not judge it again.
 func dagReviewLandedNotObserved(in *dagReviewInput, facts dagReviewFacts) {
 	issue := dagReviewIssueByNode(facts)
-	landed := map[string]string{}
+	type dagReviewTarget struct{ node, repository, baseRef string }
+	type dagReviewLanding struct {
+		acceptanceID string
+		instant      time.Time
+	}
+	// display is the target as a reader sees it. It is derived here, for the detail and the report
+	// order only: the key above keeps the fields apart so two targets that display alike stay two.
+	display := func(target dagReviewTarget) string { return target.repository + "#" + target.baseRef }
+	landed := map[dagReviewTarget]dagReviewLanding{}
 	for _, turn := range in.lanes {
 		if turn.state != "landed" || turn.relationshipID == "" {
 			continue
@@ -400,21 +415,40 @@ func dagReviewLandedNotObserved(in *dagReviewInput, facts dagReviewFacts) {
 		if !ok || in.now.Sub(instant) <= in.stall {
 			continue
 		}
-		target := turn.repository + "#" + turn.baseRef
 		for _, acceptance := range facts.acceptances {
 			if acceptance.relationshipID != turn.relationshipID {
 				continue
 			}
-			if dagReviewObservedIn(facts, acceptance.acceptanceID, turn.repository, turn.baseRef, instant) {
+			target := dagReviewTarget{node: acceptance.nodeID, repository: turn.repository, baseRef: turn.baseRef}
+			if previous, seen := landed[target]; seen && !instant.Before(previous.instant) {
 				continue
 			}
-			landed[acceptance.nodeID] = target
+			landed[target] = dagReviewLanding{acceptanceID: acceptance.acceptanceID, instant: instant}
 		}
 	}
-	for _, node := range dagReviewSortedKeys(landed) {
+	targets := make([]dagReviewTarget, 0, len(landed))
+	for target := range landed {
+		targets = append(targets, target)
+	}
+	// The report order is the node, then the display string, then the repository. The repository is
+	// the final key so two targets that display alike still have a fixed order between them.
+	sort.Slice(targets, func(i, j int) bool {
+		if targets[i].node != targets[j].node {
+			return targets[i].node < targets[j].node
+		}
+		if display(targets[i]) != display(targets[j]) {
+			return display(targets[i]) < display(targets[j])
+		}
+		return targets[i].repository < targets[j].repository
+	})
+	for _, target := range targets {
+		landing := landed[target]
+		if dagReviewObservedIn(facts, landing.acceptanceID, target.repository, target.baseRef, landing.instant) {
+			continue
+		}
 		in.review.Anomalies = append(in.review.Anomalies, DagReviewAnomaly{
-			Kind: dagReviewKindLandedNotObserved, Plan: facts.plan.planID, Node: node, Issue: issue[node],
-			Detail: fmt.Sprintf("the lane landed and no integration was observed in %s within %s", landed[node], in.stall),
+			Kind: dagReviewKindLandedNotObserved, Plan: facts.plan.planID, Node: target.node, Issue: issue[target.node],
+			Detail: fmt.Sprintf("the lane landed and no integration was observed in %s within %s", display(target), in.stall),
 		})
 	}
 }
