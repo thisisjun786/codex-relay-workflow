@@ -5,9 +5,9 @@ import (
 	"testing"
 )
 
-// CRW-965 review: a SQLite rowid table's TEXT PRIMARY KEY admits NULL, and the appended CHECK (<> '') lets it through.
-// The three appended key columns of the commit path are guarded by a BEFORE INSERT trigger, as the merge train's id is
-// (CRW-768 decision 9). A NULL key is refused by that trigger's own message, not by a generic constraint.
+// CRW-965 review: a SQLite rowid table's TEXT PRIMARY KEY admits NULL, and a CHECK on the empty string lets it through.
+// The three appended key columns of the commit path are guarded by a BEFORE INSERT trigger, as the merge train's id is.
+// A NULL key is refused by that trigger's own message, not by a generic constraint.
 func TestDAGZoneRefusesANullKeyOfTheCommitPath(t *testing.T) {
 	path := zonePreDAGStore(t)
 	zoneOpenClose(t, path)
