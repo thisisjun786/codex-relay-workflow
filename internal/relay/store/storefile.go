@@ -1,12 +1,14 @@
 package store
 
 import (
+	"fmt"
 	"os"
 	"sync"
 	"syscall"
 
 	"golang.org/x/sys/unix"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
 )
 
@@ -178,9 +180,10 @@ func clearStoreFileNonblock(fd int) {
 }
 
 // liveStoreRef is one open store's share of the identity table (CRW-967). registerLiveStore takes it
-// before the store connects, attach records the database file's identity once the file exists, and
-// release gives both back when the store closes. release does nothing after the first call, so a
-// store closed twice never lowers another store's count.
+// before the store connects and records the identity of the database file it names at that moment;
+// attach confirms, once the connection has opened the file, that the path still names that file;
+// and release gives both back when the store closes. release does nothing after the first call, so
+// a store closed twice never lowers another store's count.
 type liveStoreRef struct {
 	path     string
 	key      storeFileKey
@@ -189,30 +192,37 @@ type liveStoreRef struct {
 }
 
 // registerLiveStore records that this process is opening the database at resolved, under the
-// registry lock. It stats nothing and opens nothing, so it is safe before a connection is made.
+// registry lock: its path, and its identity when the path already names a regular file. The
+// identity is in the table from here on, so a reader that checks in the window before the connection
+// still sees the store (CRW-880). It opens nothing.
 func registerLiveStore(resolved string) *liveStoreRef {
 	heldStoreFiles.Lock()
 	defer heldStoreFiles.Unlock()
 	heldStoreFiles.livePaths[resolved]++
-	return &liveStoreRef{path: resolved}
-}
-
-// attach records the identity of the database file, under the registry lock, once the file exists
-// (after the connection succeeded). It does nothing on a nil or released reference, or when the
-// identity is already recorded.
-func (r *liveStoreRef) attach() {
-	if r == nil {
-		return
-	}
-	heldStoreFiles.Lock()
-	defer heldStoreFiles.Unlock()
-	if r.keyed || r.released {
-		return
-	}
-	if key, ok := storeFileKeyOf(r.path); ok {
-		r.key, r.keyed = key, true
+	ref := &liveStoreRef{path: resolved}
+	if key, ok := storeFileKeyOf(resolved); ok {
+		ref.key, ref.keyed = key, true
 		heldStoreFiles.live[key]++
 	}
+	return ref
+}
+
+// attach confirms, under the registry lock and once the connection has opened the file, that the
+// path still names the file this reference was taken on. A path that named nothing when the
+// reference was taken, or that names another file now (it was renamed or replaced while the
+// connection opened), cannot record the store's identity correctly, so the open is an error rather
+// than a store the table describes wrongly (CRW-967).
+func (r *liveStoreRef) attach() error {
+	heldStoreFiles.Lock()
+	defer heldStoreFiles.Unlock()
+	if r.released {
+		return fmt.Errorf("the database at %s was released before its store finished opening", pyvalue.StrRepr(r.path))
+	}
+	key, ok := storeFileKeyOf(r.path)
+	if !r.keyed || !ok || key != r.key {
+		return fmt.Errorf("the database at %s changed while the store opened, so its identity cannot be recorded", pyvalue.StrRepr(r.path))
+	}
+	return nil
 }
 
 // release gives back this store's references to its identity and its path. The first call does;
@@ -260,17 +270,22 @@ func holdsStoreFileIdentityLocked(device, inode uint64) bool {
 	return holdsLiveStoreIdentityLocked(device, inode)
 }
 
+// liveSidecarSuffixes are the SQLite sidecars of an open store's database path. The database itself is
+// recognised by its identity in the table and never by its name, so a new file at the old name of a
+// renamed database is not taken for the store (CRW-967).
+var liveSidecarSuffixes = []string{"-wal", "-shm", "-journal"}
+
 // holdsLiveStoreIdentityLocked reports whether (device, inode) is the database of an open store this
-// process has, or one of its sidecars as the kernel resolves the open store's path now. A handle the
-// registry keeps for the process's life (byKey) is not counted here: a store that has closed leaves
-// this table, whatever handles the process still keeps. The caller holds the lock.
+// process has, or one of an open store's sidecars as the kernel resolves the store's path now. A
+// handle the registry keeps for the process's life (byKey) is not counted here: a store that has
+// closed leaves this table, whatever handles the process still keeps. The caller holds the lock.
 func holdsLiveStoreIdentityLocked(device, inode uint64) bool {
 	key := storeFileKey{device, inode}
 	if _, ok := heldStoreFiles.live[key]; ok {
 		return true
 	}
 	for path := range heldStoreFiles.livePaths {
-		for _, suffix := range storeFileSuffixes {
+		for _, suffix := range liveSidecarSuffixes {
 			info, err := os.Stat(path + suffix)
 			if err != nil {
 				continue

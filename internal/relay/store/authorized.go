@@ -94,6 +94,25 @@ func refuseKnownStoreFile(path string) error {
 	return nil
 }
 
+// refuseKnownStoreTarget is refuseKnownStoreFile for a path that the open follows through symbolic
+// links: it stats the path, so a link to an open store is refused before anything is opened and a
+// repeated read of that link opens no descriptor (CRW-967). nil when the target is not known as a
+// store file or is not a regular file.
+func refuseKnownStoreTarget(path string) error {
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return nil
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return nil
+	}
+	if holdsStoreFileIdentity(uint64(stat.Dev), uint64(stat.Ino)) {
+		return refuseStoreFile(path)
+	}
+	return nil
+}
+
 // ReadIndependentFile reads the regular file at path, at most limit bytes, for an input that names an
 // artifact rather than holding it (delivery's --independent-review). It follows a symbolic link as
 // os.Open does, but a relay store file this process holds or has open is refused, before the open
@@ -107,7 +126,7 @@ func ReadIndependentFile(path string, limit int64) ([]byte, error) {
 // readIndependentFile is ReadIndependentFile with a seam: between runs with the descriptor open, after
 // the identity check and before the read, so a test can make a store open the file in that gap.
 func readIndependentFile(path string, limit int64, between func(file *os.File)) ([]byte, error) {
-	if refused := refuseKnownStoreFile(path); refused != nil {
+	if refused := refuseKnownStoreTarget(path); refused != nil {
 		return nil, refused
 	}
 	fd, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_CLOEXEC|syscall.O_NONBLOCK, 0)

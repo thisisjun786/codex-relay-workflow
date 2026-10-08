@@ -4,6 +4,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -14,12 +15,12 @@ import (
 )
 
 // CRW-967: the store-file identity table. A store holds a reference on its database file while it is
-// open (store.open, the read-only openers and the projection copy), and the artifact reader, the
-// authorized openers and the independent-review reader refuse a file that table holds. The tests
-// below use only temporary state and never touch the operational relay store.
+// open (store.open, the read-only openers and the projection copy). The artifact reader, the authorized
+// opener and the independent-review reader refuse a file the table recognises, and a descriptor a
+// close keeps stays open. The tests use only temporary state and never touch the operational store.
 
-// identityTableSize is the number of entries the identity table holds: one per open store identity
-// and one per open store path. A closed store must leave it as it found it.
+// identityTableSize is the number of entries the identity table holds: one per open store identity and
+// one per open store path. A closed store must leave it as it found it.
 func identityTableSize() int {
 	heldStoreFiles.Lock()
 	defer heldStoreFiles.Unlock()
@@ -52,16 +53,22 @@ func descriptorIsOpen(fd int) bool {
 	return err == nil
 }
 
-func TestStoreFileIdentity_repeatedOpenAndCloseLeavesTheTableAsItWas(t *testing.T) {
-	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "relay.sqlite3")
-	seed, err := fixtureOpen(ctx, path, "")
+// seedDatabase creates a store at path and closes it, so the file exists and no store holds it.
+func seedDatabase(t *testing.T, path string) {
+	t.Helper()
+	seed, err := fixtureOpen(context.Background(), path, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := seed.Close(); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestStoreFileIdentity_repeatedOpenAndCloseLeavesTheTableAsItWas(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "relay.sqlite3")
+	seedDatabase(t, path)
 	before := identityTableSize()
 	for i := 0; i < 25; i++ {
 		s, err := fixtureOpen(ctx, path, "")
@@ -80,13 +87,7 @@ func TestStoreFileIdentity_repeatedOpenAndCloseLeavesTheTableAsItWas(t *testing.
 func TestStoreFileIdentity_concurrentOpenAndCloseLeavesTheTableAsItWas(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "relay.sqlite3")
-	seed, err := fixtureOpen(ctx, path, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := seed.Close(); err != nil {
-		t.Fatal(err)
-	}
+	seedDatabase(t, path)
 	before := identityTableSize()
 	var wg sync.WaitGroup
 	errs := make(chan error, 24)
@@ -121,13 +122,7 @@ func TestStoreFileIdentity_twoStoresOnOneFileKeepTheOtherRecognised(t *testing.T
 	ctx := context.Background()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "relay.sqlite3")
-	seed, err := fixtureOpen(ctx, path, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := seed.Close(); err != nil {
-		t.Fatal(err)
-	}
+	seedDatabase(t, path)
 	first, err := fixtureOpen(ctx, path, "")
 	if err != nil {
 		t.Fatal(err)
@@ -175,6 +170,25 @@ func TestStoreFileIdentity_renamedDatabaseIsRecognisedUnderItsNewName(t *testing
 	judgeStoreFileLockAfter(t, os.Getpid(), inode, before, "the renamed database was read as an artifact")
 }
 
+// TestStoreFileIdentity_aNewFileAtTheOldNameOfARenamedDatabaseIsNotRefused: the database is recognised
+// by its identity, so an unrelated file that takes the name it had is an ordinary artifact.
+func TestStoreFileIdentity_aNewFileAtTheOldNameOfARenamedDatabaseIsNotRefused(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "relay.sqlite3")
+	s := openRaceStore(t, path)
+	defer func() { _ = s.Close() }()
+	if err := os.Rename(path, filepath.Join(dir, "moved.sqlite3")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("unrelated artifact"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := HashArtifact(ctx, path, []string{dir}, false); err != nil {
+		t.Fatalf("an unrelated file at the old name of a renamed database was refused: %v", err)
+	}
+}
+
 func TestStoreFileIdentity_inodeOfAClosedStoreIsNotRefused(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
@@ -193,29 +207,31 @@ func TestStoreFileIdentity_inodeOfAClosedStoreIsNotRefused(t *testing.T) {
 	if tableHolds {
 		t.Fatalf("the closed store's identity (inode %d) is still in the identity table after its database was removed", key.inode)
 	}
-	other := filepath.Join(dir, "unrelated.txt")
-	if err := os.WriteFile(other, []byte("unrelated artifact"), 0o600); err != nil {
-		t.Fatal(err)
+	// The freed inode is reused by the next new file on most filesystems. Each new file is read through
+	// the public reader; the one that takes the freed inode must not be refused.
+	reused := false
+	for i := 0; i < 256 && !reused; i++ {
+		candidate := filepath.Join(dir, fmt.Sprintf("unrelated-%03d.txt", i))
+		if err := os.WriteFile(candidate, []byte("unrelated artifact"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if identityKeyOf(t, candidate).inode != key.inode {
+			continue
+		}
+		reused = true
+		if _, _, _, err := HashArtifact(ctx, candidate, []string{dir}, false); err != nil {
+			t.Fatalf("an unrelated artifact on the freed inode %d was refused: %v", key.inode, err)
+		}
 	}
-	if identityKeyOf(t, other).inode != key.inode {
-		t.Logf("the kernel did not reuse inode %d for the unrelated artifact; the table check above is the assertion", key.inode)
-		return
-	}
-	if _, _, _, err := HashArtifact(ctx, other, []string{dir}, false); err != nil {
-		t.Fatalf("an unrelated artifact on a reused inode was refused: %v", err)
+	if !reused {
+		t.Skipf("the filesystem did not reuse inode %d for 256 new files; the table check above is the assertion that held", key.inode)
 	}
 }
 
 func TestStoreFileIdentity_readOnlyOpenersFillAndReleaseTheTable(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "relay.sqlite3")
-	seed, err := fixtureOpen(ctx, path, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := seed.Close(); err != nil {
-		t.Fatal(err)
-	}
+	seedDatabase(t, path)
 	before := identityTableSize()
 
 	ro, err := OpenReadOnlyStore(ctx, path)
@@ -285,8 +301,6 @@ func TestStoreFileIdentity_readIndependentFileRefusesAKnownStoreFile(t *testing.
 	_, err := ReadIndependentFile(path, 1<<20)
 	requireReason(t, err, ReasonScopeEscape)
 
-	// A symbolic link to the store file is followed by the open, so only the opened descriptor's
-	// identity shows it: the refusal and the descriptor's handover must still hold.
 	link := filepath.Join(dir, "review-link.json")
 	if err := os.Symlink(path, link); err != nil {
 		t.Fatal(err)
@@ -296,85 +310,158 @@ func TestStoreFileIdentity_readIndependentFileRefusesAKnownStoreFile(t *testing.
 	judgeStoreFileLockAfter(t, os.Getpid(), inode, before, "the refused independent review reads")
 }
 
-func TestStoreFileIdentity_authorizedHandleKeepsAStoreFileOpenedAfterIt(t *testing.T) {
+// TestStoreFileIdentity_repeatedReadsOfALinkToAnOpenStoreOpenNoDescriptor: a link to an open store is
+// refused before it is opened, so asking again opens no descriptor and keeps none.
+func TestStoreFileIdentity_repeatedReadsOfALinkToAnOpenStoreOpenNoDescriptor(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "plain.sqlite3")
-	if err := os.WriteFile(path, []byte("not yet a store"), 0o600); err != nil {
+	path := filepath.Join(dir, "relay.sqlite3")
+	s := openRaceStore(t, path)
+	defer func() { _ = s.Close() }()
+	link := filepath.Join(dir, "review-link.json")
+	if err := os.Symlink(path, link); err != nil {
 		t.Fatal(err)
 	}
+	before := openDescriptorsUnder(t, dir)
+	for i := 0; i < 50; i++ {
+		_, err := ReadIndependentFile(link, 1<<20)
+		requireReason(t, err, ReasonScopeEscape)
+	}
+	if after := openDescriptorsUnder(t, dir); after != before {
+		t.Fatalf("50 refused reads of a link to an open store changed this process's descriptors under the test root from %d to %d", before, after)
+	}
+}
+
+// TestStoreFileIdentity_attachRefusesAPathRenamedAfterItsReference: the identity is taken when the
+// reference is taken, and a path that names another file (or nothing) when the connection opened it
+// cannot record the store's identity, so the open is an error.
+func TestStoreFileIdentity_attachRefusesAPathRenamedAfterItsReference(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "relay.sqlite3")
+	if err := os.WriteFile(path, []byte("database"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	live := registerLiveStore(path)
+	defer live.release()
+	if err := os.Rename(path, filepath.Join(dir, "moved.sqlite3")); err != nil {
+		t.Fatal(err)
+	}
+	if err := live.attach(); err == nil {
+		t.Fatal("attach accepted a path that no longer names the file its reference was taken on")
+	}
+}
+
+func TestStoreFileIdentity_attachRefusesAPathThatNamesNothing(t *testing.T) {
+	live := registerLiveStore(filepath.Join(t.TempDir(), "absent.sqlite3"))
+	defer live.release()
+	if err := live.attach(); err == nil {
+		t.Fatal("attach accepted a path that names no file")
+	}
+}
+
+// TestStoreFileIdentity_authorizedHandleKeepsADescriptorAStoreOpenedAfterIt: the handle is taken on a
+// file no store holds; a store opens the file afterwards; closing the handle keeps the descriptor and
+// the store still answers.
+func TestStoreFileIdentity_authorizedHandleKeepsADescriptorAStoreOpenedAfterIt(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "relay.sqlite3")
+	seedDatabase(t, path)
 	h, err := OpenAuthorized(path, []string{dir}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	fd := int(h.File.Fd())
-	live := registerLiveStore(path)
-	live.attach()
-	defer live.release()
-
+	ro, err := OpenReadOnlyStore(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ro.Close() }()
 	if err := h.Close(); err != nil {
 		t.Fatal(err)
 	}
 	if !descriptorIsOpen(fd) {
 		t.Fatal("closing an artifact handle closed a descriptor of a store file opened after it was taken")
 	}
+	var one int
+	if err := ro.DB.QueryRowContext(ctx, "SELECT count(*) FROM store_challenge").Scan(&one); err != nil {
+		t.Fatalf("the store that opened the file stopped answering: %v", err)
+	}
 }
 
 // TestStoreFileIdentity_aStoreOpenedDuringTheReadIsRecognisedBeforeTheClose is the interleaving test
-// for the gap between the identity check and the close: a store takes its reference on the file
-// after the read's checks and before the read closes its descriptor. The close must keep the
-// descriptor, decided under the registry lock.
+// for the gap between the identity check and the close: a store takes its reference on the database
+// between the read's checks and the close of its descriptor. The close must keep the descriptor.
 func TestStoreFileIdentity_aStoreOpenedDuringTheReadIsRecognisedBeforeTheClose(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
-	path := filepath.Join(dir, "artifact.bin")
-	if err := os.WriteFile(path, []byte("artifact bytes"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	path := filepath.Join(dir, "relay.sqlite3")
+	seedDatabase(t, path)
 	var fdSeen = -1
-	var live *liveStoreRef
+	var opened *Store
+	var openErr error
 	saved := betweenPasses
 	betweenPasses = func(fd int, _ *statSnapshot) {
 		fdSeen = fd
-		live = registerLiveStore(path)
-		live.attach()
+		opened, openErr = OpenReadOnlyStore(ctx, path)
 	}
-	t.Cleanup(func() { betweenPasses = saved })
+	t.Cleanup(func() {
+		betweenPasses = saved
+		if opened != nil {
+			_ = opened.Close()
+		}
+	})
 	_, _, _, err := HashArtifact(ctx, path, []string{dir}, false)
-	if err != nil {
-		t.Fatalf("the read of an ordinary artifact failed: %v", err)
+	if openErr != nil {
+		t.Fatalf("the store opened during the read failed: %v", openErr)
 	}
-	defer live.release()
 	if fdSeen < 0 {
 		t.Fatal("the read did not reach the seam between its passes")
 	}
+	if err != nil {
+		t.Fatalf("the read of the database failed: %v", err)
+	}
 	if !descriptorIsOpen(fdSeen) {
-		t.Fatal("the read closed a descriptor of a file a store took a reference on during the read")
+		t.Fatal("the read closed a descriptor of a database a store opened during the read")
+	}
+	var one int
+	if err := opened.DB.QueryRowContext(ctx, "SELECT count(*) FROM store_challenge").Scan(&one); err != nil {
+		t.Fatalf("the store opened during the read stopped answering: %v", err)
 	}
 }
 
 // TestStoreFileIdentity_independentReadKeepsADescriptorOpenedDuringTheRead is the same gap for
-// delivery's independent-review reader: the store takes the reference between the check and the close.
+// delivery's independent-review reader.
 func TestStoreFileIdentity_independentReadKeepsADescriptorOpenedDuringTheRead(t *testing.T) {
+	ctx := context.Background()
 	dir := t.TempDir()
-	path := filepath.Join(dir, "review.json")
-	if err := os.WriteFile(path, []byte(`{"verdict":"ok"}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	path := filepath.Join(dir, "relay.sqlite3")
+	seedDatabase(t, path)
 	var seen *os.File
-	var live *liveStoreRef
+	var opened *Store
+	var openErr error
 	raw, err := readIndependentFile(path, 1<<20, func(file *os.File) {
 		seen = file
-		live = registerLiveStore(path)
-		live.attach()
+		opened, openErr = OpenReadOnlyStore(ctx, path)
 	})
-	defer live.release()
+	t.Cleanup(func() {
+		if opened != nil {
+			_ = opened.Close()
+		}
+	})
+	if openErr != nil {
+		t.Fatalf("the store opened during the read failed: %v", openErr)
+	}
 	if err != nil {
 		t.Fatalf("the independent review read failed: %v", err)
 	}
-	if string(raw) != `{"verdict":"ok"}` {
-		t.Fatalf("the read returned %q", raw)
+	if len(raw) == 0 {
+		t.Fatal("the read returned no bytes")
 	}
 	if seen == nil || !descriptorIsOpen(int(seen.Fd())) {
-		t.Fatal("the read closed a descriptor of a file a store took a reference on during the read")
+		t.Fatal("the read closed a descriptor of a database a store opened during the read")
+	}
+	var one int
+	if err := opened.DB.QueryRowContext(ctx, "SELECT count(*) FROM store_challenge").Scan(&one); err != nil {
+		t.Fatalf("the store opened during the read stopped answering: %v", err)
 	}
 }

@@ -211,7 +211,9 @@ func open(ctx context.Context, path, socketPath string, options OpenOptions) (_ 
 	if err = db.PingContext(ctx); err != nil {
 		return nil, fmt.Errorf("connect database: %w", err)
 	}
-	live.attach()
+	if err = live.attach(); err != nil {
+		return nil, err
+	}
 	var gate *os.File
 	if options.verify != nil {
 		if gate, err = options.verify(ctx, db); err != nil {
