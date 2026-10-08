@@ -29,8 +29,18 @@ import { dirname, join } from "node:path";
 
 // The harness always sets ORACLE_ROOT to the target's Oracle.Root; no host path is committed here.
 const oracleRoot = process.env.ORACLE_ROOT;
-if (!oracleRoot) throw new Error("ORACLE_ROOT is not set");
-const { readGoalplanDetailed, writeGoalplan, goalplanDir, GOALPLAN_FILE } = await import(oracleRoot + "/pabcd-state/dist/goalplan.js");
+// The import runs once, here, before the listener exists, so a worker's first reply proves the oracle
+// is loaded (the pool's readiness probe depends on it). A load that fails is remembered rather than
+// thrown: the worker still answers the start-up handshake, which touches no oracle function, and answers
+// every case with the remembered error (CRW-932; the spawn shim loads the same way).
+let readGoalplanDetailed, writeGoalplan, goalplanDir, GOALPLAN_FILE;
+let oracleLoadError = null;
+try {
+  if (!oracleRoot) throw new Error("ORACLE_ROOT is not set");
+  ({ readGoalplanDetailed, writeGoalplan, goalplanDir, GOALPLAN_FILE } = await import(oracleRoot + "/pabcd-state/dist/goalplan.js"));
+} catch (error) {
+  oracleLoadError = error;
+}
 
 // goalplanPath is module-private in the oracle, so the shim rebuilds it from the exported
 // goalplanDir and GOALPLAN_FILE.
@@ -149,6 +159,7 @@ function run(request) {
   if (input === null || typeof input !== "object" || Array.isArray(input)) {
     return null;
   }
+  if (oracleLoadError) throw oracleLoadError;
   const root = typeof request.root === "string" ? request.root : "";
   if (root !== "") {
     process.env.HOME = root + "/home";
