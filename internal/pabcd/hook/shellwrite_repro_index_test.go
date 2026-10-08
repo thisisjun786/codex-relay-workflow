@@ -50,8 +50,8 @@ func TestReproductionIndexHasRows(t *testing.T) {
 			if !rows[l.row] {
 				t.Errorf("indexed reproduction %s has no row", l.row)
 			}
-			if l.reason != "" {
-				t.Errorf("row line %s carries a reason: %q", l.row, l.reason)
+			if l.reason != "-" {
+				t.Errorf("row line %s carries a reason (%q); a row line has - in the reason field", l.row, l.reason)
 			}
 			owner[l.row]++
 		case "same":

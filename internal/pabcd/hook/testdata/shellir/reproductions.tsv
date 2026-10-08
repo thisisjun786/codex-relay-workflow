@@ -1,274 +1,274 @@
-# source	text (the reproduction, shortened)	row id (shellwrite_repro_test.go rows)	kind (row: the reproduction is this row; same: the same command as that row; prose: no command, the row is the nearest command shape or - when none)	reason (empty for a row; "same ..." or "prose: ..." otherwise)
-linear-issue-CRW-1012.json	python3 -c "print(\"f'}'\")"	CRW-1012-01	row	
-linear-issue-CRW-1012.json	python3 -c "print(f'{len(\"abc\")}')"	CRW-1012-02	row	
-linear-issue-CRW-1014.json	python3 -c 'open("<m>/a","w")'	CRW-1014-01	row	
-linear-issue-CRW-1014.json	python3 -c 'a='"'"'q'"'"'; open("<m>/a","w")'	CRW-1014-02	row	
-linear-issue-CRW-1014.json	python3 -c 'open("<m>/a",'""'"w")'	CRW-1014-03	row	
-linear-issue-CRW-1014.json	sh -c 'a='"'"'q'"'"'; echo hi > <m>/a'	CRW-1014-04	row	
-linear-issue-CRW-1014.json	echo hi > '<m>'/a	CRW-1014-05	row	
-linear-issue-CRW-1014.json	python3 -c $'open("<m>/a","w")'	CRW-1014-06	row	
-linear-issue-CRW-765.json	python3 - <<'EOF'	CRW-765-01	row	
-linear-issue-CRW-765.json	python3 - <<'EOF'	CRW-765-fragment	row	
-linear-issue-CRW-765.json	python3 - <<'EOF'\nopen('<m>/a','w')\nEOF	CRW-765-02	row	
-linear-issue-CRW-765.json	python3 <<EOF\nopen(file='<m>/a', mode='w')\nEOF	CRW-765-03	row	
-linear-issue-CRW-765.json	node <<'EOF'\nrequire('fs').writeFileSync('<m>/a','x')\nEOF	CRW-765-04	row	
-linear-issue-CRW-765.json	bash <<'EOF'\necho x > <m>/a\nEOF	CRW-765-05	row	
-linear-issue-CRW-765.json	python3 <<EOF\nopen('$P','w')\nEOF	CRW-765-06	row	
-linear-issue-CRW-765.json	cat > note.md <<'EOF'\n<m>/a 경로를 인용한 글\nEOF	CRW-765-07	row	
-linear-issue-CRW-765.json	python3 script.py <<'EOF'	CRW-765-08	row	
-linear-issue-CRW-765.json	go test -count=1 ./internal/pabcd/hook ./cmd/crw	CRW-765-09	row	
-linear-issue-CRW-765.json	python3 <<'PY' # note	CRW-765-10	row	
-linear-issue-CRW-765.json	bash 0<<'EOF'	CRW-765-11	row	
-linear-issue-CRW-765.json	bash /dev/fd/3 3<<'EOF'	CRW-765-12	row	
-linear-issue-CRW-765.json	cat > note.md <<'EOF'	CRW-765-13	row	
-linear-issue-CRW-765.json	python3 script.py <<'EOF' 2>/dev/null	CRW-765-14	row	
-linear-issue-CRW-765.json	bash -n <<'EOF'	CRW-765-15	row	
-linear-issue-CRW-765.json	cat <<'EOF' > x.md	CRW-765-16	row	
-linear-issue-CRW-765.json	cat <<\EOF	CRW-765-17	row	
-linear-issue-CRW-765.json	bash <<'EOF' \	CRW-765-18	row	
-linear-issue-CRW-765.json	cat <<'A'; python3 <<'B'	CRW-765-19	row	
-linear-issue-CRW-765.json	node script.js <<'EOF'	CRW-765-20	row	
-linear-issue-CRW-765.json	cat > /tmp/x.py <<'EOF'	CRW-765-21	row	
-linear-issue-CRW-765.json	python3 /tmp/x.py	CRW-765-22	row	
-linear-issue-CRW-765.json	eval bash <<'EOF'	CRW-765-23	row	
-linear-issue-CRW-765.json	cat > x.py <<'EOF'	CRW-765-24	row	
-linear-issue-CRW-765.json	python3 x.py	CRW-765-25	row	
-linear-issue-CRW-765.json	git commit -F - <<'EOF'	CRW-765-26	row	
-linear-issue-CRW-765.json	sort <<'EOF'	CRW-765-27	row	
-linear-issue-CRW-765.json	bash -c 'bash' <<'EOF'	CRW-765-28	row	
-linear-issue-CRW-765.json	sh -c 'exec sh' <<'EOF'	CRW-765-29	row	
-linear-issue-CRW-765.json	python3 -m code <<'EOF'	CRW-765-30	row	
-linear-issue-CRW-765.json	node -e	CRW-765-31	row	
-linear-issue-CRW-765.json	perl <<'EOF'	CRW-765-32	row	
-linear-issue-CRW-765.json	ruby <<'EOF'	CRW-765-33	row	
-linear-issue-CRW-765.json	sed -nf - <<'EOF'	CRW-765-34	row	
-linear-issue-CRW-765.json	sed -Ef - x.txt <<'EOF'	CRW-765-35	row	
-linear-issue-CRW-765.json	make -f - <<'EOF'	CRW-765-36	row	
-linear-issue-CRW-765.json	git commit -F -	CRW-765-37	row	
-linear-issue-CRW-765.json	sed -nf- <<'EOF'	CRW-765-38	row	
-linear-issue-CRW-765.json	sed 's/a/b/' <<'EOF'	CRW-765-39	row	
-linear-issue-CRW-765.json	sed -n p <<'EOF'	CRW-765-40	row	
-linear-issue-CRW-765.json	cd /tmp && mytool <<'EOF'	CRW-765-41	row	
-linear-issue-CRW-765.json	sed -\f - <<'EOF'	CRW-765-42	row	
-linear-issue-CRW-765.json	sed -n$F -	CRW-765-43	row	
-linear-issue-CRW-765.json	sed -n$(printf f) -	CRW-765-44	row	
-linear-issue-CRW-765.json	cat <<'EOF' | perl	CRW-765-45	row	
-linear-issue-CRW-765.json	echo start; perl <<'EOF'	CRW-765-46	row	
-linear-issue-CRW-765.json	sed -n$(printf f) - <<'EOF'	CRW-765-47	row	
-linear-issue-CRW-765.json	sed --fil - <<'EOF'	CRW-765-48	row	
-linear-issue-CRW-765.json	sed --fi=- <<'EOF'	CRW-765-49	row	
-linear-issue-CRW-765.json	cd x; python3 - <<'EOF'	CRW-765-50	row	
-linear-issue-CRW-765.json	git add -A && git commit -F - <<'EOF'	CRW-765-51	row	
-linear-issue-CRW-765.json	sed -n'p' <<'EOF'	CRW-765-52	row	
-linear-issue-CRW-765.json	sed -n 'p' <<'EOF'	CRW-765-52b	row	
-linear-issue-CRW-765.json	cat <<'EOF' | jq .	CRW-765-53	row	
-linear-issue-CRW-765.json	python3 -c "...exec(code)"	CRW-765-54	row	
-linear-issue-CRW-765.json	cat > note.md <<'DOC'	CRW-765-55	row	
-linear-issue-CRW-765.json	cat <<<hello	CRW-765-57	row	
-linear-issue-CRW-765.json	jq . <<<'{}'	CRW-765-58	row	
-linear-issue-CRW-765.json	cat <<'DATA' # <<'HIDDEN'	CRW-765-59	row	
-linear-issue-CRW-765.json	node <<EOF	CRW-765-60	row	
-linear-issue-CRW-765.json	cat > note.md <<'EOF'	CRW-765-61	row	
-linear-issue-CRW-986.json	$'hash' -p /usr/bin/python3 cat	CRW-986-01	row	
-linear-issue-CRW-986.json	cat <<$'D\c?'	CRW-986-02	row	
-linear-issue-CRW-986.json	cat > note.md <<'EOF'	CRW-986-03	row	
-linear-issue-CRW-986.json	echo env -S hello	CRW-986-04	row	
-linear-issue-CRW-986.json	cat > note.md <<'EOF'	CRW-986-05	row	
-linear-issue-CRW-851.json	exec(src)	CRW-851-01	row	
-linear-issue-CRW-851.json	python3 -c 'import builtins; builtins .exec("""open(file="<m>/a",mode=	CRW-851-02	row	
-linear-issue-CRW-851.json	python3 -c 'import sys; pad="\""; src=sys.argv[1]; exec(src)' 'open(fi	CRW-851-03	row	
-linear-issue-CRW-851.json	python3 -c 'exec(br"""# coding note; coding: unicode_escape (줄바꿈) \x6f	CRW-851-04	row	
-linear-issue-CRW-851.json	python3 -c 'exec("print("hi")")'\	CRW-851-05	row	
-linear-issue-CRW-851.json	python3 -c 'exec("x = \"a\"")'	CRW-851-05b	row	
-linear-issue-CRW-851.json	python3 - <<< "open('<m>/a','w')"	CRW-851-06	row	
-linear-issue-CRW-851.json	printf '%s' "open('<m>/a','w')" | python3 -	CRW-851-07	row	
-linear-issue-CRW-851.json	echo "open('{MEMORY}/a','w')" | python3 -	CRW-851-07b	row	
-linear-issue-CRW-851.json	curl -s x | python3 -	CRW-851-08	row	
-linear-issue-CRW-851.json	echo hi | python3 script.py	CRW-851-09	row	
-linear-issue-CRW-851.json	printf hi | cat	CRW-851-10	row	
-linear-issue-CRW-851.json	printf '…' | ruby	CRW-851-11	row	
-linear-issue-CRW-851.json	perl script.pl <<'EOF'	CRW-851-12	row	
-linear-issue-CRW-851.json	python3 -c 'import builtins; builtins .exec("""open(file="{MEMORY}/a",m…	CRW-851-13	row	
-linear-issue-CRW-851.json	python3 -c 'import builtins; __builtins__ .eval("""open(file="{MEMORY}/…	CRW-851-14	row	
-linear-issue-CRW-851.json	python3 -c 'exec(br"""# plain	CRW-851-15	row	
-linear-issue-CRW-851.json	python3 -c "import sys; pad='\"'; src=sys.argv[1]; exec(src)" 'open(fil…	CRW-851-16	row	
-linear-issue-CRW-941.json	sed -e 'w <m>/a' x.txt	CRW-941-01	row	
-linear-issue-CRW-941.json	sed -n 'w <m>/a' x.txt	CRW-941-02	row	
-linear-issue-CRW-941.json	sed --expression='w <m>/a' <<'EOF'	CRW-941-03	row	
-linear-issue-CRW-941.json	sort -o <m>/a <<'EOF'	CRW-941-04	row	
-linear-issue-CRW-941.json	sort -o FILE	CRW-941-05	row	
-linear-issue-CRW-941.json	sed 's/a/b/w <m>/a' x.txt	CRW-941-06	row	
-linear-issue-CRW-941.json	sed -e p -e 'W <m>/a' x.txt	CRW-941-07	row	
-linear-issue-CRW-941.json	sort -o <m>/a x.txt	CRW-941-08	row	
-linear-issue-CRW-941.json	sort --output=<m>/a <<'EOF'	CRW-941-09	row	
-linear-issue-CRW-941.json	sed -f script.sed x.txt	CRW-941-10	row	
-linear-issue-CRW-941.json	sed 's/a/b/' x.txt	CRW-941-11	row	
-linear-issue-CRW-941.json	sed -n p x.txt	CRW-941-12	row	
-linear-issue-CRW-941.json	sed 's/w/x/' x.txt	CRW-941-13	row	
-linear-issue-CRW-941.json	sed 'w /dev/stdout' x.txt	CRW-941-14	row	
-linear-issue-CRW-941.json	sort x.txt	CRW-941-15	row	
-linear-issue-CRW-941.json	sort -o /tmp/out x.txt	CRW-941-16	row	
-linear-issue-CRW-998.json	python3 -c 'from pathlib import Path; p=Path("{MEMORY}/n.md"); p.open(	CRW-998-01	row	
-linear-issue-CRW-998.json	python3 -c 'from functools import partial; m="{MEMORY}/n.md"; partial(	CRW-998-02	row	
-linear-issue-CRW-998.json	python3 -c 'from pathlib import Path; p=Path("/w/a"); m="{MEMORY}/n.md	CRW-998-03	row	
-linear-issue-CRW-998.json	env 2>/dev/null python3 -c 'import os; open(os.path.join("{MEMORY}","n	CRW-998-04	row	
-linear-issue-CRW-998.json	0<< 'EOF' python3	CRW-998-05	row	
-linear-issue-CRW-998.json	python3 -c 'from pathlib import Path; p=Path("{MEMORY}/n.md"); p.open("…	CRW-998-06	row	
-linear-issue-CRW-998.json	python3 -c 'from functools import partial; print(partial(int, base=2)("…	CRW-998-07	row	
-linear-issue-CRW-998.json	python3 -c 'print("abc".replace("a", "b", **{}))'	CRW-998-08	row	
-linear-issue-CRW-951.json	python3 -c 'from pathlib import Path; m="{MEMORY}/n.md"; open(Path(m), …	CRW-951-01	row	
-linear-issue-CRW-951.json	python3 -c 'import os; root="{MEMORY}"; open(os.path.join(root, "n.md")…	CRW-951-02	row	
-linear-issue-CRW-951.json	python3 -c 'm="{MEMORY}/n.md"; f = open; f(m, "w")'	CRW-951-03	row	
-linear-issue-CRW-951.json	python3 -c 'from pathlib import Path; root="{MEMORY}"; Path(root).joinp…	CRW-951-04	row	
-linear-issue-CRW-951.json	python3 -c 'from pathlib import Path; root="{MEMORY}"; (Path(root) / "n…	CRW-951-05	row	
-linear-issue-CRW-951.json	python3 -c 'from pathlib import Path; m="{MEMORY}/n.md"; Path("/w/a").a…	CRW-951-06	row	
-linear-issue-CRW-951.json	python3 -c 'from pathlib import Path; m="{MEMORY}/n.md"; Path("/w/a").r…	CRW-951-07	row	
-linear-issue-CRW-951.json	python3 -c 'import shutil; m="{MEMORY}/n.md"; f = shutil.copy; f("/w/a"…	CRW-951-08	row	
-linear-issue-CRW-951.json	python3 -c 'import shutil; m="{MEMORY}/n.md"; getattr(shutil, "copy")("…	CRW-951-09	row	
-linear-issue-CRW-951.json	python3 -c 'm="{MEMORY}/n.md"; __import__("shutil").copy("/w/a", m)'	CRW-951-10	row	
-linear-issue-CRW-951.json	python3 -c 'import shutil, os; root="{MEMORY}"; shutil.copy("/w/a", os.…	CRW-951-11	row	
-linear-issue-CRW-951.json	python3 -c 'import importlib; m="{MEMORY}/n.md"; importlib.import_modul…	CRW-951-12	row	
-linear-issue-CRW-951.json	python3 -c 'm="{MEMORY}/n.md"; open(m, "w")'	CRW-951-13	row	
-linear-issue-CRW-951.json	python3 -c 'import shutil; m="{MEMORY}/n.md"; shutil.copy("/w/a", m)'	CRW-951-14	row	
-linear-issue-CRW-951.json	python3 -c 'import os; root="/w"; open(os.path.join(root, "n.md"), "w")'	CRW-951-15	row	
-linear-issue-CRW-951.json	python3 -c 'import shutil, os; root="/w"; shutil.copy("/w/a", os.path.j…	CRW-951-16	row	
-linear-issue-CRW-951.json	python3 -c 'm="{MEMORY}/n.md"; print(open(m, "r").read())'	CRW-951-17	row	
-linear-issue-CRW-875.json	bash post.sh	CRW-875-01	row	
-linear-issue-CRW-875.json	sh post.sh	CRW-875-02	row	
-linear-issue-CRW-875.json	gh pr comment 1 -b "$(env)"	CRW-875-03	row	
-linear-issue-CRW-875.json	. post.sh	CRW-875-03b	row	
-linear-issue-CRW-875.json	gh pr comment 1 --body-file <임시 루트>/b.md	CRW-875-04	row	
-linear-issue-CRW-875.json	gh api repos/o/r/issues/1/comments --input -	CRW-875-05	row	
-linear-issue-CRW-875.json	gh api … -F body=@-	CRW-875-06	row	
-linear-issue-CRW-875.json	gh api repos/o/r/issues/1/comments --field body=@-	CRW-875-06b	row	
-linear-issue-CRW-875.json	bash -x	CRW-875-07	row	
-linear-issue-CRW-875.json	bash --	CRW-875-08	row	
-linear-issue-CRW-875.json	timeout 30 bash post.sh	CRW-875-09	row	
-linear-issue-CRW-875.json	env X=1 bash post.sh	CRW-875-10	row	
-linear-issue-CRW-875.json	nohup bash post.sh	CRW-875-11	row	
-linear-issue-CRW-875.json	command bash post.sh	CRW-875-12	row	
-linear-issue-CRW-875.json	exec bash post.sh	CRW-875-13	row	
-linear-issue-CRW-875.json	cd . && bash post.sh	CRW-875-14	row	
-linear-issue-CRW-875.json	bash post.sh &	CRW-875-15	row	
-linear-issue-CRW-875.json	timeout -s KILL 30 bash post.sh	CRW-875-16	row	
-linear-issue-CRW-875.json	timeout 30 bash clean.sh	CRW-875-17	row	
-linear-issue-CRW-875.json	cd . && make	CRW-875-18	row	
-linear-issue-CRW-875.json	sudo bash post.sh	CRW-875-19	row	
-linear-issue-CRW-875.json	sudo -u root bash post.sh	CRW-875-20	row	
-linear-issue-CRW-875.json	nice bash post.sh	CRW-875-21	row	
-linear-issue-CRW-875.json	time bash post.sh	CRW-875-22	row	
-linear-issue-CRW-875.json	X=1 bash post.sh	CRW-875-23	row	
-linear-issue-CRW-875.json	true; bash post.sh	CRW-875-24	row	
-linear-issue-CRW-875.json	./post.sh	CRW-875-25	row	
-linear-issue-CRW-875.json	scripts/post.sh	CRW-875-26	row	
-linear-issue-CRW-875.json	sudo apt-get update	CRW-875-27	row	
-linear-issue-CRW-875.json	./bin/tool	CRW-875-28	row	
-linear-issue-CRW-875.json	gh pr comment 1 --body-file {TMP}/link.md	CRW-875-29	row	
-linear-issue-CRW-875.json	gh pr comment 1 --body-file {TMP}/clean.md	CRW-875-30	row	
-linear-issue-CRW-875.json	gh pr comment 1 --body-file {TMP}/inner.md	CRW-875-31	row	
-linear-issue-CRW-875.json	curl -s -X POST https://api.github.com/repos/o/r/issues/1/comments -d @…	CRW-875-32	row	
-linear-issue-CRW-917.json	gh pr comment 1 '--body' 'MY_API_KEY=sentinel'	CRW-917-01	row	
-linear-issue-CRW-917.json	gh pr comment 1 '--body-file' /tmp/secret.md	CRW-917-02	row	
-linear-issue-CRW-917.json	gh pr create --title 'MY_API_KEY=sentinel' --body-file /tmp/clean.md	CRW-917-03	row	
-linear-issue-CRW-917.json	gh pr</dev/null comment 1 --body-file /tmp/secret.md	CRW-917-04	row	
-linear-issue-CRW-917.json	gh api … --input /tmp/post.json	CRW-917-05	row	
-linear-issue-CRW-917.json	git checkout -b topic && git status	CRW-917-06	row	
-linear-issue-CRW-917.json	gh api --input F	CRW-917-07	row	
-linear-issue-CRW-917.json	gh pr comment 1 '--body-file' {TMP}/clean.md	CRW-917-08	row	
-linear-issue-CRW-917.json	gh api repos/o/r/issues/1/comments --input {TMP}/clean.json	CRW-917-09	row	
-linear-issue-CRW-917.json	gh api repos/o/r/issues/1/comments --input {TMP}/dump.json	CRW-917-10	row	
-linear-issue-CRW-917.json	gh pr comment 1 --body-file {TMP}/body.fifo	CRW-917-11	row	
-linear-issue-CRW-984.json	if false; then cd sub; fi; bash post.sh	CRW-984-01	row	
-linear-issue-CRW-984.json	while false; do cd sub; done; bash post.sh	CRW-984-01b	row	
-linear-issue-CRW-984.json	case x in never) cd sub;; esac; bash post.sh	CRW-984-01c	row	
-linear-issue-CRW-984.json	D=/evil; cd "$D"; cd ./sub; bash post.sh	CRW-984-02	row	
-linear-issue-CRW-984.json	env -S bash 'post.sh extra'	CRW-984-03	row	
-linear-issue-CRW-984.json	declare -x PATH=/evil:/usr/bin:/bin; source lib.sh	CRW-984-04	row	
-linear-issue-CRW-984.json	cd {WORK}/sub; bash clean.sh	CRW-984-05	row	
-linear-issue-CRW-894.json	printf 'rm -rf ../repo' | bash </dev/stdin	CRW-894-01	row	
-linear-issue-CRW-894.json	printf '...' | python3	CRW-894-02	row	
-linear-issue-CRW-894.json	printf 'echo hi' | bash </dev/null	CRW-894-03	row	
-linear-issue-CRW-894.json	printf x | (cd sub; cat)	CRW-894-04	row	
-linear-issue-CRW-894.json	printf x | nohup cat	CRW-894-05	row	
-linear-issue-CRW-894.json	bash -c 'echo hi'	CRW-894-06	row	
-linear-issue-CRW-894.json	exec -a x true	CRW-894-07	row	
-linear-issue-CRW-894.json	printf 'echo x > <memories>/a' | exec -a x bash	CRW-894-08	row	
-linear-issue-CRW-894.json	printf 'rm -rf ../repo' | bash 3</dev/fd/0 </dev/null <&3	CRW-894-09	row	
-linear-issue-CRW-894.json	exec -a x >/dev/null rm -rf ../repo	CRW-894-10	row	
-linear-issue-CRW-894.json	python3 2>&1 <<'PY'	CRW-894-11	row	
-linear-issue-CRW-894.json	printf x | bash -c 'bash -c bash </dev/null'	CRW-894-12	row	
-linear-issue-CRW-894.json	python3 -m code	CRW-894-13	row	
-linear-issue-CRW-894.json	python3 -m json.tool	CRW-894-14	row	
-linear-issue-CRW-894.json	printf x | python3 -c 'print(1)'	CRW-894-15	row	
-linear-issue-CRW-894.json	printf x | node script.js	CRW-894-16	row	
-linear-issue-CRW-894.json	printf 'rm -rf ../repo' | bash /dev/stdin	CRW-894-17	row	
-linear-issue-CRW-894.json	printf 'rm -rf ../repo' | bash /proc/self/fd/0	CRW-894-18	row	
-linear-issue-CRW-894.json	printf 'rm -rf ../repo' | source /dev/stdin	CRW-894-19	row	
-linear-issue-CRW-894.json	printf 'rm -rf ../repo' | bash -c 'bash'	CRW-894-20	row	
-linear-issue-CRW-894.json	printf 'rm -rf ../repo' | eval bash	CRW-894-21	row	
-linear-issue-CRW-894.json	printf 'rm -rf ../repo' | busybox sh	CRW-894-22	row	
-linear-issue-CRW-894.json	printf 'rm -rf ../repo\n' | bash -c 'bash </dev/null </proc/$$/fd/0; :'	CRW-894-23	row	
-linear-issue-CRW-894.json	printf 'rm -rf ../repo\n' | bash -c 'if bash; then :; fi'	CRW-894-24	row	
-linear-issue-CRW-894.json	printf 'rm -rf ../repo\n' | bash -c '! bash'	CRW-894-25	row	
-linear-issue-CRW-894.json	<<< 'import shutil; shutil.rmtree("../repo")' python3	CRW-894-26	row	
-linear-issue-CRW-894.json	printf 'require("fs").rmSync("../repo", {recursive:true, force:true})\n…	CRW-894-27	row	
-linear-issue-CRW-989.json	printf 'rm -rf ../repo' | exec -a x &>/dev/null bash	CRW-989-01	row	
-linear-issue-CRW-989.json	printf 'echo x > <memories>/a' | exec -a x &>/dev/null bash	CRW-989-02	row	
-linear-issue-CRW-989.json	python3 /dev/fd/4 3<<'PY' 4<&3	CRW-989-03	row	
-linear-issue-CRW-989.json	python3 /dev/fd/4 3<<< '...' 4<&3	CRW-989-04	row	
-linear-issue-CRW-989.json	printf x | sh -c 'cat' _ -s	CRW-989-05	row	
-linear-issue-CRW-989.json	printf x | dash -c 'cat' _ -s	CRW-989-06	row	
-linear-issue-CRW-989.json	printf 'rm -rf ../repo' | if false; then :; exec </dev/null; else bash;…	CRW-989-07	row	
-linear-issue-CRW-989.json	printf 'rm -rf ../repo' | if true; then :; exec </dev/null & bash; fi	CRW-989-08	row	
-linear-issue-CRW-989.json	printf 'rm -rf ../repo' | bash -c 'if false; then :; exec </dev/null; f…	CRW-989-09	row	
-linear-issue-CRW-989.json	printf x | printf '%s\n' sudo -s	CRW-989-10	row	
-linear-issue-CRW-1011.json	git worktree remove --force ../repo	CRW-1011-01	row	
-linear-issue-CRW-1011.json	git worktree remove --force <<<$'..\x2f..\x2f..\x2frepo' ../repo	CRW-1011-02	row	
-linear-issue-CRW-1011.json	git worktree remove --force <<<x ../repo	CRW-1011-03	row	
-linear-issue-CRW-1011.json	git worktree remove --force <<<'x' ../repo	CRW-1011-04	row	
-linear-issue-CRW-1011.json	git worktree remove --force <<<../repo ../repo	CRW-1011-05	row	
-linear-issue-CRW-1011.json	git worktree remove --force <<< ../../../repo ../repo	CRW-1011-06	row	
-linear-issue-CRW-1011.json	git worktree remove <<<x --force ../repo	CRW-1011-07	row	
-linear-issue-CRW-1011.json	git worktree remove --force ../repo <<<x	CRW-1011-08	row	
-linear-issue-CRW-1011.json	git worktree remove --force <<<x ../elsewhere	CRW-1011-09	row	
-linear-issue-CRW-1011.json	git status <<<x	CRW-1011-10	row	
-linear-issue-CRW-1011.json	rm -rf <<<x ../repo	CRW-1011-11	row	
-linear-issue-CRW-1011.json	rm -rf 2>/dev/null ../repo	CRW-1011-12	row	
-linear-issue-CRW-1011.json	rm -rf ../repo <<'EOF'	CRW-1011-13	row	
-linear-issue-CRW-1011.json	find ../repo <<<x -delete	CRW-1011-14	row	
-linear-issue-CRW-1011.json	git worktree remove --force >/dev/null ../repo	CRW-1011-15	row	
-linear-issue-CRW-1011.json	git worktree remove --force 2>/dev/null ../repo	CRW-1011-16	row	
-linear-issue-CRW-1011.json	git worktree remove --force </dev/null ../repo	CRW-1011-17	row	
-linear-issue-CRW-765.json	{ python3 -; } <<'EOF'	CRW-765-g3-01	row	
-linear-issue-CRW-765.json	if true; then bash; fi <<'EOF'	CRW-765-g3-02	row	
-linear-issue-CRW-765.json	f() { bash; }; f <<'EOF'	CRW-765-g3-03	row	
-linear-issue-CRW-765.json	x=$(bash <<'EOF'	CRW-765-g3-04	row	
-linear-issue-CRW-765.json	python3 <<'PY' >|out	CRW-765-g3-05	row	
-linear-issue-CRW-765.json	python3 <<'PY' >&out	CRW-765-g3-06	row	
-linear-issue-CRW-765.json	python3 <<'PY' >> >(cat)	CRW-765-g3-07	row	
-linear-issue-CRW-765.json	python3 <<'PY' < <(true)	CRW-765-g3-08	row	
-linear-issue-CRW-765.json	python3 <<'PY' >$(mktemp)	CRW-765-g3-09	row	
-linear-issue-CRW-765.json	bas\h <<'EOF'	CRW-765-g4-01	row	
-linear-issue-CRW-765.json	pytho\n3 <<'EOF'	CRW-765-g4-02	row	
-linear-issue-CRW-765.json	nod\e <<'EOF'	CRW-765-g4-03	row	
-linear-issue-CRW-765.json	bas\	CRW-765-g4-04	row	
-linear-issue-CRW-765.json	function f { bash; }; f <<'EOF'	CRW-765-g4-05	row	
-linear-issue-CRW-765.json	x="$(python3 <<'EOF'	CRW-765-g4-06	row	
-linear-issue-CRW-765.json	hash -p /bin/bash b	CRW-765-g5-01	row	
-linear-issue-CRW-765.json	alias b=bash	CRW-765-g5-02	row	
-linear-issue-CRW-765.json	ln -sf /bin/bash X	CRW-765-g5-03	row	
-linear-issue-CRW-765.json	"$B" <<'EOF'	CRW-765-g5-04	row	
-linear-issue-CRW-765.json	${B} <<'EOF'	CRW-765-g5-05	row	
-linear-issue-CRW-765.json	awk -f /dev/stdin <<'EOF'	CRW-765-g6-01	row	
-linear-issue-CRW-765.json	ed -s /dev/null <<'EOF'	CRW-765-g7-01	row	
-linear-issue-CRW-765.json	sqlite3 <<'EOF'	CRW-765-g7-02	row	
-linear-issue-CRW-765.json	true | perl <<'EOF'	CRW-765-g8-01	row	
-linear-issue-CRW-765.json	true; ed -s /dev/null <<'EOF'	CRW-765-g8-02	row	
-linear-issue-CRW-765.json	true; sqlite3 <<'EOF'	CRW-765-g8-03	row	
-linear-issue-CRW-765.json	for x in a; do perl; done <<'EOF'	CRW-765-g8-04	row	
-linear-issue-CRW-765.json	true; cat <<'EOF'	CRW-765-g8-05	row	
-linear-issue-CRW-765.json	mkdir -p d && cat > d/f.py <<'EOF'	CRW-765-g8-06	row	
-linear-issue-CRW-765.json	while read l; do echo "$l"; done <<'EOF'	CRW-765-g8-07	row	
+# source	text (the reproduction, shortened)	row id (rows/*.txt)	kind: row (this reproduction is that row), same (the same command as that row) or prose (no command; the row is the nearest command shape, or - when the source has none)	reason: - for a row, same ... or prose: ... otherwise
+linear-issue-CRW-1012.json	python3 -c "print(\"f'}'\")"	CRW-1012-01	row	-
+linear-issue-CRW-1012.json	python3 -c "print(f'{len(\"abc\")}')"	CRW-1012-02	row	-
+linear-issue-CRW-1014.json	python3 -c 'open("<m>/a","w")'	CRW-1014-01	row	-
+linear-issue-CRW-1014.json	python3 -c 'a='"'"'q'"'"'; open("<m>/a","w")'	CRW-1014-02	row	-
+linear-issue-CRW-1014.json	python3 -c 'open("<m>/a",'""'"w")'	CRW-1014-03	row	-
+linear-issue-CRW-1014.json	sh -c 'a='"'"'q'"'"'; echo hi > <m>/a'	CRW-1014-04	row	-
+linear-issue-CRW-1014.json	echo hi > '<m>'/a	CRW-1014-05	row	-
+linear-issue-CRW-1014.json	python3 -c $'open("<m>/a","w")'	CRW-1014-06	row	-
+linear-issue-CRW-765.json	python3 - <<'EOF'	CRW-765-01	row	-
+linear-issue-CRW-765.json	python3 - <<'EOF'	CRW-765-fragment	row	-
+linear-issue-CRW-765.json	python3 - <<'EOF'\nopen('<m>/a','w')\nEOF	CRW-765-02	row	-
+linear-issue-CRW-765.json	python3 <<EOF\nopen(file='<m>/a', mode='w')\nEOF	CRW-765-03	row	-
+linear-issue-CRW-765.json	node <<'EOF'\nrequire('fs').writeFileSync('<m>/a','x')\nEOF	CRW-765-04	row	-
+linear-issue-CRW-765.json	bash <<'EOF'\necho x > <m>/a\nEOF	CRW-765-05	row	-
+linear-issue-CRW-765.json	python3 <<EOF\nopen('$P','w')\nEOF	CRW-765-06	row	-
+linear-issue-CRW-765.json	cat > note.md <<'EOF'\n<m>/a 경로를 인용한 글\nEOF	CRW-765-07	row	-
+linear-issue-CRW-765.json	python3 script.py <<'EOF'	CRW-765-08	row	-
+linear-issue-CRW-765.json	go test -count=1 ./internal/pabcd/hook ./cmd/crw	CRW-765-09	row	-
+linear-issue-CRW-765.json	python3 <<'PY' # note	CRW-765-10	row	-
+linear-issue-CRW-765.json	bash 0<<'EOF'	CRW-765-11	row	-
+linear-issue-CRW-765.json	bash /dev/fd/3 3<<'EOF'	CRW-765-12	row	-
+linear-issue-CRW-765.json	cat > note.md <<'EOF'	CRW-765-13	row	-
+linear-issue-CRW-765.json	python3 script.py <<'EOF' 2>/dev/null	CRW-765-14	row	-
+linear-issue-CRW-765.json	bash -n <<'EOF'	CRW-765-15	row	-
+linear-issue-CRW-765.json	cat <<'EOF' > x.md	CRW-765-16	row	-
+linear-issue-CRW-765.json	cat <<\EOF	CRW-765-17	row	-
+linear-issue-CRW-765.json	bash <<'EOF' \	CRW-765-18	row	-
+linear-issue-CRW-765.json	cat <<'A'; python3 <<'B'	CRW-765-19	row	-
+linear-issue-CRW-765.json	node script.js <<'EOF'	CRW-765-20	row	-
+linear-issue-CRW-765.json	cat > /tmp/x.py <<'EOF'	CRW-765-21	row	-
+linear-issue-CRW-765.json	python3 /tmp/x.py	CRW-765-22	row	-
+linear-issue-CRW-765.json	eval bash <<'EOF'	CRW-765-23	row	-
+linear-issue-CRW-765.json	cat > x.py <<'EOF'	CRW-765-24	row	-
+linear-issue-CRW-765.json	python3 x.py	CRW-765-25	row	-
+linear-issue-CRW-765.json	git commit -F - <<'EOF'	CRW-765-26	row	-
+linear-issue-CRW-765.json	sort <<'EOF'	CRW-765-27	row	-
+linear-issue-CRW-765.json	bash -c 'bash' <<'EOF'	CRW-765-28	row	-
+linear-issue-CRW-765.json	sh -c 'exec sh' <<'EOF'	CRW-765-29	row	-
+linear-issue-CRW-765.json	python3 -m code <<'EOF'	CRW-765-30	row	-
+linear-issue-CRW-765.json	node -e	CRW-765-31	row	-
+linear-issue-CRW-765.json	perl <<'EOF'	CRW-765-32	row	-
+linear-issue-CRW-765.json	ruby <<'EOF'	CRW-765-33	row	-
+linear-issue-CRW-765.json	sed -nf - <<'EOF'	CRW-765-34	row	-
+linear-issue-CRW-765.json	sed -Ef - x.txt <<'EOF'	CRW-765-35	row	-
+linear-issue-CRW-765.json	make -f - <<'EOF'	CRW-765-36	row	-
+linear-issue-CRW-765.json	git commit -F -	CRW-765-37	row	-
+linear-issue-CRW-765.json	sed -nf- <<'EOF'	CRW-765-38	row	-
+linear-issue-CRW-765.json	sed 's/a/b/' <<'EOF'	CRW-765-39	row	-
+linear-issue-CRW-765.json	sed -n p <<'EOF'	CRW-765-40	row	-
+linear-issue-CRW-765.json	cd /tmp && mytool <<'EOF'	CRW-765-41	row	-
+linear-issue-CRW-765.json	sed -\f - <<'EOF'	CRW-765-42	row	-
+linear-issue-CRW-765.json	sed -n$F -	CRW-765-43	row	-
+linear-issue-CRW-765.json	sed -n$(printf f) -	CRW-765-44	row	-
+linear-issue-CRW-765.json	cat <<'EOF' | perl	CRW-765-45	row	-
+linear-issue-CRW-765.json	echo start; perl <<'EOF'	CRW-765-46	row	-
+linear-issue-CRW-765.json	sed -n$(printf f) - <<'EOF'	CRW-765-47	row	-
+linear-issue-CRW-765.json	sed --fil - <<'EOF'	CRW-765-48	row	-
+linear-issue-CRW-765.json	sed --fi=- <<'EOF'	CRW-765-49	row	-
+linear-issue-CRW-765.json	cd x; python3 - <<'EOF'	CRW-765-50	row	-
+linear-issue-CRW-765.json	git add -A && git commit -F - <<'EOF'	CRW-765-51	row	-
+linear-issue-CRW-765.json	sed -n'p' <<'EOF'	CRW-765-52	row	-
+linear-issue-CRW-765.json	sed -n 'p' <<'EOF'	CRW-765-52b	row	-
+linear-issue-CRW-765.json	cat <<'EOF' | jq .	CRW-765-53	row	-
+linear-issue-CRW-765.json	python3 -c "...exec(code)"	CRW-765-54	row	-
+linear-issue-CRW-765.json	cat > note.md <<'DOC'	CRW-765-55	row	-
+linear-issue-CRW-765.json	cat <<<hello	CRW-765-57	row	-
+linear-issue-CRW-765.json	jq . <<<'{}'	CRW-765-58	row	-
+linear-issue-CRW-765.json	cat <<'DATA' # <<'HIDDEN'	CRW-765-59	row	-
+linear-issue-CRW-765.json	node <<EOF	CRW-765-60	row	-
+linear-issue-CRW-765.json	cat > note.md <<'EOF'	CRW-765-61	row	-
+linear-issue-CRW-986.json	$'hash' -p /usr/bin/python3 cat	CRW-986-01	row	-
+linear-issue-CRW-986.json	cat <<$'D\c?'	CRW-986-02	row	-
+linear-issue-CRW-986.json	cat > note.md <<'EOF'	CRW-986-03	row	-
+linear-issue-CRW-986.json	echo env -S hello	CRW-986-04	row	-
+linear-issue-CRW-986.json	cat > note.md <<'EOF'	CRW-986-05	row	-
+linear-issue-CRW-851.json	exec(src)	CRW-851-01	row	-
+linear-issue-CRW-851.json	python3 -c 'import builtins; builtins .exec("""open(file="<m>/a",mode=	CRW-851-02	row	-
+linear-issue-CRW-851.json	python3 -c 'import sys; pad="\""; src=sys.argv[1]; exec(src)' 'open(fi	CRW-851-03	row	-
+linear-issue-CRW-851.json	python3 -c 'exec(br"""# coding note; coding: unicode_escape (줄바꿈) \x6f	CRW-851-04	row	-
+linear-issue-CRW-851.json	python3 -c 'exec("print("hi")")'\	CRW-851-05	row	-
+linear-issue-CRW-851.json	python3 -c 'exec("x = \"a\"")'	CRW-851-05b	row	-
+linear-issue-CRW-851.json	python3 - <<< "open('<m>/a','w')"	CRW-851-06	row	-
+linear-issue-CRW-851.json	printf '%s' "open('<m>/a','w')" | python3 -	CRW-851-07	row	-
+linear-issue-CRW-851.json	echo "open('{MEMORY}/a','w')" | python3 -	CRW-851-07b	row	-
+linear-issue-CRW-851.json	curl -s x | python3 -	CRW-851-08	row	-
+linear-issue-CRW-851.json	echo hi | python3 script.py	CRW-851-09	row	-
+linear-issue-CRW-851.json	printf hi | cat	CRW-851-10	row	-
+linear-issue-CRW-851.json	printf '…' | ruby	CRW-851-11	row	-
+linear-issue-CRW-851.json	perl script.pl <<'EOF'	CRW-851-12	row	-
+linear-issue-CRW-851.json	python3 -c 'import builtins; builtins .exec("""open(file="{MEMORY}/a",m…	CRW-851-13	row	-
+linear-issue-CRW-851.json	python3 -c 'import builtins; __builtins__ .eval("""open(file="{MEMORY}/…	CRW-851-14	row	-
+linear-issue-CRW-851.json	python3 -c 'exec(br"""# plain	CRW-851-15	row	-
+linear-issue-CRW-851.json	python3 -c "import sys; pad='\"'; src=sys.argv[1]; exec(src)" 'open(fil…	CRW-851-16	row	-
+linear-issue-CRW-941.json	sed -e 'w <m>/a' x.txt	CRW-941-01	row	-
+linear-issue-CRW-941.json	sed -n 'w <m>/a' x.txt	CRW-941-02	row	-
+linear-issue-CRW-941.json	sed --expression='w <m>/a' <<'EOF'	CRW-941-03	row	-
+linear-issue-CRW-941.json	sort -o <m>/a <<'EOF'	CRW-941-04	row	-
+linear-issue-CRW-941.json	sort -o FILE	CRW-941-05	row	-
+linear-issue-CRW-941.json	sed 's/a/b/w <m>/a' x.txt	CRW-941-06	row	-
+linear-issue-CRW-941.json	sed -e p -e 'W <m>/a' x.txt	CRW-941-07	row	-
+linear-issue-CRW-941.json	sort -o <m>/a x.txt	CRW-941-08	row	-
+linear-issue-CRW-941.json	sort --output=<m>/a <<'EOF'	CRW-941-09	row	-
+linear-issue-CRW-941.json	sed -f script.sed x.txt	CRW-941-10	row	-
+linear-issue-CRW-941.json	sed 's/a/b/' x.txt	CRW-941-11	row	-
+linear-issue-CRW-941.json	sed -n p x.txt	CRW-941-12	row	-
+linear-issue-CRW-941.json	sed 's/w/x/' x.txt	CRW-941-13	row	-
+linear-issue-CRW-941.json	sed 'w /dev/stdout' x.txt	CRW-941-14	row	-
+linear-issue-CRW-941.json	sort x.txt	CRW-941-15	row	-
+linear-issue-CRW-941.json	sort -o /tmp/out x.txt	CRW-941-16	row	-
+linear-issue-CRW-998.json	python3 -c 'from pathlib import Path; p=Path("{MEMORY}/n.md"); p.open(	CRW-998-01	row	-
+linear-issue-CRW-998.json	python3 -c 'from functools import partial; m="{MEMORY}/n.md"; partial(	CRW-998-02	row	-
+linear-issue-CRW-998.json	python3 -c 'from pathlib import Path; p=Path("/w/a"); m="{MEMORY}/n.md	CRW-998-03	row	-
+linear-issue-CRW-998.json	env 2>/dev/null python3 -c 'import os; open(os.path.join("{MEMORY}","n	CRW-998-04	row	-
+linear-issue-CRW-998.json	0<< 'EOF' python3	CRW-998-05	row	-
+linear-issue-CRW-998.json	python3 -c 'from pathlib import Path; p=Path("{MEMORY}/n.md"); p.open("…	CRW-998-06	row	-
+linear-issue-CRW-998.json	python3 -c 'from functools import partial; print(partial(int, base=2)("…	CRW-998-07	row	-
+linear-issue-CRW-998.json	python3 -c 'print("abc".replace("a", "b", **{}))'	CRW-998-08	row	-
+linear-issue-CRW-951.json	python3 -c 'from pathlib import Path; m="{MEMORY}/n.md"; open(Path(m), …	CRW-951-01	row	-
+linear-issue-CRW-951.json	python3 -c 'import os; root="{MEMORY}"; open(os.path.join(root, "n.md")…	CRW-951-02	row	-
+linear-issue-CRW-951.json	python3 -c 'm="{MEMORY}/n.md"; f = open; f(m, "w")'	CRW-951-03	row	-
+linear-issue-CRW-951.json	python3 -c 'from pathlib import Path; root="{MEMORY}"; Path(root).joinp…	CRW-951-04	row	-
+linear-issue-CRW-951.json	python3 -c 'from pathlib import Path; root="{MEMORY}"; (Path(root) / "n…	CRW-951-05	row	-
+linear-issue-CRW-951.json	python3 -c 'from pathlib import Path; m="{MEMORY}/n.md"; Path("/w/a").a…	CRW-951-06	row	-
+linear-issue-CRW-951.json	python3 -c 'from pathlib import Path; m="{MEMORY}/n.md"; Path("/w/a").r…	CRW-951-07	row	-
+linear-issue-CRW-951.json	python3 -c 'import shutil; m="{MEMORY}/n.md"; f = shutil.copy; f("/w/a"…	CRW-951-08	row	-
+linear-issue-CRW-951.json	python3 -c 'import shutil; m="{MEMORY}/n.md"; getattr(shutil, "copy")("…	CRW-951-09	row	-
+linear-issue-CRW-951.json	python3 -c 'm="{MEMORY}/n.md"; __import__("shutil").copy("/w/a", m)'	CRW-951-10	row	-
+linear-issue-CRW-951.json	python3 -c 'import shutil, os; root="{MEMORY}"; shutil.copy("/w/a", os.…	CRW-951-11	row	-
+linear-issue-CRW-951.json	python3 -c 'import importlib; m="{MEMORY}/n.md"; importlib.import_modul…	CRW-951-12	row	-
+linear-issue-CRW-951.json	python3 -c 'm="{MEMORY}/n.md"; open(m, "w")'	CRW-951-13	row	-
+linear-issue-CRW-951.json	python3 -c 'import shutil; m="{MEMORY}/n.md"; shutil.copy("/w/a", m)'	CRW-951-14	row	-
+linear-issue-CRW-951.json	python3 -c 'import os; root="/w"; open(os.path.join(root, "n.md"), "w")'	CRW-951-15	row	-
+linear-issue-CRW-951.json	python3 -c 'import shutil, os; root="/w"; shutil.copy("/w/a", os.path.j…	CRW-951-16	row	-
+linear-issue-CRW-951.json	python3 -c 'm="{MEMORY}/n.md"; print(open(m, "r").read())'	CRW-951-17	row	-
+linear-issue-CRW-875.json	bash post.sh	CRW-875-01	row	-
+linear-issue-CRW-875.json	sh post.sh	CRW-875-02	row	-
+linear-issue-CRW-875.json	gh pr comment 1 -b "$(env)"	CRW-875-03	row	-
+linear-issue-CRW-875.json	. post.sh	CRW-875-03b	row	-
+linear-issue-CRW-875.json	gh pr comment 1 --body-file <임시 루트>/b.md	CRW-875-04	row	-
+linear-issue-CRW-875.json	gh api repos/o/r/issues/1/comments --input -	CRW-875-05	row	-
+linear-issue-CRW-875.json	gh api … -F body=@-	CRW-875-06	row	-
+linear-issue-CRW-875.json	gh api repos/o/r/issues/1/comments --field body=@-	CRW-875-06b	row	-
+linear-issue-CRW-875.json	bash -x	CRW-875-07	row	-
+linear-issue-CRW-875.json	bash --	CRW-875-08	row	-
+linear-issue-CRW-875.json	timeout 30 bash post.sh	CRW-875-09	row	-
+linear-issue-CRW-875.json	env X=1 bash post.sh	CRW-875-10	row	-
+linear-issue-CRW-875.json	nohup bash post.sh	CRW-875-11	row	-
+linear-issue-CRW-875.json	command bash post.sh	CRW-875-12	row	-
+linear-issue-CRW-875.json	exec bash post.sh	CRW-875-13	row	-
+linear-issue-CRW-875.json	cd . && bash post.sh	CRW-875-14	row	-
+linear-issue-CRW-875.json	bash post.sh &	CRW-875-15	row	-
+linear-issue-CRW-875.json	timeout -s KILL 30 bash post.sh	CRW-875-16	row	-
+linear-issue-CRW-875.json	timeout 30 bash clean.sh	CRW-875-17	row	-
+linear-issue-CRW-875.json	cd . && make	CRW-875-18	row	-
+linear-issue-CRW-875.json	sudo bash post.sh	CRW-875-19	row	-
+linear-issue-CRW-875.json	sudo -u root bash post.sh	CRW-875-20	row	-
+linear-issue-CRW-875.json	nice bash post.sh	CRW-875-21	row	-
+linear-issue-CRW-875.json	time bash post.sh	CRW-875-22	row	-
+linear-issue-CRW-875.json	X=1 bash post.sh	CRW-875-23	row	-
+linear-issue-CRW-875.json	true; bash post.sh	CRW-875-24	row	-
+linear-issue-CRW-875.json	./post.sh	CRW-875-25	row	-
+linear-issue-CRW-875.json	scripts/post.sh	CRW-875-26	row	-
+linear-issue-CRW-875.json	sudo apt-get update	CRW-875-27	row	-
+linear-issue-CRW-875.json	./bin/tool	CRW-875-28	row	-
+linear-issue-CRW-875.json	gh pr comment 1 --body-file {TMP}/link.md	CRW-875-29	row	-
+linear-issue-CRW-875.json	gh pr comment 1 --body-file {TMP}/clean.md	CRW-875-30	row	-
+linear-issue-CRW-875.json	gh pr comment 1 --body-file {TMP}/inner.md	CRW-875-31	row	-
+linear-issue-CRW-875.json	curl -s -X POST https://api.github.com/repos/o/r/issues/1/comments -d @…	CRW-875-32	row	-
+linear-issue-CRW-917.json	gh pr comment 1 '--body' 'MY_API_KEY=sentinel'	CRW-917-01	row	-
+linear-issue-CRW-917.json	gh pr comment 1 '--body-file' /tmp/secret.md	CRW-917-02	row	-
+linear-issue-CRW-917.json	gh pr create --title 'MY_API_KEY=sentinel' --body-file /tmp/clean.md	CRW-917-03	row	-
+linear-issue-CRW-917.json	gh pr</dev/null comment 1 --body-file /tmp/secret.md	CRW-917-04	row	-
+linear-issue-CRW-917.json	gh api … --input /tmp/post.json	CRW-917-05	row	-
+linear-issue-CRW-917.json	git checkout -b topic && git status	CRW-917-06	row	-
+linear-issue-CRW-917.json	gh api --input F	CRW-917-07	row	-
+linear-issue-CRW-917.json	gh pr comment 1 '--body-file' {TMP}/clean.md	CRW-917-08	row	-
+linear-issue-CRW-917.json	gh api repos/o/r/issues/1/comments --input {TMP}/clean.json	CRW-917-09	row	-
+linear-issue-CRW-917.json	gh api repos/o/r/issues/1/comments --input {TMP}/dump.json	CRW-917-10	row	-
+linear-issue-CRW-917.json	gh pr comment 1 --body-file {TMP}/body.fifo	CRW-917-11	row	-
+linear-issue-CRW-984.json	if false; then cd sub; fi; bash post.sh	CRW-984-01	row	-
+linear-issue-CRW-984.json	while false; do cd sub; done; bash post.sh	CRW-984-01b	row	-
+linear-issue-CRW-984.json	case x in never) cd sub;; esac; bash post.sh	CRW-984-01c	row	-
+linear-issue-CRW-984.json	D=/evil; cd "$D"; cd ./sub; bash post.sh	CRW-984-02	row	-
+linear-issue-CRW-984.json	env -S bash 'post.sh extra'	CRW-984-03	row	-
+linear-issue-CRW-984.json	declare -x PATH=/evil:/usr/bin:/bin; source lib.sh	CRW-984-04	row	-
+linear-issue-CRW-984.json	cd {WORK}/sub; bash clean.sh	CRW-984-05	row	-
+linear-issue-CRW-894.json	printf 'rm -rf ../repo' | bash </dev/stdin	CRW-894-01	row	-
+linear-issue-CRW-894.json	printf '...' | python3	CRW-894-02	row	-
+linear-issue-CRW-894.json	printf 'echo hi' | bash </dev/null	CRW-894-03	row	-
+linear-issue-CRW-894.json	printf x | (cd sub; cat)	CRW-894-04	row	-
+linear-issue-CRW-894.json	printf x | nohup cat	CRW-894-05	row	-
+linear-issue-CRW-894.json	bash -c 'echo hi'	CRW-894-06	row	-
+linear-issue-CRW-894.json	exec -a x true	CRW-894-07	row	-
+linear-issue-CRW-894.json	printf 'echo x > <memories>/a' | exec -a x bash	CRW-894-08	row	-
+linear-issue-CRW-894.json	printf 'rm -rf ../repo' | bash 3</dev/fd/0 </dev/null <&3	CRW-894-09	row	-
+linear-issue-CRW-894.json	exec -a x >/dev/null rm -rf ../repo	CRW-894-10	row	-
+linear-issue-CRW-894.json	python3 2>&1 <<'PY'	CRW-894-11	row	-
+linear-issue-CRW-894.json	printf x | bash -c 'bash -c bash </dev/null'	CRW-894-12	row	-
+linear-issue-CRW-894.json	python3 -m code	CRW-894-13	row	-
+linear-issue-CRW-894.json	python3 -m json.tool	CRW-894-14	row	-
+linear-issue-CRW-894.json	printf x | python3 -c 'print(1)'	CRW-894-15	row	-
+linear-issue-CRW-894.json	printf x | node script.js	CRW-894-16	row	-
+linear-issue-CRW-894.json	printf 'rm -rf ../repo' | bash /dev/stdin	CRW-894-17	row	-
+linear-issue-CRW-894.json	printf 'rm -rf ../repo' | bash /proc/self/fd/0	CRW-894-18	row	-
+linear-issue-CRW-894.json	printf 'rm -rf ../repo' | source /dev/stdin	CRW-894-19	row	-
+linear-issue-CRW-894.json	printf 'rm -rf ../repo' | bash -c 'bash'	CRW-894-20	row	-
+linear-issue-CRW-894.json	printf 'rm -rf ../repo' | eval bash	CRW-894-21	row	-
+linear-issue-CRW-894.json	printf 'rm -rf ../repo' | busybox sh	CRW-894-22	row	-
+linear-issue-CRW-894.json	printf 'rm -rf ../repo\n' | bash -c 'bash </dev/null </proc/$$/fd/0; :'	CRW-894-23	row	-
+linear-issue-CRW-894.json	printf 'rm -rf ../repo\n' | bash -c 'if bash; then :; fi'	CRW-894-24	row	-
+linear-issue-CRW-894.json	printf 'rm -rf ../repo\n' | bash -c '! bash'	CRW-894-25	row	-
+linear-issue-CRW-894.json	<<< 'import shutil; shutil.rmtree("../repo")' python3	CRW-894-26	row	-
+linear-issue-CRW-894.json	printf 'require("fs").rmSync("../repo", {recursive:true, force:true})\n…	CRW-894-27	row	-
+linear-issue-CRW-989.json	printf 'rm -rf ../repo' | exec -a x &>/dev/null bash	CRW-989-01	row	-
+linear-issue-CRW-989.json	printf 'echo x > <memories>/a' | exec -a x &>/dev/null bash	CRW-989-02	row	-
+linear-issue-CRW-989.json	python3 /dev/fd/4 3<<'PY' 4<&3	CRW-989-03	row	-
+linear-issue-CRW-989.json	python3 /dev/fd/4 3<<< '...' 4<&3	CRW-989-04	row	-
+linear-issue-CRW-989.json	printf x | sh -c 'cat' _ -s	CRW-989-05	row	-
+linear-issue-CRW-989.json	printf x | dash -c 'cat' _ -s	CRW-989-06	row	-
+linear-issue-CRW-989.json	printf 'rm -rf ../repo' | if false; then :; exec </dev/null; else bash;…	CRW-989-07	row	-
+linear-issue-CRW-989.json	printf 'rm -rf ../repo' | if true; then :; exec </dev/null & bash; fi	CRW-989-08	row	-
+linear-issue-CRW-989.json	printf 'rm -rf ../repo' | bash -c 'if false; then :; exec </dev/null; f…	CRW-989-09	row	-
+linear-issue-CRW-989.json	printf x | printf '%s\n' sudo -s	CRW-989-10	row	-
+linear-issue-CRW-1011.json	git worktree remove --force ../repo	CRW-1011-01	row	-
+linear-issue-CRW-1011.json	git worktree remove --force <<<$'..\x2f..\x2f..\x2frepo' ../repo	CRW-1011-02	row	-
+linear-issue-CRW-1011.json	git worktree remove --force <<<x ../repo	CRW-1011-03	row	-
+linear-issue-CRW-1011.json	git worktree remove --force <<<'x' ../repo	CRW-1011-04	row	-
+linear-issue-CRW-1011.json	git worktree remove --force <<<../repo ../repo	CRW-1011-05	row	-
+linear-issue-CRW-1011.json	git worktree remove --force <<< ../../../repo ../repo	CRW-1011-06	row	-
+linear-issue-CRW-1011.json	git worktree remove <<<x --force ../repo	CRW-1011-07	row	-
+linear-issue-CRW-1011.json	git worktree remove --force ../repo <<<x	CRW-1011-08	row	-
+linear-issue-CRW-1011.json	git worktree remove --force <<<x ../elsewhere	CRW-1011-09	row	-
+linear-issue-CRW-1011.json	git status <<<x	CRW-1011-10	row	-
+linear-issue-CRW-1011.json	rm -rf <<<x ../repo	CRW-1011-11	row	-
+linear-issue-CRW-1011.json	rm -rf 2>/dev/null ../repo	CRW-1011-12	row	-
+linear-issue-CRW-1011.json	rm -rf ../repo <<'EOF'	CRW-1011-13	row	-
+linear-issue-CRW-1011.json	find ../repo <<<x -delete	CRW-1011-14	row	-
+linear-issue-CRW-1011.json	git worktree remove --force >/dev/null ../repo	CRW-1011-15	row	-
+linear-issue-CRW-1011.json	git worktree remove --force 2>/dev/null ../repo	CRW-1011-16	row	-
+linear-issue-CRW-1011.json	git worktree remove --force </dev/null ../repo	CRW-1011-17	row	-
+linear-issue-CRW-765.json	{ python3 -; } <<'EOF'	CRW-765-g3-01	row	-
+linear-issue-CRW-765.json	if true; then bash; fi <<'EOF'	CRW-765-g3-02	row	-
+linear-issue-CRW-765.json	f() { bash; }; f <<'EOF'	CRW-765-g3-03	row	-
+linear-issue-CRW-765.json	x=$(bash <<'EOF'	CRW-765-g3-04	row	-
+linear-issue-CRW-765.json	python3 <<'PY' >|out	CRW-765-g3-05	row	-
+linear-issue-CRW-765.json	python3 <<'PY' >&out	CRW-765-g3-06	row	-
+linear-issue-CRW-765.json	python3 <<'PY' >> >(cat)	CRW-765-g3-07	row	-
+linear-issue-CRW-765.json	python3 <<'PY' < <(true)	CRW-765-g3-08	row	-
+linear-issue-CRW-765.json	python3 <<'PY' >$(mktemp)	CRW-765-g3-09	row	-
+linear-issue-CRW-765.json	bas\h <<'EOF'	CRW-765-g4-01	row	-
+linear-issue-CRW-765.json	pytho\n3 <<'EOF'	CRW-765-g4-02	row	-
+linear-issue-CRW-765.json	nod\e <<'EOF'	CRW-765-g4-03	row	-
+linear-issue-CRW-765.json	bas\	CRW-765-g4-04	row	-
+linear-issue-CRW-765.json	function f { bash; }; f <<'EOF'	CRW-765-g4-05	row	-
+linear-issue-CRW-765.json	x="$(python3 <<'EOF'	CRW-765-g4-06	row	-
+linear-issue-CRW-765.json	hash -p /bin/bash b	CRW-765-g5-01	row	-
+linear-issue-CRW-765.json	alias b=bash	CRW-765-g5-02	row	-
+linear-issue-CRW-765.json	ln -sf /bin/bash X	CRW-765-g5-03	row	-
+linear-issue-CRW-765.json	"$B" <<'EOF'	CRW-765-g5-04	row	-
+linear-issue-CRW-765.json	${B} <<'EOF'	CRW-765-g5-05	row	-
+linear-issue-CRW-765.json	awk -f /dev/stdin <<'EOF'	CRW-765-g6-01	row	-
+linear-issue-CRW-765.json	ed -s /dev/null <<'EOF'	CRW-765-g7-01	row	-
+linear-issue-CRW-765.json	sqlite3 <<'EOF'	CRW-765-g7-02	row	-
+linear-issue-CRW-765.json	true | perl <<'EOF'	CRW-765-g8-01	row	-
+linear-issue-CRW-765.json	true; ed -s /dev/null <<'EOF'	CRW-765-g8-02	row	-
+linear-issue-CRW-765.json	true; sqlite3 <<'EOF'	CRW-765-g8-03	row	-
+linear-issue-CRW-765.json	for x in a; do perl; done <<'EOF'	CRW-765-g8-04	row	-
+linear-issue-CRW-765.json	true; cat <<'EOF'	CRW-765-g8-05	row	-
+linear-issue-CRW-765.json	mkdir -p d && cat > d/f.py <<'EOF'	CRW-765-g8-06	row	-
+linear-issue-CRW-765.json	while read l; do echo "$l"; done <<'EOF'	CRW-765-g8-07	row	-
 linear-issue-CRW-765.json	python3 -c / node -e / -m in the interpreter list of rule 1 (flags, no command)	CRW-765-02	prose	prose: a flag list of the rule text, not a command
 linear-issue-CRW-765.json	3rd to 9th generation answers: rules R0-R2, C1-C3, H1-H2, U1-U3, S8, K1-K5 (rule text)	CRW-765-02	prose	prose: rule statements; their red shapes are the rows CRW-765-xx
 linear-issue-CRW-851.json	items 1-3 prose (builtins dot, wrong alternate reading, coding)	CRW-851-02	prose	prose: the commands of the items are rows CRW-851-02 to 04
@@ -296,259 +296,259 @@ linear-issue-CRW-1011.json	end conditions 4 and 5: correct the known-defects cla
 linear-issue-CRW-917.json	P1 argv array: tool_input.cmd is an array, one element is one word	CRW-917-01	prose	prose: an array payload is not a shell command string; covered by the GitHub guard payload tests
 linear-issue-CRW-917.json	P1 FIFO body file and a cancelled hook row (S6, S7)	CRW-917-11	prose	prose: the FIFO command is row CRW-917-11; cancellation is a hook-process behaviour, not a command
 linear-issue-CRW-1014.json	comparison table: the same commands against the Go gate and the operating Node gate	CRW-1014-01	prose	prose: the Node gate column is not reproducible here; the commands are rows CRW-1014-01 to 06
-frozen/pre-eval-records-bundle.json (= frozen/pre-eval-pr774-562c59e1.json)	pr774-562c59e1 d1 P0: $'hash' -p /usr/bin/python3 cat	PR774-562c59e1-d1	row	
-frozen/pre-eval-records-bundle.json (= frozen/pre-eval-pr774-562c59e1.json)	pr774-562c59e1 d2 P0: cat <<$'D\c?'	PR774-562c59e1-d2	row	
-frozen/pre-eval-records-bundle.json (= frozen/pre-eval-pr774-562c59e1.json)	pr774-562c59e1 d3 P1: cat > note.md <<'DOC'	PR774-562c59e1-d3	row	
-frozen/pre-eval-records-bundle.json	pr774-5a36ccca d1 P0: cat <<'DATA' # <<'HIDDEN'	PR774-5a36ccca-d1	row	
-frozen/pre-eval-records-bundle.json	pr774-5a36ccca d2 P0: node <<EOF	PR774-5a36ccca-d2	row	
-frozen/pre-eval-records-bundle.json	pr774-5a36ccca d3 P0: bash <<'SH'	PR774-5a36ccca-d3	row	
-frozen/pre-eval-records-bundle.json	pr774-5a36ccca d4 P1: cat <<<hello	PR774-5a36ccca-d4	row	
-frozen/pre-eval-records-bundle.json	pr774-5a36ccca d4 P1: jq . <<<'{}'	PR774-5a36ccca-d4b	row	
-frozen/pre-eval-records-bundle.json	pr774-5a36ccca d5 P1: cat > note.md <<'DOC'	PR774-5a36ccca-d5	row	
-frozen/pre-eval-records-bundle.json	pr774-6f0fcf3f d1 P0: bash -s arg\ #text <<'EOF'	PR774-6f0fcf3f-d1	row	
-frozen/pre-eval-records-bundle.json	pr774-6f0fcf3f d2 P0: cat <<"E\\OF"	PR774-6f0fcf3f-d2	row	
-frozen/pre-eval-records-bundle.json	pr774-6f0fcf3f d3 P1: cat > note.md <<'EOF' # don't parse this	PR774-6f0fcf3f-d3	row	
-frozen/pre-eval-records-bundle.json	pr774-6f0fcf3f d3 P1: echo hi # "$(cat <<INNER)"	PR774-6f0fcf3f-d3b	row	
-frozen/pre-eval-records-bundle.json	pr774-9709977c d1 P0: env -S 'python3 -' cat <<'PY'	PR774-9709977c-d1	row	
-frozen/pre-eval-records-bundle.json	pr774-9709977c d2 P0: cat <<$'DATA\0ignored'	PR774-9709977c-d2	row	
-frozen/pre-eval-records-bundle.json	pr774-9709977c d3 P1: cat > note.md <<'E''OF'	PR774-9709977c-d3	row	
-frozen/pre-eval-records-bundle.json	pr774-9709977c d4 P1: cat > note.md <<'DOC'; printf '%s' 'f()'	PR774-9709977c-d4	row	
-frozen/pre-eval-records-bundle.json	pr774-a742344d d1 P0: cat <<EOF	PR774-a742344d-d1	row	
-frozen/pre-eval-records-bundle.json	pr774-a742344d d2 P0: echo \' <<'DATA'	PR774-a742344d-d2	row	
-frozen/pre-eval-records-bundle.json	pr774-a742344d d3 P1: node <<'EOF'	PR774-a742344d-d3	row	
-frozen/pre-eval-records-bundle.json	pr774-cf4c472b d1 P0: cat <<$'DATA\0ignored'X	PR774-cf4c472b-d1	row	
-frozen/pre-eval-records-bundle.json	pr774-cf4c472b d2 P0: env --split-str='python3 -' cat <<'PY'	PR774-cf4c472b-d2	row	
-frozen/pre-eval-records-bundle.json	pr774-cf4c472b d3 P1: echo 'PATH=/usr/bin'; cat > note.md <<'EOF'	PR774-cf4c472b-d3	row	
-frozen/pre-eval-records-bundle.json	pr774-cf4c472b d3 P1: echo 'example; eval placeholder'; cat <<'EOF'	PR774-cf4c472b-d3b	row	
-frozen/pre-eval-records-bundle.json (= frozen/pre-eval-pr825-3113ad91.json)	pr825-3113ad91 d1 P0: printf 'rm -rf ../repo' | if false; then :; exec </dev/null; else bash;…	PR825-3113ad91-d1	row	
-frozen/pre-eval-records-bundle.json (= frozen/pre-eval-pr825-3113ad91.json)	pr825-3113ad91 d1 P0: printf 'rm -rf ../repo' | if true; then :; exec </dev/null & bash; fi	PR825-3113ad91-d1b	row	
-frozen/pre-eval-records-bundle.json (= frozen/pre-eval-pr825-3113ad91.json)	pr825-3113ad91 d1 P0: printf 'rm -rf ../repo' | bash -c 'if false; then :; exec </dev/null; f…	PR825-3113ad91-d1c	row	
-frozen/pre-eval-records-bundle.json (= frozen/pre-eval-pr825-3113ad91.json)	pr825-3113ad91 d2 P0: printf 'rm -rf ../repo' | exec -a x &>/dev/null bash	PR825-3113ad91-d2	row	
-frozen/pre-eval-records-bundle.json (= frozen/pre-eval-pr825-3113ad91.json)	pr825-3113ad91 d2 P0: printf 'echo x > {MEMORY}/a' | exec -a x &>/dev/null bash	PR825-3113ad91-d2b	row	
-frozen/pre-eval-records-bundle.json (= frozen/pre-eval-pr825-3113ad91.json)	pr825-3113ad91 d3 P0: python3 /dev/fd/4 3<<'PY' 4<&3	PR825-3113ad91-d3	row	
-frozen/pre-eval-records-bundle.json (= frozen/pre-eval-pr825-3113ad91.json)	pr825-3113ad91 d3 P0: python3 /dev/fd/4 3<<< 'import shutil; shutil.rmtree("../repo")' 4<&3	PR825-3113ad91-d3b	row	
-frozen/pre-eval-records-bundle.json (= frozen/pre-eval-pr825-3113ad91.json)	pr825-3113ad91 d3 P0: python3 /dev/fd/4 3<<'PY' 4<&3	PR825-3113ad91-d3c	row	
-frozen/pre-eval-records-bundle.json (= frozen/pre-eval-pr825-3113ad91.json)	pr825-3113ad91 d4 P1: printf x | sh -c 'cat' _ -s	PR825-3113ad91-d4	row	
-frozen/pre-eval-records-bundle.json (= frozen/pre-eval-pr825-3113ad91.json)	pr825-3113ad91 d4 P1: printf x | dash -c 'cat' _ -s	PR825-3113ad91-d4b	row	
-frozen/pre-eval-records-bundle.json	pr825-350f75c1 d1 P0: printf 'rm -rf ../repo\n' | bash -c 'bash 3<&0 </dev/null 0>&3'	PR825-350f75c1-d1	row	
-frozen/pre-eval-records-bundle.json	pr825-350f75c1 d1 P0: printf 'rm -rf ../repo\n' | bash -c 'bash <>/dev/stdin'	PR825-350f75c1-d1b	row	
-frozen/pre-eval-records-bundle.json	pr825-350f75c1 d2 P0: printf 'rm -rf ../repo\n' | bash -c 'if bash -s then; then :; fi'	PR825-350f75c1-d2	row	
-frozen/pre-eval-records-bundle.json	pr825-350f75c1 d3 P0: printf 'import shutil; shutil.rmtree("../repo")\n' | python3 -- /dev/st…	PR825-350f75c1-d3	row	
-frozen/pre-eval-records-bundle.json	pr825-350f75c1 d4 P0: if python3 <<'PY'	PR825-350f75c1-d4	row	
-frozen/pre-eval-records-bundle.json	pr825-350f75c1 d4 P0: if python3 <<'PY'	PR825-350f75c1-d4b	row	
-frozen/pre-eval-records-bundle.json	pr825-350f75c1 d5 P0: python3 3<<'PY' <&3	PR825-350f75c1-d5	row	
-frozen/pre-eval-records-bundle.json	pr825-350f75c1 d6 P1: printf x | node --no-warnings script.js	PR825-350f75c1-d6	row	
-frozen/pre-eval-records-bundle.json	pr825-50ea729e d1 P0: printf 'rm -rf ../repo' | if true; then false && exec </dev/null; bash;…	PR825-50ea729e-d1	row	
-frozen/pre-eval-records-bundle.json	pr825-50ea729e d1 P0: printf 'rm -rf ../repo' | bash -c 'false && exec </dev/null; bash'	PR825-50ea729e-d1b	row	
-frozen/pre-eval-records-bundle.json	pr825-50ea729e d2 P0: (python3; :) <<< 'import shutil; shutil.rmtree("../repo")'	PR825-50ea729e-d2	row	
-frozen/pre-eval-records-bundle.json	pr825-50ea729e d3 P0: python3 /dev/stdin <<< 'import shutil; shutil.rmtree("../repo")'	PR825-50ea729e-d3	row	
-frozen/pre-eval-records-bundle.json	pr825-50ea729e d3 P0: python3 /dev/stdin <<'PY'	PR825-50ea729e-d3b	row	
-frozen/pre-eval-records-bundle.json	pr825-50ea729e d3 P0: python3 /dev/fd/3 3<<'PY'	PR825-50ea729e-d3c	row	
-frozen/pre-eval-records-bundle.json	pr825-50ea729e d3 P0: php -f /dev/stdin <<< '<?php system("rm -rf ../repo");'	PR825-50ea729e-d3d	row	
-frozen/pre-eval-records-bundle.json	pr825-50ea729e d4 P0: printf 'rm -rf ../repo' | env -S 'bash -c bash'	PR825-50ea729e-d4	row	
-frozen/pre-eval-records-bundle.json	pr825-50ea729e d4 P0: printf 'rm -rf ../repo' | env -S 'bash /dev/stdin'	PR825-50ea729e-d4b	row	
-frozen/pre-eval-records-bundle.json	pr825-50ea729e d5 P1: printf x | printf '%s\n' sudo -s	PR825-50ea729e-d5	row	
-frozen/pre-eval-records-bundle.json	pr825-65a24b8b d1 P0: env -u '>/dev/null' rm -rf ../repo	PR825-65a24b8b-d1	row	
-frozen/pre-eval-records-bundle.json	pr825-65a24b8b d1 P0: cat /tmp/program | env -u '>/dev/null' bash	PR825-65a24b8b-d1b	row	
-frozen/pre-eval-records-bundle.json	pr825-65a24b8b d1 P0: exec -a '>/dev/null' rm -rf ../repo	PR825-65a24b8b-d1c	row	
-frozen/pre-eval-records-bundle.json	pr825-65a24b8b d2 P0: cat /tmp/program | bash -c 'bash -s "</dev/null"'	PR825-65a24b8b-d2	row	
-frozen/pre-eval-records-bundle.json	pr825-65a24b8b d3 P0: printf 'import shutil; shutil.rmtree("../repo")\n' | python3 /dev/fd/3 …	PR825-65a24b8b-d3	row	
-frozen/pre-eval-records-bundle.json	pr825-65a24b8b d4 P0: if python3 <<< 'import shutil; shutil.rmtree("../repo")'; then :; fi	PR825-65a24b8b-d4	row	
-frozen/pre-eval-records-bundle.json	pr825-65a24b8b d4 P0: (python3 <<'PY'	PR825-65a24b8b-d4b	row	
-frozen/pre-eval-records-bundle.json	pr825-65a24b8b d5 P1: printf x | bash -c 'exec </dev/null; bash'	PR825-65a24b8b-d5	row	
-frozen/pre-eval-records-bundle.json	pr825-8d7b38fe d1 P0: printf 'import shutil; shutil.rmtree("../repo")' | python3 -- -	PR825-8d7b38fe-d1	row	
-frozen/pre-eval-records-bundle.json	pr825-8d7b38fe d1 P0: python3 -- - <<< 'import shutil; shutil.rmtree("../repo")'	PR825-8d7b38fe-d1b	row	
-frozen/pre-eval-records-bundle.json	pr825-8d7b38fe d2 P0: printf 'rm -rf ../repo' | exec -a >/dev/null x bash	PR825-8d7b38fe-d2	row	
-frozen/pre-eval-records-bundle.json	pr825-8d7b38fe d2 P0: exec -a >/dev/null x rm -rf ../repo	PR825-8d7b38fe-d2b	row	
-frozen/pre-eval-records-bundle.json	pr825-8d7b38fe d3 P0: printf 'rm -rf ../repo' | bash -c 'eval "0</dev/null; bash"'	PR825-8d7b38fe-d3	row	
-frozen/pre-eval-records-bundle.json	pr825-8d7b38fe d4 P0: printf 'import shutil; shutil.rmtree("../repo")' | bash -c 'python3 /de…	PR825-8d7b38fe-d4	row	
-frozen/pre-eval-records-bundle.json	pr825-918798df d1 P0: printf 'rm -rf ../repo' | exec -a x 2>&1 bash	PR825-918798df-d1	row	
-frozen/pre-eval-records-bundle.json	pr825-918798df d1 P0: printf 'rm -rf ../repo' | 2>&1 bash /dev/stdin	PR825-918798df-d1b	row	
-frozen/pre-eval-records-bundle.json	pr825-918798df d1 P0: printf 'echo x > {MEMORY}/a' | exec -a x 2>&1 bash	PR825-918798df-d1c	row	
-frozen/pre-eval-records-bundle.json	pr825-918798df d2 P0: printf 'import shutil; shutil.rmtree("../repo")\n' | python3 -Im code	PR825-918798df-d2	row	
-frozen/pre-eval-records-bundle.json	pr825-918798df d3 P0: printf 'rm -rf ../repo' | bash -c 'if ! bash; then :; fi'	PR825-918798df-d3	row	
-frozen/pre-eval-records-bundle.json	pr825-918798df d3 P0: printf 'echo x > {MEMORY}/a' | bash -c 'if ! bash; then :; fi'	PR825-918798df-d3b	row	
-frozen/pre-eval-records-bundle.json	pr825-918798df d4 P0: python3 2>'log;name' <<'PY'	PR825-918798df-d4	row	
-frozen/pre-eval-records-bundle.json	pr825-918798df d4 P0: python3 2>'log;name' <<'PY'	PR825-918798df-d4b	row	
-frozen/pre-eval-records-bundle.json	pr825-be21a322 d1 P0: printf 'rm -rf ../repo' | ( (exec </dev/null); bash; : )	PR825-be21a322-d1	row	
-frozen/pre-eval-records-bundle.json	pr825-be21a322 d1 P0: printf 'rm -rf ../repo' | (false && exec </dev/null; bash; : )	PR825-be21a322-d1b	row	
-frozen/pre-eval-records-bundle.json	pr825-be21a322 d2 P0: printf 'import shutil; shutil.rmtree("../repo")' | python3 /dev/fd/3 3<…	PR825-be21a322-d2	row	
-frozen/pre-eval-records-bundle.json	pr825-be21a322 d3 P0: (	PR825-be21a322-d3	row	
-frozen/pre-eval-records-bundle.json	pr825-be21a322 d4 P0: (python3) <<< 'import shutil; shutil.rmtree("../repo")'	PR825-be21a322-d4	row	
-frozen/pre-eval-records-bundle.json	pr825-be21a322 d5 P1: python3 </dev/null; { cat; } <<'EOF'	PR825-be21a322-d5	row	
-frozen/pre-eval-records-bundle.json	pr825-f54cf198 d1 P0: printf 'rm -rf ../repo\n' | bash -c 'bash </dev/null </proc/$$/fd/0; :'	PR825-f54cf198-d1	row	
-frozen/pre-eval-records-bundle.json	pr825-f54cf198 d2 P0: printf 'rm -rf ../repo\n' | exec -a x >/dev/null bash	PR825-f54cf198-d2	row	
-frozen/pre-eval-records-bundle.json	pr825-f54cf198 d2 P0: exec -a x >/dev/null rm -rf ../repo	PR825-f54cf198-d2b	row	
-frozen/pre-eval-records-bundle.json	pr825-f54cf198 d3 P0: printf 'rm -rf ../repo\n' | bash -c 'if bash; then :; fi'	PR825-f54cf198-d3	row	
-frozen/pre-eval-records-bundle.json	pr825-f54cf198 d3 P0: printf 'rm -rf ../repo\n' | bash -c "! bash"	PR825-f54cf198-d3b	row	
-frozen/pre-eval-records-bundle.json	pr825-f54cf198 d4 P0: <<< 'import shutil; shutil.rmtree("../repo")' python3	PR825-f54cf198-d4	row	
-frozen/pre-eval-records-bundle.json	pr825-f54cf198 d5 P0: python3 2>&1 <<'PY'	PR825-f54cf198-d5	row	
-frozen/pre-eval-records-bundle.json	pr825-f54cf198 d6 P0: printf 'require("fs").rmSync("../repo", {recursive:true, force:true})\n…	PR825-f54cf198-d6	row	
-frozen/pre-eval-records-bundle.json	pr825-f54cf198 d7 P1: printf x | bash -c 'bash -c bash </dev/null'	PR825-f54cf198-d7	row	
-frozen/pre-eval-records-bundle.json	pr837-5dc55510 d1 P0: python3 -c 'if True: from shutil import copy; copy("/w/a", "{MEMORY}/n.…	PR837-5dc55510-d1	row	
-frozen/pre-eval-records-bundle.json	pr837-5dc55510 d1 P0: python3 -c 'if True: import shutil as s; s.copy("/w/a", "{MEMORY}/n.md"…	PR837-5dc55510-d1b	row	
-frozen/pre-eval-records-bundle.json	pr837-5dc55510 d2 P0: python3 -c 'import shutil as os; os.copy("/w/a", "{MEMORY}/n.md")'	PR837-5dc55510-d2	row	
-frozen/pre-eval-records-bundle.json	pr837-5dc55510 d2 P0: python3 -c 'import os as shutil; shutil.rename("/w/a", "{MEMORY}/n.md")'	PR837-5dc55510-d2b	row	
-frozen/pre-eval-records-bundle.json	pr837-5dc55510 d3 P0: python3 -c 'from os import renames as mv; mv(old="/w/a", new="{MEMORY}/…	PR837-5dc55510-d3	row	
-frozen/pre-eval-records-bundle.json	pr837-5dc55510 d3 P0: python3 -c 'from os import rename as renames; renames(src="/w/a", dst="…	PR837-5dc55510-d3b	row	
-frozen/pre-eval-records-bundle.json	pr845-0ec90889 d1 P0: gh pr comment 1 --body-file {TMP}/link/../body.md	PR845-0ec90889-d1	row	
-frozen/pre-eval-records-bundle.json	pr845-0ec90889 d2 P0: cd sub && bash post.sh	PR845-0ec90889-d2	row	
-frozen/pre-eval-records-bundle.json	pr845-0ec90889 d2 P0: env -C sub bash post.sh	PR845-0ec90889-d2b	row	
-frozen/pre-eval-records-bundle.json	pr845-0ec90889 d2 P0: cp evil.sh post.sh && bash post.sh	PR845-0ec90889-d2c	row	
-frozen/pre-eval-records-bundle.json	pr845-0ec90889 d3 P0: bash "post's.sh"	PR845-0ec90889-d3	row	
-frozen/pre-eval-records-bundle.json	pr845-0ec90889 d3 P0: true; 'ba'sh post.sh	PR845-0ec90889-d3b	row	
-frozen/pre-eval-records-bundle.json	pr845-0ec90889 d3 P0: true; bash 'evil.sh)'	PR845-0ec90889-d3c	row	
-frozen/pre-eval-records-bundle.json	pr845-0ec90889 d4 P0: PATH=/tmp/post-bin:$PATH source lib.sh	PR845-0ec90889-d4	row	
-frozen/pre-eval-records-bundle.json	pr845-0ec90889 d5 P0: gh api repos/o/r/issues/1/comments --input '-'	PR845-0ec90889-d5	row	
-frozen/pre-eval-records-bundle.json	pr845-0ec90889 d6 P0: zsh -oshwordsplit post.sh	PR845-0ec90889-d6	row	
-frozen/pre-eval-records-bundle.json	pr845-0ec90889 d6 P0: source +post.sh	PR845-0ec90889-d6b	row	
-frozen/pre-eval-records-bundle.json	pr845-1bf60d75 d1 P0: gh pr comment 1 --body-file "{TMP}/'body.md'"	PR845-1bf60d75-d1	row	
-frozen/pre-eval-records-bundle.json	pr845-1bf60d75 d2 P0: command ./env	PR845-1bf60d75-d2	row	
-frozen/pre-eval-records-bundle.json	pr845-1bf60d75 d2 P0: env ./env	PR845-1bf60d75-d2b	row	
-frozen/pre-eval-records-bundle.json	pr845-1bf60d75 d3 P0: ./gh pr view 1	PR845-1bf60d75-d3	row	
-frozen/pre-eval-records-bundle.json	pr845-1bf60d75 d4 P0: PATH=/tmp/crw-evil:/usr/bin:/bin source lib.sh	PR845-1bf60d75-d4	row	
-frozen/pre-eval-records-bundle.json	pr845-1bf60d75 d4 P0: PATH=/tmp/crw-evil:/usr/bin:/bin . lib.sh	PR845-1bf60d75-d4b	row	
-frozen/pre-eval-records-bundle.json	pr845-1bf60d75 d5 P0: (cd sub); bash post.sh	PR845-1bf60d75-d5	row	
-frozen/pre-eval-records-bundle.json	pr845-1bf60d75 d6 P0: env -C sub bash post.sh	PR845-1bf60d75-d6	row	
-frozen/pre-eval-records-bundle.json	pr845-1bf60d75 d6 P0: env --chdir=sub bash post.sh	PR845-1bf60d75-d6b	row	
-frozen/pre-eval-records-bundle.json	pr845-3cccb50b d1 P0: if false; then cd sub; fi; bash post.sh	PR845-3cccb50b-d1	row	
-frozen/pre-eval-records-bundle.json	pr845-3cccb50b d1 P0: while false; do cd sub; done; bash post.sh	PR845-3cccb50b-d1b	row	
-frozen/pre-eval-records-bundle.json	pr845-3cccb50b d2 P0: 2>/dev/null bash post.sh	PR845-3cccb50b-d2	row	
-frozen/pre-eval-records-bundle.json	pr845-3cccb50b d2 P0: bash 2>/dev/null post.sh	PR845-3cccb50b-d2b	row	
-frozen/pre-eval-records-bundle.json	pr845-3cccb50b d3 P0: env -C "$DIR" bash post.sh	PR845-3cccb50b-d3	row	
-frozen/pre-eval-records-bundle.json	pr845-3cccb50b d3 P0: env --chdir="$DIR" bash post.sh	PR845-3cccb50b-d3b	row	
-frozen/pre-eval-records-bundle.json	pr845-3cccb50b d4 P0: cd; bash post.sh	PR845-3cccb50b-d4	row	
-frozen/pre-eval-records-bundle.json	pr845-3cccb50b d4 P0: cd -; bash post.sh	PR845-3cccb50b-d4b	row	
-frozen/pre-eval-records-bundle.json	pr845-3cccb50b d5 P0: bash post.sh\)	PR845-3cccb50b-d5	row	
-frozen/pre-eval-records-bundle.json	pr845-3cccb50b d5 P0: bash po\	PR845-3cccb50b-d5b	row	
-frozen/pre-eval-records-bundle.json	pr845-3cccb50b d6 P1: bash build.sh	PR845-3cccb50b-d6	row	
-frozen/pre-eval-records-bundle.json	pr845-3cccb50b d7 P1: cd "$PWD" && make	PR845-3cccb50b-d7	row	
-frozen/pre-eval-records-bundle.json	pr845-3cccb50b d7 P1: cd "$DIR" && ls	PR845-3cccb50b-d7b	row	
-frozen/pre-eval-records-bundle.json	pr845-3e2d3c04 d1 P0: bash post.sh\ extra	PR845-3e2d3c04-d1	row	
-frozen/pre-eval-records-bundle.json	pr845-3e2d3c04 d2 P0: bash post.sh>out	PR845-3e2d3c04-d2	row	
-frozen/pre-eval-records-bundle.json	pr845-3e2d3c04 d2 P0: >out bash post.sh	PR845-3e2d3c04-d2b	row	
-frozen/pre-eval-records-bundle.json	pr845-3e2d3c04 d3 P0: env -C sub -S 'bash post.sh'	PR845-3e2d3c04-d3	row	
-frozen/pre-eval-records-bundle.json	pr845-3e2d3c04 d3 P0: true; env -C sub -S 'bash post.sh'	PR845-3e2d3c04-d3b	row	
-frozen/pre-eval-records-bundle.json	pr845-3e2d3c04 d4 P0: true && PATH=/tmp/evil:/usr/bin:/bin; source lib.sh	PR845-3e2d3c04-d4	row	
-frozen/pre-eval-records-bundle.json	pr845-3e2d3c04 d4 P0: PATH=/tmp/clean true; source lib.sh	PR845-3e2d3c04-d4b	row	
-frozen/pre-eval-records-bundle.json	pr845-3e2d3c04 d5 P0: false && cd a; false && cd b; false && cd c; false && cd d; false && cd…	PR845-3e2d3c04-d5	row	
-frozen/pre-eval-records-bundle.json	pr845-3e2d3c04 d6 P1: bash 'cash$.sh'	PR845-3e2d3c04-d6	row	
-frozen/pre-eval-records-bundle.json	pr845-3e2d3c04 d7 P1: ./gh pr view 1	PR845-3e2d3c04-d7	row	
-frozen/pre-eval-records-bundle.json	pr845-705d4e3f d1 P0: true; 'ba'sh post.sh	PR845-705d4e3f-d1	row	
-frozen/pre-eval-records-bundle.json	pr845-705d4e3f d2 P0: cd sub && bash post.sh	PR845-705d4e3f-d2	row	
-frozen/pre-eval-records-bundle.json	pr845-705d4e3f d2 P0: PATH=/tmp/evil . lib.sh	PR845-705d4e3f-d2b	row	
-frozen/pre-eval-records-bundle.json	pr845-705d4e3f d3 P0: ./sh	PR845-705d4e3f-d3	row	
-frozen/pre-eval-records-bundle.json	pr845-705d4e3f d3 P0: ./env	PR845-705d4e3f-d3b	row	
-frozen/pre-eval-records-bundle.json	pr845-705d4e3f d3 P0: ./gh help	PR845-705d4e3f-d3c	row	
-frozen/pre-eval-records-bundle.json	pr845-92799ae0 d1 P1: true && cd sub; bash post.sh	PR845-92799ae0-d1	row	
-frozen/pre-eval-records-bundle.json	pr845-92799ae0 d1 P1: false || cd sub; bash post.sh	PR845-92799ae0-d1b	row	
-frozen/pre-eval-records-bundle.json	pr845-92799ae0 d2 P1: env -C sub true; bash post.sh	PR845-92799ae0-d2	row	
-frozen/pre-eval-records-bundle.json	pr845-92799ae0 d2 P1: env -C sub true; bash post.sh	PR845-92799ae0-d2b	row	
-frozen/pre-eval-records-bundle.json	pr845-92799ae0 d3 P1: bash '>post.sh' 2>/dev/null	PR845-92799ae0-d3	row	
-frozen/pre-eval-records-bundle.json	pr845-92799ae0 d4 P1: /usr/bin/env bash post.sh	PR845-92799ae0-d4	row	
-frozen/pre-eval-records-bundle.json	pr845-92799ae0 d4 P1: /usr/bin/timeout 30 bash post.sh	PR845-92799ae0-d4b	row	
-frozen/pre-eval-records-bundle.json	pr845-92799ae0 d5 P1: true; (cd sub; bash post.sh)	PR845-92799ae0-d5	row	
-frozen/pre-eval-records-bundle.json	pr845-92799ae0 d7 P1: cd link; cd ..; bash post.sh	PR845-92799ae0-d7	row	
-frozen/pre-eval-records-bundle.json	pr845-92799ae0 d8 P1: ./gh pr view 1	PR845-92799ae0-d8	row	
-frozen/pre-eval-records-bundle.json	pr845-92799ae0 d9 P1: bash "$SCRIPT"	PR845-92799ae0-d9	row	
-frozen/pre-eval-records-bundle.json	pr845-c343611d d1 P0: bash post.sh	PR845-c343611d-d1	row	
-frozen/pre-eval-records-bundle.json	pr845-c343611d d1 P0: bash post.sh	PR845-c343611d-d1b	row	
-frozen/pre-eval-records-bundle.json	pr845-c343611d d2 P0: false && cd sub; bash post.sh	PR845-c343611d-d2	row	
-frozen/pre-eval-records-bundle.json	pr845-c343611d d2 P0: cd sub | cat; bash post.sh	PR845-c343611d-d2b	row	
-frozen/pre-eval-records-bundle.json	pr845-c343611d d3 P0: bash '>post.sh'	PR845-c343611d-d3	row	
-frozen/pre-eval-records-bundle.json	pr845-c343611d d4 P0: PATH=/tmp/evil:/usr/bin:/bin; source lib.sh	PR845-c343611d-d4	row	
-frozen/pre-eval-records-bundle.json	pr845-c343611d d4 P0: PATH=/tmp/evil:/usr/bin:/bin; . lib.sh	PR845-c343611d-d4b	row	
-frozen/pre-eval-records-bundle.json	pr845-c343611d d5 P0: PATH=/tmp/t/decoy/link/..:/usr/bin:/bin source lib.sh	PR845-c343611d-d5	row	
-frozen/pre-eval-records-bundle.json	pr845-c343611d d6 P0: ./gh pr view 1	PR845-c343611d-d6	row	
-frozen/pre-eval-records-bundle.json	pr845-c343611d d7 P0: bash wrapper.sh	PR845-c343611d-d7	row	
-frozen/pre-eval-records-bundle.json	pr845-c343611d d7 P0: ./wrapper.sh	PR845-c343611d-d7b	row	
-frozen/pre-eval-records-bundle.json	pr845-ef89e0ed d1 P0: bash 'post.sh extra'	PR845-ef89e0ed-d1	row	
-frozen/pre-eval-records-bundle.json	pr845-ef89e0ed d2 P0: SCRIPT=post.sh; ./"$SCRIPT"	PR845-ef89e0ed-d2	row	
-frozen/pre-eval-records-bundle.json	pr845-ef89e0ed d3 P0: D=sub; cd "$D"; bash post.sh	PR845-ef89e0ed-d3	row	
-frozen/pre-eval-records-bundle.json	pr845-ef89e0ed d3 P0: P=/evil; PATH="$P:/usr/bin:/bin"; source lib.sh	PR845-ef89e0ed-d3b	row	
-frozen/pre-eval-records-bundle.json	pr845-ef89e0ed d4 P0: sudo -D sub bash post.sh	PR845-ef89e0ed-d4	row	
-frozen/pre-eval-records-bundle.json	pr845-ef89e0ed d4 P0: sudo -Dsub bash post.sh	PR845-ef89e0ed-d4b	row	
-frozen/pre-eval-records-bundle.json	pr845-ef89e0ed d5 P0: bash "post\q.sh"	PR845-ef89e0ed-d5	row	
-frozen/pre-eval-records-bundle.json	pr845-ef89e0ed d6 P1: bash post.sh	PR845-ef89e0ed-d6	row	
-frozen/pre-eval-records-bundle.json	pr845-ef89e0ed d7 P1: gh api repos/o/r/issues/1/comments -X 'POST' --input -	PR845-ef89e0ed-d7	row	
-frozen/pre-eval-records-bundle.json	pr845-ef89e0ed d7 P1: gh api repos/o/r/issues/1/comments --method 'POST' --field body=@-	PR845-ef89e0ed-d7b	row	
-frozen/pre-eval-records-bundle.json (= frozen/pre-eval-pr845-f30490c1.json)	pr845-f30490c1 d1 P0: if false; then true; cd sub; fi; bash post.sh	PR845-f30490c1-d1	row	
-frozen/pre-eval-records-bundle.json (= frozen/pre-eval-pr845-f30490c1.json)	pr845-f30490c1 d1 P0: case x in never) cd sub;; esac; bash post.sh	PR845-f30490c1-d1b	row	
-frozen/pre-eval-records-bundle.json (= frozen/pre-eval-pr845-f30490c1.json)	pr845-f30490c1 d2 P0: D=/evil; cd "$D"; cd ./sub; bash post.sh	PR845-f30490c1-d2	row	
-frozen/pre-eval-records-bundle.json (= frozen/pre-eval-pr845-f30490c1.json)	pr845-f30490c1 d2 P0: CDPATH=/evil; cd ./safe; cd target; bash post.sh	PR845-f30490c1-d2b	row	
-frozen/pre-eval-records-bundle.json (= frozen/pre-eval-pr845-f30490c1.json)	pr845-f30490c1 d3 P0: env -S bash 'post.sh extra'	PR845-f30490c1-d3	row	
-frozen/pre-eval-records-bundle.json (= frozen/pre-eval-pr845-f30490c1.json)	pr845-f30490c1 d4 P0: declare -x PATH=/evil:/usr/bin:/bin; source lib.sh	PR845-f30490c1-d4	row	
-frozen/pre-eval-records-bundle.json (= frozen/pre-eval-pr845-f30490c1.json)	pr845-f30490c1 d5 P1: cd ./sub; bash clean.sh	PR845-f30490c1-d5	row	
-frozen/pre-eval-records-bundle.json (= frozen/pre-eval-pr845-f30490c1.json)	pr845-f30490c1 d5 P1: cd {WORK}/sub; bash clean.sh	PR845-f30490c1-d5b	row	
-frozen/pre-eval-records-bundle.json	pr871-01da262c d1 P0: python3 -c 'for f in [open]: f("{MEMORY}/n.md","w").write("x")'	PR871-01da262c-d1	row	
-frozen/pre-eval-records-bundle.json	pr871-01da262c d1 P0: python3 -c '(lambda f=open: f("{MEMORY}/n.md","w").write("x"))()'	PR871-01da262c-d1b	row	
-frozen/pre-eval-records-bundle.json	pr871-01da262c d2 P0: python3 -c 'import io; from pathlib import Path; [io.write_text("x") fo…	PR871-01da262c-d2	row	
-frozen/pre-eval-records-bundle.json	pr871-01da262c d3 P1: python3 -c 'import pathlib; pathlib.Path("/w/n.md").write_text("x"); pr…	PR871-01da262c-d3	row	
-frozen/pre-eval-records-bundle.json	pr871-24f62ef3 d1 P0: python3 -c 'import os as parent; from pathlib import Path; p = Path("{M…	PR871-24f62ef3-d1	row	
-frozen/pre-eval-records-bundle.json	pr871-24f62ef3 d2 P0: python3 <<'PY'	PR871-24f62ef3-d2	row	
-frozen/pre-eval-records-bundle.json	pr871-24f62ef3 d3 P1: python3 -c 'import io, os; (io).open(os.path.join("{MEMORY}", "n.md"), …	PR871-24f62ef3-d3	row	
-frozen/pre-eval-records-bundle.json	pr871-24f62ef3 d4 P1: python3 -c 'print({"memories": 1}.copy())'	PR871-24f62ef3-d4	row	
-frozen/pre-eval-records-bundle.json	pr871-6e106e5c d1 P0: python3 -c 'import shutil, os; s = shutil; s.copy("/w/a", os.path.join(…	PR871-6e106e5c-d1	row	
-frozen/pre-eval-records-bundle.json	pr871-6e106e5c d1 P0: python3 -c 'import shutil, os; f = (shutil).copy; f("/w/a", os.path.joi…	PR871-6e106e5c-d1b	row	
-frozen/pre-eval-records-bundle.json	pr871-6e106e5c d2 P0: python3 2>/dev/null <<'PY'	PR871-6e106e5c-d2	row	
-frozen/pre-eval-records-bundle.json	pr871-6e106e5c d2 P0: 2>/dev/null python3 -c 'from pathlib import Path; open(Path("{MEMORY}/n…	PR871-6e106e5c-d2b	row	
-frozen/pre-eval-records-bundle.json	pr871-6e106e5c d3 P0: python3 <<'PY'	PR871-6e106e5c-d3	row	
-frozen/pre-eval-records-bundle.json	pr871-6e106e5c d4 P0: python3 -c 'import os{CR}m = "{MEMORY}/n.md"{CR}f = open{CR}f(m, "w").w…	PR871-6e106e5c-d4	row	
-frozen/pre-eval-records-bundle.json	pr871-6e106e5c d5 P1: python3 -c 'root = "{MEMORY}"; print(open(f"{root}/n.md").read())'	PR871-6e106e5c-d5	row	
-frozen/pre-eval-records-bundle.json	pr871-6e106e5c d5 P1: python3 -c 'root = "{MEMORY}"; print(open(f"{root}/n.md", "r").read())'	PR871-6e106e5c-d5b	row	
-frozen/pre-eval-records-bundle.json	pr871-76f0290e d1 P0: python3 -c 'from pathlib import Path; root = "{MEMORY}"; Path(root).joi…	PR871-76f0290e-d1	row	
-frozen/pre-eval-records-bundle.json	pr871-76f0290e d2 P0: python3 -c 'import io; from pathlib import Path; [io.write_text("x") fo…	PR871-76f0290e-d2	row	
-frozen/pre-eval-records-bundle.json	pr871-76f0290e d3 P2: python3 <<PY	PR871-76f0290e-d3	row	
-frozen/pre-eval-records-bundle.json	pr871-8148f7fb d1 P0: python3 -c 'import io; from pathlib import Path; io: Path = Path("{MEMO…	PR871-8148f7fb-d1	row	
-frozen/pre-eval-records-bundle.json	pr871-8148f7fb d1 P0: python3 -c 'import io; from pathlib import Path; [io.write_text("x") fo…	PR871-8148f7fb-d1b	row	
-frozen/pre-eval-records-bundle.json	pr871-8148f7fb d2 P0: python3 -c 'import shutil; s = shutil; args = ("/w/a", "{MEMORY}/n.md")…	PR871-8148f7fb-d2	row	
-frozen/pre-eval-records-bundle.json	pr871-8148f7fb d2 P0: python3 -c 'import shutil; s = shutil; s.copy(**{"src": "/w/a", "dst": …	PR871-8148f7fb-d2b	row	
-frozen/pre-eval-records-bundle.json	pr871-8148f7fb d3 P1: python3 -c 'import os; label = rf"/w/\x6demories/x"; open(os.path.join(…	PR871-8148f7fb-d3	row	
-frozen/pre-eval-records-bundle.json	pr871-8148f7fb d5 P2: python3 <<PY	PR871-8148f7fb-d5	row	
-frozen/pre-eval-records-bundle.json (= frozen/pre-eval-pr871-90405376.json)	pr871-90405376 d1 P0: python3 -c 'from pathlib import Path; p=Path("{MEMORY}/n.md"); p.open("…	PR871-90405376-d1	row	
-frozen/pre-eval-records-bundle.json (= frozen/pre-eval-pr871-90405376.json)	pr871-90405376 d1 P0: python3 -c 'import os; from pathlib import Path; p=Path("{MEMORY}/n.md"…	PR871-90405376-d1b	row	
-frozen/pre-eval-records-bundle.json (= frozen/pre-eval-pr871-90405376.json)	pr871-90405376 d2 P0: python3 -c 'from functools import partial; m="{MEMORY}/n.md"; partial(o…	PR871-90405376-d2	row	
-frozen/pre-eval-records-bundle.json (= frozen/pre-eval-pr871-90405376.json)	pr871-90405376 d3 P0: python3 -c 'from pathlib import Path; p=Path("/w/a"); m="{MEMORY}/n.md"…	PR871-90405376-d3	row	
-frozen/pre-eval-records-bundle.json (= frozen/pre-eval-pr871-90405376.json)	pr871-90405376 d3 P0: python3 -c 'from pathlib import Path; m="{MEMORY}/n.md"; Path("/w/a").a…	PR871-90405376-d3b	row	
-frozen/pre-eval-records-bundle.json (= frozen/pre-eval-pr871-90405376.json)	pr871-90405376 d4 P0: env 2>/dev/null python3 -c 'import os; open(os.path.join("{MEMORY}","n.…	PR871-90405376-d4	row	
-frozen/pre-eval-records-bundle.json (= frozen/pre-eval-pr871-90405376.json)	pr871-90405376 d4 P0: 0<< 'EOF' python3	PR871-90405376-d4b	row	
-frozen/pre-eval-records-bundle.json	pr871-9a50be25 d1 P0: python3 -c 'import shutil; s = shutil; f = s.copy; f("/w/a", "{MEMORY}/…	PR871-9a50be25-d1	row	
-frozen/pre-eval-records-bundle.json	pr871-9a50be25 d2 P0: python3 -c 'import io; from pathlib import Path; io, = [Path("{MEMORY}/…	PR871-9a50be25-d2	row	
-frozen/pre-eval-records-bundle.json	pr871-9a50be25 d3 P0: python3 2> {TMP}/crw-951.err <<'PY'	PR871-9a50be25-d3	row	
-frozen/pre-eval-records-bundle.json	pr871-9a50be25 d4 P2: python3 <<PY	PR871-9a50be25-d4	row	
-frozen/pre-eval-records-bundle.json	pr871-c835301b d1 P0: python3 -c 'from pathlib import Path; Path("{MEMORY}/n.md/child").paren…	PR871-c835301b-d1	row	
-frozen/pre-eval-records-bundle.json	pr871-c835301b d1 P0: python3 -c 'from pathlib import Path; [Path("{MEMORY}/n.md")][0].write_…	PR871-c835301b-d1b	row	
-frozen/pre-eval-records-bundle.json	pr871-c835301b d2 P0: python3 -c 'from pathlib import Path; p = Path("/w/a"); f = p.replace; …	PR871-c835301b-d2	row	
-frozen/pre-eval-records-bundle.json	pr871-c835301b d3 P0: python3 -c 'from pathlib import Path; p = Path("/w/a"); p.replace("{MEM…	PR871-c835301b-d3	row	
-frozen/pre-eval-records-bundle.json	pr871-c835301b d4 P0: python3 -c 'm = r"{MEMORY}/\N{foo}.md"; open(m, "w").write("x")'	PR871-c835301b-d4	row	
-frozen/pre-eval-records-bundle.json	pr871-c835301b d4 P0: python3 -c 'import os; label = r"\x6demories"; open(os.path.join("/w", …	PR871-c835301b-d4b	row	
-frozen/pre-eval-records-bundle.json	pr871-c835301b d5 P1: python3 -c 'from pathlib import Path; p = Path("{MEMORY}/n.md"); p.open…	PR871-c835301b-d5	row	
-frozen/pre-eval-records-bundle.json	pr871-d960e401 d1 P0: python3 -c 'from pathlib import Path; p=Path("{MEMORY}/n.md"); mode="w"…	PR871-d960e401-d1	row	
-frozen/pre-eval-records-bundle.json	pr871-d960e401 d2 P0: python3 -c 'from pathlib import Path; p=Path("{MEMORY}/n.md"); f=p.writ…	PR871-d960e401-d2	row	
-frozen/pre-eval-records-bundle.json	pr871-d960e401 d2 P0: python3 -c 'from pathlib import Path; f=Path("{MEMORY}/n.md").write_tex…	PR871-d960e401-d2b	row	
-frozen/pre-eval-records-bundle.json	pr871-d960e401 d3 P0: python3 -W ignore <<'PY'	PR871-d960e401-d3	row	
-frozen/pre-eval-records-bundle.json	pr871-d960e401 d3 P0: bash -c 'python3 <<PY	PR871-d960e401-d3b	row	
-frozen/pre-eval-records-bundle.json	pr871-d960e401 d4 P0: python3 -c 'print(str("memories").replace("m", "M"))'	PR871-d960e401-d4	row	
-frozen/pre-eval-records-bundle.json	pr871-d960e401 d4 P0: python3 -c 'print(("memories").replace("m", "M"))'	PR871-d960e401-d4b	row	
-frozen/pre-eval-records-bundle.json	pr871-d960e401 d5 P0: python3 <<PY	PR871-d960e401-d5	row	
-frozen/pre-eval-records-bundle.json	pr871-d97e63dc d1 P0: python3 -c 'from pathlib import Path; p = Path("{MEMORY}/n.md/child"); …	PR871-d97e63dc-d1	row	
-frozen/pre-eval-records-bundle.json	pr871-d97e63dc d2 P0: python3 -c 'from pathlib import Path; mode = "w"; open(Path("{MEMORY}/n…	PR871-d97e63dc-d2	row	
-frozen/pre-eval-records-bundle.json	pr871-d97e63dc d2 P0: python3 -c 'import shutil; root = "{MEMORY}"; shutil.copy("/tmp/a", f"{…	PR871-d97e63dc-d2b	row	
-frozen/pre-eval-records-bundle.json	pr871-d97e63dc d3 P0: python3 <<'PY'	PR871-d97e63dc-d3	row	
-frozen/pre-eval-records-bundle.json	pr871-d97e63dc d4 P0: bash -c "python3 -c \"from pathlib import Path; open(Path('{MEMORY}/n.m…	PR871-d97e63dc-d4	row	
-frozen/pre-eval-records-bundle.json	pr871-d97e63dc d5 P1: python3 -c 'import io, os; io.open(os.path.join("{MEMORY}", "n.md")).re…	PR871-d97e63dc-d5	row	
-frozen/pre-eval-records-bundle.json	pr871-ee58e0b3 d1 P0: python3 -c 'root = "{MEMORY}"; open(f"{root}/n.md", "w").write("x")'	PR871-ee58e0b3-d1	row	
-frozen/pre-eval-records-bundle.json	pr871-ee58e0b3 d2 P0: python3 -c 'import pathlib as p; p = p.Path("{MEMORY}/n.md"); p.write_t…	PR871-ee58e0b3-d2	row	
-frozen/pre-eval-records-bundle.json	pr871-ee58e0b3 d2 P0: python3 -c 'import pathlib as p; p = p.Path("{MEMORY}/n.md"); p.open("w…	PR871-ee58e0b3-d2b	row	
-frozen/pre-eval-records-bundle.json	pr871-ee58e0b3 d3 P0: python3 -c 'import shutil, os; (shutil).copy("/w/a", os.path.join("{MEM…	PR871-ee58e0b3-d3	row	
-frozen/pre-eval-records-bundle.json	pr871-ee58e0b3 d3 P0: python3 -c 'import shutil, os; shutil.copy2("/w/a", os.path.join("{MEMO…	PR871-ee58e0b3-d3b	row	
-frozen/pre-eval-records-bundle.json	pr871-ee58e0b3 d3 P0: python3 -c 'import shutil, os; shutil.move("/w/a", os.path.join("{MEMOR…	PR871-ee58e0b3-d3c	row	
-frozen/pre-eval-records-bundle.json	pr871-ee58e0b3 d4 P0: python3 -c 'from importlib import import_module as load; root = "{MEMOR…	PR871-ee58e0b3-d4	row	
-frozen/pre-eval-records-bundle.json	pr871-ee58e0b3 d5 P0: python3 -W 'ignore:foo|bar' <<'PY'	PR871-ee58e0b3-d5	row	
-frozen/pre-eval-records-bundle.json	pr871-ee58e0b3 d6 P1: python3 -c 'from pathlib import Path; p = Path("{MEMORY}/n.md"); buf = …	PR871-ee58e0b3-d6	row	
-frozen/pre-eval-records-bundle.json	pr871-f5c5f8f3 d1 P0: python3 -c 'import io; from pathlib import Path; f = lambda io: io.writ…	PR871-f5c5f8f3-d1	row	
-frozen/pre-eval-records-bundle.json	pr871-f5c5f8f3 d2 P0: 2>&1 python3 <<'PY'	PR871-f5c5f8f3-d2	row	
-frozen/pre-eval-records-bundle.json	pr871-f5c5f8f3 d3 P1: python3 -c 'import io, os; s = io; s.open(os.path.join("{MEMORY}", "n.m…	PR871-f5c5f8f3-d3	row	
+frozen/pre-eval-records-bundle.json (= frozen/pre-eval-pr774-562c59e1.json)	pr774-562c59e1 d1 P0: $'hash' -p /usr/bin/python3 cat	PR774-562c59e1-d1	row	-
+frozen/pre-eval-records-bundle.json (= frozen/pre-eval-pr774-562c59e1.json)	pr774-562c59e1 d2 P0: cat <<$'D\c?'	PR774-562c59e1-d2	row	-
+frozen/pre-eval-records-bundle.json (= frozen/pre-eval-pr774-562c59e1.json)	pr774-562c59e1 d3 P1: cat > note.md <<'DOC'	PR774-562c59e1-d3	row	-
+frozen/pre-eval-records-bundle.json	pr774-5a36ccca d1 P0: cat <<'DATA' # <<'HIDDEN'	PR774-5a36ccca-d1	row	-
+frozen/pre-eval-records-bundle.json	pr774-5a36ccca d2 P0: node <<EOF	PR774-5a36ccca-d2	row	-
+frozen/pre-eval-records-bundle.json	pr774-5a36ccca d3 P0: bash <<'SH'	PR774-5a36ccca-d3	row	-
+frozen/pre-eval-records-bundle.json	pr774-5a36ccca d4 P1: cat <<<hello	PR774-5a36ccca-d4	row	-
+frozen/pre-eval-records-bundle.json	pr774-5a36ccca d4 P1: jq . <<<'{}'	PR774-5a36ccca-d4b	row	-
+frozen/pre-eval-records-bundle.json	pr774-5a36ccca d5 P1: cat > note.md <<'DOC'	PR774-5a36ccca-d5	row	-
+frozen/pre-eval-records-bundle.json	pr774-6f0fcf3f d1 P0: bash -s arg\ #text <<'EOF'	PR774-6f0fcf3f-d1	row	-
+frozen/pre-eval-records-bundle.json	pr774-6f0fcf3f d2 P0: cat <<"E\\OF"	PR774-6f0fcf3f-d2	row	-
+frozen/pre-eval-records-bundle.json	pr774-6f0fcf3f d3 P1: cat > note.md <<'EOF' # don't parse this	PR774-6f0fcf3f-d3	row	-
+frozen/pre-eval-records-bundle.json	pr774-6f0fcf3f d3 P1: echo hi # "$(cat <<INNER)"	PR774-6f0fcf3f-d3b	row	-
+frozen/pre-eval-records-bundle.json	pr774-9709977c d1 P0: env -S 'python3 -' cat <<'PY'	PR774-9709977c-d1	row	-
+frozen/pre-eval-records-bundle.json	pr774-9709977c d2 P0: cat <<$'DATA\0ignored'	PR774-9709977c-d2	row	-
+frozen/pre-eval-records-bundle.json	pr774-9709977c d3 P1: cat > note.md <<'E''OF'	PR774-9709977c-d3	row	-
+frozen/pre-eval-records-bundle.json	pr774-9709977c d4 P1: cat > note.md <<'DOC'; printf '%s' 'f()'	PR774-9709977c-d4	row	-
+frozen/pre-eval-records-bundle.json	pr774-a742344d d1 P0: cat <<EOF	PR774-a742344d-d1	row	-
+frozen/pre-eval-records-bundle.json	pr774-a742344d d2 P0: echo \' <<'DATA'	PR774-a742344d-d2	row	-
+frozen/pre-eval-records-bundle.json	pr774-a742344d d3 P1: node <<'EOF'	PR774-a742344d-d3	row	-
+frozen/pre-eval-records-bundle.json	pr774-cf4c472b d1 P0: cat <<$'DATA\0ignored'X	PR774-cf4c472b-d1	row	-
+frozen/pre-eval-records-bundle.json	pr774-cf4c472b d2 P0: env --split-str='python3 -' cat <<'PY'	PR774-cf4c472b-d2	row	-
+frozen/pre-eval-records-bundle.json	pr774-cf4c472b d3 P1: echo 'PATH=/usr/bin'; cat > note.md <<'EOF'	PR774-cf4c472b-d3	row	-
+frozen/pre-eval-records-bundle.json	pr774-cf4c472b d3 P1: echo 'example; eval placeholder'; cat <<'EOF'	PR774-cf4c472b-d3b	row	-
+frozen/pre-eval-records-bundle.json (= frozen/pre-eval-pr825-3113ad91.json)	pr825-3113ad91 d1 P0: printf 'rm -rf ../repo' | if false; then :; exec </dev/null; else bash;…	PR825-3113ad91-d1	row	-
+frozen/pre-eval-records-bundle.json (= frozen/pre-eval-pr825-3113ad91.json)	pr825-3113ad91 d1 P0: printf 'rm -rf ../repo' | if true; then :; exec </dev/null & bash; fi	PR825-3113ad91-d1b	row	-
+frozen/pre-eval-records-bundle.json (= frozen/pre-eval-pr825-3113ad91.json)	pr825-3113ad91 d1 P0: printf 'rm -rf ../repo' | bash -c 'if false; then :; exec </dev/null; f…	PR825-3113ad91-d1c	row	-
+frozen/pre-eval-records-bundle.json (= frozen/pre-eval-pr825-3113ad91.json)	pr825-3113ad91 d2 P0: printf 'rm -rf ../repo' | exec -a x &>/dev/null bash	PR825-3113ad91-d2	row	-
+frozen/pre-eval-records-bundle.json (= frozen/pre-eval-pr825-3113ad91.json)	pr825-3113ad91 d2 P0: printf 'echo x > {MEMORY}/a' | exec -a x &>/dev/null bash	PR825-3113ad91-d2b	row	-
+frozen/pre-eval-records-bundle.json (= frozen/pre-eval-pr825-3113ad91.json)	pr825-3113ad91 d3 P0: python3 /dev/fd/4 3<<'PY' 4<&3	PR825-3113ad91-d3	row	-
+frozen/pre-eval-records-bundle.json (= frozen/pre-eval-pr825-3113ad91.json)	pr825-3113ad91 d3 P0: python3 /dev/fd/4 3<<< 'import shutil; shutil.rmtree("../repo")' 4<&3	PR825-3113ad91-d3b	row	-
+frozen/pre-eval-records-bundle.json (= frozen/pre-eval-pr825-3113ad91.json)	pr825-3113ad91 d3 P0: python3 /dev/fd/4 3<<'PY' 4<&3	PR825-3113ad91-d3c	row	-
+frozen/pre-eval-records-bundle.json (= frozen/pre-eval-pr825-3113ad91.json)	pr825-3113ad91 d4 P1: printf x | sh -c 'cat' _ -s	PR825-3113ad91-d4	row	-
+frozen/pre-eval-records-bundle.json (= frozen/pre-eval-pr825-3113ad91.json)	pr825-3113ad91 d4 P1: printf x | dash -c 'cat' _ -s	PR825-3113ad91-d4b	row	-
+frozen/pre-eval-records-bundle.json	pr825-350f75c1 d1 P0: printf 'rm -rf ../repo\n' | bash -c 'bash 3<&0 </dev/null 0>&3'	PR825-350f75c1-d1	row	-
+frozen/pre-eval-records-bundle.json	pr825-350f75c1 d1 P0: printf 'rm -rf ../repo\n' | bash -c 'bash <>/dev/stdin'	PR825-350f75c1-d1b	row	-
+frozen/pre-eval-records-bundle.json	pr825-350f75c1 d2 P0: printf 'rm -rf ../repo\n' | bash -c 'if bash -s then; then :; fi'	PR825-350f75c1-d2	row	-
+frozen/pre-eval-records-bundle.json	pr825-350f75c1 d3 P0: printf 'import shutil; shutil.rmtree("../repo")\n' | python3 -- /dev/st…	PR825-350f75c1-d3	row	-
+frozen/pre-eval-records-bundle.json	pr825-350f75c1 d4 P0: if python3 <<'PY'	PR825-350f75c1-d4	row	-
+frozen/pre-eval-records-bundle.json	pr825-350f75c1 d4 P0: if python3 <<'PY'	PR825-350f75c1-d4b	row	-
+frozen/pre-eval-records-bundle.json	pr825-350f75c1 d5 P0: python3 3<<'PY' <&3	PR825-350f75c1-d5	row	-
+frozen/pre-eval-records-bundle.json	pr825-350f75c1 d6 P1: printf x | node --no-warnings script.js	PR825-350f75c1-d6	row	-
+frozen/pre-eval-records-bundle.json	pr825-50ea729e d1 P0: printf 'rm -rf ../repo' | if true; then false && exec </dev/null; bash;…	PR825-50ea729e-d1	row	-
+frozen/pre-eval-records-bundle.json	pr825-50ea729e d1 P0: printf 'rm -rf ../repo' | bash -c 'false && exec </dev/null; bash'	PR825-50ea729e-d1b	row	-
+frozen/pre-eval-records-bundle.json	pr825-50ea729e d2 P0: (python3; :) <<< 'import shutil; shutil.rmtree("../repo")'	PR825-50ea729e-d2	row	-
+frozen/pre-eval-records-bundle.json	pr825-50ea729e d3 P0: python3 /dev/stdin <<< 'import shutil; shutil.rmtree("../repo")'	PR825-50ea729e-d3	row	-
+frozen/pre-eval-records-bundle.json	pr825-50ea729e d3 P0: python3 /dev/stdin <<'PY'	PR825-50ea729e-d3b	row	-
+frozen/pre-eval-records-bundle.json	pr825-50ea729e d3 P0: python3 /dev/fd/3 3<<'PY'	PR825-50ea729e-d3c	row	-
+frozen/pre-eval-records-bundle.json	pr825-50ea729e d3 P0: php -f /dev/stdin <<< '<?php system("rm -rf ../repo");'	PR825-50ea729e-d3d	row	-
+frozen/pre-eval-records-bundle.json	pr825-50ea729e d4 P0: printf 'rm -rf ../repo' | env -S 'bash -c bash'	PR825-50ea729e-d4	row	-
+frozen/pre-eval-records-bundle.json	pr825-50ea729e d4 P0: printf 'rm -rf ../repo' | env -S 'bash /dev/stdin'	PR825-50ea729e-d4b	row	-
+frozen/pre-eval-records-bundle.json	pr825-50ea729e d5 P1: printf x | printf '%s\n' sudo -s	PR825-50ea729e-d5	row	-
+frozen/pre-eval-records-bundle.json	pr825-65a24b8b d1 P0: env -u '>/dev/null' rm -rf ../repo	PR825-65a24b8b-d1	row	-
+frozen/pre-eval-records-bundle.json	pr825-65a24b8b d1 P0: cat /tmp/program | env -u '>/dev/null' bash	PR825-65a24b8b-d1b	row	-
+frozen/pre-eval-records-bundle.json	pr825-65a24b8b d1 P0: exec -a '>/dev/null' rm -rf ../repo	PR825-65a24b8b-d1c	row	-
+frozen/pre-eval-records-bundle.json	pr825-65a24b8b d2 P0: cat /tmp/program | bash -c 'bash -s "</dev/null"'	PR825-65a24b8b-d2	row	-
+frozen/pre-eval-records-bundle.json	pr825-65a24b8b d3 P0: printf 'import shutil; shutil.rmtree("../repo")\n' | python3 /dev/fd/3 …	PR825-65a24b8b-d3	row	-
+frozen/pre-eval-records-bundle.json	pr825-65a24b8b d4 P0: if python3 <<< 'import shutil; shutil.rmtree("../repo")'; then :; fi	PR825-65a24b8b-d4	row	-
+frozen/pre-eval-records-bundle.json	pr825-65a24b8b d4 P0: (python3 <<'PY'	PR825-65a24b8b-d4b	row	-
+frozen/pre-eval-records-bundle.json	pr825-65a24b8b d5 P1: printf x | bash -c 'exec </dev/null; bash'	PR825-65a24b8b-d5	row	-
+frozen/pre-eval-records-bundle.json	pr825-8d7b38fe d1 P0: printf 'import shutil; shutil.rmtree("../repo")' | python3 -- -	PR825-8d7b38fe-d1	row	-
+frozen/pre-eval-records-bundle.json	pr825-8d7b38fe d1 P0: python3 -- - <<< 'import shutil; shutil.rmtree("../repo")'	PR825-8d7b38fe-d1b	row	-
+frozen/pre-eval-records-bundle.json	pr825-8d7b38fe d2 P0: printf 'rm -rf ../repo' | exec -a >/dev/null x bash	PR825-8d7b38fe-d2	row	-
+frozen/pre-eval-records-bundle.json	pr825-8d7b38fe d2 P0: exec -a >/dev/null x rm -rf ../repo	PR825-8d7b38fe-d2b	row	-
+frozen/pre-eval-records-bundle.json	pr825-8d7b38fe d3 P0: printf 'rm -rf ../repo' | bash -c 'eval "0</dev/null; bash"'	PR825-8d7b38fe-d3	row	-
+frozen/pre-eval-records-bundle.json	pr825-8d7b38fe d4 P0: printf 'import shutil; shutil.rmtree("../repo")' | bash -c 'python3 /de…	PR825-8d7b38fe-d4	row	-
+frozen/pre-eval-records-bundle.json	pr825-918798df d1 P0: printf 'rm -rf ../repo' | exec -a x 2>&1 bash	PR825-918798df-d1	row	-
+frozen/pre-eval-records-bundle.json	pr825-918798df d1 P0: printf 'rm -rf ../repo' | 2>&1 bash /dev/stdin	PR825-918798df-d1b	row	-
+frozen/pre-eval-records-bundle.json	pr825-918798df d1 P0: printf 'echo x > {MEMORY}/a' | exec -a x 2>&1 bash	PR825-918798df-d1c	row	-
+frozen/pre-eval-records-bundle.json	pr825-918798df d2 P0: printf 'import shutil; shutil.rmtree("../repo")\n' | python3 -Im code	PR825-918798df-d2	row	-
+frozen/pre-eval-records-bundle.json	pr825-918798df d3 P0: printf 'rm -rf ../repo' | bash -c 'if ! bash; then :; fi'	PR825-918798df-d3	row	-
+frozen/pre-eval-records-bundle.json	pr825-918798df d3 P0: printf 'echo x > {MEMORY}/a' | bash -c 'if ! bash; then :; fi'	PR825-918798df-d3b	row	-
+frozen/pre-eval-records-bundle.json	pr825-918798df d4 P0: python3 2>'log;name' <<'PY'	PR825-918798df-d4	row	-
+frozen/pre-eval-records-bundle.json	pr825-918798df d4 P0: python3 2>'log;name' <<'PY'	PR825-918798df-d4b	row	-
+frozen/pre-eval-records-bundle.json	pr825-be21a322 d1 P0: printf 'rm -rf ../repo' | ( (exec </dev/null); bash; : )	PR825-be21a322-d1	row	-
+frozen/pre-eval-records-bundle.json	pr825-be21a322 d1 P0: printf 'rm -rf ../repo' | (false && exec </dev/null; bash; : )	PR825-be21a322-d1b	row	-
+frozen/pre-eval-records-bundle.json	pr825-be21a322 d2 P0: printf 'import shutil; shutil.rmtree("../repo")' | python3 /dev/fd/3 3<…	PR825-be21a322-d2	row	-
+frozen/pre-eval-records-bundle.json	pr825-be21a322 d3 P0: (	PR825-be21a322-d3	row	-
+frozen/pre-eval-records-bundle.json	pr825-be21a322 d4 P0: (python3) <<< 'import shutil; shutil.rmtree("../repo")'	PR825-be21a322-d4	row	-
+frozen/pre-eval-records-bundle.json	pr825-be21a322 d5 P1: python3 </dev/null; { cat; } <<'EOF'	PR825-be21a322-d5	row	-
+frozen/pre-eval-records-bundle.json	pr825-f54cf198 d1 P0: printf 'rm -rf ../repo\n' | bash -c 'bash </dev/null </proc/$$/fd/0; :'	PR825-f54cf198-d1	row	-
+frozen/pre-eval-records-bundle.json	pr825-f54cf198 d2 P0: printf 'rm -rf ../repo\n' | exec -a x >/dev/null bash	PR825-f54cf198-d2	row	-
+frozen/pre-eval-records-bundle.json	pr825-f54cf198 d2 P0: exec -a x >/dev/null rm -rf ../repo	PR825-f54cf198-d2b	row	-
+frozen/pre-eval-records-bundle.json	pr825-f54cf198 d3 P0: printf 'rm -rf ../repo\n' | bash -c 'if bash; then :; fi'	PR825-f54cf198-d3	row	-
+frozen/pre-eval-records-bundle.json	pr825-f54cf198 d3 P0: printf 'rm -rf ../repo\n' | bash -c "! bash"	PR825-f54cf198-d3b	row	-
+frozen/pre-eval-records-bundle.json	pr825-f54cf198 d4 P0: <<< 'import shutil; shutil.rmtree("../repo")' python3	PR825-f54cf198-d4	row	-
+frozen/pre-eval-records-bundle.json	pr825-f54cf198 d5 P0: python3 2>&1 <<'PY'	PR825-f54cf198-d5	row	-
+frozen/pre-eval-records-bundle.json	pr825-f54cf198 d6 P0: printf 'require("fs").rmSync("../repo", {recursive:true, force:true})\n…	PR825-f54cf198-d6	row	-
+frozen/pre-eval-records-bundle.json	pr825-f54cf198 d7 P1: printf x | bash -c 'bash -c bash </dev/null'	PR825-f54cf198-d7	row	-
+frozen/pre-eval-records-bundle.json	pr837-5dc55510 d1 P0: python3 -c 'if True: from shutil import copy; copy("/w/a", "{MEMORY}/n.…	PR837-5dc55510-d1	row	-
+frozen/pre-eval-records-bundle.json	pr837-5dc55510 d1 P0: python3 -c 'if True: import shutil as s; s.copy("/w/a", "{MEMORY}/n.md"…	PR837-5dc55510-d1b	row	-
+frozen/pre-eval-records-bundle.json	pr837-5dc55510 d2 P0: python3 -c 'import shutil as os; os.copy("/w/a", "{MEMORY}/n.md")'	PR837-5dc55510-d2	row	-
+frozen/pre-eval-records-bundle.json	pr837-5dc55510 d2 P0: python3 -c 'import os as shutil; shutil.rename("/w/a", "{MEMORY}/n.md")'	PR837-5dc55510-d2b	row	-
+frozen/pre-eval-records-bundle.json	pr837-5dc55510 d3 P0: python3 -c 'from os import renames as mv; mv(old="/w/a", new="{MEMORY}/…	PR837-5dc55510-d3	row	-
+frozen/pre-eval-records-bundle.json	pr837-5dc55510 d3 P0: python3 -c 'from os import rename as renames; renames(src="/w/a", dst="…	PR837-5dc55510-d3b	row	-
+frozen/pre-eval-records-bundle.json	pr845-0ec90889 d1 P0: gh pr comment 1 --body-file {TMP}/link/../body.md	PR845-0ec90889-d1	row	-
+frozen/pre-eval-records-bundle.json	pr845-0ec90889 d2 P0: cd sub && bash post.sh	PR845-0ec90889-d2	row	-
+frozen/pre-eval-records-bundle.json	pr845-0ec90889 d2 P0: env -C sub bash post.sh	PR845-0ec90889-d2b	row	-
+frozen/pre-eval-records-bundle.json	pr845-0ec90889 d2 P0: cp evil.sh post.sh && bash post.sh	PR845-0ec90889-d2c	row	-
+frozen/pre-eval-records-bundle.json	pr845-0ec90889 d3 P0: bash "post's.sh"	PR845-0ec90889-d3	row	-
+frozen/pre-eval-records-bundle.json	pr845-0ec90889 d3 P0: true; 'ba'sh post.sh	PR845-0ec90889-d3b	row	-
+frozen/pre-eval-records-bundle.json	pr845-0ec90889 d3 P0: true; bash 'evil.sh)'	PR845-0ec90889-d3c	row	-
+frozen/pre-eval-records-bundle.json	pr845-0ec90889 d4 P0: PATH=/tmp/post-bin:$PATH source lib.sh	PR845-0ec90889-d4	row	-
+frozen/pre-eval-records-bundle.json	pr845-0ec90889 d5 P0: gh api repos/o/r/issues/1/comments --input '-'	PR845-0ec90889-d5	row	-
+frozen/pre-eval-records-bundle.json	pr845-0ec90889 d6 P0: zsh -oshwordsplit post.sh	PR845-0ec90889-d6	row	-
+frozen/pre-eval-records-bundle.json	pr845-0ec90889 d6 P0: source +post.sh	PR845-0ec90889-d6b	row	-
+frozen/pre-eval-records-bundle.json	pr845-1bf60d75 d1 P0: gh pr comment 1 --body-file "{TMP}/'body.md'"	PR845-1bf60d75-d1	row	-
+frozen/pre-eval-records-bundle.json	pr845-1bf60d75 d2 P0: command ./env	PR845-1bf60d75-d2	row	-
+frozen/pre-eval-records-bundle.json	pr845-1bf60d75 d2 P0: env ./env	PR845-1bf60d75-d2b	row	-
+frozen/pre-eval-records-bundle.json	pr845-1bf60d75 d3 P0: ./gh pr view 1	PR845-1bf60d75-d3	row	-
+frozen/pre-eval-records-bundle.json	pr845-1bf60d75 d4 P0: PATH=/tmp/crw-evil:/usr/bin:/bin source lib.sh	PR845-1bf60d75-d4	row	-
+frozen/pre-eval-records-bundle.json	pr845-1bf60d75 d4 P0: PATH=/tmp/crw-evil:/usr/bin:/bin . lib.sh	PR845-1bf60d75-d4b	row	-
+frozen/pre-eval-records-bundle.json	pr845-1bf60d75 d5 P0: (cd sub); bash post.sh	PR845-1bf60d75-d5	row	-
+frozen/pre-eval-records-bundle.json	pr845-1bf60d75 d6 P0: env -C sub bash post.sh	PR845-1bf60d75-d6	row	-
+frozen/pre-eval-records-bundle.json	pr845-1bf60d75 d6 P0: env --chdir=sub bash post.sh	PR845-1bf60d75-d6b	row	-
+frozen/pre-eval-records-bundle.json	pr845-3cccb50b d1 P0: if false; then cd sub; fi; bash post.sh	PR845-3cccb50b-d1	row	-
+frozen/pre-eval-records-bundle.json	pr845-3cccb50b d1 P0: while false; do cd sub; done; bash post.sh	PR845-3cccb50b-d1b	row	-
+frozen/pre-eval-records-bundle.json	pr845-3cccb50b d2 P0: 2>/dev/null bash post.sh	PR845-3cccb50b-d2	row	-
+frozen/pre-eval-records-bundle.json	pr845-3cccb50b d2 P0: bash 2>/dev/null post.sh	PR845-3cccb50b-d2b	row	-
+frozen/pre-eval-records-bundle.json	pr845-3cccb50b d3 P0: env -C "$DIR" bash post.sh	PR845-3cccb50b-d3	row	-
+frozen/pre-eval-records-bundle.json	pr845-3cccb50b d3 P0: env --chdir="$DIR" bash post.sh	PR845-3cccb50b-d3b	row	-
+frozen/pre-eval-records-bundle.json	pr845-3cccb50b d4 P0: cd; bash post.sh	PR845-3cccb50b-d4	row	-
+frozen/pre-eval-records-bundle.json	pr845-3cccb50b d4 P0: cd -; bash post.sh	PR845-3cccb50b-d4b	row	-
+frozen/pre-eval-records-bundle.json	pr845-3cccb50b d5 P0: bash post.sh\)	PR845-3cccb50b-d5	row	-
+frozen/pre-eval-records-bundle.json	pr845-3cccb50b d5 P0: bash po\	PR845-3cccb50b-d5b	row	-
+frozen/pre-eval-records-bundle.json	pr845-3cccb50b d6 P1: bash build.sh	PR845-3cccb50b-d6	row	-
+frozen/pre-eval-records-bundle.json	pr845-3cccb50b d7 P1: cd "$PWD" && make	PR845-3cccb50b-d7	row	-
+frozen/pre-eval-records-bundle.json	pr845-3cccb50b d7 P1: cd "$DIR" && ls	PR845-3cccb50b-d7b	row	-
+frozen/pre-eval-records-bundle.json	pr845-3e2d3c04 d1 P0: bash post.sh\ extra	PR845-3e2d3c04-d1	row	-
+frozen/pre-eval-records-bundle.json	pr845-3e2d3c04 d2 P0: bash post.sh>out	PR845-3e2d3c04-d2	row	-
+frozen/pre-eval-records-bundle.json	pr845-3e2d3c04 d2 P0: >out bash post.sh	PR845-3e2d3c04-d2b	row	-
+frozen/pre-eval-records-bundle.json	pr845-3e2d3c04 d3 P0: env -C sub -S 'bash post.sh'	PR845-3e2d3c04-d3	row	-
+frozen/pre-eval-records-bundle.json	pr845-3e2d3c04 d3 P0: true; env -C sub -S 'bash post.sh'	PR845-3e2d3c04-d3b	row	-
+frozen/pre-eval-records-bundle.json	pr845-3e2d3c04 d4 P0: true && PATH=/tmp/evil:/usr/bin:/bin; source lib.sh	PR845-3e2d3c04-d4	row	-
+frozen/pre-eval-records-bundle.json	pr845-3e2d3c04 d4 P0: PATH=/tmp/clean true; source lib.sh	PR845-3e2d3c04-d4b	row	-
+frozen/pre-eval-records-bundle.json	pr845-3e2d3c04 d5 P0: false && cd a; false && cd b; false && cd c; false && cd d; false && cd…	PR845-3e2d3c04-d5	row	-
+frozen/pre-eval-records-bundle.json	pr845-3e2d3c04 d6 P1: bash 'cash$.sh'	PR845-3e2d3c04-d6	row	-
+frozen/pre-eval-records-bundle.json	pr845-3e2d3c04 d7 P1: ./gh pr view 1	PR845-3e2d3c04-d7	row	-
+frozen/pre-eval-records-bundle.json	pr845-705d4e3f d1 P0: true; 'ba'sh post.sh	PR845-705d4e3f-d1	row	-
+frozen/pre-eval-records-bundle.json	pr845-705d4e3f d2 P0: cd sub && bash post.sh	PR845-705d4e3f-d2	row	-
+frozen/pre-eval-records-bundle.json	pr845-705d4e3f d2 P0: PATH=/tmp/evil . lib.sh	PR845-705d4e3f-d2b	row	-
+frozen/pre-eval-records-bundle.json	pr845-705d4e3f d3 P0: ./sh	PR845-705d4e3f-d3	row	-
+frozen/pre-eval-records-bundle.json	pr845-705d4e3f d3 P0: ./env	PR845-705d4e3f-d3b	row	-
+frozen/pre-eval-records-bundle.json	pr845-705d4e3f d3 P0: ./gh help	PR845-705d4e3f-d3c	row	-
+frozen/pre-eval-records-bundle.json	pr845-92799ae0 d1 P1: true && cd sub; bash post.sh	PR845-92799ae0-d1	row	-
+frozen/pre-eval-records-bundle.json	pr845-92799ae0 d1 P1: false || cd sub; bash post.sh	PR845-92799ae0-d1b	row	-
+frozen/pre-eval-records-bundle.json	pr845-92799ae0 d2 P1: env -C sub true; bash post.sh	PR845-92799ae0-d2	row	-
+frozen/pre-eval-records-bundle.json	pr845-92799ae0 d2 P1: env -C sub true; bash post.sh	PR845-92799ae0-d2b	row	-
+frozen/pre-eval-records-bundle.json	pr845-92799ae0 d3 P1: bash '>post.sh' 2>/dev/null	PR845-92799ae0-d3	row	-
+frozen/pre-eval-records-bundle.json	pr845-92799ae0 d4 P1: /usr/bin/env bash post.sh	PR845-92799ae0-d4	row	-
+frozen/pre-eval-records-bundle.json	pr845-92799ae0 d4 P1: /usr/bin/timeout 30 bash post.sh	PR845-92799ae0-d4b	row	-
+frozen/pre-eval-records-bundle.json	pr845-92799ae0 d5 P1: true; (cd sub; bash post.sh)	PR845-92799ae0-d5	row	-
+frozen/pre-eval-records-bundle.json	pr845-92799ae0 d7 P1: cd link; cd ..; bash post.sh	PR845-92799ae0-d7	row	-
+frozen/pre-eval-records-bundle.json	pr845-92799ae0 d8 P1: ./gh pr view 1	PR845-92799ae0-d8	row	-
+frozen/pre-eval-records-bundle.json	pr845-92799ae0 d9 P1: bash "$SCRIPT"	PR845-92799ae0-d9	row	-
+frozen/pre-eval-records-bundle.json	pr845-c343611d d1 P0: bash post.sh	PR845-c343611d-d1	row	-
+frozen/pre-eval-records-bundle.json	pr845-c343611d d1 P0: bash post.sh	PR845-c343611d-d1b	row	-
+frozen/pre-eval-records-bundle.json	pr845-c343611d d2 P0: false && cd sub; bash post.sh	PR845-c343611d-d2	row	-
+frozen/pre-eval-records-bundle.json	pr845-c343611d d2 P0: cd sub | cat; bash post.sh	PR845-c343611d-d2b	row	-
+frozen/pre-eval-records-bundle.json	pr845-c343611d d3 P0: bash '>post.sh'	PR845-c343611d-d3	row	-
+frozen/pre-eval-records-bundle.json	pr845-c343611d d4 P0: PATH=/tmp/evil:/usr/bin:/bin; source lib.sh	PR845-c343611d-d4	row	-
+frozen/pre-eval-records-bundle.json	pr845-c343611d d4 P0: PATH=/tmp/evil:/usr/bin:/bin; . lib.sh	PR845-c343611d-d4b	row	-
+frozen/pre-eval-records-bundle.json	pr845-c343611d d5 P0: PATH=/tmp/t/decoy/link/..:/usr/bin:/bin source lib.sh	PR845-c343611d-d5	row	-
+frozen/pre-eval-records-bundle.json	pr845-c343611d d6 P0: ./gh pr view 1	PR845-c343611d-d6	row	-
+frozen/pre-eval-records-bundle.json	pr845-c343611d d7 P0: bash wrapper.sh	PR845-c343611d-d7	row	-
+frozen/pre-eval-records-bundle.json	pr845-c343611d d7 P0: ./wrapper.sh	PR845-c343611d-d7b	row	-
+frozen/pre-eval-records-bundle.json	pr845-ef89e0ed d1 P0: bash 'post.sh extra'	PR845-ef89e0ed-d1	row	-
+frozen/pre-eval-records-bundle.json	pr845-ef89e0ed d2 P0: SCRIPT=post.sh; ./"$SCRIPT"	PR845-ef89e0ed-d2	row	-
+frozen/pre-eval-records-bundle.json	pr845-ef89e0ed d3 P0: D=sub; cd "$D"; bash post.sh	PR845-ef89e0ed-d3	row	-
+frozen/pre-eval-records-bundle.json	pr845-ef89e0ed d3 P0: P=/evil; PATH="$P:/usr/bin:/bin"; source lib.sh	PR845-ef89e0ed-d3b	row	-
+frozen/pre-eval-records-bundle.json	pr845-ef89e0ed d4 P0: sudo -D sub bash post.sh	PR845-ef89e0ed-d4	row	-
+frozen/pre-eval-records-bundle.json	pr845-ef89e0ed d4 P0: sudo -Dsub bash post.sh	PR845-ef89e0ed-d4b	row	-
+frozen/pre-eval-records-bundle.json	pr845-ef89e0ed d5 P0: bash "post\q.sh"	PR845-ef89e0ed-d5	row	-
+frozen/pre-eval-records-bundle.json	pr845-ef89e0ed d6 P1: bash post.sh	PR845-ef89e0ed-d6	row	-
+frozen/pre-eval-records-bundle.json	pr845-ef89e0ed d7 P1: gh api repos/o/r/issues/1/comments -X 'POST' --input -	PR845-ef89e0ed-d7	row	-
+frozen/pre-eval-records-bundle.json	pr845-ef89e0ed d7 P1: gh api repos/o/r/issues/1/comments --method 'POST' --field body=@-	PR845-ef89e0ed-d7b	row	-
+frozen/pre-eval-records-bundle.json (= frozen/pre-eval-pr845-f30490c1.json)	pr845-f30490c1 d1 P0: if false; then true; cd sub; fi; bash post.sh	PR845-f30490c1-d1	row	-
+frozen/pre-eval-records-bundle.json (= frozen/pre-eval-pr845-f30490c1.json)	pr845-f30490c1 d1 P0: case x in never) cd sub;; esac; bash post.sh	PR845-f30490c1-d1b	row	-
+frozen/pre-eval-records-bundle.json (= frozen/pre-eval-pr845-f30490c1.json)	pr845-f30490c1 d2 P0: D=/evil; cd "$D"; cd ./sub; bash post.sh	PR845-f30490c1-d2	row	-
+frozen/pre-eval-records-bundle.json (= frozen/pre-eval-pr845-f30490c1.json)	pr845-f30490c1 d2 P0: CDPATH=/evil; cd ./safe; cd target; bash post.sh	PR845-f30490c1-d2b	row	-
+frozen/pre-eval-records-bundle.json (= frozen/pre-eval-pr845-f30490c1.json)	pr845-f30490c1 d3 P0: env -S bash 'post.sh extra'	PR845-f30490c1-d3	row	-
+frozen/pre-eval-records-bundle.json (= frozen/pre-eval-pr845-f30490c1.json)	pr845-f30490c1 d4 P0: declare -x PATH=/evil:/usr/bin:/bin; source lib.sh	PR845-f30490c1-d4	row	-
+frozen/pre-eval-records-bundle.json (= frozen/pre-eval-pr845-f30490c1.json)	pr845-f30490c1 d5 P1: cd ./sub; bash clean.sh	PR845-f30490c1-d5	row	-
+frozen/pre-eval-records-bundle.json (= frozen/pre-eval-pr845-f30490c1.json)	pr845-f30490c1 d5 P1: cd {WORK}/sub; bash clean.sh	PR845-f30490c1-d5b	row	-
+frozen/pre-eval-records-bundle.json	pr871-01da262c d1 P0: python3 -c 'for f in [open]: f("{MEMORY}/n.md","w").write("x")'	PR871-01da262c-d1	row	-
+frozen/pre-eval-records-bundle.json	pr871-01da262c d1 P0: python3 -c '(lambda f=open: f("{MEMORY}/n.md","w").write("x"))()'	PR871-01da262c-d1b	row	-
+frozen/pre-eval-records-bundle.json	pr871-01da262c d2 P0: python3 -c 'import io; from pathlib import Path; [io.write_text("x") fo…	PR871-01da262c-d2	row	-
+frozen/pre-eval-records-bundle.json	pr871-01da262c d3 P1: python3 -c 'import pathlib; pathlib.Path("/w/n.md").write_text("x"); pr…	PR871-01da262c-d3	row	-
+frozen/pre-eval-records-bundle.json	pr871-24f62ef3 d1 P0: python3 -c 'import os as parent; from pathlib import Path; p = Path("{M…	PR871-24f62ef3-d1	row	-
+frozen/pre-eval-records-bundle.json	pr871-24f62ef3 d2 P0: python3 <<'PY'	PR871-24f62ef3-d2	row	-
+frozen/pre-eval-records-bundle.json	pr871-24f62ef3 d3 P1: python3 -c 'import io, os; (io).open(os.path.join("{MEMORY}", "n.md"), …	PR871-24f62ef3-d3	row	-
+frozen/pre-eval-records-bundle.json	pr871-24f62ef3 d4 P1: python3 -c 'print({"memories": 1}.copy())'	PR871-24f62ef3-d4	row	-
+frozen/pre-eval-records-bundle.json	pr871-6e106e5c d1 P0: python3 -c 'import shutil, os; s = shutil; s.copy("/w/a", os.path.join(…	PR871-6e106e5c-d1	row	-
+frozen/pre-eval-records-bundle.json	pr871-6e106e5c d1 P0: python3 -c 'import shutil, os; f = (shutil).copy; f("/w/a", os.path.joi…	PR871-6e106e5c-d1b	row	-
+frozen/pre-eval-records-bundle.json	pr871-6e106e5c d2 P0: python3 2>/dev/null <<'PY'	PR871-6e106e5c-d2	row	-
+frozen/pre-eval-records-bundle.json	pr871-6e106e5c d2 P0: 2>/dev/null python3 -c 'from pathlib import Path; open(Path("{MEMORY}/n…	PR871-6e106e5c-d2b	row	-
+frozen/pre-eval-records-bundle.json	pr871-6e106e5c d3 P0: python3 <<'PY'	PR871-6e106e5c-d3	row	-
+frozen/pre-eval-records-bundle.json	pr871-6e106e5c d4 P0: python3 -c 'import os{CR}m = "{MEMORY}/n.md"{CR}f = open{CR}f(m, "w").w…	PR871-6e106e5c-d4	row	-
+frozen/pre-eval-records-bundle.json	pr871-6e106e5c d5 P1: python3 -c 'root = "{MEMORY}"; print(open(f"{root}/n.md").read())'	PR871-6e106e5c-d5	row	-
+frozen/pre-eval-records-bundle.json	pr871-6e106e5c d5 P1: python3 -c 'root = "{MEMORY}"; print(open(f"{root}/n.md", "r").read())'	PR871-6e106e5c-d5b	row	-
+frozen/pre-eval-records-bundle.json	pr871-76f0290e d1 P0: python3 -c 'from pathlib import Path; root = "{MEMORY}"; Path(root).joi…	PR871-76f0290e-d1	row	-
+frozen/pre-eval-records-bundle.json	pr871-76f0290e d2 P0: python3 -c 'import io; from pathlib import Path; [io.write_text("x") fo…	PR871-76f0290e-d2	row	-
+frozen/pre-eval-records-bundle.json	pr871-76f0290e d3 P2: python3 <<PY	PR871-76f0290e-d3	row	-
+frozen/pre-eval-records-bundle.json	pr871-8148f7fb d1 P0: python3 -c 'import io; from pathlib import Path; io: Path = Path("{MEMO…	PR871-8148f7fb-d1	row	-
+frozen/pre-eval-records-bundle.json	pr871-8148f7fb d1 P0: python3 -c 'import io; from pathlib import Path; [io.write_text("x") fo…	PR871-8148f7fb-d1b	row	-
+frozen/pre-eval-records-bundle.json	pr871-8148f7fb d2 P0: python3 -c 'import shutil; s = shutil; args = ("/w/a", "{MEMORY}/n.md")…	PR871-8148f7fb-d2	row	-
+frozen/pre-eval-records-bundle.json	pr871-8148f7fb d2 P0: python3 -c 'import shutil; s = shutil; s.copy(**{"src": "/w/a", "dst": …	PR871-8148f7fb-d2b	row	-
+frozen/pre-eval-records-bundle.json	pr871-8148f7fb d3 P1: python3 -c 'import os; label = rf"/w/\x6demories/x"; open(os.path.join(…	PR871-8148f7fb-d3	row	-
+frozen/pre-eval-records-bundle.json	pr871-8148f7fb d5 P2: python3 <<PY	PR871-8148f7fb-d5	row	-
+frozen/pre-eval-records-bundle.json (= frozen/pre-eval-pr871-90405376.json)	pr871-90405376 d1 P0: python3 -c 'from pathlib import Path; p=Path("{MEMORY}/n.md"); p.open("…	PR871-90405376-d1	row	-
+frozen/pre-eval-records-bundle.json (= frozen/pre-eval-pr871-90405376.json)	pr871-90405376 d1 P0: python3 -c 'import os; from pathlib import Path; p=Path("{MEMORY}/n.md"…	PR871-90405376-d1b	row	-
+frozen/pre-eval-records-bundle.json (= frozen/pre-eval-pr871-90405376.json)	pr871-90405376 d2 P0: python3 -c 'from functools import partial; m="{MEMORY}/n.md"; partial(o…	PR871-90405376-d2	row	-
+frozen/pre-eval-records-bundle.json (= frozen/pre-eval-pr871-90405376.json)	pr871-90405376 d3 P0: python3 -c 'from pathlib import Path; p=Path("/w/a"); m="{MEMORY}/n.md"…	PR871-90405376-d3	row	-
+frozen/pre-eval-records-bundle.json (= frozen/pre-eval-pr871-90405376.json)	pr871-90405376 d3 P0: python3 -c 'from pathlib import Path; m="{MEMORY}/n.md"; Path("/w/a").a…	PR871-90405376-d3b	row	-
+frozen/pre-eval-records-bundle.json (= frozen/pre-eval-pr871-90405376.json)	pr871-90405376 d4 P0: env 2>/dev/null python3 -c 'import os; open(os.path.join("{MEMORY}","n.…	PR871-90405376-d4	row	-
+frozen/pre-eval-records-bundle.json (= frozen/pre-eval-pr871-90405376.json)	pr871-90405376 d4 P0: 0<< 'EOF' python3	PR871-90405376-d4b	row	-
+frozen/pre-eval-records-bundle.json	pr871-9a50be25 d1 P0: python3 -c 'import shutil; s = shutil; f = s.copy; f("/w/a", "{MEMORY}/…	PR871-9a50be25-d1	row	-
+frozen/pre-eval-records-bundle.json	pr871-9a50be25 d2 P0: python3 -c 'import io; from pathlib import Path; io, = [Path("{MEMORY}/…	PR871-9a50be25-d2	row	-
+frozen/pre-eval-records-bundle.json	pr871-9a50be25 d3 P0: python3 2> {TMP}/crw-951.err <<'PY'	PR871-9a50be25-d3	row	-
+frozen/pre-eval-records-bundle.json	pr871-9a50be25 d4 P2: python3 <<PY	PR871-9a50be25-d4	row	-
+frozen/pre-eval-records-bundle.json	pr871-c835301b d1 P0: python3 -c 'from pathlib import Path; Path("{MEMORY}/n.md/child").paren…	PR871-c835301b-d1	row	-
+frozen/pre-eval-records-bundle.json	pr871-c835301b d1 P0: python3 -c 'from pathlib import Path; [Path("{MEMORY}/n.md")][0].write_…	PR871-c835301b-d1b	row	-
+frozen/pre-eval-records-bundle.json	pr871-c835301b d2 P0: python3 -c 'from pathlib import Path; p = Path("/w/a"); f = p.replace; …	PR871-c835301b-d2	row	-
+frozen/pre-eval-records-bundle.json	pr871-c835301b d3 P0: python3 -c 'from pathlib import Path; p = Path("/w/a"); p.replace("{MEM…	PR871-c835301b-d3	row	-
+frozen/pre-eval-records-bundle.json	pr871-c835301b d4 P0: python3 -c 'm = r"{MEMORY}/\N{foo}.md"; open(m, "w").write("x")'	PR871-c835301b-d4	row	-
+frozen/pre-eval-records-bundle.json	pr871-c835301b d4 P0: python3 -c 'import os; label = r"\x6demories"; open(os.path.join("/w", …	PR871-c835301b-d4b	row	-
+frozen/pre-eval-records-bundle.json	pr871-c835301b d5 P1: python3 -c 'from pathlib import Path; p = Path("{MEMORY}/n.md"); p.open…	PR871-c835301b-d5	row	-
+frozen/pre-eval-records-bundle.json	pr871-d960e401 d1 P0: python3 -c 'from pathlib import Path; p=Path("{MEMORY}/n.md"); mode="w"…	PR871-d960e401-d1	row	-
+frozen/pre-eval-records-bundle.json	pr871-d960e401 d2 P0: python3 -c 'from pathlib import Path; p=Path("{MEMORY}/n.md"); f=p.writ…	PR871-d960e401-d2	row	-
+frozen/pre-eval-records-bundle.json	pr871-d960e401 d2 P0: python3 -c 'from pathlib import Path; f=Path("{MEMORY}/n.md").write_tex…	PR871-d960e401-d2b	row	-
+frozen/pre-eval-records-bundle.json	pr871-d960e401 d3 P0: python3 -W ignore <<'PY'	PR871-d960e401-d3	row	-
+frozen/pre-eval-records-bundle.json	pr871-d960e401 d3 P0: bash -c 'python3 <<PY	PR871-d960e401-d3b	row	-
+frozen/pre-eval-records-bundle.json	pr871-d960e401 d4 P0: python3 -c 'print(str("memories").replace("m", "M"))'	PR871-d960e401-d4	row	-
+frozen/pre-eval-records-bundle.json	pr871-d960e401 d4 P0: python3 -c 'print(("memories").replace("m", "M"))'	PR871-d960e401-d4b	row	-
+frozen/pre-eval-records-bundle.json	pr871-d960e401 d5 P0: python3 <<PY	PR871-d960e401-d5	row	-
+frozen/pre-eval-records-bundle.json	pr871-d97e63dc d1 P0: python3 -c 'from pathlib import Path; p = Path("{MEMORY}/n.md/child"); …	PR871-d97e63dc-d1	row	-
+frozen/pre-eval-records-bundle.json	pr871-d97e63dc d2 P0: python3 -c 'from pathlib import Path; mode = "w"; open(Path("{MEMORY}/n…	PR871-d97e63dc-d2	row	-
+frozen/pre-eval-records-bundle.json	pr871-d97e63dc d2 P0: python3 -c 'import shutil; root = "{MEMORY}"; shutil.copy("/tmp/a", f"{…	PR871-d97e63dc-d2b	row	-
+frozen/pre-eval-records-bundle.json	pr871-d97e63dc d3 P0: python3 <<'PY'	PR871-d97e63dc-d3	row	-
+frozen/pre-eval-records-bundle.json	pr871-d97e63dc d4 P0: bash -c "python3 -c \"from pathlib import Path; open(Path('{MEMORY}/n.m…	PR871-d97e63dc-d4	row	-
+frozen/pre-eval-records-bundle.json	pr871-d97e63dc d5 P1: python3 -c 'import io, os; io.open(os.path.join("{MEMORY}", "n.md")).re…	PR871-d97e63dc-d5	row	-
+frozen/pre-eval-records-bundle.json	pr871-ee58e0b3 d1 P0: python3 -c 'root = "{MEMORY}"; open(f"{root}/n.md", "w").write("x")'	PR871-ee58e0b3-d1	row	-
+frozen/pre-eval-records-bundle.json	pr871-ee58e0b3 d2 P0: python3 -c 'import pathlib as p; p = p.Path("{MEMORY}/n.md"); p.write_t…	PR871-ee58e0b3-d2	row	-
+frozen/pre-eval-records-bundle.json	pr871-ee58e0b3 d2 P0: python3 -c 'import pathlib as p; p = p.Path("{MEMORY}/n.md"); p.open("w…	PR871-ee58e0b3-d2b	row	-
+frozen/pre-eval-records-bundle.json	pr871-ee58e0b3 d3 P0: python3 -c 'import shutil, os; (shutil).copy("/w/a", os.path.join("{MEM…	PR871-ee58e0b3-d3	row	-
+frozen/pre-eval-records-bundle.json	pr871-ee58e0b3 d3 P0: python3 -c 'import shutil, os; shutil.copy2("/w/a", os.path.join("{MEMO…	PR871-ee58e0b3-d3b	row	-
+frozen/pre-eval-records-bundle.json	pr871-ee58e0b3 d3 P0: python3 -c 'import shutil, os; shutil.move("/w/a", os.path.join("{MEMOR…	PR871-ee58e0b3-d3c	row	-
+frozen/pre-eval-records-bundle.json	pr871-ee58e0b3 d4 P0: python3 -c 'from importlib import import_module as load; root = "{MEMOR…	PR871-ee58e0b3-d4	row	-
+frozen/pre-eval-records-bundle.json	pr871-ee58e0b3 d5 P0: python3 -W 'ignore:foo|bar' <<'PY'	PR871-ee58e0b3-d5	row	-
+frozen/pre-eval-records-bundle.json	pr871-ee58e0b3 d6 P1: python3 -c 'from pathlib import Path; p = Path("{MEMORY}/n.md"); buf = …	PR871-ee58e0b3-d6	row	-
+frozen/pre-eval-records-bundle.json	pr871-f5c5f8f3 d1 P0: python3 -c 'import io; from pathlib import Path; f = lambda io: io.writ…	PR871-f5c5f8f3-d1	row	-
+frozen/pre-eval-records-bundle.json	pr871-f5c5f8f3 d2 P0: 2>&1 python3 <<'PY'	PR871-f5c5f8f3-d2	row	-
+frozen/pre-eval-records-bundle.json	pr871-f5c5f8f3 d3 P1: python3 -c 'import io, os; s = io; s.open(os.path.join("{MEMORY}", "n.m…	PR871-f5c5f8f3-d3	row	-
 frozen/pre-eval-records-bundle.json	pr774-a742344d d4 P2: Compare the frozen PR's file table, correction history and …	PR774-a742344d-d1	prose	prose: a comparison of the PR file table with the diff, no command
 frozen/pre-eval-records-bundle.json	pr825-65a24b8b d6 P2: 최종 후보 65a24b8bc의 리뷰·검증 범위를 PR 본문에서 확인할 때 서로 다른 설명 대상 head가 …	PR825-65a24b8b-d1	prose	prose: the PR body names different heads, no command
 frozen/pre-eval-records-bundle.json	pr825-8d7b38fe d5 P2: candidate/pr.md의 최종 검증 절을 frozen input만으로 검토할 때.	PR825-8d7b38fe-d1	prose	prose: the PR body validation section, no command
@@ -573,34 +573,34 @@ frozen/pre-eval-records-bundle.json	pr871-c835301b d6 P2: Compare the supplied c
 frozen/pre-eval-records-bundle.json	pr871-d960e401 d6 P2: Compare the 11 issue examples at test lines 30-40 with the …	PR871-d960e401-d1	prose	prose: issue examples against the control table, no new command
 frozen/pair-eval-ledger-rows.json	CRW-374 pr583 d1 P1: Linux에서 /tmp/m/source/sub와 /tmp/m/alias가 있고, source/sub를 al…	-	prose	prose: a Go API call sequence, no shell command
 frozen/pair-eval-ledger-rows.json	CRW-374 pr583 d2 P2: 정적으로 보면 EnsureChild의 d.Sync() 블록을 제거해도 최초 생성 검증은 그대로 만족한다. …	-	prose	prose: a Go API call sequence, no shell command (a missing test)
-frozen/pair-eval-ledger-rows.json	CRW-639 pr605 d1 P0: bash -c 'echo OK' "$(rm -rf ../repo)"	LEDGER-CRW-639-d1	row	
-frozen/pair-eval-ledger-rows.json	CRW-639 pr605 d2 P1: bash -c 'echo OK' -c 'rm -rf ../repo'	LEDGER-CRW-639-d2	row	
-frozen/pair-eval-ledger-rows.json	CRW-639 pr605 d3 P1: sh -c "sh -c \"sh -c \\\"sh -c \\\\\\\"sh -c \\\\\\\\\\\\\\\"sh -c \\\\…	LEDGER-CRW-639-d3	row	
+frozen/pair-eval-ledger-rows.json	CRW-639 pr605 d1 P0: bash -c 'echo OK' "$(rm -rf ../repo)"	LEDGER-CRW-639-d1	row	-
+frozen/pair-eval-ledger-rows.json	CRW-639 pr605 d2 P1: bash -c 'echo OK' -c 'rm -rf ../repo'	LEDGER-CRW-639-d2	row	-
+frozen/pair-eval-ledger-rows.json	CRW-639 pr605 d3 P1: sh -c "sh -c \"sh -c \\\"sh -c \\\\\\\"sh -c \\\\\\\\\\\\\\\"sh -c \\\\…	LEDGER-CRW-639-d3	row	-
 frozen/pair-eval-ledger-rows.json	CRW-639 pr605 d4 P2: c5의 유지 결함 기록을 확인하면 새 CRW-639 항목이 port: pending으로 끝난다.	LEDGER-CRW-639-d1	prose	prose: a record claim (port: pending), no command
-frozen/pair-eval-ledger-rows.json	CRW-678 pr634 d1 P0: python3 -c "f''' '{open(file='{MEMORY}/a', mode='w')} '''"	LEDGER-CRW-678-d1	row	
+frozen/pair-eval-ledger-rows.json	CRW-678 pr634 d1 P0: python3 -c "f''' '{open(file='{MEMORY}/a', mode='w')} '''"	LEDGER-CRW-678-d1	row	-
 frozen/pair-eval-ledger-rows.json	CRW-678 pr634 d2 P2: Follow either entry-point command in candidate/pr.md:108-10…	LEDGER-CRW-678-d1	prose	prose: PR body entry-point commands, no new command
-frozen/pair-eval-ledger-rows.json	CRW-754 pr715 d1 P0: python3 -c 'import builtins; builtins .exec("""open(file="{MEMORY}/a",m…	LEDGER-CRW-754-d1	row	
+frozen/pair-eval-ledger-rows.json	CRW-754 pr715 d1 P0: python3 -c 'import builtins; builtins .exec("""open(file="{MEMORY}/a",m…	LEDGER-CRW-754-d1	row	-
 frozen/pair-eval-ledger-rows.json	CRW-754 pr715 d2 P0: Under the same protected-root/no-grant conditions, submit: …	CRW-851-03	same	same command as row CRW-851-03
 frozen/pair-eval-ledger-rows.json	CRW-754 pr715 d3 P0: Under the same protected-root/no-grant conditions, submit t…	CRW-851-04	same	same command as row CRW-851-04
 frozen/pair-eval-ledger-rows.json	CRW-754 pr715 d4 P2: A regression that classifies exec(src) before checking for …	CRW-851-01	prose	prose: a test that would still pass if the order of checks changed, no command
 frozen/pair-eval-ledger-rows.json	CRW-754 pr715 d5 P2: Compare candidate/pr.md:74-75 and :117-118 with the complet…	CRW-851-01	prose	prose: PR body line numbers against the record, no command
 frozen/pair-eval-ledger-rows.json	CRW-703 pr751 d1 P1: Use a temporary root beneath /tmp/fuzz"dir and the note-too…	-	prose	prose: a Go fuzz-target defect (a temporary root with a quote breaks JSON), no shell command
-frozen/pair-eval-ledger-rows.json	CRW-703 pr751 d2 P1: python3 -c 'open(f"""{MEMORY}/a{{b}}""","w")'	LEDGER-CRW-703-d2	row	
-frozen/pair-eval-ledger-rows.json	CRW-703 pr751 d2 P1: python3 -c 'open("\x2f{MEMORY_NOSLASH}","w")'	LEDGER-CRW-703-d2b	row	
-frozen/pair-eval-ledger-rows.json	CRW-703 pr751 d2 P1: echo $(tee {MEMORY}/a)	LEDGER-CRW-703-d2c	row	
-frozen/pair-eval-ledger-rows.json	CRW-703 pr751 d3 P1: echo x > abs/n.md	LEDGER-CRW-703-d3	row	
+frozen/pair-eval-ledger-rows.json	CRW-703 pr751 d2 P1: python3 -c 'open(f"""{MEMORY}/a{{b}}""","w")'	LEDGER-CRW-703-d2	row	-
+frozen/pair-eval-ledger-rows.json	CRW-703 pr751 d2 P1: python3 -c 'open("\x2f{MEMORY_NOSLASH}","w")'	LEDGER-CRW-703-d2b	row	-
+frozen/pair-eval-ledger-rows.json	CRW-703 pr751 d2 P1: echo $(tee {MEMORY}/a)	LEDGER-CRW-703-d2c	row	-
+frozen/pair-eval-ledger-rows.json	CRW-703 pr751 d3 P1: echo x > abs/n.md	LEDGER-CRW-703-d3	row	-
 frozen/pair-eval-ledger-rows.json	CRW-703 pr751 d4 P2: The required cases are Path(root, """alias<CR>/n.md""") wit…	LEDGER-CRW-703-d2	prose	prose: generator coverage of two parser failures (Path(root, alias<CR>/n.md)), a fuzz-grammar finding with no gate command
-frozen/pair-eval-ledger-rows.json	CRW-726 pr746 d1 P0: echo cd /tmp "$(rm -rf ../repo)"	LEDGER-CRW-726-d1	row	
-frozen/pair-eval-ledger-rows.json	CRW-726 pr746 d2 P0: X='rm -rf ../repo'; bash </dev/null -c "$X"	LEDGER-CRW-726-d2	row	
-frozen/pair-eval-ledger-rows.json	CRW-726 pr746 d2 P0: X='echo x > {MEMORY}/a'; bash </dev/null -c "$X"	LEDGER-CRW-726-d2b	row	
-frozen/pair-eval-ledger-rows.json	CRW-726 pr746 d3 P0: X='rm -rf ../repo'	LEDGER-CRW-726-d3	row	
-frozen/pair-eval-ledger-rows.json	CRW-726 pr746 d4 P0: env --ignore-environment rm -rf ../repo	LEDGER-CRW-726-d4	row	
-frozen/pair-eval-ledger-rows.json	CRW-726 pr746 d4 P0: printf 'rm -rf ../repo' | env --ignore-environment bash	LEDGER-CRW-726-d4b	row	
-frozen/pair-eval-ledger-rows.json	CRW-726 pr746 d4 P0: env -- rm -rf ../repo	LEDGER-CRW-726-d4c	row	
-frozen/pair-eval-ledger-rows.json	CRW-726 pr746 d5 P0: X=rm; (	LEDGER-CRW-726-d5	row	
-frozen/pair-eval-ledger-rows.json	CRW-726 pr746 d6 P0: X=rm; eval '$X' -rf ../repo	LEDGER-CRW-726-d6	row	
-frozen/pair-eval-ledger-rows.json	CRW-726 pr746 d7 P0: X='rm -rf ../repo'; echo ${x:- #}; bash -c "$X"	LEDGER-CRW-726-d7	row	
-frozen/pair-eval-ledger-rows.json	CRW-726 pr746 d8 P1: echo "$(true)x" '$(rm -rf ../repo)'	LEDGER-CRW-726-d8	row	
+frozen/pair-eval-ledger-rows.json	CRW-726 pr746 d1 P0: echo cd /tmp "$(rm -rf ../repo)"	LEDGER-CRW-726-d1	row	-
+frozen/pair-eval-ledger-rows.json	CRW-726 pr746 d2 P0: X='rm -rf ../repo'; bash </dev/null -c "$X"	LEDGER-CRW-726-d2	row	-
+frozen/pair-eval-ledger-rows.json	CRW-726 pr746 d2 P0: X='echo x > {MEMORY}/a'; bash </dev/null -c "$X"	LEDGER-CRW-726-d2b	row	-
+frozen/pair-eval-ledger-rows.json	CRW-726 pr746 d3 P0: X='rm -rf ../repo'	LEDGER-CRW-726-d3	row	-
+frozen/pair-eval-ledger-rows.json	CRW-726 pr746 d4 P0: env --ignore-environment rm -rf ../repo	LEDGER-CRW-726-d4	row	-
+frozen/pair-eval-ledger-rows.json	CRW-726 pr746 d4 P0: printf 'rm -rf ../repo' | env --ignore-environment bash	LEDGER-CRW-726-d4b	row	-
+frozen/pair-eval-ledger-rows.json	CRW-726 pr746 d4 P0: env -- rm -rf ../repo	LEDGER-CRW-726-d4c	row	-
+frozen/pair-eval-ledger-rows.json	CRW-726 pr746 d5 P0: X=rm; (	LEDGER-CRW-726-d5	row	-
+frozen/pair-eval-ledger-rows.json	CRW-726 pr746 d6 P0: X=rm; eval '$X' -rf ../repo	LEDGER-CRW-726-d6	row	-
+frozen/pair-eval-ledger-rows.json	CRW-726 pr746 d7 P0: X='rm -rf ../repo'; echo ${x:- #}; bash -c "$X"	LEDGER-CRW-726-d7	row	-
+frozen/pair-eval-ledger-rows.json	CRW-726 pr746 d8 P1: echo "$(true)x" '$(rm -rf ../repo)'	LEDGER-CRW-726-d8	row	-
 frozen/pair-eval-ledger-rows.json	CRW-726 pr746 d9 P2: candidate/pr.md의 c1-c14 표·Diff size·Defects found를 최종 diff …	LEDGER-CRW-726-d1	prose	prose: PR body table against the final diff, no command
 frozen/pair-eval-ledger-rows.json	CRW-783 pr739 d1 P0: 인증된 gh와 게시 가능한 PR에서 gh pr comment 1 '--body' 'MY_API_KEY=se…	CRW-917-01	same	same commands as rows CRW-917-01, 02, 03
 frozen/pair-eval-ledger-rows.json	CRW-783 pr739 d2 P0: /tmp/secret.md에 MY_API_KEY=sentinel이 있는 상태에서 gh pr</dev/nul…	CRW-917-04	same	same command as row CRW-917-04
@@ -611,12 +611,12 @@ frozen/pair-eval-ledger-rows.json	CRW-783 pr739 d6 P1: 쓰기 측이 연결되�
 frozen/pair-eval-ledger-rows.json	CRW-900 pr837 d1 P0: No memory grant/request; CODEX_HOME=/codex-home; /w/a is a …	PR837-5dc55510-d1	same	same commands as rows PR837-5dc55510-d1 and d1b
 frozen/pair-eval-ledger-rows.json	CRW-900 pr837 d2 P0: No memory grant/request; CODEX_HOME=/codex-home; /w/a is a …	PR837-5dc55510-d2	same	same commands as rows PR837-5dc55510-d2 and d2b
 frozen/pair-eval-ledger-rows.json	CRW-900 pr837 d3 P0: No memory grant/request; CODEX_HOME=/codex-home; /w/a is a …	PR837-5dc55510-d3	same	same commands as rows PR837-5dc55510-d3 and d3b
-frozen/pair-eval-ledger-rows.json	CRW-900 pr837 d4 P0: python3 -c 'from shutil import copy as Path; Path("/w/a", "{MEMORY}/n.m…	LEDGER-CRW-900-d4	row	
-frozen/pair-eval-ledger-rows.json	CRW-741 pr671 d1 P0: python3 -c 'f"""{( # comment{CR}open(file="{MEMORY}/a", mode="w"), 0	LEDGER-CRW-741-d1	row	
+frozen/pair-eval-ledger-rows.json	CRW-900 pr837 d4 P0: python3 -c 'from shutil import copy as Path; Path("/w/a", "{MEMORY}/n.m…	LEDGER-CRW-900-d4	row	-
+frozen/pair-eval-ledger-rows.json	CRW-741 pr671 d1 P0: python3 -c 'f"""{( # comment{CR}open(file="{MEMORY}/a", mode="w"), 0	LEDGER-CRW-741-d1	row	-
 frozen/pair-eval-ledger-rows.json	CRW-741 pr671 d2 P0: 보호 루트가 있는 세션에서 python3 -c "print(\"f'}'\")"를 실행한다. 실제 Pytho…	CRW-1012-01	same	same command as row CRW-1012-01
 frozen/pair-eval-ledger-rows.json	CRW-741 pr671 d3 P0: 보호 루트가 있는 세션에서 python3 -c "print(f'{len(\"abc\")}')"를 실행한다.…	CRW-1012-02	same	same command as row CRW-1012-02
-frozen/pair-eval-ledger-rows.json	CRW-741 pr671 d4 P1: python3 -c "f'{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:…	LEDGER-CRW-741-d4	row	
-frozen/pair-eval-ledger-rows.json	CRW-741 pr671 d4 P1: python3 -c "f'{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:…	LEDGER-CRW-741-d4b	row	
+frozen/pair-eval-ledger-rows.json	CRW-741 pr671 d4 P1: python3 -c "f'{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:…	LEDGER-CRW-741-d4	row	-
+frozen/pair-eval-ledger-rows.json	CRW-741 pr671 d4 P1: python3 -c "f'{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:{v:…	LEDGER-CRW-741-d4b	row	-
 frozen/pair-eval-ledger-rows.json	CRW-741 pr671 d5 P2: TestShellWriteFStringGateDeniesAndSpends의 readable 입력은 shel…	LEDGER-CRW-741-d4	prose	prose: a test that checks one of five rows, no command
 frozen/pair-eval-ledger-rows.json	CRW-741 pr671 d6 P2: candidate/pr.md:39-41에 세 수정이 나열되지만 CRW-741.md에는 최초 f-string…	LEDGER-CRW-741-d4	prose	prose: PR body against the record, no command
 frozen/pair-eval-ledger-rows.json	CRW-657 pr621 d1 P0: Inside a managed linked worktree <CODEX_HOME>/worktrees/zk3…	CRW-1011-02	same	same command as row CRW-1011-02
@@ -637,19 +637,19 @@ frozen/crw-875-handoff-f30490c14470.json	openFindings d4	PR845-f30490c1-d4	same	
 frozen/crw-875-handoff-f30490c14470.json	openFindings d5	PR845-f30490c1-d5	same	same commands as the rows PR845-f30490c1-d5
 frozen/crw-875-handoff-f30490c14470.json	openFindings d6 P2 (body-link fixture under /tmp)	CRW-875-29	prose	prose: a test-environment finding, no command
 frozen/crw-875-handoff-f30490c14470.json	openFindings d7 P2 (test depends on /usr/bin/gh)	PR845-3e2d3c04-d7	prose	prose: a test-environment finding, no command
-frozen/crw-875-handoff-f30490c14470.json	openFindings Boundary: a case pattern containing | is refused	HANDOFF-875-boundary-case-pipe	row	
+frozen/crw-875-handoff-f30490c14470.json	openFindings Boundary: a case pattern containing | is refused	HANDOFF-875-boundary-case-pipe	row	-
 frozen/crw-875-handoff-f30490c14470.json	openFindings Review: GLM 5.3 whole-diff review has no verdict	PR845-f30490c1-d1	prose	prose: a process record, no command
 frozen/crw-894-handoff-g3-3113ad91f272.json	openFindings: premerge-eval record not produced at handoff	PR825-3113ad91-d1	prose	prose: a process record, no command
 frozen/crw-894-handoff-g3-3113ad91f272.json	openFindings: independent GLM review not finished	PR825-3113ad91-d1	prose	prose: a process record, no command
 frozen/crw-894-handoff-g3-3113ad91f272.json	openFindings: PR #825 body not empty	PR825-3113ad91-d1	prose	prose: a process record, no command
 frozen/crw-894-handoff-g3-3113ad91f272.json	openFindings: PR CI on 3113ad91f not observed	PR825-3113ad91-d1	prose	prose: a process record, no command
 frozen/crw-894-handoff-g3-3113ad91f272.json	openFindings: root file 0 at the fork point deleted on this branch	PR825-3113ad91-d1	prose	prose: a process record, no command
-frozen/crw-894-handoff-g3-3113ad91f272.json	follow-up: a shell named by parameter expansion	HANDOFF-894-followup-paramexp-shell	row	
-frozen/crw-894-handoff-g3-3113ad91f272.json	follow-up: a shell named by command substitution (same finding)	HANDOFF-894-followup-cmdsubst-shell	row	
-frozen/crw-894-handoff-g3-3113ad91f272.json	follow-up: a shell behind process substitution	HANDOFF-894-followup-procsubst-shell	row	
-frozen/crw-894-handoff-g3-3113ad91f272.json	follow-up: tclsh not in the interpreter table	HANDOFF-894-followup-tclsh	row	
-frozen/crw-894-handoff-g3-3113ad91f272.json	follow-up: awk not in the interpreter table	HANDOFF-894-followup-awk	row	
-frozen/crw-894-handoff-g3-3113ad91f272.json	follow-up: a here-document that exec puts on descriptor 3 and a later exec copies back	HANDOFF-894-followup-exec-fd3	row	
+frozen/crw-894-handoff-g3-3113ad91f272.json	follow-up: a shell named by parameter expansion	HANDOFF-894-followup-paramexp-shell	row	-
+frozen/crw-894-handoff-g3-3113ad91f272.json	follow-up: a shell named by command substitution (same finding)	HANDOFF-894-followup-cmdsubst-shell	row	-
+frozen/crw-894-handoff-g3-3113ad91f272.json	follow-up: a shell behind process substitution	HANDOFF-894-followup-procsubst-shell	row	-
+frozen/crw-894-handoff-g3-3113ad91f272.json	follow-up: tclsh not in the interpreter table	HANDOFF-894-followup-tclsh	row	-
+frozen/crw-894-handoff-g3-3113ad91f272.json	follow-up: awk not in the interpreter table	HANDOFF-894-followup-awk	row	-
+frozen/crw-894-handoff-g3-3113ad91f272.json	follow-up: a here-document that exec puts on descriptor 3 and a later exec copies back	HANDOFF-894-followup-exec-fd3	row	-
 frozen/crw-951-handoff-904053760577.json	openFindings pr871-76f0290e:d1	PR871-76f0290e-d1	same	same command as row PR871-76f0290e-d1
 frozen/crw-951-handoff-904053760577.json	openFindings pr871-76f0290e:d2	PR871-76f0290e-d2	same	same command as row PR871-76f0290e-d2
 frozen/crw-951-handoff-904053760577.json	openFindings pr871-76f0290e:d3 (record overstated heredoc protection)	PR871-76f0290e-d3	prose	prose: a record claim about an unquoted here-document; the command is row PR871-76f0290e-d3
@@ -657,6 +657,6 @@ frozen/crw-951-handoff-904053760577.json	openFindings pr871-76f0290e:c1 (criteri
 frozen/crw-951-handoff-904053760577.json	openFindings pr871-76f0290e:c2 (criterion PARTIAL)	PR871-76f0290e-d1	prose	prose: a criterion verdict, no command
 frozen/crw-951-handoff-904053760577.json	openFindings pr871-76f0290e:c3 (criterion PARTIAL)	PR871-76f0290e-d1	prose	prose: a criterion verdict, no command
 frozen/crw-951-handoff-904053760577.json	openFindings pr871-76f0290e:c5 (criterion PARTIAL)	PR871-76f0290e-d1	prose	prose: a criterion verdict, no command
-frozen/crw-951-handoff-904053760577.json	openFindings additional:tuple-assignment	HANDOFF-951-tuple-assignment	row	
-frozen/crw-951-handoff-904053760577.json	openFindings additional:unknown-call-mode	HANDOFF-951-unknown-call-mode	row	
-added by CRW-1028 (failure class 5, paths)	bash link/../post.sh where link is a symbolic link	CRW-1028-class5-script-dotdot	row	
+frozen/crw-951-handoff-904053760577.json	openFindings additional:tuple-assignment	HANDOFF-951-tuple-assignment	row	-
+frozen/crw-951-handoff-904053760577.json	openFindings additional:unknown-call-mode	HANDOFF-951-unknown-call-mode	row	-
+added by CRW-1028 (failure class 5, paths)	bash link/../post.sh where link is a symbolic link	CRW-1028-class5-script-dotdot	row	-
