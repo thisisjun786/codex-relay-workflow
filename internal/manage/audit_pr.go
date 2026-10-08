@@ -723,6 +723,43 @@ func auditPRBuild(ctx context.Context, e *Env, cfg *Config, section auditPRSecti
 	return dir, nil
 }
 
+// auditPRBuildAndGrade assembles one pull request bundle and grades it with the drafts lock held
+// across both, for the reason auditPkgBuildAndGrade holds it: a rebuild empties the bundle a grade
+// reads, and a grade replaces the grade.json the rebuild's ledger row would describe, so the two
+// must not interleave. The target carries only the pair and phase the job needs.
+//
+// A build error is one target's, and the caller names it and moves on. A grading or recording error
+// is the run's (an unconfigured grader, an unwritable ledger), so it is returned as a
+// auditPRRunError and the caller stops rather than rebuilding and grading every later target.
+func auditPRBuildAndGrade(ctx context.Context, e *Env, cfg *Config, section auditPRSection, co auditPkgCheckout, source auditPRSource, target auditPRTarget) (string, []AuditResult, error) {
+	release, err := auditDraftLock(e, cfg)
+	if err != nil {
+		return "", nil, auditPRRunError{err}
+	}
+	defer release()
+	dir, err := auditPRBuild(ctx, e, cfg, section, co, source)
+	if err != nil {
+		return "", nil, err
+	}
+	results, err := auditGradeLocked(ctx, e, cfg, []AuditJob{{Bundle: dir, Pair: target.Pair, Phase: target.Phase}})
+	if err != nil {
+		return "", nil, auditPRRunError{err}
+	}
+	if len(results) != 1 {
+		return "", nil, auditPRRunError{fmt.Errorf("the grader answered %d results for one bundle", len(results))}
+	}
+	return dir, results, nil
+}
+
+// auditPRRunError is a grading or recording failure that belongs to the whole run rather than to one
+// target, so the caller stops instead of skipping and rebuilding every later target against the same
+// broken shared state.
+type auditPRRunError struct{ err error }
+
+func (e auditPRRunError) Error() string { return e.err.Error() }
+
+func (e auditPRRunError) Unwrap() error { return e.err }
+
 // auditPRCriteriaDocument encodes the criteria document the grader reads. Every string value
 // is scrubbed before the document is encoded, because encoding/json escapes &, < and > as
 // \u0026 and the like: a scrub applied only to the encoded bytes would never match a name that
@@ -951,26 +988,25 @@ func auditPRRunWith(ctx context.Context, e *Env, cfg *Config, max int, dryRun bo
 				failed = true
 				continue
 			}
-			dir, err := auditPRBuild(ctx, e, cfg, section, co, auditPRSource{
+			_, _, err = auditPRBuildAndGrade(ctx, e, cfg, section, co, auditPRSource{
 				Target: target, Patch: patch, Criteria: criteria, CriteriaUnavailable: unavailable,
 				RelationshipUnavailable: target.Child.Relationship == "", Relationship: target.Child.Relationship,
-			})
+			}, target)
 			if err != nil {
+				// A grading or recording failure belongs to the whole run: every later target would
+				// meet the same broken shared state, so the run stops rather than rebuilding and
+				// grading on.
+				var run auditPRRunError
+				if errors.As(err, &run) {
+					fmt.Fprintf(e.Stderr, "crw manage audit pr: error: %v\n", err)
+					return 1
+				}
 				if auditPRCancelled(e, ctx) {
 					return 1
 				}
 				auditPRSkipTarget(e, target, err)
 				failed = true
 				continue
-			}
-			results, err := AuditGrade(ctx, e, cfg, []AuditJob{{Bundle: dir, Pair: target.Pair, Phase: target.Phase}})
-			if err != nil {
-				fmt.Fprintf(e.Stderr, "crw manage audit pr: error: %v\n", err)
-				return 1
-			}
-			if len(results) != 1 {
-				fmt.Fprintf(e.Stderr, "crw manage audit pr: error: the grader answered %d results for one bundle\n", len(results))
-				return 1
 			}
 		}
 	}

@@ -32,5 +32,13 @@ func (c *Channel) resolveNoticeProject(ctx context.Context, key string) (Resolut
 	if reading["readable"] == true && (len(levels) == 0 || evidence.Item(levels[0], "scopeKind") != "project" || evidence.Item(levels[0], "scopeKey") != key) {
 		return Resolution{}, Refusal{"unregistered_scope", "the linkage walk for " + where + " did not start at that project, so it names no level above it; the notification waits"}
 	}
-	return resolveReading(reading, where)
+	// A notification addressed to the project alone takes the same store-seat fallback as one
+	// addressed to a relationship: the fold happens before the resolution is read, so a project
+	// nobody's initiative supervises reaches the store supervisor with the kind recorded, not
+	// refused as having nowhere to go.
+	folded, err := c.withStoreSeat(ctx, reading, where)
+	if err != nil {
+		return Resolution{}, err
+	}
+	return resolveReading(folded, where)
 }

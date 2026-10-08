@@ -85,6 +85,10 @@ type Authorized struct {
 	// to another of them since, and a caller's stale statement would undo that.
 	Pinned  bool
 	Receipt map[string]any
+	// AutoCompactTokenLimit is the matched pair's optional model_auto_compact_token_limit, carried
+	// out so a creation or resume can send it. It is nil when the pair declares none, and for an
+	// exception or a supervisor, neither of which names a pair for a limit to belong to.
+	AutoCompactTokenLimit *int64
 }
 
 func (p Policy) Mode() string {
@@ -161,10 +165,11 @@ func (p Policy) Authorize(in Input) (Authorized, error) {
 			return Authorized{}, &Refusal{Code: RoleUnknown, Field: "role", Requested: in.Role, Allowed: anys(sortedKeys(p.roles)), Detail: "no such role is declared in this host's execution policy; this bridge declares no pair of its own for any role"}
 		}
 		if role.Expectation == Pair {
-			if !role.Allows(model, effort) {
+			pair, matchedDeclared := role.pairFor(model, effort)
+			if !matchedDeclared {
 				return Authorized{}, role.mismatch(in.Role, model, effort)
 			}
-			matched = &RolePair{Model: model, Effort: effort}
+			matched = &pair
 			provenance = "role_pair"
 			pinned = len(role.Pairs) == 1
 		}
@@ -187,7 +192,11 @@ func (p Policy) Authorize(in Input) (Authorized, error) {
 		expectation["overriddenBy"] = overriddenBy
 		receipt["roleExpectation"] = expectation
 	}
-	return Authorized{Model: model, Effort: effort, Provenance: provenance, Pinned: pinned, Receipt: receipt}, nil
+	var limit *int64
+	if matched != nil {
+		limit = matched.AutoCompactTokenLimit
+	}
+	return Authorized{Model: model, Effort: effort, Provenance: provenance, Pinned: pinned, AutoCompactTokenLimit: limit, Receipt: receipt}, nil
 }
 
 func (p Policy) exceptionCovers(in Input, model, effort string) error {

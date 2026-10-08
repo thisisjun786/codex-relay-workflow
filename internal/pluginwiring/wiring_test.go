@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -189,8 +190,11 @@ func fakeRuntime(t *testing.T, home, answer string, code int) {
 		"printf '%s' '" + answer + "'\n" +
 		"exit " + strconv.Itoa(code) + "\n"
 	pointerTo(t, home, func(path string) {
-		if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
-			t.Fatal(err)
+		syscall.ForkLock.RLock()
+		writeErr := os.WriteFile(path, []byte(script), 0o755)
+		syscall.ForkLock.RUnlock()
+		if writeErr != nil {
+			t.Fatal(writeErr)
 		}
 	})
 }
@@ -204,8 +208,11 @@ func realRuntime(t *testing.T, home string) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(path, raw, 0o755); err != nil {
-			t.Fatal(err)
+		syscall.ForkLock.RLock()
+		writeErr := os.WriteFile(path, raw, 0o755)
+		syscall.ForkLock.RUnlock()
+		if writeErr != nil {
+			t.Fatal(writeErr)
 		}
 	})
 }

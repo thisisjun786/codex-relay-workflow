@@ -57,7 +57,7 @@ func Test24_SR_16_EnvelopeCallerWholeOutput(t *testing.T) {
 				}
 			}
 			f.c.Program = "codex-session-relay"
-			r := Resolution{"01parent-task", "01supervisor-task", "PRJ-1", "INI-1", "linkage"}
+			r := Resolution{"01parent-task", "01supervisor-task", "initiative", "PRJ-1", "INI-1", "linkage"}
 			packet, composeErr := f.c.Compose(context.Background(), o, r, f.at)
 			got := map[string]any{"value": nil, "error": nil}
 			if composeErr != nil {
