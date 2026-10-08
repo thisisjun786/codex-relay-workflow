@@ -107,3 +107,31 @@ func TestDagHostReview985UnparsedCommandIsUnmeasuredOnce(t *testing.T) {
 		t.Fatalf("the unparsed command was reported again: %d", again)
 	}
 }
+
+// TestDagHostReview985UnparsedLineBehindPendingCallIsNotRepeated: a call still waiting for its answer
+// makes the next check read the lines after it again, so a refused command line behind it is read a
+// second time. It is reported once, and the refusal that arrives for the pending call is reported
+// when it comes.
+func TestDagHostReview985UnparsedLineBehindPendingCallIsNotRepeated(t *testing.T) {
+	f := dagReviewNewFixture(t)
+	stateDir := filepath.Join(t.TempDir(), "state")
+	rollout := dagHostWriteRollout(t, f.dir, "parent.jsonl",
+		dagHostReview985Call(t, "call-A", "crw relay --state S dag-ready --plan p"),
+		dagHostReview985Call(t, "call-B", `crw relay --state S dag-release --plan "unclosed`),
+		dagHostReview985Refused(t, "call-B"))
+	f.close()
+	dagHostReview775SeedOffsets(t, stateDir, rollout, 0)
+	cfg := dagHostReview775Parent(t, f, rollout, stateDir)
+
+	if got := dagHostReview985Unparsed(dagHostRun(t, context.Background(), f, cfg)); got != 1 {
+		t.Fatalf("the first check reported %d unparsed lines, want 1", got)
+	}
+	dagHostAppendRollout(t, rollout, dagHostReview985Refused(t, "call-A"))
+	second := dagHostRun(t, context.Background(), f, cfg)
+	if got := dagHostReview985Unparsed(second); got != 0 {
+		t.Fatalf("the second check repeated the unparsed line: %d", got)
+	}
+	if found := dagReviewFind(second, dagHostKindParentDagRefusals); len(found) != 1 {
+		t.Fatalf("the refusal of the pending call = %+v, want one", found)
+	}
+}
