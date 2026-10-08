@@ -7,8 +7,9 @@ import (
 )
 
 // resetLinkDotWorkspace makes a directory holding a "keep" directory (with one file) and a symlink
-// named "link" pointing at target, and opens it as an os.Root. The root is closed when the test ends.
-func resetLinkDotWorkspace(t *testing.T, target string, keepMode os.FileMode) (*os.Root, string) {
+// named "link" pointing at target, and pins it for the link judgement. The pin is closed when the
+// test ends.
+func resetLinkDotWorkspace(t *testing.T, target string, keepMode os.FileMode) (*resetLinkWalkPin, string) {
 	t.Helper()
 	dir := t.TempDir()
 	keep := filepath.Join(dir, "keep")
@@ -32,8 +33,13 @@ func resetLinkDotWorkspace(t *testing.T, target string, keepMode os.FileMode) (*
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = root.Close() })
-	return root, dir
+	pinned, err := resetLinkWalkPinOf(root)
+	if err != nil {
+		root.Close()
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = pinned.Close() })
+	return pinned, dir
 }
 
 // TestResetLinkDotTargetSkipsTheRootStat: a link whose Readlink target ends in a "." or ".."
@@ -53,7 +59,9 @@ func TestResetLinkDotTargetSkipsTheRootStat(t *testing.T) {
 		{"keep_slash_dotdot", "keep/..", 0, true, 0},
 		{"missing_slash_dot", "missing/.", 0, false, 0},
 		{"search_only_keep_slash_dot", "keep/.", 0o311, true, 0},
-		{"plain_keep_keeps_the_descriptor_path", "keep", 0, true, 1},
+		// A target that stays inside the root is decided by the walk alone, dot-ending or not, so the
+		// descriptor path is never asked for it. This row is the one expectation CRW-927 changes.
+		{"plain_keep_is_decided_by_the_walk", "keep", 0, true, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root, _ := resetLinkDotWorkspace(t, tc.target, tc.keepMode)

@@ -1,8 +1,16 @@
 package configguard
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"strings"
+	"syscall"
 	"time"
+
+	"golang.org/x/sys/unix"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 )
@@ -36,6 +44,118 @@ type DeactivateResult struct {
 	FeaturesStateUnavailable bool              `json:"featuresStateUnavailable"`
 }
 
+// configLockPathsPinned answers the path this deactivation must work on, and refuses when the file
+// the lock guards cannot be proven. The lock is keyed by the file it guards, but its spelling was
+// resolved before this command waited, and a directory symlink in the path can be retargeted during
+// the wait. The path is therefore pinned to the file the held sidecar belongs to: the sidecar beside
+// the resolved real path must be the very file this lock holds (fstat), or the directory changed
+// under the wait and acting now would edit a file this lock does not guard (CRW-899 E1, fail
+// closed). The Go-side operations — the drift hash, the read and the restore — work on the pinned
+// path, never on a spelling re-resolved after the wait. The injected CLI calls take only feature
+// names and read CODEX_HOME from the environment, so they are not pinned by this path.
+func configLockPathsPinned(lock *crwdir.ConfigLock) (*configLockPathsPin, error) {
+	pinned, ok := configLockPathsRealPath(lock.Target)
+	if !ok || !lock.HoldsSidecar(pinned) {
+		return nil, fmt.Errorf("the config file's directory changed while the lock was being taken (%s); run the deactivation again", lock.Target)
+	}
+	// The identities are captured HERE, once, while the sidecar proof above holds. Every later
+	// comparison is judged against these captured values, never against the pinned path read from
+	// the filesystem again: re-reading it would follow a directory replaced after this point and
+	// accept the replacement as the locked file (CRW-899's fifth-generation evaluation).
+	// A config file that is already gone is not an error — an uninstall whose config.toml was
+	// removed still disables flags — so a missing file leaves the file identity nil and the
+	// comparison falls back to comparing resolved paths.
+	dirPath := filepath.Dir(pinned)
+	dir, err := os.Stat(dirPath)
+	if err != nil {
+		return nil, fmt.Errorf("the config file's directory could not be inspected (%s); run the deactivation again", dirPath)
+	}
+	file, err := os.Stat(pinned)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return nil, fmt.Errorf("the config file could not be inspected (%s); run the deactivation again", pinned)
+	}
+	dirFd, dirErr := configLockPathsOpenDir(dirPath)
+	return &configLockPathsPin{lock: lock, path: pinned, file: file, dir: dir, dirFd: dirFd, dirErr: dirErr}, nil
+}
+
+// configLockPathsOpenDir opens the pinned directory for a search-only lookup.
+func configLockPathsOpenDir(dirPath string) (int, error) {
+	fd, err := unix.Open(dirPath, configLockPathsDirFlags, 0)
+	if err != nil {
+		return -1, err
+	}
+	return fd, nil
+}
+
+// configLockPathsPin is the locked config file as it was when the lock was proven: its resolved path
+// and the identities of the file and of its parent directory at that moment. A comparison against a
+// later manifest is judged against these captured values, so a path replaced after the pin cannot be
+// accepted as the locked file. The lock itself is kept so the pin can re-prove, at the moment of the
+// decision, that the pinned path still names the sidecar the lock holds; without that proof the
+// captured identities describe a file the lock no longer guards.
+type configLockPathsPin struct {
+	lock *crwdir.ConfigLock
+	path string
+	file os.FileInfo
+	dir  os.FileInfo
+	// dirFd holds the pinned directory open for a search-only lookup; -1 when it could not be opened.
+	dirFd  int
+	dirErr error
+}
+
+// close releases the held directory descriptor.
+func (p *configLockPathsPin) close() {
+	if p != nil && p.dirFd >= 0 {
+		_ = unix.Close(p.dirFd)
+		p.dirFd = -1
+	}
+}
+
+// configLockPathsPinHolds reports whether the pinned path still names the very sidecar this lock
+// holds. The pin is captured while the sidecar proof holds, but the directory behind the pinned path
+// can be replaced afterwards: swapping the pinned directory with another one makes the pinned
+// pathname name a different file while the held sidecar now lives beside the moved directory. The
+// captured identities alone cannot see that — the replacement's file and directory are a different
+// pair, but a manifest naming the moved directory still matches the captured pair — so the comparison
+// re-proves the lock's own sidecar identity here and refuses when it no longer holds (CRW-899 E1,
+// fail closed). This re-stat is the lock's identity check, not a re-interpretation of the pin as a
+// comparison target: a stale pin makes the answer false, never a different acceptance.
+func configLockPathsPinHolds(pinned *configLockPathsPin) bool {
+	return pinned != nil && pinned.lock.HoldsSidecar(pinned.path)
+}
+
+// configLockPathsParentLive reports whether the directory the pinned pathname names is still the
+// directory the pin captured. The sidecar and the file are reached through the pathname, so a
+// directory moved away after the pin and replaced under the old name, with hard links to the file and
+// the sidecar, passes the sidecar and file checks while the pathname now lies in the replacement. The
+// restore would publish there and leave the manifest's file untouched (CRW-899 d1, CRW-993 c1).
+func configLockPathsParentLive(pinned *configLockPathsPin) bool {
+	if pinned == nil || pinned.dir == nil {
+		return false
+	}
+	live, err := os.Stat(filepath.Dir(pinned.path))
+	return err == nil && os.SameFile(live, pinned.dir)
+}
+
+// configLockPathsPublishGuard is the check a restore runs immediately before it publishes: the lock
+// still holds the pinned sidecar and the pinned pathname still lies in the pinned directory. Nothing is
+// published when it refuses. It is called once before the restore is computed and again at the rename
+// (CRW-993 c1).
+func configLockPathsPublishGuard(pinned *configLockPathsPin) error {
+	if !configLockPathsPinHolds(pinned) || !configLockPathsParentLive(pinned) {
+		return fmt.Errorf("the config file's directory changed before the restore was published (%s); nothing was written; run the deactivation again", configLockPathsPinnedName(pinned))
+	}
+	return nil
+}
+
+// configLockPathsPinnedName names the pinned path in a refusal, empty for a nil pin.
+func configLockPathsPinnedName(pinned *configLockPathsPin) string {
+	if pinned == nil {
+		return ""
+	}
+	return pinned.path
+}
+
 func readTextOrNull(path string) (*string, error) {
 	b, exists, err := activationReadFile(path)
 	if err != nil || !exists {
@@ -43,6 +163,310 @@ func readTextOrNull(path string) (*string, error) {
 	}
 	s := string(b)
 	return &s, nil
+}
+
+// configLockPathsRealPath answers the path a config file really has on disk once every symlink in it
+// is followed, so two spellings of one file compare equal. Links are resolved first and only then is
+// a relative result joined to the resolved working directory: cleaning or absolutising the input
+// before the resolution would compare spellings instead of the file, which is the defect CRW-899
+// fixes (a relative CODEX_HOME and an absolute manifest path named one file and compared unequal).
+// A final component that is not there — an install whose config.toml was removed — is named through
+// its resolved parent, so the caller still pins a real path for the directory entry it will use.
+// The second answer is false when nothing can be resolved, and every caller treats that as "not the
+// same file": the comparison only ever widens acceptance to spellings that name one path.
+func configLockPathsRealPath(p string) (string, bool) {
+	if resolved, err := filepath.EvalSymlinks(p); err == nil {
+		return configLockPathsAbsolute(resolved)
+	}
+	// Only the final component may be missing — an install whose config.toml was removed. It is
+	// named through its parent, and that parent must resolve completely: synthesising a missing
+	// intermediate directory would let a path the kernel cannot resolve be answered as the locked
+	// file (CRW-899's pre-merge d1). The split is lexical and does NOT clean, so a ".." reaches the
+	// kernel applied to the directory it has already resolved rather than being folded into the
+	// spelling (E2).
+	dir, base := filepath.Split(p)
+	if base == "" || base == "." || base == ".." {
+		return "", false
+	}
+	if dir == "" {
+		dir = "."
+	} else if trimmed := strings.TrimSuffix(dir, string(filepath.Separator)); trimmed != "" {
+		// A trailing separator is dropped so the parent resolves as a directory, but the root
+		// separator is not: "" would resolve to the working directory instead of "/".
+		dir = trimmed
+	}
+	realDir, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return "", false
+	}
+	absDir, ok := configLockPathsAbsolute(realDir)
+	if !ok {
+		return "", false
+	}
+	return filepath.Join(absDir, base), true
+}
+
+// configLockPathsAbsolute makes a kernel-resolved path absolute in kernel terms: a relative result
+// is joined to the resolved working directory, never to the lexical one, so two spellings of one
+// file compare equal however the process was started.
+func configLockPathsAbsolute(resolved string) (string, bool) {
+	if filepath.IsAbs(resolved) {
+		return resolved, true
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", false
+	}
+	realCwd, err := filepath.EvalSymlinks(cwd)
+	if err != nil {
+		return "", false
+	}
+	return filepath.Join(realCwd, resolved), true
+}
+
+// configLockPathsSameTarget reports whether a manifest's spelling names the file the lock still
+// guards. It is configLockPathsSameTargetReason without the reason.
+func configLockPathsSameTarget(spelling string, pinned *configLockPathsPin) bool {
+	ok, _ := configLockPathsSameTargetReason(spelling, pinned)
+	return ok
+}
+
+// configLockPathsSameTargetReason reports whether a manifest's spelling names the file the lock still
+// guards. It first re-proves that the pinned path still names the held sidecar
+// (configLockPathsPinHolds): a directory replaced after the pin moves the held sidecar away from the
+// pinned pathname, so the answer is false whatever the manifest names (CRW-899 E1). The manifest is
+// allowed to name the config file through a different spelling, such as CODEX_HOME behind a directory
+// symlink. The comparison is directory-entry identity, not inode identity: the restore publishes through
+// the pinned path with an atomic rename, which replaces that one pathname, so a hard link to the same
+// inode under another name would keep the managed key while this command reported it restored. A hard
+// link therefore stays refused. The error is non-nil only when the spelling cannot be proven to name the
+// locked entry for a stated reason (CRW-993 d2).
+func configLockPathsSameTargetReason(spelling string, pinned *configLockPathsPin) (bool, error) {
+	// A directory that lost search permission after the pin cannot have its sidecar looked up, so the
+	// lock's proof fails for a reason that is not a different file. That refusal names the reason (CRW-993 d4).
+	if pinned != nil {
+		if _, err := os.Stat(pinned.path + configLockPathsSidecarSuffix); errors.Is(err, fs.ErrPermission) {
+			return false, fmt.Errorf("%s cannot be proven to be the locked config file: its directory cannot be searched (%w)", spelling, err)
+		}
+	}
+	if !configLockPathsPinHolds(pinned) {
+		return false, nil
+	}
+	// The live parent of the pinned pathname must still be the directory the pin captured. Without
+	// this, a directory moved after the pin and replaced under the old name is accepted through the
+	// hard links the replacement holds, and the restore publishes into the replacement (CRW-993 c1).
+	if !configLockPathsParentLive(pinned) {
+		return false, nil
+	}
+	// The pinned pathname itself must still name the pinned file. The restore publishes through
+	// pin.path, so an entry renamed away, leaving only a folded-name sibling that still matches the
+	// captured file and directory identities, would be accepted here and then restored to a path that
+	// no longer exists (CRW-899's thirteenth evaluation).
+	if pinned.file != nil {
+		if live, err := os.Stat(pinned.path); err != nil || !os.SameFile(live, pinned.file) {
+			return false, nil
+		}
+	}
+	real, ok := configLockPathsRealPath(spelling)
+	if !ok {
+		return false, nil
+	}
+	if real == pinned.path {
+		return true, nil
+	}
+	if pinned.file == nil {
+		// The config file was already gone at pin time: there is nothing to compare it with, and
+		// the absent-config path restores nothing.
+		return false, nil
+	}
+	// The spellings differ. On a case-insensitive filesystem they can still name one directory entry,
+	// and filepath.EvalSymlinks follows links without canonicalising the case of ordinary components.
+	// Such a spelling is the same target only when the directory holds it as the locked entry.
+	if !strings.EqualFold(filepath.Base(real), filepath.Base(pinned.path)) {
+		return false, nil
+	}
+	realDir, err := os.Stat(filepath.Dir(real))
+	if err != nil || !os.SameFile(realDir, pinned.dir) {
+		return false, nil
+	}
+	if filepath.Base(real) == filepath.Base(pinned.path) {
+		// The two spellings reach one file and one parent directory under the SAME basename, so they are
+		// one directory entry whatever else the directory holds.
+		realFile, err := os.Stat(real)
+		if err != nil || !os.SameFile(realFile, pinned.file) {
+			return false, nil
+		}
+		return true, nil
+	}
+	if configLockPathsReadable(filepath.Dir(pinned.path)) {
+		// A readable parent keeps the enumeration the comparison has always used: the candidate must
+		// reach the pinned file, and the folded name must hold exactly one entry.
+		realFile, err := os.Stat(real)
+		if err != nil || !os.SameFile(realFile, pinned.file) {
+			return false, nil
+		}
+		return configLockPathsOneFoldedEntry(real, pinned), nil
+	}
+	return configLockPathsProbedEntry(real, pinned)
+}
+
+// configLockPathsOneFoldedEntry reports whether the candidate's spelling and the locked file's name
+// reach exactly one directory entry. The kernel permits no two entries with fold-equal names on a
+// directory that folds case, so one such entry IS the locked entry, and two, a case-sensitive sibling
+// or a hard link, are entries a rename over the locked path would not reach. It is used only for a
+// readable parent; an unreadable one goes through configLockPathsProbedEntry.
+func configLockPathsOneFoldedEntry(real string, pinned *configLockPathsPin) bool {
+	dir := filepath.Dir(real)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		// A readable parent that still cannot be enumerated cannot prove the count, so the comparison
+		// refuses (fail closed).
+		return false
+	}
+	matches := 0
+	for _, entry := range entries {
+		if strings.EqualFold(entry.Name(), filepath.Base(pinned.path)) {
+			matches++
+		}
+	}
+	return matches == 1
+}
+
+// configLockPathsFold is what the pinned directory answers about case: it folds case, it is
+// case-sensitive, or the answer is unknown.
+type configLockPathsFold int
+
+const (
+	configLockPathsFoldUnknown configLockPathsFold = iota
+	configLockPathsFoldFolds
+	configLockPathsFoldSensitive
+)
+
+// configLockPathsFoldProbe answers whether the pinned directory folds case. It is a variable so a test
+// can answer for a directory on a filesystem of either kind (CRW-993 d2).
+var configLockPathsFoldProbe = configLockPathsProbeFold
+
+// configLockPathsEntryLookup answers the identity of the entry a name reaches in the pinned directory.
+// It is a variable so a test can answer for a lookup the host cannot make (CRW-993 d2).
+var configLockPathsEntryLookup = configLockPathsLookupEntry
+
+// configLockPathsSidecarSuffix is the suffix of the sidecar the lock is held on (crwdir's lock suffix).
+const configLockPathsSidecarSuffix = ".crw-lock"
+
+// configLockPathsProbeFold learns whether the pinned directory folds case, without listing it and without
+// writing into it. The ASCII case-swapped spelling of the sidecar's basename is looked up through the held
+// directory descriptor without following a link. ENOENT means the directory is case-sensitive. A hit is
+// trusted only when one fstat of the descriptor the lock holds gives the sidecar a link count of one and
+// the swapped name reaches that same entry: then the directory folds case. Anything else is unknown, and
+// the reason names which of the four causes applies (CRW-993 d1, d2).
+func configLockPathsProbeFold(pinned *configLockPathsPin) (configLockPathsFold, string) {
+	if pinned == nil || pinned.dirFd < 0 || pinned.lock == nil {
+		return configLockPathsFoldUnknown, "the case-swapped lookup failed (the directory has no descriptor)"
+	}
+	sidecar := filepath.Base(pinned.path) + configLockPathsSidecarSuffix
+	swapped, letters := configLockPathsCaseSwap(sidecar)
+	if !letters {
+		return configLockPathsFoldUnknown, "the name has no ASCII letter"
+	}
+	dev, ino, err := configLockPathsStatEntry(pinned.dirFd, swapped)
+	if errors.Is(err, fs.ErrNotExist) {
+		return configLockPathsFoldSensitive, ""
+	}
+	if err != nil {
+		return configLockPathsFoldUnknown, fmt.Sprintf("the case-swapped lookup failed (%v)", err)
+	}
+	held, err := pinned.lock.HeldInfo()
+	if err != nil {
+		return configLockPathsFoldUnknown, fmt.Sprintf("the case-swapped lookup failed (the held lock file cannot be stat'ed: %v)", err)
+	}
+	st, ok := held.Sys().(*syscall.Stat_t)
+	if !ok {
+		return configLockPathsFoldUnknown, "the case-swapped lookup failed (the lock file's identity is unavailable)"
+	}
+	if uint64(st.Nlink) != 1 {
+		return configLockPathsFoldUnknown, "the sidecar has another name (its link count is not one)"
+	}
+	hdev, hino, _ := configLockPathsIdentity(held)
+	if hdev != dev || hino != ino {
+		return configLockPathsFoldUnknown, "the identity differs: the case-swapped name reaches another entry"
+	}
+	return configLockPathsFoldFolds, ""
+}
+
+// configLockPathsCaseSwap swaps the ASCII letters of name and reports whether it had any.
+func configLockPathsCaseSwap(name string) (string, bool) {
+	b := []byte(name)
+	letters := false
+	for i, c := range b {
+		switch {
+		case c >= 'a' && c <= 'z':
+			b[i] = c - 'a' + 'A'
+			letters = true
+		case c >= 'A' && c <= 'Z':
+			b[i] = c - 'A' + 'a'
+			letters = true
+		}
+	}
+	return string(b), letters
+}
+
+// configLockPathsLookupEntry answers the identity of the entry name reaches through the pinned
+// directory's held descriptor, without following a final link and without listing the directory.
+func configLockPathsLookupEntry(pinned *configLockPathsPin, name string) (uint64, uint64, error) {
+	if pinned == nil || pinned.dirFd < 0 {
+		if pinned != nil && pinned.dirErr != nil {
+			return 0, 0, pinned.dirErr
+		}
+		return 0, 0, fs.ErrPermission
+	}
+	return configLockPathsStatEntry(pinned.dirFd, name)
+}
+
+// configLockPathsStatEntry is fstatat without following a final link, relative to an open directory.
+func configLockPathsStatEntry(dirFd int, name string) (uint64, uint64, error) {
+	var st unix.Stat_t
+	if err := unix.Fstatat(dirFd, name, &st, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+		return 0, 0, err
+	}
+	return uint64(st.Dev), uint64(st.Ino), nil
+}
+
+// configLockPathsIdentity is the device and inode of a stat result.
+func configLockPathsIdentity(info os.FileInfo) (uint64, uint64, bool) {
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return 0, 0, false
+	}
+	return uint64(st.Dev), uint64(st.Ino), true
+}
+
+// configLockPathsReadable reports whether the process may read the directory's entries. It answers
+// from the permission bits, so it lists nothing.
+func configLockPathsReadable(dir string) bool {
+	return unix.Access(dir, unix.R_OK) == nil
+}
+
+// configLockPathsProbedEntry decides, for an unreadable parent, whether the candidate names the locked
+// entry. A folding directory is proved by a by-name lookup through the held descriptor, which must give
+// the pinned file's identity. A case-sensitive directory refuses, because a differently cased name is a
+// different entry even when it is a hard link. An unknown answer refuses with its reason, which is the one
+// exception the same-file restore promise has (CRW-993 d2).
+func configLockPathsProbedEntry(real string, pinned *configLockPathsPin) (bool, error) {
+	name := filepath.Base(real)
+	fold, reason := configLockPathsFoldProbe(pinned)
+	switch fold {
+	case configLockPathsFoldSensitive:
+		return false, nil
+	case configLockPathsFoldFolds:
+	default:
+		return false, fmt.Errorf("%s cannot be shown to be the locked config file: the case behaviour of its directory is unknown, %s", name, reason)
+	}
+	dev, ino, err := configLockPathsEntryLookup(pinned, name)
+	if err != nil {
+		return false, fmt.Errorf("%s cannot be looked up in its directory to prove it is the locked config file: %w", name, err)
+	}
+	pdev, pino, ok := configLockPathsIdentity(pinned.file)
+	return ok && dev == pdev && ino == pino, nil
 }
 
 // DecideKeyRestore is deactivate.ts's per-key decision table. backupKnown=false means
@@ -120,13 +544,20 @@ func Deactivate(deps DeactivateDeps) (*DeactivateResult, error) {
 	// have its change discarded with neither command reporting it. The lock is taken only when this
 	// deactivation writes config.toml, so an uninstall with nothing to restore and no flag CRW
 	// enabled is never gated on it, and an empty config path names no file to guard.
+	var pin *configLockPathsPin
 	if path != "" && configLockWritersDeactivateWrites(m) {
 		lock, err := crwdir.LockConfig(path, activationLockWait)
 		if err != nil {
 			return nil, err
 		}
 		defer lock.Release()
-		path = lock.Target
+		var pinErr error
+		pin, pinErr = configLockPathsPinned(lock)
+		if pinErr != nil {
+			return nil, pinErr
+		}
+		defer pin.close()
+		path = pin.path
 		// The manifest read before the lock answered only whether and where to lock. An activation
 		// that published while this command waited would otherwise be ignored, and the restore would
 		// be computed from a manifest that no longer describes the install: the drift hash, the table
@@ -143,7 +574,20 @@ func Deactivate(deps DeactivateDeps) (*DeactivateResult, error) {
 		// config file would have this deactivation apply one file's ownership records to another, so
 		// it refuses rather than acting under the wrong lock (fail closed). An explicit ConfigPath
 		// overrides the manifest in both readings, so only the derived path can disagree.
-		if deps.ConfigPath == "" && m.ConfigPath != lockedPath {
+		if deps.ConfigPath != "" {
+			// An explicit ConfigPath has no manifest spelling to agree with, but the pinned path must
+			// still name the pinned file: the override chooses WHICH file this command acts on, and a
+			// directory replacement or a final-component symlink swapped in after the pin would send
+			// the read, the restore and the hash to another file without its lock. The same proof the
+			// manifest branch uses runs here, against the pinned path itself (CRW-899's eleventh and
+			// twelfth evaluations).
+			if !configLockPathsSameTarget(pin.path, pin) {
+				return nil, fmt.Errorf("the config file's directory changed while the lock was held (%s); run the deactivation again", lockedPath)
+			}
+		} else if ok, reason := configLockPathsSameTargetReason(m.ConfigPath, pin); !ok {
+			if reason != nil {
+				return nil, fmt.Errorf("the install manifest names %s, which cannot be proven to be the locked config file (%w); nothing was written", m.ConfigPath, reason)
+			}
 			return nil, fmt.Errorf("the install manifest now names a different config file (%s, was %s); run the deactivation again", m.ConfigPath, lockedPath)
 		}
 	}
@@ -165,7 +609,15 @@ func Deactivate(deps DeactivateDeps) (*DeactivateResult, error) {
 		return nil, err
 	}
 	if content != nil && len(m.TableKeys) > 0 {
-		if err := deactivateTableKeys(path, *content, m, r); err != nil {
+		// The restore is computed under the lock and published only when the pin still holds at the
+		// rename; the check runs here first so a refusal is reported before the keys are computed.
+		guard := func() error { return configLockPathsPublishGuard(pin) }
+		if pin != nil {
+			if err := guard(); err != nil {
+				return nil, err
+			}
+		}
+		if err := deactivateTableKeys(path, *content, m, r, guard); err != nil {
 			return nil, err
 		}
 	}
@@ -191,7 +643,7 @@ func Deactivate(deps DeactivateDeps) (*DeactivateResult, error) {
 	return r, nil
 }
 
-func deactivateTableKeys(path, content string, m *InstallManifest, r *DeactivateResult) error {
+func deactivateTableKeys(path, content string, m *InstallManifest, r *DeactivateResult, guard func() error) error {
 	var backup *string
 	if m.BackupPath != nil && *m.BackupPath != "" {
 		// A read failure is unknown provenance, not evidence of an absent backup key.
@@ -220,7 +672,7 @@ func deactivateTableKeys(path, content string, m *InstallManifest, r *Deactivate
 		r.RestoredKeys = append(r.RestoredKeys, id)
 	}
 	if changed {
-		return activationPublish(path, []byte(content))
+		return configLockPathsPublishChecked(path, []byte(content), guard)
 	}
 	return nil
 }

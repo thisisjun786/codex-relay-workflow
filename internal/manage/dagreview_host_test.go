@@ -193,6 +193,11 @@ func TestDagHostDuplicateToolOutputs(t *testing.T) {
 func dagHostRelationship(f *dagReviewFixture, relationshipID, issue, thread string, generation int) {
 	f.exec("INSERT INTO relationships (relationship_id, issue_key, status, parent_task_id, parent_host_id, child_task_id, child_host_id, execution_generation, artifact_roots, allowed_recipients, created_at, updated_at) VALUES (?,?,'active','parent','host',?,'host',?,'[]','[]',?,?)",
 		relationshipID, issue, thread, generation, dagReviewAt(0), dagReviewAt(0))
+	// The generation row is written with the relationship because the registry refuses a
+	// relationship whose generation the store does not carry, and the scheduler now reads a
+	// node's relationship through the registry when the review asks it for the plan's progress.
+	f.exec("INSERT INTO generations (relationship_id, execution_generation, dispatch_request_id, anchor_state, dispatch_turn_id, reason, opened_at, bound_at) VALUES (?,?,?,'bound',?,NULL,?,?)",
+		relationshipID, generation, "dispatch-"+relationshipID, "turn-"+thread, dagReviewAt(0), dagReviewAt(0))
 }
 
 // dagHostReceipt inserts one child receipt event.

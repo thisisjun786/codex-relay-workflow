@@ -82,9 +82,16 @@ func RefuseNewFork(ctx context.Context, q store.Querier, rid string, generation 
 	if len(revisions) == 0 {
 		return nil
 	}
-	anchors, err := registry.RequestedPredecessors(ctx, q, rid, generation)
+	anchors, unreadable, err := registry.RequestedPredecessors(ctx, q, rid, generation)
 	if err != nil {
 		return err
+	}
+	if len(unreadable) > 0 {
+		// The head judgment answers unknown_predecessor for this generation (CRW-928), so it
+		// already reads no single head and this judgment leaves it as it is: refusing here would
+		// only decide a question the generation has already answered, and the recovery route is
+		// what repairs a store holding a ruling the relay cannot read.
+		return nil
 	}
 	without := registry.JudgeHead(registry.ReadThroughSuppressed(revisions, suppressed, anchors), anchors)
 	if slices.Contains(ambiguousEvidence, without.Evidence) {

@@ -68,7 +68,7 @@ actually went. The projects you did not examine closely are reported at the dept
 reached; describing them as checked, verified, or fine is a false claim about work not done.
 
 Read outward from the cheap sources. Listings, project and issue summaries, the linked coordination
-record, and the current pull request state usually answer the question. Go further only for the
+record, and the current delivery state usually answers the question. Go further only for the
 evidence the report actually needs. Do not expand by reflex into every comment on an issue, the
 whole repository, or every task's full transcript: a check that reads everything costs more than
 the work it is checking. Where a task's own record must be read, use a compact snapshot and its

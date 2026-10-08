@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -79,8 +80,11 @@ func improveTestFakeCRW(t *testing.T, s *improveTestState, measurements string) 
 		"esac",
 		"exit 0",
 	}, "\n") + "\n"
-	if err := os.WriteFile(s.fake, []byte(script), 0o700); err != nil {
-		t.Fatal(err)
+	syscall.ForkLock.RLock()
+	writeErr := os.WriteFile(s.fake, []byte(script), 0o700)
+	syscall.ForkLock.RUnlock()
+	if writeErr != nil {
+		t.Fatal(writeErr)
 	}
 }
 

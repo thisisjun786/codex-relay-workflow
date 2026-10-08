@@ -881,18 +881,30 @@ func improveProposeRunCapped(ctx context.Context, e *Env, bundlePath string, dry
 			report.Created = append(report.Created, auditDraftSummaryOf(saved))
 			continue
 		}
-		// A draft with this fingerprint already exists, from this feature or from the audit. The
-		// whole record is rewritten, so only fields this command understands may change: the seen
-		// list gains the origins this run reached, and an occurrence whose owner changed is counted
-		// under its latest owner. The evidence is the union of what the draft holds and what this
-		// run reached, and the issue keys it names are what an earlier build could have taken for a
-		// project. The added and moved counts are read before the seen list is updated, so they
-		// name only what this run newly recorded or re-owned.
+		// A draft with this fingerprint already exists, from this feature or from the audit. The whole
+		// record is rewritten, so only fields this command understands may change. The seen list gains the
+		// origins this run reached, and an occurrence whose owner changed is counted under its latest owner.
+		// The evidence is the union of what the draft holds and what this run reached, and the issue keys it
+		// names are what an earlier build could have taken for a project. The added and moved counts are read
+		// before the seen list is updated, so they name only what this run newly recorded or re-owned.
 		evidence := improveSortedEvidence(append(improveProposeParseEvidence(doc.Body), candidate.Evidence...))
 		issueKeys := improveProposeIssueKeys(evidence)
 		seen, added, moved := improveProposeReconcileSightings(candidate, doc.Seen, issueKeys)
 		changed := len(seen) != len(doc.Seen)
 		doc.Seen = seen
+		// A posted draft is the record of an issue the management session already opened, so this writer
+		// only grows its seen list: the title, the labels, the severity, the body and the project stay exactly
+		// as first written, whatever source wrote it.
+		if doc.State == auditDraftStatePosted {
+			if !changed {
+				continue
+			}
+			if err := auditDraftSave(path, doc); err != nil {
+				return report, err
+			}
+			report.Updated = append(report.Updated, auditDraftSummaryOf(doc))
+			continue
+		}
 		if doc.Source == improveProposeSource {
 			// The whole record is rewritten, so the projects and the evidence the new run reached
 			// are folded in rather than dropped: a project's count is what the draft already held

@@ -5,7 +5,7 @@ Use these fields to make a candidate reviewable. Keep evidence proportional to t
 ## Cycle context
 
 - Target cycle, actual start/end dates (or open end), original design and agreed goal; the verified subset and any unread or unfinished scope.
-- Per repository: baseline, delivered revision, relevant PRs, current dirty/active paths and evidence date.
+- Per repository: baseline, delivered revision, relevant deliveries, current dirty/active paths and evidence date.
 - Preserved features and external contracts; next agreed change or replacement boundary.
 - Delivery evidence reused, its applicability and missing installation/runtime proof where relevant.
 
@@ -20,8 +20,8 @@ Use these fields to make a candidate reviewable. Keep evidence proportional to t
 | Preservation and exclusions | Behavior, external interfaces, compatibility still required, active work and unrelated improvements left alone |
 | Same-cause reach | How sibling sites were sought, what was found and what remains unexamined |
 | Verification | Baseline reproduction/checks, known failures, required negative controls, preserved behavior and observable maintenance benefit |
-| Independence and reversal | Separate PR boundary, dependencies, how the repair can be reverted, and any coupling preventing independent reversal |
-| Execution owner | Project parent and candidate-owning undelivered issue/task, a proposed new issue after merged delivery, or the direct implementation owner explicitly chosen by the user; a proposed owner is not a dispatch |
+| Independence and reversal | Separate delivery boundary, dependencies, how the repair can be reverted, and any coupling preventing independent reversal |
+| Execution owner | Project parent and candidate-owning undelivered issue/task, a proposed new issue after merged delivery (a defect inside a finished issue's own promise reopens that issue instead; see [Late review threads](../../crw-run/references/merge-readiness.md#late-review-threads)), or the direct implementation owner explicitly chosen by the user; a proposed owner is not a dispatch |
 | Recommendation | Do now, defer to a named trigger, or measure an uncertainty first; cite an existing issue when one already owns it |
 
 ## Baseline versus result

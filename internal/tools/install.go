@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -88,45 +89,64 @@ func install(ctx context.Context, pin Pin, seams *Seams, toolsRoot, tempRoot str
 	return stage(ctx, pin, seams, toolsRoot, body)
 }
 
-// fetch downloads the pin's archive into a fresh directory under tempRoot, verifies its digest and
-// returns the executable member read out of it. The archive is streamed to a file and then read once
-// through: the bytes that reach the hasher are the bytes the unpack reads, so nothing can change
-// between the digest and the unpack. Every directory this call creates under tempRoot is removed
-// before it returns, whatever the answer, and a directory that was already there is left alone.
+// fetch downloads the pin's archive into a fresh directory under tempRoot, verifies its digest and returns the
+// executable member read out of it. Each directory this call makes under tempRoot is made and removed while the
+// lock on the directory that holds it is held, so an install that shares a missing root cannot remove a directory
+// another install is using. The download runs with no lock held. Every directory this call creates is removed
+// before fetch returns, whatever the answer. A parent that another install still uses stays in place with the
+// directories inside it, which is accepted: this call removes only the directories it made, and only when empty.
 func fetch(ctx context.Context, pin Pin, seams *Seams, tempRoot string) ([]byte, error) {
-	// Only the components this call's own os.Mkdir creates are recorded, so a directory another
-	// install made is never this call's to remove.
+	if err := ctx.Err(); err != nil {
+		return nil, hostFail("the install was cancelled: %v", err)
+	}
+	created, dir, err := makeDownloadDir(pin, seams, tempRoot)
+	if err != nil {
+		return nil, err
+	}
+	body, downloadErr := verifyDownload(ctx, pin, seams, dir)
+	// The download directory is removed before the directories this call made, so the directory that holds it is
+	// empty when it is tried. A download directory that cannot be removed keeps its parent, which is then left.
+	_ = os.RemoveAll(dir)
+	removeCreated(created)
+	if downloadErr != nil {
+		return nil, downloadErr
+	}
+	return body, nil
+}
+
+// makeDownloadDir makes the download root under tempRoot and a fresh download directory in it. It answers the
+// directories this call made and the download directory. A failure removes what this call made.
+func makeDownloadDir(pin Pin, seams *Seams, tempRoot string) ([]createRootRecord, string, error) {
 	created, err := createRoot(tempRoot)
 	if err != nil {
-		return nil, hostFail("the download root %s could not be made: %v", tempRoot, err)
+		return nil, "", hostFail("the download root %s could not be made: %v", tempRoot, err)
 	}
-	// removeCreated is a closure so it reads the list after the retry below may extend it.
-	defer func() { removeCreated(created) }()
-	dir, err := seams.mkdirTemp(tempRoot, pin.Name+"-")
-	if err != nil {
-		if !errors.Is(err, fs.ErrNotExist) {
-			return nil, hostFail("the download directory under %s could not be made: %v", tempRoot, err)
-		}
-		// A concurrent install removed the shared download root between this call creating it and
-		// here. The root is made again, recording only what this call makes, and the directory is
-		// tried once more, so the overlap does not turn a valid install into a host failure.
+	dir, err := tempDirUnderLock(pin, seams, tempRoot)
+	if errors.Is(err, fs.ErrNotExist) {
+		// A concurrent install removed the download root between this call making it and here. The root is made
+		// again, recording only what this call makes, and the directory is tried once more.
 		again, mkErr := createRoot(tempRoot)
 		if mkErr != nil {
-			return nil, hostFail("the download root %s could not be made: %v", tempRoot, mkErr)
+			removeCreated(created)
+			return nil, "", hostFail("the download root %s could not be made: %v", tempRoot, mkErr)
 		}
 		created = append(created, again...)
-		if dir, err = seams.mkdirTemp(tempRoot, pin.Name+"-"); err != nil {
-			return nil, hostFail("the download directory under %s could not be made: %v", tempRoot, err)
-		}
+		dir, err = tempDirUnderLock(pin, seams, tempRoot)
 	}
-	defer func() { _ = os.RemoveAll(dir) }()
+	if err != nil {
+		removeCreated(created)
+		return nil, "", hostFail("the download directory under %s could not be made: %v", tempRoot, err)
+	}
+	return created, dir, nil
+}
 
+// verifyDownload downloads the pin's archive into dir, checks its digest and returns the executable member. The
+// archive is read exactly once, so the bytes that reach the hasher are the bytes the unpack reads.
+func verifyDownload(ctx context.Context, pin Pin, seams *Seams, dir string) ([]byte, error) {
 	archive, err := download(ctx, pin, seams, dir)
 	if err != nil {
 		return nil, err
 	}
-	// The file is read exactly once. The bytes that reach the hasher are the bytes the unpack reads,
-	// so the digest describes what is unpacked, and the archive never sits in memory whole.
 	file, err := os.Open(archive)
 	if err != nil {
 		return nil, hostFail("the downloaded archive %s could not be read: %v", archive, err)
@@ -151,6 +171,105 @@ func fetch(ctx context.Context, pin Pin, seams *Seams, tempRoot string) ([]byte,
 		return nil, memberErr
 	}
 	return body, nil
+}
+
+// tempRootLockAttempts bounds how often a parent is opened and locked again when the path that names it changes
+// while the process waits for the lock.
+const tempRootLockAttempts = 8
+
+// ancestorOf answers the existing directory a component is made in: its parent, or the root or the current
+// directory when the spelling has no parent part.
+func ancestorOf(component string) string {
+	if parent := componentParent(component); parent != "" {
+		return parent
+	}
+	if strings.HasPrefix(component, string(os.PathSeparator)) {
+		return string(os.PathSeparator)
+	}
+	return "."
+}
+
+// lockOpenDir takes the exclusive flock on the open directory dir and answers whether the lock is held. A
+// filesystem that refuses flock answers false and no error, and the caller proceeds unlocked, which is how the
+// walk ran before the lock existed. Any other error is a host failure.
+func lockOpenDir(dir *os.File) (bool, error) {
+	for {
+		err := unix.Flock(int(dir.Fd()), unix.LOCK_EX)
+		switch {
+		case err == nil:
+			return true, nil
+		case errors.Is(err, unix.EINTR):
+			continue
+		case tempRootLockUnsupported(err):
+			return false, nil
+		default:
+			return false, hostFail("the lock on %s could not be taken: %v", dir.Name(), err)
+		}
+	}
+}
+
+// unlockOpenDir releases the lock lockOpenDir took. The descriptor stays open for the caller that keeps it.
+func unlockOpenDir(dir *os.File) {
+	_ = unix.Flock(int(dir.Fd()), unix.LOCK_UN)
+}
+
+// openLockedDir opens the directory that path names and takes its lock, answering the descriptor and whether the
+// lock is held. The descriptor is compared with the path after the lock is granted, because a path that changed
+// while the process waited no longer names the directory that was locked; that descriptor is closed and the path is
+// opened again, at most tempRootLockAttempts times. A directory this process cannot open answers no descriptor and
+// no error, and the caller proceeds without a parent handle, as before the lock existed.
+func openLockedDir(path string) (*os.File, bool, error) {
+	for attempt := 0; attempt < tempRootLockAttempts; attempt++ {
+		dir, err := os.Open(path)
+		if err != nil {
+			return nil, false, nil
+		}
+		locked, err := lockOpenDir(dir)
+		if err != nil {
+			_ = dir.Close()
+			return nil, false, err
+		}
+		held, heldErr := dir.Stat()
+		named, namedErr := os.Stat(path)
+		if heldErr == nil && namedErr == nil && os.SameFile(held, named) {
+			return dir, locked, nil
+		}
+		_ = dir.Close()
+	}
+	return nil, false, hostFail("%s changed on each of %d attempts to take its lock", path, tempRootLockAttempts)
+}
+
+// underParentLock runs fn while the directory that holds path is locked, so an entry fn makes or removes at path is
+// not changed by another install that holds the same lock. Closing the directory when fn returns releases the lock.
+// A parent this process cannot open runs fn without a lock, as before.
+func underParentLock(path string, fn func() error) error {
+	dir, _, err := openLockedDir(ancestorOf(path))
+	if err != nil {
+		return err
+	}
+	if dir == nil {
+		return fn()
+	}
+	defer dir.Close()
+	return fn()
+}
+
+// tempDirUnderLock makes a download directory under tempRoot while the lock on the directory that holds tempRoot is
+// held, so the removal of tempRoot by an install that made it cannot run between this call's check and its mkdir.
+func tempDirUnderLock(pin Pin, seams *Seams, tempRoot string) (string, error) {
+	var dir string
+	err := underParentLock(tempRoot, func() error {
+		var mkErr error
+		dir, mkErr = seams.mkdirTemp(tempRoot, pin.Name+"-")
+		return mkErr
+	})
+	return dir, err
+}
+
+// tempRootLockUnsupported reports whether a flock error means the filesystem cannot take the lock at all, and not
+// that another holder has it.
+func tempRootLockUnsupported(err error) bool {
+	return errors.Is(err, unix.ENOLCK) || errors.Is(err, unix.EOPNOTSUPP) || errors.Is(err, unix.ENOSYS) || errors.Is(err, unix.EINVAL)
 }
 
 // download streams the pin's archive into a file named pin.Archive inside dir and answers that
@@ -194,31 +313,455 @@ func download(ctx context.Context, pin Pin, seams *Seams, dir string) (string, e
 	return path, nil
 }
 
-// createRoot makes dir and every missing ancestor of it, recording only the components this call
-// created: an os.Mkdir that succeeds is this call's, and one that answers EEXIST was already there
-// or was made by another call in the same instant and is not this call's to remove. The list is
-// outermost first, the order removeCreated walks backwards. The path is walked by its raw spelling,
-// the way os.MkdirAll walks it, so a configured root that mixes a symbolic link and ".." is not
-// rewritten. Lstat is used so a dangling symbolic link counts as existing rather than as a
-// directory this call may make and remove.
-func createRoot(dir string) ([]string, error) {
-	components := rootComponents(dir)
-	created := make([]string, 0, len(components))
-	for _, component := range components {
-		err := os.Mkdir(component, 0o755)
-		switch {
-		case err == nil:
-			created = append(created, component)
-		case errors.Is(err, fs.ErrExist):
-			// Already there, or another call made it in the same instant; either way it is not
-			// this call's to remove.
-		default:
-			removeCreated(created)
-			return nil, err
+// createRootRecord is one directory createRoot made. Its identity is the device and inode read when the
+// directory was made, and every later check compares identities, never names alone. A directory made through
+// an open parent handle is identified and removed through that handle with fstatat and unlinkat, so the cleanup
+// never opens the directory and works when the mode of the directory denies reading it. The directory is also
+// held open where the mode lets this process open it, so its inode cannot be reused while the record stands.
+type createRootRecord struct {
+	path   string
+	parent string
+	name   string
+	id     createRootID
+	dir    *os.File
+	pdir   *os.File
+}
+
+// close releases the handles a record holds. A record is closed once, when it leaves the walk's list.
+func (made createRootRecord) close() {
+	if made.dir != nil {
+		_ = made.dir.Close()
+	}
+	if made.pdir != nil {
+		_ = made.pdir.Close()
+	}
+}
+
+// componentParent is component's parent as text: everything before the last separator, with nothing
+// cleaned. filepath.Dir cannot be used here, because it cleans the result and a clean would collapse
+// a ".." that has to stay in the path: the parent of "base/link/../p/q" is "base/link/../p" and not
+// the different directory "base/p" a clean names, and resolving the cleaned form would answer a
+// location that is not the one the mkdir acts on.
+func componentParent(component string) string {
+	trimmed := strings.TrimRight(component, string(os.PathSeparator))
+	if cut := strings.LastIndex(trimmed, string(os.PathSeparator)); cut > 0 {
+		return trimmed[:cut]
+	}
+	return ""
+}
+
+// parentLocation answers the location the kernel resolves component's parent to, or "" when it
+// cannot be resolved. It is read before the component's mkdir, while the spelling is known to reach
+// the parent, so the location keeps reaching the component after a segment above the parent -- a
+// "..", for instance -- vanishes, which is the race this walk handles.
+func parentLocation(component string) string {
+	parent := componentParent(component)
+	if parent == "" {
+		return ""
+	}
+	resolved, err := filepath.EvalSymlinks(parent)
+	if err != nil {
+		return ""
+	}
+	return resolved
+}
+
+// componentName answers the leaf name the component's mkdir uses under its parent: the text after the
+// last separator, with a trailing separator dropped. It is "" for a component with no separator.
+func componentName(component string) string {
+	trimmed := strings.TrimRight(component, string(os.PathSeparator))
+	cut := strings.LastIndex(trimmed, string(os.PathSeparator))
+	if cut < 0 {
+		return ""
+	}
+	return trimmed[cut+1:]
+}
+
+// createRootID is the identity of a directory on this host: its device and inode.
+type createRootID struct {
+	dev, ino uint64
+}
+
+// known reports whether an identity was read. An identity that was not read is the zero value.
+func (id createRootID) known() bool {
+	return id.ino != 0
+}
+
+// idOfStat answers the identity of a stat result.
+func idOfStat(st *unix.Stat_t) createRootID {
+	return createRootID{dev: uint64(st.Dev), ino: uint64(st.Ino)}
+}
+
+// lstatID answers the identity of the entry at path, without following a symbolic link.
+func lstatID(path string) (createRootID, error) {
+	var st unix.Stat_t
+	if err := unix.Lstat(path, &st); err != nil {
+		return createRootID{}, &fs.PathError{Op: "lstat", Path: path, Err: err}
+	}
+	return idOfStat(&st), nil
+}
+
+// entryID answers the identity of the directory that name holds under the open parent pdir. The entry is read
+// through the parent handle and not opened, so a directory whose mode denies reading is still identified. A
+// symbolic link is not followed, and an entry that is not a directory is an error.
+func entryID(pdir *os.File, name string) (createRootID, error) {
+	var st unix.Stat_t
+	if err := unix.Fstatat(int(pdir.Fd()), name, &st, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+		return createRootID{}, &fs.PathError{Op: "fstatat", Path: name, Err: err}
+	}
+	if st.Mode&unix.S_IFMT != unix.S_IFDIR {
+		return createRootID{}, &fs.PathError{Op: "fstatat", Path: name, Err: unix.ENOTDIR}
+	}
+	return idOfStat(&st), nil
+}
+
+// openPinned opens the directory that name holds under pdir and returns the handle, which keeps the inode
+// allocated while a record stands. It answers nil when the mode does not let this process open the directory;
+// the record then holds the identity alone.
+func openPinned(pdir *os.File, name string) *os.File {
+	fd, err := unix.Openat(int(pdir.Fd()), name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return nil
+	}
+	return os.NewFile(uintptr(fd), name)
+}
+
+// createRootReach answers the names a record made without a parent handle can be reached by, the caller's
+// spelling first and the resolved parent location second.
+func createRootReach(made createRootRecord) []string {
+	if made.parent == "" || made.name == "" {
+		return []string{made.path}
+	}
+	return []string{made.path, crwconfig.JoinRoot(made.parent, made.name)}
+}
+
+// createRootMatch answers the name at which a record's directory is found, when the record reached it by a
+// name, together with the identity read there, and whether that is still the directory the record made. A
+// record held through a parent handle answers "" for the name, because the handle, not a name, reaches it.
+// Identity, not the name, decides: a directory another install made at the same place is a different
+// directory.
+func createRootMatch(made createRootRecord) (string, createRootID, bool) {
+	if made.pdir != nil {
+		id, err := entryID(made.pdir, made.name)
+		return "", id, err == nil && id == made.id
+	}
+	for _, reach := range createRootReach(made) {
+		if id, err := lstatID(reach); err == nil && id == made.id {
+			return reach, id, true
 		}
 	}
-	return created, nil
+	return "", createRootID{}, false
 }
+
+// createRootComponent makes component's directory and answers the record of the directory the mkdir made. The
+// parent is opened and locked by openLockedDir, and the mkdir runs through that open handle on the parent
+// location the kernel resolved, so the entry it acts on is the one in the directory that handle pins. When no
+// parent handle can be opened -- a relative root, a parent that no longer resolves, or a parent this process may
+// not read -- the mkdir runs through the caller's spelling without a lock, and the record keeps the identity read
+// by name.
+//
+// On EEXIST the record describes the directory standing there, which is not this call's to make unless the
+// caller finds it is the one recorded. When no identity could be read the record has none, and the caller
+// keeps the record it already holds rather than deciding ownership from nothing.
+func createRootComponent(component string) (createRootRecord, error) {
+	name := componentName(component)
+	parent := parentLocation(component)
+	if parent == "" || name == "" || name == "." || name == ".." {
+		return createRootSpelled(component, "", "")
+	}
+	pdir, locked, err := openLockedDir(parent)
+	if err != nil {
+		return createRootRecord{}, err
+	}
+	if pdir == nil {
+		return createRootSpelled(component, parent, name)
+	}
+	return createRootUnderParent(component, parent, name, pdir, locked)
+}
+
+// createRootSpelled makes component through the caller's spelling and reads the identity of what stands
+// there by name.
+func createRootSpelled(component, parent, name string) (createRootRecord, error) {
+	made := createRootRecord{path: component, parent: parent, name: name}
+	err := os.Mkdir(component, 0o755)
+	if err != nil && !errors.Is(err, fs.ErrExist) {
+		return createRootRecord{}, err
+	}
+	id, readErr := lstatID(component)
+	if readErr != nil {
+		if err != nil {
+			return createRootRecord{}, err
+		}
+		return createRootRecord{}, readErr
+	}
+	made.id = id
+	return made, err
+}
+
+// createRootUnderParent makes name under the open parent handle pdir and records the directory it finds there.
+// The handle is taken ownership of: it is closed here on every path that does not return it in the record. When
+// locked is set the lock taken on pdir is held for the mkdir and released on return. The identity is read through
+// the handle, so a directory whose mode denies reading is still recorded. Before the record is returned the parent
+// is checked against the name the caller spelled: when the spelling no longer reaches the directory the handle
+// pins, the entry is in a place the caller did not ask for, so it is removed when this call made it and the walk
+// recomputes.
+func createRootUnderParent(component, parent, name string, pdir *os.File, locked bool) (createRootRecord, error) {
+	if locked {
+		defer unlockOpenDir(pdir)
+	}
+	if createRootAfterParentOpened != nil {
+		createRootAfterParentOpened(component)
+	}
+	mkErr := unix.Mkdirat(int(pdir.Fd()), name, 0o755)
+	if mkErr != nil && !errors.Is(mkErr, fs.ErrExist) {
+		_ = pdir.Close()
+		return createRootRecord{}, &fs.PathError{Op: "mkdirat", Path: component, Err: mkErr}
+	}
+	if createRootAfterMkdir != nil {
+		createRootAfterMkdir(component)
+	}
+	id, err := entryID(pdir, name)
+	if err != nil {
+		if mkErr == nil {
+			// The entry this call made is not a directory that can be identified. unlinkat with AT_REMOVEDIR
+			// removes it only while it is an empty directory, so a file a peer put in its place stays, and the
+			// walk recomputes. The handle is used before it is closed.
+			_ = unix.Unlinkat(int(pdir.Fd()), name, unix.AT_REMOVEDIR)
+			_ = pdir.Close()
+			return createRootRecord{}, fs.ErrNotExist
+		}
+		_ = pdir.Close()
+		return createRootRecord{path: component, parent: parent, name: name}, mkErr
+	}
+	if !parentStillNamed(component, pdir) {
+		if mkErr == nil {
+			unlinkHeldDir(pdir, name, id)
+		}
+		_ = pdir.Close()
+		return createRootRecord{}, fs.ErrNotExist
+	}
+	return createRootRecord{path: component, parent: parent, name: name, id: id, dir: openPinned(pdir, name), pdir: pdir}, mkErr
+}
+
+// parentStillNamed reports whether the caller's spelling of component's parent still reaches the directory
+// the parent handle pins. It is checked after the entry was made, so an entry made in a directory the
+// spelling no longer names is caught before it is recorded.
+func parentStillNamed(component string, pdir *os.File) bool {
+	held, err := pdir.Stat()
+	if err != nil {
+		return false
+	}
+	named, err := os.Stat(componentParent(component))
+	return err == nil && os.SameFile(held, named)
+}
+
+// unlinkHeldDir removes the entry name under a parent handle when it is still the directory with identity id. The
+// parent is locked for the check and the removal, so an install that holds the same lock cannot make or remove
+// entries under it meanwhile. The identity is read through the handle and the removal is unlinkat with
+// AT_REMOVEDIR, which refuses a file and a directory with entries, so only an empty directory can be removed here.
+// No child is opened, so a directory whose mode denies reading or searching is removed too. When the lock cannot be
+// taken the directory is left in place.
+func unlinkHeldDir(pdir *os.File, name string, id createRootID) {
+	locked, err := lockOpenDir(pdir)
+	if err != nil {
+		return
+	}
+	if locked {
+		defer unlockOpenDir(pdir)
+	}
+	if current, err := entryID(pdir, name); err == nil && current == id {
+		_ = unix.Unlinkat(int(pdir.Fd()), name, unix.AT_REMOVEDIR)
+	}
+}
+
+// dropGone drops the record of a component the scan found missing when the component is really gone. A
+// failed read of the component is evidence of absence only while its parent is reachable: a component
+// below a segment that has vanished is unreachable rather than absent, and its record is kept so a
+// directory this call made is still removed.
+func dropGone(created []createRootRecord, component string) []createRootRecord {
+	for _, made := range created {
+		if made.path != component {
+			continue
+		}
+		if _, _, ok := createRootMatch(made); ok {
+			return created
+		}
+	}
+	if parentLocation(component) == "" {
+		return created
+	}
+	if _, err := os.Lstat(component); err == nil {
+		return created
+	}
+	return dropCreated(created, component)
+}
+
+// dropGoneComponents drops the record of every component the scan found missing that is really gone. The
+// scan reports the components missing outermost first, and each is decided on its own.
+func dropGoneComponents(created []createRootRecord, components []string) []createRootRecord {
+	for _, component := range components {
+		created = dropGone(created, component)
+	}
+	return created
+}
+
+// createRoot makes dir and every missing ancestor of it, recording only the components this call created: a
+// mkdir that succeeds is this call's and is recorded with the identity of the directory that mkdir made, and
+// one that answers EEXIST is this call's only when the identity standing there is the one this call recorded
+// at that path. The list is outermost first, the order removeCreated walks backwards. The path is walked by
+// its raw spelling, the way os.MkdirAll walks it, so a configured root that mixes a symbolic link and ".." is
+// not rewritten. Lstat is used so a dangling symbolic link counts as existing rather than as a directory this
+// call may make and remove.
+//
+// A concurrent install sharing this root removes the directories it made as it finishes, and it can remove an
+// ancestor this call's scan found present. The mkdir of a component then answers ENOENT; the missing
+// components are recomputed and the walk continues, at most createRootMkdirRounds times, so a normal overlap
+// does not become a host failure. What this call made stays recorded either way.
+func createRoot(dir string) ([]createRootRecord, error) {
+	// A root that keeps vanishing under this call must not spin: after this many recomputes the
+	// error is returned rather than the walk being tried again.
+	const createRootMkdirRounds = 3
+	var created []createRootRecord
+	for round := 0; ; round++ {
+		// absent carries this round's not-exist error out of the component walk, so the walk is
+		// left and the components are recomputed instead of the error being returned at once.
+		var absent error
+		components := rootComponents(dir)
+		if len(components) > 0 {
+			created = dropGoneComponents(created, components)
+		}
+		for _, component := range components {
+			if createRootBeforeMkdir != nil {
+				createRootBeforeMkdir(component)
+			}
+			made, err := createRootComponent(component)
+			switch {
+			case err == nil:
+				// The mkdir made the component, so the identity read for it is this call's to record.
+				created = recordCreated(created, made)
+			case errors.Is(err, fs.ErrExist):
+				// The path is there but the scan found it missing. When the identity is the one this call
+				// recorded for that path, the directory is still the one this call made; otherwise another
+				// install made its own there, which is not this call's to remove.
+				switch {
+				case !made.id.known():
+					// No identity could be read, so nothing proves the directory changed hands. The record
+					// this call already holds is left alone, and removeCreated verifies it again before
+					// removing.
+				case sameRecordedDirectory(created, component, made.id):
+					created = recordCreated(created, made)
+				default:
+					made.close()
+					created = dropCreated(created, component)
+				}
+			case errors.Is(err, fs.ErrNotExist):
+				// An ancestor the scan found was removed before this mkdir; the missing components
+				// are recomputed and the walk continues.
+				absent = err
+			default:
+				removeCreated(created)
+				return nil, err
+			}
+			if absent != nil {
+				break
+			}
+		}
+		if absent == nil {
+			return created, nil
+		}
+		if round >= createRootMkdirRounds {
+			// The root keeps vanishing; what this call made is not left for the next run to trip
+			// over, and the answer is the error the last mkdir gave.
+			removeCreated(created)
+			return nil, absent
+		}
+	}
+}
+
+// recordCreated records the directory a component's mkdir made as this call's, with the identity read for
+// it. The record is keyed by identity and not by the spelling alone: one spelled component can name two
+// directories over the life of a walk when a parent is retargeted between rounds, and both are this call's
+// while they stand. A record for the path is kept beside the new one while its directory is still standing,
+// and closed once neither name reaches it. The list is kept outermost first, the order removeCreated walks
+// backwards.
+func recordCreated(created []createRootRecord, made createRootRecord) []createRootRecord {
+	kept := make([]createRootRecord, 0, len(created)+1)
+	recorded := false
+	for _, held := range created {
+		if held.path != made.path {
+			kept = append(kept, held)
+			continue
+		}
+		if held.id == made.id {
+			// The same directory is recorded again: the new record takes its place, and the handles
+			// it held are released.
+			held.close()
+			if !recorded {
+				kept = append(kept, made)
+				recorded = true
+			}
+			continue
+		}
+		if _, _, ok := createRootMatch(held); ok {
+			kept = append(kept, held)
+		} else {
+			held.close()
+		}
+	}
+	if !recorded {
+		kept = append(kept, made)
+	}
+	slices.SortStableFunc(kept, func(a, b createRootRecord) int {
+		return strings.Count(a.path, string(os.PathSeparator)) - strings.Count(b.path, string(os.PathSeparator))
+	})
+	return kept
+}
+
+// sameRecordedDirectory reports whether the directory standing at path is one this call recorded there.
+// Identity, not the name, decides: a directory another install made at the same path is a different
+// directory. One spelling can hold more than one record, so every record for the path is compared.
+func sameRecordedDirectory(created []createRootRecord, path string, id createRootID) bool {
+	for _, made := range created {
+		if made.path == path && made.id == id {
+			return true
+		}
+	}
+	return false
+}
+
+// dropCreated forgets the records for path whose directory no longer stands where it was made, because a
+// directory that is not there is not this call's to remove. A record whose directory is still standing is
+// kept, and the handles of a forgotten record are released.
+func dropCreated(created []createRootRecord, path string) []createRootRecord {
+	var kept []createRootRecord
+	for _, made := range created {
+		if made.path != path {
+			kept = append(kept, made)
+			continue
+		}
+		if _, _, ok := createRootMatch(made); ok {
+			kept = append(kept, made)
+			continue
+		}
+		made.close()
+	}
+	return kept
+}
+
+// createRootBeforeMkdir is a test seam called immediately before each mkdir createRoot performs, so a test
+// can remove an ancestor at exactly the moment a concurrent install would instead of relying on timing. nil
+// is the production value.
+var createRootBeforeMkdir func(path string)
+
+// createRootAfterParentOpened is a test seam called after a component's parent location has been opened and
+// before its entry is made, so a test can move that parent at exactly the moment a concurrent install would.
+// nil is the production value.
+var createRootAfterParentOpened func(component string)
+
+// createRootAfterMkdir is a test seam called after an entry is made through a parent handle and before the
+// entry is opened, so a test can replace it at exactly the moment a concurrent install would. nil is the
+// production value.
+var createRootAfterMkdir func(component string)
 
 // rootComponents lists the components of dir that do not exist yet, outermost first, stopping at
 // the first ancestor that does exist. A dangling symbolic link counts as existing, so it is never
@@ -244,12 +787,20 @@ func rootComponents(dir string) []string {
 	return missing
 }
 
-// removeCreated removes the directories this call created, innermost outward. os.Remove refuses a
-// directory that is not empty, which is exactly the wanted behaviour: a directory another call has
-// since filled is left alone and is not this call's error to report.
-func removeCreated(created []string) {
+// removeCreated removes the directories this call created, innermost outward, and only while each one is still
+// the directory this call made. A directory held through a parent handle is identified through that handle and
+// removed with unlinkat(AT_REMOVEDIR), which never removes a file and never a directory with entries; a directory
+// made by name is removed by name only after its identity matches. Every record's handles are released here,
+// since removeCreated is the last use of a record.
+func removeCreated(created []createRootRecord) {
 	for i := len(created) - 1; i >= 0; i-- {
-		_ = os.Remove(created[i])
+		made := created[i]
+		if made.pdir != nil {
+			unlinkHeldDir(made.pdir, made.name, made.id)
+		} else if reach, _, ok := createRootMatch(made); ok {
+			_ = unix.Rmdir(reach)
+		}
+		made.close()
 	}
 }
 

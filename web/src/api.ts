@@ -95,17 +95,20 @@ function storage(): Storage | undefined {
  * only once storage has refused a read or a write.
  */
 export function getToken(): string | null {
+  // The token this page load received in the address fragment always wins. The stored value can be
+  // the previous run's token - the server prints a fresh one on every start - and sending the old
+  // one after a restart is refused, so the fragment's value is never second to a stored one.
+  if (memoryToken !== null) return memoryToken;
+  if (storageDenied) return null;
   const store = storage();
   if (store) {
     try {
-      const stored = store.getItem(TOKEN_STORAGE_KEY);
-      if (stored !== null) return stored;
-      if (!storageDenied) return null;
+      return store.getItem(TOKEN_STORAGE_KEY);
     } catch {
       storageDenied = true;
     }
   }
-  return memoryToken;
+  return null;
 }
 
 /**
@@ -127,8 +130,16 @@ export function bootstrapToken(): void {
     try {
       store.setItem(TOKEN_STORAGE_KEY, token);
     } catch {
-      // Storage refused the write; the in-memory copy carries this tab.
+      // Storage refused the write; the in-memory copy carries this tab. The old stored value is
+      // cleared as well, so a later load of this tab cannot fall back to the previous run's token
+      // after the server has replaced it. A context that refuses the write usually refuses this
+      // too, and the in-memory copy is what answers then.
       storageDenied = true;
+      try {
+        store.removeItem(TOKEN_STORAGE_KEY);
+      } catch {
+        // The stored value is unreachable; the in-memory copy is this tab's only token.
+      }
     }
   }
   const rest = removeFragmentParam(fragment, TOKEN_PARAM);
@@ -194,6 +205,263 @@ async function errorText(response: Response): Promise<string> {
   return `request failed (${response.status})`;
 }
 
+/* ---- the run-state screen (GET /api/status) ---- */
+
+// The endpoint is read-only, so it carries no token and no body: every value below comes from a
+// named read the server already has. Nothing here re-derives a judgement the server made - a
+// source that could not be read arrives as unknown with the reason the command itself gave.
+
+/** Whether a source answered. A source that could not be read is unknown, never ok. */
+export type SourceState = "ok" | "unknown";
+
+/** One status-bar reading. */
+export interface StatusMark {
+  state: SourceState;
+  reason?: string;
+}
+
+/**
+ * The execution policy's reading. The file, registered and running digests are separate values,
+ * each with its own reason, so the bar never conflates the bytes on disk with the digest the
+ * wiring record names and with the digest the running service published.
+ */
+export interface StatusPolicyReading extends StatusMark {
+  policyState: string;
+  path?: string;
+  fileDigest: string | null;
+  fileReason?: string;
+  registeredDigest: string | null;
+  registeredReason?: string;
+  runningDigest: string | null;
+  runningReason?: string;
+  applied: string;
+}
+
+/** One manage source's own document, passed through from the command unchanged. */
+export interface StatusSource<T = unknown> {
+  state: SourceState;
+  reason?: string;
+  data: T | null;
+}
+
+/** One relay relationship, as the relay's own projection spells it. */
+/** One live owner of a scope, as the relay read reports it. */
+export interface RelayBindingView {
+  bindingId?: unknown;
+  role?: unknown;
+  scopeKind?: unknown;
+  scopeKey?: unknown;
+  taskId?: unknown;
+  cwd?: unknown;
+  status?: unknown;
+  read?: { state?: string; reason?: string } | null;
+}
+
+export interface RelayRelationshipView {
+  relationshipId?: unknown;
+  issueKey?: unknown;
+  parentTaskId?: unknown;
+  childTaskId?: unknown;
+  relationshipStatus?: unknown;
+  executionGeneration?: unknown;
+  nextExpectedAction?: unknown;
+  head?: { eventId?: unknown; revisionHash?: unknown; detail?: unknown } | null;
+  read?: { state?: string; reason?: string } | null;
+}
+
+/** One DAG plan's progress, under the scheduler's own stage names. */
+export interface RelayPlanView {
+  planId?: unknown;
+  projectKey?: unknown;
+  revision?: unknown;
+  stages?: Record<string, number> | null;
+  blocked?: unknown;
+  denominator?: unknown;
+  read?: { state?: string; reason?: string } | null;
+}
+
+/** One merge turn. */
+export interface RelayMergeTurnView {
+  turnId?: unknown;
+  repository?: unknown;
+  prNumber?: unknown;
+  holderTaskId?: unknown;
+  state?: unknown;
+  updatedAt?: unknown;
+  read?: { state?: string; reason?: string } | null;
+}
+
+/** The crw manage relay-read document. */
+export interface RelayDocument {
+  stateDir?: unknown;
+  readAt?: unknown;
+  bindings?: RelayBindingView[] | null;
+  relationships?: RelayRelationshipView[] | null;
+  plans?: RelayPlanView[] | null;
+  mergeTurns?: RelayMergeTurnView[] | null;
+  failures?: { section?: string; item?: string; reason?: string }[] | null;
+}
+
+/** One capacity judgement. */
+export interface CapacityPlanView {
+  plan?: unknown;
+  project?: unknown;
+  family?: unknown;
+  parent?: unknown;
+  verdict?: unknown;
+  waiting?: unknown[] | null;
+  waiting_minutes?: number;
+  held?: number;
+  ceiling?: number;
+  host_memory?: string;
+  reasons?: string[] | null;
+}
+
+/** The crw manage capacity document. */
+export interface CapacityDocument {
+  lane?: { merges_last_hour?: number | null } | null;
+  actions?: { state?: string; incident?: string | null } | null;
+  child_429?: { state?: string; count?: number | null } | null;
+  plans?: CapacityPlanView[] | null;
+}
+
+/** One DAG anomaly the review found. */
+export interface DagAnomalyView {
+  kind?: string;
+  plan?: string;
+  node?: string;
+  issue?: string;
+  detail?: string;
+}
+
+/** The crw manage dag-review document. */
+export interface DagDocument {
+  plans?: unknown[] | null;
+  anomalies?: DagAnomalyView[] | null;
+  checks?: { name?: string; state?: string; detail?: string }[] | null;
+}
+
+/** The GET /api/status document. */
+export interface RunState {
+  schema: string;
+  readAt: string;
+  bar: {
+    relayStore: StatusMark;
+    appServer: StatusMark;
+    executionPolicy: StatusPolicyReading;
+  };
+  relay: StatusSource<RelayDocument>;
+  capacity: StatusSource<CapacityDocument>;
+  dag: StatusSource<DagDocument>;
+}
+
+/** One part of a reading: a value with its own state, so a blank is never read as a value. */
+export interface ReadingPart {
+  label: string;
+  value: string;
+  state: SourceState;
+  reason: string;
+}
+
+/** One status-bar reading, as the bar renders it. */
+export interface RunStateReading {
+  key: "relayStore" | "appServer" | "executionPolicy";
+  label: string;
+  state: SourceState;
+  reason: string;
+  parts: ReadingPart[];
+}
+
+/** GET /api/status. A read: it carries no token and no body. */
+export function fetchStatus(signal?: AbortSignal): Promise<RunState> {
+  return request<RunState>("/api/status", signal ? { signal } : {});
+}
+
+/**
+ * The three status-bar readings, in a fixed order. The mapping is deliberately total: a document
+ * that never arrived turns all three unknown with the request's reason, and one source that could
+ * not be read keeps its own reason without changing the other two.
+ */
+export function runStateReadings(state: RunState | null, error?: string | null): RunStateReading[] {
+  const failed = typeof error === "string" && error !== "" ? error : "the status request did not answer";
+  if (!state) {
+    return [
+      { key: "relayStore", label: "Relay store", state: "unknown", reason: failed, parts: [] },
+      { key: "appServer", label: "App Server", state: "unknown", reason: failed, parts: [] },
+      { key: "executionPolicy", label: "Execution policy", state: "unknown", reason: failed, parts: [] },
+    ];
+  }
+  const policy = state.bar.executionPolicy;
+  return [
+    {
+      key: "relayStore",
+      label: "Relay store",
+      state: state.bar.relayStore.state,
+      reason: state.bar.relayStore.reason ?? "",
+      parts: [],
+    },
+    {
+      key: "appServer",
+      label: "App Server",
+      state: state.bar.appServer.state,
+      reason: state.bar.appServer.reason ?? "",
+      parts: [],
+    },
+    {
+      key: "executionPolicy",
+      label: "Execution policy",
+      state: policy.state,
+      reason: policy.reason ?? "",
+      parts: [
+        digestPart("File digest", policy.fileDigest, policy.fileReason),
+        digestPart("Registered digest", policy.registeredDigest, policy.registeredReason),
+        digestPart("Running digest", policy.runningDigest, policy.runningReason),
+      ],
+    },
+  ];
+}
+
+/** One digest as a part: a value when it was read, otherwise unknown with its reason. */
+function digestPart(label: string, digest: string | null | undefined, reason?: string): ReadingPart {
+  if (typeof digest === "string" && digest !== "") {
+    return { label, value: digest, state: "ok", reason: "" };
+  }
+  return { label, value: "", state: "unknown", reason: reason ?? "not read" };
+}
+
+/**
+ * One section of a manage document: whether it was read, and what it held.
+ *
+ * "Could not be read" and "read and empty" are different facts, and this is where they are kept
+ * apart. A section named in the read's own failures list, or one the document did not carry at
+ * all, is unknown with its reason; only an array the document really carried and that holds
+ * nothing is an empty list. Turning the first into the second would let a failed read pass as a
+ * clean one.
+ */
+export interface SectionReading<T> {
+  state: SourceState;
+  items: T[] | null;
+  reason: string;
+}
+
+/** The reading of one section, from the document, its failures list and the source's own reason. */
+export function sectionReading<T>(
+  section: string,
+  items: T[] | null | undefined,
+  failures: { section?: string; reason?: string }[] | null | undefined,
+  sourceReason?: string | null,
+): SectionReading<T> {
+  const failure = (failures ?? []).find((entry) => entry?.section === section);
+  if (failure || items == null) {
+    const reason = failure?.reason;
+    return {
+      state: "unknown",
+      items: null,
+      reason: reason && reason !== "" ? reason : sourceReason && sourceReason !== "" ? sourceReason : "the section was not read",
+    };
+  }
+  return { state: "ok", items, reason: "" };
+}
 /* ---- helper-role settings ---- */
 
 // Ported from CXC v0.2.40 plugins/codexclaw/gui/src/api.ts (12-38, 129-153, 333-359), modified:
@@ -420,4 +688,92 @@ export function helperRoleEfforts(catalog: readonly CatalogEntry[], policyEffort
  */
 export function effortSelectable(name: string): boolean {
   return (EFFORTS as readonly string[]).includes(name);
+}
+
+/* ---- execution policy ---- */
+
+// The execution-policy client. It is deliberately separate from the helper-role functions above:
+// those read and write the explorer/reviewer/executor/architect store, these read and write the
+// supervisor/parent/child execution policy, and the two share no name or wording.
+//
+// These functions are transport only. They return the status and the raw body, and the screen turns
+// that into a reading or a notice through policy-state.ts. Nothing here imports that module at run
+// time, so there is no cycle between the two, and no judgement about the answer is made twice.
+
+/** One policy call's raw answer: the status and the JSON body, or a thrown transport failure. */
+export interface PolicyResponse {
+  status: number;
+  body: unknown;
+}
+
+/** The body every policy write carries: the digest the caller read and the one change it proposes. */
+export interface PolicyWritePayload {
+  expectedDigest: string;
+  change: unknown;
+}
+
+/**
+ * The execution policy the wiring record names. A read that fails throws, because a fabricated
+ * reading could show values the file does not declare.
+ */
+export async function getPolicy(signal?: AbortSignal): Promise<unknown> {
+  const response = await fetch("/api/policy", { headers: { Accept: "application/json" }, signal });
+  const body = (await response.json().catch(() => null)) as unknown;
+  if (!response.ok) throw new Error(errorMessageOf(body) ?? `The execution policy could not be read (${response.status})`);
+  return body;
+}
+
+/** One POST to a policy route, with the write headers and the caller's own payload. */
+async function postPolicy(path: string, payload: PolicyWritePayload): Promise<PolicyResponse> {
+  const response = await fetch(path, {
+    method: "POST",
+    headers: writeHeaders(),
+    body: JSON.stringify(payload),
+  });
+  const body = (await response.json().catch(() => null)) as unknown;
+  return { status: response.status, body };
+}
+
+/** Save one change to the execution policy. A refusal is returned, never thrown. */
+export function writePolicy(payload: PolicyWritePayload): Promise<PolicyResponse> {
+  return postPolicy("/api/policy", payload);
+}
+
+/** Check one change without writing it. The server judges it with the bridge's own parser. */
+export function checkPolicy(payload: PolicyWritePayload): Promise<PolicyResponse> {
+  return postPolicy("/api/policy/check", payload);
+}
+
+/**
+ * The store-accepted names a model's advertised ladder permits, in the store's own order.
+ *
+ * `supported` is the same three-state value the effort control uses: an array is the model's
+ * advertised ladder, `undefined` means no model is selected, and `null` means the catalog did not
+ * advertise a ladder. Only an array is evidence that the model refuses a name, so a non-array keeps
+ * every store-accepted name selectable.
+ */
+export function selectableEfforts(supported: readonly string[] | null | undefined): string[] {
+  if (!Array.isArray(supported)) return [...EFFORTS];
+  return EFFORTS.filter((name) => supported.includes(name));
+}
+
+/**
+ * Whether the model advertises a ladder that holds none of the names the helper-role store accepts.
+ * When this is true no option is selectable and the role can only use the session effort, so the
+ * screen owes the user a reason (see `effortFallbackNotice`).
+ */
+export function effortLadderUnsupported(supported: readonly string[] | null | undefined): boolean {
+  return Array.isArray(supported) && selectableEfforts(supported).length === 0;
+}
+
+/**
+ * The one-line reason no store-accepted effort is selectable, or null when some is. The sentence
+ * states what the role then uses: the session effort when nothing is saved, and the saved value when
+ * one is, because the screen never silently changes a stored value.
+ */
+export function effortFallbackNotice(supported: readonly string[] | null | undefined, savedEffort: string | null): string | null {
+  if (!effortLadderUnsupported(supported)) return null;
+  return savedEffort === null
+    ? "This model advertises no effort the helper-role store accepts; the role uses the session effort."
+    : `This model advertises no effort the helper-role store accepts; the saved effort ${savedEffort} is kept.`;
 }

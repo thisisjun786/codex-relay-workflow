@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -29,8 +30,14 @@ func workspace(t *testing.T) string {
 func put(t *testing.T, path, text string) {
 	t.Helper()
 	mkdir(t, filepath.Dir(path))
-	if err := os.WriteFile(path, []byte(text), 0o666); err != nil {
-		t.Fatal(err)
+	// A caller may chmod the result and run it (TestProcessStartTokenIsWhatPsPrints writes a fake
+	// ps this way), so the descriptor is open only under syscall.ForkLock: a fork in that window
+	// would inherit it and leave the path unexecutable (ETXTBSY, golang/go#22315).
+	syscall.ForkLock.RLock()
+	writeErr := os.WriteFile(path, []byte(text), 0o666)
+	syscall.ForkLock.RUnlock()
+	if writeErr != nil {
+		t.Fatal(writeErr)
 	}
 }
 

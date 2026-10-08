@@ -94,7 +94,7 @@ func TestAuditLedgerRowCarriesTheFixedKeys(t *testing.T) {
 		Status: auditStatusOK, Score: 6, GradedAt: "2026-01-01T00:00:00Z", Bundle: "b",
 		Defects: []AuditDefect{{Severity: "P2", What: "w", Where: "f.go:1"}},
 	}}
-	if err := auditRecord(e, cfg, results); err != nil {
+	if _, err := auditRecord(e, cfg, results); err != nil {
 		t.Fatal(err)
 	}
 	rows := auditLines(t, filepath.Join(state, "audit", auditLedgerFile))
@@ -123,7 +123,7 @@ func TestAuditLedgerRowForAnUngradedRunHasNullScore(t *testing.T) {
 	state := t.TempDir()
 	cfg := auditSectionConfig(t, state, nil)
 	results := []AuditResult{{Mode: auditModePR, Status: auditStatusInvalid, GradedAt: "2026-01-01T00:00:00Z"}}
-	if err := auditRecord(e, cfg, results); err != nil {
+	if _, err := auditRecord(e, cfg, results); err != nil {
 		t.Fatal(err)
 	}
 	rows := auditLines(t, filepath.Join(state, "audit", auditLedgerFile))
@@ -156,7 +156,7 @@ func TestAuditAlertsOnlyForP0AndP1(t *testing.T) {
 			Defects: []AuditDefect{{Severity: "P3", What: "nit", Where: "b.go:1"}}},
 		{Mode: auditModePR, Subject: "c", Issue: "CRW-3", Status: auditStatusTimeout, GradedAt: "t"},
 	}
-	if err := auditRecord(e, cfg, results); err != nil {
+	if _, err := auditRecord(e, cfg, results); err != nil {
 		t.Fatal(err)
 	}
 	if rows := auditLines(t, filepath.Join(state, "audit", auditLedgerFile)); len(rows) != 3 {
@@ -203,7 +203,7 @@ func TestAuditWritesNoAlertFileWhenNothingReachedP0OrP1(t *testing.T) {
 			Defects: []AuditDefect{{Severity: "P2", What: "w", Where: "f.go:1"}}},
 		{Mode: auditModePR, Status: auditStatusInvalid, GradedAt: "t"},
 	}
-	if err := auditRecord(e, cfg, results); err != nil {
+	if _, err := auditRecord(e, cfg, results); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(state, "audit", auditAlertFile)); !os.IsNotExist(err) {
@@ -226,7 +226,7 @@ func TestAuditRecordSeparatesATornTail(t *testing.T) {
 	}
 	cfg := auditSectionConfig(t, state, nil)
 	results := []AuditResult{{Mode: auditModePR, Subject: "new", Status: auditStatusOK, Score: 7, GradedAt: "t"}}
-	if err := auditRecord(e, cfg, results); err != nil {
+	if _, err := auditRecord(e, cfg, results); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(filepath.Join(dir, auditLedgerFile))

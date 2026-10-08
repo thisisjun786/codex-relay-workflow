@@ -40,7 +40,7 @@ func Test24_SCH_1_StoreLiveHierarchy(t *testing.T) {
 	}
 	c := Channel{Store: s, Linkage: StoreLinkage{s}}
 	got, err := c.Resolve(ctx, "r")
-	if err != nil || got != (Resolution{"parent", "supervisor", "PRJ-1", "INI-1", "linkage"}) {
+	if err != nil || got != (Resolution{"parent", "supervisor", "initiative", "PRJ-1", "INI-1", "linkage"}) {
 		t.Fatalf("resolution %+v: %v", got, err)
 	}
 	// Retained write refusals do not stop a live hierarchy.

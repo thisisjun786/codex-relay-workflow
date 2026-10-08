@@ -11,6 +11,7 @@ package migrate
 // activation or startup path calls this.
 
 import (
+	"bufio"
 	"cmp"
 	"crypto/sha256"
 	"encoding/json"
@@ -21,6 +22,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
 	"golang.org/x/sys/unix"
 )
 
@@ -35,6 +37,13 @@ const (
 
 // applyReasonChanged refuses a source that moved between classification and publication, which stops the run.
 const applyReasonChanged Reason = "changed"
+
+// migrateReviewFollowupReceiptReadCap is the size bound the receipt reader applies, which is what decides whether a planned
+// record under evidence/ can be judged by its content at all: gate.ParseSourceBoundReceipt reads a receipt with
+// readFile(path, maxText), maxText being V8's longest string, the most the oracle's readFileSync(path, "utf8") returns
+// (internal/pabcd/gate/js.go:19-20). A record larger than this is one the receipt reader itself cannot read, so it keeps
+// the name judgement instead of being opened here.
+const migrateReviewFollowupReceiptReadCap = 0x1fffffe8
 
 // migrateOwnedDirBeforeEnsureChild runs between the lookup that found a destination directory absent
 // and the mkdir that would create it, so a case can put another actor's creation in that window; it is
@@ -68,7 +77,7 @@ func apply(r *Roots, plan *Plan) (*ApplyResult, error) {
 
 // applyWith is apply with a publisher the caller supplies, so a test can give it its own seams.
 func applyWith(r *Roots, plan *Plan, pub *Publisher) (*ApplyResult, error) {
-	a := &applyRun{roots: r, plan: plan, pub: pub, dirs: map[string]*Dir{}, srcs: map[string]*Dir{}, made: map[string]bool{}, result: &ApplyResult{}}
+	a := &applyRun{roots: r, plan: plan, pub: pub, dirs: map[string]*Dir{}, srcs: map[string]*Dir{}, made: map[string]bool{}, denied: map[string]bool{}, result: &ApplyResult{}}
 	if plan != nil {
 		a.result.Items = make([]ApplyItem, len(plan.Items))
 		for i, it := range plan.Items {
@@ -90,6 +99,7 @@ type applyRun struct {
 	dirs   map[string]*Dir
 	srcs   map[string]*Dir
 	made   map[string]bool
+	denied map[string]bool
 }
 
 func applyKey(scope Scope, rel string) string { return string(scope) + "\x00" + rel }
@@ -279,7 +289,9 @@ func (a *applyRun) ensureRoots() error {
 		if err != nil {
 			return err
 		}
-		a.made[applyKey(scope, "")] = made
+		// A root that was absent when the pair was pinned, or that another directory has held since, is not adopted unless this
+		// run owns it. A retry reaches here with the pinned root already set, so the answer comes from the pair.
+		a.recordOwnership(scope, "", made, pair.pinnedAbsent || pair.replaced)
 	}
 	return nil
 }
@@ -335,6 +347,12 @@ func (a *applyRun) ensureDestDir(scope Scope, rel string) (*Dir, error) {
 	}
 	var made bool
 	if child, made, err = parent.EnsureChild(base, applyTempRaw); err != nil {
+		// The run stops here, so a handle the creation handed back with its error - another actor's
+		// directory when the creation ended in EEXIST, or this run's own when only the final check or
+		// the sync failed - is not kept by anyone else and must not outlive the attempt.
+		if child != nil {
+			_ = child.Close()
+		}
 		return nil, err
 	}
 	if made {
@@ -342,8 +360,11 @@ func (a *applyRun) ensureDestDir(scope Scope, rel string) (*Dir, error) {
 			_ = child.Close()
 			return nil, err
 		}
-		a.made[applyKey(scope, rel)] = true
 	}
+	// The lookup above found the name absent, so a creation this run's own mkdir
+	// refused with EEXIST made another actor's directory: record it so finishModes
+	// never adopts it.
+	a.recordOwnership(scope, rel, made, true)
 	a.dirs[applyKey(scope, rel)] = child
 	return child, nil
 }
@@ -359,13 +380,20 @@ func (a *applyRun) writeFiles() error {
 			order = append(order, i)
 		}
 	}
-	refs := a.migrateApplyReviewReferences()
+	refs, receipts, deps := a.migrateApplyReviewReferences()
+	depths := migrateReviewFollowupDepths(deps)
 	slices.SortStableFunc(order, func(x, y int) int {
 		ix, iy := a.plan.Items[x], a.plan.Items[y]
 		if c := cmp.Compare(applyRank(ix), applyRank(iy)); c != 0 {
 			return c
 		}
-		return cmp.Compare(migrateApplyReviewSubRank(ix, refs), migrateApplyReviewSubRank(iy, refs))
+		if c := cmp.Compare(migrateApplyReviewSubRank(ix, refs, receipts), migrateApplyReviewSubRank(iy, refs, receipts)); c != 0 {
+			return c
+		}
+		// The reference chain decides inside the sub-rank: a record another receipt names is still a referrer when it is
+		// itself a receipt, so without this a chain of receipts would keep plan order and a receipt could publish before
+		// the artifact it names (CRW-879).
+		return cmp.Compare(depths[ix.Source], depths[iy.Source])
 	})
 	for _, i := range order {
 		if err := a.publishFile(i, a.plan.Items[i]); err != nil {
@@ -375,42 +403,37 @@ func (a *applyRun) writeFiles() error {
 	return nil
 }
 
-// migrateApplyReviewReferences returns the source paths another plan item's evidence manifest names: the artifactManifest[]
-// entries of a QA receipt, each resolved against the receipt's own directory, whose kinds are the verdict and
-// artifact-identity files the receipt is judged with (internal/pabcd/gate/receipt.go:35-36, gate/manifest.go:89-143). A
-// record that cannot be read or decoded contributes nothing: this key only orders publications and never decides what is
-// copied, so a receipt this run cannot read is reported by attention, not refused here.
-func (a *applyRun) migrateApplyReviewReferences() map[string]bool {
-	refs := map[string]bool{}
+// migrateApplyReviewReferences reads the plan's evidence records and returns two keys over source paths: the artifactManifest[]
+// entries a receipt names, each resolved against the receipt's own directory, whose kinds are the verdict and
+// artifact-identity files the receipt is judged with (internal/pabcd/gate/receipt.go:35-36, gate/manifest.go:89-143), and
+// the records that are receipts. A record is a receipt by its content, never by its name (CRW-879): a planned written
+// regular file under evidence/ whose bytes, read within the receipt reader's own bound, are a JSON object with a non-empty
+// artifactManifest array. The receipt reader takes the name its caller chose (gate/receipt.go:104-108), so a dependency
+// order that only knew the conventional qa-receipt.json name published a receipt under another name before the artifact it
+// refers to. A record that cannot be read, is past that bound or holds no manifest array is not judged by content, and one
+// carrying the conventional name keeps the place the name gave it, so an unreadable receipt still orders after its
+// dependencies. deps is each receipt's own referenced paths, so a chain of records is ordered by its length rather than by
+// plan order. Nothing here decides what is copied or fails the run: a record this run cannot read contributes no key and
+// is reported by attention.
+func (a *applyRun) migrateApplyReviewReferences() (refs, receipts map[string]bool, deps map[string][]string) {
+	refs, receipts, deps = map[string]bool{}, map[string]bool{}, map[string][]string{}
 	for _, it := range a.plan.Items {
-		if !applyWrites(it) || applyDir(it) || !strings.HasSuffix(it.Source, "qa-receipt.json") {
+		if !applyWrites(it) || applyDir(it) {
 			continue
+		}
+		named := strings.HasSuffix(it.Source, "qa-receipt.json")
+		if !named && !classifyEvidenceTree(it.Source) {
+			continue
+		}
+		manifest, ok := a.migrateReviewFollowupReceiptManifest(it)
+		if ok {
+			receipts[it.Source] = true
+		} else if named {
+			receipts[it.Source] = true // an unreadable record keeps the name judgement and the order it gave
 		}
 		dir := classifyDirPart(it.Source)
-		src, err := a.open(it.Scope, dir, false)
-		if err != nil {
-			continue
-		}
-		_, base := applySplit(it.Source)
-		f, _, err := src.OpenRegular(base)
-		if err != nil {
-			continue
-		}
-		data, err := io.ReadAll(io.LimitReader(f, attentionReadCap+1))
-		_ = f.Close()
-		if err != nil || len(data) > attentionReadCap {
-			continue
-		}
-		var view struct {
-			ArtifactManifest []struct {
-				Path string `json:"path"`
-				Kind string `json:"kind"`
-			} `json:"artifactManifest"`
-		}
-		if json.Unmarshal(data, &view) != nil {
-			continue
-		}
-		for _, e := range view.ArtifactManifest {
+		var own []string
+		for _, e := range manifest {
 			if e.Kind != "verdict" && e.Kind != "artifact-identity" {
 				continue
 			}
@@ -419,16 +442,457 @@ func (a *applyRun) migrateApplyReviewReferences() map[string]bool {
 				rel = path.Clean(dir + "/" + rel)
 			}
 			refs[rel] = true
+			own = append(own, rel)
+		}
+		if len(own) > 0 {
+			deps[it.Source] = own
 		}
 	}
-	return refs
+	return refs, receipts, deps
+}
+
+// migrateReviewFollowupDepths is the longest reference chain below each record: 0 for a record that names nothing, and one
+// more than the deepest record it names. A record another receipt names is still a referrer when it is itself a receipt, so
+// without this a chain of receipts would keep plan order and a receipt could publish before the artifact it names
+// (CRW-879). The walk starts from the records in sorted order, so the same plan gives the same keys on every run: a walk
+// driven by Go's map order cached the first depth it reached for a record on a cycle, and two runs of one plan then gave
+// that cycle two different keys and published it in two orders. A cycle is broken at the record already on the current
+// path, so a record that names another keeps one key per cycle and the order stays the plan's.
+func migrateReviewFollowupDepths(deps map[string][]string) map[string]int {
+	sources := make([]string, 0, len(deps))
+	for source := range deps {
+		sources = append(sources, source)
+	}
+	slices.Sort(sources)
+	depths := make(map[string]int, len(deps))
+	var walk func(source string, onPath map[string]bool) int
+	walk = func(source string, onPath map[string]bool) int {
+		if depth, done := depths[source]; done {
+			return depth
+		}
+		if onPath[source] {
+			return 0
+		}
+		onPath[source] = true
+		depth := 0
+		for _, dep := range deps[source] {
+			if d := walk(dep, onPath) + 1; d > depth {
+				depth = d
+			}
+		}
+		delete(onPath, source)
+		depths[source] = depth
+		return depth
+	}
+	for _, source := range sources {
+		walk(source, map[string]bool{})
+	}
+	return depths
+}
+
+// migrateReviewFollowupManifestEntry is one artifactManifest entry of a receipt: the relative path and the kind the receipt
+// is judged with. Both are read by their exact spelling, as the receipt reader's own lookups read them.
+type migrateReviewFollowupManifestEntry struct {
+	Path string
+	Kind string
+}
+
+// migrateReviewFollowupReceiptManifest reads one planned item as a receipt and returns the artifactManifest entries it
+// names. ok is true for a referring receipt, which is any file whose content is a JSON object with a non-empty
+// artifactManifest array, whatever the file is called: the receipt reader takes the caller's chosen name
+// (internal/pabcd/gate/receipt.go:104-108), so a dependency order that only knew the conventional qa-receipt.json name left
+// a receipt under another name publishing before the artifact it refers to (CRW-879). A file this run cannot open, one past
+// migrateReviewFollowupReceiptReadCap, or one that is not such an object returns ok false with a nil manifest, and the
+// caller falls back to the name judgement for it.
+func (a *applyRun) migrateReviewFollowupReceiptManifest(it Item) ([]migrateReviewFollowupManifestEntry, bool) {
+	if it.Size > migrateReviewFollowupReceiptReadCap {
+		// The plan already measured it, so a record past the receipt reader's bound is refused without opening it: the
+		// receipt reader could not read it either, so it keeps the name judgement.
+		return nil, false
+	}
+	dir := classifyDirPart(it.Source)
+	src, err := a.open(it.Scope, dir, false)
+	if err != nil {
+		return nil, false
+	}
+	_, base := applySplit(it.Source)
+	f, _, err := src.OpenRegular(base)
+	if err != nil {
+		return nil, false
+	}
+	defer f.Close()
+	return migrateReviewFollowupDecodeManifest(f, migrateReviewFollowupReceiptReadCap)
+}
+
+// migrateReviewFollowupJSONSpace reports whether b is one of the four bytes JSON allows between tokens, which is what the
+// receipt reader's own decoder skips: a byte outside that set between two tokens is not the JSON the reader would read.
+func migrateReviewFollowupJSONSpace(b byte) bool {
+	return b == ' ' || b == '\t' || b == '\n' || b == '\r'
+}
+
+// migrateReviewFollowupRecord counts the bytes a decode has read from one record, so the judgement can apply the receipt
+// reader's own size bound without holding the record: gate.readFile refuses a file with more than maxText bytes, and this
+// order must refuse the same record for the same reason.
+type migrateReviewFollowupRecord struct {
+	src io.Reader
+	n   int64
+}
+
+func (c *migrateReviewFollowupRecord) Read(p []byte) (int, error) {
+	n, err := c.src.Read(p)
+	c.n += int64(n)
+	return n, err
+}
+
+// migrateReviewFollowupManifestKey is the member a receipt's references live in, as the receipt reader spells it.
+const migrateReviewFollowupManifestKey = "artifactManifest"
+
+// migrateReviewFollowupDecodeManifest reads one record as a receipt within limit bytes and returns the artifactManifest
+// entries it names. ok is false, with no entries, for a record that is not one JSON object with a non-empty
+// artifactManifest array, for one with data after that object, and for one that is longer than limit. The key is read by its
+// exact spelling from the decoded object, as the receipt reader's own map lookup does, so a record whose key differs in case
+// is not judged a receipt here either. The judgement is the array's presence and length, never the shape of its entries: an
+// entry that is not an object with a string path and kind names no dependency, and an array of such entries is still a
+// receipt, so a receipt this run cannot read in full keeps the referrer's place instead of falling back to plan order.
+//
+// The record is decoded by encoding/json, which is what the receipt reader itself uses, so every JSON rule the reader
+// applies is applied here too: a duplicate key keeps the last value, an escaped key is the key the reader's map lookup
+// reads, a member of any other type is refused as the reader refuses it, and data after the object or a malformed value is
+// refused rather than framed by hand. There is no cap of this order's own: a receipt the reader can read is a receipt here,
+// and none of its references is dropped.
+//
+// The scan looks at every planned file under evidence/, up to the receipt reader's bound (the size of the largest string
+// the oracle could hold), so the record is streamed rather than held: the judgement keeps the bytes of one token, never the
+// record, and a record of any size costs a bounded pass. The first byte that is not whitespace decides whether the record
+// can be an object at all, every member other than the manifest key is skipped token by token, and the manifest array is
+// held only when the record really names one: the memory this costs is the size of that array, which is the memory the
+// receipt reader spends on the same record. The record is the receipt reader's own text. A string is read as its raw bytes and
+// normalised by source.DecodeUTF8, the normalisation the reader applies to its whole input, so an invalid UTF-8 path keeps the
+// text the reader sees, and the order matches it against the plan's file names.
+func migrateReviewFollowupDecodeManifest(rs io.ReadSeeker, limit int64) ([]migrateReviewFollowupManifestEntry, bool) {
+	if _, err := rs.Seek(0, io.SeekStart); err != nil {
+		return nil, false
+	}
+	// The record is counted as the decoder reads it, so the receipt reader's own bound applies to the bytes that reader
+	// would have read: gate.readFile refuses a file with more than maxText bytes, and this order must refuse the same
+	// record for the same reason, so a record that grew past the bound after the plan measured it is not judged here.
+	record := &migrateReviewFollowupRecord{src: io.LimitReader(rs, limit+1)}
+	br := bufio.NewReaderSize(record, 64<<10)
+	// A receipt is a JSON object (gate/receipt.go:109-115), so the first byte that is not JSON whitespace decides: any
+	// other byte means this record cannot be one, and it is refused here without being decoded or held.
+	for {
+		b, err := br.ReadByte()
+		if err != nil {
+			return nil, false
+		}
+		if migrateReviewFollowupJSONSpace(b) {
+			continue
+		}
+		if b != '{' {
+			return nil, false
+		}
+		if err := br.UnreadByte(); err != nil {
+			return nil, false
+		}
+		break
+	}
+	feed := &migrateFollowupFeed{br: br}
+	dec := json.NewDecoder(feed)
+	dec.UseNumber()                        // the receipt reader decodes with UseNumber too (gate/js.go:37), so a huge literal is a number here
+	if _, err := dec.Token(); err != nil { // the opening brace the walk above found
+		return nil, false
+	}
+	var manifest []migrateReviewFollowupManifestEntry
+	found := false
+	for dec.More() {
+		key, err := dec.Token()
+		if err != nil {
+			return nil, false
+		}
+		name, ok := key.(string)
+		if !ok {
+			return nil, false
+		}
+		if name != migrateReviewFollowupManifestKey {
+			if err := migrateReviewFollowupSkipValue(dec, 1); err != nil {
+				return nil, false
+			}
+			continue
+		}
+		entries, ok, err := migrateReviewFollowupReadManifest(dec, feed, 1)
+		if err != nil {
+			return nil, false
+		}
+		// A duplicated key keeps the last value, as the receipt reader's own map decode reads it, so an earlier
+		// occurrence that is not a non-empty array is replaced by the later one rather than refusing the record.
+		manifest, found = entries, ok
+	}
+	if _, err := dec.Token(); err != nil { // the closing brace
+		return nil, false
+	}
+	// The record must be exactly this one object: data after it is not the JSON the receipt reader would read, and the
+	// reader refuses it too. What follows is walked byte by byte rather than decoded, so a long trailing run costs
+	// nothing, and the count of the bytes read is what decides the bound above.
+	rest := io.MultiReader(dec.Buffered(), br)
+	buf := make([]byte, 64<<10)
+	for {
+		n, err := rest.Read(buf)
+		for _, b := range buf[:n] {
+			if !migrateReviewFollowupJSONSpace(b) {
+				return nil, false
+			}
+		}
+		if err != nil {
+			if !errors.Is(err, io.EOF) {
+				return nil, false
+			}
+			break
+		}
+	}
+	if !found || record.n > limit {
+		return nil, false
+	}
+	return manifest, true
+}
+
+// migrateReviewFollowupMaxDepth is the nesting encoding/json itself accepts, and so the deepest record the receipt reader
+// can read: its own Decode refuses a value nested past this (encoding/json's maxNestingDepth). A record past it is one the
+// reader refuses, so this order must refuse it too rather than walk it.
+const migrateReviewFollowupMaxDepth = 10000
+
+// migrateReviewFollowupTooDeep is the refusal of a record nested deeper than the receipt reader accepts.
+func migrateReviewFollowupTooDeep() error {
+	return errors.New("the record nests deeper than the receipt reader accepts")
+}
+
+// migrateReviewFollowupSkipValue consumes the value of a member this order does not use, one token at a time, so a member
+// of any size costs the bytes of one token rather than a copy of itself. It refuses anything encoding/json refuses, which
+// is what makes the whole record valid JSON: a trailing comma, a missing colon or a malformed literal ends the walk here
+// and the record is not a receipt, exactly as the receipt reader's own decode of it would fail. depth is the nesting of
+// the object holding the member, so the count of containers this walk has open is what the reader's own limit is applied
+// to; the walk is iterative, so its stack use does not grow with the record, and a record the reader
+// refuses must not be walked into a stack overflow here.
+func migrateReviewFollowupSkipValue(dec *json.Decoder, depth int) error {
+	tok, err := dec.Token()
+	if err != nil {
+		return err
+	}
+	return migrateReviewFollowupSkipRest(dec, tok, depth)
+}
+
+// migrateReviewFollowupSkipRest consumes the rest of a value whose first token is tok: nothing more for a scalar, and for
+// an array or object every token up to its matching close. It carries its own count of the containers it has opened,
+// because Token elides the separators and does not count the record's nesting against the receipt reader's own
+// Decode would refuse for nesting too deeply.
+func migrateReviewFollowupSkipRest(dec *json.Decoder, tok json.Token, depth int) error {
+	delim, ok := tok.(json.Delim)
+	if !ok || (delim != '{' && delim != '[') {
+		return nil
+	}
+	for open := 1; open > 0; {
+		if depth+open > migrateReviewFollowupMaxDepth {
+			return migrateReviewFollowupTooDeep()
+		}
+		tok, err := dec.Token()
+		if err != nil {
+			return err
+		}
+		if d, ok := tok.(json.Delim); ok {
+			switch d {
+			case '{', '[':
+				open++
+			case '}', ']':
+				open--
+			}
+		}
+	}
+	return nil
+}
+
+// migrateReviewFollowupReadManifest reads the artifactManifest member of the object being walked and returns the entries it
+// names. The first token of the value decides: anything that is not an array is refused as the receipt reader refuses it
+// (gate/manifest.go:110-139) and skipped token by token, so an object or a string under the key costs the bytes of one
+// token and never the value. An array is walked element by element, and each element keeps only its path and kind strings,
+// so an element of any size costs the bytes of its own two strings. depth is the number of containers open around the
+// member, so the nesting is counted against the receipt reader's own limit. ok is false for a member that is not a
+// non-empty array; err is non-nil only for a malformed stream, which refuses the record.
+func migrateReviewFollowupReadManifest(dec *json.Decoder, feed *migrateFollowupFeed, depth int) ([]migrateReviewFollowupManifestEntry, bool, error) {
+	tok, err := dec.Token()
+	if err != nil {
+		return nil, false, err
+	}
+	if delim, ok := tok.(json.Delim); !ok || delim != '[' {
+		return nil, false, migrateReviewFollowupSkipRest(dec, tok, depth)
+	}
+	if depth+1 > migrateReviewFollowupMaxDepth {
+		return nil, false, migrateReviewFollowupTooDeep()
+	}
+	var manifest []migrateReviewFollowupManifestEntry
+	items := 0
+	for dec.More() {
+		items++
+		entry, err := migrateReviewFollowupReadEntry(dec, feed, depth+1)
+		if err != nil {
+			return nil, false, err
+		}
+		if entry != nil {
+			manifest = append(manifest, *entry)
+		}
+	}
+	if _, err := dec.Token(); err != nil { // the closing bracket
+		return nil, false, err
+	}
+	// The judgement is the array's presence and length, never the shape of its entries.
+	if items == 0 {
+		return nil, false, nil
+	}
+	return manifest, true, nil
+}
+
+// migrateReviewFollowupReadEntry walks one artifactManifest element. depth counts the containers open around the element,
+// the array included. An element that is not an object names no dependency and is skipped; an object keeps the last value
+// of its path and of its kind, as the receipt reader's own map lookup does, and skips every other member.
+func migrateReviewFollowupReadEntry(dec *json.Decoder, feed *migrateFollowupFeed, depth int) (*migrateReviewFollowupManifestEntry, error) {
+	tok, err := dec.Token()
+	if err != nil {
+		return nil, err
+	}
+	if delim, ok := tok.(json.Delim); !ok || delim != '{' {
+		return nil, migrateReviewFollowupSkipRest(dec, tok, depth)
+	}
+	var entry migrateReviewFollowupManifestEntry
+	for dec.More() {
+		key, err := dec.Token()
+		if err != nil {
+			return nil, err
+		}
+		name, _ := key.(string)
+		if name != "path" && name != "kind" {
+			if err := migrateReviewFollowupSkipValue(dec, depth+1); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		text, err := migrateReviewFollowupReadField(dec, feed, depth+1)
+		if err != nil {
+			return nil, err
+		}
+		if name == "path" {
+			entry.Path = text
+		} else {
+			entry.Kind = text
+		}
+	}
+	if _, err := dec.Token(); err != nil { // the closing brace
+		return nil, err
+	}
+	if entry.Path == "" || entry.Kind == "" {
+		return nil, nil
+	}
+	return &entry, nil
+}
+
+// migrateReviewFollowupReadField returns the string a path or kind value holds, or "" when it holds anything else. A container
+// is skipped token by token, so it is never held whole. A string or a scalar is read as its own bytes through the reader's
+// UTF-8 normalisation (source.DecodeUTF8, gate/js.go:36-53), so a path holding invalid bytes names the plan file the
+// reader's text holds; a string is bounded by its one token, which is the residual the issue's answer records. depth is the
+// containers open around the value.
+func migrateReviewFollowupReadField(dec *json.Decoder, feed *migrateFollowupFeed, depth int) (string, error) {
+	c, err := migrateReviewFollowupPeekValue(dec, feed)
+	if err != nil {
+		return "", err
+	}
+	if c == '{' || c == '[' {
+		tok, err := dec.Token() // consumes the colon and opens the container
+		if err != nil {
+			return "", err
+		}
+		return "", migrateReviewFollowupSkipRest(dec, tok, depth)
+	}
+	var raw json.RawMessage
+	if err := dec.Decode(&raw); err != nil {
+		return "", err
+	}
+	var text string
+	if json.Unmarshal([]byte(source.DecodeUTF8(raw)), &text) != nil {
+		return "", nil
+	}
+	return text, nil
+}
+
+// migrateFollowupFeed is the reader the receipt decoder reads through. A byte the value peek takes from the buffered
+// reader and hands back is served first, so the decoder reads it as if the peek had not happened.
+type migrateFollowupFeed struct {
+	br      *bufio.Reader
+	pending []byte
+}
+
+// Read serves the handed-back bytes first, then the buffered reader.
+func (f *migrateFollowupFeed) Read(p []byte) (int, error) {
+	if len(f.pending) > 0 {
+		n := copy(p, f.pending)
+		f.pending = f.pending[n:]
+		return n, nil
+	}
+	return f.br.Read(p)
+}
+
+// readByte takes the next byte of the stream.
+func (f *migrateFollowupFeed) readByte() (byte, error) {
+	if len(f.pending) > 0 {
+		c := f.pending[0]
+		f.pending = f.pending[1:]
+		return c, nil
+	}
+	return f.br.ReadByte()
+}
+
+// unread hands bytes back in front of the stream.
+func (f *migrateFollowupFeed) unread(b []byte) {
+	f.pending = append(append([]byte(nil), b...), f.pending...)
+}
+
+// migrateReviewFollowupPeekValue returns the first byte of the value after the colon the decoder has just read a key for,
+// without the decoder having taken it. The decoder's read-ahead is looked at first. Past it, whitespace is skipped one byte at
+// a time, so a run of any length costs no memory and is not limited by the reader's window. A colon the decoder has not read
+// yet and the value's first byte are handed back to the feed, so the decoder reads the same bytes it would read without the
+// peek.
+func migrateReviewFollowupPeekValue(dec *json.Decoder, feed *migrateFollowupFeed) (byte, error) {
+	ahead, err := io.ReadAll(dec.Buffered())
+	if err != nil {
+		return 0, err
+	}
+	for _, c := range ahead {
+		if !migrateReviewFollowupJSONSpace(c) && c != ':' {
+			return c, nil
+		}
+	}
+	var kept []byte
+	for {
+		c, err := feed.readByte()
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return 0, io.ErrUnexpectedEOF
+			}
+			return 0, err
+		}
+		if migrateReviewFollowupJSONSpace(c) {
+			continue
+		}
+		if c == ':' && len(kept) == 0 {
+			kept = append(kept, c)
+			continue
+		}
+		feed.unread(append(kept, c))
+		return c, nil
+	}
 }
 
 // migrateApplyReviewSubRank is the ordering key inside a rank: 0 for the artifacts an evidence manifest names and for the
-// Codex config backups, 2 for the records that refer to them (a QA receipt and the Codex install record), and 1 for the
-// rest. A receipt whose manifest this run could not read still takes the referrer's place, so its dependencies keep the
-// dependencies-first order even when the graph is unknown.
-func migrateApplyReviewSubRank(it Item, refs map[string]bool) int {
+// Codex config backups, 2 for the records that refer to them (a QA receipt, by name or by content, and the Codex install
+// record), and 1 for the rest. A receipt whose manifest this run could not read still takes the referrer's place, so its
+// dependencies keep the dependencies-first order even when the graph is unknown.
+func migrateApplyReviewSubRank(it Item, refs, receipts map[string]bool) int {
 	if it.Scope == ScopeCodex {
 		switch {
 		case strings.HasPrefix(it.Source, backupSource) && strings.HasSuffix(it.Source, backupSuffix):
@@ -440,7 +904,7 @@ func migrateApplyReviewSubRank(it Item, refs map[string]bool) int {
 	if refs[it.Source] {
 		return 0
 	}
-	if strings.HasSuffix(it.Source, "qa-receipt.json") {
+	if receipts[it.Source] {
 		return 2
 	}
 	return 1
@@ -472,11 +936,13 @@ func (a *applyRun) publishFile(i int, it Item) error {
 		return a.stop(i, it, err)
 	}
 	_, leaf := applySplit(it.Destination)
-	res, err := a.pub.Publish(parent, leaf, f, it.Size, it.Mode.Perm())
+	res, renamed, err := a.pub.migrateReviewFollowupPublish(parent, leaf, f, it.Size, it.Mode.Perm())
 	a.result.Items[i].Result = res
-	if res == ResultCopied {
-		// The rename and the directory sync completed, so this file is this run's write whatever the source recheck below
-		// finds: a moved source must not erase a completed write from the report.
+	if renamed {
+		// This run's own no-replace rename completed, so the file is this run's write whatever the source recheck below
+		// finds and whether or not the directory sync after it failed: neither a moved source nor a failed sync erases a
+		// completed rename from the report. A failure before the rename is never counted, whatever the destination holds,
+		// because a racer can publish the plan's bytes between settle's look and this run's own create (CRW-879).
 		a.result.WritesCompleted++
 	}
 	if err != nil {
@@ -488,9 +954,9 @@ func (a *applyRun) publishFile(i int, it Item) error {
 			if got, derr := a.destMode(parent, leaf); derr == nil && got != it.Mode.Perm() {
 				a.result.Items[i].Note += "; destination kept its mode " + got.String()
 			}
-		case res == ResultFailed && a.checkDest(parent, leaf, it) == nil:
-			// A failure after the no-replace rename leaves a whole final file, which the report must count.
-			a.result.WritesCompleted++
+		case renamed:
+			// The rename completed before the failure, so the whole final file is at the destination and only its directory
+			// sync failed.
 			a.result.Items[i].Note = "the final file is whole but its directory sync failed"
 		}
 		return err
@@ -596,6 +1062,8 @@ func (a *applyRun) destMode(parent *Dir, leaf string) (fs.FileMode, error) {
 
 // finishModes applies the source mode to every directory the plan names, deepest first. A directory this run created, or
 // one an interrupted run left at the private marker mode, is finished; any other directory keeps its mode and is reported.
+// A directory whose creation this run's own mkdir refused with EEXIST is another actor's, so
+// it keeps its mode whatever that mode is and is reported too, never adopted through the marker branch.
 // The marker is the raw mode, sticky bit included, which nothing else in this repository writes, so a directory this
 // migration did not create is never chmodded.
 func (a *applyRun) finishModes() error {
@@ -624,7 +1092,14 @@ func (a *applyRun) finishModes() error {
 			return err
 		}
 		switch cur := fs.FileMode(raw).Perm(); {
-		case a.made[applyKey(it.Scope, rel)], raw == applyTempRaw && a.entriesExpected(it.Scope, rel, dir):
+		case a.made[applyKey(it.Scope, rel)]:
+			err = applyChmod(dir, it.Mode.Perm())
+		case a.denied[applyKey(it.Scope, rel)]:
+			// This run's own creation ended in EEXIST, so the directory is another
+			// actor's whatever its mode is: it is never adopted through the marker
+			// branch below, only reported.
+			a.result.Items[i].Note = "existing directory kept its mode " + cur.String()
+		case raw == applyTempRaw && a.entriesExpected(it.Scope, rel, dir):
 			err = applyChmod(dir, it.Mode.Perm())
 		case cur == it.Mode.Perm():
 		default:
@@ -635,6 +1110,20 @@ func (a *applyRun) finishModes() error {
 		}
 	}
 	return nil
+}
+
+// recordOwnership records what a lookup saw and what this run's own creation then reported for a
+// destination directory. made marks a directory this run created; a directory the lookup saw absent
+// whose creation ended in EEXIST is another actor's, so it is marked denied and finishModes
+// never adopts it; a directory that was already there at the lookup keeps neither mark, so the
+// marker-mode adoption stays available to one an interrupted earlier run may have left.
+func (a *applyRun) recordOwnership(scope Scope, rel string, made, absent bool) {
+	switch {
+	case made:
+		a.made[applyKey(scope, rel)] = true
+	case absent:
+		a.denied[applyKey(scope, rel)] = true
+	}
 }
 
 // entriesExpected reports whether every entry of an existing destination directory is one the plan accounts for: a

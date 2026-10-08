@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
-	"os"
 	"regexp"
 	"strconv"
 
@@ -251,13 +249,14 @@ func readIndependentReview(path string) (Obj, error) {
 	usage := func(detail string) error {
 		return &dispatch.UsageError{Detail: "--independent-review: " + detail, Code: contract.ExitUsage}
 	}
-	file, err := os.Open(path)
+	// The read goes through the store's identity check (CRW-967): a relay store file is refused with
+	// its reason, and no store descriptor is closed here.
+	raw, err := store.ReadIndependentFile(path, independentReviewCap+1)
 	if err != nil {
-		return nil, usage("the file could not be read: " + err.Error())
-	}
-	defer file.Close()
-	raw, err := io.ReadAll(io.LimitReader(file, independentReviewCap+1))
-	if err != nil {
+		var refused *store.RefusedError
+		if errors.As(err, &refused) {
+			return nil, err
+		}
 		return nil, usage("the file could not be read: " + err.Error())
 	}
 	if len(raw) > independentReviewCap {

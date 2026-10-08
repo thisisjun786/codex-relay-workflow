@@ -72,7 +72,7 @@ func (b *Bridge) CreateWorktreeThread(ctx context.Context, in CreateWorktree) (l
 		if err != nil {
 			return err
 		}
-		contract = settings.Contract{Sandbox: in.Sandbox, ExpectedPolicy: in.Policy, Model: auth.Model, ReasoningEffort: auth.Effort}
+		contract = settings.Contract{Sandbox: in.Sandbox, ExpectedPolicy: in.Policy, Model: auth.Model, ReasoningEffort: auth.Effort, AutoCompactTokenLimit: auth.AutoCompactTokenLimit}
 		return contract.Validate()
 	}
 	result, err := b.mutate(ctx, mutation{in.RequestID, "create_worktree_thread", params, validate, func(ctx context.Context, receipt ledger.Receipt, effects *[]string) error {
@@ -165,7 +165,7 @@ func (b *Bridge) CreateWorktreeThread(ctx context.Context, in CreateWorktree) (l
 		if watch, err = b.watchSubscription(ctx, threadID, true); err != nil {
 			return err
 		}
-		placed := settings.Contract{CWD: w.Destination, Sandbox: in.Sandbox, ExpectedPolicy: in.Policy, Model: auth.Model, ReasoningEffort: auth.Effort, Roots: []string{w.Destination}}
+		placed := settings.Contract{CWD: w.Destination, Sandbox: in.Sandbox, ExpectedPolicy: in.Policy, Model: auth.Model, ReasoningEffort: auth.Effort, Roots: []string{w.Destination}, AutoCompactTokenLimit: auth.AutoCompactTokenLimit}
 		receipt["threadId"] = threadID
 		receipt["permissionReceipt"] = map[string]any{"approvalPolicy": created["approvalPolicy"], "sandbox": created["sandbox"], "activePermissionProfile": created["activePermissionProfile"], "runtimeWorkspaceRoots": created["runtimeWorkspaceRoots"]}
 		receipt["desktopProjectAssociation"] = map[string]any{"status": "unverified", "sourceRepository": in.Source, "checkout": created["cwd"], "appServerProjectId": pyjson.Map(created["thread"])["projectId"]}
