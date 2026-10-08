@@ -7,7 +7,7 @@ var offlineCommands = []string{
 	"decision-show", "decision-withdraw", "doctor", "emit", "generation-bind", "generation-open",
 	"intervention-show", "register",
 	"relationship-resume", "relationship-status", "revision-head", "settings-record", "settings-show",
-	"show", "status", "store-challenge", "store-identity", "verdict", "linkage-attach",
+	"show", "status", "store-challenge", "store-halt-clear", "store-identity", "verdict", "linkage-attach",
 	"linkage-bind", "linkage-counterpart", "linkage-directive", "linkage-completion", "linkage-down",
 	"linkage-handover", "linkage-outstanding", "linkage-peer", "linkage-settle", "linkage-supervise",
 	"linkage-up", "fault-target", "fault-observe", "fault-sweep", "fault-show", "fault-fix",
