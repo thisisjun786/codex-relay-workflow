@@ -11,6 +11,7 @@ import { HelpDrawer, HelpTopicButton, useHelp } from "./ui/help.tsx";
 import { HelperRolesPage } from "./pages/HelperRoles.tsx";
 import { RunStateBar, useRunState } from "./components/RunStateBar.tsx";
 import { Status } from "./pages/Status.tsx";
+import { PolicyPage } from "./pages/Policy.tsx";
 
 export function App() {
   const route = useRoute();
@@ -54,6 +55,8 @@ export function App() {
       <main className="main">
         {active.path === "/helper-roles" ? (
           <HelperRolesPage />
+        ) : active.path === "/policy" ? (
+          <PolicyPage />
         ) : (
           <>
             <div className="page-header">
