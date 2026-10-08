@@ -462,6 +462,12 @@ func (s *Scheduler) integratedEdge(ctx context.Context, q store.Querier, plan st
 	if _, _, st, err := s.recordedEvidence(ctx, q, a); err != nil || st != nil {
 		return valueOf(st), err
 	}
+	// a commit-accepted node is judged on the integration branches its batches moved, not on the base ref its edge names (CRW-965, D4)
+	if commit, err := commitAccepted(ctx, q, a.AcceptanceID); err != nil {
+		return EdgeStatus{}, err
+	} else if commit {
+		return s.commitIntegratedEdge(ctx, q, plan, snap, e, from, a)
+	}
 	at, err := s.integratedAt(ctx, q, plan, a, e.TargetRepository, e.TargetBaseRef)
 	if err != nil {
 		return EdgeStatus{}, err

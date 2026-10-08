@@ -156,6 +156,12 @@ func JudgeVerificationRecord(raw []byte, want VerificationKeys) (VerificationRec
 	if len(record.PinMismatch) > 0 {
 		return record, refuse(contract.RefusalDispositionConflict, "the verification record carries a tool pin mismatch (%s), so it is not reusable", strings.Join(record.PinMismatch, ", "))
 	}
+	// a tool that differs from its own pin makes the record internally inconsistent (CRW-965, parent decision D1 refined)
+	for name, pinned := range record.Pins {
+		if tool, ok := record.Tools[name]; !ok || tool != pinned {
+			return record, refuse(contract.RefusalDispositionConflict, "the verification record's tool %s is %q but its pin is %q: the record is not reusable", name, tool, pinned)
+		}
+	}
 	if !strings.EqualFold(record.TreeHash, want.Tree) {
 		return record, refuse(contract.RefusalRevisionMismatch, "the verification record names tree %s and the tree judged is %s", record.TreeHash, want.Tree)
 	}

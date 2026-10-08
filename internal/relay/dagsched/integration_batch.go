@@ -207,7 +207,7 @@ func (s *Scheduler) IntegrateBatch(ctx context.Context, in IntegrationBatchInput
 		return out, err
 	}
 	if len(settled.merged) > 0 {
-		out.Targets, err = s.mergedTargetsOf(ctx, in, settled.merged)
+		out.Targets = []string{in.Checkout + "@" + in.IntegrationRef}
 	}
 	return out, err
 }
@@ -353,26 +353,6 @@ func (s *Scheduler) stageRow(ctx context.Context, in IntegrationBatchInput, batc
 	return store.RecordIntegrationStage(ctx, s.Store, store.IntegrationStageRow{StageID: stageID, BatchID: batch, PlanID: in.Plan, Stage: stage,
 		NodeID: c.NodeID, AcceptanceID: c.AcceptanceID, EventID: c.EventID, RevisionHash: c.RevisionHash, Generation: c.Generation,
 		HeadSHA: c.HeadSHA, Detail: detail, RecordedBy: in.Actor, RecordedAt: registry.SystemISO()})
-}
-
-// mergedTargetsOf names the targets the merged candidates land on, so the answer tells the parent what to observe.
-func (s *Scheduler) mergedTargetsOf(ctx context.Context, in IntegrationBatchInput, merged []integrationMerge) ([]string, error) {
-	seen := map[string]bool{}
-	for _, m := range merged {
-		targets, err := s.CandidateTargets(ctx, in.Plan, m.NodeID)
-		if err != nil {
-			return nil, err
-		}
-		for _, t := range targets {
-			seen[t.Repository+"@"+t.BaseRef] = true
-		}
-	}
-	out := make([]string, 0, len(seen))
-	for k := range seen {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out, nil
 }
 
 // completePendingMarks completes the marks earlier batches left pending. A pending mark is completed only when its
