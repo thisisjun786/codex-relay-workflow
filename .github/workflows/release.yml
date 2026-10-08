@@ -163,6 +163,7 @@ jobs:
   # absent verification fails this job, and "publish" needs it, so nothing is published from an
   # unverified commit. The job is read-only: it creates no tag, release or branch.
   verify:
+    needs: [validate]
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
