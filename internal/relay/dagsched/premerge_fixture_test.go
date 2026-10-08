@@ -27,13 +27,6 @@ func premergeWithRecord(s *Scheduler, ctx context.Context, plan, node, actor str
 	if !ok || n.Kind != dag.NodeImplementation {
 		return in
 	}
-	// a pure replay of an acceptance whose stored record is current names no record (answer 2)
-	var stored string
-	if current, err := queryOne(ctx, s.Store.Q(ctx), "SELECT p.record_json FROM dag_acceptances a JOIN dag_acceptance_premerge p ON p.acceptance_id = a.acceptance_id WHERE a.plan_id = ? AND a.node_id = ? AND a.state = 'active'", []any{plan, node}, &stored); err == nil && current {
-		if rec, err := premerge.Decode([]byte(stored)); err == nil && rec.CriteriaDigest == n.CriteriaSetDigest {
-			return in
-		}
-	}
 	var head string
 	switch {
 	case in.Commit != nil:
@@ -46,6 +39,14 @@ func premergeWithRecord(s *Scheduler, ctx context.Context, plan, node, actor str
 		head = pr.HeadSHA
 	default:
 		return in
+	}
+	// a pure replay is the same output again, already accepted with a stored record that is still current (answer 2).
+	// Any other call, including a new output under unchanged criteria, names its own record.
+	var stored string
+	if current, err := queryOne(ctx, s.Store.Q(ctx), "SELECT p.record_json FROM dag_acceptances a JOIN dag_acceptance_premerge p ON p.acceptance_id = a.acceptance_id WHERE a.plan_id = ? AND a.node_id = ? AND a.state = 'active' AND p.accepted_head = ?", []any{plan, node, head}, &stored); err == nil && current {
+		if rec, err := premerge.Decode([]byte(stored)); err == nil && rec.CriteriaDigest == n.CriteriaSetDigest {
+			return in
+		}
 	}
 	in.Premerge = premergeAt(s, ctx, plan, node, head)
 	return in
