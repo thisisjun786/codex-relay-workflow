@@ -8,7 +8,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -37,6 +40,7 @@ func (e NoCommand) Unwrap() error { return e.Err }
 type Pool struct {
 	argv    []string
 	env     []string
+	root    string
 	timeout time.Duration
 	startup time.Duration
 	slots   chan *worker
@@ -59,6 +63,13 @@ func NewPool(oracle Oracle, workers int, timeout, startup time.Duration, env []s
 	if err != nil {
 		return nil, NoCommand{Command: oracle.Command, Err: err}
 	}
+	for _, required := range oracle.Requires {
+		// Resolve against the environment the worker is launched with, not this process's own PATH: a
+		// caller that hands the worker a different PATH must have its requirements judged there.
+		if _, err := lookPathIn(env, required); err != nil {
+			return nil, NoCommand{Command: required, Err: err}
+		}
+	}
 	argv := []string{command}
 	if oracle.Shim != "" {
 		argv = append(argv, oracle.Shim)
@@ -72,15 +83,38 @@ func NewPool(oracle Oracle, workers int, timeout, startup time.Duration, env []s
 	if startup <= 0 {
 		startup = DefaultStartupTimeout
 	}
-	workerEnv := append([]string{}, env...)
+	root, err := os.MkdirTemp("", "cxcfuzz-worker-")
+	if err != nil {
+		return nil, err
+	}
+	if err := workerRoot(root); err != nil {
+		_ = os.RemoveAll(root)
+		return nil, err
+	}
+	workerEnv := workerEnvironment(env, root)
+	// A worker environment with no PATH entry gets the PATH the requirement check searched, so the
+	// worker finds what the check found (CRW-708 generation 5, d5). An explicit PATH= is kept as it is.
+	if !poolEnvNamesPath(env) {
+		workerEnv = append(workerEnv, "PATH="+os.Getenv("PATH"))
+	}
 	if oracle.Root != "" {
 		workerEnv = append(workerEnv, "ORACLE_ROOT="+oracle.Root)
 	}
-	pool := &Pool{argv: argv, env: workerEnv, timeout: timeout, startup: startup, slots: make(chan *worker, workers)}
+	pool := &Pool{argv: argv, env: workerEnv, root: root, timeout: timeout, startup: startup, slots: make(chan *worker, workers)}
 	for i := 0; i < workers; i++ {
 		pool.slots <- nil
 	}
 	return pool, nil
+}
+
+// poolEnvNamesPath reports whether a worker environment has a PATH entry of its own, present or empty.
+func poolEnvNamesPath(env []string) bool {
+	for _, entry := range env {
+		if strings.HasPrefix(entry, "PATH=") {
+			return true
+		}
+	}
+	return false
 }
 
 func (p *Pool) start() (*worker, error) {
@@ -177,10 +211,12 @@ func (p *Pool) ready(w *worker, budget time.Duration) error {
 		if errors.Is(err, Timeout{}) {
 			return fmt.Errorf("the oracle worker did not become ready in time: %w", err)
 		}
-		return err
+		return transportFailure(err)
 	}
-	_, err = answer(id, line)
-	return err
+	if _, err := answer(id, line); err != nil {
+		return CaseFailure{Cause: CauseNoAnswer, Err: err}
+	}
+	return nil
 }
 
 func (p *Pool) exchange(w *worker, input, root string) (string, error) {
@@ -192,9 +228,13 @@ func (p *Pool) exchange(w *worker, input, root string) (string, error) {
 	request := fmt.Sprintf("{\"id\":%d,\"input\":%s,\"root\":%s}\n", id, input, encoded)
 	line, err := p.roundTrip(w, request, p.timeout)
 	if err != nil {
-		return "", err
+		return "", transportFailure(err)
 	}
-	return answer(id, line)
+	output, err := answer(id, line)
+	if err != nil {
+		return "", CaseFailure{Cause: CauseNoAnswer, Err: err}
+	}
+	return output, nil
 }
 
 // roundTrip writes one request line and reads one reply line, both inside one deadline: a worker
@@ -228,12 +268,54 @@ func (p *Pool) roundTrip(w *worker, request string, timeout time.Duration) (stri
 	}
 }
 
-// Close stops every idle worker.
+// lookPathIn resolves a command against an explicit environment's PATH, the way exec.LookPath does
+// against this process's own. Only an environment with no PATH entry at all falls back to the process
+// PATH, as a child would inherit it; a PATH entry that is present and empty is an empty search path,
+// where nothing is found. The two must not be conflated: the worker is launched with this very
+// environment, so a check that fell back to the process PATH for an explicitly empty one would accept
+// a dependency the worker cannot reach and the campaign would record the worker's failure as a
+// fuzzing difference instead of refusing the target before any case runs (CRW-708 generation 5, d5).
+func lookPathIn(env []string, command string) (string, error) {
+	path, found := "", false
+	for _, entry := range env {
+		if value, ok := strings.CutPrefix(entry, "PATH="); ok {
+			path, found = value, true
+		}
+	}
+	if !found {
+		return exec.LookPath(command)
+	}
+	if path == "" {
+		return "", exec.ErrNotFound
+	}
+	if strings.ContainsRune(command, filepath.Separator) {
+		// An explicit path is a requirement too: it must name an executable regular file, as the search
+		// below would find one (CRW-978 c3a).
+		if info, err := os.Stat(command); err == nil && !info.IsDir() && info.Mode()&0o111 != 0 {
+			return command, nil
+		}
+		return "", exec.ErrNotFound
+	}
+	for _, dir := range filepath.SplitList(path) {
+		if dir == "" {
+			dir = "."
+		}
+		candidate := filepath.Join(dir, command)
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() && info.Mode()&0o111 != 0 {
+			return candidate, nil
+		}
+	}
+	return "", exec.ErrNotFound
+}
+
 func (p *Pool) Close() error {
 	for i := 0; i < cap(p.slots); i++ {
 		if w := <-p.slots; w != nil {
 			w.kill()
 		}
+	}
+	if err := os.RemoveAll(p.root); err != nil {
+		return fmt.Errorf("the worker start-up root %s was not removed: %w", p.root, err)
 	}
 	return nil
 }
@@ -244,8 +326,8 @@ func answer(id int, line string) (string, error) {
 		ID     int             `json:"id"`
 		Output json.RawMessage `json:"output"`
 		Error  *struct {
-			Name    string `json:"name"`
-			Message string `json:"message"`
+			Name    json.RawMessage `json:"name"`
+			Message json.RawMessage `json:"message"`
 		} `json:"error"`
 	}
 	if err := json.Unmarshal([]byte(line), &body); err != nil {
@@ -255,12 +337,20 @@ func answer(id int, line string) (string, error) {
 		return "", fmt.Errorf("the worker answered request %d as %d", id, body.ID)
 	}
 	if body.Error != nil {
-		name, _ := json.Marshal(body.Error.Name)
-		message, _ := json.Marshal(body.Error.Message)
-		return fmt.Sprintf("{\"error\":{\"name\":%s,\"message\":%s}}", name, message), nil
+		// The name and message go on as the worker wrote them, so a lone surrogate reaches the comparison as the
+		// same escape a success reply keeps, not as U+FFFD (CRW-978 c5).
+		return "{\"error\":{\"name\":" + rawOrNull(body.Error.Name) + ",\"message\":" + rawOrNull(body.Error.Message) + "}}", nil
 	}
 	if body.Output == nil {
 		return "", errors.New("the worker's reply holds neither an output nor an error")
 	}
 	return string(body.Output), nil
+}
+
+// rawOrNull is a raw JSON value as the worker wrote it, or null when the worker left it out.
+func rawOrNull(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return "null"
+	}
+	return string(raw)
 }

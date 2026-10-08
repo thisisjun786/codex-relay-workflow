@@ -6,6 +6,8 @@ import (
 	"errors"
 	"math/rand"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -115,5 +117,51 @@ func TestHelperBootDelayComesFromTheEnvironment(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("the boot delay is not in the worker environment: %v", env)
+	}
+}
+
+// A PATH entry that is present but empty is an empty search path, so nothing is found there; only an
+// environment with no PATH entry at all falls back to this process's own PATH, as a child would
+// inherit (CRW-708 generation 5, d5). The worker gets exactly this environment, so the dependency
+// check and the worker must agree about what is reachable.
+func TestLookPathInTreatsAnEmptyPathEntryAsEmpty(t *testing.T) {
+	dir := t.TempDir()
+	helper := filepath.Join(dir, "python3")
+	if err := os.WriteFile(helper, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// The helper is reachable only through this process's own PATH, never through the worker's.
+	t.Setenv("PATH", dir)
+	if _, err := lookPathIn([]string{"PATH="}, "python3"); !errors.Is(err, exec.ErrNotFound) {
+		t.Fatalf("an explicit empty PATH resolved python3: %v", err)
+	}
+	if _, err := lookPathIn(nil, "python3"); err != nil {
+		t.Fatalf("an environment with no PATH entry did not fall back to this process's PATH: %v", err)
+	}
+	if _, err := lookPathIn([]string{"HOME=/tmp"}, "python3"); err != nil {
+		t.Fatalf("an environment with no PATH entry did not fall back to this process's PATH: %v", err)
+	}
+}
+
+// A campaign whose worker environment holds an explicit empty PATH must refuse the target before any
+// case runs when a required command is reachable only through this process's own PATH: the campaign
+// would otherwise record a worker failure as a fuzzing difference (CRW-708 generation 5, d5).
+func TestCampaignRefusesAMissingRequirementUnderAnEmptyPath(t *testing.T) {
+	// node and python3 are both on this process's PATH, so the pool resolves the interpreter and the
+	// only thing that can refuse the target is the requirement check against the worker's own
+	// environment. That environment holds an explicit empty PATH, so nothing is reachable in it.
+	// NewPool resolves the interpreter before its requirements, so a host without node refuses on node
+	// and this test has nothing to say about the requirement check.
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skipf("node is not on PATH: %v", err)
+	}
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skipf("python3 is not on PATH: %v", err)
+	}
+	target := pyjsonTarget()
+	_, err := NewPool(target.Oracle, 1, DefaultTimeout, DefaultStartupTimeout, []string{"PATH="})
+	var missing NoCommand
+	if !errors.As(err, &missing) || missing.Command != "python3" {
+		t.Fatalf("err = %v, want NoCommand naming python3", err)
 	}
 }
