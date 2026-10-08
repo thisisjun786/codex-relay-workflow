@@ -10,9 +10,9 @@ import (
 	"time"
 )
 
-// runtime-upgrade replaces the relay runtime from a release archive whose commit is green on the
-// dev gate, after proving no relay attempt is still open. Every step's command, exit status and
-// output head is left in W/record.json.
+// runtime-upgrade replaces the relay runtime from a release archive whose commit has a passing
+// verification record for its own tree, after proving no relay attempt is still open. Every step's command, exit status and
+// output head is left in W/record.json, together with every reason that applied to the run.
 
 // upgradeRecordHead is how many bytes of a command's output the record keeps.
 const upgradeRecordHead = 2000
@@ -29,24 +29,30 @@ const (
 const upgradeExitUpdateFailed = upgradeExitUnexpected
 
 const (
-	upgradeReasonRepository    = "repository_unconfigured"
-	upgradeReasonSumsFailed    = "sums_failed"
-	upgradeReasonExtractFailed = "extract_failed"
-	upgradeReasonCommitUnknown = "commit_unknown"
-	upgradeReasonDevGate       = "dev_gate_not_green"
-	upgradeReasonStoreRead     = "store_unreadable"
-	upgradeReasonOpenAttempts  = "open_attempts"
-	upgradeReasonPointer       = "pointer_missing"
-	upgradeReasonStopFailed    = "service_stop_failed"
-	upgradeReasonPostCheck     = "postcheck_failed"
-	upgradeReasonUpdateFailed  = "update_failed"
+	upgradeReasonRepository      = "repository_unconfigured"
+	upgradeReasonSumsFailed      = "sums_failed"
+	upgradeReasonExtractFailed   = "extract_failed"
+	upgradeReasonCommitUnknown   = "commit_unknown"
+	upgradeReasonVerifyMissing   = "verification_record_missing"
+	upgradeReasonVerifyOtherTree = "verification_record_other_tree"
+	upgradeReasonVerifyNotPass   = "verification_record_not_pass"
+	upgradeReasonStoreRead       = "store_unreadable"
+	upgradeReasonOpenAttempts    = "open_attempts"
+	upgradeReasonPointer         = "pointer_missing"
+	upgradeReasonStopFailed      = "service_stop_failed"
+	upgradeReasonPostCheck       = "postcheck_failed"
+	upgradeReasonUpdateFailed    = "update_failed"
+	// The post-check's own findings are named apart from upgradeReasonPostCheck, so the record
+	// says what was found rather than only that the post-check refused.
+	upgradeReasonConfigChanged   = "config_changed"
+	upgradeReasonRuntimeMismatch = "runtime_mismatch"
 )
 
 const (
 	upgradeStepSums      = "sums"
 	upgradeStepExtract   = "extract"
 	upgradeStepCommit    = "commit"
-	upgradeStepDevGate   = "dev-gate"
+	upgradeStepVerify    = "verification-record"
 	upgradeStepAttempts  = "open-attempts"
 	upgradeStepSnapshot  = "snapshot"
 	upgradeStepStop      = "service-stop"
@@ -55,12 +61,13 @@ const (
 	upgradeStepPostCheck = "post-check"
 )
 
-const upgradeUsage = "usage: crw manage runtime-upgrade --release-dir DIR [--issue KEY] [--dry-run]"
+const upgradeUsage = "usage: crw manage runtime-upgrade --release-dir DIR [--verification FILE] [--issue KEY] [--dry-run]"
 
 type upgradeOptions struct {
-	ReleaseDir string
-	Issue      string
-	DryRun     bool
+	ReleaseDir   string
+	Issue        string
+	Verification string
+	DryRun       bool
 }
 
 // upgradeConfig is the configuration a run reads: a variable, so a test can supply a repository
@@ -75,15 +82,19 @@ type upgradeStepRecord struct {
 }
 
 type upgradeRecord struct {
-	ReleaseDir string              `json:"release_dir"`
-	Issue      string              `json:"issue,omitempty"`
-	DryRun     bool                `json:"dry_run"`
-	StartedAt  string              `json:"started_at"`
-	Directory  string              `json:"directory"`
-	ExtractDir string              `json:"extract_dir,omitempty"`
-	Outcome    string              `json:"outcome"`
-	Reason     string              `json:"reason,omitempty"`
-	Steps      []upgradeStepRecord `json:"steps"`
+	ReleaseDir string `json:"release_dir"`
+	Issue      string `json:"issue,omitempty"`
+	DryRun     bool   `json:"dry_run"`
+	StartedAt  string `json:"started_at"`
+	Directory  string `json:"directory"`
+	ExtractDir string `json:"extract_dir,omitempty"`
+	// StartFrom is the runtime directory the restart was called from, so the record says which
+	// executable the service came back on.
+	StartFrom string              `json:"start_from,omitempty"`
+	Outcome   string              `json:"outcome"`
+	Reason    string              `json:"reason,omitempty"`
+	Reasons   []string            `json:"reasons,omitempty"`
+	Steps     []upgradeStepRecord `json:"steps"`
 }
 
 var upgradeCommand = Command{
@@ -124,20 +135,25 @@ func upgradeParse(args []string) (opts upgradeOptions, code int, handled bool) {
 			return opts, 0, true
 		case arg == "--dry-run":
 			opts.DryRun = true
-		case arg == "--release-dir" || arg == "--issue":
+		case arg == "--release-dir" || arg == "--issue" || arg == "--verification":
 			if i+1 >= len(args) {
 				return opts, usageExit, true
 			}
 			i++
-			if arg == "--release-dir" {
+			switch arg {
+			case "--release-dir":
 				opts.ReleaseDir = args[i]
-			} else {
+			case "--issue":
 				opts.Issue = args[i]
+			default:
+				opts.Verification = args[i]
 			}
 		case strings.HasPrefix(arg, "--release-dir="):
 			opts.ReleaseDir = strings.TrimPrefix(arg, "--release-dir=")
 		case strings.HasPrefix(arg, "--issue="):
 			opts.Issue = strings.TrimPrefix(arg, "--issue=")
+		case strings.HasPrefix(arg, "--verification="):
+			opts.Verification = strings.TrimPrefix(arg, "--verification=")
 		default:
 			return opts, usageExit, true
 		}
@@ -158,10 +174,31 @@ type upgradeRunState struct {
 	extract string // W/extract
 	archive string
 	commit  string
+	// tree is the tree of the commit, as the forge reports it; the record must name it.
+	tree    string
 	state   string
 	started time.Time
 
+	// version is the cleaned version the unpacked crw printed, installed the runtime directory the
+	// update reported it produced, previous the runtime the pointer named before the stop, and
+	// startFrom the runtime the restart used. The verified archive's own digest is not kept: the
+	// sums step records it.
+	version   string
+	installed string
+	previous  string
+	startFrom string
+	// serviceUp reports whether a start attempt left the service up - its own start succeeded, or the
+	// service was already running. It is what lets the post-check tell the runtime the service is
+	// really on from the last runtime it merely tried.
+	serviceUp bool
+	// promoted reports whether the update put a runtime in service (the installer's OK or
+	// Incomplete), which is what the post-check compares the pointer and the version with. An
+	// update that did not land leaves the pointer on the runtime it replaced, which is a correct
+	// rollback rather than a mismatch.
+	promoted bool
+
 	beforeConfig string
+	reasons      []string
 	steps        []upgradeStepRecord
 }
 
@@ -183,7 +220,8 @@ func (r *upgradeRunState) run() int {
 	return code
 }
 
-// execute performs the nine steps in order. Each stop returns before the step after it.
+// execute performs the steps in order. Each stop returns before the step after it; the steps
+// after the update always run, because the service has to come back either way.
 func (r *upgradeRunState) execute() (int, string) {
 	archive, code, reason := r.verifySums()
 	if code != 0 {
@@ -194,7 +232,7 @@ func (r *upgradeRunState) execute() (int, string) {
 	if code, reason = r.extractAndResolve(); code != 0 {
 		return code, reason
 	}
-	if code, reason = r.checkDevGate(); code != 0 {
+	if code, reason = r.checkVerificationRecord(); code != 0 {
 		return code, reason
 	}
 	if code, reason = r.checkOpenAttempts(); code != 0 {
@@ -210,12 +248,29 @@ func (r *upgradeRunState) execute() (int, string) {
 	updateCode, updateReason := r.stopAndUpdate()
 	r.start()
 
-	postCode, postReason := r.postCheck()
+	post := r.postCheck()
+	return r.outcome(updateCode, updateReason, post)
+}
+
+// outcome is the run's final status and reason, in the decided order: the post-check's own findings
+// outrank a failed update, which in turn outranks its other findings. A configuration change comes
+// first, then the pointer-and-runtime mismatch the post-check exists to catch; both are exit 4, so a
+// failed update can never hide either. Every reason that applied is kept in the record, so a run
+// that both failed to update and changed the configuration names both.
+func (r *upgradeRunState) outcome(updateCode int, updateReason string, post upgradePostCheck) (int, string) {
 	if updateCode != 0 {
-		return updateCode, updateReason
+		r.reasons = append(r.reasons, updateReason)
 	}
-	if postCode != 0 {
-		return postCode, postReason
+	r.reasons = append(r.reasons, post.reasons...)
+	switch {
+	case post.configChanged:
+		return upgradeExitPostCheck, upgradeReasonConfigChanged
+	case post.mismatch:
+		return upgradeExitPostCheck, upgradeReasonRuntimeMismatch
+	case updateCode != 0:
+		return updateCode, updateReason
+	case post.code != 0:
+		return post.code, post.reason
 	}
 	return 0, ""
 }
@@ -228,8 +283,16 @@ func (r *upgradeRunState) write(reason string) error {
 		StartedAt:  r.started.Format(time.RFC3339),
 		Directory:  r.dir,
 		ExtractDir: r.extract,
+		StartFrom:  r.startFrom,
 		Outcome:    "ok",
 		Steps:      r.steps,
+	}
+	// Every failure names its reasons. A run that refused before the update has only the one
+	// reason it stopped on, so the list carries that; a run that got as far as the update names
+	// every reason that applied, in the order they were decided.
+	record.Reasons = r.reasons
+	if len(record.Reasons) == 0 && reason != "" {
+		record.Reasons = []string{reason}
 	}
 	if reason != "" {
 		record.Outcome = "failed"

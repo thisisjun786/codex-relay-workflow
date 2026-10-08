@@ -117,6 +117,16 @@ func (s *Service) Check(ctx context.Context, turn, actor, head, base string, che
 		} else if guard != nil {
 			refusal = guard
 		}
+		// CRW-906: an accepted result whose correction generation is open is not carried to the base by
+		// the lane either. A turn can have been granted before the correction was opened, and this check
+		// is what moves it to merging, so the state is read here, inside the transaction that writes.
+		if refusal == nil {
+			if guard, e := underCorrectionRefusal(tx, s.Store.Querier(tx), row); e != nil {
+				return e
+			} else if guard != nil {
+				refusal = guard
+			}
+		}
 		if refusal == nil {
 			switch {
 			case row.HolderTaskID != actor:

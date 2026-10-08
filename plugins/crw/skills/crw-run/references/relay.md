@@ -1326,8 +1326,13 @@ A `needs_changes` verdict opens the generation itself. Open one by hand when not
       --dispatch-request-id <new stable id> --reason needs_changes_revision \
       --dispatch-turn-id <the turn that dispatched the re-review>
 
-`--reason` takes `initial_assignment` or `needs_changes_revision`; anything else is refused with
-`unknown_generation`. Opening SENDS nothing, because the command is store-only and a generation is
+`--reason` takes `initial_assignment`, `needs_changes_revision` or `accepted_result_correction`; anything
+else is refused with `unknown_generation`. The last names the route for a result the plan already accepted
+and that is still current, when a blocking defect is found in it before it lands: `dag-correct` records that
+generation as a correction under the checks the stale case has, and the parent takes the corrected result
+with `dag-accept --supersedes`
+([Correcting a result that was accepted and is still current](../../../../../docs/relay/dag-scheduler.md#correcting-a-result-that-was-accepted-and-is-still-current)).
+Opening SENDS nothing, because the command is store-only and a generation is
 not an event the relay can deliver. The child learns about the re-review the same way it learned
 about the original assignment, through whatever transport dispatched it, and the turn that resume
 creates is the new generation's anchor. Supply that turn when opening, as above, or afterwards:

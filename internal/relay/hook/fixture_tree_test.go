@@ -358,8 +358,14 @@ func restoreTree(t *testing.T, root string, tree map[string]fixtureEntry) error 
 				}
 				raw = decoded
 			}
-			if err := os.WriteFile(path, raw, 0o600); err != nil {
-				return err
+			// A fixture file may be a program the guard runs (late-verdict's relay), so its
+			// descriptor is open only under syscall.ForkLock: a fork in that window would inherit
+			// it and leave the path unexecutable (ETXTBSY, golang/go#22315).
+			syscall.ForkLock.RLock()
+			writeErr := os.WriteFile(path, raw, 0o600)
+			syscall.ForkLock.RUnlock()
+			if writeErr != nil {
+				return writeErr
 			}
 			if err := os.Chmod(path, fs.FileMode(entry.Mode)); err != nil {
 				return err

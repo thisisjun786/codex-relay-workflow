@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver"
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
 )
 
@@ -64,6 +65,14 @@ type resumeSettings struct {
 	ReasoningEffort string
 	CWD             string
 	ApprovalPolicy  string
+	// CitedRole and CitedException are what the record cites, and BoundRole is the role the relay's
+	// gate checked the record against. The auto-compaction limit belongs to a pair rather than to the
+	// record, so it is resolved from the policy by the pair the record states, and the role to read
+	// that pair from is the bound one the gate authorized against, falling back to the record's own
+	// citation when the relay named no binding.
+	CitedRole      string
+	CitedException *string
+	BoundRole      string
 	// RuntimeWorkspaceRoots is a pointer so an empty list is a value: the relay preserves the
 	// recorded [] and the resume must send it as an empty array, while a key that is absent or
 	// null supplied nothing and stays missing.
@@ -83,6 +92,13 @@ type resumeReport struct {
 	Servers    map[string]string `json:"servers"`
 	AdmitTurn  string            `json:"admitTurn,omitempty"`
 	DryRun     bool              `json:"dryRun,omitempty"`
+	// AutoCompactTokenLimit is the value this resume sent, nil when the pair declares none. The
+	// host never reports it back, so the report states it the way the bridge states a setting the
+	// host cannot confirm: the value that went out, and AutoCompactUnobservable saying the host
+	// cannot be asked about it. Without these a reader cannot tell a capped reload from an
+	// uncapped one.
+	AutoCompactTokenLimit   *int64 `json:"autoCompactTokenLimit,omitempty"`
+	AutoCompactUnobservable bool   `json:"autoCompactUnobservable,omitempty"`
 }
 
 // resumeFailure is a refusal: the reason and, where the host or the relay gave one, its detail.
@@ -159,10 +175,13 @@ func resumeRecorded(ctx context.Context, e *Env, cfg *Config, child string) (*re
 		return nil, &resumeFailure{Reason: resumeSettingsUnavailable, Detail: "the relay exited with status " + fmt.Sprint(code) + ": " + resumeTrim(stdout)}
 	}
 	var answer struct {
-		Settings      resumeSettings `json:"settings"`
-		Usable        *bool          `json:"usable"`
-		Deliverable   *bool          `json:"deliverable"`
-		RecordFinding *struct {
+		Settings       resumeSettings `json:"settings"`
+		Usable         *bool          `json:"usable"`
+		Deliverable    *bool          `json:"deliverable"`
+		CitedRole      *string        `json:"citedRole"`
+		BoundRole      *string        `json:"boundRole"`
+		CitedException *string        `json:"citedException"`
+		RecordFinding  *struct {
 			Code, Detail string
 		} `json:"recordFinding"`
 		RoleFinding *struct {
@@ -203,12 +222,72 @@ func resumeRecorded(ctx context.Context, e *Env, cfg *Config, child string) (*re
 	if len(missing) > 0 {
 		return nil, &resumeFailure{Reason: resumeSettingsUnavailable, Detail: "the recorded settings are missing " + strings.Join(missing, ", ")}
 	}
+	if answer.CitedRole != nil {
+		settings.CitedRole = *answer.CitedRole
+	}
+	if answer.BoundRole != nil {
+		settings.BoundRole = *answer.BoundRole
+	}
+	if answer.CitedException != nil {
+		settings.CitedException = answer.CitedException
+	}
 	return &settings, nil
 }
 
 // resumeSandboxMode is the thread/resume mode the recorded sandbox takes. A type this command
 // cannot name is settings_unavailable, because resuming with a mode the record does not carry is
 // what the issue refuses.
+//
+// resumeAutoCompactLimit is the pair's optional model_auto_compact_token_limit for this child, nil
+// when it has none. The host never reports the value back, so the relay record cannot hold it and a
+// resume built from that record alone would drop it; it is resolved from the execution policy by the
+// pair the record states, exactly as the relay's own delivery resume does. The role is the one the
+// relay's gate confirmed the task is bound to, falling back to the record's own citation. A record
+// that cites an exception names no pair and sends none. A configured policy that cannot be read is a
+// refusal rather than a silent omission: resuming a capped child without its limit is the failure
+// this command exists to prevent, and an unreadable policy means the limit cannot be established.
+//
+// The policy is the one the gate read. The gate is the settings-show subprocess, which reads
+// CODEX_THREAD_BRIDGE_EXECUTION_POLICY from the environment it inherits, so that environment value
+// is authoritative here and manage.bridge.execution_policy is the fallback for a configuration that
+// carries the policy for other commands but leaves the environment unset.
+func resumeAutoCompactLimit(e *Env, cfg *Config, settings resumeSettings) (*int64, error) {
+	if settings.CitedException != nil {
+		return nil, nil
+	}
+	role := settings.BoundRole
+	if role == "" {
+		role = settings.CitedRole
+	}
+	if role == "" {
+		return nil, nil
+	}
+	path := strings.TrimSpace(e.Getenv(execution.EnvPolicy))
+	if path == "" {
+		path = strings.TrimSpace(cfg.Bridge.ExecutionPolicy)
+	}
+	if path == "" {
+		return nil, nil
+	}
+	raw, err := execution.ReadFile(path)
+	if err != nil {
+		return nil, &resumeFailure{Reason: resumeSettingsUnavailable, Detail: "the execution policy " + quote.Value(path) + " could not be read to resolve the pair's auto-compaction limit: " + err.Error() + "; nothing was sent"}
+	}
+	policy, err := execution.FromBytes(raw, path)
+	if err != nil {
+		return nil, &resumeFailure{Reason: resumeSettingsUnavailable, Detail: "the execution policy " + quote.Value(path) + " could not be read to resolve the pair's auto-compaction limit: " + err.Error() + "; nothing was sent"}
+	}
+	declared, ok := policy.Role(role)
+	if !ok {
+		return nil, nil
+	}
+	for _, pair := range declared.Pairs {
+		if pair.Model == settings.Model && pair.Effort == settings.ReasoningEffort {
+			return pair.AutoCompactTokenLimit, nil
+		}
+	}
+	return nil, nil
+}
 func resumeSandboxMode(sandbox map[string]any) (string, error) {
 	kind, _ := sandbox["type"].(string)
 	mode := resumeSettingsModes[kind]
@@ -271,8 +350,17 @@ func resumeRun(ctx context.Context, e *Env, cfg *Config, opts resumeOptions) (*r
 	if err != nil {
 		return nil, err
 	}
+	limit, err := resumeAutoCompactLimit(e, cfg, *settings)
+	if err != nil {
+		return nil, err
+	}
 	report := &resumeReport{OK: true, Thread: child, Generation: generation, Model: settings.Model,
 		Effort: settings.ReasoningEffort, Servers: map[string]string{}, DryRun: opts.dryRun}
+	if limit != nil {
+		// The value is not in the host's answer, so the report carries it rather than reading it back.
+		report.AutoCompactTokenLimit = limit
+		report.AutoCompactUnobservable = true
+	}
 	client := appserver.New(cfg.Relay.Socket, appserver.DefaultBounds)
 	defer client.Close()
 	if err := client.Connect(ctx); err != nil {
@@ -346,12 +434,16 @@ func resumeRun(ctx context.Context, e *Env, cfg *Config, opts resumeOptions) (*r
 	}
 	// 2. thread/resume with the recorded settings and the servers switched off.
 	subscribed = true
+	config := resumeSandboxConfig(map[string]any{"model_reasoning_effort": settings.ReasoningEffort,
+		"mcp_servers": resumeMCPConfig(disabled)}, settings.Sandbox)
+	if limit != nil {
+		config["model_auto_compact_token_limit"] = *limit
+	}
 	resumed, err := call("thread/resume", map[string]any{
 		"threadId": child, "excludeTurns": true, "model": settings.Model, "cwd": settings.CWD,
 		"sandbox": mode, "approvalPolicy": settings.ApprovalPolicy,
 		"runtimeWorkspaceRoots": settings.RuntimeWorkspaceRoots,
-		"config": resumeSandboxConfig(map[string]any{"model_reasoning_effort": settings.ReasoningEffort,
-			"mcp_servers": resumeMCPConfig(disabled)}, settings.Sandbox),
+		"config":                config,
 	})
 	if err != nil {
 		return nil, err

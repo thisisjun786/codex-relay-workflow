@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -79,9 +80,23 @@ func (f *retrustFixture) write(path, content string) {
 
 func (f *retrustFixture) writeExec(path, content string) {
 	f.t.Helper()
-	f.write(path, content)
-	if err := os.Chmod(path, 0o755); err != nil {
-		f.t.Fatal(err)
+	// The result is a program the tests run, so the write and the chmod that makes it one are
+	// taken under syscall.ForkLock: a fork in that window would inherit the descriptor and leave
+	// the path unexecutable (ETXTBSY, golang/go#22315).
+	syscall.ForkLock.RLock()
+	writeErr := os.WriteFile(path, []byte(content), 0o644)
+	var chmodErr error
+	if writeErr == nil {
+		chmodErr = os.Chmod(path, 0o755)
+	}
+	syscall.ForkLock.RUnlock()
+	// The failures are reported after the unlock: t.Fatal must not run while the read lock is
+	// held, or the goroutine exits without releasing it and every later fork waits forever.
+	if writeErr != nil {
+		f.t.Fatal(writeErr)
+	}
+	if chmodErr != nil {
+		f.t.Fatal(chmodErr)
 	}
 }
 

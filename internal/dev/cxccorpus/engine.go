@@ -194,13 +194,19 @@ func mkdirAll(path string) error {
 }
 
 // writeFile writes a file, making its directory first. A file it creates gets mode 0644 whatever the
-// umask is; one that already exists keeps its mode, as with os.WriteFile.
+// umask is; one that already exists keeps its mode, as with os.WriteFile. The scenario may then run
+// the file (an executable Given.Modes entry or a Step.Write program), so the descriptor is open only
+// under syscall.ForkLock: a fork in that window would inherit it and leave the file unexecutable
+// (ETXTBSY, golang/go#22315).
 func writeFile(path string, data []byte) error {
 	if err := mkdirAll(filepath.Dir(path)); err != nil {
 		return err
 	}
 	_, statErr := os.Stat(path)
-	if err := os.WriteFile(path, data, 0o644); err != nil {
+	syscall.ForkLock.RLock()
+	err := os.WriteFile(path, data, 0o644)
+	syscall.ForkLock.RUnlock()
+	if err != nil {
 		return err
 	}
 	if errors.Is(statErr, fs.ErrNotExist) {

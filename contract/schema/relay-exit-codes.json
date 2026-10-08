@@ -60,6 +60,7 @@
     "CRITERIA_SET_CHANGED": "criteria_set_changed",
     "UNKNOWN_CRITERION": "unknown_criterion",
     "FINDINGS_REQUIRED": "findings_required",
+    "HEAD_NOT_RECEIPT_HEAD": "head_not_receipt_head",
     "DUPLICATE_ASSIGNMENT": "duplicate_assignment",
     "READBACK_MISMATCH": "readback_mismatch",
     "SYNC_NOT_CLAIMABLE": "sync_not_claimable",

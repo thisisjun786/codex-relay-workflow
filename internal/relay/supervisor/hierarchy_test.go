@@ -67,12 +67,12 @@ func Test24_SCH_1_LiveHierarchy(t *testing.T) {
 		reason, detail string
 		want           Resolution
 	}{
-		{name: "resolved", reading: map[string]any{"readable": true, "state": "resolved", "levels": levels}, want: Resolution{"01parent", "01supervisor", "PRJ-1", "INI-1", "linkage"}},
+		{name: "resolved", reading: map[string]any{"readable": true, "state": "resolved", "levels": levels}, want: Resolution{"01parent", "01supervisor", "initiative", "PRJ-1", "INI-1", "linkage"}},
 		{name: "no_supervisor", reading: map[string]any{"readable": true, "state": "resolved", "levels": levels[:1], "gaps": []any{map[string]any{"gap": "no_supervisor"}}}, reason: "unregistered_scope", detail: "nobody to report to"},
 		{name: "unreadable", reading: map[string]any{"readable": false, "state": "unreadable"}, reason: "relation_unreadable"},
 		{name: "competing_owners", reading: map[string]any{"readable": true, "state": "ambiguous", "contention": []any{map[string]any{"contention": "competing_owners"}}}, reason: "duplicate_scope_owner"},
 		{name: "owner_drift", reading: map[string]any{"readable": true, "state": "resolved", "contention": []any{map[string]any{"contention": "owner_drift"}}, "levels": levels[:1]}, reason: "relation_owner_drift"},
-		{name: "retained_refusal", reading: map[string]any{"readable": true, "state": "resolved", "contention": []any{map[string]any{"reason": "role_already_bound"}}, "levels": levels}, want: Resolution{"01parent", "01supervisor", "PRJ-1", "INI-1", "linkage"}},
+		{name: "retained_refusal", reading: map[string]any{"readable": true, "state": "resolved", "contention": []any{map[string]any{"reason": "role_already_bound"}}, "levels": levels}, want: Resolution{"01parent", "01supervisor", "initiative", "PRJ-1", "INI-1", "linkage"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

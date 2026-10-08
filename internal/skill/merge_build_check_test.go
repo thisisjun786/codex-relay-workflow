@@ -884,8 +884,11 @@ fi
 func mbcCacheShim(t *testing.T, script string) string {
 	t.Helper()
 	bin := t.TempDir()
-	if err := os.WriteFile(filepath.Join(bin, "go"), []byte(script), 0o700); err != nil {
-		t.Fatal(err)
+	syscall.ForkLock.RLock()
+	writeErr := os.WriteFile(filepath.Join(bin, "go"), []byte(script), 0o700)
+	syscall.ForkLock.RUnlock()
+	if writeErr != nil {
+		t.Fatal(writeErr)
 	}
 	log := filepath.Join(t.TempDir(), "shim.log")
 	t.Setenv("PATH", bin)

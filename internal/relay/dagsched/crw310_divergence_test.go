@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -378,8 +379,11 @@ func TestBothStepsOfACorrectionRefuseANonParentUnderOneReason(t *testing.T) {
 func crw310GH(t *testing.T, body string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "gh")
-	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+body+"\n"), 0o700); err != nil {
-		t.Fatal(err)
+	syscall.ForkLock.RLock()
+	writeErr := os.WriteFile(path, []byte("#!/bin/sh\n"+body+"\n"), 0o700)
+	syscall.ForkLock.RUnlock()
+	if writeErr != nil {
+		t.Fatal(writeErr)
 	}
 	return path
 }

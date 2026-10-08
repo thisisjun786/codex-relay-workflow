@@ -1,11 +1,10 @@
 name: CRW CI
 
 on:
-  push:
-    branches: [dev]
+  # CRW-966: the repository integrates by one integrator's verified fast-forward to dev, so this
+  # workflow no longer starts on a push or a pull request. A manual dispatch runs every job as a
+  # developer's full remote check; it is not integration or release evidence.
   workflow_dispatch:
-  pull_request:
-    types: [opened, reopened, synchronize, ready_for_review, edited, labeled]
 
 permissions:
   contents: read
