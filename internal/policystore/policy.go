@@ -1,9 +1,13 @@
-// Package policystore reads the host's execution policy and checks a proposed change against it.
+// Package policystore reads the host's execution policy, checks a proposed change against it, and
+// applies one to the file the plugin wiring record names.
 //
-// The policy is never written here: the one file the plugin wiring record names is the only source
-// of a policy value, and every function in this package is read-only. A change is applied to an
-// in-memory copy of the document and judged with the bridge's own parser, so a caller can learn
-// whether the host would accept it without touching a byte of the file.
+// Reading and checking never write: the one file the wiring record names is the only source of a
+// policy value, a change is applied to an in-memory copy of the document and judged with the
+// bridge's own parser, and a caller can learn whether the host would accept it without touching a
+// byte of the file. The write path is the one exception, and it is deliberately narrow (Write, in
+// policy_write.go): it takes the lock beside the policy file, judges the candidate with the same
+// check, backs the original bytes up, replaces the file atomically, and re-registers it through
+// the installer so the wiring record and the file never disagree for longer than that operation.
 package policystore
 
 import (
@@ -61,6 +65,18 @@ type Located struct {
 // spells it, and effort is accepted as an alias.
 type Pair struct {
 	Model, Effort string
+	// AutoCompactTokenLimit is the pair's optional model_auto_compact_token_limit, zero when the
+	// pair declares none. It is not part of the pair's identity - the pair is its model and effort -
+	// but it does belong to the pair, so a change that rebuilds a role's pairs has to carry it
+	// across for every pair it keeps.
+	AutoCompactTokenLimit int64
+	// limit is the same field exactly as a request spelled it, present only when the request named the
+	// key. A request that states zero, null, a fraction or a string has stated a value, and the rule
+	// the policy file is held to applies to it: the value is carried into the candidate document and
+	// refused there. Collapsing it into the absent representation would approve a document whose pair
+	// silently kept an older limit, or quietly dropped the invalid one.
+	limit        any
+	limitPresent bool
 	// conflict is why the two spellings of the effort could not be reconciled, or "" when they
 	// could. It is unexported because it is not part of the pair: it is how a mismatch reaches the
 	// check as a refused change rather than as a decode failure the API would answer as a bad
@@ -73,6 +89,9 @@ type pairWire struct {
 	Model           string `json:"model"`
 	ReasoningEffort string `json:"reasoningEffort"`
 	Effort          string `json:"effort,omitempty"`
+	// AutoCompactTokenLimit is written only when the pair declares one, so a pair without it reads
+	// back the way it was written.
+	AutoCompactTokenLimit int64 `json:"autoCompactTokenLimit,omitempty"`
 }
 
 // pairRequest is a pair as a request carries it. The two effort spellings are raw so the reader can
@@ -82,6 +101,9 @@ type pairRequest struct {
 	Model           string          `json:"model"`
 	ReasoningEffort json.RawMessage `json:"reasoningEffort"`
 	Effort          json.RawMessage `json:"effort"`
+	// AutoCompactTokenLimit is raw so an absent key is distinguishable from a zero one: zero is not
+	// a positive integer, and the parser refuses it rather than reading it as "no limit".
+	AutoCompactTokenLimit json.RawMessage `json:"autoCompactTokenLimit"`
 }
 
 // UnmarshalJSON reads a pair from either spelling of its effort. A pair that names neither is read
@@ -103,6 +125,18 @@ func (p *Pair) UnmarshalJSON(raw []byte) error {
 	}
 	p.Model = wire.Model
 	p.Effort, p.conflict = effortAlias(reasoningEffort, reasoningPresent, effort, effortPresent)
+	if len(wire.AutoCompactTokenLimit) > 0 {
+		value, err := pyjson.Loads(string(wire.AutoCompactTokenLimit), pyjson.LoadOptions{Constants: true, Numbers: pyjson.SpelledNumbers})
+		if err != nil {
+			return err
+		}
+		p.limit, p.limitPresent = value, true
+		if spelled, ok := value.(json.Number); ok {
+			if parsed, err := strconv.ParseInt(string(spelled), 10, 64); err == nil {
+				p.AutoCompactTokenLimit = parsed
+			}
+		}
+	}
 	return nil
 }
 
@@ -137,7 +171,14 @@ func effortAlias(reasoningEffort string, reasoningPresent bool, effort string, e
 
 // MarshalJSON writes a pair as the policy document spells it.
 func (p Pair) MarshalJSON() ([]byte, error) {
-	return json.Marshal(pairWire{Model: p.Model, ReasoningEffort: p.Effort})
+	if p.limitPresent {
+		return json.Marshal(struct {
+			Model                 string `json:"model"`
+			ReasoningEffort       string `json:"reasoningEffort"`
+			AutoCompactTokenLimit any    `json:"autoCompactTokenLimit"`
+		}{p.Model, p.Effort, p.limit})
+	}
+	return json.Marshal(pairWire{Model: p.Model, ReasoningEffort: p.Effort, AutoCompactTokenLimit: p.AutoCompactTokenLimit})
 }
 
 // RoleView is one declared role: its pairs, or the record expectation of a supervisor. The JSON
@@ -286,7 +327,11 @@ func projectRoles(policy execution.Policy) []RoleView {
 		}
 		view := RoleView{Name: name, Expectation: role.Expectation}
 		for _, pair := range role.Pairs {
-			view.Pairs = append(view.Pairs, Pair{Model: pair.Model, Effort: pair.Effort})
+			limit := int64(0)
+			if pair.AutoCompactTokenLimit != nil {
+				limit = *pair.AutoCompactTokenLimit
+			}
+			view.Pairs = append(view.Pairs, Pair{Model: pair.Model, Effort: pair.Effort, AutoCompactTokenLimit: limit})
 		}
 		roles = append(roles, view)
 	}

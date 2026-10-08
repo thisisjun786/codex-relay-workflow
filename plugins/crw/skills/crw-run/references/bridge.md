@@ -230,6 +230,34 @@ Compare actual cwd, workspace roots, model, reasoningEffort, approvalPolicy, and
 the full sandbox/permission response. Do not infer OCX routing from a model ID
 or the generic modelProvider label. Missing served-provider proof stays unknown.
 
+A pair may also carry `autoCompactTokenLimit`. The bridge sends it as
+`config.model_auto_compact_token_limit` on `thread/start` and `thread/resume`, and the relay sends
+it again on the resume it makes when it delivers a message to a task or carries a correction back
+to it. It is how a thread is made to compact below a host window larger than what the provider
+behind the model accepts. It is not a pair half and not something a caller states: the operator
+writes it on the role's pair in the execution policy, and a file without it is unchanged. The host
+does not report the value back, so the resume observation never compares it, its silence withholds
+nothing, and the receipt lists it under `requested` and `unobservable` rather than `verified` --
+on a relay resume too, where the value is resolved from the policy by the pair the task's record
+states — the role is the one the relay's gate confirmed the task is bound to, falling back to the
+record's own citation — and the receipt is the only place the send can say what it carried. A
+resume that sent no limit records no such observation.
+
+The value applies where the host takes the configuration: at creation, or when the host loads a
+thread it did not have. A resume to a thread the host already holds answers with that thread's
+current state, so it does not install a new threshold; the receipt saying the limit was sent is not
+the same as the thread now compacting under it.
+
+**Write 550000.** The probe measured the mechanism, not this number: at
+`config.model_auto_compact_token_limit=4000` the host compacted, and 550000 is the value
+recommended for `inferhub/deepseek-v4.1-flash` because it sits about 110,000 below the highest
+input observed to pass (664,238 tokens) and compaction is decided between samples, where one tool
+result can add a lot between two of them. The probe: two ephemeral threads under an isolated
+`codex app-server`, both reporting a 950,000 window, given the same ~15,000-token input over three
+turns. The thread given the 4000 limit compacted twice, its context falling from 30,696 to 15,478;
+the control thread never compacted and grew 30,756 to 40,588 to 40,593. A model whose provider cuts
+the stream above roughly 664,000 tokens otherwise stops without a receipt.
+
 The receipt also reports the runtime status the host gave before the resume. Where that status
 is `notLoaded`, it carries `echoIndependence: "not_established"`: the host may apply the
 settings it was sent while materializing the task, so an agreeing answer cannot be told apart

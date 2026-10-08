@@ -258,7 +258,9 @@ func (s *Scheduler) RecordCorrection(ctx context.Context, plan, node, actor, sup
 		if reason.String == delivery.DecisionReply {
 			return s.recordDecisionOpened(txCtx, tx, plan, snap, n, rel, actor, suppliedDigest, &out)
 		}
-		if reason.String != "needs_changes_revision" {
+		// the generation's own reason says how it was opened: a decision reply has its own binder below, and a correction was opened either by a needs_changes ruling or by hand. A correction of an accepted
+		// result that is still current has no ruling to open it (the writer refuses a second ruling on the accepted head), so it carries the reason the coordinator gave it (revalidation.go).
+		if !correctionOpenReason(reason.String) {
 			return refuse(contract.RefusalDispositionConflict, "generation %d of %s was not opened by a needs_changes ruling or a decision reply (%q)", rel.Generation, rel.ID, reason.String)
 		}
 		// the ruling on the previous generation's head must have opened this generation

@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -112,8 +113,11 @@ func coreFakeCRW(t *testing.T, doctorState string, exit int) (exe, record string
 		coreFakeDoctorEnv + "=" + coreShellQuote(doctorState) + " " +
 		coreFakeExitEnv + "=" + coreShellQuote(strconv.Itoa(exit)) + " " +
 		"exec " + coreShellQuote(os.Args[0]) + " \"$@\"\n"
-	if err := os.WriteFile(exe, []byte(script), 0o700); err != nil {
-		t.Fatal(err)
+	syscall.ForkLock.RLock()
+	writeErr := os.WriteFile(exe, []byte(script), 0o700)
+	syscall.ForkLock.RUnlock()
+	if writeErr != nil {
+		t.Fatal(writeErr)
 	}
 	return exe, record
 }

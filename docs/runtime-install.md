@@ -153,6 +153,7 @@ under the destination or in the host record is created before all three hold.
 `--backup-state-to <dir>` (on `install`, `update` and `rollback`) is the acknowledgement that the swap brings the additive DAG zone, or ordinary
 indexes on tables the store already holds, to a store that lacks them: the command copies the whole relay state directory to `<dir>` before
 promoting, and without it that swap refuses and names the flag ([the route](#why-the-schema-reading-compares-statements-and-not-versions)).
+The same artifact can be taken outside an install, by hand, with `crw install backup-state --to <dir>` ([the operator command](#the-state-backup-outside-an-install)).
 
 What follows is one run, in this order, and the result lists the steps it took:
 
@@ -419,22 +420,33 @@ it copies the whole state directory the gate read to `DIR`: copy only, byte for 
 or deleted, here or on a failure. Directories and regular files are copied with their bytes and, once every byte is in place and verified, their permission bits, each synced after its mode is set so the mode and not only the bytes survives a power loss (the directory the backup is made in stays 0700, and a copy always keeps its owner able to open it: a source the installer could read only through its group gets the owner's read bit, and the manifest records both modes); a symbolic link to a regular file is copied as the
 file's bytes under the link's name (a link alone would back up nothing), and when `relay.sqlite3` is such a link the real file's `-wal`
 is copied beside it, so a restore opens with the commits only the log held; a socket, a FIFO or a device is listed as skipped. The store's two
-sidecars follow SQLite's WAL mode: `relay.sqlite3-shm` is never listed, copied or compared, because SQLite rebuilds that index from the log on
-open, and `relay.sqlite3-wal` is copied when it is there at its copy, while an empty one that goes or appears between the listing and the copy is
-not a refusal (a log listed and gone is dropped, one that appeared after the listing is not copied, and the manifest's `storeSidecars` records which
-of the four happened). An empty log is the case this route exists for: a read-only open of a store no connection holds leaves one. A log that was
+sidecars are recognised by the path SQLite resolves the database to, not by their top-level name: with `relay.sqlite3` linked to a file inside
+the state directory (or outside it), the sidecars are that file's `-wal` and `-shm`, wherever they lie. `-shm` is never listed, copied or compared,
+because SQLite rebuilds that index from the log on open, and `-wal` is copied when it is there at its copy, under the restore-compatible name
+`relay.sqlite3-wal`, while an empty one that goes or appears between the listing and the copy is not a refusal (a log listed and gone is dropped,
+one that appeared after the listing is not copied, and the manifest's `storeSidecars` records which of the four happened). An empty log is the case
+this route exists for: a read-only open of a store no connection holds leaves one. The log is compared by its identity, not its size: its kind, its
+link target and the file its bytes come from must be the same in both listings, so a log whose link target or resolved source moved under the copy
+refuses ("the store's write-ahead log changed"), while the log's size and its coming and going are left to the sidecar rules above. A log that was
 not copied and holds frames in the second listing refuses instead, because a commit that stays in the log does not touch `relay.sqlite3` until a
 checkpoint, so the digest check alone would not see it and the backup would claim success while the live store held a row the copy lacks.
 `relay.sqlite3` itself and every other file keep the rule above, so a store that was written under the copy still refuses, and a copied `-wal` that
 is still there at the verification must digest to what was copied: one that a checkpoint has taken away by then is not a refusal either, and
-`relay.sqlite3` is the consistency the verification keeps.
+`relay.sqlite3` is the consistency the verification keeps. A store's `-wal` or `-shm` that goes between a listing's directory read and the entry's own
+information is recorded as gone before its copy rather than refusing; every other file's disappearance there still refuses.
 Each file is
 hashed while it is read and synced; then the state directory is read again, and the listing, every size and every file's digest, and the digest of
 every file in the copy, must be what was copied. Any difference, in any file, refuses the swap ("the state directory changed under the copy"):
 the copy is of one moment or it is not made. The backup, its manifest and the directories made for them are synced in their parents after the manifest is written, so a power loss cannot keep the files and lose the names that reach them. `DIR` and its manifest must not exist, must not lie inside the state directory, and must not lie
 inside the runtime destination tree (a failed run removes its candidate runtime, and a backup there would go with it); the free space on its
-filesystem must cover the directory. The record is written last, beside the backup and not inside it (`DIR.manifest.json`: source, destination,
-time, issue, every entry with its size, mode and digest, what was skipped, an aggregate digest), and the command's result carries the same facts
+filesystem must cover the directory. Before the record is written the copy passes the integrity gate: a scratch duplicate of the copied store (its
+`relay.sqlite3` and, when copied, its `-wal`) is opened with SQLite and asked `PRAGMA integrity_check`. The duplicate is what SQLite touches, never
+the copy, so the backup’s bytes are unchanged by the check, and the duplicate is removed afterwards. The destination’s free-space preflight covers
+the backup and that duplicate together. The manifest records `integrityCheck` (SQLite’s
+answer) and `restoreCandidate` (true only when the check passed), and a copy that fails the check is not a restore candidate and refuses. The
+record is written last, beside the backup and not inside it (`DIR.manifest.json`: source, destination,
+time, issue, every entry with its size, mode and digest, what was skipped, an aggregate digest, `integrityCheck` and `restoreCandidate`), and the command's
+result carries the same facts
 as `swapGate.stateBackup`. A backup that fails part-way stays where it is and is reported with `partial: true`; a swap that fails after the backup keeps
 it too, and a rerun needs a new destination.
 
@@ -493,6 +505,25 @@ to keep, so the tests keep `json_extract` as a control that fails when a driver 
 The warning against write commands stays: opening a store for writing with this build creates the zone, and that happens outside this route (a
 relay command run by hand against a live state directory takes no backup), so the route makes the warning unnecessary only inside the install
 command. Run no write command of this build against a live state directory before the install has taken its backup.
+
+### The state backup outside an install
+
+`crw install backup-state --to <dir>` takes the same stopped byte copy the install route takes, outside any install, so an operator can
+take the default artifact on demand. It calls the same `backupState` routine, so the copy, its manifest and its `integrityCheck` and
+`restoreCandidate` fields are the same, and the destination rules (`<dir>` and its manifest must not exist, must not lie inside the state
+directory or the runtime destination tree, and the free space must cover the directory) are the same. It is routed before the generic install
+options, like `features`, `config` and `migrate-state`: it takes its own `--to` flag and prints its own JSON report (`command: "backup-state"`,
+`applied`, `stateBackup`), and the frozen `crw install` usage line still names only the commands it named before this one arrived.
+
+It refuses while the relay service runs, reading the relay the same way the swap gate does: the selected relay’s own `service status`. Stopping
+the service is the operator’s job. A reading that could not be taken refuses too, so a backup is never taken on the strength of an unasked
+service. While it copies, it holds the store’s write gate exclusively, so no relay writer reaches the store under the copy: the gate is the one
+the relay writers lock, beside the database as SQLite resolves it (`holdGate`), which is the state directory’s own `write-gate.lock` in the
+ordinary layout and the linked file’s directory otherwise. A writer that already holds it refuses the command rather than waiting, and the
+command takes no other lock.
+
+What this command does not do: it does not stop or start the service, it does not restore, and it does not schedule anything. The online
+`sqlite3_backup` snapshot and its schedule are a separate decision and are not built here.
 
 ### The order a swap commits in
 
@@ -950,14 +981,30 @@ that replaces that one field:
 
     crw install register-mcp --re-register-policy --execution-policy /path/to/execution-policy.json
 
-It takes the file from the same `--execution-policy` flag the create path spells, reads and writes
-under the ownership lock beside the record, and replaces `executionPolicy` alone: `path` and
-`digest` become the new file's values and every other field keeps its bytes and its order. That
-promise holds for a record this installer wrote: a record in another spelling is refused as
-`record_not_canonical`, because publishing it would reserialize the fields this path leaves alone.
-The record must also be a regular file at that path: a symbolic link is refused as
-`record_symlinked`, because the replacement renames a file over the path itself and would turn the
-link into a regular file.
+It takes the file from the same `--execution-policy` flag the create path spells, and reads and
+writes under the ownership lock beside the record. The policy file is read inside that lock, so the
+digest the record is given is the one the launcher would read now: a file edited while the command
+waited for the lock is what it registers, rather than a `record_unchanged` answer over a digest the
+launcher already refuses, and a file another run repaired during the wait is judged as it stands
+rather than as it stood when the command started. The file is hashed once more immediately before
+the decision, so an edit between the two readings answers `record_policy_changed` and nothing is
+written.
+
+`executionPolicy` alone is replaced, and it is replaced in the record's own bytes: the member's
+value is spliced in the installer's form and every other byte - the document's whitespace, its key
+order, a trailing newline it does or does not have - is the byte it was. A record this installer
+did not write, hand-edited or written by another tool, is therefore re-registered like any other.
+The document is read the way the launcher reads it, so a value `json.loads` accepts - `NaN` and the
+infinities, in a member this path never replaces - does not make the record unregisterable. What is
+still refused is a record the launcher will not start, which answers `record_malformed`: the record
+is judged by the launcher's own checks - the version, the owner, the `serverName` the package
+declares, an absolute `bridgeExecutable`, string `args`, the version-1/version-2 policy rule, an
+executable and arguments an `exec` can take (no NUL, encodable as file-system bytes), and an
+argument list that does not begin with the plugin-launch flag (which would start the launcher again
+instead of the bridge) - so a hand-edited record naming another server, or one holding a value no
+`exec` could be given, is refused with its bytes unchanged and no backup written. The record must be
+a regular file at that path: a symbolic link is refused as `record_symlinked`, because the
+replacement renames a file over the path itself and would turn the link into a regular file.
 The new file goes through the bridge's own parser first, exactly as the create path checks it, so a
 policy the bridge would refuse to start under answers `execution_policy_unreadable` and nothing is
 written. The bridge's second owner is refused here too: a `config.toml` entry that also starts this
@@ -972,11 +1019,12 @@ policy's mode and role pairs, and the backup path. A read-back that does not mat
 file that changed while the record was being published answers `record_policy_changed` with
 `applied` true, because the record was written and the launcher will refuse its digest.
 
-The other answers are the create path's own: a record that already names this policy is left as it is
-and answered `record_unchanged`, a host with no record at all is answered `record_absent` (register
-it first), a record whose bytes change between the decision and the write is answered
-`record_changed_underneath`, and a version-1 record is answered `record_differs`, because naming a
-policy also changes `recordVersion`. A `--dry-run` reports `record_would_update` and writes nothing.
+The other answers are the create path's own: a record that already names the policy the file holds
+under the lock is left as it is and answered `record_unchanged`, a host with no record at all is
+answered `record_absent` (register it first), a record whose bytes change between the decision and
+the write is answered `record_changed_underneath`, and a version-1 record is answered
+`record_differs`, because naming a policy also changes `recordVersion`. A `--dry-run` reports
+`record_would_update` and writes nothing.
 
 Nothing here touches a bridge or the relay service. The record is read at every bridge start, so a
 thread started afterwards picks the new policy up, while a relay service already running keeps the

@@ -48,12 +48,14 @@ func cliPublishedScanRecordRun(a ScanCliArgs, appendEvent func(string, state.Int
 		if unreadable {
 			return errors.New("session state is unreadable; refusing to overwrite it")
 		}
-		if !cliVerdictsIntact(a.Cwd, a.SessionID, len(s.UnverifiedSubagents)) {
-			return errors.New("session state holds unreadable unverified records; refusing to rewrite it")
-		}
-		// Intentionally changed: publishing a capped/repaired read loses interview records too.
+		// Intentionally changed: publishing a capped/repaired read loses interview records too. This
+		// check runs first because cliVerdictsIntact now covers the tracker, and the interview loss
+		// keeps this command's own sentence.
 		if !cliInterviewIntact(a.Cwd, a.SessionID) {
 			return errors.New(cliInterviewRefusalReason)
+		}
+		if !cliVerdictsIntact(a.Cwd, a.SessionID, len(s.UnverifiedSubagents)) {
+			return errors.New("session state holds unreadable unverified records; refusing to rewrite it")
 		}
 		tracker := s.Interview
 		if tracker == nil {
