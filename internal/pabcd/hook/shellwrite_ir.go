@@ -14,8 +14,8 @@ const shellIRUnknownDest = "\x00unknown"
 // shellIRWriteDests returns the destinations of the writes a command makes, read from the reader's program records.
 // A destination the reader cannot evaluate is returned as shellIRUnknownDest. ok is false when the reader cannot
 // read the command at all.
-func shellIRWriteDests(command, cwd string) (dests []string, ok bool) {
-	res, err := shellir.Analyze(command, cwd)
+func shellIRWriteDests(command, cwd string, lookup func(string) (string, bool)) (dests []string, ok bool) {
+	res, err := shellir.AnalyzeEnv(command, cwd, lookup)
 	if err != nil {
 		return nil, false
 	}
@@ -30,8 +30,22 @@ func shellIRWriteDests(command, cwd string) (dests []string, ok bool) {
 			}
 		}
 		dests = append(dests, shellIRVerbDests(e)...)
+		dests = append(dests, shellIRLanguageDests(e)...)
 	}
-	return dests, true
+	return shellIRUnique(dests), true
+}
+
+// shellIRUnique keeps the first of each destination.
+func shellIRUnique(in []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, d := range in {
+		if !seen[d] {
+			seen[d] = true
+			out = append(out, d)
+		}
+	}
+	return out
 }
 
 // shellIRWriteRedir is whether a redirection operator writes its target.
@@ -44,7 +58,7 @@ func shellIRWriteRedir(op string) bool {
 }
 
 func shellIRWordDest(w shellir.Word) string {
-	if !w.Known {
+	if !w.Known || strings.Contains(w.Value, "%") {
 		return shellIRUnknownDest
 	}
 	return w.Value
@@ -138,4 +152,39 @@ func shellIRSedDests(args []shellir.Word) []string {
 		files = append(files, v)
 	}
 	return files
+}
+
+// shellIRLanguageDests reads the writes of an interpreter's inline program with the language readers, from the
+// program text the reader extracted. awk has no reader in this port yet; its inline program is not judged here.
+func shellIRLanguageDests(e shellir.Exec) []string {
+	if e.Inline == nil {
+		return nil
+	}
+	src := e.Inline.Source.Value
+	if !e.Inline.Source.Known {
+		return []string{shellIRUnknownDest}
+	}
+	switch e.Inline.Language {
+	case "python", "node":
+		isPy := e.Inline.Language == "python"
+		out := shellVerbScriptWritesIn(src, true, isPy)
+		if un := shellVerbUnescape(src); un != src {
+			out = append(out, shellVerbScriptWritesIn(un, true, isPy)...)
+		}
+		return out
+	case "sed":
+		return shellVerbSedWrites(shellIRStrings(e.Args))
+	case "perl", "ruby":
+		return shellVerbInterp(shellIRStrings(e.Args), false)
+	}
+	return nil
+}
+
+// shellIRStrings is the values of a word list, with the unknown mark for each word the reader cannot evaluate.
+func shellIRStrings(ws []shellir.Word) []string {
+	out := make([]string, 0, len(ws))
+	for _, w := range ws {
+		out = append(out, shellIRPlain(w))
+	}
+	return out
 }

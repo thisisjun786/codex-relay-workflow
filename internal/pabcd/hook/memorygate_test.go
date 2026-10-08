@@ -389,10 +389,10 @@ func TestMemoryGateHomeForms(t *testing.T) {
 		{map[string]string{"HOME": home}, "${HOME}/.codex/memories/n.md", true},
 		{map[string]string{"HOME": home}, "\"$HOME/.codex/memories/n.md\"", true},
 		{map[string]string{"HOME": home}, "~/.codex/memories-backup/n.md", false},
-		{map[string]string{"HOME": home}, "~user/.codex/memories/n.md", false},
+		{map[string]string{"HOME": home}, "~user/.codex/memories/n.md", true}, // another user's home is not provable: fail closed (CRW-1028)
 		{map[string]string{"HOME": home, "CODEX_HOME": filepath.Join(home, "ch")}, "$CODEX_HOME/memories/n.md", true},
 		{map[string]string{"HOME": home, "CODEX_HOME": filepath.Join(home, "ch")}, "${CODEX_HOME}/memories/n.md", true},
-		{map[string]string{"HOME": home}, "$CODEX_HOME/memories/n.md", false},
+		{map[string]string{"HOME": home}, "$CODEX_HOME/memories/n.md", true}, // an unset variable is not provable: fail closed (CRW-1028)
 	} {
 		env := gateEnvOf(c.vars)
 		got := memoryGateClassify("Bash", map[string]any{"command": "echo hi > " + c.dest}, cwd, env)

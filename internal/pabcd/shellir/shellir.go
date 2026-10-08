@@ -134,23 +134,6 @@ type Result struct {
 
 // Analyze reads a command text run in the working directory cwd. It returns
 // an *Unreadable error for any text it cannot prove.
-func Analyze(src, cwd string) (Result, error) {
-	if len(src) > MaxCommandBytes {
-		return Result{}, unreadablef("command is %d bytes; the limit is %d", len(src), MaxCommandBytes)
-	}
-	if continuationNearComment(src) {
-		return Result{}, unreadablef("a line continuation next to a # is read differently by bash and by the parser")
-	}
-	file, err := parseText(src)
-	if err != nil {
-		return Result{}, err
-	}
-	w := &walker{}
-	if err := w.stmts(file.Stmts, newState(cwd), Context{}); err != nil {
-		return Result{}, err
-	}
-	return Result{Execs: w.out}, nil
-}
 
 func parseText(src string) (*syntax.File, error) {
 	p := syntax.NewParser(syntax.Variant(syntax.LangBash))
@@ -168,6 +151,7 @@ type state struct {
 	vars   map[string]string
 	funcs  map[string]*syntax.Stmt
 	cdpath bool
+	lookup func(string) (string, bool)
 }
 
 func newState(cwd string) *state {
@@ -184,6 +168,7 @@ func (s *state) clone() *state {
 		vars:   make(map[string]string, len(s.vars)),
 		funcs:  make(map[string]*syntax.Stmt, len(s.funcs)),
 		cdpath: s.cdpath,
+		lookup: s.lookup,
 	}
 	for k, v := range s.vars {
 		c.vars[k] = v
@@ -225,6 +210,7 @@ func joinStates(states ...*state) *state {
 		vars:  map[string]string{},
 		funcs: map[string]*syntax.Stmt{},
 	}
+	out.lookup = first.lookup
 	for _, s := range states {
 		if !s.dir.Known || !first.dir.Known || s.dir.Path != first.dir.Path {
 			out.dir.Known = false

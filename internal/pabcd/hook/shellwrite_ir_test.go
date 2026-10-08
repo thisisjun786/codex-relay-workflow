@@ -24,7 +24,7 @@ func TestShellIRWriteDests(t *testing.T) {
 		{"sed 's/a/b/' f1", nil},
 	}
 	for _, c := range cases {
-		got, ok := shellIRWriteDests(c.cmd, "/work")
+		got, ok := shellIRWriteDests(c.cmd, "/work", nil)
 		if !ok {
 			t.Fatalf("%q: unreadable", c.cmd)
 		}

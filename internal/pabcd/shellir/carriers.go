@@ -314,6 +314,9 @@ func interpreterLanguage(name string) string {
 }
 
 func isPythonName(name string) bool {
+	if name == "py" {
+		return true
+	}
 	if !strings.HasPrefix(name, "python") {
 		return false
 	}

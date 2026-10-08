@@ -21,7 +21,7 @@ func (w *walker) word(x *syntax.Word, st *state, ctx Context) (Word, error) {
 		return Word{Reason: reason}, nil
 	}
 	cfg := &expand.Config{
-		Env:       expand.FuncEnviron(func(name string) string { return st.vars[name] }),
+		Env:       expand.FuncEnviron(func(name string) string { return st.value(name) }),
 		ProcSubst: refuseProcSubst,
 	}
 	v, err := expand.Literal(cfg, unescapeUnquoted(x))
@@ -84,7 +84,7 @@ func unknownPart(p syntax.WordPart, quoted, first bool, st *state) string {
 		if quoted {
 			return ""
 		}
-		if first && strings.HasPrefix(x.Value, "~") {
+		if first && strings.HasPrefix(x.Value, "~") && !st.tildeKnown(x.Value) {
 			return "tilde expansion"
 		}
 		if strings.ContainsAny(x.Value, "*?[") {
@@ -134,8 +134,7 @@ func simpleKnownParam(x *syntax.ParamExp, st *state) bool {
 		len(x.Modifiers) > 0 || x.Flags != nil {
 		return false
 	}
-	_, ok := st.vars[x.Param.Value]
-	return ok
+	return st.known(x.Param.Value)
 }
 
 func (w *walker) redirects(list []*syntax.Redirect, st *state, ctx Context) ([]Redir, error) {
