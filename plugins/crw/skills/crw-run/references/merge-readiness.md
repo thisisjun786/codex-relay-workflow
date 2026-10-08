@@ -453,6 +453,15 @@ other finding does; a warning with no such finding behind it is recorded in the 
 goes on. Do not turn a warning into a gate by waiting for a rerun, a fix or a statement that only the
 warning asked for.
 
+## Integrate a node by its commit (no pull request)
+
+A node built on the commit path has no pull request, so the merge gates above do not apply to it. Its acceptance is dag-accept with --commit, --base, --checkout and --verification (see docs/relay/dag-scheduler.md, "Commit acceptance and local integration"). The relay checks in that checkout that the commit is the receipt head of the node's generation, that it descends from the base, and that the verification record is reusable for this exact tree.
+
+The integration is one batch. dag-integrate merges the ready accepted candidates onto the local integration branch in a temporary worktree, verifies the merged tree with the --verify command (for example, a script whose first line is #!/bin/sh and that runs crw-dev ci local --commit "$CRW_VERIFY_HEAD" --base "$CRW_VERIFY_BASE" --record "$CRW_VERIFY_RECORD" --runner local), and moves the branch only if that verification passed. A candidate that breaks the merged tree, or that depends on one, is left out and returned to its parent with the reason; a candidate that only conflicted with a removed candidate integrates on the retry. Then dag-integrate-push fast-forwards the remote dev to the same commit. Never force it: a remote dev that holds a commit the integration branch does not contain is refused with merge_base_mismatch, and the parent resolves that divergence first. When the remote cannot be reached the push is deferred (outcome deferred); run dag-integrate-push again once it answers, because the batch and the merged marks already stand and are not repeated. A merged mark that could not be written is shown as mark_pending and completed by the next dag-integrate run. Observe the landing with dag-integration-observe --target on the integration branch.
+
+A batch leaves out a candidate that only breaks the set with others: it is reported as `not_proven_failing` and stays ready for the next batch. Only a candidate that fails when verified alone is reported as `verification_failed`. A candidate whose criteria changed after its acceptance is not ready until it is revalidated, and the relay does not re-verify an integration branch for a criteria change by itself. `dag-integrate-push` pushes only a tip the relay moved the branch onto (a verified batch row for that head); a commit added on top of it is refused with `merge_base_mismatch`, and the remote is not moved.
+
+
 ## Judge a finding by its impact
 
 Whether a finding blocks is decided by what it does to this change at its current

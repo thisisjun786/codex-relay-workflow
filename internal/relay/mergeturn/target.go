@@ -192,11 +192,39 @@ func gitDirOf(repository string) string {
 	if resolved, err := filepath.EvalSymlinks(repository); err == nil {
 		repository = resolved
 	}
-	gitdir := filepath.Join(repository, ".git")
-	if _, err := os.Stat(gitdir); os.IsNotExist(err) {
+	dotGit := filepath.Join(repository, ".git")
+	info, err := os.Stat(dotGit)
+	if os.IsNotExist(err) {
 		return repository
 	}
-	return gitdir
+	if err != nil || info.IsDir() {
+		return dotGit
+	}
+	return linkedWorktreeGitDir(repository, dotGit)
+}
+
+// linkedWorktreeGitDir is the git directory a linked worktree's .git file names (CRW-965: its .git is a file, not
+// a directory). It runs git with every GIT_ variable removed, so a poisoned environment cannot name another
+// repository, and bounds the call so a stuck git cannot hang the lane. A failed or empty answer keeps the .git path.
+func linkedWorktreeGitDir(repository, dotGit string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	env := make([]string, 0)
+	for _, v := range os.Environ() {
+		if !strings.HasPrefix(v, "GIT_") {
+			env = append(env, v)
+		}
+	}
+	cmd := exec.CommandContext(ctx, "git", "-C", repository, "rev-parse", "--absolute-git-dir")
+	cmd.Env = append(env, "GIT_TERMINAL_PROMPT=0", "LC_ALL=C")
+	out, err := cmd.Output()
+	if err != nil {
+		return dotGit
+	}
+	if dir := strings.TrimSpace(string(out)); dir != "" {
+		return dir
+	}
+	return dotGit
 }
 
 // repositoryKeyTimeout bounds the one git call that names a local repository. A repository that does not answer
