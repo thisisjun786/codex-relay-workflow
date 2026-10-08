@@ -198,7 +198,10 @@ func localProbeEnv(home, pathEnv string) []string {
 	env := []string{"PATH=" + pathEnv, "HOME=" + home, "XDG_CONFIG_HOME=" + filepath.Join(home, "config"),
 		"XDG_CACHE_HOME=" + filepath.Join(home, "cache"), "XDG_DATA_HOME=" + filepath.Join(home, "data"),
 		"XDG_STATE_HOME=" + filepath.Join(home, "state"), "TZ=UTC", "GOTOOLCHAIN=local", "GOWORK=off", "GOFLAGS=-p=4"}
-	for _, name := range []string{"LANG", "TMPDIR"} {
+	for _, name := range localInheritedEnv {
+		if name == "PATH" {
+			continue
+		}
 		if value, ok := os.LookupEnv(name); ok {
 			env = append(env, name+"="+value)
 		}
@@ -261,4 +264,48 @@ func localProbeCommand(gate, path string, args []string) *exec.Cmd {
 	}
 	rest := append(append([]string{}, words[1:]...), path)
 	return exec.Command(words[0], append(rest, args...)...)
+}
+
+// localCheckoutDiff names the first tracked file whose bytes in the clean worktree are not the bytes the
+// commit stores, or "" when every file matches. git status compares filtered content, so a smudge or clean
+// filter can make a changed file look clean; hashing each file with --no-filters compares the bytes the
+// commit holds (pre-merge finding d1). Symlinks are not regular files and are not hashed.
+func localCheckoutDiff(worktree, commit string) string {
+	listing, err := runGit(worktree, "ls-tree", "-r", "-z", commit)
+	if err != nil {
+		return "the commit's tree cannot be read: " + err.Error()
+	}
+	want := map[string]string{}
+	var paths []string
+	for _, entry := range strings.Split(string(listing), "\x00") {
+		meta, path, ok := strings.Cut(entry, "\t")
+		if !ok {
+			continue
+		}
+		fields := strings.Fields(meta)
+		if len(fields) != 3 || fields[1] != "blob" || fields[0] == "120000" {
+			continue
+		}
+		if strings.Contains(path, "\n") {
+			return path + " has a newline in its name, which the check cannot read"
+		}
+		want[path] = fields[2]
+		paths = append(paths, path)
+	}
+	cmd := exec.Command("git", "-C", worktree, "hash-object", "--no-filters", "--stdin-paths")
+	cmd.Stdin = strings.NewReader(strings.Join(paths, "\n") + "\n")
+	out, err := cmd.Output()
+	if err != nil {
+		return "the clean worktree cannot be hashed: " + err.Error()
+	}
+	got := strings.Fields(string(out))
+	if len(got) != len(paths) {
+		return "the clean worktree's hashes do not match its files"
+	}
+	for i, path := range paths {
+		if got[i] != want[path] {
+			return path + " differs from the commit"
+		}
+	}
+	return ""
 }

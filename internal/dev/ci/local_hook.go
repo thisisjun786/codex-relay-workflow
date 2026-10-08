@@ -164,10 +164,18 @@ func localHookPath(dir string) (string, error) {
 // an older one it wrote), absent, or foreign (a hook this tool did not write, which it leaves
 // alone).
 func localHookState(path string) string {
-	data, err := os.ReadFile(path)
+	info, err := os.Lstat(path)
 	if os.IsNotExist(err) {
 		return "absent"
 	}
+	if err != nil {
+		return "unreadable"
+	}
+	// A symlink is another installer's hook, dangling or not: it is never followed or replaced (pre-merge finding d4).
+	if info.Mode()&os.ModeSymlink != 0 {
+		return "foreign"
+	}
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return "unreadable"
 	}

@@ -308,6 +308,8 @@ func localExecute(opts localOptions, plan []localJob, current verificationRecord
 	} else if dirty := strings.TrimSpace(string(status)); dirty != "" {
 		// Attributes or filters changed the checked-out content, so the tests would not be the commit's.
 		checkoutErr = "the clean worktree differs from the commit" + localReason(dirty)
+	} else if diff := localCheckoutDiff(worktree, current.HeadCommit); diff != "" {
+		checkoutErr = "the clean worktree differs from the commit: " + diff
 	}
 	if checkoutErr != "" {
 		// A checkout that fails is a failed record, named with its reason, not a missing one.
