@@ -636,3 +636,30 @@ func TestStatusBlockingReadIsBoundedAndUnknown(t *testing.T) {
 		t.Fatalf("the unknown reading must name the unfinished read, got %q", reason)
 	}
 }
+
+// TestStatusPolicyKeepsFileDigestsWhenRunningTimesOut pins that a running-digest read that does
+// not finish leaves the file and registered digests the policy read already had, and reports only
+// the running digest unknown.
+func TestStatusPolicyKeepsFileDigestsWhenRunningTimesOut(t *testing.T) {
+	previousTimeout := statusPolicyTimeout
+	statusPolicyTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { statusPolicyTimeout = previousTimeout })
+	previousRunning := statusRunningReader
+	statusRunningReader = func(ctx context.Context) policystore.Running {
+		<-ctx.Done()
+		return policystore.Running{State: policystore.RunningUnavailable, Reason: "held"}
+	}
+	t.Cleanup(func() { statusRunningReader = previousRunning })
+	policyHost(t, policyText, true)
+	fakeStatusManage(t, okStatusSources())
+	policy := object(t, bar(t, decodeStatus(t, statusServer(t))), "executionPolicy")
+	if policy["fileDigest"] != digestOf(policyText) || policy["registeredDigest"] != digestOf(policyText) {
+		t.Fatalf("file and registered digests were dropped when the running read timed out: %#v", policy)
+	}
+	if policy["runningDigest"] != nil {
+		t.Fatalf("runningDigest = %#v, want null", policy["runningDigest"])
+	}
+	if reason, _ := policy["runningReason"].(string); reason == "" {
+		t.Fatalf("runningReason is blank: %#v", policy)
+	}
+}

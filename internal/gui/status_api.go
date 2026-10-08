@@ -36,6 +36,10 @@ const statusSchema = "crw-gui-status/1"
 // command and reports its own reason instead of being cut off here.
 var statusSourceTimeout = 45 * time.Second
 
+// statusPolicyGrace is how long a policy read that hit its deadline may still hand back what it
+// already read.
+const statusPolicyGrace = time.Second
+
 // statusPolicyTimeout bounds the policy read. It is separate from statusSourceTimeout so a test
 // can drive the timeout path without waiting out the manage sources' bound.
 var statusPolicyTimeout = statusSourceTimeout
@@ -246,12 +250,19 @@ func statusPolicyRead(ctx context.Context) statusPolicyReading {
 	select {
 	case reading = <-done:
 	case <-readCtx.Done():
-		return statusPolicyReading{State: statusUnknown, Applied: policystore.AppliedUnverifiable,
-			Reason: "the execution policy read did not finish: " + readCtx.Err().Error()}
+		// The production reader stops its own running read at the deadline and hands back what
+		// it already has, so it gets a short grace to do so. Past the grace the whole read is
+		// unknown.
+		select {
+		case reading = <-done:
+		case <-time.After(statusPolicyGrace):
+			return statusPolicyReading{State: statusUnknown, Applied: policystore.AppliedUnverifiable,
+				Reason: "the execution policy read did not finish: " + readCtx.Err().Error()}
+		}
 	}
-	if err := readCtx.Err(); err != nil && reading.State == statusOK {
-		// The read reported ok only because it fell back on what it already had; the deadline is
-		// the fact that decides, so it is reported rather than passed on as a success.
+	// A reader that reports ok after the deadline without saying what it read for the running
+	// digest is treated as unfinished, so an ok it never earned does not survive.
+	if err := readCtx.Err(); err != nil && reading.State == statusOK && reading.RunningReason == "" && reading.RunningDigest == nil {
 		return statusPolicyReading{State: statusUnknown, PolicyState: reading.PolicyState,
 			Path: reading.Path, Applied: policystore.AppliedUnverifiable,
 			Reason: "the execution policy read did not finish: " + err.Error()}
@@ -264,7 +275,7 @@ func statusPolicyRead(ctx context.Context) statusPolicyReading {
 func statusPolicyReadProduction(ctx context.Context) statusPolicyReading {
 	located := policystore.Locate(envLookup)
 	reading := policystore.Read(located)
-	running := statusRunningDigestGated(ctx)
+	running := statusRunningReader(ctx)
 	out := statusPolicyReading{
 		PolicyState: reading.State,
 		Path:        reading.Path,
@@ -296,6 +307,10 @@ func statusPolicyReadProduction(ctx context.Context) statusPolicyReading {
 	}
 	return out
 }
+
+// statusRunningReader reads the running digest. A test replaces it to hold the read open; the
+// production value is statusRunningDigestGated.
+var statusRunningReader = statusRunningDigestGated
 
 // statusRunningDigestGated reads the running digest under the manage gate. Its manage config
 // call is a manage read like the others, so it takes its turn behind them.
