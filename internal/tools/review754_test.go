@@ -275,7 +275,11 @@ func TestToolsReviewCreateRootRecordsOnlyItsOwnDirectories(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{filepath.Join(existing, "a"), filepath.Join(existing, "a", "b")}
-	if strings.Join(created, ",") != strings.Join(want, ",") {
+	made := make([]string, 0, len(created))
+	for _, entry := range created {
+		made = append(made, entry.path)
+	}
+	if strings.Join(made, ",") != strings.Join(want, ",") {
 		t.Fatalf("createRoot recorded %v, want only the components it made %v", created, want)
 	}
 	// A directory that already exists is not recorded, even when the deeper component is missing.
