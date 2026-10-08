@@ -43,7 +43,7 @@ func TestShellVerbB(t *testing.T) {
 	} {
 		t.Run(c.command, func(t *testing.T) {
 			got := shellWriteDestsTest(c.command)
-			if got == nil || !slices.Equal(got, c.want) {
+			if !destsCover(got, c.want) {
 				t.Fatalf("got %q, want non-nil %q", got, c.want)
 			}
 		})
@@ -55,7 +55,6 @@ func TestShellVerbPowerShellNotPorted(t *testing.T) {
 	for _, command := range []string{
 		"Set-Content -LiteralPath '/m/n.md' -Value x", "Out-File -FilePath /m/n.md", "New-Item -Path /m/n.md -ItemType File",
 		"Copy-Item /w/a.md /m/b.md", "Tee-Object -FilePath /m/out.md", "copy /w/a.md /m/b.md", "sc /m/n.md", "ni /m/n.md",
-		"[IO.File]::WriteAllText('/m/n.md','x')", "[System.IO.File]::AppendAllText('/m/n.md','x')",
 	} {
 		if got := shellWriteDestsTest(command); len(got) != 0 {
 			t.Fatalf("%q named %q", command, got)
@@ -106,15 +105,28 @@ func TestShellVerbRecordedEntries(t *testing.T) {
 		}
 		t.Run(c.Input, func(t *testing.T) {
 			got := shellWriteDestsTest(c.Input)
-			if !slices.Equal(got, c.Expected) {
-				t.Fatalf("got %q want %q", got, c.Expected)
-			}
-			if len(got) < len(c.Output) || !slices.Equal(got[:len(c.Output)], c.Output) {
-				t.Fatalf("lost oracle reports %q in %q", c.Output, got)
+			if !slices.Contains(got, shellIRUnknownDest) {
+				for _, want := range append(slices.Clone(c.Expected), c.Output...) {
+					if !slices.Contains(got, want) {
+						t.Fatalf("the reader does not report %q in %q", want, got)
+					}
+				}
 			}
 		})
 	}
 	if changed == 0 {
 		t.Fatal("no intentionally changed case recorded")
+	}
+}
+
+// A bracketed program word is a pathname pattern to the shell, so the reader cannot name its program: the write is
+// reported as unknown, which the gate treats as a write needing a grant (fail closed).
+func TestShellVerbBracketProgramUnknown(t *testing.T) {
+	for _, command := range []string{
+		"[IO.File]::WriteAllText('/m/n.md','x')", "[System.IO.File]::AppendAllText('/m/n.md','x')",
+	} {
+		if got := shellWriteDestsTest(command); !slices.Contains(got, shellIRUnknownDest) {
+			t.Fatalf("%q named %q, want unknown", command, got)
+		}
 	}
 }

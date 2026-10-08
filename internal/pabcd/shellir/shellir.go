@@ -694,7 +694,10 @@ func (w *walker) dispatch(words []Word, assigns []Assign, redirs []Redir, st *st
 	if strings.HasPrefix(prog.Value, "=") {
 		return unreadablef("zsh =word program %q", prog.Value)
 	}
-	name := path.Base(prog.Value)
+	if strings.Contains(prog.Value, ":") && prog.Value != ":" {
+		return unreadablef("a program word with a colon is not modelled: %q", prog.Value)
+	}
+	name := programName(prog.Value)
 	if err := checkAssigns(assigns, st); err != nil {
 		return err
 	}

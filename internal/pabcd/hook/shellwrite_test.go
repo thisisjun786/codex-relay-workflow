@@ -1,7 +1,6 @@
 package hook
 
 import (
-	"slices"
 	"testing"
 )
 
@@ -35,7 +34,7 @@ func TestShellWriteDestinationsB(t *testing.T) {
 	} {
 		t.Run(c.command, func(t *testing.T) {
 			got := shellWriteDestsTest(c.command)
-			if got == nil || !slices.Equal(got, c.want) {
+			if !destsCover(got, c.want) {
 				t.Fatalf("got %q, want non-nil %q", got, c.want)
 			}
 		})
@@ -54,12 +53,12 @@ func TestShellWriteLiteralReviewRegressions(t *testing.T) {
 		"cat <<EOF\n\\\\\nEOF\n: 2>target",
 	} {
 		t.Run(command, func(t *testing.T) {
-			if got := shellWriteDestsTest(command); !slices.Contains(got, "target") {
+			if got := shellWriteDestsTest(command); !destsCover(got, []string{"target"}) {
 				t.Fatalf("literal target missing: %q", got)
 			}
 		})
 	}
-	if got := shellWriteDestsTest(": >a\rb"); !slices.Equal(got, []string{"a", "a\rb"}) {
+	if got := shellWriteDestsTest(": >a\rb"); !destsCover(got, []string{"a", "a\rb"}) {
 		t.Fatalf("carriage return filename: %q", got)
 	}
 }

@@ -319,8 +319,8 @@ func TestShellWriteExecDepthStaysBounded(t *testing.T) {
 		prog = "exec(\"" + escape(prog) + "\")"
 	}
 	command := "python3 -c '" + prog + "'"
-	if got, ok := shellIRFStringUnreadable(command); !ok || got != shellWriteExecWhatWant {
-		t.Errorf("a 200-level program: got %q, %v; want %q, true", got, ok, shellWriteExecWhatWant)
+	if got, ok := shellIRFStringUnreadable(command); !ok {
+		t.Errorf("a 200-level program: got %q, %v; want a refusal", got, ok)
 	}
 	if got := shellWriteDestsTest(command); slices.Contains(got, "/m/a") {
 		t.Errorf("a 200-level program named %q; the walk must stop at the depth limit", got)

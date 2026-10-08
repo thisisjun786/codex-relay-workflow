@@ -63,7 +63,7 @@ func interpreterSpec(lang string) interpSpec {
 	case "python":
 		return interpSpec{code: "c", consume: "WX", flags: "BbdEhiIOPqRsSuvxV", attach: true}
 	case "node":
-		return interpSpec{code: "ep", consume: "r", flags: "ci", attach: true}
+		return interpSpec{code: "ep", consume: "r", flags: "ci"}
 	case "perl":
 		return interpSpec{code: "eE", flags: "wWXnpsTtUcSaFlvi", attach: true}
 	case "ruby":

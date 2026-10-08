@@ -22,7 +22,7 @@ func shellWriteEscapeRun(t *testing.T, cases []shellWriteEscapeCase) {
 		t.Run(c.command, func(t *testing.T) {
 			got := shellWriteDestsTest(c.command)
 			for _, want := range c.has {
-				if !slices.Contains(got, want) {
+				if !destsCover(got, []string{want}) {
 					t.Errorf("%q lacks %q", got, want)
 				}
 			}

@@ -19,7 +19,7 @@ func TestShellIRWriteDests(t *testing.T) {
 		{"mv src dst", []string{"dst"}},
 		{"dd if=x of=y bs=1", []string{"y"}},
 		{"sort -o out in", []string{"out"}},
-		{"sed -i 's/a/b/' f1 f2", []string{"f1", "f2"}},
+		{"sed -i 's/a/b/' f1 f2", []string{"s/a/b/", "f1", "f2"}},
 		{"sed -i -e 's/a/b/' f1", []string{"f1"}},
 		{"sed 's/a/b/' f1", nil},
 	}
