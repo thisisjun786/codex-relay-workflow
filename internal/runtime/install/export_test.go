@@ -48,6 +48,65 @@ func ReplaceStateBackupListed(listed func() error) (restore func()) {
 	return func() { stateBackupListed = saved }
 }
 
+// ReplaceStateBackupWalk makes each listing of the state directory call walk for every entry, after the directory
+// was read and before the entry's own information is asked, until restored: a test makes the store's write-ahead log
+// go between the walk's read and its Info (CRW-862, PR #735 P1 3).
+func ReplaceStateBackupWalk(walk func(path string) error) (restore func()) {
+	saved := stateBackupWalk
+	stateBackupWalk = walk
+	return func() { stateBackupWalk = saved }
+}
+
+// ReplaceStateBackupVerified makes the state-directory backup call verified once every byte of the copy is in place
+// and verified and before the integrity gate runs, until restored.
+func ReplaceStateBackupVerified(verified func() error) (restore func()) {
+	saved := stateBackupVerified
+	stateBackupVerified = verified
+	return func() { stateBackupVerified = saved }
+}
+
+// ReplaceIntegrityCheck makes the backup's integrity gate go through check until restored, so a test that cannot
+// corrupt a real store substitutes the answer instead.
+func ReplaceIntegrityCheck(check func(ctx context.Context, dest string, copied []BackedUp) (string, error)) (restore func()) {
+	saved := integrityCheckPath
+	integrityCheckPath = func(ctx context.Context, dest string, copied []backedUp) (string, error) {
+		return check(ctx, dest, copied)
+	}
+	return func() { integrityCheckPath = saved }
+}
+
+// BackedUp is one entry of a backup's listing, for a test seam that judges the copied entries.
+type BackedUp = backedUp
+
+// ReplaceServiceReading makes the operator command's relay service reading go through reading until restored, so a
+// test fakes a running service without starting a daemon.
+func ReplaceServiceReading(reading func(ctx context.Context, o Options) Object) (restore func()) {
+	saved := serviceReading
+	serviceReading = reading
+	return func() { serviceReading = saved }
+}
+
+// ServiceCell is swapgate.DaemonCell's answer for a service reading, so a test can fake one without a daemon.
+func ServiceCell(answer any, readable bool, detail string) Object {
+	return Object{field("answer", answer), field("readable", readable), field("detail", detail), field("command", nil), field("evidence", nil)}
+}
+
+// SidecarsFor is the store's resolved -wal and -shm paths, the identity the listing and the comparison use.
+func SidecarsFor(source, dbPath string) (wal, shm string) {
+	s := sidecarsFor(source, dbPath)
+	return s.wal, s.shm
+}
+
+// ScratchNeed is the bytes the integrity gate's scratch duplicate needs for a backup whose copied files have
+// these sizes and names.
+func ScratchNeed(entries map[string]int64) int64 {
+	var list []backedUp
+	for path, size := range entries {
+		list = append(list, backedUp{Path: path, Kind: "file", Size: size})
+	}
+	return scratchNeed(list)
+}
+
 // StoreSidecarWal is the manifest's reading of the store's write-ahead log, from what happened to it while the backup
 // was made: its bytes were copied, it was listed and had gone by its copy, it was absent from the first listing and
 // appeared in the second so it was not copied, or it was absent from both. The appeared reading cannot be reached end
@@ -58,12 +117,18 @@ func StoreSidecarWal(copied, gone, appeared bool) string {
 }
 
 // ListingDiff is how two readings of a state directory differ, or "": the comparison the backup's verification makes,
-// with the store's two sidecars left out. A white-box test pins the sidecars' exclusion here.
+// with the store's write-ahead log compared by its identity and its shared-memory index never listed. A white-box test
+// pins both here. The paths are the state directory's own top-level names, so relay.sqlite3-wal is the store's log and
+// relay.sqlite3-shm its index.
 func ListingDiff(a, b []string) string {
 	toEntries := func(paths []string) []backedUp {
 		out := make([]backedUp, 0, len(paths))
 		for _, p := range paths {
-			out = append(out, backedUp{Path: p, Kind: "file", Size: 1})
+			if p == shmSidecar {
+				// the shared-memory index is never listed
+				continue
+			}
+			out = append(out, backedUp{Path: p, Kind: "file", Size: 1, storeWal: p == walSidecar})
 		}
 		return out
 	}
@@ -109,6 +174,15 @@ func ReplaceBeforeWriteLock(between func(path string)) (restore func()) {
 	saved := beforeWriteLock
 	beforeWriteLock = between
 	return func() { beforeWriteLock = saved }
+}
+
+// ReplaceOwnershipLockWait runs just before the re-registration path waits for the ownership lock,
+// until restored: a test that moves the policy file while the run waits for that lock uses it to
+// know the wait has begun.
+func ReplaceOwnershipLockWait(wait func()) (restore func()) {
+	saved := beforeOwnershipLock
+	beforeOwnershipLock = wait
+	return func() { beforeOwnershipLock = saved }
 }
 
 // ReplaceProcessOwner makes the process table's owner reading go through owner until restored,

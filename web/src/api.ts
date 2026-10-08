@@ -95,17 +95,20 @@ function storage(): Storage | undefined {
  * only once storage has refused a read or a write.
  */
 export function getToken(): string | null {
+  // The token this page load received in the address fragment always wins. The stored value can be
+  // the previous run's token - the server prints a fresh one on every start - and sending the old
+  // one after a restart is refused, so the fragment's value is never second to a stored one.
+  if (memoryToken !== null) return memoryToken;
+  if (storageDenied) return null;
   const store = storage();
   if (store) {
     try {
-      const stored = store.getItem(TOKEN_STORAGE_KEY);
-      if (stored !== null) return stored;
-      if (!storageDenied) return null;
+      return store.getItem(TOKEN_STORAGE_KEY);
     } catch {
       storageDenied = true;
     }
   }
-  return memoryToken;
+  return null;
 }
 
 /**
@@ -127,8 +130,16 @@ export function bootstrapToken(): void {
     try {
       store.setItem(TOKEN_STORAGE_KEY, token);
     } catch {
-      // Storage refused the write; the in-memory copy carries this tab.
+      // Storage refused the write; the in-memory copy carries this tab. The old stored value is
+      // cleared as well, so a later load of this tab cannot fall back to the previous run's token
+      // after the server has replaced it. A context that refuses the write usually refuses this
+      // too, and the in-memory copy is what answers then.
       storageDenied = true;
+      try {
+        store.removeItem(TOKEN_STORAGE_KEY);
+      } catch {
+        // The stored value is unreachable; the in-memory copy is this tab's only token.
+      }
     }
   }
   const rest = removeFragmentParam(fragment, TOKEN_PARAM);
@@ -420,4 +431,92 @@ export function helperRoleEfforts(catalog: readonly CatalogEntry[], policyEffort
  */
 export function effortSelectable(name: string): boolean {
   return (EFFORTS as readonly string[]).includes(name);
+}
+
+/* ---- execution policy ---- */
+
+// The execution-policy client. It is deliberately separate from the helper-role functions above:
+// those read and write the explorer/reviewer/executor/architect store, these read and write the
+// supervisor/parent/child execution policy, and the two share no name or wording.
+//
+// These functions are transport only. They return the status and the raw body, and the screen turns
+// that into a reading or a notice through policy-state.ts. Nothing here imports that module at run
+// time, so there is no cycle between the two, and no judgement about the answer is made twice.
+
+/** One policy call's raw answer: the status and the JSON body, or a thrown transport failure. */
+export interface PolicyResponse {
+  status: number;
+  body: unknown;
+}
+
+/** The body every policy write carries: the digest the caller read and the one change it proposes. */
+export interface PolicyWritePayload {
+  expectedDigest: string;
+  change: unknown;
+}
+
+/**
+ * The execution policy the wiring record names. A read that fails throws, because a fabricated
+ * reading could show values the file does not declare.
+ */
+export async function getPolicy(signal?: AbortSignal): Promise<unknown> {
+  const response = await fetch("/api/policy", { headers: { Accept: "application/json" }, signal });
+  const body = (await response.json().catch(() => null)) as unknown;
+  if (!response.ok) throw new Error(errorMessageOf(body) ?? `The execution policy could not be read (${response.status})`);
+  return body;
+}
+
+/** One POST to a policy route, with the write headers and the caller's own payload. */
+async function postPolicy(path: string, payload: PolicyWritePayload): Promise<PolicyResponse> {
+  const response = await fetch(path, {
+    method: "POST",
+    headers: writeHeaders(),
+    body: JSON.stringify(payload),
+  });
+  const body = (await response.json().catch(() => null)) as unknown;
+  return { status: response.status, body };
+}
+
+/** Save one change to the execution policy. A refusal is returned, never thrown. */
+export function writePolicy(payload: PolicyWritePayload): Promise<PolicyResponse> {
+  return postPolicy("/api/policy", payload);
+}
+
+/** Check one change without writing it. The server judges it with the bridge's own parser. */
+export function checkPolicy(payload: PolicyWritePayload): Promise<PolicyResponse> {
+  return postPolicy("/api/policy/check", payload);
+}
+
+/**
+ * The store-accepted names a model's advertised ladder permits, in the store's own order.
+ *
+ * `supported` is the same three-state value the effort control uses: an array is the model's
+ * advertised ladder, `undefined` means no model is selected, and `null` means the catalog did not
+ * advertise a ladder. Only an array is evidence that the model refuses a name, so a non-array keeps
+ * every store-accepted name selectable.
+ */
+export function selectableEfforts(supported: readonly string[] | null | undefined): string[] {
+  if (!Array.isArray(supported)) return [...EFFORTS];
+  return EFFORTS.filter((name) => supported.includes(name));
+}
+
+/**
+ * Whether the model advertises a ladder that holds none of the names the helper-role store accepts.
+ * When this is true no option is selectable and the role can only use the session effort, so the
+ * screen owes the user a reason (see `effortFallbackNotice`).
+ */
+export function effortLadderUnsupported(supported: readonly string[] | null | undefined): boolean {
+  return Array.isArray(supported) && selectableEfforts(supported).length === 0;
+}
+
+/**
+ * The one-line reason no store-accepted effort is selectable, or null when some is. The sentence
+ * states what the role then uses: the session effort when nothing is saved, and the saved value when
+ * one is, because the screen never silently changes a stored value.
+ */
+export function effortFallbackNotice(supported: readonly string[] | null | undefined, savedEffort: string | null): string | null {
+  if (!effortLadderUnsupported(supported)) return null;
+  return savedEffort === null
+    ? "This model advertises no effort the helper-role store accepts; the role uses the session effort."
+    : `This model advertises no effort the helper-role store accepts; the saved effort ${savedEffort} is kept.`;
 }

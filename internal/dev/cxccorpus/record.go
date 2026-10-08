@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -211,14 +212,24 @@ func (r *Recorder) Setup(c *Case, s Scenario) error {
 	if err := os.Symlink(r.Node, filepath.Join(c.Root, "bin", "node")); err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(c.Root, "bin", "git"), []byte(fmt.Sprintf(gitWrapper, r.Node, r.Git)), 0o755); err != nil {
-		return err
+	// The wrapper goes on PATH and the scenario runs it, so its descriptor is open only under
+	// syscall.ForkLock: a fork in that window would inherit it and leave the wrapper unexecutable
+	// (ETXTBSY, golang/go#22315).
+	syscall.ForkLock.RLock()
+	writeErr := os.WriteFile(filepath.Join(c.Root, "bin", "git"), []byte(fmt.Sprintf(gitWrapper, r.Node, r.Git)), 0o755)
+	syscall.ForkLock.RUnlock()
+	if writeErr != nil {
+		return writeErr
 	}
 	if err := os.WriteFile(filepath.Join(c.Root, ".rec", "preload.mjs"), []byte(preload), 0o644); err != nil {
 		return err
 	}
 	err := InstallStubs(c, s.Given, func(name string) error {
-		return os.WriteFile(filepath.Join(c.Root, "stubs", name), []byte(fmt.Sprintf(stubProgram, r.Node)), 0o755)
+		// Each stub is a program the scenario runs.
+		syscall.ForkLock.RLock()
+		writeErr := os.WriteFile(filepath.Join(c.Root, "stubs", name), []byte(fmt.Sprintf(stubProgram, r.Node)), 0o755)
+		syscall.ForkLock.RUnlock()
+		return writeErr
 	})
 	c.Env = append(c.Env,
 		"NODE_OPTIONS=--import=file://"+filepath.Join(c.Root, ".rec", "preload.mjs"),

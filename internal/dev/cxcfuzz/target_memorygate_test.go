@@ -233,6 +233,20 @@ func TestMemorygateGoDeniesAWriteUnderTheRoot(t *testing.T) {
 	}
 }
 
+// c3 (CRW-908): the destination pool holds a brace pair under the memories root, so the doubled-brace f
+// literal the shell-write program builder emits for a brace reaches a generated command instead of only
+// the brace-free destinations the pool held before.
+func TestMemorygateGeneratorEmitsABraceDestination(t *testing.T) {
+	rng := rand.New(rand.NewSource(23))
+	for i := 0; i < 4000; i++ {
+		input := memoryGateGenerate(rng, rng.Int())
+		if strings.Contains(canonical(input), "{x}.md") {
+			return
+		}
+	}
+	t.Fatal("the generator never emitted the brace destination")
+}
+
 // The generator builds a PreToolUse payload over an fs scenario with the memories root and a link
 // into it, and the scenario is one the harness can materialise (so a refused case is a defect in
 // the generator, not a property of the target).

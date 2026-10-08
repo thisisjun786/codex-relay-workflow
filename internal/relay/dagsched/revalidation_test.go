@@ -865,7 +865,8 @@ func TestReworkWithUnchangedCriteriaGoesThroughAGenerationOpenedByHand(t *testin
 }
 
 // What dag-correct will not bind for a generation opened by hand: one opened for another manifest, one nobody bound to a turn, one without a named manifest, a manifest that is not the node's, and a
-// node whose result is not stale (those are corrected by a ruling). Each leaves no execution row.
+// node whose result is not stale (those are corrected by a ruling). Each leaves no execution row. A result that was accepted and is still current is corrected by hand under a reason that states a
+// correction (CRW-906, correction_accepted_test.go); under any other reason it is refused as well, and this is the case below.
 func TestAGenerationOpenedByHandIsBoundOnlyToTheManifestItWasOpenedFor(t *testing.T) {
 	t.Parallel()
 	bound := func(k *releaseKit) int {
@@ -1009,14 +1010,14 @@ func TestAGenerationOpenedByHandIsBoundOnlyToTheManifestItWasOpenedFor(t *testin
 			t.Fatalf("the refusal does not name the route: %v", err)
 		}
 	})
-	t.Run("a node whose accepted result is current has no hand-opened route", func(t *testing.T) {
+	t.Run("a node whose accepted result is current under a reason that states no correction", func(t *testing.T) {
 		k, accepted, _, _ := rvHandKit(t)
 		ridB := accepted["B"].RelationshipID
 		prepared := k.rvPrepare("sr", "B")
-		rvOpenByHand(t, k, ridB, prepared.DispatchRequestID, true)
+		acOpenByHand(t, k, ridB, prepared.DispatchRequestID, "initial_assignment", 2, true)
 		if _, err := k.sched.RecordCorrection(context.Background(), "sr", "B", "parent", prepared.ManifestDigest); refusalReason(err) != "disposition_conflict" || k.count("SELECT COUNT(*) FROM dag_node_executions WHERE node_id = 'B' AND execution_generation = 2") != 0 {
 			t.Fatalf("correction = %v", err)
-		} else if !strings.Contains(err.Error(), "not stale") {
+		} else if !strings.Contains(err.Error(), "not opened by a needs_changes ruling or a decision reply") {
 			t.Fatalf("the refusal does not say why: %v", err)
 		}
 	})

@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       commit:
-        description: Exact 40-character commit SHA on dev with successful push CI
+        description: Exact 40-character commit SHA on dev that this workflow verifies
         required: true
         type: string
       tag:
@@ -73,7 +73,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - id: release-source
-        name: Verify source, release ancestry, remote tag, and exact-commit CI
+        name: Verify source, release ancestry and remote tag
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -111,25 +111,10 @@ jobs:
               exit 1
             }
           fi
-          runs=$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?event=push&branch=dev&head_sha=$RELEASE_SHA&per_page=100") || {
-            echo '::error::Could not read dev push CI for this commit.'
-            exit 1
-          }
-          jq -e -s --arg sha "$RELEASE_SHA" '
-            map(if type == "object" and (.workflow_runs | type) == "array" then . else error("invalid CI page") end)
-            | [.[].workflow_runs[]]
-            | map(select(.head_sha == $sha and .head_branch == "dev" and .event == "push"))
-            | group_by(.id) | map(max_by(.run_attempt))
-            | sort_by(.run_number) | last
-            | select(.status == "completed" and .conclusion == "success")
-          ' <<< "$runs" >/dev/null || {
-            echo '::error::The latest dev push CI for this exact commit must have completed successfully.'
-            exit 1
-          }
           {
             printf '## Validated release candidate\n\n'
             printf -- '- Commit: %s\n- Tag: %s\n' "$RELEASE_SHA" "$RELEASE_TAG"
-            printf -- '- Latest exact-commit dev push CI passed.\n'
+            printf -- '- The selected commit is on dev and fast-forwards main.\n'
             printf -- '- No tag, release, or branch has been changed by validation.\n'
           } >> "$GITHUB_STEP_SUMMARY"
       - id: release-credentials
@@ -171,8 +156,84 @@ jobs:
           version: v2.18.2
           args: release --snapshot --clean
 
+  # CRW-966: the workflow verifies the SHA it will publish itself, instead of reading a dev push
+  # CI run. The repository's local full verification is "crw-dev ci local", which runs every job
+  # and step of ci.yml in a clean worktree of the selected commit and writes a
+  # verification-record/1 whose "result" is "pass" only when every step succeeded. A failed or
+  # absent verification fails this job, and "publish" needs it, so nothing is published from an
+  # unverified commit. The job is read-only: it creates no tag, release or branch.
+  verify:
+    needs: [validate]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out the commit to verify
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.commit }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up the pinned Go toolchain
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      # The screen build and the staged skills' Node tests are two of the verified steps, and the
+      # record's pins name Node, so the pinned release is installed here as ci.yml installs it.
+      - name: Set up the pinned Node toolchain
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24.20.0'
+      - id: release-verify-run
+        name: Run the local full verification of the selected commit
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$RELEASE_SHA" ]] || {
+            echo '::error::The checkout does not identify the commit to verify.'
+            exit 1
+          }
+          record="$RUNNER_TEMP/verification-record.json"
+          if ! go run -tags dev ./cmd/crw-dev ci local \
+              --commit "$RELEASE_SHA" \
+              --runner github-release \
+              --record "$record"; then
+            echo '::error::The local full verification of this commit failed; nothing is published.'
+            exit 1
+          fi
+      # The record is the evidence, so it is checked on its own: a missing, non-passing, pinned-
+      # mismatched or foreign-commit record fails the job and "publish" needs it, so nothing is
+      # published from an unverified commit.
+      - id: release-verify
+        name: Require a passing verification record for this commit
+        run: |
+          set -euo pipefail
+          record="$RUNNER_TEMP/verification-record.json"
+          [[ -f "$record" ]] || {
+            echo '::error::The verification wrote no record; nothing is published.'
+            exit 1
+          }
+          jq -e '
+            .schema == "verification-record/1"
+            and .result == "pass"
+            and (.pinMismatch | type) == "array"
+            and (.pinMismatch | length) == 0
+          ' "$record" >/dev/null || {
+            echo '::error::The verification record is not a passing verification-record/1 for this commit.'
+            exit 1
+          }
+          jq -e --arg sha "$RELEASE_SHA" '.headCommit == $sha' "$record" >/dev/null || {
+            echo '::error::The verification record does not name the commit being released.'
+            exit 1
+          }
+          {
+            printf '## Verified release candidate\n\n'
+            printf -- '- Commit: %s\n- Tag: %s\n' "$RELEASE_SHA" "$RELEASE_TAG"
+            printf -- '- verification-record/1 at %s is a pass for this commit.\n' "$(jq -r '.digest' "$record")"
+            printf -- '- No tag, release, or branch has been changed by verification.\n'
+          } >> "$GITHUB_STEP_SUMMARY"
+
   publish:
-    needs: validate
+    needs: [validate, verify]
     if: inputs.dry_run == false
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -206,21 +267,6 @@ jobs:
           }
           git merge-base --is-ancestor origin/main "$RELEASE_SHA" || {
             echo '::error::The release must fast-forward main; older or divergent sources are not allowed.'
-            exit 1
-          }
-          runs=$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?event=push&branch=dev&head_sha=$RELEASE_SHA&per_page=100") || {
-            echo '::error::Could not read dev push CI for this commit.'
-            exit 1
-          }
-          jq -e -s --arg sha "$RELEASE_SHA" '
-            map(if type == "object" and (.workflow_runs | type) == "array" then . else error("invalid CI page") end)
-            | [.[].workflow_runs[]]
-            | map(select(.head_sha == $sha and .head_branch == "dev" and .event == "push"))
-            | group_by(.id) | map(max_by(.run_attempt))
-            | sort_by(.run_number) | last
-            | select(.status == "completed" and .conclusion == "success")
-          ' <<< "$runs" >/dev/null || {
-            echo '::error::The latest dev push CI for this exact commit must have completed successfully.'
             exit 1
           }
           if tag_body=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG"); then
@@ -302,7 +348,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   release-go:
-    needs: [validate, publish]
+    needs: [validate, verify, publish]
     if: inputs.dry_run == false
     runs-on: ubuntu-24.04
     timeout-minutes: 15

@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -201,24 +202,73 @@ func download(ctx context.Context, pin Pin, seams *Seams, dir string) (string, e
 // the way os.MkdirAll walks it, so a configured root that mixes a symbolic link and ".." is not
 // rewritten. Lstat is used so a dangling symbolic link counts as existing rather than as a
 // directory this call may make and remove.
+//
+// A concurrent install sharing this root removes the directories it made as it finishes, and it can
+// remove an ancestor this call's scan found present. The mkdir of a component then answers ENOENT;
+// the missing components are recomputed and the walk continues, at most createRootMkdirRounds
+// times, so a normal overlap does not become a host failure. What this call made stays recorded
+// either way, and the record is kept outermost first -- the order removeCreated walks backwards --
+// so an ancestor re-made after a component below it is still reached only after that component. A
+// component the scan found missing but the mkdir finds present was made by another install, so it is
+// dropped from the record rather than removed as if it were this call's.
 func createRoot(dir string) ([]string, error) {
-	components := rootComponents(dir)
-	created := make([]string, 0, len(components))
-	for _, component := range components {
-		err := os.Mkdir(component, 0o755)
-		switch {
-		case err == nil:
-			created = append(created, component)
-		case errors.Is(err, fs.ErrExist):
-			// Already there, or another call made it in the same instant; either way it is not
-			// this call's to remove.
-		default:
+	// A root that keeps vanishing under this call must not spin: after this many recomputes the
+	// error is returned rather than the walk being tried again.
+	const createRootMkdirRounds = 3
+	var created []string
+	for round := 0; ; round++ {
+		// absent carries this round's not-exist error out of the component walk, so the walk is
+		// left and the components are recomputed instead of the error being returned at once.
+		var absent error
+		for _, component := range rootComponents(dir) {
+			if createRootBeforeMkdir != nil {
+				createRootBeforeMkdir(component)
+			}
+			err := os.Mkdir(component, 0o755)
+			switch {
+			case err == nil:
+				// The component is this call's, wherever in the walk it was made, so the record is
+				// kept outermost first: removeCreated walks it backwards, and an ancestor must not
+				// be reached while a directory below it is still there.
+				if !slices.Contains(created, component) {
+					created = append(created, component)
+				}
+				slices.SortFunc(created, func(a, b string) int {
+					return strings.Count(a, string(os.PathSeparator)) - strings.Count(b, string(os.PathSeparator))
+				})
+			case errors.Is(err, fs.ErrExist):
+				// The path is there but the scan found it missing, so whoever made it is not this
+				// call: a component this call made was removed by a concurrent install and made
+				// again by it. This call no longer owns the path and must not remove it.
+				created = slices.DeleteFunc(created, func(path string) bool { return path == component })
+			case errors.Is(err, fs.ErrNotExist):
+				// An ancestor the scan found was removed before this mkdir; the missing components
+				// are recomputed and the walk continues.
+				absent = err
+			default:
+				removeCreated(created)
+				return nil, err
+			}
+			if absent != nil {
+				break
+			}
+		}
+		if absent == nil {
+			return created, nil
+		}
+		if round >= createRootMkdirRounds {
+			// The root keeps vanishing; what this call made is not left for the next run to trip
+			// over, and the answer is the error the last mkdir gave.
 			removeCreated(created)
-			return nil, err
+			return nil, absent
 		}
 	}
-	return created, nil
 }
+
+// createRootBeforeMkdir is a test seam called immediately before each os.Mkdir createRoot performs,
+// so a test can remove an ancestor at exactly the moment a concurrent install would instead of
+// relying on timing. nil is the production value.
+var createRootBeforeMkdir func(path string)
 
 // rootComponents lists the components of dir that do not exist yet, outermost first, stopping at
 // the first ancestor that does exist. A dangling symbolic link counts as existing, so it is never

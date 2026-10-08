@@ -492,14 +492,14 @@ func TestAuditDraftDocumentCarriesTheFixedKeys(t *testing.T) {
 // The title stays inside the 72 characters the issue fixes.
 func TestAuditDraftTitleIsAtMostSeventyTwoCharacters(t *testing.T) {
 	long := strings.Repeat("a very long defect description ", 8)
-	title := auditDraftTitle("P1", long)
+	title := auditDraftTitle("P1", long, "a.go:1")
 	if len([]rune(title)) > auditDraftTitleLimit {
 		t.Errorf("the title is %d characters: %q", len([]rune(title)), title)
 	}
 	if !strings.HasPrefix(title, "P1: ") {
 		t.Errorf("the title does not name the severity: %q", title)
 	}
-	if short := auditDraftTitle("P0", "a short one"); short != "P0: a short one" {
+	if short := auditDraftTitle("P0", "a short one", "a.go:1"); short != "P0: a short one" {
 		t.Errorf("the short title is %q", short)
 	}
 }
@@ -677,9 +677,10 @@ func TestAuditDraftIndexNamingAMissingFileDoesNotBlock(t *testing.T) {
 	}
 }
 
-// A later audit that raises a defect's severity escalates the stored draft, keeping the
-// posted state and the issue key.
-func TestAuditDraftEscalatesSeverityOnALaterAudit(t *testing.T) {
+// A draft the management session already posted is the record of the one issue it opened, so a
+// later audit that raises the defect's severity does not rewrite it: the issue stands, and the
+// report names the escalation for the session to raise that issue itself.
+func TestAuditDraftPostedDraftIsNotEscalated(t *testing.T) {
 	state := auditDraftHome(t)
 	defect := AuditDefect{Severity: "P1", What: "a crash", Where: "a.go:3"}
 	auditDraftFixture(t, state, auditDraftFixtureRow{
@@ -692,21 +693,30 @@ func TestAuditDraftEscalatesSeverityOnALaterAudit(t *testing.T) {
 	if code := auditRunDrafts(context.Background(), e, []string{"mark", "--fingerprint", fingerprint, "--posted", "CRW-999"}); code != 0 {
 		t.Fatalf("mark: exit %d %q", code, errOut.String())
 	}
+	before := auditDraftLoadAt(t, state, fingerprint)
 	raised := defect
 	raised.Severity = "P0"
 	auditDraftFixture(t, state, auditDraftFixtureRow{
 		mode: auditModePR, subject: "s2", head: "h2", round: "r2", gradedAt: "2026-02-01T00:00:00Z", defects: []AuditDefect{raised},
 	})
 	second := auditDraftRunOf(t, cfg, auditDraftScope{})
-	if len(second.Updated) != 1 {
-		t.Fatalf("the escalation was not reported as an update: %+v", second)
+	if len(second.PostedEscalations) != 1 {
+		t.Fatalf("the report names %d posted escalations, want the P1 to P0 raise: %+v", len(second.PostedEscalations), second)
+	}
+	escalation := second.PostedEscalations[0]
+	if escalation.Fingerprint != fingerprint || escalation.Issue != "CRW-999" || escalation.From != "P1" || escalation.To != "P0" {
+		t.Errorf("the posted escalation reads %+v", escalation)
 	}
 	after := auditDraftLoadAt(t, state, fingerprint)
-	if after.Severity != "P0" || strings.Join(after.Labels, ",") != "audit,P0" || !strings.HasPrefix(after.Title, "P0: ") {
-		t.Errorf("the escalated draft reads %+v", after)
+	if after.Severity != before.Severity || after.Title != before.Title || after.Body != before.Body ||
+		after.Project != before.Project || strings.Join(after.Labels, ",") != strings.Join(before.Labels, ",") {
+		t.Errorf("the posted draft changed:\nbefore: %+v\nafter:  %+v", before, after)
+	}
+	if len(after.Seen) != len(before.Seen)+1 {
+		t.Errorf("the seen list holds %d entries, want one more than %d", len(after.Seen), len(before.Seen))
 	}
 	if after.State != auditDraftStatePosted || after.Posted != "CRW-999" {
-		t.Errorf("the escalation lost the posted state: %+v", after)
+		t.Errorf("the draft lost the posted state: %+v", after)
 	}
 }
 

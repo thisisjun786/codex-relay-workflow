@@ -9,7 +9,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
-	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -105,6 +104,11 @@ func (f *trForge) Compare(_ context.Context, _, base, head string) (string, erro
 type trProof struct {
 	tree string
 	err  error
+	// workflow is the text .github/workflows/ci.yml holds at the head, and fileErr the refusal the
+	// stand-in answers with instead. Empty means the repository's own workflow, which is what the
+	// bundle's head normally holds (CRW-897, answer 6).
+	workflow string
+	fileErr  error
 }
 
 func (p *trProof) Chain(_ context.Context, _ string, _, _ string, _ []TrainMemberExpectation) (TrainChain, error) {
@@ -112,6 +116,20 @@ func (p *trProof) Chain(_ context.Context, _ string, _, _ string, _ []TrainMembe
 		return TrainChain{}, p.err
 	}
 	return TrainChain{Tree: p.tree}, nil
+}
+
+func (p *trProof) File(_ context.Context, _, _, _ string) (string, error) {
+	if p.fileErr != nil {
+		return "", p.fileErr
+	}
+	if p.workflow != "" {
+		return p.workflow, nil
+	}
+	data, err := os.ReadFile(filepath.Join("..", "..", "..", ".github", "workflows", "ci.yml"))
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
 }
 
 // tr is the test's world: a temporary store, the registry, the service, the base reader and the forge.
@@ -719,57 +737,6 @@ func TestTrainAbandonedReturnsMembersToWaiting(t *testing.T) {
 	}
 }
 
-// TestTrainExpectedJobsMatchCiYml pins TrainExpectedJobs to .github/workflows/ci.yml: the workflow's
-// jobs and its go-product matrix. A change to ci.yml's jobs turns this red (CRW-768 c1, c2).
-func TestTrainExpectedJobsMatchCiYml(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join("..", "..", "..", ".github", "workflows", "ci.yml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	workflow := string(data)
-	// every job the workflow declares, and the go-product matrix expanded into its leg names
-	var want []string
-	for _, job := range ciJobNames(t, workflow) {
-		if job == "go-product" {
-			for _, part := range ciMatrixParts(t, workflow) {
-				want = append(want, "go-product ("+part+")")
-			}
-			continue
-		}
-		want = append(want, job)
-	}
-	sort.Strings(want)
-	got := append([]string{}, TrainExpectedJobs...)
-	sort.Strings(got)
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("TrainExpectedJobs = %v, and ci.yml's jobs are %v", got, want)
-	}
-}
-
-// ciMatrixParts reads jobs.go-product.strategy.matrix.part from ci.yml as text, the way
-// internal/dev/ci/edit_mirror_test.go already reads this workflow (no YAML dependency exists).
-func ciMatrixParts(t *testing.T, workflow string) []string {
-	t.Helper()
-	_, after, found := strings.Cut(workflow, "\n  go-product:\n")
-	if !found {
-		t.Fatal("ci.yml holds no go-product job")
-	}
-	body, _, _ := strings.Cut(after, "\n  dev-gate:")
-	_, matrix, found := strings.Cut(body, "\n        part: [")
-	if !found {
-		t.Fatal("ci.yml's go-product job has no matrix part list")
-	}
-	list, _, found := strings.Cut(matrix, "]")
-	if !found {
-		t.Fatal("ci.yml's matrix part list is unterminated")
-	}
-	parts := strings.Split(list, ",")
-	for i := range parts {
-		parts[i] = strings.TrimSpace(parts[i])
-	}
-	return parts
-}
-
 // TestTrainChainProverAgainstRealGit exercises TrainCheckoutProver against a temporary git repository:
 // a clean two-parent merge passes with its tree, a hand-resolved merge and a wrong order are refused.
 func TestTrainChainProverAgainstRealGit(t *testing.T) {
@@ -1023,28 +990,6 @@ func TestTrainReconcileAfterALostLandAnswer(t *testing.T) {
 	if n := w.count("SELECT count(*) FROM merge_train_events WHERE kind = 'landed'"); n != 0 {
 		t.Fatalf("reconcile wrote %d landed event(s)", n)
 	}
-}
-
-// ciJobNames reads ci.yml's job headers as text: the two-space-indented keys under the jobs
-// block, the way internal/dev/ci/edit_mirror_test.go already reads this workflow.
-func ciJobNames(t *testing.T, workflow string) []string {
-	t.Helper()
-	_, after, found := strings.Cut(workflow, "\njobs:\n")
-	if !found {
-		t.Fatal("ci.yml holds no jobs block")
-	}
-	var names []string
-	for _, line := range strings.Split(after, "\n") {
-		if line != "" && !strings.HasPrefix(line, " ") {
-			break
-		}
-		if strings.HasPrefix(line, "  ") && !strings.HasPrefix(line, "   ") && strings.HasSuffix(line, ":") {
-			if name := strings.TrimSuffix(strings.TrimPrefix(line, "  "), ":"); name != "" {
-				names = append(names, name)
-			}
-		}
-	}
-	return names
 }
 
 // TestTrainFindingsFromTheFirstReview: one test per finding the one-shot Codex review raised on the

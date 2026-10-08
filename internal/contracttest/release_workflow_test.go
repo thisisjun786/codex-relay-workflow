@@ -1,6 +1,7 @@
 package contracttest
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"slices"
@@ -29,6 +30,7 @@ var releaseBlocks = map[string][2]string{
 	"inputs":        {"validate", "release-inputs"},
 	"source":        {"validate", "release-source"},
 	"credentials":   {"validate", "release-credentials"},
+	"verify":        {"verify", "release-verify"},
 	"publish":       {"publish", "release-publish"},
 	"go-source":     {"release-go", "release-go-source"},
 	"go-tree":       {"release-go", "release-go-tree"},
@@ -114,6 +116,113 @@ func (r *releaseRepo) expectNoRelease(t *testing.T) {
 	}
 }
 
+// verifyRecord writes a verification-record.json into the fixture and returns the RUNNER_TEMP the
+// verify step reads it from. values are merged over a passing record for r.candidate, so a case
+// changes only the field it is about.
+func (r *releaseRepo) verifyRecord(t *testing.T, values map[string]any) string {
+	t.Helper()
+	dir := filepath.Join(r.dir, "verify")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	record := map[string]any{
+		"schema": "verification-record/1", "runner": "github-release",
+		"headCommit": r.candidate, "result": "pass", "pinMismatch": []any{},
+		"digest": "sha256:" + strings.Repeat("0", 64),
+	}
+	for key, value := range values {
+		if value == nil {
+			delete(record, key)
+			continue
+		}
+		record[key] = value
+	}
+	raw, err := json.Marshal(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "verification-record.json"), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+// CRW-966: release.yml verifies the SHA it will publish itself. The dev push CI run it used to
+// read is gone, and the evidence is the repository's local full verification: a
+// verification-record/1 whose result is a pass for the commit being released. A missing record, a
+// non-passing result, a pin mismatch, a foreign commit and a wrong schema each refuse publication.
+func TestReleaseWorkflow_verify_requires_a_passing_record_for_the_commit(t *testing.T) {
+	r := releaseFixture(t)
+	r.pass(t, "a passing record", "verify", map[string]string{"RUNNER_TEMP": r.verifyRecord(t, nil)})
+	for label, values := range map[string]map[string]any{
+		"missing record": nil,
+		"failed result":  {"result": "fail"},
+		"no result":      {"result": nil},
+		"pin mismatch":   {"pinMismatch": []any{"node"}},
+		"foreign commit": {"headCommit": strings.Repeat("0", 40)},
+		"no head commit": {"headCommit": nil},
+		"wrong schema":   {"schema": "verification-record/2"},
+		"no schema":      {"schema": nil},
+	} {
+		t.Run(label, func(t *testing.T) {
+			temp := r.verifyRecord(t, values)
+			if label == "missing record" {
+				if err := os.Remove(filepath.Join(temp, "verification-record.json")); err != nil {
+					t.Fatal(err)
+				}
+			}
+			r.refuse(t, label, "verify", map[string]string{"RUNNER_TEMP": temp})
+		})
+	}
+}
+
+// Publication and the binary attachment both stand behind the verification: a failed or absent
+// verify job cannot publish, because publish needs it and release-go needs publish.
+func TestReleaseWorkflow_publication_needs_the_verification(t *testing.T) {
+	r := releaseFixture(t)
+	verify, err := releaseJobBody(r.workflow, "verify")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, form := range []string{
+		"go run -tags dev ./cmd/crw-dev ci local",
+		"--commit \"$RELEASE_SHA\"",
+		"--runner github-release",
+		"--record \"$record\"",
+	} {
+		if !strings.Contains(verify, form) {
+			t.Fatalf("verify does not run the local full verification as %q:\n%s", form, verify)
+		}
+	}
+	if !strings.Contains(verify, "ci local") {
+		t.Fatalf("verify does not run the local full verification:\n%s", verify)
+	}
+	publish, err := releaseJobBody(r.workflow, "publish")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(publish, "needs: [validate, verify]") {
+		t.Fatalf("publish does not need verify:\n%s", publish)
+	}
+	job, err := releaseJobBody(r.workflow, "release-go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(job, "needs: [validate, verify, publish]") {
+		t.Fatalf("release-go does not need verify:\n%s", job)
+	}
+	// The dev push CI run the workflow used to read is gone from every job.
+	for _, name := range []string{"validate", "publish", "release-go"} {
+		body, err := releaseJobBody(r.workflow, name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(body, "actions/workflows/ci.yml/runs") {
+			t.Errorf("%s still reads a dev push CI run", name)
+		}
+	}
+}
+
 func (r *releaseRepo) ghLog(t *testing.T) string {
 	t.Helper()
 	raw, err := os.ReadFile(r.log)
@@ -129,8 +238,8 @@ func TestReleaseWorkflow_publication_needs_validation_and_a_real_request(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(publish, "needs: validate") || !strings.Contains(publish, "inputs.dry_run == false") {
-		t.Fatal("publish must follow validation and a real publication request")
+	if !strings.Contains(publish, "needs: [validate, verify]") || !strings.Contains(publish, "inputs.dry_run == false") {
+		t.Fatal("publish must follow validation and verification, and a real publication request")
 	}
 	metadata, _, err := releaseStepBlock(r.workflow, "validate", "release-credentials")
 	if err != nil {
@@ -157,41 +266,11 @@ func TestReleaseWorkflow_owner_dispatch_inputs(t *testing.T) {
 	}
 }
 
-func TestReleaseWorkflow_source_requires_latest_exact_push_ci_and_remote_tag(t *testing.T) {
+// CRW-966: the release source check keeps its ancestry and remote tag rules. It no longer reads a
+// dev push CI run, so the CI-run cases left with the lookup; the verification is the verify job's.
+func TestReleaseWorkflow_source_requires_ancestry_and_remote_tag(t *testing.T) {
 	r := releaseFixture(t)
 	r.pass(t, "valid source", "source", nil)
-	r.setCase(t, "ci", map[string]any{"older": true, "conclusion": "failure", "run_number": 3})
-	r.refuse(t, "older success does not hide latest failure", "source", nil)
-	for _, c := range []struct {
-		label  string
-		values map[string]any
-	}{
-		{"missing", nil},
-		{"error", nil},
-		{"running", map[string]any{"status": "in_progress", "conclusion": ""}},
-		{"failed", map[string]any{"conclusion": "failure"}},
-		{"cancelled", map[string]any{"conclusion": "cancelled"}},
-		{"wrong-sha", map[string]any{"sha": strings.Repeat("0", 40)}},
-		{"pr-only", map[string]any{"event": "pull_request"}},
-		{"manual", map[string]any{"event": "workflow_dispatch"}},
-		{"wrong-branch", map[string]any{"branch": "main"}},
-		{"latest-cancelled", nil},
-		{"latest-attempt-failed", nil},
-		{"stale-attempt", nil},
-		{"paged-pending", nil},
-		{"bad-page", nil},
-	} {
-		t.Run(c.label, func(t *testing.T) {
-			r.setCase(t, "ci", map[string]any{"case": "success", "older": false, "conclusion": "success",
-				"status": "completed", "event": "push", "branch": "dev", "sha": "", "attempt": 1})
-			r.setCase(t, "ci", map[string]any{"case": c.label})
-			r.setCase(t, "ci", c.values)
-			r.refuse(t, c.label, "source", nil)
-		})
-	}
-	r.setCase(t, "ci", map[string]any{"case": "paged-success"})
-	r.pass(t, "paginated successes still select the newest", "source", nil)
-	r.setCase(t, "ci", map[string]any{"case": "success"})
 	r.setCase(t, "tag", map[string]any{"case": "commit", "object_sha": r.base, "object_type": "commit"})
 	r.refuse(t, "lightweight tag points elsewhere", "source", nil)
 	r.setCase(t, "tag", map[string]any{"case": "annotated", "object_sha": strings.Repeat("a", 40), "object_type": "tag",
@@ -327,8 +406,8 @@ func TestReleaseWorkflow_release_go_runs_after_publication_and_snapshot_stays_in
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(job, "needs: [validate, publish]") || !strings.Contains(job, "if: inputs.dry_run == false") {
-		t.Fatalf("release-go must follow publication:\n%s", job)
+	if !strings.Contains(job, "needs: [validate, verify, publish]") || !strings.Contains(job, "if: inputs.dry_run == false") {
+		t.Fatalf("release-go must follow verification and publication:\n%s", job)
 	}
 	if ids, err = releaseStepIDs(r.workflow, "release-go"); err != nil || !slices.Equal(ids, []string{"release-go-source", "release-go-tree", "release-go-publish"}) {
 		t.Fatalf("release-go steps %v %v", ids, err)

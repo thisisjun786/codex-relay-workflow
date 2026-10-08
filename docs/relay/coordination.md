@@ -517,9 +517,10 @@ a pull request comment is never exempted.
   record lists it). The list is empty when the document was rejected or the record could not be
   graded. Without the flag the payload is exactly what it was. No problem code, refusal reason or
   exit code was added.
-- **What the relay does not decide.** Whether a thread is minor enough to judge here is the
-  coordinator's decision. A P0, P1 or security finding goes back to the child as before, and
-  nothing in the relay stops an entry that records another grade. The file is unauthenticated,
+- **What the relay does not decide.** Whether a thread is inside the issue's promise is the
+  coordinator's decision under the scope rule in [Late review threads](https://github.com/thisisjun786/codex-relay-workflow/blob/dev/plugins/crw/skills/crw-run/references/merge-readiness.md#late-review-threads):
+  a finding inside the promise is fixed whatever its grade, a P0 is always fixed, and nothing in
+  the relay stops an entry that records another grade. The file is unauthenticated,
   like `--required` and `--actor`; the payload carries each entry so the merge record keeps the
   grade and the evidence that were given.
 
