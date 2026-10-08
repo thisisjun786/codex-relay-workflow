@@ -69,6 +69,10 @@ type improveProposeCandidate struct {
 	// sighting: one record without origins must not turn another record's origins into moving
 	// occurrences.
 	seenWhere map[auditDraftSeen]bool
+	// seenRecord is the where of the record each sighting came from. A draft an earlier build wrote names
+	// a split's record by that where rather than by its origin, so the record is how such a sighting is
+	// found again.
+	seenRecord map[auditDraftSeen]string
 }
 
 // improveProposeReport is what crw manage improve propose prints: the ranked candidates, the
@@ -331,7 +335,7 @@ func improveProposeCandidates(bundle improveBundle) []improveProposeCandidate {
 			}
 			improveProposeAddProject(&current.Projects, project, count)
 			current.Evidence = append(current.Evidence, record.Evidence...)
-			improveProposeAddSightings(current, project, sightings, fallback)
+			improveProposeAddSightings(current, project, sightings, fallback, record.Where)
 			continue
 		}
 		byKey[key] = len(candidates)
@@ -341,7 +345,7 @@ func improveProposeCandidates(bundle improveBundle) []improveProposeCandidate {
 			Evidence: append([]string(nil), record.Evidence...),
 		}
 		improveProposeAddProject(&candidate.Projects, project, count)
-		improveProposeAddSightings(&candidate, project, sightings, fallback)
+		improveProposeAddSightings(&candidate, project, sightings, fallback, record.Where)
 		candidates = append(candidates, candidate)
 	}
 	for i := range candidates {
@@ -394,7 +398,7 @@ func improveProposeProjectKey(project string) string {
 // added to it, so the map is what keeps a stored count and a grown seen list in step. A record that
 // merged several rows of one origin keeps the count that origin was first given, so two rows behind
 // one origin are not counted twice.
-func improveProposeAddSightings(candidate *improveProposeCandidate, project string, sightings []auditDraftSeen, where bool) {
+func improveProposeAddSightings(candidate *improveProposeCandidate, project string, sightings []auditDraftSeen, where bool, recordWhere string) {
 	if candidate.seenProjects == nil {
 		candidate.seenProjects = map[auditDraftSeen]string{}
 	}
@@ -402,11 +406,17 @@ func improveProposeAddSightings(candidate *improveProposeCandidate, project stri
 		candidate.seenWhere = map[auditDraftSeen]bool{}
 	}
 	owner := improveProposeProjectKey(project)
+	if candidate.seenRecord == nil {
+		candidate.seenRecord = map[auditDraftSeen]string{}
+	}
 	for _, sighting := range sightings {
 		// A sighting is compared by its whole entry when it falls back to the record's where, and by
 		// its origin otherwise. The flag belongs to the sighting, so a record without origins cannot
 		// turn another record's origins into moving occurrences.
 		candidate.seenWhere[sighting] = candidate.seenWhere[sighting] || where
+		if _, ok := candidate.seenRecord[sighting]; !ok {
+			candidate.seenRecord[sighting] = recordWhere
+		}
 		if improveProposeSeenHas(candidate.seen, sighting, candidate.seenWhere[sighting]) {
 			continue
 		}
@@ -587,23 +597,37 @@ func improveProposeMergeProjects(stored []improveProposeProject, added, moved ma
 
 // improveProposeReconcileSightings brings a stored seen list and the counts its draft holds up to
 // date with this run's candidate, and reports what changed. One origin is one sighting: an origin
-// the draft already carries is not added again, and the owner its occurrence is counted under
-// follows the latest reading, so learning the project of an existing split moves its count from
-// the unknown owner to the project instead of counting the origin twice. An origin the draft does
-// not carry yet adds one to the project this run saw it in. The owner moves are returned in a
-// second map, because a stored project's count is otherwise carried forward unchanged.
-func improveProposeReconcileSightings(candidate improveProposeCandidate, stored []auditDraftSeen, issueKeys map[string]bool) (seen []auditDraftSeen, added, moved map[string]int) {
+// the draft already carries is not added again, and the owner its occurrence is counted under follows
+// the latest reading, so learning the project of an existing split moves its count from the unknown
+// owner to the project instead of counting the origin twice. An origin the draft does not carry yet
+// adds one to the project this run saw it in. The owner moves are returned in a second map, because a
+// stored project's count is otherwise carried forward unchanged.
+//
+// A draft with no improve item was written before origins were read: its split sightings name the
+// relationship rather than the event the origin is read from. For such a draft a candidate sighting
+// whose record is already stored takes over that stored sighting under its origin, so the occurrence
+// is not counted a second time. The time an origin already carries is kept, so a source that only
+// refreshes the last-seen time of an origin leaves the stored sighting, and the file, as they are.
+func improveProposeReconcileSightings(candidate improveProposeCandidate, stored []auditDraftSeen, issueKeys map[string]bool, legacy bool) (seen []auditDraftSeen, added, moved map[string]int) {
 	seen = append([]auditDraftSeen(nil), stored...)
 	added = map[string]int{}
 	moved = map[string]int{}
+	claimed := map[int]bool{}
 	for _, sighting := range candidate.seen {
 		owner := improveProposeProjectKey(candidate.seenProjects[sighting])
 		at := improveProposeSeenIndex(seen, sighting, candidate.seenWhere[sighting])
+		if at < 0 && legacy {
+			at = improveProposeLegacySeenIndex(seen, claimed, candidate.seenRecord[sighting])
+			if at >= 0 {
+				seen[at].Head = sighting.Head
+			}
+		}
 		if at < 0 {
 			seen = append(seen, sighting)
 			added[owner]++
 			continue
 		}
+		claimed[at] = true
 		// The occurrence is already recorded. Its owner in this run may differ from the stored one:
 		// a relationship that had no scope may have gained its project, so the count follows the
 		// latest reading rather than staying under the owner it was first seen under.
@@ -616,7 +640,6 @@ func improveProposeReconcileSightings(candidate improveProposeCandidate, stored 
 			was = improveProposeProjectKey(seen[at].Subject)
 		}
 		seen[at].Subject = sighting.Subject
-		seen[at].At = sighting.At
 		// A stored owner this run's own evidence names as an issue key is not moved here: the merge
 		// already drops that false project and carries its occurrences to the unknown owner, so
 		// moving them again would count the same occurrence twice.
@@ -626,6 +649,20 @@ func improveProposeReconcileSightings(candidate improveProposeCandidate, stored 
 		}
 	}
 	return seen, added, moved
+}
+
+// improveProposeLegacySeenIndex is the position of the first stored sighting this feature wrote that
+// no candidate sighting has claimed and that names the record's where, or -1 when there is none.
+func improveProposeLegacySeenIndex(seen []auditDraftSeen, claimed map[int]bool, where string) int {
+	if where == "" {
+		return -1
+	}
+	for i, have := range seen {
+		if !claimed[i] && have.Mode == improveProposeSource && have.Head == where {
+			return i
+		}
+	}
+	return -1
 }
 
 // improveProposeSuppressed reports whether an exported issue already covers a candidate: the issue
@@ -835,7 +872,7 @@ func improveProposeRunCapped(ctx context.Context, e *Env, bundlePath string, dry
 		storedProjects, storedEvidence := improveProposeStored(doc, candidate.Kind)
 		evidence := improveSortedEvidence(append(append([]string(nil), storedEvidence...), candidate.Evidence...))
 		issueKeys := improveProposeIssueKeys(evidence)
-		seen, added, moved := improveProposeReconcileSightings(candidate, doc.Seen, issueKeys)
+		seen, added, moved := improveProposeReconcileSightings(candidate, doc.Seen, issueKeys, doc.Improve == nil)
 		seenChanged := !improveProposeSeenEqual(seen, doc.Seen)
 		if doc.State == auditDraftStatePosted {
 			// A posted draft is the record of an issue the management session already opened, so this
@@ -849,7 +886,7 @@ func improveProposeRunCapped(ctx context.Context, e *Env, bundlePath string, dry
 			projects := improveProposeMergeProjects(storedProjects, added, moved, issueKeys)
 			changed := seenChanged
 			if doc.Source == improveProposeSource {
-				changed = changed || !improveProposeProjectsEqual(projects, storedProjects) || !improveProposeStringsEqual(evidence, storedEvidence)
+				changed = changed || doc.Improve == nil || !improveProposeProjectsEqual(projects, storedProjects) || !improveProposeStringsEqual(evidence, storedEvidence)
 			}
 			if !changed {
 				continue

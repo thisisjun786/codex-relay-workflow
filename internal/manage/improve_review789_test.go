@@ -1382,3 +1382,84 @@ func TestImproveReview789AggregateGrowthIsAdded(t *testing.T) {
 		t.Errorf("the new origin did not add one to the held count:\n%s", body)
 	}
 }
+
+// TestImproveReview988MarkKeepsTheImproveItem covers C2 through the command an operator runs: a
+// mark rewrites the draft through the same load and save, and the counts it holds survive.
+func TestImproveReview988MarkKeepsTheImproveItem(t *testing.T) {
+	w := improveProposeTestSetup(t)
+	improveProposeTestConfigure(t, w, map[string]any{})
+	first := improveReview988Propose(t, w, improveProposeTestBundle(t, w, []improveRecord{
+		improveProposeTestSplit("project-a", "size overrun", "rel-a"),
+	}))
+	fingerprint := first.Created[0].Fingerprint
+	path := improveReview988DraftPath(w, fingerprint)
+	if got := improveReview988Counts(t, path); len(got) != 1 || got[0] != "project-a=1" {
+		t.Fatalf("the draft holds %v before the mark, want project-a=1", got)
+	}
+	var stdout, stderr strings.Builder
+	if code := auditDraftRunMark(improveProposeTestEnv(w, &stdout, &stderr), []string{"--fingerprint", fingerprint, "--posted", "CRW-1"}); code != 0 {
+		t.Fatalf("mark: exit %d, stderr %s", code, stderr.String())
+	}
+	if got := improveReview988Counts(t, path); len(got) != 1 || got[0] != "project-a=1" {
+		t.Errorf("the mark dropped the improve item: counts = %v", got)
+	}
+}
+
+// TestImproveReview988DevWrittenDraftTakesOverItsSightings covers C5: a draft an earlier build wrote
+// names a split's sighting by its relationship, not by the origin this feature reads. The next run
+// takes that sighting over under its origin, counts the occurrence once, and writes the item the draft
+// lacked; a further run changes nothing.
+func TestImproveReview988DevWrittenDraftTakesOverItsSightings(t *testing.T) {
+	w := improveProposeTestSetup(t)
+	improveProposeTestConfigure(t, w, map[string]any{})
+	bundle := improveProposeTestBundle(t, w, []improveRecord{
+		improveProposeTestSplit("project-a", "size overrun", "rel-a"),
+	})
+	first := improveReview988Propose(t, w, bundle)
+	path := improveReview988DraftPath(w, first.Created[0].Fingerprint)
+	improveReview988EditRaw(t, path, func(doc map[string]any) {
+		delete(doc, "improve")
+		doc["seen"].([]any)[0].(map[string]any)["head"] = "rel-a"
+	})
+
+	again := improveReview988Propose(t, w, bundle)
+	if len(again.Updated) != 1 {
+		t.Fatalf("updated = %+v, want the earlier draft to take its item", again.Updated)
+	}
+	if got := improveReview988Counts(t, path); len(got) != 1 || got[0] != "project-a=1" {
+		t.Errorf("the project counts = %v, want project-a=1: the occurrence was counted again", got)
+	}
+	seen := improveReview988Raw(t, path)["seen"].([]any)
+	if len(seen) != 1 || seen[0].(map[string]any)["head"] != "events:rel-a" {
+		t.Errorf("the stored sighting = %v, want one sighting under the origin events:rel-a", seen)
+	}
+	before := improveReview988Read(t, path)
+	if third := improveReview988Propose(t, w, bundle); len(third.Updated) != 0 {
+		t.Errorf("a rerun after the takeover updated the draft: %+v", third.Updated)
+	}
+	if after := improveReview988Read(t, path); after != before {
+		t.Errorf("a rerun after the takeover rewrote the draft file")
+	}
+}
+
+// TestImproveReview988RefreshedLastSeenKeepsTheFile covers C4 and C7 for a source that refreshes its
+// last-seen time as it raises an origin's occurrence count: the origin is already carried, so the
+// draft and its file stay as they are.
+func TestImproveReview988RefreshedLastSeenKeepsTheFile(t *testing.T) {
+	w := improveProposeTestSetup(t)
+	improveProposeTestConfigure(t, w, map[string]any{})
+	first := improveReview988Propose(t, w, improveProposeTestBundle(t, w, []improveRecord{
+		improveProposeTestRecord(improveKindFault, "observation_stalled", "project-a", "a signature", 5, "fault:store-a:f1"),
+	}))
+	path := improveReview988DraftPath(w, first.Created[0].Fingerprint)
+	before := improveReview988Read(t, path)
+
+	refreshed := improveProposeTestRecord(improveKindFault, "observation_stalled", "project-a", "a signature", 6, "fault:store-a:f1")
+	refreshed.LastAt = "2026-10-06T02:00:00Z"
+	if report := improveReview988Propose(t, w, improveProposeTestBundle(t, w, []improveRecord{refreshed})); len(report.Updated) != 0 {
+		t.Fatalf("updated = %+v, want the draft kept: the origin is already carried", report.Updated)
+	}
+	if after := improveReview988Read(t, path); after != before {
+		t.Errorf("the refreshed last-seen time rewrote the draft file")
+	}
+}
