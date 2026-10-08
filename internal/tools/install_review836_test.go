@@ -397,7 +397,7 @@ func TestToolsReview836RemoveCreatedLeavesANonDirectoryAlone(t *testing.T) {
 	if info.IsDir() {
 		t.Fatal("the test did not place a regular file at the recorded path")
 	}
-	created := []createRootRecord{{path: target, info: info}}
+	created := []createRootRecord{{path: target, id: createRootIDOfInfo(t, info)}}
 
 	removeCreated(created)
 	if _, err := os.Stat(target); err != nil {
@@ -679,7 +679,7 @@ func TestToolsReview836HeldDirectoryIsNotReusedWhileRecorded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if os.SameFile(made.info, info) {
+	if made.id == createRootIDOfInfo(t, info) {
 		t.Fatalf("the directory another install made at %s has the identity this call recorded", target)
 	}
 	removeCreated(created)
