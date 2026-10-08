@@ -925,7 +925,10 @@ func sqliteIntegrityCheck(ctx context.Context, dest string, copied []backedUp) (
 	defer os.RemoveAll(scratch)
 	var database string
 	for _, e := range copied {
-		if e.Kind == "dir" || !strings.HasPrefix(e.Path, "relay.sqlite3") {
+		// Only the store's own file and its log are duplicated: they are the only files the check opens. A prefix match
+		// would also take a directory or a leftover journal that merely starts with the same name, and a flattened name
+		// would collide with the store in the scratch directory (CRW-862 generation 4, failure class 1).
+		if e.Kind == "dir" || (e.Path != "relay.sqlite3" && e.Path != walSidecar) {
 			continue
 		}
 		// streamed with a fixed buffer, as the backup's own copy is: a store of any size is duplicated

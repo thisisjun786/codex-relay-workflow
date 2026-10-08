@@ -643,3 +643,64 @@ func TestTheAppearedLogBranchIsNotACopyAndNotAChange(t *testing.T) {
 		}
 	}
 }
+
+// CRW-862 generation 4 (failure class 1): the integrity gate duplicates only the store's own two files, relay.sqlite3
+// and relay.sqlite3-wal, which are the only files it opens. Before the fix it duplicated every copied entry whose path
+// starts with "relay.sqlite3" and flattened it to its base name, so a directory relay.sqlite3-archive holding a file
+// named relay.sqlite3 collided with the store in the scratch directory, and the healthy store was refused as not a
+// restore candidate.
+func TestTheIntegrityCheckDoesNotCollideWithAStoreLikeDirectory(t *testing.T) {
+	h, _, second, _, next := zoneInstalled(t)
+	zoneStore(t, h)
+	archive := filepath.Join(h.relayState, "relay.sqlite3-archive")
+	if err := os.Mkdir(archive, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(archive, "relay.sqlite3"), "an archived file, not the store\n")
+	o := h.options()
+	o.StateBackup = backupOf(h, "archive-dir")
+	result, code := install.Install(context.Background(), o, "update", install.Source{From: second})
+	if code != install.OK || at(result, "promoted") != true || h.pointerTarget(t) != next {
+		t.Fatalf("a healthy store beside a store-like directory must back up: exit %d\n%s", code, golden.Canon(at(result, "swapGate")))
+	}
+	var manifest struct {
+		IntegrityCheck   string `json:"integrityCheck"`
+		RestoreCandidate bool   `json:"restoreCandidate"`
+	}
+	if err := json.Unmarshal(mustRead(t, backupOf(h, "archive-dir")+install.ManifestSuffix), &manifest); err != nil {
+		t.Fatal(err)
+	}
+	if !manifest.RestoreCandidate || manifest.IntegrityCheck != "ok" {
+		t.Fatalf("manifest: %+v", manifest)
+	}
+}
+
+// CRW-862 generation 4 (failure class 1): a file that only starts with "relay.sqlite3" (a leftover journal) is backed up
+// but never duplicated into the integrity scratch directory. The copy of the journal is made unreadable after the
+// copy is verified and before the gate runs: a duplicate of it would fail the gate, so a backup that passes shows the
+// journal was not duplicated.
+func TestTheIntegrityCheckDoesNotDuplicateAJournalItDoesNotOpen(t *testing.T) {
+	h, _, second, _, next := zoneInstalled(t)
+	zoneStore(t, h)
+	write(t, filepath.Join(h.relayState, "relay.sqlite3-journal"), "a leftover journal, which the check never opens\n")
+	dest := backupOf(h, "journal")
+	restore := install.ReplaceStateBackupVerified(func() error {
+		return os.Chmod(filepath.Join(dest, "relay.sqlite3-journal"), 0)
+	})
+	defer restore()
+	o := h.options()
+	o.StateBackup = dest
+	result, code := install.Install(context.Background(), o, "update", install.Source{From: second})
+	if code != install.OK || at(result, "promoted") != true || h.pointerTarget(t) != next {
+		t.Fatalf("a journal the check does not open must not refuse the backup: exit %d\n%s", code, golden.Canon(at(result, "swapGate")))
+	}
+	var manifest struct {
+		RestoreCandidate bool `json:"restoreCandidate"`
+	}
+	if err := json.Unmarshal(mustRead(t, dest+install.ManifestSuffix), &manifest); err != nil {
+		t.Fatal(err)
+	}
+	if !manifest.RestoreCandidate {
+		t.Fatalf("the journal must not change the restore candidacy: %+v", manifest)
+	}
+}
