@@ -130,23 +130,80 @@ func manifestTargetsCommandText(s string) string {
 // for the system call and returns as the character it was given. The containment judgement compares those
 // two answers, so the spelling has to survive (CRW-652).
 func manifestTargetsRealpath(path string) (string, error) {
-	abs, err := filepath.Abs(path)
+	abs, err := manifestTargetsAbsolute(path)
 	if err != nil {
 		return "", err
 	}
 	return manifestTargetsFollow(abs, 0)
 }
 
-// manifestTargetsFollow is one walk of manifestTargetsRealpath: the components before the first symlink
-// keep their spelling, that symlink is replaced by its target resolved against the directory reached so
-// far, and the walk restarts there with the components still left.
+// manifestTargetsAbsolute makes a path absolute without resolving '..'. filepath.Abs would Clean the
+// result, and a '..' in the argument -- after a symlink or not -- would be dropped before the walk
+// reached its own component, so the walk would answer a different file than the kernel does (CRW-937).
+// The walk resolves every component, '..' included, in kernel order, so the argument has to reach it
+// spelled as the caller gave it. What the oracle's path.resolve does drop for a path with no '..' --
+// '.' components, doubled separators and a trailing separator -- is dropped here too, so such a path is
+// judged exactly as before.
+func manifestTargetsAbsolute(path string) (string, error) {
+	if filepath.IsAbs(path) {
+		return manifestTargetsCollapseDots(path), nil
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	if path == "" {
+		return wd, nil
+	}
+	return manifestTargetsCollapseDots(wd + string(filepath.Separator) + path), nil
+}
+
+// manifestTargetsCollapseDots drops the components the oracle's path.resolve drops for a path that
+// holds no '..': '.' components, doubled separators and a trailing separator. A '..' component is kept,
+// because the walk resolves it in kernel order. This is not filepath.Clean: Clean would also resolve
+// '..' lexically, which is the defect CRW-937 fixes.
+func manifestTargetsCollapseDots(path string) string {
+	sep := string(filepath.Separator)
+	volume := filepath.VolumeName(path)
+	parts := strings.Split(path[len(volume):], sep)
+	out := make([]string, 0, len(parts))
+	for i, part := range parts {
+		if part == "." {
+			continue
+		}
+		if part == "" && i != 0 {
+			continue
+		}
+		out = append(out, part)
+	}
+	joined := volume + strings.Join(out, sep)
+	if joined == "" {
+		return sep
+	}
+	return joined
+}
+
+// manifestTargetsFollow is one walk of manifestTargetsRealpath: the components are walked in kernel
+// order, and a symlink component is replaced by its target's components, put in front of the components
+// still left, so the directory reached is always fully resolved and its lexical parent is its physical
+// parent.
 //
 // A symlink component is stat'ed before its target is read, exactly as Node's realpathSync calls
 // binding.stat(base) before binding.readlink (CRW-840): the stat follows the link, so a link whose target
 // cannot be reached answers that error instead of a resolved path, and targetEscapesRoot then takes its
-// paired lexical fallback. The target itself is resolved lexically, as pathModule.resolve(previous,
-// linkTarget) does, so a '..' inside the target is dropped by Clean rather than walked physically. A
-// component that cannot be read, and a link chain past the depth a realpath follows, answer an error,
+// paired lexical fallback.
+//
+// The link target is not joined or cleaned before its components are walked: it is concatenated as it
+// stands, so the next walk splits it and steps through its components ahead of the components still
+// left. That is the order the kernel resolves in, so a '..' in the target climbs from the directory the
+// walk has physically reached -- not from a lexical prefix. This deliberately diverges from the oracle,
+// whose realpathSync resolves the target with pathModule.resolve(previous, linkTarget) and therefore
+// drops that '..' lexically (CRW-937): this walk answers the plugin-root containment check, and the
+// oracle's answer would judge a target that reaches outside the root as one inside it. The prefix already
+// walked is compacted with filepath.Clean, which cannot change the answer because a component reaches it
+// only after Lstat found it is not a symlink, so its lexical parent is its physical parent; without that
+// the accumulated string would grow without bound and an over-long path would answer an error instead.
+// A component that cannot be read, and a link chain past the depth a realpath follows, answer an error,
 // which sends both paths to the caller's lexical fallback as the oracle's throw does.
 func manifestTargetsFollow(path string, depth int) (string, error) {
 	if depth > 40 {
@@ -166,7 +223,7 @@ func manifestTargetsFollow(path string, depth int) (string, error) {
 			return "", err
 		}
 		if info.Mode()&os.ModeSymlink == 0 {
-			dir = next
+			dir = filepath.Clean(next)
 			continue
 		}
 		// Node's realpathSync stats the link before reading it, so a target it cannot reach is the
@@ -180,12 +237,12 @@ func manifestTargetsFollow(path string, depth int) (string, error) {
 			return "", err
 		}
 		if !filepath.IsAbs(target) {
-			target = filepath.Join(dir+sep, target)
+			target = dir + sep + target
 		}
 		if rest := strings.Join(parts[i+1:], sep); rest != "" {
-			target = filepath.Join(target, rest)
+			target = target + sep + rest
 		}
-		return manifestTargetsFollow(filepath.Clean(target), depth+1)
+		return manifestTargetsFollow(target, depth+1)
 	}
 	if dir == "" {
 		return sep, nil
@@ -196,7 +253,16 @@ func manifestTargetsFollow(path string, depth int) (string, error) {
 // targetEscapesRoot keeps the paired realpath fallback exact: either failure
 // makes BOTH paths lexical. A missing leaf below a link is a missing target.
 func targetEscapesRoot(root, target string) bool {
-	r, e1 := manifestTargetsRealpath(root)
+	// The ROOT is normalized lexically, exactly as targetResolve normalizes it to build the target and
+	// as the oracle's path.resolve normalizes it: the root is the caller's own spelling, not a link
+	// target and not a remaining path, so its '.' and '..' components are dropped before the walk
+	// (CRW-937). Only the components AFTER the root -- the target's -- are walked in kernel order. The
+	// normalized root is still handed to the walk, so a symlink IN the root is resolved as before.
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		rootAbs = root
+	}
+	r, e1 := manifestTargetsRealpath(rootAbs)
 	p, e2 := manifestTargetsRealpath(target)
 	if e1 != nil || e2 != nil {
 		r, _ = filepath.Abs(root)
@@ -209,12 +275,25 @@ func targetEscapesRoot(root, target string) bool {
 	return p != r && !strings.HasPrefix(p, strings.TrimSuffix(r, string(filepath.Separator))+string(filepath.Separator))
 }
 func targetResolve(root, rel string) string {
+	// One leading "./" is removed, exactly as the oracle's rel.replace(/^\.\//, "") does: what
+	// follows decides whether the result is absolute.
 	rel = strings.TrimPrefix(rel, "./")
 	if filepath.IsAbs(rel) {
-		return filepath.Clean(rel)
+		return manifestTargetsCollapseDots(rel)
 	}
-	p, _ := filepath.Abs(filepath.Join(root, rel))
-	return p
+	// The ROOT is normalized the way the oracle's resolve normalizes it -- its own '.' and '..'
+	// components are dropped -- so the manifest lookup and every target are built from ONE root
+	// (CRW-937). The TARGET's spelling is kept: filepath.Join would Clean the whole result and drop a
+	// '..' the target spelled after a symlink before the walk could resolve it, so the verdict would
+	// describe a different file than the kernel opens. manifestTargetsCollapseDots drops only what the
+	// oracle's resolve drops for a path that holds no '..'; the walk resolves every component that is
+	// left, '..' included, in kernel order.
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		rootAbs = root
+	}
+	sep := string(filepath.Separator)
+	return manifestTargetsCollapseDots(strings.TrimRight(rootAbs, sep) + sep + rel)
 }
 func targetCheck(issues *[]TargetIssue, kind TargetKind, root, rel, missing string) error {
 	abs := targetResolve(root, rel)

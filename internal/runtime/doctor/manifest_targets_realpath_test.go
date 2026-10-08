@@ -148,11 +148,12 @@ func targetOracleRealpath(path string) (string, error) {
 }
 
 // targetRealpathMatchesOracle runs the port's walk and the oracle model over path and fails unless they
-// agree on whether the path resolves and on the resolved location. The port answers the caller's spelling
-// for the components before the first link (CRW-652) and leaves the '..' components it walked in place, so
-// the locations are compared after filepath.Clean -- which is what targetEscapesRoot does with both
-// strings. The comparison is sound for a path whose components are plain names, which is why these cases
-// spell no lone surrogate.
+// agree on whether the path resolves and on the resolved location. It applies to the shapes the port and
+// the oracle still share; a '..' inside a link target is the one CRW-937 deliberately diverges on, and
+// those rows use targetRealpathMatchesKernelOnly instead. The port answers the caller's spelling for the
+// components before the first link (CRW-652), so the locations are compared after filepath.Clean -- which
+// is what targetEscapesRoot does with both strings. The comparison is sound for a path whose components
+// are plain names, which is why these cases spell no lone surrogate.
 func targetRealpathMatchesOracle(t *testing.T, path string) {
 	t.Helper()
 	want, wantErr := targetOracleRealpath(path)
@@ -170,6 +171,14 @@ func targetRealpathMatchesOracle(t *testing.T, path string) {
 func targetRealpathMatchesKernel(t *testing.T, path string) {
 	t.Helper()
 	targetRealpathMatchesOracle(t, path)
+	targetRealpathMatchesKernelOnly(t, path)
+}
+
+// targetRealpathMatchesKernelOnly requires the kernel's answer without requiring the oracle's, for the
+// shapes CRW-937 deliberately diverges on (a '..' inside a link target): there the port follows the
+// kernel and the oracle model records the counter-judgement.
+func targetRealpathMatchesKernelOnly(t *testing.T, path string) {
+	t.Helper()
 	want, wantErr := targetKernelRealpath(path)
 	got, gotErr := manifestTargetsRealpath(path)
 	if (wantErr == nil) != (gotErr == nil) {
@@ -214,7 +223,11 @@ func TestManifestTargetsRealpathOracleAgreement(t *testing.T) {
 		targetRealpathMatchesOracle(t, root+sep+"sub"+sep+".."+sep+"hook.json")
 	})
 	t.Run("dotdot_after_a_missing_component", func(t *testing.T) {
-		targetRealpathMatchesOracle(t, root+sep+"missing"+sep+".."+sep+"hook.json")
+		// CRW-937: the walk no longer cleans the caller's spelling, so a '..' after a component that
+		// does not exist is the kernel's ENOENT here too; the oracle model cleans the argument with
+		// path.resolve first and answers the resolved path. Compared with the kernel only, with the
+		// oracle's answer recorded in the divergence test below.
+		targetRealpathMatchesKernelOnly(t, root+sep+"missing"+sep+".."+sep+"hook.json")
 	})
 	t.Run("a_link_chain", func(t *testing.T) {
 		if err := os.Symlink("hook.json", filepath.Join(root, "chain-1")); err != nil {
@@ -238,17 +251,20 @@ func TestManifestTargetsRealpathOracleAgreement(t *testing.T) {
 		targetRealpathMatchesKernel(t, filepath.Join(root, "out", "hook.json"))
 	})
 	t.Run("dotdot_inside_a_link_target", func(t *testing.T) {
-		// root/bad.json -> sublink/../hook.json with root/sublink -> ../outside/deep. The oracle stat's
-		// bad.json (which reaches outside/hook.json), then resolves sublink's target lexically, so the
-		// '..' drops 'deep' from the lexical prefix and the answer is root/hook.json.
+		// root/bad.json -> sublink/../hook.json with root/sublink -> ../outside/deep. CRW-937 made this
+		// walk resolve the link target's components in kernel order, so the '..' climbs from the
+		// directory the link really reached (outside/deep) and the answer is outside/hook.json. The
+		// oracle resolves sublink's target lexically instead and answers root/hook.json, which is the
+		// deliberate divergence this issue records (docs/port-cxc/known-defects/CRW-937.md); the oracle
+		// model below stays as the recorded counter-judgement.
 		link := targetRealpathSublinkFixture(t, root)
-		targetRealpathMatchesOracle(t, link)
+		targetRealpathMatchesKernelOnly(t, link)
 		got, err := manifestTargetsRealpath(link)
-		if err != nil || filepath.Clean(got) != filepath.Join(root, "hook.json") {
-			t.Fatalf("manifestTargetsRealpath(bad.json) = %q, %v; want the lexical %q", got, err, filepath.Join(root, "hook.json"))
+		if err != nil || filepath.Clean(got) != filepath.Join(root, "..", "outside", "hook.json") {
+			t.Fatalf("manifestTargetsRealpath(bad.json) = %q, %v; want the kernel %q", got, err, filepath.Join(root, "..", "outside", "hook.json"))
 		}
-		if targetEscapesRoot(root, link) {
-			t.Fatalf("the lexical answer inside the root was reported as escaped")
+		if !targetEscapesRoot(root, link) {
+			t.Fatalf("the kernel answer outside the root was not reported as escaped")
 		}
 	})
 }
@@ -268,15 +284,20 @@ func targetRealpathSublinkFixture(t *testing.T, root string) string {
 }
 
 // TestManifestTargetsRealpathKernelDivergence records the two cases where the kernel's answer and the
-// oracle's differ, so the model choice is pinned rather than incidental. The port must follow the oracle,
-// because escapesRoot calls realpathSync; a walk that matched the kernel instead would report an escape
-// where the oracle reports a path inside the root, and a resolved path where the oracle reports ENOENT.
+// oracle's differ, so the model choice is pinned rather than incidental. Since CRW-937 the port follows
+// the KERNEL for a '..' inside a link target, because that judgement is the plugin-root containment
+// check and the oracle's lexical resolution would report an outside target as inside the root; the
+// oracle model stays as the recorded counter-judgement. The second case -- a '..' after a component that
+// does not exist -- is the same divergence on the caller's own spelling: the walk no longer cleans the
+// argument, so it answers the kernel's ENOENT where the oracle cleans the argument first and answers a
+// resolved path.
 func TestManifestTargetsRealpathKernelDivergence(t *testing.T) {
 	root, _ := targetRealpathFixture(t)
 	sep := string(filepath.Separator)
 	link := targetRealpathSublinkFixture(t, root)
 
-	// The kernel walks the '..' physically, so it leaves the directory sublink reached.
+	// The kernel walks the '..' physically, so it leaves the directory sublink reached -- which is what
+	// the port answers now.
 	kernel, err := targetKernelRealpath(link)
 	if err != nil {
 		t.Fatalf("the kernel answered an error for %q: %v", link, err)
@@ -284,16 +305,24 @@ func TestManifestTargetsRealpathKernelDivergence(t *testing.T) {
 	if filepath.Clean(kernel) != filepath.Join(root, "..", "outside", "hook.json") {
 		t.Fatalf("the kernel answered %q; the divergence this test records has moved", kernel)
 	}
+	port, err := manifestTargetsRealpath(link)
+	if err != nil || filepath.Clean(port) != filepath.Clean(kernel) {
+		t.Fatalf("manifestTargetsRealpath(%q) = %q, %v; the kernel answers %q (CRW-937 follows it)", link, port, err, kernel)
+	}
 	oracle, err := targetOracleRealpath(link)
 	if err != nil || filepath.Clean(oracle) != filepath.Join(root, "hook.json") {
 		t.Fatalf("the oracle answered %q, %v; want the lexical %q", oracle, err, filepath.Join(root, "hook.json"))
 	}
 
 	// The kernel has no path.resolve step, so a '..' after a component that does not exist is ENOENT
-	// there, while the oracle resolves the argument lexically first and answers the cleaned path.
+	// there, while the oracle resolves the argument lexically first and answers the cleaned path. The
+	// port follows the kernel here too.
 	missing := root + sep + "missing" + sep + ".." + sep + "hook.json"
 	if _, err := targetKernelRealpath(missing); err == nil {
 		t.Fatalf("the kernel resolved %q; the divergence this test records has moved", missing)
+	}
+	if port, err := manifestTargetsRealpath(missing); err == nil {
+		t.Fatalf("manifestTargetsRealpath(%q) = %q; the kernel answers ENOENT (CRW-937 follows it)", missing, port)
 	}
 	if oracle, err := targetOracleRealpath(missing); err != nil || filepath.Clean(oracle) != filepath.Join(root, "hook.json") {
 		t.Fatalf("the oracle answered %q, %v for %q; want the cleaned %q", oracle, err, missing, filepath.Join(root, "hook.json"))
@@ -349,7 +378,10 @@ func TestManifestTargetsRealpathOracleAgreementVerdict(t *testing.T) {
 
 // TestManifestTargetsRealpathOracleRecorded compares the walk with answers recorded from the oracle itself,
 // so the oracle model above is not the only witness. Each expectation was produced by running Node 24's
-// fs.realpathSync on this same fixture, with the fixture root substituted for this test's root.
+// fs.realpathSync on this same fixture, with the fixture root substituted for this test's root. The
+// `dotdot_inside_a_link_target` row is the one CRW-937 deliberately diverges on: Node's recorded answer
+// was the lexically cleaned root/hook.json, and the port now answers the kernel's outside/hook.json.
+// Its `want` below is the kernel's answer and the recorded oracle value is kept beside it.
 func TestManifestTargetsRealpathOracleRecorded(t *testing.T) {
 	root, outside := targetRealpathFixture(t)
 	sep := string(filepath.Separator)
@@ -374,9 +406,14 @@ func TestManifestTargetsRealpathOracleRecorded(t *testing.T) {
 	}{
 		{"a_normal_hook_file", filepath.Join(root, "hook.json"), filepath.Join(root, "hook.json"), false},
 		{"dotdot_after_an_existing_component", root + sep + "sub" + sep + ".." + sep + "hook.json", filepath.Join(root, "hook.json"), false},
-		{"dotdot_after_a_missing_component", root + sep + "missing" + sep + ".." + sep + "hook.json", filepath.Join(root, "hook.json"), false},
+		// Recorded from the oracle (Node 24 fs.realpathSync): root/hook.json, because path.resolve
+		// cleans the argument before resolving. CRW-937 answers the kernel instead: a '..' after a
+		// component that does not exist is ENOENT, so this row records the error.
+		{"dotdot_after_a_missing_component", root + sep + "missing" + sep + ".." + sep + "hook.json", "", true},
 		{"a_link_chain", filepath.Join(root, "chain-2"), filepath.Join(root, "hook.json"), false},
-		{"dotdot_inside_a_link_target", link, filepath.Join(root, "hook.json"), false},
+		// Recorded from the oracle (Node 24 fs.realpathSync): root/hook.json. CRW-937 answers the
+		// kernel instead -- root/../outside/hook.json -- because this is the containment check.
+		{"dotdot_inside_a_link_target", link, filepath.Join(root, "..", "outside", "hook.json"), false},
 		{"a_link_leaving_the_root", filepath.Join(root, "out", "hook.json"), filepath.Join(outside, "hook.json"), false},
 		{"a_missing_component_below_a_link", filepath.Join(root, "missing-component.json"), "", true},
 	} {
