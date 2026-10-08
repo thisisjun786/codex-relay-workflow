@@ -188,7 +188,7 @@ current owner and status. Then write one of these four outcomes before any reass
   inventory its required deliveries against the criteria still open, and reconcile with
   its current owner before dispatch.
 
-Leaving the issue open with its criteria unchanged is not alignment. It defers the
+Leaving the issue open with its boundary undecided is not alignment. It defers the
 decision to the next worker, who inherits an issue whose stated scope is larger than the
 PR it may open. Check what a linked PR does to the issue on merge as well, and record the
 intended link type when a PR will not complete it
@@ -267,7 +267,7 @@ wrong row, and both are fixed here.
 | 7 | The same request again on the same milestone, two commits later, deliverables unchanged. | 0 new issues, 0 renames, 0 re-splits; matching by stable ID and scope; only genuinely moved items change. | Convergence. |
 | 8 | The user asks to move the milestone boundary and nothing else. | 1 milestone write, 0 issue writes; the closing check runs and reports the coverage gap the new boundary creates. | Narrow scope keeps its scope. |
 | 9 | The delivery PR is open, its owner is active, and the remaining scope needs its own merge. | New boundary agreed with the owner first, then the issue narrowed to what that PR delivers and 1 new issue blocked by it. 0 reassignments, 0 changes made before that agreement, PR scope unchanged. | Align a delivered issue: unmerged delivery. |
-| 10 | The delivery PR merged part of the accepted scope carrying a closing keyword, automation moved the issue to Done, two criteria are still open. | Conflict recorded and the issue corrected within the assignment, the open criteria inside the accepted promise reopen the same issue key, and any outside it become 1 new issue blocked by the merged one, the criteria inside the promise stay open on the same key until met, the narrowing to what merged is recorded, then Done once they are met. | Align a delivered issue: merged with criteria open. |
+| 10 | The delivery PR merged part of the accepted scope carrying a closing keyword, automation moved the issue to Done, two criteria are still open. | Conflict recorded and the issue corrected within the assignment, the open criteria inside the accepted promise reopen the same issue key, and any outside it become 1 new issue blocked by the merged one, the record shows what merged, and the issue is Done only once they are met. | Align a delivered issue: merged with criteria open. |
 | 11 | A PR that only makes the failure observable merged; it satisfies no accepted criterion and the fix is unwritten. | Linked as contributing, delivery link empty, status unchanged, 0 criteria marked met, the issue's status confirmed against what the merge actually did. | Align a delivered issue: no accepted criterion satisfied. |
 | 12 | An old issue carries five PRs from an agreed exception, some merged. | Exception recorded, required deliveries inventoried against the open criteria, reconciled with the current owner before dispatch, links and owner and history preserved, 0 silent splits or reassignments, pattern not copied into new issues. | Align a delivered issue: existing exception. |
 | 13 | A bare "PR 단위로 정리해줘" on a milestone with no prior plan. | Every issue written carries the full issue fields, each boundary decided by the rule above, the closing check run; issue count is whatever the boundary rule yields, standard unchanged by the request's length, scope unwidened. | Default output standard. |

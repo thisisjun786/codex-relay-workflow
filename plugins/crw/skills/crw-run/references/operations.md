@@ -495,7 +495,7 @@ belongs to the parent that asked for it.
 ### OPS-5.3 Who commits, and the fallback when a task cannot
 
 By default the child commits its own work. It owns the implementation, the tests, the commits on
-its branch, the push, and the pull request, because the task that made a change is the one that can
+its branch, the push, and, where one exists, the pull request, because the task that made a change is the one that can
 explain it in a commit message and answer a reviewer about it. Delivery ownership is OPS-9.
 
 That default assumes the child was created able to do it, which OPS-5.5 covers. Permission does not

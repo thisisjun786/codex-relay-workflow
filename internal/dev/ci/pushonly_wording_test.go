@@ -19,13 +19,16 @@ import (
 // seed phrase anywhere else. A case whose data quotes the old procedure on purpose is listed in
 // pushOnlyCaseAllowlist with its reason.
 
-var pushOnlySeedPhrases = regexp.MustCompile("(?i)exactly one pull request|pull request open|pull request is open|open the pull request|open a pull request|open that pull request|open it non-draft|open pull request|opens the pull request|opens a pull request|opens its pull request|intended PR[ ,.]|PR landing|after its CI finishes|on this pull request|dev-gate is required|dev-gate required|dev-gate must|PR body|pull request body|every CI job|pull-request CI|red or security|P0, P1|red, P0|blocking P2")
+var pushOnlySeedPhrases = regexp.MustCompile("(?i)exactly one pull request|pull request open|pull request is open|open the pull request|open a pull request|open that pull request|open it non-draft|open pull request|opens the pull request|opens a pull request|opens its pull request|intended PR[ ,.]|PR landing|after its CI finishes|on this pull request|dev-gate is required|dev-gate required|dev-gate must|PR body|pull request body|every CI job|pull-request CI")
+
+// pushOnlyGradePhrases are the grade-first phrases; a refusal-name table row may keep them, never a pull-request phrase.
+var pushOnlyGradePhrases = regexp.MustCompile("(?i)red or security|P0, P1|red, P0|blocking P2")
 
 // pushOnlyCaseAllowlist maps a dispatch case ID to the reason its text may keep the old procedure.
 var pushOnlyCaseAllowlist = map[string]string{}
 
 // pushOnlyHistory matches a line that cites a numbered pull request, a dated record of what happened then.
-var pushOnlyHistory = regexp.MustCompile("pull request [0-9]+|#[0-9]+")
+var pushOnlyHistory = regexp.MustCompile("pull request [0-9]+")
 
 const pushOnlyInFlightHeading = "## In-flight pull requests (transition)"
 const pushOnlyExampleHeading = "### One issue in both formats"
@@ -120,10 +123,10 @@ func pushOnlyOutside(rel string, text string, fileCase string) []string {
 		if _, ok := pushOnlyCaseAllowlist[id]; ok && id != "" {
 			continue
 		}
-		if strings.HasPrefix(line, "| `") || pushOnlyHistory.MatchString(line) {
+		if pushOnlyHistory.MatchString(line) {
 			continue
 		}
-		if pushOnlySeedPhrases.MatchString(line) {
+		if pushOnlySeedPhrases.MatchString(line) || (pushOnlyGradePhrases.MatchString(line) && !strings.HasPrefix(line, "| `")) {
 			hits = append(hits, fmt.Sprintf("%s:%d: %s", rel, i+1, strings.TrimSpace(line)))
 		}
 	}

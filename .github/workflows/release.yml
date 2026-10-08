@@ -215,6 +215,7 @@ jobs:
           jq -e '
             .schema == "verification-record/1"
             and .result == "pass"
+            and (.pinMismatch | type) == "array"
             and (.pinMismatch | length) == 0
           ' "$record" >/dev/null || {
             echo '::error::The verification record is not a passing verification-record/1 for this commit.'

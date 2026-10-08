@@ -1626,7 +1626,7 @@ retain private recovery receipts so an interrupted task can still be reconciled.
 needed to resume:
 
 - Coordinator task ID and fixed project or standalone issue link.
-- Each implementation issue's one current PR, repository, and integration target;
+- Each implementation issue's one current delivery (its pull request where one exists, otherwise its task branch and head), repository, and integration target;
   retain superseded PR links as history. Record non-PR results separately.
 - Each task's scope, dependency edges, overlap decisions, and code baseline SHA
   or non-PR source revision.
