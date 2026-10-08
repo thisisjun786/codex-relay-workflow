@@ -432,3 +432,58 @@ func TestPumpBatchIDIsStable(t *testing.T) {
 		t.Error("the id encoding is ambiguous")
 	}
 }
+
+// A refusal the bridge's receipt settles is counted once: the pin is lifted by the reconcile, and the
+// round must not count the same refusal again through the ledger's replayed answer.
+func TestPumpQueueReceiptRefusalIsCountedOnce(t *testing.T) {
+	now := pumpTestNow
+	e := pumpTestEnv(t, &now)
+	bridge, _ := deliverFakeBridge(t, []map[string]any{
+		{"payload": map[string]any{"status": "refused", "observation": "idle"}},
+	})
+	cfg := pumpTestConfig(t, bridge)
+	pumpQueueTestNotice(t, cfg, "parent-1", "aaaaaaaaaaaaaaaa.txt", "a-body")
+	if err := os.Chtimes(filepath.Join(cfg.StateDir, pumpQueueDir, "parent-1", "aaaaaaaaaaaaaaaa.txt"), pumpTestNow.Add(-2*time.Hour), pumpTestNow.Add(-2*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	pumpQueueTestPin(t, cfg, "parent-1", "pinid", []string{"aaaaaaaaaaaaaaaa.txt"}, []string{"a-body"})
+	if err := deliverSave(cfg, deliverRecord{LogicalID: "pinid", RequestID: "pinid", Tool: deliverToolSend, TargetThread: "parent-1",
+		MessageSHA256: deliverMessageSHA256(pumpReview776QueueBody([]string{"a-body"})), CreatedAt: pumpTestNow.Add(-time.Minute).UTC().Format(time.RFC3339),
+		State: deliverStateUnknown}); err != nil {
+		t.Fatal(err)
+	}
+	if err := pumpQueueFlush(context.Background(), e, cfg, pumpTestReadStatePtr(t, cfg), pumpSettingsFrom(cfg), false); err != nil {
+		t.Fatal(err)
+	}
+	if refusals := pumpQueueTestRefusals(t, cfg); refusals["parent-1"].Count != 1 {
+		t.Errorf("the receipt refusal was counted %d times, want once: %v", refusals["parent-1"].Count, refusals)
+	}
+}
+
+// The idle-parent gate of a pinned retry judges what the next batch would carry: a notice the queue
+// would move aside as oversize does not age the pin into a send.
+func TestPumpQueueRetryGateIgnoresNoticesMovedAsideAsOversize(t *testing.T) {
+	now := pumpTestNow
+	e := pumpTestEnv(t, &now)
+	bridge, log := deliverFakeBridge(t, []map[string]any{
+		{"payload": map[string]any{"observation": "idle"}},
+	})
+	cfg := pumpTestConfig(t, bridge)
+	fresh := pumpQueueTestNotice(t, cfg, "parent-1", "aaaaaaaaaaaaaaaa.txt", "a-body")
+	huge := pumpQueueTestNotice(t, cfg, "parent-1", "bbbbbbbbbbbbbbbb.txt", strings.Repeat("y", 130000))
+	if err := os.Chtimes(fresh, pumpTestNow, pumpTestNow); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(huge, pumpTestNow.Add(-2*time.Hour), pumpTestNow.Add(-2*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	pumpQueueTestPin(t, cfg, "parent-1", "pinid", []string{"aaaaaaaaaaaaaaaa.txt"}, []string{"a-body"})
+	if err := pumpQueueFlush(context.Background(), e, cfg, pumpTestReadStatePtr(t, cfg), pumpSettingsFrom(cfg), false); err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range deliverSendToolsOf(t, log) {
+		if tool == deliverToolSend || tool == deliverToolSteer {
+			t.Fatalf("an oversize notice aged the pin into a send: %v", deliverSendToolsOf(t, log))
+		}
+	}
+}

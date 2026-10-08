@@ -79,7 +79,7 @@ func pumpQueueFlushThread(ctx context.Context, e *Env, cfg *Config, st *pumpStat
 	// A move that an earlier round was interrupted in the middle of left a notice in the aside
 	// directory; it is put back before anything is read, so an interrupted move never hides a notice
 	// from the queue. A dry run reports it instead of moving it.
-	if err := pumpReview776QueueRecoverAsides(e, dir, dry); err != nil {
+	if err := pumpReview776QueueRecoverAsides(ctx, e, dir, dry); err != nil {
 		return err
 	}
 	// A pinned batch is reconciled first, under its own frozen logical id and body, before any new
@@ -139,7 +139,7 @@ func pumpQueueFlushThread(ctx context.Context, e *Env, cfg *Config, st *pumpStat
 		}
 		return nil
 	}
-	action, err := pumpReview776QueueAdoptLegacy(cfg, st, dir, thread, whole)
+	action, err := pumpReview776QueueAdoptLegacy(ctx, cfg, st, dir, thread, whole)
 	if err != nil {
 		return err
 	}
@@ -517,15 +517,20 @@ func pumpReview776QueueRetry(ctx context.Context, e *Env, cfg *Config, st *pumpS
 		if settled {
 			return true, nil
 		}
+		if _, pinned := st.QueueAttempt[thread]; !pinned {
+			// The receipt lifted the pin: the refusal is counted once, and nothing is sent under the id now.
+			return false, nil
+		}
 	}
 	// The receipt is not settled (or there is none): the attempt may still be sent, but only under
-	// the queue's own gate, so an idle parent is not opened early. The gate judges the whole queue, the
-	// pinned names and every notice queued with them, so an older notice outside the pin makes it due.
-	queued, err := pumpQueueSortedNames(dir)
+	// the queue's own gate, so an idle parent is not opened early. The gate judges the pinned notices and
+	// every queued notice the next batch would keep, so an older one that would be moved aside cannot make
+	// the pin due.
+	gate, err := pumpReview776QueueGateNames(dir, pin.Names)
 	if err != nil {
 		return true, err
 	}
-	present := pumpReview776QueuePresent(dir, append(append([]string(nil), pin.Names...), queued...))
+	present := pumpReview776QueuePresent(dir, gate)
 	oldest, err := pumpReview776QueueOldest(dir, present)
 	if err != nil {
 		return true, err
@@ -957,7 +962,7 @@ func pumpReview776QueueTakeAside(dir, name string) (string, error) {
 // notice twice. Otherwise the notice never left the queue, and it goes back to the name it came
 // from. A notice written in the meantime keeps the queue name and the aside is dropped. A dry run
 // reports what it would do instead of moving anything.
-func pumpReview776QueueRecoverAsides(e *Env, dir string, dry bool) error {
+func pumpReview776QueueRecoverAsides(ctx context.Context, e *Env, dir string, dry bool) error {
 	asideDir := pumpReview776QueueAsideDir(dir)
 	// A symlink in the aside directory's place would make every file of its target look like one of
 	// this move's asides, and the recovery would then unlink files outside the queue.
@@ -992,6 +997,9 @@ func pumpReview776QueueRecoverAsides(e *Env, dir string, dry bool) error {
 			}
 			fmt.Fprintf(e.Stdout, "queue: would %s the notice %s an interrupted move set aside\n", action, name)
 			continue
+		}
+		if err := ctx.Err(); err != nil {
+			return err
 		}
 		if published {
 			if err := os.Remove(aside); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -1147,33 +1155,45 @@ const (
 	pumpReview776QueueLegacyHold
 )
 
-// pumpReview776QueueLegacyCandidate is one set of notice names a pre-change ledger record may cover.
+// pumpReview776QueueLegacyCandidate is one set of notice names a pre-change ledger record may cover,
+// with each member's modification time for the record's age check.
 type pumpReview776QueueLegacyCandidate struct {
 	names, texts []string
-	// byAge marks an oldest-first set rather than a name-ordered prefix. Its record is adopted only
-	// when the record was written after every member was last modified.
+	// byAge marks an oldest-first set. Only its record is checked against the members' modification
+	// times; a name-ordered prefix keeps the adoption rule the pre-change pump was judged by.
 	byAge    bool
 	modTimes []time.Time
 }
 
 // pumpReview776QueueLegacyCandidates lists the sets a pre-change record may cover, longest first: the
-// name-ordered prefixes of the queue, then the oldest-first prefixes, each name-ordered once taken.
-// An oldest-first prefix matters when a notice added later sorts before the notices the pre-change
-// attempt carried: the attempt was then the oldest notices, not the name-ordered prefix. A set that
-// is already a name-ordered prefix is not listed twice.
-func pumpReview776QueueLegacyCandidates(dir string, batch pumpReview776QueueBatch) []pumpReview776QueueLegacyCandidate {
-	var out []pumpReview776QueueLegacyCandidate
-	for cut := len(batch.names); cut >= 1; cut-- {
-		out = append(out, pumpReview776QueueLegacyCandidate{names: batch.names[:cut], texts: batch.texts[:cut]})
-	}
+// name-ordered prefixes of the queue, then the oldest-first prefixes. An oldest-first prefix matters
+// when a notice queued later sorts before the notices the pre-change attempt carried. A set that is
+// already a name-ordered prefix is listed once, as a name-ordered prefix.
+func pumpReview776QueueLegacyCandidates(dir string, batch pumpReview776QueueBatch) ([]pumpReview776QueueLegacyCandidate, error) {
 	modTimes := make([]time.Time, len(batch.names))
 	for i, name := range batch.names {
 		info, err := os.Lstat(filepath.Join(dir, name))
 		if err != nil {
-			// Without every modification time there is no oldest-first order; the name-ordered sets stand.
-			return out
+			return nil, err
 		}
 		modTimes[i] = info.ModTime()
+	}
+	build := func(indices []int, byAge bool) pumpReview776QueueLegacyCandidate {
+		c := pumpReview776QueueLegacyCandidate{byAge: byAge}
+		for _, i := range indices {
+			c.names = append(c.names, batch.names[i])
+			c.texts = append(c.texts, batch.texts[i])
+			c.modTimes = append(c.modTimes, modTimes[i])
+		}
+		return c
+	}
+	var out []pumpReview776QueueLegacyCandidate
+	for cut := len(batch.names); cut >= 1; cut-- {
+		indices := make([]int, cut)
+		for i := range indices {
+			indices[i] = i
+		}
+		out = append(out, build(indices, false))
 	}
 	order := make([]int, len(batch.names))
 	for i := range order {
@@ -1191,33 +1211,69 @@ func pumpReview776QueueLegacyCandidates(dir string, batch pumpReview776QueueBatc
 		// batch.names is name-ordered, so the sorted indices list the set in name order.
 		sort.Ints(picked)
 		if picked[cut-1] == cut-1 {
-			// The set is the name-ordered prefix of the same length, already listed above.
 			continue
 		}
-		candidate := pumpReview776QueueLegacyCandidate{byAge: true}
-		for _, i := range picked {
-			candidate.names = append(candidate.names, batch.names[i])
-			candidate.texts = append(candidate.texts, batch.texts[i])
-			candidate.modTimes = append(candidate.modTimes, modTimes[i])
-		}
-		out = append(out, candidate)
+		out = append(out, build(picked, true))
 	}
-	return out
+	return out, nil
 }
 
 // pumpReview776QueueCreatedAfter reports whether a ledger record was written after every member of a
-// set was last modified. A record whose stamp does not parse proves nothing, so it is not adopted.
+// set was last modified. The record's stamp has whole seconds, so a member counts as later only when
+// its modification falls in a later second than the stamp. A stamp that does not parse is no evidence
+// against the record, so the record is not rejected; the pump writes a stamp on every record.
 func pumpReview776QueueCreatedAfter(createdAt string, modTimes []time.Time) bool {
 	created, err := time.Parse(time.RFC3339, createdAt)
 	if err != nil {
-		return false
+		return true
 	}
 	for _, modified := range modTimes {
-		if modified.After(created) {
+		if modified.Truncate(time.Second).After(created) {
 			return false
 		}
 	}
 	return true
+}
+
+// pumpReview776QueueGateNames is the set an idle-parent gate on a pinned attempt judges: the pinned
+// names still present and every queued notice the next batch would keep, which are the notices that
+// are neither empty nor over the batch limit. A notice the queue would move aside cannot age the pin.
+func pumpReview776QueueGateNames(dir string, pinned []string) ([]string, error) {
+	queued, err := pumpQueueSortedNames(dir)
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[string]bool, len(pinned)+len(queued))
+	var gate []string
+	for _, name := range append(append([]string(nil), pinned...), queued...) {
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		info, err := os.Lstat(filepath.Join(dir, name))
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			return nil, err
+		}
+		if !info.Mode().IsRegular() {
+			continue
+		}
+		raw, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			return nil, err
+		}
+		text := strings.TrimSpace(string(raw))
+		if text == "" || len(text) > pumpBatchLimit {
+			continue
+		}
+		gate = append(gate, name)
+	}
+	return gate, nil
 }
 
 // pumpReview776QueueAdoptLegacy looks for a pre-change attempt a batch that has no pin still has to
@@ -1242,8 +1298,12 @@ func pumpReview776QueueCreatedAfter(createdAt string, modTimes []time.Time) bool
 //
 // A settled accepted record is completed only while its own text is still the text on disk, because
 // that is the only case where every member is known to have been delivered.
-func pumpReview776QueueAdoptLegacy(cfg *Config, st *pumpState, dir, thread string, batch pumpReview776QueueBatch) (pumpReview776QueueLegacyAction, error) {
-	for _, candidate := range pumpReview776QueueLegacyCandidates(dir, batch) {
+func pumpReview776QueueAdoptLegacy(ctx context.Context, cfg *Config, st *pumpState, dir, thread string, batch pumpReview776QueueBatch) (pumpReview776QueueLegacyAction, error) {
+	candidates, err := pumpReview776QueueLegacyCandidates(dir, batch)
+	if err != nil {
+		return pumpReview776QueueLegacyNone, err
+	}
+	for _, candidate := range candidates {
 		names, texts := candidate.names, candidate.texts
 		oldID := pumpQueueLegacyBatchID(thread, names)
 		record, known, err := deliverLoad(cfg, oldID)
@@ -1254,8 +1314,8 @@ func pumpReview776QueueAdoptLegacy(cfg *Config, st *pumpState, dir, thread strin
 			continue
 		}
 		if candidate.byAge && !pumpReview776QueueCreatedAfter(record.CreatedAt, candidate.modTimes) {
-			// The attempt was written before a member of this oldest-first set was modified, so the set
-			// is not the one the attempt covered.
+			// The record was written before a member of this set was last modified, so the set is not
+			// the one the attempt covered.
 			continue
 		}
 		body := pumpReview776QueueBody(texts)
@@ -1274,10 +1334,16 @@ func pumpReview776QueueAdoptLegacy(cfg *Config, st *pumpState, dir, thread strin
 				pin.SHA256 = pumpReview776QueueDigests(names, texts)
 				pin.Accepted = true
 				st.QueueAttempt[thread] = pin
+				if err := ctx.Err(); err != nil {
+					return pumpReview776QueueLegacyNone, err
+				}
 				return pumpReview776QueueLegacyComplete, st.pumpSave(cfg)
 			}
 			pin.Held = true
 			st.QueueAttempt[thread] = pin
+			if err := ctx.Err(); err != nil {
+				return pumpReview776QueueLegacyNone, err
+			}
 			return pumpReview776QueueLegacyHold, st.pumpSave(cfg)
 		case deliverStateRefused:
 			// A refusal is terminal and nothing was sent, so the batch takes its current id as usual.
@@ -1297,6 +1363,9 @@ func pumpReview776QueueAdoptLegacy(cfg *Config, st *pumpState, dir, thread strin
 				pin.Legacy = true
 			}
 			st.QueueAttempt[thread] = pin
+			if err := ctx.Err(); err != nil {
+				return pumpReview776QueueLegacyNone, err
+			}
 			return pumpReview776QueueLegacyReconcile, st.pumpSave(cfg)
 		}
 	}
