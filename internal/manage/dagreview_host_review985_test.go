@@ -178,3 +178,31 @@ func TestDagHostReview985FirstSightKeepsAnsiCPendingCall(t *testing.T) {
 		t.Fatalf("the refusal of the ANSI-C call = %+v, want one", found)
 	}
 }
+
+// TestDagHostReview985UnparsedLineAndRefusalKeepSeparateReports: a refusal and a refused command line
+// are two reports even when a call id spells the other's prefix. Each is reported once, and neither is
+// reported again by the next check.
+func TestDagHostReview985UnparsedLineAndRefusalKeepSeparateReports(t *testing.T) {
+	f := dagReviewNewFixture(t)
+	stateDir := filepath.Join(t.TempDir(), "state")
+	rollout := dagHostWriteRollout(t, f.dir, "parent.jsonl",
+		dagHostReview985Call(t, "unparsed:call-1", "crw relay --state S dag-release --plan p"),
+		dagHostReview985Refused(t, "unparsed:call-1"),
+		dagHostReview985Call(t, "call-1", "crw relay --state S dag-release --plan \"unclosed"),
+		dagHostReview985Refused(t, "call-1"))
+	f.close()
+	dagHostReview775SeedOffsets(t, stateDir, rollout, 0)
+	cfg := dagHostReview775Parent(t, f, rollout, stateDir)
+
+	first := dagHostRun(t, context.Background(), f, cfg)
+	if got := len(dagReviewFind(first, dagHostKindParentDagRefusals)); got != 1 {
+		t.Fatalf("refusals = %d, want 1", got)
+	}
+	if got := dagHostReview985Unparsed(first); got != 1 {
+		t.Fatalf("command_unparsed checks = %d, want 1", got)
+	}
+	second := dagHostRun(t, context.Background(), f, cfg)
+	if got := len(dagReviewFind(second, dagHostKindParentDagRefusals)) + dagHostReview985Unparsed(second); got != 0 {
+		t.Fatalf("the second check repeated %d reports", got)
+	}
+}

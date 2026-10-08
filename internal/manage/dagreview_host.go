@@ -154,7 +154,7 @@ func dagHostSortedParents(parents map[string]string) []dagHostParent {
 // start there would re-report refusals an earlier check already reported.
 func dagHostParentsRead(ctx context.Context, in *dagReviewInput, scope dagHostScope) error {
 	cfg := scope.config()
-	offsets := dagHostOffsets{Offsets: map[string]int64{}, Reported: map[string][]string{}, raw: map[string]json.RawMessage{}}
+	offsets := dagHostOffsets{Offsets: map[string]int64{}, Reported: map[string][]string{}, Unparsed: map[string][]string{}, raw: map[string]json.RawMessage{}}
 	offsetsRead, refusalsMeasured := false, false
 	if scope.noState {
 		refusalsMeasured = true
@@ -297,7 +297,11 @@ func dagHostParentRollout(in *dagReviewInput, parent dagHostParent, path string,
 			Detail: fmt.Sprintf("the relay command %s was refused: %s", strings.Join(refusal.commands, ","), refusal.reason),
 		})
 	}
-	for _, line := range dagHostNewUnparsed(reading, reported) {
+	unparsedReported := map[string]bool{}
+	for _, callID := range offsets.Unparsed[path] {
+		unparsedReported[callID] = true
+	}
+	for _, line := range dagHostNewUnparsed(reading, unparsedReported) {
 		in.review.Checks = append(in.review.Checks, Check{
 			Name: "parent_command:" + parent.id, State: dagReviewUnmeasured,
 			Detail: fmt.Sprintf("command_unparsed: the command line of call %s is not valid shell, so its relay calls were not read", line.callID),
@@ -306,6 +310,7 @@ func dagHostParentRollout(in *dagReviewInput, parent dagHostParent, path string,
 	if offsetsRead {
 		offsets.Offsets[path] = reading.resume
 		offsets.Reported[path] = dagHostResumeRefusalIDs(reading)
+		offsets.Unparsed[path] = dagHostResumeUnparsedIDs(reading)
 	}
 }
 
@@ -350,11 +355,20 @@ func dagHostResumeRefusalIDs(reading dagHostRolloutReading) []string {
 		}
 		ids = append(ids, refusal.callID)
 	}
+	sort.Strings(ids)
+	return ids
+}
+
+// dagHostResumeUnparsedIDs is the call ids of the refused command lines a check resuming at
+// reading.resume reads again. They are kept in their own list, so a refusal and an unparsed line
+// with the same call id never share one reported entry.
+func dagHostResumeUnparsedIDs(reading dagHostRolloutReading) []string {
+	ids := []string{}
 	for _, line := range reading.unparsed {
 		if line.callStart < reading.resume {
 			continue
 		}
-		ids = append(ids, dagHostUnparsedKey(line.callID))
+		ids = append(ids, line.callID)
 	}
 	sort.Strings(ids)
 	return ids
@@ -362,24 +376,18 @@ func dagHostResumeRefusalIDs(reading dagHostRolloutReading) []string {
 
 // dagHostNewUnparsed is the command lines of one reading that this check has not reported yet. A
 // refused command line is unmeasured wherever it stands, so a first-sight rollout reports its history
-// too, unlike a refusal. The lines share the reported list with the refusals under their own key, so a
+// too, unlike a refusal. The lines are kept in their own reported list, so a
 // line the next check reads again is not reported twice.
 func dagHostNewUnparsed(reading dagHostRolloutReading, reported map[string]bool) []dagHostUnparsed {
 	out := []dagHostUnparsed{}
 	for _, line := range reading.unparsed {
-		key := dagHostUnparsedKey(line.callID)
-		if reported[key] {
+		if reported[line.callID] {
 			continue
 		}
-		reported[key] = true
+		reported[line.callID] = true
 		out = append(out, line)
 	}
 	return out
-}
-
-// dagHostUnparsedKey is the reported-list key of a command line the parser refused.
-func dagHostUnparsedKey(callID string) string {
-	return "unparsed:" + callID
 }
 
 // dagHostDuplicate is one call id whose tool results repeat in a rollout.
@@ -934,6 +942,7 @@ func dagHostOutputText(raw json.RawMessage) string {
 type dagHostOffsets struct {
 	Offsets  map[string]int64
 	Reported map[string][]string
+	Unparsed map[string][]string
 	raw      map[string]json.RawMessage
 }
 
@@ -979,7 +988,7 @@ func dagHostStateLock(ctx context.Context, stateDir string) (func(), error) {
 func dagHostLoadOffsets(stateDir string) (dagHostOffsets, error) {
 	data, err := os.ReadFile(filepath.Join(stateDir, dagHostStateFile))
 	if errors.Is(err, os.ErrNotExist) {
-		return dagHostOffsets{Offsets: map[string]int64{}, Reported: map[string][]string{}, raw: map[string]json.RawMessage{}}, nil
+		return dagHostOffsets{Offsets: map[string]int64{}, Reported: map[string][]string{}, Unparsed: map[string][]string{}, raw: map[string]json.RawMessage{}}, nil
 	}
 	if err != nil {
 		return dagHostOffsets{}, err
@@ -988,7 +997,7 @@ func dagHostLoadOffsets(stateDir string) (dagHostOffsets, error) {
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return dagHostOffsets{}, fmt.Errorf("the offset file %s is not readable: %w", dagHostStateFile, err)
 	}
-	state := dagHostOffsets{Offsets: map[string]int64{}, Reported: map[string][]string{}, raw: raw}
+	state := dagHostOffsets{Offsets: map[string]int64{}, Reported: map[string][]string{}, Unparsed: map[string][]string{}, raw: raw}
 	if held, ok := raw["offsets"]; ok {
 		if err := json.Unmarshal(held, &state.Offsets); err != nil {
 			return dagHostOffsets{}, fmt.Errorf("the offset file %s holds an unreadable offsets member: %w", dagHostStateFile, err)
@@ -1003,6 +1012,14 @@ func dagHostLoadOffsets(stateDir string) (dagHostOffsets, error) {
 		}
 		if state.Reported == nil {
 			state.Reported = map[string][]string{}
+		}
+	}
+	if held, ok := raw["reported_unparsed"]; ok {
+		if err := json.Unmarshal(held, &state.Unparsed); err != nil {
+			return dagHostOffsets{}, fmt.Errorf("the offset file %s holds an unreadable reported_unparsed member: %w", dagHostStateFile, err)
+		}
+		if state.Unparsed == nil {
+			state.Unparsed = map[string][]string{}
 		}
 	}
 	return state, nil
@@ -1026,12 +1043,17 @@ func dagHostSaveOffsets(ctx context.Context, stateDir string, state dagHostOffse
 	if err != nil {
 		return err
 	}
+	unparsed, err := json.Marshal(state.Unparsed)
+	if err != nil {
+		return err
+	}
 	document := map[string]json.RawMessage{}
 	for key, value := range state.raw {
 		document[key] = value
 	}
 	document["offsets"] = offsets
 	document["reported"] = reported
+	document["reported_unparsed"] = unparsed
 	data, err := json.Marshal(document)
 	if err != nil {
 		return err
