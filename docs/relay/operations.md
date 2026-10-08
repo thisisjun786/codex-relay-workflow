@@ -613,13 +613,13 @@ that reports no status, a recipient the relay could not subscribe, and a recipie
 before the attempt lands. The min send interval and the hourly budget pace the send as before, and a
 busy recipient is still never interrupted: the wake only decides when the relay looks.
 
-The two store failures this pass can meet end the tick with their error. A failed wake write returns before
-the delivery pass and the supervisor channel write anything. A failed read of the waiting heads that the
-subscription hold needs comes after the delivery pass, so the deliveries and deferrals written earlier in that
-tick stay written, and the supervisor channel does not write after it. In both cases no statement follows the
-failed one in that tick. A failed wake
-write leaves the report unapplied, and the head keeps its timer. The daemon's own halt (CRW-848) is not
-on this baseline; when it lands, these two sites are the ones it classifies.
+The two store failures this pass can meet go through the daemon's halt (CRW-848), as the other write and
+observation sites do. A corrupting failure of the wake write publishes the write marker and ends the tick before
+the delivery pass and the supervisor channel write anything. A corrupting failure of the waiting-head read
+publishes the observation marker after the delivery pass, so the deliveries and deferrals written earlier in that
+tick stay written, no subscription is opened, and the supervisor channel does not write after it. The next tick
+reads the marker first and writes nothing. A failure the classifier does not call corruption ends the tick with
+its error, as it did before the halt, and a wake that is not written leaves the head on its timer.
 
 A delivery that has reached its busy or pre-send attempt cap is annotated when its generation
 advances. Once a cap sets a hold, `attempt` returns before the pre-send supersession check, so
