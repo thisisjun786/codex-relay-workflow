@@ -65,7 +65,7 @@ func SaveCases(dir string, cases []Case) error {
 // problem description, or "" when the case holds. The case root is prepared exactly as a campaign
 // prepares it, so a target that opens a file under one of the homes, or under TMPDIR, sees the
 // same directories during replay as it saw when the answer was recorded.
-func CheckCase(target Target, c Case) string {
+func CheckCase(target Target, c Case) (problem string) {
 	input, err := decode(c.Input)
 	if err != nil {
 		return fmt.Sprintf("the input is not JSON: %v", err)
@@ -74,7 +74,13 @@ func CheckCase(target Target, c Case) string {
 	if err != nil {
 		return err.Error()
 	}
-	defer func() { _ = os.RemoveAll(root) }()
+	// The cleanup error is reported rather than discarded: a case root that survived replay says the
+	// harness left a tree on the host, which is not a replay result.
+	defer func() {
+		if err := CleanupCaseRoot(root); err != nil {
+			problem = joinProblem(problem, fmt.Sprintf("the case root was not removed: %v", err))
+		}
+	}()
 	if err := PrepareRoot(root); err != nil {
 		return fmt.Sprintf("the case root was not prepared: %v", err)
 	}
@@ -108,6 +114,17 @@ func CheckCase(target Target, c Case) string {
 		return fmt.Sprintf("unknown tag %q", c.Tag)
 	}
 	return ""
+}
+
+// joinProblem folds a cleanup problem into a replay's own problem, so neither hides the other.
+func joinProblem(problem, cleanup string) string {
+	if cleanup == "" {
+		return problem
+	}
+	if problem == "" {
+		return cleanup
+	}
+	return problem + "; " + cleanup
 }
 
 // Adopt pins one divergence as a case in the target's cases.json.
