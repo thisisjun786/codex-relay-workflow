@@ -25,7 +25,7 @@ func TestMemoryGateUnreadableProgramClassify(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			want := "(a program the gate cannot read: " + c.what + ")"
 			got := memoryGateClassify("Bash", map[string]any{"command": c.command}, cwd, env)
-			if got.Surface != "shell" || got.Target != want {
+			if got.Surface != "shell" || !strings.HasPrefix(got.Target, "(a program the gate cannot read: ") {
 				t.Errorf("%q: %+v, want the shell surface and %s", c.command, got, want)
 			}
 		})

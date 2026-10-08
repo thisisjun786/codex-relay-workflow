@@ -45,3 +45,9 @@ func stripLeadingTabs(s string) string {
 	}
 	return strings.Join(lines, "\n")
 }
+
+// continuationNearComment reports a backslash-newline in a text that also holds a #. bash ends a comment
+// at a newline even after a backslash, while the parser reads the backslash-newline as a continuation.
+func continuationNearComment(src string) bool {
+	return strings.Contains(src, "\\\n") && strings.Contains(src, "#")
+}

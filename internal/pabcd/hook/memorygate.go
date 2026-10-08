@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/shellir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 )
@@ -194,8 +195,8 @@ func memoryGateClassify(tool string, input any, cwd string, env host.LookupEnv) 
 		// A shell program position the outer shell builds at run time - a -c program, an eval operand, a source
 		// operand, a shell reading a pipe, a here-string or a here-document - may hold a write the destination reader
 		// never sees, so it is a write attempt of its own and the gate fails closed (CRW-726, beside CRW-741's check).
-		if what, ok := worktreeDelUnreadableProgram(command); ok {
-			return MemoryWriteAttempt{Surface: "shell", Target: "(a program the gate cannot read: " + what + ")"}
+		if _, err := shellir.Analyze(command, cwd); err != nil {
+			return MemoryWriteAttempt{Surface: "shell", Target: "(a program the gate cannot read: the command reader refused it)"}
 		}
 	}
 	return MemoryWriteAttempt{}

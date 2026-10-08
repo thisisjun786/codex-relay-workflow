@@ -138,6 +138,9 @@ func Analyze(src, cwd string) (Result, error) {
 	if len(src) > MaxCommandBytes {
 		return Result{}, unreadablef("command is %d bytes; the limit is %d", len(src), MaxCommandBytes)
 	}
+	if continuationNearComment(src) {
+		return Result{}, unreadablef("a line continuation next to a # is read differently by bash and by the parser")
+	}
 	file, err := parseText(src)
 	if err != nil {
 		return Result{}, err
@@ -747,7 +750,11 @@ func (w *walker) dispatch(words []Word, assigns []Assign, redirs []Redir, st *st
 	case isShell(name):
 		return w.shellCall(name, words[1:], redirs, st, ctx)
 	case name == "eval":
-		text, err := joinKnown(words[1:], "eval argument")
+		evalArgs := words[1:]
+		if len(evalArgs) > 0 && evalArgs[0].Known && evalArgs[0].Value == "--" {
+			evalArgs = evalArgs[1:]
+		}
+		text, err := joinKnown(evalArgs, "eval argument")
 		if err != nil {
 			return err
 		}
@@ -902,6 +909,10 @@ func (w *walker) wrapped(name string, args []Word, assigns []Assign, redirs []Re
 	}
 	if err := checkAssigns(u.assigns, st); err != nil {
 		return err
+	}
+	if name == "xargs" || name == "find" {
+		// The operands of these programs arrive at run time, so the inner program is marked.
+		ctx.Carrier = name
 	}
 	inherited := append(append([]Assign{}, assigns...), u.assigns...)
 	for _, inner := range u.inner {

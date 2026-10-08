@@ -16,72 +16,6 @@ func shellLongOption(v string) bool {
 
 // shellCall reads a shell invocation: its -c string, its script file operand,
 // or the here-document or here-string it reads from standard input.
-func (w *walker) shellCall(name string, args []Word, redirs []Redir, st *state, ctx Context) error {
-	var code, script *Word
-	i := 0
-loop:
-	for i < len(args) {
-		v, err := knownValue(args[i], name+" option")
-		if err != nil {
-			return err
-		}
-		switch {
-		case v == "--":
-			i++
-			break loop
-		case v == "-":
-			i++
-			break loop
-		case strings.HasPrefix(v, "--"):
-			if !shellLongOption(v) {
-				return unreadablef("%s option %s is not modelled", name, v)
-			}
-			i++
-		case len(v) > 1 && (v[0] == '-' || v[0] == '+'):
-			i++
-			for k := 1; k < len(v); k++ {
-				c := v[k]
-				if c == 'c' {
-					if i >= len(args) {
-						return unreadablef("%s -c without a string", name)
-					}
-					code = &args[i]
-					i++
-					break
-				}
-				if c == 'o' || c == 'O' {
-					i++
-					continue
-				}
-				if strings.IndexByte(shellFlagLetters, c) < 0 {
-					return unreadablef("%s option -%c is not modelled", name, c)
-				}
-			}
-			if code != nil {
-				break loop
-			}
-		default:
-			script = &args[i]
-			i++
-			break loop
-		}
-	}
-	if code != nil {
-		text, err := knownValue(*code, name+" -c string")
-		if err != nil {
-			return err
-		}
-		return w.carried(text, st.clone(), ctx, name+" -c")
-	}
-	if script != nil {
-		return w.scriptFile(name, *script, st, ctx)
-	}
-	body, err := stdinProgram(redirs, ctx.Stdin, name)
-	if err != nil {
-		return err
-	}
-	return w.carried(body, st.clone(), ctx, name+" stdin")
-}
 
 // suCall reads su -c, the only form whose program is visible: the command
 // string runs under a shell.
@@ -392,3 +326,68 @@ func isPythonName(name string) bool {
 }
 
 func isInterpreter(name string) bool { return interpreterLanguage(name) != "" }
+
+// shellCall reads a shell invocation. Options keep being read after -c, so the -c string is the first operand
+// after the options, not the word that follows -c. The operand is a script file unless -c is set; without an
+// operand the program comes from standard input.
+func (w *walker) shellCall(name string, args []Word, redirs []Redir, st *state, ctx Context) error {
+	cmdMode := false
+	i := 0
+loop:
+	for i < len(args) {
+		v, err := knownValue(args[i], name+" option")
+		if err != nil {
+			return err
+		}
+		switch {
+		case v == "--" || v == "-":
+			i++
+			break loop
+		case strings.HasPrefix(v, "--"):
+			if !shellLongOption(v) {
+				return unreadablef("%s option %s is not modelled", name, v)
+			}
+			i++
+		case len(v) > 1 && (v[0] == '-' || v[0] == '+'):
+			i++
+			for k := 1; k < len(v); k++ {
+				c := v[k]
+				if c == 'c' {
+					cmdMode = true
+					continue
+				}
+				if c == 'o' || c == 'O' {
+					i++
+					break
+				}
+				if strings.IndexByte(shellFlagLetters, c) < 0 {
+					return unreadablef("%s option -%c is not modelled", name, c)
+				}
+			}
+		default:
+			break loop
+		}
+	}
+	var operand *Word
+	if i < len(args) {
+		operand = &args[i]
+	}
+	if cmdMode {
+		if operand == nil {
+			return unreadablef("%s -c without a string", name)
+		}
+		text, err := knownValue(*operand, name+" -c string")
+		if err != nil {
+			return err
+		}
+		return w.carried(text, st.clone(), ctx, name+" -c")
+	}
+	if operand != nil {
+		return w.scriptFile(name, *operand, st, ctx)
+	}
+	body, err := stdinProgram(redirs, ctx.Stdin, name)
+	if err != nil {
+		return err
+	}
+	return w.carried(body, st.clone(), ctx, name+" stdin")
+}

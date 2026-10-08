@@ -1,0 +1,213 @@
+package hook
+
+// The worktree deletion guard reads a command through the shared command reader (internal/pabcd/shellir).
+// Every program the reader shows is judged: a recursive rm, an rmdir, or a git worktree remove whose target is
+// the session's own worktree, its slot, or an ancestor of the directory the command runs in is denied. A text
+// the reader cannot read is denied, and so is a removal whose target the reader cannot evaluate.
+
+import (
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/shellir"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
+)
+
+// worktreeDelMaxScriptDepth bounds script files that run script files.
+const worktreeDelMaxScriptDepth = 4
+
+// worktreeDelMaxScriptBytes is the largest script file the guard reads.
+const worktreeDelMaxScriptBytes = 1 << 20
+
+// evaluateCommand is the verdict for one command in the session's worktree.
+func evaluateCommand(command, cwd string, id WorktreeIdentity) GuardVerdict {
+	if !id.Managed || text.Trim(command) == "" {
+		return GuardVerdict{}
+	}
+	return worktreeDelJudgeText(command, cwd, id, 0)
+}
+
+func worktreeDelUnreadable(id WorktreeIdentity) GuardVerdict {
+	return GuardVerdict{Deny: true, Reason: denyReason("a command the guard cannot read", id)}
+}
+
+func worktreeDelJudgeText(command, cwd string, id WorktreeIdentity, depth int) GuardVerdict {
+	res, err := shellir.Analyze(command, cwd)
+	if err != nil {
+		return worktreeDelUnreadable(id)
+	}
+	for _, e := range res.Execs {
+		var v GuardVerdict
+		if e.Kind == shellir.KindScriptFile {
+			v = worktreeDelJudgeScript(e, id, depth)
+		} else {
+			v = worktreeDelJudgeExec(e, id)
+		}
+		if v.Deny {
+			return v
+		}
+	}
+	return GuardVerdict{}
+}
+
+// worktreeDelJudgeScript reads the script file a shell runs and judges its text in the script's directory.
+func worktreeDelJudgeScript(e shellir.Exec, id WorktreeIdentity, depth int) GuardVerdict {
+	if depth >= worktreeDelMaxScriptDepth || !e.Script.Known || !e.Dir.Known {
+		return worktreeDelUnreadable(id)
+	}
+	path := e.Script.Value
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(e.Dir.Path, path)
+	}
+	file, err := os.Open(filepath.Clean(path))
+	if err != nil {
+		return worktreeDelUnreadable(id)
+	}
+	defer file.Close()
+	if st, err := file.Stat(); err != nil || !st.Mode().IsRegular() {
+		return worktreeDelUnreadable(id)
+	}
+	b, err := io.ReadAll(io.LimitReader(file, worktreeDelMaxScriptBytes+1))
+	if err != nil || len(b) > worktreeDelMaxScriptBytes {
+		return worktreeDelUnreadable(id)
+	}
+	res, err := shellir.Analyze(string(b), e.Dir.Path)
+	if err != nil {
+		return worktreeDelUnreadable(id)
+	}
+	for _, inner := range res.Execs {
+		var v GuardVerdict
+		if inner.Kind == shellir.KindScriptFile {
+			v = worktreeDelJudgeScript(inner, id, depth+1)
+		} else {
+			v = worktreeDelJudgeExec(inner, id)
+		}
+		if v.Deny {
+			return v
+		}
+	}
+	return GuardVerdict{}
+}
+
+// worktreeDelJudgeExec is the verdict for one program the reader shows.
+func worktreeDelJudgeExec(e shellir.Exec, id WorktreeIdentity) GuardVerdict {
+	switch basename(e.Name) {
+	case "rm":
+		return worktreeDelJudgeRm(e, id)
+	case "rmdir":
+		return worktreeDelJudgeRmdir(e, id)
+	case "git":
+		return worktreeDelJudgeGit(e, id)
+	}
+	return GuardVerdict{}
+}
+
+// worktreeDelArgs splits the known operands of a program; an unknown operand is returned as unknown.
+func worktreeDelArgs(args []shellir.Word) ([]string, bool) {
+	out := make([]string, 0, len(args))
+	unknown := false
+	for _, a := range args {
+		if !a.Known {
+			unknown = true
+			out = append(out, "")
+			continue
+		}
+		out = append(out, a.Value)
+	}
+	return out, unknown
+}
+
+func worktreeDelJudgeRm(e shellir.Exec, id WorktreeIdentity) GuardVerdict {
+	args, unknown := worktreeDelArgs(e.Args)
+	recursive, flagsDone := false, false
+	var targets []string
+	for _, a := range args {
+		switch {
+		case !flagsDone && a == "--":
+			flagsDone = true
+		case !flagsDone && strings.HasPrefix(a, "--"):
+			recursive = recursive || a == "--recursive"
+		case !flagsDone && strings.HasPrefix(a, "-") && len(a) > 1:
+			recursive = recursive || strings.ContainsAny(a, "rR")
+		default:
+			targets = append(targets, a)
+		}
+	}
+	if !recursive {
+		return GuardVerdict{}
+	}
+	if unknown || e.Ctx.Carrier == "xargs" || e.Ctx.Carrier == "find" {
+		return worktreeDelUnreadable(id)
+	}
+	for _, t := range targets {
+		if worktreeDelTargetProtected(t, e, id) {
+			return GuardVerdict{Deny: true, Reason: denyReason("rm -r "+t, id)}
+		}
+	}
+	return GuardVerdict{}
+}
+
+func worktreeDelJudgeRmdir(e shellir.Exec, id WorktreeIdentity) GuardVerdict {
+	args, unknown := worktreeDelArgs(e.Args)
+	for _, a := range args {
+		if a == "" && unknown {
+			return worktreeDelUnreadable(id)
+		}
+		if strings.HasPrefix(a, "-") && a != "" {
+			continue
+		}
+		if worktreeDelTargetProtected(a, e, id) {
+			return GuardVerdict{Deny: true, Reason: denyReason("rmdir "+a, id)}
+		}
+	}
+	return GuardVerdict{}
+}
+
+// worktreeDelJudgeGit denies git worktree remove of a protected checkout. -C moves the directory git runs in.
+func worktreeDelJudgeGit(e shellir.Exec, id WorktreeIdentity) GuardVerdict {
+	args, unknown := worktreeDelArgs(e.Args)
+	dir := e.Dir
+	var rest []string
+	for i := 0; i < len(args); i++ {
+		switch {
+		case args[i] == "-C" && i+1 < len(args):
+			if !e.Dir.Known {
+				return worktreeDelUnreadable(id)
+			}
+			dir = shellir.Dir{Path: resolveFrom(dir.Path, args[i+1]), Known: true}
+			i++
+		case args[i] == "-c" && i+1 < len(args):
+			i++
+		default:
+			rest = append(rest, args[i])
+		}
+	}
+	if len(rest) < 2 || rest[0] != "worktree" || rest[1] != "remove" {
+		return GuardVerdict{}
+	}
+	if unknown {
+		return worktreeDelUnreadable(id)
+	}
+	target := ""
+	for _, t := range rest[2:] {
+		if !strings.HasPrefix(t, "-") {
+			target = t
+			break
+		}
+	}
+	if target != "" && worktreeDelTargetProtected(target, shellir.Exec{Dir: dir}, id) {
+		return GuardVerdict{Deny: true, Reason: denyReason("git worktree remove "+target, id)}
+	}
+	return GuardVerdict{}
+}
+
+// worktreeDelTargetProtected says whether a removal target, taken from the program's directory, is protected. A
+// relative target from an unknown directory cannot be placed, so it is protected.
+func worktreeDelTargetProtected(target string, e shellir.Exec, id WorktreeIdentity) bool {
+	if !e.Dir.Known {
+		return !filepath.IsAbs(target)
+	}
+	return isProtectedTarget(target, e.Dir.Path, id, true)
+}

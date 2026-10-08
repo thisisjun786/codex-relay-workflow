@@ -92,6 +92,9 @@ func unknownPart(p syntax.WordPart, quoted, first bool, st *state) string {
 		}
 		return ""
 	case *syntax.SglQuoted:
+		if x.Dollar && strings.Contains(x.Value, "\\") {
+			return "ANSI-C escape"
+		}
 		return ""
 	case *syntax.DblQuoted:
 		for _, q := range x.Parts {
