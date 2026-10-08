@@ -573,6 +573,12 @@ func auditDraftLoad(path string) (*auditDraft, error) {
 	if err != nil {
 		return nil, err
 	}
+	return improveAuditDraftDecode(path, data)
+}
+
+// improveAuditDraftDecode is auditDraftLoad over the bytes of one draft file already read, so a reader that
+// holds the file's pinned descriptor decodes the content it read rather than reading the path again.
+func improveAuditDraftDecode(path string, data []byte) (*auditDraft, error) {
 	var doc auditDraft
 	if err := json.Unmarshal(data, &doc); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
