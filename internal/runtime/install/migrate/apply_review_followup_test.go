@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"slices"
 	"strings"
 	"testing"
@@ -516,6 +517,8 @@ func migrateReviewFollowupStreamRecord(t *testing.T, dir, name string, gen func(
 // peak by its own size.
 func migrateReviewFollowupJudgePeakHeap(t *testing.T, path string) (before, peak uint64, ok bool) {
 	t.Helper()
+	prev := debug.SetGCPercent(1) // the judgement reads a live heap, not garbage the collector has not reclaimed
+	defer debug.SetGCPercent(prev)
 	f, err := os.Open(path)
 	if err != nil {
 		t.Fatal(err)
@@ -554,6 +557,8 @@ func migrateReviewFollowupJudgePeakHeap(t *testing.T, path string) (before, peak
 // migrateReviewFollowupJudgePeakHeapRecord is migrateReviewFollowupJudgePeakHeap for a record already in memory.
 func migrateReviewFollowupJudgePeakHeapRecord(t *testing.T, record string) (before, peak uint64, ok bool) {
 	t.Helper()
+	prev := debug.SetGCPercent(1) // the judgement reads a live heap, not garbage the collector has not reclaimed
+	defer debug.SetGCPercent(prev)
 	runtime.GC()
 	var b runtime.MemStats
 	runtime.ReadMemStats(&b)
