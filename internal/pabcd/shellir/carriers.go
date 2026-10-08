@@ -63,11 +63,11 @@ func interpreterSpec(lang string) interpSpec {
 	case "python":
 		return interpSpec{code: "c", consume: "WX", flags: "BbdEhiIOPqRsSuvxV", attach: true}
 	case "node":
-		return interpSpec{code: "ep", consume: "r", flags: "ci"}
+		return interpSpec{code: "ep", consume: "r", flags: "ci", attach: true}
 	case "perl":
 		return interpSpec{code: "eE", flags: "wWXnpsTtUcSaFlvi", attach: true}
 	case "ruby":
-		return interpSpec{code: "e", consume: "CI", flags: "wWdnpsyvcUalFrhxT", attach: true}
+		return interpSpec{code: "e", consume: "CI", flags: "wWdnpsyvcUalFrhxTi", attach: true}
 	}
 	return interpSpec{}
 }
@@ -105,62 +105,6 @@ func (w *walker) interpreterInline(name string, args []Word, redirs []Redir, ctx
 		return nil, nil, err
 	}
 	return &Inline{Language: lang, Source: Word{Known: true, Value: text}}, nil, nil
-}
-
-// clusterInterp reads interpreter options. It returns the program words it
-// found and the index of the first operand.
-func clusterInterp(name string, args []Word, spec interpSpec) ([]Word, int, error) {
-	var codes []Word
-	i := 0
-	for i < len(args) {
-		v, err := knownValue(args[i], name+" option")
-		if err != nil {
-			return nil, 0, err
-		}
-		if v == "--" {
-			i++
-			break
-		}
-		if strings.HasPrefix(v, "--") {
-			return nil, 0, unreadablef("%s option %s is not modelled", name, v)
-		}
-		if v == "-" || len(v) < 2 || v[0] != '-' {
-			break
-		}
-		i++
-		for k := 1; k < len(v); k++ {
-			c := v[k]
-			last := k == len(v)-1
-			switch {
-			case strings.IndexByte(spec.code, c) >= 0:
-				if !last && !spec.attach {
-					return nil, 0, unreadablef("%s option -%c must stand alone", name, c)
-				}
-				if !last {
-					codes = append(codes, Word{Known: true, Value: v[k+1:]})
-				} else {
-					if i >= len(args) {
-						return nil, 0, unreadablef("%s -%c without a program", name, c)
-					}
-					codes = append(codes, args[i])
-					i++
-				}
-				k = len(v)
-			case strings.IndexByte(spec.consume, c) >= 0:
-				if last {
-					if i >= len(args) {
-						return nil, 0, unreadablef("%s -%c without a value", name, c)
-					}
-					i++
-				}
-				k = len(v)
-			case strings.IndexByte(spec.flags, c) >= 0:
-			default:
-				return nil, 0, unreadablef("%s option -%c is not modelled", name, c)
-			}
-		}
-	}
-	return codes, i, nil
 }
 
 func awkInline(name string, args []Word) (*Inline, *Word, error) {
@@ -297,22 +241,6 @@ func sedInline(name string, args []Word, redirs []Redir, ctx Context) (*Inline, 
 	return inline, file, nil
 }
 
-func interpreterLanguage(name string) string {
-	switch {
-	case isPythonName(name):
-		return "python"
-	case name == "node" || name == "nodejs":
-		return "node"
-	case name == "perl" || name == "ruby":
-		return name
-	case name == "awk" || name == "gawk" || name == "mawk" || name == "nawk":
-		return "awk"
-	case name == "sed":
-		return "sed"
-	}
-	return ""
-}
-
 func isPythonName(name string) bool {
 	if name == "py" {
 		return true
@@ -393,4 +321,94 @@ loop:
 		return err
 	}
 	return w.carried(body, st.clone(), ctx, name+" stdin")
+}
+
+// interpreterLanguage names the interpreter a program is: the lower-case base name, without a Windows extension.
+func interpreterLanguage(name string) string {
+	name = strings.ToLower(name)
+	for _, ext := range []string{".exe", ".cmd", ".bat"} {
+		name = strings.TrimSuffix(name, ext)
+	}
+	switch {
+	case isPythonName(name):
+		return "python"
+	case name == "node" || name == "nodejs":
+		return "node"
+	case name == "perl" || name == "ruby":
+		return name
+	case name == "awk" || name == "gawk" || name == "mawk" || name == "nawk":
+		return "awk"
+	case name == "sed":
+		return "sed"
+	}
+	return ""
+}
+
+// clusterInterp reads interpreter options. It returns the program words it found and the index of the first operand.
+// Node's --eval and --print take the program as the next word or after an =.
+func clusterInterp(name string, args []Word, spec interpSpec) ([]Word, int, error) {
+	var codes []Word
+	i := 0
+	for i < len(args) {
+		v, err := knownValue(args[i], name+" option")
+		if err != nil {
+			return nil, 0, err
+		}
+		if v == "--" {
+			i++
+			break
+		}
+		if v == "--eval" || v == "--print" {
+			if i+1 >= len(args) {
+				return nil, 0, unreadablef("%s %s without a program", name, v)
+			}
+			codes = append(codes, args[i+1])
+			i += 2
+			continue
+		}
+		if strings.HasPrefix(v, "--eval=") {
+			codes = append(codes, Word{Known: true, Value: strings.TrimPrefix(v, "--eval=")})
+			i++
+			continue
+		}
+		if strings.HasPrefix(v, "--") {
+			return nil, 0, unreadablef("%s option %s is not modelled", name, v)
+		}
+		if v == "-" || len(v) < 2 || v[0] != '-' {
+			break
+		}
+		i++
+		for k := 1; k < len(v); k++ {
+			c := v[k]
+			last := k == len(v)-1
+			switch {
+			case strings.IndexByte(spec.code, c) >= 0:
+				if !last && !spec.attach {
+					return nil, 0, unreadablef("%s option -%c must stand alone", name, c)
+				}
+				if !last {
+					codes = append(codes, Word{Known: true, Value: v[k+1:]})
+				} else {
+					if i >= len(args) {
+						return nil, 0, unreadablef("%s -%c without a program", name, c)
+					}
+					codes = append(codes, args[i])
+					i++
+				}
+				k = len(v)
+			case strings.IndexByte(spec.consume, c) >= 0:
+				if last {
+					if i >= len(args) {
+						return nil, 0, unreadablef("%s -%c without a value", name, c)
+					}
+					i++
+				}
+				k = len(v)
+			case strings.IndexByte(spec.flags, c) >= 0:
+			default:
+				return nil, 0, unreadablef("%s option -%c is not modelled", name, c)
+			}
+		}
+	}
+	return codes, i, nil
 }

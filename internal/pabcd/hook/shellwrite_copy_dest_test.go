@@ -107,7 +107,7 @@ func TestShellCopyDestinationThroughTheCommand(t *testing.T) {
 		{"python -c 'import shutil as s; s.move(\"/w/a\", \"/m/n.md\")'", []string{"/m/n.md"}},
 	} {
 		t.Run(c.command, func(t *testing.T) {
-			if got := ShellWriteDestinations(c.command); !slices.Equal(got, c.want) {
+			if got := shellWriteDestsTest(c.command); !slices.Equal(got, c.want) {
 				t.Fatalf("got %q, want %q", got, c.want)
 			}
 		})

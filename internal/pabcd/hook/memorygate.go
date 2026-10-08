@@ -194,7 +194,7 @@ func memoryGateClassify(tool string, input any, cwd string, env host.LookupEnv) 
 		}
 		// A Python program the reader cannot finish - an f-string replacement field it cannot walk - may hold a write
 		// it never sees, so it is a write attempt of its own and the gate fails closed (CRW-741).
-		if what, ok := shellWriteFStringUnreadable(command); ok {
+		if what, ok := shellIRFStringUnreadable(command); ok {
 			return MemoryWriteAttempt{Surface: "shell", Target: "(a program the gate cannot read: " + what + ")"}
 		}
 		// A shell program position the outer shell builds at run time - a -c program, an eval operand, a source

@@ -67,8 +67,43 @@ func shellIRWordDest(w shellir.Word) string {
 // shellIRPlain is a known word's value, or the unknown mark for a word the reader cannot evaluate.
 func shellIRPlain(w shellir.Word) string { return shellIRWordDest(w) }
 
-// shellIRVerbDests reads the files a file-writing program names: tee's operands, cp, mv and install's last operand,
-// dd's of=, sort -o, and sed -i's file operands. An operand the reader cannot evaluate is returned as unknown.
+// shellIRLanguageDests reads the writes of an interpreter's inline program with the language readers, from the
+// program text the reader extracted. awk has no reader in this port yet; its inline program is not judged here.
+func shellIRLanguageDests(e shellir.Exec) []string {
+	if e.Inline == nil {
+		return nil
+	}
+	src := e.Inline.Source.Value
+	if !e.Inline.Source.Known {
+		return []string{shellIRUnknownDest}
+	}
+	switch e.Inline.Language {
+	case "python", "node":
+		isPy := e.Inline.Language == "python"
+		out := shellVerbScriptWritesIn(src, true, isPy)
+		if un := shellVerbUnescape(src); un != src {
+			out = append(out, shellVerbScriptWritesIn(un, true, isPy)...)
+		}
+		return out
+	case "sed":
+		return shellVerbSedWrites(shellIRStrings(e.Args))
+	case "perl", "ruby":
+		return append(shellVerbInterp(shellIRStrings(e.Args), false), shellIRInPlaceFiles(e.Args)...)
+	}
+	return nil
+}
+
+// shellIRStrings is the values of a word list, with the unknown mark for each word the reader cannot evaluate.
+func shellIRStrings(ws []shellir.Word) []string {
+	out := make([]string, 0, len(ws))
+	for _, w := range ws {
+		out = append(out, shellIRPlain(w))
+	}
+	return out
+}
+
+// shellIRVerbDests reads the files a file-writing program names: tee's operands, the destination of cp, mv and install
+// (the -t directory when given, else the last operand), dd's of=, sort -o, and sed -i's file operands.
 func shellIRVerbDests(e shellir.Exec) []string {
 	args := e.Args
 	switch filepath.Base(e.Name) {
@@ -81,6 +116,18 @@ func shellIRVerbDests(e shellir.Exec) []string {
 		}
 		return out
 	case "cp", "mv", "install":
+		for i, a := range args {
+			v := shellIRPlain(a)
+			if v == "-t" || v == "--target-directory" {
+				if i+1 < len(args) {
+					return []string{shellIRPlain(args[i+1])}
+				}
+				return []string{shellIRUnknownDest}
+			}
+			if strings.HasPrefix(v, "--target-directory=") {
+				return []string{strings.TrimPrefix(v, "--target-directory=")}
+			}
+		}
 		if len(args) == 0 {
 			return nil
 		}
@@ -108,8 +155,8 @@ func shellIRVerbDests(e shellir.Exec) []string {
 	return nil
 }
 
-// shellIRSedDests returns the files sed -i rewrites. When the script comes from -e or -f, every operand is a file;
-// otherwise the first operand is the script.
+// shellIRSedDests returns the files sed -i rewrites. A BSD suffix given as its own empty word is skipped. When the script
+// comes from -e or -f, every operand is a file; otherwise the first operand is the script.
 func shellIRSedDests(args []shellir.Word) []string {
 	inPlace, scriptOpt := false, false
 	for _, a := range args {
@@ -132,10 +179,14 @@ func shellIRSedDests(args []shellir.Word) []string {
 	var files []string
 	operands := 0
 	skip := false
-	for _, a := range args {
+	for i, a := range args {
 		v := shellIRPlain(a)
 		if skip {
 			skip = false
+			continue
+		}
+		if v == "-i" && i+1 < len(args) && shellIRPlain(args[i+1]) == "" {
+			skip = true
 			continue
 		}
 		if v == "-e" || v == "-f" || v == "-l" {
@@ -154,37 +205,46 @@ func shellIRSedDests(args []shellir.Word) []string {
 	return files
 }
 
-// shellIRLanguageDests reads the writes of an interpreter's inline program with the language readers, from the
-// program text the reader extracted. awk has no reader in this port yet; its inline program is not judged here.
-func shellIRLanguageDests(e shellir.Exec) []string {
-	if e.Inline == nil {
-		return nil
+// shellIRFStringUnreadable reports the first Python program of a command that holds an f-string the reader cannot walk.
+// The programs come from the shared reader's records, so a program a nested shell -c or eval runs is included. A command
+// the reader cannot read is itself unreadable.
+func shellIRFStringUnreadable(command string) (string, bool) {
+	res, err := shellir.Analyze(command, "")
+	if err != nil {
+		return "the command reader refused it", true
 	}
-	src := e.Inline.Source.Value
-	if !e.Inline.Source.Known {
-		return []string{shellIRUnknownDest}
-	}
-	switch e.Inline.Language {
-	case "python", "node":
-		isPy := e.Inline.Language == "python"
-		out := shellVerbScriptWritesIn(src, true, isPy)
-		if un := shellVerbUnescape(src); un != src {
-			out = append(out, shellVerbScriptWritesIn(un, true, isPy)...)
+	for _, e := range res.Execs {
+		if e.Inline == nil || e.Inline.Language != "python" || !e.Inline.Source.Known {
+			continue
 		}
-		return out
-	case "sed":
-		return shellVerbSedWrites(shellIRStrings(e.Args))
-	case "perl", "ruby":
-		return shellVerbInterp(shellIRStrings(e.Args), false)
+		if what, bad := shellWriteFStringUnreadableProgram(e.Inline.Source.Value); bad {
+			return what, true
+		}
 	}
-	return nil
+	return "", false
 }
 
-// shellIRStrings is the values of a word list, with the unknown mark for each word the reader cannot evaluate.
-func shellIRStrings(ws []shellir.Word) []string {
-	out := make([]string, 0, len(ws))
-	for _, w := range ws {
-		out = append(out, shellIRPlain(w))
+// shellIRInPlaceFiles reads the file operands of a perl or ruby program run with -i, which edits them in place: every
+// operand that is not an option is a file the program may write.
+func shellIRInPlaceFiles(args []shellir.Word) []string {
+	inPlace := false
+	for _, a := range args {
+		v := shellIRPlain(a)
+		if v == shellIRUnknownDest {
+			return []string{v}
+		}
+		if strings.HasPrefix(v, "-") && !strings.HasPrefix(v, "--") && strings.Contains(v, "i") {
+			inPlace = true
+		}
 	}
-	return out
+	if !inPlace {
+		return nil
+	}
+	var files []string
+	for _, a := range args {
+		if v := shellIRPlain(a); !strings.HasPrefix(v, "-") {
+			files = append(files, v)
+		}
+	}
+	return files
 }
