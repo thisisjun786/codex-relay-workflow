@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"golang.org/x/sys/unix"
+	"mvdan.cc/sh/v3/syntax"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
 )
@@ -296,6 +297,12 @@ func dagHostParentRollout(in *dagReviewInput, parent dagHostParent, path string,
 			Detail: fmt.Sprintf("the relay command %s was refused: %s", strings.Join(refusal.commands, ","), refusal.reason),
 		})
 	}
+	for _, line := range dagHostNewUnparsed(reading, reported, firstSight) {
+		in.review.Checks = append(in.review.Checks, Check{
+			Name: "parent_command:" + parent.id, State: dagReviewUnmeasured,
+			Detail: fmt.Sprintf("command_unparsed: the command line of call %s is not valid shell, so its relay calls were not read", line.callID),
+		})
+	}
 	if offsetsRead {
 		offsets.Offsets[path] = reading.resume
 		offsets.Reported[path] = dagHostResumeRefusalIDs(reading)
@@ -343,8 +350,39 @@ func dagHostResumeRefusalIDs(reading dagHostRolloutReading) []string {
 		}
 		ids = append(ids, refusal.callID)
 	}
+	for _, line := range reading.unparsed {
+		if line.callStart < reading.resume {
+			continue
+		}
+		ids = append(ids, dagHostUnparsedKey(line.callID))
+	}
 	sort.Strings(ids)
 	return ids
+}
+
+// dagHostNewUnparsed is the command lines of one reading that this check has not reported yet. They
+// share the reported list with the refusals under their own key, so a line the next check reads again
+// is not reported twice. A first-sight rollout leaves the lines of its history unreported, as it does
+// its refusals.
+func dagHostNewUnparsed(reading dagHostRolloutReading, reported map[string]bool, firstSight bool) []dagHostUnparsed {
+	out := []dagHostUnparsed{}
+	for _, line := range reading.unparsed {
+		key := dagHostUnparsedKey(line.callID)
+		if reported[key] {
+			continue
+		}
+		reported[key] = true
+		if firstSight && line.lineEnd <= reading.boundary {
+			continue
+		}
+		out = append(out, line)
+	}
+	return out
+}
+
+// dagHostUnparsedKey is the reported-list key of a command line the parser refused.
+func dagHostUnparsedKey(callID string) string {
+	return "unparsed:" + callID
 }
 
 // dagHostDuplicate is one call id whose tool results repeat in a rollout.
@@ -425,6 +463,7 @@ type dagHostRefusal struct {
 // appended while this reading ran.
 type dagHostRolloutReading struct {
 	refusals []dagHostRefusal
+	unparsed []dagHostUnparsed
 	resume   int64
 	boundary int64
 	tooLong  bool
@@ -436,508 +475,206 @@ type dagHostRolloutReading struct {
 // {"ok": false, "reason": ...}, and the scheduler's own envelope {"error": "refused", "reason": ...}
 // (internal/relay/dispatch/answer.go emit). Either shape with a reason is a refusal.
 var (
-	dagHostDagSubcommand  = regexp.MustCompile(`^dag-[a-z-]+$`)
-	dagHostVariableWord   = regexp.MustCompile(`^\$\{?[A-Za-z_][A-Za-z0-9_]*\}?$`)
-	dagHostAssignmentWord = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=`)
-	// dagHostSubstitutionWord stands for a command substitution in a word: this reader cannot expand
-	// it, so it is one opaque word that is neither an option, a dag- subcommand nor a variable word.
+	dagHostDagSubcommand = regexp.MustCompile("^dag-[a-z-]+$")
+	// dagHostSubstitutionWord stands for a word part the reading does not expand (a command
+	// substitution, a parameter expansion, arithmetic). A word holding one is never a program, a
+	// subcommand or a dag- word.
 	dagHostSubstitutionWord = "<substitution>"
 	dagHostRefusedAnswer    = regexp.MustCompile(`"ok"\s*:\s*false`)
 	dagHostRefusedEnvelope  = regexp.MustCompile(`"error"\s*:\s*"refused"`)
 	dagHostRefusedReason    = regexp.MustCompile(`"reason"\s*:\s*"([a-z_]+)"`)
 )
 
-// dagHostHeredoc is one here-document a command line opens: its delimiter, whether it is a <<-
-// document (whose end line the shell matches with the leading tabs stripped), and whether the
-// delimiter is unquoted, so the shell expands the body.
-type dagHostHeredoc struct {
-	delimiter string
-	stripTabs bool
-	expanded  bool
+// dagHostUnparsed is a shell command line of a tool call that the parser refused. The reading does not
+// guess whether it held a relay call; it leaves the line unmeasured. callStart and lineEnd are the
+// rollout offsets of the call's line.
+type dagHostUnparsed struct {
+	callID    string
+	callStart int64
+	lineEnd   int64
 }
 
-// dagHostCommandUnits splits a tool call's argument text into the command units a shell would run,
-// reading the text once. A newline, ;, &&, ||, | or a subshell's ( starts a unit, and a
-// here-document body is not a command at all. A separator inside a single-quoted string, or inside a
-// double-quoted string that is not itself inside a command substitution, is data, so a relay command
-// written in an example the parent only read (rg's pattern, cat's document) is never mistaken for one
-// the parent ran. A command substitution runs its own commands: its text stays inside the word it
-// belongs to, so "crw relay --state \"$(...)\" dag-ready" still names the relay, and the commands
-// inside it are read as units of their own. A # that starts a word begins a comment to the end of the
-// line. A unit keeps its own text, quotes included, for the word reading that follows; text the
-// reader cannot read to its end (an unterminated quote) is never split.
-func dagHostCommandUnits(text string) []string {
-	var units []string
-	dagHostScanUnits(dagHostStripHeredocs(text), &units)
-	return units
+// dagHostWord is one word of a simple command as the shell reads it. text is the word with its quotes
+// removed; static is false when a part of it is expanded at run time, and then text holds the
+// placeholder for that part; variable is true when the whole word is one bare parameter expansion,
+// such as $RELAY, ${RELAY} or "$RELAY".
+type dagHostWord struct {
+	text     string
+	static   bool
+	variable bool
 }
 
-// dagHostScanUnits reads one level of command text into units, recursing into the commands a
-// substitution runs. It reads the substitution's text as part of the word it sits in, so the word
-// reading sees the enclosing command whole.
-func dagHostScanUnits(text string, units *[]string) {
-	var unit strings.Builder
-	flush := func() {
-		if strings.TrimSpace(unit.String()) != "" {
-			*units = append(*units, unit.String())
-		}
-		unit.Reset()
+// dagHostRelaySubcommands reads the dag- subcommands of the relay invocations in a command line. The
+// command line is parsed with mvdan.cc/sh/v3/syntax, and every simple command in the tree is judged,
+// so a call in a substitution (including one in an expanded here-document), a pipeline, a list, a
+// compound command or a function body is found, while a quoted string, a comment, a quoted
+// here-document body or a document read is not. A simple command is a relay invocation when its
+// program word is codex-session-relay (by basename), crw followed by relay, or a bare parameter
+// expansion such as $RELAY. The subcommand is the first word the relay's root parser does not consume,
+// and the call is a dag call only when that word matches ^dag-[a-z-]+$. A command line the parser
+// refuses returns its error, and the reading never guesses at it.
+func dagHostRelaySubcommands(command string) ([]string, error) {
+	file, err := syntax.NewParser(syntax.Variant(syntax.LangBash)).Parse(strings.NewReader(command), "")
+	if err != nil {
+		return nil, err
 	}
-	inDouble := false
-	wordStart := true
-	for i := 0; i < len(text); {
-		c := text[i]
-		switch {
-		case c == '\\' && i+1 < len(text):
-			unit.WriteString(text[i : i+2])
-			i += 2
-			wordStart = false
-		case !inDouble && c == '\'':
-			end := dagHostQuotedEnd(text, i, '\'')
-			unit.WriteString(text[i:end])
-			i = end
-			wordStart = false
-		case c == '"':
-			unit.WriteByte(c)
-			inDouble = !inDouble
-			i++
-			wordStart = false
-		case c == '#' && wordStart && !inDouble:
-			// A comment runs to the end of the line; the newline that ends it still separates units.
-			for i < len(text) && text[i] != '\n' {
-				i++
-			}
-		case !inDouble && (c == '\n' || c == ';'):
-			flush()
-			i++
-			wordStart = true
-		case !inDouble && (c == '|' || c == '&'):
-			flush()
-			i++
-			if i < len(text) && (text[i] == '|' || text[i] == '&') {
-				i++
-			}
-			wordStart = true
-		case c == '$' && i+1 < len(text) && text[i+1] == '(':
-			end := dagHostParenEnd(text, i+1)
-			unit.WriteString(text[i:end])
-			if end > i+2 {
-				dagHostScanUnits(dagHostStripHeredocs(text[i+2:end-1]), units)
-			}
-			i = end
-			wordStart = false
-		case c == '`':
-			end := i + 1
-			for end < len(text) && text[end] != '`' {
-				end++
-			}
-			if end < len(text) {
-				end++
-			}
-			unit.WriteString(text[i:end])
-			if end > i+1 {
-				dagHostScanUnits(dagHostStripHeredocs(text[i+1:end-1]), units)
-			}
-			i = end
-			wordStart = false
-		case !inDouble && c == '(' && wordStart:
-			// A subshell runs its own commands, so it starts a unit of its own.
-			flush()
-			i++
-			wordStart = true
-		case !inDouble && c == ')':
-			// The subshell's last command ends here.
-			flush()
-			i++
-			wordStart = true
-		default:
-			unit.WriteByte(c)
-			i++
-			wordStart = c == ' ' || c == '\t' || c == '\r'
-		}
-	}
-	flush()
-}
-
-// dagHostQuotedEnd is the index just past the quoted string that starts at i with quote q. A single
-// quote ends at the next single quote; a double quote ends at the next double quote a backslash does
-// not escape. A quote with no end is the end of the text, so an unterminated string is never split.
-func dagHostQuotedEnd(s string, i int, q byte) int {
-	for j := i + 1; j < len(s); j++ {
-		if q == '"' && s[j] == '\\' {
-			j++
-			continue
-		}
-		if s[j] == q {
-			return j + 1
-		}
-	}
-	return len(s)
-}
-
-// dagHostWords splits one command unit into the words a shell would pass as argv. A run of unquoted
-// characters up to whitespace is one word, a quoted run contributes its own text without the quotes,
-// a backslash quotes the character after it, and a backslash before a newline removes both. So a
-// quoted option value with a space stays one word, a quoted program word still names the program,
-// and a line continued with a backslash leaves no stray word behind. The program word and its
-// options are read from these words, never from the unit's raw text.
-func dagHostWords(unit string) []string {
-	var words []string
-	var word strings.Builder
-	started := false
-	flush := func() {
-		if started {
-			words = append(words, word.String())
-		}
-		word.Reset()
-		started = false
-	}
-	for i := 0; i < len(unit); {
-		switch c := unit[i]; {
-		case c == ' ' || c == '\t' || c == '\r' || c == '\n':
-			flush()
-			i++
-		case c == '\\':
-			if i+1 < len(unit) && unit[i+1] == '\n' {
-				i += 2
-				continue
-			}
-			if i+1 < len(unit) {
-				word.WriteByte(unit[i+1])
-				started = true
-				i += 2
-				continue
-			}
-			i++
-		case c == '\'' || c == '"':
-			end := dagHostQuotedEnd(unit, i, c)
-			inner := unit[i+1 : end]
-			if len(inner) > 0 && inner[len(inner)-1] == c {
-				inner = inner[:len(inner)-1]
-			}
-			word.WriteString(inner)
-			started = true
-			i = end
-		case c == '$' && i+1 < len(unit) && unit[i+1] == '(':
-			// A command substitution is one word whatever its output, and this reader cannot expand
-			// it, so it becomes one opaque word: the words around it are neither glued together nor
-			// split apart, and the substitution's own text is never read as a program or a subcommand.
-			end := dagHostParenEnd(unit, i+1)
-			word.WriteString(dagHostSubstitutionWord)
-			started = true
-			i = end
-		case c == '`':
-			end := i + 1
-			for end < len(unit) && unit[end] != '`' {
-				end++
-			}
-			if end < len(unit) {
-				end++
-			}
-			word.WriteString(dagHostSubstitutionWord)
-			started = true
-			i = end
-		default:
-			word.WriteByte(c)
-			started = true
-			i++
-		}
-	}
-	flush()
-	return words
-}
-
-// dagHostStripHeredocs is the text with every here-document body removed. A body is data the parent
-// read or wrote, so a relay command written in one is not a command the parent ran; the end is the
-// delimiter line itself, an ordinary << ending at a line equal to the delimiter and only <<-
-// stripping the leading tabs the shell strips. One exception keeps a real invocation: an unquoted
-// delimiter leaves the body expanded, so a command substitution in the body still runs and its text
-// is kept for the command reading. A quoted delimiter expands nothing, so its body is dropped whole.
-// The scan carries an unclosed quote from one line to the next, so a << inside a quoted string that
-// spans lines starts no document and does not hide the commands after it.
-func dagHostStripHeredocs(text string) string {
-	var out strings.Builder
-	var pending []dagHostHeredoc
-	quote := byte(0)
-	for _, line := range strings.SplitAfter(text, "\n") {
-		content := strings.TrimRight(strings.TrimRight(line, "\n"), "\r")
-		if len(pending) > 0 {
-			end := content
-			if pending[0].stripTabs {
-				end = strings.TrimLeft(end, "\t")
-			}
-			if end == pending[0].delimiter {
-				pending = pending[1:]
-				continue
-			}
-			if pending[0].expanded {
-				out.WriteString(dagHostSubstitutionText(content))
-				out.WriteString("\n")
-			}
-			continue
-		}
-		out.WriteString(line)
-		openers, next := dagHostHeredocOpeners(content, quote)
-		quote = next
-		pending = append(pending, openers...)
-	}
-	return out.String()
-}
-
-// dagHostHeredocOpeners is the here-documents a line opens, given the quote it starts inside, and the
-// quote it leaves open. A << inside a comment, a quoted string or a here-string (<<<) starts none, so
-// a commented or quoted example does not swallow the commands that follow it.
-func dagHostHeredocOpeners(line string, quoteIn byte) ([]dagHostHeredoc, byte) {
-	var openers []dagHostHeredoc
-	quote := quoteIn
-	for i := 0; i < len(line); i++ {
-		c := line[i]
-		if quote != 0 {
-			if c == '\\' && quote == '"' && i+1 < len(line) {
-				i++
-				continue
-			}
-			if c == quote {
-				quote = 0
-			}
-			continue
-		}
-		switch {
-		case c == '\\':
-			i++
-		case c == '\'' || c == '"':
-			quote = c
-		case c == '#':
-			// A # that starts a word begins a comment; a # inside a word (a#b) does not.
-			if i == 0 || line[i-1] == ' ' || line[i-1] == '\t' {
-				return openers, quote
-			}
-		case c == '<' && i+1 < len(line) && line[i+1] == '<':
-			heredoc, ok, next := dagHostHeredocAt(line, i)
-			// The scan continues after whatever the reader consumed, so a rejected opener (a
-			// here-string, an unnamed <<) is not read again from its second <.
-			i = next - 1
-			if !ok {
-				continue
-			}
-			openers = append(openers, heredoc)
-		}
-	}
-	return openers, quote
-}
-
-// dagHostHeredocAt reads the here-document that starts at the first < of line[i], and the index just
-// past its delimiter word. The delimiter is the word the shell reads, with its quotes and backslashes
-// removed, so <<\EOF and <<E'OF' both name EOF; the body is expanded only when no part of the word is
-// quoted. A here-string (<<<), a << with no delimiter word, and a word the shell would expand (a $ or
-// a substitution) start no document this reader can end.
-func dagHostHeredocAt(line string, i int) (dagHostHeredoc, bool, int) {
-	if i+2 < len(line) && line[i+2] == '<' {
-		return dagHostHeredoc{}, false, i + 3
-	}
-	j := i + 2
-	strip := j < len(line) && line[j] == '-'
-	if strip {
-		j++
-	}
-	for j < len(line) && (line[j] == ' ' || line[j] == '\t') {
-		j++
-	}
-	end := j
-	for end < len(line) && !dagHostWordBreak(line[end]) {
-		switch line[end] {
-		case '\\':
-			end += 2
-		case '\'', '"':
-			end = dagHostQuotedEnd(line, end, line[end])
-		default:
-			end++
-		}
-	}
-	if end > len(line) {
-		end = len(line)
-	}
-	if end == j {
-		return dagHostHeredoc{}, false, i + 2
-	}
-	raw := line[j:end]
-	if strings.ContainsAny(raw, "$("+"\x60") {
-		return dagHostHeredoc{}, false, i + 2
-	}
-	name, quoted, ok := dagHostUnquoteWord(raw)
-	if !ok || name == "" {
-		return dagHostHeredoc{}, false, i + 2
-	}
-	// A word closed by ) is arithmetic (x<<2)), not a here-document.
-	if end < len(line) && line[end] == ')' {
-		return dagHostHeredoc{}, false, i + 2
-	}
-	return dagHostHeredoc{delimiter: name, stripTabs: strip, expanded: !quoted}, true, end
-}
-
-// dagHostUnquoteWord is the text a shell word reads as: quotes are removed, a backslash quotes the
-// character after it, and quoted reports whether any part of the word was quoted. ok is false when a
-// quote is never closed.
-func dagHostUnquoteWord(raw string) (name string, quoted bool, ok bool) {
-	var out strings.Builder
-	for i := 0; i < len(raw); {
-		switch c := raw[i]; c {
-		case '\\':
-			quoted = true
-			if i+1 < len(raw) {
-				out.WriteByte(raw[i+1])
-			}
-			i += 2
-		case '\'', '"':
-			quoted = true
-			closing := strings.IndexByte(raw[i+1:], c)
-			if closing < 0 {
-				return "", false, false
-			}
-			out.WriteString(raw[i+1 : i+1+closing])
-			i += closing + 2
-		default:
-			out.WriteByte(c)
-			i++
-		}
-	}
-	return out.String(), quoted, true
-}
-
-// dagHostWordBreak reports whether c ends a shell word: whitespace, or a metacharacter that starts
-// another token (; & | < > ( )). So the delimiter of "<<EOF;" is EOF, not "EOF;", exactly as the
-// shell reads it.
-func dagHostWordBreak(c byte) bool {
-	switch c {
-	case ' ', '\t', '\r', '\n', ';', '&', '|', '<', '>', '(', ')':
-		return true
-	}
-	return false
-}
-
-// dagHostSubstitutionText is the command substitutions an unquoted here-document body runs: the
-// shell expands such a body, so a $( ... ) or ` ... ` in it executes its commands even though the
-// rest of the body is data. A body the reader cannot read to the end of a substitution is left as
-// it stands, so an unreadable body is never split into a command it would report.
-func dagHostSubstitutionText(body string) string {
-	var out strings.Builder
-	for i := 0; i < len(body); i++ {
-		switch {
-		case body[i] == '\\' && i+1 < len(body):
-			i++
-		case body[i] == '$' && i+1 < len(body) && body[i+1] == '(':
-			end := dagHostParenEnd(body, i+1)
-			out.WriteString(body[i:end])
-			i = end - 1
-		case body[i] == '`':
-			end := i + 1
-			for end < len(body) && body[end] != '`' {
-				end++
-			}
-			if end < len(body) {
-				end++
-			}
-			out.WriteString(body[i:end])
-			i = end - 1
-		}
-	}
-	return out.String()
-}
-
-// dagHostParenEnd is the index just past the ) that closes the ( at index open, counting nested
-// parentheses and skipping the quoted strings between them.
-func dagHostParenEnd(s string, open int) int {
-	depth := 0
-	for i := open; i < len(s); i++ {
-		switch s[i] {
-		case '\\':
-			// A backslash quotes the character after it, so an escaped ( or ) is not a nesting
-			// parenthesis and does not close the substitution.
-			i++
-		case '\'', '"':
-			i = dagHostQuotedEnd(s, i, s[i]) - 1
-		case '(':
-			depth++
-		case ')':
-			depth--
-			if depth == 0 {
-				return i + 1
-			}
-		}
-	}
-	return len(s)
-}
-
-// dagHostRelaySubcommands reads the dag- subcommands of the relay invocations in a tool call's
-// argument text. The text is split into simple command units (a newline, ;, &&, ||, | or $( starts
-// one) and each into words; leading VAR=value assignments and exec are skipped; the program word
-// must be the relay (codex-session-relay by basename, crw relay, or a variable expansion). The
-// words after the program are read with the relay's own root parser, so an option's value is not
-// mistaken for the subcommand: --state, --socket and --kind-module take a value (--flag=value too)
-// and --json takes none. The subcommand is the parser's first remaining word, and the call is a dag
-// call only when the parser read the line and that word matches ^dag-[a-z-]+$; a line the root
-// parser refuses (an unknown option, a missing value) is not a dag call, and reading a relay
-// document with cat or searching for a dag- word with rg is never a relay invocation.
-func dagHostRelaySubcommands(text string) []string {
 	var subcommands []string
-	for _, unit := range dagHostCommandUnits(text) {
-		words := dagHostWords(unit)
-		for len(words) > 0 && (dagHostAssignmentWord.MatchString(words[0]) || words[0] == "exec") {
-			words = words[1:]
+	syntax.Walk(file, func(node syntax.Node) bool {
+		if call, ok := node.(*syntax.CallExpr); ok {
+			if subcommand, found := dagHostRelaySubcommand(call.Args); found {
+				subcommands = append(subcommands, subcommand)
+			}
 		}
-		if len(words) == 0 || !dagHostRelayProgram(words) {
-			continue
-		}
-		if path.Base(words[0]) == "crw" {
-			words = words[2:]
-		} else {
-			words = words[1:]
-		}
-		// The relay's root parser knows which options take a value, so a dag- word given as an
-		// option's value is not read as the subcommand, and a line the parser refuses is not a dag
-		// call. Remaining is what the parser did not consume: for the root, the subcommand and the
-		// words after it.
-		parsed := argparse.Parse("", words)
-		if parsed.Message != "" || len(parsed.Remaining) == 0 {
-			continue
-		}
-		if dagHostDagSubcommand.MatchString(parsed.Remaining[0]) {
-			subcommands = append(subcommands, parsed.Remaining[0])
-		}
-	}
-	return subcommands
+		return true
+	})
+	return subcommands, nil
 }
 
-// dagHostRelayProgram reports whether the first word names the relay: codex-session-relay by
-// basename, crw (or its absolute path) followed by relay, or a variable expansion a shell would
-// substitute. The absolute form is the relay's own recovery command, which names this binary's
-// resolved executable followed by relay (internal/relay/cli/status.go relayProgram).
-func dagHostRelayProgram(words []string) bool {
+// dagHostRelaySubcommand is the dag- subcommand of one simple command's words, when the command is a
+// relay invocation of one.
+func dagHostRelaySubcommand(args []*syntax.Word) (string, bool) {
+	words := make([]dagHostWord, 0, len(args))
+	for _, arg := range args {
+		words = append(words, dagHostWordOf(arg))
+	}
+	// exec runs the command that follows it in place of the shell, so it names the same program.
+	if len(words) > 0 && words[0].static && words[0].text == "exec" {
+		words = words[1:]
+	}
+	if len(words) == 0 {
+		return "", false
+	}
+	var rest []dagHostWord
 	switch {
-	case path.Base(words[0]) == "codex-session-relay":
-		return true
-	case path.Base(words[0]) == "crw":
-		return len(words) > 1 && words[1] == "relay"
-	case dagHostVariableWord.MatchString(words[0]):
-		return true
+	case words[0].variable:
+		rest = words[1:]
+	case words[0].static && path.Base(words[0].text) == "codex-session-relay":
+		rest = words[1:]
+	case words[0].static && path.Base(words[0].text) == "crw" && len(words) > 1 && words[1].static && words[1].text == "relay":
+		rest = words[2:]
+	default:
+		return "", false
 	}
-	return false
+	// The relay's root parser knows which options take a value, so a dag- word given as an option's
+	// value is not read as the subcommand, and a line the parser refuses is not a dag call.
+	texts := make([]string, len(rest))
+	for i, word := range rest {
+		texts[i] = word.text
+	}
+	parsed := argparse.Parse("", texts)
+	if parsed.Message != "" || len(parsed.Remaining) == 0 {
+		return "", false
+	}
+	if dagHostDagSubcommand.MatchString(parsed.Remaining[0]) {
+		return parsed.Remaining[0], true
+	}
+	return "", false
 }
 
-// dagHostCallText is a tool call's command line: a function_call's arguments is a JSON object whose
-// cmd member carries it; any other text (a custom_tool_call's input, or a rollout that stores the
-// command line directly) is used as it stands.
-func dagHostCallText(arguments, input string) string {
-	if arguments != "" {
-		var parsed struct {
-			Cmd string `json:"cmd"`
-		}
-		if err := json.Unmarshal([]byte(arguments), &parsed); err == nil && parsed.Cmd != "" {
-			return parsed.Cmd
-		}
-		return arguments
+// dagHostWordOf reads one word of a simple command.
+func dagHostWordOf(word *syntax.Word) dagHostWord {
+	var out strings.Builder
+	static := true
+	for _, part := range word.Parts {
+		dagHostPartText(&out, &static, part, false)
 	}
-	return input
+	return dagHostWord{text: out.String(), static: static, variable: dagHostBareExpansion(word)}
+}
+
+// dagHostPartText writes the text one part of a word reads as. quoted reports whether the part sits
+// inside double quotes, where a backslash escapes fewer characters.
+func dagHostPartText(out *strings.Builder, static *bool, part syntax.WordPart, quoted bool) {
+	switch p := part.(type) {
+	case *syntax.Lit:
+		out.WriteString(dagHostUnescape(p.Value, quoted))
+	case *syntax.SglQuoted:
+		if p.Dollar {
+			*static = false
+			out.WriteString(dagHostSubstitutionWord)
+			return
+		}
+		out.WriteString(p.Value)
+	case *syntax.DblQuoted:
+		if p.Dollar {
+			*static = false
+			out.WriteString(dagHostSubstitutionWord)
+			return
+		}
+		for _, inner := range p.Parts {
+			dagHostPartText(out, static, inner, true)
+		}
+	default:
+		*static = false
+		out.WriteString(dagHostSubstitutionWord)
+	}
+}
+
+// dagHostUnescape removes the escapes of a literal part. An unquoted backslash quotes the character
+// after it; inside double quotes a backslash quotes only $, backtick, double quote, backslash and a
+// newline, and keeps itself before anything else. A backslash that ends a line continues it, so both
+// are removed.
+func dagHostUnescape(raw string, quoted bool) string {
+	var out strings.Builder
+	for i := 0; i < len(raw); i++ {
+		c := raw[i]
+		if c != '\\' || i+1 >= len(raw) {
+			out.WriteByte(c)
+			continue
+		}
+		next := raw[i+1]
+		if quoted && !strings.ContainsRune("$`\"\\\n", rune(next)) {
+			out.WriteByte(c)
+			continue
+		}
+		i++
+		if next != '\n' {
+			out.WriteByte(next)
+		}
+	}
+	return out.String()
+}
+
+// dagHostBareExpansion reports whether a word is one parameter expansion with no operator, bare or
+// inside double quotes: $RELAY, ${RELAY} or "$RELAY". Only a plain name is read as a program.
+func dagHostBareExpansion(word *syntax.Word) bool {
+	parts := word.Parts
+	if len(parts) == 1 {
+		if quoted, ok := parts[0].(*syntax.DblQuoted); ok && !quoted.Dollar {
+			parts = quoted.Parts
+		}
+	}
+	if len(parts) != 1 {
+		return false
+	}
+	p, ok := parts[0].(*syntax.ParamExp)
+	if !ok {
+		return false
+	}
+	return p.Exp == nil && p.Index == nil && p.Slice == nil && p.Repl == nil && p.Names == 0 &&
+		!p.Excl && !p.Length && !p.Width && !p.IsSet && p.Flags == nil
+}
+
+// dagHostCallText is a tool call's command line, and whether a line the parser refuses is reported as
+// unmeasured. A function_call's arguments is a JSON object whose cmd member carries the command line;
+// a JSON object with no cmd is another tool's arguments and is not a command line at all. Arguments
+// that are not a JSON object are read as the command line itself, as a rollout that stores the command
+// directly does. A custom_tool_call's input is the code of whatever tool it calls (an exec cell, a
+// patch), so it is judged for relay calls but its refusal is not reported.
+func dagHostCallText(kind, arguments, input string) (string, bool) {
+	if kind == "custom_tool_call" {
+		return input, false
+	}
+	var object map[string]json.RawMessage
+	if json.Unmarshal([]byte(arguments), &object) != nil {
+		return arguments, true
+	}
+	var parsed struct {
+		Cmd string `json:"cmd"`
+	}
+	if json.Unmarshal([]byte(arguments), &parsed) != nil || parsed.Cmd == "" {
+		return "", false
+	}
+	return parsed.Cmd, true
 }
 
 // dagHostAfterBoundary is a test seam: it is called after a reading has taken the rollout's size as
@@ -1001,7 +738,15 @@ func dagHostRolloutRefusals(path string, start int64) (dagHostRolloutReading, er
 			if json.Unmarshal(bytes.TrimRight(line, "\r\n"), &entry) == nil && entry.Type == "response_item" {
 				switch entry.Payload.Type {
 				case "function_call", "custom_tool_call":
-					if commands := dagHostRelaySubcommands(dagHostCallText(entry.Payload.Arguments, entry.Payload.Input)); len(commands) > 0 {
+					command, reportable := dagHostCallText(entry.Payload.Type, entry.Payload.Arguments, entry.Payload.Input)
+					commands, err := dagHostRelaySubcommands(command)
+					if err != nil {
+						if reportable {
+							reading.unparsed = append(reading.unparsed, dagHostUnparsed{callID: entry.Payload.CallID, callStart: lineStart, lineEnd: offset})
+						}
+						break
+					}
+					if len(commands) > 0 {
 						calls[entry.Payload.CallID] = dagHostCall{commands: commands, callStart: lineStart}
 					}
 				case "function_call_output", "custom_tool_call_output":
