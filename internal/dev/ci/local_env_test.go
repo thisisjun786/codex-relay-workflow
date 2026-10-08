@@ -96,3 +96,19 @@ func TestLocal_the_recorded_tool_versions_match_the_reuse_keys(t *testing.T) {
 		}
 	}
 }
+
+// CRW-964 parent ruling 2, d1: GOWORK is off in every step and every tool probe, so an ancestor
+// go.work never selects another module set.
+func TestLocal_a_step_never_selects_a_go_workspace(t *testing.T) {
+	temp := t.TempDir()
+	env, err := localStepEnv(filepath.Join(temp, "home"), temp, localOptions{output: filepath.Join(temp, "output")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !localContains(env, "GOWORK=off") {
+		t.Errorf("the step environment does not disable go.work: %v", env)
+	}
+	if probe := localProbeEnv(filepath.Join(temp, "probe"), "/usr/bin"); !localContains(probe, "GOWORK=off") {
+		t.Errorf("the tool probe does not disable go.work: %v", probe)
+	}
+}

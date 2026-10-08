@@ -124,14 +124,7 @@ func localObserveToolIn(name, pathEnv string, goMod []byte) string {
 	}
 	// The probe runs with the steps' sealed environment: the same allowlist, GOTOOLCHAIN local and the
 	// engine's GOFLAGS, so the version it reads is the one a step reads.
-	cmd.Env = []string{"PATH=" + pathEnv, "HOME=" + home, "XDG_CONFIG_HOME=" + filepath.Join(home, "config"),
-		"XDG_CACHE_HOME=" + filepath.Join(home, "cache"), "XDG_DATA_HOME=" + filepath.Join(home, "data"),
-		"XDG_STATE_HOME=" + filepath.Join(home, "state"), "TZ=UTC", "GOTOOLCHAIN=local", "GOFLAGS=-p=4"}
-	for _, name := range []string{"LANG", "TMPDIR"} {
-		if value, ok := os.LookupEnv(name); ok {
-			cmd.Env = append(cmd.Env, name+"="+value)
-		}
-	}
+	cmd.Env = localProbeEnv(home, pathEnv)
 	out, err := cmd.Output()
 	if err != nil {
 		return ""
@@ -196,4 +189,64 @@ func localPinMismatch(pins, observed map[string]string) []string {
 		}
 	}
 	return localSortedUnique(mismatches)
+}
+
+// localProbeEnv is the environment a tool probe runs with: the steps' allowlist, GOTOOLCHAIN local,
+// GOWORK off and the engine's GOFLAGS, so the version a probe reads is the one a step reads (parent
+// ruling 2, d1). The caller's Go settings never reach it.
+func localProbeEnv(home, pathEnv string) []string {
+	env := []string{"PATH=" + pathEnv, "HOME=" + home, "XDG_CONFIG_HOME=" + filepath.Join(home, "config"),
+		"XDG_CACHE_HOME=" + filepath.Join(home, "cache"), "XDG_DATA_HOME=" + filepath.Join(home, "data"),
+		"XDG_STATE_HOME=" + filepath.Join(home, "state"), "TZ=UTC", "GOTOOLCHAIN=local", "GOWORK=off", "GOFLAGS=-p=4"}
+	for _, name := range []string{"LANG", "TMPDIR"} {
+		if value, ok := os.LookupEnv(name); ok {
+			env = append(env, name+"="+value)
+		}
+	}
+	return env
+}
+
+// localPinsAt reads the pins a commit names, the tools' and every setup-node pin of its ci.yml, through
+// read, which takes a path inside the commit.
+func localPinsAt(read func(path string) ([]byte, error)) (map[string]string, []workflowJob, error) {
+	pins, err := localToolPinsFrom(read)
+	if err != nil {
+		return nil, nil, err
+	}
+	data, err := read(".github/workflows/ci.yml")
+	if err != nil {
+		return nil, nil, err
+	}
+	jobs, err := parseWorkflow(string(data))
+	if err != nil {
+		return nil, nil, err
+	}
+	var nodePins []string
+	for _, job := range jobs {
+		for _, step := range job.steps {
+			if step.nodeVersion != "" {
+				nodePins = append(nodePins, step.nodeVersion)
+			}
+		}
+	}
+	if nodes := localSortedUnique(nodePins); len(nodes) > 0 {
+		pins["node"] = strings.Join(nodes, ",")
+	}
+	return pins, jobs, nil
+}
+
+// localRecomputedReuse refuses a record whose pin mismatch, recomputed from the verified commit and the
+// versions this host observes, is not empty. The record's stored mismatch is never read (parent ruling 2, d3).
+func localRecomputedReuse(opts localOptions, plan []localJob, current verificationRecord) (bool, string) {
+	pins, jobs, err := localPinsAt(func(path string) ([]byte, error) {
+		return runGit(opts.Root, "show", current.HeadCommit+":"+path)
+	})
+	if err != nil {
+		return false, "the commit's pins cannot be read: " + err.Error()
+	}
+	mismatch := localSortedUnique(append(localPinMismatch(pins, current.Tools), localNodeMismatch(plan, jobs, current.Tools["node"])...))
+	if len(mismatch) > 0 {
+		return false, "the pins the commit names mismatch (" + strings.Join(mismatch, ", ") + ")"
+	}
+	return true, "the pins the commit names match"
 }

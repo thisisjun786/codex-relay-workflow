@@ -160,6 +160,14 @@ func TestLocalReuse_each_key_changed_alone_re_runs_the_table(t *testing.T) {
 	for name, change := range keys {
 		t.Run(name, func(t *testing.T) {
 			repo := newLocalFixture(t)
+			node := localToolVersions(localPathEnv(nil))["node"]
+			if node == "" {
+				t.Skip("no node on PATH, so the fixture's Node pin cannot match this host")
+			}
+			if workflow := strings.Replace(localFixtureWorkflow, "'24.20.0'", "'"+node+"'", 1); workflow != localFixtureWorkflow {
+				repo.write(".github/workflows/ci.yml", workflow)
+				repo.commit()
+			}
 			mark := filepath.Join(t.TempDir(), "marks")
 			options := func(record string) localOptions {
 				opts := localRunOptions(repo, localFixturePlan("echo \"$MARK\" >> \"$MARK_FILE\""), record)
@@ -176,6 +184,13 @@ func TestLocalReuse_each_key_changed_alone_re_runs_the_table(t *testing.T) {
 			}
 			if made.Dependencies == nil {
 				made.Dependencies = map[string]string{}
+			}
+			// The unchanged record must answer first, so a key that re-runs is shown to be the one changed.
+			if _, err := writeRecord(record, made); err != nil {
+				t.Fatal(err)
+			}
+			if _, reused, err := localVerify(options(filepath.Join(t.TempDir(), "unchanged.json")), record, io.Discard); err != nil || !reused {
+				t.Fatalf("the unchanged record is not reusable (reused=%t, err=%v)", reused, err)
 			}
 			change(&made)
 			if _, err := writeRecord(record, made); err != nil {

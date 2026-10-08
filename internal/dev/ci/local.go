@@ -160,6 +160,9 @@ func localVerify(opts localOptions, reusePath string, stdout io.Writer) (verific
 			ok, why = localValidateReuse(reused, plan)
 		}
 		if ok {
+			ok, why = localRecomputedReuse(opts, plan, current)
+		}
+		if ok {
 			// The record answers: write it to --record so the caller finds it where it asked.
 			if _, err := writeRecord(opts.Record, reused); err != nil {
 				return verificationRecord{}, false, err
@@ -382,6 +385,7 @@ func localExecute(opts localOptions, plan []localJob, current verificationRecord
 					entry.Name = localStepLabel(step)
 				}
 				start := time.Now()
+				offset := localOutputSize(opts.output)
 				switch {
 				case step.kind == localNotApplicable:
 					entry.Result, entry.Reason = localNotApplicableResult, step.note
@@ -395,6 +399,7 @@ func localExecute(opts localOptions, plan []localJob, current verificationRecord
 						failed = true
 					}
 				}
+				entry.Decision = localDecisionSince(opts.output, offset)
 				entry.Seconds = time.Since(start).Seconds()
 				recorded.Steps = append(recorded.Steps, entry)
 				fmt.Fprintf(stdout, "local: %-26s %-44s %s\n", name, entry.Name, entry.Result)
@@ -542,6 +547,7 @@ func localStepEnv(home, temp string, opts localOptions) ([]string, error) {
 		"GITHUB_OUTPUT=" + opts.output,
 		"GITHUB_EVENT_NAME=pull_request",
 		"GIT_NO_REPLACE_OBJECTS=1",
+		"GOWORK=off",
 	}
 	for _, name := range localInheritedEnv {
 		if value, ok := os.LookupEnv(name); ok {
@@ -831,4 +837,23 @@ func localContains(items []string, item string) bool {
 		}
 	}
 	return false
+}
+
+// localOutputSize is the size of the changed-path output file before a step runs.
+func localOutputSize(path string) int64 {
+	info, err := os.Stat(path)
+	if err != nil {
+		return 0
+	}
+	return info.Size()
+}
+
+// localDecisionSince is what a step appended to GITHUB_OUTPUT since offset: the decision the step
+// recorded, copied into its record entry (parent ruling 2, d7).
+func localDecisionSince(path string, offset int64) string {
+	data, err := os.ReadFile(path)
+	if err != nil || int64(len(data)) <= offset {
+		return ""
+	}
+	return strings.TrimSpace(string(data[offset:]))
 }

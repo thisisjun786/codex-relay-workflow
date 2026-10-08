@@ -4,7 +4,6 @@ package ci
 
 import (
 	"fmt"
-	"regexp"
 	"strconv"
 	"strings"
 )
@@ -36,18 +35,19 @@ const (
 // localStep is one ci.yml step, as this run performs it. command and uses are the ci.yml step's own
 // run text and pinned action, so the table can be compared with the workflow step by step.
 type localStep struct {
-	name    string   // the ci.yml step name, "" when the step is unnamed
-	kind    string   // localRun, localAction or localNotApplicable
-	action  string   // the Go action a localAction step performs
-	command string   // a run step's shell command, the ci.yml run text itself
-	uses    string   // a uses step's pinned action, the ci.yml uses itself
-	workdir string   // the directory the command runs in, relative to the checkout root
-	scope   string   // "range" for the steps that judge the commits a change adds, "full" otherwise
-	tool    string   // the tool the step needs on PATH, "" when none
-	env     []string // extra environment, as NAME=value
-	legs    []string // the go-product matrix parts; empty means every leg
-	heavy   bool     // runs through the heavy-check gate when one is configured
-	note    string   // why a not_applicable step is not run, or what a decision step decided
+	name     string   // the ci.yml step name, "" when the step is unnamed
+	kind     string   // localRun, localAction or localNotApplicable
+	action   string   // the Go action a localAction step performs
+	command  string   // a run step's shell command, the ci.yml run text itself
+	uses     string   // a uses step's pinned action, the ci.yml uses itself
+	workdir  string   // the directory the command runs in, relative to the checkout root
+	scope    string   // "range" for the steps that judge the commits a change adds, "full" otherwise
+	tool     string   // the tool the step needs on PATH, "" when none
+	env      []string // extra environment, as NAME=value
+	legs     []string // the go-product matrix parts; empty means every leg
+	heavy    bool     // runs through the heavy-check gate when one is configured
+	ciDigest string   // the digest of the ci.yml step this step implements (local_workflow.go)
+	note     string   // why a not_applicable step is not run, or what a decision step decided
 }
 
 // localJob is one ci.yml job. legs is the go-product matrix; nil elsewhere.
@@ -229,114 +229,8 @@ func localPlan() []localJob {
 		scope: "full", command: localGateScript, tool: "go",
 		note: "every prerequisite job must have succeeded, as the gate's own script requires"})
 	plan = append(plan, dev_gate)
+	applyStepDigests(plan)
 	return plan
-}
-
-// workflowStep is one step of a parsed ci.yml.
-type workflowStep struct {
-	name string
-	uses string
-	run  string
-	// nodeVersion is the with: node-version a setup-node step names, ""
-	nodeVersion string
-}
-
-// workflowJob is one job of a parsed ci.yml.
-type workflowJob struct {
-	name  string
-	steps []workflowStep
-}
-
-var (
-	localWorkflowJobHeader = regexp.MustCompile(`^  ([a-z][a-z0-9-]*):$`)
-	localWorkflowStepKey   = regexp.MustCompile(`^        ([a-z][a-z-]*):(?: (.*))?$`)
-	localWorkflowWithNode  = regexp.MustCompile(`^          node-version: (.+)$`)
-)
-
-// parseWorkflow reads .github/workflows/ci.yml's job and step names, their run text (a block
-// scalar's body included) and their pinned action, in order. It is the same two-space/six-space
-// reading internal/dev/ci/workflow_test.go does, deliberately without a YAML parser: the file is
-// this repository's own and the reader only has to see jobs and steps.
-func parseWorkflow(text string) ([]workflowJob, error) {
-	raw := lines(strings.TrimSuffix(text, "\n"))
-	var jobs []workflowJob
-	inside := false
-	for i := 0; i < len(raw); i++ {
-		line := raw[i]
-		if line != "" && !strings.HasPrefix(line, " ") {
-			inside = strings.HasPrefix(line, "jobs:")
-			continue
-		}
-		if !inside {
-			continue
-		}
-		if m := localWorkflowJobHeader.FindStringSubmatch(line); m != nil {
-			jobs = append(jobs, workflowJob{name: m[1]})
-			continue
-		}
-		if len(jobs) == 0 {
-			continue
-		}
-		if strings.HasPrefix(line, "      - ") {
-			jobs[len(jobs)-1].steps = append(jobs[len(jobs)-1].steps, workflowStep{})
-			line = "        " + line[8:]
-		}
-		steps := &jobs[len(jobs)-1].steps
-		if len(*steps) == 0 {
-			continue
-		}
-		step := &(*steps)[len(*steps)-1]
-		if w := localWorkflowWithNode.FindStringSubmatch(line); w != nil {
-			step.nodeVersion = localYAMLScalar(w[1])
-			continue
-		}
-		m := localWorkflowStepKey.FindStringSubmatch(line)
-		if m == nil {
-			continue
-		}
-		switch m[1] {
-		case "name":
-			step.name = strings.Trim(m[2], `\"'`)
-		case "uses":
-			if fields := strings.Fields(m[2]); len(fields) > 0 {
-				step.uses = fields[0]
-			}
-		case "run":
-			if m[2] != "|" && m[2] != "|-" && m[2] != ">" && m[2] != ">-" {
-				step.run = localYAMLScalar(m[2])
-				break
-			}
-			// A literal block scalar: its body is the run text. The body sits deeper than the key
-			// that opened it, so the first body line fixes the indent and a shallower line ends the
-			// block (the step's own keys and the next step sit shallower still).
-			var body []string
-			indent := -1
-			for j := i + 1; j < len(raw); j++ {
-				rest := raw[j]
-				if strings.TrimSpace(rest) == "" {
-					body = append(body, "")
-					continue
-				}
-				width := len(rest) - len(strings.TrimLeft(rest, " "))
-				if indent < 0 {
-					indent = width
-				}
-				if width < indent {
-					break
-				}
-				body = append(body, rest[indent:])
-				i = j
-			}
-			for len(body) > 0 && body[len(body)-1] == "" {
-				body = body[:len(body)-1]
-			}
-			step.run = strings.Join(body, "\n")
-		}
-	}
-	if len(jobs) == 0 {
-		return nil, fmt.Errorf("ci.yml has no jobs")
-	}
-	return jobs, nil
 }
 
 // localYAMLScalar is a run value as the workflow's YAML reader hands it to the runner: a quoted
@@ -362,48 +256,6 @@ func workflowJobNamed(jobs []workflowJob, name string) *workflowJob {
 		}
 	}
 	return nil
-}
-
-// localPlanProblems is what would let a ci.yml step run unverified: a job or a step the table does
-// not have, a job the table invents, or a step that moved. It is the C1 check, and the runner
-// refuses the workflow when it is not empty.
-func localPlanProblems(plan []localJob, workflow []workflowJob) []string {
-	var problems []string
-	planned := map[string]*localJob{}
-	for i := range plan {
-		planned[plan[i].name] = &plan[i]
-	}
-	for i := range workflow {
-		job := &workflow[i]
-		entry, ok := planned[job.name]
-		if !ok {
-			problems = append(problems, fmt.Sprintf("ci.yml job %q has no entry in the local plan", job.name))
-			continue
-		}
-		if len(entry.steps) != len(job.steps) {
-			problems = append(problems, fmt.Sprintf("%s: the plan has %d steps, ci.yml has %d", job.name, len(entry.steps), len(job.steps)))
-		}
-		for n := 0; n < len(entry.steps) && n < len(job.steps); n++ {
-			want, got := job.steps[n].name, entry.steps[n].name
-			if want != got {
-				problems = append(problems, fmt.Sprintf("%s step %d: the plan names %q, ci.yml names %q", job.name, n, got, want))
-			}
-			// A step kept under its name but changed underneath would run other work locally, so its run
-			// text and its action are compared too.
-			if entry.steps[n].kind == localRun && strings.TrimSpace(entry.steps[n].command) != strings.TrimSpace(job.steps[n].run) {
-				problems = append(problems, fmt.Sprintf("%s step %d (%s): the plan's command is not the ci.yml run text", job.name, n, want))
-			}
-			if entry.steps[n].uses != "" && entry.steps[n].uses != job.steps[n].uses {
-				problems = append(problems, fmt.Sprintf("%s step %d (%s): the plan's action is not the ci.yml uses", job.name, n, want))
-			}
-		}
-	}
-	for _, entry := range plan {
-		if workflowJobNamed(workflow, entry.name) == nil {
-			problems = append(problems, fmt.Sprintf("the plan names job %q, which ci.yml does not have", entry.name))
-		}
-	}
-	return problems
 }
 
 // checkWorkflowAt reads ci.yml as the named commit has it and refuses a workflow the table does not

@@ -77,13 +77,14 @@ type recordJob struct {
 
 // recordStep is one step: what it ran, over what range, and how it ended.
 type recordStep struct {
-	Job     string  `json:"job"`
-	Name    string  `json:"name"`
-	Command string  `json:"command"`
-	Scope   string  `json:"scope"`
-	Result  string  `json:"result"`
-	Seconds float64 `json:"seconds"`
-	Reason  string  `json:"reason"`
+	Job      string  `json:"job"`
+	Name     string  `json:"name"`
+	Command  string  `json:"command"`
+	Scope    string  `json:"scope"`
+	Result   string  `json:"result"`
+	Seconds  float64 `json:"seconds"`
+	Reason   string  `json:"reason"`
+	Decision string  `json:"decision"`
 }
 
 // canonicalRecord is the record's canonical serialization: the document as JSON with its keys
@@ -305,6 +306,7 @@ func planDigest(plan []localJob) string {
 		for _, step := range job.steps {
 			fmt.Fprintf(&b, "step %q kind %q action %q command %q uses %q workdir %q scope %q tool %q env %q legs %q heavy %t note %q\n",
 				step.name, step.kind, step.action, step.command, step.uses, step.workdir, step.scope, step.tool, step.env, step.legs, step.heavy, step.note)
+			fmt.Fprintf(&b, "digest %q\n", step.ciDigest)
 		}
 	}
 	sum := sha256.Sum256([]byte(b.String()))
