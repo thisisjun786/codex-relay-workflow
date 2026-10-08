@@ -125,6 +125,11 @@ const (
 	loopInitHolderUnknown                       // the lock file is there, its owner is unreadable
 )
 
+// loopInitSessionProbeSeam is a test seam: it runs after the session owner path is named and before the probe
+// opens it, so a test can swap the lock file for a FIFO or a link inside that window (CRW-982 c3). Production
+// leaves it nil.
+var loopInitSessionProbeSeam func()
+
 // loopInitSessionHolder reads the session lock: gone when the file is absent, dead when its pid is not
 // running, live otherwise. An absent lock is the ordinary release path (state's lock removes the file
 // when its critical section ends), so it must not be read as a live holder — that mistake waits out the
@@ -133,22 +138,20 @@ const (
 // live rather than refusing a competing creator that is about to publish.
 func loopInitSessionHolder(cwd, sessionID string) loopInitHolder {
 	lockPath := state.StatePath(cwd, sessionID) + ".lock"
-	info, err := os.Lstat(lockPath)
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return loopInitHolderGone
-		}
-		return loopInitHolderUnknown
+	if loopInitSessionProbeSeam != nil {
+		loopInitSessionProbeSeam()
 	}
-	if !info.Mode().IsRegular() {
-		// A FIFO, a link, a directory or a device at the lock path is no holder: nothing there can
-		// publish a plan, and waiting on it would be a hang. The caller reports the lock's own error.
-		return loopInitHolderDead
-	}
-	raw, err := os.ReadFile(lockPath)
+	// The probe opens the owner with O_NOFOLLOW and O_NONBLOCK and checks the opened descriptor (CRW-982 c3), so
+	// a link or a FIFO swapped in after the path was named is refused, never followed or blocked on.
+	raw, err := goalplan.ReadLockOwnerFile(lockPath)
 	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
+		switch {
+		case errors.Is(err, fs.ErrNotExist):
 			return loopInitHolderGone
+		case errors.Is(err, goalplan.ErrLockOwnerNotRegular), errors.Is(err, syscall.ELOOP):
+			// A FIFO, a link, a directory or a device at the lock path is no holder: nothing there can
+			// publish a plan, and waiting on it would be a hang. The caller reports the lock's own error.
+			return loopInitHolderDead
 		}
 		return loopInitHolderUnknown
 	}

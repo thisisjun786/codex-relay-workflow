@@ -912,3 +912,76 @@ func TestLoopInitAnswersAlreadyExistsWhenALockHasEmptyOwnerAndThePlanAppears(t *
 		t.Fatalf("got %d %q\nwant 1 %q", result.Code, result.Output, want)
 	}
 }
+
+// TestLoopInitOwnerProbeDoesNotBlockOrFollowALinkSwappedInAfterItNamesTheOwner is CRW-982 c3: the session owner
+// probe opens the owner with O_NOFOLLOW and O_NONBLOCK and checks the opened descriptor, so a FIFO or a link
+// that replaces a regular owner file after the probe named it is refused, neither blocked on nor followed. The
+// swap happens at the probe's seam, inside the window a check-then-read would leave open.
+func TestLoopInitOwnerProbeDoesNotBlockOrFollowALinkSwappedInAfterItNamesTheOwner(t *testing.T) {
+	for _, kind := range []string{"fifo", "link"} {
+		t.Run(kind, func(t *testing.T) {
+			cwd := loopReadWorkspace(t)
+			gitInit(t, cwd)
+			const id = "rec-probe-swap"
+			loopSession(t, cwd, id)
+			lockPath := state.StatePath(cwd, id) + ".lock"
+			outside := filepath.Join(t.TempDir(), "owner")
+			calls := 0
+			if err := os.WriteFile(outside, []byte(strconv.Itoa(os.Getpid())), 0o666); err != nil {
+				t.Fatal(err)
+			}
+			// The regular owner names this live process, so a probe that followed the swap would report a live holder.
+			if err := os.WriteFile(lockPath, []byte(strconv.Itoa(os.Getpid())), 0o666); err != nil {
+				t.Fatal(err)
+			}
+			loopInitSessionProbeSeam = func() {
+				calls++
+				if calls > 1 {
+					return
+				}
+				if err := os.Remove(lockPath); err != nil {
+					t.Error(err)
+					return
+				}
+				var err error
+				if kind == "fifo" {
+					err = syscall.Mkfifo(lockPath, 0o666)
+				} else {
+					err = os.Symlink(outside, lockPath)
+				}
+				if err != nil {
+					t.Error(err)
+				}
+			}
+			t.Cleanup(func() { loopInitSessionProbeSeam = nil })
+			// The first round swaps the owner for the special file. The wait's pause is reached only by a probe that
+			// followed the swap, and it puts a regular live owner back, so a probe that read the link answers busy on
+			// its next round instead of the refusal.
+			restored := false
+			pausePrev := loopInitPlanWaitPause
+			loopInitPlanWaitPause = func() {
+				if restored {
+					return
+				}
+				restored = true
+				if err := os.Remove(lockPath); err != nil {
+					t.Error(err)
+					return
+				}
+				if err := os.WriteFile(lockPath, []byte(strconv.Itoa(os.Getpid())), 0o666); err != nil {
+					t.Error(err)
+				}
+			}
+			t.Cleanup(func() { loopInitPlanWaitPause = pausePrev })
+
+			select {
+			case out := <-loopInitAsync(cwd, "init", "--objective", "Bound objective", "--session", id):
+				if out.err == nil {
+					t.Fatalf("the probe answered a swapped-in %s without an error: %d %q", kind, out.result.Code, out.result.Output)
+				}
+			case <-time.After(10 * time.Second):
+				t.Fatalf("init hung on a %s swapped in at the owner path", kind)
+			}
+		})
+	}
+}

@@ -335,11 +335,23 @@ func readLockOwnerBytes(path string) ([]byte, error) {
 		return nil, err
 	}
 	if !info.Mode().IsRegular() {
-		return nil, errors.New("lock metadata is not a regular file: " + path)
+		return nil, fmt.Errorf("%w: %s", ErrLockOwnerNotRegular, path)
 	}
 	// A small cap: the file this reads is a pid or one short JSON object, so a file that claims to be
 	// huge is not one this call should spend memory on.
 	return io.ReadAll(io.LimitReader(f, 4096))
+}
+
+// ErrLockOwnerNotRegular is what the owner probe returns for a path that opens to something other than a
+// regular file (a FIFO, a device, a directory).
+var ErrLockOwnerNotRegular = errors.New("lock metadata is not a regular file")
+
+// ReadLockOwnerFile is the owner probe, exported for the session lock's holder check (CRW-982 c3): it opens
+// path with O_NOFOLLOW and O_NONBLOCK, checks that the opened descriptor is a regular file, and reads at most
+// a small fixed size. A link at path is refused with ELOOP, a special file with ErrLockOwnerNotRegular, and an
+// absent path with fs.ErrNotExist.
+func ReadLockOwnerFile(path string) ([]byte, error) {
+	return readLockOwnerBytes(path)
 }
 
 // processAlive reports whether pid names a running process: signal 0 reaches it, and a permission
