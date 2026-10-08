@@ -112,7 +112,7 @@ func (s *Scheduler) WithdrawGeneration(ctx context.Context, plan, node, actor st
 			return refuse(contract.RefusalUnknownGeneration, "%s has no generation %d", rel.ID, in.Generation)
 		}
 		// generation-open gives the generation a reason; a returning tenure's generation has none, and undoing a tenure is not what a withdrawal does (it leaves the supersession and the linkage as they are)
-		if opened.String != "initial_assignment" && opened.String != "needs_changes_revision" {
+		if opened.String != "initial_assignment" && !correctionOpenReason(opened.String) {
 			return refuse(contract.RefusalDispositionConflict, "generation %d of %s was not opened by generation-open (its reason is %q): a returning tenure or a reply opened it, and a withdrawal does not undo that", in.Generation, rel.ID, opened.String)
 		}
 		if anchor != "anchor_pending" || turn.Valid || bound.Valid {

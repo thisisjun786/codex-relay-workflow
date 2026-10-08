@@ -112,7 +112,7 @@ Read `get_goal` first, then choose the matching case:
 A useful objective identifies the project and scope snapshot, the delivery boundary,
 coordination record, and explicit limits. For example: “Coordinate project <id>'s
 agreed issues <ids/milestone snapshot>: reuse one child per issue, dispatch independent
-ready work, verify results and integrate permitted PRs into their intended targets.
+ready work, verify results and integrate permitted deliveries into their intended targets.
 Finish when all scoped obligations and receipts are reconciled. Preserve <limits>.”
 Keep credentials and raw transcripts out. Do not grow scope from a later backlog scan.
 
@@ -162,7 +162,7 @@ to perform.
 ## Repeat, complete or recover
 
 The existing goal remains active across Run passes. Refresh scope, child ownership,
-PR revisions, receipts and next actions in the same coordination record. Returning
+delivery revisions, receipts and next actions in the same coordination record. Returning
 from a Run pass does not complete the goal. On host continuation or authorized resume,
 read the goal and record first, then continue the next available in-scope action.
 

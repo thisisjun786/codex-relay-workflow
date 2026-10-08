@@ -262,15 +262,19 @@ func auditStateDir(e *Env, cfg *Config) string {
 // run in which nothing reached P0 or P1 leaves no alert file at all. The directory and
 // the files are private to the owner, as the relay store's own state is, because a ledger
 // row names the subject, the issue and the bundle an audit covered.
-func auditRecord(e *Env, cfg *Config, results []AuditResult) (err error) {
+//
+// The first return is how many ledger rows the call appended before it failed: the rows are a
+// prefix of the results, and a caller that has to know which results are recorded reads it from
+// the writer rather than re-reading the file, which may not be readable even when it was written.
+func auditRecord(e *Env, cfg *Config, results []AuditResult) (rows int, err error) {
 	dir := filepath.Join(auditStateDir(e, cfg), "audit")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
+		return 0, err
 	}
 	ledgerPath := filepath.Join(dir, auditLedgerFile)
 	ledger, err := os.OpenFile(ledgerPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	// A deferred close cannot be skipped on an early return, and its error is kept: a write
 	// that reached the page cache can still fail on close, and that is not a recorded row.
@@ -286,7 +290,7 @@ func auditRecord(e *Env, cfg *Config, results []AuditResult) (err error) {
 	if alerting {
 		alertsPath = filepath.Join(dir, auditAlertFile)
 		if alerts, err = os.OpenFile(alertsPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600); err != nil {
-			return err
+			return 0, err
 		}
 		defer func() { err = errors.Join(err, alerts.Close()) }()
 	}
@@ -299,8 +303,9 @@ func auditRecord(e *Env, cfg *Config, results []AuditResult) (err error) {
 			GradedAt: result.GradedAt, Bundle: result.Bundle,
 		}
 		if err := auditAppendLine(ledger, ledgerPath, row); err != nil {
-			return err
+			return rows, err
 		}
+		rows++
 		if p0+p1 == 0 {
 			continue
 		}
@@ -315,10 +320,10 @@ func auditRecord(e *Env, cfg *Config, results []AuditResult) (err error) {
 			alert.Defects = append(alert.Defects, auditAlertDefect{Severity: defect.Severity, What: defect.What, Where: defect.Where})
 		}
 		if err := auditAppendLine(alerts, alertsPath, alert); err != nil {
-			return err
+			return rows, err
 		}
 	}
-	return nil
+	return rows, nil
 }
 
 // auditScoreOf is the score a ledger or alert line carries, and null when the run left no

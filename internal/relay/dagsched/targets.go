@@ -17,13 +17,34 @@ type Target struct{ Repository, BaseRef string }
 // A terminal node has no outgoing edge: its target arrives with its first observation (dag-integration-observe --target).
 func (s *Scheduler) nodeTargets(ctx context.Context, q store.Querier, snap dag.Snapshot, a Acceptance) ([]Target, error) {
 	seen := map[Target]bool{}
+	// a commit-accepted node completes on the integration branch its batches moved, not on the base ref its edge names (CRW-965, D4)
+	commit, err := commitAccepted(ctx, q, a.AcceptanceID)
+	if err != nil {
+		return nil, err
+	}
+	var refs []string
+	if commit {
+		if refs, err = integrationRefsOf(ctx, q, a.AcceptanceID); err != nil {
+			return nil, err
+		}
+	}
 	for _, e := range snap.Edges {
-		if e.FromNodeID != a.NodeID || e.TargetRepository == "" || e.TargetBaseRef == "" {
+		if e.FromNodeID != a.NodeID || e.TargetRepository == "" {
 			continue
 		}
-		if e.Kind == dag.EdgeIntegrated || (e.Kind == dag.EdgeArtifactVerified && e.PinsCodeHead) {
-			seen[Target{e.TargetRepository, e.TargetBaseRef}] = true
+		if e.Kind != dag.EdgeIntegrated && !(e.Kind == dag.EdgeArtifactVerified && e.PinsCodeHead) {
+			continue
 		}
+		if commit {
+			for _, ref := range refs {
+				seen[Target{e.TargetRepository, ref}] = true
+			}
+			continue
+		}
+		if e.TargetBaseRef == "" {
+			continue
+		}
+		seen[Target{e.TargetRepository, e.TargetBaseRef}] = true
 	}
 	rows, err := q.QueryContext(ctx, "SELECT DISTINCT repository, base_ref FROM dag_integration_observations WHERE acceptance_id = ?", a.AcceptanceID)
 	if err != nil {

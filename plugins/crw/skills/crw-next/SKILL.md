@@ -56,7 +56,7 @@ over setup work that merely makes the backlog look organized.
 Read the delivered artifact and completion evidence against the agreed criterion
 and required delivery level. Separate implemented, reviewed, merged, deployed,
 and observed behavior. Reuse valid proof; read
-[Merge readiness](../crw-run/references/merge-readiness.md) only when PR
+[Merge readiness](../crw-run/references/merge-readiness.md) only when a delivery
 readiness or integration determines the next action.
 
 If the claimed result still has a consequential gap, choose its correction or

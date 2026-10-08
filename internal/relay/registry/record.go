@@ -229,19 +229,28 @@ func describe(finding contract.OrderedObject) string {
 // sender that resumes a task, or the pre-send refusal (reason and detail) that withholds it.
 // settingsFree reports that the pair was not derived from the role's declared pair.
 func (r *Registry) AuthorizedSettings(ctx context.Context, task string) (settings TaskSettings, settingsFree bool, err error) {
+	settings, _, settingsFree, err = r.AuthorizedSettingsBound(ctx, task)
+	return settings, settingsFree, err
+}
+
+// AuthorizedSettingsBound is AuthorizedSettings with the role the task is bound to ("" when it is
+// bound to none). A sender that has to read the role for a rule the gate itself does not decide --
+// the pair's auto-compaction limit is resolved from that role's pair -- takes both from this one
+// call, so the role and the authorization it was judged with come from the same read.
+func (r *Registry) AuthorizedSettingsBound(ctx context.Context, task string) (settings TaskSettings, role string, settingsFree bool, err error) {
 	settings, ok, err := r.LoadSettings(ctx, task)
 	if err != nil {
-		return settings, false, err
+		return settings, "", false, err
 	}
 	if !ok {
-		return settings, false, refuse(contract.RefusalSettingsUnavailable, "no authorized settings recorded for %s; register them from the"+
+		return settings, "", false, refuse(contract.RefusalSettingsUnavailable, "no authorized settings recorded for %s; register them from the"+
 			" creation result before a send can preserve them", pyvalue.StrRepr(task))
 	}
 	if err := settings.RequireUsable(); err != nil {
-		return settings, false, err
+		return settings, "", false, err
 	}
-	_, settingsFree, err = CheckBoundRole(ctx, r.Store, task, settings.Data, r.Policy)
-	return settings, settingsFree, err
+	role, settingsFree, err = CheckBoundRole(ctx, r.Store, task, settings.Data, r.Policy)
+	return settings, role, settingsFree, err
 }
 
 // CheckBoundRole is the role half of AuthorizedSettings, which every sender's pre-send check

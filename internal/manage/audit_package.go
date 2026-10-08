@@ -346,6 +346,31 @@ func auditPkgBuild(ctx context.Context, e *Env, cfg *Config, section auditPkgSec
 	return dir, nil
 }
 
+// auditPkgBuildAndGrade assembles one package bundle and grades it with the drafts lock held
+// across both. A rebuild empties the bundle and a grade replaces its grade.json, so the two must
+// not interleave: a grade that started first would lose its inputs, and a rebuild that started
+// first would be graded while the ledger recorded the metadata the grade read. Holding the one
+// lock the drafts surface and every grade already share is what keeps them apart.
+func auditPkgBuildAndGrade(ctx context.Context, e *Env, cfg *Config, section auditPkgSection, co auditPkgCheckout, pkg, head, round string) (string, []AuditResult, error) {
+	release, err := auditDraftLock(e, cfg)
+	if err != nil {
+		return "", nil, err
+	}
+	defer release()
+	dir, err := auditPkgBuild(ctx, e, cfg, section, co, pkg, head)
+	if err != nil {
+		return "", nil, err
+	}
+	results, err := auditGradeLocked(ctx, e, cfg, []AuditJob{{Bundle: dir, Round: round}})
+	if err != nil {
+		return "", nil, err
+	}
+	if len(results) != 1 {
+		return "", nil, fmt.Errorf("the grader answered %d results for one bundle", len(results))
+	}
+	return dir, results, nil
+}
+
 // auditPkgResetDir makes the bundle directory empty. It refuses a directory that is not
 // strictly below the bundle root, so a package path can never make this remove anything
 // else.
@@ -737,18 +762,9 @@ func auditPkgRunOne(ctx context.Context, e *Env, round string, next int, headArg
 			return 1
 		}
 		for _, pkg := range pending {
-			dir, err := auditPkgBuild(ctx, e, cfg, section, co, pkg, head)
+			dir, results, err := auditPkgBuildAndGrade(ctx, e, cfg, section, co, pkg, head, round)
 			if err != nil {
 				fmt.Fprintf(e.Stderr, "crw manage audit package: error: %v\n", err)
-				return 1
-			}
-			results, err := AuditGrade(ctx, e, cfg, []AuditJob{{Bundle: dir, Round: round}})
-			if err != nil {
-				fmt.Fprintf(e.Stderr, "crw manage audit package: error: %v\n", err)
-				return 1
-			}
-			if len(results) != 1 {
-				fmt.Fprintf(e.Stderr, "crw manage audit package: error: the grader answered %d results for one bundle\n", len(results))
 				return 1
 			}
 			auditRoundApply(doc, pkg, head, dir, results[0])

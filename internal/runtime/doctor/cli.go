@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
@@ -16,6 +17,31 @@ import (
 
 // usageExit is the exit status of a command line this command cannot parse.
 const usageExit = 2
+
+// retrustTestClock is an optional link-time fixture seam for the retrust subcommand, decimal Unix
+// milliseconds. Nothing in this repository initializes it: a release build leaves it empty and
+// retrust runs on the wall clock. Only a test build links a value in (-X
+// github.com/.../internal/runtime/doctor.retrustTestClock=<ms>), which the cxc domain of
+// internal/contracttest does so a replayed fixture sees the instant the oracle recorded under. A
+// retrust backup name is minted from the clock (hookTrustRetrustBackupPath) with its colons replaced,
+// so the corpus's normalisation rules cannot reach it and the README's "a replay runs the Go build
+// with the same epoch" is the only way such a value compares (contract/schema/cxc/README.md,
+// "Normalisation and determinism").
+var retrustTestClock string
+
+// retrustNow is the clock the retrust subcommand runs with: the wall clock when no seam is linked,
+// else the frozen instant in UTC. A malformed value means the build was linked wrongly, so it panics
+// with the value it read instead of running with a moving clock.
+func retrustNow() time.Time {
+	if retrustTestClock == "" {
+		return time.Now()
+	}
+	ms, err := strconv.ParseInt(retrustTestClock, 10, 64)
+	if err != nil {
+		panic("retrustTestClock " + strconv.Quote(retrustTestClock) + ": " + err.Error())
+	}
+	return time.UnixMilli(ms).UTC()
+}
 
 // Run is `crw doctor [declared-schema] ...`. Every form prints one JSON document
 // (json.dumps(indent=2) with ensure_ascii, as the Python diagnosis emitted) and exits
@@ -33,7 +59,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 			// The CXC hook trust rewrite (decision 8, J4): a command only the user runs, never a
 			// hook, the installer or SessionStart. Its plugin package is the host's PLUGIN_ROOT.
 			pluginRoot, _ := host.LookupEnv(os.LookupEnv)("PLUGIN_ROOT")
-			return HookTrustRetrustCLI(args[1:], stdout, stderr, host.LookupEnv(os.LookupEnv), hookTrustRetrustExec, pluginRoot, time.Now())
+			return HookTrustRetrustCLI(args[1:], stdout, stderr, host.LookupEnv(os.LookupEnv), hookTrustRetrustExec, pluginRoot, retrustNow())
 		}
 	}
 	flags := flag.NewFlagSet("crw doctor", flag.ContinueOnError)

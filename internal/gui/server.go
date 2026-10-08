@@ -10,11 +10,16 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/buildinfo"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/policystore"
 )
 
 // defaultShutdownTimeout is how long a cancelled run waits for in-flight requests before it
-// ends. The decided answer says to wait briefly; this is the bound.
-const defaultShutdownTimeout = 5 * time.Second
+// ends. The decided answer says to wait briefly; this is the bound, and it is at least as long as a
+// write's own post-publication phase (policystore.WriteSettleBound). A write that has already
+// replaced the policy file must finish registering it: ending the process before that leaves the
+// file and the wiring record naming different digests, and no bridge starts under those bytes.
+var defaultShutdownTimeout = policystore.WriteSettleBound() + 5*time.Second
 
 // Options is what a Server is built from. Every field has a default the zero value gets, so
 // a caller supplies only what it must: Run supplies the port it bound, a test supplies the
