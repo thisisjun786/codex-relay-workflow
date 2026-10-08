@@ -201,6 +201,12 @@ func jsonStringify(value any) ([]byte, error) {
 }
 
 func goalplanCompare(goOut, oracleOut any) Verdict {
+	sub, err := sharedSubstitution()
+	if err != nil {
+		return Verdict{Kind: Differ, Detail: "the name-substitution table could not be read: " + err.Error()}
+	}
+	goOut = normaliseDiagnosticPaths(sub, goOut)
+	oracleOut = normaliseDiagnosticPaths(sub, oracleOut)
 	if canonical(goOut) == canonical(oracleOut) {
 		return Verdict{Kind: Same}
 	}
@@ -221,7 +227,11 @@ func goalplanCompare(goOut, oracleOut any) Verdict {
 			}
 		}
 	}
-	return Verdict{Kind: Differ, Detail: "the read result or the rewritten bytes differ"}
+	detail := "the read result or the rewritten bytes differ"
+	if fields := differingFields(goOut, oracleOut); len(fields) > 0 {
+		detail += ": " + strings.Join(fields, ", ")
+	}
+	return Verdict{Kind: Differ, Detail: detail}
 }
 
 // goalplanPlans are the plan documents the issue names: schemaVersion 1 to 4 and 1.0 and 1e21,
