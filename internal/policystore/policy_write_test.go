@@ -13,6 +13,9 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
+	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/install"
+	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/scope"
 )
 
 // recordOf is the wiring record path of an isolated host.
@@ -652,13 +655,13 @@ func TestAQueuedWriteThatLostThePolicyRefuses(t *testing.T) {
 func cancelAfterPublish(t *testing.T) (context.Context, func()) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
-	restore := writePublish
-	writePublish = func(path string, data []byte, mode os.FileMode) (bool, error) {
-		renamed, err := restore(path, data, mode)
+	restore := writeSwap
+	writeSwap = func(ctx context.Context, path string, expected, next []byte, mode os.FileMode) ([]byte, string, error) {
+		displaced, kept, err := restore(ctx, path, expected, next, mode)
 		cancel()
-		return renamed, err
+		return displaced, kept, err
 	}
-	t.Cleanup(func() { writePublish = restore })
+	t.Cleanup(func() { writeSwap = restore })
 	return ctx, cancel
 }
 
@@ -775,37 +778,10 @@ func TestARefusalWhoseRecordNamesSomethingElseNeedsRecovery(t *testing.T) {
 	}
 }
 
-// TestAFailedRestoreDirectorySyncIsNotAConfirmedRestore is the restore-durability finding: the
-// original bytes are back and their survival through a power loss was not established, so the
-// answer is a recovery rather than a confirmed restore.
-func TestAFailedRestoreDirectorySyncIsNotAConfirmedRestore(t *testing.T) {
-	env, file := host(t, policyText, true)
-	restore := writePublish
-	calls := 0
-	writePublish = func(path string, data []byte, mode os.FileMode) (bool, error) {
-		calls++
-		renamed, err := restore(path, data, mode)
-		if calls == 2 {
-			return renamed, errors.New("the directory could not be synced")
-		}
-		return renamed, err
-	}
-	t.Cleanup(func() { writePublish = restore })
-	opts := WriteOptions{Register: func(context.Context, string) RegisterAnswer { return answer("record_absent", 1) }}
-	result := Write(context.Background(), envOf(env), opts,
-		WriteRequest{ExpectedDigest: digestOf(policyText), Change: removeLegacy()})
-	if result.Kind != WriteRecoveryNeeded {
-		t.Fatalf("kind = %q (%v), want %q", result.Kind, result.Errors, WriteRecoveryNeeded)
-	}
-	if result.Restored {
-		t.Fatal("a restore whose durability was not established is reported as restored")
-	}
-	after, _ := os.ReadFile(file)
-	if string(after) != policyText {
-		t.Fatal("the original bytes are not on disk")
-	}
-}
-
+// The restore-durability case is TestARestoreWhoseDirectorySyncFailedIsStillARestore, which pins the
+// corrected answer (register_failed with restored and the power-loss warning) and the next-write
+// refusal that follows the power loss the warning names. The earlier test asserted the defect -
+// recovery_needed for a state in which the file and the record agree - and was replaced with it.
 // TestABackupNeverFollowsASymbolicLink is the backup security finding: a name that is already a
 // symbolic link is refused like any other existing name, so a backup never writes through a link.
 func TestABackupNeverFollowsASymbolicLink(t *testing.T) {
@@ -863,7 +839,9 @@ func TestAPolicyWhoseNameIsNotUTF8CanBeWritten(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		surrogateRecord(t, codexHome, path, digestOfFile(t, encoded))
+		// The registration is handed the kernel spelling (R1), so the record's surrogate spelling is
+		// built from the bytes it names rather than from the path as it arrived.
+		surrogateRecord(t, codexHome, pyvalue.FSDecode(path), digestOfFile(t, encoded))
 		return answer("record_updated", 0)
 	}}
 	result := Write(context.Background(), envOf(env), opts,
@@ -940,9 +918,11 @@ func TestAnUnlistedRegistrationOutcomeFallsToTheDistrustPath(t *testing.T) {
 	}
 }
 
-// TestARecordThatCannotBeReadBackIsNotReportedAsTheFileDigest pins the stored answer's honesty: a
-// registration that reported success and a record that then cannot be read is a warning, not a
-// registered digest taken from the file.
+// TestARecordThatCannotBeReadBackIsNotReportedAsTheFileDigest pins the (c) decision for a
+// registration that reported success and a record that then cannot be read back: whether the file
+// and the record describe one document was not established, so the answer is a recovery carrying
+// the file's digest, the backup and the repair advice, never a 200 with the record's digest taken
+// from the file.
 func TestARecordThatCannotBeReadBackIsNotReportedAsTheFileDigest(t *testing.T) {
 	env, _ := host(t, policyText, true)
 	opts := WriteOptions{Register: func(_ context.Context, path string) RegisterAnswer {
@@ -955,19 +935,397 @@ func TestARecordThatCannotBeReadBackIsNotReportedAsTheFileDigest(t *testing.T) {
 	}, Running: unavailableRunning()}
 	result := Write(context.Background(), envOf(env), opts,
 		WriteRequest{ExpectedDigest: digestOf(policyText), Change: removeLegacy()})
-	if result.Kind != WriteStored {
-		t.Fatalf("kind = %q (%v)", result.Kind, result.Errors)
-	}
-	if len(result.Warnings) == 0 {
-		t.Fatal("a record that could not be read back carries no warning")
+	if result.Kind != WriteRecoveryNeeded {
+		t.Fatalf("kind = %q (%v), want %q: the record could not be read back", result.Kind, result.Errors, WriteRecoveryNeeded)
 	}
 	if result.RegisteredDigest != "" {
 		t.Fatalf("registered = %q, want it unestablished rather than taken from the file", result.RegisteredDigest)
 	}
-	if result.Applied != AppliedUnverifiable {
-		t.Fatalf("applied = %q, want %q", result.Applied, AppliedUnverifiable)
+	if result.FileDigest == "" {
+		t.Fatal("the file's digest is not reported")
 	}
-	if result.StoredDigest == "" {
-		t.Fatal("the stored digest is not reported")
+	if result.Backup == "" || result.Recovery == "" {
+		t.Fatalf("the recovery does not name the backup and the repair: backup=%q recovery=%q", result.Backup, result.Recovery)
+	}
+	if len(result.Errors) == 0 || !strings.Contains(strings.Join(result.Errors, " "), "read") {
+		t.Fatalf("the recovery does not say the record could not be read: %v", result.Errors)
+	}
+}
+
+// --- CRW-867c: the five completion defects, red first ---
+
+// TestTheRealInstallerRegistersAPolicyWhoseNameIsNotUTF8 is R1: the write path hands the installer
+// the record's spelling (a surrogate escape), and the installer opens that string, so a policy whose
+// filename is not UTF-8 is never registered. The registration must receive the kernel byte spelling -
+// the value the command line `crw install register-mcp --execution-policy <file>` receives - so this
+// test drives the REAL install.Main and never a fake registrar.
+func TestTheRealInstallerRegistersAPolicyWhoseNameIsNotUTF8(t *testing.T) {
+	root := t.TempDir()
+	codexHome := filepath.Join(root, ".codex")
+	if err := os.MkdirAll(codexHome, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// The registration step runs install.Main over this process's environment, so the isolated host
+	// is installed there rather than only in the LookupEnv a test would otherwise supply.
+	t.Setenv("HOME", root)
+	t.Setenv("CODEX_HOME", codexHome)
+	t.Setenv("XDG_STATE_HOME", filepath.Join(root, "state"))
+	t.Setenv("CRW_HOME", filepath.Join(root, "crw-home"))
+	// A file name with one byte that is not valid UTF-8: the byte 0x80 stands on its own.
+	raw := append([]byte("policy"), 0x80)
+	raw = append(raw, []byte(".json")...)
+	real := filepath.Join(root, string(raw))
+	if err := os.WriteFile(real, []byte(policyText), 0o644); err != nil {
+		t.Skipf("this filesystem refuses a non-UTF-8 name: %v", err)
+	}
+	// The record is created by the installer's own create path, so it is canonical and the
+	// re-registration path accepts it; the policy path on the command line is the kernel spelling.
+	var stdout, stderr strings.Builder
+	if code := install.Main(context.Background(), []string{"register-mcp", "--owner", "plugin", "--execution-policy", real},
+		scope.Env(os.Environ()), &stdout, &stderr); code != install.OK {
+		t.Fatalf("register-mcp: exit %d\n%s%s", code, stdout.String(), stderr.String())
+	}
+	env := map[string]string{"HOME": root, "CODEX_HOME": codexHome, "XDG_STATE_HOME": filepath.Join(root, "state")}
+	// The production registrar: Register stays nil, so install.Main runs in this process.
+	opts := WriteOptions{Running: unavailableRunning()}
+	result := Write(context.Background(), envOf(env), opts,
+		WriteRequest{ExpectedDigest: digestOf(policyText), Change: removeLegacy()})
+	if result.Kind != WriteStored {
+		t.Fatalf("kind = %q (%v), want %q: the real installer did not register the non-UTF-8 policy", result.Kind, result.Errors, WriteStored)
+	}
+	after, err := os.ReadFile(real)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) == policyText {
+		t.Fatal("the policy was not replaced")
+	}
+	located := Locate(envOf(env))
+	if located.State != Registered {
+		t.Fatalf("the record no longer names a registered policy: %+v", located)
+	}
+	if located.RegisteredDigest != digestOf(string(after)) {
+		t.Fatalf("the record names %q, the file hashes to %q", located.RegisteredDigest, digestOf(string(after)))
+	}
+	if _, err := encodedPath(located.Path); err != nil {
+		t.Fatalf("the record's path is not the surrogate spelling of an openable file: %v", err)
+	}
+	if _, err := os.Lstat(located.Path); err == nil {
+		t.Fatal("a file exists under the surrogate spelling, so the record does not name the real file")
+	}
+}
+
+// TestARestoreWhoseDirectorySyncFailedIsStillARestore is R2: the restore's rename happened and only
+// the directory sync failed, so the file and the record again name one document. The answer is
+// register_failed with restored and a warning about the power-loss exposure, never recovery_needed.
+func TestARestoreWhoseDirectorySyncFailedIsStillARestore(t *testing.T) {
+	env, file := host(t, policyText, true)
+	restore := writeSwap
+	calls := 0
+	writeSwap = func(ctx context.Context, path string, expected, next []byte, mode os.FileMode) ([]byte, string, error) {
+		calls++
+		displaced, kept, err := restore(ctx, path, expected, next, mode)
+		if calls == 2 {
+			return displaced, "", errors.New("the directory could not be synced")
+		}
+		return displaced, kept, err
+	}
+	t.Cleanup(func() { writeSwap = restore })
+	opts := WriteOptions{Register: func(context.Context, string) RegisterAnswer { return answer("record_absent", 1) }}
+	result := Write(context.Background(), envOf(env), opts,
+		WriteRequest{ExpectedDigest: digestOf(policyText), Change: removeLegacy()})
+	if result.Kind != WriteRegisterFailed || !result.Restored {
+		t.Fatalf("kind = %q restored = %v (%v), want %q with restored", result.Kind, result.Restored, result.Errors, WriteRegisterFailed)
+	}
+	if len(result.Warnings) == 0 {
+		t.Fatal("a restore whose durability was not established carries no warning")
+	}
+	if result.FileDigest != digestOf(policyText) {
+		t.Fatalf("fileDigest = %q, want the restored digest", result.FileDigest)
+	}
+	after, _ := os.ReadFile(file)
+	if string(after) != policyText {
+		t.Fatal("the original bytes are not on disk")
+	}
+	// The power loss the warning names: the new bytes are back and the record still names the old
+	// digest, so the next write is refused on that disagreement before any durable effect.
+	candidate, err := candidateBytes([]byte(policyText), removeLegacy())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(file, candidate, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := os.ReadFile(file)
+	next := Write(context.Background(), envOf(env), WriteOptions{Register: neverRegisters(t)},
+		WriteRequest{ExpectedDigest: digestOf(string(before)), Change: removeLegacy()})
+	if next.Kind != WriteRecoveryNeeded {
+		t.Fatalf("the next write: kind = %q (%v), want %q", next.Kind, next.Errors, WriteRecoveryNeeded)
+	}
+	afterNext, _ := os.ReadFile(file)
+	if !bytes.Equal(before, afterNext) {
+		t.Fatal("the refused write changed the file")
+	}
+}
+
+// TestAWriteCancelledWhileRenderingTheCandidatePublishesNothing is R3: the cancellation check sits
+// immediately before publication, so a request that goes away while the candidate is rendered
+// publishes nothing and ends cancelled.
+func TestAWriteCancelledWhileRenderingTheCandidatePublishesNothing(t *testing.T) {
+	env, file := host(t, policyText, true)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	render := writeCandidate
+	writeCandidate = func(raw []byte, change Change) ([]byte, error) {
+		cancel()
+		return render(raw, change)
+	}
+	t.Cleanup(func() { writeCandidate = render })
+	before, _ := os.ReadFile(file)
+	result := Write(ctx, envOf(env), WriteOptions{Register: neverRegisters(t)},
+		WriteRequest{ExpectedDigest: digestOf(policyText), Change: removeLegacy()})
+	if result.Kind != WriteCancelled || result.Step != "publish" {
+		t.Fatalf("kind = %q step = %q (%v), want %q at publish", result.Kind, result.Step, result.Errors, WriteCancelled)
+	}
+	after, _ := os.ReadFile(file)
+	if !bytes.Equal(before, after) {
+		t.Fatal("a write cancelled while rendering the candidate published it")
+	}
+	if result.Backup == "" {
+		t.Fatal("the cancellation does not name the backup it had already written")
+	}
+}
+
+// TestARecoveryWhoseFileCannotBeReadReportsNoFileDigest is R5: a file the (c) decision cannot read
+// back leaves fileDigest empty and names the read error, rather than reporting the digest this run
+// tried to write as the one on disk.
+func TestARecoveryWhoseFileCannotBeReadReportsNoFileDigest(t *testing.T) {
+	env, file := host(t, policyText, true)
+	third := digestOf("a document neither the file nor the record holds\n")
+	opts := WriteOptions{Register: func(_ context.Context, path string) RegisterAnswer {
+		rewriteRecord(t, env, path, third)
+		// The file the write published is gone before the decision reads it back.
+		if err := os.Remove(file); err != nil {
+			t.Fatal(err)
+		}
+		return RegisterAnswer{Err: errors.New("the registration response was lost")}
+	}}
+	result := Write(context.Background(), envOf(env), opts,
+		WriteRequest{ExpectedDigest: digestOf(policyText), Change: removeLegacy()})
+	if result.Kind != WriteRecoveryNeeded {
+		t.Fatalf("kind = %q (%v), want %q", result.Kind, result.Errors, WriteRecoveryNeeded)
+	}
+	if result.FileDigest != "" {
+		t.Fatalf("fileDigest = %q, want it empty: the run never read the file", result.FileDigest)
+	}
+	if result.RegisteredDigest != third {
+		t.Fatalf("registeredDigest = %q, want %q", result.RegisteredDigest, third)
+	}
+	if len(result.Errors) == 0 || !strings.Contains(strings.Join(result.Errors, " "), "read") {
+		t.Fatalf("the recovery hides the read error: %v", result.Errors)
+	}
+}
+
+// TestARestoreWhoseBytesMovedAfterTheRenameNeedsRecovery is the Codex review finding: the rename
+// happened and the directory could not be synced, but the bytes on disk are no longer the ones the
+// restore put there (an editor wrote them). The file and the wiring record disagree, so the answer
+// must be recovery_needed with both digests, not restored - a bridge refuses those bytes.
+func TestARestoreWhoseBytesMovedAfterTheRenameNeedsRecovery(t *testing.T) {
+	env, file := host(t, policyText, true)
+	third := "a document another writer put there after the restore\n"
+	restore := writeSwap
+	calls := 0
+	writeSwap = func(ctx context.Context, path string, expected, next []byte, mode os.FileMode) ([]byte, string, error) {
+		calls++
+		displaced, kept, err := restore(ctx, path, expected, next, mode)
+		if calls == 2 {
+			// The restore's rename is done and its directory was not synced; another writer then
+			// replaces the bytes before the write reads them back.
+			if err := os.WriteFile(file, []byte(third), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			return displaced, "", errors.New("the directory could not be synced")
+		}
+		return displaced, kept, err
+	}
+	t.Cleanup(func() { writeSwap = restore })
+	opts := WriteOptions{Register: func(context.Context, string) RegisterAnswer { return answer("record_absent", 1) }}
+	result := Write(context.Background(), envOf(env), opts,
+		WriteRequest{ExpectedDigest: digestOf(policyText), Change: removeLegacy()})
+	if result.Kind != WriteRecoveryNeeded {
+		t.Fatalf("kind = %q (%v), want %q: the file and the record disagree", result.Kind, result.Errors, WriteRecoveryNeeded)
+	}
+	if result.Restored {
+		t.Fatal("a restore was reported although the bytes on disk are not the ones it put back")
+	}
+	if result.FileDigest != digestOf(third) {
+		t.Fatalf("fileDigest = %q, want the digest of the bytes now on disk", result.FileDigest)
+	}
+	if result.RegisteredDigest != digestOf(policyText) {
+		t.Fatalf("registeredDigest = %q, want the digest the record still names", result.RegisteredDigest)
+	}
+}
+
+// TestARestoreNeverOverwritesAnotherWritersEdit is the pre-merge evaluation's P0: the (b) branch
+// restored whenever the record still named the original bytes, without checking what the file held.
+// An editor that saved a different policy between this run's publication and the failed
+// registration had its bytes overwritten by the restore, and they were in no backup. A file that no
+// longer holds the bytes this run published is not this run's to replace: the answer is a recovery
+// that names what was observed.
+func TestARestoreNeverOverwritesAnotherWritersEdit(t *testing.T) {
+	env, file := host(t, policyText, true)
+	edited := "a policy an editor saved while the registration was failing\n"
+	opts := WriteOptions{Register: func(_ context.Context, path string) RegisterAnswer {
+		// The editor saves its own policy at the same path; the registration then fails without
+		// updating the record, so the record still names the original bytes.
+		if err := os.WriteFile(file, []byte(edited), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return answer("record_changed_underneath", 1)
+	}}
+	result := Write(context.Background(), envOf(env), opts,
+		WriteRequest{ExpectedDigest: digestOf(policyText), Change: removeLegacy()})
+	if result.Kind != WriteRecoveryNeeded {
+		t.Fatalf("kind = %q (%v), want %q: the file is not this run's to replace", result.Kind, result.Errors, WriteRecoveryNeeded)
+	}
+	if result.Restored {
+		t.Fatal("the restore overwrote another writer's edit")
+	}
+	if result.FileDigest != digestOf(edited) {
+		t.Fatalf("fileDigest = %q, want the digest of the bytes on disk", result.FileDigest)
+	}
+	after, _ := os.ReadFile(file)
+	if string(after) != edited {
+		t.Fatalf("the editor's bytes are gone: %q", string(after))
+	}
+}
+
+// TestANamedRefusalReportsTheBytesOnDisk is the pre-merge evaluation's P1 on R5: the
+// registrationUnchanged branch re-read only the record and reported the digest this run tried to
+// write as fileDigest. When the file no longer holds those bytes, the answer must name what is
+// actually there, or say the file could not be read.
+func TestANamedRefusalReportsTheBytesOnDisk(t *testing.T) {
+	env, file := host(t, policyText, true)
+	third := "a policy the file now holds instead of the candidate\n"
+	opts := WriteOptions{Register: func(_ context.Context, path string) RegisterAnswer {
+		// The record is left naming the original, so the branch decides a restore; the file holds a
+		// third document, so the restore must not run and the answer must name the third digest.
+		if err := os.WriteFile(file, []byte(third), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return answer("record_absent", 1)
+	}}
+	result := Write(context.Background(), envOf(env), opts,
+		WriteRequest{ExpectedDigest: digestOf(policyText), Change: removeLegacy()})
+	if result.Kind != WriteRecoveryNeeded {
+		t.Fatalf("kind = %q (%v), want %q", result.Kind, result.Errors, WriteRecoveryNeeded)
+	}
+	if result.FileDigest != digestOf(third) {
+		t.Fatalf("fileDigest = %q, want the digest the file actually holds (%q)", result.FileDigest, digestOf(third))
+	}
+	after, _ := os.ReadFile(file)
+	if string(after) != third {
+		t.Fatal("the refused write replaced the file")
+	}
+}
+
+// TestACancellationDuringPublicationDoesNotReplaceTheFile is the pre-merge evaluation's P1 on R3:
+// the check sat before the publication was called, but the publication itself (a temporary file,
+// an fsync, a close and a rename) ran with no context, so a request that went away inside it still
+// replaced the policy. The rename is the durable effect, so the context must be honoured up to it.
+func TestACancellationDuringPublicationDoesNotReplaceTheFile(t *testing.T) {
+	env, file := host(t, policyText, true)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	opts := WriteOptions{Register: neverRegisters(t), Swap: func(publishCtx context.Context, path string, expected, next []byte, mode os.FileMode) ([]byte, string, error) {
+		// The request goes away while the publication is under way; the real publication must then
+		// refuse the exchange.
+		cancel()
+		displaced, kept, err := swapPolicy(publishCtx, path, expected, next, mode)
+		return displaced, kept, err
+	}}
+	result := Write(ctx, envOf(env), opts,
+		WriteRequest{ExpectedDigest: digestOf(policyText), Change: removeLegacy()})
+	if result.Kind != WriteCancelled {
+		t.Fatalf("kind = %q (%v), want %q", result.Kind, result.Errors, WriteCancelled)
+	}
+	if result.Step != "publish" {
+		t.Fatalf("step = %q, want %q", result.Step, "publish")
+	}
+	after, _ := os.ReadFile(file)
+	if string(after) != policyText {
+		t.Fatal("a cancelled publication replaced the policy")
+	}
+}
+
+// TestAChangeThatMovesNothingIsRefused is the pre-merge evaluation's P1 on the replay promise: a
+// set that names the values already in the document produced the same bytes, so the write reported
+// success without advancing the digest, and the same request could be accepted again. A write that
+// changes no byte cannot satisfy the promise that a repeated request is refused, so it is refused.
+func TestAChangeThatMovesNothingIsRefused(t *testing.T) {
+	env, file := host(t, policyText, true)
+	change := Change{Kind: KindSetAllowed, Model: "anthropic/opus", Efforts: []string{"xhigh", "max"}}
+	// The first write normalises the allowlist row, so the same change against the file it produced
+	// renders the very bytes that are already on disk.
+	first := Write(context.Background(), envOf(env), WriteOptions{Register: updatingRegisters(t, env), Running: unavailableRunning()},
+		WriteRequest{ExpectedDigest: digestOf(policyText), Change: change})
+	if first.Kind != WriteStored {
+		t.Fatalf("the first write: kind = %q (%v)", first.Kind, first.Errors)
+	}
+	current, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := backupsOf(t, filepath.Dir(file))
+	// The same request again, against the digest the file now has: the change would render exactly
+	// those bytes, so accepting it would leave the digest where it is and let the request succeed
+	// for ever instead of ending stale_digest.
+	result := Write(context.Background(), envOf(env), WriteOptions{Register: neverRegisters(t)},
+		WriteRequest{ExpectedDigest: digestOf(string(current)), Change: change})
+	if result.Kind != WriteInvalidPolicy {
+		t.Fatalf("kind = %q (%v), want %q: a change that moves nothing must be refused", result.Kind, result.Errors, WriteInvalidPolicy)
+	}
+	after, _ := os.ReadFile(file)
+	if !bytes.Equal(after, current) {
+		t.Fatal("a refused no-op changed the file")
+	}
+	if !slices.Equal(before, backupsOf(t, filepath.Dir(file))) {
+		t.Fatal("a refused no-op wrote a backup")
+	}
+}
+
+// TestARestoreWhoseRecordWentAwayNeedsRecovery is the pre-merge evaluation's finding: the final check
+// after a restore rejected only a registered record with a different digest, so a record that was
+// removed or corrupted while the restore ran fell through to a confirmed restore. The record must be
+// re-established, not assumed.
+func TestARestoreWhoseRecordWentAwayNeedsRecovery(t *testing.T) {
+	env, file := host(t, policyText, true)
+	// The registration leaves the record naming the original, so the (b) restore is decided; the
+	// record then disappears while the restore runs, so the final check cannot re-establish it.
+	restore := writeSwap
+	calls := 0
+	writeSwap = func(ctx context.Context, path string, expected, next []byte, mode os.FileMode) ([]byte, string, error) {
+		calls++
+		displaced, kept, err := restore(ctx, path, expected, next, mode)
+		if calls == 2 {
+			if err := os.Remove(recordOf(env)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return displaced, kept, err
+	}
+	t.Cleanup(func() { writeSwap = restore })
+	opts := WriteOptions{Register: func(context.Context, string) RegisterAnswer { return answer("record_absent", 1) }}
+	result := Write(context.Background(), envOf(env), opts,
+		WriteRequest{ExpectedDigest: digestOf(policyText), Change: removeLegacy()})
+	if result.Kind != WriteRecoveryNeeded {
+		t.Fatalf("kind = %q (%v), want %q: the record was not re-established", result.Kind, result.Errors, WriteRecoveryNeeded)
+	}
+	if result.Restored {
+		t.Fatal("a restore was confirmed although the wiring record is gone")
+	}
+	after, _ := os.ReadFile(file)
+	if string(after) != policyText {
+		t.Fatal("the original bytes are not on disk")
 	}
 }

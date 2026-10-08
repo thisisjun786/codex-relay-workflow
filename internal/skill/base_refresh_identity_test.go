@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -249,8 +250,14 @@ func gitShim(t *testing.T, mergeTreeBody string) {
 	}
 	bin := t.TempDir()
 	script := "#!/bin/sh\nfor a in \"$@\"; do\n  if [ \"$a\" = merge-tree ]; then\n" + mergeTreeBody + "\n  fi\ndone\nexec " + real + " \"$@\"\n"
-	if err := os.WriteFile(filepath.Join(bin, "git"), []byte(script), 0o700); err != nil {
-		t.Fatal(err)
+	// The shim goes on PATH and the tests run git through it, so its descriptor is open only under
+	// syscall.ForkLock: a fork in that window would inherit it and leave the shim unexecutable
+	// (ETXTBSY, golang/go#22315).
+	syscall.ForkLock.RLock()
+	writeErr := os.WriteFile(filepath.Join(bin, "git"), []byte(script), 0o700)
+	syscall.ForkLock.RUnlock()
+	if writeErr != nil {
+		t.Fatal(writeErr)
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 }

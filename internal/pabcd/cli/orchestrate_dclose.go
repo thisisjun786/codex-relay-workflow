@@ -24,6 +24,12 @@ package cli
 // unexported seam the tests pass in. The one package-level value here is
 // orchestrateDcloseSurrogateOptions, a struct literal with no initializer work; nothing runs at
 // program start and there is no init().
+//
+// A third departure, CRW-922: the oracle's process has no signal path, so a SIGINT ends it wherever it
+// stands. This port reads the invocation's context immediately before every durable effect that can
+// still be this invocation's first one and answers 130 with no output when it is already done - CRW-871's
+// rule, extended here past the reads that precede each write - and it reads the context once more before
+// answering a goalplan lock that gave up, so a cancelled close never reports the busy text instead.
 
 import (
 	"context"
@@ -57,6 +63,24 @@ type orchestrateDcloseSeam struct {
 	// interrupt runs immediately before this close's pre-write cancellation check inside each
 	// critical section (CRW-871). A field, never package state; nil means no hook.
 	interrupt func()
+	// afterLedgerRead runs immediately after the PABCD ledger has been read and parsed, in each branch
+	// whose first durable effect is the row that read guards - the all-done branch and the finalization
+	// pass - before the pre-write check that guards that row. A test cancels the context here to order
+	// the cancellation after the read and before the first write, which a check that had run before the
+	// read cannot see. Nil means no hook.
+	afterLedgerRead func()
+	// goalplanLockSeam runs immediately before each goalplan write lock this close takes, with
+	// finalize telling the first lock and the finalization lock apart, and its answer replaces that
+	// lock's own seams (goalplan.GoalplanWriteLockOptions). A test arranges the lock's outcome there -
+	// taking the lock directory, or removing the plan file - and cancels the context from the returned
+	// Sleep, which the lock calls only once its wait has begun; zero retry delays keep that wait free
+	// of real sleeps. Nil means the lock's own defaults.
+	goalplanLockSeam func(finalize bool) *goalplan.GoalplanWriteLockOptions
+	// afterRecoveryStateRead runs immediately after the state read that follows the first goalplan lock
+	// (`state.ReadState(cwd, sessionID).DcloseRecovery`), before the pre-write check that guards the IDLE
+	// state write that read precedes. A test cancels the context here to order the cancellation after that
+	// read and before that write, which a check that had run before the read cannot see. Nil means no hook.
+	afterRecoveryStateRead func()
 }
 
 // orchestrateDcloseRunHook runs one hook, or nothing when the test left it nil.
@@ -65,6 +89,35 @@ func orchestrateDcloseRunHook(hook func() error) error {
 		return nil
 	}
 	return hook()
+}
+
+// orchestrateDcloseRunVoid runs a test seam that answers nothing, or nothing when it is nil.
+func orchestrateDcloseRunVoid(seam func()) {
+	if seam != nil {
+		seam()
+	}
+}
+
+// orchestrateDcloseLockOptions is the options the seam supplies for one of this close's two goalplan
+// write locks; nil leaves the lock's own retry and clock seams in place.
+func orchestrateDcloseLockOptions(seam orchestrateDcloseSeam, finalize bool) *goalplan.GoalplanWriteLockOptions {
+	if seam.goalplanLockSeam == nil {
+		return nil
+	}
+	return seam.goalplanLockSeam(finalize)
+}
+
+// orchestrateDcloseCancelCheck is the pre-write cancellation check of CRW-871, run again by CRW-922
+// immediately before every durable effect that could still be this invocation's first one, after the
+// reads that precede it. wrote is true once this invocation has started its first durable effect: from
+// then on the close finishes and answers as it did before, because the later effects are the cleanup of a
+// close that is already visible, and a close that stopped halfway would leave a recovery marker no answer
+// explains.
+func orchestrateDcloseCancelCheck(ctx context.Context, interrupt func(), wrote bool) error {
+	if wrote {
+		return nil
+	}
+	return orchestrateInterruptCheckWith(ctx, interrupt)
 }
 
 // orchestrateDcloseStateWarning is the line a published-but-unsynced state write adds to the answer
@@ -278,11 +331,14 @@ func orchestrateDclose(cwd, sessionID, closePhaseID string, cur state.State, att
 
 // orchestrateDcloseContext is orchestrateDclose for a caller that can be interrupted (the orchestrate
 // row's D edge, CRW-871). The close takes its own goalplan write lock, which is not context-aware, so
-// the invocation's context is read once more at the top of each critical section, before that
-// section's first durable effect: the unbound write, and the callback of the first goalplan lock
-// (whose first effect is the recovery marker, the all-done PABCD row, or the closed plan). Once the
-// first write has started the close runs to the end and answers as it did before, because the later
-// critical section is cleanup of a close that is already visible.
+// the invocation's context is read once more before every durable effect that could still be this
+// invocation's first one, after the reads that precede it (CRW-922): the unbound state write, the
+// all-done PABCD row (whose preceding read is the whole ledger), the recovery marker, the plan
+// publication, the plan's own ledger rows, the IDLE state write and the finalization's row and marker
+// clear. A context that ended while the process waited for the goalplan lock is answered the same way,
+// before the lock's busy or unreadable refusal. Once the first write has started the close runs to the
+// end and answers as it did before, because the later effects are cleanup of a close that is already
+// visible.
 func orchestrateDcloseContext(ctx context.Context, cwd, sessionID, closePhaseID string, cur state.State, att *attest.Attestation, recovering bool, seam orchestrateDcloseSeam) (CliResult, error) {
 	// The recovery branch reads the marker it is resuming. The caller decides recovering with
 	// state.MatchesDcloseRecovery, which is false without one, so a nil marker here is a caller bug and
@@ -295,6 +351,9 @@ func orchestrateDcloseContext(ctx context.Context, cwd, sessionID, closePhaseID 
 		return orchestrateTransitionStateRefusal(fsm.VerbD, reason), nil
 	}
 	warnings := []string{}
+	// wrote is true once this invocation has started its first durable effect; from then on the pre-write
+	// checks below are skipped (CRW-871's rule).
+	wrote := false
 
 	// CHECK-BINDING-01 (075): a bound session must name a receipt this cycle produced. A
 	// marker-matched retry already spent its receipt in the first attempt, and the epoch it ran
@@ -316,14 +375,16 @@ func orchestrateDcloseContext(ctx context.Context, cwd, sessionID, closePhaseID 
 	if cur.Slug == "" {
 		next := fsm.ClearedIdle(cur)
 		next.StopBlockPhase, next.StopBlockCount = nil, 0
-		// CRW-871: the unbound close takes no goalplan lock, so this is its only pre-write check.
-		if err := orchestrateInterruptCheckWith(ctx, seam.interrupt); err != nil {
+		// CRW-871/CRW-922: the unbound close takes no goalplan lock, so its state write is the only
+		// effect that can be this invocation's first one.
+		if err := orchestrateDcloseCancelCheck(ctx, seam.interrupt, wrote); err != nil {
 			return CliResult{}, err
 		}
 		warning, err := orchestrateDcloseWriteState(seam, cwd, next)
 		if err != nil {
 			return CliResult{}, err
 		}
+		wrote = true
 		warnings = append(warnings, warning)
 		from := cur.Phase
 		if err := state.AppendLedger(cwd, state.LedgerEntry{
@@ -452,10 +513,17 @@ func orchestrateDcloseContext(ctx context.Context, cwd, sessionID, closePhaseID 
 					if err != nil {
 						return orchestrateDcloseLockAnswer{}, err
 					}
+					orchestrateDcloseRunVoid(seam.afterLedgerRead)
 					if !have {
+						// CRW-922: the ledger read above is the read that precedes this close's first
+						// durable effect in the all-done branch, so the check runs here, after it.
+						if err := orchestrateDcloseCancelCheck(ctx, seam.interrupt, wrote); err != nil {
+							return orchestrateDcloseLockAnswer{}, err
+						}
 						if err := orchestrateDcloseAppendPabcdRow(cwd, cur, cur.CheckEpoch, nil, att); err != nil {
 							return orchestrateDcloseLockAnswer{}, err
 						}
+						wrote = true
 						if err := orchestrateDcloseRunHook(seam.afterPabcdLedgerAppend); err != nil {
 							return orchestrateDcloseLockAnswer{}, err
 						}
@@ -505,10 +573,15 @@ func orchestrateDcloseContext(ctx context.Context, cwd, sessionID, closePhaseID 
 				// so a later hand edit of the cursor cannot rewrite what this close meant to do.
 				NextWorkPhaseID: closedPlan.ActiveWorkPhaseID,
 			}
+			// CRW-922: the recovery marker is this close's first durable effect on the normal path.
+			if err := orchestrateDcloseCancelCheck(ctx, seam.interrupt, wrote); err != nil {
+				return orchestrateDcloseLockAnswer{}, err
+			}
 			warning, err := orchestrateDcloseWriteState(seam, cwd, next)
 			if err != nil {
 				return orchestrateDcloseLockAnswer{}, err
 			}
+			wrote = true
 			if warning != "" {
 				warnings = append(warnings, warning)
 			}
@@ -517,9 +590,15 @@ func orchestrateDcloseContext(ctx context.Context, cwd, sessionID, closePhaseID 
 			}
 		}
 		if writeClosedPlan {
+			// CRW-922: on a recovery retry the marker is already on the session, so the plan
+			// publication is this invocation's first durable effect.
+			if err := orchestrateDcloseCancelCheck(ctx, seam.interrupt, wrote); err != nil {
+				return orchestrateDcloseLockAnswer{}, err
+			}
 			if err := goalplan.WriteGoalplan(cwd, closedPlan); err != nil {
 				return orchestrateDcloseLockAnswer{}, err
 			}
+			wrote = true
 			if err := orchestrateDcloseRunHook(seam.afterGoalplanCommit); err != nil {
 				return orchestrateDcloseLockAnswer{}, err
 			}
@@ -530,12 +609,16 @@ func orchestrateDcloseContext(ctx context.Context, cwd, sessionID, closePhaseID 
 			return orchestrateDcloseLockAnswer{}, err
 		}
 		if !haveDone {
+			if err := orchestrateDcloseCancelCheck(ctx, seam.interrupt, wrote); err != nil {
+				return orchestrateDcloseLockAnswer{}, err
+			}
 			if err := goalplan.AppendGoalplanLedger(cwd, slug, goalplan.GoalplanLedgerEntry{
 				Ts: orchestrateTransitionTimestamp(), Slug: slug, Event: goalplan.EventWorkphaseDone,
 				Detail: "closed " + closePhaseID,
 			}); err != nil {
 				return orchestrateDcloseLockAnswer{}, err
 			}
+			wrote = true
 		}
 		// §52: the started row names the successor THIS close activated, which the marker records. The
 		// persisted cursor is the wrong source on a resume: a retry that answers already_done leaves
@@ -554,22 +637,35 @@ func orchestrateDcloseContext(ctx context.Context, cwd, sessionID, closePhaseID 
 			}
 		}
 		if startedID != nil && *startedID != "" && !haveStarted {
+			if err := orchestrateDcloseCancelCheck(ctx, seam.interrupt, wrote); err != nil {
+				return orchestrateDcloseLockAnswer{}, err
+			}
 			if err := goalplan.AppendGoalplanLedger(cwd, slug, goalplan.GoalplanLedgerEntry{
 				Ts: orchestrateTransitionTimestamp(), Slug: slug, Event: goalplan.EventWorkphaseStarted,
 				Detail: "started " + *startedID,
 			}); err != nil {
 				return orchestrateDcloseLockAnswer{}, err
 			}
+			wrote = true
 		}
 		return orchestrateDcloseLockAnswer{Code: 0, AllDone: false}, nil
-	}, nil)
+	}, orchestrateDcloseLockOptions(seam, false))
 	if err != nil {
 		return CliResult{}, err
 	}
 	switch locked.Kind {
 	case "locked":
+		// CRW-922: nothing was written, so a context that ended while this process waited for the
+		// goalplan lock (which takes no context) answers Interrupted (130) rather than the busy refusal,
+		// as CRW-871's other paths and orchestrateCommitPublish already do.
+		if err := ctx.Err(); err != nil {
+			return CliResult{}, err
+		}
 		return CliResult{Code: 1, Output: "orchestrate D: " + locked.Reason + " D-close was not applied. Nothing was written."}, nil
 	case "unreadable":
+		if err := ctx.Err(); err != nil {
+			return CliResult{}, err
+		}
 		return CliResult{Code: 1, Output: "orchestrate D: the bound goalplan \"" + slug + "\" could not be read (CYCLE-COMPLETION-01): " +
 			locked.Reason + ". Nothing was written."}, nil
 	}
@@ -582,6 +678,7 @@ func orchestrateDcloseContext(ctx context.Context, cwd, sessionID, closePhaseID 
 	allDoneClose = locked.Value.AllDone
 
 	recovery := state.ReadState(cwd, sessionID).DcloseRecovery
+	orchestrateDcloseRunVoid(seam.afterRecoveryStateRead)
 	closeCheckEpoch := cur.CheckEpoch
 	if recovery != nil {
 		epoch := recovery.CheckEpoch
@@ -601,10 +698,17 @@ func orchestrateDcloseContext(ctx context.Context, cwd, sessionID, closePhaseID 
 			epoch := recovery.CheckEpoch
 			next.CheckEpoch, next.DcloseRecovery = &epoch, recovery
 		}
+		// CRW-922: the state write is this invocation's first durable effect when the goalplan lock
+		// above wrote nothing (the all-done branch whose row is already recorded, or a recovery retry
+		// with nothing left to append).
+		if err := orchestrateDcloseCancelCheck(ctx, seam.interrupt, wrote); err != nil {
+			return CliResult{}, err
+		}
 		warning, err := orchestrateDcloseWriteState(seam, cwd, next)
 		if err != nil {
 			return CliResult{}, err
 		}
+		wrote = true
 		warnings = append(warnings, warning)
 		if err := orchestrateDcloseRunHook(seam.afterStateWrite); err != nil {
 			return CliResult{}, err
@@ -619,10 +723,15 @@ func orchestrateDcloseContext(ctx context.Context, cwd, sessionID, closePhaseID 
 			if err != nil {
 				return struct{}{}, err
 			}
+			orchestrateDcloseRunVoid(seam.afterLedgerRead)
 			if !have {
+				if err := orchestrateDcloseCancelCheck(ctx, seam.interrupt, wrote); err != nil {
+					return struct{}{}, err
+				}
 				if err := orchestrateDcloseAppendPabcdRow(cwd, cur, closeCheckEpoch, closedWorkPhaseID, att); err != nil {
 					return struct{}{}, err
 				}
+				wrote = true
 				if err := orchestrateDcloseRunHook(seam.afterPabcdLedgerAppend); err != nil {
 					return struct{}{}, err
 				}
@@ -631,10 +740,14 @@ func orchestrateDcloseContext(ctx context.Context, cwd, sessionID, closePhaseID 
 			if state.MatchesDcloseRecovery(current, closePhaseID) {
 				cleared := current
 				cleared.CheckEpoch, cleared.DcloseRecovery = nil, nil
+				if err := orchestrateDcloseCancelCheck(ctx, seam.interrupt, wrote); err != nil {
+					return struct{}{}, err
+				}
 				warning, err := orchestrateDcloseWriteState(seam, cwd, cleared)
 				if err != nil {
 					return struct{}{}, err
 				}
+				wrote = true
 				if warning != "" {
 					warnings = append(warnings, warning)
 				}
@@ -643,11 +756,22 @@ func orchestrateDcloseContext(ctx context.Context, cwd, sessionID, closePhaseID 
 				}
 			}
 			return struct{}{}, nil
-		}, nil)
+		}, orchestrateDcloseLockOptions(seam, true))
 		if err != nil {
 			return CliResult{}, err
 		}
 		if finalize.Kind != "ok" {
+			// CRW-922 (F1): the close's second and last lock can be the first thing to fail for an
+			// invocation that has written nothing of its own - a recovery retry whose session is already
+			// IDLE, so the state write above did not run. A context that ended while this lock waited
+			// answers Interrupted (130) with no output, exactly as the first lock's give-up does. Once
+			// this invocation has written, the answer below stands: its effects are visible and the
+			// marker the next request resumes from is on the session.
+			if !wrote {
+				if err := ctx.Err(); err != nil {
+					return CliResult{}, err
+				}
+			}
 			// §39 Y3: not a refusal. The state write above already moved the FSM to IDLE outside the
 			// lock, so returning code 1 here would report a failure for a cycle that is functionally
 			// closed. The marker survives and the next D request for the same tuple finishes cleanup.

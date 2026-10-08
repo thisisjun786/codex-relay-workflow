@@ -104,9 +104,10 @@ with the model beside it: Sonnet at SOL's effort is refused too, because an effo
 model. The list keeps the order the file declares, and that order carries no preference.
 
 The file is refused when it is read, not at the first creation, if a `pairs` list is empty or is not a
-list, names the same pair twice, holds an entry that is not exactly `{model, reasoningEffort}`, sits in
-the same entry as `model` or `reasoningEffort`, is declared for the `supervisor`, or names a pair that the
-file's `allowed` list does not approve. A list of one pair is the one-pair form written another way.
+list, names the same pair twice, holds an entry that states anything beyond `model`, `reasoningEffort`
+and the optional `autoCompactTokenLimit` (see "A pair may cap auto-compaction"), sits in the same entry
+as `model` or `reasoningEffort`, is declared for the `supervisor`, or names a pair that the file's
+`allowed` list does not approve. A list of one pair is the one-pair form written another way.
 The description of a policy whose roles list several pairs must also fit what the relay publishes
 about it (half of the 64 KiB its readers accept), so an absurdly long list is refused when the file is
 read instead of leaving every worker check reading "unreadable".
@@ -135,6 +136,71 @@ role that lists more than one pair is described differently:
   `send_message_to_thread` holds the same line: a pair of such a role is authorized (`role_pair`) but is
   withheld from a thread the host has not loaded, as `unverified_pair_for_unloaded_thread`, exactly as a
   supervisor's or an exception's pair is.
+
+## A pair may cap auto-compaction
+
+A host can report a context window far larger than what the provider behind a model actually
+accepts. `inferhub/deepseek-v4.1-flash` is the measured case: the host reports 950,000 tokens, and
+the provider cuts every request above roughly 664,000 with `Provider stream error: upstream error`,
+so the child stops without a receipt before Codex compacts on its own. A pair may therefore carry
+`autoCompactTokenLimit`, a positive integer the bridge sends as `model_auto_compact_token_limit` in
+the `thread/start` and `thread/resume` `config`, which makes the host compact below its own window:
+
+    "child": {"model": "inferhub/deepseek-v4.1-flash", "reasoningEffort": "none", "autoCompactTokenLimit": 550000}
+
+    "child": {"pairs": [
+      {"model": "inferhub/deepseek-v4.1-flash", "reasoningEffort": "none", "autoCompactTokenLimit": 550000}
+    ]}
+
+The field is optional and belongs to the pair, so it goes on whichever spelling declares that pair:
+the single `model`/`reasoningEffort` form, or one entry of `pairs`. A file that declares none
+behaves exactly as before — no key is sent and the host's own threshold stands. A supervisor and an
+exception name no pair, so neither can carry one: a `supervisor` entry that declares the field does
+not load, and so does an entry that puts it beside `pairs` instead of inside one.
+
+The relay reads the same declaration. A task's recorded settings come from the host's creation
+response, which never carries this value, so a relay delivery or correction send resolves the
+recipient's role and the limit from the pair that role states, and adds it to the resume's config —
+including on a settings-free resume, which transmits no pair but may still carry the limit of the
+pair the thread is on. The role is the one the relay's own gate confirmed the task is bound to (a
+record need not cite its own role), falling back to the record's own citation when the task is
+bound to none. A pair that declares no limit sends none rather than inheriting a sibling pair's,
+and a record citing an exception sends none.
+
+A value that is not a positive integer is refused when the file is read, through the same
+`execution_policy_unreadable` path as every other unusable policy value: a string, a boolean, a
+fraction or an exponent, zero and a negative number all fail there. A number written with an
+exponent is refused even when it is integral — `1e6` is a float spelling, not an integer — so a
+value the host would accept only after rounding is never silently taken. The limit is not part of what a
+request is judged against, so it changes neither which pairs a role allows nor the description
+`get_capabilities` reports — that description is the authorization surface, as it is for MCP
+profiles.
+
+The host has no field that reports this value back, so the bridge never compares it. A creation or a
+resume is not withheld, and its receipt does not fail, because the host said nothing about it. The
+receipt records it the way it records any setting the host cannot confirm: under `requested`, with
+the value that was sent, and under `unobservable`; `verified` never lists it. `verification` stays
+`observed_at_creation` or `observed_at_resume` for the settings that were actually compared, and
+`not_requested` when the limit was the only thing asked for. A relay resume records it the same way
+on the receipt it keeps for its own send: the limit resolved from the record's pair is written under
+`requested` and `unobservable`, with `not_requested`, so a later reader of that stored receipt
+still sees what the send carried.
+
+**A resume does not install the value on a thread the host already has loaded.** The host answers a
+resume with the thread's current state, so a resume that transmits the limit to a loaded thread
+leaves that thread's own threshold as it was: the value takes effect at creation, or when the host
+loads the thread again (a `notLoaded` recipient). An accepted resume receipt therefore records that the
+limit was sent, not that it now applies. An operator who adds the value for a running child gets it
+on that child's next load.
+
+**The recommended value is 550000**, about 110,000 below the highest input observed to pass
+(664,238 tokens, 2026-10-06) and about 114,000 below the first observed failure. The margin is there
+because compaction is decided between samples, and one tool result can add a lot between two of
+them. The evidence is the parent's probe of 2026-10-06: two ephemeral threads under an isolated
+`codex app-server`, both reporting a 950,000 window, given the same ~15,000-token input over three
+turns. The thread given `config.model_auto_compact_token_limit=4000` compacted twice, its context
+falling from 30,696 to 15,478; the control thread never compacted and grew 30,756 → 40,588 →
+40,593. Writing the value into a host's policy file is an operator step, like the rest of that file.
 
 ## A role may carry MCP profiles
 

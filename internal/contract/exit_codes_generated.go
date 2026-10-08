@@ -51,6 +51,7 @@ const (
 	RefusalForeignScope                    RefusalReason = "foreign_scope"
 	RefusalHandoverUnconfirmed             RefusalReason = "handover_unconfirmed"
 	RefusalHandoverWouldStrand             RefusalReason = "handover_would_strand"
+	RefusalHeadNotReceiptHead              RefusalReason = "head_not_receipt_head"
 	RefusalInsufficientPathBinding         RefusalReason = "insufficient_path_binding"
 	RefusalLinkConflict                    RefusalReason = "link_conflict"
 	RefusalLinkNotActive                   RefusalReason = "link_not_active"

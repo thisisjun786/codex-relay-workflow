@@ -25,9 +25,18 @@ func verifyResume(settings delivery.TaskSettings, response any, status any) (con
 		message := code + ": " + pyjson.Text(first.Get("field")) + " returned " + returned + "; message withheld"
 		if !transmitted {
 			code = registry.SettingsFreeRefusalCode(mismatches)
+			// A settings-free resume transmits no pair, which is what this sentence is about. It may
+			// still have sent the MCP profile's overrides and the pair's auto-compaction limit, neither
+			// of which is a pair, so the sentence names what went out rather than counting nothing.
 			sent := "nothing was transmitted"
-			if _, overrides := settings.Data.Lookup("mcpServers"); overrides {
+			_, overrides := settings.Data.Lookup("mcpServers")
+			switch {
+			case overrides && settings.AutoCompactTokenLimit != nil:
+				sent = "only the MCP profile's overrides and the pair's auto-compaction limit were transmitted"
+			case overrides:
 				sent = "only the MCP profile's overrides were transmitted"
+			case settings.AutoCompactTokenLimit != nil:
+				sent = "only the pair's auto-compaction limit was transmitted"
 			}
 			message = code + ": " + pyjson.Text(first.Get("field")) + " is " + returned + " on the loaded thread and " + pyvalue.Repr(first.Get("expected")) + " in the record; " + sent + " and no turn was started"
 		}

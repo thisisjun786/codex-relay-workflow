@@ -173,8 +173,11 @@ func fakeCfg(t *testing.T, sp fakeSpec) (Config, func() fakeRecord) {
 	if err := os.WriteFile(specPath, spec, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(binary, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
+	syscall.ForkLock.RLock()
+	writeErr := os.WriteFile(binary, []byte(script), 0o755)
+	syscall.ForkLock.RUnlock()
+	if writeErr != nil {
+		t.Fatal(writeErr)
 	}
 	cfg := Config{Binary: binary, LockPath: filepath.Join(dir, "agy.lock"), LockWait: 10 * time.Second, WorkRoot: filepath.Join(dir, "work"),
 		TimeLimitFloor: time.Minute, TimeLimitCeiling: time.Minute}

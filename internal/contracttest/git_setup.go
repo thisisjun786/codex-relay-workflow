@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"syscall"
 )
 
 func (r *gitBridgeRun) hostileGit() {
@@ -27,8 +28,13 @@ func (r *gitBridgeRun) hostileGit() {
 	r.base = gitValue(r.t, context.Background(), r.repo, "rev-parse", "HEAD")
 	r.args.Revision = r.base
 	script := filepath.Join(r.repo, ".git", "hooks", "post-checkout")
-	if err := os.WriteFile(script, []byte("#!/bin/sh\ntouch '"+marker+"'\ncat\n"), 0700); err != nil {
-		r.t.Fatal(err)
+	// git runs this hook, so its descriptor is open only under syscall.ForkLock: a fork in that
+	// window would inherit it and leave the hook unexecutable (ETXTBSY, golang/go#22315).
+	syscall.ForkLock.RLock()
+	writeErr := os.WriteFile(script, []byte("#!/bin/sh\ntouch '"+marker+"'\ncat\n"), 0700)
+	syscall.ForkLock.RUnlock()
+	if writeErr != nil {
+		r.t.Fatal(writeErr)
 	}
 	for _, name := range []string{"filter.example.smudge", "filter.example.clean", "core.fsmonitor"} {
 		if _, err := gitCommand(context.Background(), r.repo, "config", name, script); err != nil {

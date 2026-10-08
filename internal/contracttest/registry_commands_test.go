@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -81,8 +82,11 @@ func replayCLICases(t *testing.T, fixture string, targetKeys bool, commands []st
 					if err := os.MkdirAll(bin, 0o700); err != nil {
 						t.Fatal(err)
 					}
-					if err := os.WriteFile(filepath.Join(bin, name), []byte(strings.ReplaceAll(script, "${HOME}", home)), 0o700); err != nil {
-						t.Fatal(err)
+					syscall.ForkLock.RLock()
+					writeErr := os.WriteFile(filepath.Join(bin, name), []byte(strings.ReplaceAll(script, "${HOME}", home)), 0o700)
+					syscall.ForkLock.RUnlock()
+					if writeErr != nil {
+						t.Fatal(writeErr)
 					}
 				}
 				for file, text := range step.Files {

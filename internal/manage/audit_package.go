@@ -346,6 +346,31 @@ func auditPkgBuild(ctx context.Context, e *Env, cfg *Config, section auditPkgSec
 	return dir, nil
 }
 
+// auditPkgBuildAndGrade assembles one package bundle and grades it with the drafts lock held
+// across both. A rebuild empties the bundle and a grade replaces its grade.json, so the two must
+// not interleave: a grade that started first would lose its inputs, and a rebuild that started
+// first would be graded while the ledger recorded the metadata the grade read. Holding the one
+// lock the drafts surface and every grade already share is what keeps them apart.
+func auditPkgBuildAndGrade(ctx context.Context, e *Env, cfg *Config, section auditPkgSection, co auditPkgCheckout, pkg, head, round string) (string, []AuditResult, error) {
+	release, err := auditDraftLock(e, cfg)
+	if err != nil {
+		return "", nil, err
+	}
+	defer release()
+	dir, err := auditPkgBuild(ctx, e, cfg, section, co, pkg, head)
+	if err != nil {
+		return "", nil, err
+	}
+	results, err := auditGradeLocked(ctx, e, cfg, []AuditJob{{Bundle: dir, Round: round}})
+	if err != nil {
+		return "", nil, err
+	}
+	if len(results) != 1 {
+		return "", nil, fmt.Errorf("the grader answered %d results for one bundle", len(results))
+	}
+	return dir, results, nil
+}
+
 // auditPkgResetDir makes the bundle directory empty. It refuses a directory that is not
 // strictly below the bundle root, so a package path can never make this remove anything
 // else.
@@ -653,6 +678,9 @@ func auditPkgParseArgs(args []string, allowed map[string]bool) (map[string]strin
 		if !allowed[key] {
 			return nil, fmt.Errorf("unknown option %s", name)
 		}
+		if _, twice := values[key]; twice {
+			return nil, fmt.Errorf("the option --%s is given twice", key)
+		}
 		values[key] = value
 	}
 	return values, nil
@@ -662,11 +690,16 @@ func auditPkgParseArgs(args []string, allowed map[string]bool) (map[string]strin
 // packages the round still holds pending or failed, and writes each result back into the
 // round file before releasing the lock.
 func auditPkgRun(ctx context.Context, e *Env, args []string) int {
-	for _, arg := range args {
-		if arg == "-h" || arg == "--help" || arg == "help" {
-			fmt.Fprintln(e.Stdout, auditPkgUsage)
-			return 0
-		}
+	if auditOptionsHelpRequested(args) {
+		fmt.Fprintln(e.Stdout, auditPkgUsage)
+		return 0
+	}
+	// A -h this parse reads as a value is not a help request, so Run's own skip does not
+	// apply to it; the configuration refusal is made here, in Run's words and status, so a
+	// file this product cannot use never lets the command run on the defaults.
+	if err := coreConfigError(e); err != nil {
+		fmt.Fprintf(e.Stderr, "crw manage: error: %v\n", err)
+		return usageExit
 	}
 	values, err := auditPkgParseArgs(args, map[string]bool{"round": true, "next": true, "head": true})
 	round := values["round"]
@@ -729,18 +762,9 @@ func auditPkgRunOne(ctx context.Context, e *Env, round string, next int, headArg
 			return 1
 		}
 		for _, pkg := range pending {
-			dir, err := auditPkgBuild(ctx, e, cfg, section, co, pkg, head)
+			dir, results, err := auditPkgBuildAndGrade(ctx, e, cfg, section, co, pkg, head, round)
 			if err != nil {
 				fmt.Fprintf(e.Stderr, "crw manage audit package: error: %v\n", err)
-				return 1
-			}
-			results, err := AuditGrade(ctx, e, cfg, []AuditJob{{Bundle: dir, Round: round}})
-			if err != nil {
-				fmt.Fprintf(e.Stderr, "crw manage audit package: error: %v\n", err)
-				return 1
-			}
-			if len(results) != 1 {
-				fmt.Fprintf(e.Stderr, "crw manage audit package: error: the grader answered %d results for one bundle\n", len(results))
 				return 1
 			}
 			auditRoundApply(doc, pkg, head, dir, results[0])

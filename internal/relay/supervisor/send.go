@@ -179,17 +179,75 @@ type claimedMessage struct {
 }
 
 // oldestAhead names the oldest message to recipient, other than id, that goes ahead of the one
-// staged at (stagedAt, id): staged earlier, and satisfying ahead, the SQL condition (binding now
-// twice) of the vantage that asks. Attempt asks it before any host work with
-// store.SupervisorAheadSQL, and the claim asks it again under its write lock with
-// store.SupervisorAheadInClaimSQL, because another writer can make an older message claimable in
-// between. found is false when nothing goes first.
-func (c *Channel) oldestAhead(ctx context.Context, recipient, stagedAt, id, ahead string, now float64) (older string, found bool, err error) {
-	err = c.Store.Q(ctx).QueryRowContext(ctx, "SELECT message_id FROM supervisor_messages WHERE recipient_task_id=? AND message_id<>? AND "+ahead+" AND "+store.SupervisorOlderThanSQL("")+" ORDER BY staged_at,message_id LIMIT 1", recipient, id, now, now, stagedAt, stagedAt, id).Scan(&older)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", false, nil
+// staged at (stagedAt, id): staged earlier, and satisfying the ordering condition of the vantage
+// that asks. Attempt asks it before any host work with the attempt's condition, and the claim asks
+// it again under its write lock with the claim's own, because another writer can make an older
+// message claimable in between. found is false when nothing goes first.
+//
+// A delivery waiting out a busy backoff holds its recipient's line, and the notice channel yields
+// that line (I-216's notice part), so a fault notice to such a recipient cannot be claimed and goes
+// ahead of nothing: the message behind it must not wait for it (CRW-943). The line is asked of the
+// delivery path's own rule, and only when the row that would go first is a notice, so a recipient
+// with no notice ahead reads no delivery row. It is asked on ctx's querier, so the claim asks it
+// under its own write lock and cannot disagree with the yield check that claim performs.
+func (c *Channel) oldestAhead(ctx context.Context, service *delivery.Service, recipient, stagedAt, id string, inClaim bool, now float64) (older string, found bool, err error) {
+	older, yields, found, err := c.aheadOf(ctx, recipient, stagedAt, id, inClaim, nil, now)
+	if err != nil || !found || !yields {
+		return older, found, err
 	}
-	return older, err == nil, err
+	held, err := heldRecipient(ctx, service, recipient, now)
+	if err != nil || len(held) == 0 {
+		return older, found, err
+	}
+	older, _, found, err = c.aheadOf(ctx, recipient, stagedAt, id, inClaim, held, now)
+	return older, found, err
+}
+
+// aheadOf is the one question oldestAhead asks: the oldest message to recipient, other than id,
+// that is staged earlier and satisfies the ordering condition of the vantage inClaim names, with the
+// notices to a held line excluded when held names any. yields says the row it found is a fault
+// notice, which is the only row whose yield can change the answer. The bindings are, in the order
+// the statement names them, the recipient, the message itself, the condition's own and the ordering
+// key - see store.SupervisorHeldNoticeArgs.
+func (c *Channel) aheadOf(ctx context.Context, recipient, stagedAt, id string, inClaim bool, held []string, now float64) (older string, yields bool, found bool, err error) {
+	ahead := store.SupervisorAheadExceptYieldingSQL("", held)
+	if inClaim {
+		ahead = store.SupervisorAheadInClaimExceptYieldingSQL("", held)
+	}
+	args := append([]any{recipient, id}, store.SupervisorHeldNoticeArgs(held, now)...)
+	args = append(args, stagedAt, stagedAt, id)
+	query := "SELECT message_id,obligation_kind FROM supervisor_messages WHERE recipient_task_id=? AND message_id<>? AND " + ahead +
+		" AND " + store.SupervisorOlderThanSQL("") + " ORDER BY staged_at,message_id LIMIT 1"
+	var kind string
+	err = c.Store.Q(ctx).QueryRowContext(ctx, query, args...).Scan(&older, &kind)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, false, nil
+	}
+	if err != nil {
+		return "", false, false, err
+	}
+	return older, kind == store.SupervisorNoticeObligationKind, true, nil
+}
+
+// heldRecipient is the held-line reading one order question is given, as the set the ordering
+// conditions bind: the recipient itself when a delivery waiting out a busy backoff holds its line,
+// and nothing otherwise. It is the delivery path's own predicate (I-216's notice part), so the
+// supervisor channel's order judgements and its yield check cannot disagree about which deliveries
+// hold a line.
+func heldRecipient(ctx context.Context, service *delivery.Service, recipient string, now float64) ([]string, error) {
+	held, err := service.BusyHeadHoldsRecipientLine(ctx, recipient, now)
+	if err != nil || !held {
+		return nil, err
+	}
+	return []string{recipient}, nil
+}
+
+// heldLineRecipients is the held-line reading a head selection over many recipients is given: the
+// recipients whose line a delivery holds under a busy backoff at now, from the delivery path's own
+// rule, so the selection and the claim's yield check cannot disagree about which lines are held
+// (I-216's notice part, CRW-943).
+func (c *Channel) heldLineRecipients(ctx context.Context, now float64) ([]string, error) {
+	return delivery.NewService(c.Store, delivery.SystemClock{}).BusyHeadRecipients(ctx, now)
 }
 
 // claim is the transaction-level operation shared by the send and its parity tests.
@@ -225,7 +283,7 @@ func (c *Channel) claim(ctx context.Context, id string, r Resolution, now float6
 				return err
 			}
 		}
-		older, found, err := c.oldestAhead(tx, r.Recipient, current.StagedAt, id, store.SupervisorAheadInClaimSQL(""), now)
+		older, found, err := c.oldestAhead(tx, service, r.Recipient, current.StagedAt, id, true, now)
 		if err != nil {
 			return err
 		}
@@ -241,7 +299,7 @@ func (c *Channel) claim(ctx context.Context, id string, r Resolution, now float6
 				return err
 			}
 			if held {
-				return Refusal{"not_claimable", noticeYieldsDetail(r.Recipient)}
+				return noticeLineYieldRefusal(r.Recipient)
 			}
 		}
 		attemptNo = current.AttemptCount + 1
@@ -430,7 +488,7 @@ func (a *attemptRun) eligible(ctx context.Context) (stop bool, err error) {
 	if !row.ClaimableAt(a.now) {
 		return true, nil
 	}
-	older, found, err := a.c.oldestAhead(ctx, row.RecipientTaskID, row.StagedAt, a.id, store.SupervisorAheadSQL(""), a.now)
+	older, found, err := a.c.oldestAhead(ctx, a.service, row.RecipientTaskID, row.StagedAt, a.id, false, a.now)
 	if err != nil {
 		return true, err
 	}
@@ -446,7 +504,7 @@ func (a *attemptRun) eligible(ctx context.Context) (stop bool, err error) {
 			return true, err
 		}
 		if held {
-			return true, Refusal{"not_claimable", noticeYieldsDetail(row.RecipientTaskID)}
+			return true, noticeLineYieldRefusal(row.RecipientTaskID)
 		}
 	}
 	return false, nil
@@ -699,7 +757,7 @@ func (a *attemptRun) fenceBusyHead(tx context.Context, current store.SupervisorM
 		return false, nil
 	}
 	refusal := Refusal{"not_claimable", noticeYieldsDetail(current.RecipientTaskID)}
-	out.refusal = refusal
+	out.refusal = noticeLineYield{refusal}
 	reason := "a delivery came to hold this recipient's line under a busy backoff between this notice's claim and its transport"
 	if err := c.cancelTransport(tx, a.id, requestID, attemptNo, a.at, 0, reason, a.owner); err != nil {
 		return true, err

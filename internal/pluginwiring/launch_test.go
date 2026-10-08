@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/mcp"
@@ -69,8 +70,14 @@ func write(t *testing.T, path, text string, mode os.FileMode) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, []byte(text), mode); err != nil {
-		t.Fatal(err)
+	// The mode may make this a program the tests then run, so the descriptor is open only under
+	// syscall.ForkLock: a fork in that window would inherit it and leave the path unexecutable
+	// (ETXTBSY, golang/go#22315).
+	syscall.ForkLock.RLock()
+	writeErr := os.WriteFile(path, []byte(text), mode)
+	syscall.ForkLock.RUnlock()
+	if writeErr != nil {
+		t.Fatal(writeErr)
 	}
 }
 
