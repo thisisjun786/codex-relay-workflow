@@ -24,7 +24,7 @@ func baseRecord() Record {
 		Grader: Grader{Model: "gpt-6.1-sol", Effort: "xhigh", PromptDigest: "sha256:0000"}, GradedAt: "2026-10-08T12:00:00Z",
 		Criteria: map[string]Criterion{"c1": {Verdict: "PASS", Evidence: "covered by the table test"}},
 		Defects:  []Defect{}, Score: floatPtr(9), Summary: "clean run",
-		Dispositions: Dispositions{By: "P-CRW-64"},
+		Dispositions: Dispositions{By: "parent"},
 	}
 }
 
