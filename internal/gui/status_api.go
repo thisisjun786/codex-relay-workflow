@@ -308,22 +308,43 @@ func statusPolicyReadProduction(ctx context.Context) statusPolicyReading {
 	return out
 }
 
-// statusRunningReader reads the running digest. A test replaces it to hold the read open; the
-// production value is statusRunningDigestGated.
-var statusRunningReader = statusRunningDigestGated
+// statusRunningReader is the status endpoint's running read. A test replaces it to hold the read
+// open; the production value reads through gatedRunningDigest.
+var statusRunningReader = func(ctx context.Context) policystore.Running {
+	return gatedRunningDigest(ctx, envLookup)
+}
 
-// statusRunningDigestGated reads the running digest under the manage gate. Its manage config
-// call is a manage read like the others, so it takes its turn behind them.
-func statusRunningDigestGated(ctx context.Context) policystore.Running {
+// gatedRunningDigest reads the running digest under statusManageGate, so the policy endpoint and the
+// status endpoint never run a manage call at the same time. A request whose context ends while it
+// waits for the gate returns without starting the read.
+func gatedRunningDigest(ctx context.Context, env policystore.LookupEnv) policystore.Running {
+	if err := ctx.Err(); err != nil {
+		return policystore.Running{State: policystore.RunningUnavailable,
+			Reason: "the running policy digest was not read: " + err.Error()}
+	}
 	select {
 	case statusManageGate <- struct{}{}:
 	case <-ctx.Done():
 		return policystore.Running{State: policystore.RunningUnavailable,
 			Reason: "the running policy digest was not read: " + ctx.Err().Error()}
 	}
-	defer func() { <-statusManageGate }()
-	return policystore.RunningDigest(ctx, envLookup)
+	done := make(chan policystore.Running, 1)
+	go func() {
+		defer func() { <-statusManageGate }()
+		done <- manageRunningDigest(ctx, env)
+	}()
+	select {
+	case running := <-done:
+		return running
+	case <-ctx.Done():
+		return policystore.Running{State: policystore.RunningUnavailable,
+			Reason: "the running policy digest did not finish: " + ctx.Err().Error()}
+	}
 }
+
+// manageRunningDigest is policystore.RunningDigest, which runs crw manage config in this process.
+// Every path in this server to it goes through statusManageGate; a test replaces it to count calls.
+var manageRunningDigest = policystore.RunningDigest
 
 // statusCallResult is one finished manage call.
 type statusCallResult struct {

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -661,5 +662,111 @@ func TestStatusPolicyKeepsFileDigestsWhenRunningTimesOut(t *testing.T) {
 	}
 	if reason, _ := policy["runningReason"].(string); reason == "" {
 		t.Fatalf("runningReason is blank: %#v", policy)
+	}
+}
+
+// TestManageReadsNeverOverlapAcrossStatusAndPolicy pins that a policy read waits behind a status
+// read holding the manage gate, and that both reach the running digest through the same gate.
+func TestManageReadsNeverOverlapAcrossStatusAndPolicy(t *testing.T) {
+	policyHost(t, policyText, true)
+	fakeStatusManage(t, okStatusSources())
+	var mu sync.Mutex
+	active, maxActive, calls := 0, 0, 0
+	entered := make(chan struct{}, 8)
+	release := make(chan struct{})
+	previous := manageRunningDigest
+	manageRunningDigest = func(ctx context.Context, env policystore.LookupEnv) policystore.Running {
+		mu.Lock()
+		active++
+		calls++
+		if active > maxActive {
+			maxActive = active
+		}
+		mu.Unlock()
+		entered <- struct{}{}
+		<-release
+		mu.Lock()
+		active--
+		mu.Unlock()
+		return policystore.Running{State: policystore.RunningUnavailable, Reason: "stub"}
+	}
+	t.Cleanup(func() { manageRunningDigest = previous })
+
+	statusDone := make(chan struct{})
+	go func() {
+		defer close(statusDone)
+		decodeStatus(t, statusServer(t))
+	}()
+	<-entered
+
+	policyDone := make(chan Response, 1)
+	go func() {
+		response, _ := policyHandler(nil, httptest.NewRequest(http.MethodGet, "/api/policy", nil))
+		policyDone <- response
+	}()
+	select {
+	case <-entered:
+		t.Fatal("the policy read started its running digest while the status read held the manage gate")
+	case <-time.After(150 * time.Millisecond):
+	}
+	close(release)
+	<-statusDone
+	<-policyDone
+
+	mu.Lock()
+	defer mu.Unlock()
+	if maxActive != 1 {
+		t.Fatalf("running digest calls overlapped: at most %d active", maxActive)
+	}
+	if calls != 2 {
+		t.Fatalf("running digest calls = %d, want 2 (one status, one policy) through the gate", calls)
+	}
+}
+
+// TestPolicyWaitingForTheGateStartsNoRunningRead pins that a policy request whose context ends while
+// a status read holds the gate returns without starting its running digest read, on both the GET
+// route and the write route's running read.
+func TestPolicyWaitingForTheGateStartsNoRunningRead(t *testing.T) {
+	policyHost(t, policyText, true)
+	fakeStatusManage(t, okStatusSources())
+	var mu sync.Mutex
+	calls := 0
+	entered := make(chan struct{}, 8)
+	release := make(chan struct{})
+	previous := manageRunningDigest
+	manageRunningDigest = func(ctx context.Context, env policystore.LookupEnv) policystore.Running {
+		mu.Lock()
+		calls++
+		mu.Unlock()
+		entered <- struct{}{}
+		<-release
+		return policystore.Running{State: policystore.RunningUnavailable, Reason: "stub"}
+	}
+	t.Cleanup(func() { manageRunningDigest = previous })
+
+	statusDone := make(chan struct{})
+	go func() {
+		defer close(statusDone)
+		decodeStatus(t, statusServer(t))
+	}()
+	<-entered
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	request := httptest.NewRequest(http.MethodGet, "/api/policy", nil).WithContext(ctx)
+	if _, err := policyHandler(nil, request); err != nil {
+		t.Fatal(err)
+	}
+	running := policyWriteOptions().Running(ctx, envLookup)
+	if running.State == policystore.RunningObserved {
+		t.Fatal("a cancelled write-route read reported an observed digest")
+	}
+
+	close(release)
+	<-statusDone
+	mu.Lock()
+	defer mu.Unlock()
+	if calls != 1 {
+		t.Fatalf("running digest calls = %d, want 1: the cancelled policy reads must not start", calls)
 	}
 }
