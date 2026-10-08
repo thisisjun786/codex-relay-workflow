@@ -7,6 +7,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/commitid"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	_ "github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // Each row is a pair of commit identities and whether they name the same commit. Surrounding Unicode whitespace

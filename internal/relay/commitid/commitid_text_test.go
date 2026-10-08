@@ -7,6 +7,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/commitid"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	_ "github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // Only TEXT names a commit: a BLOB, a number or NULL names none, whatever its bytes or digits spell.
