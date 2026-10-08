@@ -597,12 +597,8 @@ func dagHostPartText(out *strings.Builder, static *bool, part syntax.WordPart, q
 			return
 		}
 		out.WriteString(p.Value)
+	// A locale-quoted $"..." reads as its plain text: the relay runs in the C locale, where no catalog translates a program name.
 	case *syntax.DblQuoted:
-		if p.Dollar {
-			*static = false
-			out.WriteString(dagHostSubstitutionWord)
-			return
-		}
 		for _, inner := range p.Parts {
 			dagHostPartText(out, static, inner, true)
 		}

@@ -66,6 +66,7 @@ func TestDagHostReview985CommandLineJudgedByGrammar(t *testing.T) {
 		{"a relay call inside a double-quoted string", "echo \"crw relay dag-ready --plan p\"", false},
 		{"an ANSI-C quoted program name", `$'codex-session-relay' --state S dag-ready --plan p`, true},
 		{"an ANSI-C quoted program name with an escape", `$'codex\x2dsession-relay' --state S dag-ready --plan p`, true},
+		{"a locale-quoted program name", `$"codex-session-relay" --state S dag-ready --plan p`, true},
 		{"a substituted program name", `$(echo crw) relay --state S dag-ready --plan p`, false},
 	}
 	for _, test := range cases {
