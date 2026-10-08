@@ -382,10 +382,7 @@ The two exceptions of that step are unchanged: a stale result whose reading says
 concerns the base only and is no way around a late thread.
 
 **After the merge.** A late thread inside this issue's scope reopens the same issue key: the finding belongs to
-what this issue promised, so the issue carries its own correction rather than a successor. This deliberately
-differs from the general [issue-to-PR mapping](../../crw-plan/references/integrations.md#issue-to-pr-mapping),
-whose "a new change after that delivery has merged gets a new issue and PR" is written for a change outside what
-the issue promised. A late thread outside this issue's scope is new work: a separable one is replied to and
+what this issue promised, so the issue carries its own correction rather than a successor. The general [issue-to-PR mapping](../../crw-plan/references/integrations.md#issue-to-pr-mapping) states the same exception for a defect inside the finished issue's promise. A late thread outside this issue's scope is new work: a separable one is replied to and
 listed for the backlog with its own context, impact and outcome, a blocking one is raised at once as a correction
 issue for the area it touches, and a P0 or security one is fixed before the merge and raised as a correction
 issue if it arrives after it.

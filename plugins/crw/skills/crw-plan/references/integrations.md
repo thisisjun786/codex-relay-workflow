@@ -439,7 +439,7 @@ something read from its binding rather than from what anyone called it.
 | Role | Verifies | Merges | Updates in Linear | Complete when |
 |---|---|---|---|---|
 | Supervisor | each parent's reported project outcome against the initiative's finish condition | nothing; it decides cross-project order, never a landing ([OPS-9.3](../../crw-run/references/operations.md#ops-93-the-parent-integrates-and-does-not-release)) | the initiative record | the initiative's finish condition holds on its projects' verified outcomes |
-| Parent | each child's delivery, pull request, checks and review against the issue's accepted criteria | its own project's issues, into their intended target | the project record and the issues it owns | every obligation in the agreed project scope is delivered, integrated and reconciled |
+| Parent | each child's delivery, checks and review against the issue's accepted criteria | its own project's issues, into their intended target | the project record and the issues it owns | every obligation in the agreed project scope is delivered, integrated and reconciled |
 | Child | its own implementation and the local verification of its task branch | never ([OPS-9.3](../../crw-run/references/operations.md#ops-93-the-parent-integrates-and-does-not-release)) | nothing; it returns proposed record changes to its parent | the local verification record of the head passes and its blocking findings are resolved ([OPS-9.2](../../crw-run/references/operations.md#ops-92-what-normal-completion-means)); the issue itself is Done once its parent lands that head on the intended branch, under [Implementation Done](#implementation-done) |
 
 The tables say what each level answers for. What the supervisor spends its time on is the level
