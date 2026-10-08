@@ -56,19 +56,16 @@ func storeFileLockLines(pid int, inode uint64) []string {
 }
 
 // requireObservableLock is the precondition of a test that measures the process's POSIX locks on
-// the store's main inode: the test can only observe a loss if the process holds a lock to lose. A
-// process that holds none is not a defect of the code under test - the count depends on the host
-// and on what else this process is doing - so both counts and the /proc/locks lines naming the
-// inode are logged and the test skips, rather than failing. Only a count of 0 after the step is a
-// failure (CRW-880).
+// the store's main inode. A count of 0, or a lookup error (-1), before the step fails the test with
+// the /proc/locks lines naming the inode (CRW-888): a skip or a log alone judges nothing, and a
+// precondition that does not hold is a failed run, not a passed one.
 func requireObservableLock(t *testing.T, inode uint64, before int, where string) {
 	t.Helper()
 	if before >= 1 {
 		return
 	}
 	lines := storeFileLockLines(os.Getpid(), inode)
-	t.Logf("the process holds no POSIX lock on the store's main inode %d before %s (locks=%d); the /proc/locks lines naming this process and inode: %q", inode, where, before, lines)
-	t.Skipf("the process holds no POSIX lock on the store's main inode %d before %s (locks=%d), so this test cannot observe the lock it means to; nothing was judged", inode, where, before)
+	t.Fatalf("the process holds no POSIX lock on the store's main inode %d before %s (locks=%d), so this test cannot observe the lock it means to; the /proc/locks lines naming this process and inode: %q", inode, where, before, lines)
 }
 
 // openDescriptorsUnder counts the descriptors this process holds whose target lies under root:
@@ -208,7 +205,7 @@ func TestStoreFileRace_aDisplacedHandleSurvivesGarbageCollection(t *testing.T) {
 	if _, err := holdStoreFile(path); err != nil {
 		t.Fatal(err)
 	}
-	before := storeFileLocks(os.Getpid(), inode)
+	before, _ := storeFileLocks(os.Getpid(), inode)
 	requireObservableLock(t, inode, before, "the race")
 
 	moveAwayAndBack(t, path)
@@ -223,19 +220,11 @@ func TestStoreFileRace_aDisplacedHandleSurvivesGarbageCollection(t *testing.T) {
 	// holds on it, so a process that lost the lock holds none. A lower but non-zero count is not
 	// a lost lock - the /proc/locks line count on one inode can carry a transient extra line,
 	// because SQLite's lock byte ranges differ from moment to moment - so it is logged, not failed.
-	if after := storeFileLocks(os.Getpid(), inode); after == 0 {
-		t.Fatalf("the store's POSIX lock was lost after garbage collection: the process holds no lock on the store's main inode (%d lock(s) before, %d after). The handle the registry displaced became unreachable and os.File's finalizer closed it (CRW-880)", before, after)
-	} else if after < before {
-		t.Logf("the store's POSIX lock count on the main inode fell from %d to %d after garbage collection; a non-zero count is not a lost lock, because the /proc/locks line count on one inode can carry a transient extra line", before, after)
-	}
+	judgeStoreFileLockAfter(t, os.Getpid(), inode, before, "garbage collection")
 	if !systemSQLitePeer(t, path) {
 		t.Log("python3 is absent, so the system-SQLite-peer layer of this test did not run")
 	}
-	if after := storeFileLocks(os.Getpid(), inode); after == 0 {
-		t.Fatalf("the store's POSIX lock was lost by a system SQLite peer's open and close: the process holds no lock on the store's main inode (%d lock(s) before, %d after) (CRW-880)", before, after)
-	} else if after < before {
-		t.Logf("the store's POSIX lock count on the main inode fell from %d to %d after a system SQLite peer's open and close; a non-zero count is not a lost lock, because the /proc/locks line count on one inode can carry a transient extra line", before, after)
-	}
+	judgeStoreFileLockAfter(t, os.Getpid(), inode, before, "a system SQLite peer's open and close")
 }
 
 // TestStoreFileRace_aWriterlessFifoDoesNotBlockTheRegistry is defect 2: a path that is not a
@@ -415,7 +404,7 @@ func TestStoreFileRace_hashArtifactRefusesAStoreFileThisProcessOpened(t *testing
 		t.Fatalf("an ordinary artifact hashed to %s of %d bytes", digest, size)
 	}
 
-	before := storeFileLocks(os.Getpid(), inode)
+	before, _ := storeFileLocks(os.Getpid(), inode)
 	requireObservableLock(t, inode, before, "the artifact reads")
 
 	_, _, _, err = HashArtifact(context.Background(), path, []string{root}, false)
@@ -434,9 +423,5 @@ func TestStoreFileRace_hashArtifactRefusesAStoreFileThisProcessOpened(t *testing
 	if !systemSQLitePeer(t, path) {
 		t.Log("python3 is absent, so the system-SQLite-peer layer of this test did not run")
 	}
-	if after := storeFileLocks(os.Getpid(), inode); after == 0 {
-		t.Fatalf("the store's POSIX lock was lost by the artifact reads: the process holds no lock on the store's main inode (%d lock(s) before, %d after) (CRW-880)", before, after)
-	} else if after < before {
-		t.Logf("the store's POSIX lock count on the main inode fell from %d to %d after the artifact reads; a non-zero count is not a lost lock, because the /proc/locks line count on one inode can carry a transient extra line", before, after)
-	}
+	judgeStoreFileLockAfter(t, os.Getpid(), inode, before, "the artifact reads")
 }
