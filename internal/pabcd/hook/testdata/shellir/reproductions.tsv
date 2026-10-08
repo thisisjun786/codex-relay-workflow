@@ -1,0 +1,143 @@
+# issue	short name (first 70 characters of the reproduction)	row id in shellwrite_repro_test.go
+CRW-1012	python3 -c "print(\"f'}'\")"	CRW-1012-01
+CRW-1012	python3 -c "print(f'{len(\"abc\")}')"	CRW-1012-02
+CRW-1014	python3 -c 'open("<m>/a","w")'	CRW-1014-01
+CRW-1014	python3 -c 'a='"'"'q'"'"'; open("<m>/a","w")'	CRW-1014-02
+CRW-1014	python3 -c 'open("<m>/a",'""'"w")'	CRW-1014-03
+CRW-1014	sh -c 'a='"'"'q'"'"'; echo hi > <m>/a'	CRW-1014-04
+CRW-1014	echo hi > '<m>'/a	CRW-1014-05
+CRW-1014	python3 -c $'open("<m>/a","w")'	CRW-1014-06
+CRW-765	python3 - <<'EOF'	CRW-765-01
+CRW-765	python3 - <<'EOF'\nopen('<m>/a','w')\nEOF	CRW-765-02
+CRW-765	python3 <<EOF\nopen(file='<m>/a', mode='w')\nEOF	CRW-765-03
+CRW-765	node <<'EOF'\nrequire('fs').writeFileSync('<m>/a','x')\nEOF	CRW-765-04
+CRW-765	bash <<'EOF'\necho x > <m>/a\nEOF	CRW-765-05
+CRW-765	python3 <<EOF\nopen('$P','w')\nEOF	CRW-765-06
+CRW-765	cat > note.md <<'EOF'\n<m>/a 경로를 인용한 글\nEOF	CRW-765-07
+CRW-765	python3 script.py <<'EOF'	CRW-765-08
+CRW-765	go test -count=1 ./internal/pabcd/hook ./cmd/crw	CRW-765-09
+CRW-765	python3 <<'PY' # note	CRW-765-10
+CRW-765	bash 0<<'EOF'	CRW-765-11
+CRW-765	bash /dev/fd/3 3<<'EOF'	CRW-765-12
+CRW-765	cat > note.md <<'EOF'	CRW-765-13
+CRW-765	python3 script.py <<'EOF' 2>/dev/null	CRW-765-14
+CRW-765	bash -n <<'EOF'	CRW-765-15
+CRW-765	cat <<'EOF' > x.md	CRW-765-16
+CRW-765	cat <<\EOF	CRW-765-17
+CRW-765	bash <<'EOF' \	CRW-765-18
+CRW-765	cat <<'A'; python3 <<'B'	CRW-765-19
+CRW-765	node script.js <<'EOF'	CRW-765-20
+CRW-765	cat > /tmp/x.py <<'EOF'	CRW-765-21
+CRW-765	python3 /tmp/x.py	CRW-765-22
+CRW-765	eval bash <<'EOF'	CRW-765-23
+CRW-765	cat > x.py <<'EOF'	CRW-765-24
+CRW-765	python3 x.py	CRW-765-25
+CRW-765	git commit -F - <<'EOF'	CRW-765-26
+CRW-765	sort <<'EOF'	CRW-765-27
+CRW-765	bash -c 'bash' <<'EOF'	CRW-765-28
+CRW-765	sh -c 'exec sh' <<'EOF'	CRW-765-29
+CRW-765	python3 -m code <<'EOF'	CRW-765-30
+CRW-765	node -e	CRW-765-31
+CRW-765	perl <<'EOF'	CRW-765-32
+CRW-765	ruby <<'EOF'	CRW-765-33
+CRW-765	sed -nf - <<'EOF'	CRW-765-34
+CRW-765	sed -Ef - x.txt <<'EOF'	CRW-765-35
+CRW-765	make -f - <<'EOF'	CRW-765-36
+CRW-765	git commit -F -	CRW-765-37
+CRW-765	sed -nf- <<'EOF'	CRW-765-38
+CRW-765	sed 's/a/b/' <<'EOF'	CRW-765-39
+CRW-765	sed -n p <<'EOF'	CRW-765-40
+CRW-765	cd /tmp && mytool <<'EOF'	CRW-765-41
+CRW-765	sed -\f - <<'EOF'	CRW-765-42
+CRW-765	sed -n$F -	CRW-765-43
+CRW-765	sed -n$(printf f) -	CRW-765-44
+CRW-765	cat <<'EOF' | perl	CRW-765-45
+CRW-765	echo start; perl <<'EOF'	CRW-765-46
+CRW-765	sed -n$(printf f) - <<'EOF'	CRW-765-47
+CRW-765	sed --fil - <<'EOF'	CRW-765-48
+CRW-765	sed --fi=- <<'EOF'	CRW-765-49
+CRW-765	cd x; python3 - <<'EOF'	CRW-765-50
+CRW-765	git add -A && git commit -F - <<'EOF'	CRW-765-51
+CRW-765	sed -n'p' <<'EOF'	CRW-765-52
+CRW-765	cat <<'EOF' | jq .	CRW-765-53
+CRW-765	python3 -c "...exec(code)"	CRW-765-54
+CRW-765	cat > note.md <<'DOC'	CRW-765-55
+CRW-765	python3 -c	CRW-765-56
+CRW-765	cat <<<hello	CRW-765-57
+CRW-851	exec(src)	CRW-851-01
+CRW-851	python3 -c 'import builtins; builtins .exec("""open(file="<m>/a",mode=	CRW-851-02
+CRW-851	python3 -c 'import sys; pad="\""; src=sys.argv[1]; exec(src)' 'open(fi	CRW-851-03
+CRW-851	python3 -c 'exec(br"""# coding note; coding: unicode_escape (줄바꿈) \x6f	CRW-851-04
+CRW-851	python3 -c 'exec("print("hi")")'\	CRW-851-05
+CRW-851	python3 - <<< "open('<m>/a','w')"	CRW-851-06
+CRW-851	printf '%s' "open('<m>/a','w')" | python3 -	CRW-851-07
+CRW-851	curl -s x | python3 -	CRW-851-08
+CRW-851	echo hi | python3 script.py	CRW-851-09
+CRW-851	printf hi | cat	CRW-851-10
+CRW-851	printf '…' | ruby	CRW-851-11
+CRW-851	perl script.pl <<'EOF'	CRW-851-12
+CRW-875	bash post.sh	CRW-875-01
+CRW-875	sh post.sh	CRW-875-02
+CRW-875	gh pr comment 1 -b "$(env)"	CRW-875-03
+CRW-875	gh pr comment 1 --body-file <임시 루트>/b.md	CRW-875-04
+CRW-875	gh api repos/o/r/issues/1/comments --input -	CRW-875-05
+CRW-875	gh api … -F body=@-	CRW-875-06
+CRW-875	bash -x	CRW-875-07
+CRW-875	bash --	CRW-875-08
+CRW-875	timeout 30 bash post.sh	CRW-875-09
+CRW-875	env X=1 bash post.sh	CRW-875-10
+CRW-875	nohup bash post.sh	CRW-875-11
+CRW-875	command bash post.sh	CRW-875-12
+CRW-875	exec bash post.sh	CRW-875-13
+CRW-875	cd . && bash post.sh	CRW-875-14
+CRW-875	bash post.sh &	CRW-875-15
+CRW-875	timeout -s KILL 30 bash post.sh	CRW-875-16
+CRW-875	timeout 30 bash clean.sh	CRW-875-17
+CRW-875	cd . && make	CRW-875-18
+CRW-894	printf 'rm -rf ../repo' | bash </dev/stdin	CRW-894-01
+CRW-894	printf '...' | python3	CRW-894-02
+CRW-894	printf 'echo hi' | bash </dev/null	CRW-894-03
+CRW-894	printf x | (cd sub; cat)	CRW-894-04
+CRW-894	printf x | nohup cat	CRW-894-05
+CRW-894	bash -c 'echo hi'	CRW-894-06
+CRW-894	exec -a x true	CRW-894-07
+CRW-894	printf 'echo x > <memories>/a' | exec -a x bash	CRW-894-08
+CRW-894	printf 'rm -rf ../repo' | bash 3</dev/fd/0 </dev/null <&3	CRW-894-09
+CRW-894	exec -a x >/dev/null rm -rf ../repo	CRW-894-10
+CRW-894	python3 2>&1 <<'PY'	CRW-894-11
+CRW-894	printf x | bash -c 'bash -c bash </dev/null'	CRW-894-12
+CRW-894	python3 -m code	CRW-894-13
+CRW-894	python3 -m json.tool	CRW-894-14
+CRW-917	gh pr comment 1 '--body' 'MY_API_KEY=sentinel'	CRW-917-01
+CRW-917	gh pr comment 1 '--body-file' /tmp/secret.md	CRW-917-02
+CRW-917	gh pr create --title 'MY_API_KEY=sentinel' --body-file /tmp/clean.md	CRW-917-03
+CRW-917	gh pr</dev/null comment 1 --body-file /tmp/secret.md	CRW-917-04
+CRW-917	gh api … --input /tmp/post.json	CRW-917-05
+CRW-917	git checkout -b topic && git status	CRW-917-06
+CRW-917	gh api --input F	CRW-917-07
+CRW-941	sed -e 'w <m>/a' x.txt	CRW-941-01
+CRW-941	sed -n 'w <m>/a' x.txt	CRW-941-02
+CRW-941	sed --expression='w <m>/a' <<'EOF'	CRW-941-03
+CRW-941	sort -o <m>/a <<'EOF'	CRW-941-04
+CRW-941	sort -o FILE	CRW-941-05
+CRW-941	sed 's/a/b/w <m>/a' x.txt	CRW-941-06
+CRW-941	sed -e p -e 'W <m>/a' x.txt	CRW-941-07
+CRW-941	sort -o <m>/a x.txt	CRW-941-08
+CRW-941	sort --output=<m>/a <<'EOF'	CRW-941-09
+CRW-941	sed -f script.sed x.txt	CRW-941-10
+CRW-941	sed 's/a/b/' x.txt	CRW-941-11
+CRW-941	sed -n p x.txt	CRW-941-12
+CRW-941	sed 's/w/x/' x.txt	CRW-941-13
+CRW-941	sed 'w /dev/stdout' x.txt	CRW-941-14
+CRW-941	sort x.txt	CRW-941-15
+CRW-941	sort -o /tmp/out x.txt	CRW-941-16
+CRW-989	printf 'rm -rf ../repo' | exec -a x &>/dev/null bash	CRW-989-01
+CRW-989	printf 'echo x > <memories>/a' | exec -a x &>/dev/null bash	CRW-989-02
+CRW-989	python3 /dev/fd/4 3<<'PY' 4<&3	CRW-989-03
+CRW-989	python3 /dev/fd/4 3<<< '...' 4<&3	CRW-989-04
+CRW-989	printf x | sh -c 'cat' _ -s	CRW-989-05
+CRW-989	printf x | dash -c 'cat' _ -s	CRW-989-06
+CRW-998	python3 -c 'from pathlib import Path; p=Path("{MEMORY}/n.md"); p.open(	CRW-998-01
+CRW-998	python3 -c 'from functools import partial; m="{MEMORY}/n.md"; partial(	CRW-998-02
+CRW-998	python3 -c 'from pathlib import Path; p=Path("/w/a"); m="{MEMORY}/n.md	CRW-998-03
+CRW-998	env 2>/dev/null python3 -c 'import os; open(os.path.join("{MEMORY}","n	CRW-998-04

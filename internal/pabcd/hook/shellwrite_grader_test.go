@@ -33,8 +33,8 @@ func TestGraderShapesHeldByTheGates(t *testing.T) {
 			t.Errorf("%q names %q, want %q", cmd, d, want)
 		}
 	}
-	d, ok := shellIRWriteDestsResolved("cd /home/u/.codex/memories && echo x > n.md", "/work", nil)
-	if !ok || !slices.Contains(d, "/home/u/.codex/memories/n.md") {
+	d, ok := shellIRWriteDestsResolved("cd /example/u/.codex/memories && echo x > n.md", "/work", nil)
+	if !ok || !slices.Contains(d, "/example/u/.codex/memories/n.md") {
 		t.Errorf("a write after cd names %q, want the memories file", d)
 	}
 	d, ok = shellIRWriteDestsResolved("echo x > n.md", "/work", nil)

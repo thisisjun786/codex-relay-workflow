@@ -1,6 +1,9 @@
 package hook
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // worktreeDelChange is a verdict the shared command reader (internal/pabcd/shellir) gives on purpose, where the
 // old expectation of the test row no longer holds. deny is the verdict now. The reasons are recorded in
@@ -55,7 +58,7 @@ func worktreeDelChangeRows() []worktreeDelChange {
 		{"rm -rf $'../repo\\x00junk'tail", true},
 		{"rm -rf $'../repo\\x'", true},
 		{"rm -rf $'../repo\\c'z", true},
-		{"echo x # rm -rf /var/tmp/crw-1028/TestWorktreeDelQuoteKeepsEarlierDenies3313292908/001/.codex/worktrees/zk3q", false},
+		{"echo x # rm -rf {HOME}/.codex/worktrees/zk3q", false},
 		{"$'s\\x68' -c 'r\\\nm -rf ../../other'", true},
 		{"su --command 'rm -rf ../other' root", true},
 		{"su --session-command 'rm -rf ../other' root", true},
@@ -73,16 +76,16 @@ func worktreeDelChangeRows() []worktreeDelChange {
 		{"bash script.sh", true},
 		{"rm -rf '.\\\n' # sh", true},
 		{"rm -rf ./build-zk3q", false},
-		{"rm /var/tmp/crw-1028/TestFallbackForUnresolvableTargets613980038/001/.codex/worktrees/zk3q/repo", false},
+		{"rm {HOME}/.codex/worktrees/zk3q/repo", false},
 		{"find . -name zk3q | xargs rm -rf", true},
 		{"rm -rf \"$X\" && echo cleaning", true},
-		{"rd /var/tmp/crw-1028/TestFallbackForUnresolvableTargets613980038/001/.codex/worktrees/zk3q/repo", false},
-		{"Remove-Item -Recurse -LiteralPath /var/tmp/crw-1028/TestFallbackForUnresolvableTargets613980038/001/.codex/worktrees/zk3q", false},
-		{"REMOVE-ITEM /var/tmp/crw-1028/TestFallbackForUnresolvableTargets613980038/001/.codex/worktrees/zk3q/repo", false},
-		{"git worKtree remove /var/tmp/crw-1028/TestFallbackForUnresolvableTargets613980038/001/.codex/worktrees/zk3q/repo", true},
+		{"rd {HOME}/.codex/worktrees/zk3q/repo", false},
+		{"Remove-Item -Recurse -LiteralPath {HOME}/.codex/worktrees/zk3q", false},
+		{"REMOVE-ITEM {HOME}/.codex/worktrees/zk3q/repo", false},
+		{"git worKtree remove {HOME}/.codex/worktrees/zk3q/repo", true},
 		{"cd ..\nrm -rf other", true},
 		{"cat > clean.sh <<'EOF'\nrm -rf .\nEOF", false},
-		{"echo \"rm -rf /var/tmp/crw-1028/TestExtendedWalkAddsDenies137562850/001/.codex/worktrees/zk3q\"", false},
+		{"echo \"rm -rf {HOME}/.codex/worktrees/zk3q\"", false},
 		{"rm -rf ${TMPDIR}/x", true},
 		{"source ./env.sh", true},
 		{"bash script.sh <<EOF\n$X\nEOF", true},
@@ -113,9 +116,12 @@ func worktreeDelChangeRows() []worktreeDelChange {
 // TestWorktreeDelChangedVerdicts checks that the reader gives each recorded command the recorded verdict.
 func TestWorktreeDelChangedVerdicts(t *testing.T) {
 	r := newDelRig(t)
+	fill := strings.NewReplacer("{CHECKOUT}", r.checkout, "{SLOT}", r.slotRoot, "{WORKTREES}", r.worktrees,
+		"{OTHER}", r.other, "{HOME}", r.home)
 	for _, c := range worktreeDelChangeRows() {
-		if got := r.verdict(c.cmd); got.Deny != c.deny {
-			t.Errorf("%s: deny=%v, recorded deny=%v (%s)", c.cmd, got.Deny, c.deny, got.Reason)
+		cmd := fill.Replace(c.cmd)
+		if got := r.verdict(cmd); got.Deny != c.deny {
+			t.Errorf("%s: deny=%v, recorded deny=%v (%s)", cmd, got.Deny, c.deny, got.Reason)
 		}
 	}
 	r.intact(t)

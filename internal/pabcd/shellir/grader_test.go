@@ -7,7 +7,7 @@ import "testing"
 // program, and parallel. Each is judged on what the shell would run, never on the reading the walk first gave.
 func TestGraderReproductionsRefused(t *testing.T) {
 	t.Run("compound redirection is a write", func(t *testing.T) {
-		for _, cmd := range []string{"{ :; } > /home/u/.codex/memories/n.md", "( : ) > /home/u/.codex/memories/n.md"} {
+		for _, cmd := range []string{"{ :; } > /example/u/.codex/memories/n.md", "( : ) > /example/u/.codex/memories/n.md"} {
 			r, err := Analyze(cmd, "/work")
 			if err != nil {
 				t.Fatalf("%q: %v", cmd, err)
@@ -15,7 +15,7 @@ func TestGraderReproductionsRefused(t *testing.T) {
 			found := false
 			for _, e := range r.Execs {
 				for _, rd := range e.Redirs {
-					if rd.Op == ">" && rd.Target.Value == "/home/u/.codex/memories/n.md" {
+					if rd.Op == ">" && rd.Target.Value == "/example/u/.codex/memories/n.md" {
 						found = true
 					}
 				}

@@ -56,8 +56,11 @@ func zshOnlyUse(name string, args []Word) string {
 		"autoload", "compdef", "bindkey", "zstyle":
 		return name + " has a zsh meaning the reader does not model"
 	case "hash":
-		if len(args) > 0 {
-			return "hash with operands"
+		// hash -r and hash -l take options only; a word that is no option, or one the reader cannot read, is an operand.
+		for _, a := range args {
+			if !a.Known || !strings.HasPrefix(a.Value, "-") {
+				return "hash with operands"
+			}
 		}
 	case "set":
 		for i, a := range args {

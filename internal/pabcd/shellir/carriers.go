@@ -98,6 +98,11 @@ func (w *walker) interpreterInline(name string, args []Word, redirs []Redir, ctx
 		return &Inline{Language: lang, Source: Word{Known: true, Value: text}}, nil, nil
 	}
 	if operand < len(args) && args[operand].Value != "-" {
+		// A script operand named through a file-descriptor alias runs the text of that descriptor (a here-string or a
+		// pipe the text shows): the reader cannot follow the alias, so the program is unreadable.
+		if args[operand].Known && fdAliasPath(args[operand].Value) {
+			return nil, nil, unreadablef("%s reads its program from %s, a file-descriptor alias", name, args[operand].Value)
+		}
 		return nil, nil, nil
 	}
 	text, err := stdinProgram(redirs, ctx.Stdin, name)
@@ -411,4 +416,16 @@ func clusterInterp(name string, args []Word, spec interpSpec) ([]Word, int, erro
 		}
 	}
 	return codes, i, nil
+}
+
+// fdAliasPath reports a path that names a file descriptor of this process, so that reading it reads what the shell gave
+// that descriptor: /dev/stdin, /dev/fd/N and /proc/<pid>/fd/N (and /proc/self/fd/N).
+func fdAliasPath(p string) bool {
+	switch {
+	case p == "/dev/stdin", strings.HasPrefix(p, "/dev/fd/"):
+		return true
+	case strings.HasPrefix(p, "/proc/") && strings.Contains(p, "/fd/"):
+		return true
+	}
+	return false
 }
