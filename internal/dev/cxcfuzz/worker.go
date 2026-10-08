@@ -320,8 +320,8 @@ func answer(id int, line string) (string, error) {
 		ID     int             `json:"id"`
 		Output json.RawMessage `json:"output"`
 		Error  *struct {
-			Name    string `json:"name"`
-			Message string `json:"message"`
+			Name    json.RawMessage `json:"name"`
+			Message json.RawMessage `json:"message"`
 		} `json:"error"`
 	}
 	if err := json.Unmarshal([]byte(line), &body); err != nil {
@@ -331,12 +331,20 @@ func answer(id int, line string) (string, error) {
 		return "", fmt.Errorf("the worker answered request %d as %d", id, body.ID)
 	}
 	if body.Error != nil {
-		name, _ := json.Marshal(body.Error.Name)
-		message, _ := json.Marshal(body.Error.Message)
-		return fmt.Sprintf("{\"error\":{\"name\":%s,\"message\":%s}}", name, message), nil
+		// The name and message go on as the worker wrote them, so a lone surrogate reaches the comparison as the
+		// same escape a success reply keeps, not as U+FFFD (CRW-978 c5).
+		return "{\"error\":{\"name\":" + rawOrNull(body.Error.Name) + ",\"message\":" + rawOrNull(body.Error.Message) + "}}", nil
 	}
 	if body.Output == nil {
 		return "", errors.New("the worker's reply holds neither an output nor an error")
 	}
 	return string(body.Output), nil
+}
+
+// rawOrNull is a raw JSON value as the worker wrote it, or null when the worker left it out.
+func rawOrNull(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return "null"
+	}
+	return string(raw)
 }
