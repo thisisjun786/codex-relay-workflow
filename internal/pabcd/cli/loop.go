@@ -21,6 +21,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/gate"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/goalplan"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/interview"
@@ -289,19 +290,18 @@ func loopInit(args LoopCliArgs) (LoopCliResult, error) {
 	if sessionID == "" {
 		return loopInitCreate(args, slug, objective)
 	}
-	// Every session pre-write check runs inside the lock below, the source-identity gate included: the
-	// order the criterion fixes is session lock first, then goalplan lock, and a check that ran before
-	// the lock would not be serialized against another writer of the same session (CRW-646 c2). Taking
-	// the lock creates the state root, which is where the lock file itself lives; that creation is
-	// symlink-safe (state.openSessionsDir opens each step with O_NOFOLLOW and the lock file is created
-	// and removed relative to that held descriptor), so a root that is a link cannot send the lock file
-	// or the session files outside the workspace. Nothing is removed
-	// afterwards: a pre-lock observation cannot prove this call created a directory or a file, and
-	// acting on that guess could delete another writer's .gitignore or an empty sessions directory it
-	// had just ensured, so the refusal names only the artifacts it did not write — the plan, the
-	// created row and the binding.
+	// The bound gate runs before the session lock: a refusal there writes nothing, and a .crw that is a
+	// link never receives the lock's directory (CRW-982 c1). The same bound check runs again under the
+	// lock, before the first write of the plan, because a check made outside the lock does not hold at
+	// the write (CRW-646 c2). The session lock is still taken ahead of the goalplan lock, the order the
+	// bound D-close uses. Nothing is removed afterwards: a pre-lock observation cannot prove this call
+	// created a directory or a file, so the refusal names only the artifacts this call did not write:
+	// the plan, the created row and the binding.
 	var answer LoopCliResult
 	running := true
+	if refusal, ok := loopInitBoundGate(args.Cwd, sessionID); !ok {
+		return refusal, nil
+	}
 	err := state.WithSessionLock(args.Cwd, sessionID, func() error {
 		result, err := loopInitBound(args, slug, objective, sessionID)
 		answer = result
@@ -323,6 +323,19 @@ func loopInit(args LoopCliArgs) (LoopCliResult, error) {
 		return LoopCliResult{}, err
 	}
 	return answer, nil
+}
+
+// loopInitBoundGate is the bound gate init runs before it takes the session lock. It refuses a .crw that is
+// a symbolic link, because the state package's directory creation follows a link and the lock would
+// otherwise create a sessions directory outside the workspace, and it runs CheckBound. It writes nothing.
+func loopInitBoundGate(cwd, sessionID string) (LoopCliResult, bool) {
+	if info, err := os.Lstat(filepath.Join(cwd, crwdir.DirName)); err == nil && info.Mode()&fs.ModeSymlink != 0 {
+		return LoopCliResult{Output: "loop init: " + crwdir.DirName + " is a symbolic link; refusing to create the session lock through it.\nNothing was written.", Code: 1}, false
+	}
+	if verdict := session.CheckBound(cwd, sessionID); !verdict.OK {
+		return LoopCliResult{Output: "loop init: " + verdict.Reason + "\nNothing was written.", Code: 1}, false
+	}
+	return LoopCliResult{}, true
 }
 
 // loopInitAfterSessionLock answers a session lock this init could not take. It follows the competing

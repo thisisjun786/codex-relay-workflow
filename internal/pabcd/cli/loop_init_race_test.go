@@ -825,3 +825,54 @@ func TestLoopInitAnswersAlreadyExistsWhenALiveWinnerOutlastsTheDeadline(t *testi
 		t.Fatalf("a live winner that outlasted the deadline: got %d %q\nwant 1 %q", result.Code, result.Output, want)
 	}
 }
+
+// loopTreeListing lists every path under dir with its type and size, so a case can prove a command
+// changed nothing under a directory it must not reach.
+func loopTreeListing(t *testing.T, dir string) string {
+	t.Helper()
+	var lines []string
+	err := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(dir, path)
+		lines = append(lines, rel+" "+info.Mode().String()+" "+strconv.FormatInt(info.Size(), 10))
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.Join(lines, "\n")
+}
+
+// TestLoopInitCreatesNothingThroughALinkedStateRoot is CRW-982 c1 (finding d1, a P0): a .crw that is a
+// symbolic link to a directory outside the workspace must not receive a sessions directory or a lock
+// file. The session lock was taken before the bound check, and the lock's directory creation followed
+// the link, so init wrote outside the workspace and then answered with a refusal.
+func TestLoopInitCreatesNothingThroughALinkedStateRoot(t *testing.T) {
+	cwd := loopReadWorkspace(t)
+	gitInit(t, cwd)
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(cwd, ".crw")); err != nil {
+		t.Fatal(err)
+	}
+	before := loopTreeListing(t, outside)
+	const id = "019a0000-0000-7000-8000-000000000201"
+
+	args, err := ParseLoopCliArgs([]string{"init", "--objective", "Bound objective", "--session", id}, cwd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, runErr := RunLoopCli(args)
+	after := loopTreeListing(t, outside)
+	if before != after {
+		t.Fatalf("init wrote through the linked state root:\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+	if runErr == nil && (result.Code == 0 || !strings.Contains(result.Output, "Nothing was written")) {
+		t.Fatalf("the refusal does not say nothing was written: %d %q", result.Code, result.Output)
+	}
+}
