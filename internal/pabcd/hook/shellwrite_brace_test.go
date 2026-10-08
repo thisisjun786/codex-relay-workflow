@@ -2,21 +2,6 @@ package hook
 
 import "testing"
 
-// braceGate names the three gates on one command: the worktree guard denies it, the memory gate makes a write attempt, and
-// the GitHub guard denies it. Each gate sees the brace word as unknown, so it refuses or asks.
-func braceGate(t *testing.T, cmd string, root, checkout string) (worktree, memory, github bool) {
-	t.Helper()
-	r := newDelRig(t)
-	cwd, memRoot, env := gateScene(t)
-	_ = root
-	_ = checkout
-	worktree = r.verdict(cmd).Deny
-	memory = memoryGateClassify("Bash", map[string]any{"command": cmd}, cwd, env).Surface != ""
-	_, github = githubPostJudgeText(cmd, cwd)
-	_ = memRoot
-	return worktree, memory, github
-}
-
 // TestBraceWordsAcrossQuotesRefusedInAllGates: the three commands of the ruling, and the quoted-part shapes, are refused or
 // asked for in every gate that reads them.
 func TestBraceWordsAcrossQuotesRefusedInAllGates(t *testing.T) {
