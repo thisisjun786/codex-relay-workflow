@@ -77,10 +77,8 @@ func (w *walker) substBody(list []*syntax.Stmt, st *state, ctx Context) error {
 func unknownWord(x *syntax.Word, st *state) string {
 	// bash brace-expands an unquoted word before it runs it, and mvdan keeps the braces as literal text: a word with an
 	// unescaped brace expansion names a different word at run time, so the reader cannot know it.
-	for _, p := range x.Parts {
-		if lit, ok := p.(*syntax.Lit); ok && hasBraceExpansion(lit.Value) {
-			return "brace expansion"
-		}
+	if hasBraceExpansionWord(x) {
+		return "brace expansion"
 	}
 	for i, p := range x.Parts {
 		if r := unknownPart(p, false, i == 0, st); r != "" {
@@ -300,6 +298,21 @@ func unquotedExpansion(x *syntax.Word) bool {
 		}
 	}
 	return false
+}
+
+// hasBraceExpansionWord decides the whole word, not each literal run: a quoted part, an expansion or a command substitution
+// is one opaque placeholder, so a brace group split by quotes ({rm,"-rf"}, {"a",b}, {$x,b}) is seen as the group bash
+// expands. Quoted text is never a brace or a separator. Bash confirms the shapes: printf '%s' {rm,"-rf"} prints three words.
+func hasBraceExpansionWord(x *syntax.Word) bool {
+	var b []byte
+	for _, p := range x.Parts {
+		if lit, ok := p.(*syntax.Lit); ok {
+			b = append(b, lit.Value...)
+			continue
+		}
+		b = append(b, 'P')
+	}
+	return hasBraceExpansion(string(b))
 }
 
 // hasBraceExpansion reports an unescaped { that a comma or a .. sequence and a closing unescaped } enclose: the forms bash

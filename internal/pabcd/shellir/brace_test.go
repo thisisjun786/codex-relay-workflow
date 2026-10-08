@@ -2,28 +2,80 @@ package shellir
 
 import "testing"
 
-// TestBraceExpansionIsUnknown: an unquoted, unescaped brace expansion names a different word at run time, so a program
-// position holding one is unreadable and an operand holding one is an unknown word. Quoted, escaped and lone braces are
-// words the reader knows.
-func TestBraceExpansionIsUnknown(t *testing.T) {
-	for _, cmd := range []string{"{rm,echo} -rf ../repo", "{cp,install} /tmp/x out", "echo {1..3}", "echo a{,b}", "echo {a,{b,c}}"} {
-		if _, err := Analyze(cmd, "/w"); err == nil {
-			res, _ := Analyze(cmd, "/w")
-			unknown := false
-			for _, e := range res.Execs {
-				if !e.Program.Known || anyUnknownArg(e.Args) {
-					unknown = true
-				}
-			}
-			if !unknown {
-				t.Errorf("%q: every word known, want an unknown brace word", cmd)
+// braceUnknown reports whether the reader fails to prove a command: a refused text, or a program or operand it cannot know.
+func braceUnknown(cmd string) bool {
+	res, err := Analyze(cmd, "/w")
+	if err != nil {
+		return true
+	}
+	for _, e := range res.Execs {
+		if !e.Program.Known || anyUnknownArg(e.Args) {
+			return true
+		}
+		for _, r := range e.Redirs {
+			if !r.Target.Known {
+				return true
 			}
 		}
 	}
-	for _, cmd := range []string{"echo '{a,b}'", "echo \"{a,b}\"", "echo \\{a,b\\}", "echo {}", "echo ${HOME}"} {
+	return false
+}
+
+// TestBraceExpansionIsUnknown: an unquoted, unescaped brace expansion names a different word at run time, so the reader
+// cannot know the word. Quoted parts inside the braces do not stop the expansion (bash expands {rm,"-rf"} to rm and -rf).
+func TestBraceExpansionIsUnknown(t *testing.T) {
+	for _, cmd := range []string{
+		"{rm,echo} -rf ../repo",
+		"{cp,install} /tmp/x out",
+		"echo {1..3}",
+		"echo a{,b}",
+		"echo {a,{b,c}}",
+		"{rm,\"-rf\"} x",
+		"echo {a,'b'}",
+		"echo {'a',b}",
+		"echo {\"a\",b}",
+		"echo {$x,b}",
+		"echo {a,b}$x",
+		"echo x{\"a\",b}y",
+		"echo {1..\"3\"}",
+		"echo {a,\\\"b\\\"}",
+		"echo {\"a\",{b,c}}",
+	} {
+		if !braceUnknown(cmd) {
+			t.Errorf("%q: every word known, want an unknown brace word", cmd)
+		}
+	}
+}
+
+// TestBraceControlsStayKnown: the spellings that are no brace expansion stay known words: quoted or escaped braces, a lone
+// {}, a comma or a dot pair with no open brace, and a braced parameter expansion.
+func TestBraceControlsStayKnown(t *testing.T) {
+	for _, cmd := range []string{
+		"echo '{a,b}'",
+		"echo \"{a,b}\"",
+		"echo \\{a,b\\}",
+		"echo a\\,b",
+		"echo {}",
+		"echo {x}",
+		"echo a,b",
+		"echo '{a,'\"b\"'}'",
+	} {
 		if _, err := Analyze(cmd, "/w"); err != nil {
 			t.Errorf("%q: refused (%v), want read", cmd, err)
 		}
+		if braceUnknown(cmd) {
+			t.Errorf("%q: unknown, want known", cmd)
+		}
+	}
+}
+
+// TestBraceParameterExpansionIsNoGroup: a braced parameter expansion is one placeholder with no comma, so it is no group.
+func TestBraceParameterExpansionIsNoGroup(t *testing.T) {
+	if hasBraceExpansion("{P}") || hasBraceExpansion("P{P}P") {
+		t.Errorf("a braced parameter expansion read as a brace group")
+	}
+	if !hasBraceExpansion("{P,P}") {
+		t.Errorf("a group with a placeholder member is no group")
 	}
 }
 
