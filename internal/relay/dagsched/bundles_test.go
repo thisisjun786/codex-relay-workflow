@@ -3,10 +3,12 @@ package dagsched
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"os"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
@@ -270,6 +272,23 @@ func TestBundleOtherPlanExclusive(t *testing.T) {
 			t.Fatalf("a: reason %q, want other_plan_exclusive", reason)
 		}
 	})
+	t.Run("a holder that a later revision made a non_pr node still holds", func(t *testing.T) {
+		t.Parallel()
+		f := newFixture(t)
+		f.projectParent()
+		f.putPlan("q", 0, "q-r1", addNode("h", dag.NodeImplementation))
+		if _, err := f.sched.DeclareRegions(context.Background(), "q", "h", "parent", []Region{exclusive}); err != nil {
+			t.Fatal(err)
+		}
+		f.putPlan("q", 1, "q-r2", doc{"op": dag.OpUpdateNode, "node": nodeDoc("h", dag.NodeNonPR)})
+		f.putPlan("p", 0, "p-r1", addNode("a", dag.NodeImplementation), addNode("b", dag.NodeImplementation))
+		f.declare("p", "a", "pkg/x.go")
+		f.declare("p", "b", "elsewhere/y.go")
+		got := bundleRead(t, f, "p")
+		if reason := got.reasonOf("a"); reason != "other_plan_exclusive" {
+			t.Fatalf("a: reason %q, want other_plan_exclusive: the holder is live and unintegrated whatever its kind", reason)
+		}
+	})
 	t.Run("an integrated holder no longer holds", func(t *testing.T) {
 		t.Parallel()
 		f := setup(t, []Region{exclusive})
@@ -324,4 +343,200 @@ func bundleFileSum(t *testing.T, path string) [32]byte {
 		t.Fatal(err)
 	}
 	return sha256.Sum256(raw)
+}
+
+// bundleMerged is the single region a two-member bundle holds for one identity, after passing it through the normaliser dag-region-declare applies.
+func bundleMerged(t *testing.T, a, b Region) Region {
+	t.Helper()
+	f := newFixture(t)
+	f.projectParent()
+	f.putPlan("m", 0, "m-r1", addNode("a", dag.NodeImplementation), addNode("b", dag.NodeImplementation), bundleEdge("ab", "a", "b"))
+	for node, r := range map[string]Region{"a": a, "b": b} {
+		if _, err := f.sched.DeclareRegions(context.Background(), "m", node, "parent", []Region{r}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	bundle, ok := bundleRead(t, f, "m").bundleOf("a")
+	if !ok {
+		t.Fatal("the two nodes did not bundle")
+	}
+	if len(bundle.Regions) != 1 {
+		t.Fatalf("one identity, %d regions: %+v", len(bundle.Regions), bundle.Regions)
+	}
+	normal, err := normalizeRegions(bundle.Regions)
+	if err != nil {
+		t.Fatalf("dag-region-declare refuses the bundle's regions: %v", err)
+	}
+	if !reflect.DeepEqual(normal, bundle.Regions) {
+		t.Fatalf("the normaliser changed the bundle's regions:\n%+v\n%+v", bundle.Regions, normal)
+	}
+	return bundle.Regions[0]
+}
+
+// Members that declare one place (repository, path, kind, key) differently give one region, merged so that it never holds the place less strictly than any member did.
+func TestBundleRegionsMergeOneIdentity(t *testing.T) {
+	t.Parallel()
+	region := func(change, grade, rule string, exclusive bool) Region {
+		return Region{Repository: "owner/repo", Path: "pkg/x.go", Kind: "file", Change: change, Grade: grade, Rule: rule, Exclusive: exclusive}
+	}
+	cases := []struct {
+		name string
+		a, b Region
+		want Region
+	}{
+		{"local and independent", region("edit", "local", "", false), region("edit", "independent", "", false), region("edit", "independent", "", false)},
+		{"independent and exclusive grade", region("edit", "independent", "", false), region("edit", "exclusive", "", false), region("edit", "exclusive", "", false)},
+		{"mechanical and local", region("edit", "mechanical", "union", false), region("edit", "local", "", false), region("edit", "local", "", false)},
+		{"mechanical under two rules", region("edit", "mechanical", "union", false), region("edit", "mechanical", "renumber", false), region("edit", "local", "", false)},
+		{"mechanical under one rule", region("edit", "mechanical", "union", false), region("edit", "mechanical", "union", false), region("edit", "mechanical", "union", false)},
+		{"the stated whole-repository hold", region("edit", "local", "", true), region("edit", "local", "", false), region("edit", "exclusive", "", true)},
+		{"edit and rename", region("edit", "local", "", false), region("rename", "local", "", false), region("rename", "exclusive", "", false)},
+		{"edit and delete", region("edit", "independent", "", false), region("delete", "local", "", false), region("delete", "exclusive", "", false)},
+		{"rename and delete", region("rename", "local", "", false), region("delete", "local", "", false), region("delete", "exclusive", "", false)},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			if got := bundleMerged(t, c.a, c.b); got != c.want {
+				t.Fatalf("merged = %+v, want %+v", got, c.want)
+			}
+			// the merge does not depend on which member declared which
+			if got := bundleMerged(t, c.b, c.a); got != c.want {
+				t.Fatalf("merged (members swapped) = %+v, want %+v", got, c.want)
+			}
+		})
+	}
+}
+
+// A bundle of several members holds each place once, and what it holds is accepted by dag-region-declare as it stands.
+func TestBundleRegionsUnionIsDeclarable(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.projectParent()
+	f.putPlan("u", 0, "u-r1", addNode("a", dag.NodeImplementation), addNode("b", dag.NodeImplementation), addNode("c", dag.NodeImplementation), addNode("m", dag.NodeImplementation),
+		bundleEdge("ab", "a", "b"), bundleEdge("bc", "b", "c"))
+	file := func(p, change, grade string) Region {
+		return Region{Repository: "owner/repo", Path: p, Kind: "file", Change: change, Grade: grade}
+	}
+	symbol := func(key string) Region {
+		return Region{Repository: "owner/repo", Path: "pkg/s.go", Kind: "symbol", Key: key, Change: "edit"}
+	}
+	declare := func(node string, regions ...Region) {
+		t.Helper()
+		if _, err := f.sched.DeclareRegions(context.Background(), "u", node, "parent", regions); err != nil {
+			t.Fatal(err)
+		}
+	}
+	declare("a", file("pkg/x.go", "edit", "local"), file("pkg/only-a.go", "edit", ""), symbol("One"))
+	declare("b", file("pkg/x.go", "edit", "independent"), symbol("Two"))
+	declare("c", file("pkg/x.go", "delete", "local"), file("pkg/only-c.go", "edit", "local"), symbol("One"))
+	bundle, ok := bundleRead(t, f, "u").bundleOf("a")
+	if !ok || !reflect.DeepEqual(bundle.Nodes, []string{"a", "b", "c"}) {
+		t.Fatalf("bundle = %+v (ok %v)", bundle, ok)
+	}
+	var identities []string
+	for _, r := range bundle.Regions {
+		identities = append(identities, r.Path+"|"+r.Kind+"|"+r.Key)
+	}
+	want := []string{"pkg/only-a.go|file|", "pkg/only-c.go|file|", "pkg/s.go|symbol|One", "pkg/s.go|symbol|Two", "pkg/x.go|file|"}
+	if !reflect.DeepEqual(identities, want) {
+		t.Fatalf("identities = %v, want %v", identities, want)
+	}
+	normal, err := normalizeRegions(bundle.Regions)
+	if err != nil {
+		t.Fatalf("dag-region-declare refuses the bundle's regions: %v", err)
+	}
+	if !reflect.DeepEqual(normal, bundle.Regions) {
+		t.Fatalf("the normaliser changed the bundle's regions:\n%+v\n%+v", bundle.Regions, normal)
+	}
+	if _, err := f.sched.DeclareRegions(context.Background(), "u", "m", "parent", bundle.Regions); err != nil {
+		t.Fatalf("declaring the bundle's regions on the merged node: %v", err)
+	}
+	for _, r := range bundle.Regions {
+		if r.Path == "pkg/x.go" && (r.Change != "delete" || r.Grade != "exclusive") {
+			t.Fatalf("the merged pkg/x.go = %+v, want the delete held exclusive", r)
+		}
+	}
+}
+
+// Either row alone is enough to call a node released: a managed start leaves a dag_release_requests row before a dag_releases row exists.
+func TestBundleReleasedByEitherRow(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.putPlan("r", 0, "r-r1", addNode("req", dag.NodeImplementation), addNode("rel", dag.NodeImplementation), addNode("free", dag.NodeImplementation))
+	f.exec("INSERT INTO dag_release_requests (plan_id, node_id, manifest_digest, request_sha256, request_json, marker_root, socket, state_selector, recorded_at) VALUES (?, ?, ?, ?, '{}', '', '', '', 't')",
+		"r", "req", dig("manifest req"), dig("request req"))
+	f.exec("INSERT INTO dag_releases (plan_id, node_id, manifest_digest, managed_request_id, coordinator_epoch, decided_at) VALUES (?, ?, ?, ?, 0, 't')",
+		"r", "rel", dig("manifest rel"), "req-rel")
+	got := bundleRead(t, f, "r")
+	for node, want := range map[string]string{"req": "released", "rel": "released", "free": ""} {
+		if reason := got.reasonOf(node); reason != want {
+			t.Errorf("%s: reason %q, want %q", node, reason, want)
+		}
+	}
+}
+
+// dag-ready --record keeps its pass and carries the same candidates as the plain reading.
+func TestBundleReadyRecordCarriesTheCandidates(t *testing.T) {
+	t.Parallel()
+	state := closedState(t, func(f *fixture) {
+		f.projectParent()
+		f.putPlan("k", 0, "k-r1", addNode("a", dag.NodeImplementation), addNode("b", dag.NodeImplementation), bundleEdge("ab", "a", "b"))
+	})
+	plain, code := crw(t, state, "dag-ready", "--plan", "k")
+	if code != 0 {
+		t.Fatalf("dag-ready exit %d: %s", code, plain)
+	}
+	recorded, code := crw(t, state, "dag-ready", "--plan", "k", "--record", "--actor", "parent")
+	if code != 0 {
+		t.Fatalf("dag-ready --record exit %d: %s", code, recorded)
+	}
+	out := parseOut(t, recorded)
+	if out["pass_seq"] != float64(1) {
+		t.Fatalf("pass_seq = %v", out["pass_seq"])
+	}
+	if !reflect.DeepEqual(out["bundleCandidates"], parseOut(t, plain)["bundleCandidates"]) {
+		t.Fatalf("recorded bundleCandidates = %v, plain = %v", out["bundleCandidates"], parseOut(t, plain)["bundleCandidates"])
+	}
+}
+
+// dag-ready --record answers the recorded pass and the candidates from one state of the store: a plan revision that another process commits while the command runs
+// cannot land between the two readings.
+func TestBundleRecordedPassAndCandidatesShareASnapshot(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.putPlan("s", 0, "s-r1", addNode("a", dag.NodeImplementation), addNode("b", dag.NodeImplementation), bundleEdge("ab", "a", "b"))
+	committed := make(chan error, 1)
+	f.sched.testBetweenPassAndBundles = func() {
+		go func() {
+			raw, err := json.Marshal(doc{"schema": dag.SchemaRevision, "plan_id": "s", "project_key": "P-TEST", "request_id": "s-r2",
+				"expected_parent_revision": 1, "author_task_id": "task-test", "changes": []any{addNode("c", dag.NodeImplementation)}})
+			if err == nil {
+				var rev dag.Revision
+				if rev, err = dag.DecodeRevision(raw); err == nil {
+					_, err = f.repo.Put(context.Background(), rev)
+				}
+			}
+			committed <- err
+		}()
+		// a writer that is not blocked has committed by now; one that waits for the command's transaction has not
+		select {
+		case err := <-committed:
+			committed <- err
+		case <-time.After(300 * time.Millisecond):
+		}
+	}
+	reading, seq, bundles, err := f.sched.RecordPassWithBundles(context.Background(), "s", "parent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if seq != 1 || reading.PlanRevision != 1 {
+		t.Fatalf("pass %d at revision %d, want pass 1 at revision 1", seq, reading.PlanRevision)
+	}
+	if bundles.PlanRevision != reading.PlanRevision {
+		t.Fatalf("the pass was recorded at revision %d and the candidates read at revision %d", reading.PlanRevision, bundles.PlanRevision)
+	}
+	if err := <-committed; err != nil {
+		t.Fatalf("the concurrent revision never committed: %v", err)
+	}
 }

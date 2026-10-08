@@ -85,6 +85,27 @@ func (s *Scheduler) ReadWithBundles(ctx context.Context, plan string) (Reading, 
 	return out, bundles, err
 }
 
+// RecordPassWithBundles is RecordPass and the bundle candidates of the same plan in one transaction (dag-ready --record), so the pass and the candidates
+// describe one plan revision and one set of releases: nothing can commit between the two readings.
+func (s *Scheduler) RecordPassWithBundles(ctx context.Context, plan, actor string) (Reading, int64, BundleReading, error) {
+	var reading Reading
+	var seq int64
+	var bundles BundleReading
+	err := s.Store.Compose(ctx, func(txCtx context.Context, _ *sql.Conn) error {
+		var err error
+		// RecordPass and BundleCandidates join the transaction Compose opened
+		if reading, seq, err = s.RecordPass(txCtx, plan, actor, ReadyOptions{}); err != nil {
+			return err
+		}
+		if s.testBetweenPassAndBundles != nil {
+			s.testBetweenPassAndBundles()
+		}
+		bundles, err = s.BundleCandidates(txCtx, s.Store.Q(txCtx), plan, nil)
+		return err
+	})
+	return reading, seq, bundles, err
+}
+
 // BundleCandidates reads the bundle candidates of a plan's head revision. exclude names live nodes the parent leaves out; a name the plan does not hold is
 // refused as a usage error. Two readings over one store state are equal: nothing is written and no clock is read.
 func (s *Scheduler) BundleCandidates(ctx context.Context, q store.Querier, plan string, exclude []string) (BundleReading, error) {
@@ -288,8 +309,8 @@ func bundleTouches(regions []Region, held map[[2]string]bool) bool {
 	return false
 }
 
-// bundleHeldElsewhere is the places (repository and path) that an implementation node of another plan holds exclusively by its latest declaration,
-// while the node is live and not yet integrated. A declaration is exclusive by its stated hold or the exclusive grade.
+// bundleHeldElsewhere is the places (repository and path) that a node of another plan holds exclusively by its latest declaration, whatever its kind
+// (update_node can turn a node that declared regions into a non_pr one, which keeps the declaration), while the node is live and not yet integrated. A declaration is exclusive by its stated hold or the exclusive grade.
 func (s *Scheduler) bundleHeldElsewhere(ctx context.Context, q store.Querier, plan string) (map[[2]string]bool, error) {
 	rows, err := q.QueryContext(ctx, "SELECT plan_id FROM dag_plans WHERE plan_id <> ? ORDER BY plan_id", plan)
 	if err != nil {
@@ -320,7 +341,7 @@ func (s *Scheduler) bundleHeldElsewhere(ctx context.Context, q store.Querier, pl
 			return nil, err
 		}
 		for _, n := range snap.Nodes {
-			if n.Kind != dag.NodeImplementation || !bundleHasExclusive(decls[n.NodeID]) {
+			if !bundleHasExclusive(decls[n.NodeID]) {
 				continue
 			}
 			state, err := s.stateOf(ctx, q, other, snap, n)
@@ -367,17 +388,76 @@ func bundleReleased(ctx context.Context, q store.Querier, plan string) (map[stri
 	return out, rows.Err()
 }
 
-// bundleRegions sorts regions and drops the exact repeats a union of nodes brings.
+// bundleRegions is the union of the members' regions with one entry per place (repository, path, kind, key), sorted: the shape dag-region-declare reads, which
+// refuses one place declared twice with different words (normalizeRegions). Members that declare one place differently are merged by bundleMerge, so the
+// union holds every place at least as strictly as any member did.
 func bundleRegions(list []Region) []Region {
 	sort.SliceStable(list, func(i, j int) bool { return bundleRegionLess(list[i], list[j]) })
 	var out []Region
 	for _, r := range list {
-		if len(out) > 0 && out[len(out)-1] == r {
+		if n := len(out); n > 0 && bundleSamePlace(out[n-1], r) {
+			out[n-1] = bundleMerge(out[n-1], r)
 			continue
 		}
 		out = append(out, r)
 	}
 	return out
+}
+
+func bundleSamePlace(a, b Region) bool {
+	return a.Repository == b.Repository && a.Path == b.Path && a.Kind == b.Kind && a.Key == b.Key
+}
+
+// bundleMerge merges two declarations of one place so that the result holds it at least as strictly as each (the order the hold is judged by: holdWeight, foldedGrade).
+//   - exclusive (the whole-repository hold) when either is;
+//   - change: the strictest of edit, rename, delete, in that order;
+//   - grade: the stricter of mechanical, local, independent, exclusive, in that order; two mechanical grades keep their rule when it is the same one and
+//     become local when the rules differ (PairGrade reads two rules as local); the rule survives only on a mechanical grade;
+//   - then foldedGrade, so a rename, a delete, a hotspot, a shared contract surface or the exclusive flag holds the place exclusively, as declaring it would.
+//
+// The merge is commutative and associative, so any order of members gives one answer.
+func bundleMerge(a, b Region) Region {
+	out := a
+	out.Exclusive = a.Exclusive || b.Exclusive
+	if bundleChangeRank(b.Change) > bundleChangeRank(a.Change) {
+		out.Change = b.Change
+	}
+	ga, ra := foldedGrade(a)
+	gb, rb := foldedGrade(b)
+	switch {
+	case ga == GradeMechanical && gb == GradeMechanical && ra == rb:
+		out.Grade, out.Rule = GradeMechanical, ra
+	case ga == GradeMechanical && gb == GradeMechanical:
+		out.Grade, out.Rule = GradeLocal, ""
+	case bundleGradeRank(gb) > bundleGradeRank(ga):
+		out.Grade, out.Rule = gb, rb
+	default:
+		out.Grade, out.Rule = ga, ra
+	}
+	out.Grade, out.Rule = foldedGrade(out)
+	return out
+}
+
+func bundleChangeRank(change string) int {
+	switch change {
+	case "delete":
+		return 2
+	case "rename":
+		return 1
+	}
+	return 0
+}
+
+func bundleGradeRank(grade string) int {
+	switch grade {
+	case GradeMechanical:
+		return 1
+	case GradeLocal:
+		return 2
+	case GradeIndependent:
+		return 3
+	}
+	return 4
 }
 
 func bundleRegionLess(a, b Region) bool {
@@ -388,16 +468,8 @@ func bundleRegionLess(a, b Region) bool {
 		return a.Path < b.Path
 	case a.Kind != b.Kind:
 		return a.Kind < b.Kind
-	case a.Key != b.Key:
-		return a.Key < b.Key
-	case a.Change != b.Change:
-		return a.Change < b.Change
-	case a.Grade != b.Grade:
-		return a.Grade < b.Grade
-	case a.Rule != b.Rule:
-		return a.Rule < b.Rule
 	}
-	return !a.Exclusive && b.Exclusive
+	return a.Key < b.Key
 }
 
 // lists is the bundles and the excluded nodes, the part dag-ready carries as bundleCandidates.

@@ -85,11 +85,7 @@ func runReady(ctx context.Context, services dispatch.Services, args dispatch.Arg
 		}
 		return append(reading.Object(), contract.Field{Key: "bundleCandidates", Value: bundles.lists()}), nil
 	}
-	reading, seq, err := sched.RecordPass(ctx, args.Text("plan"), actor, ReadyOptions{})
-	if err != nil {
-		return nil, hostFailure(err)
-	}
-	bundles, err := sched.ReadBundles(ctx, args.Text("plan"), nil)
+	reading, seq, bundles, err := sched.RecordPassWithBundles(ctx, args.Text("plan"), actor)
 	if err != nil {
 		return nil, hostFailure(err)
 	}
