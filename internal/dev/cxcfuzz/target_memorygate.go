@@ -30,13 +30,16 @@ func memorygateTarget() Target {
 }
 
 // memoryGateGo is the Go side: hook.HandleMemoryWriteGate over the payload, with the homes under
-// the case's own root. The payload's ${ROOT} takes that root, exactly as the shim substitutes its own.
+// the case's own root. The payload's ROOT placeholder takes that root in its string values and its
+// object keys, before the payload is serialized, exactly as the shim substitutes its own
+// (testdata/memorygate/shim.mjs substitute(), :19-27). Substituting into the serialized text
+// instead corrupted the JSON whenever the root held a quote, a backslash or a line break.
 func memoryGateGo(input any, env Env) (any, error) {
 	payload, found := field(input, "payload")
 	if !found {
 		return "", nil
 	}
-	raw := substituteRoot(canonical(payload), env.Root)
+	raw := canonical(substituteRootValue(payload, env.Root))
 	return hook.HandleMemoryWriteGate(raw, memoryGateEnvOf(env)), nil
 }
 
@@ -128,44 +131,88 @@ func memoryGateGenerateToolNames() []string {
 
 // memoryGateGenerate builds one PreToolUse payload over a scenario whose tree holds the memories
 // root, a sibling memories-backup, and links into the root: aliases whose names carry a line break, a
-// carriage return, a space or a quote, and link chains one to forty-five deep. Every link target is
-// relative: the harness's scenario builder refuses an absolute link target before it writes anything
-// (internal/dev/cxcfuzz/scenario.go, confine), so an absolute target is a limitation of this target,
-// recorded in the handoff. Destinations mix the root itself, a path inside it, a sibling, a link, a
-// home form and a relative form, and the command grammar is the shellwrite generator's own.
+// carriage return, a space or a quote, and link chains one to forty-five deep. Link targets mix the
+// relative form with the case root's absolute form (the ROOT placeholder the scenario builder
+// substitutes), so both forms the issue asks for reach the campaigns. Destinations mix the root
+// itself, a path inside it, a sibling, a link, a home form and a relative form, and the command
+// grammar is the shellwrite generator's own.
 func memoryGateGenerate(rng *rand.Rand, size int) any {
 	memories := rootPlaceholder + "/codex-home/memories"
-	backup := rootPlaceholder + "/codex-home/memories-backup"
 	fs := []any{
 		memoryGateDir("codex-home/memories"), memoryGateDir("codex-home/memories-backup"), memoryGateDir("work"),
 	}
-	dests := []string{
-		memories + "/n.md", memories, memories + "/extensions/ad_hoc/notes/x.md",
-		backup + "/n.md", "../codex-home/memories/n.md", memories + "/a b.md", memories + "/a'b.md",
-	}
-	for _, alias := range []string{"alias", "alias\n", "alias\r", "alias ", "alias'", "alias\""} {
-		fs = append(fs, memoryGateLink("work/"+alias, "../codex-home/memories"))
-		dests = append(dests, alias+"/x.md", "./"+alias+"/x.md")
+	dests := memoryGateDests()
+	for i, alias := range memoryGateAliases() {
+		fs = append(fs, memoryGateLink("work/"+alias, memoryGateTarget(i, "../codex-home/memories", memories)))
 	}
 	if rng.Intn(2) == 0 {
 		// The home-prefixed destinations must resolve under the case's own HOME (${ROOT}/home), so the
 		// link they follow stands there; the work/link entry gives the absolute and relative forms a
 		// second link to reach.
-		fs = append(fs, memoryGateLink("home/link", "../codex-home/memories"), memoryGateLink("work/link", "../codex-home/memories"))
-		dests = append(dests, "~/link/x.md", "$HOME/link/x.md", "$CODEX_HOME/memories/n.md", rootPlaceholder+"/work/link/x.md", "work/link/x.md")
+		fs = append(fs, memoryGateLink("home/link", "../codex-home/memories"), memoryGateLink("work/link", memories))
+		dests = append(dests, memoryGateLinkDests()...)
 	}
 	if rng.Intn(2) == 0 {
 		depth := 1 + rng.Intn(45)
 		for i := 0; i < depth; i++ {
 			target := "c" + memoryGateInt(i+1)
 			if i == depth-1 {
-				target = "../codex-home/memories"
+				target = memoryGateTarget(i, "../codex-home/memories", memories)
 			}
 			fs = append(fs, memoryGateLink("work/c"+memoryGateInt(i), target))
 		}
-		dests = append(dests, "c0/x.md")
+		dests = append(dests, memoryGateChainDests()...)
 	}
 	return pyjson.Object{{Key: "fs", Value: fs}, {Key: "payload", Value: memoryGatePayload(rng, dests, size)}}
+}
+
+// memoryGateAliases are the link names the scenario builds: plain, and names carrying the characters a
+// path reader trips on.
+func memoryGateAliases() []string {
+	return []string{"alias", "alias\n", "alias\r", "alias ", "alias'", "alias\""}
+}
+
+// memoryGateDests is the destination pool every generated payload draws from, so a test can walk the pool
+// itself instead of copying entries by hand. The link-dependent destinations are NOT here: they are added
+// by memoryGateLinkDests and memoryGateChainDests only in the branch that builds the links they follow,
+// because a destination whose link the tree does not hold is not a memory write at all and would change
+// what the campaign compares.
+func memoryGateDests() []string {
+	memories := rootPlaceholder + "/codex-home/memories"
+	backup := rootPlaceholder + "/codex-home/memories-backup"
+	dests := []string{
+		memories + "/n.md", memories, memories + "/extensions/ad_hoc/notes/x.md",
+		backup + "/n.md", "../codex-home/memories/n.md", memories + "/a b.md", memories + "/a'b.md",
+		// A destination holding a brace pair, so the doubled-brace f literal the shell-write program
+		// builder emits for a brace reaches a generated command (CRW-908).
+		memories + "/{x}.md",
+	}
+	for _, alias := range memoryGateAliases() {
+		dests = append(dests, alias+"/x.md", "./"+alias+"/x.md")
+	}
+	return dests
+}
+
+// memoryGateLinkDests are the destinations that reach the memories root through the home and work links,
+// added to a payload only in the branch that builds those links.
+func memoryGateLinkDests() []string {
+	return []string{"~/link/x.md", "$HOME/link/x.md", "$CODEX_HOME/memories/n.md", rootPlaceholder + "/work/link/x.md", "work/link/x.md"}
+}
+
+// memoryGateChainDests are the destinations that reach the memories root through the link chain, added to
+// a payload only in the branch that builds the chain.
+func memoryGateChainDests() []string {
+	return []string{"c0/x.md"}
+}
+
+// memoryGateTarget alternates a link target between the relative form and the case root's absolute
+// form, so a generated tree carries both. The choice is by index rather than by the rng, so a seed
+// draws both forms whatever the rest of the generator does.
+func memoryGateTarget(index int, relative, absolute string) string {
+	if index%2 == 1 {
+		return absolute
+	}
+	return relative
 }
 
 func memoryGateInt(n int) string {

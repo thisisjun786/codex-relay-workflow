@@ -21,6 +21,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -41,8 +42,11 @@ func hookTrustRetrustUTF8FakeCodex(t *testing.T, stderr []byte, status int) stri
 	}
 	script := filepath.Join(dir, "codex")
 	body := "#!/bin/sh\nprintf '" + escaped.String() + "' >&2\nexit " + fmt.Sprint(status) + "\n"
-	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
-		t.Fatal(err)
+	syscall.ForkLock.RLock()
+	writeErr := os.WriteFile(script, []byte(body), 0o755)
+	syscall.ForkLock.RUnlock()
+	if writeErr != nil {
+		t.Fatal(writeErr)
 	}
 	return script
 }

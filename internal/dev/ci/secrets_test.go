@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -122,8 +123,14 @@ func newSecretsRepo(t *testing.T, outside, inPR bool) *secretsRepo {
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(path, []byte(f.body), f.mode); err != nil {
-			t.Fatal(err)
+		// The stand-ins (curl, sha256sum, gitleaks) go on PATH and are run, so each descriptor is
+		// open only under syscall.ForkLock: a fork in that window would inherit it and leave the
+		// path unexecutable (ETXTBSY, golang/go#22315).
+		syscall.ForkLock.RLock()
+		writeErr := os.WriteFile(path, []byte(f.body), f.mode)
+		syscall.ForkLock.RUnlock()
+		if writeErr != nil {
+			t.Fatal(writeErr)
 		}
 	}
 	return r

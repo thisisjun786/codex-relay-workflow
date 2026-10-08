@@ -95,17 +95,20 @@ function storage(): Storage | undefined {
  * only once storage has refused a read or a write.
  */
 export function getToken(): string | null {
+  // The token this page load received in the address fragment always wins. The stored value can be
+  // the previous run's token - the server prints a fresh one on every start - and sending the old
+  // one after a restart is refused, so the fragment's value is never second to a stored one.
+  if (memoryToken !== null) return memoryToken;
+  if (storageDenied) return null;
   const store = storage();
   if (store) {
     try {
-      const stored = store.getItem(TOKEN_STORAGE_KEY);
-      if (stored !== null) return stored;
-      if (!storageDenied) return null;
+      return store.getItem(TOKEN_STORAGE_KEY);
     } catch {
       storageDenied = true;
     }
   }
-  return memoryToken;
+  return null;
 }
 
 /**
@@ -127,8 +130,16 @@ export function bootstrapToken(): void {
     try {
       store.setItem(TOKEN_STORAGE_KEY, token);
     } catch {
-      // Storage refused the write; the in-memory copy carries this tab.
+      // Storage refused the write; the in-memory copy carries this tab. The old stored value is
+      // cleared as well, so a later load of this tab cannot fall back to the previous run's token
+      // after the server has replaced it. A context that refuses the write usually refuses this
+      // too, and the in-memory copy is what answers then.
       storageDenied = true;
+      try {
+        store.removeItem(TOKEN_STORAGE_KEY);
+      } catch {
+        // The stored value is unreachable; the in-memory copy is this tab's only token.
+      }
     }
   }
   const rest = removeFragmentParam(fragment, TOKEN_PARAM);
@@ -157,9 +168,7 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
   const method = options.method ?? "GET";
   const headers: Record<string, string> = { Accept: "application/json" };
   if (isWriteMethod(method)) {
-    headers["Content-Type"] = "application/json";
-    const token = getToken();
-    if (token !== null) headers["X-CRW-Token"] = token;
+    Object.assign(headers, writeHeaders());
   }
   const init: RequestInit = { method, headers };
   if (options.body !== undefined) init.body = options.body;
@@ -174,6 +183,18 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
   return (await response.json()) as T;
 }
 
+/**
+ * The headers a write carries: the JSON content type and, when this tab has one, the per-run
+ * token. A read carries neither, which is what the server's guard expects of it.
+ */
+function writeHeaders(): Record<string, string> {
+  bootstrapToken();
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  const token = getToken();
+  if (token !== null) headers["X-CRW-Token"] = token;
+  return headers;
+}
+
 async function errorText(response: Response): Promise<string> {
   try {
     const body = (await response.json()) as { error?: unknown };
@@ -182,4 +203,320 @@ async function errorText(response: Response): Promise<string> {
     // A non-JSON error body leaves only the status to report.
   }
   return `request failed (${response.status})`;
+}
+
+/* ---- helper-role settings ---- */
+
+// Ported from CXC v0.2.40 plugins/codexclaw/gui/src/api.ts (12-38, 129-153, 333-359), modified:
+// the store's scope is global only, so the read names no scope and the write body carries none;
+// the "project" source and the trust warning have no counterpart here; and the effort names come
+// from the catalog and the execution policy rather than from the fixed spawn enum alone.
+//
+// The helper roles are the four roles of the internal/role store (explorer, reviewer, executor,
+// architect). They are not the supervisor, parent and child pairs of the execution policy: that is
+// a different store with different names, and nothing here reads or writes it.
+
+/** The four helper roles, in the order the store encodes them. */
+export type HelperRole = "explorer" | "reviewer" | "executor" | "architect";
+
+export const HELPER_ROLES: readonly HelperRole[] = ["explorer", "reviewer", "executor", "architect"] as const;
+
+/** The first fallback after a role's primary candidate. */
+export interface RoleFallback {
+  model: string;
+  effort: string | null;
+}
+
+/** One role's settings. A null member is the store's null, not a missing one. */
+export interface HelperRoleConfig {
+  mode: "default" | "model";
+  model: string | null;
+  effort: string | null;
+  promptOverride: string | null;
+  fallback: RoleFallback | null;
+}
+
+/** The effective settings, with each role's source and whether it overrides the session. */
+export interface HelperRoleSettings {
+  roles: Record<HelperRole, HelperRoleConfig>;
+  scope: "global";
+  sources: Record<HelperRole, "global" | "session">;
+  overrides: Record<HelperRole, boolean>;
+}
+
+/**
+ * A partial change to one role. An absent member stays, an explicit null clears the model, effort
+ * or prompt override (or removes the fallback), and inherit resets the whole role.
+ */
+export interface HelperRolePatch {
+  mode?: "default" | "model";
+  model?: string | null;
+  effort?: string | null;
+  promptOverride?: string | null;
+  fallback?: RoleFallback | null;
+  inherit?: boolean;
+}
+
+/** What a role write reports: the settings after it, or the caller's own settings and the reason. */
+export interface SetHelperRoleResult {
+  ok: boolean;
+  config: HelperRoleSettings;
+  error?: string;
+}
+
+/** A role with no override: the main model, the session's effort, no prompt, no fallback. */
+export function defaultHelperRole(): HelperRoleConfig {
+  return { mode: "default", model: null, effort: null, promptOverride: null, fallback: null };
+}
+
+/** The settings of a store that holds nothing yet. */
+export function defaultHelperRoleSettings(): HelperRoleSettings {
+  return {
+    roles: { explorer: defaultHelperRole(), reviewer: defaultHelperRole(), executor: defaultHelperRole(), architect: defaultHelperRole() },
+    scope: "global",
+    sources: { explorer: "session", reviewer: "session", executor: "session", architect: "session" },
+    overrides: { explorer: false, reviewer: false, executor: false, architect: false },
+  };
+}
+
+/**
+ * Whether a body is a whole settings answer. A body missing any role, source or override is
+ * rejected rather than rendered as a half-populated screen, which is the CRW form of the check
+ * CXC's client made on its scope metadata.
+ */
+export function isHelperRoleSettings(body: unknown): body is HelperRoleSettings {
+  if (!body || typeof body !== "object") return false;
+  const candidate = body as HelperRoleSettings;
+  if (candidate.scope !== "global") return false;
+  return HELPER_ROLES.every(
+    (role) =>
+      !!candidate.roles?.[role] &&
+      (candidate.sources?.[role] === "global" || candidate.sources?.[role] === "session") &&
+      typeof candidate.overrides?.[role] === "boolean",
+  );
+}
+
+/** The server's error member of a JSON body, or null. */
+function errorMessageOf(body: unknown): string | null {
+  if (body && typeof body === "object") {
+    const value = (body as { error?: unknown }).error;
+    if (typeof value === "string" && value !== "") return value;
+  }
+  return null;
+}
+
+/**
+ * The effective helper-role settings. It throws rather than returning a fabricated default,
+ * because a fabricated default could overwrite a saved override.
+ */
+export async function getHelperRoleSettings(signal?: AbortSignal): Promise<HelperRoleSettings> {
+  const response = await fetch("/api/helper-roles", { headers: { Accept: "application/json" }, signal });
+  const body = await response.json().catch(() => null);
+  if (!response.ok) throw new Error(errorMessageOf(body) ?? `Settings load failed (${response.status})`);
+  if (!isHelperRoleSettings(body)) throw new Error("Invalid settings response. Reload and try again.");
+  return body;
+}
+
+/**
+ * Change one role. A refusal is reported rather than thrown, so the screen can show the store's
+ * own message beside the row, and the caller's settings are returned unchanged on failure.
+ */
+export async function setHelperRole(role: HelperRole, patch: HelperRolePatch, fallback: HelperRoleSettings): Promise<SetHelperRoleResult> {
+  try {
+    const response = await fetch("/api/helper-roles", {
+      method: "POST",
+      headers: writeHeaders(),
+      body: JSON.stringify({ role, ...patch }),
+    });
+    const body = (await response.json().catch(() => null)) as unknown;
+    if (!response.ok || !isHelperRoleSettings(body)) {
+      return { ok: false, config: fallback, error: errorMessageOf(body) ?? `save failed (${response.status})` };
+    }
+    return { ok: true, config: body };
+  } catch {
+    return { ok: false, config: fallback, error: "backend unreachable" };
+  }
+}
+
+/** The model catalog, as the server reports it. The three states stay distinct. */
+export interface ModelCatalog {
+  state: string;
+  status: "fresh" | "stale" | "unavailable";
+  source?: string;
+  fetchedAt?: string | null;
+  message?: string;
+  entries: CatalogEntry[];
+}
+
+/**
+ * The model catalog. A catalog that could not be read is reported as unavailable with an empty
+ * list and the server's reason, never as an empty success.
+ */
+export async function getModelCatalog(refresh = false): Promise<ModelCatalog> {
+  try {
+    const response = await fetch(`/api/catalog${refresh ? "?refresh=1" : ""}`, { headers: { Accept: "application/json" } });
+    const body = (await response.json().catch(() => null)) as unknown;
+    if (!response.ok || !body || typeof body !== "object") throw new Error("invalid catalog response");
+    const catalog = body as ModelCatalog;
+    if (!Array.isArray(catalog.entries) || !["fresh", "stale", "unavailable"].includes(catalog.status)) {
+      throw new Error("invalid catalog response");
+    }
+    return catalog;
+  } catch {
+    return {
+      state: "unavailable",
+      status: "unavailable",
+      entries: [],
+      message: "The model list could not be read. Retry, or check the catalog source.",
+    };
+  }
+}
+
+/**
+ * The effort names the execution policy approves, read from the policy route. This is a read of
+ * effort NAMES only: the policy's supervisor, parent and child pairs are not shown on this screen
+ * and none of its values are mixed into it. A policy that is not registered or cannot be read
+ * yields no names, which is not an error for this screen.
+ */
+export async function getPolicyEffortNames(): Promise<string[]> {
+  try {
+    const response = await fetch("/api/policy", { headers: { Accept: "application/json" } });
+    if (!response.ok) return [];
+    const body = (await response.json()) as { allowed?: Array<{ efforts?: unknown }> } | null;
+    if (!body || !Array.isArray(body.allowed)) return [];
+    const names: string[] = [];
+    for (const entry of body.allowed) {
+      if (!entry || !Array.isArray(entry.efforts)) continue;
+      for (const effort of entry.efforts) if (typeof effort === "string" && effort !== "") names.push(effort);
+    }
+    return names;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * The effort names this screen offers, in first-seen order: what the catalog advertises for each
+ * model, then what the execution policy approves, then the store's own accepted names as a floor.
+ *
+ * The order matters. The catalog and the policy are the sources, so a name CRW's policy uses that
+ * the CXC spawn enum never had (none, max) appears here and is never renamed or swapped for
+ * another. The floor keeps the control usable when neither source could be read, which is why it
+ * is appended rather than used as the list.
+ */
+export function helperRoleEfforts(catalog: readonly CatalogEntry[], policyEfforts: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const names: string[] = [];
+  const add = (name: unknown): void => {
+    if (typeof name === "string" && name !== "" && !seen.has(name)) {
+      seen.add(name);
+      names.push(name);
+    }
+  };
+  for (const entry of catalog) {
+    if (Array.isArray(entry?.reasoningEfforts)) for (const effort of entry.reasoningEfforts) add(effort);
+  }
+  for (const effort of policyEfforts) add(effort);
+  for (const effort of EFFORTS) add(effort);
+  return names;
+}
+
+/**
+ * Whether the helper-role store accepts this effort name. The store's own set is the authority, and
+ * it is narrower than what a catalog or an execution policy may advertise: a policy legitimately
+ * names an effort the helper-role store does not hold. Such a name is still listed, so the screen
+ * shows the sources as they are, but it is not offered for selection, because choosing it could
+ * only produce a refusal. This is a statement about the store's contract, not a second list of
+ * acceptable values.
+ */
+export function effortSelectable(name: string): boolean {
+  return (EFFORTS as readonly string[]).includes(name);
+}
+
+/* ---- execution policy ---- */
+
+// The execution-policy client. It is deliberately separate from the helper-role functions above:
+// those read and write the explorer/reviewer/executor/architect store, these read and write the
+// supervisor/parent/child execution policy, and the two share no name or wording.
+//
+// These functions are transport only. They return the status and the raw body, and the screen turns
+// that into a reading or a notice through policy-state.ts. Nothing here imports that module at run
+// time, so there is no cycle between the two, and no judgement about the answer is made twice.
+
+/** One policy call's raw answer: the status and the JSON body, or a thrown transport failure. */
+export interface PolicyResponse {
+  status: number;
+  body: unknown;
+}
+
+/** The body every policy write carries: the digest the caller read and the one change it proposes. */
+export interface PolicyWritePayload {
+  expectedDigest: string;
+  change: unknown;
+}
+
+/**
+ * The execution policy the wiring record names. A read that fails throws, because a fabricated
+ * reading could show values the file does not declare.
+ */
+export async function getPolicy(signal?: AbortSignal): Promise<unknown> {
+  const response = await fetch("/api/policy", { headers: { Accept: "application/json" }, signal });
+  const body = (await response.json().catch(() => null)) as unknown;
+  if (!response.ok) throw new Error(errorMessageOf(body) ?? `The execution policy could not be read (${response.status})`);
+  return body;
+}
+
+/** One POST to a policy route, with the write headers and the caller's own payload. */
+async function postPolicy(path: string, payload: PolicyWritePayload): Promise<PolicyResponse> {
+  const response = await fetch(path, {
+    method: "POST",
+    headers: writeHeaders(),
+    body: JSON.stringify(payload),
+  });
+  const body = (await response.json().catch(() => null)) as unknown;
+  return { status: response.status, body };
+}
+
+/** Save one change to the execution policy. A refusal is returned, never thrown. */
+export function writePolicy(payload: PolicyWritePayload): Promise<PolicyResponse> {
+  return postPolicy("/api/policy", payload);
+}
+
+/** Check one change without writing it. The server judges it with the bridge's own parser. */
+export function checkPolicy(payload: PolicyWritePayload): Promise<PolicyResponse> {
+  return postPolicy("/api/policy/check", payload);
+}
+
+/**
+ * The store-accepted names a model's advertised ladder permits, in the store's own order.
+ *
+ * `supported` is the same three-state value the effort control uses: an array is the model's
+ * advertised ladder, `undefined` means no model is selected, and `null` means the catalog did not
+ * advertise a ladder. Only an array is evidence that the model refuses a name, so a non-array keeps
+ * every store-accepted name selectable.
+ */
+export function selectableEfforts(supported: readonly string[] | null | undefined): string[] {
+  if (!Array.isArray(supported)) return [...EFFORTS];
+  return EFFORTS.filter((name) => supported.includes(name));
+}
+
+/**
+ * Whether the model advertises a ladder that holds none of the names the helper-role store accepts.
+ * When this is true no option is selectable and the role can only use the session effort, so the
+ * screen owes the user a reason (see `effortFallbackNotice`).
+ */
+export function effortLadderUnsupported(supported: readonly string[] | null | undefined): boolean {
+  return Array.isArray(supported) && selectableEfforts(supported).length === 0;
+}
+
+/**
+ * The one-line reason no store-accepted effort is selectable, or null when some is. The sentence
+ * states what the role then uses: the session effort when nothing is saved, and the saved value when
+ * one is, because the screen never silently changes a stored value.
+ */
+export function effortFallbackNotice(supported: readonly string[] | null | undefined, savedEffort: string | null): string | null {
+  if (!effortLadderUnsupported(supported)) return null;
+  return savedEffort === null
+    ? "This model advertises no effort the helper-role store accepts; the role uses the session effort."
+    : `This model advertises no effort the helper-role store accepts; the saved effort ${savedEffort} is kept.`;
 }

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 )
 
@@ -87,6 +88,14 @@ func CopyCRW(path string) error {
 
 // CopyBinary copies the executable at source to path, which must not exist yet, creating its
 // directory.
+//
+// The copy is opened for writing and closed before this returns, and the caller usually runs it
+// right after. A fork of this process landing in that window copies the write descriptor into the
+// child, which keeps it until its own exec, and Linux refuses to execute a file open for writing
+// with ETXTBSY, "text file busy" (golang/go#22315). So the write descriptor is open only under
+// syscall.ForkLock held for reading, which every process start takes for writing across its fork:
+// no child is forked holding it. Nothing done while it is held may start a process, which would
+// wait for this read lock forever.
 func CopyBinary(source, path string) (err error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
@@ -96,6 +105,8 @@ func CopyBinary(source, path string) (err error) {
 		return err
 	}
 	defer in.Close()
+	syscall.ForkLock.RLock()
+	defer syscall.ForkLock.RUnlock()
 	out, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o755)
 	if err != nil {
 		return err

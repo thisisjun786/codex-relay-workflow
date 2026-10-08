@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -29,14 +30,18 @@ const DefaultIssue = "CRW-158"
 const backupHelp = "the directory the whole relay state directory is copied to (copy only, byte for byte, recorded) before a swap that brings the additive DAG zone, or ordinary indexes on tables the store already holds, to a store that lacks them; the acknowledgement that route needs"
 
 // Commands are `crw install`'s subcommands.
-var Commands = []string{"install", "update", "rollback", "remove", "status", "register-mcp", "hook", "register-service", "features", "config", "migrate-state"}
+var Commands = []string{"install", "update", "rollback", "remove", "status", "register-mcp", "hook", "register-service", "features", "config", "migrate-state", "backup-state"}
+
+// ownUsage are the commands with a help surface of their own, so the frozen legacy usage line still
+// names only the commands it named before they arrived.
+var ownUsage = []string{"features", "config", "migrate-state", "backup-state"}
 
 func usage(w io.Writer) {
 	// The installer help is a frozen contract; features, config and migrate-state have their own help
 	// surfaces, so the frozen line still names only the commands it named before.
 	var legacy []string
 	for _, command := range Commands {
-		if command != "features" && command != "config" && command != "migrate-state" {
+		if !slices.Contains(ownUsage, command) {
 			legacy = append(legacy, command)
 		}
 	}
@@ -96,6 +101,11 @@ func Main(ctx context.Context, args []string, env scope.Env, stdout, stderr io.W
 		// Routed before the generic install options, as features and config are: it takes its own
 		// flags and prints its own text or JSON report, not the installer's envelope.
 		return migrate.Run(ctx, rest, env, stdout, stderr)
+	}
+	if command == "backup-state" {
+		// Routed before the generic install options, like features, config and migrate-state: it takes
+		// its own flag and prints its own JSON report (CRW-862).
+		return runBackupState(ctx, rest, env, stdout, stderr)
 	}
 	flags := flag.NewFlagSet("crw install "+command, flag.ContinueOnError)
 	flags.SetOutput(stderr)

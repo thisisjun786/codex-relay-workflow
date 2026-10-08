@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/acceptance"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/mergeturn"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
@@ -29,6 +30,14 @@ type JudgeResult struct {
 
 // Eligible is whether the judgement lets the pull request go to the merge lane.
 func (r JudgeResult) Eligible() bool { return r.Outcome == OutcomeEligible }
+
+// refuseUnderCorrection is the CRW-906 refusal: the accepted result is being corrected in a later
+// generation, so the head its acceptance stands on is not judged, not eligible and not carried to the
+// merge lane. It is the existing disposition_conflict and it names the open generation, so a parent
+// reading the refusal knows which generation to finish or withdraw; no refusal name is added.
+func refuseUnderCorrection(node string, live, standGeneration int64) error {
+	return refuse(contract.RefusalDispositionConflict, "the accepted result of %s is under correction: generation %d is open over the acceptance, which stands on generation %d, so its head is not judged and does not go to the merge lane; accept the corrected result with dag-accept --supersedes, or withdraw the generation if it was never bound or sent", node, live, standGeneration)
+}
 
 const maxRounds = 2
 
@@ -218,6 +227,17 @@ func (s *Scheduler) Judge(ctx context.Context, plan, node, actor string, in Judg
 		case pr.HeadSHA != stand.Head:
 			m.Outcome, m.Reason = OutcomeStaleHead, staleHeadReason(pr.HeadSHA, acc.HeadSHA, stand)
 		default:
+			// CRW-906: this is the head the acceptance stands on, and the relationship's live generation
+			// is later than the generation it stands on, so the accepted result is under correction and
+			// the head the judgement is about is the result being repaired. Refused, and nothing is
+			// written: an eligible row here would let the old head ride to the base. A pull request at
+			// another head is stale_head above, as it was before this change, and a correction that is
+			// accepted over or withdrawn moves the stand generation and this gate stops firing.
+			if under, live, standGeneration, err := acceptance.UnderCorrection(txCtx, tx, still.RelationshipID); err != nil {
+				return err
+			} else if under {
+				return refuseUnderCorrection(node, live, standGeneration)
+			}
 			landed, why, err := s.predecessorsLanded(txCtx, tx, plan, current, node)
 			if err != nil {
 				return err
@@ -356,6 +376,13 @@ func (s *Scheduler) RequestMergeTurn(ctx context.Context, plan, node, actor stri
 		stand, err := s.standOf(txCtx, tx, acc)
 		if err != nil {
 			return err
+		}
+		// CRW-906: no turn is requested for a result whose correction generation opened while the
+		// judgement above was being made, so the lane never carries the head being repaired
+		if under, live, standGeneration, err := acceptance.UnderCorrection(txCtx, tx, acc.RelationshipID); err != nil {
+			return err
+		} else if under {
+			return refuseUnderCorrection(node, live, standGeneration)
 		}
 		if landed, why, err := s.predecessorsLanded(txCtx, tx, plan, current, node); err != nil {
 			return err

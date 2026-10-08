@@ -37,6 +37,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/childcleanup"
 	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/dagsched"
+	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/integrate"
 	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/managed"
 	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/mergeturn"
 	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/routing"

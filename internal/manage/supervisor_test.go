@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -123,8 +124,11 @@ func supervisorScript(t *testing.T, answers map[string]string) (exe, record stri
 	}
 	script.WriteString("esac\nexit 0\n")
 	exe = filepath.Join(dir, "crw")
-	if err := os.WriteFile(exe, []byte(script.String()), 0o700); err != nil {
-		t.Fatal(err)
+	syscall.ForkLock.RLock()
+	writeErr := os.WriteFile(exe, []byte(script.String()), 0o700)
+	syscall.ForkLock.RUnlock()
+	if writeErr != nil {
+		t.Fatal(writeErr)
 	}
 	return exe, record
 }
