@@ -98,7 +98,14 @@ func runIntegrate(ctx context.Context, services dispatch.Services, args dispatch
 }
 
 func runPush(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
-	result, err := dagsched.PushIntegration(ctx, args.Text("checkout"), args.Text("remote"), args.Text("remote-ref"), args.Text("integration-ref"))
+	// the store answers whether the relay moved the branch onto the tip (CRW-965, parent decision D6)
+	s, err := store.Open(ctx, services.Selection.DBPath(), services.SocketPath)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = s.Close() }()
+	sched := &dagsched.Scheduler{Store: s}
+	result, err := dagsched.PushIntegration(ctx, args.Text("checkout"), args.Text("remote"), args.Text("remote-ref"), args.Text("integration-ref"), sched.VerifiedMoveOnto)
 	if err != nil {
 		return nil, err
 	}

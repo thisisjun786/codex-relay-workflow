@@ -47,14 +47,14 @@ func TestPushFastForwardsTheSameCommit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("batch: %v", err)
 	}
-	first, err := PushIntegration(context.Background(), k.repo.path, "origin", "dev", "dev-int")
+	first, err := PushIntegration(context.Background(), k.repo.path, "origin", "dev", "dev-int", k.sched.VerifiedMoveOnto)
 	if err != nil || first.Outcome != PushPushed {
 		t.Fatalf("first push: %+v, %v", first, err)
 	}
 	if got := remoteBranch(t, remote, "dev"); got != res.NewHead {
 		t.Fatalf("remote dev is %s; want the integration commit %s", got, res.NewHead)
 	}
-	second, err := PushIntegration(context.Background(), k.repo.path, "origin", "dev", "dev-int")
+	second, err := PushIntegration(context.Background(), k.repo.path, "origin", "dev", "dev-int", k.sched.VerifiedMoveOnto)
 	if err != nil || second.Outcome != PushUpToDate {
 		t.Fatalf("second push: %+v, %v; want up_to_date", second, err)
 	}
@@ -76,7 +76,7 @@ func TestPushRefusesToOverwriteARemoteThatHasMoved(t *testing.T) {
 	k.repo.git("commit", "-q", "-m", "other")
 	other := k.repo.git("rev-parse", "HEAD")
 	k.repo.git("push", "-q", remote, other+":refs/heads/dev")
-	_, err := PushIntegration(context.Background(), k.repo.path, "origin", "dev", "dev-int")
+	_, err := PushIntegration(context.Background(), k.repo.path, "origin", "dev", "dev-int", k.sched.VerifiedMoveOnto)
 	if refusalReasonOf(err) != "merge_base_mismatch" {
 		t.Fatalf("divergent push: %v; want merge_base_mismatch", err)
 	}
@@ -114,7 +114,7 @@ func TestOutageDefersOnlyThePushAndTheIntegrationCompletes(t *testing.T) {
 	if progress.Cumulative.Integrated.Nodes != 2 {
 		t.Fatalf("integrated count %d during the outage; want 2", progress.Cumulative.Integrated.Nodes)
 	}
-	deferred, err := PushIntegration(context.Background(), k.repo.path, "origin", "dev", "dev-int")
+	deferred, err := PushIntegration(context.Background(), k.repo.path, "origin", "dev", "dev-int", k.sched.VerifiedMoveOnto)
 	if err != nil || deferred.Outcome != PushDeferred {
 		t.Fatalf("push during the outage: %+v, %v; want deferred", deferred, err)
 	}
@@ -123,7 +123,7 @@ func TestOutageDefersOnlyThePushAndTheIntegrationCompletes(t *testing.T) {
 	}
 	// the outage ends: the same push completes, and the integrated count is unchanged
 	k.repo.git("config", "--unset", "remote.origin.pushurl")
-	done, err := PushIntegration(context.Background(), k.repo.path, "origin", "dev", "dev-int")
+	done, err := PushIntegration(context.Background(), k.repo.path, "origin", "dev", "dev-int", k.sched.VerifiedMoveOnto)
 	if err != nil || done.Outcome != PushPushed {
 		t.Fatalf("push after the outage: %+v, %v; want pushed", done, err)
 	}

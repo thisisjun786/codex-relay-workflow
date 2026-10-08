@@ -208,6 +208,17 @@ func (s *Scheduler) IntegrateBatch(ctx context.Context, in IntegrationBatchInput
 		}
 		// the compare-and-swap and the moved record share one fenced transaction: the epoch is checked inside it (CRW-965, D6)
 		if err := s.IntegrationWrite(ctx, in.Plan, in.Actor, func(txCtx context.Context) error {
+			// every frozen candidate is proved current again inside the fenced transaction, before the branch moves: a candidate
+			// that changed after the verification is never published on the old verification (CRW-965, D3)
+			for _, m := range settled.merged {
+				current, err := s.frozenCandidateStillCurrent(txCtx, m.Candidate)
+				if err != nil {
+					return err
+				}
+				if !current {
+					return refuse(contract.RefusalMergeCandidateMoved, "candidate %s (acceptance %s) is no longer current after the verification of %s: the branch did not move, and the next batch freezes again without it", m.NodeID, m.AcceptanceID, in.IntegrationRef)
+				}
+			}
 			if err := deps.Update(txCtx, in.Checkout, in.IntegrationRef, settled.head, old); err != nil {
 				return refuse(contract.RefusalStaleMarkContext, "%s moved while the merged tree was being verified (the batch read %s): read it again and run the batch again", in.IntegrationRef, old)
 			}
@@ -598,7 +609,17 @@ func (w *integrationWorktree) settle(ctx context.Context, candidates []Candidate
 			return out, err
 		}
 		failing := kept[k-1]
-		left := map[string]string{failing.NodeID: "verification_failed"}
+		// the bisection shows only that this candidate breaks the prefix before it; it is reported as failing only when it fails
+		// verified alone, and otherwise it is left for the next batch (CRW-965, parent decision D5)
+		reason := "verification_failed"
+		alone, err := w.failsAlone(ctx, failing)
+		if err != nil {
+			return out, err
+		}
+		if !alone {
+			reason = "not_proven_failing"
+		}
+		left := map[string]string{failing.NodeID: reason}
 		edges, err := w.s.Successors(ctx, w.in.Plan)
 		if err != nil {
 			return out, err
@@ -697,6 +718,26 @@ func (w *integrationWorktree) firstFailingPrefix(ctx context.Context, kept []Can
 		}
 	}
 	return lo, nil
+}
+
+// failsAlone is whether a candidate fails verification when it is merged alone onto the start. A candidate that does not
+// merge alone, or that verifies, does not fail alone (CRW-965, parent decision D5).
+func (w *integrationWorktree) failsAlone(ctx context.Context, c Candidate) (bool, error) {
+	if err := w.reset(ctx, w.start); err != nil {
+		return false, err
+	}
+	ok, _, err := w.merge(ctx, c)
+	if err != nil {
+		return false, err
+	}
+	if !ok {
+		return false, nil
+	}
+	_, _, pass, err := w.verify(ctx)
+	if err != nil {
+		return false, err
+	}
+	return !pass, nil
 }
 
 // conflictNode names the first kept candidate a deferred candidate conflicts with when merged on its own, by git's own
@@ -863,12 +904,28 @@ func (s *Scheduler) verifiedHeadState(ctx context.Context, in IntegrationBatchIn
 		return true, false, err
 	}
 	for _, d := range stored {
-		if d["tree"] == now["tree"] && d["ci_digest"] == now["ci_digest"] && d["dependency_go_sum"] == now["dependency_go_sum"] && d["dependency_web_lock"] == now["dependency_web_lock"] {
+		if verifiedKeysHold(d, now) {
 			return true, true, nil
 		}
 	}
 	return true, false, nil
 }
+
+// verifiedKeysHold is whether a stored verification stands for the keys the verifier would judge now: the same tree, ci.yml
+// digest, dependency digests and platform (CRW-965, parent decisions D2 and D2 remainder). A row with a key missing is not
+// reused, so an older row is verified again.
+func verifiedKeysHold(stored, now map[string]string) bool {
+	for _, key := range verifiedKeyNames {
+		value, ok := stored[key]
+		if !ok || value != now[key] {
+			return false
+		}
+	}
+	return true
+}
+
+// verifiedKeyNames are the keys a verified head's row carries, in the order they are judged.
+var verifiedKeyNames = []string{"tree", "ci_digest", "dependency_go_sum", "dependency_web_lock", "os", "arch"}
 
 // verifiedKeysOf is what a verified head's record is judged under: its tree, its ci.yml digest and its dependency digests.
 func verifiedKeysOf(ctx context.Context, checkout, head string) (map[string]string, error) {
@@ -881,7 +938,8 @@ func verifiedKeysOf(ctx context.Context, checkout, head string) (map[string]stri
 		return nil, err
 	}
 	return map[string]string{"tree": strings.TrimSpace(tree), "ci_digest": keys.CiDigest,
-		"dependency_go_sum": keys.Dependencies["go.sum"], "dependency_web_lock": keys.Dependencies["web/package-lock.json"]}, nil
+		"dependency_go_sum": keys.Dependencies["go.sum"], "dependency_web_lock": keys.Dependencies["web/package-lock.json"],
+		"os": runtime.GOOS, "arch": runtime.GOARCH}, nil
 }
 
 // recordVerifiedHead writes the batch's intent to move the branch to a verified head, before the branch moves. The row

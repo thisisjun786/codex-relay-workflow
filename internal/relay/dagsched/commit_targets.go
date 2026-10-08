@@ -52,12 +52,41 @@ func integrationRefsOf(ctx context.Context, q store.Querier, acceptanceID string
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+	moved, err := movedIntegrationRefs(ctx, q)
+	if err != nil {
+		return nil, err
+	}
 	out := make([]string, 0, len(seen))
 	for ref := range seen {
-		out = append(out, ref)
+		if moved[ref] {
+			out = append(out, ref)
+		}
 	}
 	sort.Strings(out)
 	return out, nil
+}
+
+// movedIntegrationRefs are the integration refs a batch with a ref_moved row has moved. A planned, abandoned, deferred or
+// failed intent names no moved ref, so it adds no completion target (CRW-965, parent decision D4). It is the one definition
+// nodeTargets and the observation read.
+func movedIntegrationRefs(ctx context.Context, q store.Querier) (map[string]bool, error) {
+	rows, err := q.QueryContext(ctx, "SELECT DISTINCT b.detail FROM dag_integration_stages m JOIN dag_integration_stages b ON b.batch_id = m.batch_id AND b.stage = 'intent' AND b.node_id = '' WHERE m.stage = 'ref_moved'")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	moved := map[string]bool{}
+	for rows.Next() {
+		var detail string
+		if err := rows.Scan(&detail); err != nil {
+			return nil, err
+		}
+		var d map[string]string
+		if json.Unmarshal([]byte(detail), &d) == nil && d["integration_ref"] != "" {
+			moved[d["integration_ref"]] = true
+		}
+	}
+	return moved, rows.Err()
 }
 
 // commitIntegratedEdge judges an integrated edge out of a commit-accepted node: the node must be integrated on every

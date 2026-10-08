@@ -2,11 +2,33 @@ package dagsched
 
 import (
 	"context"
+	"encoding/json"
 	"regexp"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 )
+
+// VerifiedMoveOnto is whether a batch with a passing verification moved integrationRef onto commit (CRW-965, parent decision
+// D6). The move names the ref and its new head, so any plan's batch counts.
+func (s *Scheduler) VerifiedMoveOnto(ctx context.Context, integrationRef, commit string) (bool, error) {
+	rows, err := s.Store.Q(ctx).QueryContext(ctx, "SELECT verification_json FROM dag_integration_batches WHERE integration_ref = ? AND new_head = ?", integrationRef, commit)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var raw string
+		if err := rows.Scan(&raw); err != nil {
+			return false, err
+		}
+		var verification map[string]string
+		if json.Unmarshal([]byte(raw), &verification) == nil && verification["result"] == VerificationRecordResultPass {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
+}
 
 // The push of the integration branch to a remote branch (CRW-965, criteria c6 and c7). It moves the remote branch to the
 // integration commit only by a fast-forward. The remote branch is read first: an equal remote is up to date; a remote that
@@ -34,8 +56,13 @@ type PushResult struct {
 	Detail            string
 }
 
-// PushIntegration moves a remote branch to a local integration branch's commit by a fast-forward only.
-func PushIntegration(ctx context.Context, checkout, remote, remoteRef, integrationRef string) (PushResult, error) {
+// MovedHeadCheck answers whether the relay verified a commit and moved an integration ref onto it.
+type MovedHeadCheck func(ctx context.Context, integrationRef, commit string) (bool, error)
+
+// PushIntegration moves a remote branch to a local integration branch's commit by a fast-forward only. The branch's tip
+// must be a head the relay verified and moved the branch onto; any other tip is refused before the remote is read (CRW-965,
+// parent decision D6).
+func PushIntegration(ctx context.Context, checkout, remote, remoteRef, integrationRef string, moved MovedHeadCheck) (PushResult, error) {
 	out := PushResult{Remote: remote, RemoteRef: remoteRef}
 	// a name that starts with a dash would be read by git as an option (CRW-965 review): refused before git runs
 	if strings.HasPrefix(remote, "-") || strings.HasPrefix(remoteRef, "-") {
@@ -49,6 +76,13 @@ func PushIntegration(ctx context.Context, checkout, remote, remoteRef, integrati
 		return out, refuse(contract.RefusalMergeTargetUnreadable, "%s names no branch in %s", integrationRef, checkout)
 	}
 	out.LocalHead = local
+	verified, err := moved(ctx, integrationRef, local)
+	if err != nil {
+		return out, err
+	}
+	if !verified {
+		return out, refuse(contract.RefusalMergeBaseMismatch, "%s in %s points at %s, which the relay did not verify and move the branch onto: nothing is pushed", integrationRef, checkout, local)
+	}
 	pushTarget := remoteURLForPush(ctx, checkout, remote)
 	remoteHead, unreachableRemote, err := lsRemoteHead(ctx, checkout, pushTarget, remoteRef)
 	if err != nil {

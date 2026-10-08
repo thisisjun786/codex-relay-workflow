@@ -62,61 +62,96 @@ func (s *Scheduler) AcceptedCandidates(ctx context.Context, plan string) ([]Cand
 		if n.Kind != dag.NodeImplementation {
 			continue
 		}
-		if err := lifecycleRefusal(snap, n, "integrating its result", true); err != nil {
-			continue
-		}
-		acc, found, err := loadActiveAcceptance(ctx, q, plan, n.NodeID)
+		c, ok, err := s.currentCandidate(ctx, q, plan, snap, n)
 		if err != nil {
 			return nil, err
 		}
-		if !found || acc.HeadSHA == "" {
-			continue
+		if ok {
+			out = append(out, c)
 		}
-		landed, _, err := s.nodeIntegrated(ctx, q, plan, snap, acc)
-		if err != nil {
-			return nil, err
-		}
-		if landed {
-			continue
-		}
-		stale, err := s.staleOf(ctx, q, plan, snap, n)
-		if err != nil {
-			return nil, err
-		}
-		if stale != nil {
-			continue
-		}
-		rel, found, err := currentRelationshipOf(ctx, q, plan, n.NodeID)
-		if err != nil {
-			return nil, err
-		}
-		if !found || rel.Status != "active" || rel.Superseded {
-			continue
-		}
-		stand, err := s.standOf(ctx, q, acc)
-		if err != nil {
-			return nil, err
-		}
-		criteria, err := currentCriteriaDigest(ctx, q, acc)
-		if err != nil {
-			return nil, err
-		}
-		if stand.Generation != rel.Generation {
-			continue
-		}
-		// the accepted event must still be the head of its generation: a newer receipt makes this acceptance stale (CRW-965 review)
-		head, err := delivery.HeadRevisionFrom(ctx, q, stand.RelationshipID, stand.Generation)
-		if err != nil {
-			return nil, err
-		}
-		if id, _ := objString(head, "eventId"); id != stand.EventID {
-			continue
-		}
-		out = append(out, Candidate{PlanID: plan, NodeID: n.NodeID, AcceptanceID: acc.AcceptanceID, RelationshipID: stand.RelationshipID,
-			EventID: stand.EventID, RevisionHash: stand.RevisionHash, Generation: stand.Generation, HeadSHA: stand.Head, Repository: acc.Repository,
-			CriteriaSetDigest: criteria})
 	}
 	return out, nil
+}
+
+// currentCandidate is the one currency predicate of an implementation node's candidate (CRW-965, parent decisions D-D and
+// D3): the node is live, its active acceptance is not integrated, not stale, its relationship is active on the generation
+// the acceptance stands on, and the accepted event is still the head of that generation. Candidate selection and the
+// batch's check inside its fenced transaction both call it, so they never disagree.
+func (s *Scheduler) currentCandidate(ctx context.Context, q store.Querier, plan string, snap dag.Snapshot, n dag.SnapNode) (Candidate, bool, error) {
+	if err := lifecycleRefusal(snap, n, "integrating its result", true); err != nil {
+		return Candidate{}, false, nil
+	}
+	acc, found, err := loadActiveAcceptance(ctx, q, plan, n.NodeID)
+	if err != nil {
+		return Candidate{}, false, err
+	}
+	if !found || acc.HeadSHA == "" {
+		return Candidate{}, false, nil
+	}
+	landed, _, err := s.nodeIntegrated(ctx, q, plan, snap, acc)
+	if err != nil {
+		return Candidate{}, false, err
+	}
+	if landed {
+		return Candidate{}, false, nil
+	}
+	stale, err := s.staleOf(ctx, q, plan, snap, n)
+	if err != nil {
+		return Candidate{}, false, err
+	}
+	if stale != nil {
+		return Candidate{}, false, nil
+	}
+	rel, found, err := currentRelationshipOf(ctx, q, plan, n.NodeID)
+	if err != nil {
+		return Candidate{}, false, err
+	}
+	if !found || rel.Status != "active" || rel.Superseded {
+		return Candidate{}, false, nil
+	}
+	stand, err := s.standOf(ctx, q, acc)
+	if err != nil {
+		return Candidate{}, false, err
+	}
+	criteria, err := currentCriteriaDigest(ctx, q, acc)
+	if err != nil {
+		return Candidate{}, false, err
+	}
+	if stand.Generation != rel.Generation {
+		return Candidate{}, false, nil
+	}
+	// the accepted event must still be the head of its generation: a newer receipt makes this acceptance stale (CRW-965 review)
+	head, err := delivery.HeadRevisionFrom(ctx, q, stand.RelationshipID, stand.Generation)
+	if err != nil {
+		return Candidate{}, false, err
+	}
+	if id, _ := objString(head, "eventId"); id != stand.EventID {
+		return Candidate{}, false, nil
+	}
+	return Candidate{PlanID: plan, NodeID: n.NodeID, AcceptanceID: acc.AcceptanceID, RelationshipID: stand.RelationshipID,
+		EventID: stand.EventID, RevisionHash: stand.RevisionHash, Generation: stand.Generation, HeadSHA: stand.Head, Repository: acc.Repository,
+		CriteriaSetDigest: criteria}, true, nil
+}
+
+// frozenCandidateStillCurrent is whether a frozen candidate is still the current candidate of its node under the same
+// predicate candidate selection uses, with the same acceptance, event, revision, generation and head (CRW-965, D3). The
+// batch asks it inside the transaction that moves the branch.
+func (s *Scheduler) frozenCandidateStillCurrent(ctx context.Context, f Candidate) (bool, error) {
+	q := s.Store.Q(ctx)
+	snap, _, err := dag.SnapshotAt(ctx, q, f.PlanID, 0)
+	if err != nil {
+		return false, err
+	}
+	n, ok := nodeOf(snap, f.NodeID)
+	if !ok {
+		return false, nil
+	}
+	c, ok, err := s.currentCandidate(ctx, q, f.PlanID, snap, n)
+	if err != nil || !ok {
+		return false, err
+	}
+	return c.AcceptanceID == f.AcceptanceID && c.EventID == f.EventID && c.RevisionHash == f.RevisionHash &&
+		c.Generation == f.Generation && c.HeadSHA == f.HeadSHA, nil
 }
 
 // currentCriteriaDigest is the criteria set a candidate is verified under: the one its latest revalidation names, else
