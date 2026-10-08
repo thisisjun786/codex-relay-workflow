@@ -31,6 +31,7 @@ type premergeJudgment struct {
 	raw           []byte
 	digest        string
 	evaluatedHead string
+	acceptedHead  string
 }
 
 // premergeRefusal carries a judgment's refusal into the relay's own refusal names.
@@ -74,7 +75,7 @@ func judgePremerge(ctx context.Context, raw []byte, node string, n dag.SnapNode,
 	if err := premerge.Judge(rec, premerge.Options{AfterEvaluation: afterEvaluation}); err != nil {
 		return premergeJudgment{}, premergeRefusal(err)
 	}
-	return premergeJudgment{raw: raw, digest: digest, evaluatedHead: rec.Head}, nil
+	return premergeJudgment{raw: raw, digest: digest, evaluatedHead: rec.Head, acceptedHead: acceptedHead}, nil
 }
 
 // premergeCheckout is the pull-request-less path's local checkout and the base the head must descend from.
@@ -166,7 +167,7 @@ func premergeHeld(err error) (string, bool) {
 // premergeOfAcceptance judges the record stored with an active acceptance of node n. Integration reads the stored text,
 // never a file: the stored digest must match the text, the stored head must be the acceptance's head, and the same
 // judgment as acceptance applies. A pull-request-less acceptance is judged against its own checkout and base.
-func (s *Scheduler) premergeOfAcceptance(ctx context.Context, q store.Querier, acc Acceptance, n dag.SnapNode) (premergeJudgment, error) {
+func (s *Scheduler) premergeOfAcceptance(ctx context.Context, q store.Querier, acc Acceptance, n dag.SnapNode, head string) (premergeJudgment, error) {
 	var raw, digest, evaluated, accepted string
 	// the latest re-validation's record is the one that stands once the criteria were re-registered (CRW-952 answer 4); otherwise the acceptance's own
 	has, err := queryOne(ctx, q, "SELECT p.record_json, p.record_digest, p.evaluated_head, p.accepted_head FROM dag_acceptance_revalidations r JOIN dag_revalidation_premerge p ON p.revalidation_id = r.revalidation_id WHERE r.acceptance_id = ? ORDER BY r.reval_seq DESC LIMIT 1", []any{acc.AcceptanceID}, &raw, &digest, &evaluated, &accepted)
@@ -182,8 +183,8 @@ func (s *Scheduler) premergeOfAcceptance(ctx context.Context, q store.Querier, a
 	if !has {
 		return premergeJudgment{}, refuse(contract.RefusalPremergeMissing, "acceptance %s has no pre-merge record: it was accepted before the gate or without --premerge", acc.AcceptanceID)
 	}
-	if accepted != acc.HeadSHA {
-		return premergeJudgment{}, refuse(contract.RefusalPremergeHeadMismatch, "the record was stored for head %s and acceptance %s stands on %s", accepted, acc.AcceptanceID, acc.HeadSHA)
+	if accepted != head {
+		return premergeJudgment{}, refuse(contract.RefusalPremergeHeadMismatch, "the record was stored for head %s and acceptance %s stands on %s", accepted, acc.AcceptanceID, head)
 	}
 	var commit *premergeCheckout
 	var base string
@@ -192,7 +193,7 @@ func (s *Scheduler) premergeOfAcceptance(ctx context.Context, q store.Querier, a
 	} else if isCommit {
 		commit = &premergeCheckout{checkout: acc.Repository, base: base}
 	}
-	j, err := judgePremerge(ctx, []byte(raw), acc.NodeID, n, acc.HeadSHA, commit)
+	j, err := judgePremerge(ctx, []byte(raw), acc.NodeID, n, head, commit)
 	if err != nil {
 		return premergeJudgment{}, err
 	}

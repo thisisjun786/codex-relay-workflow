@@ -618,7 +618,7 @@ The head rule depends on the path. On the commit path (`--commit`), the accepted
 
 A passing record is stored with its acceptance in `dag_acceptance_premerge`: the record text, its digest, the evaluated head, the accepted head, the actor and the coordinator epoch. The table is append-only, and the judgment reads the stored text. Editing the record file after the acceptance changes nothing.
 
-A re-validation changes the criteria digest of an existing acceptance, so its record is a second, later record for that acceptance. It is stored in `dag_revalidation_premerge`, one row per revalidation, tied to the revalidation row. The acceptance keeps the record it was accepted with, so the rule reads as one record per acceptance output and one per revalidation.
+A re-validation changes the criteria digest of an existing acceptance, so its record is a second, later record for that acceptance. It is stored in `dag_revalidation_premerge`, one row per revalidation, tied to the revalidation row. The acceptance keeps the record it was accepted with, so the rule reads as one record per acceptance output and one per revalidation. A re-validation is judged on the head the acceptance stands on, which after a base refresh is the carried head: on the pull-request path the record must name that head exactly, so a refreshed head needs its own evaluation before it is re-validated.
 
 An acceptance taken before the gate has no record. `dag-integrate` leaves it out as `premerge_missing` and does not touch its row. The attach path adds the record once, under the same acceptance id, judged by the same rules; a second attach is refused as `disposition_conflict`.
 

@@ -77,9 +77,9 @@ func TestOracleBranches(t *testing.T) {
 		{name: "PARTIAL criterion without a disposition", mutate: func(r *Record) {
 			r.Criteria["c1"] = Criterion{Verdict: "PARTIAL", Evidence: "x"}
 		}, want: contract.RefusalPremergeUndisposed},
-		{name: "criterion without a verdict is not PASS", mutate: func(r *Record) {
+		{name: "criterion without a verdict is refused by the schema before the branch (the oracle blocks it as well)", mutate: func(r *Record) {
 			r.Criteria["c1"] = Criterion{Evidence: "x"}
-		}, want: contract.RefusalPremergeUndisposed},
+		}, want: contract.RefusalPremergeMissing},
 		{name: "P1 defect without a disposition", mutate: func(r *Record) {
 			r.Defects = []Defect{{ID: "d1", Severity: "P1", What: "x"}}
 		}, want: contract.RefusalPremergeUndisposed},

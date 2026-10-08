@@ -249,6 +249,9 @@ func Decode(raw []byte) (Record, error) {
 	if err := checkDefectMembers(members["defects"]); err != nil {
 		return record, err
 	}
+	if err := checkRecordMembers(members, record); err != nil {
+		return record, err
+	}
 	for _, d := range record.Defects {
 		if d.ID == "" {
 			return record, refuse(contract.RefusalPremergeMissing, "a defect has no id")
@@ -401,4 +404,39 @@ func judgeItem(n need, it Item) error {
 		return refuse(contract.RefusalPremergeDispositionInvalid, "%s: unknown class %q", n.ref, it.Class)
 	}
 	return nil
+}
+
+// checkRecordMembers enforces the nested members the schema names (CRW-952 review): a grader that names its model,
+// effort and prompt, dispositions that are an object naming who decided, a verdict on every criterion and a severity on
+// every defect. A missing severity would otherwise make a defect read as nothing to dispose of.
+func checkRecordMembers(members map[string]json.RawMessage, r Record) error {
+	if r.Issue == "" || r.Node == "" || r.GradedAt == "" {
+		return refuse(contract.RefusalPremergeMissing, "the record names its issue, node and gradedAt")
+	}
+	if r.Grader.Model == "" || r.Grader.Effort == "" || r.Grader.PromptDigest == "" {
+		return refuse(contract.RefusalPremergeMissing, "the grader names its model, effort and prompt digest")
+	}
+	if !isObject(members["dispositions"]) || r.Dispositions.By == "" {
+		return refuse(contract.RefusalPremergeMissing, "dispositions is an object that names who decided")
+	}
+	for name, c := range r.Criteria {
+		switch c.Verdict {
+		case "PASS", "PARTIAL", "FAIL":
+		default:
+			return refuse(contract.RefusalPremergeMissing, "criterion %s has no verdict PASS, PARTIAL or FAIL", name)
+		}
+	}
+	for _, d := range r.Defects {
+		switch d.Severity {
+		case "P0", "P1", "P2", "P3":
+		default:
+			return refuse(contract.RefusalPremergeMissing, "defect %s has no severity P0 to P3", d.ID)
+		}
+	}
+	return nil
+}
+
+func isObject(raw json.RawMessage) bool {
+	trimmed := bytes.TrimSpace(raw)
+	return len(trimmed) > 0 && trimmed[0] == '{'
 }

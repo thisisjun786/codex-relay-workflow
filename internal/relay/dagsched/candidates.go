@@ -136,7 +136,7 @@ func (s *Scheduler) currentCandidate(ctx context.Context, q store.Querier, plan 
 		return Candidate{}, false, nil
 	}
 	// the stored pre-merge record is judged again on every selection: a refusal holds the candidate with its premerge_* name
-	judged, err := s.premergeOfAcceptance(ctx, q, acc, n)
+	judged, err := s.premergeOfAcceptance(ctx, q, acc, n, stand.Head)
 	if err != nil {
 		return Candidate{}, false, err
 	}

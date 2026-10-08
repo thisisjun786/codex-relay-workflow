@@ -686,15 +686,12 @@ func TestBaseRefreshThenACriteriaChangeIsRevalidatedAsAnyOther(t *testing.T) {
 		t.Fatalf("the route of the refreshed node whose criteria alone changed = %q, want %q", got, rvRevalidate)
 	}
 	s.rvRule(s.rid, "verified", other, rvVerified())
-	// The record judges the head the forge map holds, and the refresh moved the pull request past it. A pull-request record
-	// names the pull request head exactly (CRW-952, answer 2 and criterion c5), so the revalidation is refused as a head
-	// mismatch and writes no acceptance. A refreshed head needs its own evaluation before it can be revalidated.
-	_, err := s.accept("g", "I", AcceptInput{PullRequest: &PRRef{Repository: "owner/repo", Number: 7}, Premerge: premergeAt(s.sched, context.Background(), "g", "I", s.forge.by["owner/repo#7"].HeadSHA)})
-	if refusalReason(err) != "premerge_head_mismatch" {
-		t.Fatalf("accept after the review = %v, want premerge_head_mismatch for the refreshed pull request head", err)
+	res, err := s.accept("g", "I", AcceptInput{PullRequest: &PRRef{Repository: "owner/repo", Number: 7}, Premerge: premergeAt(s.sched, context.Background(), "g", "I", s.head)})
+	if err != nil || !res.Revalidated || res.Replayed || res.AcceptanceID != s.accepted.Acceptance.AcceptanceID {
+		t.Fatalf("accept after the review = %v %+v, want the same acceptance revalidated", err, res)
 	}
-	if n := s.read("g").node("I"); n.Disposition != DispStale {
-		t.Fatalf("I = %+v, want it still stale after the refused revalidation", n)
+	if n := s.read("g").node("I"); n.Disposition == DispStale {
+		t.Fatalf("I = %+v, still stale after the revalidation", n)
 	}
 }
 

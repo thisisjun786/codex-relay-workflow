@@ -199,7 +199,7 @@ func (s *Scheduler) IntegrateBatch(ctx context.Context, in IntegrationBatchInput
 			return out, err
 		}
 	}
-	out.Split = settled.split
+	out.Split = append(out.Split, settled.split...)
 	for _, m := range settled.merged {
 		out.Merged = append(out.Merged, IntegrationBatchMerged{NodeID: m.NodeID, AcceptanceID: m.AcceptanceID, HeadSHA: m.HeadSHA, MergeCommit: m.MergeCommit})
 	}
@@ -346,7 +346,7 @@ func (s *Scheduler) readyIntegrationCandidates(ctx context.Context, in Integrati
 func integrationBatchID(in IntegrationBatchInput, old string, candidates []Candidate) string {
 	var parts []string
 	for _, c := range candidates {
-		parts = append(parts, c.NodeID+"="+c.AcceptanceID+"@"+c.EventID+"#"+c.HeadSHA)
+		parts = append(parts, c.NodeID+"="+c.AcceptanceID+"@"+c.EventID+"#"+c.HeadSHA+"/"+c.PremergeDigest)
 	}
 	return registry.CoordinationID("dib", in.Plan, in.Checkout, in.IntegrationRef, old, in.BaseRef, strings.Join(parts, ","))
 }

@@ -393,7 +393,11 @@ func (s *Scheduler) accept(ctx context.Context, plan, node, actor string, in Acc
 				if implementation && len(in.Premerge) > 0 {
 					// the attach path (CRW-952 answer 5): a record for an acceptance that has none is stored once
 					cn, _ := nodeOf(current, node)
-					if err := s.attachPremerge(txCtx, tx, in, existing, node, cn, a.HeadSHA, actor); err != nil {
+					stand, serr := s.standOf(txCtx, tx, a)
+					if serr != nil {
+						return serr
+					}
+					if err := s.attachPremerge(txCtx, tx, in, existing, node, cn, stand.Head, actor); err != nil {
 						return err
 					}
 				}
@@ -411,7 +415,11 @@ func (s *Scheduler) accept(ctx context.Context, plan, node, actor string, in Acc
 			var revalJudged premergeJudgment
 			if implementation {
 				cn, _ := nodeOf(current, node)
-				if revalJudged, err = judgePremerge(txCtx, in.Premerge, node, cn, a.HeadSHA, premergeAttachPath(in)); err != nil {
+				stand, serr := s.standOf(txCtx, tx, a)
+				if serr != nil {
+					return serr
+				}
+				if revalJudged, err = judgePremerge(txCtx, in.Premerge, node, cn, stand.Head, premergeAttachPath(in)); err != nil {
 					return err
 				}
 			}
@@ -425,7 +433,7 @@ func (s *Scheduler) accept(ctx context.Context, plan, node, actor string, in Acc
 				return err
 			}
 			if implementation {
-				if err := store.RecordRevalidationPremerge(txCtx, s.Store, revalidationID(existing, seq), store.AcceptancePremergeRow{AcceptanceID: existing, RecordDigest: revalJudged.digest, RecordJSON: string(revalJudged.raw), EvaluatedHead: revalJudged.evaluatedHead, AcceptedHead: a.HeadSHA, RecordedBy: actor, CoordinatorEpoch: s.ExpectedEpoch, RecordedAt: s.now()}); err != nil {
+				if err := store.RecordRevalidationPremerge(txCtx, s.Store, revalidationID(existing, seq), store.AcceptancePremergeRow{AcceptanceID: existing, RecordDigest: revalJudged.digest, RecordJSON: string(revalJudged.raw), EvaluatedHead: revalJudged.evaluatedHead, AcceptedHead: revalJudged.acceptedHead, RecordedBy: actor, CoordinatorEpoch: s.ExpectedEpoch, RecordedAt: s.now()}); err != nil {
 					return err
 				}
 			}
