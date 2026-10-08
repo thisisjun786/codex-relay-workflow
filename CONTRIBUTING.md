@@ -14,8 +14,9 @@ and linked references before editing. Shared workflow rules belong in
 `plugins/crw/skills/crw-plan/references/integrations.md`; operation-specific guidance
 belongs with that skill.
 
-Keep each PR focused on one coherent unit under [the work-unit rules](POLICY.md#work-units-review-and-integration). Explain the triggering problem, expected
-behavior and acceptance example in the PR even when there is a Linear link.
+Keep each change focused on one coherent unit under [the work-unit rules](POLICY.md#work-units-review-and-integration). A PR explains the triggering problem,
+expected behavior and acceptance example even when there is a Linear link; internal
+work carries the same explanation in its coordination record.
 Access to the maintainer's private project is not a contribution prerequisite.
 Korean and English contributions are welcome. Use only material you have the
 right to contribute, preserve imported notices, and omit private task records
@@ -25,7 +26,8 @@ and credentials. Contributions are provided under this repository's
 For bugs, open a GitHub issue with the source commit, relevant skill, host version,
 expected behavior, and a minimal redacted reproduction. Use [SECURITY.md](SECURITY.md)
 for vulnerabilities. Private Linear links may provide context, but keep enough
-public detail in the issue or PR for contributors to understand the change.
+public detail in the issue or PR for contributors to understand the change, and keep
+the same public detail in a change that is integrated directly.
 Do not copy private Linear descriptions, attachments, or task transcripts into
 public reports. Check integration settings before linking: a bot linkback may
 copy an entire issue description, not just its URL.
@@ -42,8 +44,17 @@ go run -tags dev ./cmd/crw-dev ci contracts
 git diff --check
 ```
 
-Changes to the runtime (`cmd/`, `internal/`, `contract/`) also need `make lint test`;
-[CI operation](docs/CI.md) lists the parts CI splits that into.
+The full local verification is one command:
+
+```sh
+go run -tags dev ./cmd/crw-dev ci local
+```
+
+It runs every job and step of `.github/workflows/ci.yml` in a clean worktree of the
+commit being verified and writes a `verification-record/1`, whose `result` is a pass
+only when every step succeeded. Changes to the runtime (`cmd/`, `internal/`,
+`contract/`) also need `make lint test`; [CI operation](docs/CI.md) lists the parts CI
+splits that into.
 
 The CXC v0.2.40 behaviour corpus (`contract/fixtures/cxc`) is recorded, not written by hand:
 edit a spec under `contract/schema/cxc/specs/` and run
@@ -71,21 +82,21 @@ Linear writes, worker creation, hook registration and service changes within
 their separately authorized task scope. See [CI operation](docs/CI.md) for
 scanner setup and the difference between offline checks and live proof.
 
-## Publish for review
+## Integrate
 
-Open ordinary PRs against `dev`. When basic checks pass and the change can be
-reviewed, open it Ready for review or mark the draft ready, then request review.
-Handle findings, fixes and replies on that same PR, keeping it ready during
-normal corrections. Include exact checks and their results, and identify
-untested behavior. An absent check or review is not a pass.
+A contribution is proposed as an ordinary PR against `dev`, and that is the route an
+external contributor uses. The maintainer reads it, verifies the tree it delivers with
+the local full verification (`crw-dev ci local`, a `verification-record/1` PASS), and
+fast-forwards `dev` to the verified tree. Integration does not wait on a hosted event:
+`.github/workflows/ci.yml` starts only on a manual `workflow_dispatch`, and the integrator
+runs the same checks locally. Include exact checks and their results, and identify
+untested behavior. An absent check is not a pass.
 
-The implementation owner handles reviews through resolution; the coordinator
-checks the latest candidate before integration. A normal contribution does not
-publish or deploy anything. The owner releases a verified dev commit with the
-[Release workflow](docs/releases.md), which fast-forwards main to that exact SHA;
-do not open a promotion PR. Release approval, a version tag and notes are required.
+The integrator owns the integration and handles review through resolution. A normal
+contribution does not publish or deploy anything. The owner releases a verified dev
+commit with the [Release workflow](docs/releases.md), which verifies that SHA itself
+and fast-forwards main to it; do not open a promotion PR. Release approval, a version
+tag and notes are required.
 
 During implementation, run focused tests for the changed behavior. Reuse passing
-evidence while its source, criteria and environment remain applicable. Hosted CI
-runs every check on every PR and dev push, whatever the change touches, and
-`dev-gate` passes only when all of them succeeded.
+evidence while its source, criteria and environment remain applicable.

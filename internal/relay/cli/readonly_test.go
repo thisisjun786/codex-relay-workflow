@@ -197,8 +197,14 @@ func unauthenticatedGH(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	script := "#!/bin/sh\nprintf 'To get started with GitHub CLI, please run:  gh auth login\\nAlternatively, populate the GH_TOKEN environment variable with a GitHub API authentication token.\\n' >&2\nexit 4\n"
-	if err := os.WriteFile(filepath.Join(dir, "gh"), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
+	// The shim goes on PATH and the tests run gh through it, so its descriptor is open only under
+	// syscall.ForkLock: a fork in that window would inherit it and leave the shim unexecutable
+	// (ETXTBSY, golang/go#22315).
+	syscall.ForkLock.RLock()
+	writeErr := os.WriteFile(filepath.Join(dir, "gh"), []byte(script), 0o755)
+	syscall.ForkLock.RUnlock()
+	if writeErr != nil {
+		t.Fatal(writeErr)
 	}
 	return "PATH=" + dir + string(os.PathListSeparator) + os.Getenv("PATH")
 }

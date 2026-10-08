@@ -1,0 +1,75 @@
+//go:build dev
+
+package ci
+
+// CRW-964 parent ruling 2: the digest of each ci.yml step the plan implements, by job name, in ci.yml
+// order (workflowStepDigest). The table is generated from the workflow, and the plan refuses a step
+// whose digest differs, so a ci.yml change that the table does not carry is plan drift.
+var localStepDigests = map[string][]string{
+	"validate": {
+		"sha256:7fa47e8bfeaeff3386b8bea388c219e8498fba07bb29dfd508cd607c865528bf",
+		"sha256:35c8ff31716d9b8044569cd5b0bc091f1b2de017c46b4798d9875a9baa67519f",
+		"sha256:4a2b65647f969f0e1f16c21c53a9c821d3c2aed629137080a4a17511395147b5",
+		"sha256:62cd9179f246e1960b90c4a22651ec0fbf869694d20e82845c711a9c2216b0d6",
+		"sha256:5770393c2d421f725357704308e44765262275b2dba58fc6755190b58fefb055",
+		"sha256:867bcaa34751bbf97a59db02a3e2f67d86a64a0257b81528aeb57962efb8422a",
+		"sha256:84e84d99cd4db5c9597fd369242b975f570e80a2a0e3ad8ee31692eb222517c8",
+		"sha256:ff5a3d2b6e1a9f505623334fca92df1b339ed7bacadf845c4e1f1d1fd68f30d0",
+	},
+	"secrets": {
+		"sha256:54f715225ba8a03c216653456c044d9451980ba9578cd77ad98d8c2803922766",
+		"sha256:fac335eec7d174d9d6c2ab8992ec78daaacc1540c0a875262470d37e96befe0d",
+		"sha256:399af037b994a23c8f9f0cfe3c0d8df19d1c1af16f373190d1cc8fdb9e75f49c",
+		"sha256:bd3f1b7618eaa2856c7e83c8bbf602c14f2567d79b7896c216a0141176466470",
+	},
+	"skill-scripts-node": {
+		"sha256:78da226fdac335d8664eb3e9e504152fd69248796b311747c1020b4d347bf79b",
+		"sha256:451b73d1adec8ae85e629d145bd5ed3e15127ed1357d039da9da0c6fce7ce490",
+		"sha256:b8846421a7360908123db0e376a85da1b44aa752ed7eaf8f4cac940c6a00a7cb",
+		"sha256:fb3811d4d542681309f4f63180eb3c64bd70651f257920158cc3418299f6176c",
+		"sha256:ff697e572a2087aeade05d8986323935df76df7b4ccf3175047e0bc775773229",
+		"sha256:e89207b51e62acb7091e414c5ea8fd75cd0602097c539ed4252876c3efc658a1",
+	},
+	"gui": {
+		"sha256:a35dbbaf6b8ff34549bc61096948a9c78ac848122a5e369acfcf39d775a33f23",
+		"sha256:3475c3ff63b6783339c07076513110e774ba1c8d0fc315fdeed84b29a75bf047",
+		"sha256:e8d6edebf85e0ed5e54c3549d160655462d7e435c98e7f0962deafe50aba6aa0",
+		"sha256:cba661004a505efce0b10942a6cb6a5a47fd8e869d3b69e096586b6db089e433",
+		"sha256:07bb40941b606ace7e6ed1a2655b4ed00ed677603ffd56a06c189784ddd6e0c4",
+		"sha256:1e4898d6f1e4725bf9024993324450ac4a8116965ce79d69f332799b405d3c05",
+		"sha256:c7368c076636c6dea4d6402a6f90b232b03114924f8080d1142f973eeb6b2af2",
+		"sha256:e6f84c8a5f6c20b5d4cbc14c25f06126c73107b735b44985689c0186f2f897d3",
+		"sha256:d03f69d3a80a174a3f2e7192cf86db0e9f0e8befc6bbe1e91aaacb9036e01ee9",
+		"sha256:946d1d4d5074200f08ba9276640deef129d14347b8dff681e1d171ee0c28cfd4",
+	},
+	"go-product": {
+		"sha256:a9ad961bac6627d3961f51c316ed76f46a60ebd2baaf4b214a4665df98c4e96b",
+		"sha256:e8c07e5eb1cf59a1290107ec481d1a74f1fe68dd77619302beccf31aa63da3d1",
+		"sha256:e45e3a027713f2bdb97dd6205057cafefab136ac411c2bd65907c6662264fa34",
+		"sha256:ed54267127f0bcc7d50e48b2a4167c14717880d64a2aa681b84525c52dd963ef",
+		"sha256:5b204effbc66e8c7905cd6f8d86c5a928c03aff3e42c5d91bc76cab41ebcf80e",
+		"sha256:98ea19bc84a0aa107a3b551626908832116b198614cfea3b36d5ee9e1459a2cf",
+		"sha256:cd330e7e8b28949e93d00959f6c2124063d2cc647759d4f2555a639f14d06127",
+		"sha256:d4d2d8179928d37612d3bb41c59583b196e365c05aa439d523c917f3eda064a8",
+		"sha256:1e67571f3607e077a719f17a836936332c802f5b01d720befdf1f1dcabec61af",
+		"sha256:95237cdd36c438cc62f3ebfff356abaf0ab43e4e3817933708b9c76e9d1f3083",
+		"sha256:c65fc3940320bc406554d8226b03af6a910644488029d88145c04bdda4e0c02f",
+		"sha256:e2cc69f571cf28400b96a9ea8a8efe5a81dc48cc7d61fadff08a46f4ca04ed66",
+		"sha256:1d6f1fe936f287b929747e8bf04123d95ee03814257d94b86139aaeff0b1989c",
+	},
+	"dev-gate": {
+		"sha256:c3bcbb76733f1d85e0efe8e420cf81eaf03aa9e669dc2784f3caf6c5807d7977",
+	},
+}
+
+// applyStepDigests gives each planned step the digest the table carries for its position.
+func applyStepDigests(plan []localJob) {
+	for i := range plan {
+		digests := localStepDigests[plan[i].name]
+		for n := range plan[i].steps {
+			if n < len(digests) {
+				plan[i].steps[n].ciDigest = digests[n]
+			}
+		}
+	}
+}

@@ -13,11 +13,15 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/gate"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/goalplan"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/interview"
@@ -56,22 +60,182 @@ func loopOpt(value *string) string {
 // loopSessionID is the trimmed --session value, "" when absent.
 func loopSessionID(args LoopCliArgs) string { return text.Trim(loopOpt(args.Session)) }
 
+// loopInitAfterAbsenceCheck is a test seam: it runs after init's outer absence check and before the
+// plan is created, so a test can hold one init there while a second init on the same slug completes
+// and then prove the held init is refused instead of replacing that plan (CRW-646 c1). Production
+// leaves it nil, so no call ever carries it.
+var loopInitAfterAbsenceCheck func()
+
+// loopInitWriteStateHook, when non-nil, replaces the binding write of init's --session branch so a
+// test can drive the commit-order case where the plan and its created ledger row are published and
+// the binding then fails (CRW-646, failure class 2). It is nil in production (an uninitialized
+// variable, no package-level work at start).
+var loopInitWriteStateHook func(string, state.State) error
+
+// loopInitWriteState is init's binding write: the hook when a test set one, state.WriteState otherwise.
+func loopInitWriteState(cwd string, next state.State) error {
+	if loopInitWriteStateHook != nil {
+		return loopInitWriteStateHook(cwd, next)
+	}
+	return state.WriteState(cwd, next)
+}
+
+// loopInitPollStep is the pause between the rounds of init's wait for another writer: the first step of
+// the goalplan lock's retry schedule (GoalplanLockRetryDelaysMs).
+const loopInitPollStep = 5 * time.Millisecond
+
+// loopInitPlanWaitLimit bounds every wait init makes for another writer, whatever the holder's state: a
+// live holder, a holder whose owner metadata is not written yet, and one whose owner cannot be read. It is
+// the total of goalplan.GoalplanLockRetryDelaysMs (5+10+20+40 ms), the budget the goalplan lock gives a
+// creator before it answers busy (CRW-982 c2). A winner that holds the lock longer than this is answered
+// busy with nothing written, and the operator retries. loopInitPlanWaitEntered runs once when the wait
+// begins, so a test can synchronize at the post-budget entry instead of guessing with a timer (CRW-646 d4);
+// all three are test seams.
+var (
+	loopInitPlanWaitPause   = func() { time.Sleep(loopInitPollStep) }
+	loopInitPlanWaitLimit   = 75 * time.Millisecond
+	loopInitPlanWaitEntered func()
+)
+
+// loopInitGoalplanProbeSeam is a test seam: it runs before the goalplan lock's holder is probed, so a test can
+// publish the plan inside the window between the plan check and the terminal answer (CRW-982 post-evaluation D2).
+// Production leaves it nil.
+var loopInitGoalplanProbeSeam func()
+
+// loopInitGoalplanHolder maps slug's goalplan lock onto the shared wait vocabulary, so the goalplan
+// wait and the session wait act on the same four answers.
+func loopInitGoalplanHolder(cwd, slug string) loopInitHolder {
+	if loopInitGoalplanProbeSeam != nil {
+		loopInitGoalplanProbeSeam()
+	}
+	switch goalplan.GoalplanLockHolderState(cwd, slug) {
+	case goalplan.GoalplanHolderLive:
+		return loopInitHolderLive
+	case goalplan.GoalplanHolderDead:
+		return loopInitHolderDead
+	case goalplan.GoalplanHolderGone:
+		return loopInitHolderGone
+	default:
+		return loopInitHolderUnknown
+	}
+}
+
+// loopInitHolder is what a wait can learn about the process that holds a lock, told apart because the
+// three answers call for different actions: a live holder is waited for, an abandoned lock is answered
+// with the shared lock's busy message, and a lock that is already gone means the holder released
+// without publishing and the waiter should try to take the lock itself.
+type loopInitHolder int
+
+const (
+	loopInitHolderGone    loopInitHolder = iota // no lock file: released (or never created)
+	loopInitHolderLive                          // the lock file names a running process
+	loopInitHolderDead                          // the lock file is there, its owner is not
+	loopInitHolderUnknown                       // the lock file is there, its owner is unreadable
+)
+
+// loopInitSessionProbeSeam is a test seam: it runs after the session owner path is named and before the probe
+// opens it, so a test can swap the lock file for a FIFO or a link inside that window (CRW-982 c3). Production
+// leaves it nil.
+var loopInitSessionProbeSeam func()
+
+// loopInitSessionHolder reads the session lock: gone when the file is absent, dead when its pid is not
+// running, live otherwise. An absent lock is the ordinary release path (state's lock removes the file
+// when its critical section ends), so it must not be read as a live holder — that mistake waits out the
+// whole budget for a plan no one will publish (CRW-646 d2). Metadata that is present but momentarily
+// unreadable or empty is the ordinary state of a holder that has just created the file, so it counts as
+// live rather than refusing a competing creator that is about to publish.
+func loopInitSessionHolder(cwd, sessionID string) loopInitHolder {
+	lockPath := state.StatePath(cwd, sessionID) + ".lock"
+	if loopInitSessionProbeSeam != nil {
+		loopInitSessionProbeSeam()
+	}
+	// The probe opens the owner with O_NOFOLLOW and O_NONBLOCK and checks the opened descriptor (CRW-982 c3), so
+	// a link or a FIFO swapped in after the path was named is refused, never followed or blocked on.
+	raw, err := goalplan.ReadLockOwnerFile(lockPath)
+	if err != nil {
+		switch {
+		case errors.Is(err, fs.ErrNotExist):
+			return loopInitHolderGone
+		case errors.Is(err, goalplan.ErrLockOwnerNotRegular), errors.Is(err, syscall.ELOOP):
+			// A FIFO, a link, a directory or a device at the lock path is no holder: nothing there can
+			// publish a plan, and waiting on it would be a hang. The caller reports the lock's own error.
+			return loopInitHolderDead
+		}
+		return loopInitHolderUnknown
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(raw)))
+	if err != nil || pid <= 0 {
+		return loopInitHolderUnknown
+	}
+	if loopInitProcessAlive(pid) {
+		return loopInitHolderLive
+	}
+	return loopInitHolderDead
+}
+
+// loopInitProcessAlive reports whether pid names a running process.
+func loopInitProcessAlive(pid int) bool {
+	err := syscall.Kill(pid, 0)
+	return err == nil || errors.Is(err, syscall.EPERM)
+}
+
+// loopInitWriteGoalplanHook, when non-nil, replaces the plan publication of init's creation step so a
+// test can drive the case where the plan is published and a step after its rename fails (CRW-646,
+// failure class 2). It is nil in production (an uninitialized variable, no package-level work at
+// start).
+var loopInitWriteGoalplanHook func(string, *goalplan.Goalplan) error
+
+// loopInitWriteGoalplan is init's plan publication: the hook when a test set one,
+// goalplan.WriteGoalplan otherwise.
+func loopInitWriteGoalplan(cwd string, plan *goalplan.Goalplan) error {
+	if loopInitWriteGoalplanHook != nil {
+		return loopInitWriteGoalplanHook(cwd, plan)
+	}
+	return goalplan.WriteGoalplan(cwd, plan)
+}
+
+// loopInitAppendLedgerHook, when non-nil, replaces the created-row append of init's creation step so a
+// test can drive the case where the plan is published and the row then fails (CRW-646, failure class 2).
+// It is nil in production (an uninitialized variable, no package-level work at start).
+var loopInitAppendLedgerHook func(string, string, goalplan.GoalplanLedgerEntry) error
+
+// loopInitAppendLedger is init's created-row append: the hook when a test set one,
+// goalplan.AppendGoalplanLedger otherwise.
+func loopInitAppendLedger(cwd, slug string, entry goalplan.GoalplanLedgerEntry) error {
+	if loopInitAppendLedgerHook != nil {
+		return loopInitAppendLedgerHook(cwd, slug, entry)
+	}
+	return goalplan.AppendGoalplanLedger(cwd, slug, entry)
+}
+
+// loopInitAppendWarnings joins a warning line onto init's answer for each durability warning its
+// writes produced, in the order they happened. No warning leaves the answer's bytes untouched.
+func loopInitAppendWarnings(result LoopCliResult, warnings []string) LoopCliResult {
+	for _, warning := range warnings {
+		if warning != "" {
+			result.Output += "\n" + warning
+		}
+	}
+	return result
+}
+
 // RunLoopCli is runGoalplanCli (:751-865) for the verbs this issue owns. A non-nil error is the oracle's
 // uncaught throw: a write that failed, or a lock status that could not be read.
 func RunLoopCli(args LoopCliArgs) (LoopCliResult, error) {
 	if args.Verb == LoopVerbHelp {
 		return LoopCliResult{Output: RenderLoopHelp(), Code: 0}, nil
 	}
+	// Checked BEFORE the verb dispatch, init included, and on the TRIMMED value the verbs themselves
+	// use: state paths sanitize the id, so a blank or non-canonical one would resolve to a DIFFERENT
+	// session's state file and this verb would print or judge a plan the caller never named
+	// (docs/port-cxc/known-defects/CRW-646.md, port: fixed). The oracle guards the ready verb alone
+	// (:802-810) and tests its raw value, so a blanks-only --session skips its guard, reaches
+	// resolveSlug, and reads the 'missing' session's plan (:821-839).
+	if args.Session != nil && !state.IsCanonicalSessionID(loopSessionID(args)) {
+		return LoopCliResult{Output: fmt.Sprintf("loop %s: session id is not canonical", args.Verb), Code: 1}, nil
+	}
 	if args.Verb == LoopVerbInit {
 		return loopInit(args)
-	}
-	// Checked BEFORE ResolveLoopSlug(): state paths sanitize the id, so a non-canonical one would resolve to
-	// a DIFFERENT session's state file and this verb would print or judge a plan the caller never named. The
-	// oracle guards the ready verb alone (:802-810), which leaves show --session a/b reading session a-b's
-	// plan (docs/port-cxc/known-defects/CRW-646.md, port: fixed); the port applies the guard to every verb
-	// that resolves a plan through --session.
-	if id := loopSessionID(args); id != "" && !state.IsCanonicalSessionID(id) {
-		return LoopCliResult{Output: fmt.Sprintf("loop %s: session id is not canonical", args.Verb), Code: 1}, nil
 	}
 	switch args.Verb {
 	case LoopVerbSteer, LoopVerbAsk, LoopVerbDecide, LoopVerbAddCriterion, LoopVerbAddWorkPhase,
@@ -106,6 +270,15 @@ func RunLoopCli(args LoopCliArgs) (LoopCliResult, error) {
 // loopInit is the init branch (:753-800): a real objective, no --surface, no plan of that slug yet, a
 // resolvable source identity when the plan is bound to a session, then the plan, its created ledger row and
 // the session's slug binding.
+//
+// Two write-order defects of the oracle's branch are fixed here (docs/port-cxc/known-defects/CRW-646.md,
+// both port: fixed). The absence check and the plan's publication are one critical section, so of two
+// concurrent inits on one slug exactly one creates the plan (c1, a data loss: the oracle checks first and
+// its replacing rename then overwrites the plan the other init just published). And when --session is
+// given, the session lock comes FIRST and is held across the plan creation, the created ledger row and
+// the binding (c2: the oracle writes the plan and the row and only then takes the lock, so a lock it
+// cannot take leaves an unbound plan that blocks the retry). The lock order is the bound D-close's:
+// session lock outside, goalplan lock inside.
 func loopInit(args LoopCliArgs) (LoopCliResult, error) {
 	objective := text.Trim(loopOpt(args.Objective))
 	if objective == "" {
@@ -117,99 +290,319 @@ func loopInit(args LoopCliArgs) (LoopCliResult, error) {
 			"--surface <logic|web|tui|desktop>\nNothing was written.", Code: 1}, nil
 	}
 	slug := interview.DeriveSlug(objective)
-	// The oracle asks only whether a plan LOADED, so a truncated or structurally invalid plan file reads as
-	// absent and WriteGoalplan's rename replaces its bytes (docs/port-cxc/known-defects/CRW-646.md,
-	// port: fixed). Refuse whenever the plan file is there, so a damaged plan stays for repair.
-	if read := goalplan.ReadGoalplanDetailed(args.Cwd, slug); read.Diagnostic == nil || loopPlanFileExists(args.Cwd, slug) {
-		if read.Diagnostic == nil {
-			return LoopCliResult{Output: fmt.Sprintf("loop init: a plan already exists at slug '%s' (use show/validate)", slug), Code: 1}, nil
+	if refusal, present := loopInitPlanRefusal(args.Cwd, slug); present {
+		return refusal, nil
+	}
+	if loopInitAfterAbsenceCheck != nil {
+		loopInitAfterAbsenceCheck()
+	}
+	sessionID := loopSessionID(args)
+	if sessionID == "" {
+		return loopInitCreate(args, slug, objective)
+	}
+	// The bound gate runs before the session lock, once: a refusal there writes nothing, and a .crw that is a
+	// link never receives the lock's directory (CRW-982 c1). CheckBound is not repeated under the lock; the
+	// state checks run under it (CRW-646 c2). The session lock is still taken ahead of the goalplan lock, the
+	// order the bound D-close uses. Nothing is removed afterwards: a pre-lock observation cannot prove this call
+	// created a directory or a file, so the refusal names only the artifacts this call did not write:
+	// the plan, the created row and the binding.
+	var answer LoopCliResult
+	running := true
+	if refusal, ok := loopInitBoundGate(args.Cwd, sessionID); !ok {
+		return refusal, nil
+	}
+	err := state.WithSessionLock(args.Cwd, sessionID, func() error {
+		result, err := loopInitBound(args, slug, objective, sessionID)
+		answer = result
+		running = false
+		return err
+	})
+	if err != nil {
+		// An error the callback returned is the callback's own: it already answers what was written (the
+		// published plan, its row, the binding), so the lock-acquisition answers below must not rewrite it
+		// as a lock failure or as "Nothing was written" (CRW-646).
+		if !running {
+			return LoopCliResult{}, err
 		}
+		// The lock's wait budget ran out (the create's EEXIST is what the lock returns when another
+		// holder keeps its file). An error the callback itself returned is not this case.
+		if errors.Is(err, fs.ErrExist) {
+			return loopInitAfterSessionLock(args, slug, objective, sessionID, err)
+		}
+		return LoopCliResult{}, err
+	}
+	return answer, nil
+}
+
+// loopInitBoundGate is the bound gate init runs before it takes the session lock, and the only place init
+// runs CheckBound. It refuses a .crw that is a symbolic link, because the state package's directory creation
+// follows a link and the lock would otherwise create a sessions directory outside the workspace. It also
+// refuses a session with no resolvable source identity (#133: a bound plan promises a closable cycle, and
+// without a source identity the cycle would strand at C with no testReceiptPath). The source identity is read
+// here, before the lock, so a change to the workspace between this check and the first write of the plan is
+// not seen by it; that window is recorded in CRW-646.md. It writes nothing.
+func loopInitBoundGate(cwd, sessionID string) (LoopCliResult, bool) {
+	if info, err := os.Lstat(filepath.Join(cwd, crwdir.DirName)); err == nil && info.Mode()&fs.ModeSymlink != 0 {
+		return LoopCliResult{Output: "loop init: " + crwdir.DirName + " is a symbolic link; refusing to create the session lock through it.\nNothing was written.", Code: 1}, false
+	}
+	if verdict := session.CheckBound(cwd, sessionID); !verdict.OK {
+		return LoopCliResult{Output: "loop init: " + verdict.Reason + "\nNothing was written.", Code: 1}, false
+	}
+	return LoopCliResult{}, true
+}
+
+// loopInitAfterSessionLock answers a session lock this init could not take. It follows the competing
+// holder's liveness, which is the only thing that tells the three cases apart (CRW-646 c1, d2):
+//
+//   - a LIVE holder may still publish the plan this init must refuse, so keep looking for it;
+//   - a lock file that is GONE is the holder's ordinary release, so this init tries to take the lock
+//     itself and run the bound creation, rather than waiting for a plan no one will publish;
+//   - a lock file whose owner is DEAD is an abandoned lock, answered with the shared lock's own busy
+//     message, that lock's documented recovery.
+//
+// The wait ends the moment the plan appears (CRW-646 c1), when the holder's process is gone, or at
+// loopInitPlanWaitLimit (CRW-982 c2), so a lock whose pid was reused by an unrelated process cannot make
+// init hang, and a live holder that outlasts the limit gets the busy answer rather than an endless wait.
+func loopInitAfterSessionLock(args LoopCliArgs, slug, objective, sessionID string, lockErr error) (LoopCliResult, error) {
+	// The wait's entry seam: this call runs only after the session lock's own acquisition budget ran out,
+	// so the seam marks exactly the post-budget moment a test synchronizes a competing publication at
+	// (CRW-646 d4).
+	if loopInitPlanWaitEntered != nil {
+		loopInitPlanWaitEntered()
+	}
+	deadline := time.Now().Add(loopInitPlanWaitLimit)
+	for {
+		if result, present := loopInitPlanRefusal(args.Cwd, slug); present {
+			return result, nil
+		}
+		switch loopInitSessionHolder(args.Cwd, sessionID) {
+		case loopInitHolderGone:
+			// The holder released without publishing a plan, so the lock is free: take it and run the
+			// bound creation, the same critical section this init would have entered had it won.
+			var answer LoopCliResult
+			ran := true
+			err := state.WithSessionLock(args.Cwd, sessionID, func() error {
+				result, err := loopInitBound(args, slug, objective, sessionID)
+				answer = result
+				ran = false
+				return err
+			})
+			if err == nil {
+				return answer, nil
+			}
+			// An error the callback returned is the callback's own (a failed binding names the published
+			// plan and its row); it must not be rewritten as a lock-acquisition answer here either
+			// (CRW-646).
+			if !ran {
+				return LoopCliResult{}, err
+			}
+			if !errors.Is(err, fs.ErrExist) {
+				return LoopCliResult{}, err
+			}
+			lockErr = err // another init took the lock in the window; keep waiting for its plan
+		case loopInitHolderDead:
+			// A plan published while the dead holder was probed is the answer (CRW-982 post-evaluation D2).
+			if result, present := loopInitPlanRefusal(args.Cwd, slug); present {
+				return result, nil
+			}
+			return LoopCliResult{}, lockErr
+		}
+		if time.Now().After(deadline) {
+			// The plan is checked once more before the terminal busy answer, so a plan published during the probe
+			// wins over it (CRW-982 post-evaluation D2).
+			if result, present := loopInitPlanRefusal(args.Cwd, slug); present {
+				return result, nil
+			}
+			return loopInitSessionBusy(args.Cwd, sessionID), nil
+		}
+		loopInitPlanWaitPause()
+	}
+}
+
+// loopInitSessionBusy is init's answer when the session lock's holder outlasts the wait limit (CRW-982 c2).
+// The lock is held by another writer and nothing was written; this is not the "a plan already exists" answer.
+func loopInitSessionBusy(cwd, sessionID string) LoopCliResult {
+	return LoopCliResult{Output: fmt.Sprintf(
+		"loop init: session %s is held by another writer that did not finish within %s; the session lock %s is held and nothing was written.",
+		sessionID, loopInitPlanWaitLimit, state.StatePath(cwd, sessionID)+".lock"), Code: 1}
+}
+
+// loopInitGoalplanBusy is init's answer when the slug's goalplan lock outlasts the wait limit (CRW-982 c2).
+// The lock is held by another writer and nothing was written; this is not the "a plan already exists" answer.
+func loopInitGoalplanBusy(cwd, slug string) LoopCliResult {
+	dir, _ := goalplan.GoalplanWriteLockDir(cwd, slug)
+	return LoopCliResult{Output: fmt.Sprintf(
+		"loop init: the goalplan lock at slug '%s' is held by another writer that did not finish within %s; the lock is held and nothing was written. Lock directory: %s",
+		slug, loopInitPlanWaitLimit, dir), Code: 1}
+}
+
+// loopInitPlanRefusal is the one "a plan of this slug must not be created" predicate: init's outer
+// check and the re-check inside the slug's goalplan write lock both take it, so the answer that
+// refused the earlier check is the answer taken at the write. The oracle asks only whether a plan
+// LOADED, so a truncated or structurally invalid plan file reads as absent and its rename replaces
+// the bytes (docs/port-cxc/known-defects/CRW-646.md, port: fixed); this predicate refuses whenever
+// the file is there, so a damaged plan stays for repair.
+func loopInitPlanRefusal(cwd, slug string) (LoopCliResult, bool) {
+	read := goalplan.ReadGoalplanDetailed(cwd, slug)
+	if read.Diagnostic == nil {
+		return LoopCliResult{Output: fmt.Sprintf("loop init: a plan already exists at slug '%s' (use show/validate)", slug), Code: 1}, true
+	}
+	if loopPlanFileExists(cwd, slug) {
 		return LoopCliResult{Output: fmt.Sprintf(
 			"loop init: a plan file for slug '%s' already exists but could not be read (%s); refusing to overwrite it\nNothing was written.",
-			slug, read.Diagnostic.Kind), Code: 1}, nil
+			slug, read.Diagnostic.Kind), Code: 1}, true
 	}
-	// #133: a BOUND plan promises a closable cycle. Refuse here when the source identity cannot be resolved,
-	// rather than letting P->A->B->C succeed and then stranding the session at C with no testReceiptPath.
-	// Guarded on --session: an init without one writes the local artifact and binds nothing.
-	sessionID := loopSessionID(args)
-	if sessionID != "" {
-		if verdict := session.CheckBound(args.Cwd, sessionID); !verdict.OK {
-			return LoopCliResult{Output: "loop init: " + verdict.Reason + "\nNothing was written.", Code: 1}, nil
-		}
-		// ReadState answers a fresh IDLE state for a file it cannot decode, so binding a slug through it would
-		// replace a damaged session state with a default and lose the original bytes
-		// (docs/port-cxc/known-defects/CRW-646.md, port: fixed). Refuse before anything is written, and again
-		// under the session lock at the binding itself.
-		next, unreadable := state.ReadStateStrict(args.Cwd, sessionID)
-		if unreadable {
-			return LoopCliResult{Output: "loop init: session " + sessionID + " has unreadable state; refusing to overwrite it\nNothing was written.", Code: 1}, nil
-		}
-		// The strict reader also rebuilds records it cannot keep whole, so the write-back below would replace
-		// them with the rebuilt ones (docs/port-cxc/known-defects/CRW-646.md, port: fixed). Every other writer
-		// of the session file refuses such a rewrite by decision; this one follows the same rule.
-		if raw, err := os.ReadFile(state.StatePath(args.Cwd, sessionID)); err == nil && !loopStateRewritable(raw, next) {
-			return LoopCliResult{Output: "loop init: session " + sessionID + " holds records a rewrite would change; refusing to overwrite it\nNothing was written.", Code: 1}, nil
-		}
+	return LoopCliResult{}, false
+}
+
+// loopInitBound is the --session branch of init, run with the session lock already held: the state gates,
+// then the plan's creation, then the slug binding. The source identity was checked once, by loopInitBoundGate,
+// before the lock. The state gates run under the lock, so nothing they refuse can leave a half-written binding,
+// and a plan it creates is always followed by the binding in the same critical section (CRW-646 c2).
+func loopInitBound(args LoopCliArgs, slug, objective, sessionID string) (LoopCliResult, error) {
+	// ReadState answers a fresh IDLE state for a file it cannot decode, so binding a slug through it would
+	// replace a damaged session state with a default and lose the original bytes
+	// (docs/port-cxc/known-defects/CRW-646.md, port: fixed). Refuse before anything is written.
+	next, unreadable := state.ReadStateStrict(args.Cwd, sessionID)
+	if unreadable {
+		return LoopCliResult{Output: "loop init: session " + sessionID + " has unreadable state; refusing to overwrite it\nNothing was written.", Code: 1}, nil
 	}
+	// The strict reader also rebuilds records it cannot keep whole, so the write-back below would replace
+	// them with the rebuilt ones (docs/port-cxc/known-defects/CRW-646.md, port: fixed). Every other writer
+	// of the session file refuses such a rewrite by decision; this one follows the same rule, through the
+	// shared judgement plus the per-writer legacy refusal.
+	if raw, err := os.ReadFile(state.StatePath(args.Cwd, sessionID)); err == nil && (!state.RewriteKeepsStored(raw, next) || state.DcloseRecoveryLegacy(next)) {
+		return LoopCliResult{Output: "loop init: session " + sessionID + " holds records a rewrite would change; refusing to overwrite it\nNothing was written.", Code: 1}, nil
+	}
+	result, err := loopInitCreate(args, slug, objective)
+	if err != nil || result.Code != 0 {
+		return result, err
+	}
+	next.Slug = slug
+	writeErr := loopInitWriteState(args.Cwd, next)
+	// The plan and its created ledger row are published before this write, so a failure here is never
+	// "nothing was written": the published plan is a completed effect and is not rolled back (the
+	// state.PublishedError rule). A write that reached the final path but could not sync its directory
+	// is a binding every reader can see, so it is a warning on the answer, as the memory grant and the
+	// D-close answer theirs (CRW-823/CRW-869); a failure before the rename is an error that names the
+	// plan left behind, because a retry is refused with "a plan already exists" and would otherwise
+	// look like the defect this issue fixes.
+	answer := loopInitAppendWarnings(result, nil)
+	if writeErr != nil {
+		if !state.Published(writeErr) {
+			return LoopCliResult{}, fmt.Errorf(
+				"loop init: the plan and its created ledger row at slug '%s' are published, but the session %s binding could not be written: %w",
+				slug, sessionID, writeErr)
+		}
+		answer.Output += "\n" + cliPublishedStateWarning(writeErr)
+	}
+	return answer, nil
+}
+
+// loopInitCreate builds slug's plan and publishes it, re-checking inside that slug's goalplan write
+// lock that no plan is there. The check and the publish are one critical section, so of two
+// concurrent inits on one slug exactly one creates the plan and the other is refused without writing
+// (CRW-646 c1); WriteGoalplan's replacing rename is therefore never reached for an existing plan.
+// The lock is the one the bound D-close takes, so an init and a close of the same slug queue on the
+// same mkdir.
+func loopInitCreate(args LoopCliArgs, slug, objective string) (LoopCliResult, error) {
 	criteria := make([]goalplan.NewGoalplanCriterion, 0, len(args.Criteria))
 	for _, scenario := range args.Criteria {
 		criteria = append(criteria, goalplan.NewGoalplanCriterion{Scenario: scenario})
 	}
 	plan := goalplan.BuildGoalplan(goalplan.NewGoalplanInput{Objective: objective, Criteria: criteria, SchemaVersion: args.SchemaVersion})
-	if err := goalplan.WriteGoalplan(args.Cwd, plan); err != nil {
-		return LoopCliResult{}, err
-	}
-	if err := goalplan.AppendGoalplanLedger(args.Cwd, slug, goalplan.GoalplanLedgerEntry{
-		Ts: loopNowISO(), Slug: slug, Event: goalplan.EventCreated,
-		Detail: "init objective=\"" + objective + "\" criteria=" + fmt.Sprint(len(args.Criteria)),
-	}); err != nil {
-		return LoopCliResult{}, err
-	}
-	if sessionID != "" {
-		if err := state.WithSessionLock(args.Cwd, sessionID, func() error {
-			next, unreadable := state.ReadStateStrict(args.Cwd, sessionID)
-			if unreadable {
-				return errors.New("session state is unreadable; refusing to overwrite it")
+	// The creation lock's own budget is short (5+10+20+40 ms), and a competing init holds it across a
+	// staged-file write, its fsync and the directory fsync, so the loser's budget can run out while the
+	// winner is still publishing. The loser re-checks the plan and re-attempts the acquisition each round
+	// within loopInitPlanWaitLimit (CRW-982 c2). A round that takes the lock runs the same check-and-publish
+	// body, so a holder that released without publishing is followed. The wait ends when the plan appears
+	// ("a plan already exists", CRW-646 c1), when the holder's process is gone (the shared lock's busy
+	// message), or when the limit passes, whatever the holder's state: a live holder, a holder whose
+	// owner.json is not written yet, and one whose owner cannot be read all get the same bound. The limit
+	// answer says the lock is held and nothing was written, so it is never read as an existing plan.
+	entered := false
+	deadline := time.Now().Add(loopInitPlanWaitLimit)
+	for {
+		var refusal *LoopCliResult
+		warnings := []string{}
+		locked, err := goalplan.WithGoalplanCreationLock(args.Cwd, slug, func() error {
+			if result, present := loopInitPlanRefusal(args.Cwd, slug); present {
+				refusal = &result
+				return nil
 			}
-			if raw, err := os.ReadFile(state.StatePath(args.Cwd, sessionID)); err == nil && !loopStateRewritable(raw, next) {
-				return errors.New("session state holds records a rewrite would change; refusing to overwrite it")
+			// A plan write that published at the final path and then failed the directory sync is a
+			// written plan: the bytes and the criteria are there for every reader, so the created row
+			// and the binding still run and the durability failure is carried as a warning, exactly as
+			// steering and review-round open do (CRW-793/CRW-823). A failure before the rename
+			// published nothing and stays an error.
+			if err := loopInitWriteGoalplan(args.Cwd, plan); err != nil {
+				if !state.Published(err) {
+					return err
+				}
+				warnings = append(warnings, cliPublishedGoalplanWarning(slug, err))
 			}
-			next.Slug = slug
-			return state.WriteState(args.Cwd, next)
-		}); err != nil {
+			if err := loopInitAppendLedger(args.Cwd, slug, goalplan.GoalplanLedgerEntry{
+				Ts: loopNowISO(), Slug: slug, Event: goalplan.EventCreated,
+				Detail: "init objective=\"" + objective + "\" criteria=" + fmt.Sprint(len(args.Criteria)),
+			}); err != nil {
+				// The plan is published before this row, so a failure here is not "nothing was
+				// written": the retry answers "a plan already exists", which would otherwise look like
+				// the defect this issue fixes. Name the published plan, as the binding failure does.
+				return fmt.Errorf("loop init: the plan at slug '%s' is published, but its created ledger row could not be appended: %w", slug, err)
+			}
+			return nil
+		}, nil)
+		if err != nil {
 			return LoopCliResult{}, err
 		}
+		if locked.Kind != "locked" {
+			if refusal != nil {
+				return *refusal, nil
+			}
+			return loopInitAppendWarnings(LoopCliResult{Output: RenderLoopPlan(goalplan.ReadGoalplan(args.Cwd, slug), nil), Code: 0}, warnings), nil
+		}
+		if !entered {
+			entered = true
+			if loopInitPlanWaitEntered != nil {
+				loopInitPlanWaitEntered()
+			}
+		}
+		if result, present := loopInitPlanRefusal(args.Cwd, slug); present {
+			return result, nil
+		}
+		holder := loopInitGoalplanHolder(args.Cwd, slug)
+		if holder == loopInitHolderDead {
+			if result, present := loopInitPlanRefusal(args.Cwd, slug); present {
+				return result, nil
+			}
+			return LoopCliResult{Output: "loop init: " + locked.Reason, Code: 1}, nil
+		}
+		if time.Now().After(deadline) {
+			if result, present := loopInitPlanRefusal(args.Cwd, slug); present {
+				return result, nil
+			}
+			return loopInitGoalplanBusy(args.Cwd, slug), nil
+		}
+		if holder == loopInitHolderGone {
+			continue // the lock was released without publishing: re-attempt the acquisition now
+		}
+		loopInitPlanWaitPause()
 	}
-	return LoopCliResult{Output: RenderLoopPlan(goalplan.ReadGoalplan(args.Cwd, slug), nil), Code: 0}, nil
 }
 
-// loopStateRewritable says whether writing next back over raw would keep every record the file stores. The reader
-// normalises what it handles, so a write-back that only means to bind a slug can still drop or change records:
-// ReconstructUnverified stops at MaxUnverifiedSubagents, cuts a receiptClaimed to MaxReceiptClaimLen and replaces a
-// field of the wrong type (state.RewriteKeepsUnverified); ReconstructInterview caps contradictions, assumptions, each
-// dimension's known/unknown lists and each ontology entry's fields and relationships at interview.MaxTrackerArray, and
-// drops an unnamed entity and a relationship with no target (state.RewriteKeepsInterview); and a legacy D-close marker
-// loses its distinction. All three live in the state package, so nothing here is copied from the hook package.
-func loopStateRewritable(raw []byte, next state.State) bool {
-	if next.DcloseRecovery != nil && next.DcloseRecovery.Legacy {
-		return false
-	}
-	if !state.RewriteKeepsUnverified(raw, next.UnverifiedSubagents) {
-		return false
-	}
-	return state.RewriteKeepsInterview(raw, next.Interview)
-}
-
-// loopPlanFileExists reports whether slug's plan file is there as a regular file. A path the slug resolver
-// refuses - a linked state root, say - is not an existing plan file: the write path reports that refusal
-// itself, exactly as the oracle's writeGoalplan does.
+// loopPlanFileExists reports whether anything occupies slug's plan path. A regular file is the plan; a
+// symbolic link or another non-directory entry is something a replacing rename would destroy, so it
+// counts as present too (the read path refuses a link through O_NOFOLLOW, so without this the predicate
+// would read "absent" and the publication would replace the link). A path the slug resolver refuses - a
+// linked state root, say - is not an existing plan file: the write path reports that refusal itself,
+// exactly as the oracle's writeGoalplan does.
 func loopPlanFileExists(cwd, slug string) bool {
 	dir, err := goalplan.GoalplanDir(cwd, slug)
 	if err != nil {
 		return false
 	}
 	info, err := os.Lstat(filepath.Join(dir, goalplan.GoalplanFile))
-	return err == nil && info.Mode().IsRegular()
+	return err == nil && !info.IsDir()
 }
 
 // loopReadyPhaseRow, loopReadyTaskRow, loopReadyOpenDecisionRow and loopReadyAwaitingRow are runReady's JSON

@@ -19,6 +19,7 @@ var Checks = map[string]Check{
 	"contracts":        Contracts,
 	"dispatch-cases":   DispatchCases,
 	"gui-drift":        GuiDrift,
+	"local":            Local,
 	"operations":       OperationsContract,
 	"plugin":           Plugin,
 	"refactor-backlog": RefactorBacklog,

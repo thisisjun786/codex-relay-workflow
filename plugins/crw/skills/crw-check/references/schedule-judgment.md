@@ -354,7 +354,7 @@ current one worth discussing.
    observed 2026-09-21. On plan, nothing due yet, stating that the claim covers only
    up to the observation. Not on track to finish 2026-10-31.
 
-7. **Merged but not installed.** I-10's criteria require installation; the PR merged
+7. **Merged but not installed.** I-10's criteria require installation; the delivery landed
    2026-09-18T10:00; current target 2026-09-25; no installation evidence; observed
    2026-09-21. Not achieved; at risk, cause the required level unreached while the
    source is merged, wait class internal coordination wait, and the report keeps

@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"strings"
+	"syscall"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 )
@@ -98,23 +100,22 @@ func init() { Register(supervisorCommand) }
 // supervisorRun is crw manage supervisor.
 func supervisorRun(ctx context.Context, e *Env, args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(e.Stderr, supervisorUsage)
-		fmt.Fprintln(e.Stderr, "crw manage supervisor: error: the following arguments are required: command")
+		supervisorNote(e, supervisorUsage+"\n")
+		supervisorNote(e, "crw manage supervisor: error: the following arguments are required: command\n")
 		return usageExit
 	}
 	switch args[0] {
 	case "-h", "--help", "help":
-		fmt.Fprintln(e.Stdout, supervisorUsage)
-		fmt.Fprintln(e.Stdout, "  register\tbind the management thread as the store supervisor and record its pair")
-		fmt.Fprintln(e.Stdout, "  show\t\tprint the recorded binding and the recorded settings")
-		return 0
+		return supervisorUsageWrite(e, supervisorUsage,
+			"  register\tbind the management thread as the store supervisor and record its pair",
+			"  show\t\tprint the recorded binding and the recorded settings")
 	case "register":
 		return supervisorRegister(ctx, e, args[1:])
 	case "show":
 		return supervisorShow(ctx, e, args[1:])
 	}
-	fmt.Fprintln(e.Stderr, supervisorUsage)
-	fmt.Fprintf(e.Stderr, "crw manage supervisor: error: invalid command %q (choose from 'register', 'show')\n", args[0])
+	supervisorNote(e, supervisorUsage+"\n")
+	supervisorNote(e, fmt.Sprintf("crw manage supervisor: error: invalid command %q (choose from 'register', 'show')\n", args[0]))
 	return usageExit
 }
 
@@ -123,7 +124,7 @@ func supervisorRun(ctx context.Context, e *Env, args []string) int {
 func supervisorSectionOf(e *Env, cfg *Config) (supervisorSection, int) {
 	var section supervisorSection
 	if err := cfg.Section("supervisor", &section); err != nil {
-		fmt.Fprintf(e.Stderr, "crw manage supervisor: error: the supervisor section is not readable: %v\n", err)
+		supervisorNote(e, fmt.Sprintf("crw manage supervisor: error: the supervisor section is not readable: %v\n", err))
 		return section, usageExit
 	}
 	return section, 0
@@ -135,7 +136,7 @@ func supervisorConfigured(e *Env, section supervisorSection) bool {
 	if section.TaskID != "" && section.HostID != "" {
 		return true
 	}
-	fmt.Fprintf(e.Stderr, "crw manage supervisor: error: %s\n", supervisorUnconfigured)
+	supervisorNote(e, fmt.Sprintf("crw manage supervisor: error: %s\n", supervisorUnconfigured))
 	return false
 }
 
@@ -159,29 +160,29 @@ func supervisorHostValueOptionNamed(arg string) (string, bool) {
 	return "", false
 }
 
-// supervisorRegisterArgs reads register's own arguments: no option at all is the accepted command
-// line, -h and --help report the usage and stop the run there, and an option that names a host value
-// is refused with the note that says where host values come from. The refusal happens here, before
-// any relay call, so a run that passes one neither binds nor records anything. help is reported
+// supervisorRegisterArgs reads register's own arguments, and the order is the contract: an option
+// that names a host value is refused first, with the note that says where host values come from,
+// even when -h or --help is present; then a help request prints the usage and stops the run there;
+// then anything left is an unexpected argument. Every refusal happens here, before any relay call,
+// so a run that passes a removed option neither binds nor records anything. help is reported
 // separately from the status, because a run that asked for the usage must not fall through to the
 // bind: the caller returns before the configuration is even read.
 func supervisorRegisterArgs(e *Env, args []string) (help bool, code int) {
 	for _, arg := range args {
-		if arg == "-h" || arg == "--help" {
-			fmt.Fprintln(e.Stdout, supervisorRegisterUsage)
-			return true, 0
-		}
-	}
-	for _, arg := range args {
 		if _, removed := supervisorHostValueOptionNamed(arg); removed {
-			fmt.Fprintln(e.Stderr, supervisorRegisterUsage)
-			fmt.Fprintf(e.Stderr, "crw manage supervisor: error: %s\n", supervisorHostValuesNote)
+			supervisorNote(e, supervisorRegisterUsage+"\n")
+			supervisorNote(e, fmt.Sprintf("crw manage supervisor: error: %s\n", supervisorHostValuesNote))
 			return false, usageExit
 		}
 	}
+	for _, arg := range args {
+		if arg == "-h" || arg == "--help" {
+			return true, supervisorUsageWrite(e, supervisorRegisterUsage)
+		}
+	}
 	if len(args) > 0 {
-		fmt.Fprintln(e.Stderr, supervisorRegisterUsage)
-		fmt.Fprintf(e.Stderr, "crw manage supervisor: error: unexpected argument %q\n", args[0])
+		supervisorNote(e, supervisorRegisterUsage+"\n")
+		supervisorNote(e, fmt.Sprintf("crw manage supervisor: error: unexpected argument %q\n", args[0]))
 		return false, usageExit
 	}
 	return false, 0
@@ -203,8 +204,8 @@ func supervisorRegister(ctx context.Context, e *Env, args []string) int {
 		return usageExit
 	}
 	if section.SettingsFile == "" {
-		fmt.Fprintln(e.Stderr, supervisorRegisterUsage)
-		fmt.Fprintln(e.Stderr, "crw manage supervisor: error: the supervisor section names no settings_file, so the pair record has nothing to cite")
+		supervisorNote(e, supervisorRegisterUsage+"\n")
+		supervisorNote(e, "crw manage supervisor: error: the supervisor section names no settings_file, so the pair record has nothing to cite\n")
 		return usageExit
 	}
 	bind := []string{"linkage-bind", "--role", "supervisor", "--scope-kind", "store", "--scope", "store",
@@ -228,7 +229,7 @@ func supervisorRegister(ctx context.Context, e *Env, args []string) int {
 	if code != 0 {
 		// The bind stands and the pair does not. Re-running register converges: the seat keeps one
 		// live owner, so the bind is a no-op and only the pair is written.
-		fmt.Fprintf(e.Stderr, "crw manage supervisor: the store binding was recorded and the pair was not; re-running register completes the pair\n")
+		supervisorNote(e, "crw manage supervisor: the store binding was recorded and the pair was not; re-running register completes the pair\n")
 		return supervisorRelayStatus(e, recorded, code)
 	}
 	boundValue, ok := supervisorAnswer(bound)
@@ -264,8 +265,8 @@ func supervisorWarnStaleCwd(e *Env, binding json.RawMessage, wanted string) {
 		return
 	}
 	if record.Cwd != "" && record.Cwd != wanted {
-		fmt.Fprintf(e.Stderr, "crw manage supervisor: the live binding kept cwd %q and this run asked for %q; the seat keeps one owner and does not move its endpoint, so the binding still names %q\n",
-			record.Cwd, wanted, record.Cwd)
+		supervisorNote(e, fmt.Sprintf("crw manage supervisor: the live binding kept cwd %q and this run asked for %q; the seat keeps one owner and does not move its endpoint, so the binding still names %q\n",
+			record.Cwd, wanted, record.Cwd))
 	}
 }
 
@@ -275,8 +276,8 @@ func supervisorWarnStaleCwd(e *Env, binding json.RawMessage, wanted string) {
 // (exit 3).
 func supervisorShow(ctx context.Context, e *Env, args []string) int {
 	if len(args) > 0 {
-		fmt.Fprintln(e.Stderr, supervisorShowUsage)
-		fmt.Fprintf(e.Stderr, "crw manage supervisor: error: unexpected argument %q\n", args[0])
+		supervisorNote(e, supervisorShowUsage+"\n")
+		supervisorNote(e, fmt.Sprintf("crw manage supervisor: error: unexpected argument %q\n", args[0]))
 		return usageExit
 	}
 	cfg := supervisorConfig(e)
@@ -481,7 +482,7 @@ func supervisorRelayStatus(e *Env, stdout []byte, code int) int {
 // supervisorUnreadableAnswer reports a relay command that exited 0 with an answer this command
 // cannot read, as a host failure, keeping the bytes for the caller.
 func supervisorUnreadableAnswer(e *Env, command string, stdout []byte) int {
-	fmt.Fprintf(e.Stderr, "crw manage supervisor: the %s answer is not one JSON value\n", command)
+	supervisorNote(e, fmt.Sprintf("crw manage supervisor: the %s answer is not one JSON value\n", command))
 	return supervisorPassThrough(e, stdout, supervisorExitHost)
 }
 
@@ -493,7 +494,7 @@ func supervisorPassThrough(e *Env, stdout []byte, code int) int {
 	if len(stdout) == 0 {
 		return code
 	}
-	if _, err := e.Stdout.Write(stdout); err != nil {
+	if err := supervisorOutputWrite(e.Stdout, stdout); err != nil {
 		return supervisorWriteFailure(e, err)
 	}
 	return code
@@ -513,6 +514,20 @@ func supervisorRefuse(e *Env, reason string, linkage []byte) int {
 	return supervisorExitRefused
 }
 
+// supervisorUsageWrite writes the usage lines a help request prints and reports a write that failed,
+// so a help request whose usage never reached the caller ends with exit 1 rather than reading as a
+// success. The message names the usage rather than the report: the JSON report this command writes
+// is a different output and keeps its own failure message (supervisorWriteFailure).
+func supervisorUsageWrite(e *Env, lines ...string) int {
+	for _, line := range lines {
+		if err := supervisorOutputWrite(e.Stdout, []byte(line+"\n")); err != nil {
+			supervisorNote(e, fmt.Sprintf("crw manage supervisor: error: write the usage: %v\n", err))
+			return 1
+		}
+	}
+	return 0
+}
+
 // supervisorWrite writes one JSON value and a newline, and reports a write that failed so a command
 // whose report never left can end with a failure rather than a silent success.
 func supervisorWrite(w io.Writer, value any) error {
@@ -521,19 +536,61 @@ func supervisorWrite(w io.Writer, value any) error {
 		// The value could not be encoded, so what is written is the encode failure itself: the
 		// caller must still learn that its report was not the one it meant to send, so the error is
 		// returned whether or not that fallback line reached the writer.
-		if _, werr := fmt.Fprintf(w, "{\"ok\":false,\"reason\":\"encode_failed\",\"detail\":%q}\n", err.Error()); werr != nil {
+		if werr := supervisorOutputWrite(w, []byte(fmt.Sprintf("{\"ok\":false,\"reason\":\"encode_failed\",\"detail\":%q}\n", err.Error()))); werr != nil {
 			return werr
 		}
 		return err
 	}
-	_, err = fmt.Fprintf(w, "%s\n", data)
+	return supervisorOutputWrite(w, append(data, '\n'))
+}
+
+// supervisorOutputWrite is the one place this command's stdout output is written, so a caller can
+// tell a report that left from one that did not. os.File.Write on fd 1 or 2 turns an EPIPE into a
+// fatal runtime SIGPIPE (os/file_unix.go epipecheck), so a run whose stdout is a pipe nobody reads
+// would die on a signal before any error branch could report it; a direct syscall keeps EPIPE an
+// ordinary error, the way internal/relay/job/envelope.go writeHookOutput does for the hook output.
+// Any other writer, and any file on another descriptor, is written with io.Writer as before. The
+// process's signal policy is left alone either way.
+func supervisorOutputWrite(w io.Writer, body []byte) error {
+	if file, ok := w.(*os.File); ok && file.Fd() <= 2 {
+		fd := int(file.Fd())
+		for len(body) > 0 {
+			n, err := syscall.Write(fd, body)
+			if n > 0 {
+				body = body[n:]
+			}
+			if err == syscall.EINTR {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			if n == 0 {
+				// A write of nothing that reported no error would spin here, so it is reported as
+				// the failure it is rather than retried forever.
+				return io.ErrShortWrite
+			}
+		}
+		return nil
+	}
+	_, err := w.Write(body)
 	return err
+}
+
+// supervisorNote writes one diagnostic to stderr. A diagnostic is best-effort: it must never take
+// the run's exit status with it, so a stderr that cannot be written to is not reported again and
+// the caller still returns the status it decided on. It goes through supervisorOutputWrite for the
+// same reason the report does, and this matters when a shell merges the streams ("cmd 2>&1 | ..."):
+// os.File.Write on fd 2 would raise SIGPIPE and end the process before the caller could return the
+// exit 1 the failure path promises.
+func supervisorNote(e *Env, text string) {
+	_ = supervisorOutputWrite(e.Stderr, []byte(text))
 }
 
 // supervisorWriteFailure reports a report that could not be written, as a failure of the run: the
 // caller sees the write failure on stderr and the run ends with exit 1.
 func supervisorWriteFailure(e *Env, err error) int {
-	fmt.Fprintf(e.Stderr, "crw manage supervisor: error: write output: %v\n", err)
+	supervisorNote(e, fmt.Sprintf("crw manage supervisor: error: write output: %v\n", err))
 	return 1
 }
 
@@ -541,6 +598,6 @@ func supervisorWriteFailure(e *Env, err error) int {
 // failure (exit 3). A command that ran and was refused is not this: its own status is passed
 // through instead.
 func supervisorRelayFailure(e *Env, err error) int {
-	fmt.Fprintf(e.Stderr, "crw manage supervisor: error: %v\n", err)
+	supervisorNote(e, fmt.Sprintf("crw manage supervisor: error: %v\n", err))
 	return supervisorExitHost
 }

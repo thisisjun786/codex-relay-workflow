@@ -38,12 +38,21 @@ func siblingStoreDirs(root, skip string) []string {
 		if info, err := os.Stat(path); err != nil || !info.IsDir() || entry.Name() == skip {
 			continue
 		}
-		if exists(filepath.Join(path, "relay.sqlite3")) {
+		if regularFileAt(filepath.Join(path, "relay.sqlite3")) {
 			found = append(found, path)
 		}
 	}
 	sort.Strings(found)
 	return found
+}
+
+// regularFileAt reports whether path names an existing regular file. Sibling discovery requires
+// it of relay.sqlite3 (CRW-880): a directory whose database is a FIFO or a device is no store,
+// and the registry refuses such a path anyway - but only after discovery has offered it, and
+// offering it costs a refusal per candidate.
+func regularFileAt(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.Mode().IsRegular()
 }
 
 // StoresWithoutProvenance is stores_without_provenance: store directories that never recorded

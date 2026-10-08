@@ -78,6 +78,15 @@ var zoneInventory = map[string][]string{
 	// CRW-736 (appended statement): the user-decision record, one column per field of crw-user-decision/1
 	// with the object and array fields as JSON text.
 	"dag_user_decisions": {"decision_id", "fingerprint", "kind", "context", "options_json", "recommendation_json", "blocking_json", "needed_by", "origin_json", "source_json", "authority_json", "state", "raised_at", "raised_via", "seen_json", "answered_at", "answered_by", "answered_via", "answer_text", "applied_at", "applied_event", "applied_generation", "withdrawn_reason", "expired_reason"},
+	// CRW-904 (appended statement): the idle-edge wake of a delivery that waits out a busy backoff.
+	"delivery_wakes": {"event_id", "woken_at", "original_deadline", "spent_at"},
+	// CRW-965 (appended statements): the verification record an acceptance was taken on, and one row per integration batch.
+	"dag_acceptance_verifications": {"acceptance_id", "record_digest", "record_json", "head_commit", "tree_sha", "base_commit", "recorded_by", "coordinator_epoch", "recorded_at"},
+	"dag_integration_batches":      {"batch_id", "plan_id", "repository", "integration_ref", "base_ref", "old_head", "new_head", "merged_json", "split_json", "verification_json", "recorded_by", "coordinator_epoch", "recorded_at"},
+	"dag_integration_stages":       {"stage_id", "batch_id", "plan_id", "stage", "node_id", "acceptance_id", "event_id", "revision_hash", "generation", "head_sha", "detail", "recorded_by", "recorded_at"},
+	// CRW-952 (appended statements): the pre-merge record of an acceptance, and of a revalidation.
+	"dag_acceptance_premerge":   {"acceptance_id", "record_digest", "record_json", "evaluated_head", "accepted_head", "recorded_by", "coordinator_epoch", "recorded_at"},
+	"dag_revalidation_premerge": {"revalidation_id", "acceptance_id", "record_digest", "record_json", "evaluated_head", "accepted_head", "recorded_by", "coordinator_epoch", "recorded_at"},
 }
 
 // rawDB opens path without any of the store's open rules, as an operator's sqlite3 would.

@@ -110,7 +110,7 @@ func (f *forkJoin) report(plan, node string, res ReleaseResult, number int64) {
 
 func (f *forkJoin) accept(plan, node string, number int64) AcceptResult {
 	f.t.Helper()
-	res, err := f.sched.Accept(context.Background(), plan, node, "parent", AcceptInput{PullRequest: &PRRef{Repository: "owner/repo", Number: number}, RuleVersion: verifier})
+	res, err := f.sched.Accept(context.Background(), plan, node, "parent", premergeWithRecord(f.sched, context.Background(), plan, node, "parent", AcceptInput{PullRequest: &PRRef{Repository: "owner/repo", Number: number}, RuleVersion: verifier}))
 	if err != nil {
 		f.t.Fatalf("accept %s: %v", node, err)
 	}

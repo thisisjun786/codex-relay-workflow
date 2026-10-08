@@ -64,8 +64,14 @@ func runHook(t *testing.T, s Scenario) (map[string]any, error) {
 	config := map[string]any{"configVersion": 1, "event": "Stop", "relayExecutable": home + "/codex-session-relay", "markerRoot": home + "/marker", "dbPath": nil, "mode": "observe", "timeoutSeconds": float64(5), "journalRoot": home + "/journal", "journalPolicy": "every_invocation", "installedBy": "CRW-37", "isolationAssertedBy": nil}
 	if hasRelay {
 		script := fmt.Sprintf("#!/bin/sh\nprintf '%%s' %s\nexit %d\n", shellSingleQuote(fmt.Sprint(relay["stdout"])), int(number(relay["exit"])))
-		if err = os.WriteFile(home+"/codex-session-relay", []byte(script), 0o700); err != nil {
-			return nil, err
+		// The stand-in goes on the hook's configured relay path and is run, so its descriptor is open
+		// only under syscall.ForkLock: a fork in that window would inherit it and leave the stand-in
+		// unexecutable (ETXTBSY, golang/go#22315).
+		syscall.ForkLock.RLock()
+		writeErr := os.WriteFile(home+"/codex-session-relay", []byte(script), 0o700)
+		syscall.ForkLock.RUnlock()
+		if writeErr != nil {
+			return nil, writeErr
 		}
 	}
 	if overrides, ok := s.Given["settings_overrides"].(map[string]any); ok {

@@ -348,3 +348,20 @@ func TestPinnedLookupAndObservedReplacement(t *testing.T) {
 		t.Fatal("outside changed")
 	}
 }
+
+// TestGoalplanLockOwnerTextIsCapped is CRW-982 post-evaluation D1 (P1): the owner text a refused lock acquisition
+// reports is read through the owner probe's fixed cap, so a huge owner.json is not read whole into memory.
+func TestGoalplanLockOwnerTextIsCapped(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, GoalplanLockOwnerFile), []byte(strings.Repeat("a", 8<<20)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	held, err := os.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer held.Close()
+	if got := readGoalplanLockOwnerText(held, dir); len(got) > goalplanLockOwnerTextCap {
+		t.Fatalf("the owner text is %d bytes; the read must stop at the cap", len(got))
+	}
+}

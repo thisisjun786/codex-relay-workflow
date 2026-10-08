@@ -1022,3 +1022,179 @@ func VerifiedHead(ctx context.Context, s *Store, eventID string) (VerifiedHeadRo
 	}
 	return row, true, nil
 }
+
+// AcceptanceVerificationRow is one dag_acceptance_verifications row, every column in DDL order
+// (CRW-965): the verification record a pull-request-less acceptance was taken on.
+type AcceptanceVerificationRow struct {
+	AcceptanceID     string
+	RecordDigest     string
+	RecordJSON       string
+	HeadCommit       string
+	TreeSHA          string
+	BaseCommit       string
+	RecordedBy       string
+	CoordinatorEpoch int64
+	RecordedAt       string
+}
+
+const acceptanceVerificationColumns = "acceptance_id, record_digest, record_json, head_commit, tree_sha, base_commit, recorded_by, coordinator_epoch, recorded_at"
+
+func scanAcceptanceVerification(row scanner) (AcceptanceVerificationRow, error) {
+	var r AcceptanceVerificationRow
+	err := row.Scan(&r.AcceptanceID, &r.RecordDigest, &r.RecordJSON, &r.HeadCommit, &r.TreeSHA, &r.BaseCommit, &r.RecordedBy, &r.CoordinatorEpoch, &r.RecordedAt)
+	return r, err
+}
+
+// RecordAcceptanceVerification appends the verification record of a pull-request-less acceptance. One
+// acceptance holds one row: a second insert is the table's PRIMARY KEY refusal, which the caller reads
+// as the replay it is.
+func RecordAcceptanceVerification(ctx context.Context, s *Store, r AcceptanceVerificationRow) error {
+	_, err := s.exec(ctx, "INSERT INTO dag_acceptance_verifications ("+acceptanceVerificationColumns+") VALUES (?,?,?,?,?,?,?,?,?)",
+		r.AcceptanceID, r.RecordDigest, r.RecordJSON, r.HeadCommit, r.TreeSHA, r.BaseCommit, r.RecordedBy, r.CoordinatorEpoch, r.RecordedAt)
+	return err
+}
+
+// AcceptancePremergeRow is the pre-merge record an acceptance was taken on (CRW-952): the record text as it was
+// read, its digest, the head the evaluation names, the head the acceptance stands on, and who recorded it.
+type AcceptancePremergeRow struct {
+	AcceptanceID     string
+	RecordDigest     string
+	RecordJSON       string
+	EvaluatedHead    string
+	AcceptedHead     string
+	RecordedBy       string
+	CoordinatorEpoch int64
+	RecordedAt       string
+}
+
+const acceptancePremergeColumns = "acceptance_id, record_digest, record_json, evaluated_head, accepted_head, recorded_by, coordinator_epoch, recorded_at"
+
+func scanAcceptancePremerge(row scanner) (AcceptancePremergeRow, error) {
+	var r AcceptancePremergeRow
+	err := row.Scan(&r.AcceptanceID, &r.RecordDigest, &r.RecordJSON, &r.EvaluatedHead, &r.AcceptedHead, &r.RecordedBy, &r.CoordinatorEpoch, &r.RecordedAt)
+	return r, err
+}
+
+// RecordAcceptancePremerge appends the pre-merge record of an acceptance. One acceptance holds one row: a
+// second insert is the table's PRIMARY KEY refusal.
+func RecordAcceptancePremerge(ctx context.Context, s *Store, r AcceptancePremergeRow) error {
+	_, err := s.exec(ctx, "INSERT INTO dag_acceptance_premerge ("+acceptancePremergeColumns+") VALUES (?,?,?,?,?,?,?,?)",
+		r.AcceptanceID, r.RecordDigest, r.RecordJSON, r.EvaluatedHead, r.AcceptedHead, r.RecordedBy, r.CoordinatorEpoch, r.RecordedAt)
+	return err
+}
+
+// AcceptancePremerge reads the pre-merge record stored with an acceptance. found is false when the acceptance has
+// none, or when the store predates the table: neither is an error.
+func AcceptancePremerge(ctx context.Context, s *Store, acceptanceID string) (AcceptancePremergeRow, bool, error) {
+	present, err := dagZoneTable(ctx, s, "dag_acceptance_premerge")
+	if err != nil || !present {
+		return AcceptancePremergeRow{}, false, err
+	}
+	row, err := queryRow(ctx, s, scanAcceptancePremerge, "SELECT "+acceptancePremergeColumns+" FROM dag_acceptance_premerge WHERE acceptance_id = ?", acceptanceID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return AcceptancePremergeRow{}, false, nil
+	}
+	if err != nil {
+		return AcceptancePremergeRow{}, false, err
+	}
+	return row, true, nil
+}
+
+// RecordRevalidationPremerge appends the pre-merge record a re-validation was judged on (CRW-952): one row per revalidation.
+func RecordRevalidationPremerge(ctx context.Context, s *Store, revalidationID string, r AcceptancePremergeRow) error {
+	_, err := s.exec(ctx, "INSERT INTO dag_revalidation_premerge (revalidation_id, acceptance_id, record_digest, record_json, evaluated_head, accepted_head, recorded_by, coordinator_epoch, recorded_at) VALUES (?,?,?,?,?,?,?,?,?)",
+		revalidationID, r.AcceptanceID, r.RecordDigest, r.RecordJSON, r.EvaluatedHead, r.AcceptedHead, r.RecordedBy, r.CoordinatorEpoch, r.RecordedAt)
+	return err
+}
+
+// AcceptanceVerification reads the verification record an acceptance was taken on. found is false when
+// the acceptance has none, or when the store predates the table: neither is an error.
+func AcceptanceVerification(ctx context.Context, s *Store, acceptanceID string) (AcceptanceVerificationRow, bool, error) {
+	present, err := dagZoneTable(ctx, s, "dag_acceptance_verifications")
+	if err != nil || !present {
+		return AcceptanceVerificationRow{}, false, err
+	}
+	row, err := queryRow(ctx, s, scanAcceptanceVerification, "SELECT "+acceptanceVerificationColumns+" FROM dag_acceptance_verifications WHERE acceptance_id = ?", acceptanceID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return AcceptanceVerificationRow{}, false, nil
+	}
+	if err != nil {
+		return AcceptanceVerificationRow{}, false, err
+	}
+	return row, true, nil
+}
+
+// IntegrationBatchRow is one dag_integration_batches row, every column in DDL order (CRW-965): one
+// integration batch that moved the local integration branch.
+type IntegrationBatchRow struct {
+	BatchID          string
+	PlanID           string
+	Repository       string
+	IntegrationRef   string
+	BaseRef          string
+	OldHead          string
+	NewHead          string
+	MergedJSON       string
+	SplitJSON        string
+	VerificationJSON string
+	RecordedBy       string
+	CoordinatorEpoch int64
+	RecordedAt       string
+}
+
+const integrationBatchColumns = "batch_id, plan_id, repository, integration_ref, base_ref, old_head, new_head, merged_json, split_json, verification_json, recorded_by, coordinator_epoch, recorded_at"
+
+func scanIntegrationBatch(row scanner) (IntegrationBatchRow, error) {
+	var r IntegrationBatchRow
+	err := row.Scan(&r.BatchID, &r.PlanID, &r.Repository, &r.IntegrationRef, &r.BaseRef, &r.OldHead, &r.NewHead, &r.MergedJSON, &r.SplitJSON,
+		&r.VerificationJSON, &r.RecordedBy, &r.CoordinatorEpoch, &r.RecordedAt)
+	return r, err
+}
+
+// RecordIntegrationBatch appends one integration batch row.
+func RecordIntegrationBatch(ctx context.Context, s *Store, r IntegrationBatchRow) error {
+	_, err := s.exec(ctx, "INSERT INTO dag_integration_batches ("+integrationBatchColumns+") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+		r.BatchID, r.PlanID, r.Repository, r.IntegrationRef, r.BaseRef, r.OldHead, r.NewHead, r.MergedJSON, r.SplitJSON, r.VerificationJSON,
+		r.RecordedBy, r.CoordinatorEpoch, r.RecordedAt)
+	return err
+}
+
+// IntegrationBatch reads the batch recorded under an id. found is false when the store holds none, or
+// when it predates the table.
+func IntegrationBatch(ctx context.Context, s *Store, batchID string) (IntegrationBatchRow, bool, error) {
+	present, err := dagZoneTable(ctx, s, "dag_integration_batches")
+	if err != nil || !present {
+		return IntegrationBatchRow{}, false, err
+	}
+	row, err := queryRow(ctx, s, scanIntegrationBatch, "SELECT "+integrationBatchColumns+" FROM dag_integration_batches WHERE batch_id = ?", batchID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return IntegrationBatchRow{}, false, nil
+	}
+	if err != nil {
+		return IntegrationBatchRow{}, false, err
+	}
+	return row, true, nil
+}
+
+// IntegrationBatchesOfPlan lists a plan's integration batches, newest first (CRW-965): the record a
+// reader consults to see which trees the local integration branch has already been verified at.
+func IntegrationBatchesOfPlan(ctx context.Context, s *Store, planID string) ([]IntegrationBatchRow, error) {
+	present, err := dagZoneTable(ctx, s, "dag_integration_batches")
+	if err != nil || !present {
+		return nil, err
+	}
+	rows, err := s.Querier(ctx).QueryContext(ctx, "SELECT "+integrationBatchColumns+" FROM dag_integration_batches WHERE plan_id = ? ORDER BY recorded_at DESC, batch_id DESC", planID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []IntegrationBatchRow
+	for rows.Next() {
+		row, err := scanIntegrationBatch(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, row)
+	}
+	return out, rows.Err()
+}

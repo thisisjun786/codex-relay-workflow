@@ -12,7 +12,49 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
+
+// pathText is a filesystem path in a response body. A path whose bytes are not UTF-8 is spelled by
+// the installer as a surrogate escape (os.fsdecode: the byte becomes \\udcXX), and encoding/json
+// would replace that surrogate with U+FFFD, naming a file that does not exist. This type keeps the
+// installer's spelling on the wire, so a caller that follows an answer's path reaches the file the
+// write really made. pyjson writes a surrogate as its \\u escape, which is valid JSON and is what
+// the record itself carries.
+type pathText string
+
+func (p pathText) MarshalJSON() ([]byte, error) {
+	return pyjson.Encode(string(p), pyjson.Options{Unicode: true})
+}
+
+// messageText is prose that may name a path whose bytes are not UTF-8 (a refusal's detail, a
+// recovery instruction). It is written the same way pathText is, so a surrogate escape survives the
+// response instead of becoming U+FFFD and naming a file that does not exist.
+type messageText string
+
+func (m messageText) MarshalJSON() ([]byte, error) {
+	return pyjson.Encode(string(m), pyjson.Options{Unicode: true})
+}
+
+// textList is a list of strings that may name a path, written with the same spelling.
+type textList []string
+
+func (l textList) MarshalJSON() ([]byte, error) {
+	var out []byte
+	out = append(out, '[')
+	for i, value := range l {
+		if i > 0 {
+			out = append(out, ',')
+		}
+		encoded, err := pyjson.Encode(value, pyjson.Options{Unicode: true})
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, encoded...)
+	}
+	return append(out, ']'), nil
+}
 
 // The decided answers this file enforces. Every response the Handler writes carries the three
 // headers below; an /api/ response is never cached; no response carries a CORS allow header,

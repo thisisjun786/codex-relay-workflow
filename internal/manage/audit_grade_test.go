@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -81,8 +82,14 @@ const (
 func auditFakeGrader(t *testing.T) []string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "grader.sh")
-	if err := os.WriteFile(path, []byte(auditGraderScript), 0o700); err != nil {
-		t.Fatal(err)
+	// The script is a program the grader command runs, so its descriptor is open only under
+	// syscall.ForkLock: a fork in that window would inherit it and leave the script unexecutable
+	// (ETXTBSY, golang/go#22315).
+	syscall.ForkLock.RLock()
+	writeErr := os.WriteFile(path, []byte(auditGraderScript), 0o700)
+	syscall.ForkLock.RUnlock()
+	if writeErr != nil {
+		t.Fatal(writeErr)
 	}
 	return []string{path, "{prompt_file}", "{bundle}"}
 }

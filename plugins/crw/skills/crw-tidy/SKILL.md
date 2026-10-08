@@ -13,7 +13,7 @@ Read [Integrations](../crw-plan/references/integrations.md) first. It owns the r
 
 ## Pin the scope and the rules
 
-Record the initiative, project, issues and documents you were asked about, each by stable ID with its updated-at, and for every implementation issue the current delivery PR and the existing assignment alongside its body. Those three inputs are what the repository surfaces are judged on, so read them before judging rather than after.
+Record the initiative, project, issues and documents you were asked about, each by stable ID with its updated-at, and for every implementation issue its delivery (the pull request when one exists, otherwise the task branch and its head) and the existing assignment alongside its body. Those three inputs are what the repository surfaces are judged on, so read them before judging rather than after.
 
 Fix the rule source in the same pass. A rule is already agreed when Integrations states it, when an accepted Linear decision carries it with an ID and a date you can cite, or when the user's own later correction supersedes either of those with a traceable source and date, which [Linear holds canonical documents](../crw-plan/references/integrations.md#linear-holds-canonical-documents) allows even before the canonical document catches up. Anything else is a candidate rule: name it, route it to [crw-plan](../crw-plan/SKILL.md), and judge no record against it. An issue status, an assistant proposal and a newer local draft are none of them decisions.
 

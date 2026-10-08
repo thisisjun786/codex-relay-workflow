@@ -212,11 +212,29 @@ func runAccept(ctx context.Context, services dispatch.Services, args dispatch.Ar
 		return nil, usage("--rule-version is {skills_digest, model, effort}: " + err.Error())
 	}
 	input := AcceptInput{Event: args.Text("event"), Supersedes: args.Text("supersedes"), RuleVersion: rule}
+	if args.Given("premerge") {
+		// the pre-merge record the gate judged the head on (CRW-952): inline JSON or @file
+		raw, err := readPremergeRecord(args.Text("premerge"))
+		if err != nil {
+			return nil, err
+		}
+		input.Premerge = raw
+	}
 	if args.Given("repository") || args.Given("pull-request") {
 		if !args.Given("repository") || !args.Given("pull-request") {
 			return nil, usage("--repository and --pull-request name a pull request together")
 		}
 		input.PullRequest = &PRRef{Repository: args.Text("repository"), Number: args.Integer("pull-request")}
+	}
+	if args.Given("commit") {
+		// the pull-request-less acceptance (CRW-965): the commit, its base, its checkout and its verification record
+		if args.Given("repository") || args.Given("pull-request") {
+			return nil, usage("--commit accepts a node by its commit, without a pull request: drop --repository and --pull-request")
+		}
+		if !args.Given("base") || !args.Given("checkout") || !args.Given("verification") {
+			return nil, usage("--commit names --base, --checkout and --verification too")
+		}
+		input.Commit = &CommitRef{Head: args.Text("commit"), Base: args.Text("base"), Checkout: args.Text("checkout"), Record: args.Text("verification")}
 	}
 	sched, closeStore, err := openScheduler(ctx, services, args)
 	if err != nil {

@@ -86,7 +86,7 @@ time, a predicted completion date, or a speed multiple: nothing in these records
 a number with no basis is read as a commitment.
 
 A date applies to the result its own criterion names. Where the criterion is installation or
-observed operation, a merged pull request is progress toward it and not achievement of it, and the
+observed operation, a landed delivery is progress toward it and not achievement of it, and the
 [evidence states](../SKILL.md#keep-the-evidence-states-apart) stay apart here exactly as they do in
 the rest of the report.
 

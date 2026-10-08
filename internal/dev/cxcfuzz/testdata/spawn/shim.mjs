@@ -9,24 +9,144 @@
 // the rules of contract/schema/cxc/name-substitution.json the way the corpus recorders and
 // internal/role/spawn/testdata/inline/record.mjs apply them. The answer needs no translation at all.
 import { createInterface } from "node:readline";
+import { closeSync, constants, mkdirSync, mkdtempSync, openSync, rmSync, writeSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const oracleRoot = process.env.ORACLE_ROOT;
-if (!oracleRoot) throw new Error("ORACLE_ROOT is not set");
-const hook = await import("file://" + join(oracleRoot, "subagent-config", "dist", "spawn-attach-hook.js"));
+// The oracle is loaded once here, before the stdin listener exists, so its module initialization is paid
+// by the worker's start-up budget rather than by a case's timeout: the pool charges everything up to the
+// handshake reply to the startup deadline (worker.go ready/acquire) and only what follows to the per-case
+// one, so a load moved into a case would be charged to that case and a slow import would time out a
+// worker that answered its handshake. There is exactly one attempt: a later attempt, made while a case
+// waits, would put that same cost on the case, so a worker whose load failed keeps listening and answers
+// every later request with the remembered error instead of trying again.
+//
+// The load must not run under the caller's environment. The pool hands the worker the caller's
+// environment (Campaign passes os.Environ() through NewPool), so before the import the worker creates a
+// temporary root of its own under the harness TMPDIR and points HOME, CODEX_HOME, CRW_HOME,
+// CODEXCLAW_HOME and TMPDIR at it. The oracle's module initialization therefore runs under a root this
+// worker owns and removes again when the attempt ends. Each case then gets its own homes: run puts the
+// five variables under request.root before the classifier is called, after the load has finished, so a
+// case's own work reads the case's tree and not the load root.
+//
+// A load that fails is remembered, not fatal: the worker still starts, still answers the pool's
+// start-up handshake (a null input with an empty root) with the refusal, and answers a later request
+// with an error envelope, so a missing or hidden oracle tree reads as an answer rather than as a dead
+// worker.
+//
+// The harness temporary directory the pool handed this worker, captured here before any request can
+// replace TMPDIR, so the load root is always created under the harness's own scratch directory. A TMPDIR
+// the worker cannot make its root under is an initialization failure it remembers and answers; it is
+// never a reason to create the root somewhere else, which would put the oracle's initialization outside
+// the boundary the harness selected. When the caller named no TMPDIR at all, the process's own temporary
+// directory is that scratch.
+const loadBase = typeof process.env.TMPDIR === "string" && process.env.TMPDIR !== "" ? process.env.TMPDIR : tmpdir();
+const loadHomes = ["home", "codex-home", "crw-home", "codexclaw-home", "tmp"];
+let oracleTable = null;
+let oracleLoadError = null;
+
+// setHomes points the five variables a case's homes live in at one root.
+function setHomes(root) {
+  process.env.HOME = join(root, "home");
+  process.env.CODEX_HOME = join(root, "codex-home");
+  process.env.CRW_HOME = join(root, "crw-home");
+  process.env.CODEXCLAW_HOME = join(root, "codexclaw-home");
+  process.env.TMPDIR = join(root, "tmp");
+}
+
+// LOAD_ROOTS_RECORD is the file, in the worker's own harness scratch, the load roots are recorded in.
+const LOAD_ROOTS_RECORD = "load-roots.txt";
+
+// recordLoadRoot appends the root one import attempt used to <loadBase>/load-roots.txt, inside the scratch the
+// harness gave this worker (CRW-978 c8). It takes no path from the environment, and it opens the file without
+// following a link, so no variable the caller sets can make the worker write anywhere else. A record that cannot
+// be written must not stop the worker.
+function recordLoadRoot(root) {
+  try {
+    const fd = openSync(join(loadBase, LOAD_ROOTS_RECORD), constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | constants.O_NOFOLLOW, 0o600);
+    try {
+      writeSync(fd, root + "\n");
+    } finally {
+      closeSync(fd);
+    }
+  } catch {
+    // A record that cannot be written must not stop the worker.
+  }
+}
+
+// makeLoadRoot creates a fresh, exclusively owned root for the import and points the five variables at
+// it. mkdtempSync creates a new 0700 directory and fails rather than following a pathname that already
+// exists, so a name another process has since taken over is never inherited and no import ever creates a
+// directory through a path this worker does not own. A root that cannot be completed is removed again
+// before the error is raised, on a best-effort basis (see releaseLoadRoot). The caller removes the root when
+// the import ends.
+function makeLoadRoot() {
+  const root = mkdtempSync(join(loadBase, "crw-spawn-load-"));
+  try {
+    for (const name of loadHomes) {
+      mkdirSync(join(root, name), { recursive: true });
+    }
+  } catch (error) {
+    releaseLoadRoot(root);
+    throw error;
+  }
+  recordLoadRoot(root);
+  setHomes(root);
+  return root;
+}
+
+// releaseLoadRoot removes one attempt's root. The root is this worker's own scratch: a failure to remove
+// it must not stop the worker, so the removal is best-effort and its error is dropped. A root is left
+// behind when this process is killed outright (the pool's startup deadline sends SIGKILL, which no finally
+// can run under) or when the removal itself fails; either way the leftover lives under the harness TMPDIR
+// the caller chose.
+function releaseLoadRoot(root) {
+  try {
+    rmSync(root, { recursive: true, force: true });
+  } catch {
+    // best-effort cleanup
+  }
+}
+
+async function loadOracle() {
+  const root = makeLoadRoot();
+  try {
+    const base = process.env.ORACLE_ROOT;
+    if (!base) throw new Error("ORACLE_ROOT is not set");
+    return functions(await import("file://" + join(base, "subagent-config", "dist", "spawn-attach-hook.js")));
+  } finally {
+    releaseLoadRoot(root);
+  }
+}
+
+try {
+  oracleTable = await loadOracle();
+} catch (error) {
+  oracleLoadError = error;
+}
+
+// oracle is the table the one load attempt produced, or the error it left. There is no second attempt
+// (see the note on the load above): a worker whose load failed answers every later request with the
+// remembered error and keeps listening.
+function oracle() {
+  if (oracleTable) return oracleTable;
+  throw oracleLoadError ?? new Error("the oracle was not loaded");
+}
 
 // The exported functions the issue names: each has an exported counterpart here. The Go side's
 // StripControlMarkers and DenyEnvelope are not in this table: stripControlMarkers (409) and
 // denyEnvelope (450) are internal to the oracle, and the issue's rule leaves a helper without an
 // exported counterpart out of the target.
-const functions = {
-  InferRole: (agentType, message) => hook.inferRole(agentType, typeof message === "string" ? message : ""),
-  IsV2SpawnInput: (toolInput) => hook.isV2SpawnInput(asObject(toolInput)),
-  IsFullHistoryFork: (toolInput) => hook.isFullHistoryFork(asObject(toolInput)),
-  IsSpawnToolName: (name) => hook.isSpawnToolName(name),
-  IsCollaborationToolName: (name) => hook.isCollaborationToolName(name),
-  MentionedFolders: (message) => [...hook.mentionedFolders(typeof message === "string" ? message : "")],
-};
+function functions(hook) {
+  return {
+    InferRole: (agentType, message) => hook.inferRole(agentType, typeof message === "string" ? message : ""),
+    IsV2SpawnInput: (toolInput) => hook.isV2SpawnInput(asObject(toolInput)),
+    IsFullHistoryFork: (toolInput) => hook.isFullHistoryFork(asObject(toolInput)),
+    IsSpawnToolName: (name) => hook.isSpawnToolName(name),
+    IsCollaborationToolName: (name) => hook.isCollaborationToolName(name),
+    MentionedFolders: (message) => [...hook.mentionedFolders(typeof message === "string" ? crwToCxc(message) : "")],
+  };
+}
 
 function asObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value : {};
@@ -88,18 +208,41 @@ function wtf8(text) {
   return Buffer.from(bytes);
 }
 
-function answer(request) {
-  const input = request.input;
-  if (input === null || typeof input !== "object" || Array.isArray(input)) {
-    return refusal();
-  }
-  const fn = functions[input.fn];
+function answer(table, input) {
+  const fn = table[input.fn];
   if (!fn) return refusal();
   const args = Array.isArray(input.args) ? input.args : [];
   const translated = args.map((argument) => (typeof argument === "string" ? crwToCxc(argument) : argument));
   const value = fn(...translated);
   if (input.fn === "MentionedFolders") return sortFolders(value);
   return value;
+}
+
+// run isolates one case and answers it. The harness hands the worker pool the caller's environment
+// (Campaign passes os.Environ() through NewPool), so without this step a case would answer under the
+// real HOME, CODEX_HOME, CRW_HOME, CODEXCLAW_HOME and TMPDIR. The echo, memorygate and doctor shims
+// each put those five under request.root per request; this does the same, so a case's own work reads
+// the case's tree. An input that is not an object is answered with the refusal first and touches
+// nothing else: the pool's start-up handshake is {"id":N,"input":null,"root":""}, a readiness probe
+// that must never read or write a home. The oracle is consulted before the case's homes are set,
+// because loading it runs the oracle's module initialization under a root of the worker's own (see
+// loadOracle); setting the case's homes first would be overwritten by that root and then left pointing
+// at a directory the worker has already removed.
+async function run(request) {
+  const input = request.input;
+  if (input === null || typeof input !== "object" || Array.isArray(input)) {
+    return refusal();
+  }
+  // The oracle is consulted before the case's homes are set, because loading it runs the oracle's module
+  // initialization under the worker's own root (see loadOracle). Setting the case's homes first would be
+  // overwritten by that root and then left pointing at a directory this worker has already removed, so
+  // the classifier would read a tree that is not the case's.
+  const table = oracle();
+  const root = typeof request.root === "string" ? request.root : "";
+  if (root !== "") {
+    setHomes(root);
+  }
+  return answer(table, input);
 }
 
 // The answer both sides give an input outside the grammar. It is answered rather than thrown,
@@ -110,7 +253,7 @@ function refusal() {
 }
 
 const lines = createInterface({ input: process.stdin, terminal: false });
-lines.on("line", (line) => {
+lines.on("line", async (line) => {
   const text = line.trim();
   if (text === "") return;
   let request;
@@ -121,7 +264,7 @@ lines.on("line", (line) => {
     return;
   }
   try {
-    process.stdout.write(JSON.stringify({ id: request.id, output: answer(request) }) + "\n");
+    process.stdout.write(JSON.stringify({ id: request.id, output: await run(request) }) + "\n");
   } catch (error) {
     process.stdout.write(JSON.stringify({ id: request.id, error: { name: error.name, message: error.message } }) + "\n");
   }

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode"
 )
 
 // crw manage audit drafts turns the defects a graded audit recorded into follow-up issue
@@ -87,11 +88,22 @@ type auditDraft struct {
 	Body        string           `json:"body"`
 	Labels      []string         `json:"labels"`
 	Seen        []auditDraftSeen `json:"seen"`
-	State       string           `json:"state"`
+	// Improve is the counts and origins an improve draft holds. It is absent on an audit draft, and on an
+	// improve draft an earlier build wrote before the item existed.
+	Improve *auditDraftImprove `json:"improve,omitempty"`
+	State   string             `json:"state"`
 
 	// Posted is the issue key the management session recorded with mark. It is absent until
 	// then, so a reader can tell a draft nobody opened from one already on Linear.
 	Posted string `json:"posted,omitempty"`
+}
+
+// auditDraftImprove is the item an improve draft keeps for its counts and its origins: the projects
+// it reaches with the count each one holds, and the evidence locations it names. The body is drawn
+// from this item, and no reader takes a count back out of the body. An audit draft carries none.
+type auditDraftImprove struct {
+	Projects []improveProposeProject `json:"projects"`
+	Evidence []string                `json:"evidence"`
 }
 
 // auditDraftIndex is the listing of the fingerprints the drafts directory holds.
@@ -121,16 +133,28 @@ type auditDraftSkip struct {
 	Reason  string `json:"reason"`
 }
 
+// auditDraftPostedEscalation is a posted draft a later audit reported at a higher severity. The
+// draft itself is not changed: the management session reads this list and raises the issue it
+// already opened.
+type auditDraftPostedEscalation struct {
+	Fingerprint string `json:"fingerprint"`
+	Issue       string `json:"issue"`
+	From        string `json:"from"`
+	To          string `json:"to"`
+}
+
 // auditDraftReport is what crw manage audit drafts prints: the drafts this run created and
 // the ones it appended a sighting to, the fingerprints whose owner the owners map does not
-// name, and how many new drafts the cap left for a later run.
+// name, the posted drafts a later audit reported at a higher severity, and how many new drafts
+// the cap left for a later run.
 type auditDraftReport struct {
-	Created      []auditDraftSummary `json:"created"`
-	Updated      []auditDraftSummary `json:"updated"`
-	OwnerUnknown []string            `json:"owner_unknown"`
-	Skipped      []auditDraftSkip    `json:"skipped"`
-	TornLines    int                 `json:"torn_lines"`
-	Remaining    int                 `json:"remaining"`
+	Created           []auditDraftSummary          `json:"created"`
+	Updated           []auditDraftSummary          `json:"updated"`
+	OwnerUnknown      []string                     `json:"owner_unknown"`
+	Skipped           []auditDraftSkip             `json:"skipped"`
+	PostedEscalations []auditDraftPostedEscalation `json:"posted_escalations"`
+	TornLines         int                          `json:"torn_lines"`
+	Remaining         int                          `json:"remaining"`
 }
 
 // auditDraftScope is the range and the threshold one run works with. A run names at most one
@@ -160,7 +184,7 @@ type auditDraftCandidate struct {
 // field, so such a file is refused rather than silently narrowed.
 var auditDraftKnownKeys = map[string]bool{
 	"schema": true, "fingerprint": true, "source": true, "project": true, "title": true,
-	"severity": true, "body": true, "labels": true, "seen": true, "state": true, "posted": true,
+	"severity": true, "body": true, "labels": true, "seen": true, "state": true, "posted": true, "improve": true,
 }
 
 // auditDraftUnknownKeys names the keys of a draft document this build does not read, in
@@ -184,6 +208,11 @@ func auditDraftUnknownKeys(data []byte) ([]string, error) {
 // run, so two processes cannot create or grow one draft at once. It is non-blocking: a second
 // caller is refused by name rather than waiting. The lock file itself is never removed,
 // because another process may hold it.
+//
+// A grade holds the same lock for its whole run (AuditGrade), because the grade file and the
+// ledger row that names it are one record and the drafts surface reads that pair: without the
+// lock a regrade could replace grade.json between the ledger read and the file read, and a
+// row would be drafted from another run's file.
 func auditDraftLock(e *Env, cfg *Config) (func(), error) {
 	dir := auditDraftDir(e, cfg)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -227,8 +256,11 @@ func auditDraftSectionOf(cfg *Config) (auditDraftSection, error) {
 	return section, nil
 }
 
-// auditDraftWherePath is the path part of a defect's where: a grader appends a line number
-// after a colon, and the owners map and the fingerprint are about the file, not the line.
+// auditDraftWherePath is the path part of a defect's where: a grader appends a line, or a line
+// range, after a colon, and the owners map and the fingerprint are about the file, not the
+// lines. A trailing line specifier is dropped from the end one component at a time, so
+// "a.go:12", "a.go:12-15", "a.go:12:3" and "a.go:12-15:4" all name the file "a.go" while a
+// colon that does not introduce one stays where it is.
 func auditDraftWherePath(where string) string {
 	path := strings.TrimSpace(where)
 	for {
@@ -236,11 +268,21 @@ func auditDraftWherePath(where string) string {
 		if cut < 0 {
 			return path
 		}
-		if !auditDraftAllDigits(path[cut+1:]) {
+		if !auditDraftLineSpec(path[cut+1:]) {
 			return path
 		}
 		path = path[:cut]
 	}
+}
+
+// auditDraftLineSpec reports whether s is one component of a line specifier: a run of ASCII
+// digits, or two such runs joined by one hyphen, so "12" and "12-15" are line specifiers and
+// "12-15-3", "notaline" and the empty string are not.
+func auditDraftLineSpec(s string) bool {
+	if dash := strings.IndexByte(s, '-'); dash >= 0 {
+		return auditDraftAllDigits(s[:dash]) && auditDraftAllDigits(s[dash+1:])
+	}
+	return auditDraftAllDigits(s)
 }
 
 // auditDraftAllDigits reports whether s is a non-empty run of ASCII digits.
@@ -292,14 +334,33 @@ func auditDraftOwner(owners map[string]string, path string) string {
 	return best
 }
 
-// auditDraftTitle is the English title of a draft: the severity and the defect's what, cut to
-// the character limit the issue fixes.
-func auditDraftTitle(severity, what string) string {
+// auditDraftTitle is the English title of a draft: the severity and the defect's what, or, when
+// the what is not written in ASCII, the severity and the defect's path, cut to the character
+// limit the issue fixes. The defect's own words stay in the body, so a grader that answered in
+// another language loses nothing.
+func auditDraftTitle(severity, what, where string) string {
 	text := auditDraftNormalizeWhat(what)
-	if text == "" {
+	if !auditDraftASCII(text) {
+		if path := auditDraftWherePath(where); path != "" {
+			text = "audit defect in " + path
+		} else {
+			text = "audit defect"
+		}
+	} else if text == "" {
 		text = "audit defect"
 	}
 	return auditDraftTruncateRunes(severity+": "+text, auditDraftTitleLimit)
+}
+
+// auditDraftASCII reports whether every character of s is ASCII. A title built from a what
+// outside it would not be the English title the grader prompt asks for.
+func auditDraftASCII(s string) bool {
+	for _, r := range s {
+		if r > unicode.MaxASCII {
+			return false
+		}
+	}
+	return true
 }
 
 // auditDraftTruncateRunes cuts s to at most limit characters, marking a cut with three dots.
@@ -451,6 +512,71 @@ func auditDraftBundleOf(row auditLedgerRow) error {
 	return nil
 }
 
+// auditBundleID is one bundle spelling resolved to what makes two spellings one bundle: the
+// cleaned path, and the file the kernel resolves the path to when it exists.
+type auditBundleID struct {
+	cleaned string
+	info    os.FileInfo
+}
+
+// auditBundleIDOf resolves one bundle spelling. A spelling that exists is identified by the
+// file it is, so a relative form, a trailing separator and a link to one directory are one
+// bundle; a spelling that names no directory is compared by its cleaned path, because nothing
+// is left to resolve. The same resolution decides which jobs of one grade may run and which
+// ledger rows are one bundle, so a batch and the drafts surface agree on identity.
+func auditBundleIDOf(bundle string) auditBundleID {
+	// The resolved path is the identity, so a row a grade wrote and a row an older run wrote are
+	// compared as the directories they name rather than as the spellings they carry.
+	cleaned := auditBundleIdentity(bundle)
+	info, err := os.Stat(cleaned)
+	if err != nil {
+		info = nil
+	}
+	return auditBundleID{cleaned: cleaned, info: info}
+}
+
+// auditBundleIDSame reports whether two resolved spellings name one bundle. A spelling that
+// resolves to a file is one bundle only with a spelling resolving to the same file, so a link
+// and its target are one bundle and a directory that has since gone is not confused with it.
+func auditBundleIDSame(a, b auditBundleID) bool {
+	switch {
+	case a.info != nil && b.info != nil:
+		return os.SameFile(a.info, b.info)
+	case a.info == nil && b.info == nil:
+		return a.cleaned == b.cleaned
+	}
+	return false
+}
+
+// auditDraftBundleIDs names the bundle each ledger row points at, so two spellings of one
+// directory are one bundle. A grader may write the same directory as a relative path, with a
+// trailing separator, or through a link, while the grade.json it left is one file. An empty
+// Bundle names no bundle and carries -1.
+func auditDraftBundleIDs(rows []auditLedgerRow) []int {
+	ids := make([]int, len(rows))
+	groups := make([]auditBundleID, 0, len(rows))
+	for i, row := range rows {
+		ids[i] = -1
+		if row.Bundle == "" {
+			continue
+		}
+		id := -1
+		resolved := auditBundleIDOf(row.Bundle)
+		for g, have := range groups {
+			if auditBundleIDSame(have, resolved) {
+				id = g
+				break
+			}
+		}
+		if id < 0 {
+			groups = append(groups, resolved)
+			id = len(groups) - 1
+		}
+		ids[i] = id
+	}
+	return ids
+}
+
 // auditDraftLoad reads one draft file. A missing file, malformed JSON or another schema is an
 // error: a draft this product cannot trust is never appended to or marked.
 func auditDraftLoad(path string) (*auditDraft, error) {
@@ -458,6 +584,12 @@ func auditDraftLoad(path string) (*auditDraft, error) {
 	if err != nil {
 		return nil, err
 	}
+	return improveAuditDraftDecode(path, data)
+}
+
+// improveAuditDraftDecode is auditDraftLoad over the bytes of one draft file already read, so a reader that
+// holds the file's pinned descriptor decodes the content it read rather than reading the path again.
+func improveAuditDraftDecode(path string, data []byte) (*auditDraft, error) {
 	var doc auditDraft
 	if err := json.Unmarshal(data, &doc); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
@@ -579,8 +711,10 @@ func auditDraftFingerprintName(fingerprint string) error {
 	return nil
 }
 
-// auditDraftScopeMatches reports whether one ledger row is inside the run's range. Only an ok
-// row carries a usable grade.json, so every other status is out of the range.
+// auditDraftScopeMatches reports whether one ledger row is inside the run's range. Only an ok row
+// is drafted from, whatever a row of another status left in the bundle: a timeout or a failure
+// records that the run did not finish inside its limit, so its grade.json is not a result this
+// surface reads, and a bundle whose newest row is one of those produces no draft at all.
 func auditDraftScopeMatches(row auditLedgerRow, scope auditDraftScope) (bool, error) {
 	if row.Status != auditStatusOK {
 		return false, nil
@@ -600,16 +734,19 @@ func auditDraftScopeMatches(row auditLedgerRow, scope auditDraftScope) (bool, er
 	return true, nil
 }
 
-// auditDraftsRun reads the ledger's ok rows and each bundle's grade.json, and writes one draft
-// per defect at or above the threshold. A defect already in the index grows its seen list
-// instead of becoming a new draft, and the new drafts the cap leaves uncreated are counted in
-// the report rather than silently dropped.
+// auditDraftsRun reads the ledger and each bundle's grade.json, and writes one draft per defect at
+// or above the threshold. The ledger is read in full, because the newest row of a bundle decides
+// whether its grade.json may be read at all, and only the ok rows inside the run's range are then
+// drafted from. A defect already in the index grows its seen list instead of becoming a new draft,
+// and the new drafts the cap leaves uncreated are counted in the report rather than silently
+// dropped.
 func auditDraftsRun(e *Env, cfg *Config, scope auditDraftScope) (auditDraftReport, error) {
 	report := auditDraftReport{
-		Created:      []auditDraftSummary{},
-		Updated:      []auditDraftSummary{},
-		OwnerUnknown: []string{},
-		Skipped:      []auditDraftSkip{},
+		Created:           []auditDraftSummary{},
+		Updated:           []auditDraftSummary{},
+		OwnerUnknown:      []string{},
+		Skipped:           []auditDraftSkip{},
+		PostedEscalations: []auditDraftPostedEscalation{},
 	}
 	section, err := auditDraftSectionOf(cfg)
 	if err != nil {
@@ -642,14 +779,17 @@ func auditDraftsRun(e *Env, cfg *Config, scope auditDraftScope) (auditDraftRepor
 	}
 	// A bundle is a mutable directory: grading into it again replaces its grade.json, and the
 	// ledger keeps every row that ever named it. Only the newest such row can still have its
-	// grade there, so the older rows are named and skipped rather than given the newest
-	// audit's defects as sightings they never made.
-	newest := map[string]int{}
-	for i, row := range rows {
-		if row.Status != auditStatusOK || row.Bundle == "" {
+	// grade there, and the status does not decide which row that is: a later run that timed out
+	// or failed leaves its own grade.json in the bundle, so a row that named it must not be
+	// drafted from that file. Every older row is named and skipped rather than given the newest
+	// audit's defects as sightings it never made.
+	bundles := auditDraftBundleIDs(rows)
+	newest := map[int]int{}
+	for i := range rows {
+		if bundles[i] < 0 {
 			continue
 		}
-		newest[row.Bundle] = i
+		newest[bundles[i]] = i
 	}
 	// A torn line is the fragment auditAppendLine leaves on its own line when it separates an
 	// interrupted append from the rows after it, so it is counted rather than treated as a row.
@@ -664,7 +804,7 @@ func auditDraftsRun(e *Env, cfg *Config, scope auditDraftScope) (auditDraftRepor
 		if !matches {
 			continue
 		}
-		if owner, ok := newest[row.Bundle]; ok && owner != i {
+		if owner, ok := newest[bundles[i]]; ok && owner != i {
 			report.Skipped = append(report.Skipped, auditDraftSkip{Mode: row.Mode, Subject: row.Subject, Head: row.Head,
 				Reason: "the bundle was graded again after this row, so its " + auditGradeFile + " is that later audit's"})
 			continue
@@ -673,6 +813,16 @@ func auditDraftsRun(e *Env, cfg *Config, scope auditDraftScope) (auditDraftRepor
 		// cannot read must not stop the rows it can: the row is named in the report instead.
 		if err := auditDraftBundleOf(row); err != nil {
 			report.Skipped = append(report.Skipped, auditDraftSkip{Mode: row.Mode, Subject: row.Subject, Head: row.Head, Reason: err.Error()})
+			continue
+		}
+		// A grade marks its bundle before its grader can leave a file and clears the mark once
+		// its ledger row is on disk. A bundle that still carries the mark holds the result of a
+		// run nothing names, so no row is drafted from it: the file may belong to a run that
+		// timed out, failed or was killed, and attributing it to this older row would report
+		// defects the row never found.
+		if auditPending(e, cfg, row.Bundle) {
+			report.Skipped = append(report.Skipped, auditDraftSkip{Mode: row.Mode, Subject: row.Subject, Head: row.Head,
+				Reason: "the bundle carries an unrecorded grade, so its " + auditGradeFile + " is not this row's"})
 			continue
 		}
 		doc, ok := auditParseResult(filepath.Join(row.Bundle, auditGradeFile))
@@ -741,7 +891,7 @@ func auditDraftsRun(e *Env, cfg *Config, scope auditDraftScope) (auditDraftRepor
 	for _, candidate := range fresh {
 		doc := &auditDraft{
 			Schema: auditDraftSchema, Fingerprint: candidate.fingerprint, Source: auditDraftSource,
-			Project: candidate.project, Title: auditDraftTitle(candidate.severity, candidate.defect.What),
+			Project: candidate.project, Title: auditDraftTitle(candidate.severity, candidate.defect.What, candidate.defect.Where),
 			Severity: candidate.severity, Body: auditDraftBody(candidate),
 			Labels: auditDraftLabels(candidate.severity), Seen: candidate.seen, State: auditDraftStateDraft,
 		}
@@ -766,22 +916,34 @@ func auditDraftsRun(e *Env, cfg *Config, scope auditDraftScope) (auditDraftRepor
 				changed = true
 			}
 		}
-		if changed {
-			doc.Body = auditDraftSeenSection(doc.Body, doc.Seen)
-		}
-		// A later audit that reports the same defect at a higher severity escalates the
-		// draft, so the management session prioritizes it as it now stands, and the draft
-		// carries the evidence that raised it rather than the lower grade's. The posted state
-		// and the issue key are kept: the escalation does not open a second issue.
-		if stored, known := auditDraftSeverityRank[doc.Severity]; known && auditDraftSeverityRank[candidate.severity] < stored {
-			promoted := *candidate
-			promoted.seen = doc.Seen
-			promoted.project = doc.Project
-			doc.Severity = candidate.severity
-			doc.Labels = auditDraftLabels(candidate.severity)
-			doc.Title = auditDraftTitle(candidate.severity, candidate.defect.What)
-			doc.Body = auditDraftBody(&promoted)
-			changed = true
+		// A posted draft is the record of an issue the management session already opened, so
+		// only its seen list grows: the title, the labels, the severity, the body (the source
+		// audit section included) and the project stay exactly as first written. A later audit
+		// that reports the same defect at a higher severity is named on the report instead, so
+		// the management session raises the issue it already has rather than a second one.
+		if doc.State == auditDraftStatePosted {
+			if stored, known := auditDraftSeverityRank[doc.Severity]; known && auditDraftSeverityRank[candidate.severity] < stored {
+				report.PostedEscalations = append(report.PostedEscalations, auditDraftPostedEscalation{
+					Fingerprint: doc.Fingerprint, Issue: doc.Posted, From: doc.Severity, To: candidate.severity,
+				})
+			}
+		} else {
+			if changed {
+				doc.Body = auditDraftSeenSection(doc.Body, doc.Seen)
+			}
+			// A later audit that reports the same defect at a higher severity escalates the
+			// draft, so the management session prioritizes it as it now stands, and the draft
+			// carries the evidence that raised it rather than the lower grade's.
+			if stored, known := auditDraftSeverityRank[doc.Severity]; known && auditDraftSeverityRank[candidate.severity] < stored {
+				promoted := *candidate
+				promoted.seen = doc.Seen
+				promoted.project = doc.Project
+				doc.Severity = candidate.severity
+				doc.Labels = auditDraftLabels(candidate.severity)
+				doc.Title = auditDraftTitle(candidate.severity, candidate.defect.What, candidate.defect.Where)
+				doc.Body = auditDraftBody(&promoted)
+				changed = true
+			}
 		}
 		if !changed {
 			continue

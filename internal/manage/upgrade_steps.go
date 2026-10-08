@@ -14,21 +14,50 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"strings"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dagsched"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/install"
 )
 
 const (
-	upgradeSumsName     = "SHA256SUMS"
-	upgradeArchiveGlob  = "crw_*_linux_amd64.tar.gz"
-	upgradeRuntimeDir   = ".local/share/crw-runtime"
-	upgradeStoreTimeout = 5 * time.Second
+	upgradeSumsName    = "SHA256SUMS"
+	upgradeArchiveGlob = "crw_*_linux_amd64.tar.gz"
+	upgradeRuntimeDir  = ".local/share/crw-runtime"
 	// upgradeCommandTimeout bounds one forge call; upgradeInstallTimeout one lifecycle command,
 	// which exercises the bridge and may copy a large relay state.
 	upgradeCommandTimeout = 60 * time.Second
 	upgradeInstallTimeout = 30 * time.Minute
+	// upgradeInstallOK and upgradeInstallIncomplete are the installer's own statuses for an update
+	// that promoted the runtime: OK, and Incomplete (the candidate is selected and the owned
+	// pointer names it, and only the claim that records it did not settle). Neither is this
+	// command's status space: an update that ends Incomplete is reported as failed here, but the
+	// runtime is in service, so the post-check still compares the pointer with it.
+	upgradeInstallOK         = 0
+	upgradeInstallIncomplete = 3
+	// upgradeSumsBytes bounds the SHA256SUMS copy: the file is a list of digests, so a source far
+	// larger than that is not one.
+	upgradeSumsBytes = 1 << 20
+)
+
+// upgradeMaxArchiveBytes bounds what the pre-verification archive copy reads. It matches the
+// installer's own input limit, so a release directory holding something that is not the archive is
+// refused before it can fill the state disk the live relay shares. upgradeCopy removes its partial
+// file on any failure, so a refused or failed copy leaves nothing behind. A variable so a test can
+// reach the bound without writing 256 MiB.
+var upgradeMaxArchiveBytes int64 = install.MaxArchiveBytes
+
+// upgradeServiceInterval and upgradeServiceBudget are how often, and for how long, the post-check
+// reads the service status again after starting it. Variables so a test can pin the wait's timing
+// rather than spend the real budget.
+var (
+	upgradeServiceInterval = 2 * time.Second
+	upgradeServiceBudget   = 60 * time.Second
 )
 
 // upgradeRunCommand runs exe and returns its stdout, stderr and exit status.
@@ -72,48 +101,65 @@ func upgradeOutputHead(text string) string {
 	return text[:upgradeRecordHead]
 }
 
-// verifySums is step 1: find the archive and verify it against the SHA256SUMS beside it.
+// verifySums is step 1: copy the release archive and its SHA256SUMS into the run directory, then
+// verify the copy against the copied sums. The originals in the release directory are opened once,
+// by the copy, and never again: the bytes that were checked are the bytes every later step reads,
+// so replacing an original after the check cannot change what is unpacked and run.
 func (r *upgradeRunState) verifySums() (string, int, string) {
 	matches, err := filepath.Glob(filepath.Join(r.opts.ReleaseDir, upgradeArchiveGlob))
 	if err != nil || len(matches) == 0 {
 		r.note(upgradeStepSums, nil, 1, "", fmt.Errorf("no %s in %s", upgradeArchiveGlob, r.opts.ReleaseDir))
 		return "", upgradeExitRefused, upgradeReasonSumsFailed
 	}
-	archive := matches[0]
-	sums, err := os.ReadFile(filepath.Join(r.opts.ReleaseDir, upgradeSumsName))
+	name := filepath.Base(matches[0])
+	pinned := filepath.Join(r.dir, name)
+	if err := upgradeCopy(matches[0], pinned, upgradeMaxArchiveBytes); err != nil {
+		r.note(upgradeStepSums, nil, 1, "", err)
+		return "", upgradeExitRefused, upgradeReasonSumsFailed
+	}
+	if err := upgradeCopy(filepath.Join(r.opts.ReleaseDir, upgradeSumsName), filepath.Join(r.dir, upgradeSumsName), upgradeSumsBytes); err != nil {
+		r.note(upgradeStepSums, nil, 1, "", err)
+		return "", upgradeExitRefused, upgradeReasonSumsFailed
+	}
+	sums, err := os.ReadFile(filepath.Join(r.dir, upgradeSumsName))
 	if err != nil {
 		r.note(upgradeStepSums, nil, 1, "", err)
 		return "", upgradeExitRefused, upgradeReasonSumsFailed
 	}
-	want := upgradeSumsFor(string(sums), filepath.Base(archive))
+	want := upgradeSumsFor(string(sums), name)
 	if want == "" {
-		r.note(upgradeStepSums, nil, 1, "", fmt.Errorf("%s names no digest for %s", upgradeSumsName, filepath.Base(archive)))
+		r.note(upgradeStepSums, nil, 1, "", fmt.Errorf("%s names no digest for %s", upgradeSumsName, name))
 		return "", upgradeExitRefused, upgradeReasonSumsFailed
 	}
-	got, err := upgradeFileDigest(archive)
+	got, err := upgradeFileDigest(pinned)
 	if err != nil {
 		r.note(upgradeStepSums, nil, 1, "", err)
 		return "", upgradeExitRefused, upgradeReasonSumsFailed
 	}
 	if !strings.EqualFold(got, want) {
-		r.note(upgradeStepSums, nil, 1, "", fmt.Errorf("%s does not match %s", filepath.Base(archive), upgradeSumsName))
+		r.note(upgradeStepSums, nil, 1, "", fmt.Errorf("%s does not match %s", name, upgradeSumsName))
 		return "", upgradeExitRefused, upgradeReasonSumsFailed
 	}
-	r.note(upgradeStepSums, nil, 0, want+"  "+filepath.Base(archive), nil)
-	// Pin the verified bytes so the archive cannot be swapped after the check; the installer
-	// rechecks against the SHA256SUMS, so that file is pinned too.
-	pinned := filepath.Join(r.dir, filepath.Base(archive))
-	for _, src := range []string{archive, filepath.Join(r.opts.ReleaseDir, upgradeSumsName)} {
-		if err := upgradeCopy(src, filepath.Join(r.dir, filepath.Base(src))); err != nil {
-			r.note(upgradeStepSums, nil, 1, "", err)
-			return "", upgradeExitRefused, upgradeReasonSumsFailed
-		}
+	r.note(upgradeStepSums, nil, 0, want+"  "+name, nil)
+	if upgradeSumsVerified != nil {
+		upgradeSumsVerified(r.opts.ReleaseDir)
 	}
 	return pinned, 0, ""
 }
 
-// upgradeCopy copies src to dst, so a later reader cannot be given different bytes.
-func upgradeCopy(src, dst string) error {
+// upgradeSumsVerified runs at the one moment the release directory's originals could still change
+// what runs: after the copied archive's digest has been compared with the copied SHA256SUMS, and
+// before anything is unpacked. It is nil everywhere but a test, which uses it to replace the
+// release directory's archive there. The run never opens that archive again, so what replaced it
+// cannot be what runs; the baseline hashed the original and then copied it, and the same
+// replacement between those two reads changed the bytes that were executed.
+var upgradeSumsVerified func(releaseDir string)
+
+// upgradeCopy copies src to dst, so a later reader cannot be given different bytes. At most limit
+// bytes are read: a source over it is refused rather than copied, so a release directory holding
+// something that is not the archive cannot fill the state disk before verification. A copy that
+// fails for any reason leaves no partial file behind.
+func upgradeCopy(src, dst string, limit int64) error {
 	in, err := os.Open(src)
 	if err != nil {
 		return err
@@ -123,11 +169,19 @@ func upgradeCopy(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := io.Copy(out, in); err != nil {
-		out.Close()
+	written, err := io.Copy(out, io.LimitReader(in, limit+1))
+	if cerr := out.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil && written > limit {
+		err = fmt.Errorf("%s is larger than %d bytes", filepath.Base(src), limit)
+	}
+	if err != nil {
+		// The partial copy is this call's own file; remove it so a refusal leaves nothing behind.
+		os.Remove(dst)
 		return err
 	}
-	return out.Close()
+	return nil
 }
 
 // upgradeSumsFor is the digest SHA256SUMS lists for name, or "" when it lists none.
@@ -154,7 +208,9 @@ func upgradeFileDigest(path string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-// extractAndResolve is step 2: unpack the archive and resolve the version to a full commit SHA.
+// extractAndResolve is step 2: unpack the verified copy and resolve the version to a full commit
+// SHA. The unpacked crw's version is kept, because the post-check compares the installed runtime's
+// version with the one this archive carried.
 func (r *upgradeRunState) extractAndResolve() (int, string) {
 	r.extract = filepath.Join(r.dir, "extract")
 	if err := os.MkdirAll(r.extract, 0o700); err != nil {
@@ -168,16 +224,23 @@ func (r *upgradeRunState) extractAndResolve() (int, string) {
 	if err != nil || code != 0 {
 		return upgradeExitRefused, upgradeReasonExtractFailed
 	}
+	r.version = strings.TrimSpace(version)
 	for _, ref := range upgradeCommitRefs(version) {
 		out, code, err := r.command(r.ctx, upgradeCommandTimeout, upgradeStepCommit, "gh", "api", "repos/"+r.cfg.Repository+"/commits/"+ref)
 		if err != nil || code != 0 {
 			continue
 		}
 		var answer struct {
-			SHA string `json:"sha"`
+			SHA    string `json:"sha"`
+			Commit struct {
+				Tree struct {
+					SHA string `json:"sha"`
+				} `json:"tree"`
+			} `json:"commit"`
 		}
-		if json.Unmarshal([]byte(out), &answer) == nil && answer.SHA != "" {
+		if json.Unmarshal([]byte(out), &answer) == nil && answer.SHA != "" && answer.Commit.Tree.SHA != "" {
 			r.commit = answer.SHA
+			r.tree = answer.Commit.Tree.SHA
 			return 0, ""
 		}
 	}
@@ -202,66 +265,144 @@ func upgradeCommitRefs(version string) []string {
 	return []string{trimmed, "v" + trimmed}
 }
 
-// checkDevGate is step 3: the commit's dev-gate check run must have concluded success.
-func (r *upgradeRunState) checkDevGate() (int, string) {
-	out, code, err := r.command(r.ctx, upgradeCommandTimeout, upgradeStepDevGate, "gh", "api", "repos/"+r.cfg.Repository+"/commits/"+r.commit+"/check-runs")
-	if err != nil || code != 0 {
-		return upgradeExitRefused, upgradeReasonDevGate
+// checkVerificationRecord is step 3: the verification record the operator gives must be a
+// verification-record/1 that the relay's judge accepts for the installed commit's tree. The judge is the
+// same one dag-accept uses: it refuses a record missing a member, with a digest that does not match, a
+// result other than pass, a pin mismatch, or another tree. The keys it cannot know here (the ci.yml and
+// dependency digests and the base) are the record's own, so the judge still checks the record's shape,
+// digest, result and pins, and the host platform comes from the runtime. A record that is missing or
+// unreadable refuses as missing; a record of another tree refuses as other tree; every other refusal is
+// not a pass.
+func (r *upgradeRunState) checkVerificationRecord() (int, string) {
+	if r.opts.Verification == "" {
+		return r.refuse(upgradeStepVerify, upgradeReasonVerifyMissing, "", fmt.Errorf("no --verification record was given"))
 	}
-	var answer struct {
-		CheckRuns []struct {
-			Name       string `json:"name"`
-			Conclusion string `json:"conclusion"`
-			App        struct {
-				Slug string `json:"slug"`
-			} `json:"app"`
-		} `json:"check_runs"`
+	raw, err := os.ReadFile(r.opts.Verification)
+	if err != nil {
+		return r.refuse(upgradeStepVerify, upgradeReasonVerifyMissing, "", err)
 	}
-	if err := json.Unmarshal([]byte(out), &answer); err != nil {
-		return r.refuse(upgradeStepDevGate, upgradeReasonDevGate, out, err)
+	record, err := dagsched.DecodeVerificationRecord(raw)
+	if err != nil {
+		return r.refuse(upgradeStepVerify, upgradeReasonVerifyNotPass, "", err)
 	}
-	for _, run := range answer.CheckRuns {
-		if run.Name == "dev-gate" && run.Conclusion == "success" && (run.App.Slug == "" || run.App.Slug == "github-actions") {
-			return 0, ""
+	keys := dagsched.VerificationKeys{
+		Tree:         r.tree,
+		Base:         record.BaseCommit,
+		CiDigest:     record.CiDigest,
+		Dependencies: record.Dependencies,
+		OS:           runtime.GOOS,
+		Arch:         runtime.GOARCH,
+	}
+	if _, err := dagsched.JudgeVerificationRecord(raw, keys); err != nil {
+		var refused *store.RefusedError
+		if errors.As(err, &refused) && refused.Reason == string(contract.RefusalRevisionMismatch) {
+			return r.refuse(upgradeStepVerify, upgradeReasonVerifyOtherTree, "", err)
 		}
+		return r.refuse(upgradeStepVerify, upgradeReasonVerifyNotPass, "", err)
 	}
-	return r.refuse(upgradeStepDevGate, upgradeReasonDevGate, out, fmt.Errorf("no dev-gate check run concluded success"))
+	r.note(upgradeStepVerify, nil, 0, "the verification record passes for the installed tree", nil)
+	return 0, ""
 }
 
-// checkOpenAttempts is step 4: read the store read-only and refuse while any attempt is unsettled.
+// upgradeDoctorAnswer is the part of the relay doctor's answer this command reads: where the store
+// is, and how many attempts the service that holds it still has open.
+type upgradeDoctorAnswer struct {
+	StateSelection struct {
+		Path string `json:"path"`
+	} `json:"stateSelection"`
+	Contents struct {
+		Available    bool   `json:"available"`
+		OpenAttempts *int64 `json:"openAttempts"`
+	} `json:"contents"`
+	// ServiceStore is present only when the relay service registered for this socket serves another
+	// directory than the one discovery selected: the contents above then belong to the selected
+	// directory, not to the store the service reads and writes, so they are not the served store's
+	// open attempts.
+	ServiceStore *struct {
+		StateDirectory string `json:"stateDirectory"`
+		SocketPath     string `json:"socketPath"`
+	} `json:"serviceStore"`
+}
+
+// upgradeParseDoctorAnswer reads the doctor's answer; an answer that is not JSON is an error, so a
+// reader never mistakes an unreadable store for an empty one.
+func upgradeParseDoctorAnswer(out string) (upgradeDoctorAnswer, error) {
+	var answer upgradeDoctorAnswer
+	if err := json.Unmarshal([]byte(out), &answer); err != nil {
+		return answer, fmt.Errorf("the relay doctor answer: %w", err)
+	}
+	return answer, nil
+}
+
+// checkOpenAttempts is step 4: ask the running runtime's own relay for its doctor answer and refuse
+// while any attempt is still open. The count is the doctor's contents.openAttempts alone; contents
+// that are unavailable, or that carry no count, are refused rather than read as an absence, so a
+// store nobody could read never looks like a store with nothing open. When the doctor says the
+// service serves another directory than the one discovery selected, that other store is the one
+// whose attempts matter, so it is asked for its own answer; a served store whose answer cannot be
+// read is refused rather than passed over.
 func (r *upgradeRunState) checkOpenAttempts() (int, string) {
-	state, err := r.relayState()
+	pointer, err := upgradePointerTarget(r.e)
 	if err != nil {
-		return r.refuse(upgradeStepAttempts, upgradeReasonStoreRead, "", err)
+		// There is no running runtime to ask, which is the pointer's own refusal: the same reason the
+		// snapshot reported for this host before this step moved ahead of it.
+		return r.refuse(upgradeStepAttempts, upgradeReasonPointer, "", err)
 	}
-	r.state = state
-	ctx, cancel := context.WithTimeout(r.ctx, upgradeStoreTimeout)
-	defer cancel()
-	read, err := store.OpenReadOnly(ctx, filepath.Join(state, "relay.sqlite3"), upgradeStoreTimeout)
-	if err != nil {
-		return r.refuse(upgradeStepAttempts, upgradeReasonStoreRead, "", err)
-	}
-	defer read.Close()
-	var open int
-	query := "select count(*) from attempts where internal_state != 'settled'"
-	if err := read.QueryRowContext(ctx, query).Scan(&open); err != nil {
-		r.note(upgradeStepAttempts, []string{query}, 1, "", err)
+	relay := filepath.Join(pointer, "bin", "codex-session-relay")
+	state := r.cfg.Relay.State
+	socket := r.cfg.Relay.Socket
+	answer, out, code, err := r.doctorAnswer(relay, state, socket)
+	if err != nil || code != 0 {
 		return upgradeExitRefused, upgradeReasonStoreRead
 	}
-	r.note(upgradeStepAttempts, []string{query}, 0, fmt.Sprintf("%d", open), nil)
-	if open != 0 {
+	if served := answer.ServiceStore; served != nil && served.StateDirectory != "" {
+		// The doctor adds serviceStore only when the directory it read is not the one the service
+		// serves, so these contents are another store's. Ask the served store for its own answer;
+		// anything unreadable there is refused rather than read as none.
+		servedSocket := served.SocketPath
+		if servedSocket == "" {
+			servedSocket = socket
+		}
+		answer, out, code, err = r.doctorAnswer(relay, served.StateDirectory, servedSocket)
+		if err != nil || code != 0 {
+			return upgradeExitRefused, upgradeReasonStoreRead
+		}
+		state = served.StateDirectory
+	}
+	answer, err = upgradeParseDoctorAnswer(out)
+	if err != nil {
+		return r.refuse(upgradeStepAttempts, upgradeReasonStoreRead, out, err)
+	}
+	if state == "" {
+		state = answer.StateSelection.Path
+	}
+	if state == "" {
+		return r.refuse(upgradeStepAttempts, upgradeReasonStoreRead, out, errors.New("the doctor named no state directory"))
+	}
+	r.state = state
+	if !answer.Contents.Available || answer.Contents.OpenAttempts == nil {
+		return r.refuse(upgradeStepAttempts, upgradeReasonStoreRead, out, fmt.Errorf("the doctor's contents carry no open attempt count"))
+	}
+	if *answer.Contents.OpenAttempts != 0 {
 		return upgradeExitOpenAttempts, upgradeReasonOpenAttempts
 	}
 	return 0, ""
 }
 
-// relayState is the state directory the run reads and stops: configured, else the doctor's.
-func (r *upgradeRunState) relayState() (string, error) {
-	if r.cfg.Relay.State != "" {
-		return r.cfg.Relay.State, nil
+// doctorAnswer runs the relay's doctor for one state directory (or discovery when state is empty)
+// and parses its answer, recording the call.
+func (r *upgradeRunState) doctorAnswer(relay, state, socket string) (upgradeDoctorAnswer, string, int, error) {
+	args := []string{"--socket", socket}
+	if state != "" {
+		args = append([]string{"--state", state}, args...)
 	}
-	state, err := r.e.relayHelperDoctorState(r.ctx, r.cfg.Relay.Socket)
-	return state, err
+	args = append(args, "doctor")
+	out, code, err := r.command(r.ctx, upgradeCommandTimeout, upgradeStepAttempts, relay, args...)
+	if err != nil || code != 0 {
+		return upgradeDoctorAnswer{}, out, code, err
+	}
+	answer, err := upgradeParseDoctorAnswer(out)
+	return answer, out, code, err
 }
 
 // snapshot is step 5: what the run must be able to compare afterwards.
@@ -283,13 +424,15 @@ func (r *upgradeRunState) snapshot() (int, string) {
 }
 
 // stopAndUpdate is step 6: stop with the running executable, then install with the extracted one.
-// It returns the status and reason to report: a stop that did not succeed stops the run before
-// the runtime is replaced, and the two failures are named apart in the record.
+// The runtime the pointer names is recorded before the stop, so the restart after it can fall back
+// to the runtime the service was running. A stop that did not succeed stops the run before the
+// runtime is replaced, and the two failures are named apart in the record.
 func (r *upgradeRunState) stopAndUpdate() (int, string) {
 	pointer, err := upgradePointerTarget(r.e)
 	if err != nil {
 		return r.refuse(upgradeStepStop, upgradeReasonStopFailed, "", err)
 	}
+	r.previous = pointer
 	if _, code, err := r.command(r.ctx, upgradeInstallTimeout, upgradeStepStop,
 		filepath.Join(pointer, "bin", "codex-session-relay"),
 		"--state", r.state, "--socket", r.cfg.Relay.Socket, "service", "stop"); err != nil || code != 0 {
@@ -300,9 +443,17 @@ func (r *upgradeRunState) stopAndUpdate() (int, string) {
 	if r.opts.Issue != "" {
 		args = append(args, "--issue", r.opts.Issue)
 	}
-	_, code, err := r.command(r.ctx, upgradeInstallTimeout, upgradeStepUpdate, filepath.Join(r.extract, "crw"), args...)
+	out, code, err := r.command(r.ctx, upgradeInstallTimeout, upgradeStepUpdate, filepath.Join(r.extract, "crw"), args...)
 	if err != nil {
 		return upgradeExitUpdateFailed, upgradeReasonUpdateFailed
+	}
+	if code == upgradeInstallOK || code == upgradeInstallIncomplete {
+		// The installer's Incomplete is a promotion whose claim did not settle: the candidate is
+		// selected and the owned pointer already names it, so the runtime is in service and the
+		// post-check compares the pointer and the version with it, even though this command reports
+		// the run as failed because the promotion did not finish.
+		r.promoted = true
+		r.installed = upgradeInstalledRuntime(out)
 	}
 	if code != 0 {
 		return upgradeExitUpdateFailed, upgradeReasonUpdateFailed
@@ -310,47 +461,231 @@ func (r *upgradeRunState) stopAndUpdate() (int, string) {
 	return 0, ""
 }
 
-// start is step 7: start from the new pointer's executable, whether or not the update succeeded.
+// upgradeInstalledRuntime is the runtime directory the update's own answer names, or "" when the
+// answer names none. Nothing else can say where the update put the runtime, and the post-check
+// refuses rather than comparing the pointer with a guess.
+func upgradeInstalledRuntime(answer string) string {
+	var reported struct {
+		Environment string `json:"environment"`
+	}
+	if json.Unmarshal([]byte(answer), &reported) != nil {
+		return ""
+	}
+	return reported.Environment
+}
+
+// start is step 7: start again, whatever the update did. The pointer's runtime is tried first when
+// it still resolves; a pointer that does not resolve, or a start that does not succeed, falls back
+// to the runtime the pointer named before the stop, which is what the service was running. A
+// pointer left on an unusable runtime therefore cannot leave the relay down. Every attempt is
+// recorded, and startFrom is the runtime the service is on: the one whose start succeeded, or the
+// one whose start answered that the service was already running. A service already up holds the
+// lock, so no other runtime can start either, and falling back would only name a runtime the
+// service is not on.
 func (r *upgradeRunState) start() {
-	pointer, err := upgradePointerTarget(r.e)
-	if err != nil {
+	var candidates []string
+	if pointer, err := upgradePointerTarget(r.e); err == nil {
+		candidates = append(candidates, pointer)
+	} else if r.previous != "" {
+		r.note(upgradeStepStart, nil, 1, "", err)
+	} else {
 		r.note(upgradeStepStart, nil, 1, "", err)
 		return
 	}
-	// The recovery step runs detached, so a cancellation after the stop cannot leave it down.
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.ctx), upgradeInstallTimeout)
-	defer cancel()
-	_, _, _ = r.command(ctx, upgradeInstallTimeout, upgradeStepStart, filepath.Join(pointer, "bin", "codex-session-relay"),
-		"--state", r.state, "--socket", r.cfg.Relay.Socket, "service", "start")
+	if r.previous != "" && !slices.Contains(candidates, r.previous) {
+		candidates = append(candidates, r.previous)
+	}
+	for i, runtime := range candidates {
+		// The recovery step runs detached, so a cancellation after the stop cannot leave it down.
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(r.ctx), upgradeInstallTimeout)
+		argv := []string{filepath.Join(runtime, "bin", "codex-session-relay"),
+			"--state", r.state, "--socket", r.cfg.Relay.Socket, "service", "start"}
+		out, stderr, code, err := upgradeRunCommand(ctx, argv[0], argv[1:]...)
+		cancel()
+		from := "the pointer"
+		if runtime == r.previous {
+			from = "the runtime the pointer named before the stop"
+		}
+		r.note(upgradeStepStart, argv, code, "started from "+from+": "+runtime+"\n"+out+stderr, err)
+		if err == nil && code == 0 {
+			r.startFrom = runtime
+			r.serviceUp = true
+			return
+		}
+		if err == nil && upgradeServiceAlreadyRunning(out) {
+			r.startFrom = runtime
+			r.serviceUp = true
+			return
+		}
+		if i+1 == len(candidates) {
+			// Nothing started the service, so startFrom stays empty: it names the runtime the service
+			// came back on, and no runtime did. The post-check reads the status through the pointer and
+			// reports what it finds; the last runtime tried is in the recorded step above.
+			r.note(upgradeStepStart, nil, 1, "", fmt.Errorf("no runtime started the service; the last attempt was %s", runtime))
+		}
+	}
 }
 
-// postCheck is step 8: the new pointer and version, the service running and matching, and an
-// unchanged configuration file.
-func (r *upgradeRunState) postCheck() (int, string) {
-	pointer, err := upgradePointerTarget(r.e)
-	if err != nil {
-		r.note(upgradeStepPostCheck, nil, 1, "", err)
-		return upgradeExitPostCheck, upgradeReasonPostCheck
+// upgradeServiceAlreadyRunning reports whether a start answer says the service was already up. That
+// is not a failed launch: the service holds the lock, so this is the runtime it is on, and the
+// status the post-check reads next is what decides whether it is the runtime the update installed.
+func upgradeServiceAlreadyRunning(out string) bool {
+	var answer struct {
+		Reason string `json:"reason"`
 	}
-	version, code, err := r.command(r.ctx, upgradeCommandTimeout, upgradeStepPostCheck, filepath.Join(pointer, "bin", "crw"), "--version")
-	if err != nil || code != 0 || strings.TrimSpace(version) == "" {
-		return upgradeExitPostCheck, upgradeReasonPostCheck
+	if json.Unmarshal([]byte(out), &answer) != nil {
+		return false
 	}
-	out, code, err := r.command(r.ctx, upgradeCommandTimeout, upgradeStepPostCheck, filepath.Join(pointer, "bin", "codex-session-relay"),
-		"--state", r.state, "--socket", r.cfg.Relay.Socket, "service", "status")
-	if err != nil || code != 0 {
-		return upgradeExitPostCheck, upgradeReasonPostCheck
+	return answer.Reason == "already_running"
+}
+
+// upgradePostCheck is what step 8 established: the status and reason it reports, every reason it
+// found, and whether the configuration file changed.
+type upgradePostCheck struct {
+	code          int
+	reason        string
+	reasons       []string
+	configChanged bool
+	// mismatch reports that the post-check found the pointer and the runtime in service disagreeing
+	// with the runtime the update installed. It is carried apart from the other findings because the
+	// decided order lets it outrank a failed update, which a service that merely came up slowly does
+	// not.
+	mismatch bool
+}
+
+// postCheck is step 8: the pointer must name the runtime the update installed and that runtime's
+// crw must report the version the archive carried, or - when the update did not put a runtime in
+// service - the pointer must still name the runtime it replaced, which is the rollback. The service
+// must come up running and matching on that runtime within the wait budget, and the configuration
+// file must be unchanged. The install target is verified again after the wait: the wait can take a
+// minute, and another process on the host can move the pointer while this run waits.
+func (r *upgradeRunState) postCheck() upgradePostCheck {
+	var post upgradePostCheck
+	r.verifyInstallTarget(&post)
+	runtime := r.startFrom
+	if runtime == "" {
+		if pointer, err := upgradePointerTarget(r.e); err == nil {
+			runtime = pointer
+		}
 	}
-	if !upgradeServiceRunning(out) {
-		r.note(upgradeStepPostCheck, nil, 1, out, fmt.Errorf("the service is not running and matching"))
-		return upgradeExitPostCheck, upgradeReasonPostCheck
+	if runtime != "" && !r.waitForService(runtime) {
+		post.reasons = append(post.reasons, upgradeReasonPostCheck)
 	}
+	r.verifyInstallTarget(&post)
+	// A configuration file the snapshot read and that is now gone is a change the run can state
+	// exactly. A file that still exists but cannot be read is not a change: the run cannot tell
+	// whether it differs, so that is a post-check finding of its own rather than a claimed change.
 	digest, err := upgradeFileDigest(upgradeConfigPath(r.e))
-	if err != nil || digest != r.beforeConfig {
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		r.note(upgradeStepPostCheck, nil, 1, "", fmt.Errorf("the configuration file is gone"))
+		post.reasons = append(post.reasons, upgradeReasonConfigChanged)
+		post.configChanged = true
+	case err != nil:
+		r.note(upgradeStepPostCheck, nil, 1, "", fmt.Errorf("the configuration file could not be read: %w", err))
+		post.reasons = append(post.reasons, upgradeReasonPostCheck)
+	case digest != r.beforeConfig:
 		r.note(upgradeStepPostCheck, nil, 1, "", fmt.Errorf("the configuration file changed"))
-		return upgradeExitPostCheck, upgradeReasonPostCheck
+		post.reasons = append(post.reasons, upgradeReasonConfigChanged)
+		post.configChanged = true
 	}
-	return 0, ""
+	if len(post.reasons) == 0 {
+		return post
+	}
+	post.code = upgradeExitPostCheck
+	post.reason = post.reasons[0]
+	return post
+}
+
+// verifyInstallTarget is what the post-check compares the pointer and the running service with: the
+// runtime the update installed, or - when it installed none - the runtime it replaced. It records
+// every mismatch it finds; a mismatch reason is kept once however many times this runs.
+func (r *upgradeRunState) verifyInstallTarget(post *upgradePostCheck) {
+	pointer, err := upgradePointerTarget(r.e)
+	switch {
+	case err != nil:
+		r.note(upgradeStepPostCheck, nil, 1, "", err)
+		r.mismatch(post)
+	case r.promoted && r.installed == "":
+		r.note(upgradeStepPostCheck, nil, 1, "", fmt.Errorf("the update named no runtime it installed, so nothing shows the pointer names what it installed"))
+		r.mismatch(post)
+	case r.promoted && !upgradeSameDirectory(pointer, r.installed):
+		r.note(upgradeStepPostCheck, nil, 1, "", fmt.Errorf("the runtime pointer names %s, not %s, the runtime the update installed", pointer, r.installed))
+		r.mismatch(post)
+	case r.promoted && r.serviceUp && !upgradeSameDirectory(r.startFrom, r.installed):
+		// The pointer names the runtime the update installed, but the service did not come back on it:
+		// the restart fell back to the runtime the pointer named before the stop. A pointer that names
+		// one runtime while the service runs another is the disagreement this step exists to catch, so
+		// the recovery is recorded as a mismatch rather than a success.
+		r.note(upgradeStepPostCheck, nil, 1, "", fmt.Errorf("the service came back on %s, not %s, the runtime the update installed", r.startFrom, r.installed))
+		r.mismatch(post)
+	case !r.promoted && r.previous != "" && !upgradeSameDirectory(pointer, r.previous):
+		// The update put no runtime in service, so the pointer has to still name the runtime it
+		// replaced: that is the rollback, and its version is the previous one by design. A pointer
+		// that names anything else was changed by something other than this run's update, and nothing
+		// here can show what is in service, so the run refuses rather than calling it a rollback.
+		r.note(upgradeStepPostCheck, nil, 1, "", fmt.Errorf("the update did not put a runtime in service, and the pointer names %s, not %s, the runtime it replaced", pointer, r.previous))
+		r.mismatch(post)
+	default:
+		// The version is compared only against a runtime the update put in service. An update that
+		// did not land leaves the pointer on the runtime it replaced, whose version is the previous
+		// one by design: that is the rollback, not a mismatch.
+		if r.promoted {
+			version, code, err := r.command(r.ctx, upgradeCommandTimeout, upgradeStepPostCheck, filepath.Join(pointer, "bin", "crw"), "--version")
+			got := strings.TrimSpace(version)
+			if err != nil || code != 0 || got != r.version {
+				r.note(upgradeStepPostCheck, nil, 1, version, fmt.Errorf("the runtime's crw reports the version %q, not %q, the version the archive carried", got, r.version))
+				r.mismatch(post)
+			}
+		}
+	}
+}
+
+// mismatch records a pointer-and-runtime disagreement once, however many times the check runs.
+func (r *upgradeRunState) mismatch(post *upgradePostCheck) {
+	post.mismatch = true
+	if !slices.Contains(post.reasons, upgradeReasonRuntimeMismatch) {
+		post.reasons = append(post.reasons, upgradeReasonRuntimeMismatch)
+	}
+}
+
+// waitForService reads the service status again every upgradeServiceInterval until it reports the
+// daemon running and matching, or upgradeServiceBudget passes; the last answer is recorded either
+// way. The wait is measured on the wall clock, not on Env.Now: a test's fixed clock must not be
+// able to stop it ending.
+func (r *upgradeRunState) waitForService(runtime string) bool {
+	ctx, cancel := context.WithTimeout(r.ctx, upgradeServiceBudget)
+	defer cancel()
+	relay := filepath.Join(runtime, "bin", "codex-session-relay")
+	last := ""
+	for {
+		out, code, err := r.command(ctx, upgradeCommandTimeout, upgradeStepPostCheck, relay,
+			"--state", r.state, "--socket", r.cfg.Relay.Socket, "service", "status")
+		last = out
+		if err == nil && code == 0 && upgradeServiceRunning(out) {
+			return true
+		}
+		if ctx.Err() != nil {
+			r.note(upgradeStepPostCheck, nil, 1, last, fmt.Errorf("the service did not report itself running and matching within %s", upgradeServiceBudget))
+			return false
+		}
+		if !upgradeWait(ctx, upgradeServiceInterval) {
+			r.note(upgradeStepPostCheck, nil, 1, last, fmt.Errorf("the wait for the service ended before it reported itself running and matching"))
+			return false
+		}
+	}
+}
+
+// upgradeWait waits for one interval, or until ctx ends; false when the context ended first.
+func upgradeWait(ctx context.Context, d time.Duration) bool {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return true
+	case <-ctx.Done():
+		return false
+	}
 }
 
 // upgradeServiceRunning reports whether a status answer says the daemon runs and matches.
@@ -368,6 +703,20 @@ func upgradeServiceRunning(out string) bool {
 		return false
 	}
 	return answer.LaunchPolicy.MatchesRunning == "same"
+}
+
+// upgradeSameDirectory reports whether two spellings name the same directory, resolving both so a
+// path through a symbolic link compares equal to its target.
+func upgradeSameDirectory(a, b string) bool {
+	if a == b {
+		return true
+	}
+	resolvedA, errA := filepath.EvalSymlinks(a)
+	resolvedB, errB := filepath.EvalSymlinks(b)
+	if errA != nil || errB != nil {
+		return false
+	}
+	return resolvedA == resolvedB
 }
 
 // upgradePointerTarget is where the runtime pointer resolves, as a real path.

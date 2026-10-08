@@ -70,6 +70,46 @@ const (
 // in which surrogate they hold stay apart.
 var spawnLoneSurrogates = []string{"\xed\xa0\x80", "\xed\xa0\x81", "\xed\xb0\x80"}
 
+// spawnMentionedFoldersInput is the whole MentionedFolders case, in the grammar the target reads: the
+// drawn message, made as long as the size draws. This target makes no depth claim. MentionedFolders
+// and the other classifiers it compares read strings, and the 4,400-level bound is the writer bound of
+// RunSpawnAttachHook (internal/role/spawn/hook_route.go, spawnHookRouteMaxDepth), which a classifier
+// comparison never reaches. So nothing here nests and no harness strips a container before a classifier
+// receives the input: what the two sides compare is the argument itself. The bound is covered by
+// TestSpawnHookRouteMaximumNesting and internal/role/spawn/testdata/hook/oracle.json, and a hook-route
+// depth target is a separate follow-up.
+//
+// The size still shapes the case: it decides how long the message is, with the total bytes computed
+// from the size and capped before the string is built, so a generated case reaches the lengths a
+// mention can have without an unbounded input.
+func spawnMentionedFoldersInput(rng *rand.Rand, size int) pyjson.Object {
+	message := spawnMessage(rng, 1+rng.Intn(8)) + spawnMentionFiller(size)
+	return pyjson.Object{
+		{Key: "fn", Value: spawnFnMentionedFolders},
+		{Key: "args", Value: []any{message}},
+	}
+}
+
+// spawnMentionFillerCap caps the filler one generated case may build. A case's bytes are decided from
+// the size and clamped to this before the string is built, so no size can make the harness build an
+// unbounded input.
+const spawnMentionFillerCap = 1 << 16
+
+// spawnMentionFiller is the run of filler a case's size draws, in bytes. The campaign's size is an
+// arbitrary int (rng.Int()), so it is folded into the cap rather than used directly.
+func spawnMentionFiller(size int) string {
+	if size < 0 {
+		size = -size
+	}
+	return strings.Repeat("x", size%spawnMentionFillerCap)
+}
+
+// spawnMentionBytes is what a case's filler costs, in bytes, decided from the size alone and never by
+// measuring the built string, so a caller can decide whether a size fits before anything is built.
+func spawnMentionBytes(size int) int {
+	return len(spawnMentionFiller(size))
+}
+
 // spawnWords are the message pieces the generator assembles: the role-like spellings, the mention
 // shapes, the header lines, and the characters that make the classifiers' folding and scanning
 // interesting.
@@ -135,6 +175,8 @@ func spawnFunctionNames() []string {
 }
 
 // spawnGenerate builds one input: {"fn": name, "args": [...]}. It is deterministic for a given rng.
+// size drives the length of a MentionedFolders case's mention text; the target makes no depth claim
+// (see spawnMentionedFoldersInput).
 func spawnGenerate(rng *rand.Rand, size int) any {
 	names := spawnFunctionNames()
 	name := names[rng.Intn(len(names))]
@@ -149,7 +191,7 @@ func spawnGenerate(rng *rand.Rand, size int) any {
 		toolNames := []any{"spawn_agent", "collaborationspawn_agent", "collaboration.spawn_agent", "collaboration_spawn_agent", "Spawn_Agent", "spawn_agent ", "", nil, 3, true}
 		args = []any{toolNames[rng.Intn(len(toolNames))]}
 	case spawnFnMentionedFolders:
-		args = []any{spawnMessage(rng, 1+rng.Intn(8))}
+		return spawnMentionedFoldersInput(rng, size)
 	}
 	return pyjson.Object{{Key: "fn", Value: name}, {Key: "args", Value: args}}
 }
