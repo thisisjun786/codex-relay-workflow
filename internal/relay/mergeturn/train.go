@@ -247,24 +247,26 @@ func (s *Service) Open(ctx context.Context, turn, actor, base string, members []
 	}
 	// every member (the leader included) must stand on an active acceptance whose stand head is the
 	// head its pull request shows and its turn holds (Blocking 1): in the single lane that tie is
-	// dag-accept, which the bundle path would otherwise never pass through
-	standFor := func(relationship, memberHead string) (acceptance.Active, string, string, string, error) {
-		active, found, err := acceptance.ActiveForRelationship(ctx, s.Store.Querier(ctx), relationship)
+	// dag-accept, which the bundle path would otherwise never pass through. The reading carries the
+	// correction gate too (CRW-906): a member whose accepted result is being corrected in an open
+	// generation is not a candidate this bundle may carry.
+	standFor := func(relationship, memberHead string) (acceptance.Active, string, string, string, bool, int64, int64, error) {
+		active, live, found, err := acceptance.ActiveWithLiveGeneration(ctx, s.Store.Querier(ctx), relationship)
 		if err != nil {
-			return acceptance.Active{}, "", "", "", trainUnreadable("the acceptance of relationship %s was not read: %v", pyvalue.StrRepr(relationship), err)
+			return acceptance.Active{}, "", "", "", false, 0, 0, trainUnreadable("the acceptance of relationship %s was not read: %v", pyvalue.StrRepr(relationship), err)
 		}
 		if !found {
-			return acceptance.Active{}, "", "", "", nil
+			return acceptance.Active{}, "", "", "", false, live, 0, nil
 		}
 		stand, err := acceptance.StandOf(ctx, s.Store.Querier(ctx), active.AcceptanceID, relationship, active.Generation, active.EventID, active.RevisionHash, active.HeadSHA)
 		if err != nil {
-			return acceptance.Active{}, "", "", "", trainUnreadable("what acceptance %s stands on was not read: %v", pyvalue.StrRepr(active.AcceptanceID), err)
+			return acceptance.Active{}, "", "", "", false, live, 0, trainUnreadable("what acceptance %s stands on was not read: %v", pyvalue.StrRepr(active.AcceptanceID), err)
 		}
 		rulingHead, rulingSource, err := acceptance.RulingHead(ctx, s.Store.Querier(ctx), active.EventID, active.HeadSHA)
 		if err != nil {
-			return acceptance.Active{}, "", "", "", trainUnreadable("the ruling head of event %s was not read: %v", pyvalue.StrRepr(active.EventID), err)
+			return acceptance.Active{}, "", "", "", false, live, 0, trainUnreadable("the ruling head of event %s was not read: %v", pyvalue.StrRepr(active.EventID), err)
 		}
-		return active, stand.Head, rulingHead, rulingSource, nil
+		return active, stand.Head, rulingHead, rulingSource, live > stand.Generation, live, stand.Generation, nil
 	}
 	for _, pr := range members {
 		pull, err := forge.PullRequest(ctx, early.Repository, pr)
@@ -284,11 +286,11 @@ func (s *Service) Open(ctx context.Context, turn, actor, base string, members []
 			if !SameCommit(pull.HeadSHA, early.CandidateHead) {
 				return nil, trainConflict("the leader's pull request %d reads head %s and its turn holds %s; a member's head is not refreshed by the bundle", pr, pyvalue.StrRepr(pull.HeadSHA), pyvalue.StrRepr(early.CandidateHead))
 			}
-			active, standHead, rulingHead, rulingSource, err := standFor(early.RelationshipID.String, early.CandidateHead)
+			active, standHead, rulingHead, rulingSource, under, live, standGeneration, err := standFor(early.RelationshipID.String, early.CandidateHead)
 			if err != nil {
 				return nil, err
 			}
-			if err := trainStandRefusal(pr, early.RelationshipID.String, early.CandidateHead, active, standHead); err != nil {
+			if err := trainStandRefusal(pr, early.RelationshipID.String, early.CandidateHead, active, standHead, under, live, standGeneration); err != nil {
 				return nil, err
 			}
 			expectations = append(expectations, TrainMemberExpectation{TurnID: turn, PRNumber: pr, RelationshipID: early.RelationshipID.String, AcceptedHead: early.CandidateHead, RuledEventID: active.EventID, RulingHead: rulingHead, RulingHeadSource: rulingSource})
@@ -307,11 +309,11 @@ func (s *Service) Open(ctx context.Context, turn, actor, base string, members []
 		if !member.RelationshipID.Valid || member.RelationshipID.String == "" {
 			return nil, trainConflict("pull request %d's turn %s records no relationship, so its landing cannot be recorded", pr, pyvalue.StrRepr(member.TurnID))
 		}
-		active, standHead, rulingHead, rulingSource, err := standFor(member.RelationshipID.String, member.CandidateHead)
+		active, standHead, rulingHead, rulingSource, under, live, standGeneration, err := standFor(member.RelationshipID.String, member.CandidateHead)
 		if err != nil {
 			return nil, err
 		}
-		if err := trainStandRefusal(pr, member.RelationshipID.String, member.CandidateHead, active, standHead); err != nil {
+		if err := trainStandRefusal(pr, member.RelationshipID.String, member.CandidateHead, active, standHead, under, live, standGeneration); err != nil {
 			return nil, err
 		}
 		expectations = append(expectations, TrainMemberExpectation{TurnID: member.TurnID, PRNumber: pr, RelationshipID: member.RelationshipID.String, AcceptedHead: member.CandidateHead, RuledEventID: active.EventID, RulingHead: rulingHead, RulingHeadSource: rulingSource})
@@ -339,6 +341,14 @@ func (s *Service) Open(ctx context.Context, turn, actor, base string, members []
 		// refused rather than opening a second one.
 		if e := s.trainMembershipRefusal(tx, actor, expectations); e != nil {
 			return e
+		}
+		// CRW-906: every member's correction state is read again on this transaction's snapshot. The
+		// reads above happen before it, and a generation opened in that gap would otherwise be recorded
+		// as an opened train: nothing is written for a member whose accepted result is under correction.
+		for _, m := range expectations {
+			if e := trainMemberCorrectionRefusal(tx, s.Store.Querier(tx), row.Repository, m.PRNumber, m.RelationshipID, m.AcceptedHead); e != nil {
+				return e
+			}
 		}
 		// a train id names one opening, not the candidate: a turn that abandons a train and reopens
 		// one for the same head gets a fresh id rather than colliding with the abandoned record
@@ -454,13 +464,20 @@ func waitingTurnFor(turns []store.MergeTurnsRow, pr int64) (store.MergeTurnsRow,
 }
 
 // trainStandRefusal is Blocking 1's gate: the member must have an active acceptance whose stand head
-// is the head its pull request shows and its turn holds.
-func trainStandRefusal(pr int64, relationship, memberHead string, active acceptance.Active, standHead string) error {
+// is the head its pull request shows and its turn holds, and no correction generation may be open over
+// the accepted result (CRW-906). A defect found in an accepted result before it lands is corrected in a
+// later generation; until that generation's result is accepted with dag-accept --supersedes, or the
+// generation is withdrawn, the old head is not a candidate a bundle may carry or land. The refusal is
+// the existing disposition_conflict and it names the open generation: no new refusal name, no column.
+func trainStandRefusal(pr int64, relationship, memberHead string, active acceptance.Active, standHead string, underCorrection bool, liveGeneration, standGeneration int64) error {
 	if active.AcceptanceID == "" {
 		return trainConflict("pull request %d's relationship %s has no active acceptance, so the member is not a verified, accepted candidate this bundle may carry; run dag-accept on its head first", pr, pyvalue.StrRepr(relationship))
 	}
 	if !SameCommit(standHead, memberHead) {
 		return trainConflict("pull request %d stands on %s and its acceptance %s stands on %s, so the member's head is not the head the ruling covers", pr, pyvalue.StrRepr(memberHead), pyvalue.StrRepr(active.AcceptanceID), pyvalue.StrRepr(standHead))
+	}
+	if underCorrection {
+		return trainUnderCorrectionRefusal(pr, relationship, liveGeneration, standGeneration)
 	}
 	return nil
 }
@@ -723,6 +740,14 @@ func (s *Service) Verify(ctx context.Context, train, actor, bundlePR, head, run,
 		if !found || (current != store.MergeTrainOpened && current != store.MergeTrainVerified) {
 			return trainConflict("train %s changed while the bundle was being read, so it is no longer a train a verify may advance; call again", pyvalue.StrRepr(train))
 		}
+		// CRW-906: each member's correction state is read again on this transaction's snapshot. The
+		// expectations above were read before the run and the chain were proved, and a generation opened
+		// in that gap would otherwise be recorded as verified: nothing is written for such a member.
+		for _, m := range expected {
+			if e := trainMemberCorrectionRefusal(tx, s.Store.Querier(tx), row.Repository, m.PRNumber, m.RelationshipID, m.AcceptedHead); e != nil {
+				return e
+			}
+		}
 		return store.RecordMergeTrainEvent(tx, s.Store, store.MergeTrainEventRow{TrainID: train, Seq: seq, Kind: store.MergeTrainVerified, Actor: actor, DetailJSON: pythonJSON(detail), RecordedAt: at})
 	})
 	if err != nil {
@@ -738,7 +763,7 @@ func (s *Service) Verify(ctx context.Context, train, actor, bundlePR, head, run,
 func (s *Service) trainExpectations(ctx context.Context, members []store.MergeTrainMemberRow) ([]TrainMemberExpectation, error) {
 	out := make([]TrainMemberExpectation, 0, len(members))
 	for _, m := range members {
-		active, found, err := acceptance.ActiveForRelationship(ctx, s.Store.Querier(ctx), m.RelationshipID)
+		active, live, found, err := acceptance.ActiveWithLiveGeneration(ctx, s.Store.Querier(ctx), m.RelationshipID)
 		if err != nil {
 			return nil, trainUnreadable("the acceptance of relationship %s was not read: %v", pyvalue.StrRepr(m.RelationshipID), err)
 		}
@@ -749,7 +774,7 @@ func (s *Service) trainExpectations(ctx context.Context, members []store.MergeTr
 		if err != nil {
 			return nil, trainUnreadable("what acceptance %s stands on was not read: %v", pyvalue.StrRepr(active.AcceptanceID), err)
 		}
-		if err := trainStandRefusal(m.PRNumber, m.RelationshipID, m.MemberHead, active, stand.Head); err != nil {
+		if err := trainStandRefusal(m.PRNumber, m.RelationshipID, m.MemberHead, active, stand.Head, live > stand.Generation, live, stand.Generation); err != nil {
 			return nil, err
 		}
 		rulingHead, rulingSource, err := acceptance.RulingHead(ctx, s.Store.Querier(ctx), active.EventID, active.HeadSHA)
@@ -944,6 +969,13 @@ func (s *Service) TrainLand(ctx context.Context, train, actor, landed, observed 
 		survivors := make([]store.MergeTrainMemberRow, 0, len(members))
 		turns := make(map[string]store.MergeTurnsRow, len(members))
 		excluded := make([]any, 0, len(members))
+		// CRW-906: the members whose turn left the lane are excluded from the landing, but their code is
+		// still in the merge commit this bundle lands (every member head is checked as an ancestor of it
+		// above), so their correction state is read too. The CRW-897 carve-out keeps holding for what it
+		// is about (a revoked acceptance or a moved head of a member that left does not refuse the rest
+		// of the bundle); this is the separate question of whether the tree being landed still contains a
+		// result the plan is repairing.
+		leftMembers := make([]store.MergeTrainMemberRow, 0, len(members))
 		for _, m := range members {
 			turn, e := s.Store.MergeTurn(tx, m.TurnID)
 			if e != nil {
@@ -951,6 +983,7 @@ func (s *Service) TrainLand(ctx context.Context, train, actor, landed, observed 
 			}
 			if turn.State != Holding && turn.State != Waiting {
 				excluded = append(excluded, map[string]any{"seq": m.Seq, "turnId": m.TurnID, "prNumber": m.PRNumber, "relationshipId": m.RelationshipID, "state": turn.State, "closeReason": value(turn.CloseReason)})
+				leftMembers = append(leftMembers, m)
 				continue
 			}
 			if !SameCommit(turn.CandidateHead, m.MemberHead) {
@@ -963,6 +996,16 @@ func (s *Service) TrainLand(ctx context.Context, train, actor, landed, observed 
 		// or moved after open refuses the landing with nothing written (Blocking 1). A member that
 		// left the lane is excluded above and is not re-read, so its parent revoking the acceptance
 		// does not refuse the rest of the bundle.
+		for _, m := range survivors {
+			if e := trainMemberCorrectionRefusal(tx, s.Store.Querier(tx), row.Repository, m.PRNumber, m.RelationshipID, m.MemberHead); e != nil {
+				return e
+			}
+		}
+		for _, m := range leftMembers {
+			if e := trainExcludedMemberRefusal(tx, s.Store.Querier(tx), row.Repository, m.PRNumber, m.RelationshipID, m.MemberHead); e != nil {
+				return e
+			}
+		}
 		expectations, e := s.trainExpectations(tx, survivors)
 		if e != nil {
 			return e

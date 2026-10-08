@@ -368,7 +368,7 @@ func TestSchemaFiles_python_packaged_contract(t *testing.T) {
 		// These digests follow the contract bundle (SOURCE.md). The Draft 7 verdicts keep their own
 		// pins (schemaPins, schema_validator_test.go), which move only when the cases for a changed
 		// schema are judged again, so a contract revision that edits a schema fails both.
-		expected := map[string]string{"acknowledgement.json": "193c2a1dbdb6197f852aaa38c6b8b4e55ba804ffc66e7b2a73925365b133eb7c", "completion-receipt.json": "fd6498fdca80c7e8f4d97e37ceec12935bf1afce10211826fdc232593b9fb0d5", "delivery-attempt.json": "ad856f98872952ffc2235acc12ccc5942bbd6e5cae0df1771f063dc74526d24b", "relationship.json": "c8ebaf4559fa1ac6df26d98c4214938caf78bd8c61659bce026da6a3595a4b90", "verification-verdict.json": "0b3f8f4b061cff2992fc60a7c1f45dec6f803116894735751c40df3a8d356af9"}
+		expected := map[string]string{"acknowledgement.json": "193c2a1dbdb6197f852aaa38c6b8b4e55ba804ffc66e7b2a73925365b133eb7c", "completion-receipt.json": "fd6498fdca80c7e8f4d97e37ceec12935bf1afce10211826fdc232593b9fb0d5", "delivery-attempt.json": "ad856f98872952ffc2235acc12ccc5942bbd6e5cae0df1771f063dc74526d24b", "relationship.json": "6a994cad6400a07d3e2faaf2161a16818ac7784be651cdcb2d6c9b9439988cbd", "verification-verdict.json": "0b3f8f4b061cff2992fc60a7c1f45dec6f803116894735751c40df3a8d356af9"}
 		for name, want := range expected {
 			data, err := os.ReadFile(filepath.Join(schema, name))
 			if err != nil {
