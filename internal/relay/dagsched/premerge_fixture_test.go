@@ -11,8 +11,10 @@ import (
 
 // premergeWithRecord is the CRW-952 test fixture: an acceptance of an implementation node that names no pre-merge
 // record gets a passing one, built for the node (its issue key and the criteria the plan holds now) and for the head
-// the input accepts (the commit, or the pull request head the forge reports). A record the call names is kept. Tests
-// route their Accept calls through it with gofmt -r; the gate's own tests name their records explicitly.
+// the input accepts (the commit, or the pull request head the forge reports). A record the call names is kept, and a
+// pure replay whose stored record is current names none. Tests route their Accept calls through it with gofmt -r. A
+// test whose forge reader has side effects names its record with premergeAt instead, because the fixture reads the
+// forge once more than Accept does.
 func premergeWithRecord(s *Scheduler, ctx context.Context, plan, node, actor string, in AcceptInput) AcceptInput {
 	if in.Premerge != nil {
 		return in
@@ -45,6 +47,22 @@ func premergeWithRecord(s *Scheduler, ctx context.Context, plan, node, actor str
 	default:
 		return in
 	}
+	in.Premerge = premergeAt(s, ctx, plan, node, head)
+	return in
+}
+
+// premergeAt is a passing pre-merge record for node on head, built from the plan as it stands: the node's issue key and
+// its criteria digest. It reads no forge, so a test can name its head without a side effect. nil when the plan cannot
+// be read.
+func premergeAt(s *Scheduler, ctx context.Context, plan, node, head string) []byte {
+	snap, _, err := dag.SnapshotAt(ctx, s.Store.Q(ctx), plan, 0)
+	if err != nil {
+		return nil
+	}
+	n, ok := nodeOf(snap, node)
+	if !ok {
+		return nil
+	}
 	score := 9.0
 	raw, err := json.Marshal(premerge.Record{Schema: premerge.RecordSchema, Issue: n.IssueKey, Node: node, Head: head,
 		Dev: strings.Repeat("a", 40), CriteriaDigest: n.CriteriaSetDigest,
@@ -52,8 +70,7 @@ func premergeWithRecord(s *Scheduler, ctx context.Context, plan, node, actor str
 		Criteria: map[string]premerge.Criterion{"c1": {Verdict: "PASS", Evidence: "fixture"}}, Defects: []premerge.Defect{},
 		Score: &score, Summary: "fixture", Dispositions: premerge.Dispositions{By: "fixture"}})
 	if err != nil {
-		return in
+		return nil
 	}
-	in.Premerge = raw
-	return in
+	return raw
 }

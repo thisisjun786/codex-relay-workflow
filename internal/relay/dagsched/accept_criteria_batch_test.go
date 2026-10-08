@@ -82,6 +82,7 @@ func TestIntegrationBatchReadsACriteriaChangeAsDecided(t *testing.T) {
 	k.exec("UPDATE canonical_criteria SET set_digest = ? WHERE relationship_id = ?", dig("changed b"), bAccept.RelationshipID)
 	k.exec("INSERT INTO dag_acceptance_revalidations (revalidation_id, acceptance_id, criteria_set_digest, event_id, verdict_turn_id, reval_seq, revalidated_by, revalidated_at) VALUES ('rv-b', ?, ?, ?, 'vt2', 1, 'parent', 't')",
 		bAccept.AcceptanceID, dig("changed b"), event)
+	premergeRevalidationRecord(k.t, k.s.DB, bAccept.AcceptanceID, "rv-b", dig("changed b"))
 	if got := invStaleIDs(k.read("g")); !reflect.DeepEqual(got, []string{"a"}) {
 		t.Fatalf("after B's revalidation stale = %v, want [a]", got)
 	}

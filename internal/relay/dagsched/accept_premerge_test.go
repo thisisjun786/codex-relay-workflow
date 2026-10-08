@@ -2,11 +2,13 @@ package dagsched
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/acceptance/premerge"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 )
 
 // The pre-merge gate inside acceptance and integration (CRW-952). Each refusal name is reached by calling Accept with its
@@ -16,13 +18,20 @@ import (
 // member and encode it again.
 func premergeRecordOf(t *testing.T, k *commitAcceptKit) premerge.Record {
 	t.Helper()
-	in := premergeWithRecord(k.sched, context.Background(), "g", "I", "parent", AcceptInput{
-		Commit: &CommitRef{Head: k.head, Base: k.base, Checkout: k.repo.path}})
-	rec, err := premerge.Decode(in.Premerge)
+	ctx := context.Background()
+	snap, _, err := dag.SnapshotAt(ctx, k.sched.Store.Q(ctx), "g", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return rec
+	n, ok := nodeOf(snap, "I")
+	if !ok {
+		t.Fatal("node I is not in the plan")
+	}
+	score := 9.0
+	return premerge.Record{Schema: premerge.RecordSchema, Issue: n.IssueKey, Node: "I", Head: k.head, Dev: strings.Repeat("a", 40),
+		CriteriaDigest: n.CriteriaSetDigest, Grader: premerge.Grader{Model: "test", Effort: "none", PromptDigest: "sha256:test"},
+		GradedAt: "2026-10-08T12:00:00Z", Criteria: map[string]premerge.Criterion{"c1": {Verdict: "PASS", Evidence: "test"}},
+		Defects: []premerge.Defect{}, Score: &score, Summary: "test", Dispositions: premerge.Dispositions{By: "test"}}
 }
 
 func premergeRaw(t *testing.T, rec premerge.Record) []byte {
@@ -35,11 +44,38 @@ func premergeRaw(t *testing.T, rec premerge.Record) []byte {
 }
 
 // acceptWithPremerge runs the commit acceptance of node I with the record given (nil names none).
+// premergeRevalidationRecord stores the record a revalidation was judged on (CRW-952): the acceptance's stored record with
+// its criteria digest replaced by the one the revalidation rules, inserted with the revalidation row it belongs to.
+func premergeRevalidationRecord(t *testing.T, db *sql.DB, acceptanceID, revalidationID, criteria string) {
+	t.Helper()
+	var raw string
+	if err := db.QueryRow("SELECT record_json FROM dag_acceptance_premerge WHERE acceptance_id = ?", acceptanceID).Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	rec, err := premerge.Decode([]byte(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec.CriteriaDigest = criteria
+	body, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest, err := premerge.Digest(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("INSERT INTO dag_revalidation_premerge (revalidation_id, acceptance_id, record_digest, record_json, evaluated_head, accepted_head, recorded_by, coordinator_epoch, recorded_at) VALUES (?,?,?,?,?,?,?,?,?)",
+		revalidationID, acceptanceID, digest, string(body), rec.Head, rec.Head, "parent", 0, "t"); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func (k *commitAcceptKit) acceptWithPremerge(raw []byte) (AcceptResult, error) {
 	k.t.Helper()
 	return k.sched.Accept(context.Background(), "g", "I", "parent", AcceptInput{
 		RuleVersion: VerifierRule{SkillsDigest: dig("skills"), Model: "m", Effort: "none"},
-		Commit:      &CommitRef{Head: k.head, Base: k.base, Checkout: k.repo.path},
+		Commit:      &CommitRef{Head: k.head, Base: k.base, Checkout: k.repo.path, Record: k.record(k.treeOf(k.head), "pass", nil)},
 		Premerge:    raw,
 	})
 }

@@ -339,7 +339,7 @@ func TestAcceptRefusesAPlanThatChangedWhileTheHeadWasRead(t *testing.T) {
 				k.putPlan("rp", int(k.snapshot("rp").Revision), "rp-moved", doc{"op": dag.OpUpdateNode, "node": node})
 				return pr, err
 			}
-			_, err := k.accept("rp", "I", AcceptInput{PullRequest: &PRRef{Repository: "owner/repo", Number: 7}})
+			_, err := k.accept("rp", "I", AcceptInput{PullRequest: &PRRef{Repository: "owner/repo", Number: 7}, Premerge: premergeAt(k.sched, context.Background(), "rp", "I", k.forge.by["owner/repo#7"].HeadSHA)})
 			if refusalReason(err) != "disposition_conflict" || !strings.Contains(err.Error(), "plan changed") {
 				t.Fatalf("accept = %v, want the plan-changed refusal", err)
 			}
