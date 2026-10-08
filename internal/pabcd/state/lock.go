@@ -18,8 +18,13 @@ func WithSessionLock(cwd, sessionID string, fn func() error) error {
 	return WithSessionLockContext(context.Background(), cwd, sessionID, fn)
 }
 
+// sessionLockBeforeGiveUp is a test seam: it runs inside orchestrateInterruptLockContext immediately
+// before an acquisition failure is returned, so a test can cancel the invocation's context in that
+// window without a sleep. Production leaves it nil.
+var sessionLockBeforeGiveUp func()
+
 func withSessionLock(cwd, sessionID string, fn func() error, sleep func(time.Duration)) error {
-	return orchestrateInterruptLockContext(context.Background(), cwd, sessionID, fn, sleep)
+	return orchestrateInterruptLockContext(context.Background(), cwd, sessionID, fn, sleep, nil)
 }
 
 // WithSessionLockContext is WithSessionLock for a caller that can be interrupted (the orchestrate row under cmd/crw
@@ -28,10 +33,13 @@ func withSessionLock(cwd, sessionID string, fn func() error, sleep func(time.Dur
 // no context passes context.Background(), which is what WithSessionLock does: its behaviour and its sleep seam are
 // unchanged.
 func WithSessionLockContext(ctx context.Context, cwd, sessionID string, fn func() error) error {
-	return orchestrateInterruptLockContext(ctx, cwd, sessionID, fn, time.Sleep)
+	return orchestrateInterruptLockContext(ctx, cwd, sessionID, fn, time.Sleep, nil)
 }
 
-func orchestrateInterruptLockContext(ctx context.Context, cwd, sessionID string, fn func() error, sleep func(time.Duration)) error {
+// orchestrateInterruptLockContext is the acquisition both entries share. retryDelays is a test seam: a
+// caller that has to reach the give-up passes a short schedule so the case does not burn the oracle's
+// real waits (CRW-922); nil means LOCK_RETRY_DELAYS_MS, which is what both entries above pass.
+func orchestrateInterruptLockContext(ctx context.Context, cwd, sessionID string, fn func() error, sleep func(time.Duration), retryDelays []time.Duration) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -40,6 +48,10 @@ func orchestrateInterruptLockContext(ctx context.Context, cwd, sessionID string,
 	}
 	lockPath := StatePath(cwd, sessionID) + ".lock"
 	delays := [...]time.Duration{5, 10, 15, 20, 25, 30, 35, 40, 35, 35} // milliseconds: LOCK_RETRY_DELAYS_MS
+	schedule := delays[:]
+	if retryDelays != nil {
+		schedule = retryDelays
+	}
 	for attempt := 0; ; attempt++ {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -48,10 +60,21 @@ func orchestrateInterruptLockContext(ctx context.Context, cwd, sessionID string,
 		if err == nil {
 			break
 		}
-		if !errors.Is(err, fs.ErrExist) || attempt >= len(delays) {
+		if !errors.Is(err, fs.ErrExist) || attempt >= len(schedule) {
+			if sessionLockBeforeGiveUp != nil {
+				sessionLockBeforeGiveUp()
+			}
+			// CRW-922 (c1-3): the give-up is reported after the invocation's context is read once more, so
+			// a cancellation that landed as the wait ended answers the context's own error (130) rather
+			// than the busy error with code 1 - the same rule the D close's goalplan locks follow. A
+			// caller with no context (context.Background, which WithSessionLock passes) is unchanged: its
+			// ctx.Err() is always nil.
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return ctxErr
+			}
 			return err
 		}
-		delay := delays[attempt] * time.Millisecond
+		delay := schedule[attempt] * time.Millisecond
 		if ctx.Done() == nil {
 			sleep(delay) // a context that can never end keeps the caller's seam
 			continue
