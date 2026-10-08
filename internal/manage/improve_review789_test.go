@@ -909,8 +909,8 @@ func TestImproveReview789ReasonHeadingIsNotAProjectList(t *testing.T) {
 	doc := improveProposeTestDraft(t, w, fingerprint)
 	// The reason itself holds the text, so the body legitimately contains it; what must not happen
 	// is the reader taking it for a project.
-	if projects := improveProposeParseProjects(doc.Body); len(projects) != 1 || projects[0].Project != "project-a" || projects[0].Count != 1 {
-		t.Errorf("the rerun read the reason's heading as the Where section: projects = %+v, want only project-a (1)\n%s", projects, doc.Body)
+	if got := improveReview988Counts(t, improveReview988DraftPath(w, fingerprint)); len(got) != 1 || got[0] != "project-a=1" {
+		t.Errorf("the rerun read the reason's heading as the Where section: the project counts = %v, want only project-a=1\n%s", got, doc.Body)
 	}
 	if doc.Project != "project-a" {
 		t.Errorf("the draft project = %q, want project-a", doc.Project)

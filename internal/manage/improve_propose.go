@@ -462,86 +462,82 @@ func improveProposeIssueIndex(bundle improveBundle) (keys, titles, fingerprints 
 	return keys, titles, fingerprints
 }
 
-// improveProposeSectionHeadings are the four section headings the renderer writes, in the order it
-// writes them.
-var improveProposeSectionHeadings = []string{"## What\n\n", "## Where\n\n", "## Seen\n\n", "## Evidence\n\n"}
-
-// improveProposeSectionEnd is the offset where the section starting at start ends: the next
-// heading of the writer's own set, or the end of the body. Only the writer's headings end a
-// section, so a heading a reason, an evidence string or a sighting happens to contain is part of
-// the section's text rather than its end.
-func improveProposeSectionEnd(body string, start int) int {
-	end := len(body)
-	for _, heading := range improveProposeSectionHeadings {
-		if at := strings.Index(body[start:], heading); at >= 0 && start+at < end {
-			end = start + at
-		}
+// improveProposeStored is what a draft already holds for its counts and its origins: the item an
+// earlier run wrote, or, for a draft written before the item existed, the counts its stored sightings
+// give. The body is never read back, so a Where or Evidence section a person edited, or one a reason
+// quotes, changes nothing here. Only a split names its project in a sighting, so the sightings of any
+// other kind count under the unknown owner.
+func improveProposeStored(doc *auditDraft, kind string) ([]improveProposeProject, []string) {
+	if doc.Improve != nil {
+		return append([]improveProposeProject(nil), doc.Improve.Projects...), append([]string(nil), doc.Improve.Evidence...)
 	}
-	return end
+	counts := map[string]int{}
+	var origins []string
+	for _, sighting := range doc.Seen {
+		owner := auditDraftOwnerUnknown
+		if kind == improveKindSplit {
+			owner = improveProposeProjectKey(sighting.Subject)
+		}
+		counts[owner]++
+		origins = append(origins, sighting.Head)
+	}
+	projects := make([]improveProposeProject, 0, len(counts))
+	for project, count := range counts {
+		projects = append(projects, improveProposeProject{Project: project, Count: count})
+	}
+	sort.Slice(projects, func(a, b int) bool { return projects[a].Project < projects[b].Project })
+	return projects, improveSortedEvidence(origins)
 }
 
-// improveProposeBodySection is the text of one section of a stored improve body. The writer emits
-// the four sections in order, so a section is read from its heading to the next heading of that
-// set. For Where the reader takes the first heading whose text is a project list and whose next
-// heading is Seen: a reason that quotes a Where heading is followed by the writer's own Where, and
-// an evidence string that quotes one is followed by no Seen, so neither can be mistaken for the
-// section this feature wrote.
-func improveProposeBodySection(body, heading, next string) (string, bool) {
-	for at := 0; ; {
-		found := strings.Index(body[at:], heading)
-		if found < 0 {
-			return "", false
+// improveProposeCountsOf is the count each project holds, leaving out a project that holds none.
+func improveProposeCountsOf(projects []improveProposeProject) map[string]int {
+	out := map[string]int{}
+	for _, project := range projects {
+		if project.Count > 0 {
+			out[project.Project] += project.Count
 		}
-		start := at + found
-		end := improveProposeSectionEnd(body, start+len(heading))
-		rest := body[start+len(heading) : end]
-		if next == "" || strings.HasPrefix(body[end:], next) {
-			return rest, true
-		}
-		at = start + len(heading)
-	}
-}
-
-// improveProposeParseProjects reads the projects a stored improve body names, so a later run
-// can carry them into the rewritten body. Only this feature's own body is parsed.
-func improveProposeParseProjects(body string) []improveProposeProject {
-	rest, ok := improveProposeBodySection(body, "## Where\n\n", "## Seen\n\n")
-	if !ok {
-		return nil
-	}
-	var out []improveProposeProject
-	for _, line := range strings.Split(rest, "\n") {
-		line = strings.TrimSpace(line)
-		if !strings.HasPrefix(line, "- ") {
-			continue
-		}
-		line = strings.TrimPrefix(line, "- ")
-		open := strings.LastIndex(line, " (")
-		if open < 0 || !strings.HasSuffix(line, ")") {
-			continue
-		}
-		count := 0
-		if _, err := fmt.Sscanf(line[open+2:len(line)-1], "%d", &count); err != nil {
-			continue
-		}
-		out = append(out, improveProposeProject{Project: strings.TrimSpace(line[:open]), Count: count})
 	}
 	return out
 }
 
-// improveProposeParseEvidence reads the evidence locations a stored improve body names.
-func improveProposeParseEvidence(body string) []string {
-	rest, ok := improveProposeBodySection(body, "## Evidence\n\n", "")
-	if !ok {
-		return nil
+// improveProposeProjectsEqual reports whether two project lists hold the same counts, whatever their order.
+func improveProposeProjectsEqual(a, b []improveProposeProject) bool {
+	ca, cb := improveProposeCountsOf(a), improveProposeCountsOf(b)
+	if len(ca) != len(cb) {
+		return false
 	}
-	var out []string
-	for _, line := range strings.Split(rest, "\n") {
-		if strings.HasPrefix(line, "- ") {
-			out = append(out, strings.TrimSpace(strings.TrimPrefix(line, "- ")))
+	for project, count := range ca {
+		if cb[project] != count {
+			return false
 		}
 	}
-	return out
+	return true
+}
+
+// improveProposeSeenEqual reports whether two sighting lists are the same, entry by entry and in order.
+func improveProposeSeenEqual(a, b []auditDraftSeen) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// improveProposeStringsEqual reports whether two sorted origin lists are the same.
+func improveProposeStringsEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // improveProposeIssueKeys is the issue keys a record's evidence names, the ones an earlier build
@@ -558,82 +554,31 @@ func improveProposeIssueKeys(evidence []string) map[string]bool {
 	return keys
 }
 
-// improveProposeMergeProjects merges the projects a stored body names with the ones the new
-// candidate reached: a project's count is the count the draft already held plus the occurrences
-// this run newly recorded there, and never below what this run's own records report for it, so a
-// source that aggregates its occurrences into one row grows the count the source itself reports. A
-// project the new run no longer carries keeps its count, so a rewrite never drops a project and
-// rerunning one bundle never grows a count.
-//
-// One stored project is dropped: a key this run's own evidence names as an issue key. An earlier
-// build took the issue key of a split whose relationship carried no scope for the project, and an
-// issue key is never a project, so a draft written then must lose it on the next run rather than
-// keep a false owner. The key stays in the body's evidence as issue:<KEY>.
-func improveProposeMergeProjects(stored, current []improveProposeProject, added, moved map[string]int, issueKeys map[string]bool) []improveProposeProject {
-	// reported is what this run's own records report for each project. A record that merges several
-	// occurrences into one row reports its whole count at that one origin, and that count grows
-	// while the origin stays the same, so the sightings this run added are not the whole growth.
-	// The sightings keep a stored count in step; this keeps it from falling behind the source.
-	reported := map[string]int{}
-	for _, project := range current {
-		reported[project.Project] = project.Count
-	}
-	// projectCount is the stored count plus what this run newly recorded, raised to what the run's
-	// own records report so an aggregate's growth is not dropped.
-	projectCount := func(stored int, project string) int {
-		count := stored + added[project] + moved[project]
-		if count < reported[project] {
-			count = reported[project]
-		}
-		return count
-	}
-	out := make([]improveProposeProject, 0, len(stored))
-	carried := 0
+// improveProposeMergeProjects is the count each project of a draft holds after one run: the count the
+// draft held, plus the occurrences this run newly recorded there, plus the occurrences that moved to or
+// from it because their owner changed. A project whose occurrences all moved away holds no count and is
+// dropped. A stored project that is an issue key of an earlier build is not a project: its occurrences
+// move to the unknown owner, so the false name is not kept. Nothing else moves a count, so rerunning one
+// bundle leaves every stored count as it was.
+func improveProposeMergeProjects(stored []improveProposeProject, added, moved map[string]int, issueKeys map[string]bool) []improveProposeProject {
+	counts := map[string]int{}
 	for _, project := range stored {
 		if project.Project != "" && issueKeys[project.Project] {
-			// The occurrences are real, only the key was never a project: they move to the
-			// unknown owner rather than being dropped with the false name.
-			carried += project.Count
+			counts[auditDraftOwnerUnknown] += project.Count
 			continue
 		}
-		out = append(out, project)
+		counts[project.Project] += project.Count
 	}
-	if carried > 0 {
-		found := false
-		for i := range out {
-			if out[i].Project == auditDraftOwnerUnknown {
-				out[i].Count += carried
-				found = true
-			}
-		}
-		if !found {
-			out = append(out, improveProposeProject{Project: auditDraftOwnerUnknown, Count: carried})
-		}
+	for project, n := range added {
+		counts[project] += n
 	}
-	// Each project's count is what the draft held plus the occurrences this run newly recorded
-	// there, plus the occurrences that moved to or from it because their owner changed, and never
-	// less than what this run's records report for it. A project whose occurrences all moved away
-	// carries no count and is not kept. Nothing else moves the count: an occurrence the draft
-	// already carries adds nothing, so rerunning one bundle leaves every stored count as it was.
-	kept := out[:0]
-	for _, project := range out {
-		count := projectCount(project.Count, project.Project)
-		if count <= 0 {
-			continue
-		}
-		kept = append(kept, improveProposeProject{Project: project.Project, Count: count})
+	for project, n := range moved {
+		counts[project] += n
 	}
-	out = kept
-	for _, project := range current {
-		found := false
-		for i := range out {
-			if out[i].Project == project.Project {
-				found = true
-			}
-		}
-		if !found {
-			out = append(out, improveProposeProject{Project: project.Project,
-				Count: projectCount(0, project.Project)})
+	out := make([]improveProposeProject, 0, len(counts))
+	for project, count := range counts {
+		if count > 0 {
+			out = append(out, improveProposeProject{Project: project, Count: count})
 		}
 	}
 	sort.Slice(out, func(a, b int) bool { return out[a].Project < out[b].Project })
@@ -774,6 +719,7 @@ func improveProposeDraft(candidate improveProposeCandidate) *auditDraft {
 		Body:        improveProposeDraftBody(candidate),
 		Labels:      []string{improveProposeSource, severity},
 		Seen:        candidate.seen,
+		Improve:     &auditDraftImprove{Projects: improveProposeMergeProjects(candidate.Projects, nil, nil, nil), Evidence: improveSortedEvidence(candidate.Evidence)},
 		State:       auditDraftStateDraft,
 	}
 }
@@ -882,60 +828,46 @@ func improveProposeRunCapped(ctx context.Context, e *Env, bundlePath string, dry
 			continue
 		}
 		// A draft with this fingerprint already exists, from this feature or from the audit. The whole
-		// record is rewritten, so only fields this command understands may change. The seen list gains the
-		// origins this run reached, and an occurrence whose owner changed is counted under its latest owner.
-		// The evidence is the union of what the draft holds and what this run reached, and the issue keys it
-		// names are what an earlier build could have taken for a project. The added and moved counts are read
-		// before the seen list is updated, so they name only what this run newly recorded or re-owned.
-		evidence := improveSortedEvidence(append(improveProposeParseEvidence(doc.Body), candidate.Evidence...))
+		// record is rewritten only when a count, an origin or a sighting changed, and only fields this
+		// command understands may change. The seen list gains the origins this run reached, and an
+		// occurrence whose owner changed is counted under its latest owner. A count is what the draft
+		// stores plus what this run newly recorded, never what its body shows.
+		storedProjects, storedEvidence := improveProposeStored(doc, candidate.Kind)
+		evidence := improveSortedEvidence(append(append([]string(nil), storedEvidence...), candidate.Evidence...))
 		issueKeys := improveProposeIssueKeys(evidence)
 		seen, added, moved := improveProposeReconcileSightings(candidate, doc.Seen, issueKeys)
-		changed := len(seen) != len(doc.Seen)
-		doc.Seen = seen
-		// A posted draft is the record of an issue the management session already opened, so this writer
-		// only grows its seen list: the title, the labels, the severity, the body and the project stay exactly
-		// as first written, whatever source wrote it.
+		seenChanged := !improveProposeSeenEqual(seen, doc.Seen)
 		if doc.State == auditDraftStatePosted {
-			if !changed {
+			// A posted draft is the record of an issue the management session already opened, so this
+			// writer only grows its seen list: the title, the labels, the severity, the body and the
+			// project stay exactly as first written, whatever source wrote it.
+			if !seenChanged {
 				continue
 			}
-			if err := auditDraftSave(path, doc); err != nil {
-				return report, err
-			}
-			report.Updated = append(report.Updated, auditDraftSummaryOf(doc))
-			continue
-		}
-		if doc.Source == improveProposeSource {
-			// The whole record is rewritten, so the projects and the evidence the new run reached
-			// are folded in rather than dropped: a project's count is what the draft already held
-			// plus the occurrences this run newly recorded there, and the evidence is the union.
-			merged := improveProposeCandidate{
-				// The reason is this run's own text, which is the whole reason the fingerprint was
-				// taken over. Reading it back out of the rendered body could not tell a Markdown
-				// heading inside the reason from the end of its section, so a multiline reason
-				// would be cut short on the next run.
-				Title:    candidate.Title,
-				Projects: improveProposeMergeProjects(improveProposeParseProjects(doc.Body), candidate.Projects, added, moved, issueKeys),
-				Evidence: evidence,
-				seen:     doc.Seen,
-			}
-			// A run whose records report a larger total for a project than the sightings alone
-			// imply grows the body without adding a sighting, so the rewrite is judged by the
-			// body it would write and not by the seen list alone.
-			body := improveProposeDraftBody(merged)
-			if !changed && body == doc.Body {
-				continue
-			}
-			doc.Project = improveProposeOwner(merged.Projects)
-			doc.Body = body
+			doc.Seen = seen
 		} else {
+			projects := improveProposeMergeProjects(storedProjects, added, moved, issueKeys)
+			changed := seenChanged
+			if doc.Source == improveProposeSource {
+				changed = changed || !improveProposeProjectsEqual(projects, storedProjects) || !improveProposeStringsEqual(evidence, storedEvidence)
+			}
 			if !changed {
 				continue
 			}
-			// A draft the audit wrote keeps its own body, and only its sighting section is
-			// advanced, so the management session reading the body sees the sighting this run
-			// recorded rather than a body that contradicts the file.
-			doc.Body = auditDraftSeenSection(doc.Body, doc.Seen)
+			doc.Seen = seen
+			if doc.Source == improveProposeSource {
+				// The body is drawn from the item the draft now holds. The reason is this run's own text,
+				// the whole reason the fingerprint was taken over.
+				merged := improveProposeCandidate{Title: candidate.Title, Projects: projects, Evidence: evidence, seen: seen}
+				doc.Improve = &auditDraftImprove{Projects: projects, Evidence: evidence}
+				doc.Project = improveProposeOwner(projects)
+				doc.Body = improveProposeDraftBody(merged)
+			} else {
+				// A draft the audit wrote keeps its own body, and only its sighting section is advanced, so
+				// the management session reading the body sees the sighting this run recorded rather than a
+				// body that contradicts the file.
+				doc.Body = auditDraftSeenSection(doc.Body, doc.Seen)
+			}
 		}
 		if err := auditDraftSave(path, doc); err != nil {
 			return report, err
