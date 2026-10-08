@@ -325,11 +325,13 @@ func collectWrittenLosses(goValue, oracleValue any, path string, lost *[]string)
 	}
 }
 
-// lossyString reports whether got is oracle with every unpaired UTF-16 surrogate replaced by U+FFFD,
-// which is what a decoder that refuses a lone surrogate leaves behind (the CRW-556 class this target
-// pins), or any string with fewer UTF-16 code units than the oracle's, which is a truncation or a
-// dropped surrogate pair (CRW-708 generation 5, c10 d2). A string that is equal, or that differs in
-// any other way with as many code units, is not a loss.
+// lossyString reports whether got is oracle with some or all of its unpaired UTF-16 surrogates replaced
+// by U+FFFD, which is what a decoder that refuses a lone surrogate leaves behind (the CRW-556 class this
+// target pins), or any string with fewer UTF-16 code units than the oracle's, which is a truncation or a
+// dropped surrogate pair (CRW-708 generation 5, c10 d2). Each unpaired surrogate of the oracle is either
+// kept as it is or replaced by U+FFFD, every other byte must match, and at least one replacement must
+// have happened; a partial replacement is a loss just as a full one is (CRW-978 c2). A string that is
+// equal, or whose difference is anything else, is not a loss.
 func lossyString(oracle, got string) bool {
 	if oracle == got {
 		return false
@@ -337,19 +339,33 @@ func lossyString(oracle, got string) bool {
 	if lossUTF16Units(got) < lossUTF16Units(oracle) {
 		return true
 	}
-	var rebuilt strings.Builder
-	rebuilt.Grow(len(got))
+	replaced := 0
+	j := 0
 	for i := 0; i < len(oracle); {
 		if size := unpairedSurrogateAt(oracle, i); size > 0 {
-			rebuilt.WriteRune('�')
+			switch {
+			case j+size <= len(got) && got[j:j+size] == oracle[i:i+size]:
+				j += size
+			case j+len(replacementRune) <= len(got) && got[j:j+len(replacementRune)] == replacementRune:
+				replaced++
+				j += len(replacementRune)
+			default:
+				return false
+			}
 			i += size
 			continue
 		}
-		rebuilt.WriteByte(oracle[i])
+		if j >= len(got) || got[j] != oracle[i] {
+			return false
+		}
 		i++
+		j++
 	}
-	return rebuilt.String() == got
+	return replaced > 0 && j == len(got)
 }
+
+// replacementRune is U+FFFD as the bytes a Go string holds it in.
+const replacementRune = "\uFFFD"
 
 // lossUTF16Units counts the UTF-16 code units a string holds: an astral code point is two, a lone
 // surrogate held as its three WTF-8 bytes is one, and every other code point is one.
