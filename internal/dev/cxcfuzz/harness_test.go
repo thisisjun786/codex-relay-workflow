@@ -122,8 +122,10 @@ func requireNode(t *testing.T) {
 // shim imports at its top level is not present under DefaultOracleRoot. A CI runner has node but no
 // extracted CXC oracle tree, so such a shim exits at its top-level import (ERR_MODULE_NOT_FOUND)
 // before it reads a request, and a test that started it would report a worker that answered nothing
-// rather than the input the host is missing. The state and goalplan shims import the oracle's readers
-// and writers; the pyjson shim imports none (it drives python3's json.tool through the standard
+// rather than the input the host is missing. Each shim that imports an oracle module names it here: the
+// state and goalplan shims import the oracle's readers and writers, and the doctor, memorygate,
+// shellwrite, spawn and worktreedel shims import theirs (CRW-932 widened the start-up handshake test to
+// all of them). The pyjson shim imports none (it drives python3's json.tool through the standard
 // library command), so it is never skipped here and keeps running wherever python3 is. The skip
 // message names the module file that was looked for.
 func requireOracleModule(t *testing.T, target string) {
@@ -134,6 +136,16 @@ func requireOracleModule(t *testing.T, target string) {
 		module = "pabcd-state/dist/state.js"
 	case "goalplan":
 		module = "pabcd-state/dist/goalplan.js"
+	case "doctor":
+		module = "cxc-ops/dist/doctor.js"
+	case "memorygate":
+		module = "pabcd-state/dist/memory-write-gate.js"
+	case "shellwrite":
+		module = "pabcd-state/dist/shell-write-destinations.js"
+	case "spawn":
+		module = "subagent-config/dist/spawn-attach-hook.js"
+	case "worktreedel":
+		module = "pabcd-state/dist/worktree-guard.js"
 	}
 	if module == "" {
 		return
