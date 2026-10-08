@@ -1256,7 +1256,7 @@ func improveReadDrafts(ids *improveIdentitySet, path string, acc *improveAccumul
 		// auditDraftLoad (CRW-695) is the writer's own reader: it refuses an empty or mismatched
 		// fingerprint and a key this build does not know, so a document that claims to be a draft
 		// but is not one is named rather than read as something else.
-		draft, err := auditDraftDecode(file, data)
+		draft, err := improveAuditDraftDecode(file, data)
 		if err != nil {
 			return 0, err
 		}
