@@ -470,7 +470,10 @@ func configLockPathsCaseInsensitiveDir(t *testing.T) string {
 // entry count cannot be read, so the comparison cannot prove the two spellings are one entry and
 // refuses (fail closed); the owned key stays in place and nothing is written. Red on every head that
 // answered with a read-only proxy, each of which a hard link or symlink can forge.
-func TestConfigLockPathsDeactivateRefusesACaseVariantUnderAnUnreadableParent(t *testing.T) {
+// CRW-993 d2: this expectation changed. On a folding directory the case-only alias is proved by the by-name
+// lookup and restored; config_lock_case_alias_test.go pins the seam cases on this host. This test runs only on
+// a folding filesystem.
+func TestConfigLockPathsDeactivateAcceptsACaseVariantUnderAnUnreadableParent(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root reads a mode-0300 directory")
 	}
@@ -507,11 +510,14 @@ func TestConfigLockPathsDeactivateRefusesACaseVariantUnderAnUnreadableParent(t *
 	}, held.Release)
 
 	_, err = Deactivate(deactivationDeps(home, func([]string) CodexRunResult { return CodexRunResult{} }))
-	if err == nil || !strings.Contains(err.Error(), "names a different config file") {
-		t.Fatalf("the deactivation accepted a spelling it could not prove: %v", err)
+	if err != nil {
+		t.Fatalf("the deactivation refused a case-only alias that the folding directory proves: %v", err)
 	}
-	if got := activationRead(t, path); got != deactivationConfig {
-		t.Fatalf("the refused deactivation wrote the config: %q", got)
+	if err := os.Chmod(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if got := activationRead(t, path); strings.Contains(got, "dedicated_tools") {
+		t.Fatalf("the case-only alias was accepted but the key was not restored: %q", got)
 	}
 }
 

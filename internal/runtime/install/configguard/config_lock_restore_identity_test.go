@@ -14,8 +14,8 @@ import (
 // links to the file and its sidecar, passed every check: the restore published into the replacement
 // and the file the manifest names kept the managed key.
 
-// configLockRestoreIdentityManifest is a manifest that owns memories.dedicated_tools in the file at path.
-func configLockRestoreIdentityManifest(t *testing.T, path string) []byte {
+// configLockPathsRestoreManifest is a manifest that owns memories.dedicated_tools in the file at path.
+func configLockPathsRestoreManifest(t *testing.T, path string) []byte {
 	t.Helper()
 	hash, err := hashOrNull(path)
 	if err != nil {
@@ -38,8 +38,8 @@ func TestConfigLockRestoreIdentityRefusesAHardLinkedReplacementDirectory(t *test
 	}
 	cfg := filepath.Join(codex, "config.toml")
 	activationWrite(t, cfg, deactivationConfig)
-	stale := configLockRestoreIdentityManifest(t, cfg)
-	fresh := configLockRestoreIdentityManifest(t, filepath.Join(saved, "config.toml"))
+	stale := configLockPathsRestoreManifest(t, cfg)
+	fresh := configLockPathsRestoreManifest(t, filepath.Join(saved, "config.toml"))
 
 	held := configLockWritersHold(t, cfg)
 	configLockPathsHandoverRetarget(t, codex, stale, func() error {
@@ -73,7 +73,7 @@ func TestConfigLockRestoreIdentityRestoresAnOrdinaryFile(t *testing.T) {
 	codex := t.TempDir()
 	cfg := filepath.Join(codex, "config.toml")
 	activationWrite(t, cfg, deactivationConfig)
-	if err := os.WriteFile(manifestPath(codex), configLockRestoreIdentityManifest(t, cfg), 0o600); err != nil {
+	if err := os.WriteFile(manifestPath(codex), configLockPathsRestoreManifest(t, cfg), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	res, err := Deactivate(deactivationDeps(codex, func([]string) CodexRunResult { return CodexRunResult{} }))
@@ -101,7 +101,7 @@ func TestConfigLockRestoreIdentityRestoresAMovedDirectoryWithIntactIdentity(t *t
 		t.Fatal(err)
 	}
 	movedCfg := filepath.Join(moved, "config.toml")
-	if err := os.WriteFile(manifestPath(moved), configLockRestoreIdentityManifest(t, movedCfg), 0o600); err != nil {
+	if err := os.WriteFile(manifestPath(moved), configLockPathsRestoreManifest(t, movedCfg), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	res, err := Deactivate(deactivationDeps(moved, func([]string) CodexRunResult { return CodexRunResult{} }))
