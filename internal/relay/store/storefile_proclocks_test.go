@@ -93,6 +93,25 @@ func TestStoreFileLocksReportsALostLock(t *testing.T) {
 	}
 }
 
+// TestStoreFileLocksReportsTheLastReadOfALostLock pins what a lost lock reports: every read is
+// spent, and the uncounted lines that name the inode are those of the last read, not the first.
+func TestStoreFileLocksReportsTheLastReadOfALostLock(t *testing.T) {
+	var texts []string
+	for i := 0; i < storeFileLockReads; i++ {
+		texts = append(texts, fmt.Sprintf("%d: POSIX  ADVISORY  READ %d 103:07:%d 0 EOF\n", 20+i, 4000000+i, crw1054Inode))
+	}
+	s := &scriptedProcLocks{texts: texts}
+	swapProcLocks(t, s)
+	count, uncounted := storeFileLocks(crw1054Pid, crw1054Inode)
+	if count != 0 || s.calls != storeFileLockReads {
+		t.Fatalf("storeFileLocks = %d after %d reads, want 0 after %d reads", count, s.calls, storeFileLockReads)
+	}
+	last := texts[len(texts)-1][:len(texts[len(texts)-1])-1]
+	if len(uncounted) != 1 || uncounted[0] != last {
+		t.Fatalf("storeFileLocks reported uncounted lines %q, want the last read's line %q", uncounted, last)
+	}
+}
+
 // TestStoreFileLocksKeepsALookupErrorAsMinusOne keeps a read failure a lookup error, not a count of
 // zero, so judgeStoreFileLockAfter still refuses to call it a transient drop.
 func TestStoreFileLocksKeepsALookupErrorAsMinusOne(t *testing.T) {
