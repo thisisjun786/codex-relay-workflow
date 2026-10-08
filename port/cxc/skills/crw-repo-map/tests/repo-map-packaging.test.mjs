@@ -194,15 +194,35 @@ function withFieldsOf(code, line, at, body) {
   return code.slice(0, code.length - (at - 1 - prefixAt)) + fstringCode(body) + " ";
 }
 
+/**
+ * The index of the delimiter that closes a triple-quoted string whose body starts at from, or -1. The
+ * tokenizer reads a backslash as escaping the character after it, so an escaped quote never closes the
+ * string, and the first unescaped delimiter does (CRW-983, finding d3).
+ */
+function tripleClose(line, from, triple) {
+  for (let i = from; i < line.length; ) {
+    if (line[i] === "\\") {
+      i += 2;
+      continue;
+    }
+    if (line.startsWith(triple, i)) return i;
+    i += 1;
+  }
+  return -1;
+}
+
 function codeLines(source) {
   const out = [];
   let open = null; // the triple-quote delimiter a string is still open with
   let openF = false; // whether that string is an f-string, whose replacement fields run
+  // What the reader could not read to the end. The check refuses each one: code after an unread quote
+  // is not known to be code, so passing it would be a pass the reader never made (CRW-983, finding d3).
+  const unread = [];
   for (const raw of source.replace(/\r\n/g, "\n").split("\n")) {
     let line = raw;
     let code = "";
     if (open !== null) {
-      const end = line.indexOf(open);
+      const end = tripleClose(line, 0, open);
       if (end < 0) {
         out.push(openF ? fstringCode(line) : "");
         continue;
@@ -220,7 +240,7 @@ function codeLines(source) {
         const triple = ch.repeat(3);
         if (line.slice(at, at + 3) === triple) {
           const fstring = fstringAt(line, at);
-          const end = line.indexOf(triple, at + 3);
+          const end = tripleClose(line, at + 3, triple);
           if (end < 0) {
             open = triple;
             openF = fstring;
@@ -232,7 +252,10 @@ function codeLines(source) {
           continue;
         }
         const end = closingQuote(line, at, ch);
-        if (end < 0) break; // a quote that does not close: the rest of the line is unread
+        if (end < 0) {
+          unread.push("line " + (out.length + 1) + ": a quote that never closes, so the rest of the line is unread");
+          break;
+        }
         // An f-string evaluates the expressions in its replacement fields while the line runs, so
         // the reader keeps their bodies as code. A plain string evaluates nothing and is dropped
         // whole (CRW-939, the twelfth generation-2 evaluation of d3).
@@ -253,7 +276,8 @@ function codeLines(source) {
     }
     out.push(code);
   }
-  return out;
+  if (open !== null) unread.push("line " + out.length + ": a triple-quoted string that never closes");
+  return { lines: out, unread };
 }
 
 /**
@@ -363,10 +387,10 @@ function importStatements(line) {
 }
 
 function parserImportsBeforeParsing(source) {
-  const code = codeLines(source);
+  const { lines: code, unread } = codeLines(source);
   const parseAt = code.findIndex((line) => /^\s*args\s*=\s*parser\.parse_args\(\)\s*$/.test(line));
   if (parseAt < 0) return { parseAt, offenders: ["(no `args = parser.parse_args()` line found)"] };
-  const offenders = [];
+  const offenders = [...unread];
   for (const [i, line] of code.entries()) {
     // A dependency can also be pulled in by a call the reader cannot resolve:
     // `importlib.import_module("networkx")` or `__import__("networkx")`. The reader cannot see what
@@ -414,6 +438,37 @@ function parserImportsBeforeParsing(source) {
   }
   return { parseAt, offenders };
 }
+
+// CRW-983, finding d3. A triple-quoted string closes at the first delimiter the language does not escape.
+// The evaluation's marker escapes its interior quote, so the import after it is module code that runs
+// before --help, and the reader must not hide it inside a string that never opened.
+test("an escaped quote inside a triple-quoted string does not close it", () => {
+  const source = 'import argparse\nparser = argparse.ArgumentParser()\nmarker = """a\\"""b"""\nimport networkx\nargs = parser.parse_args()\n';
+  const { offenders } = parserImportsBeforeParsing(source);
+  assert.ok(offenders.some((line) => line.includes("networkx")), "the import after the marker is hidden: " + JSON.stringify(offenders));
+});
+
+// A string the reader cannot read to its end is a finding, never a pass: Python rejects an unclosed
+// string, so the code after it must not count as read (CRW-983, finding d3).
+test("a triple-quoted string that never closes is a finding", () => {
+  const source = 'import argparse\nparser = argparse.ArgumentParser()\nargs = parser.parse_args()\nmarker = """a\nprint(args)\n';
+  assert.ok(parserImportsBeforeParsing(source).offenders.length > 0, "an unclosed triple-quoted string passes");
+});
+
+test("a single-quoted string that never closes is a finding", () => {
+  const source = "import argparse\nparser = argparse.ArgumentParser()\nmarker = 'a\nargs = parser.parse_args()\n";
+  assert.ok(parserImportsBeforeParsing(source).offenders.length > 0, "an unclosed single-quoted string passes");
+});
+
+
+// The same rule holds for a string that opened on an earlier line: the escaped delimiter on the closing line
+// does not close it, so the import after the real closing delimiter is module code (CRW-983, finding d3).
+test("an escaped quote on a continuation line does not close a triple-quoted string", () => {
+  const source = 'import argparse\nparser = argparse.ArgumentParser()\nmarker = """a\n  b\\"""c"""\nimport networkx\nargs = parser.parse_args()\n';
+  const { offenders } = parserImportsBeforeParsing(source);
+  assert.ok(offenders.some((line) => line.includes("networkx")), "the import after the continued marker is hidden: " + JSON.stringify(offenders));
+});
+
 
 test("the vendored CLI names its real entry point", () => {
   const script = readFileSync(join(scriptsDir, "repomap.py"), "utf8");
