@@ -440,7 +440,7 @@ the record states the item. Every warning code starts `independent_review_`:
 | `artifact_invalid` | the file is not a schema v1 review artifact | treat the review as unusable |
 | `status_differs` | the item's status is not the artifact's | trust the artifact |
 | `head_differs` | the artifact covers another head and the candidate head is not the head the record is about, or the stated patch-id is missing or different | run the patch-id check above |
-| `disposition_missing` | a P0, P1 or security finding of the artifact has no disposition | ask the child, or judge the finding yourself by its impact |
+| `disposition_missing` | a P0 or security finding, or an in-scope finding, of the artifact has no disposition | ask the child, or judge the finding yourself by its impact |
 | `disposition_unknown` | a disposition names a finding the artifact does not have | the item and the artifact disagree: trust the artifact |
 
 A warning is a question to read the artifact, never a reason to return the candidate by itself. A
@@ -674,7 +674,7 @@ and while a correction can still reach the child it returns to the child. The fi
 Serialize integrations sharing a target. Verify the actual landing and resulting
 destination revision; an accepted or queued merge request is not a completed merge.
 In the existing coordination record, retain the candidate and landed revisions,
-CI attempt links/results, review sources and coverage, finding dispositions, and
+CI attempt links/results where hosted CI ran, review sources and coverage, finding dispositions, and
 any permitted fallback or remaining limitation. A base refresh adds the head it started
 from, the head it produced and the check between them. Keep implementation verification,
 integration, and deployment as separate claims.

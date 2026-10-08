@@ -111,7 +111,7 @@ role carries which lifecycle by default; [Start policy](../../crw-run/references
 owns the second. A goal-free parent is the default rather than a defect, so finding one is not a
 finding at all.
 
-Per delivery, from git and, where a pull request exists, from GitHub: the current head, the CI attempt that applies to that head, the reviews
+Per delivery, from git and, where a pull request exists, from GitHub: the current head, the CI attempt that applies to that head where hosted CI ran on it, the reviews
 paged to the end, whether the delivery actually landed on its intended target (the integrator's fast-forward, or the pull request's merge while one is open), and whether
 anything was installed or demonstrated afterwards. Use
 [Merge readiness](../../crw-run/references/merge-readiness.md) for what the checks and reviews

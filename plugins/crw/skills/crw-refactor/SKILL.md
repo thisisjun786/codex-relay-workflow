@@ -47,7 +47,7 @@ Exclude taste-only renaming, speculative future abstractions, rewrites without a
 
 Rank by concrete next-change cost reduced, evidence strength and size of the required change. Return zero to three; do not fill a quota. Use the [candidate record](references/candidate-record.md) for the compact evidence and validation fields. Each candidate must state its actual code/PR evidence, cost if left alone, smallest repair, preserved behavior, affected scope and exclusions.
 
-Separate work so each candidate can be checked and reverted on its own when that is technically true. Where two repairs share an invariant or depend on the same migration, state the dependency and keep the coherent repair together instead of promising false independence. Keep one issue/task/PR per coherent result under the existing workflow.
+Separate work so each candidate can be checked and reverted on its own when that is technically true. Where two repairs share an invariant or depend on the same migration, state the dependency and keep the coherent repair together instead of promising false independence. Keep one issue or task per coherent result under the existing workflow, delivered as its task branch (or its pull request where one exists).
 
 Before suggesting execution, define baseline checks and the observations that would demonstrate reduced cost. Label known failures with their revision, environment and reproduction; distinguish observed failures from reports you could not reproduce. Specify what will count as an introduced regression and which unaffected evidence can be reused. Preserve required coverage and external contracts; a green test with its assertion removed proves nothing.
 

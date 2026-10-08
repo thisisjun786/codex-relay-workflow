@@ -123,10 +123,7 @@ func pushOnlyOutside(rel string, text string, fileCase string) []string {
 		if _, ok := pushOnlyCaseAllowlist[id]; ok && id != "" {
 			continue
 		}
-		if pushOnlyHistory.MatchString(line) {
-			continue
-		}
-		if pushOnlySeedPhrases.MatchString(line) || (pushOnlyGradePhrases.MatchString(line) && !strings.HasPrefix(line, "| `")) {
+		if pushOnlySeedPhrases.MatchString(line) || (pushOnlyGradePhrases.MatchString(line) && !pushOnlyHistory.MatchString(line)) {
 			hits = append(hits, fmt.Sprintf("%s:%d: %s", rel, i+1, strings.TrimSpace(line)))
 		}
 	}

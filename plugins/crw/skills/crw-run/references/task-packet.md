@@ -1669,7 +1669,7 @@ needed to resume:
 - Requested/actual settings and independent fields for launch, loop, delivery,
   verification, integration, and deployment evidence.
 - Last observed status/cursor, final commit, acceptance evidence, and next action.
-- For integration: candidate base/head and landed revisions, CI attempt links,
+- For integration: candidate base/head and landed revisions, CI attempt links where hosted CI ran,
   review sources/coverage, and finding dispositions per [Merge readiness](merge-readiness.md).
 - The current temporary target, where this task was asked to handle another project or issue: its
   stable ID, the request that asked for it, and the limit that request carried, recorded beside the
