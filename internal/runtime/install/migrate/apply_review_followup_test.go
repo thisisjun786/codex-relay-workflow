@@ -554,41 +554,6 @@ func migrateReviewFollowupJudgePeakHeap(t *testing.T, path string) (before, peak
 	return before, peak, ok
 }
 
-// migrateReviewFollowupJudgePeakHeapRecord is migrateReviewFollowupJudgePeakHeap for a record already in memory.
-func migrateReviewFollowupJudgePeakHeapRecord(t *testing.T, record string) (before, peak uint64, ok bool) {
-	t.Helper()
-	prev := debug.SetGCPercent(1) // the judgement reads a live heap, not garbage the collector has not reclaimed
-	defer debug.SetGCPercent(prev)
-	runtime.GC()
-	var b runtime.MemStats
-	runtime.ReadMemStats(&b)
-	before = b.HeapAlloc
-	stop := make(chan struct{})
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		for {
-			select {
-			case <-stop:
-				return
-			default:
-			}
-			var m runtime.MemStats
-			runtime.ReadMemStats(&m)
-			if m.HeapAlloc > peak {
-				peak = m.HeapAlloc
-			}
-		}
-	}()
-	_, ok = migrateReviewFollowupDecodeManifest(strings.NewReader(record), migrateReviewFollowupReceiptReadCap)
-	close(stop)
-	<-done
-	if peak < before {
-		peak = before
-	}
-	return before, peak, ok
-}
-
 // R1h: a receipt the reader can read keeps every reference it names, however large its manifest is and however long its
 // other keys are. An earlier pass capped the manifest member at 1 MiB and an object key at 64 KiB, and either cap dropped
 // references of a receipt the reader itself reads, which left its artifacts in plan order — the dangling reference this
