@@ -30,11 +30,12 @@ func commitAccepted(ctx context.Context, q store.Querier, acceptanceID string) (
 	return !hasForge, nil
 }
 
-// integrationRefsOf are the integration refs an acceptance completes on: the refs of the acceptance's own batches that have a
-// ref_moved row (CRW-965, parent decision D4). A batch that failed before its move, and a planned or abandoned intent, name no
-// ref. The result is sorted and deduplicated.
+// integrationRefsOf are the integration refs an acceptance completes on (CRW-965, parent decision D4 and its revision): the
+// refs of the acceptance's own batches that moved the ref (a ref_moved row), and the ref of any of its batches that marked the
+// acceptance as already contained on it (a marked row, which moves no ref). A batch that failed before its move, and a planned
+// or abandoned intent, name no ref. The result is sorted and deduplicated, and nodeTargets and the observation both read it.
 func integrationRefsOf(ctx context.Context, q store.Querier, acceptanceID string) ([]string, error) {
-	rows, err := q.QueryContext(ctx, "SELECT DISTINCT b.detail FROM dag_integration_stages c JOIN dag_integration_stages b ON b.batch_id = c.batch_id AND b.stage = 'intent' AND b.node_id = '' WHERE c.acceptance_id = ? AND c.stage = 'intent' AND c.node_id <> '' AND EXISTS (SELECT 1 FROM dag_integration_stages m WHERE m.batch_id = c.batch_id AND m.stage = 'ref_moved')", acceptanceID)
+	rows, err := q.QueryContext(ctx, "SELECT DISTINCT b.detail FROM dag_integration_stages c JOIN dag_integration_stages b ON b.batch_id = c.batch_id AND b.stage = 'intent' AND b.node_id = '' WHERE c.acceptance_id = ? AND c.stage = 'intent' AND c.node_id <> '' AND (EXISTS (SELECT 1 FROM dag_integration_stages m WHERE m.batch_id = c.batch_id AND m.stage = 'ref_moved') OR EXISTS (SELECT 1 FROM dag_integration_stages k WHERE k.batch_id = c.batch_id AND k.acceptance_id = c.acceptance_id AND k.stage = 'marked'))", acceptanceID)
 	if err != nil {
 		return nil, err
 	}
