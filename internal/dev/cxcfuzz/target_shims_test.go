@@ -163,7 +163,9 @@ func TestDoctorShimImportsNothingForTheHandshake(t *testing.T) {
 	if err := os.MkdirAll(module, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	source := "import { appendFileSync } from \"node:fs\";\nappendFileSync(process.env.CRW932_IMPORT_RECORD, \"imported\\n\");\n"
+	// The module takes a moment to evaluate (a top-level await), as a real import of a large tree
+	// does, so the control case still has the import in flight when a caller's stdin closes.
+	source := "import { appendFileSync } from \"node:fs\";\nawait new Promise((resolve) => setTimeout(resolve, 300));\nappendFileSync(process.env.CRW932_IMPORT_RECORD, \"imported\\n\");\n"
 	if err := os.WriteFile(filepath.Join(module, "doctor.js"), []byte(source), 0o644); err != nil {
 		t.Fatal(err)
 	}
