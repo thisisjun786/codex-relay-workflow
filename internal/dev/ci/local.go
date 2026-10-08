@@ -140,6 +140,7 @@ func Local(args []string, stdout, stderr io.Writer) int {
 // record it made.
 func localVerify(opts localOptions, reusePath string, stdout io.Writer) (verificationRecord, bool, error) {
 	localScrubGitEnv()
+	opts.HeavyGate = localAbsGate(opts.HeavyGate)
 	// Replacement refs (refs/replace) would let another object stand in for a commit; the run reads the
 	// objects as they are.
 	os.Setenv("GIT_NO_REPLACE_OBJECTS", "1")
@@ -895,4 +896,19 @@ func localDecisionSince(path string, offset int64) string {
 		return ""
 	}
 	return strings.TrimSpace(string(data[offset:]))
+}
+
+// localAbsGate resolves a relative path to the heavy-check gate's executable against the directory the run was
+// started in, once, before any probe or step changes directory (pre-merge finding d3).
+func localAbsGate(gate string) string {
+	words := strings.Fields(gate)
+	if len(words) == 0 || !strings.Contains(words[0], "/") || filepath.IsAbs(words[0]) {
+		return gate
+	}
+	abs, err := filepath.Abs(words[0])
+	if err != nil {
+		return gate
+	}
+	words[0] = abs
+	return strings.Join(words, " ")
 }

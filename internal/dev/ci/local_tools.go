@@ -286,7 +286,11 @@ func localCheckoutDiff(worktree, commit string) string {
 			continue
 		}
 		fields := strings.Fields(meta)
-		if len(fields) != 3 || fields[1] != "blob" || fields[0] == "120000" {
+		if len(fields) == 3 && fields[0] == "120000" {
+			// A link could name a file outside the commit, which the record would never see (pre-merge finding d1).
+			return path + " is a symlink; the run reads only the regular files of the commit"
+		}
+		if len(fields) != 3 || fields[1] != "blob" {
 			continue
 		}
 		if strings.Contains(path, "\n") {

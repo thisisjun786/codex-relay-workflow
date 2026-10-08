@@ -47,6 +47,15 @@ var (
 	localWorkflowEntry10   = regexp.MustCompile(`^          ([A-Za-z_][A-Za-z0-9_.-]*):(?: (.*))?$`)
 )
 
+// localWorkflowTopKey is a top-level key of ci.yml. The reader reads only the keys the plan can compare: a key
+// it does not read could change how a step runs, so it is refused rather than ignored (pre-merge finding d2).
+var localWorkflowTopKey = regexp.MustCompile(`^([A-Za-z][A-Za-z0-9_-]*):`)
+
+// localWorkflowTopKeys, localWorkflowJobKeys are the keys the reader accepts at each level. concurrency, runs-on,
+// timeout-minutes and permissions do not change which commands a step runs.
+var localWorkflowTopKeys = map[string]bool{"name": true, "on": true, "permissions": true, "concurrency": true, "jobs": true}
+var localWorkflowJobKeys = map[string]bool{"runs-on": true, "timeout-minutes": true, "permissions": true, "env": true, "strategy": true, "steps": true, "if": true, "needs": true}
+
 // parseWorkflow reads the jobs of .github/workflows/ci.yml with their steps. It is deliberately not a
 // YAML parser: the file is this repository's own, and the reader only has to see the keys the plan
 // compares. A block it does not read is refused by the plan, never skipped.
@@ -60,6 +69,9 @@ func parseWorkflow(text string) ([]workflowJob, error) {
 	for i := 0; i < len(raw); i++ {
 		line := raw[i]
 		if line != "" && !strings.HasPrefix(line, " ") {
+			if m := localWorkflowTopKey.FindStringSubmatch(line); m != nil && !localWorkflowTopKeys[m[1]] {
+				return nil, fmt.Errorf("ci.yml sets %s at the top level, which the local plan does not read", m[1])
+			}
 			inside = strings.HasPrefix(line, "jobs:")
 			continue
 		}
@@ -76,6 +88,9 @@ func parseWorkflow(text string) ([]workflowJob, error) {
 		}
 		job := &jobs[len(jobs)-1]
 		if m := localWorkflowJobKey.FindStringSubmatch(line); m != nil {
+			if !localWorkflowJobKeys[m[1]] {
+				return nil, fmt.Errorf("ci.yml job %s sets %s, which the local plan does not read", job.name, m[1])
+			}
 			section, block = m[1], ""
 			if m[1] == "if" {
 				job.ifExpr = localYAMLScalar(m[2])
@@ -133,6 +148,8 @@ func parseWorkflow(text string) ([]workflowJob, error) {
 			if fields := strings.Fields(m[2]); len(fields) > 0 {
 				step.uses = fields[0]
 			}
+		case "id":
+			// An id names the step for the workflow's own outputs; it does not change the work.
 		case "if":
 			step.ifExpr = localYAMLScalar(m[2])
 		case "working-directory":
@@ -171,6 +188,8 @@ func parseWorkflow(text string) ([]workflowJob, error) {
 				body = body[:len(body)-1]
 			}
 			step.run = strings.Join(body, "\n")
+		default:
+			return nil, fmt.Errorf("ci.yml sets %s on a step, which the local plan does not read", m[1])
 		}
 	}
 	if len(jobs) == 0 {
