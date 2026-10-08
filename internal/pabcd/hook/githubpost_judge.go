@@ -41,6 +41,7 @@ func HandleGitHubPostGuard(raw string) string {
 		return ""
 	}
 	cwd, _ := p["cwd"].(string)
+	cwd = shellirPayloadCwd(cwd)
 	var site githubPostSite
 	var denied bool
 	if words, ok := githubPostArgv(input); ok {

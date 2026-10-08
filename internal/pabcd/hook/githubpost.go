@@ -25,6 +25,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 )
 
 const (
@@ -423,13 +424,11 @@ func githubPostGhCommand(w string) bool {
 func githubPostReadFile(name, cwd string) (string, bool) {
 	path := name
 	if !filepath.IsAbs(path) {
-		base := cwd
-		if base == "" {
-			if wd, err := os.Getwd(); err == nil {
-				base = wd
-			}
+		// A relative name needs a known directory; the hook's own process directory is never a stand-in for it.
+		if cwd == "" {
+			return "", false
 		}
-		path = filepath.Join(base, path)
+		path = filepath.Join(cwd, path)
 	}
 	path = filepath.Clean(path)
 	// "-" is standard input, which the guard cannot read in the file it names.
@@ -469,14 +468,25 @@ func githubPostUnderRoots(path string) bool {
 	return false
 }
 
-// githubPostRegularFile opens a path only when it names a regular file: a named pipe or a device would block the open.
+// githubPostBeforeOpen is a test seam: it runs between the name lookup and the open of githubPostRegularFile, so a test
+// can swap the file for a named pipe at that moment. It is nil outside tests.
+var githubPostBeforeOpen func(path string)
+
+// githubPostRegularFile opens a path only when it names a regular file. The path is opened first, without blocking and
+// without following a final link, and the opened descriptor is the one checked and read: a named pipe or a device swapped
+// in between a check and the open never blocks the guard, because the check is on the descriptor (failure class 3).
 func githubPostRegularFile(path string) (*os.File, bool) {
-	st, err := os.Stat(path)
-	if err != nil || !st.Mode().IsRegular() {
+	if githubPostBeforeOpen != nil {
+		githubPostBeforeOpen(path)
+	}
+	fd, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
+	if err != nil {
 		return nil, false
 	}
-	file, err := os.Open(path)
-	if err != nil {
+	file := os.NewFile(uintptr(fd), path)
+	st, err := file.Stat()
+	if err != nil || !st.Mode().IsRegular() {
+		file.Close()
 		return nil, false
 	}
 	return file, true

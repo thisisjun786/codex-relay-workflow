@@ -195,7 +195,11 @@ func shellSedWriteDests(script string) []string {
 			}
 			d := rs[i]
 			i++
-			if !delimited(d) || !delimited(d) {
+			// s/pattern/replacement/ and y/source/dest/ each end two parts at the delimiter d.
+			if !delimited(d) {
+				return unknown
+			}
+			if !delimited(d) {
 				return unknown
 			}
 			for i < len(rs) && strings.ContainsRune("gpiImM0123456789", rs[i]) {
@@ -218,7 +222,11 @@ func shellSedWriteDests(script string) []string {
 			}
 			d := rs[i]
 			i++
-			if !delimited(d) || !delimited(d) {
+			// s/pattern/replacement/ and y/source/dest/ each end two parts at the delimiter d.
+			if !delimited(d) {
+				return unknown
+			}
+			if !delimited(d) {
 				return unknown
 			}
 		default:

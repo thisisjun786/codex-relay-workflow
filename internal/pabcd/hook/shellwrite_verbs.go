@@ -142,57 +142,6 @@ func shellVerbSedWrites(args []string) []string {
 	return files
 }
 
-// shellVerbCpMvWrites reads cp and mv options as getopt does: -t and -S inside a bundle (-rt DIR) or with the value attached
-// (-tDIR) take their value, and --suffix does not leave its value among the operands.
-func shellVerbCpMvWrites(args []string) []string {
-	dir := ""
-	files := []string{}
-	for i := 0; i < len(args); i++ {
-		a := args[i]
-		name, value, inline := strings.Cut(strings.TrimPrefix(a, "--"), "=")
-		switch {
-		case a == "--":
-			files = append(files, args[i+1:]...)
-			i = len(args)
-		case strings.HasPrefix(a, "--"):
-			if name != "target-directory" && name != "suffix" {
-				continue
-			}
-			if !inline && i+1 < len(args) {
-				i++
-				value = args[i]
-			}
-			if name == "target-directory" {
-				dir = value
-			}
-		case len(a) > 1 && a[0] == '-':
-			for j := 1; j < len(a); j++ {
-				if a[j] != 't' && a[j] != 'S' {
-					continue
-				}
-				value := a[j+1:]
-				if value == "" && i+1 < len(args) {
-					i++
-					value = args[i]
-				}
-				if a[j] == 't' {
-					dir = value
-				}
-				break
-			}
-		default:
-			files = append(files, a)
-		}
-	}
-	if dir != "" {
-		return []string{dir}
-	}
-	if len(files) >= 2 {
-		return files[len(files)-1:]
-	}
-	return []string{}
-}
-
 // shellVerbScriptWrites is scriptWriteDestinations (:535): the path of open(path, "w"), Path(path).write_text(...) and
 // writeFile(path...) calls, pattern by pattern in that order. The oracle's backreferences (the closing quote repeats the opening
 // one) become one alternative per quote; each alternation picks its branch by the quote present, so it never competes with
@@ -1193,8 +1142,9 @@ func shellWriteTripleScanRegion(rs []rune, i int, python bool) int {
 	return len(rs)
 }
 
-// shellWriteFStringMaxDepth bounds the replacement-field nesting the walk reads: a deeper one is unreadable, so the memory
-// gate fails closed rather than reading a program it cannot finish (CRW-741, criterion c2).
+// shellWriteFStringMaxDepth is the number of nested levels the walk reads: an f-string or a replacement field is one level,
+// and the walk counts depth from 0, so a level at depth shellWriteFStringMaxDepth or deeper is unreadable and the memory
+// gate fails closed. 32 levels are read; the 33rd is refused (CRW-741, criterion c2; CRW-1028 c1e).
 const shellWriteFStringMaxDepth = 32
 
 // shellWriteFStringUnreadableWhat is the what shellWriteFStringUnreadable reports for a program it cannot read (the deny
@@ -1229,7 +1179,7 @@ func shellWriteFStringPrefix(rs []rune, i int) bool {
 // literal or the program ends, an unpaired } outside a field, or nesting deeper than shellWriteFStringMaxDepth. A literal
 // without an f in its prefix is not this function's case (shellWriteTripleScanRegion keeps the one-region rule for it).
 func shellWriteFStringRegion(rs []rune, i, depth int) (end int, fields [][2]int, bad bool) {
-	if depth > shellWriteFStringMaxDepth {
+	if depth >= shellWriteFStringMaxDepth {
 		return len(rs), nil, true
 	}
 	quote := rs[i]
@@ -1286,7 +1236,7 @@ func shellWriteFStringRegion(rs []rune, i, depth int) (end int, fields [][2]int,
 // PEP 701) and an inner f-string inside it are followed. It returns the index just past the field's closing }, the expression
 // spans to read as program text, and whether the field is unreadable.
 func shellWriteFStringField(rs []rune, from, depth int) (next int, fields [][2]int, bad bool) {
-	if depth > shellWriteFStringMaxDepth {
+	if depth >= shellWriteFStringMaxDepth {
 		return len(rs), nil, true
 	}
 	k, bracket := from, 0

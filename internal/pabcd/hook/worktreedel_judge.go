@@ -8,7 +8,6 @@ package hook
 import (
 	"io"
 	"path/filepath"
-	"regexp"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/shellir"
@@ -26,7 +25,7 @@ func evaluateCommand(command, cwd string, id WorktreeIdentity) GuardVerdict {
 	if !id.Managed || text.Trim(command) == "" {
 		return GuardVerdict{}
 	}
-	return worktreeDelJudgeText(command, cwd, id, 0)
+	return worktreeDelJudgeText(command, shellirPayloadCwd(cwd), id, 0)
 }
 
 func worktreeDelUnreadable(id WorktreeIdentity) GuardVerdict {
@@ -139,18 +138,14 @@ func worktreeDelJudgeFind(e shellir.Exec, id WorktreeIdentity) GuardVerdict {
 	return GuardVerdict{}
 }
 
-// worktreeDelDeleteAPI names the file-removal calls of the languages the reader holds an inline program of. A program that
-// holds one may remove a path the text does not name as a literal, so in a managed worktree it is refused.
-var worktreeDelDeleteAPI = regexp.MustCompile(`rmtree|os\.remove|os\.unlink|os\.rmdir|unlink|rmSync|rmdirSync|unlinkSync|removeSync|fs\.rm|fs\.unlink|rm_rf|File\.delete|FileUtils`)
-
-// worktreeDelJudgeInline judges an interpreter's inline program: a program that removes files is refused in a managed
-// worktree, and one the reader cannot show is unreadable.
+// worktreeDelJudgeInline judges an interpreter's inline program: one the reader cannot show is unreadable, and one that
+// removes a file, starts another program or reaches a name at run time is refused in a managed worktree.
 func worktreeDelJudgeInline(e shellir.Exec, id WorktreeIdentity) GuardVerdict {
 	if !e.Inline.Source.Known {
 		return worktreeDelUnreadable(id)
 	}
-	if worktreeDelDeleteAPI.MatchString(e.Inline.Source.Value) {
-		return GuardVerdict{Deny: true, Reason: denyReason(e.Inline.Language+" program that removes files", id)}
+	if why := worktreeDelProgramRefusal(e.Inline.Language, e.Inline.Source.Value); why != "" {
+		return GuardVerdict{Deny: true, Reason: denyReason(e.Inline.Language+" "+why, id)}
 	}
 	return GuardVerdict{}
 }

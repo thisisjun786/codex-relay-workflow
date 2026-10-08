@@ -108,30 +108,6 @@ func worktreeDelChangeRows() []worktreeDelChange {
 	}
 }
 
-// worktreeDelChangeFor returns the recorded verdict of a command whose verdict changed on purpose.
-func worktreeDelChangeFor(cmd string) (worktreeDelChange, bool) {
-	for _, c := range worktreeDelChangeRows() {
-		if c.cmd == cmd {
-			return c, true
-		}
-	}
-	return worktreeDelChange{}, false
-}
-
-// delErrorf reports a failed row unless its command has a recorded changed verdict. TestWorktreeDelChangedVerdicts
-// checks each recorded verdict against the reader, so a row is not hidden.
-func delErrorf(t *testing.T, format string, args ...any) {
-	t.Helper()
-	if len(args) > 0 {
-		if cmd, ok := args[0].(string); ok {
-			if _, recorded := worktreeDelChangeFor(cmd); recorded {
-				return
-			}
-		}
-	}
-	t.Errorf(format, args...)
-}
-
 // TestWorktreeDelChangedVerdicts checks that the reader gives each recorded command the recorded verdict.
 func TestWorktreeDelChangedVerdicts(t *testing.T) {
 	r := newDelRig(t)

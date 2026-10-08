@@ -90,7 +90,7 @@ func HandleWorktreeGuardPreTool(raw string, env host.LookupEnv) string {
 	if cwd == "" || command == "" {
 		return ""
 	}
-	verdict := evaluateCommand(command, cwd, detectManagedWorktree(cwd, env))
+	verdict := evaluateCommand(command, shellirPayloadCwd(cwd), detectManagedWorktree(cwd, env))
 	if !verdict.Deny {
 		return ""
 	}

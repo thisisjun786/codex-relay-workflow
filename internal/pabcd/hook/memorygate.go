@@ -173,8 +173,12 @@ func memoryGateClassify(tool string, input any, cwd string, env host.LookupEnv) 
 		} else {
 			candidates = memoryGatePatchTargets(command)
 		}
+		dir := shellirPayloadCwd(cwd)
 		for _, candidate := range candidates {
-			if target, ok := g.hit(candidate, cwd, root); ok {
+			if dir == "" && !path.IsAbs(candidate) {
+				return MemoryWriteAttempt{Surface: "edit", Target: "(a destination the gate cannot read)"}
+			}
+			if target, ok := g.hit(candidate, dir, root); ok {
 				return MemoryWriteAttempt{Surface: "edit", Target: target}
 			}
 		}
@@ -182,12 +186,13 @@ func memoryGateClassify(tool string, input any, cwd string, env host.LookupEnv) 
 		// A path that is only read, quoted, or in a heredoc body is no write; redirections, tee, sed -i, cp and mv targets and
 		// perl and ruby -i operands are the write surface (ShellWriteDestinations).
 		command, _ := record["command"].(string)
-		if dests, readable := shellIRWriteDestsResolved(command, cwd, env); readable {
+		dir := shellirPayloadCwd(cwd)
+		if dests, readable := shellIRWriteDestsResolved(command, dir, env); readable {
 			for _, token := range dests {
 				if token == shellIRUnknownDest {
 					return MemoryWriteAttempt{Surface: "shell", Target: "(a destination the gate cannot read)"}
 				}
-				if target, ok := g.hit(token, cwd, root); ok {
+				if target, ok := g.hit(token, dir, root); ok {
 					return MemoryWriteAttempt{Surface: "shell", Target: target}
 				}
 			}
@@ -200,7 +205,7 @@ func memoryGateClassify(tool string, input any, cwd string, env host.LookupEnv) 
 		// A shell program position the outer shell builds at run time - a -c program, an eval operand, a source
 		// operand, a shell reading a pipe, a here-string or a here-document - may hold a write the destination reader
 		// never sees, so it is a write attempt of its own and the gate fails closed (CRW-726, beside CRW-741's check).
-		if _, err := shellir.Analyze(command, cwd); err != nil {
+		if _, err := shellir.Analyze(command, dir); err != nil {
 			return MemoryWriteAttempt{Surface: "shell", Target: "(a program the gate cannot read: the command reader refused it)"}
 		}
 	}
