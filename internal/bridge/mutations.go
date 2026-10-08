@@ -76,7 +76,7 @@ func (b *Bridge) SendMessageToThread(ctx context.Context, in SendMessage) (ledge
 		if err != nil {
 			return err
 		}
-		contract = settings.Contract{CWD: pyjson.Text(expected["cwd"]), Sandbox: pyjson.Text(expected["sandbox"]), ExpectedPolicy: pyjson.Map(expected["expected_sandbox_policy"]), Model: auth.Model, ReasoningEffort: auth.Effort}
+		contract = settings.Contract{CWD: pyjson.Text(expected["cwd"]), Sandbox: pyjson.Text(expected["sandbox"]), ExpectedPolicy: pyjson.Map(expected["expected_sandbox_policy"]), Model: auth.Model, ReasoningEffort: auth.Effort, AutoCompactTokenLimit: auth.AutoCompactTokenLimit}
 		if roots, ok := expected["runtime_workspace_roots"].([]any); ok {
 			for _, root := range roots {
 				contract.Roots = append(contract.Roots, pyjson.Text(root))

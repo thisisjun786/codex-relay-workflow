@@ -303,7 +303,10 @@ func sameSettings24(first, second *delivery.TaskSettings) bool {
 	if first == nil || second == nil {
 		return first == second
 	}
-	return first.SettingsFreeResume == second.SettingsFreeResume && pyjson.Dumps(first.Data, pyjson.Options{SortKeys: true}) == pyjson.Dumps(second.Data, pyjson.Options{SortKeys: true})
+	// The bound role is part of what a send reads from a record: a re-read that lands on a different
+	// binding must cancel the claim rather than let the transport run on the pair the first read
+	// confirmed (the auto-compaction limit is resolved from that role's pair).
+	return first.SettingsFreeResume == second.SettingsFreeResume && first.BoundRole == second.BoundRole && pyjson.Dumps(first.Data, pyjson.Options{SortKeys: true}) == pyjson.Dumps(second.Data, pyjson.Options{SortKeys: true})
 }
 
 func optionalNumber(n sql.NullInt64) any {
