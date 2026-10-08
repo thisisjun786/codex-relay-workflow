@@ -242,6 +242,13 @@ func configLockPathsSameTarget(spelling string, pinned *configLockPathsPin) bool
 // link therefore stays refused. The error is non-nil only when the spelling cannot be proven to name the
 // locked entry for a stated reason (CRW-993 d2).
 func configLockPathsSameTargetReason(spelling string, pinned *configLockPathsPin) (bool, error) {
+	// A directory that lost search permission after the pin cannot have its sidecar looked up, so the
+	// lock's proof fails for a reason that is not a different file. That refusal names the reason (CRW-993 d4).
+	if pinned != nil {
+		if _, err := os.Stat(pinned.path + configLockPathsSidecarSuffix); errors.Is(err, fs.ErrPermission) {
+			return false, fmt.Errorf("%s cannot be proven to be the locked config file: its directory cannot be searched (%w)", spelling, err)
+		}
+	}
 	if !configLockPathsPinHolds(pinned) {
 		return false, nil
 	}

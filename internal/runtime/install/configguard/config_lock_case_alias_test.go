@@ -80,9 +80,10 @@ func configLockPathsCaseAliasRun(t *testing.T, hardLink bool, seams func(cfg str
 	keys := map[string]TableKeyRecord{"memories.dedicated_tools": deactivationKey(nil)}
 	stale := configLockActivationManifestBytes(t, &InstallManifest{Version: 2, ConfigPath: cfg, PostActivateHash: hash, Flags: map[string]FlagRecord{}, TableKeys: keys})
 	fresh := configLockActivationManifestBytes(t, &InstallManifest{Version: 2, ConfigPath: filepath.Join(dir, "CONFIG.TOML"), PostActivateHash: hash, Flags: map[string]FlagRecord{}, TableKeys: keys})
+	held := configLockWritersHold(t, cfg)
 	configLockPathsHandoverRetarget(t, home, stale, func() error {
 		return os.Chmod(dir, 0o300)
-	}, func() {}, fresh)
+	}, held.Release, fresh)
 	_, err = Deactivate(deactivationDeps(home, func([]string) CodexRunResult { return CodexRunResult{} }))
 	if cerr := os.Chmod(dir, 0o700); cerr != nil {
 		t.Fatal(cerr)
@@ -208,5 +209,41 @@ func TestConfigLockCaseAliasRecordMatchesTheProbe(t *testing.T) {
 	rec := read("../../../../docs/port-cxc/known-defects/CRW-993.md")
 	if !strings.Contains(rec, "The one exception to the same-file restore promise") {
 		t.Error("CRW-993.md does not state the exception to the same-file restore promise")
+	}
+}
+
+// CRW-993 d4: a directory that loses search permission after the pin is refused with the reason, not as a
+// different file, because the lock's sidecar can no longer be looked up.
+func TestConfigLockPathsCaseAliasSearchDeniedNamesTheReason(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root searches a mode-0200 directory")
+	}
+	home := configLockActivationHome(t)
+	dir := filepath.Join(home, "locked")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	cfg := filepath.Join(dir, "config.toml")
+	activationWrite(t, cfg, deactivationConfig)
+	hash, err := hashOrNull(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys := map[string]TableKeyRecord{"memories.dedicated_tools": deactivationKey(nil)}
+	manifest := configLockActivationManifestBytes(t, &InstallManifest{Version: 2, ConfigPath: cfg, PostActivateHash: hash, Flags: map[string]FlagRecord{}, TableKeys: keys})
+	held := configLockWritersHold(t, cfg)
+	configLockPathsHandoverRetarget(t, home, manifest, func() error {
+		return os.Chmod(dir, 0o200)
+	}, held.Release, manifest)
+	_, err = Deactivate(deactivationDeps(home, func([]string) CodexRunResult { return CodexRunResult{} }))
+	if cerr := os.Chmod(dir, 0o700); cerr != nil {
+		t.Fatal(cerr)
+	}
+	if err == nil || !strings.Contains(err.Error(), "cannot be searched") {
+		t.Fatalf("a directory that lost search permission did not name the reason: %v", err)
+	}
+	if got := activationRead(t, cfg); !strings.Contains(got, "dedicated_tools") {
+		t.Fatalf("the refused deactivation changed the config: %q", got)
 	}
 }
