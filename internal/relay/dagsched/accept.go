@@ -363,11 +363,12 @@ func (s *Scheduler) accept(ctx context.Context, plan, node, actor string, in Acc
 				if commitPath {
 					// the same output accepted before on the commit path: the replay is the same head with
 					// the same verification record. A call naming another record is not a replay of it.
-					digest, found, err := storedVerificationDigest(txCtx, tx, a.AcceptanceID)
+					// the same output is the same head and tree: a fresh record of that tree is a replay, and its bytes are not compared (CRW-965, D3)
+					stored, found, err := storedVerificationIdentity(txCtx, tx, a.AcceptanceID)
 					if err != nil {
 						return err
 					}
-					if !found || digest != shaOf(prepared.recordRaw) {
+					if !found || stored.Head != prepared.ref.Head || stored.Tree != prepared.tree {
 						return refuse(contract.RefusalDispositionConflict, "the output of %s was accepted with another verification record; accept a new output instead", node)
 					}
 				} else {

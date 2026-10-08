@@ -146,12 +146,15 @@ func (s *Scheduler) storeCommitVerification(txCtx context.Context, acceptanceID,
 	})
 }
 
-// storedVerificationDigest reads the verification record digest recorded with an acceptance. found is
-// false when the acceptance has none, which is what tells a pull-request acceptance from a commit one.
-func storedVerificationDigest(ctx context.Context, q store.Querier, acceptanceID string) (string, bool, error) {
-	var digest string
-	found, err := queryOne(ctx, q, "SELECT record_digest FROM dag_acceptance_verifications WHERE acceptance_id = ?", []any{acceptanceID}, &digest)
-	return digest, found, err
+// storedVerification is the head and tree a commit acceptance's verification row stores (CRW-965, D3).
+type storedVerification struct{ Head, Tree string }
+
+// storedVerificationIdentity reads the head and tree recorded with an acceptance. found is false when the acceptance
+// has no verification row, which is what tells a pull-request acceptance from a commit one.
+func storedVerificationIdentity(ctx context.Context, q store.Querier, acceptanceID string) (storedVerification, bool, error) {
+	var v storedVerification
+	found, err := queryOne(ctx, q, "SELECT head_commit, tree_sha FROM dag_acceptance_verifications WHERE acceptance_id = ?", []any{acceptanceID}, &v.Head, &v.Tree)
+	return v, found, err
 }
 
 // acceptCommitTarget is the repository a pull-request-less acceptance is judged against: the local
