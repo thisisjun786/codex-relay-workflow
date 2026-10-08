@@ -6,6 +6,7 @@
       "id": "hook__pre-tool-use-guarding-managed-worktree-deletion__slot_substring_denies_unrelated_target",
       "reason": "security loosening: the slot id is matched as a raw substring by the old fallback, so rm -rf on an unrelated child directory of the working directory (./build-7627) is no longer denied; the target is not inside the managed worktree, so the new answer is silent (empty stdout)",
       "set": {
+        "steps/0/form": "empty",
         "steps/0/stdout": ""
       }
     },
@@ -20,8 +21,11 @@
       "id": "hook__pre-tool-use-guarding-managed-worktree-deletion__windows_verbs_on_posix",
       "reason": "security loosening: rd and Remove-Item are PowerShell verbs with no meaning on a POSIX host, and the port reads only POSIX removal verbs, so the three Windows-verb steps are silent (empty stdout); the step that names no slot (Remove-Item .) was already silent in the oracle",
       "set": {
+        "steps/0/form": "empty",
         "steps/0/stdout": "",
+        "steps/1/form": "empty",
         "steps/1/stdout": "",
+        "steps/2/form": "empty",
         "steps/2/stdout": ""
       }
     }
