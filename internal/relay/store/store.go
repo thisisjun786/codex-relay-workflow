@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/commitid"
 	"golang.org/x/sys/unix"
 	"modernc.org/sqlite"
 )
@@ -139,6 +140,9 @@ func open(ctx context.Context, path, socketPath string, options OpenOptions) (_ 
 	// and this record is what lets it recognise the database and its sidecars by identity.
 	recordStoreFilePath(resolved)
 	d := &sqlite.Driver{}
+	if err := commitid.Register(d); err != nil {
+		return nil, err
+	}
 	d.RegisterConnectionHook(func(conn sqlite.ExecQuerierContext, _ string) error {
 		if options.OnConnect != nil {
 			options.OnConnect()

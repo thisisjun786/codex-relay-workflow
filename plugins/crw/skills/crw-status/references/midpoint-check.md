@@ -34,7 +34,7 @@ total makes a growing backlog look like slipping delivery, or hides it inside a 
 Per project: done, in progress, or waiting against the project's own criteria rather than against a
 status field somebody set by hand. That judgement is [crw-check](../../crw-check/SKILL.md)'s, not
 this check's, so take it from the most recent trustworthy result its parent or a prior check
-already produced. What this check reads for itself is the current delivery state: the pull request,
+already produced. What this check reads for itself is the current delivery state: the commits on the task branch and, while one is open, the pull request,
 whether it merged, and whether anything was installed. Where no such judgement exists, or the one
 on hand is too old or too thin to rely on, report that project's criteria state as unverified and
 route it to check. A midpoint check that starts auditing criteria has become the audit it was
@@ -111,8 +111,8 @@ role carries which lifecycle by default; [Start policy](../../crw-run/references
 owns the second. A goal-free parent is the default rather than a defect, so finding one is not a
 finding at all.
 
-Per delivery, from GitHub: the current head, the CI attempt that applies to that head, the reviews
-paged to the end, whether the pull request actually merged into its intended target, and whether
+Per delivery, from git and, where a pull request exists, from GitHub: the current head, the CI attempt that applies to that head where hosted CI ran on it, the reviews
+paged to the end, whether the delivery actually landed on its intended target (the integrator's fast-forward, or the pull request's merge while one is open), and whether
 anything was installed or demonstrated afterwards. Use
 [Merge readiness](../../crw-run/references/merge-readiness.md) for what the checks and reviews
 establish and [Implementation Done](../../crw-plan/references/integrations.md#implementation-done)
@@ -146,8 +146,8 @@ where two levels disagree, and four of them recur:
   an ordinary quiet queue unless held rows are read, so read them.
 - A child ended its turn waiting on a judgement. Its work is not blocked by a defect; it is blocked
   by an unanswered question, and the question has an owner who has not seen it.
-- The newest report and the newest pull request describe different states. The report is stale, or
-  the pull request moved after it, and the summary everybody is reading is no longer true.
+- The newest report and the newest delivery read describe different states. The report is stale, or
+  the delivery moved after it, and the summary everybody is reading is no longer true.
 - A tracked item sits outside the project it belongs to: an issue read back with no project or the
   wrong one, or an incident the relay's product routing held because no single product, owner or
   project could be chosen (`route-show --attention` lists those, with the issues whose project
@@ -275,14 +275,14 @@ observation fields, and the `notLoaded` one is never a send target until a secon
 
 ### M2 CI is green and the review is not finished
 
-Observed: the pull request's required checks passed on the current head; one review is still
+Observed: the local verification record passes on the current head; one review is still
 running and one thread is open.
 Action: report checks passed and review unfinished as two rows. A green gate is not review
 completion, and an open thread is not a resolved finding.
 
 ### M3 Merged but not installed
 
-Observed: the pull request landed on the intended target; the issue's criteria also require
+Observed: the delivery landed on the intended target; the issue's criteria also require
 installation or live verification, and neither has happened.
 Action: report merged and not installed separately, and keep the outstanding obligation visible.
 A source merge does not satisfy an installation criterion.
@@ -417,14 +417,6 @@ Preserved: the goal lifecycle's own owner, and an accurate reason for the stall.
 
 Observed: a delivery's record was handed over, and a review thread, from Devin or Codex or from any other reviewer,
 now sits on its head that the record's `threadsSeen` does not list. The relay's restatement would read it as `late_finding`, resolved or not.
-Action: report it as its own row: the thread, its grade as the reviewer wrote it, the stage of the delivery and
-whose move it is. A minor thread is the coordinator's: where the installed relay can record a disposition
-(`merge-evidence --late-dispositions`) it is recorded and nothing goes back to the child; where it cannot, the child
-only emits its receipt again, before the acceptance. A red, P0, P1 or security thread, or a P2 or P3 whose effect is
-blocking, is the child's ordinary correction before the acceptance. After the acceptance of a current result no
-correction can reach the child, so such a thread, and a minor one that cannot be recorded, leaves the candidate held
-and reported on the coordination record. After the merge it is new work. A status call reads the thread and
-triages, replies to and resolves nothing: the triage is the coordinator's
-([Late review threads](../../crw-run/references/merge-readiness.md#late-review-threads)).
+Action: report it as its own row, with the thread, its reading against this issue's scope, the stage of the delivery and whose move it is. The handling follows [Late review threads](../../crw-run/references/merge-readiness.md#late-review-threads); a status call reads the thread and triages, replies to and resolves nothing.
 Preserved: the child's judged dispositions, the coordinator's own triage, and the difference between a review
 that finished and a record that saw it.

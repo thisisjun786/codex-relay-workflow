@@ -31,8 +31,11 @@ func cxcTestReplayer(t *testing.T) *cxcReplayer {
 		t.Fatal(err)
 	}
 	crw := filepath.Join(t.TempDir(), "crw")
-	if err := os.WriteFile(crw, []byte(fakeCRW), 0o755); err != nil {
-		t.Fatal(err)
+	syscall.ForkLock.RLock()
+	writeErr := os.WriteFile(crw, []byte(fakeCRW), 0o755)
+	syscall.ForkLock.RUnlock()
+	if writeErr != nil {
+		t.Fatal(writeErr)
 	}
 	r, err := newCXCReplayer(root, crw)
 	if err != nil {

@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/commitid"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
 	"modernc.org/sqlite"
 )
@@ -23,6 +24,9 @@ func boundedDB(path, mode string, timeout time.Duration, pragmas ...string) (*sq
 // boundedURI is boundedDB with every SQLite URI parameter given (mode, immutable).
 func boundedURI(path string, params url.Values, timeout time.Duration, pragmas ...string) (*sql.DB, error) {
 	d := &sqlite.Driver{}
+	if err := commitid.Register(d); err != nil {
+		return nil, err
+	}
 	d.RegisterConnectionHook(func(conn sqlite.ExecQuerierContext, _ string) error {
 		for _, pragma := range append([]string{fmt.Sprintf("PRAGMA busy_timeout=%d", timeout.Milliseconds())}, pragmas...) {
 			if _, err := conn.ExecContext(context.Background(), pragma, []driver.NamedValue{}); err != nil {

@@ -95,6 +95,7 @@
             "enum": [
               "initial_assignment",
               "needs_changes_revision",
+              "accepted_result_correction",
               null
             ]
           }

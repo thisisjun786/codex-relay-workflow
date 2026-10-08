@@ -128,11 +128,11 @@ func (f hostFactory) supervisorHostCommand(ctx context.Context, command, state, 
 	channel := &supervisor.Channel{Store: s, Linkage: supervisor.StoreLinkage{Store: s}, Program: program, Socket: socket}
 	channel.SettingsLoader = func(ctx context.Context, task string) (*delivery.TaskSettings, error) {
 		r := &registry.Registry{Store: s, Now: (&delivery.FakeClock{T: now}).ISO, Policy: registry.EnvironmentRolePolicy()}
-		settings, free, err := r.AuthorizedSettings(ctx, task)
+		settings, role, free, err := r.AuthorizedSettingsBound(ctx, task)
 		if err != nil {
 			return nil, err
 		}
-		return &delivery.TaskSettings{Data: delivery.Obj(settings.Data), SettingsFreeResume: free}, nil
+		return &delivery.TaskSettings{Data: delivery.Obj(settings.Data), SettingsFreeResume: free, BoundRole: role}, nil
 	}
 	switch command {
 	case "supervisor-send":

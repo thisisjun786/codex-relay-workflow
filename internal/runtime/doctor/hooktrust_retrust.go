@@ -75,6 +75,12 @@ const hookTrustRetrustLockWait = 2 * time.Second
 // ran; Conflict records that the displaced content was not what retrust read; LateWrite records that
 // config.toml held something else again when it was read back; Warning carries a post-publication
 // failure that is counted as written.
+//
+// CRW-936 adds the two states the overlap report needs, and the reason a refusal prints: RecheckFailed
+// and RecheckError record that the target could not be read again after a conflict, so the report
+// asserts nothing about its content; Reason carries the refusal's message for the report of a refusal
+// that came before the plan. ConfigPath is set as soon as the config path is known, so every refusal
+// can name the file it left alone.
 type HookTrustRetrustResult struct {
 	Updated    int
 	Appended   int
@@ -84,7 +90,30 @@ type HookTrustRetrustResult struct {
 	Published  bool
 	Conflict   bool
 	LateWrite  bool
-	Warning    string
+	// RecheckFailed records that the target could not be read again after the publication, so there is
+	// no evidence of what it holds now. It is set on the conflict path (the exchange displaced content
+	// that was not what retrust read, so another save landed in between) and on the ordinary path (the
+	// post-publication read back failed); in both the report says the read failed and asserts nothing
+	// about what the target holds, and RecheckError carries why.
+	RecheckFailed bool
+	RecheckError  string
+	// DisplacedUnreadable records that the content the publication displaced could not be read back,
+	// so whether another writer raced the exchange cannot be decided. The report then says so and does
+	// not claim the displaced path holds that content; what the target holds is still read and reported
+	// (CRW-936). DisplacedError carries why the read failed.
+	DisplacedUnreadable bool
+	DisplacedError      string
+	// ConfigPathMoved records that the configured config.toml no longer resolves to the file the
+	// publication locked and rewrote, so the config Codex reads is not the one retrust verified.
+	// ConfiguredPath is the path the command was given and ConfigPathNow what it resolves to; the
+	// report states the change and makes no claim about the document that path now names (CRW-936).
+	ConfigPathMoved bool
+	ConfiguredPath  string
+	ConfigPathNow   string
+	// Reason is the refusal's message, set by the command line for a refusal that came before the
+	// plan existed. The report prints it as the "no plan" reason.
+	Reason  string
+	Warning string
 	// DisplacedAt names the file that holds the content the publication displaced when the backup
 	// path could not be filled (a failure after the exchange). It is empty when the backup path
 	// holds it, which is every other case.
@@ -268,11 +297,19 @@ func hookTrustRetrustVerifyNext(pluginRoot, pluginKey, next string, runner HookT
 //     config is never visible at the real path and there is no rollback path;
 //   - crwdir.PublishSwap exchanges the temp file with the target atomically and keeps the displaced
 //     file as the backup. A displaced file whose bytes differ from B is a non-cooperative writer
-//     that saved in between: its content stays in the backup, the target holds retrust's content,
-//     nothing is exchanged back, and the conflict is reported with both paths;
+//     that saved in between: its content stays in the backup, nothing is exchanged back, and the
+//     conflict is reported with both paths. What the target holds then is read again before the
+//     answer (CRW-936): retrust's content when nothing saved after the exchange, else the newer save
+//     (Conflict and LateWrite), or nothing is claimed about it when that read fails (RecheckFailed);
 //   - a sync-only failure is a *crwdir.PublishedError: the publication counts as done and the
 //     failure is reported as a warning;
-//   - config.toml is read back, and a value that is not next is reported and left in place.
+//   - config.toml is read back; a value that is not next is reported and left in place, and a read
+//     that fails is reported with nothing claimed about what the file holds (CRW-936). When the
+//     displaced content itself could not be read back, whether another writer raced the exchange is
+//     undecidable, so the conflict comparison is skipped, the target is still read, and the report
+//     names the unreadable displaced path with its reason instead of claiming what it holds; and when
+//     the configured config.toml no longer resolves to the file this run locked, the run refuses,
+//     because the config Codex reads is then not the one that was verified.
 //
 // The refusals, in the oracle's order and words: a missing config.toml; a plugin that declares no
 // synchronous command hooks; a duplicate exact section header; more than one, or no, trusted_hash in
@@ -297,30 +334,35 @@ func hookTrustRetrustWith(codexHome, pluginRoot, pluginKey string, bootstrapOK b
 		publish = seams.publish
 	}
 	configPath := filepath.Join(codexHome, "config.toml")
+	// The result is declared before anything can refuse, so every refusal names the config path it
+	// left alone and the report can print it (CRW-936). The joined path is enough before the file is
+	// resolved; it is replaced by the resolved target once the lock names it.
+	result := HookTrustRetrustResult{ConfigPath: configPath}
 	if _, err := os.Stat(configPath); err != nil {
-		return HookTrustRetrustResult{}, nil, errors.New("missing " + configPath)
+		return result, nil, errors.New("missing " + configPath)
 	}
 	targetPath, err := hookTrustRetrustResolvedConfigPath(configPath)
 	if err != nil {
-		return HookTrustRetrustResult{}, nil, err
+		return result, nil, err
 	}
 	lock, err := crwdir.LockConfig(targetPath, hookTrustRetrustLockWait)
 	if err != nil {
-		return HookTrustRetrustResult{}, nil, err
+		return result, nil, err
 	}
 	defer lock.Release()
 	targetPath = lock.Target
+	result.ConfigPath = targetPath
 	raw, err := os.ReadFile(targetPath)
 	if err != nil {
-		return HookTrustRetrustResult{}, nil, err
+		return result, nil, err
 	}
 	original := string(raw)
 	expected, err := ListHookTrustEntries(pluginRoot, pluginKey)
 	if err != nil {
-		return HookTrustRetrustResult{}, nil, err
+		return result, nil, err
 	}
 	if len(expected) == 0 {
-		return HookTrustRetrustResult{}, nil, errors.New("plugin declares no synchronous command hooks to trust")
+		return result, nil, errors.New("plugin declares no synchronous command hooks to trust")
 	}
 
 	var replacements []hookTrustRetrustReplacement
@@ -330,7 +372,7 @@ func hookTrustRetrustWith(codexHome, pluginRoot, pluginKey string, bootstrapOK b
 	for _, entry := range expected {
 		sections := hookTrustTomlExactHookSections(original, entry.Key)
 		if len(sections) > 1 {
-			return HookTrustRetrustResult{}, nil, errors.New("duplicate section header: [hooks.state.\"" + entry.Key + "\"]")
+			return result, nil, errors.New("duplicate section header: [hooks.state.\"" + entry.Key + "\"]")
 		}
 		if len(sections) == 0 {
 			missing = append(missing, entry)
@@ -341,10 +383,10 @@ func hookTrustRetrustWith(codexHome, pluginRoot, pluginKey string, bootstrapOK b
 		section := sections[0]
 		hashes := hookTrustTomlTrustedHashLines(original[section.BodyStart:section.End])
 		if len(hashes) > 1 {
-			return HookTrustRetrustResult{}, nil, errors.New("multiple trusted_hash lines in [hooks.state.\"" + entry.Key + "\"]")
+			return result, nil, errors.New("multiple trusted_hash lines in [hooks.state.\"" + entry.Key + "\"]")
 		}
 		if len(hashes) == 0 {
-			return HookTrustRetrustResult{}, nil, errors.New("missing trusted_hash in [hooks.state.\"" + entry.Key + "\"]")
+			return result, nil, errors.New("missing trusted_hash in [hooks.state.\"" + entry.Key + "\"]")
 		}
 		if hashes[0].Value == entry.Hash {
 			matchingCount++
@@ -357,15 +399,12 @@ func hookTrustRetrustWith(codexHome, pluginRoot, pluginKey string, bootstrapOK b
 
 	// The plan exists from here on, so a refusal below reports the items it would have changed.
 	backupPath := hookTrustRetrustBackupPath(targetPath, now)
-	result := HookTrustRetrustResult{
-		Updated:      len(replacements),
-		Appended:     len(missing),
-		BackupPath:   backupPath,
-		ConfigPath:   targetPath,
-		Planned:      true,
-		UpdatedKeys:  updatedKeys,
-		AppendedKeys: appendedKeys,
-	}
+	result.Updated = len(replacements)
+	result.Appended = len(missing)
+	result.BackupPath = backupPath
+	result.Planned = true
+	result.UpdatedKeys = updatedKeys
+	result.AppendedKeys = appendedKeys
 	if existingCount == 0 && !bootstrapOK {
 		return result, nil, errors.New("no existing hook trust entries match this plugin key; pass --bootstrap-ok to initialize trust")
 	}
@@ -392,32 +431,87 @@ func hookTrustRetrustWith(codexHome, pluginRoot, pluginKey string, bootstrapOK b
 		return result, nil, err
 	}
 	result.Published = true
+	displacedKnown := true
 	if err != nil {
-		result.Warning = err.Error()
 		// The backup could not be filled, so the displaced content is wherever PublishSwap says it
 		// is; the report must not claim the backup path holds it, and the displaced bytes must be
 		// read from there so the conflict comparison is against the real content.
 		var published *crwdir.PublishedError
 		if errors.As(err, &published) && published.DisplacedAt != "" {
 			result.DisplacedAt = published.DisplacedAt
-			if displaced, err = os.ReadFile(published.DisplacedAt); err != nil {
-				return result, nil, fmt.Errorf("%w (the content the publication displaced is at %s and could not be read back)", err, published.DisplacedAt)
+			read, readErr := os.ReadFile(published.DisplacedAt)
+			if readErr != nil {
+				// Whether another writer raced the exchange cannot be decided without those bytes, but
+				// what the target holds still can, and the report must not claim either without looking
+				// (CRW-936). Keep going and read the target; the displaced path and its reason are named
+				// by the report and the warning.
+				displacedKnown = false
+				result.DisplacedUnreadable = true
+				result.DisplacedError = readErr.Error()
+				err = fmt.Errorf("%w (the content the publication displaced is at %s and could not be read back: %s)", err, published.DisplacedAt, readErr)
+			} else {
+				displaced = read
 			}
 		}
+		result.Warning = err.Error()
 	}
-	if !bytes.Equal(displaced, raw) {
+	if displacedKnown && !bytes.Equal(displaced, raw) {
 		result.Conflict = true
-		return result, nil, fmt.Errorf("config.toml changed between the last check and the publication: the content that was there is preserved at %s and %s holds retrust's content", result.displacedPath(), targetPath)
+		// The displaced content is not what retrust read, so a save landed between the last check and
+		// the exchange. Read the target again before answering: a second save may have landed right
+		// after the publication, and the report must name what config.toml really holds rather than
+		// assume retrust's content (CRW-936). A failed re-read is reported as such and makes no claim
+		// about the target's content.
+		after, recheckErr := os.ReadFile(targetPath)
+		switch {
+		case recheckErr != nil:
+			result.RecheckFailed = true
+			result.RecheckError = recheckErr.Error()
+			return result, nil, fmt.Errorf("config.toml changed between the last check and the publication: the content that was there is preserved at %s, and %s could not be read again to say what it holds now (%s)", result.displacedPath(), targetPath, recheckErr)
+		case !bytes.Equal(after, []byte(next)):
+			result.LateWrite = true
+			return result, nil, fmt.Errorf("config.toml changed between the last check and the publication: the content that was there is preserved at %s, and %s holds a newer save, not retrust's content", result.displacedPath(), targetPath)
+		default:
+			return result, nil, fmt.Errorf("config.toml changed between the last check and the publication: the content that was there is preserved at %s and %s holds retrust's content", result.displacedPath(), targetPath)
+		}
 	}
 	after, err := os.ReadFile(targetPath)
 	if err != nil {
-		return result, nil, err
+		// The same rule as the conflict branch: with the target unreadable there is no evidence of what
+		// it holds, so the report says the read failed and claims nothing about it (CRW-936). The exit
+		// status stays the failure it was.
+		result.RecheckFailed = true
+		result.RecheckError = err.Error()
+		return result, nil, fmt.Errorf("retrust published %s but could not read it again to say what it holds now (%s)", targetPath, err)
 	}
 	if !bytes.Equal(after, []byte(next)) {
 		result.LateWrite = true
 		return result, nil, fmt.Errorf("%s changed again after retrust published it; the newer content was left in place", targetPath)
 	}
-	verification, err := DiagnoseHookTrust(codexHome, pluginRoot, pluginKey)
+	if !displacedKnown {
+		// The target was read and holds the published content, so the report can say so; but the content
+		// the exchange displaced could not be read, so whether a writer raced the exchange could not be
+		// decided. That is a failure, not a success with a warning: the publication cannot be called
+		// verified when the comparison it depends on never ran (CRW-936).
+		return result, nil, fmt.Errorf("retrust published %s but the content the exchange displaced at %s could not be read back, so whether another writer raced the exchange could not be verified (%s)", targetPath, result.displacedPath(), result.DisplacedError)
+	}
+	// Codex reads the configured path, not the file this run locked. A writer that repointed it during
+	// the publication makes the verified bytes unreachable, so the run must not report success: the
+	// diagnosis below would otherwise attest a document Codex no longer reads (CRW-936). The check is
+	// on the configured path's identity, and nothing is written to either document.
+	if now, resolveErr := hookTrustRetrustResolvedConfigPath(configPath); resolveErr != nil || now != targetPath {
+		result.ConfigPathMoved = true
+		result.ConfiguredPath = configPath
+		result.ConfigPathNow = now
+		if resolveErr != nil {
+			return result, nil, fmt.Errorf("retrust published %s, but %s no longer resolves to it (%s), so the config Codex reads is not the one retrust verified", targetPath, configPath, resolveErr)
+		}
+		return result, nil, fmt.Errorf("retrust published %s, but %s now resolves to %s, so the config Codex reads is not the one retrust verified", targetPath, configPath, now)
+	}
+	// The diagnosis runs on the bytes read back above rather than reading the path a second time: the
+	// report has already grounded what config.toml holds on that read, and a second read could only see
+	// different content or fail, making the report contradict itself (CRW-936).
+	verification, err := hookTrustRetrustDiagnoseContent(pluginRoot, pluginKey, hookTrustEntriesUTF8(after))
 	if err != nil {
 		return result, nil, err
 	}
@@ -435,6 +529,37 @@ func hookTrustRetrustWith(codexHome, pluginRoot, pluginKey string, bootstrapOK b
 		return result, verification, errors.New("post-publication verification failed for " + strings.Join(drifted, ", ") + "; the hooks changed after the pre-write verification")
 	}
 	return result, verification, nil
+}
+
+// hookTrustRetrustDiagnoseContent is DiagnoseHookTrust's answer for content already in hand. The
+// post-publication check runs on the bytes the report was grounded on rather than reading the path a
+// second time (CRW-936): the same file read twice can differ, and a second read that failed would let
+// the report claim the target holds the rewritten config while the check that contradicts it never
+// ran. The reading step is the only difference; the listing and the per-entry rule are the same.
+func hookTrustRetrustDiagnoseContent(pluginRoot, pluginKey, content string) ([]HookTrustResult, error) {
+	entries, err := ListHookTrustEntries(pluginRoot, pluginKey)
+	if err != nil {
+		return nil, err
+	}
+	results := make([]HookTrustResult, 0, len(entries))
+	for _, entry := range entries {
+		sections := hookTrustTomlExactHookSections(content, entry.Key)
+		var hashes []hookTrustTomlTrustedHash
+		for _, section := range sections {
+			hashes = append(hashes, hookTrustTomlTrustedHashLines(content[section.BodyStart:section.End])...)
+		}
+		result := HookTrustResult{HookTrustEntry: entry, Status: "untrusted"}
+		if len(sections) == 1 && len(hashes) == 1 {
+			actual := hashes[0].Value
+			result.Actual = &actual
+			result.Status = "drifted"
+			if actual == entry.Hash {
+				result.Status = "trusted"
+			}
+		}
+		results = append(results, result)
+	}
+	return results, nil
 }
 
 // hookTrustRetrustExec is the real HookTrustRetrustRunner: run file with argv under env and answer
@@ -479,6 +604,11 @@ type hookTrustRetrustOptionSet struct {
 	pluginKey   string
 	pluginRoot  string
 	bootstrapOK bool
+	// codexHomeKnown distinguishes a Codex home the command line named from one it never learned. An
+	// empty CODEX_HOME that is set is a Codex home, not an absent one: the target is then
+	// ./config.toml, and a refusal report must name that path (CRW-936 B3) rather than say the path is
+	// unknown.
+	codexHomeKnown bool
 }
 
 // hookTrustRetrustOptions is parseHookOptions (cli.ts:40-60): --bootstrap-ok, --key <value> and
@@ -488,13 +618,13 @@ type hookTrustRetrustOptionSet struct {
 // command has no such relation (docs/port-cxc/known-defects/CRW-362.md).
 func hookTrustRetrustOptions(args []string, env host.LookupEnv) (options hookTrustRetrustOptionSet, err error) {
 	if value, set := env("CODEX_HOME"); set {
-		options.codexHome = value
+		options.codexHome, options.codexHomeKnown = value, true
 	} else {
 		home, err := host.Home(env)
 		if err != nil {
 			return options, err
 		}
-		options.codexHome = filepath.Join(home, ".codex")
+		options.codexHome, options.codexHomeKnown = filepath.Join(home, ".codex"), true
 	}
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
@@ -519,6 +649,7 @@ func hookTrustRetrustOptions(args []string, env host.LookupEnv) (options hookTru
 				} else {
 					options.codexHome = value
 				}
+				options.codexHomeKnown = true
 			}
 			index++
 		default:
@@ -652,23 +783,34 @@ func hookTrustRetrustResolveKey(pluginRoot, pluginKey, codexHome string) (string
 // itself, so a word after the verb stays the parser's "unknown hooks option: <word>" and the form
 // is advertised by the doctor dispatcher's unknown-argument list instead.
 func HookTrustRetrustCLI(args []string, stdout, stderr io.Writer, env host.LookupEnv, runner HookTrustRetrustRunner, pluginRoot string, now time.Time) int {
+	// The options are parsed first so the failure closure below can report the config path a refusal
+	// raised before the file was resolved implies, even when the parse itself refused.
+	options, err := hookTrustRetrustOptions(args, env)
 	fail := func(err error, result HookTrustRetrustResult) int {
+		// Every refusal prints a report (CRW-936). A refusal that came before the plan has no items to
+		// list, so it reports the config path, the reason and the file state instead; the reason is the
+		// refusal's own message, which is the only place it is written down.
+		if result.ConfigPath == "" {
+			result.ConfigPath = hookTrustRetrustReportPath(options)
+		}
+		if result.Reason == "" {
+			result.Reason = err.Error()
+		}
 		hookTrustRetrustReport(stdout, result)
 		fmt.Fprintln(stderr, "crw doctor retrust: "+err.Error())
 		hookTrustRetrustWarn(stderr, result)
 		return 1
 	}
-	options, err := hookTrustRetrustOptions(args, env)
 	if err != nil {
-		return fail(err, HookTrustRetrustResult{})
+		return fail(err, HookTrustRetrustResult{ConfigPath: hookTrustRetrustReportPath(options)})
 	}
 	root, err := hookTrustRetrustPluginRoot(pluginRoot, options.pluginRoot, options.codexHome)
 	if err != nil {
-		return fail(err, HookTrustRetrustResult{})
+		return fail(err, HookTrustRetrustResult{ConfigPath: hookTrustRetrustReportPath(options)})
 	}
 	key, err := hookTrustRetrustResolveKey(root, options.pluginKey, options.codexHome)
 	if err != nil {
-		return fail(err, HookTrustRetrustResult{})
+		return fail(err, HookTrustRetrustResult{ConfigPath: hookTrustRetrustReportPath(options)})
 	}
 	result, results, err := HookTrustRetrust(options.codexHome, root, key, options.bootstrapOK, runner, env, now)
 	if err != nil {
@@ -687,6 +829,17 @@ func HookTrustRetrustCLI(args []string, stdout, stderr io.Writer, env host.Looku
 	return 0
 }
 
+// hookTrustRetrustReportPath names the config.toml a refusal concerns before the file is resolved.
+// It answers the empty string only when the command never learned a Codex home at all (a parse that
+// refused before --codex-home, with no CODEX_HOME and no HOME): an empty CODEX_HOME that is set is
+// still a Codex home, whose target is ./config.toml, and the report must name it (CRW-936 B3).
+func hookTrustRetrustReportPath(options hookTrustRetrustOptionSet) string {
+	if !options.codexHomeKnown {
+		return ""
+	}
+	return filepath.Join(options.codexHome, "config.toml")
+}
+
 // hookTrustRetrustWarn prints the post-publication failure the command counted as a warning. It is
 // printed on a success and on a failure alike: when a conflict or a late write follows a
 // post-exchange failure, the failure detail is the only place the operator learns where the
@@ -697,26 +850,51 @@ func hookTrustRetrustWarn(stderr io.Writer, result HookTrustRetrustResult) {
 	}
 }
 
-// hookTrustRetrustReport prints, for a success, a refusal that had a plan and a conflict alike, the
-// items the plan changed (or would have changed), the backup path and which file holds what (CRW-844
-// requirement 8). The oracle's own success lines are printed by the caller before this, so this only
-// appends. A run with no plan (a refusal before the plan exists) prints nothing here.
+// hookTrustRetrustReport prints, for a success, a refusal and a conflict alike, the items the plan
+// changed (or would have changed), the backup path and which file holds what (CRW-844 requirement 8).
+// The oracle's own success lines are printed by the caller before this, so this only appends.
+//
+// CRW-936 B3: every refusal prints. A refusal that came before the plan (the lock is busy, the config
+// could not be read, the plugin declares no hooks) has no items to list, so it prints the config path,
+// the reason and the file state; a refusal that had a plan but never published prints the planned
+// items, the unchanged line and the backup it did not create. The success and conflict lines keep
+// their wording and order and the new lines are appended.
 func hookTrustRetrustReport(stdout io.Writer, result HookTrustRetrustResult) {
 	if !result.Planned {
+		path := result.ConfigPath
+		if path == "" {
+			path = "(unknown)"
+		}
+		fmt.Fprintf(stdout, "config.toml: %s\n", path)
+		fmt.Fprintf(stdout, "no plan: %s\n", result.Reason)
+		fmt.Fprintf(stdout, "config.toml unchanged; no backup\n")
 		return
 	}
 	fmt.Fprintf(stdout, "updated keys: %s\n", hookTrustRetrustList(result.UpdatedKeys))
 	fmt.Fprintf(stdout, "appended keys: %s\n", hookTrustRetrustList(result.AppendedKeys))
-	displaced := result.displacedPath()
 	switch {
+	case result.Conflict && result.RecheckFailed:
+		fmt.Fprintf(stdout, "%s could not be read again to say what it holds now (%s); %s\n", result.ConfigPath, result.RecheckError, result.displacedClause("holds the content that was saved in between"))
+	case result.Conflict && result.LateWrite:
+		fmt.Fprintf(stdout, "%s holds a newer save, not retrust's config; %s\n", result.ConfigPath, result.displacedClause("holds the content that was saved in between"))
 	case result.Conflict:
-		fmt.Fprintf(stdout, "%s holds retrust's config; %s holds the content that was saved in between\n", result.ConfigPath, displaced)
+		fmt.Fprintf(stdout, "%s holds retrust's config; %s\n", result.ConfigPath, result.displacedClause("holds the content that was saved in between"))
+	case result.Published && result.RecheckFailed:
+		// The publication happened and the displaced content was what retrust read, so there is no
+		// conflict to report; but the read back failed, so the report must not claim the target holds the
+		// rewritten config (CRW-936, the same rule as the conflict branch).
+		fmt.Fprintf(stdout, "%s could not be read again to say what it holds now (%s); %s\n", result.ConfigPath, result.RecheckError, result.displacedClause("holds the content it displaced"))
 	case result.Published && result.LateWrite:
-		fmt.Fprintf(stdout, "%s holds the newer save, not retrust's config; %s holds the content retrust displaced\n", result.ConfigPath, displaced)
+		fmt.Fprintf(stdout, "%s holds the newer save, not retrust's config; %s\n", result.ConfigPath, result.displacedClause("holds the content retrust displaced"))
+	case result.Published && result.ConfigPathMoved:
+		// The publication happened, but the path Codex reads no longer reaches the file retrust verified,
+		// so the report says which path moved and claims nothing about the document it now names.
+		fmt.Fprintf(stdout, "%s no longer reaches the file retrust published (%s): %s; %s\n", result.ConfiguredPath, result.ConfigPath, result.movedClause(), result.displacedClause("holds the content it displaced"))
 	case result.Published:
-		fmt.Fprintf(stdout, "%s holds the rewritten config; %s holds the content it displaced\n", result.ConfigPath, displaced)
+		fmt.Fprintf(stdout, "%s holds the rewritten config; %s\n", result.ConfigPath, result.displacedClause("holds the content it displaced"))
 	default:
 		fmt.Fprintf(stdout, "%s unchanged; nothing was published\n", result.ConfigPath)
+		fmt.Fprintf(stdout, "backup: %s (not created)\n", result.BackupPath)
 	}
 }
 
@@ -729,6 +907,25 @@ func (r HookTrustRetrustResult) displacedPath() string {
 		return r.DisplacedAt
 	}
 	return r.BackupPath
+}
+
+// displacedClause names the displaced file and what it holds, or, when that file could not be read
+// back, says so with the reason and claims nothing about its content (CRW-936): the file roles the
+// report prints must be the ones the run actually observed.
+func (r HookTrustRetrustResult) displacedClause(holds string) string {
+	if r.DisplacedUnreadable {
+		return fmt.Sprintf("%s could not be read back to say what it holds (%s)", r.displacedPath(), r.DisplacedError)
+	}
+	return fmt.Sprintf("%s %s", r.displacedPath(), holds)
+}
+
+// movedClause says where the configured path points now, or that it could not be resolved at all, so
+// the report never has to name a destination it did not read (CRW-936).
+func (r HookTrustRetrustResult) movedClause() string {
+	if r.ConfigPathNow == "" {
+		return "it no longer resolves"
+	}
+	return "it now resolves to " + r.ConfigPathNow
 }
 
 // hookTrustRetrustList spells the keys of one plan item list, or "(none)".

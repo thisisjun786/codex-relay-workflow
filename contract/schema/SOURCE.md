@@ -9,7 +9,7 @@ with this note until todo 44 removed its source; the copies here are the ones th
 | acknowledgement.json | 193c2a1dbdb6197f852aaa38c6b8b4e55ba804ffc66e7b2a73925365b133eb7c |
 | completion-receipt.json | fd6498fdca80c7e8f4d97e37ceec12935bf1afce10211826fdc232593b9fb0d5 |
 | delivery-attempt.json | ad856f98872952ffc2235acc12ccc5942bbd6e5cae0df1771f063dc74526d24b |
-| relationship.json | c8ebaf4559fa1ac6df26d98c4214938caf78bd8c61659bce026da6a3595a4b90 |
+| relationship.json | 6a994cad6400a07d3e2faaf2161a16818ac7784be651cdcb2d6c9b9439988cbd |
 | verification-verdict.json | 0b3f8f4b061cff2992fc60a7c1f45dec6f803116894735751c40df3a8d356af9 |
 
 Contract bundle revision c37d332e2daba95c9ef47adf00a82bc9c6a539ab62538f0ad857561e470d2989.
@@ -32,3 +32,14 @@ on a `ready_for_review` receipt. Old receipts without it still validate. The 18 
 were re-judged against the revised bytes with jsonschema 4.19.2 Draft7Validator and kept their
 verdicts; 18 additional recorded cases cover the item stated, absent, on an execution-only receipt and
 malformed. This changes the stored JSON contract, not the SQLite schema.
+
+The relationship copy now allows one more `generations[].reason`: `accepted_result_correction`,
+the reason a coordinator gives `generation-open` when it corrects a result that was accepted and is
+still current (the relay's verdict writer refuses a second ruling on an accepted head, so the
+generation is opened by hand and its reason is what notes the route). The enum previously allowed
+only `initial_assignment` and `needs_changes_revision`, so a relationship opened by that route
+serialized a reason the shipped contract refused. Old relationships without it still validate; a
+generation with no reason (a returning tenure) still validates as null. The 6 existing relationship
+cases were re-judged against the revised bytes with jsonschema 4.19.2 Draft7Validator and kept their
+verdicts; 6 additional recorded cases cover each reason the registry accepts, the empty reason, and
+an unknown and a mistyped one. This changes the stored JSON contract, not the SQLite schema.

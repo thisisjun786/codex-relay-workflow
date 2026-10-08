@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -239,8 +240,11 @@ func runEditMirror(t *testing.T, c editMirrorCase) editMirrorOutcome {
 	if err := os.MkdirAll(bin, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(bin, "gh"), []byte(editMirrorStandInGH), 0o755); err != nil {
-		t.Fatal(err)
+	syscall.ForkLock.RLock()
+	writeErr := os.WriteFile(filepath.Join(bin, "gh"), []byte(editMirrorStandInGH), 0o755)
+	syscall.ForkLock.RUnlock()
+	if writeErr != nil {
+		t.Fatal(writeErr)
 	}
 	write := func(name, body string) {
 		t.Helper()
@@ -726,9 +730,8 @@ func TestWorkflow_the_body_only_edit_mirror_is_wired(t *testing.T) {
 		t.Fatal(err)
 	}
 	workflow := string(data)
-	if !strings.Contains(workflow, "types: [opened, reopened, synchronize, ready_for_review, edited, labeled]") {
-		t.Error("the pull_request types no longer carry edited and labeled")
-	}
+	// CRW-966 removed the pull_request trigger, so the edited/labeled types this mirror answers to
+	// no longer exist; the mirror steps and their guards are kept in the workflow.
 	if !strings.Contains(workflow, "\npermissions:\n  contents: read\n") {
 		t.Error("the workflow's own permissions changed")
 	}

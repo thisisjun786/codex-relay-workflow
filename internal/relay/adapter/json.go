@@ -21,7 +21,7 @@ func dumps(value any, sorted bool) string {
 // returns a copy, so updatedAt is appended after the operation's fields. Nested values are ordered
 // at the RPC boundary and are not decoded into maps before being persisted.
 func receiptObject(r ledger.Receipt) contract.OrderedObject {
-	keys := []string{"requestId", "operation", "status", "startedAt", "retrySafe", "fingerprintVersion", "attempt", "priorAttempts", "threadId", "statusBeforeResume", "resumed", "settingsFreeResume", "settingsFindings", "settingsNotes", "turnId", "attemptedEffects", "error", "rpcError", "updatedAt", "replayed"}
+	keys := []string{"requestId", "operation", "status", "startedAt", "retrySafe", "fingerprintVersion", "attempt", "priorAttempts", "threadId", "statusBeforeResume", "resumed", "settingsFreeResume", "settings", "settingsFindings", "settingsNotes", "turnId", "attemptedEffects", "error", "rpcError", "updatedAt", "replayed"}
 	if r["operation"] == "create_thread" {
 		keys = []string{"requestId", "operation", "status", "startedAt", "retrySafe", "fingerprintVersion", "attempt", "priorAttempts", "executionPolicy", "threadId", "creation", "settings", "title", "turnId", "desktopProjectAssociation", "error", "rpcError", "attemptedEffects", "updatedAt", "settingsAfterDispatch", "replayed"}
 	}
