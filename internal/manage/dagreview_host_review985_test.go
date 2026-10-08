@@ -207,3 +207,87 @@ func TestDagHostReview985UnparsedLineAndRefusalKeepSeparateReports(t *testing.T)
 		t.Fatalf("the second check repeated %d reports", got)
 	}
 }
+
+// dagHostReview985CustomCall is a custom_tool_call line of the named tool with the given input.
+func dagHostReview985CustomCall(t *testing.T, callID, name, input string) string {
+	t.Helper()
+	return dagHostResponseItem(t, map[string]any{"type": "custom_tool_call", "call_id": callID, "name": name, "input": input})
+}
+
+// dagHostReview985CustomOutput is the custom_tool_call_output line that answers callID.
+func dagHostReview985CustomOutput(t *testing.T, callID, output string) string {
+	t.Helper()
+	return dagHostResponseItem(t, map[string]any{"type": "custom_tool_call_output", "call_id": callID, "output": output})
+}
+
+// TestDagHostReview985ExecCellLiteralsAreJudged: a code-mode exec cell is JavaScript, and a relay call it
+// makes sits in a string literal. The literals are judged as shell command lines; the JavaScript around
+// them is not.
+func TestDagHostReview985ExecCellLiteralsAreJudged(t *testing.T) {
+	refused := `{"error":"refused","reason":"unregistered_scope"}`
+	cases := []struct {
+		name  string
+		input string
+		want  bool
+	}{
+		{"a double-quoted literal with a variable program", `const r = await tools.exec_command({cmd: "source /x/env.sh; cd $RUN; $RELAY --state $ST dag-ready --plan p"});`, true},
+		{"a template literal in a constant with shorthand arguments", "const cmd = \x60crw relay --state S dag-ready --plan p\x60;\nawait tools.exec_command({cmd, yield_time_ms: 1000});", true},
+		{"escapes decode to a multi-line command and a quote", `await tools.exec_command({cmd: "true &&\n printf \"x\"; crw relay --state S dag-ready --plan p"});`, true},
+		{"documentation text is not a call", `const doc = "Run crw relay dag-ready to see the state";`, false},
+		{"an unterminated literal is not a call", `await tools.exec_command({cmd: "crw relay --state S dag-ready --plan p});`, false},
+		{"a template expression in the program position is not judged", "await tools.exec_command({cmd: \x60\x24{bin} --state S dag-ready --plan p\x60});", false},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			f := dagReviewNewFixture(t)
+			stateDir := filepath.Join(t.TempDir(), "state")
+			rollout := dagHostWriteRollout(t, f.dir, "parent.jsonl",
+				dagHostReview985CustomCall(t, "exec-1", "exec", test.input),
+				dagHostReview985CustomOutput(t, "exec-1", refused))
+			f.close()
+			dagHostReview775SeedOffsets(t, stateDir, rollout, 0)
+			cfg := dagHostReview775Parent(t, f, rollout, stateDir)
+
+			found := dagReviewFind(dagHostRun(t, context.Background(), f, cfg), dagHostKindParentDagRefusals)
+			if got := len(found) == 1; got != test.want {
+				t.Fatalf("refusal reported = %v (%+v), want %v for %q", got, found, test.want, test.input)
+			}
+		})
+	}
+}
+
+// TestDagHostReview985PatchInputIsNotJudged: a patch is neither JavaScript nor shell, and a relay command
+// written in its text is not a call.
+func TestDagHostReview985PatchInputIsNotJudged(t *testing.T) {
+	f := dagReviewNewFixture(t)
+	stateDir := filepath.Join(t.TempDir(), "state")
+	rollout := dagHostWriteRollout(t, f.dir, "parent.jsonl",
+		dagHostReview985CustomCall(t, "patch-1", "apply_patch", "*** Begin Patch\n+crw relay --state S dag-ready --plan p\n*** End Patch"),
+		dagHostReview985CustomOutput(t, "patch-1", `{"error":"refused","reason":"unregistered_scope"}`))
+	f.close()
+	dagHostReview775SeedOffsets(t, stateDir, rollout, 0)
+	cfg := dagHostReview775Parent(t, f, rollout, stateDir)
+
+	if found := dagReviewFind(dagHostRun(t, context.Background(), f, cfg), dagHostKindParentDagRefusals); len(found) != 0 {
+		t.Fatalf("a patch's text was judged as a relay call: %+v", found)
+	}
+}
+
+// TestDagHostReview985FirstSightKeepsPendingExecCell: a relay call made from an exec cell that has no
+// answer yet stays pending for a rollout seen for the first time, as a function_call does.
+func TestDagHostReview985FirstSightKeepsPendingExecCell(t *testing.T) {
+	f := dagReviewNewFixture(t)
+	stateDir := filepath.Join(t.TempDir(), "state")
+	rollout := dagHostWriteRollout(t, f.dir, "parent.jsonl",
+		dagHostReview985CustomCall(t, "exec-A", "exec", "await tools.exec_command({cmd: \"crw relay --state S dag-ready --plan p\"});"))
+	f.close()
+	cfg := dagHostReview775Parent(t, f, rollout, stateDir)
+
+	if found := dagReviewFind(dagHostRun(t, context.Background(), f, cfg), dagHostKindParentDagRefusals); len(found) != 0 {
+		t.Fatalf("the first check reported %+v before the answer arrived", found)
+	}
+	dagHostAppendRollout(t, rollout, dagHostReview985CustomOutput(t, "exec-A", "{\"error\":\"refused\",\"reason\":\"unregistered_scope\"}"))
+	if found := dagReviewFind(dagHostRun(t, context.Background(), f, cfg), dagHostKindParentDagRefusals); len(found) != 1 {
+		t.Fatalf("the refusal of the exec cell = %+v, want one", found)
+	}
+}

@@ -746,27 +746,198 @@ func dagHostBareExpansion(word *syntax.Word) bool {
 		!p.Excl && !p.Length && !p.Width && !p.IsSet && p.Flags == nil
 }
 
-// dagHostCallText is a tool call's command line, and whether a line the parser refuses is reported as
-// unmeasured. A function_call's arguments is a JSON object whose cmd member carries the command line;
-// a JSON object with no cmd is another tool's arguments and is not a command line at all. Arguments
-// that are not a JSON object are read as the command line itself, as a rollout that stores the command
-// directly does. A custom_tool_call's input is the code of whatever tool it calls (an exec cell, a
-// patch), so it is judged for relay calls but its refusal is not reported.
-func dagHostCallText(kind, arguments, input string) (string, bool) {
-	if kind == "custom_tool_call" {
-		return input, false
-	}
+// dagHostCallText is a function_call's command line, and whether a line the parser refuses is reported
+// as unmeasured. The arguments is a JSON object whose cmd member carries the command line; a JSON object
+// with no cmd is another tool's arguments and is not a command line at all. Arguments that are not a JSON
+// object are read as the command line itself, as a rollout that stores the command directly does.
+func dagHostCallText(arguments string) (string, bool) {
 	var object map[string]json.RawMessage
 	if json.Unmarshal([]byte(arguments), &object) != nil {
 		return arguments, true
 	}
 	var parsed struct {
-		Cmd string `json:"cmd"`
+		Cmd string "json:\"cmd\""
 	}
 	if json.Unmarshal([]byte(arguments), &parsed) != nil || parsed.Cmd == "" {
 		return "", false
 	}
 	return parsed.Cmd, true
+}
+
+// dagHostExecCellCommands is the relay dag- subcommands of a code-mode exec cell. Its input is
+// JavaScript, so each string literal in it is judged as a shell command line; a literal the shell parser
+// refuses is not a command and is ignored. The JavaScript around the literals is never judged, and a
+// custom tool other than exec is not judged at all.
+func dagHostExecCellCommands(name, input string) []string {
+	if name != "exec" {
+		return nil
+	}
+	var commands []string
+	for _, literal := range dagHostJSLiterals(input) {
+		found, err := dagHostRelaySubcommands(literal)
+		if err != nil {
+			continue
+		}
+		commands = append(commands, found...)
+	}
+	return commands
+}
+
+// dagHostExpressionWord stands for a template literal expression in the shell text its literal is read
+// as. The expression is never run; a command substitution word is one the reader does not expand, like
+// dagHostSubstitutionWord, so the word is neither a program nor a subcommand.
+const dagHostExpressionWord = "$(expression)"
+
+// dagHostJSLiterals is the decoded string literals of a JavaScript source, single-quoted, double-quoted
+// and template, in order. Comments are skipped and text outside a literal is never returned. A literal
+// that never closes ends the scan: the text after it is inside a string that does not end, so nothing
+// more is returned. A regular expression holding a quote can confuse the scan; that limit is accepted.
+func dagHostJSLiterals(source string) []string {
+	var literals []string
+	for i := 0; i < len(source); {
+		switch c := source[i]; {
+		case c == '/' && i+1 < len(source) && source[i+1] == '/':
+			for i < len(source) && source[i] != '\n' {
+				i++
+			}
+		case c == '/' && i+1 < len(source) && source[i+1] == '*':
+			end := strings.Index(source[i+2:], "*/")
+			if end < 0 {
+				return literals
+			}
+			i += end + 4
+		case c == '\'' || c == '"' || c == '\x60':
+			text, next, closed := dagHostJSString(source, i+1, c)
+			if !closed {
+				return literals
+			}
+			literals = append(literals, text)
+			i = next
+		default:
+			i++
+		}
+	}
+	return literals
+}
+
+// dagHostJSString decodes the string literal whose body starts at start and closes with quote, and
+// returns the index just past the closing quote. In a template literal an expression between dollar and
+// brace is replaced by dagHostExpressionWord.
+func dagHostJSString(source string, start int, quote byte) (string, int, bool) {
+	var out strings.Builder
+	for i := start; i < len(source); {
+		switch c := source[i]; {
+		case c == quote:
+			return out.String(), i + 1, true
+		case c == '\\':
+			i = dagHostJSEscape(source, i, &out)
+		case quote == '\x60' && c == '$' && i+1 < len(source) && source[i+1] == '{':
+			end := dagHostJSExpressionEnd(source, i+2)
+			if end < 0 {
+				return "", len(source), false
+			}
+			out.WriteString(dagHostExpressionWord)
+			i = end
+		default:
+			out.WriteByte(c)
+			i++
+		}
+	}
+	return "", len(source), false
+}
+
+// dagHostJSEscape decodes the escape that starts at the backslash at i into out, and returns the index
+// just past it. The escapes a shell line needs are decoded. Any other character after a backslash stands
+// for itself, as JavaScript reads the backslash-quote, backslash-backslash and backslash-dollar forms.
+func dagHostJSEscape(source string, i int, out *strings.Builder) int {
+	if i+1 >= len(source) {
+		return len(source)
+	}
+	switch c := source[i+1]; c {
+	case 'n':
+		out.WriteByte('\n')
+	case 't':
+		out.WriteByte('\t')
+	case 'r':
+		out.WriteByte('\r')
+	case 'b':
+		out.WriteByte('\b')
+	case 'f':
+		out.WriteByte('\f')
+	case 'v':
+		out.WriteByte('\v')
+	case '\n':
+		// A backslash before a newline continues the line and adds nothing.
+	case 'x':
+		if value, ok := dagHostJSHex(source, i+2, 2); ok {
+			out.WriteByte(byte(value))
+			return i + 4
+		}
+		out.WriteByte('x')
+	case 'u':
+		if i+2 < len(source) && source[i+2] == '{' {
+			if end := strings.IndexByte(source[i+3:], '}'); end > 0 && end <= 8 {
+				if value, ok := dagHostJSHex(source, i+3, end); ok {
+					out.WriteRune(rune(value))
+					return i + 3 + end + 1
+				}
+			}
+		} else if value, ok := dagHostJSHex(source, i+2, 4); ok {
+			out.WriteRune(rune(value))
+			return i + 6
+		}
+		out.WriteByte('u')
+	default:
+		out.WriteByte(c)
+	}
+	return i + 2
+}
+
+// dagHostJSHex is the value of the width hexadecimal digits at start, and whether all of them are there.
+func dagHostJSHex(source string, start, width int) (int, bool) {
+	if width <= 0 || start+width > len(source) {
+		return 0, false
+	}
+	value := 0
+	for _, c := range []byte(source[start : start+width]) {
+		digit, ok := dagHostHexValue(c)
+		if !ok {
+			return 0, false
+		}
+		value = value*16 + digit
+	}
+	return value, true
+}
+
+// dagHostJSExpressionEnd is the index just past the closing brace of a template expression whose body
+// starts at start, or -1 when it never closes. Braces inside it are counted, and a quoted string inside
+// it is skipped whole.
+func dagHostJSExpressionEnd(source string, start int) int {
+	depth := 0
+	for i := start; i < len(source); i++ {
+		switch c := source[i]; c {
+		case '{':
+			depth++
+		case '}':
+			if depth == 0 {
+				return i + 1
+			}
+			depth--
+		case '\'', '"', '\x60':
+			j := i + 1
+			for j < len(source) && source[j] != c {
+				if source[j] == '\\' {
+					j++
+				}
+				j++
+			}
+			if j >= len(source) {
+				return -1
+			}
+			i = j
+		}
+	}
+	return -1
 }
 
 // dagHostAfterBoundary is a test seam: it is called after a reading has taken the rollout's size as
@@ -830,13 +1001,19 @@ func dagHostRolloutRefusals(path string, start int64) (dagHostRolloutReading, er
 			if json.Unmarshal(bytes.TrimRight(line, "\r\n"), &entry) == nil && entry.Type == "response_item" {
 				switch entry.Payload.Type {
 				case "function_call", "custom_tool_call":
-					command, reportable := dagHostCallText(entry.Payload.Type, entry.Payload.Arguments, entry.Payload.Input)
-					commands, err := dagHostRelaySubcommands(command)
-					if err != nil {
-						if reportable {
-							reading.unparsed = append(reading.unparsed, dagHostUnparsed{callID: entry.Payload.CallID, callStart: lineStart})
+					var commands []string
+					if entry.Payload.Type == "custom_tool_call" {
+						commands = dagHostExecCellCommands(entry.Payload.Name, entry.Payload.Input)
+					} else {
+						command, reportable := dagHostCallText(entry.Payload.Arguments)
+						parsed, err := dagHostRelaySubcommands(command)
+						if err != nil {
+							if reportable {
+								reading.unparsed = append(reading.unparsed, dagHostUnparsed{callID: entry.Payload.CallID, callStart: lineStart})
+							}
+							break
 						}
-						break
+						commands = parsed
 					}
 					if len(commands) > 0 {
 						calls[entry.Payload.CallID] = dagHostCall{commands: commands, callStart: lineStart}
