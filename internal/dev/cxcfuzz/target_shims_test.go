@@ -168,10 +168,17 @@ func TestDoctorShimImportsNothingForTheHandshake(t *testing.T) {
 		t.Fatal(err)
 	}
 	record := func() string { return filepath.Join(t.TempDir(), "import-record") }
-	handshakeRecord := record()
-	runShim(t, root, "doctor", fake, []string{"CRW932_IMPORT_RECORD=" + handshakeRecord}, `{"id":1,"input":null,"root":""}`)
-	if _, err := os.Stat(handshakeRecord); err == nil {
-		t.Fatal("the doctor shim imported its original module for the start-up handshake")
+	// Every input that is not an object is answered before the import: the start-up handshake's null
+	// and the scalars and array a malformed case could carry.
+	for _, input := range []string{`null`, `"x"`, `0`, `true`, `[]`} {
+		nonObjectRecord := record()
+		line := runShim(t, root, "doctor", fake, []string{"CRW932_IMPORT_RECORD=" + nonObjectRecord}, `{"id":1,"input":`+input+`,"root":""}`)
+		if strings.TrimSpace(line) != `{"id":1,"output":null}` {
+			t.Fatalf("the doctor shim answered the non-object input %s with %q, want {\"id\":1,\"output\":null}", input, line)
+		}
+		if _, err := os.Stat(nonObjectRecord); err == nil {
+			t.Fatalf("the doctor shim imported its original module for the non-object input %s", input)
+		}
 	}
 	controlRecord := record()
 	runShim(t, root, "doctor", fake, []string{"CRW932_IMPORT_RECORD=" + controlRecord}, `{"id":1,"input":{},"root":""}`)
