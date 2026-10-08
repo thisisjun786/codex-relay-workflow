@@ -94,10 +94,11 @@ func (k *commitAcceptKit) treeOf(commit string) string {
 
 func (k *commitAcceptKit) acceptCommit(record string) (AcceptResult, error) {
 	k.t.Helper()
-	return k.sched.Accept(context.Background(), "g", "I", "parent", AcceptInput{
+	return k.sched.Accept(context.Background(), "g", "I", "parent", premergeWithRecord(k.sched, context.Background(), "g", "I", "parent", AcceptInput{
 		RuleVersion: VerifierRule{SkillsDigest: dig("skills"), Model: "m", Effort: "none"},
 		Commit:      &CommitRef{Head: k.head, Base: k.base, Checkout: k.repo.path, Record: record},
-	})
+	}))
+
 }
 
 func refusalReasonOf(err error) string {
@@ -167,8 +168,9 @@ func TestCommitAcceptanceRefusesACommitThatIsNotTheRuledHead(t *testing.T) {
 	k.repo.git("checkout", "-q", "feature")
 	other := k.repo.commit("other.txt", "other")
 	k.repo.git("checkout", "-q", "dev")
-	_, err := k.sched.Accept(context.Background(), "g", "I", "parent", AcceptInput{RuleVersion: VerifierRule{SkillsDigest: "s", Model: "m", Effort: "none"},
-		Commit: &CommitRef{Head: other, Base: k.base, Checkout: k.repo.path, Record: k.record(k.treeOf(other), "pass", nil)}})
+	_, err := k.sched.Accept(context.Background(), "g", "I", "parent", premergeWithRecord(k.sched, context.Background(), "g", "I", "parent", AcceptInput{RuleVersion: VerifierRule{SkillsDigest: "s", Model: "m", Effort: "none"},
+		Commit: &CommitRef{Head: other, Base: k.base, Checkout: k.repo.path, Record: k.record(k.treeOf(other), "pass", nil)}}))
+
 	if got := refusalReasonOf(err); got != "head_not_receipt_head" {
 		t.Fatalf("reason %q (err %v)", got, err)
 	}
@@ -187,8 +189,9 @@ func TestCommitAcceptanceRefusesACommitThatDoesNotDescendFromTheBase(t *testing.
 	k.repo.commit("unrelated.txt", "unrelated")
 	unrelated := k.repo.git("rev-parse", "HEAD")
 	k.repo.git("checkout", "-q", "dev")
-	_, err := k.sched.Accept(context.Background(), "g", "I", "parent", AcceptInput{RuleVersion: VerifierRule{SkillsDigest: "s", Model: "m", Effort: "none"},
-		Commit: &CommitRef{Head: k.head, Base: unrelated, Checkout: k.repo.path, Record: k.record(k.treeOf(k.head), "pass", nil)}})
+	_, err := k.sched.Accept(context.Background(), "g", "I", "parent", premergeWithRecord(k.sched, context.Background(), "g", "I", "parent", AcceptInput{RuleVersion: VerifierRule{SkillsDigest: "s", Model: "m", Effort: "none"},
+		Commit: &CommitRef{Head: k.head, Base: unrelated, Checkout: k.repo.path, Record: k.record(k.treeOf(k.head), "pass", nil)}}))
+
 	if got := refusalReasonOf(err); got != "merge_base_mismatch" {
 		t.Fatalf("reason %q (err %v)", got, err)
 	}

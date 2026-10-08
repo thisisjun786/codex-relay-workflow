@@ -428,8 +428,8 @@ func TestClassifyCaseError(t *testing.T) {
 	}{
 		{"no error", nil, caseOK},
 		{"a plain refusal", errRefused, caseRefused},
-		{"a worker death", errors.New("the worker died"), caseTimedOut},
-		{"a timeout", Timeout{}, caseTimedOut},
+		{"a worker death", errors.New("the worker died"), caseFailed},
+		{"a timeout", Timeout{}, caseFailed},
 		{"a removal failure", removal, caseRemovalFailed},
 		{"a removal failure beside a refusal", errors.Join(errRefused, removal), caseRemovalFailed},
 		{"a removal failure beside a timeout", errors.Join(Timeout{}, removal), caseRemovalFailed},

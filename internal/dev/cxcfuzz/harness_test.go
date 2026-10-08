@@ -118,6 +118,51 @@ func requireNode(t *testing.T) {
 	}
 }
 
+// requireOracleModule skips a test that starts one of this issue's shims when the oracle module that
+// shim imports at its top level is not present under DefaultOracleRoot. A CI runner has node but no
+// extracted CXC oracle tree, so such a shim exits at its top-level import (ERR_MODULE_NOT_FOUND)
+// before it reads a request, and a test that started it would report a worker that answered nothing
+// rather than the input the host is missing. The state and goalplan shims import the oracle's readers
+// and writers; the pyjson shim imports none (it drives python3's json.tool through the standard
+// library command), so it is never skipped here and keeps running wherever python3 is. The skip
+// message names the module file that was looked for.
+func requireOracleModule(t *testing.T, target string) {
+	t.Helper()
+	module := ""
+	switch target {
+	case "state":
+		module = "pabcd-state/dist/state.js"
+	case "goalplan":
+		module = "pabcd-state/dist/goalplan.js"
+	}
+	if module == "" {
+		return
+	}
+	path := filepath.Join(DefaultOracleRoot, filepath.FromSlash(module))
+	if _, err := os.Stat(path); err != nil {
+		t.Skipf("the oracle module %s is not present: %v", path, err)
+	}
+}
+
+// requireOracleCommands skips a test that starts one of this issue's shims when a command that shim's
+// worker needs besides its interpreter is not on PATH. The pyjson shim drives python3's json.tool, so a
+// host with node but no python3 must skip that target's oracle replay exactly as a host with no node
+// skips every target: without this the test reports the worker's start-up failure instead of the
+// command the host is missing, which is a red test on a host that is merely short one optional tool
+// (CRW-708 generation 5, d3). The skip message names the missing command.
+func requireOracleCommands(t *testing.T, target string) {
+	t.Helper()
+	entry, ok := Lookup(target)
+	if !ok {
+		return
+	}
+	for _, required := range entry.Oracle.Requires {
+		if _, err := exec.LookPath(required); err != nil {
+			t.Skipf("the oracle worker command %q is not on PATH: %v", required, err)
+		}
+	}
+}
+
 // A campaign over the echo target with the committed shim agrees everywhere.
 func TestCampaignEchoAgreesWithTheShim(t *testing.T) {
 	requireNode(t)

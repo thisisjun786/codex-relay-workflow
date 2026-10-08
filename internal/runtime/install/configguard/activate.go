@@ -60,6 +60,15 @@ func activationPublish(path string, b []byte) error {
 	return crwdir.Publish(path, b)
 }
 
+// configLockPathsPublishChecked is activationPublish with check run at the last step, after the new content
+// is written and synced and immediately before the rename. A refusal publishes nothing (CRW-993 c1).
+func configLockPathsPublishChecked(path string, b []byte, check func() error) error {
+	if _, _, e := activationReadFile(path); e != nil {
+		return e
+	}
+	return crwdir.PublishChecked(path, b, check)
+}
+
 // activationSetKeyLocked is the whole read-modify-write of one auto-enabled key under the sidecar
 // lock every CRW writer of config.toml takes (CRW-844): the read, the decision and the publish are
 // serialized against retrust and any other CRW writer, so two writers never interleave on one
@@ -156,6 +165,12 @@ func activationFailureMessage(s string) string {
 func Activate(deps ActivateDeps) (*InstallManifest, error) {
 	path := deps.ConfigPath
 	if path == "" {
+		// The oracle derives this path the same way (activate.ts:201, deps.configPath ??
+		// join(codexHome, "config.toml")), and Node's path.join folds a ".." lexically exactly as
+		// filepath.Join does. Resolving it through the kernel here would name a different file
+		// from the oracle for a CODEX_HOME that contains a symlink followed by "..", so the port
+		// keeps the oracle's derivation; the shared limitation is recorded in
+		// docs/port-cxc/known-defects/CRW-899.md (parity wins).
 		path = filepath.Join(deps.CodexHome, "config.toml")
 	}
 	now := deps.Now
@@ -173,17 +188,31 @@ func Activate(deps ActivateDeps) (*InstallManifest, error) {
 	// wait and the busy text are the ones the other writers use.
 	lock, e := crwdir.LockConfig(path, activationLockWait)
 	if e != nil {
+		// Contention is answered as it is, before the re-read below: LockConfig builds it once with
+		// errors.New(crwdir.ConfigLockBusy) and never wraps it (internal/pabcd/crwdir/swap.go), so the
+		// exact comparison is the whole test. A busy lock is not a read failure, and mapping it to the
+		// read path's message would hide which writer the operator is waiting behind.
+		if e.Error() == crwdir.ConfigLockBusy {
+			return nil, e
+		}
 		// A file this activation cannot read is refused with the read path's own message, which the
 		// tests and the operator already know ("left unchanged"); LockConfig resolves the target
 		// through a symlink, so a config.toml link that leads nowhere fails here rather than in the
-		// read. Contention (the busy text) is not that case and is returned as it is.
+		// read. Only a failure that is not contention reaches this re-read.
 		if _, _, readErr := activationReadFile(path); readErr != nil {
 			return nil, readErr
 		}
 		return nil, e
 	}
 	defer lock.Release()
-	target := lock.Target
+	// The lock is keyed by lock.Target, the caller's path with a symlink followed, so two writers
+	// reaching one file through different spellings share one lock. The content path stays the
+	// caller's (CRW-899), the rule CRW-891 gave SetMultiAgentV2State: the injected "codex features
+	// enable" calls below rewrite config.toml themselves and may atomically replace the caller's
+	// pathname, so the managed-key read-modify-writes and the post-activation hash must follow the
+	// path that names the live config rather than the target the link pointed at when the lock was
+	// taken. When that replacement happened the lock guarded the old target while the keys went to
+	// the caller's path, which is the limitation recorded in docs/port-cxc/known-defects/CRW-899.md.
 	// The declared-state probe reads the same config.toml through the injected CLI, and its answer
 	// decides both which flags are enabled below and every flag's priorEnabled, so it runs inside the
 	// critical section too. A probe taken before the wait would let an activation that holds the lock
@@ -194,13 +223,13 @@ func Activate(deps ActivateDeps) (*InstallManifest, error) {
 	if e != nil {
 		return nil, e
 	}
-	pre, exists, e := activationReadFile(target)
+	pre, exists, e := activationReadFile(path)
 	if e != nil {
 		return nil, e
 	}
 	var backup *string
 	if exists {
-		info, e := os.Stat(target)
+		info, e := os.Stat(path)
 		if e != nil {
 			return nil, e
 		}
@@ -244,7 +273,7 @@ func Activate(deps ActivateDeps) (*InstallManifest, error) {
 		// The whole read-modify-write is under the sidecar lock every CRW writer of config.toml
 		// takes (CRW-844): reading before the lock and publishing after it would let a retrust that
 		// published in that window be overwritten with content built from the pre-retrust bytes.
-		res, e := activationSetKeyLocked(target, entry.Table, entry.Key)
+		res, e := activationSetKeyLocked(path, entry.Table, entry.Key)
 		if e != nil {
 			return nil, e
 		}
@@ -262,7 +291,7 @@ func Activate(deps ActivateDeps) (*InstallManifest, error) {
 		m.tableOrder = append(m.tableOrder, id)
 	}
 	m.ActivatedAt = now()
-	m.PostActivateHash, e = hashOrNull(target)
+	m.PostActivateHash, e = hashOrNull(path)
 	if e != nil {
 		return nil, e
 	}

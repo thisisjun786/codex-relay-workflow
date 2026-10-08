@@ -86,7 +86,7 @@ func TestTargetsAreJudgedAgainstThePlanNow(t *testing.T) {
 				addEdge("ij2", "I", "J", dag.EdgeArtifactVerified, doc{"pins_code_head": true, "target_repository": "other/repo", "target_base_ref": "dev"}))
 			return pr, err
 		}
-		_, err := k.accept("rp", "I", AcceptInput{PullRequest: &PRRef{Repository: "owner/repo", Number: 7}})
+		_, err := k.accept("rp", "I", AcceptInput{PullRequest: &PRRef{Repository: "owner/repo", Number: 7}, Premerge: premergeAt(k.sched, context.Background(), "rp", "I", k.forge.by["owner/repo#7"].HeadSHA)})
 		if refusalReason(err) != "disposition_conflict" || !strings.Contains(err.Error(), "other/repo") {
 			t.Fatalf("accept = %v, want the target of the plan as it is now to decide", err)
 		}

@@ -686,7 +686,7 @@ func TestBaseRefreshThenACriteriaChangeIsRevalidatedAsAnyOther(t *testing.T) {
 		t.Fatalf("the route of the refreshed node whose criteria alone changed = %q, want %q", got, rvRevalidate)
 	}
 	s.rvRule(s.rid, "verified", other, rvVerified())
-	res, err := s.accept("g", "I", AcceptInput{PullRequest: &PRRef{Repository: "owner/repo", Number: 7}})
+	res, err := s.accept("g", "I", AcceptInput{PullRequest: &PRRef{Repository: "owner/repo", Number: 7}, Premerge: premergeAt(s.sched, context.Background(), "g", "I", s.head)})
 	if err != nil || !res.Revalidated || res.Replayed || res.AcceptanceID != s.accepted.Acceptance.AcceptanceID {
 		t.Fatalf("accept after the review = %v %+v, want the same acceptance revalidated", err, res)
 	}

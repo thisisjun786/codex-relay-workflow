@@ -30,6 +30,7 @@ func (k *batchKit) revalidateCriteria(t *testing.T, node, digest string) {
 	k.exec("UPDATE canonical_criteria SET set_digest = ? WHERE relationship_id = ?", digest, rel.ID)
 	k.exec("INSERT INTO dag_acceptance_revalidations (revalidation_id, acceptance_id, criteria_set_digest, event_id, verdict_turn_id, reval_seq, revalidated_by, revalidated_at) VALUES (?, ?, ?, ?, 'vt', ?, 'parent', 't')",
 		"rv-"+acc.AcceptanceID+"-"+digest, acc.AcceptanceID, digest, event, seq+1)
+	premergeRevalidationRecord(t, k.s.DB, acc.AcceptanceID, "rv-"+acc.AcceptanceID+"-"+digest, digest)
 }
 
 // CRW-965 (criteria c2 as read by the parent): a contained candidate whose criteria set changed is verified again with no

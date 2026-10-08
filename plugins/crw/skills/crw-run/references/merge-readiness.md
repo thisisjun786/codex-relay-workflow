@@ -5,6 +5,8 @@ Use before integration, together with the target repository's policy and the
 This procedure consumes existing CI and review evidence; it does not install a
 reviewer, enable an unfinished app, or change branch protections.
 
+The relay enforces the pre-merge evaluation inside its own acceptance and integration (CRW-952). `dag-accept` refuses a new acceptance, a supersession or a re-validation of an implementation node unless it carries a `premerge-record/1` that passes for the head it accepts, and `dag-integrate` leaves out any candidate whose stored record no longer passes. The relay does not write the evaluation. The parent still runs and records it, and the gate stops a result from being accepted or integrated without it. See docs/relay/dag-scheduler.md, section The pre-merge record (CRW-952).
+
 ## Identify the candidate and gates
 
 Pin the repository, the pull request where one exists, the destination branch, current base/head SHAs, and dependencies.

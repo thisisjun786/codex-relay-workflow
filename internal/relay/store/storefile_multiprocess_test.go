@@ -388,14 +388,16 @@ func TestStoreFileHandlesSurviveTheReadPaths(t *testing.T) {
 		t.Fatalf("holder did not start: %q (%v)", lines.Text(), lines.Err())
 	}
 	if before < 1 {
-		// A zero count before any read path has not been shown to be a lost lock and has cost a
-		// merge-lane turn, so this run records the holder's evidence and skips instead of failing.
-		// A real I-563 loss reads 0 after the read paths, which still fails below.
-		t.Logf("%s", storeFileDiagnosticMessage(holder.Process.Pid, before, askStoreFileDiagnostic(t, stdin, lines)))
-		t.Skip("the holder holds no POSIX lock on the store's main inode before any read path ran, so this run cannot observe the lock it means to")
+		// CRW-888: a count of 0, or a lookup error, before any read path is a failed precondition
+		// with the holder's evidence in the failure. A skip or a log alone judges nothing.
+		t.Fatalf("%s", storeFileDiagnosticMessage(holder.Process.Pid, before, askStoreFileDiagnostic(t, stdin, lines)))
 	}
 
 	after := askStoreFileLocks(t, stdin, lines, "paths")
+	if after < 0 {
+		// A lookup error is not a transient drop: only a count of 0 after the read paths is a lost lock.
+		t.Fatalf("the holder could not read its lock count after the read paths (locks=%d), so the lock was not observed (CRW-888)\n%s", after, askStoreFileDiagnostic(t, stdin, lines))
+	}
 	if after == 0 {
 		t.Fatalf("the store's POSIX lock did not survive the read paths: %d lock(s) before, %d after. A process that holds a WAL connection must never close another descriptor of the same file (CRW-846)\n%s", before, after, askStoreFileDiagnostic(t, stdin, lines))
 	}

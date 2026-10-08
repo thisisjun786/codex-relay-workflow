@@ -846,6 +846,30 @@ BEGIN SELECT RAISE(ABORT, 'merge_trains.train_id is NULL: a train is addressed b
     expired_reason      TEXT NOT NULL
 )`,
 	`CREATE INDEX IF NOT EXISTS dag_user_decisions_fingerprint ON dag_user_decisions (fingerprint)`,
+	// CRW-904: the idle-edge wake of a delivery that waits out a busy backoff. A row here says one
+	// thing: this deferred-busy delivery was woken by its recipient's thread/status/changed to idle (or
+	// notLoaded), so it is due now and keeps the head of its recipient's line until the wake is spent,
+	// whatever its own deadline. It is a zone table rather than a column of deliveries because a
+	// shipped statement is never edited (the swap gate compares the stored text of every object) and
+	// because the marker has to survive a daemon restart.
+	//
+	// original_deadline is the deadline the delivery carried when the wake was written. The wake never
+	// moves deliveries.next_eligible_at, so this column is where that deadline survives the attempt:
+	// the claim records the wake as spent and leaves the row in place, and every arm that answers a
+	// busy recipient then takes due = min(original_deadline, the recomputed backoff) from here, however
+	// late the answer arrives and whether or not the original deadline has already passed. The row is
+	// deleted by the arm that takes it, and by the next busy deferral.
+	//
+	// spent_at is when the wake stopped holding the line, which is the claim: the attempt the wake
+	// released has begun, so the head set stops counting the row while its deadline is still readable.
+	// A row with spent_at NULL is the wake a head still holds; a row whose delivery has left
+	// deferred_busy is inert, because every reader of this table pairs it with that state.
+	`CREATE TABLE IF NOT EXISTS delivery_wakes (
+    event_id          TEXT PRIMARY KEY CHECK (event_id <> ''),
+    woken_at          TEXT NOT NULL CHECK (woken_at <> ''),
+    original_deadline REAL NOT NULL,
+    spent_at          TEXT
+)`,
 
 	// CRW-965: the pull-request-less acceptance and integration path. Two appended tables, because a
 	// shipped statement is never edited: the verification record an acceptance was taken on (the body
@@ -914,4 +938,43 @@ BEGIN SELECT RAISE(ABORT, 'dag_integration_stages.stage_id is NULL: a row is add
 BEGIN SELECT RAISE(ABORT, 'dag_integration_stages rows are append-only: never updated'); END`,
 	`CREATE TRIGGER IF NOT EXISTS dag_integration_stages_no_delete BEFORE DELETE ON dag_integration_stages
 BEGIN SELECT RAISE(ABORT, 'dag_integration_stages rows are append-only: never deleted'); END`,
+	// CRW-952: the pre-merge record an acceptance was taken on. One row per acceptance, appended with it in
+	// the same transaction, so dag-integrate judges the stored text and never a file that was edited later.
+	`CREATE TABLE IF NOT EXISTS dag_acceptance_premerge (
+    acceptance_id     TEXT PRIMARY KEY REFERENCES dag_acceptances (acceptance_id),
+    record_digest     TEXT NOT NULL CHECK (record_digest <> ''),
+    record_json       TEXT NOT NULL CHECK (record_json <> ''),
+    evaluated_head    TEXT NOT NULL CHECK (evaluated_head <> ''),
+    accepted_head     TEXT NOT NULL CHECK (accepted_head <> ''),
+    recorded_by       TEXT NOT NULL CHECK (recorded_by <> ''),
+    coordinator_epoch INTEGER NOT NULL CHECK (coordinator_epoch >= 0),
+    recorded_at       TEXT NOT NULL
+)`,
+	`CREATE TRIGGER IF NOT EXISTS dag_acceptance_premerge_acceptance_id_not_null BEFORE INSERT ON dag_acceptance_premerge
+WHEN NEW.acceptance_id IS NULL
+BEGIN SELECT RAISE(ABORT, 'dag_acceptance_premerge.acceptance_id is NULL: a row is addressed by a non-empty id'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_acceptance_premerge_no_update BEFORE UPDATE ON dag_acceptance_premerge
+BEGIN SELECT RAISE(ABORT, 'dag_acceptance_premerge rows are append-only: never updated'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_acceptance_premerge_no_delete BEFORE DELETE ON dag_acceptance_premerge
+BEGIN SELECT RAISE(ABORT, 'dag_acceptance_premerge rows are append-only: never deleted'); END`,
+	// CRW-952: the pre-merge record a re-validation was judged on (criteria re-registered). One row per revalidation, so the
+	// acceptance keeps the record it was accepted with and integration judges the latest revalidation record when there is one.
+	`CREATE TABLE IF NOT EXISTS dag_revalidation_premerge (
+    revalidation_id   TEXT PRIMARY KEY REFERENCES dag_acceptance_revalidations (revalidation_id),
+    acceptance_id     TEXT NOT NULL REFERENCES dag_acceptances (acceptance_id),
+    record_digest     TEXT NOT NULL CHECK (record_digest <> ''),
+    record_json       TEXT NOT NULL CHECK (record_json <> ''),
+    evaluated_head    TEXT NOT NULL CHECK (evaluated_head <> ''),
+    accepted_head     TEXT NOT NULL CHECK (accepted_head <> ''),
+    recorded_by       TEXT NOT NULL CHECK (recorded_by <> ''),
+    coordinator_epoch INTEGER NOT NULL CHECK (coordinator_epoch >= 0),
+    recorded_at       TEXT NOT NULL
+)`,
+	`CREATE TRIGGER IF NOT EXISTS dag_revalidation_premerge_revalidation_id_not_null BEFORE INSERT ON dag_revalidation_premerge
+WHEN NEW.revalidation_id IS NULL
+BEGIN SELECT RAISE(ABORT, 'dag_revalidation_premerge.revalidation_id is NULL: a row is addressed by a non-empty id'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_revalidation_premerge_no_update BEFORE UPDATE ON dag_revalidation_premerge
+BEGIN SELECT RAISE(ABORT, 'dag_revalidation_premerge rows are append-only: never updated'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_revalidation_premerge_no_delete BEFORE DELETE ON dag_revalidation_premerge
+BEGIN SELECT RAISE(ABORT, 'dag_revalidation_premerge rows are append-only: never deleted'); END`,
 }

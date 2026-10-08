@@ -93,14 +93,13 @@ func improveProposeTestSplit(project, reason, relationship string) improveRecord
 }
 
 // improveProposeTestEightCases is the fixed 2026-10-06 input the issue's C6 names: the eight
-// issue and project keys of the 721 fixture's case list, all of them the same repeated
-// friction (the body size estimate the merged size ran past), so the eight records across
-// three projects are one candidate. The parent's addition says the C6 fixed input rewrites the
-// 721 helper, and the issue's own title-key wording makes a candidate one (kind, title) pair.
+// issue and project keys of the real case list, each carrying the reason its own case carries.
+// The fixture is not normalized to one string here, so a reason the fixture gets wrong shows up
+// as a second candidate rather than being hidden.
 func improveProposeTestEightCases() []improveRecord {
 	records := make([]improveRecord, 0, len(improveTestEightCases))
 	for _, c := range improveTestEightCases {
-		records = append(records, improveProposeTestSplit(c.project, improveProposeTestFriction, "rel-"+c.issue))
+		records = append(records, improveProposeTestSplit(c.project, c.reason, "rel-"+c.issue))
 	}
 	return records
 }
@@ -141,14 +140,14 @@ func TestImproveProposeSuppressedCandidateStillGrowsAnExistingDraft(t *testing.T
 	}
 }
 
-// TestImproveProposeKeepsDistinctFrictionsApart pins the literal 721 fixture: the same eight
-// issues and projects, each carrying the reason its receipt held. Two different reasons are
-// two different frictions, so they are two candidates, and each still merges across every
-// project it reached.
+// TestImproveProposeKeepsDistinctFrictionsApart pins the property the corrected fixture can no
+// longer show, because all eight of its cases share one reason: two different reasons are two
+// different frictions, so they are two candidates, and each still merges across every project it
+// reached.
 func TestImproveProposeKeepsDistinctFrictionsApart(t *testing.T) {
 	w := improveProposeTestSetup(t)
 	improveProposeTestConfigure(t, w, map[string]any{})
-	bundle := improveProposeTestBundle(t, w, improveProposeTestLiteralCases())
+	bundle := improveProposeTestBundle(t, w, improveProposeTestTwoReasonCases())
 	code, stdout, stderr := improveProposeTestRun(t, w, "--bundle", bundle)
 	if code != 0 {
 		t.Fatalf("propose: exit %d, stderr %s", code, stderr)
@@ -177,19 +176,25 @@ func TestImproveProposeKeepsDistinctFrictionsApart(t *testing.T) {
 	}
 }
 
-// improveProposeTestLiteralCases is the 721 fixture's case list verbatim: the same eight
-// issues and projects, each carrying the reason its receipt actually held.
-func improveProposeTestLiteralCases() []improveRecord {
+// improveProposeTestTwoReasonCases is the fixed case list carrying two different reasons, so the
+// two-reason property survives the corrected fixture: five cases are the size friction across three
+// projects and three are a name collision across two.
+func improveProposeTestTwoReasonCases() []improveRecord {
+	reasons := map[string]string{
+		"CRW-624": "size overrun", "CRW-369": "size overrun", "CRW-376": "name collision",
+		"CRW-378": "size overrun", "CRW-382": "name collision", "CRW-664": "size overrun",
+		"CRW-685": "size overrun", "CRW-716": "name collision",
+	}
 	records := make([]improveRecord, 0, len(improveTestEightCases))
 	for _, c := range improveTestEightCases {
-		records = append(records, improveProposeTestSplit(c.project, c.reason, "rel-"+c.issue))
+		records = append(records, improveProposeTestSplit(c.project, reasons[c.issue], "rel-"+c.issue))
 	}
 	return records
 }
 
-// improveProposeTestFriction is the one repeated friction the fixed eight cases share: the
-// body size estimate the merged size ran past.
-const improveProposeTestFriction = "size estimate understated"
+// improveProposeTestFriction is the one repeated friction the corrected fixed eight cases share:
+// the body size estimate the merged size ran past. The fixture carries it as each case's reason.
+const improveProposeTestFriction = "size overrun"
 
 // improveProposeTestBundle writes a crw-improve-bundle/1 document and returns its path.
 func improveProposeTestBundle(t *testing.T, w *improveProposeTestWorld, records []improveRecord) string {

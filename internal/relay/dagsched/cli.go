@@ -212,6 +212,14 @@ func runAccept(ctx context.Context, services dispatch.Services, args dispatch.Ar
 		return nil, usage("--rule-version is {skills_digest, model, effort}: " + err.Error())
 	}
 	input := AcceptInput{Event: args.Text("event"), Supersedes: args.Text("supersedes"), RuleVersion: rule}
+	if args.Given("premerge") {
+		// the pre-merge record the gate judged the head on (CRW-952): inline JSON or @file
+		raw, err := readPremergeRecord(args.Text("premerge"))
+		if err != nil {
+			return nil, err
+		}
+		input.Premerge = raw
+	}
 	if args.Given("repository") || args.Given("pull-request") {
 		if !args.Given("repository") || !args.Given("pull-request") {
 			return nil, usage("--repository and --pull-request name a pull request together")

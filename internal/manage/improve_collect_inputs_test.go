@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"golang.org/x/sys/unix"
 )
 
 // The tests here cover the identity of the files the collection actually opens: the relay
@@ -101,6 +103,420 @@ func improveInputRelayConfig(t *testing.T, s *improveTestState) {
 	improveTestConfig(t, s, map[string]any{"manage": map[string]any{"improve": map[string]any{
 		"sources": map[string]any{"relay": map[string]any{"path": s.stateDir}},
 	}}})
+}
+
+// improveTestTemporaryNames lists the temporary files a run may have left in a directory.
+func improveTestTemporaryNames(t *testing.T, dir string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), "improve-bundle-") {
+			names = append(names, entry.Name())
+		}
+	}
+	return names
+}
+
+// improveForceUnnamed makes the unnamed temporary file's creation answer err and counts the calls.
+func improveForceUnnamed(t *testing.T, err error) *int {
+	t.Helper()
+	calls := new(int)
+	previous := improveUnnamedCreate
+	improveUnnamedCreate = func(dirfd int) (int, error) {
+		*calls++
+		return -1, err
+	}
+	t.Cleanup(func() { improveUnnamedCreate = previous })
+	return calls
+}
+
+// TestImproveUnnamedTemporaryUnsupportedFallsBackToNamed covers C5: a platform or filesystem whose
+// unnamed temporary file creation answers an errno meaning "unsupported" still writes the bundle,
+// as a named temporary file, and leaves no temporary file behind.
+func TestImproveUnnamedTemporaryUnsupportedFallsBackToNamed(t *testing.T) {
+	for _, errno := range []unix.Errno{unix.EOPNOTSUPP, unix.EINVAL, unix.EISDIR, unix.ENOSYS} {
+		t.Run(errno.Error(), func(t *testing.T) {
+			s := improveTestSetup(t)
+			improveReview799Store(t, s)
+			improveInputRelayConfig(t, s)
+			out := filepath.Join(improveReview799OutDir(t, s), "bundle.json")
+			calls := improveForceUnnamed(t, errno)
+			code, _, stderr := improveTestRun(t, s, "--out", out)
+			if *calls == 0 {
+				t.Fatal("the run never tried the unnamed temporary file")
+			}
+			if code != 0 {
+				t.Fatalf("a run on a filesystem without unnamed files: exit %d, stderr %q, want the bundle", code, stderr)
+			}
+			if bundle := improveTestReadBundle(t, out); bundle.Schema != improveBundleSchema {
+				t.Errorf("the fallback did not write the bundle: %+v", bundle)
+			}
+			if left := improveTestTemporaryNames(t, filepath.Dir(out)); len(left) != 0 {
+				t.Errorf("the run left temporary files %v", left)
+			}
+		})
+	}
+}
+
+// TestImproveUnnamedTemporaryRealErrorStaysARefusal covers the other side of C5: an error that
+// would also stop a named temporary file, here ENOSPC, is still a refusal and writes nothing.
+func TestImproveUnnamedTemporaryRealErrorStaysARefusal(t *testing.T) {
+	s := improveTestSetup(t)
+	improveReview799Store(t, s)
+	improveInputRelayConfig(t, s)
+	outDir := improveReview799OutDir(t, s)
+	out := filepath.Join(outDir, "bundle.json")
+	improveForceUnnamed(t, unix.ENOSPC)
+	code, _, stderr := improveTestRun(t, s, "--out", out)
+	if code == 0 {
+		t.Fatalf("a run whose temporary file cannot be created for lack of space succeeded: stderr %q", stderr)
+	}
+	if _, err := os.Stat(out); err == nil {
+		t.Errorf("the refused run wrote %s", out)
+	}
+	if left := improveTestTemporaryNames(t, outDir); len(left) != 0 {
+		t.Errorf("the refused run left temporary files %v", left)
+	}
+}
+
+// TestImproveNamedTemporaryLeavesNothingOnRefusal covers C6 on the named path: a refusal after the
+// named temporary file exists removes that file through its descriptor.
+func TestImproveNamedTemporaryLeavesNothingOnRefusal(t *testing.T) {
+	s := improveTestSetup(t)
+	improveReview799Store(t, s)
+	ledger := filepath.Join(s.root, "audit.jsonl")
+	improveTestWrite(t, ledger, "{\"schema\":\"crw-audit/1\",\"issue\":\"CRW-1\",\"grade\":\"A\"}\n")
+	improveTestConfig(t, s, map[string]any{"manage": map[string]any{"improve": map[string]any{
+		"sources": map[string]any{
+			"relay": map[string]any{"path": s.stateDir},
+			"audit": map[string]any{"path": ledger},
+		},
+	}}})
+	improveForceUnnamed(t, unix.EOPNOTSUPP)
+	outDir := improveReview799OutDir(t, s)
+	replaced := false
+	previous := improveInputBeforeRename
+	improveInputBeforeRename = func(improveOutputPlan) {
+		if replaced {
+			return
+		}
+		replaced = true
+		if err := os.Remove(ledger); err != nil {
+			t.Errorf("removing the ledger: %v", err)
+			return
+		}
+		improveTestWrite(t, ledger, "{\"schema\":\"crw-audit/1\",\"issue\":\"CRW-2\",\"grade\":\"B\"}\n")
+	}
+	t.Cleanup(func() { improveInputBeforeRename = previous })
+	code, _, stderr := improveTestRun(t, s, "--out", filepath.Join(outDir, "bundle.json"))
+	if !replaced {
+		t.Fatalf("the rename seam never ran: exit %d, stderr %q", code, stderr)
+	}
+	if code != 1 || !strings.Contains(stderr, improveReasonInputChanged) {
+		t.Fatalf("a named-file run whose input changed: exit %d, stderr %q, want %s", code, stderr, improveReasonInputChanged)
+	}
+	if left := improveTestTemporaryNames(t, outDir); len(left) != 0 {
+		t.Errorf("the refused run left temporary files %v", left)
+	}
+}
+
+// TestImproveNamedTemporaryRemovalFailureNamesTheFile covers the report half of C6: when the
+// removal of a named temporary file fails, the refusal names that file and the reason it stayed.
+func TestImproveNamedTemporaryRemovalFailureNamesTheFile(t *testing.T) {
+	s := improveTestSetup(t)
+	improveReview799Store(t, s)
+	ledger := filepath.Join(s.root, "audit.jsonl")
+	improveTestWrite(t, ledger, "{\"schema\":\"crw-audit/1\",\"issue\":\"CRW-1\",\"grade\":\"A\"}\n")
+	improveTestConfig(t, s, map[string]any{"manage": map[string]any{"improve": map[string]any{
+		"sources": map[string]any{
+			"relay": map[string]any{"path": s.stateDir},
+			"audit": map[string]any{"path": ledger},
+		},
+	}}})
+	improveForceUnnamed(t, unix.EOPNOTSUPP)
+	outDir := improveReview799OutDir(t, s)
+	previousRename := improveInputBeforeRename
+	improveInputBeforeRename = func(improveOutputPlan) {
+		_ = os.Remove(ledger)
+		improveTestWrite(t, ledger, "{\"schema\":\"crw-audit/1\",\"issue\":\"CRW-2\",\"grade\":\"B\"}\n")
+	}
+	t.Cleanup(func() { improveInputBeforeRename = previousRename })
+	previousUnlink := improveUnlinkTemporary
+	improveUnlinkTemporary = func(int, string) error { return unix.EACCES }
+	t.Cleanup(func() { improveUnlinkTemporary = previousUnlink })
+	code, _, stderr := improveTestRun(t, s, "--out", filepath.Join(outDir, "bundle.json"))
+	left := improveTestTemporaryNames(t, outDir)
+	for _, name := range left {
+		_ = os.Remove(filepath.Join(outDir, name))
+	}
+	if code != 1 || !strings.Contains(stderr, improveReasonInputChanged) {
+		t.Fatalf("the refusal: exit %d, stderr %q, want %s", code, stderr, improveReasonInputChanged)
+	}
+	if len(left) != 1 || !strings.Contains(stderr, left[0]) {
+		t.Errorf("the left file %v is not named in the refusal %q", left, stderr)
+	}
+}
+
+// TestImproveAuditReadUsesThePinnedFile covers C7: the audit ledger is read from the descriptor the
+// collection pinned, so a ledger swapped during the read and restored before the post-read check
+// contributes the content that was pinned, not the swapped content.
+func TestImproveAuditReadUsesThePinnedFile(t *testing.T) {
+	s := improveTestSetup(t)
+	improveReview799Store(t, s)
+	ledger := filepath.Join(s.root, "audit.jsonl")
+	keep := ledger + ".keep"
+	improveTestWrite(t, ledger, "{\"schema\":\"crw-audit/1\",\"issue\":\"CRW-1\",\"grade\":\"A\"}\n")
+	improveTestConfig(t, s, map[string]any{"manage": map[string]any{"improve": map[string]any{
+		"sources": map[string]any{
+			"relay": map[string]any{"path": s.stateDir},
+			"audit": map[string]any{"path": ledger},
+		},
+	}}})
+	moved := false
+	previousRead := improveIdentityReadHook
+	improveIdentityReadHook = func(path string) {
+		if path != ledger || moved {
+			return
+		}
+		moved = true
+		if err := os.Link(ledger, keep); err != nil {
+			t.Errorf("keeping the original ledger: %v", err)
+			return
+		}
+		improveTestWrite(t, ledger+".new", "{\"schema\":\"crw-audit/1\",\"issue\":\"CRW-2\",\"grade\":\"B\"}\n")
+		if err := os.Rename(ledger+".new", ledger); err != nil {
+			t.Errorf("swapping the ledger: %v", err)
+		}
+	}
+	t.Cleanup(func() { improveIdentityReadHook = previousRead })
+	restored := false
+	previousAfter := improveInputAfterRead
+	improveInputAfterRead = func() {
+		if !moved || restored {
+			return
+		}
+		restored = true
+		if err := os.Rename(keep, ledger); err != nil {
+			t.Errorf("restoring the original ledger: %v", err)
+		}
+	}
+	t.Cleanup(func() { improveInputAfterRead = previousAfter })
+	out := filepath.Join(improveReview799OutDir(t, s), "bundle.json")
+	code, _, stderr := improveTestRun(t, s, "--out", out)
+	if !moved {
+		t.Fatalf("the read seam never ran on the ledger: exit %d, stderr %q", code, stderr)
+	}
+	if code != 0 {
+		t.Fatalf("a ledger swapped back before the post-read check: exit %d, stderr %q, want the bundle", code, stderr)
+	}
+	records := improveTestRecordsOf(improveTestReadBundle(t, out), improveKindAudit)
+	if len(records) != 1 || records[0].Key != "CRW-1" {
+		t.Errorf("the bundle holds the swapped ledger, not the one the collection pinned: %+v", records)
+	}
+}
+
+// improveLowerDescriptorLimit lowers the soft descriptor limit for one test and restores it after.
+func improveLowerDescriptorLimit(t *testing.T, cur uint64) {
+	t.Helper()
+	var previous unix.Rlimit
+	if err := unix.Getrlimit(unix.RLIMIT_NOFILE, &previous); err != nil {
+		t.Skipf("the descriptor limit is unreadable here: %v", err)
+	}
+	if previous.Cur <= cur {
+		t.Skipf("the descriptor limit %d is already at or below %d", previous.Cur, cur)
+	}
+	lowered := unix.Rlimit{Cur: cur, Max: previous.Max}
+	if err := unix.Setrlimit(unix.RLIMIT_NOFILE, &lowered); err != nil {
+		t.Skipf("the descriptor limit cannot be lowered here: %v", err)
+	}
+	t.Cleanup(func() { _ = unix.Setrlimit(unix.RLIMIT_NOFILE, &previous) })
+}
+
+// improveTestManyDrafts writes n drafts into a drafts directory and configures it as the source.
+func improveTestManyDrafts(t *testing.T, s *improveTestState, n int) string {
+	t.Helper()
+	drafts := filepath.Join(s.root, "drafts")
+	if err := os.MkdirAll(drafts, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < n; i++ {
+		name := fmt.Sprintf("d-%03d", i)
+		improveTestWrite(t, filepath.Join(drafts, name+".json"), fmt.Sprintf("{\"schema\":\"crw-issue-draft/1\",\"fingerprint\":%q,\"project\":\"p\",\"title\":\"t\"}", name))
+	}
+	improveTestConfig(t, s, map[string]any{"manage": map[string]any{"improve": map[string]any{
+		"sources": map[string]any{
+			"relay": map[string]any{"path": s.stateDir},
+			"draft": map[string]any{"path": drafts},
+		},
+	}}})
+	return drafts
+}
+
+// TestImproveDraftsOverDescriptorLimitStillCollect covers C8: a drafts directory with more entries
+// than the descriptor limit is read in full without a refusal.
+func TestImproveDraftsOverDescriptorLimitStillCollect(t *testing.T) {
+	s := improveTestSetup(t)
+	improveReview799Store(t, s)
+	improveLowerDescriptorLimit(t, 64)
+	improveTestManyDrafts(t, s, 100)
+	out := filepath.Join(improveReview799OutDir(t, s), "bundle.json")
+	code, _, stderr := improveTestRun(t, s, "--out", out)
+	if code != 0 {
+		t.Fatalf("a drafts directory over the descriptor limit: exit %d, stderr %q, want the bundle", code, stderr)
+	}
+	if got := improveTestRecordsOf(improveTestReadBundle(t, out), improveKindDraft); len(got) != 100 {
+		t.Errorf("draft records = %d, want 100", len(got))
+	}
+}
+
+// TestImproveDraftsOverDescriptorLimitRefusesAMovedEntry covers the refusal half of C8: an entry
+// past the descriptor limit, which the collection holds by identity rather than by descriptor, is
+// refused when it is moved onto the output's place.
+func TestImproveDraftsOverDescriptorLimitRefusesAMovedEntry(t *testing.T) {
+	s := improveTestSetup(t)
+	improveReview799Store(t, s)
+	improveLowerDescriptorLimit(t, 64)
+	drafts := improveTestManyDrafts(t, s, 100)
+	out := filepath.Join(improveReview799OutDir(t, s), "bundle.json")
+	moved := false
+	previous := improveInputBeforeRename
+	improveInputBeforeRename = func(improveOutputPlan) {
+		if moved {
+			return
+		}
+		moved = true
+		if err := os.Rename(filepath.Join(drafts, "d-099.json"), out); err != nil {
+			t.Errorf("moving the draft: %v", err)
+		}
+	}
+	t.Cleanup(func() { improveInputBeforeRename = previous })
+	code, _, stderr := improveTestRun(t, s, "--out", out)
+	if !moved {
+		t.Fatalf("the rename seam never ran: exit %d, stderr %q", code, stderr)
+	}
+	if code != 1 || !strings.Contains(stderr, improveReasonOutputIsInput) {
+		t.Fatalf("an output moved over an entry past the limit: exit %d, stderr %q, want %s", code, stderr, improveReasonOutputIsInput)
+	}
+}
+
+// TestImproveDraftsCreatedAfterTheListingAreRefused covers the P0 that the pre-merge evaluation found
+// (C2, C7): a draft that appears after the drafts directory was listed for recording, and is read
+// through a link into an archive, must be pinned when the reader lists it. Removing the link after
+// the read is then a change the post-read examination refuses, and the archive file is not written
+// over by an output placed on it.
+func TestImproveDraftsCreatedAfterTheListingAreRefused(t *testing.T) {
+	s := improveTestSetup(t)
+	improveReview799Store(t, s)
+	archive := filepath.Join(s.root, "archive")
+	drafts := filepath.Join(s.root, "drafts")
+	for _, dir := range []string{archive, drafts} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	target := filepath.Join(archive, "new.json")
+	const body = "{\"schema\":\"crw-issue-draft/1\",\"fingerprint\":\"new\",\"project\":\"p\",\"title\":\"archived\"}\n"
+	improveTestWrite(t, target, body)
+	improveTestConfig(t, s, map[string]any{"manage": map[string]any{"improve": map[string]any{
+		"sources": map[string]any{
+			"relay": map[string]any{"path": s.stateDir},
+			"draft": map[string]any{"path": drafts},
+		},
+	}}})
+	linked := false
+	previousRead := improveIdentityReadHook
+	improveIdentityReadHook = func(path string) {
+		if path != drafts || linked {
+			return
+		}
+		linked = true
+		if err := os.Symlink(target, filepath.Join(drafts, "new.json")); err != nil {
+			t.Errorf("linking the draft: %v", err)
+		}
+	}
+	t.Cleanup(func() { improveIdentityReadHook = previousRead })
+	removed := false
+	previousAfter := improveInputAfterRead
+	improveInputAfterRead = func() {
+		if !linked || removed {
+			return
+		}
+		removed = true
+		if err := os.Remove(filepath.Join(drafts, "new.json")); err != nil {
+			t.Errorf("removing the link: %v", err)
+		}
+	}
+	t.Cleanup(func() { improveInputAfterRead = previousAfter })
+	code, _, stderr := improveTestRun(t, s, "--out", target)
+	if !linked {
+		t.Fatalf("the listing seam never ran: exit %d, stderr %q", code, stderr)
+	}
+	if code == 0 {
+		t.Fatalf("a draft that appeared after the recording and was removed before the rename was written over: exit 0, stderr %q", stderr)
+	}
+	if after, err := os.ReadFile(target); err != nil || string(after) != body {
+		t.Errorf("the archived draft changed: %q (%v)", after, err)
+	}
+}
+
+// TestImproveDraftsAtASmallDescriptorLimitStillCollect covers the P1 that the pre-merge evaluation
+// found (C4, C8): a descriptor limit as low as 16 must not make a normal drafts collection fail
+// with "too many open files" while the collection's own descriptors are still open.
+func TestImproveDraftsAtASmallDescriptorLimitStillCollect(t *testing.T) {
+	s := improveTestSetup(t)
+	improveReview799Store(t, s)
+	improveLowerDescriptorLimit(t, 16)
+	improveTestManyDrafts(t, s, 100)
+	out := filepath.Join(improveReview799OutDir(t, s), "bundle.json")
+	code, _, stderr := improveTestRun(t, s, "--out", out)
+	if code != 0 {
+		t.Fatalf("a drafts directory at a descriptor limit of 16: exit %d, stderr %q, want the bundle", code, stderr)
+	}
+	if got := improveTestRecordsOf(improveTestReadBundle(t, out), improveKindDraft); len(got) != 100 {
+		t.Errorf("draft records = %d, want 100", len(got))
+	}
+}
+
+// TestImproveDraftsResolveTheirDirectoryLikeTheStore covers the P1 that the pre-merge evaluation
+// found (C1): a drafts directory spelled through a link and ".." is listed and read where the kernel
+// resolves that spelling, the way the store's path is, not where a cleaned path would point.
+func TestImproveDraftsResolveTheirDirectoryLikeTheStore(t *testing.T) {
+	s := improveTestSetup(t)
+	improveReview799Store(t, s)
+	real := filepath.Join(s.root, "real", "sub")
+	realDrafts := filepath.Join(s.root, "real", "drafts")
+	base := filepath.Join(s.root, "base")
+	cleanDrafts := filepath.Join(base, "drafts")
+	for _, dir := range []string{real, realDrafts, cleanDrafts} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	improveTestWrite(t, filepath.Join(realDrafts, "one.json"), "{\"schema\":\"crw-issue-draft/1\",\"fingerprint\":\"one\",\"project\":\"project-a\",\"title\":\"real\"}\n")
+	improveTestWrite(t, filepath.Join(cleanDrafts, "one.json"), "{\"schema\":\"crw-issue-draft/1\",\"fingerprint\":\"one\",\"project\":\"project-a\",\"title\":\"clean\"}\n")
+	if err := os.Symlink(real, filepath.Join(base, "link")); err != nil {
+		t.Skipf("symbolic links are unavailable here: %v", err)
+	}
+	configured := s.root + string(filepath.Separator) + "base" + string(filepath.Separator) + "link" + string(filepath.Separator) + ".." + string(filepath.Separator) + "drafts"
+	improveTestConfig(t, s, map[string]any{"manage": map[string]any{"improve": map[string]any{
+		"sources": map[string]any{
+			"relay": map[string]any{"path": s.stateDir},
+			"draft": map[string]any{"path": configured},
+		},
+	}}})
+	out := filepath.Join(improveReview799OutDir(t, s), "bundle.json")
+	code, _, stderr := improveTestRun(t, s, "--out", out)
+	if code != 0 {
+		t.Fatalf("a drafts directory spelled through a link: exit %d, stderr %q", code, stderr)
+	}
+	got := improveTestRecordsOf(improveTestReadBundle(t, out), improveKindDraft)
+	if len(got) != 1 || got[0].What != "real" {
+		t.Errorf("the draft read was %+v, want the one the kernel resolves the directory to (title real)", got)
+	}
 }
 
 // TestImproveInputRefusesTheLinkedStoreInsideTheSourceDirectory covers the P0: the relay
