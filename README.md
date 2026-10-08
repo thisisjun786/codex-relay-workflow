@@ -20,7 +20,7 @@ live Codex hook or Desktop compatibility.
 |---|---|
 | [crw-next](plugins/crw/skills/crw-next/SKILL.md) | Choose one next action when starting or after finishing work |
 | [crw-define](plugins/crw/skills/crw-define/SKILL.md) | Explore intent and define an initiative goal, success evidence, and scope |
-| [crw-plan](plugins/crw/skills/crw-plan/SKILL.md) | Decompose an agreed goal into projects, milestones, and one-PR issues |
+| [crw-plan](plugins/crw/skills/crw-plan/SKILL.md) | Decompose an agreed goal into projects, milestones, and one-delivery issues |
 | [crw-run](plugins/crw/skills/crw-run/SKILL.md) | Bind the parent and execute one project's agreed scope, including parallel issue delivery and successors, without a parent goal |
 | [crw-loop](plugins/crw/skills/crw-loop/SKILL.md) | Add a parent goal and automatic continuation to the same Run project execution |
 | [crw-status](plugins/crw/skills/crw-status/SKILL.md) | Report where work stands, including the supervisor midpoint check and progress against the agreed schedule |

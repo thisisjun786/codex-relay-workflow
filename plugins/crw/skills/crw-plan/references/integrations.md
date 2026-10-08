@@ -446,9 +446,7 @@ The tables say what each level answers for. What the supervisor spends its time 
 above them: it talks with Jun, carries the requests he approves down to the parents, decides which
 parent takes which project, answers the midpoint check when he asks for one, collects what the
 parents report, and writes the initiative's record. The work it never takes is divided by name
-rather than left to the pair below it. The child implements, verifies and resolves the review on
-its own pull request; the parent accepts that delivery against the issue's criteria and performs
-the merge; the supervisor tests each reported project outcome against the initiative's finish
+rather than left to the pair below it. The child implements, verifies and resolves the review on its own delivery (its task branch, or its pull request where one exists); the parent accepts that delivery against the issue's criteria and performs the integration; the supervisor tests each reported project outcome against the initiative's finish
 condition and stops there. Holding no goal of its own narrows none of that: inside an execution
 approval still in force it moves the approved work and resumes the responsible parent, which is
 what [the midpoint check](../../crw-status/references/midpoint-check.md) already describes.
@@ -846,7 +844,7 @@ projects when a change is considered; Jun can ask for it.
 **Changing the table.** A change to a tag, a Bundles row or a shape row is a decision of the management
 session or Jun. The decision is recorded with its evidence: the issues whose classification was wrong, the
 tag that was wrong in each and the feature that shows it, and what the change would have given each of
-them. The change is then an edit of this section through an ordinary pull request. It applies to lines
+them. The change is then an edit of this section, made as an ordinary commit on the task branch. It applies to lines
 written after it, and the lines and release rows already written keep their values. No number of wrong
 cases triggers a change by itself; the cases are evidence to read.
 
