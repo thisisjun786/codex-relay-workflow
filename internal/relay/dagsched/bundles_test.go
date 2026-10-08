@@ -5,13 +5,16 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"reflect"
+	"slices"
 	"testing"
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 // bundleRead reads the bundle candidates of one plan, with the given exclusions, and fails the test on an error.
@@ -501,29 +504,39 @@ func TestBundleReadyRecordCarriesTheCandidates(t *testing.T) {
 }
 
 // dag-ready --record answers the recorded pass and the candidates from one state of the store: a plan revision that another process commits while the command runs
-// cannot land between the two readings.
+// cannot land between the two readings. The writer is its own Store over the same file (another connection, as another process has), and it is released by the
+// seam between the two readings, so it has surely started when the command goes on; the seam then waits for its commit, which a command that holds no
+// transaction between the readings lets through at once and one that holds the pass's transaction does not.
 func TestBundleRecordedPassAndCandidatesShareASnapshot(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	f.putPlan("s", 0, "s-r1", addNode("a", dag.NodeImplementation), addNode("b", dag.NodeImplementation), bundleEdge("ab", "a", "b"))
+	other, err := store.Open(context.Background(), f.path, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = other.Close() })
+	writer := &dag.Repo{Store: other, Now: f.clock}
 	committed := make(chan error, 1)
 	f.sched.testBetweenPassBundles = func() {
+		started := make(chan struct{})
 		go func() {
+			close(started)
 			raw, err := json.Marshal(doc{"schema": dag.SchemaRevision, "plan_id": "s", "project_key": "P-TEST", "request_id": "s-r2",
 				"expected_parent_revision": 1, "author_task_id": "task-test", "changes": []any{addNode("c", dag.NodeImplementation)}})
 			if err == nil {
 				var rev dag.Revision
 				if rev, err = dag.DecodeRevision(raw); err == nil {
-					_, err = f.repo.Put(context.Background(), rev)
+					_, err = writer.Put(context.Background(), rev)
 				}
 			}
 			committed <- err
 		}()
-		// a writer that is not blocked has committed by now; one that waits for the command's transaction has not
+		<-started
 		select {
 		case err := <-committed:
-			committed <- err
-		case <-time.After(300 * time.Millisecond):
+			committed <- err // the writer committed inside the command: put the answer back for the check below
+		case <-time.After(time.Second):
 		}
 	}
 	reading, seq, bundles, err := f.sched.RecordPassWithBundles(context.Background(), "s", "parent")
@@ -536,7 +549,78 @@ func TestBundleRecordedPassAndCandidatesShareASnapshot(t *testing.T) {
 	if bundles.PlanRevision != reading.PlanRevision {
 		t.Fatalf("the pass was recorded at revision %d and the candidates read at revision %d", reading.PlanRevision, bundles.PlanRevision)
 	}
-	if err := <-committed; err != nil {
-		t.Fatalf("the concurrent revision never committed: %v", err)
+	select {
+	case err := <-committed:
+		if err != nil {
+			t.Fatalf("the concurrent revision never committed: %v", err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("the concurrent revision never committed")
+	}
+}
+
+// bundleFiles declares count files pkg/<prefix>00.go ... on a node.
+func (f *fixture) bundleFiles(plan, node, prefix string, count int) {
+	f.t.Helper()
+	regions := make([]Region, count)
+	for i := range regions {
+		regions[i] = Region{Repository: "owner/repo", Path: fmt.Sprintf("pkg/%s%02d.go", prefix, i), Kind: "file", Change: "edit"}
+	}
+	if _, err := f.sched.DeclareRegions(context.Background(), plan, node, "parent", regions); err != nil {
+		f.t.Fatal(err)
+	}
+}
+
+// A bundle is offered only when dag-region-declare accepts its regions as they stand: 64 places are declarable, 65 are not, so a group whose union would hold 65
+// is not offered as one bundle (the members keep their own declarations; the parent declares nothing it cannot).
+func TestBundleUnionStaysDeclarable(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name         string
+		a, b, c      int // the places each node declares; a and b share a directory, c joins them
+		wantBundle   []string
+		wantRegions  int
+		wantNoBundle bool
+	}{
+		{name: "64 places", a: 32, b: 32, wantBundle: []string{"a", "b"}, wantRegions: 64},
+		{name: "65 places", a: 33, b: 32, wantNoBundle: true},
+		{name: "a third node that would make 65 stays out", a: 33, b: 31, c: 2, wantBundle: []string{"a", "b"}, wantRegions: 64},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			f := newFixture(t)
+			f.putPlan("w", 0, "w-r1", addNode("a", dag.NodeImplementation), addNode("b", dag.NodeImplementation), addNode("c", dag.NodeImplementation))
+			f.bundleFiles("w", "a", "a", c.a)
+			f.bundleFiles("w", "b", "b", c.b)
+			if c.c > 0 {
+				f.bundleFiles("w", "c", "c", c.c)
+			}
+			got := bundleRead(t, f, "w")
+			if c.wantNoBundle {
+				if len(got.Bundles) != 0 {
+					t.Fatalf("%d bundles, want none (first: %v)", len(got.Bundles), got.Bundles[0].Nodes)
+				}
+				return
+			}
+			if len(got.Bundles) != 1 || !reflect.DeepEqual(got.Bundles[0].Nodes, c.wantBundle) {
+				t.Fatalf("%d bundles, want one of %v", len(got.Bundles), c.wantBundle)
+			}
+			b := got.Bundles[0]
+			if len(b.Regions) != c.wantRegions {
+				t.Fatalf("the bundle holds %d places, want %d", len(b.Regions), c.wantRegions)
+			}
+			for _, pair := range b.Pairs {
+				for _, n := range pair.Nodes {
+					if !slices.Contains(b.Nodes, n) {
+						t.Fatalf("pair %v names %s, which is outside the bundle %v", pair.Nodes, n, b.Nodes)
+					}
+				}
+			}
+			normal, err := normalizeRegions(b.Regions)
+			if err != nil || !reflect.DeepEqual(normal, b.Regions) {
+				t.Fatalf("dag-region-declare does not accept the bundle's regions as they stand: %v", err)
+			}
+		})
 	}
 }

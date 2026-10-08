@@ -235,10 +235,70 @@ func (s *Scheduler) BundleCandidates(ctx context.Context, q store.Querier, plan 
 		if len(list) < 2 {
 			continue
 		}
-		out.Bundles = append(out.Bundles, bundleComponent(snap, decls, list, pairs, joined))
+		for _, group := range bundleDeclarable(decls, list, joined) {
+			out.Bundles = append(out.Bundles, bundleComponent(snap, decls, group, pairs, joined))
+		}
 	}
 	sort.Slice(out.Bundles, func(i, j int) bool { return out.Bundles[i].Nodes[0] < out.Bundles[j].Nodes[0] })
 	return out, nil
+}
+
+// bundleDeclarable cuts a connected component into the groups whose union of regions dag-region-declare can take in one declaration (at most MaxRegions places),
+// because a bundle is offered to be merged into one node and that node declares the union. A component that fits is returned whole. Otherwise the groups
+// grow from the smallest unplaced node id: each takes, one at a time, the smallest unplaced member joined to the group by a pair, as long as the union still
+// fits. The members left in no group of two or more stay candidates outside any bundle, each with its own declaration; nothing is dropped from a union.
+func bundleDeclarable(decls map[string][]Region, list []string, joined map[[2]string][]string) [][]string {
+	union := func(ids []string) int {
+		var all []Region
+		for _, id := range ids {
+			all = append(all, decls[id]...)
+		}
+		return len(bundleRegions(all))
+	}
+	if union(list) <= MaxRegions {
+		return [][]string{list}
+	}
+	linked := func(a, b string) bool {
+		if a > b {
+			a, b = b, a
+		}
+		return len(joined[[2]string{a, b}]) > 0
+	}
+	placed := map[string]bool{}
+	var groups [][]string
+	for _, seed := range list {
+		if placed[seed] {
+			continue
+		}
+		placed[seed] = true
+		group := []string{seed}
+		for grown := true; grown; {
+			grown = false
+			for _, id := range list {
+				if placed[id] {
+					continue
+				}
+				near := false
+				for _, member := range group {
+					if linked(member, id) {
+						near = true
+						break
+					}
+				}
+				if near && union(append(append([]string(nil), group...), id)) <= MaxRegions {
+					group = append(group, id)
+					placed[id] = true
+					grown = true
+					break
+				}
+			}
+		}
+		if len(group) >= 2 {
+			sort.Strings(group)
+			groups = append(groups, group)
+		}
+	}
+	return groups
 }
 
 // bundleComponent assembles one component: its pairs, reasons, regions and internal edges.
@@ -250,7 +310,7 @@ func bundleComponent(snap dag.Snapshot, decls map[string][]Region, list []string
 	b := Bundle{Nodes: list}
 	reasons := map[string]bool{}
 	for _, pair := range pairs {
-		if !in[pair[0]] {
+		if !in[pair[0]] || !in[pair[1]] {
 			continue
 		}
 		b.Pairs = append(b.Pairs, BundlePair{Nodes: pair, Reasons: joined[pair]})
