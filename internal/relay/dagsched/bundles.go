@@ -35,7 +35,9 @@ type BundlePair struct {
 }
 
 // Bundle is a connected group of two or more candidates: its nodes (sorted), the reasons and pairs that join them, the union of the regions they
-// declared, and the edges between them, which a merge of the group would absorb.
+// declared, and the edges between them, which a merge of the group would absorb. Regions is empty exactly when no member declared a region (a chain_slice
+// of undeclared nodes: there is nothing to pass on, and the merged node declares what it edits); otherwise it holds 1 to MaxRegions places and
+// dag-region-declare accepts it as it stands.
 type Bundle struct {
 	Nodes         []string
 	Reasons       []string
@@ -244,7 +246,8 @@ func (s *Scheduler) BundleCandidates(ctx context.Context, q store.Querier, plan 
 }
 
 // bundleDeclarable cuts a connected component into the groups whose union of regions dag-region-declare can take in one declaration (at most MaxRegions places),
-// because a bundle is offered to be merged into one node and that node declares the union. A component that fits is returned whole. Otherwise the groups
+// because a bundle is offered to be merged into one node and that node declares the union. A union of no place at all fits (nothing is declared, so
+// the 1-region floor of a declaration does not apply to an empty list, which is never passed on). A component that fits is returned whole. Otherwise the groups
 // grow from the smallest unplaced node id: each takes, one at a time, the smallest unplaced member joined to the group by a pair, as long as the union still
 // fits. The members left in no group of two or more stay candidates outside any bundle, each with its own declaration; nothing is dropped from a union.
 func bundleDeclarable(decls map[string][]Region, list []string, joined map[[2]string][]string) [][]string {

@@ -10,7 +10,6 @@ import (
 	"reflect"
 	"slices"
 	"testing"
-	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
@@ -504,9 +503,10 @@ func TestBundleReadyRecordCarriesTheCandidates(t *testing.T) {
 }
 
 // dag-ready --record answers the recorded pass and the candidates from one state of the store: a plan revision that another process commits while the command runs
-// cannot land between the two readings. The writer is its own Store over the same file (another connection, as another process has), and it is released by the
-// seam between the two readings, so it has surely started when the command goes on; the seam then waits for its commit, which a command that holds no
-// transaction between the readings lets through at once and one that holds the pass's transaction does not.
+// cannot land between the two readings. The writer is its own Store over the same file (another connection, as another process has) and it writes from inside the
+// seam between the two readings, synchronously, so there is no start to wait for and no schedule to hope for: a command that holds no transaction between the
+// readings lets the revision commit at once, and one that keeps the pass's transaction open leaves the write lock taken, so the writer is refused (its lock wait
+// ends) having surely reached the write. The refusal is then shown to be the lock's: the same request commits after the command.
 func TestBundleRecordedPassAndCandidatesShareASnapshot(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
@@ -516,46 +516,45 @@ func TestBundleRecordedPassAndCandidatesShareASnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = other.Close() })
+	// the writer's one connection gives up on a taken write lock after a second, so the refusal below comes quickly (the store's own wait is thirty)
+	if _, err := other.DB.ExecContext(context.Background(), "PRAGMA busy_timeout=1000"); err != nil {
+		t.Fatal(err)
+	}
 	writer := &dag.Repo{Store: other, Now: f.clock}
-	committed := make(chan error, 1)
+	raw, err := json.Marshal(doc{"schema": dag.SchemaRevision, "plan_id": "s", "project_key": "P-TEST", "request_id": "s-r2",
+		"expected_parent_revision": 1, "author_task_id": "task-test", "changes": []any{addNode("c", dag.NodeImplementation)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rev, err := dag.DecodeRevision(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var inSeam error
+	reached := false
 	f.sched.testBetweenPassBundles = func() {
-		started := make(chan struct{})
-		go func() {
-			close(started)
-			raw, err := json.Marshal(doc{"schema": dag.SchemaRevision, "plan_id": "s", "project_key": "P-TEST", "request_id": "s-r2",
-				"expected_parent_revision": 1, "author_task_id": "task-test", "changes": []any{addNode("c", dag.NodeImplementation)}})
-			if err == nil {
-				var rev dag.Revision
-				if rev, err = dag.DecodeRevision(raw); err == nil {
-					_, err = writer.Put(context.Background(), rev)
-				}
-			}
-			committed <- err
-		}()
-		<-started
-		select {
-		case err := <-committed:
-			committed <- err // the writer committed inside the command: put the answer back for the check below
-		case <-time.After(time.Second):
-		}
+		reached = true
+		_, inSeam = writer.Put(context.Background(), rev)
 	}
 	reading, seq, bundles, err := f.sched.RecordPassWithBundles(context.Background(), "s", "parent")
 	if err != nil {
 		t.Fatal(err)
 	}
+	if !reached {
+		t.Fatal("the seam between the pass and the candidates never ran")
+	}
 	if seq != 1 || reading.PlanRevision != 1 {
 		t.Fatalf("pass %d at revision %d, want pass 1 at revision 1", seq, reading.PlanRevision)
+	}
+	if inSeam == nil {
+		t.Fatalf("a plan revision committed between the recorded pass and the candidates (the candidates read revision %d)", bundles.PlanRevision)
 	}
 	if bundles.PlanRevision != reading.PlanRevision {
 		t.Fatalf("the pass was recorded at revision %d and the candidates read at revision %d", reading.PlanRevision, bundles.PlanRevision)
 	}
-	select {
-	case err := <-committed:
-		if err != nil {
-			t.Fatalf("the concurrent revision never committed: %v", err)
-		}
-	case <-time.After(30 * time.Second):
-		t.Fatal("the concurrent revision never committed")
+	// the writer was held off by the lock, not by its own request: after the command it commits
+	if _, err := writer.Put(context.Background(), rev); err != nil {
+		t.Fatalf("the concurrent revision, refused while the command ran (%v), does not commit afterwards: %v", inSeam, err)
 	}
 }
 
@@ -623,4 +622,85 @@ func TestBundleUnionStaysDeclarable(t *testing.T) {
 			}
 		})
 	}
+}
+
+// bundleRegionsOffered checks the contract of a bundle's regions: empty (nobody declared) or accepted by dag-region-declare's normaliser without a change.
+func bundleRegionsOffered(t *testing.T, b Bundle) {
+	t.Helper()
+	if len(b.Regions) == 0 {
+		return
+	}
+	normal, err := normalizeRegions(b.Regions)
+	if err != nil || !reflect.DeepEqual(normal, b.Regions) {
+		t.Fatalf("dag-region-declare does not accept the bundle's regions %+v as they stand: %v", b.Regions, err)
+	}
+}
+
+// A chain of nodes that declared nothing is still a bundle (chain_slice needs no declaration) and its regions are empty: dag-region-declare refuses an empty
+// declaration, so an empty list is the one answer that is not passed on. A chain in which only some members declared holds exactly their places, and that list
+// is accepted as it stands.
+func TestBundleRegionsOfUndeclaredMembers(t *testing.T) {
+	t.Parallel()
+	impl := dag.NodeImplementation
+	t.Run("no member declared", func(t *testing.T) {
+		t.Parallel()
+		f := newFixture(t)
+		f.putPlan("n", 0, "n-r1", addNode("a", impl), addNode("b", impl), bundleEdge("ab", "a", "b"))
+		got := bundleRead(t, f, "n")
+		bundle, ok := got.bundleOf("a")
+		if !ok || !reflect.DeepEqual(bundle.Nodes, []string{"a", "b"}) || !reflect.DeepEqual(bundle.Reasons, []string{"chain_slice"}) {
+			t.Fatalf("bundle = %+v (ok %v)", bundle, ok)
+		}
+		if len(bundle.Regions) != 0 {
+			t.Fatalf("regions = %+v, want none", bundle.Regions)
+		}
+		if _, err := normalizeRegions(bundle.Regions); err == nil {
+			t.Fatal("dag-region-declare takes an empty declaration; the empty list would then be declarable and the documented policy is wrong")
+		}
+		var list any
+		for _, field := range bundle.object() {
+			if field.Key == "regions" {
+				list = field.Value
+			}
+		}
+		if empty, isList := list.([]any); !isList || len(empty) != 0 {
+			t.Fatalf("regions = %#v, want an empty list (not null)", list)
+		}
+	})
+	t.Run("one member of a chain declared", func(t *testing.T) {
+		t.Parallel()
+		f := newFixture(t)
+		f.projectParent()
+		f.putPlan("n", 0, "n-r1", addNode("a", impl), addNode("b", impl), addNode("c", impl), bundleEdge("ab", "a", "b"), bundleEdge("bc", "b", "c"))
+		f.declare("n", "b", "pkg/b.go", "pkg/more.go")
+		bundle, ok := bundleRead(t, f, "n").bundleOf("a")
+		if !ok || !reflect.DeepEqual(bundle.Nodes, []string{"a", "b", "c"}) {
+			t.Fatalf("bundle = %+v (ok %v)", bundle, ok)
+		}
+		var paths []string
+		for _, r := range bundle.Regions {
+			paths = append(paths, r.Path)
+		}
+		if !reflect.DeepEqual(paths, []string{"pkg/b.go", "pkg/more.go"}) {
+			t.Fatalf("regions = %v, want the declaring member's two places", paths)
+		}
+		bundleRegionsOffered(t, bundle)
+	})
+	t.Run("every bundle of a mixed plan offers a list that is empty or accepted", func(t *testing.T) {
+		t.Parallel()
+		f := newFixture(t)
+		f.projectParent()
+		f.putPlan("n", 0, "n-r1", addNode("a", impl), addNode("b", impl), addNode("c", impl), addNode("d", impl), addNode("e", impl), addNode("g", impl),
+			bundleEdge("ab", "a", "b"), bundleEdge("cd", "c", "d"))
+		f.declare("n", "c", "pkg/c.go")
+		f.declare("n", "e", "lib/e.go")
+		f.declare("n", "g", "lib/g.go")
+		got := bundleRead(t, f, "n")
+		if len(got.Bundles) != 3 {
+			t.Fatalf("bundles = %+v, want a-b, c-d and e-g", got.Bundles)
+		}
+		for _, b := range got.Bundles {
+			bundleRegionsOffered(t, b)
+		}
+	})
 }
