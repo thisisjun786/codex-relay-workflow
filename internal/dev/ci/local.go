@@ -291,23 +291,29 @@ func localExecute(opts localOptions, plan []localJob, current verificationRecord
 			fmt.Fprintf(stdout, "local: kept %s\n", temp)
 			return
 		}
-		// Remove the worktree through git, then the whole root. A failed removal falls back to
-		// pruning the administrative entry so the repository is not left with a stale worktree.
+		// Remove this run's own worktree through git, then the whole root. No repository-wide prune runs:
+		// it would also drop the administrative state of other tasks' worktrees.
 		runGit(opts.Root, "worktree", "remove", "--force", worktree)
-		if _, err := os.Stat(worktree); err == nil {
-			runGit(opts.Root, "worktree", "prune")
-		}
 		os.RemoveAll(temp)
 	}
 	defer cleanup()
+	checkoutErr := ""
 	if out, err := runGit(opts.Root, "-c", "core.hooksPath=/dev/null", "worktree", "add", "--detach", worktree, current.HeadCommit); err != nil {
+		checkoutErr = fmt.Sprintf("%v%s", err, localReason(string(out)))
+	} else if status, err := runGit(worktree, "status", "--porcelain"); err != nil {
+		checkoutErr = fmt.Sprintf("%v%s", err, localReason(string(status)))
+	} else if dirty := strings.TrimSpace(string(status)); dirty != "" {
+		// Attributes or filters changed the checked-out content, so the tests would not be the commit's.
+		checkoutErr = "the clean worktree differs from the commit" + localReason(dirty)
+	}
+	if checkoutErr != "" {
 		// A checkout that fails is a failed record, named with its reason, not a missing one.
 		failed := current
 		failed.Sealed = true
 		failed.PlanDigest = planDigest(plan)
 		failed.IgnoredEnv = localIgnoredEnv(os.Environ())
 		failed.Result = localFail
-		failed.Jobs = []recordJob{{Name: "clean worktree", Result: localFail, Steps: []recordStep{{Job: "clean worktree", Name: "git worktree add", Scope: "full", Result: localFailed, Reason: fmt.Sprintf("%v%s", err, localReason(string(out)))}}}}
+		failed.Jobs = []recordJob{{Name: "clean worktree", Result: localFail, Steps: []recordStep{{Job: "clean worktree", Name: "git worktree add", Scope: "full", Result: localFailed, Reason: checkoutErr}}}}
 		return failed, false, nil
 	}
 	opts.output = filepath.Join(temp, "runner", "output")
