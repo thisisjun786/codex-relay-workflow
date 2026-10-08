@@ -213,3 +213,18 @@ func TestLocalWorkRoot_a_root_inside_TMPDIR_or_tmp_is_refused(t *testing.T) {
 		t.Errorf("a root outside the temporary directories is refused: %v", err)
 	}
 }
+
+// A caller's module cache never reaches a step: a module tree is trusted from the cache without the
+// go.sum check, so the cache is not part of what a sealed run may read.
+func TestLocal_a_step_never_sees_the_callers_module_cache(t *testing.T) {
+	t.Setenv("GOMODCACHE", "/somewhere/else")
+	repo := newLocalFixture(t)
+	record := filepath.Join(t.TempDir(), "record.json")
+	made, _, err := localVerify(localRunOptions(repo, localFixturePlan(`test -z "${GOMODCACHE:-}"`), record), "", io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if step := made.Jobs[0].Steps[1]; step.Result != localPassed {
+		t.Errorf("the step is %q (%s): the caller's module cache reached it", step.Result, step.Reason)
+	}
+}

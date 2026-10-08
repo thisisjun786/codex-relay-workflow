@@ -489,7 +489,7 @@ func localWriteScript(opts localOptions, command string) (string, error) {
 
 // localInheritedEnv is the caller's variables a step may inherit. Everything else the caller sets
 // stays out of a step, and localIgnoredEnv names the Go, Node and npm variables that were left out.
-var localInheritedEnv = []string{"PATH", "LANG", "TMPDIR", "GOCACHE", "GOMODCACHE", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS", "NPM_CONFIG_CACHE"}
+var localInheritedEnv = []string{"PATH", "LANG", "TMPDIR", "GOCACHE", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS", "NPM_CONFIG_CACHE"}
 
 // localStepEnv is the sealed environment every step runs in: HOME and the XDG directories point into
 // the run's own home, TZ is UTC, GOTOOLCHAIN is local, and GOFLAGS is set by the engine alone (its
