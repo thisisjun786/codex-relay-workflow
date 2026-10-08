@@ -215,7 +215,7 @@ Workspace ownership:
   applies only when the packet states it, after the packet's writer has confirmed that the local
   full verification of that tree runs the whole suite (a check that is partial or selected by changed paths does not
   qualify). The packet then records where the repository's contribution rules ask for a full local
-  run and that the override covers it, and the child reports the CI run, with its id and head,
+  run and that the override covers it, and the child reports the CI run it dispatched manually on its branch, with its id and head,
   instead of claiming a local pass. A packet that does not state the override leaves the
   repository's local check in force.
   Memory limit: a heavy command, meaning `-race`, `-a`, a load reproduction, a `-count` above 10
@@ -1492,7 +1492,7 @@ says, so read the level first and the fields second:
   they have no transport field, and a child that compacted away its first assignment is left with
   CXC's own rules, which say never to push without approval and point a question at the
   user. Say whether its publication scope is still the explicit push approval
-  `DEV-GIT-PUSH-01` requires (push its task branch, update the pull request, never merge, nothing
+  `DEV-GIT-PUSH-01` requires (push its task branch and, where a pull request exists, update it, never merge, nothing
   wider) or that it is not, and that a question only a person can answer goes to the parent as
   `blocked_needs_input` with the question written out. These are pointers to
   [Default dev integration](../../crw-plan/references/integrations.md#default-dev-integration),
@@ -1505,7 +1505,7 @@ says, so read the level first and the fields second:
   current generation names the one the child has just stopped working in, and a receipt
   emitted under it is refused. The relay carries the superseded event and its digest
   itself, so the block does not repeat them.
-- The delivery artifact as it stands now: pull request URL, base and head, and which
+- The delivery artifact as it stands now: the task branch and head, the pull request URL, base and head where one exists, and which
   required checks and reviews are outstanding on that head. Include the current
   [reviewer policy](merge-readiness.md#reviewer-policy) when it changed;
   supersede stale review-wait instructions without discarding unresolved findings.
