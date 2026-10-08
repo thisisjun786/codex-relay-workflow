@@ -90,35 +90,24 @@ func install(ctx context.Context, pin Pin, seams *Seams, toolsRoot, tempRoot str
 }
 
 // fetch downloads the pin's archive into a fresh directory under tempRoot, verifies its digest and returns the
-// executable member read out of it. The directories this call makes under tempRoot are made and removed under
-// the directory lock on the nearest existing ancestor of tempRoot, so two installs that share a missing root
-// never remove each other's directories. The download runs with the lock released, so an install waiting for
-// the lock is not held up by the network. Every directory this call creates is removed before it returns,
-// whatever the answer, and a directory that was already there is left alone.
+// executable member read out of it. Each directory this call makes under tempRoot is made and removed while the
+// lock on the directory that holds it is held, so an install that shares a missing root cannot remove a directory
+// another install is using. The download runs with no lock held. Every directory this call creates is removed
+// before fetch returns, whatever the answer. A parent that another install still uses stays in place with the
+// directories inside it, which is accepted: this call removes only the directories it made, and only when empty.
 func fetch(ctx context.Context, pin Pin, seams *Seams, tempRoot string) ([]byte, error) {
-	lock := newTempRootLock(tempRoot)
-	if err := lock.acquire(); err != nil {
-		return nil, err
-	}
 	if err := ctx.Err(); err != nil {
-		lock.release()
 		return nil, hostFail("the install was cancelled: %v", err)
 	}
 	created, dir, err := makeDownloadDir(pin, seams, tempRoot)
-	lock.release()
 	if err != nil {
 		return nil, err
 	}
 	body, downloadErr := verifyDownload(ctx, pin, seams, dir)
-	// The download directory is removed before the lock is taken again, so the directories this call made are
-	// not kept non-empty by a download this call no longer needs.
+	// The download directory is removed before the directories this call made, so the directory that holds it is
+	// empty when it is tried. A download directory that cannot be removed keeps its parent, which is then left.
 	_ = os.RemoveAll(dir)
-	if err := lock.acquire(); err != nil {
-		removeCreated(created)
-		return nil, err
-	}
 	removeCreated(created)
-	lock.release()
 	if downloadErr != nil {
 		return nil, downloadErr
 	}
@@ -126,23 +115,23 @@ func fetch(ctx context.Context, pin Pin, seams *Seams, tempRoot string) ([]byte,
 }
 
 // makeDownloadDir makes the download root under tempRoot and a fresh download directory in it. It answers the
-// directories this call made and the download directory. Under the lock a root cannot vanish between the two
-// steps; the retry covers a filesystem that refuses flock and therefore runs unlocked. A failure removes what
-// this call made.
+// directories this call made and the download directory. A failure removes what this call made.
 func makeDownloadDir(pin Pin, seams *Seams, tempRoot string) ([]createRootRecord, string, error) {
 	created, err := createRoot(tempRoot)
 	if err != nil {
 		return nil, "", hostFail("the download root %s could not be made: %v", tempRoot, err)
 	}
-	dir, err := seams.mkdirTemp(tempRoot, pin.Name+"-")
+	dir, err := tempDirUnderLock(pin, seams, tempRoot)
 	if errors.Is(err, fs.ErrNotExist) {
+		// A concurrent install removed the download root between this call making it and here. The root is made
+		// again, recording only what this call makes, and the directory is tried once more.
 		again, mkErr := createRoot(tempRoot)
 		if mkErr != nil {
 			removeCreated(created)
 			return nil, "", hostFail("the download root %s could not be made: %v", tempRoot, mkErr)
 		}
 		created = append(created, again...)
-		dir, err = seams.mkdirTemp(tempRoot, pin.Name+"-")
+		dir, err = tempDirUnderLock(pin, seams, tempRoot)
 	}
 	if err != nil {
 		removeCreated(created)
@@ -184,31 +173,12 @@ func verifyDownload(ctx context.Context, pin Pin, seams *Seams, dir string) ([]b
 	return body, nil
 }
 
-// tempRootLockAttempts bounds how often the lock is taken again when the directory it names changes while the
-// process waits for it.
+// tempRootLockAttempts bounds how often a parent is opened and locked again when the path that names it changes
+// while the process waits for the lock.
 const tempRootLockAttempts = 8
 
-// tempRootLock is the directory lock that serializes the creation and removal of a temp root across install
-// processes. It is the exclusive flock on the nearest existing ancestor of the root, the directory the root's
-// missing components are made in. No lock file is made: a file in a directory that installs also create and
-// remove would name a different inode for each install. Closing the descriptor that holds the lock releases it.
-type tempRootLock struct {
-	ancestor string
-	held     *os.File
-}
-
-// newTempRootLock names the lock for tempRoot. A root with nothing missing has no lock, because nothing is made
-// or removed under it.
-func newTempRootLock(tempRoot string) *tempRootLock {
-	components := rootComponents(tempRoot)
-	if len(components) == 0 {
-		return &tempRootLock{}
-	}
-	return &tempRootLock{ancestor: ancestorOf(components[0])}
-}
-
-// ancestorOf answers the existing directory a missing component is made in: its parent, or the root or the
-// current directory when the spelling has no parent part.
+// ancestorOf answers the existing directory a component is made in: its parent, or the root or the current
+// directory when the spelling has no parent part.
 func ancestorOf(component string) string {
 	if parent := componentParent(component); parent != "" {
 		return parent
@@ -219,60 +189,81 @@ func ancestorOf(component string) string {
 	return "."
 }
 
-// acquire takes the lock, waiting for its holder. A filesystem that refuses flock runs without the lock, which is
-// how the walk ran before the lock existed.
-func (l *tempRootLock) acquire() error {
-	if l == nil || l.ancestor == "" || l.held != nil {
-		return nil
+// lockOpenDir takes the exclusive flock on the open directory dir and answers whether the lock is held. A
+// filesystem that refuses flock answers false and no error, and the caller proceeds unlocked, which is how the
+// walk ran before the lock existed. Any other error is a host failure.
+func lockOpenDir(dir *os.File) (bool, error) {
+	for {
+		err := unix.Flock(int(dir.Fd()), unix.LOCK_EX)
+		switch {
+		case err == nil:
+			return true, nil
+		case errors.Is(err, unix.EINTR):
+			continue
+		case tempRootLockUnsupported(err):
+			return false, nil
+		default:
+			return false, hostFail("the lock on %s could not be taken: %v", dir.Name(), err)
+		}
 	}
-	held, err := lockDirectory(l.ancestor)
+}
+
+// unlockOpenDir releases the lock lockOpenDir took. The descriptor stays open for the caller that keeps it.
+func unlockOpenDir(dir *os.File) {
+	_ = unix.Flock(int(dir.Fd()), unix.LOCK_UN)
+}
+
+// openLockedDir opens the directory that path names and takes its lock, answering the descriptor and whether the
+// lock is held. The descriptor is compared with the path after the lock is granted, because a path that changed
+// while the process waited no longer names the directory that was locked; that descriptor is closed and the path is
+// opened again, at most tempRootLockAttempts times. A directory this process cannot open answers no descriptor and
+// no error, and the caller proceeds without a parent handle, as before the lock existed.
+func openLockedDir(path string) (*os.File, bool, error) {
+	for attempt := 0; attempt < tempRootLockAttempts; attempt++ {
+		dir, err := os.Open(path)
+		if err != nil {
+			return nil, false, nil
+		}
+		locked, err := lockOpenDir(dir)
+		if err != nil {
+			_ = dir.Close()
+			return nil, false, err
+		}
+		held, heldErr := dir.Stat()
+		named, namedErr := os.Stat(path)
+		if heldErr == nil && namedErr == nil && os.SameFile(held, named) {
+			return dir, locked, nil
+		}
+		_ = dir.Close()
+	}
+	return nil, false, hostFail("%s changed on each of %d attempts to take its lock", path, tempRootLockAttempts)
+}
+
+// underParentLock runs fn while the directory that holds path is locked, so an entry fn makes or removes at path is
+// not changed by another install that holds the same lock. Closing the directory when fn returns releases the lock.
+// A parent this process cannot open runs fn without a lock, as before.
+func underParentLock(path string, fn func() error) error {
+	dir, _, err := openLockedDir(ancestorOf(path))
 	if err != nil {
 		return err
 	}
-	l.held = held
-	return nil
+	if dir == nil {
+		return fn()
+	}
+	defer dir.Close()
+	return fn()
 }
 
-// release gives the lock up by closing the descriptor that holds it.
-func (l *tempRootLock) release() {
-	if l == nil || l.held == nil {
-		return
-	}
-	_ = l.held.Close()
-	l.held = nil
-}
-
-// lockDirectory takes the exclusive flock on the directory that path names. The descriptor is compared with the
-// path after the wait, because a path that changed while the process waited no longer names the directory the lock
-// was taken on; that lock is released and the path is locked again, at most tempRootLockAttempts times. A
-// filesystem that refuses flock answers no descriptor and no error.
-func lockDirectory(path string) (*os.File, error) {
-	for attempt := 0; attempt < tempRootLockAttempts; attempt++ {
-		held, err := os.Open(path)
-		if err != nil {
-			return nil, hostFail("the lock directory %s could not be opened: %v", path, err)
-		}
-		for {
-			err = unix.Flock(int(held.Fd()), unix.LOCK_EX)
-			if !errors.Is(err, unix.EINTR) {
-				break
-			}
-		}
-		if err != nil {
-			_ = held.Close()
-			if tempRootLockUnsupported(err) {
-				return nil, nil
-			}
-			return nil, hostFail("the lock on %s could not be taken: %v", path, err)
-		}
-		heldInfo, heldErr := held.Stat()
-		namedInfo, namedErr := os.Stat(path)
-		if heldErr == nil && namedErr == nil && os.SameFile(heldInfo, namedInfo) {
-			return held, nil
-		}
-		_ = held.Close()
-	}
-	return nil, hostFail("the lock directory %s changed on each of %d attempts", path, tempRootLockAttempts)
+// tempDirUnderLock makes a download directory under tempRoot while the lock on the directory that holds tempRoot is
+// held, so the removal of tempRoot by an install that made it cannot run between this call's check and its mkdir.
+func tempDirUnderLock(pin Pin, seams *Seams, tempRoot string) (string, error) {
+	var dir string
+	err := underParentLock(tempRoot, func() error {
+		var mkErr error
+		dir, mkErr = seams.mkdirTemp(tempRoot, pin.Name+"-")
+		return mkErr
+	})
+	return dir, err
 }
 
 // tempRootLockUnsupported reports whether a flock error means the filesystem cannot take the lock at all, and not
@@ -462,11 +453,12 @@ func createRootMatch(made createRootRecord) (string, createRootID, bool) {
 	return "", createRootID{}, false
 }
 
-// createRootComponent makes component's directory and answers the record of the directory the mkdir made.
-// The mkdir runs through an open handle on the parent location the kernel resolved, so the entry it acts
-// on is the one in the directory that handle pins. When no parent handle can be opened -- a relative root,
-// a parent that no longer resolves, or a parent this process may not read -- the mkdir runs through the
-// caller's spelling and the record keeps the identity read by name.
+// createRootComponent makes component's directory and answers the record of the directory the mkdir made. The
+// parent is opened and locked by openLockedDir, and the mkdir runs through that open handle on the parent
+// location the kernel resolved, so the entry it acts on is the one in the directory that handle pins. When no
+// parent handle can be opened -- a relative root, a parent that no longer resolves, or a parent this process may
+// not read -- the mkdir runs through the caller's spelling without a lock, and the record keeps the identity read
+// by name.
 //
 // On EEXIST the record describes the directory standing there, which is not this call's to make unless the
 // caller finds it is the one recorded. When no identity could be read the record has none, and the caller
@@ -477,11 +469,14 @@ func createRootComponent(component string) (createRootRecord, error) {
 	if parent == "" || name == "" || name == "." || name == ".." {
 		return createRootSpelled(component, "", "")
 	}
-	pdir, err := os.Open(parent)
+	pdir, locked, err := openLockedDir(parent)
 	if err != nil {
+		return createRootRecord{}, err
+	}
+	if pdir == nil {
 		return createRootSpelled(component, parent, name)
 	}
-	return createRootUnderParent(component, parent, name, pdir)
+	return createRootUnderParent(component, parent, name, pdir, locked)
 }
 
 // createRootSpelled makes component through the caller's spelling and reads the identity of what stands
@@ -504,12 +499,16 @@ func createRootSpelled(component, parent, name string) (createRootRecord, error)
 }
 
 // createRootUnderParent makes name under the open parent handle pdir and records the directory it finds there.
-// The handle is taken ownership of: it is closed here on every path that does not return it in the record.
-// The identity is read through the handle, so a directory whose mode denies reading is still recorded. Before
-// the record is returned the parent is checked against the name the caller spelled: when the spelling no
-// longer reaches the directory the handle pins, the entry is in a place the caller did not ask for, so it is
-// removed when this call made it and the walk recomputes.
-func createRootUnderParent(component, parent, name string, pdir *os.File) (createRootRecord, error) {
+// The handle is taken ownership of: it is closed here on every path that does not return it in the record. When
+// locked is set the lock taken on pdir is held for the mkdir and released on return. The identity is read through
+// the handle, so a directory whose mode denies reading is still recorded. Before the record is returned the parent
+// is checked against the name the caller spelled: when the spelling no longer reaches the directory the handle
+// pins, the entry is in a place the caller did not ask for, so it is removed when this call made it and the walk
+// recomputes.
+func createRootUnderParent(component, parent, name string, pdir *os.File, locked bool) (createRootRecord, error) {
+	if locked {
+		defer unlockOpenDir(pdir)
+	}
 	if createRootAfterParentOpened != nil {
 		createRootAfterParentOpened(component)
 	}
@@ -556,11 +555,20 @@ func parentStillNamed(component string, pdir *os.File) bool {
 	return err == nil && os.SameFile(held, named)
 }
 
-// unlinkHeldDir removes the entry name under a parent handle when it is still the directory with identity id.
-// The identity is read through the handle and the removal is unlinkat with AT_REMOVEDIR, which refuses a file
-// and a directory with entries, so only an empty directory can be removed here. No child is opened, so a
-// directory whose mode denies reading or searching is removed too.
+// unlinkHeldDir removes the entry name under a parent handle when it is still the directory with identity id. The
+// parent is locked for the check and the removal, so an install that holds the same lock cannot make or remove
+// entries under it meanwhile. The identity is read through the handle and the removal is unlinkat with
+// AT_REMOVEDIR, which refuses a file and a directory with entries, so only an empty directory can be removed here.
+// No child is opened, so a directory whose mode denies reading or searching is removed too. When the lock cannot be
+// taken the directory is left in place.
 func unlinkHeldDir(pdir *os.File, name string, id createRootID) {
+	locked, err := lockOpenDir(pdir)
+	if err != nil {
+		return
+	}
+	if locked {
+		defer unlockOpenDir(pdir)
+	}
 	if current, err := entryID(pdir, name); err == nil && current == id {
 		_ = unix.Unlinkat(int(pdir.Fd()), name, unix.AT_REMOVEDIR)
 	}
