@@ -1,0 +1,185 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "premerge-record.schema.json",
+  "title": "premerge-record/1",
+  "description": "One pre-merge evaluation of an issue branch head and the parent's dispositions of its findings. Digest: sha256 of the canonical serialization (keys sorted, no whitespace, UTF-8, numbers as written). Judged by internal/relay/acceptance/premerge.",
+  "type": "object",
+  "required": [
+    "schema",
+    "issue",
+    "node",
+    "head",
+    "dev",
+    "criteria_digest",
+    "grader",
+    "gradedAt",
+    "criteria",
+    "defects",
+    "score",
+    "summary",
+    "dispositions"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "schema": {
+      "const": "premerge-record/1"
+    },
+    "issue": {
+      "type": "string",
+      "minLength": 1
+    },
+    "node": {
+      "type": "string",
+      "minLength": 1
+    },
+    "head": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "dev": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "criteria_digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "grader": {
+      "type": "object",
+      "required": [
+        "model",
+        "effort",
+        "prompt_digest"
+      ],
+      "properties": {
+        "model": {
+          "type": "string"
+        },
+        "effort": {
+          "type": "string"
+        },
+        "prompt_digest": {
+          "type": "string"
+        }
+      }
+    },
+    "gradedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "criteria": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "verdict"
+        ],
+        "properties": {
+          "verdict": {
+            "enum": [
+              "PASS",
+              "PARTIAL",
+              "FAIL"
+            ]
+          },
+          "evidence": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "defects": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "severity"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "severity": {
+            "enum": [
+              "P0",
+              "P1",
+              "P2",
+              "P3"
+            ]
+          },
+          "impact": {
+            "type": "string",
+            "minLength": 1
+          },
+          "introduced": {
+            "type": "boolean"
+          },
+          "in_promise": {
+            "type": "boolean"
+          },
+          "what": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "score": {
+      "type": "number"
+    },
+    "summary": {
+      "type": "string"
+    },
+    "dispositions": {
+      "type": "object",
+      "required": [
+        "by"
+      ],
+      "properties": {
+        "by": {
+          "type": "string"
+        },
+        "afterEvaluation": {
+          "type": "string"
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "ref",
+              "class"
+            ],
+            "properties": {
+              "ref": {
+                "type": "string",
+                "minLength": 1
+              },
+              "class": {
+                "enum": [
+                  "blocking",
+                  "separable",
+                  "carried",
+                  "not_applicable",
+                  "already_resolved"
+                ]
+              },
+              "note": {
+                "type": "string"
+              },
+              "followUp": {
+                "type": "string",
+                "pattern": "^CRW-[0-9]+$"
+              },
+              "newCodeOnly": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
