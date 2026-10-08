@@ -303,18 +303,6 @@ var (
 	// inside a flow mapping (`env: {SKILLS_ROOT: port/cxc/skills}`), and the body line of a block
 	// scalar (`SKILLS_ROOT: |` with the root alone on the next line), which is no assignment at all.
 	skillRootValue = regexp.MustCompile(`(?:^|[{,])\s*(?:[A-Za-z_][A-Za-z0-9_-]*|"[^"]*"|'[^']*')[ \t]*:\s*["']?(?:` + alternation(skillAssetRoots) + `)/?["']?(?:[,\s}]|$)|^[ \t]*(?:(?:export|readonly|declare|local)[ \t]+)?(?:[A-Za-z_][A-Za-z0-9_-]*=)?["']?(?:` + alternation(skillAssetRoots) + `)/?["']?(?:[ \t]*(?:#.*)?$|[ \t]+)`)
-	// nodeTest matches a Node test run: the node word, any options, and --test as its own argument
-	// (`node --test`, `node --no-warnings --test`). It is the subject the one admitted job exists for,
-	// and the run needs no skill path spelled out -- a bare `node --test` discovers the test files
-	// under its working directory -- so a detector that only looks for a skills root or a path below
-	// one lets another job run the staged tests with no finding (CRW-939, the generation-2
-	// evaluations). `npm test` is not this pattern: it runs the gui job's own suite, not the staged
-	// skills'.
-	// nodeTest matches a Node test run in the command that shellWords reads: a word ending in node,
-	// then --test later on the same command. The quotes are gone by then, so a quoted node word, a
-	// quoted flag and a separator inside quotes are all read the way the shell reads them (CRW-939,
-	// the generation-3 evaluation of d1).
-	nodeTest = regexp.MustCompile(`(?m)(?:^|[^A-Za-z0-9_./-])[^ \t;|&\n]*node[ \t][^;|&\n]*--test(?:$|[^A-Za-z0-9_-])`)
 )
 
 // skillScriptsNodeJob is the one job whose subject is the staged skills' Node tests (the
@@ -349,123 +337,474 @@ func alternation(words []string) string {
 	return strings.Join(quoted, "|")
 }
 
-// shellWords is the command the shell reads from s once its quotes are taken off: a quoted or escaped
-// character is that character, so '--test', "--test", --te”st and -'-test' are all the flag --test.
-// A separator inside quotes is not a separator to the shell, so it becomes shellQuotedSeparator and
-// does not end the command (CRW-939, the generation-3 evaluation of d1).
-func shellWords(s string) string {
-	var b strings.Builder
-	var quote byte
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		switch {
-		case quote == '\'':
+// shellCommand is one simple command: its words with the quotes and escapes taken off, as the program
+// receives them.
+type shellCommand []string
+
+// shellMaxDepth bounds how deep a run's text nests shells and evals. Past it the run counts as a
+// finding, so a bound never passes a run (fail closed).
+const shellMaxDepth = 8
+
+// shellSubstitution is the state a command substitution saves: the quote the text was in when it
+// opened, whether it is a backquote, and the parentheses still open inside a $( ).
+type shellSubstitution struct {
+	quote    byte
+	backtick bool
+	parens   int
+}
+
+// assignmentWord is a shell assignment before a command name (FOO=1).
+var assignmentWord = regexp.MustCompile("^[A-Za-z_][A-Za-z0-9_]*=")
+
+// shellPrefixWords are reserved words that start a simple command without being its program.
+var shellPrefixWords = map[string]bool{"!": true, "{": true, "}": true, "if": true, "then": true, "elif": true, "else": true, "do": true, "while": true, "until": true, "time": true, "exec": true, "builtin": true}
+
+// shellWrappers run the program after them with options and arguments this reader does not parse. A
+// command one of them starts is read with a conservative test: a node word followed by --test anywhere
+// after it (CRW-983).
+var shellWrappers = map[string]bool{"command": true, "env": true, "nohup": true, "sudo": true, "timeout": true, "xargs": true, "nice": true, "stdbuf": true}
+
+// shellInterpreters are the shells whose -c option runs its argument as a script.
+var shellInterpreters = map[string]bool{"sh": true, "bash": true, "dash": true, "ash": true, "ksh": true, "zsh": true}
+
+// stepKeyPrefix is the part of a workflow line before a step's run text: an optional list dash and the
+// run key. keyPrefix is the same for any other key.
+var (
+	stepKeyPrefix = regexp.MustCompile("^[ \\t]*(?:-[ \\t]+)?(?:run|\"run\"|'run')[ \\t]*:(?:[ \\t]+|$)")
+	keyPrefix     = regexp.MustCompile("^[ \\t]*(?:-[ \\t]+)?(?:\"[^\"]*\"|'[^']*'|[A-Za-z_][A-Za-z0-9_.-]*)[ \\t]*:(?:[ \\t]+|$)")
+)
+
+// shellCommands reads the simple commands a shell would run from text, the way Bash reads them. An
+// unquoted separator (a newline, ;, &, |, a parenthesis) ends a command, a substitution starts one, and a
+// quoted separator is a character of its word. A backslash at a line end is removed with no blank in its
+// place; inside double quotes the pair is removed too, and inside single quotes every character stays
+// (CRW-983, findings d1 and d2). A here-document body is data unless its command runs a shell, a wrapper,
+// eval or Node, or an unquoted body can expand a substitution; those bodies are read as shell text. It
+// refuses what it cannot read completely: an unterminated quote, substitution or here-document, a trailing
+// backslash and an ANSI-C string. A here-string is read as shell text when the command it feeds runs a shell.
+func shellCommands(text string) ([]shellCommand, error) {
+	var (
+		cmds       []shellCommand
+		cmd        shellCommand
+		word       []byte
+		inWord     bool
+		quote      byte
+		subs       []shellSubstitution
+		lineWords  []string
+		pending    []heredoc
+		herestring bool
+		hereErr    error
+	)
+	put := func(c byte) {
+		word = append(word, c)
+		inWord = true
+	}
+	flush := func() {
+		if !inWord {
+			return
+		}
+		w := string(word)
+		word, inWord = word[:0], false
+		if herestring {
+			// A here-string feeds its word to the command on its line; the word is read as shell text only
+			// when that command runs a shell, a wrapper, eval or Node.
+			herestring = false
+			if heredocShellConsumer(lineWords) {
+				sub, err := shellCommands(w)
+				if err != nil && hereErr == nil {
+					hereErr = err
+				}
+				cmds = append(cmds, sub...)
+			}
+			return
+		}
+		cmd = append(cmd, w)
+		lineWords = append(lineWords, w)
+	}
+	end := func() {
+		flush()
+		if len(cmd) > 0 {
+			cmds = append(cmds, cmd)
+		}
+		cmd = nil
+	}
+	for i := 0; i < len(text); i++ {
+		c := text[i]
+		var next byte
+		if i+1 < len(text) {
+			next = text[i+1]
+		}
+		if quote == '\'' {
 			if c == '\'' {
 				quote = 0
-				continue
+			} else {
+				put(c)
 			}
-			b.WriteByte(quotedByte(c))
-		case quote == '"':
-			if c == '"' {
+			continue
+		}
+		if c == '$' && next == '(' {
+			subs = append(subs, shellSubstitution{quote: quote})
+			quote = 0
+			i++
+			end()
+			continue
+		}
+		if c == '\x60' {
+			if n := len(subs); n > 0 && subs[n-1].backtick {
+				quote = subs[n-1].quote
+				subs = subs[:n-1]
+			} else {
+				subs = append(subs, shellSubstitution{quote: quote, backtick: true})
 				quote = 0
-				continue
 			}
-			if c == '\\' && i+1 < len(s) {
+			end()
+			continue
+		}
+		if quote == '"' {
+			switch {
+			case c == '"':
+				quote = 0
+			case c == '\\' && strings.IndexByte("$\x60\"\\\n", next) >= 0:
 				i++
-				c = s[i]
+				if next != '\n' {
+					put(next)
+				}
+			default:
+				put(c)
 			}
-			b.WriteByte(quotedByte(c))
+			continue
+		}
+		switch {
+		case c == '\\':
+			if i+1 >= len(text) {
+				return nil, fmt.Errorf("a trailing backslash")
+			}
+			i++
+			if next != '\n' {
+				put(next)
+			}
 		case c == '\'' || c == '"':
 			quote = c
-		case c == '\\' && i+1 < len(s):
-			i++
-			b.WriteByte(s[i])
+			inWord = true
+		case c == '$' && next == '\'':
+			return nil, fmt.Errorf("an ANSI-C string")
+		case c == '<' && next == '<' && i+2 < len(text) && text[i+2] == '<':
+			flush()
+			i += 2
+			for i+1 < len(text) && (text[i+1] == ' ' || text[i+1] == '\t') {
+				i++
+			}
+			herestring = true
+		case c == '<' && next == '<':
+			flush()
+			i += 2
+			h := heredoc{}
+			if i < len(text) && text[i] == '-' {
+				h.strip = true
+				i++
+			}
+			for i < len(text) && (text[i] == ' ' || text[i] == '\t') {
+				i++
+			}
+			var d []byte
+			for i < len(text) && strings.IndexByte(" \t\r\n;&|<>()", text[i]) < 0 {
+				ch := text[i]
+				switch ch {
+				case '\'', '"':
+					stop := strings.IndexByte(text[i+1:], ch)
+					if stop < 0 {
+						return nil, fmt.Errorf("an unterminated here-document delimiter")
+					}
+					d = append(d, text[i+1:i+1+stop]...)
+					h.quoted = true
+					i += stop + 2
+				case '\\':
+					if i+1 >= len(text) {
+						return nil, fmt.Errorf("a trailing backslash")
+					}
+					d = append(d, text[i+1])
+					h.quoted = true
+					i += 2
+				default:
+					d = append(d, ch)
+					i++
+				}
+			}
+			if len(d) == 0 || i >= len(text) {
+				return nil, fmt.Errorf("a here-document without its body")
+			}
+			h.delim = string(d)
+			pending = append(pending, h)
+			i--
+		case c == '\n':
+			end()
+			if len(pending) > 0 {
+				bodies, last, err := readHeredocs(text, i+1, pending, heredocShellConsumer(lineWords))
+				if err != nil {
+					return nil, err
+				}
+				cmds = append(cmds, bodies...)
+				i = last
+				pending = nil
+			}
+			lineWords = nil
+		case c == ';' || c == '&' || c == '|':
+			end()
+		case c == '(':
+			if n := len(subs); n > 0 && !subs[n-1].backtick {
+				subs[n-1].parens++
+			}
+			end()
+		case c == ')':
+			if n := len(subs); n > 0 && !subs[n-1].backtick {
+				if subs[n-1].parens > 0 {
+					subs[n-1].parens--
+				} else {
+					quote = subs[n-1].quote
+					subs = subs[:n-1]
+				}
+			}
+			end()
+		case c == ' ' || c == '\t' || c == '\r':
+			flush()
+		case c == '#' && !inWord:
+			for i+1 < len(text) && text[i+1] != '\n' {
+				i++
+			}
 		default:
-			b.WriteByte(c)
+			put(c)
 		}
 	}
-	return b.String()
-}
-
-// shellQuotedSeparator stands in for a separator character that sits inside quotes.
-const shellQuotedSeparator byte = 1
-
-// quotedByte keeps a quoted character, except that a separator inside quotes is no separator.
-func quotedByte(c byte) byte {
-	switch c {
-	case ';', '|', '&', '\n':
-		return shellQuotedSeparator
+	if hereErr != nil {
+		return nil, hereErr
 	}
-	return c
+	if quote != 0 || len(subs) > 0 {
+		return nil, fmt.Errorf("an unterminated quote or substitution")
+	}
+	if len(pending) > 0 {
+		return nil, fmt.Errorf("an unterminated here-document")
+	}
+	end()
+	return cmds, nil
 }
 
-// commandWindow is the command a shell would run from the line at i: the line itself, plus the
-// lines it continues into. A line ending in a backslash continues on the next one, and a `run:`
-// block scalar (`|`, `|-`, `>`, `>-`, ...) carries its whole command in the body below it. Reading
-// only one physical line would see `node \\` / `--test` and a folded `node` / `--test` as two
-// fragments and report neither, so another workflow could run the staged tests with no finding
-// (CRW-939, the seventh generation-2 evaluation of d1). The caller reports the line where the
-// command starts, so the finding still names one place.
-func commandWindow(physical []string, i int) string {
-	joined := physical[i]
-	if key, ok := blockScalarKey(physical[i]); ok {
-		// A literal scalar keeps its newlines and a folded one joins them with a blank, so the two
-		// kinds give the shell different commands. A literal body line is a command of its own unless
-		// it ends in a backslash, which the shell itself joins to the next line; joining every line
-		// with a blank instead would read a node in one command and a --test in another as one run and
-		// refuse a workflow that only runs them apart (CRW-939, the generation-2 evaluation of d2).
-		literal := blockScalarLiteral(physical[i])
-		base, prevMore, blanks := -1, false, 0
-		for j := i + 1; j < len(physical); j++ {
-			body := physical[j]
-			if strings.TrimSpace(body) == "" {
-				blanks++
-				continue
+// heredoc is a here-document a command opened on its line: the word that ends its body, whether that word
+// is quoted (so the body is not expanded), and whether <<- strips the body's leading tabs.
+type heredoc struct {
+	delim  string
+	quoted bool
+	strip  bool
+}
+
+// heredocShellConsumer reports whether the words on a line hand a here-document body to a program that
+// runs it: a shell, a wrapper, eval, or a Node program that reads its script from input.
+func heredocShellConsumer(words []string) bool {
+	for _, w := range words {
+		base := filepath.Base(w)
+		if shellInterpreters[base] || shellWrappers[base] || base == "eval" || strings.HasSuffix(base, "node") {
+			return true
+		}
+	}
+	return false
+}
+
+// readHeredocs reads the bodies of the here-documents one line opened, in order, from start, the first
+// character after that line. It returns the commands of the bodies that are read as shell text and the
+// index of the newline that ends the last terminator line, where reading resumes.
+func readHeredocs(text string, start int, pending []heredoc, shellConsumer bool) ([]shellCommand, int, error) {
+	var cmds []shellCommand
+	pos, last := start, start
+	for _, h := range pending {
+		var body []string
+		closed := false
+		for pos < len(text) {
+			end := len(text)
+			if k := strings.IndexByte(text[pos:], '\n'); k >= 0 {
+				end = pos + k
 			}
-			if indentOf(body) <= key {
+			line := text[pos:end]
+			cmp := line
+			if h.strip {
+				cmp = strings.TrimLeft(line, "\t")
+			}
+			if cmp == h.delim {
+				closed, last = true, end
+				pos = end + 1
 				break
 			}
-			// A body line starting with '#' is a shell comment, not a command: joining it would
-			// report a workflow that only mentions the run in a note (CRW-939, the tenth
-			// generation-2 evaluation of d3).
-			if strings.HasPrefix(strings.TrimSpace(body), "#") {
-				continue
-			}
-			if literal {
-				if strings.HasSuffix(strings.TrimRight(joined, " \t"), "\\") {
-					joined = strings.TrimSuffix(strings.TrimRight(joined, " \t"), "\\") + " " + strings.TrimSpace(body)
-					continue
-				}
-				joined += "\n" + strings.TrimSpace(body)
-				continue
-			}
-			// A folded scalar joins two lines at its own indentation with a blank, but keeps the break
-			// beside a line indented further, and keeps each blank line as a break (YAML). The shell ends
-			// a command at a kept break, so the two sides are read apart (CRW-939, the generation-3
-			// evaluation of d2). A backslash at the end of a line still continues the command.
-			more := base >= 0 && indentOf(body) > base
-			if base < 0 {
-				base = indentOf(body)
-			}
-			if strings.HasSuffix(strings.TrimRight(joined, " \t"), "\\") {
-				joined = strings.TrimSuffix(strings.TrimRight(joined, " \t"), "\\") + " " + strings.TrimSpace(body)
-			} else {
-				sep := " "
-				switch {
-				case prevMore || more:
-					sep = strings.Repeat("\n", blanks+1)
-				case blanks > 0:
-					sep = strings.Repeat("\n", blanks)
-				}
-				joined += sep + strings.TrimSpace(body)
-			}
-			prevMore, blanks = more, 0
+			body = append(body, line)
+			pos = end + 1
 		}
-		return joined
+		if !closed {
+			return nil, 0, fmt.Errorf("an unterminated here-document")
+		}
+		joined := strings.Join(body, "\n")
+		if shellConsumer || (!h.quoted && (strings.Contains(joined, "$(") || strings.Contains(joined, "\x60"))) {
+			sub, err := shellCommands(joined)
+			if err != nil {
+				return nil, 0, err
+			}
+			cmds = append(cmds, sub...)
+		}
 	}
+	return cmds, last, nil
+}
+
+// nodeTestRun reports whether text runs a Node test at a command position: a program named node with
+// --test among its arguments, possibly behind a prefix, a wrapper, a shell's -c or an eval. Text the
+// reader cannot read completely is a finding only when failClosed is set, which the caller sets for a
+// run and a shell script that a run starts (CRW-983).
+func nodeTestRun(text string, failClosed bool, depth int) bool {
+	if depth > shellMaxDepth {
+		return true
+	}
+	cmds, err := shellCommands(text)
+	if err != nil {
+		return failClosed
+	}
+	for _, cmd := range cmds {
+		if commandRunsNodeTest(cmd, depth) {
+			return true
+		}
+	}
+	return false
+}
+
+// commandRunsNodeTest reports whether one simple command is a Node test run, looking past its
+// assignments and prefix words to the program it names.
+func commandRunsNodeTest(cmd shellCommand, depth int) bool {
+	words := []string(cmd)
+	for len(words) > 0 && (assignmentWord.MatchString(words[0]) || strings.HasPrefix(words[0], "-") || shellPrefixWords[words[0]]) {
+		words = words[1:]
+	}
+	if len(words) == 0 {
+		return false
+	}
+	name, args := filepath.Base(words[0]), words[1:]
+	switch {
+	case shellWrappers[name]:
+		return nodeAndTest(args)
+	case strings.HasSuffix(name, "node"):
+		return hasTestFlag(args)
+	case shellInterpreters[name]:
+		for k, a := range args {
+			if strings.HasPrefix(a, "-") && !strings.HasPrefix(a, "--") && strings.Contains(a, "c") && k+1 < len(args) {
+				return nodeTestRun(args[k+1], true, depth+1)
+			}
+		}
+	case name == "eval":
+		return nodeTestRun(strings.Join(args, " "), true, depth+1)
+	case name == "su":
+		return suCommandRuns(args, depth)
+	}
+	return false
+}
+
+// suCommandRuns reads the program su -c runs: the word after -c or --command, the text joined to -c, or
+// the text after --command=. Its other options take no program, so the reader does not parse them.
+func suCommandRuns(args []string, depth int) bool {
+	for k, a := range args {
+		switch {
+		case a == "-c" || a == "--command":
+			return k+1 < len(args) && nodeTestRun(args[k+1], true, depth+1)
+		case strings.HasPrefix(a, "--command="):
+			return nodeTestRun(strings.TrimPrefix(a, "--command="), true, depth+1)
+		case strings.HasPrefix(a, "-c") && !strings.HasPrefix(a, "--"):
+			return nodeTestRun(a[2:], true, depth+1)
+		}
+	}
+	return false
+}
+
+// nodeAndTest reports whether a node program is followed by --test among words.
+func nodeAndTest(words []string) bool {
+	for i, w := range words {
+		if strings.HasSuffix(filepath.Base(w), "node") && hasTestFlag(words[i+1:]) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasTestFlag reports whether a Node argument list carries the --test flag.
+func hasTestFlag(words []string) bool {
+	for _, w := range words {
+		if w == "--test" || strings.HasPrefix(w, "--test=") {
+			return true
+		}
+	}
+	return false
+}
+
+// commandWindow is the command a shell would run from the line at i, with the run key taken off, and
+// whether the line is a run. A line ending in a backslash continues on the next one, and a block scalar
+// carries its command in the body below it. The lines are joined with newlines, which shellCommands
+// reads as a shell does, so a break that the shell removes leaves no blank behind. The caller reports
+// the line where the command starts.
+func commandWindow(physical []string, i int) (string, bool) {
+	first := physical[i]
+	run := false
+	if m := stepKeyPrefix.FindStringIndex(first); m != nil {
+		run, first = true, first[m[1]:]
+	} else if m := keyPrefix.FindStringIndex(first); m != nil {
+		first = first[m[1]:]
+	}
+	if key, ok := blockScalarKey(physical[i]); ok {
+		return blockCommand(physical, i, key, blockScalarLiteral(physical[i])), run
+	}
+	joined := first
 	for strings.HasSuffix(strings.TrimRight(joined, " \t"), "\\") && i+1 < len(physical) {
-		joined = strings.TrimSuffix(strings.TrimRight(joined, " \t"), "\\") + " " + strings.TrimSpace(physical[i+1])
+		joined = strings.TrimRight(joined, " \t") + "\n" + strings.TrimSpace(physical[i+1])
 		i++
+	}
+	return joined, run
+}
+
+// blockCommand joins the body of the block scalar whose header is at i. A literal body keeps its
+// newlines. A folded body joins two lines at its own indentation with a blank, but keeps the break
+// beside a line indented further and each blank line, as YAML does. A comment line is no command.
+func blockCommand(physical []string, i, key int, literal bool) string {
+	joined := ""
+	base, prevMore, blanks := -1, false, 0
+	for j := i + 1; j < len(physical); j++ {
+		body := physical[j]
+		if strings.TrimSpace(body) == "" {
+			blanks++
+			continue
+		}
+		if indentOf(body) <= key {
+			break
+		}
+		if strings.HasPrefix(strings.TrimSpace(body), "#") {
+			continue
+		}
+		text := strings.TrimSpace(body)
+		if literal {
+			if joined != "" {
+				joined += "\n"
+			}
+			joined += text
+			continue
+		}
+		more := base >= 0 && indentOf(body) > base
+		if base < 0 {
+			base = indentOf(body)
+		}
+		sep := " "
+		switch {
+		case strings.HasSuffix(strings.TrimRight(joined, " \t"), "\\"):
+			joined, sep = strings.TrimRight(joined, " \t"), "\n"
+		case prevMore || more:
+			sep = strings.Repeat("\n", blanks+1)
+		case blanks > 0:
+			sep = strings.Repeat("\n", blanks)
+		}
+		if joined == "" {
+			joined = text
+		} else {
+			joined += sep + text
+		}
+		prevMore, blanks = more, 0
 	}
 	return joined
 }
@@ -527,6 +866,7 @@ func pythonInWorkflow(file, text string) []string {
 	admitted := filepath.Base(file) == skillScriptsNodeFile
 	inJobs, inSkillScriptsNode := false, false
 	physical := lines(text)
+	blockKey := -1
 	for number, line := range physical {
 		// A key at column 0 is a top-level key: it opens or closes the jobs block, and the job
 		// exception lives only inside it. A workflow-level `env:` value whose key happens to be
@@ -546,8 +886,17 @@ func pythonInWorkflow(file, text string) []string {
 		code := strings.TrimSpace(line)
 		// The token checks read the whole command the shell would run from this line, so a run split
 		// across a continuation or a block scalar is not read as two harmless fragments.
-		command := commandWindow(physical, number)
-		skillPath := skillStep.MatchString(code) || skillRootValue.MatchString(code) || nodeTest.MatchString(shellWords(command))
+		inBody := blockKey >= 0 && (code == "" || indentOf(line) > blockKey)
+		command, isRun := "", false
+		if !inBody {
+			blockKey = -1
+			if key, ok := blockScalarKey(line); ok {
+				blockKey = key
+			}
+			command, isRun = commandWindow(physical, number)
+		}
+
+		skillPath := skillStep.MatchString(code) || skillRootValue.MatchString(code) || nodeTestRun(command, isRun, 0)
 		if !strings.HasPrefix(code, "#") && (pythonStep.MatchString(code) || (skillPath && !inSkillScriptsNode)) {
 			found = append(found, fmt.Sprintf("%d: %s", number+1, code))
 		}
@@ -1093,6 +1442,82 @@ func TestWorkflow_python_detector(t *testing.T) {
 	}
 	expectEqual(t, "line number", pythonInWorkflow("ci.yml", "jobs:\n  a:\n    steps:\n      - run: |\n          make test\n          python3 x.py\n"),
 		[]string{"6: python3 x.py"})
+}
+
+// A step that only prints the text node --test is a log line, not a run: the shell reads the printed
+// text as an argument or a quoted word, never as a command. A node test still counts wherever the
+// shell runs a command: after an assignment, under a shell's -c, after a separator, in a substitution
+// (CRW-983, finding d2).
+func TestWorkflow_a_log_line_naming_a_node_test_is_not_a_run(t *testing.T) {
+	for _, row := range []struct {
+		line  string
+		found bool
+	}{
+		{"      - run: echo 'node --test'", false},
+		{"      - run: echo \"node --test\"", false},
+		{"      - run: echo node --test", false},
+		{"      - run: printf '%s\\n' 'node --test'", false},
+		{"      - run: env FOO=1 node --test", true},
+		{"      - run: bash -c 'node --test'", true},
+		{"      - run: sh -c \"node --test\"", true},
+		{"      - run: echo ok; node --test", true},
+		{"      - run: echo ok && node --test", true},
+		{"      - run: echo \"$(node --test)\"", true},
+	} {
+		if got := pythonInWorkflow("release.yml", row.line+"\n"); (len(got) > 0) != row.found {
+			t.Errorf("%q: found = %q, want found = %v", row.line, got, row.found)
+		}
+	}
+}
+
+// A backslash at a line end continues the command as Bash reads it: the pair is removed and no blank
+// takes its place, so a flag or a program word split across the break is one word (CRW-983, finding
+// d1). Inside single quotes both characters stay, so the text is only a log line.
+func TestWorkflow_a_backslash_newline_joins_without_a_blank(t *testing.T) {
+	for _, row := range []struct {
+		name  string
+		body  string
+		found bool
+	}{
+		{"a flag split across the break", "      - run: |\n          node --te\\\n          st\n", true},
+		{"the program word split across the break", "      - run: |\n          no\\\n          de --test\n", true},
+		{"a longer flag split across the break", "      - run: |\n          node --test-name-pat\\\n          tern=V1 --test\n", true},
+		{"a flag split across a folded break", "      - run: >-\n          node --te\\\n          st\n", true},
+		{"a blank before the backslash stays", "      - run: |\n          node --te \\\n          st\n", false},
+		{"a backslash inside single quotes stays", "      - run: |\n          echo 'node --te\\\n          st'\n", false},
+	} {
+		if got := pythonInWorkflow("release.yml", row.body); (len(got) > 0) != row.found {
+			t.Errorf("%s: found = %q, want found = %v", row.name, got, row.found)
+		}
+	}
+}
+
+// The shell reader reads what a run can execute and refuses a run it cannot read whole (CRW-983, the
+// quoting forms of finding d1). A here-document body is data unless a shell, a wrapper, eval or Node
+// runs it, a here-string is read the same way, su -c runs its argument, and a run that cannot be read is
+// a finding.
+func TestWorkflow_the_shell_reader_follows_the_quoting_forms(t *testing.T) {
+	for _, row := range []struct {
+		name  string
+		body  string
+		found bool
+	}{
+		{"an unterminated quote", "      - run: echo \"node --test\n", true},
+		{"a shell reading a body that runs the test", "      - run: |\n          bash <<EOF\n          node --test\n          EOF\n", true},
+		{"a quoted here-document body is data", "      - run: |\n          cat <<'EOF'\n          node --test\n          EOF\n", false},
+		{"an unquoted body that expands a test", "      - run: |\n          cat <<EOF\n          $(node --test)\n          EOF\n", true},
+		{"a here-string into a shell", "      - run: bash <<< 'node --test'\n", true},
+		{"a here-string into jq", "      - run: jq . <<< \"$tag_body\"\n", false},
+		{"su -c runs its argument", "      - run: su -c 'node --test' ci\n", true},
+		{"su -c with the command joined", "      - run: su -c'node --test' ci\n", true},
+		{"eval reads its argument", "      - run: eval \"node --test\"\n", true},
+		{"an ANSI-C string is unreadable", "      - run: echo $'node --test'\n", true},
+		{"a here-document with no terminator", "      - run: |\n          bash <<EOF\n          node --test\n", true},
+	} {
+		if got := pythonInWorkflow("release.yml", row.body); (len(got) > 0) != row.found {
+			t.Errorf("%s: found = %q, want found = %v", row.name, got, row.found)
+		}
+	}
 }
 
 // matrixValues reads a one-line `key: [a, b]` matrix entry from a job body.
