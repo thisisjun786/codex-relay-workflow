@@ -249,6 +249,7 @@
   {"flag":"--kind","required":true,"help":"design_choice|dependency|merge_approval|cleanup_approval|blocked_escalation|policy"},
   {"flag":"--context","required":true,"help":"one paragraph: what the question is and why it is asked"},
   {"flag":"--option","kind":"append","required":true,"help":"id=label:effect, 2 or 3 times"},
+  {"flag":"--option-reply","kind":"append","help":"id=action, repeatable: the decision_reply an option makes when it is chosen (answer|stop|split_approval|scope_change). A decision that blocks a relationship names one for every option"},
   {"flag":"--recommend","help":"id:one line, the raiser's own suggestion"},
   {"flag":"--blocking","kind":"append","help":"kind=ref, repeatable: relationship|issue|plan_node|project"},
   {"flag":"--needed-by","help":"RFC3339 deadline, or omitted"},
@@ -260,13 +261,13 @@
 {"name":"decision-list","summary":"the user-decision records the filters select, oldest first by the real instant of raised_at. A read: it records nothing","options":[
   {"flag":"--state","help":"open|raised|answered|applied|withdrawn|expired"},
   {"flag":"--project","help":"a record whose origin project is this key, or one of whose observations names it"}]},
-{"name":"decision-answer","summary":"record an answer on a user-decision record, with its provenance. --by and --via are required; the answer must name an option of the record or carry free text; and the authority it cites may not outrank the record's. A withdrawn, applied or expired record takes no answer","options":[
+	{"name":"decision-answer","summary":"record an answer on a user-decision record, with its provenance. --by and --via are required; the answer must name an option of the record or carry free text, and a decision that blocks a relationship is answered with an option; the authority it cites must be the record's own class, and a user-grade or delegated-management-grade decision requires it and is answered only by the task the relay's store-scope supervisor binding holds. A withdrawn, applied or expired record takes no answer","options":[
   {"flag":"--decision","required":true},
   {"flag":"--option","help":"the option id the answer chooses"},
   {"flag":"--text","help":"the answer as text, for a free-form answer"},
   {"flag":"--by","required":true,"help":"the task id that answered"},
-  {"flag":"--via","required":true,"help":"file-import|management-message|supervisor-readback|dots|direct-ask"},
-  {"flag":"--authority","help":"kind[=ref]: the class the answer cites, which may not outrank the record's"}]},
+  {"flag":"--via","required":true,"help":"file-import|management-message|supervisor-readback|dots|direct-ask. A user-grade or delegated-management-grade answer is one of file-import, management-message, dots or direct-ask: supervisor-readback reads the parent's report, not the user's answer"},
+  {"flag":"--authority","help":"kind[=ref]: the class the answer cites, which must be the record's own. A user-grade or delegated-management-grade decision requires it; its --by must be the task the relay's store-scope supervisor binding holds"}]},
 {"name":"decision-apply","summary":"mark an answered user-decision record applied, once the decision_reply event of a relationship the decision blocks has been observed. Delivery alone never applies a decision","options":[
   {"flag":"--decision","required":true},
   {"flag":"--event","required":true,"help":"the decision_reply event the relay recorded for the blocked relationship"}]},
@@ -906,6 +907,10 @@
   {"flag":"--repository","help":"an implementation node's pull request repository (owner/name)"},
   {"flag":"--pull-request","type":"int","help":"an implementation node's pull request number"},
   {"flag":"--supersedes","help":"the active acceptance of another output this one replaces"},
+  {"flag":"--commit","help":"an implementation node accepted without a pull request: the commit that is the receipt head of its generation (full lower-case hex). Needs --base, --checkout and --verification; not with --repository or --pull-request"},
+  {"flag":"--base","help":"with --commit: the commit the head must descend from"},
+  {"flag":"--checkout","help":"with --commit: an absolute path to the local checkout that holds both commits"},
+  {"flag":"--verification","help":"with --commit: the verification-record/1 document (JSON or @file) that names this commit tree with a PASS it may reuse"},
   {"flag":"--rule-version","required":true,"help":"the rules the result was verified under, {skills_digest, model, effort} as JSON or @file"},
   {"flag":"--expect-epoch","type":"int","help":"the coordinator epoch this session holds (dag-coordinator-claim answers it); a write from another epoch is refused stale_coordinator_epoch. 0 names none, which only a plan nobody claimed takes"}]},
 {"name":"dag-integration-observe","summary":"records whether an accepted implementation node's head is contained in the branches it has to land on, read by the relay itself (git merge-base --is-ancestor for a local checkout, the compare API for a forge repository). Integration needs every required target to contain the head and the parent's merged mark on the same revision; the node's slot is returned when it does. A landing also runs the conflict sweep it owes (conflict_sweep in the answer), once per landing","options":[
@@ -914,6 +919,20 @@
   {"flag":"--actor","required":true},
   {"flag":"--target","kind":"append","help":"repository@ref to observe (repeatable); the targets of the node's outgoing edges by default. A terminal node needs it"},
   {"flag":"--expect-epoch","type":"int","help":"the coordinator epoch this session holds (dag-coordinator-claim answers it); a write from another epoch is refused stale_coordinator_epoch. 0 names none, which only a plan nobody claimed takes"}]},
+{"name":"dag-integrate","summary":"merges the plan's ready accepted implementation candidates (or the named --node ones) one after another onto a local integration branch with merge commits, runs one verification (--verify, split into arguments, never a shell) on the merged tree, and moves the branch only to a tree whose verification record is a PASS. A candidate whose merge conflicts or whose verification breaks is left out and returned in split. The branch moves by a compare-and-swap on its old head, so a head that moved under the command is refused. On success the parent's merged mark is recorded for each merged candidate; integration is then observed by dag-integration-observe --target on the integration branch","options":[
+  {"flag":"--plan","required":true},
+  {"flag":"--actor","required":true,"help":"the parent running the batch"},
+  {"flag":"--checkout","required":true,"help":"an absolute path to the local checkout that holds the candidates' commits and the integration branch"},
+  {"flag":"--integration-ref","required":true,"help":"the local branch the batch merges onto"},
+  {"flag":"--base","required":true,"help":"the branch the candidates descend from, read in the same checkout"},
+  {"flag":"--verify","required":true,"help":"the one verification run on the merged tree, a command split into arguments (no shell); it runs in the merged worktree with CRW_VERIFY_RECORD (a fresh path to write a verification-record/1 to), CRW_VERIFY_BASE and CRW_VERIFY_HEAD in its environment; a non-zero exit is a failure"},
+  {"flag":"--node","kind":"append","help":"a candidate to consider (repeatable); none means every ready accepted candidate of the plan"},
+  {"flag":"--expect-epoch","type":"int","help":"the coordinator epoch this session holds (dag-coordinator-claim answers it); a write from another epoch is refused stale_coordinator_epoch. 0 names none, which only a plan nobody claimed takes"}]},
+{"name":"dag-integrate-push","summary":"moves the remote branch to the integration branch's commit by a fast-forward only: nothing is pushed when the remote already holds that commit (up_to_date), when the remote holds a commit the integration branch does not contain (refused merge_base_mismatch), or never by force. When the remote cannot be reached the push is deferred (outcome deferred, exit 0) and the integration recorded by dag-integrate stands; run this command again later to make the push","options":[
+  {"flag":"--checkout","required":true,"help":"an absolute path to the local checkout that holds the integration branch"},
+  {"flag":"--integration-ref","required":true,"help":"the local integration branch whose commit is pushed"},
+  {"flag":"--remote","required":true,"help":"the remote name, for example origin"},
+  {"flag":"--remote-ref","required":true,"help":"the remote branch to fast-forward, for example dev"}]},
 {"name":"dag-base-refresh","summary":"records that an accepted implementation node's acceptance also stands on a later generation of its relationship that only refreshed the base: the relay reads the pull request head from the forge and the base tip from the target, and proves in a local checkout that the head is the accepted head plus merges of the base branch (each merge a two-parent commit whose tree is the tree git merges from its parents; a merge git cannot do cleanly is accepted only when the commit differs from git's tree in the files git could not merge, and files not proved by the node's declared mechanical rule must be named exactly with --resolved). The acceptance is not replaced; integration is then judged on the refreshed head and the merged mark of that generation. A stale node, a landed node and a head that holds anything but base merges are refused","options":[
   {"flag":"--plan","required":true},
   {"flag":"--node","required":true},

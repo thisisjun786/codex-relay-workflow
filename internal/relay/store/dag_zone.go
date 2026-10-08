@@ -846,4 +846,72 @@ BEGIN SELECT RAISE(ABORT, 'merge_trains.train_id is NULL: a train is addressed b
     expired_reason      TEXT NOT NULL
 )`,
 	`CREATE INDEX IF NOT EXISTS dag_user_decisions_fingerprint ON dag_user_decisions (fingerprint)`,
+
+	// CRW-965: the pull-request-less acceptance and integration path. Two appended tables, because a
+	// shipped statement is never edited: the verification record an acceptance was taken on (the body
+	// itself, so a repeat call can prove it is the same output and the batch can reuse the record for a
+	// tree it already verified), and one row per integration batch that moved the local integration
+	// branch. Both are append-only.
+	`CREATE TABLE IF NOT EXISTS dag_acceptance_verifications (
+    acceptance_id   TEXT PRIMARY KEY REFERENCES dag_acceptances (acceptance_id),
+    record_digest   TEXT NOT NULL CHECK (record_digest <> ''),
+    record_json     TEXT NOT NULL CHECK (record_json <> ''),
+    head_commit     TEXT NOT NULL CHECK (head_commit <> ''),
+    tree_sha        TEXT NOT NULL CHECK (tree_sha <> ''),
+    base_commit     TEXT NOT NULL CHECK (base_commit <> ''),
+    recorded_by     TEXT NOT NULL CHECK (recorded_by <> ''),
+    coordinator_epoch INTEGER NOT NULL CHECK (coordinator_epoch >= 0),
+    recorded_at     TEXT NOT NULL
+)`,
+	`CREATE TRIGGER IF NOT EXISTS dag_acceptance_verifications_acceptance_id_not_null BEFORE INSERT ON dag_acceptance_verifications
+WHEN NEW.acceptance_id IS NULL
+BEGIN SELECT RAISE(ABORT, 'dag_acceptance_verifications.acceptance_id is NULL: a row is addressed by a non-empty id'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_acceptance_verifications_no_update BEFORE UPDATE ON dag_acceptance_verifications
+BEGIN SELECT RAISE(ABORT, 'dag_acceptance_verifications rows are append-only: never updated'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_acceptance_verifications_no_delete BEFORE DELETE ON dag_acceptance_verifications
+BEGIN SELECT RAISE(ABORT, 'dag_acceptance_verifications rows are append-only: never deleted'); END`,
+	`CREATE TABLE IF NOT EXISTS dag_integration_batches (
+    batch_id          TEXT PRIMARY KEY CHECK (batch_id <> ''),
+    plan_id           TEXT NOT NULL REFERENCES dag_plans (plan_id),
+    repository        TEXT NOT NULL CHECK (repository <> ''),
+    integration_ref   TEXT NOT NULL CHECK (integration_ref <> ''),
+    base_ref          TEXT NOT NULL CHECK (base_ref <> ''),
+    old_head          TEXT NOT NULL,
+    new_head          TEXT NOT NULL CHECK (new_head <> ''),
+    merged_json       TEXT NOT NULL,
+    split_json        TEXT NOT NULL,
+    verification_json TEXT NOT NULL,
+    recorded_by       TEXT NOT NULL CHECK (recorded_by <> ''),
+    coordinator_epoch INTEGER NOT NULL CHECK (coordinator_epoch >= 0),
+    recorded_at       TEXT NOT NULL
+)`,
+	`CREATE TRIGGER IF NOT EXISTS dag_integration_batches_batch_id_not_null BEFORE INSERT ON dag_integration_batches
+WHEN NEW.batch_id IS NULL
+BEGIN SELECT RAISE(ABORT, 'dag_integration_batches.batch_id is NULL: a row is addressed by a non-empty id'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_integration_batches_no_update BEFORE UPDATE ON dag_integration_batches
+BEGIN SELECT RAISE(ABORT, 'dag_integration_batches rows are append-only: never updated'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_integration_batches_no_delete BEFORE DELETE ON dag_integration_batches
+BEGIN SELECT RAISE(ABORT, 'dag_integration_batches rows are append-only: never deleted'); END`,
+	`CREATE TABLE IF NOT EXISTS dag_integration_stages (
+    stage_id       TEXT PRIMARY KEY CHECK (stage_id <> ''),
+    batch_id       TEXT NOT NULL CHECK (batch_id <> ''),
+    plan_id        TEXT NOT NULL REFERENCES dag_plans (plan_id),
+    stage          TEXT NOT NULL CHECK (stage IN ('intent', 'ref_moved', 'marked', 'mark_pending')),
+    node_id        TEXT NOT NULL,
+    acceptance_id  TEXT NOT NULL,
+    event_id       TEXT NOT NULL,
+    revision_hash  TEXT NOT NULL,
+    generation     INTEGER NOT NULL CHECK (generation >= 0),
+    head_sha       TEXT NOT NULL,
+    detail         TEXT NOT NULL,
+    recorded_by    TEXT NOT NULL CHECK (recorded_by <> ''),
+    recorded_at    TEXT NOT NULL
+)`,
+	`CREATE TRIGGER IF NOT EXISTS dag_integration_stages_stage_id_not_null BEFORE INSERT ON dag_integration_stages
+WHEN NEW.stage_id IS NULL
+BEGIN SELECT RAISE(ABORT, 'dag_integration_stages.stage_id is NULL: a row is addressed by a non-empty id'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_integration_stages_no_update BEFORE UPDATE ON dag_integration_stages
+BEGIN SELECT RAISE(ABORT, 'dag_integration_stages rows are append-only: never updated'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_integration_stages_no_delete BEFORE DELETE ON dag_integration_stages
+BEGIN SELECT RAISE(ABORT, 'dag_integration_stages rows are append-only: never deleted'); END`,
 }

@@ -88,6 +88,17 @@ func (s *Service) Land(ctx context.Context, turn, actor, landed, stated, evidenc
 		} else if guard != nil {
 			refusal = guard
 		}
+		// CRW-906: a correction generation opened over the accepted result after the currency check (or
+		// before it) refuses the landing, on this transaction's snapshot: the merge already happened on
+		// the forge, but the relay records no landing of the head that is being repaired, and the turn
+		// stays merging for the holder to read again.
+		if refusal == nil {
+			if guard, e := underCorrectionRefusal(tx, s.Store.Querier(tx), r); e != nil {
+				return e
+			} else if guard != nil {
+				refusal = guard
+			}
+		}
 		if refusal == nil {
 			switch {
 			case r.HolderTaskID != actor:
