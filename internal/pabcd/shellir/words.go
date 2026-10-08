@@ -75,6 +75,13 @@ func (w *walker) substBody(list []*syntax.Stmt, st *state, ctx Context) error {
 
 // unknownWord names the first part of x whose value the reader cannot prove.
 func unknownWord(x *syntax.Word, st *state) string {
+	// bash brace-expands an unquoted word before it runs it, and mvdan keeps the braces as literal text: a word with an
+	// unescaped brace expansion names a different word at run time, so the reader cannot know it.
+	for _, p := range x.Parts {
+		if lit, ok := p.(*syntax.Lit); ok && hasBraceExpansion(lit.Value) {
+			return "brace expansion"
+		}
+	}
 	for i, p := range x.Parts {
 		if r := unknownPart(p, false, i == 0, st); r != "" {
 			return r
@@ -290,6 +297,36 @@ func unquotedExpansion(x *syntax.Word) bool {
 		switch p.(type) {
 		case *syntax.ParamExp, *syntax.CmdSubst, *syntax.ArithmExp:
 			return true
+		}
+	}
+	return false
+}
+
+// hasBraceExpansion reports an unescaped { that a comma or a .. sequence and a closing unescaped } enclose: the forms bash
+// expands ({a,b}, {1..3}, {,}, nested groups). A backslash escapes the next character, so \{a,b\} is no expansion, and a
+// lone {} is none.
+func hasBraceExpansion(raw string) bool {
+	for i := 0; i < len(raw); i++ {
+		if raw[i] == '\\' {
+			i++
+			continue
+		}
+		if raw[i] != '{' {
+			continue
+		}
+		sep := false
+		for j := i + 1; j < len(raw); j++ {
+			switch c := raw[j]; {
+			case c == '\\':
+				j++
+			case c == ',' || (c == '.' && j+1 < len(raw) && raw[j+1] == '.'):
+				sep = true
+			case c == '}':
+				if sep {
+					return true
+				}
+				j = len(raw)
+			}
 		}
 	}
 	return false

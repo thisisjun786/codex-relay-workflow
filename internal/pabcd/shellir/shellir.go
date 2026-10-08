@@ -917,7 +917,7 @@ func (w *walker) wrapped(name string, args []Word, assigns []Assign, redirs []Re
 	if err := checkAssigns(u.assigns, st); err != nil {
 		return err
 	}
-	if name == "xargs" || name == "find" {
+	if name == "xargs" || name == "find" || name == "parallel" {
 		// The operands of these programs arrive at run time, so the inner program is marked.
 		ctx.Carrier = name
 	}

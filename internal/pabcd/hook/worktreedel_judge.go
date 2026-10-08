@@ -184,7 +184,7 @@ func worktreeDelJudgeRm(e shellir.Exec, id WorktreeIdentity) GuardVerdict {
 	if !recursive {
 		return GuardVerdict{}
 	}
-	if unknown || e.Ctx.Carrier == "xargs" || e.Ctx.Carrier == "find" {
+	if unknown || shellIRRunTimeCarrier(e.Ctx.Carrier) {
 		return worktreeDelUnreadable(id)
 	}
 	for _, t := range targets {

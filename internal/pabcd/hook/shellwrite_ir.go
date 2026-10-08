@@ -207,6 +207,10 @@ func shellIRInPlaceFiles(args []shellir.Word) []string {
 // operand, skipping a --suffix value. dd writes its of=, sort writes -o, and sed -i writes its file operands.
 func shellIRVerbDests(e shellir.Exec) []string {
 	args := e.Args
+	if shellIRRunTimeCarrier(e.Ctx.Carrier) && shellIRWriterVerb(filepath.Base(e.Name)) {
+		// xargs, find -exec and parallel build the operands of this program at run time, so its destination is not in the text.
+		return []string{shellIRUnknownDest}
+	}
 	switch filepath.Base(e.Name) {
 	case "tee":
 		return shellIRTeeDests(args)
@@ -290,7 +294,7 @@ func shellIRLanguageDests(e shellir.Exec) []string {
 // shellIRDynamicWrite is whether a Node or Python program calls a writer with a first argument that is no string literal,
 // or binds open to a name (f = open) so that its calls are not visible as open(...).
 func shellIRDynamicWrite(src string, python bool) bool {
-	if shellIRNodeDynamicWrite.MatchString(src) {
+	if shellIRNodeDynamicWrite.MatchString(src) || shellIRStructuralWriteUnknown(src) {
 		return true
 	}
 	return python && shellIRPyOpenAlias.MatchString(src)
@@ -441,4 +445,19 @@ func ShellWriteDestinations(command string) []string {
 		return []string{}
 	}
 	return dests
+}
+
+// shellIRRunTimeCarrier names the carriers whose operands are made at run time: the program they run gets its operands
+// from the input or from the file list, not from the text (xargs, find -exec and -execdir and -ok, parallel).
+func shellIRRunTimeCarrier(carrier string) bool {
+	return carrier == "xargs" || carrier == "find" || carrier == "parallel"
+}
+
+// shellIRWriterVerb names the programs whose destination shellIRVerbDests reads.
+func shellIRWriterVerb(name string) bool {
+	switch name {
+	case "tee", "cp", "mv", "install", "dd", "sed", "sort":
+		return true
+	}
+	return false
 }

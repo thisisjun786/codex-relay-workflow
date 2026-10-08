@@ -14,6 +14,8 @@ type worktreeDelChange struct {
 func worktreeDelChangeRows() []worktreeDelChange {
 	return []worktreeDelChange{
 		{"-x rm -rf ../repo", false},
+		{"rm -rf .{cache,local}", true},
+		{"rm -rf .\\\n{\\\ncache,local}", true},
 		{"xargs rm -rf ../other", true},
 		{"echo `echo safe; rm -rf '../repo\\\n'; echo done`", false},
 		{"echo `x`; rm -rf '.\\\n'", false},
