@@ -127,10 +127,12 @@ func unwrapRunner(name string, args []Word) (u unwrapped, handled bool, err erro
 			return u, true, unreadablef("script without -c starts an interactive shell")
 		}
 		var files []string
+		logged := false // -I, -O or -B name an output log, which takes the place of the default transcript
 		for _, o := range got {
 			if strings.IndexByte("tTBIO", o.c) >= 0 {
 				files = append(files, o.v)
 			}
+			logged = logged || strings.IndexByte("BIO", o.c) >= 0
 		}
 		if rest := args[idx:]; len(rest) > 0 {
 			f, err := knownValue(rest[0], "script file")
@@ -138,8 +140,9 @@ func unwrapRunner(name string, args []Word) (u unwrapped, handled bool, err erro
 				return u, true, err
 			}
 			files = append(files, f)
-		} else {
-			// Without a file operand script writes its transcript to typescript in the current directory.
+		} else if !logged {
+			// Without a file operand and without -I, -O or -B script writes its transcript to typescript in the current
+			// directory (util-linux 2.41.3 on the host: -T alone and -a still write typescript; -O, -I or -B alone do not).
 			files = append(files, "typescript")
 		}
 		u.shell, u.shellCarrier, u.isShell = text, "script -c", true

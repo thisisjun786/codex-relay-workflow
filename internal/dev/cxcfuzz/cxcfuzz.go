@@ -56,18 +56,24 @@ type Config struct {
 
 // Summary is <out>/summary.json: what one campaign did.
 type Summary struct {
-	Target    string  `json:"target"`
-	Seed      int64   `json:"seed"`
-	DevSHA    string  `json:"devSha"`
-	Seconds   float64 `json:"seconds"`
-	Cases     int     `json:"cases"`
-	Same      int     `json:"same"`
-	Miss      int     `json:"miss"`
-	Extra     int     `json:"extra"`
-	Differ    int     `json:"differ"`
-	Timeouts  int     `json:"timeouts"`
-	Refused   int     `json:"refused"`
-	PerSecond float64 `json:"casesPerSecond"`
+	Target   string  `json:"target"`
+	Seed     int64   `json:"seed"`
+	DevSHA   string  `json:"devSha"`
+	Seconds  float64 `json:"seconds"`
+	Cases    int     `json:"cases"`
+	Same     int     `json:"same"`
+	Miss     int     `json:"miss"`
+	Extra    int     `json:"extra"`
+	Differ   int     `json:"differ"`
+	Timeouts int     `json:"timeouts"`
+	// Refused counts the cases whose fs scenario the harness declined to build; it says nothing about the gates. The three
+	// fields below count the cases whose command the shared reader could not read, the ones the Go side refused and the ones it
+	// did not; the run fails when the last is not zero.
+	Refused              int     `json:"refused"`
+	UnreadableCases      int     `json:"unreadableCases"`
+	UnreadableRefused    int     `json:"unreadableRefused"`
+	UnreadableNotRefused int     `json:"unreadableNotRefused"`
+	PerSecond            float64 `json:"casesPerSecond"`
 }
 
 // Divergence is one shrunk difference, written to <out>/divergences/<kind>-<sha12>.json.
@@ -166,14 +172,20 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "crw-dev fuzz: %v\n", err)
 		return 1
 	}
-	fmt.Fprintf(stdout, "crw-dev fuzz: %s seed %d %d cases in %.1fs: same %d differ %d miss %d extra %d timeout %d refused %d\n",
-		summary.Target, summary.Seed, summary.Cases, summary.Seconds, summary.Same, summary.Differ, summary.Miss, summary.Extra, summary.Timeouts, summary.Refused)
-	// A case that timed out, or whose fs scenario was refused, compared nothing, so it is not an
-	// agreement either: a campaign that compared nothing does not report success.
-	if summary.Differ+summary.Miss+summary.Extra+summary.Timeouts+summary.Refused > 0 {
+	fmt.Fprintf(stdout, "crw-dev fuzz: %s seed %d %d cases in %.1fs: same %d differ %d miss %d extra %d timeout %d refused %d; unreadable %d refused %d not refused %d\n",
+		summary.Target, summary.Seed, summary.Cases, summary.Seconds, summary.Same, summary.Differ, summary.Miss, summary.Extra, summary.Timeouts, summary.Refused,
+		summary.UnreadableCases, summary.UnreadableRefused, summary.UnreadableNotRefused)
+	if campaignFailed(summary) {
 		return 1
 	}
 	return 0
+}
+
+// campaignFailed is whether a campaign's summary is a failure. A case that timed out, or whose fs scenario was refused, compared
+// nothing, so it is not an agreement either: a campaign that compared nothing does not report success. A case whose command the
+// reader could not read and the Go side did not refuse is a failure of its own, whatever the oracle answered.
+func campaignFailed(summary Summary) bool {
+	return summary.Differ+summary.Miss+summary.Extra+summary.Timeouts+summary.Refused+summary.UnreadableNotRefused > 0
 }
 
 // Campaign runs one target: it generates inputs, evaluates each on both sides, shrinks every
@@ -209,7 +221,9 @@ func Campaign(cfg Config) (Summary, error) {
 			break
 		}
 		summary.Cases++
+		run.reading = readingResult{}
 		verdict, goOut, oracleOut, input, err := run.one()
+		reading := run.reading
 		switch classifyCaseError(err) {
 		case caseRemovalFailed:
 			// A root that survived its removal is reported, never counted: the caller must see which root
@@ -221,6 +235,14 @@ func Campaign(cfg Config) (Summary, error) {
 		case caseRefused:
 			summary.Refused++
 			continue
+		}
+		if reading.unreadable {
+			summary.UnreadableCases++
+			if reading.refused {
+				summary.UnreadableRefused++
+			} else {
+				summary.UnreadableNotRefused++
+			}
 		}
 		switch verdict.Kind {
 		case Same:
@@ -325,7 +347,12 @@ type campaign struct {
 	cfg  Config
 	pool *Pool
 	rng  *rand.Rand
+	// reading is what the target's Reading said about the last case evaluate ran (the zero value when the target has none).
+	reading readingResult
 }
+
+// readingResult is one case's reading: whether the shared reader could not read it, and whether the Go answer refused it.
+type readingResult struct{ unreadable, refused bool }
 
 // one generates one input and evaluates it on both sides, each in its own fresh root. The roots
 // are removed before it returns, and each side's own root is replaced by ${ROOT} in the answers.
@@ -369,6 +396,9 @@ func (c *campaign) evaluate(input any) (verdict Verdict, goText, oracleText stri
 	goOut := any(goValue)
 	if goErr != nil {
 		goOut = errorValue(goErr)
+	}
+	if c.cfg.Target.Reading != nil {
+		c.reading.unreadable, c.reading.refused = c.cfg.Target.Reading(value, RootEnv(goRoot), goOut)
 	}
 	oracleAnswer, err := c.pool.Call(text, oracleRoot)
 	if err != nil {

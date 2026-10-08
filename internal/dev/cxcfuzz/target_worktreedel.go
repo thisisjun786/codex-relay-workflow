@@ -32,6 +32,7 @@ func worktreeDelTarget() Target {
 		Go:       worktreeDelGo,
 		Oracle:   Oracle{Command: "node", Shim: shimPath("worktreedel"), Root: DefaultOracleRoot},
 		Compare:  worktreeDelCompare,
+		Reading:  worktreeDelReading,
 	}
 }
 
@@ -420,4 +421,30 @@ func worktreeDelDecision(value any) (string, string) {
 	text, _ := decision.(string)
 	detail, _ := reason.(string)
 	return text, detail
+}
+
+// worktreeDelReading is the c2g measure for this target: the input is unreadable when the guard judges it (a PreToolUse call of Bash
+// with a cwd and a command in a managed checkout) and the shared reader cannot read the command, and the Go side refused it when the
+// guard answered deny.
+func worktreeDelReading(input any, env Env, goOut any) (unreadable, refused bool) {
+	object, ok := input.(pyjson.Object)
+	if !ok {
+		return false, false
+	}
+	if worktreeDelText(object, "event") != "PreToolUse" {
+		return false, false
+	}
+	if tool := worktreeDelText(object, "tool"); tool != "" && tool != "Bash" {
+		return false, false
+	}
+	cwd, command := worktreeDelCwd(object, env), worktreeDelText(object, "command")
+	if cwd == "" || command == "" {
+		return false, false
+	}
+	lookup := worktreeDelEnv(object, env)
+	if !hook.WorktreeCwdManaged(cwd, lookup) || hook.ShellCommandReadable(command, cwd, lookup) {
+		return false, false
+	}
+	decision, _ := worktreeDelDecision(goOut)
+	return true, decision == "deny"
 }

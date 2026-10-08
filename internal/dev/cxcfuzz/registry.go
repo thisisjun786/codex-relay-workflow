@@ -54,6 +54,10 @@ type Target struct {
 	Go       func(input any, env Env) (any, error)
 	Oracle   Oracle
 	Compare  func(goOut, oracleOut any) Verdict
+	// Reading is optional. It says whether an input is a shell command the shared command reader cannot read, and whether the Go
+	// answer for it is a refusal. The campaign counts both and fails the run when an unreadable case was not refused (criterion
+	// c2g). Only the three command-gate targets set it.
+	Reading func(input any, env Env, goOut any) (unreadable, refused bool)
 }
 
 // registry is the target table: one entry line per target. It is built on each call rather than

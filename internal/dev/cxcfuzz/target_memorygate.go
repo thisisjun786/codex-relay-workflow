@@ -26,6 +26,7 @@ func memorygateTarget() Target {
 		Go:       memoryGateGo,
 		Oracle:   Oracle{Command: "node", Shim: shimPath("memorygate"), Root: DefaultOracleRoot},
 		Compare:  memoryGateCompare,
+		Reading:  memoryGateReading,
 	}
 }
 
@@ -280,4 +281,38 @@ func memoryGatePayload(rng *rand.Rand, dests []string, size int) pyjson.Object {
 		}
 	}
 	return payload
+}
+
+// memoryGateReading is the c2g measure for this target: the input is unreadable when the payload is a PreToolUse call of a shell
+// tool whose command the shared reader cannot read, and the Go side refused it when the gate answered deny.
+func memoryGateReading(input any, env Env, goOut any) (unreadable, refused bool) {
+	payload, found := field(input, "payload")
+	if !found {
+		return false, false
+	}
+	payload = substituteRootValue(payload, env.Root)
+	if event, _ := field(payload, "hook_event_name"); event != "PreToolUse" {
+		return false, false
+	}
+	tool, _ := field(payload, "tool_name")
+	switch tool {
+	case "Bash", "shell", "exec_command", "local_shell":
+	default:
+		return false, false
+	}
+	toolInput, _ := field(payload, "tool_input")
+	value, _ := field(toolInput, "command")
+	command, isText := value.(string)
+	if !isText {
+		return false, false
+	}
+	cwd := ""
+	if value, found := field(payload, "cwd"); found {
+		cwd, _ = value.(string)
+	}
+	if hook.ShellCommandReadable(command, cwd, memoryGateEnvOf(env)) {
+		return false, false
+	}
+	decision, _ := memoryGateAnswer(goOut)
+	return true, decision == "deny"
 }
