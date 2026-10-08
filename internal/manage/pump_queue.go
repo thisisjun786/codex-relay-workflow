@@ -566,12 +566,13 @@ func pumpReview776QueueReconcileReceipt(ctx context.Context, e *Env, cfg *Config
 	defer bridge.close()
 	switch deliverReconcile(ctx, bridge, record) {
 	case deliverReconcileAccepted:
+		at := deliverNow(e)
 		if err := ctx.Err(); err != nil {
 			return true, err
 		}
 		if !pin.Legacy && len(pin.SHA256) > 0 {
 			record.State, record.Received, record.Applied = deliverStateAccepted, true, false
-			record.Attempts = append(record.Attempts, deliverAttempt{At: deliverNow(e), Class: deliverClassAccepted, ReceiptExcerpt: "get_operation: the pinned attempt was dispatched"})
+			record.Attempts = append(record.Attempts, deliverAttempt{At: at, Class: deliverClassAccepted, ReceiptExcerpt: "get_operation: the pinned attempt was dispatched"})
 			if err := deliverSave(cfg, record); err != nil {
 				return true, err
 			}
@@ -580,8 +581,13 @@ func pumpReview776QueueReconcileReceipt(ctx context.Context, e *Env, cfg *Config
 	case deliverReconcileRefused:
 		// The bridge settled the attempt as a refusal before any dispatch, so nothing was sent. The
 		// refusal is recorded the way Deliver records one, and counted against the batch.
+		at := deliverNow(e)
+		if err := ctx.Err(); err != nil {
+			// The outbox record, the count and the pin clear are durable effects: a cancelled round makes none.
+			return true, err
+		}
 		record.State = deliverStateRefused
-		record.Attempts = append(record.Attempts, deliverAttempt{At: deliverNow(e), Class: deliverClassRefused, ReceiptExcerpt: "get_operation: refused before the dispatch"})
+		record.Attempts = append(record.Attempts, deliverAttempt{At: at, Class: deliverClassRefused, ReceiptExcerpt: "get_operation: refused before the dispatch"})
 		if err := deliverSave(cfg, record); err != nil {
 			return true, err
 		}
@@ -1301,7 +1307,10 @@ func pumpReview776QueueGateNames(dir string, pinned []string) ([]string, error) 
 // others were not, the unchanged ones are the members the attempt carried and the replaced ones are
 // notices it never carried, so only the unchanged members are adopted (see
 // pumpReview776QueueAdoptPartial): a record that is stale for one member never becomes a reason to send
-// another member again under a new id.
+// another member again under a new id. Records can overlap, so the unsettled ones of this kind are
+// adopted last: every other candidate is read first, and an accepted record for any of the sets, whole
+// or partial, is acted on before them, because a receipt that says an unsettled attempt never went must
+// not leave an accepted one unread.
 //
 // A settled accepted record is completed only while its own text is still the text on disk, because
 // that is the only case where every member is known to have been delivered.
@@ -1310,6 +1319,11 @@ func pumpReview776QueueAdoptLegacy(ctx context.Context, cfg *Config, st *pumpSta
 	if err != nil {
 		return pumpReview776QueueLegacyNone, err
 	}
+	// An unsettled record that covers only some of its members is the weakest evidence: the bridge may
+	// say it never went, and the pin is then lifted and the batch takes a new id. It is therefore held
+	// back until every candidate has been read, so a settled record for a shorter or other set of the same
+	// members is never hidden behind it.
+	var weak *pumpReview776QueueWeakAdoption
 	for _, candidate := range candidates {
 		names, texts := candidate.names, candidate.texts
 		oldID := pumpQueueLegacyBatchID(thread, names)
@@ -1335,6 +1349,12 @@ func pumpReview776QueueAdoptLegacy(ctx context.Context, cfg *Config, st *pumpSta
 			// digest of the text they still hold; the attempt's own text is not recoverable, so a replay is
 			// never an option, and a member that cannot be shown to have been carried is never sent under a
 			// new id on the attempt's behalf.
+			if record.State != deliverStateAccepted {
+				if record.State != deliverStateRefused && weak == nil {
+					weak = &pumpReview776QueueWeakAdoption{oldID: oldID, record: record, candidate: candidate, carried: carried}
+				}
+				continue
+			}
 			if action, adopted, err := pumpReview776QueueAdoptPartial(ctx, cfg, st, thread, oldID, record, candidate, carried); adopted || err != nil {
 				return action, err
 			}
@@ -1391,6 +1411,11 @@ func pumpReview776QueueAdoptLegacy(ctx context.Context, cfg *Config, st *pumpSta
 			return pumpReview776QueueLegacyReconcile, st.pumpSave(cfg)
 		}
 	}
+	if weak != nil {
+		if action, adopted, err := pumpReview776QueueAdoptPartial(ctx, cfg, st, thread, weak.oldID, weak.record, weak.candidate, weak.carried); adopted || err != nil {
+			return action, err
+		}
+	}
 	// No prefix of today's queue is the pre-change id of an attempt. The pre-change id hashed the
 	// sorted names of the whole queue at the time, and a notice the producer added later carries a
 	// name it chose, so the old set need not be a prefix of today's. Nothing is adopted then: the
@@ -1399,6 +1424,15 @@ func pumpReview776QueueAdoptLegacy(ctx context.Context, cfg *Config, st *pumpSta
 	// unsettled attempt whose names cannot be recovered is the upgrade path the issue leaves to the
 	// batch's own id, not one this code can answer for.
 	return pumpReview776QueueLegacyNone, nil
+}
+
+// pumpReview776QueueWeakAdoption is an unsettled pre-change record over a set of which only some members
+// were unchanged since the record, kept aside while the other candidates are read.
+type pumpReview776QueueWeakAdoption struct {
+	oldID     string
+	record    deliverRecord
+	candidate pumpReview776QueueLegacyCandidate
+	carried   []int
 }
 
 // pumpReview776QueueAdoptPartial adopts a pre-change record for the members of its set that were not

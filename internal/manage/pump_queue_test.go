@@ -1001,3 +1001,81 @@ func TestPumpQueueRefusedPublishedMoveIsNotPutBack(t *testing.T) {
 		t.Errorf("the notice behind the refused batch did not flow: %v (sends %v)", err, pumpQueueTestSendIDs(t, log))
 	}
 }
+
+// Two pre-change records can overlap: an accepted one over the first two names and a later unsettled
+// one over all three, where the third member was written again after it. The unsettled record only
+// covers the two unchanged members, and the bridge may say it never went; the accepted record is the
+// evidence that those two were delivered. Neither the unsettled record's receipt nor its pin may hide
+// the accepted one, or the delivered members go out again under a new id.
+func TestPumpQueueOverlappingLegacyRecordsKeepAcceptedEvidence(t *testing.T) {
+	now := pumpTestNow
+	e := pumpTestEnv(t, &now)
+	bridge, log := deliverFakeBridge(t, []map[string]any{
+		{"payload": map[string]any{"status": "not_attempted", "observation": "active", "activeTurnId": "turn-1"}},
+		{"payload": map[string]any{"status": "accepted", "delivery": "accepted_not_applied"}},
+	})
+	cfg := pumpTestConfig(t, bridge)
+	a, b, c := "aaaaaaaaaaaaaaaa.txt", "bbbbbbbbbbbbbbbb.txt", "cccccccccccccccc.txt"
+	stamp := now.Add(-time.Hour)
+	pumpQueueTestSetTime(t, pumpQueueTestNotice(t, cfg, "parent-1", a, "A-already-delivered"), stamp.Add(-time.Minute))
+	pumpQueueTestSetTime(t, pumpQueueTestNotice(t, cfg, "parent-1", b, "B-already-delivered"), stamp.Add(-time.Minute))
+	pumpQueueTestSetTime(t, pumpQueueTestNotice(t, cfg, "parent-1", c, "C-new"), stamp.Add(time.Minute))
+	pumpQueueTestLegacyRecord(t, cfg, "parent-1", []string{a, b}, []string{"A-already-delivered", "B-already-delivered"}, stamp, deliverStateAccepted)
+	pumpQueueTestLegacyRecord(t, cfg, "parent-1", []string{a, b, c}, []string{"A-already-delivered", "B-already-delivered", "C-old"}, stamp.Add(10*time.Second), deliverStateUnknown)
+	for round := 0; round < 3; round++ {
+		if err := pumpQueueFlush(context.Background(), e, cfg, pumpTestReadStatePtr(t, cfg), pumpSettingsFrom(cfg), false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, message := range pumpQueueTestSentMessages(t, log) {
+		if strings.Contains(message, "already-delivered") {
+			t.Errorf("a member the accepted record carried was delivered again: %q", message)
+		}
+	}
+	dir := filepath.Join(cfg.StateDir, pumpQueueDir, "parent-1")
+	for _, name := range []string{a, b} {
+		if _, err := os.Stat(filepath.Join(dir, pumpSentDir, name)); err != nil {
+			t.Errorf("the notice %s the accepted record carried did not reach sent/: %v", name, err)
+		}
+	}
+}
+
+// A receipt that settles a pinned attempt as refused is stored only while the round is live: a round
+// cancelled after the bridge answered writes neither the outbox record nor the attempt count.
+func TestPumpQueueReceiptRefusalAfterCancelWritesNothing(t *testing.T) {
+	now := pumpTestNow
+	e := pumpTestEnv(t, &now)
+	bridge, _ := deliverFakeBridge(t, []map[string]any{{"payload": map[string]any{"status": "refused"}}})
+	cfg := pumpTestConfig(t, bridge)
+	pumpQueueTestNotice(t, cfg, "parent-1", "aaaaaaaaaaaaaaaa.txt", "A")
+	pumpQueueTestPin(t, cfg, "parent-1", "pinid", []string{"aaaaaaaaaaaaaaaa.txt"}, []string{"A"})
+	record := deliverRecord{LogicalID: "pinid", RequestID: "pinid", State: deliverStateUnknown, CreatedAt: pumpQueueTestStamp(now.Add(-time.Hour))}
+	if err := deliverSave(cfg, record); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	// The round is cancelled after the receipt was read and before the queue stores its answer.
+	e.Now = func() time.Time { cancel(); return now }
+	st := pumpTestReadStatePtr(t, cfg)
+	before := pumpQueueTreeSnapshot(t, cfg.StateDir)
+	dir := filepath.Join(cfg.StateDir, pumpQueueDir, "parent-1")
+	_, _ = pumpReview776QueueReconcileReceipt(ctx, e, cfg, st, dir, "parent-1", st.QueueAttempt["parent-1"], record)
+	if ctx.Err() == nil {
+		t.Fatal("the cancellation hook was not reached")
+	}
+	after := pumpQueueTreeSnapshot(t, cfg.StateDir)
+	for path, content := range after {
+		if before[path] != content {
+			t.Errorf("the cancelled round changed %s", path)
+		}
+	}
+	for path := range before {
+		if _, ok := after[path]; !ok {
+			t.Errorf("the cancelled round removed %s", path)
+		}
+	}
+	if _, ok := pumpReview776QueueAttempt(t, cfg, "parent-1"); !ok {
+		t.Errorf("the cancelled round lifted the pin")
+	}
+}
