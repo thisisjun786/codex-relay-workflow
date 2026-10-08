@@ -197,18 +197,18 @@ func TestRestartOfTheSameTaskAfterTheResultAndTheRuling(t *testing.T) {
 			t.Fatalf("restart says %+v", node)
 		}
 		before := allRows(t, k.s.DB)
-		if _, err := second.Accept(ctx, "rp", "A", "parent", AcceptInput{RuleVersion: verifier}); refusalReason(err) != "disposition_conflict" {
+		if _, err := second.Accept(ctx, "rp", "A", "parent", premergeWithRecord(second, ctx, "rp", "A", "parent", AcceptInput{RuleVersion: verifier})); refusalReason(err) != "disposition_conflict" {
 			t.Fatalf("accepting before the ruling = %v", err)
 		}
 		if !equalRows(before, allRows(t, k.s.DB)) {
 			t.Fatal("a refused acceptance changed the store")
 		}
 		restore()
-		res, err := second.Accept(ctx, "rp", "A", "parent", AcceptInput{RuleVersion: verifier})
+		res, err := second.Accept(ctx, "rp", "A", "parent", premergeWithRecord(second, ctx, "rp", "A", "parent", AcceptInput{RuleVersion: verifier}))
 		if err != nil || res.Replayed || res.AcceptanceID == "" {
 			t.Fatalf("accept after the ruling = %+v, %v", res, err)
 		}
-		if _, err := first.Accept(ctx, "rp", "A", "parent", AcceptInput{RuleVersion: verifier}); !isStale(err) {
+		if _, err := first.Accept(ctx, "rp", "A", "parent", premergeWithRecord(first, ctx, "rp", "A", "parent", AcceptInput{RuleVersion: verifier})); !isStale(err) {
 			t.Fatalf("the crashed session's acceptance = %v", err)
 		}
 		if created, _ := k.host.counts(); created != 1 || k.count("SELECT COUNT(*) FROM dag_acceptances") != 1 {
@@ -222,7 +222,7 @@ func TestRestartOfTheSameTaskAfterTheResultAndTheRuling(t *testing.T) {
 		if node, found := k.resumeOf(second, "rp", "parent", "A"); !found || node.Resume != ResumeAdopt {
 			t.Fatalf("restart says %+v", node)
 		}
-		res, err := second.Accept(ctx, "rp", "A", "parent", AcceptInput{RuleVersion: verifier})
+		res, err := second.Accept(ctx, "rp", "A", "parent", premergeWithRecord(second, ctx, "rp", "A", "parent", AcceptInput{RuleVersion: verifier}))
 		if err != nil || res.Replayed {
 			t.Fatalf("accept = %+v, %v", res, err)
 		}
@@ -230,14 +230,14 @@ func TestRestartOfTheSameTaskAfterTheResultAndTheRuling(t *testing.T) {
 		if err := k.s.DB.QueryRow("SELECT coordinator_epoch FROM dag_acceptances").Scan(&epoch); err != nil || epoch != 2 {
 			t.Fatalf("the acceptance carries epoch %d (%v), want 2", epoch, err)
 		}
-		if _, err := first.Accept(ctx, "rp", "A", "parent", AcceptInput{RuleVersion: verifier}); !isStale(err) {
+		if _, err := first.Accept(ctx, "rp", "A", "parent", premergeWithRecord(first, ctx, "rp", "A", "parent", AcceptInput{RuleVersion: verifier})); !isStale(err) {
 			t.Fatalf("the crashed session's acceptance = %v", err)
 		}
 	})
 
 	t.Run("accepted and the reply lost", func(t *testing.T) {
 		k, first, _ := setup(t)
-		if _, err := first.Accept(ctx, "rp", "A", "parent", AcceptInput{RuleVersion: verifier}); err != nil {
+		if _, err := first.Accept(ctx, "rp", "A", "parent", premergeWithRecord(first, ctx, "rp", "A", "parent", AcceptInput{RuleVersion: verifier})); err != nil {
 			t.Fatal(err)
 		}
 		second := k.session("rp", "parent", "session-2")
@@ -245,7 +245,7 @@ func TestRestartOfTheSameTaskAfterTheResultAndTheRuling(t *testing.T) {
 		if node, found := k.resumeOf(second, "rp", "parent", "A"); !found || node.Resume != ResumeNone || node.State != StateAccepted {
 			t.Fatalf("restart says %+v (found %v)", node, found)
 		}
-		res, err := second.Accept(ctx, "rp", "A", "parent", AcceptInput{RuleVersion: verifier})
+		res, err := second.Accept(ctx, "rp", "A", "parent", premergeWithRecord(second, ctx, "rp", "A", "parent", AcceptInput{RuleVersion: verifier}))
 		if err != nil || !res.Replayed {
 			t.Fatalf("a repeated acceptance = %+v, %v", res, err)
 		}
@@ -398,7 +398,7 @@ func TestAReplacementParentAdoptsTheLiveChild(t *testing.T) {
 	if !equalRows(before, allRows(t, k.s.DB)) {
 		t.Fatal("a refused write changed the store")
 	}
-	if _, err := r.s2.Accept(ctx, "rp", "A", "parent-2", AcceptInput{RuleVersion: verifier}); refusalReason(err) != "relationship_not_active" {
+	if _, err := r.s2.Accept(ctx, "rp", "A", "parent-2", premergeWithRecord(r.s2, ctx, "rp", "A", "parent-2", AcceptInput{RuleVersion: verifier})); refusalReason(err) != "relationship_not_active" {
 		t.Fatalf("accepting before the adoption = %v", err)
 	}
 
@@ -431,7 +431,7 @@ func TestAReplacementParentAdoptsTheLiveChild(t *testing.T) {
 	k.exec("INSERT INTO canonical_criteria (relationship_id, criterion_id, title, required, set_digest, recorded_at) VALUES (?, 'c1', 'criterion', 1, ?, ?)", r.r2, releaseCriteriaDigest(), k.clock())
 	k.exec("INSERT INTO verification_mode (relationship_id, mode, recorded_at) VALUES (?, 'managed', ?)", r.r2, k.clock())
 	k.seedReport(r.r2, "A", "rp")
-	acc, err := r.s2.Accept(ctx, "rp", "A", "parent-2", AcceptInput{RuleVersion: verifier})
+	acc, err := r.s2.Accept(ctx, "rp", "A", "parent-2", premergeWithRecord(r.s2, ctx, "rp", "A", "parent-2", AcceptInput{RuleVersion: verifier}))
 	if err != nil || !acc.SlotReleased || acc.RelationshipID != r.r2 {
 		t.Fatalf("accept after the adoption = %+v, %v", acc, err)
 	}
@@ -442,7 +442,7 @@ func TestAReplacementParentAdoptsTheLiveChild(t *testing.T) {
 	if k.count("SELECT COUNT(*) FROM execution_slots WHERE subject_key = 'rp/A'") != 1 {
 		t.Fatal("a second slot was reserved")
 	}
-	if _, err := r.s1.Accept(ctx, "rp", "A", "parent", AcceptInput{RuleVersion: verifier}); !isStale(err) {
+	if _, err := r.s1.Accept(ctx, "rp", "A", "parent", premergeWithRecord(r.s1, ctx, "rp", "A", "parent", AcceptInput{RuleVersion: verifier})); !isStale(err) {
 		t.Fatalf("the old parent's acceptance = %v", err)
 	}
 }
@@ -460,7 +460,7 @@ func TestAdoptionSurvivesACeilingLoweredBelowUse(t *testing.T) {
 	k.exec("INSERT INTO canonical_criteria (relationship_id, criterion_id, title, required, set_digest, recorded_at) VALUES (?, 'c1', 'criterion', 1, ?, ?)", r.r2, releaseCriteriaDigest(), k.clock())
 	k.exec("INSERT INTO verification_mode (relationship_id, mode, recorded_at) VALUES (?, 'managed', ?)", r.r2, k.clock())
 	k.seedReport(r.r2, "A", "rp")
-	if acc, err := r.s2.Accept(ctx, "rp", "A", "parent-2", AcceptInput{RuleVersion: verifier}); err != nil || !acc.SlotReleased {
+	if acc, err := r.s2.Accept(ctx, "rp", "A", "parent-2", premergeWithRecord(r.s2, ctx, "rp", "A", "parent-2", AcceptInput{RuleVersion: verifier})); err != nil || !acc.SlotReleased {
 		t.Fatalf("accept under a ceiling below use = %+v, %v", acc, err)
 	}
 	var tenure int64

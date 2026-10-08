@@ -211,7 +211,7 @@ func TestForgedCompletedOpensNothing(t *testing.T) {
 		t.Fatalf("release = %v %+v", err, res)
 	}
 	accept := func() error {
-		_, err := k.sched.Accept(context.Background(), "rp", "A", "parent", AcceptInput{RuleVersion: verifier})
+		_, err := k.sched.Accept(context.Background(), "rp", "A", "parent", premergeWithRecord(k.sched, context.Background(), "rp", "A", "parent", AcceptInput{RuleVersion: verifier}))
 		return err
 	}
 	// the host says the business turn is completed (the scripted turns/list answers completed for every turn): no report exists
