@@ -45,7 +45,7 @@ func (r TargetReader) gitMovement(ctx context.Context, repository, base, from, t
 	if err != nil || !info.IsDir() {
 		return Movement{}, unreadable("repository %s is not a directory here", pyvalue.StrRepr(repository))
 	}
-	gitdir := gitDirOfCheckout(ctx, repository)
+	gitdir := filepath.Join(repository, ".git")
 	if _, err := os.Stat(gitdir); os.IsNotExist(err) {
 		gitdir = repository
 	}

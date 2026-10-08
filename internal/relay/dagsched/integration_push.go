@@ -111,7 +111,7 @@ func unreachableGitMessage(message string) bool {
 	lower := strings.ToLower(message)
 	for _, needle := range []string{"could not resolve host", "connection refused", "connection timed out", "network is unreachable",
 		"could not read from remote repository", "no route to host", "operation timed out", "temporary failure in name resolution",
-		"could not connect to server", "failed to connect to"} {
+		"could not connect to server", "failed to connect to", "returned error: 5"} {
 		if strings.Contains(lower, needle) {
 			return true
 		}

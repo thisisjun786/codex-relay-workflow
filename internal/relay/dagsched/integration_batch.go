@@ -235,6 +235,7 @@ func (s *Scheduler) readyIntegrationCandidates(ctx context.Context, in Integrati
 	if err != nil {
 		return nil, err
 	}
+	all = candidatesInCheckout(all, in.Checkout)
 	pick := all
 	if len(in.Nodes) > 0 {
 		byNode := map[string]Candidate{}
@@ -789,9 +790,26 @@ type IntegrationBatchContained struct {
 }
 
 // markContained writes the merged marks of the candidates the branch already contained, from their frozen rows (CRW-965).
+// markContained writes the merged marks of the candidates the branch already contained, from their frozen rows (CRW-965).
+// A mark this batch already recorded (a retried run) is reported from its stage row and is not inserted again.
 func (s *Scheduler) markContained(ctx context.Context, in IntegrationBatchInput, batch string, candidates []Candidate, tip string, out *IntegrationBatchResult) error {
+	rows, err := store.IntegrationStagesOfPlan(ctx, s.Store, in.Plan)
+	if err != nil {
+		return err
+	}
+	prior := map[string]string{}
+	for _, r := range rows {
+		if r.BatchID == batch && r.Stage == "marked" {
+			prior[r.NodeID] = r.Detail
+		}
+	}
 	for _, c := range candidates {
 		row := IntegrationBatchContained{NodeID: c.NodeID, AcceptanceID: c.AcceptanceID, HeadSHA: c.HeadSHA, ContainedIn: tip}
+		if event, done := prior[c.NodeID]; done {
+			row.MarkedEvent = event
+			out.AlreadyContained = append(out.AlreadyContained, row)
+			continue
+		}
 		event, err := s.MarkFrozen(ctx, c, in.Actor, tip)
 		if err != nil {
 			row.Reason = err.Error()
@@ -843,6 +861,18 @@ func withoutCandidateNode(set []Candidate, node string) []Candidate {
 	var out []Candidate
 	for _, c := range set {
 		if c.NodeID != node {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// candidatesInCheckout is the candidates accepted for the checkout a batch integrates into: a candidate accepted in
+// another repository is judged there, never merged here (CRW-965 review).
+func candidatesInCheckout(set []Candidate, checkout string) []Candidate {
+	var out []Candidate
+	for _, c := range set {
+		if c.Repository == checkout {
 			out = append(out, c)
 		}
 	}
