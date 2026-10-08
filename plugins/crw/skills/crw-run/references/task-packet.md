@@ -958,10 +958,10 @@ SCOPE
 VERIFY
 - `go test -count=1 -v ./internal/testsupport/storeseed/ ./internal/relay/adapter/` (the seed's only caller), `make lint`, `go vet ./...`,
   `GOOS=darwin go vet ./...`, `git diff --check`. Each was confirmed to exist at the baseline. Tests use temporary synthetic data only.
-- The local full verification of the same tree stands in for `make test`; you run the packages you changed, with `-count=1`, not the whole suite.
+- Hosted CI on the same head stands in for `make test`; you run the packages you changed, with `-count=1`, not the whole suite.
 
 STOP WHEN
-- Done: the pull request is open, the repository's named verification passes on its head, the
+- Done: the pull request is open with its body, every required check is green on its head (`dev-gate`, which needs every job), the
   one-time reviews are finished or skipped, every thread is answered and the receipt is emitted. Then publish ready_for_review and end the turn.
 - Blocked: the size passes about 1,035 lines, an input mismatch, or anything you cannot clear under this assignment. Write the
   blocked file, emit blocked_needs_input without `--artifact` (it carries no file), name the blocked file in your final message and end the turn.

@@ -19,7 +19,7 @@ import (
 // and the plugin manifest as text, and fails on a seed phrase anywhere else. A case whose data quotes the
 // old procedure on purpose is listed in pushOnlyCaseAllowlist with its reason.
 
-var pushOnlySeedPhrases = regexp.MustCompile("(?i)exactly one pull request|pull request open|pull request is open|open the pull request|open a pull request|open that pull request|open the PR\\b|open a PR\\b|open this PR\\b|open it non-draft|open pull request|opens the pull request|opens a pull request|opens its pull request|opens the PR\\b|intended PR[ ,.]|PR landing|after its CI finishes|on this pull request|dev-gate is required|dev-gate required|dev-gate must|PR body|pull request body|every CI job|pull-request CI|hosted CI run is required|CI run is required|pull request is required|PR is required")
+var pushOnlySeedPhrases = regexp.MustCompile(`(?i)exactly one pull request|pull request open|pull request is open|open the pull request|open a pull request|open that pull request|open the PR\b|open a PR\b|open this PR\b|open it non-draft|open pull request|opens the pull request|opens a pull request|opens its pull request|opens the PR\b|intended PR[ ,.]|PR landing|after its CI finishes|on this pull request|dev-gate is required|dev-gate required|dev-gate must|PR body|pull request body|every CI job|pull-request CI|hosted CI run is required|CI run is required|pull request is required|PR is required`)
 
 // pushOnlyGradePhrases are the grade-first phrases; a refusal-name table row may keep them, never a pull-request phrase.
 var pushOnlyGradePhrases = regexp.MustCompile("(?i)red or security|P0, P1|red, P0|blocking P2")

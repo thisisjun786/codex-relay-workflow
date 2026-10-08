@@ -36,8 +36,8 @@ See the [workflow](../.github/workflows/ci.yml) for the exact job inputs.
 
 `crw-dev ci local` (and `make ci-local`) runs every job and step of
 [the workflow](../.github/workflows/ci.yml) locally, in the same order and at the same pinned
-versions, and writes a `verification-record/1`. It exists so the whole verification can be
-run without GitHub; the hosted run stays the merge evidence.
+versions, and writes a `verification-record/1`. The record of the integration batch is the evidence, and the hosted run is optional: it runs only when started with
+`workflow_dispatch`.
 
 The run makes a **clean worktree** of the commit being verified under the work root (the XDG state directory, or --work-root; never TMPDIR, /tmp or /var/tmp)
 (`git worktree add --detach`), with `HOME` and the XDG directories pointed into a
@@ -45,13 +45,11 @@ temporary home and `TZ=UTC`, so uncommitted changes in the caller's checkout and
 caches cannot change the result. The record names the commit and its tree, never the caller's
 working state. The worktree is removed afterwards. `GOCACHE` and `NPM_CONFIG_CACHE` are inherited: they decide how fast a step runs, not what it decides. The module cache is not inherited, and GOFLAGS is set by the engine.
 
-Light mode and the body-only edit mirror are never applied: the local run is always full.
-
 ### The local step to GitHub job mapping
 
 | ci.yml job | ci.yml step | local |
 | --- | --- | --- |
-| `validate` | the sparse `scripts/ci` checkout and the edit mirror | not run: a hosted body-only edit lookup |
+| `validate` | the sparse `scripts/ci` checkout and the edit mirror | not run: hosted-only step |
 | `validate` | checkout | the clean worktree of the verified commit |
 | `validate` | `setup-go` | the pinned Go is resolved and recorded |
 | `validate` | `go build -tags dev -o "$RUNNER_TEMP/crw-dev" ./cmd/crw-dev` | run |
@@ -69,7 +67,7 @@ Light mode and the body-only edit mirror are never applied: the local run is alw
 | `gui` | `setup-go`, `setup-node` | as above |
 | `gui` | `npm ci`, `npm test`, `npm run build -- --outDir "$RUNNER_TEMP/gui-built" --emptyOutDir` | run (in `web/`) |
 | `gui` | `ci gui-drift --built "$RUNNER_TEMP/gui-built"` | run |
-| `go-product` | the light mode notice | not run: light mode is never applied |
+| `go-product` | the light mode notice | not run: hosted-only step |
 | `go-product` | the mirror pair, checkout, `setup-go` | as above |
 | `go-product` | `make lint` (leg `lint`) | run |
 | `go-product` | `make test-part TEST_PART=<n>` (legs `test-1`..`test-rest`) | run, one leg at a time |
