@@ -678,7 +678,7 @@ func pumpReview776QueueSettleLegacy(ctx context.Context, e *Env, cfg *Config, st
 		if err := ctx.Err(); err != nil {
 			return true, err
 		}
-		if pin.Legacy || len(pin.SHA256) == 0 {
+		if len(pin.SHA256) == 0 {
 			pin.Held = true
 			st.QueueAttempt[thread] = pin
 			if err := st.pumpSave(cfg); err != nil {
@@ -749,7 +749,7 @@ func pumpReview776QueueAcceptPin(ctx context.Context, e *Env, cfg *Config, st *p
 	if err := ctx.Err(); err != nil {
 		return true, err
 	}
-	if pin.Legacy || len(pin.SHA256) == 0 {
+	if len(pin.SHA256) == 0 {
 		// The attempt's text is not recoverable, so no queued notice can be shown to be one it
 		// carried: the pin holds the thread rather than archiving an undelivered notice.
 		pin.Held = true
@@ -767,14 +767,14 @@ func pumpReview776QueueAcceptPin(ctx context.Context, e *Env, cfg *Config, st *p
 // pumpQueueRefusedLift drops the pin of a batch the ledger proves the bridge refused, and counts the
 // refusal against the batch id, so the batch's next attempt goes out under its next ordinal. The
 // pumpQueueRefusalLimit-th refusal of one id moves the batch's notices to refused/ instead, with a
-// log line naming each one, so the notices queued behind it flow. A pin without digests (a legacy
-// pin) is only lifted: its members cannot be told apart from the ones that may have been sent.
+// log line naming each one, so the notices queued behind it flow. A pin without digests, and a legacy
+// pin (a pre-change attempt, whose refusal was not a refusal of this queue's batch), is only lifted.
 func pumpQueueRefusedLift(ctx context.Context, cfg *Config, st *pumpState, dir, thread string, pin pumpReview776QueuePin, cause error) error {
 	if err := ctx.Err(); err != nil {
 		// The count, the moves and the pin clear are durable effects: a cancelled round makes none.
 		return err
 	}
-	if len(pin.SHA256) == 0 {
+	if len(pin.SHA256) == 0 || pin.Legacy {
 		return pumpReview776QueuePinLift(cfg, st, thread, cause)
 	}
 	base := pin.Base
@@ -1014,11 +1014,11 @@ func pumpReview776QueueRecoverAsides(ctx context.Context, e *Env, dir string, dr
 	return nil
 }
 
-// pumpReview776QueuePublished reports whether a notice taken aside is already linked under sent/ or
-// oversize/, which is what the publish step of a move leaves behind when the process died before it
-// dropped the aside.
+// pumpReview776QueuePublished reports whether a notice taken aside is already linked under sent/,
+// oversize/ or refused/ -- the three directories a move publishes into -- which is what the publish
+// step of a move leaves behind when the process died before it dropped the aside.
 func pumpReview776QueuePublished(dir string, aside os.FileInfo) (bool, error) {
-	for _, destDir := range []string{filepath.Join(dir, pumpSentDir), filepath.Join(dir, pumpReview776OversizeDir)} {
+	for _, destDir := range []string{filepath.Join(dir, pumpSentDir), filepath.Join(dir, pumpReview776OversizeDir), filepath.Join(dir, pumpQueueRefusedDir)} {
 		entries, err := os.ReadDir(destDir)
 		if err != nil {
 			if os.IsNotExist(err) {
@@ -1216,21 +1216,22 @@ func pumpReview776QueueLegacyCandidates(dir string, batch pumpReview776QueueBatc
 	return out, nil
 }
 
-// pumpReview776QueueCreatedAfter reports whether a ledger record was written after every member of a
-// set was last modified. The record's stamp has whole seconds, so a member counts as later only when
-// its modification falls in a later second than the stamp. A stamp that does not parse is no evidence
-// against the record, so the record is not rejected; the pump writes a stamp on every record.
-func pumpReview776QueueCreatedAfter(createdAt string, modTimes []time.Time) bool {
+// pumpReview776QueueCarriedBy lists the members of a set that were already queued, unchanged, when a
+// ledger record was written: those whose modification falls in the stamp's second or an earlier one.
+// The stamp has whole seconds, so a member counts as later only when its modification falls in a later
+// second than the stamp. A member outside the list was written after the attempt, so the attempt cannot
+// have carried what it holds now. A stamp that does not parse is no evidence against the record, so
+// every member is listed; the pump writes a stamp on every record.
+func (c pumpReview776QueueLegacyCandidate) carriedBy(createdAt string) []int {
 	created, err := time.Parse(time.RFC3339, createdAt)
-	if err != nil {
-		return true
-	}
-	for _, modified := range modTimes {
-		if modified.Truncate(time.Second).After(created) {
-			return false
+	var carried []int
+	for i, modified := range c.modTimes {
+		if err == nil && modified.Truncate(time.Second).After(created) {
+			continue
 		}
+		carried = append(carried, i)
 	}
-	return true
+	return carried
 }
 
 // pumpReview776QueueGateNames is the set an idle-parent gate on a pinned attempt judges: the pinned
@@ -1296,6 +1297,12 @@ func pumpReview776QueueGateNames(dir string, pinned []string) ([]string, error) 
 // delivery core can replay it; otherwise the attempt's text is not recoverable, the pin is marked
 // legacy, and it is reconciled through the receipt alone.
 //
+// A record is judged member by member. When some members were written again after the record and
+// others were not, the unchanged ones are the members the attempt carried and the replaced ones are
+// notices it never carried, so only the unchanged members are adopted (see
+// pumpReview776QueueAdoptPartial): a record that is stale for one member never becomes a reason to send
+// another member again under a new id.
+//
 // A settled accepted record is completed only while its own text is still the text on disk, because
 // that is the only case where every member is known to have been delivered.
 func pumpReview776QueueAdoptLegacy(ctx context.Context, cfg *Config, st *pumpState, dir, thread string, batch pumpReview776QueueBatch) (pumpReview776QueueLegacyAction, error) {
@@ -1313,11 +1320,24 @@ func pumpReview776QueueAdoptLegacy(ctx context.Context, cfg *Config, st *pumpSta
 		if !known {
 			continue
 		}
-		if !pumpReview776QueueCreatedAfter(record.CreatedAt, candidate.modTimes) {
-			// The record was written before a member of this set was last modified, so the member came
-			// after the attempt and the set is not the one the attempt covered. This holds for a
-			// name-ordered set as for an oldest-first one: a record for names a producer has since
-			// written again is not adopted, so it can neither pin a stale attempt nor hold the thread.
+		carried := candidate.carriedBy(record.CreatedAt)
+		if len(carried) == 0 {
+			// Every member was last modified after the record was written, so none of them came before the
+			// attempt and the set is not the one the attempt covered. This holds for a name-ordered set as
+			// for an oldest-first one: a record for names a producer has since written again is not
+			// adopted, so it can neither pin a stale attempt nor hold the thread.
+			continue
+		}
+		if len(carried) < len(names) {
+			// Some members were written again after the attempt and some were not. The record is the pre-change
+			// id of exactly these names, so the unchanged members are the ones the attempt carried, and the
+			// replaced ones are notices it never carried. Only the unchanged members are adopted, by the
+			// digest of the text they still hold; the attempt's own text is not recoverable, so a replay is
+			// never an option, and a member that cannot be shown to have been carried is never sent under a
+			// new id on the attempt's behalf.
+			if action, adopted, err := pumpReview776QueueAdoptPartial(ctx, cfg, st, thread, oldID, record, candidate, carried); adopted || err != nil {
+				return action, err
+			}
 			continue
 		}
 		body := pumpReview776QueueBody(texts)
@@ -1379,6 +1399,39 @@ func pumpReview776QueueAdoptLegacy(ctx context.Context, cfg *Config, st *pumpSta
 	// unsettled attempt whose names cannot be recovered is the upgrade path the issue leaves to the
 	// batch's own id, not one this code can answer for.
 	return pumpReview776QueueLegacyNone, nil
+}
+
+// pumpReview776QueueAdoptPartial adopts a pre-change record for the members of its set that were not
+// written again after it (carried indexes them). The pin names only those members and carries the digest
+// of the text each still holds: an accepted record completes them without a send, and an unsettled one
+// is reconciled through the bridge's own receipt, which completes them when the attempt was dispatched
+// and lifts the pin when it was not. The pin is marked legacy because the attempt's own text is not
+// recoverable, so it is never replayed. A refused record sent nothing, so it adopts nothing and the
+// reported flag is false. The replaced members are not in the pin and form a batch of their own once
+// the pin settles.
+func pumpReview776QueueAdoptPartial(ctx context.Context, cfg *Config, st *pumpState, thread, oldID string, record deliverRecord, candidate pumpReview776QueueLegacyCandidate, carried []int) (pumpReview776QueueLegacyAction, bool, error) {
+	if record.State == deliverStateRefused {
+		return pumpReview776QueueLegacyNone, false, nil
+	}
+	pin := pumpReview776QueuePin{LogicalID: oldID}
+	var texts []string
+	for _, i := range carried {
+		pin.Names = append(pin.Names, candidate.names[i])
+		texts = append(texts, candidate.texts[i])
+	}
+	pin.SHA256 = pumpReview776QueueDigests(pin.Names, texts)
+	action := pumpReview776QueueLegacyReconcile
+	if record.State == deliverStateAccepted {
+		pin.Accepted = true
+		action = pumpReview776QueueLegacyComplete
+	} else {
+		pin.Legacy = true
+	}
+	if err := ctx.Err(); err != nil {
+		return pumpReview776QueueLegacyNone, false, err
+	}
+	st.QueueAttempt[thread] = pin
+	return action, true, st.pumpSave(cfg)
 }
 
 // pumpQueueLegacyBatchID is the pre-change queue batch id: the thread and the sorted notice names,

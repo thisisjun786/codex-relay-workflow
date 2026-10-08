@@ -155,6 +155,9 @@ type pumpReview776QueuePin struct {
 	// Legacy marks a pin taken for a pre-change ledger record whose body the ledger does not store.
 	// Such an attempt is reconciled through the bridge's own receipt instead of being replayed with
 	// the text on disk, which a notice the producer replaced no longer matches.
+	// A legacy pin without digests cannot prove which notices the attempt carried and holds the thread
+	// when the receipt says it went. One that carries digests names only the members written before
+	// the attempt, so an accepted receipt completes exactly those.
 	Legacy bool `json:"legacy,omitempty"`
 	// Held marks a pin whose pre-change attempt the ledger accepted but whose text is not
 	// recoverable. The attempt covered the pin's names, so completing them by name could archive a

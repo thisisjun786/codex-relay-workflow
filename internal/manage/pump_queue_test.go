@@ -717,6 +717,12 @@ func TestPumpQueueRoundCancelledMidwayChangesNothingAfterwards(t *testing.T) {
 			pumpQueueTestSetTime(t, path, pumpTestNow.Add(-time.Hour))
 			pumpQueueTestLegacyRecord(t, cfg, "parent-1", []string{"aaaaaaaaaaaaaaaa.txt"}, []string{"a-body"}, pumpTestNow.Add(-30*time.Minute), deliverStateUnknown)
 		}},
+		{"legacy accepted record over a partly replaced set", func(t *testing.T, cfg *Config) {
+			pumpQueuePartialSetup(t, cfg, deliverStateAccepted)
+		}},
+		{"legacy unknown record over a partly replaced set", func(t *testing.T, cfg *Config) {
+			pumpQueuePartialSetup(t, cfg, deliverStateUnknown)
+		}},
 		{"aside left by an interrupted move", func(t *testing.T, cfg *Config) {
 			dir := filepath.Join(cfg.StateDir, pumpQueueDir, "parent-1")
 			aside := filepath.Join(dir, pumpReview776AsideDir)
@@ -833,5 +839,165 @@ func TestPumpQueueRefusedMovesThenStoreCrashConverges(t *testing.T) {
 	}
 	if entries, err := os.ReadDir(filepath.Join(dir, pumpQueueRefusedDir)); err != nil || len(entries) != 1 {
 		t.Errorf("refused/ holds %v (%v), want the one earlier notice", entries, err)
+	}
+}
+
+// pumpQueueTestSentMessages is the text of every delivery a fake bridge saw, oldest first.
+func pumpQueueTestSentMessages(t *testing.T, log string) []string {
+	t.Helper()
+	var out []string
+	for _, call := range deliverSendCallsOf(t, log) {
+		if call["tool"] == deliverToolSteer || call["tool"] == deliverToolSend {
+			args, _ := call["args"].(map[string]any)
+			message, _ := args["message"].(string)
+			out = append(out, message)
+		}
+	}
+	return out
+}
+
+// pumpQueuePartialSetup queues the two members of a pre-change attempt the way a producer leaves
+// them after replacing one: a.txt now holds a newer body written after the record, b.txt is the
+// body the attempt carried and was written before it. It returns the record's stamp.
+func pumpQueuePartialSetup(t *testing.T, cfg *Config, state string) time.Time {
+	t.Helper()
+	stamp := pumpTestNow.Add(-time.Hour)
+	pumpQueueTestSetTime(t, pumpQueueTestNotice(t, cfg, "parent-1", "aaaaaaaaaaaaaaaa.txt", "A2-after-the-attempt"), stamp.Add(10*time.Minute))
+	pumpQueueTestSetTime(t, pumpQueueTestNotice(t, cfg, "parent-1", "bbbbbbbbbbbbbbbb.txt", "B-already-delivered"), stamp.Add(-time.Hour))
+	pumpQueueTestLegacyRecord(t, cfg, "parent-1", []string{"aaaaaaaaaaaaaaaa.txt", "bbbbbbbbbbbbbbbb.txt"},
+		[]string{"A1-the-old-body", "B-already-delivered"}, stamp, state)
+	return stamp
+}
+
+// An accepted pre-change record over two names where the producer later replaced only one of them:
+// the unchanged member was carried by the accepted attempt and is completed, never sent under a new
+// id, while the replaced member is a notice the attempt never carried and is delivered on its own.
+func TestPumpQueuePartiallyReplacedAcceptedLegacyRecordCompletesTheUnchangedMember(t *testing.T) {
+	now := pumpTestNow
+	e := pumpTestEnv(t, &now)
+	bridge, log := deliverFakeBridge(t, []map[string]any{
+		{"payload": map[string]any{"observation": "active", "activeTurnId": "turn-1"}},
+		{"payload": map[string]any{"status": "accepted", "delivery": "accepted_not_applied"}},
+	})
+	cfg := pumpTestConfig(t, bridge)
+	pumpQueuePartialSetup(t, cfg, deliverStateAccepted)
+	for round := 0; round < 2; round++ {
+		if err := pumpQueueFlush(context.Background(), e, cfg, pumpTestReadStatePtr(t, cfg), pumpSettingsFrom(cfg), false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dir := filepath.Join(cfg.StateDir, pumpQueueDir, "parent-1")
+	messages := pumpQueueTestSentMessages(t, log)
+	for _, message := range messages {
+		if strings.Contains(message, "B-already-delivered") {
+			t.Errorf("the member the accepted attempt carried was delivered again: %q", message)
+		}
+	}
+	if len(messages) != 1 || !strings.Contains(messages[0], "A2-after-the-attempt") {
+		t.Errorf("the replaced member was not delivered on its own: %q", messages)
+	}
+	for _, name := range []string{"aaaaaaaaaaaaaaaa.txt", "bbbbbbbbbbbbbbbb.txt"} {
+		if _, err := os.Stat(filepath.Join(dir, pumpSentDir, name)); err != nil {
+			t.Errorf("the notice %s did not reach sent/: %v", name, err)
+		}
+	}
+	if _, ok := pumpReview776QueueAttempt(t, cfg, "parent-1"); ok {
+		t.Errorf("a pin survived the two rounds")
+	}
+}
+
+// An unsettled pre-change record over two names where only one was replaced is reconciled through
+// the bridge's receipt. The receipt says the attempt went: the unchanged member is completed and not
+// sent under a new id, and the replaced member is delivered on its own afterwards.
+func TestPumpQueuePartiallyReplacedUnsettledLegacyRecordIsReconciled(t *testing.T) {
+	now := pumpTestNow
+	e := pumpTestEnv(t, &now)
+	bridge, log := deliverFakeBridge(t, []map[string]any{
+		{"payload": map[string]any{"observation": "active", "activeTurnId": "turn-1",
+			"status": "accepted", "delivery": "accepted_not_applied"}},
+		{"payload": map[string]any{"status": "accepted", "delivery": "accepted_not_applied"}},
+	})
+	cfg := pumpTestConfig(t, bridge)
+	pumpQueuePartialSetup(t, cfg, deliverStateUnknown)
+	for round := 0; round < 3; round++ {
+		if err := pumpQueueFlush(context.Background(), e, cfg, pumpTestReadStatePtr(t, cfg), pumpSettingsFrom(cfg), false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dir := filepath.Join(cfg.StateDir, pumpQueueDir, "parent-1")
+	for _, message := range pumpQueueTestSentMessages(t, log) {
+		if strings.Contains(message, "B-already-delivered") {
+			t.Errorf("the member the unsettled attempt carried was delivered under a new id: %q", message)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, pumpSentDir, "bbbbbbbbbbbbbbbb.txt")); err != nil {
+		t.Errorf("the unchanged member was not completed from the receipt: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, pumpSentDir, "aaaaaaaaaaaaaaaa.txt")); err != nil {
+		t.Errorf("the replaced member was not delivered afterwards: %v", err)
+	}
+}
+
+// A refused batch's third refusal moves its notice into refused/; a process that died after the
+// link into refused/ and before the aside was dropped is recovered by dropping the aside, not by
+// putting the notice back and filing it a second time.
+func TestPumpQueueRefusedPublishedMoveIsNotPutBack(t *testing.T) {
+	now := pumpTestNow
+	e := pumpTestEnv(t, &now)
+	bridge, log := deliverFakeBridge(t, []map[string]any{
+		{"payload": map[string]any{"observation": "active", "activeTurnId": "turn-1"}},
+		{"payload": map[string]any{"status": "accepted", "delivery": "accepted_not_applied"}},
+	})
+	cfg := pumpTestConfig(t, bridge)
+	dir := filepath.Join(cfg.StateDir, pumpQueueDir, "parent-1")
+	refused := filepath.Join(dir, pumpQueueRefusedDir)
+	asideDir := filepath.Join(dir, pumpReview776AsideDir)
+	for _, d := range []string{refused, asideDir} {
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The third refusal took the notice aside and linked it into refused/, then the process died
+	// before it dropped the aside and saved the state.
+	aside := filepath.Join(asideDir, "aaaaaaaaaaaaaaaa.txt")
+	if err := os.WriteFile(aside, []byte("a-body"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(aside, filepath.Join(refused, "aaaaaaaaaaaaaaaa.txt")); err != nil {
+		t.Fatal(err)
+	}
+	pumpQueueTestPin(t, cfg, "parent-1", "pinid-r2", []string{"aaaaaaaaaaaaaaaa.txt"}, []string{"a-body"})
+	st := pumpTestReadStatePtr(t, cfg)
+	pin := st.QueueAttempt["parent-1"]
+	pin.Base = "pinid"
+	st.QueueAttempt["parent-1"] = pin
+	st.QueueRefused["parent-1"] = pumpQueueRefusal{ID: "pinid", Count: 2}
+	if err := st.pumpSave(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := deliverSave(cfg, deliverRecord{LogicalID: "pinid-r2", RequestID: "pinid-r2", Tool: deliverToolSend, TargetThread: "parent-1",
+		MessageSHA256: deliverMessageSHA256(pumpReview776QueueBody([]string{"a-body"})), CreatedAt: pumpQueueTestStamp(pumpTestNow.Add(-time.Hour)), State: deliverStateRefused}); err != nil {
+		t.Fatal(err)
+	}
+	pumpQueueTestSetTime(t, pumpQueueTestNotice(t, cfg, "parent-1", "bbbbbbbbbbbbbbbb.txt", "b-body"), pumpTestNow.Add(-time.Minute))
+	for round := 0; round < 2; round++ {
+		if err := pumpQueueFlush(context.Background(), e, cfg, pumpTestReadStatePtr(t, cfg), pumpSettingsFrom(cfg), false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if entries, err := os.ReadDir(refused); err != nil || len(entries) != 1 {
+		t.Errorf("refused/ holds %v (%v), want the one refused notice", entries, err)
+	}
+	if _, err := os.Stat(aside); !os.IsNotExist(err) {
+		t.Errorf("the aside name survived the recovery: %v", err)
+	}
+	if _, ok := pumpReview776QueueAttempt(t, cfg, "parent-1"); ok {
+		t.Errorf("the pin survived the recovery")
+	}
+	if refusals := pumpQueueTestRefusals(t, cfg); len(refusals) != 0 {
+		t.Errorf("the refusal count survived the recovery: %v", refusals)
+	}
+	if _, err := os.Stat(filepath.Join(dir, pumpSentDir, "bbbbbbbbbbbbbbbb.txt")); err != nil {
+		t.Errorf("the notice behind the refused batch did not flow: %v (sends %v)", err, pumpQueueTestSendIDs(t, log))
 	}
 }
