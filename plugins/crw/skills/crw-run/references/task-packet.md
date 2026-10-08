@@ -215,8 +215,7 @@ Workspace ownership:
   applies only when the packet states it, after the packet's writer has confirmed that the local
   full verification of that tree runs the whole suite (a check that is partial or selected by changed paths does not
   qualify). The packet then records where the repository's contribution rules ask for a full local
-  run and that the override covers it, and the child reports the CI run it dispatched manually on its branch, with its id and head,
-  instead of claiming a local pass. A packet that does not state the override leaves the
+  run and that the override covers it, and the child reports that full run with its record and head as the evidence, not a partial pass. A packet that does not state the override leaves the
   repository's local check in force.
   Memory limit: a heavy command, meaning `-race`, `-a`, a load reproduction, a `-count` above 10
   for example, or one the packet names (a command the child cannot place is treated as heavy), runs
