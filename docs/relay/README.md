@@ -612,6 +612,8 @@ problem, 4 usage.
 
 ## The merge lane: landing a bundle
 
+This is the in-flight pull-request lane. It serves the pull requests that were already open when the push-only procedure takes effect, and it stays until the push-only path of CRW-965 is installed; the repository's rule is in [In-flight pull requests (transition)](https://github.com/thisisjun786/codex-relay-workflow/blob/dev/plugins/crw/skills/crw-run/references/merge-readiness.md#in-flight-pull-requests-transition).
+
 The merge lane's own commands are `merge-turn-*` (one candidate at a time) and, since CRW-768,
 `merge-train-*` (a bundle of several verified candidates landing as one). A bundle exists because a
 strict lane that merges members one by one needs a green `dev-gate` on every prefix tree, so k
@@ -634,7 +636,7 @@ A bundle that disagrees or is out of order is `disposition_conflict` and a forge
 answer is `merge_target_unreadable`, and a refusal writes no event. The five commands are offline
 like the `merge-turn-*` ones.
 
-The steps, with the command names:
+The steps below are the in-flight lane's steps, for pull requests that were open before CRW-965 is installed. The steps, with the command names:
 
 1. **Choose the members.** Every member must be a verified, accepted candidate: each member's own
    parent runs `dag-accept` on the member pull request's head before the leader opens the bundle, and

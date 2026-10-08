@@ -19,11 +19,6 @@ func TestUpgradeStopsBeforeTheNextStep(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	gate := func(body string) map[string]upgradeGhAnswer {
-		out := upgradeGhPaths(commit)
-		out["repos/owner/repo/commits/"+commit+"/check-runs"] = upgradeGhAnswer{Body: body}
-		return out
-	}
 	for _, tc := range []struct {
 		name   string
 		opts   upgradeHarnessOptions
@@ -33,11 +28,11 @@ func TestUpgradeStopsBeforeTheNextStep(t *testing.T) {
 		absent []string
 	}{
 		{"step 1", upgradeHarnessOptions{gh: upgradeGhPaths(commit), pointer: true}, badSums,
-			2, upgradeReasonSumsFailed, []string{"commits/", "check-runs", "install", "service"}},
+			2, upgradeReasonSumsFailed, []string{"commits/", "install", "service"}},
 		{"step 2", upgradeHarnessOptions{gh: map[string]upgradeGhAnswer{}, pointer: true}, nil,
-			2, upgradeReasonCommitUnknown, []string{"check-runs", "install", "service"}},
-		{"step 3", upgradeHarnessOptions{gh: gate("{\"check_runs\":[]}"), pointer: true}, nil,
-			2, upgradeReasonDevGate, []string{"install", "service"}},
+			2, upgradeReasonCommitUnknown, []string{"install", "service"}},
+		{"step 3", upgradeHarnessOptions{gh: upgradeGhPaths(commit), pointer: true, noRecord: true}, nil,
+			2, upgradeReasonVerifyMissing, []string{"install", "service"}},
 		{"step 4", upgradeHarnessOptions{openAttempts: 1, gh: upgradeGhPaths(commit), pointer: true}, nil,
 			3, upgradeReasonOpenAttempts, []string{"install", "service"}},
 	} {

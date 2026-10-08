@@ -4,6 +4,11 @@
 activate GitHub enforcement. It is developer-only: every check runs from a checkout.
 Installing and operating the runtime is [runtime installation](runtime-install.md).
 
+Local full verification is the primary route: `crw-dev ci local` runs every job and step below
+in a clean worktree of the commit being verified and writes a `verification-record/1`, whose
+`result` is a pass only when every step succeeded. GitHub Actions is an optional remote run: the
+workflow starts only on a manual dispatch, and integration does not wait on it.
+
 ## Checks
 
 | Command | Where CI runs it |
@@ -12,7 +17,7 @@ Installing and operating the runtime is [runtime installation](runtime-install.m
 | `crw-dev ci plugin` | `validate`: plugin package shape, payload hygiene and the recorded version digest ([below](#plugin-package)) |
 | `crw-dev ci contracts` | `validate`: the offline contract checks built into `crw-dev`: the hook replay, the operations shape check (`crw-dev ci operations`), the component definition, the start-policy self-test and the parent-title replay |
 | `crw-dev ci refactor-backlog` | `validate`: the generated refactor backlog: assembles `docs/port/refactor-backlog.md` from the fragments under `docs/port/refactor-backlog.d` and refuses when the committed file differs from the fragments (`--write` regenerates it) |
-| `bash scripts/ci/secrets.sh` | `secrets`: checksum-pinned Gitleaks scan: the commits a pull request adds to its base on a pull request, all fetched history on any other event ([scope](#secret-scanning)) |
+| `bash scripts/ci/secrets.sh` | `secrets`: checksum-pinned Gitleaks scan: on a manual dispatch every fetched ref ([scope](#secret-scanning)) |
 | `node --test port/cxc/skills/*/tests/*.test.mjs` | `skill-scripts-node`: the staged skills' own Node tests, on Node 24.20.0, only when a staged skill path changed; a run that skips them is success |
 | `npm ci`, `npm test`, `npm run build -- --outDir "$RUNNER_TEMP/gui-built" --emptyOutDir`, `crw-dev ci gui-drift --built "$RUNNER_TEMP/gui-built"` | `gui`: the screens under `web/` build and match the committed `internal/gui/assets` tree byte for byte, on Node 24.20.0, only when a watched path changed ([below](#the-gui-job)); `make gui` runs the same three commands locally |
 | `make lint` | `go-product` leg `lint`: vet (also of the `dev` and `integration` tagged packages), staticcheck and gofmt |
@@ -23,14 +28,16 @@ Installing and operating the runtime is [runtime installation](runtime-install.m
 `crw-dev` is the development binary (`make crw-dev`); it builds only with the `dev` tag, so
 `make dist` and the release archives never contain it. Its checks have no Python twin: the copies
 under `scripts/ci` and `scripts/check_operations_contract.py` left in refactor R3 (decision R3R-1).
+`crw-dev ci local` runs this same table locally and records the result as a
+`verification-record/1` (CRW-964's command and format, documented in its own section).
 See the [workflow](../.github/workflows/ci.yml) for the exact job inputs.
 
 ## The local run
 
 `crw-dev ci local` (and `make ci-local`) runs every job and step of
 [the workflow](../.github/workflows/ci.yml) locally, in the same order and at the same pinned
-versions, and writes a `verification-record/1`. It exists so the whole verification can be
-run without GitHub; the hosted run stays the merge evidence.
+versions, and writes a `verification-record/1`. The record of the integration batch is the evidence, and the hosted run is optional: it runs only when started with
+`workflow_dispatch`.
 
 The run makes a **clean worktree** of the commit being verified under the work root (the XDG state directory, or --work-root; never TMPDIR, /tmp or /var/tmp)
 (`git worktree add --detach`), with `HOME` and the XDG directories pointed into a
@@ -38,13 +45,11 @@ temporary home and `TZ=UTC`, so uncommitted changes in the caller's checkout and
 caches cannot change the result. The record names the commit and its tree, never the caller's
 working state. The worktree is removed afterwards. `GOCACHE` and `NPM_CONFIG_CACHE` are inherited: they decide how fast a step runs, not what it decides. The module cache is not inherited, and GOFLAGS is set by the engine.
 
-Light mode and the body-only edit mirror are never applied: the local run is always full.
-
 ### The local step to GitHub job mapping
 
 | ci.yml job | ci.yml step | local |
 | --- | --- | --- |
-| `validate` | the sparse `scripts/ci` checkout and the edit mirror | not run: a hosted body-only edit lookup |
+| `validate` | the sparse `scripts/ci` checkout and the edit mirror | not run: hosted-only step |
 | `validate` | checkout | the clean worktree of the verified commit |
 | `validate` | `setup-go` | the pinned Go is resolved and recorded |
 | `validate` | `go build -tags dev -o "$RUNNER_TEMP/crw-dev" ./cmd/crw-dev` | run |
@@ -62,7 +67,7 @@ Light mode and the body-only edit mirror are never applied: the local run is alw
 | `gui` | `setup-go`, `setup-node` | as above |
 | `gui` | `npm ci`, `npm test`, `npm run build -- --outDir "$RUNNER_TEMP/gui-built" --emptyOutDir` | run (in `web/`) |
 | `gui` | `ci gui-drift --built "$RUNNER_TEMP/gui-built"` | run |
-| `go-product` | the light mode notice | not run: light mode is never applied |
+| `go-product` | the light mode notice | not run: hosted-only step |
 | `go-product` | the mirror pair, checkout, `setup-go` | as above |
 | `go-product` | `make lint` (leg `lint`) | run |
 | `go-product` | `make test-part TEST_PART=<n>` (legs `test-1`..`test-rest`) | run, one leg at a time |
@@ -167,11 +172,11 @@ shared checkout is the operator's to install.
 
 ## The workflow
 
-Every job runs on every event: a pull request (GitHub's merge candidate), a push to `dev` (the
-integrated commit, the evidence a release needs) and a manual dispatch (which is not release
-evidence). There is no path selection, except [the temporary light mode](#the-temporary-light-mode)
-below. The Go product legs always ran whatever changed, so
-selecting the rest by changed paths saved little and put a job before every other one.
+`ci.yml` starts only on `workflow_dispatch`: a person asks for the full hosted
+verification of a commit. Integration no longer runs through a hosted event, so a
+dispatch run is a developer's remote check and never integration or release
+evidence. The job bodies are the ones `crw-dev ci local` runs locally (the local full
+verification CRW-964 adds), so a dispatch exercises the same checks.
 
 Two jobs gate themselves on changed paths. `skill-scripts-node` runs the staged skills' Node
 tests only when a staged skill path changed, and ends successfully without installing Node when
@@ -198,13 +203,14 @@ up to `make test`, and a new package lands in `rest`; a renamed package makes it
 integration test against the linux/amd64 one with `CGO_ENABLED=0` and `-trimpath`, so the test
 reuses the dist build's compiled packages and only relinks.
 
-`dev-gate` is the one required check. It runs after every other job, `if: always()`, so a failed
+`dev-gate` is the one aggregate check: a manual dispatch is refused when any job fails. It runs
+after every other job, `if: always()`, so a failed
 or cancelled prerequisite still produces a failing gate rather than a skipped one. The workflow
 writes `toJSON(needs)` into a file in the step's own script (a quoted heredoc: the text is never
 expanded by the shell and never travels in the environment, whose size the runner bounds) and
 the gate passes only when that object names at least one job and every job's `result` is
-`success`: a failure, a cancellation, a skip or anything unreadable fails it. It also fails a pull
-request whose base is `main`. `internal/dev/ci`'s workflow tests hold the structure: `dev-gate`
+`success`: a failure, a cancellation, a skip or anything unreadable fails it. `internal/dev/ci`'s
+workflow tests hold the structure: `dev-gate`
 needs exactly the other jobs, no job continues on error, every action is pinned by commit, every
 Makefile part has a leg and every package runs in exactly one ([the test legs](#the-test-legs)), the
 integration step runs in `dist` after the build, and the gate's script, run with a written results
@@ -214,110 +220,12 @@ Until wave R1 of the post-port refactoring a `selection` job classified the chan
 (`crw-dev ci scope`) and the gate (`crw-dev ci gate`) re-checked that selection; a `tests` job ran
 the Python twins' own tests on two Python versions. The selection's changed-path list reached
 the gate in one environment variable, which made the gate fail with "Argument list too long" once
-a pull request changed about a thousand paths. All three left; the release workflow's tests
+a change touched about a thousand paths. All three left; the release workflow's tests
 became Go tests (`internal/contracttest` `TestReleaseWorkflow_*`), and the twins were compared with
 their Go checks by `internal/dev/ci` until refactor R3 deleted them.
 
 During iteration run the affected tests and reuse valid evidence for unchanged source, criteria
-and environments. CI concurrency cancels obsolete runs within the same PR or branch. An
-interrupted dev push is not release evidence: rerun that exact push run if the owner later
-chooses its commit.
-
-## The body-only edit mirror
-
-No job reads a pull request's title or body, but a title or body edit fires the `edited` trigger
-again and used to rerun every job on the same commit. Such a run now mirrors what the
-head has already proved.
-
-An `edited` event whose base did not change (`github.event.action == 'edited' &&
-!github.event.changes.base`) joins the pull request's own concurrency group, so it waits behind a
-running run instead of cancelling it, and a later push cancels it in turn. Every other event,
-a retarget included, still cancels obsolete runs.
-
-`validate`, `secrets`, `skill-scripts-node`, `gui` and each `go-product` leg then run `scripts/ci/edit_mirror.sh` as their first step,
-and only on such an edit. The script reads, with `gh api`, the newest created run of this workflow,
-of this pull request, of this repository, for the same `head_sha`, other than the run it is in, and
-mirrors the job when that run's same-named job's newest attempt concluded `success`. Creation order
-is the run's `run_number`, and the larger `id` when two runs share one: those two values are what a
-rerun leaves alone. `run_started_at` is deliberately not the order, because rerunning only the
-failed jobs moves it forward and would let an older run outrank a newer one whose same-named job
-failed. It answers `mirrored=true` with the run id in its step output and its step summary, or
-`mirrored=false`.
-
-Two jobs carry more than their own conclusion. A `go-product` test leg is mirrored only when its
-own test step also concluded `success`, so [light mode](#the-temporary-light-mode) cannot carry an
-untested leg forward. The `gui` job is mirrored only when all four of its screen steps concluded
-`success` in the same newest attempt: a `gui` job that concluded success with the screens skipped
-(`gui_paths.sh` answered `changed=false`, so the job ended before Node was installed) is not
-mirrored. The job then makes its own changed-path decision again, and because the paths that
-decision watches are the same on a body-only edit it answers `changed=false` again and the job
-ends without installing Node: refusing the mirror does not run the screens, it stops the job from
-claiming screen evidence this head does not have. The four names the mirror reads are ci.yml's gui
-job step names, and a test holds the two lists to each other, so a rename on either side is red.
-
-Every later step of those jobs carries `steps.mirror.outputs.mirrored != 'true'`, joined with any
-condition the step already had. The full checkout is one of them, and the sparse checkout of
-`scripts/ci` above the mirror is what has to exist before the script can decide. A mirrored job
-succeeds without running its steps, and nothing is skipped at job level: GitHub reports a skipped
-job's check as success, so a skipped `dev-gate` could hide an earlier red run.
-
-The lookup never fails the job, and an older run is never consulted: the newest created run alone
-answers for the job. No candidate, a failure, a cancellation, a skip, a missing job,
-another head, workflow or repository, an unreadable API and the run itself all answer
-`mirrored=false`, and the job runs in full. `dev-gate`, the job names and the required check are
-unchanged, and the five jobs add only `actions: read` to the workflow's `contents: read`, which is
-what reading the runs and jobs endpoints needs.
-
-Mirroring is safe because it repeats a result this head already has. `dev` is strict, so a merge
-candidate contains dev's tip, and the same `head_sha` is the same tree: the run being mirrored is a
-run of the same pull request's own head, never another tree's.
-
-## The temporary light mode
-
-Until the porting and improvement projects finish, the repository variable `CRW_CI_MODE` can be
-set to `light` by the repository owners alone. While it is, a pull request run that does not
-carry the `crw-lane` label skips the work of the five `go-product` test legs. Child pull request
-pushes are most of the concurrent Actions jobs and the merge lane waits for runners behind them;
-the lane's local `make test` was measured too slow to stand in for a runner, so the full run is
-moved to the one event that needs it. Reverting the mode is deleting the variable, and Jun
-decides when it ends.
-
-The condition is one job-level `env` on `go-product`, `CRW_LIGHT_LEG`, holding
-`github.event_name == 'pull_request' && vars.CRW_CI_MODE == 'light' &&
-!contains(github.event.pull_request.labels.*.name, 'crw-lane') && startsWith(matrix.part, 'test-')`.
-A dev push and a manual dispatch fail the first term, a labeled pull request fails the third, and
-`lint` and `dist` fail the fourth, so only the five test legs of an unlabeled pull request can
-be light. `validate`, `secrets`, `skill-scripts-node`, `gui`, `lint` and `dist` always run in
-full, and so does every event other than an unlabeled pull request, whatever the variable says.
-
-A light leg keeps its own name and its own success. Its first step writes
-`light mode: this leg's tests run in full when the merge lane labels the pull request crw-lane`
-to the step summary, and every other step carries `env.CRW_LIGHT_LEG != 'true'` joined with the
-condition it already had, the mirror steps included. The guard is a step condition and never a
-job-level `if`, because GitHub reports a skipped job's check as success and a skipped
-`dev-gate` could hide an earlier red run; no check name moves and no job opts out of its result.
-
-`pull_request.types` gains `labeled` after its five earlier types, so when the merge lane
-labels the pull request the labeled event starts a full run on that head, and every later push
-while the label stays runs in full too. The concurrency expression is unchanged: a labeled run is
-not a body-only edit, so it joins the pull request's main group with `cancel-in-progress: true`
-and cancels the light run still in progress. Adding any other label also starts a run; this
-repository uses no other label.
-
-[The body-only edit mirror](#the-body-only-edit-mirror) refuses to carry a light leg forward. A
-`go-product` test leg is mirrored only when the chosen run's same-named job concluded `success`
-and that job's step `Test and replay the contract corpus (<part>)` also concluded `success`.
-A skipped or missing test step answers `mirrored=false` and the leg runs in full, so a body edit
-right after the label, or after the variable is cleared, cannot replace a full run with an
-untested one. `validate`, `secrets` and the `lint` and `dist` legs keep mirroring on the
-job's conclusion alone, as they did before.
-
-The merge evidence is still the hosted `dev-gate`, and the lane's local `make test` is not
-evidence. While the variable is `light`, a green `dev-gate` of a run without the `crw-lane`
-label is not merge evidence, because that run's test legs did not run their tests: the evidence
-is a run of the same head, started after the label was added, that finished in success. The lane
-adds `crw-lane` when it takes its turn, before it refreshes the base, and removes it when it
-returns the turn without merging.
+and environments. CI concurrency cancels obsolete runs within the same branch.
 
 ## The gui job
 
@@ -331,10 +239,10 @@ The job always exists and `dev-gate` waits on it. Its first step decides from th
 `scripts/ci/gui_paths.sh` compares a pull request's base with its head, or a push's replaced
 commit with the one it added, over `web/`, `internal/gui/assets/`, `.github/workflows/ci.yml`,
 `Makefile`, `scripts/ci/gui_paths.sh` and `internal/dev/ci/gui_drift.go`, and writes
-`changed=true` to its step output when any of them moved. A manual dispatch, a push that created
-the branch (its before is the all-zeros object, which is no commit) and any git failure also
-answer `changed=true`: the safe direction is the full run, because a screen change that is
-skipped is a committed tree that no longer matches its source.
+`changed=true` to its step output when any of them moved. With no pull request or push event
+left, a manual dispatch and any git failure also answer `changed=true`: the safe direction is
+the full run, because a screen change that is skipped is a committed tree that no longer matches
+its source.
 
 When the answer is `true` the job installs `actions/setup-go` (the drift check is a `crw-dev ci`
 subcommand) and `actions/setup-node` pinned by commit at Node 24.20.0, runs `npm ci` from the
@@ -362,19 +270,12 @@ regeneration command.
 `internal/dev/ci/gui_drift_test.go` pins each rejection and the pass;
 `internal/dev/ci/gui_paths_test.go` pins the decision.
 
-The job never reads `CRW_CI_MODE`, so [light mode](#the-temporary-light-mode) cannot skip the
-screen verification: an unlabeled light pull request runs this job exactly as a full one, and only
-the five `go-product` test legs can be light. It takes the same [body-only edit
-mirror](#the-body-only-edit-mirror) pair as the other four jobs, so a mirrored run stands the job
-down only when the newest attempt of that run's `gui` job concluded all four screen steps as
-`success` on the same head, which is the same-head screen evidence the mirror rule requires. A
-`gui` job that concluded success with the screens skipped is not mirrored: the job repeats its own
-changed-path decision and, with no watched path changed, ends without installing Node, so it
-claims no screen evidence rather than carrying a run that never verified them.
+The job never reads the repository's CI-mode variable, so the screen verification is never
+skipped by a mode: a manual dispatch runs this job exactly as any other event does.
 
 ## The test legs
 `make test-part TEST_PART=<n>` runs one leg on its own runner, so the slowest leg sets how long a
-pull request waits. Parts 1 to 4 name their packages in the Makefile and `rest` is every other
+full run waits. Parts 1 to 4 name their packages in the Makefile and `rest` is every other
 package plus the `dev`-tagged tests, so a package runs in exactly one leg. `internal/dev/ci` holds
 that: it refuses a package named by two parts, a part missing from `TEST_PARTS` (what `rest`
 subtracts, so its packages would run again in `rest`), a named path with no tests, a pattern, and a
@@ -384,7 +285,7 @@ A runner spends about 55 s before its tests (checkout, toolchain, the one `crw` 
 compiles its own test binaries before it starts. It then runs a few packages at a time on four CPUs,
 in the order a part lists them, so a leg takes about that plus its slowest package, or its packages'
 total over four CPUs if that is longer; list a slow package first. The legs as rebalanced after the
-slow packages' tests ran in parallel, with the hosted job time before (median of six dev push runs on
+slow packages' tests ran in parallel, with the hosted job time before (median of six runs on
 2026-10-06) and after (median of three runs of the change that moved packages between the parts):
 
 | Leg | Packages | Before | After |
@@ -463,26 +364,20 @@ ignore file; inline allow comments and repository ignore files do not suppress f
 complete history: a shallow checkout cannot establish full-history coverage, and network,
 download or checksum failures fail the scan. No broad allowlist is supplied.
 
-What is scanned follows the event. On a `pull_request` run the workflow passes the event's base tip
-as `PR_BASE_SHA`, and the script scans the range from it to the checked-out merge candidate, still
-with merge-parent diffs (`-m`): the commits the pull request adds to its base. A finding that sits
-only on another branch does not fail the pull request; it still fails the runs that scan every ref.
-A pull request run whose `PR_BASE_SHA` is missing, is not a full hex SHA or is not in the checkout is
-refused before the scanner is downloaded, so a wiring fault cannot change the scope unnoticed. Every
-other event (a push to `dev`, a manual dispatch, a run outside Actions) scans every fetched ref
-(`--all -m`), so what reaches `dev` is checked in full and a finding on any branch fails those runs.
-A pull request run reads no other branch, so a branch without a pull request is checked only by the
-runs that scan every ref (a push to `dev`, a manual dispatch); a scheduled scan of every remote
-branch is recorded in the [refactor backlog](port/refactor-backlog.md).
+What is scanned follows the event. A manual dispatch has no base to compare with, so the script
+scans every fetched ref (`--all -m`), and a finding on any branch fails the run. Integration does not
+depend on a hosted run at all: the integrator scans locally before the push, over the commits the
+push adds, with the same pinned scanner. A scheduled scan of every remote branch is recorded in the
+[refactor backlog](port/refactor-backlog.md).
 
 Secret scanning is not proof that every private fact or credential was detected. Review fixtures
-and publication history separately. A PR can change the scanner and workflow, so review those
+and publication history separately. A change can alter the scanner and workflow, so review those
 changes as changes to the gate itself. Do not upload secret-bearing findings; keep output
 redacted and repair with the owner.
 
 ## Large blobs
 
-This repository merges pull requests with merge commits, so every blob of every commit on a branch
+This repository integrates with merge commits, so every blob of every commit on a branch
 becomes part of `dev`'s public history, and a public history cannot drop it again: deleting or
 shrinking the file in a later commit leaves the blob behind. `crw-dev ci validate` therefore refuses
 any blob over 2 MiB (2,097,152 bytes, measured uncompressed) that the range under judgment brings
@@ -490,15 +385,10 @@ into the history, unless [`.large-blob-allowlist.json`](../.large-blob-allowlist
 with a ceiling that covers it.
 
 The range follows the event, and `validate` learns it from two variables (its workflow step has no
-flag, as the secrets script has none). On a `pull_request` run the workflow passes the event's base tip
-as `BLOB_RANGE_BASE` and the check judges `base..HEAD`: the commits the pull request adds,
-intermediate commits included, so a blob that a later commit deletes is still refused. A pull request
-run without a usable base is refused, as the secrets scan refuses it. On a push to `dev` the variable
-carries the commit the push replaced, and the check judges the commits the push adds. With no base (a
-manual dispatch, a push that created the branch, a base that does not resolve, a local run) every blob
-reachable from `HEAD` is judged: stricter, never weaker. The job fetches full history, and a shallow
-checkout is refused, because its boundary commit's whole tree would look new. To check a branch before
-pushing it, run `BLOB_RANGE_BASE=origin/dev go run -tags dev ./cmd/crw-dev ci validate`; without the
+flag, as the secrets script has none). A manual dispatch has no base, so every blob reachable from
+`HEAD` is judged: stricter, never weaker. The job fetches full history, and a shallow checkout is
+refused, because its boundary commit's whole tree would look new. To check a branch before pushing
+it, run `BLOB_RANGE_BASE=origin/dev go run -tags dev ./cmd/crw-dev ci validate`; without the
 variable the whole history of the branch is judged. A repository with no commit has nothing to judge.
 
 A blob is new when `HEAD` reaches it and the base does not: a blob the base's history held and dropped
@@ -507,8 +397,8 @@ brought the blob first and that commit's subject. It then says how to shrink the
 generated input deterministically in the test that uses it; check a large record by its hash and
 count), how to name it in the allow list, and how to rebuild the branch from its base: a new branch
 from the base, `git merge --squash` of the old branch, the file shrunk or removed, a commit, a push of
-the new branch and a replacement pull request with the old one closed unmerged, so that no commit that
-carries the blob reaches `dev`.
+the new branch and, where the change is an external contribution, a replacement pull request with
+the old one closed unmerged, so that no commit that carries the blob reaches `dev`.
 
 The allow list starts empty (`{"entries": []}`). An entry is `{"path": ..., "max_bytes": ...,
 "reason": ...}`: the exact repository path as git records it, a ceiling above 2 MiB and the reason the
@@ -518,38 +408,34 @@ an entry for as long as its blob is in the history, because a run that judges th
 run, a manual dispatch) judges the blob again. The list is part of the change, so a pull request can add
 a file and its own entry; review the entry's reason as the gate itself is reviewed.
 
-Limits. The size is the object's uncompressed size. On a push to `dev` the blob is already public when
-the check runs; the failure is the report. `dev`'s history cannot be rewritten, so shrinking the file
-in a follow-up changes only its later versions: the old blob stays reachable, and a run that judges the
-whole history keeps seeing it until the allow list names it with a reason. `base.sha` is the base tip at
-the time of the event, so commits that reached `dev` between that moment and the run count as the pull
-request's own, as in the secrets scan. Files no commit holds yet are not judged.
+Limits. The size is the object's uncompressed size. `dev`'s history cannot be rewritten, so
+shrinking the file in a follow-up changes only its later versions: the old blob stays reachable, and
+a run that judges the whole history keeps seeing it until the allow list names it with a reason.
+Files no commit holds yet are not judged.
 
 
 ## Activation
 
-Use `dev` as default and the normal PR target. `main` is a release mirror, advanced by the
+Use `dev` as default. `main` is a release mirror, advanced by the
 owner-authorized [Release workflow](releases.md) to the exact verified dev SHA. There is no
 promotion PR or release-specific CI gate.
 
-Land CI and policy changes through the existing protected dev PR route first. Confirm that the new
-PR gate and the merged dev-push gate both actually succeeded, then apply the authorized protection
-changes and read back the effective rules; never loosen a current gate merely to land its
-replacement. The required check keeps its name, `dev-gate`, through the changes above.
+The management session changes the branch protection when the push-only procedure is switched on:
+the `dev` ruleset stops requiring a pull request and stops requiring a status check, while
+deletion and force-push stay disallowed. Read back the effective rules before claiming the
+protection is active; never loosen a protection merely to land a change.
 
 | Setting | `dev` | `main` |
 | --- | --- | --- |
-| PR required | Yes | No; release workflow advances the ref |
-| Required check | `dev-gate` | `dev-gate` from the selected commit |
-| Strict current-base requirement | Yes | No; unchanged verified commit is fast-forwarded |
+| PR required | No | No; release workflow advances the ref |
+| Required status check | None | None |
+| Deletion | Disallowed | Disallowed |
+| Force push | Disallowed | Disallowed |
 | Required human approvals | 0 | Not a PR workflow |
-| Resolved PR conversations | Yes | Not applicable |
-| Force push, deletion and bypass | Disallowed | Disallowed |
-| Update method | Merge commit through PR | Non-forced fast-forward |
+| Update method | Non-forced fast-forward by the integrator | Non-forced fast-forward |
 
-Require stale-review dismissal on dev and bind checks to the observed GitHub Actions producer.
 Protect version tags (`v*`) against update, deletion and non-fast-forward with no bypass actors.
-The main rules protect ancestry and CI, while owner-only workflow checks govern its release route;
+The main rules protect ancestry, while owner-only workflow checks govern its release route;
 they do not prevent a repository administrator from changing policy or using other authorized
 write credentials. Read before and after configuration:
 
@@ -557,7 +443,7 @@ write credentials. Read before and after configuration:
 gh api repos/OWNER/REPO/rulesets
 gh api repos/OWNER/REPO/rules/branches/dev
 gh api repos/OWNER/REPO/rules/branches/main
-gh pr checks PR_NUMBER --repo OWNER/REPO
+gh run list --repo OWNER/REPO --workflow ci.yml --json databaseId,event,headSha,conclusion
 ```
 
 Checked-in rules are not proof of server enforcement. If protection or release credentials are
@@ -594,7 +480,7 @@ The policy and CI structure were adapted from Jun's Lina checkout at
 `522101ff99e356b0ea6d27b4ea03ec7e599ee4b3` (`POLICY.md`, `docs/CI.md`, the CI workflow and
 `scripts/ci/secrets.sh`), without Lina's builds, dependencies, deployment or personal data. The
 bridge's provenance is in [its PROVENANCE.md](../packages/codex-thread-bridge/PROVENANCE.md).
-GitHub's [PR event reference](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#pull_request)
+GitHub's [workflow dispatch reference](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_dispatch)
 and [secure use reference](https://docs.github.com/en/actions/reference/security/secure-use)
-cover merge-candidate execution, pinned Actions and untrusted PR input; the scanner is
+cover manual execution and pinned Actions; the scanner is
 [Gitleaks 8.30.1](https://github.com/gitleaks/gitleaks/releases/tag/v8.30.1).

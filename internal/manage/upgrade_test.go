@@ -45,11 +45,13 @@ const (
 
 // upgradeEnv is one run's environment.
 type upgradeEnv struct {
-	t       *testing.T
-	home    string
-	codex   string
-	state   string
-	release string
+	record   []byte
+	noRecord bool
+	t        *testing.T
+	home     string
+	codex    string
+	state    string
+	release  string
 
 	// calls is the arguments of every call the fake answered; exeCalls is one line per call as
 	// "<executable><TAB><arguments>", so a test can see which runtime a call came from.
@@ -78,6 +80,14 @@ type upgradeEnv struct {
 }
 
 type upgradeHarnessOptions struct {
+	// noRecord leaves the verification record out: the run gets no --verification option.
+	noRecord bool
+	// recordTree is the tree the default verification record names; empty means upgradeGoodTree.
+	recordTree string
+	// recordResult is the record's result; empty means pass.
+	recordResult string
+	// recordRaw, when set, is the record file's exact bytes.
+	recordRaw []byte
 	// version is what the release archive's crw answers --version with.
 	version string
 	// installedVersion is what the runtime the update produces answers --version with; empty
@@ -170,7 +180,7 @@ func upgradeHarness(t *testing.T, opts upgradeHarnessOptions) *upgradeEnv {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := &upgradeEnv{t: t, home: home, codex: codex, state: state, release: t.TempDir(),
+	h := &upgradeEnv{record: upgradeRecordFor(t, opts), noRecord: opts.noRecord, t: t, home: home, codex: codex, state: state, release: t.TempDir(),
 		calls: filepath.Join(home, "crw-calls.txt"), exeCalls: filepath.Join(home, "crw-exe-calls.txt"),
 		ghCalls:       filepath.Join(home, "gh-calls.jsonl"),
 		statusAnswers: filepath.Join(home, "service-status-answers"),
@@ -444,6 +454,13 @@ func (h *upgradeEnv) installPointer(want bool) {
 // inside one second pins Env.Now instead of racing the wall clock.
 func (h *upgradeEnv) run(args ...string) int {
 	h.t.Helper()
+	if !h.noRecord && !upgradeHasFlag(args, "--verification") {
+		path := filepath.Join(h.home, upgradeRecordName)
+		if err := os.WriteFile(path, h.record, 0o600); err != nil {
+			h.t.Fatal(err)
+		}
+		args = append(args, "--verification", path)
+	}
 	old := upgradeConfig
 	upgradeConfig = func(e *Env) *Config {
 		cfg := coreDefaults(e)
@@ -581,13 +598,12 @@ func (h *upgradeEnv) recordOf(t *testing.T) upgradeRecord {
 }
 
 // upgradeGhPathsFor answers the forge calls a released version makes: the commit ref the version
-// names, and the dev-gate check runs of that commit.
+// names with the tree of that commit.
 func upgradeGhPathsFor(version, commit string) map[string]upgradeGhAnswer {
 	out := map[string]upgradeGhAnswer{}
 	for _, ref := range upgradeCommitRefs(version) {
-		out["repos/owner/repo/commits/"+ref] = upgradeGhAnswer{Body: "{\"sha\":\"" + commit + "\"}"}
+		out["repos/owner/repo/commits/"+ref] = upgradeGhAnswer{Body: fmt.Sprintf("{\"sha\":\"%s\",\"commit\":{\"tree\":{\"sha\":\"%s\"}}}", commit, upgradeGoodTree)}
 	}
-	out["repos/owner/repo/commits/"+commit+"/check-runs"] = upgradeGhAnswer{Body: "{\"check_runs\":[{\"name\":\"dev-gate\",\"conclusion\":\"success\"}]}"}
 	return out
 }
 
@@ -681,7 +697,7 @@ func TestUpgradeSucceedsOnAHealthyHost(t *testing.T) {
 				steps = append(steps, s.Step)
 			}
 			joined := strings.Join(steps, ",")
-			for _, want := range []string{upgradeStepSums, upgradeStepExtract, upgradeStepCommit, upgradeStepDevGate,
+			for _, want := range []string{upgradeStepSums, upgradeStepExtract, upgradeStepCommit, upgradeStepVerify,
 				upgradeStepAttempts, upgradeStepSnapshot, upgradeStepStop, upgradeStepUpdate, upgradeStepStart, upgradeStepPostCheck} {
 				if !strings.Contains(joined, want) {
 					t.Errorf("the record does not name the step %q: %v", want, joined)

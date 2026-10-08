@@ -14,10 +14,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dagsched"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/install"
 )
 
@@ -227,10 +231,16 @@ func (r *upgradeRunState) extractAndResolve() (int, string) {
 			continue
 		}
 		var answer struct {
-			SHA string `json:"sha"`
+			SHA    string `json:"sha"`
+			Commit struct {
+				Tree struct {
+					SHA string `json:"sha"`
+				} `json:"tree"`
+			} `json:"commit"`
 		}
-		if json.Unmarshal([]byte(out), &answer) == nil && answer.SHA != "" {
+		if json.Unmarshal([]byte(out), &answer) == nil && answer.SHA != "" && answer.Commit.Tree.SHA != "" {
 			r.commit = answer.SHA
+			r.tree = answer.Commit.Tree.SHA
 			return 0, ""
 		}
 	}
@@ -255,30 +265,43 @@ func upgradeCommitRefs(version string) []string {
 	return []string{trimmed, "v" + trimmed}
 }
 
-// checkDevGate is step 3: the commit's dev-gate check run must have concluded success.
-func (r *upgradeRunState) checkDevGate() (int, string) {
-	out, code, err := r.command(r.ctx, upgradeCommandTimeout, upgradeStepDevGate, "gh", "api", "repos/"+r.cfg.Repository+"/commits/"+r.commit+"/check-runs")
-	if err != nil || code != 0 {
-		return upgradeExitRefused, upgradeReasonDevGate
+// checkVerificationRecord is step 3: the verification record the operator gives must be a
+// verification-record/1 that the relay's judge accepts for the installed commit's tree. The judge is the
+// same one dag-accept uses: it refuses a record missing a member, with a digest that does not match, a
+// result other than pass, a pin mismatch, or another tree. The keys it cannot know here (the ci.yml and
+// dependency digests and the base) are the record's own, so the judge still checks the record's shape,
+// digest, result and pins, and the host platform comes from the runtime. A record that is missing or
+// unreadable refuses as missing; a record of another tree refuses as other tree; every other refusal is
+// not a pass.
+func (r *upgradeRunState) checkVerificationRecord() (int, string) {
+	if r.opts.Verification == "" {
+		return r.refuse(upgradeStepVerify, upgradeReasonVerifyMissing, "", fmt.Errorf("no --verification record was given"))
 	}
-	var answer struct {
-		CheckRuns []struct {
-			Name       string `json:"name"`
-			Conclusion string `json:"conclusion"`
-			App        struct {
-				Slug string `json:"slug"`
-			} `json:"app"`
-		} `json:"check_runs"`
+	raw, err := os.ReadFile(r.opts.Verification)
+	if err != nil {
+		return r.refuse(upgradeStepVerify, upgradeReasonVerifyMissing, "", err)
 	}
-	if err := json.Unmarshal([]byte(out), &answer); err != nil {
-		return r.refuse(upgradeStepDevGate, upgradeReasonDevGate, out, err)
+	record, err := dagsched.DecodeVerificationRecord(raw)
+	if err != nil {
+		return r.refuse(upgradeStepVerify, upgradeReasonVerifyNotPass, "", err)
 	}
-	for _, run := range answer.CheckRuns {
-		if run.Name == "dev-gate" && run.Conclusion == "success" && (run.App.Slug == "" || run.App.Slug == "github-actions") {
-			return 0, ""
+	keys := dagsched.VerificationKeys{
+		Tree:         r.tree,
+		Base:         record.BaseCommit,
+		CiDigest:     record.CiDigest,
+		Dependencies: record.Dependencies,
+		OS:           runtime.GOOS,
+		Arch:         runtime.GOARCH,
+	}
+	if _, err := dagsched.JudgeVerificationRecord(raw, keys); err != nil {
+		var refused *store.RefusedError
+		if errors.As(err, &refused) && refused.Reason == string(contract.RefusalRevisionMismatch) {
+			return r.refuse(upgradeStepVerify, upgradeReasonVerifyOtherTree, "", err)
 		}
+		return r.refuse(upgradeStepVerify, upgradeReasonVerifyNotPass, "", err)
 	}
-	return r.refuse(upgradeStepDevGate, upgradeReasonDevGate, out, fmt.Errorf("no dev-gate check run concluded success"))
+	r.note(upgradeStepVerify, nil, 0, "the verification record passes for the installed tree", nil)
+	return 0, ""
 }
 
 // upgradeDoctorAnswer is the part of the relay doctor's answer this command reads: where the store
