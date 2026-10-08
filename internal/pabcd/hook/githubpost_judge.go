@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"io"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/shellir"
@@ -361,10 +362,18 @@ func githubPostJudgeDirect(e shellir.Exec, depth int) (githubPostSite, bool) {
 	case "sh", "bash", "dash", "zsh", "ksh", "mksh", "ash":
 		return githubPostJudgeTextDepth(body, e.Dir.Path, depth+1)
 	}
-	if githubPostInlineNamesPost(body) {
+	if githubPostScriptMentionsPost(body) {
 		return unread, true
 	}
 	return githubPostSite{}, false
+}
+
+// githubPostScriptMentionsPost is whether the text of a script of another interpreter spells a gh command (gh pr, gh api, ...). It is
+// narrower than githubPostInlineNamesPost, which a program on the command line is held to: a script file is long, and a bare gh
+// and pr inside other words must not refuse every node shim in the directory.
+func githubPostScriptMentionsPost(body string) bool {
+	re := regexp.MustCompile(`(?:^|[^A-Za-z0-9_./-])gh\s+(?:pr|issue|api|release|repo|gist|workflow|run|label|project|extension|auth|alias|secret|ruleset|cache|codespace)\b`)
+	return re.MatchString(body)
 }
 
 // githubPostReadScriptBytes is githubPostReadScript's read: the bytes of a regular file of at most 1 MiB.
