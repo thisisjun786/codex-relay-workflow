@@ -18,7 +18,7 @@ workflow starts only on a manual dispatch, and integration does not wait on it.
 | `crw-dev ci contracts` | `validate`: the offline contract checks built into `crw-dev`: the hook replay, the operations shape check (`crw-dev ci operations`), the component definition, the start-policy self-test and the parent-title replay |
 | `crw-dev ci refactor-backlog` | `validate`: the generated refactor backlog: assembles `docs/port/refactor-backlog.md` from the fragments under `docs/port/refactor-backlog.d` and refuses when the committed file differs from the fragments (`--write` regenerates it) |
 | `bash scripts/ci/secrets.sh` | `secrets`: checksum-pinned Gitleaks scan: on a manual dispatch every fetched ref ([scope](#secret-scanning)) |
-| `node --test port/cxc/skills/*/tests/*.test.mjs` | `skill-scripts-node`: the staged skills' own Node tests, on Node 24.20.0, only when a staged skill path changed; a run that skips them is success |
+| `node --test port/cxc/skills/*/tests/*.test.mjs` | `skill-scripts-node`: the staged skills' own Node tests, on Node 24.20.0, only when a staged skill path changed from the run's own base (a pull request from its merge base); a run that skips them is success |
 | `npm ci`, `npm test`, `npm run build -- --outDir "$RUNNER_TEMP/gui-built" --emptyOutDir`, `crw-dev ci gui-drift --built "$RUNNER_TEMP/gui-built"` | `gui`: the screens under `web/` build and match the committed `internal/gui/assets` tree byte for byte, on Node 24.20.0, only when a watched path changed ([below](#the-gui-job)); `make gui` runs the same three commands locally |
 | `make lint` | `go-product` leg `lint`: vet (also of the `dev` and `integration` tagged packages), staticcheck and gofmt |
 | `make test-part TEST_PART=<n>` | `go-product` legs `test-<n>` and `test-rest`: the Go tests and the contract corpus; together the parts are `make test` |
@@ -180,9 +180,14 @@ verification CRW-964 adds), so a dispatch exercises the same checks.
 
 Two jobs gate themselves on changed paths. `skill-scripts-node` runs the staged skills' Node
 tests only when a staged skill path changed, and ends successfully without installing Node when
-none did. `gui` runs the screen verification only when `web/`, `internal/gui/assets/` or the gui
-definition changed ([the gui job](#the-gui-job)); it always exists, `dev-gate` waits on it, and
-anything its decision cannot read selects the full run.
+none did. A pull request is judged from its merge base — the three-dot range `base...head`, the
+commits the branch adds to its base — so a staged-skill change that only the base branch carries is
+not this pull request's, and a branch that carries the same change as its base is still selected;
+the job's checkout fetches full history for that reason. A push to `dev` compares the commit it
+replaced with the one it added, where the range is already the pushed commits, and a manual
+dispatch has no base and runs the tests. `gui` runs the screen verification only when `web/`,
+`internal/gui/assets/` or the gui definition changed ([the gui job](#the-gui-job)); it always
+exists, `dev-gate` waits on it, and anything its decision cannot read selects the full run.
 
 `validate`, `secrets` and the `go-product` legs start at once and run on separate runners.
 `make test` builds one `crw` for the run (`dist/test/crw`, release-shaped with `-trimpath`) and
