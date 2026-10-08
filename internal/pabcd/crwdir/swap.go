@@ -344,6 +344,15 @@ func (l *ConfigLock) HoldsSidecar(resolvedPath string) bool {
 	return os.SameFile(held, side)
 }
 
+// HeldInfo answers the identity and link count of the sidecar this lock holds, from one fstat of the held
+// descriptor. It fails for a nil or released lock. The caller compares it with a lookup by name (CRW-993 d1).
+func (l *ConfigLock) HeldInfo() (os.FileInfo, error) {
+	if l == nil || l.file == nil {
+		return nil, errors.New("the config lock is not held")
+	}
+	return l.file.Stat()
+}
+
 // Release unlocks and closes the sidecar. The file is never unlinked.
 func (l *ConfigLock) Release() {
 	if l == nil || l.file == nil {

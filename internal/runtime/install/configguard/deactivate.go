@@ -353,36 +353,44 @@ var configLockPathsEntryLookup = configLockPathsLookupEntry
 // configLockPathsSidecarSuffix is the suffix of the sidecar the lock is held on (crwdir's lock suffix).
 const configLockPathsSidecarSuffix = ".crw-lock"
 
-// configLockPathsProbeFold learns whether the pinned directory folds case without listing it and
-// without writing into it. It looks up, through the held directory descriptor and without following a
-// link, the ASCII case-swapped spelling of the sidecar's basename. The sidecar is the file the lock
-// holds, so it exists for as long as the lock does. The swapped name resolving to the sidecar's own
-// device and inode means the directory folds case; ENOENT means it is case-sensitive; any other error,
-// or another identity, is unknown. A name with no ASCII letter is unknown.
-func configLockPathsProbeFold(pinned *configLockPathsPin) configLockPathsFold {
-	if pinned == nil || pinned.dirFd < 0 {
-		return configLockPathsFoldUnknown
+// configLockPathsProbeFold learns whether the pinned directory folds case, without listing it and without
+// writing into it. The ASCII case-swapped spelling of the sidecar's basename is looked up through the held
+// directory descriptor without following a link. ENOENT means the directory is case-sensitive. A hit is
+// trusted only when one fstat of the descriptor the lock holds gives the sidecar a link count of one and
+// the swapped name reaches that same entry: then the directory folds case. Anything else is unknown, and
+// the reason names which of the four causes applies (CRW-993 d1, d2).
+func configLockPathsProbeFold(pinned *configLockPathsPin) (configLockPathsFold, string) {
+	if pinned == nil || pinned.dirFd < 0 || pinned.lock == nil {
+		return configLockPathsFoldUnknown, "the case-swapped lookup failed (the directory has no descriptor)"
 	}
 	sidecar := filepath.Base(pinned.path) + configLockPathsSidecarSuffix
 	swapped, letters := configLockPathsCaseSwap(sidecar)
 	if !letters {
-		return configLockPathsFoldUnknown
-	}
-	held, err := os.Stat(filepath.Join(filepath.Dir(pinned.path), sidecar))
-	if err != nil {
-		return configLockPathsFoldUnknown
+		return configLockPathsFoldUnknown, "the name has no ASCII letter"
 	}
 	dev, ino, err := configLockPathsStatEntry(pinned.dirFd, swapped)
 	if errors.Is(err, fs.ErrNotExist) {
-		return configLockPathsFoldSensitive
+		return configLockPathsFoldSensitive, ""
 	}
 	if err != nil {
-		return configLockPathsFoldUnknown
+		return configLockPathsFoldUnknown, fmt.Sprintf("the case-swapped lookup failed (%v)", err)
 	}
-	if hdev, hino, ok := configLockPathsIdentity(held); ok && hdev == dev && hino == ino {
-		return configLockPathsFoldFolds
+	held, err := pinned.lock.HeldInfo()
+	if err != nil {
+		return configLockPathsFoldUnknown, fmt.Sprintf("the case-swapped lookup failed (the held lock file cannot be stat'ed: %v)", err)
 	}
-	return configLockPathsFoldUnknown
+	st, ok := held.Sys().(*syscall.Stat_t)
+	if !ok {
+		return configLockPathsFoldUnknown, "the case-swapped lookup failed (the lock file's identity is unavailable)"
+	}
+	if uint64(st.Nlink) != 1 {
+		return configLockPathsFoldUnknown, "the sidecar has another name (its link count is not one)"
+	}
+	hdev, hino, _ := configLockPathsIdentity(held)
+	if hdev != dev || hino != ino {
+		return configLockPathsFoldUnknown, "the identity differs: the case-swapped name reaches another entry"
+	}
+	return configLockPathsFoldFolds, ""
 }
 
 // configLockPathsCaseSwap swaps the ASCII letters of name and reports whether it had any.
@@ -441,16 +449,17 @@ func configLockPathsReadable(dir string) bool {
 // configLockPathsProbedEntry decides, for an unreadable parent, whether the candidate names the locked
 // entry. A folding directory is proved by a by-name lookup through the held descriptor, which must give
 // the pinned file's identity. A case-sensitive directory refuses, because a differently cased name is a
-// different entry even when it is a hard link. An unknown answer refuses with the reason, which is the
-// one exception the same-file restore promise has (CRW-993 d2).
+// different entry even when it is a hard link. An unknown answer refuses with its reason, which is the one
+// exception the same-file restore promise has (CRW-993 d2).
 func configLockPathsProbedEntry(real string, pinned *configLockPathsPin) (bool, error) {
 	name := filepath.Base(real)
-	switch configLockPathsFoldProbe(pinned) {
+	fold, reason := configLockPathsFoldProbe(pinned)
+	switch fold {
 	case configLockPathsFoldSensitive:
 		return false, nil
 	case configLockPathsFoldFolds:
 	default:
-		return false, fmt.Errorf("%s cannot be shown to be the locked config file: its directory does not answer whether it folds case, and it cannot be listed", name)
+		return false, fmt.Errorf("%s cannot be shown to be the locked config file: the case behaviour of its directory is unknown, %s", name, reason)
 	}
 	dev, ino, err := configLockPathsEntryLookup(pinned, name)
 	if err != nil {

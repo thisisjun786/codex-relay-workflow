@@ -1128,7 +1128,7 @@ func configLockPathsHandoverRetarget(t *testing.T, home string, stale []byte, re
 		t.Fatal(err)
 	}
 	go func() {
-		f, err := os.OpenFile(first, os.O_WRONLY, 0)
+		f, err := configLockPathsOpenFifoWriter(first)
 		if err != nil {
 			t.Error(err)
 			return
@@ -1151,7 +1151,7 @@ func configLockPathsHandoverRetarget(t *testing.T, home string, stale []byte, re
 			return
 		}
 		release()
-		f, err = os.OpenFile(second, os.O_WRONLY, 0)
+		f, err = configLockPathsOpenFifoWriter(second)
 		if err != nil {
 			t.Error(err)
 			return
