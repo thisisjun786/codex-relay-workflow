@@ -240,6 +240,7 @@ func TestCapacityReview779ReadinessFollowsTheSnapshotRevision(t *testing.T) {
 	f.passRevision = 1
 	f.revision(2)
 	f.pauseNode("C")
+	// C is paused in revision 2, so it reads defer:node_paused and is not ready. D waits on e2.
 	f.publishOpen()
 	capacityReview779PassSeam(t, f)
 	plan := f.run()
@@ -361,13 +362,14 @@ func TestCapacityReview779CancelledNodeIsNotLive(t *testing.T) {
 	})
 
 	t.Run("a paused node is still live", func(t *testing.T) {
+		// C is paused, which defers it as node_paused, so it is not ready. D waits on e2, so C+D has no ready node.
 		f := branchNewFixture(t, "CRW-1", "CRW-2")
 		capacityReview779Plan(f)
 		f.revision(2)
 		f.pauseNode("C")
 		f.publish()
 		branchWant(t, branchSummaries(branchList(t, f.run())),
-			"A+B pkg/A.go,pkg/B.go ready=1 edges=1", "C+D pkg/C.go,pkg/D.go ready=1 edges=1")
+			"A+B pkg/A.go,pkg/B.go ready=1 edges=1", "C+D pkg/C.go,pkg/D.go ready=0 edges=1")
 	})
 }
 

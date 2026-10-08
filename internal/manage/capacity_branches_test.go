@@ -4,8 +4,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
-	"encoding/json"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -109,8 +109,8 @@ func branchNewFixture(t *testing.T, ready ...string) *branchFixture {
 		t.Fatal(err)
 	}
 	for path, body := range map[string]string{
-		"meminfo":          "MemAvailable: 100000000 kB\nSwapTotal: 2000000 kB\nSwapFree: 2000000 kB\n",
-		"pressure/memory":  "some avg10=0.00 avg60=0.00 avg300=0.00 total=0\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0\n",
+		"meminfo":         "MemAvailable: 100000000 kB\nSwapTotal: 2000000 kB\nSwapFree: 2000000 kB\n",
+		"pressure/memory": "some avg10=0.00 avg60=0.00 avg300=0.00 total=0\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0\n",
 	} {
 		if err := os.WriteFile(filepath.Join(proc, path), []byte(body), 0o600); err != nil {
 			t.Fatal(err)
@@ -795,34 +795,29 @@ func TestBranchCandidatesForgetTheAlwaysFlagAfterTheRun(t *testing.T) {
 	}
 }
 
-// The waiting set is the ready nodes plus the ones deferred for want of capacity, so a bundle
-// whose member is only deferred still counts it.
+// A node the relay defers for want of a slot is part of the waiting set, so it counts in ready_count
+// and reads as waiting. The run slot is held, so A, a root, is deferred for want of capacity. B waits
+// on A's edge and is not in the waiting set; C is a root of its own and stays a bundle of one.
 func TestBranchCandidatesCountADeferredNodeAsWaiting(t *testing.T) {
-	f := branchNewFixture(t, "CRW-1")
+	f := branchNewFixture(t, "CRW-1", "CRW-2")
+	f.capacityLimit("runs", 1)
+	f.heldSlots(1)
 	f.node("A", "CRW-1").node("B", "CRW-2").node("C", "CRW-3")
 	f.edge("e1", "A", "B")
 	for _, node := range []string{"A", "B", "C"} {
 		f.region(node, "pkg/"+node+".go", "file", "", "edit", false)
 	}
-	f.waiting = []string{"CRW-1", "CRW-2"}
-	// A second node deferred for want of a slot is part of the waiting set, and it is the node the
-	// plan does not list as ready.
-	f.publish()
-	branchWriteJSON(t, filepath.Join(f.dir, "ready.json"), map[string]any{"ok": true, "schema": "dag-ready/1",
-		"pass":  map[string]any{"free_slots": 0, "ceiling": 12, "held": 12, "host_memory": map[string]any{"state": "within"}},
-		"ready": []any{map[string]any{"node_id": "A", "issue_key": "CRW-1", "disposition": "ready", "reason": nil}},
-		"nodes": []any{map[string]any{"node_id": "B", "issue_key": "CRW-2", "disposition": "defer", "reason": "defer:no_capacity"}}})
-	plan := f.run()
+	plan := f.publish().run()
 	candidates := branchList(t, plan)
 	if len(candidates) != 1 {
 		t.Fatalf("branches = %v, want the one bundle", branchSummaries(candidates))
 	}
-	if candidates[0].ReadyCount != 2 {
-		t.Fatalf("ready_count = %d, want 2: one ready node and one deferred for want of capacity", candidates[0].ReadyCount)
+	if candidates[0].ReadyCount != 1 {
+		t.Fatalf("ready_count = %d, want 1: A is deferred for want of capacity and counts as waiting", candidates[0].ReadyCount)
 	}
 	for _, node := range candidates[0].Nodes {
-		if !node.Ready {
-			t.Fatalf("node %s reads not waiting, want every member of the waiting set to read waiting", node.NodeID)
+		if want := node.NodeID == "A"; node.Ready != want {
+			t.Fatalf("node %s Ready = %v, want %v: only the deferred root is in the waiting set", node.NodeID, node.Ready, want)
 		}
 	}
 }
@@ -830,6 +825,8 @@ func TestBranchCandidatesCountADeferredNodeAsWaiting(t *testing.T) {
 // Every edge kind connects: the plan's edges are read whatever kind they are, so a bundle joined
 // by an integrated or a decision edge is one bundle.
 func TestBranchCandidatesConnectWhateverTheEdgeKind(t *testing.T) {
+	// B waits on A's edge in the artifact and integrated kinds, and defers for want of an authority in the
+	// decision kind, so only A reads ready in every kind. C is a root of its own.
 	for _, kind := range []string{"artifact_verified", "integrated", "decision"} {
 		t.Run(kind, func(t *testing.T) {
 			f := branchNewFixture(t, "CRW-1", "CRW-2")
@@ -840,13 +837,14 @@ func TestBranchCandidatesConnectWhateverTheEdgeKind(t *testing.T) {
 				f.region(node, "pkg/"+node+".go", "file", "", "edit", false)
 			}
 			plan := f.publish().run()
-			branchWant(t, branchSummaries(branchList(t, plan)), "A+B pkg/A.go,pkg/B.go ready=2 edges=1")
+			branchWant(t, branchSummaries(branchList(t, plan)), "A+B pkg/A.go,pkg/B.go ready=1 edges=1")
 		})
 	}
 }
 
 // C1: a bundle joined only by an edge is a candidate, and the graph's two bundles are two of them.
 func TestBranchCandidatesConnectByEdgesOnly(t *testing.T) {
+	// Ready: A and C, the roots. B waits on e1 and D waits on e2, so each bundle has one ready node.
 	f := branchNewFixture(t, "CRW-1", "CRW-2")
 	f.node("A", "CRW-1").node("B", "CRW-2").node("C", "CRW-3").node("D", "CRW-4")
 	f.edge("e1", "A", "B").edge("e2", "C", "D")
@@ -855,12 +853,13 @@ func TestBranchCandidatesConnectByEdgesOnly(t *testing.T) {
 	}
 	plan := f.publish().run()
 	branchWant(t, branchSummaries(branchList(t, plan)),
-		"A+B pkg/A.go,pkg/B.go ready=2 edges=1", "C+D pkg/C.go,pkg/D.go ready=0 edges=1")
+		"A+B pkg/A.go,pkg/B.go ready=1 edges=1", "C+D pkg/C.go,pkg/D.go ready=1 edges=1")
 }
 
 // C1: a bundle joined only by overlapping regions is a candidate; regions in different places leave
 // two of them.
 func TestBranchCandidatesConnectByRegionsOnly(t *testing.T) {
+	// B and D defer for an edit overlap with A and C, which are the roots. Each bundle has one ready node.
 	f := branchNewFixture(t, "CRW-1", "CRW-2")
 	f.node("A", "CRW-1").node("B", "CRW-2").node("C", "CRW-3").node("D", "CRW-4")
 	f.region("A", "internal/pkg", "tree", "", "edit", false)
@@ -869,12 +868,13 @@ func TestBranchCandidatesConnectByRegionsOnly(t *testing.T) {
 	f.region("D", "cmd/svc/d.go", "file", "", "edit", false)
 	plan := f.publish().run()
 	branchWant(t, branchSummaries(branchList(t, plan)),
-		"A+B internal/pkg,internal/pkg/x.go ready=2 edges=0", "C+D cmd/svc,cmd/svc/d.go ready=0 edges=0")
+		"A+B internal/pkg,internal/pkg/x.go ready=1 edges=0", "C+D cmd/svc,cmd/svc/d.go ready=1 edges=0")
 }
 
 // C1: a node that declared no region joins every live node, so the same graph becomes one component
 // and nothing can be taken out.
 func TestBranchCandidatesUndeclaredNodeJoinsEveryLiveNode(t *testing.T) {
+	// Ready: A and C, the roots of the two edges. B waits on e1 and D waits on e2. E is a root of its own.
 	build := func(undeclared bool) *branchFixture {
 		f := branchNewFixture(t, "CRW-1", "CRW-2")
 		f.node("A", "CRW-1").node("B", "CRW-2").node("C", "CRW-3").node("D", "CRW-4").node("E", "CRW-5")
@@ -888,7 +888,7 @@ func TestBranchCandidatesUndeclaredNodeJoinsEveryLiveNode(t *testing.T) {
 		return f
 	}
 	declared := branchSummaries(branchList(t, build(false).publish().run()))
-	branchWant(t, declared, "A+B pkg/A.go,pkg/B.go ready=2 edges=1", "C+D pkg/C.go,pkg/D.go ready=0 edges=1")
+	branchWant(t, declared, "A+B pkg/A.go,pkg/B.go ready=1 edges=1", "C+D pkg/C.go,pkg/D.go ready=1 edges=1")
 	if got := branchSummaries(branchList(t, build(true).publish().run())); len(got) != 0 {
 		t.Fatalf("with E undeclared, branches = %v, want none: E joins every live node, so the one component is the whole plan", got)
 	}
@@ -896,6 +896,7 @@ func TestBranchCandidatesUndeclaredNodeJoinsEveryLiveNode(t *testing.T) {
 
 // C1: a bundle that holds a released node is not a candidate.
 func TestBranchCandidatesExcludeABundleWithAReleasedNode(t *testing.T) {
+	// B waits on A's edge, so A is the only ready node of its bundle. C is released, which takes C+D out.
 	f := branchNewFixture(t, "CRW-1", "CRW-2")
 	f.node("A", "CRW-1").node("B", "CRW-2").node("C", "CRW-3").node("D", "CRW-4").node("E", "CRW-5")
 	f.edge("e1", "A", "B").edge("e2", "C", "D")
@@ -904,12 +905,13 @@ func TestBranchCandidatesExcludeABundleWithAReleasedNode(t *testing.T) {
 	}
 	f.release("C")
 	got := branchSummaries(branchList(t, f.publish().run()))
-	branchWant(t, got, "A+B pkg/A.go,pkg/B.go ready=2 edges=1")
+	branchWant(t, got, "A+B pkg/A.go,pkg/B.go ready=1 edges=1")
 }
 
 // C1: an integrated node is not live, so an edge into it joins nothing and its neighbour stands
 // alone, below the floor.
 func TestBranchCandidatesDoNotConnectThroughAnIntegratedNode(t *testing.T) {
+	// C is integrated and leaves the plan. B waits on A's edge, so only A reads ready.
 	f := branchNewFixture(t, "CRW-1", "CRW-2")
 	f.node("A", "CRW-1").node("B", "CRW-2").node("C", "CRW-3").node("D", "CRW-4")
 	f.edge("e1", "A", "B").edge("e2", "C", "D")
@@ -918,7 +920,7 @@ func TestBranchCandidatesDoNotConnectThroughAnIntegratedNode(t *testing.T) {
 	}
 	f.integrated("C")
 	got := branchSummaries(branchList(t, f.publish().run()))
-	branchWant(t, got, "A+B pkg/A.go,pkg/B.go ready=2 edges=1")
+	branchWant(t, got, "A+B pkg/A.go,pkg/B.go ready=1 edges=1")
 }
 
 // An integration that a later observation contradicts does not integrate: the node stays live, so
@@ -927,6 +929,7 @@ func TestBranchCandidatesDoNotConnectThroughAnIntegratedNode(t *testing.T) {
 // E, so a C that stays live keeps D and E inside its component and D and E never become a bundle of
 // their own.
 func TestBranchCandidatesKeepANodeWhoseIntegrationWasSuperseded(t *testing.T) {
+	// B waits on A's edge, so only A reads ready. C stays live after its superseded integration.
 	f := branchNewFixture(t, "CRW-1", "CRW-2")
 	f.node("A", "CRW-1").node("B", "CRW-2").node("C", "CRW-3").node("D", "CRW-4").node("E", "CRW-5")
 	f.edge("e1", "A", "B").edge("e2", "C", "D").edge("e3", "D", "E")
@@ -939,7 +942,7 @@ func TestBranchCandidatesKeepANodeWhoseIntegrationWasSuperseded(t *testing.T) {
 	got := branchSummaries(branchList(t, f.publish().run()))
 	// If C read as integrated it would leave the graph and D+E would be a bundle of its own; C stays
 	// live, so A+B is the only candidate.
-	branchWant(t, got, "A+B pkg/A.go,pkg/B.go ready=2 edges=1")
+	branchWant(t, got, "A+B pkg/A.go,pkg/B.go ready=1 edges=1")
 }
 
 // C1: when the whole plan is one component there is no candidate, and the plan still carries the
@@ -960,8 +963,10 @@ func TestBranchCandidatesOfOneComponentAreNone(t *testing.T) {
 // C2: the same input gives the same branches in the same order, ranked by waiting count, then node
 // count, then the smallest node id, and capped at max_branches.
 func TestBranchCandidatesOrderCapAndDeterminism(t *testing.T) {
+	// Each bundle has one ready node: A, C, F and H are roots and B, D, E, G and I wait on their edges.
+	// The cap of three drops {H,I}, which ranks last.
 	f := branchNewFixture(t, "CRW-1", "CRW-2", "CRW-3", "CRW-4")
-	// four bundles: {A,B} with two waiting, {C,D,E} with two, {F,G} with none, {H,I} with none.
+	// four bundles: {A,B} with A ready, {C,D,E} with C ready, {F,G} with F ready, {H,I} with H ready.
 	f.node("A", "CRW-1").node("B", "CRW-2").node("C", "CRW-3").node("D", "CRW-4").node("E", "CRW-5").
 		node("F", "CRW-6").node("G", "CRW-7").node("H", "CRW-8").node("I", "CRW-9")
 	for _, pair := range [][2]string{{"A", "B"}, {"C", "D"}, {"D", "E"}, {"F", "G"}, {"H", "I"}} {
@@ -973,9 +978,9 @@ func TestBranchCandidatesOrderCapAndDeterminism(t *testing.T) {
 	plan := f.publish().run()
 	got := branchSummaries(branchList(t, plan))
 	branchWant(t, got,
-		"C+D+E pkg/C.go,pkg/D.go,pkg/E.go ready=2 edges=2",
-		"A+B pkg/A.go,pkg/B.go ready=2 edges=1",
-		"F+G pkg/F.go,pkg/G.go ready=0 edges=1")
+		"C+D+E pkg/C.go,pkg/D.go,pkg/E.go ready=1 edges=2",
+		"A+B pkg/A.go,pkg/B.go ready=1 edges=1",
+		"F+G pkg/F.go,pkg/G.go ready=1 edges=1")
 	again := branchSummaries(branchList(t, f.run()))
 	if strings.Join(again, " | ") != strings.Join(got, " | ") {
 		t.Fatalf("the second run = %v, want the first run %v", again, got)
@@ -1050,7 +1055,8 @@ func TestBranchCandidatesDocumentKeysAndTheAlwaysFlag(t *testing.T) {
 // The thresholds come from the capacity section, so a floor of three drops the two-node bundle and
 // a cap of one keeps the first.
 func TestBranchCandidatesThresholdsComeFromTheSection(t *testing.T) {
-	// The waiting set is inside the larger bundle, so the ready count and the node count rank it
+	// C+D+E+F has C ready and the rest waiting on their edges. A+B has A ready and B waiting on e1.
+	// Both bundles hold one ready node, so the node count ranks the larger one first and
 	// first; the floor then drops the smaller one and the cap keeps only what is left.
 	f := branchNewFixture(t, "CRW-3", "CRW-4")
 	f.node("A", "CRW-1").node("B", "CRW-2").node("C", "CRW-3").node("D", "CRW-4").node("E", "CRW-5").node("F", "CRW-6")
@@ -1060,14 +1066,40 @@ func TestBranchCandidatesThresholdsComeFromTheSection(t *testing.T) {
 	}
 	f.publish()
 	branchWant(t, branchSummaries(branchList(t, f.run())),
-		"C+D+E+F pkg/C.go,pkg/D.go,pkg/E.go,pkg/F.go ready=2 edges=3",
-		"A+B pkg/A.go,pkg/B.go ready=0 edges=1")
+		"C+D+E+F pkg/C.go,pkg/D.go,pkg/E.go,pkg/F.go ready=1 edges=3",
+		"A+B pkg/A.go,pkg/B.go ready=1 edges=1")
 	f.section["min_branch_nodes"] = 3
 	f.load()
 	branchWant(t, branchSummaries(branchList(t, f.run())),
-		"C+D+E+F pkg/C.go,pkg/D.go,pkg/E.go,pkg/F.go ready=2 edges=3")
+		"C+D+E+F pkg/C.go,pkg/D.go,pkg/E.go,pkg/F.go ready=1 edges=3")
 	f.section["max_branches"] = 1
 	f.load()
 	branchWant(t, branchSummaries(branchList(t, f.run())),
-		"C+D+E+F pkg/C.go,pkg/D.go,pkg/E.go,pkg/F.go ready=2 edges=3")
+		"C+D+E+F pkg/C.go,pkg/D.go,pkg/E.go,pkg/F.go ready=1 edges=3")
+}
+
+// The reading takes readiness from its own snapshot. The earlier dag-ready pass answered for the same
+// plan revision and listed X and Y as ready, and B's only predecessor A is integrated just before the
+// reading takes its snapshot. The revision does not move, so a reading that kept the pass's answer
+// would keep B waiting. B and C form one bundle with B ready, and X and Y form another with X ready.
+func TestBranchCandidatesReadyFromTheSnapshotNotTheEarlierPass(t *testing.T) {
+	f := branchNewFixture(t, "CRW-4", "CRW-5")
+	f.node("A", "CRW-1").node("B", "CRW-2").node("C", "CRW-3").node("X", "CRW-4").node("Y", "CRW-5")
+	f.integratedEdge("e1", "A", "B", "dev")
+	f.edge("e2", "B", "C").edge("e3", "X", "Y")
+	for _, node := range []string{"A", "B", "C", "X", "Y"} {
+		f.region(node, "pkg/"+node+".go", "file", "", "edit", false)
+	}
+	f.readyNode("A")
+	f.exec("INSERT OR IGNORE INTO assignment_marks (relationship_id, mark, event_id, execution_generation, revision_hash, evidence, actor, marked_at) SELECT relationship_id, 'merged', event_id, 1, revision_hash, 'merged', 'parent', '2026-10-07T09:00:00.000000+00:00' FROM dag_acceptances WHERE node_id = 'A' AND plan_id = 'p-branch'")
+	f.passRevision = 1
+	f.publishOpen()
+	previous := branchPassSeam
+	branchPassSeam = func() {
+		f.exec("INSERT INTO dag_integration_observations (observation_id, acceptance_id, repository, base_ref, subject_sha, tip_sha, is_ancestor, method, observed_seq, reverted_by, observed_at) SELECT 'observation-A-1', acceptance_id, 'owner/repo', 'dev', head_sha, 'tip', 1, 'ancestry', 1, NULL, '2026-10-07T09:00:00.000000+00:00' FROM dag_acceptances WHERE node_id = 'A' AND plan_id = 'p-branch'")
+	}
+	t.Cleanup(func() { branchPassSeam = previous })
+	plan := f.run()
+	branchWant(t, branchSummaries(branchList(t, plan)),
+		"B+C pkg/B.go,pkg/C.go ready=1 edges=1", "X+Y pkg/X.go,pkg/Y.go ready=1 edges=1")
 }
