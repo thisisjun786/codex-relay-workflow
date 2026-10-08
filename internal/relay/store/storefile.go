@@ -1,10 +1,14 @@
 package store
 
 import (
+	"fmt"
 	"os"
 	"sync"
 	"syscall"
 
+	"golang.org/x/sys/unix"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
 )
 
@@ -18,33 +22,53 @@ import (
 // descriptor this process opens on a store file outside SQLite is kept for the life of the
 // process and never closed.
 //
-// Two consequences shape the code below. First, a descriptor that becomes unreachable would be
+// Three consequences shape the code below. First, a descriptor that becomes unreachable would be
 // closed by os.File's finalizer at the next garbage collection, which is a close of the same file
-// and drops the same locks, so nothing opened here is left for the collector to find. Second, a
-// second name for a file this process already holds must reuse that handle rather than open
-// another descriptor, so the lookup by identity happens before the open.
+// and drops the same locks, so nothing opened here is left for the collector to find - neither a
+// handle whose identity could not be measured nor the second handle a same-inode race produced
+// (CRW-880). Second, a second name for a file this process already holds must reuse that handle
+// rather than open another descriptor, so the lookup by identity happens before the open and
+// again after it. Third, the open itself must not wait: the registry mutex is process-wide, so a
+// path that is not a regular file is refused without a blocking open (CRW-880).
 
 // storeFileSuffixes is the suffix set the rule names: the database and its SQLite sidecars. The
 // guard test (storefile_guard_test.go) reads the same set, so a new sidecar suffix is declared
 // once.
 var storeFileSuffixes = []string{"", "-wal", "-shm", "-journal"}
 
+// storeFileAfterStatHook is a deterministic seam for tests, called between the identity lookup
+// and the open, where a test can move the path away and back (CRW-880). Production leaves it nil.
+var storeFileAfterStatHook func(path string)
+
 // storeFileKey identifies one store file by the identity the kernel gives it. Two paths naming
 // one inode share a key, which is what makes the registry hold each file once.
 type storeFileKey struct{ device, inode uint64 }
 
 // heldRegistry is the process-wide registry. byPath answers the common case without an open;
-// byKey answers a second path that names an already-held inode. Neither map ever loses an entry
-// and nothing in this package closes a stored handle. unidentified keeps a descriptor whose
-// identity could not be measured reachable, so the collector cannot close it either.
+// byKey answers a second path that names an already-held inode. A byPath value is replaced when
+// the path stops naming the handle's file, and byKey keeps every handle reachable, so no handle is
+// lost and nothing in this package closes a stored handle. neverClosed keeps every descriptor that
+// must stay reachable but is not the registry's answer for its inode: one whose identity could
+// not be measured, one that lost the same-inode race after the open (CRW-880), and one the
+// artifact reader refused and handed over rather than closing (CRW-880).
+//
+// live and livePaths are the store-file identity table (CRW-967). They describe the stores this
+// process has open right now, not every path it ever opened: store.open and the read-only openers
+// take a reference on their database file when they open, and Store.Close gives it back. live
+// counts the open stores per (device, inode) of their database file, so a database renamed while
+// its connection is open is still recognised by identity. livePaths counts the open stores per
+// resolved database path; the artifact check stats the sidecars of those paths only. Both maps
+// drop an entry when its last store closes, so an inode a closed store freed is no longer refused.
 type heldRegistry struct {
 	sync.Mutex
-	byPath       map[string]*os.File
-	byKey        map[storeFileKey]*os.File
-	unidentified []*os.File
+	byPath      map[string]*os.File
+	byKey       map[storeFileKey]*os.File
+	neverClosed []*os.File
+	live        map[storeFileKey]int
+	livePaths   map[string]int
 }
 
-var heldStoreFiles = &heldRegistry{byPath: map[string]*os.File{}, byKey: map[storeFileKey]*os.File{}}
+var heldStoreFiles = &heldRegistry{byPath: map[string]*os.File{}, byKey: map[storeFileKey]*os.File{}, live: map[storeFileKey]int{}, livePaths: map[string]int{}}
 
 func init() { ownership.HoldStoreFile = holdStoreFile }
 
@@ -52,6 +76,8 @@ func init() { ownership.HoldStoreFile = holdStoreFile }
 // the first time and never closing it. The returned handle is a borrow: the caller must not close
 // it. A path that does not name a regular file is refused, with the descriptor closed before the
 // refusal, because a directory or a device is not a store file and cannot carry SQLite's locks.
+// The refusal happens before the open where a stat can already see it, so a writerless FIFO never
+// reaches open(2) while this mutex is held (CRW-880).
 func holdStoreFile(path string) (*os.File, error) {
 	heldStoreFiles.Lock()
 	defer heldStoreFiles.Unlock()
@@ -62,17 +88,29 @@ func holdStoreFile(path string) (*os.File, error) {
 	if file, ok := heldStoreFiles.byPath[path]; ok && namesTheFileAt(file, path) {
 		return file, nil
 	}
-	// Look the file up by identity BEFORE opening it. A second name for an inode this process
-	// already holds (a hard link, a bind mount, another spelling of the path) must reuse that
-	// handle: opening another descriptor and dropping it would let the collector close it and
-	// drop this process's locks on the file.
-	if key, ok := storeFileKeyOf(path); ok {
-		if file, ok := heldStoreFiles.byKey[key]; ok {
-			heldStoreFiles.byPath[path] = file
-			return file, nil
+	// Refuse a path that is not a regular file BEFORE opening it, and look the file up by
+	// identity before opening it too. A second name for an inode this process already holds (a
+	// hard link, a bind mount, another spelling of the path) must reuse that handle: opening
+	// another descriptor and dropping it would let the collector close it and drop this
+	// process's locks on the file.
+	if info, err := os.Stat(path); err == nil {
+		if !info.Mode().IsRegular() {
+			return nil, storeFileRefusal(path, info)
+		}
+		if stat, ok := info.Sys().(*syscall.Stat_t); ok {
+			if file, ok := heldStoreFiles.byKey[storeFileKey{uint64(stat.Dev), uint64(stat.Ino)}]; ok {
+				heldStoreFiles.byPath[path] = file
+				return file, nil
+			}
 		}
 	}
-	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_CLOEXEC, 0)
+	if storeFileAfterStatHook != nil {
+		storeFileAfterStatHook(path)
+	}
+	// O_NONBLOCK closes the window between the stat above and this open: a path that became a
+	// FIFO in it returns at once instead of waiting for a writer that may never come. The flag is
+	// cleared again before the handle is registered or handed out.
+	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_CLOEXEC|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -81,29 +119,235 @@ func holdStoreFile(path string) (*os.File, error) {
 		// The descriptor is open on a store file, so it is kept reachable rather than closed:
 		// closing it would drop this process's POSIX locks on that inode, which is the defect
 		// this file exists to prevent. The caller gets the error and uses nothing.
-		heldStoreFiles.unidentified = append(heldStoreFiles.unidentified, file)
+		heldStoreFiles.neverClosed = append(heldStoreFiles.neverClosed, file)
 		return nil, err
 	}
 	if !info.Mode().IsRegular() {
-		// Not a store file: a directory at relay.sqlite3 is the case sibling discovery and a
-		// directory-shaped source reach. Closing it is safe (it carries no SQLite lock) and
-		// refusing it keeps malformed sibling directories from consuming descriptors for the
-		// life of the process. The refusal is the one ownership.CopySnapshot documents for a
-		// directory source.
+		// Not a store file: the path became a FIFO, a device or a directory between the stat
+		// above and this open. Such a file carries no SQLite lock, so closing it is safe and
+		// refusing it keeps it from consuming a descriptor for the life of the process. The
+		// refusal is the one ownership.CopySnapshot documents for a directory source.
 		_ = file.Close()
-		return nil, &os.PathError{Op: "open", Path: path, Err: syscall.EISDIR}
+		return nil, storeFileRefusal(path, info)
 	}
+	clearStoreFileNonblock(int(file.Fd()))
 	identity, measured := fstatIdentity(int(file.Fd()))
 	if !measured {
 		// Keep the descriptor reachable rather than let the collector close it: it may be the
 		// only descriptor this process holds on a file it will hold a lock on.
-		heldStoreFiles.unidentified = append(heldStoreFiles.unidentified, file)
+		heldStoreFiles.neverClosed = append(heldStoreFiles.neverClosed, file)
 		return file, nil
 	}
 	key := storeFileKey{identity.device, identity.inode}
+	if held, ok := heldStoreFiles.byKey[key]; ok {
+		// The path came back to an inode this process already holds between the stat above and
+		// this open (CRW-880). The handle the registry already has is the answer and byKey keeps
+		// it: overwriting byKey here would drop the old handle's last reference, and the
+		// collector's close of it would drop this process's POSIX locks on the file. The
+		// descriptor just opened is kept reachable for the same reason.
+		heldStoreFiles.neverClosed = append(heldStoreFiles.neverClosed, file)
+		// A handle this path used to answer with is displaced here. It stays reachable through
+		// byKey today (every value byPath holds is one byKey holds), and it is put on the
+		// never-closed list as well so the rule holds even if that ever stops being true.
+		if displaced, ok := heldStoreFiles.byPath[path]; ok && displaced != held {
+			heldStoreFiles.neverClosed = append(heldStoreFiles.neverClosed, displaced)
+		}
+		heldStoreFiles.byPath[path] = held
+		return held, nil
+	}
 	heldStoreFiles.byKey[key] = file
 	heldStoreFiles.byPath[path] = file
 	return file, nil
+}
+
+// storeFileRefusal is the refusal of a store-file path that is not a regular file, in the shape
+// the directory case has always used: an os.PathError whose Op is "open". A directory keeps
+// EISDIR; every other special file (a FIFO, a device, a socket) gets ENXIO, which no SQLite lock
+// can be taken on and which is not a directory. No refusal reason is added.
+func storeFileRefusal(path string, info os.FileInfo) error {
+	errno := syscall.ENXIO
+	if info.IsDir() {
+		errno = syscall.EISDIR
+	}
+	return &os.PathError{Op: "open", Path: path, Err: errno}
+}
+
+// clearStoreFileNonblock clears the O_NONBLOCK holdStoreFile adds to its open. The flag lives on
+// the open file description, so a descriptor this process keeps must not leave it set: a read
+// through it, or through any descriptor that shares the description, would see EAGAIN.
+func clearStoreFileNonblock(fd int) {
+	_ = unix.SetNonblock(fd, false)
+}
+
+// liveStoreRef is one open store's share of the identity table (CRW-967). registerLiveStore takes it
+// before the store connects and records the identity of the database file it names at that moment;
+// attach confirms, once the connection has opened the file, that the path still names that file;
+// and release gives both back when the store closes. release does nothing after the first call, so
+// a store closed twice never lowers another store's count.
+type liveStoreRef struct {
+	path     string
+	key      storeFileKey
+	keyed    bool
+	released bool
+}
+
+// registerLiveStore records that this process is opening the database at resolved, under the
+// registry lock: its path, and its identity when the path already names a regular file. The
+// identity is in the table from here on, so a reader that checks in the window before the connection
+// still sees the store (CRW-880). It opens nothing.
+func registerLiveStore(resolved string) *liveStoreRef {
+	heldStoreFiles.Lock()
+	defer heldStoreFiles.Unlock()
+	heldStoreFiles.livePaths[resolved]++
+	ref := &liveStoreRef{path: resolved}
+	if key, ok := storeFileKeyOf(resolved); ok {
+		ref.key, ref.keyed = key, true
+		heldStoreFiles.live[key]++
+	}
+	return ref
+}
+
+// attach confirms, under the registry lock and once the connection has opened the file, that the
+// path still names the file this reference was taken on. A path that named nothing when the
+// reference was taken, or that names another file now (it was renamed or replaced while the
+// connection opened), cannot record the store's identity correctly, so the open is an error rather
+// than a store the table describes wrongly (CRW-967).
+func (r *liveStoreRef) attach() error {
+	heldStoreFiles.Lock()
+	defer heldStoreFiles.Unlock()
+	if r.released {
+		return fmt.Errorf("the database at %s was released before its store finished opening", pyvalue.StrRepr(r.path))
+	}
+	key, ok := storeFileKeyOf(r.path)
+	if !r.keyed || !ok || key != r.key {
+		return fmt.Errorf("the database at %s changed while the store opened, so its identity cannot be recorded", pyvalue.StrRepr(r.path))
+	}
+	return nil
+}
+
+// release gives back this store's references to its identity and its path. The first call does;
+// a nil or later call does nothing.
+func (r *liveStoreRef) release() {
+	if r == nil {
+		return
+	}
+	heldStoreFiles.Lock()
+	defer heldStoreFiles.Unlock()
+	if r.released {
+		return
+	}
+	r.released = true
+	if r.keyed {
+		heldStoreFiles.live[r.key]--
+		if heldStoreFiles.live[r.key] <= 0 {
+			delete(heldStoreFiles.live, r.key)
+		}
+	}
+	heldStoreFiles.livePaths[r.path]--
+	if heldStoreFiles.livePaths[r.path] <= 0 {
+		delete(heldStoreFiles.livePaths, r.path)
+	}
+}
+
+// holdsStoreFileIdentity reports whether (device, inode) is a store file this process holds or has
+// open: a handle the registry holds, an open store's database file, or one of an open store's
+// database path and sidecars as the kernel resolves it now. It stats at most the open stores' paths
+// and never opens, and it is asked about the identity of an already-open descriptor, so a pathname
+// race cannot move the answer (CRW-880). The registry mutex is held for the stats and the maps only;
+// the caller hashes outside it, and the two functions never nest, so nothing here waits on a read.
+func holdsStoreFileIdentity(device, inode uint64) bool {
+	heldStoreFiles.Lock()
+	defer heldStoreFiles.Unlock()
+	return holdsStoreFileIdentityLocked(device, inode)
+}
+
+// holdsStoreFileIdentityLocked is holdsStoreFileIdentity with the registry lock already held. It
+// stats and never opens. The caller holds the lock.
+func holdsStoreFileIdentityLocked(device, inode uint64) bool {
+	if _, ok := heldStoreFiles.byKey[storeFileKey{device, inode}]; ok {
+		return true
+	}
+	return holdsLiveStoreIdentityLocked(device, inode)
+}
+
+// liveSidecarSuffixes are the SQLite sidecars of an open store's database path. The database itself is
+// recognised by its identity in the table and never by its name, so a new file at the old name of a
+// renamed database is not taken for the store (CRW-967).
+var liveSidecarSuffixes = []string{"-wal", "-shm", "-journal"}
+
+// holdsLiveStoreIdentityLocked reports whether (device, inode) is the database of an open store this
+// process has, or one of an open store's sidecars as the kernel resolves the store's path now. A
+// handle the registry keeps for the process's life (byKey) is not counted here: a store that has
+// closed leaves this table, whatever handles the process still keeps. The caller holds the lock.
+func holdsLiveStoreIdentityLocked(device, inode uint64) bool {
+	key := storeFileKey{device, inode}
+	if _, ok := heldStoreFiles.live[key]; ok {
+		return true
+	}
+	for path := range heldStoreFiles.livePaths {
+		for _, suffix := range liveSidecarSuffixes {
+			info, err := os.Stat(path + suffix)
+			if err != nil {
+				continue
+			}
+			stat, ok := info.Sys().(*syscall.Stat_t)
+			if !ok {
+				continue
+			}
+			if uint64(stat.Dev) == device && uint64(stat.Ino) == inode {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// closeOrKeepStoreFile closes file unless its identity is a store file this process holds or has
+// open, in which case the file is kept reachable instead. It is closeOrKeepStoreFileDescriptor for
+// an os.File whose finalizer would otherwise close the descriptor at the next collection: the same
+// *os.File is kept, so no second owner of the descriptor is created (CRW-967, I-563).
+func closeOrKeepStoreFile(file *os.File) error {
+	heldStoreFiles.Lock()
+	defer heldStoreFiles.Unlock()
+	fd := int(file.Fd())
+	if identity, measured := fstatIdentity(fd); measured && holdsStoreFileIdentityLocked(identity.device, identity.inode) {
+		clearStoreFileNonblock(fd)
+		heldStoreFiles.neverClosed = append(heldStoreFiles.neverClosed, file)
+		return nil
+	}
+	return file.Close()
+}
+
+// closeOrKeepStoreFileDescriptor closes fd unless its identity is a store file this process holds
+// or opened, in which case the descriptor is kept reachable instead: closing any descriptor of
+// such a file drops this process's POSIX locks on it (CRW-880, I-563). The decision and the close
+// are made under the registry lock, and store.open takes that same lock to take its reference before it
+// connects, so a store opened while the caller was reading is still recognised here (CRW-967).
+func closeOrKeepStoreFileDescriptor(fd int, name string) {
+	heldStoreFiles.Lock()
+	defer heldStoreFiles.Unlock()
+	if identity, measured := fstatIdentity(fd); measured && holdsStoreFileIdentityLocked(identity.device, identity.inode) {
+		clearStoreFileNonblock(fd)
+		heldStoreFiles.neverClosed = append(heldStoreFiles.neverClosed, os.NewFile(uintptr(fd), name))
+		return
+	}
+	_ = syscall.Close(fd)
+}
+
+// knownStoreFileIdentityAt is the identity of the path itself, without following a symbolic link
+// and without opening anything. The artifact reader asks it before it opens, so a path this
+// process already knows as a store file is refused without producing a descriptor that would have
+// to be kept unclosed for the life of the process (CRW-880).
+func knownStoreFileIdentityAt(path string) (storeFileKey, bool) {
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return storeFileKey{}, false
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return storeFileKey{}, false
+	}
+	return storeFileKey{uint64(stat.Dev), uint64(stat.Ino)}, true
 }
 
 // storeFileKeyOf is the identity of the file a path names, without opening it. ok is false when

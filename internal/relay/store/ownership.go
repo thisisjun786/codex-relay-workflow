@@ -684,7 +684,7 @@ func buildAbsent(ctx context.Context, temp, socket string, options OpenOptions) 
 	if err != nil {
 		return stamp, err
 	}
-	defer func() { err = errors.Join(err, s.DB.Close()) }()
+	defer func() { err = errors.Join(err, s.Close()) }()
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return stamp, err

@@ -494,7 +494,9 @@ func freezeManifestCopy(root string, canonical []byte) (path string, created boo
 	if err != nil {
 		return "", created, fmt.Errorf("freeze the manifest: %w", err)
 	}
-	defer opened.File.Close()
+	// The handle closes through the store's registry, which keeps a descriptor that became a store
+	// file's while it was read (CRW-967, I-563).
+	defer opened.Close()
 	read, err := io.ReadAll(io.LimitReader(opened.File, int64(len(canonical))+1))
 	if err != nil {
 		return "", created, fmt.Errorf("freeze the manifest: %w", err)
