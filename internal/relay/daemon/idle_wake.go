@@ -46,7 +46,10 @@ type idleSubscriptions interface {
 // so the next tick reads the store again and opens it again.
 type idleWake struct {
 	daemon *Daemon
-	holds  map[string]string
+	// beforeIdle and beforeHold are the tests' seams: a test damages the store at the point the pass starts,
+	// so the pass's own statement meets a real corrupting failure. Nil in the daemon.
+	beforeIdle, beforeHold func()
+	holds                  map[string]string
 	// attempted is every recipient this pass has called HoldThread for since its last release, by
 	// recipient task id, whether or not the resume was answered. It is what the release sweep walks:
 	// a resume whose answer never arrived may still have subscribed the recipient, and the relay owns
@@ -92,6 +95,9 @@ func (w *idleWake) take() []string {
 // the deferred-busy head that is still inside its backoff, so a younger delivery, a recipient with
 // no backlog, and a report about a head that is already due are all no-ops.
 func (w *idleWake) idle(ctx context.Context, r *Report, host Host, now float64) error {
+	if w.beforeIdle != nil {
+		w.beforeIdle()
+	}
 	reporter, ok := host.(idleReports)
 	if !ok {
 		return nil
@@ -121,6 +127,9 @@ func (w *idleWake) idle(ctx context.Context, r *Report, host Host, now float64) 
 // retention may already subscribe the thread, but that owner can release it mid-backlog, so the
 // backlog takes a reference of its own rather than borrowing one (CRW-904 d4).
 func (w *idleWake) hold(ctx context.Context, r *Report, host Host, now float64) error {
+	if w.beforeHold != nil {
+		w.beforeHold()
+	}
 	subscriptions, ok := host.(idleSubscriptions)
 	if !ok {
 		return nil

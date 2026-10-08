@@ -176,9 +176,13 @@ func (d *Daemon) Tick(ctx context.Context) (Report, error) {
 	// does not offer them: every scripted double, and every transport that is not the App Server.
 	d.idle.begin()
 	if err := d.idle.idle(ctx, &r, d.Host, now); err != nil {
-		// A store failure in the idle pass ends the tick before the delivery pass and the supervisor channel
-		// write anything (I-564); the report that failed is left to the head's timer (CRW-904 d1).
+		// The wake is this pass's own write (CRW-1007, decision 2): a corrupting failure halts the store at the
+		// write site and ends the tick before the delivery pass and the supervisor channel write anything (I-564).
+		// A failure that is not corruption stays the tick's error.
 		r.Notes = append(r.Notes, d.idle.take()...)
+		if d.halted(ctx, &r, store.HaltSiteWrite, err) {
+			return r, nil
+		}
 		return r, err
 	}
 	var sent delivery.TickCounts
@@ -189,7 +193,12 @@ func (d *Daemon) Tick(ctx context.Context) (Report, error) {
 		return r, err
 	}
 	if err := d.idle.hold(ctx, &r, d.Host, now); err != nil {
+		// The waiting heads are read out of the store after the delivery pass (CRW-1007, decision 2): a corrupting
+		// read halts the store at the observation site, and the supervisor channel does not write after it.
 		r.Notes = append(r.Notes, d.idle.take()...)
+		if d.halted(ctx, &r, store.HaltSiteObservation, err) {
+			return r, nil
+		}
 		return r, err
 	}
 	r.Notes = append(r.Notes, d.idle.take()...)
