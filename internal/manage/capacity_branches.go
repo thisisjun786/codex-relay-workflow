@@ -3,17 +3,27 @@ package manage
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"sort"
 	"sync"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/acceptance"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dagsched"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 // This file is CRW-690: the detachable branch candidates of a plan whose verdict is
 // expand_candidate. A candidate is a bundle of live nodes no other live node joins by an edge or
 // shares an edit region with, so the bundle could be taken out into a project of its own. Nothing
 // here writes a plan, Linear or the relay: it reads and reports.
+//
+// CRW-865 makes that reading the relay's own: the whole reading (the plan, the declared regions, the
+// release and execution marks and the integration judgement) runs inside one ReadSnapshot of one
+// read-only handle, the plan comes from dag.SnapshotAt, and a node counts as landed only where
+// dagsched's own integration judgement says so. A store that predates the DAG zone is then reported
+// as unmeasured rather than as a plan nothing can be detached from.
 
 // branchAlwaysMemoMu guards branchAlwaysMemo, and branchAlwaysMemo is the --branches-always flag
 // each Env is currently run with. The flag belongs to one command invocation, not to the process:
@@ -112,42 +122,61 @@ func branchThresholds(settings branchSettings) (int, int, error) {
 	return minNodes, maxBranches, nil
 }
 
-// branchPlanNode and branchPlanEdge are one live node and one live edge of the plan, as the plan
-// itself carries them: the rows dag-plan-show reads, with the retired ones left out.
+// branchZoneTables are the DAG zone tables one branch reading needs. The zone is additive, so a
+// store written before it (or one an interrupted install left partial) holds no plan this reading
+// could measure: the plan then reports why its branches were not measured instead of the empty list
+// of a plan nothing can be detached from.
+var branchZoneTables = []string{"dag_plans", "dag_nodes", "dag_edges", "dag_plan_revisions", "dag_node_regions", "dag_releases", "dag_acceptances"}
+
+// branchReadSeam runs once inside one plan's branch reading, right after the plan has been read and
+// before the readings beside it. It is nil in production; a test replaces it to commit a revision
+// while the reading is in flight, which is how the reading's one snapshot is pinned.
+var branchReadSeam func()
+
+// branchPassSeam runs once at the start of one plan's branch reading, after the plan's ready pass has
+// been read and before the reading takes its snapshot. It is nil in production; a test replaces it to
+// commit a revision between the pass and the snapshot, which is how the readiness re-read is pinned:
+// the reading must report the readiness of the revision its snapshot holds.
+var branchPassSeam func()
+
+// branchPlanNode and branchPlanEdge are one live node and one live edge of the plan, as the relay's
+// own reading of the plan carries them. A node the plan cancelled or archived is not live; a paused
+// one is.
 type branchPlanNode struct{ nodeID, issueKey string }
 type branchPlanEdge struct{ from, to string }
 
-// branchReadPlan reads the plan's live nodes and edges from the store read-only, which is the
-// reading dag-plan-show prints (dag_nodes and dag_edges with retired_rev IS NULL).
-func branchReadPlan(ctx context.Context, handle *dagReviewStore, plan string) ([]branchPlanNode, []branchPlanEdge, error) {
-	nodes, err := dagReviewRows(ctx, handle.db,
-		"SELECT node_id, issue_key FROM dag_nodes WHERE plan_id = ? AND retired_rev IS NULL ORDER BY node_id",
-		[]any{plan}, func(rows *sql.Rows) (branchPlanNode, error) {
-			var node branchPlanNode
-			err := rows.Scan(&node.nodeID, &node.issueKey)
-			return node, err
-		})
+// branchReadPlan reads the plan through the relay canon: the live nodes and the live edges as of one
+// revision, from dag.SnapshotAt over the reading's own snapshot querier, at the head the snapshot
+// holds. The canon recomputes every node's slice digest and the plan's state digest from the rows it
+// read, so a plan that does not agree with itself is refused rather than reported as a bundle.
+func branchReadPlan(ctx context.Context, q store.Querier, plan string) ([]branchPlanNode, []branchPlanEdge, int64, error) {
+	snap, _, err := dag.SnapshotAt(ctx, q, plan, 0)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, 0, err
 	}
-	edges, err := dagReviewRows(ctx, handle.db,
-		"SELECT from_node_id, to_node_id FROM dag_edges WHERE plan_id = ? AND retired_rev IS NULL ORDER BY edge_id",
-		[]any{plan}, func(rows *sql.Rows) (branchPlanEdge, error) {
-			var edge branchPlanEdge
-			err := rows.Scan(&edge.from, &edge.to)
-			return edge, err
-		})
-	if err != nil {
-		return nil, nil, err
+	nodes := make([]branchPlanNode, 0, len(snap.Nodes))
+	for _, node := range snap.Nodes {
+		if node.Lifecycle == dag.LifeCancelled || node.Lifecycle == dag.LifeArchived {
+			continue
+		}
+		nodes = append(nodes, branchPlanNode{nodeID: node.NodeID, issueKey: node.IssueKey})
 	}
-	return nodes, edges, nil
+	edges := make([]branchPlanEdge, 0, len(snap.Edges))
+	for _, edge := range snap.Edges {
+		edges = append(edges, branchPlanEdge{from: edge.FromNodeID, to: edge.ToNodeID})
+	}
+	return nodes, edges, snap.Revision, nil
 }
 
-// branchStoreMarks reads the two marks the rule needs from the relay store, read-only: which nodes
-// were released (or executed) and which nodes have an effective integration observation.
-func branchStoreMarks(ctx context.Context, handle *dagReviewStore, plan string) (map[string]bool, map[string]bool, error) {
-	column := func(query string) (map[string]bool, error) {
-		rows, err := dagReviewRows(ctx, handle.db, query, []any{plan}, func(rows *sql.Rows) (string, error) {
+// branchReadReleased reads the nodes the relay released or executed. A bundle that holds one of them
+// cannot be taken out, so it is not a candidate.
+func branchReadReleased(ctx context.Context, q store.Querier, plan string) (map[string]bool, error) {
+	out := map[string]bool{}
+	for _, query := range []string{
+		"SELECT node_id FROM dag_releases WHERE plan_id = ?",
+		"SELECT node_id FROM dag_node_executions WHERE plan_id = ?",
+	} {
+		rows, err := dagReviewRows(ctx, q, query, []any{plan}, func(rows *sql.Rows) (string, error) {
 			var id string
 			err := rows.Scan(&id)
 			return id, err
@@ -155,92 +184,173 @@ func branchStoreMarks(ctx context.Context, handle *dagReviewStore, plan string) 
 		if err != nil {
 			return nil, err
 		}
-		out := map[string]bool{}
 		for _, id := range rows {
 			out[id] = true
 		}
-		return out, nil
 	}
-	released, err := column("SELECT node_id FROM dag_releases WHERE plan_id = ?")
+	return out, nil
+}
+
+// branchActiveAcceptance is one node's active acceptance: the row whose stand the integration
+// judgement is asked about, and the row a recorded base refresh is keyed by.
+type branchActiveAcceptance struct {
+	acceptanceID, relationshipID, eventID, revisionHash, headSHA string
+	generation                                                   int64
+}
+
+// branchAcceptanceOf reads one node's active acceptance; found is false when it has none.
+func branchAcceptanceOf(ctx context.Context, q store.Querier, plan, node string) (branchActiveAcceptance, bool, error) {
+	var row branchActiveAcceptance
+	err := q.QueryRowContext(ctx, "SELECT acceptance_id, relationship_id, execution_generation, event_id, revision_hash, COALESCE(head_sha, '')"+
+		" FROM dag_acceptances WHERE plan_id = ? AND node_id = ? AND state = 'active'", plan, node).
+		Scan(&row.acceptanceID, &row.relationshipID, &row.generation, &row.eventID, &row.revisionHash, &row.headSHA)
+	if errors.Is(err, sql.ErrNoRows) {
+		return branchActiveAcceptance{}, false, nil
+	}
 	if err != nil {
-		return nil, nil, err
+		return branchActiveAcceptance{}, false, err
 	}
-	executed, err := column("SELECT node_id FROM dag_node_executions WHERE plan_id = ?")
-	if err != nil {
-		return nil, nil, err
+	return row, true, nil
+}
+
+// branchIntegratedNodes is the set of the plan's nodes the relay's own integration judgement counts
+// as integrated, so the connectivity graph drops exactly the nodes the scheduler calls landed and
+// keeps every node it does not. The judgement is dagsched's ExecutionIntegrated, so a node the
+// parent never marked merged, whose accepted head was not observed in every target it has to land
+// on, or whose observed head is not the head it stands on stays live. What an acceptance stands on
+// is resolved with acceptance.StandOf over the same snapshot's querier, so an acceptance a recorded
+// base refresh moved to a later generation is judged at the stand it holds now rather than at the
+// generation it was accepted in.
+func branchIntegratedNodes(ctx context.Context, st *store.Store, plan string, nodes []branchPlanNode) (map[string]bool, error) {
+	scheduler := &dagsched.Scheduler{Store: st}
+	q := st.Q(ctx)
+	out := map[string]bool{}
+	for _, node := range nodes {
+		row, found, err := branchAcceptanceOf(ctx, q, plan, node.nodeID)
+		if err != nil {
+			return nil, err
+		}
+		if !found {
+			continue
+		}
+		stand, err := acceptance.StandOf(ctx, q, row.acceptanceID, row.relationshipID,
+			row.generation, row.eventID, row.revisionHash, row.headSHA)
+		if err != nil {
+			return nil, err
+		}
+		applicable, integrated, err := scheduler.ExecutionIntegrated(ctx, stand.RelationshipID, stand.EventID, stand.Generation, stand.RevisionHash)
+		if err != nil {
+			return nil, err
+		}
+		if applicable && integrated {
+			out[node.nodeID] = true
+		}
 	}
-	for id := range executed {
-		released[id] = true
-	}
-	// The integration reading is the scheduler's own rule (dagsched.integratedAt): an observation of
-	// an active acceptance that is an ancestor and was not reverted, with no later observation of
-	// the same acceptance and target saying it is not. Without the second half a node whose landing
-	// was undone would read as integrated and drop out of the connectivity graph.
-	integrated, err := column("SELECT DISTINCT a.node_id FROM dag_acceptances a" +
-		" JOIN dag_integration_observations o ON o.acceptance_id = a.acceptance_id" +
-		" WHERE a.plan_id = ? AND a.state = 'active' AND o.is_ancestor = 1" +
-		" AND (o.reverted_by IS NULL OR o.reverted_by = '')" +
-		" AND NOT EXISTS (SELECT 1 FROM dag_integration_observations o2" +
-		" WHERE o2.acceptance_id = o.acceptance_id AND o2.repository = o.repository" +
-		" AND o2.base_ref = o.base_ref AND o2.observed_seq > o.observed_seq AND o2.is_ancestor = 0)")
-	if err != nil {
-		return nil, nil, err
-	}
-	return released, integrated, nil
+	return out, nil
 }
 
 // branchAttach computes the candidates of one plan: nil when the plan carries none at all (a hold
-// plan without --branches-always), otherwise a list, empty when nothing can be detached.
-func branchAttach(ctx context.Context, e *Env, cfg *Config, stateDir, plan, verdict string, waiting []string) (*BranchCandidates, error) {
+// plan without --branches-always), otherwise a list, empty when nothing can be detached. Readiness is
+// the relay's own dag-ready reading (dagsched Scheduler.Ready, which is what dag-ready runs) taken on
+// this reading's snapshot querier, judged by node id because a plan may hold two nodes with one issue
+// key (a redefinition) and their states must not mix. The second result is why the reading is
+// unmeasured: a store that predates the DAG zone holds no plan to read, so its candidates are unknown
+// rather than none.
+func branchAttach(ctx context.Context, e *Env, cfg *Config, stateDir, plan, verdict, zoneReason string) (*BranchCandidates, string, error) {
 	// The thresholds are read and validated before the hold shortcut: a malformed section is a
 	// refusal whether or not this plan happens to carry candidates, so a configuration mistake never
 	// hides behind a transient verdict.
 	settings, err := branchSettingsOf(cfg)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	minNodes, maxBranches, err := branchThresholds(settings)
 	if err != nil {
-		return nil, err
+		return nil, "", err
+	}
+	// A missing DAG zone is an unmeasured reading whatever the verdict: the plan carries the null
+	// list beside the reason rather than the absent key of a reading nobody asked for, so a hold that
+	// happens to fall out of an unreadable store still says why nothing could be measured.
+	if zoneReason != "" {
+		var unknown BranchCandidates
+		return &unknown, zoneReason, nil
 	}
 	if verdict == capacityHold && !branchAlwaysFor(e) {
-		return nil, nil
+		return nil, "", nil
 	}
-	// The store is read through the review's own read-only handle: one no-sidecar open, and the
-	// region reading the scheduler makes (the latest declaration per node, with its hold).
+	if branchPassSeam != nil {
+		branchPassSeam()
+	}
+	// The whole reading is one snapshot of the review's own read-only handle: the plan (through the
+	// canon's own dag.SnapshotAt), the declared regions, the release and execution marks and the
+	// integration judgement all run on that snapshot's querier, so a revision that commits while the
+	// reading is in flight cannot mix two revisions into one bundle.
 	handle, err := dagReviewOpenStore(ctx, stateDir)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	defer handle.Close()
-	// A store that predates the DAG zone holds no plan to read, so nothing here can be proven and
-	// the plan carries an empty list rather than a candidate nobody measured.
-	for _, table := range []string{"dag_node_regions", "dag_releases", "dag_acceptances"} {
-		present, err := handle.hasTable(ctx, table)
+	var candidates *BranchCandidates
+	unmeasured := ""
+	err = handle.dagReviewSnapshot(ctx, stateDir, func(ctx context.Context, st *store.Store) error {
+		q := st.Q(ctx)
+		nodes, edges, _, err := branchReadPlan(ctx, q, plan)
 		if err != nil {
-			return nil, err
+			return err
 		}
-		if !present {
-			empty := BranchCandidates{}
-			return &empty, nil
+		// Readiness comes from this snapshot, never from the earlier dag-ready pass, so the whole
+		// reading is the answer of one revision. The pass is a transaction of its own, and a plan
+		// revision does not move when an integration observation or a merged mark changes a
+		// downstream node's readiness: judging from the pass then would drop a predecessor from this
+		// graph while the successor's Ready and ReadyCount still came from a graph that held it. The
+		// re-read carries the same host memory bound dag-ready judges with, so a node the pass would
+		// defer for host memory is not read as waiting here. The pass still supplies the waiting
+		// issue_key list the report prints, so the reported shape does not change.
+		scheduler := &dagsched.Scheduler{Store: st}
+		if bound, err := dagsched.HostMemoryFromEnvironment(e.Getenv); err == nil {
+			scheduler.Host = bound
 		}
-	}
-	nodes, edges, err := branchReadPlan(ctx, handle, plan)
+		reading, err := scheduler.Ready(ctx, q, plan, dagsched.ReadyOptions{})
+		if err != nil {
+			return err
+		}
+		waitingNodes := capacityWaitingNodeIDs(reading)
+		if branchReadSeam != nil {
+			branchReadSeam()
+		}
+		var checks []Check
+		declared, err := handle.dagReviewRegions(ctx, plan, &checks)
+		if err != nil {
+			return err
+		}
+		released, err := branchReadReleased(ctx, q, plan)
+		if err != nil {
+			return err
+		}
+		integrated, err := branchIntegratedNodes(ctx, st, plan, nodes)
+		if err != nil {
+			return err
+		}
+		candidates = branchCandidates(nodes, edges, declared, released, integrated, waitingNodes, minNodes, maxBranches)
+		return nil
+	})
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	var checks []Check
-	declared, err := handle.dagReviewRegions(ctx, plan, &checks)
-	if err != nil {
-		return nil, err
+	if unmeasured != "" {
+		// branches stays null beside the reason: a pointer to a nil list, which is how a reader tells
+		// "nobody could look" from the empty list of a plan nothing can be detached from.
+		var unknown BranchCandidates
+		return &unknown, unmeasured, nil
 	}
-	released, integrated, err := branchStoreMarks(ctx, handle, plan)
-	if err != nil {
-		return nil, err
-	}
+	return candidates, unmeasured, nil
+}
 
-	// A live node is one that was not retired (the plan answer holds only those) and has no
-	// integration observation.
+// branchCandidates is the detachable bundles of one plan's live nodes: the nodes no other live node
+// joins by an edge or shares a declared place with, ranked as the report prints them.
+func branchCandidates(nodes []branchPlanNode, edges []branchPlanEdge, declared []dagReviewRegion, released, integrated map[string]bool, waitingNodes []string, minNodes, maxBranches int) *BranchCandidates {
+	// A live node is one the plan still holds (a cancelled or archived node was left out of the
+	// reading) and that the relay does not count as integrated.
 	live, issue := []string{}, map[string]string{}
 	for _, node := range nodes {
 		if integrated[node.nodeID] {
@@ -290,8 +400,8 @@ func branchAttach(ctx context.Context, e *Env, cfg *Config, stateDir, plan, verd
 	}
 
 	waitingSet := map[string]bool{}
-	for _, key := range waiting {
-		waitingSet[key] = true
+	for _, id := range waitingNodes {
+		waitingSet[id] = true
 	}
 	candidates := BranchCandidates{}
 	for _, members := range groups {
@@ -314,7 +424,7 @@ func branchAttach(ctx context.Context, e *Env, cfg *Config, stateDir, plan, verd
 		candidate := BranchCandidate{Nodes: []BranchNode{}, Regions: []string{}}
 		paths := map[string]bool{}
 		for _, id := range members {
-			ready := waitingSet[issue[id]]
+			ready := waitingSet[id]
 			candidate.Nodes = append(candidate.Nodes, BranchNode{NodeID: id, IssueKey: issue[id], Ready: ready})
 			if ready {
 				candidate.ReadyCount++
@@ -347,7 +457,7 @@ func branchAttach(ctx context.Context, e *Env, cfg *Config, stateDir, plan, verd
 	if len(candidates) > maxBranches {
 		candidates = candidates[:maxBranches]
 	}
-	return &candidates, nil
+	return &candidates
 }
 
 // branchConnected is whether two live nodes are joined: a node that declared no region is joined to

@@ -4,20 +4,22 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
 	"net/http"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dagsched"
 )
 
 // The seams every signal reads through: package variables, so this issue adds no field to a type
@@ -178,7 +180,11 @@ func capacityChild429Count(logPath string, models []string, since time.Time) (st
 }
 
 type capacityWaiting struct {
-	Waiting    []string
+	Waiting []string
+	// Held, Ceiling and HostMemory are the pass's slots and host bound, which the report prints as
+	// they are. Readiness is not taken from the pass: the branch reading judges it by node id from its
+	// own snapshot (branchAttach), so the readiness belongs to the same revision as the plan, the
+	// declared regions and the integration verdict it is ranked against.
 	Held       int
 	Ceiling    int
 	HostMemory string
@@ -186,17 +192,26 @@ type capacityWaiting struct {
 
 // capacityWaitingFor asks the relay for one plan's ready set: the ready nodes and the nodes
 // deferred for want of capacity, with the pass's slots and host memory bound. A relay that refuses
-// or answers something unreadable is the read failure reported as exit 3.
-func capacityWaitingFor(ctx context.Context, e *Env, cfg *Config, plan string) (capacityWaiting, error) {
+// or answers something unreadable is the read failure reported as exit 3, except when the store
+// itself lacks the DAG zone (zoneReason): there the plan's own question has no answer to read,
+// whatever shape the relay's failure takes — the refusal a store with no zone at all gives, or the
+// raw table error a partially installed one gives — so the pass reads as empty and the branch
+// reading reports the plan's branches as unmeasured rather than the command failing. A relay failure
+// beside a whole zone stays the read failure it is.
+func capacityWaitingFor(ctx context.Context, e *Env, cfg *Config, plan, zoneReason string, headerMissing bool) (capacityWaiting, error) {
 	stdout, code, err := e.Relay(ctx, cfg, "dag-ready", "--plan", plan)
 	if err != nil {
 		return capacityWaiting{}, err
 	}
 	if code != 0 {
+		if zoneReason != "" && capacityZoneFailure(stdout, headerMissing) {
+			return capacityWaiting{}, nil
+		}
 		return capacityWaiting{}, fmt.Errorf("relay dag-ready --plan %s: exit %d", plan, code)
 	}
 	var reading struct {
-		Pass struct {
+		PlanRevision int64 `json:"plan_revision"`
+		Pass         struct {
 			Held       int `json:"held"`
 			Ceiling    int `json:"ceiling"`
 			HostMemory *struct {
@@ -204,9 +219,11 @@ func capacityWaitingFor(ctx context.Context, e *Env, cfg *Config, plan string) (
 			} `json:"host_memory"`
 		} `json:"pass"`
 		Ready []struct {
+			NodeID   string `json:"node_id"`
 			IssueKey string `json:"issue_key"`
 		} `json:"ready"`
 		Nodes []struct {
+			NodeID   string `json:"node_id"`
 			IssueKey string `json:"issue_key"`
 			Reason   string `json:"reason"`
 		} `json:"nodes"`
@@ -221,7 +238,10 @@ func capacityWaitingFor(ctx context.Context, e *Env, cfg *Config, plan string) (
 		}
 	}
 	for _, node := range reading.Nodes {
-		if node.Reason == capacityDeferNoCapacity && node.IssueKey != "" {
+		if node.Reason != capacityDeferNoCapacity {
+			continue
+		}
+		if node.IssueKey != "" {
 			set[node.IssueKey] = struct{}{}
 		}
 	}
@@ -237,15 +257,114 @@ func capacityWaitingFor(ctx context.Context, e *Env, cfg *Config, plan string) (
 	return out, nil
 }
 
+// capacityZoneReason reads the store's DAG zone tables, read-only and without repairing anything, and
+// returns why a branch reading cannot be measured: "" when every table the reading needs is present,
+// otherwise the reason a store that predates the zone — or one an interrupted install left partial —
+// gives. It runs before the relay is asked, because a partially installed zone makes dag-ready fail
+// with a raw table error rather than a refusal, and that failure is the same missing zone. A store
+// that is absent or cannot be opened is not this case, so a relay failure beside it stays the read
+// failure it is rather than reading as an unmeasured answer.
+func capacityZoneReason(ctx context.Context, stateDir string) (string, bool, error) {
+	if stateDir == "" {
+		return "", false, nil
+	}
+	handle, err := dagReviewOpenStore(ctx, stateDir)
+	if err != nil {
+		if errors.Is(err, ErrRelayStoreAbsent) {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	defer handle.Close()
+	var missing []string
+	headerMissing := false
+	for _, table := range branchZoneTables {
+		present, err := handle.hasTable(ctx, table)
+		if err != nil {
+			return "", false, err
+		}
+		if !present {
+			missing = append(missing, table)
+			if table == "dag_plans" {
+				headerMissing = true
+			}
+		}
+	}
+	return capacityZoneReasonText(missing), headerMissing, nil
+}
+
+// capacityWaitingNodeIDs is the node ids a reading counts as waiting: the ready nodes and the nodes
+// deferred for want of a slot. The branch reading judges readiness by node id, and it takes these ids
+// from the pass that answered for its own plan revision or, when that pass answered for another one,
+// from its own reading of the snapshot, so the same extraction serves both.
+func capacityWaitingNodeIDs(reading dagsched.Reading) []string {
+	nodes := map[string]struct{}{}
+	for _, node := range reading.Ready {
+		if node.NodeID != "" {
+			nodes[node.NodeID] = struct{}{}
+		}
+	}
+	for _, node := range reading.Nodes {
+		if node.Reason == capacityDeferNoCapacity && node.NodeID != "" {
+			nodes[node.NodeID] = struct{}{}
+		}
+	}
+	ids := make([]string, 0, len(nodes))
+	for id := range nodes {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+// capacityZoneReasonText is the one wording of the missing-zone reason, so the preflight and the
+// reading inside the snapshot say the same thing about the same store.
+func capacityZoneReasonText(missing []string) string {
+	if len(missing) == 0 {
+		return ""
+	}
+	return "the store predates the DAG zone (no " + strings.Join(missing, ", ") + ")"
+}
+
+// capacityZoneFailure reports whether the relay's failed answer is the one a missing DAG zone
+// produces, so that a store the local check already found zone-less can be read as unmeasured rather
+// than as a failure. Two shapes count, and both are the relay's own words for the missing zone: the
+// host failure a partially installed zone gives, whose detail names the table SQLite could not find
+// (the same test the relay's own reading makes, isMissingZone in internal/relay/dag), and — only when
+// the plan header table itself is absent — the refusal a store with no zone at all gives (error
+// refused, reason unregistered_scope).
+//
+// headerMissing is what keeps the second shape honest: unregistered_scope is also the refusal for a
+// plan the store does not hold, so a store that keeps dag_plans but is missing another zone table
+// would otherwise turn a mistyped plan id into a fabricated empty reading. When the header table is
+// there, a refused lookup is the relay saying the plan is unknown, which stays the read failure it is.
+func capacityZoneFailure(stdout []byte, headerMissing bool) bool {
+	var answer struct {
+		Error  string `json:"error"`
+		Reason string `json:"reason"`
+		Detail string `json:"detail"`
+	}
+	if err := json.Unmarshal(stdout, &answer); err != nil {
+		return false
+	}
+	if answer.Error == "host" && strings.Contains(answer.Detail, "no such table: dag_") {
+		return true
+	}
+	return headerMissing && answer.Error == "refused" && answer.Reason == string(contract.RefusalUnregisteredScope)
+}
+
 // capacityReceiptWaitFor reads the relay store read-only: the median and count of the acknowledged
-// deliveries that reached one parent in the window, leaving out the interrupted ones.
+// deliveries that reached one parent in the window, leaving out the interrupted ones. The store is
+// opened through the relay-read helper, which resolves the path the way SQLite does, so a configured
+// state spelling that carries a symlink or a .. component reads the same store dag-ready and the
+// branch reading read rather than another one a cleaned path would name (CRW-865).
 func capacityReceiptWaitFor(ctx context.Context, stateDir, parent string, since time.Time) (CapacityReceiptWait, error) {
-	db, err := sql.Open("sqlite", "file:"+filepath.Join(stateDir, "relay.sqlite3")+"?mode=ro")
+	handle, err := relayReadOpenStore(ctx, stateDir)
 	if err != nil {
 		return CapacityReceiptWait{}, err
 	}
-	defer db.Close()
-	rows, err := db.QueryContext(ctx,
+	defer handle.Close()
+	rows, err := handle.QueryContext(ctx,
 		"SELECT d.created_at, a.ack_at FROM deliveries d"+
 			" JOIN acks a ON a.event_id = d.event_id"+
 			" JOIN events e ON e.event_id = d.event_id"+
