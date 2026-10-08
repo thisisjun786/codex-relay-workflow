@@ -1228,12 +1228,20 @@ func improveReadInterventions(ids *improveIdentitySet, path string, acc *improve
 // the drafts directory could not be read from. That is the rule improveReadJSONLines already
 // applies to a null line, and it is what this reader did before the schema gate existed.
 func improveReadDrafts(ids *improveIdentitySet, path string, acc *improveAccumulator) (int, error) {
+	if improveIdentityReadHook != nil {
+		improveIdentityReadHook(path)
+	}
 	files, err := improveParseDraftFiles(path)
 	if err != nil {
 		return 0, err
 	}
 	rows := 0
 	for _, file := range files {
+		// A file the listing shows now may have appeared after the recording. It is pinned here, before
+		// it is read, so the examination after the read still names the file that was read.
+		if err := ids.improveIdentityAdd(file, "", false); err != nil {
+			return 0, err
+		}
 		data, err := ids.improveIdentityRead(file)
 		if err != nil {
 			return 0, err
@@ -1277,7 +1285,7 @@ func improveParseDraftFiles(path string) ([]string, error) {
 	files := make([]string, 0, len(entries))
 	for _, entry := range entries {
 		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".json") {
-			files = append(files, filepath.Join(path, entry.Name()))
+			files = append(files, crwconfig.JoinRoot(path, entry.Name()))
 		}
 	}
 	sort.Strings(files)

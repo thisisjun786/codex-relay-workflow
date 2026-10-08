@@ -195,17 +195,18 @@ func TestImproveReview799StatFailureFailsClosed(t *testing.T) {
 }
 
 // TestImproveReview799DraftEntryUnderALinkedDirectoryIsProtected covers the draft child the reader
-// opens: the drafts directory is spelled through a link and "..", so the reader enumerates one
-// place and opens the joined spelling. The destination names the file a draft entry links to, so
-// only the recorded child identity refuses it.
+// opens when the drafts directory is spelled through a link and "..". The kernel resolves that
+// spelling, as it resolves the store path, so the listing and the read both reach the directory the
+// link leads to and the ".." applies there. The destination names that draft, so the recorded child
+// identity refuses it.
 func TestImproveReview799DraftEntryUnderALinkedDirectoryIsProtected(t *testing.T) {
 	s := improveTestSetup(t)
 	improveReview799Store(t, s)
 	base := filepath.Join(s.root, "base")
 	real := filepath.Join(s.root, "real")
-	listed := filepath.Join(s.root, "drafts")
-	opened := filepath.Join(base, "drafts")
-	for _, dir := range []string{base, real, listed, opened} {
+	resolved := filepath.Join(s.root, "drafts")
+	cleaned := filepath.Join(base, "drafts")
+	for _, dir := range []string{base, real, resolved, cleaned} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -213,14 +214,11 @@ func TestImproveReview799DraftEntryUnderALinkedDirectoryIsProtected(t *testing.T
 	if err := os.Symlink(real, filepath.Join(base, "link")); err != nil {
 		t.Skipf("symbolic links are unavailable here: %v", err)
 	}
-	// The configured spelling reaches root/drafts, so a directory enumeration sees that directory,
-	// but the reader opens each entry at the path filepath.Join builds from the spelling, which
-	// cleans the ".." away and lands in root/base/drafts. Both are ordinary files holding different
-	// drafts, so the file the reader opens is the one under root/base/drafts, and that is the file
-	// the guard has to record.
-	improveTestWrite(t, filepath.Join(listed, "one.json"), "{\"schema\":\"crw-issue-draft/1\",\"fingerprint\":\"enumerated\",\"project\":\"p\",\"title\":\"t\"}\n")
-	target := filepath.Join(opened, "one.json")
-	improveTestWrite(t, target, "{\"schema\":\"crw-issue-draft/1\",\"fingerprint\":\"opened\",\"project\":\"p\",\"title\":\"t\"}\n")
+	// The link leads to root/real, so base/link/.. is root and the drafts are root/drafts. A cleaned
+	// spelling would reach root/base/drafts instead, which holds a different draft that must not be read.
+	improveTestWrite(t, filepath.Join(cleaned, "one.json"), "{\"schema\":\"crw-issue-draft/1\",\"fingerprint\":\"opened\",\"project\":\"p\",\"title\":\"t\"}\n")
+	target := filepath.Join(resolved, "one.json")
+	improveTestWrite(t, target, "{\"schema\":\"crw-issue-draft/1\",\"fingerprint\":\"one\",\"project\":\"p\",\"title\":\"t\"}\n")
 	improveTestConfig(t, s, map[string]any{"manage": map[string]any{"improve": map[string]any{
 		"sources": map[string]any{
 			"relay": map[string]any{"path": s.stateDir},
@@ -1130,6 +1128,9 @@ func TestImproveReview799EmptyPathLinkFallbackStillWrites(t *testing.T) {
 	t.Cleanup(func() { improveEmptyPathLink = previous })
 	code, _, stderr := improveTestRun(t, s, "--out", out)
 	if !forced {
+		if code == 0 {
+			t.Skipf("this filesystem has no unnamed temporary file, so the empty-path link is never reached: stderr %q", stderr)
+		}
 		t.Fatalf("the run never tried to name the temporary file with an empty old path: exit %d, stderr %q", code, stderr)
 	}
 	if code != 0 {
@@ -1209,6 +1210,9 @@ func TestImproveReview799UnnameableTemporaryFileStillWrites(t *testing.T) {
 	t.Cleanup(func() { improveTemporaryLink = previous })
 	code, _, stderr := improveTestRun(t, s, "--out", out)
 	if !forced {
+		if code == 0 {
+			t.Skipf("this filesystem has no unnamed temporary file, so the link is never reached: stderr %q", stderr)
+		}
 		t.Fatalf("the run never tried to name the temporary file: exit %d, stderr %q", code, stderr)
 	}
 	if code != 0 {

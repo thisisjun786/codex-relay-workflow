@@ -403,6 +403,122 @@ func TestImproveDraftsOverDescriptorLimitRefusesAMovedEntry(t *testing.T) {
 	}
 }
 
+// TestImproveDraftsCreatedAfterTheListingAreRefused covers the P0 that the pre-merge evaluation found
+// (C2, C7): a draft that appears after the drafts directory was listed for recording, and is read
+// through a link into an archive, must be pinned when the reader lists it. Removing the link after
+// the read is then a change the post-read examination refuses, and the archive file is not written
+// over by an output placed on it.
+func TestImproveDraftsCreatedAfterTheListingAreRefused(t *testing.T) {
+	s := improveTestSetup(t)
+	improveReview799Store(t, s)
+	archive := filepath.Join(s.root, "archive")
+	drafts := filepath.Join(s.root, "drafts")
+	for _, dir := range []string{archive, drafts} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	target := filepath.Join(archive, "new.json")
+	const body = "{\"schema\":\"crw-issue-draft/1\",\"fingerprint\":\"new\",\"project\":\"p\",\"title\":\"archived\"}\n"
+	improveTestWrite(t, target, body)
+	improveTestConfig(t, s, map[string]any{"manage": map[string]any{"improve": map[string]any{
+		"sources": map[string]any{
+			"relay": map[string]any{"path": s.stateDir},
+			"draft": map[string]any{"path": drafts},
+		},
+	}}})
+	linked := false
+	previousRead := improveIdentityReadHook
+	improveIdentityReadHook = func(path string) {
+		if path != drafts || linked {
+			return
+		}
+		linked = true
+		if err := os.Symlink(target, filepath.Join(drafts, "new.json")); err != nil {
+			t.Errorf("linking the draft: %v", err)
+		}
+	}
+	t.Cleanup(func() { improveIdentityReadHook = previousRead })
+	removed := false
+	previousAfter := improveInputAfterRead
+	improveInputAfterRead = func() {
+		if !linked || removed {
+			return
+		}
+		removed = true
+		if err := os.Remove(filepath.Join(drafts, "new.json")); err != nil {
+			t.Errorf("removing the link: %v", err)
+		}
+	}
+	t.Cleanup(func() { improveInputAfterRead = previousAfter })
+	code, _, stderr := improveTestRun(t, s, "--out", target)
+	if !linked {
+		t.Fatalf("the listing seam never ran: exit %d, stderr %q", code, stderr)
+	}
+	if code == 0 {
+		t.Fatalf("a draft that appeared after the recording and was removed before the rename was written over: exit 0, stderr %q", stderr)
+	}
+	if after, err := os.ReadFile(target); err != nil || string(after) != body {
+		t.Errorf("the archived draft changed: %q (%v)", after, err)
+	}
+}
+
+// TestImproveDraftsAtASmallDescriptorLimitStillCollect covers the P1 that the pre-merge evaluation
+// found (C4, C8): a descriptor limit as low as 16 must not make a normal drafts collection fail
+// with "too many open files" while the collection's own descriptors are still open.
+func TestImproveDraftsAtASmallDescriptorLimitStillCollect(t *testing.T) {
+	s := improveTestSetup(t)
+	improveReview799Store(t, s)
+	improveLowerDescriptorLimit(t, 16)
+	improveTestManyDrafts(t, s, 100)
+	out := filepath.Join(improveReview799OutDir(t, s), "bundle.json")
+	code, _, stderr := improveTestRun(t, s, "--out", out)
+	if code != 0 {
+		t.Fatalf("a drafts directory at a descriptor limit of 16: exit %d, stderr %q, want the bundle", code, stderr)
+	}
+	if got := improveTestRecordsOf(improveTestReadBundle(t, out), improveKindDraft); len(got) != 100 {
+		t.Errorf("draft records = %d, want 100", len(got))
+	}
+}
+
+// TestImproveDraftsResolveTheirDirectoryLikeTheStore covers the P1 that the pre-merge evaluation
+// found (C1): a drafts directory spelled through a link and ".." is listed and read where the kernel
+// resolves that spelling, the way the store's path is, not where a cleaned path would point.
+func TestImproveDraftsResolveTheirDirectoryLikeTheStore(t *testing.T) {
+	s := improveTestSetup(t)
+	improveReview799Store(t, s)
+	real := filepath.Join(s.root, "real", "sub")
+	realDrafts := filepath.Join(s.root, "real", "drafts")
+	base := filepath.Join(s.root, "base")
+	cleanDrafts := filepath.Join(base, "drafts")
+	for _, dir := range []string{real, realDrafts, cleanDrafts} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	improveTestWrite(t, filepath.Join(realDrafts, "one.json"), "{\"schema\":\"crw-issue-draft/1\",\"fingerprint\":\"one\",\"project\":\"project-a\",\"title\":\"real\"}\n")
+	improveTestWrite(t, filepath.Join(cleanDrafts, "one.json"), "{\"schema\":\"crw-issue-draft/1\",\"fingerprint\":\"one\",\"project\":\"project-a\",\"title\":\"clean\"}\n")
+	if err := os.Symlink(real, filepath.Join(base, "link")); err != nil {
+		t.Skipf("symbolic links are unavailable here: %v", err)
+	}
+	configured := s.root + string(filepath.Separator) + "base" + string(filepath.Separator) + "link" + string(filepath.Separator) + ".." + string(filepath.Separator) + "drafts"
+	improveTestConfig(t, s, map[string]any{"manage": map[string]any{"improve": map[string]any{
+		"sources": map[string]any{
+			"relay": map[string]any{"path": s.stateDir},
+			"draft": map[string]any{"path": configured},
+		},
+	}}})
+	out := filepath.Join(improveReview799OutDir(t, s), "bundle.json")
+	code, _, stderr := improveTestRun(t, s, "--out", out)
+	if code != 0 {
+		t.Fatalf("a drafts directory spelled through a link: exit %d, stderr %q", code, stderr)
+	}
+	got := improveTestRecordsOf(improveTestReadBundle(t, out), improveKindDraft)
+	if len(got) != 1 || got[0].What != "real" {
+		t.Errorf("the draft read was %+v, want the one the kernel resolves the directory to (title real)", got)
+	}
+}
+
 // TestImproveInputRefusesTheLinkedStoreInsideTheSourceDirectory covers the P0: the relay
 // source is a directory and its relay.sqlite3 is a link to a database elsewhere, so the file
 // the collection actually opens is not the configured directory. Before this issue the guard

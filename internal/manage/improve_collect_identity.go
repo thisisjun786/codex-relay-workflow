@@ -116,6 +116,7 @@ type improveIdentitySet struct {
 	entries []improveIdentityEntry
 	// heldLimit is the descriptor bound, computed once from the process limit.
 	heldLimit int
+	heldSet   bool
 }
 
 // improveIdentityNew is an empty set.
@@ -163,6 +164,17 @@ func (ids *improveIdentitySet) improveIdentityPin(entry *improveIdentityEntry) e
 	switch {
 	case errors.Is(err, os.ErrNotExist):
 		return nil
+	case errors.Is(err, unix.EMFILE) || errors.Is(err, unix.ENFILE):
+		// No descriptor is free, so the identity comes from stat and no descriptor is held, as past the bound.
+		info, statErr := os.Stat(entry.path)
+		if errors.Is(statErr, os.ErrNotExist) {
+			return nil
+		}
+		if statErr != nil {
+			return fmt.Errorf("%s: the input %s could not be examined to record its identity: %w", improveReasonInputChanged, entry.path, statErr)
+		}
+		entry.info = info
+		return nil
 	case err != nil:
 		return fmt.Errorf("%s: the input %s could not be opened to record its identity: %w", improveReasonInputChanged, entry.path, err)
 	}
@@ -184,30 +196,54 @@ func (ids *improveIdentitySet) improveIdentityPin(entry *improveIdentityEntry) e
 // runtime need when the bound is taken from the process's own limit.
 const improveIdentityHeldReserve = 32
 
-// improveIdentityHeldFloor is the smallest bound, so the store files, their sidecars and the
-// configured directories are always pinned even when the process limit leaves almost no room.
-const improveIdentityHeldFloor = 16
+// improveIdentityHeldDefault is the bound when the process limit cannot be read.
+const improveIdentityHeldDefault = 16
 
-// improveIdentityHeldLimit is how many inputs may hold a descriptor at once. Every input the
-// collection reads is pinned by a descriptor, as the decided answer requires; the bound exists only
-// so that a drafts directory larger than the process's own descriptor limit degrades instead of
-// failing, because a collection that used to read each document in turn must not begin to fail with
-// "too many open files" as the file count grows. The bound is taken from the process limit less a
-// reserve, so it does not bind at any ordinary limit; only a genuinely low limit reaches it, and
-// there the inputs past it keep the identity their fstat recorded, which every comparison still
-// uses.
+// improveIdentityMaxInt is the largest int, the cap on a bound computed from a huge process limit.
+const improveIdentityMaxInt = int(^uint(0) >> 1)
+
+// improveIdentityHeldLimit is how many inputs may hold a descriptor at once. The bound is the process
+// limit less the descriptors the process already holds and a reserve, so the collection's own
+// descriptors and the reads that follow always find a free one. The reserve is at most a quarter of the
+// limit, so a low limit still pins some inputs. An input past the bound keeps the identity its stat
+// recorded, which every comparison still uses.
 func (ids *improveIdentitySet) improveIdentityHeldLimit() int {
-	if ids.heldLimit != 0 {
+	if ids.heldSet {
 		return ids.heldLimit
 	}
-	ids.heldLimit = improveIdentityHeldFloor
+	ids.heldSet = true
+	ids.heldLimit = improveIdentityHeldDefault
 	var limit unix.Rlimit
 	if err := unix.Getrlimit(unix.RLIMIT_NOFILE, &limit); err == nil {
-		if limit.Cur > uint64(improveIdentityHeldReserve) {
-			ids.heldLimit = int(limit.Cur) - improveIdentityHeldReserve
+		cur := uint64(limit.Cur)
+		reserve := uint64(improveIdentityHeldReserve)
+		if cur/4 < reserve {
+			reserve = cur / 4
 		}
+		open := uint64(improveIdentityOpenDescriptors())
+		var held uint64
+		if cur > open+reserve {
+			held = cur - open - reserve
+		}
+		if held > uint64(improveIdentityMaxInt) {
+			held = uint64(improveIdentityMaxInt)
+		}
+		ids.heldLimit = int(held)
 	}
 	return ids.heldLimit
+}
+
+// improveIdentityOpenDescriptors counts the descriptors the process holds open, from the directory that
+// lists them on Linux and Darwin. The descriptor the listing itself uses is not counted.
+func improveIdentityOpenDescriptors() int {
+	entries, err := os.ReadDir("/dev/fd")
+	if err != nil {
+		return improveIdentityHeldDefault
+	}
+	if len(entries) == 0 {
+		return 0
+	}
+	return len(entries) - 1
 }
 
 // improveIdentityHeld counts the descriptors the set holds open.
