@@ -114,7 +114,7 @@ func localObserveToolIn(name, pathEnv string, goMod []byte, gate string) string 
 			return ""
 		}
 	}
-	cmd := localProbeCommand(gate, path, args)
+	cmd := localProbeCommand(gate, path, args, dir, localProbeEnv(filepath.Join(dir, "home"), pathEnv))
 	cmd.Dir = dir
 	// The probe has the steps' isolation: its own HOME and XDG directories, and no GOENV or GOTOOLCHAIN
 	// from the caller.
@@ -257,13 +257,16 @@ func localRecomputedReuse(opts localOptions, plan []localJob, current verificati
 // localProbeCommand is the command a version probe runs. The probe runs through the heavy-check gate when
 // one is configured, as the checks it informs do, so the versions a record names are read under the same
 // gate as the steps (pre-merge finding d1).
-func localProbeCommand(gate, path string, args []string) *exec.Cmd {
+func localProbeCommand(gate, path string, args []string, dir string, env []string) *exec.Cmd {
 	words := strings.Fields(gate)
 	if len(words) == 0 {
 		return exec.Command(path, args...)
 	}
-	rest := append(append([]string{}, words[1:]...), path)
-	return exec.Command(words[0], append(rest, args...)...)
+	argv := append(append([]string{}, words...), "env", "-i")
+	argv = append(argv, env...)
+	argv = append(argv, "bash", "-c", localChdirScript, "bash", dir, path)
+	argv = append(argv, args...)
+	return exec.Command(argv[0], argv[1:]...)
 }
 
 // localCheckoutDiff names the first tracked file whose bytes in the clean worktree are not the bytes the

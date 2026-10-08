@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -60,6 +61,7 @@ type localOptions struct {
 // Local is `crw-dev ci local`: run every ci.yml job and step locally, or install the
 // pre-push hook. `crw-dev ci local hook install|status` is the hook subcommand.
 func Local(args []string, stdout, stderr io.Writer) int {
+	localScrubGitEnv()
 	if len(args) > 0 && args[0] == "hook" {
 		return localHook(args[1:], stdout, stderr)
 	}
@@ -137,6 +139,7 @@ func Local(args []string, stdout, stderr io.Writer) int {
 // localVerify answers a reused record when every key matches, or runs the table and returns the
 // record it made.
 func localVerify(opts localOptions, reusePath string, stdout io.Writer) (verificationRecord, bool, error) {
+	localScrubGitEnv()
 	// Replacement refs (refs/replace) would let another object stand in for a commit; the run reads the
 	// objects as they are.
 	os.Setenv("GIT_NO_REPLACE_OBJECTS", "1")
@@ -268,10 +271,36 @@ func localEngineFlags(parallel int) string {
 // localRepository is the origin remote's URL, the identity a record names. It is read from the
 // checkout rather than written down, so the record travels with the repository it describes.
 func localRepository(root string) string {
-	if out, err := runGit(root, "remote", "get-url", "origin"); err == nil {
-		return strings.TrimSpace(string(out))
+	out, err := runGit(root, "remote", "get-url", "origin")
+	if err != nil {
+		return ""
 	}
-	return ""
+	return localWithoutUserinfo(strings.TrimSpace(string(out)))
+}
+
+// localWithoutUserinfo removes the credentials from a remote address before the record names it: the user,
+// password and query of a URL, or the user@ of an scp-style address (pre-merge finding d1).
+func localWithoutUserinfo(remote string) string {
+	if u, err := url.Parse(remote); err == nil && u.Scheme != "" && u.Host != "" {
+		u.User = nil
+		u.RawQuery = ""
+		u.Fragment = ""
+		return u.String()
+	}
+	if at := strings.Index(remote, "@"); at >= 0 && !strings.Contains(remote[:at], "/") {
+		return remote[at+1:]
+	}
+	return remote
+}
+
+// localScrubGitEnv removes the caller's git repository and configuration variables from this process, so no
+// git command the run makes reads another repository, index or configuration (review finding, P2).
+func localScrubGitEnv() {
+	for _, entry := range os.Environ() {
+		if name, _, _ := strings.Cut(entry, "="); strings.HasPrefix(name, "GIT_") {
+			os.Unsetenv(name)
+		}
+	}
 }
 
 // localExecute runs the table in a clean worktree of the verified commit and assembles the record.
@@ -461,7 +490,7 @@ func localRunStep(opts localOptions, step localStep, worktree, leg string, env [
 	if err != nil {
 		return localFailed, err.Error()
 	}
-	argv := localGateArgv(opts.HeavyGate, step.heavy, script)
+	argv := localGateArgv(opts.HeavyGate, step.heavy, script, dir, stepEnv)
 	shell := exec.Command(argv[0], argv[1:]...)
 	shell.Dir = dir
 	shell.Env = stepEnv
@@ -488,14 +517,22 @@ const localIsolatedGoEnv = "unset: Go reads its default file under the run's own
 // localGateArgv is the argv a step runs: bash <script>, with the heavy-check gate's own words
 // prepended for a heavy step. The step's command lives in the script file, so a gate between this
 // process and bash never sees the command's own characters.
-func localGateArgv(gate string, heavy bool, script string) []string {
-	argv := []string{"bash", "--noprofile", "--norc", "-eo", "pipefail", script}
-	if heavy {
-		if words := strings.Fields(gate); len(words) > 0 {
-			argv = append(words, argv...)
-		}
+// localChdirScript starts the step in its directory and replaces the shell with the step's own bash.
+const localChdirScript = `cd "$1" && shift && exec "$@"`
+
+// localGateArgv is the argv a step runs. A heavy step runs through the heavy-check gate, and the step's
+// directory and sealed environment are part of that argv (env -i, then the directory, then bash), so no
+// launcher of the gate can start the step elsewhere or with variables of its own (pre-merge finding d2).
+func localGateArgv(gate string, heavy bool, script, dir string, env []string) []string {
+	shell := []string{"bash", "--noprofile", "--norc", "-eo", "pipefail", script}
+	words := strings.Fields(gate)
+	if !heavy || len(words) == 0 {
+		return shell
 	}
-	return argv
+	argv := append(append([]string{}, words...), "env", "-i")
+	argv = append(argv, env...)
+	argv = append(argv, "bash", "-c", localChdirScript, "bash", dir)
+	return append(argv, shell...)
 }
 
 // localWriteScript writes a step's command to a script in the run's temporary root and returns its

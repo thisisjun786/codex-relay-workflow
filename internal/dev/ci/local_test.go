@@ -410,11 +410,11 @@ func TestLocal_removes_its_clean_worktree(t *testing.T) {
 // The gate a heavy step goes through is prepended as argv, and the step's command travels as a
 // script file, so a gate between the run and bash never sees the command's own characters.
 func TestLocal_gate_prefixes_a_heavy_step_as_argv(t *testing.T) {
-	gate := localGateArgv("gate.sh --flag", true, "/tmp/step-001.sh")
-	expectEqual(t, "a heavy step's argv", gate, []string{"gate.sh", "--flag", "bash", "--noprofile", "--norc", "-eo", "pipefail", "/tmp/step-001.sh"})
-	light := localGateArgv("gate.sh", false, "/tmp/step-001.sh")
+	gate := localGateArgv("gate.sh --flag", true, "/tmp/step-001.sh", "/tmp", nil)
+	expectEqual(t, "a heavy step's argv", gate, []string{"gate.sh", "--flag", "env", "-i", "bash", "-c", localChdirScript, "bash", "/tmp", "bash", "--noprofile", "--norc", "-eo", "pipefail", "/tmp/step-001.sh"})
+	light := localGateArgv("gate.sh", false, "/tmp/step-001.sh", "/tmp", nil)
 	expectEqual(t, "a light step's argv", light, []string{"bash", "--noprofile", "--norc", "-eo", "pipefail", "/tmp/step-001.sh"})
-	none := localGateArgv("", true, "/tmp/step-001.sh")
+	none := localGateArgv("", true, "/tmp/step-001.sh", "/tmp", nil)
 	expectEqual(t, "no gate", none, []string{"bash", "--noprofile", "--norc", "-eo", "pipefail", "/tmp/step-001.sh"})
 }
 
@@ -439,7 +439,7 @@ func TestLocal_write_script_keeps_the_command_verbatim(t *testing.T) {
 		t.Errorf("the script is not executable: %v, %v", info.Mode(), err)
 	}
 	// The command itself is never an argv element, so the shell's characters cannot be touched.
-	if strings.Contains(strings.Join(localGateArgv("gate.sh", true, path), " "), "target in linux/amd64") {
+	if strings.Contains(strings.Join(localGateArgv("gate.sh", true, path, "/tmp", nil), " "), "target in linux/amd64") {
 		t.Error("the command reached the argv")
 	}
 }
