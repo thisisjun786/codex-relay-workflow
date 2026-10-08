@@ -707,7 +707,7 @@ func TestTheLaneGateKeepsAHeadThatTheActiveAcceptanceReachesByARefresh(t *testin
 		fxRepo, alpha.TaskID)
 	w.exec("INSERT INTO dag_base_refreshes (refresh_id, acceptance_id, refresh_seq, relationship_id, execution_generation, event_id, revision_hash, head_sha, base_repository, base_ref, base_tip_sha, proof_json, resolved_paths_json, recorded_by_task_id, coordinator_epoch, recorded_at)"+
 		" VALUES (?, 'acc-rel-c2', 1, 'rel-c', 2, 'ev-r2', 'rev-r2', 'head-refreshed', ?, ?, 'base-0', '{}', '[]', ?, 0, '2023-11-14T22:13:22.000000+00:00')",
-		"dbr-"+strings.Repeat("d", 60), fxRepo, fxBase, alpha.TaskID)
+		refreshIDFor("acc-rel-c2", "rel-c", 2, "ev-r2", "rev-r2", "head-refreshed", fxRepo, fxBase, "base-0"), fxRepo, fxBase, alpha.TaskID)
 	turn := store.MergeTurnsRow{TurnID: "mtn-refresh-current", TargetKey: "tgt-x", Repository: fxRepo, BaseRef: fxBase, ProjectKey: fxA,
 		HolderTaskID: alpha.TaskID, CandidateHead: "head-refreshed", State: Holding}
 	refusal, err := underCorrectionRefusal(w.ctx, w.s.Querier(w.ctx), turn)

@@ -35,13 +35,10 @@ func Register(d *sqlite.Driver) error {
 	})
 }
 
-// commitText is the text of a SQL argument; a NULL or a non-text value names no commit.
+// commitText is the text of a SQL argument. Only TEXT names a commit: a BLOB, a number or NULL names none.
 func commitText(v driver.Value) string {
-	switch x := v.(type) {
-	case string:
+	if x, ok := v.(string); ok {
 		return x
-	case []byte:
-		return string(x)
 	}
 	return ""
 }

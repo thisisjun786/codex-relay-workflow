@@ -219,11 +219,15 @@ func ucReplacedHead(ctx context.Context, q store.Querier, repository, head strin
 	// it, is not replaced by it: the head is that relationship's own current result.
 	held := "crw_same_commit(a2.head_sha, ?)"
 	args = append(args, head)
-	if refreshedHeads, err := ucZoneTable(ctx, q, "dag_base_refreshes"); err != nil {
+	stood, err := ucValidStandAcceptances(ctx, q, head)
+	if err != nil {
 		return "", err
-	} else if refreshedHeads {
-		held += " OR a2.acceptance_id IN (SELECT f2.acceptance_id FROM dag_base_refreshes f2 WHERE crw_same_commit(f2.head_sha, ?))"
-		args = append(args, head)
+	}
+	if len(stood) > 0 {
+		held += " OR a2.acceptance_id IN (" + strings.TrimSuffix(strings.Repeat("?,", len(stood)), ",") + ")"
+		for _, id := range stood {
+			args = append(args, id)
+		}
 	}
 	query = "SELECT relationship_id FROM (" + query + ") WHERE relationship_id NOT IN (SELECT a2.relationship_id FROM dag_acceptances a2" +
 		" WHERE a2.state = 'active' AND (" + held + ")) ORDER BY relationship_id LIMIT 1"
