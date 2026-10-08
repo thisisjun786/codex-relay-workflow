@@ -75,6 +75,13 @@ func (c *Channel) refreshProposal(ctx context.Context, row store.SupervisorMessa
 			if err != sql.ErrNoRows {
 				return false, err
 			}
+			// An omission's packet is composed from its frozen reading and the live resolution, and
+			// the resolution's recipient scope kind can move without the recipient task moving (the
+			// same task answering from the store seat instead of an initiative's), so a claim and a
+			// transport start must not send the stale kind.
+			if o != nil {
+				return c.refreshEventlessProposal(ctx, row, r, at, currentAttempt)
+			}
 		}
 		return false, nil
 	}
@@ -118,6 +125,15 @@ func (c *Channel) refreshProposal(ctx context.Context, row store.SupervisorMessa
 	if err != nil {
 		return false, err
 	}
+	// A packet stored before recipient.scopeKind existed carries no such field, so the freshly
+	// composed one always differs. Compare without it there: adding the field alone is not a
+	// change to the message, and a restatement made for something else still writes it.
+	if !recipientScopeKindRecorded(row.Packet) {
+		comparison, err = canonicalPacket(packetWithoutRecipientScopeKind(current))
+		if err != nil {
+			return false, err
+		}
+	}
 	if comparison == row.Packet && eventID == row.EventID.String && (!row.SubmissionNo.Valid && report.submission == 0 || row.SubmissionNo.Valid && row.SubmissionNo.Int64 == report.submission) {
 		return false, nil
 	}
@@ -151,6 +167,62 @@ func (c *Channel) refreshProposal(ctx context.Context, row store.SupervisorMessa
 		instant = "transport_start"
 	}
 	detail := pyjson.Dumps(contract.OrderedObject{{Key: "fromEvent", Value: row.EventID.String}, {Key: "toEvent", Value: eventID}, {Key: "fromSubmission", Value: optionalNumber(row.SubmissionNo)}, {Key: "toSubmission", Value: optionalNumber(submission)}, {Key: "at", Value: instant}, {Key: "reason", Value: "what the obligation says moved after staging and nothing had been sent, so the message now carries what is owed now"}}, pyjson.Options{})
+	_, err = c.Store.Q(ctx).ExecContext(ctx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,'supervisor_message_restated',?,?)", at, row.MessageID, detail)
+	return true, err
+}
+
+// refreshEventlessProposal keeps an eventless omission's stored packet naming the seat its recipient
+// answers from now. An omission carries no event, so its packet is not recomposed here: it was
+// composed from the reading the omission was frozen with, and recomposing it would rewrite fields
+// that have not moved. What can move is the resolution's recipient scope kind, which the same
+// recipient task can change seat on (an initiative's supervisor handing the store seat, or the
+// reverse), and a claim and a transport start must not send the stale kind. Only that one field is
+// rewritten, in the stored packet's own bytes. A packet stored before the field existed is left
+// exactly as it is: nothing about an old packet is guessed at, which is the same rule the event and
+// notice paths follow.
+func (c *Channel) refreshEventlessProposal(ctx context.Context, row store.SupervisorMessagesRow, r Resolution, at string, currentAttempt int64) (bool, error) {
+	decoded, err := pyjson.Loads(row.Packet, pyjson.LoadOptions{Python: true, RangeErrors: true})
+	if err != nil {
+		return false, err
+	}
+	top, ok := evidence.Object(decoded)
+	if !ok {
+		return false, nil
+	}
+	envelope, _ := top.Lookup("envelope")
+	region, ok := evidence.Object(envelope)
+	if !ok {
+		return false, nil
+	}
+	recipient, _ := region.Lookup("recipient")
+	person, ok := evidence.Object(recipient)
+	if !ok {
+		return false, nil
+	}
+	stored, present := person.Lookup("scopeKind")
+	if !present || stored == r.RecipientScopeKind {
+		return false, nil
+	}
+	updated := person.Set("scopeKind", r.RecipientScopeKind)
+	region = region.Set("recipient", updated)
+	top = top.Set("envelope", region)
+	encoded := pyjson.Dumps(top, pyjson.Options{SortKeys: true, Unicode: true})
+	result, err := c.Store.Q(ctx).ExecContext(ctx, "UPDATE supervisor_messages SET packet=?,updated_at=? WHERE message_id=? AND "+store.SupervisorRestatableSQL("")+" AND recipient_task_id=? AND NOT EXISTS (SELECT 1 FROM supervisor_attempts WHERE message_id=? AND attempt_no<>? AND "+store.SupervisorAttemptMayHaveGoneSQL("")+")", encoded, at, row.MessageID, r.Recipient, row.MessageID, currentAttempt)
+	if err != nil {
+		return false, err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	if n != 1 {
+		return false, Refusal{"superseded_revision", "the report was sent; the staged packet cannot be changed"}
+	}
+	instant := "claim"
+	if row.State == "sending" {
+		instant = "transport_start"
+	}
+	detail := pyjson.Dumps(contract.OrderedObject{{Key: "at", Value: instant}, {Key: "reason", Value: "the recipient of this omission now answers from another scope, so the packet records the seat it is addressed to now"}}, pyjson.Options{})
 	_, err = c.Store.Q(ctx).ExecContext(ctx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,'supervisor_message_restated',?,?)", at, row.MessageID, detail)
 	return true, err
 }
