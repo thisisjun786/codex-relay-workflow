@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -133,8 +134,11 @@ func deliverFakeBridge(t *testing.T, steps []map[string]any) (bridge, log string
 	script := "#!/bin/sh\n" + deliverFakeScenarioEnv + "=" + coreShellQuote(scenario) + " " +
 		deliverFakeLogEnv + "=" + coreShellQuote(log) + " exec " + coreShellQuote(os.Args[0]) +
 		" -test.run " + coreShellQuote(deliverFakeRun) + "\n"
-	if err := os.WriteFile(bridge, []byte(script), 0o700); err != nil {
-		t.Fatal(err)
+	syscall.ForkLock.RLock()
+	writeErr := os.WriteFile(bridge, []byte(script), 0o700)
+	syscall.ForkLock.RUnlock()
+	if writeErr != nil {
+		t.Fatal(writeErr)
 	}
 	return bridge, log
 }

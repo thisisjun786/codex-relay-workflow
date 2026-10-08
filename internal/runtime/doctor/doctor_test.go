@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -58,8 +59,14 @@ func mkdir(t *testing.T, dir string) {
 func write(t *testing.T, path, text string, mode os.FileMode) {
 	t.Helper()
 	mkdir(t, filepath.Dir(path))
-	if err := os.WriteFile(path, []byte(text), mode); err != nil {
-		t.Fatal(err)
+	// The mode may make this a program the tests then run, so the descriptor is open only under
+	// syscall.ForkLock: a fork in that window would inherit it and leave the path unexecutable
+	// (ETXTBSY, golang/go#22315).
+	syscall.ForkLock.RLock()
+	writeErr := os.WriteFile(path, []byte(text), mode)
+	syscall.ForkLock.RUnlock()
+	if writeErr != nil {
+		t.Fatal(writeErr)
 	}
 }
 

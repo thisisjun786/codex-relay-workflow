@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 	"time"
 
@@ -41,7 +42,10 @@ func capacityTestRelay(t *testing.T, f *capacityFixture, reading map[string]any)
 	script := "#!/bin/sh\n" + "case \"$*\" in\n" +
 		"  *dag-ready*) cat " + coreShellQuote(file) + " ;;\n" +
 		"  *) echo 'relay: refused' >&2; exit 2 ;;\n" + "esac\n"
-	capacityTestMust(t, os.WriteFile(f.env.Executable, []byte(script), 0o700))
+	syscall.ForkLock.RLock()
+	writeErr := os.WriteFile(f.env.Executable, []byte(script), 0o700)
+	syscall.ForkLock.RUnlock()
+	capacityTestMust(t, writeErr)
 }
 
 func capacityTestReading(waiting, extraWaiting []string, held, ceiling int, hostMemory string) map[string]any {

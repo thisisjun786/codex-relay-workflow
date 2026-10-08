@@ -326,12 +326,22 @@ func (s *Scheduler) artifactVerified(ctx context.Context, q store.Querier, plan 
 	}
 	// 7. a code pin needs the accepted head, the target and the pull request to read it from.
 	if e.PinsCodeHead {
-		var forge int
+		// A pull-request acceptance is read through its forge row and pull request; a commit acceptance (CRW-965) has
+		// its verification row and no pull request. Either one needs the accepted head and the edge's target.
+		var forge, verified int
 		hasForge, err := queryOne(ctx, q, "SELECT 1 FROM dag_acceptance_forge WHERE acceptance_id = ?", []any{a.AcceptanceID}, &forge)
 		if err != nil {
 			return EdgeStatus{}, err
 		}
-		if a.HeadSHA == "" || a.PRNumber < 1 || !hasForge || a.Repository != e.TargetRepository {
+		// the verification table is read only for an acceptance without a forge row: a store that predates it still reads its pull requests (CRW-965 review)
+		hasVerification := false
+		if !hasForge {
+			if hasVerification, err = queryOne(ctx, q, "SELECT 1 FROM dag_acceptance_verifications WHERE acceptance_id = ?", []any{a.AcceptanceID}, &verified); err != nil {
+				return EdgeStatus{}, err
+			}
+		}
+		readable := (hasForge && a.PRNumber >= 1) || (hasVerification && !hasForge)
+		if a.HeadSHA == "" || !readable || a.Repository != e.TargetRepository {
 			return blocked(BlockedAcceptanceIncomplete, "a pinned acceptance needs its head, its pull request and the edge's target"), nil
 		}
 	}
@@ -451,6 +461,12 @@ func (s *Scheduler) integratedEdge(ctx context.Context, q store.Querier, plan st
 	}
 	if _, _, st, err := s.recordedEvidence(ctx, q, a); err != nil || st != nil {
 		return valueOf(st), err
+	}
+	// a commit-accepted node is judged on the integration branches its batches moved, not on the base ref its edge names (CRW-965, D4)
+	if commit, err := commitAccepted(ctx, q, a.AcceptanceID); err != nil {
+		return EdgeStatus{}, err
+	} else if commit {
+		return s.commitIntegratedEdge(ctx, q, plan, snap, e, from, a)
 	}
 	at, err := s.integratedAt(ctx, q, plan, a, e.TargetRepository, e.TargetBaseRef)
 	if err != nil {

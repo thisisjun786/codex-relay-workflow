@@ -21,6 +21,11 @@ type Command struct {
 	Name    string
 	Summary string
 	Run     func(ctx context.Context, e *Env, args []string) int
+	// HelpRequested, when a subcommand sets it, reports whether the arguments ask for that
+	// subcommand's usage by a rule wider than -h and --help. Run consults it before it
+	// refuses a configuration file this product cannot use, so a command line that really
+	// asks for the usage is not refused by the configuration check.
+	HelpRequested func(args []string) bool
 }
 
 // Env is what a subcommand runs with: the process's streams and the seams a test
@@ -70,6 +75,12 @@ func coreNames() []string {
 func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	e := &Env{Stdin: stdin, Stdout: stdout, Stderr: stderr, Getenv: os.Getenv, Now: time.Now, Executable: coreExecutable()}
 	defer coreForgetConfig(e)
+	// The three Env-keyed memos hold their entry for the invocation and no longer: a process
+	// that embeds Run and calls it many times would otherwise grow one entry, with the Env and
+	// its streams, per call. Deleting an entry that was never written is a no-op, so every
+	// subcommand and every exit path clears all three.
+	defer relayHelperForget(e)
+	defer branchAlwaysForget(e)
 	if len(args) == 0 {
 		coreUsage(stderr)
 		fmt.Fprintln(stderr, "crw manage: error: the following arguments are required: command")
@@ -86,7 +97,7 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 			// runs, so no subcommand silently continues with the defaults. config is the one
 			// command that names the file itself (--config), so it reports its own refusal
 			// once it has read its flag.
-			if c.Name != coreConfigCommand.Name && !coreHelpRequested(args[1:]) {
+			if c.Name != coreConfigCommand.Name && !coreHelpRequested(args[1:]) && !coreCommandHelpRequested(c, args[1:]) {
 				if err := coreConfigError(e); err != nil {
 					fmt.Fprintf(stderr, "crw manage: error: %v\n", err)
 					return usageExit

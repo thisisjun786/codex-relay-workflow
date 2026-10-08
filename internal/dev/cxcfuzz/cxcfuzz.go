@@ -210,18 +210,16 @@ func Campaign(cfg Config) (Summary, error) {
 		}
 		summary.Cases++
 		verdict, goOut, oracleOut, input, err := run.one()
-		switch {
-		case errors.Is(err, Timeout{}):
+		switch classifyCaseError(err) {
+		case caseRemovalFailed:
+			// A root that survived its removal is reported, never counted: the caller must see which root
+			// was left and why, and the run must not continue as if the case had merely been refused.
+			return summary, err
+		case caseTimedOut:
 			summary.Timeouts++
 			continue
-		case errors.Is(err, errRefused):
+		case caseRefused:
 			summary.Refused++
-			continue
-		case err != nil:
-			// The worker died, or its reply was unreadable: the issue records that input as a
-			// timeout case and carries on with the replacement worker, so one transient death
-			// does not discard the run. It is not an agreement either.
-			summary.Timeouts++
 			continue
 		}
 		switch verdict.Kind {
@@ -239,6 +237,11 @@ func Campaign(cfg Config) (Summary, error) {
 		}
 		shrinker := &shrinkRun{campaign: run, verdict: verdict, goOut: goOut, oracleOut: oracleOut}
 		shrunk, _ := Shrink(input, ShrinkAttempts, shrinker.keep)
+		if shrinker.removal != nil {
+			// A removal failure during shrinking is the same fact as one during the run: a root outlived
+			// the work that owned it, so it is reported rather than folded into the kept candidate.
+			return summary, shrinker.removal
+		}
 		if err := writeDivergence(cfg.Out, Divergence{
 			Kind:    verdict.Kind,
 			Input:   canonical(shrunk),
@@ -264,6 +267,60 @@ func Campaign(cfg Config) (Summary, error) {
 // errRefused is a case whose fs scenario the harness refused to build, so it was not run.
 var errRefused = errors.New("the fs scenario was refused")
 
+// caseOutcome is what one case's error means to a campaign.
+type caseOutcome int
+
+const (
+	// caseOK is no error: the case ran and its verdict decides.
+	caseOK caseOutcome = iota
+	// caseRefused is a scenario the harness declined, which the run counts and carries on from.
+	caseRefused
+	// caseTimedOut is a worker that died or did not answer, which the run counts and carries on from.
+	caseTimedOut
+	// caseRemovalFailed is a root that outlived its run, which is reported and never counted.
+	caseRemovalFailed
+)
+
+// classifyCaseError says what one case's error means. A removal failure is checked before the refusal,
+// because a refused build whose root survived is answered as the RemovalError itself: reading it as a
+// refused case would let the run carry on with a root still on the host.
+func classifyCaseError(err error) caseOutcome {
+	if err == nil {
+		return caseOK
+	}
+	if errors.As(err, new(RemovalError)) {
+		return caseRemovalFailed
+	}
+	if errors.Is(err, errRefused) {
+		return caseRefused
+	}
+	return caseTimedOut
+}
+
+// refusedOutcome turns a scenario failure into the error the caller sees. A refusal is the harness
+// declining the case; a RemovalError is not - the root survived, so it is reported as itself and never
+// as a refused case a target may run on.
+func refusedOutcome(err error) error {
+	var removal RemovalError
+	if errors.As(err, &removal) {
+		return err
+	}
+	return errRefused
+}
+
+// joinCleanup folds a cleanup failure into the error a function is already returning. The first
+// failure is kept, because it is the one that explains the run, and a cleanup failure is never
+// discarded: it says a root outlived the run that owned it.
+func joinCleanup(err, cleanup error) error {
+	if cleanup == nil {
+		return err
+	}
+	if err == nil {
+		return cleanup
+	}
+	return errors.Join(err, cleanup)
+}
+
 type campaign struct {
 	cfg  Config
 	pool *Pool
@@ -278,28 +335,31 @@ func (c *campaign) one() (Verdict, string, string, any, error) {
 	return verdict, goOut, oracleOut, input, err
 }
 
-func (c *campaign) evaluate(input any) (Verdict, string, string, error) {
+func (c *campaign) evaluate(input any) (verdict Verdict, goText, oracleText string, err error) {
 	text := canonical(input)
 	goRoot, err := os.MkdirTemp("", "cxcfuzz-go-")
 	if err != nil {
 		return Verdict{}, "", "", err
 	}
-	defer func() { _ = os.RemoveAll(goRoot) }()
+	defer func() { err = joinCleanup(err, CleanupCaseRoot(goRoot)) }()
 	oracleRoot, err := os.MkdirTemp("", "cxcfuzz-oracle-")
 	if err != nil {
 		return Verdict{}, "", "", err
 	}
-	defer func() { _ = os.RemoveAll(oracleRoot) }()
+	defer func() { err = joinCleanup(err, CleanupCaseRoot(oracleRoot)) }()
 	for _, root := range []string{goRoot, oracleRoot} {
 		if err := PrepareRoot(root); err != nil {
 			return Verdict{}, "", "", err
 		}
 	}
+	// A refused scenario is the harness declining the case, and a removal that still failed is its own
+	// error: the caller must not read either as an agreement, and must not read the removal failure as
+	// a refused case a target may run on.
 	if _, err := Scenarios(goRoot, input); err != nil {
-		return Verdict{}, "", "", errRefused
+		return Verdict{}, "", "", refusedOutcome(err)
 	}
 	if _, err := Scenarios(oracleRoot, input); err != nil {
-		return Verdict{}, "", "", errRefused
+		return Verdict{}, "", "", refusedOutcome(err)
 	}
 	value, err := decode(text)
 	if err != nil {
@@ -310,17 +370,17 @@ func (c *campaign) evaluate(input any) (Verdict, string, string, error) {
 	if goErr != nil {
 		goOut = errorValue(goErr)
 	}
-	oracleText, err := c.pool.Call(text, oracleRoot)
+	oracleAnswer, err := c.pool.Call(text, oracleRoot)
 	if err != nil {
 		return Verdict{}, "", "", err
 	}
-	oracleValue, err := decode(oracleText)
+	oracleValue, err := decode(oracleAnswer)
 	if err != nil {
 		return Verdict{}, "", "", err
 	}
 	goStripped := stripRoot(goOut, goRoot)
 	oracleStripped := stripRoot(oracleValue, oracleRoot)
-	verdict := c.cfg.Target.Compare(goStripped, oracleStripped)
+	verdict = c.cfg.Target.Compare(goStripped, oracleStripped)
 	return verdict, canonical(goStripped), canonical(oracleStripped), nil
 }
 
@@ -333,10 +393,18 @@ type shrinkRun struct {
 	verdict   Verdict
 	goOut     string
 	oracleOut string
+	// removal is the first removal failure a candidate hit. The shrinker asks keep many times, and a
+	// root that survived is a fact about the host, not a property of the candidate, so it is reported
+	// rather than folded into the keep decision.
+	removal error
 }
 
 func (s *shrinkRun) keep(candidate any) bool {
 	verdict, goOut, oracleOut, err := s.campaign.evaluate(candidate)
+	var removal RemovalError
+	if errors.As(err, &removal) && s.removal == nil {
+		s.removal = err
+	}
 	if err != nil || verdict.Kind != s.verdict.Kind {
 		return false
 	}

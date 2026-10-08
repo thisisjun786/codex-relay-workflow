@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -381,8 +382,11 @@ func (h *upgradeEnv) writeFakes(opts upgradeHarnessOptions) {
 	if err := os.MkdirAll(bin, 0o700); err != nil {
 		h.t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(bin, "crw"), []byte(h.script), 0o700); err != nil {
-		h.t.Fatal(err)
+	syscall.ForkLock.RLock()
+	writeErr := os.WriteFile(filepath.Join(bin, "crw"), []byte(h.script), 0o700)
+	syscall.ForkLock.RUnlock()
+	if writeErr != nil {
+		h.t.Fatal(writeErr)
 	}
 	if err := os.WriteFile(filepath.Join(bin, "version"), []byte(opts.version+"\n"), 0o600); err != nil {
 		h.t.Fatal(err)
@@ -394,8 +398,11 @@ func (h *upgradeEnv) writeFakes(opts upgradeHarnessOptions) {
 		body.WriteString(coreShellQuote(path) + ") printf '%s\\n' " + coreShellQuote(answer.Body) + "; exit " + strconv.Itoa(answer.Exit) + ";;\n")
 	}
 	body.WriteString("*) exit 1;;\nesac\n")
-	if err := os.WriteFile(filepath.Join(bin, "gh"), []byte(body.String()), 0o700); err != nil {
-		h.t.Fatal(err)
+	syscall.ForkLock.RLock()
+	writeErr = os.WriteFile(filepath.Join(bin, "gh"), []byte(body.String()), 0o700)
+	syscall.ForkLock.RUnlock()
+	if writeErr != nil {
+		h.t.Fatal(writeErr)
 	}
 	h.t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
@@ -409,8 +416,11 @@ func (h *upgradeEnv) installRuntime(dir, version string) {
 		h.t.Fatal(err)
 	}
 	for _, name := range []string{"crw", "codex-session-relay"} {
-		if err := os.WriteFile(filepath.Join(bin, name), []byte(h.script), 0o700); err != nil {
-			h.t.Fatal(err)
+		syscall.ForkLock.RLock()
+		writeErr := os.WriteFile(filepath.Join(bin, name), []byte(h.script), 0o700)
+		syscall.ForkLock.RUnlock()
+		if writeErr != nil {
+			h.t.Fatal(writeErr)
 		}
 	}
 	if err := os.WriteFile(filepath.Join(bin, "version"), []byte(version+"\n"), 0o600); err != nil {

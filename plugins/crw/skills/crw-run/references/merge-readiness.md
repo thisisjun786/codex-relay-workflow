@@ -372,16 +372,20 @@ the node, as the first way of opening a generation in
      acceptance ([the parent's acceptance](#conditional-acceptance-and-what-recording-one-costs)).
 
 **After the acceptance of a current result.** A DAG node that reads `done:accepted` and is not stale takes no
-second ruling, and `dag-correct` records a correction only for a stale result (step 6 of
-[a base conflict after the ruling and before the acceptance](#a-base-conflict-after-the-ruling-and-before-the-acceptance)).
-No grade has a correction route in this build, and resolving the thread does not release the candidate. A minor
-thread that the installed relay can record is dispositioned as above and needs no route. Where it cannot, the
-coordinator still triages the thread as in the temporary procedure so that its disposition is ready, reports the
-case on the coordination record, and holds the candidate: it does not merge, and it opens no generation by hand
-around `dag-correct`. A red, P0, P1 or security thread is reported the same way and the candidate does not merge.
-The two exceptions of that step are unchanged: a stale result whose reading says `correct` goes through
-`dag-correct`, and an open criteria re-review is decided first. The base-refresh route for an accepted node
-concerns the base only and is no way around a late thread.
+second ruling, and `dag-correct` records a correction of a stale result (step 6 of
+[a base conflict after the ruling and before the acceptance](#a-base-conflict-after-the-ruling-and-before-the-acceptance))
+or of a result that is accepted and still current, when the generation was opened by hand under a reason that states
+the correction (`needs_changes_revision` or `accepted_result_correction`) and the node has not landed. That is the
+route a late thread takes: the coordinator opens the next generation by hand, sends the child the instruction line
+`dag-correct --prepare` printed, binds the turn with `generation-bind`, records it with `dag-correct --manifest-digest`,
+and takes the corrected result with `dag-accept --supersedes`; the accepted head is held back from the lane and from
+a bundle while that generation is open, so the candidate does not merge meanwhile. A minor thread that the installed
+relay can record is dispositioned as above and needs no route. Where a minor thread cannot be recorded, the coordinator still triages the
+thread as in the temporary procedure so that its disposition is ready, reports the case on the coordination record,
+and holds the candidate: it does not merge, and it opens no generation by hand around `dag-correct`. A red, P0, P1 or
+security thread takes the hand-opened route above and the candidate does not merge. The two exceptions of that step are
+unchanged: a stale result whose reading says `correct` goes through `dag-correct`, and an open criteria re-review is
+decided first. The base-refresh route for an accepted node concerns the base only and is no way around a late thread.
 
 **After the merge.** The delivery is not reopened, and a late thread is new work. A minor one is replied to and
 listed for the backlog; a red, P0, P1 or security one is raised at once as a correction issue for the same area.
@@ -448,6 +452,15 @@ finding that is a defect by impact is a defect whether or not it was warned abou
 other finding does; a warning with no such finding behind it is recorded in the verdict and the merge
 goes on. Do not turn a warning into a gate by waiting for a rerun, a fix or a statement that only the
 warning asked for.
+
+## Integrate a node by its commit (no pull request)
+
+A node built on the commit path has no pull request, so the merge gates above do not apply to it. Its acceptance is dag-accept with --commit, --base, --checkout and --verification (see docs/relay/dag-scheduler.md, "Commit acceptance and local integration"). The relay checks in that checkout that the commit is the receipt head of the node's generation, that it descends from the base, and that the verification record is reusable for this exact tree.
+
+The integration is one batch. dag-integrate merges the ready accepted candidates onto the local integration branch in a temporary worktree, verifies the merged tree with the --verify command (for example, a script whose first line is #!/bin/sh and that runs crw-dev ci local --commit "$CRW_VERIFY_HEAD" --base "$CRW_VERIFY_BASE" --record "$CRW_VERIFY_RECORD" --runner local), and moves the branch only if that verification passed. A candidate that breaks the merged tree, or that depends on one, is left out and returned to its parent with the reason; a candidate that only conflicted with a removed candidate integrates on the retry. Then dag-integrate-push fast-forwards the remote dev to the same commit. Never force it: a remote dev that holds a commit the integration branch does not contain is refused with merge_base_mismatch, and the parent resolves that divergence first. When the remote cannot be reached the push is deferred (outcome deferred); run dag-integrate-push again once it answers, because the batch and the merged marks already stand and are not repeated. A merged mark that could not be written is shown as mark_pending and completed by the next dag-integrate run. Observe the landing with dag-integration-observe --target on the integration branch.
+
+A batch leaves out a candidate that only breaks the set with others: it is reported as `not_proven_failing` and stays ready for the next batch. Only a candidate that fails when verified alone is reported as `verification_failed`. A candidate whose criteria changed after its acceptance is not ready until it is revalidated, and the relay does not re-verify an integration branch for a criteria change by itself. `dag-integrate-push` pushes only a tip the relay moved the branch onto (a verified batch row for that head); a commit added on top of it is refused with `merge_base_mismatch`, and the remote is not moved.
+
 
 ## Judge a finding by its impact
 
@@ -1004,9 +1017,14 @@ jobs on N (`checks_pending` is waited on; the first failure is the `retry_same_s
 `dag-merge-request`, the merge lane, the merge, `assignment-mark merged`,
 `dag-integration-observe`. The judge reads the pull request through the relay's own checkout, so N
 has to be fetched there, or it fails as a host problem and writes nothing. A base that moves after
-the acceptance, for example while N's jobs run or while the candidate waits for its turn, cannot be
-refreshed by the parent at this baseline: the update would move the head off the accepted one, and
-the judge reads `stale_base`. That candidate does not go back by a second ruling, because the relay takes none on an accepted head; [a base refresh the child made after the acceptance](#a-base-refresh-the-child-made-after-the-acceptance) is the way back, and [a base conflict after the ruling and before the acceptance](#a-base-conflict-after-the-ruling-and-before-the-acceptance) says what remains for the ruling that precedes it. The window now includes N's job time, and another project's landing during it
+the acceptance, for example while N's jobs run or while the candidate waits for its turn, is the
+parent's to refresh in that same turn: the update moves the head off the accepted one, and
+`dag-base-refresh` records the refreshed head in the acceptance's own generation, so the head moves
+and the generation does not (`docs/relay/dag-scheduler.md`, "A base refresh of an accepted node").
+Without that record the judge reads `stale_head` and `dag-merge-request` refuses
+`merge_candidate_moved`, because the head is no longer the one the acceptance stands on: the head is
+compared before the base is. With it the judge, the merge request, the release freshness check and a
+bundle's stand-head check all read the refreshed head. That candidate does not go back by a second ruling, because the relay takes none on an accepted head; [a base refresh the child made after the acceptance](#a-base-refresh-the-child-made-after-the-acceptance) is the other way back, and [a base conflict after the ruling and before the acceptance](#a-base-conflict-after-the-ruling-and-before-the-acceptance) says what remains for the ruling that precedes it. The window now includes N's job time, and another project's landing during it
 counts; refreshing only the candidate about to merge is what keeps it short. The limit is the
 scheduler's, which has no re-acceptance of a verified refresh: the refresh is recorded beside the acceptance instead.
 
@@ -1188,31 +1206,54 @@ its correction; the operator page is `docs/relay/README.md`).
    --run <R> --repo <a checkout>`. The relay reads the pull request, the run and the chain itself and
    compares your values; a run that is not this repository's `ci.yml`, a fork run, a job that is not a
    success, a go-product test leg whose test step was skipped, and a hand-resolved merge are each
-   refused with no event.
+   refused with no event. It also reads `.github/workflows/ci.yml` **at H** from the checkout (the git
+   object, never the working tree, which may sit on another branch) and refuses a head whose job set
+   differs from the one this runtime verifies, naming the jobs the head lost and the ones it added; a
+   workflow it cannot read is `merge_target_unreadable`. So a member that changes the workflow's jobs
+   cannot ride a bundle unnoticed.
 5. `gh pr merge <bundle pr> --merge --match-head-commit <H>`.
 6. `merge-train-land --train <id> --actor <leader> --landed-sha <M> --observed-base-sha <M>`. The
    relay reads the dev tip and M's parents from the forge; anything but M with parents (D, H) and every
    member head an ancestor of M is refused and writes nothing. On success every member turn is recorded
-   landed with M.
-7. For each member pull request, check it shows merged; if it does not, comment "landed via bundle
-   <merge sha>" and close it.
+   landed with M, except the members the landed event names in its `excluded` list.
+7. For each member pull request **the landed event did not exclude**, check it shows merged; if it does
+   not, comment "landed via bundle <merge sha>" and close it. An excluded member's pull request is left
+   alone: the bundle carried the head it moved away from, so the pull request still has to land on its
+   own.
 8. `merge-train-close --train <id> --actor <leader> --state done --reason <...>` and delete the
    bundle branch.
 
 **Each member's parent.** Once the landing is recorded, the member's own parent records
-`assignment-mark` (merged) and `dag-integration-observe` on its relationship. The ruling and the
-integration observation stay the parent's work.
+`assignment-mark` (merged) and `dag-integration-observe` on its relationship — except for a member the
+landed event's `excluded` list names, whose work did not land and which therefore gets neither mark.
+The ruling and the integration observation stay the parent's work.
 
 **Failure handling.**
 
 - If the bundle's CI fails, read the failed job's log for the packages it names and remove the members
   that touch those packages, then open a new bundle over the rest (close the old one abandoned and close
-  its pull request).
+  its pull request). Abandoning moves no member turn: opening a bundle never moved them, so after the
+  close the leader still holds the lane turn (which is what reopening needs) and every other member is
+  still waiting (so a replacement bundle may carry it).
 - If no member can be named as the cause, halve the bundle and run again, keeping a predecessor and its
-  successors on the same side.
+  successors on the same side. `merge-train-open` requires the whole bundle to be one holding turn plus
+  waiting members, so a member whose turn is not waiting at open is not carried; and a bundle whose
+  members are joined into one group cannot be halved at all — it is run as it is or taken apart by hand.
 - If only a known flaky test failed, rerun the failed jobs once.
 - A set that failed twice goes one by one through the lane.
 - A removed member rides alone.
+- **A member that moves while the bundle is up.** `merge-train-verify` and `merge-train-land` each
+  reread every member pull request from the forge before writing; a member whose pull request no
+  longer shows the head the bundle carries, or is no longer open on the bundle's base, is refused
+  `disposition_conflict` naming the pull request and what changed, with nothing written. At verify,
+  abandon and reopen without that member. Between verify and land (the window the bundle merge opens)
+  the member's own parent takes its turn out of the lane — `merge-turn-withdraw` for a waiting member,
+  `merge-turn-release --disposition returned` for the leader, which is the turn that holds the lane —
+  and `merge-train-land` then records the rest and names the excluded member in its landed event with
+  the turn state and close reason. A member that moved while its turn is still in the lane is refused,
+  not excluded. The leader's post-land steps must read that `excluded` list: an excluded member's pull
+  request is not merged and is not closed as landed, and its parent records no `assignment-mark` for
+  it, because the bundle carries only the head it moved away from.
 - If a merge outside the lane moves dev, abandon the bundle and open a new one.
 
 **The lane script** changes only after the bundle merge is in the runtime; until then the lane goes one
@@ -1364,12 +1405,14 @@ The verdict `verified` was given, and before `dag-accept` (or, in a project with
 3. **Read the answer, not the exit code.** A ruling that was replaced answers the new record: `verdict` is `needs_changes`, `nextExecutionGeneration` is the generation the child will report in, and `_supersedes` names the verified ruling it replaced; `assignment-show` then reads `needs_changes`.
 4. **Release the turn you hold** once the ruling is given, because the child works on the next generation and the lane must not wait for it: `merge-turn-release --turn <turn> --actor <id> --disposition returned --reason '<what invalidated the readiness>'`.
 5. **An older relay changed nothing.** An answer that is still `verified` and carries `_replay` means the installed relay is older than this rule and answered a different verdict with the recorded one: nothing reached the child and `assignment-show` still reads `verified`. Do not repeat the call, and do not open a parallel path to the child (the rule of [Return corrections to the existing task](../SKILL.md#return-corrections-to-the-existing-task)). Record the correction as undelivered on the assignment and hand the decision to whoever owns it, as for a relay that does not carry the restoration declaration.
-6. **A refusal says what remains**, with its reason, and wrote nothing: the verified ruling stands. `disposition_conflict` names the cause: a plan accepted the event, the work is marked merged, or a merge turn is merging, of unknown effect or landed. `stale_generation`, `superseded_revision`, `revision_ambiguous` and `relationship_not_active` say that the receipt is not the head of an active relationship, and each names its route. After the acceptance the relay takes no second ruling (unless a criteria re-review is open), so a verdict is not the way back for a candidate returned for any reason after it, a second job failure, a thread outside `threadsSeen` or `stale_base` included. The DAG records a correction only for a node whose stale reading says `correct`; for a result that is current there is no recorded correction route in this build, so report it on the coordination record and do not open a generation that `dag-correct` will refuse ([Late review threads](#late-review-threads) says what a thread outside `threadsSeen` adds to that report). The one exception is a base that moved after the acceptance: the child merges the base in a generation opened by hand and the parent records it with `dag-base-refresh` ([a base refresh the child made after the acceptance](#a-base-refresh-the-child-made-after-the-acceptance)).
+6. **A refusal says what remains**, with its reason, and wrote nothing: the verified ruling stands. `disposition_conflict` names the cause: a plan accepted the event, the work is marked merged, or a merge turn is merging, of unknown effect or landed. `stale_generation`, `superseded_revision`, `revision_ambiguous` and `relationship_not_active` say that the receipt is not the head of an active relationship, and each names its route. After the acceptance the relay takes no second ruling (unless a criteria re-review is open), so a verdict is not the way back for a candidate returned for any reason after it, a second job failure, a thread outside `threadsSeen` or `stale_base` included. The DAG records a correction of a stale node whose reading says `correct`, and of a result that is accepted and still current when the generation was opened by hand under a reason that states the correction (see [Late review threads](#late-review-threads)); a result that is current with any other open reason is refused, and what the refusal names is what to change. The one exception is a base that moved after the acceptance: the child merges the base in a generation opened by hand and the parent records it with `dag-base-refresh` ([a base refresh the child made after the acceptance](#a-base-refresh-the-child-made-after-the-acceptance)).
 7. **When the child reports again** in the new generation, the receipt is a new event: acknowledge it and rule it as for any receipt ([the parent verifies](relay.md#the-parent-verifies): `claim`, `ack-proof`, `ack`, `verdict`), and refresh the base yourself if only the base moved again, as above. The child declares the receipt it replaces by its revision hash with `--supersedes-revision` only when it reports again inside the same generation.
 
 ### A base refresh the child made after the acceptance
 
-In a DAG-managed project the node is accepted (`dag-ready` reads it `done:accepted`), the base moved after `dag-accept`, and the candidate cannot go back by a second ruling or by `dag-correct`, because its result is current. The way back to the same child is a generation you open by hand that asks for the merge of the base and nothing else. Once that generation is ruled `verified`, `dag-base-refresh` records that the acceptance also stands on it, after the relay has proved from git that its head is the accepted head plus merges of the base. The pull request is then judged and merged through the lane at that head, and the node integrates on it. A generation that holds more than that, the child's own work, is a correction, and for a current result this build has no route for it: report it on the coordination record. The rule and its refusals are in `docs/relay/dag-scheduler.md`, "A base refresh of an accepted node".
+**The parent's own refresh comes first (CRW-916).** When the candidate is the one about to merge, the parent updates the branch inside its own turn ([Refresh the base yourself when only the base moved](#refresh-the-base-yourself-when-only-the-base-moved)) and records it with `dag-base-refresh` in the acceptance's own generation: the head moves and the generation does not, so the node integrates on that generation's own merged mark, and a bundle leader that fell back to the single lane keeps moving. What follows is the case where that is not possible and the work goes back to the same child.
+
+In a DAG-managed project the node is accepted (`dag-ready` reads it `done:accepted`), the base moved after `dag-accept`, and the candidate cannot go back by a second ruling, and a base-only change is recorded by `dag-base-refresh`, not by `dag-correct`. The way back to the same child is a generation you open by hand that asks for the merge of the base and nothing else. Once that generation is ruled `verified`, `dag-base-refresh` records that the acceptance also stands on it, after the relay has proved from git that its head is the accepted head plus merges of the base. The pull request is then judged and merged through the lane at that head, and the node integrates on it. A generation that holds more than that, the child's own work, is a correction: it is opened by hand under a reason that states the correction and recorded with `dag-correct --manifest-digest`, as [Correcting a result that was accepted and is still current](../../../../../docs/relay/dag-scheduler.md#correcting-a-result-that-was-accepted-and-is-still-current) sets out. The rule and its refusals are in `docs/relay/dag-scheduler.md`, "A base refresh of an accepted node".
 
 1. **Check the premise.** `dag-ready --plan <plan>` reads the node `done:accepted` (a node that reads `stale` goes through its stale reading's action, not this); `assignment-show --relationship <rel>` shows the relationship at the accepted generation; no merge turn of the candidate is merging, of unknown effect or landed.
 2. **Open the generation and send the instruction.** Open it by hand ([a fresh execution generation](relay.md#a-fresh-execution-generation)) and dispatch the child through the transport that dispatched it, with the instruction: merge `origin/dev` into the branch with a merge commit, resolve only the conflicts git reports, change nothing else, push, name every file it resolved by hand and how, and report `ready_for_review` in the new generation.

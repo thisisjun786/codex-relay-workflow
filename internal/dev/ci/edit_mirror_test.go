@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -239,8 +240,11 @@ func runEditMirror(t *testing.T, c editMirrorCase) editMirrorOutcome {
 	if err := os.MkdirAll(bin, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(bin, "gh"), []byte(editMirrorStandInGH), 0o755); err != nil {
-		t.Fatal(err)
+	syscall.ForkLock.RLock()
+	writeErr := os.WriteFile(filepath.Join(bin, "gh"), []byte(editMirrorStandInGH), 0o755)
+	syscall.ForkLock.RUnlock()
+	if writeErr != nil {
+		t.Fatal(writeErr)
 	}
 	write := func(name, body string) {
 		t.Helper()

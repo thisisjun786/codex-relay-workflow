@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -138,8 +139,14 @@ func newReleaseRepo(t *testing.T) (*releaseRepo, error) {
 		if err != nil {
 			return nil, err
 		}
-		if err := os.WriteFile(filepath.Join(bin, name), raw, 0o755); err != nil {
-			return nil, err
+		// The fake goes on PATH and the workflow runs it, so its descriptor is open only under
+		// syscall.ForkLock: a fork in that window would inherit it and leave the fake unexecutable
+		// (ETXTBSY, golang/go#22315).
+		syscall.ForkLock.RLock()
+		writeErr := os.WriteFile(filepath.Join(bin, name), raw, 0o755)
+		syscall.ForkLock.RUnlock()
+		if writeErr != nil {
+			return nil, writeErr
 		}
 	}
 	for _, name := range []string{"gh.log", "summary"} {

@@ -138,6 +138,10 @@ type TrainForge interface {
 // crw skill base-refresh check applies.
 type TrainCheckout interface {
 	Chain(ctx context.Context, checkout, head, base string, members []TrainMemberExpectation) (TrainChain, error)
+	// File answers the bytes a path holds at one commit in the checkout, read from git objects alone
+	// (never the working tree, which may sit on another branch). It is how verify reads the head's
+	// .github/workflows/ci.yml (CRW-897, answer 6).
+	File(ctx context.Context, checkout, commit, path string) (string, error)
 }
 
 // TrainChain is a passed chain proof: the tree of the head and the merge commits it walked.
@@ -161,6 +165,12 @@ func trainUnreadable(format string, args ...any) error {
 func trainID(target, turn, head string) string {
 	return key("trn", target, turn, head)
 }
+
+// trainSkipEarlyMembership is a test seam: the in-transaction membership re-check (CRW-897, answer
+// 4) is what makes two concurrent opens safe, and the early check in front of it hides that. A test
+// sets this to drive the transaction with the early check out of the way. It is never set outside
+// tests.
+var trainSkipEarlyMembership = false
 
 // Open is merge-train-open: the leader's holding turn opens a train over the members in the order
 // given. One member is today's lane and makes no train.
@@ -226,33 +236,37 @@ func (s *Service) Open(ctx context.Context, turn, actor, base string, members []
 	}
 	// a member that already belongs to another live train is refused here rather than wasting a whole
 	// CI run on a bundle whose land would refuse it (gap e)
-	for _, member := range waiting {
-		if _, _, live, err := store.MergeTrainOfTurn(ctx, s.Store, member.TurnID); err != nil {
-			return nil, err
-		} else if live {
-			return nil, trainConflict("turn %s of pull request %d already belongs to a live train, so it cannot ride another", pyvalue.StrRepr(member.TurnID), member.PRNumber.Int64)
+	if !trainSkipEarlyMembership {
+		for _, member := range waiting {
+			if _, _, live, err := store.MergeTrainOfTurn(ctx, s.Store, member.TurnID); err != nil {
+				return nil, err
+			} else if live {
+				return nil, trainConflict("turn %s of pull request %d already belongs to a live train, so it cannot ride another", pyvalue.StrRepr(member.TurnID), member.PRNumber.Int64)
+			}
 		}
 	}
 	// every member (the leader included) must stand on an active acceptance whose stand head is the
 	// head its pull request shows and its turn holds (Blocking 1): in the single lane that tie is
-	// dag-accept, which the bundle path would otherwise never pass through
-	standFor := func(relationship, memberHead string) (acceptance.Active, string, string, string, error) {
-		active, found, err := acceptance.ActiveForRelationship(ctx, s.Store.Querier(ctx), relationship)
+	// dag-accept, which the bundle path would otherwise never pass through. The reading carries the
+	// correction gate too (CRW-906): a member whose accepted result is being corrected in an open
+	// generation is not a candidate this bundle may carry.
+	standFor := func(relationship, memberHead string) (acceptance.Active, string, string, string, bool, int64, int64, error) {
+		active, live, found, err := acceptance.ActiveWithLiveGeneration(ctx, s.Store.Querier(ctx), relationship)
 		if err != nil {
-			return acceptance.Active{}, "", "", "", trainUnreadable("the acceptance of relationship %s was not read: %v", pyvalue.StrRepr(relationship), err)
+			return acceptance.Active{}, "", "", "", false, 0, 0, trainUnreadable("the acceptance of relationship %s was not read: %v", pyvalue.StrRepr(relationship), err)
 		}
 		if !found {
-			return acceptance.Active{}, "", "", "", nil
+			return acceptance.Active{}, "", "", "", false, live, 0, nil
 		}
 		stand, err := acceptance.StandOf(ctx, s.Store.Querier(ctx), active.AcceptanceID, relationship, active.Generation, active.EventID, active.RevisionHash, active.HeadSHA)
 		if err != nil {
-			return acceptance.Active{}, "", "", "", trainUnreadable("what acceptance %s stands on was not read: %v", pyvalue.StrRepr(active.AcceptanceID), err)
+			return acceptance.Active{}, "", "", "", false, live, 0, trainUnreadable("what acceptance %s stands on was not read: %v", pyvalue.StrRepr(active.AcceptanceID), err)
 		}
 		rulingHead, rulingSource, err := acceptance.RulingHead(ctx, s.Store.Querier(ctx), active.EventID, active.HeadSHA)
 		if err != nil {
-			return acceptance.Active{}, "", "", "", trainUnreadable("the ruling head of event %s was not read: %v", pyvalue.StrRepr(active.EventID), err)
+			return acceptance.Active{}, "", "", "", false, live, 0, trainUnreadable("the ruling head of event %s was not read: %v", pyvalue.StrRepr(active.EventID), err)
 		}
-		return active, stand.Head, rulingHead, rulingSource, nil
+		return active, stand.Head, rulingHead, rulingSource, live > stand.Generation, live, stand.Generation, nil
 	}
 	for _, pr := range members {
 		pull, err := forge.PullRequest(ctx, early.Repository, pr)
@@ -272,11 +286,11 @@ func (s *Service) Open(ctx context.Context, turn, actor, base string, members []
 			if !SameCommit(pull.HeadSHA, early.CandidateHead) {
 				return nil, trainConflict("the leader's pull request %d reads head %s and its turn holds %s; a member's head is not refreshed by the bundle", pr, pyvalue.StrRepr(pull.HeadSHA), pyvalue.StrRepr(early.CandidateHead))
 			}
-			active, standHead, rulingHead, rulingSource, err := standFor(early.RelationshipID.String, early.CandidateHead)
+			active, standHead, rulingHead, rulingSource, under, live, standGeneration, err := standFor(early.RelationshipID.String, early.CandidateHead)
 			if err != nil {
 				return nil, err
 			}
-			if err := trainStandRefusal(pr, early.RelationshipID.String, early.CandidateHead, active, standHead); err != nil {
+			if err := trainStandRefusal(pr, early.RelationshipID.String, early.CandidateHead, active, standHead, under, live, standGeneration); err != nil {
 				return nil, err
 			}
 			expectations = append(expectations, TrainMemberExpectation{TurnID: turn, PRNumber: pr, RelationshipID: early.RelationshipID.String, AcceptedHead: early.CandidateHead, RuledEventID: active.EventID, RulingHead: rulingHead, RulingHeadSource: rulingSource})
@@ -295,11 +309,11 @@ func (s *Service) Open(ctx context.Context, turn, actor, base string, members []
 		if !member.RelationshipID.Valid || member.RelationshipID.String == "" {
 			return nil, trainConflict("pull request %d's turn %s records no relationship, so its landing cannot be recorded", pr, pyvalue.StrRepr(member.TurnID))
 		}
-		active, standHead, rulingHead, rulingSource, err := standFor(member.RelationshipID.String, member.CandidateHead)
+		active, standHead, rulingHead, rulingSource, under, live, standGeneration, err := standFor(member.RelationshipID.String, member.CandidateHead)
 		if err != nil {
 			return nil, err
 		}
-		if err := trainStandRefusal(pr, member.RelationshipID.String, member.CandidateHead, active, standHead); err != nil {
+		if err := trainStandRefusal(pr, member.RelationshipID.String, member.CandidateHead, active, standHead, under, live, standGeneration); err != nil {
 			return nil, err
 		}
 		expectations = append(expectations, TrainMemberExpectation{TurnID: member.TurnID, PRNumber: pr, RelationshipID: member.RelationshipID.String, AcceptedHead: member.CandidateHead, RuledEventID: active.EventID, RulingHead: rulingHead, RulingHeadSource: rulingSource})
@@ -319,6 +333,22 @@ func (s *Service) Open(ctx context.Context, turn, actor, base string, members []
 		}
 		if row.HolderTaskID != actor || row.State != Holding {
 			return trainConflict("turn %s changed while the bundle was being read, so it is not the holding turn this open began on; call again", pyvalue.StrRepr(turn))
+		}
+		// the membership check again, inside the transaction that records the train (CRW-897, answer
+		// 4): the early check above is a CI-saving pre-filter, and two opens that overlap between it
+		// and here would otherwise register the same turns in two live trains. The leader's turn is
+		// re-checked here too, so a leader that joined another train while this open was being read is
+		// refused rather than opening a second one.
+		if e := s.trainMembershipRefusal(tx, actor, expectations); e != nil {
+			return e
+		}
+		// CRW-906: every member's correction state is read again on this transaction's snapshot. The
+		// reads above happen before it, and a generation opened in that gap would otherwise be recorded
+		// as an opened train: nothing is written for a member whose accepted result is under correction.
+		for _, m := range expectations {
+			if e := trainMemberCorrectionRefusal(tx, s.Store.Querier(tx), row.Repository, m.PRNumber, m.RelationshipID, m.AcceptedHead); e != nil {
+				return e
+			}
 		}
 		// a train id names one opening, not the candidate: a turn that abandons a train and reopens
 		// one for the same head gets a fresh id rather than colliding with the abandoned record
@@ -348,6 +378,81 @@ func (s *Service) Open(ctx context.Context, turn, actor, base string, members []
 	return s.trainAnswer(ctx, id)
 }
 
+// trainMembershipRefusal is answer 4's in-transaction check: no member turn (the leader's included)
+// belongs to a live train, and the leader task leads none. It reads through the transaction's
+// connection, so the rows it sees are the ones the recording transaction will write beside. Each
+// member turn is also reread here: open read the members' turns and their pull requests before this
+// transaction, and a claimant can withdraw or restate one during those reads (Devin's
+// check-then-act finding), so the turn that will be recorded must still be the one open chose.
+func (s *Service) trainMembershipRefusal(ctx context.Context, actor string, members []TrainMemberExpectation) error {
+	for _, m := range members {
+		if _, _, live, err := store.MergeTrainOfTurn(ctx, s.Store, m.TurnID); err != nil {
+			return err
+		} else if live {
+			return trainConflict("turn %s of pull request %d already belongs to a live train, so it cannot ride another", pyvalue.StrRepr(m.TurnID), m.PRNumber)
+		}
+		turn, err := s.Store.MergeTurn(ctx, m.TurnID)
+		if err != nil {
+			return err
+		}
+		if turn.State != Holding && turn.State != Waiting {
+			return trainConflict("turn %s of pull request %d is %s, so it left the lane while the bundle was being read; call again", pyvalue.StrRepr(m.TurnID), m.PRNumber, turn.State)
+		}
+		if !SameCommit(turn.CandidateHead, m.AcceptedHead) {
+			return trainConflict("turn %s of pull request %d now holds %s and the bundle was opened on %s, so it changed while the bundle was being read; call again", pyvalue.StrRepr(m.TurnID), m.PRNumber, pyvalue.StrRepr(turn.CandidateHead), pyvalue.StrRepr(m.AcceptedHead))
+		}
+	}
+	if live, err := s.trainLedBy(ctx, actor); err != nil {
+		return err
+	} else if live != "" {
+		return trainConflict("task %s already leads the live train %s, so it cannot open another until that one lands, is done or is abandoned", pyvalue.StrRepr(actor), pyvalue.StrRepr(live))
+	}
+	return nil
+}
+
+// trainLedBy is the live train a task leads, or "" when it leads none. A train is live while its
+// newest event is opened or verified; the leader of a train is not a member of it, so the member
+// table cannot answer this.
+func (s *Service) trainLedBy(ctx context.Context, actor string) (string, error) {
+	rows, err := s.Store.All(ctx, "SELECT train_id, leader_task_id FROM merge_trains")
+	if err != nil {
+		return "", err
+	}
+	for _, row := range rows {
+		if fmt.Sprint(row.Get("leader_task_id")) != actor {
+			continue
+		}
+		trainID := fmt.Sprint(row.Get("train_id"))
+		state, found, err := store.MergeTrainState(ctx, s.Store, trainID)
+		if err != nil {
+			return "", err
+		}
+		if !found || state == store.MergeTrainOpened || state == store.MergeTrainVerified {
+			return trainID, nil
+		}
+	}
+	return "", nil
+}
+
+// membersWhoLeftTheLane is the member turns that are neither holding nor waiting. Opening a train
+// admits only a holding leader and waiting members, and the member guard keeps a member of a live
+// train out of check and single land, so such a turn left the lane after the train opened (a parent
+// returned or withdrew it). Land excludes those from the landing and names them in the landed
+// event (CRW-897, answer 1); a moved head there is not a reason to refuse the rest of the bundle.
+func (s *Service) membersWhoLeftTheLane(ctx context.Context, members []store.MergeTrainMemberRow) (map[string]bool, error) {
+	out := map[string]bool{}
+	for _, m := range members {
+		turn, err := s.Store.MergeTurn(ctx, m.TurnID)
+		if err != nil {
+			return nil, err
+		}
+		if turn.State != Holding && turn.State != Waiting {
+			out[m.TurnID] = true
+		}
+	}
+	return out, nil
+}
+
 // waitingTurnFor is the waiting turn of one pull request on a target, if any.
 func waitingTurnFor(turns []store.MergeTurnsRow, pr int64) (store.MergeTurnsRow, bool) {
 	for _, t := range turns {
@@ -359,13 +464,58 @@ func waitingTurnFor(turns []store.MergeTurnsRow, pr int64) (store.MergeTurnsRow,
 }
 
 // trainStandRefusal is Blocking 1's gate: the member must have an active acceptance whose stand head
-// is the head its pull request shows and its turn holds.
-func trainStandRefusal(pr int64, relationship, memberHead string, active acceptance.Active, standHead string) error {
+// is the head its pull request shows and its turn holds, and no correction generation may be open over
+// the accepted result (CRW-906). A defect found in an accepted result before it lands is corrected in a
+// later generation; until that generation's result is accepted with dag-accept --supersedes, or the
+// generation is withdrawn, the old head is not a candidate a bundle may carry or land. The refusal is
+// the existing disposition_conflict and it names the open generation: no new refusal name, no column.
+func trainStandRefusal(pr int64, relationship, memberHead string, active acceptance.Active, standHead string, underCorrection bool, liveGeneration, standGeneration int64) error {
 	if active.AcceptanceID == "" {
 		return trainConflict("pull request %d's relationship %s has no active acceptance, so the member is not a verified, accepted candidate this bundle may carry; run dag-accept on its head first", pr, pyvalue.StrRepr(relationship))
 	}
 	if !SameCommit(standHead, memberHead) {
 		return trainConflict("pull request %d stands on %s and its acceptance %s stands on %s, so the member's head is not the head the ruling covers", pr, pyvalue.StrRepr(memberHead), pyvalue.StrRepr(active.AcceptanceID), pyvalue.StrRepr(standHead))
+	}
+	if underCorrection {
+		return trainUnderCorrectionRefusal(pr, relationship, liveGeneration, standGeneration)
+	}
+	return nil
+}
+
+// trainMemberRefusal rereads every member pull request from the forge and refuses one that no
+// longer proposes what the train carries (CRW-897, answer 1). The train's member rows are a
+// snapshot taken at open, and both verify and land write against it: a member that moved must not
+// be verified into a bundle whose CI ran on the old head, nor recorded landed while its new commits
+// are left behind; and a member whose pull request was closed to cancel it or retargeted away from
+// the bundle's base no longer proposes this landing at all, so it is refused too, on the same
+// invariants Open applies. disposition_conflict names the pull request and what changed, and
+// nothing is written; a forge that cannot answer is merge_target_unreadable.
+//
+// exempt names the member turns that left the lane (a parent returned or withdrew them): land
+// excludes those from the landing and names them in the landed event, so their pull request is not
+// read at all and neither a moved head nor an unreadable pull request there can refuse the rest of
+// the bundle. A nil exempt refuses every member that disagrees, which is what verify wants.
+func trainMemberRefusal(ctx context.Context, forge TrainForge, repository, baseRef string, members []store.MergeTrainMemberRow, exempt map[string]bool) error {
+	for _, m := range members {
+		if exempt[m.TurnID] {
+			continue
+		}
+		pull, err := forge.PullRequest(ctx, repository, m.PRNumber)
+		if err != nil {
+			return trainUnreadable("member pull request %d of %s was not read: %v", m.PRNumber, pyvalue.StrRepr(repository), err)
+		}
+		if pull.Number != m.PRNumber {
+			return trainUnreadable("the forge's answer for member pull request %d names %d", m.PRNumber, pull.Number)
+		}
+		if !SameCommit(pull.HeadSHA, m.MemberHead) {
+			return trainConflict("member pull request %d reads head %s and the bundle carries %s, so the member moved after the train opened", m.PRNumber, pyvalue.StrRepr(pull.HeadSHA), pyvalue.StrRepr(m.MemberHead))
+		}
+		if pull.State != "open" {
+			return trainConflict("member pull request %d is %s and the bundle carries its head %s, so the member no longer proposes this landing", m.PRNumber, pull.State, pyvalue.StrRepr(m.MemberHead))
+		}
+		if pull.BaseRef != baseRef {
+			return trainConflict("member pull request %d targets %s and the bundle's base is %s, so the member no longer proposes this landing", m.PRNumber, pyvalue.StrRepr(pull.BaseRef), pyvalue.StrRepr(baseRef))
+		}
 	}
 	return nil
 }
@@ -401,7 +551,7 @@ func (s *Service) trainOrderRefusal(ctx context.Context, members []TrainMemberEx
 		place[pr] = i
 	}
 	for i, m := range members {
-		nodes, err := s.acceptedNodesForHead(ctx, m.AcceptedHead)
+		nodes, err := s.acceptedNodesForRelationship(ctx, m.RelationshipID)
 		if err != nil {
 			return err
 		}
@@ -433,12 +583,16 @@ func (s *Service) trainOrderRefusal(ctx context.Context, members []TrainMemberEx
 
 type trainNode struct{ planID, nodeID string }
 
-// acceptedNodesForHead is every active acceptance whose accepted head is this head.
-func (s *Service) acceptedNodesForHead(ctx context.Context, head string) ([]trainNode, error) {
-	if head == "" {
+// acceptedNodesForRelationship is the plan node a member's active acceptance names: relationship ->
+// acceptance -> plan/node (CRW-897, answer 2). Looking the node up by commit head misses a member
+// whose acceptance was base-refreshed, because the refreshed stand head is not the row's head_sha;
+// the relationship is what the train already carries. The row selection is the one
+// acceptance.ActiveForRelationship makes, so the train and the stand reading name the same row.
+func (s *Service) acceptedNodesForRelationship(ctx context.Context, relationship string) ([]trainNode, error) {
+	if relationship == "" {
 		return nil, nil
 	}
-	rows, err := s.Store.All(ctx, "SELECT plan_id, node_id FROM dag_acceptances WHERE head_sha = ? AND state = 'active'", head)
+	rows, err := s.Store.All(ctx, "SELECT plan_id, node_id FROM dag_acceptances WHERE relationship_id = ? AND state = 'active' ORDER BY accepted_at DESC, acceptance_id DESC LIMIT 1", relationship)
 	if err != nil {
 		return nil, err
 	}
@@ -540,6 +694,16 @@ func (s *Service) Verify(ctx context.Context, train, actor, bundlePR, head, run,
 	if !hasLabel(pull.Labels, TrainLaneLabel) {
 		return nil, trainConflict("bundle pull request %d does not carry the %s label, so its run may be a light one", pr, TrainLaneLabel)
 	}
+	// every member pull request's head is reread from the forge here (CRW-897, answer 1): the head
+	// the train opened on is a snapshot, and a member that moved after it must not be verified into
+	// the bundle whose CI ran on the old head. A moved member is disposition_conflict naming the
+	// pull request and both heads, and nothing is written.
+	if err := trainMemberRefusal(ctx, forge, row.Repository, row.BaseRef, members, nil); err != nil {
+		return nil, err
+	}
+	if proof == nil {
+		return nil, trainUnreadable("this relay has no checkout prover configured, so the bundle's first-parent chain cannot be proved")
+	}
 	reading, err := forge.Run(ctx, row.Repository, run)
 	if err != nil {
 		return nil, trainUnreadable("workflow run %s of %s was not read: %v", run, pyvalue.StrRepr(row.Repository), err)
@@ -551,11 +715,15 @@ func (s *Service) Verify(ctx context.Context, train, actor, bundlePR, head, run,
 	if err != nil {
 		return nil, err
 	}
-	if proof == nil {
-		return nil, trainUnreadable("this relay has no checkout prover configured, so the bundle's first-parent chain cannot be proved")
-	}
 	chain, err := proof.Chain(ctx, checkout, head, row.BaseSHA, expected)
 	if err != nil {
+		return nil, err
+	}
+	// the head's own job set, read from the checkout at H (never its working tree, which may sit on
+	// another branch), must be the set this runtime verifies (CRW-897, answer 6). The read runs after
+	// --head was compared with the forge's bundle head and after the chain proof has established that
+	// the checkout holds H, so the commit named here is the forge's own and git can resolve it.
+	if err := trainWorkflowRefusal(ctx, proof, checkout, head); err != nil {
 		return nil, err
 	}
 	at := s.now()
@@ -572,6 +740,14 @@ func (s *Service) Verify(ctx context.Context, train, actor, bundlePR, head, run,
 		if !found || (current != store.MergeTrainOpened && current != store.MergeTrainVerified) {
 			return trainConflict("train %s changed while the bundle was being read, so it is no longer a train a verify may advance; call again", pyvalue.StrRepr(train))
 		}
+		// CRW-906: each member's correction state is read again on this transaction's snapshot. The
+		// expectations above were read before the run and the chain were proved, and a generation opened
+		// in that gap would otherwise be recorded as verified: nothing is written for such a member.
+		for _, m := range expected {
+			if e := trainMemberCorrectionRefusal(tx, s.Store.Querier(tx), row.Repository, m.PRNumber, m.RelationshipID, m.AcceptedHead); e != nil {
+				return e
+			}
+		}
 		return store.RecordMergeTrainEvent(tx, s.Store, store.MergeTrainEventRow{TrainID: train, Seq: seq, Kind: store.MergeTrainVerified, Actor: actor, DetailJSON: pythonJSON(detail), RecordedAt: at})
 	})
 	if err != nil {
@@ -587,7 +763,7 @@ func (s *Service) Verify(ctx context.Context, train, actor, bundlePR, head, run,
 func (s *Service) trainExpectations(ctx context.Context, members []store.MergeTrainMemberRow) ([]TrainMemberExpectation, error) {
 	out := make([]TrainMemberExpectation, 0, len(members))
 	for _, m := range members {
-		active, found, err := acceptance.ActiveForRelationship(ctx, s.Store.Querier(ctx), m.RelationshipID)
+		active, live, found, err := acceptance.ActiveWithLiveGeneration(ctx, s.Store.Querier(ctx), m.RelationshipID)
 		if err != nil {
 			return nil, trainUnreadable("the acceptance of relationship %s was not read: %v", pyvalue.StrRepr(m.RelationshipID), err)
 		}
@@ -598,7 +774,7 @@ func (s *Service) trainExpectations(ctx context.Context, members []store.MergeTr
 		if err != nil {
 			return nil, trainUnreadable("what acceptance %s stands on was not read: %v", pyvalue.StrRepr(active.AcceptanceID), err)
 		}
-		if err := trainStandRefusal(m.PRNumber, m.RelationshipID, m.MemberHead, active, stand.Head); err != nil {
+		if err := trainStandRefusal(m.PRNumber, m.RelationshipID, m.MemberHead, active, stand.Head, live > stand.Generation, live, stand.Generation); err != nil {
 			return nil, err
 		}
 		rulingHead, rulingSource, err := acceptance.RulingHead(ctx, s.Store.Querier(ctx), active.EventID, active.HeadSHA)
@@ -749,6 +925,19 @@ func (s *Service) TrainLand(ctx context.Context, train, actor, landed, observed 
 	if err != nil {
 		return nil, err
 	}
+	// every member pull request's head is reread from the forge before anything is written
+	// (CRW-897, answer 1): the stored member head is the snapshot the train opened on, and a member
+	// that moved while the bundle was in CI must not be recorded landed with its new commits left
+	// behind. A moved member whose turn is still live is disposition_conflict and nothing is written;
+	// a member whose turn left the lane is handled inside the transaction below, where it is named as
+	// excluded rather than refused.
+	left, err := s.membersWhoLeftTheLane(ctx, members)
+	if err != nil {
+		return nil, err
+	}
+	if err := trainMemberRefusal(ctx, forge, row.Repository, row.BaseRef, members, left); err != nil {
+		return nil, err
+	}
 	for _, m := range members {
 		status, err := forge.Compare(ctx, row.Repository, m.MemberHead, landed)
 		if err != nil {
@@ -772,32 +961,64 @@ func (s *Service) TrainLand(ctx context.Context, train, actor, landed, observed 
 		if !found || current != store.MergeTrainVerified {
 			return trainConflict("train %s changed while the landing was being read, so nothing is recorded; call again", pyvalue.StrRepr(train))
 		}
-		// every member's acceptance is re-read inside this transaction: one withdrawn or moved after
-		// open refuses the landing with nothing written (Blocking 1)
-		expectations, e := s.trainExpectations(tx, members)
-		if e != nil {
-			return e
-		}
-		// every member turn lands, the leader's included, in the same transaction as the event, so a
-		// failure leaves neither the rows nor the event (the relay's one-transaction rule). Each turn
-		// is revalidated here: it can have withdrawn or restated its head since the train opened, and
-		// a stale bundle must not record such a turn landed (finding 2).
+		// each member turn is read inside this transaction (CRW-897, answer 1). Opening a train
+		// admits only a holding leader and waiting members, so a member turn that is neither has
+		// left the lane since the train opened: it is not recorded landed, and it is named in the
+		// landed event with the reason instead. A member whose turn is still live and whose head
+		// moved is still refused, as finding 2 requires.
+		survivors := make([]store.MergeTrainMemberRow, 0, len(members))
+		turns := make(map[string]store.MergeTurnsRow, len(members))
+		excluded := make([]any, 0, len(members))
+		// CRW-906: the members whose turn left the lane are excluded from the landing, but their code is
+		// still in the merge commit this bundle lands (every member head is checked as an ancestor of it
+		// above), so their correction state is read too. The CRW-897 carve-out keeps holding for what it
+		// is about (a revoked acceptance or a moved head of a member that left does not refuse the rest
+		// of the bundle); this is the separate question of whether the tree being landed still contains a
+		// result the plan is repairing.
+		leftMembers := make([]store.MergeTrainMemberRow, 0, len(members))
 		for _, m := range members {
 			turn, e := s.Store.MergeTurn(tx, m.TurnID)
 			if e != nil {
 				return e
 			}
 			if turn.State != Holding && turn.State != Waiting {
-				return trainConflict("member turn %s of pull request %d is %s, so it is not a turn this bundle can land", pyvalue.StrRepr(m.TurnID), m.PRNumber, turn.State)
+				excluded = append(excluded, map[string]any{"seq": m.Seq, "turnId": m.TurnID, "prNumber": m.PRNumber, "relationshipId": m.RelationshipID, "state": turn.State, "closeReason": value(turn.CloseReason)})
+				leftMembers = append(leftMembers, m)
+				continue
 			}
 			if !SameCommit(turn.CandidateHead, m.MemberHead) {
 				return trainConflict("member turn %s of pull request %d now holds %s and the bundle carries %s, so the member changed after the train opened", pyvalue.StrRepr(m.TurnID), m.PRNumber, pyvalue.StrRepr(turn.CandidateHead), pyvalue.StrRepr(m.MemberHead))
 			}
-			if e := s.closeWith(tx, turn, "landed", reason, actor, at, nullable(landed), nullable(tip.SHA)); e != nil {
+			turns[m.TurnID] = turn
+			survivors = append(survivors, m)
+		}
+		// the acceptance of each surviving member is re-read inside this transaction: one withdrawn
+		// or moved after open refuses the landing with nothing written (Blocking 1). A member that
+		// left the lane is excluded above and is not re-read, so its parent revoking the acceptance
+		// does not refuse the rest of the bundle.
+		for _, m := range survivors {
+			if e := trainMemberCorrectionRefusal(tx, s.Store.Querier(tx), row.Repository, m.PRNumber, m.RelationshipID, m.MemberHead); e != nil {
 				return e
 			}
 		}
-		detail := trainLandedDetail(row.BaseSHA, landed, head, tested, reason, expectations)
+		for _, m := range leftMembers {
+			if e := trainExcludedMemberRefusal(tx, s.Store.Querier(tx), row.Repository, m.PRNumber, m.RelationshipID, m.MemberHead); e != nil {
+				return e
+			}
+		}
+		expectations, e := s.trainExpectations(tx, survivors)
+		if e != nil {
+			return e
+		}
+		// every surviving member turn lands, the leader's included, in the same transaction as the
+		// event, so a failure leaves neither the rows nor the event (the relay's one-transaction
+		// rule).
+		for _, m := range survivors {
+			if e := s.closeWith(tx, turns[m.TurnID], "landed", reason, actor, at, nullable(landed), nullable(tip.SHA)); e != nil {
+				return e
+			}
+		}
+		detail := trainLandedDetail(row.BaseSHA, landed, head, tested, reason, expectations, excluded)
 		if e := store.RecordMergeTrainEvent(tx, s.Store, store.MergeTrainEventRow{TrainID: train, Seq: seq, Kind: store.MergeTrainLanded, Actor: actor, DetailJSON: pythonJSON(detail), RecordedAt: at}); e != nil {
 			return e
 		}
@@ -815,13 +1036,20 @@ func (s *Service) TrainLand(ctx context.Context, train, actor, landed, observed 
 }
 
 // trainLandedDetail is the landed event's body: the merge commit M, the verified head H, the close
-// reason and the per-member mapping.
-func trainLandedDetail(base, landed, head, tree, reason string, members []TrainMemberExpectation) map[string]any {
-	return map[string]any{"landedSha": landed, "baseSha": base, "head": head, "tree": tree, "reason": reason, "members": trainMemberMapping(members)}
+// reason, the per-member mapping of the members that landed, and the members left out because their
+// turn left the lane after the train opened (CRW-897, answer 1). The excluded list is always
+// present, empty when every member landed, so a reader never has to tell an absent key from none.
+func trainLandedDetail(base, landed, head, tree, reason string, members []TrainMemberExpectation, excluded []any) map[string]any {
+	if excluded == nil {
+		excluded = []any{}
+	}
+	return map[string]any{"landedSha": landed, "baseSha": base, "head": head, "tree": tree, "reason": reason, "members": trainMemberMapping(members), "excluded": excluded}
 }
 
-// Close is merge-train-close: it appends the terminal event. abandoned returns every member turn to
-// waiting so another bundle may carry it.
+// Close is merge-train-close: it appends the terminal event. It moves no member turn: opening a
+// train never moved them, so an abandoned close leaves the leader holding the lane turn (which is
+// what a reopen needs) and every other member waiting (so a replacement bundle may carry it). A
+// member whose turn a parent returned or withdrew in the meantime stays as that parent left it.
 func (s *Service) Close(ctx context.Context, train, actor, state, reason string) (map[string]any, error) {
 	if state != "done" && state != "abandoned" {
 		return nil, trainConflict("a train closes done or abandoned, not %s", pyvalue.StrRepr(state))
@@ -1011,8 +1239,13 @@ func TrainDependencyClosure(nodes []TrainMemberNode, edges []TrainPlanEdge, fail
 
 // TrainHalve is decision 10's halving rule made checkable: when a failure's cause cannot be named,
 // the bundle is split in two with every predecessor and its successors kept on the same side, so no
-// half carries a member whose dependency is in the other. The split is by the members' order, then
-// repaired by moving a member whose predecessor is in the other half to the predecessor's side.
+// half carries a member whose dependency is in the other. Members joined by plan edges (in either
+// direction) form groups; the groups are filled into the first half in the bundle's order, each
+// whole group at a time, while the group still fits the half, and the rest go to the second. The
+// order inside each half is the bundle's order. One group holding every member cannot be split, so
+// it is all of the first half and the second is empty. The split is structural, so it always
+// terminates: the repair loop the earlier version ran could oscillate forever on a join whose
+// predecessors land in different halves (CRW-897, answer 3).
 func TrainHalve(order []int64, nodes []TrainMemberNode, edges []TrainPlanEdge) (first, second []int64) {
 	if len(order) < 2 {
 		return append([]int64{}, order...), nil
@@ -1023,34 +1256,79 @@ func TrainHalve(order []int64, nodes []TrainMemberNode, edges []TrainPlanEdge) (
 			prOf[n.NodeID] = n.PRNumber
 		}
 	}
-	half := (len(order) + 1) / 2
-	side := map[int64]int{}
-	for i, pr := range order {
-		if i < half {
-			side[pr] = 0
-		} else {
-			side[pr] = 1
-		}
-	}
-	// a member whose predecessor stands on the other side moves to the predecessor's side
-	for changed := true; changed; {
-		changed = false
-		for _, e := range edges {
-			from, okFrom := prOf[e.FromNodeID]
-			to, okTo := prOf[e.ToNodeID]
-			if !okFrom || !okTo || side[from] == side[to] {
-				continue
-			}
-			side[to] = side[from]
-			changed = true
-		}
-	}
+	// groups are the members joined by plan edges, in either direction: an edge whose endpoints are
+	// both members joins them, and an edge to a member outside the bundle joins nothing.
+	group := map[int64]int64{}
 	for _, pr := range order {
-		if side[pr] == 0 {
-			first = append(first, pr)
-		} else {
-			second = append(second, pr)
+		group[pr] = pr
+	}
+	find := func(pr int64) int64 {
+		for group[pr] != pr {
+			group[pr] = group[group[pr]]
+			pr = group[pr]
 		}
+		return pr
+	}
+	for _, e := range edges {
+		from, okFrom := prOf[e.FromNodeID]
+		to, okTo := prOf[e.ToNodeID]
+		if !okFrom || !okTo {
+			continue
+		}
+		if _, inOrder := group[from]; !inOrder {
+			continue
+		}
+		if _, inOrder := group[to]; !inOrder {
+			continue
+		}
+		rootFrom, rootTo := find(from), find(to)
+		if rootFrom != rootTo {
+			group[rootTo] = rootFrom
+		}
+	}
+	// the groups in the bundle's order, each by the place of its first member
+	type trainGroup struct {
+		root    int64
+		members []int64
+	}
+	var groups []trainGroup
+	index := map[int64]int{}
+	for _, pr := range order {
+		root := find(pr)
+		if i, seen := index[root]; seen {
+			groups[i].members = append(groups[i].members, pr)
+			continue
+		}
+		index[root] = len(groups)
+		groups = append(groups, trainGroup{root: root, members: []int64{pr}})
+	}
+	// one group holding every member cannot be split
+	if len(groups) == 1 {
+		return append([]int64{}, order...), nil
+	}
+	half := (len(order) + 1) / 2
+	// the groups are filled into the first half in order, each whole group while it still fits;
+	// the rest go to the second. Each half is then emitted in the bundle's order, so the two sides
+	// stay in the order the bundle named (the halving moves members between halves, never within one).
+	inFirst := map[int64]bool{}
+	taken := 0
+	for _, g := range groups {
+		if taken+len(g.members) > half {
+			continue
+		}
+		taken += len(g.members)
+		for _, pr := range g.members {
+			inFirst[pr] = true
+		}
+	}
+	first = []int64{}
+	second = []int64{}
+	for _, pr := range order {
+		if inFirst[pr] {
+			first = append(first, pr)
+			continue
+		}
+		second = append(second, pr)
 	}
 	return first, second
 }
@@ -1402,6 +1680,25 @@ func (r TrainCheckoutProver) Chain(ctx context.Context, checkout, head, base str
 	return g.chain(ctx, head, base, want)
 }
 
+// File answers the bytes a path holds at one commit, read from the checkout's git objects rather
+// than its working tree: the checkout may sit on another branch, and verify must read what the head
+// it is verifying actually declares. A checkout or commit git cannot read is merge_target_unreadable.
+func (r TrainCheckoutProver) File(ctx context.Context, checkout, commit, path string) (string, error) {
+	if strings.TrimSpace(checkout) == "" {
+		return "", trainUnreadable("a bundle's head is read in a checkout, and none was named")
+	}
+	info, err := os.Stat(checkout)
+	if err != nil || !info.IsDir() {
+		return "", trainUnreadable("checkout %s is not a directory here", pyvalue.StrRepr(checkout))
+	}
+	g, err := openTrainGit(ctx, checkout, r.Git)
+	if err != nil {
+		return "", trainUnreadable("the checkout %s could not be read: %v", pyvalue.StrRepr(checkout), err)
+	}
+	defer g.close()
+	return g.file(ctx, commit, path)
+}
+
 // trainGit is the throwaway repository the chain proof runs in.
 type trainGit struct {
 	gitdir string
@@ -1517,6 +1814,16 @@ func (g *trainGit) tree(ctx context.Context, commit string) (string, error) {
 		return "", err
 	}
 	return strings.TrimSpace(out), nil
+}
+
+// file is one path's bytes at one commit. --end-of-options keeps a commit that looks like a flag
+// from being read as one, and the commit and path are joined with the object syntax git defines.
+func (g *trainGit) file(ctx context.Context, commit, path string) (string, error) {
+	code, out, err := g.iso(ctx, "show", "--end-of-options", commit+":"+path)
+	if code != 0 {
+		return "", err
+	}
+	return out, nil
 }
 
 // mergeTree merges two commits in memory and returns the resulting tree, or an error when git cannot

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -182,8 +183,11 @@ func newLBForge(t *testing.T) *lbForge {
 		"  repos/owner/repo/git/commits/*) f='" + dir + "/commit-'\"$(basename \"$6\")\"'.json'; if [ -f \"$f\" ]; then cat \"$f\"; else echo 'gh: HTTP 404' >&2; exit 1; fi;;\n" +
 		"  *) echo 'gh: HTTP 404' >&2; exit 1;;\nesac\n"
 	f := &lbForge{dir: dir, gh: filepath.Join(dir, "gh")}
-	if err := os.WriteFile(f.gh, []byte(script), 0o700); err != nil {
-		t.Fatal(err)
+	syscall.ForkLock.RLock()
+	writeErr := os.WriteFile(f.gh, []byte(script), 0o700)
+	syscall.ForkLock.RUnlock()
+	if writeErr != nil {
+		t.Fatal(writeErr)
 	}
 	return f
 }

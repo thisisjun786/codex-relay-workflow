@@ -623,9 +623,9 @@ procedure is in the crw-run skill's
 | Command | Purpose |
 |---|---|
 | `merge-train-open` | the leader's holding turn opens a train over the members in the given order; one member is today's lane and opens no train |
-| `merge-train-verify` | the leader reads the bundle pull request, this repository's `ci.yml` run and the first-parent chain in the given checkout, and appends a verified event |
-| `merge-train-land` | record that the bundle landed as one merge commit M and close every member turn landed |
-| `merge-train-close` | close the train done, or abandon it and return its member turns to waiting |
+| `merge-train-verify` | the leader reads the bundle pull request, this repository's `ci.yml` run, the first-parent chain and the head's own `.github/workflows/ci.yml` job set in the given checkout, and appends a verified event |
+| `merge-train-land` | record that the bundle landed as one merge commit M and close every member turn landed; a member whose turn left the lane after the train opened is named in the landed event instead |
+| `merge-train-close` | close the train done, or abandon it; abandoning moves no member turn (the leader still holds the lane turn, the other members still wait) |
 | `merge-train-show` | the train's members in order, its event log, the state its newest event derives, and a reconcile reading of a lost landing |
 
 The relay reads the pull request, the run, the jobs, the commits and the ancestry from the forge
@@ -653,11 +653,12 @@ The steps, with the command names:
    `merge-train-verify --train <id> --actor <leader> --bundle-pr <n> --head <H> --run <R> --repo
    <checkout>`; then `gh pr merge <bundle pr> --merge --match-head-commit <H>`; then
    `merge-train-land --train <id> --actor <leader> --landed-sha <M> --observed-base-sha <M>`; then
-   check every member pull request shows merged (comment "landed via bundle <merge sha>" and close it
-   if not); then `merge-train-close --train <id> --actor <leader> --state done --reason <...>` and
-   delete the bundle branch.
+   check every member pull request the landed event did not exclude shows merged (comment "landed via
+   bundle <merge sha>" and close it if not) and leave an excluded one alone; then `merge-train-close
+   --train <id> --actor <leader> --state done --reason <...>` and delete the bundle branch.
 3. **Each member's parent.** Once the landing is recorded, the member's own parent records
-   `assignment-mark` (merged) and `dag-integration-observe` on its relationship.
+   `assignment-mark` (merged) and `dag-integration-observe` on its relationship — except for a member
+   the landed event's `excluded` list names, whose work did not land and which gets neither mark.
 4. **Failure handling.** A member touching a failed job's packages is removed and the rest re-bundled
    (the old train abandoned); when no member can be named the bundle is halved with a predecessor and
    its successors kept on the same side; a known flaky test's jobs are rerun once; a set that failed
@@ -840,7 +841,7 @@ When a step refuses, the refusal names what to do:
 | recorded `verified`, asked `unverified` or `aborted` | `disposition_conflict` | rule `needs_changes`, or stop the assignment by changing the relationship's status |
 | recorded `needs_changes` | `disposition_conflict` | the ruling opened a generation and is not withdrawn: rule the head of that generation when the child reports there |
 | recorded `unverified` or `aborted` | `disposition_conflict` | the ruling is final for the event: open a fresh execution generation (`generation-open`, then `generation-bind`) and rule what the child reports there |
-| a plan accepted the verified event | `disposition_conflict` | read the node's stale reading: when its action is `correct`, `dag-correct --prepare` prints the instruction and the dispatch request id, the generation is opened by hand and `dag-correct` binds it; `revalidate` and `hold` have their own steps; when the accepted result is current, a base that moved after the acceptance is recorded by `dag-base-refresh` (a generation opened by hand that only merges the base, ruled `verified`; the relay proves from git that its head is the accepted head plus merges of the base), and for any other current result this build records no correction route, so report it and open no generation that `dag-correct` will refuse |
+| a plan accepted the verified event | `disposition_conflict` | read the node's stale reading: when its action is `correct`, `dag-correct --prepare` prints the instruction and the dispatch request id, the generation is opened by hand and `dag-correct` binds it; `revalidate` and `hold` have their own steps; when the accepted result is current and a defect was found in it before it landed, the same steps correct it, with the generation opened under a reason that states the correction (`accepted_result_correction`, or the `needs_changes_revision` default), after which `dag-accept --supersedes` takes the corrected result ([the scheduler](dag-scheduler.md#correcting-a-result-that-was-accepted-and-is-still-current)); when only the base moved, `dag-base-refresh` records it (a generation opened by hand that only merges the base, ruled `verified`; the relay proves from git that its head is the accepted head plus merges of the base) |
 | the work is marked merged, or a turn landed it | `disposition_conflict` | a merged result is corrected by new work, not by a second ruling |
 | a merge turn is merging or of unknown effect | `disposition_conflict` | resolve the turn (`merge-turn-resolve` reads the branch), then rule again |
 | the event is not the head | `stale_generation` or `superseded_revision` | rule the head the assignment shows |
@@ -885,7 +886,7 @@ The rule is fixed by the kind. `answer` and `stop` change nothing the child's at
 
 No refusal reason is added, and a refusal writes nothing. The command line is checked first: an unknown `--decision` or a missing required option ends with the parser's own exit 2 and a message on stderr before the writer runs, an unreadable `--note @path` is a host problem (exit 3, as for `verdict --criteria`), and `malformed_receipt` is what the writer answers to a direct call or to a blank note, turn or digest. `decision-show` reads the decisions of a relationship back, oldest first, each with the state of its delivery.
 
-Limits that are part of the contract. The relay records the decision and its delivery; it does not read the child's thread, so `dispatched` says the message was accepted, not that the child acted. A decision that opened g+1 is recorded against a DAG plan node by `dag-correct` ([the third way to open a generation](dag-scheduler.md#three-ways-to-open-the-generation)), which refuses until the decision was dispatched into the turn the generation is bound to; until it is recorded, `dag-accept` finds no execution for g+1 and refuses `stale_generation`. A message sent to the child outside this route leaves a record only when the registered parent admits its turn ([Direct parent interventions](#direct-parent-interventions)). The crw-run skill's need-input procedure follows this route. After an answer or a stop, the relationship still reads as blocked (`dispositions-show`) until the child reports again. `registry`'s `generation-open --reason` still accepts only its own two reasons: `decision_reply` is written by this command alone. An installed relay older than this change has no `decision-reply` and answers the command as an unknown subcommand.
+Limits that are part of the contract. The relay records the decision and its delivery; it does not read the child's thread, so `dispatched` says the message was accepted, not that the child acted. A decision that opened g+1 is recorded against a DAG plan node by `dag-correct` ([the third way to open a generation](dag-scheduler.md#three-ways-to-open-the-generation)), which refuses until the decision was dispatched into the turn the generation is bound to; until it is recorded, `dag-accept` finds no execution for g+1 and refuses `stale_generation`. A message sent to the child outside this route leaves a record only when the registered parent admits its turn ([Direct parent interventions](#direct-parent-interventions)). The crw-run skill's need-input procedure follows this route. After an answer or a stop, the relationship still reads as blocked (`dispositions-show`) until the child reports again. `registry`'s `generation-open --reason` still accepts only the reasons that command writes: `decision_reply` is written by this command alone. An installed relay older than this change has no `decision-reply` and answers the command as an unknown subcommand.
 
 
 ## The coordination summary

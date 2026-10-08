@@ -101,7 +101,7 @@ func (b *Bridge) CreateThread(ctx context.Context, in CreateThread) (ledger.Rece
 		if err != nil {
 			return err
 		}
-		contract = settings.Contract{CWD: cwd, Sandbox: in.Sandbox, Model: authorized.Model, ReasoningEffort: authorized.Effort, Roots: in.Roots, ExpectedPolicy: in.Policy}
+		contract = settings.Contract{CWD: cwd, Sandbox: in.Sandbox, Model: authorized.Model, ReasoningEffort: authorized.Effort, Roots: in.Roots, ExpectedPolicy: in.Policy, AutoCompactTokenLimit: authorized.AutoCompactTokenLimit}
 		if err := contract.Validate(); err != nil {
 			return err
 		}
