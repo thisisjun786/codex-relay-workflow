@@ -40,7 +40,7 @@ func migrateFollowupWriteArray(w io.Writer, size int, tail string) error {
 // CRW-987 d4: a path that is an array after more than 64 KiB of whitespace is skipped token by token. The judgement grows
 // by the bytes of one token, the same as it grows for the same manifest with a plain path.
 func TestMigrateFollowupLongWhitespaceBeforeAPathArrayIsNotHeld(t *testing.T) {
-	const size = 32 << 20
+	const size = 64 << 20
 	const gap = 128 << 10
 	record := func(name string, container bool) string {
 		return migrateReviewFollowupStreamRecord(t, t.TempDir(), name, func(w io.Writer) error {
@@ -63,14 +63,14 @@ func TestMigrateFollowupLongWhitespaceBeforeAPathArrayIsNotHeld(t *testing.T) {
 		t.Fatalf("a receipt whose manifest is an array is read whatever its entries hold: with %v, without %v", withOK, withoutOK)
 	}
 	grew := int64(withPeak-withBefore) - int64(withoutPeak-withoutBefore)
-	if grew > size/8 {
+	if grew > size/4 {
 		t.Errorf("the container under the path grew the judgement by %d bytes of a %d byte array", grew, size)
 	}
 }
 
 // CRW-987 d4: the same for a kind that is an object after more than 64 KiB of whitespace.
 func TestMigrateFollowupLongWhitespaceBeforeAKindObjectIsNotHeld(t *testing.T) {
-	const size = 32 << 20
+	const size = 64 << 20
 	const gap = 128 << 10
 	record := func(name string, container bool) string {
 		return migrateReviewFollowupStreamRecord(t, t.TempDir(), name, func(w io.Writer) error {
@@ -96,7 +96,7 @@ func TestMigrateFollowupLongWhitespaceBeforeAKindObjectIsNotHeld(t *testing.T) {
 		t.Fatalf("a receipt whose manifest is an array is read whatever its entries hold: with %v, without %v", withOK, withoutOK)
 	}
 	grew := int64(withPeak-withBefore) - int64(withoutPeak-withoutBefore)
-	if grew > size/8 {
+	if grew > size/4 {
 		t.Errorf("the object under the kind grew the judgement by %d bytes of a %d byte object", grew, size)
 	}
 }

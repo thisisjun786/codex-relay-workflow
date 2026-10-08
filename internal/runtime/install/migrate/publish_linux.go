@@ -38,9 +38,9 @@ var ownedDirIdentityFchmodat2 = func(fd int, perm uint32) error {
 // case can replace that seam here and expect it to run.
 const ownedDirIdentityFchmodUsesFchmodat2 = true
 
-// ownedDirIdentityProcChmod is the /proc/self/fd path of the descriptor chmod. It is a variable so a case can model a
+// migrateFollowupProcChmod is the /proc/self/fd path of the descriptor chmod. It is a variable so a case can model a
 // kernel whose /proc does not offer the descriptor; no other code replaces it.
-var ownedDirIdentityProcChmod = func(fd int, perm uint32) error {
+var migrateFollowupProcChmod = func(fd int, perm uint32) error {
 	return unix.Chmod("/proc/self/fd/"+strconv.Itoa(fd), perm)
 }
 
@@ -57,7 +57,7 @@ func ownedDirIdentityFchmod(fd int, perm uint32) error {
 		// fchmodat2 exists and refused this mode, a genuine failure that the /proc path must not get past.
 		return first
 	}
-	second := ownedDirIdentityProcChmod(fd, perm)
+	second := migrateFollowupProcChmod(fd, perm)
 	if second == nil {
 		return nil
 	}
@@ -67,7 +67,7 @@ func ownedDirIdentityFchmod(fd int, perm uint32) error {
 	firstAbsent := errors.Is(first, unix.ENOSYS) || errors.Is(first, unix.EOPNOTSUPP)
 	secondAbsent := errors.Is(second, unix.ENOENT) || errors.Is(second, unix.EACCES) || errors.Is(second, unix.ENOTDIR)
 	if firstAbsent && secondAbsent {
-		return ownedDirIdentityChmodUnsupported{fchmodat2: first, proc: second}
+		return migrateFollowupChmodUnsupported{fchmodat2: first, proc: second}
 	}
 	if firstAbsent {
 		return fmt.Errorf("%w; fchmodat2: %v", second, first)

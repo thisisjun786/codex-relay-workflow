@@ -16,9 +16,9 @@ import (
 // migrateFollowupChmodSeams replaces the two descriptor-chmod mechanisms for one case and restores them afterwards.
 func migrateFollowupChmodSeams(t *testing.T, fchmodat2 func(int, uint32) error, proc func(int, uint32) error) {
 	t.Helper()
-	restore2, restoreProc := ownedDirIdentityFchmodat2, ownedDirIdentityProcChmod
-	t.Cleanup(func() { ownedDirIdentityFchmodat2, ownedDirIdentityProcChmod = restore2, restoreProc })
-	ownedDirIdentityFchmodat2, ownedDirIdentityProcChmod = fchmodat2, proc
+	restore2, restoreProc := ownedDirIdentityFchmodat2, migrateFollowupProcChmod
+	t.Cleanup(func() { ownedDirIdentityFchmodat2, migrateFollowupProcChmod = restore2, restoreProc })
+	ownedDirIdentityFchmodat2, migrateFollowupProcChmod = fchmodat2, proc
 }
 
 // CRW-987 d2: when neither mechanism can be used, the run is refused as unsupported and the report names both mechanisms.

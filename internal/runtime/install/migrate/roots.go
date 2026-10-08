@@ -241,12 +241,12 @@ func (p *Pair) repin(next *Dir) {
 	}
 }
 
-// ownedDirIdentityChmodUnsupported is the refusal of a kernel that offers neither descriptor-chmod mechanism: fchmodat2
+// migrateFollowupChmodUnsupported is the refusal of a kernel that offers neither descriptor-chmod mechanism: fchmodat2
 // answers ENOSYS or EOPNOTSUPP and chmod through /proc/self/fd answers ENOENT, EACCES or ENOTDIR. It is a type, not a
 // sentinel value, so no platform file needs a package-level initializer.
-type ownedDirIdentityChmodUnsupported struct{ fchmodat2, proc error }
+type migrateFollowupChmodUnsupported struct{ fchmodat2, proc error }
 
-func (e ownedDirIdentityChmodUnsupported) Error() string {
+func (e migrateFollowupChmodUnsupported) Error() string {
 	return fmt.Sprintf("neither fchmodat2 (%v) nor chmod through /proc/self/fd (%v) can change the mode of a descriptor on this kernel", e.fchmodat2, e.proc)
 }
 
@@ -873,7 +873,7 @@ func (d *Dir) migrateOwnedDirIdentityClaim(tmp string, want fileID, perm uint32,
 		return fd, refuse(applyReasonChanged, d.join(tmp), "the temporary name is not the directory this run created")
 	}
 	if err := ownedDirIdentityFchmod(fd, perm); err != nil {
-		var unsupported ownedDirIdentityChmodUnsupported
+		var unsupported migrateFollowupChmodUnsupported
 		if errors.As(err, &unsupported) {
 			return fd, refuse(ReasonUnsupported, d.join(tmp), unsupported.Error())
 		}
