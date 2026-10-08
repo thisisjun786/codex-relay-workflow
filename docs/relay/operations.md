@@ -1027,18 +1027,32 @@ because the directory entry decides presence and not what a read makes of it). `
 for every option, so its own preflight never runs: with `--probe-write` against a halted store the
 write probe is not run at all - it would take the store's write lock - and the answer says so.
 
-**Clearing it by hand, until the command exists.** The operator command that clears the marker
-ships separately (the follow-up issue for `store-halt-clear`). Until then:
+**Clearing it: `store-halt-clear` (CRW-885).** The operator clears the marker with one command:
+
+```
+codex-session-relay --state <state> store-halt-clear --restore-reading <file> --reconcile-reading <file> --actor <id> --reason <text>
+```
 
 1. Stop the relay service. Nothing must be writing while the store is being restored.
 2. Keep a copy of `corruption.json` as evidence: it records the code, the message, the site and the
    process, and it is the only record of what the store looked like when it broke.
-3. Restore the store from a backup and check the readings agree - the restore slice's own reading and
-   the reconcile reading - before any write is admitted again. The halt does not do this for you and
-   does not lift itself.
-4. Only then remove `corruption.json` from the state directory, and start the service.
+3. Restore the store from a backup. Write the restore slice's reading and the reconcile reading to
+   two files. Until the restore (S2) and reconcile (S4) commands exist, the operator makes both files
+   by hand. The halt does not do this for you and does not lift itself.
+4. Run `store-halt-clear` with both files. It takes the write gate exclusively and removes
+   `corruption.json` only when both files exist and are not empty. It writes one journal row, kind
+   `store_halt_cleared`, whose subject is the actor and whose detail holds the marker's sequence and
+   detection time, the sha256 and byte count of each reading, and the reason. It answers `cleared`
+   true with those fields. A missing or empty reading is refused `malformed_receipt` (exit 2) and leaves the marker in place. A
+   writer holding the write gate is refused `store_owned_by_other`.
+5. Start the service.
 
-Removing the marker without a verified restore re-admits writes to a store that is still damaged.
+With no marker the command changes nothing, writes no row, and answers `cleared` false. The command
+does not judge what the two readings say: it checks that each one exists and is not empty, and
+records their digests. The nonce, replay-dedup and grant-sequence findings of the section 83
+post-merge evaluation belong to the restore (S2) and reconcile (S4) commands, not to this one.
+
+Clearing the marker without a verified restore re-admits writes to a store that is still damaged.
 `doctor` reports the marker and the halt is visible in the daemon's notes, so a store that is
 halted cannot be mistaken for a quiet one.
 

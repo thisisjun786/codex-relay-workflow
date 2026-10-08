@@ -566,6 +566,11 @@
   {"flag":"--write","kind":"true"},
   {"flag":"--read"},
   {"flag":"--actor"}]},
+{"name":"store-halt-clear","options":[
+  {"flag":"--restore-reading","required":true,"help":"the operator's restore reading file: it must exist and be non-empty"},
+  {"flag":"--reconcile-reading","required":true,"help":"the operator's reconcile reading file: it must exist and be non-empty"},
+  {"flag":"--actor","required":true},
+  {"flag":"--reason","required":true}]},
 {"name":"intent-declare","options":[
   {"flag":"--marker-root"},
   {"flag":"--workspace","required":true},

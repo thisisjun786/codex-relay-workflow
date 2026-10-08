@@ -25,7 +25,7 @@ func init() {
 		supervisorReportRecordedCommand, supervisorStageCommand, supervisorSendCommand, supervisorReadCommand,
 		supervisorShowCommand, showCommand, statusCommand, daemonCommand)
 	dispatch.Register(nil, serviceCommands()...)
-	dispatch.Register(nil, doctorCommand, storeIdentityCommand, storeChallengeCommand, mergeEvidenceCommand)
+	dispatch.Register(nil, doctorCommand, storeIdentityCommand, storeChallengeCommand, storeHaltClearCommand, mergeEvidenceCommand)
 	// The user-decision commands (CRW-737).
 	dispatch.Register(nil, decisionCommands...)
 }

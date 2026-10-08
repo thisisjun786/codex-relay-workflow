@@ -2,13 +2,19 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
 )
 
 // This file is the halt marker (CRW-848, decision CRW-847 section 83 item 1 as the issue body
@@ -119,7 +125,7 @@ func haltDetail(state HaltState) string {
 		return "the store is halted for writes: " + state.Detail + " (the marker is " + state.Path + ")"
 	}
 	marker := state.Marker
-	return fmt.Sprintf("the store is halted for writes: %s records %s (code %d) seen at %s on %s by pid %d; it is cleared by hand, after a restore and a reconcile reading agree",
+	return fmt.Sprintf("the store is halted for writes: %s records %s (code %d) seen at %s on %s by pid %d; it is cleared by store-halt-clear, after a restore and a reconcile reading agree",
 		state.Path, marker.Message, marker.Code, marker.Site, marker.DetectedAt, marker.PID)
 }
 
@@ -257,4 +263,192 @@ func haltFaultPoint(point string) error {
 		return nil
 	}
 	return haltFault(point)
+}
+
+// HaltClearKind is the journal kind of the row a clear writes (CRW-885).
+const HaltClearKind = "store_halt_cleared"
+
+// HaltClearInput is what the operator names for a clear: the restore reading and the reconcile
+// reading, both files the operator made, and the actor and reason the journal row records. The
+// clear does not judge what the readings say; it checks that each one exists and is not empty.
+type HaltClearInput struct {
+	RestorePath   string
+	ReconcilePath string
+	Actor         string
+	Reason        string
+}
+
+// HaltReading is one reading as the clear read it: its sha256 and its size in bytes.
+type HaltReading struct {
+	SHA256 string
+	Bytes  int64
+}
+
+// HaltClearResult is what a clear did. Cleared is false when no marker was there to clear, and
+// then nothing was changed. Marker is the marker that was removed, and the readings are the two
+// digests the journal row records.
+type HaltClearResult struct {
+	Cleared   bool
+	Marker    HaltState
+	Restore   HaltReading
+	Reconcile HaltReading
+}
+
+// ClearHalt removes the halt marker beside the store dbPath names and records the clear in one
+// journal row (CRW-885). It holds the write gate exclusively for the whole decision: a writer
+// holding the gate shared is met by the existing fence, and no marker is read or removed outside
+// it. The marker is read with HaltStateAt, the reader CRW-848 wrote, so there is one reading rule.
+//
+// With no marker the clear changes nothing and writes no row. Otherwise both readings are read
+// first; a reading that is missing, unreadable or empty is refused malformed_receipt and the marker stays.
+// Before the marker is removed, the store's stamp is judged on a connection opened for the row, so
+// no marker is removed beside a store this runtime does not own. The marker is then removed and
+// its directory synced, and the row is written in its own transaction. The marker's removal is a
+// durable effect that comes before the row, because the row needs the store writable, and the
+// halt refuses a write while the marker stands. If the directory sync or the row fails after the
+// removal, the error says the marker is gone and the row is not written, so nothing claims success
+// the store does not hold.
+func ClearHalt(ctx context.Context, dbPath string, in HaltClearInput) (result HaltClearResult, err error) {
+	if err = ctx.Err(); err != nil {
+		return result, err
+	}
+	absolute, err := expandUser(dbPath)
+	if err != nil {
+		return result, err
+	}
+	if err = holdStat(dbPath); err != nil {
+		return result, err
+	}
+	resolved, err := refuseLiveState(absolute)
+	if err != nil {
+		return result, err
+	}
+	dir := filepath.Dir(resolved)
+	gate, err := ownership.Lock(filepath.Join(dir, "write-gate.lock"), true, false)
+	if err != nil {
+		return result, writeGateRefusal(err, errors.Is(err, os.ErrNotExist) && unstampedAt(ctx, absolute))
+	}
+	defer func() { err = errors.Join(err, gate.Close()) }()
+
+	state := HaltStateAt(dbPath)
+	if !state.Present {
+		return result, nil
+	}
+	if err = ctx.Err(); err != nil {
+		return result, err
+	}
+	if result.Restore, err = haltReadingDigest(in.RestorePath, "restore"); err != nil {
+		return result, err
+	}
+	if result.Reconcile, err = haltReadingDigest(in.ReconcilePath, "reconcile"); err != nil {
+		return result, err
+	}
+
+	db, err := boundedDB(resolved, "rw", RegistrationTimeout)
+	if err != nil {
+		return result, err
+	}
+	defer func() { err = errors.Join(err, db.Close()) }()
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return result, err
+	}
+	defer func() { err = errors.Join(err, conn.Close()) }()
+	if _, err = stampOn(ctx, conn); err != nil {
+		return result, err
+	}
+
+	if err = ctx.Err(); err != nil {
+		return result, err
+	}
+	markerPath := haltMarkerPath(dbPath)
+	if rmErr := os.Remove(markerPath); rmErr != nil {
+		if errors.Is(rmErr, os.ErrNotExist) {
+			return result, nil
+		}
+		return result, rmErr
+	}
+	result.Cleared = true
+	result.Marker = state
+	dirErr := syncFile(dir)
+	rowErr := haltClearRow(ctx, conn, state, in, result)
+	if joined := errors.Join(dirErr, rowErr); joined != nil {
+		return result, fmt.Errorf("the halt marker %s was removed, but the clear did not finish (the marker is gone and the journal row may be missing): %w", markerPath, joined)
+	}
+	return result, nil
+}
+
+// haltReadingDigest reads one reading file the clear names. A missing name, an unreadable file or an
+// empty file is the existing malformed_receipt refusal (CRW-885 adds no reason); the marker stays,
+// and the detail says which reading it is.
+func haltReadingDigest(path, which string) (HaltReading, error) {
+	if path == "" {
+		return HaltReading{}, refuse(ReasonMalformedReceipt, "the %s reading names no file", which)
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return HaltReading{}, refuse(ReasonMalformedReceipt, "the %s reading could not be read: %v", which, err)
+	}
+	defer func() { _ = f.Close() }()
+	sum := sha256.New()
+	n, err := io.Copy(sum, f)
+	if err != nil {
+		return HaltReading{}, refuse(ReasonMalformedReceipt, "the %s reading could not be read: %v", which, err)
+	}
+	if n == 0 {
+		return HaltReading{}, refuse(ReasonMalformedReceipt, "the %s reading is empty", which)
+	}
+	return HaltReading{SHA256: hex.EncodeToString(sum.Sum(nil)), Bytes: n}, nil
+}
+
+// haltClearDetail is the journal row's detail. The marker fields are null when the marker could not
+// be decoded, and MarkerDetail then says why. Field names are part of the row's contract.
+type haltClearDetail struct {
+	Reason           string  `json:"reason"`
+	MarkerSequence   *int    `json:"markerSequence"`
+	MarkerDetectedAt *string `json:"markerDetectedAt"`
+	MarkerDetail     string  `json:"markerDetail,omitempty"`
+	RestoreSHA256    string  `json:"restoreSha256"`
+	RestoreBytes     int64   `json:"restoreBytes"`
+	ReconcileSHA256  string  `json:"reconcileSha256"`
+	ReconcileBytes   int64   `json:"reconcileBytes"`
+}
+
+// haltClearRow records the clear as one journal row in its own transaction on conn.
+func haltClearRow(ctx context.Context, conn *sql.Conn, state HaltState, in HaltClearInput, result HaltClearResult) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	detail := haltClearDetail{
+		Reason:          in.Reason,
+		RestoreSHA256:   result.Restore.SHA256,
+		RestoreBytes:    result.Restore.Bytes,
+		ReconcileSHA256: result.Reconcile.SHA256,
+		ReconcileBytes:  result.Reconcile.Bytes,
+	}
+	if state.Detail != "" {
+		detail.MarkerDetail = state.Detail
+	} else {
+		sequence := state.Marker.Sequence
+		detailed := state.Marker.DetectedAt
+		detail.MarkerSequence = &sequence
+		detail.MarkerDetectedAt = &detailed
+	}
+	raw, err := json.Marshal(detail)
+	if err != nil {
+		return err
+	}
+	at := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err = conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		return fmt.Errorf("begin immediate: %w", err)
+	}
+	if err = journal(ctx, conn, HaltClearKind, in.Actor, string(raw), at); err != nil {
+		_, _ = conn.ExecContext(context.WithoutCancel(ctx), "ROLLBACK")
+		return err
+	}
+	if _, err = conn.ExecContext(ctx, "COMMIT"); err != nil {
+		_, _ = conn.ExecContext(context.WithoutCancel(ctx), "ROLLBACK")
+		return fmt.Errorf("commit: %w", err)
+	}
+	return nil
 }
