@@ -237,18 +237,23 @@ func (p *Publisher) EnsureProjectRoot(pair *Pair) (*Dir, bool, error) {
 	// Was .gitignore already there when this call started? Capture that before EnsureDest can create the root, so a .gitignore
 	// a racer makes in the window that creation opens (or in the root step) is a conflicting initialization race, not a
 	// retained owner file: the root did not exist before the call, so no .gitignore could have.
+	pinned := pair.Dest
 	pre := false
-	if pair.Dest != nil {
-		switch _, err := pair.Dest.typeOf(".gitignore"); {
-		case err == nil:
-			pre = true
-		case !errors.Is(err, fs.ErrNotExist):
+	if pinned != nil {
+		present, err := migrateFollowupGitignorePresent(pinned)
+		if err != nil {
 			return nil, false, err
 		}
+		pre = present
 	}
 	// The root's mkdir itself is private (CRW-878), so no failure between it and the chmod below can leave a root another
 	// user can read through, whatever a retry then makes of the root it finds. Only a root this call made may be tightened.
 	root, made, err := p.ensureDest(pair, 0o700)
+	if err == nil && pinned != nil && root != pinned {
+		// The pinned directory was moved aside and the name holds another one, which this call publishes into. Whether its
+		// .gitignore was there when the call began is answered for that directory.
+		pre, err = migrateFollowupGitignorePresent(root)
+	}
 	if err == nil && made {
 		// Give the root the private marker mode here, before the fallible .gitignore publication, so a failure below cannot
 		// leave a widened root that a retry would then find as an existing one.
@@ -269,6 +274,18 @@ func (p *Publisher) EnsureProjectRoot(pair *Pair) (*Dir, bool, error) {
 		return nil, false, err
 	}
 	return root, made, nil
+}
+
+// migrateFollowupGitignorePresent reports whether dir holds a .gitignore entry of any type.
+func migrateFollowupGitignorePresent(dir *Dir) (bool, error) {
+	_, err := dir.typeOf(".gitignore")
+	switch {
+	case err == nil:
+		return true, nil
+	case errors.Is(err, fs.ErrNotExist):
+		return false, nil
+	}
+	return false, err
 }
 
 // OlderTemps lists the temporaries other runs left in dir. It only reports: nothing adopts, renames or removes them.

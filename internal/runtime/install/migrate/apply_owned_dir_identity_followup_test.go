@@ -116,3 +116,59 @@ func TestMigrateFollowupDefectRecordDoesNotCallTheFallbackUnreachable(t *testing
 		}
 	}
 }
+
+// CRW-987 d1 (review): a root that existed when the run was opened, and that another directory has held since, is not adopted
+// through its marker mode. The replacement keeps its mode and is reported; the displaced directory receives nothing.
+func TestMigrateFollowupReplacedExistingRootIsNotAdopted(t *testing.T) {
+	ws, _, _ := apPlan(t, migrateOwnedDirIdentityEntries(), nil)
+	root := apDst(ws, "")
+	mkdirs(t, root)
+	migrateOwnedDirIdentitySetRaw(t, root, 0o700)
+	r, err := Open(Options{Scope: ScopeProject, Cwd: ws})
+	must(t, err)
+	t.Cleanup(func() { _ = r.Close() })
+	p, err := classify(r)
+	must(t, err)
+	must(t, os.Rename(root, root+".ours"))
+	mkdirs(t, root)
+	migrateOwnedDirIdentitySetRaw(t, root, applyTempRaw)
+	res, err := apply(r, p)
+	must(t, err)
+	migrateOwnedDirIdentityWantRaw(t, root, applyTempRaw)
+	migrateOwnedDirIdentityWantKeptNote(t, res, ".")
+	if _, err := os.Lstat(filepath.Join(root+".ours", "sessions")); err == nil {
+		t.Errorf("the displaced root received the files of the run")
+	}
+}
+
+// CRW-987 d2 (review): when the pinned project root is replaced, the .gitignore judgement is made for the directory the run
+// publishes into. The replacement's own .gitignore is the owner's, so it is kept and the run does not stop with a refusal.
+func TestMigrateFollowupReplacedProjectRootKeepsItsOwnGitignore(t *testing.T) {
+	ws, r, p := apPlan(t, migrateOwnedDirIdentityEntries(), nil)
+	root := apDst(ws, "")
+	pub := newPub(t)
+	pub.at = func(step string) error {
+		if step == "root" {
+			return errApplyInterrupted
+		}
+		return nil
+	}
+	if _, err := applyWith(r, p, pub); !errors.Is(err, errApplyInterrupted) {
+		t.Fatalf("the interrupted run: %v", err)
+	}
+	must(t, os.Rename(root, root+".ours"))
+	mkdirs(t, root)
+	migrateOwnedDirIdentitySetRaw(t, root, 0o700)
+	must(t, os.WriteFile(filepath.Join(root, ".gitignore"), []byte("mine\n"), 0o644))
+	res, err := apply(r, p)
+	must(t, err)
+	got, err := os.ReadFile(filepath.Join(root, ".gitignore"))
+	must(t, err)
+	if string(got) != "mine\n" {
+		t.Errorf("the replacement's .gitignore must be kept as its owner wrote it, got %q", got)
+	}
+	if _, err := os.Lstat(filepath.Join(root+".ours", "sessions")); err == nil {
+		t.Errorf("the displaced root received the files of the run")
+	}
+	migrateOwnedDirIdentityWantKeptNote(t, res, ".")
+}

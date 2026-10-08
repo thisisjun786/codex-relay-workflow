@@ -45,13 +45,17 @@ var ownedDirIdentityProcChmod = func(fd int, perm uint32) error {
 }
 
 // ownedDirIdentityFchmod gives the pinned directory exactly perm through its descriptor. fchmodat2 is
-// used where the kernel has it (6.5 and later); any other error it answers is tried on the
+// used where the kernel has it (6.5 and later); only an answer that the call is absent (ENOSYS or EOPNOTSUPP) is tried on the
 // /proc/self/fd path, which is the same call a libc fchmod makes on a descriptor, so a kernel or
-// filesystem without the flag is still served and its own failure is reported.
+// filesystem without the flag is still served; any other answer is a failure of that mechanism and is reported with its errno.
 func ownedDirIdentityFchmod(fd int, perm uint32) error {
 	first := ownedDirIdentityFchmodat2(fd, perm)
 	if first == nil {
 		return nil
+	}
+	if !errors.Is(first, unix.ENOSYS) && !errors.Is(first, unix.EOPNOTSUPP) {
+		// fchmodat2 exists and refused this mode, a genuine failure that the /proc path must not get past.
+		return first
 	}
 	second := ownedDirIdentityProcChmod(fd, perm)
 	if second == nil {

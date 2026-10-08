@@ -30,6 +30,7 @@ type Pair struct {
 	Source, Dest         *Dir
 	parent               *Dir   // holds Dest, where EnsureDest creates it
 	pinnedAbsent         bool   // Dest did not exist when this pair was pinned
+	replaced             bool   // the name has held another directory since this pair pinned it
 	created              fileID // the identity of Dest when this process's own creation put it there
 	createdDir           *Dir   // the handle held on that directory, so its inode cannot be reused
 }
@@ -172,10 +173,12 @@ func (p *Pair) EnsureDest(perm uint32) (*Dir, bool, error) {
 				_ = cur.Close()
 				return nil, false, err
 			}
+			p.replaced = true
 			p.repin(cur)
 			return cur, false, nil
 		case errors.Is(err, unix.ENOENT):
 			// The root was removed. The pin is released and the creation below runs again.
+			p.replaced = true
 			p.repin(nil)
 		default:
 			return nil, false, err

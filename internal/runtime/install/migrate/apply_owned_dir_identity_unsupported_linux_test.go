@@ -92,3 +92,24 @@ func TestMigrateFollowupGenuineChmodFailureKeepsItsErrno(t *testing.T) {
 		}
 	}
 }
+
+// CRW-987 d3 (review): a genuine refusal from fchmodat2 is the mechanism's own failure. The /proc path must not get past it,
+// even where that path would succeed, so the error keeps its errno.
+func TestMigrateFollowupGenuineFchmodat2FailureIsNotHiddenByProc(t *testing.T) {
+	for _, errno := range []error{unix.EPERM, unix.EIO, unix.EROFS} {
+		migrateFollowupChmodSeams(t,
+			func(int, uint32) error { return errno },
+			func(fd int, perm uint32) error {
+				return unix.Chmod(fmt.Sprintf("/proc/self/fd/%d", fd), perm)
+			})
+		_, r, p := apPlan(t, migrateOwnedDirIdentityEntries(), nil)
+		_, err := apply(r, p)
+		var refused *RefusedError
+		if errors.As(err, &refused) {
+			t.Errorf("%v from fchmodat2 must not be a refusal, got %v", errno, err)
+		}
+		if !errors.Is(err, errno) {
+			t.Errorf("the failure must keep fchmodat2's errno %v, got %v", errno, err)
+		}
+	}
+}

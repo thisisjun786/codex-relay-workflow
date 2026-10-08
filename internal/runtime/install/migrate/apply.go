@@ -269,12 +269,6 @@ func (a *applyRun) ensureRoots() error {
 				return refuse(applyReasonChanged, it.Source, "the source root mode changed since classification")
 			}
 		}
-		// Whether the root was there when the pair was pinned decides whether a directory this run did
-		// not create may still be adopted below: a root that was absent then is another actor's when
-		// this run's own creation does not end up owning it, whatever its mode, and that lookup is not
-		// repeated - a retry reaches this with the pair's pinned root already set, so the answer has to
-		// come from the pair rather than from a fresh look at Dest.
-		absent := pair.pinnedAbsent
 		var made bool
 		var err error
 		if scope == ScopeProject {
@@ -295,7 +289,9 @@ func (a *applyRun) ensureRoots() error {
 		if err != nil {
 			return err
 		}
-		a.recordOwnership(scope, "", made, absent)
+		// A root that was absent when the pair was pinned, or that another directory has held since, is not adopted unless this
+		// run owns it. A retry reaches here with the pinned root already set, so the answer comes from the pair.
+		a.recordOwnership(scope, "", made, pair.pinnedAbsent || pair.replaced)
 	}
 	return nil
 }
