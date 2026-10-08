@@ -404,12 +404,16 @@ type githubPostWrites struct {
 	unknown bool // some write has a destination the reader cannot name
 }
 
-// githubPostWritesOf collects the destinations of every record of a text other than a script file record.
+// githubPostWritesOf collects the destinations of every record of a text other than a script file record, by the identity the
+// kernel gives them (links resolved). A link made in the text (ln) can alias any file, so it counts as a write to a name unknown.
 func githubPostWritesOf(execs []shellir.Exec) *githubPostWrites {
 	w := &githubPostWrites{files: map[string]bool{}}
 	for _, o := range execs {
 		if o.Kind == shellir.KindScriptFile {
 			continue
+		}
+		if o.Name == "ln" {
+			w.unknown = true
 		}
 		for _, d := range shellIRExecDests(o) {
 			switch {
@@ -417,15 +421,28 @@ func githubPostWritesOf(execs []shellir.Exec) *githubPostWrites {
 				w.unknown = true
 			case d == "/dev/null":
 			case filepath.IsAbs(d):
-				w.files[filepath.Clean(d)] = true
+				w.files[githubPostIdentity(d)] = true
 			case !o.Dir.Known:
 				w.unknown = true
 			default:
-				w.files[filepath.Clean(filepath.Join(o.Dir.Path, d))] = true
+				w.files[githubPostIdentity(githubPostScriptPath(d, o.Dir.Path))] = true
 			}
 		}
 	}
 	return w
+}
+
+// githubPostIdentity is the name the kernel gives a path: its links resolved through the last component when it exists, through
+// its directory when it does not. The path is resolved as written (failure class 5).
+func githubPostIdentity(p string) string {
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		return r
+	}
+	dir, base := filepath.Split(p)
+	if r, err := filepath.EvalSymlinks(dir); err == nil {
+		return filepath.Join(r, base)
+	}
+	return filepath.Clean(p)
 }
 
 // rewrites is whether the text itself writes the script file it runs (cp evil.sh post.sh && bash post.sh): the file the guard reads
@@ -435,11 +452,7 @@ func (w *githubPostWrites) rewrites(script string, dir shellir.Dir) bool {
 	if !dir.Known {
 		return false // the script is unreadable already
 	}
-	target := script
-	if !filepath.IsAbs(target) {
-		target = filepath.Join(dir.Path, target)
-	}
-	return w.unknown || w.files[filepath.Clean(target)]
+	return w.unknown || w.files[githubPostIdentity(githubPostScriptPath(script, dir.Path))]
 }
 
 // githubPostScriptPath is the path a shell opens for a script name in a directory: the name as written, joined to the directory

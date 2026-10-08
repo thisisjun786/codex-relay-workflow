@@ -59,6 +59,9 @@ func TestGitHubPostScriptRewrittenInTheSameText(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	if err := os.Symlink("post.sh", filepath.Join(dir, "alias.sh")); err != nil {
+		t.Fatal(err)
+	}
 	for _, c := range []struct {
 		cmd    string
 		denied bool
@@ -67,6 +70,8 @@ func TestGitHubPostScriptRewrittenInTheSameText(t *testing.T) {
 		{"mv evil.sh post.sh; bash post.sh", true},
 		{"echo 'gh pr comment 1 -b x' > post.sh; bash post.sh", true},
 		{"tee post.sh </dev/null; bash post.sh", true},
+		{"cp evil.sh alias.sh && bash post.sh", true},
+		{"ln -sf evil.sh post.sh && bash post.sh", true},
 		{"cp evil.sh other.sh && bash post.sh", false},
 		{"echo hi > log.txt; bash post.sh", false},
 		{"bash post.sh > log.txt", false},

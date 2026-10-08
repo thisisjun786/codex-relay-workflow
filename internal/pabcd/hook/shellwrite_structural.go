@@ -153,7 +153,7 @@ func shellIRPyUnattributedCall(src string, sp [2]int, name string) bool {
 			return false
 		}
 		// str.replace takes two or more arguments; Path.replace takes one (an argument unpacking may carry more).
-		return closed && (len(args) <= 1 || shellIRPyHasUnpacking(args))
+		return !closed || len(args) <= 1 || shellIRPyHasUnpacking(args)
 	}
 	return false
 }
