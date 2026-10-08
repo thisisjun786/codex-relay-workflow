@@ -38,6 +38,9 @@ func shellMetaBases() []shellMetaBase {
 		{"cat <<EOF > m/i\nx\nEOF", "memory"},
 		{"echo x >| m/j", "memory"},
 		{"echo x &> m/k", "memory"},
+		{"rm -rf {CHECKOUT}", "worktree"},
+		{"find {CHECKOUT} -delete", "worktree"},
+		{"git worktree remove {CHECKOUT}", "worktree"},
 		{"gh pr comment 1 --body hi", "github"},
 		{"gh api -X POST repos/o/r/issues -f body=x", "github"},
 		{"gh issue create --title t --body hi", "github"},
@@ -108,6 +111,10 @@ func shellMetaTransforms() []shellMetaTransform {
 		{"source-substitution", func(c string) string { return "source <(printf '%s\\n' " + shellMetaSingle(c) + ")" }},
 		{"command-substitution", func(c string) string { return ": $(" + c + ")" }},
 		{"cd-prefix", func(c string) string { return "cd . && " + c }},
+		{"builtin", func(c string) string { return "builtin " + c }},
+		{"command-builtin", func(c string) string { return "command builtin " + c }},
+		{"fd-alias", func(c string) string { return "exec 9>&2; " + c }},
+		{"fd-dup", func(c string) string { return "{ " + c + "; } 9>&1" }},
 	}
 }
 
@@ -115,7 +122,7 @@ func shellMetaTransforms() []shellMetaTransform {
 // must be a simple command.
 func shellMetaWrapper(name string) bool {
 	switch name {
-	case "env", "command", "exec", "nohup", "time":
+	case "env", "command", "exec", "nohup", "time", "builtin", "command-builtin":
 		return true
 	}
 	return false
@@ -186,8 +193,21 @@ func TestShellMetaVerdictNeverMorePermissive(t *testing.T) {
 	githubPostTempHome(t)
 	start := time.Now()
 	cases := 0
+	rig := newDelRig(t)
+	fill := strings.NewReplacer("{CHECKOUT}", rig.checkout)
 	for _, base := range shellMetaBases() {
 		switch base.gate {
+		case "worktree":
+			// A removal of the managed checkout is denied, and no variant of it is allowed (CRW-1028, criterion c2).
+			if !rig.verdict(fill.Replace(base.cmd)).Deny {
+				t.Fatalf("base %q is not denied by the worktree guard", base.cmd)
+			}
+			for _, v := range shellMetaVariants(base.cmd) {
+				cases++
+				if got := rig.verdict(fill.Replace(v)); !got.Deny {
+					t.Errorf("variant %q of %q is allowed by the worktree guard", v, base.cmd)
+				}
+			}
 		case "memory":
 			want := shellWriteDestsTest(base.cmd)
 			if len(want) == 0 || slicesContainsUnknown(want) {
