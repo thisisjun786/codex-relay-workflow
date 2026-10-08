@@ -43,6 +43,8 @@ type Config struct {
 	Cases   int
 	Seconds int
 	Seed    int64
+	// SeedSet says Seed was given, so a Seed of 0 is the seed the campaign runs, not a request for the clock.
+	SeedSet bool
 	Workers int
 	Out     string
 	Timeout time.Duration
@@ -123,6 +125,12 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "crw-dev fuzz: error: unrecognized arguments: %s\n", strings.Join(extra, " "))
 		return 2
 	}
+	seedGiven := false
+	set.Visit(func(f *flag.Flag) {
+		if f.Name == "seed" {
+			seedGiven = true
+		}
+	})
 	target, ok := Lookup(targetName)
 	if !ok {
 		fmt.Fprintf(stderr, "crw-dev fuzz: error: unknown target %q (registered: %s)\n", targetName, strings.Join(Names(), ", "))
@@ -140,7 +148,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "crw-dev fuzz: error: one of --seconds or --cases is required")
 		return 2
 	}
-	cfg := Config{Target: target, Cases: *cases, Seconds: *seconds, Seed: *seed, Workers: *workers, Timeout: DefaultTimeout, DevSHA: devSHA()}
+	cfg := Config{Target: target, Cases: *cases, Seconds: *seconds, Seed: *seed, SeedSet: seedGiven, Workers: *workers, Timeout: DefaultTimeout, DevSHA: devSHA()}
 	if *out != "" {
 		cfg.Out = *out
 	} else {
@@ -180,7 +188,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 // divergence, and writes the divergence files and summary.json under cfg.Out.
 func Campaign(cfg Config) (summary Summary, err error) {
 	seed := cfg.Seed
-	if seed == 0 {
+	if seed == 0 && !cfg.SeedSet {
 		now := cfg.Now
 		if now.IsZero() {
 			now = time.Now()
