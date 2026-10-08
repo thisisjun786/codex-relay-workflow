@@ -25,6 +25,146 @@ Installing and operating the runtime is [runtime installation](runtime-install.m
 under `scripts/ci` and `scripts/check_operations_contract.py` left in refactor R3 (decision R3R-1).
 See the [workflow](../.github/workflows/ci.yml) for the exact job inputs.
 
+## The local run
+
+`crw-dev ci local` (and `make ci-local`) runs every job and step of
+[the workflow](../.github/workflows/ci.yml) locally, in the same order and at the same pinned
+versions, and writes a `verification-record/1`. It exists so the whole verification can be
+run without GitHub; the hosted run stays the merge evidence.
+
+The run makes a **clean worktree** of the commit being verified under the work root (the XDG state directory, or --work-root; never TMPDIR, /tmp or /var/tmp)
+(`git worktree add --detach`), with `HOME` and the XDG directories pointed into a
+temporary home and `TZ=UTC`, so uncommitted changes in the caller's checkout and the host's
+caches cannot change the result. The record names the commit and its tree, never the caller's
+working state. The worktree is removed afterwards. `GOCACHE` and `NPM_CONFIG_CACHE` are inherited: they decide how fast a step runs, not what it decides. The module cache is not inherited, and GOFLAGS is set by the engine.
+
+Light mode and the body-only edit mirror are never applied: the local run is always full.
+
+### The local step to GitHub job mapping
+
+| ci.yml job | ci.yml step | local |
+| --- | --- | --- |
+| `validate` | the sparse `scripts/ci` checkout and the edit mirror | not run: a hosted body-only edit lookup |
+| `validate` | checkout | the clean worktree of the verified commit |
+| `validate` | `setup-go` | the pinned Go is resolved and recorded |
+| `validate` | `go build -tags dev -o "$RUNNER_TEMP/crw-dev" ./cmd/crw-dev` | run |
+| `validate` | `"$RUNNER_TEMP/crw-dev" ci validate` | run, over the record's range (`BLOB_RANGE_BASE`) |
+| `validate` | `"$RUNNER_TEMP/crw-dev" ci plugin` | run |
+| `validate` | `"$RUNNER_TEMP/crw-dev" ci contracts` | run |
+| `secrets` | the mirror pair, checkout | as above |
+| `secrets` | `bash scripts/ci/secrets.sh` | run, with `GITHUB_EVENT_NAME=pull_request` and `PR_BASE_SHA`, so it scans base..head as a pull request run does |
+| `skill-scripts-node` | the mirror pair, checkout | as above |
+| `skill-scripts-node` | the changed-path decision | run: the same script, its answer recorded; the local run performs every step either way |
+| `skill-scripts-node` | `setup-node` | the pinned Node is resolved and recorded |
+| `skill-scripts-node` | the staged skill-script tests | run |
+| `gui` | the mirror pair, checkout | as above |
+| `gui` | the changed-path decision (`scripts/ci/gui_paths.sh`) | run, its answer recorded |
+| `gui` | `setup-go`, `setup-node` | as above |
+| `gui` | `npm ci`, `npm test`, `npm run build -- --outDir "$RUNNER_TEMP/gui-built" --emptyOutDir` | run (in `web/`) |
+| `gui` | `ci gui-drift --built "$RUNNER_TEMP/gui-built"` | run |
+| `go-product` | the light mode notice | not run: light mode is never applied |
+| `go-product` | the mirror pair, checkout, `setup-go` | as above |
+| `go-product` | `make lint` (leg `lint`) | run |
+| `go-product` | `make test-part TEST_PART=<n>` (legs `test-1`..`test-rest`) | run, one leg at a time |
+| `go-product` | the three `make dist` builds and `sha256sum` (leg `dist`) | run |
+| `go-product` | `CRW_TEST_BINARY=... go test -tags integration ./internal/runtime/integration/...` (leg `dist`) | run |
+| `go-product` | the four `upload-artifact` steps | not run: nothing is uploaded locally |
+| `dev-gate` | "Require every prerequisite to succeed" | run: every prerequisite job must have passed |
+
+`internal/dev/ci/local_plan_test.go` holds the table to the workflow job by job and step by
+step, and the runner refuses a ci.yml the table does not cover.
+
+### The verification record
+
+The record is `verification-record/1`: `repository`, `baseCommit`,
+`headCommit`, `treeHash`, `ciDigest` (the sha256 of ci.yml),
+`tools` (Go as the module at the commit selects it, probed with the steps' isolation, and Node as observed on the host; gitleaks and staticcheck at the version
+their step runs, which is the pin, because secrets.sh runs its own pinned Gitleaks and the lint
+leg runs the staticcheck the tree requires), `pins` (the versions the tree
+pins: go.mod's toolchain and staticcheck, ci.yml's Node, secrets.sh's Gitleaks),
+`pinMismatch`, `goFlags` (the GOFLAGS the steps inherit, without the flags that select or skip tests, so a full run runs every test; a record whose GOFLAGS name a modfile or an overlay is never reused), `range` (the sha256 of the commits between base and head, the input of the blob and secret steps), `goEnv` (GOENV is unset in the
+steps, so Go reads its default file under the run's own empty home, and the host's GOENV never
+applies),
+`dependencies` (the sha256 of `go.sum` and
+`web/package-lock.json`), `os`, `arch`, `result`, `runner`, and `jobs`
+— one entry per GitHub check, each with its steps' `command`, `scope`,
+`result`, `seconds` and `reason`. `digest` is the sha256 of the
+canonical serialization: the record as JSON with its keys sorted, no indentation and no HTML
+escaping, and the `digest` member removed. A tool whose observed version differs from its
+pin is named in `pinMismatch`, and such a record is never reused.
+
+A step runs under `bash --noprofile --norc -eo pipefail`, as the runner does, so its first
+failed command fails it. A failed step's `reason` gives the exit status, the failing test lines
+of its output (a `--- FAIL`, `FAIL` or `panic:` line, at most 20) and the last 40 lines of the
+output, at most 4 KB; a Go test that outlived its `-timeout` is named with a `timeout:` prefix,
+so a load timeout reads as a timeout, not as a verdict on the code. The steps inherit `TMPDIR`
+and `PATH`, so a test that makes a socket or a temporary file uses the caller's temporary root.
+
+A step's result is `passed`, `failed`, `missing_tool`,
+`skipped` or `not_applicable`. The whole result is `pass` only when no step
+is `failed`, `missing_tool` or `skipped`: one step that fails, does not run
+or lacks its tool fails the run, and the record names it with its reason.
+
+### Sealed runs
+
+A step runs in a sealed environment built from an allowlist, not from the caller's environment
+minus a denylist: HOME and the XDG directories point into the run's own home, TZ is UTC,
+GOTOOLCHAIN is local, and GOFLAGS is set by the engine alone (its parallelism, from
+--parallel). The caller's other variables do not reach a step, and the record names the Go,
+cgo, Node and npm variables it left out in ignoredEnv (names only). A caller's GOFLAGS with
+-exec, -toolexec, -overlay, -modfile, -run or -count therefore cannot change what a step runs.
+
+Each job's Node pin is read from its own setup-node step in the commit's ci.yml, not from a
+shared first match. The host's Node is observed in the same isolation, and a job whose pin
+differs is named in pinMismatch as `job:node`; such a record is kept but never reused. The
+gitleaks and staticcheck pins are the ones secrets.sh and go.mod fix, and the steps fetch
+or run those pins, so they are recorded at the pin.
+
+The clean worktree is made under a work root: the directory given by --work-root, or the XDG
+state directory of the real user. A root inside TMPDIR, /tmp or /var/tmp is refused with the
+name work_root_in_tmp, because the repository's own checkout tests assert the checkout lies
+outside those directories.
+
+### Reuse validation
+
+A record answers a run only when every key above matches and the record is sound: its digest
+is valid, it is sealed, it was made from the plan the commit's table gives (planDigest), it
+matches that plan one job and one step at a time (name, command and scope), every job and
+step passed (or is a not-applicable step the plan marks as such), its result equals the result its steps recompute to, and it has
+no pinMismatch. Any other record is not reused: the engine runs the table again and says why.
+
+### Reuse
+
+`--reuse <record>` answers an existing record instead of running only when the **tree**, the
+**ci.yml digest**, the **tool versions**, the **dependency digests**, the **OS and
+architecture** and the **base commit** and the **commit range** all match,
+and the record passed with no pin mismatch. The head commit is not a key on its own. The commit range (the commits between base and head) is one: a rebase or an amend that changes that list reruns the checks, and a record is reused only when the list and the tree both match. Changing any one key re-runs.
+
+### The heavy-check gate and TMPDIR
+
+A heavy step (a Go build, vet, test, the dist builds, the integration test, `npm ci`) runs
+through the command named by `CRW_CI_HEAVY_GATE` when it is set — `<gate> <command>`
+— and directly when it is unset. The gate is the host's; no host path is written into the
+repository. Temporary files go under `TMPDIR`, which the caller sets.
+Only the gate's executable is resolved, once, against the directory the run starts in. Its other
+arguments are not resolved: a relative argument is read in each step's own directory, so give absolute paths.
+
+### The pre-push hook
+
+`crw-dev ci local hook install` writes a `pre-push` hook into the repository the
+working directory belongs to (`git rev-parse --git-path hooks/pre-push`), and
+`... hook status` reports `installed`, `absent` or `foreign`. The hook
+refuses a push whose range (`<remote sha>..<local sha>`, or the whole local sha for a new
+ref) brings in a blob over 2 MiB or a secret Gitleaks finds — the same two checks the hosted
+`secrets` and `validate` jobs run, moved before the push because a public history
+cannot drop what has already been pushed. It fails closed: a missing Gitleaks or an unreadable
+range blocks the push. An existing `pre-push` this tool did not write is left untouched and
+the install refuses; the tool writes no git config. The hook's size rule carries no allow list,
+unlike `crw-dev ci validate`: the list is empty today, and a future entry must be paired
+with the hook at that time. Tests install the hook only into temporary repositories; the real
+shared checkout is the operator's to install.
+
+
 ## The workflow
 
 Every job runs on every event: a pull request (GitHub's merge candidate), a push to `dev` (the
