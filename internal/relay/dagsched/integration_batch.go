@@ -147,12 +147,26 @@ func (s *Scheduler) IntegrateBatch(ctx context.Context, in IntegrationBatchInput
 	}
 	var covered []Candidate
 	if len(contained) > 0 {
-		verified, err := s.headVerified(ctx, in, start)
+		rowFound, keysHold, err := s.verifiedHeadState(ctx, in, start)
 		if err != nil {
 			return out, err
 		}
+		// a covering record whose keys no longer hold for the head's tree is verified again, with no merge; only its PASS covers (CRW-965, D2)
+		holds := rowFound && keysHold
+		if rowFound && !keysHold {
+			_, dig, pass, err := s.verifyHead(ctx, in, deps, start, baseTip)
+			if err != nil {
+				return out, err
+			}
+			if pass {
+				if err := s.recordVerifiedHead(ctx, in, batch, start, dig); err != nil {
+					return out, err
+				}
+				holds = true
+			}
+		}
 		for _, c := range contained {
-			if verified {
+			if holds {
 				covered = append(covered, c)
 				continue
 			}
@@ -806,36 +820,6 @@ func (s *Scheduler) markContained(ctx context.Context, in IntegrationBatchInput,
 	return nil
 }
 
-// headVerified is whether this relay recorded a verified head equal to the commit: a batch intent row for the integration
-// ref names it before the batch moved the branch to it, so the tree the branch holds passed its verification (CRW-965).
-func (s *Scheduler) headVerified(ctx context.Context, in IntegrationBatchInput, head string) (bool, error) {
-	rows, err := store.IntegrationStagesOfPlan(ctx, s.Store, in.Plan)
-	if err != nil {
-		return false, err
-	}
-	for _, r := range rows {
-		if r.Stage != "intent" || r.NodeID != "" {
-			continue
-		}
-		var d map[string]string
-		if json.Unmarshal([]byte(r.Detail), &d) == nil && d["verified_head"] == head && d["integration_ref"] == in.IntegrationRef {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
-// recordVerifiedHead writes the batch's intent to move the branch to a verified head, before the branch moves.
-func (s *Scheduler) recordVerifiedHead(ctx context.Context, in IntegrationBatchInput, batch, head, digest string) error {
-	detail, err := json.Marshal(map[string]string{"verified_head": head, "verification_digest": digest, "integration_ref": in.IntegrationRef})
-	if err != nil {
-		return err
-	}
-	return s.IntegrationWrite(ctx, in.Plan, in.Actor, func(txCtx context.Context) error {
-		return s.stageRow(txCtx, in, batch, "intent", Candidate{}, string(detail))
-	})
-}
-
 // withoutCandidateNode is the candidates with one node removed, in their order.
 func withoutCandidateNode(set []Candidate, node string) []Candidate {
 	var out []Candidate
@@ -857,4 +841,89 @@ func candidatesInCheckout(set []Candidate, checkout string) []Candidate {
 		}
 	}
 	return out
+}
+
+// verifiedHeadState reads the verified-head rows this relay wrote for a head on the integration ref. rowFound is whether any
+// such row exists; keysHold is whether one of them still matches the head's tree, ci.yml and dependency digests now (CRW-965,
+// parent decision D2). A commit's content does not change, so the keys differ only when the verification they were judged
+// under no longer stands for the tree.
+func (s *Scheduler) verifiedHeadState(ctx context.Context, in IntegrationBatchInput, head string) (bool, bool, error) {
+	rows, err := store.IntegrationStagesOfPlan(ctx, s.Store, in.Plan)
+	if err != nil {
+		return false, false, err
+	}
+	var stored []map[string]string
+	for _, r := range rows {
+		if r.Stage != "intent" || r.NodeID != "" {
+			continue
+		}
+		var d map[string]string
+		if json.Unmarshal([]byte(r.Detail), &d) == nil && d["verified_head"] == head && d["integration_ref"] == in.IntegrationRef {
+			stored = append(stored, d)
+		}
+	}
+	if len(stored) == 0 {
+		return false, false, nil
+	}
+	now, err := verifiedKeysOf(ctx, in.Checkout, head)
+	if err != nil {
+		return true, false, err
+	}
+	for _, d := range stored {
+		if d["tree"] == now["tree"] && d["ci_digest"] == now["ci_digest"] && d["dependency_go_sum"] == now["dependency_go_sum"] && d["dependency_web_lock"] == now["dependency_web_lock"] {
+			return true, true, nil
+		}
+	}
+	return true, false, nil
+}
+
+// verifiedKeysOf is what a verified head's record is judged under: its tree, its ci.yml digest and its dependency digests.
+func verifiedKeysOf(ctx context.Context, checkout, head string) (map[string]string, error) {
+	tree, err := runGit(ctx, checkout, nil, "rev-parse", head+"^{tree}")
+	if err != nil {
+		return nil, err
+	}
+	keys, err := CommitVerificationKeys(ctx, checkout, head)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]string{"tree": strings.TrimSpace(tree), "ci_digest": keys.CiDigest,
+		"dependency_go_sum": keys.Dependencies["go.sum"], "dependency_web_lock": keys.Dependencies["web/package-lock.json"]}, nil
+}
+
+// recordVerifiedHead writes the batch's intent to move the branch to a verified head, before the branch moves. The row
+// names the tree and the keys the verification stands on, so a later batch compares them without reading old records.
+func (s *Scheduler) recordVerifiedHead(ctx context.Context, in IntegrationBatchInput, batch, head, digest string) error {
+	keys, err := verifiedKeysOf(ctx, in.Checkout, head)
+	if err != nil {
+		return err
+	}
+	keys["verified_head"], keys["verification_digest"], keys["integration_ref"] = head, digest, in.IntegrationRef
+	detail, err := json.Marshal(keys)
+	if err != nil {
+		return err
+	}
+	return s.IntegrationWrite(ctx, in.Plan, in.Actor, func(txCtx context.Context) error {
+		return s.stageRow(txCtx, in, batch, "intent", Candidate{}, string(detail))
+	})
+}
+
+// verifyHead verifies the tree of a branch head in a temporary worktree, with no merge: the record is judged by the same
+// judge a merged tree is (CRW-965, parent decision D2). The worktree is removed on every path.
+func (s *Scheduler) verifyHead(ctx context.Context, in IntegrationBatchInput, deps IntegrationBatchDeps, head, baseTip string) (VerificationRecord, string, bool, error) {
+	tmp, err := os.MkdirTemp("", "crw-965-verify-")
+	if err != nil {
+		return VerificationRecord{}, "", false, err
+	}
+	wt := filepath.Join(tmp, "worktree")
+	defer func() {
+		_, _ = runGit(context.WithoutCancel(ctx), in.Checkout, nil, "worktree", "remove", "--force", wt)
+		_, _ = runGit(context.WithoutCancel(ctx), in.Checkout, nil, "worktree", "prune")
+		_ = os.RemoveAll(tmp)
+	}()
+	if _, err := runGit(ctx, in.Checkout, nil, "worktree", "add", "--detach", wt, head); err != nil {
+		return VerificationRecord{}, "", false, refuse(contract.RefusalMergeTargetUnreadable, "git could not create a worktree at %s: %v", head, err)
+	}
+	w := &integrationWorktree{s: s, in: in, deps: deps, dir: wt, tmp: tmp, start: head, baseTip: baseTip}
+	return w.verify(ctx)
 }
