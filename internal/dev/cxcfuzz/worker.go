@@ -211,10 +211,12 @@ func (p *Pool) ready(w *worker, budget time.Duration) error {
 		if errors.Is(err, Timeout{}) {
 			return fmt.Errorf("the oracle worker did not become ready in time: %w", err)
 		}
-		return err
+		return transportFailure(err)
 	}
-	_, err = answer(id, line)
-	return err
+	if _, err := answer(id, line); err != nil {
+		return CaseFailure{Cause: CauseNoAnswer, Err: err}
+	}
+	return nil
 }
 
 func (p *Pool) exchange(w *worker, input, root string) (string, error) {
@@ -226,9 +228,13 @@ func (p *Pool) exchange(w *worker, input, root string) (string, error) {
 	request := fmt.Sprintf("{\"id\":%d,\"input\":%s,\"root\":%s}\n", id, input, encoded)
 	line, err := p.roundTrip(w, request, p.timeout)
 	if err != nil {
-		return "", err
+		return "", transportFailure(err)
 	}
-	return answer(id, line)
+	output, err := answer(id, line)
+	if err != nil {
+		return "", CaseFailure{Cause: CauseNoAnswer, Err: err}
+	}
+	return output, nil
 }
 
 // roundTrip writes one request line and reads one reply line, both inside one deadline: a worker

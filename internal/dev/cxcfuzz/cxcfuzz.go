@@ -58,18 +58,26 @@ type Config struct {
 
 // Summary is <out>/summary.json: what one campaign did.
 type Summary struct {
-	Target    string  `json:"target"`
-	Seed      int64   `json:"seed"`
-	DevSHA    string  `json:"devSha"`
-	Seconds   float64 `json:"seconds"`
-	Cases     int     `json:"cases"`
-	Same      int     `json:"same"`
-	Miss      int     `json:"miss"`
-	Extra     int     `json:"extra"`
-	Differ    int     `json:"differ"`
-	Timeouts  int     `json:"timeouts"`
-	Refused   int     `json:"refused"`
-	PerSecond float64 `json:"casesPerSecond"`
+	Target   string  `json:"target"`
+	Seed     int64   `json:"seed"`
+	DevSHA   string  `json:"devSha"`
+	Seconds  float64 `json:"seconds"`
+	Cases    int     `json:"cases"`
+	Same     int     `json:"same"`
+	Miss     int     `json:"miss"`
+	Extra    int     `json:"extra"`
+	Differ   int     `json:"differ"`
+	Timeouts int     `json:"timeouts"`
+	// DeadWorkers, NoAnswers and Errors count the cases the harness could not answer for a reason other than a
+	// timeout: a worker that ended before it replied, a reply that answers nothing, and a failure of the case's own
+	// machinery (CRW-978 c7).
+	DeadWorkers int `json:"deadWorkers"`
+	NoAnswers   int `json:"noAnswers"`
+	Errors      int `json:"errors"`
+	Refused     int `json:"refused"`
+	// Failures names the case records written under the output directory, one per distinct failing input.
+	Failures  []string `json:"failures,omitempty"`
+	PerSecond float64  `json:"casesPerSecond"`
 }
 
 // Divergence is one shrunk difference, written to <out>/divergences/<kind>-<sha12>.json.
@@ -178,7 +186,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		summary.Target, summary.Seed, summary.Cases, summary.Seconds, summary.Same, summary.Differ, summary.Miss, summary.Extra, summary.Timeouts, summary.Refused)
 	// A case that timed out, or whose fs scenario was refused, compared nothing, so it is not an
 	// agreement either: a campaign that compared nothing does not report success.
-	if summary.Differ+summary.Miss+summary.Extra+summary.Timeouts+summary.Refused > 0 {
+	if summary.Differ+summary.Miss+summary.Extra+summary.Timeouts+summary.DeadWorkers+summary.NoAnswers+summary.Errors+summary.Refused > 0 {
 		return 1
 	}
 	return 0
@@ -212,6 +220,7 @@ func Campaign(cfg Config) (summary Summary, err error) {
 	}
 	summary = Summary{Target: cfg.Target.Name, Seed: seed, DevSHA: cfg.DevSHA}
 	written := map[string]bool{}
+	failed := map[string]bool{}
 	for n := 0; cfg.Cases <= 0 || n < cfg.Cases; n++ {
 		if !deadline.IsZero() && time.Now().After(deadline) {
 			break
@@ -223,8 +232,10 @@ func Campaign(cfg Config) (summary Summary, err error) {
 			// A root that survived its removal is reported, never counted: the caller must see which root
 			// was left and why, and the run must not continue as if the case had merely been refused.
 			return summary, err
-		case caseTimedOut:
-			summary.Timeouts++
+		case caseFailed:
+			if err := recordFailure(cfg, &summary, seed, summary.Cases, input, err, failed); err != nil {
+				return summary, err
+			}
 			continue
 		case caseRefused:
 			summary.Refused++
@@ -283,8 +294,9 @@ const (
 	caseOK caseOutcome = iota
 	// caseRefused is a scenario the harness declined, which the run counts and carries on from.
 	caseRefused
-	// caseTimedOut is a worker that died or did not answer, which the run counts and carries on from.
-	caseTimedOut
+	// caseFailed is a case the harness could not answer: a timeout, a worker that died, a reply that answers
+	// nothing, or a failure of the case's own machinery. The run records it under its cause and carries on.
+	caseFailed
 	// caseRemovalFailed is a root that outlived its run, which is reported and never counted.
 	caseRemovalFailed
 )
@@ -302,7 +314,7 @@ func classifyCaseError(err error) caseOutcome {
 	if errors.Is(err, errRefused) {
 		return caseRefused
 	}
-	return caseTimedOut
+	return caseFailed
 }
 
 // refusedOutcome turns a scenario failure into the error the caller sees. A refusal is the harness
@@ -347,17 +359,17 @@ func (c *campaign) evaluate(input any) (verdict Verdict, goText, oracleText stri
 	text := canonical(input)
 	goRoot, err := os.MkdirTemp("", "cxcfuzz-go-")
 	if err != nil {
-		return Verdict{}, "", "", err
+		return Verdict{}, "", "", CaseFailure{Cause: CauseTempRoot, Err: err}
 	}
 	defer func() { err = joinCleanup(err, CleanupCaseRoot(goRoot)) }()
 	oracleRoot, err := os.MkdirTemp("", "cxcfuzz-oracle-")
 	if err != nil {
-		return Verdict{}, "", "", err
+		return Verdict{}, "", "", CaseFailure{Cause: CauseTempRoot, Err: err}
 	}
 	defer func() { err = joinCleanup(err, CleanupCaseRoot(oracleRoot)) }()
 	for _, root := range []string{goRoot, oracleRoot} {
 		if err := PrepareRoot(root); err != nil {
-			return Verdict{}, "", "", err
+			return Verdict{}, "", "", CaseFailure{Cause: CauseTempRoot, Err: err}
 		}
 	}
 	// A refused scenario is the harness declining the case, and a removal that still failed is its own
@@ -371,7 +383,7 @@ func (c *campaign) evaluate(input any) (verdict Verdict, goText, oracleText stri
 	}
 	value, err := decode(text)
 	if err != nil {
-		return Verdict{}, "", "", err
+		return Verdict{}, "", "", CaseFailure{Cause: CauseDecode, Err: err}
 	}
 	goValue, goErr := c.cfg.Target.Go(value, RootEnv(goRoot))
 	goOut := any(goValue)
@@ -384,7 +396,7 @@ func (c *campaign) evaluate(input any) (verdict Verdict, goText, oracleText stri
 	}
 	oracleValue, err := decode(oracleAnswer)
 	if err != nil {
-		return Verdict{}, "", "", err
+		return Verdict{}, "", "", CaseFailure{Cause: CauseDecode, Err: err}
 	}
 	goStripped := stripRoot(goOut, goRoot)
 	oracleStripped := stripRoot(oracleValue, oracleRoot)
