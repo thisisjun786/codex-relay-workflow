@@ -197,6 +197,11 @@ func (d *Daemon) Tick(ctx context.Context) (Report, error) {
 		// read halts the store at the observation site, and the supervisor channel does not write after it.
 		r.Notes = append(r.Notes, d.idle.take()...)
 		if d.halted(ctx, &r, store.HaltSiteObservation, err) {
+			// The delivery pass ran before this read, so its counts and notes are this tick's: the halt keeps them.
+			r.Delivered += sent.Delivered
+			r.Deferred += sent.Deferred
+			r.Skipped += sent.Skipped
+			r.Notes = append(r.Notes, sent.Notes...)
 			return r, nil
 		}
 		return r, err
