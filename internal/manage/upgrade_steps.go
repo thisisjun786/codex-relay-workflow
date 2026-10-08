@@ -14,11 +14,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dagsched"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/install"
 )
 
@@ -263,10 +266,13 @@ func upgradeCommitRefs(version string) []string {
 }
 
 // checkVerificationRecord is step 3: the verification record the operator gives must be a
-// verification-record/1 that passes and names the installed commit's tree. The record is read with the
-// relay's own decoder, digest and result word, so no second parser decides what a record says. A record
-// that is missing or unreadable, a record of another tree, and a record that is not a pass each refuse
-// under their own reason.
+// verification-record/1 that the relay's judge accepts for the installed commit's tree. The judge is the
+// same one dag-accept uses: it refuses a record missing a member, with a digest that does not match, a
+// result other than pass, a pin mismatch, or another tree. The keys it cannot know here (the ci.yml and
+// dependency digests and the base) are the record's own, so the judge still checks the record's shape,
+// digest, result and pins, and the host platform comes from the runtime. A record that is missing or
+// unreadable refuses as missing; a record of another tree refuses as other tree; every other refusal is
+// not a pass.
 func (r *upgradeRunState) checkVerificationRecord() (int, string) {
 	if r.opts.Verification == "" {
 		return r.refuse(upgradeStepVerify, upgradeReasonVerifyMissing, "", fmt.Errorf("no --verification record was given"))
@@ -279,18 +285,20 @@ func (r *upgradeRunState) checkVerificationRecord() (int, string) {
 	if err != nil {
 		return r.refuse(upgradeStepVerify, upgradeReasonVerifyNotPass, "", err)
 	}
-	digest, err := dagsched.VerificationRecordDigest(raw)
-	if err != nil || record.Digest != digest {
-		return r.refuse(upgradeStepVerify, upgradeReasonVerifyNotPass, "", fmt.Errorf("the verification record's digest does not match its contents"))
+	keys := dagsched.VerificationKeys{
+		Tree:         r.tree,
+		Base:         record.BaseCommit,
+		CiDigest:     record.CiDigest,
+		Dependencies: record.Dependencies,
+		OS:           runtime.GOOS,
+		Arch:         runtime.GOARCH,
 	}
-	if record.Result != dagsched.VerificationRecordResultPass {
-		return r.refuse(upgradeStepVerify, upgradeReasonVerifyNotPass, "", fmt.Errorf("the verification record's result is %q", record.Result))
-	}
-	if len(record.PinMismatch) > 0 {
-		return r.refuse(upgradeStepVerify, upgradeReasonVerifyNotPass, "", fmt.Errorf("the verification record carries a tool pin mismatch"))
-	}
-	if !strings.EqualFold(record.TreeHash, r.tree) {
-		return r.refuse(upgradeStepVerify, upgradeReasonVerifyOtherTree, "", fmt.Errorf("the record names tree %s and the installed commit's tree is %s", record.TreeHash, r.tree))
+	if _, err := dagsched.JudgeVerificationRecord(raw, keys); err != nil {
+		var refused *store.RefusedError
+		if errors.As(err, &refused) && refused.Reason == string(contract.RefusalRevisionMismatch) {
+			return r.refuse(upgradeStepVerify, upgradeReasonVerifyOtherTree, "", err)
+		}
+		return r.refuse(upgradeStepVerify, upgradeReasonVerifyNotPass, "", err)
 	}
 	r.note(upgradeStepVerify, nil, 0, "the verification record passes for the installed tree", nil)
 	return 0, ""

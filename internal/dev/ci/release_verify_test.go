@@ -23,10 +23,15 @@ func TestReleaseVerifyInvocationUsesRegisteredLocalFlags(t *testing.T) {
 	if start < 0 {
 		t.Fatal("release.yml does not run crw-dev ci local")
 	}
-	invocation := text[start:]
-	if end := strings.Index(invocation, "\n\n"); end >= 0 {
-		invocation = invocation[:end]
+	// The command is its first line and every following line that the previous one continues with a backslash.
+	var lines []string
+	for _, line := range strings.Split(text[start:], "\n") {
+		lines = append(lines, line)
+		if !strings.HasSuffix(strings.TrimSpace(line), "\\") {
+			break
+		}
 	}
+	invocation := strings.Join(lines, "\n")
 	var usage bytes.Buffer
 	if code := Local([]string{"-h"}, &usage, &usage); code != 0 {
 		t.Fatalf("ci local -h exited %d", code)
