@@ -885,7 +885,7 @@ This section is the forge procedure for an in-flight pull request. A task branch
 relay's own mechanism on a pull request; the repository's rule is the integrator's verified
 fast-forward in [The three gates](#the-three-gates).
 
-The dev ruleset is strict: a pull request has to contain the tip of its base, so each landing leaves
+While the dev ruleset still requires pull requests (until the protection change in docs/CI.md takes effect after CRW-965 is installed), an in-flight pull request has to contain the tip of its base, so each landing leaves
 the other candidates behind. Returning a candidate to its child for that alone costs a whole
 generation (merge the base, wait for every job and the review, report again) and changes nothing the
 parent had verified. When nothing else is wrong the parent updates the branch itself, once, and

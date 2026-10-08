@@ -14,12 +14,12 @@ import (
 // The push-only procedure (CRW-966): the current rule is a task branch that the one integrator
 // fast-forwards to dev, so no document states that a pull request or a hosted gate is required.
 // The one place that still describes a pull request lane is the in-flight section of merge-readiness.md,
-// and the worked example of the Launch packet keeps a dated history. The guard reads the skills, the
-// policy documents, the dispatch case data and the generated dispatch document as text, and fails on a
-// seed phrase anywhere else. A case whose data quotes the old procedure on purpose is listed in
-// pushOnlyCaseAllowlist with its reason.
+// and the dated worked example of task-packet.md keeps the old Launch text. The guard reads the skills
+// (markdown and agent YAML), the policy documents, the dispatch case data, the generated dispatch document
+// and the plugin manifest as text, and fails on a seed phrase anywhere else. A case whose data quotes the
+// old procedure on purpose is listed in pushOnlyCaseAllowlist with its reason.
 
-var pushOnlySeedPhrases = regexp.MustCompile("(?i)exactly one pull request|pull request open|pull request is open|open the pull request|open a pull request|open that pull request|open it non-draft|open pull request|opens the pull request|opens a pull request|opens its pull request|intended PR[ ,.]|PR landing|after its CI finishes|on this pull request|dev-gate is required|dev-gate required|dev-gate must|PR body|pull request body|every CI job|pull-request CI")
+var pushOnlySeedPhrases = regexp.MustCompile("(?i)exactly one pull request|pull request open|pull request is open|open the pull request|open a pull request|open that pull request|open the PR\\b|open a PR\\b|open this PR\\b|open it non-draft|open pull request|opens the pull request|opens a pull request|opens its pull request|opens the PR\\b|intended PR[ ,.]|PR landing|after its CI finishes|on this pull request|dev-gate is required|dev-gate required|dev-gate must|PR body|pull request body|every CI job|pull-request CI|hosted CI run is required|CI run is required|pull request is required|PR is required")
 
 // pushOnlyGradePhrases are the grade-first phrases; a refusal-name table row may keep them, never a pull-request phrase.
 var pushOnlyGradePhrases = regexp.MustCompile("(?i)red or security|P0, P1|red, P0|blocking P2")
@@ -33,6 +33,15 @@ var pushOnlyHistory = regexp.MustCompile("pull request [0-9]+")
 const pushOnlyInFlightHeading = "## In-flight pull requests (transition)"
 const pushOnlyExampleHeading = "### One issue in both formats"
 const pushOnlyGenerated = "plugins/crw/skills/crw-run/references/dispatch-verification.md"
+const pushOnlyManifest = "plugins/crw/.codex-plugin/plugin.json"
+const pushOnlyInFlightFile = "plugins/crw/skills/crw-run/references/merge-readiness.md"
+const pushOnlyExampleFile = "plugins/crw/skills/crw-run/references/task-packet.md"
+
+// pushOnlyExempt names, per file, the one heading whose text may keep a pull-request phrase.
+var pushOnlyExempt = map[string]string{
+	pushOnlyInFlightFile: pushOnlyInFlightHeading,
+	pushOnlyExampleFile:  pushOnlyExampleHeading,
+}
 
 var pushOnlyDocs = []string{
 	"POLICY.md", "CONTRIBUTING.md", "AGENTS.md", "README.md",
@@ -50,7 +59,8 @@ func pushOnlyFiles(t *testing.T) []string {
 			if err != nil {
 				return err
 			}
-			if !info.IsDir() && strings.HasSuffix(p, ".md") {
+			agentYAML := strings.HasSuffix(p, ".yaml") && filepath.Base(filepath.Dir(p)) == "agents"
+			if !info.IsDir() && (strings.HasSuffix(p, ".md") || agentYAML) {
 				rel, err := filepath.Rel(root, p)
 				if err != nil {
 					return err
@@ -63,7 +73,7 @@ func pushOnlyFiles(t *testing.T) []string {
 			t.Fatal(err)
 		}
 	}
-	files = append(files, pushOnlyGenerated)
+	files = append(files, pushOnlyGenerated, pushOnlyManifest)
 	return append(files, pushOnlyDocs...)
 }
 
@@ -97,12 +107,13 @@ func pushOnlyLineCase(line string) string {
 	return ""
 }
 
-// pushOnlyOutside reports the lines that carry a seed phrase outside the in-flight section, the worked
-// example and the allowlisted cases, as "file:line: text". fileCase is the case ID of a data file; it is
-// empty for a document, whose case IDs follow the lines that open them.
+// pushOnlyOutside reports the lines that carry a seed phrase outside the file's exempt heading and the
+// allowlisted cases, as "file:line: text". fileCase is the case ID of a data file; it is empty for a
+// document, whose case IDs follow the lines that open them.
 func pushOnlyOutside(rel string, text string, fileCase string) []string {
 	var hits []string
 	h2, h3, lineCase := "", "", ""
+	exempt := pushOnlyExempt[rel]
 	for i, line := range strings.Split(text, "\n") {
 		switch {
 		case strings.HasPrefix(line, "## "):
@@ -113,7 +124,7 @@ func pushOnlyOutside(rel string, text string, fileCase string) []string {
 		if id := pushOnlyLineCase(line); id != "" {
 			lineCase = id
 		}
-		if h2 == pushOnlyInFlightHeading || strings.HasPrefix(h3, pushOnlyExampleHeading) {
+		if exempt != "" && (h2 == exempt || h3 == exempt) {
 			continue
 		}
 		id := fileCase
@@ -149,8 +160,51 @@ func TestPushOnlyWording_NoCurrentPullRequestRule(t *testing.T) {
 	}
 }
 
+// TestPushOnlyWording_GuardScope pins the guard itself: each phrase form is caught, the exemption applies
+// only to its own file and heading, and the agent YAML and the plugin manifest are scanned.
+func TestPushOnlyWording_GuardScope(t *testing.T) {
+	const skill = "plugins/crw/skills/crw-run/SKILL.md"
+	cases := []struct {
+		name string
+		rel  string
+		text string
+		want int
+	}{
+		{"open the PR in a skill", skill, "Then open the PR for review.", 1},
+		{"open a pull request in a skill", skill, "Then open a pull request.", 1},
+		{"hosted CI run is required", skill, "A hosted CI run is required before the handoff.", 1},
+		{"agent yaml prompt", "plugins/crw/skills/crw-run/agents/openai.yaml", "default_prompt: open the PR", 1},
+		{"plugin description", pushOnlyManifest, "  \"description\": \"open the PR\"", 1},
+		{"in-flight section is exempt", pushOnlyInFlightFile, pushOnlyInFlightHeading + "\n\nopen a pull request\n", 0},
+		{"same phrase under another heading of the in-flight file", pushOnlyInFlightFile, "## Other\n\nopen a pull request\n", 1},
+		{"in-flight exemption does not reach another file", skill, pushOnlyInFlightHeading + "\n\nopen a pull request\n", 1},
+		{"worked example is exempt", pushOnlyExampleFile, pushOnlyExampleHeading + "\n\nopen a pull request\n", 0},
+		{"same phrase under another heading of the example file", pushOnlyExampleFile, "## Other\n\nopen a pull request\n", 1},
+	}
+	for _, c := range cases {
+		if got := pushOnlyOutside(c.rel, c.text, ""); len(got) != c.want {
+			t.Errorf("%s: got %d hits %q, want %d", c.name, len(got), got, c.want)
+		}
+	}
+}
+
+func TestPushOnlyWording_ScansAgentYAMLAndManifest(t *testing.T) {
+	files := pushOnlyFiles(t)
+	for _, want := range []string{pushOnlyManifest, "plugins/crw/skills/crw-run/agents/openai.yaml"} {
+		found := false
+		for _, f := range files {
+			if f == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("guard does not scan %s", want)
+		}
+	}
+}
+
 func TestPushOnlyWording_InFlightSectionIsSingle(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join(repoRoot(), "plugins", "crw", "skills", "crw-run", "references", "merge-readiness.md"))
+	data, err := os.ReadFile(filepath.Join(repoRoot(), filepath.FromSlash(pushOnlyInFlightFile)))
 	if err != nil {
 		t.Fatal(err)
 	}
