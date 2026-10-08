@@ -440,7 +440,7 @@ the record states the item. Every warning code starts `independent_review_`:
 | `artifact_invalid` | the file is not a schema v1 review artifact | treat the review as unusable |
 | `status_differs` | the item's status is not the artifact's | trust the artifact |
 | `head_differs` | the artifact covers another head and the candidate head is not the head the record is about, or the stated patch-id is missing or different | run the patch-id check above |
-| `disposition_missing` | a P0 or security finding, or an in-scope finding, of the artifact has no disposition | ask the child, or judge the finding yourself by its impact |
+| `disposition_missing` | the relay grades a finding of the artifact as P0, P1 or security and it has no disposition; an in-scope finding of any grade needs one too, by [What each finding needs before the receipt](#what-each-finding-needs-before-the-receipt) | ask the child, or judge the finding yourself by its impact |
 | `disposition_unknown` | a disposition names a finding the artifact does not have | the item and the artifact disagree: trust the artifact |
 
 A warning is a question to read the artifact, never a reason to return the candidate by itself. A

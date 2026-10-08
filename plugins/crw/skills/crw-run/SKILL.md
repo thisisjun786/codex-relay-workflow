@@ -974,9 +974,7 @@ code and reruns the tests the criteria rest on
 ([the three gates](references/merge-readiness.md#the-three-gates)). Read the head it reports, the conclusions on that head and its
 per-finding trail, and accept them as the evidence table above defines them.
 
-Acceptance keeps its own work, which was never the child's. Confirm the reported
-head is the head the pull request has now, the base is current and the merge is
-clean, every accepted criterion maps to evidence that still applies at that head,
+Acceptance keeps its own work, which was never the child's. Confirm the reported head is the head the delivery names (the task branch and its head, or the pull request's head where one exists), the base is current and the merge is clean, every accepted criterion maps to evidence that still applies at that head,
 and any finding still open is named. The handoff's disclosures are part of that: every decision
 request is answered before the verdict, under
 [what the handoff discloses, checked at the verdict](references/merge-readiness.md#what-the-handoff-discloses-checked-at-the-verdict).
