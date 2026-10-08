@@ -34,7 +34,7 @@ the mapping through `crw-plan` before new implementation dispatch.
 
 The title names the Codex task and nothing else. The packet's `Title:` field carries it so
 that the creation call and its read-back have one value to compare, and it is not the pull
-request's title. The child titles its own pull request in English, as `Language:` requires,
+request's title. The child writes its commit messages in English and, where a pull request exists, titles it in English, as `Language:` requires,
 under the rules of the repository it targets; where those rules state no format, the packet
 names one, such as `CRW-275: <short English summary>`. Put that into the packet beside the
 `Title:` line, because a child handed a Korean title and no sentence on what it names can
@@ -762,7 +762,7 @@ DELIVERABLE
   final head, model and effort as observed, goal ids, per-criterion evidence, remaining defects, and the resource delta: what you
   created, changed, retained or started, each with its owner, release condition and next action, and any process with its working
   directory and whether it still runs>
-- <the criteria, numbered, each the thing the pull request must show>
+- <the criteria, numbered, each the thing the delivered head must show>
 
 SCOPE
 - <the edit surfaces, what is out of scope, shared contracts>
