@@ -158,6 +158,7 @@ func splitCommand(command string) ([]string, error) {
 		switch {
 		case escaped:
 			current.WriteRune(r)
+			started = true
 			escaped = false
 		case r == '\\' && quote != '\'':
 			escaped = true
