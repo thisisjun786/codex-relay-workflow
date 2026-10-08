@@ -261,7 +261,7 @@ not a standing one-to-one rule: several packets for one feature are allowed by p
 switch on when their support lands.
 
 Keep review fixes on the same issue and delivery. A necessary replacement PR retains
-the superseded link and names the one current delivery PR; it does not create a
+the superseded link and names the one current delivery; it does not create a
 second simultaneous delivery for the issue. A new change after that delivery
 has landed gets a new issue and delivery, except a defect inside the finished issue's own specification, criteria or promise: that reopens the same issue key ([After the merge](../../crw-run/references/merge-readiness.md#late-review-threads)), and only a defect outside the issue gets a new issue. Research, design, or operational work with
 no repository change uses an explicit non-PR result and verification; do not
@@ -1071,7 +1071,7 @@ carrying a real state change over a heartbeat carrying none.
 ### Resolve the implementation repository
 
 Resolve the issue repository label and its explicit GitHub owner/repo or URL
-against its accepted scope, current delivery PR and existing assignment.
+against its accepted scope, current delivery (its pull request when one exists, otherwise its task branch and head) and existing assignment.
 Project context links and any remaining legacy project labels do not assign
 repositories to its issues. Identify reference-only repositories separately.
 If the issue's label or explicit target conflicts with its PR or ownership record, reconcile the conflict
