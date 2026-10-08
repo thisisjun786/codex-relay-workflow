@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 )
@@ -50,6 +51,20 @@ var handshakeAnswers = map[string]string{
 	"worktreedel": `{"decision":"allow","reason":""}`,
 }
 
+// startupLoadingShims are the shims that import their original module at their top level, when the
+// worker starts and before it listens, so the pool's readiness probe waits for the module. With an
+// original root that holds no module they exit non-zero before answering anything; that is the behaviour
+// before CRW-932 and it stays (a worker whose original module cannot load fails at start). The set is
+// pinned so a change to it is noticed: a shim that starts loading lazily, or a new top-level loader,
+// fails the empty-oracle-root case until the set is updated.
+var startupLoadingShims = map[string]bool{
+	"goalplan":    true,
+	"memorygate":  true,
+	"shellwrite":  true,
+	"state":       true,
+	"worktreedel": true,
+}
+
 // A start-up handshake is one request with a null input and a root (CRW-854). Each registered shim
 // must answer it inertly, without building a path from the root or mirroring or reading a document: a
 // shim that ran the case would create .codexclaw/... in the worker's own working directory on every
@@ -58,10 +73,11 @@ var handshakeAnswers = map[string]string{
 //
 // Three cases per shim. The root is empty (the pool's own handshake), the root is an empty directory
 // that must stay empty, and the original root (ORACLE_ROOT) is an empty directory, so no original module
-// can load: the shim must still answer, which shows the answer does not depend on the original module.
-// The shims that load their original module when they start (every one but doctor, which imports per
-// request) remember a failed load and answer the handshake; TestDoctorShimImportsNothingForTheHandshake
-// shows by a recorded import attempt that the doctor shim does not import for it.
+// can load. In that last case the shims that load their original module when they start
+// (startupLoadingShims) keep their existing behaviour: the worker exits non-zero before it answers, with
+// the module-not-found error. Every other shim must still give its inert answer and leave the working
+// directory empty. TestDoctorShimImportsNothingForTheHandshake shows by a recorded import attempt that
+// the doctor shim does not import for the handshake.
 func TestShimsAnswerTheStartupHandshakeInertly(t *testing.T) {
 	requireNode(t)
 	root, err := repositoryRoot()
@@ -85,10 +101,13 @@ func TestShimsAnswerTheStartupHandshakeInertly(t *testing.T) {
 				requireOracleModule(t, name)
 				checkStartupHandshake(t, root, name, t.TempDir(), DefaultOracleRoot, want)
 			})
-			// The same request with the original root set to an empty directory: no original module
-			// loads, and the shim still answers the handshake. This case does not read the host's
-			// original tree, so it is not skipped when that tree is absent.
+			// The same request with the original root set to an empty directory. This case does not
+			// read the host's original tree, so it is not skipped when that tree is absent.
 			t.Run("empty oracle root", func(t *testing.T) {
+				if startupLoadingShims[name] {
+					checkStartupLoaderFailsBeforeAnswering(t, root, name, t.TempDir())
+					return
+				}
 				checkStartupHandshake(t, root, name, "", t.TempDir(), want)
 			})
 		})
@@ -292,4 +311,60 @@ func dirEntryNames(t *testing.T, dir string) []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+// checkStartupLoaderFailsBeforeAnswering starts a start-up-loading shim with an original root that holds
+// no module and sends the start-up handshake. The worker must exit non-zero without writing an answer,
+// with the module-not-found error on its stderr, and must leave its working directory empty.
+func checkStartupLoaderFailsBeforeAnswering(t *testing.T, root, name, oracleRoot string) {
+	t.Helper()
+	dir := t.TempDir()
+	envDir := t.TempDir()
+	env := append(os.Environ(),
+		"HOME="+filepath.Join(envDir, "home"),
+		"CODEX_HOME="+filepath.Join(envDir, "codex-home"),
+		"CRW_HOME="+filepath.Join(envDir, "crw-home"),
+		"TMPDIR="+filepath.Join(envDir, "tmp"),
+		"ORACLE_ROOT="+oracleRoot,
+	)
+	for _, sub := range []string{"home", "codex-home", "crw-home", "tmp"} {
+		if err := os.MkdirAll(filepath.Join(envDir, sub), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cmd := exec.Command("node", filepath.Join(root, "internal", "dev", "cxcfuzz", "testdata", name, "shim.mjs"))
+	cmd.Dir = dir
+	cmd.Env = env
+	cmd.Stdin = strings.NewReader("{\"id\":1,\"input\":null,\"root\":\"\"}\n")
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	waited := make(chan error, 1)
+	go func() { waited <- cmd.Wait() }()
+	var waitErr error
+	select {
+	case waitErr = <-waited:
+	case <-time.After(30 * time.Second):
+		_ = cmd.Process.Kill()
+		<-waited
+		t.Fatal("the shim neither answered nor exited with an empty original root")
+	}
+	if waitErr == nil {
+		t.Fatalf("the shim exited 0 with an empty original root; stdout %q", stdout.String())
+	}
+	if _, isExit := waitErr.(*exec.ExitError); !isExit {
+		t.Fatalf("the shim did not run to an exit status: %v", waitErr)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("the shim answered %q before failing to load its original module", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "ERR_MODULE_NOT_FOUND") {
+		t.Fatalf("the shim failed, but not with the module-not-found error: %s", stderr.String())
+	}
+	if names := dirEntryNames(t, dir); len(names) > 0 {
+		t.Fatalf("the failed start wrote under the working directory: %v", names)
+	}
 }
