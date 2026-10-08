@@ -630,3 +630,5 @@ the ledger row that does.
 - An implementation node's acceptance that writes a new acceptance, a supersession or a re-validation carries a `premerge-record/1` that the relay judges itself, and the record stored with the acceptance is the text integration judges.
 - A stored pre-merge record is never edited. A re-validation adds its own row and the acceptance keeps its original record.
 - An acceptance without a stored record is never integrated: `dag-integrate` leaves it out as `premerge_missing`.
+- A record is judged against the head the acceptance stands on. After a base refresh, the carried head needs its own record, and a record of the earlier head is held as `premerge_head_mismatch`.
+- Integration judges each candidate's stored record again inside the transaction that moves the branch. A candidate that fails there is refused, and the branch does not move.
