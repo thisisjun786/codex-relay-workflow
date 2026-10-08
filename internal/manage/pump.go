@@ -129,6 +129,11 @@ type pumpState struct {
 	// already have gone.
 	QueueAttempt map[string]pumpReview776QueuePin `json:"queue_attempt"`
 
+	// QueueRefused is a queue thread's count of the refusals one batch id has taken. The next batch
+	// of that id is sent under the count as an ordinal, so the ledger's refusal of the earlier id is
+	// not replayed. A state written before the key existed reads as no refusals.
+	QueueRefused map[string]pumpQueueRefusal `json:"queue_refused"`
+
 	extra map[string]json.RawMessage
 }
 
@@ -143,6 +148,10 @@ type pumpReview776QueuePin struct {
 	Body      string            `json:"body"`
 	SHA256    map[string]string `json:"sha256,omitempty"`
 	Accepted  bool              `json:"accepted,omitempty"`
+	// Base is the batch id the pin's logical id carries before any refusal ordinal is appended. A
+	// refusal is counted against it. A pin without it (written before the ordinal existed) is counted
+	// against its logical id.
+	Base string `json:"base,omitempty"`
 	// Legacy marks a pin taken for a pre-change ledger record whose body the ledger does not store.
 	// Such an attempt is reconciled through the bridge's own receipt instead of being replayed with
 	// the text on disk, which a notice the producer replaced no longer matches.
@@ -152,6 +161,14 @@ type pumpReview776QueuePin struct {
 	// notice it never carried, and sending them under a new id could deliver one twice; the thread
 	// waits while the pin holds, which is the queue's rule for a pin.
 	Held bool `json:"held,omitempty"`
+}
+
+// pumpQueueRefusal is a queue thread's count of the refusals one batch id has taken. The next batch
+// of that id is sent under the ordinal, so the ledger's refusal of the earlier id is not replayed. A
+// state without the key reads as no refusals.
+type pumpQueueRefusal struct {
+	ID    string `json:"id"`
+	Count int    `json:"count"`
 }
 
 // pumpAttempt is one frozen batch: the logical id it was tried under, the ids it carried, and its
@@ -168,7 +185,8 @@ func pumpNewState() pumpState {
 		Offsets: map[string]int64{}, PRs: map[string]string{}, Sources: map[string]string{},
 		Cursors: map[string]string{}, Sent: map[string]bool{},
 		QueueAccepted: map[string][]string{}, QueueAttempt: map[string]pumpReview776QueuePin{},
-		extra: map[string]json.RawMessage{},
+		QueueRefused: map[string]pumpQueueRefusal{},
+		extra:        map[string]json.RawMessage{},
 	}
 }
 
@@ -214,6 +232,8 @@ func pumpLoadState(cfg *Config) (pumpState, error) {
 			err = json.Unmarshal(value, &st.PRSeq)
 		case "queue_attempt":
 			err = json.Unmarshal(value, &st.QueueAttempt)
+		case "queue_refused":
+			err = json.Unmarshal(value, &st.QueueRefused)
 		default:
 			// A key this file does not name belongs to a later node; it is preserved on write.
 			st.extra[key] = value
@@ -243,6 +263,9 @@ func pumpLoadState(cfg *Config) (pumpState, error) {
 	if st.QueueAttempt == nil {
 		st.QueueAttempt = map[string]pumpReview776QueuePin{}
 	}
+	if st.QueueRefused == nil {
+		st.QueueRefused = map[string]pumpQueueRefusal{}
+	}
 	return st, nil
 }
 
@@ -269,6 +292,7 @@ func (st pumpState) pumpSave(cfg *Config) error {
 		{"prs", st.PRs}, {"sources", st.Sources}, {"cursors", st.Cursors}, {"sent", st.Sent},
 		{"prs_seen", st.PRsSeen}, {"attempt", st.Attempt}, {"queue_accepted", st.QueueAccepted},
 		{"pr_seq", st.PRSeq}, {"queue_attempt", st.QueueAttempt},
+		{"queue_refused", st.QueueRefused},
 	} {
 		if err := put(field.key, field.value); err != nil {
 			return err

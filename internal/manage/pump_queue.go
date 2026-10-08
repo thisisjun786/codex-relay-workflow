@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -28,6 +29,14 @@ const (
 	// directory nor a file inside it, so nothing it writes can be mistaken for a move's aside.
 	pumpReview776AsideDir = ".reclaim"
 	pumpQueueWait         = "queued"
+)
+
+const (
+	// pumpQueueRefusedDir holds the notices of a batch the bridge refused pumpQueueRefusalLimit times
+	// under one batch id. They stay in the thread directory, out of the queue, with a log line each.
+	pumpQueueRefusedDir = "refused"
+	// pumpQueueRefusalLimit is how many times one batch id may be refused before its notices move aside.
+	pumpQueueRefusalLimit = 3
 )
 
 // pumpQueueFlush delivers the queued notices of every thread. It first completes any accepted
@@ -130,7 +139,7 @@ func pumpQueueFlushThread(ctx context.Context, e *Env, cfg *Config, st *pumpStat
 		}
 		return nil
 	}
-	action, err := pumpReview776QueueAdoptLegacy(cfg, st, thread, whole)
+	action, err := pumpReview776QueueAdoptLegacy(cfg, st, dir, thread, whole)
 	if err != nil {
 		return err
 	}
@@ -186,9 +195,10 @@ func pumpQueueFlushThread(ctx context.Context, e *Env, cfg *Config, st *pumpStat
 		// Every queued notice carries an empty body, so there is nothing to deliver this round.
 		return nil
 	}
-	// The idle-parent timeout is measured on the notices the batch actually carries, so a notice
-	// moved aside as oversize or left for the next round cannot age it.
-	oldest, err := pumpReview776QueueOldest(dir, batch.names)
+	// The idle-parent timeout is judged on the whole queue left after the oversize move, so an older
+	// notice outside the size-cut prefix makes the queue due. The batch itself carries only the prefix
+	// that fits, and a notice moved aside as oversize cannot age the queue.
+	oldest, err := pumpReview776QueueOldest(dir, names)
 	if err != nil {
 		return err
 	}
@@ -230,9 +240,15 @@ func pumpQueueSend(ctx context.Context, e *Env, cfg *Config, st *pumpState, dir,
 		// being the text on disk; the delivery core refuses such a message anyway.
 		return fmt.Errorf("crw manage pump: the queued notices of %s are not valid UTF-8", thread)
 	}
-	logicalID := pumpQueueBatchID(thread, batch.idNames, batch.body)
+	base := pumpQueueBatchID(thread, batch.idNames, batch.body)
+	logicalID := base
+	// A batch the ledger refused under this id is tried again under the next ordinal of the id. The
+	// ledger's refusal of the id itself is final, so resending under it would only replay that refusal.
+	if refusal := st.QueueRefused[thread]; refusal.ID == base && refusal.Count > 0 {
+		logicalID = fmt.Sprintf("%s-r%d", base, refusal.Count)
+	}
 	st.QueueAttempt[thread] = pumpReview776QueuePin{
-		LogicalID: logicalID, Names: append([]string(nil), batch.names...), Body: batch.body,
+		LogicalID: logicalID, Base: base, Names: append([]string(nil), batch.names...), Body: batch.body,
 		SHA256: pumpReview776QueueDigests(batch.names, batch.texts)}
 	if err := st.pumpSave(cfg); err != nil {
 		return err
@@ -258,8 +274,11 @@ func pumpQueueSend(ctx context.Context, e *Env, cfg *Config, st *pumpState, dir,
 		}
 		return pumpReview776QueueFinishAccepted(ctx, e, cfg, st, dir, thread, pin, false)
 	case deliverClassRefused:
-		// A refusal is terminal and nothing was sent, so the pin lifts: the notices stay queued and
-		// a later round forms a new batch under a new id.
+		// A refusal is terminal and nothing was sent, so the pin lifts: the notices stay queued and a
+		// later round forms the batch again. A refusal the ledger proves is counted against the batch.
+		if pumpReview776QueueRefusalSettled(cfg, logicalID) {
+			return pumpQueueRefusedLift(ctx, cfg, st, dir, thread, st.QueueAttempt[thread], err)
+		}
 		return pumpReview776QueuePinLift(cfg, st, thread, err)
 	default:
 		// Unknown: the pin stays, so the next round reconciles the same logical id and body.
@@ -482,6 +501,15 @@ func pumpReview776QueueRetry(ctx context.Context, e *Env, cfg *Config, st *pumpS
 		return true, err
 	}
 	if known {
+		// The ledger's own settled answer is read first, with no bridge: an accepted record completes the
+		// batch and a refused one lifts the pin, the answers Deliver gives a settled message. Only an
+		// unsettled record asks the bridge for its receipt.
+		switch record.State {
+		case deliverStateAccepted:
+			return pumpReview776QueueAcceptPin(ctx, e, cfg, st, dir, thread, pin)
+		case deliverStateRefused:
+			return false, pumpQueueRefusedLift(ctx, cfg, st, dir, thread, pin, nil)
+		}
 		settled, err := pumpReview776QueueReconcileReceipt(ctx, e, cfg, st, dir, thread, pin, record)
 		if err != nil {
 			return true, err
@@ -491,8 +519,13 @@ func pumpReview776QueueRetry(ctx context.Context, e *Env, cfg *Config, st *pumpS
 		}
 	}
 	// The receipt is not settled (or there is none): the attempt may still be sent, but only under
-	// the queue's own gate, so an idle parent is not opened early.
-	present := pumpReview776QueuePresent(dir, pin.Names)
+	// the queue's own gate, so an idle parent is not opened early. The gate judges the whole queue, the
+	// pinned names and every notice queued with them, so an older notice outside the pin makes it due.
+	queued, err := pumpQueueSortedNames(dir)
+	if err != nil {
+		return true, err
+	}
+	present := pumpReview776QueuePresent(dir, append(append([]string(nil), pin.Names...), queued...))
 	oldest, err := pumpReview776QueueOldest(dir, present)
 	if err != nil {
 		return true, err
@@ -531,28 +564,23 @@ func pumpReview776QueueReconcileReceipt(ctx context.Context, e *Env, cfg *Config
 		if err := ctx.Err(); err != nil {
 			return true, err
 		}
-		if pin.Legacy || len(pin.SHA256) == 0 {
-			// The attempt's text is not recoverable, so no queued notice can be shown to be one it
-			// carried: the pin holds the thread rather than archiving an undelivered notice.
-			pin.Held = true
-			st.QueueAttempt[thread] = pin
-			return true, st.pumpSave(cfg)
+		if !pin.Legacy && len(pin.SHA256) > 0 {
+			record.State, record.Received, record.Applied = deliverStateAccepted, true, false
+			record.Attempts = append(record.Attempts, deliverAttempt{At: deliverNow(e), Class: deliverClassAccepted, ReceiptExcerpt: "get_operation: the pinned attempt was dispatched"})
+			if err := deliverSave(cfg, record); err != nil {
+				return true, err
+			}
 		}
-		record.State, record.Received, record.Applied = deliverStateAccepted, true, false
-		record.Attempts = append(record.Attempts, deliverAttempt{At: deliverNow(e), Class: deliverClassAccepted, ReceiptExcerpt: "get_operation: the pinned attempt was dispatched"})
+		return pumpReview776QueueAcceptPin(ctx, e, cfg, st, dir, thread, pin)
+	case deliverReconcileRefused:
+		// The bridge settled the attempt as a refusal before any dispatch, so nothing was sent. The
+		// refusal is recorded the way Deliver records one, and counted against the batch.
+		record.State = deliverStateRefused
+		record.Attempts = append(record.Attempts, deliverAttempt{At: deliverNow(e), Class: deliverClassRefused, ReceiptExcerpt: "get_operation: refused before the dispatch"})
 		if err := deliverSave(cfg, record); err != nil {
 			return true, err
 		}
-		pin.Accepted = true
-		st.QueueAttempt[thread] = pin
-		if err := st.pumpSave(cfg); err != nil {
-			return true, err
-		}
-		return true, pumpReview776QueueFinishAccepted(ctx, e, cfg, st, dir, thread, pin, false)
-	case deliverReconcileRefused:
-		// The bridge settled the attempt as a refusal before any dispatch, so nothing was sent and the
-		// notices may be tried again under the batch's current id.
-		return false, pumpReview776QueuePinLift(cfg, st, thread, nil)
+		return false, pumpQueueRefusedLift(ctx, cfg, st, dir, thread, pin, nil)
 	case deliverReconcileResendSame, deliverReconcileResendNew:
 		// Nothing was sent under the attempt, so the caller may make it under the queue's gate.
 		return false, nil
@@ -602,7 +630,7 @@ func pumpReview776QueueSettle(ctx context.Context, e *Env, cfg *Config, st *pump
 		if !pumpReview776QueueRefusalSettled(cfg, pin.LogicalID) {
 			return true, err
 		}
-		return true, pumpReview776QueuePinLift(cfg, st, thread, err)
+		return true, pumpQueueRefusedLift(ctx, cfg, st, dir, thread, pin, err)
 	default:
 		// Unknown: the pin stays, so the next round reconciles the same logical id and body.
 		return true, err
@@ -707,6 +735,100 @@ func pumpReview776QueueFinishAccepted(ctx context.Context, e *Env, cfg *Config, 
 	delete(st.QueueAttempt, thread)
 	delete(st.QueueAccepted, thread)
 	return st.pumpSave(cfg)
+}
+
+// pumpReview776QueueAcceptPin completes a pin whose attempt is settled as accepted. A pin that cannot
+// prove which notices the attempt carried is held instead, so nothing is archived undelivered and
+// nothing is sent twice. It reports the thread as settled for this round.
+func pumpReview776QueueAcceptPin(ctx context.Context, e *Env, cfg *Config, st *pumpState, dir, thread string, pin pumpReview776QueuePin) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return true, err
+	}
+	if pin.Legacy || len(pin.SHA256) == 0 {
+		// The attempt's text is not recoverable, so no queued notice can be shown to be one it
+		// carried: the pin holds the thread rather than archiving an undelivered notice.
+		pin.Held = true
+		st.QueueAttempt[thread] = pin
+		return true, st.pumpSave(cfg)
+	}
+	pin.Accepted = true
+	st.QueueAttempt[thread] = pin
+	if err := st.pumpSave(cfg); err != nil {
+		return true, err
+	}
+	return true, pumpReview776QueueFinishAccepted(ctx, e, cfg, st, dir, thread, pin, false)
+}
+
+// pumpQueueRefusedLift drops the pin of a batch the ledger proves the bridge refused, and counts the
+// refusal against the batch id, so the batch's next attempt goes out under its next ordinal. The
+// pumpQueueRefusalLimit-th refusal of one id moves the batch's notices to refused/ instead, with a
+// log line naming each one, so the notices queued behind it flow. A pin without digests (a legacy
+// pin) is only lifted: its members cannot be told apart from the ones that may have been sent.
+func pumpQueueRefusedLift(ctx context.Context, cfg *Config, st *pumpState, dir, thread string, pin pumpReview776QueuePin, cause error) error {
+	if err := ctx.Err(); err != nil {
+		// The count, the moves and the pin clear are durable effects: a cancelled round makes none.
+		return err
+	}
+	if len(pin.SHA256) == 0 {
+		return pumpReview776QueuePinLift(cfg, st, thread, cause)
+	}
+	base := pin.Base
+	if base == "" {
+		base = pin.LogicalID
+	}
+	count := 1
+	if refusal := st.QueueRefused[thread]; refusal.ID == base {
+		count = refusal.Count + 1
+	}
+	if count < pumpQueueRefusalLimit {
+		st.QueueRefused[thread] = pumpQueueRefusal{ID: base, Count: count}
+		return pumpReview776QueuePinLift(cfg, st, thread, cause)
+	}
+	refused := filepath.Join(dir, pumpQueueRefusedDir)
+	// The directory is checked the way the queue root is, so a symlink planted in its place cannot
+	// redirect the moves outside the thread.
+	if err := pumpQueueSafe(refused, "refused directory"); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(refused, 0o700); err != nil {
+		return err
+	}
+	reason := pumpQueueRefusalReason(cfg, pin.LogicalID)
+	for _, name := range pin.Names {
+		destination, moved, err := pumpReview776QueueMoveVerified(dir, name, refused, pin.SHA256[name])
+		if err != nil {
+			return err
+		}
+		if !moved {
+			pumpLog(cfg, fmt.Sprintf("queue %s: the refused notice %s was replaced or is gone; left queued", thread, name))
+			continue
+		}
+		info, err := os.Stat(destination)
+		if err != nil {
+			return err
+		}
+		pumpLog(cfg, fmt.Sprintf("queue %s: refused notice %s %d bytes moved to %s/%s after %d refusals: %s",
+			thread, name, info.Size(), pumpQueueRefusedDir, filepath.Base(destination), count, reason))
+	}
+	delete(st.QueueRefused, thread)
+	return pumpReview776QueuePinLift(cfg, st, thread, cause)
+}
+
+// pumpQueueRefusalReason is the bridge's last answer the ledger keeps for a logical id, cut short and
+// kept on one line for the log.
+func pumpQueueRefusalReason(cfg *Config, logicalID string) string {
+	record, known, err := deliverLoad(cfg, logicalID)
+	if err != nil || !known || len(record.Attempts) == 0 {
+		return "no receipt excerpt"
+	}
+	excerpt := strings.Join(strings.Fields(record.Attempts[len(record.Attempts)-1].ReceiptExcerpt), " ")
+	if excerpt == "" {
+		return "refused"
+	}
+	if len(excerpt) > 200 {
+		excerpt = strings.ToValidUTF8(excerpt[:200], "") + "..."
+	}
+	return excerpt
 }
 
 // pumpReview776QueueRefusalSettled reports whether the ledger holds a record for a logical id that
@@ -1025,6 +1147,79 @@ const (
 	pumpReview776QueueLegacyHold
 )
 
+// pumpReview776QueueLegacyCandidate is one set of notice names a pre-change ledger record may cover.
+type pumpReview776QueueLegacyCandidate struct {
+	names, texts []string
+	// byAge marks an oldest-first set rather than a name-ordered prefix. Its record is adopted only
+	// when the record was written after every member was last modified.
+	byAge    bool
+	modTimes []time.Time
+}
+
+// pumpReview776QueueLegacyCandidates lists the sets a pre-change record may cover, longest first: the
+// name-ordered prefixes of the queue, then the oldest-first prefixes, each name-ordered once taken.
+// An oldest-first prefix matters when a notice added later sorts before the notices the pre-change
+// attempt carried: the attempt was then the oldest notices, not the name-ordered prefix. A set that
+// is already a name-ordered prefix is not listed twice.
+func pumpReview776QueueLegacyCandidates(dir string, batch pumpReview776QueueBatch) []pumpReview776QueueLegacyCandidate {
+	var out []pumpReview776QueueLegacyCandidate
+	for cut := len(batch.names); cut >= 1; cut-- {
+		out = append(out, pumpReview776QueueLegacyCandidate{names: batch.names[:cut], texts: batch.texts[:cut]})
+	}
+	modTimes := make([]time.Time, len(batch.names))
+	for i, name := range batch.names {
+		info, err := os.Lstat(filepath.Join(dir, name))
+		if err != nil {
+			// Without every modification time there is no oldest-first order; the name-ordered sets stand.
+			return out
+		}
+		modTimes[i] = info.ModTime()
+	}
+	order := make([]int, len(batch.names))
+	for i := range order {
+		order[i] = i
+	}
+	sort.SliceStable(order, func(a, b int) bool {
+		ma, mb := modTimes[order[a]], modTimes[order[b]]
+		if !ma.Equal(mb) {
+			return ma.Before(mb)
+		}
+		return batch.names[order[a]] < batch.names[order[b]]
+	})
+	for cut := len(order); cut >= 1; cut-- {
+		picked := append([]int(nil), order[:cut]...)
+		// batch.names is name-ordered, so the sorted indices list the set in name order.
+		sort.Ints(picked)
+		if picked[cut-1] == cut-1 {
+			// The set is the name-ordered prefix of the same length, already listed above.
+			continue
+		}
+		candidate := pumpReview776QueueLegacyCandidate{byAge: true}
+		for _, i := range picked {
+			candidate.names = append(candidate.names, batch.names[i])
+			candidate.texts = append(candidate.texts, batch.texts[i])
+			candidate.modTimes = append(candidate.modTimes, modTimes[i])
+		}
+		out = append(out, candidate)
+	}
+	return out
+}
+
+// pumpReview776QueueCreatedAfter reports whether a ledger record was written after every member of a
+// set was last modified. A record whose stamp does not parse proves nothing, so it is not adopted.
+func pumpReview776QueueCreatedAfter(createdAt string, modTimes []time.Time) bool {
+	created, err := time.Parse(time.RFC3339, createdAt)
+	if err != nil {
+		return false
+	}
+	for _, modified := range modTimes {
+		if modified.After(created) {
+			return false
+		}
+	}
+	return true
+}
+
 // pumpReview776QueueAdoptLegacy looks for a pre-change attempt a batch that has no pin still has to
 // answer for, so an upgrade neither re-sends a delivery that may already have gone nor sends an
 // accepted one again. It answers with the action the caller takes.
@@ -1047,15 +1242,20 @@ const (
 //
 // A settled accepted record is completed only while its own text is still the text on disk, because
 // that is the only case where every member is known to have been delivered.
-func pumpReview776QueueAdoptLegacy(cfg *Config, st *pumpState, thread string, batch pumpReview776QueueBatch) (pumpReview776QueueLegacyAction, error) {
-	for cut := len(batch.names); cut >= 1; cut-- {
-		names, texts := batch.names[:cut], batch.texts[:cut]
+func pumpReview776QueueAdoptLegacy(cfg *Config, st *pumpState, dir, thread string, batch pumpReview776QueueBatch) (pumpReview776QueueLegacyAction, error) {
+	for _, candidate := range pumpReview776QueueLegacyCandidates(dir, batch) {
+		names, texts := candidate.names, candidate.texts
 		oldID := pumpQueueLegacyBatchID(thread, names)
 		record, known, err := deliverLoad(cfg, oldID)
 		if err != nil {
 			return pumpReview776QueueLegacyNone, err
 		}
 		if !known {
+			continue
+		}
+		if candidate.byAge && !pumpReview776QueueCreatedAfter(record.CreatedAt, candidate.modTimes) {
+			// The attempt was written before a member of this oldest-first set was modified, so the set
+			// is not the one the attempt covered.
 			continue
 		}
 		body := pumpReview776QueueBody(texts)
