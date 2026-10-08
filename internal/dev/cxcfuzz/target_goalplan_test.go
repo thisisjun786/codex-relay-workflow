@@ -88,7 +88,7 @@ func goalplanAnswerText(readUpdatedAt, openedAt, writeStamp string) any {
 	return maskTimestamps(pyjson.Object{
 		{Key: "kind", Value: "ok"},
 		{Key: "plan", Value: goalplanDoc(readUpdatedAt, openedAt)},
-		{Key: "written", Value: goalplanDoc(writeStamp, openedAt)},
+		{Key: "written", Value: testWrittenStamp(goalplanDoc(writeStamp, openedAt))},
 	}, false)
 }
 

@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
@@ -64,6 +65,7 @@ func stateText(s state.State) string {
 func stateGo(input any, env Env) (any, error) {
 	raw, _ := os.ReadFile(state.StatePath(env.Root, stateSessionID))
 	s, unreadable := state.ReadStateStrict(env.Root, stateSessionID)
+	from := time.Now()
 	if err := state.WriteState(env.Root, s); err != nil {
 		return maskTimestamps(stateAnswer(unreadable, s, "", err), readDefaultedUpdatedAt(raw)), nil
 	}
@@ -71,7 +73,7 @@ func stateGo(input any, env Env) (any, error) {
 	if err != nil {
 		return maskTimestamps(stateAnswer(unreadable, s, "", err), readDefaultedUpdatedAt(raw)), nil
 	}
-	return maskTimestamps(stateAnswer(unreadable, s, string(written), nil), readDefaultedUpdatedAt(raw)), nil
+	return maskTimestamps(stateAnswer(unreadable, s, maskWrittenStamp(string(written), from, time.Now()), nil), readDefaultedUpdatedAt(raw)), nil
 }
 
 // isTimestampText reports whether text is an ISO-8601 instant with milliseconds, the shape a
@@ -131,8 +133,6 @@ func maskTimestamps(answer any, maskRead bool) any {
 		switch item.Key {
 		case "state", "plan":
 			out = append(out, pyjson.Field{Key: item.Key, Value: maskDocumentText(item.Value, maskRead)})
-		case "written":
-			out = append(out, pyjson.Field{Key: item.Key, Value: maskDocumentText(item.Value, true)})
 		default:
 			out = append(out, item)
 		}
@@ -147,14 +147,14 @@ func maskDocumentText(value any, stamp bool) any {
 	if !ok || !stamp {
 		return value
 	}
-	return maskTopLevelTimestamp(text)
+	return maskTopLevelTimestamp(text, anyStamp)
 }
 
 // maskTopLevelTimestamp is text with the value of its top-level updatedAt rewritten to the
 // placeholder, when that value is a wall-clock stamp. The span comes from a token walk of the text,
 // so the replacement cannot touch a nested key or any other byte, and a value that is not a stamp is
 // left as stored.
-func maskTopLevelTimestamp(text string) string {
+func maskTopLevelTimestamp(text string, accept func(stamp string) bool) string {
 	dec := json.NewDecoder(strings.NewReader(text))
 	dec.UseNumber()
 	tok, err := dec.Token()
@@ -174,7 +174,7 @@ func maskTopLevelTimestamp(text string) string {
 			continue
 		}
 		var stamp string
-		if json.Unmarshal(raw, &stamp) != nil || !isTimestampText(stamp) {
+		if json.Unmarshal(raw, &stamp) != nil || !isTimestampText(stamp) || !accept(stamp) {
 			return text
 		}
 		end := int(dec.InputOffset())

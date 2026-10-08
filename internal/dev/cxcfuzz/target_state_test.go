@@ -88,7 +88,7 @@ func stateAnswerText(readUpdatedAt, recordedAt, writeStamp string, maskRead bool
 	return maskTimestamps(pyjson.Object{
 		{Key: "unreadable", Value: false},
 		{Key: "state", Value: stateDoc(readUpdatedAt, recordedAt)},
-		{Key: "written", Value: stateDoc(writeStamp, recordedAt)},
+		{Key: "written", Value: testWrittenStamp(stateDoc(writeStamp, recordedAt))},
 	}, maskRead)
 }
 
@@ -183,7 +183,7 @@ func TestStateReadDefaultedUpdatedAtUsesTheReaderDecoder(t *testing.T) {
 func TestMaskTopLevelTimestampLeavesANestedUpdatedAt(t *testing.T) {
 	text := "{\n  \"finalGate\": {\n    \"updatedAt\": \"2020-01-01T00:00:00.000Z\"\n  },\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"objective\": \"o\"\n}"
 	want := "{\n  \"finalGate\": {\n    \"updatedAt\": \"2020-01-01T00:00:00.000Z\"\n  },\n  \"updatedAt\": \"" + timestampPlaceholder + "\",\n  \"objective\": \"o\"\n}"
-	if got := maskTopLevelTimestamp(text); got != want {
+	if got := maskTopLevelTimestamp(text, anyStamp); got != want {
 		t.Fatalf("the mask changed more than the top-level updatedAt:\n got %q\nwant %q", got, want)
 	}
 }
@@ -199,7 +199,7 @@ func TestMaskTopLevelTimestampLeavesEverythingElse(t *testing.T) {
 		"",
 		"{\"other\": \"2026-01-01T00:00:00.000Z\"}",
 	} {
-		if got := maskTopLevelTimestamp(text); got != text {
+		if got := maskTopLevelTimestamp(text, anyStamp); got != text {
 			t.Errorf("maskTopLevelTimestamp(%q) = %q, want it unchanged", text, got)
 		}
 	}

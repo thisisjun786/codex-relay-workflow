@@ -274,7 +274,12 @@ func lookPathIn(env []string, command string) (string, error) {
 		return "", exec.ErrNotFound
 	}
 	if strings.ContainsRune(command, filepath.Separator) {
-		return command, nil
+		// An explicit path is a requirement too: it must name an executable regular file, as the search
+		// below would find one (CRW-978 c3a).
+		if info, err := os.Stat(command); err == nil && !info.IsDir() && info.Mode()&0o111 != 0 {
+			return command, nil
+		}
+		return "", exec.ErrNotFound
 	}
 	for _, dir := range filepath.SplitList(path) {
 		if dir == "" {

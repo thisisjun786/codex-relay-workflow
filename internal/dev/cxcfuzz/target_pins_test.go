@@ -41,7 +41,7 @@ func TestPinnedDivergencesAreRealDivergences(t *testing.T) {
 
 // caseIsADivergence runs one case's Go side and reports whether it still answers something other than
 // the case's stored oracle answer. A case whose Go answer equals the oracle's is not a divergence.
-func caseIsADivergence(target Target, c Case) string {
+func caseIsADivergence(target Target, c Case) (problem string) {
 	input, err := decode(c.Input)
 	if err != nil {
 		return "the input is not JSON: " + err.Error()
@@ -50,7 +50,7 @@ func caseIsADivergence(target Target, c Case) string {
 	if err != nil {
 		return err.Error()
 	}
-	defer func() { _ = os.RemoveAll(root) }()
+	defer func() { problem = joinRemoval(problem, root) }()
 	if err := PrepareRoot(root); err != nil {
 		return "the case root was not prepared: " + err.Error()
 	}
@@ -105,7 +105,7 @@ func TestPinnedOracleAnswersMatchTheOracle(t *testing.T) {
 // caseOracleMatches replays one case through the real oracle worker and reports whether its answer
 // still equals the case's stored oracle field. It builds the case root and calls the pool the way a
 // campaign does, and removes the root however it returns, so a failure inside it leaks nothing.
-func caseOracleMatches(target Target, pool *Pool, c Case) string {
+func caseOracleMatches(target Target, pool *Pool, c Case) (problem string) {
 	input, err := decode(c.Input)
 	if err != nil {
 		return "the input is not JSON: " + err.Error()
@@ -114,7 +114,7 @@ func caseOracleMatches(target Target, pool *Pool, c Case) string {
 	if err != nil {
 		return err.Error()
 	}
-	defer func() { _ = os.RemoveAll(root) }()
+	defer func() { problem = joinRemoval(problem, root) }()
 	if err := PrepareRoot(root); err != nil {
 		return "the case root was not prepared: " + err.Error()
 	}
@@ -165,4 +165,17 @@ func recursionPinMatches(live any, pinned string) bool {
 		}
 	}
 	return true
+}
+
+// joinRemoval reports a pin's case root that could not be removed. A removal failure is never dropped: it
+// stays on the problem already found, or stands alone when the pin had none (CRW-978 c3b).
+func joinRemoval(problem, root string) string {
+	err := os.RemoveAll(root)
+	if err == nil {
+		return problem
+	}
+	if problem == "" {
+		return "the case root " + root + " was not removed: " + err.Error()
+	}
+	return problem + "; the case root " + root + " was not removed: " + err.Error()
 }

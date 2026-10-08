@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/goalplan"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
@@ -116,6 +117,7 @@ func goalplanGo(input any, env Env) (any, error) {
 	if read.Plan == nil {
 		return maskTimestamps(answer, false), nil
 	}
+	from := time.Now()
 	locked, err := goalplan.WithGoalplanWriteLock(env.Root, goalplanSlug, func(plan *goalplan.Goalplan) (struct{}, error) {
 		return struct{}{}, goalplan.WriteGoalplan(env.Root, plan)
 	}, nil)
@@ -131,7 +133,7 @@ func goalplanGo(input any, env Env) (any, error) {
 	if err != nil {
 		return maskTimestamps(answer.Set("writeError", err.Error()), false), nil
 	}
-	return maskTimestamps(answer.Set("written", string(written)), false), nil
+	return maskTimestamps(answer.Set("written", maskWrittenStamp(string(written), from, time.Now())), false), nil
 }
 
 // goalplanAnswer is the read half of both sides' answers: the diagnostic kind and field, and the

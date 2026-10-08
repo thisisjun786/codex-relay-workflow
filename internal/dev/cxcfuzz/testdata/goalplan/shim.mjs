@@ -75,6 +75,13 @@ function isLink(path) {
 // generation 3, c8). The read form needs no mask: the oracle's reader defaults a missing or non-text
 // updatedAt to the epoch, a fixed value both sides keep, and it never stamps the clock.
 const TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+
+// stampWithin reports whether a stamp is an instant between from and to, the clock readings a write was
+// made between. Only a stamp the write made is masked as its own (CRW-978 c3c).
+function stampWithin(stamp, from, to) {
+  const at = Date.parse(stamp);
+  return Number.isFinite(at) && at >= from && at <= to;
+}
 const TIMESTAMP_PLACEHOLDER = "@TS@";
 
 // topLevelUpdatedAtSpan is the [start, end) span of the string value of the plan's top-level
@@ -117,7 +124,7 @@ function topLevelUpdatedAtSpan(text) {
 // maskUpdatedAt is the plan text with the value of its top-level updatedAt replaced by the
 // placeholder, when that value is a wall-clock stamp. A parsed copy decides whether to mask; the
 // replacement is spliced into the original text so every other byte is unchanged.
-function maskUpdatedAt(text) {
+function maskUpdatedAt(text, accept = () => true) {
   let parsed;
   try {
     parsed = JSON.parse(text);
@@ -125,7 +132,7 @@ function maskUpdatedAt(text) {
     return text;
   }
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return text;
-  if (typeof parsed.updatedAt !== "string" || !TIMESTAMP.test(parsed.updatedAt)) return text;
+  if (typeof parsed.updatedAt !== "string" || !TIMESTAMP.test(parsed.updatedAt) || !accept(parsed.updatedAt)) return text;
   const span = topLevelUpdatedAtSpan(text);
   if (span === null) return text;
   return text.slice(0, span[0]) + '"' + TIMESTAMP_PLACEHOLDER + '"' + text.slice(span[1]);
@@ -176,6 +183,7 @@ function run(request) {
   }
   answer.plan = read.plan === null ? null : JSON.stringify(read.plan, null, 2);
   if (read.plan === null) return answer;
+  const from = Date.now();
   try {
     writeGoalplan(root, read.plan);
   } catch (error) {
@@ -183,7 +191,7 @@ function run(request) {
     return answer;
   }
   try {
-    answer.written = maskUpdatedAt(readFileSync(goalplanPath(root, SLUG), "utf8"));
+    answer.written = maskUpdatedAt(readFileSync(goalplanPath(root, SLUG), "utf8"), (stamp) => stampWithin(stamp, from, Date.now()));
   } catch (error) {
     answer.writeError = error instanceof Error ? error.message : String(error);
   }
