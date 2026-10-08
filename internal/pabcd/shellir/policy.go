@@ -5,7 +5,8 @@ import "strings"
 func isWrapper(name string) bool {
 	switch name {
 	case "env", "command", "builtin", "exec", "nohup", "nice", "ionice", "timeout", "time",
-		"stdbuf", "setsid", "sudo", "doas", "xargs", "busybox", "find", "parallel":
+		"stdbuf", "setsid", "sudo", "doas", "xargs", "busybox", "find", "parallel",
+		"watch", "flock", "chroot", "script", "strace", "ltrace", "entr", "at", "batch":
 		return true
 	}
 	return false

@@ -917,9 +917,18 @@ func (w *walker) wrapped(name string, args []Word, assigns []Assign, redirs []Re
 	if err := checkAssigns(u.assigns, st); err != nil {
 		return err
 	}
-	if name == "xargs" || name == "find" || name == "parallel" {
+	if name == "xargs" || name == "find" || name == "parallel" || name == "entr" {
 		// The operands of these programs arrive at run time, so the inner program is marked.
 		ctx.Carrier = name
+	}
+	if u.recordName != "" {
+		// The wrapper's own file operand is a write of its own (script transcript, strace -o FILE).
+		w.out = append(w.out, Exec{Kind: KindCommand, Program: Word{Known: true, Value: u.recordName}, Name: u.recordName,
+			Args: u.record, Redirs: redirs, Dir: st.dir, Ctx: ctx})
+	}
+	if u.isShell {
+		// A shell string the wrapper runs is code the text shows: it is read by the same layer, as bash -c is.
+		return w.carried(u.shell, st.clone(), ctx, u.shellCarrier)
 	}
 	inherited := append(append([]Assign{}, assigns...), u.assigns...)
 	// An external program runs in a child process: it cannot change this shell's directory or variables. Its inner

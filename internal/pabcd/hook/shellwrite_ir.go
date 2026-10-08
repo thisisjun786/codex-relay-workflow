@@ -212,7 +212,8 @@ func shellIRVerbDests(e shellir.Exec) []string {
 		return []string{shellIRUnknownDest}
 	}
 	switch filepath.Base(e.Name) {
-	case "tee":
+	case "tee", "script", "strace", "ltrace":
+		// tee writes its operands; script writes its transcript and strace or ltrace -o writes the trace to its file.
 		return shellIRTeeDests(args)
 	case "cp", "mv", "install":
 		return shellIRCopyDests(args)
@@ -450,7 +451,7 @@ func ShellWriteDestinations(command string) []string {
 // shellIRRunTimeCarrier names the carriers whose operands are made at run time: the program they run gets its operands
 // from the input or from the file list, not from the text (xargs, find -exec and -execdir and -ok, parallel).
 func shellIRRunTimeCarrier(carrier string) bool {
-	return carrier == "xargs" || carrier == "find" || carrier == "parallel"
+	return carrier == "xargs" || carrier == "find" || carrier == "parallel" || carrier == "entr"
 }
 
 // shellIRWriterVerb names the programs whose destination shellIRVerbDests reads.

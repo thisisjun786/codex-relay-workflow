@@ -7,12 +7,22 @@ import "strings"
 type unwrapped struct {
 	inner   [][]Word
 	assigns []Assign
+	// isShell marks a program that runs a shell string (shell) under shellCarrier, read by the same layer.
+	isShell      bool
+	shell        string
+	shellCarrier string
+	// recordName and record name the wrapper's own file operand (script's transcript, strace -o) as a synthetic record.
+	recordName string
+	record     []Word
 }
 
 // unwrapCommand applies the option grammar of one wrapper. An option the
 // grammar does not list makes the program position unproven.
 func unwrapCommand(name string, args []Word) (unwrapped, error) {
 	var u unwrapped
+	if ru, handled, err := unwrapRunner(name, args); handled {
+		return ru, err
+	}
 	switch name {
 	case "parallel":
 		// parallel runs the program its ::: operands name at run time, so the program it runs is not in the text.
