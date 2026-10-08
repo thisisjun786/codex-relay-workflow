@@ -1210,7 +1210,7 @@ The rules for that transition:
 - To leave the lane, the pull request's commits go to the integrator: the head is verified locally with the verification record and fast-forwarded to `dev`, and the pull request is closed with a comment that names the landing commit.
 - The one run each external reviewer makes on a pull request that is still open follows [The one run of each reviewer](#the-one-run-of-each-reviewer-awaited-before-the-receipt).
 
-The subsections below are the lane's mechanics (bundles, the merge lane and its base conflicts) and apply only while such a pull request exists.
+The subsections below are the lane's mechanics (bundles, the merge lane and its base conflicts) and apply only while such a pull request exists. A bundle pull request is opened only over members that are already open pull requests; internal task-branch work is never bundled into one, and the integrator fast-forwards it.
 
 ### Late threads on an in-flight pull request (temporary procedure)
 
