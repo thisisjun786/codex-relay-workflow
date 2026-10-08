@@ -596,7 +596,9 @@ func (w *walker) call(c *syntax.CallExpr, redirs []Redir, st *state, ctx Context
 		if err := checkAssigns(assigns, st); err != nil {
 			return err
 		}
-		w.out = append(w.out, Exec{Kind: KindCommand, Assigns: assigns, Redirs: redirs, Dir: st.dir, Ctx: ctx})
+		// A command with no words is a program position that is empty, not an unknown one: a redirection alone
+		// (">file") creates or truncates its file, and the record carries that write.
+		w.out = append(w.out, Exec{Kind: KindCommand, Program: Word{Known: true}, Assigns: assigns, Redirs: redirs, Dir: st.dir, Ctx: ctx})
 		for _, a := range assigns {
 			st.setVar(a.Name, a.Value, a.Append)
 		}

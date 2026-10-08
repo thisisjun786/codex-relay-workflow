@@ -40,7 +40,8 @@ func shellIRUnique(in []string) []string {
 	seen := map[string]bool{}
 	var out []string
 	for _, d := range in {
-		if !seen[d] {
+		// A write to /dev/null changes no file, so it is no destination of the gate.
+		if !seen[d] && d != "/dev/null" {
 			seen[d] = true
 			out = append(out, d)
 		}
