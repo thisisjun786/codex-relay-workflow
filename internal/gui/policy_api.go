@@ -14,6 +14,16 @@ import (
 // reading a real relay.
 var policyWriteSeams policystore.WriteOptions
 
+// policyWriteOptions is the seam set the write route runs with. When no test replaced the running
+// digest read, that read goes through the manage gate like every other in-server manage call.
+func policyWriteOptions() policystore.WriteOptions {
+	opts := policyWriteSeams
+	if opts.Running == nil {
+		opts.Running = gatedRunningDigest
+	}
+	return opts
+}
+
 // policyBody is the GET /api/policy answer. A value the reader could not establish is a named
 // state or a null with a reason, never a zero and never an empty success.
 type policyBody struct {
@@ -114,7 +124,7 @@ func envLookup(key string) (string, bool) { return os.LookupEnv(key) }
 func policyHandler(_ *Env, r *http.Request) (Response, error) {
 	located := policystore.Locate(envLookup)
 	reading := policystore.Read(located)
-	running := policystore.RunningDigest(r.Context(), envLookup)
+	running := gatedRunningDigest(r.Context(), envLookup)
 	applied := policystore.Applied(reading, running)
 	body := policyBody{
 		State:            reading.State,
@@ -186,7 +196,7 @@ func policyWriteHandler(_ *Env, r *http.Request) (Response, error) {
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		return Response{Status: http.StatusBadRequest, Body: jsonError{Error: codeBadRequest}}, nil
 	}
-	result := policystore.Write(r.Context(), envLookup, policyWriteSeams,
+	result := policystore.Write(r.Context(), envLookup, policyWriteOptions(),
 		policystore.WriteRequest{ExpectedDigest: request.ExpectedDigest, Change: request.Change})
 	switch result.Kind {
 	case policystore.WriteStored:
