@@ -88,7 +88,7 @@ func shellIRFStringUnreadable(command string) (string, bool) {
 		if e.Inline == nil || e.Inline.Language != "python" || !e.Inline.Source.Known {
 			continue
 		}
-		if what, bad := shellWriteFStringUnreadableProgram(e.Inline.Source.Value); bad {
+		if what, bad := shellIRProgramUnreadable(e.Inline.Source.Value); bad {
 			return what, true
 		}
 	}
@@ -142,7 +142,7 @@ func shellIRVerbDests(e shellir.Exec) []string {
 		}
 		return out
 	case "sed":
-		return shellIRSedDests(args)
+		return append(shellIRSedScriptDests(args), shellIRSedDests(args)...)
 	case "sort":
 		for i, a := range args {
 			if shellIRPlain(a) == "-o" && i+1 < len(args) {
@@ -315,4 +315,18 @@ func shellIRCopyDests(args []shellir.Word) []string {
 		out = append(out, operands[len(operands)-1])
 	}
 	return append(out, suffixes...)
+}
+
+// shellIRProgramUnreadable reports the what of a Python program the walk cannot finish, read from the exact bytes the
+// shell handed over: an f-string replacement field it cannot read, or a program passed to exec, eval or compile whose
+// first argument is no string literal. The shell has already removed its own quoting, so no unescaped second reading
+// is taken here.
+func shellIRProgramUnreadable(program string) (string, bool) {
+	if what, bad := shellWriteFStringProgramUnreadable(program); bad {
+		return what, true
+	}
+	if _, what := shellWriteExecScan(shellVerbWithoutComments(program, true), true, 0); what != "" {
+		return what, true
+	}
+	return "", false
 }

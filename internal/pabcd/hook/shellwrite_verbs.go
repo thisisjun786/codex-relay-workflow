@@ -302,9 +302,13 @@ func shellWriteExecCalleeExpr(rs []rune, end int) bool {
 			j-- // legal spacing around the attribute operator: runner . exec(src)
 		}
 		if j >= 0 && rs[j] == '.' {
+			k := j
+			for k > 0 && shellVerbSpaceRune(rs[k-1]) {
+				k-- // builtins .exec: blanks may stand before the dot too
+			}
 			for _, module := range []string{"builtins", "__builtins__"} {
 				m := len(module)
-				if j < m || string(rs[j-m:j]) != module || shellWriteExecIdentRune(rs, j-m-1) || j-m-1 >= 0 && rs[j-m-1] == '.' {
+				if k < m || string(rs[k-m:k]) != module || shellWriteExecIdentRune(rs, k-m-1) || k-m-1 >= 0 && rs[k-m-1] == '.' {
 					continue
 				}
 				return true
@@ -442,6 +446,9 @@ func shellWriteExecScanIn(rs []rune, python bool, depth int, outer shellWriteCop
 				if kind == 0 && python && c == '(' {
 					kind = shellWriteCopyModuleKind(rs, i, binds)
 				}
+				if kind == 0 && python && c == '(' {
+					kind = shellWriteVarMethodKind(rs, i)
+				}
 			}
 			stack = append(stack, frame{kind: kind, start: i + 1, recv: recv})
 		case c == ',' && len(stack) > 0:
@@ -456,6 +463,14 @@ func shellWriteExecScanIn(rs []rune, python bool, depth int, outer shellWriteCop
 			switch {
 			case top.kind == 'o' && c == ')':
 				dests = append(dests, shellVerbOpenCall(rs, spans)...)
+			case top.kind == 'q' && c == ')':
+				if len(spans) > 0 && shellVerbSpanText(rs, spans[0]) == "open" {
+					dests = append(dests, shellVerbOpenCall(rs, spans[1:])...)
+				}
+			case top.kind == 'm' && c == ')':
+				dests = append(dests, shellVerbMethodOpenCall(rs, spans)...)
+			case top.kind == 'u' && c == ')':
+				dests = append(dests, shellIRUnknownDest)
 			case top.kind == 'p' && c == ')':
 				if shellVerbWriteMethod(rs, i+1) {
 					dests = append(dests, shellWriteEscapePath(rs, spans)...)
@@ -472,6 +487,8 @@ func shellWriteExecScanIn(rs []rune, python bool, depth int, outer shellWriteCop
 				dests = append(dests, shellWriteCopyDest(rs, spans, 0, "target")...)
 			case top.kind == 'l' && c == ')':
 				dests = append(dests, shellWriteEscapePath(rs, top.recv)...)
+			case top.kind == 'v' && c == ')':
+				dests = append(dests, shellIRUnknownDest)
 			case top.kind == 'e' && c == ')':
 				more, inner := shellWriteExecProgram(rs, spans, depth, binds)
 				dests = append(dests, more...)
@@ -589,8 +606,14 @@ func shellVerbCallKind(rs []rune, i int, c rune) byte {
 	for i > 0 && shellVerbSpaceRune(rs[i-1]) {
 		i--
 	}
-	for _, word := range []string{"open", "Path"} {
+	for _, word := range []string{"open", "Path", "partial"} {
 		if n := len(word); c == '(' && i >= n && string(rs[i-n:i]) == word && (i == n || rs[i-n-1] >= 128 || !shellVerbLetter(byte(rs[i-n-1]), true) && rs[i-n-1] != '_') {
+			if word == "partial" {
+				return 'q' // functools.partial(open, ...): its first argument is open
+			}
+			if word == "open" && shellVerbMethodOpen(rs, i-n) {
+				return 'm'
+			}
 			return word[0] | 0x20 // 'o' or 'p'
 		}
 	}
@@ -687,9 +710,16 @@ func shellWriteCopyLiteral(arg []rune) []string {
 	}
 	names := []string{}
 	for _, earlier := range []bool{true, false} {
-		if file, ok := shellWriteEscapeLiteral(arg, earlier); ok && file != "" && !slices.Contains(names, file) {
+		file, ok := shellWriteEscapeLiteral(arg, earlier)
+		if !ok {
+			continue
+		}
+		if file != "" && !slices.Contains(names, file) {
 			names = append(names, file)
 		}
+	}
+	if len(names) == 0 {
+		return []string{shellIRUnknownDest}
 	}
 	return names
 }
@@ -985,13 +1015,31 @@ func shellVerbOpenCall(rs []rune, spans [][2]int) []string {
 	names := []string{}
 	_, decodedOK := shellVerbLiteral(mode)
 	named := !decodedOK && strings.Contains(string(mode), "\\N{")
+	// writes reads the mode the way open() would: a literal with w, a, x or + writes, a computed mode may write, and no mode
+	// is read-only (CRW-998: Path.open("w".strip()) and the like).
+	writes := func(earlier bool) bool {
+		if len(mode) == 0 {
+			return false
+		}
+		kind, ok := shellWriteEscapeLiteral(mode, earlier)
+		return !ok || strings.ContainsAny(kind, "wax+")
+	}
+	anyKnown := false
 	for _, earlier := range []bool{true, false} {
-		if kind, ok := shellWriteEscapeLiteral(mode, earlier); !named && !(ok && strings.ContainsAny(kind, "wax+")) {
+		if !named && !writes(earlier) {
 			continue
 		}
-		if file, ok := shellWriteEscapeLiteral(path, earlier); ok && file != "" && !slices.Contains(names, file) {
+		file, ok := shellWriteEscapeLiteral(path, earlier)
+		if !ok {
+			continue
+		}
+		anyKnown = true
+		if file != "" && !slices.Contains(names, file) {
 			names = append(names, file)
 		}
+	}
+	if !anyKnown && (named || writes(true) || writes(false)) {
+		names = append(names, shellIRUnknownDest)
 	}
 	return names
 }
@@ -1447,6 +1495,9 @@ func shellWriteEscapePath(rs []rune, spans [][2]int) []string {
 	if len(path) > 0 {
 		names = append(names, string(path))
 	}
+	if !known {
+		names = append(names, shellIRUnknownDest)
+	}
 	if (dynamic || parts == 1) && head != "" && head != string(path) {
 		names = append(names, head)
 	}
@@ -1645,4 +1696,92 @@ func shellWriteEscapeJS(body string, template bool) (string, bool) {
 		}
 	}
 	return shellString(units), true
+}
+
+// shellWriteVarMethodKind reads a method call on a receiver the reader cannot name (p.replace(, p.rename(, p.symlink_to(,
+// p.hardlink_to() at the bracket i: 'r' for rename and replace, whose destination is their first argument, 'v' for the
+// link methods, whose destination is the receiver, which is unknown here. A plain call is no such method.
+func shellWriteVarMethodKind(rs []rune, i int) byte {
+	j := i
+	for j > 0 && shellVerbSpaceRune(rs[j-1]) {
+		j--
+	}
+	k := j
+	for k > 0 && shellWriteCopyIdentRune(rs[k-1]) {
+		k--
+	}
+	name := string(rs[k:j])
+	for k > 0 && shellVerbSpaceRune(rs[k-1]) {
+		k--
+	}
+	if k == 0 || rs[k-1] != '.' {
+		return 0
+	}
+	switch name {
+	case "replace", "rename":
+		return 'r'
+	case "symlink_to", "hardlink_to":
+		return 'v'
+	}
+	return 0
+}
+
+// shellVerbSpanText is the text of one argument span, without the blanks around it.
+func shellVerbSpanText(rs []rune, span [2]int) string {
+	return strings.TrimSpace(string(rs[span[0]:span[1]]))
+}
+
+// shellVerbMethodOpen reports whether the open at rs[at:] is a method call on a receiver that is not a module of this
+// reader's known file openers: receiver.open(mode), whose file is the receiver and whose first argument is the mode.
+func shellVerbMethodOpen(rs []rune, at int) bool {
+	j := at
+	for j > 0 && shellVerbSpaceRune(rs[j-1]) {
+		j--
+	}
+	if j == 0 || rs[j-1] != '.' {
+		return false
+	}
+	j--
+	for j > 0 && shellVerbSpaceRune(rs[j-1]) {
+		j--
+	}
+	k := j
+	for k > 0 && shellWriteCopyIdentRune(rs[k-1]) {
+		k--
+	}
+	switch string(rs[k:j]) {
+	case "os", "io", "builtins", "codecs", "gzip", "bz2", "lzma", "tarfile", "zipfile", "webbrowser", "__builtins__":
+		return false
+	}
+	return true
+}
+
+// shellVerbMethodOpenCall names the write a receiver.open(mode) call makes: a mode that writes names the receiver, which is
+// unknown here, so the call is an unknown destination; a read mode, or no mode, names nothing.
+func shellVerbMethodOpenCall(rs []rune, spans [][2]int) []string {
+	var mode []rune
+	positional := 0
+	for _, span := range spans {
+		arg := rs[span[0]:span[1]]
+		if shellVerbBlank(arg) {
+			continue
+		}
+		if name, value, keyword := shellVerbKeywordArg(arg); keyword {
+			if name == "mode" {
+				mode = value
+			}
+			continue
+		}
+		if positional == 0 {
+			mode = arg
+		}
+		positional++
+	}
+	if len(mode) == 0 {
+		return nil
+	}
+	if kind, ok := shellWriteEscapeLiteral(mode, true); ok && !strings.ContainsAny(kind, "wax+") {
+		return nil
+	}
+	return []string{shellIRUnknownDest}
 }
