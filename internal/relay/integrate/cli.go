@@ -79,13 +79,21 @@ func runIntegrate(ctx context.Context, services dispatch.Services, args dispatch
 	for i, c := range result.ContainedUnverified {
 		unverified[i] = contract.OrderedObject{{Key: "node_id", Value: c.NodeID}, {Key: "acceptance_id", Value: c.AcceptanceID}, {Key: "head_sha", Value: c.HeadSHA}, {Key: "contained_in", Value: c.ContainedIn}}
 	}
+	reconciled := make([]any, len(result.Reconciled))
+	for i, b := range result.Reconciled {
+		reconciled[i] = b
+	}
+	abandoned := make([]any, len(result.Abandoned))
+	for i, b := range result.Abandoned {
+		abandoned[i] = b
+	}
 	return contract.OrderedObject{
 		{Key: "ok", Value: true}, {Key: "schema", Value: SchemaIntegrate}, {Key: "plan_id", Value: result.Plan}, {Key: "batch_id", Value: result.BatchID},
 		{Key: "checkout", Value: result.Checkout}, {Key: "integration_ref", Value: result.Ref}, {Key: "base_ref", Value: result.BaseRef},
 		{Key: "old_head", Value: result.OldHead}, {Key: "new_head", Value: result.NewHead},
 		{Key: "merged", Value: merged}, {Key: "split", Value: split}, {Key: "pending_marks", Value: pending},
 		{Key: "verification", Value: contract.OrderedObject{{Key: "result", Value: result.Verification.Result}, {Key: "tree", Value: result.Verification.TreeHash}, {Key: "digest", Value: result.VerificationDigest}}},
-		{Key: "marked_events", Value: events}, {Key: "already_contained", Value: already}, {Key: "contained_unverified", Value: unverified}, {Key: "targets", Value: targets},
+		{Key: "marked_events", Value: events}, {Key: "already_contained", Value: already}, {Key: "contained_unverified", Value: unverified}, {Key: "reconciled_batches", Value: reconciled}, {Key: "abandoned_batches", Value: abandoned}, {Key: "targets", Value: targets},
 	}, nil
 }
 
