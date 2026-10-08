@@ -931,7 +931,7 @@ WHEN NEW.acceptance_id IS NULL
 BEGIN SELECT RAISE(ABORT, 'dag_acceptance_premerge.acceptance_id is NULL: a row is addressed by a non-empty id'); END`,
 	`CREATE TRIGGER IF NOT EXISTS dag_acceptance_premerge_no_update BEFORE UPDATE ON dag_acceptance_premerge
 BEGIN SELECT RAISE(ABORT, 'dag_acceptance_premerge rows are append-only: never updated'); END`,
-`CREATE TRIGGER IF NOT EXISTS dag_acceptance_premerge_no_delete BEFORE DELETE ON dag_acceptance_premerge
+	`CREATE TRIGGER IF NOT EXISTS dag_acceptance_premerge_no_delete BEFORE DELETE ON dag_acceptance_premerge
 BEGIN SELECT RAISE(ABORT, 'dag_acceptance_premerge rows are append-only: never deleted'); END`,
 	// CRW-952: the pre-merge record a re-validation was judged on (criteria re-registered). One row per revalidation, so the
 	// acceptance keeps the record it was accepted with and integration judges the latest revalidation record when there is one.

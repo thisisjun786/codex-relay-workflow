@@ -598,6 +598,32 @@ A batch moves the branch in one fenced transaction: the coordinator epoch is che
 **The push (D6).** `dag-integrate-push` reads the relay store and pushes only a tip the relay moved the branch onto: a batch with a moved record whose new head is the tip and whose verification passed. A commit added on top of such a move, or a branch the relay did not verify, is refused with `merge_base_mismatch` before the remote is read, and the remote keeps its commit. The push stays fast-forward only, with no force, and a GitHub outage defers it.
 
 
+## The pre-merge record (CRW-952)
+
+An implementation node's acceptance needs the pre-merge evaluation record, `premerge-record/1`, and the relay judges that record itself. The record names the issue, the node, the head it evaluated, the dev commit, the criteria digest the plan held when the head was judged, the grader, the criteria with their verdicts, the defects, the score, the summary and the parent's dispositions. Its schema is `contract/schema/premerge-record.schema.json`. The validator, the canonical digest (sha256 of the keys-sorted, whitespace-free UTF-8 form) and the judgment live in one package, `internal/relay/acceptance/premerge`; every relay call uses that judgment, and internal/manage imports the same package.
+
+`dag-accept` takes `--premerge @file` (or the record inline) for a new acceptance, for a `--supersedes` acceptance, for a re-validation, and to attach a record to an acceptance that has none. A pure replay of a stored acceptance needs no record. Each refusal has its own name, registered in `contract/schema/relay-exit-codes.json`:
+
+- `premerge_missing`: no record, or a record that is not a `premerge-record/1`, or one that lacks a member the judgment reads.
+- `premerge_subject_mismatch`: the record names another issue or node.
+- `premerge_head_mismatch`: the record head is not the accepted head, and no allowed chain links them.
+- `premerge_after_evaluation_missing`: the accepted head is a plain commit after the evaluated head, and `dispositions.afterEvaluation` is shorter than 20 characters.
+- `premerge_criteria_stale`: the record was judged against criteria the node no longer holds.
+- `premerge_undisposed`: a criterion that is not PASS, or a P0 to P2 defect (or one with an impact other than minor_separable), has no disposition.
+- `premerge_blocked`: a disposition is `blocking`.
+- `premerge_separable_forbidden`, `premerge_carried_forbidden`: a `separable` or `carried` disposition breaks its rule (P0, P1, failed criteria, introduced or regression defects, in-promise findings, a follow-up key that is not an issue key, a missing reason).
+- `premerge_disposition_invalid`: an unknown class, or a `not_applicable` or `already_resolved` without a code-evidence note.
+
+The head rule depends on the path. On the commit path (`--commit`), the accepted head may be the evaluated head, a chain of up to four merges whose second parent lies in `--base` and whose tree is git's automatic merge of the two parents (dev-only merges keep the evaluation), or a plain commit after it, which then needs the `afterEvaluation` statement. A hand-resolved merge, a merge whose second parent is outside `--base`, and a fifth merge are `premerge_head_mismatch`. On the pull-request path (`--pull-request`), the record head equals the pull request head exactly.
+
+A passing record is stored with its acceptance in `dag_acceptance_premerge`: the record text, its digest, the evaluated head, the accepted head, the actor and the coordinator epoch. The table is append-only, and the judgment reads the stored text. Editing the record file after the acceptance changes nothing.
+
+A re-validation changes the criteria digest of an existing acceptance, so its record is a second, later record for that acceptance. It is stored in `dag_revalidation_premerge`, one row per revalidation, tied to the revalidation row. The acceptance keeps the record it was accepted with, so the rule reads as one record per acceptance output and one per revalidation.
+
+An acceptance taken before the gate has no record. `dag-integrate` leaves it out as `premerge_missing` and does not touch its row. The attach path adds the record once, under the same acceptance id, judged by the same rules; a second attach is refused as `disposition_conflict`.
+
+`dag-integrate` judges each active candidate from its stored record: the latest revalidation's record when there is one, otherwise the acceptance's own. A candidate whose judgment fails is left out of the batch with its `premerge_*` reason, in the same shape other left-out reasons take, and naming it with `--node` refuses with the same name. The intent row of a batch records the digest of each candidate's record, and the check that moves the branch uses the same judgment.
+
 ## A base refresh of an accepted node
 
 The parent accepted a node's result and the base moved afterwards, so the pull request cannot land as it stands. `dag-base-refresh` is the route out of both shapes of that: it records that the acceptance also stands on a head the base was merged into, after the relay has proved from git that the head is the accepted head plus merges of the base branch and nothing else. Which generation the record names depends on who refreshed the branch.
