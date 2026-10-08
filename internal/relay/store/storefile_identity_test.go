@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -463,5 +464,27 @@ func TestStoreFileIdentity_independentReadKeepsADescriptorOpenedDuringTheRead(t 
 	var one int
 	if err := opened.DB.QueryRowContext(ctx, "SELECT count(*) FROM store_challenge").Scan(&one); err != nil {
 		t.Fatalf("the store opened during the read stopped answering: %v", err)
+	}
+}
+
+// TestStoreFileIdentity_independentReadRefusesAFifoWithoutBlocking: a path that is not a regular file is
+// refused after a non-blocking open, so a FIFO with no writer cannot hold the reader.
+func TestStoreFileIdentity_independentReadRefusesAFifoWithoutBlocking(t *testing.T) {
+	fifo := filepath.Join(t.TempDir(), "review.fifo")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Skipf("mkfifo is unavailable: %v", err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := ReadIndependentFile(fifo, 1<<20)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("a FIFO was read as an independent review")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("reading a FIFO blocked: the open must not wait for a writer")
 	}
 }
