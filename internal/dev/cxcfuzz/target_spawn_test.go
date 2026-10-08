@@ -657,11 +657,11 @@ func TestSpawnOracleLoadRunsUnderAnOwnedRoot(t *testing.T) {
 func TestSpawnFailedLoadKeepsAnsweringWithoutASecondRoot(t *testing.T) {
 	requireNode(t)
 	workerTmp := t.TempDir()
-	record := filepath.Join(t.TempDir(), "load-roots.txt")
 	oracle := filepath.Join(t.TempDir(), "late-oracle")
-	pool := spawnFakePool(t, oracle, append(append(os.Environ(), spawnDecoyEnvAt(t, t.TempDir(), workerTmp, true)...),
-		"CXCFUZZ_LOAD_ROOTS="+record))
+	pool := spawnFakePool(t, oracle, append(os.Environ(), spawnDecoyEnvAt(t, t.TempDir(), workerTmp, true)...))
 	defer func() { _ = pool.Close() }()
+	// The worker records its load roots in the harness scratch it was given (CRW-978 c8).
+	record := filepath.Join(pool.root, "tmp", spawnLoadRootsRecord)
 
 	// The import fails: the oracle tree is not there. The handshake is still answered.
 	got, err := pool.Call("null", "")

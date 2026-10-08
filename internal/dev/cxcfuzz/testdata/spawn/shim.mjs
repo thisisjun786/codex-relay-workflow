@@ -9,7 +9,7 @@
 // the rules of contract/schema/cxc/name-substitution.json the way the corpus recorders and
 // internal/role/spawn/testdata/inline/record.mjs apply them. The answer needs no translation at all.
 import { createInterface } from "node:readline";
-import { appendFileSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { closeSync, constants, mkdirSync, mkdtempSync, openSync, rmSync, writeSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -54,14 +54,21 @@ function setHomes(root) {
   process.env.TMPDIR = join(root, "tmp");
 }
 
-// recordLoadRoot appends the root one import attempt used to the file CXCFUZZ_LOAD_ROOTS names, when
-// the harness sets it, so a test can read back which roots the worker created. With the variable unset
-// the worker does no such write.
+// LOAD_ROOTS_RECORD is the file, in the worker's own harness scratch, the load roots are recorded in.
+const LOAD_ROOTS_RECORD = "load-roots.txt";
+
+// recordLoadRoot appends the root one import attempt used to <loadBase>/load-roots.txt, inside the scratch the
+// harness gave this worker (CRW-978 c8). It takes no path from the environment, and it opens the file without
+// following a link, so no variable the caller sets can make the worker write anywhere else. A record that cannot
+// be written must not stop the worker.
 function recordLoadRoot(root) {
-  const path = process.env.CXCFUZZ_LOAD_ROOTS;
-  if (typeof path !== "string" || path === "") return;
   try {
-    appendFileSync(path, root + "\n");
+    const fd = openSync(join(loadBase, LOAD_ROOTS_RECORD), constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | constants.O_NOFOLLOW, 0o600);
+    try {
+      writeSync(fd, root + "\n");
+    } finally {
+      closeSync(fd);
+    }
   } catch {
     // A record that cannot be written must not stop the worker.
   }
