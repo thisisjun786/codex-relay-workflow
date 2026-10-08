@@ -300,11 +300,10 @@ func loopInit(args LoopCliArgs) (LoopCliResult, error) {
 	if sessionID == "" {
 		return loopInitCreate(args, slug, objective)
 	}
-	// The bound gate runs before the session lock: a refusal there writes nothing, and a .crw that is a
-	// link never receives the lock's directory (CRW-982 c1). The same bound check runs again under the
-	// lock, before the first write of the plan, because a check made outside the lock does not hold at
-	// the write (CRW-646 c2). The session lock is still taken ahead of the goalplan lock, the order the
-	// bound D-close uses. Nothing is removed afterwards: a pre-lock observation cannot prove this call
+	// The bound gate runs before the session lock, once: a refusal there writes nothing, and a .crw that is a
+	// link never receives the lock's directory (CRW-982 c1). CheckBound is not repeated under the lock; the
+	// state checks run under it (CRW-646 c2). The session lock is still taken ahead of the goalplan lock, the
+	// order the bound D-close uses. Nothing is removed afterwards: a pre-lock observation cannot prove this call
 	// created a directory or a file, so the refusal names only the artifacts this call did not write:
 	// the plan, the created row and the binding.
 	var answer LoopCliResult
@@ -335,9 +334,13 @@ func loopInit(args LoopCliArgs) (LoopCliResult, error) {
 	return answer, nil
 }
 
-// loopInitBoundGate is the bound gate init runs before it takes the session lock. It refuses a .crw that is
-// a symbolic link, because the state package's directory creation follows a link and the lock would
-// otherwise create a sessions directory outside the workspace, and it runs CheckBound. It writes nothing.
+// loopInitBoundGate is the bound gate init runs before it takes the session lock, and the only place init
+// runs CheckBound. It refuses a .crw that is a symbolic link, because the state package's directory creation
+// follows a link and the lock would otherwise create a sessions directory outside the workspace. It also
+// refuses a session with no resolvable source identity (#133: a bound plan promises a closable cycle, and
+// without a source identity the cycle would strand at C with no testReceiptPath). The source identity is read
+// here, before the lock, so a change to the workspace between this check and the first write of the plan is
+// not seen by it; that window is recorded in CRW-646.md. It writes nothing.
 func loopInitBoundGate(cwd, sessionID string) (LoopCliResult, bool) {
 	if info, err := os.Lstat(filepath.Join(cwd, crwdir.DirName)); err == nil && info.Mode()&fs.ModeSymlink != 0 {
 		return LoopCliResult{Output: "loop init: " + crwdir.DirName + " is a symbolic link; refusing to create the session lock through it.\nNothing was written.", Code: 1}, false
@@ -452,16 +455,11 @@ func loopInitPlanRefusal(cwd, slug string) (LoopCliResult, bool) {
 	return LoopCliResult{}, false
 }
 
-// loopInitBound is the --session branch of init, run with the session lock already held: the source
-// and state gates the bound cycle needs, then the plan's creation, then the slug binding. Every
-// pre-write check runs under that lock, so nothing it refuses can leave a half-written binding, and
-// a plan it creates is always followed by the binding in the same critical section (CRW-646 c2).
+// loopInitBound is the --session branch of init, run with the session lock already held: the state gates,
+// then the plan's creation, then the slug binding. The source identity was checked once, by loopInitBoundGate,
+// before the lock. The state gates run under the lock, so nothing they refuse can leave a half-written binding,
+// and a plan it creates is always followed by the binding in the same critical section (CRW-646 c2).
 func loopInitBound(args LoopCliArgs, slug, objective, sessionID string) (LoopCliResult, error) {
-	// #133: a BOUND plan promises a closable cycle. Refuse here when the source identity cannot be resolved,
-	// rather than letting P->A->B->C succeed and then stranding the session at C with no testReceiptPath.
-	if verdict := session.CheckBound(args.Cwd, sessionID); !verdict.OK {
-		return LoopCliResult{Output: "loop init: " + verdict.Reason + "\nNothing was written.", Code: 1}, nil
-	}
 	// ReadState answers a fresh IDLE state for a file it cannot decode, so binding a slug through it would
 	// replace a damaged session state with a default and lose the original bytes
 	// (docs/port-cxc/known-defects/CRW-646.md, port: fixed). Refuse before anything is written.
