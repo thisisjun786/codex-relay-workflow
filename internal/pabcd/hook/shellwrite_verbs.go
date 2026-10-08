@@ -563,16 +563,21 @@ func shellWriteExecCodingDecl(program string) bool {
 
 // shellWriteExecCodingLine reports whether a comment body names a source encoding, as PEP 263's coding[:=] does.
 func shellWriteExecCodingLine(comment string) bool {
-	at := strings.Index(comment, "coding")
-	if at < 0 {
-		return false
+	// Every "coding" in the comment is read: a comment may name the word before the declaration (CRW-1012 review).
+	for rest := comment; ; {
+		at := strings.Index(rest, "coding")
+		if at < 0 {
+			return false
+		}
+		after := strings.TrimLeft(rest[at+len("coding"):], " \t\f")
+		if after != "" && (after[0] == ':' || after[0] == '=') {
+			v := strings.TrimLeft(after[1:], " \t\f")
+			if v != "" && (shellVerbLetter(v[0], true) || v[0] == '-' || v[0] == '_' || v[0] == '.') {
+				return true
+			}
+		}
+		rest = rest[at+len("coding"):]
 	}
-	rest := strings.TrimLeft(comment[at+len("coding"):], " \t\f")
-	if rest == "" || rest[0] != ':' && rest[0] != '=' {
-		return false
-	}
-	rest = strings.TrimLeft(rest[1:], " \t\f")
-	return rest != "" && (shellVerbLetter(rest[0], true) || rest[0] == '-' || rest[0] == '_' || rest[0] == '.')
 }
 
 // shellVerbWithoutComments is the program with its # comments (outside string literals) cut off at the end of the line, so a
@@ -1389,15 +1394,49 @@ func shellWriteFStringUnreadableProgram(script string) (string, bool) {
 func shellWriteFStringProgramUnreadable(program string) (string, bool) {
 	rs := shellVerbWithoutComments(program, true)
 	for i := 0; i < len(rs); i++ {
-		if c := rs[i]; (c == '\'' || c == '"') && shellWriteFStringPrefix(rs, i) {
-			end, _, bad := shellWriteFStringRegion(rs, i, 0)
-			if bad {
-				return shellWriteFStringUnreadableWhat, true
-			}
-			i = end - 1
+		c := rs[i]
+		if c != '\'' && c != '"' {
+			continue
 		}
+		if !shellWriteFStringPrefix(rs, i) {
+			// A literal without an f is read to its own closing quote, so the quotes inside it open no f-string (CRW-1012:
+			// print("f'}'") is a plain string).
+			i = shellWriteSkipPlainString(rs, i) - 1
+			continue
+		}
+		end, _, bad := shellWriteFStringRegion(rs, i, 0)
+		if bad {
+			return shellWriteFStringUnreadableWhat, true
+		}
+		i = end - 1
 	}
 	return "", false
+}
+
+// shellWriteSkipPlainString is the index just past the string literal whose opening quote stands at rs[i]: a single or triple
+// quoted literal, read to the matching close, with a backslash taking the character after it.
+func shellWriteSkipPlainString(rs []rune, i int) int {
+	q := rs[i]
+	n := 1
+	if i+2 < len(rs) && rs[i+1] == q && rs[i+2] == q {
+		n = 3
+	}
+	for j := i + n; j < len(rs); j++ {
+		if rs[j] == '\\' {
+			j++
+			continue
+		}
+		if rs[j] != q {
+			continue
+		}
+		if n == 1 {
+			return j + 1
+		}
+		if j+2 < len(rs) && rs[j+1] == q && rs[j+2] == q {
+			return j + 3
+		}
+	}
+	return len(rs)
 }
 
 // shellWriteExecUnreadableProgram is the exec fail-closed reason of one Python program: the reason only when every reading

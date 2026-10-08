@@ -2,6 +2,7 @@ package hook
 
 import (
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/shellir"
@@ -15,6 +16,16 @@ const shellIRUnknownDest = "\x00unknown"
 // A destination the reader cannot evaluate is returned as shellIRUnknownDest. ok is false when the reader cannot
 // read the command at all.
 func shellIRWriteDests(command, cwd string, lookup func(string) (string, bool)) (dests []string, ok bool) {
+	return shellIRDests(command, cwd, lookup, false)
+}
+
+// shellIRWriteDestsResolved is shellIRWriteDests with each relative destination joined to the directory its program runs in
+// (a cd earlier in the text changes it); a destination in a directory the reader does not know is the unknown destination.
+func shellIRWriteDestsResolved(command, cwd string, lookup func(string) (string, bool)) (dests []string, ok bool) {
+	return shellIRDests(command, cwd, lookup, true)
+}
+
+func shellIRDests(command, cwd string, lookup func(string) (string, bool), resolve bool) (dests []string, ok bool) {
 	res, err := shellir.AnalyzeEnv(command, cwd, lookup)
 	if err != nil {
 		return nil, false
@@ -24,15 +35,85 @@ func shellIRWriteDests(command, cwd string, lookup func(string) (string, bool)) 
 			dests = append(dests, shellIRUnknownDest)
 			continue
 		}
+		var own []string
 		for _, r := range e.Redirs {
 			if shellIRWriteRedir(r.Op) {
-				dests = append(dests, shellIRWordDest(r.Target))
+				own = append(own, shellIRWordDest(r.Target))
 			}
 		}
-		dests = append(dests, shellIRVerbDests(e)...)
-		dests = append(dests, shellIRLanguageDests(e)...)
+		own = append(own, shellIRVerbDests(e)...)
+		own = append(own, shellIRLanguageDests(e)...)
+		if resolve {
+			own = shellIRResolve(own, e.Dir, cwd)
+		}
+		dests = append(dests, own...)
 	}
 	return shellIRUnique(dests), true
+}
+
+// shellIRResolve joins each relative destination to the directory its program runs in. A program in the payload's own
+// directory keeps the destination as written, which the gate resolves against that directory as it always has.
+func shellIRResolve(dests []string, dir shellir.Dir, cwd string) []string {
+	out := make([]string, 0, len(dests))
+	for _, d := range dests {
+		switch {
+		case d == shellIRUnknownDest || filepath.IsAbs(d) || d == "/dev/null":
+			out = append(out, d)
+		case dir.Known && dir.Path == cwd:
+			out = append(out, d)
+		case !dir.Known || dir.Path == "":
+			out = append(out, shellIRUnknownDest)
+		default:
+			// The join is textual and keeps every component: a link in the path is followed by the filesystem, not cleaned away.
+			out = append(out, strings.TrimSuffix(dir.Path, "/")+"/"+d)
+		}
+	}
+	return out
+}
+
+// shellIRSortDests returns the file sort writes with -o: the separate, attached and long forms (-o FILE, -oFILE, -ro FILE,
+// --output FILE, --output=FILE and an unambiguous abbreviation of --output).
+func shellIRSortDests(args []shellir.Word) []string {
+	var out []string
+	for i := 0; i < len(args); i++ {
+		v := shellIRPlain(args[i])
+		name, _, _ := strings.Cut(v, "=")
+		switch {
+		case v == shellIRUnknownDest:
+			out = append(out, v)
+		case v == "--":
+			return out
+		case len(name) >= 5 && strings.HasPrefix("--output", name) && strings.HasPrefix(v, "--"):
+			if strings.Contains(v, "=") {
+				out = append(out, strings.TrimPrefix(v, name+"="))
+				break
+			}
+			if i+1 < len(args) {
+				i++
+				out = append(out, shellIRPlain(args[i]))
+			} else {
+				out = append(out, shellIRUnknownDest)
+			}
+		case strings.HasPrefix(v, "-") && !strings.HasPrefix(v, "--") && len(v) > 1:
+			for j := 1; j < len(v); j++ {
+				if v[j] == 'o' {
+					if j+1 < len(v) {
+						out = append(out, v[j+1:])
+					} else if i+1 < len(args) {
+						i++
+						out = append(out, shellIRPlain(args[i]))
+					} else {
+						out = append(out, shellIRUnknownDest)
+					}
+					break
+				}
+				if strings.ContainsRune("kStTyx", rune(v[j])) {
+					break // this option takes a value: the rest of the word is that value
+				}
+			}
+		}
+	}
+	return out
 }
 
 // shellIRUnique keeps the first of each destination.
@@ -145,11 +226,7 @@ func shellIRVerbDests(e shellir.Exec) []string {
 	case "sed":
 		return append(shellIRSedScriptDests(args), shellIRSedDests(args)...)
 	case "sort":
-		for i, a := range args {
-			if shellIRPlain(a) == "-o" && i+1 < len(args) {
-				return []string{shellIRPlain(args[i+1])}
-			}
-		}
+		return shellIRSortDests(args)
 	}
 	return nil
 }
@@ -194,15 +271,35 @@ func shellIRLanguageDests(e shellir.Exec) []string {
 		if un := shellVerbUnescape(src); un != src {
 			res = append(res, shellVerbScriptWritesIn(un, true, isPy)...)
 		}
+		// A writer whose destination is not a literal, and a Python open bound to a name, write to a destination the text
+		// does not show: unknown (CRW-998, CRW-851).
+		if shellIRDynamicWrite(src, isPy) {
+			res = append(res, shellIRUnknownDest)
+		}
 		return append(out, res...)
 	case "sed":
 		return append(out, shellVerbSedWrites(shellIRStrings(e.Args))...)
 	case "perl", "ruby":
-		return append(out, shellVerbInterp(shellIRStrings(e.Args), false)...)
+		// No reader of perl or ruby code is in this port, so the program's writes are not read: unknown.
+		return append(append(out, shellVerbInterp(shellIRStrings(e.Args), false)...), shellIRUnknownDest)
 	}
 	// An interpreter program with no reader here (awk) is code the text shows and this port does not read: unknown.
 	return append(out, shellIRUnknownDest)
 }
+
+// shellIRDynamicWrite is whether a Node or Python program calls a writer with a first argument that is no string literal,
+// or binds open to a name (f = open) so that its calls are not visible as open(...).
+func shellIRDynamicWrite(src string, python bool) bool {
+	if shellIRNodeDynamicWrite.MatchString(src) {
+		return true
+	}
+	return python && shellIRPyOpenAlias.MatchString(src)
+}
+
+var (
+	shellIRNodeDynamicWrite = regexp.MustCompile("\\b(?:writeFileSync|writeFile|appendFileSync|appendFile|createWriteStream)\\s*\\(\\s*[^'\"\x60\\s)]")
+	shellIRPyOpenAlias      = regexp.MustCompile(`=\s*open\s*(?:[,)\n;]|$)`)
+)
 
 // shellIRSedDests returns the files sed -i rewrites. Every operand is reported, the script included, as the reading of
 // sed's operands always did; the option values of -e, -f and -l are not operands.

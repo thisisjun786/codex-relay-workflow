@@ -7,8 +7,8 @@ package hook
 
 import (
 	"io"
-	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/shellir"
@@ -61,14 +61,11 @@ func worktreeDelJudgeScript(e shellir.Exec, id WorktreeIdentity, depth int) Guar
 	if !filepath.IsAbs(path) {
 		path = filepath.Join(e.Dir.Path, path)
 	}
-	file, err := os.Open(filepath.Clean(path))
-	if err != nil {
+	file, ok := githubPostRegularFile(filepath.Clean(path))
+	if !ok {
 		return worktreeDelUnreadable(id)
 	}
 	defer file.Close()
-	if st, err := file.Stat(); err != nil || !st.Mode().IsRegular() {
-		return worktreeDelUnreadable(id)
-	}
 	b, err := io.ReadAll(io.LimitReader(file, worktreeDelMaxScriptBytes+1))
 	if err != nil || len(b) > worktreeDelMaxScriptBytes {
 		return worktreeDelUnreadable(id)
@@ -100,6 +97,60 @@ func worktreeDelJudgeExec(e shellir.Exec, id WorktreeIdentity) GuardVerdict {
 		return worktreeDelJudgeRmdir(e, id)
 	case "git":
 		return worktreeDelJudgeGit(e, id)
+	case "find":
+		return worktreeDelJudgeFind(e, id)
+	}
+	if e.Inline != nil {
+		return worktreeDelJudgeInline(e, id)
+	}
+	return GuardVerdict{}
+}
+
+// worktreeDelJudgeFind is the verdict for a find that deletes what it finds (-delete): the start points are removed.
+func worktreeDelJudgeFind(e shellir.Exec, id WorktreeIdentity) GuardVerdict {
+	args, unknown := worktreeDelArgs(e.Args)
+	deletes := false
+	for _, a := range args {
+		if a == "-delete" {
+			deletes = true
+		}
+	}
+	if !deletes {
+		return GuardVerdict{}
+	}
+	if unknown {
+		return worktreeDelUnreadable(id)
+	}
+	var starts []string
+	for _, a := range args {
+		if strings.HasPrefix(a, "-") || a == "(" || a == "!" || a == ")" {
+			break
+		}
+		starts = append(starts, a)
+	}
+	if len(starts) == 0 {
+		starts = []string{"."}
+	}
+	for _, s := range starts {
+		if worktreeDelTargetProtected(s, e, id) {
+			return GuardVerdict{Deny: true, Reason: denyReason("find "+s+" -delete", id)}
+		}
+	}
+	return GuardVerdict{}
+}
+
+// worktreeDelDeleteAPI names the file-removal calls of the languages the reader holds an inline program of. A program that
+// holds one may remove a path the text does not name as a literal, so in a managed worktree it is refused.
+var worktreeDelDeleteAPI = regexp.MustCompile(`rmtree|os\.remove|os\.unlink|os\.rmdir|unlink|rmSync|rmdirSync|unlinkSync|removeSync|fs\.rm|fs\.unlink|rm_rf|File\.delete|FileUtils`)
+
+// worktreeDelJudgeInline judges an interpreter's inline program: a program that removes files is refused in a managed
+// worktree, and one the reader cannot show is unreadable.
+func worktreeDelJudgeInline(e shellir.Exec, id WorktreeIdentity) GuardVerdict {
+	if !e.Inline.Source.Known {
+		return worktreeDelUnreadable(id)
+	}
+	if worktreeDelDeleteAPI.MatchString(e.Inline.Source.Value) {
+		return GuardVerdict{Deny: true, Reason: denyReason(e.Inline.Language+" program that removes files", id)}
 	}
 	return GuardVerdict{}
 }
@@ -207,7 +258,8 @@ func worktreeDelJudgeGit(e shellir.Exec, id WorktreeIdentity) GuardVerdict {
 // relative target from an unknown directory cannot be placed, so it is protected.
 func worktreeDelTargetProtected(target string, e shellir.Exec, id WorktreeIdentity) bool {
 	if !e.Dir.Known {
-		return !filepath.IsAbs(target)
+		// The directory is unknown, so the target may name the managed checkout whatever its spelling: protected.
+		return true
 	}
 	return isProtectedTarget(target, e.Dir.Path, id, true)
 }

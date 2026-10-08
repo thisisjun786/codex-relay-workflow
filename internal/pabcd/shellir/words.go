@@ -28,6 +28,11 @@ func (w *walker) word(x *syntax.Word, st *state, ctx Context) (Word, error) {
 	if err != nil {
 		return Word{Reason: err.Error()}, nil
 	}
+	// An unquoted expansion is split into fields at the blanks of its value and matched as a pattern: a value with a
+	// blank or a glob character is several words, which expand.Literal does not split, so it is not one known word.
+	if unquotedExpansion(x) && strings.ContainsAny(v, " \t\n*?[") {
+		return Word{Reason: "an unquoted expansion splits into several words"}, nil
+	}
 	return Word{Known: true, Value: v}, nil
 }
 
@@ -277,4 +282,15 @@ func hasExpansion(x *syntax.Word) bool {
 		return !found
 	})
 	return found
+}
+
+// unquotedExpansion is whether the word has a parameter, command or arithmetic expansion outside every quote.
+func unquotedExpansion(x *syntax.Word) bool {
+	for _, p := range x.Parts {
+		switch p.(type) {
+		case *syntax.ParamExp, *syntax.CmdSubst, *syntax.ArithmExp:
+			return true
+		}
+	}
+	return false
 }

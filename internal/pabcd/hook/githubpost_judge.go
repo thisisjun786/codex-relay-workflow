@@ -8,7 +8,6 @@ package hook
 
 import (
 	"io"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -174,15 +173,11 @@ func githubPostReadScript(name, cwd string) (string, bool) {
 	if !filepath.IsAbs(path) {
 		path = filepath.Join(cwd, path)
 	}
-	file, err := os.Open(filepath.Clean(path))
-	if err != nil {
+	file, ok := githubPostRegularFile(filepath.Clean(path))
+	if !ok {
 		return "", false
 	}
 	defer file.Close()
-	st, err := file.Stat()
-	if err != nil || !st.Mode().IsRegular() {
-		return "", false
-	}
 	b, err := io.ReadAll(io.LimitReader(file, githubPostMaxFileBytes+1))
 	if err != nil || len(b) > githubPostMaxFileBytes {
 		return "", false

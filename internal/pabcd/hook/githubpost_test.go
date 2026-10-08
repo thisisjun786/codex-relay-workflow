@@ -261,7 +261,7 @@ func TestGitHubPostGuardJudgements(t *testing.T) {
 		{"api file field", "gh api repos/o/r/pulls/1/reviews -F body=@credential.md", githubPostRuleSecret, "credential.md:1"},
 		{"api attached file field", "gh api repos/o/r/pulls/1/reviews -Fbody=@credential.md", githubPostRuleUnread, githubPostWhereCommand},
 		{"api clean file field", "gh api repos/o/r/pulls/1/reviews -F body=@clean.md", "", ""},
-		{"api input", "gh api repos/o/r/pulls/1/reviews --input input.json", githubPostRuleSecret, "input.json:1"},
+		{"api input", "gh api repos/o/r/pulls/1/reviews --input input.json", githubPostRuleSecret, "input.json:2"}, // the place numbers the JSON strings the scan reads: the key is line 1, its value line 2
 		{"api input equals", "gh api repos/o/r/pulls/1/reviews --input=clean.md", "", ""},
 		{"missing file", "gh pr comment 1 --body-file nowhere.md", githubPostRuleUnread, "nowhere.md"},
 		{"directory", "gh pr comment 1 --body-file adir", githubPostRuleUnread, "adir"},
@@ -399,7 +399,7 @@ func TestGitHubPostGuardJudgements(t *testing.T) {
 		{"nested control structures", "if true; then for i in 1 2; do gh pr comment 1 -b plain; done; fi", githubPostRuleInline, githubPostWhereCommand},
 		{"post after a loop closes", "for i in 1; do :; done; gh pr comment 1 -b plain", githubPostRuleInline, githubPostWhereCommand},
 		{"nested control structures with nothing to do with gh", "if true; then for i in 1 2; do echo hi; done; fi", "", ""},
-		{"clean post after a loop closes", "for i in 1; do :; done; gh pr comment 1 --body-file body.md", githubPostRuleUnread, githubPostWhereCommand},
+		{"clean post after a loop closes", "for i in 1; do :; done; gh pr comment 1 --body-file body.md", githubPostRuleUnread, "body.md"}, // the loop leaves the directory unknown, so the body file is unreadable where it is named
 		{"timeout with a duration suffix", "timeout 30s gh pr comment 1 -b plain", githubPostRuleInline, githubPostWhereCommand},
 		{"timeout with a duration and a variable", "timeout 30s gh pr comment 1 -b \"$BODY\"", githubPostRuleInline, githubPostWhereCommand},
 		{"exec", "exec gh pr comment 1 -b plain", githubPostRuleInline, githubPostWhereCommand},

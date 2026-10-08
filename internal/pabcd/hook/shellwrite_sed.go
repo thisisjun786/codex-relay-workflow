@@ -184,7 +184,9 @@ func shellSedWriteDests(script string) []string {
 				return unknown
 			}
 			out = append(out, name)
-		case 'r', 'R', 'a', 'i', 'c', 'e', ':', 'b', 't', 'T', 'l', 'L', 'q', 'Q':
+		case 'e':
+			return unknown // e runs a shell command the script names
+		case 'r', 'R', 'a', 'i', 'c', ':', 'b', 't', 'T', 'l', 'L', 'q', 'Q':
 			toEOL()
 		case '=', 'd', 'D', 'g', 'G', 'h', 'H', 'n', 'N', 'p', 'P', 'x', 'z', 'F':
 		case 's':
@@ -196,8 +198,11 @@ func shellSedWriteDests(script string) []string {
 			if !delimited(d) || !delimited(d) {
 				return unknown
 			}
-			for i < len(rs) && strings.ContainsRune("gpiImMe0123456789", rs[i]) {
+			for i < len(rs) && strings.ContainsRune("gpiImM0123456789", rs[i]) {
 				i++
+			}
+			if i < len(rs) && rs[i] == 'e' {
+				return unknown // the e flag runs the replacement as a shell command
 			}
 			if i < len(rs) && rs[i] == 'w' {
 				i++

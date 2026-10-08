@@ -19,6 +19,7 @@ package hook
 // not gh appears; that is what refuses a program word built in quote pieces or one quoting level down.
 
 import (
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -56,6 +57,11 @@ func GitHubPostAnswer(in io.Reader) string {
 }
 
 // githubPostDeny is the deny envelope: the rule, the place, and one way forward.
+// GitHubPostCancelledAnswer is the deny answer of a GitHub post guard cancelled before it judged the command.
+func GitHubPostCancelledAnswer() string {
+	return githubPostDeny("cancelled", "the hook")
+}
+
 func githubPostDeny(rule, place string) string {
 	reason := "GitHub post blocked (" + rule + ") at " + place +
 		": write the text to a file, check it, and pass it with --body-file, -F body=@file or --input"
@@ -205,11 +211,39 @@ func githubPostPost(args []string, cwd string) (githubPostSite, bool, bool) {
 		if !ok {
 			return githubPostSite{githubPostRuleUnread, file}, true, true
 		}
-		if line, found := githubPostSecretLine(content); found {
+		if line, found := githubPostSecretLine(githubPostScanText(content)); found {
 			return githubPostSite{githubPostRuleSecret, file + ":" + strconv.Itoa(line)}, true, true
 		}
 	}
 	return githubPostSite{}, false, true
+}
+
+// githubPostScanText is the text the secret scan reads from a body file: the strings of a JSON document (keys and values,
+// with their escapes decoded), so a secret inside a JSON string is seen as the text gh posts; any other file is its text.
+func githubPostScanText(content string) string {
+	var doc any
+	if err := json.Unmarshal([]byte(content), &doc); err != nil {
+		return content
+	}
+	var parts []string
+	var walk func(any)
+	walk = func(x any) {
+		switch t := x.(type) {
+		case string:
+			parts = append(parts, t)
+		case []any:
+			for _, e := range t {
+				walk(e)
+			}
+		case map[string]any:
+			for k, e := range t {
+				parts = append(parts, k)
+				walk(e)
+			}
+		}
+	}
+	walk(doc)
+	return strings.Join(parts, "\n")
 }
 
 // githubPostAPI is form A2: gh api, with only the words the rule allows. At most one of -F body=@F,
@@ -299,7 +333,7 @@ func githubPostAPI(args []string, cwd string) (githubPostSite, bool, bool) {
 		if !ok {
 			return githubPostSite{githubPostRuleUnread, file}, true, true
 		}
-		if line, found := githubPostSecretLine(content); found {
+		if line, found := githubPostSecretLine(githubPostScanText(content)); found {
 			return githubPostSite{githubPostRuleSecret, file + ":" + strconv.Itoa(line)}, true, true
 		}
 	}
@@ -398,18 +432,20 @@ func githubPostReadFile(name, cwd string) (string, bool) {
 		path = filepath.Join(base, path)
 	}
 	path = filepath.Clean(path)
-	if !githubPostUnderRoots(path) {
+	// "-" is standard input, which the guard cannot read in the file it names.
+	if name == "-" || !githubPostUnderRoots(path) {
 		return "", false
 	}
-	file, err := os.Open(path)
-	if err != nil {
+	// The trusted root is judged on the file the path resolves to, so a link inside it cannot reach another file.
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil || !githubPostUnderRoots(resolved) {
+		return "", false
+	}
+	file, ok := githubPostRegularFile(resolved)
+	if !ok {
 		return "", false
 	}
 	defer file.Close()
-	st, err := file.Stat()
-	if err != nil || !st.Mode().IsRegular() {
-		return "", false
-	}
 	b, err := io.ReadAll(io.LimitReader(file, githubPostMaxFileBytes+1))
 	if err != nil || len(b) > githubPostMaxFileBytes {
 		return "", false
@@ -431,4 +467,17 @@ func githubPostUnderRoots(path string) bool {
 		}
 	}
 	return false
+}
+
+// githubPostRegularFile opens a path only when it names a regular file: a named pipe or a device would block the open.
+func githubPostRegularFile(path string) (*os.File, bool) {
+	st, err := os.Stat(path)
+	if err != nil || !st.Mode().IsRegular() {
+		return nil, false
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, false
+	}
+	return file, true
 }

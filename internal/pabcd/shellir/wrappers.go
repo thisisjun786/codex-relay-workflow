@@ -14,6 +14,9 @@ type unwrapped struct {
 func unwrapCommand(name string, args []Word) (unwrapped, error) {
 	var u unwrapped
 	switch name {
+	case "parallel":
+		// parallel runs the program its ::: operands name at run time, so the program it runs is not in the text.
+		return u, unreadablef("parallel runs the program its operands name at run time")
 	case "env":
 		return unwrapEnv(args)
 	case "find":

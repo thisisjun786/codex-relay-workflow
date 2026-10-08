@@ -144,6 +144,13 @@ func gitConfigKeyForbidden(kv string) bool {
 		key = kv[:i]
 	}
 	key = strings.ToLower(key)
+	// A driver, textconv, clean, smudge, process or command key of any name runs the program it gives (diff.<driver>.command,
+	// merge.<driver>.driver, filter.<driver>.clean and the like).
+	for _, suffix := range []string{".command", ".textconv", ".driver", ".cmd", ".clean", ".smudge", ".process"} {
+		if strings.HasSuffix(key, suffix) {
+			return true
+		}
+	}
 	switch key {
 	case "core.editor", "core.pager", "core.sshcommand", "core.fsmonitor", "core.hookspath",
 		"core.askpass", "core.gitproxy", "diff.external", "sequence.editor", "gpg.program":

@@ -139,9 +139,9 @@
     "name": "campaign-perl-in-place",
     "input": "{\"command\": \"timeout 5 perl -i -pe 's/a/b/' .\"}",
     "oracle": "[]",
-    "go": "[\"s/a/b/\", \".\"]",
+    "go": "[\"s/a/b/\", \".\", \"\\u0000unknown\"]",
     "tag": "intentionally-changed",
-    "record": "CRW-1028: see docs/port-cxc/known-defects/CRW-1028.md; a perl or ruby -i script operand is named as a file (a stricter reading, fail closed)"
+    "record": "CRW-1028: see docs/port-cxc/known-defects/CRW-1028.md; a perl or ruby -i script operand is named as a file (a stricter reading, fail closed) Also, a perl or ruby program with no reader is the unknown destination (CRW-1028)."
   },
   {
     "name": "campaign-sudo-tee",

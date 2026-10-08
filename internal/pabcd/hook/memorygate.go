@@ -182,7 +182,7 @@ func memoryGateClassify(tool string, input any, cwd string, env host.LookupEnv) 
 		// A path that is only read, quoted, or in a heredoc body is no write; redirections, tee, sed -i, cp and mv targets and
 		// perl and ruby -i operands are the write surface (ShellWriteDestinations).
 		command, _ := record["command"].(string)
-		if dests, readable := shellIRWriteDests(command, cwd, env); readable {
+		if dests, readable := shellIRWriteDestsResolved(command, cwd, env); readable {
 			for _, token := range dests {
 				if token == shellIRUnknownDest {
 					return MemoryWriteAttempt{Surface: "shell", Target: "(a destination the gate cannot read)"}

@@ -285,6 +285,11 @@ func (w *walker) stmt(s *syntax.Stmt, st *state, ctx Context) error {
 		return err
 	}
 	ctx.Stdin = stdinKind(redirs, ctx.Stdin)
+	if isCompound(s.Cmd) && len(redirs) > 0 {
+		// A redirection on a compound command (a block, a subshell, a loop) writes its file as a command does: it
+		// is an empty program with these redirections, judged with the state before the body runs.
+		w.out = append(w.out, Exec{Kind: KindCommand, Program: Word{Known: true}, Redirs: redirs, Dir: st.dir, Ctx: ctx})
+	}
 	switch c := s.Cmd.(type) {
 	case *syntax.CallExpr:
 		return w.call(c, redirs, st, ctx)
@@ -304,7 +309,9 @@ func (w *walker) stmt(s *syntax.Stmt, st *state, ctx Context) error {
 		if err := w.stmts(c.Cond, st, lctx); err != nil {
 			return err
 		}
-		return w.stmts(c.Do, st, lctx)
+		err := w.stmts(c.Do, st, lctx)
+		afterLoop(st)
+		return err
 	case *syntax.ForClause:
 		return w.forClause(c, st, ctx)
 	case *syntax.CaseClause:
@@ -338,6 +345,13 @@ func (w *walker) stmt(s *syntax.Stmt, st *state, ctx Context) error {
 		return w.stmt(c.Stmt, st.clone(), cctx)
 	}
 	return unreadablef("unsupported command %T", s.Cmd)
+}
+
+// afterLoop makes the state unknown once a loop has run: the body may have run zero or many times, so the directory and the
+// variables after it are not those of any one iteration (a cd in a loop body is unknown afterwards).
+func afterLoop(st *state) {
+	st.dir = unknownDir(st.dir)
+	st.clearVars()
 }
 
 func loopContext(ctx Context) Context {
@@ -458,7 +472,9 @@ func (w *walker) forClause(c *syntax.ForClause, st *state, ctx Context) error {
 	default:
 		return unreadablef("unsupported loop %T", c.Loop)
 	}
-	return w.stmts(c.Do, st, loopContext(ctx))
+	err := w.stmts(c.Do, st, loopContext(ctx))
+	afterLoop(st)
+	return err
 }
 
 func (w *walker) caseClause(c *syntax.CaseClause, st *state, ctx Context) error {
@@ -906,10 +922,37 @@ func (w *walker) wrapped(name string, args []Word, assigns []Assign, redirs []Re
 		ctx.Carrier = name
 	}
 	inherited := append(append([]Assign{}, assigns...), u.assigns...)
+	// An external program runs in a child process: it cannot change this shell's directory or variables. Its inner
+	// program gets a copy of the state, and a shell builtin named behind an external program is not modelled.
+	external := name != "command" && name != "builtin" && name != "exec"
 	for _, inner := range u.inner {
+		if external {
+			if len(inner) > 0 && shellStateBuiltin(inner[0]) {
+				return unreadablef("a shell builtin named behind the external program %s", name)
+			}
+			if err := w.dispatch(inner, inherited, redirs, st.clone(), ctx); err != nil {
+				return err
+			}
+			continue
+		}
 		if err := w.dispatch(inner, inherited, redirs, st, ctx); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// shellStateBuiltin is whether a word names a shell builtin that changes the shell's own directory, variables, functions or
+// options: these take no effect in a child process, so behind an external program they are not read.
+func shellStateBuiltin(w Word) bool {
+	if !w.Known {
+		return false
+	}
+	switch w.Value {
+	case "cd", "pushd", "popd", "export", "unset", "set", "shopt", "alias", "unalias", "hash", "trap", "source", ".",
+		"eval", "read", "mapfile", "readarray", "getopts", "let", "declare", "typeset", "local", "readonly", "shift",
+		"umask", "ulimit", "enable", "builtin", "command", "exec":
+		return true
+	}
+	return false
 }
