@@ -48,17 +48,25 @@ type storeFileKey struct{ device, inode uint64 }
 // lost and nothing in this package closes a stored handle. neverClosed keeps every descriptor that
 // must stay reachable but is not the registry's answer for its inode: one whose identity could
 // not be measured, one that lost the same-inode race after the open (CRW-880), and one the
-// artifact reader refused and handed over rather than closing (CRW-880). recorded holds the
-// resolved database paths this process opened through store.open, without opening anything.
+// artifact reader refused and handed over rather than closing (CRW-880).
+//
+// live and livePaths are the store-file identity table (CRW-967). They describe the stores this
+// process has open right now, not every path it ever opened: store.open and the read-only openers
+// take a reference on their database file when they open, and Store.Close gives it back. live
+// counts the open stores per (device, inode) of their database file, so a database renamed while
+// its connection is open is still recognised by identity. livePaths counts the open stores per
+// resolved database path; the artifact check stats the sidecars of those paths only. Both maps
+// drop an entry when its last store closes, so an inode a closed store freed is no longer refused.
 type heldRegistry struct {
 	sync.Mutex
 	byPath      map[string]*os.File
 	byKey       map[storeFileKey]*os.File
 	neverClosed []*os.File
-	recorded    map[string]bool
+	live        map[storeFileKey]int
+	livePaths   map[string]int
 }
 
-var heldStoreFiles = &heldRegistry{byPath: map[string]*os.File{}, byKey: map[storeFileKey]*os.File{}, recorded: map[string]bool{}}
+var heldStoreFiles = &heldRegistry{byPath: map[string]*os.File{}, byKey: map[storeFileKey]*os.File{}, live: map[storeFileKey]int{}, livePaths: map[string]int{}}
 
 func init() { ownership.HoldStoreFile = holdStoreFile }
 
@@ -169,21 +177,74 @@ func clearStoreFileNonblock(fd int) {
 	_ = unix.SetNonblock(fd, false)
 }
 
-// recordStoreFilePath records a resolved database path this process opened through store.open,
-// without opening anything. The artifact reader asks whether an artifact is one of these paths or
-// one of their sidecars (holdsStoreFileIdentity).
-func recordStoreFilePath(resolved string) {
-	heldStoreFiles.Lock()
-	defer heldStoreFiles.Unlock()
-	heldStoreFiles.recorded[resolved] = true
+// liveStoreRef is one open store's share of the identity table (CRW-967). registerLiveStore takes it
+// before the store connects, attach records the database file's identity once the file exists, and
+// release gives both back when the store closes. release does nothing after the first call, so a
+// store closed twice never lowers another store's count.
+type liveStoreRef struct {
+	path     string
+	key      storeFileKey
+	keyed    bool
+	released bool
 }
 
-// holdsStoreFileIdentity reports whether (device, inode) is a store file this process holds or
-// opened: an inode the registry holds, or a recorded database path or one of its sidecars as the
-// kernel resolves it now. It stats and never opens, and it is asked about the identity of an
-// already-open descriptor, so a pathname race cannot move the answer (CRW-880). The registry
-// mutex is held for the stats and the maps only; the caller hashes outside it, and the two
-// functions never nest, so nothing here waits on a read.
+// registerLiveStore records that this process is opening the database at resolved, under the
+// registry lock. It stats nothing and opens nothing, so it is safe before a connection is made.
+func registerLiveStore(resolved string) *liveStoreRef {
+	heldStoreFiles.Lock()
+	defer heldStoreFiles.Unlock()
+	heldStoreFiles.livePaths[resolved]++
+	return &liveStoreRef{path: resolved}
+}
+
+// attach records the identity of the database file, under the registry lock, once the file exists
+// (after the connection succeeded). It does nothing on a nil or released reference, or when the
+// identity is already recorded.
+func (r *liveStoreRef) attach() {
+	if r == nil {
+		return
+	}
+	heldStoreFiles.Lock()
+	defer heldStoreFiles.Unlock()
+	if r.keyed || r.released {
+		return
+	}
+	if key, ok := storeFileKeyOf(r.path); ok {
+		r.key, r.keyed = key, true
+		heldStoreFiles.live[key]++
+	}
+}
+
+// release gives back this store's references to its identity and its path. The first call does;
+// a nil or later call does nothing.
+func (r *liveStoreRef) release() {
+	if r == nil {
+		return
+	}
+	heldStoreFiles.Lock()
+	defer heldStoreFiles.Unlock()
+	if r.released {
+		return
+	}
+	r.released = true
+	if r.keyed {
+		heldStoreFiles.live[r.key]--
+		if heldStoreFiles.live[r.key] <= 0 {
+			delete(heldStoreFiles.live, r.key)
+		}
+	}
+	heldStoreFiles.livePaths[r.path]--
+	if heldStoreFiles.livePaths[r.path] <= 0 {
+		delete(heldStoreFiles.livePaths, r.path)
+	}
+}
+
+// holdsStoreFileIdentity reports whether (device, inode) is a store file this process holds or has
+// open: a handle the registry holds, an open store's database file, or one of an open store's
+// database path and sidecars as the kernel resolves it now. It stats at most the open stores' paths
+// and never opens, and it is asked about the identity of an already-open descriptor, so a pathname
+// race cannot move the answer (CRW-880). The registry mutex is held for the stats and the maps only;
+// the caller hashes outside it, and the two functions never nest, so nothing here waits on a read.
 func holdsStoreFileIdentity(device, inode uint64) bool {
 	heldStoreFiles.Lock()
 	defer heldStoreFiles.Unlock()
@@ -193,11 +254,22 @@ func holdsStoreFileIdentity(device, inode uint64) bool {
 // holdsStoreFileIdentityLocked is holdsStoreFileIdentity with the registry lock already held. It
 // stats and never opens. The caller holds the lock.
 func holdsStoreFileIdentityLocked(device, inode uint64) bool {
-	key := storeFileKey{device, inode}
-	if _, ok := heldStoreFiles.byKey[key]; ok {
+	if _, ok := heldStoreFiles.byKey[storeFileKey{device, inode}]; ok {
 		return true
 	}
-	for path := range heldStoreFiles.recorded {
+	return holdsLiveStoreIdentityLocked(device, inode)
+}
+
+// holdsLiveStoreIdentityLocked reports whether (device, inode) is the database of an open store this
+// process has, or one of its sidecars as the kernel resolves the open store's path now. A handle the
+// registry keeps for the process's life (byKey) is not counted here: a store that has closed leaves
+// this table, whatever handles the process still keeps. The caller holds the lock.
+func holdsLiveStoreIdentityLocked(device, inode uint64) bool {
+	key := storeFileKey{device, inode}
+	if _, ok := heldStoreFiles.live[key]; ok {
+		return true
+	}
+	for path := range heldStoreFiles.livePaths {
 		for _, suffix := range storeFileSuffixes {
 			info, err := os.Stat(path + suffix)
 			if err != nil {
@@ -215,11 +287,27 @@ func holdsStoreFileIdentityLocked(device, inode uint64) bool {
 	return false
 }
 
+// closeOrKeepStoreFile closes file unless its identity is a store file this process holds or has
+// open, in which case the file is kept reachable instead. It is closeOrKeepStoreFileDescriptor for
+// an os.File whose finalizer would otherwise close the descriptor at the next collection: the same
+// *os.File is kept, so no second owner of the descriptor is created (CRW-967, I-563).
+func closeOrKeepStoreFile(file *os.File) error {
+	heldStoreFiles.Lock()
+	defer heldStoreFiles.Unlock()
+	fd := int(file.Fd())
+	if identity, measured := fstatIdentity(fd); measured && holdsStoreFileIdentityLocked(identity.device, identity.inode) {
+		clearStoreFileNonblock(fd)
+		heldStoreFiles.neverClosed = append(heldStoreFiles.neverClosed, file)
+		return nil
+	}
+	return file.Close()
+}
+
 // closeOrKeepStoreFileDescriptor closes fd unless its identity is a store file this process holds
 // or opened, in which case the descriptor is kept reachable instead: closing any descriptor of
 // such a file drops this process's POSIX locks on it (CRW-880, I-563). The decision and the close
-// are made under the registry lock, and store.open takes that same lock to record a path before it
-// connects, so a store opened while the caller was reading is still recognised here.
+// are made under the registry lock, and store.open takes that same lock to take its reference before it
+// connects, so a store opened while the caller was reading is still recognised here (CRW-967).
 func closeOrKeepStoreFileDescriptor(fd int, name string) {
 	heldStoreFiles.Lock()
 	defer heldStoreFiles.Unlock()

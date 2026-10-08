@@ -32,7 +32,10 @@ func holdStat(path string) error {
 }
 
 // ReadOnly is a mode=ro connection that never creates a store (intent.read_only_connection).
-type ReadOnly struct{ db *sql.DB }
+type ReadOnly struct {
+	db   *sql.DB
+	live *liveStoreRef
+}
 
 // OpenStopRead is ownership.stop_metadata's read for the read-only Stop path (cutover.md Lock
 // order): it creates no SQLite sidecar and copies nothing, under the rule InPlaceRead states. A
@@ -62,20 +65,27 @@ func OpenInPlace(ctx context.Context, path string, timeout time.Duration) (*Read
 // openExamined opens the file whose sidecars were examined and refuses a connection SQLite made
 // to any other file.
 func openExamined(ctx context.Context, examined string, params url.Values, timeout time.Duration) (*ReadOnly, error) {
+	// The reference is taken before the connection, as the writer's open does (CRW-967), and given
+	// back on every refusal below.
+	live := registerLiveStore(examined)
 	db, err := boundedURI(examined, params, timeout)
 	if err != nil {
+		live.release()
 		return nil, err
 	}
 	var opened string
 	if err := db.QueryRowContext(ctx, "SELECT file FROM pragma_database_list WHERE name = 'main'").Scan(&opened); err != nil {
 		_ = db.Close()
+		live.release()
 		return nil, err
 	}
 	if opened != examined {
 		_ = db.Close()
+		live.release()
 		return nil, fmt.Errorf("the store's sidecars were examined beside %s, but SQLite opened %s, so its committed state was not read", pyvalue.StrRepr(examined), pyvalue.StrRepr(opened))
 	}
-	return &ReadOnly{db: db}, nil
+	live.attach()
+	return &ReadOnly{db: db, live: live}, nil
 }
 
 // walHeaderSize is a write-ahead log's header; a log no longer than it holds no frame.
@@ -130,15 +140,19 @@ func OpenReadOnly(ctx context.Context, path string, timeout time.Duration) (*Rea
 	if err != nil {
 		return nil, err
 	}
+	live := registerLiveStore(resolved)
 	db, err := boundedDB(resolved, "ro", timeout)
 	if err != nil {
+		live.release()
 		return nil, err
 	}
 	if err := db.PingContext(ctx); err != nil {
 		_ = db.Close()
+		live.release()
 		return nil, err
 	}
-	return &ReadOnly{db: db}, nil
+	live.attach()
+	return &ReadOnly{db: db, live: live}, nil
 }
 
 func (r *ReadOnly) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
@@ -153,8 +167,12 @@ func (r *ReadOnly) ExecContext(ctx context.Context, query string, args ...any) (
 	return r.db.ExecContext(ctx, query, args...)
 }
 
-// Close closes the connection.
-func (r *ReadOnly) Close() error { return r.db.Close() }
+// Close closes the connection and gives back the store's reference in the identity table (CRW-967).
+func (r *ReadOnly) Close() error {
+	err := r.db.Close()
+	r.live.release()
+	return err
+}
 
 // readOnlyCommandKey marks a context that serves one of cli.py's READ_ONLY_COMMANDS forms.
 type readOnlyCommandKey struct{}
@@ -297,16 +315,20 @@ func OpenReadOnlyStore(ctx context.Context, path string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
+	live := registerLiveStore(resolved)
 	db, err := boundedDB(resolved, "ro", 5*time.Second, "PRAGMA query_only=ON")
 	if err != nil {
+		live.release()
 		return nil, err
 	}
 	if err = db.PingContext(ctx); err != nil {
 		_ = db.Close()
+		live.release()
 		// The failed connect is the command's host error.
 		return nil, &hostError{cause: err}
 	}
-	return &Store{DB: db, Path: pathlibSpelling(path), readOnly: true}, nil
+	live.attach()
+	return &Store{DB: db, Path: pathlibSpelling(path), readOnly: true, live: live}, nil
 }
 
 // ReadOnly reports whether s is a read-only Store, which must never be written.
@@ -353,10 +375,18 @@ func (s *Store) Projection(ctx context.Context) (_ *Store, release func() error,
 	if err = errors.Join(err, conn.Close()); err != nil {
 		return nil, nil, err
 	}
+	// The copy is a store file this process has open from here until release (CRW-967).
+	live := registerLiveStore(copyPath)
+	live.attach()
 	db, err := boundedDB(copyPath, "rw", 5*time.Second)
 	if err != nil {
+		live.release()
 		return nil, nil, err
 	}
-	projected := &Store{DB: db, Path: s.Path}
-	return projected, func() error { return errors.Join(db.Close(), os.RemoveAll(dir)) }, nil
+	projected := &Store{DB: db, Path: s.Path, live: live}
+	return projected, func() error {
+		closeErr := db.Close()
+		live.release()
+		return errors.Join(closeErr, os.RemoveAll(dir))
+	}, nil
 }

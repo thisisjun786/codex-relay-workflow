@@ -49,6 +49,8 @@ type Store struct {
 	gate *os.File
 	// readOnly is Store(read_only=True): mode=ro, query_only=ON, deferred BEGIN.
 	readOnly bool
+	// live is this store's reference in the store-file identity table (CRW-967), given back by Close.
+	live *liveStoreRef
 }
 
 // The frozen contract contains DDL, then guard indexes, then illustrative seed SQL.
@@ -135,10 +137,16 @@ func open(ctx context.Context, path, socketPath string, options OpenOptions) (_ 
 	if err != nil {
 		return nil, err
 	}
-	// The registry records the resolved database path this process is opening, without opening
-	// anything (CRW-880): the artifact reader refuses a store file this process holds or opened,
-	// and this record is what lets it recognise the database and its sidecars by identity.
-	recordStoreFilePath(resolved)
+	// The registry takes a reference on the resolved database path before this process connects
+	// (CRW-880, CRW-967): the artifact reader refuses a store file this process has open, and the
+	// reference is what lets it recognise the database by identity and its sidecars by name. The
+	// reference is given back if the open fails, and by Close if it succeeds.
+	live := registerLiveStore(resolved)
+	defer func() {
+		if err != nil {
+			live.release()
+		}
+	}()
 	d := &sqlite.Driver{}
 	if err := commitid.Register(d); err != nil {
 		return nil, err
@@ -203,6 +211,7 @@ func open(ctx context.Context, path, socketPath string, options OpenOptions) (_ 
 	if err = db.PingContext(ctx); err != nil {
 		return nil, fmt.Errorf("connect database: %w", err)
 	}
+	live.attach()
 	var gate *os.File
 	if options.verify != nil {
 		if gate, err = options.verify(ctx, db); err != nil {
@@ -234,7 +243,7 @@ func open(ctx context.Context, path, socketPath string, options OpenOptions) (_ 
 			return nil, err
 		}
 	}
-	result := &Store{DB: db, Path: pathlibSpelling(path), gate: gate}
+	result := &Store{DB: db, Path: pathlibSpelling(path), gate: gate, live: live}
 	guards := strings.SplitN(sections[1], seedMarker, 2)
 	if len(guards) != 2 {
 		return nil, errors.New("embedded schema lacks seed marker")
@@ -450,12 +459,16 @@ func randomBytes(size int) ([]byte, error) {
 	return b, nil
 }
 
+// Close closes the store's connection and gives back its reference in the store-file identity
+// table (CRW-967). The reference is released after the connection, so the database descriptor is
+// closed before its identity stops being recognised.
 func (s *Store) Close() error {
 	err := s.DB.Close()
 	if s.gate != nil {
 		err = errors.Join(err, s.gate.Close())
 		s.gate = nil
 	}
+	s.live.release()
 	return err
 }
 
