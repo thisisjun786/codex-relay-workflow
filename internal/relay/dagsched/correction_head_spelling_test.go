@@ -68,3 +68,27 @@ func TestACorrectionIsNotRecordedOverALiveBundleWhoseMemberHeadIsStoredInAnother
 		})
 	}
 }
+
+// The landed bundle's excluded member: a member whose turn was withdrawn is still a member row, and the head it
+// carries reached the base when the bundle landed, even though no integration mark names the member's node.
+func TestACorrectionIsNotRecordedOverAnExcludedMemberOfALandedBundle(t *testing.T) {
+	t.Parallel()
+	k, accepted := rvSettledSharedRoot(t)
+	rid := accepted["B"].RelationshipID
+	other := accepted["A"].RelationshipID
+	prepared := k.rvPrepare("sr", "B")
+	acOpenByHand(t, k, rid, prepared.DispatchRequestID, "needs_changes_revision", 2, true)
+	k.exec("UPDATE dag_acceptances SET repository = 'owner/repo', head_sha = 'head-b' WHERE relationship_id = ?", rid)
+	k.exec("INSERT INTO merge_trains (train_id, target_key, repository, base_ref, base_sha, leader_task_id, created_at) VALUES ('trn-excluded', 'tgt', 'owner/repo', 'dev', 'base-0', 'parent', 't')")
+	k.exec("INSERT INTO merge_train_members (train_id, seq, turn_id, pr_number, relationship_id, member_head) VALUES ('trn-excluded', 1, 'turn-1', 5, ?, 'head-b')", other)
+	k.exec("INSERT INTO merge_train_events (train_id, seq, kind, actor, detail_json, recorded_at) VALUES ('trn-excluded', 1, 'opened', 'parent', '{}', 't')")
+	k.exec("INSERT INTO merge_train_events (train_id, seq, kind, actor, detail_json, recorded_at) VALUES ('trn-excluded', 2, 'verified', 'parent', '{}', 't')")
+	k.exec("INSERT INTO merge_train_events (train_id, seq, kind, actor, detail_json, recorded_at) VALUES ('trn-excluded', 3, 'landed', 'parent', '{}', 't')")
+	_, err := k.sched.RecordCorrection(context.Background(), "sr", "B", "parent", prepared.ManifestDigest)
+	if refusalReason(err) != "disposition_conflict" {
+		t.Fatalf("a correction over an excluded member of a landed bundle = %v, want disposition_conflict", err)
+	}
+	if !strings.Contains(err.Error(), "trn-excluded") {
+		t.Fatalf("the refusal does not name the landed bundle: %v", err)
+	}
+}

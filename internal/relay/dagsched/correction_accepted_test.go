@@ -293,7 +293,7 @@ func TestACorrectionIsNotRecordedOverALiveBundleCarryingTheHead(t *testing.T) {
 			}
 		})
 	}
-	t.Run("a bundle that landed does not block the correction", func(t *testing.T) {
+	t.Run("a bundle that landed with the head refuses the correction", func(t *testing.T) {
 		k, accepted := rvSettledSharedRoot(t)
 		rid := accepted["B"].RelationshipID
 		prepared := k.rvPrepare("sr", "B")
@@ -302,8 +302,12 @@ func TestACorrectionIsNotRecordedOverALiveBundleCarryingTheHead(t *testing.T) {
 		k.exec("INSERT INTO merge_trains (train_id, target_key, repository, base_ref, base_sha, leader_task_id, created_at) VALUES ('trn-done', 'tgt', 'owner/repo', 'dev', 'base-0', 'parent', 't')")
 		k.exec("INSERT INTO merge_train_members (train_id, seq, turn_id, pr_number, relationship_id, member_head) VALUES ('trn-done', 1, 'turn-1', 5, ?, 'head-b')", rid)
 		k.exec("INSERT INTO merge_train_events (train_id, seq, kind, actor, detail_json, recorded_at) VALUES ('trn-done', 1, 'landed', 'parent', '{}', 't')")
-		if _, err := k.sched.RecordCorrection(context.Background(), "sr", "B", "parent", prepared.ManifestDigest); err != nil {
-			t.Fatalf("a closed bundle blocked the correction: %v", err)
+		_, err := k.sched.RecordCorrection(context.Background(), "sr", "B", "parent", prepared.ManifestDigest)
+		if refusalReason(err) != "disposition_conflict" {
+			t.Fatalf("a correction over a landed bundle that carries the head = %v, want disposition_conflict", err)
+		}
+		if !strings.Contains(err.Error(), "trn-done") {
+			t.Fatalf("the refusal does not name the landed bundle: %v", err)
 		}
 	})
 }

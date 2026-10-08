@@ -572,11 +572,24 @@ func (s *Scheduler) refuseLiveBundleCarrying(ctx context.Context, q store.Querie
 		if err != nil {
 			return err
 		}
-		if !found {
-			continue
+		if found {
+			return refuse(contract.RefusalDispositionConflict, "the accepted result of %s is on its way to the base already: bundle %s is live and carries head %s as a member, so its merge may already be on the forge and a correction cannot be recorded over it. Close the bundle first (merge-train-close), then record this same generation again with the manifest digest dag-correct --prepare already printed: it is not yet recorded, and opening another generation would skip it",
+				acc.NodeID, short(train), short(head))
 		}
-		return refuse(contract.RefusalDispositionConflict, "the accepted result of %s is on its way to the base already: bundle %s is live and carries head %s as a member, so its merge may already be on the forge and a correction cannot be recorded over it. Close the bundle first (merge-train-close), then record this same generation again with the manifest digest dag-correct --prepare already printed: it is not yet recorded, and opening another generation would skip it",
-			acc.NodeID, short(train), short(head))
+		// A landed bundle has merged the tree that holds every member head, excluded members included: a member
+		// whose turn was withdrawn is still a member row, and no integration mark names its node. Its head is on the
+		// base, so the correction is refused whatever the member's relationship.
+		landed, err := queryOne(ctx, q, "SELECT m.train_id FROM merge_train_members m JOIN merge_trains t ON t.train_id = m.train_id"+
+			" WHERE (lower(t.repository) = lower(?) OR m.relationship_id = ?) AND crw_same_commit(m.member_head, ?)"+
+			" AND EXISTS (SELECT 1 FROM merge_train_events e WHERE e.train_id = m.train_id AND e.kind = 'landed')"+
+			" ORDER BY m.train_id, m.seq LIMIT 1", []any{forge, acc.RelationshipID, head}, &train)
+		if err != nil {
+			return err
+		}
+		if landed {
+			return refuse(contract.RefusalDispositionConflict, "the accepted result of %s has already landed: bundle %s landed a tree that carries head %s as a member, so the head is on the base and a correction cannot be recorded over it. A node that landed is never run again: what changed above it is carried by a successor node of a new plan revision (contract 8.4, E-20)",
+				acc.NodeID, short(train), short(head))
+		}
 	}
 	return nil
 }
