@@ -70,16 +70,18 @@ func optSeen(got []optVal, c byte) (string, bool) {
 	return "", false
 }
 
-// fileRecord is the synthetic record of a wrapper's own file operand (script's transcript, strace -o): the write it makes
-// is named by the verb reader of its program name.
-func fileRecord(name string, files []string) (string, []Word) {
+// FileRecordName names the synthetic record of a wrapper's own files (script's transcript and log files, strace -o). Its
+// operands are all files, none of them an option, so the hook reader takes every word verbatim.
+const FileRecordName = "wrapper-file"
+
+func fileRecord(files []string) (string, []Word) {
 	words := make([]Word, 0, len(files))
 	for _, f := range files {
 		if f != "" {
 			words = append(words, Word{Known: true, Value: f})
 		}
 	}
-	return name, words
+	return FileRecordName, words
 }
 
 // unwrapRunner handles the wrappers that run a program the text shows in another form: a shell string (watch, flock -c,
@@ -136,9 +138,12 @@ func unwrapRunner(name string, args []Word) (u unwrapped, handled bool, err erro
 				return u, true, err
 			}
 			files = append(files, f)
+		} else {
+			// Without a file operand script writes its transcript to typescript in the current directory.
+			files = append(files, "typescript")
 		}
 		u.shell, u.shellCarrier, u.isShell = text, "script -c", true
-		u.recordName, u.record = fileRecord("script", files)
+		u.recordName, u.record = fileRecord(files)
 		return u, true, nil
 	case "strace", "ltrace":
 		valued, flags := "oesEuabIOPSXp", "cCdDfFiqrtTvxyn"
@@ -162,7 +167,7 @@ func unwrapRunner(name string, args []Word) (u unwrapped, handled bool, err erro
 				files = append(files, o.v)
 			}
 		}
-		u.recordName, u.record = fileRecord(name, files)
+		u.recordName, u.record = fileRecord(files)
 		u.inner = [][]Word{rest}
 		return u, true, nil
 	case "entr":

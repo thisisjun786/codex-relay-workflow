@@ -21,12 +21,13 @@ func isShell(name string) bool {
 }
 
 // isCodeEnvName lists the environment names that make a program run code the
-// text does not show. The list is closed; tests pin it.
+// text does not show. The list is closed; tests pin it. SHELL picks the shell that
+// flock -c, script -c, watch and entr -s run their string with.
 func isCodeEnvName(name string) bool {
 	switch name {
 	case "BASH_ENV", "ENV", "ZDOTDIR", "GIT_EDITOR", "GIT_SEQUENCE_EDITOR", "GIT_SSH_COMMAND",
 		"PAGER", "GIT_PAGER", "LD_PRELOAD", "LD_LIBRARY_PATH", "PYTHONSTARTUP", "PYTHONPATH",
-		"NODE_OPTIONS", "RUBYOPT", "PERL5OPT", "npm_config_script_shell":
+		"NODE_OPTIONS", "RUBYOPT", "PERL5OPT", "npm_config_script_shell", "SHELL":
 		return true
 	}
 	return false

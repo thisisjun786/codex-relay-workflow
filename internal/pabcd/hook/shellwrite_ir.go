@@ -212,9 +212,12 @@ func shellIRVerbDests(e shellir.Exec) []string {
 		return []string{shellIRUnknownDest}
 	}
 	switch filepath.Base(e.Name) {
-	case "tee", "script", "strace", "ltrace":
-		// tee writes its operands; script writes its transcript and strace or ltrace -o writes the trace to its file.
+	case "tee":
+		// tee writes its operands; options end at --.
 		return shellIRTeeDests(args)
+	case shellir.FileRecordName:
+		// The files a wrapper writes (script's transcript and log files, strace -o): every operand is a file.
+		return shellIRFileDests(args)
 	case "cp", "mv", "install":
 		return shellIRCopyDests(args)
 	case "dd":
@@ -234,6 +237,16 @@ func shellIRVerbDests(e shellir.Exec) []string {
 		return shellIRSortDests(args)
 	}
 	return nil
+}
+
+// shellIRFileDests returns the operands of a wrapper's file record. None is an option, so a word that starts with a dash is
+// still a file.
+func shellIRFileDests(args []shellir.Word) []string {
+	var out []string
+	for _, a := range args {
+		out = append(out, shellIRPlain(a))
+	}
+	return out
 }
 
 // shellIRTeeDests returns tee's file operands: every word after the options, and the words of a -- ends the options.
