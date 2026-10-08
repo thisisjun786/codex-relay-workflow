@@ -34,7 +34,7 @@ const statusSchema = "crw-gui-status/1"
 // statusSourceTimeout bounds one named read. It sits above capacity's own signal timeout
 // (internal/manage's capacitySignalTimeout, 30s), so a slow capacity signal expires inside the
 // command and reports its own reason instead of being cut off here.
-const statusSourceTimeout = 45 * time.Second
+var statusSourceTimeout = 45 * time.Second
 
 // statusPolicyTimeout bounds the policy read. It is separate from statusSourceTimeout so a test
 // can drive the timeout path without waiting out the manage sources' bound.
@@ -238,7 +238,17 @@ func statusPolicyRead(ctx context.Context) statusPolicyReading {
 	// request open.
 	readCtx, cancel := context.WithTimeout(ctx, statusPolicyTimeout)
 	defer cancel()
-	reading := statusPolicyReader(readCtx)
+	// The read runs beside this request so a read that never returns is still answered on its
+	// deadline. Its answer is used only when it arrives in time.
+	done := make(chan statusPolicyReading, 1)
+	go func() { done <- statusPolicyReader(readCtx) }()
+	var reading statusPolicyReading
+	select {
+	case reading = <-done:
+	case <-readCtx.Done():
+		return statusPolicyReading{State: statusUnknown, Applied: policystore.AppliedUnverifiable,
+			Reason: "the execution policy read did not finish: " + readCtx.Err().Error()}
+	}
 	if err := readCtx.Err(); err != nil && reading.State == statusOK {
 		// The read reported ok only because it fell back on what it already had; the deadline is
 		// the fact that decides, so it is reported rather than passed on as a success.
@@ -254,7 +264,7 @@ func statusPolicyRead(ctx context.Context) statusPolicyReading {
 func statusPolicyReadProduction(ctx context.Context) statusPolicyReading {
 	located := policystore.Locate(envLookup)
 	reading := policystore.Read(located)
-	running := policystore.RunningDigest(ctx, envLookup)
+	running := statusRunningDigestGated(ctx)
 	out := statusPolicyReading{
 		PolicyState: reading.State,
 		Path:        reading.Path,
@@ -287,7 +297,28 @@ func statusPolicyReadProduction(ctx context.Context) statusPolicyReading {
 	return out
 }
 
-// statusManageCall runs one manage command line under its own time bound.
+// statusRunningDigestGated reads the running digest under the manage gate. Its manage config
+// call is a manage read like the others, so it takes its turn behind them.
+func statusRunningDigestGated(ctx context.Context) policystore.Running {
+	select {
+	case statusManageGate <- struct{}{}:
+	case <-ctx.Done():
+		return policystore.Running{State: policystore.RunningUnavailable,
+			Reason: "the running policy digest was not read: " + ctx.Err().Error()}
+	}
+	defer func() { <-statusManageGate }()
+	return policystore.RunningDigest(ctx, envLookup)
+}
+
+// statusCallResult is one finished manage call.
+type statusCallResult struct {
+	code           int
+	stdout, stderr string
+}
+
+// statusManageCall runs one manage command line under its own time bound. The call runs beside
+// this request: a call that does not return by the bound is reported unknown on time, and it keeps
+// the gate until it does return, so the next read waits behind it rather than running beside it.
 func statusManageCall(ctx context.Context, args ...string) (int, string, string) {
 	callCtx, cancel := context.WithTimeout(ctx, statusSourceTimeout)
 	defer cancel()
@@ -305,8 +336,18 @@ func statusManageCall(ctx context.Context, args ...string) (int, string, string)
 	case <-callCtx.Done():
 		return 0, "", "the read did not start: " + callCtx.Err().Error()
 	}
-	defer func() { <-statusManageGate }()
-	return statusManage(callCtx, args)
+	done := make(chan statusCallResult, 1)
+	go func() {
+		defer func() { <-statusManageGate }()
+		code, stdout, stderr := statusManage(callCtx, args)
+		done <- statusCallResult{code: code, stdout: stdout, stderr: stderr}
+	}()
+	select {
+	case result := <-done:
+		return result.code, result.stdout, result.stderr
+	case <-callCtx.Done():
+		return 0, "", "the read did not finish: " + callCtx.Err().Error()
+	}
 }
 
 // statusDecode reads one JSON document from a command's stdout. An empty or unparseable answer

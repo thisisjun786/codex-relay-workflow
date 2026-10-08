@@ -16,6 +16,7 @@ import {
   type CapacityPlanView,
   type DagAnomalyView,
   type DagDocument,
+  type RelayBindingView,
   type RelayDocument,
   type RelayMergeTurnView,
   type RelayPlanView,
@@ -125,6 +126,23 @@ function RelaySection({ source }: { source: StatusSource<RelayDocument> }) {
           ))}
         </div>
       ) : null}
+      <h3 className="card-title">Bindings</h3>
+      <div className="row-list">
+        <Rows<RelayBindingView>
+          items={section("bindings", document?.bindings).items}
+          empty="No live binding in the store."
+          reason={section("bindings", document?.bindings).reason}
+          render={(binding, index) => (
+            <Row
+              key={`binding-${index}`}
+              id={text(binding.role)}
+              sub={`${text(binding.scopeKind)}=${text(binding.scopeKey)} · task ${text(binding.taskId)} · ${text(binding.status)} · cwd ${text(binding.cwd)}`}
+              state={binding.read?.state ?? "unknown"}
+              reason={binding.read?.reason}
+            />
+          )}
+        />
+      </div>
       <h3 className="card-title">Relationships</h3>
       <div className="row-list">
         <Rows<RelayRelationshipView>
@@ -135,7 +153,7 @@ function RelaySection({ source }: { source: StatusSource<RelayDocument> }) {
             <Row
               key={`relationship-${index}`}
               id={text(relationship.issueKey)}
-              sub={`generation ${text(relationship.executionGeneration)} · ${text(relationship.relationshipStatus)} · next ${text(relationship.nextExpectedAction)} · head ${text(relationship.head?.revisionHash)}`}
+              sub={`parent ${text(relationship.parentTaskId)} · child ${text(relationship.childTaskId)} · generation ${text(relationship.executionGeneration)} · ${text(relationship.relationshipStatus)} · next ${text(relationship.nextExpectedAction)} · head ${text(relationship.head?.revisionHash)}`}
               state={relationship.read?.state ?? "unknown"}
               reason={relationship.read?.reason}
             />
@@ -247,7 +265,10 @@ function DagSection({ source }: { source: StatusSource<DagDocument> }) {
       {checks.length > 0 ? (
         <div className="row wrap">
           {checks.map((check, index) => (
-            <span className="hint" key={`check-${index}`}>{`${text(check.name)}: ${text(check.state)}`}</span>
+            <span className="hint" key={`check-${index}`} title={check.detail ?? undefined}>
+              {`${text(check.name)}: ${text(check.state)}`}
+              {check.detail ? ` · ${check.detail}` : ""}
+            </span>
           ))}
         </div>
       ) : null}

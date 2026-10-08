@@ -234,9 +234,23 @@ export interface StatusSource<T = unknown> {
 }
 
 /** One relay relationship, as the relay's own projection spells it. */
+/** One live owner of a scope, as the relay read reports it. */
+export interface RelayBindingView {
+  bindingId?: unknown;
+  role?: unknown;
+  scopeKind?: unknown;
+  scopeKey?: unknown;
+  taskId?: unknown;
+  cwd?: unknown;
+  status?: unknown;
+  read?: { state?: string; reason?: string } | null;
+}
+
 export interface RelayRelationshipView {
   relationshipId?: unknown;
   issueKey?: unknown;
+  parentTaskId?: unknown;
+  childTaskId?: unknown;
   relationshipStatus?: unknown;
   executionGeneration?: unknown;
   nextExpectedAction?: unknown;
@@ -270,7 +284,7 @@ export interface RelayMergeTurnView {
 export interface RelayDocument {
   stateDir?: unknown;
   readAt?: unknown;
-  bindings?: unknown[] | null;
+  bindings?: RelayBindingView[] | null;
   relationships?: RelayRelationshipView[] | null;
   plans?: RelayPlanView[] | null;
   mergeTurns?: RelayMergeTurnView[] | null;

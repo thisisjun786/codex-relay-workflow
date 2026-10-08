@@ -600,3 +600,39 @@ func TestStatusPolicyReadThatOutlivesItsBoundIsUnknown(t *testing.T) {
 		t.Fatalf("applied = %v, want %q", policy["applied"], policystore.AppliedUnverifiable)
 	}
 }
+
+// A read that never answers is bounded: the request returns on the source's own deadline, and
+// the source reads unknown with the reason, instead of holding the response open.
+func TestStatusBlockingReadIsBoundedAndUnknown(t *testing.T) {
+	previousTimeout := statusSourceTimeout
+	statusSourceTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { statusSourceTimeout = previousTimeout })
+
+	release := make(chan struct{})
+	previousManage := statusManage
+	statusManage = func(_ context.Context, _ []string) (int, string, string) {
+		<-release
+		return 0, "", ""
+	}
+	t.Cleanup(func() { statusManage = previousManage })
+	t.Cleanup(func() { close(release) })
+
+	previousPolicy := statusPolicyReader
+	statusPolicyReader = func(_ context.Context) statusPolicyReading {
+		return statusPolicyReading{State: statusOK, PolicyState: policystore.Registered}
+	}
+	t.Cleanup(func() { statusPolicyReader = previousPolicy })
+
+	start := time.Now()
+	body := decodeStatus(t, statusServer(t))
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("GET /api/status held the response for %s past the source bound", elapsed)
+	}
+	relay := object(t, body, "relay")
+	if relay["state"] != statusUnknown {
+		t.Fatalf("a read that did not finish must be unknown, got %v", relay["state"])
+	}
+	if reason, _ := relay["reason"].(string); !strings.Contains(reason, "did not finish") {
+		t.Fatalf("the unknown reading must name the unfinished read, got %q", reason)
+	}
+}
