@@ -188,10 +188,43 @@ function fstringCode(body) {
  * there they would sit against the first field body and hide it from a word-boundary test. The
  * body is the text inside the quotes (CRW-939, the generation-3 evaluation of d3).
  */
-function withFieldsOf(code, line, at, body) {
+function withFieldsOf(code, line, at, fields) {
   let prefixAt = at - 1;
   while (prefixAt >= 0 && /[A-Za-z]/.test(line[prefixAt])) prefixAt -= 1;
-  return code.slice(0, code.length - (at - 1 - prefixAt)) + fstringCode(body) + " ";
+  return code.slice(0, code.length - (at - 1 - prefixAt)) + fields + " ";
+}
+
+/**
+ * The executable part of an f-string line that continues a replacement field opened on an earlier line.
+ * The state counts the braces still open, so a field that spans lines keeps its code on every line
+ * between its braces, including a line with no brace of its own (CRW-983, finding d5).
+ */
+function fstringScan(body, state) {
+  let out = "";
+  for (let i = 0; i < body.length; i++) {
+    const c = body[i];
+    if (state.depth === 0) {
+      if ((c === "{" || c === "}") && body[i + 1] === c) {
+        i += 1;
+        continue;
+      }
+      if (c === "{") {
+        state.depth = 1;
+        out += " ; ";
+      }
+      continue;
+    }
+    if (c === "{") {
+      state.depth += 1;
+      out += c;
+    } else if (c === "}") {
+      state.depth -= 1;
+      out += state.depth === 0 ? " ; " : c;
+    } else {
+      out += c;
+    }
+  }
+  return out;
 }
 
 /**
@@ -215,6 +248,9 @@ function codeLines(source) {
   const out = [];
   let open = null; // the triple-quote delimiter a string is still open with
   let openF = false; // whether that string is an f-string, whose replacement fields run
+  // The braces an open f-string holds across its lines: a replacement field that spans lines keeps its
+  // code on every line between its braces (CRW-983, finding d5).
+  let fstate = { depth: 0 };
   // What the reader could not read to the end. The check refuses each one: code after an unread quote
   // is not known to be code, so passing it would be a pass the reader never made (CRW-983, finding d3).
   const unread = [];
@@ -224,10 +260,10 @@ function codeLines(source) {
     if (open !== null) {
       const end = tripleClose(line, 0, open);
       if (end < 0) {
-        out.push(openF ? fstringCode(line) : "");
+        out.push(openF ? fstringScan(line, fstate) : "");
         continue;
       }
-      if (openF) code += fstringCode(line.slice(0, end)) + " ";
+      if (openF) code += fstringScan(line.slice(0, end), fstate) + " ";
       line = line.slice(end + open.length);
       open = null;
       openF = false;
@@ -244,10 +280,11 @@ function codeLines(source) {
           if (end < 0) {
             open = triple;
             openF = fstring;
-            if (fstring) code = withFieldsOf(code, line, at, line.slice(at + 3));
+            fstate = { depth: 0 };
+            if (fstring) code = withFieldsOf(code, line, at, fstringScan(line.slice(at + 3), fstate));
             break;
           }
-          if (fstring) code = withFieldsOf(code, line, at, line.slice(at + 3, end));
+          if (fstring) code = withFieldsOf(code, line, at, fstringCode(line.slice(at + 3, end)));
           at = end + 3;
           continue;
         }
@@ -467,6 +504,16 @@ test("an escaped quote on a continuation line does not close a triple-quoted str
   const source = 'import argparse\nparser = argparse.ArgumentParser()\nmarker = """a\n  b\\"""c"""\nimport networkx\nargs = parser.parse_args()\n';
   const { offenders } = parserImportsBeforeParsing(source);
   assert.ok(offenders.some((line) => line.includes("networkx")), "the import after the continued marker is hidden: " + JSON.stringify(offenders));
+});
+
+
+// CRW-983, the pre-merge evaluation of b3edf605 (d5). A replacement field that opens on one line of a
+// triple-quoted f-string and closes on a later one is code on every line between them, including a
+// line with no brace of its own.
+test("a replacement field that spans lines of a triple-quoted f-string is code", () => {
+  const source = 'import argparse\nparser = argparse.ArgumentParser()\nmarker = f"""start {\n__import__("networkx")\n} end"""\nargs = parser.parse_args()\n';
+  const { offenders } = parserImportsBeforeParsing(source);
+  assert.ok(offenders.some((line) => line.includes("networkx")), "the field across lines is dropped: " + JSON.stringify(offenders));
 });
 
 

@@ -357,12 +357,46 @@ type shellSubstitution struct {
 var assignmentWord = regexp.MustCompile("^[A-Za-z_][A-Za-z0-9_]*=")
 
 // shellPrefixWords are reserved words that start a simple command without being its program.
-var shellPrefixWords = map[string]bool{"!": true, "{": true, "}": true, "if": true, "then": true, "elif": true, "else": true, "do": true, "while": true, "until": true, "time": true, "exec": true, "builtin": true}
+var shellPrefixWords = map[string]bool{"!": true, "command": true, "nohup": true, "{": true, "}": true, "if": true, "then": true, "elif": true, "else": true, "do": true, "while": true, "until": true, "time": true, "exec": true, "builtin": true}
 
-// shellWrappers run the program after them with options and arguments this reader does not parse. A
-// command one of them starts is read with a conservative test: a node word followed by --test anywhere
-// after it (CRW-983).
-var shellWrappers = map[string]bool{"command": true, "env": true, "nohup": true, "sudo": true, "timeout": true, "xargs": true, "nice": true, "stdbuf": true}
+// shellWrappers start a command whose program follows their options, the values of those options and,
+// for env, their assignments; wrappedCommand reads that program (CRW-983).
+var shellWrappers = map[string]bool{"env": true, "sudo": true, "timeout": true, "xargs": true, "nice": true, "stdbuf": true}
+
+// shellWrapperArgs are the options each wrapper takes a value for; wrappedCommand skips the value so the
+// program after it is read (CRW-983).
+var shellWrapperArgs = map[string]map[string]bool{
+	"env":     {"-u": true, "-C": true, "-S": true},
+	"sudo":    {"-u": true, "-g": true, "-C": true, "-h": true, "-p": true, "-r": true, "-t": true, "-T": true, "-U": true},
+	"nice":    {"-n": true},
+	"timeout": {"-s": true, "-k": true},
+	"xargs":   {"-I": true, "-n": true, "-P": true, "-L": true, "-d": true, "-s": true, "-E": true, "-a": true},
+	"stdbuf":  {"-i": true, "-o": true, "-e": true},
+}
+
+// wrappedCommand is the words a wrapper runs: the program and its arguments, after the wrapper's own
+// options, the values of those options and, for env, its assignments. Nil means the wrapper starts no
+// program (CRW-983).
+func wrappedCommand(name string, args []string) []string {
+	takes := shellWrapperArgs[name]
+	for len(args) > 0 {
+		w := args[0]
+		switch {
+		case name == "env" && assignmentWord.MatchString(w):
+			args = args[1:]
+		case strings.HasPrefix(w, "-") && w != "-":
+			args = args[1:]
+			if takes[w] && len(args) > 0 {
+				args = args[1:]
+			}
+		case name == "timeout" && w != "" && w[0] >= '0' && w[0] <= '9':
+			args = args[1:]
+		default:
+			return args
+		}
+	}
+	return nil
+}
 
 // shellInterpreters are the shells whose -c option runs its argument as a script.
 var shellInterpreters = map[string]bool{"sh": true, "bash": true, "dash": true, "ash": true, "ksh": true, "zsh": true}
@@ -683,7 +717,7 @@ func commandRunsNodeTest(cmd shellCommand, depth int) bool {
 	name, args := filepath.Base(words[0]), words[1:]
 	switch {
 	case shellWrappers[name]:
-		return nodeAndTest(args)
+		return commandRunsNodeTest(wrappedCommand(name, args), depth)
 	case strings.HasSuffix(name, "node"):
 		return hasTestFlag(args)
 	case shellInterpreters[name]:
@@ -716,16 +750,6 @@ func suCommandRuns(args []string, depth int) bool {
 	return false
 }
 
-// nodeAndTest reports whether a node program is followed by --test among words.
-func nodeAndTest(words []string) bool {
-	for i, w := range words {
-		if strings.HasSuffix(filepath.Base(w), "node") && hasTestFlag(words[i+1:]) {
-			return true
-		}
-	}
-	return false
-}
-
 // hasTestFlag reports whether a Node argument list carries the --test flag.
 func hasTestFlag(words []string) bool {
 	for _, w := range words {
@@ -734,6 +758,59 @@ func hasTestFlag(words []string) bool {
 		}
 	}
 	return false
+}
+
+// yamlQuoted reads the value a single- or double-quoted YAML scalar holds on its line, which is the text
+// the shell receives, and reports whether the scalar closes on that line. An escape this reader does not
+// know leaves the scalar unclosed, so the caller reads the raw quoted text and fails closed (CRW-983).
+func yamlQuoted(s string) (string, bool) {
+	quote := s[0]
+	var b strings.Builder
+	for i := 1; i < len(s); i++ {
+		c := s[i]
+		if quote == '\'' {
+			if c != '\'' {
+				b.WriteByte(c)
+				continue
+			}
+			if i+1 < len(s) && s[i+1] == '\'' {
+				b.WriteByte('\'')
+				i++
+				continue
+			}
+			return closedScalar(b.String(), s[i+1:])
+		}
+		switch {
+		case c == '"':
+			return closedScalar(b.String(), s[i+1:])
+		case c == '\\' && i+1 < len(s):
+			i++
+			switch s[i] {
+			case '"', '\\':
+				b.WriteByte(s[i])
+			case 'n':
+				b.WriteByte('\n')
+			case 't':
+				b.WriteByte('\t')
+			default:
+				return "", false
+			}
+		default:
+			b.WriteByte(c)
+		}
+	}
+	return "", false
+}
+
+// closedScalar is the value of a quoted scalar once its closing quote is read. Only blanks or a comment may
+// follow the quote; anything else makes the line invalid YAML, so the scalar is reported unclosed and the
+// caller reads the raw text (CRW-983).
+func closedScalar(value, rest string) (string, bool) {
+	rest = strings.TrimLeft(rest, " \t")
+	if rest != "" && !strings.HasPrefix(rest, "#") {
+		return "", false
+	}
+	return value, true
 }
 
 // commandWindow is the command a shell would run from the line at i, with the run key taken off, and
@@ -749,6 +826,11 @@ func commandWindow(physical []string, i int) (string, bool) {
 	} else if m := keyPrefix.FindStringIndex(first); m != nil {
 		first = first[m[1]:]
 	}
+	if run && first != "" && (first[0] == '\'' || first[0] == '"') {
+		if value, closed := yamlQuoted(first); closed {
+			first = value
+		}
+	}
 	if key, ok := blockScalarKey(physical[i]); ok {
 		return blockCommand(physical, i, key, blockScalarLiteral(physical[i])), run
 	}
@@ -762,7 +844,7 @@ func commandWindow(physical []string, i int) (string, bool) {
 
 // blockCommand joins the body of the block scalar whose header is at i. A literal body keeps its
 // newlines. A folded body joins two lines at its own indentation with a blank, but keeps the break
-// beside a line indented further and each blank line, as YAML does. A comment line is no command.
+// beside a line indented further and each blank line, as YAML does. A comment line stays in the text, since YAML keeps it, and the shell reads it as a comment.
 func blockCommand(physical []string, i, key int, literal bool) string {
 	joined := ""
 	base, prevMore, blanks := -1, false, 0
@@ -774,9 +856,6 @@ func blockCommand(physical []string, i, key int, literal bool) string {
 		}
 		if indentOf(body) <= key {
 			break
-		}
-		if strings.HasPrefix(strings.TrimSpace(body), "#") {
-			continue
 		}
 		text := strings.TrimSpace(body)
 		if literal {
@@ -792,8 +871,6 @@ func blockCommand(physical []string, i, key int, literal bool) string {
 		}
 		sep := " "
 		switch {
-		case strings.HasSuffix(strings.TrimRight(joined, " \t"), "\\"):
-			joined, sep = strings.TrimRight(joined, " \t"), "\n"
 		case prevMore || more:
 			sep = strings.Repeat("\n", blanks+1)
 		case blanks > 0:
@@ -1482,7 +1559,7 @@ func TestWorkflow_a_backslash_newline_joins_without_a_blank(t *testing.T) {
 		{"a flag split across the break", "      - run: |\n          node --te\\\n          st\n", true},
 		{"the program word split across the break", "      - run: |\n          no\\\n          de --test\n", true},
 		{"a longer flag split across the break", "      - run: |\n          node --test-name-pat\\\n          tern=V1 --test\n", true},
-		{"a flag split across a folded break", "      - run: >-\n          node --te\\\n          st\n", true},
+		{"a flag split across a folded break is a space to the shell", "      - run: >-\n          node --te\\\n          st\n", false},
 		{"a blank before the backslash stays", "      - run: |\n          node --te \\\n          st\n", false},
 		{"a backslash inside single quotes stays", "      - run: |\n          echo 'node --te\\\n          st'\n", false},
 	} {
@@ -1513,6 +1590,30 @@ func TestWorkflow_the_shell_reader_follows_the_quoting_forms(t *testing.T) {
 		{"eval reads its argument", "      - run: eval \"node --test\"\n", true},
 		{"an ANSI-C string is unreadable", "      - run: echo $'node --test'\n", true},
 		{"a here-document with no terminator", "      - run: |\n          bash <<EOF\n          node --test\n", true},
+	} {
+		if got := pythonInWorkflow("release.yml", row.body); (len(got) > 0) != row.found {
+			t.Errorf("%s: found = %q, want found = %v", row.name, got, row.found)
+		}
+	}
+}
+
+// CRW-983, the pre-merge evaluation of b3edf605. The reader reads the text the shell receives: YAML takes
+// the quotes off a quoted run value, folds a line break into a space and keeps a comment line as content,
+// and a wrapper hands the shell the program it runs, not the words after it.
+func TestWorkflow_the_run_text_is_what_the_shell_receives(t *testing.T) {
+	for _, row := range []struct {
+		name  string
+		body  string
+		found bool
+	}{
+		{"an echoed node test behind a wrapper", "      - run: env FOO=1 echo node --test\n", false},
+		{"a node test behind a wrapper's option value", "      - run: env -u HOME node --test\n", true},
+		{"a double-quoted run value", "      - run: \"node --test\"\n", true},
+		{"a single-quoted run value", "      - run: 'node --test'\n", true},
+		{"a single-quoted log line", "      - run: 'echo node --test'\n", false},
+		{"a quoted run value that does not close", "      - run: \"node --test\n", true},
+		{"a folded break is a space", "      - run: >-\n          node --te\\\n          st\n", false},
+		{"a comment line after a continuation", "      - run: |\n          echo x \\\n          # note\n          node --test\n", true},
 	} {
 		if got := pythonInWorkflow("release.yml", row.body); (len(got) > 0) != row.found {
 			t.Errorf("%s: found = %q, want found = %v", row.name, got, row.found)
