@@ -3,8 +3,10 @@ package manage
 import (
 	"context"
 	"encoding/json"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -485,5 +487,351 @@ func TestPumpQueueRetryGateIgnoresNoticesMovedAsideAsOversize(t *testing.T) {
 		if tool == deliverToolSend || tool == deliverToolSteer {
 			t.Fatalf("an oversize notice aged the pin into a send: %v", deliverSendToolsOf(t, log))
 		}
+	}
+}
+
+// pumpQueueTestStamp is a ledger stamp the way Deliver writes one: whole seconds, UTC.
+func pumpQueueTestStamp(at time.Time) string { return at.UTC().Format(time.RFC3339) }
+
+// pumpQueueTestSetTime sets a queued notice's modification time.
+func pumpQueueTestSetTime(t *testing.T, path string, at time.Time) {
+	t.Helper()
+	if err := os.Chtimes(path, at, at); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// pumpQueueTestBackdate makes every queued notice of a thread older than the ledger records the
+// legacy fixtures store at the clock's now, as a notice that was queued before the attempt is.
+func pumpQueueTestBackdate(t *testing.T, cfg *Config, thread string) {
+	t.Helper()
+	dir := filepath.Join(cfg.StateDir, pumpQueueDir, thread)
+	for _, name := range pumpQueueTestNames(t, cfg, thread) {
+		pumpQueueTestSetTime(t, filepath.Join(dir, name), pumpTestNow.Add(-time.Hour))
+	}
+}
+
+// pumpQueueTestLegacyRecord stores a pre-change ledger record under the pre-change id of the names.
+func pumpQueueTestLegacyRecord(t *testing.T, cfg *Config, thread string, names, texts []string, createdAt time.Time, state string) string {
+	t.Helper()
+	legacyID := pumpQueueLegacyBatchID(thread, names)
+	if err := deliverSave(cfg, deliverRecord{LogicalID: legacyID, RequestID: legacyID, Tool: deliverToolSend, TargetThread: thread,
+		MessageSHA256: deliverMessageSHA256(pumpReview776QueueBody(texts)), CreatedAt: pumpQueueTestStamp(createdAt), State: state}); err != nil {
+		t.Fatal(err)
+	}
+	return legacyID
+}
+
+// A legacy record written before a name-ordered member was last modified is not that attempt: the
+// member came after it, so the record is not adopted and the batch takes its own id.
+func TestPumpQueueStaleNameOrderedLegacyRecordIsNotAdopted(t *testing.T) {
+	now := pumpTestNow
+	e := pumpTestEnv(t, &now)
+	bridge, log := deliverFakeBridge(t, []map[string]any{
+		{"payload": map[string]any{"observation": "active", "activeTurnId": "turn-1"}},
+		{"payload": map[string]any{"status": "accepted", "delivery": "accepted_not_applied"}},
+	})
+	cfg := pumpTestConfig(t, bridge)
+	path := pumpQueueTestNotice(t, cfg, "parent-1", "aaaaaaaaaaaaaaaa.txt", "a-body")
+	pumpQueueTestSetTime(t, path, pumpTestNow.Add(-time.Hour))
+	legacyID := pumpQueueTestLegacyRecord(t, cfg, "parent-1", []string{"aaaaaaaaaaaaaaaa.txt"}, []string{"a-body"}, pumpTestNow.Add(-2*time.Hour), deliverStateUnknown)
+	if err := pumpQueueFlush(context.Background(), e, cfg, pumpTestReadStatePtr(t, cfg), pumpSettingsFrom(cfg), false); err != nil {
+		t.Fatal(err)
+	}
+	sent := pumpQueueTestSendIDs(t, log)
+	if len(sent) != 1 || sent[0] == legacyID {
+		t.Errorf("the batch was sent under %v, want one new id and not the stale legacy id %s", sent, legacyID)
+	}
+	if _, err := os.Stat(filepath.Join(cfg.StateDir, pumpQueueDir, "parent-1", pumpSentDir, "aaaaaaaaaaaaaaaa.txt")); err != nil {
+		t.Errorf("the notice was not delivered: %v", err)
+	}
+}
+
+// A stale accepted record whose text is not the text on disk must not become a Held pin: the notice
+// was written after the record, so nothing says the attempt carried it, and a held pin would block
+// every notice added behind it.
+func TestPumpQueueStaleAcceptedLegacyRecordDoesNotHoldTheThread(t *testing.T) {
+	now := pumpTestNow
+	e := pumpTestEnv(t, &now)
+	bridge, log := deliverFakeBridge(t, []map[string]any{
+		{"payload": map[string]any{"observation": "active", "activeTurnId": "turn-1"}},
+		{"payload": map[string]any{"status": "accepted", "delivery": "accepted_not_applied"}},
+	})
+	cfg := pumpTestConfig(t, bridge)
+	path := pumpQueueTestNotice(t, cfg, "parent-1", "aaaaaaaaaaaaaaaa.txt", "the new body")
+	pumpQueueTestSetTime(t, path, pumpTestNow.Add(-time.Hour))
+	legacyID := pumpQueueTestLegacyRecord(t, cfg, "parent-1", []string{"aaaaaaaaaaaaaaaa.txt"}, []string{"the old body"}, pumpTestNow.Add(-2*time.Hour), deliverStateAccepted)
+	other := pumpQueueTestNotice(t, cfg, "parent-1", "bbbbbbbbbbbbbbbb.txt", "b-body")
+	pumpQueueTestSetTime(t, other, pumpTestNow.Add(-time.Hour))
+	if err := pumpQueueFlush(context.Background(), e, cfg, pumpTestReadStatePtr(t, cfg), pumpSettingsFrom(cfg), false); err != nil {
+		t.Fatal(err)
+	}
+	if pin, ok := pumpReview776QueueAttempt(t, cfg, "parent-1"); ok && pin["held"] == true {
+		t.Errorf("a stale accepted record held the thread: %v", pin)
+	}
+	sent := pumpQueueTestSendIDs(t, log)
+	if len(sent) != 1 || sent[0] == legacyID {
+		t.Errorf("the batch was sent under %v, want one new id", sent)
+	}
+	for _, name := range []string{"aaaaaaaaaaaaaaaa.txt", "bbbbbbbbbbbbbbbb.txt"} {
+		if _, err := os.Stat(filepath.Join(cfg.StateDir, pumpQueueDir, "parent-1", pumpSentDir, name)); err != nil {
+			t.Errorf("the notice %s was not delivered: %v", name, err)
+		}
+	}
+}
+
+// The ledger stamp has whole seconds while a file's modification time has nanoseconds. A notice
+// written half a second into the stamp's own second was there when the attempt was made, so its
+// record is adopted for a name-ordered set and for an oldest-first set alike.
+func TestPumpQueueLegacyRecordInTheSameSecondAsAMemberIsAdopted(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		others  bool
+		members []string
+	}{
+		{"name-ordered", false, []string{"aaaaaaaaaaaaaaaa.txt"}},
+		{"oldest-first", true, []string{"zzzzzzzzzzzzzzzz.txt"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			now := pumpTestNow
+			e := pumpTestEnv(t, &now)
+			bridge, log := deliverFakeBridge(t, []map[string]any{})
+			cfg := pumpTestConfig(t, bridge)
+			stamp := pumpTestNow.Add(-time.Hour)
+			texts := make([]string, len(tc.members))
+			for i, member := range tc.members {
+				texts[i] = member[:1] + "-body"
+				pumpQueueTestSetTime(t, pumpQueueTestNotice(t, cfg, "parent-1", member, texts[i]), stamp.Add(500*time.Millisecond))
+			}
+			if tc.others {
+				// A notice queued after the attempt sorts before the attempt's own member.
+				pumpQueueTestSetTime(t, pumpQueueTestNotice(t, cfg, "parent-1", "aaaaaaaaaaaaaaaa.txt", "a-body"), stamp.Add(time.Minute))
+			}
+			pumpQueueTestLegacyRecord(t, cfg, "parent-1", tc.members, texts, stamp, deliverStateAccepted)
+			if err := pumpQueueFlush(context.Background(), e, cfg, pumpTestReadStatePtr(t, cfg), pumpSettingsFrom(cfg), false); err != nil {
+				t.Fatal(err)
+			}
+			if sent := pumpQueueTestSendIDs(t, log); len(sent) != 0 {
+				t.Errorf("an attempt made in the same second was sent again under %v", sent)
+			}
+			for _, member := range tc.members {
+				if _, err := os.Stat(filepath.Join(cfg.StateDir, pumpQueueDir, "parent-1", pumpSentDir, member)); err != nil {
+					t.Errorf("the notice %s the attempt carried was not completed: %v", member, err)
+				}
+			}
+		})
+	}
+}
+
+// A member modified in a later second than the stamp is newer than the attempt.
+func TestPumpQueueLegacyRecordBeforeALaterSecondIsNotAdopted(t *testing.T) {
+	now := pumpTestNow
+	e := pumpTestEnv(t, &now)
+	bridge, log := deliverFakeBridge(t, []map[string]any{
+		{"payload": map[string]any{"observation": "active", "activeTurnId": "turn-1"}},
+		{"payload": map[string]any{"status": "accepted", "delivery": "accepted_not_applied"}},
+	})
+	cfg := pumpTestConfig(t, bridge)
+	stamp := pumpTestNow.Add(-time.Hour)
+	pumpQueueTestSetTime(t, pumpQueueTestNotice(t, cfg, "parent-1", "aaaaaaaaaaaaaaaa.txt", "a-body"), stamp.Add(1500*time.Millisecond))
+	legacyID := pumpQueueTestLegacyRecord(t, cfg, "parent-1", []string{"aaaaaaaaaaaaaaaa.txt"}, []string{"a-body"}, stamp, deliverStateAccepted)
+	if err := pumpQueueFlush(context.Background(), e, cfg, pumpTestReadStatePtr(t, cfg), pumpSettingsFrom(cfg), false); err != nil {
+		t.Fatal(err)
+	}
+	if sent := pumpQueueTestSendIDs(t, log); len(sent) != 1 || sent[0] == legacyID {
+		t.Errorf("a notice from a later second was sent under %v, want one new id", sent)
+	}
+}
+
+// pumpQueueCancelCtx reports a cancellation from its (after+1)-th Err call on, and runs onCancel the
+// moment it first reports one, so a test can see what the round changed after that point.
+type pumpQueueCancelCtx struct {
+	context.Context
+	after, calls int
+	cancelled    bool
+	onCancel     func()
+}
+
+func (c *pumpQueueCancelCtx) Err() error {
+	c.calls++
+	if c.calls <= c.after {
+		return nil
+	}
+	if !c.cancelled {
+		c.cancelled = true
+		c.onCancel()
+	}
+	return context.Canceled
+}
+
+// pumpQueueTreeSnapshot is every file under dir (except the log) with its content, for comparing two
+// moments of a state directory.
+func pumpQueueTreeSnapshot(t *testing.T, dir string) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(dir, path)
+		if rel == pumpLogFile {
+			return nil
+		}
+		if d.IsDir() {
+			out[rel+"/"] = ""
+			return nil
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		out[rel] = string(raw)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+// A round cancelled at any point of its recovery and adoption steps makes no durable change after the
+// cancellation: the state directory is the same when the round returns as when it was first told to
+// stop, and the state the round still holds in memory is the state on disk.
+func TestPumpQueueRoundCancelledMidwayChangesNothingAfterwards(t *testing.T) {
+	scenarios := []struct {
+		name  string
+		setup func(t *testing.T, cfg *Config)
+	}{
+		{"legacy accepted record", func(t *testing.T, cfg *Config) {
+			path := pumpQueueTestNotice(t, cfg, "parent-1", "aaaaaaaaaaaaaaaa.txt", "a-body")
+			pumpQueueTestSetTime(t, path, pumpTestNow.Add(-time.Hour))
+			pumpQueueTestLegacyRecord(t, cfg, "parent-1", []string{"aaaaaaaaaaaaaaaa.txt"}, []string{"a-body"}, pumpTestNow.Add(-30*time.Minute), deliverStateAccepted)
+		}},
+		{"legacy held record", func(t *testing.T, cfg *Config) {
+			path := pumpQueueTestNotice(t, cfg, "parent-1", "aaaaaaaaaaaaaaaa.txt", "new body")
+			pumpQueueTestSetTime(t, path, pumpTestNow.Add(-time.Hour))
+			pumpQueueTestLegacyRecord(t, cfg, "parent-1", []string{"aaaaaaaaaaaaaaaa.txt"}, []string{"old body"}, pumpTestNow.Add(-30*time.Minute), deliverStateAccepted)
+		}},
+		{"legacy unknown record", func(t *testing.T, cfg *Config) {
+			path := pumpQueueTestNotice(t, cfg, "parent-1", "aaaaaaaaaaaaaaaa.txt", "a-body")
+			pumpQueueTestSetTime(t, path, pumpTestNow.Add(-time.Hour))
+			pumpQueueTestLegacyRecord(t, cfg, "parent-1", []string{"aaaaaaaaaaaaaaaa.txt"}, []string{"a-body"}, pumpTestNow.Add(-30*time.Minute), deliverStateUnknown)
+		}},
+		{"aside left by an interrupted move", func(t *testing.T, cfg *Config) {
+			dir := filepath.Join(cfg.StateDir, pumpQueueDir, "parent-1")
+			aside := filepath.Join(dir, pumpReview776AsideDir)
+			if err := os.MkdirAll(aside, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(aside, "aaaaaaaaaaaaaaaa.txt"), []byte("a-body"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"refused pin", func(t *testing.T, cfg *Config) {
+			pumpQueueTestSetTime(t, pumpQueueTestNotice(t, cfg, "parent-1", "aaaaaaaaaaaaaaaa.txt", "a-body"), pumpTestNow.Add(-time.Hour))
+			pumpQueueTestPin(t, cfg, "parent-1", "pinid", []string{"aaaaaaaaaaaaaaaa.txt"}, []string{"a-body"})
+			if err := deliverSave(cfg, deliverRecord{LogicalID: "pinid", RequestID: "pinid", Tool: deliverToolSend, TargetThread: "parent-1",
+				MessageSHA256: deliverMessageSHA256(pumpReview776QueueBody([]string{"a-body"})), CreatedAt: pumpQueueTestStamp(pumpTestNow.Add(-30 * time.Minute)), State: deliverStateRefused}); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	}
+	for _, sc := range scenarios {
+		t.Run(sc.name, func(t *testing.T) {
+			cancelledRuns := 0
+			for after := 0; after < 40; after++ {
+				now := pumpTestNow
+				e := pumpTestEnv(t, &now)
+				cfg := pumpTestConfig(t, "/nonexistent/crw-bridge-991")
+				sc.setup(t, cfg)
+				st := pumpTestReadStatePtr(t, cfg)
+				var atCancel map[string]string
+				ctx := &pumpQueueCancelCtx{Context: context.Background(), after: after}
+				ctx.onCancel = func() { atCancel = pumpQueueTreeSnapshot(t, cfg.StateDir) }
+				if err := pumpQueueFlush(ctx, e, cfg, st, pumpSettingsFrom(cfg), false); err != nil {
+					t.Fatal(err)
+				}
+				if !ctx.cancelled {
+					break
+				}
+				cancelledRuns++
+				final := pumpQueueTreeSnapshot(t, cfg.StateDir)
+				var diff []string
+				for path, content := range final {
+					if before, ok := atCancel[path]; !ok || before != content {
+						diff = append(diff, path)
+					}
+				}
+				for path := range atCancel {
+					if _, ok := final[path]; !ok {
+						diff = append(diff, path)
+					}
+				}
+				sort.Strings(diff)
+				if len(diff) > 0 {
+					t.Errorf("cancelled at Err call %d: the round changed %v afterwards", after+1, diff)
+				}
+				disk := pumpTestReadState(t, cfg)
+				if len(disk.QueueAttempt) != len(st.QueueAttempt) {
+					t.Errorf("cancelled at Err call %d: the round holds %d pins in memory, the state file %d", after+1, len(st.QueueAttempt), len(disk.QueueAttempt))
+				}
+			}
+			if cancelledRuns == 0 {
+				t.Fatalf("no run was cancelled; the sweep exercised nothing")
+			}
+		})
+	}
+}
+
+// A crash between a third refusal's moves and the state save leaves the pin and the count behind
+// with the notices already in refused/. The next round converges: the pin lifts, the count clears
+// and a notice queued behind flows, without moving or counting anything twice.
+func TestPumpQueueRefusedMovesThenStoreCrashConverges(t *testing.T) {
+	now := pumpTestNow
+	e := pumpTestEnv(t, &now)
+	bridge, log := deliverFakeBridge(t, []map[string]any{
+		{"payload": map[string]any{"observation": "active", "activeTurnId": "turn-1"}},
+		{"payload": map[string]any{"status": "accepted", "delivery": "accepted_not_applied"}},
+	})
+	cfg := pumpTestConfig(t, bridge)
+	dir := filepath.Join(cfg.StateDir, pumpQueueDir, "parent-1")
+	if err := os.MkdirAll(filepath.Join(dir, pumpQueueRefusedDir), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// The earlier round moved the refused notice and died before it saved: the file is in refused/
+	// and the state still holds the pin and the second refusal.
+	if err := os.WriteFile(filepath.Join(dir, pumpQueueRefusedDir, "aaaaaaaaaaaaaaaa.txt"), []byte("a-body"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	pumpQueueTestPin(t, cfg, "parent-1", "pinid-r2", []string{"aaaaaaaaaaaaaaaa.txt"}, []string{"a-body"})
+	st := pumpTestReadStatePtr(t, cfg)
+	pin := st.QueueAttempt["parent-1"]
+	pin.Base = "pinid"
+	st.QueueAttempt["parent-1"] = pin
+	st.QueueRefused["parent-1"] = pumpQueueRefusal{ID: "pinid", Count: 2}
+	if err := st.pumpSave(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := deliverSave(cfg, deliverRecord{LogicalID: "pinid-r2", RequestID: "pinid-r2", Tool: deliverToolSend, TargetThread: "parent-1",
+		MessageSHA256: deliverMessageSHA256(pumpReview776QueueBody([]string{"a-body"})), CreatedAt: pumpQueueTestStamp(pumpTestNow.Add(-time.Hour)), State: deliverStateRefused}); err != nil {
+		t.Fatal(err)
+	}
+	pumpQueueTestSetTime(t, pumpQueueTestNotice(t, cfg, "parent-1", "bbbbbbbbbbbbbbbb.txt", "b-body"), pumpTestNow.Add(-time.Minute))
+	for round := 0; round < 2; round++ {
+		if err := pumpQueueFlush(context.Background(), e, cfg, pumpTestReadStatePtr(t, cfg), pumpSettingsFrom(cfg), false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, ok := pumpReview776QueueAttempt(t, cfg, "parent-1"); ok {
+		t.Errorf("the pin survived the rerun")
+	}
+	if refusals := pumpQueueTestRefusals(t, cfg); len(refusals) != 0 {
+		t.Errorf("the refusal count survived the rerun: %v", refusals)
+	}
+	if _, err := os.Stat(filepath.Join(dir, pumpSentDir, "bbbbbbbbbbbbbbbb.txt")); err != nil {
+		t.Errorf("the notice behind the refused batch did not flow: %v (sends %v)", err, pumpQueueTestSendIDs(t, log))
+	}
+	if entries, err := os.ReadDir(filepath.Join(dir, pumpQueueRefusedDir)); err != nil || len(entries) != 1 {
+		t.Errorf("refused/ holds %v (%v), want the one earlier notice", entries, err)
 	}
 }

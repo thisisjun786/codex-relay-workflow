@@ -1156,13 +1156,11 @@ const (
 )
 
 // pumpReview776QueueLegacyCandidate is one set of notice names a pre-change ledger record may cover,
-// with each member's modification time for the record's age check.
+// with each member's modification time for the record's age check. Every set is checked the same
+// way, whichever order it came from.
 type pumpReview776QueueLegacyCandidate struct {
 	names, texts []string
-	// byAge marks an oldest-first set. Only its record is checked against the members' modification
-	// times; a name-ordered prefix keeps the adoption rule the pre-change pump was judged by.
-	byAge    bool
-	modTimes []time.Time
+	modTimes     []time.Time
 }
 
 // pumpReview776QueueLegacyCandidates lists the sets a pre-change record may cover, longest first: the
@@ -1178,8 +1176,8 @@ func pumpReview776QueueLegacyCandidates(dir string, batch pumpReview776QueueBatc
 		}
 		modTimes[i] = info.ModTime()
 	}
-	build := func(indices []int, byAge bool) pumpReview776QueueLegacyCandidate {
-		c := pumpReview776QueueLegacyCandidate{byAge: byAge}
+	build := func(indices []int) pumpReview776QueueLegacyCandidate {
+		c := pumpReview776QueueLegacyCandidate{}
 		for _, i := range indices {
 			c.names = append(c.names, batch.names[i])
 			c.texts = append(c.texts, batch.texts[i])
@@ -1193,7 +1191,7 @@ func pumpReview776QueueLegacyCandidates(dir string, batch pumpReview776QueueBatc
 		for i := range indices {
 			indices[i] = i
 		}
-		out = append(out, build(indices, false))
+		out = append(out, build(indices))
 	}
 	order := make([]int, len(batch.names))
 	for i := range order {
@@ -1213,7 +1211,7 @@ func pumpReview776QueueLegacyCandidates(dir string, batch pumpReview776QueueBatc
 		if picked[cut-1] == cut-1 {
 			continue
 		}
-		out = append(out, build(picked, true))
+		out = append(out, build(picked))
 	}
 	return out, nil
 }
@@ -1286,7 +1284,9 @@ func pumpReview776QueueGateNames(dir string, pinned []string) ([]string, error) 
 // longest first: the pre-change pump had no size split, so it always sent the whole queue, and a
 // notice queued afterwards extends the set rather than changing it. The id check is what keeps a
 // record for another batch -- a direct send-parent delivery, or one over different names -- from
-// completing notices it never carried.
+// completing notices it never carried. A record is also adopted only when it was written no earlier
+// than the second a member was last modified, for every candidate set: a notice written after the
+// attempt cannot have been carried by it.
 //
 // An unsettled record is adopted whatever its message digest says. The digest is not evidence that
 // the attempt never went: a record whose text is not the text now on disk is still an attempt that
@@ -1313,9 +1313,11 @@ func pumpReview776QueueAdoptLegacy(ctx context.Context, cfg *Config, st *pumpSta
 		if !known {
 			continue
 		}
-		if candidate.byAge && !pumpReview776QueueCreatedAfter(record.CreatedAt, candidate.modTimes) {
-			// The record was written before a member of this set was last modified, so the set is not
-			// the one the attempt covered.
+		if !pumpReview776QueueCreatedAfter(record.CreatedAt, candidate.modTimes) {
+			// The record was written before a member of this set was last modified, so the member came
+			// after the attempt and the set is not the one the attempt covered. This holds for a
+			// name-ordered set as for an oldest-first one: a record for names a producer has since
+			// written again is not adopted, so it can neither pin a stale attempt nor hold the thread.
 			continue
 		}
 		body := pumpReview776QueueBody(texts)
@@ -1333,17 +1335,17 @@ func pumpReview776QueueAdoptLegacy(ctx context.Context, cfg *Config, st *pumpSta
 			if sameBody {
 				pin.SHA256 = pumpReview776QueueDigests(names, texts)
 				pin.Accepted = true
-				st.QueueAttempt[thread] = pin
 				if err := ctx.Err(); err != nil {
 					return pumpReview776QueueLegacyNone, err
 				}
+				st.QueueAttempt[thread] = pin
 				return pumpReview776QueueLegacyComplete, st.pumpSave(cfg)
 			}
 			pin.Held = true
-			st.QueueAttempt[thread] = pin
 			if err := ctx.Err(); err != nil {
 				return pumpReview776QueueLegacyNone, err
 			}
+			st.QueueAttempt[thread] = pin
 			return pumpReview776QueueLegacyHold, st.pumpSave(cfg)
 		case deliverStateRefused:
 			// A refusal is terminal and nothing was sent, so the batch takes its current id as usual.
@@ -1362,10 +1364,10 @@ func pumpReview776QueueAdoptLegacy(ctx context.Context, cfg *Config, st *pumpSta
 				// nobody has evidence was delivered.
 				pin.Legacy = true
 			}
-			st.QueueAttempt[thread] = pin
 			if err := ctx.Err(); err != nil {
 				return pumpReview776QueueLegacyNone, err
 			}
+			st.QueueAttempt[thread] = pin
 			return pumpReview776QueueLegacyReconcile, st.pumpSave(cfg)
 		}
 	}

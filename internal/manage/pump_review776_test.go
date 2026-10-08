@@ -706,6 +706,7 @@ func TestPumpReview776UpgradeReconcilesTheOldLogicalID(t *testing.T) {
 	})
 	cfg := pumpTestConfig(t, bridge)
 	pumpQueueTestNotice(t, cfg, "parent-1", "aaaaaaaaaaaaaaaa.txt", "a-body")
+	pumpQueueTestBackdate(t, cfg, "parent-1")
 	// The pre-change id: the thread and the names, without the body.
 	oldID := pumpBatchIDStrings([]string{"parent-1", "aaaaaaaaaaaaaaaa.txt"})
 	newID := pumpBatchIDStrings([]string{"parent-1", "aaaaaaaaaaaaaaaa.txt", "a-body"})
@@ -813,6 +814,7 @@ func TestPumpReview776LegacyAcceptedRecordIsCompletedNotResent(t *testing.T) {
 	bridge, log := deliverFakeBridge(t, []map[string]any{})
 	cfg := pumpTestConfig(t, bridge)
 	pumpQueueTestNotice(t, cfg, "parent-1", "aaaaaaaaaaaaaaaa.txt", "a-body")
+	pumpQueueTestBackdate(t, cfg, "parent-1")
 	oldID := pumpBatchIDStrings([]string{"parent-1", "aaaaaaaaaaaaaaaa.txt"})
 	if err := deliverSave(cfg, deliverRecord{
 		LogicalID: oldID, RequestID: oldID, Tool: deliverToolSend, TargetThread: "parent-1",
@@ -841,6 +843,7 @@ func TestPumpReview776LegacyUnknownRecordIsReconciled(t *testing.T) {
 	})
 	cfg := pumpTestConfig(t, bridge)
 	pumpQueueTestNotice(t, cfg, "parent-1", "aaaaaaaaaaaaaaaa.txt", "a-body")
+	pumpQueueTestBackdate(t, cfg, "parent-1")
 	oldID := pumpBatchIDStrings([]string{"parent-1", "aaaaaaaaaaaaaaaa.txt"})
 	newID := pumpBatchIDStrings([]string{"parent-1", "aaaaaaaaaaaaaaaa.txt", "a-body"})
 	if err := deliverSave(cfg, deliverRecord{
@@ -944,6 +947,7 @@ func TestPumpReview776LegacyLookupUsesTheWholeSetBeforeSplitting(t *testing.T) {
 	big := strings.Repeat("x", 46000)
 	pumpQueueTestNotice(t, cfg, "parent-1", "aaaaaaaaaaaaaaaa.txt", big)
 	pumpQueueTestNotice(t, cfg, "parent-1", "bbbbbbbbbbbbbbbb.txt", big)
+	pumpQueueTestBackdate(t, cfg, "parent-1")
 	// The pre-change id hashes the whole queued set, not the split prefix.
 	wholeBody := pumpReview776QueueBody([]string{big, big})
 	oldID := pumpBatchIDStrings([]string{"parent-1", "aaaaaaaaaaaaaaaa.txt", "bbbbbbbbbbbbbbbb.txt"})
@@ -1295,6 +1299,7 @@ func TestPumpReview776LegacyPrefixNameSetIsReconciled(t *testing.T) {
 	// The upgrade left an unsettled attempt for [a.txt] alone; b.txt arrived afterwards.
 	pumpQueueTestNotice(t, cfg, "parent-1", "aaaaaaaaaaaaaaaa.txt", "a-body")
 	pumpQueueTestNotice(t, cfg, "parent-1", "bbbbbbbbbbbbbbbb.txt", "b-body")
+	pumpQueueTestBackdate(t, cfg, "parent-1")
 	oldID := pumpBatchIDStrings([]string{"parent-1", "aaaaaaaaaaaaaaaa.txt"})
 	newID := pumpBatchIDStrings([]string{"parent-1", "aaaaaaaaaaaaaaaa.txt", "bbbbbbbbbbbbbbbb.txt"})
 	if err := deliverSave(cfg, deliverRecord{
@@ -1330,6 +1335,7 @@ func TestPumpReview776LegacyPinCarriesNoDigestForAChangedBody(t *testing.T) {
 	})
 	cfg := pumpTestConfig(t, bridge)
 	pumpQueueTestNotice(t, cfg, "parent-1", "aaaaaaaaaaaaaaaa.txt", "A2")
+	pumpQueueTestBackdate(t, cfg, "parent-1")
 	oldID := pumpBatchIDStrings([]string{"parent-1", "aaaaaaaaaaaaaaaa.txt"})
 	if err := deliverSave(cfg, deliverRecord{
 		LogicalID: oldID, RequestID: oldID, Tool: deliverToolSend, TargetThread: "parent-1",
@@ -1453,6 +1459,7 @@ func TestPumpReview776LegacyAcceptedWithUnrecoverableTextHoldsTheQueue(t *testin
 	})
 	cfg := pumpTestConfig(t, bridge)
 	pumpQueueTestNotice(t, cfg, "parent-1", "aaaaaaaaaaaaaaaa.txt", "A2")
+	pumpQueueTestBackdate(t, cfg, "parent-1")
 	oldID := pumpBatchIDStrings([]string{"parent-1", "aaaaaaaaaaaaaaaa.txt"})
 	if err := deliverSave(cfg, deliverRecord{
 		LogicalID: oldID, RequestID: oldID, Tool: deliverToolSend, TargetThread: "parent-1",
@@ -1667,6 +1674,7 @@ func TestPumpReview776LegacyUnsettledRecordIsReconciledDespiteAChangedBody(t *te
 	cfg := pumpTestConfig(t, bridge)
 	pumpQueueTestNotice(t, cfg, "parent-1", "aaaaaaaaaaaaaaaa.txt", "A2")
 	pumpQueueTestNotice(t, cfg, "parent-1", "bbbbbbbbbbbbbbbb.txt", "b-body")
+	pumpQueueTestBackdate(t, cfg, "parent-1")
 	oldID := pumpBatchIDStrings([]string{"parent-1", "aaaaaaaaaaaaaaaa.txt", "bbbbbbbbbbbbbbbb.txt"})
 	// The pre-change attempt's text is not recoverable: the ledger holds a digest of a body nobody
 	// can rebuild from the notices now on disk.
