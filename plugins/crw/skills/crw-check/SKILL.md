@@ -31,11 +31,11 @@ When the claim includes PR readiness or integration, assess CI and review eviden
 
 For implementation completion, use the shared
 [Implementation Done](../crw-plan/references/integrations.md#implementation-done).
-Match the issue to its current delivery PR, intended integration target and actual
+Match the issue to its current delivery, intended integration target and actual
 merge evidence, or the reconciled legacy PR set and its combined issue coverage.
 Preserve existing accepted operational criteria. Contrast partial, reference/replacement, wrong-branch and
 closed-unmerged cases with a complete intended merge. An implementation merge does
-not prove deployment; a verified non-PR result does not need an empty PR.
+not prove deployment; a verified non-PR result needs no placeholder pull request.
 
 ## Compare criterion by criterion
 

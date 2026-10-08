@@ -249,21 +249,21 @@ preserving product labels, context links, unrelated fields and history.
 
 ### Issue-to-PR mapping
 
-Today's operation is one implementation issue per packet and PR, and that PR delivers that
-one issue: several PRs for one issue, or one PR delivering several issues, are reconciled
-through `crw-plan` before new dispatch. Split work requiring several PRs into separate
+Today's operation is one implementation issue per packet, and that packet delivers that one
+issue: several deliveries for one issue, or one delivery covering several issues, are reconciled
+through `crw-plan` before new dispatch. Split work requiring several deliveries into separate
 issues with explicit dependencies, even within one repository. Keep a multi-repository
-outcome in one project when appropriate, with one issue per repository PR.
-Batches coordinate separate issue/PR pairs; they do not combine issues into one
-PR. Referencing a related issue is not claiming to deliver or close it. This is today's
+outcome in one project when appropriate, with one issue per repository delivery.
+Batches coordinate separate issue/delivery pairs; they do not combine issues into one
+delivery. Referencing a related issue is not claiming to deliver or close it. This is today's
 operation under the [work-unit rules](../../../../../POLICY.md#work-units-review-and-integration),
 not a standing one-to-one rule: several packets for one feature are allowed by policy and
 switch on when their support lands.
 
-Keep review fixes on the same issue and PR. A necessary replacement PR retains
-the superseded link and names the one current delivery PR; it does not create a
+Keep review fixes on the same issue and delivery. A necessary replacement PR retains
+the superseded link and names the one current delivery; it does not create a
 second simultaneous delivery for the issue. A new change after that delivery
-has merged gets a new issue and PR. Research, design, or operational work with
+has landed gets a new issue and delivery, except a defect inside the finished issue's own specification, criteria or promise: that reopens the same issue key ([After the merge](../../crw-run/references/merge-readiness.md#late-review-threads)), and only a defect outside the issue gets a new issue. Research, design, or operational work with
 no repository change uses an explicit non-PR result and verification; do not
 create an empty PR merely to fit the rule.
 
@@ -438,17 +438,15 @@ something read from its binding rather than from what anyone called it.
 
 | Role | Verifies | Merges | Updates in Linear | Complete when |
 |---|---|---|---|---|
-| Supervisor | each parent's reported project outcome against the initiative's finish condition | nothing; it decides cross-project order, never a landing ([OPS-9.3](../../crw-run/references/operations.md#ops-93-the-parent-merges-and-does-not-release)) | the initiative record | the initiative's finish condition holds on its projects' verified outcomes |
-| Parent | each child's delivery, pull request, checks and review against the issue's accepted criteria | its own project's issues, into their intended target | the project record and the issues it owns | every obligation in the agreed project scope is delivered, integrated and reconciled |
-| Child | its own implementation and the review on its one pull request | never ([OPS-9.3](../../crw-run/references/operations.md#ops-93-the-parent-merges-and-does-not-release)) | nothing; it returns proposed record changes to its parent | the current head's required checks have passed, its required reviews have finished and its blocking findings are resolved ([OPS-9.2](../../crw-run/references/operations.md#ops-92-what-normal-completion-means)); the issue itself is Done once its parent lands that pull request, under [Implementation Done](#implementation-done) |
+| Supervisor | each parent's reported project outcome against the initiative's finish condition | nothing; it decides cross-project order, never a landing ([OPS-9.3](../../crw-run/references/operations.md#ops-93-the-parent-integrates-and-does-not-release)) | the initiative record | the initiative's finish condition holds on its projects' verified outcomes |
+| Parent | each child's delivery, checks and review against the issue's accepted criteria | its own project's issues, into their intended target | the project record and the issues it owns | every obligation in the agreed project scope is delivered, integrated and reconciled |
+| Child | its own implementation and the local verification of its task branch | never ([OPS-9.3](../../crw-run/references/operations.md#ops-93-the-parent-integrates-and-does-not-release)) | nothing; it returns proposed record changes to its parent | the local verification record of the head passes and its blocking findings are resolved ([OPS-9.2](../../crw-run/references/operations.md#ops-92-what-normal-completion-means)); the issue itself is Done once its parent lands that head on the intended branch, under [Implementation Done](#implementation-done) |
 
 The tables say what each level answers for. What the supervisor spends its time on is the level
 above them: it talks with Jun, carries the requests he approves down to the parents, decides which
 parent takes which project, answers the midpoint check when he asks for one, collects what the
 parents report, and writes the initiative's record. The work it never takes is divided by name
-rather than left to the pair below it. The child implements, verifies and resolves the review on
-its own pull request; the parent accepts that delivery against the issue's criteria and performs
-the merge; the supervisor tests each reported project outcome against the initiative's finish
+rather than left to the pair below it. The child implements, verifies and resolves the review on its own delivery (its task branch, or its pull request where one exists); the parent accepts that delivery against the issue's criteria and performs the integration; the supervisor tests each reported project outcome against the initiative's finish
 condition and stops there. Holding no goal of its own narrows none of that: inside an execution
 approval still in force it moves the approved work and resumes the responsible parent, which is
 what [the midpoint check](../../crw-status/references/midpoint-check.md) already describes.
@@ -846,7 +844,7 @@ projects when a change is considered; Jun can ask for it.
 **Changing the table.** A change to a tag, a Bundles row or a shape row is a decision of the management
 session or Jun. The decision is recorded with its evidence: the issues whose classification was wrong, the
 tag that was wrong in each and the feature that shows it, and what the change would have given each of
-them. The change is then an edit of this section through an ordinary pull request. It applies to lines
+them. The change is then an edit of this section, made as an ordinary commit on the task branch. It applies to lines
 written after it, and the lines and release rows already written keep their values. No number of wrong
 cases triggers a change by itself; the cases are evidence to read.
 
@@ -1063,7 +1061,7 @@ as an implied promise.
 
 A merge turn and an edit agreement are different things. Agreeing on an edit grants no merge
 permission and creates no new project scope, and the merge itself stays with the owning parent
-under [OPS-9.3](../../crw-run/references/operations.md#ops-93-the-parent-merges-and-does-not-release). Use the shared
+under [OPS-9.3](../../crw-run/references/operations.md#ops-93-the-parent-integrates-and-does-not-release). Use the shared
 [Coordination message](../../crw-run/references/task-packet.md#coordination-message), reference the
 values the existing relationship already holds instead of recopying them, and prefer one message
 carrying a real state change over a heartbeat carrying none.
@@ -1071,7 +1069,7 @@ carrying a real state change over a heartbeat carrying none.
 ### Resolve the implementation repository
 
 Resolve the issue repository label and its explicit GitHub owner/repo or URL
-against its accepted scope, current delivery PR and existing assignment.
+against its accepted scope, current delivery (its pull request when one exists, otherwise its task branch and head) and existing assignment.
 Project context links and any remaining legacy project labels do not assign
 repositories to its issues. Identify reference-only repositories separately.
 If the issue's label or explicit target conflicts with its PR or ownership record, reconcile the conflict
@@ -1101,17 +1099,17 @@ Keep its source baseline and delivered output identity under the non-PR evidence
 
 ### Implementation Done
 
-An implementation issue is Done when every accepted criterion maps to a commit that actually merged into the
+An implementation issue is Done when every accepted criterion maps to a commit that actually landed on the
 intended integration target, and a partial implementation never closes it. In today's operation one issue runs as
-one packet and one PR, so that mapping is its one current delivery PR's landing
-([the work-unit rules](../../../../../POLICY.md#work-units-review-and-integration)). Read GitHub's current PR identity,
-repository, base branch, merged state and landing commit against the issue's
-accepted scope. A related/reference PR, superseded replacement, approval, green
-CI, merge-ready flag or closed-but-unmerged PR is not that evidence. Merging a
-prerequisite branch into another task branch is not integration into the intended
-target. Verify the landing rather than treating an accepted merge request as done.
+one packet and one delivery, so that mapping is its one current delivery's landing commit
+([the work-unit rules](../../../../../POLICY.md#work-units-review-and-integration)). Under the push-only procedure
+that commit is the integrator's fast-forward of the verified merged tree; where the delivery is a pull request,
+read GitHub's current PR identity, repository, base branch, merged state and landing commit instead. A
+related/reference PR, superseded replacement, approval, green CI, merge-ready flag or closed-but-unmerged PR is
+not that evidence. Landing a prerequisite branch into another task branch is not integration into the intended
+target. Verify the landing rather than treating an accepted integration request as done.
 
-The PR must deliver the issue's accepted implementation scope; a partial merge
+The delivery must carry the issue's accepted implementation scope; a partial landing
 cannot hide remaining required implementation. For an already-approved legacy
 multi-PR issue, preserve links, owners and history, inventory required deliveries
 and reconcile through `crw-plan` before new dispatch. Its completion uses all
@@ -1161,10 +1159,10 @@ Each row fixes one document type's canonical location, the level whose record it
 | Document type | Canonical location | Owner | Applies to | Change trigger | Referenced from the other side as |
 | --- | --- | --- | --- | --- | --- |
 | Initiative definition: goal, finish condition, contributing projects' roles | The Linear initiative page body, written to the [initiative body standard](#initiative-body-standard) | The initiative's execution supervisor where one is designated, otherwise the user | The initiative and every project contributing to it | The goal, finish condition or scope changes, or a contributing project's role does | Its stable ID and URL |
-| A project's or issue's own requirements, scope, priority, acceptance criteria and open questions | The Linear project or issue body | The parent, for the project record and the issues it owns; a standalone issue keeps its own existing owner | That project or issue, at the revision read | An accepted requirement, scope or criteria change | The item link, beside the expected behaviour and criteria stated in the pull request's own text, because a private link alone does not carry them |
+| A project's or issue's own requirements, scope, priority, acceptance criteria and open questions | The Linear project or issue body | The parent, for the project record and the issues it owns; a standalone issue keeps its own existing owner | That project or issue, at the revision read | An accepted requirement, scope or criteria change | The item link, beside the expected behaviour and criteria stated in the commit or handoff that carries the change, because a private link alone does not carry them |
 | Accepted decisions and dispositions | Linear comments on the item the decision binds | The level whose record that item is | The item and anything citing it | A decision is accepted, or a later explicit correction supersedes it | The comment cited by ID and date from the commit, pull request or repository document it settles |
 | Progress and status | Linear updates on the project or initiative | The level whose record it is | That subject's reporting period | Material progress, under the record rule in [supervisor, parent and child scope](#supervisor-parent-and-child-scope) | Not copied into the repository at all |
-| Architecture, API, schema and module contracts, and the rationale for the technical decision behind them | The implementing repository, versioned with the code that implements them | The implementation owner of the issue whose pull request carries them | That repository at the commit carrying them | The implemented contract changes | The Linear issue citing path and commit, never a copy of the contract |
+| Architecture, API, schema and module contracts, and the rationale for the technical decision behind them | The implementing repository, versioned with the code that implements them | The implementation owner of the issue whose delivery carries them | That repository at the commit carrying them | The implemented contract changes | The Linear issue citing path and commit, never a copy of the contract |
 | Install, run, test and recovery procedures; development, CI and security rules | The same repository, in its own policy and contribution documents | That repository's maintainer | That repository, at that revision | A command, path, prerequisite or rule changes | A Linear link, which does not restate them |
 | Research and verification verdicts | Linear, in the issue or the linked coordination document | The level that commissioned the work | The question asked, under the conditions recorded | A verdict is reached, or later evidence overturns it | Links to the repository's reproduction and to the raw evidence |
 | Raw, large or private evidence | The durable private evidence root recorded under [OPS-5.4](../../crw-run/references/operations.md#ops-54-evidence-location) | The task that produced it | The run that produced it | A new run replaces it; nothing is edited in place | A citation carrying version or digest, date and access scope, never pasted into Linear or the repository |
@@ -1190,7 +1188,7 @@ The last column is not an overflow for anything awkward. Two binding sources tha
 
 When one side changes, the other is checked before the change is called done, and which side moved decides what follows. Two cases look alike in a diff and are not the same thing.
 
-A **requirements change** is the canonical Linear side moving: an accepted change to scope, criteria or a decision. The implementation and the repository documents describing it are now behind, which is the expected consequence rather than a defect. Check the impact by naming the repository contracts, procedures, tests and open pull requests the changed requirement reaches. The owner of the changed record raises it, and the implementing issue's owner updates the repository side inside its own assignment, while a sub-task returns the proposal rather than writing it, under [record writes and returned proposals](#record-writes-and-returned-proposals). Where a review is already bound to the old criteria, the registered set is updated before the next claim rather than after it, because a verdict recorded against superseded wording rules on the wrong obligation.
+A **requirements change** is the canonical Linear side moving: an accepted change to scope, criteria or a decision. The implementation and the repository documents describing it are now behind, which is the expected consequence rather than a defect. Check the impact by naming the repository contracts, procedures, tests and open task branches the changed requirement reaches. The owner of the changed record raises it, and the implementing issue's owner updates the repository side inside its own assignment, while a sub-task returns the proposal rather than writing it, under [record writes and returned proposals](#record-writes-and-returned-proposals). Where a review is already bound to the old criteria, the registered set is updated before the next claim rather than after it, because a verdict recorded against superseded wording rules on the wrong obligation.
 
 An **implementation mismatch** is the repository side diverging from a requirement nobody changed. It is a defect to route and never a licence to rewrite the requirement to match the code. Check the impact by establishing first whether the behaviour is wrong or only the repository's description of it is, since those have different fixes and different owners. [crw-check](../../crw-check/SKILL.md) carries the finding to the task that owns the implementation; where two currently binding sources require incompatible things, that is a contradiction for [crw-logic](../../crw-logic/SKILL.md) rather than a mismatch.
 
@@ -1326,37 +1324,31 @@ A value this precedence settles is applied without asking. A value it does not s
 
 ### Publish for review when the work is reviewable
 
-This applies where the assignment's scope expressly covers publication. Where it does not, the delivery is local commits or a frozen diff and the question of draft never arises; lacking publication authorization is a reason not to publish, not a reason to publish as a draft.
+Internal work is delivered as commits on the task branch, with the `verification-record/1` of the tree they build and the handoff. The integrator merges the candidate into a local integration tree over `dev`, verifies that tree with the local full verification (a `verification-record/1` with `result: pass`) and fast-forwards `dev` to it ([POLICY.md](../../../../../POLICY.md#branches-and-authority)). Internal work is not delivered through a pull request. An external contribution may still arrive as one, and a pull request that was already open when this procedure took effect follows [In-flight pull requests (transition)](../../crw-run/references/merge-readiness.md#in-flight-pull-requests-transition).
 
-Where publication IS in scope, draft marks an implementation not yet worth reading. It is not a waiting room until reviewers finish. When the change is complete enough to review, it is published as a pull request that is open for review: created non-draft, or an existing draft transitioned to Ready for review. Ready is review entry, not merge permission and not proof the work is done.
+This applies where the assignment's scope expressly covers delivery. Where it does not, the delivery is local commits or a frozen diff and the question of a draft never arises; lacking authorization to deliver is a reason not to deliver, not a reason to deliver as a draft.
 
-Each step below is a separate recorded fact, in this order: implement with the local validation the change actually needs; open the PR non-draft or transition the existing draft to Ready for review; request the review the repository requires and the assignment's authorization covers, and confirm it actually started, because a request that never started is not a review; reproduce, fix, reply to and resolve findings, refreshing only the review evidence invalidated by a changed head, under the [reviewer policy](../../crw-run/references/merge-readiness.md#reviewer-policy); report `ready_for_parent_review` only once the relevant review, check, and finding gates are met. The coordinator then compares the issue's criteria against the current diff, base, head, checks, and reviews, and may merge under existing authorization. Release and deployment need Jun's approval.
+Where delivery IS in scope, a change that is complete enough to review is reported as soon as it is reviewable: the branch head, its commits and its verification record go to the parent. Reviewable is review entry, not integration permission and not proof the work is done. It is not held back until reviewers finish.
 
-Where the child's workflow runs an independent review of its candidate, that review belongs to the first step above, implementing with the local validation the change needs: it ends on a head, and the hosted review follows on the open pull request. They are different reviews and may overlap, so this does not move the order above, and the child's handoff says which head it reviewed and lists the commits made after it ([what a handoff discloses](../../crw-run/references/task-packet.md#what-a-handoff-discloses)).
+Each step below is a separate recorded fact, in this order: implement with the local validation the change actually needs; commit on the task branch and record the verification record of the tree it builds; request the review the repository requires and the assignment's authorization covers, and confirm it actually started, because a request that never started is not a review; reproduce, fix, reply to and resolve findings, refreshing only the review evidence invalidated by a changed head, under the [reviewer policy](../../crw-run/references/merge-readiness.md#reviewer-policy); report `ready_for_parent_review` only once the relevant review, check, and finding gates are met. The integrator then compares the issue's criteria against the current diff, base, head, verification record and reviews, and fast-forwards `dev` under existing authorization. Release and deployment need Jun's approval.
+
+Where the child's workflow runs an independent review of its candidate, that review belongs to the first step above, implementing with the local validation the change needs: it ends on a head, and the child's handoff says which head it reviewed and lists the commits made after it ([what a handoff discloses](../../crw-run/references/task-packet.md#what-a-handoff-discloses)).
 
 Which of those findings has to be fixed before that report, and which may be left with a recorded acceptance, is decided by [impact](../../crw-run/references/merge-readiness.md#judge-a-finding-by-its-impact) rather than by how a reviewer labelled it or how many rounds have already run. A conditional acceptance there belongs to the parent that owns the criteria, and it is recorded as an acceptance carrying its follow-up rather than as a fix.
 
-An optional reviewer that cannot start, stalls, or sits outside the authorized scope does not become an indefinite wait: use the fallback in [Merge readiness](../../crw-run/references/merge-readiness.md), record the gap, and continue. The first run Devin and Codex each make on the pull request is the exception: it is awaited within the [waiting budget](../../crw-run/references/merge-readiness.md#the-one-run-of-each-reviewer-awaited-before-the-receipt) before the receipt, and a run still going when the budget ends is recorded as pending rather than complete ([Devin and Codex reviews are references, not merge gates](../../crw-run/references/merge-readiness.md#devin-and-codex-reviews-are-references-not-merge-gates)). A required review gate is not waivable that way.
-
-Review findings, pending CI, and ordinary revision pushes never send a pull request back to draft. Re-draft only when the implementation itself stops being reviewable.
-
-Two facts are easy to collapse and are recorded separately: a relay receipt whose outcome is `ready_for_review` says the child emitted a reviewable revision, and GitHub `isDraft=false` says the pull request is open for review. Neither implies the other.
-
-Where publication is in scope but the child cannot execute it, the coordinator performs only that blocked action, from the child's verified artifact, and records the actual resulting state. The child keeps review and fix ownership. That is the exception for a capability-limited task, not a standing parent obligation for children that can publish, and not a way to supply authorization the assignment never had: a coordinator cannot publish on behalf of an assignment whose scope excludes publication.
-
-Explicit draft-only, read-only, or no-remote-write limits win, as do the repository's own requirements. None of this adds an approval prompt to a workflow the user already authorized.
+An optional reviewer that cannot start, stalls, or sits outside the authorized scope does not become an indefinite wait: use the fallback in [Merge readiness](../../crw-run/references/merge-readiness.md), record the gap, and continue. A review run of an in-flight pull request is awaited within its waiting budget as [In-flight pull requests (transition)](../../crw-run/references/merge-readiness.md#in-flight-pull-requests-transition) states, and a run still going when that budget ends is recorded as pending rather than complete. A required review gate is not waivable that way.
 
 ### Default dev integration
 
-Jun authorizes a pull request workflow in which the implementation child carries the work to a reviewable pull request and the coordinator decides the merge. The child implements, tests, commits on its branch, pushes, opens the pull request, and then owns every applicable review on that same pull request: intake, triage, fixes, replies, and rechecks. It reports normal completion only once the required checks and reviews on the current head have finished and blocking findings are resolved, with per-finding evidence. Which findings are blocking, and what a recorded acceptance of the rest costs, are defined in [Judge a finding by its impact](../../crw-run/references/merge-readiness.md#judge-a-finding-by-its-impact); a minor separable residue accepted there is a disposition the parent owns, not an unfinished obligation the report hides. A missing mandatory review or check is reported as blocked rather than as completion. The full contract, including the fallback for a task that cannot write git metadata, is [Operations contract](../../crw-run/references/operations.md).
+Jun authorizes a delivery workflow in which the implementation child carries the work to a reviewable state and the coordinator decides the integration. Under the push-only procedure the child implements, tests, commits on its task branch and pushes it, and the repository's local full verification of the delivered tree is its evidence; the integrator merges that tree into the integration tree over `dev`, verifies it and fast-forwards `dev`. A pull request exists only in the in-flight transition ([In-flight pull requests (transition)](../../crw-run/references/merge-readiness.md#in-flight-pull-requests-transition)); there the child owns every applicable review on it: intake, triage, fixes, replies, and rechecks. It reports normal completion only once the repository's named verification on the current head has passed and any applicable review has finished and blocking findings are resolved, with per-finding evidence. Which findings are blocking, and what a recorded acceptance of the rest costs, are defined in [Judge a finding by its impact](../../crw-run/references/merge-readiness.md#judge-a-finding-by-its-impact); a minor separable residue accepted there is a disposition the parent owns, not an unfinished obligation the report hides. A missing mandatory review or check is reported as blocked rather than as completion. The full contract, including the fallback for a task that cannot write git metadata, is [Operations contract](../../crw-run/references/operations.md).
 
-For the child this authorization is also the explicit push approval that CXC `DEV-GIT-PUSH-01` requires. That rule says never `git push` without the user's explicit approval in the current session, and CXC rule text is loaded into every child, so the packet states which approval it carries: where its `Delivery:` line covers publication, the packet carries Jun's standing authorization above, and the child pushes its own task branch and opens the pull request without stopping to ask, then never merges. The authorization covers no force-push, no tag and no push to `dev` or `main`. A packet whose scope excludes publication carries none, and its child pushes nothing. This states which approval satisfies the CXC rule here; it does not change the rule's text.
+For the child this authorization is also the explicit push approval that CXC `DEV-GIT-PUSH-01` requires. That rule says never `git push` without the user's explicit approval in the current session, and CXC rule text is loaded into every child, so the packet states which approval it carries: where its `Delivery:` line covers publication, the packet carries Jun's standing authorization above, and the child pushes its own task branch without stopping to ask, then never merges. The authorization covers no force-push, no tag and no push to `dev` or `main`. A packet whose scope excludes publication carries none, and its child pushes nothing. This states which approval satisfies the CXC rule here; it does not change the rule's text.
 
 A child that needs something only a person can give, such as a decision, a credential or an approval its packet does not carry, does not ask with `request_user_input`, which CXC denies while a goal is active. It writes the question out, records `blocked_needs_input` on its turn and, where a relay holds the assignment, emits that outcome without a file, the question being in its blocked file and its final message (see the clause on a child that stopped to ask a question in [OPS-6.2](../../crw-run/references/operations.md#ops-62-record-shape)), so its parent can take the question to Jun.
 
-The coordinator then checks the Linear criteria and the pull request's latest diff, base, head, checks, and review resolution, and merges without another confirmation round when those hold. This is standing user authorization for this workflow, not permission inferred from passing checks, and it supersedes the earlier recommendation that the coordinator avoid merging. Use [Merge readiness](../../crw-run/references/merge-readiness.md) for the gate detail, preserve unrelated work and branch protections, resolve routine in-scope failures and recheck, then verify the actual landing rather than an accepted merge request. An explicit diff-only, no-merge, or narrower instruction still overrides this default, and the child never merges.
+The coordinator then checks the Linear criteria and the candidate's latest diff, destination tip, head, verification evidence and review resolution, and integrates without another confirmation round when those hold. This is standing user authorization for this workflow, not permission inferred from passing checks, and it supersedes the earlier recommendation that the coordinator avoid integrating. Use [Merge readiness](../../crw-run/references/merge-readiness.md) for the gate detail, preserve unrelated work and branch protections, resolve routine in-scope failures and recheck, then verify the actual landing rather than an accepted integration request. An explicit diff-only, no-integration, or narrower instruction still overrides this default, and the child never integrates.
 
-A base that only moved is the coordinator's to refresh, not the child's: where nothing else is wrong it updates the branch itself, for the candidate about to merge only, and checks the result, under [Refresh the base yourself when only the base moved](../../crw-run/references/merge-readiness.md#refresh-the-base-yourself-when-only-the-base-moved), instead of returning the pull request for a base-refresh generation. A conflict only in places the plan declared `mechanical` is settled the same way, by the declared rule and the `base-refresh mechanical` check ([Resolve a mechanical conflict yourself](../../crw-run/references/merge-readiness.md#resolve-a-mechanical-conflict-yourself)).
+A base that only moved is the coordinator's to refresh, not the child's: where nothing else is wrong it refreshes the candidate about to merge only, for an in-flight pull request by the forge update, and checks the result, under [Refresh the base yourself when only the base moved](../../crw-run/references/merge-readiness.md#refresh-the-base-yourself-when-only-the-base-moved), instead of returning the candidate for a base-refresh generation. For a task branch nothing is refreshed on the forge: the integrator merges dev into its local integration tree and verifies that tree. A conflict only in places the plan declared `mechanical` is settled the same way, by the declared rule and the `base-refresh mechanical` check ([Resolve a mechanical conflict yourself](../../crw-run/references/merge-readiness.md#resolve-a-mechanical-conflict-yourself)).
 
 Release and deployment are not covered and still require the user. Where merging a branch is known to trigger a release or a deployment, obtain that approval before merging, since the branch name alone does not carry it. A repository requirement that genuinely needs a new decision remains a blocker for that action.
 

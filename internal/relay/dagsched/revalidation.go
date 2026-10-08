@@ -9,6 +9,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/mergeturn"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -51,6 +52,26 @@ const (
 	OpenedByDecisionReply = "decision_reply"
 )
 
+// AcceptedResultCorrection is the reason a coordinator gives generation-open when it corrects a result that was accepted and is still current (recordHandOpened): the relay's verdict writer has no review to
+// open a second ruling on the accepted head with, so the generation is opened by hand and its own reason says why. needs_changes_revision, the reason generation-open writes by default, is admitted the same way;
+// a generation opened for anything else (the assignment itself, a returning tenure, a reply) is not a correction of an accepted result.
+const AcceptedResultCorrection = "accepted_result_correction"
+
+// correctionOpenReason is whether the reason a generation was opened with says a correction: the generation-open default, or the reason the coordinator gives when the accepted result is current.
+func correctionOpenReason(reason string) bool {
+	return reason == "needs_changes_revision" || reason == AcceptedResultCorrection
+}
+
+// correctionOpenedReason is the reason the relationship's current generation was opened under: generations.reason, which generation-open writes and a returning tenure leaves empty. Named for this route
+// rather than for the column, because a sibling node of the same plan edits this package too and two top-level names that only differ by which file declares them do not conflict in git.
+func (s *Scheduler) correctionOpenedReason(ctx context.Context, q store.Querier, rel relRow) (string, error) {
+	var reason sql.NullString
+	if _, err := queryOne(ctx, q, "SELECT reason FROM generations WHERE relationship_id = ? AND execution_generation = ?", []any{rel.ID, rel.Generation}, &reason); err != nil {
+		return "", err
+	}
+	return reason.String, nil
+}
+
 // CorrectionRequestID is the dispatch request id a correction generation opened by hand carries (generation-open --dispatch-request-id): derived from the plan, the node, the manifest and the generation, so
 // the generation row itself names the one manifest it was opened for and a generation opened under any other id is not bound to a manifest by dag-correct.
 func CorrectionRequestID(plan, node, manifestDigest string, generation int64) string {
@@ -91,7 +112,8 @@ func (s *Scheduler) describeOpening(ctx context.Context, q store.Querier, plan, 
 // an accepted head it ruled verified (disposition_conflict, naming this route) unless the criteria registered for the relationship changed (a node whose consumed input was replaced, its criteria untouched). The
 // route is bounded so that it cannot make a rerun or bind a manifest other than the one the generation was opened for:
 //
-//   - the node's accepted result is stale and its route, without this generation, is a correction: a result that is not accepted yet is corrected by a ruling, an accepted result that is current has no recorded correction route in this build, a change of the criteria alone is a revalidation and
+//   - the node's accepted result is stale and its route, without this generation, is a correction, or the result is accepted and still current and the generation's own reason states a correction
+//     (needs_changes_revision, the generation-open default, or accepted_result_correction): a result that is not accepted yet is corrected by a ruling, a change of the criteria alone is a revalidation and
 //     opens no generation, and a node that landed was refused before this;
 //   - the manifest is named (--manifest-digest) and is the one stored for this node at its current slice and criteria, as on the ruling route, and its inputs are still the ones the node's edges are satisfied
 //     by now (VerifyManifest without the file bytes, as release checks its own intent): a predecessor accepted again after the prepare leaves another input than the one the child was told to consume;
@@ -101,6 +123,11 @@ func (s *Scheduler) describeOpening(ctx context.Context, q store.Querier, plan, 
 // What is recorded of how the instruction reached the child is that request id (dag_node_executions.managed_request_id, which a ruling leaves NULL) and the bound dispatch turn. It is the coordinator's
 // statement: the relay does not read the child's thread, so unlike the ruling route (which compares the restoration note with the instruction line) nothing here compares the dispatching message with the
 // line; the child checks the manifest file against the digest and hash the line names and answers blocked_needs_input on a mismatch.
+//
+// CRW-906: a result that was accepted and is still current (not stale) is corrected by hand as well, when a blocking defect is found in it before it lands and no ruling can open the generation: a bundle
+// review that finds one in an accepted member is the case. The generation's own reason states the correction (needs_changes_revision, what generation-open writes by default, or accepted_result_correction,
+// which names the route), the node must not have landed, and every check above is the one the stale route had. The acceptance stays active until the parent takes the new result with dag-accept --supersedes,
+// and the reason of the generation row is what notes that the correction came through this route: nothing is added to the schema, no column and no refusal name is new.
 func (s *Scheduler) recordHandOpened(ctx context.Context, q store.Querier, plan string, snap dag.Snapshot, n dag.SnapNode, rel relRow, suppliedDigest string, out *CorrectionResult) error {
 	before, err := store.LiveGenerationBefore(ctx, q, rel.ID, rel.Generation)
 	if err != nil {
@@ -130,8 +157,31 @@ func (s *Scheduler) recordHandOpened(ctx context.Context, q store.Querier, plan 
 	if err != nil {
 		return err
 	}
+	// CRW-906: an accepted result that is still current is corrected by hand as well, when the generation's own reason says a correction (needs_changes_revision or accepted_result_correction) and the node has
+	// not landed. Every check below is the one the stale route had. The reason of the generation row is what notes the route, so nothing is added to the schema and no refusal name is new. The caller refuses a
+	// generation whose reason states no correction before it reaches this binder (correction.go); the case below is this binder's own bound, so an accepted result is never recorded as corrected by a
+	// generation that was opened for something else.
 	if st == nil && !ambiguousPrevious {
-		return refuse(contract.RefusalDispositionConflict, "%s, and the accepted result of %s is not stale, so it is not corrected by a generation opened by hand either: a result that is not accepted yet is corrected by a ruling, and an accepted result that is current has no recorded correction route in this build. A generation that only merged the base into the branch is not a correction: when the generation was ruled verified, dag-base-refresh records it, after proving from git that its head is the accepted head plus merges of the base", notRuled, n.NodeID)
+		reason, err := s.correctionOpenedReason(ctx, q, rel)
+		if err != nil {
+			return err
+		}
+		switch {
+		case !hasAcceptance:
+			return refuse(contract.RefusalDispositionConflict, "%s, and the accepted result of %s is not stale, so it is not corrected by a generation opened by hand either: a result that is not accepted yet is corrected by a ruling. A generation that only merged the base into the branch is not a correction: when the generation was ruled verified, dag-base-refresh records it, after proving from git that its head is the accepted head plus merges of the base", notRuled, n.NodeID)
+		case !correctionOpenReason(reason):
+			return refuse(contract.RefusalDispositionConflict, "%s, and the accepted result of %s is current: a generation opened by hand corrects it only when the reason it was opened under states a correction, and generation %d reads %q. Open the generation with generation-open --reason needs_changes_revision or %s, or, when it only merged the base into the branch, record it with dag-base-refresh", notRuled, n.NodeID, rel.Generation, reason, AcceptedResultCorrection)
+		}
+		// CRW-906: a turn of this node that is merging or of unknown effect may already have carried the
+		// accepted head to the base on the forge, outside the relay. Recording a correction now would name
+		// a head that is on its way to landing as the one being repaired, and no later refusal can undo a
+		// merge the forge already made: the turn is resolved first (merge-turn-resolve, or merge-turn-unknown
+		// then merge-turn-resolve). A turn that only waits or holds the lane is not this case: the lane's own
+		// check and land refuse it under correction, so it cannot progress. This is the same conservative
+		// reading the verdict writer makes when a ruling rests on a merge turn (registry.RestsOn).
+		if err := s.refuseAcceptedHeadOnItsWayToTheBase(ctx, q, acc); err != nil {
+			return err
+		}
 	}
 	// the same route a stale node has without the generation: a change of the criteria alone is ruled again (a revalidation, no generation), and what rests on a stale predecessor or an input that is not
 	// there waits; only a result that must be reworked is corrected
@@ -423,6 +473,213 @@ func (s *Scheduler) refuseRevalidation(ctx context.Context, q store.Querier, pla
 		return err
 	}
 	return refuse(contract.RefusalDispositionConflict, "the accepted result of %s is stale (%s) and ruling the same output again would not make it current; its route is %s: %s", n.NodeID, st.Reason(), action, detail)
+}
+
+// refuseAcceptedHeadOnItsWayToTheBase is the guard CRW-906 adds to the accepted-current correction: a
+// merge turn of the node's relationship that is merging or of unknown effect may already have carried the
+// accepted head to the base on the forge. The relay reads the forge, not the merge itself, so the merge
+// is a fact the relay may not have recorded; recording a correction over it would name a head that is on
+// its way to landing as the one being repaired, and no later refusal can undo a merge the forge already
+// made. The turn is resolved first (merge-turn-resolve, or merge-turn-unknown then merge-turn-resolve).
+//
+// A turn that only waits or holds the lane is not this case: the lane's own check and land refuse it
+// under correction (mergeturn.underCorrectionRefusal), so it cannot progress to the base while the
+// generation is open. The reading is the same conservative one the verdict writer makes when a ruling
+// rests on a merge turn (registry.RestsOn): a turn of the assignment that is merging, unknown or landed
+// counts, whatever head it names.
+//
+// The turn is resolved by every identity a claim may carry, because --relationship and --pr are both
+// optional on merge-turn-request: the relationship, the pull request, or the head the turn holds. The
+// lane's own gate resolves the same three (mergeturn.underCorrectionRefusal), and a guard that read only
+// the relationship would miss the turn a successful merge-turn-check had just authorized.
+func (s *Scheduler) refuseAcceptedHeadOnItsWayToTheBase(ctx context.Context, q store.Querier, acc Acceptance) error {
+	heads, err := s.stoodOn(ctx, q, acc)
+	if err != nil {
+		return err
+	}
+	// The turn's repository is matched by mergeturn.SameRepository, the lane's one reading of a repository,
+	// against every spelling the acceptance has: the repository it was accepted against, and the forge
+	// repository recorded with it (dag_acceptance_forge). A legacy acceptance keeps whatever target it was
+	// accepted against, a local checkout included, so a PR-only or bare-head turn of it is found through the
+	// forge spelling, and a turn spelled as the checkout, its .git directory or a symlink to it is found
+	// through the path.
+	spellings, err := acceptanceRepositories(ctx, q, acc)
+	if err != nil {
+		return err
+	}
+	clauses := []string{"relationship_id = ?"}
+	args := []any{acc.RelationshipID}
+	for _, head := range heads {
+		if head == "" {
+			continue
+		}
+		clauses = append(clauses, "crw_same_commit(candidate_head, ?)")
+		args = append(args, head)
+	}
+	if acc.PRNumber > 0 {
+		clauses = append(clauses, "pr_number = ?")
+		args = append(args, acc.PRNumber)
+	}
+	rows, err := q.QueryContext(ctx, "SELECT turn_id, state, candidate_head, repository, relationship_id, pr_number FROM merge_turns"+
+		" WHERE state IN ('merging','unknown','landed') AND ("+strings.Join(clauses, " OR ")+") ORDER BY requested_at, turn_id", args...)
+	if err != nil {
+		return err
+	}
+	type turnRow struct {
+		turn, state, repository string
+		head                    sql.NullString
+		relationship            sql.NullString
+		pr                      sql.NullInt64
+	}
+	var turns []turnRow
+	for rows.Next() {
+		var t turnRow
+		if err := rows.Scan(&t.turn, &t.state, &t.head, &t.repository, &t.relationship, &t.pr); err != nil {
+			rows.Close()
+			return err
+		}
+		turns = append(turns, t)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	for _, t := range turns {
+		byRelationship := t.relationship.Valid && t.relationship.String == acc.RelationshipID
+		bySelector := spelledAs(t.repository, spellings) &&
+			((acc.PRNumber > 0 && t.pr.Valid && t.pr.Int64 == acc.PRNumber) || headIsOneOf(t.head.String, heads))
+		if !byRelationship && !bySelector {
+			continue
+		}
+		return refuse(contract.RefusalDispositionConflict, "the accepted result of %s is on its way to the base already: merge turn %s of the relationship is %s on head %s, and a correction cannot be recorded over a head the forge may already have merged. Resolve that turn first (merge-turn-resolve, or merge-turn-unknown then merge-turn-resolve), then record this same generation again with the manifest digest dag-correct --prepare already printed: it is not yet recorded, and opening another generation would skip it",
+			acc.NodeID, short(t.turn), t.state, short(t.head.String))
+	}
+	// A live bundle is the second way the head may already be on the base. The parent merges a verified
+	// bundle on the forge and records it with merge-train-land afterwards, so between those two the
+	// bundle's members still hold or wait in the lane while the forge already carries the head; the
+	// bundle's own state cannot be told from one that was never merged, and the relay reads no forge
+	// here. Recording a correction now would name a head the forge may already have merged, and the
+	// later train refusal cannot undo that. The bundle is closed first (merge-train-close), which is what
+	// a parent that found a defect in a bundle review does anyway.
+	if err := s.refuseLiveBundleCarrying(ctx, q, acc, heads); err != nil {
+		return err
+	}
+	return nil
+}
+
+// refuseLiveBundleCarrying refuses the correction while an opened or verified bundle carries the node's
+// stand head as a member: the bundle's merge may already be on the forge, and the relay records that
+// merge only when the bundle lands. A bundle that landed, was done or was abandoned carries nothing
+// live, so a parent that closed the bundle before correcting a member is not held back.
+func (s *Scheduler) refuseLiveBundleCarrying(ctx context.Context, q store.Querier, acc Acceptance, heads []string) error {
+	present, err := tableExists(ctx, q, "merge_train_members")
+	if err != nil || !present {
+		return err
+	}
+	// A bundle carries a head through whichever node's member it is: two accepted nodes can name the same
+	// commit, so a member is matched by its head and by the repository its train names (under any spelling
+	// the acceptance has), or by its own relationship.
+	spellings, err := acceptanceRepositories(ctx, q, acc)
+	if err != nil {
+		return err
+	}
+	for _, head := range heads {
+		if head == "" {
+			continue
+		}
+		train, err := bundleMemberCarrying(ctx, q, acc, spellings, head,
+			"AND (SELECT kind FROM merge_train_events e WHERE e.train_id = m.train_id ORDER BY e.seq DESC LIMIT 1) IN ('opened','verified')")
+		if err != nil {
+			return err
+		}
+		if train != "" {
+			return refuse(contract.RefusalDispositionConflict, "the accepted result of %s is on its way to the base already: bundle %s is live and carries head %s as a member, so its merge may already be on the forge and a correction cannot be recorded over it. Close the bundle first (merge-train-close), then record this same generation again with the manifest digest dag-correct --prepare already printed: it is not yet recorded, and opening another generation would skip it",
+				acc.NodeID, short(train), short(head))
+		}
+		// A landed bundle has merged the tree that holds every member head, excluded members included: a member
+		// whose turn was withdrawn is still a member row, and no integration mark names its node. Its head is on the
+		// base, so the correction is refused whatever the member's relationship.
+		landed, err := bundleMemberCarrying(ctx, q, acc, spellings, head,
+			"AND EXISTS (SELECT 1 FROM merge_train_events e WHERE e.train_id = m.train_id AND e.kind = 'landed')")
+		if err != nil {
+			return err
+		}
+		if landed != "" {
+			return refuse(contract.RefusalDispositionConflict, "the accepted result of %s has already landed: bundle %s landed a tree that carries head %s as a member, so the head is on the base and a correction cannot be recorded over it. A node that landed is never run again: what changed above it is carried by a successor node of a new plan revision (contract 8.4, E-20)",
+				acc.NodeID, short(landed), short(head))
+		}
+	}
+	return nil
+}
+
+// bundleMemberCarrying is the first bundle, in member order, whose member carries head and that the event filter
+// selects, and whose train names the acceptance's repository under one of its spellings or whose member is the
+// acceptance's own relationship. "" means none.
+func bundleMemberCarrying(ctx context.Context, q store.Querier, acc Acceptance, spellings []string, head, eventFilter string) (string, error) {
+	rows, err := q.QueryContext(ctx, "SELECT m.train_id, t.repository, m.relationship_id FROM merge_train_members m JOIN merge_trains t ON t.train_id = m.train_id"+
+		" WHERE crw_same_commit(m.member_head, ?) "+eventFilter+" ORDER BY m.train_id, m.seq", head)
+	if err != nil {
+		return "", err
+	}
+	type member struct {
+		train, repository string
+		relationship      sql.NullString
+	}
+	var members []member
+	for rows.Next() {
+		var m member
+		if err := rows.Scan(&m.train, &m.repository, &m.relationship); err != nil {
+			rows.Close()
+			return "", err
+		}
+		members = append(members, m)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return "", err
+	}
+	rows.Close()
+	for _, m := range members {
+		if (m.relationship.Valid && m.relationship.String == acc.RelationshipID) || spelledAs(m.repository, spellings) {
+			return m.train, nil
+		}
+	}
+	return "", nil
+}
+
+// acceptanceRepositories are every repository spelling of an acceptance: the one it was accepted against and the
+// forge repository recorded with it.
+func acceptanceRepositories(ctx context.Context, q store.Querier, acc Acceptance) ([]string, error) {
+	forge := ""
+	has, err := queryOne(ctx, q, "SELECT forge_repository FROM dag_acceptance_forge WHERE acceptance_id = ?", []any{acc.AcceptanceID}, &forge)
+	if err != nil {
+		return nil, err
+	}
+	if !has {
+		return []string{acc.Repository}, nil
+	}
+	return []string{acc.Repository, forge}, nil
+}
+
+// spelledAs reports whether a stored repository names one of the spellings, by mergeturn.SameRepository.
+func spelledAs(repository string, spellings []string) bool {
+	for _, s := range spellings {
+		if mergeturn.SameRepository(repository, s) {
+			return true
+		}
+	}
+	return false
+}
+
+// headIsOneOf reports whether a stored head names one of the heads, by the one head definition.
+func headIsOneOf(stored string, heads []string) bool {
+	for _, h := range heads {
+		if h != "" && mergeturn.SameCommit(stored, h) {
+			return true
+		}
+	}
+	return false
 }
 
 // refuseLanded is the guard of a correction (contract 8.4, E-20): a node whose accepted head landed in every target it lands on is never run again, whatever changed above it and whatever the plan now

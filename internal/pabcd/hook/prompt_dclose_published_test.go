@@ -368,6 +368,9 @@ func TestPromptDclosePrePublicationMarkerFailureStillRefuses(t *testing.T) {
 
 // TestPromptDclosePrePublicationPlanFailureStillRefuses is the plan-write counterpart of the
 // pre-publication marker control: a plan write that never reached its final path still refuses.
+// The recovery marker landed before it (the oracle's own order), so the refusal names that marker
+// rather than denying it: CRW-930 c6 closed the promise CRW-869 left open, and this expectation
+// changed with it (Supersedes line in docs/port-cxc/known-defects/CRW-930.md).
 func TestPromptDclosePrePublicationPlanFailureStillRefuses(t *testing.T) {
 	cwd := promptDcloseRepo(t)
 	slug := "chat-prepublication-plan"
@@ -382,8 +385,11 @@ func TestPromptDclosePrePublicationPlanFailureStillRefuses(t *testing.T) {
 	if panicked != nil {
 		t.Fatalf("the close panicked: %v", panicked)
 	}
-	if !strings.Contains(answer, "Nothing was written") {
-		t.Errorf("a pre-publication plan failure answered %q", answer)
+	if strings.Contains(answer, "Nothing was written.") {
+		t.Errorf("a pre-publication plan failure denied the published marker: %q", answer)
+	}
+	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
+		t.Errorf("a pre-publication plan failure did not name the published marker: %q", answer)
 	}
 	if strings.Contains(answer, "[crw: DONE]") {
 		t.Errorf("a pre-publication plan failure completed the close: %q", answer)

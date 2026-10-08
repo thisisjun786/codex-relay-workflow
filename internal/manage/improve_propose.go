@@ -592,6 +592,16 @@ func improveProposeRun(ctx context.Context, e *Env, bundlePath string, dryRun bo
 		if !changed {
 			continue
 		}
+		// A posted draft is the record of an issue the management session already opened, so
+		// this writer only grows its seen list too: the title, the labels, the severity, the
+		// body and the project stay exactly as first written, whatever source wrote it.
+		if doc.State == auditDraftStatePosted {
+			if err := auditDraftSave(path, doc); err != nil {
+				return report, err
+			}
+			report.Updated = append(report.Updated, auditDraftSummaryOf(doc))
+			continue
+		}
 		if doc.Source == improveProposeSource {
 			// The whole record is rewritten, so the projects and the evidence the new run
 			// reached are folded in rather than dropped: a project the draft already held

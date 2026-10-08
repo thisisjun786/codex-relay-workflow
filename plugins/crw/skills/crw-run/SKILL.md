@@ -201,7 +201,7 @@ In this managed execution workflow, implementation belongs to a responsible
 independent child Codex task, including a single issue, an existing worktree,
 and repairs to an existing PR. The coordinator owns scope selection, preparation,
 dispatch, delivery validation, and authorized integration; a child whose assignment
-covers publication owns its own pull request, including its checks and its review
+covers publication owns its own delivery, including its checks and its review
 cycle. Issue count and checkout availability do not turn the coordinator into the
 implementation worker.
 
@@ -339,7 +339,8 @@ owner that could not be proved from two the store reports, and a disposition tha
 read from one the store holds as contested. It carries no escalation value, because a review
 round count is not a reason to send an approved correction upward. Do not invent extra issues or duplicate writers just to
 increase concurrency; an issue the [size check](#check-the-size-before-dispatch) flags is reconciled through `crw-plan`'s boundary rules before dispatch, when the concept boundary separates it and a useful split fits the authorized scope.
-One issue runs as one packet and one pull request today, and a batch keeps those
+One issue runs as one packet and one delivery today (a task branch and its head for the
+integrator, or a pull request where one is named), and a batch keeps those
 separate pairs, under the shared [issue-to-PR mapping](../crw-plan/references/integrations.md#issue-to-pr-mapping)
 and the [work-unit rules](../../../../POLICY.md#work-units-review-and-integration). Several
 packets for one feature are allowed by policy but are not switched on until their
@@ -413,7 +414,7 @@ applies throughout dispatch, observation and completion below.
 
 For repository-changing work, every packet carries the current delivery contract, and where the template's older
 delivery menu disagrees the contract wins. Name in the packet that the child owns its
-commits, push, the pull request and the review on that same pull request through to
+commits, push, the task branch and its verification through to
 the applicable gates, and that the coordinator performs the merge while release and
 deployment remain the user's. Then give the child OPS-5.5 and OPS-9 from
 [Operations contract](references/operations.md) as context of its own: cite them by id
@@ -845,15 +846,15 @@ Describe evidence separately:
 | Agreed workflow actually followed | That task's own recorded phases, plan and evidence for this assignment. A skill-loading line, an acceptance receipt, or the instruction quoted back is an indication of receipt, not of compliance |
 | Child reused its own existing goal | That task's current goal and goalplan read back under its own identity. A second goal opened for the same assignment is a duplicate, not a resume |
 | Work delivered | Completed turn plus actual commit/diff and checks for code; verified result with both input baseline and delivered output revision/digest for non-PR work |
-| Pull request review handled by the child | Per-finding trail on that PR: the finding, the commit that addressed it, and the recheck |
-| Child reports normal completion | Required checks and reviews finished on the current head, blocking findings resolved; a missing mandatory review or check is blocked, not complete |
-| Candidate ready to hand over | The child's handoff record: pull request and head, the verified base, the declared required checks and the runs by id and attempt, the review coverage actually read, and a judged disposition with evidence for every thread seen. A completion naming a pull request and saying nothing about its review is refused, because silence is the failure this exists to catch |
+| In-flight pull request review handled by the child | Per-finding trail on that pull request (in-flight only): the finding, the commit that addressed it, and the recheck |
+| Child reports normal completion | The repository's named verification and the applicable reviews finished on the current head, blocking findings resolved; a missing mandatory review or verification is blocked, not complete |
+| Candidate ready to hand over | The child's handoff record: the delivered tree and head, the verified destination tip, the verification evidence the repository names (this repository's `verification-record/1`, or the runs by id and attempt where a repository still runs hosted CI), the review coverage actually read, and a judged disposition with evidence for every thread seen. A completion naming a pull request and saying nothing about its review is refused, because silence is the failure this exists to catch |
 | Parent runs its own goal loop | That task's own active goal, read back under its own identity, where a Loop was explicitly requested. A parent operating without a goal is the default and needs no authorization; what is recorded instead is its observation path and the readiness facts behind it |
 | Verified for integration | Coordinator reviewed the exact revision and acceptance criteria |
 | Receipt recorded, where a relay holds the assignment | The child's completion receipt with its revision hash and manifest |
 | Verification decision, where a relay holds the assignment | A verdict at the current head revision, covering the registered criteria and naming the criteria set it was reviewed against |
 | Coordination summary written | The coordinator's own connector write, confirmed by a readback carrying that job's structured record |
-| Merged by the coordinator | Linear criteria and the PR's latest diff/base/head/checks/review resolution checked, then the actual landing verified |
+| Merged by the coordinator | Linear criteria and the delivered head's verification checked, then the actual landing on the intended branch verified (for an in-flight pull request, its latest diff, base, head, checks and review resolution) |
 | Release or deployment | The user's approval for that action, obtained before a merge known to trigger it |
 
 Do not assume a worktree/task returned by a backend appears in the app's project.
@@ -880,8 +881,8 @@ child and does not stop it.
 
 What the parent runs locally to verify also follows the launch packet's `Go build resources:` line: the
 shared build cache, `GOFLAGS=-p=4`, the packages the change touches and a memory-limited scope for
-anything heavy. The whole test suite is the hosted CI of the head under verification and is not
-repeated locally
+anything heavy. The whole test suite is the verification the repository names for the tree under
+verification (this repository's `crw-dev ci local`) and is not repeated locally
 ([The three gates](references/merge-readiness.md#the-three-gates)).
 
 Where a relay holds the assignment, verify the revision it reports as current. If a
@@ -914,9 +915,7 @@ Devin and Codex reviews are references there and not gates: the merge waits for 
 waits for the one run of each within its waiting budget before its receipt ([Devin and Codex reviews are references, not merge gates](references/merge-readiness.md#devin-and-codex-reviews-are-references-not-merge-gates)).
 Serialize integrations that share a target, verify the landing, and update the
 coordination record. Work inside a relay merge turn never runs in the background and records
-its steps ([Working inside a merge turn](references/relay.md#working-inside-a-merge-turn)). A capable child owns its commits, push, pull request and the
-review handling on it, and reports once the current head is clean; the coordinator
-decides and performs the merge, and the child never merges. Release and deployment
+its steps ([Working inside a merge turn](references/relay.md#working-inside-a-merge-turn)). A capable child owns its commits, its push of the task branch, the handoff and the local verification record, and reports once the current head is verified; the integrator fast-forwards the verified tree to dev, and the child never merges. Release and deployment
 still require the user. Delivery ownership and the fallback for a task that cannot
 write git metadata are in [Operations contract](references/operations.md).
 
@@ -953,8 +952,7 @@ vocabulary names is reported as a blocker against the state that does apply, und
 A child blocked on a person is answered with a decision, never with a verdict or a message the relay cannot see: the answer goes back through `decision-reply`; for a split approval or a scope change, which open the next generation of the same child, `dag-correct` then records that generation for its DAG node; and the child's result in it is ruled and accepted like any other. Follow [Answering a child that stopped for input](references/relay.md#answering-a-child-that-stopped-for-input). A message sent outside that route leaves only the trace `admit-turn` records, which the same section names as the fallback.
 
 After integration, apply [Implementation Done](../crw-plan/references/integrations.md#implementation-done)
-before reporting or recording the issue complete. Read back the one delivery PR's
-actual merge, intended repository/branch and landing revision. For legacy multi-PR
+before reporting or recording the issue complete. Read back the one delivery's landing: the commit on the intended branch (the integrator's fast-forward) with its repository and branch, or the pull request's actual merge where one was named. For legacy multi-PR
 scope, verify the reconciled deliveries and their combined coverage instead. Retain
 existing accepted operational criteria and never infer completion from an automatic status alone.
 
@@ -976,9 +974,7 @@ code and reruns the tests the criteria rest on
 ([the three gates](references/merge-readiness.md#the-three-gates)). Read the head it reports, the conclusions on that head and its
 per-finding trail, and accept them as the evidence table above defines them.
 
-Acceptance keeps its own work, which was never the child's. Confirm the reported
-head is the head the pull request has now, the base is current and the merge is
-clean, every accepted criterion maps to evidence that still applies at that head,
+Acceptance keeps its own work, which was never the child's. Confirm the reported head is the head the delivery names (the task branch and its head, or the pull request's head where one exists), the base is current and the merge is clean, every accepted criterion maps to evidence that still applies at that head,
 and any finding still open is named. The handoff's disclosures are part of that: every decision
 request is answered before the verdict, under
 [what the handoff discloses, checked at the verdict](references/merge-readiness.md#what-the-handoff-discloses-checked-at-the-verdict).
@@ -1215,7 +1211,7 @@ A record saying completed is a claim rather than a verdict, and it is corroborat
 evidence its own delivery shape requires under
 [Implementation Done](../crw-plan/references/integrations.md#implementation-done) and C9 in
 [Initiative supervision](references/initiative-supervision.md): for implementation work that is
-the pull request landed in its intended target together with every accepted criterion still
+the delivery landed in its intended target together with every accepted criterion still
 outstanding beside it, installation or live verification included where the criteria named them;
 for accepted non-PR work it is the agreed observable result, which has no pull request by design.
 That test runs per subject rather than once, so each scoped issue is corroborated on its own

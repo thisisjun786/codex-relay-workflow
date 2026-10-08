@@ -15,7 +15,7 @@ import (
 	"testing"
 )
 
-// The CI workflow's structure (.github/workflows/ci.yml) and its one required check, dev-gate.
+// The CI workflow's structure (.github/workflows/ci.yml) and its one aggregate check, dev-gate.
 // The workflow is read as text, by its two-space job headers and six-space step items,
 // deliberately without a YAML parser.
 
@@ -85,7 +85,45 @@ func sortedCopy(items []string) []string {
 	return out
 }
 
-// dev-gate needs every other job, so a job cannot run outside the required check, and nothing
+// workflowTriggerKeys is ci.yml's top-level on: block: each key it declares, in order, as the text
+// before its colon. The block ends at the next top-level key. Read as text, like the rest of this
+// file, so the trigger is pinned without a YAML parser.
+func workflowTriggerKeys(t *testing.T) []string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(repoRoot(), ".github", "workflows", "ci.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, rest, found := strings.Cut(string(data), "\non:\n")
+	if !found {
+		t.Fatal("ci.yml has no top-level on: block")
+	}
+	var keys []string
+	for _, line := range strings.Split(rest, "\n") {
+		if line == "" || strings.HasPrefix(strings.TrimSpace(line), "#") {
+			continue
+		}
+		if !strings.HasPrefix(line, " ") {
+			break
+		}
+		if !strings.HasPrefix(line, "    ") {
+			if key, _, ok := strings.Cut(strings.TrimPrefix(line, "  "), ":"); ok {
+				keys = append(keys, key)
+			}
+		}
+	}
+	return keys
+}
+
+// ci.yml starts only on workflow_dispatch (CRW-966): the repository integrates by an integrator's
+// verified fast-forward, so no push or pull_request event runs the workflow. The job bodies stay as
+// they are, for a manual remote run.
+func TestWorkflow_the_trigger_is_workflow_dispatch_only(t *testing.T) {
+	keys := workflowTriggerKeys(t)
+	expectEqual(t, "ci.yml triggers", keys, []string{"workflow_dispatch"})
+}
+
+// dev-gate needs every other job, so a job cannot run outside the aggregate check, and nothing
 // else waits on anything: every check starts at once.
 func TestWorkflow_the_gate_needs_every_other_job_and_nothing_else_waits(t *testing.T) {
 	jobs, order := workflowJobs(t)

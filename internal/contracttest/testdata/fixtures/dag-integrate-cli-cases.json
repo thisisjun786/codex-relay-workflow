@@ -1,0 +1,98 @@
+{
+  "integrate-missing-plan": [
+    {
+      "argv": [
+        "dag-integrate",
+        "--actor",
+        "parent",
+        "--checkout",
+        "/nonexistent/checkout",
+        "--integration-ref",
+        "dev-int",
+        "--base",
+        "dev",
+        "--verify",
+        "true"
+      ]
+    }
+  ],
+  "integrate-absent-store": [
+    {
+      "argv": [
+        "dag-integrate",
+        "--plan",
+        "p",
+        "--actor",
+        "parent",
+        "--checkout",
+        "/nonexistent/checkout",
+        "--integration-ref",
+        "dev-int",
+        "--base",
+        "dev",
+        "--verify",
+        "true"
+      ]
+    }
+  ],
+  "push-missing-checkout": [
+    {
+      "argv": [
+        "dag-integrate-push",
+        "--checkout",
+        "/nonexistent/checkout",
+        "--integration-ref",
+        "dev-int",
+        "--remote",
+        "origin",
+        "--remote-ref",
+        "dev"
+      ]
+    }
+  ],
+  "push-missing-remote": [
+    {
+      "argv": [
+        "dag-integrate-push",
+        "--checkout",
+        "/nonexistent/checkout",
+        "--integration-ref",
+        "dev-int",
+        "--remote-ref",
+        "dev"
+      ]
+    }
+  ],
+  "observe-absent-store": [
+    {
+      "argv": [
+        "dag-integration-observe",
+        "--plan",
+        "p",
+        "--node",
+        "a",
+        "--actor",
+        "parent"
+      ]
+    }
+  ],
+  "accept-commit-absent-store": [
+    {
+      "argv": [
+        "dag-accept",
+        "--plan",
+        "p",
+        "--node",
+        "a",
+        "--actor",
+        "parent",
+        "--commit",
+        "0123456789abcdef0123456789abcdef01234567",
+        "--base",
+        "0123456789abcdef0123456789abcdef01234567",
+        "--verification",
+        "/nonexistent/record.json"
+      ]
+    }
+  ]
+}

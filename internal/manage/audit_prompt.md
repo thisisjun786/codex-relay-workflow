@@ -35,7 +35,7 @@ Write `grade.json` here, in exactly this shape:
   the issue require, or a real edge case that produces a wrong result. `P2` is a weak
   test, a misleading description or a maintainability problem. `P3` is a nit. Give a
   concrete trigger for every P0 and P1, and name a path and a line in `where` when you
-  can.
+  can. Write every what, where and repro in English.
 - `score`: 0 to 10, where 10 means correct and complete and 5 means it needed one more
   correction round.
 

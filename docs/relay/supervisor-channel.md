@@ -910,10 +910,12 @@ The relay daemon does, on every tick, with nobody asking. Its supervisor pass
 by hand, restricted to obligations whose message is absent or still unsent - and attempts each
 recipient's oldest eligible message through `SupervisorChannel.attempt`, a page of them at a time
 starting after the last one the previous tick considered, so neither one recipient's backlog nor
-a page of recipients that are never sendable can keep a later recipient's report unread; an attempt that raises
-is deferred by the recheck interval, and only an attempt that reached the claim and the
-transport spends the send budget, so a recipient that is never sendable cannot take every tick's
-budget however far apart ticks are. So every rule above holds
+a page of recipients that are never sendable can keep a later recipient's report unread; an attempt
+that raises is deferred by the recheck interval, except the notice channel's line yield, whose
+message keeps its eligibility because what is not ready is the recipient's line rather than the
+message (I-216), and only an attempt that reached the claim and the transport spends the send
+budget, so a recipient that is never sendable cannot take every tick's budget however far apart
+ticks are. So every rule above holds
 for it unchanged: one obligation is one message and one wake, what goes out is re-derived where
 the transport starts (I-247), the recipient's budget is shared with parent-child traffic and
 spent only at the transport start, a paused, archived or unreachable supervisor is withheld

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/commitid"
 )
 
 // Tip is the branch's current full object name, not a caller's restatement.
@@ -54,9 +55,7 @@ func branch(base string) error {
 	return nil
 }
 func SameCommit(a, b string) bool {
-	a = strings.ToLower(strings.TrimSpace(a))
-	b = strings.ToLower(strings.TrimSpace(b))
-	return a != "" && a == b
+	return commitid.Same(a, b)
 }
 
 // Reader is mergeturn.py's target_reader: where a target's base branch points now.
@@ -96,10 +95,7 @@ func (r TargetReader) Tip(ctx context.Context, repository, base string) (Tip, er
 	if err != nil || !info.IsDir() {
 		return Tip{}, unreadable("repository %s is not a directory here", pyvalue.StrRepr(repository))
 	}
-	gitdir := filepath.Join(repository, ".git")
-	if _, err := os.Stat(gitdir); os.IsNotExist(err) {
-		gitdir = repository
-	}
+	gitdir := gitDirOf(repository)
 	ref := "refs/heads/" + base
 	git := r.Git
 	if git == "" {
@@ -187,6 +183,115 @@ func (r TargetReader) github(ctx context.Context, repository, base string) (Tip,
 }
 
 // excerpt is text[:EXCERPT], counted in characters as Python slices a str.
+// gitDirOf is the git directory the lane reads a local repository through: its .git child when it exists,
+// else the path itself (a bare repository, or a .git directory named directly). The repository is resolved by
+// the kernel first, as the lane's own stat of it is, so a spelling with a symlink followed by a parent segment
+// (link/../repo) names the same directory here as it does in the reader; filepath.Join alone would collapse the
+// segment before the link was followed.
+func gitDirOf(repository string) string {
+	if resolved, err := filepath.EvalSymlinks(repository); err == nil {
+		repository = resolved
+	}
+	dotGit := filepath.Join(repository, ".git")
+	info, err := os.Stat(dotGit)
+	if os.IsNotExist(err) {
+		return repository
+	}
+	if err != nil || info.IsDir() {
+		return dotGit
+	}
+	return linkedWorktreeGitDir(repository, dotGit)
+}
+
+// linkedWorktreeGitDir is the git directory a linked worktree's .git file names (CRW-965: its .git is a file, not
+// a directory). It runs git with every GIT_ variable removed, so a poisoned environment cannot name another
+// repository, and bounds the call so a stuck git cannot hang the lane. A failed or empty answer keeps the .git path.
+func linkedWorktreeGitDir(repository, dotGit string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	env := make([]string, 0)
+	for _, v := range os.Environ() {
+		if !strings.HasPrefix(v, "GIT_") {
+			env = append(env, v)
+		}
+	}
+	cmd := exec.CommandContext(ctx, "git", "-C", repository, "rev-parse", "--absolute-git-dir")
+	cmd.Env = append(env, "GIT_TERMINAL_PROMPT=0", "LC_ALL=C")
+	out, err := cmd.Output()
+	if err != nil {
+		return dotGit
+	}
+	if dir := strings.TrimSpace(string(out)); dir != "" {
+		return dir
+	}
+	return dotGit
+}
+
+// repositoryKeyTimeout bounds the one git call that names a local repository. A repository that does not answer
+// in time is not named, and its spellings are then compared as text.
+const repositoryKeyTimeout = 5 * time.Second
+
+// SameRepository reports whether two repository spellings name one repository. The two kinds of spelling are read
+// differently, and neither is interpreted by the relay itself.
+//
+// A forge slug (owner/name) is a name: two slugs name the same repository when they are equal after trimming and
+// lower-casing. A local path is a directory name, so its bytes are never trimmed or case-folded: a directory whose
+// name ends in a space is a different name from the one without it. Two paths name the same repository when git
+// says so: the identity of a path is the common git directory git reports for it (git rev-parse --git-common-dir,
+// with symlinks resolved), so a main work tree, its .git directory, a linked worktree (which shares the refs and
+// so is the same repository for a hold on a head), its administrative directory and a symlink to any of them all
+// name one repository. When git cannot name either path (it is not a repository here, git is missing, or it does
+// not answer in time), the two spellings are compared by their exact text, case-insensitively, and nothing else.
+// A slug and a path never name the same repository, and an empty spelling names none.
+func SameRepository(a, b string) bool {
+	aPath, bPath := strings.HasPrefix(a, "/"), strings.HasPrefix(b, "/")
+	if aPath != bPath {
+		return false
+	}
+	if !aPath {
+		a, b = strings.TrimSpace(a), strings.TrimSpace(b)
+		if a == "" || b == "" {
+			return false
+		}
+		return strings.EqualFold(a, b)
+	}
+	keyA, okA := repositoryKey(a)
+	keyB, okB := repositoryKey(b)
+	if okA && okB {
+		return keyA == keyB
+	}
+	return strings.EqualFold(a, b)
+}
+
+// repositoryKey is the identity git gives a local repository spelling: its common git directory with symlinks
+// resolved. The git call runs with the GIT_* environment scrubbed, as TargetReader.Tip scrubs it, so the answer is
+// the repository's own and not one a caller's environment redirects.
+func repositoryKey(path string) (string, bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), repositoryKeyTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", "-C", path, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	env := make([]string, 0)
+	for _, v := range os.Environ() {
+		if !strings.HasPrefix(v, "GIT_") {
+			env = append(env, v)
+		}
+	}
+	cmd.Env = append(env, "GIT_TERMINAL_PROMPT=0", "LC_ALL=C")
+	output, err := cmd.Output()
+	if err != nil {
+		return "", false
+	}
+	common := strings.TrimSuffix(string(output), "\n")
+	if !filepath.IsAbs(common) {
+		return "", false
+	}
+	resolved, err := filepath.EvalSymlinks(common)
+	if err != nil {
+		return "", false
+	}
+	return resolved, true
+}
+
 func excerpt(text string) string {
 	runes := []rune(text)
 	if len(runes) > 400 {

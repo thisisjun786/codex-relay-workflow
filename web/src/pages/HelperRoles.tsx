@@ -6,6 +6,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   HELPER_ROLES,
+  effortFallbackNotice,
   effortSelectable,
   getHelperRoleSettings,
   getModelCatalog,
@@ -20,6 +21,7 @@ import {
 import { ModelSelect } from "../components/ModelSelect.tsx";
 import { PromptOverrideEditor } from "../components/PromptOverrideEditor.tsx";
 import { effortExcluded } from "../effort-support.ts";
+import { inheritState, isDirty, saveBody, storedToState, type PromptOverrideState } from "../prompt-override.ts";
 import { Loading } from "../ui/kit.tsx";
 import { toast } from "../ui/toast.tsx";
 import { HelpDrawer, HelpTopicButton, useHelp } from "../ui/help.tsx";
@@ -51,10 +53,15 @@ export function HelperRolesPage() {
   const [savingRole, setSavingRole] = useState<HelperRole | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
-  // The prompt draft is string-or-null, not a string: null is the store's "inherit" and the empty
-  // string is a value the user stored, and collapsing the two here would lose that distinction
-  // before the write even leaves the screen.
-  const [prompts, setPrompts] = useState<Record<HelperRole, string | null>>({ explorer: null, reviewer: null, executor: null, architect: null });
+  // The prompt draft is the editor's two states, not a string: "inherit" is the store's null and
+  // "override" is a value the user stored, the empty string included. Collapsing the two here would
+  // lose that distinction before the write even leaves the screen.
+  const [prompts, setPrompts] = useState<Record<HelperRole, PromptOverrideState>>({
+    explorer: inheritState(),
+    reviewer: inheritState(),
+    executor: inheritState(),
+    architect: inheritState(),
+  });
   const saving = useRef(false);
   const generation = useRef(0);
   const catalogLoading = useRef(false);
@@ -63,7 +70,7 @@ export function HelperRolesPage() {
 
   const entries = catalog?.entries ?? [];
   const efforts = helperRoleEfforts(entries, policyEfforts);
-  const dirty = (role: HelperRole) => prompts[role] !== (config?.roles[role].promptOverride ?? null);
+  const dirty = (role: HelperRole) => isDirty(prompts[role], config?.roles[role].promptOverride ?? null);
 
   async function refreshCatalog(force = false) {
     if (catalogLoading.current) return;
@@ -105,10 +112,10 @@ export function HelperRolesPage() {
         if (controller.signal.aborted || current !== generation.current) return;
         setConfig(next);
         setPrompts({
-          explorer: next.roles.explorer.promptOverride,
-          reviewer: next.roles.reviewer.promptOverride,
-          executor: next.roles.executor.promptOverride,
-          architect: next.roles.architect.promptOverride,
+          explorer: storedToState(next.roles.explorer.promptOverride),
+          reviewer: storedToState(next.roles.reviewer.promptOverride),
+          executor: storedToState(next.roles.executor.promptOverride),
+          architect: storedToState(next.roles.architect.promptOverride),
         });
       })
       .catch((err) => {
@@ -158,7 +165,7 @@ export function HelperRolesPage() {
       // null to "" here would leave the draft disagreeing with the settings the server returned, so
       // the save controls would reappear right after a successful clear and one more click would
       // store an empty-string override the user never asked for.
-      setPrompts((previous) => ({ ...previous, [role]: result.config.roles[role].promptOverride }));
+      setPrompts((previous) => ({ ...previous, [role]: storedToState(result.config.roles[role].promptOverride) }));
     }
     toast(`${role} ${patch.inherit ? "now inherits defaults" : "updated"}`, "ok");
   }
@@ -217,6 +224,11 @@ export function HelperRolesPage() {
               const unsupported = r.effort !== null && effortExcluded(supported, r.effort);
               const fallbackSupported = r.fallback ? ladderFor(r.fallback.model) : undefined;
               const savedEffortMissing = r.effort !== null && !efforts.includes(r.effort);
+              // When the model advertises a ladder that holds none of the store's names, every option
+              // is disabled and the role can only use the session effort. The screen says so, and it
+              // names what the role then uses rather than describing a saved value it is keeping.
+              const primaryNotice = effortFallbackNotice(supported, r.effort);
+              const fallbackNotice = effortFallbackNotice(fallbackSupported, r.fallback?.effort ?? null);
               return (
                 <section key={role} className="list-row role-row" aria-label={`${role} settings`}>
                   <div className="row-id">
@@ -252,6 +264,11 @@ export function HelperRolesPage() {
                         ))}
                       </select>
                     </div>
+                    {primaryNotice ? (
+                      <p className="sub" role="status">
+                        {primaryNotice}
+                      </p>
+                    ) : null}
                     <div className="role-selects" style={{ marginTop: 8 }}>
                       <span className="sub">First fallback</span>
                       <ModelSelect
@@ -280,6 +297,11 @@ export function HelperRolesPage() {
                         ))}
                       </select>
                     </div>
+                    {fallbackNotice ? (
+                      <p className="sub" role="status">
+                        {fallbackNotice}
+                      </p>
+                    ) : null}
                     <p className="sub">After attempts fail, the main agent takes over remaining work.</p>
                     {unsupported ? (
                       <p className="sub" role="status">
@@ -295,10 +317,10 @@ export function HelperRolesPage() {
                     <div className="role-selects">
                       {dirty(role) ? (
                         <>
-                          <button className="btn" disabled={savingRole !== null} onClick={() => void save(role, { promptOverride: prompts[role] })}>
+                          <button className="btn" disabled={savingRole !== null} onClick={() => void save(role, saveBody(prompts[role]))}>
                             Save prompt
                           </button>
-                          <button className="btn" onClick={() => setPrompts((previous) => ({ ...previous, [role]: r.promptOverride }))}>
+                          <button className="btn" onClick={() => setPrompts((previous) => ({ ...previous, [role]: storedToState(r.promptOverride) }))}>
                             Discard prompt changes
                           </button>
                         </>

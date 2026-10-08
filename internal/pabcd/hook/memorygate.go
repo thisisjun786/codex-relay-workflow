@@ -136,15 +136,16 @@ func memoryGateConsume(cwd, sid, turn string, write func(string, state.State) er
 }
 
 // memoryGateRewritable says whether writing back the state the reader rebuilt would keep every record: each stored unverified
-// subagent must come back as it was stored (the reader drops malformed entries, caps the list, cuts a long receiptClaimed and
-// replaces a field of the wrong type, see state.RewriteKeepsUnverified), and a legacy D-close marker would lose its
-// distinction. The memory allow-write command and the scan and evidence commands refuse on the same judgement.
+// subagent must come back as it was stored, an interview tracker longer than the reader keeps would lose its oldest entries, and
+// no record class the shared judgement covers would change (state.RewriteKeepsStored). A legacy D-close marker is refused
+// separately, as this writer always has (state.DcloseRecoveryLegacy). The memory allow-write command and the scan and evidence
+// commands refuse on the same judgement.
 func memoryGateRewritable(file string, s state.State) bool {
-	if s.DcloseRecovery != nil && s.DcloseRecovery.Legacy {
+	if state.DcloseRecoveryLegacy(s) {
 		return false
 	}
 	raw, err := os.ReadFile(file)
-	return err == nil && state.RewriteKeepsUnverified(raw, s.UnverifiedSubagents)
+	return err == nil && state.RewriteKeepsStored(raw, s)
 }
 
 // memoryGateClassify is classifyMemoryWrite with the protected root worked out from env.
