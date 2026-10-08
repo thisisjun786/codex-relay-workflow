@@ -88,11 +88,22 @@ type auditDraft struct {
 	Body        string           `json:"body"`
 	Labels      []string         `json:"labels"`
 	Seen        []auditDraftSeen `json:"seen"`
-	State       string           `json:"state"`
+	// Improve is the counts and origins an improve draft holds. It is absent on an audit draft, and on an
+	// improve draft an earlier build wrote before the item existed.
+	Improve *auditDraftImprove `json:"improve,omitempty"`
+	State   string             `json:"state"`
 
 	// Posted is the issue key the management session recorded with mark. It is absent until
 	// then, so a reader can tell a draft nobody opened from one already on Linear.
 	Posted string `json:"posted,omitempty"`
+}
+
+// auditDraftImprove is the item an improve draft keeps for its counts and its origins: the projects
+// it reaches with the count each one holds, and the evidence locations it names. The body is drawn
+// from this item, and no reader takes a count back out of the body. An audit draft carries none.
+type auditDraftImprove struct {
+	Projects []improveProposeProject `json:"projects"`
+	Evidence []string                `json:"evidence"`
 }
 
 // auditDraftIndex is the listing of the fingerprints the drafts directory holds.
@@ -173,7 +184,7 @@ type auditDraftCandidate struct {
 // field, so such a file is refused rather than silently narrowed.
 var auditDraftKnownKeys = map[string]bool{
 	"schema": true, "fingerprint": true, "source": true, "project": true, "title": true,
-	"severity": true, "body": true, "labels": true, "seen": true, "state": true, "posted": true,
+	"severity": true, "body": true, "labels": true, "seen": true, "state": true, "posted": true, "improve": true,
 }
 
 // auditDraftUnknownKeys names the keys of a draft document this build does not read, in

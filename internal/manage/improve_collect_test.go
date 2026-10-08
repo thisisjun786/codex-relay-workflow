@@ -199,8 +199,10 @@ const improveTestMeasurementDoc = `{"ok":true,"schema":"dag-measurements/1","pla
 	`"post_merge":{"samples":1,"ok":1},"duplicated_or_discarded":{"samples":0},` +
 	`"cancelled_after_release":{"samples":1,"count":1},"landings":[]}`
 
-// improveTestEightCases is the fixed 2026-10-06 input: issue key, project key, and the
-// reason the receipt body carries.
+// improveTestEightCases is the fixed 2026-10-06 input: issue key, project key, and the reason the
+// receipt body carries. It is the management session's real case list: all eight are the same
+// friction, a body size estimate the merged size ran past, so the reason is "size overrun" on
+// every one of them and the projects are cxc-port (5), dag (1) and manage (2).
 var improveTestEightCases = []struct {
 	issue   string
 	project string
@@ -208,16 +210,18 @@ var improveTestEightCases = []struct {
 }{
 	{"CRW-624", "project-cxc-port", "size overrun"},
 	{"CRW-369", "project-cxc-port", "size overrun"},
-	{"CRW-376", "project-cxc-port", "name collision"},
+	{"CRW-376", "project-cxc-port", "size overrun"},
 	{"CRW-378", "project-cxc-port", "size overrun"},
-	{"CRW-382", "project-cxc-port", "name collision"},
+	{"CRW-382", "project-cxc-port", "size overrun"},
 	{"CRW-664", "project-dag", "size overrun"},
 	{"CRW-685", "project-manage", "size overrun"},
-	{"CRW-716", "project-manage", "name collision"},
+	{"CRW-716", "project-manage", "size overrun"},
 }
 
-// improveTestReceiptBody is a receipt body: a blocked_needs_input receipt, or a split
-// decision, carrying the reason.
+// improveTestReceiptBody is a receipt body: a blocked_needs_input receipt, or a split decision,
+// carrying the reason. A blocked receipt names no reason of its own; the reason of a blockage is
+// the note of the decision reply that answered it, which improveTestBlockedReceipt and
+// improveTestAnswerReceipt write together.
 func improveTestReceiptBody(t *testing.T, split bool, reason string) string {
 	t.Helper()
 	body := map[string]any{"reason": reason}
@@ -233,8 +237,30 @@ func improveTestReceiptBody(t *testing.T, split bool, reason string) string {
 	return string(data)
 }
 
-// improveTestSeedEightCases inserts the eight relationships, their project keys, and one
-// receipt each: a blocked_needs_input receipt or a split decision, alternating.
+// improveTestBlockedReceipt is the receipt of a final blocked_needs_input event: the bare outcome,
+// because a child's receipt carries no reason field.
+func improveTestBlockedReceipt(t *testing.T) string {
+	t.Helper()
+	return improveTestReceiptBody(t, false, "")
+}
+
+// improveTestAnswerReceipt is the receipt of the parent's decision reply that answered one blocked
+// event: a split_approval naming the event it answered and the reason it gave.
+func improveTestAnswerReceipt(t *testing.T, answersEvent, reason string) string {
+	t.Helper()
+	body := map[string]any{"decision": "split_approval", "answersEvent": answersEvent, "note": reason}
+	data, err := json.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+// improveTestSeedEightCases inserts the eight relationships and their project keys, with the two
+// real shapes of a blockage: an even 1-based case is a final blocked_needs_input receipt plus the
+// parent's decision reply that answered it (a split_approval naming that event and carrying the
+// reason), and an odd 1-based case is the parent's own split decision with no receipt to answer.
+// Either way one case is one blockage, so the eight cases are eight records, all the same reason.
 func improveTestSeedEightCases(t *testing.T, db *sql.DB) {
 	t.Helper()
 	for i, c := range improveTestEightCases {
@@ -242,12 +268,19 @@ func improveTestSeedEightCases(t *testing.T, db *sql.DB) {
 		improveTestInsert(t, db, "INSERT INTO relationships (relationship_id, issue_key, status, parent_task_id, parent_host_id, child_task_id, child_host_id, execution_generation, artifact_roots, allowed_recipients, created_at, updated_at) VALUES (?,?,'active','parent','host','child','host',1,'[]','[]','2026-10-06T00:00:00Z','2026-10-06T00:00:00Z')", rid, c.issue)
 		improveTestInsert(t, db, "INSERT INTO relationship_scope (relationship_id, project_key, recorded_at) VALUES (?,?,'2026-10-06T00:00:00Z')", rid, c.project)
 		at := fmt.Sprintf("2026-10-06T%02d:00:00Z", i+1)
-		outcome, producer := "blocked_needs_input", "child"
 		if i%2 == 1 {
-			outcome, producer = "decision_reply", "parent"
+			// The issue's fixed input: the 2nd, 4th, 6th and 8th entries are a blocked receipt plus
+			// the answer that resolved it. A 1-based even case is a 0-based odd index.
+			blocked := "ev-blocked-" + c.issue
+			improveTestInsert(t, db, "INSERT INTO events (event_id, relationship_id, execution_generation, revision_hash, outcome, producer, turn_thread_id, turn_id, turn_status, receipt, stage, first_seen_at, last_seen_at) VALUES (?,?,1,?,'blocked_needs_input','child','t','turn-1','completed',?,'final',?,?)",
+				blocked, rid, strings.Repeat("0", 64), improveTestBlockedReceipt(t), at, at)
+			improveTestInsert(t, db, "INSERT INTO events (event_id, relationship_id, execution_generation, revision_hash, outcome, producer, turn_thread_id, turn_id, turn_status, receipt, stage, first_seen_at, last_seen_at) VALUES (?,?,1,?,'decision_reply','parent','t','turn-1','completed',?,'final',?,?)",
+				"ev-answer-"+c.issue, rid, strings.Repeat("0", 64), improveTestAnswerReceipt(t, blocked, c.reason), at, at)
+			continue
 		}
-		improveTestInsert(t, db, "INSERT INTO events (event_id, relationship_id, execution_generation, revision_hash, outcome, producer, turn_thread_id, turn_id, turn_status, receipt, stage, first_seen_at, last_seen_at) VALUES (?,?,1,?,?,?, 't','turn-1','completed',?,'final',?,?)",
-			"ev-"+c.issue, rid, strings.Repeat("0", 64), outcome, producer, improveTestReceiptBody(t, i%2 == 1, c.reason), at, at)
+		// The issue's remaining entries: the parent's own split decision, with no receipt to answer.
+		improveTestInsert(t, db, "INSERT INTO events (event_id, relationship_id, execution_generation, revision_hash, outcome, producer, turn_thread_id, turn_id, turn_status, receipt, stage, first_seen_at, last_seen_at) VALUES (?,?,1,?,'decision_reply','parent','t','turn-1','completed',?,'final',?,?)",
+			"ev-"+c.issue, rid, strings.Repeat("0", 64), improveTestReceiptBody(t, true, c.reason), at, at)
 	}
 }
 

@@ -107,6 +107,16 @@ var improveUnlinkTemporary func(dirfd int, name string) error = func(dirfd int, 
 // improveStoreFile is the relay store's file name inside a state directory.
 const improveStoreFile = "relay.sqlite3"
 
+// improveEvidenceIssuePrefix marks the evidence entry that names the issue a record belongs to,
+// rather than a place the friction itself was seen. A split whose relationship carries no scope
+// keeps its issue key this way, so the key is not mistaken for a project or for an occurrence.
+const improveEvidenceIssuePrefix = "issue:"
+
+// improveEvidenceAnswerPrefix marks the evidence entry that names the decision reply which answered
+// a blockage. The reply's own record is folded into the blockage's, so the reply's event is cited
+// as the source of the reason rather than counted as a second occurrence.
+const improveEvidenceAnswerPrefix = "answer:"
+
 // improveStoreTimeout bounds the read-only store open.
 const improveStoreTimeout = 5 * time.Second
 
@@ -144,7 +154,8 @@ type improveSourceRow struct {
 
 // improveRecord is one normalized record: what kind of friction it is, its identity, where
 // it happened, what it was, how many rows it merges, the first and last time it was seen,
-// and the origin locations of the rows behind it.
+// the origin locations of the rows behind it, and the draft fingerprint a source already
+// recorded for the row when it carries one.
 type improveRecord struct {
 	Kind     string   `json:"kind"`
 	Key      string   `json:"key"`
@@ -154,6 +165,11 @@ type improveRecord struct {
 	FirstAt  string   `json:"first_at"`
 	LastAt   string   `json:"last_at"`
 	Evidence []string `json:"evidence"`
+
+	// Fingerprint is the shared draft fingerprint a row already carries, when its source records
+	// one. The issue list a management session exports names it, so a candidate whose fingerprint
+	// an issue already holds is not proposed again; every other kind leaves it empty.
+	Fingerprint string `json:"fingerprint,omitempty"`
 }
 
 // improveAccumulator merges records that share a (kind, key, where) identity, so the same
@@ -186,6 +202,11 @@ func (a *improveAccumulator) improveAdd(r improveRecord) {
 		}
 		if current.What == "" || (improveGenericReason(current.What) && !improveGenericReason(r.What)) {
 			current.What = r.What
+		}
+		// A row that carries the fingerprint keeps it, so a record merged from several rows still
+		// names the draft its source already holds.
+		if current.Fingerprint == "" {
+			current.Fingerprint = r.Fingerprint
 		}
 		current.Evidence = append(current.Evidence, r.Evidence...)
 		return
@@ -481,6 +502,17 @@ func improvePrefix(dir string) string {
 // a link and ".." names the file the kernel would open rather than the different file
 // filepath.Clean would name.
 func improveResolvedPath(path string) (string, error) { return store.Realpath(path) }
+
+// improveResolvedPathOr is improveResolvedPath for an origin that must still name a file when the
+// path cannot be resolved at all: the caller's own spelling is kept rather than dropping the
+// origin, because a record with no location would fall back to a sighting of its where.
+func improveResolvedPathOr(path string) string {
+	resolved, err := improveResolvedPath(path)
+	if err != nil {
+		return path
+	}
+	return resolved
+}
 
 // improveOpenDirectory opens a directory for the *at calls this file makes on it: creating the
 // temporary file, removing it and renaming it into place. The open needs only search permission on
@@ -939,6 +971,33 @@ func improveStorePath(configured string) (string, error) {
 	return configured, nil
 }
 
+// improveStoreIdentity is the stable token one store's rows are read under, so an occurrence's
+// origin names the store it came from: the store's own store_id, or the file it was opened from
+// when the store carries none. A row number is unique only inside one store, so two stores can
+// carry the same reason at the same row number and, without this token, the second store's row
+// would read as an occurrence already seen.
+//
+// fallback is the store file the caller resolved before the snapshot, because the Store a
+// ReadSnapshot hands its reader carries no path of its own: deriving the file from the reader's
+// working directory would name every pathless store by the same directory.
+func improveStoreIdentity(ctx context.Context, s *store.Store, fallback string) (string, error) {
+	rows, err := s.All(ctx, "SELECT value FROM schema_meta WHERE key = 'store_id'")
+	if err != nil {
+		return "", err
+	}
+	for _, row := range rows {
+		if id := strings.TrimSpace(row.Text("value")); id != "" {
+			return id, nil
+		}
+	}
+	// A store whose identity row is missing is named by the file it was read from, so two
+	// different files still read as two different origins.
+	if resolved, err := improveResolvedPath(fallback); err == nil {
+		return resolved, nil
+	}
+	return fallback, nil
+}
+
 // improveReadRelay reads the relay store read-only and normalizes its refusal, fault,
 // generation and split rows. The store is opened with store.OpenInPlace, which never
 // creates a -wal or -shm sidecar, and read through ReadSnapshot's one deferred snapshot.
@@ -948,8 +1007,21 @@ func improveReadRelay(ctx context.Context, dbPath string, acc *improveAccumulato
 		return 0, err
 	}
 	defer func() { _ = read.Close() }()
+	// The store file, resolved once, names a store whose own identity row is missing. The Store a
+	// snapshot hands its reader carries no path, so it cannot be taken from there.
+	storeFile, err := improveResolvedPath(dbPath)
+	if err != nil {
+		storeFile = dbPath
+	}
 	rows := 0
 	err = read.ReadSnapshot(ctx, func(ctx context.Context, s *store.Store) error {
+		// An occurrence's origin has to name the store it was read from. A row number is unique
+		// only inside one store: two stores can carry the same reason at the same row number, and
+		// without the store the second one's row reads as an occurrence already seen.
+		token, err := improveStoreIdentity(ctx, s, storeFile)
+		if err != nil {
+			return err
+		}
 		refusals, err := s.All(ctx, "SELECT id, at, relationship_id, reason, detail FROM refusals ORDER BY id")
 		if err != nil {
 			return err
@@ -959,7 +1031,7 @@ func improveReadRelay(ctx context.Context, dbPath string, acc *improveAccumulato
 			reason := row.Text("reason")
 			acc.improveAdd(improveRecord{Kind: improveKindRefusal, Key: reason, What: reason, Count: 1,
 				FirstAt: row.Text("at"), LastAt: row.Text("at"),
-				Evidence: []string{fmt.Sprintf("refusals:%d", improveRowInt(row, "id"))}})
+				Evidence: []string{fmt.Sprintf("refusals:%s:%d", token, improveRowInt(row, "id"))}})
 		}
 
 		faults, err := s.All(ctx, "SELECT fault_id, fault_class, signature, scope_key, occurrence_count, first_seen_at, last_seen_at FROM fault_ledger ORDER BY fault_id")
@@ -971,7 +1043,7 @@ func improveReadRelay(ctx context.Context, dbPath string, acc *improveAccumulato
 			acc.improveAdd(improveRecord{Kind: improveKindFault, Key: row.Text("fault_class"), Where: row.Text("scope_key"),
 				What: row.Text("signature"), Count: improveRowInt(row, "occurrence_count"),
 				FirstAt: row.Text("first_seen_at"), LastAt: row.Text("last_seen_at"),
-				Evidence: []string{"fault:" + row.Text("fault_id")}})
+				Evidence: []string{"fault:" + token + ":" + row.Text("fault_id")}})
 		}
 
 		generations, err := s.All(ctx, "SELECT relationship_id, execution_generation, reason, opened_at FROM generations ORDER BY relationship_id, execution_generation")
@@ -983,7 +1055,7 @@ func improveReadRelay(ctx context.Context, dbPath string, acc *improveAccumulato
 			reason := row.Text("reason")
 			acc.improveAdd(improveRecord{Kind: improveKindGeneration, Key: reason, Where: row.Text("relationship_id"),
 				What: reason, Count: 1, FirstAt: row.Text("opened_at"), LastAt: row.Text("opened_at"),
-				Evidence: []string{fmt.Sprintf("generations:%s:%d", row.Text("relationship_id"), improveRowInt(row, "execution_generation"))}})
+				Evidence: []string{fmt.Sprintf("generations:%s:%s:%d", token, row.Text("relationship_id"), improveRowInt(row, "execution_generation"))}})
 		}
 
 		// The criteria-registration round trip is in the journal: every registration records
@@ -1004,7 +1076,7 @@ func improveReadRelay(ctx context.Context, dbPath string, acc *improveAccumulato
 			acc.improveAdd(improveRecord{Kind: improveKindCriteria, Key: row.Text("subject"), Where: digest,
 				What: "registered", Count: size,
 				FirstAt: row.Text("at"), LastAt: row.Text("at"),
-				Evidence: []string{fmt.Sprintf("journal:%d", improveRowInt(row, "seq"))}})
+				Evidence: []string{fmt.Sprintf("journal:%s:%d", token, improveRowInt(row, "seq"))}})
 		}
 
 		// The current set is what canonical_criteria holds; a digest the journal already carries
@@ -1016,7 +1088,7 @@ func improveReadRelay(ctx context.Context, dbPath string, acc *improveAccumulato
 		rows += len(criteria)
 		for _, row := range criteria {
 			rid, digest := row.Text("relationship_id"), row.Text("set_digest")
-			evidence := "canonical_criteria:" + rid + ":" + digest
+			evidence := "canonical_criteria:" + token + ":" + rid + ":" + digest
 			if acc.improveAnnotate(improveKindCriteria, rid, digest, evidence) {
 				continue
 			}
@@ -1034,10 +1106,18 @@ func improveReadRelay(ctx context.Context, dbPath string, acc *improveAccumulato
 		// internal/relay/store/receipt_shape.go allows none, so reading one there found no
 		// reason for any real blockage. The reason is the note of the decision reply that
 		// answered the event, and that receipt names the answered event in its answersEvent, so
-		// one prepass indexes the replies before the blocked rows are read.
+		// one prepass indexes the replies before the blocked rows are read. The same prepass
+		// records which events are blockages: a reply that answered one of them is that
+		// blockage's answer, not a second record, so one blockage stays one record.
 		answered := map[improveParseBlockedKey]string{}
+		blocked := map[improveParseBlockedKey]bool{}
+		// answerEvents maps a blocked event to the decision reply that answered it, so the
+		// blockage's record can cite the reply whose note gave it its reason.
+		answerEvents := map[improveParseBlockedKey]string{}
 		for _, row := range splits {
-			if row.Text("outcome") != "decision_reply" {
+			key := improveParseBlockedKey{relationship: row.Text("relationship_id"), event: row.Text("event_id")}
+			if row.Text("outcome") == "blocked_needs_input" {
+				blocked[key] = true
 				continue
 			}
 			receipt := improveParseJSONObject(row.Text("receipt"))
@@ -1045,10 +1125,12 @@ func improveReadRelay(ctx context.Context, dbPath string, acc *improveAccumulato
 			if event == "" {
 				continue
 			}
-			answered[improveParseBlockedKey{relationship: row.Text("relationship_id"), event: event}] = improveStringField(receipt, "note")
+			answered[improveParseBlockedKey{relationship: key.relationship, event: event}] = improveStringField(receipt, "note")
+			answerEvents[improveParseBlockedKey{relationship: key.relationship, event: event}] = key.event
 		}
 		for _, row := range splits {
 			outcome, receipt := row.Text("outcome"), improveParseJSONObject(row.Text("receipt"))
+			relationship := row.Text("relationship_id")
 			project := row.Text("project_key")
 			issue := row.Text("issue_key")
 			var reason string
@@ -1057,20 +1139,41 @@ func improveReadRelay(ctx context.Context, dbPath string, acc *improveAccumulato
 				if decision != "split_approval" && decision != "scope_change" {
 					continue
 				}
+				// A reply whose answersEvent names a stored blockage is that blockage's own
+				// record: the blocked row already carries the answer's reason, so this row
+				// contributes no record of its own and one blockage counts once.
+				if event := improveStringField(receipt, "answersEvent"); event != "" {
+					if blocked[improveParseBlockedKey{relationship: relationship, event: event}] {
+						continue
+					}
+				}
 				reason = improveStringField(receipt, "reason", "detail", "note", "question", "summary")
 				if reason == "" {
 					reason = improveStringField(receipt, "outcome", "decision")
 				}
 			} else {
-				reason = answered[improveParseBlockedKey{relationship: row.Text("relationship_id"), event: row.Text("event_id")}]
+				reason = answered[improveParseBlockedKey{relationship: relationship, event: row.Text("event_id")}]
 				if reason == "" {
 					reason = string(store.BlockedNeedsInput)
 				}
 			}
+			// The record's identity is the project the issue belongs to; a relationship with no
+			// scope leaves it empty, and the issue key stays in the record's evidence rather than
+			// taking the project's place.
+			key := improveSplitKey(project)
+			evidence := []string{"events:" + token + ":" + row.Text("event_id")}
+			// The reply that answered this blockage is cited as the source of the reason the
+			// record carries, so the reason is substantiated rather than asserted.
+			if answer := answerEvents[improveParseBlockedKey{relationship: relationship, event: row.Text("event_id")}]; answer != "" {
+				evidence = append(evidence, improveEvidenceAnswerPrefix+answer)
+			}
+			if key == "" && issue != "" {
+				evidence = append(evidence, improveEvidenceIssuePrefix+issue)
+			}
 			rows++
-			acc.improveAdd(improveRecord{Kind: improveKindSplit, Key: improveSplitKey(project, issue), Where: row.Text("relationship_id"),
+			acc.improveAdd(improveRecord{Kind: improveKindSplit, Key: key, Where: relationship,
 				What: reason, Count: 1, FirstAt: row.Text("first_seen_at"), LastAt: row.Text("last_seen_at"),
-				Evidence: []string{"events:" + row.Text("event_id")}})
+				Evidence: evidence})
 		}
 		return nil
 	})
@@ -1080,14 +1183,12 @@ func improveReadRelay(ctx context.Context, dbPath string, acc *improveAccumulato
 	return rows, nil
 }
 
-// improveSplitKey is a split record's identity: the project key the issue belongs to. The
-// relationship it happened at stays in the record's where, so one issue is one record and
-// the project key is on every one of them.
-func improveSplitKey(project, issue string) string {
-	if project != "" {
-		return project
-	}
-	return issue
+// improveSplitKey is a split record's identity: the project key the issue belongs to, or the
+// empty string when the relationship carries no scope. An issue key is never a project, so it
+// never takes this place; the record's evidence keeps it instead. The relationship it happened at
+// stays in the record's where, so one relationship is one record.
+func improveSplitKey(project string) string {
+	return strings.TrimSpace(project)
 }
 
 // improveParseBlockedKey names one blocked event inside one relationship. The two fields are
@@ -1183,6 +1284,20 @@ func improvePatterns(pattern string) []string {
 	return out
 }
 
+// improveFileOrigin is the origin of one row of a JSON-line source: the resolved file, the line
+// number, and the time the row itself records. The file is resolved so two spellings that reach it
+// through a link are one location. The time is part of it because such a file is read by position:
+// a rotated file can put a different occurrence at the same line number, and without the row's own
+// time that new occurrence would read as the one already seen. A row that carries no time is named
+// by its position alone, which is the best the file offers.
+func improveFileOrigin(path string, line int, at string) string {
+	origin := fmt.Sprintf("%s:%d", improveResolvedPathOr(path), line)
+	if trimmed := strings.TrimSpace(at); trimmed != "" {
+		origin += ":" + trimmed
+	}
+	return origin
+}
+
 // improveReadAudit reads the audit ledger, one JSON line per graded result, and normalizes
 // it by issue.
 func improveReadAudit(ids *improveIdentitySet, path string, acc *improveAccumulator) (int, error) {
@@ -1191,10 +1306,11 @@ func improveReadAudit(ids *improveIdentitySet, path string, acc *improveAccumula
 		return 0, err
 	}
 	for i, line := range lines {
+		at := improveStringField(line, "graded_at")
 		acc.improveAdd(improveRecord{Kind: improveKindAudit, Key: improveStringField(line, "issue"),
 			Where: improveStringField(line, "subject"), What: improveStringField(line, "status"), Count: 1,
-			FirstAt: improveStringField(line, "graded_at"), LastAt: improveStringField(line, "graded_at"),
-			Evidence: []string{fmt.Sprintf("%s:%d", path, i+1)}})
+			FirstAt: at, LastAt: at,
+			Evidence: []string{improveFileOrigin(path, i+1, at)}})
 	}
 	return len(lines), nil
 }
@@ -1208,9 +1324,10 @@ func improveReadInterventions(ids *improveIdentitySet, path string, acc *improve
 	}
 	for i, line := range lines {
 		signal := improveStringField(line, "signal", "kind", "case")
+		at := improveStringField(line, "at", "date", "recorded_at")
 		acc.improveAdd(improveRecord{Kind: improveKindIntervention, Key: signal, What: signal, Count: 1,
-			FirstAt: improveStringField(line, "at", "date", "recorded_at"), LastAt: improveStringField(line, "at", "date", "recorded_at"),
-			Evidence: []string{fmt.Sprintf("%s:%d", path, i+1)}})
+			FirstAt: at, LastAt: at,
+			Evidence: []string{improveFileOrigin(path, i+1, at)}})
 	}
 	return len(lines), nil
 }
@@ -1332,7 +1449,11 @@ func improveReadIssues(ids *improveIdentitySet, path string, acc *improveAccumul
 		key := improveStringField(issue, "identifier", "key", "id")
 		acc.improveAdd(improveRecord{Kind: improveKindIssue, Key: key, Where: improveStringField(issue, "state"),
 			What: improveStringField(issue, "title"), Count: 1,
-			FirstAt: improveStringField(issue, "createdAt", "created_at"), LastAt: improveStringField(issue, "updatedAt", "updated_at"),
+			// The issue list names the draft fingerprint it was registered under, so a candidate
+			// whose fingerprint an issue already holds is suppressed by that fingerprint and not
+			// only by its key or its title.
+			Fingerprint: improveStringField(issue, "fingerprint"),
+			FirstAt:     improveStringField(issue, "createdAt", "created_at"), LastAt: improveStringField(issue, "updatedAt", "updated_at"),
 			Evidence: []string{path + ":" + key}})
 	}
 	return len(issues), nil
