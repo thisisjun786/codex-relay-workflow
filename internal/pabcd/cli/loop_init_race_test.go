@@ -624,20 +624,14 @@ func TestLoopInitDoesNotHangOnASpecialFileAtTheSessionLock(t *testing.T) {
 	}
 }
 
-// loopInitFastWaits shortens the pause between init's post-lock wait rounds so a case that drives
-// that wait does not spend the production budget in it, while leaving the wait long enough (limit x
-// pause) for a competing publication scheduled just after the lock's own budget to land inside it.
-// The wait itself follows the competing holder's liveness, which the cases control. It restores the
-// seam when the test ends.
+// loopInitFastWaits shortens the pause between init's wait rounds, so a case that drives the wait does not
+// poll at the production step. The limit stays as production sets it; a case that needs a longer window sets
+// loopInitPlanWaitLimit itself. It restores the seam when the test ends.
 func loopInitFastWaits(t *testing.T) {
 	t.Helper()
 	pause := loopInitPlanWaitPause
-	deadline := loopInitPlanWaitDeadline
 	loopInitPlanWaitPause = func() { time.Sleep(time.Millisecond) }
-	// A case that drives the wait must not spend the production deadline in it; the wait's real bound is
-	// exercised by the fact that it ends at all, and the production value is asserted below.
-	loopInitPlanWaitDeadline = 3 * time.Second
-	t.Cleanup(func() { loopInitPlanWaitPause, loopInitPlanWaitDeadline = pause, deadline })
+	t.Cleanup(func() { loopInitPlanWaitPause = pause })
 }
 
 // loopDeadPID returns the pid of a process that has already exited, so a lock file naming it is an
@@ -676,17 +670,13 @@ func TestLoopInitDoesNotWaitForAReleasedSessionLock(t *testing.T) {
 	if err := os.WriteFile(lockPath, []byte(strconv.Itoa(os.Getpid())), 0o666); err != nil {
 		t.Fatal(err)
 	}
-	// The holder finishes without publishing, after the loser's own acquisition budget has run out, so
-	// the loser meets the released lock inside its post-budget wait.
-	released := make(chan struct{})
-	go func() {
-		time.Sleep(400 * time.Millisecond)
-		_ = os.Remove(lockPath)
-		close(released)
-	}()
+	// The holder finishes without publishing. The release happens at the wait's entry, after the loser's own
+	// acquisition budget has run out, so the loser meets the released lock inside its wait (CRW-982 c2: a
+	// timer would race the wait limit).
+	loopInitPlanWaitEntered = func() { _ = os.Remove(lockPath) }
+	t.Cleanup(func() { loopInitPlanWaitEntered = nil })
 
 	result := loopRun(t, cwd, "init", "--objective", "Bound objective", "--session", id)
-	<-released
 	if result.Code != 0 {
 		t.Fatalf("the init after the lock was released: %d %q", result.Code, result.Output)
 	}
@@ -738,11 +728,11 @@ func TestLoopInitNamesThePublishedPlanWhenTheReacquiredBindingFails(t *testing.T
 	}
 }
 
-// TestLoopInitAnswersTheLockRecoveryWhenALockHasNoReadableOwner is d3's bound: a lock whose owner
-// metadata is absent or unreadable (a foreign or corrupt lock, not a just-started holder) is followed
-// only for loopInitPlanWaitGrace rounds and then answers the shared lock's own recovery text — never a
-// claim that nothing is there, and never a raw error a caller cannot act on. The grace is the test seam.
-func TestLoopInitAnswersTheLockRecoveryWhenALockHasNoReadableOwner(t *testing.T) {
+// TestLoopInitAnswersBusyWhenALockHasNoReadableOwnerPastTheLimit is CRW-982 c2: a lock whose owner metadata
+// is absent or unreadable is waited for within loopInitPlanWaitLimit, then answered busy with nothing
+// written. The answer says the lock is held, so it is not the "a plan already exists" answer, and it is not
+// a raw error the caller cannot act on.
+func TestLoopInitAnswersBusyWhenALockHasNoReadableOwnerPastTheLimit(t *testing.T) {
 	cwd := loopReadWorkspace(t)
 	const slug = "ship-the-export-feature"
 	dir := filepath.Join(cwd, ".crw", "goalplans", slug)
@@ -760,69 +750,13 @@ func TestLoopInitAnswersTheLockRecoveryWhenALockHasNoReadableOwner(t *testing.T)
 	if result.Code != 1 {
 		t.Fatalf("got %d %q, want the lock's recovery answer", result.Code, result.Output)
 	}
-	for _, want := range []string{"is busy", "lock directory", "remove"} {
+	for _, want := range []string{"held by another writer", "nothing was written", "Lock directory"} {
 		if !strings.Contains(result.Output, want) {
 			t.Fatalf("the recovery answer does not name %q: %q", want, result.Output)
 		}
 	}
 	if _, err := os.Stat(loopPlanFile(cwd, slug)); !os.IsNotExist(err) {
 		t.Fatalf("the refused init wrote a plan: %v", err)
-	}
-}
-
-// TestLoopInitWaitsForALiveWinnerWithoutARoundLimit is c1's answer for a slow winner: a live winner that
-// publishes only after many rounds still gets its plan seen by the loser, because the wait follows the
-// holder's lifetime rather than a small fixed round count (CRW-646 c1). The holder here stays live and
-// publishes well past any small round budget, and inside the wait's real deadline.
-func TestLoopInitWaitsForALiveWinnerWithoutARoundLimit(t *testing.T) {
-	cwd := loopReadWorkspace(t)
-	const slug = "ship-the-export-feature"
-	loopInitFastWaits(t)
-	holder := newLoopPlanHolder(t, cwd, slug, "Ship the export feature")
-	loopInitAfterAbsenceCheck = func() { holder.plant() }
-	// Publish only after a long stretch of the loser's wait, well past a small fixed limit, and stop the
-	// holder being "live" only after it has published: the owner is this test process throughout.
-	loopInitPlanWaitEntered = func() {
-		go func() {
-			time.Sleep(300 * time.Millisecond) // ~300 fast-wait rounds, far past a small backstop
-			_ = holder.publish()
-		}()
-	}
-	t.Cleanup(func() { loopInitAfterAbsenceCheck, loopInitPlanWaitEntered = nil, nil })
-
-	result := loopRun(t, cwd, "init", "--objective", "Ship the export feature")
-	want := "loop init: a plan already exists at slug '" + slug + "' (use show/validate)"
-	if result.Code != 1 || result.Output != want {
-		t.Fatalf("got %d %q\nwant 1 %q", result.Code, result.Output, want)
-	}
-}
-
-// TestLoopInitAnswersAlreadyExistsWhenALiveWinnerOutlastsTheDeadline is CRW-646 d3: a live competing init
-// still running after the wait's deadline must still make the loser answer "a plan already exists at slug
-// ...". The deadline may end the wait only for a holder that is dead or gone, never for a live one. The
-// deadline is shortened to 20 ms while the holder stays live and publishes only after 200 ms, so the loser
-// must keep waiting. Until the live-holder branch stops consulting the deadline, this case is red.
-func TestLoopInitAnswersAlreadyExistsWhenALiveWinnerOutlastsTheDeadline(t *testing.T) {
-	cwd := loopReadWorkspace(t)
-	const slug = "ship-the-export-feature"
-	loopInitFastWaits(t)
-	deadline := loopInitPlanWaitDeadline
-	loopInitPlanWaitDeadline = 20 * time.Millisecond
-	t.Cleanup(func() { loopInitPlanWaitDeadline = deadline })
-	holder := newLoopPlanHolder(t, cwd, slug, "Ship the export feature")
-	loopInitAfterAbsenceCheck = func() { holder.plant() }
-	loopInitPlanWaitEntered = func() {
-		go func() {
-			time.Sleep(200 * time.Millisecond)
-			_ = holder.publish()
-		}()
-	}
-	t.Cleanup(func() { loopInitAfterAbsenceCheck, loopInitPlanWaitEntered = nil, nil })
-
-	result := loopRun(t, cwd, "init", "--objective", "Ship the export feature")
-	want := "loop init: a plan already exists at slug '" + slug + "' (use show/validate)"
-	if result.Code != 1 || result.Output != want {
-		t.Fatalf("a live winner that outlasted the deadline: got %d %q\nwant 1 %q", result.Code, result.Output, want)
 	}
 }
 
@@ -874,5 +808,107 @@ func TestLoopInitCreatesNothingThroughALinkedStateRoot(t *testing.T) {
 	}
 	if runErr == nil && (result.Code == 0 || !strings.Contains(result.Output, "Nothing was written")) {
 		t.Fatalf("the refusal does not say nothing was written: %d %q", result.Code, result.Output)
+	}
+}
+
+// TestLoopInitAnswersBusyWhenALiveHolderOutlastsTheLimit is CRW-982 c2 (a): a goalplan lock that a live
+// process keeps past the wait limit ends init within the limit plus a margin, answered busy with nothing
+// written, and the session lock the bound init took is released.
+func TestLoopInitAnswersBusyWhenALiveHolderOutlastsTheLimit(t *testing.T) {
+	cwd := loopReadWorkspace(t)
+	gitInit(t, cwd)
+	const id = "rec-live-holder"
+	const slug = "bound-objective"
+	loopSession(t, cwd, id)
+	// The holder is this test process: its owner.json names a live pid, and it never publishes the plan.
+	newLoopPlanHolder(t, cwd, slug, "Bound objective").plant()
+
+	start := time.Now()
+	result := loopRun(t, cwd, "init", "--objective", "Bound objective", "--session", id)
+	if elapsed := time.Since(start); elapsed > loopInitPlanWaitLimit+2*time.Second {
+		t.Fatalf("init waited %v for a holder that outlasted the %v limit", elapsed, loopInitPlanWaitLimit)
+	}
+	if result.Code != 1 || !strings.Contains(result.Output, "held by another writer") || !strings.Contains(result.Output, "nothing was written") {
+		t.Fatalf("got %d %q, want the busy answer", result.Code, result.Output)
+	}
+	if strings.Contains(result.Output, "already exists") {
+		t.Fatalf("the busy answer reads as an existing plan: %q", result.Output)
+	}
+	if _, err := os.Stat(loopPlanFile(cwd, slug)); !os.IsNotExist(err) {
+		t.Fatalf("the busy init wrote a plan: %v", err)
+	}
+	if _, err := os.Stat(state.StatePath(cwd, id) + ".lock"); !os.IsNotExist(err) {
+		t.Fatalf("the busy init left the session lock behind: %v", err)
+	}
+	if bound := state.ReadState(cwd, id).Slug; bound != "" {
+		t.Fatalf("the busy init bound a slug: %q", bound)
+	}
+}
+
+// TestLoopInitAnswersBusyWhenALiveSessionLockOutlastsTheLimit is CRW-982 c2 (a) for the session lock: a session
+// lock that a live process keeps past the wait limit ends init with the busy answer, nothing is written, and
+// the lock the live process owns is left as it is.
+func TestLoopInitAnswersBusyWhenALiveSessionLockOutlastsTheLimit(t *testing.T) {
+	cwd := loopReadWorkspace(t)
+	gitInit(t, cwd)
+	const id = "rec-live-session"
+	loopSession(t, cwd, id)
+	lockPath := state.StatePath(cwd, id) + ".lock"
+	if err := os.WriteFile(lockPath, []byte(strconv.Itoa(os.Getpid())), 0o666); err != nil {
+		t.Fatal(err)
+	}
+
+	start := time.Now()
+	result := loopRun(t, cwd, "init", "--objective", "Bound objective", "--session", id)
+	if elapsed := time.Since(start); elapsed > loopInitPlanWaitLimit+2*time.Second {
+		t.Fatalf("init waited %v for a session lock that outlasted the %v limit", elapsed, loopInitPlanWaitLimit)
+	}
+	if result.Code != 1 || !strings.Contains(result.Output, "held by another writer") || !strings.Contains(result.Output, "nothing was written") {
+		t.Fatalf("got %d %q, want the busy answer", result.Code, result.Output)
+	}
+	if _, err := os.Stat(lockPath); err != nil {
+		t.Fatalf("the busy init removed a lock it does not own: %v", err)
+	}
+	if _, err := os.Stat(loopPlanFile(cwd, "bound-objective")); !os.IsNotExist(err) {
+		t.Fatalf("the busy init wrote a plan: %v", err)
+	}
+}
+
+// TestLoopInitAnswersAlreadyExistsWhenALockHasEmptyOwnerAndThePlanAppears is CRW-982 c2 (b): a lock whose
+// owner metadata is still empty is a creator in progress, not an unknown owner. The loser waits within the
+// limit for the plan and answers "a plan already exists" once it is there, never the busy answer.
+func TestLoopInitAnswersAlreadyExistsWhenALockHasEmptyOwnerAndThePlanAppears(t *testing.T) {
+	cwd := loopReadWorkspace(t)
+	const slug = "ship-the-export-feature"
+	loopInitFastWaits(t)
+	// A wider limit than production, so the publication lands inside the window on a loaded host.
+	limit := loopInitPlanWaitLimit
+	loopInitPlanWaitLimit = 2 * time.Second
+	t.Cleanup(func() { loopInitPlanWaitLimit = limit })
+	lock := filepath.Join(cwd, ".crw", "goalplans", slug, ".goalplan.lock")
+	loopInitAfterAbsenceCheck = func() {
+		if err := os.MkdirAll(lock, 0o755); err != nil {
+			t.Error(err)
+			return
+		}
+		if err := os.WriteFile(filepath.Join(lock, "owner.json"), nil, 0o600); err != nil {
+			t.Error(err)
+		}
+	}
+	loopInitPlanWaitEntered = func() {
+		go func() {
+			time.Sleep(20 * time.Millisecond)
+			plan := goalplan.BuildGoalplan(goalplan.NewGoalplanInput{Objective: "Ship the export feature"})
+			if err := goalplan.WriteGoalplan(cwd, plan); err != nil {
+				t.Error(err)
+			}
+		}()
+	}
+	t.Cleanup(func() { loopInitAfterAbsenceCheck, loopInitPlanWaitEntered = nil, nil })
+
+	result := loopRun(t, cwd, "init", "--objective", "Ship the export feature")
+	want := "loop init: a plan already exists at slug '" + slug + "' (use show/validate)"
+	if result.Code != 1 || result.Output != want {
+		t.Fatalf("got %d %q\nwant 1 %q", result.Code, result.Output, want)
 	}
 }
