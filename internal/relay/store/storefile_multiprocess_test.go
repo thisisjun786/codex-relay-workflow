@@ -175,11 +175,18 @@ func storeFileDropOwnLock(path string) {
 // CRW-846's, unchanged: field 4 is the owner pid and field 5 splits on ':' with the inode last. A
 // read failure keeps the -1 count and reports itself as the one uncounted line.
 func storeFileLocks(pid int, inode uint64) (int, []string) {
-	raw, err := os.ReadFile("/proc/locks")
+	raw, err := readProcLocks()
 	if err != nil {
 		return -1, []string{"read /proc/locks: " + err.Error()}
 	}
-	return storeFileLockCountsFrom(string(raw), pid, inode)
+	return storeFileLockCountsFrom(raw, pid, inode)
+}
+
+// readProcLocks returns the text of one read of /proc/locks. It is a package variable only so the
+// reader test can feed storeFileLocks a recorded sequence of texts.
+var readProcLocks = func() (string, error) {
+	raw, err := os.ReadFile("/proc/locks")
+	return string(raw), err
 }
 
 // storeFileLockCountsFrom applies the counting rule to the text of /proc/locks and collects the
