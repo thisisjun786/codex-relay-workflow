@@ -50,6 +50,20 @@ var handshakeAnswers = map[string]string{
 	"worktreedel": `{"decision":"allow","reason":""}`,
 }
 
+// startupImportTargets are the registered shims that import their original module at their top level,
+// before they read any request. With the original root empty that import fails, so these shims give no
+// handshake answer and their empty-oracle-root case is skipped. The skip is an open item of CRW-932
+// (docs/port-cxc/known-defects/CRW-932.md): answering before the import needs a change to each of these
+// five shims, which this issue's scope does not include. The doctor shim answers before its import and
+// is covered by the same case.
+var startupImportTargets = map[string]bool{
+	"state":       true,
+	"goalplan":    true,
+	"memorygate":  true,
+	"shellwrite":  true,
+	"worktreedel": true,
+}
+
 // A start-up handshake is one request with a null input and a root (CRW-854). Each registered shim
 // must answer it inertly, without building a path from the root, mirroring or reading a document, or
 // importing its original module: a shim that ran the case would create .codexclaw/... in the worker's
@@ -70,21 +84,29 @@ func TestShimsAnswerTheStartupHandshakeInertly(t *testing.T) {
 			}
 			// The pool's own start-up request carries an empty root.
 			t.Run("empty root", func(t *testing.T) {
-				checkStartupHandshake(t, root, name, "", want)
+				checkStartupHandshake(t, root, name, "", DefaultOracleRoot, want)
 			})
 			// The same request with the root set to an empty directory: the shim must still answer
 			// inertly and must leave that directory empty, so it did not run a case under it.
 			t.Run("empty directory root", func(t *testing.T) {
-				checkStartupHandshake(t, root, name, t.TempDir(), want)
+				checkStartupHandshake(t, root, name, t.TempDir(), DefaultOracleRoot, want)
+			})
+			// The same request with the original root set to an empty directory: a shim that imports
+			// its original module before it answers fails here, so this proves the answer came first.
+			t.Run("empty oracle root", func(t *testing.T) {
+				if startupImportTargets[name] {
+					t.Skip("the shim imports its original module at its top level, before it reads a request; an empty original root fails that import (CRW-932 open item, known-defects/CRW-932.md)")
+				}
+				checkStartupHandshake(t, root, name, "", t.TempDir(), want)
 			})
 		})
 	}
 }
 
-// checkStartupHandshake sends one start-up handshake for the named shim with the given request root
-// and checks the answer is the want output (a JSON value) for request 1 with no error, and that nothing
-// was written under the worker's working directory or the request root.
-func checkStartupHandshake(t *testing.T, root, name, requestRoot, want string) {
+// checkStartupHandshake sends one start-up handshake for the named shim with the given request root and
+// original (oracle) root, checks the answer is the want output (a JSON value) for request 1 with no
+// error, and that nothing was written under the worker's working directory or the request root.
+func checkStartupHandshake(t *testing.T, root, name, requestRoot, oracleRoot, want string) {
 	t.Helper()
 	dir := t.TempDir()
 	// The shim's homes go in a sibling directory, not in dir: dir is the worker's working
@@ -99,7 +121,7 @@ func checkStartupHandshake(t *testing.T, root, name, requestRoot, want string) {
 		"CODEX_HOME="+filepath.Join(envDir, "codex-home"),
 		"CRW_HOME="+filepath.Join(envDir, "crw-home"),
 		"TMPDIR="+filepath.Join(envDir, "tmp"),
-		"ORACLE_ROOT="+DefaultOracleRoot,
+		"ORACLE_ROOT="+oracleRoot,
 	)
 	for _, sub := range []string{"home", "codex-home", "crw-home", "tmp"} {
 		if err := os.MkdirAll(filepath.Join(envDir, sub), 0o755); err != nil {
