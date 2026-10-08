@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -86,8 +87,11 @@ func providerPath(t *testing.T, body string) string {
 	t.Setenv("HOME", root)
 	t.Setenv("CODEX_HOME", root)
 	path := filepath.Join(root, "ocx")
-	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+body+"\n"), 0o755); err != nil {
-		t.Fatal(err)
+	syscall.ForkLock.RLock()
+	writeErr := os.WriteFile(path, []byte("#!/bin/sh\n"+body+"\n"), 0o755)
+	syscall.ForkLock.RUnlock()
+	if writeErr != nil {
+		t.Fatal(writeErr)
 	}
 	return path
 }

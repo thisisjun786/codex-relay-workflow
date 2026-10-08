@@ -152,18 +152,18 @@ func TestCRW737WithdrawAndApplyTransitions(t *testing.T) {
 	if _, err := Withdraw(withdrawn, "again"); !errors.Is(err, ErrTransition) {
 		t.Fatalf("a second withdrawal = %v, want ErrTransition", err)
 	}
-	if _, err := Apply(record, "ev-1"); !errors.Is(err, ErrTransition) {
+	if _, err := Apply(record, "ev-1", 1); !errors.Is(err, ErrTransition) {
 		t.Fatalf("applying a raised record = %v, want ErrTransition", err)
 	}
 	answered, err := ValidateAnswer(record, Answer{Option: "now", By: "task-a", Via: ViaDirectAsk})
 	if err != nil {
 		t.Fatal(err)
 	}
-	applied, err := Apply(answered, "ev-1")
+	applied, err := Apply(answered, "ev-1", 1)
 	if err != nil || applied.State != StateApplied || applied.AppliedEvent != "ev-1" || applied.AppliedAt == "" {
 		t.Fatalf("apply: %v %+v", err, applied)
 	}
-	if _, err := Apply(applied, "ev-2"); !errors.Is(err, ErrTransition) {
+	if _, err := Apply(applied, "ev-2", 2); !errors.Is(err, ErrTransition) {
 		t.Fatalf("a second apply = %v, want ErrTransition", err)
 	}
 }

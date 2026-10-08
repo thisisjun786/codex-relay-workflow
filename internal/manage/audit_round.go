@@ -1,6 +1,7 @@
 package manage
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -121,15 +122,33 @@ func auditRoundLock(path string) (func(), error) {
 	}, nil
 }
 
-// auditRoundLoad reads a round file.
+// auditRoundLoad reads a round file. A document that is not a JSON object, and a round that
+// names no round, are refused. Decoding straight into the struct is not enough: JSON null
+// unmarshals into it without an error and leaves the zero value, which would read as a whole
+// round with no name, no start and no package, and be reported as a round that was read.
 func auditRoundLoad(path string) (*auditRoundFile, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
+	// The probe reads the document's shape only. UseNumber keeps a number outside float64
+	// (1e400) as the token it was written as instead of failing the read, so a round file
+	// this build could read before stays readable.
+	probe := json.NewDecoder(bytes.NewReader(data))
+	probe.UseNumber()
+	var shape any
+	if err := probe.Decode(&shape); err != nil {
+		return nil, fmt.Errorf("round %s: %w", path, err)
+	}
+	if _, ok := shape.(map[string]any); !ok {
+		return nil, fmt.Errorf("round %s: not a round document", path)
+	}
 	var doc auditRoundFile
 	if err := json.Unmarshal(data, &doc); err != nil {
 		return nil, fmt.Errorf("round %s: %w", path, err)
+	}
+	if doc.Round == "" {
+		return nil, fmt.Errorf("round %s: not a round document", path)
 	}
 	return &doc, nil
 }
@@ -400,6 +419,9 @@ func auditRoundParseStart(args []string) (map[string]string, map[string][]string
 		}
 		switch key {
 		case "name", "packages":
+			if _, twice := values[key]; twice {
+				return nil, nil, fmt.Errorf("the option --%s is given twice", key)
+			}
 			values[key] = value
 		case "package":
 			multi[key] = append(multi[key], value)

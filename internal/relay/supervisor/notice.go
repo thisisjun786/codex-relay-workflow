@@ -2,6 +2,7 @@ package supervisor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
@@ -29,7 +30,7 @@ func (n NoticeChannel) Resolve(ctx context.Context, anchor string) (map[string]a
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"sender": r.Sender, "recipient": r.Recipient, "projectKey": r.ProjectKey, "initiativeKey": r.InitiativeKey, "source": r.Source}, nil
+	return map[string]any{"sender": r.Sender, "recipient": r.Recipient, "recipientScopeKind": r.RecipientScopeKind, "projectKey": r.ProjectKey, "initiativeKey": r.InitiativeKey, "source": r.Source}, nil
 }
 func (n NoticeChannel) Attempt(ctx context.Context, id string, now float64, owner string) error {
 	_, err := n.Channel.attempt(ctx, id, n.Host, now, 0, owner)
@@ -45,6 +46,55 @@ func (n NoticeChannel) Recover(ctx context.Context, id string, now float64) erro
 }
 func (n NoticeChannel) Measure(ctx context.Context, task string) error {
 	return delivery.RecordLifecycle(ctx, n.Channel.Store, n.Ledger.Clock, delivery.Observe(ctx, n.Host, task, nil, true))
+}
+
+// noticeYieldsToBusyHead reports whether a notice to recipient must wait: a delivery to that
+// recipient is waiting out a busy backoff, so the notice channel yields the recipient's line to it
+// and that head meets the recipient idle rather than busy again (I-216's notice part, section 82
+// decision 2). The supervisor channel never asks it.
+//
+// It asks the predicate on the caller's own delivery service, the same one the claim paces and
+// reserves against, so the two channels cannot disagree about which deliveries hold a line down to
+// the policy the predicate reads. It reads on ctx's querier: the claim asks it under its write lock
+// and the attempt's checks ask it on the store.
+func (c *Channel) noticeYieldsToBusyHead(ctx context.Context, service *delivery.Service, recipient string, now float64) (bool, error) {
+	return service.BusyHeadHoldsRecipientLine(ctx, recipient, now)
+}
+
+// noticeYieldsDetail is why a notice waits for a delivery that holds its recipient's line. Both the
+// attempt's check before any host work and the claim's check under its write lock answer with it.
+func noticeYieldsDetail(recipient string) string {
+	return "a delivery to " + pyvalue.StrRepr(recipient) + " is waiting out a busy backoff and holds that recipient's line, so this notice yields to it and waits: the receipt that head carries reaches the recipient first. This notice is claimable again once that head's backoff ends or the head is delivered"
+}
+
+// noticeLineYield is the refusal a notice raises when a delivery holds its recipient's line under a
+// busy backoff. It carries the not_claimable reason that already exists - no new refusal name is
+// added for it (D-02) - and a type of its own, so the daemon's own pass can tell a notice that is
+// waiting from a refusal that is a failure without reading the detail text (I-216's notice part,
+// section 82 decision 2; CRW-943). It answers errors.As for the Refusal it carries, so every reader
+// that asks for the reason and the detail is unchanged.
+type noticeLineYield struct{ Refusal }
+
+// As answers errors.As for the Refusal this refusal carries.
+func (e noticeLineYield) As(target any) bool {
+	if refusal, ok := target.(*Refusal); ok {
+		*refusal = e.Refusal
+		return true
+	}
+	return false
+}
+
+// noticeLineYieldRefusal is that refusal for a recipient whose delivery holds its line.
+func noticeLineYieldRefusal(recipient string) error {
+	return noticeLineYield{Refusal{"not_claimable", noticeYieldsDetail(recipient)}}
+}
+
+// isNoticeLineYield reports whether err is that refusal: the one answer a daemon pass must not turn
+// into a backoff, because the notice is waiting and is claimable the moment the head is delivered or
+// its backoff ends (CRW-943).
+func isNoticeLineYield(err error) bool {
+	var yielded noticeLineYield
+	return errors.As(err, &yielded)
 }
 
 // A staged notice is not permission to send. Re-derive the reservation under
@@ -89,12 +139,19 @@ func (c *Channel) refreshNotice(ctx context.Context, row store.SupervisorMessage
 	}
 	staged := evidence.Dict(evidence.Decode(row.Packet), false)
 	observed := pyvalue.Str(evidence.Item(staged["envelope"], "observedAt"))
-	live := map[string]any{"sender": r.Sender, "recipient": r.Recipient, "projectKey": r.ProjectKey, "initiativeKey": r.InitiativeKey, "source": r.Source}
+	live := map[string]any{"sender": r.Sender, "recipient": r.Recipient, "recipientScopeKind": r.RecipientScopeKind, "projectKey": r.ProjectKey, "initiativeKey": r.InitiativeKey, "source": r.Source}
 	packet, err := composeNotice(notice, live, observed, c.command("fault-show", "--fault", notice["faultId"].(string)))
 	if err != nil {
 		return false, err
 	}
-	if pyvalue.ItemEqual(staged, packet) {
+	// A packet stored before recipient.scopeKind existed carries no such field, so the freshly
+	// composed one always differs. Compare without it there: adding the field alone is not a
+	// change to the notice, and a restatement made for something else still writes it.
+	comparison := packet
+	if !recipientScopeKindPresent(staged) {
+		comparison = packetWithoutRecipientScopeKind(packet)
+	}
+	if pyvalue.ItemEqual(staged, comparison) {
 		return false, nil
 	}
 	packet, err = composeNotice(notice, live, at, c.command("fault-show", "--fault", notice["faultId"].(string)))

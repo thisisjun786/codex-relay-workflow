@@ -262,15 +262,19 @@ func auditStateDir(e *Env, cfg *Config) string {
 // run in which nothing reached P0 or P1 leaves no alert file at all. The directory and
 // the files are private to the owner, as the relay store's own state is, because a ledger
 // row names the subject, the issue and the bundle an audit covered.
-func auditRecord(e *Env, cfg *Config, results []AuditResult) (err error) {
+//
+// The first return is how many ledger rows the call appended before it failed: the rows are a
+// prefix of the results, and a caller that has to know which results are recorded reads it from
+// the writer rather than re-reading the file, which may not be readable even when it was written.
+func auditRecord(e *Env, cfg *Config, results []AuditResult) (rows int, err error) {
 	dir := filepath.Join(auditStateDir(e, cfg), "audit")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
+		return 0, err
 	}
 	ledgerPath := filepath.Join(dir, auditLedgerFile)
 	ledger, err := os.OpenFile(ledgerPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	// A deferred close cannot be skipped on an early return, and its error is kept: a write
 	// that reached the page cache can still fail on close, and that is not a recorded row.
@@ -286,7 +290,7 @@ func auditRecord(e *Env, cfg *Config, results []AuditResult) (err error) {
 	if alerting {
 		alertsPath = filepath.Join(dir, auditAlertFile)
 		if alerts, err = os.OpenFile(alertsPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600); err != nil {
-			return err
+			return 0, err
 		}
 		defer func() { err = errors.Join(err, alerts.Close()) }()
 	}
@@ -299,8 +303,9 @@ func auditRecord(e *Env, cfg *Config, results []AuditResult) (err error) {
 			GradedAt: result.GradedAt, Bundle: result.Bundle,
 		}
 		if err := auditAppendLine(ledger, ledgerPath, row); err != nil {
-			return err
+			return rows, err
 		}
+		rows++
 		if p0+p1 == 0 {
 			continue
 		}
@@ -315,10 +320,10 @@ func auditRecord(e *Env, cfg *Config, results []AuditResult) (err error) {
 			alert.Defects = append(alert.Defects, auditAlertDefect{Severity: defect.Severity, What: defect.What, Where: defect.Where})
 		}
 		if err := auditAppendLine(alerts, alertsPath, alert); err != nil {
-			return err
+			return rows, err
 		}
 	}
-	return nil
+	return rows, nil
 }
 
 // auditScoreOf is the score a ledger or alert line carries, and null when the run left no
@@ -371,7 +376,46 @@ func auditEndsMidLine(f *os.File, path string) bool {
 }
 
 // auditCommand is crw manage audit.
-var auditCommand = Command{Name: "audit", Summary: "grade an audit bundle and record the result", Run: auditRun}
+var auditCommand = Command{
+	Name: "audit", Summary: "grade an audit bundle and record the result", Run: auditRun,
+	HelpRequested: auditHelpRequested,
+}
+
+// auditHelpRequested reports whether an audit command line asks for the usage. The audit
+// dispatcher and its subcommands accept a bare "help" as well as -h and --help, which is a
+// wider rule than the shared -h/--help check; Run consults it so a command line that really
+// asks for the usage is not refused by the configuration check. A token an option consumes
+// is a value, so "audit list --round -h" is not a help request and the configuration check
+// still applies to it.
+func auditHelpRequested(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	switch args[0] {
+	case "-h", "--help", "help":
+		return true
+	}
+	rest := args[1:]
+	switch args[0] {
+	case "round", "drafts":
+		// These two switch on their first token, so help is that token and nothing else.
+		return len(rest) > 0 && (rest[0] == "-h" || rest[0] == "--help" || rest[0] == "help")
+	case "pr":
+		_, _, help, _ := auditPRParseArgs(rest)
+		return help
+	case "report":
+		for _, arg := range rest {
+			if arg == "-h" || arg == "--help" || arg == "help" {
+				return true
+			}
+		}
+		return false
+	case "list", "package":
+		// These two read their flags the same way: a value slot is not a help position.
+		return auditOptionsHelpRequested(rest)
+	}
+	return false
+}
 
 func init() { Register(auditCommand) }
 
@@ -382,19 +426,34 @@ const auditUsage = "usage: crw manage audit grade --bundle DIR [--pair P] [--pha
 	"       crw manage audit round {start,status} --name R\n" +
 	"       crw manage audit pr [--max N] [--dry-run]\n" +
 	"       crw manage audit report\n" +
-	"       crw manage audit drafts [--round R | --since T] [--severity P1]"
+	"       crw manage audit drafts [--round R | --since T] [--severity P1]\n" +
+	"       crw manage audit list [--round R] [--issue K] [--since T]"
 
 // auditRun is crw manage audit. It dispatches the grade subcommand, which grades one bundle
 // the caller already assembled, the package subcommand, which audits the packages a round
 // still holds pending or failed, the round subcommand, which starts a round and reports its
 // progress, the pr subcommand, which selects, bundles and grades newly merged pull requests,
 // the report subcommand, which rebuilds the report from the ledger, and the drafts
-// subcommand, which turns the recorded defects into follow-up issue drafts. The help flags
-// keep their own path so the usage stays reachable without a subcommand.
+// subcommand, which turns the recorded defects into follow-up issue drafts, and the list
+// subcommand, which reports what the audit has recorded without writing anything. The help
+// flags keep their own path so the usage stays reachable without a subcommand.
 func auditRun(ctx context.Context, e *Env, args []string) int {
 	if len(args) == 0 {
 		fmt.Fprintln(e.Stderr, auditUsage)
 		return usageExit
+	}
+	// The audit family reads a help request more widely than the shared entry point does (a
+	// bare "help" as the command's or its subcommand's own first argument), and Run skips its
+	// configuration refusal for any -h or --help it sees, including one an option consumes as
+	// a value. A command line the audit family reads as real work — "audit list --round -h",
+	// where the round is named -h — would otherwise run on the defaults of a file this product
+	// cannot use. The refusal is made here, once for every audit subcommand, in Run's words and
+	// with Run's status, so no audit command silently continues with the defaults.
+	if !auditHelpRequested(args) {
+		if err := coreConfigError(e); err != nil {
+			fmt.Fprintf(e.Stderr, "crw manage: error: %v\n", err)
+			return usageExit
+		}
 	}
 	switch args[0] {
 	case "-h", "--help", "help":
@@ -412,9 +471,11 @@ func auditRun(ctx context.Context, e *Env, args []string) int {
 		return auditReportRun(ctx, e, args[1:])
 	case "drafts":
 		return auditRunDrafts(ctx, e, args[1:])
+	case "list":
+		return auditListRun(ctx, e, args[1:])
 	}
 	fmt.Fprintln(e.Stderr, auditUsage)
-	fmt.Fprintf(e.Stderr, "crw manage audit: error: invalid command %q (choose from 'grade', 'package', 'pr', 'report', 'round', 'drafts')\n", args[0])
+	fmt.Fprintf(e.Stderr, "crw manage audit: error: invalid command %q (choose from 'grade', 'package', 'pr', 'report', 'round', 'drafts', 'list')\n", args[0])
 	return usageExit
 }
 
@@ -458,6 +519,7 @@ func auditRunGrade(ctx context.Context, e *Env, args []string) int {
 // argument, or a missing --bundle is an error naming what is wrong.
 func auditParseGradeArgs(args []string) (AuditJob, error) {
 	var job AuditJob
+	seen := map[string]bool{}
 	for i := 0; i < len(args); i++ {
 		name := args[i]
 		if !strings.HasPrefix(name, "--") {
@@ -477,12 +539,28 @@ func auditParseGradeArgs(args []string) (AuditJob, error) {
 		}
 		switch key {
 		case "bundle":
+			if seen[key] {
+				return AuditJob{}, fmt.Errorf("the option --%s is given twice", key)
+			}
+			seen[key] = true
 			job.Bundle = value
 		case "pair":
+			if seen[key] {
+				return AuditJob{}, fmt.Errorf("the option --%s is given twice", key)
+			}
+			seen[key] = true
 			job.Pair = value
 		case "phase":
+			if seen[key] {
+				return AuditJob{}, fmt.Errorf("the option --%s is given twice", key)
+			}
+			seen[key] = true
 			job.Phase = value
 		case "round":
+			if seen[key] {
+				return AuditJob{}, fmt.Errorf("the option --%s is given twice", key)
+			}
+			seen[key] = true
 			job.Round = value
 		default:
 			return AuditJob{}, fmt.Errorf("unknown option %s", name)

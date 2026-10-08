@@ -108,6 +108,16 @@ func coreDefaults(e *Env) *Config { return coreConfigStateOf(e).cfg }
 // coreConfigError is why the configuration file could not be used, or nil.
 func coreConfigError(e *Env) error { return coreConfigStateOf(e).err }
 
+// coreCommandHelpRequested asks a subcommand that declares its own help rule whether these
+// arguments ask for its usage. A subcommand with no such rule answers no, and Run keeps its
+// own -h/--help rule for it.
+func coreCommandHelpRequested(c Command, args []string) bool {
+	if c.HelpRequested == nil {
+		return false
+	}
+	return c.HelpRequested(args)
+}
+
 // coreHelpRequested reports whether a subcommand's arguments ask for its usage. A help
 // request runs no work and reads no configuration, so a file this product cannot use must
 // not take the usage away from an operator who is trying to read it.

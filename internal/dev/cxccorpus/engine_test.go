@@ -125,7 +125,13 @@ type shRuntime struct{ git string }
 func (rt shRuntime) Setup(c *Case, s Scenario) error {
 	err := InstallStubs(c, s.Given, func(name string) error {
 		script := "#!/bin/sh\nn=${0##*/}\nprintf '{\"cmd\":\"%s\",\"argv\":[\"%s\",\"%s\"],\"cwd\":\"%s\"}\\n' \"$n\" \"$1\" \"$2\" \"$PWD\" >> \"$CXC_REC_LOG\"\nexit 127\n"
-		return os.WriteFile(filepath.Join(c.Root, "stubs", name), []byte(script), 0o755)
+		// The stub is a program the scenario runs, so its descriptor is open only under
+		// syscall.ForkLock: a fork in that window would inherit it and leave the stub unexecutable
+		// (ETXTBSY, golang/go#22315).
+		syscall.ForkLock.RLock()
+		writeErr := os.WriteFile(filepath.Join(c.Root, "stubs", name), []byte(script), 0o755)
+		syscall.ForkLock.RUnlock()
+		return writeErr
 	})
 	c.Env = append(c.Env, "CXC_REC_LOG="+filepath.Join(c.Root, ".rec", "calls.jsonl"))
 	return err
