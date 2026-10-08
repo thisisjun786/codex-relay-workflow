@@ -9,7 +9,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"strings"
 )
 
 // The causes a case the harness could not answer is recorded under (CRW-978 c7).
@@ -67,11 +66,11 @@ func failureCause(err error) string {
 // failureDir is the subdirectory of --out the case records go in.
 const failureDir = "failures"
 
-// writeFailure writes one case record, once per cause and input hash, and reports the name the summary lists it
-// under and whether this call wrote it (CRW-978 c7).
+// writeFailure writes one case record, once per input hash whatever its cause, and reports the name the summary
+// lists it under and whether this call wrote it (CRW-978 c7, review d3).
 func writeFailure(out string, record Failure, written map[string]bool) (string, bool, error) {
 	sum := sha256.Sum256([]byte(record.Input))
-	name := failureDir + "/" + strings.ReplaceAll(record.Cause, " ", "-") + "-" + hex.EncodeToString(sum[:])[:12] + ".json"
+	name := failureDir + "/" + hex.EncodeToString(sum[:])[:12] + ".json"
 	if written[name] {
 		return name, false, nil
 	}

@@ -92,7 +92,12 @@ func TestPinnedOracleAnswersMatchTheOracle(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer func() { _ = pool.Close() }()
+			defer func() {
+				// The pool's start-up root is the replay's own scratch: a root that stays behind is reported, never dropped (CRW-978 c3b, review d4).
+				if err := pool.Close(); err != nil {
+					t.Errorf("%s: the replay's worker start-up root was not removed: %v", name, err)
+				}
+			}()
 			for _, c := range cases {
 				if problem := caseOracleMatches(target, pool, c); problem != "" {
 					t.Errorf("%s/%s: %s", name, c.Name, problem)

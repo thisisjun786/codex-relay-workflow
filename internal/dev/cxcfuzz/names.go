@@ -24,10 +24,14 @@ func sharedSubstitution() (*cxccorpus.Substituter, error) {
 	return substitutionTable, substitutionErr
 }
 
-// normaliseDiagnosticPaths applies the rename table to the path of a read diagnostic. The oracle reads
-// its state under .codexclaw and the port under .crw, and the table's directory rule (R26) maps the one
-// onto the other, so both sides name the same directory before anything is compared or reduced
-// (CRW-978 c1). Only the path is renamed; the kind, field and detail compare as they are.
+// diagnosticPathKeys are the answer fields that can name a directory the oracle or the port read or wrote.
+var diagnosticPathKeys = map[string]bool{"path": true, "detail": true, "writeError": true}
+
+// normaliseDiagnosticPaths applies the rename table to every diagnostic field that can name a directory: the
+// path of a read, and the detail or write error that quotes one. The oracle reads its state under .codexclaw
+// and the port under .crw, and the table's directory rule (R26) maps one onto the other, so both sides name
+// the same directory before anything is compared or reduced (CRW-978 c1, review d2). The kind and field
+// compare as they are.
 func normaliseDiagnosticPaths(sub *cxccorpus.Substituter, out any) any {
 	object, ok := out.(pyjson.Object)
 	if !ok {
@@ -35,7 +39,7 @@ func normaliseDiagnosticPaths(sub *cxccorpus.Substituter, out any) any {
 	}
 	renamed := make(pyjson.Object, 0, len(object))
 	for _, item := range object {
-		if text, ok := item.Value.(string); ok && item.Key == "path" {
+		if text, ok := item.Value.(string); ok && diagnosticPathKeys[item.Key] {
 			renamed = append(renamed, pyjson.Field{Key: item.Key, Value: sub.Apply(text)})
 			continue
 		}

@@ -405,7 +405,8 @@ func (c *campaign) evaluate(input any) (verdict Verdict, goText, oracleText stri
 }
 
 // shrinkRun is the shrinker's keep test. A candidate is kept only while it still produces the
-// same verdict kind, and the verdict and the two answers of the last candidate kept are what the
+// same verdict kind and detail, so a divergence keeps its class and a read difference never shrinks into a
+// write difference of the same kind (CRW-978 c1, review d1). The verdict and the two answers of the last candidate kept are what the
 // divergence file ends up holding: the shrunk input, the answers and the verdict must describe
 // one run, or a case adopted from the file could never replay and its detail could contradict it.
 type shrinkRun struct {
@@ -425,7 +426,7 @@ func (s *shrinkRun) keep(candidate any) bool {
 	if errors.As(err, &removal) && s.removal == nil {
 		s.removal = err
 	}
-	if err != nil || verdict.Kind != s.verdict.Kind {
+	if err != nil || verdict.Kind != s.verdict.Kind || verdict.Detail != s.verdict.Detail {
 		return false
 	}
 	s.verdict, s.goOut, s.oracleOut = verdict, goOut, oracleOut

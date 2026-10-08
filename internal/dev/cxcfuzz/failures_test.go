@@ -37,7 +37,7 @@ func TestCampaignRecordsEveryTimedOutCase(t *testing.T) {
 		if err := json.Unmarshal(raw, &record); err != nil {
 			t.Fatal(err)
 		}
-		if record.Cause != CauseTimeout || record.Case < 1 || record.Input == "" || !strings.HasPrefix(name, "failures/timeout-") {
+		if record.Cause != CauseTimeout || record.Case < 1 || record.Input == "" || !strings.HasPrefix(name, "failures/") {
 			t.Fatalf("the record %s holds %+v, want a timeout with its case number and input", name, record)
 		}
 	}

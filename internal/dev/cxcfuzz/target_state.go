@@ -221,6 +221,12 @@ func readDefaultedUpdatedAt(raw []byte) bool {
 // data-loss differ and is named first in the detail, as the issue asks. Both sides mask their write
 // timestamps before answering, so the comparison is a plain canonical one.
 func stateCompare(goOut, oracleOut any) Verdict {
+	sub, err := sharedSubstitution()
+	if err != nil {
+		return Verdict{Kind: Differ, Detail: "the name-substitution table could not be read: " + err.Error()}
+	}
+	goOut = normaliseDiagnosticPaths(sub, goOut)
+	oracleOut = normaliseDiagnosticPaths(sub, oracleOut)
 	if canonical(goOut) == canonical(oracleOut) {
 		return Verdict{Kind: Same}
 	}
