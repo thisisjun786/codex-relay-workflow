@@ -126,7 +126,7 @@ func branchThresholds(settings branchSettings) (int, int, error) {
 // store written before it (or one an interrupted install left partial) holds no plan this reading
 // could measure: the plan then reports why its branches were not measured instead of the empty list
 // of a plan nothing can be detached from.
-var branchZoneTables = []string{"dag_plans", "dag_nodes", "dag_node_regions", "dag_releases", "dag_acceptances"}
+var branchZoneTables = []string{"dag_plans", "dag_nodes", "dag_edges", "dag_plan_revisions", "dag_node_regions", "dag_releases", "dag_acceptances"}
 
 // branchReadSeam runs once inside one plan's branch reading, right after the plan has been read and
 // before the readings beside it. It is nil in production; a test replaces it to commit a revision

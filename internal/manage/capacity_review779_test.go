@@ -292,6 +292,8 @@ func TestCapacityReview779ReadyByNodeID(t *testing.T) {
 // C4: an acceptance a recorded base refresh moved to a later generation is judged at the stand it
 // holds now, so the refreshed head is the head the integration judgement asks for.
 func TestCapacityReview779BaseRefreshedAcceptanceIsIntegrated(t *testing.T) {
+	// B waits on A's edge, so A is the only ready node of its bundle. C is integrated and leaves the plan.
+	// D is blocked (acceptance_tampered) because the fixture gives it no acceptance, and E waits on D's edge.
 	t.Run("the refreshed head is the head the judgement asks for", func(t *testing.T) {
 		f := branchNewFixture(t, "CRW-1", "CRW-2")
 		capacityReview779Chain(f)
@@ -323,6 +325,8 @@ func TestCapacityReview779BaseRefreshedAcceptanceIsIntegrated(t *testing.T) {
 
 // C4: a node that has to land in two targets is integrated only when both contain it.
 func TestCapacityReview779IntegrationNeedsEveryTarget(t *testing.T) {
+	// B waits on A's edge, so only A reads ready. C has a second target nothing observed, so it stays live;
+	// D is blocked (acceptance_tampered) because the fixture gives it no acceptance, and E waits on D's edge.
 	t.Run("only the first target observed", func(t *testing.T) {
 		f := branchNewFixture(t, "CRW-1", "CRW-2")
 		// C hands its result to a second branch as well, and only the first one observed the landing:

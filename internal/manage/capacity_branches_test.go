@@ -218,7 +218,7 @@ func (f *branchFixture) readyNode(node string) *branchFixture {
 	}
 	f.writePlan()
 	event := "event-" + node
-	f.exec("INSERT INTO events (event_id, relationship_id, execution_generation, revision_hash, outcome, producer, turn_thread_id, turn_id, turn_status, receipt, stage, first_seen_at, last_seen_at) VALUES (?,?,1,?, 'ready_for_review','child','child-?','turn-1','completed',?, 'final',?,?)",
+	f.exec("INSERT INTO events (event_id, relationship_id, execution_generation, revision_hash, outcome, producer, turn_thread_id, turn_id, turn_status, receipt, stage, first_seen_at, last_seen_at) VALUES (?,?,1,?, 'ready_for_review','child',?,'turn-1','completed',?,'final',?,?)",
 		event, relationship, revision, node, receipt, now, now)
 	f.exec("INSERT INTO revision_lineage (relationship_id, execution_generation, event_id, revision_hash, declared_by, recorded_at) VALUES (?,1,?,?,'child',?)",
 		relationship, event, revision, now)
