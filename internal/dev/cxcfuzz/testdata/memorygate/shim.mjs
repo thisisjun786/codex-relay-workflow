@@ -14,17 +14,7 @@
 import { createInterface } from "node:readline";
 
 const oracleRoot = process.env.ORACLE_ROOT || "/var/tmp/cxc-v0.2.40/plugins/codexclaw/components";
-// The import runs once, here, before the listener exists, so a worker's first reply proves the oracle
-// is loaded (the pool's readiness probe depends on it). A load that fails is remembered rather than
-// thrown: the worker still answers the start-up handshake, which touches no oracle function, and answers
-// every case with the remembered error (CRW-932; the spawn shim loads the same way).
-let handleMemoryWriteGate;
-let oracleLoadError = null;
-try {
-  ({ handleMemoryWriteGate } = await import(oracleRoot + "/pabcd-state/dist/memory-write-gate.js"));
-} catch (error) {
-  oracleLoadError = error;
-}
+const { handleMemoryWriteGate } = await import(oracleRoot + "/pabcd-state/dist/memory-write-gate.js");
 
 function substitute(value, root) {
   if (typeof value === "string") return value.split("${ROOT}").join(root);
@@ -48,7 +38,6 @@ function run(request) {
   }
   const payload = substitute(request.input && request.input.payload, root);
   if (payload === null || typeof payload !== "object") return "";
-  if (oracleLoadError) throw oracleLoadError;
   return handleMemoryWriteGate(JSON.stringify(payload), process.env);
 }
 

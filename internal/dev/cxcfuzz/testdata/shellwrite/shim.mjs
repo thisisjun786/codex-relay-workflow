@@ -13,17 +13,7 @@
 import { createInterface } from "node:readline";
 
 const oracleRoot = process.env.ORACLE_ROOT || "/var/tmp/cxc-v0.2.40/plugins/codexclaw/components";
-// The import runs once, here, before the listener exists, so a worker's first reply proves the oracle
-// is loaded (the pool's readiness probe depends on it). A load that fails is remembered rather than
-// thrown: the worker still answers the start-up handshake, which touches no oracle function, and answers
-// every case with the remembered error (CRW-932; the spawn shim loads the same way).
-let shellWriteDestinations;
-let oracleLoadError = null;
-try {
-  ({ shellWriteDestinations } = await import(oracleRoot + "/pabcd-state/dist/shell-write-destinations.js"));
-} catch (error) {
-  oracleLoadError = error;
-}
+const { shellWriteDestinations } = await import(oracleRoot + "/pabcd-state/dist/shell-write-destinations.js");
 
 // run puts the homes the case declared under its own root, so a shim never reads a real one.
 function run(request) {
@@ -39,7 +29,6 @@ function run(request) {
   if (input === null || typeof input !== "object" || typeof input.command !== "string") {
     return [];
   }
-  if (oracleLoadError) throw oracleLoadError;
   return shellWriteDestinations(input.command.split("${ROOT}").join(root)).map((dest) => String(dest));
 }
 

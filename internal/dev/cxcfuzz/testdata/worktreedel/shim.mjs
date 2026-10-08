@@ -16,18 +16,8 @@ import { realpathSync } from "node:fs";
 // The harness always sets ORACLE_ROOT from the target's Oracle.Root, so the worker needs no
 // built-in path: the oracle tree is a caller-supplied input, not a value of this repository.
 const oracleRoot = process.env.ORACLE_ROOT;
-// The import runs once, here, before the listener exists, so a worker's first reply proves the oracle
-// is loaded (the pool's readiness probe depends on it). A load that fails is remembered rather than
-// thrown: the worker still answers the start-up handshake, which touches no oracle function, and answers
-// every case with the remembered error (CRW-932; the spawn shim loads the same way).
-let guard;
-let oracleLoadError = null;
-try {
-  if (!oracleRoot) throw new Error("ORACLE_ROOT is not set");
-  guard = await import("file://" + join(oracleRoot, "pabcd-state", "dist", "worktree-guard.js"));
-} catch (error) {
-  oracleLoadError = error;
-}
+if (!oracleRoot) throw new Error("ORACLE_ROOT is not set");
+const guard = await import("file://" + join(oracleRoot, "pabcd-state", "dist", "worktree-guard.js"));
 
 // The rename the port's corpus applies to an expectation: every "codexclaw:cxc-X" becomes
 // "crw:crw-X" first, then every "codexclaw" becomes "crw". Both are the rules the replayer uses.
@@ -58,7 +48,6 @@ function answer(request) {
   if (input === null || typeof input !== "object" || Array.isArray(input)) {
     return { decision: "allow", reason: "" };
   }
-  if (oracleLoadError) throw oracleLoadError;
   const root = typeof request.root === "string" ? request.root : "";
   process.env.HOME = join(root, "home");
   process.env.CRW_HOME = join(root, "crw-home");
