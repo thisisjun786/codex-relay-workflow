@@ -340,6 +340,12 @@ func (rc *Reconciler) settleFromReceipt(ctx context.Context, attempt, delivery R
 		if attempt.I("attempt_no") >= rc.policy().CapFor(reason) {
 			hold, next = rc.policy().CapReason(reason), nil
 		}
+		// CRW-1007 (replay of a settled answer): a busy answer that already settled this attempt holds the deadline it
+		// took when it was written, the earlier of the original deadline and the recomputed one. Replaying the same
+		// receipt after its wake was spent must keep that deadline, not promote the attempt again with a later one.
+		if hold == nil && facts.DeliveryState == DeferredBusy && delivery.S("state") == DeferredBusy && delivery.Opt("next_eligible_at") != nil {
+			next = delivery.F("next_eligible_at")
+		}
 	}
 	var dispatchEvidence any
 	if facts.DeliveryState == Dispatched {
