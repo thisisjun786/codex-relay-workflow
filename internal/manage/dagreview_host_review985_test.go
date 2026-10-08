@@ -64,6 +64,9 @@ func TestDagHostReview985CommandLineJudgedByGrammar(t *testing.T) {
 		{"a relay document read", "cat docs/relay.md | rg dag-ready", false},
 		{"a relay call inside a comment", "# crw relay dag-ready --plan p", false},
 		{"a relay call inside a double-quoted string", "echo \"crw relay dag-ready --plan p\"", false},
+		{"an ANSI-C quoted program name", `$'codex-session-relay' --state S dag-ready --plan p`, true},
+		{"an ANSI-C quoted program name with an escape", `$'codex\x2dsession-relay' --state S dag-ready --plan p`, true},
+		{"a substituted program name", `$(echo crw) relay --state S dag-ready --plan p`, false},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
@@ -133,5 +136,45 @@ func TestDagHostReview985UnparsedLineBehindPendingCallIsNotRepeated(t *testing.T
 	}
 	if found := dagReviewFind(second, dagHostKindParentDagRefusals); len(found) != 1 {
 		t.Fatalf("the refusal of the pending call = %+v, want one", found)
+	}
+}
+
+// TestDagHostReview985FirstSightReportsUnparsedHistory: a refused command line is unmeasured wherever it
+// stands, so a rollout seen for the first time reports the one in its history, once.
+func TestDagHostReview985FirstSightReportsUnparsedHistory(t *testing.T) {
+	f := dagReviewNewFixture(t)
+	stateDir := filepath.Join(t.TempDir(), "state")
+	rollout := dagHostWriteRollout(t, f.dir, "parent.jsonl",
+		dagHostReview985Call(t, "call-1", "crw relay --state S dag-release --plan \"unclosed"),
+		dagHostReview985Refused(t, "call-1"))
+	f.close()
+	cfg := dagHostReview775Parent(t, f, rollout, stateDir)
+
+	first := dagHostRun(t, context.Background(), f, cfg)
+	if got := dagHostReview985Unparsed(first); got != 1 {
+		t.Fatalf("command_unparsed checks = %d, want 1: %+v", got, first.Checks)
+	}
+	if again := dagHostReview985Unparsed(dagHostRun(t, context.Background(), f, cfg)); again != 0 {
+		t.Fatalf("the history line was reported again: %d", again)
+	}
+}
+
+// TestDagHostReview985FirstSightKeepsAnsiCPendingCall: a call whose program word is ANSI-C quoted and
+// static is a relay call, so a rollout seen for the first time keeps it pending until its refusal
+// arrives.
+func TestDagHostReview985FirstSightKeepsAnsiCPendingCall(t *testing.T) {
+	f := dagReviewNewFixture(t)
+	stateDir := filepath.Join(t.TempDir(), "state")
+	rollout := dagHostWriteRollout(t, f.dir, "parent.jsonl",
+		dagHostReview985Call(t, "call-1", "$'codex-session-relay' --state S dag-ready --plan p"))
+	f.close()
+	cfg := dagHostReview775Parent(t, f, rollout, stateDir)
+
+	if found := dagReviewFind(dagHostRun(t, context.Background(), f, cfg), dagHostKindParentDagRefusals); len(found) != 0 {
+		t.Fatalf("the first check reported %+v before the answer arrived", found)
+	}
+	dagHostAppendRollout(t, rollout, dagHostReview985Refused(t, "call-1"))
+	if found := dagReviewFind(dagHostRun(t, context.Background(), f, cfg), dagHostKindParentDagRefusals); len(found) != 1 {
+		t.Fatalf("the refusal of the ANSI-C call = %+v, want one", found)
 	}
 }

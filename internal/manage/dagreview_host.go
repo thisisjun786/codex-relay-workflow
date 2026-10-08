@@ -297,7 +297,7 @@ func dagHostParentRollout(in *dagReviewInput, parent dagHostParent, path string,
 			Detail: fmt.Sprintf("the relay command %s was refused: %s", strings.Join(refusal.commands, ","), refusal.reason),
 		})
 	}
-	for _, line := range dagHostNewUnparsed(reading, reported, firstSight) {
+	for _, line := range dagHostNewUnparsed(reading, reported) {
 		in.review.Checks = append(in.review.Checks, Check{
 			Name: "parent_command:" + parent.id, State: dagReviewUnmeasured,
 			Detail: fmt.Sprintf("command_unparsed: the command line of call %s is not valid shell, so its relay calls were not read", line.callID),
@@ -360,11 +360,11 @@ func dagHostResumeRefusalIDs(reading dagHostRolloutReading) []string {
 	return ids
 }
 
-// dagHostNewUnparsed is the command lines of one reading that this check has not reported yet. They
-// share the reported list with the refusals under their own key, so a line the next check reads again
-// is not reported twice. A first-sight rollout leaves the lines of its history unreported, as it does
-// its refusals.
-func dagHostNewUnparsed(reading dagHostRolloutReading, reported map[string]bool, firstSight bool) []dagHostUnparsed {
+// dagHostNewUnparsed is the command lines of one reading that this check has not reported yet. A
+// refused command line is unmeasured wherever it stands, so a first-sight rollout reports its history
+// too, unlike a refusal. The lines share the reported list with the refusals under their own key, so a
+// line the next check reads again is not reported twice.
+func dagHostNewUnparsed(reading dagHostRolloutReading, reported map[string]bool) []dagHostUnparsed {
 	out := []dagHostUnparsed{}
 	for _, line := range reading.unparsed {
 		key := dagHostUnparsedKey(line.callID)
@@ -372,9 +372,6 @@ func dagHostNewUnparsed(reading dagHostRolloutReading, reported map[string]bool,
 			continue
 		}
 		reported[key] = true
-		if firstSight && line.lineEnd <= reading.boundary {
-			continue
-		}
 		out = append(out, line)
 	}
 	return out
@@ -486,12 +483,11 @@ var (
 )
 
 // dagHostUnparsed is a shell command line of a tool call that the parser refused. The reading does not
-// guess whether it held a relay call; it leaves the line unmeasured. callStart and lineEnd are the
-// rollout offsets of the call's line.
+// guess whether it held a relay call; it leaves the line unmeasured. callStart is the
+// offset of the call's line.
 type dagHostUnparsed struct {
 	callID    string
 	callStart int64
-	lineEnd   int64
 }
 
 // dagHostWord is one word of a simple command as the shell reads it. text is the word with its quotes
@@ -589,8 +585,7 @@ func dagHostPartText(out *strings.Builder, static *bool, part syntax.WordPart, q
 		out.WriteString(dagHostUnescape(p.Value, quoted))
 	case *syntax.SglQuoted:
 		if p.Dollar {
-			*static = false
-			out.WriteString(dagHostSubstitutionWord)
+			out.WriteString(dagHostANSIText(p.Value))
 			return
 		}
 		out.WriteString(p.Value)
@@ -632,6 +627,99 @@ func dagHostUnescape(raw string, quoted bool) string {
 		}
 	}
 	return out.String()
+}
+
+// dagHostANSIText is the text of an ANSI-C quoted string ($'...'): the escapes bash decodes are
+// decoded, and an escape bash keeps as it is stays as it is. A relay call's program word may be
+// written this way, so the reading names it like a plain word.
+func dagHostANSIText(raw string) string {
+	var out strings.Builder
+	for i := 0; i < len(raw); i++ {
+		if raw[i] != '\\' || i+1 >= len(raw) {
+			out.WriteByte(raw[i])
+			continue
+		}
+		i++
+		switch c := raw[i]; c {
+		case 'a':
+			out.WriteByte('\a')
+		case 'b':
+			out.WriteByte('\b')
+		case 'e', 'E':
+			out.WriteByte(0x1b)
+		case 'f':
+			out.WriteByte('\f')
+		case 'n':
+			out.WriteByte('\n')
+		case 'r':
+			out.WriteByte('\r')
+		case 't':
+			out.WriteByte('\t')
+		case 'v':
+			out.WriteByte('\v')
+		case '\\', '\'', '"', '?':
+			out.WriteByte(c)
+		case 'c':
+			if i+1 < len(raw) {
+				i++
+				out.WriteByte(raw[i] & 0x1f)
+			} else {
+				out.WriteString("\\c")
+			}
+		case '0', '1', '2', '3', '4', '5', '6', '7':
+			value := 0
+			for digits := 0; digits < 3 && i < len(raw) && raw[i] >= '0' && raw[i] <= '7'; digits++ {
+				value = value*8 + int(raw[i]-'0')
+				i++
+			}
+			out.WriteByte(byte(value))
+			i--
+		case 'x', 'u', 'U':
+			width := 2
+			if c == 'u' {
+				width = 4
+			} else if c == 'U' {
+				width = 8
+			}
+			value, digits := 0, 0
+			for digits < width && i+1+digits < len(raw) {
+				digit, ok := dagHostHexValue(raw[i+1+digits])
+				if !ok {
+					break
+				}
+				value = value*16 + digit
+				digits++
+			}
+			if digits == 0 {
+				out.WriteByte('\\')
+				out.WriteByte(c)
+				continue
+			}
+			i += digits
+			if c == 'x' {
+				out.WriteByte(byte(value))
+			} else {
+				out.WriteRune(rune(value))
+			}
+		default:
+			out.WriteByte('\\')
+			out.WriteByte(c)
+		}
+	}
+	return out.String()
+}
+
+// dagHostHexValue is the value of one hexadecimal digit.
+func dagHostHexValue(c byte) (int, bool) {
+	switch {
+	case c >= '0' && c <= '9':
+		return int(c - '0'), true
+	case c >= 'a' && c <= 'f':
+		return int(c-'a') + 10, true
+	case c >= 'A' && c <= 'F':
+		return int(c-'A') + 10, true
+	}
+	return 0, false
 }
 
 // dagHostBareExpansion reports whether a word is one parameter expansion with no operator, bare or
@@ -742,7 +830,7 @@ func dagHostRolloutRefusals(path string, start int64) (dagHostRolloutReading, er
 					commands, err := dagHostRelaySubcommands(command)
 					if err != nil {
 						if reportable {
-							reading.unparsed = append(reading.unparsed, dagHostUnparsed{callID: entry.Payload.CallID, callStart: lineStart, lineEnd: offset})
+							reading.unparsed = append(reading.unparsed, dagHostUnparsed{callID: entry.Payload.CallID, callStart: lineStart})
 						}
 						break
 					}
