@@ -507,7 +507,7 @@ func TestBundleRecordedPassAndCandidatesShareASnapshot(t *testing.T) {
 	f := newFixture(t)
 	f.putPlan("s", 0, "s-r1", addNode("a", dag.NodeImplementation), addNode("b", dag.NodeImplementation), bundleEdge("ab", "a", "b"))
 	committed := make(chan error, 1)
-	f.sched.testBetweenPassAndBundles = func() {
+	f.sched.testBetweenPassBundles = func() {
 		go func() {
 			raw, err := json.Marshal(doc{"schema": dag.SchemaRevision, "plan_id": "s", "project_key": "P-TEST", "request_id": "s-r2",
 				"expected_parent_revision": 1, "author_task_id": "task-test", "changes": []any{addNode("c", dag.NodeImplementation)}})

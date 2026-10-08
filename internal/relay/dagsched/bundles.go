@@ -97,8 +97,8 @@ func (s *Scheduler) RecordPassWithBundles(ctx context.Context, plan, actor strin
 		if reading, seq, err = s.RecordPass(txCtx, plan, actor, ReadyOptions{}); err != nil {
 			return err
 		}
-		if s.testBetweenPassAndBundles != nil {
-			s.testBetweenPassAndBundles()
+		if s.testBetweenPassBundles != nil {
+			s.testBetweenPassBundles()
 		}
 		bundles, err = s.BundleCandidates(txCtx, s.Store.Q(txCtx), plan, nil)
 		return err

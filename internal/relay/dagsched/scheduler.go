@@ -35,22 +35,22 @@ type Scheduler struct {
 	Host *HostMemoryBound
 
 	// Test seams (zero in production): between the unlocked judgement and the intent, after the slot is reserved, and between the managed start and the bind.
-	testBeforeObserveTx       func()
-	testBeforeManifestStore   func()
-	testBetweenJudgeAndAsk    func()
-	testBeforeReplayTx        func()
-	testBeforeAcceptTx        func()
-	testBeforeRefreshTx       func()
-	testBeforeJudgeTx         func()
-	testBeforeStart           func()
-	testBeforePrepareTx       func()
-	testAfterReading          func()
-	testAfterFreshness        func()
-	testBetweenReadAndIntent  func()
-	testAfterReserve          func() error
-	testAfterStart            func() error
-	testInSweepTx             func() error
-	testBetweenPassAndBundles func()
+	testBeforeObserveTx      func()
+	testBeforeManifestStore  func()
+	testBetweenJudgeAndAsk   func()
+	testBeforeReplayTx       func()
+	testBeforeAcceptTx       func()
+	testBeforeRefreshTx      func()
+	testBeforeJudgeTx        func()
+	testBeforeStart          func()
+	testBeforePrepareTx      func()
+	testAfterReading         func()
+	testAfterFreshness       func()
+	testBetweenReadAndIntent func()
+	testAfterReserve         func() error
+	testAfterStart           func() error
+	testInSweepTx            func() error
+	testBetweenPassBundles   func()
 }
 
 // Selectors are what the managed identity fingerprints besides the request: the marker root, the socket and the state
