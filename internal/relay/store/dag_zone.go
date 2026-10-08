@@ -863,6 +863,9 @@ BEGIN SELECT RAISE(ABORT, 'merge_trains.train_id is NULL: a train is addressed b
     coordinator_epoch INTEGER NOT NULL CHECK (coordinator_epoch >= 0),
     recorded_at     TEXT NOT NULL
 )`,
+	`CREATE TRIGGER IF NOT EXISTS dag_acceptance_verifications_acceptance_id_not_null BEFORE INSERT ON dag_acceptance_verifications
+WHEN NEW.acceptance_id IS NULL
+BEGIN SELECT RAISE(ABORT, 'dag_acceptance_verifications.acceptance_id is NULL: a row is addressed by a non-empty id'); END`,
 	`CREATE TRIGGER IF NOT EXISTS dag_acceptance_verifications_no_update BEFORE UPDATE ON dag_acceptance_verifications
 BEGIN SELECT RAISE(ABORT, 'dag_acceptance_verifications rows are append-only: never updated'); END`,
 	`CREATE TRIGGER IF NOT EXISTS dag_acceptance_verifications_no_delete BEFORE DELETE ON dag_acceptance_verifications
@@ -882,6 +885,9 @@ BEGIN SELECT RAISE(ABORT, 'dag_acceptance_verifications rows are append-only: ne
     coordinator_epoch INTEGER NOT NULL CHECK (coordinator_epoch >= 0),
     recorded_at       TEXT NOT NULL
 )`,
+	`CREATE TRIGGER IF NOT EXISTS dag_integration_batches_batch_id_not_null BEFORE INSERT ON dag_integration_batches
+WHEN NEW.batch_id IS NULL
+BEGIN SELECT RAISE(ABORT, 'dag_integration_batches.batch_id is NULL: a row is addressed by a non-empty id'); END`,
 	`CREATE TRIGGER IF NOT EXISTS dag_integration_batches_no_update BEFORE UPDATE ON dag_integration_batches
 BEGIN SELECT RAISE(ABORT, 'dag_integration_batches rows are append-only: never updated'); END`,
 	`CREATE TRIGGER IF NOT EXISTS dag_integration_batches_no_delete BEFORE DELETE ON dag_integration_batches
@@ -901,6 +907,9 @@ BEGIN SELECT RAISE(ABORT, 'dag_integration_batches rows are append-only: never d
     recorded_by    TEXT NOT NULL CHECK (recorded_by <> ''),
     recorded_at    TEXT NOT NULL
 )`,
+	`CREATE TRIGGER IF NOT EXISTS dag_integration_stages_stage_id_not_null BEFORE INSERT ON dag_integration_stages
+WHEN NEW.stage_id IS NULL
+BEGIN SELECT RAISE(ABORT, 'dag_integration_stages.stage_id is NULL: a row is addressed by a non-empty id'); END`,
 	`CREATE TRIGGER IF NOT EXISTS dag_integration_stages_no_update BEFORE UPDATE ON dag_integration_stages
 BEGIN SELECT RAISE(ABORT, 'dag_integration_stages rows are append-only: never updated'); END`,
 	`CREATE TRIGGER IF NOT EXISTS dag_integration_stages_no_delete BEFORE DELETE ON dag_integration_stages
