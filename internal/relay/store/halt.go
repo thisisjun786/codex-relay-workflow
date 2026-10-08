@@ -284,9 +284,9 @@ type HaltReading struct {
 	Bytes  int64
 }
 
-// HaltClearResult is what a clear did. Cleared is false when no marker was there to clear, and
-// then nothing was changed. Marker is the marker that was removed, and the readings are the two
-// digests the journal row records.
+// HaltClearResult is what a clear did. Cleared is false when no marker was there to clear, and then
+// nothing was changed. Marker is the marker the clear removed, and the readings are the digests the
+// journal row records.
 type HaltClearResult struct {
 	Cleared   bool
 	Marker    HaltState
@@ -295,19 +295,21 @@ type HaltClearResult struct {
 }
 
 // ClearHalt removes the halt marker beside the store dbPath names and records the clear in one
-// journal row (CRW-885). It holds the write gate exclusively for the whole decision: a writer
-// holding the gate shared is met by the existing fence, and no marker is read or removed outside
-// it. The marker is read with HaltStateAt, the reader CRW-848 wrote, so there is one reading rule.
+// journal row (CRW-885). The whole decision runs under the write gate, taken exclusively on the
+// resolved store path. The marker is read and removed beside that same resolved store, never beside
+// the path as spelled, so the gate, the stamp check, the marker and the row all name one store. A
+// writer holding the gate is met by the existing fence.
 //
-// With no marker the clear changes nothing and writes no row. Otherwise both readings are read
-// first; a reading that is missing, unreadable or empty is refused malformed_receipt and the marker stays.
-// Before the marker is removed, the store's stamp is judged on a connection opened for the row, so
-// no marker is removed beside a store this runtime does not own. The marker is then removed and
-// its directory synced, and the row is written in its own transaction. The marker's removal is a
-// durable effect that comes before the row, because the row needs the store writable, and the
-// halt refuses a write while the marker stands. If the directory sync or the row fails after the
-// removal, the error says the marker is gone and the row is not written, so nothing claims success
-// the store does not hold.
+// With no marker, and no store to read, the clear changes nothing and writes no row; it never creates
+// a store. Otherwise both readings are read first: a reading that is missing, unreadable or empty is
+// refused malformed_receipt and the marker stays. The store's stamp is judged before anything is
+// written, so no row goes into a store this runtime does not own.
+//
+// The row comes before the removal. A failure before the row leaves the marker as it was. A failure
+// after the row leaves a recorded clear and a marker still present, and a retry with the same readings
+// finds the row by the marker's identity and writes no second one. A retry with other readings for a
+// marker already recorded is refused, because the record would then say something other than what
+// cleared the marker.
 func ClearHalt(ctx context.Context, dbPath string, in HaltClearInput) (result HaltClearResult, err error) {
 	if err = ctx.Err(); err != nil {
 		return result, err
@@ -317,6 +319,10 @@ func ClearHalt(ctx context.Context, dbPath string, in HaltClearInput) (result Ha
 		return result, err
 	}
 	if err = holdStat(dbPath); err != nil {
+		// An absent store with no marker has nothing to clear, and the clear never creates one.
+		if errors.Is(err, os.ErrNotExist) && !HaltStateAt(dbPath).Present {
+			return result, nil
+		}
 		return result, err
 	}
 	resolved, err := refuseLiveState(absolute)
@@ -330,7 +336,7 @@ func ClearHalt(ctx context.Context, dbPath string, in HaltClearInput) (result Ha
 	}
 	defer func() { err = errors.Join(err, gate.Close()) }()
 
-	state := HaltStateAt(dbPath)
+	state := HaltStateAt(resolved)
 	if !state.Present {
 		return result, nil
 	}
@@ -358,22 +364,28 @@ func ClearHalt(ctx context.Context, dbPath string, in HaltClearInput) (result Ha
 		return result, err
 	}
 
-	if err = ctx.Err(); err != nil {
+	if err = haltFaultPoint("clear-before-row"); err != nil {
 		return result, err
 	}
-	markerPath := haltMarkerPath(dbPath)
-	if rmErr := os.Remove(markerPath); rmErr != nil {
-		if errors.Is(rmErr, os.ErrNotExist) {
-			return result, nil
-		}
-		return result, rmErr
+	if err = haltClearRow(ctx, conn, state, in, result); err != nil {
+		return result, err
+	}
+	if err = haltFaultPoint("clear-row-committed"); err != nil {
+		return result, err
+	}
+	if err = ctx.Err(); err != nil {
+		return result, fmt.Errorf("the clear is recorded, but the halt marker %s is still present: %w", state.Path, err)
+	}
+	if rmErr := os.Remove(state.Path); rmErr != nil && !errors.Is(rmErr, os.ErrNotExist) {
+		return result, fmt.Errorf("the clear is recorded, but the halt marker %s is still present: %w", state.Path, rmErr)
 	}
 	result.Cleared = true
 	result.Marker = state
-	dirErr := syncFile(dir)
-	rowErr := haltClearRow(ctx, conn, state, in, result)
-	if joined := errors.Join(dirErr, rowErr); joined != nil {
-		return result, fmt.Errorf("the halt marker %s was removed, but the clear did not finish (the marker is gone and the journal row may be missing): %w", markerPath, joined)
+	if err = haltFaultPoint("clear-marker-removed"); err != nil {
+		return result, fmt.Errorf("the halt marker %s was removed and the clear is recorded, but the removal was not finished: %w", state.Path, err)
+	}
+	if err = syncFile(dir); err != nil {
+		return result, fmt.Errorf("the halt marker %s was removed and the clear is recorded, but the directory sync failed: %w", state.Path, err)
 	}
 	return result, nil
 }
@@ -401,26 +413,96 @@ func haltReadingDigest(path, which string) (HaltReading, error) {
 	return HaltReading{SHA256: hex.EncodeToString(sum.Sum(nil)), Bytes: n}, nil
 }
 
-// haltClearDetail is the journal row's detail. The marker fields are null when the marker could not
-// be decoded, and MarkerDetail then says why. Field names are part of the row's contract.
+// haltClearDetail is the journal row's detail, and the shape a retry decodes an earlier row into. The
+// marker fields are null when the marker could not be decoded, and MarkerDetail then says why.
 type haltClearDetail struct {
 	Reason           string  `json:"reason"`
 	MarkerSequence   *int    `json:"markerSequence"`
 	MarkerDetectedAt *string `json:"markerDetectedAt"`
 	MarkerDetail     string  `json:"markerDetail,omitempty"`
+	MarkerSHA256     string  `json:"markerSha256"`
 	RestoreSHA256    string  `json:"restoreSha256"`
 	RestoreBytes     int64   `json:"restoreBytes"`
 	ReconcileSHA256  string  `json:"reconcileSha256"`
 	ReconcileBytes   int64   `json:"reconcileBytes"`
 }
 
-// haltClearRow records the clear as one journal row in its own transaction on conn.
+// haltMarkerIdentity is the marker's identity in the journal: the sha256 of its bytes, or of the
+// failure the reader recorded when the bytes cannot be read. A retry reads the same bytes or the same
+// failure, so it finds the same identity.
+func haltMarkerIdentity(state HaltState) string {
+	raw, err := os.ReadFile(state.Path)
+	if err != nil {
+		raw = []byte("unreadable: " + state.Detail)
+	}
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:])
+}
+
+// haltClearRow records the clear in its own transaction on conn, unless the journal already holds a
+// clear of this marker with these two readings, which a retry after a failed removal does. A clear of
+// this marker recorded with other readings is refused. The row's detail is parsed, never matched as
+// text, because a reason is free text that may contain anything.
 func haltClearRow(ctx context.Context, conn *sql.Conn, state HaltState, in HaltClearInput, result HaltClearResult) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	markerSum := haltMarkerIdentity(state)
+	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		return fmt.Errorf("begin immediate: %w", err)
+	}
+	recorded, err := haltClearRecorded(ctx, conn, markerSum, result)
+	if err == nil && recorded.other {
+		err = fmt.Errorf("the halt marker %s is already recorded as cleared with other readings: the clear is refused rather than recorded twice", state.Path)
+	}
+	if err == nil && !recorded.same {
+		err = writeHaltClearRow(ctx, conn, state, markerSum, in, result)
+	}
+	if err != nil {
+		_, _ = conn.ExecContext(context.WithoutCancel(ctx), "ROLLBACK")
+		return err
+	}
+	if _, err = conn.ExecContext(ctx, "COMMIT"); err != nil {
+		_, _ = conn.ExecContext(context.WithoutCancel(ctx), "ROLLBACK")
+		return fmt.Errorf("commit: %w", err)
+	}
+	return nil
+}
+
+// haltRecorded says whether the journal holds a clear of this marker with exactly these readings
+// (same), and whether it holds one with other readings (other).
+type haltRecorded struct{ same, other bool }
+
+func haltClearRecorded(ctx context.Context, conn *sql.Conn, markerSum string, result HaltClearResult) (haltRecorded, error) {
+	var recorded haltRecorded
+	rows, err := conn.QueryContext(ctx, "SELECT detail FROM journal WHERE kind = ?", HaltClearKind)
+	if err != nil {
+		return recorded, fmt.Errorf("journal query: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var raw string
+		if err := rows.Scan(&raw); err != nil {
+			return recorded, fmt.Errorf("journal scan: %w", err)
+		}
+		var detail haltClearDetail
+		if err := json.Unmarshal([]byte(raw), &detail); err != nil || detail.MarkerSHA256 != markerSum {
+			continue
+		}
+		if detail.RestoreSHA256 == result.Restore.SHA256 && detail.ReconcileSHA256 == result.Reconcile.SHA256 {
+			recorded.same = true
+		} else {
+			recorded.other = true
+		}
+	}
+	return recorded, rows.Err()
+}
+
+// writeHaltClearRow inserts the clear's journal row inside the transaction haltClearRow opened.
+func writeHaltClearRow(ctx context.Context, conn *sql.Conn, state HaltState, markerSum string, in HaltClearInput, result HaltClearResult) error {
 	detail := haltClearDetail{
 		Reason:          in.Reason,
+		MarkerSHA256:    markerSum,
 		RestoreSHA256:   result.Restore.SHA256,
 		RestoreBytes:    result.Restore.Bytes,
 		ReconcileSHA256: result.Reconcile.SHA256,
@@ -430,25 +512,14 @@ func haltClearRow(ctx context.Context, conn *sql.Conn, state HaltState, in HaltC
 		detail.MarkerDetail = state.Detail
 	} else {
 		sequence := state.Marker.Sequence
-		detailed := state.Marker.DetectedAt
+		detected := state.Marker.DetectedAt
 		detail.MarkerSequence = &sequence
-		detail.MarkerDetectedAt = &detailed
+		detail.MarkerDetectedAt = &detected
 	}
 	raw, err := json.Marshal(detail)
 	if err != nil {
 		return err
 	}
 	at := time.Now().UTC().Format(time.RFC3339Nano)
-	if _, err = conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
-		return fmt.Errorf("begin immediate: %w", err)
-	}
-	if err = journal(ctx, conn, HaltClearKind, in.Actor, string(raw), at); err != nil {
-		_, _ = conn.ExecContext(context.WithoutCancel(ctx), "ROLLBACK")
-		return err
-	}
-	if _, err = conn.ExecContext(ctx, "COMMIT"); err != nil {
-		_, _ = conn.ExecContext(context.WithoutCancel(ctx), "ROLLBACK")
-		return fmt.Errorf("commit: %w", err)
-	}
-	return nil
+	return journal(ctx, conn, HaltClearKind, in.Actor, string(raw), at)
 }

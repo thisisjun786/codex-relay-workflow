@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -209,5 +210,118 @@ func TestHaltClearRecordsAHostileReasonAsOneJSONRow(t *testing.T) {
 	}
 	if detail["reason"] != reason {
 		t.Fatal("the reason did not round-trip through the row")
+	}
+}
+
+// haltClearFault makes the named clear point fail with err for the rest of the test.
+func haltClearFault(t *testing.T, point string, err error) {
+	t.Helper()
+	SetHaltFault(func(p string) error {
+		if p == point {
+			return err
+		}
+		return nil
+	})
+	t.Cleanup(func() { SetHaltFault(nil) })
+}
+
+// haltClearInputs writes the two readings a clear names, returning their paths.
+func haltClearInputs(t *testing.T, reconcileText string) HaltClearInput {
+	t.Helper()
+	restore, _ := haltClearReadingFile(t, "restore.txt", "restore reading\n")
+	reconcile, _ := haltClearReadingFile(t, "reconcile.txt", reconcileText)
+	return HaltClearInput{RestorePath: restore, ReconcilePath: reconcile, Actor: "operator-1", Reason: "restore and reconcile agree"}
+}
+
+func TestHaltClearAbsentStoreWithNoMarkerCreatesNothing(t *testing.T) {
+	dir := t.TempDir()
+	result, err := ClearHalt(context.Background(), filepath.Join(dir, "relay.sqlite3"), haltClearInputs(t, "reconcile reading\n"))
+	if err != nil || result.Cleared {
+		t.Fatalf("an absent store with no marker answered %v, cleared %v", err, result.Cleared)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if entry.Name() != "restore.txt" && entry.Name() != "reconcile.txt" {
+			t.Fatalf("the clear created %s in an empty state directory", entry.Name())
+		}
+	}
+}
+
+func TestHaltClearFailureBeforeTheRowKeepsTheMarkerAndWritesNoRow(t *testing.T) {
+	path := haltClearFixture(t)
+	haltClearFault(t, "clear-before-row", errors.New("injected before the row"))
+	if _, err := ClearHalt(context.Background(), path, haltClearInputs(t, "reconcile reading\n")); err == nil {
+		t.Fatal("a clear that failed before its row reported success")
+	}
+	if !HaltStateAt(path).Present {
+		t.Fatal("the marker was removed although the row was never written")
+	}
+	if rows := haltClearRows(t, path); len(rows) != 0 {
+		t.Fatalf("a failed clear wrote %d rows", len(rows))
+	}
+}
+
+func TestHaltClearRetryAfterAFailedRemovalWritesOneRow(t *testing.T) {
+	path := haltClearFixture(t)
+	input := haltClearInputs(t, "reconcile reading\n")
+	haltClearFault(t, "clear-row-committed", errors.New("injected after the row"))
+	if _, err := ClearHalt(context.Background(), path, input); err == nil {
+		t.Fatal("a clear that failed after its row reported success")
+	}
+	if !HaltStateAt(path).Present {
+		t.Fatal("the marker was removed although the clear failed before the removal")
+	}
+	if rows := haltClearRows(t, path); len(rows) != 1 {
+		t.Fatalf("the failed clear left %d rows, want one", len(rows))
+	}
+	SetHaltFault(nil)
+	result, err := ClearHalt(context.Background(), path, input)
+	if err != nil || !result.Cleared {
+		t.Fatalf("the retry did not clear the marker: %v, cleared %v", err, result.Cleared)
+	}
+	if HaltStateAt(path).Present {
+		t.Fatal("the marker is still present after the retry")
+	}
+	if rows := haltClearRows(t, path); len(rows) != 1 {
+		t.Fatalf("the retry wrote a second row: %d rows", len(rows))
+	}
+}
+
+func TestHaltClearRetryWithOtherReadingsIsRefused(t *testing.T) {
+	path := haltClearFixture(t)
+	haltClearFault(t, "clear-row-committed", errors.New("injected after the row"))
+	if _, err := ClearHalt(context.Background(), path, haltClearInputs(t, "reconcile reading\n")); err == nil {
+		t.Fatal("a clear that failed after its row reported success")
+	}
+	SetHaltFault(nil)
+	if _, err := ClearHalt(context.Background(), path, haltClearInputs(t, "other reconcile reading\n")); err == nil {
+		t.Fatal("a retry with other readings was not refused")
+	}
+	if !HaltStateAt(path).Present {
+		t.Fatal("the marker was removed by a refused retry")
+	}
+	if rows := haltClearRows(t, path); len(rows) != 1 {
+		t.Fatalf("the refused retry changed the rows: %d", len(rows))
+	}
+}
+
+func TestHaltClearFollowsALinkedStateDirectory(t *testing.T) {
+	path := haltClearFixture(t)
+	linked := filepath.Join(t.TempDir(), "linked")
+	if err := os.Symlink(filepath.Dir(path), linked); err != nil {
+		t.Fatal(err)
+	}
+	result, err := ClearHalt(context.Background(), filepath.Join(linked, "relay.sqlite3"), haltClearInputs(t, "reconcile reading\n"))
+	if err != nil || !result.Cleared {
+		t.Fatalf("a clear through a linked state directory did not clear: %v, cleared %v", err, result.Cleared)
+	}
+	if HaltStateAt(path).Present {
+		t.Fatal("the marker beside the resolved store is still present")
+	}
+	if rows := haltClearRows(t, path); len(rows) != 1 {
+		t.Fatalf("the clear through the link wrote %d rows beside the resolved store", len(rows))
 	}
 }

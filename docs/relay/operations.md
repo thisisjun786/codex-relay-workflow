@@ -1039,15 +1039,23 @@ codex-session-relay --state <state> store-halt-clear --restore-reading <file> --
 3. Restore the store from a backup. Write the restore slice's reading and the reconcile reading to
    two files. Until the restore (S2) and reconcile (S4) commands exist, the operator makes both files
    by hand. The halt does not do this for you and does not lift itself.
-4. Run `store-halt-clear` with both files. It takes the write gate exclusively and removes
-   `corruption.json` only when both files exist and are not empty. It writes one journal row, kind
-   `store_halt_cleared`, whose subject is the actor and whose detail holds the marker's sequence and
-   detection time, the sha256 and byte count of each reading, and the reason. It answers `cleared`
-   true with those fields. A missing or empty reading is refused `malformed_receipt` (exit 2) and leaves the marker in place. A
-   writer holding the write gate is refused `store_owned_by_other`.
+4. Run `store-halt-clear` with both files. It takes the write gate exclusively on the store it
+   names, and it checks both files before anything is written: a file that is missing or empty is refused
+   `malformed_receipt` (exit 2) and the marker stays. With both files present it writes one journal row,
+   kind `store_halt_cleared`, and only then removes `corruption.json`. The row's subject is the
+   actor; its detail holds the marker's sequence and detection time (null when the marker cannot be
+   decoded), a sha256 of the marker's bytes, the sha256 and byte count of each reading, and the reason.
+   The command answers `cleared` true with `markerSequence`, `markerDetectedAt`, `restoreSha256`,
+   `reconcileSha256`, `actor` and `reason`. A writer holding the write gate is refused
+   `store_owned_by_other`.
+
+   The row comes first, so a failure after it leaves the row and a marker still present. Run the command
+   again with the same two files: it removes the marker and writes no second row. Run it with other
+   files and it is refused, because the record would then say something other than what cleared the
+   marker. A failure before the row leaves the marker as it was.
 5. Start the service.
 
-With no marker the command changes nothing, writes no row, and answers `cleared` false. The command
+With no marker, and no store to read, the command changes nothing, writes no row, creates no store, and answers `cleared` false. The command
 does not judge what the two readings say: it checks that each one exists and is not empty, and
 records their digests. The nonce, replay-dedup and grant-sequence findings of the section 83
 post-merge evaluation belong to the restore (S2) and reconcile (S4) commands, not to this one.
