@@ -91,6 +91,19 @@ var improveTemporaryLink func(fd, dirfd int, name string) error
 // Production leaves it nil.
 var improveEmptyPathLink func(fd, dirfd int, name string) error
 
+// improveUnnamedCreate creates the bundle's unnamed temporary file in the directory a descriptor
+// names. It is the seam a test uses to make the creation answer the errno a kernel or filesystem
+// without the unnamed form gives, and prove the run writes the bundle as a named temporary file.
+// Production leaves it at improveCreateTemporary.
+var improveUnnamedCreate func(dirfd int) (int, error) = improveCreateTemporary
+
+// improveUnlinkTemporary removes a named temporary file through the directory descriptor. It is the
+// seam a test uses to make the removal fail and prove the refusal names the file it left.
+// Production leaves it at unlinkat.
+var improveUnlinkTemporary func(dirfd int, name string) error = func(dirfd int, name string) error {
+	return unix.Unlinkat(dirfd, name, 0)
+}
+
 // improveStoreFile is the relay store's file name inside a state directory.
 const improveStoreFile = "relay.sqlite3"
 
@@ -554,6 +567,21 @@ func improveWriteFile(plan improveOutputPlan, ids *improveIdentitySet, data []by
 // writing the bundle again as a named temporary file.
 var errImproveNoUnnamedName = errors.New("the unnamed temporary file could not be given a name")
 
+// improveUnnamedUnsupported reports whether a failed creation of the unnamed temporary file means the
+// platform or filesystem has no unnamed form: the errno a kernel answers with when it does not know
+// O_TMPFILE, or when the filesystem refuses it. Any other error would also stop a named file and stays a refusal.
+func improveUnnamedUnsupported(err error) bool {
+	if errors.Is(err, errImproveNoUnnamedName) {
+		return true
+	}
+	for _, errno := range []unix.Errno{unix.EOPNOTSUPP, unix.EINVAL, unix.EISDIR, unix.ENOSYS} {
+		if errors.Is(err, errno) {
+			return true
+		}
+	}
+	return false
+}
+
 // improveWriteTemporary writes the bundle to one temporary file in the directory dirfd names and
 // renames it onto the destination. With unnamed the file is created unnamed and receives its one
 // name immediately before the rename, so a refusal releases it by closing the descriptor alone;
@@ -565,7 +593,11 @@ func improveWriteTemporary(dirfd int, held os.FileInfo, plan improveOutputPlan, 
 	fd := -1
 	var err error
 	if unnamed {
-		fd, err = improveCreateTemporary(dirfd)
+		fd, err = improveUnnamedCreate(dirfd)
+		if err != nil && improveUnnamedUnsupported(err) {
+			// The platform or filesystem has no unnamed form, so the bundle is written as a named file.
+			return errImproveNoUnnamedName
+		}
 	} else {
 		fd, err = unix.Openat(dirfd, name, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0o600)
 	}
@@ -583,7 +615,7 @@ func improveWriteTemporary(dirfd int, held os.FileInfo, plan improveOutputPlan, 
 		if !named {
 			return cause
 		}
-		if err := unix.Unlinkat(dirfd, name, 0); err != nil {
+		if err := improveUnlinkTemporary(dirfd, name); err != nil {
 			return fmt.Errorf("%w (the temporary file %s could not be removed: %v)", cause, name, err)
 		}
 		return cause
@@ -687,7 +719,7 @@ func improveProcSelfFd(fd int) string { return fmt.Sprintf("/proc/self/fd/%d", f
 // and the caller falls back to a named file.
 func improveCreateTemporary(dirfd int) (int, error) {
 	if runtime.GOOS != "linux" {
-		return -1, errors.New("the unnamed temporary file is unavailable on this platform")
+		return -1, fmt.Errorf("%w: the unnamed temporary file is unavailable on this platform", errImproveNoUnnamedName)
 	}
 	return unix.Openat(dirfd, ".", unix.O_WRONLY|improveOtmpfile|unix.O_CLOEXEC, 0o600)
 }
@@ -832,7 +864,7 @@ func improveCollect(ctx context.Context, section improveSection) (improveBundle,
 	if auditPath == "" {
 		sources = append(sources, improveSourceRow{Kind: improveKindAudit, State: improveStateMissing})
 	} else {
-		rows, err := improveReadAudit(auditPath, acc)
+		rows, err := improveReadAudit(ids, auditPath, acc)
 		if err != nil {
 			return fail(improveUnreadable(improveKindAudit, auditPath, err))
 		}
@@ -846,7 +878,7 @@ func improveCollect(ctx context.Context, section improveSection) (improveBundle,
 	if interventionPath == "" {
 		sources = append(sources, improveSourceRow{Kind: improveKindIntervention, State: improveStateMissing})
 	} else {
-		rows, err := improveReadInterventions(interventionPath, acc)
+		rows, err := improveReadInterventions(ids, interventionPath, acc)
 		if err != nil {
 			return fail(improveUnreadable(improveKindIntervention, interventionPath, err))
 		}
@@ -860,7 +892,7 @@ func improveCollect(ctx context.Context, section improveSection) (improveBundle,
 	if draftPath == "" {
 		sources = append(sources, improveSourceRow{Kind: improveKindDraft, State: improveStateMissing})
 	} else {
-		rows, err := improveReadDrafts(draftPath, acc)
+		rows, err := improveReadDrafts(ids, draftPath, acc)
 		if err != nil {
 			return fail(improveUnreadable(improveKindDraft, draftPath, err))
 		}
@@ -873,7 +905,7 @@ func improveCollect(ctx context.Context, section improveSection) (improveBundle,
 	if section.IssueList == "" {
 		sources = append(sources, improveSourceRow{Kind: improveKindIssue, State: improveStateMissing})
 	} else {
-		rows, err := improveReadIssues(section.IssueList, acc)
+		rows, err := improveReadIssues(ids, section.IssueList, acc)
 		if err != nil {
 			return fail(improveUnreadable(improveKindIssue, section.IssueList, err))
 		}
@@ -1153,8 +1185,8 @@ func improvePatterns(pattern string) []string {
 
 // improveReadAudit reads the audit ledger, one JSON line per graded result, and normalizes
 // it by issue.
-func improveReadAudit(path string, acc *improveAccumulator) (int, error) {
-	lines, err := improveReadJSONLines(path)
+func improveReadAudit(ids *improveIdentitySet, path string, acc *improveAccumulator) (int, error) {
+	lines, err := improveReadJSONLines(ids, path)
 	if err != nil {
 		return 0, err
 	}
@@ -1169,8 +1201,8 @@ func improveReadAudit(path string, acc *improveAccumulator) (int, error) {
 
 // improveReadInterventions reads the management intervention records, one JSON line per
 // intervention, and normalizes them by the signal they observed.
-func improveReadInterventions(path string, acc *improveAccumulator) (int, error) {
-	lines, err := improveReadJSONLines(path)
+func improveReadInterventions(ids *improveIdentitySet, path string, acc *improveAccumulator) (int, error) {
+	lines, err := improveReadJSONLines(ids, path)
 	if err != nil {
 		return 0, err
 	}
@@ -1195,14 +1227,14 @@ func improveReadInterventions(path string, acc *improveAccumulator) (int, error)
 // document of another schema, so reading it as nothing would report a complete bundle over a file
 // the drafts directory could not be read from. That is the rule improveReadJSONLines already
 // applies to a null line, and it is what this reader did before the schema gate existed.
-func improveReadDrafts(path string, acc *improveAccumulator) (int, error) {
+func improveReadDrafts(ids *improveIdentitySet, path string, acc *improveAccumulator) (int, error) {
 	files, err := improveParseDraftFiles(path)
 	if err != nil {
 		return 0, err
 	}
 	rows := 0
 	for _, file := range files {
-		data, err := os.ReadFile(file)
+		data, err := ids.improveIdentityRead(file)
 		if err != nil {
 			return 0, err
 		}
@@ -1216,7 +1248,7 @@ func improveReadDrafts(path string, acc *improveAccumulator) (int, error) {
 		// auditDraftLoad (CRW-695) is the writer's own reader: it refuses an empty or mismatched
 		// fingerprint and a key this build does not know, so a document that claims to be a draft
 		// but is not one is named rather than read as something else.
-		draft, err := auditDraftLoad(file)
+		draft, err := auditDraftDecode(file, data)
 		if err != nil {
 			return 0, err
 		}
@@ -1279,8 +1311,8 @@ func improveParseSeenBounds(seen []auditDraftSeen) (first, last string) {
 
 // improveReadIssues reads the issue list a management session exported: an array of issues,
 // or an object carrying them under issues.
-func improveReadIssues(path string, acc *improveAccumulator) (int, error) {
-	data, err := os.ReadFile(path)
+func improveReadIssues(ids *improveIdentitySet, path string, acc *improveAccumulator) (int, error) {
+	data, err := ids.improveIdentityRead(path)
 	if err != nil {
 		return 0, err
 	}
@@ -1317,8 +1349,8 @@ func improveDecodeIssues(data []byte) ([]map[string]any, error) {
 }
 
 // improveReadJSONLines reads a JSON-lines file, refusing a line that is not a JSON object.
-func improveReadJSONLines(path string) ([]map[string]any, error) {
-	data, err := os.ReadFile(path)
+func improveReadJSONLines(ids *improveIdentitySet, path string) ([]map[string]any, error) {
+	data, err := ids.improveIdentityRead(path)
 	if err != nil {
 		return nil, err
 	}

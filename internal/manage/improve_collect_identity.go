@@ -3,6 +3,7 @@ package manage
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"runtime"
 	"strings"
@@ -35,6 +36,58 @@ const improveReasonInputChanged = "improve_input_changed"
 // improveReasonOutputUnreadable is the named refusal of a destination the collection cannot examine
 // for a reason other than its absence. A comparison that cannot be made is never a pass.
 const improveReasonOutputUnreadable = "improve_output_unreadable"
+
+// improveIdentityReadHook runs before a reader reads an input it recorded, with the path the reader
+// names. It is the seam a test uses to change an input inside the read itself. Production leaves it nil.
+var improveIdentityReadHook func(path string)
+
+// improveIdentityFind is the recorded entry of a path, or nil when the path was never recorded.
+func (ids *improveIdentitySet) improveIdentityFind(path string) *improveIdentityEntry {
+	for i := range ids.entries {
+		if ids.entries[i].path == path {
+			return &ids.entries[i]
+		}
+	}
+	return nil
+}
+
+// improveIdentityRead returns the content of a recorded regular file, read from the descriptor the
+// collection pinned for it, so the bytes are those of the file the identity names and not of whatever
+// the path reaches when the reader runs. An input past the descriptor bound has no pinned descriptor;
+// it is opened for this one read, and the file it opens must be the file recorded, or the read is
+// refused.
+func (ids *improveIdentitySet) improveIdentityRead(path string) ([]byte, error) {
+	if improveIdentityReadHook != nil {
+		improveIdentityReadHook(path)
+	}
+	entry := ids.improveIdentityFind(path)
+	// A path that was absent when recorded, or a special file such as a named pipe, has no identity
+	// the collection can pin without attaching to it: the pipe is read as it always was, and the
+	// post-read examination still refuses it if it no longer names the file that was recorded.
+	if entry == nil || entry.info == nil || !entry.info.Mode().IsRegular() {
+		return os.ReadFile(path)
+	}
+	file := entry.file
+	if file == nil {
+		opened, err := improveOpenInput(path)
+		if err != nil {
+			return nil, fmt.Errorf("%s: the input %s could not be opened to read it: %w", improveReasonInputChanged, path, err)
+		}
+		defer func() { _ = opened.Close() }()
+		info, err := opened.Stat()
+		if err != nil {
+			return nil, fmt.Errorf("%s: the input %s could not be examined to read it: %w", improveReasonInputChanged, path, err)
+		}
+		if !os.SameFile(entry.info, info) {
+			return nil, fmt.Errorf("%s: the input %s no longer names the file the collection read", improveReasonInputChanged, path)
+		}
+		file = opened
+	}
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		return nil, err
+	}
+	return io.ReadAll(file)
+}
 
 // improveIdentityEntry is one input the collection opens: the path it opens, that path resolved the
 // way the reader resolves it, and the descriptor held open until the bundle is renamed.
