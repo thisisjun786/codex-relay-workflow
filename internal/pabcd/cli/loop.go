@@ -3,8 +3,7 @@
 // CRW-382 ported the structural parser (loop_args.go) and the renderers (loop_render.go). This file ports
 // runGoalplanCli (:751-865) for the verbs that only read or create a plan - init, show, validate and ready -
 // plus runReady (:461-525). The mutating verbs (steer, add-criterion, add-work-phase, add-task,
-// complete-task, meet-criterion, ask, decide) belong to CRW-383 (C2); loopSeam is the one insertion point
-// they take, so this issue never has to be undone to add them.
+// complete-task, meet-criterion, ask, decide) are CRW-383 (C2) and live in loop_mutate.go.
 //
 // The caller's shape is the oracle's cli.ts dispatch: parse, then run, and a library error is the oracle's
 // uncaught throw (the harness row answers it as "crw cli failed: "). No package-level initializer runs here.
@@ -35,15 +34,6 @@ import (
 type LoopCliResult struct {
 	Output string `json:"output"`
 	Code   int    `json:"code"`
-}
-
-// loopSeamText is the mutating verbs' answer: CRW-383 owns the write surface, and this build writes nothing,
-// so a caller that ignores the exit status still cannot change a plan.
-const loopSeamText = "loop %s: the write surface of the loop CLI is not in this build yet; the verb arrives with the loop write issue. Nothing was written."
-
-// loopSeam is the mutating-verb seam CRW-383 replaces. It never touches the plan.
-func loopSeam(args LoopCliArgs) LoopCliResult {
-	return LoopCliResult{Output: fmt.Sprintf(loopSeamText, args.Verb), Code: 1}
 }
 
 // loopNowISO is new Date().toISOString() for the timestamps this file stamps.
@@ -225,22 +215,21 @@ func RunLoopCli(args LoopCliArgs) (LoopCliResult, error) {
 	if args.Verb == LoopVerbHelp {
 		return LoopCliResult{Output: RenderLoopHelp(), Code: 0}, nil
 	}
-	// Checked BEFORE the verb dispatch, init included, and on the TRIMMED value the verbs themselves
+	// Checked BEFORE the verb dispatch, init included (the mutating verbs excepted: the oracle checks
+	// their session itself, with a text per verb, and loop_mutate.go keeps it), and on the TRIMMED value the verbs themselves
 	// use: state paths sanitize the id, so a blank or non-canonical one would resolve to a DIFFERENT
 	// session's state file and this verb would print or judge a plan the caller never named
 	// (docs/port-cxc/known-defects/CRW-646.md, port: fixed). The oracle guards the ready verb alone
 	// (:802-810) and tests its raw value, so a blanks-only --session skips its guard, reaches
 	// resolveSlug, and reads the 'missing' session's plan (:821-839).
-	if args.Session != nil && !state.IsCanonicalSessionID(loopSessionID(args)) {
+	if args.Session != nil && !loopIsMutatingVerb(args.Verb) && !state.IsCanonicalSessionID(loopSessionID(args)) {
 		return LoopCliResult{Output: fmt.Sprintf("loop %s: session id is not canonical", args.Verb), Code: 1}, nil
 	}
 	if args.Verb == LoopVerbInit {
 		return loopInit(args)
 	}
-	switch args.Verb {
-	case LoopVerbSteer, LoopVerbAsk, LoopVerbDecide, LoopVerbAddCriterion, LoopVerbAddWorkPhase,
-		LoopVerbAddTask, LoopVerbCompleteTask, LoopVerbMeetCriterion:
-		return loopSeam(args), nil
+	if loopIsMutatingVerb(args.Verb) {
+		return loopRunMutating(args)
 	}
 	slug := ResolveLoopSlug(args)
 	if slug == nil {
