@@ -305,3 +305,60 @@ func TestGitHubPostGuardLegAnswersDenyWhenCancelled(t *testing.T) {
 		t.Errorf("a cancelled GitHub post guard did not answer the deny for the command: %q", out.String())
 	}
 }
+
+// TestGitHubPostGuardLegLeavesObservation: the GitHub post guard leg leaves the same metadata-only invocation record as every other
+// leg, before it judges, and its answer is unchanged by it (CRW-1139).
+func TestGitHubPostGuardLegLeavesObservation(t *testing.T) {
+	for _, tc := range []struct {
+		name, command string
+		deny          bool
+	}{
+		{"allowed", "ls -la", false},
+		{"denied", "gh pr comment 1 --body hi", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := recallHookComponentHome(t)
+			plugin := filepath.Join(t.TempDir(), "plugin")
+			if err := os.MkdirAll(filepath.Join(plugin, ".codex-plugin"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(plugin, ".codex-plugin", "plugin.json"), []byte(`{"version":"1.0.0"}`), 0600); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PLUGIN_ROOT", plugin)
+			payload, err := json.Marshal(map[string]any{"session_id": "hook-fixture", "hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": map[string]any{"command": tc.command}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var out bytes.Buffer
+			claimed, code := runComponentHook(invocation{ctx: context.Background(), args: []string{"pre-tool-use", "--leg", "pre-tool-use-guarding-github-post"}, stdout: &out}, bytes.NewReader(payload), componentHooks())
+			if !claimed || code != 0 || strings.Contains(out.String(), `"permissionDecision":"deny"`) != tc.deny {
+				t.Fatalf("claimed=%v code=%d out=%q want deny=%v", claimed, code, out.String(), tc.deny)
+			}
+			var records []map[string]any
+			if err := filepath.WalkDir(home, func(p string, d os.DirEntry, err error) error {
+				if err != nil || d.IsDir() || !strings.HasSuffix(p, ".json") {
+					return err
+				}
+				b, err := os.ReadFile(p)
+				if err != nil {
+					return err
+				}
+				var rec map[string]any
+				if err := json.Unmarshal(b, &rec); err != nil {
+					return err
+				}
+				records = append(records, rec)
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if len(records) != 1 || records[0]["component"] != "pabcd-state" || records[0]["event"] != "pre-tool-use-github-post" || records[0]["outcome"] != "invoked" {
+				t.Fatalf("records %v, want exactly one pabcd-state pre-tool-use-github-post record", records)
+			}
+			if _, has := records[0]["decision"]; has {
+				t.Fatalf("the record carries a decision: %v", records[0])
+			}
+		})
+	}
+}

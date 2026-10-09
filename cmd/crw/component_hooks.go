@@ -72,7 +72,18 @@ func componentHooks() []componentHook {
 		// GitHub post guard: CRW's own protection (no CXC oracle), with its own stdin policy and answer.
 		{"pre-tool-use-guarding-github-post", "pre-tool-use", func(c invocation, in io.Reader) int {
 			done := make(chan string, 1)
-			go func() { done <- pabcdhook.GitHubPostAnswer(in) }()
+			go func() {
+				raw, over, ok := pabcdhook.GitHubPostInput(in)
+				if !ok {
+					done <- ""
+					return
+				}
+				// Like every other leg, the record is left before the judgment; it is metadata-only and an over-bound payload leaves none.
+				if !over {
+					harness.RecordInvocation(raw, harness.Component, "pre-tool-use-github-post", os.LookupEnv)
+				}
+				done <- pabcdhook.GitHubPostJudge(raw, over)
+			}()
 			select {
 			case answer := <-done:
 				if answer != "" {
