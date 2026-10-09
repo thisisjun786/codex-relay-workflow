@@ -21,7 +21,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/goalplan"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
@@ -88,6 +90,26 @@ func loopParseJSON(raw string) (any, error) {
 	return value, nil
 }
 
+// loopLossyJSON names what the decoder would replace by U+FFFD in a JSON text that parsed, "" when it replaces
+// nothing. Two idempotency keys, or two scenarios, that differ only in such a character would decode equal and the
+// second batch would be dropped as a duplicate, so the goalplan reader's refusal of the same loss applies here as
+// well. The oracle's JSON.parse has the loss; the verb is stricter (docs/port-cxc/known-defects/CRW-383.md).
+func loopLossyJSON(raw string) string {
+	if !utf8.ValidString(raw) {
+		for i := 0; i < len(raw); {
+			r, n := utf8.DecodeRuneInString(raw[i:])
+			if r == utf8.RuneError && n == 1 {
+				return fmt.Sprintf("a byte that is not UTF-8 at byte %d that would lose stored text", i)
+			}
+			i += n
+		}
+	}
+	if at := goalplan.UnpairedJSONSurrogate(raw); at >= 0 {
+		return fmt.Sprintf("an unpaired JSON surrogate at byte %d that would lose stored text", at)
+	}
+	return ""
+}
+
 // loopSteer is runSteer (:296-352): the plan is the one the session is bound to, the batch is inline JSON or a
 // file, and the steering transaction answers.
 func loopSteer(args LoopCliArgs) (LoopCliResult, error) {
@@ -117,6 +139,9 @@ func loopSteer(args LoopCliArgs) (LoopCliResult, error) {
 	batch, err := loopParseJSON(batchText)
 	if err != nil {
 		return LoopCliResult{Output: fmt.Sprintf("loop steer: batch is not valid JSON (%s)", err.Error()), Code: 1}, nil
+	}
+	if lossy := loopLossyJSON(batchText); lossy != "" {
+		return LoopCliResult{Output: "loop steer: batch holds " + lossy, Code: 1}, nil
 	}
 	slug := loopBoundSlug(args, session)
 	if slug == "" {
@@ -225,9 +250,61 @@ func loopAddOp(args LoopCliArgs) (LoopCliResult, error) {
 		}
 		return LoopCliResult{Output: output, Code: 0}, nil
 	case goalplan.SteerResultDuplicate:
+		// The key names the scenario (or the id and title) alone, so a recorded key only says that this
+		// criterion or phase was registered; a retry that asks for other options is not that retry.
+		if reason := loopAddOpConflict(goalplan.ReadGoalplan(args.Cwd, slug), op); reason != "" {
+			return LoopCliResult{Output: fmt.Sprintf("loop %s: %s", args.Verb, reason), Code: 1}, nil
+		}
 		return LoopCliResult{Output: fmt.Sprintf("loop %s: already applied at %s - nothing to do", args.Verb, result.Entry.AppliedAt), Code: 0}, nil
 	}
 	return LoopCliResult{Output: fmt.Sprintf("loop %s: %s", args.Verb, result.Reason), Code: 1}, nil
+}
+
+// loopAddOpConflict is the refusal for a retry of an add verb whose recorded key matches but whose plan holds the
+// criterion or phase with other options than the retry asks for, "" for an exact retry (or when the plan no longer
+// shows the entry, which the key then speaks for).
+func loopAddOpConflict(plan *goalplan.Goalplan, op map[string]any) string {
+	if plan == nil {
+		return ""
+	}
+	if op["kind"] == "add-criterion" {
+		scenario, _ := op["scenario"].(string)
+		surface, _ := op["surface"].(string)
+		presented, _ := op["presented"].(string)
+		for _, criterion := range plan.Criteria {
+			if criterion.Scenario != scenario {
+				continue
+			}
+			have := string(criterion.Surface)
+			if have == "" {
+				have = "logic"
+			}
+			if have != surface || string(criterion.Presented) != presented {
+				quoted, _ := json.Marshal(scenario)
+				return "a criterion with scenario " + string(quoted) + " is already registered with another surface or presentation"
+			}
+		}
+		return ""
+	}
+	id, _ := op["id"].(string)
+	var want []string
+	if deps, ok := op["dependsOn"].([]any); ok {
+		for _, dep := range deps {
+			want = append(want, fmt.Sprint(dep))
+		}
+	}
+	for _, phase := range plan.WorkPhases {
+		if phase.ID != id {
+			continue
+		}
+		have := append([]string(nil), phase.DependsOn...)
+		slices.Sort(have)
+		slices.Sort(want)
+		if !slices.Equal(have, want) {
+			return "work phase '" + id + "' is already registered with other prerequisites"
+		}
+	}
+	return ""
 }
 
 // loopDecisionCommit is the three answers of the decision step inside the write lock.
@@ -391,6 +468,16 @@ func loopLifecycle(args LoopCliArgs) (LoopCliResult, error) {
 			}
 			commit.warnings = append(commit.warnings, cliPublishedGoalplanWarning(slug, err))
 		}
+		// The row is written before the lock is released: the plan and the ledger then order two writers the same
+		// way, and the row's timestamp is taken while the transition is still the latest one (as the steering
+		// transaction writes its own rows).
+		if ledgerEvent != "" {
+			if err := loopAppendLedger(args.Cwd, slug, goalplan.GoalplanLedgerEntry{
+				Ts: loopNowISO(), Slug: slug, Event: ledgerEvent, Detail: ledgerDetail,
+			}); err != nil {
+				commit.warnings = append(commit.warnings, "warning: goalplan state was committed, but ledger append failed: "+err.Error())
+			}
+		}
 		return commit, nil
 	}, nil)
 	if err != nil {
@@ -406,13 +493,5 @@ func loopLifecycle(args LoopCliArgs) (LoopCliResult, error) {
 		// The pure reason IS the message: wrapping it would give one state two wordings by surface.
 		return LoopCliResult{Output: fmt.Sprintf("loop %s: %s; nothing to do", args.Verb, locked.Value.reason), Code: 0}, nil
 	}
-	warnings := locked.Value.warnings
-	if ledgerEvent != "" {
-		if err := loopAppendLedger(args.Cwd, slug, goalplan.GoalplanLedgerEntry{
-			Ts: loopNowISO(), Slug: slug, Event: ledgerEvent, Detail: ledgerDetail,
-		}); err != nil {
-			warnings = append(warnings, "warning: goalplan state was committed, but ledger append failed: "+err.Error())
-		}
-	}
-	return loopInitAppendWarnings(LoopCliResult{Output: fmt.Sprintf("loop %s: %s %s applied", args.Verb, slug, id), Code: 0}, warnings), nil
+	return loopInitAppendWarnings(LoopCliResult{Output: fmt.Sprintf("loop %s: %s %s applied", args.Verb, slug, id), Code: 0}, locked.Value.warnings), nil
 }
