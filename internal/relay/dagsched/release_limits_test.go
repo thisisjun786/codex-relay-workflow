@@ -48,7 +48,8 @@ func TestDecodeReleaseRequestNamesTheListOverItsBound(t *testing.T) {
 		{"artifact_roots", 1, 65, 0, 0, "artifact_roots has 65 entries; the limit is 64"},
 		{"artifact_roots empty", 1, 0, 0, 0, "artifact_roots has no entry; at least one is required"},
 		{"allowed_recipients", 1, 1, 65, 0, "allowed_recipients has 65 entries; the limit is 64"},
-		{"volatile", 1, 1, 0, releaseVolatileLimit + 1, fmt.Sprintf("volatile has %d entries; the limit is %d", releaseVolatileLimit+1, releaseVolatileLimit)},
+		// the published bound (docs/relay/dag-scheduler.md) is written out here, not read from releaseVolatileLimit, so changing the constant fails this test
+		{"volatile", 1, 1, 0, 513, "volatile has 513 entries; the limit is 512"},
 	} {
 		c := c
 		t.Run(c.name, func(t *testing.T) {
@@ -64,7 +65,7 @@ func TestDecodeReleaseRequestNamesTheListOverItsBound(t *testing.T) {
 // CRW-1046: the 72 snapshot files of the report (every file its own sha256 in the manifest) are inside the bound, and so is the bound itself.
 func TestDecodeReleaseRequestTakesSeventyTwoAndTheBoundOfVolatileEntries(t *testing.T) {
 	t.Parallel()
-	for _, n := range []int{72, releaseVolatileLimit} {
+	for _, n := range []int{72, 512} {
 		req, err := DecodeReleaseRequest(releaseLimitRequest(1, 1, 0, n))
 		if err != nil || len(req.Volatile) != n {
 			t.Fatalf("%d volatile entries: %v, %d read", n, err, len(req.Volatile))
