@@ -23,6 +23,12 @@ func isShell(name string) bool {
 	return false
 }
 
+// isOnceCarrier names the carrier of a shell's -c string: the shell runs that text once, in place.
+func isOnceCarrier(carrier string) bool {
+	name, ok := strings.CutSuffix(carrier, " -c")
+	return ok && isShell(name)
+}
+
 // IsShell is isShell for the consumers that read a shebang line: a script whose interpreter is one of these names is shell text.
 func IsShell(name string) bool { return isShell(name) }
 

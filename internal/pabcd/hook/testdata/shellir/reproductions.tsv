@@ -1240,6 +1240,16 @@ CRW-1058 issue text (Linear, 2026-10-09)	printf 'rm -rf {CHECKOUT}' | bash </dev
 CRW-1058 issue text (Linear, 2026-10-09)	bash /dev/fd/3	CRW-1058-23	row	-
 CRW-1058 issue text (Linear, 2026-10-09)	printf 'echo hi\n' | bash -s foo	CRW-1058-24	row	-
 CRW-1058 issue text (Linear, 2026-10-09)	printf 'rm -rf {CHECKOUT}' | bash -s foo	CRW-1058-25	row	-
+CRW-1059 issue text (Linear, read only)	bash -c 'bash lint.sh && bash refresh.sh'	CRW-1059-01	row	-
+CRW-1059 issue text (Linear, read only)	bash -c 'bash lint.sh || bash refresh.sh'	CRW-1059-02	row	-
+CRW-1059 issue text (Linear, read only)	bash -c 'bash lint.sh<newline>bash refresh.sh' (two lines of one carried text)	CRW-1059-03	row	-
+CRW-1059 issue text (Linear, read only)	x=$(bash lint.sh; bash refresh.sh)	CRW-1059-04	row	-
+CRW-1059 issue text (Linear, read only)	x=$(bash refresh.sh); bash lint.sh	CRW-1059-05	row	-
+CRW-1059 issue text (Linear, read only)	bash -c 'for i in 1 2; do bash lint.sh; bash refresh.sh; done'	CRW-1059-06	row	-
+CRW-1059 issue text (Linear, read only)	bash -c 'bash lint.sh | cat; bash refresh.sh'	CRW-1059-07	row	-
+CRW-1059 issue text (Linear, read only)	bash -c 'bash lint.sh & bash refresh.sh'	CRW-1059-08	row	-
+CRW-1059 issue text (Linear, read only)	bash -c 'f() { bash lint.sh; }; bash refresh.sh; f'	CRW-1059-09	row	-
+CRW-1059 issue text (Linear, read only)	bash -c 'bash lint.sh; bash refresh.sh; bash lint.sh'	CRW-1059-10	row	-
 recheck-20261009-g4-RC-851-v3	python3 -c 'import builtins; builtins \<nl>.exec("""open(file="<m>/a",mode="w")""")'	CRW-851-lc-01	row	-
 recheck-20261009-g4-RC-851-v3d	python3 -c 'import builtins; (builtins \<nl>.exec)("""open(file="<m>/a",mode="w")""")'	CRW-851-lc-02	row	-
 added by CRW-851 (line-continuation variant of the 10-09 re-check RC-851-v3)	python3 -c 'import builtins; builtins.\<nl>exec("""open(file="<m>/a",mode="w")""")'	CRW-851-lc-03	row	-
@@ -1631,3 +1641,13 @@ CRW-1058 pre-merge record crw1058-e83d8ec4 (findings d1 to d9)	echo {CHECKOUT} |
 CRW-1058 pre-merge record crw1058-e83d8ec4 (findings d1 to d9)	printf 'echo hi\n' | bash >/dev/null	CRW-1058-34	row	-
 CRW-1058 pre-merge record crw1058-e83d8ec4 (findings d1 to d9)	bash /dev/stdin 3<<<'echo hi' 0<&3	CRW-1058-35	row	-
 CRW-1058 pre-merge record crw1058-e83d8ec4 (findings d1 to d9)	python3 /dev/fd/0 3<<<'print(1)' 0<&3	CRW-1058-36	row	-
+CRW-1059 evaluation of 0ef1b43d (post-evaluation round, findings d1 to d3)	X=$(bash lint.sh) printf "%s\n" "$(bash refresh.sh)"	CRW-1059-11	row	-
+CRW-1059 evaluation of 0ef1b43d (post-evaluation round, findings d1 to d3)	X=$(bash lint.sh) printf "%s\n" "$(bash refresh.sh)" with evil.sh posting	CRW-1059-12	row	-
+CRW-1059 evaluation of 0ef1b43d (post-evaluation round, findings d1 to d3)	X=$(bash lint.sh) printf "%s\n" "$(bash refresh.sh)" with evil.sh removing the checkout	CRW-1059-13	row	-
+CRW-1059 evaluation of 0ef1b43d (post-evaluation round, findings d1 to d3)	watch -x bash -c 'bash lint.sh; bash refresh.sh'	CRW-1059-14	row	-
+CRW-1059 evaluation of 0ef1b43d (post-evaluation round, findings d1 to d3)	watch -x bash lint.sh; bash refresh.sh	CRW-1059-15	row	-
+CRW-1059 evaluation of 0ef1b43d (post-evaluation round, findings d1 to d3)	watch 'bash lint.sh; bash refresh.sh'	CRW-1059-16	row	-
+CRW-1059 evaluation of 0ef1b43d (post-evaluation round, findings d1 to d3)	bash -c 'for ((i=0; $(bash lint.sh; echo 1) && i<2; i+=$(bash refresh.sh; echo 1))); do :; done'	CRW-1059-17	row	-
+CRW-1059 evaluation of 0ef1b43d (post-evaluation round, findings d1 to d3)	for ((i=0; $(bash lint.sh; echo 1) && i<2; i+=$(bash refresh.sh; echo 1))); do :; done	CRW-1059-18	row	-
+CRW-1059 evaluation of 0ef1b43d (post-evaluation round, findings d1 to d3)	X=$(bash refresh.sh) bash lint.sh	CRW-1059-19	row	-
+CRW-1059 evaluation of 0ef1b43d (post-evaluation round, findings d1 to d3)	X=$(bash lint.sh) bash refresh.sh	CRW-1059-20	row	-
