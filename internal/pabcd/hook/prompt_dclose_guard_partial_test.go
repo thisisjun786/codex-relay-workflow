@@ -276,10 +276,10 @@ func TestPromptDcloseRecoveryRefusalLeavesThePlanUnknown(t *testing.T) {
 	}
 }
 
-// TestPromptDcloseRecoveryCleanupNamesTheCommittedPlan is the absent-target cleanup case: the target
+// TestPromptDcloseRecoveryCleanupDoesNotClaimThePlan is the absent-target cleanup case: the target
 // is gone and its recorded successor is already running, so the retry settles the plan with no write
-// of its own - the first attempt had committed it. The resting state write then fails, and that
-// refusal must name the plan this close published as well as the marker (CRW-930, d2).
+// of its own. That shape cannot prove the first attempt's plan commit landed, so the resting state
+// write then fails, and that refusal names the marker and leaves the goalplan unknown (CRW-930, d2).
 func TestPromptDcloseRecoveryCleanupDoesNotClaimThePlan(t *testing.T) {
 	cwd := promptDcloseRepo(t)
 	slug := "chat-recovery-cleanup-names"
@@ -334,11 +334,10 @@ func promptDcloseCommittedRecoveryStateNext(slug, epoch, next string) string {
 		"\",\"recordedAt\":\"2026-01-01T00:00:00.000Z\",\"resolvable\":false}]}"
 }
 
-// TestPromptDcloseRecoveryAlreadyCommittedPlanIsNamedByALaterRefusal is the d1 case: a marker-matched
-// retry whose plan commit already landed (the settled shape is on disk, so the retry rewrites
-// nothing) continues the same close, so a later refusal must name the goalplan that close published
-// as well as the marker. The plan is committed by the first attempt and only the marker is inherited,
-// so a branch that recorded the plan only when this invocation rewrote it would drop it.
+// TestPromptDcloseRecoveryCommittedPlanIsNotClaimedByALaterRefusal is the d1 case: a marker-matched
+// retry finds the settled shape on disk and rewrites nothing, so it continues the same close. The
+// settled shape cannot prove that the first attempt committed the plan, so a later refusal names the
+// inherited marker and leaves the goalplan unknown, never claiming or denying the plan.
 func TestPromptDcloseRecoveryCommittedPlanIsNotClaimedByALaterRefusal(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root ignores the file mode this case needs")
@@ -599,11 +598,11 @@ func TestPromptDcloseRecoveryCorruptMarkerDoesNotClaimThePlan(t *testing.T) {
 	}
 }
 
-// TestPromptDcloseRecoveryIntegrityRefusalNamesTheCommittedPlan is the d2 case: the first attempt of
-// this close committed the plan (the target is done and its successor runs on the cursor) and the
-// operator then broke the plan's definition, so the retry refuses at the integrity check - which runs
-// before the recovery accounting. The refusal must still name the goalplan this close published; the
-// generation-1 head names the marker alone and denies the rest.
+// TestPromptDcloseRecoveryIntegrityRefusalDoesNotClaimThePlan is the d2 case: the target is done and
+// its successor runs on the cursor, and the operator then broke the plan's definition, so the retry
+// refuses at the integrity check - which runs before the recovery accounting. The refusal names the
+// inherited marker and leaves the goalplan unknown: the plan on disk cannot prove the first attempt's
+// commit, so the refusal neither claims nor denies the plan.
 func TestPromptDcloseRecoveryIntegrityRefusalDoesNotClaimThePlan(t *testing.T) {
 	cwd := promptDcloseRepo(t)
 	slug := "chat-recovery-integrity"
@@ -655,10 +654,10 @@ func TestPromptDcloseRecoveryIntegrityRefusalWithoutACommitKeepsTheBareClaim(t *
 	}
 }
 
-// TestPromptDcloseRecoveryBusyLockNamesWhatTheFirstAttemptPublished is the d3 case: the retry cannot
-// take the goalplan lock, so it never reads the plan, but its first attempt's marker and committed
-// goalplan are still on disk. The busy refusal must name both; the generation-1 head returns the busy
-// text alone, so the operator cannot tell that a partial close is waiting.
+// TestPromptDcloseRecoveryBusyLockNamesTheMarkerAndLeavesThePlanUnknown is the d3 case: the retry cannot
+// take the goalplan lock, so it never reads the plan, but its first attempt's marker may be on the
+// session. The busy refusal names that marker and leaves the goalplan unknown; the generation-1 head
+// returns the busy text alone, so the operator cannot tell that a partial close is waiting.
 func TestPromptDcloseRecoveryBusyLockNamesTheMarkerAndLeavesThePlanUnknown(t *testing.T) {
 	cwd := promptDcloseRepo(t)
 	slug := "chat-recovery-busy-lock"
@@ -760,9 +759,10 @@ func TestPromptDcloseRecoveryStartedSuccessorDoesNotClaimThePlan(t *testing.T) {
 	}
 }
 
-// TestPromptDcloseRecoveryUnreadablePlanStillNamesTheCommittedPlan is the d2 case: the write lock
-// answers "unreadable" for a plan that read cleanly but would lose an unknown field on revival. The
-// committed shape is still on disk, so the refusal must name the goalplan this close published; the
+// TestPromptDcloseRecoveryUnreadablePlanDoesNotClaimThePlan is the d2 case: the write lock answers
+// "unreadable" for a plan that read cleanly but would lose an unknown field on revival. The refusal
+// names the inherited marker and leaves the goalplan unknown, because the shape on disk cannot prove
+// the first attempt's commit; the
 // generation-2 head named the inherited marker alone.
 func TestPromptDcloseRecoveryUnreadablePlanDoesNotClaimThePlan(t *testing.T) {
 	cwd := promptDcloseRepo(t)
@@ -806,10 +806,10 @@ func TestPromptDcloseFreshUnreadablePlanKeepsTheBareClaim(t *testing.T) {
 	}
 }
 
-// TestPromptDcloseRecoveryBusySessionLockNamesWhatTheFirstAttemptPublished is the d3 case for the
+// TestPromptDcloseRecoveryBusySessionLockNamesTheMarkerAndLeavesThePlanUnknown is the d3 case for the
 // session lock the bound close itself takes: it stays busy, so the close never runs, but the first
-// attempt's marker and committed goalplan are on disk and the answer must name them. The
-// generation-2 head returned the bare busy text.
+// attempt's marker is on the session and the answer must name it while leaving the goalplan unknown.
+// The generation-2 head returned the bare busy text.
 func TestPromptDcloseRecoveryBusySessionLockNamesTheMarkerAndLeavesThePlanUnknown(t *testing.T) {
 	cwd := promptDcloseRepo(t)
 	slug := "chat-recovery-busy-session-lock"
@@ -898,11 +898,11 @@ func TestPromptDcloseLegacyMarkerDoesNotClaimACommittedPlan(t *testing.T) {
 	}
 }
 
-// TestPromptDcloseRecoveryUnreadableRereadNamesWhatTheFirstAttemptPublished is the d1 case for the
+// TestPromptDcloseRecoveryUnreadableRereadNamesTheMarkerAndLeavesThePlanUnknown is the d1 case for the
 // close's own stricter reread: the leading snapshot matched this close's marker, then the session
 // file became unreadable before the close's locked reread, which refuses. The first attempt's marker
-// and committed goalplan are on disk, so the refusal names them; the generation-3 head answered the
-// bare state refusal.
+// may be on disk, so the refusal names it and leaves the goalplan unknown; the generation-3 head
+// answered the bare state refusal.
 func TestPromptDcloseRecoveryUnreadableRereadNamesTheMarkerAndLeavesThePlanUnknown(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root ignores the file mode this case needs")
@@ -939,10 +939,10 @@ func TestPromptDcloseRecoveryUnreadableRereadNamesTheMarkerAndLeavesThePlanUnkno
 	}
 }
 
-// TestPromptDcloseRecoverySourceRootRefusalNamesWhatTheFirstAttemptPublished is the d1 case for the
+// TestPromptDcloseRecoverySourceRootRefusalNamesTheMarkerAndLeavesThePlanUnknown is the d1 case for the
 // entry gate: a bound D-close whose pinned source binding no longer resolves is refused before the
-// bound handler runs. A matching retry's first attempt may already have published its marker and
-// committed its goalplan, so the refusal names them; the generation-3 head returned the bare
+// bound handler runs. A matching retry's first attempt may already have published its marker, so the
+// refusal names the marker and leaves the goalplan unknown; the generation-3 head returned the bare
 // SOURCE-ROOT text.
 func TestPromptDcloseRecoverySourceRootRefusalNamesTheMarkerAndLeavesThePlanUnknown(t *testing.T) {
 	cwd := promptDcloseRepo(t)
