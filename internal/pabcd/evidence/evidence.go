@@ -35,7 +35,6 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
-	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 )
 
 // MaxAttempts is the number of blocks an agent gets before the gate releases it and records a tombstone.
@@ -76,28 +75,24 @@ func resolve(cwd, p string) string {
 
 func evidenceRoot(cwd string) string { return resolve(cwd, filepath.Join(crwdir.DirName, Subdir)) }
 
-// ExtractReceiptPath is the path after the first "EVIDENCE_RECORDED:" in message: JavaScript whitespace is skipped (the newline
-// too) and the path is the run of characters that are not whitespace. A marker followed by nothing but whitespace gives none;
-// no other marker can follow it. The oracle's regular expression takes the first match, not the last line its comment names.
+// ExtractReceiptPath is the path on the last line of message that is a receipt marker: a line that starts, after JavaScript white
+// space, with "EVIDENCE_RECORDED:" and has a path after it, the path being the run of characters that are not white space. A line
+// ends at \n, \r, U+2028 or U+2029 and nothing is read past it, so a marker with nothing after it never takes the next line's text,
+// and an earlier valid marker line counts when the last one is empty.
+//
+// Changed from the oracle (port: fixed, CRW-1112): its regular expression takes the first match anywhere, not the last line the
+// directive asks for, so a child that quoted the directive (which names `EVIDENCE_RECORDED: <path>` inside a sentence) before its
+// real last line was judged on the quoted "<path>`" and spent its budget with a valid receipt on disk (isolated trial r1, S5-F2).
 func ExtractReceiptPath(message string) (string, bool) {
-	const marker = "EVIDENCE_RECORDED:"
-	i := strings.Index(message, marker)
-	if i < 0 {
-		return "", false
-	}
-	isSpace := func(r rune) bool { return text.Trim(string(r)) == "" }
-	rest := strings.TrimLeftFunc(message[i+len(marker):], isSpace)
-	if end := strings.IndexFunc(rest, isSpace); end >= 0 {
-		rest = rest[:end]
-	}
-	return rest, rest != ""
+	return lastMarkerValue(message, "EVIDENCE_RECORDED:")
 }
 
-// insideDirectory is isPathInsideDirectory: file lies below directory. A relative path that merely starts with ".." counts as
-// outside, so a file named "..x" directly in the directory does too.
+// insideDirectory is isPathInsideDirectory: file lies below directory, not at it. Changed from the oracle (port: fixed, CRW-1112):
+// the oracle treats every relative path that starts with ".." as outside, so a receipt named "..notes.txt", or one under a directory
+// named "..d", was refused although it lies inside; only ".." itself or ".." followed by a separator leaves the directory.
 func insideDirectory(file, directory string) bool {
 	rel, err := filepath.Rel(directory, file)
-	return err == nil && rel != "." && !strings.HasPrefix(rel, "..") && !filepath.IsAbs(rel)
+	return err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
 }
 
 // realPathSafe is the path with its symbolic links resolved, or p itself when that fails.

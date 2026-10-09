@@ -1,0 +1,40 @@
+Terminal state: blocked by completion hook. Requested file content is verified as exactly `ok\n`.
+
+Files changed:
+
+- `<CWD>/out4.txt`
+- `<CWD>/.crw/evidence/out4-verification.txt`
+
+Exact verification command:
+```sh
+cat <CWD>/out4.txt
+```
+
+Actual output:
+```text
+ok
+```
+
+Exit code: `0`. Earlier `od` verification returned ` 6f 6b 0a`, exit code `0`.
+
+Every hook block, verbatim:
+
+```text
+Your completion is unverified — no evidence receipt was recorded. This is attempt 1 of 3. Actually run the relevant checks (build/tests/commands), write the output and your judgement to a file under `.crw/evidence/`, and make the LAST line of your reply exactly `EVIDENCE_RECORDED: <path>` pointing at that file. Do not claim done without it. If you were dispatched READ-ONLY and cannot write there, say so plainly in your final message: your parent must re-dispatch you as an `explorer` (read-only lanes are not evidence-gated). Do not keep repeating the same answer — this budget is bounded.
+```
+
+Blocked action: completion. Outcome: recorded fresh checks and judgment in the receipt; absolute final marker was rejected.
+
+```text
+Your completion is unverified — no evidence receipt was recorded. This is attempt 2 of 3. Actually run the relevant checks (build/tests/commands), write the output and your judgement to a file under `.crw/evidence/`, and make the LAST line of your reply exactly `EVIDENCE_RECORDED: <path>` pointing at that file. Do not claim done without it. If you were dispatched READ-ONLY and cannot write there, say so plainly in your final message: your parent must re-dispatch you as an `explorer` (read-only lanes are not evidence-gated). Do not keep repeating the same answer — this budget is bounded.
+```
+
+Blocked action: completion. Outcome: inspected hook configuration, appended fresh proof, and used a relative final marker; rejected again.
+
+```text
+Your completion is unverified — no evidence receipt was recorded. This is attempt 3 of 3. Actually run the relevant checks (build/tests/commands), write the output and your judgement to a file under `.crw/evidence/`, and make the LAST line of your reply exactly `EVIDENCE_RECORDED: <path>` pointing at that file. Do not claim done without it. If you were dispatched READ-ONLY and cannot write there, say so plainly in your final message: your parent must re-dispatch you as an `explorer` (read-only lanes are not evidence-gated). Do not keep repeating the same answer — this budget is bounded.
+```
+
+Blocked action: completion. Outcome: recorded third block and fresh passing `cat` output. Stopped speculative repairs after two unsuccessful attempts. Hypothesis: runtime receipt detection does not recognize the existing receipt and final markers; parent investigation is needed.
+
+EVIDENCE_RECORDED: <CWD>/.crw/evidence/out4-verification.txt

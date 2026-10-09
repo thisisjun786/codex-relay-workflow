@@ -167,6 +167,15 @@ func TestGatedAgentTypesAndBudget(t *testing.T) {
 
 func TestExtractReceiptPath(t *testing.T) {
 	c, g := load(t)
+	// Changed (port: fixed, CRW-1112): the marker is the last line that is a marker with a path, and nothing is read past its
+	// line. An empty marker no longer takes the next line's text (U+2028 ends a line too), a marker inside a sentence or after
+	// other text on its line is not a marker line, and of two marker lines the last wins.
+	none, port := (*string)(nil), map[string]*string{}
+	for _, id := range []string{"newline_after_colon", "ws_u2028", "prefixed_marker", "inline_in_prose"} {
+		port[id] = none
+	}
+	later, renamed := "later.md", ".codexclaw/evidence/x.md"
+	port["empty_first_then_valid"], port["first_marker_wins"] = &later, &renamed
 	for _, k := range c.Extract {
 		msg := ""
 		if k.Message != nil {
@@ -177,7 +186,11 @@ func TestExtractReceiptPath(t *testing.T) {
 		if ok {
 			gotPtr = &got
 		}
-		same(t, k.ID, gotPtr, g.Extract[k.ID])
+		want := g.Extract[k.ID]
+		if p, ok := port[k.ID]; ok {
+			want = p
+		}
+		same(t, k.ID, gotPtr, want)
 	}
 }
 
@@ -388,8 +401,12 @@ func TestHasValidReceipt(t *testing.T) {
 				must(t, os.Chmod(at(o.Chmod), os.FileMode(mode)))
 			}
 		}
-		if got := HasValidReceipt(cwd, sub(k.Claim, cwd, out)); got != g.Receipt[k.ID] {
-			t.Errorf("%s: %v, want %v", k.ID, got, g.Receipt[k.ID])
+		want := g.Receipt[k.ID]
+		if k.ID == "receipt_name_starts_with_dotdot" || k.ID == "dotdot_directory_name" {
+			want = true // changed (port: fixed, CRW-1112): a name that starts with two dots lies inside the root
+		}
+		if got := HasValidReceipt(cwd, sub(k.Claim, cwd, out)); got != want {
+			t.Errorf("%s: %v, want %v", k.ID, got, want)
 		}
 	}
 }
