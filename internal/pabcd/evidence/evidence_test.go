@@ -29,12 +29,17 @@ type tombstoneLockWatch struct {
 	firstRan       bool
 	firstErr       error
 	sentinelRaised bool
+	inner          lockFunc // nil: state.WithSessionLock; a test replaces it to decide what a lock acquisition does
 }
 
 func (w *tombstoneLockWatch) lock(cwd, sessionID string, fn func() error) error {
 	w.calls++
 	ran := false
-	err := state.WithSessionLock(cwd, sessionID, func() error {
+	inner := w.inner
+	if inner == nil {
+		inner = state.WithSessionLock
+	}
+	err := inner(cwd, sessionID, func() error {
 		ran = true
 		return fn()
 	})
@@ -42,7 +47,9 @@ func (w *tombstoneLockWatch) lock(cwd, sessionID string, fn func() error) error 
 	case 1:
 		w.firstRan, w.firstErr = ran, err
 	case 2:
-		w.sentinelRaised = ran && err == nil
+		// A sentinel whose state reached the final path counts even when the write then failed the directory sync
+		// (state.PublishedError): the file says unverifiedCorrupt.
+		w.sentinelRaised = ran && (err == nil || state.Published(err))
 	}
 	return err
 }
@@ -106,6 +113,32 @@ func TestRecordTombstoneKeepsConcurrentVerdicts(t *testing.T) {
 	}
 	if want := sentinels.Load() > 0; final.UnverifiedCorrupt != want {
 		t.Errorf("unverifiedCorrupt = %v, want %v (lock give-ups %d, sentinels raised %d)", final.UnverifiedCorrupt, want, giveUps.Load(), sentinels.Load())
+	}
+}
+
+// A sentinel that was renamed into place and then failed the directory sync (state.PublishedError) is a raised sentinel: the
+// session file says unverifiedCorrupt, so the watch must count it or the final expectation of the concurrency test is wrong
+// (CRW-861, verifier P2).
+func TestTombstoneLockWatchCountsAPublishedSentinel(t *testing.T) {
+	cwd := t.TempDir()
+	w := &tombstoneLockWatch{}
+	w.inner = func(dir, sessionID string, fn func() error) error {
+		if w.calls == 1 { // the commit tier: the lock gives up and never runs fn
+			return &fs.PathError{Op: "open", Path: "s1.lock", Err: fs.ErrExist}
+		}
+		if err := state.WithSessionLock(dir, sessionID, fn); err != nil { // the sentinel tier writes for real ...
+			return err
+		}
+		return &state.PublishedError{Err: errors.New("directory sync failed")} // ... and its directory sync is reported failed
+	}
+	if recordTombstone(cwd, "s1", Payload{AgentType: "executor", AgentID: "a1"}, MaxAttempts, time.Now(), w.lock, nil) {
+		t.Fatal("a commit whose lock gave up reported success")
+	}
+	if !w.gaveUp() || w.calls != 2 {
+		t.Fatalf("lock calls %d, gave up %v", w.calls, w.gaveUp())
+	}
+	if got := state.ReadState(cwd, "s1").UnverifiedCorrupt; !got || !w.sentinelRaised {
+		t.Fatalf("the session file says unverifiedCorrupt = %v, the watch counted the sentinel = %v", got, w.sentinelRaised)
 	}
 }
 
