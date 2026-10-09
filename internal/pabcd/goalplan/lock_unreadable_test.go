@@ -4,6 +4,7 @@ package goalplan
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -66,4 +67,40 @@ func TestWithGoalplanWriteLockRevivalRefusalIsRefused(t *testing.T) {
 			t.Fatalf("got %+v err=%v, want unreadable without Refused", got, err)
 		}
 	})
+}
+
+// TestWithGoalplanWriteLockLinkedPlanDirectoryStaysAnError: only an access failure is the oracle's "cannot
+// be read". A plan directory that is a symbolic link (found by the O_NOFOLLOW walk) or a path that is the
+// wrong kind is a path-safety refusal and stays a Go error, as it was before the access failure was
+// downgraded: the caller must not publish past it.
+func TestWithGoalplanWriteLockLinkedPlanDirectoryStaysAnError(t *testing.T) {
+	cwd, dir := readWorkspace(t)
+	moved := dir + "-moved"
+	if err := os.Rename(dir, moved); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(moved, dir); err != nil {
+		t.Fatal(err)
+	}
+	ran := false
+	got, err := WithGoalplanWriteLock(cwd, "demo", func(*Goalplan) (int, error) { ran = true; return 0, nil }, nil)
+	if err == nil || ran || got.Kind == "ok" {
+		t.Fatalf("a linked plan directory must be an error: got %+v err=%v ran=%v", got, err, ran)
+	}
+}
+
+// TestWithGoalplanWriteLockPlanDirectoryNotADirectoryStaysAnError: a regular file where the plan directory
+// belongs is the wrong kind of path, not an unreadable plan.
+func TestWithGoalplanWriteLockPlanDirectoryNotADirectoryStaysAnError(t *testing.T) {
+	cwd, dir := readWorkspace(t)
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Clean(dir), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := WithGoalplanWriteLock(cwd, "demo", func(*Goalplan) (int, error) { return 0, nil }, nil)
+	if err == nil || got.Kind == "ok" {
+		t.Fatalf("a plan directory that is a file must be an error: got %+v err=%v", got, err)
+	}
 }

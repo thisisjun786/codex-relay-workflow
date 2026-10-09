@@ -396,14 +396,20 @@ func WithGoalplanWriteLock[T any](cwd, slug string, fn func(*Goalplan) (T, error
 	if pathAbsent(err) {
 		return missing(), nil
 	}
-	// A plan directory or file that cannot be reached (EACCES and the like) is a plan that cannot be read,
-	// which ReadGoalplan answers with nil and the oracle's orchestrate gate (orchestrate-cli.ts 606-622)
-	// goes on from; the caller decides, so this is "unreadable" with the reason, not a Go error.
-	unreachable := func(err error) GoalplanWriteLockResult[T] {
-		return GoalplanWriteLockResult[T]{Kind: "unreadable", Reason: "goalplan '" + slug + "' could not be reached: " + err.Error()}
+	// A plan directory or file the process may not open or search (EACCES, EPERM) is a plan that cannot be
+	// read, which ReadGoalplan answers with nil and the oracle's orchestrate gate (orchestrate-cli.ts
+	// 606-622) goes on from; the caller decides, so this is "unreadable" with the reason, not a Go error.
+	// Only that access failure is downgraded. A link or a wrong kind of path found by the O_NOFOLLOW walk
+	// (goalplanRelocatedError, ELOOP, ENOTDIR), a relocated descriptor and every other failure stay Go
+	// errors: they are path-safety refusals, and nothing may be published past them.
+	unreachable := func(err error) (GoalplanWriteLockResult[T], error) {
+		if !errors.Is(err, unix.EACCES) && !errors.Is(err, unix.EPERM) {
+			return result, err
+		}
+		return GoalplanWriteLockResult[T]{Kind: "unreadable", Reason: "goalplan '" + slug + "' could not be reached: " + err.Error()}, nil
 	}
 	if err != nil {
-		return unreachable(err), nil
+		return unreachable(err)
 	}
 	defer parent.Close()
 	var st unix.Stat_t
@@ -412,7 +418,7 @@ func WithGoalplanWriteLock[T any](cwd, slug string, fn func(*Goalplan) (T, error
 		return missing(), nil
 	}
 	if err != nil {
-		return unreachable(err), nil
+		return unreachable(err)
 	}
 	if st.Mode&unix.S_IFMT == unix.S_IFLNK {
 		return result, fmt.Errorf("goalplan state path must not be a symlink: %s", filepath.Join(real, GoalplanFile))

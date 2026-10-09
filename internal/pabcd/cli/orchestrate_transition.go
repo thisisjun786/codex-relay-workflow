@@ -327,6 +327,12 @@ func orchestrateCommitPublish(ctx context.Context, seams *orchestrateCommitSeams
 				return orchestrateCommitOutcome{refusal: refusal}, nil
 			}
 		}
+		// CRW-975: the review binding re-check above re-reads and re-hashes the plan files, which is I/O the
+		// first check did not cover, so the invocation's context is read once more immediately before the
+		// first durable effect below (CRW-871).
+		if err := orchestrateInterruptCheck(ctx, seams); err != nil {
+			return orchestrateCommitOutcome{}, err
+		}
 		// 032: a fresh epoch orphans every round the old one owned. The cleanup runs here, after the binding is
 		// revalidated and before the state is published, so a refusal above leaves the round open for a
 		// transition that did not happen; it stays fail-open, as the oracle's catch is.
