@@ -80,6 +80,7 @@ type env struct {
 	now    func() time.Time
 	forge  func(Config) forge                   // nil: the gh CLI of the checkout
 	keep   func(path string, data []byte) error // nil: crwdir.PublishDurable; a test fails or watches the write of the kept copy
+	fault  func(r record) error                 // nil: none; a test fails the ledger append of a record
 }
 
 // Run is crw review.
@@ -141,7 +142,7 @@ func execute(ctx context.Context, cfg Config, e env) (*Summary, error) {
 		return nil, errors.New("base...head has no changes; there is nothing to review")
 	}
 	sum := &Summary{Outcome: OutcomeReviewed, Issue: cfg.Issue, Base: m.Base, Head: m.Head, PatchID: m.PatchID}
-	l := &ledger{dir: cfg.StateDir, now: e.now, publishKept: e.keep}
+	l := &ledger{dir: cfg.StateDir, now: e.now, publishKept: e.keep, appendFault: e.fault}
 	entry := func(event string) record {
 		return record{Event: event, PatchID: m.PatchID, Base: m.Base, Head: m.Head, Issue: cfg.Issue}
 	}
@@ -217,7 +218,10 @@ func execute(ctx context.Context, cfg Config, e env) (*Summary, error) {
 	if err = os.MkdirAll(cfg.Out, 0o755); err != nil {
 		return nil, err
 	}
-	if err = l.append(entry("started")); err != nil {
+	retry, sizeBefore := st.open(), l.good // whether this attempt is the one more attempt of an unavailable review, and the length of the ledger before its started line
+	started := entry("started")
+	started.Time = e.now().UTC().Format(time.RFC3339)
+	if err = l.append(started); err != nil {
 		return nil, err
 	}
 	fail := func(err error) (*Summary, error) {
@@ -257,10 +261,7 @@ func execute(ctx context.Context, cfg Config, e env) (*Summary, error) {
 	// The result is kept, durably, before the review is recorded, so that a record always has its copy. If it cannot be kept nothing is recorded as finished and nothing is published: the failure is returned
 	// naming its cause and the patch stays open, so that the same call can be made again once the cause is gone (a second model call is accepted over a finished record whose copy is missing).
 	if err = l.keep(result.SHA256, data); err != nil {
-		unkept := entry(eventKeepFailed)
-		unkept.Reason = err.Error()
-		err = fmt.Errorf("the review ran but its result could not be kept in the state directory; nothing is recorded as finished and no file is written, so run the same command again: %w", err)
-		return nil, errors.Join(err, l.append(unkept))
+		return nil, l.unkeptAttempt(err, started, entry(eventKeepFailed), retry, sizeBefore)
 	}
 	// The review is recorded before its files are written, so that nothing after this point can let the patch be reviewed again.
 	if err = l.append(result); err != nil {

@@ -4,11 +4,15 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"time"
+
+	"golang.org/x/sys/unix"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 )
@@ -33,6 +37,49 @@ func (l *ledger) keep(sha string, data []byte) error {
 		publish = crwdir.PublishDurable
 	}
 	return publish(l.keptPath(sha), data)
+}
+
+// unkeptAttempt ends the attempt whose result could not be kept (keepErr) and returns the error that says so. The attempt is ended by its keep_failed line, which leaves the patch open; when that line
+// cannot be appended either, the attempt's started line stands alone, which closes nothing on a first attempt but spends the one more attempt of an unavailable review (retry), as a killed process does. That
+// line is then taken back out of the ledger, cutting it to sizeBefore, the length it had before the line: the attempt leaves no trace, so it is not counted toward the daily cap, and the one more attempt is
+// still to come. When the ledger takes no truncation either, the attempt is spent as the ledger stands, and the error gives the line that leaves the attempt to come, to be appended by hand once the state
+// directory takes it, instead of telling the operator to run the same command again.
+func (l *ledger) unkeptAttempt(keepErr error, started, unkept record, retry bool, sizeBefore int64) error {
+	const ran = "the review ran but its result could not be kept in the state directory"
+	unkept.Reason, unkept.Time = keepErr.Error(), l.now().UTC().Format(time.RFC3339)
+	appendErr := l.append(unkept)
+	switch {
+	case appendErr == nil:
+		return fmt.Errorf("%s; nothing is recorded as finished and no file is written, so run the same command again: %w", ran, keepErr)
+	case !retry:
+		return fmt.Errorf("%s: %w; nothing is recorded as finished and no file is written, and the keep_failed line could not be appended either (%v), which leaves the patch open as well: run the same command again once the state directory takes writes", ran, keepErr, appendErr)
+	}
+	withdrawErr := l.withdraw(sizeBefore)
+	if withdrawErr == nil {
+		return fmt.Errorf("%s: %w; nothing is recorded as finished and no file is written. The keep_failed line could not be appended (%v), so this attempt's started line was taken back out of %s: the one more attempt of the unavailable review is still to come and this attempt is not counted toward the daily cap. Run the same command again once the state directory takes writes", ran, keepErr, appendErr, l.path())
+	}
+	startedLine, _ := json.Marshal(started)
+	unkeptLine, _ := json.Marshal(unkept)
+	return fmt.Errorf("%s: %w; nothing is recorded as finished and no file is written. This attempt was the one more attempt of the unavailable review, and neither its keep_failed line could be appended (%v) nor its started line taken back out of %s (%v): as the ledger stands the attempt is spent, and the same command answers already_reviewed with the unavailable result. To leave the attempt to come, once the state directory takes writes, check that the last whole line of the ledger is this attempt's started line\n%s\nremove any incomplete line after it, and append this line on a line of its own\n%s\nthen run the same command again",
+		ran, keepErr, appendErr, l.path(), withdrawErr, startedLine, unkeptLine)
+}
+
+// withdraw cuts the ledger back to size bytes, the length it had before the started line of the attempt being withdrawn, and syncs it. It is called only under the run lock, by the attempt itself, so whatever
+// lies beyond size was appended by that attempt.
+func (l *ledger) withdraw(size int64) error {
+	f, err := os.OpenFile(l.path(), os.O_WRONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if err := f.Truncate(size); err != nil {
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		return err
+	}
+	l.good = size
+	return nil
 }
 
 func (l *ledger) sync(dir string) error {

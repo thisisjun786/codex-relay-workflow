@@ -404,3 +404,97 @@ func TestPostOfASharedPathUsesTheAskingPatchsOwnResult(t *testing.T) {
 		t.Fatalf("a foreign file was posted from: %d %s", code, errOut)
 	}
 }
+
+// The retry whose result cannot be kept and whose keep_failed line cannot be appended either (the state directory takes neither) would leave a bare started line, which spends the one more attempt. The
+// attempt's started line is taken back out of the ledger instead, so the patch stays open and the same command reviews it once the fault is gone.
+func TestRetryWhoseResultAndKeepFailedLineCannotBeWrittenStillLeavesTheOneMoreAttempt(t *testing.T) {
+	f := newFixture(t)
+	h := f.repo.change(f.base, 2)
+	f.on("2026-10-04", quotaResult)
+	if code, first, errOut := f.run(h); code != 0 || first.RetryNotBefore != "2026-10-05" {
+		t.Fatalf("quota: %d %+v %s", code, first, errOut)
+	}
+	before := f.ledger()
+	f.on("2026-10-05", okResult)
+	f.keep = func(string, []byte) error { return errors.New("keep injected") }
+	f.fault = func(r record) error {
+		if r.Event == eventKeepFailed {
+			return errors.New("append injected")
+		}
+		return nil
+	}
+	calls := f.s.count()
+	code, _, errOut := f.run(h)
+	if code != 1 || !strings.Contains(errOut, "keep injected") || !strings.Contains(errOut, "append injected") || f.s.count() == calls {
+		t.Fatalf("the retry whose result and keep_failed line cannot be written: %d %s (calls %d)", code, errOut, f.s.count())
+	}
+	if after := f.ledger(); len(after) != len(before) {
+		t.Fatalf("the withdrawn attempt left lines in the ledger: %+v", after[len(before):])
+	}
+	f.keep, f.fault = nil, nil // the fault is gone
+	calls = f.s.count()
+	if code, again, errOut := f.run(h); code != 0 || again.Outcome != OutcomeReviewed || again.Status != "complete" || f.s.count() == calls {
+		t.Fatalf("the run after the fault: %d %+v %s (calls %d, ledger %+v)", code, again, errOut, f.s.count(), f.ledger())
+	}
+}
+
+// When the started line cannot be taken back out either, the attempt is spent as the ledger stands, and the error says so and gives the line that leaves the attempt to come instead of only telling the
+// operator to run the same command again; appending that line after the attempt's started line, as the error says, makes the next run the one more attempt.
+func TestRetryWhoseLedgerTakesNoChangeAtAllNamesTheLineThatLeavesTheOneMoreAttempt(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root writes a read-only file")
+	}
+	f := newFixture(t)
+	h := f.repo.change(f.base, 2)
+	f.on("2026-10-04", quotaResult)
+	f.run(h)
+	f.on("2026-10-05", okResult)
+	path := filepath.Join(f.state, "ledger.jsonl")
+	f.keep = func(string, []byte) error {
+		if err := os.Chmod(path, 0o400); err != nil { // from here on the ledger takes no append and no truncation
+			t.Error(err)
+		}
+		return errors.New("keep injected")
+	}
+	code, _, errOut := f.run(h)
+	if err := os.Chmod(path, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f.keep = nil
+	if code != 1 || !strings.Contains(errOut, "keep injected") || !strings.Contains(errOut, "spent") || strings.Contains(errOut, "so run the same command again") {
+		t.Fatalf("the retry whose ledger takes no change: %d %s", code, errOut)
+	}
+	// As the ledger stands, the attempt is spent.
+	calls := f.s.count()
+	if _, sum, _ := f.run(h); sum.Outcome != OutcomeAlreadyReviewed || sum.Status != string(review.StatusUnavailable) || f.s.count() != calls {
+		t.Fatalf("the bare started line must spend the attempt: %+v", sum)
+	}
+	// The recovery the error gives: the keep_failed line, appended right after the attempt's started line.
+	var line string
+	for _, l := range strings.Split(errOut, "\n") {
+		if l = strings.TrimSpace(l); strings.HasPrefix(l, `{"time"`) && strings.Contains(l, `"event":"`+eventKeepFailed+`"`) {
+			line = l
+		}
+	}
+	if line == "" {
+		t.Fatalf("the error gives no keep_failed line to append: %s", errOut)
+	}
+	recs := f.ledger()
+	if last := recs[len(recs)-1]; last.Event != "started" || !strings.Contains(errOut, last.Time) {
+		t.Fatalf("the last line is not the attempt's started line the error names: %+v", last)
+	}
+	ledgerFile, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ledgerFile.WriteString(line + "\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := ledgerFile.Close(); err != nil {
+		t.Fatal(err)
+	}
+	calls = f.s.count()
+	if code, again, errOut := f.run(h); code != 0 || again.Outcome != OutcomeReviewed || again.Status != "complete" || f.s.count() == calls {
+		t.Fatalf("the run after the recovery: %d %+v %s (ledger %+v)", code, again, errOut, f.ledger())
+	}
+}

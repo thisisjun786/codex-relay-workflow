@@ -17,7 +17,7 @@ import (
 
 // A record is one line of ledger.jsonl. Event is started (counts toward the daily cap), finished (the patch-id is reviewed from then on), unavailable (a review that could not run at all for a reason of
 // the account or the configuration or because the runner failed: the patch-id is still open for one more attempt, see standing), lock_wait (the attempt's agy was never started because the host-wide lock
-// was not free: the attempt counts toward nothing and closes nothing), keep_failed (the attempt ran and its result could not be kept: nothing is closed and the one more attempt is not spent, but it counts toward the daily cap), failed (history only) or refused (the run rules stopped it). The line that ends a run which did not end complete -- a finished line
+// was not free: the attempt counts toward nothing and closes nothing), keep_failed (the attempt ran and its result could not be kept: nothing is closed and the one more attempt is not spent, but it counts toward the daily cap; a retry whose keep_failed line cannot be appended takes its started line back out instead, see unkeptAttempt), failed (history only) or refused (the run rules stopped it). The line that ends a run which did not end complete -- a finished line
 // whose status is partial or unavailable, or the unavailable line that opens the one more attempt -- also records the failure it knows in Reason and AgyCalled.
 type record struct {
 	Time      string `json:"time"`
@@ -60,6 +60,7 @@ type ledger struct {
 	now         func() time.Time
 	publishKept func(path string, data []byte) error // writes a kept copy; nil is the production write
 	syncDir     func(dir string) error               // fsyncs a directory; nil is crwdir.SyncDir
+	appendFault func(r record) error                 // fails the append of r when it returns an error; nil fails none (a test injects a ledger that takes no line)
 	good        int64                                // the length of the complete lines read last; a torn tail beyond it is cut off by the next append
 }
 
@@ -155,6 +156,11 @@ func dayOf(t string) string { return t[:min(len(t), len(time.DateOnly))] }
 
 // append writes r as one line and syncs it, first cutting off a torn tail.
 func (l *ledger) append(r record) error {
+	if l.appendFault != nil {
+		if err := l.appendFault(r); err != nil {
+			return err
+		}
+	}
 	f, err := os.OpenFile(l.path(), os.O_WRONLY|os.O_APPEND|os.O_CREATE|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0o600)
 	if err != nil {
 		return err
