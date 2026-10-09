@@ -193,6 +193,35 @@ func TestLoopAddWorkPhaseReusesTheContentDerivedKey(t *testing.T) {
 	before.assertUnchanged(t, cwd, slug)
 }
 
+// Post-evaluation 1c7e2a5d d1: a recorded key whose phase is not in the plan (the pre-upgrade state) cannot show what
+// prerequisites it was registered with, so a retry that names some is not the exact legacy retry.
+func TestLoopAddWorkPhaseLegacyKeyRefusesChangedDependencies(t *testing.T) {
+	cwd, slug := loopMutWorkspace(t, func(plan *goalplan.Goalplan) {
+		plan.SteeringLog = []goalplan.SteeringEntry{{
+			IdempotencyKey: "add-work-phase-c90b4bd0e709", Rationale: "cxc loop add-work-phase", Evidence: "wp-new: new",
+			AppliedAt: "2026-08-28T00:00:00.000Z", Summary: "1 op(s): add-work-phase",
+		}}
+	})
+	before := loopMutTake(t, cwd, slug)
+	for _, deps := range [][]string{{"ghost"}, {"wp-base"}, {"wp-base", "wp-live"}} {
+		argv := []string{"add-work-phase", "--session", loopMutSession, "--id", "wp-new", "--title", "new"}
+		for _, dep := range deps {
+			argv = append(argv, "--depends-on", dep)
+		}
+		out := loopMutRun(t, cwd, 1, argv...)
+		if out != "loop add-work-phase: work phase 'wp-new' has a recorded key but is not in the plan, so its --depends-on cannot be checked against what was registered" {
+			t.Errorf("%v: output = %q", deps, out)
+		}
+	}
+	before.assertUnchanged(t, cwd, slug)
+	// The exact legacy retry (no prerequisites) is still the recorded duplicate.
+	out := loopMutRun(t, cwd, 0, "add-work-phase", "--session", loopMutSession, "--id", "wp-new", "--title", "new")
+	if !strings.Contains(out, ": already applied at ") {
+		t.Fatalf("legacy retry output = %q", out)
+	}
+	before.assertUnchanged(t, cwd, slug)
+}
+
 // public-surface "comma dependency is rejected while repeated flags persist dependencies".
 func TestLoopAddWorkPhaseDependencies(t *testing.T) {
 	cwd, slug := loopMutWorkspace(t, nil)
