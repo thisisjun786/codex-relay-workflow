@@ -229,6 +229,73 @@ func TestWorktreeDelReadingCountsAnUnreadableCommand(t *testing.T) {
 	}
 }
 
+// TestReadingsReadTheCommandAsTheGuardDoes: each measure reads a command the way its gate does. The worktree guard reads with no
+// environment (an unset variable is unknown), so $HOME/tool, a program the case environment would name, is unreadable to it and
+// counted; the case environment only decides whether the cwd is a managed checkout. The memory gate refuses a command that either
+// of its readings (with the environment, and without one) cannot read. A relative cd and an argument word that is a variable stay
+// readable (CRW-1028 verifier round 3, finding 5).
+func TestReadingsReadTheCommandAsTheGuardDoes(t *testing.T) {
+	for _, c := range []struct {
+		command             string
+		unreadable, refused bool
+	}{
+		{"$HOME/tool", true, true},
+		{"$CRW_HOME/bin/tool --flag", true, true},
+		{"\"$TMPDIR\"/tool", true, true},
+		{"cd deep && $HOME/tool", true, true},
+		{"cd deep && git status", false, false},
+		{"cd ../other && ls", false, false},
+		{"echo \"$HOME\"", false, false},
+	} {
+		root := t.TempDir()
+		if err := PrepareRoot(root); err != nil {
+			t.Fatal(err)
+		}
+		input := worktreeDelCaseInput(c.command)
+		if _, err := Scenarios(root, input); err != nil {
+			t.Fatal(err)
+		}
+		env := RootEnv(root)
+		goOut, err := worktreeDelGo(input, env)
+		if err != nil {
+			t.Fatal(err)
+		}
+		unreadable, refused := worktreeDelReading(input, env, goOut)
+		if unreadable != c.unreadable || refused != c.refused {
+			t.Errorf("worktreedel %q: unreadable=%v refused=%v, want %v %v", c.command, unreadable, refused, c.unreadable, c.refused)
+		}
+	}
+	root := t.TempDir()
+	if err := PrepareRoot(root); err != nil {
+		t.Fatal(err)
+	}
+	env := RootEnv(root)
+	for _, c := range []struct {
+		command             string
+		unreadable, refused bool
+	}{
+		{"$HOME/tool", true, true},
+		{"$CODEX_HOME/bin/tool", true, true},
+		{"cd sub && $HOME/tool", true, true},
+		{"cd sub && ls", false, false},
+		{"echo \"$HOME\"", false, false},
+	} {
+		input := pyjson.Object{{Key: "payload", Value: pyjson.Object{
+			{Key: "hook_event_name", Value: "PreToolUse"}, {Key: "session_id", Value: "s1"}, {Key: "turn_id", Value: "t1"},
+			{Key: "cwd", Value: env.Root}, {Key: "tool_name", Value: "Bash"},
+			{Key: "tool_input", Value: pyjson.Object{{Key: "command", Value: c.command}}},
+		}}}
+		goOut, err := memoryGateGo(input, env)
+		if err != nil {
+			t.Fatal(err)
+		}
+		unreadable, refused := memoryGateReading(input, env, goOut)
+		if unreadable != c.unreadable || refused != c.refused {
+			t.Errorf("memorygate %q: unreadable=%v refused=%v, want %v %v", c.command, unreadable, refused, c.unreadable, c.refused)
+		}
+	}
+}
+
 // The registered command-gate targets carry the measure; the others do not.
 func TestOnlyTheCommandGateTargetsCarryAReading(t *testing.T) {
 	for _, name := range []string{"shellwrite", "memorygate", "worktreedel"} {

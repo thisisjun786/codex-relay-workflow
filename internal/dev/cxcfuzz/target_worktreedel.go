@@ -424,8 +424,8 @@ func worktreeDelDecision(value any) (string, string) {
 }
 
 // worktreeDelReading is the c2g measure for this target: the input is unreadable when the guard judges it (a PreToolUse call of Bash
-// with a cwd and a command in a managed checkout) and the shared reader cannot read the command, and the Go side refused it when the
-// guard answered deny.
+// with a cwd and a command in a managed checkout) and the guard's own reading (hook.WorktreeGuardCommandReadable) cannot read the
+// command, and the Go side refused it when the guard answered deny.
 func worktreeDelReading(input any, env Env, goOut any) (unreadable, refused bool) {
 	object, ok := input.(pyjson.Object)
 	if !ok {
@@ -441,8 +441,9 @@ func worktreeDelReading(input any, env Env, goOut any) (unreadable, refused bool
 	if cwd == "" || command == "" {
 		return false, false
 	}
-	lookup := worktreeDelEnv(object, env)
-	if !hook.WorktreeCwdManaged(cwd, lookup) || hook.ShellCommandReadable(command, cwd, lookup) {
+	// The case environment decides only whether the cwd is a managed checkout; the command is read the way the guard reads it, with
+	// no environment (a variable is unknown), so $HOME/tool is unreadable here as it is to the guard.
+	if !hook.WorktreeCwdManaged(cwd, worktreeDelEnv(object, env)) || hook.WorktreeGuardCommandReadable(command, cwd) {
 		return false, false
 	}
 	decision, _ := worktreeDelDecision(goOut)

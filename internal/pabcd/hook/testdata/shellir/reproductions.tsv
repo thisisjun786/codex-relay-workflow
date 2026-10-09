@@ -692,3 +692,14 @@ added by CRW-1028 (verifier round 2, created and rewritten programs)	cat evil.sh
 added by CRW-1028 (verifier round 2, created and rewritten programs)	cp -r evil bin; bash other/tool	CRW-1028-v2-15	row	-
 added by CRW-1028 (verifier round 2, created and rewritten programs)	cat evil.sh > other.sh; bash runner.sh	CRW-1028-v2-16	row	-
 added by CRW-1028 (verifier round 2, created and rewritten programs)	php -- script.php	CRW-1028-v2-17	row	-
+added by CRW-1028 (verifier round 3, copied contents, sibling scripts, deferred Python aliases)	cp -r -t bin evil/.; bin/tool	CRW-1028-v3-01	row	-
+added by CRW-1028 (verifier round 3, copied contents, sibling scripts, deferred Python aliases)	cp -r --target-directory=bin evil/.; bash bin/tool	CRW-1028-v3-02	row	-
+added by CRW-1028 (verifier round 3, copied contents, sibling scripts, deferred Python aliases)	cp -r evil/. bin; bash bin/tool	CRW-1028-v3-03	row	-
+added by CRW-1028 (verifier round 3, copied contents, sibling scripts, deferred Python aliases)	cp -r -t bin evil/.; bash other/tool	CRW-1028-v3-04	row	-
+added by CRW-1028 (verifier round 3, copied contents, sibling scripts, deferred Python aliases)	bash writer.sh; bash post.sh	CRW-1028-v3-05	row	-
+added by CRW-1028 (verifier round 3, copied contents, sibling scripts, deferred Python aliases)	bash outer.sh; bash post.sh	CRW-1028-v3-06	row	-
+added by CRW-1028 (verifier round 3, copied contents, sibling scripts, deferred Python aliases)	bash pair.sh	CRW-1028-v3-07	row	-
+added by CRW-1028 (verifier round 3, copied contents, sibling scripts, deferred Python aliases)	bash writer.sh; bash post.sh (writer.sh: cat evil.sh > "$DEST")	CRW-1028-v3-08	row	-
+added by CRW-1028 (verifier round 3, copied contents, sibling scripts, deferred Python aliases)	bash writer.sh; bash post.sh (writer.sh: cat evil.sh > other.sh)	CRW-1028-v3-09	row	-
+added by CRW-1028 (verifier round 3, copied contents, sibling scripts, deferred Python aliases)	python3 -c "import io; f=io.open; f('{MEMORY}/target','w').write('x')"	CRW-1028-v3-10	row	-
+added by CRW-1028 (verifier round 3, copied contents, sibling scripts, deferred Python aliases)	python3 -c "from io import open as o; o('{MEMORY}/target','w').write('x')"	CRW-1028-v3-11	row	-

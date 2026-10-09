@@ -27,6 +27,12 @@ func evaluateCommand(command, cwd string, id WorktreeIdentity) GuardVerdict {
 	return worktreeDelJudgeText(command, shellirPayloadCwd(cwd), id, 0, nil)
 }
 
+// worktreeDelRead is the guard's reading of a text: the shared reader with no environment, so a variable is unknown whatever the
+// session's environment holds. The differential fuzz counts the commands this reading refuses (WorktreeGuardCommandReadable).
+func worktreeDelRead(command, cwd string) (shellir.Result, error) {
+	return shellir.Analyze(command, cwd)
+}
+
 func worktreeDelUnreadable(id WorktreeIdentity) GuardVerdict {
 	return GuardVerdict{Deny: true, Reason: denyReason("a command the guard cannot read", id)}
 }
@@ -34,7 +40,7 @@ func worktreeDelUnreadable(id WorktreeIdentity) GuardVerdict {
 // worktreeDelJudgeText judges one text; outer is the writes of the texts that run it (a script file's body), which happen before
 // its own commands.
 func worktreeDelJudgeText(command, cwd string, id WorktreeIdentity, depth int, outer *githubPostWrites) GuardVerdict {
-	res, err := shellir.Analyze(command, cwd)
+	res, err := worktreeDelRead(command, cwd)
 	if err != nil {
 		return worktreeDelUnreadable(id)
 	}

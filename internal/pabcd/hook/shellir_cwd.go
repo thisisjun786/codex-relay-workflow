@@ -30,6 +30,21 @@ func ShellCommandReadable(command, cwd string, env host.LookupEnv) bool {
 	return err == nil
 }
 
+// WorktreeGuardCommandReadable reports whether the worktree deletion guard can read a command run in the payload's cwd: the guard
+// reads with no environment (worktreeDelRead), so a program word such as $HOME/tool is unreadable to it whatever the session's
+// environment holds. The differential fuzz counts the unreadable cases of the worktreedel target by it (criterion c2g).
+func WorktreeGuardCommandReadable(command, cwd string) bool {
+	_, err := worktreeDelRead(command, shellirPayloadCwd(cwd))
+	return err == nil
+}
+
+// MemoryGateCommandReadable reports whether the memory write gate can read a shell command run in the payload's cwd with the
+// session's environment: every reading the gate makes must succeed (memoryGateShellReadable). The differential fuzz counts the
+// unreadable cases of the memorygate target by it (criterion c2g).
+func MemoryGateCommandReadable(command, cwd string, env host.LookupEnv) bool {
+	return memoryGateShellReadable(command, shellirPayloadCwd(cwd), env)
+}
+
 // WorktreeCwdManaged reports whether the worktree deletion guard treats a cwd as the checkout of a managed worktree, the only place
 // it judges a command. The differential fuzz uses it to tell a command the guard declined to read from one it refused.
 func WorktreeCwdManaged(cwd string, env host.LookupEnv) bool {

@@ -205,11 +205,26 @@ func memoryGateClassify(tool string, input any, cwd string, env host.LookupEnv) 
 		// A shell program position the outer shell builds at run time - a -c program, an eval operand, a source
 		// operand, a shell reading a pipe, a here-string or a here-document - may hold a write the destination reader
 		// never sees, so it is a write attempt of its own and the gate fails closed (CRW-726, beside CRW-741's check).
-		if _, err := shellir.Analyze(command, dir); err != nil {
+		if !memoryGateShellReadable(command, dir, env) {
 			return MemoryWriteAttempt{Surface: "shell", Target: "(a program the gate cannot read: the command reader refused it)"}
 		}
 	}
 	return MemoryWriteAttempt{}
+}
+
+// memoryGateShellReadable is whether every reading the gate makes of a shell command succeeds: the destination reading with the
+// session's environment, and the readings with none in the payload's directory and in no directory (the f-string check). A command
+// one of them refuses is a write attempt of its own. The differential fuzz counts the commands this refuses
+// (MemoryGateCommandReadable).
+func memoryGateShellReadable(command, dir string, env host.LookupEnv) bool {
+	if _, err := shellir.AnalyzeEnv(command, dir, env); err != nil {
+		return false
+	}
+	if _, err := shellir.Analyze(command, dir); err != nil {
+		return false
+	}
+	_, err := shellir.Analyze(command, "")
+	return err == nil
 }
 
 // memoryGateToolName: flat_tool_name joins the namespace and the name with no separator, so the hook sees

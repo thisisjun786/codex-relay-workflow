@@ -3,8 +3,9 @@ package shellir
 import "testing"
 
 // TestProgramCreatedInADirectoryByTheText: cp, mv, install and ln write a file inside a directory operand (the last operand, or the
-// -t / --target-directory one) named like the source. A program word that names such a file is what the text wrote
-// (CRW-1028 verifier finding 4).
+// -t / --target-directory one) named like the source; a source that names a directory's contents (evil/.) fills the directory
+// operand itself. A program word that names such a file is what the text wrote
+// (CRW-1028 verifier finding 4; round 3 finding 1).
 func TestProgramCreatedInADirectoryByTheText(t *testing.T) {
 	for _, cmd := range []string{
 		"cp -t bin evil/tool; bin/tool",
@@ -44,6 +45,18 @@ func TestProgramCreatedInADirectoryByTheText(t *testing.T) {
 		// >&FILE writes the file (verifier round 2)
 		"cat evil.sh >&tool.sh; ./tool.sh",
 		"echo x 1>&tool.sh; ./tool.sh",
+		// a source that names a directory's contents (dir/.) fills the target directory itself (verifier round 3)
+		"cp -r -t bin evil/.; bin/tool",
+		"cp -r --target-directory=bin evil/.; bin/tool",
+		"cp -r --target-directory bin evil/./; bin/sub/tool",
+		"cp -rt bin evil/.; ./bin/tool",
+		"cp -r evil/. bin; bin/tool",
+		"cp -a evil/. bin/; bin/tool",
+		"cp -t bin evil/.; bin/tool",
+		"cp -r -t bin evil/..; bin/tool",
+		"cp -r -t bin .; bin/tool",
+		"cp -r . bin; bin/tool",
+		"cd sub; cp -r -t bin ../evil/.; bin/tool",
 	} {
 		analyzeUnreadable(t, cmd, true)
 	}
@@ -65,6 +78,9 @@ func TestProgramCreatedInADirectoryByTheText(t *testing.T) {
 		"echo x 2>&1; ./tool",
 		"echo x >&-; ./tool",
 		"cat evil.sh >&other.sh; ./tool.sh",
+		"cp -r -t bin evil/.; other/tool",
+		"cp -r --target-directory=bin evil/.; ./tool",
+		"cp -r evil/. bin; other/tool",
 	} {
 		analyzeUnreadable(t, cmd, false)
 	}

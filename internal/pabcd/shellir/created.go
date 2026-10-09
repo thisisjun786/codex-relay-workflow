@@ -86,8 +86,9 @@ func (w *walker) noteCopied(e Exec, add func(string, Dir)) {
 // is a file, or a directory the sources are written into when it is one: the reader cannot say which, so both are recorded
 // (the last operand as a file, and each source name below it as the tree a copied directory fills). A destination that a
 // directory source may become itself (cp -r evil bin, cp -rT evil bin, mv evil bin, ln -s evildir bin) is a tree as a whole:
-// every file below it comes from the source. A single operand of ln links into the working directory. An operand the reader
-// cannot evaluate is not returned.
+// every file below it comes from the source; so is a directory operand that a source naming a directory's contents (evil/.,
+// cp -r -t bin evil/.) fills. A single operand of ln links into the working directory. An operand the reader cannot evaluate is
+// not returned.
 func CopiedPaths(e Exec) (files, trees []string) {
 	if e.Name != "ln" && e.Name != "cp" && e.Name != "mv" && e.Name != "install" {
 		return nil, nil
@@ -162,6 +163,8 @@ func CopiedPaths(e Exec) (files, trees []string) {
 			}
 			base := path.Base(strings.TrimSuffix(s.Value, "/"))
 			if base == "" || base == "." || base == ".." || base == "/" {
+				// evil/. (or ., .., /) names a directory's contents, which the copy writes into the directory operand itself.
+				trees = append(trees, strings.TrimSuffix(dir.Value, "/"))
 				continue
 			}
 			trees = append(trees, path.Join(dir.Value, base))

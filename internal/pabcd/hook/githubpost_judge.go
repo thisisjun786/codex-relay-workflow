@@ -330,28 +330,67 @@ func githubPostDirectPath(e shellir.Exec) bool {
 }
 
 // githubPostJudgeDirect reads the file a command runs by a relative path, as a script the shell runs: a file that is missing, not
-// a regular file, over 1 MiB, or in a directory the reader does not know is unreadable. A binary (no #! line and a NUL in the
-// first 4 KiB) is not a script and is not judged. A script with a shell shebang, or none (the shell runs it), is judged as shell
-// text; a script of another interpreter that names a post is refused (its lines cannot satisfy the line rule).
+// a regular file, or in a directory the reader does not know is unreadable. A binary (no #! line and a NUL in the first 4 KiB) is not
+// a script and is not judged, whatever its size; a script over 1 MiB is unreadable. A script with a shell shebang, or none (the shell
+// runs it), is judged as shell text; a script of another interpreter that names a post is refused (its lines cannot satisfy the line
+// rule).
 func githubPostJudgeDirect(e shellir.Exec, depth int, writes *githubPostWrites) (githubPostSite, bool) {
 	unread := githubPostSite{githubPostRuleUnread, githubPostWhereCommand}
 	if depth >= githubPostMaxScriptDepth || !e.Dir.Known {
 		return unread, true
 	}
-	b, ok := githubPostReadScriptBytes(e.Program.Value, e.Dir.Path)
-	if !ok {
+	body, kind := githubPostReadDirect(e.Program.Value, e.Dir.Path)
+	switch kind {
+	case githubPostFileUnreadable:
+		return unread, true
+	case githubPostFileBinary:
+		return githubPostSite{}, false
+	case githubPostFileShell:
+		return githubPostJudgeTextDepth(body, e.Dir.Path, depth+1, writes)
+	}
+	if githubPostScriptMentionsPost(body) {
 		return unread, true
 	}
-	body := string(b)
+	return githubPostSite{}, false
+}
+
+// githubPostFileKind is what a file run by path holds.
+type githubPostFileKind int
+
+const (
+	githubPostFileUnreadable githubPostFileKind = iota // missing, not a regular file, or a script over 1 MiB
+	githubPostFileBinary                               // no #! line and a NUL in the first 4 KiB
+	githubPostFileShell                                // a #! line naming a shell, or none: the shell runs the text
+	githubPostFileOther                                // a #! line naming another interpreter
+)
+
+// githubPostDirectHead is how much of a file run by path decides whether it is a binary.
+const githubPostDirectHead = 4096
+
+// githubPostReadDirect opens a file run by a relative path once and reads its head: a file whose head has no #! line and a NUL is a
+// binary and is read no further, so an executable of any size is not refused; any other file is a script, read whole up to 1 MiB.
+func githubPostReadDirect(name, dir string) (string, githubPostFileKind) {
+	file, ok := githubPostRegularFile(githubPostScriptPath(name, dir))
+	if !ok {
+		return "", githubPostFileUnreadable
+	}
+	defer file.Close()
+	head := make([]byte, githubPostDirectHead)
+	n, err := io.ReadFull(file, head)
+	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+		return "", githubPostFileUnreadable
+	}
+	head = head[:n]
+	if !bytes.HasPrefix(head, []byte("#!")) && bytes.IndexByte(head, 0) >= 0 {
+		return "", githubPostFileBinary
+	}
+	rest, err := io.ReadAll(io.LimitReader(file, int64(githubPostMaxFileBytes-n)+1))
+	if err != nil || n+len(rest) > githubPostMaxFileBytes {
+		return "", githubPostFileUnreadable
+	}
+	body := string(head) + string(rest)
 	if !strings.HasPrefix(body, "#!") {
-		head := b
-		if len(head) > 4096 {
-			head = head[:4096]
-		}
-		if bytes.IndexByte(head, 0) >= 0 {
-			return githubPostSite{}, false
-		}
-		return githubPostJudgeTextDepth(body, e.Dir.Path, depth+1, writes)
+		return body, githubPostFileShell
 	}
 	line, _, _ := strings.Cut(body, "\n")
 	words := strings.Fields(strings.TrimPrefix(line, "#!"))
@@ -368,14 +407,19 @@ func githubPostJudgeDirect(e shellir.Exec, depth int, writes *githubPostWrites) 
 			}
 		}
 	}
-	switch interp {
+	if githubPostShellName(interp) {
+		return body, githubPostFileShell
+	}
+	return body, githubPostFileOther
+}
+
+// githubPostShellName is whether a program name is a POSIX-family shell that reads a script file as shell text.
+func githubPostShellName(name string) bool {
+	switch name {
 	case "sh", "bash", "dash", "zsh", "ksh", "mksh", "ash":
-		return githubPostJudgeTextDepth(body, e.Dir.Path, depth+1, writes)
+		return true
 	}
-	if githubPostScriptMentionsPost(body) {
-		return unread, true
-	}
-	return githubPostSite{}, false
+	return false
 }
 
 // githubPostScriptMentionsPost is whether the text of a script of another interpreter spells a gh command (gh pr, gh api, ...). It is
@@ -384,20 +428,6 @@ func githubPostJudgeDirect(e shellir.Exec, depth int, writes *githubPostWrites) 
 func githubPostScriptMentionsPost(body string) bool {
 	re := regexp.MustCompile(`(?:^|[^A-Za-z0-9_./-])gh\s+(?:pr|issue|api|release|repo|gist|workflow|run|label|project|extension|auth|alias|secret|ruleset|cache|codespace)\b`)
 	return re.MatchString(body)
-}
-
-// githubPostReadScriptBytes is githubPostReadScript's read: the bytes of a regular file of at most 1 MiB.
-func githubPostReadScriptBytes(name, cwd string) ([]byte, bool) {
-	file, ok := githubPostRegularFile(githubPostScriptPath(name, cwd))
-	if !ok {
-		return nil, false
-	}
-	defer file.Close()
-	b, err := io.ReadAll(io.LimitReader(file, githubPostMaxFileBytes+1))
-	if err != nil || len(b) > githubPostMaxFileBytes {
-		return nil, false
-	}
-	return b, true
 }
 
 // githubPostWrites is the set of files the records of a text write, computed once per text: a text of thousands of script runs
@@ -435,13 +465,37 @@ func (w *githubPostWrites) reaches(p string) bool {
 	return false
 }
 
-// githubPostWritesOf collects the destinations of every record of a text other than a script file record, by the identity the
-// kernel gives them (links resolved). A link made in the text (ln) can alias any file, so it counts as a write to a name unknown.
+// githubPostWritesOf collects the destinations of every record of a text, by the identity the kernel gives them (links resolved).
+// A link made in the text (ln) can alias any file, so it counts as a write to a name unknown. A script file a shell runs or sources,
+// and a shell script run by path, write what their bodies write, however deep: those writes happen before the scripts that run after
+// them, in this text and in the texts around it (bash writer.sh; bash post.sh). A body whose writes cannot be computed (unreadable,
+// over the limit, deeper than githubPostMaxScriptDepth) writes a file unknown. A binary or a script of another interpreter is a
+// program like any installed one: its writes are not read.
 func githubPostWritesOf(execs []shellir.Exec, outer *githubPostWrites) *githubPostWrites {
-	w := &githubPostWrites{files: map[string]bool{}, existing: map[int64][]os.FileInfo{}, outer: outer}
+	w := newGithubPostWrites(outer)
+	w.collect(execs, 0, map[string]*githubPostWrites{})
+	return w
+}
+
+func newGithubPostWrites(outer *githubPostWrites) *githubPostWrites {
+	return &githubPostWrites{files: map[string]bool{}, existing: map[int64][]os.FileInfo{}, outer: outer}
+}
+
+// collect adds the writes of the records of one text; depth counts the script bodies around it, memo holds the writes of each body
+// already read (by script identity and directory), so a text that runs one script many times reads it once.
+func (w *githubPostWrites) collect(execs []shellir.Exec, depth int, memo map[string]*githubPostWrites) {
 	for _, o := range execs {
 		if o.Kind == shellir.KindScriptFile {
+			switch o.Name {
+			case "sed", "awk", "gawk", "mawk", "nawk":
+				// a sed or awk program file is not shell text
+			default:
+				w.merge(githubPostBodyWrites(o.Script, o.Dir, depth, memo, false))
+			}
 			continue
+		}
+		if githubPostDirectPath(o) {
+			w.merge(githubPostBodyWrites(o.Program, o.Dir, depth, memo, true))
 		}
 		if o.Name == "ln" {
 			w.unknown = true
@@ -476,7 +530,60 @@ func githubPostWritesOf(execs []shellir.Exec, outer *githubPostWrites) *githubPo
 			}
 		}
 	}
-	return w
+}
+
+// githubPostBodyWrites is the writes of the body of a script a shell runs (direct: a file run by path, which may be a binary or a
+// script of another interpreter, whose writes are not read). A body the reader cannot read writes a file unknown.
+func githubPostBodyWrites(script shellir.Word, dir shellir.Dir, depth int, memo map[string]*githubPostWrites, direct bool) *githubPostWrites {
+	unknown := &githubPostWrites{unknown: true}
+	if !script.Known || !dir.Known || depth >= githubPostMaxScriptDepth {
+		return unknown
+	}
+	key := githubPostIdentity(githubPostScriptPath(script.Value, dir.Path)) + "\x00" + dir.Path
+	if got, ok := memo[key]; ok {
+		return got
+	}
+	memo[key] = unknown // a script that runs itself is not read again
+	var body string
+	if direct {
+		var kind githubPostFileKind
+		body, kind = githubPostReadDirect(script.Value, dir.Path)
+		switch kind {
+		case githubPostFileBinary, githubPostFileOther:
+			memo[key] = nil
+			return nil
+		case githubPostFileUnreadable:
+			return unknown
+		}
+	} else {
+		var ok bool
+		if body, ok = githubPostReadScript(script.Value, dir.Path); !ok {
+			return unknown
+		}
+	}
+	res, err := shellir.Analyze(body, dir.Path)
+	if err != nil {
+		return unknown
+	}
+	got := newGithubPostWrites(nil)
+	got.collect(res.Execs, depth+1, memo)
+	memo[key] = got
+	return got
+}
+
+// merge adds the writes of a script body to the writes of the text that runs it.
+func (w *githubPostWrites) merge(o *githubPostWrites) {
+	if o == nil {
+		return
+	}
+	w.unknown = w.unknown || o.unknown
+	for f := range o.files {
+		w.files[f] = true
+	}
+	for size, fis := range o.existing {
+		w.existing[size] = append(w.existing[size], fis...)
+	}
+	w.trees = append(w.trees, o.trees...)
 }
 
 // githubPostIdentity is the name the kernel gives a path: its links resolved through the last component when it exists, through

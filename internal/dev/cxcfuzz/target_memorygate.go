@@ -284,7 +284,8 @@ func memoryGatePayload(rng *rand.Rand, dests []string, size int) pyjson.Object {
 }
 
 // memoryGateReading is the c2g measure for this target: the input is unreadable when the payload is a PreToolUse call of a shell
-// tool whose command the shared reader cannot read, and the Go side refused it when the gate answered deny.
+// tool whose command one of the gate's own readings (hook.MemoryGateCommandReadable) cannot read, and the Go side refused it when
+// the gate answered deny.
 func memoryGateReading(input any, env Env, goOut any) (unreadable, refused bool) {
 	payload, found := field(input, "payload")
 	if !found {
@@ -310,7 +311,7 @@ func memoryGateReading(input any, env Env, goOut any) (unreadable, refused bool)
 	if value, found := field(payload, "cwd"); found {
 		cwd, _ = value.(string)
 	}
-	if hook.ShellCommandReadable(command, cwd, memoryGateEnvOf(env)) {
+	if hook.MemoryGateCommandReadable(command, cwd, memoryGateEnvOf(env)) {
 		return false, false
 	}
 	decision, _ := memoryGateAnswer(goOut)
