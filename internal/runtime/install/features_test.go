@@ -291,11 +291,13 @@ func TestFeaturesDisableBranches(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(h.home, "config.toml"), []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
+	// CRW-1143 (port: fixed): with the list unreadable the disables cannot be confirmed, so they are reported as failures
+	// (exit 1) and stay crw's for a retry; the keys and the notes are reported as before.
 	h.env = h.env.With("CRW499_FAKE_LIST_FAIL", "1")
-	out := h.success("disable")
-	for _, text := range []string{"disabled [multi_agent, goals, default_mode_request_user_input]; kept pre-existing [hooks]", "restored keys: memories.dedicated_tools", "note: config.toml changed since activation; reverted per key", "note: could not read 'codex features list'; reverted flags from the manifest alone"} {
-		if !strings.Contains(out, text) {
-			t.Fatal(out)
+	code, out, errOut := h.run("disable")
+	for _, text := range []string{"disabled [none]; kept pre-existing [hooks]", "restored keys: memories.dedicated_tools", "note: config.toml changed since activation; reverted per key", "note: could not read 'codex features list'; reverted flags from the manifest alone"} {
+		if code != 1 || !strings.Contains(out, text) || !strings.Contains(errOut, "could not disable 'multi_agent' (exit 0)") {
+			t.Fatalf("%d %q %q", code, out, errOut)
 		}
 	}
 	if !strings.Contains(h.read("config.toml"), "# user edit") {

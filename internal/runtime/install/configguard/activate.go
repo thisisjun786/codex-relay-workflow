@@ -406,41 +406,75 @@ func Activate(deps ActivateDeps) (*InstallManifest, error) {
 		}
 		return m, txDurability(unsynced)
 	}
+	// The flags first: a hard flag that fails stops the activation, and the flags enabled before it are recorded as crw's,
+	// so the deactivation reverts them (CRW-1153).
+	var hardErr error
+	ran := false
 	for i, effect := range in.Effects {
+		if effect.Kind != intentFlag || hardErr != nil {
+			continue
+		}
 		if e = in.attempt(i, &unsynced); e != nil {
 			return finish(e)
 		}
-		switch effect.Kind {
-		case intentFlag:
-			key := DeclaredFeature(effect.Name)
-			r := deps.Run([]string{"features", "enable", effect.Name})
+		ran = true
+		key := DeclaredFeature(effect.Name)
+		r := deps.Run([]string{"features", "enable", effect.Name})
+		f := m.Flags[effect.Name]
+		if r.ExitCode == 0 {
+			f.EnabledByCodexclaw = true
+		} else {
+			f.EnableFailed = true
+			f.Failure = &FailureRecord{float64(r.ExitCode), activationFailureMessage(r.Stderr)}
+			if !slices.Contains(SoftFeatures(), key) {
+				hardErr = fmt.Errorf("codex features enable %s failed (exit %d): %s; the flags enabled before it are recorded, and 'crw install features disable' reverts them", key, r.ExitCode, text.Trim(r.Stderr))
+			}
+		}
+		m.Flags[effect.Name] = f
+	}
+	// An exit 0 is not proof (CRW-1143): the flags are read back from the same config, and only a flag observed enabled is
+	// crw's. A list that cannot be read proves nothing either way, so nothing is committed as changed or unchanged: the
+	// intent stays for the next explicit command to measure and record.
+	if ran {
+		observed, err := ReadFeatureStates(deps.Run)
+		if err != nil {
+			return nil, fmt.Errorf("the flags were asked to change but could not be read back (%w); the change is kept in %s, and the next 'crw install features enable' or 'disable' records what is in place", err, intentPath(deps.CodexHome))
+		}
+		for _, effect := range in.Effects {
 			f := m.Flags[effect.Name]
-			if r.ExitCode == 0 {
-				f.EnabledByCodexclaw = true
-			} else {
-				f.EnableFailed = true
-				f.Failure = &FailureRecord{float64(r.ExitCode), activationFailureMessage(r.Stderr)}
-			}
-			m.Flags[effect.Name] = f
-			if r.ExitCode != 0 && !slices.Contains(SoftFeatures(), key) {
-				// A hard flag that fails stops the activation, and the flags enabled before it are recorded as crw's, so
-				// the deactivation reverts them (CRW-1153).
-				return finish(fmt.Errorf("codex features enable %s failed (exit %d): %s; the flags enabled before it are recorded, and 'crw install features disable' reverts them", key, r.ExitCode, text.Trim(r.Stderr)))
-			}
-		case intentKey:
-			// The whole read-modify-write is under the sidecar lock every CRW writer of config.toml
-			// takes (CRW-844): reading before the lock and publishing after it would let a retrust that
-			// published in that window be overwritten with content built from the pre-retrust bytes.
-			res, e := activationSetKeyLocked(path, effect.Table, effect.Key, &unsynced)
-			if e != nil {
-				return finish(e)
-			}
-			if res.Action == TomlUnsupportedValue {
+			if effect.Kind != intentFlag || !f.EnabledByCodexclaw || observed[effect.Name] == FeatureEnabled {
 				continue
 			}
-			m.TableKeys[effect.Name] = TableKeyRecord{effect.Table, effect.Key, effect.Prior, effect.Applied, effect.Owned || res.Changed}
-			m.tableOrder = append(m.tableOrder, effect.Name)
+			f.EnabledByCodexclaw, f.EnableFailed = false, true
+			f.Failure = &FailureRecord{0, "codex features enable exited 0, but the flag reads " + string(observed[effect.Name])}
+			m.Flags[effect.Name] = f
+			if hardErr == nil && !slices.Contains(SoftFeatures(), DeclaredFeature(effect.Name)) {
+				hardErr = fmt.Errorf("codex features enable %s exited 0, but the flag reads %s; the flags observed enabled are recorded, and 'crw install features disable' reverts them", effect.Name, observed[effect.Name])
+			}
 		}
+	}
+	if hardErr != nil {
+		return finish(hardErr)
+	}
+	for i, effect := range in.Effects {
+		if effect.Kind != intentKey {
+			continue
+		}
+		if e = in.attempt(i, &unsynced); e != nil {
+			return finish(e)
+		}
+		// The whole read-modify-write is under the sidecar lock every CRW writer of config.toml
+		// takes (CRW-844): reading before the lock and publishing after it would let a retrust that
+		// published in that window be overwritten with content built from the pre-retrust bytes.
+		res, e := activationSetKeyLocked(path, effect.Table, effect.Key, &unsynced)
+		if e != nil {
+			return finish(e)
+		}
+		if res.Action == TomlUnsupportedValue {
+			continue
+		}
+		m.TableKeys[effect.Name] = TableKeyRecord{effect.Table, effect.Key, effect.Prior, effect.Applied, effect.Owned || res.Changed}
+		m.tableOrder = append(m.tableOrder, effect.Name)
 	}
 	return finish(nil)
 }

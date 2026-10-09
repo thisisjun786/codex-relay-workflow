@@ -71,15 +71,12 @@ func runFeatures(ctx context.Context, args []string, env scope.Env, stdout, stde
 			return 1
 		}
 	case "status":
-		var state map[string]bool
-		state, err = configguard.ReadDeclaredState(run)
+		// The observed state of each flag (CRW-1143): enabled, disabled, or unsupported by this Codex.
+		var states map[string]configguard.FeatureState
+		states, err = configguard.ReadFeatureStates(run)
 		if err == nil {
 			for _, key := range configguard.DeclaredFeatures() {
-				value := "disabled"
-				if state[string(key)] {
-					value = "enabled"
-				}
-				fmt.Fprintf(stdout, "%s: %s\n", key, value)
+				fmt.Fprintf(stdout, "%s: %s\n", key, states[string(key)])
 			}
 		}
 	}

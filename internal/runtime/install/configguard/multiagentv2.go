@@ -207,6 +207,11 @@ func SetMultiAgentV2State(deps MultiAgentV2Deps, version MultiAgentVersion) (*Mu
 			}
 		}
 	}
+	// An exit 0 is not proof (CRW-1143): the state is read back from the same config, and a runner that changed nothing,
+	// removed the file or wrote the other value is not a change.
 	state := ReadMultiAgentV2State(deps)
-	return &MultiAgentV2Change{state.Version, state.V2Enabled, true, state.MultiAgentV2Context}, nil
+	if state.V2Enabled != want {
+		return nil, fmt.Errorf("codex features %s multi_agent_v2 exited 0, but config.toml still reads %s", op, state.Version)
+	}
+	return &MultiAgentV2Change{state.Version, state.V2Enabled, multiAgentV2EnabledIn(string(pre)) != state.V2Enabled, state.MultiAgentV2Context}, nil
 }

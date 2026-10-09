@@ -2,6 +2,7 @@ package configguard
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -289,10 +290,12 @@ func TestActivateFailedConfigPublicationPreservesBytes(t *testing.T) {
 	state := allActivationFlags()
 	state["hooks"] = false
 	deps := activationDeps(t, home, state, &calls)
+	hooks := false
 	deps.Run = func(a []string) CodexRunResult {
 		if a[1] == "list" {
-			return CodexRunResult{Stdout: "multi_agent true\ngoals true\nhooks false\ndefault_mode_request_user_input true"}
+			return CodexRunResult{Stdout: fmt.Sprintf("multi_agent true\ngoals true\nhooks %t\ndefault_mode_request_user_input true", hooks)}
 		}
+		hooks = true
 		if e := os.Chmod(path, 0444); e != nil {
 			t.Fatal(e)
 		}

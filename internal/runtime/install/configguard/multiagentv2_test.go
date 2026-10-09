@@ -180,7 +180,8 @@ func TestMultiAgentV2RunnerOutcomes(t *testing.T) {
 				if err == nil {
 					t.Fatal("post read failure swallowed")
 				}
-			} else if err != nil || !got.Changed || got.Version != MultiAgentV1 || got.V2Enabled {
+			} else if err == nil || got != nil || !strings.Contains(err.Error(), "still reads v1") {
+				// CRW-1143 (port: fixed): an exit-0 runner whose config still reads v1 is not a change.
 				t.Fatalf("observed state = %+v, %v", got, err)
 			}
 		})

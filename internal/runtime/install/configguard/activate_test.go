@@ -67,7 +67,8 @@ func TestActivateSelectedFlagsBackupAndManifest(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	want := [][]string{{"features", "list"}, {"features", "enable", "hooks"}, {"features", "enable", "default_mode_request_user_input"}}
+	// The last call is the read-back of the flags it enabled (CRW-1143, intentionally changed from the oracle's calls).
+	want := [][]string{{"features", "list"}, {"features", "enable", "hooks"}, {"features", "enable", "default_mode_request_user_input"}, {"features", "list"}}
 	if !reflect.DeepEqual(calls, want) {
 		t.Fatalf("calls = %v", calls)
 	}
@@ -111,7 +112,7 @@ func TestActivateSelectedFlagsBackupAndManifest(t *testing.T) {
 	if err = json.Unmarshal(recorded, &oracle); err != nil {
 		t.Fatal(err)
 	}
-	if strings.ReplaceAll(raw, home, "<HOME>") != oracle.Manifest || content != oracle.Config || activationRead(t, *m.BackupPath) != oracle.Backup || !reflect.DeepEqual(calls, oracle.Calls) {
+	if strings.ReplaceAll(raw, home, "<HOME>") != oracle.Manifest || content != oracle.Config || activationRead(t, *m.BackupPath) != oracle.Backup || !reflect.DeepEqual(calls[:len(calls)-1], oracle.Calls) {
 		t.Fatal("activation differs from the recorded byte-exact manifest/config/backup or runner calls")
 	}
 }

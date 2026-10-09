@@ -230,7 +230,7 @@ func recoverIntent(home, path string, run CodexRunner) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	var flags map[string]bool
+	var flags map[string]FeatureState
 	var recorded []string
 	for _, e := range in.Effects {
 		if !e.Attempted {
@@ -242,12 +242,12 @@ func recoverIntent(home, path string, run CodexRunner) ([]string, error) {
 				return nil, fmt.Errorf("an interrupted 'crw install features enable' is pending in %s; run 'crw install features enable' or 'disable' first, which can read the flags it changed. Nothing was changed", intentPath(home))
 			}
 			if flags == nil {
-				if flags, err = ReadDeclaredState(run); err != nil {
+				if flags, err = ReadFeatureStates(run); err != nil {
 					return nil, fmt.Errorf("an interrupted crw change is pending in %s, and the flags it may have changed cannot be read (%w); nothing was changed", intentPath(home), err)
 				}
 			}
 			f := m.Flags[e.Name]
-			if flags[e.Name] && !f.PriorEnabled && !f.EnabledByCodexclaw {
+			if flags[e.Name] == FeatureEnabled && !f.PriorEnabled && !f.EnabledByCodexclaw {
 				f.EnabledByCodexclaw, f.EnableFailed, f.Failure = true, false, nil
 				m.Flags[e.Name] = f
 				if !slices.Contains(m.flagOrder, e.Name) {

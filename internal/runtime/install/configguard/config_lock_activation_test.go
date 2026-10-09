@@ -129,6 +129,7 @@ func TestActivateHoldsTheConfigLockWhileItEnablesFlags(t *testing.T) {
 		{"features", "enable", "goals"},
 		{"features", "enable", "hooks"},
 		{"features", "enable", "default_mode_request_user_input"},
+		{"features", "list"}, // the read-back of the flags it enabled (CRW-1143)
 	}
 	if !reflect.DeepEqual(calls, want) {
 		t.Fatalf("calls = %v, want %v", calls, want)

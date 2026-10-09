@@ -698,6 +698,23 @@ func Deactivate(deps DeactivateDeps) (*DeactivateResult, error) {
 		}
 		r.Disabled = append(r.Disabled, key)
 	}
+	// An exit 0 is not proof (CRW-1143): the flags are read back, and a flag still enabled, or one that cannot be read back,
+	// is a failure that keeps the ownership.
+	if len(r.Disabled) > 0 {
+		observed, err := ReadFeatureStates(deps.Run)
+		confirmed := []string{}
+		for _, key := range r.Disabled {
+			switch {
+			case err != nil:
+				r.Failed = append(r.Failed, FailedFlag{key, 0, "codex features disable exited 0, but the flags could not be read back to confirm it: " + err.Error()})
+			case observed[key] == FeatureEnabled:
+				r.Failed = append(r.Failed, FailedFlag{key, 0, "codex features disable exited 0, but the flag is still enabled"})
+			default:
+				confirmed = append(confirmed, key)
+			}
+		}
+		r.Disabled = confirmed
+	}
 	// A deactivation that reverted everything it owned releases the manifest: the records stay as evidence, and the next
 	// activation starts a new baseline (CRW-1145). A flag that failed to disable, or a key whose provenance could not be
 	// proven, is unresolved ownership and keeps the manifest live for a retry. The release is written only under the config

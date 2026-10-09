@@ -64,16 +64,74 @@ func ParseFeaturesList(stdout string) map[string]bool {
 	return result
 }
 
-// ReadDeclaredState calls only features/list and treats unseen declared flags as disabled.
-func ReadDeclaredState(run CodexRunner) (map[string]bool, error) {
+// FeatureState is what "codex features list" says about a declared flag (CRW-1143).
+type FeatureState string
+
+// The observed states. Unsupported is a flag the CLI lists no row for (an upstream without it); Unavailable is a list that
+// could not be read, which says nothing about any flag.
+const (
+	FeatureEnabled     FeatureState = "enabled"
+	FeatureDisabled    FeatureState = "disabled"
+	FeatureUnsupported FeatureState = "unsupported"
+	FeatureUnavailable FeatureState = "unavailable"
+)
+
+// ParseFeatureStates reads the declared flags' rows: the exact name first, any stage words in the middle, and true or false
+// last. A declared row that is cut short or ends in anything else, and two rows for one flag that disagree, are refused
+// rather than read as disabled (the oracle's ParseFeaturesList dropped them silently, so a later or earlier row decided). A
+// declared flag without a row is unsupported.
+func ParseFeatureStates(stdout string) (map[string]FeatureState, error) {
+	declared := DeclaredFeatures()
+	seen := map[string]FeatureState{}
+	for _, line := range text.SplitLines(stdout) {
+		fields := strings.FieldsFunc(line, tomlIsSpace)
+		if len(fields) == 0 || !slices.Contains(declared, DeclaredFeature(fields[0])) {
+			continue
+		}
+		var state FeatureState
+		switch last := fields[len(fields)-1]; {
+		case len(fields) >= 2 && strings.EqualFold(last, "true"):
+			state = FeatureEnabled
+		case len(fields) >= 2 && strings.EqualFold(last, "false"):
+			state = FeatureDisabled
+		default:
+			return nil, fmt.Errorf("codex features list has a row for %s that crw cannot read (%q), so the flag state is unknown", fields[0], text.Trim(line))
+		}
+		if prior, ok := seen[fields[0]]; ok && prior != state {
+			return nil, fmt.Errorf("codex features list has conflicting rows for %s, so the flag state is unknown", fields[0])
+		}
+		seen[fields[0]] = state
+	}
+	states := map[string]FeatureState{}
+	for _, key := range declared {
+		state, ok := seen[string(key)]
+		if !ok {
+			state = FeatureUnsupported
+		}
+		states[string(key)] = state
+	}
+	return states, nil
+}
+
+// ReadFeatureStates calls only features/list.
+func ReadFeatureStates(run CodexRunner) (map[string]FeatureState, error) {
 	res := run([]string{"features", "list"})
 	if res.ExitCode != 0 {
 		return nil, fmt.Errorf("codex features list failed (exit %d): %s", res.ExitCode, text.Trim(res.Stderr))
 	}
-	parsed := ParseFeaturesList(res.Stdout)
+	return ParseFeatureStates(res.Stdout)
+}
+
+// ReadDeclaredState is ReadFeatureStates as enabled or not: a flag without a row reads as not enabled, and a list crw cannot
+// read is an error.
+func ReadDeclaredState(run CodexRunner) (map[string]bool, error) {
+	states, err := ReadFeatureStates(run)
+	if err != nil {
+		return nil, err
+	}
 	state := make(map[string]bool)
-	for _, key := range DeclaredFeatures() {
-		state[string(key)] = parsed[string(key)]
+	for key, s := range states {
+		state[key] = s == FeatureEnabled
 	}
 	return state, nil
 }

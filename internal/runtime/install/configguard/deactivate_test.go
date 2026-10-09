@@ -2,6 +2,7 @@ package configguard
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -206,6 +207,7 @@ func TestDeactivateFlagPathsAndOrdering(t *testing.T) {
 			m.flagOrder = []string{"multi_agent", "goals", "hooks", "default_mode_request_user_input", "unknown", "failed"}
 			deactivationSaveManifest(t, home, m)
 			var calls [][]string
+			goals := true
 			run := func(a []string) CodexRunResult {
 				calls = append(calls, slices.Clone(a))
 				if strings.Contains(activationRead(t, path), "dedicated_tools") {
@@ -215,19 +217,29 @@ func TestDeactivateFlagPathsAndOrdering(t *testing.T) {
 					if broken {
 						return CodexRunResult{ExitCode: 127}
 					}
-					return CodexRunResult{Stdout: "goals stable true\nhooks stable false\n"}
+					return CodexRunResult{Stdout: fmt.Sprintf("goals stable %t\nhooks stable false\n", goals)}
 				}
 				if a[2] == "failed" {
 					return CodexRunResult{ExitCode: 9}
+				}
+				if a[2] == "goals" {
+					goals = false
 				}
 				return CodexRunResult{}
 			}
 			r, err := Deactivate(deactivationDeps(home, run))
 			want := []string{"goals", "unknown"}
+			failed := []string{"failed"}
 			if broken {
-				want = []string{"goals", "hooks", "unknown"}
+				// CRW-1143: with the list unreadable an exit 0 cannot be confirmed, so those flags stay crw's and are
+				// reported as failures.
+				want, failed = []string{}, []string{"failed", "goals", "hooks", "unknown"}
 			}
-			if err != nil || r.FeaturesStateUnavailable != broken || !reflect.DeepEqual(r.Disabled, want) || !reflect.DeepEqual(r.SkippedPreExisting, []string{"multi_agent"}) {
+			var gotFailed []string
+			for _, f := range r.Failed {
+				gotFailed = append(gotFailed, f.Key)
+			}
+			if err != nil || r.FeaturesStateUnavailable != broken || !reflect.DeepEqual(r.Disabled, want) || !reflect.DeepEqual(gotFailed, failed) || !reflect.DeepEqual(r.SkippedPreExisting, []string{"multi_agent"}) {
 				t.Fatalf("result=%+v error=%v calls=%v", r, err, calls)
 			}
 			if !broken && !reflect.DeepEqual(r.SkippedExternal, []SkippedExternal{{"hooks", SkipMissing}}) {
