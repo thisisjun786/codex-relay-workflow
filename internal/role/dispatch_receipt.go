@@ -9,7 +9,8 @@ type DispatchReceipt struct {
 	Issuance  DispatchIssuance  `json:"issuance"`
 	Child     DispatchChild     `json:"child"`
 	// Correlation is how the child is tied to this attempt: "attempt-marker" (the host's first message of the child carries
-	// this attempt's dispatch marker), "unverified" (issued, but the host shows no first message to compare) or "unissued"
+	// this attempt's dispatch marker, the host created the child after the hook issued the attempt, and no other child of the
+	// session carries the marker from then on), "unverified" (issued, but the host does not show enough to compare) or "unissued"
 	// (recorded through the explicit reconciliation path without an issuance). Only "attempt-marker" satisfies an
 	// independent review.
 	Correlation string `json:"correlation"`

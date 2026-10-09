@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"time"
 )
 
@@ -75,11 +76,12 @@ func dispatchPinnedChecked(ctx context.Context, cwd string, input any, env host.
 // native call the attempt was issued to, and the attempt must have been issued by the spawn hook, unless the report takes the
 // explicit reconciliation path for a child spawned without it. Then the session's other records must not hold the id, the
 // host must witness a subagent of this session, and, when the native database shows the child's first message, that message
-// must carry this attempt's dispatch marker. The accepted report writes the attempt's receipt.
+// must carry this attempt's dispatch marker and the child must not predate the issuance (createdCheckOrdered). The accepted
+// report writes the attempt's receipt; a report of a child whose receipt is already attempt-marker keeps that receipt.
 func createdCheckReporter(ctx context.Context, env host.LookupEnv, h DispatchHost) dispatchReporter {
 	return func(dir *dispatchPinnedDir, name string, d *Dispatch, b map[string]any) (DispatchResult, error) {
 		a := &d.Attempts[len(d.Attempts)-1]
-		issued, tool := a.SpawnIssued, a.ToolUseID
+		issued, tool, prior := a.SpawnIssued, a.ToolUseID, a.Receipt
 		if _, err := dispatchReport(d, b, nil); err != nil {
 			return DispatchResult{}, err
 		}
@@ -104,6 +106,13 @@ func createdCheckReporter(ctx context.Context, env host.LookupEnv, h DispatchHos
 		if err := createdArchivedReplay(dir, name, d.SessionID, a.ID, agent); err != nil {
 			return DispatchResult{}, err
 		}
+		if prior != nil && prior.Correlation == "attempt-marker" && prior.Child.AgentID == agent {
+			// The same child reported again: the evidence that tied it to the issued call stays as it was recorded, whatever the
+			// host shows now. Only the caller's own claim is refreshed.
+			prior.ObservedModel = a.ObservedModel
+			a.Receipt = prior
+			return dispatchResult(d, "wait", ""), nil
+		}
 		identity, err := createdCheckRead(ctx, env, h, agent)
 		if err != nil {
 			return DispatchResult{}, errors.New("host could not verify created agent" + createdCheckCorrection)
@@ -120,7 +129,10 @@ func createdCheckReporter(ctx context.Context, env host.LookupEnv, h DispatchHos
 		correlation := "unverified"
 		if native.FirstMessage != "" {
 			if m := managedSpawnMarker(native.FirstMessage); m != nil && m[1] == d.ID && m[2] == a.ID {
-				correlation = "attempt-marker"
+				var err error
+				if correlation, err = createdCheckOrdered(ctx, env, d, a, native, issued); err != nil {
+					return DispatchResult{}, err
+				}
 			} else if issued {
 				return DispatchResult{}, errors.New("agentId is not the child the issued spawn created: its first message carries no marker of this attempt" + createdCheckCorrection)
 			}
@@ -143,12 +155,41 @@ func createdCheckReporter(ctx context.Context, env host.LookupEnv, h DispatchHos
 		reason := ""
 		switch correlation {
 		case "unverified":
-			reason = "the host does not show this child's first message, so it is not tied to the issued spawn and cannot satisfy independent review; report created again once it does"
+			reason = "the host does not show that this child was created by the issued spawn (its first message, its creation time after the issuance, and no other child with this attempt's marker), so it cannot satisfy independent review; report created again once it does"
 		case "unissued":
 			reason = "recorded without issuance on caller reconciliation; this child cannot satisfy independent review"
 		}
 		return dispatchResult(d, "wait", reason), nil
 	}
+}
+
+// createdCheckOrdered decides whether a child whose first message carries this attempt's marker is the child the issued native
+// call created. The marker is written by the caller into the call's message, so it names the call but is not the call's
+// result: a child made before the spawn was issued (the hook off, an older call) can carry it too. The host's own record is
+// compared with the issuance the hook wrote: a child the host created before the issuance is refused, and one created after it
+// is tied to the call ("attempt-marker") only when no other child of the session carries the marker from the issuance on. A
+// host that shows no creation time, an attempt issued without a recorded time, or a second marked child leaves the child
+// "unverified". An unissued attempt only needs the marker read.
+func createdCheckOrdered(ctx context.Context, env host.LookupEnv, d *Dispatch, a *DispatchAttempt, child createdCheckIdentity, issued bool) (string, error) {
+	if !issued {
+		return "attempt-marker", nil
+	}
+	if a.IssuedAtMs == 0 || child.CreatedMs == 0 {
+		return "unverified", nil
+	}
+	if child.CreatedMs < a.IssuedAtMs {
+		return "", errors.New("agentId is not the child the issued spawn created: the host created it before the spawn was issued" + createdCheckCorrection)
+	}
+	marked, err := createdCheckMarked(ctx, env, d.SessionID, d.ID, a.ID)
+	if err != nil {
+		return "unverified", nil
+	}
+	for _, other := range marked {
+		if other.ID != child.ID && (other.CreatedMs == 0 || other.CreatedMs >= a.IssuedAtMs) {
+			return "unverified", nil
+		}
+	}
+	return "attempt-marker", nil
 }
 
 // createdCheckComplete is the complete report at the checked boundary: an independent review is complete only through a child
@@ -250,6 +291,9 @@ type createdCheckIdentity struct {
 	// RolloutPath, FirstMessage, Model and Effort are the native database's rollout_path, first_user_message, model and
 	// reasoning_effort of the thread, "" when the column is absent or empty. Only the native read fills them.
 	RolloutPath, FirstMessage, Model, Effort string
+	// CreatedMs is the thread's creation time in Unix milliseconds (created_at_ms, else created_at in seconds); 0 when the
+	// host's table shows neither.
+	CreatedMs int64
 }
 
 func createdCheckRead(ctx context.Context, env host.LookupEnv, h DispatchHost, agent string) (createdCheckIdentity, error) {
@@ -393,13 +437,73 @@ func createdCheckStop(ctx context.Context, cwd string, b map[string]any, env hos
 // Read that witness without networking: role is also imported by offline relay
 // packages. Existing host imports already register the pure-Go SQLite driver.
 func createdCheckNative(ctx context.Context, env host.LookupEnv, agent string) (createdCheckIdentity, error) {
+	var row createdCheckIdentity
+	err := createdCheckWithDB(ctx, env, func(conn *sql.Conn, columns map[string]bool) error {
+		id, source, r, err := createdCheckScan(ctx, conn, columns, "WHERE id = ?", agent)
+		if err != nil {
+			return err
+		}
+		// The archive flag is a lifecycle fact, not part of the identity: the host archives a child
+		// when it finishes, and the spawn marker below still proves who created it.
+		if id != agent {
+			return errors.New("host thread identity is unavailable")
+		}
+		row, err = createdCheckParent(id, source, r)
+		return err
+	})
+	return row, err
+}
+
+// createdCheckMarked lists the subagents of session whose first message carries the dispatch marker of attempt in dispatch.
+func createdCheckMarked(ctx context.Context, env host.LookupEnv, session, dispatch, attempt string) ([]createdCheckIdentity, error) {
+	var out []createdCheckIdentity
+	err := createdCheckWithDB(ctx, env, func(conn *sql.Conn, columns map[string]bool) error {
+		if !columns["first_user_message"] {
+			return nil
+		}
+		rows, err := conn.QueryContext(ctx, "SELECT id, source FROM threads WHERE first_user_message LIKE ?", "%[CRW-DISPATCH:%")
+		if err != nil {
+			return err
+		}
+		var ids []string
+		for rows.Next() {
+			var id, source string
+			if err := rows.Scan(&id, &source); err != nil {
+				rows.Close()
+				return err
+			}
+			ids = append(ids, id)
+		}
+		if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+			return err
+		}
+		for _, id := range ids {
+			id, source, r, err := createdCheckScan(ctx, conn, columns, "WHERE id = ?", id)
+			if err != nil {
+				return err
+			}
+			row, err := createdCheckParent(id, source, r)
+			if err != nil || row.Parent != session {
+				continue
+			}
+			if m := managedSpawnMarker(row.FirstMessage); m != nil && m[1] == dispatch && m[2] == attempt {
+				out = append(out, row)
+			}
+		}
+		return nil
+	})
+	return out, err
+}
+
+// createdCheckWithDB opens the newest native thread database read-only, without networking, and runs fn on one connection.
+func createdCheckWithDB(ctx context.Context, env host.LookupEnv, fn func(*sql.Conn, map[string]bool) error) error {
 	home, err := host.CodexSQLiteHome(env)
 	if err != nil {
-		return createdCheckIdentity{}, err
+		return err
 	}
 	entries, err := os.ReadDir(home)
 	if err != nil {
-		return createdCheckIdentity{}, err
+		return err
 	}
 	pattern := regexp.MustCompile(`^state_([0-9]+)\.sqlite$`)
 	name := ""
@@ -415,55 +519,64 @@ func createdCheckNative(ctx context.Context, env host.LookupEnv, agent string) (
 		}
 	}
 	if name == "" {
-		return createdCheckIdentity{}, errors.New("host thread database is missing")
+		return errors.New("host thread database is missing")
 	}
 	path := filepath.Join(home, name)
 	info, err := os.Lstat(path)
 	if err != nil {
-		return createdCheckIdentity{}, err
+		return err
 	}
 	if !info.Mode().IsRegular() {
-		return createdCheckIdentity{}, errors.New("host thread database must be a regular file")
+		return errors.New("host thread database must be a regular file")
 	}
 	path, err = filepath.Abs(path)
 	if err != nil {
-		return createdCheckIdentity{}, err
+		return err
 	}
 	db, err := sql.Open("sqlite", (&url.URL{Scheme: "file", Path: path, RawQuery: "mode=ro"}).String())
 	if err != nil {
-		return createdCheckIdentity{}, err
+		return err
 	}
 	defer db.Close()
 	conn, err := db.Conn(ctx)
 	if err != nil {
-		return createdCheckIdentity{}, err
+		return err
 	}
 	defer conn.Close()
 	if _, err := conn.ExecContext(ctx, "PRAGMA query_only=ON"); err != nil {
-		return createdCheckIdentity{}, err
+		return err
 	}
 	columns, err := createdCheckColumns(ctx, conn)
 	if err != nil {
-		return createdCheckIdentity{}, err
+		return err
 	}
-	// Optional columns are read when the host's schema has them; a missing one reads as "".
+	return fn(conn, columns)
+}
+
+// createdCheckScan reads one threads row selected by where. Optional columns are read when the host's schema has them; a
+// missing one reads as "" (0 for the creation time).
+func createdCheckScan(ctx context.Context, conn *sql.Conn, columns map[string]bool, where, arg string) (id, source string, row createdCheckIdentity, err error) {
 	optional := func(name string) string {
 		if columns[name] {
 			return "COALESCE(CAST(" + name + " AS TEXT), '')"
 		}
 		return "''"
 	}
-	var id, source string
-	var row createdCheckIdentity
-	query := "SELECT id, source, " + optional("rollout_path") + ", " + optional("first_user_message") + ", " + optional("model") + ", " + optional("reasoning_effort") + " FROM threads WHERE id = ?"
-	if err := conn.QueryRowContext(ctx, query, agent).Scan(&id, &source, &row.RolloutPath, &row.FirstMessage, &row.Model, &row.Effort); err != nil {
-		return createdCheckIdentity{}, err
+	var createdMs, createdS string
+	query := "SELECT id, source, " + optional("rollout_path") + ", " + optional("first_user_message") + ", " + optional("model") + ", " + optional("reasoning_effort") + ", " + optional("created_at_ms") + ", " + optional("created_at") + " FROM threads " + where
+	if err = conn.QueryRowContext(ctx, query, arg).Scan(&id, &source, &row.RolloutPath, &row.FirstMessage, &row.Model, &row.Effort, &createdMs, &createdS); err != nil {
+		return "", "", createdCheckIdentity{}, err
 	}
-	// The archive flag is a lifecycle fact, not part of the identity: the host archives a child
-	// when it finishes, and the spawn marker below still proves who created it.
-	if id != agent {
-		return createdCheckIdentity{}, errors.New("host thread identity is unavailable")
+	if ms, err := strconv.ParseInt(createdMs, 10, 64); err == nil && ms > 0 {
+		row.CreatedMs = ms
+	} else if s, err := strconv.ParseInt(createdS, 10, 64); err == nil && s > 0 {
+		row.CreatedMs = s * 1000
 	}
+	return id, source, row, nil
+}
+
+// createdCheckParent reads the parent thread out of a threads row's source and completes the identity.
+func createdCheckParent(id, source string, row createdCheckIdentity) (createdCheckIdentity, error) {
 	var marker struct {
 		Subagent struct {
 			Spawn struct {

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"path/filepath"
 	"regexp"
+	"time"
 )
 
 // ManagedSpawnSelection ports managedSpawn's snapshot, without invoking a model.
@@ -79,6 +80,10 @@ func IssueManagedSpawn(cwd, session, message string, toolUseID *string) (*Manage
 	}
 	if a.SpawnIssued && (toolUseID == nil || *toolUseID == "" || a.ToolUseID == nil || *a.ToolUseID != *toolUseID) {
 		return nil, errors.New("attempt already issued to another native call; reconcile before retry")
+	}
+	if !a.SpawnIssued {
+		a.IssuedAtMs = time.Now().UnixMilli()
+		a.raw.set("issuedAtMs", a.IssuedAtMs)
 	}
 	a.SpawnIssued, a.ToolUseID = true, toolUseID
 	// The ledger marshaler overlays only the fields its own operations mutate.

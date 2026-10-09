@@ -61,6 +61,9 @@ type DispatchAttempt struct {
 	Reconciliation *string              `json:"reconciliation"`
 	SpawnIssued    bool                 `json:"spawnIssued"`
 	ToolUseID      *string              `json:"toolUseId"`
+	// IssuedAtMs is the spawn hook's clock (Unix milliseconds) when it issued the attempt; 0 for an attempt issued before the
+	// hook recorded it. The checked boundary compares it with the host's creation time of the reported child.
+	IssuedAtMs int64 `json:"issuedAtMs,omitempty"`
 	// Termination is set by the checked boundary when a handoff relied on an observed end of the child; the parity ledger
 	// never writes it, and a stored one is kept as it was read.
 	Termination *DispatchTermination `json:"termination,omitempty"`
@@ -505,6 +508,11 @@ func dispatchPinnedDecode(data []byte, session, id string) (Dispatch, error) {
 			return d, errors.New("invalid spawn issuance")
 		}
 		a.SpawnIssued = string(spawn) == "true"
+		if issued := dispatchRaw(a.raw, "issuedAtMs"); issued != nil {
+			if json.Unmarshal(issued, &a.IssuedAtMs) != nil || a.IssuedAtMs < 0 {
+				return d, errors.New("invalid spawn issuance")
+			}
+		}
 		if a.Status, err = dispatchStatus(dispatchRaw(a.raw, "status"), "ready", "claimed", "running", "reconcile", "failed", "complete"); err != nil {
 			if errors.Is(err, errNotObject) {
 				return d, errors.New("invalid attempt status")
