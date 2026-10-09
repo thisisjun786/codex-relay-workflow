@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -297,5 +298,23 @@ func TestIssueReadyHoldsTheIssueThatAskedForTheGate(t *testing.T) {
 	r := decodeReport(t, out)
 	if code != 1 || at(r, "decision") != "design_first" || strings.Join(strs(atList(r, "missing")), ",") != "edit_region,decided_answer,red_test,done_condition" {
 		t.Fatalf("exit %d: %s", code, out)
+	}
+}
+
+// Every heading the reasons tell the author to write (the quoted words of the hint) is read as the item
+// it supplies.
+func TestIssueReadyHeadingsNamedInReasonsAreRead(t *testing.T) {
+	quoted := regexp.MustCompile(`'([^']+)'`)
+	for item, hint := range readyHeadingHint {
+		titles := quoted.FindAllStringSubmatch(hint, -1)
+		if len(titles) != 2 {
+			t.Errorf("%s: the hint quotes %d headings, want the Korean and the English: %s", item, len(titles), hint)
+		}
+		for _, m := range titles {
+			title := strings.TrimPrefix(m[1], "## ")
+			if got := readyHeadingKind(title); got != item {
+				t.Errorf("heading %q is read as %q, want %q", title, got, item)
+			}
+		}
 	}
 }
