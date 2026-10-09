@@ -103,7 +103,7 @@ func (g ghForge) Update(ctx context.Context, id int64, body string) (prComment, 
 // assignedTo reports whether the ledger assigned the result with this sha256 to path: a file that has these bytes is the result of some patch, only not the one that is posted.
 func assignedTo(recs []record, path, sha string) bool {
 	for _, r := range recs {
-		if r.Artifact == path && r.SHA256 == sha && (r.Event == "finished" || r.Event == "unavailable") {
+		if samePath(r.Artifact, path) && r.SHA256 == sha && (r.Event == "finished" || r.Event == "unavailable") {
 			return true
 		}
 	}

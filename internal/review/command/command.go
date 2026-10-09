@@ -211,14 +211,15 @@ func execute(ctx context.Context, cfg Config, e env) (*Summary, error) {
 		refused.Reason = sum.Reason
 		return sum, l.append(refused)
 	}
-	artifact := filepath.Join(cfg.Out, m.Head+".json")
+	out := canonicalDir(cfg.Out) // the output directory with its symlinks resolved, so that a symlink and its target share one history in the ledger
+	artifact := filepath.Join(out, m.Head+".json")
 	if _, err = os.Lstat(artifact); err == nil && !replaces(st.unavailable, artifact) { // the file name is the head's, the ledger key the patch's: the same head reviewed against another base lands here
 		return nil, fmt.Errorf("%s already exists but is no review of this patch (the same head, reviewed against another base?); use another --out", artifact)
 	}
 	if err = os.MkdirAll(cfg.Out, 0o755); err != nil {
 		return nil, err
 	}
-	retry, sizeBefore := st.open(), l.good // whether this attempt is the one more attempt of an unavailable review, and the length of the ledger before its started line
+	retry := st.open() // whether this attempt is the one more attempt of an unavailable review
 	started := entry("started")
 	started.Time = e.now().UTC().Format(time.RFC3339)
 	if err = l.append(started); err != nil {
@@ -261,7 +262,7 @@ func execute(ctx context.Context, cfg Config, e env) (*Summary, error) {
 	// The result is kept, durably, before the review is recorded, so that a record always has its copy. If it cannot be kept nothing is recorded as finished and nothing is published: the failure is returned
 	// naming its cause and the patch stays open, so that the same call can be made again once the cause is gone (a second model call is accepted over a finished record whose copy is missing).
 	if err = l.keep(result.SHA256, data); err != nil {
-		return nil, l.unkeptAttempt(err, started, entry(eventKeepFailed), retry, sizeBefore)
+		return nil, l.unkeptAttempt(err, started, entry(eventKeepFailed), retry)
 	}
 	// The review is recorded before its files are written, so that nothing after this point can let the patch be reviewed again.
 	if err = l.append(result); err != nil {
@@ -282,7 +283,7 @@ func execute(ctx context.Context, cfg Config, e env) (*Summary, error) {
 
 // replaces reports whether the file at path is the artifact the unavailable attempt r recorded (the same path with the bytes it recorded), which the one more attempt may replace.
 func replaces(r *record, path string) bool {
-	if r == nil || r.Artifact != path {
+	if r == nil || !samePath(r.Artifact, path) {
 		return false
 	}
 	data, err := os.ReadFile(path)

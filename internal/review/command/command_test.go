@@ -133,7 +133,10 @@ type fixture struct {
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
 	r := newRepo(t)
-	tmp := t.TempDir()
+	tmp, err := filepath.EvalSymlinks(t.TempDir()) // the physical path: the command records output paths with their directories resolved
+	if err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("XDG_STATE_HOME", filepath.Join(tmp, "xdg")) // no default path may reach the real state
 	return &fixture{t: t, repo: r, base: r.commit(map[string]string{"a.go": "package a\n\nfunc F() int { return 1 }\n"}),
 		state: filepath.Join(tmp, "state"), out: filepath.Join(tmp, "out"), lock: filepath.Join(tmp, "agy.lock"),

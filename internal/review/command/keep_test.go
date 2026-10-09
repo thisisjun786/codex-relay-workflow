@@ -405,13 +405,15 @@ func TestPostOfASharedPathUsesTheAskingPatchsOwnResult(t *testing.T) {
 	}
 }
 
-// The retry whose result cannot be kept and whose keep_failed line cannot be appended either (the state directory takes neither) would leave a bare started line, which spends the one more attempt. The
-// attempt's started line is taken back out of the ledger instead, so the patch stays open and the same command reviews it once the fault is gone.
-func TestRetryWhoseResultAndKeepFailedLineCannotBeWrittenStillLeavesTheOneMoreAttempt(t *testing.T) {
+// The retry whose result cannot be kept and whose keep_failed line cannot be appended either (the state directory takes neither) has called the model, so its started line stays in the ledger and
+// counts toward the daily cap: the ledger is never rewritten to forget a review that ran. The attempt is then spent as the ledger stands (a bare started line spends the one more attempt, as a killed
+// process does), so the same patch is not reviewed again and another patch of the same day is refused by the cap.
+func TestRetryWhoseResultAndKeepFailedLineCannotBeWrittenStillCountsTowardTheDailyCap(t *testing.T) {
 	f := newFixture(t)
 	h := f.repo.change(f.base, 2)
+	other := f.repo.change(f.base, 3)
 	f.on("2026-10-04", quotaResult)
-	if code, first, errOut := f.run(h); code != 0 || first.RetryNotBefore != "2026-10-05" {
+	if code, first, errOut := f.run(h, "--daily-cap", "1"); code != 0 || first.RetryNotBefore != "2026-10-05" {
 		t.Fatalf("quota: %d %+v %s", code, first, errOut)
 	}
 	before := f.ledger()
@@ -424,21 +426,25 @@ func TestRetryWhoseResultAndKeepFailedLineCannotBeWrittenStillLeavesTheOneMoreAt
 		return nil
 	}
 	calls := f.s.count()
-	code, _, errOut := f.run(h)
+	code, _, errOut := f.run(h, "--daily-cap", "1")
 	if code != 1 || !strings.Contains(errOut, "keep injected") || !strings.Contains(errOut, "append injected") || f.s.count() == calls {
 		t.Fatalf("the retry whose result and keep_failed line cannot be written: %d %s (calls %d)", code, errOut, f.s.count())
 	}
-	if after := f.ledger(); len(after) != len(before) {
-		t.Fatalf("the withdrawn attempt left lines in the ledger: %+v", after[len(before):])
+	after := f.ledger()
+	if len(after) != len(before)+1 || after[len(after)-1].Event != "started" || runsOn(after, "2026-10-05") != 1 {
+		t.Fatalf("the attempt that called the model left no started line that counts toward the cap: %+v", after[len(before):])
 	}
 	f.keep, f.fault = nil, nil // the fault is gone
 	calls = f.s.count()
-	if code, again, errOut := f.run(h); code != 0 || again.Outcome != OutcomeReviewed || again.Status != "complete" || f.s.count() == calls {
-		t.Fatalf("the run after the fault: %d %+v %s (calls %d, ledger %+v)", code, again, errOut, f.s.count(), f.ledger())
+	if code, sum, _ := f.run(other, "--daily-cap", "1"); code != 3 || sum.Outcome != OutcomeDailyCap || f.s.count() != calls {
+		t.Fatalf("a second call the same day must be refused by the cap: %d %+v (calls %d)", code, sum, f.s.count())
+	}
+	if code, sum, _ := f.run(h, "--daily-cap", "1"); code != 0 || sum.Outcome != OutcomeAlreadyReviewed || sum.Status != string(review.StatusUnavailable) || f.s.count() != calls {
+		t.Fatalf("the patch whose attempt is spent: %d %+v (calls %d)", code, sum, f.s.count())
 	}
 }
 
-// When the started line cannot be taken back out either, the attempt is spent as the ledger stands, and the error says so and gives the line that leaves the attempt to come instead of only telling the
+// When the keep_failed line cannot be appended, the attempt is spent as the ledger stands, and the error says so and gives the line that leaves the attempt to come instead of only telling the
 // operator to run the same command again; appending that line after the attempt's started line, as the error says, makes the next run the one more attempt.
 func TestRetryWhoseLedgerTakesNoChangeAtAllNamesTheLineThatLeavesTheOneMoreAttempt(t *testing.T) {
 	if os.Geteuid() == 0 {
@@ -496,5 +502,104 @@ func TestRetryWhoseLedgerTakesNoChangeAtAllNamesTheLineThatLeavesTheOneMoreAttem
 	calls = f.s.count()
 	if code, again, errOut := f.run(h); code != 0 || again.Outcome != OutcomeReviewed || again.Status != "complete" || f.s.count() == calls {
 		t.Fatalf("the run after the recovery: %d %+v %s (ledger %+v)", code, again, errOut, f.ledger())
+	}
+}
+
+// The output path's identity is the physical path: a symlinked output directory and the directory it points to are one history. The ledger records the path with its directory resolved, and ownership and
+// the known results of a path are matched on resolved directories, so P and Q alternating on one head through /alias and /real still restore the newest result, and each patch's post accepts the other's bytes
+// on the path as a result the ledger assigned to it.
+func TestSharedPathHistoryIsOneAcrossSymlinkAliasesOfTheOutputDirectory(t *testing.T) {
+	f := newFixture(t)
+	f.forge = &scriptedForge{}
+	h2 := f.repo.change(f.base, 2)
+	f.repo.git("checkout", "-q", "--detach", h2)
+	h3 := f.repo.commit(map[string]string{"a.go": "package a\n\nfunc F() int { return 3 }\n"})
+	baseP, baseQ := f.base, h2
+	parent := filepath.Dir(f.out)
+	realDir, alias := filepath.Join(parent, "real"), filepath.Join(parent, "alias")
+	if err := errors.Join(os.MkdirAll(realDir, 0o755), os.Symlink(realDir, alias)); err != nil {
+		t.Fatal(err)
+	}
+	f.base = baseP
+	_, p, errOut := f.run(h3, "--out", realDir)
+	if p.Outcome != OutcomeReviewed {
+		t.Fatalf("P: %+v %s", p, errOut)
+	}
+	path := filepath.Join(realDir, h3+".json")
+	pBytes, _ := os.ReadFile(path)
+	remove := func() {
+		t.Helper()
+		if err := errors.Join(os.Remove(path), os.Remove(path+".sha256")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	remove()
+	f.base = baseQ
+	_, q, errOut := f.run(h3, "--out", alias)
+	if q.Outcome != OutcomeReviewed || q.SHA256 == p.SHA256 || q.Artifact != p.Artifact || q.Artifact != path {
+		t.Fatalf("Q through the alias: %+v (P %q) %s", q, p.Artifact, errOut)
+	}
+	remove()
+	holds := func(step, want string) {
+		t.Helper()
+		data, err := os.ReadFile(path)
+		if got := fmt.Sprintf("%x", sha256.Sum256(data)); err != nil || got != want {
+			t.Fatalf("%s: the path holds %s (%v), want %s", step, got, err, want)
+		}
+	}
+	// P asks about the missing path through /real: the ledger's last assignment of that physical path is Q's.
+	f.base = baseP
+	if _, again, errOut := f.run(h3, "--out", realDir); again.Outcome != OutcomeAlreadyReviewed || len(again.Restored) != 2 {
+		t.Fatalf("P asks: %+v %s", again, errOut)
+	}
+	holds("P asked", q.SHA256)
+	// P's bytes on the path (an earlier restore left them): Q's post, through the alias, still recognises them as a result of the ledger for this path and posts Q's own kept result; P's post through /real
+	// posts P's.
+	plantP := func() {
+		t.Helper()
+		if err := errors.Join(os.WriteFile(path, pBytes, 0o644), os.WriteFile(path+".sha256", []byte(p.SHA256+"  "+h3+".json\n"), 0o644)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, c := range []struct{ name, base, out, sha string }{{"Q via alias", baseQ, alias, q.SHA256}, {"P via real", baseP, realDir, p.SHA256}} {
+		plantP()
+		f.base = c.base
+		code, sum, errOut := f.run(h3, "--post-only", "--pr", "7", "--out", c.out)
+		if code != 0 || sum.Comment == nil || sum.SHA256 != c.sha {
+			t.Fatalf("%s post-only: %d %+v %s", c.name, code, sum, errOut)
+		}
+		holds(c.name, q.SHA256) // the restore put the ledger's owner of the path back
+	}
+	if f.s.count() != 4 {
+		t.Fatalf("a restore or a post called the model: %d calls", f.s.count())
+	}
+}
+
+// A ledger written before the output directory was resolved holds the path as the operator spelled it; ownership and known results are matched on the resolved directory, so those lines still count.
+func TestOwnerOfMatchesRecordsOfAnAliasSpelling(t *testing.T) {
+	parent, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	realDir, alias := filepath.Join(parent, "real"), filepath.Join(parent, "alias")
+	if err := errors.Join(os.MkdirAll(realDir, 0o755), os.Symlink(realDir, alias)); err != nil {
+		t.Fatal(err)
+	}
+	recs := []record{
+		{Event: "finished", PatchID: "p", Artifact: filepath.Join(realDir, "h.json"), SHA256: "aa"},
+		{Event: "finished", PatchID: "q", Artifact: filepath.Join(alias, "h.json"), SHA256: "bb"},
+	}
+	if o := ownerOf(recs, filepath.Join(realDir, "h.json")); o == nil || o.SHA256 != "bb" {
+		t.Fatalf("owner through /real: %+v", o)
+	}
+	if o := ownerOf(recs, filepath.Join(alias, "h.json")); o == nil || o.SHA256 != "bb" {
+		t.Fatalf("owner through the alias: %+v", o)
+	}
+	if !assignedTo(recs, filepath.Join(realDir, "h.json"), "bb") || !assignedTo(recs, filepath.Join(alias, "h.json"), "aa") {
+		t.Fatal("assignedTo ignores the other spelling")
+	}
+	missing := filepath.Join(alias, "later", "h.json") // a directory that does not exist yet resolves through its existing ancestor
+	if !samePath(missing, filepath.Join(realDir, "later", "h.json")) {
+		t.Fatal("a path below a missing directory is not resolved through its existing ancestor")
 	}
 }

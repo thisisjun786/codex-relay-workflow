@@ -17,7 +17,7 @@ import (
 
 // A record is one line of ledger.jsonl. Event is started (counts toward the daily cap), finished (the patch-id is reviewed from then on), unavailable (a review that could not run at all for a reason of
 // the account or the configuration or because the runner failed: the patch-id is still open for one more attempt, see standing), lock_wait (the attempt's agy was never started because the host-wide lock
-// was not free: the attempt counts toward nothing and closes nothing), keep_failed (the attempt ran and its result could not be kept: nothing is closed and the one more attempt is not spent, but it counts toward the daily cap; a retry whose keep_failed line cannot be appended takes its started line back out instead, see unkeptAttempt), failed (history only) or refused (the run rules stopped it). The line that ends a run which did not end complete -- a finished line
+// was not free: the attempt counts toward nothing and closes nothing), keep_failed (the attempt ran and its result could not be kept: nothing is closed and the one more attempt is not spent, but it counts toward the daily cap; a retry whose keep_failed line cannot be appended keeps its started line, which counts toward the cap and spends the attempt, see unkeptAttempt), failed (history only) or refused (the run rules stopped it). The line that ends a run which did not end complete -- a finished line
 // whose status is partial or unavailable, or the unavailable line that opens the one more attempt -- also records the failure it knows in Reason and AgyCalled.
 type record struct {
 	Time      string `json:"time"`
