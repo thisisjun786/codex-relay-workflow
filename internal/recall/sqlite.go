@@ -330,7 +330,7 @@ func (s *Stmt) bind(params []any) error {
 			_, unordered := params[0].(map[string]any)
 			for _, arg := range named {
 				if strings.ContainsRune(arg.Name, 0) {
-					return fmt.Errorf("Named parameter %q must not contain a null byte", arg.Name)
+					return fmt.Errorf("named parameter %q must not contain a null byte", arg.Name)
 				}
 				key := arg.Name
 				alias := s.bare[key]

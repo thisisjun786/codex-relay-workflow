@@ -148,12 +148,11 @@ func hookContextToRunes(u []uint16) []rune {
 
 // accountingHook runs the session-start hook against a sidecar index holding n sessions of /repo.
 type accountingHook struct {
-	t       *testing.T
-	env     host.LookupEnv
-	path    string
-	db      *RwDb
-	refs    []string
-	summary string
+	t    *testing.T
+	env  host.LookupEnv
+	path string
+	db   *RwDb
+	refs []string
 }
 
 func newAccountingHook(t *testing.T, n int) *accountingHook {
