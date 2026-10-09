@@ -572,3 +572,49 @@ func TestJoinRootAuditCopiesTheConfiguredSourceDirectory(t *testing.T) {
 		t.Errorf("a symbolic link below the source was copied")
 	}
 }
+
+// A literal component of a rootGlob pattern is looked up by name, as filepath.Glob does, not found
+// by listing its directory: a CODEX_HOME that may be searched but not listed (mode 0100) still
+// yields its rollout, and a literal last component is found in a directory that cannot be listed.
+func TestRootGlobLiteralComponentsNeedNoListing(t *testing.T) {
+	home := t.TempDir()
+	day := filepath.Join(home, "sessions", "2026", "10", "09")
+	if err := os.MkdirAll(day, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(day, "rollout-thread-a.jsonl")
+	if err := os.WriteFile(want, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(home, 0o100); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(home, 0o700) })
+	if _, err := os.ReadDir(home); err == nil {
+		t.Skip("the directory can be listed despite mode 0100 (running as root?)")
+	}
+	old, err := filepath.Glob(filepath.Join(home, "sessions", "*", "*", "*", "*thread-a.jsonl"))
+	if err != nil || len(old) != 1 || old[0] != want {
+		t.Fatalf("filepath.Glob found %v, %v; want %s", old, err, want)
+	}
+	e, _, _ := auditTestEnv(t)
+	e.Getenv = func(name string) string {
+		if name == "CODEX_HOME" {
+			return home
+		}
+		return ""
+	}
+	got, err := pumpRolloutPath(e, "thread-a")
+	if err != nil || got != want {
+		t.Errorf("pumpRolloutPath below a searchable, unlistable CODEX_HOME = %q, %v; want %s", got, err, want)
+	}
+	if got, err := rootGlob(home, "sessions"); err != nil || len(got) != 1 || got[0] != filepath.Join(home, "sessions") {
+		t.Errorf("rootGlob(home, sessions) = %v, %v; want the one literal path", got, err)
+	}
+	if got, err := rootGlob(home, "missing"); err != nil || len(got) != 0 {
+		t.Errorf("rootGlob(home, missing) = %v, %v; want no match", got, err)
+	}
+	if got, err := rootGlob(home, "sessions", "2026", "10", "09", "rollout-thread-a.jsonl", "below-a-file"); err != nil || len(got) != 0 {
+		t.Errorf("a literal below a file = %v, %v; want no match", got, err)
+	}
+}

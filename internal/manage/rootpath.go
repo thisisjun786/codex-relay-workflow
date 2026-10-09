@@ -3,6 +3,7 @@ package manage
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 
@@ -34,8 +35,10 @@ func rootDir(path string) string {
 // in sorted order. It does what filepath.Glob does for a pattern of that shape, except that a
 // found name is joined to its directory as raw text: filepath.Glob joins with filepath.Join, which
 // cleans, so a ".." that follows a symbolic link in the root would be folded away before the
-// filesystem sees it and the search would go on in a different directory. A directory that cannot
-// be read has no matches, as in filepath.Glob; a malformed pattern is an error.
+// filesystem sees it and the search would go on in a different directory. A component without a
+// glob character is looked up with Lstat rather than listed, as in filepath.Glob, so only the
+// directories a wildcard searches must be readable. A directory that cannot be read has no
+// matches, as in filepath.Glob; a malformed pattern is an error.
 func rootGlob(dir string, pattern ...string) ([]string, error) {
 	if len(pattern) == 0 {
 		return nil, nil
@@ -49,6 +52,15 @@ func rootGlob(dir string, pattern ...string) ([]string, error) {
 	for i, part := range pattern {
 		var next []string
 		for _, d := range dirs {
+			if !rootGlobHasMeta(part) {
+				// a literal is looked up by name, as filepath.Glob does, so its directory need only
+				// be searchable, not listable
+				path := crwconfig.JoinRoot(d, part)
+				if _, err := os.Lstat(path); err == nil {
+					next = append(next, path)
+				}
+				continue
+			}
 			entries, err := os.ReadDir(d)
 			if err != nil {
 				continue
@@ -66,6 +78,16 @@ func rootGlob(dir string, pattern ...string) ([]string, error) {
 	}
 	sort.Strings(dirs)
 	return dirs, nil
+}
+
+// rootGlobHasMeta reports whether part carries a character filepath.Match treats specially, the
+// test filepath.Glob makes before it lists a directory instead of looking a name up.
+func rootGlobHasMeta(part string) bool {
+	magic := `*?[\`
+	if runtime.GOOS == "windows" {
+		magic = `*?[`
+	}
+	return strings.ContainsAny(part, magic)
 }
 
 // rootWalk calls visit for root and everything below it, a directory before its entries and the
