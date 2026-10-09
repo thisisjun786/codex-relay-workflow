@@ -326,8 +326,15 @@ func readSections(body string) (sections []section, unread []string, err error) 
 }
 
 // readSectionsBy reads the sections of body whose headings classify names ("" for a heading that is
-// none of them), with the same structure rules for every classifier.
+// none of them), with the same structure rules for every classifier. A heading deeper than a classified
+// one is part of that section.
 func readSectionsBy(body string, classify func(string) string) (sections []section, unread []string, err error) {
+	return readSectionsSplit(body, classify, nil)
+}
+
+// readSectionsSplit is readSectionsBy where a deeper heading that split names is not part of the
+// section above it: the section ends there and the heading is read as its own.
+func readSectionsSplit(body string, classify func(string) string, split func(string) bool) (sections []section, unread []string, err error) {
 	lines := strings.Split(strings.ReplaceAll(body, "\r\n", "\n"), "\n")
 	fenced := make([]bool, len(lines))
 	type heading struct {
@@ -388,8 +395,9 @@ func readSectionsBy(body string, classify func(string) string) (sections []secti
 		return nil, nil, errors.New("the description has a code fence that is never closed, so everything after it would be skipped; close it")
 	}
 	activeLevel := 0
+	splits := func(title string) bool { return split != nil && split(title) }
 	for h, head := range headings {
-		if activeLevel != 0 && head.level > activeLevel {
+		if activeLevel != 0 && head.level > activeLevel && !splits(head.title) {
 			continue
 		}
 		activeLevel = 0
@@ -401,7 +409,7 @@ func readSectionsBy(body string, classify func(string) string) (sections []secti
 		activeLevel = head.level
 		end := len(lines)
 		for _, next := range headings[h+1:] {
-			if next.level <= head.level {
+			if next.level <= head.level || splits(next.title) {
 				end = next.at
 				break
 			}

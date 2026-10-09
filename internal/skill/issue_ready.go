@@ -7,6 +7,7 @@ import (
 	"io"
 	"regexp"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -71,13 +72,29 @@ var readyHeadings = []struct {
 
 var readyOutOfScope = []string{"범위밖", "outofscope", "out-of-scope", "non-goal", "nongoal"}
 
-func readyHeadingKind(title string) string {
+func readyOutOfScopeHeading(title string) bool {
 	compact := compactHeading(title)
 	for _, w := range readyOutOfScope {
 		if strings.Contains(compact, w) {
-			return ""
+			return true
 		}
 	}
+	return false
+}
+
+// readySplit is whether a heading nested under a classified section is read as its own section: one
+// that supplies an item or holds open decisions, and one about what is out of scope. An open decisions
+// heading under the decided answer still holds the issue, and out-of-scope paths under the edit
+// regions are no edit region.
+func readySplit(title string) bool {
+	return readyOutOfScopeHeading(title) || readyHeadingKind(title) != ""
+}
+
+func readyHeadingKind(title string) string {
+	if readyOutOfScopeHeading(title) {
+		return ""
+	}
+	compact := compactHeading(title)
 	for _, k := range readyHeadings {
 		for _, w := range k.words {
 			if strings.Contains(compact, w) {
@@ -169,6 +186,12 @@ func placeholderEntry(s string) bool {
 	return false
 }
 
+// openEntry is an open decision that states something: neither empty nor a none entry. A placeholder
+// (TBD, 미정, 추후 결정) is a decision not yet taken, so it is open.
+func openEntry(s string) bool {
+	return compactEntry(s) != "" && !noneEntry(s)
+}
+
 // noneWords are the whole entries (compact form) that say nothing is open.
 var noneWords = map[string]bool{
 	"no": true, "nil": true, "na": true, "n/a": true, "none": true, "nothing": true,
@@ -180,11 +203,15 @@ var noneWords = map[string]bool{
 var parenthetical = regexp.MustCompile(`\([^()]*\)|（[^（）]*）`)
 
 // noneEntry is an entry that says there is nothing (for the open decisions): the whole entry is a none
-// word, with at most a note in brackets. An entry that only starts with one ("None of the providers
-// supports CAS; which fallback?") is a question.
+// word, at most in brackets or followed by a note in brackets. An entry that only starts with one ("None
+// of the providers supports CAS; which fallback?") is a question, and so is a question written only in
+// brackets.
 func noneEntry(s string) bool {
+	if noneWords[compactEntry(s)] {
+		return true
+	}
 	c := compactEntry(parenthetical.ReplaceAllString(s, ""))
-	return c == "" || noneWords[c]
+	return c != "" && noneWords[c]
 }
 
 // entries are what a section states: its list items and table rows, or, when it has none, its
@@ -201,35 +228,93 @@ func (s section) entries() []string {
 	return items
 }
 
-// fencedLines are the lines of a fenced block that carry content: not the fence lines, not blank. A
-// done condition may be written as a block alone (the command and its expected result).
-func (s section) fencedLines() int {
-	n := 0
+// looseParagraphs are a section's paragraphs outside its list items and tables: text that starts at
+// the margin after a blank line, a fence or a heading, and is not indented to the text of the list item
+// above it.
+func (s section) looseParagraphs() []string {
+	var out, cur []string
+	flush := func() {
+		if len(cur) > 0 {
+			out = append(out, plainText(strings.Join(cur, "\n")))
+		}
+		cur = nil
+	}
+	offset := -1       // the text column of the open list item; -1 when none is open
+	continues := false // the line continues the item or the table above it without a blank line
 	for i, line := range s.lines {
-		if s.fenced[i] && strings.TrimSpace(line) != "" {
-			if mark, _, _ := fenceRun(line); mark == 0 {
-				n++
-			}
+		indent, rest := indentOf(line)
+		switch item := listLine.FindStringSubmatch(rest); {
+		case s.fenced[i] || rest == "":
+			flush()
+			continues = false
+		case item != nil && indent <= 3 && !thematicBreak.MatchString(rest):
+			flush() // a list item interrupts a paragraph
+			offset, continues = indent+len(item[1])+markerGap(item[2]), true
+		case strings.HasPrefix(rest, "|") && indent <= 3:
+			flush()
+			offset, continues = -1, true
+		case len(cur) > 0:
+			cur = append(cur, rest)
+		case continues || (offset >= 0 && indent >= offset) || thematicBreak.MatchString(rest):
+		default:
+			offset = -1
+			cur = append(cur, rest)
 		}
 	}
-	return n
+	flush()
+	return out
 }
 
-// hasCommand is whether the section names a command: a backticked token outside code, or a line of a
-// fenced block that is not the fence itself.
-func (s section) hasCommand() bool {
+// codeSpan is a backticked span outside code blocks.
+var codeSpan = regexp.MustCompile("`+([^`]+)`+")
+
+// commandText is code that can be a command: it has a letter and is no placeholder (`0` is a result,
+// `TBD` holds a place).
+func commandText(code string) bool {
+	return strings.IndexFunc(code, unicode.IsLetter) >= 0 && !placeholderEntry(code)
+}
+
+// doneStated is whether a done condition names a command and the result it must give. The command is
+// a backticked span or a line of a fenced block; the result is text beside it (outside the command
+// spans, not a placeholder) or a second line in a block (the expected output or a comment).
+func (s section) doneStated() bool {
+	command, result := false, false
 	for i, line := range s.lines {
 		if s.fenced[i] {
-			if mark, _, _ := fenceRun(line); mark == 0 && strings.TrimSpace(line) != "" {
-				return true
-			}
 			continue
 		}
-		if pathToken.MatchString(line) || strings.Count(line, "`") >= 2 {
-			return true
+		_, rest := indentOf(line)
+		if item := listLine.FindStringSubmatch(rest); item != nil && !thematicBreak.MatchString(rest) {
+			rest = item[3]
+		}
+		rest = codeSpan.ReplaceAllStringFunc(rest, func(span string) string {
+			code := strings.Trim(span, "`")
+			if commandText(code) {
+				command = true
+				return " "
+			}
+			return " " + code + " "
+		})
+		if !placeholderEntry(rest) {
+			result = true
 		}
 	}
-	return false
+	block := 0 // the content lines of the block being read
+	for i, line := range s.lines {
+		if !s.fenced[i] {
+			continue
+		}
+		if mark, _, _ := fenceRun(line); mark != 0 {
+			block = 0
+			continue
+		}
+		if t := strings.TrimSpace(line); t != "" && !placeholderEntry(t) {
+			block++
+			command = command || commandText(t)
+			result = result || block >= 2
+		}
+	}
+	return command && result
 }
 
 func questionLine(s string) string {
@@ -242,7 +327,7 @@ func questionLine(s string) string {
 }
 
 func readyReportFor(in readyInput) (readyReport, error) {
-	sections, unread, err := readSectionsBy(in.Description, readyHeadingKind)
+	sections, unread, err := readSectionsSplit(in.Description, readyHeadingKind, readySplit)
 	if err != nil {
 		return readyReport{}, err
 	}
@@ -255,32 +340,34 @@ func readyReportFor(in readyInput) (readyReport, error) {
 	var open []string
 	var regionText []string
 	for _, s := range sections {
-		var real []string
-		for _, e := range s.entries() {
-			if !placeholderEntry(e) {
-				real = append(real, e)
-			}
-		}
 		switch s.kind {
 		case readyOpen:
-			for _, e := range real {
-				if !noneEntry(e) {
+			// Every entry is read, list items and paragraphs alike, and a placeholder is an undecided
+			// decision: only an empty or a none entry leaves nothing open.
+			for _, e := range append(s.items(), s.looseParagraphs()...) {
+				if openEntry(e) {
 					open = append(open, questionLine(e))
 				}
 			}
 			continue
 		case itemDone:
-			if (len(real) > 0 || s.fencedLines() > 0) && s.hasCommand() {
+			if s.doneStated() {
 				has[itemDone] = true
 			}
-		case itemEdit, readyScope:
-			// These supply the edit region only through the paths they name (below).
-		default:
-			if len(real) > 0 {
-				has[s.kind] = true
+		case itemCriteria, itemDecided, itemRedTest:
+			for _, e := range s.entries() {
+				if !placeholderEntry(e) {
+					has[s.kind] = true
+				}
 			}
 		}
-		regionText = append(regionText, s.text())
+		// The edit regions are the paths named where the rule allows: the edit region and scope
+		// sections, the criteria and the decided answer. A path in the red tests or the done condition
+		// names a file that is tested, not one the change is declared to edit.
+		switch s.kind {
+		case itemEdit, readyScope, itemCriteria, itemDecided:
+			regionText = append(regionText, s.text())
+		}
 	}
 	regions := pathRegions(strings.Join(regionText, "\n"))
 	if len(regions) > 0 {

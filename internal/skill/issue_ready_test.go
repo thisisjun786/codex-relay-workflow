@@ -407,3 +407,118 @@ func TestIssueReadyDoneConditionOnlyInACodeBlock(t *testing.T) {
 		t.Errorf("an empty block: exit %d: %s", code, out)
 	}
 }
+
+// openWith is readyBody with its open decisions replaced by the text given.
+func openWith(text string) string {
+	return strings.Replace(readyBody, "## 열린 결정\n\n없음\n", "## 열린 결정\n\n"+text+"\n", 1)
+}
+
+func wantDesignFirst(t *testing.T, name, body string, questions ...string) {
+	t.Helper()
+	code, out, _ := readyCall(readyIssue(t, body, nil))
+	r := decodeReport(t, out)
+	if code != 1 || at(r, "decision") != "design_first" {
+		t.Errorf("%s: exit %d: %s", name, code, out)
+		return
+	}
+	if got := strs(atList(r, "open_questions")); strings.Join(got, "|") != strings.Join(questions, "|") {
+		t.Errorf("%s: open questions %q, want %q", name, got, questions)
+	}
+}
+
+// An open decision written as TBD, 미정 or 추후 결정 is a decision not yet taken, so the issue is held
+// as design first; only an empty entry or a whole none entry clears the section.
+func TestIssueReadyOpenDecisionPlaceholderIsUndecided(t *testing.T) {
+	for _, e := range []string{"* TBD", "* 미정", "* 추후 결정", "TBD", "- TODO"} {
+		wantDesignFirst(t, e, openWith(e), strings.TrimLeft(e, "*- "))
+	}
+}
+
+// A question written only in brackets is a question: the bracket note is left out only after a none word.
+func TestIssueReadyBracketedOpenQuestionIsAQuestion(t *testing.T) {
+	for _, e := range []string{"* (which cache layer?)", "* （어떤 fallback을 쓸지?）"} {
+		wantDesignFirst(t, e, openWith(e), strings.TrimPrefix(e, "* "))
+	}
+}
+
+// An open decisions heading nested under another item's section is read as open decisions.
+func TestIssueReadyNestedOpenDecisionsAreRead(t *testing.T) {
+	body := strings.Replace(readyBody, "## 열린 결정\n\n없음\n", "", 1)
+	body = strings.Replace(body, "아키텍트 제안과 부모 결정은 이 절에 적는다.\n\n", "아키텍트 제안과 부모 결정은 이 절에 적는다.\n\n### 열린 결정\n\n* which cache layer?\n\n", 1)
+	wantDesignFirst(t, "nested", body, "which cache layer?")
+	// The decided answer around it still counts.
+	_, out, _ := readyCall(readyIssue(t, body, nil))
+	if got := strings.Join(strs(atList(decodeReport(t, out), "present")), ","); got != "criteria,edit_region,decided_answer,red_test,done_condition" {
+		t.Errorf("present: %s", got)
+	}
+	// A nested open decisions section that says none holds nothing, and out-of-scope paths nested
+	// under the edit regions are no edit region.
+	if code, out, _ := readyCall(readyIssue(t, strings.Replace(body, "* which cache layer?", "없음", 1), nil)); code != 0 {
+		t.Errorf("nested none: exit %d: %s", code, out)
+	}
+	nestedOut := strings.Replace(readyBody, "* `plugins/crw/skills/crw-run/SKILL.md`\n", "* `plugins/crw/skills/crw-run/SKILL.md`\n\n### 범위 밖\n\n* `internal/relay/`\n", 1)
+	_, out, _ = readyCall(readyIssue(t, nestedOut, nil))
+	if got := strings.Join(strs(atList(decodeReport(t, out), "observed", "edit_regions")), ","); got != "internal/skill,plugins/crw/skills" {
+		t.Errorf("nested out of scope: edit regions %s: %s", got, out)
+	}
+}
+
+// Open decisions written as a list and as paragraphs are all read.
+func TestIssueReadyOpenDecisionParagraphBesideAList(t *testing.T) {
+	wantDesignFirst(t, "none then paragraph", openWith("* 없음\n\nWhich cache layer?"), "Which cache layer?")
+	wantDesignFirst(t, "list and paragraph", openWith("* which fallback?\n\nWhich cache layer?"), "which fallback?", "Which cache layer?")
+	if code, out, _ := readyCall(readyIssue(t, openWith("* 없음\n\n없음."), nil)); code != 0 {
+		t.Errorf("none twice holds nothing: exit %d: %s", code, out)
+	}
+}
+
+// A path named only in the red tests or the done condition is no edit region: those sections say
+// which files are tested, not which the change edits.
+func TestIssueReadyTestPathsAreNoEditRegion(t *testing.T) {
+	start := strings.Index(readyBody, "## 편집 영역")
+	end := strings.Index(readyBody, "## 정한 답")
+	without := readyBody[:start] + readyBody[end:]
+	for name, body := range map[string]string{
+		"red test": strings.Replace(without, "* 빈 본문은 not_ready로 나온다.", "* `internal/skill/x_test.go`: 빈 본문은 not_ready로 나온다.", 1),
+		"done":     strings.Replace(without, "* `go test ./internal/skill -run IssueReady`가 통과한다.", "* `go test ./internal/skill -run IssueReady`가 통과한다.\n* `internal/skill/x_test.go`의 시험이 모두 통과한다.", 1),
+	} {
+		code, out, _ := readyCall(readyIssue(t, body, nil))
+		r := decodeReport(t, out)
+		if code != 1 || strings.Join(strs(atList(r, "missing")), ",") != "edit_region" || len(atList(r, "observed", "edit_regions")) != 0 {
+			t.Errorf("%s: exit %d: %s", name, code, out)
+		}
+	}
+}
+
+// A done condition names a command and the result it must give: a placeholder block, a result with no
+// command and a command with no result each leave it missing.
+func TestIssueReadyDoneConditionNeedsCommandAndResult(t *testing.T) {
+	start := strings.Index(readyBody, "## 끝 조건")
+	end := strings.Index(readyBody, "## 범위 밖")
+	with := func(text string) string {
+		return readyBody[:start] + "## 끝 조건\n\n" + text + "\n\n" + readyBody[end:]
+	}
+	for _, text := range []string{
+		"```\nTBD\n```",
+		"exit code is `0`.",
+		"* `go test ./internal/skill -run IssueReady`",
+		"```sh\ngo test ./internal/skill -run IssueReady\n```",
+		"* `go test ./internal/skill -run IssueReady` TBD",
+		"* `TBD`가 통과한다.",
+	} {
+		code, out, _ := readyCall(readyIssue(t, with(text), nil))
+		if code != 1 || strings.Join(strs(atList(decodeReport(t, out), "missing")), ",") != "done_condition" {
+			t.Errorf("%q: exit %d: %s", text, code, out)
+		}
+	}
+	for _, text := range []string{
+		"* `go test ./internal/skill -run IssueReady`가 통과한다.",
+		"* `go test ./internal/skill` exits `0`",
+		"통과해야 한다:\n\n```sh\ngo test ./internal/skill\n```",
+		"```sh\ngo test ./internal/skill -run IssueReady\n# Expected: all tests pass, exit 0\n```",
+	} {
+		if code, out, _ := readyCall(readyIssue(t, with(text), nil)); code != 0 {
+			t.Errorf("%q: exit %d: %s", text, code, out)
+		}
+	}
+}
