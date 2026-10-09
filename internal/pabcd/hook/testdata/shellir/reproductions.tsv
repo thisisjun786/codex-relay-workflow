@@ -927,3 +927,31 @@ evaluation of 83a490cef (fix round 1 of the pre-merge evaluation of 101be077, fi
 evaluation of 83a490cef (fix round 1 of the pre-merge evaluation of 101be077, finding d3 in the POSIX option scan)	sed --in='{MEMORY}/*' -e p out.txt --in-place=.bak	CRW-941-D14	row	-
 evaluation of 83a490cef (fix round 1 of the pre-merge evaluation of 101be077, finding d3 in the POSIX option scan)	sed -i'{MEMORY}/*' p out.txt -ni	CRW-941-D15	row	-
 evaluation of 83a490cef (fix round 1 of the pre-merge evaluation of 101be077, finding d3 in the POSIX option scan)	sed -i.bak -e p out.txt -i	CRW-941-D16	row	-
+recheck-20261009-g4-RC-851-v3	python3 -c 'import builtins; builtins \<nl>.exec("""open(file="<m>/a",mode="w")""")'	CRW-851-lc-01	row	-
+recheck-20261009-g4-RC-851-v3d	python3 -c 'import builtins; (builtins \<nl>.exec)("""open(file="<m>/a",mode="w")""")'	CRW-851-lc-02	row	-
+added by CRW-851 (line-continuation variant of the 10-09 re-check RC-851-v3)	python3 -c 'import builtins; builtins.\<nl>exec("""open(file="<m>/a",mode="w")""")'	CRW-851-lc-03	row	-
+added by CRW-851 (line-continuation variant of the 10-09 re-check RC-851-v3)	python3 -c 'import builtins; builtins \{CR}<nl>.exec("""open(file="<m>/a",mode="w")""")'	CRW-851-lc-04	row	-
+added by CRW-851 (line-continuation variant of the 10-09 re-check RC-851-v3)	python3 -c 'import builtins; builtins \<nl> . \<nl> exec("""open(file="<m>/a",mode="w")""")'	CRW-851-lc-05	row	-
+added by CRW-851 (line-continuation variant of the 10-09 re-check RC-851-v3)	python3 -c 'import builtins; __builtins__ \<nl>.eval("""open(file="<m>/a",mode="w")""")'	CRW-851-lc-06	row	-
+added by CRW-851 (line-continuation variant of the 10-09 re-check RC-851-v3)	python3 -c 'import builtins; exec(builtins \<nl>.compile("""open(file="<m>/a",mode="w")""", "x", "exec"))'	CRW-851-lc-07	row	-
+added by CRW-851 (line-continuation variant of the 10-09 re-check RC-851-v3)	python3 -c 'exec \<nl>("""open(file="<m>/a",mode="w")""")'	CRW-851-lc-08	row	-
+added by CRW-851 (line-continuation variant of the 10-09 re-check RC-851-v3)	python3 -c 'import builtins; (builtins.exec) \<nl>("""open(file="<m>/a",mode="w")""")'	CRW-851-lc-09	row	-
+added by CRW-851 (line-continuation variant of the 10-09 re-check RC-851-v3)	python3 -c 'import builtins; builtins \<nl>\<nl>.exec("""open(file="<m>/a",mode="w")""")'	CRW-851-lc-10	row	-
+added by CRW-851 (line-continuation variant of the 10-09 re-check RC-851-v3)	python3 -c 'import builtins; ((builtins \<nl>.exec))("""open(file="<m>/a",mode="w")""")'	CRW-851-lc-11	row	-
+added by CRW-851 (line-continuation allow counterexample of the 10-09 re-check)	python3 -c 'print("builtins \<nl>.exec(x)")'	CRW-851-lc-b01	row	-
+added by CRW-851 (line-continuation allow counterexample of the 10-09 re-check)	python3 -c 'print("""builtins \<nl>.exec(x)""")'	CRW-851-lc-b02	row	-
+added by CRW-851 (line-continuation allow counterexample of the 10-09 re-check)	python3 -c 'import re; re \<nl>.compile("a")'	CRW-851-lc-b03	row	-
+added by CRW-851 (line-continuation allow counterexample of the 10-09 re-check)	python3 -c 'import re; (re \<nl>.compile)("a")'	CRW-851-lc-b04	row	-
+added by CRW-851 (line-continuation allow counterexample of the 10-09 re-check)	python3 -c 'x = 1 + \<nl>2; print(x)'	CRW-851-lc-b05	row	-
+added by CRW-851 (line-continuation allow counterexample of the 10-09 re-check)	python3 -c 'runner = object(); runner \<nl>.exec("x")'	CRW-851-lc-b06	row	-
+added by CRW-851 (line-continuation allow counterexample of the 10-09 re-check)	python3 -c 'def myexec(s): return s<nl>myexec \<nl>("x")'	CRW-851-lc-b07	row	-
+added by CRW-851 (line-continuation allow counterexample of the 10-09 re-check)	python3 -c 'import mybuiltins; mybuiltins \<nl>.exec("x")'	CRW-851-lc-b08	row	-
+added by CRW-851 (pre-merge evaluation d1: builtins reached as an attribute of another object)	python3 -c 'import types; ...; runner . builtins \<nl>.exec(x)'	CRW-851-lc-b09	row	-
+added by CRW-851 (pre-merge evaluation d1: builtins reached as an attribute of another object)	python3 -c 'import types; ...; runner \<nl>. builtins.exec(x)'	CRW-851-lc-b10	row	-
+added by CRW-851 (pre-merge evaluation d1: builtins reached as an attribute of another object)	python3 -c 'import types; ...; runner \<nl>. \<nl>__builtins__ \<nl>. \<nl>eval(x)'	CRW-851-lc-b11	row	-
+added by CRW-851 (verifier P0: a line end after a dot is a new statement, not an attribute chain)	python3 -c 'import builtins; x = ...<nl>builtins.exec(...)'	CRW-851-lc-12	row	-
+added by CRW-851 (verifier P0: a line end after a dot is a new statement, not an attribute chain)	python3 -c 'import builtins; x = 1.<nl>builtins.exec(...)'	CRW-851-lc-13	row	-
+added by CRW-851 (verifier P0: a line end after a dot is a new statement, not an attribute chain)	python3 -c 'import builtins; x = 1.<nl>__builtins__.eval(...)'	CRW-851-lc-14	row	-
+added by CRW-851 (verifier P0: a line end after a dot is a new statement, not an attribute chain)	python3 -c 'import builtins; x = ...{CR}<nl>builtins.exec(...)'	CRW-851-lc-15	row	-
+added by CRW-851 (verifier P0: a line end after a dot is a new statement, not an attribute chain)	python3 -c 'import builtins<nl>if True:<nl>    x = 1.<nl>    builtins.exec(...)'	CRW-851-lc-16	row	-
+added by CRW-851 (verifier P0: a line end after a dot is a new statement, not an attribute chain)	python3 -c 'import builtins; x = ...<nl>builtins \<nl>.exec(...)'	CRW-851-lc-17	row	-
