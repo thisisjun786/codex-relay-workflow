@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -578,10 +579,59 @@ func auditDraftBundleIDs(rows []auditLedgerRow) []int {
 	return ids
 }
 
+// auditDraftReasonChanged is the named refusal of a draft whose name no longer reaches the file the reader
+// read, or that is gone once it was read.
+const auditDraftReasonChanged = "audit_draft_changed"
+
+// auditDraftReadHook runs inside a draft read, with the path the reader names. It is the seam a test uses to
+// change a draft while it is being read. Production leaves it nil.
+var auditDraftReadHook func(path string)
+
+// auditDraftReadFile reads one file of the drafts directory from the descriptor it opens, and then checks
+// that the name still reaches the file that descriptor holds. This is the protection CRW-1050 settled on for
+// every input the product cannot pin by descriptor: SQLite opens a store by name, so its read is guarded by
+// comparing the identity the name reaches before and after (improveIdentitySet), and a draft, which is a plain
+// file, gets the same comparison with its bytes taken from the opened file, so the content and the identity
+// that was checked are one file. A name that reaches another file, or none, once the file was read is refused
+// as auditDraftReasonChanged. The refusal is not an absent file: a caller that creates what is absent must not
+// create over a file that vanished while it was read. Every writer reads under the drafts lock, so a change it
+// sees was made by someone who did not take it; a reader without the lock (the listing) that overlaps a
+// writer's atomic rename gets the same refusal and runs again. A file that is not a regular file is read as it
+// always was.
+func auditDraftReadFile(path string) ([]byte, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = file.Close() }()
+	opened, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if auditDraftReadHook != nil {
+		auditDraftReadHook(path)
+	}
+	data, err := io.ReadAll(file)
+	if err != nil {
+		return nil, err
+	}
+	if !opened.Mode().IsRegular() {
+		return data, nil
+	}
+	named, err := os.Stat(path)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %s: the draft no longer has a file at its name once it was read (%v)", auditDraftReasonChanged, path, err)
+	}
+	if !os.SameFile(opened, named) {
+		return nil, fmt.Errorf("%s: %s: the name no longer reaches the file that was read", auditDraftReasonChanged, path)
+	}
+	return data, nil
+}
+
 // auditDraftLoad reads one draft file. A missing file, malformed JSON or another schema is an
 // error: a draft this product cannot trust is never appended to or marked.
 func auditDraftLoad(path string) (*auditDraft, error) {
-	data, err := os.ReadFile(path)
+	data, err := auditDraftReadFile(path)
 	if err != nil {
 		return nil, err
 	}

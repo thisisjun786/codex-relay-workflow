@@ -218,6 +218,50 @@
       ]
     },
     {
+      "file": "references/stacked-prs.md",
+      "reason": "CRW-1024: state the push-only scope of the pull-request rules (internal work opens no pull request) and name the commit subject and handoff where a CRW task branch has no PR title or body; rewrite the PR-gate and PR-description wording of the migration rule as change wording. Recorded per the validation ledger.",
+      "hunks": [
+        {
+          "line": 7,
+          "new": [
+            "CRW scope: CRW internal work is push-only (`AGENTS.md`): a task branch is verified and pushed, and the\n",
+            "integrator fast-forwards `dev` to it. Internal work opens no pull request, so the pull-request rules below\n",
+            "(PR titles, PR bodies, stack maps in a PR) do not apply to it. They apply to a change that arrives as a\n",
+            "pull request, and to the in-flight pull requests the transition lane serves\n",
+            "(`docs/relay/README.md`, \"The merge lane\").\n",
+            "\n"
+          ]
+        },
+        {
+          "line": 164,
+          "old": [
+            "checks, which is fine, because those are what keep PR descriptions honest.\n"
+          ],
+          "new": [
+            "checks, which is fine, because those are what keep the descriptions of pull requests honest.\n"
+          ]
+        },
+        {
+          "line": 324,
+          "old": [
+            "- has one thesis, stated in its PR title;\n"
+          ],
+          "new": [
+            "- has one thesis, stated in its PR title (a CRW task branch states it in its commit subject);\n"
+          ]
+        },
+        {
+          "line": 328,
+          "old": [
+            "- carries a stack map in its PR body so reviewers can navigate:\n"
+          ],
+          "new": [
+            "- carries a stack map in the body of its pull request so reviewers can navigate (a CRW task branch carries it in its handoff):\n"
+          ]
+        }
+      ]
+    },
+    {
       "file": "tests/native-execution.test.mjs",
       "reason": "Move the S-class skill-script test native-execution.test.mjs from CXC v0.2.40 plugins/codexclaw/test/ beside the skill it protects, changing only its import paths to the staged layout and the name table of contract/schema/cxc/name-substitution.json; it runs under Node in the skill-scripts-node CI job.",
       "add": true,

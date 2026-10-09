@@ -4,6 +4,12 @@ Canonical owner: `dev`. Other skills carry pointer stubs only (see
 `references/skill-ownership.md`). Rules here are tool-agnostic: the portable model first,
 CLI recipes second.
 
+CRW scope: CRW internal work is push-only (`AGENTS.md`): a task branch is verified and pushed, and the
+integrator fast-forwards `dev` to it. Internal work opens no pull request, so the pull-request rules below
+(PR titles, PR bodies, stack maps in a PR) do not apply to it. They apply to a change that arrives as a
+pull request, and to the in-flight pull requests the transition lane serves
+(`docs/relay/README.md`, "The merge lane").
+
 ## Native stacks are explicit-only (DEV-STACK-OPT-IN-01)
 
 Use ordinary pull requests by default; use a manual branch chain when dependencies
@@ -161,7 +167,7 @@ suppresses `push` and `pull_request` runs whose head commit subject carries
 `[skip ci]`. Verify that trigger shape in the actual workflow files before
 relying on it. Workflows on `pull_request_target` keep running and cannot be
 skipped this way — usually the cheap hygiene, labeling and base-enforcement
-checks, which is fine, because those are what keep PR descriptions honest.
+checks, which is fine, because those are what keep the descriptions of pull requests honest.
 
 ### Mandatory guards
 
@@ -321,11 +327,11 @@ delta, and confirm each PR's base ref still names the branch below it.
 
 Each layer:
 
-- has one thesis, stated in its PR title;
+- has one thesis, stated in its PR title (a CRW task branch states it in its commit subject);
 - builds and passes its own tests at its own tip — do not defer a layer's tests upward,
   except under an owner-authorized `DEV-STACK-08` lane, where deferring to the tip is
   the explicit, recorded trade;
-- carries a stack map in its PR body so reviewers can navigate:
+- carries a stack map in the body of its pull request so reviewers can navigate (a CRW task branch carries it in its handoff):
 
 ```markdown
 **Stack** (merge bottom-up):

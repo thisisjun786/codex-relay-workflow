@@ -158,10 +158,10 @@ oasdiff breaking openapi/v1.yaml openapi/v2.yaml --fail-on ERR
 - name: API breaking change check
   run: |
     oasdiff breaking openapi/v1.yaml openapi/v2.yaml --fail-on ERR
-  # Blocks PR if breaking changes detected without migration guide
+  # Blocks the change if breaking changes are detected without a migration guide
 ```
 
-When a breaking change is intentional, require a migration guide link in the PR description.
+When a breaking change is intentional, require a migration guide link in the change's description.
 
 ### Migration guide structure
 
@@ -187,7 +187,7 @@ When a breaking change is intentional, require a migration guide link in the PR 
 
 | Banned | Fix |
 |--------|-----|
-| Breaking change deployed without migration guide | PR gate: `oasdiff breaking --fail-on ERR` + guide link required |
+| Breaking change deployed without migration guide | Change gate: `oasdiff breaking --fail-on ERR` + guide link required |
 | `301 Redirect` for retired API | APIs return `410 Gone`; redirects are for web pages |
 | Undocumented field removal/rename | All removals/renames go through oasdiff + changelog entry |
 
