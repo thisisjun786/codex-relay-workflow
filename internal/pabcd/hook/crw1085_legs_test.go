@@ -93,3 +93,30 @@ func TestCRW1085ProtectedCompileAndShellFIFO(t *testing.T) {
 		}
 	}
 }
+
+func TestCRW1085ModulePathFollowsLinkBeforeDotDot(t *testing.T) {
+	cwd := t.TempDir()
+	home := filepath.Join(cwd, "codex")
+	root := filepath.Join(home, "memories")
+	t.Setenv("HOME", cwd)
+	t.Setenv("CODEX_HOME", home)
+	if err := os.MkdirAll(filepath.Join(root, "sub"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(root, "sub"), filepath.Join(cwd, "jump")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cwd, "test_linked.py"), []byte("print(1)\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	body := `open("` + filepath.Join(root, "n.md") + `","w")`
+	if err := os.WriteFile(filepath.Join(root, "test_linked.py"), []byte(body), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, cmd := range []string{"python -B -m unittest jump/../test_linked.py -v", "python3 -m py_compile jump/../test_linked.py"} {
+		raw, _ := json.Marshal(map[string]any{"hook_event_name": "PreToolUse", "tool_name": "Bash", "cwd": cwd, "tool_input": map[string]any{"command": cmd}})
+		if worktreeLeg(t, "pre-tool-use-guarding-memory-write").Handle(harness.Call{Raw: string(raw)}) == "" {
+			t.Errorf("linked module read the lexical sibling: %s", cmd)
+		}
+	}
+}

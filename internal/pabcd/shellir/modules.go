@@ -104,8 +104,12 @@ func (w *walker) pythonModule(prog Word, args []Word, assigns []Assign, redirs [
 	if len(files) == 0 && module == "py_compile" {
 		return true, unreadablef("py_compile needs file operands")
 	}
+	physical, err := filepath.EvalSymlinks(st.dir.Path)
+	if err != nil {
+		return true, unreadablef("module directory cannot be resolved")
+	}
 	if len(args[at:]) == 0 || len(files) == 0 {
-		err := filepath.WalkDir(st.dir.Path, func(p string, d fs.DirEntry, err error) error {
+		err := filepath.WalkDir(physical, func(p string, d fs.DirEntry, err error) error {
 			if err != nil {
 				return err
 			}
@@ -140,7 +144,7 @@ func (w *walker) pythonModule(prog Word, args []Word, assigns []Assign, redirs [
 	}
 	for _, file := range files {
 		if !filepath.IsAbs(file) {
-			file = filepath.Join(st.dir.Path, file)
+			file = strings.TrimSuffix(physical, "/") + "/" + file
 		}
 		if w.createdByText(file, st.dir) {
 			return true, unreadablef("module source was rewritten by the command")
@@ -152,7 +156,7 @@ func (w *walker) pythonModule(prog Word, args []Word, assigns []Assign, redirs [
 		total += len(body)
 		if module == "py_compile" {
 			// Explicit compilation writes bytecode even with Python -B.
-			name, args := fileRecord([]string{filepath.Join(filepath.Dir(file), "__pycache__")})
+			name, args := fileRecord([]string{file[:strings.LastIndexByte(file, '/')] + "/__pycache__"})
 			w.out = append(w.out, Exec{Kind: KindCommand, Name: name, Args: args, Dir: st.dir, Ctx: ctx})
 		}
 		w.out = append(w.out, Exec{Kind: KindCommand, Program: prog, Name: programName(prog.Value), Dir: st.dir, Ctx: ctx, Inline: &Inline{Language: "python", Source: Word{Known: true, Value: body}}})
