@@ -314,7 +314,7 @@ func Write(ctx context.Context, env LookupEnv, opts WriteOptions, request WriteR
 	// The backup is the first durable effect of this write: a request that went away while the
 	// candidate was judged must not leave one behind.
 	if ctx.Err() != nil {
-		return WriteResult{Kind: WriteCancelled, Step: "check", FileDigest: original, Errors: []string{cancelReason(ctx)}}
+		return WriteResult{Kind: WriteCancelled, Step: "check", FileDigest: fileAsItIs(path), Errors: []string{cancelReason(ctx)}}
 	}
 	backup, err := backupPolicy(encoded, raw, now())
 	if err != nil {
@@ -323,7 +323,7 @@ func Write(ctx context.Context, env LookupEnv, opts WriteOptions, request WriteR
 	// The backup is named in the record's own spelling, as every other path in an answer is.
 	reported := pyvalue.FSDecode(backup)
 	if ctx.Err() != nil {
-		return WriteResult{Kind: WriteCancelled, Step: "backup", Backup: reported, FileDigest: original, Errors: []string{cancelReason(ctx)}}
+		return WriteResult{Kind: WriteCancelled, Step: "backup", Backup: reported, FileDigest: fileAsItIs(path), Errors: []string{cancelReason(ctx)}}
 	}
 	updated, err := writeCandidate(raw, request.Change)
 	if err != nil {
@@ -333,7 +333,7 @@ func Write(ctx context.Context, env LookupEnv, opts WriteOptions, request WriteR
 	// rendered must not publish. After this point cancellation is no longer honoured, because stopping
 	// there would leave the file and the wiring record naming different digests.
 	if ctx.Err() != nil {
-		return WriteResult{Kind: WriteCancelled, Step: "publish", Backup: reported, FileDigest: original, Errors: []string{cancelReason(ctx)}}
+		return WriteResult{Kind: WriteCancelled, Step: "publish", Backup: reported, FileDigest: fileAsItIs(path), Errors: []string{cancelReason(ctx)}}
 	}
 	// The replacement happens only while the file still holds the bytes read under the lock, and it is
 	// an atomic exchange, so a writer that saved in between is neither replaced nor lost.
@@ -403,7 +403,7 @@ func Write(ctx context.Context, env LookupEnv, opts WriteOptions, request WriteR
 		// The publication refused the replacement because the request ended: nothing was replaced. Only
 		// an error that is the context's own says so; a failure of the exchange that happened to
 		// coincide with the end of the request is a failure (the next case).
-		return WriteResult{Kind: WriteCancelled, Step: "publish", Backup: reported, FileDigest: original, Errors: []string{cancelReason(ctx)}}
+		return WriteResult{Kind: WriteCancelled, Step: "publish", Backup: reported, FileDigest: fileAsItIs(path), Errors: []string{cancelReason(ctx)}}
 	case displaced == nil:
 		return WriteResult{Kind: WriteFailed, Backup: reported, Errors: []string{"the execution policy could not be written: " + err.Error()}}
 	default:
@@ -726,6 +726,17 @@ func registrationEnvelopeOf(answer RegisterAnswer) (registrationEnvelope, bool) 
 // coincided with it.
 func isContextEnd(ctx context.Context, err error) bool {
 	return ctx.Err() != nil && err != nil && (errors.Is(err, ctx.Err()) || errors.Is(err, context.Cause(ctx)))
+}
+
+// fileAsItIs is the digest of the policy file as it is when a cancelled write ends, or "" when it
+// cannot be read. The policy lock serializes writers but not editors, so the bytes this write read
+// under the lock are not evidence of what it left: an answer reports an observation or nothing.
+func fileAsItIs(path string) string {
+	digest, err := digestAt(path)
+	if err != nil {
+		return ""
+	}
+	return digest
 }
 
 // cancelReason is why a request ended: the context's error, and the cause it was cancelled with when

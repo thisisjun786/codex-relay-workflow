@@ -266,3 +266,49 @@ func TestTheRecordBackupNamesTheFileTheInstallerMadeWhenTheDirectoryIsNotUTF8(t 
 		t.Fatalf("the record backup the answer names does not exist: %v", err)
 	}
 }
+
+// TestACancelledAnswerNamesTheFileAsItIsWhenTheWriteEnds is the pre-merge evaluation's CRW-1001 d1:
+// the cancelled answer reported the digest of the bytes read under the lock, but the policy lock
+// does not keep an editor out, so an editor that saved another document while the write was between
+// its backup and its publication left a file the answer did not describe. The digest is read when
+// the write ends; a file that cannot be read is named by no digest at all.
+func TestACancelledAnswerNamesTheFileAsItIsWhenTheWriteEnds(t *testing.T) {
+	edited := strings.Replace(policyText, "devin/swe-2", "devin/swe-3", 1)
+	for name, drive := range map[string]func(t *testing.T, file string, cancel context.CancelFunc) WriteOptions{
+		"cancelled between the backup and the publication": func(t *testing.T, file string, cancel context.CancelFunc) WriteOptions {
+			original := writeCandidate
+			writeCandidate = func(raw []byte, change Change) ([]byte, error) {
+				if err := os.WriteFile(file, []byte(edited), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				cancel()
+				return original(raw, change)
+			}
+			t.Cleanup(func() { writeCandidate = original })
+			return WriteOptions{Register: neverRegisters(t)}
+		},
+		"publish refused by the context": func(t *testing.T, file string, cancel context.CancelFunc) WriteOptions {
+			return WriteOptions{Register: neverRegisters(t), Swap: func(ctx context.Context, _ string, _, _ []byte, _ os.FileMode) ([]byte, string, error) {
+				if err := os.WriteFile(file, []byte(edited), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				cancel()
+				return nil, "", ctx.Err()
+			}}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			env, file := host(t, policyText, true)
+			ctx, cancel := context.WithCancel(context.Background())
+			result := Write(ctx, envOf(env), drive(t, file, cancel),
+				WriteRequest{ExpectedDigest: digestOf(policyText), Change: removeLegacy()})
+			if result.Kind != WriteCancelled {
+				t.Fatalf("kind = %q (%v), want %q", result.Kind, result.Errors, WriteCancelled)
+			}
+			if result.FileDigest != digestOf(edited) {
+				t.Fatalf("fileDigest = %q, want %q: the file as the write ended, not the bytes it read at the start (%q)",
+					result.FileDigest, digestOf(edited), digestOf(policyText))
+			}
+		})
+	}
+}
