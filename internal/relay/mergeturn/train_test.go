@@ -147,11 +147,7 @@ type tr struct {
 func newTr(t *testing.T) *tr {
 	t.Helper()
 	ctx := context.Background()
-	s, err := store.Open(ctx, filepath.Join(t.TempDir(), "relay.sqlite3"), "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = s.Close() })
+	s := openFresh(t)
 	now := func() string { return trISO }
 	r := &registry.Registry{Store: s, Now: now, Policy: registry.ResolveRolePolicy(map[string]string{})}
 	w := &tr{t: t, ctx: ctx, s: s, r: r, tip: &trTip{tips: map[[2]string]string{}}, forge: newTrForge(), proof: &trProof{tree: "tree-bundle"}}

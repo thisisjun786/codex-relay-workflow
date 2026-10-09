@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -195,15 +194,7 @@ func (w *wakeParity) compare(name string) {
 func newWakeParity(t *testing.T) *wakeParity {
 	t.Helper()
 	ctx := context.Background()
-	s, err := store.Open(ctx, filepath.Join(t.TempDir(), "relay.sqlite3"), "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if e := s.Close(); e != nil {
-			t.Error(e)
-		}
-	})
+	s := mergeturn.OpenFresh(t)
 	clock := delivery.NewFakeClock()
 	r := &registry.Registry{Store: s, Now: clock.ISO}
 	w := &wakeParity{t: t, ctx: ctx, store: s, clock: clock, host: newWakeHost(clock)}
@@ -211,10 +202,10 @@ func newWakeParity(t *testing.T) *wakeParity {
 	w.d.RoleGate = func(context.Context, *store.Store, string, *delivery.TaskSettings) error { return nil }
 	w.m = &mergeturn.Service{Store: s, Registry: r, Now: clock.ISO, Delivery: mergeturn.StoreDelivery{Store: s}}
 	for _, p := range []struct{ project, task, host string }{{"PRJ-A", "task-alpha", "host-a"}, {"PRJ-B", "task-beta", "host-b"}} {
-		if _, err = r.BindScope(ctx, "parent", p.project, registry.Endpoint{TaskID: p.task, HostID: p.host, Cwd: sql.NullString{String: "/alpha", Valid: true}}); err != nil {
+		if _, err := r.BindScope(ctx, "parent", p.project, registry.Endpoint{TaskID: p.task, HostID: p.host, Cwd: sql.NullString{String: "/alpha", Valid: true}}); err != nil {
 			t.Fatal(err)
 		}
-		if _, err = r.RegisterSupervision(ctx, "INIT-1", p.project, registry.Endpoint{TaskID: "task-supervisor", HostID: "host-s", Cwd: sql.NullString{String: "/sup", Valid: true}}, registry.Endpoint{TaskID: p.task, HostID: p.host, Cwd: sql.NullString{String: "/alpha", Valid: true}}, "execution"); err != nil {
+		if _, err := r.RegisterSupervision(ctx, "INIT-1", p.project, registry.Endpoint{TaskID: "task-supervisor", HostID: "host-s", Cwd: sql.NullString{String: "/sup", Valid: true}}, registry.Endpoint{TaskID: p.task, HostID: p.host, Cwd: sql.NullString{String: "/alpha", Valid: true}}, "execution"); err != nil {
 			t.Fatal(err)
 		}
 	}

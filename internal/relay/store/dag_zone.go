@@ -3,8 +3,11 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+	"regexp"
 	"slices"
+	"strings"
 )
 
 // The additive DAG zone (D-01 of the DAG execution contract, docs/relay/dag-plans.md).
@@ -40,13 +43,89 @@ import (
 func DAGZoneStatements() []string { return slices.Clone(dagZone) }
 
 // installDAGZone creates the zone on the writable database db, after the v1 script. Every step is
-// idempotent, so a crash between two steps is completed by the next open.
+// idempotent. A store that already holds every object of the zone is not touched: the open reads the
+// catalog and returns, so it neither waits for the daemon's write transaction nor holds up its next one.
+// A store that lacks some gets all the steps in ONE write transaction (BEGIN IMMEDIATE ... COMMIT), so a
+// crash leaves the zone as it was and a concurrent opener waits for the first one's commit and then finds
+// the zone whole. Step by step, each step was a schema change of its own that a peer's open, still
+// reading or preparing statements in between, could meet as "database schema has changed (17)"
+// (SQLITE_SCHEMA): the 1007 integration verification failed its dag test that way (CRW-1054). One commit is
+// one change for a peer to meet, and a peer that does meet it runs again (retrySchemaChanged).
 func installDAGZone(ctx context.Context, db *sql.DB) error {
+	return retrySchemaChanged(ctx, "DAG zone", func() error {
+		missing, err := zoneIncomplete(ctx, db)
+		if err != nil {
+			return fmt.Errorf("initialize DAG zone: %w", err)
+		}
+		if !missing {
+			return nil
+		}
+		return installDAGZoneTx(ctx, db)
+	})
+}
+
+// zoneObjectName finds the type and the name a zone statement creates; every statement of dagZone is a
+// CREATE ... IF NOT EXISTS of one table, index or trigger (TestDAGZoneStatementsNameWhatTheyCreate).
+var zoneObjectName = regexp.MustCompile(`(?is)^\s*CREATE\s+(?:UNIQUE\s+)?(TABLE|INDEX|TRIGGER)\s+IF\s+NOT\s+EXISTS\s+([A-Za-z_][A-Za-z_0-9]*)`)
+
+// zoneIncomplete is whether the catalog lacks an object the zone declares, read by type and name: tables and
+// indexes share one namespace and triggers have their own, so a trigger named like a missing index does not
+// stand in for it (CRW-1054 evaluation d1). A statement whose type and name cannot be read counts as lacking,
+// so the transaction runs it.
+func zoneIncomplete(ctx context.Context, db *sql.DB) (bool, error) {
+	rows, err := db.QueryContext(ctx, "SELECT type, name FROM sqlite_master")
+	if err != nil {
+		return false, err
+	}
+	present := map[[2]string]bool{}
+	for rows.Next() {
+		var kind, name string
+		if err = rows.Scan(&kind, &name); err != nil {
+			break
+		}
+		present[[2]string{strings.ToLower(kind), name}] = true
+	}
+	if err = errors.Join(err, rows.Err(), rows.Close()); err != nil {
+		return false, err
+	}
+	for _, statement := range dagZone {
+		match := zoneObjectName.FindStringSubmatch(statement)
+		if match == nil || !present[[2]string{strings.ToLower(match[1]), match[2]}] {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// installDAGZoneTx runs every step on one connection in one write transaction.
+func installDAGZoneTx(ctx context.Context, db *sql.DB) (err error) {
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("initialize DAG zone: %w", err)
+	}
+	defer func() { err = errors.Join(err, conn.Close()) }()
+	if _, err = conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		return fmt.Errorf("initialize DAG zone: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_, e := conn.ExecContext(context.WithoutCancel(ctx), "ROLLBACK")
+			err = errors.Join(err, e)
+		}
+	}()
 	for i, statement := range dagZone {
-		if _, err := db.ExecContext(ctx, statement); err != nil {
+		if err = schemaAttempt(fmt.Sprintf("DAG zone step %d", i+1)); err == nil {
+			_, err = conn.ExecContext(ctx, statement)
+		}
+		if err != nil {
 			return fmt.Errorf("initialize DAG zone (step %d): %w", i+1, err)
 		}
 	}
+	if _, err = conn.ExecContext(ctx, "COMMIT"); err != nil {
+		return fmt.Errorf("initialize DAG zone (commit): %w", err)
+	}
+	committed = true
 	return nil
 }
 

@@ -7,5 +7,5 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	testsupport.Main(m)
+	testsupport.Main(m, setTemplateRoot)
 }

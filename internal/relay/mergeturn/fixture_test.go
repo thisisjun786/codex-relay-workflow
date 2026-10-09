@@ -91,15 +91,7 @@ var (
 func newFx(t *testing.T) *fx {
 	t.Helper()
 	ctx := context.Background()
-	s, err := store.Open(ctx, filepath.Join(t.TempDir(), "relay.sqlite3"), "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := s.Close(); err != nil {
-			t.Error(err)
-		}
-	})
+	s := openFresh(t)
 	now := func() string { return fxISO }
 	r := &registry.Registry{Store: s, Now: now, Policy: registry.ResolveRolePolicy(map[string]string{})}
 	w := &fx{t: t, ctx: ctx, s: s, r: r, target: &fakeTarget{tips: map[[2]string]string{}}}

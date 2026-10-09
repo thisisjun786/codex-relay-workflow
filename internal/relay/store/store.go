@@ -65,6 +65,10 @@ type OpenOptions struct {
 	// verify is the fenced opener's check of a writable store, run on the opened database
 	// before the schema script; it returns the write gate the store holds (verifyWritable).
 	verify func(context.Context, *sql.DB) (*os.File, error)
+	// unsynced opens the database with synchronous=OFF instead of FULL. Only buildAbsent sets it, on the
+	// temporary database no other process can name yet: the build is one private writer, a crash discards the
+	// file, and createAbsent syncs the finished file before it links it into place (CRW-1054).
+	unsynced bool
 }
 
 func Open(ctx context.Context, path, socketPath string) (*Store, error) {
@@ -157,7 +161,11 @@ func open(ctx context.Context, path, socketPath string, options OpenOptions) (_ 
 		}
 		// Python's sqlite3.connect installs its timeout before executing journal_mode.
 		// Do the same: journal_mode may need a lock even before the schema is read.
-		pragmas := []string{fmt.Sprintf("PRAGMA busy_timeout=%d", options.BusyTimeout.Milliseconds()), "PRAGMA journal_mode=WAL", "PRAGMA synchronous=FULL", "PRAGMA foreign_keys=ON"}
+		synchronous := "FULL"
+		if options.unsynced {
+			synchronous = "OFF"
+		}
+		pragmas := []string{fmt.Sprintf("PRAGMA busy_timeout=%d", options.BusyTimeout.Milliseconds()), "PRAGMA journal_mode=WAL", "PRAGMA synchronous=" + synchronous, "PRAGMA foreign_keys=ON"}
 		busyConfigured := false
 		for _, pragma := range pragmas {
 			deadline := time.Now().Add(options.BusyTimeout)
@@ -233,7 +241,7 @@ func open(ctx context.Context, path, socketPath string, options OpenOptions) (_ 
 	if len(sections) != 2 {
 		return nil, errors.New("embedded schema lacks guard marker")
 	}
-	if _, err = db.ExecContext(ctx, sections[0]); err != nil {
+	if err = execSchema(ctx, db, "v1 script", sections[0]); err != nil {
 		return nil, fmt.Errorf("initialize schema: %w", err)
 	}
 	// The additive DAG zone follows the v1 script and is not part of what the open validated
@@ -255,7 +263,7 @@ func open(ctx context.Context, path, socketPath string, options OpenOptions) (_ 
 		if statement == "" {
 			continue
 		}
-		if _, guardErr := db.ExecContext(ctx, statement); guardErr != nil {
+		if guardErr := execSchema(ctx, db, "guard index", statement); guardErr != nil {
 			name := strings.Fields(strings.TrimPrefix(statement, "CREATE UNIQUE INDEX IF NOT EXISTS "))[0]
 			result.UnenforcedIndexes = append(result.UnenforcedIndexes, UnenforcedIndex{Index: name, Detail: guardErr.Error()})
 		}
