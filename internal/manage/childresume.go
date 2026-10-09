@@ -436,8 +436,15 @@ func resumeRun(ctx context.Context, e *Env, cfg *Config, opts resumeOptions) (*r
 	// CRW-1140: the child's PABCD state lives at the cwd the host reports for it now, not at the
 	// recorded cwd, which a later settings record may have changed. A record that would resume the
 	// child elsewhere while that state is in flight is refused before anything is sent, the dry run
-	// included, and the preserved state is named.
-	if conflict := stateroot.Guard(resumeLookupEnv(e), read.Thread.Cwd, settings.CWD, child); conflict != nil {
+	// included, and the preserved state is named. Only a run that goes on to resume records the
+	// root as the child's anchor; the dry run writes nothing.
+	judge := func() *stateroot.Conflict {
+		if opts.dryRun {
+			return stateroot.Check(read.Thread.Cwd, settings.CWD, child)
+		}
+		return stateroot.Guard(resumeLookupEnv(e), read.Thread.Cwd, settings.CWD, child)
+	}
+	if conflict := judge(); conflict != nil {
 		return nil, &resumeFailure{Reason: stateroot.Code, Detail: conflict.Error() + "; nothing was sent"}
 	}
 	if opts.dryRun {

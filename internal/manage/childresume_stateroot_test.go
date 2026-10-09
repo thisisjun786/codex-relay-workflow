@@ -95,6 +95,10 @@ func TestResumeRefusesARecordThatMovesInFlightStateToAnotherCwd(t *testing.T) {
 			if _, err := os.Stat(filepath.Join(b, ".crw")); !errors.Is(err, fs.ErrNotExist) {
 				t.Fatalf("the target cwd got a state directory: %v", err)
 			}
+			// The dry run writes nothing, not even the anchor a resuming run records.
+			if _, err := os.Stat(filepath.Join(os.Getenv("CRW_HOME"), "state-roots")); dry != errors.Is(err, fs.ErrNotExist) {
+				t.Fatalf("dry=%v: anchor directory %v", dry, err)
+			}
 		})
 	}
 }
