@@ -125,9 +125,16 @@ type decoder struct {
 	depth int
 }
 
-// open enters a container, refusing it past MaxDepth unless the reading is Deep.
+// open enters a container, refusing it past MaxDepth unless the reading is Deep, and refusing a Deep
+// reading's container that the document is too short to close.
 func (d *decoder) open() error {
 	d.depth++
+	if d.o.Deep && 2*d.depth > len(d.s) {
+		// Every open container needs its own opener and closer, so a document this short cannot close
+		// them all. A Deep reading would otherwise recurse once per opener of a broken document, past
+		// the goroutine stack's limit (a fatal error no recover answers) for an input of a few MiB.
+		return errSyntax
+	}
 	if !d.o.Deep && d.depth > MaxDepth {
 		// A reading that accepts what encoding/json refuses (a Python reading, the constants)
 		// read the document through encoding/json only after checking it, so its depth refusal

@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -125,4 +127,79 @@ func TestGateDepthDoesNotChangeHowBrokenJSONIsHandled(t *testing.T) {
 		})
 	}
 	_ = h
+}
+
+// CRW-1075 (verification fix). A Go stack overflow is a fatal error no recover answers, so
+// the gates must meet a document inside the input bound whose nesting runs to millions of levels
+// without recursing once per opener. These cases run the hook in a child process (this test binary,
+// re-executed) and compare exit code and stdout with the oracle's: the CXC v0.2.40 cli.js answers a
+// broken document of 3,000,000 "[" with no output and exit 0, and reads a valid one 2,000,000 deep.
+const gateChildEnv = "CRW_GATE_DEPTH_CHILD_LEG"
+
+func TestGateDepthChildProcess(t *testing.T) {
+	leg := os.Getenv(gateChildEnv)
+	if leg == "" {
+		t.Skip("child process of TestGateBoundsNestingByTheInputItReads")
+	}
+	raw, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		os.Exit(70)
+	}
+	code := harness.Hook(context.Background(), []string{"pre-tool-use", "--leg", leg}, bytes.NewReader(raw), os.Stdout, os.Stderr, os.LookupEnv, harness.Legs())
+	os.Exit(code)
+}
+
+func gateChild(t *testing.T, leg, raw string) (string, int, string) {
+	t.Helper()
+	cmd := exec.Command(os.Args[0], "-test.run=^TestGateDepthChildProcess$")
+	cmd.Env = append(os.Environ(), gateChildEnv+"="+leg)
+	cmd.Stdin = strings.NewReader(raw)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	err := cmd.Run()
+	code := 0
+	if exit, ok := err.(*exec.ExitError); ok {
+		code = exit.ExitCode()
+	} else if err != nil {
+		t.Fatal(err)
+	}
+	tail := stderr.String()
+	if len(tail) > 300 {
+		tail = tail[:300]
+	}
+	return stdout.String(), code, tail
+}
+
+func TestGateBoundsNestingByTheInputItReads(t *testing.T) {
+	if testing.Short() {
+		t.Skip("reads megabytes of nesting")
+	}
+	h := gateEnv(t)
+	const leg = "pre-tool-use-guarding-goal-budget"
+	valid := func(depth int) string {
+		return gatePayload(t, h.cwd, "gate-1", "create_goal", `{"objective":"x","token_budget":1,"ignored":`+gateNested(depth)+`}`)
+	}
+	unclosed := gatePayload(t, h.cwd, "gate-1", "create_goal", `{"objective":"x","token_budget":1,"ignored":`)
+	unclosed = unclosed[:len(unclosed)-1] + strings.Repeat("[", 2_500_000)
+	shallow, code := gateRun(t, leg, valid(1))
+	if code != 0 || !strings.Contains(shallow, "Use create_goal with objective only") {
+		t.Fatalf("the shallow call answered %q (exit %d)", shallow, code)
+	}
+	cases := []struct {
+		name, raw, want string
+	}{
+		{"3,000,000 unclosed arrays are not a payload", strings.Repeat("[", 3_000_000), ""},
+		{"4 MiB of unclosed arrays are not a payload", strings.Repeat("[", 4*1024*1024), ""},
+		{"an envelope that never closes its 2,500,000-deep field is not a payload", unclosed, ""},
+		{"800,000 unclosed objects are not a payload", strings.Repeat(`{"a":`, 800_000), ""},
+		{"a valid payload 1,900,000 deep keeps its verdict", valid(1_900_000), shallow},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, code, stderr := gateChild(t, leg, c.raw)
+			if code != 0 || got != c.want {
+				t.Errorf("exit %d, stdout %q, want exit 0 and %q; stderr %q", code, got, c.want, stderr)
+			}
+		})
+	}
 }
