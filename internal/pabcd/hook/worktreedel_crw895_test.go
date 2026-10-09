@@ -101,6 +101,28 @@ func crw895Shapes() []crw895Shape {
 		{`find /tmp/build -type f -exec sh -c 'cd {}/..; rm -f ./stale' \;`, false, false},
 		{`find ../repo -exec sh -c 'cd {}; rm x' \;`, true, false},
 		{`find .. -maxdepth 0 -exec sh -c 'cd {}; rm x' \;`, true, false},
+		// the fix round after the verification of 9f189ad1: a find -regex whose syntax find and Go do not read the same (\' is the
+		// end of the path to find and a quote to Go) never guards; start points are not re-read from the unknown directory of a
+		// shell that names nothing find found; a directory prefix before {} keeps the word below that directory
+		{`find ../repo -regex ".*\'" -delete`, true, false},
+		{`find ../repo -regex ".*\'" -exec git worktree remove --force {} \;`, true, false},
+		{`find ../repo -regex '.*po\>' -delete`, true, false},
+		{`find ../repo -regex '\`+"`"+`.*' -delete`, true, false},
+		{`find ../repo -regex '.*[\.]po' -delete`, true, false},
+		{`find .. -maxdepth 0 -regex ".*\'" -exec rm -rf {} +`, true, false},
+		{`find . -regex '.*/build/.*[0-9]' -delete`, false, false},
+		{`find . -regex '.*[[:digit:]]' -delete`, false, false},
+		{`find . -regex '^\./src/.*$' -delete`, false, false},
+		{`find build -type d -exec sh -c 'cd {}; rm -f stale' \;`, false, false},
+		{`find src -exec sh -c 'D={}; cd "$D"; rm x' \;`, false, false},
+		{`find . -exec sh -c 'cd {}; rm x' \;`, true, false},
+		{`find build -type d -exec sh -c 'cd $X; rm -rf {}' \;`, true, false},
+		{`find . -maxdepth 1 -name '*.tmp' -exec rm -f build/{} \;`, false, false},
+		{`find . -maxdepth 1 -name '*.tmp' -exec rm -f /tmp/stash/{} \;`, false, false},
+		{`find . -name '*.tmp' -exec rm -rf ../{} \;`, true, false},
+		{`find . -name x -exec rm -rf ../repo/{} \;`, true, false},
+		{`find ../build -name x -exec rm -rf build/{} \;`, true, false},
+		{`find . -name x -exec rm -rf {}/../.. \;`, true, false},
 	}
 }
 

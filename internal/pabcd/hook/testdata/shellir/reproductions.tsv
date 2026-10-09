@@ -987,3 +987,24 @@ fix round after review of cf7844fce (P1 regression of the third round (absolute 
 fix round after review of cf7844fce (P1 regression of the third round (absolute find start from an unknown directory))	find /tmp/build -type f -exec sh -c 'cd {}/..; rm -f ./stale' \;	CRW-895-t4	row	-
 fix round after review of cf7844fce (P1 regression of the third round (absolute find start from an unknown directory))	find {CHECKOUT} -exec sh -c 'cd {}; rm x' \;	CRW-895-t5	row	-
 fix round after review of cf7844fce (P1 regression of the third round (absolute find start from an unknown directory))	find {CHECKOUT}/.. -maxdepth 0 -exec sh -c 'cd {}; rm x' \;	CRW-895-t6	row	-
+fix round after verification of 9f189ad1 (P0 find -regex syntax the reader does not read)	find ../repo -regex ".*\'" -delete	CRW-895-u1	row	-
+fix round after verification of 9f189ad1 (P0 find -regex syntax the reader does not read)	find ../repo -regex ".*\'" -exec git worktree remove --force {} \;	CRW-895-u2	row	-
+fix round after verification of 9f189ad1 (P0 find -regex syntax the reader does not read)	find ../repo -regex '.*po\>' -delete	CRW-895-u3	row	-
+fix round after verification of 9f189ad1 (P0 find -regex syntax the reader does not read)	find ../repo -regex '\`.*' -delete	CRW-895-u4	row	-
+fix round after verification of 9f189ad1 (P0 find -regex syntax the reader does not read)	find ../repo -regex '.*[\.]po' -delete	CRW-895-u5	row	-
+fix round after verification of 9f189ad1 (P0 find -regex syntax the reader does not read)	find .. -maxdepth 0 -regex ".*\'" -exec rm -rf {} +	CRW-895-u6	row	-
+fix round after verification of 9f189ad1 (P0 find -regex syntax the reader does not read)	find . -regex '.*\.o' -delete	CRW-895-u7	row	-
+fix round after verification of 9f189ad1 (P0 find -regex syntax the reader does not read)	find . -regex '.*/build/.*[0-9]' -delete	CRW-895-u8	row	-
+fix round after verification of 9f189ad1 (P0 find -regex syntax the reader does not read)	find . -regex '.*[[:digit:]]' -delete	CRW-895-u9	row	-
+fix round after verification of 9f189ad1 (P0 find -regex syntax the reader does not read)	find . -regex '^\./src/.*$' -delete	CRW-895-u10	row	-
+fix round after verification of 9f189ad1 (P1 start points re-judged from an unknown directory)	find build -type d -exec sh -c 'cd {}; rm -f stale' \;	CRW-895-v1	row	-
+fix round after verification of 9f189ad1 (P1 start points re-judged from an unknown directory)	find src -exec sh -c 'D={}; cd "$D"; rm x' \;	CRW-895-v2	row	-
+fix round after verification of 9f189ad1 (P1 start points re-judged from an unknown directory)	find . -exec sh -c 'cd {}; rm x' \;	CRW-895-v3	row	-
+fix round after verification of 9f189ad1 (P1 start points re-judged from an unknown directory)	find .. -maxdepth 0 -exec sh -c 'cd {}; rm x' \;	CRW-895-v4	row	-
+fix round after verification of 9f189ad1 (P1 start points re-judged from an unknown directory)	find build -type d -exec sh -c 'cd $X; rm -rf {}' \;	CRW-895-v5	row	-
+fix round after verification of 9f189ad1 (P1 prefix before {})	find . -maxdepth 1 -name '*.tmp' -exec rm -f build/{} \;	CRW-895-w1	row	-
+fix round after verification of 9f189ad1 (P1 prefix before {})	find . -maxdepth 1 -name '*.tmp' -exec rm -f /tmp/stash/{} \;	CRW-895-w2	row	-
+fix round after verification of 9f189ad1 (P1 prefix before {})	find . -name '*.tmp' -exec rm -rf ../{} \;	CRW-895-w3	row	-
+fix round after verification of 9f189ad1 (P1 prefix before {})	find . -name x -exec rm -rf ../repo/{} \;	CRW-895-w4	row	-
+fix round after verification of 9f189ad1 (P1 prefix before {})	find ../build -name x -exec rm -rf build/{} \;	CRW-895-w5	row	-
+fix round after verification of 9f189ad1 (P1 prefix before {})	find . -name x -exec rm -rf {}/../.. \;	CRW-895-w6	row	-
