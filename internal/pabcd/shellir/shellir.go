@@ -973,7 +973,12 @@ func (w *walker) wrapped(name string, args []Word, assigns []Assign, redirs []Re
 			if len(inner) > 0 && shellStateBuiltin(inner[0]) {
 				return unreadablef("a shell builtin named behind the external program %s", name)
 			}
-			if err := w.dispatch(inner, inherited, redirs, st.clone(), ctx); err != nil {
+			// env -C and --chdir move the program's own directory, not the shell's: the copy takes each operand in turn.
+			child := st.clone()
+			for _, d := range u.chdirs {
+				child.cd([]Word{d})
+			}
+			if err := w.dispatch(inner, inherited, redirs, child, ctx); err != nil {
 				return err
 			}
 			continue

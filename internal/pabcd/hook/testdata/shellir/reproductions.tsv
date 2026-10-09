@@ -927,3 +927,33 @@ evaluation of 83a490cef (fix round 1 of the pre-merge evaluation of 101be077, fi
 evaluation of 83a490cef (fix round 1 of the pre-merge evaluation of 101be077, finding d3 in the POSIX option scan)	sed --in='{MEMORY}/*' -e p out.txt --in-place=.bak	CRW-941-D14	row	-
 evaluation of 83a490cef (fix round 1 of the pre-merge evaluation of 101be077, finding d3 in the POSIX option scan)	sed -i'{MEMORY}/*' p out.txt -ni	CRW-941-D15	row	-
 evaluation of 83a490cef (fix round 1 of the pre-merge evaluation of 101be077, finding d3 in the POSIX option scan)	sed -i.bak -e p out.txt -i	CRW-941-D16	row	-
+CRW-910 issue (Linear description)	echo cd /tmp `rm -rf ../repo`	CRW-910-01	row	-
+CRW-910 issue (Linear description)	echo cd /tmp "$(rm -rf ../repo)"	CRW-910-02	row	-
+CRW-910 issue (Linear description)	X='rm -rf ../repo'; bash 2>/dev/null -c "$X"	CRW-910-03	row	-
+CRW-910 issue (Linear description)	X='echo x > {MEMORY}/a'; bash 2>/dev/null -c "$X"	CRW-910-04	row	-
+CRW-910 issue (Linear description)	bash << 'EOF'	CRW-910-05	row	-
+CRW-910 issue (Linear description)	bash <<- EOF	CRW-910-06	row	-
+CRW-910 issue (Linear description)	bash << "EOF"	CRW-910-07	row	-
+CRW-910 issue (Linear description)	P=x; python3 << EOF	CRW-910-08	row	-
+CRW-910 issue (Linear description)	env -u HOME rm -rf ../repo	CRW-910-09	row	-
+CRW-910 issue (Linear description)	env --unset=HOME rm -rf ../repo	CRW-910-10	row	-
+CRW-910 issue (Linear description)	env -C . rm -rf ../repo	CRW-910-11	row	-
+CRW-910 issue (Linear description)	env --chdir . rm -rf ../repo	CRW-910-12	row	-
+CRW-910 issue (Linear description)	env -S 'rm -rf ../repo'	CRW-910-13	row	-
+CRW-910 issue (Linear description)	env -i rm -rf ../repo	CRW-910-14	row	-
+CRW-910 issue (Linear description)	X=rm; (	CRW-910-15	row	-
+CRW-910 issue (Linear description)	X='rm -rf ../repo'; eval bash -c '"$X"'	CRW-910-16	row	-
+CRW-910 issue (Linear description)	X='rm -rf ../repo'; echo ${x:- #}; bash -c "$X"	CRW-910-17	row	-
+CRW-910 issue (Linear description)	X='echo x > {MEMORY}/a'; echo ${x:- #}; bash -c "$X"	CRW-910-18	row	-
+CRW-910 issue (Linear description)	bash 2>/dev/null -c "$(printf 'echo x > {MEMORY}/a')"	CRW-910-19	row	-
+CRW-910 issue (Linear description)	echo cd /tmp	CRW-910-20	row	-
+CRW-910 issue (Linear description)	bash </dev/null -c 'echo hi'	CRW-910-21	row	-
+CRW-910 issue (Linear description)	env --ignore-environment ls	CRW-910-22	row	-
+CRW-910 issue (Linear description)	env -v ls	CRW-910-23	row	-
+CRW-910 issue (Linear description)	env --chdir . ls	CRW-910-24	row	-
+CRW-910 issue (Linear description)	(cd /tmp); ls	CRW-910-25	row	-
+CRW-910 issue (Linear description)	cat << EOF	CRW-910-26	row	-
+CRW-910 issue (Linear description)	echo "$(true)" '$(rm -rf ../repo)'	CRW-910-27	row	-
+CRW-910 issue (Linear description)	echo "$(true)x" '$(rm -rf ../repo)'	CRW-910-28	row	-
+CRW-910 issue (Linear description)	env -C {CHECKOUT} rm -rf .	CRW-910-29	row	-
+CRW-910 issue (Linear description)	env -C {MEMORY} sh -c 'echo x > a'	CRW-910-30	row	-

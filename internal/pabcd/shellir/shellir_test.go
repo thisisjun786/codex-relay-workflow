@@ -112,6 +112,32 @@ func TestCdTrackingAndScriptFile(t *testing.T) {
 	}
 }
 
+// TestEnvChdirMovesTheProgramDirectory: env -C and env --chdir move the directory of the program env runs, and the shell's own
+// directory stays. An operand that leaves the known path makes the program's directory unknown, as cd does.
+func TestEnvChdirMovesTheProgramDirectory(t *testing.T) {
+	r, err := Analyze("env -C sub rm x; rm y", "/work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.Execs) != 3 || r.Execs[1].Dir.Path != "/work/sub" || !r.Execs[1].Dir.Known || r.Execs[2].Dir.Path != "/work" || !r.Execs[2].Dir.Known {
+		t.Fatalf("execs = %+v, want rm in /work/sub and then rm in /work", r.Execs)
+	}
+	r, err = Analyze("env --chdir=/tmp rm x", "/work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.Execs) != 2 || r.Execs[1].Dir.Path != "/tmp" || !r.Execs[1].Dir.Known {
+		t.Fatalf("env --chdir=/tmp rm execs = %+v, want rm in known /tmp", r.Execs)
+	}
+	r, err = Analyze("env -C ../x rm y", "/work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.Execs) != 2 || r.Execs[1].Dir.Known {
+		t.Fatalf("env -C ../x rm execs = %+v, want rm in an unknown directory", r.Execs)
+	}
+}
+
 func TestInlineProgramBytes(t *testing.T) {
 	r, err := Analyze("python3 -c 'print(\"a\\n\")'", "/work")
 	if err != nil {
