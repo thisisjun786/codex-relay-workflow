@@ -1,6 +1,9 @@
 package goalplan
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
 
 // CRW-859 (package audit G2, G3). The oracle's closeFixedWorkPhase maps every work phase
 // whose id equals the target to done (goalplan.ts:2020-2023), and its advance answers
@@ -87,5 +90,57 @@ func TestCRW859_EmptyExplicitCursorFallsThroughToTheNextPhase(t *testing.T) {
 	got := EffectiveActiveWorkPhaseID(plan)
 	if got == nil || *got != "p1" {
 		t.Fatalf("effective id = %v, want p1", got)
+	}
+}
+
+// CRW-1076. When the recorded successor is already done, the oracle keeps the cursor with one
+// find over (id, in_progress, ready) (goalplan.ts:2085), so a second phase carrying the cursor's id
+// is found when the first is blocked. The expected values are closeFixedWorkPhase from the oracle's
+// dist/goalplan.js, called with the same plans (closing wp1, recorded next wp2).
+func TestCRW1076_CloseFixedKeepsTheCursorOnTheRunnableDuplicate(t *testing.T) {
+	cases := []struct {
+		name   string
+		phases []GoalplanWorkPhase
+		want   []WorkPhaseStatus
+	}{
+		{"blocked wp3 then runnable wp3", []GoalplanWorkPhase{
+			auditPhase("wp1", WorkPhasePending), auditPhase("wp2", WorkPhaseDone),
+			auditPhase("wp3", WorkPhaseBlocked), auditPhase("wp3", WorkPhaseInProgress)},
+			[]WorkPhaseStatus{WorkPhaseDone, WorkPhaseDone, WorkPhaseInProgress, WorkPhaseInProgress}},
+		{"runnable wp3 then blocked wp3", []GoalplanWorkPhase{
+			auditPhase("wp1", WorkPhasePending), auditPhase("wp2", WorkPhaseDone),
+			auditPhase("wp3", WorkPhaseInProgress), auditPhase("wp3", WorkPhaseBlocked)},
+			[]WorkPhaseStatus{WorkPhaseDone, WorkPhaseDone, WorkPhaseInProgress, WorkPhaseInProgress}},
+		{"no duplicate", []GoalplanWorkPhase{
+			auditPhase("wp1", WorkPhasePending), auditPhase("wp2", WorkPhaseDone),
+			auditPhase("wp3", WorkPhaseInProgress)},
+			[]WorkPhaseStatus{WorkPhaseDone, WorkPhaseDone, WorkPhaseInProgress}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			cursor, next := "wp3", "wp2"
+			plan := &Goalplan{ActiveWorkPhaseID: &cursor, WorkPhases: c.phases}
+			before := make([]GoalplanWorkPhase, len(c.phases))
+			copy(before, c.phases)
+			got := workPhaseCloseFixed(plan, "wp1", WorkPhaseRecordedNext{Known: true, ID: &next})
+			if got.Kind != WorkPhaseCloseFixedOK || got.Plan == nil {
+				t.Fatalf("kind = %q, want ok", got.Kind)
+			}
+			if got.Plan.ActiveWorkPhaseID == nil || *got.Plan.ActiveWorkPhaseID != "wp3" {
+				t.Errorf("cursor = %v, want wp3", got.Plan.ActiveWorkPhaseID)
+			}
+			var statuses []WorkPhaseStatus
+			for _, wp := range got.Plan.WorkPhases {
+				statuses = append(statuses, wp.Status)
+			}
+			if !slices.Equal(statuses, c.want) {
+				t.Errorf("statuses = %v, want %v", statuses, c.want)
+			}
+			for i := range before {
+				if plan.WorkPhases[i].Status != before[i].Status || *plan.ActiveWorkPhaseID != "wp3" {
+					t.Errorf("the input plan changed at phase %d", i)
+				}
+			}
+		})
 	}
 }

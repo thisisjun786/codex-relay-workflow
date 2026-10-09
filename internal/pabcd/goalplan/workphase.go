@@ -202,11 +202,17 @@ func workPhaseCloseFixed(plan *Goalplan, workPhaseID string, recordedNext WorkPh
 			// it names a DIFFERENT phase that is really running and whose readiness holds, since
 			// a cursor on the target or on a phase whose dependencies are unmet is not progress.
 			next = nil
-			if plan.ActiveWorkPhaseID != nil {
-				if cursor := queryFindWorkPhase(&closedPlan, *plan.ActiveWorkPhaseID); cursor != nil &&
-					cursor.ID != workPhaseID && cursor.Status == WorkPhaseInProgress &&
-					WorkPhaseReadyConditionsMet(&closedPlan, cursor) {
-					next = cursor
+			// One find over id, status and readiness together (goalplan.ts:2085): a phase that
+			// shares the cursor's id but is blocked, or waits on a dependency, does not hide a
+			// later one that runs.
+			if plan.ActiveWorkPhaseID != nil && *plan.ActiveWorkPhaseID != workPhaseID {
+				for i := range closedPlan.WorkPhases {
+					cursor := &closedPlan.WorkPhases[i]
+					if cursor.ID == *plan.ActiveWorkPhaseID && cursor.Status == WorkPhaseInProgress &&
+						WorkPhaseReadyConditionsMet(&closedPlan, cursor) {
+						next = cursor
+						break
+					}
 				}
 			}
 		} else if named.Status != WorkPhasePending && named.Status != WorkPhaseInProgress {
