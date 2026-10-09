@@ -492,7 +492,11 @@ func TestFeaturesEnableRecordsVerifiedProbeEvidence(t *testing.T) {
 		}
 		return configguard.CodexRunResult{Stdout: "codex-cli 9.9.9\n"}
 	}
-	outcomes := configguard.SelfHealReport(configguard.SelfHealReportDeps{CodexHome: h.home, Run: count})
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	outcomes := configguard.SelfHealReport(configguard.SelfHealReportDeps{CodexHome: h.home, Cwd: cwd, Run: count})
 	if runs != 0 || len(outcomes) != 1 || outcomes[0].Reason != configguard.SelfHealReasonAlreadyEnabled {
 		t.Fatalf("runs %d outcomes %+v", runs, outcomes)
 	}

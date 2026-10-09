@@ -68,7 +68,10 @@ type SelfHealReportOutcome struct {
 // SelfHealReportDeps are injected, so the rule never resolves a home or starts a binary itself.
 type SelfHealReportDeps struct {
 	CodexHome string
-	Run       CodexRunner
+	// Cwd is the directory the hook's codex runs in; "" means it is not known, and recorded evidence
+	// is not reused (CRW-1150).
+	Cwd string
+	Run CodexRunner
 }
 
 // SelfHealReport is selfHealDeclaredFeatures without its writes. The marker is read only, and the
@@ -87,7 +90,9 @@ func SelfHealReport(deps SelfHealReportDeps) []SelfHealReportOutcome {
 	configMtimeMs := selfHealReportMtimeMs(filepath.Join(deps.CodexHome, "config.toml"))
 	// A cache that predates a SOFT_FEATURES addition must not vouch for the new key.
 	cacheCoversCurrentKeys := marker != nil && marker.CachedKeys != nil && selfHealReportCovers(marker.CachedKeys, healable)
-	if marker != nil && marker.AllEnabled != nil && *marker.AllEnabled && cacheCoversCurrentKeys &&
+	// A marker that carries verified evidence is judged by the evidence alone: the mtime cache an
+	// older CXC wrote must not vouch ahead of a newer explicit finding (CRW-1150).
+	if marker != nil && marker.Probe == nil && marker.AllEnabled != nil && *marker.AllEnabled && cacheCoversCurrentKeys &&
 		marker.ConfigMtimeMs != nil && configMtimeMs != nil && *marker.ConfigMtimeMs == *configMtimeMs {
 		return []SelfHealReportOutcome{{Action: SelfHealReportSkipped, Reason: SelfHealReasonCached}}
 	}
@@ -189,7 +194,10 @@ func RunSelfHealReportHook(ctx context.Context, in io.Reader, out io.Writer, env
 	// the hook's whole time limit and rely on the host to kill it.
 	probeCtx, endProbe := context.WithTimeout(ctx, selfHealReportProbeDeadline)
 	defer endProbe()
-	additional := RenderSelfHealReportContext(SelfHealReport(SelfHealReportDeps{CodexHome: home, Run: SelfHealReportRunner(probeCtx, env)}))
+	// codex runs in the hook's working directory, which decides the project layers that apply; when it
+	// cannot be read, recorded evidence is not reused.
+	cwd, _ := os.Getwd()
+	additional := RenderSelfHealReportContext(SelfHealReport(SelfHealReportDeps{CodexHome: home, Cwd: cwd, Run: SelfHealReportRunner(probeCtx, env)}))
 	if ctx.Err() != nil {
 		// The probe was cancelled while it ran: nothing is rendered or written after cancellation.
 		return harness.Interrupted

@@ -41,9 +41,35 @@ func (r *selfHealEvidenceRunner) listings() int {
 	return n
 }
 
+// selfHealEvidenceCwd is the project directory (no config layer of its own) a test's codex runs in:
+// next to the CODEX_HOME, inside the test's temporary tree.
+func selfHealEvidenceCwd(t *testing.T, home string) string {
+	t.Helper()
+	dir := filepath.Join(filepath.Dir(home), "project")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
 func selfHealEvidenceRecord(t *testing.T, home string, runner *selfHealEvidenceRunner) {
 	t.Helper()
-	if err := RecordSelfHealEvidence(RecordSelfHealEvidenceDeps{CodexHome: home, Run: runner.run, Now: func() string { return "2026-10-10T00:00:00.000Z" }}); err != nil {
+	selfHealEvidenceRecordIn(t, home, selfHealEvidenceCwd(t, home), runner)
+}
+
+func selfHealEvidenceRecordIn(t *testing.T, home, cwd string, runner *selfHealEvidenceRunner) {
+	t.Helper()
+	if err := RecordSelfHealEvidence(RecordSelfHealEvidenceDeps{CodexHome: home, Cwd: cwd, Run: runner.run, Now: func() string { return "2026-10-10T00:00:00.000Z" }}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func selfHealEvidenceWriteProjectConfig(t *testing.T, cwd, body string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(cwd, ".codex"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cwd, ".codex", "config.toml"), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -59,7 +85,7 @@ func TestSelfHealEvidenceAllOnIsReusedWithoutAListing(t *testing.T) {
 	runner.calls = nil
 	before := selfHealReportListing(t, home)
 	for i := 0; i < 3; i++ {
-		outcomes := SelfHealReport(SelfHealReportDeps{CodexHome: home, Run: runner.run})
+		outcomes := SelfHealReport(SelfHealReportDeps{CodexHome: home, Cwd: selfHealEvidenceCwd(t, home), Run: runner.run})
 		if len(outcomes) != 1 || outcomes[0].Action != SelfHealReportSkipped || outcomes[0].Reason != SelfHealReasonAlreadyEnabled {
 			t.Fatalf("round %d: %+v", i, outcomes)
 		}
@@ -86,6 +112,7 @@ func TestSelfHealEvidenceOffStillWarnsEverySession(t *testing.T) {
 	runner := &selfHealEvidenceRunner{version: "codex-cli 1.2.3", listing: selfHealReportSoftOff}
 	selfHealEvidenceRecord(t, home, runner)
 	before := selfHealReportListing(t, home)
+	t.Chdir(selfHealEvidenceCwd(t, home))
 	for i := 0; i < 3; i++ {
 		out, code := selfHealReportRun(t, home, selfHealReportSessionStart)
 		if code != 0 || !strings.HasPrefix(out, selfHealReportEnvelopePrefix) || !strings.Contains(out, "default_mode_request_user_input") {
@@ -143,7 +170,7 @@ func TestSelfHealEvidenceChangedConfigOrVersionMeasuresAgain(t *testing.T) {
 			runner.calls = nil
 			tc.change(t, home, runner)
 			runner.listing = selfHealReportSoftOff
-			outcomes := SelfHealReport(SelfHealReportDeps{CodexHome: home, Run: runner.run})
+			outcomes := SelfHealReport(SelfHealReportDeps{CodexHome: home, Cwd: selfHealEvidenceCwd(t, home), Run: runner.run})
 			if runner.listings() != 1 {
 				t.Fatalf("listed %d times, want a fresh diagnosis: %v", runner.listings(), runner.calls)
 			}
@@ -173,7 +200,7 @@ func TestSelfHealEvidenceIsTheDigestNotTheMtime(t *testing.T) {
 		t.Fatal(err)
 	}
 	runner.listing = selfHealReportSoftOff
-	outcomes := SelfHealReport(SelfHealReportDeps{CodexHome: home, Run: runner.run})
+	outcomes := SelfHealReport(SelfHealReportDeps{CodexHome: home, Cwd: selfHealEvidenceCwd(t, home), Run: runner.run})
 	if runner.listings() != 1 || len(outcomes) != 1 || outcomes[0].Action != SelfHealReportOff {
 		t.Fatalf("a changed config with an unchanged mtime kept the record: %+v %v", outcomes, runner.calls)
 	}
@@ -194,7 +221,7 @@ func TestSelfHealEvidenceOptOutAndDeclineStayQuiet(t *testing.T) {
 	if err := WriteSelfHealMarkerFile(home, marker); err != nil {
 		t.Fatal(err)
 	}
-	outcomes := SelfHealReport(SelfHealReportDeps{CodexHome: home, Run: runner.run})
+	outcomes := SelfHealReport(SelfHealReportDeps{CodexHome: home, Cwd: selfHealEvidenceCwd(t, home), Run: runner.run})
 	if len(outcomes) != 1 || outcomes[0].Action != SelfHealReportDeclined || RenderSelfHealReportContext(outcomes) != "" {
 		t.Fatalf("declined: %+v", outcomes)
 	}
@@ -207,7 +234,7 @@ func TestSelfHealEvidenceOptOutAndDeclineStayQuiet(t *testing.T) {
 		t.Fatal(err)
 	}
 	runner.calls = nil
-	outcomes = SelfHealReport(SelfHealReportDeps{CodexHome: home, Run: runner.run})
+	outcomes = SelfHealReport(SelfHealReportDeps{CodexHome: home, Cwd: selfHealEvidenceCwd(t, home), Run: runner.run})
 	if len(runner.calls) != 0 || len(outcomes) != 1 || outcomes[0].Reason != SelfHealReasonOptedOut {
 		t.Fatalf("opted out: %+v %v", outcomes, runner.calls)
 	}
@@ -259,7 +286,7 @@ func TestSelfHealEvidenceConfigChangedWhileMeasuringIsNotRecorded(t *testing.T) 
 		}
 		return racing.run(args)
 	}
-	if err := RecordSelfHealEvidence(RecordSelfHealEvidenceDeps{CodexHome: home, Run: run}); err != nil {
+	if err := RecordSelfHealEvidence(RecordSelfHealEvidenceDeps{CodexHome: home, Cwd: selfHealEvidenceCwd(t, home), Run: run}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(SelfHealMarkerPath(home)); !os.IsNotExist(err) {
@@ -308,5 +335,132 @@ func TestSelfHealReportEscapedGrandchildEndsAtTheSharedDeadline(t *testing.T) {
 	}
 	if code != 0 || out != "" {
 		t.Fatalf("exit %d stdout %q, want silence", code, out)
+	}
+}
+
+// CRW-1150 verification round 1: the evidence describes the effective configuration, not only the
+// user's config.toml. A project layer that changes a soft flag, a different project, and a working
+// directory the hook cannot identify all give a fresh listing.
+func TestSelfHealEvidenceProjectConfigChangeMeasuresAgain(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		change func(t *testing.T, project string)
+	}{
+		{"project layer appears", func(t *testing.T, project string) {
+			selfHealEvidenceWriteProjectConfig(t, project, "[features]\ndefault_mode_request_user_input = false\n")
+		}},
+		{"project layer edited", func(t *testing.T, project string) {
+			selfHealEvidenceWriteProjectConfig(t, project, "[features]\ndefault_mode_request_user_input = false\n")
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := selfHealReportTempHome(t)
+			selfHealReportWriteConfig(t, home)
+			project := selfHealEvidenceCwd(t, home)
+			if tc.name == "project layer edited" {
+				selfHealEvidenceWriteProjectConfig(t, project, "[features]\ndefault_mode_request_user_input = true\n")
+			}
+			runner := &selfHealEvidenceRunner{version: "codex-cli 1.2.3", listing: selfHealReportSoftOn}
+			selfHealEvidenceRecord(t, home, runner)
+			runner.calls = nil
+			tc.change(t, project)
+			runner.listing = selfHealReportSoftOff
+			outcomes := SelfHealReport(SelfHealReportDeps{CodexHome: home, Cwd: project, Run: runner.run})
+			if runner.listings() != 1 || len(outcomes) != 1 || outcomes[0].Action != SelfHealReportOff {
+				t.Fatalf("a changed project layer kept the record: %+v %v", outcomes, runner.calls)
+			}
+		})
+	}
+}
+
+// A session in a project that has its own layer is not described by the evidence another project's
+// enable recorded, and one in an unlayered project still is.
+func TestSelfHealEvidenceDifferentProjectMeasuresAgain(t *testing.T) {
+	home := selfHealReportTempHome(t)
+	selfHealReportWriteConfig(t, home)
+	runner := &selfHealEvidenceRunner{version: "codex-cli 1.2.3", listing: selfHealReportSoftOn}
+	selfHealEvidenceRecord(t, home, runner)
+	runner.calls = nil
+
+	other := filepath.Join(filepath.Dir(home), "other")
+	selfHealEvidenceWriteProjectConfig(t, other, "[features]\ndefault_mode_request_user_input = false\n")
+	runner.listing = selfHealReportSoftOff
+	outcomes := SelfHealReport(SelfHealReportDeps{CodexHome: home, Cwd: other, Run: runner.run})
+	if runner.listings() != 1 || len(outcomes) != 1 || outcomes[0].Action != SelfHealReportOff {
+		t.Fatalf("another project's layer reused the record: %+v %v", outcomes, runner.calls)
+	}
+
+	runner.calls = nil
+	plain := filepath.Join(filepath.Dir(home), "plain")
+	if err := os.MkdirAll(plain, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	outcomes = SelfHealReport(SelfHealReportDeps{CodexHome: home, Cwd: plain, Run: runner.run})
+	if runner.listings() != 0 || len(outcomes) != 1 || outcomes[0].Reason != SelfHealReasonAlreadyEnabled {
+		t.Fatalf("an unlayered project did not reuse the record: %+v %v", outcomes, runner.calls)
+	}
+}
+
+// A project layer in an ancestor of the working directory applies to it as well.
+func TestSelfHealEvidenceAncestorProjectLayerMeasuresAgain(t *testing.T) {
+	home := selfHealReportTempHome(t)
+	selfHealReportWriteConfig(t, home)
+	project := selfHealEvidenceCwd(t, home)
+	nested := filepath.Join(project, "a", "b")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runner := &selfHealEvidenceRunner{version: "codex-cli 1.2.3", listing: selfHealReportSoftOn}
+	selfHealEvidenceRecordIn(t, home, nested, runner)
+	runner.calls = nil
+	selfHealEvidenceWriteProjectConfig(t, project, "[features]\ndefault_mode_request_user_input = false\n")
+	runner.listing = selfHealReportSoftOff
+	outcomes := SelfHealReport(SelfHealReportDeps{CodexHome: home, Cwd: nested, Run: runner.run})
+	if runner.listings() != 1 || len(outcomes) != 1 || outcomes[0].Action != SelfHealReportOff {
+		t.Fatalf("an ancestor layer kept the record: %+v %v", outcomes, runner.calls)
+	}
+}
+
+// Without a working directory the layers cannot be named: nothing is recorded, nothing is reused.
+func TestSelfHealEvidenceUnknownWorkingDirectoryIsNeverReused(t *testing.T) {
+	home := selfHealReportTempHome(t)
+	selfHealReportWriteConfig(t, home)
+	runner := &selfHealEvidenceRunner{version: "codex-cli 1.2.3", listing: selfHealReportSoftOn}
+	selfHealEvidenceRecordIn(t, home, "", runner)
+	if marker, err := ReadSelfHealMarkerFile(home); err != nil || marker != nil {
+		t.Fatalf("evidence was recorded without a working directory: %+v %v", marker, err)
+	}
+	selfHealEvidenceRecord(t, home, runner)
+	runner.calls = nil
+	outcomes := SelfHealReport(SelfHealReportDeps{CodexHome: home, Run: runner.run})
+	if runner.listings() != 1 || len(outcomes) != 1 {
+		t.Fatalf("a round with no working directory reused the record: %+v %v", outcomes, runner.calls)
+	}
+}
+
+// The explicit command's off finding survives an older mtime-cache marker: the cache must not vouch
+// ahead of the evidence, before or after the codex version or the config moves.
+func TestSelfHealEvidenceLegacyCacheDoesNotOutrankTheEvidence(t *testing.T) {
+	home := selfHealReportTempHome(t)
+	path := selfHealReportWriteConfig(t, home)
+	selfHealReportWriteMarker(t, home, "{\"checkedAt\":\"2025-12-31T00:00:00.000Z\",\"allEnabled\":true,"+
+		"\"cachedKeys\":[\"default_mode_request_user_input\",\"goals\"],\"configMtimeMs\":"+selfHealReportMarkerMtimeMs(t, path)+"}\n")
+	runner := &selfHealEvidenceRunner{version: "codex-cli 1.2.3", listing: selfHealReportSoftOff}
+	selfHealEvidenceRecord(t, home, runner)
+	marker, err := ReadSelfHealMarkerFile(home)
+	if err != nil || marker == nil || marker.Probe == nil || marker.AllEnabled == nil || !*marker.AllEnabled {
+		t.Fatalf("setup: %+v %v", marker, err)
+	}
+	runner.calls = nil
+	// The recorded off state is announced, with no listing, in spite of the legacy all-on cache.
+	outcomes := SelfHealReport(SelfHealReportDeps{CodexHome: home, Cwd: selfHealEvidenceCwd(t, home), Run: runner.run})
+	if runner.listings() != 0 || len(outcomes) == 0 || outcomes[0].Action != SelfHealReportOff {
+		t.Fatalf("the legacy cache hid the recorded off state: %+v %v", outcomes, runner.calls)
+	}
+	// A new codex version is diagnosed afresh, not cached.
+	runner.version, runner.listing, runner.calls = "codex-cli 1.2.4", selfHealReportSoftOff, nil
+	outcomes = SelfHealReport(SelfHealReportDeps{CodexHome: home, Cwd: selfHealEvidenceCwd(t, home), Run: runner.run})
+	if runner.listings() != 1 || len(outcomes) == 0 || outcomes[0].Action != SelfHealReportOff {
+		t.Fatalf("the legacy cache hid a version change: %+v %v", outcomes, runner.calls)
 	}
 }
