@@ -268,6 +268,8 @@ refused instead, because transmitting an unchecked pair there could restore a va
 since changed. A send naming no role is not covered by that check; the relay resolves a
 recipient's role from its binding and owns it. Where the role lists several pairs, as the child role may, the policy does not say which pair a thread runs on, so a send naming that role to a recipient the host reports `notLoaded` is withheld as `unverified_pair_for_unloaded_thread` with nothing resumed; the relay's delivery, which resumes such a recipient with nothing requested and compares the host's report with the record, is the route that reaches it.
 
+A task's PABCD state lives in the cwd the host reports for it (`<cwd>/.crw/sessions/<thread id>.json`), so a resume at another cwd would open an empty IDLE state machine beside the work it left. A send whose `expected_settings.cwd` is not that cwd (a symbolic-link alias of it is the same cwd) while the state there is in a work phase, or cannot be read, is refused as `state_root_conflict` before anything is resumed; the message names the preserved state file. Nothing is moved: resume the task at its own cwd, or hand the work over explicitly to a task started at the new cwd. A bound source worktree is not the task's cwd. The relay's delivery and `crw manage child-resume` refuse the same way when the recorded cwd moved.
+
 These same returned settings are what a relay records as a task's authorized
 execution settings, so a later delivery preserves them instead of inheriting a host
 default. Record BOTH sides from their own receipts; do not ask a task for them. Most

@@ -3,6 +3,7 @@ package adapter
 import (
 	"context"
 	"errors"
+	"os"
 	"sort"
 	"sync"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/ledger"
 	bridgesettings "github.com/thisisjun786/codex-relay-workflow/internal/bridge/settings"
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/stateroot"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/managed"
@@ -335,6 +337,14 @@ func (a *Adapter) guardedSend(ctx context.Context, requestID, thread, message st
 			if expectedMCP != nil {
 				params["config"] = expectedMCP.Overrides()
 			}
+		}
+		// CRW-1140: the thread's PABCD state lives at the cwd the host reports for it now, not at the
+		// recorded cwd, which a later settings record may have changed. A resume that would run the
+		// thread elsewhere while that state is in flight is refused before anything is sent.
+		target, _ := params["cwd"].(string)
+		if conflict := stateroot.Guard(os.LookupEnv, pyjson.Text(th["cwd"]), target, thread); conflict != nil {
+			refuse("thread/read", contract.OrderedObject{{Key: "code", Value: stateroot.Code}, {Key: "message", Value: conflict.Error() + "; message withheld"}}, false)
+			return nil
 		}
 		// The limit is not in the record (the host never reports it back), so a resume built from the
 		// record would drop it and the thread would return to the host's own window. It is resolved

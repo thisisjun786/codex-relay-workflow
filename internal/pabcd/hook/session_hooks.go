@@ -14,6 +14,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/interview/ledger"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/stateroot"
 	"github.com/thisisjun786/codex-relay-workflow/internal/role"
 )
 
@@ -37,9 +38,38 @@ type SessionHookPostToolUsePayload struct {
 // SessionStart-bound FSM by creating the session's state file, before an agent can invoke the
 // explicit-session CLI, and answers nothing. ensureState leaves an existing file, valid or corrupt,
 // untouched; a failure leaves no state and is silent, as the oracle's dispatch catch is.
+//
+// CRW-1140 (port: fixed): the oracle bootstraps in whatever cwd the payload names, so a thread
+// resumed at another cwd gets an empty IDLE state beside the one it left in flight. A relay-managed
+// thread (one a CRW resume path anchored at its native root, stateroot.Guard) is judged with the
+// same resolution the resume paths use: when its root holds work in flight and the payload cwd holds
+// no state for it, nothing is created and the answer tells the agent where its state is. A thread
+// with no anchor, a standalone terminal session, bootstraps exactly as before; the anchor is a local
+// file, so no hook needs a running relay.
 func SessionHookSessionStart(p SessionHookSessionStartPayload) string {
+	return sessionHookSessionStart(p, os.LookupEnv)
+}
+
+func sessionHookSessionStart(p SessionHookSessionStartPayload, env host.LookupEnv) string {
+	if conflict := stateroot.Bootstrap(env, p.Cwd, p.SessionID); conflict != nil {
+		return sessionHookAnswer("SessionStart", sessionHookStateRootContext(conflict))
+	}
 	_, _ = state.EnsureState(p.Cwd, p.SessionID)
 	return ""
+}
+
+// sessionHookStateRootContext is what SessionStart tells an agent whose thread runs away from the
+// root that holds its work in flight.
+func sessionHookStateRootContext(c *stateroot.Conflict) string {
+	held := "is in flight at " + c.StatePath + " (phase " + c.Phase + ")"
+	if c.Unreadable {
+		held = "is at " + c.StatePath + " and cannot be read, so it may be in flight"
+	}
+	return "[crw: PABCD state root]\n" +
+		"This thread's PABCD state " + held + ", in its native cwd " + c.NativeCwd + ". This session started at " + c.TargetCwd +
+		", so no state was created here: an empty IDLE state would detach the work in flight. Nothing was moved.\n" +
+		"Run PABCD commands for this thread with `--cwd " + c.NativeCwd + "`, or resume the thread at that cwd. " +
+		"Moving the work is an explicit handover to a thread started at the new cwd; a bound source worktree is not a native cwd."
 }
 
 // SessionHookPostCompact is handlePostCompact (hook.ts:2025-2033): a context compaction resets the
@@ -137,13 +167,18 @@ func sessionHookGoalStatus(sessionID string, env host.LookupEnv) host.GoalStatus
 // sessionHookPostToolUseAnswer is the answer handlePostToolUse builds inline (hook.ts:1978-1986):
 // JSON.stringify of one hookSpecificOutput object, then a newline.
 func sessionHookPostToolUseAnswer(context string) string {
+	return sessionHookAnswer("PostToolUse", context)
+}
+
+// sessionHookAnswer is one hookSpecificOutput object carrying context for event, then a newline.
+func sessionHookAnswer(event, context string) string {
 	type output struct {
 		Event   string `json:"hookEventName"`
 		Context string `json:"additionalContext"`
 	}
 	b, err := role.Stringify(struct {
 		Output output `json:"hookSpecificOutput"`
-	}{output{"PostToolUse", context}}, "")
+	}{output{event, context}}, "")
 	if err != nil {
 		return ""
 	}

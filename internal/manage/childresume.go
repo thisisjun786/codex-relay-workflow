@@ -10,6 +10,8 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/stateroot"
 	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
 )
 
@@ -125,6 +127,15 @@ type resumeFailureDoc struct {
 	Detail string `json:"detail,omitempty"`
 }
 
+// resumeLookupEnv is the run's environment as the PABCD packages read it: a variable the run's
+// Getenv answers empty for is unset.
+func resumeLookupEnv(e *Env) host.LookupEnv {
+	return func(key string) (string, bool) {
+		value := e.Getenv(key)
+		return value, value != ""
+	}
+}
+
 // resumeExit is the status a refusal ends with: the recorded settings or the stopped-server list
 // are what the operator must fix (2), a disagreement with the host about what the child runs is
 // not something this command may resolve (4), and everything else is the relay or the host (3).
@@ -132,7 +143,7 @@ func resumeExit(f *resumeFailure) int {
 	switch f.Reason {
 	case resumeSettingsUnavailable, resumeDisabledServersUnset:
 		return usageExit
-	case resumeSettingsMismatch, resumeMCPNotDisabled:
+	case resumeSettingsMismatch, resumeMCPNotDisabled, stateroot.Code:
 		return 4
 	default:
 		return 3
@@ -412,8 +423,8 @@ func resumeRun(ctx context.Context, e *Env, cfg *Config, opts resumeOptions) (*r
 	}
 	var read struct {
 		Thread struct {
-			Model, ReasoningEffort string
-			Status                 struct{ Type string }
+			Model, ReasoningEffort, Cwd string
+			Status                      struct{ Type string }
 		}
 	}
 	if err := json.Unmarshal(raw, &read); err != nil {
@@ -421,6 +432,13 @@ func resumeRun(ctx context.Context, e *Env, cfg *Config, opts resumeOptions) (*r
 	}
 	if read.Thread.Status.Type == "active" {
 		return nil, &resumeFailure{Reason: resumeThreadActive, Detail: "the thread is active; nothing was sent"}
+	}
+	// CRW-1140: the child's PABCD state lives at the cwd the host reports for it now, not at the
+	// recorded cwd, which a later settings record may have changed. A record that would resume the
+	// child elsewhere while that state is in flight is refused before anything is sent, the dry run
+	// included, and the preserved state is named.
+	if conflict := stateroot.Guard(resumeLookupEnv(e), read.Thread.Cwd, settings.CWD, child); conflict != nil {
+		return nil, &resumeFailure{Reason: stateroot.Code, Detail: conflict.Error() + "; nothing was sent"}
 	}
 	if opts.dryRun {
 		// The settings comparison the dry run is for, against what the thread reports now. A thread
