@@ -122,23 +122,35 @@ func ShippedHookList(hooks []ShippedHook) []string {
 
 // WriteShippedHooks is `crw-dev cxc hooks`: it writes every generated file and removes any other
 // file from the hooks directory but the completion Stop. The manifest's hooks list is not written;
-// CheckShippedHooks says when it differs.
+// CheckShippedHooks says when it differs. It publishes only inside root: it refuses, before it writes
+// or removes anything, a hooks directory (or a parent of it below root) or a declaration path that is
+// a link or not a regular file, and each file is replaced by a rename, never written through a path.
 func WriteShippedHooks(root string) error {
 	hooks, err := ShippedHooks(root)
 	if err != nil {
 		return err
 	}
 	dir := filepath.Join(root, ShippedHooksDir)
+	if err := refuseLinkedDir(root, ShippedHooksDir); err != nil {
+		return err
+	}
 	keep := map[string]bool{CompletionStop: true}
-	for _, h := range hooks {
-		doc, err := h.Document()
-		if err != nil {
+	docs := make([][]byte, len(hooks))
+	for i, h := range hooks {
+		if docs[i], err = h.Document(); err != nil {
 			return err
 		}
-		if err := os.WriteFile(filepath.Join(dir, h.File()), doc, 0o644); err != nil {
+		if info, err := os.Lstat(filepath.Join(dir, h.File())); err == nil && !info.Mode().IsRegular() {
+			return fmt.Errorf("%s/%s is not a regular file (%s): refusing to write through it", ShippedHooksDir, h.File(), info.Mode().Type())
+		} else if err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
 		keep[h.File()] = true
+	}
+	for i, h := range hooks {
+		if err := replaceFile(dir, h.File(), docs[i]); err != nil {
+			return err
+		}
 	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -152,6 +164,45 @@ func WriteShippedHooks(root string) error {
 		}
 	}
 	return nil
+}
+
+// refuseLinkedDir fails unless rel, below root, is a directory reached through no link: every
+// component from root down is looked at without following it.
+func refuseLinkedDir(root, rel string) error {
+	cur := root
+	for _, part := range strings.Split(filepath.ToSlash(rel), "/") {
+		cur = filepath.Join(cur, part)
+		info, err := os.Lstat(cur)
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("%s is not a plain directory (%s): refusing to publish through it", strings.TrimPrefix(cur, root+string(filepath.Separator)), info.Mode().Type())
+		}
+	}
+	return nil
+}
+
+// replaceFile writes data as dir/name through a temporary file in dir and a rename, which replaces
+// the directory entry itself and never follows a link at name.
+func replaceFile(dir, name string, data []byte) error {
+	tmp, err := os.CreateTemp(dir, ".hook-*.tmp")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(0o644); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), filepath.Join(dir, name))
 }
 
 // CheckShippedHooks is the K1-against-shipped equality (Lint): every generated file is in the hooks

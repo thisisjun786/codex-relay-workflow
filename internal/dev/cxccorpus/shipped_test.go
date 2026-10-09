@@ -173,3 +173,105 @@ func TestCheckShippedHooks_reports_drift(t *testing.T) {
 		t.Errorf("the stray file stays: %v", err)
 	}
 }
+
+// shippedRoot is a scratch repository root holding what `crw-dev cxc hooks` reads and the completion Stop.
+func shippedRoot(t *testing.T) string {
+	t.Helper()
+	src := repoRoot(t)
+	root := t.TempDir()
+	for _, rel := range []string{Declarations, Substitution, ShippedManifest, filepath.Join(ShippedHooksDir, CompletionStop)} {
+		data, err := os.ReadFile(filepath.Join(src, rel))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(root, rel)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, rel), data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return root
+}
+
+// The generator publishes only inside the repository it was given (CRW-392): a declaration path that is
+// a link, a dangling link, a directory, or a hooks directory that is a link, makes it refuse before it
+// writes or removes anything, and nothing outside the repository changes.
+func TestWriteShippedHooks_refuses_paths_that_leave_the_repository(t *testing.T) {
+	const victim = "session-start-ensuring-provider-bridge.json"
+	for name, setup := range map[string]func(t *testing.T, root, outside string){
+		"declaration is a link to an existing file": func(t *testing.T, root, outside string) {
+			if err := os.Symlink(outside, filepath.Join(root, ShippedHooksDir, victim)); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"declaration is a dangling link": func(t *testing.T, root, outside string) {
+			if err := os.Remove(outside); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(outside, filepath.Join(root, ShippedHooksDir, victim)); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"declaration is a directory": func(t *testing.T, root, outside string) {
+			if err := os.Mkdir(filepath.Join(root, ShippedHooksDir, victim), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"hooks directory is a link": func(t *testing.T, root, outside string) {
+			dir := filepath.Join(root, ShippedHooksDir)
+			moved := filepath.Join(filepath.Dir(outside), "hooks-elsewhere")
+			if err := os.Rename(dir, moved); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(moved, dir); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"a parent of the hooks directory is a link": func(t *testing.T, root, outside string) {
+			wiring := filepath.Join(root, "plugins", "crw", "wiring")
+			moved := filepath.Join(filepath.Dir(outside), "wiring-elsewhere")
+			if err := os.Rename(wiring, moved); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(moved, wiring); err != nil {
+				t.Fatal(err)
+			}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := shippedRoot(t)
+			outsideDir := t.TempDir()
+			outside := filepath.Join(outsideDir, "config.toml")
+			const precious = "model = \"keep\"\n"
+			if err := os.WriteFile(outside, []byte(precious), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			stray := filepath.Join(root, ShippedHooksDir, "stray.json")
+			if err := os.WriteFile(stray, []byte("{}\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			setup(t, root, outside)
+			// The setup can move the directory that holds the stray file; resolve where it now is.
+			strayNow, err := filepath.EvalSymlinks(stray)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := WriteShippedHooks(root); err == nil {
+				t.Fatal("WriteShippedHooks succeeded on a path that leaves the repository")
+			}
+			if got, err := os.ReadFile(outside); err == nil && string(got) != precious {
+				t.Errorf("the file outside the repository was changed: %q", got)
+			}
+			if _, err := os.Stat(strayNow); err != nil {
+				t.Errorf("a stray file was removed before the refusal: %v", err)
+			}
+			entries, _ := os.ReadDir(filepath.Dir(strayNow))
+			for _, e := range entries {
+				if e.Name() == "pre-tool-use-guarding-github-post.json" {
+					t.Errorf("%s was written before the refusal", e.Name())
+				}
+			}
+		})
+	}
+}
