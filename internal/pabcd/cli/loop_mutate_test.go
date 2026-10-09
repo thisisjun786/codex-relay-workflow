@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -564,4 +565,40 @@ func TestLoopMutatingVerbsAreNoLongerTheSeam(t *testing.T) {
 	if out != "loop add-criterion: --session <id> is required" {
 		t.Fatalf("output = %q", out)
 	}
+}
+
+// Port deviation (docs/port-cxc/known-defects/CRW-383.md): a plan write that published and then failed the
+// directory sync is a written plan, so the verb answers its success with the warning, and the ledger row is
+// still appended, where the oracle throws after the plan has already moved.
+func TestLoopLifecycleAndDecisionKeepAPublishedPlanWithAWarning(t *testing.T) {
+	cwd, slug := loopMutWorkspace(t, nil)
+	loopInitWriteGoalplanHook = func(cwd string, plan *goalplan.Goalplan) error {
+		if err := goalplan.WriteGoalplan(cwd, plan); err != nil {
+			return err
+		}
+		return &state.PublishedError{Err: errors.New("sync failed")}
+	}
+	t.Cleanup(func() { loopInitWriteGoalplanHook = nil })
+	out := loopMutRun(t, cwd, 0, "complete-task", "--session", loopMutSession, "--work-phase", "wp-live", "--id", "ready-task", "--outcome", "done")
+	if want := "loop complete-task: " + slug + " ready-task applied\ngoalplan '" + slug + "' was published but its directory could not be synced: sync failed"; out != want {
+		t.Fatalf("output = %q, want %q", out, want)
+	}
+	if !strings.Contains(loopMutFile(t, cwd, slug, "ledger.jsonl"), `"event":"task_done"`) {
+		t.Fatal("no task_done row after a published plan")
+	}
+	out = loopMutRun(t, cwd, 0, "ask", "--session", loopMutSession, "--id", "dec-1", "--question", "Choose API")
+	if !strings.HasSuffix(out, "was published but its directory could not be synced: sync failed") || len(loopMutPlan(t, cwd, slug).Decisions) != 1 {
+		t.Fatalf("ask output = %q", out)
+	}
+	// A write that fails before the rename is an error and publishes nothing.
+	loopInitWriteGoalplanHook = func(string, *goalplan.Goalplan) error { return errors.New("disk full") }
+	before := loopMutTake(t, cwd, slug)
+	args, err := ParseLoopCliArgs([]string{"meet-criterion", "--session", loopMutSession, "--id", "c-1", "--evidence", "e", "--cwd", cwd}, cwd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := RunLoopCli(args); err == nil || err.Error() != "disk full" {
+		t.Fatalf("err = %v", err)
+	}
+	before.assertUnchanged(t, cwd, slug)
 }

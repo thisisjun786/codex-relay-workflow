@@ -279,7 +279,7 @@ func loopDecision(args LoopCliArgs) (LoopCliResult, error) {
 			return loopDecisionCommit{kind: "unchanged", reason: result.Reason}, nil
 		}
 		commit := loopDecisionCommit{kind: "changed"}
-		if err := goalplan.WriteGoalplan(args.Cwd, result.Plan); err != nil {
+		if err := loopInitWriteGoalplan(args.Cwd, result.Plan); err != nil {
 			// A plan that published at its final path and then failed the directory sync is a written plan.
 			if !state.Published(err) {
 				return loopDecisionCommit{}, err
@@ -382,7 +382,7 @@ func loopLifecycle(args LoopCliArgs) (LoopCliResult, error) {
 			return loopLifecycleCommit{kind: "unchanged", reason: result.Reason}, nil
 		}
 		commit := loopLifecycleCommit{kind: "committed"}
-		if err := goalplan.WriteGoalplan(args.Cwd, result.Plan); err != nil {
+		if err := loopInitWriteGoalplan(args.Cwd, result.Plan); err != nil {
 			if !state.Published(err) {
 				return loopLifecycleCommit{}, err
 			}
