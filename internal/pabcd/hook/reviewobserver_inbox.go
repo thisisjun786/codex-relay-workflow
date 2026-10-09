@@ -1,11 +1,12 @@
 package hook
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"io/fs"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -16,6 +17,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/goalplan"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/review"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
+	"golang.org/x/sys/unix"
 )
 
 // The review observer's inbox (CRW-1113, A3-06, port: fixed). The oracle holds a parsed sign-off in a local variable only: a session or
@@ -36,9 +38,12 @@ const (
 	reviewObserverDetailMax    = 200
 
 	// reviewObserverInboxFailed is the ledger event of a sign-off that could not be kept; reviewObserverWriteFailed is that of a
-	// verdict that was valid but whose plan write failed, which stays in the inbox for the next drain.
-	reviewObserverInboxFailed goalplan.GoalplanLedgerEvent = "review_signoff_inbox_failed"
-	reviewObserverWriteFailed goalplan.GoalplanLedgerEvent = "review_signoff_write_failed"
+	// verdict that was valid but whose plan write failed before publication, which stays in the inbox for the next drain;
+	// reviewObserverWriteUnsynced is that of a verdict whose plan was published but whose directory sync failed afterwards: it is
+	// recorded, and only its durability is in doubt.
+	reviewObserverInboxFailed   goalplan.GoalplanLedgerEvent = "review_signoff_inbox_failed"
+	reviewObserverWriteFailed   goalplan.GoalplanLedgerEvent = "review_signoff_write_failed"
+	reviewObserverWriteUnsynced goalplan.GoalplanLedgerEvent = "review_signoff_write_unsynced"
 )
 
 // reviewInboxEntry is one kept sign-off with the identity it is judged by: the session and plan it arrived in, the plan epoch and
@@ -55,14 +60,10 @@ type reviewInboxEntry struct {
 	ReceivedAt  string           `json:"receivedAt"`
 }
 
-// reviewInboxItem is an entry with the file it came from; an empty path is an entry held in memory only.
+// reviewInboxItem is an entry with the name of the inbox file it came from; an empty name is an entry held in memory only.
 type reviewInboxItem struct {
 	entry reviewInboxEntry
-	path  string
-}
-
-func reviewObserverInboxPath(cwd, sessionID string) string {
-	return filepath.Join(cwd, crwdir.DirName, reviewObserverInboxDir, state.SanitizeKey(sessionID))
+	name  string
 }
 
 // reviewObserverInboxName is the entry's identity: one child's sign-off for one launch of one session and plan is one file, whatever
@@ -72,18 +73,75 @@ func reviewObserverInboxName(e reviewInboxEntry) string {
 	return hex.EncodeToString(sum[:16]) + ".json"
 }
 
+// reviewObserverInboxOwnName reports whether name has the shape reviewObserverInboxName gives: 32 lower-case hex digits and ".json".
+// The observer reads, counts and removes only such names; anything else in the directory is not its own and is left alone.
+func reviewObserverInboxOwnName(name string) bool {
+	hexPart, ok := strings.CutSuffix(name, ".json")
+	if !ok || len(hexPart) != 32 {
+		return false
+	}
+	for _, c := range hexPart {
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+// reviewObserverInboxOpen opens the session's inbox directory cwd/.crw/review-inbox/<session> one component at a time from the
+// workspace, never following a link: a link or a non-directory where .crw, review-inbox or the session directory belongs is an
+// error, so nothing outside the workspace's own inbox is ever created, read or removed. Every later step (create, list, read,
+// remove) runs relative to the returned descriptor, so a component swapped after this open is not followed either. create makes the
+// missing review-inbox and session directories; without it a missing one is an error.
+func reviewObserverInboxOpen(cwd, sessionID string, create bool) (*os.File, error) {
+	key := state.SanitizeKey(sessionID)
+	if key == "." || key == ".." {
+		return nil, errors.New("the session id names no inbox directory")
+	}
+	if create {
+		if _, err := crwdir.EnsureDir(cwd); err != nil {
+			return nil, err
+		}
+	}
+	base, err := filepath.Abs(cwd)
+	if err != nil {
+		return nil, err
+	}
+	fd, err := unix.Open(base, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, &os.PathError{Op: "open", Path: base, Err: err}
+	}
+	dir, path := os.NewFile(uintptr(fd), base), base
+	for _, name := range []string{crwdir.DirName, reviewObserverInboxDir, key} {
+		path = filepath.Join(path, name)
+		if create && name != crwdir.DirName {
+			if err := unix.Mkdirat(int(dir.Fd()), name, 0o777); err != nil && !errors.Is(err, unix.EEXIST) {
+				_ = dir.Close()
+				return nil, &os.PathError{Op: "mkdir", Path: path, Err: err}
+			}
+		}
+		fd, err := unix.Openat(int(dir.Fd()), name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+		_ = dir.Close()
+		if err != nil {
+			return nil, &os.PathError{Op: "open", Path: path, Err: err}
+		}
+		dir = os.NewFile(uintptr(fd), path)
+	}
+	return dir, nil
+}
+
 // reviewObserverInboxPut keeps e. The file is complete before it is visible (a hard link of a synced temporary file), so a drain never
 // reads half an entry, and an entry that exists is kept as the first one wrote it. A full inbox is an error, not a deletion.
 func reviewObserverInboxPut(cwd string, e reviewInboxEntry) error {
-	if _, err := crwdir.EnsureDir(cwd); err != nil {
+	dir, err := reviewObserverInboxOpen(cwd, e.SessionID, true)
+	if err != nil {
 		return err
 	}
-	dir := reviewObserverInboxPath(cwd, e.SessionID)
-	if err := os.MkdirAll(dir, 0o777); err != nil {
-		return err
-	}
-	final := filepath.Join(dir, reviewObserverInboxName(e))
-	if _, err := os.Lstat(final); err == nil {
+	defer dir.Close()
+	dfd := int(dir.Fd())
+	final := reviewObserverInboxName(e)
+	var existing unix.Stat_t
+	if unix.Fstatat(dfd, final, &existing, unix.AT_SYMLINK_NOFOLLOW) == nil {
 		return nil
 	}
 	if names, _ := reviewObserverInboxNames(dir); len(names) >= reviewObserverInboxMax {
@@ -93,61 +151,105 @@ func reviewObserverInboxPut(cwd string, e reviewInboxEntry) error {
 	if err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(dir, ".tmp-")
+	tmpName := ".tmp-" + rand.Text()
+	fd, err := unix.Openat(dfd, tmpName, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0o600)
 	if err != nil {
-		return err
+		return &os.PathError{Op: "open", Path: filepath.Join(dir.Name(), tmpName), Err: err}
 	}
-	defer func() { _ = os.Remove(tmp.Name()) }()
+	tmp := os.NewFile(uintptr(fd), filepath.Join(dir.Name(), tmpName))
+	defer func() { _ = unix.Unlinkat(dfd, tmpName, 0) }()
 	_, werr := tmp.Write(append(body, '\n'))
 	serr := tmp.Sync()
 	if err := errors.Join(werr, serr, tmp.Close()); err != nil {
 		return err
 	}
-	if err := os.Link(tmp.Name(), final); err != nil && !errors.Is(err, fs.ErrExist) {
-		return err
+	if err := unix.Linkat(dfd, tmpName, dfd, final, 0); err != nil && !errors.Is(err, unix.EEXIST) {
+		return &os.LinkError{Op: "link", Old: tmpName, New: final, Err: err}
 	}
 	return nil
 }
 
-func reviewObserverInboxNames(dir string) ([]string, error) {
-	infos, err := os.ReadDir(dir)
+// reviewObserverInboxNames lists the observer's own entry names in dir. It reads a fresh descriptor of the same directory, so dir's
+// own read offset is never consumed.
+func reviewObserverInboxNames(dir *os.File) ([]string, error) {
+	fd, err := unix.Openat(int(dir.Fd()), ".", unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, err
+	}
+	listing := os.NewFile(uintptr(fd), dir.Name())
+	defer listing.Close()
+	all, err := listing.Readdirnames(-1)
 	if err != nil {
 		return nil, err
 	}
 	names := []string{}
-	for _, info := range infos {
-		if info.Type().IsRegular() && strings.HasSuffix(info.Name(), ".json") {
-			names = append(names, info.Name())
+	for _, name := range all {
+		if reviewObserverInboxOwnName(name) {
+			names = append(names, name)
 		}
 	}
 	return names, nil
 }
 
-// reviewObserverInboxRead returns the session's kept entries, oldest first, at most reviewObserverInboxMax. A file that cannot be read
-// or parsed comes back with ok false so the drain can say so and remove it.
-func reviewObserverInboxRead(cwd, sessionID string) (items []reviewInboxItem, unreadable []string) {
-	dir := reviewObserverInboxPath(cwd, sessionID)
+// reviewObserverInboxReadFile reads one entry file of dir: never through a link, never a non-regular file, at most
+// reviewObserverInboxMaxSize bytes.
+func reviewObserverInboxReadFile(dir *os.File, name string) (reviewInboxEntry, error) {
+	var e reviewInboxEntry
+	fd, err := unix.Openat(int(dir.Fd()), name, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return e, err
+	}
+	f := os.NewFile(uintptr(fd), filepath.Join(dir.Name(), name))
+	defer f.Close()
+	if info, err := f.Stat(); err != nil || !info.Mode().IsRegular() {
+		return e, errors.New("not a regular file")
+	}
+	raw, err := io.ReadAll(io.LimitReader(f, reviewObserverInboxMaxSize+1))
+	if err != nil || len(raw) > reviewObserverInboxMaxSize || json.Unmarshal(raw, &e) != nil || e.Version != 1 || e.LaunchID == "" || e.AgentID == "" {
+		return e, errors.New("not an inbox entry")
+	}
+	return e, nil
+}
+
+// reviewObserverInboxRead opens the session's inbox and returns it with its kept entries, oldest first, at most
+// reviewObserverInboxMax. An entry of ours that cannot be read or parsed comes back by name in unreadable so the drain can say so and
+// remove it. A missing or refused inbox is a nil dir and no entries. The caller closes dir.
+func reviewObserverInboxRead(cwd, sessionID string) (dir *os.File, items []reviewInboxItem, unreadable []string) {
+	dir, err := reviewObserverInboxOpen(cwd, sessionID, false)
+	if err != nil {
+		return nil, nil, nil
+	}
 	names, err := reviewObserverInboxNames(dir)
 	if err != nil {
-		return nil, nil
+		return dir, nil, nil
 	}
 	sort.Strings(names)
 	if len(names) > reviewObserverInboxMax {
 		names = names[:reviewObserverInboxMax]
 	}
 	for _, name := range names {
-		path := filepath.Join(dir, name)
-		raw, err := os.ReadFile(path)
-		var e reviewInboxEntry
-		if err != nil || len(raw) > reviewObserverInboxMaxSize || json.Unmarshal(raw, &e) != nil || e.Version != 1 || e.LaunchID == "" || e.AgentID == "" {
-			unreadable = append(unreadable, path)
+		e, err := reviewObserverInboxReadFile(dir, name)
+		if err != nil {
+			unreadable = append(unreadable, name)
 			continue
 		}
-		items = append(items, reviewInboxItem{entry: e, path: path})
+		items = append(items, reviewInboxItem{entry: e, name: name})
 	}
 	sort.SliceStable(items, func(i, j int) bool { return items[i].entry.ReceivedAt < items[j].entry.ReceivedAt })
-	return items, unreadable
+	return dir, items, unreadable
 }
+
+// reviewObserverInboxRemove removes one of the observer's own entries from dir, never anything else.
+func reviewObserverInboxRemove(dir *os.File, name string) {
+	if dir == nil || !reviewObserverInboxOwnName(name) {
+		return
+	}
+	_ = unix.Unlinkat(int(dir.Fd()), name, 0)
+}
+
+// reviewObserverReceivedAtLayout orders kept entries: fixed-width nanoseconds, so the text sorts as the time does and two sign-offs a
+// millisecond apart are not left to their file names' order.
+const reviewObserverReceivedAtLayout = "2006-01-02T15:04:05.000000000Z"
 
 func reviewObserverBounded(s string) string {
 	if len(s) > reviewObserverDetailMax {
@@ -160,7 +262,7 @@ func reviewObserverBounded(s string) string {
 // names a round the plan shows, else the one active now; both are read without a lock, which is why a drain judges them again.
 func reviewObserverNewEntry(sessionID string, st state.State, plan *goalplan.Goalplan, agentID string, signoff *review.ReviewSignoff) reviewInboxEntry {
 	e := reviewInboxEntry{Version: 1, SessionID: sessionID, Slug: st.Slug, LaunchID: signoff.LaunchID, AgentID: agentID, Verdict: signoff.Verdict,
-		ReceivedAt: time.Now().UTC().Format("2006-01-02T15:04:05.000Z")}
+		ReceivedAt: time.Now().UTC().Format(reviewObserverReceivedAtLayout)}
 	if st.PlanEpoch != nil {
 		e.PlanEpoch = *st.PlanEpoch
 	}
@@ -189,19 +291,27 @@ func (o reviewObserver) drainEntry(plan *goalplan.Goalplan, st state.State, sess
 }
 
 // drainInbox runs inside the goalplan write lock, with the session lock held by the caller. pending are the entries to judge, oldest
-// first; every one that reached a decision is removed. kept counts those that stayed because their plan write failed.
-func (o reviewObserver) drainInbox(plan *goalplan.Goalplan, st state.State, sessionID string, pending []reviewInboxItem) (next *goalplan.Goalplan, kept int) {
-	for _, item := range pending {
+// first; every one that reached a decision is removed from dir. A valid verdict whose plan write failed before the plan was published
+// ends the drain: it and every entry after it stay unjudged for the next drain, so no later child's sign-off is recorded ahead of an
+// earlier one. unapplied counts the entries that reached no decision (an entry held in memory only among them is lost, with one row).
+func (o reviewObserver) drainInbox(dir *os.File, plan *goalplan.Goalplan, st state.State, sessionID string, pending []reviewInboxItem) (next *goalplan.Goalplan, unapplied int) {
+	for i, item := range pending {
 		var retry bool
 		plan, retry = o.drainEntry(plan, st, sessionID, item.entry)
-		switch {
-		case retry:
-			kept++
-		case item.path != "":
-			_ = os.Remove(item.path)
+		if retry {
+			for _, rest := range pending[i+1:] {
+				if rest.name == "" {
+					launch := rest.entry.LaunchID
+					o.note(reviewObserverWriteFailed, string(rest.entry.Verdict)+" sign-off was not judged: an earlier verdict could not be written", nil, &launch)
+				}
+			}
+			return plan, len(pending) - i
+		}
+		if item.name != "" {
+			reviewObserverInboxRemove(dir, item.name)
 		}
 	}
-	return plan, kept
+	return plan, 0
 }
 
 // DrainReviewObserverInbox applies the sign-offs the review observer kept for sessionID to the audit round they name. The caller holds
@@ -213,14 +323,18 @@ func DrainReviewObserverInbox(cwd, sessionID string) {
 	if st.Slug == "" {
 		return
 	}
-	pending, unreadable := reviewObserverInboxRead(cwd, sessionID)
+	dir, pending, unreadable := reviewObserverInboxRead(cwd, sessionID)
+	if dir == nil {
+		return
+	}
+	defer dir.Close()
 	if len(pending) == 0 && len(unreadable) == 0 {
 		return
 	}
 	observer := reviewObserver{cwd: cwd, slug: st.Slug}
 	_, _ = goalplan.WithGoalplanWriteLock(cwd, st.Slug, func(plan *goalplan.Goalplan) (string, error) {
-		observer.dropUnreadable(unreadable)
-		_, _ = observer.drainInbox(plan, st, sessionID, pending)
+		observer.dropUnreadable(dir, unreadable)
+		_, _ = observer.drainInbox(dir, plan, st, sessionID, pending)
 		return "", nil
 	}, nil)
 }
@@ -241,19 +355,24 @@ func DrainReviewObserverInboxInLock(cwd, sessionID string, plan *goalplan.Goalpl
 	if st.Slug == "" || plan == nil {
 		return plan, 0
 	}
-	pending, unreadable := reviewObserverInboxRead(cwd, sessionID)
+	dir, pending, unreadable := reviewObserverInboxRead(cwd, sessionID)
+	if dir == nil {
+		return plan, 0
+	}
+	defer dir.Close()
 	if len(pending) == 0 && len(unreadable) == 0 {
 		return plan, 0
 	}
 	observer := reviewObserver{cwd: cwd, slug: st.Slug}
-	observer.dropUnreadable(unreadable)
-	return observer.drainInbox(plan, st, sessionID, pending)
+	observer.dropUnreadable(dir, unreadable)
+	return observer.drainInbox(dir, plan, st, sessionID, pending)
 }
 
-// dropUnreadable removes inbox files that are not one of ours, with one bounded row each: they can never be judged.
-func (o reviewObserver) dropUnreadable(paths []string) {
-	for _, path := range paths {
-		o.note(goalplan.EventReviewSignoffIgnored, reviewObserverBounded("an unreadable review inbox entry was removed: "+filepath.Base(path)), nil, nil)
-		_ = os.Remove(path)
+// dropUnreadable removes entries of dir that carry the observer's own name but cannot be read as an entry, with one bounded row
+// each: they can never be judged. A file with any other name is not the observer's and is never listed here.
+func (o reviewObserver) dropUnreadable(dir *os.File, names []string) {
+	for _, name := range names {
+		o.note(goalplan.EventReviewSignoffIgnored, reviewObserverBounded("an unreadable review inbox entry was removed: "+name), nil, nil)
+		reviewObserverInboxRemove(dir, name)
 	}
 }

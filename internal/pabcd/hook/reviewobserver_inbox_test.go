@@ -361,7 +361,8 @@ func TestReviewObserverUnknownWorkPhaseEntryStillFollowsTheRound(t *testing.T) {
 	}
 }
 
-// A kept entry that is not one of ours cannot be judged: it is removed with one row, and the entries after it still drain.
+// A file with an entry's name that cannot be read as an entry cannot be judged: it is removed with one row, and the entries after it
+// still drain. (A file with any other name is not the observer's and stays: TestReviewObserverInboxRemovesOnlyItsOwnFileNames.)
 func TestReviewObserverInboxDropsAnUnreadableEntryAndDrainsTheRest(t *testing.T) {
 	e := reviewObsSeed(t, "rb", nil)
 	launch := e.open(t)
@@ -369,7 +370,7 @@ func TestReviewObserverInboxDropsAnUnreadableEntryAndDrainsTheRest(t *testing.T)
 	e.stop(t, reviewObsType("explorer"), "reviewer-1", reviewObsSignoff(launch, "PASS"))
 	release()
 	dir := filepath.Dir(e.inboxFiles(t)[0])
-	if err := os.WriteFile(filepath.Join(dir, "0000.json"), []byte("{not json"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, strings.Repeat("0", 32)+".json"), []byte("{not json"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	e.stop(t, reviewObsType("explorer"), "other-1", "nothing")

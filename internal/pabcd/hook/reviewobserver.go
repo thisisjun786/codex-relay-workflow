@@ -87,13 +87,16 @@ func HandleReviewObserver(raw string) (out string) {
 			return nil
 		}
 		observer := reviewObserver{cwd: cwd, slug: st.Slug}
-		pending, unreadable := reviewObserverInboxRead(cwd, sessionID)
+		dir, pending, unreadable := reviewObserverInboxRead(cwd, sessionID)
+		if dir != nil {
+			defer dir.Close()
+		}
 		_, _ = goalplan.WithGoalplanWriteLock(cwd, st.Slug, func(plan *goalplan.Goalplan) (string, error) {
 			if signoff == nil {
 				observer.observeUnparsed(plan, st)
 			}
-			observer.dropUnreadable(unreadable)
-			_, _ = observer.drainInbox(plan, st, sessionID, append(pending, inMemory...))
+			observer.dropUnreadable(dir, unreadable)
+			_, _ = observer.drainInbox(dir, plan, st, sessionID, append(pending, inMemory...))
 			return "", nil
 		}, nil)
 		return nil
@@ -105,6 +108,10 @@ func HandleReviewObserver(raw string) (out string) {
 // with a wait that reports when the observer is provably blocked on a held lock and that gives up on the test's own budget, so
 // the interleaving does not depend on the wall clock. Production never assigns it.
 var reviewObserverSessionLock = state.WithSessionLock
+
+// reviewObserverWriteGoalplan is the observer's plan write. It is goalplan.WriteGoalplan; a test replaces it (export_test.go) to fail a
+// write before or after publication. Production never assigns it.
+var reviewObserverWriteGoalplan = goalplan.WriteGoalplan
 
 type reviewObserver struct{ cwd, slug string }
 
@@ -199,7 +206,14 @@ func (o reviewObserver) observe(plan *goalplan.Goalplan, st state.State, session
 		ignore(reason)
 		return plan, false
 	}
-	if err := goalplan.WriteGoalplan(o.cwd, recorded.Plan); err != nil {
+	if err := reviewObserverWriteGoalplan(o.cwd, recorded.Plan); err != nil {
+		// A write that failed after the rename published the plan (state.PublishedError: the directory fsync or its open): the verdict
+		// is recorded, so the drain goes on from the recorded plan, and a later child cannot overwrite the terminal verdict. Only its
+		// durability is in doubt, which one row says. A write that failed before publication recorded nothing and is retried.
+		if state.Published(err) {
+			o.note(reviewObserverWriteUnsynced, reviewObserverBounded("the verdict was recorded but the plan directory could not be synced: "+err.Error()), &roundID, &launch)
+			return recorded.Plan, false
+		}
 		o.note(reviewObserverWriteFailed, reviewObserverBounded("the verdict was valid but the plan could not be written: "+err.Error()), &roundID, &launch)
 		return plan, true
 	}
