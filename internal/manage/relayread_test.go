@@ -1077,3 +1077,35 @@ func TestRelayReadAcceptedRelationshipNamesTheAcceptedPullRequest(t *testing.T) 
 		t.Fatalf("rel-1 pullRequest = %#v, want the forge row owner/forge#9", pr)
 	}
 }
+
+// CRW-1042: two active acceptances that name one relationship (distinct nodes and revisions, which the
+// store allows) give no pull request: the relay does not pick one of them, the item is unknown with a
+// reason, and the command exits 1.
+func TestRelayReadRelationshipNamedByTwoActiveAcceptancesIsUnknown(t *testing.T) {
+	f := relayReadEverything(t)
+	f.acceptance("plan-1", "A", "acc-1", "rel-1", dagReviewAt(0))
+	f.exec("INSERT INTO dag_acceptance_forge (acceptance_id, forge_repository, pr_number) VALUES (?,?,?)", "acc-1", "owner/forge", 9)
+	f.exec("INSERT INTO dag_acceptances (acceptance_id, plan_id, node_id, manifest_digest, relationship_id, execution_generation, event_id, revision_hash, criteria_set_digest, verdict, head_sha, ack_tier, verdict_turn_id, rule_version_json, accepted_by_task_id, coordinator_epoch, accepted_at, state)"+
+		" VALUES ('acc-2','plan-1','B','manifest-B','rel-1',1,'event','revision-2','criteria','verified',NULL,'verified','turn','{}','task-parent',0,?,'active')", dagReviewAt(0))
+	f.exec("INSERT INTO dag_acceptance_forge (acceptance_id, forge_repository, pr_number) VALUES (?,?,?)", "acc-2", "owner/forge", 10)
+	f.close()
+
+	projection, err := RelayReadState(context.Background(), f.dir, RelayReadOptions{})
+	if err != nil {
+		t.Fatalf("RelayReadState: %v", err)
+	}
+	item := relayReadRelationshipByID(t, projection, "rel-1")
+	if item.Read.State != relayReadReadUnknown || !strings.Contains(item.Read.Reason, "2 active acceptances") {
+		t.Fatalf("read = %+v, want unknown naming the 2 active acceptances", item.Read)
+	}
+	if item.PullRequest != nil {
+		t.Fatalf("pullRequest = %+v, want none: neither acceptance may be picked", item.PullRequest)
+	}
+	if got, present := relayReadProjectedKey(t, item, "pullRequest"); !present || got != nil {
+		t.Fatalf("pullRequest = %#v (present %v), want an explicit null beside the unknown read", got, present)
+	}
+	code, stdout, stderr := relayReadRunCommand(t, f.dir)
+	if code != relayReadUnknownExit {
+		t.Fatalf("exit = %d, want %d (stdout: %s stderr: %s)", code, relayReadUnknownExit, stdout, stderr)
+	}
+}
