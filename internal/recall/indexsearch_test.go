@@ -244,6 +244,11 @@ func indexRankCompare(t *testing.T, got, want any) {
 	}
 }
 func TestIndexRankRecordedOracle(t *testing.T) {
+	// The recorded dates were made under UTC; pin the local zone so a non-UTC host (TZ=Asia/Seoul) reads the
+	// zone-less timestamps the same way.
+	old := time.Local
+	time.Local = time.UTC
+	t.Cleanup(func() { time.Local = old })
 	data := indexRankOracle(t)
 	count := 0
 	for _, corpus := range data.Corpora {
