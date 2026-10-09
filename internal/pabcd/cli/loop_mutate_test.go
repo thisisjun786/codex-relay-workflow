@@ -289,7 +289,10 @@ func TestLoopAddTaskDependencies(t *testing.T) {
 		t.Fatalf("ledger = %q", ledger)
 	}
 	before := loopMutTake(t, cwd, slug)
-	cases := []struct{ args []string; want string }{
+	cases := []struct {
+		args []string
+		want string
+	}{
 		{[]string{"--id", "cross-phase", "--title", "cross phase", "--depends-on", "base-only"},
 			"loop add-task: task wp-live/cross-phase depends on unknown task 'base-only' in the same work phase"},
 		{[]string{"--id", "self", "--title", "self", "--depends-on", "self"}, "loop add-task: task wp-live/self depends on itself"},
