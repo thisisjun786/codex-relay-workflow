@@ -95,6 +95,8 @@ func worktreeDelJudgeExec(e shellir.Exec, id WorktreeIdentity) GuardVerdict {
 		return worktreeDelJudgeGit(e, id)
 	case "find":
 		return worktreeDelJudgeFind(e, id)
+	case "mv":
+		return worktreeDelJudgeMv(e, id)
 	}
 	if e.Inline != nil {
 		return worktreeDelJudgeInline(e, id)
@@ -230,7 +232,8 @@ func worktreeDelJudgeGit(e shellir.Exec, id WorktreeIdentity) GuardVerdict {
 	if len(rest) < 2 || rest[0] != "worktree" || rest[1] != "remove" {
 		return GuardVerdict{}
 	}
-	if unknown {
+	// The target of a removal behind xargs, find or parallel arrives at run time, so it cannot be placed.
+	if unknown || shellIRRunTimeCarrier(e.Ctx.Carrier) {
 		return worktreeDelUnreadable(id)
 	}
 	target := ""
@@ -244,6 +247,104 @@ func worktreeDelJudgeGit(e shellir.Exec, id WorktreeIdentity) GuardVerdict {
 		return GuardVerdict{Deny: true, Reason: denyReason("git worktree remove "+target, id)}
 	}
 	return GuardVerdict{}
+}
+
+// worktreeDelJudgeMv is the verdict for mv. A move takes its sources away from the session as rm -r does, so a source that is
+// the managed checkout or one of its ancestors is refused. A move whose operands arrive at run time (behind xargs, find or
+// parallel) is refused too, and so is a move with an operand the reader cannot read when that operand could name the checkout.
+func worktreeDelJudgeMv(e shellir.Exec, id WorktreeIdentity) GuardVerdict {
+	if shellIRRunTimeCarrier(e.Ctx.Carrier) {
+		return worktreeDelUnreadable(id)
+	}
+	args, unknown := worktreeDelArgs(e.Args)
+	if unknown && worktreeDelMayReach(e, id) {
+		return worktreeDelUnreadable(id)
+	}
+	sources, ok := mvSources(args)
+	if !ok {
+		return worktreeDelUnreadable(id)
+	}
+	for _, s := range sources {
+		if s == "" {
+			continue // an operand the reader cannot read; refused above when it could name the checkout
+		}
+		if worktreeDelTargetProtected(s, e, id) {
+			return GuardVerdict{Deny: true, Reason: denyReason("mv "+s, id)}
+		}
+	}
+	return GuardVerdict{}
+}
+
+// worktreeDelMayReach says whether an operand the reader cannot read, taken from the directory the program runs in, could name
+// the managed checkout: that directory is unknown, or it is the checkout, inside it or above it.
+func worktreeDelMayReach(e shellir.Exec, id WorktreeIdentity) bool {
+	if !e.Dir.Known {
+		return true
+	}
+	dir := strings.TrimSuffix(canonicalize(e.Dir.Path), "/")
+	for _, root := range []string{id.CheckoutRoot, id.SlotRoot} {
+		root = strings.TrimSuffix(root, "/")
+		if root == "" {
+			continue
+		}
+		if dir == root || strings.HasPrefix(dir+"/", root+"/") || strings.HasPrefix(root+"/", dir+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+// mvSources returns the operands mv moves: with -t or --target-directory every operand is a source, otherwise all but the
+// last. The destination of -t is not a source. ok is false for an option the reader does not model.
+func mvSources(args []string) (sources []string, ok bool) {
+	var operands []string
+	targetDir, flagsDone := false, false
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case !flagsDone && a == "--":
+			flagsDone = true
+		case !flagsDone && strings.HasPrefix(a, "--"):
+			name, _, hasValue := strings.Cut(a, "=")
+			switch name {
+			case "--target-directory":
+				targetDir = true
+				if !hasValue {
+					i++
+				}
+			case "--suffix":
+				if !hasValue {
+					i++
+				}
+			case "--force", "--interactive", "--no-clobber", "--verbose", "--update", "--no-target-directory", "--strip-trailing-slashes", "--debug", "--backup":
+			default:
+				return nil, false
+			}
+		case !flagsDone && len(a) > 1 && a[0] == '-':
+			for k := 1; k < len(a); k++ {
+				c := a[k]
+				if c == 't' || c == 'S' {
+					targetDir = targetDir || c == 't'
+					if k == len(a)-1 {
+						i++
+					}
+					break
+				}
+				if !strings.ContainsRune("finvbuTZ", rune(c)) {
+					return nil, false
+				}
+			}
+		default:
+			operands = append(operands, a)
+		}
+	}
+	if targetDir {
+		return operands, true
+	}
+	if len(operands) < 2 {
+		return nil, true
+	}
+	return operands[:len(operands)-1], true
 }
 
 // worktreeDelTargetProtected says whether a removal target, taken from the program's directory, is protected. A
