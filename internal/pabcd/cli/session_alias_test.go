@@ -127,12 +127,13 @@ func TestSessionAliasTransitionLibraryRefuses(t *testing.T) {
 	}
 }
 
-// TestSessionAliasStatusStaysOnTheRawID pins the read-only verb: status still reads the raw id
-// exactly as on dev (port: kept, no write), so the corpus fixture raw_and_sanitized replays.
+// TestSessionAliasStatusStaysOnTheRawID pins the read-only verb: status still answers for the raw id and writes
+// nothing, but since CRW-1108 it no longer reads the sanitised session's file (port: fixed), so it reports a fresh
+// IDLE session under the raw id and never the phase of "raw-id".
 func TestSessionAliasStatusStaysOnTheRawID(t *testing.T) {
 	cwd := sessionAliasWorkspace(t)
 	got := orchestrateTransitionRun(t, cwd, "status", "--session", sessionAliasRaw)
-	if got.Code != 0 || !strings.Contains(got.Output, "session="+sessionAliasRaw+" phase=C") {
+	if got.Code != 0 || !strings.Contains(got.Output, "session="+sessionAliasRaw+" phase=IDLE") {
 		t.Fatalf("status --session %q: %+v", sessionAliasRaw, got)
 	}
 }
@@ -155,7 +156,7 @@ func TestSessionAliasScanRecordRefuses(t *testing.T) {
 }
 
 // TestSessionAliasReviewRoundRefusesOpenAndAbort pins the review-round entry: open and abort
-// refuse the id after it is trimmed, and show keeps reading as on dev.
+// refuse the id after it is trimmed, and show reads nothing of the sanitised session (CRW-1108).
 func TestSessionAliasReviewRoundRefusesOpenAndAbort(t *testing.T) {
 	cwd := reviewRoundRunSeed(t)
 	// The sanitised key is the file show reads: seed it too, so the control proves show still
@@ -178,12 +179,13 @@ func TestSessionAliasReviewRoundRefusesOpenAndAbort(t *testing.T) {
 			t.Fatalf("%s --session %q: %+v", verb, sessionAliasRaw, res)
 		}
 	}
-	// show is a read: it still answers the sanitised session's own state, as on dev.
+	// show is a read: since CRW-1108 it no longer answers the sanitised session's own state (port: fixed); the raw id reads
+	// as a session with no bound plan.
 	show, err := reviewRoundRunTry(cwd, nil, "show", "--session", sessionAliasRaw)
 	if err != nil {
 		t.Fatalf("show: %v", err)
 	}
-	if show.Code != 0 || !strings.HasPrefix(show.Output, "review-round show: ") {
+	if show.Code != 1 || show.Output != "review-round show: this session has no bound goalplan" {
 		t.Fatalf("show --session %q: %+v", sessionAliasRaw, show)
 	}
 }
