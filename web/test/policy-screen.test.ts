@@ -401,6 +401,20 @@ test("the screen shows the applied state and the server's action, never a guesse
   assert.ok(!markup.includes("still holds the old bytes"), "the running state is never asserted");
 });
 
+test("the screen shows the warning a not_applied answer carries", async () => {
+  // CRW-1001: the exchange undo could not be synced, so a power loss may bring the candidate back; the
+  // 409 not_applied body carries that warning and the rendered notice must show it.
+  const pure = await import("../src/policy-state.ts");
+  let state = pure.initialScreen();
+  state = pure.screenLoaded(state, pure.decodePolicy(readingBody()));
+  const warning = "the undo of this write's exchange could not be synced, so a host that loses power now may find the candidate at the policy path";
+  const notice = pure.noticeForWrite(409, { error: "not_applied", reason: "x", currentDigest: "c".repeat(64), fileDigest: "c".repeat(64), registeredDigest: "c".repeat(64), warnings: [warning] });
+  const finished = pure.screenSaveFinished(pure.screenSaveStarted(state), state.change, notice) as unknown as Record<string, unknown>;
+  const { markup } = await mount(finished);
+  assert.ok(markup.includes("Not saved"));
+  assert.ok(markup.includes("a host that loses power now may find the candidate"), "the durability warning is shown");
+});
+
 test("the screen headlines a lost write Result unknown, never Not saved", async () => {
   // d1 observed on the rendered screen: a lost response must not be headed as a refused save.
   const pure = await import("../src/policy-state.ts");
@@ -414,6 +428,73 @@ test("the screen headlines a lost write Result unknown, never Not saved", async 
   const { markup } = await mount(out.state as unknown as Record<string, unknown>);
   assert.ok(markup.includes("Result unknown"), "the lost write is headed Result unknown");
   assert.ok(!markup.includes("Not saved"), "it is never headed Not saved");
+});
+
+// CRW-994 d1 on the rendered screen: the headline and the sentence under it follow the comparison of
+// the proposed change with the file, not the digest.
+test("the screen heads a lost write by what the file holds: Not saved for another write's digest, Result unknown while the registration runs, Saved when the record names the change", async () => {
+  const pure = await import("../src/policy-state.ts");
+  let state = pure.initialScreen();
+  state = pure.screenLoaded(state, pure.decodePolicy(readingBody()));
+  state = pure.screenAllowedDraft(state, "anthropic/opus", ["max"]);
+  const out = await pure.runSave(state as never, {
+    check: async () => ({ status: 200, body: { valid: true, errors: [], currentDigest: "a".repeat(64), stale: false, diff: [] } }),
+    write: async () => { throw new Error("connection lost"); },
+  });
+  const heldBy = (changes: Record<string, unknown>) => pure.screenLoaded(out.state, pure.decodePolicy({ ...readingBody(), ...changes }), true) as unknown as Record<string, unknown>;
+  const other = await mount(heldBy({ digest: "b".repeat(64), registeredDigest: "b".repeat(64), allowed: [{ model: "anthropic/opus", efforts: ["xhigh"] }] }));
+  assert.ok(other.markup.includes("Not saved"), "another write's digest is not this change");
+  assert.ok(other.markup.includes("does not hold this change"));
+  assert.ok(!other.markup.includes("Result unknown") && !other.markup.includes(">Saved<"));
+  const early = await mount(heldBy({ digest: "b".repeat(64), registeredDigest: "a".repeat(64), allowed: [{ model: "anthropic/opus", efforts: ["max"] }] }));
+  assert.ok(early.markup.includes("Result unknown"), "the file holds the change before the record names it");
+  assert.ok(early.markup.includes("registration has not finished"));
+  const done = await mount(heldBy({ digest: "b".repeat(64), registeredDigest: "b".repeat(64), allowed: [{ model: "anthropic/opus", efforts: ["max"] }] }));
+  assert.ok(done.markup.includes("Saved"), "the record names the file that holds the change");
+  assert.ok(!done.markup.includes("Not saved") && !done.markup.includes("Result unknown"));
+});
+
+// CRW-1001 d2 / CRW-876 d1 (pre-merge evaluation of 711ab36e) on the rendered screen: a file that moved
+// to bytes without the change, under a record that names something else, is not a refusal yet.
+test("the screen keeps a lost write Result unknown while a moved file's record names another digest", async () => {
+  const pure = await import("../src/policy-state.ts");
+  let state = pure.initialScreen();
+  state = pure.screenLoaded(state, pure.decodePolicy(readingBody()));
+  state = pure.screenAllowedDraft(state, "anthropic/opus", ["max"]);
+  const out = await pure.runSave(state as never, {
+    check: async () => ({ status: 200, body: { valid: true, errors: [], currentDigest: "a".repeat(64), stale: false, diff: [] } }),
+    write: async () => { throw new Error("connection lost"); },
+  });
+  const provisional = pure.screenLoaded(out.state, pure.decodePolicy({ ...readingBody(), digest: "c".repeat(64), registeredDigest: "a".repeat(64), allowed: [{ model: "anthropic/opus", efforts: ["xhigh"] }] }), true);
+  const shown = await mount(provisional as unknown as Record<string, unknown>);
+  assert.ok(shown.markup.includes("Result unknown"));
+  assert.ok(shown.markup.includes("may still be running"));
+  assert.ok(!shown.markup.includes("Not saved"));
+  assert.equal(pure.lostRecheckDelay(provisional), pure.LOST_RECHECK_MS);
+});
+
+// CRW-994 (verification round 2) on the rendered screen: a first re-read that still finds the starting
+// digest is not a refusal. The request may publish after it, so the headline stays Result unknown, the
+// page keeps reading on its own, and it follows the late write to Saved.
+test("the screen keeps a lost write Result unknown when the first re-read finds the starting digest, then follows a late write to Saved", async () => {
+  const pure = await import("../src/policy-state.ts");
+  let state = pure.initialScreen();
+  state = pure.screenLoaded(state, pure.decodePolicy(readingBody()));
+  state = pure.screenAllowedDraft(state, "anthropic/opus", ["max"]);
+  const out = await pure.runSave(state as never, {
+    check: async () => ({ status: 200, body: { valid: true, errors: [], currentDigest: "a".repeat(64), stale: false, diff: [] } }),
+    write: async () => { throw new Error("connection lost"); },
+  });
+  const first = pure.screenLoaded(out.state, pure.decodePolicy(readingBody()), true);
+  const unchanged = await mount(first as unknown as Record<string, unknown>);
+  assert.ok(unchanged.markup.includes("Result unknown"), "one reading at the starting digest settles nothing");
+  assert.ok(!unchanged.markup.includes("Not saved"));
+  assert.equal(pure.lostRecheckDelay(first), pure.LOST_RECHECK_MS, "the page reads again on its own");
+  const late = pure.screenLoaded(first, pure.decodePolicy({ ...readingBody(), digest: "b".repeat(64), registeredDigest: "b".repeat(64), allowed: [{ model: "anthropic/opus", efforts: ["max"] }] }), true);
+  const saved = await mount(late as unknown as Record<string, unknown>);
+  assert.ok(saved.markup.includes("Saved"));
+  assert.ok(!saved.markup.includes("Not saved") && !saved.markup.includes("Result unknown"));
+  assert.equal(pure.lostRecheckDelay(late), null);
 });
 
 test("a save in flight disables the screen's other edit controls", async () => {

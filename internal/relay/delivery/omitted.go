@@ -556,7 +556,14 @@ func omissionReceiptUnmeasured(readable bool, err error) string {
 // past json.loads's depth leaves lookup_receipt instead, and observe and derive catch it as a
 // RuntimeError: evidence_unreadable with its words. So does a string sqlite3 could not encode,
 // which is a ValueError there (a UnicodeEncodeError), with the words pythonStr gives it.
+//
+// A store the lookup could not read because it is damaged (store.CorruptingFailure; the observer asks for it with
+// ReceiptQuery.ReportCorruption) leaves the omission unmeasured with the store_unreadable reason the other store
+// reads of the observer give, which the daemon's halt classifies (CRW-945).
 func omissionReceiptFailure(err error) string {
+	if cause, corrupting := store.CorruptingFailure(err); corrupting {
+		return fmt.Sprintf("store_unreadable: %s (%d)", cause.Message, cause.Code)
+	}
 	var exception *store.ManifestException
 	if errors.As(err, &exception) && exception.RuntimeError() {
 		return "evidence_unreadable: " + exception.Error()
@@ -689,7 +696,7 @@ func observeOmission(ctx context.Context, selection store.StateSelection, root, 
 	var receipt Obj
 	if pyjson.Text(disposition.Get("outcome")) == "ready_for_review" {
 		var readable bool
-		receipt, readable, err = LookupStoredReceiptAt(ctx, selection.DBPath(), nil, observationReceiptTimeout, ReceiptQuery{Relationship: rid, Session: session, Turn: turn, Generation: fieldOf(markerFact(marker, "relationship"), "executionGeneration"), Dispatch: dispatch})
+		receipt, readable, err = LookupStoredReceiptAt(ctx, selection.DBPath(), nil, observationReceiptTimeout, ReceiptQuery{Relationship: rid, Session: session, Turn: turn, Generation: fieldOf(markerFact(marker, "relationship"), "executionGeneration"), Dispatch: dispatch, ReportCorruption: true})
 		if reason := omissionReceiptUnmeasured(readable, err); reason != "" {
 			return omissionUnmeasured(result, reason)
 		}

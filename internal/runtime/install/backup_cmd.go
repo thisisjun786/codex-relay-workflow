@@ -4,8 +4,13 @@ package install
 // outside an install (CRW-862, docs/port/decisions.md section 83 item 4 and slice S7). The install route reaches
 // backupState only when the swap actually introduces the additive DAG zone or an ordinary index
 // (swapgate.AdditiveArrivalOnly), so an operator cannot take the default artifact on demand; this command takes
-// the same artifact through the same routine. It is routed before the generic install options, like features,
-// config and migrate-state: it has its own flag and prints its own JSON report.
+// the copy through the same routine. It does not take the read the install route makes first: the swap gate opens
+// the store to read its schema before the copy, and this command opens nothing before it. A store the service left
+// with an uncheckpointed write-ahead log (an unclean stop) is therefore copied with that log as it lies, its frames
+// not merged into relay.sqlite3, and the manifest's restoreCandidate then says that PRAGMA integrity_check passed
+// on a scratch duplicate of the copied store and log, in which SQLite replays the log; it does not say that the
+// copied relay.sqlite3 alone holds every commit (CRW-1004). It is routed before the generic install options, like
+// features, config and migrate-state: it has its own flag and prints its own JSON report.
 
 import (
 	"context"
@@ -30,15 +35,17 @@ import (
 // does not name this command.
 const backupStateUsage = `usage: crw install backup-state --to <dir> [--state <dir>] [--socket <path>]
 
-Copy the whole relay state directory to <dir> outside an install: the same stopped byte copy the install
+Copy the whole relay state directory to <dir> outside an install: the stopped byte copy the install
 route takes before a swap that brings the additive DAG zone or an ordinary index, with the same manifest
-beside it and the same integrity_check gate. The relay service must be stopped: this command refuses while
+beside it and the same integrity_check gate. Unlike the install route it reads nothing of the store first, so
+a write-ahead log the service left unmerged is copied as it lies, beside relay.sqlite3. The relay service must be stopped: this command refuses while
 the relay's own service reading reports it running, and it holds the store's write gate exclusively while
 it copies, so no relay write reaches the store under the copy. <dir> and its manifest must not exist and
 must not lie inside the state directory or the runtime destination tree, exactly as on the install route.
 
 The manifest records the copy's integrityCheck and whether it is a restoreCandidate (true only when
-PRAGMA integrity_check passed on a scratch duplicate of the copy, never on the copy itself).
+PRAGMA integrity_check passed on a scratch duplicate of the copy, never on the copy itself; the duplicate
+holds the copied log, so the check judges the store with its log replayed).
 `
 
 // serviceReading is the relay's own service reading, the same signal the swap gate takes
@@ -117,7 +124,9 @@ func runBackupState(ctx context.Context, args []string, env scope.Env, stdout, s
 }
 
 // BackupState takes the stopped byte copy outside an install. It refuses while the relay service runs, holds the
-// store's write gate exclusively for the whole copy, and takes the same artifact backupState makes.
+// store's write gate exclusively for the whole copy, and makes the copy backupState makes. It reads no schema first,
+// as the install route's swap gate does, so an unmerged write-ahead log is copied as it lies and restoreCandidate
+// judges the store with that log replayed in the scratch duplicate (CRW-1004).
 func BackupState(ctx context.Context, o Options, dest string) (Object, int) {
 	reading := serviceReading(ctx, o)
 	if record.Get(reading, "readable") != true {

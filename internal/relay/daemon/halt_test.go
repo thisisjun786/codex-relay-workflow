@@ -38,11 +38,13 @@ func damageStorePages(t *testing.T, path string) {
 	}
 }
 
-// TestHaltDaemonMarksACorruptingWrite: the first statement a pass issues against the damaged store
-// meets the class (the anchor recovery's write), so the pass publishes the marker with the write
-// site and ends without an error, which is what keeps the run ticking and write-free. The
-// observation site is the omission observer's, pinned by TestHaltOnUnreadableStoreMarksTheObservation.
-func TestHaltDaemonMarksACorruptingWrite(t *testing.T) {
+// TestHaltDaemonMarksACorruptingFailure: the first statement a pass issues against the damaged store
+// meets the class (the anchor recovery's read of the pending anchors), so the pass publishes the
+// marker with that statement's site, observation (CRW-945), and ends without an error, which is
+// what keeps the run ticking and write-free. The write site is pinned where a statement that
+// changes the store meets the damage (TestHaltCoverage_aRequeueWriteIsMarkedAtTheWriteSite,
+// TestSchedulerHalt_aWriteInsideTheAttemptIsMarkedAtTheWriteSite).
+func TestHaltDaemonMarksACorruptingFailure(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	dir := t.TempDir()
@@ -65,7 +67,7 @@ func TestHaltDaemonMarksACorruptingWrite(t *testing.T) {
 	if !state.Present || state.Detail != "" {
 		t.Fatalf("no marker was published: %+v", state)
 	}
-	if state.Marker.Code != 11 || state.Marker.Site != store.HaltSiteWrite {
+	if state.Marker.Code != 11 || state.Marker.Site != store.HaltSiteObservation {
 		t.Fatalf("marker %+v", state.Marker)
 	}
 	// The next pass is write-free because the marker is checked first: it attempts no statement at

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 	"os"
 	"path/filepath"
 	"sort"
@@ -218,7 +219,7 @@ func auditDraftLock(e *Env, cfg *Config) (func(), error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
-	lockPath := filepath.Join(dir, "drafts.lock")
+	lockPath := crwconfig.JoinRoot(dir, "drafts.lock")
 	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return nil, err
@@ -238,7 +239,7 @@ func auditDraftLock(e *Env, cfg *Config) (func(), error) {
 
 // auditDraftDir is where the drafts live, below the state directory the configuration names.
 func auditDraftDir(e *Env, cfg *Config) string {
-	return filepath.Join(auditStateDir(e, cfg), "drafts")
+	return crwconfig.JoinRoot(auditStateDir(e, cfg), "drafts")
 }
 
 // auditDraftSectionOf reads the audit section's owners map and cap. A configuration with no
@@ -472,7 +473,7 @@ func auditDraftSummaryOf(doc *auditDraft) auditDraftSummary {
 // append from the rows after it, so it is counted and skipped rather than failing every later
 // run: the rows after it are whole and still count.
 func auditDraftLedgerRows(e *Env, cfg *Config) ([]auditLedgerRow, int, error) {
-	path := filepath.Join(auditStateDir(e, cfg), "audit", auditLedgerFile)
+	path := crwconfig.JoinRoot(auditStateDir(e, cfg), "audit", auditLedgerFile)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -611,7 +612,7 @@ func improveAuditDraftDecode(path string, data []byte) (*auditDraft, error) {
 // auditDraftWriteFile writes one file atomically: a temporary file beside it, fsynced, then
 // renamed over it, so a reader never sees a half-written document.
 func auditDraftWriteFile(path string, data []byte) error {
-	dir := filepath.Dir(path)
+	dir := rootDir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
@@ -652,7 +653,7 @@ func auditDraftSave(path string, doc *auditDraft) error {
 
 // auditDraftIndexLoad reads the drafts index. A missing index lists nothing.
 func auditDraftIndexLoad(dir string) (auditDraftIndex, error) {
-	data, err := os.ReadFile(filepath.Join(dir, auditDraftIndexFile))
+	data, err := os.ReadFile(crwconfig.JoinRoot(dir, auditDraftIndexFile))
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return auditDraftIndex{Schema: auditDraftIndexSchema}, nil
@@ -661,10 +662,10 @@ func auditDraftIndexLoad(dir string) (auditDraftIndex, error) {
 	}
 	var index auditDraftIndex
 	if err := json.Unmarshal(data, &index); err != nil {
-		return auditDraftIndex{}, fmt.Errorf("%s: %w", filepath.Join(dir, auditDraftIndexFile), err)
+		return auditDraftIndex{}, fmt.Errorf("%s: %w", crwconfig.JoinRoot(dir, auditDraftIndexFile), err)
 	}
 	if index.Schema != auditDraftIndexSchema {
-		return auditDraftIndex{}, fmt.Errorf("%s: schema %q is not %s", filepath.Join(dir, auditDraftIndexFile), index.Schema, auditDraftIndexSchema)
+		return auditDraftIndex{}, fmt.Errorf("%s: schema %q is not %s", crwconfig.JoinRoot(dir, auditDraftIndexFile), index.Schema, auditDraftIndexSchema)
 	}
 	return index, nil
 }
@@ -692,7 +693,7 @@ func auditDraftIndexSave(dir string) error {
 	if err != nil {
 		return err
 	}
-	return auditDraftWriteFile(filepath.Join(dir, auditDraftIndexFile), append(data, '\n'))
+	return auditDraftWriteFile(crwconfig.JoinRoot(dir, auditDraftIndexFile), append(data, '\n'))
 }
 
 // auditDraftFingerprintName accepts a fingerprint that is a plain 16-character lower-case hex
@@ -825,7 +826,7 @@ func auditDraftsRun(e *Env, cfg *Config, scope auditDraftScope) (auditDraftRepor
 				Reason: "the bundle carries an unrecorded grade, so its " + auditGradeFile + " is not this row's"})
 			continue
 		}
-		doc, ok := auditParseResult(filepath.Join(row.Bundle, auditGradeFile))
+		doc, ok := auditParseResult(crwconfig.JoinRoot(row.Bundle, auditGradeFile))
 		if !ok {
 			report.Skipped = append(report.Skipped, auditDraftSkip{Mode: row.Mode, Subject: row.Subject, Head: row.Head, Reason: "no usable " + auditGradeFile})
 			continue
@@ -864,7 +865,7 @@ func auditDraftsRun(e *Env, cfg *Config, scope auditDraftScope) (auditDraftRepor
 	var fresh, existing []*auditDraftCandidate
 	for _, fingerprint := range order {
 		candidate := candidates[fingerprint]
-		if _, err := os.Stat(filepath.Join(dir, fingerprint+".json")); err == nil {
+		if _, err := os.Stat(crwconfig.JoinRoot(dir, fingerprint+".json")); err == nil {
 			existing = append(existing, candidate)
 			continue
 		} else if !errors.Is(err, os.ErrNotExist) {
@@ -895,7 +896,7 @@ func auditDraftsRun(e *Env, cfg *Config, scope auditDraftScope) (auditDraftRepor
 			Severity: candidate.severity, Body: auditDraftBody(candidate),
 			Labels: auditDraftLabels(candidate.severity), Seen: candidate.seen, State: auditDraftStateDraft,
 		}
-		if err := auditDraftSave(filepath.Join(dir, candidate.fingerprint+".json"), doc); err != nil {
+		if err := auditDraftSave(crwconfig.JoinRoot(dir, candidate.fingerprint+".json"), doc); err != nil {
 			return report, err
 		}
 		report.Created = append(report.Created, auditDraftSummaryOf(doc))
@@ -904,7 +905,7 @@ func auditDraftsRun(e *Env, cfg *Config, scope auditDraftScope) (auditDraftRepor
 		}
 	}
 	for _, candidate := range existing {
-		path := filepath.Join(dir, candidate.fingerprint+".json")
+		path := crwconfig.JoinRoot(dir, candidate.fingerprint+".json")
 		doc, err := auditDraftLoad(path)
 		if err != nil {
 			return report, err
@@ -1036,7 +1037,7 @@ func auditDraftRunMark(e *Env, args []string) int {
 		return 1
 	}
 	defer release()
-	path := filepath.Join(auditDraftDir(e, cfg), values["fingerprint"]+".json")
+	path := crwconfig.JoinRoot(auditDraftDir(e, cfg), values["fingerprint"]+".json")
 	doc, err := auditDraftLoad(path)
 	if err != nil {
 		fmt.Fprintf(e.Stderr, "crw manage audit drafts mark: error: %v\n", err)

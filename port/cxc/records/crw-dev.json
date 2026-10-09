@@ -62,7 +62,7 @@
   "edits": [
     {
       "file": "SKILL.md",
-      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. Normalize frontmatter to the repository-supported name and description fields; preserve invocation description and record the removed oracle metadata. Route Linear-level work to its CRW owner and distinguish task modes from parent coordination.",
+      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. Normalize frontmatter to the repository-supported name and description fields; preserve invocation description and record the removed oracle metadata. Route Linear-level work to its CRW owner and distinguish task modes from parent coordination. Drop the deprecated skill-hub notice: the port has no former-name guidance.",
       "hunks": [
         {
           "line": 4,
@@ -99,6 +99,15 @@
           ],
           "new": [
             "Use a bounded [discovery packet](../crw-pabcd/references/delegation.md#discovery-packet)\n"
+          ]
+        },
+        {
+          "line": 217,
+          "old": [
+            "`crw-qa`, or the matching `dev-*` owner for their named domains. `skill-hub` is deprecated.\n"
+          ],
+          "new": [
+            "`crw-qa`, or the matching `dev-*` owner for their named domains.\n"
           ]
         }
       ]
@@ -192,6 +201,18 @@
           ],
           "new": [
             "| Unsure whether the work needs a peer task or a dispatched child | Read [Dispatch surfaces](../../crw-pabcd/references/dispatch-surfaces.md); a child shares this working directory, a task gets its own |\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "references/skill-catalog.md",
+      "reason": "Drop the Telegram delivery row: the port has no messenger delivery.",
+      "hunks": [
+        {
+          "line": 54,
+          "old": [
+            " | `telegram-send` | Telegram voice/photo/document delivery |\n"
           ]
         }
       ]

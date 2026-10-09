@@ -214,3 +214,15 @@ func moduleRoot() (string, error) {
 		}
 	}
 }
+
+// WriteProgram writes a file a test then executes (a script, a stub, a copied program), creating its directory and replacing what is there as os.WriteFile does. The descriptor is open only
+// under syscall.ForkLock held for reading, from before the open until after the close, so a concurrent fork cannot inherit it: a path a fork inherited that way is open for writing in another
+// process until that process execs, and Linux refuses to execute it with ETXTBSY, "text file busy" (golang/go#22315). Nothing but the write is done under the lock.
+func WriteProgram(path string, body []byte, mode os.FileMode) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	syscall.ForkLock.RLock()
+	defer syscall.ForkLock.RUnlock()
+	return os.WriteFile(path, body, mode)
+}

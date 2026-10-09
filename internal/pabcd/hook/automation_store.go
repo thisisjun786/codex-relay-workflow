@@ -211,16 +211,17 @@ func automationStoreParse(text string) (*automationOwnershipSnapshot, error) {
 	return &automationOwnershipSnapshot{ID: id, Kind: kind, TargetThreadID: owner}, nil
 }
 
+// automationAfterRead is a test seam: it runs between the end of the read and the second fstat, the
+// window in which the oracle's snapshot check must see the file change. Production leaves it nil.
+var automationAfterRead func(path string)
+
 // automationReadOwnership is readAutomationOwnership (automation-store.ts:102-129): a bounded,
 // read-only open that rejects symlinks, non-regular files and a snapshot that changed under it.
 // It is a plain function so a test can substitute one; nothing here ever writes.
 //
-// Intentional change (D7 of the plan): the oracle also compares ctimeMs after the read. This file
-// builds for every target `make dist` publishes, and darwin names those stat fields differently, so
-// the portable os.SameFile plus size and ModTime comparisons stand in for dev, ino, size, mtime and
-// ctime. A content change on a regular file always moves ModTime, so the bytes read are still one
-// consistent snapshot; only a metadata-only change during the read goes unnoticed. Recorded in
-// docs/port-cxc/known-defects/CRW-753.md.
+// The oracle also compares ctimeMs after the read (automation-store.ts:124); so does this port, through
+// automationCtime, whose linux and darwin files name the stat field each platform calls it (CRW-804). On a
+// platform with neither, os.SameFile plus the size and ModTime comparisons stand in for it.
 func automationReadOwnership(codexHome, id string) (*automationOwnershipSnapshot, error) {
 	if !filepath.IsAbs(codexHome) || !automationSafeID(id) {
 		return nil, errAutomationStore()
@@ -265,8 +266,11 @@ func automationReadOwnership(codexHome, id string) (*automationOwnershipSnapshot
 			break
 		}
 	}
+	if automationAfterRead != nil {
+		automationAfterRead(path)
+	}
 	after, err := file.Stat()
-	if err != nil || size > automationMaxStoreBytes || int64(size) != opened.Size() || after.Size() != opened.Size() || !after.ModTime().Equal(opened.ModTime()) {
+	if err != nil || size > automationMaxStoreBytes || int64(size) != opened.Size() || after.Size() != opened.Size() || !after.ModTime().Equal(opened.ModTime()) || automationCtimeChanged(opened, after) {
 		return nil, errAutomationStore()
 	}
 	raw := buffer[:size]
@@ -281,4 +285,13 @@ func automationReadOwnership(codexHome, id string) (*automationOwnershipSnapshot
 		return nil, errAutomationStore()
 	}
 	return snapshot, nil
+}
+
+// automationCtimeChanged reports whether the inode change time moved between the fstat before the read and
+// the one after it, which a same-length rewrite with the mtime put back and a chmod or chown both do. A
+// platform that cannot name the time reports no change, as the port did before the comparison existed.
+func automationCtimeChanged(before, after os.FileInfo) bool {
+	was, okWas := automationCtime(before)
+	is, okIs := automationCtime(after)
+	return okWas && okIs && was != is
 }
