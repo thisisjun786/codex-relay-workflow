@@ -48,3 +48,63 @@ python3 -c 'import shutil; shutil.copy("{MEMORY}/n.md", "/w/b")'
 === CRW-900-C-03 | B
 --why control: rename outside memories.
 python3 -c 'import os; os.rename("/w/a", "/w/b")'
+
+=== CRW-900-D1-04 | W
+--why attempt shape; see CRW-900 fix round (post-evaluation of 0e215a28, findings d1-d4).
+python3 -c 'def f(): import shutil as s; s.copy("/w/a", "{MEMORY}/n.md")'
+
+=== CRW-900-D1-05 | W
+--why attempt shape; see CRW-900 fix round (post-evaluation of 0e215a28, findings d1-d4).
+python3 -c 'if True: from shutil import copy as c; c("/w/a", "{MEMORY}/n.md")'
+
+=== CRW-900-D2-03 | W
+--why attempt shape; see CRW-900 fix round (post-evaluation of 0e215a28, findings d1-d4).
+python3 -c 'def f(): import os as shutil; shutil.rename("/w/a", "{MEMORY}/n.md")'
+
+=== CRW-900-D2-04 | W
+--why attempt shape; see CRW-900 fix round (post-evaluation of 0e215a28, findings d1-d4).
+python3 -c 'import json as shutil; shutil.copy("/w/a", "{MEMORY}/n.md")'
+
+=== CRW-900-D4-03 | W
+--why attempt shape; see CRW-900 fix round (post-evaluation of 0e215a28, findings d1-d4).
+python3 -c 'from shutil import copy as c; c("/w/a", "{MEMORY}/n.md")'
+
+=== CRW-900-C-04 | B
+--why control shape; see CRW-900 fix round (post-evaluation of 0e215a28, findings d1-d4).
+python3 -c 'from shutil import copy as c; c("{MEMORY}/n.md", "/w/b")'
+
+=== CRW-900-C-05 | B
+--why control shape; see CRW-900 fix round (post-evaluation of 0e215a28, findings d1-d4).
+python3 -c 'import os as shutil; shutil.rename("/w/a", "/w/b")'
+
+=== CRW-900-C-06 | B
+--why control shape; see CRW-900 fix round (post-evaluation of 0e215a28, findings d1-d4).
+python3 -c 'from os import rename; rename("/w/a", "/w/b")'
+
+=== CRW-900-C-07 | B
+--why control shape; see CRW-900 fix round (post-evaluation of 0e215a28, findings d1-d4).
+python3 -c 'import shutil as s; s.copy("{MEMORY}/n.md", "/w/b")'
+
+=== CRW-900-D4-04 | W
+--why a from-import name whose value is taken stays unknown (CRW-900 fix round, guard of d2).
+python3 -c 'from shutil import copy as c; g = c; g("/w/a", "{MEMORY}/n.md")'
+
+=== CRW-900-D4-05 | W
+--why a from-import name whose value is taken stays unknown (CRW-900 fix round, guard of d2).
+python3 -c 'from shutil import copy as c; run(c, "/w/a", "{MEMORY}/n.md")'
+
+=== CRW-900-D4-06 | W
+--why a from-import list of shutil names (CRW-900 fix round, list form of d4).
+python3 -c 'from shutil import copy, move; copy("/w/a", "{MEMORY}/n.md")'
+
+=== CRW-900-C-08 | B
+--why a from-import list of shutil names (CRW-900 fix round, list form of d4).
+python3 -c 'from shutil import copy, move; copy("{MEMORY}/n.md", "/w/b")'
+
+=== CRW-900-D2-05 | W
+--why a parameter or alias rebinds a module name, so the call is unknown (CRW-900 post-evaluation d2 guard).
+python3 -c 'import os as shutil; def f(shutil): shutil.copy("/w/a", "{MEMORY}/n.md")'
+
+=== CRW-900-D2-06 | W
+--why a parameter or alias rebinds a module name, so the call is unknown (CRW-900 post-evaluation d2 guard).
+python3 -c 'import json as os; def f(os): os.rename("/w/a", "{MEMORY}/n.md")'

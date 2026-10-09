@@ -27,6 +27,17 @@ func TestShellCopyDestinationCompletion(t *testing.T) {
 		{"D4 rename imported under the name open", "from os import rename as open; open(\"/w/a\", \"/m/n.md\")", []string{"/m/n.md"}},
 		{"D4 control: real pathlib read", "from pathlib import Path; Path(\"/m/n.md\").read_text()", []string{}},
 		{"D4 control: a copy from memories", "from shutil import copy as c; c(\"/m/n.md\", \"/w/b\")", []string{"/w/b"}},
+		{"D1 def body import alias on its own lines", "def f():\n    import shutil as s\n    s.copy(\"/w/a\", \"/m/n.md\")", []string{"/m/n.md"}},
+		{"D1 indented block from-import alias", "if True:\n    from shutil import copy as c\n    c(\"/w/a\", \"/m/n.md\")", []string{"/m/n.md"}},
+		{"D1 def body from-import", "def f(): from shutil import copy as c; c(\"/w/a\", \"/m/n.md\")", []string{"/m/n.md"}},
+		{"D4 variant: from-import of os.rename under an alias", "from os import rename as mv; mv(\"/w/a\", \"/m/n.md\")", []string{"/m/n.md"}},
+		{"D2 binding first: json bound to shutil names no shutil copy", "import json as shutil; shutil.copy(\"/w/a\", \"/m/n.md\")", []string{shellIRUnknownDest}},
+		{"D2 control: json bound to os is not read as os.rename", "import json as os; os.rename(\"/w/a\", \"/m/n.md\")", []string{shellIRUnknownDest}},
+		{"D2 control: shutil bound to os has no rename", "import shutil as os; os.rename(\"/w/a\", \"/m/n.md\")", []string{}},
+		{"D2 control: os bound to shutil has no copy", "import os as shutil; shutil.copy(\"/w/a\", \"/m/n.md\")", []string{}},
+		{"D2 allowed: os bound to shutil renames outside memories", "import os as shutil; shutil.rename(\"/w/a\", \"/w/b\")", []string{"/w/b"}},
+		{"D4 list import: copy bound beside move", "from shutil import copy, move; copy(\"/w/a\", \"/m/n.md\")", []string{"/m/n.md"}},
+		{"D4 list import: aliased names", "from shutil import copy as c, move as m; m(\"/w/a\", \"/m/n.md\")", []string{"/m/n.md"}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			if got := shellVerbScriptWrites(c.script, true); !slices.Equal(got, c.want) {
@@ -48,6 +59,10 @@ func TestMemoryGateDeniesCompletedCopyShapes(t *testing.T) {
 		{"D3 renames alias", "python3 -c 'from os import renames as mv; mv(old=\"/w/a\", new=\"" + root + "/n.md\")'"},
 		{"D4 copy imported as Path", "python3 -c 'from shutil import copy as Path; Path(\"/w/a\", \"" + root + "/n.md\")'"},
 		{"D4 rename imported as open", "python3 -c 'from os import rename as open; open(\"/w/a\", \"" + root + "/n.md\")'"},
+		{"D1 def body import alias", "python3 -c 'def f(): import shutil as s; s.copy(\"/w/a\", \"" + root + "/n.md\")'"},
+		{"D1 one-line from-import alias", "python3 -c 'if True: from shutil import copy as c; c(\"/w/a\", \"" + root + "/n.md\")'"},
+		{"D2 os alias for rename into memories", "python3 -c 'def f(): import os as shutil; shutil.rename(\"/w/a\", \"" + root + "/n.md\")'"},
+		{"D4 copy imported under its own name", "python3 -c 'from shutil import copy as c; c(\"/w/a\", \"" + root + "/n.md\")'"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			reason := gateDeny(t, HandleMemoryWriteGate(gateBash(t, cwd, c.command), env))
