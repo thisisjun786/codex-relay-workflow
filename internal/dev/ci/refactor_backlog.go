@@ -3,6 +3,7 @@
 package ci
 
 import (
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -22,8 +23,9 @@ const (
 	// refactorBacklogSource is the fragment tree, refactorBacklogTarget the file it builds.
 	refactorBacklogSource = "docs/port/refactor-backlog.d"
 	refactorBacklogTarget = "docs/port/refactor-backlog.md"
-	// refactorBacklogPortDir is the directory both live in; a tree that has it and neither is missing the backlog.
-	refactorBacklogPortDir = "docs/port"
+	// refactorBacklogMarker is a directory of this repository (the sources of the command that runs the check). A tree that has it
+	// requires the backlog, whatever else it lost; a tree without it is not this repository and has none (every validate fixture).
+	refactorBacklogMarker = "cmd/crw-dev"
 	// refactorBacklogSection is the fragment a section directory holds first: its heading, prose
 	// and the entries written before the tree was split.
 	refactorBacklogSection = "_section.md"
@@ -32,9 +34,8 @@ const (
 	refactorBacklogDrift = "edit the fragments under docs/port/refactor-backlog.d and run crw-dev ci refactor-backlog --write"
 )
 
-// refactorBacklogEntry matches the tag an entry bullet opens with. It is how an entry whose fragment
-// was edited is paired with its old line (refactorBacklogDropped); it is not the entry identity,
-// because tags repeat.
+// refactorBacklogEntry matches the tag an entry bullet opens with. It marks a line as an entry
+// (refactorBacklogDropped); it is not the entry identity, because tags repeat.
 var refactorBacklogEntry = regexp.MustCompile(`^- \[[^\]]+\]`)
 
 // RefactorBacklog is the crw-dev ci refactor-backlog check: --write regenerates the committed file
@@ -72,7 +73,7 @@ func RefactorBacklog(args []string, stdout, stderr io.Writer) int {
 			return failf(stderr, "refactor-backlog: %s", err)
 		}
 		if len(dropped) > 0 {
-			return failf(stderr, "%s holds entries no fragment produces: %s; move each into the fragment of its section under %s and run --write again (an entry removed from its fragment is removed from the file by hand first)",
+			return failf(stderr, "%s was edited since it was generated and holds entries no fragment produces: %s; move each into the fragment of its section under %s (or delete the line if it is stale) and run --write again",
 				refactorBacklogTarget, strings.Join(quoted(dropped), "; "), refactorBacklogSource)
 		}
 		if err := os.WriteFile(target, []byte(text), 0o644); err != nil {
@@ -88,11 +89,10 @@ func RefactorBacklog(args []string, stdout, stderr io.Writer) int {
 }
 
 // refactorBacklogPaths resolves the fragment tree and the generated file below root. ok is false
-// only for a tree that has no backlog component at all: neither the fragments nor the file, and no
-// docs/port directory that would hold them (every validate fixture has this shape). A tree with
-// docs/port that lost both is refused, and so is a stat error other than "does not exist": a
-// permission error is not the answer "absent". The file without its source is refused too: nothing
-// could then keep the two in step.
+// only for a tree that is not this repository (no refactorBacklogMarker) and has neither the
+// fragments nor the file. This repository without both is refused, however much of docs/port is
+// left, and so is a stat error other than "does not exist": a permission error is not the answer
+// "absent". The file without its source is refused too: nothing could then keep the two in step.
 func refactorBacklogPaths(root string) (source, target string, ok bool, err error) {
 	source = filepath.Join(root, refactorBacklogSource)
 	target = filepath.Join(root, refactorBacklogTarget)
@@ -108,25 +108,26 @@ func refactorBacklogPaths(root string) (source, target string, ok bool, err erro
 	} else if !errors.Is(targetErr, fs.ErrNotExist) {
 		return "", "", false, targetErr
 	}
-	if _, portErr := os.Stat(filepath.Join(root, refactorBacklogPortDir)); portErr == nil {
-		return "", "", false, fmt.Errorf("neither %s nor %s exists in a tree that holds %s", refactorBacklogSource, refactorBacklogTarget, refactorBacklogPortDir)
-	} else if !errors.Is(portErr, fs.ErrNotExist) {
-		return "", "", false, portErr
+	if _, markerErr := os.Stat(filepath.Join(root, refactorBacklogMarker)); markerErr == nil {
+		return "", "", false, fmt.Errorf("neither %s nor %s exists in a tree that holds %s", refactorBacklogSource, refactorBacklogTarget, refactorBacklogMarker)
+	} else if !errors.Is(markerErr, fs.ErrNotExist) {
+		return "", "", false, markerErr
 	}
 	return "", "", false, nil
 }
 
 // refactorBacklogDropped is the entries the committed file carries and the assembly does not, as
 // the lines themselves (with their tag). Writing the assembly would delete those entries, which is
-// how an entry a branch added before the fragments existed disappears when the generated file is
-// regenerated. The write refuses instead, so the entry is moved into a fragment of its section
-// rather than lost.
+// how an entry a branch added by hand disappears when the generated file is regenerated. The write
+// refuses instead, so the entry is moved into a fragment of its section rather than lost.
 //
-// An entry is its whole line, because tags repeat (one tag opens many entries of the repository's
-// file). Lines equal to an assembled line are matched one for one first. A committed line left over
-// is an entry whose fragment was edited since the file was generated, and is accepted only when an
-// assembled line of the same tag is left over to take its place; a leftover with no partner (an
-// entry added by hand, or one more under a repeated tag) is dropped. A generated file that is
+// What the fragments no longer produce is lost only if someone wrote it in the generated file, and
+// the file says whether anyone did: it ends in a seal over everything above it
+// (refactorBacklogSeal). A file that still matches its seal is exactly what --write made, so every
+// line it holds that the assembly lacks is the old text of a fragment edited or removed since, and
+// replacing it loses nothing; no pairing by tag or position is needed or attempted. A file that
+// does not match (edited by hand, or written before the seal existed) is compared by whole line,
+// because tags repeat: a line the assembly does not produce is dropped, whichever section it sits in. A generated file that is
 // absent has nothing to lose; one that cannot be read is an error.
 func refactorBacklogDropped(target, assembly string) ([]string, error) {
 	committed, err := readText(target)
@@ -136,13 +137,16 @@ func refactorBacklogDropped(target, assembly string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	if refactorBacklogIntact(committed) {
+		return nil, nil
+	}
 	produced := map[string]int{}
 	for _, line := range lines(assembly) {
 		if refactorBacklogEntry.MatchString(line) {
 			produced[refactorBacklogNormal(line)]++
 		}
 	}
-	var leftover []string
+	var dropped []string
 	for _, line := range lines(committed) {
 		if !refactorBacklogEntry.MatchString(line) {
 			continue
@@ -151,22 +155,23 @@ func refactorBacklogDropped(target, assembly string) ([]string, error) {
 			produced[key]--
 			continue
 		}
-		leftover = append(leftover, line)
-	}
-	free := map[string]int{} // assembled lines no committed line matched, by tag
-	for key, n := range produced {
-		free[refactorBacklogEntry.FindString(key)] += n
-	}
-	var dropped []string
-	for _, line := range leftover {
-		tag := refactorBacklogEntry.FindString(refactorBacklogNormal(line))
-		if free[tag] > 0 {
-			free[tag]--
-			continue
-		}
 		dropped = append(dropped, refactorBacklogShown(line))
 	}
 	return dropped, nil
+}
+
+// refactorBacklogSeal is body followed by the line that seals it: a comment (invisible where the
+// file is rendered) holding the SHA-256 of body. body is what the fragments assemble to.
+func refactorBacklogSeal(body string) string {
+	return fmt.Sprintf("%s<!-- refactor-backlog: generated; sha256 of the lines above: %x -->\n", body, sha256.Sum256([]byte(body)))
+}
+
+// refactorBacklogIntact reports whether text is a sealed file no one has changed since it was
+// written: its last line is the seal of everything above it.
+func refactorBacklogIntact(text string) bool {
+	trimmed := strings.TrimSuffix(text, "\n")
+	cut := strings.LastIndex(trimmed, "\n") + 1
+	return refactorBacklogSeal(text[:cut]) == text
 }
 
 // refactorBacklogNormal is an entry line as it is compared: without trailing white space or a CR.
@@ -204,7 +209,7 @@ func refactorBacklogError(root string) error {
 	return nil
 }
 
-// assembleRefactorBacklog is the document the fragments under source build. Directories are read
+// assembleRefactorBacklog is the document the fragments under source build, sealed. Directories are read
 // in name order, so the directory names carry the section order; inside a directory _section.md
 // comes first and the other fragments follow by name.
 func assembleRefactorBacklog(source string) (string, error) {
@@ -226,7 +231,7 @@ func assembleRefactorBacklog(source string) (string, error) {
 	if len(blocks) == 0 {
 		return "", fmt.Errorf("%s holds no sections", source)
 	}
-	return strings.Join(blocks, "\n\n") + "\n", nil
+	return refactorBacklogSeal(strings.Join(blocks, "\n\n") + "\n"), nil
 }
 
 // assembleRefactorBacklogSection is one directory block: its _section.md, then the other
