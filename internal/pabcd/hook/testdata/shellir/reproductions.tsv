@@ -1536,3 +1536,24 @@ CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed p x.txt
 CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed 'w {MEMORY}/b' x.txt -i -e p	CRW-1063-36	row	-
 CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed p x.txt -e 'w {MEMORY}/a' -s	CRW-1063-37	row	-
 CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed -n p x.txt -s -e 'W {MEMORY}/a'	CRW-1063-38	row	-
+linear-issue-CRW-917.json	gh api --input of a clean plain text file (not JSON)	CRW-917-41-01	row	-
+linear-issue-CRW-917.json	gh api --input of a body with an unclosed JSON object	CRW-917-41-02	row	-
+linear-issue-CRW-917.json	gh api --input of a JSON document with text after it	CRW-917-41-03	row	-
+linear-issue-CRW-917.json	gh api --input with a unicode-escaped secret key	CRW-917-41-04	row	-
+linear-issue-CRW-917.json	gh pr comment --body-file of a clean plain text file (control)	CRW-917-41-05	row	-
+linear-issue-CRW-917.json	gh api -F body=@ of a clean plain text file (control)	CRW-917-41-06	row	-
+linear-issue-CRW-917.json	gh api --input of a named pipe	CRW-917-41-07	row	-
+linear-issue-CRW-917.json	g""h pr comment 1 --body 'x' (quoted program name)	CRW-917-41-08	row	-
+linear-issue-CRW-917.json	gh pr comment 1 --body-file "$F" (expansion in the file name)	CRW-917-41-09	row	-
+linear-issue-CRW-917.json	gh pr comment 1 --body-file clean.md </dev/null (glued redirect)	CRW-917-41-10	row	-
+linear-issue-CRW-917.json	gh pr create --title 'MY_API_KEY=sentinel' (secret title)	CRW-917-41-11	row	-
+linear-issue-CRW-917.json	gh pr create -t 'Plain title' --body-file clean.md (control)	CRW-917-41-12	row	-
+linear-issue-CRW-917.json	gh api --input of a JSON object whose repeated key holds a secret in its first value	CRW-917-42-01	row	-
+linear-issue-CRW-917.json	gh api --input of a repeated key with both values clean (control)	CRW-917-42-02	row	-
+linear-issue-CRW-917.json	gh pr comment --body-file of a JSON-looking file whose escape spells a secret (raw text, control)	CRW-917-42-03	row	-
+linear-issue-CRW-917.json	gh api -F body=@ of the same JSON-looking file (raw text, control)	CRW-917-42-04	row	-
+linear-issue-CRW-917.json	gh pr comment --body-file of a JSON-looking file with a raw secret	CRW-917-42-05	row	-
+linear-issue-CRW-917.json	true; python3 -c with a program that builds gh from empty quote pieces and names a post	CRW-917-42-06	row	-
+linear-issue-CRW-917.json	python3 -c with a program that names no post (control)	CRW-917-42-07	row	-
+linear-issue-CRW-917.json	gh pr comment --body-file of a JSON-looking file with a NAME=value secret inside a string	CRW-917-42-08	row	-
+linear-issue-CRW-917.json	gh pr comment --body-file of a JSON-looking file with an escaped key name (raw text, control)	CRW-917-42-09	row	-

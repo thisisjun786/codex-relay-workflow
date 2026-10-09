@@ -287,7 +287,8 @@ func TestFallbackHookObservationAndErrorOrder(t *testing.T) {
 }
 
 // TestGitHubPostGuardLegAnswersDenyWhenCancelled: a GitHub post guard leg cancelled while it still waits for its input answers
-// with the deny envelope and the interrupted status, never silence (CRW-1028, evaluation defect d17).
+// with the deny envelope that names the post, and exits 0 as an ordinary deny does, never silence (CRW-917 S7; this replaces
+// the interrupted status CRW-1028 d17 asked for).
 func TestGitHubPostGuardLegAnswersDenyWhenCancelled(t *testing.T) {
 	in, w := io.Pipe()
 	t.Cleanup(func() { w.Close() })
@@ -295,10 +296,10 @@ func TestGitHubPostGuardLegAnswersDenyWhenCancelled(t *testing.T) {
 	cancel()
 	var out bytes.Buffer
 	claimed, code := runComponentHook(invocation{ctx: ctx, args: []string{"pre-tool-use", "--leg", "pre-tool-use-guarding-github-post"}, stdout: &out}, in, componentHooks())
-	if !claimed || code != harness.Interrupted {
-		t.Fatalf("claimed %v, status %d, want the leg claimed with status %d", claimed, code, harness.Interrupted)
+	if !claimed || code != 0 {
+		t.Fatalf("claimed %v, status %d, want the leg claimed with status 0, as an ordinary deny", claimed, code)
 	}
-	if !strings.Contains(out.String(), `"permissionDecision":"deny"`) {
-		t.Errorf("a cancelled GitHub post guard did not answer deny: %q", out.String())
+	if !strings.Contains(out.String(), `"permissionDecision":"deny"`) || !strings.Contains(out.String(), "(unreadable-github-post) at command") {
+		t.Errorf("a cancelled GitHub post guard did not answer the deny for the command: %q", out.String())
 	}
 }

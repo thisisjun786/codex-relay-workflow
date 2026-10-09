@@ -208,7 +208,7 @@ func TestGitHubPostGuardJudgements(t *testing.T) {
 		// The generation-5 ruling's own controls, each a case.
 		{"a full form A create", "gh pr create --base dev --title 'CRW-1: x' --body-file " + githubPostAbs(cwd, "body.md"), "", ""},
 		{"an api file field on a nested path", "gh api repos/o/r/pulls/1/comments/2/replies -F body=@" + githubPostAbs(cwd, "body.md"), "", ""},
-		{"an api input with a clean file", "gh api graphql --input " + githubPostAbs(cwd, "clean.md"), "", ""},
+		{"an api input that is not JSON", "gh api graphql --input " + githubPostAbs(cwd, "clean.md"), githubPostRuleUnread, githubPostAbs(cwd, "clean.md")},
 		{"an issue list with a search", "gh issue list --search review", "", ""},
 		{"a review approval", "gh pr review 1 --approve", "", ""},
 		{"a git log with a grep", "git log --grep 'gh api'", "", ""},
@@ -262,7 +262,7 @@ func TestGitHubPostGuardJudgements(t *testing.T) {
 		{"api attached file field", "gh api repos/o/r/pulls/1/reviews -Fbody=@credential.md", githubPostRuleUnread, githubPostWhereCommand},
 		{"api clean file field", "gh api repos/o/r/pulls/1/reviews -F body=@clean.md", "", ""},
 		{"api input", "gh api repos/o/r/pulls/1/reviews --input input.json", githubPostRuleSecret, "input.json:2"}, // the place numbers the JSON strings the scan reads: the key is line 1, its value line 2
-		{"api input equals", "gh api repos/o/r/pulls/1/reviews --input=clean.md", "", ""},
+		{"api input equals, not JSON", "gh api repos/o/r/pulls/1/reviews --input=clean.md", githubPostRuleUnread, "clean.md"},
 		{"missing file", "gh pr comment 1 --body-file nowhere.md", githubPostRuleUnread, "nowhere.md"},
 		{"directory", "gh pr comment 1 --body-file adir", githubPostRuleUnread, "adir"},
 		{"clean quoted heredoc", "gh pr comment 1 --body-file - <<'EOF'\na clean body\nEOF\n", githubPostRuleInline, githubPostWhereCommand},

@@ -191,9 +191,10 @@ func githubPostJudgeScript(e shellir.Exec, depth int, writes *githubPostWrites) 
 }
 
 // githubPostInlineNamesPost is whether an interpreter's program text names a gh post. The program may run
-// that post through a shell or a system call, so a text that names one is refused.
+// that post through a shell or a system call, so a text that names one is refused. The text is judged as the shell reads its
+// words: quotes and backslashes are deleted first, so a name built from quoted pieces (g""h) is the name it spells.
 func githubPostInlineNamesPost(src string) bool {
-	lower := strings.ToLower(src)
+	lower := strings.ToLower(strings.NewReplacer("\"", "", "'", "", "\\", "").Replace(src))
 	if !strings.Contains(lower, "gh") {
 		return false
 	}
