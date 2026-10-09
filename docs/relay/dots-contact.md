@@ -54,9 +54,13 @@ is added to the envelope.
 | Logical id (outbox key) | `dotsContactLogicalID`, one path component under the bridge request limit | The same request id always gives the same logical id. |
 
 The transport request id that `Deliver` (`internal/manage/deliver_send.go`) sends to the bridge is the
-logical id on the first attempt, and `<logical-id>-rN` on each retry (`deliverRetryRequestID`, N counted
-from the outbox record). It is not the dots request id and is never used as one. The relay's own
-`del-<event>-a<attempt>` form belongs to relay delivery and is not the id `Deliver` sends.
+logical id on the first attempt. A retry after a `not_delivered` refusal, and a recovery resend for an id
+the bridge never recorded or answered `not_delivered` for, takes `<logical-id>-rN` (`deliverRetryRequestID`,
+N counted from the outbox record). A recovery resend for an id the bridge recorded and answered
+`not_attempted` keeps the request id the outbox record holds (the unsuffixed logical id, or the `-rN` id
+the record already moved to), so the bridge receipt stays correlated. The id is not the dots request id and
+is never used as one. The relay's own `del-<event>-a<attempt>` form belongs to relay delivery and is not
+the id `Deliver` sends.
 
 ## Delivery input
 
