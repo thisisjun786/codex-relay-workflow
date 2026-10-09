@@ -14,8 +14,7 @@ const configUsage = "Usage:\n" +
 	"  crw install config list                          managed keys, their live values and side effects\n" +
 	"  crw install config get <table.key>\n" +
 	"  crw install config set <table.key> <true|false>\n" +
-	"  crw install config unset <table.key>             restore the value from before crw set it, while crw still owns it\n" +
-	"  crw install config unset <table.key> --release   drop crw's record and leave config.toml as it is\n" +
+	"  crw install config unset <table.key>             restore the value from before crw set it\n" +
 	"  crw pabcd config interview [off|new-unit|always]\n\n" +
 	"Only whitelisted keys can be set; 'config list' shows them. Installation writes just the\n" +
 	"ones marked auto-enable in managed-keys.ts, records the pre-install value, and 'crw install features\n" +
