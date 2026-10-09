@@ -128,6 +128,15 @@ func (w *walker) interpreterInline(name string, args []Word, redirs []Redir, dir
 	return &Inline{Language: lang, Source: Word{Known: true, Value: text}}, nil, nil
 }
 
+// stdinCarriesProgram is whether standard input is something a program could be read from that the text does not name as a file.
+func stdinCarriesProgram(stdin string) bool {
+	switch stdin {
+	case StdinPipe, StdinHeredoc, StdinHerestring, StdinUnknown:
+		return true
+	}
+	return false
+}
+
 // nodeLongFlags are the long options of node that take no value; any other long option may take one, which would move the
 // script operand, so it stays unreadable.
 var nodeLongFlags = []string{"--no-warnings", "--no-deprecation", "--trace-warnings", "--trace-deprecation", "--throw-deprecation",
@@ -224,7 +233,11 @@ options:
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		if !a.Known {
-			operand = true // a word the reader cannot read stands for the script (a residual shared with every interpreter)
+			if stdinCarriesProgram(ctx.Stdin) {
+				// the word may name a descriptor alias, and then the interpreter runs what the pipe or the here-document carries
+				return unreadablef("%s has a word that is not known (%s) and standard input is %s", name, a.Reason, ctx.Stdin)
+			}
+			operand = true // a word the reader cannot read stands for the script (a residual of every interpreter with no pipe)
 			break
 		}
 		v := a.Value

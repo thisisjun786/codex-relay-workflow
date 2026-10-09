@@ -353,3 +353,15 @@ printf x | python3 -m json.tool -c 'import os'
 === CRW-894-ev-66 | U
 --why -m without a module name is refused.
 printf x | python3 -m
+
+=== CRW-894-ev-67 | U
+--why php (an interpreter the reader cannot read) with a script operand the reader cannot evaluate may be reading the stdin alias: refused behind a pipe.
+printf 'x' | php "$(echo /dev/./stdin)"
+
+=== CRW-894-ev-68 | B
+--why Control: php with a script file and the pipe as data.
+printf 'x' | php script.php
+
+=== CRW-894-ev-69 | U
+--why -c behind -o in one cluster is read one way by bash (-o posix -c) and another by zsh (option name), so the reader refuses it.
+bash -oc posix 'echo hi'

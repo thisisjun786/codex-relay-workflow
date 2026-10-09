@@ -204,3 +204,28 @@ func TestShebangShellNames(t *testing.T) {
 		}
 	}
 }
+
+// TestUnknownScriptOperandBehindStandardInput: a script operand the reader cannot evaluate may name the stdin alias. The
+// interpreters the reader models refuse a word they cannot evaluate; the opaque ones (php, lua) do so when standard input is a
+// pipe, a here-document or a here-string, and otherwise take it for a script file they do not judge.
+func TestUnknownScriptOperandBehindStandardInput(t *testing.T) {
+	for _, in := range []string{"python3", "node", "perl", "ruby", "php", "lua", "tclsh"} {
+		opaque := isOpaqueInterpreter(in)
+		for _, c := range []struct {
+			cmd        string
+			unreadable bool
+		}{
+			{`printf x | ` + in + ` "$S"`, true},
+			{`printf x | ` + in + ` "$(echo /dev/stdin)"`, true},
+			{in + ` "$S" <<< x`, true},
+			{`printf x | ` + in + ` script.py`, false},
+			{`S=script.py; printf x | ` + in + ` "$S"`, false},
+			{in + ` "$S"`, !opaque},
+		} {
+			_, err := Analyze(c.cmd, "/work")
+			if got := err != nil; got != c.unreadable {
+				t.Errorf("%q: unreadable=%v, want %v (%v)", c.cmd, got, c.unreadable, err)
+			}
+		}
+	}
+}

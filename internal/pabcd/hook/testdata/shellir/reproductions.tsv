@@ -910,3 +910,6 @@ pre-eval-crw894-1688f7c5.json (CRW-894 d4)	printf x | python3 -m json.tool.evil	
 pre-eval-crw894-1688f7c5.json (CRW-894 d4)	printf x | python3 -c 'print(1)' -m json.tool	CRW-894-ev-64	row	-
 pre-eval-crw894-1688f7c5.json (CRW-894 d4)	printf x | python3 -m json.tool -c 'import os'	CRW-894-ev-65	row	-
 pre-eval-crw894-1688f7c5.json (CRW-894 d4)	printf x | python3 -m	CRW-894-ev-66	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d1)	printf 'x' | php "$(echo /dev/./stdin)"	CRW-894-ev-67	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d1)	printf 'x' | php script.php	CRW-894-ev-68	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d2)	bash -oc posix 'echo hi'	CRW-894-ev-69	row	-
