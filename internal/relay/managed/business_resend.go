@@ -245,21 +245,22 @@ func (r *startRun) businessResendUnload(ctx context.Context) (string, error) {
 		// With no host answer read - a transport error, a closed connection, a deadline - the
 		// archive may have applied and only its reply been lost, which would leave the child
 		// archived until an operator unarchived it. Ask the host once, with the same complete
-		// archived scan the resend guard uses, and continue exactly as after a successful archive
-		// when it confirms the child is archived. A complete listing that does not hold the child
-		// shows the archive did not apply: the child answers as a loaded one does, the begin mark
-		// closes as archive "none" and no unarchive follows. A failed or incomplete check leaves
-		// the archive unknown: the child may be archived, so the mark closes as archive "unknown"
-		// and the attempt stays spent, and an operator who unarchives the child does not see the
-		// same attempt archive it a second time.
-		code, checkErr := businessResendCheckHost(ctx, r.m.Adapter, r.task, true)
+		// archived scan the resend guard uses and nothing else: whether the archive applied is a
+		// fact of the archived listing alone, and a later state or goal read has no bearing on it.
+		// Continue exactly as after a successful archive when the listing holds the child. A
+		// complete listing that does not hold the child shows the archive did not apply: the child
+		// answers as a loaded one does, the begin mark closes as archive "none" and no unarchive
+		// follows. A failed or incomplete listing leaves the archive unknown: the child may be
+		// archived, so the mark closes as archive "unknown" and the attempt stays spent, and an
+		// operator who unarchives the child does not see the same attempt archive it a second time.
+		archived, complete, checkErr := scanThreadListing(ctx, r.m.Adapter, r.task, true)
 		if ctx.Err() != nil {
 			return "", ctx.Err()
 		}
-		if checkErr != nil || code == "archived_listing_incomplete" {
+		if checkErr != nil || !complete {
 			return closeBegin("unknown", "archive_unconfirmed", "recipient_not_idle")
 		}
-		if code != "recipient_archived" {
+		if !archived {
 			return notArchived("archive_unconfirmed", "recipient_not_idle")
 		}
 		detail["archive"] = "reply_lost"

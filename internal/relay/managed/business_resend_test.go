@@ -723,6 +723,38 @@ func TestBusinessResendUnloadAppliedButUnconfirmedArchiveStaysSpent(t *testing.T
 	}
 }
 
+// The archive check after an unanswered archive rests on the archived listing alone: a complete
+// listing that does not hold the child shows this call archived nothing, so a thread/read or
+// thread/goal/get failure after it does not make the archive unknown. The begin mark closes as
+// archive "none" and, once the host recovers, the same attempt still reaches its one archive.
+func TestBusinessResendUnloadCompleteArchivedMissIgnoresLaterReadFailure(t *testing.T) {
+	for _, method := range []string{"thread/read", "thread/goal/get"} {
+		t.Run(method, func(t *testing.T) {
+			k, _, _ := businessResendKit(t)
+			app := &businessResendUnloadApp{Adapter: k.host, host: k.host, archiveErr: errors.New("thread/archive: transport failure before applying")}
+			k.host.threads["t-1"].status = "idle"
+			app.onArchivedList = func() { k.host.failures[method+"|t-1"] = errors.New(method + ": temporary transport failure") }
+			k.start.Adapter = app
+			r := businessResendUnloadRun(k)
+			if code, err := r.businessResendUnload(t.Context()); code != "recipient_not_idle" || err != nil {
+				t.Fatalf("unanswered archive: %q %v", code, err)
+			}
+			if detail := businessResendUnloadDetail(t, k); !strings.Contains(detail, `"archive":"none"`) || !strings.Contains(detail, `"reason":"archive_unconfirmed"`) {
+				t.Fatalf("complete archived miss closing row: %s", detail)
+			}
+			delete(k.host.failures, method+"|t-1")
+			app.onArchivedList = nil
+			app.archiveErr = nil
+			if code, err := r.businessResendUnload(t.Context()); code != "" || err != nil {
+				t.Fatalf("recovered host: %q %v", code, err)
+			}
+			if !reflect.DeepEqual(app.archiveCalls, []string{"t-1", "t-1"}) {
+				t.Fatalf("archive calls: %v, want the recovered attempt to archive", app.archiveCalls)
+			}
+		})
+	}
+}
+
 // The unload's last state read before the archive can be cancelled. Nothing was archived, so the
 // begin mark is closed with a row that says so and the cancelled call does not spend the attempt:
 // a rerun under a live context reaches the archive.
