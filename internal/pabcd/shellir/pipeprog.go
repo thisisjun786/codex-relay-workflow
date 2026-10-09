@@ -151,17 +151,17 @@ func hasStdinRedirect(redirs []Redir) bool {
 }
 
 // fdAliasNumber returns the descriptor a path names when it names one of this process's descriptors: /dev/stdin (0),
-// /dev/fd/N and /proc/<pid>/fd/N.
+// /dev/fd/N and /proc/self/fd/N. Another process's descriptor is not the one the text sets.
 func fdAliasNumber(p string) (string, bool) {
 	switch {
 	case p == "/dev/stdin":
 		return "0", true
 	case strings.HasPrefix(p, "/dev/fd/"):
 		n := p[len("/dev/fd/"):]
-		return n, allDigits(n)
+		return n, isDigits(n)
 	case strings.HasPrefix(p, "/proc/"):
 		parts := strings.Split(p[len("/proc/"):], "/")
-		if len(parts) == 3 && parts[0] != "" && parts[1] == "fd" && allDigits(parts[2]) {
+		if len(parts) == 3 && (parts[0] == "self" || parts[0] == "thread-self") && parts[1] == "fd" && isDigits(parts[2]) {
 			return parts[2], true
 		}
 	}
@@ -205,7 +205,7 @@ func fdBody(redirs []Redir, fd string, limit, depth int) (string, error) {
 		}
 		return r.Target.Value, nil
 	case "<&":
-		if r.Target.Known && allDigits(r.Target.Value) {
+		if r.Target.Known && isDigits(r.Target.Value) {
 			return fdBody(redirs, r.Target.Value, idx, depth+1)
 		}
 	}

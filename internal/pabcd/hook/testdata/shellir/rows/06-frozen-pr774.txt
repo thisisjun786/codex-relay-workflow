@@ -61,8 +61,8 @@ INNER
 )"
 DOC
 
-=== PR774-6f0fcf3f-d1 | U | deviation=attempt/allow/allow
---why bash -s arg\ #text: # is not a comment inside the escaped word, bash -s runs the here-document body. The reader refuses this form as unproven (every gate), which gives the verdict the issue asks for.
+=== PR774-6f0fcf3f-d1 | W
+--why bash -s arg\ #text: # is not a comment inside the escaped word, so arg #text is one positional parameter and bash -s runs the here-document body, which writes the memory file. The reader reads the body (since CRW-894 -s operands are not script files), so the memory gate sees the write and asks a grant; the body does nothing else the other guards refuse.
 bash -s arg\ #text <<'EOF'
 echo x > {MEMORY}/a
 EOF

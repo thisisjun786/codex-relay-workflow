@@ -15,6 +15,19 @@ func Analyze(src, cwd string) (Result, error) {
 // AnalyzeEnv reads a command text as AnalyzeEnv's caller's environment shows it: a variable the walk does not
 // assign takes its value from lookup, and a leading ~ or ~/ expands to HOME when lookup knows HOME.
 func AnalyzeEnv(src, cwd string, lookup func(string) (string, bool)) (Result, error) {
+	return analyze(src, newState(cwd), lookup)
+}
+
+// AnalyzeNoDir reads a command text with no working directory at all, with no environment. It is the reading of the memory write
+// gate that does not depend on a directory (the Python programs of the text, and whether the text is readable at all); the
+// judgments that need a directory are made by the readings that have one (see Dir.Unset).
+func AnalyzeNoDir(src string) (Result, error) {
+	st := newState("")
+	st.dir.Unset = true
+	return analyze(src, st, nil)
+}
+
+func analyze(src string, st *state, lookup func(string) (string, bool)) (Result, error) {
 	if len(src) > MaxCommandBytes {
 		return Result{}, unreadablef("command is %d bytes; the limit is %d", len(src), MaxCommandBytes)
 	}
@@ -28,7 +41,6 @@ func AnalyzeEnv(src, cwd string, lookup func(string) (string, bool)) (Result, er
 	if unquotedCarriageReturn(file, src) {
 		return Result{}, unreadablef("a carriage return outside a word is a word break for the parser and an ordinary byte for bash")
 	}
-	st := newState(cwd)
 	st.lookup = lookup
 	w := &walker{}
 	if err := w.stmts(file.Stmts, st, Context{}); err != nil {

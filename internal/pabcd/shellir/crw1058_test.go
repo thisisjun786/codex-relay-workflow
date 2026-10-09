@@ -105,6 +105,7 @@ func TestCRW1058FdAliases(t *testing.T) {
 	wantExecs(t, "bash /dev/fd/3 3<<'EOF'\necho hi\nEOF", "echo", []string{"hi"})
 	wantExecs(t, "bash /dev/fd/3 3<<<'echo hi'", "echo", []string{"hi"})
 	wantExecs(t, "bash /proc/self/fd/3 3<<<'echo hi'", "echo", []string{"hi"})
+	wantExecs(t, "bash /proc/thread-self/fd/3 3<<<'echo hi'", "echo", []string{"hi"})
 
 	r, err := Analyze("python3 /dev/fd/4 3<<'PY' 4<&3\nimport shutil\nPY", "/work")
 	if err != nil {
@@ -122,6 +123,7 @@ func TestCRW1058FdAliases(t *testing.T) {
 
 	for _, cmd := range []string{
 		"bash /dev/fd/3",                                    // no descriptor 3 in the text
+		"bash /proc/12345/fd/3 3<<<'echo hi'",               // another process's descriptor is not ours
 		"bash /dev/fd/3 3< <(echo hi)",                      // a process substitution is not a here-document
 		"bash /dev/fd/3 3<<'EOF' 3<<'EOF2'\nx\nEOF\nEOF2\n", // two bodies for one descriptor
 	} {

@@ -403,14 +403,19 @@ func githubPostReadDirect(name, dir string) (string, githubPostFileKind) {
 	interp := ""
 	if len(words) > 0 {
 		interp = filepath.Base(words[0])
+		rest := words[1:]
 		if interp == "env" {
-			interp = ""
-			for _, w := range words[1:] {
+			interp, rest = "", nil
+			for j, w := range words[1:] {
 				if !strings.HasPrefix(w, "-") {
-					interp = filepath.Base(w)
+					interp, rest = filepath.Base(w), words[2+j:]
 					break
 				}
 			}
+		}
+		if interp == "busybox" && len(rest) > 0 {
+			// busybox runs the applet its first operand names: #!/bin/busybox ash is the shell ash.
+			interp = rest[0]
 		}
 	}
 	if githubPostShellName(interp) {
@@ -419,14 +424,9 @@ func githubPostReadDirect(name, dir string) (string, githubPostFileKind) {
 	return body, githubPostFileOther
 }
 
-// githubPostShellName is whether a program name is a POSIX-family shell that reads a script file as shell text.
-func githubPostShellName(name string) bool {
-	switch name {
-	case "sh", "bash", "dash", "zsh", "ksh", "mksh", "ash":
-		return true
-	}
-	return false
-}
+// githubPostShellName is whether a program name is a POSIX or Korn family shell that reads a script file as shell text: the
+// reader's own list, so a shell the pipe rule refuses is a shell here as well (hush, pdksh, oksh, posh, yash, rbash included).
+func githubPostShellName(name string) bool { return shellir.IsShell(name) }
 
 // githubPostScriptMentionsPost is whether the text of a script of another interpreter spells a gh command (gh pr, gh api, ...). It is
 // narrower than githubPostInlineNamesPost, which a program on the command line is held to: a script file is long, and a bare gh

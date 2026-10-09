@@ -10,7 +10,7 @@ printf 'rm -rf ../repo' | bash </dev/stdin
 printf 'import shutil; shutil.rmtree("../repo")' | python3
 
 === CRW-894-03 | U
---why The 10-07 control (bash </dev/null) was changed to a refusal by c9 (zsh MULTIOS reads the pipe); the reader refuses every pipe into a shell.
+--why The 10-07 control (bash </dev/null) is a refusal on purpose: under zsh, the shell of the Bash tool, MULTIOS reads the pipe as well as /dev/null, so bash runs the pipe (TestZshMultiosReadsThePipeToo runs the real zsh); the reader refuses every pipe into a shell.
 printf 'echo hi' | bash </dev/null
 
 === CRW-894-04 | B
@@ -56,7 +56,7 @@ printf x | bash -c 'bash -c bash </dev/null'
 printf x | python3 -m code
 
 === CRW-894-14 | B | deviation=attempt/deny/deny
---why The issue keeps python3 -m json.tool in a pipe allowed; the reader does not model -m modules and refuses them (known-defects: a python -m module is refused as unreadable, port: kept).
+--why The issue keeps python3 -m json.tool in a pipe allowed; the reader does not model -m modules and refuses them (known-defects: a python -m module is refused as unreadable, port: kept; the allow control is withdrawn because python -m puts the working directory first on the module search path and json.tool imports standard modules through it).
 printf x | python3 -m json.tool
 
 === CRW-894-15 | B
