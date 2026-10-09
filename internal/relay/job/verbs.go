@@ -1,6 +1,7 @@
 package job
 
 import (
+	"errors"
 	"strconv"
 	"strings"
 	"time"
@@ -33,7 +34,7 @@ func cliFormatList(recs []BgRecord) string {
 	lines := make([]string, len(recs))
 	for i, rec := range recs {
 		lines[i] = DescribeRecord(rec)
-		if rec.Status != StatusRunning {
+		if IsTerminal(rec.Status) {
 			delivered := "미전달"
 			if rec.DeliveredAt != nil {
 				delivered = "전달됨"
@@ -74,6 +75,9 @@ func RunParsedCLI(opts CLIOptions, cwd string, getenv func(string) (string, bool
 		rec, err = RunBackground(cwd, RunOptions{SessionID: session, Command: opts.Command, Note: opts.Note}, clock)
 		if err == nil {
 			result.Out = rec.ID
+			if rec.Status != StatusRunning { // the shell could not start: the record already says failed (CRW-1134)
+				result = CLIResult{Out: rec.ID + " " + string(rec.Status) + " (셸을 시작하지 못했습니다)", Code: 1}
+			}
 			if asJSON {
 				result.Out, err = cliRecord(rec)
 			}
@@ -103,8 +107,7 @@ func RunParsedCLI(opts CLIOptions, cwd string, getenv func(string) (string, bool
 			return CLIResult{"없는 id: " + id, code}, nil
 		}
 		if verb == "cancel" {
-			rec, err = Cancel(cwd, rec, clock)
-			result.Out = rec.ID + " " + string(rec.Status)
+			return cliCancel(cwd, rec, clock)
 		} else {
 			rec, err = Reconcile(cwd, rec, clock)
 			body, _ := ReadText(OutPath(cwd, id))
@@ -160,6 +163,29 @@ func RunParsedCLI(opts CLIOptions, cwd string, getenv func(string) (string, bool
 		result = CLIResult{Out: "", Code: 1}
 	}
 	return result, err
+}
+
+// cliCancel prints the record's status after the cancel. A cancel that has not seen the job stop says so with how to follow it (the
+// status is cancellation-requested, not terminal), and a cancel that signalled nothing, or whose signal failed, exits 1 with why
+// (CRW-1155).
+func cliCancel(cwd string, rec BgRecord, clock func() time.Time) (CLIResult, error) {
+	got, err := Cancel(cwd, rec, clock)
+	var unproven ErrOwnerUnproven
+	var signal SignalError
+	switch {
+	case errors.As(err, &unproven):
+		return CLIResult{Out: got.ID + " " + string(got.Status) + "\n" + unproven.Error(), Code: 1}, nil
+	case errors.As(err, &signal):
+		return CLIResult{Out: got.ID + " " + string(got.Status) + "\n" + signal.Error(), Code: 1}, nil
+	case err != nil:
+		return CLIResult{Out: "", Code: 1}, err
+	}
+	out := got.ID + " " + string(got.Status)
+	if got.Status == StatusCancelRequested {
+		out += "\n아직 멈추지 않았습니다: 종료 신호를 보냈고 프로세스 그룹이 남아 있습니다. `crw relay job get " + got.ID +
+			"`로 cancelled가 될 때까지 확인하고, 계속 남으면 다시 cancel하면 SIGKILL을 보냅니다."
+	}
+	return CLIResult{Out: out, Code: 0}, nil
 }
 
 func cliSwitch(cwd, verb string, clock func() time.Time) (string, error) {

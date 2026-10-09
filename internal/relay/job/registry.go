@@ -39,6 +39,9 @@ const (
 	StatusComplete  BgStatus = "complete"
 	StatusFailed    BgStatus = "failed"
 	StatusCancelled BgStatus = "cancelled"
+	// StatusCancelRequested is a cancel that has signalled the job and not yet seen its process group stop (CRW-1155). It is not
+	// terminal: Reconcile settles it cancelled once no process of the group is left, and a second cancel sends SIGKILL.
+	StatusCancelRequested BgStatus = "cancellation-requested"
 )
 
 const (
@@ -105,6 +108,18 @@ func writeRecord(ws string, rec BgRecord, clock func() time.Time) error {
 	return atomicWrite(ws, RecordPath(ws, rec.ID), string(b), os.Getpid(), clock().UnixMilli())
 }
 
+// errRecordGone is a record that is not there, or does not read, when a writer goes back to it under the lock.
+const errRecordGone = sentinel("the record is gone or does not read")
+
+// readRecord is ReadRecord as an error.
+func readRecord(ws, id string) (BgRecord, error) {
+	rec, ok := ReadRecord(ws, id)
+	if !ok {
+		return BgRecord{}, errRecordGone
+	}
+	return rec, nil
+}
+
 // ReadRecord is the record of that id, or false when its file is missing, is not a JSON object, fails isRecord or holds another id: the
 // oracle returned it under the id asked for and then wrote its corrections to the record file of the id it held (readRecord).
 func ReadRecord(ws, id string) (BgRecord, bool) {
@@ -161,6 +176,9 @@ func PidAlive(pid int) bool {
 	return err == nil || errors.Is(err, syscall.EPERM)
 }
 
+// PidGone is whether no process has the pid (signal 0 answers ESRCH).
+func PidGone(pid int) bool { return errors.Is(syscall.Kill(pid, 0), syscall.ESRCH) }
+
 // ExitRead is what <id>.exit says: absent, pending (a body that is empty, has no number or is infinite: a write in progress) or known,
 // with its Code.
 type ExitRead struct {
@@ -207,11 +225,19 @@ func dateMs(s string) (int64, bool) {
 
 // Reconcile brings a running record up to date and persists the correction (reconcile). The exit file is authoritative, because a
 // recycled pid can look alive. The clock is read at the call, for the stamp, and again where the oracle reads Date.now; a write that
-// fails is the error, as the oracle's throw was.
+// fails is the error, as the oracle's throw was. The correction is written under the store lock over the record as it is on disk then
+// (CRW-1155): a record another writer has moved on since it was read is returned as it is now and not written.
+//
+// A record whose cancel was requested is settled cancelled only once no process of its group is left: a leader that has ended says
+// nothing of its descendants (CRW-1155).
 func Reconcile(ws string, rec BgRecord, clock func() time.Time) (BgRecord, error) {
+	return reconcile(ws, rec, clock, false)
+}
+
+func reconcile(ws string, rec BgRecord, clock func() time.Time, held bool) (BgRecord, error) {
 	stamp := clock().UTC().Format(isoLayout)
 	nowMs := func() float64 { return float64(clock().UnixMilli()) }
-	if rec.Status != StatusRunning {
+	if rec.Status != StatusRunning && rec.Status != StatusCancelRequested {
 		return rec, nil
 	}
 	next, event := rec, Event{{"event", "completed"}, {"id", rec.ID}, {"exitCode", nil}, {"detail", "watcher vanished"}}
@@ -225,7 +251,7 @@ func Reconcile(ws string, rec BgRecord, clock func() time.Time) (BgRecord, error
 		if next.EndedAt == nil {
 			next.EndedAt = &stamp
 		}
-		return settle(ws, rec, next, event, clock)
+		return settle(ws, rec, next, event, clock, held)
 	case exit.State == "pending":
 		// The exit code is on the way, so stay running, but only for the grace window. A file whose mtime cannot be read is not stale,
 		// and the pid test here never looks at the start token.
@@ -250,16 +276,43 @@ func Reconcile(ws string, rec BgRecord, clock func() time.Time) (BgRecord, error
 	}
 	// Dead, or another process owns the pid: the shell went away without an exit file, so the outcome is unknown.
 	next.Status, next.ExitCode, next.EndedAt = StatusFailed, nil, &stamp
-	return settle(ws, rec, next, event, clock)
+	return settle(ws, rec, next, event, clock, held)
 }
 
-// settle writes the corrected record and then its ledger row, each reading the clock once.
-func settle(ws string, rec, next BgRecord, event Event, clock func() time.Time) (BgRecord, error) {
-	if err := writeRecord(ws, next, clock); err != nil {
+// settle writes the corrected record and then its ledger row, each reading the clock once, over the record as it is on disk under the
+// lock. A record that has moved on since rec was read is left as it is. A requested cancel becomes cancelled, and only when no process
+// of its group is left.
+func settle(ws string, rec, next BgRecord, event Event, clock func() time.Time, held bool) (BgRecord, error) {
+	out, err := update(ws, rec.ID, clock, held, func(cur BgRecord) change {
+		if cur.Status != rec.Status || !samePID(cur.PID, rec.PID) {
+			return change{}
+		}
+		fixed := cur
+		fixed.Status, fixed.ExitCode, fixed.EndedAt = next.Status, next.ExitCode, next.EndedAt
+		if cur.Status == StatusCancelRequested {
+			if cur.PID != nil && !groupEnded(*cur.PID) {
+				return change{}
+			}
+			fixed.Status, event = StatusCancelled, Event{{"event", "cancelled"}, {"id", rec.ID}}
+		}
+		return change{next: fixed, event: event, write: true}
+	})
+	if errors.Is(err, errRecordGone) {
+		return rec, nil // nothing to correct any more
+	}
+	if err != nil {
 		return rec, err
 	}
-	_ = appendLedger(ws, event, clock)
-	return next, nil
+	return out, nil
+}
+
+// samePID is whether two record pids are the same value.
+func samePID(a, b *int) bool { return a == nil && b == nil || a != nil && b != nil && *a == *b }
+
+// groupEnded is whether no process is left in the process group the job's shell leads (it starts one of its own). A zombie that has
+// not been reaped still counts, so a reaper that is late keeps the group alive a moment longer, never the other way round.
+func groupEnded(pid int) bool {
+	return pid > 1 && pid <= math.MaxInt32 && errors.Is(syscall.Kill(-pid, 0), syscall.ESRCH)
 }
 
 // ListRecords is every parseable record of the store, reconciled; other files are skipped (listRecords).

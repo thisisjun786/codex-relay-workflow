@@ -160,6 +160,7 @@ func TestReconcileTakesTheExitFileAsTheAnswer(t *testing.T) {
 		}
 	}
 	r.EndedAt = sp("2026-09-09T00:00:05.000Z") // an endedAt already there is kept
+	save(t, ws, r)
 	if got, _ := Reconcile(ws, r, noonClock); *got.EndedAt != "2026-09-09T00:00:05.000Z" {
 		t.Errorf("endedAt %v", *got.EndedAt)
 	}

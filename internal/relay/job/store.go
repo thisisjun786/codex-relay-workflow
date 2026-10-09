@@ -139,6 +139,15 @@ func atomicWrite(cwd, path, text string, pid int, ms int64) error {
 	if err != nil {
 		return err
 	}
+	tmp, err := writeTemp(path, text, pid, ms)
+	if err != nil {
+		return err
+	}
+	return crwdir.Rename(tmp, path)
+}
+
+// writeTemp writes text to a new temporary file beside path, <path>.tmp-<pid>-<ms> or the first free -<n> after it, and returns its name.
+func writeTemp(path, text string, pid int, ms int64) (string, error) {
 	const exclusive = os.O_WRONLY | os.O_CREATE | os.O_EXCL
 	base := path + ".tmp-" + strconv.Itoa(pid) + "-" + strconv.FormatInt(ms, 10)
 	tmp := base
@@ -148,13 +157,13 @@ func atomicWrite(cwd, path, text string, pid int, ms int64) error {
 		f, err = os.OpenFile(tmp, exclusive, 0o666)
 	}
 	if err != nil {
-		return err
+		return "", err
 	}
 	_, err = f.WriteString(text)
 	if err = errors.Join(err, f.Close()); err != nil {
-		return err
+		return "", err
 	}
-	return crwdir.Rename(tmp, path)
+	return tmp, nil
 }
 
 // ReadText is the text of the file as Node reads it with "utf8", or false when it is missing or cannot be read (readTextOrNull).
