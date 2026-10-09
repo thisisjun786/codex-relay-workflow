@@ -375,7 +375,7 @@ deciding limit and the node dispositions, each judged node with its `release` ob
 engine. The actor is the project's registered parent: it owns the slot and the child. The request document, `dag-release-request/1`, carries what the plan and the store do not hold: for an
 implementation node the base (repository and ref; the commit is read from the target, never given; a correction reads it the same way, see [Corrections](#corrections)), the rule version the node is dispatched under (skills digest, model, effort, prompt template, relay build:
 every field required), volatile snapshots (see below), the instructions, the criteria, the criteria source and scope reference, the artifact roots, the allowed recipients, and the parent's and the child's host and
-settings.
+settings. The lists are bounded: at most 256 criteria, 64 artifact roots, 64 allowed recipients and 512 volatile snapshots (one entry per file, each with its own sha256 in the manifest), and the criteria and the artifact roots are not empty. A list over its bound is refused with `malformed_receipt` naming the list, the number of entries it holds and the limit (`volatile has 513 entries; the limit is 512`).
 
 The release is idempotent and never creates a second child. In order:
 
