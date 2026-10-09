@@ -95,3 +95,42 @@ func TestExactRestorePutsADeletedLineBack(t *testing.T) {
 		})
 	}
 }
+
+// A spelling that is not valid TOML names no key and no table: it is never taken for enabled.
+func TestExactEditIgnoresMalformedKeyAndHeaderSpellings(t *testing.T) {
+	const table = `plugins."codexclaw@codexclaw"`
+	for name, content := range map[string]string{
+		"unknown escape":     "[" + table + "]\n\"en\\qabled\" = true\n",
+		"short unicode":      "[" + table + "]\n\"en\\u61bled\" = true\n",
+		"surrogate":          "[" + table + "]\n\"\\ud800nabled\" = true\n",
+		"unterminated":       "[" + table + "]\n\"enabled = true\n",
+		"dotted":             "[" + table + "]\nenabled.x = true\n",
+		"other key":          "[" + table + "]\n\"enabled2\" = true\n",
+		"array of tables":    "[[" + table + "]]\nenabled = true\n",
+		"header with a tail": "[" + table + "] x\nenabled = true\n",
+		"header not closed":  "[" + table + "\nenabled = true\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if st := ReadTableKeyLine(content, table, "enabled"); st.Found || st.Unsupported {
+				t.Fatalf("read %+v", st)
+			}
+		})
+	}
+	if st := pluginTableStateOf(t, "[plugins.'codexclaw@codexclaw']\n\"enabled\" = false\n"); !st.Present || st.Enabled {
+		t.Fatalf("quoted false = %+v", st)
+	}
+	if st := pluginTableStateOf(t, "[plugins.\"codexclaw@codexclaw\"]\nother = 1\n"); !st.Present || !st.Enabled {
+		t.Fatalf("no key = %+v", st)
+	}
+	if st := pluginTableStateOf(t, "[plugins.\"codexclaw@codexclaw\"]\nenabled = \"false\"\n"); !st.Present || !st.Enabled || !st.Unsupported {
+		t.Fatalf("string = %+v", st)
+	}
+	if st := pluginTableStateOf(t, "[other]\nenabled = false\n"); st.Present || st.Enabled {
+		t.Fatalf("absent = %+v", st)
+	}
+}
+
+func pluginTableStateOf(t *testing.T, content string) PluginTableState {
+	t.Helper()
+	return ReadPluginTableState(content, "codexclaw@codexclaw")
+}
