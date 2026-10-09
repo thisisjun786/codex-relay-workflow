@@ -2,6 +2,7 @@ package gui
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -410,8 +411,9 @@ func TestStatusHasNoWritePath(t *testing.T) {
 	}
 }
 
-// statusTree is the recursive listing of a directory: every path with its size, sorted, so a
-// file created, removed or grown by one request is visible.
+// statusTree is the recursive listing of a directory: every path with its size and the SHA-256 of
+// its content, sorted, so a file created, removed, grown or rewritten in place (even with a value of
+// the same length) by one request is visible.
 func statusTree(t *testing.T, root string) []string {
 	t.Helper()
 	var entries []string
@@ -427,7 +429,11 @@ func statusTree(t *testing.T, root string) []string {
 			entries = append(entries, "dir "+relative)
 			return nil
 		}
-		entries = append(entries, fmt.Sprintf("file %s %d", relative, info.Size()))
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		entries = append(entries, fmt.Sprintf("file %s %d %x", relative, info.Size(), sha256.Sum256(content)))
 		return nil
 	})
 	if err != nil {
@@ -435,6 +441,24 @@ func statusTree(t *testing.T, root string) []string {
 	}
 	sort.Strings(entries)
 	return entries
+}
+
+// TestStatusTreeSeesSameLengthRewrite pins the oracle of the no-write test: a file rewritten in
+// place with a value of the same length keeps its size, so the listing must carry the content too.
+func TestStatusTreeSeesSameLengthRewrite(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "crw-config.json")
+	if err := os.WriteFile(path, []byte(`{"mode":"aaaa"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	before := statusTree(t, root)
+	if err := os.WriteFile(path, []byte(`{"mode":"bbbb"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	after := statusTree(t, root)
+	if strings.Join(before, "\n") == strings.Join(after, "\n") {
+		t.Fatalf("a same-length rewrite is invisible to the tree listing: %v", after)
+	}
 }
 
 // The fake relay the no-write test reads: one plan with one node, one live relationship and one
