@@ -14,9 +14,9 @@ type unwrapped struct {
 	// recordName and record name the wrapper's own file operand (script's transcript, strace -o) as a synthetic record.
 	recordName string
 	record     []Word
-	// feeds is the feed of each program in inner (find's actions); argFile is whether xargs reads its operands from a file (-a).
-	feeds   []*Feed
-	argFile bool
+	// feeds is the feed of each program in inner (find's actions); xopts are the options of xargs that decide its operands.
+	feeds []*Feed
+	xopts xargsOpts
 }
 
 // unwrapCommand applies the option grammar of one wrapper. An option the
@@ -111,27 +111,20 @@ func wrapperOptions(name string, args []Word) (int, error) {
 }
 
 func skipOptions(name string, args []Word, flags, valued, optional string) (int, error) {
-	i, _, err := skipOptionsSeen(name, args, flags, valued, optional)
-	return i, err
-}
-
-// skipOptionsSeen is skipOptions that also names the valued options it met.
-func skipOptionsSeen(name string, args []Word, flags, valued, optional string) (int, string, error) {
 	i := 0
-	seen := ""
 	for i < len(args) {
 		v, err := knownValue(args[i], name+" option")
 		if err != nil {
-			return 0, "", err
+			return 0, err
 		}
 		if v == "--" {
-			return i + 1, seen, nil
+			return i + 1, nil
 		}
 		if len(v) < 2 || v[0] != '-' {
-			return i, seen, nil
+			return i, nil
 		}
 		if strings.HasPrefix(v, "--") {
-			return 0, "", unreadablef("%s option %s is not modelled", name, v)
+			return 0, unreadablef("%s option %s is not modelled", name, v)
 		}
 		i++
 		for k := 1; k < len(v); k++ {
@@ -139,10 +132,9 @@ func skipOptionsSeen(name string, args []Word, flags, valued, optional string) (
 			last := k == len(v)-1
 			switch {
 			case strings.IndexByte(valued, c) >= 0:
-				seen += string(c)
 				if last {
 					if i >= len(args) {
-						return 0, "", unreadablef("%s -%c without a value", name, c)
+						return 0, unreadablef("%s -%c without a value", name, c)
 					}
 					i++
 				}
@@ -151,11 +143,11 @@ func skipOptionsSeen(name string, args []Word, flags, valued, optional string) (
 				k = len(v)
 			case strings.IndexByte(flags, c) >= 0:
 			default:
-				return 0, "", unreadablef("%s option -%c is not modelled", name, c)
+				return 0, unreadablef("%s option -%c is not modelled", name, c)
 			}
 		}
 	}
-	return i, seen, nil
+	return i, nil
 }
 
 func skipNice(args []Word) (int, error) {
@@ -307,7 +299,7 @@ func validName(s string) bool {
 }
 
 // unwrapFind returns each program that find -exec, -execdir, -ok or -okdir runs, with the feed that says where its operands
-// come from: the start points of the find and whether a test guards the action.
+// come from: the start points of the find and the tests that stand before the action.
 func unwrapFind(args []Word) (unwrapped, error) {
 	var u unwrapped
 	starts, actions, err := FindScan(args)
@@ -319,21 +311,101 @@ func unwrapFind(args []Word) (unwrapped, error) {
 			continue
 		}
 		u.inner = append(u.inner, a.Command)
-		u.feeds = append(u.feeds, &Feed{Wrapper: "find", Starts: starts, Guarded: a.Guarded})
+		u.feeds = append(u.feeds, &Feed{Wrapper: "find", Starts: starts, chains: a.chains})
 	}
 	return u, nil
 }
 
-// unwrapXargs returns the program xargs runs; -a names a file the operands are read from.
+// unwrapXargs returns the program xargs runs and the options that decide what operands it builds from standard input: -a names
+// a file the operands are read from, -0 and -d change the separator, -I and -i name the string that stands for an input line
+// in the command.
 func unwrapXargs(args []Word) (unwrapped, error) {
 	var u unwrapped
-	idx, seen, err := skipOptionsSeen("xargs", args, "0rtxpe", "ILnPdEsa", "il")
-	if err != nil {
-		return u, err
+	const flags, valued = "0rtxp", "ILnPdsa"
+	i := 0
+	for i < len(args) {
+		v, err := knownValue(args[i], "xargs option")
+		if err != nil {
+			return u, err
+		}
+		if v == "--" {
+			i++
+			break
+		}
+		if len(v) < 2 || v[0] != '-' {
+			break
+		}
+		if strings.HasPrefix(v, "--") {
+			return u, unreadablef("xargs option %s is not modelled", v)
+		}
+		i++
+		for k := 1; k < len(v); k++ {
+			c := v[k]
+			switch {
+			case strings.IndexByte(valued, c) >= 0 || c == 'E':
+				val := v[k+1:]
+				if val == "" {
+					if i >= len(args) {
+						return u, unreadablef("xargs -%c without a value", c)
+					}
+					w, err := knownValue(args[i], "xargs -"+string(c)+" value")
+					if err != nil {
+						return u, err
+					}
+					val = w
+					i++
+				}
+				switch c {
+				case 'a':
+					u.xopts.ArgFile = true
+				case 'd':
+					d, ok := xargsDelimiter(val)
+					if !ok {
+						return u, unreadablef("xargs -d %q is not modelled", val)
+					}
+					u.xopts.Delim, u.xopts.DelimSet = d, true
+				case 'I':
+					u.xopts.Replace = val
+				}
+				k = len(v)
+			case c == 'i' || c == 'l' || c == 'e':
+				// -i[STR], -l[N] and -e[EOF] take an attached value only.
+				if c == 'i' {
+					u.xopts.Replace = v[k+1:]
+					if u.xopts.Replace == "" {
+						u.xopts.Replace = "{}"
+					}
+				}
+				k = len(v)
+			case strings.IndexByte(flags, c) >= 0:
+				if c == '0' {
+					u.xopts.Null = true
+				}
+			default:
+				return u, unreadablef("xargs option -%c is not modelled", c)
+			}
+		}
 	}
-	u.argFile = strings.Contains(seen, "a")
-	if idx < len(args) {
-		u.inner = [][]Word{args[idx:]}
+	if i < len(args) {
+		u.inner = [][]Word{args[i:]}
 	}
 	return u, nil
+}
+
+// xargsDelimiter is the separator -d names: one character, or an escape such as \n, \t, \0 or \\.
+func xargsDelimiter(v string) (string, bool) {
+	switch v {
+	case `\n`:
+		return "\n", true
+	case `\t`:
+		return "\t", true
+	case `\0`:
+		return "\x00", true
+	case `\\`:
+		return `\`, true
+	}
+	if len(v) == 1 {
+		return v, true
+	}
+	return "", false
 }

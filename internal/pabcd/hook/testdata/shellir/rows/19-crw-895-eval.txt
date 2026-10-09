@@ -29,12 +29,12 @@ find ../repo -name '*' -type f -delete
 --why -name 'r*' matches repo, the root, which find names by its spelling in the start point.
 find ../repo -name 'r*' -delete
 
-=== CRW-895-f8 | R
---why A negated test that does not match the root's name matches the root.
+=== CRW-895-f8 | B
+--why A negated test is read as one that selects (the existing control CRW-895-c12 is a negated test): it keeps what it names out of the action.
 find ../repo ! -name x -delete
 
 === CRW-895-f9 | B
---why A negated test whose pattern matches the root's name leaves the root out.
+--why A negated test that names the root's own name.
 find ../repo ! -name repo -delete
 
 === CRW-895-f10 | B
@@ -280,3 +280,19 @@ find ../repo -exec bash -c 'rm "$0"' {} \;
 === CRW-895-l5 | B
 --why A fixed removal in a nested shell under find from the checkout.
 find . -exec sh -c 'rm build/old.o' \;
+
+=== CRW-895-m1 | R
+--why yes prints its operand again and again; head keeps the first line.
+yes ../repo | head -1 | xargs rmdir
+
+=== CRW-895-m2 | attempt/allow/deny
+--why awk prints what its own program says.
+awk 'BEGIN{print "../repo"}' | xargs rmdir
+
+=== CRW-895-m3 | B
+--why ls -d build prints build, which is inside the checkout.
+ls -d build | xargs rm
+
+=== CRW-895-m4 | R
+--why A replace string inside the text of a shell, with names the reader proves.
+printf '%s\n' ../repo | xargs -I{} sh -c 'rmdir {}'

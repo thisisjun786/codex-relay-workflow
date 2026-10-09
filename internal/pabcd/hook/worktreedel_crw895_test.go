@@ -56,6 +56,21 @@ func crw895Shapes() []crw895Shape {
 		{"echo ../repo | parallel rmdir", true, true},
 		{"echo ../repo | parallel unlink", true, true},
 		{"echo ../repo | parallel shred", true, true},
+		// the pre-merge evaluation of 3d1fe314: d1 a test that matches the start, d2 start points read at run time, d3 printf
+		// output, d4 -I replacement, d5 filters that rewrite, d6 an action inside a group, d7 a shell that ignores the operands
+		{"find ../repo -name '*' -delete", true, false},
+		{"find ../repo -name 'r*' -delete", true, false},
+		{"find ../repo -name '*.o' -delete", false, false},
+		{"find -files0-from roots.list -type f -delete", true, false},
+		{"printf '../%s\\n' repo | xargs git worktree remove --force", true, false},
+		{"printf '../re\\160o\\n' | xargs git worktree remove --force", true, false},
+		{"echo repo | xargs -I{} git worktree remove --force '../{}'", true, false},
+		{"echo repo | xargs -I{} sh -c 'git worktree remove ../{}'", true, false},
+		{"printf '../repoX' | head -c 7 | xargs git worktree remove --force", true, false},
+		{"echo ../repo | grep -o '../repo' | xargs rmdir", true, false},
+		{"find . -type f \\( -exec rm {} + \\)", false, false},
+		{"echo ../repo | xargs sh -c 'rm build/old.o'", false, false},
+		{"echo ../repo | xargs sh -c 'rm \"$@\"' _", true, false},
 	}
 }
 

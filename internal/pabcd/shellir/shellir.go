@@ -938,6 +938,8 @@ func (w *walker) carried(text string, st *state, ctx Context, carrier string) er
 		return unreadablef("nesting is deeper than %d", MaxNestingDepth)
 	}
 	ctx.Carrier = carrier
+	// The operands of a wrapper outside the text reach it only through the shell's positional parameters.
+	ctx.Feed = ctx.Feed.asCarried()
 	// A shell that runs the text starts a new text: a pipe of the text around it is not a pipe inside it, so an input
 	// redirection in it replaces the inherited input (zsh with MULTIOS joins a pipe and a file only within one pipeline).
 	ctx.inTextPipe = false
@@ -1009,9 +1011,8 @@ func (w *walker) wrapped(name string, args []Word, assigns []Assign, redirs []Re
 		return w.carried(u.shell, st.clone(), ctx, u.shellCarrier)
 	}
 	if name == "xargs" {
-		u.feeds = make([]*Feed, len(u.inner))
-		for i := range u.feeds {
-			u.feeds[i] = xargsFeed(ctx, redirs, u.argFile)
+		if err := xargsPrograms(&u, ctx, redirs); err != nil {
+			return err
 		}
 	}
 	inherited := append(append([]Assign{}, assigns...), u.assigns...)

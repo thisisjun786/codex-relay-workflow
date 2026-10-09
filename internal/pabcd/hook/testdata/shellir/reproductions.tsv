@@ -936,3 +936,7 @@ pre-merge evaluation crw895-3d1fe314 (d7)	echo ../repo | xargs sh -c 'rm "$@"' _
 pre-merge evaluation crw895-3d1fe314 (d7)	find ../repo -exec sh -c 'rm build/old.o' \;	CRW-895-l3	row	-
 pre-merge evaluation crw895-3d1fe314 (d7)	find ../repo -exec bash -c 'rm "$0"' {} \;	CRW-895-l4	row	-
 pre-merge evaluation crw895-3d1fe314 (d7)	find . -exec sh -c 'rm build/old.o' \;	CRW-895-l5	row	-
+pre-merge evaluation crw895-3d1fe314 (c1, d3 formatted operands)	yes ../repo | head -1 | xargs rmdir	CRW-895-m1	row	-
+pre-merge evaluation crw895-3d1fe314 (c1, d3 formatted operands)	awk 'BEGIN{print "../repo"}' | xargs rmdir	CRW-895-m2	row	-
+pre-merge evaluation crw895-3d1fe314 (c1, d3 formatted operands)	ls -d build | xargs rm	CRW-895-m3	row	-
+pre-merge evaluation crw895-3d1fe314 (c1, d3 formatted operands)	printf '%s\n' ../repo | xargs -I{} sh -c 'rmdir {}'	CRW-895-m4	row	-

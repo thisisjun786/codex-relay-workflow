@@ -91,6 +91,26 @@ func worktreeDelJudgeExec(e shellir.Exec, id WorktreeIdentity) GuardVerdict {
 	if v := worktreeDelJudgeFeed(e, id); v.Deny {
 		return v
 	}
+	if v := worktreeDelOwn(e, id); v.Deny {
+		return v
+	}
+	if e.Inline != nil && !worktreeDelNamed(e) {
+		return worktreeDelJudgeInline(e, id)
+	}
+	return GuardVerdict{}
+}
+
+// worktreeDelNamed says whether the program is one of those worktreeDelOwn judges by its own words.
+func worktreeDelNamed(e shellir.Exec) bool {
+	switch basename(e.Name) {
+	case "rm", "rmdir", "git", "find":
+		return true
+	}
+	return false
+}
+
+// worktreeDelOwn is the verdict for a program by its own words: a recursive rm, an rmdir, a git worktree remove, a find -delete.
+func worktreeDelOwn(e shellir.Exec, id WorktreeIdentity) GuardVerdict {
 	switch basename(e.Name) {
 	case "rm":
 		return worktreeDelJudgeRm(e, id)
@@ -100,9 +120,6 @@ func worktreeDelJudgeExec(e shellir.Exec, id WorktreeIdentity) GuardVerdict {
 		return worktreeDelJudgeGit(e, id)
 	case "find":
 		return worktreeDelJudgeFind(e, id)
-	}
-	if e.Inline != nil {
-		return worktreeDelJudgeInline(e, id)
 	}
 	return GuardVerdict{}
 }
@@ -119,7 +136,7 @@ func worktreeDelJudgeFind(e shellir.Exec, id WorktreeIdentity) GuardVerdict {
 		if a.Name != "-delete" {
 			continue
 		}
-		if v := worktreeDelJudgeFindStarts(starts, a.Guarded, e, id, "-delete"); v.Deny {
+		if v := worktreeDelJudgeFindStarts(starts, a.GuardedFor, e, id, "-delete"); v.Deny {
 			return v
 		}
 	}
@@ -127,15 +144,19 @@ func worktreeDelJudgeFind(e shellir.Exec, id WorktreeIdentity) GuardVerdict {
 }
 
 // worktreeDelJudgeFindStarts judges the start points of a find whose action deletes: a start that resolves to an ancestor of the
-// managed worktree (the slot root and above) is refused; a start that is the worktree itself is refused when no test stands
-// before the action. No start point means the current directory.
-func worktreeDelJudgeFindStarts(starts []shellir.Word, guarded bool, e shellir.Exec, id WorktreeIdentity, action string) GuardVerdict {
+// managed worktree (the slot root and above) is refused; a start that is the worktree itself is refused unless a test stands
+// before the action on every path that reaches it and leaves the start out (-name '*' leaves nothing out); a start read at run
+// time is refused. No start point means the current directory.
+func worktreeDelJudgeFindStarts(starts []shellir.Word, guarded func(string) bool, e shellir.Exec, id WorktreeIdentity, action string) GuardVerdict {
 	if len(starts) == 0 {
 		starts = []shellir.Word{{Known: true, Value: "."}}
 	}
 	for _, s := range starts {
+		if !s.Known {
+			return GuardVerdict{Deny: true, Reason: denyReason("find ("+s.Reason+") "+action, id)}
+		}
 		ancestor, self := worktreeDelTargetKind(s.Value, e.Dir, id)
-		if ancestor || self && !guarded {
+		if ancestor || self && !guarded(s.Value) {
 			return GuardVerdict{Deny: true, Reason: denyReason("find "+s.Value+" "+action, id)}
 		}
 	}
@@ -179,44 +200,151 @@ func worktreeDelDeleter(e shellir.Exec) (string, shellir.Dir) {
 	return "", e.Dir
 }
 
+// worktreeDelHasUnknownArg says whether a program has an operand the reader cannot evaluate: in a shell text that a wrapper runs,
+// such an operand ("$@", "$1") is where the wrapper's operands arrive.
+func worktreeDelHasUnknownArg(e shellir.Exec) bool {
+	for _, a := range e.Args {
+		if !a.Known {
+			return true
+		}
+	}
+	return false
+}
+
 // worktreeDelJudgeFeed judges a removal whose operands arrive from find or xargs: find's start points decide it (an ancestor of
 // the worktree always, the worktree itself when no test guards the action), and the names xargs reads from standard input decide
 // it (a name that resolves to the worktree, its slot or an ancestor, spelled other than .; a source the reader cannot read is
-// refused). The program's own operands are judged by its own verdict.
+// refused). The program's own operands are judged by its own verdict. A feed that belongs to a wrapper outside the shell text the
+// program stands in reaches it only through the shell's positional parameters, so it applies when the program uses one (or, for
+// xargs -I, when the shell text holds the replace string).
 func worktreeDelJudgeFeed(e shellir.Exec, id WorktreeIdentity) GuardVerdict {
-	if e.Ctx.Feed == nil {
-		return GuardVerdict{}
-	}
-	deleter, dir := worktreeDelDeleter(e)
-	if deleter == "" {
-		return GuardVerdict{}
-	}
 	for f := e.Ctx.Feed; f != nil; f = f.Outer {
+		if f.Carried && !f.Replaced && !worktreeDelHasUnknownArg(e) && !(f.Replace != "" && worktreeDelReplaceUsed(e, f.Replace)) {
+			continue
+		}
+		var v GuardVerdict
 		switch f.Wrapper {
 		case "find":
-			if v := worktreeDelJudgeFindStarts(f.Starts, f.Guarded, e, id, "-exec "+deleter); v.Deny {
-				return v
+			deleter, _ := worktreeDelDeleter(e)
+			if deleter == "" {
+				continue
 			}
+			v = worktreeDelJudgeFindStarts(f.Starts, f.GuardedFor, e, id, "-exec "+deleter)
 		case "xargs":
-			if f.Unread != "" {
-				return GuardVerdict{Deny: true, Reason: denyReason("xargs "+deleter+" ("+f.Unread+")", id)}
-			}
-			for _, n := range f.Names {
-				if !n.Known {
-					return GuardVerdict{Deny: true, Reason: denyReason("xargs "+deleter+" (the names it reads are not known)", id)}
-				}
-				for _, name := range shellir.FeedNames(n.Value) {
-					if name == "." {
-						continue
-					}
-					if !dir.Known || isProtectedTarget(name, dir.Path, id, true) {
-						return GuardVerdict{Deny: true, Reason: denyReason("xargs "+deleter+" "+name, id)}
-					}
-				}
-			}
+			v = worktreeDelJudgeXargs(f, e, id)
+		}
+		if v.Deny {
+			return v
 		}
 	}
 	return GuardVerdict{}
+}
+
+// worktreeDelNameProtected says whether an operand that xargs builds, taken from dir, names the worktree, its slot or an ancestor.
+// A name spelled . is the directory the command runs in and stays allowed, as a find start of the same spelling does.
+func worktreeDelNameProtected(name string, dir shellir.Dir, id WorktreeIdentity) bool {
+	if name == "." {
+		return false
+	}
+	return !dir.Known || isProtectedTarget(name, dir.Path, id, true)
+}
+
+// worktreeDelJudgeXargs judges the program xargs runs. With -I and names the reader proves, the reader has already read the
+// template once for each name, so e is the command that runs and every operand of the removal is judged. Otherwise the names are
+// appended to the operands, one command for each name.
+func worktreeDelJudgeXargs(f *shellir.Feed, e shellir.Exec, id WorktreeIdentity) GuardVerdict {
+	deleter, dir := worktreeDelDeleter(e)
+	base := basename(e.Name)
+	if f.Replace != "" && !f.Replaced && worktreeDelReplaceUsed(e, f.Replace) {
+		// The replace string stands in a word of a program that can remove, and the names that replace it are not known.
+		switch {
+		case base == "git" || base == "find":
+			return GuardVerdict{Deny: true, Reason: denyReason("xargs "+base+" (the names -I puts in its words are not known)", id)}
+		case deleter != "" && !worktreeDelReplaceWholeWord(e, f.Replace):
+			return GuardVerdict{Deny: true, Reason: denyReason("xargs "+deleter+" (the names -I puts in its words are not known)", id)}
+		}
+	}
+	if deleter == "" {
+		return GuardVerdict{}
+	}
+	if f.Unread != "" {
+		return GuardVerdict{Deny: true, Reason: denyReason("xargs "+deleter+" ("+f.Unread+")", id)}
+	}
+	if f.Replaced {
+		return worktreeDelJudgeOperands(worktreeDelOperands(deleter, e), dir, id, "xargs "+deleter+" ")
+	}
+	if !f.Named || f.Replace != "" {
+		return GuardVerdict{}
+	}
+	endOfOptions := false
+	for _, a := range e.Args {
+		if a.Known && a.Value == "--" {
+			endOfOptions = true
+		}
+	}
+	for _, item := range f.Items {
+		e2 := e
+		e2.Args = append(append([]shellir.Word{}, e.Args...), shellir.Word{Known: true, Value: item})
+		if !endOfOptions && strings.HasPrefix(item, "-") && deleter != "git worktree remove" {
+			return GuardVerdict{Deny: true, Reason: denyReason("xargs "+deleter+" "+item+" (a name that begins with - is an option)", id)}
+		}
+		if v := worktreeDelJudgeOperands([]string{item}, dir, id, "xargs "+deleter+" "); v.Deny {
+			return v
+		}
+		if v := worktreeDelOwn(e2, id); v.Deny {
+			return v
+		}
+	}
+	return GuardVerdict{}
+}
+
+// worktreeDelOperands are the words a removal program takes as the things to remove: all its words for rm, rmdir, unlink and
+// shred, the words after worktree remove for git.
+func worktreeDelOperands(deleter string, e shellir.Exec) []string {
+	if deleter == "git worktree remove" {
+		rest, _, _, _ := worktreeDelGitArgs(e)
+		if len(rest) > 2 {
+			return rest[2:]
+		}
+		return nil
+	}
+	args, _ := worktreeDelArgs(e.Args)
+	return args
+}
+
+// worktreeDelJudgeOperands refuses a removal operand that names the worktree, its slot or an ancestor. An option is judged by the
+// program's own verdict.
+func worktreeDelJudgeOperands(operands []string, dir shellir.Dir, id WorktreeIdentity, what string) GuardVerdict {
+	for _, a := range operands {
+		if a == "" || strings.HasPrefix(a, "-") && a != "-" {
+			continue
+		}
+		if worktreeDelNameProtected(a, dir, id) {
+			return GuardVerdict{Deny: true, Reason: denyReason(what+a, id)}
+		}
+	}
+	return GuardVerdict{}
+}
+
+// worktreeDelReplaceUsed says whether the replace string stands in a word of the program.
+func worktreeDelReplaceUsed(e shellir.Exec, repl string) bool {
+	for _, a := range e.Args {
+		if a.Known && strings.Contains(a.Value, repl) {
+			return true
+		}
+	}
+	return false
+}
+
+// worktreeDelReplaceWholeWord says whether the replace string stands only as whole words of the program: a name that replaces such
+// a word is an operand of its own, and a program whose names the text does not give (ls) is not read further.
+func worktreeDelReplaceWholeWord(e shellir.Exec, repl string) bool {
+	for _, a := range e.Args {
+		if a.Known && strings.Contains(a.Value, repl) && a.Value != repl {
+			return false
+		}
+	}
+	return true
 }
 
 // worktreeDelJudgeInline judges an interpreter's inline program: one the reader cannot show is unreadable, and one that
