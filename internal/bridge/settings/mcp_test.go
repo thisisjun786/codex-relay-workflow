@@ -113,3 +113,24 @@ func TestMCPServersAreComparedLikeEveryOtherSetting(t *testing.T) {
 		t.Fatalf("receipt = %v", receipt)
 	}
 }
+
+// ServerStatus is the one structure check Observe and crw manage child-check share.
+func TestServerStatusIsTheSharedStructureCheck(t *testing.T) {
+	row := func(name string, plugin, state any) any {
+		return map[string]any{"name": name, "pluginId": plugin, "runtimeStatus": state}
+	}
+	status, plugins, ok := ServerStatus(map[string]any{"data": []any{row("a", nil, "disabled"), row("b", "p@x", "connected")}}, []string{"a"})
+	if !ok || status["a"] != "disabled" || status["b"] != "connected" || !plugins["p@x"] || len(plugins) != 1 {
+		t.Fatalf("ServerStatus = %v, %v, %v", status, plugins, ok)
+	}
+	for name, answer := range map[string]map[string]any{
+		"nil answer": nil, "null data": {"data": nil}, "null row": {"data": []any{nil}},
+		"no pluginId":       {"data": []any{map[string]any{"name": "a", "runtimeStatus": "disabled"}}},
+		"expected no state": {"data": []any{row("a", nil, nil)}},
+		"paged":             {"data": []any{}, "nextCursor": "more"},
+	} {
+		if _, _, ok := ServerStatus(answer, []string{"a"}); ok {
+			t.Errorf("%s: ServerStatus read an unreadable answer", name)
+		}
+	}
+}

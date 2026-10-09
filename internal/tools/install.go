@@ -193,8 +193,12 @@ func ancestorOf(component string) string {
 // filesystem that refuses flock answers false and no error, and the caller proceeds unlocked, which is how the
 // walk ran before the lock existed. Any other error is a host failure.
 func lockOpenDir(dir *os.File) (bool, error) {
+	flock := unix.Flock
+	if tempRootFlock != nil {
+		flock = tempRootFlock
+	}
 	for {
-		err := unix.Flock(int(dir.Fd()), unix.LOCK_EX)
+		err := flock(int(dir.Fd()), unix.LOCK_EX)
 		switch {
 		case err == nil:
 			return true, nil
@@ -228,6 +232,9 @@ func openLockedDir(path string) (*os.File, bool, error) {
 		if err != nil {
 			_ = dir.Close()
 			return nil, false, err
+		}
+		if tempRootAfterLock != nil {
+			tempRootAfterLock(path)
 		}
 		held, heldErr := dir.Stat()
 		named, namedErr := os.Stat(path)
@@ -762,6 +769,15 @@ var createRootAfterParentOpened func(component string)
 // entry is opened, so a test can replace it at exactly the moment a concurrent install would. nil is the
 // production value.
 var createRootAfterMkdir func(component string)
+
+// tempRootFlock is a test seam that stands for the flock call of lockOpenDir, so a test can make the
+// filesystem refuse the lock with a chosen errno. nil is the production value, which is unix.Flock.
+var tempRootFlock func(fd, how int) error
+
+// tempRootAfterLock is a test seam called by openLockedDir after the lock is granted and before the descriptor
+// is compared with the path, so a test can change what the path names at exactly the moment a concurrent
+// install would. nil is the production value.
+var tempRootAfterLock func(path string)
 
 // rootComponents lists the components of dir that do not exist yet, outermost first, stopping at
 // the first ancestor that does exist. A dangling symbolic link counts as existing, so it is never
