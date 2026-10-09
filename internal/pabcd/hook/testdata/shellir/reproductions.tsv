@@ -784,5 +784,5 @@ added by CRW-851 (verifier P0: a line end after a dot is a new statement, not an
 added by CRW-851 (verifier P0: a line end after a dot is a new statement, not an attribute chain)	python3 -c 'import builtins; x = 1.<nl>builtins.exec(...)'	CRW-851-lc-13	row	-
 added by CRW-851 (verifier P0: a line end after a dot is a new statement, not an attribute chain)	python3 -c 'import builtins; x = 1.<nl>__builtins__.eval(...)'	CRW-851-lc-14	row	-
 added by CRW-851 (verifier P0: a line end after a dot is a new statement, not an attribute chain)	python3 -c 'import builtins; x = ...{CR}<nl>builtins.exec(...)'	CRW-851-lc-15	row	-
-added by CRW-851 (verifier P0: a line end after a dot is a new statement, not an attribute chain)	python3 -c 'import builtins<nl>if True:<nl>    x = 1. <nl>    builtins.exec(...)'	CRW-851-lc-16	row	-
+added by CRW-851 (verifier P0: a line end after a dot is a new statement, not an attribute chain)	python3 -c 'import builtins<nl>if True:<nl>    x = 1.<nl>    builtins.exec(...)'	CRW-851-lc-16	row	-
 added by CRW-851 (verifier P0: a line end after a dot is a new statement, not an attribute chain)	python3 -c 'import builtins; x = ...<nl>builtins \<nl>.exec(...)'	CRW-851-lc-17	row	-

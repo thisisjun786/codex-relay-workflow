@@ -142,10 +142,10 @@ python3 -c 'import builtins; x = ...{CR}
 builtins.exec("""open(file="{MEMORY}/a",mode="w")""")'
 
 === CRW-851-lc-16 | E
---why Blanks after the dot of 1. and then the line end, then builtins.exec on an indented line of the same block.
+--why The number 1. at the end of a line, then builtins.exec on the next indented line of the same block.
 python3 -c 'import builtins
 if True:
-    x = 1. 
+    x = 1.
     builtins.exec("""open(file="{MEMORY}/a",mode="w")""")'
 
 === CRW-851-lc-17 | E
