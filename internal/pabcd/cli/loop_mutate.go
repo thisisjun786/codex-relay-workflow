@@ -303,6 +303,9 @@ func loopDecision(args LoopCliArgs) (LoopCliResult, error) {
 	return loopInitAppendWarnings(LoopCliResult{Output: fmt.Sprintf("loop %s: %s %s applied", args.Verb, slug, id), Code: 0}, locked.Value.warnings), nil
 }
 
+// loopAppendLedger is the ledger append of the lifecycle verbs; a test replaces it to observe where it runs.
+var loopAppendLedger = goalplan.AppendGoalplanLedger
+
 // loopLifecycleCommit is the answers of the lifecycle step inside the write lock.
 type loopLifecycleCommit struct {
 	kind     string // "refused", "committed" or "unchanged"
@@ -405,7 +408,7 @@ func loopLifecycle(args LoopCliArgs) (LoopCliResult, error) {
 	}
 	warnings := locked.Value.warnings
 	if ledgerEvent != "" {
-		if err := goalplan.AppendGoalplanLedger(args.Cwd, slug, goalplan.GoalplanLedgerEntry{
+		if err := loopAppendLedger(args.Cwd, slug, goalplan.GoalplanLedgerEntry{
 			Ts: loopNowISO(), Slug: slug, Event: ledgerEvent, Detail: ledgerDetail,
 		}); err != nil {
 			warnings = append(warnings, "warning: goalplan state was committed, but ledger append failed: "+err.Error())

@@ -602,3 +602,123 @@ func TestLoopLifecycleAndDecisionKeepAPublishedPlanWithAWarning(t *testing.T) {
 	}
 	before.assertUnchanged(t, cwd, slug)
 }
+
+// Pre-merge evaluation e0c3603e d1: the content-derived key hashes the scenario (or the id and title) alone, so a
+// retry with other options landed on the recorded key and answered "already applied" without storing them. Only an
+// exact retry is a no-op; a retry that asks for another surface, presentation or prerequisite list is the
+// transaction's usual conflict.
+func TestLoopAddVerbsRefuseARetryWithOtherOptions(t *testing.T) {
+	cwd, slug := loopMutWorkspace(t, nil)
+	loopMutRun(t, cwd, 0, "add-criterion", "--session", loopMutSession, "--criterion", "tray matrix", "--surface", "logic")
+	loopMutRun(t, cwd, 0, "add-work-phase", "--session", loopMutSession, "--id", "wp-new", "--title", "new")
+	before := loopMutTake(t, cwd, slug)
+
+	for _, argv := range [][]string{
+		{"--criterion", "tray matrix", "--surface", "desktop", "--presented", "native"},
+		{"--criterion", "tray matrix", "--surface", "desktop"},
+		{"--criterion", "tray matrix", "--surface", "web"},
+	} {
+		out := loopMutRun(t, cwd, 1, append([]string{"add-criterion", "--session", loopMutSession}, argv...)...)
+		if out != `loop add-criterion: a criterion with scenario "tray matrix" is already registered with another surface or presentation` {
+			t.Errorf("%v: output = %q", argv, out)
+		}
+	}
+	for _, deps := range [][]string{{"wp-base"}, {"ghost"}, {"wp-base", "wp-live"}} {
+		argv := []string{"add-work-phase", "--session", loopMutSession, "--id", "wp-new", "--title", "new"}
+		for _, dep := range deps {
+			argv = append(argv, "--depends-on", dep)
+		}
+		out := loopMutRun(t, cwd, 1, argv...)
+		if out != "loop add-work-phase: work phase 'wp-new' is already registered with other prerequisites" {
+			t.Errorf("%v: output = %q", deps, out)
+		}
+	}
+	before.assertUnchanged(t, cwd, slug)
+
+	// The exact retries stay recorded duplicates, native presentation and dependencies included.
+	loopMutRun(t, cwd, 0, "add-criterion", "--session", loopMutSession, "--criterion", "native app", "--surface", "desktop", "--presented", "native")
+	loopMutRun(t, cwd, 0, "add-work-phase", "--session", loopMutSession, "--id", "wp-dep", "--title", "dep", "--depends-on", "wp-base", "--depends-on", "wp-live")
+	again := loopMutTake(t, cwd, slug)
+	for _, argv := range [][]string{
+		{"add-criterion", "--criterion", "tray matrix", "--surface", "logic"},
+		{"add-criterion", "--criterion", "tray matrix"},
+		{"add-criterion", "--criterion", "native app", "--surface", "desktop", "--presented", "native"},
+		{"add-work-phase", "--id", "wp-new", "--title", "new"},
+		{"add-work-phase", "--id", "wp-dep", "--title", "dep", "--depends-on", "wp-live", "--depends-on", "wp-base"},
+	} {
+		out := loopMutRun(t, cwd, 0, append(argv[:1:1], append([]string{"--session", loopMutSession}, argv[1:]...)...)...)
+		if !strings.Contains(out, ": already applied at ") {
+			t.Errorf("%v: output = %q", argv, out)
+		}
+	}
+	again.assertUnchanged(t, cwd, slug)
+	for _, c := range loopMutPlan(t, cwd, slug).Criteria {
+		if c.Scenario == "tray matrix" && (c.Surface != goalplan.SurfaceLogic || c.Presented != "") {
+			t.Fatalf("criterion = %+v", c)
+		}
+	}
+}
+
+// Pre-merge evaluation e0c3603e d2: the batch decoder replaced an unpaired surrogate (and a byte that is not UTF-8)
+// with U+FFFD, so two distinct idempotency keys collapsed into one and the second batch was dropped as a duplicate;
+// the goalplan reader refuses the same loss.
+func TestLoopSteerRefusesATextThatDecodesLossily(t *testing.T) {
+	cwd, slug := loopMutWorkspace(t, nil)
+	before := loopMutTake(t, cwd, slug)
+	batch := func(key string) string {
+		return `{"idempotencyKey":"` + key + `","rationale":"r","evidence":"e","ops":[{"kind":"add-criterion","scenario":"first","surface":"logic"}]}`
+	}
+	for _, key := range []string{`\ud800`, `\udc00`, `a\ud800b`} {
+		out := loopMutRun(t, cwd, 1, "steer", "--session", loopMutSession, "--batch-json", batch(key))
+		if !strings.HasPrefix(out, "loop steer: batch holds an unpaired JSON surrogate at byte ") || !strings.HasSuffix(out, " that would lose stored text") {
+			t.Errorf("%s: output = %q", key, out)
+		}
+	}
+	file := filepath.Join(cwd, "bad.json")
+	if err := os.WriteFile(file, []byte(strings.Replace(batch("k"), `"r"`, "\"r\xff\"", 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if out := loopMutRun(t, cwd, 1, "steer", "--session", loopMutSession, "--batch-json", file); !strings.HasPrefix(out, "loop steer: batch holds a byte that is not UTF-8 at byte ") {
+		t.Errorf("invalid UTF-8 output = %q", out)
+	}
+	before.assertUnchanged(t, cwd, slug)
+
+	// A complete pair and an escaped backslash keep their meaning.
+	if out := loopMutRun(t, cwd, 0, "steer", "--session", loopMutSession, "--batch-json", batch(`😀`)); !strings.HasPrefix(out, "loop steer: applied ") {
+		t.Errorf("pair output = %q", out)
+	}
+	if out := loopMutRun(t, cwd, 0, "steer", "--session", loopMutSession, "--batch-json", strings.Replace(batch(`\\ud800`), `"first"`, `"second"`, 1)); !strings.HasPrefix(out, "loop steer: applied ") {
+		t.Errorf("escaped backslash output = %q", out)
+	}
+}
+
+// Pre-merge evaluation e0c3603e d3: the ledger row of a lifecycle verb was appended after the write lock was
+// released, so a later writer could commit (and log) first and the ledger would order the two transitions the
+// other way round. The row belongs inside the lock, as the steering transaction writes its own.
+func TestLoopLifecycleAppendsItsLedgerRowInsideTheWriteLock(t *testing.T) {
+	cwd, slug := loopMutWorkspace(t, nil)
+	lock := filepath.Join(cwd, ".crw", "goalplans", slug, goalplan.GoalplanLockDir)
+	var held []bool
+	previous := loopAppendLedger
+	loopAppendLedger = func(cwd, slug string, entry goalplan.GoalplanLedgerEntry) error {
+		_, err := os.Stat(lock)
+		held = append(held, err == nil)
+		return previous(cwd, slug, entry)
+	}
+	t.Cleanup(func() { loopAppendLedger = previous })
+
+	loopMutRun(t, cwd, 0, "add-task", "--session", loopMutSession, "--work-phase", "wp-live", "--id", "t-new", "--title", "new", "--depends-on", "ready-task")
+	loopMutRun(t, cwd, 0, "complete-task", "--session", loopMutSession, "--work-phase", "wp-live", "--id", "ready-task", "--outcome", "proof")
+	loopMutRun(t, cwd, 0, "meet-criterion", "--session", loopMutSession, "--id", "c-1", "--evidence", "proof")
+	if len(held) != 3 {
+		t.Fatalf("ledger appends = %v", held)
+	}
+	for i, inside := range held {
+		if !inside {
+			t.Errorf("append %d ran after the write lock was released", i)
+		}
+	}
+	if _, err := os.Stat(lock); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("lock left behind: %v", err)
+	}
+}
