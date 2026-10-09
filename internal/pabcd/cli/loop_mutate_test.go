@@ -223,6 +223,41 @@ func TestLoopAddWorkPhaseLegacyKeyRefusesChangedDependencies(t *testing.T) {
 	before.assertUnchanged(t, cwd, slug)
 }
 
+// CRW-1067: a recorded add-criterion key whose criterion is not in the plan (the pre-upgrade state) cannot show the
+// surface or presentation it was registered with, so a retry that names another one is refused; the default retry
+// (logic, no presentation) stays the recorded duplicate, as the add-work-phase legacy key does.
+func TestLoopAddCriterionLegacyKeyRefusesOtherOptions(t *testing.T) {
+	cwd, slug := loopMutWorkspace(t, func(plan *goalplan.Goalplan) {
+		plan.SteeringLog = []goalplan.SteeringEntry{{
+			IdempotencyKey: "add-criterion-526c4dcaef37", Rationale: "cxc loop add-criterion", Evidence: "tray matrix",
+			AppliedAt: "2026-08-28T00:00:00.000Z", Summary: "1 op(s): add-criterion",
+		}}
+	})
+	before := loopMutTake(t, cwd, slug)
+	for _, argv := range [][]string{
+		{"--surface", "desktop"},
+		{"--surface", "web"},
+		{"--surface", "desktop", "--presented", "native"},
+	} {
+		out := loopMutRun(t, cwd, 1, append([]string{"add-criterion", "--session", loopMutSession, "--criterion", "tray matrix"}, argv...)...)
+		if out != `loop add-criterion: a criterion with scenario "tray matrix" has a recorded key but is not in the plan, so its --surface and --presented cannot be checked against what was registered` {
+			t.Errorf("%v: output = %q", argv, out)
+		}
+	}
+	before.assertUnchanged(t, cwd, slug)
+	// The default retry, with or without an explicit --surface logic, is the recorded duplicate.
+	for _, argv := range [][]string{
+		{"add-criterion", "--session", loopMutSession, "--criterion", "tray matrix"},
+		{"add-criterion", "--session", loopMutSession, "--criterion", "tray matrix", "--surface", "logic"},
+	} {
+		out := loopMutRun(t, cwd, 0, argv...)
+		if !strings.HasPrefix(out, "loop add-criterion: already applied at ") || !strings.HasSuffix(out, " - nothing to do") {
+			t.Fatalf("%v: output = %q", argv, out)
+		}
+	}
+	before.assertUnchanged(t, cwd, slug)
+}
+
 // public-surface "comma dependency is rejected while repeated flags persist dependencies".
 func TestLoopAddWorkPhaseDependencies(t *testing.T) {
 	cwd, slug := loopMutWorkspace(t, nil)

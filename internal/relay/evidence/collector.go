@@ -799,11 +799,6 @@ func Collect(f *Forge, repository string, numberValue any) (snapshot map[string]
 	return snapshotBase(f, owner, name, number, started, problems, connections, pinned, reread, coverage, findings, checks, detail, superseded, gates), nil
 }
 
-func RestateProblems(head string, record, snapshot any) []Problem {
-	problems, _ := RestateWithDispositions(head, record, snapshot, nil)
-	return problems
-}
-
 // RestateWithDispositions is RestateProblems with the coordinator's dispositions of late review
 // threads (see latedisposition.go). A review thread on the head that the record's threadsSeen does
 // not list is a late finding unless a well-formed document holds an entry for it on this head.

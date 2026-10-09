@@ -388,24 +388,10 @@ func Normalised(statement any) *string {
 // isSpace is str.isspace for one character: Unicode White_Space plus U+001C..U+001F.
 func isSpace(r rune) bool { return unicode.IsSpace(r) || r >= 0x1c && r <= 0x1f }
 
-// Decide is swapgate.decide: the verdict, and which cells produced it. An established refusal
-// is reported as a refusal even when another cell could not answer.
-func Decide(cells map[string]Object) Object {
-	return DecideWithRelease(cells, nil)
-}
-
 // Release is the one thing that lets a refusing storeSchema cell stand: the record of the OPS-4.5
 // backup of the state directory, taken because the only difference is the additive zone, or ordinary
 // indexes, arriving.
 type Release struct{ Backup Object }
-
-// ZoneArrivalOnly is whether the swap refuses for one reason only: the candidate brings the additive
-// DAG zone to a store that lacks it, with the daemon stopped and no attempt open both established.
-// Anything else (a running daemon, an open attempt, a cell that could not be read, another schema
-// difference) is not the arrival alone, and no backup is taken for it.
-func ZoneArrivalOnly(cells map[string]Object) bool {
-	return arrivalOnly(cells, ExtendsZone)
-}
 
 // AdditiveArrivalOnly is ZoneArrivalOnly for either arrival the OPS-4.5 backup releases: the additive DAG zone
 // (ExtendsZone) or ordinary indexes (ExtendsIndex, CRW-472). Both are additive and both are carried by the same

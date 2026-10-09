@@ -1,0 +1,63 @@
+# CRW-1062: a move of the managed checkout and a removal fed through xargs (printf format, file-operand filter, custom delimiter,
+# plain echo) are refused by the worktree guard at HandleWorktreeGuardPreTool. The controls are an unrelated xargs and a move
+# that stays inside the worktree.
+
+=== CRW-1062-01 | none/allow/deny
+--why mv of the managed checkout itself: the move takes the checkout away, as rm -r does.
+mv {CHECKOUT} /tmp/gone
+
+=== CRW-1062-02 | none/allow/deny
+--why printf format builds the checkout path that xargs feeds to git worktree remove.
+printf '%s\n' {CHECKOUT} | xargs git worktree remove -f
+
+=== CRW-1062-03 | none/allow/deny
+--why a file operand filter sits between the feed and xargs: the bytes xargs removes are not proven.
+echo x | cat list.txt | xargs git worktree remove -f
+
+=== CRW-1062-04 | none/allow/deny
+--why xargs with a custom delimiter (-d) splits the feed on a character the reader does not follow.
+echo {CHECKOUT},x | xargs -d, git worktree remove -f
+
+=== CRW-1062-05 | none/allow/deny
+--why a plain echo feed to xargs git worktree remove: the operand arrives at run time, so the guard cannot place it.
+echo {CHECKOUT} | xargs git worktree remove -f
+
+=== CRW-1062-06 | B
+--why control: an xargs whose program removes nothing is not judged by the removal rules.
+echo x | xargs wc -l
+
+=== CRW-1062-07 | B
+--why control: a move of a file inside the worktree names no checkout or ancestor.
+mv build.log archive/
+
+=== CRW-1062-08 | none/allow/deny
+--why find runs sh -c; the mv inside it takes its source from the placeholder {}, which is the checkout at run time.
+find {CHECKOUT} -maxdepth 0 -exec sh -c 'mv {} /tmp/gone' \;
+
+=== CRW-1062-09 | none/allow/deny
+--why a move from an unrelated directory whose source is a variable: the variable may hold the checkout path.
+cd /tmp && mv "$SRC" /tmp/gone
+
+=== CRW-1062-10 | none/allow/deny
+--why POSIXLY_CORRECT stops mv option parsing at the first operand, so -S is an operand and the checkout is a source.
+POSIXLY_CORRECT=1 mv build.log -S {CHECKOUT} /tmp/gone
+
+=== CRW-1062-11 | none/allow/deny
+--why a supported git global option (-P) before worktree remove: the removal of the checkout.
+git -P worktree remove -f {CHECKOUT}
+
+=== CRW-1062-12 | none/allow/deny
+--why a removal fed through xargs with a git global option (--no-pager) before worktree remove.
+printf '%s\n' {CHECKOUT} | xargs git --no-pager worktree remove -f
+
+=== CRW-1062-13 | attempt/allow/allow
+--why control: a move whose source is known and whose destination is a variable is not refused by the worktree guard (the memory gate asks for a grant for the unknown destination, as on dev).
+mv build.log "$DEST"
+
+=== CRW-1062-14 | B
+--why control: a nested shell under find runs a command that names no checkout.
+find . -maxdepth 0 -exec sh -c 'echo {}' \;
+
+=== CRW-1062-15 | B
+--why control: a POSIXLY_CORRECT move inside the worktree stays allowed.
+POSIXLY_CORRECT=1 mv build.log archive/

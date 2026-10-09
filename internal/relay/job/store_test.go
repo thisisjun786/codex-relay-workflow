@@ -529,3 +529,7 @@ func TestWhatIsNotAFileOfTheStoreIsRefused(t *testing.T) {
 		t.Error("a workspace without a store: removal is not nothing")
 	}
 }
+
+// AppendLedger appends {"at": the time, ...event} as one line (appendLedger). A row that cannot be written is lost: ledger loss must
+// never break a hook. Only the tests of this package reach it; the product calls appendLedger with its own clock (CRW-828).
+func AppendLedger(cwd string, event Event) { _ = appendLedger(cwd, event, time.Now) }

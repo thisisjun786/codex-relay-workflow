@@ -151,6 +151,10 @@ func runService(ctx context.Context, services dispatch.Services, args dispatch.A
 		if err = ownershipPreflight(ctx, services); err != nil {
 			return nil, err
 		}
+	} else {
+		// status only reads: it reads the store without creating SQLite sidecars wherever SQLite allows (CRW-837), so the swap gate, which asks for it before it
+		// lists the state directory for a backup, leaves no relay.sqlite3-shm or empty relay.sqlite3-wal there
+		ctx = store.WithSidecarFreeReads(ctx)
 	}
 	s, err := service.New(ctx, services.Selection, services.SocketPath)
 	if err != nil {
