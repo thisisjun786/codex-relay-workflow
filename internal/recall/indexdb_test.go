@@ -40,14 +40,19 @@ func indexOracle(t *testing.T) map[string]any {
 	return want
 }
 
-// indexPortDeviations applies the recorded port: fixed schema changes (docs/port-cxc/known-defects/CRW-1154.md)
-// to the oracle recording: schema version 3, and the unique (path, ord) index replacing msgs(path).
+// indexPortDeviations applies the recorded port: fixed schema changes to the oracle recording: schema
+// version 4, the unique (path, ord) index replacing msgs(path) (docs/port-cxc/known-defects/CRW-1154.md),
+// and the file identity and checkpoint columns (CRW-1083.md).
 func indexPortDeviations(want map[string]any) {
-	want["version"] = "3"
+	want["version"] = "4"
 	schema := want["schema"].([]any)
 	for i, row := range schema {
-		if row.(map[string]any)["name"] == "idx_msgs_path" {
+		entry := row.(map[string]any)
+		switch entry["name"] {
+		case "idx_msgs_path":
 			schema[i] = map[string]any{"type": "index", "name": "idx_msgs_path_ord", "sql": "CREATE UNIQUE INDEX idx_msgs_path_ord ON msgs(path, ord)"}
+		case "files":
+			entry["sql"] = strings.Replace(entry["sql"].(string), "repo_key TEXT\n)", "repo_key TEXT,\n  file_id TEXT,\n  checkpoint TEXT\n)", 1)
 		}
 	}
 }

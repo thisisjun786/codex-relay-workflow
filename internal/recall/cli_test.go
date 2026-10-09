@@ -610,3 +610,55 @@ func TestRecallRebuildSuccessOutput(t *testing.T) {
 		t.Fatal("rebuild did not re-create the same index")
 	}
 }
+
+// CRW-1083: --verify is the explicit strong path. Without it the status is metadata-only and its
+// output is the oracle's; with it a rewrite that kept size and mtime is found and replaced.
+func TestRecallChatIndexVerify(t *testing.T) {
+	r, now := recallRebuildNew(t), time.Now()
+	r.ok(t, now, "chat", "index")
+	files, err := ListRolloutFiles(r.home, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var target string
+	for _, f := range files {
+		if strings.HasSuffix(f.Path, "-main.jsonl") {
+			target = f.Path
+		}
+	}
+	before, err := os.Stat(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := os.ReadFile(target)
+	rewritten := append([]byte{}, body...)
+	// Same length, same mtime: the first bytes are changed so that the message text differs.
+	i := strings.Index(string(rewritten), "deployed")
+	if i < 0 {
+		t.Fatal("fixture has no 'deployed' message")
+	}
+	copy(rewritten[i:], "DEPLOYXX")
+	if err := os.WriteFile(target, rewritten, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(target, before.ModTime(), before.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	plain := r.ok(t, now, "chat", "index", "--status")
+	if !strings.Contains(plain, "stale: 0,") || strings.Contains(plain, "content-verified") {
+		t.Fatal("the metadata-only status changed its output:", plain)
+	}
+	if code, out, e := r.run(t, now, "chat", "index", "--status", "--verify", "--json"); code != 0 || e != "" || !strings.Contains(out, `"staleFiles": 1`) || !strings.Contains(out, `"freshness": "content-verified"`) {
+		t.Fatal("the strong status did not see the rewrite:", code, out, e)
+	}
+	if code, out, e := r.run(t, now, "chat", "index", "--status", "--json"); code != 0 || e != "" || !strings.Contains(out, `"staleFiles": 0`) || strings.Contains(out, "freshness") {
+		t.Fatal("the metadata-only JSON changed:", code, out, e)
+	}
+	text := r.ok(t, now, "chat", "index", "--verify")
+	if !strings.Contains(text, "ingested 1/4 files") || !strings.Contains(text, "stale: 0 (content-verified)") {
+		t.Fatal(text)
+	}
+	if again := r.ok(t, now, "chat", "index", "--verify"); !strings.Contains(again, "ingested 0/4 files, 0 appended") {
+		t.Fatal(again)
+	}
+}

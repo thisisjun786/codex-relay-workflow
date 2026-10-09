@@ -9,9 +9,10 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 )
 
-// IndexSchemaVersion 3 adds the unique (path, ord) invariant. A database of an older version holds
-// only derived rows, so it is dropped and rebuilt from the rollouts; the hit history is kept.
-const IndexSchemaVersion = "3"
+// IndexSchemaVersion 3 added the unique (path, ord) invariant; 4 adds the file identity and the
+// consumed-prefix checkpoint to files. A database of an older version holds only derived rows, so
+// it is dropped and rebuilt from the rollouts; the hit history is kept.
+const IndexSchemaVersion = "4"
 const hitCountsDDL = `
 CREATE TABLE IF NOT EXISTS recall_hit_counts (
   ref TEXT PRIMARY KEY,
@@ -31,7 +32,9 @@ CREATE TABLE IF NOT EXISTS files (
   date TEXT NOT NULL,
   bytes_ingested INTEGER NOT NULL DEFAULT 0,
   last_ord INTEGER NOT NULL DEFAULT 0,
-  repo_key TEXT
+  repo_key TEXT,
+  file_id TEXT,
+  checkpoint TEXT
 );
 CREATE TABLE IF NOT EXISTS msgs (
   id INTEGER PRIMARY KEY,

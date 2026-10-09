@@ -55,7 +55,7 @@ type ParsedFlags struct {
 	Positionals []string       `json:"positionals"`
 }
 
-const boolFlagNames = "any all no-tools rank recent scan no-refresh no-synonyms synonyms no-chat full rebuild status json"
+const boolFlagNames = "any all no-tools rank recent scan no-refresh no-synonyms synonyms no-chat full rebuild status json verify"
 
 func WantsHelp(args []string) bool {
 	for _, s := range args {

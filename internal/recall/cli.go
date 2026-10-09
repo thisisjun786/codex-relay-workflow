@@ -161,15 +161,25 @@ type recallCLIIndexReport struct {
 	ChangedFiles float64 `json:"changedFiles"`
 	ExtraFiles   float64 `json:"extraFiles"`
 	Truncated    bool    `json:"truncated"`
+	// Freshness is "content-verified" when the counts were decided from file content (--verify) and
+	// absent when they are metadata-only (size, mtime and file identity).
+	Freshness string `json:"freshness,omitempty"`
 }
 
 func recallCLIStatusReport(db *RwDb, path, home string, budget *FreshnessBudget) (recallCLIIndexReport, error) {
+	return recallCLIStatusReportMode(db, path, home, budget, false)
+}
+func recallCLIStatusReportMode(db *RwDb, path, home string, budget *FreshnessBudget, verify bool) (recallCLIIndexReport, error) {
 	status, err := indexStatus(db, path)
 	if err != nil {
 		return recallCLIIndexReport{}, err
 	}
-	fresh, err := measureIndexFreshness(home, db, 0, budget)
-	return recallCLIIndexReport{status, fresh.SourceFiles, fresh.StaleFiles, fresh.MissingFiles, fresh.ChangedFiles, fresh.ExtraFiles, fresh.Truncated}, err
+	fresh, err := measureIndexFreshnessMode(home, db, 0, budget, verify)
+	report := recallCLIIndexReport{status, fresh.SourceFiles, fresh.StaleFiles, fresh.MissingFiles, fresh.ChangedFiles, fresh.ExtraFiles, fresh.Truncated, ""}
+	if fresh.Verified {
+		report.Freshness = "content-verified"
+	}
+	return report, err
 }
 func recallCLIStaleCountLabel(n float64, truncated bool) string {
 	s := memoryNumberText(n)
@@ -185,7 +195,11 @@ func recallCLILastIngest(report recallCLIIndexReport) string {
 	return *report.LastIngestAt
 }
 func recallCLIFormatStatusText(r recallCLIIndexReport) string {
-	return fmt.Sprintf("index: %s\nfiles: %s, messages: %s, source files: %s, stale: %s, last ingest: %s\n", r.Path, memoryNumberText(r.Files), memoryNumberText(r.Msgs), memoryNumberText(r.SourceFiles), recallCLIStaleCountLabel(r.StaleFiles, r.Truncated), recallCLILastIngest(r))
+	stale := recallCLIStaleCountLabel(r.StaleFiles, r.Truncated)
+	if r.Freshness != "" {
+		stale += " (" + r.Freshness + ")"
+	}
+	return fmt.Sprintf("index: %s\nfiles: %s, messages: %s, source files: %s, stale: %s, last ingest: %s\n", r.Path, memoryNumberText(r.Files), memoryNumberText(r.Msgs), memoryNumberText(r.SourceFiles), stale, recallCLILastIngest(r))
 }
 func recallCLIChatIndex(args []string, stdout, stderr io.Writer) (code int) {
 	parsed, home, err := recallCLIFlags(args)
@@ -213,6 +227,7 @@ func recallCLIChatIndex(args []string, stdout, stderr io.Writer) (code int) {
 	}
 	fail := func(err error) int { return recallCLIFail(stderr, fmt.Errorf("chat index failed: %w", err)) }
 	statusOnly := recallCLIBool(v, "status") && !recallCLIBool(v, "rebuild")
+	verify := recallCLIBool(v, "verify")
 	var db *RwDb
 	if statusOnly {
 		db, err = openIndexReadOnly(path)
@@ -233,7 +248,7 @@ func recallCLIChatIndex(args []string, stdout, stderr io.Writer) (code int) {
 		}
 	}
 	if !statusOnly {
-		r, err := ingest(h, db, 0)
+		r, err := ingestWith(h, db, 0, ingestOptions{Verify: verify})
 		if err != nil {
 			return fail(err)
 		}
@@ -241,7 +256,7 @@ func recallCLIChatIndex(args []string, stdout, stderr io.Writer) (code int) {
 			fmt.Fprintf(stdout, "ingested %s/%s files, %s appended (%s messages, %s pruned, %sms)\n", memoryNumberText(r.Ingested), memoryNumberText(r.Scanned), memoryNumberText(r.Appended), memoryNumberText(r.Msgs), memoryNumberText(r.Pruned), memoryNumberText(r.ElapsedMs))
 		}
 	}
-	report, err := recallCLIStatusReport(db, path, h, nil)
+	report, err := recallCLIStatusReportMode(db, path, h, nil, verify)
 	if err != nil {
 		return fail(err)
 	}
