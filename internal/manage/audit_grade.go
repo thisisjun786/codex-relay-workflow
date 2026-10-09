@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -305,7 +306,7 @@ func auditBundleResolvedPath(bundle string) (string, error) {
 	if err != nil || !info.IsDir() {
 		return "", fmt.Errorf("bundle %s: its parent is not a directory", bundle)
 	}
-	return filepath.Join(resolvedParent, leaf), nil
+	return crwconfig.JoinRoot(resolvedParent, leaf), nil
 }
 
 // auditBundleSplitParent splits a path into the part before its last separator and the last
@@ -340,7 +341,7 @@ const auditPendingDir = "pending"
 // ledger row still finds it.
 func auditPendingPath(e *Env, cfg *Config, bundle string) string {
 	sum := sha256.Sum256([]byte(auditBundleIdentity(bundle)))
-	return filepath.Join(auditStateDir(e, cfg), "audit", auditPendingDir, hex.EncodeToString(sum[:]))
+	return crwconfig.JoinRoot(auditStateDir(e, cfg), "audit", auditPendingDir, hex.EncodeToString(sum[:]))
 }
 
 // auditBundleIdentity is the name a marker is keyed by: the directory the kernel resolves the
@@ -361,7 +362,7 @@ func auditBundleIdentity(bundle string) string {
 // names; the lock is what tells a builder that a run is in flight right now. The open refuses to
 // follow a symbolic link, so a link planted at the marker path cannot redirect this write.
 func auditPendingMark(path string) (*os.File, bool, error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	if err := os.MkdirAll(rootDir(path), 0o700); err != nil {
 		return nil, false, err
 	}
 	made := false
@@ -455,7 +456,7 @@ func auditGradeOne(ctx context.Context, e *Env, section auditSection, bundle *au
 		return result
 	}
 	result.Status = auditStatusInvalid
-	doc, ok := auditParseResult(filepath.Join(absBundle, auditGradeFile))
+	doc, ok := auditParseResult(crwconfig.JoinRoot(absBundle, auditGradeFile))
 	if !ok {
 		return result
 	}
@@ -477,13 +478,13 @@ func auditGradeOne(ctx context.Context, e *Env, section auditSection, bundle *au
 // grade file it left; auditStatusInvalid when the bundle could not be prepared; and
 // auditStatusTimeout when the limit ended the run.
 func auditRunGrader(ctx context.Context, section auditSection, absBundle, prompt string, log *auditLog) string {
-	grade := filepath.Join(absBundle, auditGradeFile)
+	grade := crwconfig.JoinRoot(absBundle, auditGradeFile)
 	// The grader is told to write this file, so a file an earlier run left is not this
 	// run's result and must not be read as one.
 	if err := os.Remove(grade); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return auditStatusInvalid
 	}
-	promptFile := filepath.Join(absBundle, auditPromptFile)
+	promptFile := crwconfig.JoinRoot(absBundle, auditPromptFile)
 	// A bundle can come from another process, so an existing prompt.md is removed first and
 	// the new one is created exclusively: a symlink left there is never followed into
 	// whatever file it points at.

@@ -58,6 +58,8 @@ func all(ctx context.Context, s *store.Store, query string, args ...any) (_ []Ro
 }
 
 func allFrom(ctx context.Context, q store.Querier, query string, args ...any) (_ []Row, err error) {
+	// A failure of the corrupting class, at the query or while the rows are read, is a read (CRW-945).
+	defer func() { err = observed(err) }()
 	rows, err := q.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
@@ -101,7 +103,7 @@ func one(ctx context.Context, s *store.Store, query string, args ...any) (Row, e
 func execSQL(ctx context.Context, s *store.Store, query string, args ...any) (int64, error) {
 	result, err := s.Q(ctx).ExecContext(ctx, query, args...)
 	if err != nil {
-		return 0, err
+		return 0, written(err)
 	}
 	return result.RowsAffected()
 }
@@ -120,7 +122,7 @@ func journal(ctx context.Context, s *store.Store, kind, subject string, detail a
 		text = dumps(detail)
 	}
 	_, err := s.Q(ctx).ExecContext(ctx, `INSERT INTO journal (at, kind, subject, detail) VALUES (?,?,?,?)`, at, kind, subject, text)
-	return err
+	return written(err)
 }
 
 type sqlConn = sql.Conn

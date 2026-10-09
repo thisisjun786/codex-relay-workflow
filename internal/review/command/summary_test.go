@@ -18,6 +18,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/review"
 	"github.com/thisisjun786/codex-relay-workflow/internal/review/agy"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // scriptedForge is a pull request that keeps its general comments in memory. It has no way to make a review thread, and it counts what it is asked.
@@ -315,7 +316,7 @@ func TestGhForgeCallsOnlyTheCommentEndpoints(t *testing.T) {
 		"*\"--method GET\"*) printf '[{\"id\":1,\"body\":\"hello\",\"html_url\":\"u1\"},{\"id\":2,\"body\":\"<!-- crw-independent-review v1 {} -->\\\\nold\",\"html_url\":\"u2\"}]\\n[{\"id\":3,\"body\":\"later\",\"html_url\":\"u3\"}]\\n';;\n" +
 		"*) cat > \"$d/stdin\"; printf '{\"id\":9,\"body\":\"b\",\"html_url\":\"https://forge.invalid/c9\"}\\n';;\n" +
 		"esac\n"
-	if err := os.WriteFile(gh, []byte(script), 0o755); err != nil {
+	if err := testsupport.WriteProgram(gh, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	read := func(name string) string { data, _ := os.ReadFile(filepath.Join(dir, name)); return string(data) }

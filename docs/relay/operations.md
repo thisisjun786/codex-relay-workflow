@@ -1035,6 +1035,17 @@ no host read, no settlement, no delivery, no journal row. The deliveries it was 
 where they are, for the next daemon and for the operator's restore. Nothing is retried and no ledger
 row is written for the failed write.
 
+A failure of the class is not held back by a step that would otherwise note it: the reconciliation pass and the
+delivery scheduler return it instead of recording it as one attempt's failure, the omission observer's reading of
+an unclaimed turn says `store_unreadable` with it, and an observer that cannot publish the marker returns the failure,
+which ends the fault sweep. The marker's site is the one of the statement that met the failure: a statement that changes the store (the
+requeue's enqueue, the sweep's ledger writes, a transaction's BEGIN and COMMIT) is `write`, and a query, wherever it
+runs - a scan, a reading, a read inside a delivery or reconciliation attempt - is `observation`. A corrupt read of
+the observation loop halts the store before the turns it held back are settled, so none of them is. Once the halt stands in a pass,
+the observation loop, the deferred settlements and the rest of the tick end there, and a marker the sweep's readings
+published is taken over, whatever the sweep returned after it, before the sweep records anything, and no further settled turn is read once the marker stands, whatever the reading that published it answered; a halt in the delivery or reconciliation pass keeps the counts and notes of the attempts made before it. A failure that is not of the class is still a note, and
+the pass goes on.
+
 The daemon also keeps its own halt in memory. A marker that cannot be written (a state directory
 that is full or read-only) must not turn a halt back into writes, so the process stops writing
 whatever became of the marker and says so in its notes; the operator then has the note and the

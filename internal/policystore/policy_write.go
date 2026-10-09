@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -18,6 +17,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/install"
@@ -38,7 +38,11 @@ const (
 	WriteSymlinked      = "symlinked"
 	WriteBusy           = "busy"
 	WriteCancelled      = "cancelled"
-	WriteFailed         = "failed"
+	// WriteNotApplied is a write that changed nothing because the file moved under it, where the file
+	// and the wiring record name one document: there is nothing to repair, and the answer says what the
+	// document is.
+	WriteNotApplied = "not_applied"
+	WriteFailed     = "failed"
 )
 
 // The shapes of the durable artifacts this file writes.
@@ -62,6 +66,10 @@ const (
 // errPolicyMoved is the publication's answer when the file no longer holds the bytes the caller
 // authorized it to replace: the exchange was undone and nothing was replaced.
 var errPolicyMoved = errors.New("the policy file changed since it was read")
+
+// ErrPolicyMoved is errPolicyMoved for a SwapFunc outside this package (the GUI route's tests): the
+// answer of a publication that found the file changed, undid its exchange and replaced nothing.
+var ErrPolicyMoved = errPolicyMoved
 
 // errExchangeHappened reports a publication whose exchange ran and whose outcome could not be read
 // back or put back. The path holds the new bytes, so a caller must not report that nothing was
@@ -229,8 +237,8 @@ func Write(ctx context.Context, env LookupEnv, opts WriteOptions, request WriteR
 	if swap == nil {
 		swap = writeSwap
 	}
-	if err := ctx.Err(); err != nil {
-		return WriteResult{Kind: WriteCancelled, Step: "start", Errors: []string{err.Error()}}
+	if ctx.Err() != nil {
+		return WriteResult{Kind: WriteCancelled, Step: "start", Errors: []string{cancelReason(ctx)}}
 	}
 	located := writeLocate(env)
 	if located.State != Registered {
@@ -252,7 +260,7 @@ func Write(ctx context.Context, env LookupEnv, opts WriteOptions, request WriteR
 	lock, err := lockPolicy(ctx, encoded, writeLockTimeout)
 	if err != nil {
 		if ctx.Err() != nil {
-			return WriteResult{Kind: WriteCancelled, Step: "lock", Errors: []string{ctx.Err().Error()}}
+			return WriteResult{Kind: WriteCancelled, Step: "lock", Errors: []string{cancelReason(ctx)}}
 		}
 		return WriteResult{Kind: WriteBusy, Errors: []string{err.Error()}}
 	}
@@ -305,8 +313,8 @@ func Write(ctx context.Context, env LookupEnv, opts WriteOptions, request WriteR
 	}
 	// The backup is the first durable effect of this write: a request that went away while the
 	// candidate was judged must not leave one behind.
-	if err := ctx.Err(); err != nil {
-		return WriteResult{Kind: WriteCancelled, Step: "check", Errors: []string{err.Error()}}
+	if ctx.Err() != nil {
+		return WriteResult{Kind: WriteCancelled, Step: "check", FileDigest: fileAsItIs(path), Errors: []string{cancelReason(ctx)}}
 	}
 	backup, err := backupPolicy(encoded, raw, now())
 	if err != nil {
@@ -314,8 +322,8 @@ func Write(ctx context.Context, env LookupEnv, opts WriteOptions, request WriteR
 	}
 	// The backup is named in the record's own spelling, as every other path in an answer is.
 	reported := pyvalue.FSDecode(backup)
-	if err := ctx.Err(); err != nil {
-		return WriteResult{Kind: WriteCancelled, Step: "backup", Backup: reported, Errors: []string{err.Error()}}
+	if ctx.Err() != nil {
+		return WriteResult{Kind: WriteCancelled, Step: "backup", Backup: reported, FileDigest: fileAsItIs(path), Errors: []string{cancelReason(ctx)}}
 	}
 	updated, err := writeCandidate(raw, request.Change)
 	if err != nil {
@@ -324,8 +332,8 @@ func Write(ctx context.Context, env LookupEnv, opts WriteOptions, request WriteR
 	// The last boundary before the replacement: a request that went away while the candidate was
 	// rendered must not publish. After this point cancellation is no longer honoured, because stopping
 	// there would leave the file and the wiring record naming different digests.
-	if err := ctx.Err(); err != nil {
-		return WriteResult{Kind: WriteCancelled, Step: "publish", Backup: reported, Errors: []string{err.Error()}}
+	if ctx.Err() != nil {
+		return WriteResult{Kind: WriteCancelled, Step: "publish", Backup: reported, FileDigest: fileAsItIs(path), Errors: []string{cancelReason(ctx)}}
 	}
 	// The replacement happens only while the file still holds the bytes read under the lock, and it is
 	// an atomic exchange, so a writer that saved in between is neither replaced nor lost.
@@ -355,21 +363,35 @@ func Write(ctx context.Context, env LookupEnv, opts WriteOptions, request WriteR
 		// The file no longer holds the bytes this run read, so nothing was replaced. The record still
 		// names those bytes, so the two disagree and the answer says what is on disk.
 		observed, readErr := digestAt(path)
-		detail := "the execution policy changed while this write held its lock, so it was not replaced"
+		detail := "the execution policy changed while this write held its lock, so the change was not applied"
 		registered, otherPath, recordReason := recordStateNow(env, path)
+		agree := false
 		if otherPath != "" {
 			detail += "; the wiring record now names " + otherPath + ", not the policy this write locked"
 		} else if recordReason != "" {
 			detail += "; the wiring record could not be read: " + recordReason
 		} else if readErr == nil && observed == registered {
-			// The file and the record name one document again, so nothing needs repairing: the caller
-			// is told the change was not applied and what the document now is.
-			detail += "; the file and the wiring record name the same document, which is not the one this request asked for"
+			// The file and the record name one document, so nothing needs repairing: the caller is
+			// told the change was not applied and what the document now is, with no repair to run.
+			agree = true
+			detail += "; the file and the wiring record name the same document, " + observed + ", which is not the one this request asked for"
 		}
+		undoUnsynced := ""
 		if errors.Is(err, errUndoSync) {
 			// The rollback ran but its directory entry was not synced, so the refusal must not present it
 			// as durable: a power loss may bring this call's candidate back at the policy path.
-			detail += "; the undo of this write's exchange could not be synced, so a host that loses power now may find the candidate at the policy path"
+			undoUnsynced = "the undo of this write's exchange could not be synced, so a host that loses power now may find the candidate at the policy path"
+		}
+		if agree && kept == "" {
+			result := WriteResult{Kind: WriteNotApplied, CurrentDigest: observed, FileDigest: observed, RegisteredDigest: registered, Backup: reported,
+				Errors: []string{detail}}
+			if undoUnsynced != "" {
+				result.Warnings = []string{undoUnsynced}
+			}
+			return result
+		}
+		if undoUnsynced != "" {
+			detail += "; " + undoUnsynced
 		}
 		if readErr != nil {
 			observed = ""
@@ -377,9 +399,11 @@ func Write(ctx context.Context, env LookupEnv, opts WriteOptions, request WriteR
 		}
 		return WriteResult{Kind: WriteRecoveryNeeded, FileDigest: observed, RegisteredDigest: registered, Backup: reported,
 			Kept: pyvalue.FSDecode(kept), Recovery: recoveryAdviceKept(path, reported, pyvalue.FSDecode(kept)), Errors: []string{detail}}
-	case displaced == nil && ctx.Err() != nil:
-		// The publication refused the replacement because the request ended: nothing was replaced.
-		return WriteResult{Kind: WriteCancelled, Step: "publish", Backup: reported, Errors: []string{err.Error()}}
+	case displaced == nil && isContextEnd(ctx, err):
+		// The publication refused the replacement because the request ended: nothing was replaced. Only
+		// an error that is the context's own says so; a failure of the exchange that happened to
+		// coincide with the end of the request is a failure (the next case).
+		return WriteResult{Kind: WriteCancelled, Step: "publish", Backup: reported, FileDigest: fileAsItIs(path), Errors: []string{cancelReason(ctx)}}
 	case displaced == nil:
 		return WriteResult{Kind: WriteFailed, Backup: reported, Errors: []string{"the execution policy could not be written: " + err.Error()}}
 	default:
@@ -663,25 +687,66 @@ func registerWithInstaller(ctx context.Context, path string) RegisterAnswer {
 // decides, the backup of the wiring record the registration took, and the restart advice. The policy
 // file's own backup is a different artifact and never travels here.
 type registrationEnvelope struct {
-	Outcome         string `json:"outcome"`
-	Backup          string `json:"backup"`
-	RestartRequired string `json:"restartRequired"`
+	Outcome         string
+	Backup          string
+	RestartRequired string
 }
 
 // registrationEnvelope reads the installer's JSON envelope. parsed is false when the answer carries
 // no readable envelope at all, or names no outcome, which is itself a reason not to trust it.
+//
+// The envelope is read the way the installer wrote it: a path whose bytes are not UTF-8 is a lone
+// surrogate escape (\udcXX) in a string, and encoding/json would fold that into U+FFFD, a name
+// nothing can turn back into the byte. pyjson keeps the escape as the WTF-8 spelling every other
+// path of an answer here has, so the backup the answer names is the file the installer made.
 func registrationEnvelopeOf(answer RegisterAnswer) (registrationEnvelope, bool) {
 	if len(answer.Stdout) == 0 {
 		return registrationEnvelope{}, false
 	}
-	var envelope registrationEnvelope
-	if err := json.Unmarshal(answer.Stdout, &envelope); err != nil {
+	value, err := pyjson.Loads(string(answer.Stdout), pyjson.LoadOptions{Surrogates: true, Numbers: pyjson.SpelledNumbers})
+	if err != nil {
 		return registrationEnvelope{}, false
 	}
+	object, ok := value.(pyjson.Object)
+	if !ok {
+		return registrationEnvelope{}, false
+	}
+	text := func(key string) string {
+		member, _ := object.Get(key).(string)
+		return member
+	}
+	envelope := registrationEnvelope{Outcome: text("outcome"), Backup: text("backup"), RestartRequired: text("restartRequired")}
 	if envelope.Outcome == "" {
 		return registrationEnvelope{}, false
 	}
 	return envelope, true
+}
+
+// isContextEnd reports whether err is the end of ctx itself rather than a failure that merely
+// coincided with it.
+func isContextEnd(ctx context.Context, err error) bool {
+	return ctx.Err() != nil && err != nil && (errors.Is(err, ctx.Err()) || errors.Is(err, context.Cause(ctx)))
+}
+
+// fileAsItIs is the digest of the policy file as it is when a cancelled write ends, or "" when it
+// cannot be read. The policy lock serializes writers but not editors, so the bytes this write read
+// under the lock are not evidence of what it left: an answer reports an observation or nothing.
+func fileAsItIs(path string) string {
+	digest, err := digestAt(path)
+	if err != nil {
+		return ""
+	}
+	return digest
+}
+
+// cancelReason is why a request ended: the context's error, and the cause it was cancelled with when
+// that says more.
+func cancelReason(ctx context.Context) string {
+	reason := ctx.Err().Error()
+	if cause := context.Cause(ctx); cause != nil && cause != ctx.Err() {
+		reason += ": " + cause.Error()
+	}
+	return reason
 }
 
 // describeAnswer is the detail a recovery answer carries about the answer that could not be trusted.
@@ -911,7 +976,7 @@ func swapPolicy(ctx context.Context, path string, expected, next []byte, mode os
 	}
 	if bytes.Equal(displaced, expected) {
 		_ = os.Remove(temporary)
-		return displaced, "", syncDirectory(dir)
+		return displaced, "", writeSync(dir)
 	}
 	// The file had already moved on, so this call replaces nothing. The exchange is undone so the
 	// writer that saved keeps its bytes.

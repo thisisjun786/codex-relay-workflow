@@ -640,7 +640,9 @@ func Test47_PLG_18_JSONReport(t *testing.T) {
 	if err := json.Unmarshal([]byte(got.stdout), &r); err != nil {
 		t.Fatalf("report: %v: %+v", err, got)
 	}
-	names := []any{"crw-check", "crw-define", "crw-logic", "crw-loop", "crw-next", "crw-plan", "crw-refactor", "crw-run", "crw-status", "crw-tidy"}
+	// The plugin ships the skills the repository holds; crw-loop returns with the staged PABCD loop when the
+	// activation move lands, and the parent-goal procedure it carried is crw-run's goal mode.
+	names := []any{"crw-check", "crw-define", "crw-logic", "crw-next", "crw-plan", "crw-refactor", "crw-run", "crw-status", "crw-tidy"}
 	var expected []any
 	for _, n := range names {
 		expected = append(expected, "crw:"+n.(string))

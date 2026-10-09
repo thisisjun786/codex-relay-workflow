@@ -78,6 +78,43 @@ func latestRelease(ctx context.Context, q store.Querier, plan, node string) (rel
 	return r, true, rows.Err()
 }
 
+// OpenReleaseNodes is the nodes of a plan that an open release intent owns, read by the scheduler's own judgement (latestRelease): a release that dag-release-close
+// closed owns nothing, so its node can be released again. The candidates are the nodes with a dag_releases row; a rereleased row belongs to a digest that already had
+// one, so no node with an intent is missed, and a store that has no recovery table yet reads as latestRelease reads it.
+func OpenReleaseNodes(ctx context.Context, q store.Querier, plan string) (map[string]bool, error) {
+	rows, err := q.QueryContext(ctx, "SELECT DISTINCT node_id FROM dag_releases WHERE plan_id = ?", plan)
+	if err != nil {
+		return nil, err
+	}
+	var nodes []string
+	for rows.Next() {
+		var node string
+		if err := rows.Scan(&node); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		nodes = append(nodes, node)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	out := map[string]bool{}
+	for _, node := range nodes {
+		_, found, err := latestRelease(ctx, q, plan, node)
+		if err != nil {
+			return nil, err
+		}
+		if found {
+			out[node] = true
+		}
+	}
+	return out, nil
+}
+
 // closedChainEnd is the closed request of a manifest digest of the node that no later release followed: the base of the successor id the next release of that digest takes.
 func closedChainEnd(ctx context.Context, q store.Querier, plan, node, digest string) (string, bool, error) {
 	var request string

@@ -29,7 +29,7 @@ access and which operation owns what, and
 for the three roles and the names a Korean report gives them. Write the report in an
 evidence-first, short-brief form, without assuming that the reader has been away: the same form serves a routine midpoint check.
 When the request bundles several questions or its referent is unclear, restate it and resolve
-silently when the context settles it. Use `cxc-recall` only for history the current records no
+silently when the context settles it. Use `crw-recall` only for history the current records no
 longer carry; it does not establish current state.
 
 Two entries have their own procedures. A supervisor's one-word midpoint check over an initiative

@@ -1,0 +1,85 @@
+# CRW-894 fix round 5: the finding of the independent verifier on 8b02f7be (P1: after a loop that does not change the directory, the readings
+# that have a directory lost it, so an ordinary script named stdin or fd/0 in the working directory was taken for a relative descriptor alias
+# and refused by all three gates; dev 09e5c5bcc and the evaluated head 1688f7c5 allowed it). ../repo is the managed checkout.
+
+=== CRW-894-vh-01 | B
+--why A for loop that changes nothing, then an ordinary file named stdin in the working directory is the script python3 runs (verifier of 8b02f7be, P1: refused by all three gates at 8b02f7be, allowed on dev and at 1688f7c5).
+--file stdin
+pass
+--cmd
+for i in 1 2; do :; done; printf x | python3 stdin
+
+=== CRW-894-vh-02 | B
+--why A while loop that changes nothing, then an ordinary file fd/0 in the working directory is the script python3 runs.
+--file fd/0
+pass
+--cmd
+while false; do :; done; printf x | python3 fd/0
+
+=== CRW-894-vh-03 | B
+--why A for loop that changes nothing, then an ordinary file named stdin in the working directory is the script node runs.
+--file stdin
+pass
+--cmd
+for i in 1; do :; done; printf x | node stdin
+
+=== CRW-894-vh-04 | B
+--why An until loop that changes nothing, then an ordinary file named stdin is the script python3 runs.
+--file stdin
+pass
+--cmd
+until true; do :; done; printf x | python3 stdin
+
+=== CRW-894-vh-05 | B
+--why A loop whose body runs commands and sets variables but does not change the directory, then an ordinary file named stdin is the script.
+--file stdin
+pass
+--cmd
+for i in 1 2; do echo "$i"; n=$i; done; printf x | python3 stdin
+
+=== CRW-894-vh-06 | B
+--why A case arm that falls through and changes nothing, then an ordinary file named stdin is the script.
+--file stdin
+pass
+--cmd
+case x in x) : ;& y) : ;; esac; printf x | python3 stdin
+
+=== CRW-894-vh-07 | U
+--why Control: a loop body that runs cd to a place the reader cannot name, then dev/stdin may be the pipe (the directory may be /).
+--cmd
+for i in 1 2; do cd "$D"; done; printf 'import shutil; shutil.rmtree("../repo")\n' | python3 dev/stdin
+
+=== CRW-894-vh-08 | U
+--why Control: a loop body that runs cd / changes the directory to /, where dev/stdin is the pipe, after one iteration or more.
+--cmd
+for i in 1; do cd /; done; printf 'import shutil; shutil.rmtree("../repo")\n' | python3 dev/stdin
+
+=== CRW-894-vh-09 | U
+--why Control: a loop body that runs pushd to a place the reader cannot name.
+--cmd
+while false; do pushd "$D"; done; printf 'import shutil; shutil.rmtree("../repo")\n' | python3 dev/stdin
+
+=== CRW-894-vh-10 | U
+--why Control: a loop body that runs popd.
+--cmd
+until true; do popd; done; printf 'import shutil; shutil.rmtree("../repo")\n' | python3 dev/stdin
+
+=== CRW-894-vh-11 | U
+--why Control: a loop body that calls a function that runs cd.
+--cmd
+f() { cd "$D"; }; for i in 1; do f; done; printf 'import shutil; shutil.rmtree("../repo")\n' | python3 dev/stdin
+
+=== CRW-894-vh-12 | U
+--why Control: a loop condition that runs cd.
+--cmd
+while cd "$D"; do break; done; printf 'import shutil; shutil.rmtree("../repo")\n' | python3 dev/stdin
+
+=== CRW-894-vh-13 | U
+--why Control: a case arm that runs cd and falls through.
+--cmd
+case x in x) cd "$D" ;& y) : ;; esac; printf 'import shutil; shutil.rmtree("../repo")\n' | python3 dev/stdin
+
+=== CRW-894-vh-14 | U
+--why Control: an absolute alias after a loop that changes nothing is still the pipe.
+--cmd
+for i in 1 2; do :; done; printf 'import shutil; shutil.rmtree("../repo")\n' | python3 /dev/./stdin

@@ -57,7 +57,22 @@ func activationPublish(path string, b []byte) error {
 	if _, _, e := activationReadFile(path); e != nil {
 		return e
 	}
-	return crwdir.Publish(path, b)
+	return activationPublished(activationCrwdirPublish(path, b))
+}
+
+// activationCrwdirPublish is the write of every file this package publishes; a test replaces it to stage a
+// publication whose directory sync failed.
+var activationCrwdirPublish = crwdir.Publish
+
+// activationPublished counts a publication whose file is in place as done. The activation, the key edits and the
+// deactivation read what they published and write the install manifest after it: failing after the rename would
+// leave config.toml changed with no manifest to undo it from, which is worse than a file whose directory sync is
+// unknown, and the files are not read back on the strength of a power failure (CRW-802).
+func activationPublished(err error) error {
+	if crwdir.Published(err) {
+		return nil
+	}
+	return err
 }
 
 // configLockPathsPublishChecked is activationPublish with check run at the last step, after the new content
@@ -66,7 +81,7 @@ func configLockPathsPublishChecked(path string, b []byte, check func() error) er
 	if _, _, e := activationReadFile(path); e != nil {
 		return e
 	}
-	return crwdir.PublishChecked(path, b, check)
+	return activationPublished(crwdir.PublishChecked(path, b, check))
 }
 
 // activationSetKeyLocked is the whole read-modify-write of one auto-enabled key under the sidecar
@@ -130,13 +145,23 @@ func activationBackup(path string, b []byte, mode fs.FileMode) (err error) {
 	if err = f.Close(); err != nil {
 		return err
 	}
-	if err = crwdir.Publish(tmp, b); err != nil {
+	// The staging file is renamed again below, so its own directory sync says nothing about the backup; the sync
+	// after the final rename does.
+	if err = crwdir.Publish(tmp, b); err != nil && !crwdir.Published(err) {
 		return err
 	}
 	if err = os.Chmod(tmp, mode.Perm()); err != nil {
 		return err
 	}
-	return crwdir.Rename(tmp, target)
+	if err = crwdir.Rename(tmp, target); err != nil {
+		return err
+	}
+	// The backup is what a later restore reads, and config.toml is rewritten next: a backup whose entry may not
+	// survive a power failure stops the activation here, before config.toml changes (CRW-802). A directory that
+	// cannot be opened for the sync (mode 0300) is such a backup too, so its permission error is returned as well;
+	// this differs from activationPublished, which counts a published config.toml or manifest as done because the
+	// files after it depend on it, while nothing has been changed yet when the backup fails.
+	return crwdir.SyncDir(filepath.Dir(target))
 }
 
 func activationFailureMessage(s string) string {

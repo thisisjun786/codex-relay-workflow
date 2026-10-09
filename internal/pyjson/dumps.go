@@ -3,9 +3,11 @@ package pyjson
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"math/big"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -62,7 +64,7 @@ const (
 // written as fmt's %v spells it.
 func Dumps(value any, o Options) string {
 	var b bytes.Buffer
-	w := writer{b: &b, o: o, lenient: true}
+	w := writer{b: &b, o: o, lenient: true, active: map[containerKey]bool{}}
 	_ = w.value(value, 0)
 	return b.String()
 }
@@ -71,7 +73,7 @@ func Dumps(value any, o Options) string {
 // Go value, or a json.Number that is not a JSON number, is an error.
 func Encode(value any, o Options) ([]byte, error) {
 	var b bytes.Buffer
-	w := writer{b: &b, o: o}
+	w := writer{b: &b, o: o, active: map[containerKey]bool{}}
 	if err := w.value(value, 0); err != nil {
 		return nil, err
 	}
@@ -82,6 +84,34 @@ type writer struct {
 	b       *bytes.Buffer
 	o       Options
 	lenient bool
+	// active is the containers the writer is inside of. A value that holds itself is refused
+	// (Encode) or written as null (Dumps) rather than recursing until the stack is exhausted.
+	active map[containerKey]bool
+}
+
+// containerKey names a container by its data and its length: a container nested in itself
+// has the same key on the path back to it, and a shorter view of the same array is not that
+// container.
+type containerKey struct {
+	ptr uintptr
+	n   int
+}
+
+// errCircular is Encode's refusal of a value that contains itself (json.dumps' ValueError).
+var errCircular = errors.New("circular reference detected")
+
+// containerIdentity is the key of a non-empty container value, if it is one.
+func containerIdentity(value any) (containerKey, bool) {
+	switch value.(type) {
+	case map[string]any, []any, []map[string]any, Object:
+	default:
+		return containerKey{}, false
+	}
+	v := reflect.ValueOf(value)
+	if v.Len() == 0 || v.Pointer() == 0 {
+		return containerKey{}, false
+	}
+	return containerKey{ptr: v.Pointer(), n: v.Len()}, true
 }
 
 // separators are json.dumps' item and key separators for these options.
@@ -165,6 +195,17 @@ func (w writer) key(key string) error {
 }
 
 func (w writer) value(value any, depth int) error {
+	if key, ok := containerIdentity(value); ok {
+		if w.active[key] {
+			if w.lenient {
+				w.b.WriteString("null")
+				return nil
+			}
+			return errCircular
+		}
+		w.active[key] = true
+		defer delete(w.active, key)
+	}
 	switch v := value.(type) {
 	case map[string]any:
 		keys := make([]string, 0, len(v))
@@ -233,6 +274,11 @@ func (w writer) float(f float64) {
 func (w writer) number(n json.Number) error {
 	text := string(n)
 	if w.o.Normalize {
+		// The spelling is checked as a JSON number before it is read as a value: big.Int and
+		// ParseFloat accept +1, 01 and similar, which json.loads never produces.
+		if !validNumber(text) {
+			return w.invalid(n)
+		}
 		if !strings.ContainsAny(text, ".eE") {
 			integer, ok := new(big.Int).SetString(text, 10)
 			if !ok {

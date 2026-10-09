@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // TestPolicyReportsAnUnreadableManageConfig is C1 over the route: a management configuration that is
@@ -90,7 +92,7 @@ func TestCatalogTellsUnsupportedFromAFailure(t *testing.T) {
 	}
 	// The stub OCX refuses the command line: nothing on stdout, a usage block on stderr, exit 1.
 	stub := "#!/bin/sh\necho 'Unexpected argument(s): live' >&2\necho 'Usage: ocx models [--provider <name>] [--json]' >&2\nexit 1\n"
-	if err := os.WriteFile(filepath.Join(bin, "ocx"), []byte(stub), 0o700); err != nil {
+	if err := testsupport.WriteProgram(filepath.Join(bin, "ocx"), []byte(stub), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	state, status := catalogAnswer(t)
@@ -99,7 +101,7 @@ func TestCatalogTellsUnsupportedFromAFailure(t *testing.T) {
 	}
 	// The same host with an OCX that runs and fails is a read failure, not unsupported.
 	failing := "#!/bin/sh\necho 'Error: Proxy is not running. Start the intended proxy with: ocx start.' >&2\nexit 1\n"
-	if err := os.WriteFile(filepath.Join(bin, "ocx"), []byte(failing), 0o700); err != nil {
+	if err := testsupport.WriteProgram(filepath.Join(bin, "ocx"), []byte(failing), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	state, status = catalogAnswer(t)

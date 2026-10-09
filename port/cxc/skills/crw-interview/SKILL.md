@@ -1,6 +1,6 @@
 ---
 name: crw-interview
-description: "Use for CRW Interview mode: persistent IPABCD I-phase requirements discovery, contradiction hunting, focused user questions, question/answer evidence recording, and readiness gating before Plan. Triggers: interview, 인터뷰, requirements clarification, ambiguity, contradiction scan, ask me questions, I phase, crw-interview."
+description: "Use for CRW Interview mode: persistent IPABCD I-phase requirements discovery, contradiction hunting, focused user questions, question/answer evidence recording, and readiness gating before Plan. It clarifies one task's requirements inside its PABCD loop; defining a Linear initiative's goal and scope is crw-define's. Triggers: interview, 인터뷰, requirements clarification, ambiguity, contradiction scan, ask me questions, I phase, crw-interview."
 ---
 
 # crw-interview

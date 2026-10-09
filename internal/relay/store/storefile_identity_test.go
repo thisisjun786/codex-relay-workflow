@@ -346,7 +346,7 @@ func TestStoreFileIdentity_attachRefusesAPathRenamedAfterItsReference(t *testing
 	if err := os.Rename(path, filepath.Join(dir, "moved.sqlite3")); err != nil {
 		t.Fatal(err)
 	}
-	if err := live.attach(); err == nil {
+	if err := live.confirm(live.key); err == nil {
 		t.Fatal("attach accepted a path that no longer names the file its reference was taken on")
 	}
 }
@@ -354,7 +354,7 @@ func TestStoreFileIdentity_attachRefusesAPathRenamedAfterItsReference(t *testing
 func TestStoreFileIdentity_attachRefusesAPathThatNamesNothing(t *testing.T) {
 	live := registerLiveStore(filepath.Join(t.TempDir(), "absent.sqlite3"))
 	defer live.release()
-	if err := live.attach(); err == nil {
+	if err := live.confirm(live.key); err == nil {
 		t.Fatal("attach accepted a path that names no file")
 	}
 }

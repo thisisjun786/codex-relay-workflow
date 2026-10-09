@@ -133,7 +133,7 @@ func dispatchCasesRegion(doc []string, section dispatchCasesSection) (int, int, 
 		}
 		end := next
 		for i := header + 2; i < next; i++ {
-			if doc[i] == "" {
+			if strings.TrimSpace(doc[i]) == "" {
 				end = i
 				break
 			}
@@ -150,8 +150,10 @@ func dispatchCasesRegion(doc []string, section dispatchCasesSection) (int, int, 
 	if first < 0 {
 		return 0, 0, fmt.Errorf("%s: %q has no case block", dispatchCasesDoc, section.heading)
 	}
+	// The last case runs to the last non-blank line of the section (CRW-800): text typed after it is
+	// part of that case, --check reports it as drift and --write replaces it with the data file.
 	end := next
-	for end > first && doc[end-1] == "" {
+	for end > first && strings.TrimSpace(doc[end-1]) == "" {
 		end--
 	}
 	return first, end, nil
@@ -177,7 +179,7 @@ func dispatchCasesBlockLines(where, id, text string) ([]string, error) {
 		return nil, fmt.Errorf("%s: a block file ends with one newline", where)
 	}
 	block := lines(body)
-	if block[0] == "" || block[len(block)-1] == "" {
+	if strings.TrimSpace(block[0]) == "" || strings.TrimSpace(block[len(block)-1]) == "" {
 		return nil, fmt.Errorf("%s: a block file starts and ends with a case line, not a blank one", where)
 	}
 	lead, ok := dispatchCasesCaseID(block[0])
@@ -222,6 +224,10 @@ func dispatchCasesRegionText(root string, section dispatchCasesSection) ([]strin
 		text, err := readText(filepath.Join(dir, name))
 		if err != nil {
 			return nil, err
+		}
+		if strings.Contains(text, "\r") {
+			// The document is refused for a CR, so a CR copied from a data file would make the next run refuse what this one wrote.
+			return nil, fmt.Errorf("%s: a data file must use LF line endings", where)
 		}
 		if section.kind == dispatchCasesTable {
 			line, err := dispatchCasesRowLine(where, match[2], text)

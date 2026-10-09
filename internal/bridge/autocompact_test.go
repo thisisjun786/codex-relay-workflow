@@ -3,6 +3,7 @@ package bridge
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -171,5 +172,48 @@ func TestAnExceptionCarriesNoAutoCompactLimit(t *testing.T) {
 	}
 	if _, present := autoCompactConfig(t, host, "thread/start")[settings.AutoCompactTokenLimitKey]; present {
 		t.Fatalf("an exception carried the role pair's limit: %v", autoCompactConfig(t, host, "thread/start"))
+	}
+}
+
+// CRW-1000 (review P3): the receipt of a send that carried the limit is stored in the ledger with the
+// limit marked unobservable, and the same request id replays that receipt with the limit still in it,
+// without a second resume or turn.
+func TestSendMessageStoresAndReplaysTheReceiptWithTheLimit(t *testing.T) {
+	b, host := policyBridge(t, autoCompactPolicy)
+	cwd := t.TempDir()
+	host.Respond("thread/read", fakehost.Reply{Result: map[string]any{"thread": map[string]any{"status": map[string]any{"type": "idle"}}}})
+	host.Respond("thread/resume", startReply(cwd))
+	host.Respond("turn/start", fakehost.Reply{Result: map[string]any{"turn": map[string]any{"id": "turn-1"}}})
+	send := SendMessage{RequestID: "auto-compact-replay", ThreadID: "thread-1", Message: "work", Role: "child", Expected: map[string]any{"model": "explicit-model", "reasoning_effort": "high"}}
+	receipt, err := b.SendMessageToThread(context.Background(), send)
+	if err != nil || receipt["status"] != "accepted" {
+		t.Fatalf("receipt=%v err=%v", receipt, err)
+	}
+	check := func(label string, got map[string]any) {
+		t.Helper()
+		section := autoCompactReceiptSettings(t, got)
+		requested := pyjson.Map(section["requested"])
+		if fmt.Sprint(requested[settings.AutoCompactTokenLimitKey]) != "550000" {
+			t.Fatalf("%s: the receipt does not carry the limit it sent under requested: %v", label, section)
+		}
+		if !autoCompactListed(section["unobservable"], settings.AutoCompactTokenLimitKey) {
+			t.Fatalf("%s: the limit is not marked unobservable: %v", label, section)
+		}
+		if autoCompactListed(section["verified"], settings.AutoCompactTokenLimitKey) {
+			t.Fatalf("%s: the limit is marked verified: %v", label, section)
+		}
+	}
+	stored, err := b.GetOperation(context.Background(), "auto-compact-replay")
+	if err != nil {
+		t.Fatal(err)
+	}
+	check("stored", stored)
+	replayed, err := b.SendMessageToThread(context.Background(), send)
+	if err != nil {
+		t.Fatal(err)
+	}
+	check("replayed", replayed)
+	if host.Count("thread/resume") != 1 || host.Count("turn/start") != 1 {
+		t.Fatalf("the replay sent again: resume=%d turn=%d", host.Count("thread/resume"), host.Count("turn/start"))
 	}
 }
