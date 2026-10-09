@@ -13,31 +13,33 @@ type jsonToolUse struct {
 	at   int
 }
 
-// jsonModuleName is whether a file of the module search path directory is a module python imports for the name json: a source
-// or byte-code module (json.py, json.pyc, json.pyw) or a compiled extension module, bare or with an ABI tag (json.so,
-// json.abi3.so, json.cpython-312-x86_64-linux-gnu.so, json.pyd).
-func jsonModuleName(n string) bool {
-	switch n {
-	case "json.py", "json.pyc", "json.pyw":
-		return true
+// pythonModuleFile is whether a file of a module search path directory is a module python may import: a source or byte-code
+// module (.py, .pyc, .pyw) or a compiled extension module, bare or with an ABI tag (.so, .abi3.so, .cpython-312-x86_64-linux-gnu.so,
+// .pyd). Its name does not matter: json.tool imports many standard modules after json, and which ones depends on the python.
+func pythonModuleFile(n string) bool {
+	for _, ext := range []string{".py", ".pyc", ".pyw", ".pyd", ".so"} {
+		if strings.HasSuffix(n, ext) {
+			return true
+		}
 	}
-	return strings.HasPrefix(n, "json.") && (strings.HasSuffix(n, ".so") || strings.HasSuffix(n, ".pyd"))
+	return false
 }
 
 // jsonToolQuiet are the programs that create no file but through the redirections of their record: next to them the files a
 // text writes are its redirections, which checkJSONToolWrites reads. A program outside the list (cp, tar, unzip, curl, dd, an
-// interpreter, a shell script, a function) may write a json module the reader cannot name.
+// interpreter, a shell script, a function) may write a python module the reader cannot name.
 var jsonToolQuiet = map[string]bool{
 	"": true, "printf": true, "echo": true, "cat": true, "head": true, "tail": true, "grep": true, "egrep": true, "fgrep": true,
 	"jq": true, "wc": true, "tr": true, "cut": true, "ls": true, "pwd": true, "cd": true, "true": true, "false": true, ":": true,
 	"test": true, "[": true, "sleep": true, "date": true, "wait": true, "set": true, "exit": true,
 }
 
-// checkJSONToolWrites proves, once the whole text is read, that no record of it writes a json module where a python -m json.tool
-// of the text finds one. Every record counts, the ones after the module too: a loop runs a later copy before the next
+// checkJSONToolWrites proves, once the whole text is read, that no record of it writes a python module where a python -m
+// json.tool of the text finds one. Every record counts, the ones after the module too: a loop runs a later copy before the next
 // json.tool, and a background or pipeline neighbour runs at the same time. A record other than json.tool itself must be a
-// program of jsonToolQuiet, and no redirection may write a json module (json.py, json.so, json.*.so, ...) into the module's
-// directory or an __init__ into its json directory; a redirection that may (its target or its directory unknown) is refused.
+// program of jsonToolQuiet, and no redirection may write a python module (argparse.py, json.so, json.*.so, ...) into the
+// module's directory or an __init__ into a directory of it; a redirection that may (its target or its directory unknown) is
+// refused.
 // Directories are compared after the symbolic links that exist are followed, so a link to the directory is the directory.
 func (w *walker) checkJSONToolWrites() error {
 	if len(w.jsonTools) == 0 {
@@ -57,7 +59,7 @@ func (w *walker) checkJSONToolWrites() error {
 				if e.Kind == KindScriptFile && e.Script.Known {
 					what = e.Name + " " + e.Script.Value
 				}
-				return unreadablef("%s -m json.tool runs in a text that runs %s, which may write a json module the reader cannot see", u.name, what)
+				return unreadablef("%s -m json.tool runs in a text that runs %s, which may write a python module the reader cannot see", u.name, what)
 			}
 			for _, r := range e.Redirs {
 				if err := jsonToolRedirect(u, r, e.Dir); err != nil {
@@ -69,7 +71,7 @@ func (w *walker) checkJSONToolWrites() error {
 	return nil
 }
 
-// jsonToolRedirect refuses a redirection that writes, or may write, a module python -m json.tool imports.
+// jsonToolRedirect refuses a redirection that writes, or may write, a module python -m json.tool may import.
 func jsonToolRedirect(u jsonToolUse, r Redir, recDir Dir) error {
 	switch r.Op {
 	case "<", "<<", "<<-", "<<<", "<&":
@@ -84,9 +86,9 @@ func jsonToolRedirect(u jsonToolUse, r Redir, recDir Dir) error {
 	}
 	t := strings.TrimRight(r.Target.Value, "/")
 	base := t[strings.LastIndexByte(t, '/')+1:]
-	module, init := jsonModuleName(base), strings.HasPrefix(base, "__init__.")
+	module, init := pythonModuleFile(base), strings.HasPrefix(base, "__init__.")
 	if !module && !init {
-		return nil // a file of any other name is no json module wherever it lies
+		return nil // a file of any other name is no python module wherever it lies
 	}
 	if !filepath.IsAbs(t) && !recDir.Known {
 		return unreadablef("%s -m json.tool runs in a text that writes %s in a directory the reader does not know", u.name, t)
@@ -95,11 +97,10 @@ func jsonToolRedirect(u jsonToolUse, r Redir, recDir Dir) error {
 		t = recDir.Path + "/" + t
 	}
 	parent := realPath(t[:strings.LastIndexByte(t, '/')+1])
-	want := realPath(u.dir.Path)
 	if init {
-		want = realPath(u.dir.Path + "/json")
+		parent = filepath.Dir(parent) // the __init__ of a package directory of the module's directory
 	}
-	if parent == want {
+	if parent == realPath(u.dir.Path) {
 		return unreadablef("%s -m json.tool imports %s, which this text writes", u.name, r.Target.Value)
 	}
 	return nil

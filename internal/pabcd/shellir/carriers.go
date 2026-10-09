@@ -794,8 +794,8 @@ var pythonModuleFlags = []string{"--sort-keys", "--no-ensure-ascii", "--tab", "-
 // module may run what it reads (pdb, code, runpy, http.server, a module the working directory holds), and so may an operand of
 // json.tool (it names a file the module writes); they are unreadable. The options are a closed list: a flag, or --indent with an
 // integer. The module is the standard library's only when the working directory, the first entry of the module search path of
-// python -m, holds no module named json (see pythonJSONShadow): a text that does not show the directory, or shows a json
-// module there or writes one, runs code the reader cannot read.
+// python -m, holds no python module (see pythonJSONShadow): a text that does not show the directory, or shows a module there
+// or writes one, runs code the reader cannot read.
 func (w *walker) checkPythonModule(name string, module Word, rest []Word, dir Dir) error {
 	mod, err := knownValue(module, name+" -m module")
 	if err != nil {
@@ -839,10 +839,12 @@ func allDigits(s string) bool {
 	return true
 }
 
-// pythonJSONShadow proves that python -m json.tool runs the standard library: the directory is known, the directory holds no
-// module that would be found in it (a json package with an __init__, json.py, json.pyc, or a compiled json extension module),
-// and the text writes none there (checkJSONToolWrites, once the whole text is read). A directory the reader cannot list holds
-// nothing it can prove; one that does not exist holds no module.
+// pythonJSONShadow proves that python -m json.tool runs the standard library. The working directory heads the module search
+// path of python -m, and json.tool imports through it json and, after it, many more standard modules (argparse, re, shutil,
+// inspect, locale, ...; the list changes from one python to the next). So the directory must be known, hold no python module
+// at all (a .py, .pyc, .pyw, .pyd or .so file, or a directory with an __init__), and the text must write none there
+// (checkJSONToolWrites, once the whole text is read). A directory the reader cannot list holds nothing it can prove; one that
+// does not exist holds no module.
 func (w *walker) pythonJSONShadow(name string, dir Dir) error {
 	if dir.Unset {
 		return nil // a reading with no directory: the readings that have one make this judgment
@@ -862,22 +864,23 @@ func (w *walker) pythonJSONShadow(name string, dir Dir) error {
 	}
 	for _, e := range entries {
 		n := e.Name()
+		if pythonModuleFile(n) {
+			return unreadablef("%s -m json.tool imports from the working directory first, and it holds the python module %s", name, n)
+		}
+		if !e.IsDir() && e.Type()&fs.ModeSymlink == 0 {
+			continue
+		}
+		sub, err := os.ReadDir(filepath.Join(dir.Path, n))
 		switch {
-		case jsonModuleName(n):
-			return unreadablef("%s -m json.tool would run %s of the working directory, not the standard library", name, n)
-		case n == "json":
-			sub, err := os.ReadDir(filepath.Join(dir.Path, n))
-			switch {
-			case err == nil:
-			case errors.Is(err, fs.ErrNotExist), errors.Is(err, syscall.ENOTDIR):
-				continue
-			default:
-				return unreadablef("%s -m json.tool: the directory json cannot be listed: %v", name, err)
-			}
-			for _, f := range sub {
-				if fn := f.Name(); strings.HasPrefix(fn, "__init__.") {
-					return unreadablef("%s -m json.tool would run the json package of the working directory", name)
-				}
+		case err == nil:
+		case errors.Is(err, fs.ErrNotExist), errors.Is(err, syscall.ENOTDIR):
+			continue
+		default:
+			return unreadablef("%s -m json.tool: the directory %s of the working directory cannot be listed: %v", name, n, err)
+		}
+		for _, f := range sub {
+			if strings.HasPrefix(f.Name(), "__init__.") {
+				return unreadablef("%s -m json.tool imports from the working directory first, and it holds the python package %s", name, n)
 			}
 		}
 	}

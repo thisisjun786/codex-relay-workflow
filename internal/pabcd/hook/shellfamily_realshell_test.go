@@ -126,3 +126,23 @@ func TestPythonJSONToolRunsTheLocalModule(t *testing.T) {
 		t.Fatalf("the standard library module did not run in an empty directory: %q (%v)", out, err)
 	}
 }
+
+// TestPythonJSONToolRunsALocalStandardModule (CRW-894, fix round 2): json.tool imports argparse after the working directory heads
+// the module search path, so a local argparse.py runs under the real python3; the reader refuses python -m json.tool in a
+// directory that holds any python module (row vr-31).
+func TestPythonJSONToolRunsALocalStandardModule(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 is not installed")
+	}
+	const marker = "from-local-argparse"
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "argparse.py"), []byte("print('"+marker+"')\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("bash", "-c", "printf '{}' | python3 -m json.tool")
+	cmd.Dir = dir
+	out, _ := cmd.CombinedOutput()
+	if !strings.Contains(string(out), marker) {
+		t.Fatalf("the local argparse module did not run: %q", out)
+	}
+}
