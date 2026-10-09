@@ -454,6 +454,30 @@ test("the screen heads a lost write by what the file holds: Not saved for anothe
   assert.ok(!done.markup.includes("Not saved") && !done.markup.includes("Result unknown"));
 });
 
+// CRW-994 (verification round 2) on the rendered screen: a first re-read that still finds the starting
+// digest is not a refusal. The request may publish after it, so the headline stays Result unknown, the
+// page keeps reading on its own, and it follows the late write to Saved.
+test("the screen keeps a lost write Result unknown when the first re-read finds the starting digest, then follows a late write to Saved", async () => {
+  const pure = await import("../src/policy-state.ts");
+  let state = pure.initialScreen();
+  state = pure.screenLoaded(state, pure.decodePolicy(readingBody()));
+  state = pure.screenAllowedDraft(state, "anthropic/opus", ["max"]);
+  const out = await pure.runSave(state as never, {
+    check: async () => ({ status: 200, body: { valid: true, errors: [], currentDigest: "a".repeat(64), stale: false, diff: [] } }),
+    write: async () => { throw new Error("connection lost"); },
+  });
+  const first = pure.screenLoaded(out.state, pure.decodePolicy(readingBody()), true);
+  const unchanged = await mount(first as unknown as Record<string, unknown>);
+  assert.ok(unchanged.markup.includes("Result unknown"), "one reading at the starting digest settles nothing");
+  assert.ok(!unchanged.markup.includes("Not saved"));
+  assert.equal(pure.lostRecheckDelay(first), pure.LOST_RECHECK_MS, "the page reads again on its own");
+  const late = pure.screenLoaded(first, pure.decodePolicy({ ...readingBody(), digest: "b".repeat(64), registeredDigest: "b".repeat(64), allowed: [{ model: "anthropic/opus", efforts: ["max"] }] }), true);
+  const saved = await mount(late as unknown as Record<string, unknown>);
+  assert.ok(saved.markup.includes("Saved"));
+  assert.ok(!saved.markup.includes("Not saved") && !saved.markup.includes("Result unknown"));
+  assert.equal(pure.lostRecheckDelay(late), null);
+});
+
 test("a save in flight disables the screen's other edit controls", async () => {
   const pure = await import("../src/policy-state.ts");
   let state = pure.initialScreen();

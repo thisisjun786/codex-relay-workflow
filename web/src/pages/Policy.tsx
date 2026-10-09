@@ -817,10 +817,11 @@ export function PolicyPage() {
     };
   }, [reload]);
 
-  // A lost write whose file already holds the change but whose wiring record has not caught up is a
-  // registration still running on the server (or failing and about to be put back). Its heading stays
-  // Result unknown, and the screen reads again on a timer, within the registration's bound, so the
-  // verdict follows the file to Saved or Not saved without the operator pressing anything.
+  // A lost write whose result is open - the file is still at the starting digest (the request may not
+  // have reached it yet), or it holds the change but the wiring record has not caught up (the
+  // registration is still running, or failing and about to be put back) - stays Result unknown, and
+  // the screen reads again on a timer, within the server's bound for a write, so the verdict follows
+  // the file to Saved or Not saved without the operator pressing anything.
   const recheck = lostRecheckDelay(state);
   useEffect(() => {
     if (recheck === null) return;

@@ -29,6 +29,7 @@ import {
   judgeLostWrite,
   readingHoldsChange,
   LOST_RECHECK_LIMIT,
+  LOST_RECHECK_MS,
   saveHeading,
   modelLadder,
   modelOptions,
@@ -706,14 +707,84 @@ test("a lost write whose request cannot name its change stays unknown when the d
   const judged = judgeLostWrite(lost, readingWithTheLostChange());
   assert.equal(judged.lost.outcome, "unknown");
   assert.equal(judged.lost.awaitingRegistration, false);
-  assert.equal(judgeLostWrite(lost, reading()).lost.outcome, "not_stored");
+  assert.equal(judgeLostWrite(lost, reading()).lost.outcome, "unknown", "one reading at the starting digest settles nothing");
+  assert.equal(judgeLostWrite({ ...lost, readings: LOST_RECHECK_LIMIT - 1 }, reading()).lost.outcome, "not_stored", "at the bound it does");
 });
 
-test("a lost write re-read that still finds the starting digest is headed Not saved", async () => {
+// CRW-994 (verification round 2): one reading at the starting digest is not evidence that the write
+// was refused. The request may still be waiting for the policy lock, or be past its last cancellation
+// check and about to exchange the file (internal/policystore/policy_write.go), when the first re-read
+// lands, so the screen keeps the result unknown and keeps reading within the server's bound.
+test("a lost write re-read that still finds the starting digest stays Result unknown and reads again", async () => {
   const state = screenLoaded(await afterLostWrite(), reading(), true);
+  assert.equal(saveHeading(state.notice), "Result unknown");
+  assert.equal(state.notice?.lost?.outcome, "unknown");
+  assert.ok(state.notice?.text.includes("started from"), state.notice?.text);
+  assert.ok(!state.notice?.text.includes("was not stored"), "one reading does not settle it");
+  assert.equal(lostRecheckDelay(state), 2000, "the screen reads again on its own");
+});
+
+test("a write that lands after a first reading at the starting digest is followed to Saved", async () => {
+  let state = screenLoaded(await afterLostWrite(), reading(), true);
+  assert.equal(saveHeading(state.notice), "Result unknown");
+  state = screenLoaded(state, reading(), true);
+  assert.equal(saveHeading(state.notice), "Result unknown");
+  assert.equal(lostRecheckDelay(state), 2000);
+  // The delayed write publishes, then registers.
+  state = screenLoaded(state, readingWithTheLostChange({ registeredDigest: "a".repeat(64) }), true);
+  assert.equal(saveHeading(state.notice), "Result unknown");
+  assert.equal(lostRecheckDelay(state), 2000);
+  state = screenLoaded(state, readingWithTheLostChange(), true);
+  assert.equal(saveHeading(state.notice), "Saved");
+  assert.equal(state.notice?.lost?.outcome, "stored");
+  assert.equal(lostRecheckDelay(state), null);
+});
+
+test("a file still at the starting digest once the server's bound has passed is Not saved", async () => {
+  let state = screenLoaded(await afterLostWrite(), reading(), true);
+  let readings = 1;
+  while (lostRecheckDelay(state) !== null) {
+    assert.equal(saveHeading(state.notice), "Result unknown", `reading ${readings}`);
+    assert.ok(readings < LOST_RECHECK_LIMIT, "bounded");
+    state = screenLoaded(state, reading(), true);
+    readings += 1;
+  }
+  assert.equal(readings, LOST_RECHECK_LIMIT);
   assert.equal(saveHeading(state.notice), "Not saved");
-  assert.ok(state.notice?.text.includes("was not stored"), "the notice says the change was not stored");
   assert.equal(state.notice?.lost?.outcome, "not_stored");
+  assert.ok(state.notice?.text.includes("was not stored"), state.notice?.text);
+});
+
+test("the bound covers the server's lock wait and its two minute decision phase", () => {
+  // internal/policystore: writeLockTimeout (10 s) before the exchange, writeDecisionTimeout (2 min)
+  // after it; the readings are at least LOST_RECHECK_MS apart.
+  assert.ok((LOST_RECHECK_LIMIT - 1) * LOST_RECHECK_MS >= 130_000);
+});
+
+// CRW-994 (verification round 2): a reading that is not registered judges nothing, but it is still
+// one of the bounded readings; otherwise a record that went away while a registration was awaited
+// kept the screen reading every two seconds for ever.
+test("readings that are not registered spend the bound, and the result stays unknown", async () => {
+  for (const other of [
+    reading({ state: "unreadable", reason: "the file could not be read", digest: "" }),
+    reading({ state: "not_registered", reason: "no record", digest: "" }),
+  ]) {
+    for (const start of [
+      screenLoaded(await afterLostWrite(), readingWithTheLostChange({ registeredDigest: "a".repeat(64) }), true),
+      screenLoaded(await afterLostWrite(), reading(), true),
+      await afterLostWrite(),
+    ]) {
+      let state = start;
+      let delays = 0;
+      while (lostRecheckDelay(state) !== null) {
+        delays += 1;
+        assert.ok(delays <= LOST_RECHECK_LIMIT, `bounded (${other.state})`);
+        state = screenLoaded(state, other, true);
+      }
+      assert.equal(saveHeading(state.notice), "Result unknown", other.state);
+      assert.equal(state.notice?.lost?.outcome, "unknown");
+    }
+  }
 });
 
 test("a lost write whose re-read fails stays Result unknown", async () => {
