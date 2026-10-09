@@ -73,7 +73,7 @@ func ReadCLIStdin(in io.Reader) string {
 // DrainNow deliberately ignores both wake switches: explicit collection still works. It selects and stamps under the store lock.
 func DrainNow(ws string, sessionID *string, clock func() time.Time) string {
 	return silent(func() string {
-		out, _ := deliver(ws, sessionID, clock, func(due []BgRecord) (string, []BgRecord) { return fitWake(due, completionBody, jsonSize) }, acceptAll)
+		out, _ := deliver(ws, sessionID, clock, nil, func(due []BgRecord) (string, []BgRecord) { return fitWake(due, completionBody, jsonSize) }, acceptAll)
 		return out
 	})
 }

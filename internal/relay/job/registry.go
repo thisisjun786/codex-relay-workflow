@@ -605,8 +605,10 @@ func HasAnyTask(ws string, sessionID *string, clock func() time.Time) (bool, err
 // deliver hands the session's due completions over (CRW-1092). Under the store lock it selects them from the records as they are now,
 // renders them, emits the text and stamps them delivered only once the emission has succeeded, so a failed write leaves them pending
 // for a later wake and a concurrent hook sees them stamped. render answers the text and the completions it describes: only those are
-// stamped, and one the budget left out stays pending (CRW-1095). It returns the emitted text, "" when there was none.
-func deliver(ws string, sessionID *string, clock func() time.Time, render func([]BgRecord) (string, []BgRecord), emit func(string) error) (string, error) {
+// stamped, and one the budget left out stays pending (CRW-1095). suppressed, when there is one, is asked under the lock too: a wake that
+// was on before the wait for the lock may have been turned off by a writer that held it (CRW-1092). It returns the emitted text, ""
+// when there was none.
+func deliver(ws string, sessionID *string, clock func() time.Time, suppressed func() bool, render func([]BgRecord) (string, []BgRecord), emit func(string) error) (string, error) {
 	unlock, err := lockStore(ws)
 	if errors.Is(err, os.ErrNotExist) {
 		return "", nil
@@ -615,6 +617,9 @@ func deliver(ws string, sessionID *string, clock func() time.Time, render func([
 		return "", err
 	}
 	defer unlock()
+	if suppressed != nil && suppressed() {
+		return "", nil
+	}
 	due, err := selectWake(ws, sessionID, WakeBatchLimit, clock, true)
 	if err != nil || len(due) == 0 {
 		return "", err

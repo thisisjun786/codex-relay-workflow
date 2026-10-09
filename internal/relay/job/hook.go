@@ -165,7 +165,7 @@ func completion(p HookPayload, cwd string, getenv func(string) string, clock fun
 		if WakeSuppressed(ws, getenv) {
 			return ""
 		}
-		out, _ := deliver(ws, PayloadSessionID(p, getenv), clock, func(due []BgRecord) (string, []BgRecord) {
+		out, _ := deliver(ws, PayloadSessionID(p, getenv), clock, func() bool { return WakeSuppressed(ws, getenv) }, func(due []BgRecord) (string, []BgRecord) {
 			return fitWake(due, func(n int, lines []string) string {
 				body := completionBody(n, lines)
 				if text.Trim(body) == "" {

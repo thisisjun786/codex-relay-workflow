@@ -319,7 +319,7 @@ func cliTail(arg *string, available int) int {
 // the relay's answer, which the dispatcher writes after it returns: the stamp still comes before that write. The text keeps the wake
 // budget as a JSON string, and a job it does not describe stays pending (CRW-1095).
 func cliDrain(cwd string, session *string, clock func() time.Time) string {
-	out, _ := deliver(cwd, session, clock, func(recs []BgRecord) (string, []BgRecord) {
+	out, _ := deliver(cwd, session, clock, nil, func(recs []BgRecord) (string, []BgRecord) {
 		return fitWake(recs, completionBody, jsonSize)
 	}, acceptAll)
 	return out
