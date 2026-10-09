@@ -5,6 +5,7 @@ import (
 	"path"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/shellir"
@@ -100,11 +101,17 @@ func memoryGateReasonFor(a MemoryWriteAttempt, sid, cwd string, leaf bool) strin
 }
 
 func memoryGateLabel(s string) string {
-	r := []rune(s)
-	if len(r) > 100 {
-		return string(r[:100]) + "..."
+	if len(s) <= 100 {
+		return s
 	}
-	return s
+	end := 0
+	for at, r := range s {
+		if at+utf8.RuneLen(r) > 100 {
+			break
+		}
+		end = at + utf8.RuneLen(r)
+	}
+	return s[:end] + "..."
 }
 
 // memoryGateSpend names the authorization the state holds for this turn: the CLI grant first, then the marker. A marker that

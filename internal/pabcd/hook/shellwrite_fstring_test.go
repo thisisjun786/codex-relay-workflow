@@ -139,8 +139,8 @@ func TestShellWriteFStringGate(t *testing.T) {
 		})
 	}
 	unreadable := "python3 -c \"f'{open(file='" + root + "/a', mode='w')\""
-	want := "(a program the gate cannot read: " + shellWriteFStringUnreadableWhat + ")"
-	if got := memoryGateClassify("Bash", map[string]any{"command": unreadable}, cwd, env); got.Surface != "shell" || got.Target != want {
+	want := "unreadable-program"
+	if got := memoryGateClassify("Bash", map[string]any{"command": unreadable}, cwd, env); got.Surface != "shell" || got.Cause != want {
 		t.Errorf("unreadable: %+v, want the shell surface and %s", got, want)
 	}
 	// The unreadable branch sits behind the protected-root guard, so a session with no root makes no attempt. host.Home

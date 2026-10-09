@@ -67,7 +67,7 @@ func TestMemoryGateRefusesToRewriteALongInterviewTracker(t *testing.T) {
 	gateSeed(t, cwd, func(s *state.State) { s.MemoryWriteGrant = true })
 	before := rewriteStoredPatch(t, state.StatePath(cwd, gateSession), rewriteStoredInterview())
 	reason := gateDeny(t, HandleMemoryWriteGate(gatePayload(t, cwd, nil), env))
-	if !strings.Contains(reason, "cannot rewrite") {
+	if !strings.Contains(reason, "authorization-state") {
 		t.Errorf("reason: %s", reason)
 	}
 	if after, _ := os.ReadFile(state.StatePath(cwd, gateSession)); string(after) != string(before) {
