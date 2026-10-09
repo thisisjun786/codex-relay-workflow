@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -206,11 +207,13 @@ func writeState(cwd string, next State, now time.Time, rename func(tmp, finalPat
 	// A file that cannot be read cannot be shown clean, so only a missing file is a new write; any other read error returns
 	// before a temp file is staged. A directory at the path (EISDIR) holds no escape and the rename onto it fails by itself,
 	// so it falls through to that failure, which the oracle's write also reports.
-	switch raw, readErr := os.ReadFile(finalPath); {
+	switch raw, readErr := readExisting(finalPath); {
 	case readErr == nil:
 		if rewriteLosslessUnpaired(raw) {
 			return fmt.Errorf("refusing to rewrite %s: it holds an unpaired surrogate escape that a rewrite would replace with U+FFFD", finalPath)
 		}
+	case errors.Is(readErr, errNotRegular):
+		return fmt.Errorf("refusing to rewrite %s: %w", finalPath, readErr)
 	case !errors.Is(readErr, fs.ErrNotExist) && !errors.Is(readErr, syscall.EISDIR):
 		return fmt.Errorf("refusing to rewrite %s: it cannot be checked for an unpaired surrogate escape: %w", finalPath, readErr)
 	}
@@ -246,6 +249,36 @@ func writeState(cwd string, next State, now time.Time, rename func(tmp, finalPat
 		return &PublishedError{Err: err}
 	}
 	return nil
+}
+
+// errNotRegular is the answer for a state path that holds something other than a regular file (a FIFO, a device, a socket, or a
+// link to one).
+var errNotRegular = errors.New("the path is not a regular file")
+
+// readExisting reads the file at path for the lone-surrogate check without ever blocking on it. The open is non-blocking, so a
+// FIFO with no writer returns at once instead of waiting for one, and the descriptor is inspected before any read: only a regular
+// file is read. A directory returns EISDIR (the rename onto it fails by itself later), a missing path fs.ErrNotExist, and a FIFO,
+// device or socket (opening a socket fails with ENXIO) errNotRegular. A symbolic link is followed, as the rename's replacement
+// of it was never refused.
+func readExisting(path string) ([]byte, error) {
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		if errors.Is(err, syscall.ENXIO) {
+			return nil, errNotRegular
+		}
+		return nil, err
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	switch {
+	case err != nil:
+		return nil, err
+	case fi.IsDir():
+		return nil, syscall.EISDIR
+	case !fi.Mode().IsRegular():
+		return nil, errNotRegular
+	}
+	return io.ReadAll(f)
 }
 
 // makeSessionsDir is ensureCodexclawDir(cwd) then mkdirSync(sessionsDir, { recursive: true }), in that order.

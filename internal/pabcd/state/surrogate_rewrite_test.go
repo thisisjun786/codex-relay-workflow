@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
+	"time"
 )
 
 // CRW-1005: the CXC Node original keeps a lone UTF-16 surrogate escape (\ud800) in a stored string when it rewrites the state,
@@ -102,5 +104,71 @@ func TestWriteStateCreatesAFileThatDoesNotExist(t *testing.T) {
 	}
 	if back, _ := ReadStateStrict(cwd, "s"); back.Slug != "x" {
 		t.Fatalf("the new file did not read back: slug %q", back.Slug)
+	}
+}
+
+// The check opens the destination before staging anything. A special file there must not make that open or read block: a FIFO
+// with no writer never returns from a blocking read, so the write would neither publish nor refuse, and a caller inside
+// WithSessionLock would keep the lock for good. The target is refused at once with the bytes (here: the node) left as they were.
+func TestWriteStateRefusesASpecialFileWithoutBlocking(t *testing.T) {
+	for _, mode := range []string{"fifo", "symlink-to-fifo"} {
+		for _, locked := range []bool{false, true} {
+			name := mode
+			if locked {
+				name += "-under-lock"
+			}
+			t.Run(name, func(t *testing.T) {
+				cwd := t.TempDir()
+				if err := makeSessionsDir(cwd); err != nil {
+					t.Fatal(err)
+				}
+				path := StatePath(cwd, "s")
+				fifo := path
+				if mode == "symlink-to-fifo" {
+					fifo = filepath.Join(cwd, "target.fifo")
+				}
+				if err := syscall.Mkfifo(fifo, 0o666); err != nil {
+					t.Skipf("no FIFOs here: %v", err)
+				}
+				if fifo != path {
+					if err := os.Symlink(fifo, path); err != nil {
+						t.Fatal(err)
+					}
+				}
+				// Releases a write that is blocked on the FIFO, so a failing run does not leave a goroutine behind.
+				t.Cleanup(func() {
+					if f, err := os.OpenFile(fifo, os.O_RDWR|syscall.O_NONBLOCK, 0); err == nil {
+						_ = f.Close()
+					}
+				})
+				write := func() error { return WriteState(cwd, State{Phase: "P", SessionID: "s"}) }
+				if locked {
+					outer := write
+					write = func() error { return WithSessionLock(cwd, "s", outer) }
+				}
+				done := make(chan error, 1)
+				go func() { done <- write() }()
+				select {
+				case err := <-done:
+					if err == nil {
+						t.Fatal("WriteState wrote over a special file")
+					}
+				case <-time.After(5 * time.Second):
+					t.Fatal("WriteState blocked on a FIFO with no writer")
+				}
+				if fi, err := os.Lstat(path); err != nil || (mode == "fifo" && fi.Mode()&os.ModeNamedPipe == 0) || (mode != "fifo" && fi.Mode()&os.ModeSymlink == 0) {
+					t.Fatalf("the refused write replaced the target: %v, %v", fi, err)
+				}
+				if entries, _ := os.ReadDir(filepath.Dir(path)); len(entries) != 1 {
+					t.Fatalf("a refused write left %d entries in the sessions directory, want 1", len(entries))
+				}
+				if locked {
+					// the lock was released: a second holder gets in at once
+					if err := WithSessionLock(cwd, "s", func() error { return nil }); err != nil {
+						t.Fatalf("the session lock was not released after the refused write: %v", err)
+					}
+				}
+			})
+		}
 	}
 }
