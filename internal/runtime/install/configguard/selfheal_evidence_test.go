@@ -1,12 +1,16 @@
 package configguard
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 // CRW-1150: the report-only SessionStart probe shares one short deadline, and an explicit command's
@@ -448,7 +452,8 @@ func TestSelfHealEvidenceLegacyCacheDoesNotOutrankTheEvidence(t *testing.T) {
 	runner := &selfHealEvidenceRunner{version: "codex-cli 1.2.3", listing: selfHealReportSoftOff}
 	selfHealEvidenceRecord(t, home, runner)
 	marker, err := ReadSelfHealMarkerFile(home)
-	if err != nil || marker == nil || marker.Probe == nil || marker.AllEnabled == nil || !*marker.AllEnabled {
+	// Recording the evidence retires the legacy cache (allEnabled false is the oracle's cache miss).
+	if err != nil || marker == nil || marker.Probe == nil || marker.AllEnabled == nil || *marker.AllEnabled {
 		t.Fatalf("setup: %+v %v", marker, err)
 	}
 	runner.calls = nil
@@ -462,5 +467,235 @@ func TestSelfHealEvidenceLegacyCacheDoesNotOutrankTheEvidence(t *testing.T) {
 	outcomes = SelfHealReport(SelfHealReportDeps{CodexHome: home, Cwd: selfHealEvidenceCwd(t, home), Run: runner.run})
 	if runner.listings() != 1 || len(outcomes) == 0 || outcomes[0].Action != SelfHealReportOff {
 		t.Fatalf("the legacy cache hid a version change: %+v %v", outcomes, runner.calls)
+	}
+}
+
+// CRW-1150 verification round 2: a layer that is a FIFO (or any file that is not a regular file)
+// is never read. Before the fix the fingerprint opened it with a plain read and the hook waited for
+// a writer past its own deadline and the K1 limit; now the layer counts as unreadable, the record is
+// not reused and the round ends inside the shared deadline.
+func TestSelfHealEvidenceFifoLayerHonorsTheDeadline(t *testing.T) {
+	prevDeadline, prevWait := selfHealReportProbeDeadline, selfHealReportWaitDelay
+	selfHealReportProbeDeadline, selfHealReportWaitDelay = 300*time.Millisecond, 200*time.Millisecond
+	t.Cleanup(func() { selfHealReportProbeDeadline, selfHealReportWaitDelay = prevDeadline, prevWait })
+	home := selfHealReportTempHome(t)
+	selfHealReportWriteConfig(t, home)
+	project := selfHealEvidenceCwd(t, home)
+	selfHealEvidenceWriteProjectConfig(t, project, "[features]\nhooks = true\n")
+	runner := &selfHealEvidenceRunner{version: "codex-cli 1.2.3", listing: selfHealReportSoftOn}
+	selfHealEvidenceRecord(t, home, runner)
+	layer := filepath.Join(project, ".codex", "config.toml")
+	if err := os.Remove(layer); err != nil {
+		t.Fatal(err)
+	}
+	if err := unix.Mkfifo(layer, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// A reader the fix failed to avoid is released at the end, so the package does not hang.
+	t.Cleanup(func() {
+		if f, err := os.OpenFile(layer, os.O_WRONLY|syscall.O_NONBLOCK, 0); err == nil {
+			_ = f.Close()
+		}
+	})
+	dir := selfHealReportFakeCodexAt(t)
+	log := filepath.Join(dir, "calls.log")
+	selfHealReportWriteFakeCodex(t, dir, "printf '%s\\n' \"$*\" >> \""+log+"\"\n"+
+		"if [ \"$1\" = --version ]; then echo 'codex-cli 1.2.3'; exit 0; fi\n"+
+		"if [ \"$1\" = features ] && [ \"$2\" = list ]; then printf '%s' '"+selfHealReportSoftOn+"'; exit 0; fi\n"+
+		"exit 1\n")
+	t.Chdir(project)
+	type result struct {
+		out  string
+		code int
+	}
+	done := make(chan result, 1)
+	start := time.Now()
+	go func() {
+		var out strings.Builder
+		code := RunSelfHealReportHook(context.Background(), strings.NewReader(selfHealReportSessionStart), &out, selfHealReportEnv(home))
+		done <- result{out.String(), code}
+	}()
+	select {
+	case r := <-done:
+		if r.code != 0 || r.out != "" {
+			t.Fatalf("exit %d stdout %q, want silence", r.code, r.out)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("the hook still ran %v after a 300ms deadline: a FIFO layer blocked the fingerprint", time.Since(start))
+	}
+	calls := selfHealReportCalls(t, log)
+	if len(calls) == 0 || calls[len(calls)-1] != "features list" {
+		t.Fatalf("an unreadable layer reused the record instead of listing: %v", calls)
+	}
+}
+
+// A layer or a config.toml that names a device or a FIFO is an error of the fingerprint, returned at
+// once, never a read.
+func TestSelfHealEvidenceFingerprintRefusesFilesThatAreNotRegular(t *testing.T) {
+	home := selfHealReportTempHome(t)
+	project := selfHealEvidenceCwd(t, home)
+	if err := os.MkdirAll(filepath.Join(project, ".codex"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	layer := filepath.Join(project, ".codex", "config.toml")
+	if err := os.Symlink("/dev/zero", layer); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := selfHealLayersDigest(home, project)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("a device layer was fingerprinted")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the fingerprint read a device layer without end")
+	}
+	fifo := filepath.Join(home, "config.toml")
+	if err := unix.Mkfifo(fifo, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if f, err := os.OpenFile(fifo, os.O_WRONLY|syscall.O_NONBLOCK, 0); err == nil {
+			_ = f.Close()
+		}
+	})
+	go func() {
+		_, err := selfHealConfigDigest(home)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("a FIFO config.toml was fingerprinted")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the config digest waited on a FIFO config.toml")
+	}
+}
+
+// A working directory reached through a symbolic link is the physical directory codex runs in
+// (getcwd); the layers of its physical ancestors apply, and a change there gives a fresh listing
+// even while the hook's logical PWD stays the same.
+func TestSelfHealEvidenceSymlinkPhysicalAncestorChangeMeasuresAgain(t *testing.T) {
+	home := selfHealReportTempHome(t)
+	selfHealReportWriteConfig(t, home)
+	root := filepath.Dir(home)
+	physical := filepath.Join(root, "physical", "parent", "project")
+	if err := os.MkdirAll(physical, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "logical"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	logical := filepath.Join(root, "logical", "link")
+	if err := os.Symlink(physical, logical); err != nil {
+		t.Fatal(err)
+	}
+	runner := &selfHealEvidenceRunner{version: "codex-cli 1.2.3", listing: selfHealReportSoftOn}
+	selfHealEvidenceRecordIn(t, home, logical, runner)
+	if marker, err := ReadSelfHealMarkerFile(home); err != nil || marker == nil || marker.Probe == nil {
+		t.Fatalf("setup: %+v %v", marker, err)
+	}
+	selfHealEvidenceWriteProjectConfig(t, filepath.Join(root, "physical", "parent"), "[features]\ndefault_mode_request_user_input = false\n")
+
+	runner.calls, runner.listing = nil, selfHealReportSoftOff
+	outcomes := SelfHealReport(SelfHealReportDeps{CodexHome: home, Cwd: logical, Run: runner.run})
+	if runner.listings() != 1 || len(outcomes) != 1 || outcomes[0].Action != SelfHealReportOff {
+		t.Fatalf("a physical ancestor layer change kept the record: %+v %v", outcomes, runner.calls)
+	}
+
+	// The real hook, with the logical PWD the shell keeps.
+	dir := selfHealReportFakeCodexAt(t)
+	log := filepath.Join(dir, "calls.log")
+	selfHealReportWriteFakeCodex(t, dir, "printf '%s\\n' \"$*\" >> \""+log+"\"\n"+
+		"if [ \"$1\" = --version ]; then echo 'codex-cli 1.2.3'; exit 0; fi\n"+
+		"if [ \"$1\" = features ] && [ \"$2\" = list ]; then printf '%s' '"+selfHealReportSoftOff+"'; exit 0; fi\n"+
+		"exit 1\n")
+	t.Chdir(logical)
+	t.Setenv("PWD", logical)
+	if wd, err := os.Getwd(); err != nil || wd != logical {
+		t.Fatalf("setup: the hook's working directory reads %q (%v), want the logical %q", wd, err, logical)
+	}
+	out, code := selfHealReportRun(t, home, selfHealReportSessionStart)
+	if code != 0 || !strings.Contains(out, "default_mode_request_user_input") {
+		t.Fatalf("exit %d stdout %q, want the fresh off notice", code, out)
+	}
+	calls := selfHealReportCalls(t, log)
+	if len(calls) == 0 || calls[len(calls)-1] != "features list" {
+		t.Fatalf("the hook reused the record over a changed physical ancestor layer: %v", calls)
+	}
+}
+
+// A recording attempt that fails must not hand authority back to the legacy mtime cache: the
+// dropped evidence leaves a marker whose allEnabled no longer vouches, so the next round lists.
+func TestSelfHealEvidenceFailedRecordingCannotResurrectTheLegacyCache(t *testing.T) {
+	home := selfHealReportTempHome(t)
+	path := selfHealReportWriteConfig(t, home)
+	selfHealReportWriteMarker(t, home, "{\"checkedAt\":\"2025-12-31T00:00:00.000Z\",\"allEnabled\":true,"+
+		"\"cachedKeys\":[\"default_mode_request_user_input\",\"goals\"],\"configMtimeMs\":"+selfHealReportMarkerMtimeMs(t, path)+"}\n")
+	runner := &selfHealEvidenceRunner{version: "codex-cli 1.2.3", listing: selfHealReportSoftOff}
+	selfHealEvidenceRecord(t, home, runner)
+	failing := &selfHealEvidenceRunner{version: "", listing: selfHealReportSoftOff}
+	selfHealEvidenceRecord(t, home, failing)
+	marker, err := ReadSelfHealMarkerFile(home)
+	if err != nil || marker == nil || marker.Probe != nil {
+		t.Fatalf("setup: the failed recording kept the record: %+v %v", marker, err)
+	}
+	runner.calls = nil
+	outcomes := SelfHealReport(SelfHealReportDeps{CodexHome: home, Cwd: selfHealEvidenceCwd(t, home), Run: runner.run})
+	if runner.listings() != 1 || len(outcomes) == 0 || outcomes[0].Action != SelfHealReportOff {
+		t.Fatalf("the legacy cache vouched again after a failed recording: %+v %v", outcomes, runner.calls)
+	}
+
+	// A legacy-only marker whose first recording attempt already fails is retired as well: the
+	// command changed the flags the cache described.
+	fresh := selfHealReportTempHome(t)
+	freshPath := selfHealReportWriteConfig(t, fresh)
+	selfHealReportWriteMarker(t, fresh, "{\"allEnabled\":true,\"cachedKeys\":[\"default_mode_request_user_input\",\"goals\"],\"configMtimeMs\":"+
+		selfHealReportMarkerMtimeMs(t, freshPath)+"}\n")
+	selfHealEvidenceRecord(t, fresh, failing)
+	runner.calls = nil
+	outcomes = SelfHealReport(SelfHealReportDeps{CodexHome: fresh, Cwd: selfHealEvidenceCwd(t, fresh), Run: runner.run})
+	if runner.listings() != 1 {
+		t.Fatalf("a legacy cache survived a failed recording attempt: %+v %v", outcomes, runner.calls)
+	}
+}
+
+// probeEvidence that does not parse (an older form without layersSha256, or a damaged record) is not
+// the same as no probeEvidence at all: the legacy cache beside it does not vouch, and a marker that
+// never carried probeEvidence keeps the oracle's cache hit.
+func TestSelfHealEvidenceUnparsableRecordDoesNotRestoreTheLegacyCache(t *testing.T) {
+	home := selfHealReportTempHome(t)
+	path := selfHealReportWriteConfig(t, home)
+	legacy := "\"allEnabled\":true,\"cachedKeys\":[\"default_mode_request_user_input\",\"goals\"],\"configMtimeMs\":" + selfHealReportMarkerMtimeMs(t, path)
+	selfHealReportWriteMarker(t, home, "{"+legacy+",\"probeEvidence\":{\"codexVersion\":\"codex-cli 1.2.3\",\"configSha256\":\"x\","+
+		"\"recordedAt\":\"2026-10-10T00:00:00.000Z\",\"features\":{\"default_mode_request_user_input\":false}}}\n")
+	runner := &selfHealEvidenceRunner{version: "codex-cli 1.2.3", listing: selfHealReportSoftOff}
+	outcomes := SelfHealReport(SelfHealReportDeps{CodexHome: home, Cwd: selfHealEvidenceCwd(t, home), Run: runner.run})
+	if runner.listings() != 1 || len(outcomes) == 0 || outcomes[0].Action != SelfHealReportOff {
+		t.Fatalf("the legacy cache vouched beside an unparsable record: %+v %v", outcomes, runner.calls)
+	}
+	// Rewriting such a marker (an opt-out cleared) does not hand the cache back its authority.
+	if err := ClearSelfHealOptOut(home); err != nil {
+		t.Fatal(err)
+	}
+	runner.calls = nil
+	outcomes = SelfHealReport(SelfHealReportDeps{CodexHome: home, Cwd: selfHealEvidenceCwd(t, home), Run: runner.run})
+	if runner.listings() != 1 {
+		t.Fatalf("a rewrite restored the legacy cache: %+v %v", outcomes, runner.calls)
+	}
+
+	plain := selfHealReportTempHome(t)
+	plainPath := selfHealReportWriteConfig(t, plain)
+	selfHealReportWriteMarker(t, plain, "{\"allEnabled\":true,\"cachedKeys\":[\"default_mode_request_user_input\",\"goals\"],\"configMtimeMs\":"+
+		selfHealReportMarkerMtimeMs(t, plainPath)+"}\n")
+	runner.calls = nil
+	outcomes = SelfHealReport(SelfHealReportDeps{CodexHome: plain, Cwd: selfHealEvidenceCwd(t, plain), Run: runner.run})
+	if len(runner.calls) != 0 || len(outcomes) != 1 || outcomes[0].Reason != SelfHealReasonCached {
+		t.Fatalf("a legacy-only marker lost the cache hit: %+v %v", outcomes, runner.calls)
 	}
 }

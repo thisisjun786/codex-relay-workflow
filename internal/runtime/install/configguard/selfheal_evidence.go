@@ -3,9 +3,14 @@ package configguard
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
+	"fmt"
+	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
@@ -77,9 +82,49 @@ func selfHealProbeEvidenceObject(e *SelfHealProbeEvidence) pyjson.Object {
 	}
 }
 
+// selfHealEvidenceMaxBytes bounds one fingerprinted file: a config layer larger than this is not
+// fingerprinted, and evidence is then neither recorded nor reused.
+const selfHealEvidenceMaxBytes = 8 << 20
+
+// selfHealEvidenceHash is the sha256 of a config file the evidence names, or nil when nothing is
+// there. The SessionStart hook reads these files inside its shared deadline, so the read can never
+// wait: the file is opened without blocking (a FIFO with no writer opens at once), and anything that
+// is not a regular file once open (a FIFO, a device, a directory) is an error, as is a file past
+// selfHealEvidenceMaxBytes. A dangling link is an error, not an absent file, as activationReadFile
+// has it.
+func selfHealEvidenceHash(path string) (*string, error) {
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			if _, lerr := os.Lstat(path); errors.Is(lerr, fs.ErrNotExist) {
+				return nil, nil
+			}
+		}
+		return nil, err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file (%s)", path, info.Mode().Type())
+	}
+	sum := sha256.New()
+	n, err := io.Copy(sum, io.LimitReader(f, selfHealEvidenceMaxBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if n > selfHealEvidenceMaxBytes {
+		return nil, fmt.Errorf("%s is larger than %d bytes", path, selfHealEvidenceMaxBytes)
+	}
+	digest := hex.EncodeToString(sum.Sum(nil))
+	return &digest, nil
+}
+
 // selfHealConfigDigest names the config.toml the evidence was measured against.
 func selfHealConfigDigest(home string) (string, error) {
-	digest, err := hashOrNull(filepath.Join(home, "config.toml"))
+	digest, err := selfHealEvidenceHash(filepath.Join(home, "config.toml"))
 	if err != nil {
 		return "", err
 	}
@@ -92,29 +137,43 @@ func selfHealConfigDigest(home string) (string, error) {
 // selfHealLayerFiles are the config layers other than the user's config.toml that codex reads for a
 // session in cwd: the project layers (.codex/config.toml of cwd and of each ancestor, which also
 // names the project) and the system and managed layers. A layer that is absent contributes nothing,
-// so one appearing changes the fingerprint.
-func selfHealLayerFiles(home, cwd string) []string {
+// so one appearing changes the fingerprint. cwd is walked as given and, when it differs, as the
+// physical directory it resolves to: codex takes its working directory from getcwd, which names the
+// physical directory, while the hook's os.Getwd keeps a logical PWD that went through a symbolic
+// link, so both ancestor chains are covered.
+func selfHealLayerFiles(home string, cwds ...string) []string {
 	files := []string{"/etc/codex/config.toml", "/etc/codex/managed_config.toml", "/etc/codex/requirements.toml",
 		filepath.Join(home, "managed_config.toml"), filepath.Join(home, "requirements.toml")}
-	for dir := cwd; ; dir = filepath.Dir(dir) {
-		files = append(files, filepath.Join(dir, ".codex", "config.toml"))
-		if filepath.Dir(dir) == dir {
-			break
+	seen := map[string]bool{}
+	for _, cwd := range cwds {
+		for dir := cwd; ; dir = filepath.Dir(dir) {
+			if layer := filepath.Join(dir, ".codex", "config.toml"); !seen[layer] {
+				seen[layer] = true
+				files = append(files, layer)
+			}
+			if filepath.Dir(dir) == dir {
+				break
+			}
 		}
 	}
 	return files
 }
 
 // selfHealLayersDigest fingerprints the layers that apply to a codex run in cwd besides the user's
-// config.toml. An unknown or relative cwd, or a layer that cannot be read, is an error: evidence is
-// then neither recorded nor reused, and the hook measures.
+// config.toml. An unknown or relative cwd, one whose physical directory cannot be resolved, or a
+// layer that cannot be read, is an error: evidence is then neither recorded nor reused, and the hook
+// measures.
 func selfHealLayersDigest(home, cwd string) (string, error) {
 	if !filepath.IsAbs(cwd) {
 		return "", errSelfHealLayersUnknown
 	}
+	physical, err := filepath.EvalSymlinks(cwd)
+	if err != nil {
+		return "", err
+	}
 	sum := sha256.New()
-	for _, path := range selfHealLayerFiles(home, filepath.Clean(cwd)) {
-		digest, err := hashOrNull(path)
+	for _, path := range selfHealLayerFiles(home, filepath.Clean(cwd), filepath.Clean(physical)) {
+		digest, err := selfHealEvidenceHash(path)
 		if err != nil {
 			return "", err
 		}
@@ -191,13 +250,32 @@ func RecordSelfHealEvidence(deps RecordSelfHealEvidenceDeps) error {
 	return WriteSelfHealMarkerFile(deps.CodexHome, marker)
 }
 
+// dropSelfHealEvidence removes the record of an older measurement after a recording attempt that
+// could not measure. The attempt follows a command that changed the declared flags, so the oracle's
+// mtime cache no longer describes them either: it is retired too (selfHealRetireLegacyCache), and a
+// marker with neither is left as it is.
 func dropSelfHealEvidence(home string) error {
 	marker, err := ReadSelfHealMarkerFile(home)
-	if err != nil || marker == nil || marker.Probe == nil {
+	if err != nil || marker == nil {
 		return err
 	}
+	if marker.Probe == nil && !marker.probeSeen && (marker.AllEnabled == nil || !*marker.AllEnabled) {
+		return nil
+	}
 	marker.Probe = nil
+	selfHealRetireLegacyCache(marker)
 	return WriteSelfHealMarkerFile(home, marker)
+}
+
+// selfHealRetireLegacyCache turns the oracle's all-enabled cache off (allEnabled false is the
+// oracle's own spelling of a cache miss) once probe evidence has been recorded in, read from or
+// dropped from a marker, so the mtime cache cannot vouch again when the evidence is gone or no
+// longer parses. A marker that never carried evidence keeps its cache.
+func selfHealRetireLegacyCache(marker *SelfHealMarker) {
+	if marker.AllEnabled != nil && *marker.AllEnabled {
+		off := false
+		marker.AllEnabled = &off
+	}
 }
 
 // selfHealEvidenceState is the recorded flag state when the evidence still describes this codex

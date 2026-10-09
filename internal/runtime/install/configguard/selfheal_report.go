@@ -90,9 +90,10 @@ func SelfHealReport(deps SelfHealReportDeps) []SelfHealReportOutcome {
 	configMtimeMs := selfHealReportMtimeMs(filepath.Join(deps.CodexHome, "config.toml"))
 	// A cache that predates a SOFT_FEATURES addition must not vouch for the new key.
 	cacheCoversCurrentKeys := marker != nil && marker.CachedKeys != nil && selfHealReportCovers(marker.CachedKeys, healable)
-	// A marker that carries verified evidence is judged by the evidence alone: the mtime cache an
-	// older CXC wrote must not vouch ahead of a newer explicit finding (CRW-1150).
-	if marker != nil && marker.Probe == nil && marker.AllEnabled != nil && *marker.AllEnabled && cacheCoversCurrentKeys &&
+	// A marker that carries verified evidence, even evidence that no longer parses, is judged by the
+	// evidence alone: the mtime cache an older CXC wrote must not vouch ahead of a newer explicit
+	// finding (CRW-1150).
+	if marker != nil && marker.Probe == nil && !marker.probeSeen && marker.AllEnabled != nil && *marker.AllEnabled && cacheCoversCurrentKeys &&
 		marker.ConfigMtimeMs != nil && configMtimeMs != nil && *marker.ConfigMtimeMs == *configMtimeMs {
 		return []SelfHealReportOutcome{{Action: SelfHealReportSkipped, Reason: SelfHealReasonCached}}
 	}

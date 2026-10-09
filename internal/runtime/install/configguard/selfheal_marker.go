@@ -22,7 +22,10 @@ type SelfHealMarker struct {
 	HealedKeys, CachedKeys []string
 	// Probe is the verified execution evidence an explicit command recorded (CRW-1150).
 	Probe *SelfHealProbeEvidence
-	order []string
+	// probeSeen is true when the marker read carried a probeEvidence field, parsed or not: such a
+	// marker is never judged by the legacy mtime cache (CRW-1150).
+	probeSeen bool
+	order     []string
 }
 
 func SelfHealMarkerPath(home string) string { return filepath.Join(home, SelfHealMarkerName) }
@@ -65,7 +68,8 @@ func ParseSelfHealMarker(raw string) *SelfHealMarker {
 	}
 	m.HealedKeys = stringsOnly(o.Get("healedKeys"))
 	m.CachedKeys = stringsOnly(o.Get("cachedKeys"))
-	m.Probe = parseSelfHealProbeEvidence(o.Get("probeEvidence"))
+	probe, probeSeen := o.Lookup("probeEvidence")
+	m.Probe, m.probeSeen = parseSelfHealProbeEvidence(probe), probeSeen
 	return m
 }
 
@@ -134,6 +138,9 @@ func selfHealMarkerObject(m *SelfHealMarker) (pyjson.Object, error) {
 // WriteSelfHealMarkerFile publishes through the same protected, fsynced temporary
 // file and rename as activation. It never reuses another writer's fixed .tmp path.
 func WriteSelfHealMarkerFile(home string, marker *SelfHealMarker) error {
+	if marker.Probe != nil || marker.probeSeen {
+		selfHealRetireLegacyCache(marker)
+	}
 	fields, err := selfHealMarkerObject(marker)
 	if err != nil {
 		return err
