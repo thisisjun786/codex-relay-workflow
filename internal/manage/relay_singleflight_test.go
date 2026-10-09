@@ -69,11 +69,6 @@ func (d *singleFlightDoctor) lines(name string) int {
 	return strings.Count(string(data), "\n")
 }
 
-func (d *singleFlightDoctor) others() []string {
-	data, _ := os.ReadFile(filepath.Join(d.dir, "other.calls"))
-	return strings.Fields(strings.ReplaceAll(strings.TrimSpace(string(data)), "\n", " \n "))
-}
-
 // waitDoctors waits until the fake has started n doctor calls.
 func (d *singleFlightDoctor) waitDoctors(n int) {
 	d.t.Helper()
