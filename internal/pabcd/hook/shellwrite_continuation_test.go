@@ -76,6 +76,40 @@ func TestCRW851AttributeChainBeforeBuiltins(t *testing.T) {
 	}
 }
 
+// TestCRW851NewStatementBeforeBuiltins (verifier P0 of the correction round): a line end is not spacing between the dot of an
+// attribute chain and the name after it, so a statement that ends in a dot (the Ellipsis, the number 1.) does not make the
+// builtins of the next statement another object's attribute. The destination of the write is named, and the gate denies it
+// without a grant.
+func TestCRW851NewStatementBeforeBuiltins(t *testing.T) {
+	cwd, root, env := gateScene(t)
+	body := "\"\"\"open(file=\"{MEMORY}/a\",mode=\"w\")\"\"\""
+	for _, c := range []struct{ name, program string }{
+		{"Ellipsis", "import builtins; x = ...\nbuiltins.exec(" + body + ")"},
+		{"number with a dot", "import builtins; x = 1.\nbuiltins.exec(" + body + ")"},
+		{"number with a dot, __builtins__ eval", "import builtins; x = 1.\n__builtins__.eval(" + body + ")"},
+		{"CR before the line end", "import builtins; x = ...\r\nbuiltins.exec(" + body + ")"},
+		{"lone CR line end", "import builtins; x = ...\rbuiltins.exec(" + body + ")"},
+		{"blank before the line end, indented", "import builtins\nif True:\n    x = 1. \n    builtins.exec(" + body + ")"},
+		{"compile after a new statement", "import builtins; x = ...\nc = builtins.compile(" + body + ", 'f', 'exec')"},
+		{"continuation after the new statement", "import builtins; x = ...\nbuiltins \\\n.exec(" + body + ")"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			program := strings.ReplaceAll(c.program, "{MEMORY}", root)
+			command := "python3 -c '" + program + "'"
+			if got := ShellWriteDestinations(command); !slices.Contains(got, root+"/a") {
+				t.Errorf("ShellWriteDestinations named %q, want %q: %q", got, root+"/a", command)
+			}
+			got := memoryGateClassify("Bash", map[string]any{"command": command}, cwd, env)
+			if got.Surface != "shell" || !strings.HasSuffix(got.Target, "/a") || strings.HasPrefix(got.Target, "(") {
+				t.Errorf("memoryGateClassify = %+v, want a shell attempt that names %s/a: %q", got, root, command)
+			}
+			gateSeed(t, cwd, func(s *state.State) {})
+			payload := gatePayload(t, cwd, map[string]any{"tool_name": "Bash", "tool_input": map[string]any{"command": command}})
+			gateDeny(t, HandleMemoryWriteGate(payload, env))
+		})
+	}
+}
+
 // TestCRW851ContinuationRowsThroughTheMemoryGate runs the rows of file 21 through HandleMemoryWriteGate with the state a session
 // has: an E row (a write the gate must see) is denied without a grant, and a grant is consumed by it; a control row passes with
 // no grant and leaves a granted session's grant unspent.
@@ -119,7 +153,7 @@ func TestCRW851ContinuationRowsThroughTheMemoryGate(t *testing.T) {
 			}
 		})
 	}
-	if rows < 22 {
-		t.Errorf("read %d rows of file 21, want at least 22", rows)
+	if rows < 28 {
+		t.Errorf("read %d rows of file 21, want at least 28", rows)
 	}
 }

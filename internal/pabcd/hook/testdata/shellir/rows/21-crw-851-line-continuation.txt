@@ -120,3 +120,36 @@ python3 -c 'import types; runner = types.SimpleNamespace(__builtins__=types.Simp
 __builtins__ \
 . \
 eval(x)'
+
+=== CRW-851-lc-12 | E
+--why Control of the attribute-chain look-back (verifier P0): the statement before ends in an Ellipsis, so the dot in front of builtins is no attribute operator; the next statement builtins.exec writes the protected file.
+python3 -c 'import builtins; x = ...
+builtins.exec("""open(file="{MEMORY}/a",mode="w")""")'
+
+=== CRW-851-lc-13 | E
+--why The statement before ends in the number 1. (a dot), then a new statement builtins.exec.
+python3 -c 'import builtins; x = 1.
+builtins.exec("""open(file="{MEMORY}/a",mode="w")""")'
+
+=== CRW-851-lc-14 | E
+--why The number 1. at the end of the line, then __builtins__.eval on the next line.
+python3 -c 'import builtins; x = 1.
+__builtins__.eval("""open(file="{MEMORY}/a",mode="w")""")'
+
+=== CRW-851-lc-15 | E
+--why A CR LF line end after the Ellipsis, then builtins.exec.
+python3 -c 'import builtins; x = ...{CR}
+builtins.exec("""open(file="{MEMORY}/a",mode="w")""")'
+
+=== CRW-851-lc-16 | E
+--why Blanks after the dot of 1. and then the line end, then builtins.exec on an indented line of the same block.
+python3 -c 'import builtins
+if True:
+    x = 1. 
+    builtins.exec("""open(file="{MEMORY}/a",mode="w")""")'
+
+=== CRW-851-lc-17 | E
+--why A new statement after the Ellipsis that continues with a backslash and a newline before the dot of the call.
+python3 -c 'import builtins; x = ...
+builtins \
+.exec("""open(file="{MEMORY}/a",mode="w")""")'
