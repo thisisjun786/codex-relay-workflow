@@ -70,3 +70,31 @@ func TestCRW1062EntryPointRefusesTheNamedShapes(t *testing.T) {
 		}
 	}
 }
+
+// TestCRW1062ResidualBypassesAreRefused (CRW-1062, pre-merge findings d1 to d4): a move or a Git removal the guard passed
+// because a nested shell, an unrelated directory, POSIX option parsing or a Git global option hid the checkout. The
+// controls next to them stay allowed.
+func TestCRW1062ResidualBypassesAreRefused(t *testing.T) {
+	r := newDelRig(t)
+	r.denied(t,
+		// d1: find -exec runs sh -c; the {} placeholder is the checkout at run time.
+		"find ../repo -maxdepth 0 -exec sh -c 'mv {} /tmp/gone' \\;",
+		"find ../repo -maxdepth 0 -exec sh -c 'git worktree remove -f {}' \\;",
+		// d2: the source is unknown from an unrelated directory; it may name the checkout through a variable.
+		"cd /tmp && mv \"$SRC\" /tmp/gone",
+		// d3: with POSIXLY_CORRECT, -S is an operand and ../repo is a source.
+		"POSIXLY_CORRECT=1 mv build.log -S ../repo /tmp/gone",
+		// d4: Git global options before the subcommand.
+		"git -P worktree remove -f ../repo",
+		"git --no-pager worktree remove -f ../repo",
+		"printf '../%s\\n' repo | xargs git -P worktree remove -f",
+	)
+	r.allowed(t,
+		"find . -maxdepth 0 -exec sh -c 'echo {}' \\;",
+		"mv build.log \"$DEST\"",
+		"POSIXLY_CORRECT=1 mv build.log archive/",
+		"POSIXLY_CORRECT=1 mv -t archive/ build.log",
+		"git -P status",
+		"git --no-pager worktree list",
+	)
+}

@@ -29,3 +29,35 @@ echo x | xargs wc -l
 === CRW-1062-07 | B
 --why control: a move of a file inside the worktree names no checkout or ancestor.
 mv build.log archive/
+
+=== CRW-1062-08 | none/allow/deny
+--why find runs sh -c; the mv inside it takes its source from the placeholder {}, which is the checkout at run time.
+find {CHECKOUT} -maxdepth 0 -exec sh -c 'mv {} /tmp/gone' \;
+
+=== CRW-1062-09 | none/allow/deny
+--why a move from an unrelated directory whose source is a variable: the variable may hold the checkout path.
+cd /tmp && mv "$SRC" /tmp/gone
+
+=== CRW-1062-10 | none/allow/deny
+--why POSIXLY_CORRECT stops mv option parsing at the first operand, so -S is an operand and the checkout is a source.
+POSIXLY_CORRECT=1 mv build.log -S {CHECKOUT} /tmp/gone
+
+=== CRW-1062-11 | none/allow/deny
+--why a supported git global option (-P) before worktree remove: the removal of the checkout.
+git -P worktree remove -f {CHECKOUT}
+
+=== CRW-1062-12 | none/allow/deny
+--why a removal fed through xargs with a git global option (--no-pager) before worktree remove.
+printf '%s\n' {CHECKOUT} | xargs git --no-pager worktree remove -f
+
+=== CRW-1062-13 | attempt/allow/allow
+--why control: a move whose source is known and whose destination is a variable is not refused by the worktree guard (the memory gate asks for a grant for the unknown destination, as on dev).
+mv build.log "$DEST"
+
+=== CRW-1062-14 | B
+--why control: a nested shell under find runs a command that names no checkout.
+find . -maxdepth 0 -exec sh -c 'echo {}' \;
+
+=== CRW-1062-15 | B
+--why control: a POSIXLY_CORRECT move inside the worktree stays allowed.
+POSIXLY_CORRECT=1 mv build.log archive/

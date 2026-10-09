@@ -934,3 +934,11 @@ Linear issue CRW-1062 (description, 10-09)	echo {CHECKOUT},x | xargs -d, git wor
 Linear issue CRW-1062 (description, 10-09)	echo {CHECKOUT} | xargs git worktree remove -f	CRW-1062-05	row	-
 Linear issue CRW-1062 (description, 10-09)	echo x | xargs wc -l	CRW-1062-06	row	-
 Linear issue CRW-1062 (description, 10-09)	mv build.log archive/	CRW-1062-07	row	-
+pre-merge evaluation of 12b216b2 (findings d1 to d4 and the controls next to them)	find {CHECKOUT} -maxdepth 0 -exec sh -c 'mv {} /tmp/gone' \;	CRW-1062-08	row	-
+pre-merge evaluation of 12b216b2 (findings d1 to d4 and the controls next to them)	cd /tmp && mv "$SRC" /tmp/gone	CRW-1062-09	row	-
+pre-merge evaluation of 12b216b2 (findings d1 to d4 and the controls next to them)	POSIXLY_CORRECT=1 mv build.log -S {CHECKOUT} /tmp/gone	CRW-1062-10	row	-
+pre-merge evaluation of 12b216b2 (findings d1 to d4 and the controls next to them)	git -P worktree remove -f {CHECKOUT}	CRW-1062-11	row	-
+pre-merge evaluation of 12b216b2 (findings d1 to d4 and the controls next to them)	printf '%s\n' {CHECKOUT} | xargs git --no-pager worktree remove -f	CRW-1062-12	row	-
+pre-merge evaluation of 12b216b2 (findings d1 to d4 and the controls next to them)	mv build.log "$DEST"	CRW-1062-13	row	-
+pre-merge evaluation of 12b216b2 (findings d1 to d4 and the controls next to them)	find . -maxdepth 0 -exec sh -c 'echo {}' \;	CRW-1062-14	row	-
+pre-merge evaluation of 12b216b2 (findings d1 to d4 and the controls next to them)	POSIXLY_CORRECT=1 mv build.log archive/	CRW-1062-15	row	-
