@@ -28,10 +28,15 @@ is distinct from that parent goal.
 
 Two distinct things, do not conflate them:
 
-- **Hook hint (narrow):** `UserPromptSubmit` detects `interview` / `인터뷰`
-  and other existing lexical phase hints and injects scoped advice only. Natural
-  hints never enter or advance a phase. A line-anchored `orchestrate i` command
-  instead takes the existing explicit-command parser path.
+- **Hook hint (narrow):** `UserPromptSubmit` injects scoped advice only, and only
+  when a prompt names the PABCD marker (`crw-pabcd`, `crw:crw-pabcd`, or `pabcd로` /
+  `pabcd phase`), a request verb (`use`, `run`, `start`, `invoke`, `enter`, `apply`,
+  or 시작, 진행, 적용, 실행, 돌려, 써서, 으로, 들어가) and a phase word (`interview` /
+  `인터뷰`, plan, audit, build, check, or `phase X`). A bare `인터뷰 먼저 해줘`,
+  `interview me first` or `pabcd로 인터뷰 해줘` (no request verb) injects nothing;
+  `Use crw-pabcd to start the interview` injects phase I. Natural hints never enter
+  or advance a phase. A line-anchored `orchestrate i` command instead takes the
+  existing explicit-command parser path.
 - **Agent judgment (broad):** for unclear requirements phrased otherwise, select
   `crw-interview` and its applicable references. Loading a skill is not a state
   transition. When phase entry is authorized, use `crw pabcd orchestrate I --session <id>`
