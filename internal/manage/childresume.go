@@ -442,9 +442,7 @@ func resumeRun(ctx context.Context, e *Env, cfg *Config, opts resumeOptions) (*r
 	rootEnv := resumeLookupEnv(e)
 	var refusal error
 	if opts.dryRun {
-		if conflict := stateroot.Resolve(rootEnv, read.Thread.Cwd, settings.CWD, child); conflict != nil {
-			refusal = conflict
-		}
+		refusal = stateroot.Resolve(rootEnv, read.Thread.Cwd, settings.CWD, child)
 	} else {
 		refusal = stateroot.Guard(rootEnv, read.Thread.Cwd, settings.CWD, child)
 	}
@@ -483,14 +481,17 @@ func resumeRun(ctx context.Context, e *Env, cfg *Config, opts resumeOptions) (*r
 	if err != nil {
 		return nil, err
 	}
-	// The host took the resume: the child now runs at the cwd it was resumed at.
-	stateroot.Moved(rootEnv, read.Thread.Cwd, settings.CWD, child)
-	var resumedSettings struct{ Model, ReasoningEffort string }
+	// The host took the resume: the anchor follows the cwd it reports for the child, which is not
+	// necessarily the one the record asked for.
+	var resumedSettings struct{ Model, ReasoningEffort, Cwd string }
 	if err := json.Unmarshal(resumed, &resumedSettings); err != nil {
 		return nil, &resumeFailure{Reason: string(hostReadHostError), Detail: "thread/resume result: " + err.Error()}
 	}
 	if mismatch := resumeCompare(settings, resumedSettings.Model, resumedSettings.ReasoningEffort); mismatch != "" {
 		return nil, &resumeFailure{Reason: resumeSettingsMismatch, Detail: mismatch + "; no turn was started"}
+	}
+	if err := stateroot.Moved(rootEnv, read.Thread.Cwd, resumedSettings.Cwd, child); err != nil {
+		return nil, &resumeFailure{Reason: stateroot.CodeOf(err), Detail: err.Error() + "; the child was resumed but no turn was started"}
 	}
 	// 3. mcpServerStatus/list: every server this command stopped must read as disabled.
 	listed, err := call("mcpServerStatus/list", map[string]any{"threadId": child, "detail": "toolsAndAuthOnly", "limit": 500})

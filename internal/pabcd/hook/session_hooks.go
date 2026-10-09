@@ -9,6 +9,7 @@
 package hook
 
 import (
+	"errors"
 	"os"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
@@ -52,17 +53,25 @@ func SessionHookSessionStart(p SessionHookSessionStartPayload) string {
 }
 
 func sessionHookSessionStart(p SessionHookSessionStartPayload, env host.LookupEnv) string {
-	if conflict := stateroot.Bootstrap(env, p.Cwd, p.SessionID); conflict != nil {
-		return sessionHookAnswer("SessionStart", sessionHookStateRootContext(conflict))
+	if refusal := stateroot.Bootstrap(env, p.Cwd, p.SessionID); refusal != nil {
+		return sessionHookAnswer("SessionStart", sessionHookStateRootContext(refusal))
 	}
 	_, _ = state.EnsureState(p.Cwd, p.SessionID)
-	stateroot.Bootstrapped(env, p.Cwd, p.SessionID)
 	return ""
 }
 
-// sessionHookStateRootContext is what SessionStart tells an agent whose thread runs away from the
-// root that holds its work in flight.
-func sessionHookStateRootContext(c *stateroot.Conflict) string {
+// sessionHookStateRootContext is what a hook tells an agent whose thread runs away from the root
+// that holds its work in flight, or whose root record cannot be trusted.
+func sessionHookStateRootContext(refusal error) string {
+	var anchorErr *stateroot.AnchorError
+	if errors.As(refusal, &anchorErr) {
+		return "[crw: PABCD state root]\n" + refusal.Error() + "\n" +
+			"No PABCD state was created or changed for this thread at this cwd. Nothing was moved."
+	}
+	c := conflictOf(refusal)
+	if c == nil {
+		return "[crw: PABCD state root]\n" + refusal.Error()
+	}
 	held := "is in flight at " + c.StatePath + " (phase " + c.Phase + ")"
 	if c.Unreadable {
 		held = "is at " + c.StatePath + " and cannot be read, so it may be in flight"
@@ -72,6 +81,14 @@ func sessionHookStateRootContext(c *stateroot.Conflict) string {
 		", so no state was created here: an empty IDLE state would detach the work in flight. Nothing was moved.\n" +
 		"Run PABCD commands for this thread with `--cwd " + c.NativeCwd + "`, or resume the thread at that cwd. " +
 		"Moving the work is an explicit handover to a thread started at the new cwd; a bound source worktree is not a native cwd."
+}
+
+func conflictOf(err error) *stateroot.Conflict {
+	var c *stateroot.Conflict
+	if errors.As(err, &c) {
+		return c
+	}
+	return nil
 }
 
 // SessionHookPostCompact is handlePostCompact (hook.ts:2025-2033): a context compaction resets the

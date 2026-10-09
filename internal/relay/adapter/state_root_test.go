@@ -27,7 +27,38 @@ func (r nativeRPC) Call(ctx context.Context, method string, params map[string]an
 	if method == "thread/read" {
 		return json.Marshal(map[string]any{"thread": map[string]any{"id": "thread-1", "cwd": r.cwd, "status": map[string]any{"type": "notLoaded"}}})
 	}
+	if method == "thread/resume" && err == nil {
+		// The host runs the thread at the cwd it was asked to.
+		return withCwd(raw, params["cwd"])
+	}
 	return raw, err
+}
+
+// withCwd is a resume answer reporting cwd as the cwd the thread runs at (none when cwd is not a
+// string).
+func withCwd(raw json.RawMessage, cwd any) (json.RawMessage, error) {
+	var answer map[string]any
+	if err := json.Unmarshal(raw, &answer); err != nil {
+		return nil, err
+	}
+	if text, ok := cwd.(string); ok {
+		answer["cwd"] = text
+	}
+	return json.Marshal(answer)
+}
+
+// ranAtRPC is nativeRPC whose host runs a resumed thread at ranAt whatever cwd it was asked for.
+type ranAtRPC struct {
+	nativeRPC
+	ranAt string
+}
+
+func (r ranAtRPC) Call(ctx context.Context, method string, params map[string]any) (json.RawMessage, error) {
+	raw, err := r.mcpRPC.Call(ctx, method, params)
+	if method == "thread/read" || err != nil || method != "thread/resume" {
+		return r.nativeRPC.Call(ctx, method, params)
+	}
+	return withCwd(raw, r.ranAt)
 }
 
 func recordAt(cwd string) *delivery.TaskSettings {
@@ -196,5 +227,80 @@ func TestTheAnchorFollowsADeliveryOnlyOnceTheHostTookIt(t *testing.T) {
 	sendRecord(t, ok, "send-taken", record)
 	if got := anchorOf(t); got != b {
 		t.Fatalf("anchor %q after the host took the resume, want %q", got, b)
+	}
+}
+
+// d2: the anchor follows the cwd the host reported for the resumed thread, not the one the delivery
+// asked for: a host that ran the thread at its native root leaves the anchor there, and the next
+// SessionStart of a thread that begins work there is still judged against that root.
+func TestTheAnchorFollowsTheCwdTheHostReported(t *testing.T) {
+	for _, ranAtRoot := range []bool{true, false} {
+		t.Run(map[bool]string{true: "ran at the native root", false: "ran elsewhere"}[ranAtRoot], func(t *testing.T) {
+			t.Setenv("CRW_HOME", t.TempDir())
+			a, b, c := t.TempDir(), t.TempDir(), t.TempDir()
+			if _, err := state.EnsureState(a, "thread-1"); err != nil {
+				t.Fatal(err)
+			}
+			ranAt := c
+			if ranAtRoot {
+				ranAt = a
+			}
+			record := recordAt(b)
+			adapter := lostResumeAdapter(t, ranAtRPC{nativeRPC{&mcpRPC{}, a}, ranAt}, autoCompactChildPolicy(t, record))
+			sendRecord(t, adapter, "send-ran-at", record)
+			if got := anchorOf(t); got != ranAt {
+				t.Fatalf("anchor %q, want the cwd the host reported %q", got, ranAt)
+			}
+		})
+	}
+}
+
+// d4: a resume the host took whose anchor cannot follow the thread to its new cwd starts no turn.
+func TestARelayDeliveryWhoseAnchorCannotFollowTheResumeStartsNoTurn(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	t.Setenv("CRW_HOME", t.TempDir())
+	a, b := t.TempDir(), t.TempDir()
+	if _, err := state.EnsureState(a, "thread-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := stateroot.Guard(os.LookupEnv, a, a, "thread-1"); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(os.Getenv("CRW_HOME"), "state-roots")
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	record := recordAt(b)
+	rpc := &mcpRPC{}
+	adapter := lostResumeAdapter(t, nativeRPC{rpc, a}, autoCompactChildPolicy(t, record))
+	receipt := sendRecord(t, adapter, "send-unfollowed", record)
+	rpcError, _ := receipt["rpcError"].(map[string]any)
+	if receipt["status"] == "accepted" || rpcError["code"] != stateroot.AnchorCode || rpc.count("turn/start") != 0 {
+		t.Fatalf("receipt=%v turns=%d", receipt, rpc.count("turn/start"))
+	}
+}
+
+// d3: an anchor that cannot be trusted refuses the delivery before the resume, retry-safe.
+func TestARelayDeliveryBesideAnUntrustworthyAnchorIsRefusedBeforeTheResume(t *testing.T) {
+	t.Setenv("CRW_HOME", t.TempDir())
+	a, b := t.TempDir(), t.TempDir()
+	threadInFlightAt(t, a)
+	if err := stateroot.Guard(os.LookupEnv, a, a, "thread-1"); err != nil {
+		t.Fatal(err)
+	}
+	path := stateroot.AnchorPath(os.LookupEnv, "thread-1")
+	if err := os.WriteFile(path, []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	record := recordAt(b)
+	rpc := &mcpRPC{}
+	adapter := lostResumeAdapter(t, nativeRPC{rpc, a}, autoCompactChildPolicy(t, record))
+	receipt := sendRecord(t, adapter, "send-untrusted", record)
+	rpcError, _ := receipt["rpcError"].(map[string]any)
+	if receipt["status"] != "not_attempted" || receipt["retrySafe"] != true || rpcError["code"] != stateroot.AnchorUnreadableCode || rpc.count("thread/resume") != 0 {
+		t.Fatalf("receipt=%v", receipt)
 	}
 }

@@ -223,3 +223,76 @@ func TestASendIsJudgedAgainstThePreservedAnchorWhenTheHostReportsAnotherCwd(t *t
 		t.Fatalf("the native state or anchor changed (anchor %q)", anchorAt(t))
 	}
 }
+
+// d2: the anchor follows the cwd the host reported for the resumed thread, not the one the send
+// asked for.
+func TestTheAnchorFollowsTheCwdTheHostReportedForTheResume(t *testing.T) {
+	for _, ranAtRoot := range []bool{true, false} {
+		t.Run(map[bool]string{true: "ran at the native root", false: "ran elsewhere"}[ranAtRoot], func(t *testing.T) {
+			a, b, c := t.TempDir(), t.TempDir(), t.TempDir()
+			if _, err := state.EnsureState(a, stateRootThread); err != nil {
+				t.Fatal(err)
+			}
+			bridge, host, input := stateRootSend(t, a, "notLoaded", b)
+			ranAt := c
+			if ranAtRoot {
+				ranAt = a
+			}
+			host.Respond("thread/resume", startReply(ranAt))
+			receipt, err := bridge.SendMessageToThread(context.Background(), input)
+			if err != nil || receipt["status"] == "accepted" || host.Count("thread/resume") != 1 || host.Count("turn/start") != 0 {
+				t.Fatalf("a resume that ran at %s was accepted: receipt=%v err=%v", ranAt, receipt, err)
+			}
+			if got := anchorAt(t); got != ranAt {
+				t.Fatalf("anchor %q, want the cwd the host reported %q", got, ranAt)
+			}
+		})
+	}
+}
+
+// d4: a resume the host took whose anchor cannot follow the thread to its new cwd starts no turn.
+func TestASendWhoseAnchorCannotFollowTheResumeStartsNoTurn(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	a, b := t.TempDir(), t.TempDir()
+	if _, err := state.EnsureState(a, stateRootThread); err != nil {
+		t.Fatal(err)
+	}
+	bridge, host, input := stateRootSend(t, a, "notLoaded", b)
+	if err := stateroot.Guard(os.LookupEnv, a, a, stateRootThread); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(os.Getenv("CRW_HOME"), "state-roots")
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	receipt, err := bridge.SendMessageToThread(context.Background(), input)
+	rpc := pyjson.Map(receipt["rpcError"])
+	if err != nil || receipt["status"] != "failed" || rpc["code"] != stateroot.AnchorCode || host.Count("turn/start") != 0 {
+		t.Fatalf("receipt=%v err=%v turns=%d", receipt, err, host.Count("turn/start"))
+	}
+}
+
+// d3: an anchor that cannot be trusted refuses the send before anything is resumed.
+func TestASendBesideAnUntrustworthyAnchorIsRefusedBeforeTheResume(t *testing.T) {
+	a, b := t.TempDir(), t.TempDir()
+	inFlightAt(t, a)
+	bridge, host, input := stateRootSend(t, a, "notLoaded", b)
+	if err := stateroot.Guard(os.LookupEnv, a, a, stateRootThread); err != nil {
+		t.Fatal(err)
+	}
+	path := stateroot.AnchorPath(os.LookupEnv, stateRootThread)
+	if err := os.WriteFile(path, []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := bridge.SendMessageToThread(context.Background(), input)
+	rpc := pyjson.Map(receipt["rpcError"])
+	if err != nil || receipt["status"] != "failed" || rpc["code"] != stateroot.AnchorUnreadableCode || host.Count("thread/resume") != 0 {
+		t.Fatalf("receipt=%v err=%v", receipt, err)
+	}
+	if raw, _ := os.ReadFile(path); string(raw) != "{" {
+		t.Fatalf("the anchor was rewritten: %q", raw)
+	}
+}

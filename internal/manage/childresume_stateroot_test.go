@@ -184,6 +184,7 @@ func TestOnlyAResumeTheHostTookMovesTheAnchor(t *testing.T) {
 			host := resumeHost(t, "notLoaded")
 			host.Respond("thread/read", fakehost.Reply{Result: map[string]any{"thread": map[string]any{
 				"cwd": a, "model": "m", "reasoningEffort": "xhigh", "status": map[string]any{"type": "notLoaded"}}}})
+			host.Respond("thread/resume", fakehost.Reply{Result: map[string]any{"cwd": b, "model": "m", "reasoningEffort": "xhigh"}})
 			exe, _ := resumeRelayScript(t, resumeTestAssignment, resumeSettingsAt(b), 0)
 			e, _, _ := resumeEnv(t, exe)
 			if _, err := resumeRun(context.Background(), e, resumeConfig(host, "alpha", "beta"), resumeOptions{relationship: "rel-1", message: "m", dryRun: dry}); err != nil {
@@ -195,6 +196,99 @@ func TestOnlyAResumeTheHostTookMovesTheAnchor(t *testing.T) {
 			}
 			if got := resumeAnchor(t); got != want {
 				t.Fatalf("anchor %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+// d2: the anchor follows the cwd the host reported for the resumed child, not the one the record
+// asked for.
+func TestTheAnchorFollowsTheCwdTheHostReportedForTheChild(t *testing.T) {
+	for _, ranAtRoot := range []bool{true, false} {
+		t.Run(map[bool]string{true: "ran at the native root", false: "ran elsewhere"}[ranAtRoot], func(t *testing.T) {
+			a, b, c := t.TempDir(), t.TempDir(), t.TempDir()
+			t.Setenv("CRW_HOME", t.TempDir())
+			if _, err := state.EnsureState(a, "01child"); err != nil {
+				t.Fatal(err)
+			}
+			ranAt := c
+			if ranAtRoot {
+				ranAt = a
+			}
+			host := resumeHost(t, "notLoaded")
+			host.Respond("thread/read", fakehost.Reply{Result: map[string]any{"thread": map[string]any{
+				"cwd": a, "model": "m", "reasoningEffort": "xhigh", "status": map[string]any{"type": "notLoaded"}}}})
+			host.Respond("thread/resume", fakehost.Reply{Result: map[string]any{"cwd": ranAt, "model": "m", "reasoningEffort": "xhigh"}})
+			exe, _ := resumeRelayScript(t, resumeTestAssignment, resumeSettingsAt(b), 0)
+			e, _, _ := resumeEnv(t, exe)
+			_, _ = resumeRun(context.Background(), e, resumeConfig(host, "alpha", "beta"), resumeOptions{relationship: "rel-1", message: "m"})
+			if got := resumeAnchor(t); got != ranAt {
+				t.Fatalf("anchor %q, want the cwd the host reported %q", got, ranAt)
+			}
+		})
+	}
+}
+
+// d4: a child resumed by the host whose anchor cannot follow it to its new cwd starts no turn.
+func TestResumeWhoseAnchorCannotFollowTheChildStartsNoTurn(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	a, b := t.TempDir(), t.TempDir()
+	t.Setenv("CRW_HOME", t.TempDir())
+	if _, err := state.EnsureState(a, "01child"); err != nil {
+		t.Fatal(err)
+	}
+	if err := stateroot.Guard(os.LookupEnv, a, a, "01child"); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(os.Getenv("CRW_HOME"), "state-roots")
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	host := resumeHost(t, "notLoaded")
+	host.Respond("thread/read", fakehost.Reply{Result: map[string]any{"thread": map[string]any{
+		"cwd": a, "model": "m", "reasoningEffort": "xhigh", "status": map[string]any{"type": "notLoaded"}}}})
+	host.Respond("thread/resume", fakehost.Reply{Result: map[string]any{"cwd": b, "model": "m", "reasoningEffort": "xhigh"}})
+	exe, _ := resumeRelayScript(t, resumeTestAssignment, resumeSettingsAt(b), 0)
+	e, _, _ := resumeEnv(t, exe)
+	_, err := resumeRun(context.Background(), e, resumeConfig(host, "alpha", "beta"), resumeOptions{relationship: "rel-1", message: "m"})
+	var failure *resumeFailure
+	if !errors.As(err, &failure) || failure.Reason != stateroot.AnchorCode || host.Count("turn/start") != 0 {
+		t.Fatalf("err = %v, turns = %d", err, host.Count("turn/start"))
+	}
+}
+
+// d3: an anchor that cannot be trusted refuses the run, and the dry run, before anything is sent.
+func TestResumeBesideAnUntrustworthyAnchorIsRefused(t *testing.T) {
+	for _, dry := range []bool{false, true} {
+		t.Run(map[bool]string{false: "run", true: "dry-run"}[dry], func(t *testing.T) {
+			a, b := t.TempDir(), t.TempDir()
+			t.Setenv("CRW_HOME", t.TempDir())
+			resumeInFlightAt(t, a)
+			if err := stateroot.Guard(os.LookupEnv, a, a, "01child"); err != nil {
+				t.Fatal(err)
+			}
+			path := stateroot.AnchorPath(os.LookupEnv, "01child")
+			if err := os.WriteFile(path, []byte("{"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			host := resumeHost(t, "notLoaded")
+			host.Respond("thread/read", fakehost.Reply{Result: map[string]any{"thread": map[string]any{
+				"cwd": b, "model": "m", "reasoningEffort": "xhigh", "status": map[string]any{"type": "notLoaded"}}}})
+			exe, _ := resumeRelayScript(t, resumeTestAssignment, resumeSettingsAt(b), 0)
+			e, _, _ := resumeEnv(t, exe)
+			_, err := resumeRun(context.Background(), e, resumeConfig(host, "alpha", "beta"), resumeOptions{relationship: "rel-1", message: "m", dryRun: dry})
+			var failure *resumeFailure
+			if !errors.As(err, &failure) || failure.Reason != stateroot.AnchorUnreadableCode {
+				t.Fatalf("err = %v", err)
+			}
+			if methods := resumeHostMethods(host); !slices.Equal(methods, []string{"thread/read"}) {
+				t.Fatalf("the host saw %q", methods)
+			}
+			if raw, _ := os.ReadFile(path); string(raw) != "{" {
+				t.Fatalf("the anchor was rewritten: %q", raw)
 			}
 		})
 	}

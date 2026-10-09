@@ -52,24 +52,23 @@ func TestMovedRecordsTheTargetOnlyForAMoveThatWasAllowed(t *testing.T) {
 	}
 }
 
-// A SessionStart bootstrap that went ahead at a new cwd re-anchors an anchored thread whose root
+// A SessionStart bootstrap that goes ahead at a new cwd re-anchors an anchored thread whose root
 // held nothing in flight, and never moves an anchor off work in flight.
-func TestBootstrappedFollowsAnAnchoredThreadOnlyOffAnIdleRoot(t *testing.T) {
+func TestBootstrapFollowsAnAnchoredThreadOnlyOffAnIdleRoot(t *testing.T) {
 	a, b := t.TempDir(), t.TempDir()
 	env := envAt(t.TempDir())
-	Bootstrapped(env, b, session)
-	if anchorOf(t, env) != "" {
-		t.Fatal("a standalone session got an anchor")
+	if err := Bootstrap(env, b, session); err != nil || anchorOf(t, env) != "" {
+		t.Fatalf("a standalone session got an anchor %q (%v)", anchorOf(t, env), err)
 	}
 	writePhase(t, a, state.PhaseIdle)
-	Guard(env, a, a, session)
-	Bootstrapped(env, b, session)
-	if anchorOf(t, env) != b {
-		t.Fatalf("anchor %q, want %q", anchorOf(t, env), b)
+	if err := Guard(env, a, a, session); err != nil {
+		t.Fatal(err)
+	}
+	if err := Bootstrap(env, b, session); err != nil || anchorOf(t, env) != b {
+		t.Fatalf("anchor %q, want %q (%v)", anchorOf(t, env), b, err)
 	}
 	writePhase(t, b, state.PhaseP)
-	Bootstrapped(env, a, session)
-	if anchorOf(t, env) != b {
-		t.Fatalf("anchor moved off work in flight to %q", anchorOf(t, env))
+	if err := Bootstrap(env, a, session); conflictOf(err) == nil || anchorOf(t, env) != b {
+		t.Fatalf("anchor %q moved off work in flight (%v)", anchorOf(t, env), err)
 	}
 }

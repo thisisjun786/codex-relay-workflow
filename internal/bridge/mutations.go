@@ -177,8 +177,9 @@ func (b *Bridge) SendMessageToThread(ctx context.Context, in SendMessage) (ledge
 		if err != nil {
 			return err
 		}
-		// The host took the resume: the thread now runs at the cwd it was resumed at.
-		stateroot.Moved(os.LookupEnv, native, contract.CWD, in.ThreadID)
+		// The host took the resume: the anchor follows the cwd it reports for the thread, which is
+		// not necessarily the one asked for (the settings findings below judge that).
+		moveErr := stateroot.Moved(os.LookupEnv, native, pyjson.Text(pyjson.Map(resumed)["cwd"]), in.ThreadID)
 		receipt["resumed"] = resumed
 		observed := resumed
 		if contract.MCP != nil {
@@ -198,6 +199,10 @@ func (b *Bridge) SendMessageToThread(ctx context.Context, in SendMessage) (ledge
 				message = fmt.Sprintf("Thread approval policy is %s; this request declared %s. Message withheld and NOT delivered; no turn was started. This bridge preserves a thread's approval policy and never sets one, so the way to deliver here is a NEW request id declaring the policy the thread is actually on. Declaring it does not make this bridge an approver: it answers no approval request, and the thread's own client decides every one the turn raises.", show(first.Returned), show(first.Expected))
 			}
 			return &appserver.RPCError{Method: "thread/resume", Message: message, Object: map[string]any{"code": first.Code, "message": message}}
+		}
+		if moveErr != nil {
+			message := moveErr.Error() + "; the thread was resumed but no turn was started, message withheld"
+			return &appserver.RPCError{Method: "thread/resume", Message: message, Object: map[string]any{"code": stateroot.CodeOf(moveErr), "message": message}}
 		}
 		turn, err := b.dispatch(ctx, "turn/start", map[string]any{"threadId": in.ThreadID, "input": []any{map[string]any{"type": "text", "text": in.Message}}}, effects)
 		if err != nil {

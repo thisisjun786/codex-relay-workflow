@@ -82,15 +82,6 @@ func TestCheckRefusesOnlyAMoveAwayFromWorkInFlight(t *testing.T) {
 	}
 }
 
-// conflictOf is the *Conflict a Guard error carries, nil for none.
-func conflictOf(err error) *Conflict {
-	var c *Conflict
-	if errors.As(err, &c) {
-		return c
-	}
-	return nil
-}
-
 func anchorOf(t *testing.T, env host.LookupEnv) string {
 	t.Helper()
 	raw, err := os.ReadFile(AnchorPath(env, session))
@@ -124,7 +115,7 @@ func TestGuardAnchorsTheNativeRootNotTheTarget(t *testing.T) {
 	if Guard(env, a, "", session) != nil || anchorOf(t, env) != a {
 		t.Fatalf("a resume that keeps the root anchored %q", anchorOf(t, env))
 	}
-	if c := Bootstrap(env, b, session); c == nil || c.NativeCwd != a {
+	if c := conflictOf(Bootstrap(env, b, session)); c == nil || c.NativeCwd != a {
 		t.Fatalf("bootstrap at the other cwd: %+v", c)
 	}
 	if c := Bootstrap(envAt(t.TempDir()), b, session); c != nil {
@@ -149,7 +140,7 @@ func TestGuardJudgesAgainstThePreservedAnchorWhateverTheHostReportsNow(t *testin
 			t.Errorf("%s: host cwd %s, anchor %s: conflict %+v", name, b, a, c)
 		}
 	}
-	if c := Bootstrap(env, b, session); c == nil || c.NativeCwd != a {
+	if c := conflictOf(Bootstrap(env, b, session)); c == nil || c.NativeCwd != a {
 		t.Errorf("Bootstrap names another root: %+v", c)
 	}
 	if anchorOf(t, env) != a {
@@ -172,7 +163,7 @@ func TestAFailedResumeDoesNotLoseTheNativeAnchor(t *testing.T) {
 	}
 	// The resume was rejected: no Moved. The thread is still at a and goes on to work there.
 	writePhase(t, a, state.PhaseP)
-	if c := Bootstrap(env, b, session); c == nil || c.NativeCwd != a {
+	if c := conflictOf(Bootstrap(env, b, session)); c == nil || c.NativeCwd != a {
 		t.Fatalf("the failed resume lost the native anchor: %+v (anchor %q)", c, anchorOf(t, env))
 	}
 }
@@ -189,7 +180,7 @@ func TestTheFirstResumeAnchorsBeforeSessionStartCreatesState(t *testing.T) {
 		t.Fatal(err)
 	}
 	writePhase(t, a, state.PhaseP)
-	if c := Bootstrap(env, b, session); c == nil || c.NativeCwd != a {
+	if c := conflictOf(Bootstrap(env, b, session)); c == nil || c.NativeCwd != a {
 		t.Fatalf("a thread resumed by CRW before it had state is unguarded: %+v", c)
 	}
 	// The standalone control: nothing resolved it, so there is no anchor and no guard.

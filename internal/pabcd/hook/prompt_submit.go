@@ -36,6 +36,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/projectcfg"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/stateroot"
 )
 
 // promptSubmitMaxInjectedTurns is MAX_INJECTED_TURNS (hook.ts:578): the cap on the session state's
@@ -74,6 +75,15 @@ func promptSubmitHandleWith(p PromptSubmitPayload, platform string, env host.Loo
 		env = os.LookupEnv
 	}
 	turn := p.TurnID
+
+	// CRW-1140 (port: fixed): a relay-managed thread whose PABCD work is in flight at its anchored
+	// root, prompted at another cwd, has no state of its own here: every write below (the memory
+	// marker, the Stop-budget stamp, the trigger bookkeeping) would publish an empty IDLE state
+	// beside the work, which SessionStart refused to create. Nothing is read or written at this cwd;
+	// the answer tells the agent where its state is. A thread without an anchor is unaffected.
+	if refusal := stateroot.Hold(env, p.Cwd, p.SessionID); refusal != nil {
+		return sessionHookStateRootContext(refusal)
+	}
 
 	// MEMORY-WRITE-GATE-01 (260909 wp1-A): record the remember request BEFORE the turn guard and
 	// before every early return below. PreToolUse carries no prompt (codex-rs

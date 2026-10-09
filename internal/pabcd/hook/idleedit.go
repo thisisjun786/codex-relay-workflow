@@ -9,6 +9,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/stateroot"
 )
 
 // NudgeEvery is the 0-indexed interval: calls 1, 6, 11, ... of eligible edits advise.
@@ -59,6 +60,11 @@ func HandleIdleEditAdvisory(raw string, env host.LookupEnv) string {
 	sid, _ := p["session_id"].(string)
 	cwd, _ := p["cwd"].(string)
 	if !editTool(tool) || sid == "" || cwd == "" {
+		return ""
+	}
+	// CRW-1140: at a cwd away from the anchored root of a thread whose work is in flight there is
+	// no state of this session to nudge about, and the counter write would create one.
+	if stateroot.Hold(env, cwd, sid) != nil {
 		return ""
 	}
 	s, unreadable := state.ReadStateStrict(cwd, sid)

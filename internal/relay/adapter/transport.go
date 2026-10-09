@@ -376,9 +376,12 @@ func (a *Adapter) guardedSend(ctx context.Context, requestID, thread, message st
 			}
 		}
 		resumed, err := a.callValue(ctx, "thread/resume", params)
+		var moveErr error
 		if err == nil {
-			// The host took the resume: the thread now runs at the cwd it was resumed at.
-			stateroot.Moved(os.LookupEnv, pyjson.Text(th["cwd"]), target, thread)
+			// The host took the resume: the anchor follows the cwd it reports for the thread, which is
+			// not necessarily the one asked for (verifyResume judges that below).
+			reported, _ := plain(resumed).(map[string]any)
+			moveErr = stateroot.Moved(os.LookupEnv, pyjson.Text(th["cwd"]), pyjson.Text(reported["cwd"]), thread)
 		}
 		// A resume the transport certainly withheld never reached the host, so the stored limit is
 		// withdrawn; a resume that may have gone out (its answer lost) keeps it. The transport's own
@@ -430,6 +433,10 @@ func (a *Adapter) guardedSend(ctx context.Context, requestID, thread, message st
 			if err = save(); err != nil {
 				return err
 			}
+		}
+		if moveErr != nil {
+			refuse("thread/resume", contract.OrderedObject{{Key: "code", Value: stateroot.CodeOf(moveErr)}, {Key: "message", Value: moveErr.Error() + "; the thread was resumed but no turn was started, message withheld"}}, false)
+			return nil
 		}
 		if guard != nil {
 			decision, err := guard(ctx)

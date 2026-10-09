@@ -25,7 +25,7 @@ func TestTheFirstAnchorIsRecordedAtTheProcessCwd(t *testing.T) {
 		}
 		Moved(env, a, a, session)
 		writePhase(t, a, state.PhaseP)
-		if c := Bootstrap(env, b, session); c == nil || c.NativeCwd != a {
+		if c := conflictOf(Bootstrap(env, b, session)); c == nil || c.NativeCwd != a {
 			t.Fatalf("a SessionStart away from work in flight at the process cwd: %+v", c)
 		}
 	})
@@ -105,7 +105,7 @@ func TestBootstrapJudgesAnExistingStateAgainstTheAnchor(t *testing.T) {
 			if Resolve(env, b, b, session) == nil {
 				t.Fatal("the resume to B went ahead")
 			}
-			if c := Bootstrap(env, b, session); c == nil || c.NativeCwd != a {
+			if c := conflictOf(Bootstrap(env, b, session)); c == nil || c.NativeCwd != a {
 				t.Fatalf("the bootstrap at B with a state there: %+v", c)
 			}
 		})
