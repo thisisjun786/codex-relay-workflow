@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -234,5 +235,57 @@ func TestPushOnlyWording_InFlightSectionIsSingle(t *testing.T) {
 	}
 	if n := strings.Count(string(data), "\n"+pushOnlyInFlightHeading+"\n"); n != 1 {
 		t.Fatalf("merge-readiness.md has %d in-flight sections, want exactly one", n)
+	}
+}
+
+// pushOnlyStackedPrs is the staged stacked-PR reference. It keeps its ordinary pull-request rules for a
+// change that arrives as a pull request, so the word guard cannot see the paragraph that excludes CRW
+// internal work from them; this check does (CRW-1024).
+const pushOnlyStackedPrs = "port/cxc/skills/crw-dev/references/stacked-prs.md"
+
+// pushOnlyScopeProblem is empty when text opens, before its first section, with a CRW scope paragraph that
+// says internal work is push-only, opens no pull request and is not bound by the pull-request rules below.
+func pushOnlyScopeProblem(text string) string {
+	head, _, _ := strings.Cut(text, "\n## ")
+	_, scope, found := strings.Cut(head, "CRW scope:")
+	if !found {
+		return "no CRW scope paragraph before the first section"
+	}
+	scope, _, _ = strings.Cut(scope, "\n\n")
+	flat := strings.Join(strings.Fields(scope), " ")
+	for _, want := range []string{"push-only", "opens no pull request", "do not apply to it"} {
+		if !strings.Contains(flat, want) {
+			return "the CRW scope paragraph no longer says " + strconv.Quote(want)
+		}
+	}
+	return ""
+}
+
+func TestPushOnlyWording_StackedPrsKeepsItsCRWScope(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(repoRoot(), filepath.FromSlash(pushOnlyStackedPrs)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if problem := pushOnlyScopeProblem(string(data)); problem != "" {
+		t.Fatalf("%s: %s", pushOnlyStackedPrs, problem)
+	}
+}
+
+func TestPushOnlyWording_ScopeGuardCatchesTheParagraphGoing(t *testing.T) {
+	const scope = "CRW scope: CRW internal work is push-only. Internal work opens no pull request, so the rules below do not apply to it.\n\n"
+	body := "# Title\n\nIntro.\n\n"
+	for name, c := range map[string]struct {
+		text string
+		ok   bool
+	}{
+		"present":         {body + scope + "## Rules\n\nUse ordinary pull requests by default.\n", true},
+		"paragraph gone":  {body + "## Rules\n\nUse ordinary pull requests by default.\n", false},
+		"requires a PR":   {body + "CRW scope: CRW internal work is push-only. Internal work opens a pull request.\n\n## Rules\n", false},
+		"moved below":     {body + "## Rules\n\n" + scope, false},
+		"rules now apply": {body + "CRW scope: CRW internal work is push-only. Internal work opens no pull request. The rules below apply to it.\n\n## Rules\n", false},
+	} {
+		if got := pushOnlyScopeProblem(c.text) == ""; got != c.ok {
+			t.Errorf("%s: scope accepted = %v, want %v", name, got, c.ok)
+		}
 	}
 }
