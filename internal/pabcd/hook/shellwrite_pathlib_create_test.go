@@ -17,6 +17,12 @@ func TestPathlibCreateRealGate(t *testing.T) {
 		`python3 -c 'from pathlib import Path; m="{M}/a"; Path(m).touch()'`,
 		`python3 -c 'from pathlib import Path; Path("{M}/d").mkdir(parents=True, exist_ok=True)'`,
 		`python3 -c 'import os; print(f"{p.touch()}", os.path.exists("/w/x"))'`,
+		`python3 -c 'from pathlib import Path; root="{M}"; Path(f"{root}/n.md").touch()'`,
+		`python3 -c 'from pathlib import Path; root="{M}"; Path(f"{root}/n").mkdir()'`,
+		`python3 -c 'from pathlib import Path; root="{M}"; Path(f"{root}/n.md").write_text("x")'`,
+		`python3 -c 'from pathlib import Path; p=Path("{M}/n.md"); exec("p.\x74ouch()")'`,
+		`python3 -c 'from pathlib import Path; p=Path("{M}/n.md"); exec("p.\x77rite_text(\"x\")")'`,
+		`python3 -c 'from pathlib import Path; os=Path("{M}/d"); os.mkdir()'`,
 	}
 	pass := []string{
 		`node -e 'function Path(x) { return {touch() { console.log(x) }} }; Path("{M}/a").touch()'`,
@@ -25,6 +31,11 @@ func TestPathlibCreateRealGate(t *testing.T) {
 		`python3 -c 'import os; print(os.path.exists("{M}/x")) # p.mkdir()'`,
 		`python3 -c 'from pathlib import Path; Path("/w/x").touch()'`,
 		`python3 -c 'from pathlib import Path; print(Path("{M}/a").exists())'`,
+		`python3 -c 'import os; print(f"p.touch()", os.path.exists("{M}/n.md"))'`,
+		`python3 -c 'import os; print("exec p.touch()", os.path.exists("{M}/n.md"))'`,
+		`python3 -c 'import os; print(os.path.exists("{M}/n.md")) # execute p.touch()'`,
+		`python3 -c 'from pathlib import Path; Path(f"/w/x").touch()'`,
+		`python3 -c 'import os; os.mkdir("/w/d")'`,
 	}
 	for _, tmpl := range write {
 		t.Run("write "+tmpl, func(t *testing.T) {

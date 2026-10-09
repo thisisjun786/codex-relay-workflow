@@ -790,3 +790,22 @@ added by CRW-951 (fix round 1: allow or refuse counterexample of the pathlib tou
 added by CRW-951 (fix round 1: allow or refuse counterexample of the pathlib touch and mkdir rule)	python3 -c 'import os; print(f"{p.touch()}", os.path.exists("/w/x"))'	CRW-951-touch-10-fstring-field	row	-
 added by CRW-951 (fix round 1: allow or refuse counterexample of the pathlib touch and mkdir rule)	python3 -c 'import os; exec("p.touch()"); os.path.exists("/w/x")'	CRW-951-touch-11-exec-program-name-receiver	row	-
 added by CRW-951 (fix round 1: allow or refuse counterexample of the pathlib touch and mkdir rule)	python3 -c 'import os<newline># note<newline>p.mkdir()<newline>os.path.exists("/w/x")'	CRW-951-mkdir-09-comment-then-call	row	-
+added by CRW-951 (fix round 2: evaluation of 8a68d4f01, E1 to E6)	python3 -c 'from pathlib import Path; root="{MEMORY}"; Path(f"{root}/n.md").touch()'	CRW-951-touch-12-fstring-arg	row	-
+added by CRW-951 (fix round 2: evaluation of 8a68d4f01, E1 to E6)	python3 -c 'from pathlib import Path; root="{MEMORY}"; Path(f"{root}/n").mkdir()'	CRW-951-mkdir-10-fstring-arg	row	-
+added by CRW-951 (fix round 2: evaluation of 8a68d4f01, E1 to E6)	python3 -c 'from pathlib import Path; root="{MEMORY}"; Path(f"{root}/n.md").write_text("x")'	CRW-951-write-text-03-fstring-arg	row	-
+added by CRW-951 (fix round 2: evaluation of 8a68d4f01, E1 to E6)	python3 -c 'from pathlib import Path; Path(f"/w/x").touch()'	CRW-951-touch-13-fstring-literal-only	row	-
+added by CRW-951 (fix round 2: evaluation of 8a68d4f01, E1 to E6)	python3 -c 'from pathlib import Path; p=Path("{MEMORY}/n.md"); exec("p.\x74ouch()")'	CRW-951-touch-14-exec-escaped-method	row	-
+added by CRW-951 (fix round 2: evaluation of 8a68d4f01, E1 to E6)	python3 -c 'from pathlib import Path; p=Path("{MEMORY}/n.md"); exec("p.\x77rite_text(\"x\")")'	CRW-951-write-text-04-exec-escaped-method	row	-
+added by CRW-951 (fix round 2: evaluation of 8a68d4f01, E1 to E6)	python3 -c 'exec("print(1)")'	CRW-951-exec-01-print	row	-
+added by CRW-951 (fix round 2: evaluation of 8a68d4f01, E1 to E6)	python3 -c 'from pathlib import Path; os=Path("{MEMORY}/d"); os.mkdir()'	CRW-951-mkdir-11-os-rebound-path	row	-
+added by CRW-951 (fix round 2: evaluation of 8a68d4f01, E1 to E6)	python3 -c 'from pathlib import Path<newline>def f(os): os.mkdir()<newline>f(Path("{MEMORY}/d"))'	CRW-951-mkdir-12-os-parameter	row	-
+added by CRW-951 (fix round 2: evaluation of 8a68d4f01, E1 to E6)	python3 -c 'from pathlib import Path<newline>import os<newline>for os in [Path("{MEMORY}/d")]: os.mkdir()'	CRW-951-mkdir-13-os-loop-target	row	-
+added by CRW-951 (fix round 2: evaluation of 8a68d4f01, E1 to E6)	python3 -c 'import sys as os; os.mkdir("{MEMORY}/d")'	CRW-951-mkdir-14-os-import-as-other	row	-
+added by CRW-951 (fix round 2: evaluation of 8a68d4f01, E1 to E6)	python3 -c 'import os; os.mkdir("/w/d")'	CRW-951-mkdir-15-os-module-import	row	-
+added by CRW-951 (fix round 2: evaluation of 8a68d4f01, E1 to E6)	python3 -c 'import sys, os; os.mkdir("/w/d"); print(os.path.exists("/w/d"))'	CRW-951-mkdir-16-os-module-import-list	row	-
+added by CRW-951 (fix round 2: evaluation of 8a68d4f01, E1 to E6)	python3 -c 'import os.path; os.mkdir("/w/d")'	CRW-951-mkdir-17-os-module-import-dotted	row	-
+added by CRW-951 (fix round 2: evaluation of 8a68d4f01, E1 to E6)	python3 -c 'import os; print(f"p.touch()", os.path.exists("{MEMORY}/n.md"))'	CRW-951-fstring-data-01-text	row	-
+added by CRW-951 (fix round 2: evaluation of 8a68d4f01, E1 to E6)	python3 -c 'import os; print(f"{{p.touch()}}", os.path.exists("{MEMORY}/n.md"))'	CRW-951-fstring-data-02-doubled-braces	row	-
+added by CRW-951 (fix round 2: evaluation of 8a68d4f01, E1 to E6)	python3 -c 'import os; print("exec p.touch()", os.path.exists("{MEMORY}/n.md"))'	CRW-951-runs-text-01-string-exec-word	row	-
+added by CRW-951 (fix round 2: evaluation of 8a68d4f01, E1 to E6)	python3 -c 'import os; print(os.path.exists("{MEMORY}/n.md")) # execute p.touch()'	CRW-951-runs-text-02-comment-execute-word	row	-
+added by CRW-951 (fix round 2: evaluation of 8a68d4f01, E1 to E6)	python3 -c 'import os; print(f"{p.touch()}", os.path.exists("{MEMORY}/n.md"))'	CRW-951-runs-text-03-fstring-field-call	row	-

@@ -132,3 +132,88 @@ python3 -c 'import os
 # note
 p.mkdir()
 os.path.exists("/w/x")'
+
+
+# Fix round 2 (evaluation of 8a68d4f01, defects d1 to d6): coordinator decisions E1 to E6.
+
+=== CRW-951-touch-12-fstring-arg | W
+--why E1: Path(f"{root}/n.md").touch(): an f-string argument with a replacement field is a computed destination, not the literal text with braces (evaluation d1).
+python3 -c 'from pathlib import Path; root="{MEMORY}"; Path(f"{root}/n.md").touch()'
+
+=== CRW-951-mkdir-10-fstring-arg | W
+--why E1: Path(f"{root}/n").mkdir() with a computed f-string argument is the unknown destination (evaluation d1).
+python3 -c 'from pathlib import Path; root="{MEMORY}"; Path(f"{root}/n").mkdir()'
+
+=== CRW-951-write-text-03-fstring-arg | W
+--why E1: Path(f"{root}/n.md").write_text("x") has the same answer as touch (the Path argument decoder is shared).
+python3 -c 'from pathlib import Path; root="{MEMORY}"; Path(f"{root}/n.md").write_text("x")'
+
+=== CRW-951-touch-13-fstring-literal-only | B
+--why E1 keep: an f-string with no replacement field is the literal /w/x, a work tree path.
+python3 -c 'from pathlib import Path; Path(f"/w/x").touch()'
+
+=== CRW-951-touch-14-exec-escaped-method | E
+--why E2: a literal exec program is read like a top-level program: p.\x74ouch() decodes to p.touch(), an unattributed receiver.
+python3 -c 'from pathlib import Path; p=Path("{MEMORY}/n.md"); exec("p.\x74ouch()")'
+
+=== CRW-951-write-text-04-exec-escaped-method | E
+--why E2: exec("p.\x77rite_text('x')") decodes to p.write_text('x'), an unattributed receiver.
+python3 -c 'from pathlib import Path; p=Path("{MEMORY}/n.md"); exec("p.\x77rite_text(\"x\")")'
+
+=== CRW-951-exec-01-print | R
+--why E2 keep: exec("print(1)") writes nothing the reader can name; the memory gate stays none.
+python3 -c 'exec("print(1)")'
+
+=== CRW-951-mkdir-11-os-rebound-path | W
+--why E3: os=Path(...); os.mkdir() is a Path receiver spelled os, not the module (evaluation d3).
+python3 -c 'from pathlib import Path; os=Path("{MEMORY}/d"); os.mkdir()'
+
+=== CRW-951-mkdir-12-os-parameter | W
+--why E3: a parameter named os is not the module.
+--cmd
+python3 -c 'from pathlib import Path
+def f(os): os.mkdir()
+f(Path("{MEMORY}/d"))'
+
+=== CRW-951-mkdir-13-os-loop-target | W
+--why E3: a loop target named os is not the module.
+--cmd
+python3 -c 'from pathlib import Path
+import os
+for os in [Path("{MEMORY}/d")]: os.mkdir()'
+
+=== CRW-951-mkdir-14-os-import-as-other | W
+--why E3: import sys as os binds os to another module.
+python3 -c 'import sys as os; os.mkdir("{MEMORY}/d")'
+
+=== CRW-951-mkdir-15-os-module-import | B
+--why E3 keep: import os; os.mkdir(path) is the module call, not judged (the pathlib methods only).
+python3 -c 'import os; os.mkdir("/w/d")'
+
+=== CRW-951-mkdir-16-os-module-import-list | B
+--why E3 keep: import sys, os binds the os module.
+python3 -c 'import sys, os; os.mkdir("/w/d"); print(os.path.exists("/w/d"))'
+
+=== CRW-951-mkdir-17-os-module-import-dotted | B
+--why E3 keep: import os.path binds the os module.
+python3 -c 'import os.path; os.mkdir("/w/d")'
+
+=== CRW-951-fstring-data-01-text | B
+--why E5: the literal text of an f-string is data: f"p.touch()" has no replacement field.
+python3 -c 'import os; print(f"p.touch()", os.path.exists("{MEMORY}/n.md"))'
+
+=== CRW-951-fstring-data-02-doubled-braces | B
+--why E5: doubled braces are literal braces, so f"{{p.touch()}}" is data.
+python3 -c 'import os; print(f"{{p.touch()}}", os.path.exists("{MEMORY}/n.md"))'
+
+=== CRW-951-runs-text-01-string-exec-word | B
+--why E6: the word exec inside a string is data and does not switch off the string reading.
+python3 -c 'import os; print("exec p.touch()", os.path.exists("{MEMORY}/n.md"))'
+
+=== CRW-951-runs-text-02-comment-execute-word | B
+--why E6: the word execute in a comment is data.
+python3 -c 'import os; print(os.path.exists("{MEMORY}/n.md")) # execute p.touch()'
+
+=== CRW-951-runs-text-03-fstring-field-call | W
+--why E5 keep: a call inside an f-string replacement field is program text and stays an attempt.
+python3 -c 'import os; print(f"{p.touch()}", os.path.exists("{MEMORY}/n.md"))'
