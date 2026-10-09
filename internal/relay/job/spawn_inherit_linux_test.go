@@ -45,8 +45,14 @@ func childDescriptors(t *testing.T, ws string, startJob func(*exec.Cmd) error) s
 		pid := *rec.PID
 		t.Cleanup(func() { _ = unix.Kill(-pid, unix.SIGKILL) })
 	}
-	settled(t, ws, rec.ID)
-	return get(t, OutPath(ws, rec.ID))
+	done := settled(t, ws, rec.ID)
+	out := get(t, OutPath(ws, rec.ID))
+	// A failed listing names no descriptor at all, so "the held path is absent" proves nothing then: the probe must have succeeded and
+	// listed the job's own stdout, which is the output file.
+	if done.Status != StatusComplete || done.ExitCode == nil || *done.ExitCode != 0 || !strings.Contains(out, OutPath(ws, rec.ID)) {
+		t.Fatalf("the descriptor listing of the job did not run: record %+v, output:\n%s", done, out)
+	}
+	return out
 }
 
 func defaultStart(cmd *exec.Cmd) error { return cmd.Start() }
