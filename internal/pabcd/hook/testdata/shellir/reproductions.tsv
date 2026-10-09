@@ -866,3 +866,73 @@ added by CRW-895 (a shape the issue rules imply)	find -D tree .. -name x -delete
 added by CRW-895 (a shape the issue rules imply)	find ../repo \( -name x -o -true \) -delete	CRW-895-d23	row	-
 added by CRW-895 (a shape the issue rules imply)	find ../repo -name x -prune -o -delete	CRW-895-d24	row	-
 added by CRW-895 (a shape the issue rules imply)	find -delete	CRW-895-d25	row	-
+pre-merge evaluation crw895-3d1fe314 (d1)	find ../repo -name '*' -delete	CRW-895-f1	row	-
+pre-merge evaluation crw895-3d1fe314 (d1)	find ../repo -path '*' -delete	CRW-895-f2	row	-
+pre-merge evaluation crw895-3d1fe314 (d1)	find ../repo -regex '.*' -delete	CRW-895-f3	row	-
+pre-merge evaluation crw895-3d1fe314 (d1)	find ../repo -name '????' -delete	CRW-895-f4	row	-
+pre-merge evaluation crw895-3d1fe314 (d1)	find . -name '*' -delete	CRW-895-f5	row	-
+pre-merge evaluation crw895-3d1fe314 (d1)	find ../repo -name '*' -type f -delete	CRW-895-f6	row	-
+pre-merge evaluation crw895-3d1fe314 (d1)	find ../repo -name 'r*' -delete	CRW-895-f7	row	-
+pre-merge evaluation crw895-3d1fe314 (d1)	find ../repo ! -name x -delete	CRW-895-f8	row	-
+pre-merge evaluation crw895-3d1fe314 (d1)	find ../repo ! -name repo -delete	CRW-895-f9	row	-
+pre-merge evaluation crw895-3d1fe314 (d1)	find . -name 'r*' -delete	CRW-895-f10	row	-
+pre-merge evaluation crw895-3d1fe314 (d1)	find ../repo -iname 'REPO' -delete	CRW-895-f11	row	-
+pre-merge evaluation crw895-3d1fe314 (d1)	find ../repo -type f -delete	CRW-895-f12	row	-
+pre-merge evaluation crw895-3d1fe314 (d1)	find ../repo \( -name x -o -name '*' \) -delete	CRW-895-f13	row	-
+pre-merge evaluation crw895-3d1fe314 (d2)	find -files0-from roots.list -type f -delete	CRW-895-g1	row	-
+pre-merge evaluation crw895-3d1fe314 (d2)	find -files0-from - -name x -delete	CRW-895-g2	row	-
+pre-merge evaluation crw895-3d1fe314 (d2)	find -files0-from roots.list -name x -exec rm {} +	CRW-895-g3	row	-
+pre-merge evaluation crw895-3d1fe314 (d2)	find -files0-from roots.list | xargs rmdir	CRW-895-g4	row	-
+pre-merge evaluation crw895-3d1fe314 (d3)	printf '../%s\n' repo | xargs git worktree remove --force	CRW-895-h1	row	-
+pre-merge evaluation crw895-3d1fe314 (d3)	printf '../re\160o\n' | xargs git worktree remove --force	CRW-895-h2	row	-
+pre-merge evaluation crw895-3d1fe314 (d3)	printf '%s/%s\n' .. repo | xargs rmdir	CRW-895-h3	row	-
+pre-merge evaluation crw895-3d1fe314 (d3)	printf '%b' '../re\x70o' | xargs rmdir	CRW-895-h4	row	-
+pre-merge evaluation crw895-3d1fe314 (d3)	echo -e '../re\x70o' | xargs rmdir	CRW-895-h5	row	-
+pre-merge evaluation crw895-3d1fe314 (d3)	echo '.\./repo' | xargs rmdir	CRW-895-h6	row	-
+pre-merge evaluation crw895-3d1fe314 (d3)	printf "'../repo'\n" | xargs rmdir	CRW-895-h7	row	-
+pre-merge evaluation crw895-3d1fe314 (d3)	printf '%s\n' build/old.o | xargs rm	CRW-895-h8	row	-
+pre-merge evaluation crw895-3d1fe314 (d3)	printf '../%s\n' other | xargs rmdir	CRW-895-h9	row	-
+pre-merge evaluation crw895-3d1fe314 (d3)	printf '%s\n' ../other ../repo | xargs rmdir	CRW-895-h10	row	-
+pre-merge evaluation crw895-3d1fe314 (d3)	printf '%s' .. /repo | xargs rmdir	CRW-895-h11	row	-
+pre-merge evaluation crw895-3d1fe314 (d3)	echo '..\x2frepo' | xargs rmdir	CRW-895-h12	row	-
+pre-merge evaluation crw895-3d1fe314 (d4)	echo repo | xargs -I{} git worktree remove --force '../{}'	CRW-895-i1	row	-
+pre-merge evaluation crw895-3d1fe314 (d4)	echo repo | xargs -I{} rmdir ../{}	CRW-895-i2	row	-
+pre-merge evaluation crw895-3d1fe314 (d4)	echo repo | xargs -i rmdir ../{}	CRW-895-i3	row	-
+pre-merge evaluation crw895-3d1fe314 (d4)	echo repo | xargs -I@ rm ../@	CRW-895-i4	row	-
+pre-merge evaluation crw895-3d1fe314 (d4)	echo worktree | xargs -I{} git {} remove ../repo	CRW-895-i5	row	-
+pre-merge evaluation crw895-3d1fe314 (d4)	echo rm | xargs -I{} {} -rf ../repo	CRW-895-i6	row	-
+pre-merge evaluation crw895-3d1fe314 (d4)	ls | xargs -I{} rm ../{}	CRW-895-i7	row	-
+pre-merge evaluation crw895-3d1fe314 (d4)	ls | xargs -I{} rm {}	CRW-895-i8	row	-
+pre-merge evaluation crw895-3d1fe314 (d4)	echo old.o | xargs -I{} rm build/{}	CRW-895-i9	row	-
+pre-merge evaluation crw895-3d1fe314 (d4)	echo build | xargs -I{} rmdir {}	CRW-895-i10	row	-
+pre-merge evaluation crw895-3d1fe314 (d4)	printf 'a:../repo' | xargs -d : rmdir	CRW-895-i11	row	-
+pre-merge evaluation crw895-3d1fe314 (d4)	printf '../repo' | xargs -0 rmdir	CRW-895-i12	row	-
+pre-merge evaluation crw895-3d1fe314 (d4)	printf '../repo\n' | xargs -d '\n' rmdir	CRW-895-i13	row	-
+pre-merge evaluation crw895-3d1fe314 (d4)	echo repo | xargs -I{} sh -c 'rmdir ../{}'	CRW-895-i14	row	-
+pre-merge evaluation crw895-3d1fe314 (d4)	ls | xargs -I{} sh -c 'rmdir ../{}'	CRW-895-i15	row	-
+pre-merge evaluation crw895-3d1fe314 (d5)	printf '../repoX' | head -c 7 | xargs git worktree remove --force	CRW-895-j1	row	-
+pre-merge evaluation crw895-3d1fe314 (d5)	printf 'x../repo' | tail -c 7 | xargs rmdir	CRW-895-j2	row	-
+pre-merge evaluation crw895-3d1fe314 (d5)	echo '../repoX' | grep -o '../repo' | xargs rmdir	CRW-895-j3	row	-
+pre-merge evaluation crw895-3d1fe314 (d5)	echo ../other | head -n 1 | xargs rmdir	CRW-895-j4	row	-
+pre-merge evaluation crw895-3d1fe314 (d5)	echo ../repo | head -n 1 | xargs rmdir	CRW-895-j5	row	-
+pre-merge evaluation crw895-3d1fe314 (d5)	echo ../repo | sort -u | xargs rmdir	CRW-895-j6	row	-
+pre-merge evaluation crw895-3d1fe314 (d5)	echo ../repo | grep -v x | xargs rmdir	CRW-895-j7	row	-
+pre-merge evaluation crw895-3d1fe314 (d5)	printf 'a\n../repo\n' | tail -n 1 | xargs rmdir	CRW-895-j8	row	-
+pre-merge evaluation crw895-3d1fe314 (d5)	printf 'X\\\n../repo' | tail -n 1 | xargs rmdir	CRW-895-j9	row	-
+pre-merge evaluation crw895-3d1fe314 (d5)	echo '../repoX' | cut -c1-7 | xargs rmdir	CRW-895-j10	row	-
+pre-merge evaluation crw895-3d1fe314 (d5)	pwd | xargs git worktree remove	CRW-895-j11	row	-
+pre-merge evaluation crw895-3d1fe314 (d5)	realpath . | xargs rmdir	CRW-895-j12	row	-
+pre-merge evaluation crw895-3d1fe314 (d5)	git rev-parse --show-toplevel | xargs git worktree remove	CRW-895-j13	row	-
+pre-merge evaluation crw895-3d1fe314 (d5)	ls -d .. | xargs rmdir	CRW-895-j14	row	-
+pre-merge evaluation crw895-3d1fe314 (d5)	/bin/echo ../repo | xargs rmdir	CRW-895-j15	row	-
+pre-merge evaluation crw895-3d1fe314 (d5)	ls build | xargs rm	CRW-895-j16	row	-
+pre-merge evaluation crw895-3d1fe314 (d6)	find . -type f \( -exec rm {} + \)	CRW-895-k1	row	-
+pre-merge evaluation crw895-3d1fe314 (d6)	find . \( -type f -exec rm {} + \)	CRW-895-k2	row	-
+pre-merge evaluation crw895-3d1fe314 (d6)	find . \( -exec rm {} + \)	CRW-895-k3	row	-
+pre-merge evaluation crw895-3d1fe314 (d6)	find ../repo -type f \( -name x -o -true \) -delete	CRW-895-k4	row	-
+pre-merge evaluation crw895-3d1fe314 (d6)	find . \( -type f -o -type l \) -exec rm {} +	CRW-895-k5	row	-
+pre-merge evaluation crw895-3d1fe314 (d7)	echo ../repo | xargs sh -c 'rm build/old.o'	CRW-895-l1	row	-
+pre-merge evaluation crw895-3d1fe314 (d7)	echo ../repo | xargs sh -c 'rm "$@"' _	CRW-895-l2	row	-
+pre-merge evaluation crw895-3d1fe314 (d7)	find ../repo -exec sh -c 'rm build/old.o' \;	CRW-895-l3	row	-
+pre-merge evaluation crw895-3d1fe314 (d7)	find ../repo -exec bash -c 'rm "$0"' {} \;	CRW-895-l4	row	-
+pre-merge evaluation crw895-3d1fe314 (d7)	find . -exec sh -c 'rm build/old.o' \;	CRW-895-l5	row	-
