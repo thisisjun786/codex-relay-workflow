@@ -72,6 +72,14 @@ func TestFindScanGuardsAndStarts(t *testing.T) {
 		{"../repo -regex *repo -delete", "../repo", "-delete:false"},
 		{"../repo -regex ^.*$ -delete", "../repo", "-delete:false"},
 		{"../repo -regex .+ -delete", "../repo", "-delete:false"},
+		// an escaped literal is the character it names (verification of 632401ae)
+		{"../repo -regex .*\\* -delete", "../repo", "-delete:true"},
+		{"../repo -regex .*\\. -delete", "../repo", "-delete:true"},
+		{"../repo -regex .*\\$ -delete", "../repo", "-delete:true"},
+		{"../repo -regex .*\\^ -delete", "../repo", "-delete:true"},
+		{"../repo -regex .*\\\\ -delete", "../repo", "-delete:true"},
+		{".. -regex .*\\. -delete", "..", "-delete:false"},
+		{"../repo -regex \\(.*\\) -delete", "../repo", "-delete:false"},
 		{"../repo -name x -o -name * -delete", "../repo", "-delete:false"},
 		// a group is reached through the tests before it
 		{". -type f ( -exec rm {} + )", ".", "-exec:true"},

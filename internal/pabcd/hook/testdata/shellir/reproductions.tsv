@@ -1008,3 +1008,11 @@ fix round after verification of 9f189ad1 (P1 prefix before {})	find . -name '*.t
 fix round after verification of 9f189ad1 (P1 prefix before {})	find . -name x -exec rm -rf ../repo/{} \;	CRW-895-w4	row	-
 fix round after verification of 9f189ad1 (P1 prefix before {})	find ../build -name x -exec rm -rf build/{} \;	CRW-895-w5	row	-
 fix round after verification of 9f189ad1 (P1 prefix before {})	find . -name x -exec rm -rf {}/../.. \;	CRW-895-w6	row	-
+fix round after verification of 632401ae (P1 escaped literal read as match-all)	find . -regex '.*\*' -delete	CRW-895-x1	row	-
+fix round after verification of 632401ae (P1 escaped literal read as match-all)	find ../repo -regex '.*\.' -delete	CRW-895-x2	row	-
+fix round after verification of 632401ae (P1 escaped literal read as match-all)	find . -regex '.*\$' -delete	CRW-895-x3	row	-
+fix round after verification of 632401ae (P1 escaped literal read as match-all)	find . -regex '.*\^' -delete	CRW-895-x4	row	-
+fix round after verification of 632401ae (P1 escaped literal read as match-all)	find . -regex '.*\\' -delete	CRW-895-x5	row	-
+fix round after verification of 632401ae (P1 escaped literal read as match-all)	find .. -maxdepth 0 -regex '.*\.' -exec rm -rf {} +	CRW-895-x6	row	-
+fix round after verification of 632401ae (P1 escaped literal read as match-all)	find ../repo -regex '.*' -delete	CRW-895-x7	row	-
+fix round after verification of 632401ae (P1 escaped literal read as match-all)	find ../repo -regex '\(.*\)' -delete	CRW-895-x8	row	-

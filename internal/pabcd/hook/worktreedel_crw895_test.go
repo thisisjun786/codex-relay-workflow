@@ -123,6 +123,16 @@ func crw895Shapes() []crw895Shape {
 		{`find . -name x -exec rm -rf ../repo/{} \;`, true, false},
 		{`find ../build -name x -exec rm -rf build/{} \;`, true, false},
 		{`find . -name x -exec rm -rf {}/../.. \;`, true, false},
+		// the fix round after the verification of 632401ae: an escaped literal is evaluated as the character it names, not taken for
+		// an operator of a match-all regular expression
+		{`find . -regex '.*\*' -delete`, false, false},
+		{`find ../repo -regex '.*\.' -delete`, false, false},
+		{`find . -regex '.*\$' -delete`, false, false},
+		{`find . -regex '.*\^' -delete`, false, false},
+		{`find . -regex '.*\\' -delete`, false, false},
+		{`find .. -maxdepth 0 -regex '.*\.' -exec rm -rf {} +`, true, false},
+		{`find ../repo -regex '.*' -delete`, true, false},
+		{`find ../repo -regex '\(.*\)' -delete`, true, false},
 	}
 }
 
