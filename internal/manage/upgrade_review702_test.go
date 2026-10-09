@@ -464,11 +464,12 @@ func TestUpgradeReview702OversizedArchiveIsRefusedBeforeItIsCopied(t *testing.T)
 
 // TestUpgradeReview702ServiceWaitBudgetIsRecorded: a service that never reports itself running and
 // matching is a post-check failure after the real budget, and the wait records the last answer it
-// read. The budget is shrunk here so the test spends it rather than the wall clock's 60 seconds; the
-// product's own budget is the default the run reads.
+// read. The budget is shrunk here so the test spends it rather than the wall clock's 60 seconds. The
+// budget is far longer than one status read by a shell child, even on a loaded host, so the test
+// does not depend on how fast a single read returns; the product's own budget is the default the run reads.
 func TestUpgradeReview702ServiceWaitBudgetIsRecorded(t *testing.T) {
 	oldBudget, oldInterval := upgradeServiceBudget, upgradeServiceInterval
-	upgradeServiceBudget, upgradeServiceInterval = 20*time.Millisecond, 5*time.Millisecond
+	upgradeServiceBudget, upgradeServiceInterval = 2*time.Second, 50*time.Millisecond
 	t.Cleanup(func() { upgradeServiceBudget, upgradeServiceInterval = oldBudget, oldInterval })
 	h := upgradeHarness(t, upgradeHarnessOptions{gh: upgradeGhPaths(upgradeGoodCommit), pointer: true,
 		produceRuntime: true, pointAtIt: true, statusAnswers: []string{upgradeStatusUnknown}})
