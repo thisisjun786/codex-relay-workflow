@@ -14,8 +14,9 @@ type jsonToolUse struct {
 }
 
 // pythonModuleFile is whether a file of a module search path directory is a module python may import: a source or byte-code
-// module (.py, .pyc, .pyw) or a compiled extension module, bare or with an ABI tag (.so, .abi3.so, .cpython-312-x86_64-linux-gnu.so,
-// .pyd). Its name does not matter: json.tool imports many standard modules after json, and which ones depends on the python.
+// module (.py, .pyc, .pyw) or a compiled extension module, bare or with an ABI tag (.so, .abi3.so,
+// .cpython-312-x86_64-linux-gnu.so, .pyd). Its name does not matter: json.tool imports many standard modules after json, and
+// which ones depends on the python.
 func pythonModuleFile(n string) bool {
 	for _, ext := range []string{".py", ".pyc", ".pyw", ".pyd", ".so"} {
 		if strings.HasSuffix(n, ext) {
@@ -35,12 +36,12 @@ var jsonToolQuiet = map[string]bool{
 }
 
 // checkJSONToolWrites proves, once the whole text is read, that no record of it writes a python module where a python -m
-// json.tool of the text finds one. Every record counts, the ones after the module too: a loop runs a later copy before the next
-// json.tool, and a background or pipeline neighbour runs at the same time. A record other than json.tool itself must be a
-// program of jsonToolQuiet, and no redirection may write a python module (argparse.py, json.so, json.*.so, ...) into the
-// module's directory or an __init__ into a directory of it; a redirection that may (its target or its directory unknown) is
-// refused.
-// Directories are compared after the symbolic links that exist are followed, so a link to the directory is the directory.
+// json.tool of the text finds one. Every record counts, the ones after the module too: a loop runs a later copy before the
+// next json.tool, and a background or pipeline neighbour runs at the same time. A record other than json.tool itself must be
+// a program of jsonToolQuiet found through the search path (./cat is a file of the directory), and no redirection may write a
+// python module (argparse.py, json.so, json.*.so, ...) into the module's directory or an __init__ into a directory of it; a
+// redirection that may (its target or its directory unknown) is refused. Directories are compared after the symbolic links
+// that exist are followed, so a link to the directory is the directory.
 func (w *walker) checkJSONToolWrites() error {
 	if len(w.jsonTools) == 0 {
 		return nil
@@ -54,12 +55,13 @@ func (w *walker) checkJSONToolWrites() error {
 			continue
 		}
 		for i, e := range w.out {
-			if !self[i] && (e.Kind != KindCommand || !jsonToolQuiet[e.Name]) {
+			if !self[i] && (e.Kind != KindCommand || !jsonToolQuiet[e.Name] || strings.Contains(e.Program.Value, "/")) {
 				what := e.Name
 				if e.Kind == KindScriptFile && e.Script.Known {
 					what = e.Name + " " + e.Script.Value
 				}
-				return unreadablef("%s -m json.tool runs in a text that runs %s, which may write a python module the reader cannot see", u.name, what)
+				return unreadablef("%s -m json.tool runs in a text that runs %s, which may write a python module the reader cannot see",
+					u.name, what)
 			}
 			for _, r := range e.Redirs {
 				if err := jsonToolRedirect(u, r, e.Dir); err != nil {

@@ -51,6 +51,8 @@ func TestPythonModuleJSONToolWrites(t *testing.T) {
 		{"f() { cat evil.so > json.so; }; f; " + j, true},
 		{"source env.sh; " + j, true},
 		{j + " > json.so", true},
+		{"./cat x; " + j, true},
+		{"/tmp/cat x; " + j, true},
 		// controls
 		{j, false},
 		{"grep '\"pr\": *737' alerts.jsonl | tail -1 | python3 -m json.tool | head -80", false},
