@@ -499,14 +499,10 @@ func statusSeedFakeRelay(t *testing.T, relayState, socketPath string) {
 // directory gains a file.
 func TestStatusReadsWriteNothing(t *testing.T) {
 	// The capacity reading runs the relay command through this test binary (see TestMain), so the
-	// crw binary is built first; it is removed when the test ends.
-	// A binary named by CRW_TEST_BINARY is the caller's and is left alone; one built here is in its own
-	// temporary directory, which is removed when the test ends.
-	preset := os.Getenv(testsupport.CRWBinaryEnv) != ""
-	crw := testsupport.CRW(t)
-	if !preset {
-		t.Cleanup(func() { _ = os.RemoveAll(filepath.Dir(crw)) })
-	}
+	// crw binary is built first. testsupport caches it for the whole test process and TestMain
+	// removes it when the process ends, so this test never deletes it (a second run in the same
+	// process, as with -count=2, reuses it).
+	testsupport.CRW(t)
 	root := t.TempDir()
 	// The real manage path runs below, so the argument list is recorded around it rather than
 	// faked: this test must discriminate the non-writing form of each command. The fake relay store
