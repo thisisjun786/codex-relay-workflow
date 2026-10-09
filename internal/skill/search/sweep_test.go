@@ -160,3 +160,31 @@ func TestOptionValueIsNeverAnotherOptionOrTheDoubleDash(t *testing.T) {
 		}
 	}
 }
+
+// A bad option is reported whether or not --help is also given: --help never turns a malformed command into a
+// success, and an option that lacks its value because --help follows it is the missing value, not a help request.
+func TestABadOptionIsReportedEvenWithHelp(t *testing.T) {
+	boom := func(url string) (string, error) {
+		t.Errorf("fetched %s", url)
+		return "", errors.New("no network expected")
+	}
+	for _, c := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"search", "tdd", "--source", "--help"}, "option --source needs a value"},
+		{[]string{"search", "tdd", "--limit", "-h"}, "option --limit needs a value"},
+		{[]string{"show", "x", "--source", "--help"}, "option --source needs a value"},
+		{[]string{"show", "x", "--source", "-h"}, "option --source needs a value"},
+		{[]string{"search", "tdd", "--wat", "--help"}, `unknown option "--wat"`},
+		{[]string{"search", "--help", "tdd", "-z"}, `unknown option "-z"`},
+	} {
+		t.Run(strings.Join(c.args, " "), func(t *testing.T) {
+			cliHome(t)
+			code, out, errOut := cliRun(c.args, boom)
+			if code != 2 || out != "" || !strings.Contains(errOut, c.want) {
+				t.Fatalf("%d %q %q", code, out, errOut)
+			}
+		})
+	}
+}

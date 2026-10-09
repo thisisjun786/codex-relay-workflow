@@ -200,13 +200,14 @@ func runCLI(ctx context.Context, argv []string, fetch fetchFunc, stdout, stderr 
 	}
 	f := ParseFlags(argv[1:])
 	if argv[0] == "search" || argv[0] == "show" {
-		if f.Help {
-			fmt.Fprintln(stdout, Help)
-			return 0, nil
-		}
+		// A bad option is reported before --help is honoured: --help never turns a malformed command into a success.
 		if f.Err != "" {
 			fmt.Fprintf(stderr, "skill-search: %s\n%s\nplace -- before a query word or id that starts with -; --help explains the options\n", f.Err, Usage)
 			return 2, nil
+		}
+		if f.Help {
+			fmt.Fprintln(stdout, Help)
+			return 0, nil
 		}
 	}
 	cmdCtx, cancel := context.WithTimeout(ctx, commandTimeout)
