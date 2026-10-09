@@ -24,6 +24,7 @@ func TestGitHubPostDirectScripts(t *testing.T) {
 	write("clean.sh", "#!/bin/sh\necho ok\n", 0o755)
 	write("noshebang.sh", "gh pr comment 1 -b \"$(env)\"\n", 0o755)
 	write("bin/tool", "#!\x00binary", 0o755)
+	write("elf/tool", "\x7fELF\x02\x01\x01\x00gh pr comment 1 -b x\x00", 0o755)
 	write("node/shim", "#!/usr/bin/env node\nconsole.log('right', 'print', 'high')\n", 0o755)
 	write("node/post", "#!/usr/bin/env node\nrequire('child_process').execSync('gh pr comment 1 -b x')\n", 0o755)
 	write("py/post", "#!/usr/bin/env python3\nimport os\nos.system('gh issue create')\n", 0o755)
@@ -36,6 +37,7 @@ func TestGitHubPostDirectScripts(t *testing.T) {
 		{"./clean.sh", false},
 		{"./noshebang.sh", true},
 		{"./bin/tool", false},
+		{"./elf/tool", false},
 		{"./node/shim", false},
 		{"./node/post", true},
 		{"./py/post", true},

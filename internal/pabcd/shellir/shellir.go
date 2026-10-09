@@ -249,8 +249,9 @@ type walker struct {
 	calls []string
 	// created is the set of files the records out[:createdUpTo] write (see createdByText); it grows as the walk appends records, so
 	// the check is linear in the text.
-	created     map[string]bool
-	createdUpTo int
+	created      map[string]bool
+	createdTrees map[string]bool // directories a copy fills: any file below one is created by the text
+	createdUpTo  int
 }
 
 func (w *walker) stmts(list []*syntax.Stmt, st *state, ctx Context) error {
@@ -293,9 +294,13 @@ func (w *walker) stmt(s *syntax.Stmt, st *state, ctx Context) error {
 		return err
 	}
 	ctx.Stdin = stdinKind(redirs, ctx.Stdin)
-	if ctx.Stdin != StdinFile {
+	switch {
+	case ctx.Stdin != StdinFile:
 		ctx.stdinFile = ""
-	} else if f, ok := lastStdinFile(redirs); ok {
+	case stdinKind(redirs, "") != "":
+		// An input redirection of its own replaces what an outer one gave: when it names no file the reader can name (a
+		// variable, a descriptor alias) the command reads a file unknown, not the file the outer redirection named.
+		f, _ := lastStdinFile(redirs)
 		ctx.stdinFile = f
 	}
 	if isCompound(s.Cmd) && len(redirs) > 0 {

@@ -9,6 +9,7 @@ package hook
 import (
 	"bytes"
 	"io"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -400,14 +401,40 @@ func githubPostReadScriptBytes(name, cwd string) ([]byte, bool) {
 // githubPostWrites is the set of files the records of a text write, computed once per text: a text of thousands of script runs
 // must not scan its records for each of them.
 type githubPostWrites struct {
-	files   map[string]bool
-	unknown bool // some write has a destination the reader cannot name
+	files    map[string]bool
+	existing map[int64][]os.FileInfo // the files a write reaches that exist already, by size: a hard link has another name and the same file
+	unknown  bool                    // some write has a destination the reader cannot name
+}
+
+// add records one destination by the name the kernel gives it and, when the file exists, by the file itself.
+func (w *githubPostWrites) add(p string) {
+	w.files[githubPostIdentity(p)] = true
+	if fi, err := os.Stat(p); err == nil {
+		w.existing[fi.Size()] = append(w.existing[fi.Size()], fi)
+	}
+}
+
+// reaches is whether a write lands on the file the path names, whatever name the write used.
+func (w *githubPostWrites) reaches(p string) bool {
+	if w.files[githubPostIdentity(p)] {
+		return true
+	}
+	fi, err := os.Stat(p)
+	if err != nil {
+		return false
+	}
+	for _, other := range w.existing[fi.Size()] {
+		if os.SameFile(fi, other) {
+			return true
+		}
+	}
+	return false
 }
 
 // githubPostWritesOf collects the destinations of every record of a text other than a script file record, by the identity the
 // kernel gives them (links resolved). A link made in the text (ln) can alias any file, so it counts as a write to a name unknown.
 func githubPostWritesOf(execs []shellir.Exec) *githubPostWrites {
-	w := &githubPostWrites{files: map[string]bool{}}
+	w := &githubPostWrites{files: map[string]bool{}, existing: map[int64][]os.FileInfo{}}
 	for _, o := range execs {
 		if o.Kind == shellir.KindScriptFile {
 			continue
@@ -421,11 +448,11 @@ func githubPostWritesOf(execs []shellir.Exec) *githubPostWrites {
 				w.unknown = true
 			case d == "/dev/null":
 			case filepath.IsAbs(d):
-				w.files[githubPostIdentity(d)] = true
+				w.add(d)
 			case !o.Dir.Known:
 				w.unknown = true
 			default:
-				w.files[githubPostIdentity(githubPostScriptPath(d, o.Dir.Path))] = true
+				w.add(githubPostScriptPath(d, o.Dir.Path))
 			}
 		}
 	}
@@ -452,7 +479,7 @@ func (w *githubPostWrites) rewrites(script string, dir shellir.Dir) bool {
 	if !dir.Known {
 		return false // the script is unreadable already
 	}
-	return w.unknown || w.files[githubPostIdentity(githubPostScriptPath(script, dir.Path))]
+	return w.unknown || w.reaches(githubPostScriptPath(script, dir.Path))
 }
 
 // githubPostScriptPath is the path a shell opens for a script name in a directory: the name as written, joined to the directory

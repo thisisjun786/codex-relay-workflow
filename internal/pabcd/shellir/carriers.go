@@ -169,8 +169,40 @@ func isOpaqueInterpreter(name string) bool {
 	return false
 }
 
+// opaqueGrammar is the closed option grammar of an interpreter the port cannot read: the options that take no value, the
+// options that take one (a separate word, or attached for a single-dash letter), and the options whose value is the script
+// file. Every other option is outside the model; a code option (-e, -r, --eval) is among them, so no spelling of it (attached,
+// --name=value) reaches the script operand.
+type opaqueGrammar struct {
+	flags  []string
+	valued []string
+	script []string
+}
+
+var opaqueGrammars = map[string]opaqueGrammar{
+	"php":       {flags: []string{"-n", "-q", "-C", "-H"}, valued: []string{"-c", "-d"}, script: []string{"-f"}},
+	"lua":       {flags: []string{"-E", "-W"}},
+	"luajit":    {},
+	"rscript":   {flags: []string{"--vanilla", "--no-save", "--no-restore", "--no-site-file", "--no-init-file", "--no-environ", "--slave", "--quiet", "--silent", "--verbose"}},
+	"tclsh":     {valued: []string{"-encoding"}},
+	"wish":      {valued: []string{"-encoding", "-display", "-geometry", "-name", "-visual", "-use", "-colormap"}, script: []string{"-file"}},
+	"osascript": {valued: []string{"-l", "-s"}},
+	"groovy":    {valued: []string{"-c", "-cp", "-classpath", "--classpath", "--encoding"}},
+}
+
+func opaqueHas(set []string, v string) bool {
+	for _, x := range set {
+		if x == v {
+			return true
+		}
+	}
+	return false
+}
+
 // opaqueInterpreter refuses the program positions of an interpreter the port cannot read: a program on standard input, in a
-// descriptor alias, or in an -e or -r option. A script file operand is not judged, as for the interpreters the port reads.
+// descriptor alias, or in a code option. The options are read by the interpreter's own grammar (opaqueGrammars): an option
+// value is no script file, and an option outside the grammar is unreadable. A script file operand is not judged, as for the
+// interpreters the port reads.
 func opaqueInterpreter(name string, args []Word, redirs []Redir, ctx Context) error {
 	if len(args) == 1 && args[0].Known {
 		switch args[0].Value {
@@ -178,19 +210,45 @@ func opaqueInterpreter(name string, args []Word, redirs []Redir, ctx Context) er
 			return nil
 		}
 	}
+	grammar := opaqueGrammars[strings.ToLower(name)]
 	operand := false
-	for _, a := range args {
+options:
+	for i := 0; i < len(args); i++ {
+		a := args[i]
 		if !a.Known {
-			operand = true
-			continue
+			operand = true // a word the reader cannot read stands for the script (a residual shared with every interpreter)
+			break
 		}
-		switch v := a.Value; {
+		v := a.Value
+		switch {
 		case v == "-" || fdAliasPath(v):
 			return unreadablef("%s reads its program from standard input or a descriptor alias (%s)", name, v)
-		case v == "-r" || v == "-e" || v == "-E" || v == "-R" || v == "-B" || v == "--run" || v == "--eval" || v == "--expression":
-			return unreadablef("%s receives a program in %s, which the port cannot read", name, v)
+		case v == "--":
+			operand = i+1 < len(args)
+			break options
 		case !strings.HasPrefix(v, "-"):
 			operand = true
+			break options
+		case opaqueHas(grammar.flags, v):
+		case opaqueHas(grammar.valued, v), opaqueHas(grammar.script, v):
+			if i+1 >= len(args) {
+				return unreadablef("%s option %s has no value", name, v)
+			}
+			i++
+			if !args[i].Known {
+				return unreadablef("%s option %s has a value that is not known (%s)", name, v, args[i].Reason)
+			}
+			if opaqueHas(grammar.script, v) {
+				if w := args[i].Value; w == "-" || fdAliasPath(w) {
+					return unreadablef("%s reads its program from standard input or a descriptor alias (%s)", name, w)
+				}
+				operand = true
+				break options
+			}
+		case len(v) > 2 && v[0] == '-' && v[1] != '-' && opaqueHas(grammar.valued, v[:2]):
+			// an attached value (-dname=value)
+		default:
+			return unreadablef("%s option %s is outside the options the port models (a program may be in it)", name, v)
 		}
 	}
 	if _, file := stdinIsFile(ctx); !operand && !file {

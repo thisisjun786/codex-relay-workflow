@@ -660,3 +660,18 @@ frozen/crw-951-handoff-904053760577.json	openFindings pr871-76f0290e:c5 (criteri
 frozen/crw-951-handoff-904053760577.json	openFindings additional:tuple-assignment	HANDOFF-951-tuple-assignment	row	-
 frozen/crw-951-handoff-904053760577.json	openFindings additional:unknown-call-mode	HANDOFF-951-unknown-call-mode	row	-
 added by CRW-1028 (failure class 5, paths)	bash link/../post.sh where link is a symbolic link	CRW-1028-class5-script-dotdot	row	-
+added by CRW-1028 (verifier round 1, reader gaps)	bash -c 'bash < "$F"' </dev/null	CRW-1028-v1-01	row	-
+added by CRW-1028 (verifier round 1, reader gaps)	bash -c 'bash < /dev/stdin' </dev/null	CRW-1028-v1-02	row	-
+added by CRW-1028 (verifier round 1, reader gaps)	bash -c 'bash </dev/null' </dev/null	CRW-1028-v1-03	row	-
+added by CRW-1028 (verifier round 1, reader gaps)	php -d display_errors=1 <<'EOF'\n<?php system("rm -rf {CHECKOUT}");\nEOF	CRW-1028-v1-04	row	-
+added by CRW-1028 (verifier round 1, reader gaps)	php -r'system("rm -rf {CHECKOUT}");' ignored	CRW-1028-v1-05	row	-
+added by CRW-1028 (verifier round 1, reader gaps)	lua -e'os.execute("rm -rf {CHECKOUT}")' ignored.lua	CRW-1028-v1-06	row	-
+added by CRW-1028 (verifier round 1, reader gaps)	Rscript --expression='system("rm -rf {CHECKOUT}")' ignored.R	CRW-1028-v1-07	row	-
+added by CRW-1028 (verifier round 1, reader gaps)	tclsh -encoding utf-8 <<'EOF'\nexec rm -rf {CHECKOUT}\nEOF	CRW-1028-v1-08	row	-
+added by CRW-1028 (verifier round 1, reader gaps)	php -d display_errors=1 script.php	CRW-1028-v1-09	row	-
+added by CRW-1028 (verifier round 1, reader gaps)	cp -t bin evil/tool; bin/tool	CRW-1028-v1-10	row	-
+added by CRW-1028 (verifier round 1, reader gaps)	cp evil/tool bin; bin/tool	CRW-1028-v1-11	row	-
+added by CRW-1028 (verifier round 1, reader gaps)	cp --target-directory=bin evil/tool; ./bin/tool	CRW-1028-v1-12	row	-
+added by CRW-1028 (verifier round 1, reader gaps)	cp -r evil bin; bin/evil/tool	CRW-1028-v1-13	row	-
+added by CRW-1028 (verifier round 1, reader gaps)	mv evil/tool bin; bin/tool	CRW-1028-v1-14	row	-
+added by CRW-1028 (verifier round 1, reader gaps)	cp -t bin evil/tool; echo done	CRW-1028-v1-15	row	-
