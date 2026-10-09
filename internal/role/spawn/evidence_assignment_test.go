@@ -29,10 +29,9 @@ import (
 // Every case runs the real spawn hook and the real SubagentStop leg against temporary homes and trees.
 
 type assignedRig struct {
-	t        *testing.T
-	rig      *spawnHookRig
-	cwd, wt  string
-	sessions string
+	t       *testing.T
+	rig     *spawnHookRig
+	cwd, wt string
 }
 
 func newAssignedRig(t *testing.T) *assignedRig {
