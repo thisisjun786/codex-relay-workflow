@@ -16,8 +16,9 @@ const reviewObserverUnparsed goalplan.GoalplanLedgerEvent = "review_signoff_unpa
 
 // HandleReviewObserver ports CXC v0.2.40 review-observer.ts:57-164 (3c1459ac), the SubagentStop observer that owns plan-audit
 // approval: the first parseable sign-off of a child binds the round to that child's agent id, and nothing else writes an
-// approval. It never blocks and answers "" always. Every parse, IO or lock failure is swallowed, so a missed recording costs one
-// more audit round and never an unrelated subagent's exit.
+// approval. It never blocks and answers "" always. Every parse, IO or lock failure is swallowed and never costs an unrelated
+// subagent's exit; since CRW-1113 a sign-off that met a busy lock or a failed write is kept in the inbox
+// (reviewobserver_inbox.go) and applied by the next drain, so it no longer costs another audit round.
 //
 // The raw payload is read here rather than through the harness's SubagentStop parser, which requires agent_type: a v1 spawn has
 // none (review-deadlock.test.ts:111-122), and the observer must still name the round. The caller applies the PABCD gate
