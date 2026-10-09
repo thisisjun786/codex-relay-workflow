@@ -22,6 +22,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/acceptance/premerge"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -152,14 +153,14 @@ func premergeSectionOf(cfg *Config) (premergeSection, error) {
 // premergeStateDir is where the evaluation keeps what the configuration does not place: below the
 // manage state directory, apart from the audit's.
 func premergeStateDir(e *Env, cfg *Config) string {
-	return filepath.Join(auditStateDir(e, cfg), premergeStateSubdir)
+	return crwconfig.JoinRoot(auditStateDir(e, cfg), premergeStateSubdir)
 }
 
 func premergeBundleRoot(e *Env, cfg *Config, section premergeSection) string {
 	if section.BundleDir != "" {
 		return section.BundleDir
 	}
-	return filepath.Join(premergeStateDir(e, cfg), premergeBundlesDir)
+	return crwconfig.JoinRoot(premergeStateDir(e, cfg), premergeBundlesDir)
 }
 
 func premergeRecordDir(e *Env, cfg *Config, section premergeSection) string {
@@ -338,7 +339,7 @@ func premergeReadInputs(dir string) (map[string][]byte, error) {
 		if !entry.Type().IsRegular() {
 			return nil, premergeFail(3, "inputs_rejected", "%s is not a regular file: the inputs hold files only, no link and no directory", entry.Name())
 		}
-		file, err := os.OpenFile(filepath.Join(dir, entry.Name()), os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+		file, err := os.OpenFile(crwconfig.JoinRoot(dir, entry.Name()), os.O_RDONLY|syscall.O_NOFOLLOW, 0)
 		if err != nil {
 			return nil, premergeFail(3, "inputs_rejected", "%s cannot be read: %v", entry.Name(), err)
 		}
@@ -589,7 +590,7 @@ func premergeSettleManifest(ctx context.Context, co auditPkgCheckout, dir, dev, 
 		}
 	}()
 	for _, name := range []string{"dev", "base", "head"} {
-		file := filepath.Join(dir, "manifest-"+name)
+		file := crwconfig.JoinRoot(dir, "manifest-"+name)
 		files = append(files, file)
 		if err := os.WriteFile(file, sides[name], 0o600); err != nil {
 			return nil, "", premergeFail(3, "git_failed", "%v", err)
@@ -617,14 +618,14 @@ func premergeSettleManifest(ctx context.Context, co auditPkgCheckout, dir, dev, 
 func premergeTreeWithSettledManifests(ctx context.Context, co auditPkgCheckout, indexDir, indexName, dev, head, tree string, paths []string) (string, error) {
 	// git runs in the checkout, so the index file is named by an absolute path: the same file is made,
 	// read by git and removed again whatever the caller's working directory is.
-	indexDir, err := filepath.Abs(indexDir)
+	indexDir, err := premergeAbs(indexDir)
 	if err != nil {
 		return "", premergeFail(3, "git_failed", "%v", err)
 	}
 	if err := os.MkdirAll(indexDir, 0o700); err != nil {
 		return "", premergeFail(3, "git_failed", "%v", err)
 	}
-	index := filepath.Join(indexDir, indexName)
+	index := crwconfig.JoinRoot(indexDir, indexName)
 	_ = os.Remove(index)
 	defer func() { _ = os.Remove(index); _ = os.Remove(index + ".lock") }()
 	env := []string{"GIT_INDEX_FILE=" + index}
@@ -636,7 +637,7 @@ func premergeTreeWithSettledManifests(ctx context.Context, co auditPkgCheckout, 
 		if err != nil {
 			return "", err
 		}
-		file := filepath.Join(indexDir, indexName+".settled")
+		file := crwconfig.JoinRoot(indexDir, indexName+".settled")
 		if err := os.WriteFile(file, settled, 0o600); err != nil {
 			return "", premergeFail(3, "git_failed", "%v", err)
 		}
@@ -707,7 +708,7 @@ func premergeWriteTree(ctx context.Context, co auditPkgCheckout, commit, dir str
 			return fmt.Errorf("the paths %q and %q both come out as %q in the bundle", other, entry.path, name)
 		}
 		placed[name] = entry.path
-		if !auditPkgContained(dir, filepath.Join(dir, filepath.FromSlash(name))) {
+		if !auditPkgContained(dir, crwconfig.JoinRoot(dir, filepath.FromSlash(name))) {
 			return fmt.Errorf("the merge names %q, which leaves the bundle", entry.path)
 		}
 		names[i] = name
@@ -762,7 +763,7 @@ func premergeWriteTree(ctx context.Context, co auditPkgCheckout, commit, dir str
 			if changed[entry.path] {
 				body = auditPRScrub(body, scrubs)
 			}
-			if err := premergeWriteTreeFile(filepath.Join(dir, filepath.FromSlash(names[i])), body, entry.mode); err != nil {
+			if err := premergeWriteTreeFile(crwconfig.JoinRoot(dir, filepath.FromSlash(names[i])), body, entry.mode); err != nil {
 				return err
 			}
 		}
@@ -791,7 +792,7 @@ func premergeWriteTreeFile(path string, data []byte, mode string) error {
 	if mode == "100755" {
 		perm = 0o700
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	if err := os.MkdirAll(rootDir(path), 0o700); err != nil {
 		return err
 	}
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY|syscall.O_NOFOLLOW, perm)
@@ -832,14 +833,14 @@ func premergeBuildBundle(ctx context.Context, e *Env, co auditPkgCheckout, root,
 			"The merge lane regenerates that line by the repository's built-in rule when it merges. " +
 			"Do not report the manifest version line or its derived value.\n"
 	}
-	if err := auditPRWriteFile(filepath.Join(dir, "criteria.md"), auditPRScrub([]byte(text), scrubs)); err != nil {
+	if err := auditPRWriteFile(crwconfig.JoinRoot(dir, "criteria.md"), auditPRScrub([]byte(text), scrubs)); err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Join(dir, "inputs"), 0o700); err != nil {
+	if err := os.MkdirAll(crwconfig.JoinRoot(dir, "inputs"), 0o700); err != nil {
 		return err
 	}
 	for name, body := range inputs {
-		if err := auditPRWriteBlob(filepath.Join(dir, "inputs", name), body); err != nil {
+		if err := auditPRWriteBlob(crwconfig.JoinRoot(dir, "inputs", name), body); err != nil {
 			return err
 		}
 	}
@@ -847,11 +848,11 @@ func premergeBuildBundle(ctx context.Context, e *Env, co auditPkgCheckout, root,
 	if err != nil {
 		return err
 	}
-	if err := auditPRWriteFile(filepath.Join(dir, "candidate", "diff.patch"), auditPRScrub(patch, scrubs)); err != nil {
+	if err := auditPRWriteFile(crwconfig.JoinRoot(dir, "candidate", "diff.patch"), auditPRScrub(patch, scrubs)); err != nil {
 		return err
 	}
 	description := pull.Title + "\n\n" + pull.Body
-	if err := auditPRWriteFile(filepath.Join(dir, "candidate", "pr.md"), auditPRScrub([]byte(description), scrubs)); err != nil {
+	if err := auditPRWriteFile(crwconfig.JoinRoot(dir, "candidate", "pr.md"), auditPRScrub([]byte(description), scrubs)); err != nil {
 		return err
 	}
 	// The changed paths are asked of the same sanitized git as the merge, not of the audit's helper, which
@@ -868,7 +869,7 @@ func premergeBuildBundle(ctx context.Context, e *Env, co auditPkgCheckout, root,
 	for _, path := range paths {
 		changed[path] = true
 	}
-	if err := premergeWriteTree(ctx, co, merged.commit, filepath.Join(dir, "candidate", "tree"), changed, scrubs); err != nil {
+	if err := premergeWriteTree(ctx, co, merged.commit, crwconfig.JoinRoot(dir, "candidate", "tree"), changed, scrubs); err != nil {
 		return err
 	}
 	complete = true
@@ -1058,7 +1059,7 @@ func premergeWriteRecord(path string, data []byte, keep string) error {
 	if err := premergeRefuseLink(path); err != nil {
 		return err
 	}
-	dir := filepath.Dir(path)
+	dir := rootDir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
@@ -1130,11 +1131,11 @@ func premergeEncode(record premerge.Record) ([]byte, error) {
 // premergeEvalLock takes the lock of one pull request head, in the premerge state directory, so two
 // evaluations of it do not rebuild one bundle at once. A second one is refused rather than waited for.
 func premergeEvalLock(e *Env, cfg *Config, number int, head string) (func(), error) {
-	dir := filepath.Join(premergeStateDir(e, cfg), premergeLocksDir)
+	dir := crwconfig.JoinRoot(premergeStateDir(e, cfg), premergeLocksDir)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, premergeFail(1, "lock_failed", "%v", err)
 	}
-	file, err := os.OpenFile(filepath.Join(dir, premergeBundlePrefix+strconv.Itoa(number)+"-"+head[:premergeHeadChars]+".lock"), os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW, 0o600)
+	file, err := os.OpenFile(crwconfig.JoinRoot(dir, premergeBundlePrefix+strconv.Itoa(number)+"-"+head[:premergeHeadChars]+".lock"), os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW, 0o600)
 	if err != nil {
 		return nil, premergeFail(1, "lock_failed", "%v", err)
 	}
@@ -1203,7 +1204,7 @@ func PremergeEval(ctx context.Context, e *Env, cfg *Config, opts PremergeEvalOpt
 	if issue == "" {
 		return PremergeEvalResult{}, premergeFail(3, "issue_unknown", "the title of pull request %d carries no issue key", opts.PR)
 	}
-	recordPath := filepath.Join(premergeRecordDir(e, cfg, section), premergeRecordName(opts.PR, pull.HeadOID))
+	recordPath := crwconfig.JoinRoot(premergeRecordDir(e, cfg, section), premergeRecordName(opts.PR, pull.HeadOID))
 	if _, err := os.Lstat(recordPath); err == nil && !opts.Replace {
 		return PremergeEvalResult{}, premergeFail(3, "record_exists", "%s exists; --replace grades again and keeps it beside the new one", recordPath)
 	}
@@ -1243,7 +1244,7 @@ func PremergeEval(ctx context.Context, e *Env, cfg *Config, opts PremergeEvalOpt
 	if err != nil {
 		return PremergeEvalResult{}, err
 	}
-	root, err := filepath.Abs(premergeBundleRoot(e, cfg, section))
+	root, err := premergeAbs(premergeBundleRoot(e, cfg, section))
 	if err != nil {
 		return PremergeEvalResult{}, premergeFail(1, "grader_failed", "%v", err)
 	}
@@ -1251,7 +1252,7 @@ func PremergeEval(ctx context.Context, e *Env, cfg *Config, opts PremergeEvalOpt
 	if err != nil {
 		return PremergeEvalResult{}, err
 	}
-	bundle := filepath.Join(root, premergeBundlePrefix+strconv.Itoa(opts.PR)+"-"+pull.HeadOID[:premergeHeadChars])
+	bundle := crwconfig.JoinRoot(root, premergeBundlePrefix+strconv.Itoa(opts.PR)+"-"+pull.HeadOID[:premergeHeadChars])
 	if err := premergeBuildBundle(ctx, e, co, root, bundle, pull, issue, criteria, inputs, merged, prSection.Scrub); err != nil {
 		return PremergeEvalResult{}, premergeFail(3, "bundle_rejected", "%v", err)
 	}
@@ -1267,7 +1268,7 @@ func PremergeEval(ctx context.Context, e *Env, cfg *Config, opts PremergeEvalOpt
 	case auditStatusInvalid:
 		return PremergeEvalResult{}, premergeFail(1, "grader_failed", "the bundle could not be prepared for the grader")
 	}
-	gradePath := filepath.Join(absBundle, auditGradeFile)
+	gradePath := crwconfig.JoinRoot(absBundle, auditGradeFile)
 	grade, err := premergeReadGrade(gradePath)
 	if err != nil {
 		return PremergeEvalResult{}, premergeFail(1, "grade_invalid", "%v (%s)", err, auditFirstLine(log.String()))
@@ -1323,7 +1324,7 @@ func PremergeEval(ctx context.Context, e *Env, cfg *Config, opts PremergeEvalOpt
 // premergeStoreRecord writes the evaluation's record. With replace, the record that is there is kept beside
 // the new one; without it, a record that appeared while the grader ran is not overwritten.
 func premergeStoreRecord(path string, data []byte, replace bool, now time.Time) error {
-	unlock, err := premergeDirLock(filepath.Dir(path), true)
+	unlock, err := premergeDirLock(rootDir(path), true)
 	if err != nil {
 		return premergeFail(1, "record_write_failed", "%v", err)
 	}
@@ -1373,7 +1374,7 @@ func PremergeDispose(_ context.Context, e *Env, cfg *Config, opts PremergeDispos
 	if err := premergeRefuseLink(opts.Record); err != nil {
 		return PremergeDisposeResult{}, premergeFail(3, "record_unreadable", "%v", err)
 	}
-	unlock, err := premergeDirLock(filepath.Dir(opts.Record), false)
+	unlock, err := premergeDirLock(rootDir(opts.Record), false)
 	if err != nil {
 		return PremergeDisposeResult{}, premergeFail(3, "record_unreadable", "%v", err)
 	}
@@ -1620,4 +1621,18 @@ func premergeFinish(e *Env, sub string, result any, err error) int {
 		return 1
 	}
 	return 0
+}
+
+// premergeAbs is path as an absolute path without cleaning it: a path that is already absolute is
+// returned as written, and a relative one is joined below the working directory as text, so a root
+// that mixes a symbolic link and ".." keeps the spelling the filesystem resolves.
+func premergeAbs(path string) (string, error) {
+	if filepath.IsAbs(path) {
+		return path, nil
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	return crwconfig.JoinRoot(wd, path), nil
 }
