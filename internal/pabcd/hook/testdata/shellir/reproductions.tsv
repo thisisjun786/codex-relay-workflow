@@ -927,3 +927,15 @@ evaluation of 83a490cef (fix round 1 of the pre-merge evaluation of 101be077, fi
 evaluation of 83a490cef (fix round 1 of the pre-merge evaluation of 101be077, finding d3 in the POSIX option scan)	sed --in='{MEMORY}/*' -e p out.txt --in-place=.bak	CRW-941-D14	row	-
 evaluation of 83a490cef (fix round 1 of the pre-merge evaluation of 101be077, finding d3 in the POSIX option scan)	sed -i'{MEMORY}/*' p out.txt -ni	CRW-941-D15	row	-
 evaluation of 83a490cef (fix round 1 of the pre-merge evaluation of 101be077, finding d3 in the POSIX option scan)	sed -i.bak -e p out.txt -i	CRW-941-D16	row	-
+linear-issue-CRW-917.json	gh api --input of a clean plain text file (not JSON)	CRW-917-41-01	row	-
+linear-issue-CRW-917.json	gh api --input of a body with an unclosed JSON object	CRW-917-41-02	row	-
+linear-issue-CRW-917.json	gh api --input of a JSON document with text after it	CRW-917-41-03	row	-
+linear-issue-CRW-917.json	gh api --input with a unicode-escaped secret key	CRW-917-41-04	row	-
+linear-issue-CRW-917.json	gh pr comment --body-file of a clean plain text file (control)	CRW-917-41-05	row	-
+linear-issue-CRW-917.json	gh api -F body=@ of a clean plain text file (control)	CRW-917-41-06	row	-
+linear-issue-CRW-917.json	gh api --input of a named pipe	CRW-917-41-07	row	-
+linear-issue-CRW-917.json	g""h pr comment 1 --body 'x' (quoted program name)	CRW-917-41-08	row	-
+linear-issue-CRW-917.json	gh pr comment 1 --body-file "$F" (expansion in the file name)	CRW-917-41-09	row	-
+linear-issue-CRW-917.json	gh pr comment 1 --body-file clean.md </dev/null (glued redirect)	CRW-917-41-10	row	-
+linear-issue-CRW-917.json	gh pr create --title 'MY_API_KEY=sentinel' (secret title)	CRW-917-41-11	row	-
+linear-issue-CRW-917.json	gh pr create -t 'Plain title' --body-file clean.md (control)	CRW-917-41-12	row	-
