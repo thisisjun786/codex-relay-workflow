@@ -235,6 +235,36 @@ func shellWriteExecSkipSpaceBack(rs []rune, end int) int {
 	return end
 }
 
+// shellWriteExecSkipInlineSpaceBack is shellWriteExecSkipSpaceBack for a reading that must not cross a statement boundary: blanks
+// and a backslash directly followed by a newline are spacing, but a newline that no backslash precedes (LF, CR LF or a lone CR)
+// ends the logical line and stops the skip. A newline inside brackets would not end it in Python, so a chain split that way is
+// read as two statements: the module is then treated as called, the side that over-reports (CRW-851, verifier P0).
+func shellWriteExecSkipInlineSpaceBack(rs []rune, end int) int {
+	for end > 0 {
+		start := end
+		for start > 0 && shellVerbSpaceRune(rs[start-1]) && rs[start-1] != '\n' && rs[start-1] != '\r' {
+			start--
+		}
+		p := start
+		switch {
+		case p > 0 && rs[p-1] == '\n':
+			p--
+			if p > 0 && rs[p-1] == '\r' {
+				p--
+			}
+		case p > 0 && rs[p-1] == '\r':
+			p--
+		default:
+			return start
+		}
+		if p == 0 || rs[p-1] != '\\' {
+			return start // a line end with no backslash before it: a new statement begins after it
+		}
+		end = p - 1 // the continuation: the backslash and its newline are spacing
+	}
+	return end
+}
+
 // shellWriteExecCalleeExpr reports whether the expression that ends just before rs[end] is exec, eval or compile, called
 // directly or through builtins. or __builtins. Parentheses around the whole callee expression do not change it, so
 // (exec)(...) and (builtins.exec)(...) count (CRW-754 review). A dot before the name makes it an attribute of whatever
@@ -269,9 +299,10 @@ func shellWriteExecCalleeExpr(rs []rune, end int) bool {
 				if k < m || string(rs[k-m:k]) != module || shellWriteExecIdentRune(rs, k-m-1) {
 					continue
 				}
-				// Another object's .builtins (runner . builtins.exec) is a different callee; Python reads the dot through the
-				// same spacing, so it is looked for past blanks and continuations before the module name, as the forward dot is.
-				if p := shellWriteExecSkipSpaceBack(rs, k-m) - 1; p >= 0 && rs[p] == '.' {
+				// Another object's .builtins (runner . builtins.exec) is a different callee; Python reads the dot through blanks
+				// and continuations, so those are skipped before the module name. A plain line end is not: a statement that
+				// ends in a dot (x = ... or x = 1.) is followed by a new statement, and that builtins.exec is the module's.
+				if p := shellWriteExecSkipInlineSpaceBack(rs, k-m) - 1; p >= 0 && rs[p] == '.' {
 					continue
 				}
 				return true
