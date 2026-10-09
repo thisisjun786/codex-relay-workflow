@@ -37,8 +37,8 @@ func TestSkillCommandLine(t *testing.T) {
 		}
 	}
 	expect(t, runSkillInProcess(), 2, nil, []string{"crw skill: error: a command is required"})
-	expect(t, runSkillInProcess("--help"), 0, []string{"usage: crw skill {hook-probe,issue-size,parent-title,start-policy,base-refresh}"}, nil)
-	expect(t, runSkillInProcess("nope"), 2, nil, []string{`invalid command "nope"`})
+	expect(t, runSkillInProcess("--help"), 0, []string{"usage: crw skill {hook-probe,issue-ready,issue-size,parent-title,start-policy,base-refresh}"}, nil)
+	expect(t, runSkillInProcess("nope"), 2, nil, []string{`invalid command "nope" (choose from hook-probe, issue-ready, issue-size, parent-title, start-policy, base-refresh)`})
 	for _, f := range []family{hookProbe, issueSize, issueReady, parentTitle, startPolicy, baseRefresh} {
 		t.Run(f.name, func(t *testing.T) {
 			var names []string
