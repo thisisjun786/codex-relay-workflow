@@ -157,7 +157,7 @@ func TestEnvChdirMovesTheProgramDirectory(t *testing.T) {
 				t.Errorf("wrapped rm dir = %+v, want known /work/sub", wrapped.Dir)
 			}
 			feed := wrapped.Ctx.Feed
-			if feed == nil || feed.Wrapper != "find" || !feed.Dir.Known || feed.Dir.Path != tc.findDir || !reflect.DeepEqual(feed.Starts, []string{"."}) {
+			if feed == nil || feed.Wrapper != "find" || !feed.Dir.Known || feed.Dir.Path != tc.findDir || len(feed.Starts) != 1 || !feed.Starts[0].Known || feed.Starts[0].Value != "." {
 				t.Errorf("wrapped rm feed = %+v, want find from %s starting at .", feed, tc.findDir)
 			}
 			plain := r.Execs[3]
