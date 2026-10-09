@@ -43,11 +43,6 @@ func cloExec(t *testing.T, fd int) bool {
 
 var errNoCloseRange = errors.New("close_range not offered")
 
-// boundedBy is the walk bound of a kernel whose maximum descriptor count is kernelMax.
-func boundedBy(kernelMax uint64) func() (int, error) {
-	return func() (int, error) { return descriptorBound(func() (uint64, error) { return kernelMax, nil }) }
-}
-
 // A Linux sandbox may leave /proc but hide /dev/fd (CRW-1057 verification): the sweep must neither
 // fail the start nor skip the descriptors.
 func TestFDSweepWithoutDevFD(t *testing.T) {
@@ -79,6 +74,37 @@ func TestFDSweepWithoutAnyListing(t *testing.T) {
 	}
 	if !cloExec(t, fd) {
 		t.Fatalf("descriptor %d still survives an exec", fd)
+	}
+}
+
+// boundedBy is the walk bound of a kernel whose maximum descriptor count is kernelMax.
+func boundedBy(kernelMax uint64) func() (int, error) {
+	return func() (int, error) { return descriptorBound(func() (uint64, error) { return kernelMax, nil }) }
+}
+
+// The walk bound is only an answer when it is an upper bound of every open descriptor (CRW-1057
+// re-evaluation of 9c0015af): the larger of the limits and the kernel's maximum, or an error.
+func TestDescriptorBound(t *testing.T) {
+	var limit unix.Rlimit
+	if err := unix.Getrlimit(unix.RLIMIT_NOFILE, &limit); err != nil {
+		t.Fatal(err)
+	}
+	known := func(n uint64) func() (uint64, error) { return func() (uint64, error) { return n, nil } }
+	if n, err := descriptorBound(known(sweepCap)); err != nil || n != sweepCap {
+		t.Fatalf("the kernel maximum %d is walkable: got %d, %v", sweepCap, n, err)
+	}
+	if limit.Max < sweepCap-1000 { // a hard limit near the cap leaves no room for a larger maximum
+		small := max(limit.Cur, limit.Max) + 1000
+		if n, err := descriptorBound(known(small)); err != nil || uint64(n) != small {
+			t.Fatalf("a maximum above both limits is the bound: want %d, got %d, %v", small, n, err)
+		}
+	}
+	if n, err := descriptorBound(known(sweepCap + 1)); !errors.Is(err, ErrDescriptorsUnbounded) {
+		t.Fatalf("a maximum above the cap has no bound, got %d, %v", n, err)
+	}
+	unreadable := func() (uint64, error) { return 0, os.ErrNotExist }
+	if n, err := descriptorBound(unreadable); !errors.Is(err, ErrDescriptorsUnbounded) {
+		t.Fatalf("an unknown maximum has no bound, got %d, %v", n, err)
 	}
 }
 

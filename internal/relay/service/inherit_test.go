@@ -7,34 +7,12 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"golang.org/x/sys/unix"
 )
 
-// The walk bound is only an answer when it is an upper bound of every open descriptor (CRW-1057
-// re-evaluation of 9c0015af): the larger of the limits and the kernel's maximum, or an error.
-func TestDescriptorBound(t *testing.T) {
-	var limit unix.Rlimit
-	if err := unix.Getrlimit(unix.RLIMIT_NOFILE, &limit); err != nil {
-		t.Fatal(err)
-	}
-	known := func(n uint64) func() (uint64, error) { return func() (uint64, error) { return n, nil } }
-	if n, err := descriptorBound(known(sweepCap)); err != nil || n != sweepCap {
-		t.Fatalf("the kernel maximum %d is walkable: got %d, %v", sweepCap, n, err)
-	}
-	if limit.Max < sweepCap-1000 { // a hard limit near the cap leaves no room for a larger maximum
-		small := max(limit.Cur, limit.Max) + 1000
-		if n, err := descriptorBound(known(small)); err != nil || uint64(n) != small {
-			t.Fatalf("a maximum above both limits is the bound: want %d, got %d, %v", small, n, err)
-		}
-	}
-	if n, err := descriptorBound(known(sweepCap + 1)); !errors.Is(err, ErrDescriptorsUnbounded) {
-		t.Fatalf("a maximum above the cap has no bound, got %d, %v", n, err)
-	}
-	unreadable := func() (uint64, error) { return 0, os.ErrNotExist }
-	if n, err := descriptorBound(unreadable); !errors.Is(err, ErrDescriptorsUnbounded) {
-		t.Fatalf("an unknown maximum has no bound, got %d, %v", n, err)
-	}
-}
+// upTo is a walk that covers n descriptor numbers.
+func upTo(n int) func() (int, error) { return func() (int, error) { return n, nil } }
 
 // A descriptor that cannot be marked close-on-exec fails the sweep on every way that finds it, and
 // a number that is not open is no failure.
@@ -42,8 +20,8 @@ func TestFDSweepFailsWhenAMarkFails(t *testing.T) {
 	refuse := errors.New("F_SETFD refused")
 	missing := filepath.Join(t.TempDir(), "missing")
 	for name, sweep := range map[string]fdSweep{
-		"listing": {dirs: []string{missing, t.TempDir()}, limit: boundedBy(0)},
-		"walk":    {dirs: []string{missing}, limit: boundedBy(8)},
+		"listing": {dirs: []string{missing, t.TempDir()}, limit: upTo(0)},
+		"walk":    {dirs: []string{missing}, limit: upTo(8)},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if name == "listing" {
@@ -99,14 +77,14 @@ func TestLaunchRefusedWhenTheSweepFails(t *testing.T) {
 	refuse := errors.New("F_SETFD refused")
 	saved := defaultFDSweep
 	t.Cleanup(func() { defaultFDSweep = saved })
-	defaultFDSweep = fdSweep{closeRange: func() error { return errors.ErrUnsupported }, dirs: []string{"/dev/null/none"}, limit: boundedBy(5), mark: func(fd int) error {
+	defaultFDSweep = fdSweep{closeRange: func() error { return errors.ErrUnsupported }, dirs: []string{"/dev/null/none"}, limit: upTo(5), mark: func(fd int) error {
 		if fd == 4 {
 			return refuse
 		}
 		return nil
 	}}
 	home := t.TempDir()
-	s := &Service{Selection: storeSelection(home)}
+	s := &Service{Selection: store.StateSelection{Path: filepath.Join(home, "state")}}
 	cmd := exec.Command("/bin/sh", "-c", "touch "+filepath.Join(home, "ran"))
 	err := s.launch(cmd)
 	if !errors.Is(err, refuse) {
