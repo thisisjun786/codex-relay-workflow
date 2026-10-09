@@ -25,6 +25,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/publishpolicy"
 )
 
 const (
@@ -299,21 +300,7 @@ func githubPostJSONText(content string) (text string, ok bool) {
 // also has its strings split out at the quotes, brackets, commas and \n escapes, so a NAME=value shape inside a string is read as
 // it is in a line of its own. Nothing is decoded, and the line numbers are the raw ones.
 func githubPostRawSecretLine(content string) (int, bool) {
-	if line, found := githubPostSecretLine(content); found {
-		return line, true
-	}
-	if !json.Valid([]byte(content)) {
-		return 0, false
-	}
-	split := strings.NewReplacer("\"", "\n", "{", "\n", "}", "\n", "[", "\n", "]", "\n", ",", "\n", "\\n", "\n")
-	for i, line := range strings.Split(content, "\n") {
-		for _, part := range strings.Split(split.Replace(line), "\n") {
-			if name, ok := githubPostAssignment(part); ok && githubPostSecretName(name) {
-				return i + 1, true
-			}
-		}
-	}
-	return 0, false
+	return publishpolicy.RawSecretLine(content)
 }
 
 // githubPostAPI is form A2: gh api, with only the words the rule allows. At most one of -F body=@F,
