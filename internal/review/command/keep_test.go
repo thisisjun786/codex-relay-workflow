@@ -3,7 +3,9 @@ package command
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -94,6 +96,82 @@ func TestKeptCopyIsWrittenDurablyBeforeTheFinishedRecord(t *testing.T) {
 	}
 	if code, sum, errOut := f.run(h); code != 0 || len(seen) != 1 || seen[0] != filepath.Join(f.state, "results", sum.SHA256+".json") || f.finishedRecords() != 1 {
 		t.Fatalf("run: %d %+v %s (kept %v)", code, sum, errOut, seen)
+	}
+}
+
+// A path two patches of one head share (the same head against two bases, the file name being the head's) belongs, in the ledger, to the result that was recorded for it last. A missing path is restored
+// from that result whichever of the two patches asks, and a path that holds the bytes of the other, superseded result gets the newest result back, so Q is restored after P was, and P never takes the path from Q.
+func TestRestoreOfASharedPathFollowsTheResultTheLedgerAssignedLast(t *testing.T) {
+	f := newFixture(t)
+	h2 := f.repo.change(f.base, 2)
+	f.repo.git("checkout", "-q", "--detach", h2)
+	h3 := f.repo.commit(map[string]string{"a.go": "package a\n\nfunc F() int { return 3 }\n"})
+	baseP, baseQ := f.base, h2
+	f.base = baseP
+	_, p, errOut := f.run(h3)
+	if p.Outcome != OutcomeReviewed {
+		t.Fatalf("P: %+v %s", p, errOut)
+	}
+	pBytes, _ := os.ReadFile(p.Artifact)
+	lose := func() {
+		t.Helper()
+		if err := errors.Join(os.Remove(p.Artifact), os.Remove(p.Artifact+".sha256")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	lose() // the path is free again, as when the first output was cleaned up, and Q's review lands on it
+	f.base = baseQ
+	_, q, errOut := f.run(h3)
+	if q.Outcome != OutcomeReviewed || q.Artifact != p.Artifact || q.SHA256 == p.SHA256 {
+		t.Fatalf("Q: %+v %s", q, errOut)
+	}
+	lose()
+	check := func(step, want string) {
+		t.Helper()
+		data, err := os.ReadFile(p.Artifact)
+		sum, _ := os.ReadFile(p.Artifact + ".sha256")
+		digest := fmt.Sprintf("%x", sha256.Sum256(data))
+		if err != nil || digest != want || string(sum) != want+"  "+h3+".json\n" {
+			t.Fatalf("%s: the path holds %s (%v), checksum file %q, want %s", step, digest, err, sum, want)
+		}
+	}
+	// P asks about the missing path: the result that owns it in the ledger, Q's, is written.
+	f.base = baseP
+	if _, again, errOut := f.run(h3); again.Outcome != OutcomeAlreadyReviewed || len(again.Restored) != 2 {
+		t.Fatalf("P asks: %+v %s", again, errOut)
+	}
+	check("P asked", q.SHA256)
+	// Q asks: its own file is there, nothing is written.
+	f.base = baseQ
+	if _, again, errOut := f.run(h3); again.Outcome != OutcomeAlreadyReviewed || len(again.Restored) != 0 {
+		t.Fatalf("Q asks: %+v %s", again, errOut)
+	}
+	check("Q asked", q.SHA256)
+	// P's bytes are on the path again (as an earlier restore of P left them): the ledger's owner of the path is Q, so a request of either patch puts Q's result back, and never P's over Q's.
+	plantP := func() {
+		t.Helper()
+		if err := errors.Join(os.WriteFile(p.Artifact, pBytes, 0o644), os.WriteFile(p.Artifact+".sha256", []byte(p.SHA256+"  "+h3+".json\n"), 0o644)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, asker := range []struct{ name, base string }{{"P", baseP}, {"Q", baseQ}} {
+		plantP()
+		f.base = asker.base
+		if _, again, errOut := f.run(h3); again.Outcome != OutcomeAlreadyReviewed || len(again.Restored) != 2 || again.ArtifactPresent == nil || !*again.ArtifactPresent {
+			t.Fatalf("%s asks with P's bytes on the path: %+v %s", asker.name, again, errOut)
+		}
+		check(asker.name+" asked with P's bytes on the path", q.SHA256)
+	}
+	// A foreign file on the path is nobody's to replace.
+	if err := os.WriteFile(p.Artifact, []byte("someone else's file\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f.base = baseQ
+	if _, again, _ := f.run(h3); len(again.Restored) != 0 {
+		t.Fatalf("a foreign file was replaced: %+v", again)
+	}
+	if f.s.count() != 4 {
+		t.Fatalf("a restore called the model: %d calls", f.s.count())
 	}
 }
 
@@ -188,7 +266,7 @@ func TestRestoreOfAnOlderResultLeavesTheNewerResultsChecksumAlone(t *testing.T) 
 		}
 	}
 	before, _ := os.ReadFile(retry.Artifact + ".sha256")
-	written, err := (&ledger{dir: f.state}).restore(context.Background(), older, nil, f.out, true)
+	written, err := (&ledger{dir: f.state}).restore(context.Background(), older, f.ledger(), f.out, true)
 	if after, _ := os.ReadFile(retry.Artifact + ".sha256"); err != nil || len(written) != 0 || !bytes.Equal(before, after) || !strings.HasPrefix(string(after), retry.SHA256) {
 		t.Fatalf("restoring the older result: wrote %v (%v); checksum file %q, was %q", written, err, after, before)
 	}

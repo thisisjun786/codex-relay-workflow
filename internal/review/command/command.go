@@ -146,8 +146,8 @@ func execute(ctx context.Context, cfg Config, e env) (*Summary, error) {
 		return record{Event: event, PatchID: m.PatchID, Base: m.Base, Head: m.Head, Issue: cfg.Issue}
 	}
 	// recorded puts the artifact an earlier attempt recorded into sum, after writing the files of it that are missing from the copy kept with the record (ledger.restore; locked says that the caller holds the run lock).
-	recorded := func(r record, earlier *record, locked bool) error {
-		restored, err := l.restore(ctx, r, earlier, cfg.Out, locked)
+	recorded := func(r record, recs []record, locked bool) error {
+		restored, err := l.restore(ctx, r, recs, cfg.Out, locked)
 		if err != nil {
 			return err
 		}
@@ -164,7 +164,7 @@ func execute(ctx context.Context, cfg Config, e env) (*Summary, error) {
 		st := standingOf(recs, m.PatchID)
 		if r, closed := st.closer(); closed && (locked || st.finished != nil) {
 			sum.Outcome = OutcomeAlreadyReviewed
-			return recs, true, recorded(r, st.unavailable, locked)
+			return recs, true, recorded(r, recs, locked)
 		}
 		return recs, false, nil
 	}
@@ -178,7 +178,7 @@ func execute(ctx context.Context, cfg Config, e env) (*Summary, error) {
 			return nil, errors.New("this patch has no recorded result to post; --post-only never runs a review")
 		}
 		sum.Outcome = OutcomeRecorded
-		return sum, recorded(*newest, standingOf(recs, m.PatchID).unavailable, false)
+		return sum, recorded(*newest, recs, false)
 	}
 	if _, done, err := already(false); done || err != nil { // without the lock: a finished record never goes away, and waiting behind another review would only delay this answer
 		return sum, err
@@ -200,7 +200,7 @@ func execute(ctx context.Context, cfg Config, e env) (*Summary, error) {
 			sum.Reason = fmt.Sprintf("the review of this patch could not run on %s (UTC): %s; one more attempt is allowed from %s (UTC)", last, st.unavailable.Reason, sum.RetryNotBefore)
 			refused := entry("refused")
 			refused.Reason = sum.Reason
-			return sum, errors.Join(recorded(*st.unavailable, nil, true), l.append(refused))
+			return sum, errors.Join(recorded(*st.unavailable, recs, true), l.append(refused))
 		}
 	}
 	if n := runsOn(recs, day); n >= cfg.DailyCap {

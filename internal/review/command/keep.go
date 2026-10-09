@@ -39,14 +39,30 @@ func (l *ledger) keep(sha string, data []byte) error {
 
 func checksumLine(r record) string { return r.SHA256 + "  " + filepath.Base(r.Artifact) + "\n" }
 
-// restoreWanted reports which files of the artifact r recorded a restore would write: the artifact when nothing is at its path, or when what is there is exactly the bytes of the earlier
-// unavailable attempt that r replaced (a retry whose files were not written); the checksum file when it is missing or says something else and the artifact it sits beside has the recorded
-// bytes (or is written now), so that a foreign file, or a newer result that replaced r at the same path, never gets a checksum that is not its own. Any other file at those paths is not ours to replace.
-func restoreWanted(r record, earlier *record) (artifact, checksum bool) {
+// ownerOf is the record that owns path in the ledger: the last finished or unavailable record, of any patch, that names path as its artifact. The file name is the head's, so the same head reviewed against another
+// base lands on the same name once the first output is gone, and what the path should hold is then the result the ledger assigned to it last, whichever patch asks.
+func ownerOf(recs []record, path string) (owner *record) {
+	for i, r := range recs {
+		if (r.Event == "finished" || r.Event == "unavailable") && r.Artifact == path && r.SHA256 != "" {
+			owner = &recs[i]
+		}
+	}
+	return owner
+}
+
+// restoreWanted reports which files of the artifact the owner record r recorded a restore would write: the artifact when nothing is at its path, or when what is there is exactly the bytes of a result the
+// ledger assigned to the path before r (an unavailable attempt that a retry replaced, or the other patch's result that r replaced) and r's files were not written; the checksum file when it is missing or says
+// something else and the artifact it sits beside has the recorded bytes (or is written now), so that a foreign file never gets a checksum that is not its own. Any other file at those paths is not ours to replace.
+func restoreWanted(recs []record, r record) (artifact, checksum bool) {
 	if _, err := os.Lstat(r.Artifact); errors.Is(err, fs.ErrNotExist) {
 		artifact = true
-	} else if earlier != nil && earlier.SHA256 != r.SHA256 && replaces(earlier, r.Artifact) {
-		artifact = true
+	} else {
+		for i, earlier := range recs {
+			if earlier.Artifact == r.Artifact && earlier.SHA256 != "" && earlier.SHA256 != r.SHA256 && (earlier.Event == "finished" || earlier.Event == "unavailable") && replaces(&recs[i], r.Artifact) {
+				artifact = true
+				break
+			}
+		}
 	}
 	got, err := os.ReadFile(r.Artifact + ".sha256")
 	checksum = err != nil || string(got) != checksumLine(r)
@@ -56,14 +72,22 @@ func restoreWanted(r record, earlier *record) (artifact, checksum bool) {
 	return artifact, checksum
 }
 
-// restore writes the files of the artifact r recorded that restoreWanted names, from the copy kept with the record, and returns the paths it wrote. A record with no kept copy (a ledger from before
-// results were kept) restores nothing. The files belong in the directory a concurrent review of the same head may be about to publish into, so the run lock is held: a caller that holds it says so, any
-// other tries it once and leaves the repair to its next call when the lock is busy.
-func (l *ledger) restore(ctx context.Context, r record, earlier *record, out string, locked bool) (written []string, err error) {
-	if r.Artifact == "" || r.SHA256 == "" {
+// restore writes the files of the artifact that restoreWanted names, from the copy kept with the record, and returns the paths it wrote. The record restored from is the one that owns the artifact's path in
+// the ledger (ownerOf), which is asked's own unless a later result of any patch was assigned to the same path: a path that is missing is restored from that result, and a result that is not the owner's never
+// replaces the owner's files. A record with no kept copy (a ledger from before results were kept) restores nothing. The files belong in the directory a concurrent review of the same head may be about to publish
+// into, so the run lock is held: a caller that holds it says so, any other tries it once and leaves the repair to its next call when the lock is busy, and then reads the ledger again, since the owner may have changed.
+func (l *ledger) restore(ctx context.Context, asked record, recs []record, out string, locked bool) (written []string, err error) {
+	if asked.Artifact == "" || asked.SHA256 == "" {
 		return nil, nil
 	}
-	artifact, checksum := restoreWanted(r, earlier)
+	ownerRecord := func(recs []record) record {
+		if owner := ownerOf(recs, asked.Artifact); owner != nil {
+			return *owner
+		}
+		return asked
+	}
+	r := ownerRecord(recs)
+	artifact, checksum := restoreWanted(recs, r)
 	if !artifact && !checksum {
 		return nil, nil
 	}
@@ -78,7 +102,11 @@ func (l *ledger) restore(ctx context.Context, r record, earlier *record, out str
 			return nil, err
 		}
 		defer unlock()
-		if artifact, checksum = restoreWanted(r, earlier); !artifact && !checksum {
+		if recs, err = l.read(); err != nil {
+			return nil, err
+		}
+		r = ownerRecord(recs)
+		if artifact, checksum = restoreWanted(recs, r); !artifact && !checksum {
 			return nil, nil
 		}
 	}
