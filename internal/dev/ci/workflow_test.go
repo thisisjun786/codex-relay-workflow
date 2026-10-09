@@ -379,10 +379,18 @@ var shellWrapperArgs = map[string]map[string]bool{
 // -i, -0 and -v in one word (-iS, -iSVALUE).
 var envSplitCluster = regexp.MustCompile("^-[i0v]*S")
 
+// envSplitLong reports whether a word is env's long option --split-string, spelled in full or as the
+// abbreviation GNU env accepts (--s, --split), with or without =value. No other long option of env starts with
+// "s", so every non-empty prefix names it.
+func envSplitLong(w string) bool {
+	name, _, _ := strings.Cut(w, "=")
+	return len(name) > 2 && strings.HasPrefix(name, "--") && strings.HasPrefix("--split-string", name)
+}
+
 // wrapperRunsNodeTest reports whether a wrapper runs a Node test: its program is read from args, the words
 // after the wrapper's name. The options are walked from the first word. A listed option skips its value; an
-// env assignment and a timeout duration are skipped; env -S and --split-string take a command line (CRW-983,
-// CRW-1047). An option the table does not list has no known value, so both readings are judged: the option
+// env assignment and a timeout duration are skipped; env -S and --split-string (and its abbreviations) take a
+// command line that env splits into words (CRW-983, CRW-1047). An option the table does not list has no known value, so both readings are judged: the option
 // alone takes no value, and the option takes the next word. A node test under either reading is a finding.
 // A word that starts no option is the program, and the words from it on are judged as a command.
 func wrapperRunsNodeTest(name string, args []string, depth int) bool {
@@ -405,16 +413,14 @@ func wrapperRunsNodeTest(name string, args []string, depth int) bool {
 				return envSplitRuns(rest, args[i+1:], depth)
 			}
 			return i+1 < len(args) && envSplitRuns(args[i+1], args[i+2:], depth)
-		case name == "env" && strings.HasPrefix(w, "--split-string="):
-			return envSplitRuns(strings.TrimPrefix(w, "--split-string="), args[i+1:], depth)
-		case name == "env" && w == "--split-string":
+		case name == "env" && envSplitLong(w):
+			if _, value, ok := strings.Cut(w, "="); ok {
+				return envSplitRuns(value, args[i+1:], depth)
+			}
 			return i+1 < len(args) && envSplitRuns(args[i+1], args[i+2:], depth)
 		case takes[w]:
 			return walk(i + 2)
 		case strings.HasPrefix(w, "-") && w != "-":
-			if strings.Contains(w, "=") {
-				return walk(i + 1)
-			}
 			return walk(i+1) || walk(i+2)
 		case name == "timeout" && w != "" && w[0] >= '0' && w[0] <= '9':
 			return walk(i + 1)
@@ -425,27 +431,122 @@ func wrapperRunsNodeTest(name string, args []string, depth int) bool {
 	return walk(0)
 }
 
-// envSplitRuns reads the value of env -S as the command line env runs (CRW-1047). Each command the value
-// holds is read with env in front, so its own options and assignments are env's. The last command takes the
-// words after the value, which env appends to it. A value the reader cannot read whole is a finding.
+// envSplitRuns reads the value of env -S as env does (CRW-1047): the value is split into words by env's own
+// rules (envSplitString), not by the shell's, and the words replace the option in env's argument list, so the
+// words after the value follow them, the way env builds its argv. The result is one argv, not a script: a ";"
+// in the value is a character of a word. A value the splitter cannot read whole is a finding.
 func envSplitRuns(value string, rest []string, depth int) bool {
-	cmds, err := shellCommands(value)
-	if err != nil {
+	words, ok := envSplitString(value)
+	if !ok {
 		return true
 	}
-	if len(cmds) == 0 {
-		cmds = []shellCommand{nil}
-	}
-	for k, cmd := range cmds {
-		words := append([]string{"env"}, cmd...)
-		if k == len(cmds)-1 {
-			words = append(words, rest...)
+	return wrapperRunsNodeTest("env", append(words, rest...), depth+1)
+}
+
+// envSplitString splits the value of env -S the way GNU env does. Blanks (space, tab, newline, vertical tab,
+// form feed, carriage return) separate words outside quotes; '...' keeps every character but takes \\ and \' as
+// escapes; "..." takes the escapes below; a # that starts a word begins a comment that runs to the end. The
+// escapes are \_ (a separator outside quotes, a space inside double quotes), \c (ends the value; not allowed in
+// double quotes), \f \n \r \t \v, and \\ \# \$ \" \' for the character itself. It reports false for what it
+// does not read whole: an unterminated quote, a backslash at the end, an escape not listed, and a $ outside
+// single quotes (a ${NAME} expansion needs env's environment), so a caller fails closed on it.
+func envSplitString(value string) ([]string, bool) {
+	var (
+		words   []string
+		word    []byte
+		started bool
+		quote   byte
+	)
+	flush := func() {
+		if started {
+			words = append(words, string(word))
 		}
-		if commandRunsNodeTest(words, depth+1) {
-			return true
+		word, started = nil, false
+	}
+	for i := 0; i < len(value); i++ {
+		c := value[i]
+		if quote == '\'' {
+			switch {
+			case c == '\'':
+				quote = 0
+			case c == '\\' && i+1 < len(value) && (value[i+1] == '\\' || value[i+1] == '\''):
+				i++
+				word = append(word, value[i])
+			default:
+				word = append(word, c)
+			}
+			continue
+		}
+		switch c {
+		case ' ', '\t', '\n', '\v', '\f', '\r':
+			if quote == '"' {
+				word = append(word, c)
+			} else {
+				flush()
+			}
+		case '\'':
+			if quote == '"' {
+				word = append(word, c)
+			} else {
+				quote, started = c, true
+			}
+		case '"':
+			if quote == '"' {
+				quote = 0
+			} else {
+				quote, started = c, true
+			}
+		case '#':
+			if quote == 0 && !started {
+				flush()
+				return words, true
+			}
+			word, started = append(word, c), true
+		case '$':
+			return nil, false
+		case '\\':
+			i++
+			if i >= len(value) {
+				return nil, false
+			}
+			started = true
+			switch value[i] {
+			case 'c':
+				if quote == '"' {
+					return nil, false
+				}
+				flush()
+				return words, true
+			case '_':
+				if quote == '"' {
+					word = append(word, ' ')
+				} else {
+					flush()
+				}
+			case 'f':
+				word = append(word, '\f')
+			case 'n':
+				word = append(word, '\n')
+			case 'r':
+				word = append(word, '\r')
+			case 't':
+				word = append(word, '\t')
+			case 'v':
+				word = append(word, '\v')
+			case '\\', '#', '$', '"', '\'':
+				word = append(word, value[i])
+			default:
+				return nil, false
+			}
+		default:
+			word, started = append(word, c), true
 		}
 	}
-	return false
+	if quote != 0 {
+		return nil, false
+	}
+	flush()
+	return words, true
 }
 
 // shellInterpreters are the shells whose -c option runs its argument as a script.
@@ -1700,12 +1801,103 @@ func TestWorkflow_a_wrapper_option_with_an_unlisted_value_hides_no_node_test(t *
 		{"a log line behind an unlisted option", "      - run: sudo --user root printf '%s\\n' 'node --test'\n", false},
 		{"a log line naming a node test", "      - run: echo 'node --test'\n", false},
 		{"an option-cluster -S with the value joined", "      - run: env -iSnode --test\n", true},
-		{"env -S with two commands, the second a test", "      - run: env -S 'echo; node --test'\n", true},
+		{"env -S whose value holds a literal semicolon", "      - run: env -S 'echo; node --test'\n", false},
 		{"env -S that does not close", "      - run: env -S 'node --test\n", true},
 		{"a double dash ends sudo's options", "      - run: sudo -- echo node --test\n", false},
 	} {
 		if got := pythonInWorkflow("release.yml", row.line); (len(got) > 0) != row.found {
 			t.Errorf("%s: found = %q, want found = %v", row.name, got, row.found)
+		}
+	}
+}
+
+// CRW-1047, fix round 1. env -S splits its value by its own rules, not the shell's, and runs the one argv that
+// results; the rows were checked against GNU env 9.7 with a fake node that prints its arguments. A literal ";"
+// in the value is a character of a word, so the text after it is an argument of the first word; "\\_" and "\\c"
+// are env's, not the shell's; the abbreviations of --split-string read the value too. A value the splitter does not
+// read whole is a finding.
+func TestWorkflow_env_split_string_is_read_as_env_splits_it(t *testing.T) {
+	for _, row := range []struct {
+		name  string
+		line  string
+		found bool
+	}{
+		{"backslash-underscore separates the words", "      - run: env -S 'node\\_--test'\n", true},
+		{"backslash-c ends the value", "      - run: env -S 'node --test\\c ignored'\n", true},
+		{"backslash-c leaves the words after the value", "      - run: env -S 'echo \\c' node --test\n", false},
+		{"a semicolon is a character of the word", "      - run: env -S 'echo hello; node --test'\n", false},
+		{"a separator escape makes the echo a program", "      - run: env -S 'echo\\_node --test'\n", false},
+		{"a comment ends the value", "      - run: env -S 'echo #node --test'\n", false},
+		{"an assignment in the value is env's", "      - run: env -S 'FOO=1 node --test'\n", true},
+		{"an option in the value is env's", "      - run: env -S '-u HOME node --test'\n", true},
+		{"--split with a separate value", "      - run: env --split 'node --test'\n", true},
+		{"--s with a separate value", "      - run: env --s 'node --test'\n", true},
+		{"--sp with an equals value", "      - run: env --sp='node --test'\n", true},
+		{"--split-string with a separate value", "      - run: env --split-string 'node --test'\n", true},
+		{"--split with an echo", "      - run: env --split 'echo node --test'\n", false},
+		{"a double-quoted separator escape is a space", "      - run: env -S 'echo \"a\\_b\"' node --test\n", false},
+		{"an escape env does not know is a finding", "      - run: env -S 'echo \\x'\n", true},
+		{"a variable expansion is a finding", "      - run: env -S 'echo ${HOME}'\n", true},
+		{"a bare dollar is a finding", "      - run: env -S 'echo $HOME'\n", true},
+		{"a backslash at the end is a finding", "      - run: env -S 'echo \\'\n", true},
+		{"a double quote that does not close is a finding", "      - run: env -S 'echo \"a'\n", true},
+		{"backslash-c in double quotes is a finding", "      - run: env -S 'echo \"\\c\"'\n", true},
+	} {
+		if got := pythonInWorkflow("release.yml", row.line); (len(got) > 0) != row.found {
+			t.Errorf("%s: found = %q, want found = %v", row.name, got, row.found)
+		}
+	}
+}
+
+// CRW-1047, fix round 1. An unknown dash-option is judged under both readings whatever its word looks like:
+// an "=" in the word does not say the option has no separate value (sudo --foo=value root node --test reads
+// root as the option's value under the second reading).
+func TestWorkflow_an_unknown_option_with_an_equals_is_read_both_ways(t *testing.T) {
+	for _, row := range []struct {
+		name  string
+		line  string
+		found bool
+	}{
+		{"sudo option with an equals and a value word", "      - run: sudo --foo=value root node --test\n", true},
+		{"env option with an equals and a value word", "      - run: env --foo=value HOME node --test\n", true},
+		{"sudo option with an equals and the program next", "      - run: sudo --foo=value node --test\n", true},
+		{"an echoed value word behind an option with an equals", "      - run: sudo --foo=value root echo node --test\n", false},
+	} {
+		if got := pythonInWorkflow("release.yml", row.line); (len(got) > 0) != row.found {
+			t.Errorf("%s: found = %q, want found = %v", row.name, got, row.found)
+		}
+	}
+}
+
+// envSplitString is GNU env's -S splitter; the want values are what GNU env 9.7 passed to a program.
+func TestEnvSplitString(t *testing.T) {
+	for _, row := range []struct {
+		in   string
+		want []string
+		ok   bool
+	}{
+		{`node\_--test`, []string{"node", "--test"}, true},
+		{`node --test\c ignored`, []string{"node", "--test"}, true},
+		{`node "a\_b" 'c\_d' e\_f`, []string{"node", "a b", `c\_d`, "e", "f"}, true},
+		{`node #c x`, []string{"node"}, true},
+		{`node a#c`, []string{"node", "a#c"}, true},
+		{`node \$HOME \# \" \'`, []string{"node", "$HOME", "#", `"`, "'"}, true},
+		{`node a\tb\fc`, []string{"node", "a\tb\fc"}, true},
+		{`node ""  '' x`, []string{"node", "", "", "x"}, true},
+		{`  node  --test  `, []string{"node", "--test"}, true},
+		{`node 'a'b"c"`, []string{"node", "abc"}, true},
+		{`node "a\"b"`, []string{"node", `a"b`}, true},
+		{`echo hello; node --test`, []string{"echo", "hello;", "node", "--test"}, true},
+		{`node "\c"`, nil, false},
+		{`node \x`, nil, false},
+		{`node $HOME`, nil, false},
+		{`node 'a\\b\nc\'`, nil, false},
+		{`node "a b`, nil, false},
+		{`node a\`, nil, false},
+	} {
+		got, ok := envSplitString(row.in)
+		if ok != row.ok || (ok && !slices.Equal(got, row.want)) {
+			t.Errorf("envSplitString(%q) = %q, %v; want %q, %v", row.in, got, ok, row.want, row.ok)
 		}
 	}
 }
