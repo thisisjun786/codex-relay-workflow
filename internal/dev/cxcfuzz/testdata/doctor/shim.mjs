@@ -118,6 +118,14 @@ lines.on("line", async (line) => {
     process.stdout.write(JSON.stringify({ id: null, error: { name: error.name, message: error.message } }) + "\n");
     return;
   }
+  // The worker's start-up handshake, and any input that is not an object, is answered inertly before
+  // isolate, the import and answer below: with an empty root the import would read the host's own
+  // environment, and a report built from a non-object input is not a case this shim answers
+  // (CRW-932). The other shims give their own inert answers for such an input and keep them.
+  if (request.input === null || typeof request.input !== "object" || Array.isArray(request.input)) {
+    process.stdout.write(JSON.stringify({ id: request.id, output: null }) + "\n");
+    return;
+  }
   try {
     isolate(request.root);
     const doctor = await import(oracleRoot() + "/cxc-ops/dist/doctor.js");
