@@ -32,8 +32,12 @@ type SwitchRecord struct {
 	Active, ChangedAt, By string
 	Pending               bool
 	ConfigBackup          *string
-	Keys                  []SwitchKeyRecord
-	Roles                 []SwitchRoleRecord
+	// ConfigHash is the SHA-256 of the config.toml the switch is about to write, kept while pending
+	// when the manifest's PostActivateHash is to follow the switch, so an unfinished run can tell its own
+	// write from a hand edit.
+	ConfigHash *string
+	Keys       []SwitchKeyRecord
+	Roles      []SwitchRoleRecord
 }
 
 // captured reports whether the record holds the pre-switch values.
@@ -67,7 +71,12 @@ func parseSwitchRecord(raw any) *SwitchRecord {
 	if !ok {
 		return nil
 	}
-	rec := &SwitchRecord{Active: active, ChangedAt: changedAt, By: by, Pending: pending, ConfigBackup: backup}
+	hashRaw, hashPresent := o.Lookup("configHash")
+	hash, ok := switchOptionalString(hashRaw, hashPresent)
+	if !ok {
+		return nil
+	}
+	rec := &SwitchRecord{Active: active, ChangedAt: changedAt, By: by, Pending: pending, ConfigBackup: backup, ConfigHash: hash}
 	keys, _ := o.Get("keys").([]any)
 	for _, item := range keys {
 		k, ok := item.(pyjson.Object)
@@ -113,5 +122,5 @@ func switchRecordObject(r *SwitchRecord) pyjson.Object {
 	for _, x := range r.Roles {
 		roles = append(roles, pyjson.Object{{Key: "role", Value: x.Role}, {Key: "path", Value: x.Path}, {Key: "priorOwner", Value: x.PriorOwner}, {Key: "backupPath", Value: manifestNullable(x.BackupPath)}, {Key: "appliedDigest", Value: x.AppliedDigest}})
 	}
-	return pyjson.Object{{Key: "active", Value: r.Active}, {Key: "changedAt", Value: r.ChangedAt}, {Key: "by", Value: r.By}, {Key: "pending", Value: r.Pending}, {Key: "configBackup", Value: manifestNullable(r.ConfigBackup)}, {Key: "keys", Value: keys}, {Key: "roles", Value: roles}}
+	return pyjson.Object{{Key: "active", Value: r.Active}, {Key: "changedAt", Value: r.ChangedAt}, {Key: "by", Value: r.By}, {Key: "pending", Value: r.Pending}, {Key: "configBackup", Value: manifestNullable(r.ConfigBackup)}, {Key: "configHash", Value: manifestNullable(r.ConfigHash)}, {Key: "keys", Value: keys}, {Key: "roles", Value: roles}}
 }

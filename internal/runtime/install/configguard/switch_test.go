@@ -294,8 +294,8 @@ func TestSwitchTwiceKeepsTheFirstValues(t *testing.T) {
 
 func TestSwitchFailureUndoesEveryStepToTheByte(t *testing.T) {
 	cases := map[string][]string{
-		"crw": {"manifest", "state", "config", "role:architect", "role:executor", "manifest-final"},
-		"cxc": {"state", "config", "role:architect", "role:executor", "manifest-final"},
+		"crw": {"manifest", "state", "config", "role:architect", "role-replace:architect", "role:executor", "role-replace:executor", "manifest-final"},
+		"cxc": {"manifest", "state", "config", "role:architect", "role:executor", "manifest-final"},
 	}
 	for target, steps := range cases {
 		for _, step := range steps {
@@ -408,3 +408,220 @@ func TestSwitchSectionSurvivesTheOtherManifestWriters(t *testing.T) {
 }
 
 func ptrBool(b bool) *bool { return &b }
+
+// switchCrashed stands for a process that died: the panic skips every rollback.
+type switchCrashed struct{}
+
+// switchRunCrashing runs a switch that dies just before its at-th step (1-based) and reports whether it did.
+func switchRunCrashing(t *testing.T, deps SwitchDeps, target string, at int) (crashed bool) {
+	t.Helper()
+	defer func() {
+		if r := recover(); r != nil {
+			if _, ok := r.(switchCrashed); !ok {
+				panic(r)
+			}
+			crashed = true
+		}
+	}()
+	n := 0
+	deps.Fail = func(string) error {
+		if n++; n == at {
+			panic(switchCrashed{})
+		}
+		return nil
+	}
+	if _, err := RunSwitch(deps, target); err != nil {
+		t.Fatalf("switch %s without a crash: %v", target, err)
+	}
+	return false
+}
+
+func switchTreeWithoutSwitchFiles(t *testing.T, home string) switchSnapshot {
+	tree := switchTree(t, home)
+	delete(tree, switchstate.Dir+string(filepath.Separator)+switchstate.File)
+	delete(tree, InstallManifestName)
+	return tree
+}
+
+// A switch that dies at any write boundary is finished by running it again, and the way back to CXC
+// from there gives the host back to the byte (verification finding 1 and 5 of CRW-201 round 1).
+func TestSwitchDiedAtEveryBoundaryIsFinishedAndReturnsToCXC(t *testing.T) {
+	for _, cfgName := range []string{"standard", "tight spacing", "key absent"} {
+		for _, first := range []string{"crw", "cxc"} {
+			for _, how := range []string{"again", "straight back"} {
+				for at := 1; ; at++ {
+					name := fmt.Sprintf("%s/%s dies at step %d then %s", cfgName, first, at, how)
+					home := switchHost(t, switchConfigs[cfgName])
+					orig := switchTreeWithoutSwitchFiles(t, home)
+					if first == "cxc" {
+						if _, err := RunSwitch(switchDeps(home), "crw"); err != nil {
+							t.Fatal(err)
+						}
+					}
+					if !switchRunCrashing(t, switchDeps(home), first, at) {
+						break
+					}
+					if how == "again" {
+						if _, err := RunSwitch(switchDeps(home), first); err != nil {
+							t.Fatalf("%s: running it again: %v", name, err)
+						}
+					}
+					if _, err := RunSwitch(switchDeps(home), "cxc"); err != nil {
+						t.Fatalf("%s: the way back: %v", name, err)
+					}
+					if d := switchDiff(orig, switchTreeWithoutSwitchFiles(t, home)); d != "" {
+						t.Fatalf("%s: host differs from before the first switch:\n%s", name, d)
+					}
+					m, err := ReadInstallManifest(home)
+					if err != nil || (m != nil && m.Switch != nil && (m.Switch.Pending || m.Switch.Active != "cxc" || len(m.Switch.Roles) != 0)) {
+						t.Fatalf("%s: manifest after the way back = %+v, %v", name, m, err)
+					}
+				}
+			}
+		}
+	}
+}
+
+// The way back is recorded as pending before it changes anything (finding 6).
+func TestSwitchBackToCXCLeavesAPendingSectionWhenItDies(t *testing.T) {
+	home := switchHost(t, switchConfigs["standard"])
+	if _, err := RunSwitch(switchDeps(home), "crw"); err != nil {
+		t.Fatal(err)
+	}
+	// Dies before the config step: the state file already says cxc.
+	if !switchRunCrashing(t, switchDeps(home), "cxc", 3) {
+		t.Fatal("no crash")
+	}
+	m, err := ReadInstallManifest(home)
+	if err != nil || m == nil || m.Switch == nil {
+		t.Fatalf("manifest = %+v, %v", m, err)
+	}
+	if !m.Switch.Pending || m.Switch.Active != "cxc" || len(m.Switch.Roles) != 2 || len(m.Switch.Keys) != 1 {
+		t.Fatalf("switch section after a died return = %+v", m.Switch)
+	}
+}
+
+// A CXC plugin table that appears after the first switch is switched off by the next one, and the
+// way back gives its line back (finding 2).
+func TestSwitchTakesUpACXCTableThatAppearedAfterTheFirstSwitch(t *testing.T) {
+	home := switchHost(t, switchConfigs["table is missing"])
+	if _, err := RunSwitch(switchDeps(home), "crw"); err != nil {
+		t.Fatal(err)
+	}
+	cfgPath := filepath.Join(home, "config.toml")
+	added := activationRead(t, cfgPath) + "\n[plugins.\"codexclaw@codexclaw\"]\nenabled=true\n"
+	activationWrite(t, cfgPath, added)
+	r, err := RunSwitch(switchDeps(home), "crw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st := ReadTableKeyLine(activationRead(t, cfgPath), `plugins."codexclaw@codexclaw"`, "enabled"); !st.Found || st.Value != "false" {
+		t.Fatalf("the new CXC table was left on: %+v (report %+v)", st, r)
+	}
+	if _, err := RunSwitch(switchDeps(home), "cxc"); err != nil {
+		t.Fatal(err)
+	}
+	if got := activationRead(t, cfgPath); got != added {
+		t.Fatalf("config after the way back:\n%q\nwant\n%q", got, added)
+	}
+}
+
+// The activation's drift hash moves with the switch only when the file was still the one the
+// activation left (finding 3).
+func TestSwitchKeepsTheActivationDriftHonest(t *testing.T) {
+	hashOf := func(t *testing.T, home string) string {
+		sum := sha256.Sum256([]byte(activationRead(t, filepath.Join(home, "config.toml"))))
+		return fmt.Sprintf("%x", sum)
+	}
+	activate := func(t *testing.T) string {
+		home := switchHost(t, switchConfigs["standard"])
+		var calls [][]string
+		if _, err := Activate(activationDeps(t, home, map[string]bool{}, &calls)); err != nil {
+			t.Fatal(err)
+		}
+		return home
+	}
+	t.Run("an untouched config follows the switch", func(t *testing.T) {
+		home := activate(t)
+		if _, err := RunSwitch(switchDeps(home), "crw"); err != nil {
+			t.Fatal(err)
+		}
+		m, _ := ReadInstallManifest(home)
+		if m.PostActivateHash == nil || *m.PostActivateHash != hashOf(t, home) {
+			t.Fatalf("PostActivateHash = %v, want the hash of the switched file", m.PostActivateHash)
+		}
+	})
+	t.Run("a drifted config stays drifted", func(t *testing.T) {
+		home := activate(t)
+		m0, _ := ReadInstallManifest(home)
+		cfgPath := filepath.Join(home, "config.toml")
+		activationWrite(t, cfgPath, activationRead(t, cfgPath)+"# edited by hand\n")
+		for _, target := range []string{"crw", "cxc"} {
+			if _, err := RunSwitch(switchDeps(home), target); err != nil {
+				t.Fatal(err)
+			}
+			m, _ := ReadInstallManifest(home)
+			if m.PostActivateHash == nil || *m.PostActivateHash != *m0.PostActivateHash {
+				t.Fatalf("switch %s moved the activation hash %v -> %v", target, *m0.PostActivateHash, m.PostActivateHash)
+			}
+		}
+	})
+}
+
+// A CRW role file that differs from this build's template is not rewritten without a way back
+// (finding 4): the switch leaves it, and the way back leaves it too.
+func TestSwitchKeepsAnExistingCRWRoleFile(t *testing.T) {
+	home := switchHost(t, switchConfigs["standard"])
+	want, err := role.NativeRoleContent(role.Architect)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := "# an older crw architect\nname = \"architect\"\n"
+	old := fmt.Sprintf("# crw-managed: %x\n%s", sha256.Sum256([]byte(body)), body)
+	if role.OwnerOf([]byte(old)) != role.OwnerCRW || old == string(want) {
+		t.Fatalf("the fixture is not an older CRW role file: %q", old)
+	}
+	path := filepath.Join(home, "agents", "architect.toml")
+	activationWrite(t, path, old)
+	r, err := RunSwitch(switchDeps(home), "crw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range r.Roles {
+		if c.Role == "architect" && (c.Action != "kept-crw" || c.BackupPath != nil) {
+			t.Fatalf("architect change = %+v", c)
+		}
+	}
+	if got := activationRead(t, path); got != old {
+		t.Fatalf("an existing CRW role file was rewritten: %q", got)
+	}
+	if _, err := RunSwitch(switchDeps(home), "cxc"); err != nil {
+		t.Fatal(err)
+	}
+	if got := activationRead(t, path); got != old {
+		t.Fatalf("the way back changed an existing CRW role file: %q", got)
+	}
+}
+
+// A switch that dies after writing config.toml but before its manifest still leaves the activation's
+// drift hash right once it is run again.
+func TestSwitchDiedAtEveryBoundaryKeepsTheActivationHash(t *testing.T) {
+	for at := 1; ; at++ {
+		home := switchHost(t, switchConfigs["standard"])
+		var calls [][]string
+		if _, err := Activate(activationDeps(t, home, map[string]bool{}, &calls)); err != nil {
+			t.Fatal(err)
+		}
+		if !switchRunCrashing(t, switchDeps(home), "crw", at) {
+			break
+		}
+		if _, err := RunSwitch(switchDeps(home), "crw"); err != nil {
+			t.Fatalf("step %d: %v", at, err)
+		}
+		m, _ := ReadInstallManifest(home)
+		sum := sha256.Sum256([]byte(activationRead(t, filepath.Join(home, "config.toml"))))
+		if m.PostActivateHash == nil || *m.PostActivateHash != fmt.Sprintf("%x", sum) || m.Switch.ConfigHash != nil || m.Switch.Pending {
+			t.Fatalf("step %d: hash %v, switch %+v", at, m.PostActivateHash, m.Switch)
+		}
+	}
+}

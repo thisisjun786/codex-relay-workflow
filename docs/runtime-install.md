@@ -92,29 +92,36 @@ crw install switch status    which side is on; --json prints one document
 `switch crw` does four things, in this order, in one critical section under the sidecar lock every CRW
 writer of `config.toml` takes:
 
-1. writes the `switch` section of `<CODEX_HOME>/.crw-install.json` with the values from before (the
-   section is separate from `tableKeys`, so `crw install features disable` and `Deactivate` never touch
-   it, and `Activate` and `config set` carry it over unchanged);
+1. writes the `switch` section of `<CODEX_HOME>/.crw-install.json`, marked `pending`, with the values from
+   before (the section is separate from `tableKeys`, so `crw install features disable` and `Deactivate`
+   never touch it, and `Activate` and `config set` carry it over unchanged). The section is written
+   again, before the file it protects is replaced, to record the copy of each CXC role file;
 2. writes `<CODEX_HOME>/crw/switch.json`, `{"active":"crw","changedAt":"<RFC 3339 UTC>","by":"crw install switch"}`,
    atomically. The Go type is `internal/runtime/install/switchstate`, which imports only the standard
    library so the hook side can read the file with it;
 3. sets `enabled = false` in `[plugins."codexclaw@codexclaw"]` after copying `config.toml` to
    `config.toml.crw-<ts>.bak`. The key is recorded as its line verbatim, so `switch cxc` gives back
-   `enabled=true`, a tab-separated line or a CRLF file to the byte. A missing CXC table is left missing;
+   `enabled=true`, a tab-separated line or a CRLF file to the byte. A missing CXC table is left missing,
+   and one that appeared since the first switch (`codex plugin add`) is read and switched off by the
+   next `switch crw`, with its line recorded then;
 4. replaces the CXC-owned `agents/executor.toml` and `agents/architect.toml` (first line
    `# codexclaw-managed: <sha256 of the rest>`) with the CRW role files after copying each to
-   `<role>.toml.crw-<ts>.bak`, installs a role file that is absent, and leaves any other file alone.
+   `<role>.toml.crw-<ts>.bak`, installs a role file that is absent, and leaves any other file alone,
+   including a CRW-owned role file that differs from this build's (`kept-crw`).
 
 `switch cxc` runs the same steps the other way: `switch.json` says `cxc`, the CXC key's line is put back,
 a role file CRW installed is removed or replaced by its backup, and the `switch` section keeps no
 values. A step that fails undoes the steps before it, each to the byte it read, and the command exits
-1; a command that died part way leaves a `pending` section, and running it again finishes from the
-recorded values. The managed keys of the switch are an internal list: `crw install config set` does
+1; a command that died part way, in either direction, leaves a `pending` section, and running it again
+finishes from the recorded values. A CRW role file that replaced a CXC one with no backup on record is
+an error, not a success: restore it by hand or remove the file. The install manifest's
+`postActivateHash` moves with the switch only while `config.toml` is still the file the activation
+left, so a hand edit stays drift for `Deactivate`. The managed keys of the switch are an internal list: `crw install config set` does
 not offer them.
 
-`switch status` reads and writes nothing. State is `crw` (`switch.json` says crw and the CXC plugin is
-off), `cxc` (the CXC plugin is on and `switch.json` does not say crw), `conflict` (both are on) or `off`
-(neither). It also reports both plugins' `enabled` keys, a summary of the CRW hooks' trust
+`switch status` reads and writes nothing. State is `crw` (`switch.json` says crw, `crw@crw` is enabled and the
+CXC plugin is off), `cxc` (the CXC plugin is on and the CRW side is not), `conflict` (both are on) or `off`
+(neither); a `switch.json` that says crw while `crw@crw` is not enabled is reported with a note. It also reports both plugins' `enabled` keys, a summary of the CRW hooks' trust
 (trusted, drifted and untrusted counts, read from the package given by `--plugin-root`,
 `$PLUGIN_ROOT` or the one crw package in the Codex plugin cache) and the owner of each role file.
 

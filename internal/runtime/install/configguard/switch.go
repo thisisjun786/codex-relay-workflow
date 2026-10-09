@@ -98,6 +98,17 @@ func (t *switchTx) run(step string, do func() (func() error, error)) error {
 	return nil
 }
 
+// check asks the injected failure for a boundary inside a step.
+func (t *switchTx) check(step string) error {
+	if t.fail == nil {
+		return nil
+	}
+	if err := t.fail(step); err != nil {
+		return fmt.Errorf("step %s: %w", step, err)
+	}
+	return nil
+}
+
 func (t *switchTx) rollback() error {
 	var errs []error
 	for i := len(t.undo) - 1; i >= 0; i-- {
@@ -196,6 +207,8 @@ func RunSwitch(deps SwitchDeps, target string) (*SwitchReport, error) {
 	rec := &SwitchRecord{Active: target, ChangedAt: stamp, By: SwitchBy}
 	if prior.captured() {
 		*rec = *prior
+		rec.Keys = append([]SwitchKeyRecord(nil), prior.Keys...)
+		rec.Roles = append([]SwitchRoleRecord(nil), prior.Roles...)
 		rec.Active, rec.By = target, SwitchBy
 		if prior.Active != target || prior.Pending {
 			rec.ChangedAt = stamp
@@ -205,16 +218,7 @@ func RunSwitch(deps SwitchDeps, target string) (*SwitchReport, error) {
 	} else if target == string(switchstate.CRW) {
 		// The values from before: read now, before anything is written.
 		for _, spec := range switchSpecs() {
-			st := ReadTableKeyLine(string(pre), spec.Table, spec.Key)
-			if st.Unsupported {
-				return nil, fmt.Errorf("%s.%s currently holds a value crw will not rewrite; edit config.toml by hand", spec.Table, spec.Key)
-			}
-			k := SwitchKeyRecord{Table: spec.Table, Key: spec.Key, TablePresent: st.TablePresent, AppliedValue: "false"}
-			if st.Found {
-				line := st.Line
-				k.PriorLine = &line
-			}
-			rec.Keys = append(rec.Keys, k)
+			rec.Keys = append(rec.Keys, SwitchKeyRecord{Table: spec.Table, Key: spec.Key, AppliedValue: "false"})
 		}
 		for _, name := range switchRoleNames() {
 			rolePath := role.RoleFilePath(home, name)
@@ -225,59 +229,29 @@ func RunSwitch(deps SwitchDeps, target string) (*SwitchReport, error) {
 			rec.Roles = append(rec.Roles, SwitchRoleRecord{Role: string(name), Path: rolePath, PriorOwner: string(role.OwnerOf(raw))})
 		}
 	}
-	finish := func(err error) (*SwitchReport, error) {
-		if rbErr := tx.rollback(); rbErr != nil {
-			return nil, fmt.Errorf("%w; the rollback also failed and left the host part way: %v", err, rbErr)
-		}
-		return nil, err
-	}
-	writeManifest := func(next *InstallManifest) (func() error, error) {
-		b, err := manifestBytes(next)
-		if err != nil {
-			return nil, err
-		}
-		undo := func() error {
-			if manifestExists {
-				return activationPublish(manifestFile, origManifest)
-			}
-			if err := os.Remove(manifestFile); err != nil && !errors.Is(err, fs.ErrNotExist) {
-				return err
-			}
-			return nil
-		}
-		return undo, activationPublish(manifestFile, b)
-	}
-	base := m
-	if base == nil {
-		base = &InstallManifest{Version: 2, ConfigPath: path, Flags: map[string]FlagRecord{}, TableKeys: map[string]TableKeyRecord{}}
-	}
-
 	if target == string(switchstate.CRW) {
-		rec.Pending = true
-		base.Switch = rec
-		if err := tx.run("manifest", func() (func() error, error) { return writeManifest(base) }); err != nil {
-			return finish(err)
-		}
-	}
-
-	// switch.json
-	current, curErr := switchstate.Parse(prevState)
-	if prevState == nil || curErr != nil || string(current.Active) != target {
-		err = tx.run("state", func() (func() error, error) {
-			undo := func() error {
-				if prevState == nil {
-					return switchstate.Remove(home)
-				}
-				return switchstate.WriteRaw(home, prevState)
+		// A CXC table that was not there at the first switch (the plugin was added since) is read
+		// now, before the key is changed, so the way back has its line too.
+		for i := range rec.Keys {
+			k := &rec.Keys[i]
+			if k.TablePresent {
+				continue
 			}
-			return undo, switchstate.Write(home, switchstate.State{Active: switchstate.Active(target), ChangedAt: stamp, By: SwitchBy})
-		})
-		if err != nil {
-			return finish(err)
+			st := ReadTableKeyLine(string(pre), k.Table, k.Key)
+			if st.Unsupported {
+				return nil, fmt.Errorf("%s.%s currently holds a value crw will not rewrite; edit config.toml by hand", k.Table, k.Key)
+			}
+			if st.TablePresent {
+				k.TablePresent, k.PriorLine = true, nil
+				if st.Found {
+					line := st.Line
+					k.PriorLine = &line
+				}
+			}
 		}
 	}
 
-	// the CXC plugin's enabled key
+	// the CXC plugin's enabled key, computed now and written below
 	content := string(pre)
 	changed := false
 	for _, k := range rec.Keys {
@@ -307,6 +281,74 @@ func RunSwitch(deps SwitchDeps, target string) (*SwitchReport, error) {
 		}
 		report.Keys = append(report.Keys, SwitchKeyChange{Table: k.Table, Key: k.Key, Before: before, After: after})
 	}
+
+	// The activation's drift hash follows the switch only while config.toml is still the file the
+	// activation (or an earlier, unfinished switch) left; a file edited since stays drifted.
+	base := m
+	if base == nil {
+		base = &InstallManifest{Version: 2, ConfigPath: path, Flags: map[string]FlagRecord{}, TableKeys: map[string]TableKeyRecord{}}
+	}
+	followHash := false
+	if base.PostActivateHash == nil {
+		followHash = len(base.TableKeys) == 0 && len(base.Flags) == 0
+	} else if preExists {
+		have := switchDigest(pre)
+		followHash = have == *base.PostActivateHash || (prior != nil && prior.ConfigHash != nil && have == *prior.ConfigHash)
+	}
+	hashPending := prior != nil && prior.ConfigHash != nil
+	if followHash && changed {
+		h := switchDigest([]byte(content))
+		rec.ConfigHash = &h
+	}
+
+	finish := func(err error) (*SwitchReport, error) {
+		if rbErr := tx.rollback(); rbErr != nil {
+			return nil, fmt.Errorf("%w; the rollback also failed and left the host part way: %v", err, rbErr)
+		}
+		return nil, err
+	}
+	writeManifest := func(next *InstallManifest) (func() error, error) {
+		b, err := manifestBytes(next)
+		if err != nil {
+			return nil, err
+		}
+		undo := func() error {
+			if manifestExists {
+				return activationPublish(manifestFile, origManifest)
+			}
+			if err := os.Remove(manifestFile); err != nil && !errors.Is(err, fs.ErrNotExist) {
+				return err
+			}
+			return nil
+		}
+		return undo, activationPublish(manifestFile, b)
+	}
+	// The pending section, with everything a restart needs, is on disk before the first change.
+	if target == string(switchstate.CRW) || prior.captured() {
+		rec.Pending = true
+		base.Switch = rec
+		if err := tx.run("manifest", func() (func() error, error) { return writeManifest(base) }); err != nil {
+			return finish(err)
+		}
+	}
+
+	// switch.json
+	current, curErr := switchstate.Parse(prevState)
+	if prevState == nil || curErr != nil || string(current.Active) != target {
+		err = tx.run("state", func() (func() error, error) {
+			undo := func() error {
+				if prevState == nil {
+					return switchstate.Remove(home)
+				}
+				return switchstate.WriteRaw(home, prevState)
+			}
+			return undo, switchstate.Write(home, switchstate.State{Active: switchstate.Active(target), ChangedAt: stamp, By: SwitchBy})
+		})
+		if err != nil {
+			return finish(err)
+		}
+	}
+
 	if changed {
 		err = tx.run("config", func() (func() error, error) {
 			name := cfg + ".crw-" + switchStamp(stamp) + ".bak"
@@ -340,7 +382,18 @@ func RunSwitch(deps SwitchDeps, target string) (*SwitchReport, error) {
 			var undo func() error
 			var err error
 			if target == string(switchstate.CRW) {
-				change, undo, err = switchRoleToCRW(home, name, rr, stamp)
+				persist := func() error {
+					// The backup is recorded before the role file is replaced.
+					undo, err := writeManifest(base)
+					if undo != nil {
+						tx.undo = append(tx.undo, undo)
+					}
+					if err != nil {
+						return err
+					}
+					return tx.check("role-replace:" + rr.Role)
+				}
+				change, undo, err = switchRoleToCRW(home, name, rr, stamp, persist)
 			} else {
 				change, undo, err = switchRoleToCXC(home, name, rr)
 			}
@@ -356,7 +409,7 @@ func RunSwitch(deps SwitchDeps, target string) (*SwitchReport, error) {
 	err = tx.run("manifest-final", func() (func() error, error) {
 		final := base
 		if target == string(switchstate.CRW) {
-			rec.Pending = false
+			rec.Pending, rec.ConfigHash = false, nil
 			final.Switch = rec
 		} else {
 			if m == nil && !prior.captured() {
@@ -364,7 +417,7 @@ func RunSwitch(deps SwitchDeps, target string) (*SwitchReport, error) {
 			}
 			final.Switch = &SwitchRecord{Active: target, ChangedAt: rec.ChangedAt, By: SwitchBy, ConfigBackup: rec.ConfigBackup}
 		}
-		if changed {
+		if followHash && (changed || hashPending) {
 			var err error
 			if final.PostActivateHash, err = hashOrNull(cfg); err != nil {
 				return nil, err
@@ -378,8 +431,8 @@ func RunSwitch(deps SwitchDeps, target string) (*SwitchReport, error) {
 	return report, nil
 }
 
-func switchRoleToCRW(home string, name role.NativeRoleName, rr *SwitchRoleRecord, stamp string) (SwitchRoleChange, func() error, error) {
-	change := SwitchRoleChange{Role: string(name), Path: rr.Path}
+func switchRoleToCRW(home string, name role.NativeRoleName, rr *SwitchRoleRecord, stamp string, persist func() error) (SwitchRoleChange, func() error, error) {
+	change := SwitchRoleChange{Role: string(name), Path: rr.Path, BackupPath: rr.BackupPath}
 	raw, err := role.ReadRoleFile(home, name)
 	if err != nil {
 		return change, nil, err
@@ -393,34 +446,54 @@ func switchRoleToCRW(home string, name role.NativeRoleName, rr *SwitchRoleRecord
 	undo := switchRestoreBytes(rr.Path, raw)
 	switch owner {
 	case role.OwnerCRW:
-		rr.AppliedDigest = switchDigest(want)
+		// An existing CRW role file is the user's or an older build's: it is not rewritten, because
+		// the way back has nothing to put in its place.
 		if bytes.Equal(raw, want) {
+			rr.AppliedDigest = switchDigest(want)
 			change.Action = "already-crw"
-			return change, nil, nil
+		} else {
+			change.Action = "kept-crw"
 		}
-		change.Action = "updated"
-		return change, undo, switchPublishRole(rr.Path, want)
+		return change, nil, nil
 	case role.OwnerNone:
 		change.Action = "installed"
 		rr.AppliedDigest = switchDigest(want)
 		return change, undo, switchPublishRole(rr.Path, want)
 	case role.OwnerCXC:
-		info, err := os.Stat(rr.Path)
-		if err != nil {
-			return change, nil, err
-		}
 		backup := rr.Path + ".crw-" + switchStamp(stamp) + ".bak"
-		if err := activationBackup(backup, raw, info.Mode()); err != nil {
-			return change, nil, err
+		if rr.BackupPath != nil {
+			// An unfinished run already took this copy: it is kept when it is the file as it is now.
+			if saved, err := os.ReadFile(*rr.BackupPath); err == nil && bytes.Equal(saved, raw) {
+				backup = *rr.BackupPath
+			}
+		}
+		if backup != derefString(rr.BackupPath) {
+			info, err := os.Stat(rr.Path)
+			if err != nil {
+				return change, nil, err
+			}
+			if err := activationBackup(backup, raw, info.Mode()); err != nil {
+				return change, nil, err
+			}
 		}
 		rr.BackupPath = &backup
+		rr.AppliedDigest = switchDigest(want)
 		change.BackupPath = &backup
 		change.Action = "replaced-cxc"
-		rr.AppliedDigest = switchDigest(want)
+		if err := persist(); err != nil {
+			return change, nil, err
+		}
 		return change, undo, switchPublishRole(rr.Path, want)
 	}
 	change.Action = "kept-other"
 	return change, nil, nil
+}
+
+func derefString(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
 }
 
 func switchRoleToCXC(home string, name role.NativeRoleName, rr *SwitchRoleRecord) (SwitchRoleChange, func() error, error) {
@@ -437,8 +510,7 @@ func switchRoleToCXC(home string, name role.NativeRoleName, rr *SwitchRoleRecord
 		switch owner {
 		case role.OwnerCRW:
 			if rr.BackupPath == nil {
-				change.Action = "left-no-backup"
-				return change, nil, nil
+				return change, nil, fmt.Errorf("%s is a CRW role file that replaced a CXC one, but no backup of the CXC file is recorded; restore it by hand or remove the file, then run the command again", rr.Path)
 			}
 			saved, err := os.ReadFile(*rr.BackupPath)
 			if err != nil {

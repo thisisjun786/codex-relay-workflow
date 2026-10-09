@@ -259,3 +259,35 @@ func TestInstallSwitchRefusalWritesNothing(t *testing.T) {
 		t.Fatalf("manifest written by a refused switch: %v", err)
 	}
 }
+
+// The CRW side counts as on only while the CRW plugin is enabled (verification finding 5).
+func TestInstallSwitchStatusReadsTheCRWPluginsOwnKey(t *testing.T) {
+	selectCRW := func(t *testing.T, h *switchHome) {
+		t.Helper()
+		if err := switchstate.Write(h.home, switchstate.State{Active: switchstate.CRW, ChangedAt: "2026-10-10T01:00:00.000Z", By: "crw install switch"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Run("crw off, cxc on", func(t *testing.T) {
+		h := newSwitchHome(t, "[plugins.\"crw@crw\"]\nenabled=false\n\n[plugins.\"codexclaw@codexclaw\"]\nenabled=true\n")
+		selectCRW(t, h)
+		s := h.status()
+		if s.State != "cxc" || len(s.Notes) == 0 {
+			t.Fatalf("status = %+v", s)
+		}
+	})
+	t.Run("both off", func(t *testing.T) {
+		h := newSwitchHome(t, "[plugins.\"crw@crw\"]\nenabled=false\n\n[plugins.\"codexclaw@codexclaw\"]\nenabled=false\n")
+		selectCRW(t, h)
+		if s := h.status(); s.State != "off" {
+			t.Fatalf("status = %+v", s)
+		}
+	})
+	t.Run("crw on, cxc on is still a conflict", func(t *testing.T) {
+		h := newSwitchHome(t, switchConfig)
+		selectCRW(t, h)
+		if s := h.status(); s.State != "conflict" {
+			t.Fatalf("status = %+v", s)
+		}
+	})
+}

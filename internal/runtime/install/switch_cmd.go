@@ -259,12 +259,12 @@ func renderSwitch(stdout io.Writer, asJSON bool, status *SwitchStatus, result *s
 func ReadSwitchStatus(home, pluginRoot string) *SwitchStatus {
 	s := &SwitchStatus{Command: "switch", Action: "status", CodexHome: home, Plugins: map[string]switchPluginStatus{}, Roles: []switchRoleStatus{}, Notes: []string{}}
 	s.Switch.Path = switchstate.Path(home)
-	surfaceCRW := false
+	selectedCRW := false
 	if st, err := switchstate.Read(home); err != nil {
 		s.Switch.Error = err.Error()
 	} else if st != nil {
 		s.Switch.Active, s.Switch.ChangedAt, s.Switch.By = string(st.Active), st.ChangedAt, st.By
-		surfaceCRW = st.Active == switchstate.CRW
+		selectedCRW = st.Active == switchstate.CRW
 	}
 	config, _ := os.ReadFile(filepath.Join(home, "config.toml"))
 	for _, p := range []struct{ name, plugin string }{{"crw", "crw"}, {"codexclaw", "codexclaw"}} {
@@ -280,7 +280,13 @@ func ReadSwitchStatus(home, pluginRoot string) *SwitchStatus {
 		}
 		s.Plugins[p.name] = switchPluginStatus{Key: key, Present: present, Enabled: enabled}
 	}
+	// The CRW hooks act only while the CRW plugin is on: switch.json says which side was picked, the
+	// plugin's own key says whether it is running.
+	surfaceCRW := selectedCRW && s.Plugins["crw"].Enabled
 	surfaceCXC := s.Plugins["codexclaw"].Enabled
+	if selectedCRW && !s.Plugins["crw"].Enabled {
+		s.Notes = append(s.Notes, "switch.json selects crw, but the CRW plugin ("+s.Plugins["crw"].Key+") is not enabled in config.toml: the CRW hooks are off; `crw install switch` does not turn crw@crw on")
+	}
 	switch {
 	case surfaceCRW && surfaceCXC:
 		s.State = switchStateConflict
