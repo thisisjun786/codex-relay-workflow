@@ -1,0 +1,66 @@
+# CRW-1028 verifier round 4: consumer gaps the independent verifier found in the round 3 head (49951dda9).
+# Format: see shellwrite_repro_test.go.
+
+=== CRW-1028-v4-01 | U
+--why One file, two readings: run by path, #!/bin/true makes writer.sh /bin/true's input (no writes); run by bash, every line is shell text, so bash writer.sh overwrites post.sh before it runs.
+--file post.sh
+echo clean
+--file evil.sh
+rm -rf {CHECKOUT}
+gh pr comment 1 -b x
+--file writer.sh
+#!/bin/true
+cat evil.sh > post.sh
+--cmd
+./writer.sh; bash writer.sh; bash post.sh
+
+=== CRW-1028-v4-02 | T
+--why Control: writer.sh only runs by path, where #!/bin/true reads it and writes nothing, so post.sh is the body the guards read.
+--file post.sh
+echo clean
+--file evil.sh
+rm -rf {CHECKOUT}
+gh pr comment 1 -b x
+--file writer.sh
+#!/bin/true
+cat evil.sh > post.sh
+--cmd
+./writer.sh; bash post.sh
+
+=== CRW-1028-v4-03 | Q
+--why A sibling script overwrites ./gh before it runs: the file the GitHub guard reads is stale, whatever read-only gh words follow.
+--file gh
+#!/bin/sh
+echo clean
+--file evil.sh
+gh pr comment 1 -b x
+--file ghwriter.sh
+cat evil.sh > gh
+--cmd
+bash ghwriter.sh; ./gh pr view 1
+
+=== CRW-1028-v4-04 | T
+--why Control: the sibling script writes another file, so ./gh is the file the GitHub guard reads.
+--file gh
+#!/bin/sh
+echo clean
+--file evil.sh
+gh pr comment 1 -b x
+--file otherwriter.sh
+cat evil.sh > other.sh
+--cmd
+bash otherwriter.sh; ./gh pr view 1
+
+=== CRW-1028-v4-05 | P
+--why A runner binary run by path (./tmux) runs the post its argument names: the runner rule applies before the unread binary is let through.
+--file tmux
+{DEL}ELF{NUL}{NUL}
+--cmd
+./tmux new-session 'gh pr comment 1 -b x'
+
+=== CRW-1028-v4-06 | B
+--why Control: a runner binary run by path whose arguments name no post.
+--file tmux
+{DEL}ELF{NUL}{NUL}
+--cmd
+./tmux ls

@@ -50,17 +50,17 @@ func TestShellCopyDestinationReader(t *testing.T) {
 		{"Path.rename target=", "from pathlib import Path; Path(\"/w/a\").rename(target=\"/m/n.md\")", []string{"/m/n.md"}},
 		{"Path.symlink_to", "from pathlib import Path; Path(\"/m/l\").symlink_to(\"/w/a\")", []string{"/m/l"}},
 		{"Path.hardlink_to", "from pathlib import Path; Path(\"/m/l\").hardlink_to(\"/w/a\")", []string{"/m/l"}},
-		{"receiver with a name part", "from pathlib import Path; Path(\"/m\", name).symlink_to(\"/w/a\")", []string{"/m"}},
-		{"non-literal receiver", "from pathlib import Path; Path(get_dst()).symlink_to(\"/w/a\")", []string{}},
-		{"chained receiver", "from pathlib import Path; Path(\"/w/a\").joinpath(\"x\").rename(\"/m/n.md\")", []string{}},
+		{"receiver with a name part", "from pathlib import Path; Path(\"/m\", name).symlink_to(\"/w/a\")", []string{"/m", shellIRUnknownDest}},
+		{"non-literal receiver", "from pathlib import Path; Path(get_dst()).symlink_to(\"/w/a\")", []string{shellIRUnknownDest}},
+		{"chained receiver", "from pathlib import Path; Path(\"/w/a\").joinpath(\"x\").rename(\"/m/n.md\")", []string{"/m/n.md"}},
 		{"Path.rename spaced", "from pathlib import Path; Path(\"/w/a\") . rename ( \"/m/n.md\" )", []string{"/m/n.md"}},
 		{"triple quoted destination", "import shutil; shutil.copy(\"/w/a\", '''/m/n.md''')", []string{"/m/n.md"}},
 		{"escaped destination", "import os; os.rename(\"/w/a\", \"\\x2fm/n.md\")", []string{"\\x2fm/n.md", "/m/n.md"}},
 		{"exec program", "exec(\"import shutil; shutil.copy('/w/a', '/m/n.md')\")", []string{"/m/n.md"}},
 		{"copy out of the source", "import shutil; shutil.copy(\"/m/n.md\", \"/w/b\")", []string{"/w/b"}},
 		{"rename outside", "import os; os.rename(\"/w/a\", \"/w/b\")", []string{"/w/b"}},
-		{"non-literal destination", "import shutil; shutil.copy(\"/w/a\", dst)", []string{}},
-		{"joined destination", "import shutil; shutil.copy(\"/w/a\", \"/m/\" + name)", []string{}},
+		{"non-literal destination", "import shutil; shutil.copy(\"/w/a\", dst)", []string{shellIRUnknownDest}},
+		{"joined destination", "import shutil; shutil.copy(\"/w/a\", \"/m/\" + name)", []string{shellIRUnknownDest}},
 		{"no destination", "import shutil; shutil.copy(\"/w/a\")", []string{}},
 		{"no arguments", "import shutil; shutil.copy()", []string{}},
 		{"bare name without the from-import", "copy(\"/w/a\", \"/m/n.md\")", []string{}},
@@ -107,7 +107,7 @@ func TestShellCopyDestinationThroughTheCommand(t *testing.T) {
 		{"python -c 'import shutil as s; s.move(\"/w/a\", \"/m/n.md\")'", []string{"/m/n.md"}},
 	} {
 		t.Run(c.command, func(t *testing.T) {
-			if got := ShellWriteDestinations(c.command); !slices.Equal(got, c.want) {
+			if got := shellWriteDestsTest(c.command); !slices.Equal(got, c.want) {
 				t.Fatalf("got %q, want %q", got, c.want)
 			}
 		})

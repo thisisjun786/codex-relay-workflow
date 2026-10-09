@@ -1,0 +1,188 @@
+# The shapes the 3rd to 8th generation answers of CRW-765 name in prose (headers of here-documents the collectors missed), written as
+# complete commands whose body writes the memory root.
+
+=== CRW-765-g3-01 | U
+--why 3rd generation: a here-document on a group command feeds the python3 inside it.
+{ python3 -; } <<'EOF'
+open('{MEMORY}/a','w')
+EOF
+
+=== CRW-765-g3-02 | U
+--why 3rd generation: a here-document on an if command feeds the bash inside it.
+if true; then bash; fi <<'EOF'
+echo x > {MEMORY}/a
+EOF
+
+=== CRW-765-g3-03 | U
+--why 3rd generation: a here-document on a call of a function that runs bash.
+f() { bash; }; f <<'EOF'
+echo x > {MEMORY}/a
+EOF
+
+=== CRW-765-g3-04 | W
+--why 3rd generation: a here-document inside a command substitution; bash reads it and writes the memory file.
+x=$(bash <<'EOF'
+echo x > {MEMORY}/a
+EOF
+)
+
+=== CRW-765-g3-05 | U
+--why 3rd generation: a redirect not in the usual list (>|) after the header. The reader does not model this redirect form and refuses the command, which asks the grant the issue requires.
+python3 <<'PY' >|out
+open('{MEMORY}/a','w')
+PY
+
+=== CRW-765-g3-06 | U
+--why 3rd generation: >&out after the header. The reader does not model this redirect form and refuses the command, which asks the grant the issue requires.
+python3 <<'PY' >&out
+open('{MEMORY}/a','w')
+PY
+
+=== CRW-765-g3-07 | U
+--why 3rd generation: the target of a redirect is a process substitution. The reader does not model this redirect form and refuses the command, which asks the grant the issue requires.
+python3 <<'PY' >> >(cat)
+open('{MEMORY}/a','w')
+PY
+
+=== CRW-765-g3-08 | U
+--why 3rd generation: an input redirect from a process substitution after the here-document. The reader does not model this redirect form and refuses the command, which asks the grant the issue requires.
+python3 <<'PY' < <(true)
+open('{MEMORY}/a','w')
+PY
+
+=== CRW-765-g3-09 | U
+--why 3rd generation: a command substitution as a redirect target. The reader does not model this redirect form and refuses the command, which asks the grant the issue requires.
+python3 <<'PY' >$(mktemp)
+open('{MEMORY}/a','w')
+PY
+
+=== CRW-765-g4-01 | W
+--why 4th generation: a backslash inside a command name is removed by the shell, bash runs.
+bas\h <<'EOF'
+echo x > {MEMORY}/a
+EOF
+
+=== CRW-765-g4-02 | W
+--why 4th generation: \n in pytho\n3 is an escaped n, the shell runs python3.
+pytho\n3 <<'EOF'
+open('{MEMORY}/a','w')
+EOF
+
+=== CRW-765-g4-03 | W
+--why 4th generation: nod\e is node.
+nod\e <<'EOF'
+require('fs').writeFileSync('{MEMORY}/a','x')
+EOF
+
+=== CRW-765-g4-04 | W
+--why 4th generation: a line continuation inside a word joins bas and h.
+bas\
+h <<'EOF'
+echo x > {MEMORY}/a
+EOF
+
+=== CRW-765-g4-05 | U
+--why 4th generation: a function defined with the function keyword and no parentheses.
+function f { bash; }; f <<'EOF'
+echo x > {MEMORY}/a
+EOF
+
+=== CRW-765-g4-06 | W
+--why 4th generation: a here-document inside a command substitution inside double quotes.
+x="$(python3 <<'EOF'
+open('{MEMORY}/a','w')
+EOF
+)"
+
+=== CRW-765-g5-01 | U
+--why 5th generation: hash -p binds b to bash; the following b reads the here-document as a program.
+hash -p /bin/bash b
+b <<'EOF'
+echo x > {MEMORY}/a
+EOF
+
+=== CRW-765-g5-02 | U
+--why 5th generation: alias binds b to bash.
+alias b=bash
+b <<'EOF'
+echo x > {MEMORY}/a
+EOF
+
+=== CRW-765-g5-03 | U
+--why 5th generation: ln -sf /bin/bash X then X in one text; the name X is created by the text, so the program that runs is not the one its name suggests (the reader refuses a program word the same text creates).
+ln -sf /bin/bash X
+X <<'EOF'
+echo x > {MEMORY}/a
+EOF
+
+=== CRW-765-g5-04 | U
+--why 5th generation: a verb that is a parameter expansion is unknown.
+"$B" <<'EOF'
+echo x > {MEMORY}/a
+EOF
+
+=== CRW-765-g5-05 | U
+--why 5th generation: a braced parameter as the verb.
+${B} <<'EOF'
+echo x > {MEMORY}/a
+EOF
+
+=== CRW-765-g6-01 | U
+--why 6th generation: awk reads its program from /dev/stdin, an alias of the here-document.
+awk -f /dev/stdin <<'EOF'
+BEGIN { print "x" > "{MEMORY}/a" }
+EOF
+
+=== CRW-765-g7-01 | B
+--why 7th generation: ed -s is an ordinary command under criterion c1d (an unknown verb is not a code position); the 7th-generation rule C3 is superseded.
+ed -s /dev/null <<'EOF'
+q
+EOF
+
+=== CRW-765-g7-02 | B
+--why 7th generation: sqlite3 is an ordinary command; superseded as above.
+sqlite3 <<'EOF'
+select 1;
+EOF
+
+=== CRW-765-g8-01 | W
+--why 8th generation: perl after a pipe from true.
+true | perl <<'EOF'
+open(F, ">{MEMORY}/a");
+EOF
+
+=== CRW-765-g8-02 | B
+--why 8th generation: ed after a list operator; superseded as above.
+true; ed -s /dev/null <<'EOF'
+q
+EOF
+
+=== CRW-765-g8-03 | B
+--why 8th generation: sqlite3 after a list operator; superseded as above.
+true; sqlite3 <<'EOF'
+select 1;
+EOF
+
+=== CRW-765-g8-04 | U
+--why 8th generation: perl inside a for loop that reads the here-document. A loop that receives a here-document is refused unless every command in it is known to ignore standard input (U2).
+for x in a; do perl; done <<'EOF'
+open(F, ">{MEMORY}/a");
+EOF
+
+=== CRW-765-g8-05 | B
+--why 8th generation control: cat after a list operator.
+true; cat <<'EOF'
+hello
+EOF
+
+=== CRW-765-g8-06 | B
+--why 8th generation control: cat writes d/f.py; the body is data.
+mkdir -p d && cat > d/f.py <<'EOF'
+open('{MEMORY}/a','w')
+EOF
+
+=== CRW-765-g8-07 | B
+--why 8th generation control: a while read loop that echoes its input.
+while read l; do echo "$l"; done <<'EOF'
+hello
+EOF

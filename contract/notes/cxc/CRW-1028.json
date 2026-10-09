@@ -1,0 +1,33 @@
+{
+  "issue": "CRW-1028",
+  "identical": [],
+  "intentionally-changed": [
+    {
+      "id": "hook__pre-tool-use-guarding-managed-worktree-deletion__slot_substring_denies_unrelated_target",
+      "reason": "security loosening: the slot id is matched as a raw substring by the old fallback, so rm -rf on an unrelated child directory of the working directory (./build-7627) is no longer denied; the target is not inside the managed worktree, so the new answer is silent (empty stdout)",
+      "set": {
+        "steps/0/form": "empty",
+        "steps/0/stdout": ""
+      }
+    },
+    {
+      "id": "hook__pre-tool-use-guarding-managed-worktree-deletion__unresolvable_target_fallback_denies",
+      "reason": "security-neutral reason change: rm -rf with an unresolved variable is still denied, now as a command the reader cannot read (the unresolved target is unknown), not as an unresolvable target with the slot id",
+      "set": {
+        "steps/0/stdout": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"[crw: WORKTREE-GUARD-03] blocked `a command the guard cannot read`: it deletes this session's own Codex-app-managed worktree (slot: ${CODEX_HOME}/worktrees/7627). This thread is bound to that worktree; deletion destroys uncommitted work. Remedies: finish and commit here; rename in place (git switch -c / branch -m); teardown of THIS session's worktree is done by the user (archive the thread in the app — snapshot preserved — or remove it from OUTSIDE this session). See $crw:crw-worktree-guardian.\",\"additionalContext\":\"[crw: WORKTREE-GUARD-03] blocked `a command the guard cannot read`: it deletes this session's own Codex-app-managed worktree (slot: ${CODEX_HOME}/worktrees/7627). This thread is bound to that worktree; deletion destroys uncommitted work. Remedies: finish and commit here; rename in place (git switch -c / branch -m); teardown of THIS session's worktree is done by the user (archive the thread in the app — snapshot preserved — or remove it from OUTSIDE this session). See $crw:crw-worktree-guardian.\"}}"
+      }
+    },
+    {
+      "id": "hook__pre-tool-use-guarding-managed-worktree-deletion__windows_verbs_on_posix",
+      "reason": "security loosening: rd and Remove-Item are PowerShell verbs with no meaning on a POSIX host, and the port reads only POSIX removal verbs, so the three Windows-verb steps are silent (empty stdout); the step that names no slot (Remove-Item .) was already silent in the oracle",
+      "set": {
+        "steps/0/form": "empty",
+        "steps/0/stdout": "",
+        "steps/1/form": "empty",
+        "steps/1/stdout": "",
+        "steps/2/form": "empty",
+        "steps/2/stdout": ""
+      }
+    }
+  ]
+}

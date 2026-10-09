@@ -1,0 +1,123 @@
+# CRW-1028 verifier round 1: reader gaps the independent verifier found in the generation 4 head.
+# Format: see shellwrite_repro_test.go.
+
+=== CRW-1028-v1-01 | U
+--why An input redirection of its own that names a variable replaces the /dev/null the outer command gave: the shell reads a file unknown.
+--cmd
+bash -c 'bash < "$F"' </dev/null
+
+=== CRW-1028-v1-02 | U
+--why An input redirection of its own that names a descriptor alias replaces the outer /dev/null.
+--cmd
+bash -c 'bash < /dev/stdin' </dev/null
+
+=== CRW-1028-v1-03 | B
+--why Control: the inner shell reads /dev/null itself, so it holds no program.
+--cmd
+bash -c 'bash </dev/null' </dev/null
+
+=== CRW-1028-v1-04 | U
+--why php with an option value (-d) before a here-document: the here-document is the program, which the port cannot read.
+--cmd
+php -d display_errors=1 <<'EOF'
+<?php system("rm -rf {CHECKOUT}");
+EOF
+
+=== CRW-1028-v1-05 | U
+--why php with the -r code attached to the option and an ignored operand after it.
+--cmd
+php -r'system("rm -rf {CHECKOUT}");' ignored
+
+=== CRW-1028-v1-06 | U
+--why lua with the -e code attached and a script-looking operand after it.
+--cmd
+lua -e'os.execute("rm -rf {CHECKOUT}")' ignored.lua
+
+=== CRW-1028-v1-07 | U
+--why Rscript with --expression=code and an operand after it.
+--cmd
+Rscript --expression='system("rm -rf {CHECKOUT}")' ignored.R
+
+=== CRW-1028-v1-08 | U
+--why tclsh with an option value and a here-document program.
+--cmd
+tclsh -encoding utf-8 <<'EOF'
+exec rm -rf {CHECKOUT}
+EOF
+
+=== CRW-1028-v1-09 | B
+--why Control: php with an option value and a script file operand; the file is the program, not judged.
+--cmd
+php -d display_errors=1 script.php
+
+=== CRW-1028-v1-10 | U
+--why cp -t into a directory, then the program inside it: the file that runs is the one the text copied.
+--file bin/tool
+#!/bin/sh
+echo clean
+--file evil/tool
+#!/bin/sh
+rm -rf {CHECKOUT}
+gh pr comment 1 -b x
+--cmd
+cp -t bin evil/tool; bin/tool
+
+=== CRW-1028-v1-11 | U
+--why cp onto an existing directory operand, then the program inside it.
+--file bin/tool
+#!/bin/sh
+echo clean
+--file evil/tool
+#!/bin/sh
+rm -rf {CHECKOUT}
+gh pr comment 1 -b x
+--cmd
+cp evil/tool bin; bin/tool
+
+=== CRW-1028-v1-12 | U
+--why cp --target-directory=DIR, then the program inside it.
+--file bin/tool
+#!/bin/sh
+echo clean
+--file evil/tool
+#!/bin/sh
+rm -rf {CHECKOUT}
+gh pr comment 1 -b x
+--cmd
+cp --target-directory=bin evil/tool; ./bin/tool
+
+=== CRW-1028-v1-13 | U
+--why A copied directory tree (cp -r) holds the program the text then runs.
+--file bin/tool
+#!/bin/sh
+echo clean
+--file evil/tool
+#!/bin/sh
+rm -rf {CHECKOUT}
+gh pr comment 1 -b x
+--cmd
+cp -r evil bin; bin/evil/tool
+
+=== CRW-1028-v1-14 | U
+--why mv into a directory operand, then the program inside it.
+--file bin/tool
+#!/bin/sh
+echo clean
+--file evil/tool
+#!/bin/sh
+rm -rf {CHECKOUT}
+gh pr comment 1 -b x
+--cmd
+mv evil/tool bin; bin/tool
+
+=== CRW-1028-v1-15 | B
+--why Control: the copy leaves the program the text runs untouched (a different name in the directory); the program is an echo.
+--file bin/tool
+#!/bin/sh
+echo clean
+--file evil/tool
+#!/bin/sh
+rm -rf {CHECKOUT}
+gh pr comment 1 -b x
+--cmd
+cp -t bin evil/tool; echo done

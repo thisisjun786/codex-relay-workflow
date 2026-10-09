@@ -80,6 +80,8 @@ func componentHooks() []componentHook {
 				}
 				return 0
 			case <-c.ctx.Done():
+				// A cancelled guard still answers: the contract is a deny, never silence, so the post is not let through.
+				_, _ = io.WriteString(c.stdout, pabcdhook.GitHubPostCancelledAnswer())
 				return harness.Interrupted
 			}
 		}},

@@ -1,0 +1,34 @@
+# CRW-1012 and CRW-1014: the false refusal of a plain string and the quoting forms of a memory write.
+# Format: see shellwrite_repro_test.go.
+
+=== CRW-1012-01 | B
+--why A plain Python string whose text begins with f' is no f-string: no write, no refusal (CRW-741 regression, fixed by CRW-1012).
+python3 -c "print(\"f'}'\")"
+
+=== CRW-1012-02 | B
+--why A correct f-string with an escaped double quote inside the field reads fine and writes nothing.
+python3 -c "print(f'{len(\"abc\")}')"
+
+=== CRW-1014-01 | W
+--why A python -c write to the memory root in single quotes names the destination.
+python3 -c 'open("{MEMORY}/a","w")'
+
+=== CRW-1014-02 | W
+--why A single-quote concatenation inside the program leaves the write readable.
+python3 -c 'a='"'"'q'"'"'; open("{MEMORY}/a","w")'
+
+=== CRW-1014-03 | W
+--why Adjacent quoted pieces form one word; the write is read from the joined word.
+python3 -c 'open("{MEMORY}/a",'""'"w")'
+
+=== CRW-1014-04 | W
+--why A shell redirect inside sh -c with a quote concatenation writes the memory file.
+sh -c 'a='"'"'q'"'"'; echo hi > {MEMORY}/a'
+
+=== CRW-1014-05 | W
+--why A quoted part of a redirect target joins the unquoted part: the file is {MEMORY}/a.
+echo hi > '{MEMORY}'/a
+
+=== CRW-1014-06 | W
+--why An ANSI-C quoted program is decoded before it is read.
+python3 -c $'open("{MEMORY}/a","w")'

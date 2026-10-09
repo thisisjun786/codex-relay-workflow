@@ -1,0 +1,131 @@
+# CRW-1028 verifier round 3: reader and consumer gaps the independent verifier found in the round 2 head (210962646).
+# Format: see shellwrite_repro_test.go.
+
+=== CRW-1028-v3-01 | U
+--why cp -r -t bin evil/. copies the contents of evil into bin itself: bin/tool is the copied program.
+--file bin/tool
+#!/bin/sh
+echo clean
+--file evil/tool
+#!/bin/sh
+rm -rf {CHECKOUT}
+gh pr comment 1 -b x
+--cmd
+cp -r -t bin evil/.; bin/tool
+
+=== CRW-1028-v3-02 | U
+--why cp -r --target-directory=bin evil/. fills bin itself, then a shell runs bin/tool as its script operand: the body the guards read is stale.
+--file bin/tool
+#!/bin/sh
+echo clean
+--file evil/tool
+#!/bin/sh
+rm -rf {CHECKOUT}
+gh pr comment 1 -b x
+--cmd
+cp -r --target-directory=bin evil/.; bash bin/tool
+
+=== CRW-1028-v3-03 | U
+--why cp -r evil/. bin (the plain form) fills bin itself; the script operand bin/tool is the copied file.
+--file bin/tool
+#!/bin/sh
+echo clean
+--file evil/tool
+#!/bin/sh
+rm -rf {CHECKOUT}
+gh pr comment 1 -b x
+--cmd
+cp -r evil/. bin; bash bin/tool
+
+=== CRW-1028-v3-04 | T
+--why Control: the copy of evil/. fills bin, and the script the text runs is other/tool, outside it.
+--file other/tool
+#!/bin/sh
+echo clean
+--file evil/tool
+#!/bin/sh
+rm -rf {CHECKOUT}
+gh pr comment 1 -b x
+--cmd
+cp -r -t bin evil/.; bash other/tool
+
+=== CRW-1028-v3-05 | U
+--why A script run before another rewrites it (writer.sh overwrites post.sh): the later sibling runs the new body, not the one the guards read.
+--file post.sh
+echo clean
+--file evil.sh
+rm -rf {CHECKOUT}
+gh pr comment 1 -b x
+--file writer.sh
+cat evil.sh > post.sh
+--cmd
+bash writer.sh; bash post.sh
+
+=== CRW-1028-v3-06 | U
+--why A nested script's write (outer.sh runs writer.sh, which overwrites post.sh) reaches a later sibling of the outer script.
+--file post.sh
+echo clean
+--file evil.sh
+rm -rf {CHECKOUT}
+gh pr comment 1 -b x
+--file writer.sh
+cat evil.sh > post.sh
+--file outer.sh
+bash writer.sh
+--cmd
+bash outer.sh; bash post.sh
+
+=== CRW-1028-v3-07 | U
+--why Siblings inside a script body: pair.sh runs writer.sh, then post.sh, which writer.sh overwrote.
+--file post.sh
+echo clean
+--file evil.sh
+rm -rf {CHECKOUT}
+gh pr comment 1 -b x
+--file writer.sh
+cat evil.sh > post.sh
+--file pair.sh
+bash writer.sh; bash post.sh
+--cmd
+bash pair.sh
+
+=== CRW-1028-v3-08 | U
+--why A script that writes a destination the reader cannot name may write the later sibling script: an unknown write.
+--file post.sh
+echo clean
+--file writer.sh
+cat evil.sh > "$DEST"
+--cmd
+bash writer.sh; bash post.sh
+
+=== CRW-1028-v3-09 | T
+--why Control: the earlier script writes another file (other.sh), so the later sibling post.sh is the body the guards read.
+--file post.sh
+echo clean
+--file evil.sh
+rm -rf {CHECKOUT}
+gh pr comment 1 -b x
+--file writer.sh
+cat evil.sh > other.sh
+--cmd
+bash writer.sh; bash post.sh
+
+=== CRW-1028-v3-10 | W | deviation=B
+--why Deferred to CRW-900 (900c): open bound through a module attribute (f=io.open) writes into the memory root; the Python destination reader does not follow the binding, so the gate sees no write.
+--cmd
+python3 -c "import io; f=io.open; f('{MEMORY}/target','w').write('x')"
+
+=== CRW-1028-v3-11 | W | deviation=B
+--why Deferred to CRW-900 (900c): open bound by a from-import alias (from io import open as o) writes into the memory root; the Python destination reader does not follow the alias.
+--cmd
+python3 -c "from io import open as o; o('{MEMORY}/target','w').write('x')"
+
+=== CRW-1028-v3-12 | T
+--why Control: a script's own write to a destination the reader cannot name is an unknown write for the scripts after it, not a rewrite of the script itself.
+--file build.sh
+cat post.sh > "$OUT"
+echo done
+--file post.sh
+echo clean
+--cmd
+bash build.sh

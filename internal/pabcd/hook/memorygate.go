@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/shellir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 )
@@ -172,8 +173,12 @@ func memoryGateClassify(tool string, input any, cwd string, env host.LookupEnv) 
 		} else {
 			candidates = memoryGatePatchTargets(command)
 		}
+		dir := shellirPayloadCwd(cwd)
 		for _, candidate := range candidates {
-			if target, ok := g.hit(candidate, cwd, root); ok {
+			if dir == "" && !path.IsAbs(candidate) {
+				return MemoryWriteAttempt{Surface: "edit", Target: "(a destination the gate cannot read)"}
+			}
+			if target, ok := g.hit(candidate, dir, root); ok {
 				return MemoryWriteAttempt{Surface: "edit", Target: target}
 			}
 		}
@@ -181,24 +186,45 @@ func memoryGateClassify(tool string, input any, cwd string, env host.LookupEnv) 
 		// A path that is only read, quoted, or in a heredoc body is no write; redirections, tee, sed -i, cp and mv targets and
 		// perl and ruby -i operands are the write surface (ShellWriteDestinations).
 		command, _ := record["command"].(string)
-		for _, token := range ShellWriteDestinations(command) {
-			if target, ok := g.hit(token, cwd, root); ok {
-				return MemoryWriteAttempt{Surface: "shell", Target: target}
+		dir := shellirPayloadCwd(cwd)
+		if dests, readable := shellIRWriteDestsResolved(command, dir, env); readable {
+			for _, token := range dests {
+				if token == shellIRUnknownDest {
+					return MemoryWriteAttempt{Surface: "shell", Target: "(a destination the gate cannot read)"}
+				}
+				if target, ok := g.hit(token, dir, root); ok {
+					return MemoryWriteAttempt{Surface: "shell", Target: target}
+				}
 			}
 		}
 		// A Python program the reader cannot finish - an f-string replacement field it cannot walk - may hold a write
 		// it never sees, so it is a write attempt of its own and the gate fails closed (CRW-741).
-		if what, ok := shellWriteFStringUnreadable(command); ok {
+		if what, ok := shellIRFStringUnreadable(command); ok {
 			return MemoryWriteAttempt{Surface: "shell", Target: "(a program the gate cannot read: " + what + ")"}
 		}
 		// A shell program position the outer shell builds at run time - a -c program, an eval operand, a source
 		// operand, a shell reading a pipe, a here-string or a here-document - may hold a write the destination reader
 		// never sees, so it is a write attempt of its own and the gate fails closed (CRW-726, beside CRW-741's check).
-		if what, ok := worktreeDelUnreadableProgram(command); ok {
-			return MemoryWriteAttempt{Surface: "shell", Target: "(a program the gate cannot read: " + what + ")"}
+		if !memoryGateShellReadable(command, dir, env) {
+			return MemoryWriteAttempt{Surface: "shell", Target: "(a program the gate cannot read: the command reader refused it)"}
 		}
 	}
 	return MemoryWriteAttempt{}
+}
+
+// memoryGateShellReadable is whether every reading the gate makes of a shell command succeeds: the destination reading with the
+// session's environment, and the readings with none in the payload's directory and in no directory (the f-string check). A command
+// one of them refuses is a write attempt of its own. The differential fuzz counts the commands this refuses
+// (MemoryGateCommandReadable).
+func memoryGateShellReadable(command, dir string, env host.LookupEnv) bool {
+	if _, err := shellir.AnalyzeEnv(command, dir, env); err != nil {
+		return false
+	}
+	if _, err := shellir.Analyze(command, dir); err != nil {
+		return false
+	}
+	_, err := shellir.Analyze(command, "")
+	return err == nil
 }
 
 // memoryGateToolName: flat_tool_name joins the namespace and the name with no separator, so the hook sees

@@ -285,3 +285,20 @@ func TestFallbackHookObservationAndErrorOrder(t *testing.T) {
 		t.Fatal("writer error visible")
 	}
 }
+
+// TestGitHubPostGuardLegAnswersDenyWhenCancelled: a GitHub post guard leg cancelled while it still waits for its input answers
+// with the deny envelope and the interrupted status, never silence (CRW-1028, evaluation defect d17).
+func TestGitHubPostGuardLegAnswersDenyWhenCancelled(t *testing.T) {
+	in, w := io.Pipe()
+	t.Cleanup(func() { w.Close() })
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var out bytes.Buffer
+	claimed, code := runComponentHook(invocation{ctx: ctx, args: []string{"pre-tool-use", "--leg", "pre-tool-use-guarding-github-post"}, stdout: &out}, in, componentHooks())
+	if !claimed || code != harness.Interrupted {
+		t.Fatalf("claimed %v, status %d, want the leg claimed with status %d", claimed, code, harness.Interrupted)
+	}
+	if !strings.Contains(out.String(), `"permissionDecision":"deny"`) {
+		t.Errorf("a cancelled GitHub post guard did not answer deny: %q", out.String())
+	}
+}

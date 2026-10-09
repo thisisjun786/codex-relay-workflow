@@ -43,9 +43,9 @@
     "name": "sed-in-place",
     "input": "{\"command\": \"sed -i 's/a/b/' /m/a.md\"}",
     "oracle": "[\"/m/a.md\"]",
-    "go": "[\"/m/a.md\"]",
-    "tag": "identical",
-    "record": ""
+    "go": "[\"s/a/b/\", \"/m/a.md\"]",
+    "tag": "intentionally-changed",
+    "record": "CRW-1028: see docs/port-cxc/known-defects/CRW-1028.md; a sed -i script operand is named as a file (a stricter reading, fail closed); the v0.2.40 oracle named the file only"
   },
   {
     "name": "cp-destination",
@@ -139,9 +139,9 @@
     "name": "campaign-perl-in-place",
     "input": "{\"command\": \"timeout 5 perl -i -pe 's/a/b/' .\"}",
     "oracle": "[]",
-    "go": "[\".\"]",
-    "tag": "open",
-    "record": "known-defects CRW-517 (port: fixed, security): the port deliberately names this destination and the oracle does not; pinned open so the divergence stays visible and the port cannot silently stop reporting it"
+    "go": "[\"s/a/b/\", \".\", \"\\u0000unknown\"]",
+    "tag": "intentionally-changed",
+    "record": "CRW-1028: see docs/port-cxc/known-defects/CRW-1028.md; a perl or ruby -i script operand is named as a file (a stricter reading, fail closed) Also, a perl or ruby program with no reader is the unknown destination (CRW-1028)."
   },
   {
     "name": "campaign-sudo-tee",
@@ -195,17 +195,17 @@
     "name": "crw857-subshell-write",
     "input": "{\"command\": \"(echo hi > /m/a)\"}",
     "oracle": "[\"/m/a)\"]",
-    "go": "[\"/m/a)\", \"/m/a\"]",
-    "tag": "open",
-    "record": "known-defects CRW-517/CRW-857 (port: fixed, security): the port reads a write inside a subshell group, which the oracle misses"
+    "go": "[\"/m/a\"]",
+    "tag": "intentionally-changed",
+    "record": "CRW-1028: see docs/port-cxc/known-defects/CRW-1028.md; the oracle kept the closing parenthesis of the subshell in the path; bash ends the word before it, so the file is the path without it"
   },
   {
     "name": "crw857-command-substitution-write",
     "input": "{\"command\": \"x=$(echo hi > /m/a)\"}",
     "oracle": "[\"/m/a)\"]",
-    "go": "[\"/m/a)\", \"/m/a\"]",
-    "tag": "open",
-    "record": "known-defects CRW-517/CRW-857 (port: fixed, security): the port reads a write inside a command substitution, which the oracle misses"
+    "go": "[\"/m/a\"]",
+    "tag": "intentionally-changed",
+    "record": "CRW-1028: see docs/port-cxc/known-defects/CRW-1028.md; the oracle kept the closing parenthesis of the command substitution in the path; bash ends the word before it"
   },
   {
     "name": "crw857-gap-copy-destination-not-named",

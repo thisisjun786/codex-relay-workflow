@@ -1,0 +1,251 @@
+# CRW-1028: the triggers of the pre-merge evaluation crw1028-7b713d91 (head 7b713d910, defects d1 to d18), as the evaluation spells them,
+# judged by the three gates on the final head. A trigger the reader now reads as an unknown program (field splitting, an env-run cd, parallel,
+# a git driver command) is refused in every gate (U); the evaluation's R verdict is the worktree guard's deny, which U includes.
+# Format: see shellwrite_repro_test.go.
+
+=== CRW-1028-ev-d1-block | W
+--why d1: a brace group's redirection creates a protected memory file.
+{ :; } > {MEMORY}/n.md
+
+=== CRW-1028-ev-d1-subshell | W
+--why d1: a subshell's redirection.
+( : ) > {MEMORY}/n.md
+
+=== CRW-1028-ev-d1-if | W
+--why d1 variant: an if compound's redirection.
+if :; then :; fi > {MEMORY}/n.md
+
+=== CRW-1028-ev-d1-while | W
+--why d1 variant: a loop compound's redirection.
+while false; do :; done > {MEMORY}/n.md
+
+=== CRW-1028-ev-d2-cd-unknown-abs | R
+--why d2: after a cd .. the cwd is known (slot root), the absolute checkout path is still refused.
+cd ..; rm -rf {CHECKOUT}
+
+=== CRW-1028-ev-d2-cd-var-abs | R
+--why d2 variant: an unknown cwd (cd to a variable) and the absolute checkout path.
+cd "$X"; rm -rf {CHECKOUT}
+
+=== CRW-1028-ev-d2-cd-sub-abs | R
+--why d2 variant: unknown cwd by a command substitution.
+cd $(pwd)/..; rm -rf {CHECKOUT}
+
+=== CRW-1028-ev-d3-split | U
+--why d3: an unquoted variable holding several words is field-split into rm.
+bash -c 'CMD="rm -rf ../repo"; $CMD'
+
+=== CRW-1028-ev-d3-split-top | U
+--why d3 variant: the same at the top level.
+CMD="rm -rf ../repo"; $CMD
+
+=== CRW-1028-ev-d4-env-cd | U
+--why d4: env runs cd in a child, the caller cwd stays.
+env cd /tmp; rm -rf ../repo
+
+=== CRW-1028-ev-d4-nohup-func | R
+--why d4 variant: a function called through nice.
+f() { cd /tmp; }; nice f; rm -rf ../repo
+
+=== CRW-1028-ev-d5-while-false | R
+--why d5: a loop that runs zero times.
+while false; do cd /tmp; done; rm -rf ../repo
+
+=== CRW-1028-ev-d5-for | R
+--why d5 variant: a for loop with an empty list.
+for i in; do cd /tmp; done; rm -rf ../repo
+
+=== CRW-1028-ev-d6-parallel | U
+--why d6: parallel's ::: input is the removal target.
+parallel rm -rf {} ::: {CHECKOUT}
+
+=== CRW-1028-ev-d7-cd-memory | W
+--why d7: cd into the memory root, relative write.
+--file {MEMORY}/seed.md
+x
+--cmd
+cd {MEMORY}; echo x > n.md
+
+=== CRW-1028-ev-d7-func-cd | W
+--why d7 variant: a function that cds.
+--file {MEMORY}/seed.md
+x
+--cmd
+f() { cd {MEMORY}; }; f; echo x > n.md
+
+=== CRW-1028-ev-d8-find-delete | R
+--why d8: find -depth -delete in the checkout.
+find . -depth -delete
+
+=== CRW-1028-ev-d8-find-delete-abs | R
+--why d8 variant: find -delete on the absolute checkout.
+find {CHECKOUT} -delete
+
+=== CRW-1028-ev-d8-python-rmtree | R
+--why d8: python shutil.rmtree of the checkout.
+python3 -c 'import shutil; shutil.rmtree("{CHECKOUT}")'
+
+=== CRW-1028-ev-d9-json-secret | P
+--why d9: a JSON body with a credential assignment.
+--file {TMP}/post.json
+{"body":"MY_API_KEY=sentinel"}
+--cmd
+gh api repos/o/r/issues/1/comments -X POST --input {TMP}/post.json
+
+=== CRW-1028-ev-d9-json-escaped | P
+--why d9 variant: the assignment spelled with a JSON escape (\u003d is =); the file text has no NAME=value, only the decoded string does.
+--file {TMP}/post2.json
+{"body":"MY_API_KEY\u003dsentinel"}
+--cmd
+gh api repos/o/r/issues/1/comments -X POST --input {TMP}/post2.json
+
+=== CRW-1028-ev-d9-json-escaped-name | P
+--why d9 variant: a letter of the name escaped as well (\u004b is K) next to the escaped =.
+--file {TMP}/post3.json
+{"body":"MY_API_\u004bEY\u003dsentinel"}
+--cmd
+gh api repos/o/r/issues/1/comments -X POST --input {TMP}/post3.json
+
+=== CRW-1028-ev-d10-double-coding | E
+--why d10: a second coding declaration in a bytes exec program.
+python3 -c 'exec(br"""# coding note; coding: unicode_escape
+\x6fpen(file="{MEMORY}/n.md",mode="w")
+""")'
+
+=== CRW-1028-ev-d11-node-argv | W
+--why d11: node writeFileSync with argv destination.
+node -e 'require("fs").writeFileSync(process.argv[1],"x")' {MEMORY}/n.md
+
+=== CRW-1028-ev-d11-python-f-open | W
+--why d11: python open function value alias.
+python3 -c 'm="{MEMORY}/n.md"; f=open; f(m,"w").write("x")'
+
+=== CRW-1028-ev-d11-python-path-computed | W
+--why d11 control: a computed Path whose protected root stays a literal in the text is a write attempt on the evaluated head 7b713d910 as well; the shapes below are the ones that head missed.
+python3 -c 'import pathlib; pathlib.Path("{MEMORY}/"+"n.md").write_text("x")'
+
+=== CRW-1028-ev-d11-python-path-join | W
+--why d11: a Path joined with joinpath; read as no write by 7b713d910 through e5c8f308f, fixed by 87ba17721.
+python3 -c 'import pathlib; pathlib.Path("{MEMORY}").joinpath("n.md").write_text("x")'
+
+=== CRW-1028-ev-d11-python-path-div | W
+--why d11: a Path built with the / operator; read as no write by 7b713d910 through e5c8f308f, fixed by 87ba17721.
+python3 -c 'import pathlib; (pathlib.Path("{MEMORY}")/"n.md").write_text("x")'
+
+=== CRW-1028-ev-d11-python-path-bound | W
+--why d11: a Path bound to a name and written through the name; read as no write by 7b713d910 through e5c8f308f, fixed by 87ba17721.
+python3 -c 'from pathlib import Path; p=Path("{MEMORY}/n.md"); p.write_text("x")'
+
+=== CRW-1028-ev-d12-ruby | W
+--why d12: ruby File.write.
+ruby -e 'File.write("{MEMORY}/n.md","x")'
+
+=== CRW-1028-ev-d12-perl | W
+--why d12: perl open for writing.
+perl -e 'open(F,">","{MEMORY}/n.md"); print F "x"'
+
+=== CRW-1028-ev-d12-sed-e | W
+--why d12: sed e command runs a shell.
+sed 'e echo x > {MEMORY}/n.md' <<<x
+
+=== CRW-1028-ev-d13-input-dash | P
+--why d13: gh api --input - with a file named - in the cwd.
+--file -
+clean
+--cmd
+gh api repos/o/r/issues/1/comments -X POST --input -
+
+=== CRW-1028-ev-d13-F-body-dash | P
+--why d13: -F body=@- with a file named - in the cwd.
+--file -
+clean
+--cmd
+gh api repos/o/r/issues/1/comments -F body=@-
+
+=== CRW-1028-ev-d14-link-outside | P
+--why d14: a link in the temporary root to a file outside it.
+--link {TMP}/body-link /etc/hostname
+--cmd
+gh api repos/o/r/issues/1/comments --input {TMP}/body-link
+
+=== CRW-1028-ev-d14-link-outside-body-file | P
+--why d14 variant: a link given to --body-file.
+--link {TMP}/body-link /etc/hostname
+--cmd
+gh pr comment 1 --body-file {TMP}/body-link
+
+=== CRW-1028-ev-d14-control-inside | B
+--why d14 control: a link to a clean file inside the root.
+--file {TMP}/real.json
+{"body":"hello"}
+--link {TMP}/inner-link {TMP}/real.json
+--cmd
+gh api repos/o/r/issues/1/comments --input {TMP}/inner-link
+
+=== CRW-1028-ev-d15-sort-output-eq | W
+--why d15: sort --output=FILE.
+sort --output={MEMORY}/n.md /tmp/input
+
+=== CRW-1028-ev-d15-sort-o-joined | W
+--why d15: sort -oFILE.
+sort -o{MEMORY}/n.md /tmp/input
+
+=== CRW-1028-ev-d15-sort-output-sep | W
+--why d15: sort --output FILE.
+sort --output {MEMORY}/n.md /tmp/input
+
+=== CRW-1028-ev-d16-git-diff-command | U
+--why d16: git -c diff.foo.command executes a program.
+git -c 'diff.foo.command=sh -c "rm -rf {CHECKOUT}" --' diff --ext-diff
+
+=== CRW-1028-ev-d17-fifo-bash | U
+--why d17: a FIFO with no writer given to bash as a script.
+--fifo {TMP}/fifo
+--cmd
+bash {TMP}/fifo
+
+=== CRW-1028-ev-d17-fifo-body-file | P
+--why d17: a FIFO as --body-file.
+--fifo {TMP}/fifo
+--cmd
+gh pr comment 1 --body-file {TMP}/fifo
+
+=== CRW-1028-ev-d18-plain-string | B
+--why d18: a plain string whose text is f'}' is no f-string.
+python3 -c "print(\"f'}'\")"
+
+=== CRW-1028-ev-overblock-01 | T
+--why Control: at the top level the later script's rewrite of lint.sh reaches only the executions after it, so lint.sh is the file read (fix round 5).
+--file lint.sh
+echo lint
+--file refresh.sh
+echo refreshed > lint.sh
+--cmd
+bash lint.sh; bash refresh.sh
+
+=== CRW-1028-ev-overblock-02 | T | deviation=U
+--why Over-block, port: kept (follow-up NEW: sequential executions inside bash -c and command substitution see later scripts' writes): the same two scripts run in order inside bash -c, but a carried text is unordered for the body writes, so lint.sh counts as rewritten.
+--file lint.sh
+echo lint
+--file refresh.sh
+echo refreshed > lint.sh
+--cmd
+bash -c 'bash lint.sh; bash refresh.sh'
+
+=== CRW-1028-ev-overblock-03 | T | deviation=U
+--why Over-block, port: kept (same follow-up): the same in a command substitution that runs after lint.sh.
+--file lint.sh
+echo lint
+--file refresh.sh
+echo refreshed > lint.sh
+--cmd
+bash lint.sh; x=$(bash refresh.sh)
+
+=== CRW-1028-ev-overblock-04 | U
+--why Control: the rewriting script first and the rewritten one after it is a real rewrite and is refused inside bash -c.
+--file lint.sh
+echo lint
+--file refresh.sh
+echo refreshed > lint.sh
+--cmd
+bash -c 'bash refresh.sh; bash lint.sh'

@@ -31,6 +31,7 @@ func shellwriteTarget() Target {
 		Go:       shellWriteGo,
 		Oracle:   Oracle{Command: "node", Shim: shimPath("shellwrite"), Root: DefaultOracleRoot},
 		Compare:  shellWriteCompare,
+		Reading:  shellWriteReading,
 	}
 }
 
@@ -488,4 +489,24 @@ func shellWriteNested(rng *rand.Rand, paths []string) string {
 func shellWriteComment(rng *rand.Rand, paths []string) string {
 	comments := []string{"# " + shellWritePath(rng, paths), "#word " + shellWritePath(rng, paths), "\\ # " + shellWritePath(rng, paths)}
 	return comments[rng.Intn(len(comments))]
+}
+
+// shellWriteReading is the c2g measure for this target: the input is unreadable when the shared reader cannot read its command,
+// and the Go side refused it when it named the unknown destination (a destination holding NUL), the only answer ShellWriteDestinations
+// gives for a command it cannot read.
+func shellWriteReading(input any, env Env, goOut any) (unreadable, refused bool) {
+	command := ""
+	if value, found := field(substituteRootValue(input, env.Root), "command"); found {
+		command, _ = value.(string)
+	}
+	if hook.ShellCommandReadable(command, "", nil) {
+		return false, false
+	}
+	items, _ := goOut.([]any)
+	for _, item := range items {
+		if text, ok := item.(string); ok && strings.Contains(text, "\x00") {
+			return true, true
+		}
+	}
+	return true, false
 }

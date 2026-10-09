@@ -1,0 +1,322 @@
+# Frozen pre-merge evaluation records of PR 871 (CRW-951, twelve heads). The memory root is {MEMORY}; every program here is
+# a Python program passed to python3.
+
+=== PR871-01da262c-d1 | W
+--why open bound by a for loop over a list.
+python3 -c 'for f in [open]: f("{MEMORY}/n.md","w").write("x")'
+
+=== PR871-01da262c-d1b | W
+--why open bound as the default of a lambda parameter.
+python3 -c '(lambda f=open: f("{MEMORY}/n.md","w").write("x"))()'
+
+=== PR871-01da262c-d2 | W
+--why io is rebound to a Path by a comprehension tuple target.
+python3 -c 'import io; from pathlib import Path; [io.write_text("x") for (io,) in [(Path("{MEMORY}/n.md"),)]]'
+
+=== PR871-01da262c-d3 | B
+--why A write to /w/n.md and the word memories in a string: no protected destination.
+python3 -c 'import pathlib; pathlib.Path("/w/n.md").write_text("x"); print("memories")'
+
+=== PR871-24f62ef3-d1 | W
+--why Path.parent of memory-root/n.md/child is the protected n.md.
+python3 -c 'import os as parent; from pathlib import Path; p = Path("{MEMORY}/n.md/child"); p.parent.write_text("x")'
+
+=== PR871-24f62ef3-d2 | W
+--why A raw bytes name with \N{foo} is literal filename text under the memory root.
+python3 <<'PY'
+m = rb"{MEMORY}/\N{foo}.md"
+open(m, "w").write("x")
+PY
+
+=== PR871-24f62ef3-d3 | B | deviation=attempt/allow/allow
+--why A read mode with a computed path is a read. The reader asks a grant for a read through an open() method on a receiver it cannot name (accepted over-refusal, fail closed).
+python3 -c 'import io, os; (io).open(os.path.join("{MEMORY}", "n.md"), "r").read()'
+
+=== PR871-24f62ef3-d4 | B
+--why A dictionary key spelled memories is data.
+python3 -c 'print({"memories": 1}.copy())'
+
+=== PR871-6e106e5c-d1 | W
+--why shutil bound to s: s.copy with a computed destination.
+python3 -c 'import shutil, os; s = shutil; s.copy("/w/a", os.path.join("{MEMORY}", "n.md"))'
+
+=== PR871-6e106e5c-d1b | W
+--why A parenthesised attribute bound to f.
+python3 -c 'import shutil, os; f = (shutil).copy; f("/w/a", os.path.join("{MEMORY}", "n.md"))'
+
+=== PR871-6e106e5c-d2 | W
+--why A stderr redirect before python3 and a here-document body.
+python3 2>/dev/null <<'PY'
+import os
+open(os.path.join("{MEMORY}", "n.md"), "w").write("x")
+PY
+
+=== PR871-6e106e5c-d2b | W
+--why The -c form with the redirect before the interpreter.
+2>/dev/null python3 -c 'from pathlib import Path; open(Path("{MEMORY}/n.md"), "w").write("x")'
+
+=== PR871-6e106e5c-d3 | W
+--why A parameter named io shadows the module and receives a Path.
+python3 <<'PY'
+import io
+from pathlib import Path
+def put(io):
+    io.open("w").write("x")
+put(Path("{MEMORY}/n.md"))
+PY
+
+=== PR871-6e106e5c-d4 | W
+--why Carriage returns separate the statements inside the single-quoted program.
+python3 -c 'import os{CR}m = "{MEMORY}/n.md"{CR}f = open{CR}f(m, "w").write("x")'
+
+=== PR871-6e106e5c-d5 | B
+--why A read through an f-string path with the default mode.
+python3 -c 'root = "{MEMORY}"; print(open(f"{root}/n.md").read())'
+
+=== PR871-6e106e5c-d5b | B
+--why An explicit read mode.
+python3 -c 'root = "{MEMORY}"; print(open(f"{root}/n.md", "r").read())'
+
+=== PR871-76f0290e-d1 | W
+--why A chained receiver with a computed mode str("w").
+python3 -c 'from pathlib import Path; root = "{MEMORY}"; Path(root).joinpath("n.md").open(str("w")).write("x")'
+
+=== PR871-76f0290e-d2 | W
+--why A tuple target with two names rebinds io to the Path.
+python3 -c 'import io; from pathlib import Path; [io.write_text("x") for io, unused in [(Path("{MEMORY}/n.md"), 0)]]'
+
+=== PR871-76f0290e-d3 | U
+--why An unquoted here-document with a parameter: the program the shell hands over is unknown (criterion c1c), whatever the variable holds.
+python3 <<PY
+open("$OUT", "w").write("x")
+PY
+
+=== PR871-8148f7fb-d1 | W
+--why An annotated assignment rebinds io to a Path.
+python3 -c 'import io; from pathlib import Path; io: Path = Path("{MEMORY}/n.md"); io.write_text("x")'
+
+=== PR871-8148f7fb-d1b | W
+--why A comprehension target rebinds io.
+python3 -c 'import io; from pathlib import Path; [io.write_text("x") for io in [Path("{MEMORY}/n.md")]]'
+
+=== PR871-8148f7fb-d2 | W
+--why Argument unpacking supplies the destination.
+python3 -c 'import shutil; s = shutil; args = ("/w/a", "{MEMORY}/n.md"); s.copy(*args)'
+
+=== PR871-8148f7fb-d2b | W
+--why Keyword unpacking supplies the destination.
+python3 -c 'import shutil; s = shutil; s.copy(**{"src": "/w/a", "dst": "{MEMORY}/n.md"})'
+
+=== PR871-8148f7fb-d3 | W
+--why Criterion c1e: a write to a computed destination is an unknown destination and asks a grant; the finding wanted /w/n.md allowed because the raw label spells x6demories.
+python3 -c 'import os; label = rf"/w/\x6demories/x"; open(os.path.join("/w", "n.md"), "w")'
+
+=== PR871-8148f7fb-d5 | U
+--why An unquoted here-document with a parameter.
+python3 <<PY
+open("$OUT", "w").write("x")
+PY
+
+=== PR871-90405376-d1 | W
+--why A computed mode "w".strip() on a Path.open is a write.
+python3 -c 'from pathlib import Path; p=Path("{MEMORY}/n.md"); p.open("w".strip()).write("x")'
+
+=== PR871-90405376-d1b | W
+--why os.path.join("w") as the mode.
+python3 -c 'import os; from pathlib import Path; p=Path("{MEMORY}/n.md"); p.open(os.path.join("w")).write("x")'
+
+=== PR871-90405376-d2 | W
+--why open passed as a value to functools.partial with mode=.
+python3 -c 'from functools import partial; m="{MEMORY}/n.md"; partial(open,m,mode="w")().write("x")'
+
+=== PR871-90405376-d3 | W
+--why Path.replace with an empty ** mapping.
+python3 -c 'from pathlib import Path; p=Path("/w/a"); m="{MEMORY}/n.md"; p.replace(m,**{})'
+
+=== PR871-90405376-d3b | W
+--why A chained receiver with the empty ** mapping.
+python3 -c 'from pathlib import Path; m="{MEMORY}/n.md"; Path("/w/a").absolute().replace(m,**{})'
+
+=== PR871-90405376-d4 | W
+--why A redirect after env must not hide python3.
+env 2>/dev/null python3 -c 'import os; open(os.path.join("{MEMORY}","n.md"),"w").write("x")'
+
+=== PR871-90405376-d4b | W
+--why A here-document with a descriptor number before the interpreter.
+0<< 'EOF' python3
+import os
+open(os.path.join("{MEMORY}","n.md"),"w").write("x")
+EOF
+
+=== PR871-9a50be25-d1 | W
+--why A copy function bound through two names.
+python3 -c 'import shutil; s = shutil; f = s.copy; f("/w/a", "{MEMORY}/n.md")'
+
+=== PR871-9a50be25-d2 | W
+--why A tuple target with a single name and a trailing comma.
+python3 -c 'import io; from pathlib import Path; io, = [Path("{MEMORY}/n.md")]; io.write_text("x")'
+
+=== PR871-9a50be25-d3 | W
+--why A stderr redirect to a file with a space after 2>; python3 still reads the here-document.
+python3 2> {TMP}/crw-951.err <<'PY'
+from pathlib import Path
+p = Path("{MEMORY}/n.md")
+p.write_text("x")
+PY
+
+=== PR871-9a50be25-d4 | U
+--why An unquoted here-document with $TARGET.
+python3 <<PY
+open("$TARGET", "w").write("x")
+PY
+
+=== PR871-c835301b-d1 | W
+--why .parent of a path below the protected file.
+python3 -c 'from pathlib import Path; Path("{MEMORY}/n.md/child").parent.write_text("x")'
+
+=== PR871-c835301b-d1b | W
+--why A list subscript of a Path.
+python3 -c 'from pathlib import Path; [Path("{MEMORY}/n.md")][0].write_text("x")'
+
+=== PR871-c835301b-d2 | W
+--why Path.replace bound to a name.
+python3 -c 'from pathlib import Path; p = Path("/w/a"); f = p.replace; f("{MEMORY}/n.md")'
+
+=== PR871-c835301b-d3 | W
+--why A trailing comma in the call.
+python3 -c 'from pathlib import Path; p = Path("/w/a"); p.replace("{MEMORY}/n.md",)'
+
+=== PR871-c835301b-d4 | W
+--why A raw string with \N{foo} is a valid file name under the protected root.
+python3 -c 'm = r"{MEMORY}/\N{foo}.md"; open(m, "w").write("x")'
+
+=== PR871-c835301b-d4b | W
+--why Criterion c1e: the computed /w write asks a grant (the finding wanted it allowed).
+python3 -c 'import os; label = r"\x6demories"; open(os.path.join("/w", "n.md"), "w")'
+
+=== PR871-c835301b-d5 | B
+--why open("r", -1): -1 is the buffering argument, the mode is a literal read.
+python3 -c 'from pathlib import Path; p = Path("{MEMORY}/n.md"); p.open("r", -1).read()'
+
+=== PR871-d960e401-d1 | W
+--why The mode is a variable that holds "w".
+python3 -c 'from pathlib import Path; p=Path("{MEMORY}/n.md"); mode="w"; p.open(mode).write("x")'
+
+=== PR871-d960e401-d2 | W
+--why write_text bound to a name.
+python3 -c 'from pathlib import Path; p=Path("{MEMORY}/n.md"); f=p.write_text; f("x")'
+
+=== PR871-d960e401-d2b | W
+--why write_text of a constructed Path bound to a name.
+python3 -c 'from pathlib import Path; f=Path("{MEMORY}/n.md").write_text; f("x")'
+
+=== PR871-d960e401-d3 | W
+--why python3 -W ignore with a here-document body.
+python3 -W ignore <<'PY'
+import os
+open(os.path.join("{MEMORY}", "n.md"), "w").write("x")
+PY
+
+=== PR871-d960e401-d3b | W
+--why The same body inside bash -c with an unquoted delimiter that holds no expansion.
+bash -c 'python3 <<PY
+import os
+open(os.path.join("{MEMORY}", "n.md"), "w").write("x")
+PY
+'
+
+=== PR871-d960e401-d4 | B
+--why Control: a string method on the word memories is data.
+python3 -c 'print(str("memories").replace("m", "M"))'
+
+=== PR871-d960e401-d4b | B
+--why Control: the same with a parenthesised literal.
+python3 -c 'print(("memories").replace("m", "M"))'
+
+=== PR871-d960e401-d5 | U
+--why The finding calls the refusal of this read-only program a false refusal; criterion c1c makes an unquoted here-document body with an expansion unreadable, which is the design.
+python3 <<PY
+print("$USER")
+PY
+
+=== PR871-d97e63dc-d1 | W
+--why .parent below the protected file.
+python3 -c 'from pathlib import Path; p = Path("{MEMORY}/n.md/child"); p.parent.write_text("x")'
+
+=== PR871-d97e63dc-d2 | W
+--why The mode is an f-string.
+python3 -c 'from pathlib import Path; mode = "w"; open(Path("{MEMORY}/n.md"), f"{mode}").write("x")'
+
+=== PR871-d97e63dc-d2b | W
+--why A copy to an f-string destination.
+python3 -c 'import shutil; root = "{MEMORY}"; shutil.copy("/tmp/a", f"{root}/n.md")'
+
+=== PR871-d97e63dc-d3 | W
+--why A default argument binds builtin open.
+python3 <<'PY'
+def put(m, f=open):
+    f(m, "w").write("x")
+put("{MEMORY}/n.md")
+PY
+
+=== PR871-d97e63dc-d4 | W
+--why A double-quoted bash -c word with escaped quotes holds the complete python3 -c command.
+bash -c "python3 -c \"from pathlib import Path; open(Path('{MEMORY}/n.md'), 'w').write('x')\""
+
+=== PR871-d97e63dc-d5 | B
+--why A read with the default mode.
+python3 -c 'import io, os; io.open(os.path.join("{MEMORY}", "n.md")).read()'
+
+=== PR871-ee58e0b3-d1 | W
+--why An f-string destination under the protected root.
+python3 -c 'root = "{MEMORY}"; open(f"{root}/n.md", "w").write("x")'
+
+=== PR871-ee58e0b3-d2 | W
+--why pathlib imported as p, then p rebound to a Path.
+python3 -c 'import pathlib as p; p = p.Path("{MEMORY}/n.md"); p.write_text("x")'
+
+=== PR871-ee58e0b3-d2b | W
+--why The same rebinding with open("w").
+python3 -c 'import pathlib as p; p = p.Path("{MEMORY}/n.md"); p.open("w")'
+
+=== PR871-ee58e0b3-d3 | W
+--why A parenthesised module.
+python3 -c 'import shutil, os; (shutil).copy("/w/a", os.path.join("{MEMORY}", "n.md"))'
+
+=== PR871-ee58e0b3-d3b | W
+--why copy2.
+python3 -c 'import shutil, os; shutil.copy2("/w/a", os.path.join("{MEMORY}", "n.md"))'
+
+=== PR871-ee58e0b3-d3c | W
+--why move.
+python3 -c 'import shutil, os; shutil.move("/w/a", os.path.join("{MEMORY}", "n.md"))'
+
+=== PR871-ee58e0b3-d4 | E
+--why importlib.import_module bound to load: an unknown destination for the memory gate, a run-time name for the worktree guard.
+python3 -c 'from importlib import import_module as load; root = "{MEMORY}"; load("shutil").copy("/w/a", root + "/n.md")'
+
+=== PR871-ee58e0b3-d5 | W
+--why A -W value that contains a bar is no shell separator.
+python3 -W 'ignore:foo|bar' <<'PY'
+from pathlib import Path
+open(Path("{MEMORY}/n.md"), "w").write("x")
+PY
+
+=== PR871-ee58e0b3-d6 | B
+--why A literal read mode with a variable buffering argument.
+python3 -c 'from pathlib import Path; p = Path("{MEMORY}/n.md"); buf = -1; p.open("r", buf).read()'
+
+=== PR871-f5c5f8f3-d1 | W
+--why A lambda parameter named io receives a Path.
+python3 -c 'import io; from pathlib import Path; f = lambda io: io.write_text("x"); f(Path("{MEMORY}/n.md"))'
+
+=== PR871-f5c5f8f3-d2 | W
+--why 2>&1 before python3 and a here-document body.
+2>&1 python3 <<'PY'
+import os
+open(os.path.join("{MEMORY}", "n.md"), "w").write("x")
+PY
+
+=== PR871-f5c5f8f3-d3 | B | deviation=attempt/allow/allow
+--why A read through an alias of io. The reader asks a grant for a read through an open() method on a receiver it cannot name (accepted over-refusal, fail closed).
+python3 -c 'import io, os; s = io; s.open(os.path.join("{MEMORY}", "n.md")).read()'

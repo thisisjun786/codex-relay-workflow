@@ -21,288 +21,6 @@ import (
 // It lives in the hardened program walk and is appended after the oracle's answer like every other addition, so the oracle's
 // own reading (scriptWriteDestinations) is unchanged.
 
-// shellVerbDestinations is the verb step of ShellWriteDestinations: the oracle's destinations, then the others. The command
-// strings a shell -c or eval runs are read again within a budget of 32 times the segment plus 64 KiB, so the work stays linear.
-func shellVerbDestinations(segment string) []string {
-	budget := 32*len(segment) + 65536
-	return shellVerbSegment(segment, &budget)
-}
-
-func shellVerbSegment(segment string, budget *int) []string {
-	return shellVerbAppendNew(shellVerbOracle(shellTokenize(segment)), shellVerbHardened(segment, budget))
-}
-
-// shellVerbAppendNew appends the destinations of more that out does not hold, keeping out's own order and duplicates.
-func shellVerbAppendNew(out, more []string) []string {
-	seen := make(map[string]struct{}, len(out)+len(more))
-	for _, dest := range out {
-		seen[dest] = struct{}{}
-	}
-	for _, dest := range more {
-		if _, found := seen[dest]; !found {
-			seen[dest] = struct{}{}
-			out = append(out, dest)
-		}
-	}
-	return out
-}
-
-// shellVerbNested is ShellWriteDestinations for the command string a shell -c or eval runs, one level deeper: the same
-// segments, redirects and verbs. With the budget spent it reads redirects and the oracle's verbs only.
-func shellVerbNested(command string, budget *int) []string {
-	*budget -= len(command)
-	out := []string{}
-	for _, segment := range splitShellSegments(stripHeredocBodies(utf16.Encode([]rune(command)))) {
-		out = append(out, shellStrings(redirectDestinations(segment))...)
-		if *budget < 0 {
-			out = append(out, shellVerbOracle(shellTokenize(shellString(segment)))...)
-		} else {
-			out = append(out, shellVerbSegment(shellString(segment), budget)...)
-		}
-	}
-	return shellVerbAppendNew(out, literalRedirectDestinations(command))
-}
-
-// shellVerbNestedBoth reads a command string as the token holds it and again with its shell escapes removed (the token does not
-// say which quotes held it, and each reading can hide what the other shows).
-func shellVerbNestedBoth(command string, budget *int) []string {
-	out := shellVerbNested(command, budget)
-	if un := shellVerbUnescape(command); un != command {
-		out = shellVerbAppendNew(out, shellVerbNested(un, budget))
-	}
-	return out
-}
-
-// shellVerbOracle is verbDestinations (:293-311) without the PowerShell and .NET branches.
-func shellVerbOracle(tokens []string) []string {
-	rest := shellVerbStripPrefixes(tokens)
-	for len(rest) > 0 && rest[0] == "&" {
-		rest = rest[1:]
-	}
-	return shellVerbRun(rest, false, nil)
-}
-
-// shellVerbRun reads the destinations of the command rest; hard selects the additions to the oracle's reading.
-func shellVerbRun(rest []string, hard bool, budget *int) []string {
-	if len(rest) == 0 || rest[0] == "" {
-		return []string{}
-	}
-	verb, args := shellVerbName(rest[0]), rest[1:]
-	switch {
-	case verb == "tee":
-		return shellVerbTee(args)
-	case verb == "sed" && hard:
-		return shellVerbSedWrites(args)
-	case verb == "sed":
-		return shellVerbSed(args)
-	case verb == "cp" || verb == "mv":
-		if hard {
-			return shellVerbCpMvWrites(args)
-		}
-		return shellVerbCpMv(args)
-	case verb == "perl" || verb == "ruby":
-		return shellVerbInterp(args, hard)
-	case verb == "python" || verb == "python3" || verb == "py" || verb == "node" || verb == "nodejs" || hard && shellVerbVersioned(verb):
-		return shellVerbPythonNode(verb, args, hard)
-	case hard && shellVerbIsShell(verb):
-		if script, ok := shellVerbShellScript(args); ok {
-			return shellVerbNestedBoth(script, budget)
-		}
-	case hard && verb == "eval":
-		for { // eval builtin eval X runs X: a chain is peeled here, not read level by level
-			next := shellVerbSkipWrappers(args)
-			if len(next) == 0 || shellVerbName(next[0]) != "eval" {
-				break
-			}
-			args = next[1:]
-		}
-		return shellVerbNestedBoth(strings.Join(args, " "), budget)
-	}
-	return []string{}
-}
-
-// shellVerbShellScript is the command string of a shell run with -c: the first operand after the leading options, when one of
-// them (an option bundle such as -c, -lc, -cx) set c and none left the shell reading without running (-n, -o noexec; +n and
-// +o noexec turn them off). Options come before the first operand, which may be a script file whose own arguments follow.
-func shellVerbShellScript(args []string) (string, bool) {
-	runC, noExec := false, false
-	for i := 0; i < len(args); i++ {
-		a := args[i]
-		switch {
-		case a == "--":
-			return shellVerbOperand(args, i+1, runC && !noExec)
-		case a == "" || a[0] != '-' && a[0] != '+':
-			return shellVerbOperand(args, i, runC && !noExec)
-		case a == "--rcfile" || a == "--init-file":
-			i++
-		case len(a) > 1 && a[1] == '-':
-		default:
-			on := a[0] == '-'
-			for j := 1; j < len(a); j++ {
-				switch a[j] {
-				case 'c':
-					runC = on
-				case 'n':
-					noExec = on
-				case 'o', 'O': // each takes the next word as its value, wherever the letter stands in the bundle
-					if a[j] == 'o' && i+1 < len(args) && args[i+1] == "noexec" {
-						noExec = on
-					}
-					i++
-				}
-			}
-		}
-	}
-	return "", false
-}
-
-func shellVerbOperand(args []string, i int, runs bool) (string, bool) {
-	if runs && i < len(args) {
-		return args[i], true
-	}
-	return "", false
-}
-
-// shellVerbBasename is basename (:266): what follows the last slash once every backslash is a slash.
-func shellVerbBasename(p string) string {
-	p = strings.ReplaceAll(p, "\\", "/")
-	return p[strings.LastIndexByte(p, '/')+1:]
-}
-
-// shellVerbNormalize is normalizeVerb (:272): a trailing .exe, .cmd or .bat goes and case folds (ASCII only in the suffix, as
-// the oracle's /i). toLowerCase maps U+0130 to i and a combining dot; the other Go differences (final sigma) cannot match a verb.
-func shellVerbNormalize(verb string) string {
-	if n := len(verb); n >= 4 && verb[n-4] == '.' {
-		switch strings.Map(func(r rune) rune {
-			if r >= 'A' && r <= 'Z' {
-				return r + 32
-			}
-			return r
-		}, verb[n-3:]) {
-		case "exe", "cmd", "bat":
-			verb = verb[:n-4]
-		}
-	}
-	return strings.ToLower(strings.ReplaceAll(verb, "\u0130", "i\u0307"))
-}
-
-func shellVerbName(token string) string { return shellVerbNormalize(shellVerbBasename(token)) }
-
-// shellVerbAssignment is /^[A-Za-z_][A-Za-z0-9_]*=/.
-func shellVerbAssignment(token string) bool {
-	name, _, found := strings.Cut(token, "=")
-	if !found || name == "" {
-		return false
-	}
-	for i := 0; i < len(name); i++ {
-		c := name[i]
-		if !(c == '_' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || i > 0 && c >= '0' && c <= '9') {
-			return false
-		}
-	}
-	return true
-}
-
-// shellVerbStripPrefixes is stripPrefixes (:276): sudo, command and builtin, and env with the NAME=value words after it.
-func shellVerbStripPrefixes(tokens []string) []string {
-	rest := tokens
-	for len(rest) > 0 {
-		head := ""
-		if rest[0] != "" {
-			head = shellVerbBasename(rest[0])
-		}
-		switch head {
-		case "sudo", "command", "builtin":
-			rest = rest[1:]
-		case "env":
-			rest = rest[1:]
-			for len(rest) > 0 && shellVerbAssignment(rest[0]) {
-				rest = rest[1:]
-			}
-		default:
-			return rest
-		}
-	}
-	return rest
-}
-
-// shellVerbTee is teeDestinations (:313): every operand.
-func shellVerbTee(args []string) []string {
-	out := []string{}
-	for i, a := range args {
-		if a == "--" {
-			return append(out, args[i+1:]...)
-		}
-		if !strings.HasPrefix(a, "-") || a == "-" {
-			out = append(out, a)
-		}
-	}
-	return out
-}
-
-// shellVerbSed is sedInPlaceDestinations (:327): the files of an in-place edit, the script being the first operand
-// unless -e or -f gave it.
-func shellVerbSed(args []string) []string {
-	inPlace, sawExpression := false, false
-	positional := []string{}
-	for i := 0; i < len(args); i++ {
-		a := args[i]
-		switch {
-		case a == "--":
-			positional = append(positional, args[i+1:]...)
-			i = len(args)
-		case a == "-i" || a == "--in-place" || strings.HasPrefix(a, "--in-place=") || strings.HasPrefix(a, "-i") && len(a) > 2:
-			inPlace = true
-			if a == "-i" && i+1 < len(args) && (args[i+1] == "" || strings.HasPrefix(args[i+1], ".")) {
-				i++
-			}
-		case a == "-e" || a == "-f" || a == "--expression" || a == "--file":
-			sawExpression = true
-			i++
-		case !strings.HasPrefix(a, "-"):
-			positional = append(positional, a)
-		}
-	}
-	switch {
-	case !inPlace:
-		return []string{}
-	case sawExpression || len(positional) == 0:
-		return positional
-	}
-	return positional[1:]
-}
-
-// shellVerbCpMv is cpMvDestinations (:354): the target directory, else the last of two or more operands.
-func shellVerbCpMv(args []string) []string {
-	targetDir := ""
-	positional := []string{}
-	for i := 0; i < len(args); i++ {
-		a := args[i]
-		switch {
-		case a == "-t" || a == "--target-directory":
-			i++
-			targetDir = ""
-			if i < len(args) {
-				targetDir = args[i]
-			}
-		case strings.HasPrefix(a, "--target-directory="):
-			targetDir = a[len("--target-directory="):]
-		case a == "--":
-			positional = append(positional, args[i+1:]...)
-			i = len(args)
-		case !strings.HasPrefix(a, "-"):
-			positional = append(positional, a)
-		}
-	}
-	if targetDir != "" {
-		return []string{targetDir}
-	}
-	if len(positional) >= 2 {
-		return []string{positional[len(positional)-1]}
-	}
-	return []string{}
-}
-
 // shellVerbBundleHas is /^-[a-zA-Z]*c/ for a letter c, with digits allowed in the bundle when digits: c occurs in the
 // leading run of option letters. shellVerbBundleEnds is /^-[a-zA-Z]*c$/: the whole argument is such a bundle ending in c.
 func shellVerbBundleHas(a string, c byte, digits bool) bool {
@@ -361,189 +79,10 @@ func shellVerbInterp(args []string, digits bool) []string {
 	return []string{}
 }
 
-// shellVerbPythonNode is pythonNodeWriteDestinations (:505): the one-line program of python -c or node -e, scanned for
-// writes. hard adds node -p, --print and -pe, python options bundled with -c (-Ic) and the shell-unescaped program.
-func shellVerbPythonNode(verb string, args []string, hard bool) []string {
-	isNode := verb == "node" || verb == "nodejs"
-	isPy := verb == "python" || verb == "python3" || verb == "py" || hard && shellVerbVersioned(verb)
-	script := ""
-	for i := 0; i < len(args); i++ {
-		a, next := args[i], ""
-		if i+1 < len(args) {
-			next = args[i+1]
-		}
-		switch {
-		case isPy && (a == "-c" || a == "--command"), isNode && (a == "-e" || a == "--eval"):
-			script = next
-		case isPy && strings.HasPrefix(a, "-c") && len(a) > 2:
-			script = a[2:]
-		case isNode && strings.HasPrefix(a, "--eval="):
-			script = a[len("--eval="):]
-		case isNode && strings.HasPrefix(a, "-e") && len(a) > 2 && !strings.HasPrefix(a, "--"):
-			script = a[2:]
-		case hard && isNode && (a == "-p" || a == "--print" || a == "-pe"):
-			script = next
-		case hard && isPy && shellVerbBundleEnds(a, 'c', false) && !strings.ContainsAny(a, "mWXQ"): // -Ic, -uc
-			script = next
-		default:
-			continue
-		}
-		break
-	}
-	if script == "" {
-		return []string{}
-	}
-	out := shellVerbScriptWritesIn(script, hard, isPy)
-	if un := shellVerbUnescape(script); hard && un != script {
-		out = append(out, shellVerbScriptWritesIn(un, true, isPy)...)
-	}
-	return out
-}
-
 // shellVerbUnescape removes the backslashes a double-quoted shell word keeps in the token (the lexer reads the quotes off and
 // leaves the escapes), so that a command string quoted into another command reads as the shell reads it.
 func shellVerbUnescape(s string) string {
 	return strings.NewReplacer("\\\"", "\"", "\\\\", "\\", "\\$", "$", "\\\x60", "\x60").Replace(s)
-}
-
-// shellVerbHardened reads each command of the segment again the way the shell does: the segment is cut at newlines and at a
-// lone & outside quotes, a leading keyword, brace, NAME=value word or wrapper command (with its options) is skipped, and the
-// verb is read with the getopt-style readers below. Its destinations are appended after the oracle's.
-func shellVerbHardened(segment string, budget *int) []string {
-	out := []string{}
-	for _, command := range shellVerbSubsegments(segment) {
-		out = append(out, shellVerbRun(shellVerbSkipWrappers(shellTokenize(command)), true, budget)...)
-	}
-	return out
-}
-
-// shellVerbSubsegments cuts at an unquoted newline, ; or |, and at a & that is not part of >&, <& or &>. A backslash keeps the
-// character after it (a continued line, an escaped quote or &), which the oracle's own cut at ; | and && does not.
-func shellVerbSubsegments(segment string) []string {
-	s := utf16.Encode([]rune(segment))
-	commands, start := []string{}, 0
-	for i := 0; i < len(s); i++ {
-		switch c := s[i]; {
-		case c == '\'' || c == '"':
-			i = skipQuoted(s, i) - 1
-		case c == '\\':
-			i++
-		case c == '\n' || c == ';' || c == '|' && shellAt(s, i-1) != '>' || c == '&' && shellAt(s, i-1) != '>' && shellAt(s, i-1) != '<' && shellAt(s, i+1) != '>':
-			commands = append(commands, shellString(s[start:i]))
-			start = i + 1
-		}
-	}
-	return append(commands, shellString(s[start:]))
-}
-
-// shellVerbSkipWrappers drops what stands in front of the verb: parentheses and braces, shell keywords, NAME=value words, and
-// wrapper commands with their options (sudo -u root, env -i, nohup, time -p, timeout 5, nice -n 5).
-func shellVerbSkipWrappers(tokens []string) []string {
-	rest := tokens
-	for len(rest) > 0 {
-		word := strings.TrimLeft(rest[0], "({")
-		head := shellVerbName(word)
-		opts, wrapper := shellVerbWrapper(head)
-		switch {
-		case word == "" || word == "&" || word == "!" || shellVerbAssignment(word) || shellVerbKeyword(head):
-			rest = rest[1:]
-		case wrapper:
-			var runs bool
-			if rest, runs = shellVerbSkipOptions(head, rest[1:], opts, head == "timeout"); !runs {
-				return nil
-			}
-		case word != rest[0]:
-			rest[0] = word
-			return rest
-		default:
-			return rest
-		}
-	}
-	return rest
-}
-
-// shellVerbSkipOptions skips the options of a wrapper command; opts lists its short options that take the next word as their
-// value, and duration skips timeout's duration operand. It reports false when an option makes the wrapper run nothing.
-func shellVerbSkipOptions(head string, rest []string, opts string, duration bool) ([]string, bool) {
-	for len(rest) > 0 {
-		a := rest[0]
-		if a == "--" {
-			rest = rest[1:]
-			break
-		}
-		if len(a) < 2 || a[0] != '-' {
-			break
-		}
-		rest = rest[1:]
-		if a[1] == '-' {
-			name, _, inline := strings.Cut(a[2:], "=")
-			if shellVerbNoExec(head, name, 0) {
-				return nil, false
-			}
-			if !inline && shellVerbLongValue(name) && len(rest) > 0 {
-				rest = rest[1:]
-			}
-			continue
-		}
-		for j := 1; j < len(a); j++ {
-			if shellVerbNoExec(head, "", a[j]) {
-				return nil, false
-			}
-			if strings.IndexByte(opts, a[j]) >= 0 {
-				if j == len(a)-1 && len(rest) > 0 {
-					rest = rest[1:]
-				}
-				break
-			}
-		}
-	}
-	if duration && len(rest) > 0 {
-		rest = rest[1:]
-	}
-	return rest, true
-}
-
-// shellVerbNoExec is an option under which the wrapper looks something up or lists and runs no command: --help, --version,
-// command -v and -V, sudo -l, -v, -V and -K.
-func shellVerbNoExec(head, long string, short byte) bool {
-	switch {
-	case long == "help" || long == "version":
-		return true
-	case head == "command":
-		return short == 'v' || short == 'V'
-	case head == "sudo":
-		return long == "list" || long == "validate" || long == "remove-timestamp" || strings.IndexByte("lvVK", short) >= 0 && short != 0
-	}
-	return false
-}
-
-// shellVerbWrapper lists wrapper commands with the short options that take the next word (name:letters).
-func shellVerbWrapper(head string) (string, bool) {
-	for _, entry := range strings.Fields("sudo:ughpCrtTDRU doas:uC env:uCS time:fo nice:n ionice:cnpt timeout:sk stdbuf:ioe exec:a nohup: setsid: command: builtin:") {
-		if name, opts, _ := strings.Cut(entry, ":"); name == head {
-			return opts, true
-		}
-	}
-	return "", false
-}
-
-func shellVerbLongValue(name string) bool {
-	return slices.Contains(strings.Fields("user group host prompt chdir chroot role type close-from other-user unset split-string "+
-		"signal kill-after adjustment class classdata input output error"), name)
-}
-
-func shellVerbKeyword(head string) bool {
-	return slices.Contains(strings.Fields("then else elif do if while until"), head)
-}
-
-func shellVerbIsShell(verb string) bool {
-	return slices.Contains(strings.Fields("sh bash zsh dash ksh ash mksh fish"), verb)
-}
-
-// shellVerbVersioned is a python interpreter name carrying a version: python2, python3.11.
-func shellVerbVersioned(verb string) bool {
-	version, found := strings.CutPrefix(verb, "python")
-	return found && version != "" && strings.Trim(version, "0123456789.") == ""
 }
 
 // shellVerbSedWrites reads sed's options as getopt does: a bundle such as -ni or -Ei holds the in-place flag, -e and -f
@@ -601,57 +140,6 @@ func shellVerbSedWrites(args []string) []string {
 		return []string{}
 	}
 	return files
-}
-
-// shellVerbCpMvWrites reads cp and mv options as getopt does: -t and -S inside a bundle (-rt DIR) or with the value attached
-// (-tDIR) take their value, and --suffix does not leave its value among the operands.
-func shellVerbCpMvWrites(args []string) []string {
-	dir := ""
-	files := []string{}
-	for i := 0; i < len(args); i++ {
-		a := args[i]
-		name, value, inline := strings.Cut(strings.TrimPrefix(a, "--"), "=")
-		switch {
-		case a == "--":
-			files = append(files, args[i+1:]...)
-			i = len(args)
-		case strings.HasPrefix(a, "--"):
-			if name != "target-directory" && name != "suffix" {
-				continue
-			}
-			if !inline && i+1 < len(args) {
-				i++
-				value = args[i]
-			}
-			if name == "target-directory" {
-				dir = value
-			}
-		case len(a) > 1 && a[0] == '-':
-			for j := 1; j < len(a); j++ {
-				if a[j] != 't' && a[j] != 'S' {
-					continue
-				}
-				value := a[j+1:]
-				if value == "" && i+1 < len(args) {
-					i++
-					value = args[i]
-				}
-				if a[j] == 't' {
-					dir = value
-				}
-				break
-			}
-		default:
-			files = append(files, a)
-		}
-	}
-	if dir != "" {
-		return []string{dir}
-	}
-	if len(files) >= 2 {
-		return files[len(files)-1:]
-	}
-	return []string{}
 }
 
 // shellVerbScriptWrites is scriptWriteDestinations (:535): the path of open(path, "w"), Path(path).write_text(...) and
@@ -763,9 +251,13 @@ func shellWriteExecCalleeExpr(rs []rune, end int) bool {
 			j-- // legal spacing around the attribute operator: runner . exec(src)
 		}
 		if j >= 0 && rs[j] == '.' {
+			k := j
+			for k > 0 && shellVerbSpaceRune(rs[k-1]) {
+				k-- // builtins .exec: blanks may stand before the dot too
+			}
 			for _, module := range []string{"builtins", "__builtins__"} {
 				m := len(module)
-				if j < m || string(rs[j-m:j]) != module || shellWriteExecIdentRune(rs, j-m-1) || j-m-1 >= 0 && rs[j-m-1] == '.' {
+				if k < m || string(rs[k-m:k]) != module || shellWriteExecIdentRune(rs, k-m-1) || k-m-1 >= 0 && rs[k-m-1] == '.' {
 					continue
 				}
 				return true
@@ -903,6 +395,9 @@ func shellWriteExecScanIn(rs []rune, python bool, depth int, outer shellWriteCop
 				if kind == 0 && python && c == '(' {
 					kind = shellWriteCopyModuleKind(rs, i, binds)
 				}
+				if kind == 0 && python && c == '(' {
+					kind = shellWriteVarMethodKind(rs, i)
+				}
 			}
 			stack = append(stack, frame{kind: kind, start: i + 1, recv: recv})
 		case c == ',' && len(stack) > 0:
@@ -917,6 +412,14 @@ func shellWriteExecScanIn(rs []rune, python bool, depth int, outer shellWriteCop
 			switch {
 			case top.kind == 'o' && c == ')':
 				dests = append(dests, shellVerbOpenCall(rs, spans)...)
+			case top.kind == 'q' && c == ')':
+				if len(spans) > 0 && shellVerbSpanText(rs, spans[0]) == "open" {
+					dests = append(dests, shellVerbOpenCall(rs, spans[1:])...)
+				}
+			case top.kind == 'm' && c == ')':
+				dests = append(dests, shellVerbMethodOpenCall(rs, spans)...)
+			case top.kind == 'u' && c == ')':
+				dests = append(dests, shellIRUnknownDest)
 			case top.kind == 'p' && c == ')':
 				if shellVerbWriteMethod(rs, i+1) {
 					dests = append(dests, shellWriteEscapePath(rs, spans)...)
@@ -933,6 +436,8 @@ func shellWriteExecScanIn(rs []rune, python bool, depth int, outer shellWriteCop
 				dests = append(dests, shellWriteCopyDest(rs, spans, 0, "target")...)
 			case top.kind == 'l' && c == ')':
 				dests = append(dests, shellWriteEscapePath(rs, top.recv)...)
+			case top.kind == 'v' && c == ')':
+				dests = append(dests, shellIRUnknownDest)
 			case top.kind == 'e' && c == ')':
 				more, inner := shellWriteExecProgram(rs, spans, depth, binds)
 				dests = append(dests, more...)
@@ -1007,16 +512,21 @@ func shellWriteExecCodingDecl(program string) bool {
 
 // shellWriteExecCodingLine reports whether a comment body names a source encoding, as PEP 263's coding[:=] does.
 func shellWriteExecCodingLine(comment string) bool {
-	at := strings.Index(comment, "coding")
-	if at < 0 {
-		return false
+	// Every "coding" in the comment is read: a comment may name the word before the declaration (CRW-1012 review).
+	for rest := comment; ; {
+		at := strings.Index(rest, "coding")
+		if at < 0 {
+			return false
+		}
+		after := strings.TrimLeft(rest[at+len("coding"):], " \t\f")
+		if after != "" && (after[0] == ':' || after[0] == '=') {
+			v := strings.TrimLeft(after[1:], " \t\f")
+			if v != "" && (shellVerbLetter(v[0], true) || v[0] == '-' || v[0] == '_' || v[0] == '.') {
+				return true
+			}
+		}
+		rest = rest[at+len("coding"):]
 	}
-	rest := strings.TrimLeft(comment[at+len("coding"):], " \t\f")
-	if rest == "" || rest[0] != ':' && rest[0] != '=' {
-		return false
-	}
-	rest = strings.TrimLeft(rest[1:], " \t\f")
-	return rest != "" && (shellVerbLetter(rest[0], true) || rest[0] == '-' || rest[0] == '_' || rest[0] == '.')
 }
 
 // shellVerbWithoutComments is the program with its # comments (outside string literals) cut off at the end of the line, so a
@@ -1050,8 +560,14 @@ func shellVerbCallKind(rs []rune, i int, c rune) byte {
 	for i > 0 && shellVerbSpaceRune(rs[i-1]) {
 		i--
 	}
-	for _, word := range []string{"open", "Path"} {
+	for _, word := range []string{"open", "Path", "partial"} {
 		if n := len(word); c == '(' && i >= n && string(rs[i-n:i]) == word && (i == n || rs[i-n-1] >= 128 || !shellVerbLetter(byte(rs[i-n-1]), true) && rs[i-n-1] != '_') {
+			if word == "partial" {
+				return 'q' // functools.partial(open, ...): its first argument is open
+			}
+			if word == "open" && shellVerbMethodOpen(rs, i-n) {
+				return 'm'
+			}
 			return word[0] | 0x20 // 'o' or 'p'
 		}
 	}
@@ -1146,11 +662,21 @@ func shellWriteCopyLiteral(arg []rune) []string {
 	if len(arg) == 0 {
 		return nil
 	}
+	if shellWriteEscapeField(arg) {
+		return []string{shellIRUnknownDest}
+	}
 	names := []string{}
 	for _, earlier := range []bool{true, false} {
-		if file, ok := shellWriteEscapeLiteral(arg, earlier); ok && file != "" && !slices.Contains(names, file) {
+		file, ok := shellWriteEscapeLiteral(arg, earlier)
+		if !ok {
+			continue
+		}
+		if file != "" && !slices.Contains(names, file) {
 			names = append(names, file)
 		}
+	}
+	if len(names) == 0 {
+		return []string{shellIRUnknownDest}
 	}
 	return names
 }
@@ -1443,16 +969,41 @@ func shellVerbOpenCall(rs []rune, spans [][2]int) []string {
 		}
 		positional++
 	}
+	// An f-string with a replacement field is computed at run time: its value is not the text between the quotes.
+	if shellWriteEscapeField(path) {
+		path = []rune("computed")
+	}
+	if shellWriteEscapeField(mode) {
+		mode = []rune("computed")
+	}
 	names := []string{}
 	_, decodedOK := shellVerbLiteral(mode)
 	named := !decodedOK && strings.Contains(string(mode), "\\N{")
+	// writes reads the mode the way open() would: a literal with w, a, x or + writes, a computed mode may write, and no mode
+	// is read-only (CRW-998: Path.open("w".strip()) and the like).
+	writes := func(earlier bool) bool {
+		if len(mode) == 0 {
+			return false
+		}
+		kind, ok := shellWriteEscapeLiteral(mode, earlier)
+		return !ok || strings.ContainsAny(kind, "wax+")
+	}
+	anyKnown := false
 	for _, earlier := range []bool{true, false} {
-		if kind, ok := shellWriteEscapeLiteral(mode, earlier); !named && !(ok && strings.ContainsAny(kind, "wax+")) {
+		if !named && !writes(earlier) {
 			continue
 		}
-		if file, ok := shellWriteEscapeLiteral(path, earlier); ok && file != "" && !slices.Contains(names, file) {
+		file, ok := shellWriteEscapeLiteral(path, earlier)
+		if !ok {
+			continue
+		}
+		anyKnown = true
+		if file != "" && !slices.Contains(names, file) {
 			names = append(names, file)
 		}
+	}
+	if !anyKnown && (named || writes(true) || writes(false)) {
+		names = append(names, shellIRUnknownDest)
 	}
 	return names
 }
@@ -1601,8 +1152,9 @@ func shellWriteTripleScanRegion(rs []rune, i int, python bool) int {
 	return len(rs)
 }
 
-// shellWriteFStringMaxDepth bounds the replacement-field nesting the walk reads: a deeper one is unreadable, so the memory
-// gate fails closed rather than reading a program it cannot finish (CRW-741, criterion c2).
+// shellWriteFStringMaxDepth is the number of nested levels the walk reads: an f-string or a replacement field is one level,
+// and the walk counts depth from 0, so a level at depth shellWriteFStringMaxDepth or deeper is unreadable and the memory
+// gate fails closed. 32 levels are read; the 33rd is refused (CRW-741, criterion c2; CRW-1028 c1e).
 const shellWriteFStringMaxDepth = 32
 
 // shellWriteFStringUnreadableWhat is the what shellWriteFStringUnreadable reports for a program it cannot read (the deny
@@ -1637,7 +1189,7 @@ func shellWriteFStringPrefix(rs []rune, i int) bool {
 // literal or the program ends, an unpaired } outside a field, or nesting deeper than shellWriteFStringMaxDepth. A literal
 // without an f in its prefix is not this function's case (shellWriteTripleScanRegion keeps the one-region rule for it).
 func shellWriteFStringRegion(rs []rune, i, depth int) (end int, fields [][2]int, bad bool) {
-	if depth > shellWriteFStringMaxDepth {
+	if depth >= shellWriteFStringMaxDepth {
 		return len(rs), nil, true
 	}
 	quote := rs[i]
@@ -1694,7 +1246,7 @@ func shellWriteFStringRegion(rs []rune, i, depth int) (end int, fields [][2]int,
 // PEP 701) and an inner f-string inside it are followed. It returns the index just past the field's closing }, the expression
 // spans to read as program text, and whether the field is unreadable.
 func shellWriteFStringField(rs []rune, from, depth int) (next int, fields [][2]int, bad bool) {
-	if depth > shellWriteFStringMaxDepth {
+	if depth >= shellWriteFStringMaxDepth {
 		return len(rs), nil, true
 	}
 	k, bracket := from, 0
@@ -1778,69 +1330,6 @@ func shellWriteFStringSpec(rs []rune, from, depth int, fields [][2]int) (next in
 	return len(rs), fields, true
 }
 
-// shellWriteFStringUnreadable reports whether a command holds a Python program with an f-string replacement field the walk
-// cannot read (shellWriteFStringRegion). It looks at the same programs ShellWriteDestinations reads as Python - the
-// python -c and --command programs of a segment, including the ones a nested shell -c or eval runs - and returns what the
-// deny reason names (CRW-741, criterion c2).
-func shellWriteFStringUnreadable(command string) (string, bool) {
-	budget := 32*len(command) + 65536
-	for _, segment := range splitShellSegments(stripHeredocBodies(utf16.Encode([]rune(command)))) {
-		if what, ok := shellWriteFStringUnreadableIn(shellString(segment), &budget); ok {
-			return what, true
-		}
-	}
-	return "", false
-}
-
-// shellWriteFStringUnreadableIn scans one segment's commands for a Python program and reports the first unreadable
-// f-string, over both the program and its shell-unescaped reading, as shellVerbPythonNode reads them. A command a nested
-// shell -c or eval runs is read again within the shared budget, the way shellVerbNested reads it for the destinations.
-func shellWriteFStringUnreadableIn(segment string, budget *int) (string, bool) {
-	for _, command := range shellVerbSubsegments(segment) {
-		tokens := shellVerbSkipWrappers(shellTokenize(command))
-		if script, ok := shellWriteFStringPythonScript(tokens); ok {
-			if what, bad := shellWriteFStringUnreadableProgram(script); bad {
-				return what, true
-			}
-			continue
-		}
-		nested, ok := shellWriteFStringNestedScript(tokens)
-		if !ok {
-			continue
-		}
-		if *budget -= len(nested); *budget < 0 {
-			continue
-		}
-		if what, bad := shellWriteFStringUnreadableIn(nested, budget); bad {
-			return what, true
-		}
-	}
-	return "", false
-}
-
-// shellWriteFStringNestedScript is the command string a shell -c or eval runs, as shellVerbRun reads it, so the fail-closed
-// scan reaches a Python program one level down the way the destination walk does.
-func shellWriteFStringNestedScript(tokens []string) (string, bool) {
-	if len(tokens) == 0 {
-		return "", false
-	}
-	verb, args := shellVerbName(tokens[0]), tokens[1:]
-	if shellVerbIsShell(verb) {
-		return shellVerbShellScript(args)
-	}
-	if verb != "eval" {
-		return "", false
-	}
-	for { // eval builtin eval X runs X: a chain is peeled here, not read level by level
-		next := shellVerbSkipWrappers(args)
-		if len(next) == 0 || shellVerbName(next[0]) != "eval" {
-			break
-		}
-		args = next[1:]
-	}
-	return strings.Join(args, " "), true
-}
-
 // shellWriteFStringUnreadableProgram reports the what of a Python program the reader cannot finish: an f-string replacement
 // field it cannot read (CRW-741) in either reading, and a program passed to exec, eval or compile whose first argument is no
 // string literal (CRW-754) in every reading the token allows.
@@ -1857,36 +1346,6 @@ func shellWriteFStringUnreadableProgram(script string) (string, bool) {
 	return shellWriteExecUnreadableProgram(script, un)
 }
 
-// shellWriteFStringPythonScript is the program of a python -c/--command command, as shellVerbPythonNode reads it: a bundled
-// -c (with no -m, -W or -X) and a versioned interpreter name (python3.11) count too.
-func shellWriteFStringPythonScript(tokens []string) (string, bool) {
-	if len(tokens) == 0 {
-		return "", false
-	}
-	verb := shellVerbName(tokens[0])
-	if verb != "python" && verb != "python3" && verb != "py" && !shellVerbVersioned(verb) {
-		return "", false
-	}
-	args := tokens[1:]
-	for i := 0; i < len(args); i++ {
-		switch a := args[i]; {
-		case a == "-c" || a == "--command":
-			if i+1 < len(args) {
-				return args[i+1], true
-			}
-			return "", false
-		case strings.HasPrefix(a, "-c") && len(a) > 2:
-			return a[2:], true
-		case shellVerbBundleEnds(a, 'c', false) && !strings.ContainsAny(a, "mWXQ"):
-			if i+1 < len(args) {
-				return args[i+1], true
-			}
-			return "", false
-		}
-	}
-	return "", false
-}
-
 // shellWriteFStringProgramUnreadable reports the what of one Python program the reader cannot finish: an f-string
 // replacement field it cannot read (CRW-741), or a program passed to exec, eval or compile whose first argument is no
 // string literal, or one nested deeper than shellWriteExecMaxDepth (CRW-754). The f-string scan keeps CRW-741's own rule -
@@ -1895,15 +1354,49 @@ func shellWriteFStringPythonScript(tokens []string) (string, bool) {
 func shellWriteFStringProgramUnreadable(program string) (string, bool) {
 	rs := shellVerbWithoutComments(program, true)
 	for i := 0; i < len(rs); i++ {
-		if c := rs[i]; (c == '\'' || c == '"') && shellWriteFStringPrefix(rs, i) {
-			end, _, bad := shellWriteFStringRegion(rs, i, 0)
-			if bad {
-				return shellWriteFStringUnreadableWhat, true
-			}
-			i = end - 1
+		c := rs[i]
+		if c != '\'' && c != '"' {
+			continue
 		}
+		if !shellWriteFStringPrefix(rs, i) {
+			// A literal without an f is read to its own closing quote, so the quotes inside it open no f-string (CRW-1012:
+			// print("f'}'") is a plain string).
+			i = shellWriteSkipPlainString(rs, i) - 1
+			continue
+		}
+		end, _, bad := shellWriteFStringRegion(rs, i, 0)
+		if bad {
+			return shellWriteFStringUnreadableWhat, true
+		}
+		i = end - 1
 	}
 	return "", false
+}
+
+// shellWriteSkipPlainString is the index just past the string literal whose opening quote stands at rs[i]: a single or triple
+// quoted literal, read to the matching close, with a backslash taking the character after it.
+func shellWriteSkipPlainString(rs []rune, i int) int {
+	q := rs[i]
+	n := 1
+	if i+2 < len(rs) && rs[i+1] == q && rs[i+2] == q {
+		n = 3
+	}
+	for j := i + n; j < len(rs); j++ {
+		if rs[j] == '\\' {
+			j++
+			continue
+		}
+		if rs[j] != q {
+			continue
+		}
+		if n == 1 {
+			return j + 1
+		}
+		if j+2 < len(rs) && rs[j+1] == q && rs[j+2] == q {
+			return j + 3
+		}
+	}
+	return len(rs)
 }
 
 // shellWriteExecUnreadableProgram is the exec fail-closed reason of one Python program: the reason only when every reading
@@ -2000,6 +1493,9 @@ func shellWriteEscapePath(rs []rune, spans [][2]int) []string {
 	names := []string{}
 	if len(path) > 0 {
 		names = append(names, string(path))
+	}
+	if !known {
+		names = append(names, shellIRUnknownDest)
 	}
 	if (dynamic || parts == 1) && head != "" && head != string(path) {
 		names = append(names, head)
@@ -2199,4 +1695,92 @@ func shellWriteEscapeJS(body string, template bool) (string, bool) {
 		}
 	}
 	return shellString(units), true
+}
+
+// shellWriteVarMethodKind reads a method call on a receiver the reader cannot name (p.replace(, p.rename(, p.symlink_to(,
+// p.hardlink_to() at the bracket i: 'r' for rename and replace, whose destination is their first argument, 'v' for the
+// link methods, whose destination is the receiver, which is unknown here. A plain call is no such method.
+func shellWriteVarMethodKind(rs []rune, i int) byte {
+	j := i
+	for j > 0 && shellVerbSpaceRune(rs[j-1]) {
+		j--
+	}
+	k := j
+	for k > 0 && shellWriteCopyIdentRune(rs[k-1]) {
+		k--
+	}
+	name := string(rs[k:j])
+	for k > 0 && shellVerbSpaceRune(rs[k-1]) {
+		k--
+	}
+	if k == 0 || rs[k-1] != '.' {
+		return 0
+	}
+	switch name {
+	case "replace", "rename":
+		return 'r'
+	case "symlink_to", "hardlink_to":
+		return 'v'
+	}
+	return 0
+}
+
+// shellVerbSpanText is the text of one argument span, without the blanks around it.
+func shellVerbSpanText(rs []rune, span [2]int) string {
+	return strings.TrimSpace(string(rs[span[0]:span[1]]))
+}
+
+// shellVerbMethodOpen reports whether the open at rs[at:] is a method call on a receiver that is not a module of this
+// reader's known file openers: receiver.open(mode), whose file is the receiver and whose first argument is the mode.
+func shellVerbMethodOpen(rs []rune, at int) bool {
+	j := at
+	for j > 0 && shellVerbSpaceRune(rs[j-1]) {
+		j--
+	}
+	if j == 0 || rs[j-1] != '.' {
+		return false
+	}
+	j--
+	for j > 0 && shellVerbSpaceRune(rs[j-1]) {
+		j--
+	}
+	k := j
+	for k > 0 && shellWriteCopyIdentRune(rs[k-1]) {
+		k--
+	}
+	switch string(rs[k:j]) {
+	case "os", "io", "builtins", "codecs", "gzip", "bz2", "lzma", "tarfile", "zipfile", "webbrowser", "__builtins__":
+		return false
+	}
+	return true
+}
+
+// shellVerbMethodOpenCall names the write a receiver.open(mode) call makes: a mode that writes names the receiver, which is
+// unknown here, so the call is an unknown destination; a read mode, or no mode, names nothing.
+func shellVerbMethodOpenCall(rs []rune, spans [][2]int) []string {
+	var mode []rune
+	positional := 0
+	for _, span := range spans {
+		arg := rs[span[0]:span[1]]
+		if shellVerbBlank(arg) {
+			continue
+		}
+		if name, value, keyword := shellVerbKeywordArg(arg); keyword {
+			if name == "mode" {
+				mode = value
+			}
+			continue
+		}
+		if positional == 0 {
+			mode = arg
+		}
+		positional++
+	}
+	if len(mode) == 0 {
+		return nil
+	}
+	if kind, ok := shellWriteEscapeLiteral(mode, true); ok && !strings.ContainsAny(kind, "wax+") {
+		return nil
+	}
+	return []string{shellIRUnknownDest}
 }

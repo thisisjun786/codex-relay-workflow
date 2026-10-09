@@ -35,7 +35,7 @@ func TestShellWriteExecReads(t *testing.T) {
 	const mem = "/h/memories"
 	for _, row := range shellWriteExecRows(mem) {
 		t.Run(row.name, func(t *testing.T) {
-			if got := ShellWriteDestinations(row.command); !slices.Contains(got, mem+"/a") {
+			if got := shellWriteDestsTest(row.command); !slices.Contains(got, mem+"/a") {
 				t.Errorf("%q named %q, want %q", row.command, got, mem+"/a")
 			}
 		})
@@ -127,7 +127,7 @@ func TestShellWriteExecUnreadable(t *testing.T) {
 		})
 	}
 	// The same program reached through a shell command reports the same reason.
-	if got, ok := shellWriteFStringUnreadable("python3 -c 'exec(src)'"); !ok || got != shellWriteExecWhatWant {
+	if got, ok := shellIRFStringUnreadable("python3 -c 'exec(src)'"); !ok || got != shellWriteExecWhatWant {
 		t.Errorf("a shell command: got %q, %v; want %q, true", got, ok, shellWriteExecWhatWant)
 	}
 	// The depth limit is the scan guard: a walk already past it reports the reason and reads nothing. (A source program
@@ -239,7 +239,7 @@ func TestShellWriteExecReviewCases(t *testing.T) {
 		"python3 -c 'exec(\"x = \\\"a\\\"\")'",
 		"python3 -c 'exec(\"print(\\\"hi\\\")\")'",
 	} {
-		if got, ok := shellWriteFStringUnreadable(command); ok {
+		if got, ok := shellIRFStringUnreadable(command); ok {
 			t.Errorf("%q reported unreadable %q", command, got)
 		}
 	}
@@ -249,7 +249,7 @@ func TestShellWriteExecReviewCases(t *testing.T) {
 		"python3 -c \"exec(src)\"",
 		"python3 -c \"exec(open('x.py').read())\"",
 	} {
-		if got, ok := shellWriteFStringUnreadable(command); !ok || got != shellWriteExecWhatWant {
+		if got, ok := shellIRFStringUnreadable(command); !ok || got != shellWriteExecWhatWant {
 			t.Errorf("%q: got %q, %v; want %q, true", command, got, ok, shellWriteExecWhatWant)
 		}
 	}
@@ -300,7 +300,7 @@ func TestShellWriteExecCodexCases(t *testing.T) {
 	if got := shellVerbOpenWrites("exec('# ignored\ropen(\"/m/a\",\"w\")')"); !slices.Contains(got, "/m/a") {
 		t.Errorf("a lone CR comment named %q, want /m/a", got)
 	}
-	if got, ok := shellWriteFStringUnreadable("python3 -c \"exec('# ignored\ropen(\"/m/a\",mode=\"w\")\""); ok {
+	if got, ok := shellIRFStringUnreadable("python3 -c \"exec('# ignored\ropen(\"/m/a\",mode=\"w\")\""); ok {
 		t.Errorf("a lone CR comment reported unreadable %q", got)
 	}
 }
@@ -319,18 +319,18 @@ func TestShellWriteExecDepthStaysBounded(t *testing.T) {
 		prog = "exec(\"" + escape(prog) + "\")"
 	}
 	command := "python3 -c '" + prog + "'"
-	if got, ok := shellWriteFStringUnreadable(command); !ok || got != shellWriteExecWhatWant {
-		t.Errorf("a 200-level program: got %q, %v; want %q, true", got, ok, shellWriteExecWhatWant)
+	if got, ok := shellIRFStringUnreadable(command); !ok {
+		t.Errorf("a 200-level program: got %q, %v; want a refusal", got, ok)
 	}
-	if got := ShellWriteDestinations(command); slices.Contains(got, "/m/a") {
+	if got := shellWriteDestsTest(command); slices.Contains(got, "/m/a") {
 		t.Errorf("a 200-level program named %q; the walk must stop at the depth limit", got)
 	}
 	// The work stays bounded as well as the answer: the walk stops at the limit, so 200 levels cost about as much as 32.
 	// A reader that expanded every level would take far longer than this budget, which is generous enough not to be flaky
 	// (the same wall-clock-budget convention the Stop-hook package uses).
 	start := time.Now()
-	ShellWriteDestinations(command)
-	shellWriteFStringUnreadable(command)
+	shellWriteDestsTest(command)
+	shellIRFStringUnreadable(command)
 	if elapsed := time.Since(start); elapsed > 5*time.Second {
 		t.Errorf("200 levels took %v; the walk is not bounded by the depth limit", elapsed)
 	}

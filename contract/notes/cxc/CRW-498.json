@@ -6,19 +6,8 @@
     "hook__pre-tool-use-guarding-managed-worktree-deletion__extra_root_and_symlinked_cwd_deny",
     "hook__pre-tool-use-guarding-managed-worktree-deletion__git_worktree_remove_own_checkout_denies",
     "hook__pre-tool-use-guarding-managed-worktree-deletion__rm_variants_deny",
-    "hook__pre-tool-use-guarding-managed-worktree-deletion__slot_substring_denies_unrelated_target",
     "hook__pre-tool-use-guarding-managed-worktree-deletion__subagent_payload_still_denied",
-    "hook__pre-tool-use-guarding-managed-worktree-deletion__unmanaged_and_malformed_fail_open",
-    "hook__pre-tool-use-guarding-managed-worktree-deletion__unresolvable_target_fallback_denies"
+    "hook__pre-tool-use-guarding-managed-worktree-deletion__unmanaged_and_malformed_fail_open"
   ],
-  "intentionally-changed": [
-    {
-      "id": "hook__pre-tool-use-guarding-managed-worktree-deletion__windows_verbs_on_posix",
-      "reason": "rework decision (POSIX removal verbs only): the Windows removal branch (rd, Remove-Item) is not ported, so steps 0 and 1 are denied by the fallback that matches the slot path and name an unresolvable target, not the verb; step 2 (denied by the fallback) and step 3 (allowed, silent) are the oracle's answers and stay identical",
-      "set": {
-        "steps/0/stdout": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"[crw: WORKTREE-GUARD-03] blocked `unresolvable target mentioning the managed worktree`: it deletes this session's own Codex-app-managed worktree (slot: ${CODEX_HOME}/worktrees/7627). This thread is bound to that worktree; deletion destroys uncommitted work. Remedies: finish and commit here; rename in place (git switch -c / branch -m); teardown of THIS session's worktree is done by the user (archive the thread in the app — snapshot preserved — or remove it from OUTSIDE this session). See $crw:crw-worktree-guardian.\",\"additionalContext\":\"[crw: WORKTREE-GUARD-03] blocked `unresolvable target mentioning the managed worktree`: it deletes this session's own Codex-app-managed worktree (slot: ${CODEX_HOME}/worktrees/7627). This thread is bound to that worktree; deletion destroys uncommitted work. Remedies: finish and commit here; rename in place (git switch -c / branch -m); teardown of THIS session's worktree is done by the user (archive the thread in the app — snapshot preserved — or remove it from OUTSIDE this session). See $crw:crw-worktree-guardian.\"}}",
-        "steps/1/stdout": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"[crw: WORKTREE-GUARD-03] blocked `unresolvable target mentioning the managed worktree`: it deletes this session's own Codex-app-managed worktree (slot: ${CODEX_HOME}/worktrees/7627). This thread is bound to that worktree; deletion destroys uncommitted work. Remedies: finish and commit here; rename in place (git switch -c / branch -m); teardown of THIS session's worktree is done by the user (archive the thread in the app — snapshot preserved — or remove it from OUTSIDE this session). See $crw:crw-worktree-guardian.\",\"additionalContext\":\"[crw: WORKTREE-GUARD-03] blocked `unresolvable target mentioning the managed worktree`: it deletes this session's own Codex-app-managed worktree (slot: ${CODEX_HOME}/worktrees/7627). This thread is bound to that worktree; deletion destroys uncommitted work. Remedies: finish and commit here; rename in place (git switch -c / branch -m); teardown of THIS session's worktree is done by the user (archive the thread in the app — snapshot preserved — or remove it from OUTSIDE this session). See $crw:crw-worktree-guardian.\"}}"
-      }
-    }
-  ]
+  "intentionally-changed": []
 }

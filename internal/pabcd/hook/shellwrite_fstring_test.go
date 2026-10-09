@@ -31,7 +31,7 @@ func TestShellWriteFStringFields(t *testing.T) {
 	const mem = "/h/memories"
 	for _, row := range shellWriteFStringRows(mem) {
 		t.Run(row.name, func(t *testing.T) {
-			if got := ShellWriteDestinations(row.command); !slices.Contains(got, mem+"/a") {
+			if got := shellWriteDestsTest(row.command); !slices.Contains(got, mem+"/a") {
 				t.Errorf("%q named %q, want %q", row.command, got, mem+"/a")
 			}
 		})
@@ -88,7 +88,7 @@ func TestShellWriteFStringUnchanged(t *testing.T) {
 		t.Errorf("a Node program was walked as Python: %q", got)
 	}
 	// A directly visible destination still reads as before.
-	if got := ShellWriteDestinations(`python3 -c "open(file='/m/a', mode='w')"`); !slices.Contains(got, "/m/a") {
+	if got := shellWriteDestsTest(`python3 -c "open(file='/m/a', mode='w')"`); !slices.Contains(got, "/m/a") {
 		t.Errorf("a direct open(file=) named %q", got)
 	}
 }
@@ -107,7 +107,7 @@ func TestShellWriteFStringUnreadable(t *testing.T) {
 		{"field nesting deeper than 32", "python3 -c \"f'" + deep + "'\""},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			got, ok := shellWriteFStringUnreadable(c.command)
+			got, ok := shellIRFStringUnreadable(c.command)
 			if !ok || got != shellWriteFStringUnreadableWhat {
 				t.Errorf("%q: got %q, %v; want %q, true", c.command, got, ok, shellWriteFStringUnreadableWhat)
 			}
@@ -120,7 +120,7 @@ func TestShellWriteFStringUnreadable(t *testing.T) {
 		`python3 -c "open(file='/m/a', mode='w')"`,
 		`node -e 'fs.writeFileSync("/m/a","x")'`,
 	} {
-		if got, ok := shellWriteFStringUnreadable(command); ok {
+		if got, ok := shellIRFStringUnreadable(command); ok {
 			t.Errorf("%q reported unreadable %q", command, got)
 		}
 	}
@@ -192,10 +192,10 @@ func TestShellWriteFStringReviewCases(t *testing.T) {
 	// A comment inside a multi-line replacement field is not syntax: a quote or a } in it must not end the field
 	// early, or the open() call after it goes unread (a security finding).
 	commented := "python3 -c 'f\"\"\"{( # \"\nopen(file=\"/m/a\", mode=\"w\"),\n# \"\n\"x\")}\"\"\"'"
-	if got := ShellWriteDestinations(commented); !slices.Contains(got, "/m/a") {
+	if got := shellWriteDestsTest(commented); !slices.Contains(got, "/m/a") {
 		t.Errorf("a comment in a field: %q named %q, want /m/a", commented, got)
 	}
-	if got, ok := shellWriteFStringUnreadable(commented); ok {
+	if got, ok := shellIRFStringUnreadable(commented); ok {
 		t.Errorf("a comment in a field reported unreadable %q", got)
 	}
 	// A backslash never escapes a brace in an f-string, so a valid raw f-string is not an unpaired brace (a
@@ -204,14 +204,14 @@ func TestShellWriteFStringReviewCases(t *testing.T) {
 		`python3 -c "x=1; print(rf'\{x}')"`,
 		`python3 -c "x=1; print(rf'\{{{x}\}}')"`,
 	} {
-		if got, ok := shellWriteFStringUnreadable(command); ok {
+		if got, ok := shellIRFStringUnreadable(command); ok {
 			t.Errorf("%q reported unreadable %q", command, got)
 		}
 	}
 	// A Python program one level down a nested shell -c is read too (a P1 finding).
 	inner := `python3 -c "f'{x"`
 	outer := "bash -c \"" + strings.NewReplacer("\\", "\\\\", "\"", "\\\"").Replace(inner) + "\""
-	if got, ok := shellWriteFStringUnreadable(outer); !ok || got != shellWriteFStringUnreadableWhat {
+	if got, ok := shellIRFStringUnreadable(outer); !ok || got != shellWriteFStringUnreadableWhat {
 		t.Errorf("a nested shell: %q reported %q, %v; want %q, true", outer, got, ok, shellWriteFStringUnreadableWhat)
 	}
 }

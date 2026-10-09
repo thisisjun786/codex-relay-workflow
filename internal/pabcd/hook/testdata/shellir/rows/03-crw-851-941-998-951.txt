@@ -1,0 +1,256 @@
+# CRW-851 (exec, eval and stdin programs), CRW-941 (sed w and sort -o), CRW-998 and CRW-951 (Python destinations the reader
+# cannot name).
+
+=== CRW-851-01 | E
+--why exec of a computed string (pad-less control of the issue): the memory gate cannot read the program, and exec is a run-time name for the worktree guard.
+python3 -c 'import sys; src=sys.argv[1]; exec(src)' 'open(file="{MEMORY}/a",mode="w")'
+
+=== CRW-851-02 | E
+--why A blank before the attribute dot must not hide builtins .exec; exec of a literal write program is read by the memory gate, and exec is a run-time name for the worktree guard.
+python3 -c 'import builtins; builtins .exec("""open(file="{MEMORY}/a",mode="w")""")'
+
+=== CRW-851-03 | E
+--why A wrong alternate reading must not erase the exec(src) refusal (pad="\"" in single quotes).
+python3 -c 'import sys; pad="\""; src=sys.argv[1]; exec(src)' 'open(file="{MEMORY}/a",mode="w")'
+
+=== CRW-851-04 | E
+--why Every coding declaration in the first two lines counts: unicode_escape turns \x6fpen into open.
+python3 -c 'exec(br"""# coding note; coding: unicode_escape
+\x6fpen(file="{MEMORY}/a",mode="w")
+""")'
+
+=== CRW-851-05 | none/allow/deny
+--why The CRW-754 review row (the issue text lost the backslashes of the inner quotes): exec of a string with escaped quotes stays readable and writes nothing; the worktree guard refuses the run-time name exec.
+python3 -c 'exec("print(\"hi\")")'
+
+=== CRW-851-05b | none/allow/deny
+--why The second CRW-754 review row, same reading.
+python3 -c 'exec("x = \"a\"")'
+
+=== CRW-851-06 | W
+--why A here-string is the program of python3 - (item 4): read as Python, it writes the memory file.
+python3 - <<< "open('{MEMORY}/a','w')"
+
+=== CRW-851-07 | U
+--why printf with a format directive as the producer of a stdin program is not modelled; known-defects keeps the refusal (fail closed).
+printf '%s' "open('{MEMORY}/a','w')" | python3 -
+
+=== CRW-851-07b | U
+--why echo with a literal text as the producer: the issue reads the text like a here-string body; the reader refuses every pipe into python3 - outright, which gives the memory verdict the issue asks for (attempt).
+echo "open('{MEMORY}/a','w')" | python3 -
+
+=== CRW-851-08 | U
+--why A program piped from another command (curl) cannot be read.
+curl -s x | python3 -
+
+=== CRW-851-09 | B
+--why python3 with a script operand receives the pipe as data.
+echo hi | python3 script.py
+
+=== CRW-851-10 | B
+--why printf into cat is a data pipeline.
+printf hi | cat
+
+=== CRW-851-11 | U
+--why ruby reading its program from the pipe is an interpreter the reader does not model (item 5).
+printf 'puts 1' | ruby
+
+=== CRW-851-12 | B
+--why Item 5 control: perl with a script file operand takes the here-document as data; a script file operand of an interpreter is not judged (criterion c1e).
+perl script.pl <<'EOF'
+open(F, ">{MEMORY}/a");
+EOF
+
+=== CRW-851-13 | E
+--why The item 1 variant with a tab before the dot (a Python blank).
+python3 -c 'import builtins; builtins	.exec("""open(file="{MEMORY}/a",mode="w")""")'
+
+=== CRW-851-14 | E
+--why The item 1 variant with __builtins__ .eval.
+python3 -c 'import builtins; __builtins__ .eval("""open(file="{MEMORY}/a",mode="w")""")'
+
+=== CRW-851-15 | E
+--why A coding declaration on the second line.
+python3 -c 'exec(br"""# plain
+# coding=unicode_escape
+\x6fpen(file="{MEMORY}/a",mode="w")
+""")'
+
+=== CRW-851-16 | E
+--why Item 2: the same program as a double-quoted word; the memory gate cannot read exec(src), and exec is a run-time name for the worktree guard.
+python3 -c "import sys; pad='\"'; src=sys.argv[1]; exec(src)" 'open(file="{MEMORY}/a",mode="w")'
+
+=== CRW-941-01 | W
+--why sed w FILE in a -e script writes the file.
+sed -e 'w {MEMORY}/a' x.txt
+
+=== CRW-941-02 | W
+--why sed -n with a w command in the script word.
+sed -n 'w {MEMORY}/a' x.txt
+
+=== CRW-941-03 | W
+--why --expression=SCRIPT with a here-document as the input.
+sed --expression='w {MEMORY}/a' <<'EOF'
+abc
+EOF
+
+=== CRW-941-04 | W
+--why sort -o writes its output into the file, whatever the here-document input.
+sort -o {MEMORY}/a <<'EOF'
+b
+a
+EOF
+
+=== CRW-941-05 | B
+--why sort -o FILE with a file in the working directory writes outside the protected root.
+sort -o out.txt x.txt
+
+=== CRW-941-06 | W
+--why The w flag of the s command writes the file.
+sed 's/a/b/w {MEMORY}/a' x.txt
+
+=== CRW-941-07 | W
+--why W (capital) writes the first line of the pattern space to the file.
+sed -e p -e 'W {MEMORY}/a' x.txt
+
+=== CRW-941-08 | W
+--why sort -o with a memory file and an input file.
+sort -o {MEMORY}/a x.txt
+
+=== CRW-941-09 | W
+--why --output=FILE is the long form of -o.
+sort --output={MEMORY}/a <<'EOF'
+b
+a
+EOF
+
+=== CRW-941-10 | U
+--why sed -f script.sed reads a script from a file the reader does not read: an unreadable write attempt.
+sed -f script.sed x.txt
+
+=== CRW-941-11 | B
+--why A plain substitution writes nothing.
+sed 's/a/b/' x.txt
+
+=== CRW-941-12 | B
+--why sed -n p writes nothing.
+sed -n p x.txt
+
+=== CRW-941-13 | B
+--why A w inside the pattern of s is no command.
+sed 's/w/x/' x.txt
+
+=== CRW-941-14 | B
+--why /dev/stdout is no write destination.
+sed 'w /dev/stdout' x.txt
+
+=== CRW-941-15 | B
+--why sort without -o writes to standard output.
+sort x.txt
+
+=== CRW-941-16 | B
+--why sort -o outside the protected root.
+sort -o {TMP}/out x.txt
+
+=== CRW-998-01 | W
+--why The mode of Path.open is computed by a call ("w".strip()): it is a write (CRW-951 d1).
+python3 -c 'from pathlib import Path; p=Path("{MEMORY}/n.md"); p.open("w".strip()).write("x")'
+
+=== CRW-998-02 | W
+--why open passed as a value through functools.partial with mode="w" (CRW-951 d2).
+python3 -c 'from functools import partial; m="{MEMORY}/n.md"; partial(open,m,mode="w")().write("x")'
+
+=== CRW-998-03 | W
+--why Path.replace with an empty ** mapping still moves a file over the target (CRW-951 d3).
+python3 -c 'from pathlib import Path; p=Path("/w/a"); m="{MEMORY}/n.md"; p.replace(m,**{})'
+
+=== CRW-998-04 | W
+--why A redirect after env must not hide the interpreter (CRW-951 d4).
+env 2>/dev/null python3 -c 'import os; open(os.path.join("{MEMORY}","n.md"),"w").write("x")'
+
+=== CRW-998-05 | W
+--why The second form of d4: a here-document with a descriptor number before the interpreter name.
+0<< 'EOF' python3
+import os
+open(os.path.join("{MEMORY}","n.md"),"w").write("x")
+EOF
+
+=== CRW-998-06 | W
+--why Criterion c1e: a mode the reader cannot prove is a possible write, so a read mode built with a string method on a protected path asks a grant (the issue's harmless control is a string method with no file).
+python3 -c 'from pathlib import Path; p=Path("{MEMORY}/n.md"); p.open("r".strip()).read()'
+
+=== CRW-998-07 | B
+--why Control: partial of a function that writes nothing.
+python3 -c 'from functools import partial; print(partial(int, base=2)("11"))'
+
+=== CRW-998-08 | B
+--why Control: a string replace with an argument mapping is no file replace.
+python3 -c 'print("abc".replace("a", "b", **{}))'
+
+=== CRW-951-01 | W
+--why Computed destination: open(Path(m), "w").
+python3 -c 'from pathlib import Path; m="{MEMORY}/n.md"; open(Path(m), "w")'
+
+=== CRW-951-02 | W
+--why Computed destination: os.path.join(root, "n.md").
+python3 -c 'import os; root="{MEMORY}"; open(os.path.join(root, "n.md"), "w")'
+
+=== CRW-951-03 | W
+--why The write function is bound to a name (f = open; f(m, "w")).
+python3 -c 'm="{MEMORY}/n.md"; f = open; f(m, "w")'
+
+=== CRW-951-04 | W
+--why Path(root).joinpath("n.md").write_text(...).
+python3 -c 'from pathlib import Path; root="{MEMORY}"; Path(root).joinpath("n.md").write_text("x")'
+
+=== CRW-951-05 | W
+--why (Path(root) / "n.md").write_text(...).
+python3 -c 'from pathlib import Path; root="{MEMORY}"; (Path(root) / "n.md").write_text("x")'
+
+=== CRW-951-06 | W
+--why A chained receiver: Path("/w/a").absolute().rename(m).
+python3 -c 'from pathlib import Path; m="{MEMORY}/n.md"; Path("/w/a").absolute().rename(m)'
+
+=== CRW-951-07 | W
+--why Path("/w/a").rename(Path(m)).
+python3 -c 'from pathlib import Path; m="{MEMORY}/n.md"; Path("/w/a").rename(Path(m))'
+
+=== CRW-951-08 | W
+--why A copy function bound to a name: f = shutil.copy; f("/w/a", m).
+python3 -c 'import shutil; m="{MEMORY}/n.md"; f = shutil.copy; f("/w/a", m)'
+
+=== CRW-951-09 | E
+--why getattr(shutil, "copy")(...): an unknown destination for the memory gate; getattr is a run-time name for the worktree guard.
+python3 -c 'import shutil; m="{MEMORY}/n.md"; getattr(shutil, "copy")("/w/a", m)'
+
+=== CRW-951-10 | E
+--why __import__("shutil").copy(...): same reading.
+python3 -c 'm="{MEMORY}/n.md"; __import__("shutil").copy("/w/a", m)'
+
+=== CRW-951-11 | W
+--why shutil.copy with a computed destination.
+python3 -c 'import shutil, os; root="{MEMORY}"; shutil.copy("/w/a", os.path.join(root, "n.md"))'
+
+=== CRW-951-12 | E
+--why importlib.import_module: same reading.
+python3 -c 'import importlib; m="{MEMORY}/n.md"; importlib.import_module("shutil").copy("/w/a", m)'
+
+=== CRW-951-13 | W
+--why Control of the issue: a literal destination was already refused.
+python3 -c 'm="{MEMORY}/n.md"; open(m, "w")'
+
+=== CRW-951-14 | W
+--why Control of the issue: shutil.copy to a literal destination.
+python3 -c 'import shutil; m="{MEMORY}/n.md"; shutil.copy("/w/a", m)'
+
+=== CRW-951-15 | W
+--why Criterion c1e supersedes item 3 of CRW-951: a write whose destination is not a proven literal is an unknown destination and asks a grant even when the program names no protected area.
+python3 -c 'import os; root="/w"; open(os.path.join(root, "n.md"), "w")'
+
+=== CRW-951-16 | W
+--why Same rule for a copy to a computed destination (criterion c1e).
+python3 -c 'import shutil, os; root="/w"; shutil.copy("/w/a", os.path.join(root, "n.md"))'
+
+=== CRW-951-17 | B
+--why Control: a read of a protected file, with a literal read mode.
+python3 -c 'm="{MEMORY}/n.md"; print(open(m, "r").read())'

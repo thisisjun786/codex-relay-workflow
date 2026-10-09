@@ -1,0 +1,42 @@
+# Open findings of the frozen handoffs (crw-765, crw-875, crw-894, crw-951) that are commands and not already rows of the
+# evaluation records they quote.
+
+=== HANDOFF-875-boundary-case-pipe | B
+--why The CRW-875 handoff records a boundary: a case pattern that holds | was refused. The parser reads it as bash does; no gate has reason to touch it.
+case "$x" in a|b) echo hi;; esac
+
+=== HANDOFF-894-followup-paramexp-shell | U
+--why A shell named by a parameter expansion reads the pipe; the program word is not known.
+printf 'rm -rf ../repo' | ${SH:-bash}
+
+=== HANDOFF-894-followup-cmdsubst-shell | U
+--why A shell named by a command substitution.
+printf 'rm -rf ../repo' | $(echo bash)
+
+=== HANDOFF-894-followup-procsubst-shell | U
+--why A shell that reads a process substitution while the pipe feeds the left side.
+printf 'rm -rf ../repo' | bash < <(cat)
+
+=== HANDOFF-894-followup-tclsh | U
+--why tclsh is not an interpreter the port reads: its program comes from the pipe.
+printf 'exec rm -rf ../repo' | tclsh
+
+=== HANDOFF-894-followup-awk | U
+--why awk -f /dev/stdin reads its program from the pipe through a descriptor alias.
+printf 'BEGIN{system("rm -rf ../repo")}' | awk -f /dev/stdin
+
+=== HANDOFF-894-followup-exec-fd3 | U
+--why A here-document that exec puts on descriptor 3 and a later exec copies back onto standard input is read by the shell that follows.
+exec 3<<'EOF'
+rm -rf ../repo
+EOF
+exec 0<&3
+bash
+
+=== HANDOFF-951-tuple-assignment | W
+--why A tuple assignment rebinds io to a Path (the handoff's additional finding of the same class as d2).
+python3 -c 'import io; from pathlib import Path; io, x = Path("{MEMORY}/n.md"), 0; io.write_text("x")'
+
+=== HANDOFF-951-unknown-call-mode | W
+--why A mode produced by an unknown call is read as a write (fail closed).
+python3 -c 'from pathlib import Path; p = Path("{MEMORY}/n.md"); p.open(unknown()).read()'

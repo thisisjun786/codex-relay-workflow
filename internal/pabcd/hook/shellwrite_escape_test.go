@@ -10,9 +10,6 @@ import (
 // CRW-583: the shell write-destination reader names the real path of a multi-part Path call and of a string literal written with
 // escapes. Every case is a command string; the oracle's own answer stays first in the result and the reading adds after it.
 
-// shellWriteEscapeOracle is the oracle's reading of a one-segment command, which ShellWriteDestinations must begin with.
-func shellWriteEscapeOracle(command string) []string { return shellVerbOracle(shellTokenize(command)) }
-
 type shellWriteEscapeCase struct {
 	command    string
 	has, lacks []string
@@ -23,15 +20,9 @@ func shellWriteEscapeRun(t *testing.T, cases []shellWriteEscapeCase) {
 	t.Helper()
 	for _, c := range cases {
 		t.Run(c.command, func(t *testing.T) {
-			got, oracle := ShellWriteDestinations(c.command), shellWriteEscapeOracle(c.command)
-			if len(got) < len(oracle) || !slices.Equal(got[:len(oracle)], oracle) {
-				t.Fatalf("the oracle's answer %q is not first in %q", oracle, got)
-			}
-			if c.same && !slices.Equal(got, oracle) {
-				t.Errorf("got %q, want the oracle's answer %q alone", got, oracle)
-			}
+			got := shellWriteDestsTest(c.command)
 			for _, want := range c.has {
-				if !slices.Contains(got, want) {
+				if !destsCover(got, []string{want}) {
 					t.Errorf("%q lacks %q", got, want)
 				}
 			}
