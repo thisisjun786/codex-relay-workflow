@@ -212,10 +212,27 @@ func shellWriteExecCallee(rs []rune, i int, c rune) bool {
 	if c != '(' {
 		return false
 	}
-	for i > 0 && shellVerbSpaceRune(rs[i-1]) {
-		i--
+	return shellWriteExecCalleeExpr(rs, shellWriteExecSkipSpaceBack(rs, i))
+}
+
+// shellWriteExecSkipSpaceBack is the end of the expression that ends before rs[end], past the spacing Python allows between two
+// tokens: blanks, and a backslash directly followed by a newline (also CR LF or a lone CR), which Python joins into one logical
+// line outside a string literal (CRW-851: builtins \<newline>.exec is builtins.exec). A backslash with a blank before its newline
+// is no continuation and stays a character of its own.
+func shellWriteExecSkipSpaceBack(rs []rune, end int) int {
+	for end > 0 {
+		start := end
+		for start > 0 && shellVerbSpaceRune(rs[start-1]) {
+			start--
+		}
+		switch {
+		case start > 0 && rs[start-1] == '\\' && start < end && (rs[start] == '\n' || rs[start] == '\r'):
+			end = start - 1 // the continuation: the blanks after it and the pair itself are spacing
+		default:
+			return start
+		}
 	}
-	return shellWriteExecCalleeExpr(rs, i)
+	return end
 }
 
 // shellWriteExecCalleeExpr reports whether the expression that ends just before rs[end] is exec, eval or compile, called
@@ -225,9 +242,7 @@ func shellWriteExecCallee(rs []rune, i int, c rune) bool {
 // to the dynamic routes this issue records as out of scope. Any other character (a newline, a semicolon, a comma, an opening
 // bracket, the start of the program) leaves a plain call, and a def or async def header binds a name instead.
 func shellWriteExecCalleeExpr(rs []rune, end int) bool {
-	for end > 0 && shellVerbSpaceRune(rs[end-1]) {
-		end--
-	}
+	end = shellWriteExecSkipSpaceBack(rs, end)
 	if end == 0 {
 		return false
 	}
@@ -246,15 +261,9 @@ func shellWriteExecCalleeExpr(rs []rune, end int) bool {
 		if end < n || string(rs[end-n:end]) != name || shellWriteExecIdentRune(rs, end-n-1) {
 			continue
 		}
-		j := end - n - 1
-		for j >= 0 && shellVerbSpaceRune(rs[j]) {
-			j-- // legal spacing around the attribute operator: runner . exec(src)
-		}
+		j := shellWriteExecSkipSpaceBack(rs, end-n) - 1 // legal spacing around the attribute operator: runner . exec(src)
 		if j >= 0 && rs[j] == '.' {
-			k := j
-			for k > 0 && shellVerbSpaceRune(rs[k-1]) {
-				k-- // builtins .exec: blanks may stand before the dot too
-			}
+			k := shellWriteExecSkipSpaceBack(rs, j) // builtins .exec: blanks may stand before the dot too
 			for _, module := range []string{"builtins", "__builtins__"} {
 				m := len(module)
 				if k < m || string(rs[k-m:k]) != module || shellWriteExecIdentRune(rs, k-m-1) || k-m-1 >= 0 && rs[k-m-1] == '.' {
