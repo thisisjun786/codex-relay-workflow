@@ -418,7 +418,13 @@ func cancel(ws string, input BgRecord, clock func() time.Time, kill func(pid int
 	if rec.PID == nil {
 		// Nothing was started under this record yet (a reservation, or a shell that never started): there is no process to stop, and a
 		// launch still in progress sees the cancel and does not run the command.
-		return finishCancel(ws, rec, now, clock, func(cur BgRecord) bool { return cur.PID == nil })
+		out, err := finishCancel(ws, rec, now, clock, func(cur BgRecord) bool { return cur.PID == nil })
+		if err == nil && out.PID != nil && !IsTerminal(out.Status) {
+			// The launch published its pid between the read above and the lock: the record on disk is a started job now, so cancel
+			// acts on that record (the pid is set, so this runs once more at most) instead of reporting a cancel that changed nothing.
+			return cancel(ws, out, clock, kill)
+		}
+		return out, err
 	}
 	pid := *rec.PID
 	if pid <= 1 || pid > math.MaxInt32 || rec.StartToken == nil {
