@@ -221,11 +221,13 @@ func CheckStale(manifest FreezeManifest, current []PlanFileHash) StaleCheckResul
 }
 
 // GoalActivationDirective is GOAL_ACTIVATION_DIRECTIVE under CRW's names: plugin code cannot call create_goal, so freeze tells the
-// main session to.
+// main session to. Step 2 differs from the oracle's (CRW-1133): the oracle told the agent to leave token_budget out, so a limit the
+// user named was dropped; here a limit the user named goes to the host as given, and no limit named means unlimited.
 const GoalActivationDirective = "[crw: FREEZE -> goal handoff]\n" +
 	"Interview is ready and the plan is frozen. To start execution under a native goal:\n" +
 	"1. Call get_goal to confirm no goal is already active for this thread.\n" +
-	"2. Call create_goal with objective ONLY (no token_budget \u2014 the L3 gate denies budgeted goals).\n" +
+	"2. Call create_goal with the objective. Add token_budget only when the user named a token limit, and pass exactly that value; never choose one yourself.\n" +
+	"   With no limit named the goal stays unlimited. If the host's create_goal does not accept token_budget, report that capability conflict and do not start the goal without the limit.\n" +
 	"3. Verify a goal row was actually created (codex owns goal lifecycle in goals_1.sqlite).\n" +
 	"The frozen plan under .crw/plan/ is the READ-ONLY spec the goal consumes; do not reopen\n" +
 	"Interview once the goal is active (L11 hard-deny). If create_goal fails, report that goal mode\n" +
