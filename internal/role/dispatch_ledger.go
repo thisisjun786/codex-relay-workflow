@@ -23,9 +23,10 @@ import (
 // This file ports fallback-dispatch.ts:1-234 (CXC v0.2.40). Ordered records keep
 // foreign members, as the role store does. The existing global store replaces
 // the project layer; OS/JSON errors have Go text. The assignment additionally
-// refuses a linked .crw or an unrelated git root. Status/Action retain raw JSON:
-// upstream validates String(status), then compares its original value strictly.
-// Managed spawn and created-report issuance checks belong to the next slice.
+// refuses a linked .crw or an unrelated git root. A stored status must be one of
+// the literal enum strings (CRW-1127): upstream validates String(status), so a
+// singleton array passed and then failed every strict comparison. The created
+// report's issuance and correlation checks live at the checked boundary.
 const dispatchMaxInput = 64 * 1024
 
 // DispatchCandidate is a primary or first fallback; nil inherits the session.
@@ -63,7 +64,9 @@ type DispatchAttempt struct {
 	// Termination is set by the checked boundary when a handoff relied on an observed end of the child; the parity ledger
 	// never writes it, and a stored one is kept as it was read.
 	Termination *DispatchTermination `json:"termination,omitempty"`
-	raw         object
+	// Receipt is set by the checked boundary when it accepts a created report (see DispatchReceipt); a stored one is decoded.
+	Receipt *DispatchReceipt `json:"receipt,omitempty"`
+	raw     object
 }
 
 func (a DispatchAttempt) MarshalJSON() ([]byte, error) {
@@ -77,6 +80,9 @@ func (a DispatchAttempt) MarshalJSON() ([]byte, error) {
 	}
 	if a.Termination != nil {
 		o.set("termination", a.Termination)
+	}
+	if a.Receipt != nil {
+		o.set("receipt", a.Receipt)
 	}
 	return o.MarshalJSON()
 }
@@ -399,15 +405,15 @@ func dispatchCandidate(raw json.RawMessage) (DispatchCandidate, error) {
 func dispatchEqual[T comparable](a, b *T) bool {
 	return a == nil && b == nil || a != nil && b != nil && *a == *b
 }
+
+// dispatchStatus accepts only a JSON string literal that is one of allowed; anything else is errNotObject, which the caller
+// words as an invalid status.
 func dispatchStatus(raw json.RawMessage, allowed ...string) (any, error) {
-	s, err := jsString(raw)
-	if err != nil {
-		return nil, err
-	}
-	if !slices.Contains(allowed, s) {
+	s, ok := stringOf(raw)
+	if !ok || !slices.Contains(allowed, s) {
 		return nil, errNotObject
 	}
-	return dispatchValue(raw)
+	return s, nil
 }
 func dispatchRead(path, session, id string) (Dispatch, error) {
 	d := Dispatch{}
@@ -505,6 +511,12 @@ func dispatchPinnedDecode(data []byte, session, id string) (Dispatch, error) {
 		}{{"agentId", &a.AgentID}, {"observedModel", &a.ObservedModel}, {"code", &a.Code}, {"reconciliation", &a.Reconciliation}, {"toolUseId", &a.ToolUseID}} {
 			if *field.dst, err = dispatchNullable(dispatchRaw(a.raw, field.key), field.key); err != nil {
 				return d, err
+			}
+		}
+		if receipt := dispatchRaw(a.raw, "receipt"); receipt != nil && string(receipt) != "null" {
+			a.Receipt = &DispatchReceipt{}
+			if json.Unmarshal(receipt, a.Receipt) != nil {
+				return d, errors.New("invalid attempt receipt")
 			}
 		}
 		tf := dispatchRaw(a.raw, "taskFailure")

@@ -102,6 +102,7 @@ func TestDispatchCommandHostReportsAcrossProcesses(t *testing.T) {
 	}
 	start := run("reports", map[string]any{"action": "start", "role": "executor"}, 0)
 	claim := run("reports", map[string]any{"action": "claim", "attemptId": start.AttemptID}, 0)
+	dispatchReceiptIssue(t, ws, claim.Marker, "call-1")
 	if claim.Candidate == nil || *claim.Candidate.Model != "primary/model" {
 		t.Fatal("primary snapshot")
 	}
@@ -121,6 +122,7 @@ func TestDispatchCommandHostReportsAcrossProcesses(t *testing.T) {
 		t.Fatal("CLI task failure did not offer fallback")
 	}
 	claim = run("reports", map[string]any{"action": "claim", "attemptId": next.AttemptID}, 0)
+	dispatchReceiptIssue(t, ws, claim.Marker, "call-2")
 	if claim.Candidate == nil || *claim.Candidate.Model != "fallback/model" || *claim.Candidate.Effort != EffortLow {
 		t.Fatal("CLI fallback snapshot")
 	}
@@ -130,7 +132,7 @@ func TestDispatchCommandHostReportsAcrossProcesses(t *testing.T) {
 		t.Fatal("CLI task failure not durable")
 	}
 	complete := run("completion", map[string]any{"action": "start", "role": "executor"}, 0)
-	run("completion", map[string]any{"action": "claim", "attemptId": complete.AttemptID}, 0)
+	dispatchReceiptIssue(t, ws, run("completion", map[string]any{"action": "claim", "attemptId": complete.AttemptID}, 0).Marker, "call-3")
 	// The completion dispatch has a child of its own: one agent id is reported once per session.
 	run("completion", map[string]any{"action": "report", "attemptId": complete.AttemptID, "outcome": "created", "agentId": "child-c"}, 0)
 	wrong := run("wrong", map[string]any{"action": "start", "role": "executor"}, 0)

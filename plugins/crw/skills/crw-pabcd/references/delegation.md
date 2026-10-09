@@ -375,7 +375,13 @@ protocol. A PreToolUse reminder after a direct call cannot retroactively manage 
    original bounded task and required skills. Use a fresh context and the returned
    candidate's model/effort (null inherits the original session). Preserve the role.
 3. Every report includes `sessionId`, `dispatchId`, and the current `attemptId`.
-   Report `outcome:created` and the actual `agentId`, then use native wait. Report
+   Report `outcome:created` and the actual `agentId`, then use native wait. Created
+   requires the spawn hook's issuance of the attempt, and the child's first message
+   must carry this attempt's marker; a child the host cannot yet tie to the marker is
+   recorded unverified and cannot complete an independent review until created is
+   reported again. A child spawned while the hook was off is recorded only with
+   `reconciliation` evidence, never deleted or respawned, and cannot satisfy
+   independent review. Report
    `outcome:complete` with that ID only after validating the final work. A native
    completed status does not prove the task succeeded; terminal reports cannot be reopened.
 4. On provider failure report `outcome:failed`, the original `error`, and `executionState`:

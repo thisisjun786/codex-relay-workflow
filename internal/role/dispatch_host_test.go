@@ -78,9 +78,9 @@ func dispatchHostStarted(t *testing.T, ws string, env host.LookupEnv) (string, s
 	t.Helper()
 	start, err := dispatchHostCommand(t, env, map[string]any{"action": "start", "role": "executor"})
 	check(t, err)
-	if _, err := dispatchHostCommand(t, env, map[string]any{"action": "claim", "attemptId": start.AttemptID}); err != nil {
-		t.Fatal(err)
-	}
+	claim, err := dispatchHostCommand(t, env, map[string]any{"action": "claim", "attemptId": start.AttemptID})
+	check(t, err)
+	dispatchReceiptIssue(t, ws, claim.Marker, "call-1")
 	if _, err := dispatchHostCommand(t, env, map[string]any{"action": "report", "attemptId": start.AttemptID, "outcome": "created", "agentId": "child-a"}); err != nil {
 		t.Fatal(err)
 	}
@@ -142,9 +142,9 @@ func TestDispatchCommandOpensTheHostOnlyForAStoppedClose(t *testing.T) {
 	}
 	start, err := dispatchHostCommand(t, env, map[string]any{"action": "start", "role": "executor"})
 	check(t, err)
-	if _, err := dispatchHostCommand(t, env, map[string]any{"action": "claim", "attemptId": start.AttemptID}); err != nil {
-		t.Fatal(err)
-	}
+	claim, err := dispatchHostCommand(t, env, map[string]any{"action": "claim", "attemptId": start.AttemptID})
+	check(t, err)
+	dispatchReceiptIssue(t, ws, claim.Marker, "call-1")
 	if _, err := dispatchHostCommand(t, env, map[string]any{"action": "report", "attemptId": start.AttemptID, "outcome": "created", "agentId": "child-a"}); err != nil {
 		t.Fatal(err)
 	}

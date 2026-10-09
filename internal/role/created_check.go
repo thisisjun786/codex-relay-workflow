@@ -29,8 +29,12 @@ const (
 )
 
 // CheckedDispatch is the product boundary. RunDispatch stays the parity ledger.
-// The created check runs after domain validation, inside the same lock, before
-// atomic publication. On refusal dispatchSave removes its owned temporary file.
+// Its report checks run after domain validation, inside the same lock, before
+// atomic publication, and a refusal writes nothing: the created report needs the
+// attempt's issuance and a child tied to it (createdCheckReporter), a reviewer's
+// complete needs that tie (createdCheckComplete), a failed or task_failed handoff
+// of a recorded child needs its observed end (dispatchHandoffGate), and the stopped
+// report closes or cleans up (createdCheckStop).
 func CheckedDispatch(ctx context.Context, cwd string, input any, env host.LookupEnv, h DispatchHost) (DispatchResult, error) {
 	return dispatchPinnedChecked(ctx, cwd, input, env, h, nil)
 }
@@ -53,25 +57,105 @@ func dispatchPinnedChecked(ctx context.Context, cwd string, input any, env host.
 			return dispatchReport(d, b, gate)
 		})
 	}
+	if dispatchIs(b["action"], "report") && dispatchIs(b["outcome"], "complete") {
+		return dispatchPinnedRunHeld(cwd, input, env, nil, after, false, createdCheckComplete)
+	}
 	if !dispatchIs(b["action"], "report") || !dispatchIs(b["outcome"], "created") {
 		return RunDispatch(cwd, input, env)
 	}
-	return dispatchPinnedRunHeld(cwd, input, env, func(dir *dispatchPinnedDir, _, final string) error {
-		session, _ := b["sessionId"].(string)
-		agent, _ := b["agentId"].(string)
-		attempt, _ := b["attemptId"].(string)
-		if err := createdArchivedReplay(dir, final, session, attempt, agent); err != nil {
-			return err
+	return dispatchPinnedRunHeld(cwd, input, env, nil, after, true, createdCheckReporter(ctx, env, h))
+}
+
+// createdCheckReporter is the created report at the checked boundary. The ledger's own validation runs first; then, before
+// anything is written and without a host call until the record's own checks pass: a toolUseId the report names must be the
+// native call the attempt was issued to, and the attempt must have been issued by the spawn hook, unless the report takes the
+// explicit reconciliation path for a child spawned without it. Then the session's other records must not hold the id, the
+// host must witness a subagent of this session, and, when the native database shows the child's first message, that message
+// must carry this attempt's dispatch marker. The accepted report writes the attempt's receipt.
+func createdCheckReporter(ctx context.Context, env host.LookupEnv, h DispatchHost) dispatchReporter {
+	return func(dir *dispatchPinnedDir, name string, d *Dispatch, b map[string]any) (DispatchResult, error) {
+		a := &d.Attempts[len(d.Attempts)-1]
+		issued, tool := a.SpawnIssued, a.ToolUseID
+		if _, err := dispatchReport(d, b, nil); err != nil {
+			return DispatchResult{}, err
+		}
+		agent := *a.AgentID
+		if v, present := b["toolUseId"]; present {
+			if s, ok := v.(string); !ok || tool == nil || *tool != s {
+				return DispatchResult{}, errors.New("toolUseId is not the native call this attempt was issued to" + createdCheckCopy)
+			}
+		}
+		issuance := DispatchIssuance{Recorded: issued, ToolUseID: tool}
+		if !issued {
+			if _, present := b["reconciliation"]; !present {
+				return DispatchResult{}, errors.New("created requires this attempt's managed spawn issuance: spawn with the claimed marker so the spawn hook issues it; " +
+					"a child spawned without the hook is recorded only with reconciliation evidence, and it cannot satisfy independent review")
+			}
+			s, err := dispatchSmallText(b["reconciliation"], "reconciliation evidence")
+			if err != nil {
+				return DispatchResult{}, err
+			}
+			issuance.Reconciliation = &s
+		}
+		if err := createdArchivedReplay(dir, name, d.SessionID, a.ID, agent); err != nil {
+			return DispatchResult{}, err
 		}
 		identity, err := createdCheckRead(ctx, env, h, agent)
 		if err != nil {
-			return errors.New("host could not verify created agent" + createdCheckCorrection)
+			return DispatchResult{}, errors.New("host could not verify created agent" + createdCheckCorrection)
 		}
-		if identity.ID != agent || identity.Parent != session || !identity.Subagent {
-			return errors.New("agentId is not a real subagent thread parented by this session" + createdCheckCorrection)
+		if identity.ID != agent || identity.Parent != d.SessionID || !identity.Subagent {
+			return DispatchResult{}, errors.New("agentId is not a real subagent thread parented by this session" + createdCheckCorrection)
 		}
-		return nil
-	}, after, true, nil)
+		witness, native := "app-server", identity
+		if h == nil {
+			witness = "native-thread-database"
+		} else if native, err = createdCheckNative(ctx, env, agent); err != nil || native.ID != agent || native.Parent != d.SessionID {
+			native = createdCheckIdentity{}
+		}
+		correlation := "unverified"
+		if native.FirstMessage != "" {
+			if m := managedSpawnMarker(native.FirstMessage); m != nil && m[1] == d.ID && m[2] == a.ID {
+				correlation = "attempt-marker"
+			} else if issued {
+				return DispatchResult{}, errors.New("agentId is not the child the issued spawn created: its first message carries no marker of this attempt" + createdCheckCorrection)
+			}
+		}
+		if !issued {
+			correlation = "unissued"
+		}
+		settings := DispatchHostSettings{Source: "unobservable"}
+		for _, v := range []struct {
+			value string
+			dst   **string
+		}{{native.Model, &settings.Model}, {native.Effort, &settings.Effort}} {
+			if v.value != "" {
+				value := v.value
+				*v.dst, settings.Source = &value, "native-thread-database"
+			}
+		}
+		a.Receipt = &DispatchReceipt{Candidate: a.Candidate, Issuance: issuance, Child: DispatchChild{AgentID: agent, Parent: identity.Parent, Witness: witness},
+			Correlation: correlation, ObservedModel: a.ObservedModel, Host: settings}
+		reason := ""
+		switch correlation {
+		case "unverified":
+			reason = "the host does not show this child's first message, so it is not tied to the issued spawn and cannot satisfy independent review; report created again once it does"
+		case "unissued":
+			reason = "recorded without issuance on caller reconciliation; this child cannot satisfy independent review"
+		}
+		return dispatchResult(d, "wait", reason), nil
+	}
+}
+
+// createdCheckComplete is the complete report at the checked boundary: an independent review is complete only through a child
+// tied to its issued spawn (receipt correlation attempt-marker). Every other check is the ledger's.
+func createdCheckComplete(_ *dispatchPinnedDir, _ string, d *Dispatch, b map[string]any) (DispatchResult, error) {
+	a := d.Attempts[len(d.Attempts)-1]
+	if d.Role == Reviewer && (a.Receipt == nil || a.Receipt.Correlation != "attempt-marker") {
+		return DispatchResult{}, errors.New("this child is not tied to its issued spawn, so it cannot satisfy independent review; " +
+			"report created again once the host shows its first message, or close it with outcome stopped")
+	}
+	return dispatchReport(d, b, nil)
 }
 
 // createdArchivedReplay refuses an agent id that another attempt of the session already holds. The
@@ -127,9 +211,9 @@ func createdCheckHeld(d *Dispatch, i int) string {
 type createdCheckIdentity struct {
 	ID, Parent, Status string
 	Subagent           bool
-	// RolloutPath is the native database's rollout_path of the thread, "" when the column is absent or empty. Only the native
-	// read fills it.
-	RolloutPath string
+	// RolloutPath, FirstMessage, Model and Effort are the native database's rollout_path, first_user_message, model and
+	// reasoning_effort of the thread, "" when the column is absent or empty. Only the native read fills them.
+	RolloutPath, FirstMessage, Model, Effort string
 }
 
 func createdCheckRead(ctx context.Context, env host.LookupEnv, h DispatchHost, agent string) (createdCheckIdentity, error) {
@@ -325,9 +409,10 @@ func createdCheckNative(ctx context.Context, env host.LookupEnv, agent string) (
 		}
 		return "''"
 	}
-	var id, source, rollout string
-	query := "SELECT id, source, " + optional("rollout_path") + " FROM threads WHERE id = ?"
-	if err := conn.QueryRowContext(ctx, query, agent).Scan(&id, &source, &rollout); err != nil {
+	var id, source string
+	var row createdCheckIdentity
+	query := "SELECT id, source, " + optional("rollout_path") + ", " + optional("first_user_message") + ", " + optional("model") + ", " + optional("reasoning_effort") + " FROM threads WHERE id = ?"
+	if err := conn.QueryRowContext(ctx, query, agent).Scan(&id, &source, &row.RolloutPath, &row.FirstMessage, &row.Model, &row.Effort); err != nil {
 		return createdCheckIdentity{}, err
 	}
 	// The archive flag is a lifecycle fact, not part of the identity: the host archives a child
@@ -346,7 +431,8 @@ func createdCheckNative(ctx context.Context, env host.LookupEnv, agent string) (
 		return createdCheckIdentity{}, err
 	}
 	parent := marker.Subagent.Spawn.Parent
-	return createdCheckIdentity{ID: id, Parent: parent, Subagent: parent != "", RolloutPath: rollout}, nil
+	row.ID, row.Parent, row.Subagent = id, parent, parent != ""
+	return row, nil
 }
 
 // createdCheckColumns lists the columns of the native threads table, whose schema grows with the host's versions.
