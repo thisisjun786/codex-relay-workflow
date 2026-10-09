@@ -55,7 +55,7 @@ and report both, and read the parent's effective workflow before judging either.
 The workflow is what makes a missing goal a fact or a fault, and since CRW-165 the ordinary answer
 is a fact. A project parent runs goal-free by default, so an absent goal is the normal state and
 never the stall: what returns it is the delivery path, and that is what the report reads. A parent
-running [crw-loop](../../crw-loop/SKILL.md) was given a goal because someone asked for one, so a
+in [goal mode](../../crw-run/references/goal-mode.md) was given a goal because someone asked for one, so a
 missing, paused or unactivatable goal there is worth leading with. Judge against the mode the
 parent is actually in, read from its recorded `run_mode` and `observation_path` under
 [Start policy](../../crw-run/references/start-policy.md), which now owns which role carries which
@@ -64,8 +64,8 @@ lifecycle by default.
 For a parent recorded `goal-free-run` the stall question is the delivery path alone, because an
 absent goal is deliverable. The other no-goal record is `blocked`, a parent that can neither hold a
 goal nor proceed without one, and that one is M14's case rather than a delivery fault. A goal
-blocks only where one exists, which means an explicit Loop or a parent carried over from before
-the default and recorded `loop` by [Start policy](../../crw-run/references/start-policy.md) rather
+blocks only where one exists, which means goal mode or a parent carried over from before
+the default and recorded `goal` by [Start policy](../../crw-run/references/start-policy.md) rather
 than converted, and there
 [OPS-8.2](../../crw-run/references/operations.md#ops-82-busy-paused-cancelled-and-archived-parents)
 owns which goal statuses the relay treats as blocking, read from there rather than named here. That
@@ -102,7 +102,7 @@ blocked by a goal compatibility problem is neither idle nor complete: reporting 
 the one fact that explains why nothing is moving. Say which of the three you observed and when.
 
 A status call creates, activates or repairs no goal. Find the task by its stable coordinator binding
-in that parent's coordination record, and route the goal work as [crw-loop](../../crw-loop/SKILL.md)
+in that parent's coordination record, and route the goal work as [goal mode](../../crw-run/references/goal-mode.md)
 lifecycle work, because that is the operation owner for a goal's creation, activation and recovery;
 `crw-run` executes the project and does not make a parent's goal. Where the record names no
 coordinator, or ownership cannot be established, it is Jun's decision and goes in the report as one.
@@ -388,7 +388,7 @@ Observed: a parent has no running turn. In one variant its goal is active with c
 working; in another it has no goal, or a paused one, or one that cannot activate.
 Action: read its effective workflow, then report the turn and the goal as two readings. A goal-free
 parent is in the default mode and its absent goal is not the stall; what to check there is whether
-its delivery path is reaching it. A Loop parent whose goal is missing or unactivatable is a mode
+its delivery path is reaching it. A goal-mode parent whose goal is missing or unactivatable is a mode
 mismatch and the report leads with that rather than calling it idle, but do not infer from it that
 nothing can reach the parent: an absent goal is deliverable under OPS-8.2, so read the delivery
 path and the waiting events separately before naming a cause. The goal statuses that genuinely
@@ -406,8 +406,8 @@ between a healthy goal and a delivered item.
 
 Observed: the checkpoint establishes that a parent cannot continue because of its goal state.
 Action: confirm first that this parent is one a goal is expected of, which since CRW-165 is only a
-parent an explicit Loop was requested for, because a goal-free parent
-is not stalled by lacking one. For a Loop parent, report the block and route it as crw-loop
+parent goal mode was requested for, because a goal-free parent
+is not stalled by lacking one. For a goal-mode parent, report the block and route it as goal-mode
 lifecycle work to the task named by the parent's stable coordinator binding, or to Jun where none
 is named. Do not create, activate or repair a goal from a status call. A checkpoint moves approved
 work; it does not change how a task is run.

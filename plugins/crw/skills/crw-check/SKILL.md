@@ -1,6 +1,6 @@
 ---
 name: crw-check
-description: "Compare canonical Linear documents and issue criteria with delivery evidence, and route in-scope corrections back to managed execution tasks. Use for requirement drift or completion checks; use crw-logic for contradictions and crw-run for execution."
+description: "Compare canonical Linear documents and issue criteria with delivery evidence, and route in-scope corrections back to managed execution tasks. Use for requirement drift or completion checks; use crw-logic for contradictions, crw-run for execution, and crw-qa to drive a changed user-facing surface by hand: its pass is evidence this skill may read, not a delivery verdict."
 ---
 
 # CRW Check
@@ -9,7 +9,7 @@ Check delivered work against what was agreed, using Linear as the canonical sour
 
 ## Connect the workflow
 
-Read [Integrations](../crw-plan/references/integrations.md), including its completion-follow-up rule. Use Linear tools for current documents and decisions, `cxc-recall` for missing historical decisions, and `cxc-dev` plus the relevant review/verification owner for code evidence. A standalone audit stays read-only; an existing execution task retains its authorized scope when this skill is used to check delivery.
+Read [Integrations](../crw-plan/references/integrations.md), including its completion-follow-up rule. Use Linear tools for current documents and decisions, `crw-recall` for missing historical decisions, and `crw-dev` plus the relevant review/verification owner (`crw-dev-code-reviewer`, `crw-qa` for a driven surface) for code evidence. A standalone audit stays read-only; an existing execution task retains its authorized scope when this skill is used to check delivery.
 
 When the comparison is ambiguous, restate it and confirm the reading. Where documents state the same fact differently, [where each document type is canonical](../crw-plan/references/integrations.md#where-each-document-type-is-canonical) decides which one is the rule. Check that acceptance evidence does not just confirm the implementation's own assumptions. For an actual contradiction, use [crw-logic](../crw-logic/SKILL.md) as a bounded helper; it returns findings without replacing this requirement audit. When a substantial handoff needs a fresh reader, give it to a context-free reviewer through CXC delegation.
 

@@ -2,8 +2,8 @@
 
 Read when deciding whether a Codex hook may conclude that a managed assignment finished, or when
 implementing the marker, disposition, and blocking behaviour that later issues install. This
-reference DECIDES those rules; it installs nothing. No hook is registered by this contract, no CXC
-state is read or written, and no Linear write happens from a hook. The one run that did register
+reference DECIDES those rules; it installs nothing. No hook is registered by this contract, no PABCD
+(`.crw/`) state is read or written, and no Linear write happens from a hook. The one run that did register
 hooks, recorded in the host-verification packet, did so inside a throwaway `CODEX_HOME` that was
 removed afterwards, and left nothing installed.
 
@@ -391,7 +391,7 @@ published facts rather than on whatever pruning happens to have run.
 
 The root sits outside the source checkout and outside the relay database, on a writable parent both
 the coordinator and the child can reach. The daemon gets no access at all: nothing in the marker
-feeds delivery, and the hook is already forbidden to read CXC state.
+feeds delivery, and the hook is already forbidden to read PABCD (`.crw/`) state.
 
 On a single-uid host, which is the configuration measured here, file permissions cannot separate
 coordinator from child, and the directory name is derivable from any workspace path, so neither read
@@ -635,7 +635,7 @@ misreporting, and so is one that cites this table without the fixture behind it.
 ## Blocking policy
 
 The decision is a pure function of the marker state, the delivered `turn_id` and `stop_hook_active`,
-the disposition record, and the receipt record. It reads no CXC state, assumes no hook ordering, and
+the disposition record, and the receipt record. It reads no PABCD (`.crw/`) state, assumes no hook ordering, and
 shares no mutable state with any other hook.
 
 A hold is only ever issued at Stop, only for a claimed managed session, and only for
@@ -665,11 +665,14 @@ ends as an ordinary one. That is the direction to fail in, and it is why the wal
 well under the registered timeout, but it means an unreliable hook degrades into no hook rather than
 into a stuck session.
 
-Other hooks hold independently, and the host was observed to honour every one of them: two handlers
-holding the same Stop both had their reasons carried into a single continuation, and a handler that
-released did not suppress one that held. The installed CXC Stop hook applies its own continuation
-caps, so a turn can be held by more than one owner and the totals compound. This contract governs
-only its own holds; it never inspects, relaxes, or counts another hook's.
+Other evaluators hold independently, and the host was observed to honour every one of them: two
+handlers holding the same Stop both had their reasons carried into a single continuation, and a
+handler that released did not suppress one that held. The single CRW Stop entry composes this
+completion guard with the PABCD continuation and the background completion wake as three independent
+evaluators, each with its own state and budget, and several that hold emit one block whose reasons
+are joined in a fixed order. The PABCD continuation applies its own continuation caps, so a turn can
+be held by more than one owner and the totals compound. This contract governs only its own holds; it
+never inspects, relaxes, or counts another evaluator's.
 
 Release is unconditional on any of: `stop_hook_active` true; a disposition recorded for this session
 and turn whose outcome is one of `in_progress`, `blocked_needs_input`, `interrupted` or `failed`; a
@@ -760,5 +763,5 @@ Where a host supports event-driven return, a parent is woken by the delivery pat
 repeated polling, and a native subagent completion is not the same thing as an independent task's
 relay handoff. No host is assumed to support automatic wake.
 
-This contract does not modify CXC, does not change any other skill's reference, and does not
+This contract changes no PABCD state, does not change any other skill's reference, and does not
 authorise a hook to write Linear.

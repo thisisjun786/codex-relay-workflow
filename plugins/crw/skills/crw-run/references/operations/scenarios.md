@@ -209,7 +209,7 @@ user deliberately stopped is the one thing a retry cannot undo.
 A native subagent completes inside its parent's own turn and is not this independent-task case.
 The active CRW parent keeps its coordination record and continues bounded transport waits
 using actual child identifiers. The timeout does not finish the project or justify a resend.
-After verifying and integrating the child's delivery, Run or Loop dispatches the next
+After verifying and integrating the child's delivery, Run or goal mode dispatches the next
 ready issue within its agreed project scope. An explicit batch-only limit excludes
 successors outside that batch in either mode. A blocked issue holds its dependents, not independent ready work. Without a
 usable observation path it records the blocker and resume step instead of promising automatic
@@ -401,9 +401,9 @@ prepared and published.
 
 ## S18 The workflow is missing, and the run is not called normal
 
-Observed: a managed assignment is about to run, and the CXC workflow the assignment assumes is not
-installed, or its contract is absent, or the installed version does not match what the packet was
-written against.
+Observed: a managed assignment is about to run, and the `crw-loop` workflow the assignment assumes is
+not available, because the `crw` runtime behind it is missing, or its contract is absent, or the
+installed version does not match what the packet was written against.
 
 Clauses: OPS-10.2, OPS-10.1, OPS-10.3.
 
@@ -415,7 +415,7 @@ what that blocks.
 
 Reporting it requires nothing to be installed, upgraded or tested mid-assignment and changes no
 permission. Receipt reading, acknowledgement and recovery continue exactly as before. If a format
-question comes up while resolving it, read the owning CXC file rather than a paraphrase, since the
+question comes up while resolving it, read the owning `crw-pabcd` or `crw-loop` file rather than a paraphrase, since the
 packet and report formats are defined there and the adapter that carries them is a separate issue.
 
 Preserved: the running assignment's settings and its existing receipts, acknowledgements and
@@ -539,35 +539,37 @@ and the separation between entering review, being merge ready, and reporting an 
 
 ## S24 Parent coordination finishes without a local implementation diff
 
-Observed: a CRW Loop parent has a verified active coordination goal on a host with
-compatible goal/continuation hooks, and no CXC implementation FSM. Every child in its agreed
+Observed: a goal-mode parent has a verified active coordination goal on a host with
+compatible goal/continuation hooks, and no implementation FSM. Every child in its agreed
 scope has delivered verified results, required PRs have landed, and no owned work or
-receipt remains pending. Its own checkout is unchanged. Separately, another parent
-explicitly chose CXC and has a blocked FSM with no supported transition to CRW.
+receipt remains pending. Its own checkout is unchanged. Separately, another parent task
+explicitly chose to run a `crw-loop` of its own and has a blocked FSM with no supported
+transition to goal mode.
 
 Clauses: OPS-8.1, OPS-8.4, OPS-10.1; lifecycle decisions belong to
-[crw-loop](../../../crw-loop/SKILL.md).
+[Goal mode](../goal-mode.md).
 
-Action: the CRW Loop parent completes its coordination record and matching host goal
+Action: the goal-mode parent completes its coordination record and matching host goal
 on the verified scoped deliveries, then reads back completion, without manufacturing
 a parent-local code change. Child completion alone is
 insufficient if any required result, correction, receipt or integration remains unresolved.
-The explicit CXC parent retains its installed lifecycle and cannot start CRW execution
+The other parent retains its `crw-loop` lifecycle and cannot start goal mode
 while its transition is unsupported. Record the transition blocker and exact supported
 resume requirement; do not reset the FSM, edit phases or report a new loop as armed.
 
 Preserved: child identities and delivery evidence, the distinct parent completion boundary,
-and the existing CXC parent's binding, goalplan, pending obligations and recovery evidence.
+and the other parent's binding, goalplan, pending obligations and recovery evidence.
 
-## S25 Run and Loop share project scope; the parent holds no goal by default
+## S25 Run and goal mode share project scope; the parent holds no goal by default
 
 Observed: the user submits Run with a project link. A and B are ready; C depends on A. In another
-run the user submits Loop explicitly for the agreed A/B/C scope and its goal/hook preflight passes.
-In a third the request carries an explicit no-goal limit.
+run the user asks Run explicitly for a parent goal on the agreed A/B/C scope, or submits `$crw-loop`
+with that project and coordination intent, which starts no loop and hands over to goal mode; its
+goal/hook preflight passes. In a third the request carries an explicit no-goal limit.
 
 Clauses: OPS-8.1, OPS-8.5, OPS-9.2; operation selection belongs to
 [crw-run](../../../crw-run/SKILL.md), goal ownership to
-[crw-loop](../../../crw-loop/SKILL.md), and the role default to
+[Goal mode](../goal-mode.md), and the role default to
 [Start policy](../start-policy.md).
 
 Action: all three record A/B/C as the agreed project scope and A/B as the initial ready batch. When
@@ -575,7 +577,7 @@ A's prerequisite delivery is verified and available, each can start C without wa
 capacity permits. The first and third are the same mode and reach it differently: the default opens
 no parent goal, and the explicit no-goal limit asks for what the default already does, so it
 subtracts nothing and is recorded as a limit the run happened to satisfy. The second holds a goal
-because the user asked for one, and what the explicit Loop submission adds is that goal rather than
+because the user asked for one, and what the explicit goal request adds is that goal rather than
 the entry. None of the three is blocked for lack of a goal, because none of the three needs one to
 proceed. An explicitly limited A/B batch excludes C in every mode. After compaction or a resume the
 run recovers the project scope and continues C rather than asking for a new batch authorization,
@@ -585,23 +587,23 @@ the second reaches idle only after its bounded Stop budget releases, at a turn p
 Dispatch-only Run may hand off pending children; status-only Run reads without waking them.
 
 Preserved: one project parent, existing issue children and PRs, requested batch/merge limits, child
-CXC defaults, an explicit no-goal limit recorded even where it changed nothing, and the difference
+`crw-loop` defaults, an explicit no-goal limit recorded even where it changed nothing, and the difference
 between parent and child goal authority.
 
 ## S26 Goal conflicts and unsupported continuation do not become new goals
 
-Observed: Loop is requested. Variants are: a matching active goal; a matching blocked
+Observed: goal mode is requested. Variants are: a matching active goal; a matching blocked
 goal without an exposed resume control; a different unfinished goal; unreadable goal
 state; explicit no-goal; and a fresh parent whose Stop hook routes all active native
-goals into CXC implementation phases. An active compatible Loop later encounters its
+goals into PABCD implementation phases. An active compatible goal-mode run later encounters its
 first blocker, with another independent issue still ready.
 
 Clauses: OPS-8.1, OPS-8.2, OPS-8.4; goal decisions belong to
-[Parent goal lifecycle](../../../crw-loop/references/parent-goal.md).
+[Parent goal lifecycle](../goal-mode.md#parent-goal-lifecycle).
 
 Action: reuse only the matching active goal. Preserve the blocked/different/unreadable
 goal and resolve its specific resume/conflict/read requirement; do not create over it.
-No-goal prevents this Loop's activation and nothing else: the run continues as the ordinary
+No-goal prevents goal mode's activation and nothing else: the run continues as the ordinary
 goal-free default, which needs no separate authorization, and no child is withheld for it.
 The incompatible Stop hook blocks activation before goal creation or new worker dispatch;
 record the supported host fix, without disabling hooks or faking PABCD. In the compatible
@@ -610,7 +612,7 @@ first failure. Use the real host threshold and observations for any eventual blo
 transition. A paused goal resumes only through authorized supported controls.
 
 Preserved: existing goal identity/status, all child ownership, explicit user limits,
-CXC state and guards, and the difference between a created goal and observed auto-resume.
+`.crw/` state and guards, and the difference between a created goal and observed auto-resume.
 
 ## S27 Binding-only requests preserve ownership
 
@@ -625,7 +627,7 @@ Action: reuse and verify the same parent binding and suitable coordination docum
 Apply supported title/pin changes only within the designation request. Do not create
 children or a goal. Inspect another parent's ownership without waking it; settle a
 material conflict before replacement. A temporary question does not switch the binding.
-Run or Loop execution requests do the same setup and then continue their requested
+Run or goal-mode execution requests do the same setup and then continue their requested
 operation.
 
 Preserved: stable project/task IDs, existing specifications and coordination history,
@@ -743,20 +745,20 @@ the third owner's freedom to decline, and the separation of edit agreement from 
 
 Observed: a supervision task restarts and reads its approved set. One parent is `idle` with an
 active goal; one is `idle` with no goal at all where the start-policy record says
-`goal-free-run`; one is `idle` with no goal where that record says `loop`; one is recorded
+`goal-free-run`; one is `idle` with no goal where that record says `goal`; one is recorded
 "blocked" with nothing saying whether that was its goal, its recorded start mode or a dependency;
 one reads `notLoaded` on both reads; and one project is completed with its parent resting.
 
 Clauses: OPS-7.1, OPS-8.1, OPS-8.2; the registers are
 [Which register each state word came from](../initiative-supervision.md), the recorded mode is
-[Record the start adjudication](../../../crw-loop/references/parent-goal.md#record-the-start-adjudication),
+[Record the start adjudication](../goal-mode.md#record-the-start-adjudication),
 and the idle action matrix and the goal/activation/continuation split belong to
 [the midpoint check](../../../crw-status/references/midpoint-check.md).
 
 Action: name the register of every reading before deciding anything, and restore the recorded start
 policy, re-adjudicating only the fields whose conditions changed. The first three parents are three
 findings and not one: an active goal is not evidence that continuation actually happens,
-`goal-free-run` accounts for an absent goal, and the same absence under a recorded `loop` is a
+`goal-free-run` accounts for an absent goal, and the same absence under a recorded `goal` is a
 finding to resolve. The unlabelled "blocked" is resolved to its register first, because a blocked
 goal, a `blocked` start mode and a recorded dependency have different owners, and until it resolves
 it is unknown. A parent still `notLoaded` after the second read keeps that exact value rather than
