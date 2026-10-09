@@ -129,7 +129,7 @@ func Test47_VAL_3_PythonFilesAreRefusedOutsideSkillAssets(t *testing.T) {
 	symlink("plugins/crw/skills/example/scripts/linkdir", "../../../../../internal")              // a directory link is no Python file
 	r.commit()
 	r.write("scripts/new.py", "print()\n") // untracked: refused before it is added
-	const tail = "; Python is allowed only in skill assets (plugins/crw/skills/*/{scripts,examples}/, port/cxc/skills/*/{scripts,examples}/)\n"
+	const tail = "; Python is allowed only in skill assets (plugins/crw/skills/*/{scripts,examples}/)\n"
 	expectEqual(t, "refused", validate(t, r), result{1, "", "internal/pkg/gen.py: a Python file" + tail +
 		"plugins/crw/skills/example/references/helper.py: a Python file" + tail +
 		"plugins/crw/skills/example/scripts.py: a Python file" + tail +
@@ -184,7 +184,7 @@ func TestSkillAssetPaths(t *testing.T) {
 	const skill = "plugins/crw/skills/example/"
 	for _, name := range []string{
 		skill + "scripts/a.py", skill + "scripts/deep/er/b.py", skill + "examples/c.py",
-		"port/cxc/skills/crw-example/scripts/a.py", "port/cxc/skills/crw-example/examples/b.py",
+		"plugins/crw/skills/crw-example/scripts/a.py", "plugins/crw/skills/crw-example/examples/b.py",
 		"plugins/crw/skills/scripts/scripts/a.py", // a skill that is called scripts
 	} {
 		put(name, py)
@@ -199,6 +199,7 @@ func TestSkillAssetPaths(t *testing.T) {
 		skill + "sub/scripts/a.py", skill + "examples.py/a.py", "plugins/crw/skills/scripts/a.py",
 		"plugins/crw/skills/a.py", "port/cxc/records/crw-example/scripts/a.py", "port/cxc/skills/a.py",
 		"port/cxc/skills/crw-example/SKILL.py",
+		"port/cxc/skills/crw-example/scripts/a.py", // the staging root of ported skills before the activation move (CRW-392)
 	} {
 		put(name, py)
 	}
@@ -219,15 +220,15 @@ func TestSkillAssetPaths(t *testing.T) {
 		refused bool
 	}{
 		{skill + "scripts/a.py", false}, {skill + "scripts/deep/er/b.py", false}, {skill + "examples/c.py", false},
-		{skill + "scripts/helper", false}, {"port/cxc/skills/crw-example/scripts/a.py", false},
-		{"port/cxc/skills/crw-example/examples/b.py", false}, {"plugins/crw/skills/scripts/scripts/a.py", false},
+		{skill + "scripts/helper", false}, {"plugins/crw/skills/crw-example/scripts/a.py", false},
+		{"plugins/crw/skills/crw-example/examples/b.py", false}, {"plugins/crw/skills/scripts/scripts/a.py", false},
 		{"cmd/a.py", true}, {"internal/a.py", true}, {"plugins/crw/wiring/a.py", true}, {"plugins/crw/wiring/scripts/a.py", true},
 		{"scripts/a.py", true}, {"docs/scripts/a.py", true}, {"internal/scripts/a.py", true},
 		{"plugins/other/skills/example/scripts/a.py", true}, {"cmd/helper", true}, {skill + "references/helper", true},
 		{skill + "scripts.py", true}, {skill + "a.py", true}, {skill + "references/a.py", true}, {skill + "Scripts/a.py", true},
 		{skill + "sub/scripts/a.py", true}, {skill + "examples.py/a.py", true}, {"plugins/crw/skills/scripts/a.py", true},
 		{"plugins/crw/skills/a.py", true}, {"port/cxc/records/crw-example/scripts/a.py", true}, {"port/cxc/skills/a.py", true},
-		{"port/cxc/skills/crw-example/SKILL.py", true},
+		{"port/cxc/skills/crw-example/SKILL.py", true}, {"port/cxc/skills/crw-example/scripts/a.py", true},
 		// a name that climbs out of the place it starts in, or is not written plainly
 		{skill + "scripts/../../../../../cmd/a.py", true}, {skill + "scripts/../scripts/a.py", true},
 		{"./" + skill + "scripts/a.py", true}, {"plugins//crw/skills/example/scripts/a.py", true},
@@ -244,7 +245,7 @@ func TestSkillAssetPaths(t *testing.T) {
 			t.Errorf("%s: refused = %v, want %v (%q)", row.name, got, row.refused, got)
 		}
 	}
-	want := []string{"cmd/a.py: a Python file; Python is allowed only in skill assets (plugins/crw/skills/*/{scripts,examples}/, port/cxc/skills/*/{scripts,examples}/)",
-		"cmd/helper: a script with a python shebang; Python is allowed only in skill assets (plugins/crw/skills/*/{scripts,examples}/, port/cxc/skills/*/{scripts,examples}/)"}
+	want := []string{"cmd/a.py: a Python file; Python is allowed only in skill assets (plugins/crw/skills/*/{scripts,examples}/)",
+		"cmd/helper: a script with a python shebang; Python is allowed only in skill assets (plugins/crw/skills/*/{scripts,examples}/)"}
 	expectEqual(t, "messages", pythonFileErrors(root, []string{"cmd/a.py", skill + "scripts/a.py", "cmd/helper"}), want)
 }

@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$HOME/.local/share/crw-runtime/current/bin/crw\" hook user-prompt-submit --leg user-prompt-submit-checking-pabcd-trigger",
+            "timeout": 15,
+            "statusMessage": "(crw) Checking PABCD trigger"
+          }
+        ]
+      }
+    ]
+  }
+}

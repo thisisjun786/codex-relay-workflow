@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$HOME/.local/share/crw-runtime/current/bin/crw\" hook pre-tool-use --leg pre-tool-use-linting-apply-patch",
+            "timeout": 10,
+            "statusMessage": "(crw) Checking structured edit"
+          }
+        ],
+        "matcher": "^(apply_patch|Write|Edit)$"
+      }
+    ]
+  }
+}

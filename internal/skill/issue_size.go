@@ -164,7 +164,7 @@ var headingWords = []struct {
 	words, prefixes []string
 }{
 	{kindResearch, []string{"연구보강", "researchreinforcement"}, []string{"research"}},
-	{kindCriteria, []string{"완료기준", "completioncriteria", "acceptancecriteria"}, nil},
+	{kindCriteria, []string{"완료기준", "completioncriteria", "acceptancecriteria"}, []string{"기준", "criteria"}},
 	{kindDeliverables, []string{"산출물", "deliverable"}, nil},
 	{kindVerification, []string{"검증", "verification"}, nil},
 	{kindScope, []string{"범위", "결과", "크기", "scope", "outcome", "result"}, []string{"size"}},
@@ -292,14 +292,20 @@ type section struct {
 	fenced []bool
 }
 
-func headingKind(title string) string {
+// compactHeading is a heading without emphasis marks, case or spaces, the form the heading words are
+// matched in.
+func compactHeading(title string) string {
 	plain := strings.Map(func(r rune) rune {
 		if r == '*' || r == '_' || r == '`' {
 			return -1
 		}
 		return r
 	}, strings.ToLower(title))
-	compact := strings.Join(strings.Fields(plain), "")
+	return strings.Join(strings.Fields(plain), "")
+}
+
+func headingKind(title string) string {
+	compact := compactHeading(title)
 	for _, k := range headingWords {
 		for _, w := range k.words {
 			if strings.Contains(compact, w) {
@@ -316,6 +322,21 @@ func headingKind(title string) string {
 }
 
 func readSections(body string) (sections []section, unread []string, err error) {
+	return readSectionsBy(body, headingKind)
+}
+
+// readSectionsBy reads the sections of body whose headings classify names ("" for a heading that is
+// none of them), with the same structure rules for every classifier. A heading deeper than a classified
+// one is part of that section.
+func readSectionsBy(body string, classify func(string) string) (sections []section, unread []string, err error) {
+	return readSectionsSplit(body, classify, nil, nil)
+}
+
+// readSectionsSplit is readSectionsBy where a deeper heading that split names is not part of the
+// section above it: the section ends there and the heading is read as its own. A heading that excluded
+// names (the out-of-scope heading) is read as none of them, and so is every deeper heading under it,
+// whatever its own words classify as, until a heading of its level or higher.
+func readSectionsSplit(body string, classify func(string) string, split, excluded func(string) bool) (sections []section, unread []string, err error) {
 	lines := strings.Split(strings.ReplaceAll(body, "\r\n", "\n"), "\n")
 	fenced := make([]bool, len(lines))
 	type heading struct {
@@ -376,12 +397,25 @@ func readSections(body string) (sections []section, unread []string, err error) 
 		return nil, nil, errors.New("the description has a code fence that is never closed, so everything after it would be skipped; close it")
 	}
 	activeLevel := 0
+	splits := func(title string) bool { return split != nil && split(title) }
+	excludedLevel := 0
 	for h, head := range headings {
-		if activeLevel != 0 && head.level > activeLevel {
+		if excludedLevel != 0 {
+			if head.level > excludedLevel {
+				continue
+			}
+			excludedLevel = 0
+		}
+		if activeLevel != 0 && head.level > activeLevel && !splits(head.title) {
 			continue
 		}
 		activeLevel = 0
-		kind := headingKind(head.title)
+		if excluded != nil && excluded(head.title) {
+			excludedLevel = head.level
+			unread = append(unread, head.title)
+			continue
+		}
+		kind := classify(head.title)
 		if kind == "" {
 			unread = append(unread, head.title)
 			continue
@@ -389,7 +423,7 @@ func readSections(body string) (sections []section, unread []string, err error) 
 		activeLevel = head.level
 		end := len(lines)
 		for _, next := range headings[h+1:] {
-			if next.level <= head.level {
+			if next.level <= head.level || splits(next.title) {
 				end = next.at
 				break
 			}
@@ -531,17 +565,32 @@ var (
 	fileExt    = regexp.MustCompile(`\.[A-Za-z0-9]+$`)
 )
 
+// rootFiles are the files at the repository root that carry no extension from pathExt (or none at all).
+var rootFiles = map[string]bool{
+	"go.mod": true, "go.sum": true, "go.work": true, "go.work.sum": true, "Makefile": true, "GNUmakefile": true,
+	"LICENSE": true, "NOTICE": true, "Dockerfile": true, ".gitignore": true, ".gitattributes": true,
+}
+
 // pathRegions are the repository regions the text names: every backticked path, cut to its directory
 // and to at most three segments, sorted and without repeats. Absolute, home, variable and URL tokens
 // are not repository paths.
 func pathRegions(text string) []string {
+	return pathRegionsWith(text, nil)
+}
+
+// pathRegionsWith is pathRegions where a slashless token is also a path when slashless says so.
+func pathRegionsWith(text string, slashless func(string) bool) []string {
 	seen := map[string]bool{}
 	for _, m := range pathToken.FindAllStringSubmatch(text, -1) {
 		t := lineSuffix.ReplaceAllString(m[1], "")
 		if strings.HasPrefix(t, "/") || strings.HasPrefix(t, "~") || strings.HasPrefix(t, "$") || strings.Contains(t, "://") || strings.ContainsAny(t, "*{}<>=(),;?") {
 			continue
 		}
-		if !strings.Contains(t, "/") && !pathExt.MatchString(t) {
+		if !strings.Contains(t, "/") && !pathExt.MatchString(t) && (slashless == nil || !slashless(t)) {
+			continue
+		}
+		if rootFiles[t] {
+			seen["."] = true
 			continue
 		}
 		clean := path.Clean(t)

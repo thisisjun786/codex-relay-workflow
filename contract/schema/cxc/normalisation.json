@@ -58,6 +58,12 @@
       "why": "the payload manifest version; a Go replay prints its own"
     },
     {
+      "name": "crw-plugin-version",
+      "regex": "0\\.4\\.0\\+[0-9a-f]{12}",
+      "replace": "<VERSION>",
+      "why": "the version of the crw plugin manifest (0.4.0+ and 12 hex digits of its payload digest, which every change to the payload moves); the oracle never prints it, a Go replay prints its own"
+    },
+    {
       "name": "iso-timestamp",
       "regex": "\\b\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})",
       "replace": "<TS>",

@@ -160,6 +160,14 @@ The issue is read as the Linear tools give it (id, title, description) or as fie
 	{"calibrate", "read a measured table and print its actual/estimate ratio distribution"},
 }}
 
+var issueReady = family{name: "issue-ready", description: `Judge whether one issue may be released to a child, so work with no decided answer, no test written to fail first or no end condition is held back before a child spends evaluation rounds designing it.
+
+The issue is read as the Linear tools give it (id, title, description, labels). An issue is ready when its body carries the five items: registered criteria, the edit regions, a decided answer with no design question left, the test cases to write first and see fail, and the end condition (which command must give which result). Each item is found by its section heading, in Korean or English, and the report names every missing item with the heading that supplies it. An issue that carries the design-first label, or whose open decisions section still lists a question, is held as design_first until the design result is in the decided answer and the label is gone.
+
+Exit 0: ready, or bypassed (a held issue released on an exception record: the management session's explicit approval, with the issue, the approver, the date and the statement). Exit 1: held, not_ready or design_first; the reasons say what to supply. Exit 2: an input that cannot be read, or an exception that names no approver. Exit 3: a file that cannot be read. The answer is a function of the issue text and labels: the same input is the same bytes. It reads nothing from Linear and writes nothing.`, commands: [][2]string{
+	{"check", "read one issue as JSON, from a file or stdin, and print the release answer"},
+}}
+
 var pairChoice = family{name: "pair-choice", description: "Offline child pair decision from release facts and an optional crw-pair-quota/1 snapshot. No snapshot producer is approved yet; absent quota uses the table. Exit 0 chooses, 1 holds, 2 rejects a request, 3 reports request/output I/O failure.", commands: [][2]string{{"choose", "print the selected family, quota values, rule and release-window counts as JSON"}}}
 
 // mergeBuildCheckSummary is the usage text of `crw skill merge-build-check`, which has no command

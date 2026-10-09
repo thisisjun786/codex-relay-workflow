@@ -736,6 +736,13 @@ func auditPkgRun(ctx context.Context, e *Env, args []string) int {
 // auditPkgRunOne does the work auditPkgRun validated the arguments for.
 func auditPkgRunOne(ctx context.Context, e *Env, round string, next int, headArg string) int {
 	cfg := coreDefaults(e)
+	// One audit run at a time (CRW-838): the lock is held for the whole run.
+	releaseRun, err := auditRunLock(e, cfg)
+	if err != nil {
+		fmt.Fprintf(e.Stderr, "crw manage audit package: error: %v\n", err)
+		return 1
+	}
+	defer releaseRun()
 	section, err := auditPkgSectionOf(cfg)
 	if err != nil {
 		fmt.Fprintf(e.Stderr, "crw manage audit package: error: %v\n", err)

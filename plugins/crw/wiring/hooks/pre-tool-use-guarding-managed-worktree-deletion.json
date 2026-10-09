@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$HOME/.local/share/crw-runtime/current/bin/crw\" hook pre-tool-use --leg pre-tool-use-guarding-managed-worktree-deletion",
+            "timeout": 10,
+            "statusMessage": "(crw) Guarding managed worktree"
+          }
+        ],
+        "matcher": "^Bash$"
+      }
+    ]
+  }
+}

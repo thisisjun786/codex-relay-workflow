@@ -507,7 +507,7 @@ the state directory (or outside it), the sidecars are that file's `-wal` and `-s
 because SQLite rebuilds that index from the log on open, and `-wal` is copied when it is there at its copy, under the restore-compatible name
 `relay.sqlite3-wal`, while an empty one that goes or appears between the listing and the copy is not a refusal (a log listed and gone is dropped,
 one that appeared after the listing is not copied, and the manifest's `storeSidecars` records which of the four happened). An empty log is the case
-this route exists for: a read-only open of a store no connection holds leaves one. The log is compared by its identity, not its size: its kind, its
+this route exists for: a read-only open of a store no connection holds leaves one. The swap gate's own reads of the store leave none: its catalog read and the relay's `doctor` and `service status` read a store that no log holds frames for with `immutable=1`, which creates neither `-wal` nor `-shm` (`store.InPlaceRead`; `service status` joined them in CRW-837), so a state directory that held no sidecars before the gate holds none at the first listing. The log is compared by its identity, not its size: its kind, its
 link target and the file its bytes come from must be the same in both listings, so a log whose link target or resolved source moved under the copy
 refuses ("the store's write-ahead log changed"), while the log's size and its coming and going are left to the sidecar rules above. A log that was
 not copied and holds frames in the second listing refuses instead, because a commit that stays in the log does not touch `relay.sqlite3` until a
@@ -516,6 +516,7 @@ checkpoint, so the digest check alone would not see it and the backup would clai
 is still there at the verification must digest to what was copied: one that a checkpoint has taken away by then is not a refusal either, and
 `relay.sqlite3` is the consistency the verification keeps. A store's `-wal` or `-shm` that goes between a listing's directory read and the entry's own
 information is recorded as gone before its copy rather than refusing; every other file's disappearance there still refuses.
+The room check ("the backup would not fit") is made before any byte is copied on the sum of the first listing, which counts the store's files twice (the copy and the scratch duplicate of the integrity gate). The log is a file another connection checkpoints away at any moment, so a refusal on the room reads the state directory once more, still before the first byte is copied, and is judged again only when that listing needs less; a log that went that way is recorded as `gone before its copy`, and one that is still there refuses as before.
 Each file is
 hashed while it is read and synced; then the state directory is read again, and the listing, every size and every file's digest, and the digest of
 every file in the copy, must be what was copied. Any difference, in any file, refuses the swap ("the state directory changed under the copy"):

@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$HOME/.local/share/crw-runtime/current/bin/crw\" hook session-start --leg session-start-announcing-subagent-fallback",
+            "timeout": 10,
+            "statusMessage": "(crw) Loading subagent fallback protocol"
+          }
+        ]
+      }
+    ]
+  }
+}

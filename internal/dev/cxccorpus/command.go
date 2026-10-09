@@ -18,7 +18,7 @@ import (
 	"time"
 )
 
-const usage = "usage: crw-dev cxc {declarations,constants,record,check,lint} ..."
+const usage = "usage: crw-dev cxc {declarations,constants,record,check,lint,hooks} ..."
 
 // Run is `crw-dev cxc`.
 //
@@ -29,6 +29,8 @@ const usage = "usage: crw-dev cxc {declarations,constants,record,check,lint} ...
 //	                                 the coverage index
 //	check --oracle DIR [--only RE]   record again and compare with the committed fixtures
 //	lint                             check the corpus without an oracle (CI)
+//	hooks                            regenerate the plugin's hook declarations from
+//	                                 hook-declarations.json (plugins/crw/wiring/hooks)
 func Run(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, usage)
@@ -41,6 +43,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return 0
 	case "lint":
 		return runLint(args[1:], stdout, stderr)
+	case "hooks":
+		return runHooks(args[1:], stdout, stderr)
 	case "declarations", "constants", "record", "check":
 		return runOracle(args[0], args[1:], stdout, stderr)
 	}
@@ -74,6 +78,36 @@ func runLint(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	return LintReport(root, stdout, stderr)
+}
+
+func runHooks(args []string, stdout, stderr io.Writer) int {
+	set := flag.NewFlagSet("crw-dev cxc hooks", flag.ContinueOnError)
+	set.SetOutput(stderr)
+	rootFlag := set.String("root", "", "repository root (default: the git top level)")
+	if err := set.Parse(args); err != nil {
+		return 2
+	}
+	root := *rootFlag
+	if root == "" {
+		var err error
+		if root, err = RepositoryRoot(); err != nil {
+			fmt.Fprintln(stderr, "crw-dev cxc hooks:", err)
+			return 1
+		}
+	}
+	if err := WriteShippedHooks(root); err != nil {
+		fmt.Fprintln(stderr, "crw-dev cxc hooks:", err)
+		return 1
+	}
+	problems := CheckShippedHooks(root)
+	for _, p := range problems {
+		fmt.Fprintln(stderr, "crw-dev cxc hooks: "+p)
+	}
+	if len(problems) > 0 {
+		return 1
+	}
+	fmt.Fprintf(stdout, "wrote the hook declarations of %s under %s\n", Declarations, ShippedHooksDir)
+	return 0
 }
 
 // LintReport prints the lint result and returns its exit status.

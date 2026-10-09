@@ -266,7 +266,29 @@ export interface RelayRelationshipView {
   executionGeneration?: unknown;
   nextExpectedAction?: unknown;
   head?: { eventId?: unknown; revisionHash?: unknown; detail?: unknown } | null;
+  /** The relay's own link: null when the relationship names no pull request; absent when not exported. */
+  pullRequest?: { repository?: unknown; number?: unknown } | null;
   read?: { state?: string; reason?: string } | null;
+}
+
+/**
+ * The pull request line of one relationship. The relay's null is no pull request; a value the
+ * document did not carry, or a relationship whose read failed, is unknown and never reads as none.
+ * The GUI does not infer a pull request from any other field.
+ */
+export function relationshipPullRequestText(
+  relationship: Pick<RelayRelationshipView, "pullRequest" | "read">,
+): string {
+  if (relationship.read && relationship.read.state !== undefined && relationship.read.state !== "ok") {
+    return "pull request unknown";
+  }
+  const link = relationship.pullRequest;
+  if (link === null) return "no pull request";
+  if (link === undefined) return "pull request unknown";
+  const repository = typeof link.repository === "string" ? link.repository : "";
+  const number = typeof link.number === "number" ? link.number : null;
+  if (repository === "" || number === null) return "pull request unknown";
+  return `pull request ${repository}#${number}`;
 }
 
 /** One DAG plan's progress, under the scheduler's own stage names. */

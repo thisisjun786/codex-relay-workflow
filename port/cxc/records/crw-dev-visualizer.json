@@ -350,9 +350,9 @@
     },
     {
       "file": "tests/report-research-handoff.test.mjs",
-      "reason": "Move the S-class skill-script test report-research-handoff.test.mjs from CXC v0.2.40 plugins/codexclaw/test/ beside the skill it protects, changing only its import paths to the staged layout and the name table of contract/schema/cxc/name-substitution.json; it runs under Node in the skill-scripts-node CI job.",
+      "reason": "Move the S-class skill-script test report-research-handoff.test.mjs from CXC v0.2.40 plugins/codexclaw/test/ beside the skill it protects, changing only its import paths to the staged layout and the name table of contract/schema/cxc/name-substitution.json; it runs under Node in the skill-scripts-node CI job. Its malformed host adapter example is a path outside a personal home directory (/var/example/account for /Users/example/account), so the plugin package check's private-path rule passes the shipped copy; it is still a path, not a portable identifier, so the assertion holds (CRW-392).",
       "add": true,
-      "sha256": "3d987fd506cb81d9cdb1962093a79c12fdfb2e4da93165e5335a11402da01ebd"
+      "sha256": "c9297ae00f86fd572e952e1f4077e00247d9e27b39639e7ceff1ba89f65dfd8c"
     },
     {
       "file": "tests/visualize-inspection.test.mjs",

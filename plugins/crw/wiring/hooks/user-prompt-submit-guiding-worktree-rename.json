@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$HOME/.local/share/crw-runtime/current/bin/crw\" hook user-prompt-submit --leg user-prompt-submit-guiding-worktree-rename",
+            "timeout": 10,
+            "statusMessage": "(crw) Checking worktree rename intent"
+          }
+        ]
+      }
+    ]
+  }
+}

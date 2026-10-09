@@ -3,17 +3,20 @@
 // Command crw-dev carries the repository's development tooling: the CI checks, the skill links a
 // checkout installs, the readings a live trial is judged by (the per-event Stop judge and the
 // intervention ledger), and the recorder of the CXC v0.2.40 behaviour corpus (which runs the Node
-// oracle). It is built only with -tags dev and is never part of a release archive.
+// oracle), and the parity harness that fires the declared hooks of a plugin root. It is built only with -tags dev and is never part of a release archive.
 package main
 
 import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/contracttest"
 	"github.com/thisisjun786/codex-relay-workflow/internal/dev/ci"
 	"github.com/thisisjun786/codex-relay-workflow/internal/dev/cxccorpus"
 	"github.com/thisisjun786/codex-relay-workflow/internal/dev/cxcfuzz"
+	"github.com/thisisjun786/codex-relay-workflow/internal/dev/laneparity"
 	"github.com/thisisjun786/codex-relay-workflow/internal/dev/skills"
 	"github.com/thisisjun786/codex-relay-workflow/internal/dev/stopevents"
 	"github.com/thisisjun786/codex-relay-workflow/internal/dev/trialledger"
@@ -24,17 +27,23 @@ var commands = map[string]func(args []string, stdout, stderr io.Writer) int{
 	"ci":           ci.Run,
 	"cxc":          cxccorpus.Run,
 	"fuzz":         cxcfuzz.Run,
+	"parity":       laneparity.Run,
 	"skills":       skills.Run,
 	"stop-events":  stopevents.Run,
 	"trial-ledger": trialledger.Run,
 }
 
 func main() {
+	// A replay case of `crw-dev parity` links its stub programs and its git wrapper to this binary: a
+	// process started under one of those names with the case's records directory set plays the stub.
+	if dir := os.Getenv(contracttest.RecDirEnv); dir != "" && filepath.Base(os.Args[0]) != "crw-dev" {
+		os.Exit(contracttest.RunStubHelper(dir))
+	}
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
-	const usage = "usage: crw-dev {ci,cxc,fuzz,skills,stop-events,trial-ledger} ..."
+	const usage = "usage: crw-dev {ci,cxc,fuzz,parity,skills,stop-events,trial-ledger} ..."
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, usage)
 		fmt.Fprintln(stderr, "crw-dev: error: the following arguments are required: command")

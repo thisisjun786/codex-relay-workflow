@@ -51,6 +51,7 @@ func TestHookRoutesALegToTheHarnessAndTheRestToTheStopAdapter(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("CODEX_HOME", filepath.Join(home, "codex"))
+	switchOn(t, filepath.Join(home, "codex"))
 	over := filepath.Join(home, "oversized.json")
 	if err := os.WriteFile(over, []byte(strings.Repeat("x", 4*1024*1024+1)), 0o600); err != nil {
 		t.Fatal(err)
@@ -86,6 +87,7 @@ func TestAnInterruptEndsAHookLegWaitingForItsInput(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("CODEX_HOME", filepath.Join(home, "codex"))
+	switchOn(t, filepath.Join(home, "codex"))
 	in, hold, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)

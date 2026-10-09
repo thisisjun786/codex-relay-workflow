@@ -147,7 +147,7 @@ func RecordEdits(root string, src Source, name, reason string) (int, error) {
 	if len(orig) != len(skill.Files) {
 		return 0, errors.New("the record is stale against the source (file set differs): stage again")
 	}
-	staged, err := readTree(filepath.Join(root, StagingRoot, name))
+	staged, err := readTree(filepath.Join(root, SkillsRoot, name))
 	if err != nil {
 		return 0, err
 	}
@@ -192,7 +192,7 @@ func RecordEdits(root string, src Source, name, reason string) (int, error) {
 	if err := skill.validate(name); err != nil {
 		return 0, err
 	}
-	if problems := compare(StagingRoot+"/"+name, skill, staged); len(problems) > 0 {
+	if problems := compare(SkillsRoot+"/"+name, skill, staged); len(problems) > 0 {
 		return 0, errors.New(strings.Join(problems, "\n"))
 	}
 	return len(edits), save(root, name, skill)

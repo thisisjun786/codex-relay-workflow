@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$HOME/.local/share/crw-runtime/current/bin/crw\" hook session-start --leg session-start-advising-agent-thread-permissions",
+            "timeout": 10,
+            "statusMessage": "(crw) Advising on agent-created thread permissions"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$HOME/.local/share/crw-runtime/current/bin/crw\" hook pre-tool-use --leg pre-tool-use-guarding-goal-budget",
+            "timeout": 15,
+            "statusMessage": "(crw) Guarding goal budget"
+          }
+        ],
+        "matcher": "^create_goal$"
+      }
+    ]
+  }
+}

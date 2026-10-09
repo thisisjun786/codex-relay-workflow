@@ -521,8 +521,8 @@ func TestAuditListFilters(t *testing.T) {
 	if len(byIssue.Rounds) != 2 {
 		t.Errorf("--issue left the rounds alone: %+v", byIssue.Rounds)
 	}
-	if len(byIssue.Drafts) != 1 {
-		t.Errorf("--issue left the drafts alone: %+v", byIssue.Drafts)
+	if len(byIssue.Drafts) != 0 {
+		t.Errorf("--issue kept a draft that was not posted as that issue: %+v", byIssue.Drafts)
 	}
 
 	at := time.Date(2026, 1, 1, 0, 0, 0, 250000000, time.UTC)
@@ -575,5 +575,54 @@ func TestAuditListOutputWriteFailure(t *testing.T) {
 	e.Stdout = auditListFailWriter{}
 	if code := auditRun(context.Background(), e, []string{"list"}); code != 3 {
 		t.Errorf("a failed output write exited %d, want 3: %q", code, errOut.String())
+	}
+}
+
+// CRW-909: --issue K keeps the drafts whose posted key is K; a draft with no posted key, or another one,
+// drops out when --issue is given, and without --issue every draft stays.
+func TestAuditListIssueFiltersPostedDrafts(t *testing.T) {
+	e, _, _ := auditTestEnv(t)
+	state := auditListHome(t)
+	auditListWriteDraft(t, state, "aaaaaaaaaaaaaaaa", "CRW", "P1", auditDraftStateDraft)
+	auditListWriteDraft(t, state, "bbbbbbbbbbbbbbbb", "CRW", "P1", auditDraftStatePosted)
+	auditListWriteDraft(t, state, "cccccccccccccccc", "CRW", "P0", auditDraftStatePosted)
+	for fingerprint, posted := range map[string]string{"bbbbbbbbbbbbbbbb": "CRW-7", "cccccccccccccccc": "CRW-8"} {
+		path := filepath.Join(state, "drafts", fingerprint+".json")
+		doc, err := auditDraftLoad(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		doc.Posted = posted
+		data, err := json.MarshalIndent(doc, "", "  ")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, append(data, '\n'), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg := coreDefaults(e)
+	fingerprints := func(opts AuditListOptions) []string {
+		listing, err := AuditList(context.Background(), e, cfg, opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := []string{}
+		for _, draft := range listing.Drafts {
+			out = append(out, draft.Fingerprint)
+		}
+		return out
+	}
+	if got := fingerprints(AuditListOptions{Issue: "CRW-7"}); !reflect.DeepEqual(got, []string{"bbbbbbbbbbbbbbbb"}) {
+		t.Errorf("--issue CRW-7 kept %v, want the draft posted as CRW-7 only", got)
+	}
+	if got := fingerprints(AuditListOptions{Issue: "CRW-99"}); !reflect.DeepEqual(got, []string{}) {
+		t.Errorf("--issue CRW-99 kept %v, want none", got)
+	}
+	if got := fingerprints(AuditListOptions{}); len(got) != 3 {
+		t.Errorf("no --issue kept %v, want every draft", got)
+	}
+	if got := fingerprints(AuditListOptions{Round: "r1"}); len(got) != 3 {
+		t.Errorf("--round alone kept %v, want every draft", got)
 	}
 }

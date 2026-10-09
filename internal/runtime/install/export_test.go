@@ -199,6 +199,14 @@ func WriteExecutable(target string, body []byte, mode os.FileMode) error {
 	return writeExecutable(target, body, mode)
 }
 
+// ReplaceStateBackupRoom makes the state-directory backup's free-space check go through room until restored: a test makes the filesystem seem too small for
+// the first listing of the state directory and large enough for a smaller one (CRW-837).
+func ReplaceStateBackupRoom(room func(parent string, need int64) error) (restore func()) {
+	saved := stateBackupRoom
+	stateBackupRoom = room
+	return func() { stateBackupRoom = saved }
+}
+
 // SqliteIntegrityCheck is the backup's real integrity gate: it duplicates the copied store (and its log, when the
 // copy holds one) beside dest and returns SQLite's PRAGMA integrity_check answer.
 func SqliteIntegrityCheck(ctx context.Context, dest string, copied []BackedUp) (string, error) {

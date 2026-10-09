@@ -2,7 +2,6 @@ package manage
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
@@ -44,11 +43,15 @@ func auditReportLedger(e *Env, cfg *Config) ([]auditLedgerRow, error) {
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
-		var row auditLedgerRow
-		if err := json.Unmarshal([]byte(line), &row); err != nil {
+		decoded, err := auditLedgerDecode(line)
+		if err != nil {
 			return nil, fmt.Errorf("the audit ledger line %d: %w", i+1, err)
 		}
-		rows = append(rows, row)
+		if decoded.Kind != "" {
+			// A line that is not a graded result (a posted escalation, CRW-962) is not a row here.
+			continue
+		}
+		rows = append(rows, decoded.Result)
 	}
 	return rows, nil
 }
@@ -99,6 +102,13 @@ func auditReportGroups(rows []auditLedgerRow) []auditReportGroup {
 // A pair or phase label is configuration text, so it is escaped before it reaches the table: a
 // label carrying a pipe or a newline would otherwise forge rows or columns in the report.
 func auditReportMarkdown(rows []auditLedgerRow, now time.Time) string {
+	return auditReportMarkdownWith(rows, nil, now)
+}
+
+// auditReportMarkdownWith is the report with the pull request targets the failure record holds
+// out of the selection named under the table: a person reading the report learns that a
+// target is not being audited and at which head. The section is absent when there are none.
+func auditReportMarkdownWith(rows []auditLedgerRow, skips []auditPRSkip, now time.Time) string {
 	groups := auditReportGroups(rows)
 	var out strings.Builder
 	out.WriteString("# Post-merge pull request audit\n\n")
@@ -109,6 +119,12 @@ func auditReportMarkdown(rows []auditLedgerRow, now time.Time) string {
 		fmt.Fprintf(&out, "| %s | %s | %d | %.2f | %d | %d |\n",
 			auditReportLabel(group.Pair), auditReportLabel(group.Phase), group.PRs,
 			float64(group.ScoreSum)/float64(group.PRs), group.P0, group.P1)
+	}
+	if len(skips) > 0 {
+		out.WriteString("\n## Skipped pull requests\n\n")
+		for _, skip := range skips {
+			fmt.Fprintf(&out, "- %s: skipped: failed %d times at %s\n", auditReportLabel(skip.Subject), skip.Failures, auditReportLabel(skip.Head))
+		}
 	}
 	return out.String()
 }
@@ -124,11 +140,22 @@ func auditReportLabel(label string) string {
 // auditReportWrite rebuilds the report from the ledger and writes it atomically, so a reader
 // never sees a half-written report and a failure leaves the previous one in place.
 func auditReportWrite(e *Env, cfg *Config) error {
+	return auditReportWriteWith(e, cfg, nil)
+}
+
+// auditReportWriteWith writes the report with the skipped pull requests judged at the heads the
+// caller knows (a nil map judges each at the head of its latest failure).
+func auditReportWriteWith(e *Env, cfg *Config, heads map[string]string) error {
 	rows, err := auditReportLedger(e, cfg)
 	if err != nil {
 		return err
 	}
-	return deliverWriteAtomic(auditReportPath(e, cfg), []byte(auditReportMarkdown(rows, e.Now())))
+	failures, err := auditPRReadFailures(e, cfg)
+	if err != nil {
+		return err
+	}
+	skips := auditPRSkips(failures, auditPRAudited(rows), heads)
+	return deliverWriteAtomic(auditReportPath(e, cfg), []byte(auditReportMarkdownWith(rows, skips, e.Now())))
 }
 
 // auditReportUsage is the line the report subcommand prints.

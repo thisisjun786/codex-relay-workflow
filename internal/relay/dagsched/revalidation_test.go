@@ -1003,7 +1003,8 @@ func TestAGenerationOpenedByHandIsBoundOnlyToTheManifestItWasOpenedFor(t *testin
 		}
 		ridA := accepted["A"].RelationshipID
 		prepared := k.rvPrepare("sr", "A")
-		rvOpenByHand(t, k, ridA, prepared.DispatchRequestID, true)
+		// a generation opened and bound before generation-open and generation-bind asked the route (CRW-1036): dag-correct still refuses to record it
+		openAndBindUnguarded(t, k, ridA, prepared.DispatchRequestID, "needs_changes_revision")
 		if _, err := k.sched.RecordCorrection(context.Background(), "sr", "A", "parent", prepared.ManifestDigest); refusalReason(err) != "disposition_conflict" || k.count("SELECT COUNT(*) FROM dag_node_executions WHERE node_id = 'A' AND execution_generation = 2") != 0 {
 			t.Fatalf("correction = %v", err)
 		} else if !strings.Contains(err.Error(), "revalidate") {

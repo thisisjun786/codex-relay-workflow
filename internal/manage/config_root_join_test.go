@@ -119,7 +119,7 @@ func TestJoinRootAuditFamilyUsesTheConfiguredRoot(t *testing.T) {
 	cfg := auditSectionConfig(t, f.spelled, nil)
 
 	results := []AuditResult{{Mode: auditModePR, Subject: "s", Head: "h", Issue: "CRW-1", Status: auditStatusOK, Score: 5,
-		GradedAt: "2026-01-01T00:00:00Z", Bundle: "b", Defects: []AuditDefect{{Severity: "P1", What: "w", Where: "f.go:1"}}}}
+		GradedAt: "2026-01-01T00:00:00Z", Bundle: "b", graded: []byte(crw838JSONFirst), Defects: []AuditDefect{{Severity: "P1", What: "w", Where: "f.go:1"}}}}
 	if rows, err := auditRecord(e, cfg, results); err != nil || rows != 1 {
 		t.Fatalf("auditRecord: %d rows, %v", rows, err)
 	}

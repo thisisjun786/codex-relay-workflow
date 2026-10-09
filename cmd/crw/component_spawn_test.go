@@ -25,6 +25,7 @@ func spawnLegEnv(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	switchOn(t, filepath.Join(root, "codex"))
 }
 
 // The recorded answers of CXC v0.2.40's hook main (spawn-attach-hook.ts:1136-1150), renamed by

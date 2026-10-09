@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/dev/cxccorpus"
 )
 
 // entries is the names in root/dir (without suffix), ignoring hidden temp items; a missing
@@ -29,9 +31,13 @@ func entries(root, dir, suffix string) (map[string]bool, error) {
 	return found, err
 }
 
-// Check verifies every staged skill against its record and returns how many it looked at and the
-// problems found, each as "<path>: <what is wrong>". Nothing staged and no record is silent. With a
-// source it also checks that tree against the record origin and renders the originals again.
+// Check verifies every ported skill against its record and returns how many it looked at and the
+// problems found, each as "<path>: <what is wrong>". A ported skill is any skill of SkillsRoot but the
+// ones CRW wrote itself (OwnSkills, which share the root since the activation move, CRW-392), and any
+// record: a ported skill without a record and a record without its skill are refused. Nothing ported
+// and no record is silent, and so is a tree without the name table and without a record: staging
+// needs the table, so such a tree holds only skills of its own. With a source it also checks that
+// tree against the record origin and renders the originals again.
 func Check(root string, src *Source) (int, []string) {
 	var problems []string
 	report := func(format string, a ...any) { problems = append(problems, fmt.Sprintf(format, a...)) }
@@ -39,15 +45,20 @@ func Check(root string, src *Source) (int, []string) {
 		return 0, []string{err.Error()}
 	}
 	recorded, err1 := entries(root, RecordDir, ".json")
-	staged, err2 := entries(root, StagingRoot, "")
+	staged, err2 := entries(root, SkillsRoot, "")
 	if err := errors.Join(err1, err2); err != nil {
 		return 0, []string{err.Error()}
 	}
 	set := map[string]bool{}
 	maps.Copy(set, recorded)
 	maps.Copy(set, staged)
+	for _, name := range OwnSkills {
+		if !recorded[name] {
+			delete(set, name)
+		}
+	}
 	names := slices.Sorted(maps.Keys(set))
-	if len(names) == 0 {
+	if len(names) == 0 || len(recorded) == 0 && !hasTable(root) {
 		return 0, nil
 	}
 	sub, err := newSubstituter(root)
@@ -63,9 +74,9 @@ func Check(root string, src *Source) (int, []string) {
 	}
 	var origin *Origin
 	for _, name := range names {
-		dir, rec := StagingRoot+"/"+name, RecordDir+"/"+name+".json"
+		dir, rec := SkillsRoot+"/"+name, RecordDir+"/"+name+".json"
 		if !recorded[name] || !staged[name] {
-			report("%s: staged skill %s", dir, map[bool]string{true: "has no record", false: "is missing"}[staged[name]])
+			report("%s: ported skill %s", dir, map[bool]string{true: "has no record", false: "is missing"}[staged[name]])
 			continue
 		}
 		skill, err := load(root, name)
@@ -98,6 +109,13 @@ func Check(root string, src *Source) (int, []string) {
 		}
 	}
 	return len(names), problems
+}
+
+// hasTable reports whether root holds the name table, or anything that could be it: only a table
+// that is certainly absent counts as none.
+func hasTable(root string) bool {
+	_, err := os.Lstat(filepath.Join(root, cxccorpus.Substitution))
+	return !errors.Is(err, fs.ErrNotExist)
 }
 
 // compare is the differences between a staged tree and what its record accounts for.

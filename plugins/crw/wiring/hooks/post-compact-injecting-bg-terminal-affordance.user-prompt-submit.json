@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$HOME/.local/share/crw-runtime/current/bin/crw\" hook user-prompt-submit --leg post-compact-injecting-bg-terminal-affordance.user-prompt-submit",
+            "timeout": 10,
+            "statusMessage": "(crw) Restoring queued compact affordances"
+          }
+        ]
+      }
+    ]
+  }
+}

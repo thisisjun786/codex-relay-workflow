@@ -69,7 +69,7 @@ documents under `docs/relay`. The CI checks are Go only (`crw-dev ci`); their Py
 refactor R3. The port checkers, the last Python files, left in todo 48. The runtime, installer
 and CI do not depend on Python: `crw-dev ci validate` refuses a `.py` file or a python-shebang
 script anywhere but the `scripts/` and `examples/` directories of a skill (`plugins/crw/skills/*`,
-and the staged skills under `port/cxc/skills/*`), whose helper scripts are original assets an
+the skills ported from CXC among them), whose helper scripts are original assets an
 agent runs when it needs them, and CI installs no Python and runs none of them.
 
 Installer tests use temporary destinations; do not point test runs at your real

@@ -337,6 +337,9 @@ func TestSessionHookPostToolUseCapturesAndReinjects(t *testing.T) {
 			"CREATE TABLE thread_goals (thread_id TEXT PRIMARY KEY, status TEXT)", "INSERT INTO thread_goals VALUES ('s4', 'active')")},
 		{"s5", sessionHookGoalsDB(t, filepath.Join(dir, "codex-unreadable"),
 			"CREATE TABLE thread_goals (thread_id TEXT PRIMARY KEY)")},
+		// A column declared STATUS leaves row.status undefined: unreadable even for a paused row (CRW-1077).
+		{"s6", sessionHookGoalsDB(t, filepath.Join(dir, "codex-upper-status"),
+			"CREATE TABLE thread_goals (thread_id TEXT PRIMARY KEY, STATUS TEXT)", "INSERT INTO thread_goals VALUES ('s6', 'paused')")},
 	} {
 		sessionHookStateFile(t, cwd, c.sessionID, func(s *state.State) { s.Phase, s.OrchestrationActive = state.PhaseI, true })
 		answer := SessionHookPostToolUse(SessionHookPostToolUsePayload{Cwd: cwd, SessionID: c.sessionID, ToolName: "request_user_input",

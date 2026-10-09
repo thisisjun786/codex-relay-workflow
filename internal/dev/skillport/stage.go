@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 )
 
-// Stage copies each folder of the source skills tree into the staging root with the name table
+// Stage copies each folder of the source skills tree into the skills root with the name table
 // applied and writes its record. It never overwrites: a folder whose staged directory or record
 // exists is refused. Each folder is a unit; the names done before a failure stay complete.
 func Stage(root string, src Source, folders []string) ([]string, error) {
@@ -54,7 +54,7 @@ func stageOne(root string, src Source, sub *substituter, folder string, rename f
 		return "", errors.New("the name table does not port this skill (redirect stub or out of scope)")
 	}
 	name = prefix + folder
-	target, record := filepath.Join(root, StagingRoot, name), recordPath(root, name)
+	target, record := filepath.Join(root, SkillsRoot, name), recordPath(root, name)
 	for _, p := range []string{target, record} {
 		if _, err := os.Lstat(p); err == nil {
 			return "", fmt.Errorf("%s exists: stage never overwrites", p)
@@ -67,7 +67,7 @@ func stageOne(root string, src Source, sub *substituter, folder string, rename f
 	if err != nil {
 		return "", err
 	}
-	if err = os.MkdirAll(filepath.Join(root, StagingRoot), 0o755); err != nil {
+	if err = os.MkdirAll(filepath.Join(root, SkillsRoot), 0o755); err != nil {
 		return "", err
 	}
 	var tmp, tmpRecord string
@@ -81,7 +81,7 @@ func stageOne(root string, src Source, sub *substituter, folder string, rename f
 			os.Remove(tmpRecord)
 		}
 	}()
-	if tmp, err = os.MkdirTemp(filepath.Join(root, StagingRoot), ".stage-"); err != nil {
+	if tmp, err = os.MkdirTemp(filepath.Join(root, SkillsRoot), ".stage-"); err != nil {
 		return "", err
 	}
 	skill := &Skill{Origin: src.Origin, Table: sub.digest, From: folder, Files: map[string]FileEntry{}}

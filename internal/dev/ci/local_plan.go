@@ -127,7 +127,10 @@ if ! jq -e 'type == "object" and length > 0 and all(.[]; type == "object" and .r
   exit 1
 fi
 echo 'Every prerequisite job succeeded.'`
-	localCorpusCommand = `make test-part TEST_PART="${PART#test-}"`
+	// localSecretsCommand is the secrets job's scan. The script downloads the linux x64 Gitleaks archive and
+	// calls sha256sum, so a plan that carries it runs only on linux x64 (CRW-1027, merged into CRW-1025).
+	localSecretsCommand = "bash scripts/ci/secrets.sh"
+	localCorpusCommand  = `make test-part TEST_PART="${PART#test-}"`
 )
 
 // localPlan is the table: every ci.yml job, every step of it, in workflow order. A job's steps are
@@ -165,18 +168,18 @@ func localPlan() []localJob {
 	secrets := localJob{name: "secrets", legs: nil}
 	secrets.steps = append(secrets.steps, mirrorPair()...)
 	secrets.steps = append(secrets.steps, checkout)
-	secrets.steps = append(secrets.steps, localStep{name: "", kind: localRun, command: "bash scripts/ci/secrets.sh",
+	secrets.steps = append(secrets.steps, localStep{name: "", kind: localRun, command: localSecretsCommand,
 		tool: "", scope: "range", heavy: true, legs: nil, env: []string{"GITHUB_EVENT_NAME=pull_request", "PR_BASE_SHA=" + localBaseEnv}})
 	plan = append(plan, secrets)
 	skill_scripts_node := localJob{name: "skill-scripts-node", legs: nil}
 	skill_scripts_node.steps = append(skill_scripts_node.steps, mirrorPair()...)
 	skill_scripts_node.steps = append(skill_scripts_node.steps, checkout)
 	skill_scripts_node.steps = append(skill_scripts_node.steps, localStep{name: "Decide from the changed files whether the staged skills changed", kind: localRun, command: "set -euo pipefail\n# A pull request compares from its merge base: the commits the branch adds to its base,\n# never the base tip's own changes. A push to dev compares the previous commit with this\n# one, where the range is already the pushed commits. A manual dispatch has neither, so\n# it runs the tests.\nif [[ -n \"${PR_BASE_SHA}\" ]]; then\n  range=\"${PR_BASE_SHA}...${PR_HEAD_SHA}\"\nelif [[ -n \"${PUSH_BEFORE_SHA}\" && \"${PUSH_BEFORE_SHA}\" != \"0000000000000000000000000000000000000000\" ]]; then\n  range=\"${PUSH_BEFORE_SHA}..${GITHUB_SHA}\"\nelse\n  echo \"changed=true\" >> \"$GITHUB_OUTPUT\"\n  echo 'no base to compare with; the staged skill-script tests run'\n  exit 0\nfi\nchanged=\"$(git diff --name-only \"${range}\" -- \"${SKILLS_ROOT}\")\"\nif [[ -n \"${changed}\" ]]; then\n  echo \"changed=true\" >> \"$GITHUB_OUTPUT\"\n  printf 'staged skill paths changed:\\n%s\\n' \"${changed}\"\nelse\n  echo \"changed=false\" >> \"$GITHUB_OUTPUT\"\n  echo 'no staged skill path changed; the job ends without installing Node'\nfi",
-		tool: "", scope: "range", heavy: false, legs: nil, env: []string{"PR_BASE_SHA=" + localBaseEnv, "PR_HEAD_SHA=" + localHeadEnv, "GITHUB_OUTPUT=" + localGuiOutputEnv, "SKILLS_ROOT=port/cxc/skills"},
+		tool: "", scope: "range", heavy: false, legs: nil, env: []string{"PR_BASE_SHA=" + localBaseEnv, "PR_HEAD_SHA=" + localHeadEnv, "GITHUB_OUTPUT=" + localGuiOutputEnv, "SKILLS_ROOT=plugins/crw/skills"},
 		note: "the same changed-path decision ci.yml runs, recorded; the local run performs every step, so the answer skips nothing"})
 	skill_scripts_node.steps = append(skill_scripts_node.steps, nodeToolchain)
 	skill_scripts_node.steps = append(skill_scripts_node.steps, localStep{name: "Run the staged skill-script tests", kind: localRun, command: localSkillTests,
-		tool: "node", scope: "full", heavy: true, legs: nil, env: []string{"SKILLS_ROOT=port/cxc/skills"}})
+		tool: "node", scope: "full", heavy: true, legs: nil, env: []string{"SKILLS_ROOT=plugins/crw/skills"}})
 	plan = append(plan, skill_scripts_node)
 	gui := localJob{name: "gui", legs: nil}
 	gui.steps = append(gui.steps, mirrorPair()...)

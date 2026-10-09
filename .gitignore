@@ -11,3 +11,4 @@ __pycache__/
 /dist/
 .omo/evidence/bin/
 *.egg-info/
+.crw/

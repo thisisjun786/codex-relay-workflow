@@ -40,6 +40,18 @@ func WithSessionLockContext(ctx context.Context, cwd, sessionID string, fn func(
 // caller that has to reach the give-up passes a short schedule so the case does not burn the oracle's
 // real waits (CRW-922); nil means LOCK_RETRY_DELAYS_MS, which is what both entries above pass.
 func orchestrateInterruptLockContext(ctx context.Context, cwd, sessionID string, fn func() error, sleep func(time.Duration), retryDelays []time.Duration) error {
+	return orchestrateInterruptLockWait(ctx, cwd, sessionID, fn, sleep, retryDelays, nil)
+}
+
+// WithSessionLockObserved is WithSessionLock for a test that has to know the caller is waiting. onBusy runs once, on the first
+// attempt that finds the lock held, immediately before the caller sleeps for the first time; retryDelays replaces the oracle's
+// schedule (milliseconds, as LOCK_RETRY_DELAYS_MS) so the test, not the wall clock, decides when the wait gives up. A nil onBusy
+// and a nil retryDelays are exactly WithSessionLock. Production never passes either (CRW-564).
+func WithSessionLockObserved(cwd, sessionID string, fn func() error, retryDelays []time.Duration, onBusy func()) error {
+	return orchestrateInterruptLockWait(context.Background(), cwd, sessionID, fn, time.Sleep, retryDelays, onBusy)
+}
+
+func orchestrateInterruptLockWait(ctx context.Context, cwd, sessionID string, fn func() error, sleep func(time.Duration), retryDelays []time.Duration, onBusy func()) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -73,6 +85,9 @@ func orchestrateInterruptLockContext(ctx context.Context, cwd, sessionID string,
 				return ctxErr
 			}
 			return err
+		}
+		if attempt == 0 && onBusy != nil {
+			onBusy()
 		}
 		delay := schedule[attempt] * time.Millisecond
 		if ctx.Done() == nil {

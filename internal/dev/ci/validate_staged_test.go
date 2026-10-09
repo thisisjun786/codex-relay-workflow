@@ -21,6 +21,15 @@ func stagedRepo(t *testing.T, skill string) *fixtureRepo {
 func stagedRepoSource(t *testing.T, skill string) (*fixtureRepo, skillport.Source) {
 	t.Helper()
 	r, tree := validateRepo(t), newRepo(t)
+	// Beside the ported skills the plugin holds only skills CRW wrote itself: the fixture's own skill
+	// takes one of their names, as any other skill there would need a record.
+	if err := os.RemoveAll(filepath.Join(r.root, "plugins/crw/skills/example")); err != nil {
+		t.Fatal(err)
+	}
+	own := skillport.OwnSkills[0]
+	r.write("plugins/crw/skills/"+own+"/SKILL.md", "---\nname: "+own+"\ndescription: \"Do useful work\"\n---\n")
+	r.write("plugins/crw/skills/"+own+"/agents/openai.yaml", "interface:\n  display_name: \"Own\"\n"+
+		"  short_description: \"Do useful work\"\n  default_prompt: \"$"+own+" work\"\n")
 	table, err := os.ReadFile(filepath.Join(repoRoot(), "contract/schema/cxc/name-substitution.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -40,9 +49,9 @@ func stagedRepoSource(t *testing.T, skill string) (*fixtureRepo, skillport.Sourc
 	return r, src
 }
 
-// A staged skill rides the validate check: its fidelity to the record, its metadata and its links.
+// A ported skill rides the validate check: its fidelity to the record, its metadata and its links.
 func TestStagedSkillsAreValidated(t *testing.T) {
-	const staged = "port/cxc/skills/crw-kwrite/"
+	const staged = "plugins/crw/skills/crw-kwrite/"
 	const good = "---\nname: cxc-kwrite\ndescription: \"Demo\"\n---\n\nSee [a](references/a.md).\n"
 	r := stagedRepo(t, good)
 	if got := validate(t, r); got.code != 0 || !strings.HasPrefix(got.stdout, "Validated 2 skills, ") || got.stderr != "" { // the rest of the line is the Python rule's, which dev changed
@@ -61,7 +70,7 @@ func TestStagedSkillsAreValidated(t *testing.T) {
 }
 
 func TestRecordedStagedEditsAreValidated(t *testing.T) {
-	const staged = "port/cxc/skills/crw-kwrite/"
+	const staged = "plugins/crw/skills/crw-kwrite/"
 	const original = "---\nname: cxc-kwrite\ndescription: \"Demo\"\nmetadata: x\n---\n\nSee [a](references/a.md).\n"
 	r, src := stagedRepoSource(t, original)
 	good := "---\nname: crw-kwrite\ndescription: \"Demo\"\n---\n\nSee [a](references/a.md).\n"

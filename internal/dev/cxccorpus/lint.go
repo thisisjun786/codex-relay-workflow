@@ -67,6 +67,9 @@ func Lint(root string) []string {
 	if err == nil && len(decls.Legs) != 32 {
 		add("%s: %d legs, the v0.2.40 manifest registers 32", Declarations, len(decls.Legs))
 	}
+	if err == nil {
+		problems = append(problems, CheckShippedHooks(root)...)
+	}
 	specs, err := LoadSpecs(root)
 	if err != nil {
 		add("%s: %v", SpecDir, err)

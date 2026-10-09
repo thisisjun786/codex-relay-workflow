@@ -301,8 +301,8 @@ var (
 	// spellings of the same assignment than a bare key, and every one of them has to be read, or a
 	// job could assemble a skill path from the variable and run it while the run statement names no
 	// literal skill path for the other pattern to catch (CRW-939, the generation-2 evaluations):
-	// a single- or double-quoted key, blanks before the colon (`SKILLS_ROOT : port/cxc/skills`), a key
-	// inside a flow mapping (`env: {SKILLS_ROOT: port/cxc/skills}`), and the body line of a block
+	// a single- or double-quoted key, blanks before the colon (`SKILLS_ROOT : plugins/crw/skills`), a key
+	// inside a flow mapping (`env: {SKILLS_ROOT: plugins/crw/skills}`), and the body line of a block
 	// scalar (`SKILLS_ROOT: |` with the root alone on the next line), which is no assignment at all.
 	skillRootValue = regexp.MustCompile(`(?:^|[{,])\s*(?:[A-Za-z_][A-Za-z0-9_-]*|"[^"]*"|'[^']*')[ \t]*:\s*["']?(?:` + alternation(skillAssetRoots) + `)/?["']?(?:[,\s}]|$)|^[ \t]*(?:(?:export|readonly|declare|local)[ \t]+)?(?:[A-Za-z_][A-Za-z0-9_-]*=)?["']?(?:` + alternation(skillAssetRoots) + `)/?["']?(?:[ \t]*(?:#.*)?$|[ \t]+)`)
 )
@@ -1384,7 +1384,7 @@ func TestWorkflow_installs_no_python(t *testing.T) {
 // copied job would otherwise widen the allow-list's boundary (CRW-939). A workflow file that is
 // not ci.yml, or another job of ci.yml, is refused for the same reason.
 func TestWorkflow_the_skill_scripts_exception_is_one_file_and_one_job(t *testing.T) {
-	job := "name: extra\n\njobs:\n  skill-scripts-node:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: node --test port/cxc/skills/crw-qa/tests/a.test.mjs\n"
+	job := "name: extra\n\njobs:\n  skill-scripts-node:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: node --test plugins/crw/skills/crw-qa/tests/a.test.mjs\n"
 	for _, file := range []string{"extra.yml", "release.yml", filepath.Join(".github", "workflows", "extra.yml")} {
 		if got := pythonInWorkflow(file, job); len(got) == 0 {
 			t.Errorf("%s admits a node --test run in a job named skill-scripts-node", file)
@@ -1397,7 +1397,7 @@ func TestWorkflow_the_skill_scripts_exception_is_one_file_and_one_job(t *testing
 		t.Errorf("ci.yml's skill-scripts-node job is refused when the path is given: %q", got)
 	}
 	// The file alone is not enough either: another job of ci.yml is still refused.
-	other := "name: ci\n\njobs:\n  other:\n    steps:\n      SKILLS_ROOT: port/cxc/skills\n"
+	other := "name: ci\n\njobs:\n  other:\n    steps:\n      SKILLS_ROOT: plugins/crw/skills\n"
 	if got := pythonInWorkflow("ci.yml", other); len(got) == 0 {
 		t.Error("ci.yml admits a skills-root value outside the skill-scripts-node job")
 	}
@@ -1411,8 +1411,8 @@ func TestWorkflow_the_skill_scripts_exception_is_one_file_and_one_job(t *testing
 // then run a skill script under a name that is not skill-scripts-node (CRW-939, the generation-1
 // pre-merge evaluation).
 func TestWorkflow_every_yaml_job_key_resets_the_skill_scripts_exception(t *testing.T) {
-	const head = "name: ci\n\njobs:\n  skill-scripts-node:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: node --test port/cxc/skills/crw-qa/tests/a.test.mjs\n"
-	const run = "      - run: node --test port/cxc/skills/crw-qa/tests/b.test.mjs\n"
+	const head = "name: ci\n\njobs:\n  skill-scripts-node:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: node --test plugins/crw/skills/crw-qa/tests/a.test.mjs\n"
+	const run = "      - run: node --test plugins/crw/skills/crw-qa/tests/b.test.mjs\n"
 	// The real job stays clean: the exception is the point of the control.
 	if got := pythonInWorkflow("ci.yml", head); len(got) != 0 {
 		t.Fatalf("the real skill-scripts-node job is refused: %q", got)
@@ -1451,9 +1451,9 @@ func TestWorkflow_every_yaml_job_key_resets_the_skill_scripts_exception(t *testi
 	// evaluation).
 	for _, row := range []struct{ name, body string }{
 		{"a workflow-level env value and a job that uses it",
-			"name: extra\n\nenv:\n  SKILLS_ROOT: port/cxc/skills\n\njobs:\n  extra_job:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: node --test \"$SKILLS_ROOT\"/crw-qa/tests/a.test.mjs\n"},
+			"name: extra\n\nenv:\n  SKILLS_ROOT: plugins/crw/skills\n\njobs:\n  extra_job:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: node --test \"$SKILLS_ROOT\"/crw-qa/tests/a.test.mjs\n"},
 		{"a one-line flow job running a staged skill test",
-			"name: extra\n\njobs:\n  skill-scripts-node: {runs-on: ubuntu-24.04, steps: [{run: 'node --test port/cxc/skills/crw-qa/tests/a.test.mjs'}]}\n"},
+			"name: extra\n\njobs:\n  skill-scripts-node: {runs-on: ubuntu-24.04, steps: [{run: 'node --test plugins/crw/skills/crw-qa/tests/a.test.mjs'}]}\n"},
 	} {
 		if got := pythonInWorkflow("extra.yml", row.body); len(got) == 0 {
 			t.Errorf("%s: the line that reset the exception was skipped and no finding was raised", row.name)
@@ -1474,8 +1474,8 @@ func TestWorkflow_every_yaml_job_key_resets_the_skill_scripts_exception(t *testi
 	// own test run.
 	for _, line := range []string{
 		"    runs-on: ubuntu-24.04\n",
-		"      - run: node --test port/cxc/skills/crw-qa/tests/a.test.mjs\n",
-		"        working-directory: port/cxc/skills/crw-qa\n",
+		"      - run: node --test plugins/crw/skills/crw-qa/tests/a.test.mjs\n",
+		"        working-directory: plugins/crw/skills/crw-qa\n",
 	} {
 		body := "name: ci\n\njobs:\n  skill-scripts-node:\n" + line
 		if got := pythonInWorkflow("ci.yml", body); len(got) != 0 {
@@ -1486,25 +1486,25 @@ func TestWorkflow_every_yaml_job_key_resets_the_skill_scripts_exception(t *testi
 	// skill-scripts-node shares the two-space key shape, so a reader that reset the exception on
 	// every two-space line switched it on before `jobs:` and let a job that reads the value run a
 	// skill test with no finding (CRW-939, the generation-2 evaluation's d1).
-	globalEnv := "name: ci\nenv:\n  skill-scripts-node: port/cxc/skills\njobs:\n  gui:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: node --test \"${{ env['skill-scripts-node'] }}\"/crw-qa/tests/a.test.mjs\n"
+	globalEnv := "name: ci\nenv:\n  skill-scripts-node: plugins/crw/skills\njobs:\n  gui:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: node --test \"${{ env['skill-scripts-node'] }}\"/crw-qa/tests/a.test.mjs\n"
 	if got := pythonInWorkflow("ci.yml", globalEnv); len(got) == 0 {
 		t.Error("a workflow-level key named skill-scripts-node switched the exception on before jobs:")
 	}
 	// The control: the same value inside the real job is the one admitted place, and the real
 	// ci.yml carries no workflow-level key of that name.
-	insideJob := "name: ci\njobs:\n  skill-scripts-node:\n    runs-on: ubuntu-24.04\n    env:\n      skill-scripts-node: port/cxc/skills\n    steps:\n      - run: node --test port/cxc/skills/crw-qa/tests/a.test.mjs\n"
+	insideJob := "name: ci\njobs:\n  skill-scripts-node:\n    runs-on: ubuntu-24.04\n    env:\n      skill-scripts-node: plugins/crw/skills\n    steps:\n      - run: node --test plugins/crw/skills/crw-qa/tests/a.test.mjs\n"
 	if got := pythonInWorkflow("ci.yml", insideJob); len(got) != 0 {
 		t.Errorf("the real job's own root is refused: %q", got)
 	}
 	// A column-0 comment is not a key: YAML reads a '#' there as a comment, so it neither opens nor
 	// closes a block. Treating it as one switched the exception off inside the job it admits and
 	// reported the job's own test run (CRW-939, the generation-2 evaluation's d2).
-	commented := "name: ci\njobs:\n  skill-scripts-node:\n    runs-on: ubuntu-24.04\n# staged test coverage\n    steps:\n      - run: node --test port/cxc/skills/crw-qa/tests/a.test.mjs\n"
+	commented := "name: ci\njobs:\n  skill-scripts-node:\n    runs-on: ubuntu-24.04\n# staged test coverage\n    steps:\n      - run: node --test plugins/crw/skills/crw-qa/tests/a.test.mjs\n"
 	if got := pythonInWorkflow("ci.yml", commented); len(got) != 0 {
 		t.Errorf("a column-0 comment ended the admitted job's exception: %q", got)
 	}
 	// A blank line is not a key either.
-	blank := "name: ci\njobs:\n  skill-scripts-node:\n    runs-on: ubuntu-24.04\n\n    steps:\n      - run: node --test port/cxc/skills/crw-qa/tests/a.test.mjs\n"
+	blank := "name: ci\njobs:\n  skill-scripts-node:\n    runs-on: ubuntu-24.04\n\n    steps:\n      - run: node --test plugins/crw/skills/crw-qa/tests/a.test.mjs\n"
 	if got := pythonInWorkflow("ci.yml", blank); len(got) != 0 {
 		t.Errorf("a blank line ended the admitted job's exception: %q", got)
 	}
@@ -1546,7 +1546,7 @@ func TestWorkflow_a_copied_skill_scripts_node_job_in_another_workflow_is_a_findi
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	body := "name: extra\n\njobs:\n  skill-scripts-node:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: node --test port/cxc/skills/crw-qa/tests/a.test.mjs\n"
+	body := "name: extra\n\njobs:\n  skill-scripts-node:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: node --test plugins/crw/skills/crw-qa/tests/a.test.mjs\n"
 	if err := os.WriteFile(filepath.Join(dir, "extra.yml"), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -1574,8 +1574,8 @@ func TestWorkflow_a_skills_root_split_across_lines_is_still_a_finding(t *testing
 		t.Fatal(err)
 	}
 	for name, body := range map[string]string{
-		"block scalar":          "name: extra\n\njobs:\n  other:\n    env:\n      SKILLS_ROOT: >-\n        port/cxc/skills\n    steps:\n      - run: node --test \"$SKILLS_ROOT\"/crw-qa/tests/a.test.mjs\n",
-		"quoted shell variable": "name: extra\n\njobs:\n  other:\n    steps:\n      - run: |\n          root=\"port/cxc/skills\"\n          node --test \"$root\"/crw-qa/tests/a.test.mjs\n",
+		"block scalar":          "name: extra\n\njobs:\n  other:\n    env:\n      SKILLS_ROOT: >-\n        plugins/crw/skills\n    steps:\n      - run: node --test \"$SKILLS_ROOT\"/crw-qa/tests/a.test.mjs\n",
+		"quoted shell variable": "name: extra\n\njobs:\n  other:\n    steps:\n      - run: |\n          root=\"plugins/crw/skills\"\n          node --test \"$root\"/crw-qa/tests/a.test.mjs\n",
 	} {
 		if err := os.WriteFile(filepath.Join(dir, "extra.yml"), []byte(body), 0o644); err != nil {
 			t.Fatal(err)
@@ -1779,57 +1779,57 @@ func TestWorkflow_python_detector(t *testing.T) {
 		{"      - run: apt-get install python3-dev python3-pip", true},
 		{"      - run: ./plugins/crw/skills/example/scripts/helper.py", true},
 		{"      - run: \"$GITHUB_WORKSPACE/plugins/crw/skills/example/scripts/helper\"", true},
-		{"      - run: sh port/cxc/skills/crw-example/examples/demo.sh", true},
+		{"      - run: sh plugins/crw/skills/crw-example/examples/demo.sh", true},
 		{"      - run: printf '%s\\n' ' # marker'; python3 -V", true},             // a # inside quotes hides nothing
 		{"          working-directory: plugins/crw/skills/example/scripts", true}, // a step runs a script by its directory
-		{"      - run: cd port/cxc/skills/crw-example && ./helper", true},
+		{"      - run: cd plugins/crw/skills/crw-example && ./helper", true},
 		{"      - run: cat plugins/crw/skills/example/SKILL.md", true}, // any path below a skills root
 		{"      - run: go test ./... # no python here", true},          // a trailing comment is part of the line
 		{"      - run: go test ./...", false},
 		{"      # python is installed by nobody", false},
 		{"          set -euo pipefail", false},
 		{"      - run: echo pipeline cpython", false},
-		{"      - run: ls plugins/crw/skills port/cxc/skills/ plugins/crw/skillset/x", false},  // the roots themselves are no skill path
-		{"      SKILLS_ROOT: port/cxc/skills", true},                                           // a value that is exactly a skills root, outside the one job allowed to name it
-		{"jobs:\n  skill-scripts-node:\n    steps:\n      SKILLS_ROOT: port/cxc/skills", true}, // the job's own name is not enough in another workflow
-		{"jobs:\n  other:\n    steps:\n      SKILLS_ROOT: port/cxc/skills", true},              // the same value in another named job
-		{"      SKILLS_ROOT: 'port/cxc/skills'", true},                                         // the quoted form is the same value
-		{"      SKILLS_ROOT: port/cxc/skills # the staged skills", true},                       // and so is the form a trailing blank ends
-		{"      \"SKILLS_ROOT\": port/cxc/skills", true},                                       // a quoted key carries the same value
-		{"      'SKILLS_ROOT': port/cxc/skills", true},                                         // in either quote
-		{"      SKILLS_ROOT : port/cxc/skills", true},                                          // a blank before the colon is the same assignment
-		{"      \"SKILLS_ROOT\" : port/cxc/skills", true},                                      // and so is a quoted key with one
-		{"      env: {SKILLS_ROOT: port/cxc/skills}", true},                                    // a flow mapping is the same assignment
-		{"      env: {OTHER: 1, SKILLS_ROOT: port/cxc/skills}", true},                          // after a comma too
-		{"          port/cxc/skills", true},                                                    // the body line of a YAML block scalar is the same value
-		{"          port/cxc/skills/", true},                                                   // with a trailing slash
-		{"          port/cxc/skills # the staged skills", true},                                // and with a trailing comment
-		{"          port/cxc/skills", true},                                                    // a folded block scalar resolves to the same root
-		{"          root=port/cxc/skills", true},                                               // a shell assignment names the same root
-		{"          root=port/cxc/skills/", true},                                              // with a trailing slash
-		{"          root=port/cxc/skills # the staged skills", true},                           // and with a trailing comment
-		{"          root=port/cxc/skillset", false},                                            // a longer name is no root
-		{"          root=\"port/cxc/skills\"", true},                                           // a quoted shell assignment is the same value
-		{"          root='port/cxc/skills'", true},                                             // in either quote
-		{"          root=\"port/cxc/skillset\"", false},                                        // a longer name is no root in quotes either
-		{"          export root=port/cxc/skills", true},                                        // an export prefix is the same assignment
-		{"          readonly root=\"port/cxc/skills\"", true},                                  // and so is readonly, quoted
-		{"          root=port/cxc/skills node --test \"$root\"/x/tests/a.test.mjs", true},      // and an assignment that shares its line
-		{"      - run: node --test", true},                                                     // a bare node test run is the same subject
-		{"      - run: node --test 2>&1 | tail -5", true},                                      // and so is one with a pipe
-		{"      - run: node --test-x", false},                                                  // a flag that is not --test
-		{"      - run: npm test", false},                                                       // npm is not node
-		{"      - run: node --no-warnings --test", true},                                       // an option before --test is the same run
-		{"      - run: node --experimental-strip-types --test x", true},                        // and so is any other option
-		{"      - run: node --version", false},                                                 // no --test is not a test run
-		{"      - run: node_modules/.bin/node --test", true},                                   // a node binary by path still runs the tests
-		{"      - run: \"node\" --test", true},                                                 // a quoted node word is the same run
-		{"      - run: '/usr/bin/node' --test", true},                                          // and a quoted absolute path
-		{"      - run: \"/usr/bin/node\" --test", true},                                        // in either quote
-		{"      - run: node --test port/cxc/skills/x/tests/a.test.mjs", true},                  // a skill path in any other job
-		{"      - run: node --test-name-pattern='V1|V17' --test", true},                        // a separator inside a quoted argument is no boundary
-		{"      - run: node --test-name-pattern=\"V1|V17\" --test", true},                      // in either quote
-		{"      - run: node \"a;b\" --test", true},                                             // nor is a semicolon one
+		{"      - run: ls plugins/crw/skills plugins/crw/skills/ plugins/crw/skillset/x", false},  // the roots themselves are no skill path
+		{"      SKILLS_ROOT: plugins/crw/skills", true},                                           // a value that is exactly a skills root, outside the one job allowed to name it
+		{"jobs:\n  skill-scripts-node:\n    steps:\n      SKILLS_ROOT: plugins/crw/skills", true}, // the job's own name is not enough in another workflow
+		{"jobs:\n  other:\n    steps:\n      SKILLS_ROOT: plugins/crw/skills", true},              // the same value in another named job
+		{"      SKILLS_ROOT: 'plugins/crw/skills'", true},                                         // the quoted form is the same value
+		{"      SKILLS_ROOT: plugins/crw/skills # the staged skills", true},                       // and so is the form a trailing blank ends
+		{"      \"SKILLS_ROOT\": plugins/crw/skills", true},                                       // a quoted key carries the same value
+		{"      'SKILLS_ROOT': plugins/crw/skills", true},                                         // in either quote
+		{"      SKILLS_ROOT : plugins/crw/skills", true},                                          // a blank before the colon is the same assignment
+		{"      \"SKILLS_ROOT\" : plugins/crw/skills", true},                                      // and so is a quoted key with one
+		{"      env: {SKILLS_ROOT: plugins/crw/skills}", true},                                    // a flow mapping is the same assignment
+		{"      env: {OTHER: 1, SKILLS_ROOT: plugins/crw/skills}", true},                          // after a comma too
+		{"          plugins/crw/skills", true},                                                    // the body line of a YAML block scalar is the same value
+		{"          plugins/crw/skills/", true},                                                   // with a trailing slash
+		{"          plugins/crw/skills # the staged skills", true},                                // and with a trailing comment
+		{"          plugins/crw/skills", true},                                                    // a folded block scalar resolves to the same root
+		{"          root=plugins/crw/skills", true},                                               // a shell assignment names the same root
+		{"          root=plugins/crw/skills/", true},                                              // with a trailing slash
+		{"          root=plugins/crw/skills # the staged skills", true},                           // and with a trailing comment
+		{"          root=plugins/crw/skillset", false},                                            // a longer name is no root
+		{"          root=\"plugins/crw/skills\"", true},                                           // a quoted shell assignment is the same value
+		{"          root='plugins/crw/skills'", true},                                             // in either quote
+		{"          root=\"plugins/crw/skillset\"", false},                                        // a longer name is no root in quotes either
+		{"          export root=plugins/crw/skills", true},                                        // an export prefix is the same assignment
+		{"          readonly root=\"plugins/crw/skills\"", true},                                  // and so is readonly, quoted
+		{"          root=plugins/crw/skills node --test \"$root\"/x/tests/a.test.mjs", true},      // and an assignment that shares its line
+		{"      - run: node --test", true},                                                        // a bare node test run is the same subject
+		{"      - run: node --test 2>&1 | tail -5", true},                                         // and so is one with a pipe
+		{"      - run: node --test-x", false},                                                     // a flag that is not --test
+		{"      - run: npm test", false},                                                          // npm is not node
+		{"      - run: node --no-warnings --test", true},                                          // an option before --test is the same run
+		{"      - run: node --experimental-strip-types --test x", true},                           // and so is any other option
+		{"      - run: node --version", false},                                                    // no --test is not a test run
+		{"      - run: node_modules/.bin/node --test", true},                                      // a node binary by path still runs the tests
+		{"      - run: \"node\" --test", true},                                                    // a quoted node word is the same run
+		{"      - run: '/usr/bin/node' --test", true},                                             // and a quoted absolute path
+		{"      - run: \"/usr/bin/node\" --test", true},                                           // in either quote
+		{"      - run: node --test plugins/crw/skills/x/tests/a.test.mjs", true},                  // a skill path in any other job
+		{"      - run: node --test-name-pattern='V1|V17' --test", true},                           // a separator inside a quoted argument is no boundary
+		{"      - run: node --test-name-pattern=\"V1|V17\" --test", true},                         // in either quote
+		{"      - run: node \"a;b\" --test", true},                                                // nor is a semicolon one
 		{"      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0", false},
 		{"      - run: node '--test'", true},   // a quoted --test is still the flag (CRW-939, the generation-3 evaluation of d1)
 		{"      - run: node \"--test\"", true}, // in either quote
@@ -1843,12 +1843,12 @@ func TestWorkflow_python_detector(t *testing.T) {
 		}
 	}
 	// Inside ci.yml's own skill-scripts-node job the same value is the job's own root.
-	if got := pythonInWorkflow("ci.yml", "jobs:\n  skill-scripts-node:\n    steps:\n      SKILLS_ROOT: port/cxc/skills\n"); len(got) != 0 {
+	if got := pythonInWorkflow("ci.yml", "jobs:\n  skill-scripts-node:\n    steps:\n      SKILLS_ROOT: plugins/crw/skills\n"); len(got) != 0 {
 		t.Errorf("ci.yml's skill-scripts-node root is refused: %q", got)
 	}
 	// The one admitted job may run the staged tests however it spells the command, including a bare
 	// `node --test` that discovers the files itself.
-	for _, line := range []string{"      - run: node --test", "      - run: node --test port/cxc/skills/x/tests/a.test.mjs"} {
+	for _, line := range []string{"      - run: node --test", "      - run: node --test plugins/crw/skills/x/tests/a.test.mjs"} {
 		if got := pythonInWorkflow("ci.yml", "jobs:\n  skill-scripts-node:\n    steps:\n"+line+"\n"); len(got) != 0 {
 			t.Errorf("ci.yml's skill-scripts-node job is refused for %q: %q", strings.TrimSpace(line), got)
 		}
@@ -2568,7 +2568,7 @@ func skillPathsRun(t *testing.T, r *fixtureRepo, env ...string) string {
 	}
 	// The workflow always passes all four: the step reads them under set -u, so an event with no
 	// base passes the empty string rather than nothing.
-	base = append(base, "GITHUB_OUTPUT="+output, "SKILLS_ROOT=port/cxc/skills",
+	base = append(base, "GITHUB_OUTPUT="+output, "SKILLS_ROOT=plugins/crw/skills",
 		"PR_BASE_SHA=", "PR_HEAD_SHA=", "PUSH_BEFORE_SHA=", "GITHUB_SHA=")
 	got := runEnv(t, r.root, append(base, env...), "bash", script)
 	if got.code != 0 {
@@ -2593,11 +2593,11 @@ func skillPathsRepo(t *testing.T, feature func(*fixtureRepo)) (*fixtureRepo, str
 	t.Helper()
 	r := newRepo(t)
 	r.write("README.md", "base\n")
-	r.write("port/cxc/skills/crw-qa/SKILL.md", "a\n")
+	r.write("plugins/crw/skills/crw-qa/SKILL.md", "a\n")
 	r.commit()
 	r.git("branch", "dev")
 	r.git("checkout", "-q", "dev")
-	r.write("port/cxc/skills/crw-qa/SKILL.md", "b\n")
+	r.write("plugins/crw/skills/crw-qa/SKILL.md", "b\n")
 	r.commit()
 	base := strings.TrimSpace(r.git("rev-parse", "HEAD"))
 	r.git("checkout", "-q", "-b", "feature", "dev~1")
@@ -2621,7 +2621,7 @@ func TestWorkflow_the_skill_paths_compare_a_pull_request_from_its_merge_base(t *
 	// The branch carries the same staged-skill change dev has. Comparing the two tips directly sees
 	// no difference, but the pull request still changed the skill relative to its merge base.
 	r2, base2, head2 := skillPathsRepo(t, func(r *fixtureRepo) {
-		r.write("port/cxc/skills/crw-qa/SKILL.md", "b\n")
+		r.write("plugins/crw/skills/crw-qa/SKILL.md", "b\n")
 		// An unrelated change beside it: two commits with the same tree, parent and message are one
 		// object, and this branch's commit must be its own so the comparison is the question.
 		r.write("docs/CI.md", "branch\n")
@@ -2638,7 +2638,7 @@ func TestWorkflow_the_skill_paths_keep_the_push_range_and_run_on_a_dispatch(t *t
 	r.write("README.md", "base\n")
 	r.commit()
 	before := strings.TrimSpace(r.git("rev-parse", "HEAD"))
-	r.write("port/cxc/skills/crw-qa/SKILL.md", "a\n")
+	r.write("plugins/crw/skills/crw-qa/SKILL.md", "a\n")
 	r.commit()
 	staged := strings.TrimSpace(r.git("rev-parse", "HEAD"))
 	if got := skillPathsRun(t, r, "PUSH_BEFORE_SHA="+before, "GITHUB_SHA="+staged); got != "changed=true" {

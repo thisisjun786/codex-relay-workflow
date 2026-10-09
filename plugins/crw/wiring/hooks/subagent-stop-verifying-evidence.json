@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$HOME/.local/share/crw-runtime/current/bin/crw\" hook subagent-stop --leg subagent-stop-verifying-evidence",
+            "timeout": 10,
+            "statusMessage": "(crw) Verifying subagent evidence"
+          }
+        ],
+        "matcher": "^(executor|worker)$"
+      }
+    ]
+  }
+}
