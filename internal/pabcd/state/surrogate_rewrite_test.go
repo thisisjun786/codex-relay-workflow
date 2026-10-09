@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -225,7 +226,8 @@ func TestWriteStateRefusesASpecialFileWithoutOpeningIt(t *testing.T) {
 // CRW-1065: the CXC original reads a file that is not JSON as an unreadable default and its writer rewrites it with the default
 // state, which publishes over the stored bytes. The port refuses such a rewrite when the bytes hold a lone surrogate escape. The
 // refusal must come before any temp file is staged or any byte is written, so the file stays byte for byte as it was, and the
-// sessions directory keeps only that file. The inputs are the non-JSON shapes a lone escape can sit in.
+// sessions directory keeps only that file. The order is pinned: the directory is read-only, so staging first would fail on the
+// create, and the sync and rename seams must not be reached. The inputs are the non-JSON shapes a lone escape can sit in.
 func TestWriteStateRefusalLeavesANonJSONFileByteForByte(t *testing.T) {
 	cases := []struct {
 		name string
@@ -250,8 +252,28 @@ func TestWriteStateRefusalLeavesANonJSONFileByteForByte(t *testing.T) {
 			if !unreadable {
 				t.Fatal("the non-JSON file read as readable; the case does not exercise the unreadable default")
 			}
-			if err := WriteState(cwd, s); err == nil {
-				t.Fatalf("WriteState rewrote a non-JSON file holding a lone surrogate; the file now reads %q", fileText(t, path))
+			// The sessions directory is read-only (when the test is not root), so a refusal that came after the temp file was
+			// created would fail on the create with a permission error instead of the refusal. The sync and rename seams count
+			// the staging steps: a refusal that comes first reaches neither.
+			dir := filepath.Dir(path)
+			if os.Geteuid() != 0 {
+				if err := os.Chmod(dir, 0o555); err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+			}
+			var syncs, renames int
+			err := writeState(cwd, s, time.Now(),
+				func(tmp, finalPath string) error { renames++; return nil },
+				func(*os.File) error { syncs++; return nil })
+			if err == nil {
+				t.Fatalf("writeState rewrote a non-JSON file holding a lone surrogate; the file now reads %q", fileText(t, path))
+			}
+			if !strings.Contains(err.Error(), "unpaired surrogate escape") {
+				t.Fatalf("the rewrite failed for another reason than the refusal: %v", err)
+			}
+			if syncs != 0 || renames != 0 {
+				t.Fatalf("a refused rewrite had already staged a temp file: %d syncs, %d renames", syncs, renames)
 			}
 			if got, _ := os.ReadFile(path); !bytes.Equal(got, raw) {
 				t.Fatalf("a refused rewrite changed the file: got %q, want %q", got, raw)
