@@ -9,7 +9,7 @@ import (
 
 func TestProtectionStaysWithOriginalCheckout(t *testing.T) {
 	r := newDelRig(t)
-	r.allowed(t, "cd "+r.other+" && rm -rf .", "git -C "+r.other+" clean -fdx", "(cd "+r.other+"; rmdir .)")
+	r.allowed(t, "cd "+r.other+" && rm -rf .", "git -C "+r.other+" clean -fdx", "(cd "+r.other+" && rmdir .)")
 	for _, target := range []string{r.checkout, r.slotRoot, filepath.Dir(r.slotRoot), filepath.Dir(r.worktrees)} {
 		for _, cmd := range []string{
 			"cd " + r.other + " && rm -rf " + target,

@@ -9,6 +9,7 @@ package hook
 
 import (
 	"io"
+	"path/filepath"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/shellir"
@@ -35,7 +36,7 @@ func evaluateCommand(command, cwd string, id WorktreeIdentity) GuardVerdict {
 // worktreeDelRead is the guard's reading of a text: the shared reader with no environment, so a variable is unknown whatever the
 // session's environment holds. The differential fuzz counts the commands this reading refuses (WorktreeGuardCommandReadable).
 func worktreeDelRead(command, cwd string, cdpath bool) (shellir.Result, error) {
-	return shellir.AnalyzeScript(command, cwd, cdpath)
+	return shellir.AnalyzeDeletionScript(command, cwd, cdpath)
 }
 
 func worktreeDelUnreadable(id WorktreeIdentity) GuardVerdict {
@@ -141,6 +142,9 @@ func worktreeDelJudgeFind(e shellir.Exec, id WorktreeIdentity) GuardVerdict {
 		if a.Name != "-delete" {
 			continue
 		}
+		if a.FollowLinks {
+			return worktreeDelUnreadable(id)
+		}
 		if v := worktreeDelJudgeFindStarts(starts, a.GuardedFor, e, id, "-delete"); v.Deny {
 			return v
 		}
@@ -240,6 +244,9 @@ func worktreeDelJudgeFeed(e shellir.Exec, id WorktreeIdentity) GuardVerdict {
 			deleter, _ := worktreeDelDeleter(e)
 			if deleter == "" {
 				continue
+			}
+			if f.FollowLinks {
+				return worktreeDelUnreadable(id)
 			}
 			if v = worktreeDelJudgeFindWords(f, e, deleter, id); v.Deny {
 				return v
@@ -635,8 +642,11 @@ func mvSources(args []string, stopAtOperand bool) (sources []string, ok bool) {
 // relative target from an unknown directory cannot be placed, so it is protected.
 func worktreeDelTargetProtected(target string, e shellir.Exec, id WorktreeIdentity) bool {
 	if !e.Dir.Known {
-		// The directory is unknown, so the target may name the managed checkout whatever its spelling: protected.
-		return true
+		// An absolute target is independent of a failed cd. Relative targets
+		// still cannot be placed against the fixed protection set.
+		if !filepath.IsAbs(target) {
+			return true
+		}
 	}
 	return isProtectedTarget(target, e.Dir.Path, id)
 }

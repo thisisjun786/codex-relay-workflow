@@ -276,21 +276,21 @@ bash missing.sh
 --cmd
 bash post.sh
 
-=== CRW-875-22-20 | T
+=== CRW-875-22-20 | T | deviation=attempt/allow/deny
 --why CDPATH assigned, then an absolute cd: the absolute target is never searched in CDPATH, so the directory is known and the script runs from it.
 --file sub/clean.sh
 echo clean
 --cmd
 CDPATH=/x; cd {WORK}/sub; bash clean.sh
 
-=== CRW-875-22-21 | T
+=== CRW-875-22-21 | T | deviation=attempt/allow/deny
 --why CDPATH assigned, then a ./ cd: a ./ target is never searched in CDPATH either.
 --file sub/clean.sh
 echo clean
 --cmd
 CDPATH=/x; cd ./sub; bash clean.sh
 
-=== CRW-875-22-22 | T
+=== CRW-875-22-22 | T | deviation=attempt/allow/deny
 --why export CDPATH, then a ./ cd; a later script run of the same text is read from the directory reached.
 --file sub/clean.sh
 echo clean
@@ -299,7 +299,7 @@ echo more
 --cmd
 export CDPATH=/x:.; cd ./sub; bash clean.sh; bash more.sh
 
-=== CRW-875-22-23 | Q
+=== CRW-875-22-23 | Q | deviation=attempt/deny/deny
 --why The script is read from the directory the ./ cd reaches under CDPATH (sub/post.sh posts), not from the working directory (post.sh is clean).
 --file post.sh
 echo clean
@@ -777,7 +777,7 @@ echo clean
 --cmd
 CDPATH=/x source entry.sh
 
-=== CRW-875-22-51 | T
+=== CRW-875-22-51 | T | deviation=attempt/allow/deny
 --why Control: under CDPATH a ./ cd inside the script resolves as without it, so the script is read from the directory reached.
 --file entry.sh
 cd ./sub
@@ -815,7 +815,7 @@ echo clean
 --cmd
 for CDPATH in /x; do :; done; cd sub; bash clean.sh
 
-=== CRW-875-22-53 | T
+=== CRW-875-22-53 | T | deviation=attempt/allow/deny
 --why Control: the cdpath array does not move a ./ cd.
 --file sub/clean.sh
 echo clean

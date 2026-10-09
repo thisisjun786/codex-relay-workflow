@@ -26,6 +26,15 @@ func AnalyzeScript(src, cwd string, cdpath bool) (Result, error) {
 	return analyze(src, st, nil)
 }
 
+// AnalyzeDeletionScript includes failed cd outcomes. Only a simple, non-negated
+// cd on the left of && proves its destination for the following command.
+// Other callers keep their existing directory reading.
+func AnalyzeDeletionScript(src, cwd string, cdpath bool) (Result, error) {
+	st := newState(cwd)
+	st.cdpath = cdpath
+	return analyzeWithWalker(src, st, nil, &walker{cdFailures: true})
+}
+
 // textNamesCdpath is whether a text spells CDPATH (or zsh's cdpath) anywhere: an assignment, a read, a printf -v, a loop variable or
 // a declaration may set it, and none of them is followed to its end, so the name in the text is enough.
 func textNamesCdpath(src string) bool {
@@ -42,6 +51,10 @@ func AnalyzeNoDir(src string) (Result, error) {
 }
 
 func analyze(src string, st *state, lookup func(string) (string, bool)) (Result, error) {
+	return analyzeWithWalker(src, st, lookup, &walker{})
+}
+
+func analyzeWithWalker(src string, st *state, lookup func(string) (string, bool), w *walker) (Result, error) {
 	if len(src) > MaxCommandBytes {
 		return Result{}, unreadablef("command is %d bytes; the limit is %d", len(src), MaxCommandBytes)
 	}
@@ -57,7 +70,6 @@ func analyze(src string, st *state, lookup func(string) (string, bool)) (Result,
 	}
 	st.lookup = lookup
 	st.cdpath = st.cdpath || textNamesCdpath(src)
-	w := &walker{}
 	if err := w.stmts(file.Stmts, st, Context{}); err != nil {
 		return Result{}, err
 	}

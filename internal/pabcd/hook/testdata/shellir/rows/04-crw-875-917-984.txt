@@ -342,7 +342,7 @@ echo clean
 --cmd
 declare -x PATH=/evil:/usr/bin:/bin; source lib.sh
 
-=== CRW-984-05 | T
+=== CRW-984-05 | T | deviation=attempt/allow/deny
 --why d5 control: an absolute cd to a known directory leaves the directory known and the clean script is allowed.
 --file sub/clean.sh
 echo clean

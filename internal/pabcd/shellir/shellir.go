@@ -93,6 +93,8 @@ type Redir struct {
 
 // Context describes where an Exec sits in the text.
 type Context struct {
+	// cdSuccess is scoped to a simple command whose successful exit reaches &&.
+	cdSuccess   bool
 	Conditional bool
 	Background  bool
 	Coprocess   bool
@@ -284,8 +286,9 @@ func notProvenDir(d Dir) Dir { return Dir{Path: d.Path, Unset: d.Unset} }
 
 // walker collects Exec records in run order.
 type walker struct {
-	out   []Exec
-	calls []string
+	cdFailures bool
+	out        []Exec
+	calls      []string
 	// created is the set of files the records out[:createdUpTo] write (see createdByText); it grows as the walk appends records, so
 	// the check is linear in the text.
 	created      map[string]bool
@@ -296,6 +299,7 @@ type walker struct {
 }
 
 func (w *walker) stmts(list []*syntax.Stmt, st *state, ctx Context) error {
+	ctx.cdSuccess = false
 	for _, s := range list {
 		if err := w.stmt(s, st, ctx); err != nil {
 			return err
@@ -315,6 +319,11 @@ func isCompound(c syntax.Command) bool {
 func (w *walker) stmt(s *syntax.Stmt, st *state, ctx Context) error {
 	if s == nil {
 		return nil
+	}
+	_, simple := s.Cmd.(*syntax.CallExpr)
+	_, binary := s.Cmd.(*syntax.BinaryCmd)
+	if (!simple && !binary) || s.Negated {
+		ctx.cdSuccess = false
 	}
 	// The records this statement adds that no inner statement already placed are on this statement's line.
 	start, line := len(w.out), int(s.Pos().Line())
@@ -614,16 +623,29 @@ func (e *effectScan) function(name string, body *syntax.Stmt) bool {
 func (w *walker) binary(c *syntax.BinaryCmd, st *state, ctx Context) error {
 	switch c.Op {
 	case syntax.AndStmt, syntax.OrStmt:
-		if err := w.stmt(c.X, st, ctx); err != nil {
+		beforeDir := st.dir
+		leftContext := ctx
+		leftContext.cdSuccess = w.cdFailures && c.Op == syntax.AndStmt
+		if err := w.stmt(c.X, st, leftContext); err != nil {
 			return err
 		}
 		right := st.clone()
 		rctx := ctx
 		rctx.Conditional = true
+		rctx.cdSuccess = ctx.cdSuccess && c.Op == syntax.AndStmt
 		if err := w.stmt(c.Y, right, rctx); err != nil {
 			return err
 		}
-		st.replace(joinStates(st, right))
+		if w.cdFailures && ctx.cdSuccess && c.Op == syntax.AndStmt {
+			st.replace(right)
+		} else {
+			st.replace(joinStates(st, right))
+		}
+		if w.cdFailures && !(ctx.cdSuccess && c.Op == syntax.AndStmt) && st.dir != beforeDir {
+			// After the chain, its left command may have failed and skipped the
+			// right command; the successful destination is no longer proven.
+			st.dir = unknownDir(st.dir)
+		}
 		return nil
 	case syntax.Pipe, syntax.PipeAll:
 		lctx := ctx
@@ -761,6 +783,7 @@ func (w *walker) callFunc(name string, body *syntax.Stmt, st *state, ctx Context
 		return unreadablef("nesting is deeper than %d", MaxNestingDepth)
 	}
 	ctx.FuncBody = true
+	ctx.cdSuccess = false
 	w.calls = append(w.calls, name)
 	defer func() { w.calls = w.calls[:len(w.calls)-1] }()
 	return w.stmt(body, st, ctx)
@@ -1126,6 +1149,9 @@ func (w *walker) dispatch(words []Word, assigns []Assign, redirs []Redir, st *st
 			return nil
 		}
 		st.cd(words[1:])
+		if w.cdFailures && !ctx.cdSuccess {
+			st.dir = unknownDir(st.dir)
+		}
 		return nil
 	case name == "pushd" || name == "popd":
 		st.dir = unknownDir(st.dir)

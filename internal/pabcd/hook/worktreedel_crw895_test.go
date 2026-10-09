@@ -257,7 +257,7 @@ func TestCRW895PlaceholderChangesTheShellContext(t *testing.T) {
 		`find ../repo -exec sh -c 'rm build/old.o' \;`:           false,
 		`find . -name '*.o' -exec sh -c 'rm -f {}' \;`:           false,
 		`find build -exec sh -c 'rm -rf {}' \;`:                  false,
-		`find . -name '*.o' -exec sh -c 'cd build; rm -f {}' \;`: false,
+		`find . -name '*.o' -exec sh -c 'cd build; rm -f {}' \;`: true, // failed cd leaves an unproven directory
 		`find . -name '*.o' -exec rm -f {}.tmp \;`:               false,
 		`find . -name '*.o' -exec rm -f ./{} \;`:                 false,
 	} {
