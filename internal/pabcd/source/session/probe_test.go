@@ -136,3 +136,45 @@ func TestNativeProbeFailureIsUnknownNotOutsideARepository(t *testing.T) {
 		t.Fatalf("non-Git native directory: %q, %v", root, err)
 	}
 }
+
+// CRW-1135 criterion 2 with the real git error: a native linked worktree whose .git file points at a Git directory
+// that cannot be read makes git answer "not a git repository: <gitdir>" (exit 128). That is a repository git could
+// not read, not a directory in no repository: binding another repository is refused, an existing binding keeps
+// its bytes, and resolving and the gate refuse it.
+func TestNativeUnreadableGitdirIsUnknownNotOutsideARepository(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("permissions do not bind root")
+	}
+	base := hermetic(t)
+	main := newRepo(t, base, "main")
+	other := newRepo(t, base, "other")
+	native := filepath.Join(base, "native")
+	gitIn(t, main, "worktree", "add", "-q", "-b", "native", native)
+	if _, err := Bind(native, "s2", main); err != nil { // a binding made while the repository is readable
+		t.Fatal(err)
+	}
+	path := filepath.Join(native, ".crw", "sources", "s2.json")
+	before, err := os.ReadFile(path)
+	must(t, err)
+
+	gitdir := filepath.Join(main, ".git")
+	must(t, os.Chmod(gitdir, 0))
+	t.Cleanup(func() { _ = os.Chmod(gitdir, 0o755) })
+
+	if root, err := Bind(native, "s1", other); err != unknownNative {
+		t.Fatalf("bind from a native worktree whose Git directory is unreadable: %q, %v", root, err)
+	}
+	if _, err := os.Lstat(filepath.Join(native, ".crw", "sources", "s1.json")); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("a binding was written: %v", err)
+	}
+	if got, err := Resolve(native, "s2"); err != unknownNative {
+		t.Fatalf("resolve: %q, %v", got, err)
+	}
+	if res := CheckBound(native, "s2"); res.OK {
+		t.Fatalf("the gate passed: %+v", res)
+	}
+	must(t, os.Chmod(gitdir, 0o755))
+	if after, err := os.ReadFile(path); err != nil || !bytes.Equal(before, after) {
+		t.Fatalf("binding changed: %v", err)
+	}
+}

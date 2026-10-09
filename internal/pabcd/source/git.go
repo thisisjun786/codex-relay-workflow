@@ -52,11 +52,18 @@ type ExitError struct {
 func (e *ExitError) Error() string { return "git exited with status " + strconv.Itoa(e.Code) }
 
 // NotARepository is true only when git ran and said the directory is in no repository: exit status 128 with the
-// C locale's "not a git repository" (a probe that asks for it sets LC_ALL=C). A git that could not start, was
-// stopped by the time limit, went over the output limit or failed for another reason is not that answer.
+// C locale's discovery answer, "not a git repository (or any of the parent directories): .git" or, at a file
+// system boundary, "not a git repository (or any parent up to mount point /)" (a probe that asks for it sets
+// LC_ALL=C). "not a git repository: <gitdir>" is not that answer: it is
+// a repository whose Git directory git could not read or accept. A git that could not start, was stopped by the
+// time limit, went over the output limit or failed for another reason is not that answer either.
 func NotARepository(err error) bool {
 	var exit *ExitError
-	return errors.As(err, &exit) && exit.Code == 128 && strings.Contains(exit.Stderr, "not a git repository")
+	if !errors.As(err, &exit) || exit.Code != 128 {
+		return false
+	}
+	return strings.Contains(exit.Stderr, "not a git repository (or any of the parent directories)") ||
+		strings.Contains(exit.Stderr, "not a git repository (or any parent up to mount point")
 }
 
 // captureTimeout bounds the identity capture's status, which reads the whole tree (and runs its clean filters);

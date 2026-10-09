@@ -59,10 +59,13 @@ func TestRunOutputLimit(t *testing.T) {
 		t.Fatalf("a child past the time limit must be killed at once: %v after %v", err, time.Since(started))
 	}
 	var exit *ExitError
-	if _, err := runBounded("", "sh", []string{"-c", "echo 'fatal: not a git repository' >&2; exit 128"}, nil, 1<<20, time.Minute); !errors.As(err, &exit) || !NotARepository(err) {
+	if _, err := runBounded("", "sh", []string{"-c", "echo 'fatal: not a git repository (or any of the parent directories): .git' >&2; exit 128"}, nil, 1<<20, time.Minute); !errors.As(err, &exit) || !NotARepository(err) {
 		t.Fatalf("exit 128: %v", err)
 	}
-	for _, script := range []string{"echo 'fatal: detected dubious ownership' >&2; exit 128", "echo 'fatal: not a git repository' >&2; exit 1"} {
+	if _, err := runBounded("", "sh", []string{"-c", "echo 'fatal: not a git repository (or any parent up to mount point /m)' >&2; exit 128"}, nil, 1<<20, time.Minute); !NotARepository(err) {
+		t.Fatalf("mount point variant: %v", err)
+	}
+	for _, script := range []string{"echo 'fatal: not a git repository: /r/.git/worktrees/w' >&2; exit 128", "echo 'fatal: detected dubious ownership' >&2; exit 128", "echo 'fatal: not a git repository (or any of the parent directories): .git' >&2; exit 1"} {
 		if _, err := runBounded("", "sh", []string{"-c", script}, nil, 1<<20, time.Minute); err == nil || NotARepository(err) {
 			t.Errorf("%s: %v is not the not-a-repository answer", script, err)
 		}
