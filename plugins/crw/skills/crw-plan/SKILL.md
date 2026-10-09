@@ -11,11 +11,11 @@ Use an agreed initiative definition as input, then cover its requested scope thr
 
 ## Connect the workflow
 
-Read [Integrations](references/integrations.md) for Linear access, document authority, and CXC ownership. Load relevant installed skills and use their outputs in the plan; naming a skill is not using it.
+Read [Integrations](references/integrations.md) for Linear access, document authority, and implementation-workflow ownership. Load relevant installed skills and use their outputs in the plan; naming a skill is not using it.
 
-- Use `cxc-recall` to recover missing decisions, and brief the product's current state from refreshed sources when it is unclear. Verify old state against current sources.
+- Use `crw-recall` to recover missing decisions, and brief the product's current state from refreshed sources when it is unclear. Verify old state against current sources.
 - Restate a bundled request to resolve it before splitting it. Ask only about a material fork the evidence cannot settle.
-- Use `cxc-dev` to assess development scope, repository boundaries, and meaningful verification. Planning does not start a CXC Loop or execution tasks.
+- Use `crw-dev` to assess development scope, repository boundaries, and meaningful verification. Planning does not start `crw-loop` or execution tasks.
 - If roadmap facts conflict or are duplicated, settle them by [where each document type is canonical](references/integrations.md#where-each-document-type-is-canonical). Check that success criteria cannot reward their own assumptions, and rewrite revised descriptions so they read as the current plan.
 - Hand executable work to [crw-run](../crw-run/SKILL.md). Use [crw-check](../crw-check/SKILL.md) for intent-versus-implementation uncertainty and [crw-logic](../crw-logic/SKILL.md) for contradictions within the proposed plan.
 - Keep Linear writes with this operation. A delegated sub-task returns the record ID, the revision it read, the reason, the smallest sufficient change and its evidence, under [record writes and returned proposals](references/integrations.md#record-writes-and-returned-proposals).

@@ -17,7 +17,7 @@ assigned result clear. The title after ` · ` may be a natural sentence or phras
 of up to 20 characters, including spaces and punctuation; the issue code and
 separator do not count. Do not abbreviate away the task's meaning just to make
 it shorter, or pad a clear title to reach 20 characters.
-Do not append workflow labels (including `CXC Loop`), repository,
+Do not append workflow labels (including `crw-loop`), repository,
 PR number, model, CI status, or merge status. Keep the execution mode in the
 packet's `Workflow` field and verify runtime behavior separately. A title or a
 chat link does not establish the task's native PR association; keep PR linkage
@@ -94,7 +94,7 @@ Context:
 - Prerequisites: [verified contract/commits and how included]
 - Effective model/effort: [values from the request or Default independent execution;
   actual configuration is supplied by creation]
-- Coordinator: [task ID; context only, never a CXC session binding]
+- Coordinator: [task ID; context only, never a PABCD session binding]
 - Responsible child: [existing independent task/host ID, or newly created task from the launch receipt]
 - Assignment route: [reuse / create; current writer state and authorization source]
 - Management marker: [the stable creation request id this launch was issued under, per
@@ -272,11 +272,11 @@ Execution:
 - Read applicable project instructions and relevant source.
 - You orchestrate this one issue and its internal helpers. Do not absorb another
   issue into this task or PR. The parent orchestrates one project and owns coordination,
-  delivery validation, and authorized integration. Do not adopt the parent's CXC binding.
+  delivery validation, and authorized integration. Do not adopt the parent's session binding.
   Where an initiative above it has a supervisor, that supervisor works through your parent:
   it does not instruct you, and you report to your parent. See
   [Supervisor, parent and child scope](../../crw-plan/references/integrations.md#supervisor-parent-and-child-scope).
-- Where the assignment covers publication and you can push, own the delivery end to end: implement, test, commit, push the task branch, then triage, fix, reply to and recheck any review. Report once the current head's local verification has passed and its blockers are resolved, not when the code is written. That publication scope is the explicit push approval CXC `DEV-GIT-PUSH-01` requires, the standing authorization of [Default dev integration](../../crw-plan/references/integrations.md#default-dev-integration) carried by this packet: push your task branch without stopping to ask, and never merge; no force-push, no tag, no push to `dev` or `main`.
+- Where the assignment covers publication and you can push, own the delivery end to end: implement, test, commit, push the task branch, then triage, fix, reply to and recheck any review. Report once the current head's local verification has passed and its blockers are resolved, not when the code is written. That publication scope is the explicit push approval `DEV-GIT-PUSH-01` (`crw-dev`) requires, the standing authorization of [Default dev integration](../../crw-plan/references/integrations.md#default-dev-integration) carried by this packet: push your task branch without stopping to ask, and never merge; no force-push, no tag, no push to `dev` or `main`.
   Without that authorization, or without the access to use it, commit locally or
   return the frozen diff and say which publication you did not perform.
 - Run your own independent review in the order your workflow chooses; the two may overlap, because preparation and review are parallel. The review meant here is the one your workflow runs on the candidate inside this task; whether and how often it runs is that workflow's decision, which this packet does not change. Where one runs, it ends on a head and the handoff names it, lists the commits made after it, and says which head the review answered ([what a handoff discloses](#what-a-handoff-discloses)).
@@ -331,8 +331,8 @@ Execution:
   deterministic checks over the listed hunks for a `mechanical` one, and the gates plus an
   independent check of the hand-resolved hunks only for a `manual` one ([the
   kinds](#what-a-handoff-discloses)). Do not audit again what the refresh did not change.
-- Maintain CXC: load current cxc-dev and relevant surface skills, and follow
-  the configured CXC protocol for helpers and review within this task.
+- Maintain the workflow: load current `crw-dev` and relevant surface skills, and follow
+  the configured helper role policy for helpers and review within this task.
 - Work in the assigned existing worktree; preserve unrelated changes.
 - [Only when a relay holds this assignment:] before acting on the assignment, correction or
   resume packet you received, run the store-backed `packet-check` described in
@@ -378,7 +378,7 @@ Execution:
   The relay accepts a receipt from the generation's anchor turn (the dispatch turn it
   bound for that generation) and from a turn already admitted against that anchor, which in
   the first generation of a managed start includes the business turn that delivered this
-  assignment once managed-start has confirmed it. Under CXC Loop the work usually ends in a
+  assignment once managed-start has confirmed it. Under `crw-loop` the work usually ends in a
   different turn: a goal-continuation turn, or one a restarted App Server opened. An emit from
   such a turn is refused `unassigned_turn` unless it carries a continuation claim, so attach
   the claim to that first emit instead of learning it from the refusal:
@@ -414,21 +414,21 @@ Execution:
   you. Report it naming the owner the lookup returned, preserve your artifact, and write
   nothing into that relationship; the coordinator reconciles your work with that owner.
 - If you need something only a person can give, such as a decision, a credential or an
-  approval this packet does not carry, do not ask with `request_user_input`: CXC denies it
+  approval this packet does not carry, do not ask with `request_user_input`: the PABCD hook denies it
   while your goal is active. Write the question out in a blocked file, record `blocked_needs_input` on your
   turn and, where a relay holds the assignment, emit that outcome without `--artifact` (it
   carries no file) and put the question and the blocked file's path in your final message;
-  where none does, return the CXC status the case takes (BLOCKED, UNSAFE or NEEDS_HUMAN)
+  where none does, return the status the case takes (BLOCKED, UNSAFE or NEEDS_HUMAN)
   with the question. Then end the turn. Your parent takes the question to Jun. See
   [Default dev integration](../../crw-plan/references/integrations.md#default-dev-integration).
-- [When CXC Loop is the effective workflow:]
-  `$codexclaw:cxc-loop` — invoke the installed skill, or attach it through the
+- [When `crw-loop` is the effective workflow:]
+  `$crw:crw-loop` — invoke the skill, or attach it through the
   creation tool's supported skill field, and run this bounded objective under it and
-  `cxc-pabcd` using your own session binding, host goal, and goalplan.
+  `crw-pabcd` using your own session binding, host goal, and goalplan.
   If a required loop capability is absent, report the exact gap before starting.
-  CXC `LOOP-DOCS-FIRST-01` applies to your own issue as CXC states it: a single-cycle issue
+  `LOOP-DOCS-FIRST-01` applies to your own issue as `crw-loop` states it: a single-cycle issue
   skips the docs-only first cycle, and a child that plans two or more work-phases opens with
-  one, with CXC's roadmap debt for scope found later.
+  one, with the roadmap debt for scope found later.
   A correction generation, a base-refresh generation and a separated publication step are not
   the first work-phase of new work, so they do not open `LOOP-DOCS-FIRST-01`'s docs-only cycle.
   On a correction or a resume, read whether that goal and goalplan exist before making
@@ -484,7 +484,7 @@ Return:
   pair was declared on this host or the check went unmade; disclose whether served-model proof
   exists. A report that says verified when nothing was compared is the failure this line exists
   to prevent.
-- For CXC Loop: goal/goalplan identifiers, final FSM state, and completion evidence.
+- For `crw-loop`: goal/goalplan identifiers, final FSM state, and completion evidence.
 - Delivery artifact: [the pushed head SHA and the local verification record, including how each
   finding was resolved; for an in-flight pull request, its URL and the state of its checks and
   reviews; or the frozen diff bundle for a restricted or narrowed delivery].
@@ -535,7 +535,7 @@ is already specified rather than restating it, giving the [Non-PR packet](#non-p
 field in brackets where that reduced shape names it differently.
 
 - Effective workflow and the skills to apply — the Loop and non-Loop branches under
-  `Execution:`, plus `Workflow:` [`Workflow/settings:`]. Where CXC Loop is effective the
+  `Execution:`, plus `Workflow:` [`Workflow/settings:`]. Where `crw-loop` is effective the
   packet carries the literal installed-skill invocation and names the applicable surface
   skills; naming the skills descriptively is not the invocation. Where an explicit
   non-Loop or no-goal alternative is effective, that workflow is named in its place.
@@ -552,7 +552,7 @@ field in brackets where that reduced shape names it differently.
   here, what the coordinator owns after it.
 - Publication scope — the publication sentence under `Execution:` and the `Delivery:` line
   under `Authorized execution:`. The packet says that its publication scope is the explicit
-  push approval CXC `DEV-GIT-PUSH-01` requires (push the task branch,
+  push approval `DEV-GIT-PUSH-01` requires (push the task branch,
   never merge), or that its scope excludes publication and the child pushes nothing.
   [Default dev integration](../../crw-plan/references/integrations.md#default-dev-integration)
   owns the rule; this line checks that the packet carries it. [A Non-PR packet has no
@@ -750,8 +750,8 @@ TASK
 Context: <project and coordinator task; the execution mode: relay-managed with its state directory and exact issue identity, or
   explicitly direct with the reason>.
 Codex task title (not the pull request's title): <ISSUE-ID · short Korean title>
-Workflow: <the effective workflow, restated; for CXC Loop the literal $codexclaw:cxc-loop with $codexclaw:cxc-pabcd and
-  $codexclaw:cxc-dev, how LOOP-DOCS-FIRST-01 applies to this issue, and that the first turn writes the activation evidence>
+Workflow: <the effective workflow, restated; for `crw-loop` the literal $crw:crw-loop with $crw:crw-pabcd and
+  $crw:crw-dev, how LOOP-DOCS-FIRST-01 applies to this issue, and that the first turn writes the activation evidence>
 Model/effort: <the pair requested through the creation call; the coordinator reads the receipt back>
 Language: English for everything you write (messages, commits, pull request title, body and replies, handoff and receipt text).
 
@@ -888,8 +888,8 @@ host values filled in.
 STOP WHEN carries five principles in place of the Launch packet's longer rules about escalation and scope:
 
 - Do not stop to ask for permission for what the packet already grants. A decision, a credential or an approval it does not carry
-  is the one route for a question: write the question out, emit `blocked_needs_input` (where no relay holds the assignment, return the CXC
-  status the case takes, BLOCKED, UNSAFE or NEEDS_HUMAN, with the question) and end the turn. Never call `request_user_input`, which CXC
+  is the one route for a question: write the question out, emit `blocked_needs_input` (where no relay holds the assignment, return the
+  status the case takes, BLOCKED, UNSAFE or NEEDS_HUMAN, with the question) and end the turn. Never call `request_user_input`, which the PABCD hook
   denies while a goal is active.
 - Do not stop at a partial fix or a proof of concept: deliver the whole DELIVERABLE, or report blocked.
 - Make no refactor and add no feature the TASK did not ask for. An edit outside SCOPE is a defect even when it improves something.
@@ -931,7 +931,7 @@ coordinator to merge.
 Context: the project that tracks the deferred test and documentation defects of the Go port; coordinator task <task id>; relay-managed,
 state <state directory>, issue identity CRW-243.
 Codex task title (not the pull request's title): CRW-243 · 시드의 결속 세대 거부 복원
-Workflow: $codexclaw:cxc-loop with $codexclaw:cxc-pabcd and $codexclaw:cxc-dev, your own session binding, goal and goalplan. This is a
+Workflow: $crw:crw-loop with $crw:crw-pabcd and $crw:crw-dev, your own session binding, goal and goalplan. This is a
 single-cycle issue, so it skips the docs-only first cycle. Your first turn writes the activation evidence.
 Model/effort: <the pair requested through the creation call>.
 Language: English for everything you write.
@@ -982,7 +982,7 @@ Supervisor: none.
 Issue/PR mapping: CRW-243; thisisjun786/codex-relay-workflow; one pull request into dev from codex/crw-243-storeseed-dispatch-turn.
 Title: CRW-243 · 시드의 결속 세대 거부 복원
   This names the Codex task only. Your pull request's title is yours, in English: "CRW-243: <short English summary>".
-Workflow: CXC Loop, [the Loop branch of the template]
+Workflow: crw-loop, [the Loop branch of the template]
 Language: [the template's text]
 
 Context:
@@ -1002,7 +1002,7 @@ Workspace ownership:
   limit), Processes you start: [the template's text, each field filled with this host's values]
 
 Outcome and scope: [the issue's scope and exclusions, as in SCOPE above]
-Execution: [the template's nineteen bullets: own review, publication, review cycle, base refresh, CXC, the six relay bullets,
+Execution: [the template's nineteen bullets: own review, publication, review cycle, base refresh, workflow maintenance, the six relay bullets,
   escalation, Loop, permissions]
 Verification: [the commands of VERIFY above, each confirmed at the baseline]
 Return: [the template's list: task id, relay receipt, title as published, changed files, per-criterion evidence, model and effort,
@@ -1479,9 +1479,9 @@ says, so read the level first and the fields second:
   reload every skill it once had, and an unrelated reference is not part of recovery.
 - The effective workflow, restated. A transport carries model and effort as settings
   and has no field for the workflow, so a send that omits it has silently dropped it. Where that
-  workflow is CXC Loop, the restatement carries the rule that a correction generation, a
+  workflow is `crw-loop`, the restatement carries the rule that a correction generation, a
   base-refresh generation and a separated publication step are not the first work-phase of new
-  work, so they do not open `LOOP-DOCS-FIRST-01`'s docs-only cycle; CXC's own rule, which a task
+  work, so they do not open `LOOP-DOCS-FIRST-01`'s docs-only cycle; `crw-loop`'s own rule, which a task
   that lost its first assignment is left with, counts work-phases and not what a phase does.
 - The language the task writes in, restated: English for an issue child under
   [Default independent execution](../../crw-plan/references/integrations.md#default-independent-execution),
@@ -1489,7 +1489,7 @@ says, so read the level first and the fields second:
   and a child that lost its first assignment answers a review in whatever language it drifts to.
 - The publication scope and the escalation route, restated. Like the workflow and the language
   they have no transport field, and a child that compacted away its first assignment is left with
-  CXC's own rules, which say never to push without approval and point a question at the
+  `crw-dev`'s own rules, which say never to push without approval and point a question at the
   user. Say whether its publication scope is still the explicit push approval
   `DEV-GIT-PUSH-01` requires (push its task branch and, where a pull request exists, update it, never merge, nothing
   wider) or that it is not, and that a question only a person can answer goes to the parent as
