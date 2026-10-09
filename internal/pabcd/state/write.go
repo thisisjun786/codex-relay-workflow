@@ -203,8 +203,16 @@ func writeState(cwd string, next State, now time.Time, rename func(tmp, finalPat
 	finalPath := StatePath(cwd, next.SessionID)
 	// CRW-1005 (decision D1): a file that holds an unpaired surrogate escape is refused, not rewritten. The reader reads the
 	// escape as U+FFFD, so a rewrite would replace stored text the CXC original keeps; the refusal leaves the file as it is.
-	if raw, readErr := os.ReadFile(finalPath); readErr == nil && rewriteLosslessUnpaired(raw) {
-		return fmt.Errorf("refusing to rewrite %s: it holds an unpaired surrogate escape that a rewrite would replace with U+FFFD", finalPath)
+	// A file that cannot be read cannot be shown clean, so only a missing file is a new write; any other read error returns
+	// before a temp file is staged. A directory at the path (EISDIR) holds no escape and the rename onto it fails by itself,
+	// so it falls through to that failure, which the oracle's write also reports.
+	switch raw, readErr := os.ReadFile(finalPath); {
+	case readErr == nil:
+		if rewriteLosslessUnpaired(raw) {
+			return fmt.Errorf("refusing to rewrite %s: it holds an unpaired surrogate escape that a rewrite would replace with U+FFFD", finalPath)
+		}
+	case !errors.Is(readErr, fs.ErrNotExist) && !errors.Is(readErr, syscall.EISDIR):
+		return fmt.Errorf("refusing to rewrite %s: it cannot be checked for an unpaired surrogate escape: %w", finalPath, readErr)
 	}
 	tmp := tempPath(finalPath)
 	defer func() {

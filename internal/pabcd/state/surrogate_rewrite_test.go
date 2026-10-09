@@ -3,6 +3,7 @@ package state
 import (
 	"bytes"
 	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -57,5 +58,49 @@ func TestWriteStateStillWritesAFileWhoseSurrogatePairIsWhole(t *testing.T) {
 	back, _ := ReadStateStrict(cwd, "s")
 	if back.Slug != "\U0001F600" {
 		t.Fatalf("the whole pair did not survive the rewrite: slug %q", back.Slug)
+	}
+}
+
+// The check reads the file it guards. A file that cannot be read cannot be shown clean, so the write fails before any temp file
+// is staged, and the bytes on disk stay as they were; only a file that does not exist is a new write.
+func TestWriteStateRefusesWhenTheExistingFileCannotBeRead(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a mode 000 file")
+	}
+	cwd := t.TempDir()
+	if err := makeSessionsDir(cwd); err != nil {
+		t.Fatal(err)
+	}
+	path := StatePath(cwd, "s")
+	raw := []byte(`{"phase":"P","sessionId":"s","slug":"\ud800"}`)
+	if err := os.WriteFile(path, raw, 0o666); err != nil {
+		t.Fatal(err)
+	}
+	s, _ := ReadStateStrict(cwd, "s")
+	if err := os.Chmod(path, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(path, 0o666) })
+	if err := WriteState(cwd, s); err == nil {
+		t.Fatal("WriteState wrote over a file it could not read")
+	}
+	if err := os.Chmod(path, 0o666); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(path); !bytes.Equal(got, raw) {
+		t.Fatalf("a refused rewrite changed the file: got %q, want %q", got, raw)
+	}
+	if entries, _ := os.ReadDir(filepath.Dir(path)); len(entries) != 1 {
+		t.Fatalf("a refused rewrite left %d entries beside the state file, want 1", len(entries))
+	}
+}
+
+func TestWriteStateCreatesAFileThatDoesNotExist(t *testing.T) {
+	cwd := t.TempDir()
+	if err := WriteState(cwd, State{Phase: "P", SessionID: "s", Slug: "x"}); err != nil {
+		t.Fatalf("WriteState refused a new file: %v", err)
+	}
+	if back, _ := ReadStateStrict(cwd, "s"); back.Slug != "x" {
+		t.Fatalf("the new file did not read back: slug %q", back.Slug)
 	}
 }
