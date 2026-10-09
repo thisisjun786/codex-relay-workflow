@@ -50,6 +50,16 @@ type cxcReplayer struct {
 	long        []string       // fixtures whose answer depends on the case-root length
 	mask        *regexp.Regexp // text no rule may rename: upstream addresses and rewrite-rule text
 	rewrite     *regexp.Regexp // text a rewrite-kind rule (R19, R29, R30) names
+
+	// declared, when set, makes a hook step run the command the plugin root declares for its leg
+	// through /bin/sh -c, as the host does, instead of crw hook <event> --leg <leg> (FireHooks).
+	declared map[string]string
+	// light readies cases for timing (FireHooks): the real git and silent stubs, no helper process.
+	light bool
+	// observe sees the outcome of each replayed fixture before it is compared; mutate may change it
+	// first (a fault injected between the process and the comparison).
+	observe func(id string, got cxccorpus.Expect)
+	mutate  func(id string, got *cxccorpus.Expect)
 }
 
 func newCXCReplayer(root, crw string) (*cxcReplayer, error) {
@@ -184,6 +194,13 @@ func (r *cxcReplayer) scenario(id string, fix cxccorpus.Fixture, claim cxcClaim)
 // this test binary (cxcHelper), with the variables that point at them.
 func (r *cxcReplayer) Setup(c *cxccorpus.Case, s cxccorpus.Scenario) error {
 	link := func(target, dir, name string) error { return os.Symlink(target, filepath.Join(c.Root, dir, name)) }
+	if r.light {
+		c.Env = append(c.Env, "CRW_BIN="+filepath.Join(c.Root, "bin", "crw"))
+		c.Env = append(c.Env, cxcClosedNetwork()...)
+		return errors.Join(link(r.crw, "bin", "crw"), link(r.git, "bin", "git"), cxccorpus.InstallStubs(c, s.Given, func(name string) error {
+			return os.WriteFile(filepath.Join(c.Root, "stubs", name), []byte("#!/bin/sh\nexit 127\n"), 0o755)
+		}))
+	}
 	if err := errors.Join(link(r.crw, "bin", "crw"), link(r.exe, "bin", "git")); err != nil {
 		return err
 	}
@@ -203,6 +220,13 @@ func (r *cxcReplayer) Bindings(c *cxccorpus.Case) []cxccorpus.Binding {
 func (r *cxcReplayer) Command(c *cxccorpus.Case, s cxccorpus.Scenario, step cxccorpus.Step) (cxccorpus.Invocation, error) {
 	inv := cxccorpus.Invocation{Argv: []string{"/bin/sh", "-c", `umask 022 && exec "$0" "$@"`, "${BIN}/crw"}}
 	switch {
+	case step.Hook != "" && r.declared != nil:
+		command, ok := r.declared[step.Hook]
+		if !ok {
+			return inv, fmt.Errorf("hook leg %q has no declared command in the plugin root", step.Hook)
+		}
+		inv.Argv = []string{"/bin/sh", "-c", command}
+		inv.Env = []string{"PLUGIN_ROOT=" + r.plugin}
 	case step.Hook != "":
 		decl, ok := r.decls[step.Hook]
 		if !ok {
@@ -274,6 +298,12 @@ func (r *cxcReplayer) check(id string, fix cxccorpus.Fixture, claim cxcClaim, tm
 	if err != nil {
 		return err
 	}
+	if r.observe != nil {
+		r.observe(id, got)
+	}
+	if r.mutate != nil {
+		r.mutate(id, &got)
+	}
 	want, err := mapStrings(fix.Expect, r.rename)
 	if err != nil {
 		return err
@@ -282,7 +312,7 @@ func (r *cxcReplayer) check(id string, fix cxccorpus.Fixture, claim cxcClaim, tm
 	if got, err = mapStrings(got, invocation.Replace); err != nil {
 		return err
 	}
-	if err := compare(flatten(want), flatten(got), claim); err != nil {
+	if err := compare(flatten(want), flatten(got), claim, r.light); err != nil {
 		return fmt.Errorf("%s (%s by %s): %w", id, claim.State, claim.Issue, err)
 	}
 	return nil
@@ -327,8 +357,10 @@ func flatten(e cxccorpus.Expect) map[string]string {
 	return flat
 }
 
-// compare applies the claim's patch to the expectation and lists up to eight differences.
-func compare(want, got map[string]string, claim cxcClaim) error {
+// compare applies the claim's patch to the expectation and lists up to eight differences. A light
+// case (timing) logs no calls and leaves its tree unobserved, so stepsOnly judges the steps alone:
+// the exit, signal, timeout, form and bytes of what each command answered.
+func compare(want, got map[string]string, claim cxcClaim, stepsOnly bool) error {
 	for _, prefix := range claim.Remove {
 		before := len(want)
 		maps.DeleteFunc(want, func(key, _ string) bool { return strings.HasPrefix(key, prefix) })
@@ -337,6 +369,11 @@ func compare(want, got map[string]string, claim cxcClaim) error {
 		}
 	}
 	maps.Copy(want, claim.Set)
+	if stepsOnly {
+		keep := func(key string) bool { return key == "exit" || strings.HasPrefix(key, "steps/") }
+		maps.DeleteFunc(want, func(key, _ string) bool { return !keep(key) })
+		maps.DeleteFunc(got, func(key, _ string) bool { return !keep(key) })
+	}
 	keys := append(slices.Collect(maps.Keys(want)), slices.Collect(maps.Keys(got))...)
 	slices.Sort(keys)
 	var diffs []string
