@@ -940,3 +940,22 @@ pre-merge evaluation crw895-3d1fe314 (c1, d3 formatted operands)	yes ../repo | h
 pre-merge evaluation crw895-3d1fe314 (c1, d3 formatted operands)	awk 'BEGIN{print "../repo"}' | xargs rmdir	CRW-895-m2	row	-
 pre-merge evaluation crw895-3d1fe314 (c1, d3 formatted operands)	ls -d build | xargs rm	CRW-895-m3	row	-
 pre-merge evaluation crw895-3d1fe314 (c1, d3 formatted operands)	printf '%s\n' ../repo | xargs -I{} sh -c 'rmdir {}'	CRW-895-m4	row	-
+second verification of ad1b3d605 (P0 find placeholder in a shell text)	find ../repo -exec sh -c 'git worktree remove --force {}' \;	CRW-895-n1	row	-
+second verification of ad1b3d605 (P0 find placeholder in a shell text)	find .. -exec bash -c 'rm -rf {}' \;	CRW-895-n2	row	-
+second verification of ad1b3d605 (P0 find placeholder in a shell text)	find ../repo -exec sh -c 'rmdir {}' \;	CRW-895-n3	row	-
+second verification of ad1b3d605 (P0 find placeholder in a shell text)	find ../repo -execdir sh -c 'rm -rf "x/{}"' \;	CRW-895-n4	row	-
+second verification of ad1b3d605 (P0 find placeholder in a shell text)	find build -exec sh -c 'rm -rf {}' \;	CRW-895-n5	row	-
+second verification of ad1b3d605 (P0 find placeholder in a shell text)	find . -name '*.o' -exec sh -c 'rm -f {}' \;	CRW-895-n6	row	-
+second verification of ad1b3d605 (P0 find placeholder in a shell text)	find . -exec sh -c 'rm -rf {}' \;	CRW-895-n7	row	-
+second verification of ad1b3d605 (P0 find placeholder in a shell text)	find ../repo -exec sh -c 'rm -rf "$1"' _ {} \;	CRW-895-n8	row	-
+second verification of ad1b3d605 (P0 find placeholder in a shell text)	find ../repo -exec sh -c 'rm build/old.o' \;	CRW-895-n9	row	-
+second verification of ad1b3d605 (P2 POSIX class in a find name pattern)	find ../repo -name '[[:alpha:]]*' -delete	CRW-895-o1	row	-
+second verification of ad1b3d605 (P2 POSIX class in a find name pattern)	find ../repo -name '[[:print:]]*' -delete	CRW-895-o2	row	-
+second verification of ad1b3d605 (P2 POSIX class in a find name pattern)	find ../repo -name '[[:digit:]]*' -delete	CRW-895-o3	row	-
+second verification of ad1b3d605 (P2 POSIX class in a find name pattern)	find ../repo -name '[[:digit:]r]*' -delete	CRW-895-o4	row	-
+second verification of ad1b3d605 (P2 POSIX class in a find name pattern)	find ../repo -name '[^[:alpha:]]*' -delete	CRW-895-o5	row	-
+second verification of ad1b3d605 (P2 filter file operand)	echo ../other | cat roots.list | xargs git worktree remove --force	CRW-895-q1	row	-
+second verification of ad1b3d605 (P2 filter file operand)	echo build | sort roots.list | xargs rmdir	CRW-895-q2	row	-
+second verification of ad1b3d605 (P2 filter file operand)	echo ../other | grep o roots.list | xargs rmdir	CRW-895-q3	row	-
+second verification of ad1b3d605 (P2 filter file operand)	echo build/old.o | cat - | xargs rm	CRW-895-q4	row	-
+second verification of ad1b3d605 (P2 filter file operand)	echo build/old.o | grep old | xargs rm	CRW-895-q5	row	-

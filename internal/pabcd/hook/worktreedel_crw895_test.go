@@ -71,6 +71,18 @@ func crw895Shapes() []crw895Shape {
 		{"find . -type f \\( -exec rm {} + \\)", false, false},
 		{"echo ../repo | xargs sh -c 'rm build/old.o'", false, false},
 		{"echo ../repo | xargs sh -c 'rm \"$@\"' _", true, false},
+		// the second verification of ad1b3d605: find substitutes {} in the text of a shell, POSIX classes, a filter that reads a file
+		{`find ../repo -exec sh -c 'git worktree remove --force {}' \;`, true, false},
+		{`find .. -exec bash -c 'rm -rf {}' \;`, true, false},
+		{`find ../repo -exec sh -c 'rmdir {}' \;`, true, false},
+		{`find build -exec sh -c 'rm -rf {}' \;`, false, false},
+		{`find . -name '*.o' -exec sh -c 'rm -f {}' \;`, false, false},
+		{`find ../repo -exec sh -c 'rm build/old.o' \;`, false, false},
+		{"find ../repo -name '[[:alpha:]]*' -delete", true, false},
+		{"find ../repo -name '[[:print:]]*' -delete", true, false},
+		{"find ../repo -name '[[:digit:]]*' -delete", false, false},
+		{"echo ../other | cat roots.list | xargs git worktree remove --force", true, false},
+		{"echo build/old.o | cat - | xargs rm", false, false},
 	}
 }
 
