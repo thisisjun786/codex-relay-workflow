@@ -646,7 +646,8 @@ func TestReviewObserverDecoratedVerdictKeepsTheBindings(t *testing.T) {
 			t.Fatal(e.ledger(t))
 		}
 	})
-	t.Run("changed plan", func(t *testing.T) {
+	// The active work-phase moved after the round opened: the observer refuses the verdict for the wrong work-phase.
+	t.Run("moved work-phase", func(t *testing.T) {
 		e := reviewObsSeed(t, "cp", nil)
 		launch := e.open(t)
 		plan := goalplan.ReadGoalplan(e.cwd, e.slug)
@@ -662,4 +663,56 @@ func TestReviewObserverDecoratedVerdictKeepsTheBindings(t *testing.T) {
 			t.Fatal(e.ledger(t))
 		}
 	})
+}
+
+// A decorated verdict for a plan file that changed after the round opened is recorded as the reviewer said it: the observer
+// binds a verdict to its launch, session, epoch and work-phase, and the plan hash is the A>B edge's check. So the same attest
+// that enters B over an unchanged plan is refused once the audited plan file's content changed ("the plan changed after round").
+func TestReviewObserverDecoratedVerdictOverAChangedPlanFileIsRefusedAtAToB(t *testing.T) {
+	attest := func() string {
+		raw, _ := json.Marshal(map[string]any{"from": "A", "to": "B", "did": "audited the plan", "auditOutput": "VERDICT: GO-WITH-FIXES (blockers=2)",
+			"auditVerdict": "near-pass", "workPhaseId": "wp0", "auditResidual": "both blockers handled",
+			"auditBlockers": []map[string]any{{"blocker": 1, "disposition": "folded", "reason": "step 2 names the rollback"},
+				{"blocker": 2, "disposition": "rebutted", "reason": "the gate owns it"}}})
+		return string(raw)
+	}
+	enterB := func(t *testing.T, e reviewObsEnv) cli.CliResult {
+		t.Helper()
+		parsed := cli.ParseOrchestrateCliArgs([]string{"B", "--session", e.session, "--cwd", e.cwd, "--attest", attest()}, e.cwd)
+		read, err := cli.RunOrchestrateRead(parsed, cli.ReadEnv{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if read.Result != nil {
+			return *read.Result
+		}
+		got, err := cli.RunOrchestrateTransition(*parsed.Args, read.SessionID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	for _, changed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("changed=%v", changed), func(t *testing.T) {
+			e := reviewObsSeed(t, fmt.Sprintf("pf%v", changed), nil)
+			launch := e.open(t)
+			if changed {
+				subagentStopPut(t, filepath.Join(e.cwd, reviewObsUnit, "000_plan.md"), "# probe\n\nstep 2 rewritten after the audit opened\n")
+			}
+			e.stop(t, reviewObsType("explorer"), "reviewer-1", reviewObsSignoff(launch, "GO-WITH-FIXES (blockers=2)"))
+			r := e.round(t)
+			if r.Status != goalplan.ReviewApproved || r.Lane.Verdict != goalplan.VerdictNearPass || r.Lane.Blockers != 2 {
+				t.Fatalf("the observer records the verdict it was given: %+v", r)
+			}
+			got := enterB(t, e)
+			s, _ := state.ReadStateStrict(e.cwd, e.session)
+			stale := strings.Contains(got.Output, "the plan changed after round "+r.RoundID)
+			if changed && (got.Code != 1 || !stale || s.Phase != state.PhaseA) {
+				t.Fatalf("a changed plan file must refuse A>B: code=%d phase=%s\n%s", got.Code, s.Phase, got.Output)
+			}
+			if !changed && (got.Code != 0 || stale || s.Phase != state.PhaseB) {
+				t.Fatalf("an unchanged plan file enters B: code=%d phase=%s\n%s", got.Code, s.Phase, got.Output)
+			}
+		})
+	}
 }
