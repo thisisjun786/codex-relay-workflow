@@ -1,0 +1,407 @@
+# CRW-894 after the evaluation of 1688f7c5: d1 (descriptor alias spellings), d2 (-s), d3 (shebangs of the shell family), d4 (python3 -m json.tool).
+# ../repo is the managed checkout.
+# CRW-894 fix round 3: python3 -m json.tool is refused as on dev (the working directory heads its module search path and json.tool imports
+# many standard modules through it, so no text proves what runs). A row that expected the module allowed records the deviation.
+
+=== CRW-894-ev-01 | U
+--why python3 reads its program from the pipe through a dot segment in the alias path (d1 of the 1688f7c5 evaluation): the kernel resolves it to /dev/stdin.
+printf 'import shutil; shutil.rmtree("../repo")\n' | python3 /dev/./stdin
+
+=== CRW-894-ev-02 | U
+--why python3 reads its program from the pipe through a doubled slash in the alias path.
+printf 'import shutil; shutil.rmtree("../repo")\n' | python3 //dev/stdin
+
+=== CRW-894-ev-03 | U
+--why python3 reads its program from the pipe through a dot-dot segment in the alias path.
+printf 'import shutil; shutil.rmtree("../repo")\n' | python3 /dev/../dev/stdin
+
+=== CRW-894-ev-04 | U
+--why python3 reads its program from the pipe through doubled slashes inside /dev/fd/0.
+printf 'import shutil; shutil.rmtree("../repo")\n' | python3 /dev//fd//0
+
+=== CRW-894-ev-05 | U
+--why python3 reads its program from the pipe through a dot-dot segment in /proc/self/fd/0.
+printf 'import shutil; shutil.rmtree("../repo")\n' | python3 /proc/self/../self/fd/0
+
+=== CRW-894-ev-06 | U
+--why python3 reads its program from the pipe through the process root link in front of /dev/stdin.
+printf 'import shutil; shutil.rmtree("../repo")\n' | python3 /proc/self/root/dev/stdin
+
+=== CRW-894-ev-07 | U
+--why An alias spelling after -- is still the stdin alias.
+printf 'import shutil; shutil.rmtree("../repo")\n' | python3 -- /dev/./stdin
+
+=== CRW-894-ev-08 | U
+--why node reads its program from the pipe through a dotted alias.
+printf 'import shutil; shutil.rmtree("../repo")\n' | node /dev/./stdin
+
+=== CRW-894-ev-09 | U
+--why perl reads its program from the pipe through a dotted alias.
+printf 'import shutil; shutil.rmtree("../repo")\n' | perl /dev/./stdin
+
+=== CRW-894-ev-10 | U
+--why php (an opaque interpreter) reads its program from the pipe through a dotted alias.
+printf 'import shutil; shutil.rmtree("../repo")\n' | php /dev/./stdin
+
+=== CRW-894-ev-11 | U
+--why A shell script operand that is a dotted stdin alias is the pipe.
+printf 'rm -rf ../repo\n' | bash /dev/./stdin
+
+=== CRW-894-ev-12 | U
+--why A shell script operand with a doubled slash is the pipe.
+printf 'rm -rf ../repo\n' | sh /dev//stdin
+
+=== CRW-894-ev-13 | U
+--why source of a dotted stdin alias is the pipe.
+printf 'rm -rf ../repo\n' | source /dev/./stdin
+
+=== CRW-894-ev-14 | U
+--why . of a dotted stdin alias is the pipe.
+printf 'rm -rf ../repo\n' | . /dev/./stdin
+
+=== CRW-894-ev-15 | U
+--why A dotted alias redirect is the pipe again.
+printf 'rm -rf ../repo\n' | bash </dev/./stdin
+
+=== CRW-894-ev-16 | U
+--why ash with a doubled-slash descriptor alias redirect is the pipe again.
+printf 'rm -rf ../repo\n' | ash </dev//fd/0
+
+=== CRW-894-ev-17 | U
+--why A relative alias: the directory is /dev, so stdin is /dev/stdin.
+cd /dev; printf 'import shutil; shutil.rmtree("../repo")\n' | python3 stdin
+
+=== CRW-894-ev-18 | U
+--why A relative alias: the directory is /proc/self/fd, so 0 is the pipe.
+cd /proc/self/fd; printf 'import shutil; shutil.rmtree("../repo")\n' | python3 0
+
+=== CRW-894-ev-19 | U
+--why The cwd link of the process, with the directory /dev.
+cd /dev; printf 'import shutil; shutil.rmtree("../repo")\n' | python3 /proc/self/cwd/stdin
+
+=== CRW-894-ev-20 | U
+--why A relative alias redirect of a shell: the directory is /dev.
+cd /dev; printf 'rm -rf ../repo\n' | bash <stdin
+
+=== CRW-894-ev-21 | U
+--why A dotted alias with a here-string: the here-string is the program but the descriptor alias is not readable by the reader.
+python3 /dev/./stdin <<< 'import shutil; shutil.rmtree("../repo")'
+
+=== CRW-894-ev-22 | B
+--why Control: a script file whose name merely contains dev and stdin is a file in the working directory.
+printf x | python3 ./dev/stdin
+
+=== CRW-894-ev-23 | B
+--why Control: a script operand /dev/null is no stdin alias.
+printf x | python3 /dev/null
+
+=== CRW-894-ev-24 | B
+--why Control: a script file operand of an interpreter is not judged.
+printf x | python3 script.py
+
+=== CRW-894-ev-25 | U
+--why The pipe is the program: -s makes safe.sh a positional parameter, the program is the pipe (d2 of the 1688f7c5 evaluation).
+--file safe.sh
+:
+--cmd
+printf 'rm -rf ../repo\n' | bash -s safe.sh
+
+=== CRW-894-ev-26 | U
+--why The pipe is the program: -s with ash.
+--file safe.sh
+:
+--cmd
+printf 'rm -rf ../repo\n' | ash -s safe.sh
+
+=== CRW-894-ev-27 | U
+--why The pipe is the program: -s with mksh and two positional parameters.
+--file safe.sh
+:
+--cmd
+printf 'rm -rf ../repo\n' | mksh -s safe.sh arg
+
+=== CRW-894-ev-28 | U
+--why The pipe is the program: -s then -- then the positional parameter.
+--file safe.sh
+:
+--cmd
+printf 'rm -rf ../repo\n' | bash -s -- safe.sh
+
+=== CRW-894-ev-29 | U
+--why The pipe is the program: -s clustered with another flag.
+--file safe.sh
+:
+--cmd
+printf 'rm -rf ../repo\n' | bash -xs safe.sh
+
+=== CRW-894-ev-30 | U
+--why The pipe is the program: -s behind -o in one cluster: bash reads it as a flag (-o posix -s), zsh as part of the option name, so the reader refuses it.
+--file safe.sh
+:
+--cmd
+printf 'rm -rf ../repo\n' | bash -os posix safe.sh
+
+=== CRW-894-ev-31 | U
+--why The pipe is the program: +s is read like -s (fail closed).
+--file safe.sh
+:
+--cmd
+printf 'rm -rf ../repo\n' | bash +s safe.sh
+
+=== CRW-894-ev-32 | U
+--why The pipe is the program: -s behind busybox ash.
+--file safe.sh
+:
+--cmd
+printf 'rm -rf ../repo\n' | busybox ash -s safe.sh
+
+=== CRW-894-ev-33 | U
+--why The pipe is the program: -s with sh.
+--file safe.sh
+:
+--cmd
+printf 'rm -rf ../repo\n' | sh -s safe.sh
+
+=== CRW-894-ev-34 | U
+--why The pipe is the program: -s with zsh.
+--file safe.sh
+:
+--cmd
+printf 'rm -rf ../repo\n' | zsh -s safe.sh
+
+=== CRW-894-ev-35 | U
+--why The pipe is the program: -s with dash.
+--file safe.sh
+:
+--cmd
+printf 'rm -rf ../repo\n' | dash -s safe.sh
+
+=== CRW-894-ev-36 | R
+--why Control for -s: the here-document is the program (rm -rf ../repo) and safe.sh is a positional parameter; the removal is denied.
+--file safe.sh
+:
+--cmd
+bash -s safe.sh <<'EOF'
+rm -rf ../repo
+EOF
+
+=== CRW-894-ev-37 | B
+--why Control for -s: a harmless here-string is the program and arg a positional parameter.
+bash -s arg <<< ':'
+
+=== CRW-894-ev-38 | B
+--why Control for -s: -c wins over -s, the string is the program.
+bash -sc 'echo hi' safe.sh
+
+=== CRW-894-ev-39 | T
+--why Control: without -s the operand is the script file and the pipe is data.
+--file safe.sh
+:
+--cmd
+printf 'rm -rf ../repo\n' | bash safe.sh
+
+=== CRW-894-ev-40 | P
+--why A direct script with a hush shebang is a shell script: its body passes the pipe to a shell, so the post it runs is refused (d3).
+--file runner.sh
+#!/bin/hush
+cat | hush
+--cmd
+printf 'gh pr create --title T --body hi\n' | ./runner.sh
+
+=== CRW-894-ev-41 | P
+--why A direct script with a env hush shebang is a shell script: its body passes the pipe to a shell, so the post it runs is refused (d3).
+--file runner.sh
+#!/usr/bin/env hush
+cat | hush
+--cmd
+printf 'gh pr create --title T --body hi\n' | ./runner.sh
+
+=== CRW-894-ev-42 | P
+--why A direct script with a pdksh shebang is a shell script: its body passes the pipe to a shell, so the post it runs is refused (d3).
+--file runner.sh
+#!/bin/pdksh
+cat | pdksh
+--cmd
+printf 'gh pr create --title T --body hi\n' | ./runner.sh
+
+=== CRW-894-ev-43 | P
+--why A direct script with a oksh shebang is a shell script: its body passes the pipe to a shell, so the post it runs is refused (d3).
+--file runner.sh
+#!/bin/oksh
+cat | oksh
+--cmd
+printf 'gh pr create --title T --body hi\n' | ./runner.sh
+
+=== CRW-894-ev-44 | P
+--why A direct script with a posh shebang is a shell script: its body passes the pipe to a shell, so the post it runs is refused (d3).
+--file runner.sh
+#!/bin/posh
+cat | posh
+--cmd
+printf 'gh pr create --title T --body hi\n' | ./runner.sh
+
+=== CRW-894-ev-45 | P
+--why A direct script with a yash shebang is a shell script: its body passes the pipe to a shell, so the post it runs is refused (d3).
+--file runner.sh
+#!/bin/yash
+cat | yash
+--cmd
+printf 'gh pr create --title T --body hi\n' | ./runner.sh
+
+=== CRW-894-ev-46 | P
+--why A direct script with a rbash shebang is a shell script: its body passes the pipe to a shell, so the post it runs is refused (d3).
+--file runner.sh
+#!/bin/rbash
+cat | rbash
+--cmd
+printf 'gh pr create --title T --body hi\n' | ./runner.sh
+
+=== CRW-894-ev-47 | P
+--why A direct script with a busybox ash shebang is a shell script: its body passes the pipe to a shell, so the post it runs is refused (d3).
+--file runner.sh
+#!/bin/busybox ash
+cat | ash
+--cmd
+printf 'gh pr create --title T --body hi\n' | ./runner.sh
+
+=== CRW-894-ev-48 | P
+--why A direct script with a busybox hush shebang is a shell script: its body passes the pipe to a shell, so the post it runs is refused (d3).
+--file runner.sh
+#!/bin/busybox hush
+cat | hush
+--cmd
+printf 'gh pr create --title T --body hi\n' | ./runner.sh
+
+=== CRW-894-ev-49 | P
+--why A direct script with a busybox sh shebang is a shell script: its body passes the pipe to a shell, so the post it runs is refused (d3).
+--file runner.sh
+#!/bin/busybox sh
+cat | sh
+--cmd
+printf 'gh pr create --title T --body hi\n' | ./runner.sh
+
+=== CRW-894-ev-50 | B
+--why Control: a hush script whose body does nothing is judged as shell text and allowed.
+--file runner.sh
+#!/bin/hush
+echo hi
+--cmd
+./runner.sh
+
+=== CRW-894-ev-51 | B
+--why Control: a script of another interpreter with no gh command in it is not judged.
+--file runner.py
+#!/usr/bin/python3
+print(1)
+--cmd
+./runner.py
+
+=== CRW-894-ev-52 | B | deviation=attempt/deny/deny
+--why The issue's control: python3 -m json.tool in a pipe (d4).
+printf x | python3 -m json.tool
+
+=== CRW-894-ev-53 | B | deviation=attempt/deny/deny
+--why python3 -m json.tool with a flag reads JSON from the pipe.
+printf x | python3 -m json.tool --sort-keys
+
+=== CRW-894-ev-54 | B | deviation=attempt/deny/deny
+--why python3 -m json.tool with a flag with an integer value reads JSON from the pipe.
+printf x | python3 -m json.tool --indent 2
+
+=== CRW-894-ev-55 | B | deviation=attempt/deny/deny
+--why python3 -m json.tool with a flag with an attached value reads JSON from the pipe.
+printf x | python3 -m json.tool --indent=2
+
+=== CRW-894-ev-56 | B | deviation=attempt/deny/deny
+--why python3 -m json.tool with two flags reads JSON from the pipe.
+printf x | python3 -m json.tool --no-ensure-ascii --tab
+
+=== CRW-894-ev-57 | B | deviation=attempt/deny/deny
+--why The module name attached to -m.
+printf x | python3 -mjson.tool
+
+=== CRW-894-ev-58 | B | deviation=attempt/deny/deny
+--why Combined flags before -m.
+printf x | python3 -B -m json.tool
+
+=== CRW-894-ev-59 | U
+--why A file operand of json.tool is a destination the reader does not model (it writes the second file): refused.
+printf x | python3 -m json.tool - {MEMORY}/a.md
+
+=== CRW-894-ev-60 | U
+--why An input file operand of json.tool is refused with the same fail-closed rule.
+printf x | python3 -m json.tool in.json
+
+=== CRW-894-ev-61 | U
+--why pdb runs the commands it reads from the pipe.
+printf x | python3 -m pdb
+
+=== CRW-894-ev-62 | U
+--why A module that is not json.tool is not read.
+printf x | python3 -m json
+
+=== CRW-894-ev-63 | U
+--why A longer module name is not json.tool.
+printf x | python3 -m json.tool.evil
+
+=== CRW-894-ev-64 | U
+--why -c and -m together: two programs, refused.
+printf x | python3 -c 'print(1)' -m json.tool
+
+=== CRW-894-ev-65 | U
+--why -c after the module is a module argument json.tool does not take: refused.
+printf x | python3 -m json.tool -c 'import os'
+
+=== CRW-894-ev-66 | U
+--why -m without a module name is refused.
+printf x | python3 -m
+
+=== CRW-894-ev-67 | U
+--why php (an interpreter the reader cannot read) with a script operand the reader cannot evaluate may be reading the stdin alias: refused behind a pipe.
+printf 'x' | php "$(echo /dev/./stdin)"
+
+=== CRW-894-ev-68 | B
+--why Control: php with a script file and the pipe as data.
+printf 'x' | php script.php
+
+=== CRW-894-ev-69 | U
+--why -c behind -o in one cluster is read one way by bash (-o posix -c) and another by zsh (option name), so the reader refuses it.
+bash -oc posix 'echo hi'
+
+=== CRW-894-ev-70 | U
+--why python3 -i runs safe.py and then reads the pipe as commands: the script operand is not the program that matters.
+--file safe.py
+pass
+--cmd
+printf 'import shutil; shutil.rmtree("../repo")\n' | python3 -i safe.py
+
+=== CRW-894-ev-71 | U
+--why python3 -i with -c runs the string and then reads the pipe as commands.
+printf 'import shutil; shutil.rmtree("../repo")\n' | python3 -i -c 'pass'
+
+=== CRW-894-ev-72 | U
+--why node -e with -i runs the string and then reads the pipe in its REPL.
+printf 'require("fs").rmSync("../repo",{recursive:true})\n' | node -e 0 -i
+
+=== CRW-894-ev-73 | U
+--why python3 -i with a here-document after a script operand: the here-document is read as commands after the script.
+--file safe.py
+pass
+--cmd
+python3 -i safe.py <<'EOF'
+import shutil; shutil.rmtree("../repo")
+EOF
+
+=== CRW-894-ev-74 | B
+--why Control: python3 -i with no pipe or here-document runs the script (standard input is not a program the text shows).
+--file safe.py
+pass
+--cmd
+python3 -i safe.py
+
+=== CRW-894-ev-75 | B
+--why Control: the pipe is data for a script of python3 without -i.
+--file safe.py
+pass
+--cmd
+printf x | python3 safe.py
