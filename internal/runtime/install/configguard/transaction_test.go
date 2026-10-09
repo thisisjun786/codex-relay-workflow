@@ -20,7 +20,7 @@ type txKilled struct{ step string }
 // txRunStoppedAt runs f with the k-th transaction step (1-based) failed, or the process "killed" there when kill is set:
 // the step panics and nothing after it runs, which leaves the files exactly as a killed command would (the only deferred
 // work in these commands is the release of the config lock).
-func txRunStoppedAt(t *testing.T, k int, kill bool, f func() error) (err error, stopped string) {
+func txRunStoppedAt(t *testing.T, k int, kill bool, f func() error) (stopped string, err error) {
 	t.Helper()
 	n := 0
 	txHook = func(step string) error {
@@ -43,7 +43,8 @@ func txRunStoppedAt(t *testing.T, k int, kill bool, f func() error) (err error, 
 			err = errors.New("killed at " + stopped)
 		}
 	}()
-	return f(), stopped
+	err = f()
+	return stopped, err
 }
 
 // txCountSteps answers how many transaction steps a clean run of f takes.
@@ -113,7 +114,7 @@ func TestActivationTransactionSurvivesAFailureOrAKillAtEveryStep(t *testing.T) {
 		for _, kill := range []bool{false, true} {
 			t.Run(fmt.Sprintf("step%d-kill%v", k, kill), func(t *testing.T) {
 				home, path, deps, state := txActivationFixture(t)
-				err, stopped := txRunStoppedAt(t, k, kill, func() error { _, err := Activate(deps); return err })
+				stopped, err := txRunStoppedAt(t, k, kill, func() error { _, err := Activate(deps); return err })
 				if err == nil {
 					t.Fatalf("the activation stopped at %s reported success", stopped)
 				}
@@ -163,7 +164,7 @@ func TestConfigSetTransactionSurvivesAFailureOrAKillAtEveryStep(t *testing.T) {
 			t.Run(fmt.Sprintf("step%d-kill%v", k, kill), func(t *testing.T) {
 				home, path := configSetHome(t, txOriginal, true)
 				deps := ConfigSetDeps{CodexHome: home, ConfigPath: path}
-				err, stopped := txRunStoppedAt(t, k, kill, func() error {
+				stopped, err := txRunStoppedAt(t, k, kill, func() error {
 					_, err := ApplyManagedKey(deps, configSetKey, &value)
 					return err
 				})
@@ -291,7 +292,7 @@ func TestRecoveryNeverAdoptsOrRevertsAConcurrentExternalEdit(t *testing.T) {
 	home, path := configSetHome(t, txOriginal, true)
 	deps := ConfigSetDeps{CodexHome: home, ConfigPath: path}
 	value := true
-	err, stopped := txRunStoppedAt(t, 4, true, func() error { _, err := ApplyManagedKey(deps, configSetKey, &value); return err })
+	stopped, err := txRunStoppedAt(t, 4, true, func() error { _, err := ApplyManagedKey(deps, configSetKey, &value); return err })
 	if err == nil || stopped != "manifest" {
 		t.Fatalf("stopped at %q: %v", stopped, err)
 	}
