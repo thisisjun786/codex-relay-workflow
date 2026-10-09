@@ -141,17 +141,12 @@ func shellIRPyDataMask(src string, spans [][2]int) []bool {
 	return mask
 }
 
-// shellIRStructuralWriteUnknown reports a program that holds a file API and a write the reader cannot attribute to a literal
-// destination: a bare or unattached write name, a run-time name (getattr, __import__, eval, ...), or a computed subscript.
-func shellIRStructuralWriteUnknown(src string, python bool) bool {
-	return shellIRStructuralWriteUnknownFrom(src, 0, python)
-}
-
-// shellIRStructuralWriteUnknownFrom is shellIRStructuralWriteUnknown for the program text src[from:], read in the scope that
+// shellIRStructuralWriteUnknownFrom reports a write whose destination cannot be named in src[from:], read in the scope that
 // the text before it makes: the file APIs, imports and names of src[:from] are in scope, but only the tokens from from on are
 // judged, and the data mask (comment and string text, and whether the program runs text) is that of src[from:] alone, so an exec
 // or a string of the enclosing text never changes how the decoded program's own strings are read (CRW-951, verifier round 2).
-func shellIRStructuralWriteUnknownFrom(src string, from int, python bool) bool {
+// protectDir prevents the computed-create relaxation in a protected or unknown effective directory.
+func shellIRStructuralWriteUnknownFrom(src string, from int, python, protectDir bool) bool {
 	spans := shellIRTokenSpans(src)
 	imports := shellIRFromImportsOf(src, python)
 	if !python {
@@ -203,7 +198,7 @@ func shellIRStructuralWriteUnknownFrom(src string, from int, python bool) bool {
 			if data != nil && data[sp[0]] {
 				continue
 			}
-			if shellIRPrevNonSpace(src, sp[0]) == '.' && (shellIRNextNonSpace(src, sp[1]) != '(' || shellIRPyUnattributedCall(src, sp, tok)) && shellIRPyProtectedReference(src) {
+			if shellIRPrevNonSpace(src, sp[0]) == '.' && (shellIRNextNonSpace(src, sp[1]) != '(' || shellIRPyUnattributedCall(src, sp, tok)) && (protectDir || shellIRPyProtectedReference(src)) {
 				return true
 			}
 			continue

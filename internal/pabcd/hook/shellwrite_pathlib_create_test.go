@@ -101,6 +101,7 @@ func TestPathlibCreateEffectiveDirectory(t *testing.T) {
 	for _, method := range []string{"touch", "mkdir"} {
 		for _, receiver := range []string{
 			`Path("x")`, `Path(name)`, `Path(".").joinpath("x")`, `(Path(".") / "x")`, `p`, `Path(f"{name}")`,
+			`decoded-bound`, `decoded-computed`, `field-computed`, `Path("/w/x")`, `data`,
 		} {
 			for _, scene := range []string{"cwd-memory", "cwd-memory-child", "cd-memory", "cd-unknown", "cwd-linked-memory", "cd-linked-memory", "cwd-work", "cd-work"} {
 				t.Run(method+"/"+receiver+"/"+scene, func(t *testing.T) {
@@ -135,6 +136,19 @@ func TestPathlibCreateEffectiveDirectory(t *testing.T) {
 						cwd, wantWrite = root, false
 					}
 					program := `from pathlib import Path; name="x"; p=Path("x"); ` + receiver + "." + method + "()"
+					switch receiver {
+					case "decoded-bound":
+						program = `from pathlib import Path; p=Path("x"); exec("p.` + method + `()")`
+					case "decoded-computed":
+						program = `from pathlib import Path; name="x"; exec("Path(name).` + method + `()")`
+					case "field-computed":
+						program = `from pathlib import Path; name="x"; print(f"{Path(name).` + method + `()}")`
+					case "data":
+						program = `from pathlib import Path; print("p.` + method + `()") # p.` + method + `()`
+					}
+					if receiver == `Path("/w/x")` || receiver == "data" {
+						wantWrite = false
+					}
 					payload := gateBash(t, cwd, prefix+"python3 -c '"+program+"'")
 					if out := HandleMemoryWriteGate(payload, env); strings.Contains(out, "MEMORY-WRITE-GATE") != wantWrite {
 						t.Errorf("without grant: %q, want attempt=%v", out, wantWrite)
@@ -151,6 +165,34 @@ func TestPathlibCreateEffectiveDirectory(t *testing.T) {
 					}
 				})
 			}
+		}
+	}
+}
+
+// The d4 create relaxation must leave other unknown writers fail closed.
+func TestPathlibOtherWritesEffectiveDirectory(t *testing.T) {
+	for _, write := range []string{`write_text("x")`, `write_bytes(b"x")`, `open("w")`} {
+		for _, prefix := range []string{"", `cd "{M}"; `, `cd "$DEST"; `} {
+			t.Run(write+"/"+prefix, func(t *testing.T) {
+				cwd, root, env := gateScene(t)
+				if err := os.MkdirAll(root, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if prefix == "" {
+					cwd = root
+				}
+				command := strings.ReplaceAll(prefix, "{M}", root) + `python3 -c 'from pathlib import Path; name="x"; Path(name).` + write + `'`
+				payload := gateBash(t, cwd, command)
+				gateDeny(t, HandleMemoryWriteGate(payload, env))
+				gateSeed(t, cwd, func(s *state.State) { s.MemoryWriteGrant = true })
+				if out := HandleMemoryWriteGate(payload, env); out != "" {
+					t.Fatalf("with grant: %q", out)
+				}
+				if state.ReadState(cwd, gateSession).MemoryWriteGrant {
+					t.Fatal("the write did not spend its grant")
+				}
+				gateDeny(t, HandleMemoryWriteGate(payload, env))
+			})
 		}
 	}
 }

@@ -147,6 +147,10 @@ func shellVerbSedWrites(args []string) []string {
 // template literal must not open a triple-quoted region and swallow the rest of the program, which would lose the destination
 // of a later write; a Node program keeps the single-quote walk the reader always had.
 func shellVerbScriptWritesIn(script string, hard, python bool) []string {
+	return shellVerbScriptWritesInDir(script, hard, python, false)
+}
+
+func shellVerbScriptWritesInDir(script string, hard, python, protectDir bool) []string {
 	s, dot, pre := lintSpace, lintDot, "[rRuUbBfF]*"
 	quoted := func(body string) string { return "(?:'(" + body + ")'|\"(" + body + ")\")" }
 	callQuote, callGroups := quoted(dot+"*?"), 2
@@ -170,7 +174,8 @@ func shellVerbScriptWritesIn(script string, hard, python bool) []string {
 	}
 	if hard {
 		out = append(out, shellWriteEscapeJSWrites(script, out)...)
-		out = append(out, shellVerbOpenWritesIn(script, python)...)
+		more, _ := shellWriteExecScanIn(shellVerbWithoutComments(script, python), python, 0, shellWriteCopyImports{protectDir: protectDir})
+		out = append(out, more...)
 	}
 	return out
 }
@@ -453,7 +458,7 @@ func shellWriteExecScanIn(rs []rune, python bool, depth int, outer shellWriteCop
 			case top.kind == 'p' && c == ')':
 				if method := shellVerbWriteMethod(rs, i+1, python); method != "" {
 					for _, dest := range shellWriteEscapePath(rs, spans) {
-						if dest == shellIRUnknownDest && shellIRPyPathCreateName(method) && !shellIRPyProtectedReference(binds.scope) {
+						if dest == shellIRUnknownDest && shellIRPyPathCreateName(method) && !binds.protectDir && !shellIRPyProtectedReference(binds.scope) {
 							continue
 						}
 						dests = append(dests, dest)
@@ -518,7 +523,7 @@ func shellWriteExecProgram(rs []rune, spans [][2]int, depth int, outer shellWrit
 		// already makes unknown is not counted twice (CRW-951, E2).
 		// enclosing is the text of every program that holds this one (outer.scope, which already ends with rs), so a name or an
 		// import of an ancestor stays in scope in a nested literal program.
-		if enclosing := outer.scope; shellIRStructuralWriteUnknownFrom(enclosing+"\n"+program, len(enclosing)+1, true) && !shellIRStructuralWriteUnknown(enclosing, true) {
+		if enclosing := outer.scope; shellIRStructuralWriteUnknownFrom(enclosing+"\n"+program, len(enclosing)+1, true, outer.protectDir) && !shellIRStructuralWriteUnknownFrom(enclosing, 0, true, outer.protectDir) {
 			more = append(more, shellIRUnknownDest)
 		}
 		return more, inner
@@ -873,6 +878,8 @@ type shellWriteCopyImports struct {
 	// scope is the text of the program being read and of every program that holds it (empty outside the walk), for the
 	// structural write analysis of a literal exec program (CRW-951).
 	scope string
+	// protectDir carries the effective shell directory into fields and decoded programs.
+	protectDir bool
 }
 
 // shellWriteCopyBind records that a statement bound local to module, once per module.
@@ -889,7 +896,7 @@ func shellWriteCopyBind(binds map[string][]string, local, module string) {
 // program's imports beside its own, because an f-string replacement field and a literal passed to exec both run in the
 // scope that holds them (CRW-900 review).
 func shellWriteCopyImportsMerge(outer, inner shellWriteCopyImports) shellWriteCopyImports {
-	out := shellWriteCopyImports{alias: map[string][]string{}, from: map[string][]string{}}
+	out := shellWriteCopyImports{alias: map[string][]string{}, from: map[string][]string{}, protectDir: outer.protectDir}
 	for _, binds := range []shellWriteCopyImports{outer, inner} {
 		for local, modules := range binds.alias {
 			for _, module := range modules {

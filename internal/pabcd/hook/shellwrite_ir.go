@@ -35,7 +35,11 @@ func shellIRDests(command, cwd string, lookup func(string) (string, bool), resol
 			dests = append(dests, shellIRUnknownDest)
 			continue
 		}
-		own := shellIRExecDests(e)
+		protectDir := false
+		if resolve && e.Inline != nil && e.Inline.Language == "python" {
+			protectDir = shellIRPyProtectedDir(e.Dir, lookup)
+		}
+		own := shellIRExecDestsIn(e, protectDir)
 		if resolve {
 			own = shellIRResolve(own, e.Dir, cwd)
 		}
@@ -47,6 +51,10 @@ func shellIRDests(command, cwd string, lookup func(string) (string, bool), resol
 // shellIRExecDests returns the destinations one program record writes: its redirections, the files its verb names and the writes
 // of its inline program, as written (relative ones are not joined to a directory).
 func shellIRExecDests(e shellir.Exec) []string {
+	return shellIRExecDestsIn(e, false)
+}
+
+func shellIRExecDestsIn(e shellir.Exec, protectDir bool) []string {
 	var own []string
 	for _, r := range e.Redirs {
 		if shellIRWriteRedir(r.Op) {
@@ -54,7 +62,23 @@ func shellIRExecDests(e shellir.Exec) []string {
 		}
 	}
 	own = append(own, shellIRVerbDests(e)...)
-	return append(own, shellIRLanguageDests(e)...)
+	return append(own, shellIRLanguageDests(e, protectDir)...)
+}
+
+// A computed Python destination may be relative to its effective directory.
+// Reuse the memory gate's lexical and physical path reading, including symlinks.
+// An unknown directory cannot establish the outside-directory control.
+func shellIRPyProtectedDir(dir shellir.Dir, lookup func(string) (string, bool)) bool {
+	if !dir.Known || dir.Path == "" {
+		return true
+	}
+	g := newMemoryGateEnv(lookup)
+	root, ok := g.root()
+	if !ok {
+		return false
+	}
+	_, hit := g.hit(dir.Path, "", root)
+	return hit
 }
 
 // shellIRResolve joins each relative destination to the directory its program runs in. A program in the payload's own
@@ -298,7 +322,7 @@ func shellIRTeeDests(args []shellir.Word) []string {
 
 // shellIRLanguageDests reads the writes of an interpreter's program with the language readers. perl and ruby with -i also
 // edit their file operands, whether or not the program is inline. An inline program with no reader is unknown.
-func shellIRLanguageDests(e shellir.Exec) []string {
+func shellIRLanguageDests(e shellir.Exec, protectDir bool) []string {
 	var out []string
 	if n := filepath.Base(e.Name); n == "perl" || n == "ruby" {
 		out = append(out, shellIRInPlaceFiles(e.Args)...)
@@ -313,13 +337,13 @@ func shellIRLanguageDests(e shellir.Exec) []string {
 	switch e.Inline.Language {
 	case "python", "node":
 		isPy := e.Inline.Language == "python"
-		res := shellVerbScriptWritesIn(src, true, isPy)
+		res := shellVerbScriptWritesInDir(src, true, isPy, protectDir)
 		if un := shellVerbUnescape(src); un != src {
-			res = append(res, shellVerbScriptWritesIn(un, true, isPy)...)
+			res = append(res, shellVerbScriptWritesInDir(un, true, isPy, protectDir)...)
 		}
 		// A writer whose destination is not a literal, and a Python open bound to a name, write to a destination the text
 		// does not show: unknown (CRW-998, CRW-851).
-		if shellIRDynamicWrite(src, isPy) {
+		if shellIRDynamicWrite(src, isPy, protectDir) {
 			res = append(res, shellIRUnknownDest)
 		}
 		return append(out, res...)
@@ -335,8 +359,8 @@ func shellIRLanguageDests(e shellir.Exec) []string {
 
 // shellIRDynamicWrite is whether a Node or Python program calls a writer with a first argument that is no string literal,
 // or binds open to a name (f = open) so that its calls are not visible as open(...).
-func shellIRDynamicWrite(src string, python bool) bool {
-	if shellIRNodeDynamicWrite.MatchString(src) || shellIRStructuralWriteUnknown(src, python) {
+func shellIRDynamicWrite(src string, python, protectDir bool) bool {
+	if shellIRNodeDynamicWrite.MatchString(src) || shellIRStructuralWriteUnknownFrom(src, 0, python, protectDir) {
 		return true
 	}
 	return python && shellIRPyOpenAlias.MatchString(src)
