@@ -45,3 +45,17 @@ true; python3 -c 'import os; os.system("g\"\"h pr comment 1 --body MY_API_KEY=se
 --why Control: a python program that names no post is allowed.
 --cmd
 python3 -c 'print(1+2)'
+
+=== CRW-917-42-08 | P
+--why --body-file of a JSON-looking file with a NAME=value secret inside a string: the raw bytes are split at the JSON punctuation and refused.
+--file {TMP}/raw-assign.json
+{"body":"MY_API_KEY=sentinel"}
+--cmd
+gh pr comment 1 --body-file {TMP}/raw-assign.json
+
+=== CRW-917-42-09 | B
+--why Control: an escaped key name in a JSON-looking body file is raw text, not a NAME=value shape, so it is allowed.
+--file {TMP}/raw-escaped-key.json
+{"\u004dY_API_KEY":"sentinel-value"}
+--cmd
+gh pr comment 1 --body-file {TMP}/raw-escaped-key.json

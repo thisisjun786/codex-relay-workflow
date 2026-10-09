@@ -946,3 +946,5 @@ linear-issue-CRW-917.json	gh api -F body=@ of the same JSON-looking file (raw te
 linear-issue-CRW-917.json	gh pr comment --body-file of a JSON-looking file with a raw secret	CRW-917-42-05	row	-
 linear-issue-CRW-917.json	true; python3 -c with a program that builds gh from empty quote pieces and names a post	CRW-917-42-06	row	-
 linear-issue-CRW-917.json	python3 -c with a program that names no post (control)	CRW-917-42-07	row	-
+linear-issue-CRW-917.json	gh pr comment --body-file of a JSON-looking file with a NAME=value secret inside a string	CRW-917-42-08	row	-
+linear-issue-CRW-917.json	gh pr comment --body-file of a JSON-looking file with an escaped key name (raw text, control)	CRW-917-42-09	row	-

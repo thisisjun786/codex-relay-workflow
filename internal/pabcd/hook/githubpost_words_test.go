@@ -25,10 +25,16 @@ func TestCRW917BodyFilesAreScannedAsText(t *testing.T) {
 	cwd := t.TempDir()
 	githubPostWrite(t, cwd, "escaped.md", "{\"body\":\"\\u0073k-aaaaaaaaaaaaaaaa\"}\n")
 	githubPostWrite(t, cwd, "raw-secret.json", "{\"body\":\"sk-aaaaaaaaaaaaaaaaaaaa\"}\n")
+	githubPostWrite(t, cwd, "raw-assign.json", "{\"body\":\"MY_API_KEY=sentinel\"}\n")
+	githubPostWrite(t, cwd, "raw-newline.json", "{\"body\":\"ok\\nMY_API_KEY=sentinel\"}\n")
+	githubPostWrite(t, cwd, "raw-escaped-key.json", "{\"\\u004dY_API_KEY\":\"sentinel-value\"}\n")
 	cases := []struct{ label, command, rule, place string }{
 		{"escape text as a body file (raw text)", "gh pr comment 1 --body-file escaped.md", "", ""},
 		{"escape text as a field file (raw text)", "gh api repos/o/r/issues/1/comments -F body=@escaped.md", "", ""},
 		{"JSON-looking body file with a raw secret", "gh pr comment 1 --body-file raw-secret.json", githubPostRuleSecret, "raw-secret.json:1"},
+		{"NAME=value secret inside a JSON-looking body file", "gh pr comment 1 --body-file raw-assign.json", githubPostRuleSecret, "raw-assign.json:1"},
+		{"NAME=value after a newline escape in a JSON-looking body file", "gh pr comment 1 --body-file raw-newline.json", githubPostRuleSecret, "raw-newline.json:1"},
+		{"escaped key name in a JSON-looking body file (raw text, control)", "gh pr comment 1 --body-file raw-escaped-key.json", "", ""},
 	}
 	for _, c := range cases {
 		githubPostWant(t, githubPostShell(t, cwd, c.command), c.label, c.rule, c.place)
