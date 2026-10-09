@@ -30,15 +30,24 @@ import (
 // call) under the parent's state directory, keyed by the exact session: AssignmentsSubdir/<session dir>/<id>.json. Its location is
 // injected into the child's packet. A child never declares a root: the gate looks only at assignments the hook recorded.
 //
+// The contract of a child is found from the child itself, never from the order in which receipts arrive. The packet the spawn hook
+// injected carries [CRW-EVIDENCE-ASSIGNMENT:<id>]; the SubagentStop payload names that child's own transcript, which starts with its
+// packet, so the id in it is the assignment this very actor was dispatched with (a surface that gives no transcript falls back on
+// the id the child cites on a line EVIDENCE_ASSIGNMENT: <id>; an actor that already claimed an assignment keeps it). A child that
+// has a contract is judged by it alone: its native-cwd receipt counts for nothing, and a different actor, or an actor whose packet
+// did not hold the id, cannot claim it. Only a child with no contract at all keeps the native root.
+//
 //   - mode tree: the receipt is verified under <root>/.crw/evidence of the registered tree, with the native checks (inside the
 //     root lexically and physically, a regular non-empty file that is not a link) and more: the tree must still be the directory
 //     that was registered (same real path, device and inode; a link put in its place or a recreated directory is refused), its
 //     .crw and .crw/evidence must be real directories, the receipt must not predate the dispatch, and when the tree was a git
-//     checkout its HEAD at dispatch must still be an ancestor of its HEAD now (an unrelated history is foreign). The first agent
-//     whose receipt passes claims the assignment; another agent's receipt in the same tree is foreign and refused.
+//     checkout its HEAD at dispatch must still be an ancestor of its HEAD now (an unrelated history is foreign). The first actor
+//     whose receipt passes claims the assignment; another actor's receipt is refused. Each dispatch has its own id, so a finished
+//     dispatch of the same tree is never a candidate for a later one.
 //   - mode none: the packet allows no evidence write. The child ends with EVIDENCE_SCOPE_CONFLICT: <id>; the gate releases it at
 //     once with a resolvable unverified verdict and marks the assignment scope-conflict, so the parent's own verification
-//     (crw pabcd evidence resolve with a receipt the parent recorded) or nothing at all decides completion. It is never a pass.
+//     (crw pabcd evidence resolve with a receipt the parent recorded) or nothing at all decides completion. It is never a pass,
+//     and a receipt in the native cwd does not turn it into one.
 //
 // A dispatch without the packet markers registers nothing and the native cwd stays the only root, as before.
 
@@ -242,40 +251,112 @@ func claimAssignment(path, id, sessionID, agentID string, update func(*Assignmen
 	return claimed
 }
 
-// AcceptAssignedReceipt reports whether receipt (absolute, or relative to the assigned tree) is a valid receipt of a tree
-// assignment of the session, and binds that assignment to agentID: see the package's assignment rules above. An agent without an
-// id cannot claim anything, and a receipt that two assignments would accept is refused as ambiguous.
-func AcceptAssignedReceipt(cwd, sessionID, agentID, receipt string) bool {
-	if agentID == "" || sessionID == "" || receipt == "" {
-		return false
+// AssignedVerdict is the outcome of judging a receipt against the child's contract.
+type AssignedVerdict int
+
+const (
+	NoContract       AssignedVerdict = iota // the child has no recorded contract: the native root decides
+	AssignedAccepted                        // the receipt is valid in the child's assigned tree and the child holds the assignment
+	AssignedRefused                         // the child has a contract and the receipt does not satisfy it
+)
+
+// AssignmentMarker opens the block of a child's packet that names its assignment: [CRW-EVIDENCE-ASSIGNMENT:<id>].
+const AssignmentMarker = "[CRW-EVIDENCE-ASSIGNMENT"
+
+// AssignmentCitation is the line a child writes to name its assignment where the harness gives no transcript.
+const AssignmentCitation = "EVIDENCE_ASSIGNMENT:"
+
+// transcriptReadLimit bounds how much of a child's transcript is read for its packet, which is the first thing in it.
+const transcriptReadLimit = 8 << 20
+
+// transcriptAssignmentID is the id of the first [CRW-EVIDENCE-ASSIGNMENT:<id>] block in the transcript at path, whether the
+// transcript could be read at all, and the id ("" when there is none). Later blocks belong to what the child itself spawned.
+func transcriptAssignmentID(path string) (id string, readable bool) {
+	if path == "" {
+		return "", false
 	}
-	dir, err := existingRecordDir(cwd, AssignmentsSubdir, sessionRecordDir(sessionID))
+	f, err := os.Open(path)
 	if err != nil {
-		return false
+		return "", false
+	}
+	defer f.Close()
+	if info, err := f.Stat(); err != nil || !info.Mode().IsRegular() {
+		return "", false
+	}
+	raw, err := io.ReadAll(io.LimitReader(f, transcriptReadLimit))
+	if err != nil {
+		return "", false
+	}
+	rest := string(raw)
+	for {
+		i := strings.Index(rest, AssignmentMarker+":")
+		if i < 0 {
+			return "", true
+		}
+		rest = rest[i+len(AssignmentMarker)+1:]
+		if end := strings.IndexByte(rest, ']'); end >= 0 && validAssignmentID(rest[:end]) {
+			return rest[:end], true
+		}
+	}
+}
+
+// childAssignment finds the assignment of the session that this child was dispatched with: the id in its own transcript when the
+// transcript can be read (a cited id is then ignored, so an actor cannot name a packet it was not given), else the id it cites, and
+// last the one assignment an actor of this id already claimed.
+func childAssignment(dir, sessionID, agentID, transcriptPath, message string) (Assignment, bool) {
+	load := func(id string) (Assignment, bool) {
+		if !validAssignmentID(id) {
+			return Assignment{}, false
+		}
+		a, ok := readAssignment(filepath.Join(dir, id+".json"), id)
+		return a, ok && a.SessionID == sessionID
+	}
+	id, readable := transcriptAssignmentID(transcriptPath)
+	if !readable {
+		id, _ = lastMarkerValue(message, AssignmentCitation)
+	}
+	if a, ok := load(id); ok {
+		return a, true
 	}
 	names, err := dirNames(dir)
 	if err != nil {
-		return false
+		return Assignment{}, false
 	}
-	var match *Assignment
+	var held *Assignment
 	for _, name := range names {
 		id, isRecord := strings.CutSuffix(name, ".json")
-		if !isRecord || !validAssignmentID(id) {
-			continue
+		if a, ok := load(id); isRecord && ok && a.AgentID == agentID && (held == nil || a.CreatedAt > held.CreatedAt) {
+			held = &a
 		}
-		a, ok := readAssignment(filepath.Join(dir, name), id)
-		if !ok || a.SessionID != sessionID || a.Mode != AssignTree || !assignedReceiptValid(a, receipt) {
-			continue
-		}
-		if match != nil {
-			return false
-		}
-		match = &a
 	}
-	if match == nil || (match.AgentID != "" && match.AgentID != agentID) {
-		return false
+	if held == nil {
+		return Assignment{}, false
 	}
-	return claimAssignment(filepath.Join(dir, match.ID+".json"), match.ID, sessionID, agentID, nil)
+	return *held, true
+}
+
+// JudgeAssignedReceipt judges receipt (absolute, or relative to the assigned tree) of the child agentID against the contract that
+// child was dispatched with (see the rules above) and binds the assignment to the child when the receipt passes. A child with no
+// id, or with no contract, is NoContract and the caller applies the native root.
+func JudgeAssignedReceipt(cwd, sessionID, agentID, transcriptPath, message, receipt string) AssignedVerdict {
+	if agentID == "" || sessionID == "" {
+		return NoContract
+	}
+	dir, err := existingRecordDir(cwd, AssignmentsSubdir, sessionRecordDir(sessionID))
+	if err != nil {
+		return NoContract
+	}
+	a, ok := childAssignment(dir, sessionID, agentID, transcriptPath, message)
+	if !ok {
+		return NoContract
+	}
+	if a.Mode != AssignTree || receipt == "" || (a.AgentID != "" && a.AgentID != agentID) || !assignedReceiptValid(a, receipt) {
+		return AssignedRefused
+	}
+	if !claimAssignment(filepath.Join(dir, a.ID+".json"), a.ID, sessionID, agentID, nil) {
+		return AssignedRefused
+	}
+	return AssignedAccepted
 }
 
 // assignedReceiptValid is the receipt check against one tree assignment.
@@ -316,10 +397,14 @@ func ExtractScopeConflict(message string) (string, bool) {
 }
 
 // ClaimScopeConflict marks the no-write assignment id of the session as a scope conflict of agentID and turnID and reports whether
-// it did. Only an assignment of mode none qualifies, and only for the agent that claims it first; a forged or unknown id, or an
+// it did. Only an assignment of mode none qualifies, only for the actor the dispatch was made to (the id in its own transcript
+// must be this one when the transcript can be read) and only for the actor that claims it first; a forged or unknown id, or an
 // agent without an id, is refused, and the gate then treats the stop as it did before.
-func ClaimScopeConflict(cwd, sessionID, agentID, turnID, id string) bool {
+func ClaimScopeConflict(cwd, sessionID, agentID, transcriptPath, turnID, id string) bool {
 	if agentID == "" || sessionID == "" || !validAssignmentID(id) {
+		return false
+	}
+	if own, readable := transcriptAssignmentID(transcriptPath); readable && own != id {
 		return false
 	}
 	dir, err := existingRecordDir(cwd, AssignmentsSubdir, sessionRecordDir(sessionID))

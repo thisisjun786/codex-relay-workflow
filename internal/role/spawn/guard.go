@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 )
 
@@ -125,7 +126,7 @@ func SkillAffordanceBlock(skillsDir string) string {
 
 // EvidenceAssignmentMarker opens the block that tells a child where its evidence goes (CRW-1115). The spawn hook writes it with the
 // id of the assignment it recorded for the parent's session: [CRW-EVIDENCE-ASSIGNMENT:<id>].
-const EvidenceAssignmentMarker = "[CRW-EVIDENCE-ASSIGNMENT"
+const EvidenceAssignmentMarker = evidence.AssignmentMarker
 
 // The packet lines a parent writes to assign a child's evidence location: the absolute path of the worker's assigned worktree,
 // and "none" when the packet allows the child no evidence write at all (a one-file or read-only scope).
@@ -151,8 +152,9 @@ func EvidenceAssignmentBlock(id, root string, none bool) string {
 	}
 	return block + " Record your evidence receipt (the checks you ran, their output and your\n" +
 		"judgement) under " + filepath.Join(root, ".crw", "evidence") + "/ - that directory is in\n" +
-		"your write scope for the receipt only - and make the LAST line of your reply\n" +
-		"exactly `EVIDENCE_RECORDED: <absolute path of that file>`."
+		"your write scope for the receipt only. End your reply with the line\n" +
+		"`" + evidence.AssignmentCitation + " " + id + "` and, as its LAST line, exactly\n" +
+		"`EVIDENCE_RECORDED: <absolute path of that file>`. Do not point at a receipt in any other directory."
 }
 
 // spawnEvidenceRequest reads the assignment lines of the caller's packet. A line counts when, after white space, it starts with the

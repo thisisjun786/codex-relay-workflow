@@ -11,6 +11,8 @@ import (
 // back to it. Only these fields participate in the evidence gate.
 type SubagentStopPayload struct {
 	Cwd, SessionID, AgentType, AgentID, TurnID, LastAssistantMessage string
+	// AgentTranscriptPath is the child's own transcript, which starts with the packet it was dispatched with (CRW-1115).
+	AgentTranscriptPath string
 }
 
 // RunSubagentStopGate ports CXC v0.2.40 subagent-evidence.ts:476-532 (3c1459ac).
@@ -52,13 +54,16 @@ func RunSubagentStopGate(p SubagentStopPayload, env func(string) string) (out st
 // subagentStopDecide is the gate's decision for one stop. reserve says whether the caller holds the tuple's counter lock: without it
 // the counter is never written, and a stop that would have spent an attempt is a terminal verdict instead.
 func subagentStopDecide(p SubagentStopPayload, item evidence.Payload, reserve bool) string {
-	// CRW-1115 (port: fixed): besides the native root, a receipt in the tree the parent's packet assigned this child counts, bound
-	// to the first child that claims it (evidence.AcceptAssignedReceipt). Without an assignment the native root is the only one.
-	if receipt, ok := evidence.ExtractReceiptPath(p.LastAssistantMessage); ok &&
-		(evidence.HasValidReceipt(p.Cwd, receipt) || evidence.AcceptAssignedReceipt(p.Cwd, p.SessionID, p.AgentID, receipt)) {
-		evidence.ClearAttempts(p.Cwd, p.SessionID, p.AgentID, p.TurnID)
-		evidence.ResolveTombstone(p.Cwd, p.SessionID, item)
-		return ""
+	// CRW-1115 (port: fixed): a child dispatched with an evidence assignment (found from its own transcript, see evidence.JudgeAssignedReceipt)
+	// is judged by that contract alone, and a native-cwd receipt is no substitute for it. Only a child with no contract keeps the
+	// native root, as in the oracle.
+	if receipt, ok := evidence.ExtractReceiptPath(p.LastAssistantMessage); ok {
+		verdict := evidence.JudgeAssignedReceipt(p.Cwd, p.SessionID, p.AgentID, p.AgentTranscriptPath, p.LastAssistantMessage, receipt)
+		if verdict == evidence.AssignedAccepted || verdict == evidence.NoContract && evidence.HasValidReceipt(p.Cwd, receipt) {
+			evidence.ClearAttempts(p.Cwd, p.SessionID, p.AgentID, p.TurnID)
+			evidence.ResolveTombstone(p.Cwd, p.SessionID, item)
+			return ""
+		}
 	}
 	counter := evidence.ReadCounter(p.Cwd, p.SessionID, p.AgentID, p.TurnID)
 	terminal := func(attempts int) string {
@@ -67,7 +72,7 @@ func subagentStopDecide(p SubagentStopPayload, item evidence.Payload, reserve bo
 	}
 	// A packet that allows no evidence write is released at once with an unverified verdict the parent must resolve with its own
 	// verification; it is never a pass, and only the assignment the spawn hook recorded for it qualifies.
-	if id, ok := evidence.ExtractScopeConflict(p.LastAssistantMessage); ok && evidence.ClaimScopeConflict(p.Cwd, p.SessionID, p.AgentID, p.TurnID, id) {
+	if id, ok := evidence.ExtractScopeConflict(p.LastAssistantMessage); ok && evidence.ClaimScopeConflict(p.Cwd, p.SessionID, p.AgentID, p.AgentTranscriptPath, p.TurnID, id) {
 		return terminal(counter.Attempts)
 	}
 	if evidence.HasTombstone(p.Cwd, p.SessionID, item) {

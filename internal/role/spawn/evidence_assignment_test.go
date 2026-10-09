@@ -32,6 +32,9 @@ type assignedRig struct {
 	t       *testing.T
 	rig     *spawnHookRig
 	cwd, wt string
+	// packets is what each child was handed: the harness gives the SubagentStop leg that child's own transcript, which starts with
+	// its packet.
+	packets map[string]string
 }
 
 func newAssignedRig(t *testing.T) *assignedRig {
@@ -42,7 +45,7 @@ func newAssignedRig(t *testing.T) *assignedRig {
 		t.Setenv(key, home)
 	}
 	t.Setenv("CRW_PABCD", "")
-	r := &assignedRig{t: t, rig: rig, cwd: rig.ws, wt: assignedGitTree(t)}
+	r := &assignedRig{t: t, rig: rig, cwd: rig.ws, wt: assignedGitTree(t), packets: map[string]string{}}
 	s := state.DefaultState("s1", "")
 	s.Phase, s.OrchestrationActive = state.PhaseB, true
 	spawnHookMust(t, state.WriteState(r.cwd, s))
@@ -87,11 +90,26 @@ func (r *assignedRig) spawn(message string) (string, string) {
 	return got, out
 }
 
-// stop runs the registered SubagentStop leg for a worker of session s1.
+// deliver hands packet to the child agent: its transcript, as the SubagentStop leg receives it, starts with that packet.
+func (r *assignedRig) deliver(agent, packet string) {
+	r.t.Helper()
+	r.packets[agent] = packet
+}
+
+// stop runs the registered SubagentStop leg for a worker of session s1. A child that was handed a packet (deliver) has a
+// transcript path in the payload.
 func (r *assignedRig) stop(agent, turn, message string) string {
 	r.t.Helper()
-	raw, err := json.Marshal(map[string]any{"hook_event_name": "SubagentStop", "cwd": r.cwd, "session_id": "s1", "agent_type": "worker",
-		"agent_id": agent, "turn_id": turn, "last_assistant_message": message})
+	payload := map[string]any{"hook_event_name": "SubagentStop", "cwd": r.cwd, "session_id": "s1", "agent_type": "worker",
+		"agent_id": agent, "turn_id": turn, "last_assistant_message": message}
+	if packet, ok := r.packets[agent]; ok {
+		transcript := filepath.Join(r.t.TempDir(), "agent.jsonl")
+		line, err := json.Marshal(map[string]any{"role": "user", "text": packet})
+		spawnHookMust(r.t, err)
+		spawnHookMust(r.t, os.WriteFile(transcript, append(line, '\n'), 0o644))
+		payload["agent_transcript_path"] = transcript
+	}
+	raw, err := json.Marshal(payload)
 	spawnHookMust(r.t, err)
 	var out, stderr bytes.Buffer
 	code := harness.Hook(context.Background(), []string{"subagent-stop", "--leg", "subagent-stop-verifying-evidence"}, bytes.NewReader(raw), &out, &stderr, os.LookupEnv, harness.Legs())
@@ -133,6 +151,7 @@ func TestEvidenceAssignmentTreeReceiptPasses(t *testing.T) {
 		t.Run(form, func(t *testing.T) {
 			r := newAssignedRig(t)
 			child, raw := r.spawn("TASK: fix it\nCRW-WORKTREE: " + r.wt + "\nSCOPE: a.txt")
+			r.deliver("w1", child)
 			if !assignedID.MatchString(child) || !strings.Contains(child, filepath.Join(r.wt, ".crw", "evidence")) {
 				t.Fatalf("the child's packet does not name the assigned evidence root:\n%s\n%s", child, raw)
 			}
@@ -183,6 +202,8 @@ func TestEvidenceAssignmentRefusals(t *testing.T) {
 				spawnHookMust(t, os.Chtimes(receipt, past, past))
 			}
 			child, raw := r.spawn("TASK: fix it\nCRW-WORKTREE: " + r.wt)
+			r.deliver("w1", child)
+			r.deliver("w2", "TASK: an unrelated job")
 			if !assignedID.MatchString(child) {
 				t.Fatalf("no assignment:\n%s", raw)
 			}
@@ -244,6 +265,7 @@ func TestEvidenceAssignmentScopeConflict(t *testing.T) {
 		t.Run(outcome, func(t *testing.T) {
 			r := newAssignedRig(t)
 			child, raw := r.spawn("TASK: edit only a.txt\nCRW-WORKTREE: " + r.wt + "\nCRW-EVIDENCE: none\nSCOPE: a.txt only, read nothing else")
+			r.deliver("w1", child)
 			m := assignedID.FindStringSubmatch(child)
 			if m == nil || !strings.Contains(child, "EVIDENCE_SCOPE_CONFLICT: "+m[1]) {
 				t.Fatalf("the child's packet does not carry the scope-conflict contract:\n%s\n%s", child, raw)
@@ -366,5 +388,92 @@ func TestEvidenceAssignmentRequestRefusalsAndIdempotence(t *testing.T) {
 	records, _ := filepath.Glob(filepath.Join(r.cwd, ".crw", "evidence-assignments", "*", "*.json"))
 	if len(records) != 1 {
 		t.Fatalf("records: %v", records)
+	}
+}
+
+// CRW-1115 verification round 1. The child that stops is tied to the dispatch by its own transcript, which holds the packet the
+// spawn hook injected: an actor whose packet did not carry the assignment cannot claim it, whoever submits first.
+func TestEvidenceAssignmentForeignActorCannotClaimFirst(t *testing.T) {
+	r := newAssignedRig(t)
+	child, _ := r.spawn("TASK: fix it\nCRW-WORKTREE: " + r.wt)
+	r.deliver("w1", child)
+	r.deliver("unrelated-worker", "TASK: something else entirely")
+	receipt := r.put(filepath.Join(r.wt, ".crw", "evidence", "check.txt"), "ok")
+	assignedBlocked(t, r.stop("unrelated-worker", "foreign-turn", "EVIDENCE_RECORDED: "+receipt), 1)
+	if out := r.stop("w1", "t1", "EVIDENCE_RECORDED: "+receipt); out != "" {
+		t.Fatalf("the assigned actor was refused after a foreign attempt: %s", out)
+	}
+	// An actor that cites the assignment id without holding the packet is no better off.
+	m := assignedID.FindStringSubmatch(child)
+	assignedBlocked(t, r.stop("unrelated-worker", "foreign-turn-2", "EVIDENCE_ASSIGNMENT: "+m[1]+"\nEVIDENCE_RECORDED: "+receipt), 1)
+}
+
+// Where the harness gives no transcript the id the child cites stands in for it; the first actor to cite it still claims it, and
+// no other actor can take it afterwards.
+func TestEvidenceAssignmentCitationWithoutTranscript(t *testing.T) {
+	r := newAssignedRig(t)
+	child, _ := r.spawn("TASK: fix it\nCRW-WORKTREE: " + r.wt)
+	m := assignedID.FindStringSubmatch(child)
+	if !strings.Contains(child, "EVIDENCE_ASSIGNMENT: "+m[1]) {
+		t.Fatalf("the packet does not tell the child to cite its assignment:\n%s", child)
+	}
+	receipt := r.put(filepath.Join(r.wt, ".crw", "evidence", "check.txt"), "ok")
+	assignedBlocked(t, r.stop("w1", "t1", "EVIDENCE_RECORDED: "+receipt), 1) // no id, no transcript: no contract, and not native
+	if out := r.stop("w1", "t1", "EVIDENCE_ASSIGNMENT: "+m[1]+"\nEVIDENCE_RECORDED: "+receipt); out != "" {
+		t.Fatalf("a cited assignment was refused: %s", out)
+	}
+	assignedBlocked(t, r.stop("w2", "t2", "EVIDENCE_ASSIGNMENT: "+m[1]+"\nEVIDENCE_RECORDED: "+receipt), 1)
+}
+
+// The same tree is assigned again in one session: each dispatch is its own contract, so a finished first dispatch is no
+// candidate for the second worker, and two dispatches open at once do not collide either.
+func TestEvidenceAssignmentSameTreeSequentialAndConcurrent(t *testing.T) {
+	r := newAssignedRig(t)
+	child1, _ := r.spawn("TASK: first\nCRW-WORKTREE: " + r.wt)
+	r.deliver("w1", child1)
+	first := r.put(filepath.Join(r.wt, ".crw", "evidence", "first.txt"), "first ok")
+	if out := r.stop("w1", "t1", "EVIDENCE_RECORDED: "+first); out != "" {
+		t.Fatalf("first dispatch refused: %s", out)
+	}
+	time.Sleep(1100 * time.Millisecond) // receipt times are compared in whole seconds
+	assignedGit(t, r.wt, "commit", "-q", "--allow-empty", "-m", "work of the first worker")
+	child2, _ := r.spawn("TASK: second\nCRW-WORKTREE: " + r.wt)
+	child3, _ := r.spawn("TASK: third, at once\nCRW-WORKTREE: " + r.wt)
+	r.deliver("w2", child2)
+	r.deliver("w3", child3)
+	// The first dispatch's receipt predates the second dispatch.
+	assignedBlocked(t, r.stop("w2", "t2", "EVIDENCE_RECORDED: "+first), 1)
+	second := r.put(filepath.Join(r.wt, ".crw", "evidence", "second.txt"), "second ok")
+	third := r.put(filepath.Join(r.wt, ".crw", "evidence", "third.txt"), "third ok")
+	if out := r.stop("w2", "t2", "EVIDENCE_RECORDED: "+second); out != "" {
+		t.Fatalf("second dispatch refused: %s", out)
+	}
+	if out := r.stop("w3", "t3", "EVIDENCE_RECORDED: "+third); out != "" {
+		t.Fatalf("a concurrent dispatch of the same tree refused: %s", out)
+	}
+	// A worker holds exactly one contract: it cannot pass on another dispatch's.
+	assignedBlocked(t, r.stop("w4", "t4", "EVIDENCE_RECORDED: "+third), 1)
+}
+
+// A child with a recorded contract is judged by it alone: a receipt in the parent's native tree, old or its own, is no
+// substitute for the assigned tree (tree mode) and no way around the scope conflict (none mode). A dispatch without a contract
+// keeps the native root.
+func TestEvidenceAssignmentContractExcludesNativeReceipt(t *testing.T) {
+	for _, mode := range []string{"tree", "none"} {
+		t.Run(mode, func(t *testing.T) {
+			r := newAssignedRig(t)
+			packet := "TASK: fix it\nCRW-WORKTREE: " + r.wt
+			if mode == "none" {
+				packet += "\nCRW-EVIDENCE: none"
+			}
+			child, _ := r.spawn(packet)
+			r.deliver("w1", child)
+			r.deliver("free", "TASK: a dispatch with no packet lines")
+			native := r.put(filepath.Join(r.cwd, ".crw", "evidence", "old-unrelated-check.txt"), "an unrelated earlier check")
+			assignedBlocked(t, r.stop("w1", "t1", "EVIDENCE_RECORDED: "+native), 1)
+			if out := r.stop("free", "t9", "EVIDENCE_RECORDED: "+native); out != "" {
+				t.Fatalf("a dispatch without a contract lost the native root: %s", out)
+			}
+		})
 	}
 }
