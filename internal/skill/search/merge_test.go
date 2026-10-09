@@ -121,3 +121,37 @@ func TestMergeWithAFailedSourceKeepsTheOthersInOrder(t *testing.T) {
 		t.Fatalf("%d %q %q", code, out, errOut)
 	}
 }
+
+// A search of one named source has nothing to merge: its rows keep the source's native order, with no fusion and no
+// exact-match boost, and only the limit applies. An exact id lower in ClawHub's answer, or a superseded row whose id
+// matches the query exactly in jaw, does not take the native rank-1 row's place.
+func TestSingleSourceSearchKeepsTheNativeOrder(t *testing.T) {
+	t.Run("clawhub later exact id", func(t *testing.T) {
+		cliHome(t)
+		rows := mergedRows(t, []string{"tdd", "--source", "clawhub", "--limit", "1"}, mergeFetch("", nil, []string{"other0", "tdd"}))
+		if keys(rows) != "clawhub:other0" {
+			t.Fatalf("top-1 = %s", keys(rows))
+		}
+		cliHome(t)
+		rows = mergedRows(t, []string{"tdd", "--source", "clawhub"}, mergeFetch("", nil, []string{"other0", "tdd"}))
+		if keys(rows) != "clawhub:other0 clawhub:tdd" {
+			t.Fatalf("rows = %s", keys(rows))
+		}
+	})
+	t.Run("jaw superseded exact id", func(t *testing.T) {
+		const jaw = `{"skills":{"tdd":{"name":"TDD","description":"","superseded_by":"tdd-active"},"tdd-active":{"name":"TDD active","description":""}}}`
+		native, err := FetchJawRows(func(string) (string, error) { return jaw, nil })
+		if err != nil {
+			t.Fatal(err)
+		}
+		ranked := Rank(native, "tdd", len(native))
+		if len(ranked) != 2 || ranked[0].ID != "tdd-active" || ranked[0].Score <= ranked[1].Score {
+			t.Fatalf("native rank: %+v", ranked)
+		}
+		cliHome(t)
+		rows := mergedRows(t, []string{"tdd", "--source", "jaw", "--limit", "1"}, mergeFetch(jaw, nil, nil))
+		if keys(rows) != "jaw:tdd-active" || rows[0].Score != ranked[0].Score {
+			t.Fatalf("top-1 = %s %+v", keys(rows), rows)
+		}
+	})
+}

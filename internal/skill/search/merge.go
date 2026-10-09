@@ -21,6 +21,8 @@ import (
 // one, even with the same id: each keeps its source. A tie is broken by the order the sources were named in, then
 // by the native order, so the result does not depend on which source answered first. `score` stays the score the
 // row's own source gave it and is comparable only with rows of that source (ClawHub's and gh's carry no relevance).
+// A search of one named source (--source jaw, hermes, clawhub or gh) is not merged: its rows keep the source's native
+// order, with neither the fusion nor the boost, and only the limit applies; `all` is merged even when one source answers.
 const (
 	mergeRankOffset = 60
 	mergeBoostID    = 1.0

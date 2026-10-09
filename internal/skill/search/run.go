@@ -250,7 +250,12 @@ func runCLI(ctx context.Context, argv []string, fetch fetchFunc, stdout, stderr 
 			}
 			return exitUnavailable, nil
 		}
-		rows := mergeSources(query, lists)
+		var rows []ScoredRow
+		if len(wanted) == 1 {
+			rows = lists[0] // one named source has nothing to merge: its native order stands, as it always did
+		} else {
+			rows = mergeSources(query, lists)
+		}
 		out, err := renderRows(rows[:sliceLimit(f.Limit, len(rows))], f.JSON)
 		if err != nil {
 			return 1, err
