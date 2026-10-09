@@ -201,6 +201,11 @@ func writeState(cwd string, next State, now time.Time, rename func(tmp, finalPat
 		return err
 	}
 	finalPath := StatePath(cwd, next.SessionID)
+	// CRW-1005 (decision D1): a file that holds an unpaired surrogate escape is refused, not rewritten. The reader reads the
+	// escape as U+FFFD, so a rewrite would replace stored text the CXC original keeps; the refusal leaves the file as it is.
+	if raw, readErr := os.ReadFile(finalPath); readErr == nil && rewriteLosslessUnpaired(raw) {
+		return fmt.Errorf("refusing to rewrite %s: it holds an unpaired surrogate escape that a rewrite would replace with U+FFFD", finalPath)
+	}
 	tmp := tempPath(finalPath)
 	defer func() {
 		if err != nil {
