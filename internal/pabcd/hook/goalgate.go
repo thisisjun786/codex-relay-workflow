@@ -6,6 +6,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/projectcfg"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
 // GOAL-GATE (pabcd-state/src/goal-gate.ts, CXC v0.2.40, 3c1459ac): the PreToolUse guard that keeps a native goal
@@ -35,13 +36,33 @@ type goalGatePreToolUse struct {
 	ToolInput                any
 }
 
+// deepPayload is JSON.parse for a gate's payload: one JSON document at any nesting depth, which V8 reads without a
+// limit, where encoding/json refuses a container past 10,000 levels (editObject, which the other handlers of this
+// package keep). A field the gate never reads can nest as deep as the input bound allows without changing its
+// verdict. Numbers stay as spelled (json.Number), so one that no float64 holds does not cost the document, and a
+// lone surrogate escape is U+FFFD as editObject reads it. The error is JSON.parse's throw.
+func deepPayload(raw string) (any, error) {
+	return pyjson.Loads(raw, pyjson.LoadOptions{Map: true, Numbers: pyjson.SpelledNumbers, Deep: true})
+}
+
+// deepObject is the payload as an object, else nil: invalid JSON and a document that is not an object both read as
+// no payload, which is what editObject answers for them.
+func deepObject(raw string) map[string]any {
+	value, err := deepPayload(raw)
+	if err != nil {
+		return nil
+	}
+	object, _ := value.(map[string]any)
+	return object
+}
+
 // goalGateParsePreToolUse is parsePreToolUse (goal-gate.ts:76-103): the trimmed input must be one JSON object
 // naming PreToolUse and carrying session_id, cwd and tool_name as strings. tool_input is carried as it is, the
 // way the oracle carries its unknown-typed value; anything else (empty, unparseable, an array, a scalar, a
 // missing or mistyped field) is not a payload. It never throws, which is what keeps a malformed input a
 // pass-through rather than a deny.
 func goalGateParsePreToolUse(raw string) (goalGatePreToolUse, bool) {
-	object := editObject(text.Trim(raw))
+	object := deepObject(text.Trim(raw))
 	if object == nil || object["hook_event_name"] != "PreToolUse" {
 		return goalGatePreToolUse{}, false
 	}
@@ -104,7 +125,7 @@ func goalGateModeInterviewDenyEnvelope(status host.GoalStatus) string {
 // the fail-closed path uses when the full parse or the status lookup could not answer. It requires only the event
 // and the tool name, so it can recognise a payload the strict parse rejected. It never throws.
 func goalGateRawLooksLikeRequestUserInput(raw string) bool {
-	object := editObject(text.Trim(raw))
+	object := deepObject(text.Trim(raw))
 	return object != nil && object["hook_event_name"] == "PreToolUse" && object["tool_name"] == goalGateRequestUserInputTool
 }
 

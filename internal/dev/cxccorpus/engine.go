@@ -598,6 +598,7 @@ type rawResult struct {
 	signal         string
 	timeout        bool
 	stdout, stderr string
+	elapsed        time.Duration
 }
 
 func runStep(rt Runtime, timeout time.Duration, c *Case, s Scenario, step Step) (rawResult, error) {
@@ -611,8 +612,9 @@ func runStep(rt Runtime, timeout time.Duration, c *Case, s Scenario, step Step) 
 	cmd.Stdin = bytes.NewReader(stdin)
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	cmd.WaitDelay = 2 * time.Second
+	started := time.Now()
 	err = cmd.Run()
-	res := rawResult{stdout: stdout.String(), stderr: stderr.String()}
+	res := rawResult{stdout: stdout.String(), stderr: stderr.String(), elapsed: time.Since(started)}
 	if ctx.Err() != nil {
 		res.timeout = true
 	}
@@ -665,7 +667,7 @@ func removeTree(root string) error {
 
 // shapeStep normalises a step and classifies its stdout (classify).
 func shapeStep(s *Session, raw rawResult) StepResult {
-	res := StepResult{Exit: raw.exit, Signal: raw.signal, Timeout: raw.timeout, Stderr: s.Stderr(raw.stderr)}
+	res := StepResult{Exit: raw.exit, Signal: raw.signal, Timeout: raw.timeout, Stderr: s.Stderr(raw.stderr), Elapsed: raw.elapsed}
 	out := s.Text(raw.stdout)
 	form, doc, lines := classify(out)
 	res.StdoutForm = form

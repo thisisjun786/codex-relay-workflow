@@ -11,6 +11,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
 // The payloads codex-rs writes to a hook's stdin. A field the oracle types optional is a pointer, nil
@@ -53,6 +54,20 @@ func decode(s string) (v any, ok bool) {
 	}
 	_, err := dec.Token()
 	return v, err == io.EOF
+}
+
+// deepObject is JSON.parse read as an object, else nil, at any nesting depth: V8 reads a document
+// however deeply it nests, where decode refuses a container past encoding/json's 10,000 levels. The
+// entry's own reads (the subagent stamp, the payload's cwd) use it, so that a payload the gates
+// read whole (internal/pabcd/hook deepPayload) is read whole before they run too. Numbers stay as
+// spelled and a lone surrogate escape is U+FFFD, as decode reads them.
+func deepObject(s string) map[string]any {
+	v, err := pyjson.Loads(s, pyjson.LoadOptions{Map: true, Numbers: pyjson.SpelledNumbers, Deep: true})
+	if err != nil {
+		return nil
+	}
+	o, _ := v.(map[string]any)
+	return o
 }
 
 // asObject is the oracle's: the trimmed text must be one JSON object, else nothing.
@@ -102,7 +117,7 @@ func required(raw, event string, keys ...string) (o map[string]any, vals []strin
 // input: a thread-spawned subagent's turn, whose session_id is its parent's. Any other input, an
 // unparseable one included, reads as a root turn.
 func IsSubagentHookPayload(raw string) bool {
-	o := asObject(raw)
+	o := deepObject(text.Trim(raw))
 	id, _ := o["agent_id"].(string)
 	typ, _ := o["agent_type"].(string)
 	return id != "" || typ != ""

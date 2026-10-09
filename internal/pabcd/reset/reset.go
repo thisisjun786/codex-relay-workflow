@@ -13,6 +13,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/goalplan"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
 	"golang.org/x/sys/unix"
 )
@@ -457,8 +458,12 @@ func resetSessions(crw *resetLinkWalkPin, base string, result *ResetResult) erro
 	}
 	slices.SortFunc(entries, func(a, b os.DirEntry) int { return strings.Compare(a.Name(), b.Name()) })
 	for _, entry := range entries {
-		if strings.HasSuffix(entry.Name(), ".json") {
-			if err := resetRmIfExists(sessions, entry.Name(), filepath.Join(display, entry.Name()), result); err != nil {
+		// readdirSync hands the oracle each name decoded as UTF-8, and it removes the path built from
+		// that string (reset.ts:62-63), so a name that is not UTF-8 stands for the file named with
+		// U+FFFD, which is absent unless it exists, and the raw file stays.
+		name := source.DecodeUTF8([]byte(entry.Name()))
+		if strings.HasSuffix(name, ".json") {
+			if err := resetRmIfExists(sessions, name, filepath.Join(display, name), result); err != nil {
 				return err
 			}
 		}

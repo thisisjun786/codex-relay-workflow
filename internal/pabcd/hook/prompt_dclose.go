@@ -37,7 +37,6 @@
 package hook
 
 import (
-	"encoding/json"
 	"errors"
 	"io/fs"
 	"os"
@@ -52,8 +51,10 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/gate"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/goalplan"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
 // promptDcloseTick is one backtick. The oracle's recovery refusals quote a command between two of
@@ -1066,21 +1067,28 @@ func promptDcloseHasPabcdCloseRow(cwd, sessionID string, checkEpoch *string, clo
 		if gotSession != sessionID || gotFrom != "C" || gotTo != "IDLE" || gotReason != "done" {
 			return false
 		}
-		if !promptDcloseSameJSONString(row["checkEpoch"], checkEpoch) {
-			return false
-		}
-		if closedWorkPhaseID == "" {
-			return row["closedWorkPhaseId"] == nil
-		}
-		gotClosed, _ := row["closedWorkPhaseId"].(string)
-		return gotClosed == closedWorkPhaseID
+		return promptDcloseRowMatchesKey(row, "checkEpoch", checkEpoch) &&
+			promptDcloseRowMatchesKey(row, "closedWorkPhaseId", promptDcloseClosedKey(closedWorkPhaseID))
 	})
+}
+
+// promptDcloseClosedKey is the closed work phase as the row key holds it: JSON null for an empty id.
+func promptDcloseClosedKey(closedWorkPhaseID string) *string {
+	if closedWorkPhaseID == "" {
+		return nil
+	}
+	return &closedWorkPhaseID
 }
 
 // promptDcloseAnyRow reads the JSON-object lines of a JSONL file and reports whether any of them
 // satisfies match. The answer has three states, by construction: present (true, nil), absent
 // (false, nil) for a file that is not there, and unreadable (false, err) for any other read error
 // (CRW-869, finding 1). A line that is not a JSON object and a blank line match nothing.
+//
+// The file is read the way the oracle's readFileSync(path, "utf8") and JSON.parse read it
+// (CRW-1073): the bytes are decoded as UTF-8 first, and a lone surrogate escape stays a lone
+// surrogate, where encoding/json folds it into U+FFFD and a stored "closed wp-\ud800" row then
+// compared equal to a U+FFFD close and the close skipped the row it owed.
 func promptDcloseAnyRow(path string, match func(map[string]any) bool) (bool, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -1089,12 +1097,16 @@ func promptDcloseAnyRow(path string, match func(map[string]any) bool) (bool, err
 		}
 		return false, err
 	}
-	for _, line := range text.SplitLines(string(data)) {
+	for _, line := range text.SplitLines(source.DecodeUTF8(data)) {
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
-		var row map[string]any
-		if json.Unmarshal([]byte(line), &row) != nil || row == nil {
+		value, err := pyjson.Loads(line, promptDcloseRowOptions())
+		if err != nil {
+			continue
+		}
+		row, isObject := value.(map[string]any)
+		if !isObject || row == nil {
 			continue
 		}
 		if match(row) {
@@ -1104,14 +1116,23 @@ func promptDcloseAnyRow(path string, match func(map[string]any) bool) (bool, err
 	return false, nil
 }
 
-// promptDcloseSameJSONString is the oracle's row.checkEpoch === checkEpoch: JSON null and an
-// absent key are the same null, and a stored value must be the same string.
-func promptDcloseSameJSONString(stored any, want *string) bool {
-	if stored == nil {
-		return want == nil
+// promptDcloseRowOptions is the oracle's JSON.parse for a ledger line: a lone surrogate escape is
+// kept (the three WTF-8 bytes a Go string holds it in), an object reads into a map, and a number
+// stays as spelled. It is a function so the file keeps no package-level initializer.
+func promptDcloseRowOptions() pyjson.LoadOptions {
+	return pyjson.LoadOptions{Surrogates: true, Map: true, Numbers: pyjson.SpelledNumbers}
+}
+
+// promptDcloseRowMatchesKey is the oracle's row[key] === want for a *string key: an absent key is
+// undefined and never equals null, while a present JSON null does (CRW-1073). A row that predates
+// the key must not suppress a real row.
+func promptDcloseRowMatchesKey(row map[string]any, key string, want *string) bool {
+	got, present := row[key]
+	if want == nil {
+		return present && got == nil
 	}
-	got, ok := stored.(string)
-	return ok && want != nil && got == *want
+	gotText, ok := got.(string)
+	return ok && gotText == *want
 }
 
 // promptDclosePendingText is the oracle's pending.map((t) => t.id (t.title)).join("; ").

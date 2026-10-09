@@ -174,13 +174,14 @@ func automationGateHandle(raw string, env host.LookupEnv, read func(string, stri
 		return automationDenyEnvelope("Hook payload exceeds the supported bound.")
 	}
 	// JSON.parse: invalid JSON throws and is answered by the catch, while valid JSON that is not an
-	// object is the malformed-payload deny below. editObject is this package's reader for exactly
-	// this payload shape, and it keeps a number JSON.parse would hold as Infinity (UseNumber) from
-	// failing the whole document.
-	if !json.Valid([]byte(raw)) {
+	// object is the malformed-payload deny below. deepPayload is this package's JSON.parse for a
+	// gate's payload: it reads any nesting depth, as V8 does, and keeps a number JSON.parse would
+	// hold as Infinity (SpelledNumbers) from failing the whole document.
+	value, err := deepPayload(raw)
+	if err != nil {
 		return automationDenyEnvelope(automationUnverifiable)
 	}
-	payload := editObject(raw)
+	payload, _ := value.(map[string]any)
 	if payload == nil {
 		return automationDenyEnvelope("Malformed native hook payload.")
 	}
