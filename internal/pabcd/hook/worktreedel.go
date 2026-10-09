@@ -40,22 +40,32 @@ func resolveFrom(base, target string) string {
 	return filepath.Join(abs(base), target)
 }
 
-// isProtectedTarget says whether deleting target (taken from segCwd) deletes the slot, the checkout, the directory the
-// segment runs in, or an ancestor of that directory. The oracle compares against the segment's own directory, so a cd to
-// an unrelated place moves what is protected along with it (known defect). Its ancestor test is cwd.startsWith(resolved
-// + sep), which never holds for the root; the extended walk fixes that.
-func isProtectedTarget(target, segCwd string, id WorktreeIdentity, extended bool) bool {
-	resolved := canonicalize(resolveFrom(segCwd, target))
-	cwd := canonicalize(segCwd)
-	if resolved == id.SlotRoot && id.SlotRoot != "" || resolved == id.CheckoutRoot && id.CheckoutRoot != "" || resolved == cwd {
-		return true
+// protectedWorktreeRoots stays bound to the payload identity. Execution directories
+// only resolve operands. With no checkout identity, the original session cwd is
+// the fallback; safe subdirectory cleanup never becomes a new protected root.
+func protectedWorktreeRoots(id WorktreeIdentity) []string {
+	root := id.CheckoutRoot
+	if root == "" {
+		root = id.cwd
 	}
-	prefix := resolved + "/"
-	if extended {
-		prefix = strings.TrimSuffix(resolved, "/") + "/"
-	}
-	return strings.HasPrefix(cwd, prefix)
+	return []string{root, id.SlotRoot}
 }
+
+func isProtectedTarget(target, segCwd string, id WorktreeIdentity) bool {
+	resolved := canonicalize(resolveFrom(segCwd, target))
+	for _, root := range protectedWorktreeRoots(id) {
+		if root == "" {
+			continue
+		}
+		root = canonicalize(root)
+		rel, err := filepath.Rel(resolved, root)
+		if err == nil && (rel == "." || rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)) {
+			return true
+		}
+	}
+	return false
+}
+
 func denyReason(what string, id WorktreeIdentity) string {
 	slotRoot := id.SlotRoot
 	if slotRoot == "" {

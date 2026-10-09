@@ -195,7 +195,7 @@ func TestCRW895ShapesFromOtherDirectories(t *testing.T) {
 		"find ../.. -name x -delete":          true,  // the slot root
 		"find .. -delete":                     true,  // the checkout, which holds the directory the command runs in, no test
 		"find .. -name x -delete":             false, // the same with a test
-		"find . -delete":                      true,  // the directory itself, no test
+		"find . -delete":                      false, // CRW-1099: a safe checkout subdirectory is not a protected root
 		"find . -name x -delete":              false, // a test
 		"find sub -delete":                    false,
 		"echo .. | xargs rm":                  true,
