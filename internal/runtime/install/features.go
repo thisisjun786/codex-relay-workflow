@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
@@ -27,6 +28,10 @@ const featureUsage = "Usage:\n" +
 	"  crw install features status       show declared feature-flag state\n\n" +
 	"  --help / -h / help in any argument position prints this text and writes nothing.\n" +
 	"  enable writes $CODEX_HOME/config.toml and a timestamped .bak; disable reverts.\n"
+
+// featureEvidenceDeadline is the one deadline of the optional evidence recording after an enable
+// (CRW-1150). A variable only so a test can shorten it.
+var featureEvidenceDeadline = 8 * time.Second
 
 // This surface keeps the oracle's text and exit codes, outside the installer's JSON verbs.
 func runFeatures(ctx context.Context, args []string, env scope.Env, stdout, stderr io.Writer) int {

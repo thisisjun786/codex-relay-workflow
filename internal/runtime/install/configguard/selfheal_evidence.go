@@ -86,6 +86,9 @@ func selfHealProbeEvidenceObject(e *SelfHealProbeEvidence) pyjson.Object {
 // fingerprinted, and evidence is then neither recorded nor reused.
 const selfHealEvidenceMaxBytes = 8 << 20
 
+// selfHealEvidenceOpen opens a fingerprinted file; a variable only so a test can stall it.
+var selfHealEvidenceOpen = os.OpenFile
+
 // selfHealEvidenceHash is the sha256 of a config file the evidence names, or nil when nothing is
 // there. The SessionStart hook reads these files inside its shared deadline, so the read can never
 // wait: the file is opened without blocking (a FIFO with no writer opens at once), and anything that
@@ -93,7 +96,7 @@ const selfHealEvidenceMaxBytes = 8 << 20
 // selfHealEvidenceMaxBytes. A dangling link is an error, not an absent file, as activationReadFile
 // has it.
 func selfHealEvidenceHash(path string) (*string, error) {
-	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	f, err := selfHealEvidenceOpen(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			if _, lerr := os.Lstat(path); errors.Is(lerr, fs.ErrNotExist) {

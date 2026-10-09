@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -697,5 +699,167 @@ func TestSelfHealEvidenceUnparsableRecordDoesNotRestoreTheLegacyCache(t *testing
 	outcomes = SelfHealReport(SelfHealReportDeps{CodexHome: plain, Cwd: selfHealEvidenceCwd(t, plain), Run: runner.run})
 	if len(runner.calls) != 0 || len(outcomes) != 1 || outcomes[0].Reason != SelfHealReasonCached {
 		t.Fatalf("a legacy-only marker lost the cache hit: %+v %v", outcomes, runner.calls)
+	}
+}
+
+// CRW-1150 correction round: the evidence names the config the codex binary reads, is judged after the
+// last probe, is bounded by the hook's deadline, and is published against a concurrent opt-out.
+
+// A CODEX_HOME that follows a symbolic link and then ".." names the physical parent's directory, as
+// the kernel resolves it for the codex run; the lexical clean would hash another config.toml.
+func TestSelfHealEvidenceFingerprintsTheConfigTheKernelResolves(t *testing.T) {
+	base := t.TempDir()
+	storage := filepath.Join(base, "storage")
+	for _, dir := range []string{filepath.Join(base, "work"), filepath.Join(storage, "project"), filepath.Join(storage, "codex"), filepath.Join(base, "codex")} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(filepath.Join(storage, "project"), filepath.Join(base, "work", "alias")); err != nil {
+		t.Fatal(err)
+	}
+	home := filepath.Join(base, "work", "alias", "..", "codex")
+	for _, dir := range []string{filepath.Join(base, "codex"), filepath.Join(storage, "codex")} {
+		if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte("[features]\nhooks = true\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("HOME", base)
+	cwd := selfHealEvidenceCwd(t, filepath.Join(base, "codex"))
+	runner := &selfHealEvidenceRunner{version: "codex-cli 1.2.3", listing: selfHealReportSoftOn}
+	selfHealEvidenceRecordIn(t, home, cwd, runner)
+	runner.calls = nil
+	// Only the config.toml the kernel reaches through the link changes.
+	if err := os.WriteFile(filepath.Join(storage, "codex", "config.toml"), []byte("[features]\nhooks = false\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runner.listing = selfHealReportSoftOff
+	outcomes := SelfHealReport(SelfHealReportDeps{CodexHome: home, Cwd: cwd, Run: runner.run})
+	if runner.listings() != 1 || len(outcomes) != 1 || outcomes[0].Action != SelfHealReportOff {
+		t.Fatalf("the config codex reads changed and the record still stood: %+v %v", outcomes, runner.calls)
+	}
+}
+
+// The reuse path judges the digests after the version probe: a change completed while --version ran
+// is a cache miss, not a hit on the earlier config.
+func TestSelfHealEvidenceConfigChangedDuringTheVersionProbeMeasuresAgain(t *testing.T) {
+	home := selfHealReportTempHome(t)
+	path := selfHealReportWriteConfig(t, home)
+	runner := &selfHealEvidenceRunner{version: "codex-cli 1.2.3", listing: selfHealReportSoftOn}
+	selfHealEvidenceRecord(t, home, runner)
+	runner.calls = nil
+	run := func(args []string) CodexRunResult {
+		if len(args) == 1 {
+			if err := os.WriteFile(path, []byte("[features]\nhooks = false\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			runner.listing = selfHealReportSoftOff
+		}
+		return runner.run(args)
+	}
+	outcomes := SelfHealReport(SelfHealReportDeps{CodexHome: home, Cwd: selfHealEvidenceCwd(t, home), Run: run})
+	if runner.listings() != 1 || len(outcomes) != 1 || outcomes[0].Action != SelfHealReportOff {
+		t.Fatalf("a change during the version probe still hit the cache: %+v %v", outcomes, runner.calls)
+	}
+}
+
+// A codex binary replaced between the listing and the version read must not pair the old listing with
+// the new version.
+func TestSelfHealEvidenceBinaryReplacedWhileMeasuringIsNotRecorded(t *testing.T) {
+	home := selfHealReportTempHome(t)
+	selfHealReportWriteConfig(t, home)
+	racing := &selfHealEvidenceRunner{version: "codex-cli 1.2.3", listing: selfHealReportSoftOff}
+	run := func(args []string) CodexRunResult {
+		res := racing.run(args)
+		if len(args) == 2 {
+			racing.version = "codex-cli 2.0.0"
+		}
+		return res
+	}
+	if err := RecordSelfHealEvidence(RecordSelfHealEvidenceDeps{CodexHome: home, Cwd: selfHealEvidenceCwd(t, home), Run: run}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(SelfHealMarkerPath(home)); !os.IsNotExist(err) {
+		t.Fatalf("a listing of one codex was recorded under another's version: %v", err)
+	}
+}
+
+// A fingerprinted file that stalls on read cannot hold the SessionStart hook past the shared deadline.
+func TestSelfHealReportStalledFingerprintReadEndsAtTheSharedDeadline(t *testing.T) {
+	home := selfHealReportTempHome(t)
+	selfHealReportWriteConfig(t, home)
+	cwd := selfHealEvidenceCwd(t, home)
+	selfHealEvidenceWriteProjectConfig(t, cwd, "[features]\nhooks = true\n")
+	dir := selfHealReportFakeCodexAt(t)
+	selfHealReportWriteFakeCodex(t, dir, "if [ \"$1\" = --version ]; then echo 'codex-cli 1.2.3'; exit 0; fi\nprintf '%s' '"+selfHealReportSoftOn+"'\n")
+	selfHealEvidenceRecordIn(t, home, cwd, &selfHealEvidenceRunner{version: "codex-cli 1.2.3", listing: selfHealReportSoftOn})
+
+	stalled, release := filepath.Join(cwd, ".codex", "config.toml"), make(chan struct{})
+	prevOpen, prevDeadline := selfHealEvidenceOpen, selfHealReportProbeDeadline
+	selfHealEvidenceOpen = func(name string, flag int, perm os.FileMode) (*os.File, error) {
+		if name == stalled {
+			<-release
+		}
+		return os.OpenFile(name, flag, perm)
+	}
+	selfHealReportProbeDeadline = 400 * time.Millisecond
+	t.Cleanup(func() {
+		close(release)
+		selfHealEvidenceOpen, selfHealReportProbeDeadline = prevOpen, prevDeadline
+	})
+	t.Chdir(cwd)
+
+	type answer struct {
+		out  string
+		code int
+	}
+	done := make(chan answer, 1)
+	start := time.Now()
+	go func() {
+		out, code := selfHealReportRun(t, home, selfHealReportSessionStart)
+		done <- answer{out, code}
+	}()
+	select {
+	case a := <-done:
+		if a.code != 0 || a.out != "" {
+			t.Fatalf("exit %d stdout %q, want silence", a.code, a.out)
+		}
+		if elapsed := time.Since(start); elapsed > 5*time.Second {
+			t.Fatalf("the hook ran %v past a %v deadline", elapsed, selfHealReportProbeDeadline)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("a stalled fingerprint read held the hook past the shared deadline")
+	}
+}
+
+// A disable that completes while an enable's recorder is between reading and publishing the marker
+// keeps its opt-out; the recorder's older marker does not overwrite it.
+func TestSelfHealEvidenceRecordingDoesNotOverwriteALaterOptOut(t *testing.T) {
+	home := selfHealReportTempHome(t)
+	selfHealReportWriteConfig(t, home)
+	selfHealReportWriteMarker(t, home, "{\"checkedAt\":\"2025-12-31T00:00:00.000Z\"}\n")
+	prev := activationCrwdirPublish
+	var fired atomic.Bool
+	var optOut sync.WaitGroup
+	activationCrwdirPublish = func(path string, b []byte) error {
+		if fired.CompareAndSwap(false, true) {
+			optOut.Add(1)
+			go func() {
+				defer optOut.Done()
+				_ = MarkSelfHealOptedOut(home, "2026-10-10T00:00:01.000Z")
+			}()
+			time.Sleep(200 * time.Millisecond)
+		}
+		return prev(path, b)
+	}
+	t.Cleanup(func() { activationCrwdirPublish = prev })
+	selfHealEvidenceRecord(t, home, &selfHealEvidenceRunner{version: "codex-cli 1.2.3", listing: selfHealReportSoftOn})
+	optOut.Wait()
+	marker, err := ReadSelfHealMarkerFile(home)
+	if err != nil || marker == nil {
+		t.Fatalf("marker %+v %v", marker, err)
+	}
+	if marker.OptedOut == nil || !*marker.OptedOut || marker.Probe != nil {
+		t.Fatalf("the later opt-out was lost or its evidence resurrected: %+v", marker)
 	}
 }
