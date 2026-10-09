@@ -177,9 +177,11 @@ func TestDoctorShimImportsNothingForTheHandshake(t *testing.T) {
 	if err := os.MkdirAll(module, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// The module takes a moment to evaluate (a top-level await), as a real import of a large tree
-	// does, so the control case still has the import in flight when a caller's stdin closes.
-	source := "import { appendFileSync } from \"node:fs\";\nawait new Promise((resolve) => setTimeout(resolve, 300));\nappendFileSync(process.env.CRW932_IMPORT_RECORD, \"imported\\n\");\n"
+	// The module records its evaluation before anything it awaits, so any import that starts leaves a
+	// record as soon as the module body runs, however late the caller looks. It then takes a moment to
+	// finish (a top-level await), as a real import of a large tree does, so the control case still has
+	// the import in flight when a caller's stdin closes.
+	source := "import { appendFileSync } from \"node:fs\";\nappendFileSync(process.env.CRW932_IMPORT_RECORD, \"imported\\n\");\nawait new Promise((resolve) => setTimeout(resolve, 300));\n"
 	if err := os.WriteFile(filepath.Join(module, "doctor.js"), []byte(source), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +190,9 @@ func TestDoctorShimImportsNothingForTheHandshake(t *testing.T) {
 	// and the scalars and array a malformed case could carry.
 	for _, input := range []string{`null`, `"x"`, `0`, `true`, `[]`} {
 		nonObjectRecord := record()
-		line := runShim(t, root, "doctor", fake, []string{"CRW932_IMPORT_RECORD=" + nonObjectRecord}, `{"id":1,"input":`+input+`,"root":""}`)
+		// The worker stays up for a while after its reply (the pool keeps it up), so an import the
+		// shim started concurrently with its reply has time to run and leave its record.
+		line, _ := runShimSettled(t, root, "doctor", fake, []string{"CRW932_IMPORT_RECORD=" + nonObjectRecord}, `{"id":1,"input":`+input+`,"root":""}`, importSettle)
 		if strings.TrimSpace(line) != `{"id":1,"output":null}` {
 			t.Fatalf("the doctor shim answered the non-object input %s with %q, want {\"id\":1,\"output\":null}", input, line)
 		}
@@ -213,9 +217,18 @@ func runShim(t *testing.T, root, name, oracleRoot string, extraEnv []string, req
 	return line
 }
 
+// importSettle is how long the import test keeps a worker's stdin open after its reply. It is longer
+// than a module import takes to start evaluating (the fake module records before its first await).
+const importSettle = 600 * time.Millisecond
+
 // runShimIn is runShim that also returns the shim's working directory, so a caller can check nothing was
 // written there.
 func runShimIn(t *testing.T, root, name, oracleRoot string, extraEnv []string, request string) (string, string) {
+	return runShimSettled(t, root, name, oracleRoot, extraEnv, request, 0)
+}
+
+// runShimSettled is runShimIn that waits settle after the reply before it closes the shim's stdin.
+func runShimSettled(t *testing.T, root, name, oracleRoot string, extraEnv []string, request string, settle time.Duration) (string, string) {
 	t.Helper()
 	dir := t.TempDir()
 	// The shim's homes go in a sibling directory, not in dir: dir is the worker's working
@@ -269,6 +282,7 @@ func runShimIn(t *testing.T, root, name, oracleRoot string, extraEnv []string, r
 	}
 	// The reply is in, so closing stdin now cannot cut an answer short. Wait for the process to exit
 	// before the caller looks at what it wrote.
+	time.Sleep(settle)
 	_ = stdin.Close()
 	done := make(chan struct{})
 	go func() { _, _ = io.Copy(io.Discard, reader); close(done) }()
