@@ -26,3 +26,26 @@ func nodeErrorMessage(err error) string {
 	}
 	return output
 }
+
+// nodeSpelledError is err with the text Node prints for it: Error returns the Node spelling and Unwrap keeps the original, so
+// errors.Is and errors.As (a cancelled context, the *os.PathError) still answer for the cause.
+type nodeSpelledError struct {
+	err     error
+	message string
+}
+
+func (e *nodeSpelledError) Error() string { return e.message }
+
+func (e *nodeSpelledError) Unwrap() error { return e.err }
+
+// nodeSpelled is err carrying nodeErrorMessage(err) as its text; nil stays nil and an error whose text is already the Node
+// spelling is returned as it is.
+func nodeSpelled(err error) error {
+	if err == nil {
+		return nil
+	}
+	if message := nodeErrorMessage(err); message != err.Error() {
+		return &nodeSpelledError{err: err, message: message}
+	}
+	return err
+}
