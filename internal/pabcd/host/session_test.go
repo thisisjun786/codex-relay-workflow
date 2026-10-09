@@ -3,6 +3,7 @@ package host
 import (
 	"bytes"
 	"database/sql"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -13,21 +14,22 @@ import (
 )
 
 const (
-	child       = "019a0000-0000-7000-8000-000000000001"
-	parent      = "019a0000-0000-7000-8000-000000000002"
-	msgAbsent   = "CODEX_THREAD_ID is absent. Run this command inside the native Codex session."
-	msgInvalid  = "CODEX_THREAD_ID must be an unmodified native UUID."
-	msgWorkdir  = "Cannot resolve the working directory. Run from the native session's directory."
-	msgNoRow    = "Native session row is missing. Run inside the intended Codex session."
-	msgArchived = "Native session is archived or has an invalid archive flag."
-	msgSource   = "Native source is not a supported root session; subagent, unknown and malformed sources cannot bind."
-	msgRelative = "Native session has an invalid working directory."
-	msgCwd      = "Cannot resolve the native session's working directory."
-	msgMismatch = "Working directory does not match the native session. Run from its exact directory."
-	msgReadDB   = "Cannot read the newest native state database or its threads schema. Check database access and Node SQLite support."
-	msgNoFile   = "Native state database is missing. Check CODEX_SQLITE_HOME or CODEX_HOME."
-	msgNoHome   = "Cannot locate the native state database. Check CODEX_SQLITE_HOME or CODEX_HOME."
-	msgNotFile  = "Newest native state database must be a regular file, not a symlink or directory."
+	child           = "019a0000-0000-7000-8000-000000000001"
+	parent          = "019a0000-0000-7000-8000-000000000002"
+	msgAbsent       = "CODEX_THREAD_ID is absent. Run this command inside the native Codex session."
+	msgInvalid      = "CODEX_THREAD_ID must be an unmodified native UUID."
+	msgWorkdir      = "Cannot resolve the working directory. Run from the native session's directory."
+	msgNoRow        = "Native session row is missing. Run inside the intended Codex session."
+	msgArchived     = "Native session is archived or has an invalid archive flag."
+	msgSource       = "Native source is not a supported root session; subagent, unknown and malformed sources cannot bind."
+	msgRelative     = "Native session has an invalid working directory."
+	msgCwd          = "Cannot resolve the native session's working directory."
+	msgMismatch     = "Working directory does not match the native session. Run from its exact directory."
+	msgReadDB       = "Cannot read the newest native state database or its threads schema. Check database access and Node SQLite support."
+	msgNoFile       = "Native state database is missing. Check CODEX_SQLITE_HOME or CODEX_HOME."
+	msgNoHome       = "Cannot locate the native state database. Check CODEX_SQLITE_HOME or CODEX_HOME."
+	msgNotFile      = "Newest native state database must be a regular file, not a symlink or directory."
+	msgRelativeRoot = "Native state database directory is not an absolute path. Set CODEX_SQLITE_HOME or CODEX_HOME to an absolute directory, or HOME to an absolute home; a relative or empty home is not read from the working directory."
 
 	// columns are untyped, as a column with no affinity keeps a stored INTEGER an INTEGER; id matches NOCASE.
 	columns = "id TEXT COLLATE NOCASE PRIMARY KEY, cwd, archived, source, title TEXT"
@@ -389,11 +391,13 @@ func TestResolveNativeSessionOfAWALDatabaseLeavesSidecars(t *testing.T) {
 	}
 }
 
-// The call cwd may be relative, as may CODEX_HOME and an empty HOME that falls back to .codex: all
-// resolve against getcwd, as process.cwd() does, and not against $PWD.
+// The call cwd may be relative: it resolves against getcwd, as process.cwd() does, and not against
+// $PWD. The database root may not (CRW-1136): a relative CODEX_HOME, CODEX_SQLITE_HOME or HOME is
+// refused with a message that names them, and an empty or unset HOME is the account's passwd home, as
+// the Codex host resolves it, never .codex below the working directory (the oracle's reading).
 func TestResolveNativeSessionResolvesRelativePathsAgainstTheWorkingDirectory(t *testing.T) {
 	f := newFixture(t)
-	dbPath := f.db("5", nil)
+	f.db("5", nil)
 	t.Chdir(f.cwd)
 	if got := f.accepts("dot", "."); got.Cwd != f.cwd {
 		t.Errorf("%+v", got)
@@ -410,26 +414,38 @@ func TestResolveNativeSessionResolvesRelativePathsAgainstTheWorkingDirectory(t *
 	if got := f.accepts("relative", "work"); got.Cwd != f.cwd {
 		t.Errorf("%+v", got)
 	}
-	alias := filepath.Join(t.TempDir(), "alias")
-	if err := os.Symlink(f.root, alias); err != nil {
-		t.Fatal(err)
+	for _, c := range []map[string]string{{"CODEX_HOME": "native"}, {"CODEX_SQLITE_HOME": "native"}, {"CODEX_HOME": " " + f.home}, {"HOME": "rel"}} {
+		vars := map[string]string{"CODEX_THREAD_ID": child, "HOME": f.root}
+		for k, v := range c {
+			vars[k] = v
+		}
+		if _, err := resolveNativeSession(f.cwd, envOf(vars), func() (string, error) { return f.root, nil }); err == nil || err.Error() != msgRelativeRoot {
+			t.Errorf("%v: %v, want the relative-root refusal", c, err)
+		}
 	}
-	t.Setenv("PWD", alias) // spelled through a symlink while the process is in f.root
-	f.vars["CODEX_HOME"] = "native"
-	if got := f.accepts("relative home", f.cwd); got.DBPath != dbPath {
-		t.Errorf("%+v, want %s", got, dbPath)
-	}
-	home := newFixture(t) // an empty HOME makes ~/.codex a path relative to the working directory
-	home.home = filepath.Join(home.root, ".codex")
-	if err := os.Mkdir(home.home, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	want := home.db("5", nil)
-	delete(home.vars, "CODEX_HOME")
-	home.vars["HOME"] = ""
-	t.Chdir(home.root)
-	if got := home.accepts("empty HOME", home.cwd); got.DBPath != want {
-		t.Errorf("%+v, want %s", got, want)
+	for _, vars := range []map[string]string{{"HOME": ""}, {}} {
+		home := newFixture(t) // .codex below the working directory holds an archived row and is not read
+		home.home = filepath.Join(home.root, ".codex")
+		if err := os.Mkdir(home.home, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		home.db("5", map[string]any{"archived": 1})
+		account := filepath.Join(home.root, "account")
+		home.home = filepath.Join(account, ".codex")
+		if err := os.MkdirAll(home.home, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		want := home.db("5", nil)
+		vars["CODEX_THREAD_ID"] = child
+		t.Chdir(home.root)
+		if got, err := resolveNativeSession(home.cwd, envOf(vars), func() (string, error) { return account, nil }); err != nil || got.DBPath != want {
+			t.Errorf("HOME %v: %+v, %v, want %s", vars, got, err, want)
+		}
+		for _, account := range []func() (string, error){func() (string, error) { return "", errors.New("no entry") }, func() (string, error) { return "rel", nil }} {
+			if _, err := resolveNativeSession(home.cwd, envOf(vars), account); err == nil || err.Error() != msgRelativeRoot {
+				t.Errorf("HOME %v without an absolute account home: %v", vars, err)
+			}
+		}
 	}
 }
 
@@ -490,7 +506,8 @@ func TestResolveNativeSessionFollowsAtMostFortyLinks(t *testing.T) {
 
 // Node holds argv, the environment, getcwd, realpath answers and TEXT as strings decoded from UTF-8
 // with U+FFFD for each invalid sequence, so the oracle names a path with invalid bytes only by its
-// replacement spelling, whichever way the path reached it (a known defect, kept).
+// replacement spelling, whichever way the path reached it (a known defect, kept for working
+// directories). The database root keeps its bytes (CRW-1136).
 func TestResolveNativeSessionSeesPathsAsNodeDoes(t *testing.T) {
 	for _, raw := range [][]byte{{0x80}, {0xe2, 0x82}} {
 		replacement := decodeUTF8(raw)
@@ -539,16 +556,12 @@ func TestResolveNativeSessionSeesPathsAsNodeDoes(t *testing.T) {
 		t.Chdir(rawWD)
 		rel.refuses("relative call cwd: sub exists only under the replacement spelling", "sub", msgWorkdir)
 
-		r := newFixture(t) // a relative CODEX_HOME resolves against the decoded getcwd answer
+		r := newFixture(t) // a relative CODEX_HOME is refused, whatever the working directory is called (CRW-1136)
 		t.Chdir(wd)
 		r.vars["CODEX_HOME"] = "native2"
 		os.Mkdir(wd+"/native2", 0o755)
 		os.Rename(r.db("5", nil), wd+"/native2/state_5.sqlite")
-		r.refuses("relative CODEX_HOME: the decoded working directory is absent", r.cwd, msgNoHome)
-		os.Mkdir(h.root+"/w-"+replacement+"/native2", 0o755)
-		r.home = h.root + "/w-" + replacement + "/native2"
-		r.db("5", map[string]any{"archived": 1})
-		r.refuses("relative CODEX_HOME: the replacement spelling holds another database", r.cwd, msgArchived)
+		r.refuses("relative CODEX_HOME", r.cwd, msgRelativeRoot)
 
 		c := newFixture(t) // a call cwd given as raw bytes names its replacement spelling, whatever the raw name links to
 		rep := c.root + "/c-" + replacement
@@ -559,15 +572,16 @@ func TestResolveNativeSessionSeesPathsAsNodeDoes(t *testing.T) {
 		c.db("5", map[string]any{"cwd": rep})
 		c.accepts("call cwd: the replacement spelling is the stored cwd", c.root+"/c-"+string(raw))
 
-		e := newFixture(t) // CODEX_HOME given as raw bytes
+		e := newFixture(t) // CODEX_HOME given as raw bytes is listed and opened as those bytes (CRW-1136)
 		home := e.root + "/h-" + string(raw)
 		mkdir(home)
 		os.Rename(e.db("5", nil), home+"/state_5.sqlite")
-		e.vars["CODEX_HOME"] = home
-		e.refuses("CODEX_HOME: only the raw bytes exist", e.cwd, msgNoHome)
 		mkdir(e.root + "/h-" + replacement)
 		e.home = e.root + "/h-" + replacement
 		e.db("5", map[string]any{"archived": 1})
-		e.refuses("CODEX_HOME: the replacement spelling holds another database", e.cwd, msgArchived)
+		e.vars["CODEX_HOME"] = home
+		if got := e.accepts("CODEX_HOME: the raw bytes, not the replacement spelling", e.cwd); got.DBPath != home+"/state_5.sqlite" {
+			t.Errorf("CODEX_HOME raw bytes: %+v", got)
+		}
 	}
 }
