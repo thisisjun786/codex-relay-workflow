@@ -188,7 +188,8 @@ func Published(err error) bool {
 // the old file or the new one whole (writeState). The temp file is fsynced before the rename, and the directory afterward;
 // a directory sync error is returned as a PublishedError after publication, without removing the new state. This is not a
 // serialised read-modify-write: a caller that must not lose a concurrent update re-reads inside WithSessionLock. The tracker is
-// capped on the way out and updatedAt stamped.
+// capped on the way out and updatedAt stamped. A session id that sanitising would rewrite, or an empty one, is refused with
+// ErrNonCanonicalSessionID before anything is created (CRW-1108; the oracle writes the sanitised key).
 func WriteState(cwd string, next State) error {
 	return writeState(cwd, next, time.Now(), crwdir.Rename)
 }
@@ -197,6 +198,11 @@ func writeState(cwd string, next State, now time.Time, rename func(tmp, finalPat
 	sync := (*os.File).Sync
 	if len(syncFile) > 0 {
 		sync = syncFile[0]
+	}
+	// CRW-1108: the id ensureState refuses is refused here too, before anything is created, so a/b can
+	// no longer replace a-b's file and an empty id no longer writes missing.json (known-defects.md:78).
+	if !IsCanonicalSessionID(next.SessionID) {
+		return ErrNonCanonicalSessionID
 	}
 	if err = makeSessionsDir(cwd); err != nil {
 		return err

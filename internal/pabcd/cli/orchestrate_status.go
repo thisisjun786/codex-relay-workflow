@@ -152,7 +152,8 @@ func SiblingRoots(cwd string, process host.LookupEnv) []string {
 
 // RunOrchestrateRead ports the read-only prefix (:466-548) on a parser result:
 // help/errors/status terminate; passed mutation guards delegate to the transition
-// library. Native identity is corroborated only for implicit status, never hooks.
+// library. Native identity selects the session of an implicit status and bounds an explicit mutation
+// to the native session (nativeSessionMismatch); hooks never pass it.
 func RunOrchestrateRead(parsed OrchestrateCliParsed, env ReadEnv) (OrchestrateReadResult, error) {
 	if parsed.Help != nil {
 		return readAnswer(0, RenderOrchestrateHelp("")), nil
@@ -168,6 +169,17 @@ func RunOrchestrateRead(parsed OrchestrateCliParsed, env ReadEnv) (OrchestrateRe
 	if a.Verb != fsm.VerbStatus && nonemptySession(a.Session) && !state.IsCanonicalSessionID(*a.Session) {
 		return readAnswer(1, sessionAliasRefusalOutput(a.Verb)), nil
 	}
+	if env.Native == nil {
+		env.Native = func(string) (string, bool) { return "", false }
+	}
+	// CRW-1108 (B2-01): inside a native session a mutation may change only that session. Judged right
+	// after the id's shape and before the attestation-error branch, which would read the other
+	// session's phase, so a refused id is neither read nor written.
+	if a.Verb != fsm.VerbStatus && nonemptySession(a.Session) {
+		if refusal := nativeSessionMismatch(*a, env.Native); refusal != "" {
+			return readAnswer(1, refusal), nil
+		}
+	}
 	if a.AttestError != "" && a.Verb != fsm.VerbStatus && a.Verb != fsm.VerbReset {
 		context, hint := "", ""
 		var from *state.Phase
@@ -180,9 +192,6 @@ func RunOrchestrateRead(parsed OrchestrateCliParsed, env ReadEnv) (OrchestrateRe
 			hint = RenderAttestShapeHint(a.Verb, from)
 		}
 		return readAnswer(1, "orchestrate "+VerbText(a.Verb)+": "+context+a.AttestError+"."+hint), nil
-	}
-	if env.Native == nil {
-		env.Native = func(string) (string, bool) { return "", false }
 	}
 	_, hasNative := env.Native("CODEX_THREAD_ID")
 	var sessionID *string
@@ -223,6 +232,30 @@ func RunOrchestrateRead(parsed OrchestrateCliParsed, env ReadEnv) (OrchestrateRe
 
 func readAnswer(code int, output string) OrchestrateReadResult {
 	return OrchestrateReadResult{Result: &CliResult{Code: code, Output: output}}
+}
+
+// nativeSessionMismatch is the refusal of a mutation whose explicit --session is not the native
+// session the command runs in, or "" when the mutation may proceed (CRW-1108). The oracle checks
+// native identity for implicit status only, so a native session could change a parent's, a sibling's
+// or an earlier session's FSM with exit 0 (orchestrate-cli.ts:489; port: fixed).
+//
+// The subject is CODEX_THREAD_ID, set and nonempty; without it (a standalone terminal) the explicit
+// id, the reserved terminal key included, keeps working. The absorbed resolver confirms the subject
+// against the native thread database where it can, but a lookup that fails (no database, another
+// working directory, a worktree) is not widened into a refusal: the alias guard is the id comparison
+// alone, so an independent terminal flow that cannot reach the database is not broken. Only the
+// terminal row supplies Native; hooks never do, because a subagent's CODEX_THREAD_ID is not the root
+// session id its hook payload carries.
+func nativeSessionMismatch(a OrchestrateCliArgs, native host.LookupEnv) string {
+	threadID, set := native("CODEX_THREAD_ID")
+	if !set || threadID == "" || *a.Session == threadID {
+		return ""
+	}
+	confirmed := ""
+	if resolved, err := host.ResolveNativeSession(a.Cwd, native); err == nil && resolved.SessionID == threadID {
+		confirmed = ", confirmed by the native thread database"
+	}
+	return fmt.Sprintf("orchestrate %s: --session '%s' is not the native Codex session this command runs in (CODEX_THREAD_ID %s%s). SESSION-IDENTITY-01: a mutation may change only your own session, never a parent, sibling or earlier session id or the terminal key 'cli'; pass your own id (crw relay session current shows it). Nothing was written.", VerbText(a.Verb), *a.Session, threadID, confirmed)
 }
 
 func readStatus(a OrchestrateCliArgs, sessionID *string, hasNative bool, process host.LookupEnv) (OrchestrateReadResult, error) {

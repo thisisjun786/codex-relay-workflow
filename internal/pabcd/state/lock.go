@@ -55,6 +55,9 @@ func orchestrateInterruptLockWait(ctx context.Context, cwd, sessionID string, fn
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if !IsCanonicalSessionID(sessionID) { // CRW-1108: a/b no longer shares a-b's lock, nor "" the lock of missing
+		return ErrNonCanonicalSessionID
+	}
 	if err := makeSessionsDir(cwd); err != nil {
 		return err
 	}

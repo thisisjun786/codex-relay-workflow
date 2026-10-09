@@ -359,7 +359,9 @@ func divergenceWrites(args []string) bool {
 // orchestrateVerb is the orchestrate row (cli.ts:143-152). The terminal entry is the only caller
 // that supplies the native environment: the oracle hands runOrchestrateCli its process.env, which is
 // what drives the implicit CODEX_THREAD_ID status selection and the homedir scan, while every other
-// row keeps the library's empty env. The parse refusal is the one answer the oracle writes to
+// row keeps the library's empty env. The same environment bounds a mutation to the native session it
+// runs in: RunOrchestrateRead refuses an explicit --session that is not CODEX_THREAD_ID before the
+// transition below takes the lock or writes anything (CRW-1108). The parse refusal is the one answer the oracle writes to
 // STDERR (cli.ts:146-149) and it never reaches runOrchestrateCli, so it is rendered here instead of
 // letting RunOrchestrateRead answer it on stdout. Everything else is the library's own stream, code
 // and trailing newline, and a delegated mutation is RunOrchestrateTransition's answer the same way.

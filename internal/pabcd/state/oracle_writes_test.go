@@ -98,6 +98,13 @@ func TestWritesMatchTheRecordedOracle(t *testing.T) {
 			}
 			created, err := ensureState(cwd, "rec-s1", at, swap)
 			same("outcome", []any{created, errors.Is(err, syscall.EISDIR), c.str("threw"), len(sessionFiles(cwd)) - btoi(slices.Contains(sessionFiles(cwd), "rec-s1.json"))}, []any{false, true, "ERR_FS_EISDIR", int(c["tmpLeft"].(float64))})
+		case id == "write_noncanonical_id":
+			// port: fixed by CRW-1108 (known-defects.md:78). The oracle writes the state of a/b to a-b.json (the recorded file);
+			// the port refuses the id as ensureState does and creates nothing
+			var s State
+			_ = json.Unmarshal(jsonOf(c["state"]), &s)
+			_, has := c["files"].(map[string]any)["a-b.json"]
+			same("write", []any{errors.Is(writeState(cwd, s, at(), crwdir.Rename), ErrNonCanonicalSessionID), sessionFiles(cwd), s.SessionID, has}, []any{true, []string(nil), "a/b", true})
 		case strings.HasPrefix(id, "write_") && c["state"] != nil:
 			var s State
 			_ = json.Unmarshal(jsonOf(c["state"]), &s)
@@ -108,11 +115,14 @@ func TestWritesMatchTheRecordedOracle(t *testing.T) {
 			}
 			same("files", files, c["files"].(map[string]any))
 		case id == "write_alias_ids":
+			// port: fixed by CRW-1108 (known-defects.md:78). The oracle writes a/b to a-b.json, so the later write of a-b replaces
+			// it; the port refuses a/b, so the listing is the same a-b.json, holding a-b's own write, and a/b reads nothing
+			var errs []error
 			for _, s := range []State{{Phase: PhaseP, SessionID: "a/b"}, {Phase: PhaseB, SessionID: "a-b"}} {
 				s.InjectedTurns, s.UnverifiedSubagents = []string{}, []UnverifiedSubagent{}
-				_ = WriteState(cwd, s)
+				errs = append(errs, WriteState(cwd, s))
 			}
-			same("alias", []any{sessionFiles(cwd), string(ReadState(cwd, "a/b").Phase)}, []any{c.strs("listing"), c.str("phase")})
+			same("alias", []any{sessionFiles(cwd), string(ReadState(cwd, "a-b").Phase), errors.Is(errs[0], ErrNonCanonicalSessionID), errs[1]}, []any{c.strs("listing"), c.str("phase"), true, error(nil)})
 		case id == "write_final_is_directory":
 			_ = os.MkdirAll(state, 0o777)
 			// os.Rename refuses a directory target itself, with EEXIST where rename(2) and Node say EISDIR; the failure, the removed temp
@@ -155,9 +165,10 @@ func TestWritesMatchTheRecordedOracle(t *testing.T) {
 		case id == "lock_key_is_sanitised":
 			_ = makeSessionsDir(cwd)
 			_ = os.WriteFile(StatePath(cwd, "x")+".lock", []byte("1"), 0o644)
-			for _, key := range []string{"x", "x/"} { // "x/" sanitises to "x": the same state file, so the same lock
-				same(key, errors.Is(withSessionLock(cwd, key, func() error { return nil }, func(time.Duration) {}), fs.ErrExist), true)
-			}
+			same("x", errors.Is(withSessionLock(cwd, "x", func() error { return nil }, func(time.Duration) {}), fs.ErrExist), true)
+			// port: fixed by CRW-1108 (known-defects.md:78). The oracle sanitises "x/" to "x" and so waits on x's lock; the port
+			// refuses the alias before it reaches any lock
+			same("x/", errors.Is(withSessionLock(cwd, "x/", func() error { return nil }, func(time.Duration) {}), ErrNonCanonicalSessionID), true)
 		case slices.Contains([]string{"concurrent_writers", "concurrent_ensure_state", "lock_contention_between_processes", "killed_between_temp_write_and_rename", "lock_runs_and_releases", "lock_released_when_fn_throws", "lock_held_exhausts"}, id):
 			// replayed by concurrency_test.go
 		default:
