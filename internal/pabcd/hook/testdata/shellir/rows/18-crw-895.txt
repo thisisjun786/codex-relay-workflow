@@ -131,7 +131,7 @@ find -L . -name '*.o' -delete
 
 === CRW-895-c24 | B
 --why A pattern that spells -delete is the argument of -name, not an action.
-find .. -name -delete
+find . -name -delete
 
 === CRW-895-d1 | R
 --why The 10-09 re-check: -exec rmdir from the slot root (an ancestor).
@@ -340,3 +340,99 @@ echo ../repo | parallel rm -rf
 === CRW-895-p6 | U
 --why parallel rm with a safe left side is refused too (the reader does not model parallel; an accepted over-refusal).
 ls | parallel rm
+
+=== CRW-895-c25 | B
+--why A prune branch before the action: every path to -delete passes a test.
+find ../repo -type d -name build -prune -o -type f -delete
+
+=== CRW-895-c26 | B
+--why git -C with a subcommand that removes nothing.
+echo repo | xargs git -C .. status
+
+=== CRW-895-c27 | B
+--why The names ls prints are the contents of the checkout, not the checkout.
+ls ../repo | xargs rmdir
+
+=== CRW-895-c28 | B
+--why A file the producer reads is output the text does not name (cat is a plain command; xargs -a and < FILE are the unreadable forms).
+cat list.txt | xargs rm
+
+=== CRW-895-c29 | B
+--why A relative name in the current directory is not the checkout.
+xargs git worktree remove <<< repo
+
+=== CRW-895-c30 | B
+--why A test group in which every alternative holds a test.
+find ../repo \( -name '*.o' -o -name '*.a' \) -delete
+
+=== CRW-895-e28 | R
+--why tee passes the list on.
+echo ../repo | tee x | xargs rmdir
+
+=== CRW-895-e29 | R
+--why sort and uniq pass the list on.
+echo ../repo | sort | uniq | xargs rmdir
+
+=== CRW-895-e30 | R
+--why sed rewrites a known list into names the guard cannot read.
+echo ../repo | sed s/a/b/ | xargs rmdir
+
+=== CRW-895-e31 | R
+--why cut rewrites a known list.
+echo ../repo | cut -d, -f1 | xargs rmdir
+
+=== CRW-895-e32 | R
+--why git -C .. moves the directory the name is resolved from.
+xargs git -C .. worktree remove <<< repo
+
+=== CRW-895-e33 | R
+--why A name relative to a directory the text changed to.
+cd ..; echo repo | xargs rmdir
+
+=== CRW-895-e34 | R
+--why env runs xargs; the pipe still feeds it.
+echo ../repo | env xargs rmdir
+
+=== CRW-895-e35 | R
+--why xargs runs env, which runs the removal.
+echo ../repo | xargs env rmdir
+
+=== CRW-895-e36 | R
+--why A subshell carries the pipe.
+echo ../repo | (xargs rmdir)
+
+=== CRW-895-e37 | R
+--why A function that prints the checkout feeds the pipe.
+f() { echo ../repo; }; f | xargs rmdir
+
+=== CRW-895-e38 | R
+--why find lists the checkout (its start point) for a non-recursive removal that can remove a worktree.
+find .. -maxdepth 1 -name repo | xargs git worktree remove
+
+=== CRW-895-d19 | R
+--why sh -c in -exec runs the removal with the placeholder.
+find ../repo -exec sh -c 'rm "$1"' _ {} \;
+
+=== CRW-895-d20 | R
+--why The slot root among several start points.
+find .. . -name x -delete
+
+=== CRW-895-d21 | R
+--why -H before the start does not hide it.
+find -H .. -name x -delete
+
+=== CRW-895-d22 | R
+--why An option that takes a value (-D) before the start does not hide it.
+find -D tree .. -name x -delete
+
+=== CRW-895-d23 | R
+--why A group with an always-true alternative guards nothing.
+find ../repo \( -name x -o -true \) -delete
+
+=== CRW-895-d24 | R
+--why -prune before -o leaves -delete without a test.
+find ../repo -name x -prune -o -delete
+
+=== CRW-895-d25 | R
+--why No start point means the current directory, which is the checkout.
+find -delete

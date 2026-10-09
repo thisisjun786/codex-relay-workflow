@@ -14,6 +14,9 @@ type unwrapped struct {
 	// recordName and record name the wrapper's own file operand (script's transcript, strace -o) as a synthetic record.
 	recordName string
 	record     []Word
+	// feeds is the feed of each program in inner (find's actions); argFile is whether xargs reads its operands from a file (-a).
+	feeds   []*Feed
+	argFile bool
 }
 
 // unwrapCommand applies the option grammar of one wrapper. An option the
@@ -31,6 +34,8 @@ func unwrapCommand(name string, args []Word) (unwrapped, error) {
 		return unwrapEnv(args)
 	case "find":
 		return unwrapFind(args)
+	case "xargs":
+		return unwrapXargs(args)
 	case "busybox":
 		if len(args) == 0 {
 			return u, nil
@@ -99,8 +104,6 @@ func wrapperOptions(name string, args []Word) (int, error) {
 		return skipOptions(name, args, "EHnSkb", "ug", "")
 	case "doas":
 		return skipOptions(name, args, "n", "u", "")
-	case "xargs":
-		return skipOptions(name, args, "0rtxpe", "ILnPdEsa", "il")
 	case "parallel":
 		return skipOptions(name, args, "0kqv", "jnaX", "")
 	}
@@ -108,20 +111,27 @@ func wrapperOptions(name string, args []Word) (int, error) {
 }
 
 func skipOptions(name string, args []Word, flags, valued, optional string) (int, error) {
+	i, _, err := skipOptionsSeen(name, args, flags, valued, optional)
+	return i, err
+}
+
+// skipOptionsSeen is skipOptions that also names the valued options it met.
+func skipOptionsSeen(name string, args []Word, flags, valued, optional string) (int, string, error) {
 	i := 0
+	seen := ""
 	for i < len(args) {
 		v, err := knownValue(args[i], name+" option")
 		if err != nil {
-			return 0, err
+			return 0, "", err
 		}
 		if v == "--" {
-			return i + 1, nil
+			return i + 1, seen, nil
 		}
 		if len(v) < 2 || v[0] != '-' {
-			return i, nil
+			return i, seen, nil
 		}
 		if strings.HasPrefix(v, "--") {
-			return 0, unreadablef("%s option %s is not modelled", name, v)
+			return 0, "", unreadablef("%s option %s is not modelled", name, v)
 		}
 		i++
 		for k := 1; k < len(v); k++ {
@@ -129,9 +139,10 @@ func skipOptions(name string, args []Word, flags, valued, optional string) (int,
 			last := k == len(v)-1
 			switch {
 			case strings.IndexByte(valued, c) >= 0:
+				seen += string(c)
 				if last {
 					if i >= len(args) {
-						return 0, unreadablef("%s -%c without a value", name, c)
+						return 0, "", unreadablef("%s -%c without a value", name, c)
 					}
 					i++
 				}
@@ -140,11 +151,11 @@ func skipOptions(name string, args []Word, flags, valued, optional string) (int,
 				k = len(v)
 			case strings.IndexByte(flags, c) >= 0:
 			default:
-				return 0, unreadablef("%s option -%c is not modelled", name, c)
+				return 0, "", unreadablef("%s option -%c is not modelled", name, c)
 			}
 		}
 	}
-	return i, nil
+	return i, seen, nil
 }
 
 func skipNice(args []Word) (int, error) {
@@ -295,30 +306,34 @@ func validName(s string) bool {
 	return true
 }
 
-// unwrapFind returns each program that find -exec, -execdir, -ok or -okdir runs.
+// unwrapFind returns each program that find -exec, -execdir, -ok or -okdir runs, with the feed that says where its operands
+// come from: the start points of the find and whether a test guards the action.
 func unwrapFind(args []Word) (unwrapped, error) {
 	var u unwrapped
-	for _, a := range args {
-		if !a.Known {
-			return u, unreadablef("find argument is not known (%s)", a.Reason)
-		}
+	starts, actions, err := FindScan(args)
+	if err != nil {
+		return u, err
 	}
-	for i := 0; i < len(args); i++ {
-		switch args[i].Value {
-		case "-exec", "-execdir", "-ok", "-okdir":
-			j := i + 1
-			for j < len(args) && args[j].Value != ";" && args[j].Value != "+" {
-				j++
-			}
-			if j >= len(args) {
-				return u, unreadablef("find %s without a terminator", args[i].Value)
-			}
-			if j == i+1 {
-				return u, unreadablef("find %s without a program", args[i].Value)
-			}
-			u.inner = append(u.inner, args[i+1:j])
-			i = j
+	for _, a := range actions {
+		if a.Name == "-delete" {
+			continue
 		}
+		u.inner = append(u.inner, a.Command)
+		u.feeds = append(u.feeds, &Feed{Wrapper: "find", Starts: starts, Guarded: a.Guarded})
+	}
+	return u, nil
+}
+
+// unwrapXargs returns the program xargs runs; -a names a file the operands are read from.
+func unwrapXargs(args []Word) (unwrapped, error) {
+	var u unwrapped
+	idx, seen, err := skipOptionsSeen("xargs", args, "0rtxpe", "ILnPdEsa", "il")
+	if err != nil {
+		return u, err
+	}
+	u.argFile = strings.Contains(seen, "a")
+	if idx < len(args) {
+		u.inner = [][]Word{args[idx:]}
 	}
 	return u, nil
 }

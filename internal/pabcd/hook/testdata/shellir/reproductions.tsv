@@ -790,7 +790,7 @@ added by CRW-895 (a shape the issue rules imply)	xargs rm ./build	CRW-895-c20	ro
 added by CRW-895 (a shape the issue rules imply)	xargs rm < /dev/null	CRW-895-c21	row	-
 added by CRW-895 (a shape the issue rules imply)	echo ../other | xargs rm	CRW-895-c22	row	-
 added by CRW-895 (a shape the issue rules imply)	find -L . -name '*.o' -delete	CRW-895-c23	row	-
-added by CRW-895 (a shape the issue rules imply)	find .. -name -delete	CRW-895-c24	row	-
+added by CRW-895 (a shape the issue rules imply)	find . -name -delete	CRW-895-c24	row	-
 recheck-20261009/g5 (10-09 re-check of CRW-895)	find .. -exec rmdir {} +	CRW-895-d1	row	-
 recheck-20261009/g5 (10-09 re-check of CRW-895)	find ../repo -exec shred {} +	CRW-895-d2	row	-
 recheck-20261009/g5 (10-09 re-check of CRW-895)	find ../repo -exec unlink {} \;	CRW-895-d3	row	-
@@ -842,3 +842,27 @@ independent verifier of the 10-09 re-check (CRW-895)	echo ../repo | parallel unl
 independent verifier of the 10-09 re-check (CRW-895)	echo ../repo | parallel shred	CRW-895-p4	row	-
 independent verifier of the 10-09 re-check (CRW-895)	echo ../repo | parallel rm -rf	CRW-895-p5	row	-
 added by CRW-895 (a shape the issue rules imply)	ls | parallel rm	CRW-895-p6	row	-
+added by CRW-895 (a shape the issue rules imply)	find ../repo -type d -name build -prune -o -type f -delete	CRW-895-c25	row	-
+added by CRW-895 (a shape the issue rules imply)	echo repo | xargs git -C .. status	CRW-895-c26	row	-
+added by CRW-895 (a shape the issue rules imply)	ls ../repo | xargs rmdir	CRW-895-c27	row	-
+added by CRW-895 (a shape the issue rules imply)	cat list.txt | xargs rm	CRW-895-c28	row	-
+added by CRW-895 (a shape the issue rules imply)	xargs git worktree remove <<< repo	CRW-895-c29	row	-
+added by CRW-895 (a shape the issue rules imply)	find ../repo \( -name '*.o' -o -name '*.a' \) -delete	CRW-895-c30	row	-
+added by CRW-895 (a shape the issue rules imply)	echo ../repo | tee x | xargs rmdir	CRW-895-e28	row	-
+added by CRW-895 (a shape the issue rules imply)	echo ../repo | sort | uniq | xargs rmdir	CRW-895-e29	row	-
+added by CRW-895 (a shape the issue rules imply)	echo ../repo | sed s/a/b/ | xargs rmdir	CRW-895-e30	row	-
+added by CRW-895 (a shape the issue rules imply)	echo ../repo | cut -d, -f1 | xargs rmdir	CRW-895-e31	row	-
+added by CRW-895 (a shape the issue rules imply)	xargs git -C .. worktree remove <<< repo	CRW-895-e32	row	-
+added by CRW-895 (a shape the issue rules imply)	cd ..; echo repo | xargs rmdir	CRW-895-e33	row	-
+added by CRW-895 (a shape the issue rules imply)	echo ../repo | env xargs rmdir	CRW-895-e34	row	-
+added by CRW-895 (a shape the issue rules imply)	echo ../repo | xargs env rmdir	CRW-895-e35	row	-
+added by CRW-895 (a shape the issue rules imply)	echo ../repo | (xargs rmdir)	CRW-895-e36	row	-
+added by CRW-895 (a shape the issue rules imply)	f() { echo ../repo; }; f | xargs rmdir	CRW-895-e37	row	-
+added by CRW-895 (a shape the issue rules imply)	find .. -maxdepth 1 -name repo | xargs git worktree remove	CRW-895-e38	row	-
+added by CRW-895 (a shape the issue rules imply)	find ../repo -exec sh -c 'rm "$1"' _ {} \;	CRW-895-d19	row	-
+added by CRW-895 (a shape the issue rules imply)	find .. . -name x -delete	CRW-895-d20	row	-
+added by CRW-895 (a shape the issue rules imply)	find -H .. -name x -delete	CRW-895-d21	row	-
+added by CRW-895 (a shape the issue rules imply)	find -D tree .. -name x -delete	CRW-895-d22	row	-
+added by CRW-895 (a shape the issue rules imply)	find ../repo \( -name x -o -true \) -delete	CRW-895-d23	row	-
+added by CRW-895 (a shape the issue rules imply)	find ../repo -name x -prune -o -delete	CRW-895-d24	row	-
+added by CRW-895 (a shape the issue rules imply)	find -delete	CRW-895-d25	row	-

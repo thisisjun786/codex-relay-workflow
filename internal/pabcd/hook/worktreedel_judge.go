@@ -86,6 +86,9 @@ func worktreeDelJudgeScript(e shellir.Exec, id WorktreeIdentity, depth int, writ
 
 // worktreeDelJudgeExec is the verdict for one program the reader shows.
 func worktreeDelJudgeExec(e shellir.Exec, id WorktreeIdentity) GuardVerdict {
+	if v := worktreeDelJudgeFeed(e, id); v.Deny {
+		return v
+	}
 	switch basename(e.Name) {
 	case "rm":
 		return worktreeDelJudgeRm(e, id)
@@ -102,34 +105,113 @@ func worktreeDelJudgeExec(e shellir.Exec, id WorktreeIdentity) GuardVerdict {
 	return GuardVerdict{}
 }
 
-// worktreeDelJudgeFind is the verdict for a find that deletes what it finds (-delete): the start points are removed.
+// worktreeDelJudgeFind is the verdict for a find that deletes what it finds (-delete): the start points are removed unless a
+// test keeps the action to the matches. A program that -exec, -execdir, -ok or -okdir runs is judged with the feed the reader
+// gives it (worktreeDelJudgeFeed).
 func worktreeDelJudgeFind(e shellir.Exec, id WorktreeIdentity) GuardVerdict {
-	args, unknown := worktreeDelArgs(e.Args)
-	deletes := false
-	for _, a := range args {
-		if a == "-delete" {
-			deletes = true
-		}
-	}
-	if !deletes {
-		return GuardVerdict{}
-	}
-	if unknown {
+	starts, actions, err := shellir.FindScan(e.Args)
+	if err != nil {
 		return worktreeDelUnreadable(id)
 	}
-	var starts []string
-	for _, a := range args {
-		if strings.HasPrefix(a, "-") || a == "(" || a == "!" || a == ")" {
-			break
+	for _, a := range actions {
+		if a.Name != "-delete" {
+			continue
 		}
-		starts = append(starts, a)
+		if v := worktreeDelJudgeFindStarts(starts, a.Guarded, e, id, "-delete"); v.Deny {
+			return v
+		}
 	}
+	return GuardVerdict{}
+}
+
+// worktreeDelJudgeFindStarts judges the start points of a find whose action deletes: a start that resolves to an ancestor of the
+// managed worktree (the slot root and above) is refused; a start that is the worktree itself is refused when no test stands
+// before the action. No start point means the current directory.
+func worktreeDelJudgeFindStarts(starts []shellir.Word, guarded bool, e shellir.Exec, id WorktreeIdentity, action string) GuardVerdict {
 	if len(starts) == 0 {
-		starts = []string{"."}
+		starts = []shellir.Word{{Known: true, Value: "."}}
 	}
 	for _, s := range starts {
-		if worktreeDelTargetProtected(s, e, id) {
-			return GuardVerdict{Deny: true, Reason: denyReason("find "+s+" -delete", id)}
+		ancestor, self := worktreeDelTargetKind(s.Value, e.Dir, id)
+		if ancestor || self && !guarded {
+			return GuardVerdict{Deny: true, Reason: denyReason("find "+s.Value+" "+action, id)}
+		}
+	}
+	return GuardVerdict{}
+}
+
+// worktreeDelTargetKind says whether a target, taken from dir, is an ancestor of the managed worktree (the slot root or a
+// directory above it) or the worktree itself (the checkout, the directory the command runs in, or a directory between). A
+// relative target from an unknown directory cannot be placed, so it counts as an ancestor.
+func worktreeDelTargetKind(target string, dir shellir.Dir, id WorktreeIdentity) (ancestor, self bool) {
+	if !dir.Known {
+		return true, false
+	}
+	if !isProtectedTarget(target, dir.Path, id, true) {
+		return false, false
+	}
+	resolved := strings.TrimSuffix(canonicalize(resolveFrom(dir.Path, target)), "/")
+	if resolved == "" || resolved == id.SlotRoot && id.SlotRoot != "" {
+		return true, false
+	}
+	for _, root := range []string{id.SlotRoot, id.CheckoutRoot} {
+		if root != "" && strings.HasPrefix(root, resolved+"/") {
+			return true, false
+		}
+	}
+	return false, true
+}
+
+// worktreeDelDeleter names the removal a program does when find or xargs gives it the operands (rm, rmdir, unlink, shred, git
+// worktree remove), with the directory its operands are resolved from; "" is a program that removes nothing by itself.
+func worktreeDelDeleter(e shellir.Exec) (string, shellir.Dir) {
+	switch name := basename(e.Name); name {
+	case "rm", "rmdir", "unlink", "shred":
+		return name, e.Dir
+	case "git":
+		rest, dir, _, _ := worktreeDelGitArgs(e)
+		if len(rest) >= 2 && rest[0] == "worktree" && rest[1] == "remove" {
+			return "git worktree remove", dir
+		}
+	}
+	return "", e.Dir
+}
+
+// worktreeDelJudgeFeed judges a removal whose operands arrive from find or xargs: find's start points decide it (an ancestor of
+// the worktree always, the worktree itself when no test guards the action), and the names xargs reads from standard input decide
+// it (a name that resolves to the worktree, its slot or an ancestor, spelled other than .; a source the reader cannot read is
+// refused). The program's own operands are judged by its own verdict.
+func worktreeDelJudgeFeed(e shellir.Exec, id WorktreeIdentity) GuardVerdict {
+	if e.Ctx.Feed == nil {
+		return GuardVerdict{}
+	}
+	deleter, dir := worktreeDelDeleter(e)
+	if deleter == "" {
+		return GuardVerdict{}
+	}
+	for f := e.Ctx.Feed; f != nil; f = f.Outer {
+		switch f.Wrapper {
+		case "find":
+			if v := worktreeDelJudgeFindStarts(f.Starts, f.Guarded, e, id, "-exec "+deleter); v.Deny {
+				return v
+			}
+		case "xargs":
+			if f.Unread != "" {
+				return GuardVerdict{Deny: true, Reason: denyReason("xargs "+deleter+" ("+f.Unread+")", id)}
+			}
+			for _, n := range f.Names {
+				if !n.Known {
+					return GuardVerdict{Deny: true, Reason: denyReason("xargs "+deleter+" (the names it reads are not known)", id)}
+				}
+				for _, name := range shellir.FeedNames(n.Value) {
+					if name == "." {
+						continue
+					}
+					if !dir.Known || isProtectedTarget(name, dir.Path, id, true) {
+						return GuardVerdict{Deny: true, Reason: denyReason("xargs "+deleter+" "+name, id)}
+					}
+				}
+			}
 		}
 	}
 	return GuardVerdict{}
@@ -208,24 +290,35 @@ func worktreeDelJudgeRmdir(e shellir.Exec, id WorktreeIdentity) GuardVerdict {
 	return GuardVerdict{}
 }
 
-// worktreeDelJudgeGit denies git worktree remove of a protected checkout. -C moves the directory git runs in.
-func worktreeDelJudgeGit(e shellir.Exec, id WorktreeIdentity) GuardVerdict {
+// worktreeDelGitArgs splits the operands of a git command into the words after -C and -c: rest, the directory git runs in
+// (-C moves it), whether an operand is unknown, and whether -C moved an unknown directory.
+func worktreeDelGitArgs(e shellir.Exec) (rest []string, dir shellir.Dir, unknown, dirLost bool) {
 	args, unknown := worktreeDelArgs(e.Args)
-	dir := e.Dir
-	var rest []string
+	dir = e.Dir
 	for i := 0; i < len(args); i++ {
 		switch {
 		case args[i] == "-C" && i+1 < len(args):
-			if !e.Dir.Known {
-				return worktreeDelUnreadable(id)
+			if !dir.Known {
+				dirLost = true
+				dir = shellir.Dir{}
+			} else {
+				dir = shellir.Dir{Path: resolveFrom(dir.Path, args[i+1]), Known: true}
 			}
-			dir = shellir.Dir{Path: resolveFrom(dir.Path, args[i+1]), Known: true}
 			i++
 		case args[i] == "-c" && i+1 < len(args):
 			i++
 		default:
 			rest = append(rest, args[i])
 		}
+	}
+	return rest, dir, unknown, dirLost
+}
+
+// worktreeDelJudgeGit denies git worktree remove of a protected checkout. -C moves the directory git runs in.
+func worktreeDelJudgeGit(e shellir.Exec, id WorktreeIdentity) GuardVerdict {
+	rest, dir, unknown, dirLost := worktreeDelGitArgs(e)
+	if dirLost {
+		return worktreeDelUnreadable(id)
 	}
 	if len(rest) < 2 || rest[0] != "worktree" || rest[1] != "remove" {
 		return GuardVerdict{}

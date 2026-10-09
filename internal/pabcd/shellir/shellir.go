@@ -107,6 +107,10 @@ type Context struct {
 	// Carrier names the construct that re-read this text, for example "bash -c".
 	Carrier string
 	Depth   int
+	// Feed says where the operands of a program that find or xargs runs come from; nil outside them.
+	Feed *Feed
+	// pipeSrc is what the left side of the pipe the command reads prints.
+	pipeSrc *pipeSource
 }
 
 // Inline is the program text an interpreter receives on its command line or
@@ -252,6 +256,8 @@ type walker struct {
 	created      map[string]bool
 	createdTrees map[string]bool // directories a copy fills: any file below one is created by the text
 	createdUpTo  int
+	// pipeOut is what the last pipeline the walk finished prints (see stageSource).
+	pipeOut *pipeSource
 }
 
 func (w *walker) stmts(list []*syntax.Stmt, st *state, ctx Context) error {
@@ -436,6 +442,7 @@ func (w *walker) binary(c *syntax.BinaryCmd, st *state, ctx Context) error {
 	case syntax.Pipe, syntax.PipeAll:
 		lctx := ctx
 		lctx.Pipeline = true
+		before := len(w.out)
 		if err := w.stmt(c.X, st.clone(), lctx); err != nil {
 			return err
 		}
@@ -443,7 +450,13 @@ func (w *walker) binary(c *syntax.BinaryCmd, st *state, ctx Context) error {
 		rctx.Pipeline = true
 		rctx.Stdin = StdinPipe
 		rctx.inTextPipe = true
-		return w.stmt(c.Y, st.clone(), rctx)
+		rctx.pipeSrc = w.stageSource(c.X, before, st)
+		beforeY := len(w.out)
+		if err := w.stmt(c.Y, st.clone(), rctx); err != nil {
+			return err
+		}
+		w.pipeOut = w.stageSource(c.Y, beforeY, st)
+		return nil
 	}
 	return unreadablef("unsupported binary operator %v", c.Op)
 }
@@ -593,6 +606,37 @@ func (w *walker) decl(c *syntax.DeclClause, st *state, ctx Context) error {
 		st.setVar(a.Name, a.Value, a.Append)
 	}
 	return nil
+}
+
+// stageSource is what a pipeline stage prints: the last stage of a pipeline the walk just finished prints what pipeOut says; any
+// other stage is read by pipeProducer from the programs it showed since before.
+func (w *walker) stageSource(x *syntax.Stmt, before int, st *state) *pipeSource {
+	if b, ok := x.Cmd.(*syntax.BinaryCmd); ok && (b.Op == syntax.Pipe || b.Op == syntax.PipeAll) && w.pipeOut != nil {
+		return w.pipeOut
+	}
+	return w.pipeProducer(x, before, st)
+}
+
+// pipeProducer is what the left side of a pipe prints. A compound command, a function and a chain the reader cannot trace are
+// not read; a simple command is classified by the programs it showed outside its substitutions.
+func (w *walker) pipeProducer(x *syntax.Stmt, before int, st *state) *pipeSource {
+	call, ok := x.Cmd.(*syntax.CallExpr)
+	if !ok {
+		return &pipeSource{unknown: "a compound command feeds the pipe"}
+	}
+	if len(call.Args) > 0 {
+		if _, isFunc := st.funcs[call.Args[0].Lit()]; isFunc {
+			return &pipeSource{unknown: "a function feeds the pipe"}
+		}
+	}
+	var execs []Exec
+	for _, e := range w.out[before:] {
+		if e.Ctx.CmdSubst || e.Ctx.ProcSubst || e.Kind == KindCommand && e.Name == "" {
+			continue
+		}
+		execs = append(execs, e)
+	}
+	return producerSource(execs)
 }
 
 func (w *walker) call(c *syntax.CallExpr, redirs []Redir, st *state, ctx Context) error {
@@ -964,21 +1008,34 @@ func (w *walker) wrapped(name string, args []Word, assigns []Assign, redirs []Re
 		// A shell string the wrapper runs is code the text shows: it is read by the same layer, as bash -c is.
 		return w.carried(u.shell, st.clone(), ctx, u.shellCarrier)
 	}
+	if name == "xargs" {
+		u.feeds = make([]*Feed, len(u.inner))
+		for i := range u.feeds {
+			u.feeds[i] = xargsFeed(ctx, redirs, u.argFile)
+		}
+	}
 	inherited := append(append([]Assign{}, assigns...), u.assigns...)
 	// An external program runs in a child process: it cannot change this shell's directory or variables. Its inner
 	// program gets a copy of the state, and a shell builtin named behind an external program is not modelled.
 	external := name != "command" && name != "builtin" && name != "exec"
-	for _, inner := range u.inner {
+	for i, inner := range u.inner {
+		ictx := ctx
+		if i < len(u.feeds) {
+			ictx.Feed = u.feeds[i]
+			if name == "find" {
+				ictx.Feed.Outer = ctx.Feed
+			}
+		}
 		if external {
 			if len(inner) > 0 && shellStateBuiltin(inner[0]) {
 				return unreadablef("a shell builtin named behind the external program %s", name)
 			}
-			if err := w.dispatch(inner, inherited, redirs, st.clone(), ctx); err != nil {
+			if err := w.dispatch(inner, inherited, redirs, st.clone(), ictx); err != nil {
 				return err
 			}
 			continue
 		}
-		if err := w.dispatch(inner, inherited, redirs, st, ctx); err != nil {
+		if err := w.dispatch(inner, inherited, redirs, st, ictx); err != nil {
 			return err
 		}
 	}
