@@ -31,14 +31,11 @@ func find(legs []Leg, args []string) (Leg, bool) {
 
 // hookCwd is the payload's cwd when JSON.parse reads the input as an object whose cwd is a non-empty
 // string, else the process's (cli.ts:418-426). It reads the input as the oracle does, not as asObject
-// does: no trimming (a BOM fails), one document, and a number no float64 holds does not cost it.
+// does: no trimming (a BOM fails), one document at any nesting depth, and a number no float64 holds
+// does not cost it.
 func hookCwd(raw string) string {
-	if v, ok := decode(raw); ok {
-		if o, _ := v.(map[string]any); o != nil {
-			if cwd, _ := o["cwd"].(string); cwd != "" {
-				return cwd
-			}
-		}
+	if cwd, _ := deepObject(raw)["cwd"].(string); cwd != "" {
+		return cwd
 	}
 	cwd, _ := os.Getwd()
 	return cwd

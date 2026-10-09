@@ -203,3 +203,41 @@ func TestGateBoundsNestingByTheInputItReads(t *testing.T) {
 		})
 	}
 }
+
+// CRW-1075 (verification fix round 2). The gates read their payload at any depth, so the entry that
+// runs them must too: cli.ts:415-426 reads agent_id/agent_type (parse.ts isSubagentHookPayload) and
+// payload.cwd with JSON.parse before a gate runs. A child's deep payload is exempt, and a deep
+// payload whose cwd turns PABCD off is silent, as the oracle's cli.js answers both (exit 0, no
+// output); an entry that read them with encoding/json's depth limit ran the gate instead.
+func TestGateEntryReadsTheSubagentStampAndCwdAtAnyDepth(t *testing.T) {
+	h := gateEnv(t)
+	t.Setenv("CRW_PABCD", "")
+	off := t.TempDir()
+	if err := os.WriteFile(filepath.Join(off, "crw.json"), []byte(`{"pabcd":{"enabled":false}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(t.TempDir()) // the process cwd has no crw.json: PABCD is on there
+	child := func(depth int) string {
+		raw := gatePayload(t, h.cwd, "gate-1", "create_goal", `{"objective":"x","token_budget":1,"ignored":`+gateNested(depth)+`}`)
+		return raw[:len(raw)-1] + `,"agent_id":"child-1","agent_type":"worker"}`
+	}
+	disabled := func(depth int) string {
+		return gatePayload(t, off, "gate-2", "request_user_input", `{"questions":[],"ignored":`+gateNested(depth)+`}`)
+	}
+	cases := []struct {
+		name, leg string
+		raw       func(int) string
+	}{
+		{"a child's create_goal with a token budget is exempt", "pre-tool-use-guarding-goal-budget", child},
+		{"request_user_input in a project with PABCD off is silent", "pre-tool-use-guarding-interview-in-goal", disabled},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			for _, depth := range []int{1, 9997, gateDeepJustOver, 400000} {
+				if got, code := gateRun(t, c.leg, c.raw(depth)); code != 0 || got != "" {
+					t.Errorf("depth %d: exit %d, %q; want exit 0 and no output", depth, code, got)
+				}
+			}
+		})
+	}
+}
