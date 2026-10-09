@@ -61,7 +61,7 @@ INNER
 )"
 DOC
 
-=== PR774-6f0fcf3f-d1 | U
+=== PR774-6f0fcf3f-d1 | U | deviation=attempt/allow/allow
 --why bash -s arg\ #text: # is not a comment inside the escaped word, bash -s runs the here-document body. The reader refuses this form as unproven (every gate), which gives the verdict the issue asks for.
 bash -s arg\ #text <<'EOF'
 echo x > {MEMORY}/a

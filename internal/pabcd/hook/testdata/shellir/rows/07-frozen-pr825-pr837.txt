@@ -21,17 +21,17 @@ printf 'rm -rf ../repo' | exec -a x &>/dev/null bash
 --why The memory-write body of the same shape.
 printf 'echo x > {MEMORY}/a' | exec -a x &>/dev/null bash
 
-=== PR825-3113ad91-d3 | U
+=== PR825-3113ad91-d3 | U | deviation=none/allow/deny
 --why Descriptor 4 is a copy of the here-document on descriptor 3: python3 runs the body.
 python3 /dev/fd/4 3<<'PY' 4<&3
 import shutil; shutil.rmtree('../repo')
 PY
 
-=== PR825-3113ad91-d3b | U
+=== PR825-3113ad91-d3b | U | deviation=none/allow/deny
 --why The here-string form of the same shape.
 python3 /dev/fd/4 3<<< 'import shutil; shutil.rmtree("../repo")' 4<&3
 
-=== PR825-3113ad91-d3c | U
+=== PR825-3113ad91-d3c | U | deviation=attempt/allow/allow
 --why The same shape with a memory write body.
 python3 /dev/fd/4 3<<'PY' 4<&3
 open('{MEMORY}/a','w')
@@ -57,7 +57,7 @@ printf 'rm -rf ../repo\n' | bash -c 'bash <>/dev/stdin'
 --why A shell in the condition of an if: bash -s then reads the piped program.
 printf 'rm -rf ../repo\n' | bash -c 'if bash -s then; then :; fi'
 
-=== PR825-350f75c1-d3 | U
+=== PR825-350f75c1-d3 | U | deviation=none/allow/deny
 --why python3 -- /dev/stdin runs the piped program; ignored.py is only an argument.
 printf 'import shutil; shutil.rmtree("../repo")\n' | python3 -- /dev/stdin ignored.py
 
@@ -97,17 +97,17 @@ printf 'rm -rf ../repo' | bash -c 'false && exec </dev/null; bash'
 --why python3 in a subshell reads the here-string of the compound command and removes the checkout. The reader refuses this form as unproven (every gate), which gives the verdict the issue asks for.
 (python3; :) <<< 'import shutil; shutil.rmtree("../repo")'
 
-=== PR825-50ea729e-d3 | U
+=== PR825-50ea729e-d3 | U | deviation=none/allow/deny
 --why python3 /dev/stdin with a here-string: the program is the descriptor.
 python3 /dev/stdin <<< 'import shutil; shutil.rmtree("../repo")'
 
-=== PR825-50ea729e-d3b | U
+=== PR825-50ea729e-d3b | U | deviation=none/allow/deny
 --why The same with a quoted here-document.
 python3 /dev/stdin <<'PY'
 import shutil; shutil.rmtree('../repo')
 PY
 
-=== PR825-50ea729e-d3c | U
+=== PR825-50ea729e-d3c | U | deviation=none/allow/deny
 --why The same on descriptor 3.
 python3 /dev/fd/3 3<<'PY'
 import shutil; shutil.rmtree('../repo')
@@ -121,7 +121,7 @@ php -f /dev/stdin <<< '<?php system("rm -rf ../repo");'
 --why env -S runs the named shell, whose script is the original pipe.
 printf 'rm -rf ../repo' | env -S 'bash -c bash'
 
-=== PR825-50ea729e-d4b | U
+=== PR825-50ea729e-d4b | U | deviation=none/allow/deny
 --why env -S 'bash /dev/stdin'.
 printf 'rm -rf ../repo' | env -S 'bash /dev/stdin'
 
@@ -164,7 +164,7 @@ PY
 --why The issue calls the refusal an over-refusal (exec </dev/null leaves nothing for bash to read). The reader refuses every pipe into a shell program; recorded as an accepted over-refusal.
 printf x | bash -c 'exec </dev/null; bash'
 
-=== PR825-8d7b38fe-d1 | U
+=== PR825-8d7b38fe-d1 | U | deviation=none/allow/deny
 --why python3 -- - after the pipe reads the program from standard input.
 printf 'import shutil; shutil.rmtree("../repo")' | python3 -- -
 
@@ -188,15 +188,15 @@ printf 'rm -rf ../repo' | bash -c 'eval "0</dev/null; bash"'
 --why Descriptor 3 holds the original pipe.
 printf 'import shutil; shutil.rmtree("../repo")' | bash -c 'python3 /dev/fd/3 3<&0 </dev/null'
 
-=== PR825-918798df-d1 | U
+=== PR825-918798df-d1 | U | deviation=none/allow/deny
 --why 2>&1 between exec -a and the program does not hide the shell.
 printf 'rm -rf ../repo' | exec -a x 2>&1 bash
 
-=== PR825-918798df-d1b | U
+=== PR825-918798df-d1b | U | deviation=none/allow/deny
 --why 2>&1 before the shell and a /dev/stdin script.
 printf 'rm -rf ../repo' | 2>&1 bash /dev/stdin
 
-=== PR825-918798df-d1c | U
+=== PR825-918798df-d1c | U | deviation=attempt/allow/allow
 --why The memory-write body.
 printf 'echo x > {MEMORY}/a' | exec -a x 2>&1 bash
 

@@ -104,6 +104,9 @@ type Context struct {
 	// whether the command is the right side of a pipe in the text being read (a carried text starts again at false).
 	stdinFile  string
 	inTextPipe bool
+	// pipeProgram is the text a literal printf or echo writes into the pipe this command reads; pipeKnown says it is set.
+	pipeProgram string
+	pipeKnown   bool
 	// Carrier names the construct that re-read this text, for example "bash -c".
 	Carrier string
 	Depth   int
@@ -443,6 +446,9 @@ func (w *walker) binary(c *syntax.BinaryCmd, st *state, ctx Context) error {
 		rctx.Pipeline = true
 		rctx.Stdin = StdinPipe
 		rctx.inTextPipe = true
+		if text, ok := pipeProducer(c.X); ok && simpleCallStmt(c.Y) {
+			rctx.pipeProgram, rctx.pipeKnown = text, true
+		}
 		return w.stmt(c.Y, st.clone(), rctx)
 	}
 	return unreadablef("unsupported binary operator %v", c.Op)
@@ -686,7 +692,10 @@ func stdinKind(redirs []Redir, def string) string {
 
 // stdinProgram returns the text a program reads from standard input when that
 // text is a here-document or here-string the reader can see.
-func stdinProgram(redirs []Redir, stdin, name string) (string, error) {
+func stdinProgram(redirs []Redir, stdin, name string, ctx Context) (string, error) {
+	if stdin == StdinPipe && ctx.pipeKnown && !hasStdinRedirect(redirs) {
+		return ctx.pipeProgram, nil
+	}
 	if stdin == StdinHeredoc || stdin == StdinHerestring {
 		for i := len(redirs) - 1; i >= 0; i-- {
 			r := redirs[i]
@@ -897,6 +906,7 @@ func (w *walker) carried(text string, st *state, ctx Context, carrier string) er
 	// A shell that runs the text starts a new text: a pipe of the text around it is not a pipe inside it, so an input
 	// redirection in it replaces the inherited input (zsh with MULTIOS joins a pipe and a file only within one pipeline).
 	ctx.inTextPipe = false
+	ctx.pipeKnown = false
 	file, err := parseText(text)
 	if err != nil {
 		return err
@@ -951,7 +961,7 @@ func (w *walker) wrapped(name string, args []Word, assigns []Assign, redirs []Re
 	if err := checkAssigns(u.assigns, st); err != nil {
 		return err
 	}
-	if name == "xargs" || name == "find" || name == "parallel" || name == "entr" {
+	if name == "xargs" || name == "find" || name == "entr" {
 		// The operands of these programs arrive at run time, so the inner program is marked.
 		ctx.Carrier = name
 	}

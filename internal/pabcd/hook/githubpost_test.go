@@ -167,8 +167,8 @@ func TestGitHubPostGuardJudgements(t *testing.T) {
 		// The generation-5 closed rule: a command that is not one simple command of literal words in the
 		// one allowed form is refused when it names a post; an allow-listed program's output is a shell
 		// program, a gh alias may expand to a post, and a body file must lie under a temporary root.
-		{"allow-listed program piped to a shell", "printf 'gh pr comment 1 -b plain' | bash", githubPostRuleUnread, githubPostWhereCommand},
-		{"allow-listed program piped to sh", "echo gh pr comment 1 -b plain | sh", githubPostRuleUnread, githubPostWhereCommand},
+		{"allow-listed program piped to a shell", "printf 'gh pr comment 1 -b plain' | bash", githubPostRuleInline, githubPostWhereCommand},
+		{"allow-listed program piped to sh", "echo gh pr comment 1 -b plain | sh", githubPostRuleInline, githubPostWhereCommand},
 		{"gh alias", "gh c 1 --body plain", githubPostRuleUnread, githubPostWhereCommand},
 		{"gh alias set", "gh alias set c 'pr comment'", githubPostRuleUnread, githubPostWhereCommand},
 		{"api mutation query", `gh api graphql -f query='mutation{addComment(input:{subjectId:"x",body:"plain"}){clientMutationId}}'`, githubPostRuleUnread, githubPostWhereCommand},

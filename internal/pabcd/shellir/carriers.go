@@ -102,10 +102,14 @@ func (w *walker) interpreterInline(name string, args []Word, redirs []Redir, ctx
 		return &Inline{Language: lang, Source: Word{Known: true, Value: text}}, nil, nil
 	}
 	if operand < len(args) && args[operand].Value != "-" {
-		// A script operand named through a file-descriptor alias runs the text of that descriptor (a here-string or a
-		// pipe the text shows): the reader cannot follow the alias, so the program is unreadable.
 		if args[operand].Known && fdAliasPath(args[operand].Value) {
-			return nil, nil, unreadablef("%s reads its program from %s, a file-descriptor alias", name, args[operand].Value)
+			// A script operand named through a descriptor alias runs the text that descriptor carries: a here-document,
+			// a here-string, or the pipe on standard input. An alias the text does not set is unreadable.
+			text, err := aliasProgram(args[operand].Value, redirs, ctx, name)
+			if err != nil {
+				return nil, nil, err
+			}
+			return &Inline{Language: lang, Source: Word{Known: true, Value: text}}, nil, nil
 		}
 		return nil, nil, nil
 	}
@@ -113,7 +117,7 @@ func (w *walker) interpreterInline(name string, args []Word, redirs []Redir, ctx
 		// The program is a file the text names (python3 < prog.py): run like a script file operand, not judged.
 		return nil, nil, nil
 	}
-	text, err := stdinProgram(redirs, ctx.Stdin, name)
+	text, err := stdinProgram(redirs, ctx.Stdin, name, ctx)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -361,6 +365,8 @@ func isInterpreter(name string) bool { return interpreterLanguage(name) != "" }
 // operand the program comes from standard input.
 func (w *walker) shellCall(name string, args []Word, redirs []Redir, st *state, ctx Context) error {
 	cmdMode := false
+	// readStdin: -s or a lone - makes the program standard input, so the operands after it are positional parameters.
+	readStdin := false
 	i := 0
 loop:
 	for i < len(args) {
@@ -370,6 +376,7 @@ loop:
 		}
 		switch {
 		case v == "--" || v == "-":
+			readStdin = readStdin || v == "-"
 			i++
 			break loop
 		case strings.HasPrefix(v, "--"):
@@ -385,6 +392,9 @@ loop:
 					cmdMode = true
 					continue
 				}
+				if c == 's' {
+					readStdin = true
+				}
 				if c == 'o' || c == 'O' {
 					i++
 					break
@@ -398,7 +408,7 @@ loop:
 		}
 	}
 	var operand *Word
-	if i < len(args) {
+	if i < len(args) && !readStdin {
 		operand = &args[i]
 	}
 	if cmdMode {
@@ -411,6 +421,14 @@ loop:
 		}
 		return w.carried(text, st.clone(), ctx, name+" -c")
 	}
+	if operand != nil && operand.Known && fdAliasPath(operand.Value) {
+		// A shell that runs a descriptor alias runs the text that descriptor carries, as a shell string does.
+		text, err := aliasProgram(operand.Value, redirs, ctx, name)
+		if err != nil {
+			return err
+		}
+		return w.carried(text, st.clone(), ctx, name+" fd")
+	}
 	if operand != nil {
 		return w.scriptFile(name, *operand, st, ctx)
 	}
@@ -422,7 +440,7 @@ loop:
 		}
 		return w.scriptFile(name, Word{Known: true, Value: file}, st, ctx)
 	}
-	body, err := stdinProgram(redirs, ctx.Stdin, name)
+	body, err := stdinProgram(redirs, ctx.Stdin, name, ctx)
 	if err != nil {
 		return err
 	}
