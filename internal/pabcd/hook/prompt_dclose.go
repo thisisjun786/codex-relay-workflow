@@ -72,6 +72,10 @@ type promptDcloseSeams struct {
 	afterGoalplanCommit      func()
 	afterStateWrite          func()
 	afterPabcdLedgerAppend   func()
+	// afterOrchestratePublish runs right after a chat transition published its state and before its
+	// ledger row is recorded; true stops the write there, as a writer killed at that point would stop
+	// (CRW-1097). nil goes on.
+	afterOrchestratePublish func() bool
 	// writeMarker and writePlan are the two plan-stage writes the close makes before its rows.
 	// nil means the real function, so a production run holds neither and a test can make one
 	// report a post-rename failure without a package-level variable (CRW-869, finding 2).
@@ -283,6 +287,8 @@ func promptOrchestrateBoundDclose(p PromptSubmitPayload, current state.State, tu
 
 	outcome := promptDcloseOutcome{}
 	err := lock(p.Cwd, p.SessionID, func() error {
+		// CRW-1097: a ledger row an earlier writer of this session left pending is recorded first.
+		DrainSessionLedger(p.Cwd, p.SessionID)
 		held, unreadable := state.ReadStateStrict(p.Cwd, p.SessionID)
 		if unreadable {
 			// The leading snapshot already matched this close's marker, so a matching retry may
@@ -490,8 +496,31 @@ func promptDcloseClose(p PromptSubmitPayload, held state.State, turn, closePhase
 		// (CRW-930, c6). With nothing published and no warning the bare refusal is unchanged.
 		return promptDcloseOutcome{refusal: promptDclosePartialRefusal(refusal, published, warnings)}
 	}
+	// CRW-1097: an all-done close leaves no recovery marker, so nothing would let a retry write a close
+	// row lost after IDLE is published (IDLE has no D edge). Its row is prepared in the session's ledger
+	// outbox before the publication instead, and recorded after it below; a row that cannot be appended
+	// stays pending for the next writer of the session. A row the ledger already holds (a close an earlier
+	// build recorded) is not prepared again, and a ledger that cannot be read leaves the row to the
+	// guarded append below, as before.
+	var allDoneEvent *state.LedgerEvent
+	if plan.allDone && result.Ledger != nil {
+		if present, readErr := promptDcloseHasPabcdCloseRow(p.Cwd, p.SessionID, held.CheckEpoch, ""); readErr == nil && !present {
+			row := promptDcloseCloseRow(*result.Ledger, held.CheckEpoch, "")
+			ev, err := state.NewLedgerEvent(p.Cwd, held, next, &row, nil)
+			if err == nil {
+				err = state.PrepareLedgerEvent(p.Cwd, ev)
+			}
+			if err != nil {
+				return promptDcloseOutcome{refusal: promptDclosePartialRefusal(promptDcloseStateRefusal(), published, warnings)}
+			}
+			allDoneEvent = &ev
+		}
+	}
 	landed, stateWarning := promptDcloseWriteLanded(state.WriteState(p.Cwd, next))
 	if !landed {
+		if allDoneEvent != nil {
+			_ = state.AbortLedgerEvent(p.Cwd, *allDoneEvent)
+		}
 		// An earlier write of this close may already have published its artifact (the marker or the
 		// plan), so the refusal must name it rather than deny that anything was written (CRW-869,
 		// the review finding on the mixed-failure path; CRW-930, c6, extended it to a clean
@@ -540,20 +569,21 @@ func promptDcloseClose(p PromptSubmitPayload, held state.State, turn, closePhase
 				return struct{}{}, nil
 			}
 		}
-		if result.Ledger != nil {
+		if allDoneEvent != nil {
+			// The prepared row is recorded by draining the session's outbox; no followup runs here,
+			// because this goalplan lock is held.
+			report := DrainSessionLedgerRows(p.Cwd, p.SessionID, allDoneEvent.ID)
+			if LedgerEventStillPending(report, allDoneEvent.ID) {
+				return struct{}{}, errors.New(ledgerPendingReason(report) + "; the row is kept pending and the next hook or orchestrate command of this session records it")
+			}
+			promptDcloseSeam(seams, func(s *promptDcloseSeams) func() { return s.afterPabcdLedgerAppend })
+		} else if result.Ledger != nil {
 			present, readErr := promptDcloseHasPabcdCloseRow(p.Cwd, p.SessionID, closeCheckEpoch, closedWorkPhaseID)
 			if readErr != nil {
 				return struct{}{}, errors.New("the PABCD ledger could not be read: " + readErr.Error())
 			}
 			if !present {
-				row := *result.Ledger
-				row.Close = &state.CloseKey{CheckEpoch: closeCheckEpoch}
-				if closedWorkPhaseID != "" {
-					row.Close.ClosedWorkPhaseID = &closedWorkPhaseID
-				}
-				// The hook's close rows spread the transition row, evidence included, before the close key
-				// (hook.ts:1147 and :1335 through orchestrate-apply.ts:111-118).
-				row.EvidenceAfterReason = true
+				row := promptDcloseCloseRow(*result.Ledger, closeCheckEpoch, closedWorkPhaseID)
 				if rowErr := state.AppendLedger(p.Cwd, row); rowErr != nil {
 					return struct{}{}, rowErr
 				}
@@ -608,6 +638,18 @@ func promptDcloseClose(p PromptSubmitPayload, held state.State, turn, closePhase
 		return promptDcloseOutcome{pending: promptDcloseFinalizePending("the goalplan ledger row could not be written: " + rowsErr.Error()), warning: strings.Join(warnings, "\n")}
 	}
 	return promptDcloseOutcome{warning: strings.Join(warnings, "\n")}
+}
+
+// promptDcloseCloseRow is the PABCD close row of a bound close: the transition row with the close key,
+// whose closed work phase is JSON null for an empty id. The hook's close rows spread the transition row,
+// evidence included, before the close key (hook.ts:1147 and :1335 through orchestrate-apply.ts:111-118).
+func promptDcloseCloseRow(row state.LedgerEntry, closeCheckEpoch *string, closedWorkPhaseID string) state.LedgerEntry {
+	row.Close = &state.CloseKey{CheckEpoch: closeCheckEpoch}
+	if closedWorkPhaseID != "" {
+		row.Close.ClosedWorkPhaseID = &closedWorkPhaseID
+	}
+	row.EvidenceAfterReason = true
+	return row
 }
 
 // promptDclosePlanWork is the body of the first goalplan lock (:956-1266). It answers the text to

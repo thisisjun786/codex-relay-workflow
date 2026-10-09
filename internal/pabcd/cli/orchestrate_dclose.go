@@ -159,6 +159,9 @@ type orchestrateDcloseLockAnswer struct {
 	Code    int
 	AllDone bool
 	Output  string
+	// RowOwed is the all-done close's verdict of its row guard, read inside the first lock: the PABCD
+	// ledger does not hold this close's C -> IDLE row yet, so the close prepares it with its state write.
+	RowOwed bool
 }
 
 // orchestrateDcloseSurrogateOptions is the reading both guards take of a ledger line: the oracle's
@@ -314,12 +317,41 @@ func orchestrateDcloseEvidence(att *attest.Attestation) *string {
 // object with the close key and then the evidence (orchestrate-cli.ts:899 and :1040), which is
 // LedgerEntry's default key order, so the row's bytes match the recorded fixture's.
 func orchestrateDcloseAppendPabcdRow(cwd string, cur state.State, checkEpoch, closedWorkPhaseID *string, att *attest.Attestation) error {
+	return state.AppendLedger(cwd, orchestrateDclosePabcdRow(cur, checkEpoch, closedWorkPhaseID, att))
+}
+
+// orchestrateDclosePabcdRow is that row.
+func orchestrateDclosePabcdRow(cur state.State, checkEpoch, closedWorkPhaseID *string, att *attest.Attestation) state.LedgerEntry {
 	from := state.PhaseC
-	return state.AppendLedger(cwd, state.LedgerEntry{
+	return state.LedgerEntry{
 		TS: orchestrateTransitionTimestamp(), SessionID: cur.SessionID, From: &from, To: state.PhaseIdle,
 		Reason: "done", Evidence: orchestrateDcloseEvidence(att),
 		Close: &state.CloseKey{CheckEpoch: checkEpoch, ClosedWorkPhaseID: closedWorkPhaseID},
-	})
+	}
+}
+
+// orchestrateDclosePublishRecorded publishes next with its row prepared in the session's ledger outbox
+// first (CRW-1097), and records the row after the publication. A failure before the publication drops the
+// event and is returned; a row that cannot be recorded after it stays pending and comes back as rowErr,
+// which the caller reports as a warning on the success answer: the close happened.
+func orchestrateDclosePublishRecorded(seam orchestrateDcloseSeam, cwd, sessionID string, cur, next state.State, row *state.LedgerEntry) (warning string, rowErr error, err error) {
+	ev, err := orchestrateCommitEvent(cwd, cur, next, row)
+	if err != nil {
+		return "", nil, err
+	}
+	if ev != nil {
+		if err := state.PrepareLedgerEvent(cwd, *ev); err != nil {
+			return "", nil, err
+		}
+	}
+	warning, err = orchestrateDcloseWriteState(seam, cwd, next)
+	if err != nil {
+		if ev != nil {
+			_ = state.AbortLedgerEvent(cwd, *ev)
+		}
+		return "", nil, err
+	}
+	return warning, orchestrateCommitRecord(cwd, sessionID, ev), nil
 }
 
 // orchestrateDclose is the D close, called from orchestrateTransitionApply while the session lock is
@@ -380,19 +412,21 @@ func orchestrateDcloseContext(ctx context.Context, cwd, sessionID, closePhaseID 
 		if err := orchestrateDcloseCancelCheck(ctx, seam.interrupt, wrote); err != nil {
 			return CliResult{}, err
 		}
-		warning, err := orchestrateDcloseWriteState(seam, cwd, next)
+		// CRW-1097: the row is prepared in the session's ledger outbox before IDLE is published and
+		// recorded after it. The oracle publishes IDLE and then appends, so a failed append lost the row for
+		// good (IDLE has no D edge for a retry); a row that cannot be appended now stays pending, the next
+		// writer of the session records it, and the answer says so.
+		from := cur.Phase
+		warning, rowErr, err := orchestrateDclosePublishRecorded(seam, cwd, sessionID, cur, next, &state.LedgerEntry{
+			TS: orchestrateTransitionTimestamp(), SessionID: cur.SessionID, From: &from, To: state.PhaseIdle,
+			Reason: "done", Evidence: orchestrateDcloseEvidence(att),
+		})
 		if err != nil {
 			return CliResult{}, err
 		}
 		wrote = true
 		warnings = append(warnings, warning)
-		from := cur.Phase
-		if err := state.AppendLedger(cwd, state.LedgerEntry{
-			TS: orchestrateTransitionTimestamp(), SessionID: cur.SessionID, From: &from, To: state.PhaseIdle,
-			Reason: "done", Evidence: orchestrateDcloseEvidence(att),
-		}); err != nil {
-			return CliResult{}, err
-		}
+		warnings = append(warnings, orchestrateCommitWarn("orchestrate D", orchestrateCommitOutcome{}, rowErr, from, state.PhaseIdle)...)
 		output := "orchestrate D: current=" + string(cur.Phase) + " -> IDLE (" + string(cur.Phase) +
 			" \u2192 IDLE, cycle closed, session " + sessionID + ")"
 		return CliResult{Code: 0, Output: orchestrateDcloseAnswer(output, warnings)}, nil
@@ -505,31 +539,23 @@ func orchestrateDcloseContext(ctx context.Context, cwd, sessionID, closePhaseID 
 				everyDone = everyDone && plan.WorkPhases[i].Status == goalplan.WorkPhaseDone
 			}
 			if everyDone {
-				// §40 Z2: finish the PABCD close row inside THIS lock. all-done mints no marker, so
-				// if the row were left to a second lock and that lock failed, the retry would hit
-				// `IDLE -> D` with nothing to recover from and the row would be lost for good.
+				// §40 Z2: the oracle finishes the PABCD close row inside THIS lock, before IDLE is
+				// published, because all-done mints no marker and a row left to a second lock that failed
+				// would be lost for good. The row then stood beside a session still at C when the state
+				// write failed. CRW-1097 keeps the guard read here and moves the row to the session's
+				// ledger outbox: it is prepared with the IDLE write and recorded after it, and a row that
+				// cannot be appended stays pending for the next writer of the session, so it is lost
+				// neither way and never describes a close that did not happen.
+				owed := false
 				if cur.Phase == state.PhaseC {
 					have, err := orchestrateDcloseHasPabcdCloseRow(cwd, sessionID, cur.CheckEpoch, nil)
 					if err != nil {
 						return orchestrateDcloseLockAnswer{}, err
 					}
 					orchestrateDcloseRunVoid(seam.afterLedgerRead)
-					if !have {
-						// CRW-922: the ledger read above is the read that precedes this close's first
-						// durable effect in the all-done branch, so the check runs here, after it.
-						if err := orchestrateDcloseCancelCheck(ctx, seam.interrupt, wrote); err != nil {
-							return orchestrateDcloseLockAnswer{}, err
-						}
-						if err := orchestrateDcloseAppendPabcdRow(cwd, cur, cur.CheckEpoch, nil, att); err != nil {
-							return orchestrateDcloseLockAnswer{}, err
-						}
-						wrote = true
-						if err := orchestrateDcloseRunHook(seam.afterPabcdLedgerAppend); err != nil {
-							return orchestrateDcloseLockAnswer{}, err
-						}
-					}
+					owed = !have
 				}
-				return orchestrateDcloseLockAnswer{Code: 0, AllDone: true}, nil
+				return orchestrateDcloseLockAnswer{Code: 0, AllDone: true, RowOwed: owed}, nil
 			}
 			// §35-5: input and target membership checks follow all-done and recovery.
 			if closePhaseID == "" {
@@ -676,6 +702,11 @@ func orchestrateDcloseContext(ctx context.Context, cwd, sessionID, closePhaseID 
 		return CliResult{Code: locked.Value.Code, Output: locked.Value.Output}, nil
 	}
 	allDoneClose = locked.Value.AllDone
+	var allDoneRow *state.LedgerEntry
+	if allDoneClose && locked.Value.RowOwed {
+		row := orchestrateDclosePabcdRow(cur, cur.CheckEpoch, nil, att)
+		allDoneRow = &row
+	}
 
 	recovery := state.ReadState(cwd, sessionID).DcloseRecovery
 	orchestrateDcloseRunVoid(seam.afterRecoveryStateRead)
@@ -704,12 +735,18 @@ func orchestrateDcloseContext(ctx context.Context, cwd, sessionID, closePhaseID 
 		if err := orchestrateDcloseCancelCheck(ctx, seam.interrupt, wrote); err != nil {
 			return CliResult{}, err
 		}
-		warning, err := orchestrateDcloseWriteState(seam, cwd, next)
+		warning, rowErr, err := orchestrateDclosePublishRecorded(seam, cwd, sessionID, cur, next, allDoneRow)
 		if err != nil {
 			return CliResult{}, err
 		}
 		wrote = true
 		warnings = append(warnings, warning)
+		warnings = append(warnings, orchestrateCommitWarn("orchestrate D", orchestrateCommitOutcome{}, rowErr, state.PhaseC, state.PhaseIdle)...)
+		if allDoneRow != nil && rowErr == nil {
+			if err := orchestrateDcloseRunHook(seam.afterPabcdLedgerAppend); err != nil {
+				return CliResult{}, err
+			}
+		}
 		if err := orchestrateDcloseRunHook(seam.afterStateWrite); err != nil {
 			return CliResult{}, err
 		}

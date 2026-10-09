@@ -282,6 +282,8 @@ func promptSubmitWriteStateWarning(lock func(cwd, sessionID string, fn func() er
 func promptSubmitWriteStateReason(lock func(cwd, sessionID string, fn func() error) error, cwd, sessionID string, change func(*state.State) bool) (promptSubmitWriteOutcome, string, error) {
 	outcome := promptSubmitSkipped
 	err := lock(cwd, sessionID, func() error {
+		// CRW-1097: a ledger row an earlier writer of this session left pending is recorded first.
+		DrainSessionLedger(cwd, sessionID)
 		fresh, unreadable := state.ReadStateStrict(cwd, sessionID)
 		if unreadable || !promptSubmitRewritable(cwd, sessionID, fresh) || !change(&fresh) {
 			return nil
