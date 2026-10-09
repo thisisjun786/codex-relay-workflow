@@ -20,6 +20,9 @@ import (
 // runs the same schema script over it and finds nothing to create. A test of the absent-store
 // initializer itself does not use this and calls store.Open on an absent path.
 var (
+	// templateRoot is the process's isolation root (testsupport.Main), which the template is built under and
+	// which Main removes when the test process ends.
+	templateRoot string
 	templateOnce sync.Once
 	templateDB   string
 	templateErr  error
@@ -29,8 +32,11 @@ var (
 // temporary directory.
 func freshStorePath(t *testing.T) string {
 	t.Helper()
+	if templateRoot == "" {
+		t.Fatal("the store template has no isolation root: TestMain must run testsupport.Main with setTemplateRoot")
+	}
 	templateOnce.Do(func() {
-		dir, err := os.MkdirTemp("", "mergeturn-store-template-")
+		dir, err := os.MkdirTemp(templateRoot, "mergeturn-store-template-")
 		if err != nil {
 			templateErr = err
 			return
@@ -84,4 +90,10 @@ func openFresh(t *testing.T) *store.Store {
 		}
 	})
 	return s
+}
+
+// setTemplateRoot is the testsupport.Setup that gives the template its home, inside the root Main removes.
+func setTemplateRoot(root string) (func() error, error) {
+	templateRoot = root
+	return nil, nil
 }
