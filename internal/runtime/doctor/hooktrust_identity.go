@@ -94,8 +94,8 @@ func HookTrustIdentityHash(event string, matcher *string, handler map[string]any
 // hookTrustIdentityEvent is EVENT_LABELS[event] (hook-trust.ts:18-29, :109) as an own-property
 // lookup: the ten labels the table holds. The oracle's plain-object lookup also finds the
 // members JavaScript inherits from Object.prototype (constructor, toString, __proto__, ...) and
-// hashes them as events; the port reads them as the names they are not (hookTrustEventInherited)
-// and refuses them like any other unknown event (CRW-1152, port: fixed).
+// hashes them as events; the port has no entry for them and refuses them like any other unknown
+// event (CRW-1152, port: fixed). The manifest-target hooks walk judges an event by this table too.
 func hookTrustIdentityEvent(event string) (string, bool) {
 	switch event {
 	case "PreToolUse":
@@ -120,19 +120,6 @@ func hookTrustIdentityEvent(event string) (string, bool) {
 		return "permission_request", true
 	}
 	return "", false
-}
-
-// hookTrustEventInherited reports whether name is a member every JavaScript object inherits from
-// Object.prototype: the eleven function members and __proto__. None of them is an event a hook
-// document can declare.
-func hookTrustEventInherited(name string) bool {
-	switch name {
-	case "constructor", "toString", "toLocaleString", "valueOf", "hasOwnProperty",
-		"isPrototypeOf", "propertyIsEnumerable", "__defineGetter__", "__defineSetter__",
-		"__lookupGetter__", "__lookupSetter__", "__proto__":
-		return true
-	}
-	return false
 }
 
 // hookTrustIdentityMatcherDropped is MATCHER_DROPPED_EVENTS.has(event) (hook-trust.ts:36).

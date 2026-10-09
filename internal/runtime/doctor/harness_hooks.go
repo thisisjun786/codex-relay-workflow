@@ -127,7 +127,8 @@ func HarnessHookTrustCheck(pluginRoot string, options HarnessOptions, env host.L
 	if name == "" {
 		return warned("manifest has no plugin name; cannot resolve install key")
 	}
-	candidates, err := ReadInstalledPluginKeys(codexHome, name)
+	// The harness reads config.toml within its bound (CRW-1152); the exported readers stay whole.
+	candidates, err := readInstalledPluginKeys(codexHome, name, harnessReadBounded)
 	if err != nil {
 		return failed(err.Error())
 	}
@@ -147,7 +148,7 @@ func HarnessHookTrustCheck(pluginRoot string, options HarnessOptions, env host.L
 		}
 		return warned(fmt.Sprintf("enabled install key is ambiguous (%d): %s", len(candidates), listed))
 	}
-	results, err := DiagnoseHookTrust(codexHome, pluginRoot, key)
+	results, err := diagnoseHookTrust(codexHome, pluginRoot, key, harnessReadBounded)
 	if err != nil {
 		return failed(err.Error())
 	}

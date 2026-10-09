@@ -617,9 +617,11 @@ func validateMCPTargets(issues *[]TargetIssue, pluginRoot string, manifest any) 
 }
 func targetHookGroups(issues *[]TargetIssue, root string, v any) error {
 	for _, event := range targetEntries(v) {
-		if hookTrustEventInherited(event.Key) {
-			// An event is a member the hook document owns; the names Object.prototype lends every
-			// object (constructor, toString, __proto__, ...) are not events (CRW-1152, port: fixed).
+		if _, supported := hookTrustIdentityEvent(event.Key); !supported {
+			// An event is one of the ten names the trust identity knows (hookTrustIdentityEvent, the
+			// same table ListHookTrustEntries and the hash use). Any other name, a misspelling or a
+			// name Object.prototype lends every object (constructor, toString, __proto__, ...), is a
+			// hooks finding, not a PASS (CRW-1152, port: fixed).
 			*issues = append(*issues, TargetIssue{TargetHook, "hook event is not supported: " + event.Key})
 			continue
 		}

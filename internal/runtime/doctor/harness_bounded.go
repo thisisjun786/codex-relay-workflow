@@ -68,19 +68,27 @@ func harnessReadHandle(file *os.File, path string) ([]byte, error) {
 var errHarnessTooDeep = errors.New("nested deeper than the 10000 container diagnostic limit")
 
 // harnessParseBounded reads a JSON document within the depth bound: pyjson.Loads without Deep
-// refuses a container past pyjson.MaxDepth, and that refusal is errHarnessTooDeep here. A document
-// that is simply malformed keeps the reader's own error. options must not set Deep.
+// refuses a container past pyjson.MaxDepth, and that refusal is errHarnessTooDeep here. The reader
+// answers one syntax error for both a depth breach and a malformed document, so a refusal is
+// errHarnessTooDeep only when the depth is all that stands against the document: it opens a
+// container past the limit and the same reader with Deep set, which reads past it, accepts it. A
+// document with any syntax error (before the deep containers or after them) keeps the reader's own
+// error. The Deep reading runs only for such a refusal and is iterative, within the read limit.
 func harnessParseBounded(doc string, options pyjson.LoadOptions) (any, error) {
 	options.Deep = false
 	value, err := pyjson.Loads(doc, options)
 	if err != nil && harnessNestsPastLimit(doc) {
-		return nil, errHarnessTooDeep
+		deep := options
+		deep.Deep = true
+		if _, deepErr := pyjson.Loads(doc, deep); deepErr == nil {
+			return nil, errHarnessTooDeep
+		}
 	}
 	return value, err
 }
 
 // harnessNestsPastLimit reports whether doc opens a container past pyjson.MaxDepth, string
-// contents aside. It only classifies a refusal; the reader decides the document.
+// contents aside. It only prefilters a refusal; the readers decide the document.
 func harnessNestsPastLimit(doc string) bool {
 	depth, inString, escaped := 0, false, false
 	for i := 0; i < len(doc); i++ {
