@@ -263,3 +263,25 @@ func TestRunContextCancellationReturnsPromptly(t *testing.T) {
 		t.Fatalf("%d %q", code, errOut.String())
 	}
 }
+
+// A caller that cancels while `show` waits for the skill body ends the command with 130, not with a fetch error.
+func TestShowCancelledWhileFetchingTheBodyIsInterrupted(t *testing.T) {
+	cliHome(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	fetch := func(url string) (string, error) {
+		if url == JAWRegistryURL {
+			return cliRegistry, nil
+		}
+		cancel()
+		select {}
+	}
+	var code int
+	var out, errOut bytes.Buffer
+	within(t, 6*time.Second, func() {
+		code = RunContext(ctx, []string{"show", "telegram-send"}, fetch, &out, &errOut)
+	})
+	if code != 130 || out.Len() != 0 || errOut.String() != "skill-search: interrupted\n" {
+		t.Fatalf("%d %q %q", code, out.String(), errOut.String())
+	}
+}

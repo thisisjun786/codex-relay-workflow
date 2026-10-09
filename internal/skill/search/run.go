@@ -281,6 +281,10 @@ func runCLI(ctx context.Context, argv []string, fetch fetchFunc, stdout, stderr 
 			body, err := fetch(bctx, row.RawURL, MaxShowBodyBytes)
 			stop()
 			if err != nil {
+				if ctx.Err() != nil { // the caller cancelled while the body was read: the same status as search
+					fmt.Fprintln(stderr, "skill-search: interrupted")
+					return exitInterrupted, nil
+				}
 				return 1, err
 			}
 			if f.JSON {
