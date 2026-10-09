@@ -125,7 +125,10 @@ a
 EOF
 
 === CRW-941-10 | U
---why sed -f script.sed reads a script from a file the reader does not read: an unreadable write attempt.
+--why sed -f script.sed reads a script from a file the reader does not read, whether or not it exists: an unreadable write attempt.
+--file script.sed
+p
+--cmd
 sed -f script.sed x.txt
 
 === CRW-941-11 | B

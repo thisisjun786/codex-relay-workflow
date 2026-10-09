@@ -346,30 +346,51 @@ sed 'w {MEMORY}/a' x.txt -n
 
 === CRW-941-F01 | U
 --why --file FILE (separate): the script file is not read.
+--file s.sed
+p
+--cmd
 sed --file s.sed x.txt
 
 === CRW-941-F02 | U
 --why --file=FILE.
+--file s.sed
+p
+--cmd
 sed --file=s.sed x.txt
 
 === CRW-941-F03 | U
 --why --fi=FILE, a prefix of --file.
+--file s.sed
+p
+--cmd
 sed --fi=s.sed x.txt
 
 === CRW-941-F04 | U
 --why --fil FILE, a prefix of --file.
+--file s.sed
+p
+--cmd
 sed --fil s.sed x.txt
 
 === CRW-941-F05 | U
 --why -nf FILE in a bundle.
+--file s.sed
+p
+--cmd
 sed -nf s.sed x.txt
 
 === CRW-941-F06 | U
 --why -fFILE attached.
+--file s.sed
+p
+--cmd
 sed -fs.sed x.txt
 
 === CRW-941-F07 | U
 --why A script file next to an -e script.
+--file s.sed
+p
+--cmd
 sed -e p -f s.sed x.txt
 
 === CRW-941-F08 | U
@@ -397,6 +418,9 @@ sed -f s.sed x.txt
 
 === CRW-941-F12 | U
 --why --f is ambiguous (--file, --follow-symlinks): the reader refuses what it cannot prove.
+--file s.sed
+p
+--cmd
 sed --f s.sed x.txt
 
 === CRW-941-F13 | U
@@ -556,3 +580,132 @@ sed -e 's/a/b/' -e 's/c/d/' x.txt
 === CRW-941-C26 | B
 --why The script after -- is the first operand and writes nothing.
 sed -n -- p x.txt
+
+# After the pre-merge evaluation of 101be077 (d1 to d4): an unevaluated sort option value, POSIXLY_CORRECT option scanning,
+# the backup suffix of sed -i, and sed script files that exist.
+
+=== CRW-941-N01 | W
+--why The value of -k is a word that splits into -k 1 -o FILE: the output option is hidden in an unknown word.
+K='1 -o {MEMORY}/a'; sort -k $K x.txt
+
+=== CRW-941-N02 | W
+--why The same for the long option --key.
+K='1 -o {MEMORY}/a'; sort --key $K x.txt
+
+=== CRW-941-N03 | W
+--why -S takes the unknown word as its value.
+K='1G -o {MEMORY}/a'; sort -S $K x.txt
+
+=== CRW-941-N04 | W
+--why Another unknown value after a short bundle (-rt).
+K=', -o {MEMORY}/a'; sort -rt $K x.txt
+
+=== CRW-941-N05 | W
+--why The value of --buffer-size= is attached to the option word: the whole word is unknown.
+K='1G -o {MEMORY}/a'; sort --buffer-size=$K x.txt
+
+=== CRW-941-N06 | B
+--why A known value of -k is skipped, and -o names a file of the work tree.
+K=1; sort -k $K -o out.txt x.txt
+
+=== CRW-941-N07 | B
+--why -k with a literal value and no output.
+sort -k 2,2 -n x.txt
+
+=== CRW-941-P01 | W
+--why POSIXLY_CORRECT stops option scanning at the script: the first operand runs, and --e p is a file.
+POSIXLY_CORRECT=1 sed 'w {MEMORY}/a' --e p x.txt
+
+=== CRW-941-P02 | W
+--why The same with --expression and a separate script word.
+POSIXLY_CORRECT=1 sed 'w {MEMORY}/a' --expression p x.txt
+
+=== CRW-941-P03 | W
+--why The same with -e.
+POSIXLY_CORRECT=1 sed 'w {MEMORY}/a' -e p x.txt
+
+=== CRW-941-P04 | W
+--why The same with -e in a bundle (-ne).
+POSIXLY_CORRECT=1 sed 'w {MEMORY}/a' -ne p x.txt
+
+=== CRW-941-P05 | W
+--why The environment is exported before sed runs.
+export POSIXLY_CORRECT=1; sed 'w {MEMORY}/a' --e p x.txt
+
+=== CRW-941-P06 | W
+--why Without the variable in the text the first operand may still be the script (the session environment): both readings are judged.
+sed 'w {MEMORY}/a' --e p x.txt
+
+=== CRW-941-P07 | W
+--why The permuted reading (-e p is the script) writes nothing; the first operand is judged as well.
+sed 'w {MEMORY}/a' -e p x.txt
+
+=== CRW-941-P08 | Q
+--why The first operand runs a shell command through the e command: POSIXLY_CORRECT hides it behind --expression.
+POSIXLY_CORRECT=1 sed 'e gh pr comment 1 -b x' --expression p x.txt
+
+=== CRW-941-P09 | B
+--why No script option follows an operand: one reading.
+sed -n p x.txt -n
+
+=== CRW-941-P10 | B
+--why The script option comes first; the operand after it is a file in both readings.
+POSIXLY_CORRECT=1 sed -e p x.txt
+
+=== CRW-941-P11 | B
+--why Two scripts that write nothing, the second after the operand.
+sed p -e p x.txt
+
+=== CRW-941-D01 | W
+--why The backup suffix of an abbreviation of --in-place moves the original into the memory root.
+sed --in='{MEMORY}/*' -e p out.txt
+
+=== CRW-941-D02 | W
+--why -i with a suffix naming the memory root.
+sed -i'{MEMORY}/*' p out.txt
+
+=== CRW-941-D03 | W
+--why -ni with a suffix, the original in a subdirectory of the work tree.
+sed -ni'{MEMORY}/*.bak' p sub/out.txt
+
+=== CRW-941-D04 | W
+--why --in-place= with the full option name.
+sed --in-place='{MEMORY}/*' p out.txt
+
+=== CRW-941-D05 | W
+--why A relative suffix that reaches the memory root by ..; the working directory is below it.
+sed -i'{MEMORY}/../memories/*' p out.txt
+
+=== CRW-941-D06 | B
+--why A suffix without * is appended to the name (out.txt/...): the backup stays under the input, never in the memory root.
+sed -i'{MEMORY}/x' p out.txt
+
+=== CRW-941-D07 | B
+--why A backup suffix without * or a slash stays next to the input.
+sed -i.bak p out.txt
+
+=== CRW-941-D08 | B
+--why A backup directory of the work tree.
+sed -i'bak/*' p out.txt
+
+=== CRW-941-D09 | B
+--why A * suffix that keeps the name.
+sed -i'*.orig' p out.txt
+
+=== CRW-941-D10 | B
+--why A later -i without a suffix replaces the earlier suffix: no backup.
+sed -i'{MEMORY}/*' -i p out.txt
+
+=== CRW-941-F15 | U
+--why The script file exists and holds a command that runs a shell command (e).
+--file s.sed
+e rm -rf {CHECKOUT}
+--cmd
+sed -f s.sed x.txt
+
+=== CRW-941-F16 | U
+--why The script file exists and holds a w command to the memory root.
+--file s.sed
+w {MEMORY}/a
+--cmd
+sed --file=s.sed x.txt

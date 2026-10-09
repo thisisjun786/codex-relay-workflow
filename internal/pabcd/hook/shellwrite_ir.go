@@ -103,6 +103,11 @@ func shellIRSortDests(args []shellir.Word) []string {
 				if i+1 < len(args) {
 					i++
 					value, taken = shellIRPlain(args[i]), true
+					if value == shellIRUnknownDest && opt.Key != "o" {
+						// The value of another option is a word the reader cannot evaluate; it may split into more words
+						// (-k $K with K='1 -o FILE'), so the output file is not proven.
+						out = append(out, value)
+					}
 				} else if opt.Key == "o" {
 					out = append(out, shellIRUnknownDest)
 				}
@@ -125,6 +130,9 @@ func shellIRSortDests(args []shellir.Word) []string {
 					}
 					i++
 					value = shellIRPlain(args[i])
+					if value == shellIRUnknownDest && v[j] != 'o' {
+						out = append(out, value) // may split into more words, -o among them
+					}
 				}
 				if v[j] == 'o' {
 					out = append(out, value)
@@ -357,9 +365,37 @@ func shellIRSedDests(args []shellir.Word) []string {
 		return nil
 	}
 	var out []string
-	for _, w := range pa.Operands {
+	for i, w := range pa.Operands {
 		if v := shellIRPlain(w); v != "" && v != "-" {
 			out = append(out, v)
+			// the first operand is the script when no -e or -f gives one: no file, no backup
+			if i > 0 || len(pa.Scripts) > 0 {
+				out = append(out, shellIRSedBackups(v, pa.InPlaceSuffix)...)
+			}
+		}
+	}
+	return out
+}
+
+// shellIRSedBackups returns where sed -i may move the original of file when the backup suffix names a place: GNU sed replaces
+// each * of the suffix by the name of the input file (its base name in older releases, the name as given in sed 4.9) and
+// takes the suffix as a path, relative to the input's directory or to the working directory (releases differ), so every
+// reading is reported; a suffix without * is appended to the name. A suffix that holds neither * nor / puts the backup next to
+// the input and names no other place.
+func shellIRSedBackups(file, suffix string) []string {
+	if !strings.ContainsAny(suffix, "*/") {
+		return nil
+	}
+	if !strings.Contains(suffix, "*") {
+		return []string{file + suffix}
+	}
+	base := filepath.Base(file)
+	out := []string{strings.ReplaceAll(suffix, "*", file)}
+	if base != file {
+		sub := strings.ReplaceAll(suffix, "*", base)
+		out = append(out, sub)
+		if !filepath.IsAbs(sub) {
+			out = append(out, filepath.Join(filepath.Dir(file), sub))
 		}
 	}
 	return out

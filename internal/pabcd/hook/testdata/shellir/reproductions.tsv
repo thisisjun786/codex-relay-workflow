@@ -891,3 +891,33 @@ re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/reche
 re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed -n p x.txt | sort --o=out.txt	CRW-941-C24	row	-
 re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed -e 's/a/b/' -e 's/c/d/' x.txt	CRW-941-C25	row	-
 re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed -n -- p x.txt	CRW-941-C26	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	K='1 -o {MEMORY}/a'; sort -k $K x.txt	CRW-941-N01	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	K='1 -o {MEMORY}/a'; sort --key $K x.txt	CRW-941-N02	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	K='1G -o {MEMORY}/a'; sort -S $K x.txt	CRW-941-N03	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	K=', -o {MEMORY}/a'; sort -rt $K x.txt	CRW-941-N04	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	K='1G -o {MEMORY}/a'; sort --buffer-size=$K x.txt	CRW-941-N05	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	K=1; sort -k $K -o out.txt x.txt	CRW-941-N06	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	sort -k 2,2 -n x.txt	CRW-941-N07	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	POSIXLY_CORRECT=1 sed 'w {MEMORY}/a' --e p x.txt	CRW-941-P01	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	POSIXLY_CORRECT=1 sed 'w {MEMORY}/a' --expression p x.txt	CRW-941-P02	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	POSIXLY_CORRECT=1 sed 'w {MEMORY}/a' -e p x.txt	CRW-941-P03	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	POSIXLY_CORRECT=1 sed 'w {MEMORY}/a' -ne p x.txt	CRW-941-P04	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	export POSIXLY_CORRECT=1; sed 'w {MEMORY}/a' --e p x.txt	CRW-941-P05	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	sed 'w {MEMORY}/a' --e p x.txt	CRW-941-P06	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	sed 'w {MEMORY}/a' -e p x.txt	CRW-941-P07	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	POSIXLY_CORRECT=1 sed 'e gh pr comment 1 -b x' --expression p x.txt	CRW-941-P08	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	sed -n p x.txt -n	CRW-941-P09	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	POSIXLY_CORRECT=1 sed -e p x.txt	CRW-941-P10	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	sed p -e p x.txt	CRW-941-P11	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	sed --in='{MEMORY}/*' -e p out.txt	CRW-941-D01	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	sed -i'{MEMORY}/*' p out.txt	CRW-941-D02	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	sed -ni'{MEMORY}/*.bak' p sub/out.txt	CRW-941-D03	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	sed --in-place='{MEMORY}/*' p out.txt	CRW-941-D04	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	sed -i'{MEMORY}/../memories/*' p out.txt	CRW-941-D05	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	sed -i'{MEMORY}/x' p out.txt	CRW-941-D06	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	sed -i.bak p out.txt	CRW-941-D07	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	sed -i'bak/*' p out.txt	CRW-941-D08	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	sed -i'*.orig' p out.txt	CRW-941-D09	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	sed -i'{MEMORY}/*' -i p out.txt	CRW-941-D10	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	sed -f s.sed x.txt	CRW-941-F15	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	sed --file=s.sed x.txt	CRW-941-F16	row	-

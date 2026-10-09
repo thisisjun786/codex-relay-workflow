@@ -1,6 +1,8 @@
 package hook
 
 import (
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -46,6 +48,20 @@ func TestMemoryGateReadsSortOutputAndSedScriptWrites(t *testing.T) {
 			gateCommandCase{"sed -n " + p + " p " + p + " 'W " + root + "/a' <<'EOF'\nabc\nEOF", true})
 	}
 	cases = append(cases,
+		// the value of another option is a word that splits (d1), the first operand is the script under POSIXLY_CORRECT (d2),
+		// the backup suffix of -i names a place (d3)
+		gateCommandCase{"K='1 -o " + root + "/a'; sort -k $K x.txt", true},
+		gateCommandCase{"K='1 -o " + root + "/a'; sort --key $K x.txt", true},
+		gateCommandCase{"POSIXLY_CORRECT=1 sed 'w " + root + "/a' --e p x.txt", true},
+		gateCommandCase{"POSIXLY_CORRECT=1 sed 'w " + root + "/a' --expression p x.txt", true},
+		gateCommandCase{"sed 'w " + root + "/a' -e p x.txt", true},
+		gateCommandCase{"sed --in='" + root + "/*' -e p out.txt", true},
+		gateCommandCase{"sed -i'" + root + "/*' p out.txt", true},
+		gateCommandCase{"sed -ni'" + root + "/*.bak' p out.txt", true},
+		gateCommandCase{"sed -i'bak/*' p out.txt", false},
+		gateCommandCase{"sed -i.bak p out.txt", false},
+		gateCommandCase{"K=1; sort -k $K -o out.txt x.txt", false},
+		gateCommandCase{"sed p -e p x.txt", false},
 		gateCommandCase{"sort -o " + root + "/a x.txt", true},
 		gateCommandCase{"sort -o" + root + "/a x.txt", true},
 		gateCommandCase{"sort -ro " + root + "/a x.txt", true},
@@ -130,6 +146,14 @@ func TestShellIRSortDests(t *testing.T) {
 		{"sort -u -n -k2,2 x", nil},
 		{"sort x --output", []string{shellIRUnknownDest}},
 		{"sort -o", []string{shellIRUnknownDest}},
+		// a value the reader cannot evaluate may split into more words, -o among them (K='1 -o M/a')
+		{"sort -k $K x", []string{shellIRUnknownDest}},
+		{"sort --key $K x", []string{shellIRUnknownDest}},
+		{"sort -S $K x", []string{shellIRUnknownDest}},
+		{"sort -rt $K x", []string{shellIRUnknownDest}},
+		{"sort --buffer-size=$K x", []string{shellIRUnknownDest}},
+		{"sort -o M/a -k $K x", []string{"M/a", shellIRUnknownDest}},
+		{"sort -- $K", nil}, // after -- every word is a file
 	} {
 		got, ok := shellIRWriteDests(c.command, cwd, none)
 		if !ok || !slices.Equal(got, c.want) {
@@ -171,6 +195,21 @@ func TestShellIRSedDestsReadsOptionsAsGetopt(t *testing.T) {
 		{"sed -i -e 's/a/b/' f1", []string{"f1"}},
 		{"sed -i '' 's/a/b/' f1", []string{"s/a/b/", "f1"}},
 		{"sed -n p f1", nil},
+		// the backup suffix of -i names a place: * is the input's name, the suffix is a path
+		{"sed -i'M/*' p out.txt", []string{"p", "out.txt", "M/out.txt"}},
+		{"sed --in='M/*' -e p out.txt", []string{"out.txt", "M/out.txt"}},
+		{"sed -ni'M/*.bak' p d/out.txt", []string{"p", "d/out.txt", "M/d/out.txt.bak", "M/out.txt.bak", "d/M/out.txt.bak"}},
+		{"sed -i'bak/*' p d/out.txt", []string{"p", "d/out.txt", "bak/d/out.txt", "bak/out.txt", "d/bak/out.txt"}},
+		{"sed -i'M/x' -e p out.txt", []string{"out.txt", "out.txtM/x"}},
+		{"sed -i.bak -e p out.txt", []string{"out.txt"}},
+		{"sed -i'M/*' -i -e p out.txt", []string{"out.txt"}},
+		// POSIXLY_CORRECT stops getopt at the first operand, which is then the script that runs: both readings are judged
+		{"sed 'w M/a' --e p x", []string{"M/a"}},
+		{"sed 'w M/a' -e p x", []string{"M/a"}},
+		{"sed 'w M/a' --expression p x", []string{"M/a"}},
+		{"sed p -e 'w M/b' x", []string{"M/b"}},
+		{"sed -e p x -e 'w M/b'", []string{"M/b"}},
+		{"sed -n p x -n", nil},
 	} {
 		got, ok := shellIRWriteDests(c.command, cwd, none)
 		if !ok || !slices.Equal(got, c.want) {
@@ -187,6 +226,11 @@ func TestCRW941ShapesThroughTheThreeEntryPoints(t *testing.T) {
 	githubPostTempHome(t)
 	rig := newDelRig(t)
 	cwd, root, env := gateScene(t)
+	for _, dir := range []string{cwd, rig.checkout} {
+		if err := os.WriteFile(filepath.Join(dir, "real.sed"), []byte("p\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
 	for _, c := range []struct {
 		command string
 		want    [3]string // memory, github, worktree
@@ -200,6 +244,16 @@ func TestCRW941ShapesThroughTheThreeEntryPoints(t *testing.T) {
 		{"sed -f s.sed x.txt", [3]string{"attempt", "deny", "deny"}},
 		{"sed --fi=s.sed x.txt", [3]string{"attempt", "deny", "deny"}},
 		{"sed --f s.sed x.txt", [3]string{"attempt", "deny", "deny"}},
+		// the script file exists (see writeScriptFiles): it is still not read, so all three gates refuse
+		{"sed -f real.sed x.txt", [3]string{"attempt", "deny", "deny"}},
+		{"sed --file real.sed x.txt", [3]string{"attempt", "deny", "deny"}},
+		{"sed --file=real.sed x.txt", [3]string{"attempt", "deny", "deny"}},
+		{"sed --fi=real.sed x.txt", [3]string{"attempt", "deny", "deny"}},
+		{"sed -nf real.sed x.txt", [3]string{"attempt", "deny", "deny"}},
+		{"K='1 -o M/a'; sort -k $K x.txt", [3]string{"attempt", "allow", "allow"}},
+		{"POSIXLY_CORRECT=1 sed 'w M/a' --e p x.txt", [3]string{"attempt", "allow", "allow"}},
+		{"POSIXLY_CORRECT=1 sed 'e gh pr comment 1 -b x' --expression p x.txt", [3]string{"attempt", "deny", "allow"}},
+		{"sed --in='M/*' -e p x.txt", [3]string{"attempt", "allow", "allow"}},
 		{"sed --s p x.txt", [3]string{"attempt", "deny", "deny"}},
 		{"sort --o=out.txt x.txt", [3]string{"none", "allow", "allow"}},
 		{"sort -o out.txt x.txt", [3]string{"none", "allow", "allow"}},

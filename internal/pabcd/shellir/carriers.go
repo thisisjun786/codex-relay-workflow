@@ -306,39 +306,37 @@ func awkInline(name string, args []Word) (*Inline, *Word, error) {
 
 // sedInline reads sed's command line (ParseSedArgs reads its options the way getopt_long does, abbreviations included) and
 // returns the script text it runs: the -e and --expression values joined by newlines, or the first operand when no -e or -f
-// gives one. The file of -f or --file is returned for the caller to read as a script record.
+// gives one. When a script option follows the first operand, that operand is judged as a script too (POSIXLY_CORRECT stops
+// getopt there and runs it). A script file (-f, --file, in any spelling) is not read: its text is not in the command, so the
+// command is unreadable, whether or not the file exists.
 func sedInline(name string, args []Word, redirs []Redir, ctx Context) (*Inline, *Word, error) {
 	pa, err := ParseSedArgs(name, args)
 	if err != nil {
 		return nil, nil, err
 	}
-	var file *Word
-	if n := len(pa.Files); n > 0 {
-		f := pa.Files[n-1]
-		file = &f
+	if len(pa.Files) > 0 {
+		return nil, nil, unreadablef("%s reads its script from a file, which is not read", name)
 	}
-	var inline *Inline
-	if len(pa.Scripts) > 0 {
-		parts := make([]string, 0, len(pa.Scripts))
-		for _, c := range pa.Scripts {
-			text, err := knownValue(c, name+" script")
-			if err != nil {
-				return nil, nil, err
-			}
-			parts = append(parts, text)
-		}
-		inline = &Inline{Language: "sed", Source: Word{Known: true, Value: strings.Join(parts, "\n")}}
+	var sources []Word
+	sources = append(sources, pa.Scripts...)
+	if pa.PosixScript != nil {
+		sources = append(sources, *pa.PosixScript)
 	}
-	if inline == nil && file == nil {
+	if len(sources) == 0 {
 		if len(pa.Operands) == 0 {
 			return nil, nil, unreadablef("%s without a script", name)
 		}
-		if !pa.Operands[0].Known {
-			return nil, nil, unreadablef("%s script is not known (%s)", name, pa.Operands[0].Reason)
-		}
-		inline = &Inline{Language: "sed", Source: pa.Operands[0]}
+		sources = append(sources, pa.Operands[0])
 	}
-	return inline, file, nil
+	parts := make([]string, 0, len(sources))
+	for _, c := range sources {
+		text, err := knownValue(c, name+" script")
+		if err != nil {
+			return nil, nil, err
+		}
+		parts = append(parts, text)
+	}
+	return &Inline{Language: "sed", Source: Word{Known: true, Value: strings.Join(parts, "\n")}}, nil, nil
 }
 
 func isPythonName(name string) bool {

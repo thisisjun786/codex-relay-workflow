@@ -168,3 +168,45 @@ func TestParseSedArgsRefusesWhatItCannotProve(t *testing.T) {
 		t.Errorf("an unknown file operand: %+v %v", pa, err)
 	}
 }
+
+// TestParseSedArgsPosixScriptAndSuffix: a script option after the first operand makes that operand a second candidate script
+// (POSIXLY_CORRECT stops getopt there), and the backup suffix of -i is the last one given.
+func TestParseSedArgsPosixScriptAndSuffix(t *testing.T) {
+	for _, c := range []struct {
+		args   []string
+		posix  string // the value of PosixScript, "" for nil
+		suffix string
+	}{
+		{[]string{"w f", "--e", "p", "x"}, "w f", ""},
+		{[]string{"w f", "--expression", "p", "x"}, "w f", ""},
+		{[]string{"w f", "-e", "p", "x"}, "w f", ""},
+		{[]string{"w f", "-ne", "p", "x"}, "w f", ""},
+		{[]string{"w f", "--expression=p", "x"}, "w f", ""},
+		{[]string{"-n", "w f", "x", "-e", "p"}, "w f", ""},
+		{[]string{"-e", "p", "x", "-e", "p"}, "", ""}, // the first -e is an option in both readings
+		{[]string{"-e", "p", "x"}, "", ""},
+		{[]string{"p", "x", "-n"}, "", ""},
+		{[]string{"p", "x", "-i"}, "", ""},
+		{[]string{"--", "p", "-e"}, "", ""},
+		{[]string{"-i.bak", "p", "x"}, "", ".bak"},
+		{[]string{"-ni.bak", "p", "x"}, "", ".bak"},
+		{[]string{"--in='/m/*'", "-e", "p", "x"}, "", "'/m/*'"},
+		{[]string{"--in=/m/*", "-e", "p", "x"}, "", "/m/*"},
+		{[]string{"--in-place=/m/*", "p", "x"}, "", "/m/*"},
+		{[]string{"-i/m/*", "-i", "p", "x"}, "", ""}, // a later -i without a suffix resets it
+		{[]string{"-i", "-i.b", "p", "x"}, "", ".b"},
+	} {
+		pa, err := ParseSedArgs("sed", optWords(c.args...))
+		if err != nil {
+			t.Errorf("%q: %v", c.args, err)
+			continue
+		}
+		posix := ""
+		if pa.PosixScript != nil {
+			posix = pa.PosixScript.Value
+		}
+		if posix != c.posix || pa.InPlaceSuffix != c.suffix {
+			t.Errorf("%q: PosixScript %q suffix %q, want %q %q", c.args, posix, pa.InPlaceSuffix, c.posix, c.suffix)
+		}
+	}
+}

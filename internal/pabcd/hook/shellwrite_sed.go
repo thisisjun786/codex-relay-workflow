@@ -22,8 +22,14 @@ func shellIRSedScriptDests(args []shellir.Word) []string {
 	if err != nil {
 		return unknown
 	}
-	scripts := pa.Scripts
-	if len(scripts) == 0 && len(pa.Files) == 0 && len(pa.Operands) > 0 {
+	if len(pa.Files) > 0 {
+		return unknown // the text of a script file is not in the command
+	}
+	scripts := append([]shellir.Word(nil), pa.Scripts...)
+	if pa.PosixScript != nil {
+		scripts = append(scripts, *pa.PosixScript) // the script POSIXLY_CORRECT would run; see shellir.SedArgs
+	}
+	if len(scripts) == 0 && len(pa.Operands) > 0 {
 		scripts = pa.Operands[:1]
 	}
 	var out []string

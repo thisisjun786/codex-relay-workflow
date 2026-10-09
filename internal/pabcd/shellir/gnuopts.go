@@ -133,6 +133,14 @@ type SedArgs struct {
 	Files []Word
 	// InPlace is set by -i, -I and --in-place (in any spelling).
 	InPlace bool
+	// InPlaceSuffix is the backup suffix of the last -i, -I or --in-place (empty: no backup). GNU sed replaces each * of it by
+	// the name of the input file and may move the backup into another directory.
+	InPlaceSuffix string
+	// PosixScript is the first operand when a script option follows it. getopt_long permutes the arguments, so that operand is
+	// a file and the option gives the script; with POSIXLY_CORRECT set (which the text, the wrapper or the session
+	// environment can do, and the reader cannot prove it does not) getopt stops at the first operand: it is the script that
+	// runs and the later options are files. Both readings are judged, so a script the other reading would run is not hidden.
+	PosixScript *Word
 	// Operands are the words that are no option or option value. When neither -e nor -f gives a script, the first operand is the
 	// script.
 	Operands []Word
@@ -145,11 +153,15 @@ func ParseSedArgs(name string, args []Word) (SedArgs, error) {
 	var pa SedArgs
 	longs := SedLongOptions()
 	optionsEnd := false
+	scriptBeforeOperand := false
 	for i := 0; i < len(args); {
 		a := args[i]
 		if !a.Known {
 			if len(pa.Operands) == 0 && !optionsEnd {
 				return SedArgs{}, unreadablef("%s option is not known (%s)", name, a.Reason)
+			}
+			if len(pa.Operands) == 0 {
+				scriptBeforeOperand = len(pa.Scripts)+len(pa.Files) > 0
 			}
 			pa.Operands = append(pa.Operands, a)
 			i++
@@ -158,6 +170,9 @@ func ParseSedArgs(name string, args []Word) (SedArgs, error) {
 		v := a.Value
 		switch {
 		case optionsEnd || v == "-" || !strings.HasPrefix(v, "-"):
+			if len(pa.Operands) == 0 {
+				scriptBeforeOperand = len(pa.Scripts)+len(pa.Files) > 0
+			}
 			pa.Operands = append(pa.Operands, a)
 			i++
 			continue
@@ -193,6 +208,12 @@ func ParseSedArgs(name string, args []Word) (SedArgs, error) {
 					i++
 				}
 			}
+			if opt.Key == "i" {
+				pa.InPlaceSuffix = attached
+			}
+			if pa.lateScript(opt.Key, scriptBeforeOperand) {
+				pa.PosixScript = &pa.Operands[0]
+			}
 			if err := pa.apply(name, opt.Key, val, v); err != nil {
 				return SedArgs{}, err
 			}
@@ -204,7 +225,8 @@ func ParseSedArgs(name string, args []Word) (SedArgs, error) {
 			case 'n', 'E', 'r', 's', 'u', 'z', 'b':
 			case 'i', 'I':
 				pa.InPlace = true
-				k = len(v) // the rest of the word is the suffix
+				pa.InPlaceSuffix = v[k+1:] // the rest of the word is the suffix
+				k = len(v)
 			case 'e', 'f', 'l':
 				var val Word
 				if k < len(v)-1 {
@@ -216,6 +238,9 @@ func ParseSedArgs(name string, args []Word) (SedArgs, error) {
 					val = args[i]
 					i++
 				}
+				if pa.lateScript(string(c), scriptBeforeOperand) {
+					pa.PosixScript = &pa.Operands[0]
+				}
 				if err := pa.apply(name, string(c), val, v); err != nil {
 					return SedArgs{}, err
 				}
@@ -226,6 +251,12 @@ func ParseSedArgs(name string, args []Word) (SedArgs, error) {
 		}
 	}
 	return pa, nil
+}
+
+// lateScript is whether the option with this Key is a script option that follows the first operand when no script option
+// came before it: the case where getopt_long with and without POSIXLY_CORRECT disagree about which word is the script.
+func (pa *SedArgs) lateScript(key string, scriptBeforeOperand bool) bool {
+	return (key == "e" || key == "f") && len(pa.Operands) > 0 && !scriptBeforeOperand && pa.PosixScript == nil
 }
 
 // apply records one option by its Key.
