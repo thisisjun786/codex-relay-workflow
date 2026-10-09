@@ -3,11 +3,11 @@ package configguard
 import (
 	"fmt"
 	"path/filepath"
-	"regexp"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tomledit"
 )
 
 // CXC v0.2.40 config-guard/src/multi-agent-v2.ts:15-40, :64-119.
@@ -67,47 +67,22 @@ func multiAgentV2ConfigPath(deps MultiAgentV2Deps) string {
 	return filepath.Join(deps.CodexHome, "config.toml")
 }
 
-// The read-only oracle grammar (toml-edit.ts:52-69) is deliberately string-unaware.
-// TomlTableBody's string-aware writer fix must not change this reader's verdicts.
-func multiAgentV2TableBody(content, header string) (string, bool) {
-	lines := text.SplitLines(content)
-	re := regexp.MustCompile("^" + tomlSpace + "*\\[" + regexp.QuoteMeta(header) + "\\]" + tomlSpace + "*(?:#" + tomlNotEOL + "*)?$")
-	for i, line := range lines {
-		if !re.MatchString(line) {
-			continue
-		}
-		end := i + 1
-		for end < len(lines) && !strings.HasPrefix(tomlTrimStart(lines[end]), "[") {
-			end++
-		}
-		return strings.Join(lines[i+1:end], "\n"), true
-	}
-	return "", false
-}
-
-func multiAgentV2Bool(body, key string) (bool, bool) {
-	re := regexp.MustCompile("(?:^|" + activationLineEnd + ")" + tomlSpace + "*" + key + tomlSpace + "*=" + tomlSpace + "*(true|false)" + tomlSpace + "*(?:#" + tomlNotEOL + "*)?(?:$|" + activationLineEnd + ")")
-	match := re.FindStringSubmatch(body)
-	if match == nil {
-		return false, false
-	}
-	return match[1] == "true", true
-}
-
+// multiAgentV2EnabledIn reads the flag from the decoded document, the same semantic reader the writers use (CRW-1141):
+// [features] multi_agent_v2 = <bool>, or the table [features.multi_agent_v2] (or an inline table) with enabled = <bool>. The
+// oracle's line grammar read a header or an enabled line inside a string as configuration and took not_enabled = true for
+// enabled; a document that does not decode reads as v1, as a missing or unreadable one does.
 func multiAgentV2EnabledIn(content string) bool {
-	if body, ok := multiAgentV2TableBody(content, "features.multi_agent_v2"); ok {
-		enabled, _ := multiAgentV2Bool(body, "enabled")
-		return enabled
+	doc, err := tomledit.Decode(content)
+	if err != nil {
+		return false
 	}
-	if body, ok := multiAgentV2TableBody(content, "features"); ok {
-		if enabled, found := multiAgentV2Bool(body, "multi_agent_v2"); found {
-			return enabled
-		}
-		inline := regexp.MustCompile("(?:^|" + activationLineEnd + ")" + tomlSpace + "*multi_agent_v2" + tomlSpace + "*=" + tomlSpace + "*\\{([^}]*)\\}").FindStringSubmatch(body)
-		if inline != nil {
-			match := regexp.MustCompile("enabled" + tomlSpace + "*=" + tomlSpace + "*(true|false)").FindStringSubmatch(inline[1])
-			return match != nil && match[1] == "true"
-		}
+	features, _ := doc["features"].(map[string]any)
+	switch v := features["multi_agent_v2"].(type) {
+	case bool:
+		return v
+	case map[string]any:
+		enabled, _ := v["enabled"].(bool)
+		return enabled
 	}
 	return false
 }
@@ -201,6 +176,10 @@ func SetMultiAgentV2State(deps MultiAgentV2Deps, version MultiAgentVersion) (*Mu
 	if err != nil {
 		return nil, err
 	}
+	// A config.toml that does not decode is refused before the runner rewrites it (CRW-1141).
+	if err := validateConfig(path, string(pre)); err != nil {
+		return nil, err
+	}
 	want := version == MultiAgentV2
 	if multiAgentV2EnabledIn(string(pre)) == want {
 		return &MultiAgentV2Change{version, want, false, MultiAgentV2StatusContext()}, nil
@@ -219,6 +198,10 @@ func SetMultiAgentV2State(deps MultiAgentV2Deps, version MultiAgentVersion) (*Mu
 	}
 	if exists {
 		if repaired, changed := multiAgentV2Preserve(string(pre), string(post), want); changed {
+			// The repair is a candidate like any other edit: one that does not decode is not published (CRW-1141).
+			if err := validateConfig(path, repaired); err != nil {
+				return nil, fmt.Errorf("the multi_agent_v2 tuning repair would leave config.toml invalid, so it was not written: %w", err)
+			}
 			if err := activationPublish(path, []byte(repaired)); err != nil {
 				return nil, err
 			}

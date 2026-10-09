@@ -168,12 +168,13 @@ func TestConfigSetNoopOwnershipAndUnsupportedValues(t *testing.T) {
 	if r.Changed || r.AppliedValue != "true" {
 		t.Fatalf("%+v", r)
 	}
-	for _, raw := range []string{"[true]", `"oops`} {
+	// CRW-1141: an unterminated string is a config.toml that does not decode, refused as such rather than as a value form.
+	for raw, reason := range map[string]string{"[true]": "will not rewrite", `"oops`: "is not valid TOML"} {
 		content := "[memories]\ndedicated_tools = " + raw + "\n"
 		activationWrite(t, path, content)
 		before := activationRead(t, manifestPath(home))
 		r, err := ApplyManagedKey(ConfigSetDeps{CodexHome: home}, configSetKey, &value)
-		if err != nil || r.OK || !strings.Contains(r.Reason, "will not rewrite") || activationRead(t, path) != content || activationRead(t, manifestPath(home)) != before {
+		if err != nil || r.OK || !strings.Contains(r.Reason, reason) || activationRead(t, path) != content || activationRead(t, manifestPath(home)) != before {
 			t.Fatalf("%+v %v", r, err)
 		}
 	}

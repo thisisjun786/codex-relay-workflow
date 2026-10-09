@@ -29,6 +29,15 @@ func configValue(value *string, absent string) string {
 	return *value
 }
 
+// configStateValue shows a managed key's live value; a key written in a form crw does not edit is shown as such, never as
+// unset (CRW-1141).
+func configStateValue(state configguard.ManagedState) string {
+	if state.Unsupported {
+		return "(set in a form crw does not edit: " + state.Reason + ")"
+	}
+	return configValue(state.Value, "(unset)")
+}
+
 // runConfig ports cli.ts:48-113; help is only the first argument, not a global flag.
 func runConfig(args []string, env scope.Env, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
@@ -53,7 +62,7 @@ func runConfig(args []string, env scope.Env, stdout, stderr io.Writer) int {
 			return 1
 		}
 		for _, state := range states {
-			fmt.Fprintf(stdout, "%s = %s\n  %s\n", configguard.ManagedKeyID(state.Entry), configValue(state.Value, "(unset)"), state.Entry.Caution)
+			fmt.Fprintf(stdout, "%s = %s\n  %s\n", configguard.ManagedKeyID(state.Entry), configStateValue(state), state.Entry.Caution)
 		}
 		if len(states) == 0 {
 			fmt.Fprintln(stdout, "(no managed keys)")
@@ -75,14 +84,14 @@ func runConfig(args []string, env scope.Env, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stderr, "crw: "+err.Error())
 			return 1
 		}
-		var value *string
+		value := "(unset)"
 		for _, state := range states {
 			if configguard.ManagedKeyID(state.Entry) == id {
-				value = state.Value
+				value = configStateValue(state)
 				break
 			}
 		}
-		fmt.Fprintf(stdout, "%s = %s\n", id, configValue(value, "(unset)"))
+		fmt.Fprintf(stdout, "%s = %s\n", id, value)
 		return 0
 	}
 	if action != "set" && action != "unset" {

@@ -117,7 +117,8 @@ func TestDeactivateDriftScenarios(t *testing.T) {
 		{name: "never_owned", config: deactivationConfig, unowned: true, reason: "changed"},
 		{name: "backup_preexisting_key", config: deactivationConfig, edit: "# edit\n" + deactivationConfig, backup: "[memories]\ndedicated_tools = false\n", reason: "unverifiable"},
 		{name: "nondestructive_drift", config: deactivationConfig, edit: "# edit\n" + deactivationConfig, prior: &prior, restore: true},
-		{name: "unsupported_reads_as_missing", config: "[memories]\ndedicated_tools = [true]\n", reason: "missing"},
+		// CRW-1141: a value the editor does not rewrite is not an absent key; it is no longer the value CRW applied.
+		{name: "unsupported_reads_as_changed", config: "[memories]\ndedicated_tools = [true]\n", reason: "changed"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			home := activationHome(t)

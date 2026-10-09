@@ -609,6 +609,11 @@ func Deactivate(deps DeactivateDeps) (*DeactivateResult, error) {
 		return nil, err
 	}
 	if content != nil && len(m.TableKeys) > 0 {
+		// A config.toml that does not decode is refused before any restore and before the CLI, which would rewrite it
+		// (CRW-1141).
+		if err := validateConfig(path, *content); err != nil {
+			return nil, err
+		}
 		// The restore is computed under the lock and published only when the pin still holds at the
 		// rename; the check runs here first so a refusal is reported before the keys are computed.
 		guard := func() error { return configLockPathsPublishGuard(pin) }
@@ -652,22 +657,31 @@ func deactivateTableKeys(path, content string, m *InstallManifest, r *Deactivate
 	changed := false
 	for _, id := range manifestOrder(m.tableOrder, m.TableKeys) {
 		rec := m.TableKeys[id]
-		value, found := ReadTableKey(content, rec.Table, rec.Key)
-		var live, prior *string
-		if found {
-			live = &value
+		// The live value and the backup's are read through the semantic editor (CRW-1141). A key the user rewrote in a form
+		// the editor does not touch is no longer the value CRW applied; a backup that does not decode proves nothing.
+		live, editable := semanticRaw(content, rec.Table, rec.Key)
+		if !editable {
+			r.SkippedExternal = append(r.SkippedExternal, SkippedExternal{id, SkipChanged})
+			continue
 		}
-		if backup != nil {
-			if v, ok := ReadTableKey(*backup, rec.Table, rec.Key); ok {
-				prior = &v
-			}
+		var prior *string
+		backupKnown := backup != nil
+		if backupKnown {
+			prior, backupKnown = semanticRaw(*backup, rec.Table, rec.Key)
 		}
-		restore, reason := DecideKeyRestore(rec, live, r.FileDrifted, backup != nil, prior)
+		restore, reason := DecideKeyRestore(rec, live, r.FileDrifted, backupKnown, prior)
 		if !restore {
 			r.SkippedExternal = append(r.SkippedExternal, SkippedExternal{id, reason})
 			continue
 		}
-		edit := RestoreTableKey(content, rec.Table, rec.Key, rec.PriorValue)
+		edit, _, err := semanticRestore(content, rec.Table, rec.Key, rec.PriorValue)
+		if err != nil {
+			return err
+		}
+		if edit.Action == TomlUnsupportedValue {
+			r.SkippedExternal = append(r.SkippedExternal, SkippedExternal{id, SkipChanged})
+			continue
+		}
 		content, changed = edit.Content, changed || edit.Changed
 		r.RestoredKeys = append(r.RestoredKeys, id)
 	}

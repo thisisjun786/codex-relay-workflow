@@ -9,6 +9,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tomledit"
 )
 
 // ConfigSetDeps injects every IO path and the timestamp (CXC config-set.ts:19-23).
@@ -28,6 +29,10 @@ type ConfigSetOutcome struct {
 type ManagedState struct {
 	Entry ManagedKey
 	Value *string
+	// Unsupported marks a key config.toml defines in a form crw does not edit (CRW-1141); it is not absent, and Reason says
+	// what the form is.
+	Unsupported bool
+	Reason      string
 }
 
 // ResolveManagedKey is the closed whitelist boundary, including the oracle's trim.
@@ -88,27 +93,38 @@ func ApplyManagedKey(deps ConfigSetDeps, id string, value *bool) (ConfigSetOutco
 	content := source.DecodeUTF8(pre)
 	keyID := ManagedKeyID(*entry)
 	recorded, hadRecord := m.TableKeys[keyID]
+	// The key is read and edited through the semantic editor (CRW-1141): a config.toml that does not decode is refused, and
+	// so is a key written in a form the editor cannot rewrite safely, with config.toml, the manifest and the backups as they
+	// were.
+	if err := validateConfig(path, content); err != nil {
+		return ConfigSetOutcome{Reason: err.Error()}, nil
+	}
 	var prior *string
 	var res TomlEditResult
+	var refused string
 	applied := "(absent)"
 	if value == nil {
 		if !hadRecord {
 			return ConfigSetOutcome{Reason: keyID + " is not recorded as set by crw; nothing to unset."}, nil
 		}
 		prior = recorded.PriorValue
-		res = RestoreTableKey(content, entry.Table, entry.Key, prior)
+		res, refused, err = semanticRestore(content, entry.Table, entry.Key, prior)
 		if prior != nil {
 			applied = *prior
 		}
 	} else {
-		if live, found := ReadTableKey(content, entry.Table, entry.Key); found {
-			prior = &live
+		live, editable := semanticRaw(content, entry.Table, entry.Key)
+		if editable {
+			prior = live
 		}
-		res = SetTableKey(content, entry.Table, entry.Key, *value)
+		res, refused, err = semanticSet(content, entry.Table, entry.Key, *value)
 		applied = strconvBool(*value)
 	}
+	if err != nil {
+		return ConfigSetOutcome{Reason: err.Error()}, nil
+	}
 	if res.Action == TomlUnsupportedValue {
-		return ConfigSetOutcome{Reason: keyID + " currently holds a value crw will not rewrite; edit config.toml by hand."}, nil
+		return ConfigSetOutcome{Reason: keyID + " currently holds a value crw will not rewrite (" + refused + "); edit config.toml by hand."}, nil
 	}
 	var backup *string
 	if res.Changed {
@@ -163,13 +179,19 @@ func ReadManagedState(configPath string) ([]ManagedState, error) {
 	if err != nil {
 		return nil, err
 	}
+	content := source.DecodeUTF8(b)
+	if err := validateConfig(configPath, content); err != nil {
+		return nil, err
+	}
 	states := make([]ManagedState, 0)
 	for _, entry := range ConfigManagedKeys() {
-		var value *string
-		if live, found := ReadTableKey(source.DecodeUTF8(b), entry.Table, entry.Key); found {
-			value = &live
+		look := semanticRead(content, entry.Table, entry.Key)
+		state := ManagedState{Entry: entry, Unsupported: look.State == tomledit.Unsupported, Reason: look.Reason}
+		if look.State == tomledit.Found {
+			raw := look.Raw
+			state.Value = &raw
 		}
-		states = append(states, ManagedState{Entry: entry, Value: value})
+		states = append(states, state)
 	}
 	return states, nil
 }

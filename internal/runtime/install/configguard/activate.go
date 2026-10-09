@@ -98,7 +98,10 @@ func activationSetKeyLocked(path, table, key string) (TomlEditResult, error) {
 	if e != nil {
 		return TomlEditResult{}, e
 	}
-	res := SetTableKey(string(content), table, key, true)
+	res, _, e := semanticSet(string(content), table, key, true)
+	if e != nil {
+		return TomlEditResult{}, errInvalidConfig(path, e.Error())
+	}
 	if !res.Changed {
 		return res, nil
 	}
@@ -252,6 +255,11 @@ func Activate(deps ActivateDeps) (*InstallManifest, error) {
 	if e != nil {
 		return nil, e
 	}
+	// A config.toml that does not decode is refused before the backup and before any "codex features enable", which would
+	// rewrite it (CRW-1141): nothing this command could add to it would be readable.
+	if e = validateConfig(path, string(pre)); e != nil {
+		return nil, e
+	}
 	var backup *string
 	if exists {
 		info, e := os.Stat(path)
@@ -290,10 +298,9 @@ func Activate(deps ActivateDeps) (*InstallManifest, error) {
 	}
 	for _, entry := range AutoEnabledManagedKeys() {
 		id := ManagedKeyID(entry)
-		value, found := ReadTableKey(string(pre), entry.Table, entry.Key)
-		var priorValue *string
-		if found {
-			priorValue = &value
+		priorValue, editable := semanticRaw(string(pre), entry.Table, entry.Key)
+		if !editable {
+			continue
 		}
 		// The whole read-modify-write is under the sidecar lock every CRW writer of config.toml
 		// takes (CRW-844): reading before the lock and publishing after it would let a retrust that

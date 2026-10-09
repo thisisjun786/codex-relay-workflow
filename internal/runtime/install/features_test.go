@@ -134,6 +134,21 @@ func TestFeaturesManagedKeyRoundTrips(t *testing.T) {
 				content += "dedicated_tools = " + prior + "\n"
 			}
 			h := newFeatureHome(t, content)
+			if prior == `"oops` {
+				// CRW-1141: an unterminated string is a config.toml that does not decode. The enable is refused before the
+				// backup and before Codex is asked to change anything, so nothing is written.
+				code, out, err := h.run("enable")
+				if code != 1 || out != "" || !strings.Contains(err, "not valid TOML") || h.read("config.toml") != content {
+					t.Fatalf("%d %q %q", code, out, err)
+				}
+				entries, _ := os.ReadDir(h.home)
+				for _, e := range entries {
+					if e.Name() != "config.toml" && e.Name() != "calls" && !strings.HasSuffix(e.Name(), ".crw-lock") {
+						t.Fatalf("refused enable wrote %s", e.Name())
+					}
+				}
+				return
+			}
 			out := h.success("enable")
 			if !strings.HasPrefix(out, "crw: enabled [multi_agent, goals, hooks, default_mode_request_user_input]\n") {
 				t.Fatal(out)
@@ -148,11 +163,7 @@ func TestFeaturesManagedKeyRoundTrips(t *testing.T) {
 				t.Fatal(err)
 			}
 			rec, exists := manifest.TableKeys["memories.dedicated_tools"]
-			if prior == `"oops` {
-				if exists {
-					t.Fatal("unsupported value recorded")
-				}
-			} else if !exists || rec.SetByCodexclaw != (prior != "true") || prior == "" && rec.PriorValue != nil || prior != "" && (rec.PriorValue == nil || *rec.PriorValue != prior) {
+			if !exists || rec.SetByCodexclaw != (prior != "true") || prior == "" && rec.PriorValue != nil || prior != "" && (rec.PriorValue == nil || *rec.PriorValue != prior) {
 				t.Fatalf("record %+v", rec)
 			}
 			if prior == "false" {
