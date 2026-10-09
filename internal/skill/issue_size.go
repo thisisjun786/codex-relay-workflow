@@ -292,14 +292,20 @@ type section struct {
 	fenced []bool
 }
 
-func headingKind(title string) string {
+// compactHeading is a heading without emphasis marks, case or spaces, the form the heading words are
+// matched in.
+func compactHeading(title string) string {
 	plain := strings.Map(func(r rune) rune {
 		if r == '*' || r == '_' || r == '`' {
 			return -1
 		}
 		return r
 	}, strings.ToLower(title))
-	compact := strings.Join(strings.Fields(plain), "")
+	return strings.Join(strings.Fields(plain), "")
+}
+
+func headingKind(title string) string {
+	compact := compactHeading(title)
 	for _, k := range headingWords {
 		for _, w := range k.words {
 			if strings.Contains(compact, w) {
@@ -316,6 +322,12 @@ func headingKind(title string) string {
 }
 
 func readSections(body string) (sections []section, unread []string, err error) {
+	return readSectionsBy(body, headingKind)
+}
+
+// readSectionsBy reads the sections of body whose headings classify names ("" for a heading that is
+// none of them), with the same structure rules for every classifier.
+func readSectionsBy(body string, classify func(string) string) (sections []section, unread []string, err error) {
 	lines := strings.Split(strings.ReplaceAll(body, "\r\n", "\n"), "\n")
 	fenced := make([]bool, len(lines))
 	type heading struct {
@@ -381,7 +393,7 @@ func readSections(body string) (sections []section, unread []string, err error) 
 			continue
 		}
 		activeLevel = 0
-		kind := headingKind(head.title)
+		kind := classify(head.title)
 		if kind == "" {
 			unread = append(unread, head.title)
 			continue
