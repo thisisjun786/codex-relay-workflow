@@ -5,6 +5,11 @@ import (
 	"testing"
 )
 
+var shellFamilyEntryFiles = map[string]bool{
+	"18-crw-894-shell-family.txt":  true,
+	"19-crw-894-eval-1688f7c5.txt": true,
+}
+
 // CRW-894: the shell family (ash, mksh, hush, the busybox applets) is read like bash and sh, and the conditions that inherit a
 // pipe are pinned. TestReproductionRows judges rows/18-crw-894-shell-family.txt through the judging functions; this test
 // sends the same rows through the three real hook entry points (HandleWorktreeGuardPreTool, HandleMemoryWriteGate,
@@ -14,7 +19,7 @@ func TestShellFamilyThroughEntryPoints(t *testing.T) {
 	githubPostTempHome(t)
 	n := 0
 	for _, row := range reproductionRows() {
-		if row.file != "18-crw-894-shell-family.txt" {
+		if !shellFamilyEntryFiles[row.file] {
 			continue
 		}
 		n++
@@ -22,7 +27,9 @@ func TestShellFamilyThroughEntryPoints(t *testing.T) {
 		t.Run(row.id, func(t *testing.T) {
 			r := newDelRig(t)
 			cwd, root, env := gateScene(t)
-			fill := strings.NewReplacer("{MEMORY}", root, "{CHECKOUT}", r.checkout, "{WORK}", cwd)
+			tmp := t.TempDir()
+			fill := strings.NewReplacer("{MEMORY}", root, "{CHECKOUT}", r.checkout, "{WORK}", cwd, "{TMP}", tmp)
+			reproScene(t, row, cwd, r.checkout, tmp, fill)
 			cmd := fill.Replace(row.cmd)
 
 			memOut := HandleMemoryWriteGate(gateBash(t, cwd, cmd), env)
@@ -32,7 +39,7 @@ func TestShellFamilyThroughEntryPoints(t *testing.T) {
 			if memOut != "" && row.want == reproClasses["U"] && !strings.Contains(gateDeny(t, memOut), "a program the gate cannot read: ") {
 				t.Errorf("HandleMemoryWriteGate for an unreadable program lacks the gate's wording: %q", memOut)
 			}
-			ghOut := HandleGitHubPostGuard(githubPostShell(t, t.TempDir(), cmd))
+			ghOut := HandleGitHubPostGuard(githubPostShell(t, cwd, cmd))
 			if (ghOut != "") != (row.want[1] == "deny") {
 				t.Errorf("HandleGitHubPostGuard = %q, want deny=%v: %q", ghOut, row.want[1] == "deny", cmd)
 			}
