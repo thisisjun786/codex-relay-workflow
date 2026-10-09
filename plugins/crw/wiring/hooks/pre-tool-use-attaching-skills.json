@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$HOME/.local/share/crw-runtime/current/bin/crw\" hook pre-tool-use --leg pre-tool-use-attaching-skills",
+            "timeout": 10,
+            "statusMessage": "(crw) Attaching skills to spawn"
+          }
+        ],
+        "matcher": "^(collaboration[._]?)?spawn_agent$"
+      }
+    ]
+  }
+}

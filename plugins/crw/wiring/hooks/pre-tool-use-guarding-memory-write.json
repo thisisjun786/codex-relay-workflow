@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$HOME/.local/share/crw-runtime/current/bin/crw\" hook pre-tool-use --leg pre-tool-use-guarding-memory-write",
+            "timeout": 10,
+            "statusMessage": "(crw) Guarding memory write"
+          }
+        ],
+        "matcher": "^(memories[._]?add_ad_hoc_note|apply_patch|Write|Edit|Bash)$"
+      }
+    ]
+  }
+}

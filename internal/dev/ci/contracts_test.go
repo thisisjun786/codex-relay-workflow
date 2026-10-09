@@ -261,6 +261,9 @@ var contractInputs = []string{
 	"plugins/crw/skills/crw-plan/references/integrations.md",
 	"contract/schema/cxc",
 	"contract/fixtures/cxc",
+	// The cxc corpus check holds the plugin's hook declarations to K1 (CRW-392).
+	"plugins/crw/.codex-plugin/plugin.json",
+	"plugins/crw/wiring/hooks",
 }
 
 // copyTree copies the file or directory rel from this checkout into root.

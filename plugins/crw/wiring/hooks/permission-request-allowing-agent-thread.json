@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$HOME/.local/share/crw-runtime/current/bin/crw\" hook permission-request --leg permission-request-allowing-agent-thread",
+            "timeout": 10,
+            "statusMessage": "(crw) Checking agent-created thread permission"
+          }
+        ],
+        "matcher": "*"
+      }
+    ]
+  }
+}

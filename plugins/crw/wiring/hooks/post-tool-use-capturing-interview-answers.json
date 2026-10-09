@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$HOME/.local/share/crw-runtime/current/bin/crw\" hook post-tool-use --leg post-tool-use-capturing-interview-answers",
+            "timeout": 15,
+            "statusMessage": "(crw) Capturing interview answer"
+          }
+        ],
+        "matcher": "^request_user_input$"
+      }
+    ]
+  }
+}
