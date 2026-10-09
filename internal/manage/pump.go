@@ -192,6 +192,9 @@ type pumpReview776QueueLegacyRef struct {
 	Members    []string `json:"members,omitempty"`
 	Unprovable bool     `json:"unprovable,omitempty"`
 	Reason     string   `json:"reason,omitempty"`
+	// Accepted marks the attempt of a pin the queue already held as accepted when the search folded that
+	// pin into the evidence set: the pin's own accepted mark is its answer, whatever the ledger says.
+	Accepted bool `json:"accepted,omitempty"`
 }
 
 // pumpQueueRefusal is a queue thread's count of the refusals one batch id has taken. The next batch
