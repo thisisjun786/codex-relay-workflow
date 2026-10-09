@@ -43,6 +43,8 @@ type Comparison struct {
 	Kind   ComparisonKind `json:"kind"`
 	Detail string         `json:"detail,omitempty"` // why "different"
 	Reason string         `json:"reason,omitempty"` // why "unavailable"
+	// DetailSet says Detail was given, so an explicitly empty Detail is still a detail (CRW-1018).
+	DetailSet bool `json:"-"`
 }
 
 // Options adjusts a capture.
