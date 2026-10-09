@@ -2,6 +2,8 @@ package spawn
 
 import (
 	"encoding/json"
+	"errors"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -376,8 +378,13 @@ func TestCheckFinalGatePrereqsReadsAReceiptSpelledInAnotherCaseOfCwd(t *testing.
 		t.Run(c.name, func(t *testing.T) {
 			real, alias := spawnFinalGateTestAliasTree(t)
 			spelled := c.spelling(real)
-			if err := os.Mkdir(spelled, 0o755); err != nil { // on a case-insensitive file system this is the working directory itself
-				t.Fatal(err)
+			// On a case-insensitive file system the other case of the name is the working directory itself, which already exists.
+			if err := os.Mkdir(spelled, 0o755); err != nil {
+				got, statErr := os.Stat(spelled)
+				want, wantErr := os.Stat(real)
+				if !errors.Is(err, fs.ErrExist) || statErr != nil || wantErr != nil || !os.SameFile(want, got) {
+					t.Fatal(err)
+				}
 			}
 			recorded := filepath.Join(spelled, receipt)
 			spawnFinalGateTestReceiptPlan(t, real, recorded, filepath.Join(real, receipt))
