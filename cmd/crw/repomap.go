@@ -144,13 +144,13 @@ var repoMapProbeTimeout = 5 * time.Second
 var repoMapLockPoll = 100 * time.Millisecond
 
 // repoMapBootstrapLock takes the exclusive lock that serializes the venv bootstrap of one crw home, waiting for another
-// bootstrap to finish until ctx ends. The lock file lives beside the venv directory, never inside the directory a failed
-// bootstrap removes.
+// bootstrap to finish until ctx ends. The lock is held on the venvs directory itself, which a failed bootstrap never removes
+// (it removes the repomap directory inside), so the lock leaves no file of its own behind.
 func repoMapBootstrapLock(ctx context.Context, venvs string, stderr io.Writer) (func(), error) {
 	if err := os.MkdirAll(venvs, 0o700); err != nil {
 		return nil, err
 	}
-	f, err := os.OpenFile(filepath.Join(venvs, ".repomap-bootstrap.lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	f, err := os.Open(venvs)
 	if err != nil {
 		return nil, err
 	}
