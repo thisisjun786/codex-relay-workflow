@@ -2,9 +2,12 @@ package dagsched
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pluginversion"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -26,12 +29,21 @@ func newAcceptRefreshKit(t *testing.T) *acceptRefreshKit { return newAcceptRefre
 // newAcceptRefreshKitWith is the kit with the ruling's record of the head (ruled) or without it, as an event ruled before CRW-742 is.
 func newAcceptRefreshKitWith(t *testing.T, ruled bool) *acceptRefreshKit {
 	t.Helper()
+	return newAcceptRefreshKitFile(t, ruled, "feature.txt")
+}
+
+// newAcceptRefreshKitFile is the kit whose branch changes the file (a path inside the repository).
+func newAcceptRefreshKitFile(t *testing.T, ruled bool, file string) *acceptRefreshKit {
+	t.Helper()
 	k := newIntegrationKit(t)
 	repo := k.repo
 	repo.git("checkout", "-q", "-b", "feature")
-	p := repo.commit("feature.txt", "feature\n")
+	if err := os.MkdirAll(filepath.Join(repo.path, filepath.Dir(file)), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	p := repo.commit(file, "feature\n")
 	repo.git("checkout", "-q", "dev")
-	k.declare("g", "I", "feature.txt")
+	k.declare("g", "I", file)
 	r := k.reportNode("g", "I", acceptOpts{})
 	n, _ := nodeOf(k.snapshot("g"), "I")
 	a := &acceptRefreshKit{integrationKit: k, rid: r.Acceptance.RelationshipID, event: r.Event, criteria: n.CriteriaSetDigest, p: p}
@@ -69,17 +81,22 @@ func (a *acceptRefreshKit) refresh(file string) string {
 }
 
 // resolveByHand is a refresh that conflicts on feature.txt and resolves it by hand.
-func (a *acceptRefreshKit) resolveByHand() string {
+func (a *acceptRefreshKit) resolveByHand() string { return a.resolveFileByHand("feature.txt") }
+
+func (a *acceptRefreshKit) resolveFileByHand(file string) string {
 	a.t.Helper()
 	repo := a.repo
-	repo.commit("feature.txt", "dev changed the feature\n")
+	if err := os.MkdirAll(filepath.Join(repo.path, filepath.Dir(file)), 0o700); err != nil {
+		a.t.Fatal(err)
+	}
+	repo.commit(file, "dev changed the feature\n")
 	repo.git("checkout", "-q", "feature")
 	if _, err := repo.tryGit("merge", "-q", "--no-ff", "-m", "merge dev", "dev"); err == nil {
 		a.t.Fatal("the merge did not conflict")
 	}
-	repo.write("feature.txt", "hand resolved: something neither side wrote\n")
-	repo.git("add", "feature.txt")
-	repo.git("commit", "-q", "-m", "merge dev, feature.txt resolved")
+	repo.write(file, "hand resolved: something neither side wrote\n")
+	repo.git("add", file)
+	repo.git("commit", "-q", "-m", "merge dev, "+file+" resolved")
 	head := repo.git("rev-parse", "HEAD")
 	repo.git("checkout", "-q", "dev")
 	a.pointAt(head)
@@ -273,5 +290,68 @@ func TestAcceptManualPathsAreNullWithoutAProof(t *testing.T) {
 	list, ok := acceptManualPaths([]string{}).([]any)
 	if !ok || len(list) != 0 {
 		t.Fatalf("manual_paths with a proof = %#v, want an empty list", acceptManualPaths([]string{}))
+	}
+}
+
+// The proof is made before the write transaction and what it rests on is read again inside it, the forge and the base branch included
+// (CRW-731): a pull request that moves to another head, or a base branch that advances, after the proof is refused and writes
+// neither the acceptance nor the proof row.
+func TestAcceptRefusesWhenThePullRequestMovesAfterTheProof(t *testing.T) {
+	a := newAcceptRefreshKit(t)
+	a.refresh("other.txt")
+	a.sched.testBeforeAcceptTx = func() { a.resolveByHand() }
+	_, err := a.acceptWith(a.repo.path)
+	if refusalReason(err) != "disposition_conflict" || !strings.Contains(err.Error(), "pull request") || !strings.Contains(err.Error(), "call again") {
+		t.Fatalf("accept after the pull request moved = %v, want disposition_conflict naming the pull request", err)
+	}
+	if a.acceptCount() != 0 || a.refreshRows() != 0 {
+		t.Fatalf("%d acceptances and %d refresh rows written on a proof of another head", a.acceptCount(), a.refreshRows())
+	}
+}
+
+func TestAcceptRefusesWhenTheBaseBranchAdvancesAfterTheProof(t *testing.T) {
+	a := newAcceptRefreshKit(t)
+	a.refresh("other.txt")
+	a.sched.testBeforeAcceptTx = func() { a.repo.commit("later.txt", "dev moved on\n") }
+	_, err := a.acceptWith(a.repo.path)
+	if refusalReason(err) != "disposition_conflict" || !strings.Contains(err.Error(), "tip of dev") || !strings.Contains(err.Error(), "call again") {
+		t.Fatalf("accept after the base advanced = %v, want disposition_conflict naming the tip", err)
+	}
+	if a.acceptCount() != 0 || a.refreshRows() != 0 {
+		t.Fatalf("%d acceptances and %d refresh rows written on a proof against an old tip", a.acceptCount(), a.refreshRows())
+	}
+	// called again with nothing moving, the same head is proved against the new tip and accepted
+	a.sched.testBeforeAcceptTx = nil
+	if res, err := a.acceptWith(a.repo.path); err != nil || res.RefreshID == "" {
+		t.Fatalf("accept again = %v %+v", err, res)
+	}
+}
+
+// A call the write would refuse for who made it never runs a regeneration command: a task that is not the parent of the relationship
+// is refused before the mechanical check is reached, and the checker is not called (CRW-731).
+func TestAcceptByANonParentRunsNoMechanicalCheck(t *testing.T) {
+	// the plugin manifest is the one path the mechanical check is asked about without a declaration covering it
+	a := newAcceptRefreshKitFile(t, true, pluginversion.ManifestRepoPath)
+	a.resolveFileByHand(pluginversion.ManifestRepoPath)
+	checker := refreshMechanical
+	calls := 0
+	refreshMechanical = func(ctx context.Context, repo string, st RefreshStep, regions []Region, paths []string) (*RefreshMechanicalRefusal, error) {
+		calls++
+		return &RefreshMechanicalRefusal{Detail: "the stub proves nothing"}, nil
+	}
+	t.Cleanup(func() { refreshMechanical = checker })
+	_, err := a.sched.Accept(context.Background(), "g", "I", "intruder", AcceptInput{PullRequest: &PRRef{Repository: "owner/repo", Number: 7}, Checkout: a.repo.path, RuleVersion: verifier})
+	if refusalReason(err) != "scope_role_mismatch" {
+		t.Fatalf("accept by a task that is not the parent = %v, want scope_role_mismatch", err)
+	}
+	if calls != 0 {
+		t.Fatalf("the mechanical check ran %d times for a call that was refused for its caller", calls)
+	}
+	if a.acceptCount() != 0 || a.refreshRows() != 0 {
+		t.Fatal("a refused call wrote rows")
+	}
+	// the parent's call reaches the check
+	if _, err := a.acceptWith(a.repo.path); refusalReason(err) != "disposition_conflict" || calls == 0 {
+		t.Fatalf("accept by the parent = %v after %d checks, want the proof's refusal after the check ran", err, calls)
 	}
 }

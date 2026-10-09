@@ -67,6 +67,24 @@ func (s *Scheduler) proveAcceptedRefresh(ctx context.Context, q store.Querier, s
 	if !hasRuled || ruled.HeadSHA == pr.HeadSHA {
 		return nil, nil
 	}
+	// a call the write would refuse for who made it or for the state of its relationship never reaches a declared regeneration command: the same
+	// preconditions the transaction asks (the relationship is active and held by the caller, the generation is an execution or carried) are asked first
+	if rel.Status != "active" || rel.Superseded {
+		return nil, refuse(contract.RefusalRelationshipNotActive, "the relationship %s of %s is %s: a result is accepted while its child's relationship is active", rel.ID, node, relationshipState(rel))
+	}
+	if rel.ParentTaskID != actor {
+		return nil, notParentHeldBy(actor, rel)
+	}
+	var manifest string
+	if bound, err := queryOne(ctx, q, "SELECT manifest_digest FROM dag_node_executions WHERE plan_id = ? AND node_id = ? AND relationship_id = ? AND execution_generation = ?", []any{plan, node, rel.ID, rel.Generation}, &manifest); err != nil {
+		return nil, err
+	} else if !bound {
+		if carried, err := s.refreshCarries(ctx, q, plan, node, rel); err != nil {
+			return nil, err
+		} else if !carried {
+			return nil, refuse(contract.RefusalStaleGeneration, "generation %d of %s is not recorded as an execution of %s (a correction is recorded with dag-correct before its result is accepted)%s", rel.Generation, rel.ID, node, s.unsentGenerationHint(ctx, q, rel))
+		}
+	}
 	repository, err := s.acceptTarget(ctx, q, snap, node, in.PullRequest.Repository)
 	if err != nil {
 		return nil, err
@@ -144,7 +162,7 @@ func (s *Scheduler) proveAcceptedRefresh(ctx context.Context, q store.Querier, s
 // the event, the declarations and contributor heads, the relationship's generation and the acceptance it replaces. It returns the proof to
 // store (nil when none is owed) and the ruled head to report (empty when the event has no record). A proof that no longer holds is a
 // refusal to call again, never a stored proof of something else.
-func (s *Scheduler) settleAcceptRefresh(ctx context.Context, q store.Querier, plan, node string, rel relRow, head verifiedHead, pr PullRequest, proof *acceptRefreshProof) (*acceptRefreshProof, string, error) {
+func (s *Scheduler) settleAcceptRefresh(ctx context.Context, q store.Querier, plan, node string, rel relRow, head verifiedHead, named PRRef, pr PullRequest, proof *acceptRefreshProof) (*acceptRefreshProof, string, error) {
 	ruled, has, err := store.VerifiedHead(ctx, s.Store, head.EventID)
 	if err != nil {
 		return nil, "", err
@@ -188,6 +206,25 @@ func (s *Scheduler) settleAcceptRefresh(ctx context.Context, q store.Querier, pl
 	}
 	if activeID != proof.activeAcceptance {
 		return nil, "", moved("the acceptance this one replaces")
+	}
+	// the forge and the base branch are read again here, as the last thing the proof rests on: a pull request that moved to another head or base, or a
+	// base branch that advanced, since the proof was made is not what the proof is of, and a reading that cannot be made refuses as well
+	if s.PRs == nil || s.Tips == nil {
+		return nil, "", errors.New("this scheduler has no pull request reader or target reader, so it cannot read the forge again to settle the refresh")
+	}
+	again, err := s.PRs(ctx, named.Repository, named.Number)
+	if err != nil {
+		return nil, "", err
+	}
+	if again.HeadSHA != pr.HeadSHA || again.BaseRef != pr.BaseRef || again.State != pr.State || again.IsDraft != pr.IsDraft {
+		return nil, "", moved("the pull request")
+	}
+	tip, err := s.Tips.Tip(ctx, proof.baseRepository, proof.baseRef)
+	if err != nil {
+		return nil, "", err
+	}
+	if tip.SHA != proof.baseTip {
+		return nil, "", moved("the tip of " + proof.baseRef)
 	}
 	return proof, ruled.HeadSHA, nil
 }

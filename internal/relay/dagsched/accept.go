@@ -475,7 +475,7 @@ func (s *Scheduler) accept(ctx context.Context, plan, node, actor string, in Acc
 		// the proof of a head the ruling did not fix is read again with what it rested on; the acceptance and its proof row are written together below
 		var settledRefresh *acceptRefreshProof
 		if implementation && !commitPath {
-			if settledRefresh, out.VerifiedHead, err = s.settleAcceptRefresh(txCtx, tx, plan, node, rel, head, pr, refreshProof); err != nil {
+			if settledRefresh, out.VerifiedHead, err = s.settleAcceptRefresh(txCtx, tx, plan, node, rel, head, *in.PullRequest, pr, refreshProof); err != nil {
 				return err
 			}
 			if settledRefresh != nil {
