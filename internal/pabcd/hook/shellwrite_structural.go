@@ -52,13 +52,13 @@ func shellIRPyRunsText(tok string) bool {
 // comment reading as shellVerbWithoutComments and shellWriteTripleScanRegion.
 func shellIRPyDataMask(src string, spans [][2]int) []bool {
 	rs := []rune(src)
-	offs := make([]int, len(rs)+1)
-	for i, n := 0, 0; i <= len(rs); i++ {
-		offs[i] = n
-		if i < len(rs) {
-			n += len(string(rs[i]))
-		}
+	// range reports the original byte offsets, including one-byte invalid UTF-8
+	// decoded from a Python bytes literal; re-encoding RuneError loses those widths.
+	offs := make([]int, 0, len(rs)+1)
+	for i := range src {
+		offs = append(offs, i)
 	}
+	offs = append(offs, len(src))
 	mask := make([]bool, len(src)+1)
 	set := func(from, to int, v bool) {
 		for k := offs[from]; k < offs[to]; k++ {
