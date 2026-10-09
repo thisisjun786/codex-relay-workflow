@@ -68,10 +68,18 @@ const hookTrustEntriesNullDocument = "Cannot read properties of null (reading 'h
 // valid regular expression and a handler that is not a command, has no command or is async are
 // skipped; every other defect of a document is an error.
 func ListHookTrustEntries(pluginRoot, pluginKey string) ([]HookTrustEntry, error) {
+	return listHookTrustEntries(pluginRoot, pluginKey, 0)
+}
+
+// listHookTrustEntries is ListHookTrustEntries reading each document of the plugin within limit
+// bytes (0: no bound). The exported listing, which `crw doctor retrust` shares for discovery,
+// repair and its pre-write verification, reads a document of any size as before CRW-1152; the
+// harness check reads within harnessReadLimit and reports a longer one.
+func listHookTrustEntries(pluginRoot, pluginKey string, limit int64) ([]HookTrustEntry, error) {
 	if err := hookTrustEntriesSafeValue(pluginKey, "plugin key"); err != nil {
 		return nil, err
 	}
-	manifestBytes, err := hookTrustEntriesReadContained(pluginRoot, ".codex-plugin/plugin.json", nil)
+	manifestBytes, err := hookTrustEntriesReadContainedLimit(pluginRoot, ".codex-plugin/plugin.json", nil, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -97,7 +105,7 @@ func ListHookTrustEntries(pluginRoot, pluginKey string) ([]HookTrustEntry, error
 		if err := hookTrustEntriesSafeValue(relative, "hook path"); err != nil {
 			return nil, err
 		}
-		raw, err := hookTrustEntriesReadContained(pluginRoot, relative, nil)
+		raw, err := hookTrustEntriesReadContainedLimit(pluginRoot, relative, nil, limit)
 		if err != nil {
 			return nil, err
 		}
@@ -289,10 +297,16 @@ const hookTrustEntriesRootEscape = "path escapes from parent"
 // points inside, a link that leaves the root and comes back, and a chain of more than 8 links.
 // The open does not block, so a FIFO is judged on the descriptor instead of waited for. The type of
 // the opened file then decides what it is: a directory is EISDIR and any other file that is not
-// regular is refused; a regular file is read up to harnessReadLimit and a longer one is refused
-// (CRW-1152). observe is a test seam, called with "open" just before the
-// open; production passes nil.
+// regular is refused (CRW-1152). The file is read whole here: the retrust command's reads decide
+// nothing by size. The harness reads through hookTrustEntriesReadContainedLimit with its own bound.
+// observe is a test seam, called with "open" just before the open; production passes nil.
 func hookTrustEntriesReadContained(pluginRoot, reference string, observe func(stage string)) ([]byte, error) {
+	return hookTrustEntriesReadContainedLimit(pluginRoot, reference, observe, 0)
+}
+
+// hookTrustEntriesReadContainedLimit is hookTrustEntriesReadContained with the byte bound its
+// caller selects: a regular file longer than limit is refused (errHarnessTooLarge); 0 is no bound.
+func hookTrustEntriesReadContainedLimit(pluginRoot, reference string, observe func(stage string), limit int64) ([]byte, error) {
 	absolute, err := filepath.Abs(pluginRoot)
 	if err != nil {
 		return nil, err
@@ -333,7 +347,7 @@ func hookTrustEntriesReadContained(pluginRoot, reference string, observe func(st
 		return nil, err
 	}
 	defer file.Close()
-	return harnessReadHandle(file, candidate)
+	return harnessReadHandleLimit(file, candidate, limit)
 }
 
 // hookTrustEntriesInside is "path === root || path.startsWith(root + sep)".

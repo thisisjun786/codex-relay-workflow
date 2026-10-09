@@ -266,30 +266,30 @@ func TestHarnessRunDoctorRecorded(t *testing.T) {
 				t.Fatal(err)
 			}
 			report := RunHarnessDoctor(root, harnessRunStub(states, version), options, projectRoot, harnessRunEnv(env), time.Now())
-			if recorded.Name == "manifest_hooks_not_an_array" {
-				// The oracle passed a hooks member of the wrong type over; the port fails the hooks
-				// check and names the member (CRW-1152, port: fixed).
-				for _, check := range report.Checks {
-					if check.Name == "hooks" && (check.Severity != HarnessFail || !strings.Contains(check.Evidence, "manifest hooks must be an array of hook file paths: nope")) {
-						t.Errorf("hooks check = %+v, want the type FAIL", check)
-					}
-				}
-				if report.Overall != HarnessFail {
-					t.Errorf("overall = %q, want FAIL", report.Overall)
-				}
-				return
-			}
 			if report.SchemaVersion != HarnessSchemaVersion {
 				t.Errorf("schemaVersion = %d, want %d", report.SchemaVersion, HarnessSchemaVersion)
 			}
-			if got := string(report.Overall); got != recorded.Overall {
-				t.Errorf("overall = %q, want %q", got, recorded.Overall)
+			// The one row the port changes (CRW-1152, port: fixed): the oracle passed a hooks member of the
+			// wrong type over, the port fails the hooks check and names the member, so the report fails.
+			// Every other row, the check count and order, the repairs and the metadata stay the oracle's.
+			wantOverall := recorded.Overall
+			if recorded.Name == "manifest_hooks_not_an_array" {
+				wantOverall = string(HarnessFail)
+			}
+			if got := string(report.Overall); got != wantOverall {
+				t.Errorf("overall = %q, want %q", got, wantOverall)
 			}
 			if len(report.Checks) != len(recorded.Checks) {
 				t.Fatalf("checks = %d, want %d: %+v", len(report.Checks), len(recorded.Checks), report.Checks)
 			}
 			for i, want := range recorded.Checks {
 				got := report.Checks[i]
+				if recorded.Name == "manifest_hooks_not_an_array" && want.Name == "hooks" {
+					if got.Name != "hooks" || got.Severity != HarnessFail || got.Evidence != "manifest hooks must be an array of hook file paths: nope" || got.Repair != nil {
+						t.Errorf("check %d = %+v, want the hooks type FAIL", i, got)
+					}
+					continue
+				}
 				if got.Name != want.Name || string(got.Severity) != want.Severity {
 					t.Errorf("check %d = %s/%s, want %s/%s", i, got.Name, got.Severity, want.Name, want.Severity)
 					continue

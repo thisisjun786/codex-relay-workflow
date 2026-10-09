@@ -44,6 +44,13 @@ func harnessReadBounded(path string) ([]byte, error) {
 // one is; any other file that is not regular is errNotRegular; more than harnessReadLimit bytes
 // is errHarnessTooLarge. Both refusals are fs.PathErrors for the read of path.
 func harnessReadHandle(file *os.File, path string) ([]byte, error) {
+	return harnessReadHandleLimit(file, path, harnessReadLimit)
+}
+
+// harnessReadHandleLimit is harnessReadHandle with the byte bound its caller selects: a limit of 0
+// is no bound, the whole file is read (the read the retrust command makes of a plugin's documents,
+// whose size the diagnostic bound does not decide).
+func harnessReadHandleLimit(file *os.File, path string, limit int64) ([]byte, error) {
 	info, err := file.Stat()
 	if err != nil {
 		return nil, err
@@ -54,11 +61,14 @@ func harnessReadHandle(file *os.File, path string) ([]byte, error) {
 	case !info.Mode().IsRegular():
 		return nil, &fs.PathError{Op: "read", Path: path, Err: errNotRegular}
 	}
-	data, err := io.ReadAll(io.LimitReader(file, harnessReadLimit+1))
+	if limit <= 0 {
+		return io.ReadAll(file)
+	}
+	data, err := io.ReadAll(io.LimitReader(file, limit+1))
 	if err != nil {
 		return nil, err
 	}
-	if len(data) > harnessReadLimit {
+	if int64(len(data)) > limit {
 		return nil, &fs.PathError{Op: "read", Path: path, Err: errHarnessTooLarge}
 	}
 	return data, nil
@@ -73,13 +83,15 @@ var errHarnessTooDeep = errors.New("nested deeper than the 10000 container diagn
 // errHarnessTooDeep only when the depth is all that stands against the document: it opens a
 // container past the limit and the same reader with Deep set, which reads past it, accepts it. A
 // document with any syntax error (before the deep containers or after them) keeps the reader's own
-// error. The Deep reading runs only for such a refusal and is iterative, within the read limit.
+// error. The Deep reading runs only for such a refusal; it is a Skim reading, which checks the
+// document and builds none of it, so what the refusal costs does not grow with how deep the
+// document nests (CRW-1152).
 func harnessParseBounded(doc string, options pyjson.LoadOptions) (any, error) {
 	options.Deep = false
 	value, err := pyjson.Loads(doc, options)
 	if err != nil && harnessNestsPastLimit(doc) {
 		deep := options
-		deep.Deep = true
+		deep.Deep, deep.Skim = true, true
 		if _, deepErr := pyjson.Loads(doc, deep); deepErr == nil {
 			return nil, errHarnessTooDeep
 		}

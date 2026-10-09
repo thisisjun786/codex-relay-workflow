@@ -111,7 +111,7 @@ func HarnessHookTrustCheck(pluginRoot string, options HarnessOptions, env host.L
 	if err != nil {
 		return failed(err.Error())
 	}
-	manifest, err := hookTrustEntriesReadContained(pluginRoot, ".codex-plugin/plugin.json", nil)
+	manifest, err := hookTrustEntriesReadContainedLimit(pluginRoot, ".codex-plugin/plugin.json", nil, harnessReadLimit)
 	if err != nil {
 		return failed(err.Error())
 	}
@@ -148,7 +148,7 @@ func HarnessHookTrustCheck(pluginRoot string, options HarnessOptions, env host.L
 		}
 		return warned(fmt.Sprintf("enabled install key is ambiguous (%d): %s", len(candidates), listed))
 	}
-	results, err := diagnoseHookTrust(codexHome, pluginRoot, key, harnessReadBounded)
+	results, err := diagnoseHookTrust(codexHome, pluginRoot, key, harnessReadBounded, harnessReadLimit)
 	if err != nil {
 		return failed(err.Error())
 	}

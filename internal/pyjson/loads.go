@@ -80,6 +80,12 @@ type LoadOptions struct {
 	// recursion limit, which a caller models with ErrorWithLimit. Without it a container nested
 	// deeper than MaxDepth is refused, as encoding/json refuses it ("exceeded max depth").
 	Deep bool
+	// Skim, with Deep, reads a document for its refusals only: it accepts and refuses exactly what the Deep reading
+	// does, with the same errors, and answers no value for a document that is a container (a scalar is read as it
+	// is). It keeps one byte for each container open at a time and builds nothing for them, so a document nested
+	// millions deep costs memory in proportion to its size, not to a frame and a value per level. A Unique
+	// reading's refusal of a repeated key is not made, as no object is built.
+	Skim bool
 }
 
 // MaxDepth is encoding/json's nesting limit: how many containers deep its Decoder reads.
@@ -191,6 +197,9 @@ func (d *decoder) value() (any, error) {
 	switch c := rest[0]; {
 	case c == '{' || c == '[':
 		if d.o.Deep {
+			if d.o.Skim {
+				return nil, d.skim()
+			}
 			return d.deep()
 		}
 		if c == '{' {
@@ -455,6 +464,75 @@ func (d *decoder) deep() (any, error) {
 			}
 			stack[len(stack)-1] = frame{}
 			stack = stack[:len(stack)-1]
+		}
+	}
+}
+
+// skim reads the container at d.i and everything inside it as deep does, without recursion and without building
+// anything: of the containers still open it keeps only whether each is an array or an object.
+func (d *decoder) skim() error {
+	var open []byte
+	d.space()
+	d.from = d.i
+	for {
+		d.space()
+		if d.i >= len(d.s) {
+			return errSyntax
+		}
+		switch c := d.s[d.i]; c {
+		case '[', '{':
+			if err := d.open(); err != nil {
+				return err
+			}
+			d.i++
+			d.space()
+			closer := byte(']')
+			if c == '{' {
+				closer = '}'
+			}
+			if d.i < len(d.s) && d.s[d.i] == closer {
+				d.i++
+				d.depth--
+				break
+			}
+			if c == '{' {
+				if _, err := d.key(); err != nil {
+					return err
+				}
+			}
+			open = append(open, c)
+			continue
+		default:
+			if _, err := d.value(); err != nil {
+				return err
+			}
+		}
+		// a value is complete: the next item of the container on top, or the end of the document.
+		for {
+			if len(open) == 0 {
+				return nil
+			}
+			array := open[len(open)-1] == '['
+			d.space()
+			if d.i >= len(d.s) {
+				return errSyntax
+			}
+			c := d.s[d.i]
+			if c == ',' {
+				d.i++
+				if !array {
+					if _, err := d.key(); err != nil {
+						return err
+					}
+				}
+				break
+			}
+			if (array && c != ']') || (!array && c != '}') {
+				return errSyntax
+			}
+			d.i++
+			d.depth--
+			open = open[:len(open)-1]
 		}
 	}
 }

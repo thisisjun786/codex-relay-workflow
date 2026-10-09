@@ -304,11 +304,12 @@ func hookTrustTomlExactHookSections(content, key string) []hookTrustTomlSection 
 // holds exactly one such line, and nil otherwise; a config.toml that does not exist reads as an
 // empty document, so every hook is untrusted. The listing's own error is returned as it is.
 func DiagnoseHookTrust(codexHome, pluginRoot, pluginKey string) ([]HookTrustResult, error) {
-	return diagnoseHookTrust(codexHome, pluginRoot, pluginKey, os.ReadFile)
+	return diagnoseHookTrust(codexHome, pluginRoot, pluginKey, os.ReadFile, 0)
 }
 
-// diagnoseHookTrust is DiagnoseHookTrust reading config.toml with read (readInstalledPluginKeys).
-func diagnoseHookTrust(codexHome, pluginRoot, pluginKey string, read hookTrustConfigReader) ([]HookTrustResult, error) {
+// diagnoseHookTrust is DiagnoseHookTrust reading config.toml with read (readInstalledPluginKeys) and
+// the plugin's documents within limit bytes (0: no bound; listHookTrustEntries).
+func diagnoseHookTrust(codexHome, pluginRoot, pluginKey string, read hookTrustConfigReader, limit int64) ([]HookTrustResult, error) {
 	content, present, err := hookTrustConfigReadConfig(codexHome, read)
 	if err != nil {
 		return nil, err
@@ -316,7 +317,7 @@ func diagnoseHookTrust(codexHome, pluginRoot, pluginKey string, read hookTrustCo
 	if !present {
 		content = ""
 	}
-	entries, err := ListHookTrustEntries(pluginRoot, pluginKey)
+	entries, err := listHookTrustEntries(pluginRoot, pluginKey, limit)
 	if err != nil {
 		return nil, err
 	}

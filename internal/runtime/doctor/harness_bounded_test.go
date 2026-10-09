@@ -8,6 +8,7 @@ package doctor
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -296,8 +297,12 @@ func TestHarnessBoundedLargeAndDeepDocuments(t *testing.T) {
 		if hooks.Severity != HarnessFail {
 			t.Fatalf("checks = %+v, want a hooks FAIL", checks)
 		}
-		if _, err := ListHookTrustEntries(root, "k@m"); err == nil {
-			t.Fatal("ListHookTrustEntries read a hook file past the limit")
+		// The harness lists within the bound; the exported listing the retrust command shares reads whole.
+		if _, err := listHookTrustEntries(root, "k@m", harnessReadLimit); !errors.Is(err, errHarnessTooLarge) {
+			t.Fatalf("the bounded listing read a hook file past the limit: %v", err)
+		}
+		if _, err := ListHookTrustEntries(root, "k@m"); err != nil {
+			t.Fatalf("ListHookTrustEntries refused a valid hook file: %v", err)
 		}
 	})
 }
