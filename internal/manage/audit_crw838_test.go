@@ -26,6 +26,15 @@ func crw838Env(t *testing.T, now *time.Time) *Env {
 	return e
 }
 
+// crw838WantID is the id the decision of 10-10 names, computed here and not by the code under
+// test: the first sixteen hex characters of sha256(target "\n" head "\n" gradedAt "\n"
+// sha256(result bytes) in hex).
+func crw838WantID(subject, head, gradedAt, result string) string {
+	digest := sha256.Sum256([]byte(result))
+	sum := sha256.Sum256([]byte(subject + "\n" + head + "\n" + gradedAt + "\n" + hex.EncodeToString(digest[:])))
+	return hex.EncodeToString(sum[:])[:16]
+}
+
 func crw838Grade(t *testing.T, e *Env, cfg *Config, bundle string) AuditResult {
 	t.Helper()
 	results, err := AuditGrade(context.Background(), e, cfg, []AuditJob{{Bundle: bundle}})
@@ -54,7 +63,8 @@ func crw838String(t *testing.T, row map[string]json.RawMessage, key string) stri
 	return out
 }
 
-// The row id is the first sixteen hex characters of sha256(target "\n" head "\n" gradedAt),
+// The row id is the first sixteen hex characters of
+// sha256(target "\n" head "\n" gradedAt "\n" sha256(the graded result bytes)),
 // the copy is at <audit state>/results/<id>.json, and the row names the copy's sha256.
 func TestCRW838OkRowCarriesAnIDAndAResultCopy(t *testing.T) {
 	state := t.TempDir()
@@ -67,8 +77,7 @@ func TestCRW838OkRowCarriesAnIDAndAResultCopy(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("the ledger has %d rows", len(rows))
 	}
-	sum := sha256.Sum256([]byte("s\nh\n2026-10-10T01:02:03Z"))
-	wantID := hex.EncodeToString(sum[:])[:16]
+	wantID := crw838WantID("s", "h", "2026-10-10T01:02:03Z", crw838JSONFirst)
 	if got := crw838String(t, rows[0], "id"); got != wantID {
 		t.Fatalf("id = %q, want %q", got, wantID)
 	}
@@ -180,7 +189,7 @@ func TestCRW838DraftsRefuseACopyThatDoesNotMatchTheRow(t *testing.T) {
 
 // The copy is written before the row and atomically: a copy that cannot be made keeps its row
 // out of the ledger; a finished copy is whole, with no temporary file beside it; and a copy that
-// exists is never replaced.
+// exists is accepted only when its bytes are the same.
 func TestCRW838TheCopyComesBeforeTheRowAndIsAtomic(t *testing.T) {
 	state := t.TempDir()
 	now := time.Date(2026, 10, 10, 1, 2, 3, 0, time.UTC)
@@ -194,39 +203,48 @@ func TestCRW838TheCopyComesBeforeTheRowAndIsAtomic(t *testing.T) {
 		Mode: auditModePR, Subject: "s", Head: "h", Issue: "CRW-1", Status: auditStatusOK, Score: 6,
 		GradedAt: "2026-10-10T01:02:03Z", Bundle: bundle,
 	}
-	id := auditRowID("s", "h", "2026-10-10T01:02:03Z")
+	id := crw838WantID("s", "h", "2026-10-10T01:02:03Z", crw838JSONFirst)
 	copyPath := filepath.Join(state, "audit", "results", id+".json")
-	// A copy already under the id (another grade of the same target in the same second) is never
-	// replaced, and the new grade is not refused: its row takes the next free second, so its id
-	// and its copy are its own.
+	// Another result already under the id: the row is refused, the copy is untouched, and the
+	// ledger holds no row for it.
 	if err := os.MkdirAll(filepath.Dir(copyPath), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(copyPath, []byte(crw838JSONSecond), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if rows, err := auditRecord(e, cfg, []AuditResult{result}); err != nil || rows != 1 {
-		t.Fatalf("auditRecord = %d, %v, want the row recorded", rows, err)
+	if rows, err := auditRecord(e, cfg, []AuditResult{result}); err == nil || rows != 0 {
+		t.Fatalf("auditRecord = %d, %v, want an error and no row", rows, err)
 	}
 	if data, _ := os.ReadFile(copyPath); string(data) != crw838JSONSecond {
 		t.Errorf("the copy was replaced: %q", data)
 	}
-	nextID := auditRowID("s", "h", "2026-10-10T01:02:04Z")
-	if data, err := os.ReadFile(filepath.Join(filepath.Dir(copyPath), nextID+".json")); err != nil || string(data) != crw838JSONFirst {
-		t.Errorf("the copy of the second grade is %q (%v)", data, err)
+	if data, _ := os.ReadFile(filepath.Join(state, "audit", auditLedgerFile)); len(data) != 0 {
+		t.Errorf("a row was appended without its copy: %q", data)
 	}
-	if rows := crw838Rows(t, state); len(rows) != 1 || crw838String(t, rows[0], "id") != nextID || crw838String(t, rows[0], "graded_at") != "2026-10-10T01:02:04Z" {
-		t.Errorf("the ledger holds %v, want one row at the next free second", rows)
+	// The same bytes under the same id are accepted, and the finished copy is the only file.
+	if err := os.Remove(copyPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(copyPath, []byte(crw838JSONFirst), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if rows, err := auditRecord(e, cfg, []AuditResult{result}); err != nil || rows != 1 {
+		t.Fatalf("the same bytes under the same id: %d, %v", rows, err)
+	}
+	entries, err := os.ReadDir(filepath.Dir(copyPath))
+	if err != nil || len(entries) != 1 || entries[0].Name() != id+".json" {
+		t.Errorf("results holds %v (%v), want only %s.json", entries, err, id)
 	}
 	// A fresh id gets a new copy through the temporary file and the link, and leaves no
 	// temporary file behind.
-	result.GradedAt = "2026-10-10T01:02:10Z"
+	result.GradedAt = "2026-10-10T01:02:04Z"
 	if rows, err := auditRecord(e, cfg, []AuditResult{result}); err != nil || rows != 1 {
 		t.Fatalf("a second id: %d, %v", rows, err)
 	}
-	entries, err := os.ReadDir(filepath.Dir(copyPath))
-	if err != nil || len(entries) != 3 {
-		t.Errorf("results holds %v (%v), want three finished copies", entries, err)
+	entries, err = os.ReadDir(filepath.Dir(copyPath))
+	if err != nil || len(entries) != 2 {
+		t.Errorf("results holds %v (%v), want two finished copies", entries, err)
 	}
 	for _, entry := range entries {
 		if strings.Contains(entry.Name(), "tmp") {

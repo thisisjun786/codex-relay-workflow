@@ -245,9 +245,6 @@ func auditGradeLocked(ctx context.Context, e *Env, cfg *Config, jobs []AuditJob)
 		}
 		return nil, err
 	}
-	for n, i := range gradedAt {
-		results[i].GradedAt = graded[n].GradedAt
-	}
 	for i := range paths {
 		if marks[i] == nil {
 			continue
