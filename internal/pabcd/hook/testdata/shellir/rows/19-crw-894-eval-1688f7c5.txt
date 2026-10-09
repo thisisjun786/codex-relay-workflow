@@ -365,3 +365,41 @@ printf 'x' | php script.php
 === CRW-894-ev-69 | U
 --why -c behind -o in one cluster is read one way by bash (-o posix -c) and another by zsh (option name), so the reader refuses it.
 bash -oc posix 'echo hi'
+
+=== CRW-894-ev-70 | U
+--why python3 -i runs safe.py and then reads the pipe as commands: the script operand is not the program that matters.
+--file safe.py
+pass
+--cmd
+printf 'import shutil; shutil.rmtree("../repo")\n' | python3 -i safe.py
+
+=== CRW-894-ev-71 | U
+--why python3 -i with -c runs the string and then reads the pipe as commands.
+printf 'import shutil; shutil.rmtree("../repo")\n' | python3 -i -c 'pass'
+
+=== CRW-894-ev-72 | U
+--why node -e with -i runs the string and then reads the pipe in its REPL.
+printf 'require("fs").rmSync("../repo",{recursive:true})\n' | node -e 0 -i
+
+=== CRW-894-ev-73 | U
+--why python3 -i with a here-document after a script operand: the here-document is read as commands after the script.
+--file safe.py
+pass
+--cmd
+python3 -i safe.py <<'EOF'
+import shutil; shutil.rmtree("../repo")
+EOF
+
+=== CRW-894-ev-74 | B
+--why Control: python3 -i with no pipe or here-document runs the script (standard input is not a program the text shows).
+--file safe.py
+pass
+--cmd
+python3 -i safe.py
+
+=== CRW-894-ev-75 | B
+--why Control: the pipe is data for a script of python3 without -i.
+--file safe.py
+pass
+--cmd
+printf x | python3 safe.py

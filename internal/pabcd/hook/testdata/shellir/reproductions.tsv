@@ -913,3 +913,9 @@ pre-eval-crw894-1688f7c5.json (CRW-894 d4)	printf x | python3 -m	CRW-894-ev-66	r
 pre-eval-crw894-1688f7c5.json (CRW-894 d1)	printf 'x' | php "$(echo /dev/./stdin)"	CRW-894-ev-67	row	-
 pre-eval-crw894-1688f7c5.json (CRW-894 d1)	printf 'x' | php script.php	CRW-894-ev-68	row	-
 pre-eval-crw894-1688f7c5.json (CRW-894 d2)	bash -oc posix 'echo hi'	CRW-894-ev-69	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d1)	printf 'import shutil; shutil.rmtree("../repo")\n' | python3 -i safe.py	CRW-894-ev-70	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d1)	printf 'import shutil; shutil.rmtree("../repo")\n' | python3 -i -c 'pass'	CRW-894-ev-71	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d1)	printf 'require("fs").rmSync("../repo",{recursive:true})\n' | node -e 0 -i	CRW-894-ev-72	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d1)	python3 -i safe.py <<'EOF'\nimport shutil; shutil.rmtree("../repo")\nEOF	CRW-894-ev-73	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d1)	python3 -i safe.py	CRW-894-ev-74	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d1)	printf x | python3 safe.py	CRW-894-ev-75	row	-

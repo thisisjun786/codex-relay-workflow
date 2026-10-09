@@ -16,6 +16,9 @@ func TestPipedProgramRunsUnderRealPrograms(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "safe.sh"), []byte(":\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(dir, "safe.py"), []byte("pass\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	const marker = "from-pipe"
 	cases := []struct {
 		name   string
@@ -41,6 +44,10 @@ func TestPipedProgramRunsUnderRealPrograms(t *testing.T) {
 		{"python3 /proc/self/root/dev/stdin", "bash", "printf 'print(\"" + marker + "\")\\n' | python3 /proc/self/root/dev/stdin", "python3"},
 		{"cd /dev; python3 stdin", "bash", "cd /dev; printf 'print(\"" + marker + "\")\\n' | python3 stdin", "python3"},
 		{"cd /dev; python3 /proc/self/cwd/stdin", "bash", "cd /dev; printf 'print(\"" + marker + "\")\\n' | python3 /proc/self/cwd/stdin", "python3"},
+		// the interpreter's REPL option reads the pipe after its script or string
+		{"python3 -i script", "bash", "printf 'print(\"" + marker + "\")\n' | python3 -i safe.py", "python3"},
+		{"python3 -i -c", "bash", "printf 'print(\"" + marker + "\")\n' | python3 -i -c pass", "python3"},
+		{"node -e 0 -i", "bash", "printf 'console.log(\"" + marker + "\")\n' | node -e 0 -i", "node"},
 		{"bash /dev/./stdin", "bash", "printf 'echo " + marker + "\\n' | bash /dev/./stdin", "bash"},
 		{"bash </dev/./stdin", "bash", "printf 'echo " + marker + "\\n' | bash </dev/./stdin", "bash"},
 	}
@@ -73,8 +80,10 @@ func reproGotText(t *testing.T, cmd string) [3]string {
 	r := newDelRig(t)
 	cwd, root, env := gateScene(t)
 	for _, base := range []string{cwd, r.checkout} {
-		if err := os.WriteFile(filepath.Join(base, "safe.sh"), []byte(":\n"), 0o644); err != nil {
-			t.Fatal(err)
+		for name, body := range map[string]string{"safe.sh": ":\n", "safe.py": "pass\n"} {
+			if err := os.WriteFile(filepath.Join(base, name), []byte(body), 0o644); err != nil {
+				t.Fatal(err)
+			}
 		}
 	}
 	return reproGot(r, cwd, root, env, cmd)

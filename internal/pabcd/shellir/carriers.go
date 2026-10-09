@@ -57,6 +57,7 @@ func (w *walker) suCall(args []Word, st *state, ctx Context) error {
 
 type interpSpec struct {
 	module    string   // letters whose argument is a module the interpreter runs (python -m); the words after it are the module's
+	repl      string   // letters that keep the interpreter reading commands from standard input after its program (python -i, node -i)
 	code      string   // letters whose argument is program text
 	consume   string   // letters whose argument is not program text
 	flags     string   // letters with no argument
@@ -67,9 +68,9 @@ type interpSpec struct {
 func interpreterSpec(lang string) interpSpec {
 	switch lang {
 	case "python":
-		return interpSpec{module: "m", code: "c", consume: "WX", flags: "BbdEhiIOPqRsSuvxV", attach: true}
+		return interpSpec{module: "m", repl: "i", code: "c", consume: "WX", flags: "BbdEhiIOPqRsSuvxV", attach: true}
 	case "node":
-		return interpSpec{code: "ep", consume: "r", flags: "ci", longFlags: nodeLongFlags}
+		return interpSpec{repl: "i", code: "ep", consume: "r", flags: "ci", longFlags: nodeLongFlags}
 	case "perl":
 		return interpSpec{code: "eE", flags: "wWXnpsTtUcSaFlvi", attach: true}
 	case "ruby":
@@ -89,9 +90,14 @@ func (w *walker) interpreterInline(name string, args []Word, redirs []Redir, dir
 	case "sed":
 		return sedInline(name, args, redirs, ctx)
 	}
-	codes, operand, module, err := clusterInterp(name, args, interpreterSpec(lang))
+	codes, operand, module, repl, err := clusterInterp(name, args, interpreterSpec(lang))
 	if err != nil {
 		return nil, nil, err
+	}
+	if repl && stdinCarriesProgram(ctx.Stdin) {
+		// -i keeps the interpreter reading commands from standard input after its script or program, so the pipe (or the
+		// here-document) is a program whatever the script operand or the -c string shows.
+		return nil, nil, unreadablef("%s -i reads commands from standard input (%s) after its program", name, ctx.Stdin)
 	}
 	if module != nil {
 		if len(codes) > 0 {
@@ -536,15 +542,16 @@ func interpreterLanguage(name string) string {
 	return ""
 }
 
-// clusterInterp reads interpreter options. It returns the program words it found, the index of the first operand and, for a module option (python -m), the module word: the operand index then points at the module's own arguments.
+// clusterInterp reads interpreter options. It returns the program words it found, the index of the first operand, for a module option (python -m) the module word (the operand index then points at the module's own arguments), and whether an option keeps the interpreter reading commands from standard input (-i).
 // Node's --eval and --print take the program as the next word or after an =.
-func clusterInterp(name string, args []Word, spec interpSpec) ([]Word, int, *Word, error) {
+func clusterInterp(name string, args []Word, spec interpSpec) ([]Word, int, *Word, bool, error) {
 	var codes []Word
+	repl := false
 	i := 0
 	for i < len(args) {
 		v, err := knownValue(args[i], name+" option")
 		if err != nil {
-			return nil, 0, nil, err
+			return nil, 0, nil, false, err
 		}
 		if v == "--" {
 			i++
@@ -552,7 +559,7 @@ func clusterInterp(name string, args []Word, spec interpSpec) ([]Word, int, *Wor
 		}
 		if v == "--eval" || v == "--print" {
 			if i+1 >= len(args) {
-				return nil, 0, nil, unreadablef("%s %s without a program", name, v)
+				return nil, 0, nil, false, unreadablef("%s %s without a program", name, v)
 			}
 			codes = append(codes, args[i+1])
 			i += 2
@@ -568,7 +575,7 @@ func clusterInterp(name string, args []Word, spec interpSpec) ([]Word, int, *Wor
 				i++
 				continue
 			}
-			return nil, 0, nil, unreadablef("%s option %s is not modelled", name, v)
+			return nil, 0, nil, false, unreadablef("%s option %s is not modelled", name, v)
 		}
 		if v == "-" || len(v) < 2 || v[0] != '-' {
 			break
@@ -580,13 +587,13 @@ func clusterInterp(name string, args []Word, spec interpSpec) ([]Word, int, *Wor
 			switch {
 			case strings.IndexByte(spec.code, c) >= 0:
 				if !last && !spec.attach {
-					return nil, 0, nil, unreadablef("%s option -%c must stand alone", name, c)
+					return nil, 0, nil, false, unreadablef("%s option -%c must stand alone", name, c)
 				}
 				if !last {
 					codes = append(codes, Word{Known: true, Value: v[k+1:]})
 				} else {
 					if i >= len(args) {
-						return nil, 0, nil, unreadablef("%s -%c without a program", name, c)
+						return nil, 0, nil, false, unreadablef("%s -%c without a program", name, c)
 					}
 					codes = append(codes, args[i])
 					i++
@@ -598,27 +605,30 @@ func clusterInterp(name string, args []Word, spec interpSpec) ([]Word, int, *Wor
 					mod = Word{Known: true, Value: v[k+1:]}
 				} else {
 					if i >= len(args) {
-						return nil, 0, nil, unreadablef("%s -%c without a module", name, c)
+						return nil, 0, nil, false, unreadablef("%s -%c without a module", name, c)
 					}
 					mod = args[i]
 					i++
 				}
-				return codes, i, &mod, nil
+				return codes, i, &mod, repl, nil
 			case strings.IndexByte(spec.consume, c) >= 0:
 				if last {
 					if i >= len(args) {
-						return nil, 0, nil, unreadablef("%s -%c without a value", name, c)
+						return nil, 0, nil, false, unreadablef("%s -%c without a value", name, c)
 					}
 					i++
 				}
 				k = len(v)
 			case strings.IndexByte(spec.flags, c) >= 0:
+				if strings.IndexByte(spec.repl, c) >= 0 {
+					repl = true
+				}
 			default:
-				return nil, 0, nil, unreadablef("%s option -%c is not modelled", name, c)
+				return nil, 0, nil, false, unreadablef("%s option -%c is not modelled", name, c)
 			}
 		}
 	}
-	return codes, i, nil, nil
+	return codes, i, nil, repl, nil
 }
 
 // fdAliasPath reports a path that names a file descriptor of this process, so that reading it reads what the shell gave

@@ -229,3 +229,32 @@ func TestUnknownScriptOperandBehindStandardInput(t *testing.T) {
 		}
 	}
 }
+
+// TestInterpreterReplOptionReadsTheInput: python -i and node -i read commands from standard input after their program, so a
+// pipe, a here-document or a here-string is a program whatever the script operand or the -c string shows.
+func TestInterpreterReplOptionReadsTheInput(t *testing.T) {
+	for _, c := range []struct {
+		cmd        string
+		unreadable bool
+	}{
+		{"printf x | python3 -i safe.py", true},
+		{"printf x | python3 -i -c pass", true},
+		{"printf x | python3 -ic pass", true},
+		{"printf x | python3 -Bi safe.py", true},
+		{"printf x | python3 -i -m json.tool", true},
+		{"python3 -i safe.py <<< x", true},
+		{"python3 -i safe.py <<'EOF'\nx\nEOF", true},
+		{"printf x | node -e 0 -i", true},
+		{"printf x | node -i safe.js", true},
+		{"python3 -i safe.py", false},
+		{"python3 -i safe.py < prog.txt", false},
+		{"printf x | python3 safe.py", false},
+		{"printf x | python3 -c pass -i", true}, // after -c the word is an argument for python, the reader keeps reading options: refused
+		{"printf x | node safe.js", false},
+	} {
+		_, err := Analyze(c.cmd, "/work")
+		if got := err != nil; got != c.unreadable {
+			t.Errorf("%q: unreadable=%v, want %v (%v)", c.cmd, got, c.unreadable, err)
+		}
+	}
+}
