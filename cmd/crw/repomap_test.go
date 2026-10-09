@@ -428,6 +428,85 @@ func TestRepoMapBootstrapsAreSerializedAndLeaveTheOthersTree(t *testing.T) {
 	}
 }
 
+// python3 -m venv creates the interpreter before pip has installed anything. A second run that starts while the first is still
+// installing must wait for the lock instead of taking the half-built interpreter as a ready venv (CRW-1147).
+func TestRepoMapSecondRunWaitsWhileThePipInstallIsRunning(t *testing.T) {
+	root := t.TempDir()
+	env := mapEnv(map[string]string{"HOME": root, "CODEX_HOME": filepath.Join(root, "codex"), "CRW_HOME": root, "CRW_MAP_BOOTSTRAP": "1"})
+	p, err := repoMapPaths(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(root, "venvs", "repomap")
+	fs := &fakeMapFS{present: map[string]bool{}}
+	pipStarted, pipRelease := make(chan struct{}), make(chan struct{})
+	var mu sync.Mutex
+	pipDone := false
+	var earlyUse []string
+	mk := func(name string, stderr io.Writer) mapDeps {
+		return mapDeps{
+			exists: fs.has, remove: fs.remove,
+			lock: func(venvs string) (func(), error) {
+				return repoMapBootstrapLock(context.Background(), venvs, stderr)
+			},
+			run: func(cmd string, args []string, quiet bool) (int, error) {
+				switch {
+				case cmd == "uv":
+					return 1, nil // no uv: the run takes the venv interpreter
+				case len(args) >= 2 && args[0] == "-m" && args[1] == "venv":
+					fs.set(dir)
+					fs.set(p.python) // the interpreter exists before pip has installed the requirements
+				case len(args) >= 2 && args[0] == "-m" && args[1] == "pip":
+					close(pipStarted)
+					<-pipRelease
+					mu.Lock()
+					pipDone = true
+					mu.Unlock()
+				case cmd == p.python:
+					mu.Lock()
+					if !pipDone {
+						earlyUse = append(earlyUse, name)
+					}
+					mu.Unlock()
+				}
+				return 0, nil
+			},
+		}
+	}
+	oldPoll := repoMapLockPoll
+	repoMapLockPoll = 5 * time.Millisecond
+	t.Cleanup(func() { repoMapLockPoll = oldPoll })
+	var aErr, bErr lockedBuilder
+	done := make(chan int, 2)
+	go func() { done <- launchRepoMap([]string{"."}, env, &aErr, mk("A", &aErr)) }()
+	<-pipStarted
+	go func() { done <- launchRepoMap([]string{"."}, env, &bErr, mk("B", &bErr)) }()
+	deadline := time.Now().Add(10 * time.Second)
+	for !strings.Contains(bErr.String(), "waiting for another venv bootstrap") {
+		if time.Now().After(deadline) {
+			close(pipRelease)
+			t.Fatalf("B did not wait for A's pip install: %q (it used the half-built interpreter: %v)", bErr.String(), func() []string { mu.Lock(); defer mu.Unlock(); return earlyUse }())
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	close(pipRelease)
+	for range 2 {
+		select {
+		case code := <-done:
+			if code != 0 {
+				t.Fatalf("exit %d, A %q B %q", code, aErr.String(), bErr.String())
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("bootstraps did not finish")
+		}
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(earlyUse) != 0 {
+		t.Fatalf("%v ran the map interpreter before the pip install finished", earlyUse)
+	}
+}
+
 // The lock cannot be taken: the bootstrap is skipped (nothing built, nothing removed) and the run falls back.
 func TestRepoMapBootstrapSkippedWhenTheLockCannotBeTaken(t *testing.T) {
 	root := t.TempDir()

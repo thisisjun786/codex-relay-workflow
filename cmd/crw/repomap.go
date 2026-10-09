@@ -224,13 +224,16 @@ func launchRepoMap(args []string, env host.LookupEnv, stderr io.Writer, d mapDep
 		return runRepoMapCommand(selectRepoMapCommand(args, env, p), stderr, d)
 	}
 	override := repoMapOverride(env)
-	p.hasVenv = d.exists(p.python)
-	if bootstrap, _ := env("CRW_MAP_BOOTSTRAP"); !p.hasVenv && bootstrap == "1" && override == "" {
+	if bootstrap, _ := env("CRW_MAP_BOOTSTRAP"); bootstrap == "1" && override == "" {
+		// The bootstrap run takes the lock before it looks for the interpreter: python3 -m venv creates it before pip has
+		// installed anything, so an interpreter that exists is not yet a ready venv while another run holds the lock (CRW-1147).
 		ok, exit := bootstrapRepoMapVenv(p, stderr, d)
 		if exit != 0 {
 			return exit
 		}
 		p.hasVenv = ok
+	} else {
+		p.hasVenv = d.exists(p.python)
 	}
 	// uv is probed only for a run it can serve: an explicit interpreter and help (above) never reach it.
 	if override == "" {
@@ -250,12 +253,12 @@ func bootstrapRepoMapVenv(p mapPaths, stderr io.Writer, d mapDeps) (ok bool, exi
 		unlock, err := d.lock(filepath.Dir(dir))
 		if err != nil {
 			fmt.Fprintln(stderr, "crw map: venv bootstrap skipped:", err)
-			return false, 0
+			return d.exists(p.python), 0 // without the lock nothing is built, and an interpreter that is there is used as before
 		}
 		defer unlock()
-		if d.exists(p.python) {
-			return true, 0 // the run that held the lock before this one built it
-		}
+	}
+	if d.exists(p.python) {
+		return true, 0 // ready: any earlier run finished (or failed and cleaned up) before it released the lock
 	}
 	existed := d.exists(dir)
 	fmt.Fprintf(stderr, "crw map: bootstrapping venv at %s (one-time)...\n", dir)
