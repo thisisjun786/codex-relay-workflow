@@ -42,8 +42,11 @@ func nonCanonicalRecords(executable, policy, digest string) map[string]string {
 // read reports needs_user_action with AppliedActionReregister once the policy file moves on, and
 // running that guidance leaves the record naming the new digest with only that member changed. The
 // refusal this used to meet (record_not_canonical) was removed by CRW-931, which made the installer
-// judge the record by the launcher's own check, the same one Locate uses through
-// pluginwiring.ReadBridgeRecord, so the two cannot disagree about which records exist.
+// judge the record by the launcher's own check. The two spellings below are read the same way by
+// Locate and the installer because both decode the record through pluginwiring.ReadBridgeRecord;
+// the two do not share one acceptance judgement (the installer also refuses arguments an exec
+// cannot take and a list that starts with the plugin-launch flag, which Locate does not check),
+// and this test pins only the spelling case.
 func TestTheRecoveryGuidanceRunsAgainstARecordThisInstallerDidNotWrite(t *testing.T) {
 	args, _ := reregisterArgs(t)
 	for name := range nonCanonicalRecords("/x", "/y", "z") {
