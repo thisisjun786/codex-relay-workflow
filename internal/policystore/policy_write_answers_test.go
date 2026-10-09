@@ -3,6 +3,7 @@ package policystore
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -55,6 +56,29 @@ func TestAMovedFileThatTheRecordAlreadyNamesIsNotARecovery(t *testing.T) {
 	}}, WriteRequest{ExpectedDigest: digestOf(moved), Change: removeLegacy()})
 	if next.Kind == WriteRecoveryNeeded {
 		t.Fatalf("the next write is refused as a recovery after a not_applied answer: %+v", next)
+	}
+}
+
+// TestANotAppliedAnswerCarriesTheUnsyncedUndoWarning pins what the web screen must show: when the
+// exchange's undo ran but its directory entry was not synced, the not_applied answer still warns that
+// a host that loses power now may find the candidate at the policy path (CRW-1001, verification round 1).
+func TestANotAppliedAnswerCarriesTheUnsyncedUndoWarning(t *testing.T) {
+	env, file := host(t, policyText, true)
+	moved := strings.Replace(policyText, "devin/swe-2", "devin/swe-3", 1)
+	opts := WriteOptions{Register: neverRegisters(t), Swap: func(context.Context, string, []byte, []byte, os.FileMode) ([]byte, string, error) {
+		if err := os.WriteFile(file, []byte(moved), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		rewriteRecord(t, env, file, digestOf(moved))
+		return nil, "", fmt.Errorf("%w: %w: the directory could not be synced", errPolicyMoved, errUndoSync)
+	}}
+	result := Write(context.Background(), envOf(env), opts,
+		WriteRequest{ExpectedDigest: digestOf(policyText), Change: removeLegacy()})
+	if result.Kind != WriteNotApplied {
+		t.Fatalf("kind = %q (%v), want %q", result.Kind, result.Errors, WriteNotApplied)
+	}
+	if len(result.Warnings) != 1 || !strings.Contains(result.Warnings[0], "may find the candidate at the policy path") {
+		t.Fatalf("the unsynced undo is not warned about: %v", result.Warnings)
 	}
 }
 

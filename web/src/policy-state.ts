@@ -127,6 +127,7 @@ export interface PolicyWriteError {
   backup?: string;
   recovery?: string;
   step?: string;
+  warnings?: string[];
 }
 
 /** One row of the first screen. */
@@ -867,6 +868,10 @@ export function noticeForWrite(status: number, body: unknown, proposal: LostProp
   const notice = emptyNotice("err", "");
   notice.errors = Array.isArray(body.errors) ? body.errors.map((error) => stringOf(error)) : [];
   notice.restored = typeof body.restored === "boolean" ? body.restored : null;
+  // A refusal can carry warnings too (an undo whose directory entry was not synced, a restore that
+  // was not durable). They qualify the refusal, so dropping them would hide a durability risk the
+  // server reported.
+  notice.warnings = Array.isArray(body.warnings) ? body.warnings.map((warning) => stringOf(warning)) : [];
   switch (body.error) {
     case "stale_digest":
       notice.keepInputs = true;

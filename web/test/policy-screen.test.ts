@@ -401,6 +401,20 @@ test("the screen shows the applied state and the server's action, never a guesse
   assert.ok(!markup.includes("still holds the old bytes"), "the running state is never asserted");
 });
 
+test("the screen shows the warning a not_applied answer carries", async () => {
+  // CRW-1001: the exchange undo could not be synced, so a power loss may bring the candidate back; the
+  // 409 not_applied body carries that warning and the rendered notice must show it.
+  const pure = await import("../src/policy-state.ts");
+  let state = pure.initialScreen();
+  state = pure.screenLoaded(state, pure.decodePolicy(readingBody()));
+  const warning = "the undo of this write's exchange could not be synced, so a host that loses power now may find the candidate at the policy path";
+  const notice = pure.noticeForWrite(409, { error: "not_applied", reason: "x", currentDigest: "c".repeat(64), fileDigest: "c".repeat(64), registeredDigest: "c".repeat(64), warnings: [warning] });
+  const finished = pure.screenSaveFinished(pure.screenSaveStarted(state), state.change, notice) as unknown as Record<string, unknown>;
+  const { markup } = await mount(finished);
+  assert.ok(markup.includes("Not saved"));
+  assert.ok(markup.includes("a host that loses power now may find the candidate"), "the durability warning is shown");
+});
+
 test("the screen headlines a lost write Result unknown, never Not saved", async () => {
   // d1 observed on the rendered screen: a lost response must not be headed as a refused save.
   const pure = await import("../src/policy-state.ts");

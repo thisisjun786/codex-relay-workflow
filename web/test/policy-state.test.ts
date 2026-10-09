@@ -766,6 +766,16 @@ test("a successful save with nothing pending leaves no drafts behind", () => {
 test("editing an existing exception keeps its identifier byte for byte", () => {
   // d2: trimming a stored id sent setException for a different id and created a new exception.
   const exception = { id: " legacy ", role: "parent", model: "m", reasoningEffort: "high", cwd: ["/srv/a"] };
+// CRW-1001 (verification round 1): a refusal can carry warnings; the not_applied answer carries the
+// unsynced-undo warning (policy_write.go), and the screen must show it.
+test("a not_applied answer keeps the server's warnings for the screen", () => {
+  const warning = "the undo of this write's exchange could not be synced, so a host that loses power now may find the candidate at the policy path";
+  const notice = noticeForWrite(409, { error: "not_applied", reason: "x", currentDigest: "c".repeat(64), fileDigest: "c".repeat(64), registeredDigest: "c".repeat(64), warnings: [warning] });
+  assert.deepEqual(notice.warnings, [warning]);
+  assert.deepEqual(noticeForWrite(409, { error: "not_applied", reason: "x" }).warnings, []);
+  assert.deepEqual(noticeForWrite(500, { error: "register_failed", restored: false, warnings: ["w"] }).warnings, ["w"]);
+});
+
   const draft = draftForException(exception);
   const change = changeFromExceptionDraft({ ...draft, effort: "max" });
   assert.equal((change as { id: string }).id, " legacy ", "the stored id is not trimmed");
