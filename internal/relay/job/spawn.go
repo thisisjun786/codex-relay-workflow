@@ -19,6 +19,9 @@
 //   - After twenty collisions the fallback id is asked again and numbered while a record has it; the oracle returned it unchecked, which
 //     could replace the record of a job that has it.
 //
+// One more difference comes from CRW-1081: the job outlives its caller, so the Go start marks every descriptor above 2 that the caller
+// holds close-on-exec before the shell is started (fdsweep, the sweep of the service start) and refuses to start when it cannot.
+//
 // Two oracle behaviours have no Go spelling: Node starts the shell through libuv, which reaps it, so a Wait goroutine does that here,
 // and a shell that cannot start is reported by an error event after spawn returns (a Start error here, settled in the same order).
 // The Windows branch of buildShell is the oracle's text: this package uses syscall.Kill and O_NOFOLLOW and does not build there.
@@ -29,6 +32,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"math"
 	"os"
 	"os/exec"
@@ -39,10 +43,16 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/fdsweep"
 )
 
 // ErrNULArgument is what Node's spawn throws (ERR_INVALID_ARG_VALUE) for an argument that holds a NUL byte.
 const ErrNULArgument = sentinel("a command argument contains a NUL byte")
+
+// markInherited is the sweep that keeps the caller's descriptors out of the job (internal/relay/fdsweep, shared with the service start).
+// It is a variable so that a check can make it fail.
+var markInherited = fdsweep.MarkInherited
 
 // RunOptions is spawn.ts RunOptions without cwd, which is the workspace argument of RunBackground. An empty ID is no seed, as in JavaScript.
 type RunOptions struct {
@@ -184,6 +194,11 @@ func runBackground(ws string, opts RunOptions, clock func() time.Time, start fun
 	cmd := exec.Command(file, args...)
 	cmd.Dir = ws
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true} // detached: a session and a process group of its own, which Cancel signals
+	// The caller's descriptors without close-on-exec would reach the job, which outlives the caller (CRW-1081): they are marked here, and a
+	// start that cannot be shown to keep them out is refused. ExtraFiles, set up by the fork itself, are not touched.
+	if err := markInherited(); err != nil {
+		return BgRecord{}, fmt.Errorf("start refused, the caller's open descriptors cannot all be kept out of the job: %w", err)
+	}
 	var pid *int
 	var token *string
 	startErr := start(cmd)
