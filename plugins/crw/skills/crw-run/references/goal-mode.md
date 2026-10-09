@@ -12,7 +12,9 @@ Two terms are kept apart throughout. A **loop** is the PABCD completion loop of 
 mode of the project parent. A request that says "loop" and names a Linear project to coordinate is
 goal mode's, not a loop's, and the answer says so: `$crw-loop` with a project scope and coordination
 intent starts no loop and hands the request to Run goal mode. A request that asks for goal mode in
-other words, such as a parent goal for the project, is the same request.
+other words, such as a parent goal for the project, is the same request. The loop skills also say
+"goal mode" of a task whose own host goal is active; that is a task's goal, a different thing from
+this mode, which belongs to the project parent.
 
 Three rules follow, and every section below keeps them.
 
