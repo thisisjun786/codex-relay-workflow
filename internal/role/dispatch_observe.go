@@ -82,8 +82,9 @@ func dispatchObserve(ctx context.Context, env host.LookupEnv, h DispatchHost, se
 
 // dispatchRolloutNewest reads the child's rollout, which the host appends to, and returns how its newest started turn ended:
 // "completed" (task_complete), "interrupted" (turn_aborted), or "" when no turn started, the newest one has not ended in the
-// file, or a damaged or unfinished line leaves it unclear how the newest turn stands. A turn that has not ended in the file may still be running, or its process may be gone; the rollout cannot tell, so it
-// is never read as in progress. Only regular files are read, line by line.
+// file, or a damaged or unfinished line leaves it unclear how the newest turn stands. A turn that has not ended in the file
+// may still be running, or its process may be gone; the rollout cannot tell, so it is never read as in progress. Only regular
+// files are read, line by line.
 func dispatchRolloutNewest(path string) string {
 	info, err := os.Lstat(path)
 	if err != nil || !info.Mode().IsRegular() {
@@ -98,11 +99,11 @@ func dispatchRolloutNewest(path string) string {
 	newest, ended := "", ""
 	for {
 		line, err := r.ReadBytes('\n')
-		// A line the host wrote whole parses. One that names an event but does not parse, or an unterminated last line that
-		// does not parse, is damage or a write in progress: it may be the start or the end of a turn, so what was read before
-		// it no longer shows how the newest turn stands, and the end stays unseen until a later turn starts and ends whole.
-		unterminated := err != nil && len(bytes.TrimSpace(line)) > 0
-		if bytes.Contains(line, []byte(`"event_msg"`)) || unterminated {
+		// Every line the host wrote whole parses. A line that does not, terminated or not, is damage or a write in progress,
+		// and nothing in it says which record it was: it may be the start or the end of a turn, so what was read before it no
+		// longer shows how the newest turn stands, and the end stays unseen until a later turn starts and ends whole. A line
+		// is classified by its decoded type, never by the text it contains.
+		if len(bytes.TrimSpace(line)) > 0 {
 			var event struct {
 				Type    string `json:"type"`
 				Payload struct {
