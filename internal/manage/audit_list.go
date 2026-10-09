@@ -128,7 +128,7 @@ func AuditList(_ context.Context, e *Env, cfg *Config, opts AuditListOptions) (A
 			return auditListFilterRounds(rows, opts), nil
 		})
 	drafts, draftsSource := auditListRead(auditListNameDrafts, auditDraftDir(e, cfg),
-		func() ([]auditDraftSummary, error) { return auditListDrafts(e, cfg) })
+		func() ([]auditDraftSummary, error) { return auditListDrafts(e, cfg, opts) })
 	listing.Results, listing.Alerts, listing.Rounds, listing.Drafts = results, alerts, rounds, drafts
 	listing.Sources = []auditListSource{resultsSource, alertsSource, roundsSource, draftsSource}
 	return listing, nil
@@ -279,8 +279,10 @@ func auditListRounds(e *Env, cfg *Config) ([]auditListRound, error) {
 // auditListDrafts reads every draft below the drafts directory, skipping the index and any
 // document of another schema. A file whose JSON cannot be read at all, or that is not a
 // draft this build knows, is corruption rather than a foreign schema, so it makes the whole
-// source unknown instead of disappearing quietly. The result is ordered by fingerprint.
-func auditListDrafts(e *Env, cfg *Config) ([]auditDraftSummary, error) {
+// source unknown instead of disappearing quietly. A draft has no issue field; the issue key it
+// carries is the one audit drafts mark recorded as posted, so --issue keeps the drafts posted as
+// that issue and drops every draft with no posted key. The result is ordered by fingerprint.
+func auditListDrafts(e *Env, cfg *Config, opts AuditListOptions) ([]auditDraftSummary, error) {
 	dir := auditDraftDir(e, cfg)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -319,6 +321,9 @@ func auditListDrafts(e *Env, cfg *Config) ([]auditDraftSummary, error) {
 		doc, err := auditDraftLoad(path)
 		if err != nil {
 			return nil, err
+		}
+		if opts.Issue != "" && doc.Posted != opts.Issue {
+			continue
 		}
 		out = append(out, auditDraftSummaryOf(doc))
 	}
