@@ -598,8 +598,9 @@ func HasAnyTask(ws string, sessionID *string, clock func() time.Time) (bool, err
 
 // deliver hands the session's due completions over (CRW-1092). Under the store lock it selects them from the records as they are now,
 // renders them, emits the text and stamps them delivered only once the emission has succeeded, so a failed write leaves them pending
-// for a later wake and a concurrent hook sees them stamped. It returns the emitted text, "" when there was none.
-func deliver(ws string, sessionID *string, clock func() time.Time, render func([]BgRecord) string, emit func(string) error) (string, error) {
+// for a later wake and a concurrent hook sees them stamped. render answers the text and the completions it describes: only those are
+// stamped, and one the budget left out stays pending (CRW-1095). It returns the emitted text, "" when there was none.
+func deliver(ws string, sessionID *string, clock func() time.Time, render func([]BgRecord) (string, []BgRecord), emit func(string) error) (string, error) {
 	unlock, err := lockStore(ws)
 	if errors.Is(err, os.ErrNotExist) {
 		return "", nil
@@ -612,14 +613,14 @@ func deliver(ws string, sessionID *string, clock func() time.Time, render func([
 	if err != nil || len(due) == 0 {
 		return "", err
 	}
-	out := render(due)
+	out, shown := render(due)
 	if out == "" {
 		return "", nil
 	}
 	if err := emit(out); err != nil {
 		return "", err
 	}
-	markDelivered(ws, due, clock, true)
+	markDelivered(ws, shown, clock, true)
 	return out, nil
 }
 

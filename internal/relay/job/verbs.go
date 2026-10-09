@@ -305,12 +305,11 @@ func cliTail(arg *string, available int) int {
 }
 
 // cliDrain selects and stamps under the store lock (deliver), so a drain and a hook never hand out one completion twice. Its text is
-// the relay's answer, which the dispatcher writes after it returns: the stamp still comes before that write.
+// the relay's answer, which the dispatcher writes after it returns: the stamp still comes before that write. The text keeps the wake
+// budget as a JSON string, and a job it does not describe stays pending (CRW-1095).
 func cliDrain(cwd string, session *string, clock func() time.Time) string {
-	out, _ := deliver(cwd, session, clock, func(recs []BgRecord) string {
-		lines := append([]string{"[crw bg] 백그라운드 작업 " + strconv.Itoa(len(recs)) + "건이 끝났습니다."}, WakeLines(recs)...)
-		lines = append(lines, "출력은 `crw relay job get <id> --tail 40`으로 봅니다. 전체 목록은 `crw relay job list`.\n결과를 확인하고 필요한 후속 작업을 이어가세요.")
-		return strings.Join(lines, "\n")
+	out, _ := deliver(cwd, session, clock, func(recs []BgRecord) (string, []BgRecord) {
+		return fitWake(recs, completionBody, jsonSize)
 	}, acceptAll)
 	return out
 }

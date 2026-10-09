@@ -45,47 +45,70 @@ func PayloadCwd(p HookPayload, fallback string) string {
 	return fallback
 }
 
+// CompletionText is the text of a wake for recs: the jobs that fit the budget (fitWake), as a drain hands it over.
 func CompletionText(recs []BgRecord) string {
-	lines := append([]string{"[crw bg] 백그라운드 작업 " + stringNumber(len(recs)) + "건이 끝났습니다."}, WakeLines(recs)...)
+	out, _ := fitWake(recs, completionBody, jsonSize)
+	return out
+}
+
+// completionBody is the text of a wake that describes n jobs with lines.
+func completionBody(n int, lines []string) string {
+	lines = append([]string{"[crw bg] 백그라운드 작업 " + stringNumber(n) + "건이 끝났습니다."}, lines...)
 	// map(...).join on an empty batch still contributes an empty body line.
-	if len(recs) == 0 {
+	if n == 0 {
 		lines = append(lines, "")
 	}
 	return strings.Join(append(lines, "출력은 `crw relay job get <id> --tail 40`으로 봅니다. 전체 목록은 `crw relay job list`.\n결과를 확인하고 필요한 후속 작업을 이어가세요."), "\n")
 }
 
-// The byte budget of the text a wake hands to the session (CRW-1095): a command longer than WakeCommandBytes and a note longer than
-// WakeNoteBytes are cut at a rune boundary and the line points at `get`, and a batch whose lines pass WakeLinesBytes is written again
-// without commands and notes. The id, the status, the exit code and the duration of every job are always there, and the record keeps
-// the whole command.
+// The byte budget of the text a wake, an adoption or a drain hands to the session (CRW-1095), measured as it is handed over: the
+// serialized envelope, where JSON spells a control character in six bytes. A command longer than WakeCommandBytes and a note longer
+// than WakeNoteBytes are cut at a rune boundary and the line points at `get`. A batch whose lines pass WakeLinesBytes, or whose text
+// passes WakeTextBytes, is written again without commands and notes; a batch that still passes WakeTextBytes describes its first jobs
+// that fit, and a wake leaves the others pending for the next one. The id, the status, the exit code, the duration and the get of
+// every job described are always there, and the record keeps the whole command. One job always fits: a file name holds at most 255
+// bytes, so its line, with the id twice and every byte escaped, stays near 3 KB.
 const (
 	WakeCommandBytes = 160
 	WakeNoteBytes    = 120
 	WakeLinesBytes   = 2048
+	WakeTextBytes    = 4096
 )
 
-// WakeLines is the line of each job a wake, an adoption or a drain describes, inside the budget. A job whose command fits and that has
-// no note gets DescribeRecord's line.
-func WakeLines(recs []BgRecord) []string {
-	render := func(command, note int) ([]string, int) {
-		lines, size := make([]string, len(recs)), 0
-		for i, rec := range recs {
-			lines[i] = briefRecord(rec, command, note)
-			size += len(lines[i]) + 1
+// fitWake is the text wrap builds from the lines of the first jobs of recs that fit the budget, and those jobs. wrap answers the text
+// of n jobs and their lines as it is handed over, and size is what that text costs. A job whose command fits and that has no note
+// gets DescribeRecord's line.
+func fitWake(recs []BgRecord, wrap func(n int, lines []string) string, size func(string) int) (string, []BgRecord) {
+	lines := make([]string, len(recs))
+	for i, rec := range recs {
+		lines[i] = briefRecord(rec, WakeCommandBytes, WakeNoteBytes)
+	}
+	if out := wrap(len(recs), lines); len(recs) == 0 || jsonSize(strings.Join(lines, "\n")) <= WakeLinesBytes && size(out) <= WakeTextBytes {
+		return out, recs
+	}
+	for i, rec := range recs {
+		lines[i] = briefRecord(rec, -1, -1)
+	}
+	for n := len(recs); ; n-- {
+		if out := wrap(n, lines[:n]); n == 1 || size(out) <= WakeTextBytes {
+			return out, recs[:n]
 		}
-		return lines, size
 	}
-	lines, size := render(WakeCommandBytes, WakeNoteBytes)
-	if size > WakeLinesBytes {
-		lines, _ = render(0, 0)
-	}
-	return lines
 }
 
+// jsonSize is the size of s as a JSON string, the way the store's serializer spells it.
+func jsonSize(s string) int { return len(quote(s)) }
+
+func envelopeSize(s string) int { return len(s) }
+
 // briefRecord is DescribeRecord with the command cut to command bytes and the note, when there is one, to note bytes; a line that
-// leaves anything out names the job's get.
+// leaves anything out names the job's get. A negative command leaves the command and the note out.
 func briefRecord(rec BgRecord, command, note int) string {
 	full := strings.Join(rec.Command, " ")
+	pointer := " (전체: crw relay job get " + rec.ID + ")"
+	if command < 0 {
+		return strings.TrimSuffix(DescribeRecord(rec), " — "+full) + pointer
+	}
 	shown, cut := clip(full, command)
 	line := strings.TrimSuffix(DescribeRecord(rec), full) + shown
 	if rec.Note != nil {
@@ -94,7 +117,7 @@ func briefRecord(rec BgRecord, command, note int) string {
 		cut = cut || noteCut
 	}
 	if cut {
-		line += " (전체: crw relay job get " + rec.ID + ")"
+		line += pointer
 	}
 	return line
 }
@@ -142,15 +165,17 @@ func completion(p HookPayload, cwd string, getenv func(string) string, clock fun
 		if WakeSuppressed(ws, getenv) {
 			return ""
 		}
-		out, _ := deliver(ws, PayloadSessionID(p, getenv), clock, func(due []BgRecord) string {
-			body := CompletionText(due)
-			if text.Trim(body) == "" {
-				return ""
-			}
-			if event == "Stop" {
-				return blockEnvelope(body)
-			}
-			return contextEnvelope(event, body)
+		out, _ := deliver(ws, PayloadSessionID(p, getenv), clock, func(due []BgRecord) (string, []BgRecord) {
+			return fitWake(due, func(n int, lines []string) string {
+				body := completionBody(n, lines)
+				if text.Trim(body) == "" {
+					return ""
+				}
+				if event == "Stop" {
+					return blockEnvelope(body)
+				}
+				return contextEnvelope(event, body)
+			}, envelopeSize)
 		}, emit)
 		return out
 	})
@@ -184,12 +209,15 @@ func HandleSessionStart(p HookPayload, cwd string, getenv func(string) string, c
 		if !has {
 			return ""
 		}
-		lines := []string{}
-		if len(adopted) > 0 {
-			lines = append(lines, "[crw bg] 이전 세션에서 끝난 백그라운드 작업 "+stringNumber(len(adopted))+"건이 아직 전달되지 않았습니다.")
-			lines = append(lines, WakeLines(adopted[:min(5, len(adopted))])...)
-		}
-		return contextEnvelope("SessionStart", strings.Join(append(lines, Affordance), "\n"))
+		out, _ := fitWake(adopted[:min(5, len(adopted))], func(_ int, described []string) string {
+			lines := []string{}
+			if len(adopted) > 0 {
+				lines = append(lines, "[crw bg] 이전 세션에서 끝난 백그라운드 작업 "+stringNumber(len(adopted))+"건이 아직 전달되지 않았습니다.")
+				lines = append(lines, described...)
+			}
+			return contextEnvelope("SessionStart", strings.Join(append(lines, Affordance), "\n"))
+		}, envelopeSize)
+		return out
 	})
 }
 
