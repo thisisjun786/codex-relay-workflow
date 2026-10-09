@@ -42,6 +42,11 @@ type AcceptInput struct {
 	Premerge    []byte
 	Supersedes  string       // the acceptance this one replaces, when the node already has an active acceptance of another output
 	RuleVersion VerifierRule // every field required
+	// Checkout is the local clone that holds the commits of a pull request's refresh (CRW-731): an absolute path, read only when the head the
+	// pull request shows is not the head the ruling of the event fixed (dag_verified_heads), because the relay then proves from git that the
+	// head is that one plus merges of the base. The ruled head is read from the ruling's record, never from this input: there is no flag that
+	// names a head. An event with no record, and a head equal to the ruled one, need no checkout. It is not used on the commit path.
+	Checkout string
 }
 
 // AcceptResult is the answer of Accept.
@@ -49,6 +54,12 @@ type AcceptResult struct {
 	PlanID, NodeID, AcceptanceID, RelationshipID, SupersededID, HeadSHA, EvidenceDigest string
 	Generation                                                                          int64
 	Replayed, Revalidated, SlotReleased                                                 bool
+	// VerifiedHead is the head the event's ruling fixed (dag_verified_heads), "" when the event has no record. RefreshID is the id of the
+	// proof row (dag_acceptance_refreshes) written when the head shown was proved from it, "" when none was owed; Manual lists the paths a
+	// hand resolution left unproved, which the acceptance refuses, so it is empty on every acceptance that proved a refresh and nil otherwise
+	// (CRW-731).
+	VerifiedHead, RefreshID string
+	Manual                  []string
 	// Sweep is the conflict sweep an accepted receipt owes (CRW-410): nil for a node with no head and for a re-ruling of an output accepted before.
 	Sweep *SweepResult
 	// the pull request's repository and base branch, for the tip the sweep measures against
@@ -239,6 +250,7 @@ func (s *Scheduler) accept(ctx context.Context, plan, node, actor string, in Acc
 	}
 	var pr PullRequest
 	var prepared acceptCommitInput
+	var refreshProof *acceptRefreshProof
 	if implementation && !commitPath {
 		if in.PullRequest == nil || in.PullRequest.Repository == "" || in.PullRequest.Number < 1 {
 			return out, refuse(contract.RefusalMalformedReceipt, "an implementation node is accepted on its pull request: name its repository (owner/name) and number")
@@ -253,6 +265,10 @@ func (s *Scheduler) accept(ctx context.Context, plan, node, actor string, in Acc
 			return out, err
 		}
 		out.prRepository, out.baseRef = in.PullRequest.Repository, pr.BaseRef
+		// the head the forge shows is proved from the head the ruling fixed before anything is written (CRW-731)
+		if refreshProof, err = s.proveAcceptedRefresh(ctx, q, snap, plan, node, actor, in, pr); err != nil {
+			return out, err
+		}
 	} else if commitPath {
 		// the commit path reads what it needs before its write transaction, as the pull-request path reads
 		// its forge before it: the relationship and the head event, then the checks in the checkout
@@ -456,6 +472,16 @@ func (s *Scheduler) accept(ctx context.Context, plan, node, actor string, in Acc
 				return err
 			}
 		}
+		// the proof of a head the ruling did not fix is read again with what it rested on; the acceptance and its proof row are written together below
+		var settledRefresh *acceptRefreshProof
+		if implementation && !commitPath {
+			if settledRefresh, out.VerifiedHead, err = s.settleAcceptRefresh(txCtx, tx, plan, node, rel, head, pr, refreshProof); err != nil {
+				return err
+			}
+			if settledRefresh != nil {
+				out.Manual = []string{}
+			}
+		}
 		// a new output: it supersedes the node's active acceptance only explicitly
 		if implementation && !commitPath && (pr.State != "open" || pr.IsDraft) {
 			return refuse(contract.RefusalDispositionConflict, "pull request %s#%d is %s%s: only an open, non-draft pull request is accepted", pr.Repository, pr.Number, pr.State, map[bool]string{true: " and a draft", false: ""}[pr.IsDraft])
@@ -515,6 +541,11 @@ func (s *Scheduler) accept(ctx context.Context, plan, node, actor string, in Acc
 		// the pre-merge record is appended with its acceptance, which it references
 		if implementation {
 			if err := s.storePremerge(txCtx, a.AcceptanceID, a.HeadSHA, actor, judged, s.ExpectedEpoch); err != nil {
+				return err
+			}
+		}
+		if settledRefresh != nil {
+			if out.RefreshID, err = s.recordAcceptRefresh(txCtx, a, settledRefresh, actor); err != nil {
 				return err
 			}
 		}

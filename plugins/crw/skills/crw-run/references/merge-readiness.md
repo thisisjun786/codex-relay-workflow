@@ -1061,8 +1061,8 @@ it.** `dag-accept` records the head the forge shows as the accepted head and tak
 child's report; a head that moves afterwards reads `stale_head` at `dag-merge-judge` and
 `dag-merge-request`, leaves the node `blocked:stale_head`, and the same output cannot be accepted at
 the new head (`merge_candidate_moved`); the exception is a head that [a base refresh the child made after the acceptance](#a-base-refresh-the-child-made-after-the-acceptance) records. An acceptance reads no CI, no review and no thread
-(`docs/relay/dag-scheduler.md`, "Accepting a result"), so the order is: the verdict `verified`, the
-update and the base-refresh check on N, `dag-accept` (it records N), `dag-merge-judge` for the
+(`docs/relay/dag-scheduler.md`, "Accepting a result"), so the order is: the verdict `verified` (given with `verdict --verified-head P`, the head the verdict judged, so the relay holds P with the ruling), the
+update and the base-refresh check on N, `dag-accept --checkout <the parent's checkout>` (it records N, after proving from the ruling's P that N is P plus merges of the base: with no checkout a refreshed head is `malformed_receipt`, an N the rules cannot prove is `disposition_conflict` with `tree_differs` and goes back to the child; a ruling that recorded no head is accepted as before, and N equal to P needs no checkout), `dag-merge-judge` for the
 jobs on N (`checks_pending` is waited on; the first failure is the `retry_same_sha` above),
 `merge-evidence` on N for the reviews and threads, which the judge does not read,
 `dag-merge-request`, the merge lane, the merge, `assignment-mark merged`,
