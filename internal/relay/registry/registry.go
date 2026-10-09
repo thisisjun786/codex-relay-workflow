@@ -818,14 +818,15 @@ func (r *Registry) OpenGeneration(ctx context.Context, rid, dispatchRequest, rea
 	if !errors.Is(err, sql.ErrNoRows) {
 		return Generation{}, err
 	}
-	if HandOpenedGenerationGuard != nil {
-		// a generation that is only being replayed was checked when it was opened; a new one is checked before anything is written
-		if err := HandOpenedGenerationGuard(ctx, r.Store, rid, reason, 0); err != nil {
-			return Generation{}, err
-		}
-	}
 	var number int64
 	err = r.Store.Transaction(ctx, func(ctx context.Context, _ *sql.Conn) error {
+		if HandOpenedGenerationGuard != nil {
+			// a generation that is only being replayed was checked when it was opened; a new one is checked in the transaction that writes it, so a plan
+			// revision between the check and the write cannot leave a generation the guard would have refused
+			if err := HandOpenedGenerationGuard(ctx, r.Store, rid, reason, 0); err != nil {
+				return err
+			}
+		}
 		number, err = r.OpenGenerationIn(ctx, rid, dispatchRequest, reason, dispatchTurn)
 		return err
 	})
@@ -906,17 +907,18 @@ func (r *Registry) BindAnchor(ctx context.Context, rid string, number int64, tur
 		}
 		return Generation{}, refuse(contract.RefusalAnchorAlreadyBound, "generation %d is already bound to %s", number, quote.Value(nullable(current.DispatchTurnID)))
 	}
-	if HandOpenedGenerationGuard != nil {
-		var reason sql.NullString
-		if err := r.Store.Querier(ctx).QueryRowContext(ctx, "SELECT reason FROM generations WHERE relationship_id = ? AND execution_generation = ?", rid, number).Scan(&reason); err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return Generation{}, err
-		}
-		if err := HandOpenedGenerationGuard(ctx, r.Store, rid, reason.String, number); err != nil {
-			return Generation{}, err
-		}
-	}
 	now := r.now()
 	err = r.Store.Transaction(ctx, func(ctx context.Context, _ *sql.Conn) error {
+		if HandOpenedGenerationGuard != nil {
+			// asked in the transaction that binds, as OpenGeneration asks it
+			var reason sql.NullString
+			if err := r.Store.Querier(ctx).QueryRowContext(ctx, "SELECT reason FROM generations WHERE relationship_id = ? AND execution_generation = ?", rid, number).Scan(&reason); err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return err
+			}
+			if err := HandOpenedGenerationGuard(ctx, r.Store, rid, reason.String, number); err != nil {
+				return err
+			}
+		}
 		if err := store.RefuseWithdrawn(ctx, r.Store.Querier(ctx), rid, number); err != nil {
 			return err
 		}
