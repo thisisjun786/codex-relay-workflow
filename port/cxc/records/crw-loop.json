@@ -157,12 +157,38 @@
     },
     {
       "file": "references/durable-goalplan.md",
-      "reason": "Remove the oracle deprecated goalplan alias from the no-alias CRW invocation table.",
+      "reason": "Remove the oracle deprecated goalplan alias from the no-alias CRW invocation table. CRW-1133: the HOTL goal rule passes a user-named token_budget to create_goal instead of omitting it, and the resource bounds name the limit.",
       "hunks": [
+        {
+          "line": 22,
+          "old": [
+            "HOTL mode. After `create_goal`, run `crw pabcd loop init --objective \"<same text>\"\n"
+          ],
+          "new": [
+            "HOTL mode.\n",
+            "\n",
+            "Token limit: pass `token_budget` to `create_goal` only when the user named a token\n",
+            "limit, with exactly that value; never choose one yourself. With no limit named the\n",
+            "goal is unlimited. The host validates the field and its value. A host whose\n",
+            "`create_goal` does not accept `token_budget` is a reported capability conflict;\n",
+            "do not create the goal without the limit the user asked for. The `create_goal`\n",
+            "hook does not refuse the field, and `update_goal` is not a budget API.\n",
+            "\n",
+            "After `create_goal`, run `crw pabcd loop init --objective \"<same text>\"\n"
+          ]
+        },
         {
           "line": 105,
           "old": [
             "- `crw goalplan *` — deprecated alias for the same behavior during migration.\n"
+          ]
+        },
+        {
+          "line": 130,
+          "new": [
+            "A token limit the user named is the host goal's `token_budget` (see the HOTL Goal-Setting Rule),\n",
+            "and a goal the host moves to `budgetLimited` stays limited at that number; a resume\n",
+            "or a raised limit is the user's decision, never the loop's.\n"
           ]
         }
       ]
