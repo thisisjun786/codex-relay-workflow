@@ -127,6 +127,7 @@ export interface PolicyWriteError {
   backup?: string;
   recovery?: string;
   step?: string;
+  warnings?: string[];
 }
 
 /** One row of the first screen. */
@@ -204,14 +205,45 @@ export interface PolicyNotice {
 }
 
 /**
- * A lost write response: the digest the change started from, and what the re-read found. The outcome
- * is "unknown" until a registered reading lands; then it is "stored" (the file moved off the starting
- * digest) or "not_stored" (the file still holds it). A failed re-read leaves it "unknown".
+ * A lost write: a request whose result the screen does not know, because its response never arrived
+ * or arrived unreadable. The server may still have replaced the file and registered it, so the result
+ * is settled only by comparing the change this request proposed with the file a later read returns
+ * (judgeLostWrite), never by the digest alone: a digest another write moved says nothing about this
+ * change.
+ *
+ * The outcome is "unknown" until a registered reading settles it, "stored" when that reading holds the
+ * proposed change and the wiring record names it, and "not_stored" only on evidence that the write
+ * ended without storing the change: the file moved to bytes the wiring record names that do not hold
+ * the change (another write finished), or the file was put back after a reading showed it holding the
+ * change (the registration failed and its restore ran). A reading at the starting digest settles
+ * nothing, however many of them there are: the request may still be waiting for the policy lock, or be
+ * past its last cancellation check inside a file exchange that has no deadline. The screen reads on a
+ * timer for LOST_SETTLE_MS and then stops reading and leaves the result unknown, because the elapsed
+ * time is not evidence that the write ended. A verdict is not final while the screen is reading: every
+ * later registered reading judges again, so a registration that fails after the file was read (and
+ * puts the file back) turns a "stored" or an awaiting verdict into "not_stored".
  */
 export interface LostWrite {
   fromDigest: string;
+  /** The change the lost request proposed, or null when the caller could not name it. */
+  change: PolicyChange | null;
   outcome: "unknown" | "stored" | "not_stored";
   storedDigest: string;
+  /**
+   * True while the file holds the change but the wiring record has not caught up: the server's
+   * registration is still running (it is detached from the request) or has failed and its restore has
+   * not landed. The result stays unknown and the screen reads again.
+   */
+  awaitingRegistration: boolean;
+  /**
+   * True while the write may still change the file, so the screen keeps reading on a timer: from the
+   * lost answer until a verdict, within LOST_SETTLE_MS of the lost answer.
+   */
+  watching: boolean;
+  /** True once a reading showed the file holding the change, so a later return to the start is a restore. */
+  sawChange: boolean;
+  /** When the answer was lost (Date.now()); the screen's reading is bounded by the time since. */
+  startedAt: number;
 }
 
 /** One selectable model, and whether the catalog still lists it. */
@@ -809,10 +841,12 @@ function emptyNotice(tone: PolicyNotice["tone"], text: string): PolicyNotice {
  * running relay holds those bytes. needs_user_action and unverifiable are separate values of
  * applied, never folded into applied.
  */
-export function noticeForWrite(status: number, body: unknown): PolicyNotice {
+export function noticeForWrite(status: number, body: unknown, proposal: LostProposal = { fromDigest: "", change: null }): PolicyNotice {
   if (status === 200) {
     if (!isWriteSuccess(body)) {
-      return emptyNotice("err", "The server answered 200 without a stored digest, so the write was not confirmed. Read the policy again before retrying.");
+      // A 200 that confirms nothing is an answer whose result is unknown, the same as one that never
+      // arrived: the file may hold the change, so the screen reads again and judges.
+      return lostWriteNotice(proposal.fromDigest, proposal.change, "The server answered 200 without a stored digest, so whether this change was written is unknown.");
     }
     const registered = isObject(body.registered) ? stringOf((body.registered as Record<string, unknown>).digest) : "";
     const notice = emptyNotice("ok", "");
@@ -847,6 +881,10 @@ export function noticeForWrite(status: number, body: unknown): PolicyNotice {
   const notice = emptyNotice("err", "");
   notice.errors = Array.isArray(body.errors) ? body.errors.map((error) => stringOf(error)) : [];
   notice.restored = typeof body.restored === "boolean" ? body.restored : null;
+  // A refusal can carry warnings too (an undo whose directory entry was not synced, a restore that
+  // was not durable). They qualify the refusal, so dropping them would hide a durability risk the
+  // server reported.
+  notice.warnings = Array.isArray(body.warnings) ? body.warnings.map((warning) => stringOf(warning)) : [];
   switch (body.error) {
     case "stale_digest":
       notice.keepInputs = true;
@@ -862,12 +900,19 @@ export function noticeForWrite(status: number, body: unknown): PolicyNotice {
         : "Registration failed and the file was NOT put back, so the file and the wiring record may disagree. Read the policy again and repair the record before another write.";
       notice.blockEditing = body.restored !== true;
       break;
+    case "not_applied":
+      // The file moved under the write and already agrees with the wiring record, so nothing needs
+      // repairing: the change was not applied, and the screen reads the document again.
+      notice.keepInputs = true;
+      notice.reread = true;
+      notice.text = `The policy file changed while this write was running, so the change was not applied. The file and the wiring record both name digest ${digest12(stringOf(body.fileDigest))}. The file has been read again; your inputs are kept. Check the new values, then save again.`;
+      break;
     case "recovery_needed":
       notice.blockEditing = true;
       notice.text = `The file and the wiring record disagree (file ${digest12(stringOf(body.fileDigest))}, record ${digest12(stringOf(body.registeredDigest))}). Every write is refused until this is settled: ${stringOf(body.recovery)}`;
       break;
     case "cancelled":
-      notice.text = `The write was cancelled during ${stringOf(body.step) || "an unknown step"}.`;
+      notice.text = `The write was cancelled during ${stringOf(body.step) || "an unknown step"}${stringOf(body.reason) !== "" ? ` (${stringOf(body.reason)})` : ""}${stringOf(body.fileDigest) !== "" ? `; the policy file had digest ${digest12(stringOf(body.fileDigest))} when the write ended` : ""}.`;
       break;
     case "failed":
       notice.text = stringOf(body.reason) || "The write failed.";
@@ -915,12 +960,18 @@ export function checkNotice(result: PolicyCheckResult): PolicyNotice {
  * has replaced the file, so a dropped connection can leave a write that completed with no answer.
  * The only honest reading is that the result is unknown, and the screen re-reads to find out.
  */
-export function lostWriteNotice(fromDigest = ""): PolicyNotice {
-  const notice = emptyNotice("err", "The connection was lost before the server answered, so whether this change was written is unknown. The policy is being read again to find out; check the digest before retrying.");
+export function lostWriteNotice(fromDigest = "", change: PolicyChange | null = null, cause = "The connection was lost before the server answered, so whether this change was written is unknown."): PolicyNotice {
+  const notice = emptyNotice("err", `${cause} The policy is being read again to find out; check the digest before retrying.`);
   notice.keepInputs = true;
   notice.reread = true;
-  notice.lost = { fromDigest, outcome: "unknown", storedDigest: "" };
+  notice.lost = { fromDigest, change, outcome: "unknown", storedDigest: "", awaitingRegistration: false, watching: true, sawChange: false, startedAt: Date.now() };
   return notice;
+}
+
+/** What a write request proposed: the digest it started from and the change it carried. */
+export interface LostProposal {
+  fromDigest: string;
+  change: PolicyChange | null;
 }
 
 /**
@@ -939,19 +990,182 @@ export function saveHeading(notice: PolicyNotice | null): string {
 }
 
 /**
- * resolveLostNotice settles a lost write from the first registered reading that lands after it. The
- * file moved off the digest the change started from: the change was stored. The file still holds that
- * digest: it was not. Anything else (no reading, or a reading that is not registered) stays unknown.
+ * readingHoldsChange is whether a registered reading's file contains the change a write proposed. It
+ * is the one comparison of the intended change with the file that read: the policy is the document
+ * the write would have produced, so a section is judged by exactly the members the change sets or
+ * removes.
+ */
+export function readingHoldsChange(reading: PolicyReading, change: PolicyChange): boolean {
+  switch (change.kind) {
+    case "setRolePairs": {
+      const role = reading.roles.find((entry) => entry.name === change.role);
+      return role !== undefined && role.pairs.length === change.pairs.length
+        && role.pairs.every((pair, index) => pair.model === change.pairs[index].model && pair.reasoningEffort === change.pairs[index].reasoningEffort);
+    }
+    case "setAllowed": {
+      const entry = reading.allowed.find((candidate) => candidate.model === change.model);
+      // The server stores a row's efforts sorted (internal/policystore allowedEntry), so the order the
+      // operator typed them in is not part of what the file holds.
+      return entry !== undefined && sameEntries(sortedEfforts(entry.efforts), sortedEfforts(change.efforts));
+    }
+    case "removeAllowed":
+      return !reading.allowed.some((candidate) => candidate.model === change.model);
+    case "setException": {
+      const exception = reading.exceptions.find((candidate) => candidate.id === change.id);
+      return exception !== undefined
+        && exception.model === change.model
+        && exception.reasoningEffort === change.effort
+        && (change.role === undefined || exception.role === change.role)
+        && exception.cwd.length === change.cwd.length
+        && exception.cwd.every((root, index) => root === change.cwd[index]);
+    }
+    case "removeException":
+      return !reading.exceptions.some((candidate) => candidate.id === change.id);
+  }
+}
+
+/** How long the screen waits before it reads again while a lost write's result is still open. */
+export const LOST_RECHECK_MS = 2000;
+/**
+ * How long the screen keeps reading after a write's answer was lost: the request's header read
+ * (internal/gui command.go ReadHeaderTimeout, 10 s), the wait for the policy lock (internal/policystore
+ * writeLockTimeout, 10 s), the post-publication phase (writeDecisionTimeout, two minutes), and a
+ * margin. It is the time the screen is willing to follow the write, not a server-enforced end of it:
+ * the file exchange between the lock and the decision phase has no deadline of its own, so a result
+ * that is still undecided at this time stays unknown instead of becoming "not stored".
+ */
+export const LOST_SETTLE_MS = 150_000;
+
+/** Whether the screen has followed a lost write for as long as it is willing to. */
+function lostExpired(lost: LostWrite, now: number): boolean {
+  return now - lost.startedAt >= LOST_SETTLE_MS;
+}
+
+/**
+ * judgeLostWrite is the single place a lost write's result is decided: the change it proposed against
+ * the file a registered reading returned. The digest alone never says "stored": a digest another
+ * write moved is not this change, and a file that holds the change before the wiring record names it
+ * is a registration still running (or about to be put back), not yet a result. Time never says "not
+ * stored" either: when LOST_SETTLE_MS has passed the screen stops reading and the result stays
+ * unknown.
+ *
+ *   - the file is at the digest the change started from: unknown (the request may still be waiting
+ *     for the lock, or be about to exchange the file); not stored only when an earlier reading showed
+ *     the file holding the change (the registration failed and its restore put the file back);
+ *   - the file moved and the request cannot name its change: unknown;
+ *   - the file moved, does not hold the change and the wiring record names it: not stored, another
+ *     write finished. The server replaces the file only while it holds the starting digest
+ *     (internal/policystore Write compares ExpectedDigest under the lock), so this request cannot
+ *     publish over bytes the record already names;
+ *   - the file moved, does not hold the change and the record names something else: unknown, because
+ *     the bytes may be another writer's publication whose registration has not finished (and which
+ *     puts the starting bytes back if it fails, letting this request publish after all), or an edit
+ *     nobody registered;
+ *   - the file holds the change and the record does not yet name it: unknown, awaiting registration;
+ *   - the file holds the change and the record names the file: stored.
+ */
+export function judgeLostWrite(lost: LostWrite, reading: PolicyReading, at: number = Date.now()): { lost: LostWrite; text: string } {
+  const from = lost.fromDigest;
+  const now = reading.digest ?? "";
+  const expired = lostExpired(lost, at);
+  const open = { ...lost, storedDigest: "", awaitingRegistration: false, watching: !expired };
+  const stopped = expired ? ` ${LOST_SETTLE_MS / 1000} seconds have passed since the answer was lost, so the screen has stopped reading on its own and cannot tell whether the request has ended: read the policy again to see where it is now.` : " The policy is being read again.";
+  if (now === from) {
+    if (lost.sawChange) {
+      return {
+        lost: { ...lost, outcome: "not_stored", storedDigest: "", awaitingRegistration: false, watching: false },
+        text: `The policy file is back at digest ${digest12(from)}, the digest this change started from, after a reading showed it holding this change: the registration did not finish and the server put the file back, so the change was not stored. Your inputs are kept.`,
+      };
+    }
+    return {
+      lost: { ...open, outcome: "unknown" },
+      text: `The policy file still has digest ${digest12(from)}, the digest this change started from, but the request may not have reached the file yet, so the result stays unknown.${stopped} Your inputs are kept; a save from a stale digest is refused by the server.`,
+    };
+  }
+  if (lost.change === null) {
+    return {
+      lost: { ...lost, outcome: "unknown", storedDigest: "", awaitingRegistration: false, watching: false },
+      text: `The policy file now has digest ${digest12(now)}, not the ${digest12(from)} this change started from, but this screen cannot tell whether the file holds this change, so the result stays unknown. Check the values before saving again.`,
+    };
+  }
+  const registered = reading.registeredDigest ?? "";
+  if (!readingHoldsChange(reading, lost.change)) {
+    if (registered === now) {
+      return {
+        lost: { ...lost, outcome: "not_stored", storedDigest: "", awaitingRegistration: false, watching: false },
+        text: `The policy file now has digest ${digest12(now)}, not the ${digest12(from)} this change started from, and the wiring record names it, but it does not hold this change: another write finished, so the change was not stored. Your inputs are kept; check the new values, then save again.`,
+      };
+    }
+    return {
+      lost: { ...open, outcome: "unknown" },
+      text: `The policy file now has digest ${digest12(now)}, not the ${digest12(from)} this change started from, and it does not hold this change, but the wiring record names ${registered === "" ? "no digest" : digest12(registered)}: another write's registration may still be running, and if it fails the file is put back and this request may still be applied. The result stays unknown.${stopped} Your inputs are kept.`,
+    };
+  }
+  if (registered !== now) {
+    return {
+      lost: { ...open, outcome: "unknown", awaitingRegistration: true, sawChange: true },
+      text: `The policy file holds this change (digest ${digest12(now)}), but the wiring record still names ${registered === "" ? "no digest" : digest12(registered)}: the registration has not finished, and if it fails the file is put back. The result stays unknown until the record names the file or the file is put back.${stopped}`,
+    };
+  }
+  return {
+    lost: { ...lost, outcome: "stored", storedDigest: now, awaitingRegistration: false, watching: false, sawChange: true },
+    text: `The policy file now has digest ${digest12(now)}, not the ${digest12(from)} this change started from, and it holds this change, so the change was stored. Check the values before saving again.`,
+  };
+}
+
+/**
+ * spendLostReading is a reading that judged nothing (one that is not registered, or a read that
+ * failed) on a lost write the screen is still watching. It changes nothing but the clock: once
+ * LOST_SETTLE_MS has passed the screen stops reading and the result stays what it was, so a record
+ * that went away or a backend that keeps failing ends the automatic reading without a verdict.
+ */
+function spendLostReading(notice: PolicyNotice | null, at: number = Date.now()): PolicyNotice | null {
+  if (notice === null || notice.lost === null || !notice.lost.watching || !lostExpired(notice.lost, at)) return notice;
+  return { ...notice, lost: { ...notice.lost, watching: false } };
+}
+
+/**
+ * resolveLostNotice judges a lost write from every registered reading that lands after it, not only
+ * the first: a verdict follows the file, so a registration that finished later, or a restore that put
+ * the file back, moves the heading with it. A reading that is not registered judges nothing.
  */
 function resolveLostNotice(notice: PolicyNotice | null, reading: PolicyReading): PolicyNotice | null {
-  if (notice === null || notice.lost === null || notice.lost.outcome !== "unknown") return notice;
-  if (reading.state !== "registered") return notice;
-  const from = notice.lost.fromDigest;
-  const now = reading.digest ?? "";
-  if (now === from) {
-    return { ...notice, lost: { ...notice.lost, outcome: "not_stored" }, text: `The policy file still has digest ${digest12(from)}, the digest this change started from, so the change was not stored. Your inputs are kept.` };
-  }
-  return { ...notice, lost: { ...notice.lost, outcome: "stored", storedDigest: now }, text: `The policy file now has digest ${digest12(now)}, not the ${digest12(from)} this change started from, so the change was stored. Check the values before saving again.` };
+  if (notice === null || notice.lost === null) return notice;
+  if (reading.state !== "registered") return spendLostReading(notice);
+  const judged = judgeLostWrite(notice.lost, reading);
+  return { ...notice, lost: judged.lost, text: judged.text };
+}
+
+/**
+ * lostRecheckDelay is how long to wait before the next automatic read, or null when none is due: a
+ * lost write is re-read on a timer while its result is open (the file is still at the starting digest,
+ * holds the change under a record that has not caught up, or is another writer's unregistered
+ * publication), and only within LOST_SETTLE_MS of the lost answer, however the readings ended.
+ */
+export function lostRecheckDelay(state: PolicyScreenState, at: number = Date.now()): number | null {
+  const lost = state.notice?.lost ?? null;
+  if (lost === null || !lost.watching || lostExpired(lost, at)) return null;
+  if (state.busy || state.saving !== null) return null;
+  return LOST_RECHECK_MS;
+}
+
+/** The timer the page schedules with; a test passes its own. */
+export interface LostRecheckClock {
+  set: (run: () => void, ms: number) => unknown;
+  clear: (handle: unknown) => void;
+}
+
+/**
+ * startLostRecheck is the wiring PolicyPage runs as an effect: when a read is due it schedules
+ * readAgain(true) (a read that keeps the operator's inputs) after lostRecheckDelay, and returns the
+ * function that cancels it. It schedules nothing when no read is due, so an explicit re-read (which
+ * drops the notice), a settled verdict and an expired wait all end the reading.
+ */
+export function startLostRecheck(state: PolicyScreenState, readAgain: (keepInputs: boolean) => void, clock: LostRecheckClock = { set: (run, ms) => setTimeout(run, ms), clear: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>) }): () => void {
+  const delay = lostRecheckDelay(state);
+  if (delay === null) return () => {};
+  const handle = clock.set(() => readAgain(true), delay);
+  return () => clock.clear(handle);
 }
 
 /** unreachableNotice is the sentence a request that could not be answered at all becomes. */
@@ -1127,11 +1341,12 @@ export async function runSave(state: PolicyScreenState, transports: PolicyWriteT
   let notice: PolicyNotice;
   try {
     const answer = await transports.write(payload);
-    notice = noticeForWrite(answer.status, answer.body);
+    notice = noticeForWrite(answer.status, answer.body, { fromDigest: reading.digest ?? "", change });
   } catch {
     // A lost response is not a lost write: the server finishes registration after it has replaced the
-    // file, so the screen re-reads rather than claiming nothing changed.
-    notice = lostWriteNotice(reading.digest ?? "");
+    // file, so the screen re-reads rather than claiming nothing changed. The request is remembered
+    // with the change it proposed, because the re-read is judged against that change.
+    notice = lostWriteNotice(reading.digest ?? "", change);
   }
   return { state: screenSaveFinished(started, change, notice), reread: notice.tone === "ok" || notice.reread, rereadKeepsInputs: notice.tone === "ok" || notice.keepInputs, saved: notice.tone === "ok" };
 }
@@ -1195,7 +1410,9 @@ export function screenLoaded(state: PolicyScreenState, reading: PolicyReading, k
 
 /** screenLoadFailed records that the policy itself could not be read. */
 export function screenLoadFailed(state: PolicyScreenState, message: string): PolicyScreenState {
-  return { ...state, reading: null, error: message, busy: false };
+  // A read that fails while a lost write's result is open changes nothing but the clock, so a backend
+  // that keeps failing is retried until the wait has run out and then left to the operator.
+  return { ...state, reading: null, error: message, busy: false, notice: spendLostReading(state.notice) };
 }
 
 /** screenCatalog applies a catalog answer. */
@@ -1536,6 +1753,11 @@ export function screenSaveFinished(state: PolicyScreenState, saved: PolicyChange
 function sameEntries(left: readonly string[] | undefined, right: readonly string[] | undefined): boolean {
   if (left === undefined || right === undefined) return left === right;
   return left.length === right.length && left.every((entry, index) => entry === right[index]);
+}
+
+/** sortedEfforts is an effort list in the order the server stores it. */
+function sortedEfforts(efforts: readonly string[]): string[] {
+  return [...efforts].sort();
 }
 
 /** effortsOf is a raw draft's entries as a change carries them: the blanks dropped. */

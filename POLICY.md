@@ -119,8 +119,9 @@ Do not bundle dependencies or runtime state to make CI green. The one committed
 generated output is the GUI deployment build under `internal/gui/assets`: the screens
 are built with Node and embedded in the `crw` binary, so a Node-free checkout serves
 them. `node_modules`, dependency caches and installed runtimes are never committed, the
-lockfile stays pinned and the secret scan is unchanged. Source: the GUI port's approval
-scope (Jun, 2026-10-06, "Node only builds the screens and runs the gui CI job").
+lockfile stays pinned and the secret scan is unchanged. Source: within the GUI port's
+approval scope (Jun, 2026-10-06: Node for the build and CI only), the management session
+chose this layout; Jun did not pick it himself.
 
 ## Issues, dependencies and release scope
 One coherent result per issue. An issue is useful for coordinated product work,
