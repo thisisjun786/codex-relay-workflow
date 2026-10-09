@@ -11,6 +11,7 @@ var shellFamilyEntryFiles = map[string]bool{
 	"20-crw-894-verifier-4636e20a.txt": true,
 	"21-crw-894-verifier-5d41d266.txt": true,
 	"22-crw-894-verifier-b7d8826d.txt": true,
+	"23-crw-894-verifier-8b02f7be.txt": true,
 }
 
 // CRW-894: the shell family (ash, mksh, hush, the busybox applets) is read like bash and sh, and the conditions that inherit a

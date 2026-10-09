@@ -315,3 +315,35 @@ func TestAnalyzeNoDirKeepsNoDirectoryThroughStatements(t *testing.T) {
 		}
 	}
 }
+
+// TestLoopThatKeepsTheDirectory: a loop (or a case arm that falls through) whose condition and body change nothing about the
+// directory leaves a known directory known, so an ordinary script named stdin or fd/0 there is the script; a cd, pushd, popd, or a
+// function that may run one, in the condition or the body makes the directory unknown and a path that may be an alias is refused.
+func TestLoopThatKeepsTheDirectory(t *testing.T) {
+	for _, c := range []struct {
+		cmd        string
+		unreadable bool
+	}{
+		{"for i in 1 2; do :; done; printf x | python3 stdin", false},
+		{"while false; do :; done; printf x | python3 fd/0", false},
+		{"for i in 1; do :; done; printf x | node stdin", false},
+		{"until true; do :; done; printf x | python3 stdin", false},
+		{"for i in 1 2; do echo \"$i\"; n=$i; done; printf x | python3 stdin", false},
+		{"for ((i=0; i<2; i++)); do :; done; printf x | python3 dev/stdin", false},
+		{"case x in x) : ;& y) : ;; esac; printf x | python3 stdin", false},
+		{"for i in 1 2; do cd \"$D\"; done; printf x | python3 dev/stdin", true},
+		{"for i in 1; do cd /; done; printf x | python3 dev/stdin", true},
+		{"while false; do pushd \"$D\"; done; printf x | python3 dev/stdin", true},
+		{"until true; do popd; done; printf x | python3 dev/stdin", true},
+		{"f() { cd \"$D\"; }; for i in 1; do f; done; printf x | python3 dev/stdin", true},
+		{"while cd \"$D\"; do break; done; printf x | python3 dev/stdin", true},
+		{"for i in 1; do $C \"$D\"; done; printf x | python3 dev/stdin", true},
+		{"case x in x) cd \"$D\" ;& y) : ;; esac; printf x | python3 dev/stdin", true},
+		{"for i in 1 2; do :; done; printf x | python3 /dev/./stdin", true},
+	} {
+		_, err := Analyze(c.cmd, "/work")
+		if got := err != nil; got != c.unreadable {
+			t.Errorf("Analyze(%q, /work): unreadable=%v, want %v (%v)", c.cmd, got, c.unreadable, err)
+		}
+	}
+}

@@ -1002,3 +1002,17 @@ verifier of b7d8826d (CRW-894 fix round 4)	if true; then cd "$D"; fi; printf '..
 verifier of b7d8826d (CRW-894 fix round 4)	if true; then cd "$A"; else cd "$B"; fi; printf '...' | python3 dev/stdin	CRW-894-vg-07	row	-
 verifier of b7d8826d (CRW-894 fix round 4)	for i in 1; do cd "$D"; done; printf '...' | python3 dev/stdin	CRW-894-vg-08	row	-
 verifier of b7d8826d (CRW-894 fix round 4)	if true; then :; fi; printf '...' | python3 /dev/./stdin	CRW-894-vg-09	row	-
+verifier of 8b02f7be (CRW-894 fix round 5)	for i in 1 2; do :; done; printf x | python3 stdin	CRW-894-vh-01	row	-
+verifier of 8b02f7be (CRW-894 fix round 5)	while false; do :; done; printf x | python3 fd/0	CRW-894-vh-02	row	-
+verifier of 8b02f7be (CRW-894 fix round 5)	for i in 1; do :; done; printf x | node stdin	CRW-894-vh-03	row	-
+verifier of 8b02f7be (CRW-894 fix round 5)	until true; do :; done; printf x | python3 stdin	CRW-894-vh-04	row	-
+verifier of 8b02f7be (CRW-894 fix round 5)	for i in 1 2; do echo "$i"; n=$i; done; printf x | python3 stdin	CRW-894-vh-05	row	-
+verifier of 8b02f7be (CRW-894 fix round 5)	case x in x) : ;& y) : ;; esac; printf x | python3 stdin	CRW-894-vh-06	row	-
+verifier of 8b02f7be (CRW-894 fix round 5)	for i in 1 2; do cd "$D"; done; printf '...' | python3 dev/stdin	CRW-894-vh-07	row	-
+verifier of 8b02f7be (CRW-894 fix round 5)	for i in 1; do cd /; done; printf '...' | python3 dev/stdin	CRW-894-vh-08	row	-
+verifier of 8b02f7be (CRW-894 fix round 5)	while false; do pushd "$D"; done; printf '...' | python3 dev/stdin	CRW-894-vh-09	row	-
+verifier of 8b02f7be (CRW-894 fix round 5)	until true; do popd; done; printf '...' | python3 dev/stdin	CRW-894-vh-10	row	-
+verifier of 8b02f7be (CRW-894 fix round 5)	f() { cd "$D"; }; for i in 1; do f; done; printf '...' | python3 dev/stdin	CRW-894-vh-11	row	-
+verifier of 8b02f7be (CRW-894 fix round 5)	while cd "$D"; do break; done; printf '...' | python3 dev/stdin	CRW-894-vh-12	row	-
+verifier of 8b02f7be (CRW-894 fix round 5)	case x in x) cd "$D" ;& y) : ;; esac; printf '...' | python3 dev/stdin	CRW-894-vh-13	row	-
+verifier of 8b02f7be (CRW-894 fix round 5)	for i in 1 2; do :; done; printf '...' | python3 /dev/./stdin	CRW-894-vh-14	row	-
