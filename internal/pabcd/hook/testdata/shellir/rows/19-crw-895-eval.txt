@@ -1,0 +1,298 @@
+# CRW-895 after the pre-merge evaluation of 3d1fe314: the shapes of its defects d1..d7 and their neighbours.
+# ../repo is the managed checkout itself, .. is the slot root. Format: see shellwrite_repro_test.go.
+
+=== CRW-895-f1 | R
+--why A test that matches every entry and the root guards nothing (the pre-merge evaluation, d1).
+find ../repo -name '*' -delete
+
+=== CRW-895-f2 | R
+--why -path '*' matches the root as well.
+find ../repo -path '*' -delete
+
+=== CRW-895-f3 | R
+--why -regex '.*' matches the root as well.
+find ../repo -regex '.*' -delete
+
+=== CRW-895-f4 | R
+--why -name '????' matches the four letters of repo, the root's own name.
+find ../repo -name '????' -delete
+
+=== CRW-895-f5 | R
+--why From inside the checkout a match-all test is the same as no test.
+find . -name '*' -delete
+
+=== CRW-895-f6 | B
+--why -type f keeps the action to files, so the root stays whatever -name matches.
+find ../repo -name '*' -type f -delete
+
+=== CRW-895-f7 | R
+--why -name 'r*' matches repo, the root, which find names by its spelling in the start point.
+find ../repo -name 'r*' -delete
+
+=== CRW-895-f8 | B
+--why A negated test is read as one that selects (the existing control CRW-895-c12 is a negated test): it keeps what it names out of the action.
+find ../repo ! -name x -delete
+
+=== CRW-895-f9 | B
+--why A negated test that names the root's own name.
+find ../repo ! -name repo -delete
+
+=== CRW-895-f10 | B
+--why From '.', find matches -name against '.', which r* does not match: the issue control.
+find . -name 'r*' -delete
+
+=== CRW-895-f11 | R
+--why -iname matches the root's name without case.
+find ../repo -iname 'REPO' -delete
+
+=== CRW-895-f12 | B
+--why -type f: the issue control spelled with a start that names the checkout.
+find ../repo -type f -delete
+
+=== CRW-895-f13 | R
+--why The alternative of a group that tests nothing the root fails reaches -delete.
+find ../repo \( -name x -o -name '*' \) -delete
+
+=== CRW-895-g1 | R
+--why find -files0-from reads the start points from a file at run time; they can be the slot or an ancestor (evaluation d2).
+find -files0-from roots.list -type f -delete
+
+=== CRW-895-g2 | R
+--why The start points read from standard input are not known either.
+find -files0-from - -name x -delete
+
+=== CRW-895-g3 | R
+--why The same with -exec rm.
+find -files0-from roots.list -name x -exec rm {} +
+
+=== CRW-895-g4 | R
+--why find -files0-from as the producer of xargs prints names the reader cannot see.
+find -files0-from roots.list | xargs rmdir
+
+=== CRW-895-h1 | R
+--why printf prints ../repo from %s: the format and the argument are joined before xargs reads them (evaluation d3).
+printf '../%s\n' repo | xargs git worktree remove --force
+
+=== CRW-895-h2 | R
+--why printf turns the octal escape \160 into p: the output names ../repo.
+printf '../re\160o\n' | xargs git worktree remove --force
+
+=== CRW-895-h3 | R
+--why Two arguments of %s/%s join into the checkout's path.
+printf '%s/%s\n' .. repo | xargs rmdir
+
+=== CRW-895-h4 | R
+--why %b decodes \x70 in its argument.
+printf '%b' '../re\x70o' | xargs rmdir
+
+=== CRW-895-h5 | R
+--why echo -e decodes \x70.
+echo -e '../re\x70o' | xargs rmdir
+
+=== CRW-895-h6 | R
+--why xargs removes the backslash from .\./repo: it reads ../repo.
+echo '.\./repo' | xargs rmdir
+
+=== CRW-895-h7 | R
+--why xargs removes the quotes around a name.
+printf "'../repo'\n" | xargs rmdir
+
+=== CRW-895-h8 | B
+--why A printed name inside the checkout.
+printf '%s\n' build/old.o | xargs rm
+
+=== CRW-895-h9 | B
+--why A printed name that is a sibling of the checkout.
+printf '../%s\n' other | xargs rmdir
+
+=== CRW-895-h10 | R
+--why One of two printed names is the checkout.
+printf '%s\n' ../other ../repo | xargs rmdir
+
+=== CRW-895-h11 | R
+--why %s with no separator joins its arguments: .. and /repo make ../repo.
+printf '%s' .. /repo | xargs rmdir
+
+=== CRW-895-h12 | R
+--why A backslash in echo without -e is literal in bash and an escape in dash; the reader judges both.
+echo '..\x2frepo' | xargs rmdir
+
+=== CRW-895-i1 | R
+--why xargs -I{} puts the printed name into the template: ../{} with repo is ../repo (evaluation d4).
+echo repo | xargs -I{} git worktree remove --force '../{}'
+
+=== CRW-895-i2 | R
+--why -I{} with rmdir.
+echo repo | xargs -I{} rmdir ../{}
+
+=== CRW-895-i3 | R
+--why -i is -I{}.
+echo repo | xargs -i rmdir ../{}
+
+=== CRW-895-i4 | R
+--why -I@ names the replace string; a non-recursive rm of the checkout is refused too.
+echo repo | xargs -I@ rm ../@
+
+=== CRW-895-i5 | R
+--why The replace string may stand for a word of the command itself.
+echo worktree | xargs -I{} git {} remove ../repo
+
+=== CRW-895-i6 | R
+--why The replace string stands for the program: the reader reads rm -rf ../repo.
+echo rm | xargs -I{} {} -rf ../repo
+
+=== CRW-895-i7 | R
+--why A source the text does not name, with a replace string in the operand, may produce any name.
+ls | xargs -I{} rm ../{}
+
+=== CRW-895-i8 | B
+--why A whole-word replace string for a program whose list the text does not name: the control.
+ls | xargs -I{} rm {}
+
+=== CRW-895-i9 | B
+--why The replace string inside the checkout.
+echo old.o | xargs -I{} rm build/{}
+
+=== CRW-895-i10 | B
+--why rmdir of a directory inside the checkout.
+echo build | xargs -I{} rmdir {}
+
+=== CRW-895-i11 | R
+--why xargs -d : splits the input at the colon.
+printf 'a:../repo' | xargs -d : rmdir
+
+=== CRW-895-i12 | R
+--why xargs -0 reads the whole input as one name.
+printf '../repo' | xargs -0 rmdir
+
+=== CRW-895-i13 | R
+--why xargs -d '\n'.
+printf '../repo\n' | xargs -d '\n' rmdir
+
+=== CRW-895-i14 | R
+--why The replace string inside the text of a shell the template runs.
+echo repo | xargs -I{} sh -c 'rmdir ../{}'
+
+=== CRW-895-i15 | R
+--why A source that is not read, with the replace string inside a shell text.
+ls | xargs -I{} sh -c 'rmdir ../{}'
+
+=== CRW-895-j1 | R
+--why head -c cuts the printed name down to ../repo (evaluation d5).
+printf '../repoX' | head -c 7 | xargs git worktree remove --force
+
+=== CRW-895-j2 | R
+--why tail -c keeps the last bytes.
+printf 'x../repo' | tail -c 7 | xargs rmdir
+
+=== CRW-895-j3 | R
+--why grep -o prints only the match.
+echo '../repoX' | grep -o '../repo' | xargs rmdir
+
+=== CRW-895-j4 | B
+--why head -n keeps a whole line of a list that does not name the checkout.
+echo ../other | head -n 1 | xargs rmdir
+
+=== CRW-895-j5 | R
+--why head -n keeps whole lines: the line names the checkout.
+echo ../repo | head -n 1 | xargs rmdir
+
+=== CRW-895-j6 | R
+--why sort -u keeps the lines.
+echo ../repo | sort -u | xargs rmdir
+
+=== CRW-895-j7 | R
+--why grep -v keeps the lines that do not match.
+echo ../repo | grep -v x | xargs rmdir
+
+=== CRW-895-j8 | R
+--why tail -n 1 keeps the last line, which names the checkout.
+printf 'a\n../repo\n' | tail -n 1 | xargs rmdir
+
+=== CRW-895-j9 | R
+--why A backslash-newline joins lines for xargs; tail leaves the checkout's line alone.
+printf 'X\\\n../repo' | tail -n 1 | xargs rmdir
+
+=== CRW-895-j10 | R
+--why cut rewrites the list.
+echo '../repoX' | cut -c1-7 | xargs rmdir
+
+=== CRW-895-j11 | R
+--why pwd prints the directory the command runs in, which is the checkout.
+pwd | xargs git worktree remove
+
+=== CRW-895-j12 | R
+--why realpath prints the absolute path of its operand.
+realpath . | xargs rmdir
+
+=== CRW-895-j13 | R
+--why git rev-parse --show-toplevel prints the checkout.
+git rev-parse --show-toplevel | xargs git worktree remove
+
+=== CRW-895-j14 | R
+--why ls -d prints its operands as they are.
+ls -d .. | xargs rmdir
+
+=== CRW-895-j15 | R
+--why An absolute program path is the same program.
+/bin/echo ../repo | xargs rmdir
+
+=== CRW-895-j16 | B
+--why ls names nothing in the text: the issue control.
+ls build | xargs rm
+
+=== CRW-895-k1 | B
+--why Every action is reached only for a regular file, parentheses or not (evaluation d6).
+find . -type f \( -exec rm {} + \)
+
+=== CRW-895-k2 | B
+--why The test stands in the group.
+find . \( -type f -exec rm {} + \)
+
+=== CRW-895-k3 | R
+--why A group with no test around the action.
+find . \( -exec rm {} + \)
+
+=== CRW-895-k4 | B
+--why A test before a group whose alternatives test nothing themselves.
+find ../repo -type f \( -name x -o -true \) -delete
+
+=== CRW-895-k5 | B
+--why A group of tests before the action: the issue control.
+find . \( -type f -o -type l \) -exec rm {} +
+
+=== CRW-895-l1 | B
+--why The shell text ignores the names xargs hands it (evaluation d7).
+echo ../repo | xargs sh -c 'rm build/old.o'
+
+=== CRW-895-l2 | R
+--why The shell text removes what xargs hands it as its arguments.
+echo ../repo | xargs sh -c 'rm "$@"' _
+
+=== CRW-895-l3 | B
+--why find -exec sh -c with a fixed removal does not use the placeholder.
+find ../repo -exec sh -c 'rm build/old.o' \;
+
+=== CRW-895-l4 | R
+--why find -exec bash -c removes the placeholder, which is the checkout.
+find ../repo -exec bash -c 'rm "$0"' {} \;
+
+=== CRW-895-l5 | B
+--why A fixed removal in a nested shell under find from the checkout.
+find . -exec sh -c 'rm build/old.o' \;
+
+=== CRW-895-m1 | R
+--why yes prints its operand again and again; head keeps the first line.
+yes ../repo | head -1 | xargs rmdir
+
+=== CRW-895-m2 | attempt/allow/deny
+--why awk prints what its own program says.
+awk 'BEGIN{print "../repo"}' | xargs rmdir
+
+=== CRW-895-m3 | B
+--why ls -d build prints build, which is inside the checkout.
+ls -d build | xargs rm
+
+=== CRW-895-m4 | R
+--why A replace string inside the text of a shell, with names the reader proves.
+printf '%s\n' ../repo | xargs -I{} sh -c 'rmdir {}'

@@ -1,0 +1,63 @@
+# CRW-895 fix round after the review of cf7844fce: a find -regex/-iregex the reader cannot evaluate never guards (only a predicate
+# proven to leave the start point out does), and an absolute find start point is judged as itself wherever the removal's directory
+# is. ../repo is the managed checkout itself, .. its slot.
+
+=== CRW-895-s1 | R
+--why The review's trigger: a regular expression with alternation (emacs dialect) that matches the checkout; the reader cannot evaluate it, so it guards nothing.
+find ../repo -regex '.*\(repo\|x\)' -delete
+
+=== CRW-895-s2 | R
+--why The same in the posix-extended dialect.
+find ../repo -regextype posix-extended -regex '.*(repo|x)' -delete
+
+=== CRW-895-s3 | R
+--why The same with -iregex.
+find ../repo -iregex '.*\(REPO\|x\)' -delete
+
+=== CRW-895-s4 | R
+--why An optional group that matches the checkout's own path.
+find ../repo -regex '\.\./re\(po\)\?' -delete
+
+=== CRW-895-s5 | R
+--why An unevaluable regular expression from the slot root with -exec rm -rf.
+find .. -maxdepth 0 -regex '.*\(repo\|x\)' -exec rm -rf {} +
+
+=== CRW-895-s6 | R
+--why An unevaluable regular expression with git worktree remove.
+find ../repo -maxdepth 0 -regex '.*\(repo\|x\)' -exec git worktree remove --force {} \;
+
+=== CRW-895-s7 | B
+--why Control: a regular expression the reader evaluates and that leaves the start point out still guards.
+find . -regex '.*\.o' -delete
+
+=== CRW-895-s8 | B
+--why Control: an evaluable regular expression after a test that guards.
+find . -type f -regex '.*\(o\|a\)' -delete
+
+=== CRW-895-s9 | B
+--why Control: an unevaluable regular expression after an evaluable test that leaves the start point out.
+find . -name '*.o' -regex '.*\(o\|a\)' -delete
+
+=== CRW-895-t1 | B
+--why Regression of the third round: an absolute start point outside the managed area is judged as itself, though the shell that removes has moved to a directory the reader does not know.
+find /tmp/build -name '*.o' -exec sh -c 'cd {}; rm x' \;
+
+=== CRW-895-t2 | B
+--why The same with the found path in a variable.
+find /tmp/build -type f -exec sh -c 'D={}; cd "$D"; rm file' \;
+
+=== CRW-895-t3 | B
+--why The same with a found path in the operand of the removal.
+find /tmp/build -type f -exec sh -c 'cd {}; rm {}.o' \;
+
+=== CRW-895-t4 | B
+--why The same with cd to the parent of the found path.
+find /tmp/build -type f -exec sh -c 'cd {}/..; rm -f ./stale' \;
+
+=== CRW-895-t5 | R
+--why An absolute start point that is the checkout is still judged as itself from an unknown directory (no test before the action guards it).
+find {CHECKOUT} -exec sh -c 'cd {}; rm x' \;
+
+=== CRW-895-t6 | R
+--why An absolute start point that is the slot root (an ancestor) stays refused from an unknown directory.
+find {CHECKOUT}/.. -maxdepth 0 -exec sh -c 'cd {}; rm x' \;
