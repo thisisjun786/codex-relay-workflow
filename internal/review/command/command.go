@@ -257,7 +257,10 @@ func execute(ctx context.Context, cfg Config, e env) (*Summary, error) {
 	// The result is kept, durably, before the review is recorded, so that a record always has its copy. If it cannot be kept nothing is recorded as finished and nothing is published: the failure is returned
 	// naming its cause and the patch stays open, so that the same call can be made again once the cause is gone (a second model call is accepted over a finished record whose copy is missing).
 	if err = l.keep(result.SHA256, data); err != nil {
-		return fail(fmt.Errorf("the review ran but its result could not be kept in the state directory; nothing is recorded as finished and no file is written, so run the same command again: %w", err))
+		unkept := entry(eventKeepFailed)
+		unkept.Reason = err.Error()
+		err = fmt.Errorf("the review ran but its result could not be kept in the state directory; nothing is recorded as finished and no file is written, so run the same command again: %w", err)
+		return nil, errors.Join(err, l.append(unkept))
 	}
 	// The review is recorded before its files are written, so that nothing after this point can let the patch be reviewed again.
 	if err = l.append(result); err != nil {

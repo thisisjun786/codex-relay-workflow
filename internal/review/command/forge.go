@@ -100,7 +100,17 @@ func (g ghForge) Update(ctx context.Context, id int64, body string) (prComment, 
 	return g.one(ctx, body, "--method", "PATCH", fmt.Sprintf("repos/{owner}/{repo}/issues/comments/%d", id))
 }
 
-// postSummary keeps the one summary comment of pull request cfg.PR: it summarizes the newest result of the patch (its artifact's bytes must be the recorded ones), then updates the first comment whose body begins with the marker,
+// assignedTo reports whether the ledger assigned the result with this sha256 to path: a file that has these bytes is the result of some patch, only not the one that is posted.
+func assignedTo(recs []record, path, sha string) bool {
+	for _, r := range recs {
+		if r.Artifact == path && r.SHA256 == sha && (r.Event == "finished" || r.Event == "unavailable") {
+			return true
+		}
+	}
+	return false
+}
+
+// postSummary keeps the one summary comment of pull request cfg.PR: it summarizes the newest result of the patch (its artifact's bytes must be the recorded ones, or, when the path holds the result the ledger assigned to it for another patch, the copy kept with the record), then updates the first comment whose body begins with the marker,
 // creates one, or leaves it when the text is the same. The post lock is held from the reading of the ledger to the write, so two posts of one state directory cannot both find no comment and both create one, and a post that was
 // prepared from an older result of the patch than the ledger holds when it gets the lock summarizes the newer one instead (sum.Comment.Reason says so) and never puts the older over it.
 func postSummary(ctx context.Context, cfg Config, f forge, sum *Summary, stderr io.Writer) error {
@@ -122,7 +132,16 @@ func postSummary(ctx context.Context, cfg Config, f forge, sum *Summary, stderr 
 		path, sha, head, newer = n.Artifact, n.SHA256, n.Head, fmt.Sprintf("a newer result of this patch (sha256 %s) was recorded; the comment shows it", short(n.SHA256))
 	}
 	data, err := os.ReadFile(path)
-	if errors.Is(err, fs.ErrNotExist) { // a result whose record was appended a moment ago and whose files are still being published: the copy kept before the record has the same bytes
+	if err == nil {
+		digest := sha256.Sum256(data)
+		if got := hex.EncodeToString(digest[:]); got != sha {
+			if !assignedTo(recs, path, got) {
+				return fmt.Errorf("the artifact %s has sha256 %s, not the recorded %s", path, got, sha)
+			}
+			err = fs.ErrNotExist // the path holds another patch's result, which the ledger assigned to it: the patch's own bytes are the kept copy
+		}
+	}
+	if errors.Is(err, fs.ErrNotExist) { // a result whose record was appended a moment ago and whose files are still being published, or one that another patch's result took the path from: the copy kept before the record has the same bytes
 		if kept, keptErr := os.ReadFile(l.keptPath(sha)); keptErr == nil {
 			data, err = kept, nil
 		}

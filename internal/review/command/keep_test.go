@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
+	"github.com/thisisjun786/codex-relay-workflow/internal/review"
 )
 
 // finishedRecords counts the finished records of the ledger.
@@ -37,7 +38,7 @@ func TestResultThatCannotBeKeptIsNotRecordedAsFinishedAndTheNextCallReviewsAgain
 	}
 	code, _, errOut := f.run(h)
 	recs := f.ledger()
-	if code != 1 || !strings.Contains(errOut, "could not be kept") || !strings.Contains(errOut, "results") || f.s.count() != 2 || f.finishedRecords() != 0 || len(recs) == 0 || recs[len(recs)-1].Event != "failed" {
+	if code != 1 || !strings.Contains(errOut, "could not be kept") || !strings.Contains(errOut, "results") || f.s.count() != 2 || f.finishedRecords() != 0 || len(recs) == 0 || recs[len(recs)-1].Event != eventKeepFailed {
 		t.Fatalf("kept copy failure: %d %s (calls %d, ledger %+v)", code, errOut, f.s.count(), recs)
 	}
 	for _, name := range []string{h + ".json", h + ".json.sha256"} {
@@ -269,5 +270,137 @@ func TestRestoreOfAnOlderResultLeavesTheNewerResultsChecksumAlone(t *testing.T) 
 	written, err := (&ledger{dir: f.state}).restore(context.Background(), older, f.ledger(), f.out, true)
 	if after, _ := os.ReadFile(retry.Artifact + ".sha256"); err != nil || len(written) != 0 || !bytes.Equal(before, after) || !strings.HasPrefix(string(after), retry.SHA256) {
 		t.Fatalf("restoring the older result: wrote %v (%v); checksum file %q, was %q", written, err, after, before)
+	}
+}
+
+// The state directory is fsynced by every call that keeps a result, not only by the one that created results/: a first call whose sync failed (or that was killed right after the directory was made) leaves
+// results/ in place, and the next call must not take its existence for proof that its entry is durable.
+func TestEveryKeptCopySyncsTheStateDirectoryAndNotOnlyTheCallThatCreatedResults(t *testing.T) {
+	dir := t.TempDir()
+	var synced []string
+	failFirst := true
+	l := &ledger{dir: dir, syncDir: func(d string) error {
+		synced = append(synced, d)
+		if failFirst {
+			failFirst = false
+			return errors.New("fsync injected")
+		}
+		return crwdir.SyncDir(d)
+	}}
+	if err := l.keep("aa", []byte("one")); err == nil || !strings.Contains(err.Error(), "fsync injected") {
+		t.Fatalf("the failed sync of the state directory must fail the keep: %v", err)
+	}
+	if err := l.keep("bb", []byte("two")); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.keep("cc", []byte("three")); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{dir, dir, dir}; !slices.Equal(synced, want) {
+		t.Fatalf("the state directory was synced %v, want it for each of the three keeps", synced)
+	}
+}
+
+// The one more attempt of an unavailable review is spent when it starts, except when what ended it was a result that could not be kept: that attempt left no result and nothing was recorded, so the
+// patch stays open and the same command can be run again once the fault is gone.
+func TestRetryWhoseResultCannotBeKeptDoesNotSpendTheOneMoreAttempt(t *testing.T) {
+	f := newFixture(t)
+	h := f.repo.change(f.base, 2)
+	f.on("2026-10-04", quotaResult)
+	if code, first, errOut := f.run(h); code != 0 || first.RetryNotBefore != "2026-10-05" {
+		t.Fatalf("quota: %d %+v %s", code, first, errOut)
+	}
+	f.on("2026-10-05", okResult)
+	blocker := filepath.Join(f.state, "results")
+	if err := errors.Join(os.RemoveAll(blocker), os.WriteFile(blocker, nil, 0o600)); err != nil { // the state directory takes no copy
+		t.Fatal(err)
+	}
+	calls := f.s.count()
+	if code, _, errOut := f.run(h); code != 1 || !strings.Contains(errOut, "could not be kept") || f.s.count() == calls {
+		t.Fatalf("the retry whose result cannot be kept: %d %s (calls %d)", code, errOut, f.s.count())
+	}
+	if err := os.Remove(blocker); err != nil { // the fault is gone
+		t.Fatal(err)
+	}
+	calls = f.s.count()
+	code, again, errOut := f.run(h)
+	if code != 0 || again.Outcome != OutcomeReviewed || again.Status != "complete" || f.s.count() == calls {
+		t.Fatalf("the run after the fault: %d %+v %s (calls %d, ledger %+v)", code, again, errOut, f.s.count(), f.ledger())
+	}
+	// This attempt did end in a result, so the patch is closed on it from now on.
+	calls = f.s.count()
+	if _, third, _ := f.run(h); third.Outcome != OutcomeAlreadyReviewed || third.Status != "complete" || f.s.count() != calls {
+		t.Fatalf("a recorded result is reviewed again: %+v", third)
+	}
+	// A retry that ends in some other way still spends the attempt: an interrupted or crashed process leaves a bare started line.
+	g := newFixture(t)
+	gh := g.repo.change(g.base, 2)
+	g.on("2026-10-04", quotaResult)
+	g.run(gh)
+	killed := &ledger{dir: g.state, now: func() time.Time { return time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC) }}
+	recs, err := killed.read() // the length of the whole lines, so that the append does not cut them off
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := killed.append(record{Event: "started", PatchID: recs[0].PatchID, Base: g.base, Head: gh}); err != nil {
+		t.Fatal(err)
+	}
+	g.on("2026-10-05", okResult)
+	if _, sum, _ := g.run(gh); sum.Outcome != OutcomeAlreadyReviewed || sum.Status != string(review.StatusUnavailable) {
+		t.Fatalf("a retry that was killed must still spend the attempt: %+v", sum)
+	}
+}
+
+// Two patches of one head share the output path. Whichever of them asks, the path is restored from the result the ledger assigned to it last, and the summary comment of the asking patch is made from that patch's
+// own result (its kept copy), because the file at the path is a result of the ledger too, only another patch's.
+func TestPostOfASharedPathUsesTheAskingPatchsOwnResult(t *testing.T) {
+	f := newFixture(t)
+	f.forge = &scriptedForge{}
+	h2 := f.repo.change(f.base, 2)
+	f.repo.git("checkout", "-q", "--detach", h2)
+	h3 := f.repo.commit(map[string]string{"a.go": "package a\n\nfunc F() int { return 3 }\n"})
+	baseP, baseQ := f.base, h2
+	f.base = baseP
+	_, p, errOut := f.run(h3)
+	if p.Outcome != OutcomeReviewed {
+		t.Fatalf("P: %+v %s", p, errOut)
+	}
+	remove := func() {
+		t.Helper()
+		if err := errors.Join(os.Remove(p.Artifact), os.Remove(p.Artifact+".sha256")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	remove()
+	f.base = baseQ
+	_, q, errOut := f.run(h3)
+	if q.Outcome != OutcomeReviewed || q.SHA256 == p.SHA256 || q.Artifact != p.Artifact {
+		t.Fatalf("Q: %+v %s", q, errOut)
+	}
+	remove()
+	for _, c := range []struct{ name, base, sha string }{{"P", baseP, p.SHA256}, {"Q", baseQ, q.SHA256}, {"P again", baseP, p.SHA256}} {
+		f.base = c.base
+		for _, flag := range []string{"--post-only", "--post-summary"} {
+			remove2 := func() { _ = errors.Join(os.Remove(p.Artifact), os.Remove(p.Artifact+".sha256")) }
+			remove2() // the path is missing, so the restore puts the ledger's owner of it back
+			code, sum, errOut := f.run(h3, flag, "--pr", "7")
+			if code != 0 || sum.Comment == nil || sum.SHA256 != c.sha {
+				t.Fatalf("%s %s: %d %+v %s", c.name, flag, code, sum, errOut)
+			}
+			if body := f.forge.(*scriptedForge).comments; len(body) != 1 || !strings.Contains(body[0].Body, short(c.sha)) {
+				t.Fatalf("%s %s: the comment is not made from this patch's result %s: %+v", c.name, flag, short(c.sha), body)
+			}
+			if data, _ := os.ReadFile(p.Artifact); fmt.Sprintf("%x", sha256.Sum256(data)) != q.SHA256 {
+				t.Fatalf("%s %s: the path does not hold the result the ledger assigned to it last", c.name, flag)
+			}
+		}
+	}
+	// A file at the path that no result of the ledger explains is still no artifact to post.
+	if err := os.WriteFile(p.Artifact, []byte("someone else's file\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f.base = baseP
+	if code, _, errOut := f.run(h3, "--post-only", "--pr", "7"); code != 1 || !strings.Contains(errOut, "not the recorded") {
+		t.Fatalf("a foreign file was posted from: %d %s", code, errOut)
 	}
 }

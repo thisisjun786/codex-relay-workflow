@@ -14,27 +14,32 @@ import (
 )
 
 // A result is kept in the state directory, in results/<sha256>.json, before the ledger record that names it is appended, and the record is appended only when the copy is kept: written, renamed into
-// place and the directory entry fsynced (crwdir.PublishDurable; the directory of results itself is synced into the state directory when it is created), so a record never names a copy that a power
+// place and the directory entry fsynced (crwdir.PublishDurable; the state directory, which holds the directory of results, is synced as well on every keep), so a record never names a copy that a power
 // failure can take away, and a copy that cannot be kept leaves the patch open for another run. The record is what closes the patch, and the two output files are written after it, so a failed write
 // leaves a patch that is reviewed and a result that is kept; the kept copy lets the next call write the files again without a model call.
 func (l *ledger) keptPath(sha string) string { return filepath.Join(l.dir, "results", sha+".json") }
 
 func (l *ledger) keep(sha string, data []byte) error {
-	results := filepath.Join(l.dir, "results")
-	_, statErr := os.Lstat(results)
-	if err := os.MkdirAll(results, 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Join(l.dir, "results"), 0o700); err != nil {
 		return err
 	}
-	if statErr != nil { // the directory was just created: its entry in the state directory is made durable too
-		if err := crwdir.SyncDir(l.dir); err != nil {
-			return fmt.Errorf("sync %s: %w", l.dir, err)
-		}
+	// The entry of results/ in the state directory is made durable by every call that keeps a result, not only by the one that created it: a call whose sync failed, or that ended right after the directory was
+	// made, leaves results/ in place, and its existence is no proof that its entry survives a power failure.
+	if err := l.sync(l.dir); err != nil {
+		return fmt.Errorf("sync %s: %w", l.dir, err)
 	}
 	publish := l.publishKept
 	if publish == nil {
 		publish = crwdir.PublishDurable
 	}
 	return publish(l.keptPath(sha), data)
+}
+
+func (l *ledger) sync(dir string) error {
+	if l.syncDir != nil {
+		return l.syncDir(dir)
+	}
+	return crwdir.SyncDir(dir)
 }
 
 func checksumLine(r record) string { return r.SHA256 + "  " + filepath.Base(r.Artifact) + "\n" }
