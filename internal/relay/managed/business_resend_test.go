@@ -431,6 +431,17 @@ func businessResendJournalCount(t *testing.T, k *reconcileKit, kind string) int 
 	return n
 }
 
+// businessResendLoweringRows counts the lowerings an unload recorded: the closing rows that name an
+// archive. The begin marks and the rows that say nothing was archived are not lowerings.
+func businessResendLoweringRows(t *testing.T, k *reconcileKit) int {
+	t.Helper()
+	var n int
+	if err := k.start.Store.DB.QueryRow(`SELECT COUNT(*) FROM journal WHERE kind='managed_resend_unloaded' AND detail LIKE '%"phase":"end"%' AND detail NOT LIKE '%"archive":"none"%'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
 // A child the host holds loaded under other MCP settings, idle with exactly its standby turn, is
 // lowered once and then resent: archive, unarchive, notLoaded, one business turn, one journal row.
 func TestBusinessResendUnloadsIdleStandbyOnlyChild(t *testing.T) {
@@ -448,7 +459,7 @@ func TestBusinessResendUnloadsIdleStandbyOnlyChild(t *testing.T) {
 	if !reflect.DeepEqual(k.host.threads["t-1"].turns, []string{"standby", "business"}) {
 		t.Fatalf("business turn count: %v", k.host.threads["t-1"].turns)
 	}
-	if n := businessResendJournalCount(t, k, "managed_resend_unloaded"); n != 1 {
+	if n := businessResendLoweringRows(t, k); n != 1 {
 		t.Fatalf("unload journal rows: %d", n)
 	}
 }
@@ -483,7 +494,7 @@ func TestBusinessResendUnloadOnlyForIdleSettingsMismatch(t *testing.T) {
 			if len(app.archiveCalls) != 0 || len(app.unarchiveCalls) != 0 || k.host.sent != 0 || len(k.host.sends) != 0 {
 				t.Fatalf("held case touched the thread: %v %v sent=%d", app.archiveCalls, app.unarchiveCalls, k.host.sent)
 			}
-			if n := businessResendJournalCount(t, k, "managed_resend_unloaded"); n != 0 {
+			if n := businessResendLoweringRows(t, k); n != 0 {
 				t.Fatalf("held case wrote %d unload rows", n)
 			}
 		})
@@ -503,7 +514,7 @@ func TestBusinessResendUnloadArchiveErrorHolds(t *testing.T) {
 	if len(app.unarchiveCalls) != 0 || k.host.sent != 0 || len(k.host.sends) != 0 {
 		t.Fatalf("archive failure unarchived or sent: %v sent=%d", app.unarchiveCalls, k.host.sent)
 	}
-	if n := businessResendJournalCount(t, k, "managed_resend_unloaded"); n != 0 {
+	if n := businessResendLoweringRows(t, k); n != 0 {
 		t.Fatalf("archive failure wrote %d unload rows", n)
 	}
 }
@@ -520,13 +531,13 @@ func TestBusinessResendUnloadUnarchiveErrorHolds(t *testing.T) {
 		t.Fatalf("unarchive retry/withhold: archive=%v unarchive=%v sent=%d", app.archiveCalls, app.unarchiveCalls, k.host.sent)
 	}
 	var detail string
-	if err := k.start.Store.DB.QueryRow("SELECT detail FROM journal WHERE kind='managed_resend_unloaded'").Scan(&detail); err != nil {
+	if err := k.start.Store.DB.QueryRow("SELECT detail FROM journal WHERE kind='managed_resend_unloaded' ORDER BY seq DESC LIMIT 1").Scan(&detail); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(detail, "t-1") || !strings.Contains(detail, "thread/unarchive t-1") {
 		t.Fatalf("unarchive failure detail: %s", detail)
 	}
-	if n := businessResendJournalCount(t, k, "managed_resend_unloaded"); n != 1 {
+	if n := businessResendLoweringRows(t, k); n != 1 {
 		t.Fatalf("unload journal rows: %d", n)
 	}
 }
@@ -547,7 +558,7 @@ func TestBusinessResendUnloadStillLoadedHolds(t *testing.T) {
 	if !reflect.DeepEqual(app.archiveCalls, []string{"t-1"}) || !reflect.DeepEqual(app.unarchiveCalls, []string{"t-1"}) {
 		t.Fatalf("replay lowered the child again: %v %v", app.archiveCalls, app.unarchiveCalls)
 	}
-	if n := businessResendJournalCount(t, k, "managed_resend_unloaded"); n != 1 {
+	if n := businessResendLoweringRows(t, k); n != 1 {
 		t.Fatalf("unload journal rows: %d", n)
 	}
 }
@@ -586,7 +597,7 @@ func TestBusinessResendUnloadRecordsArchivedChildWhenCancelled(t *testing.T) {
 		t.Fatalf("archive/unarchive calls: %v %v", app.archiveCalls, app.unarchiveCalls)
 	}
 	var detail string
-	if err := k.start.Store.DB.QueryRow("SELECT detail FROM journal WHERE kind='managed_resend_unloaded'").Scan(&detail); err != nil {
+	if err := k.start.Store.DB.QueryRow("SELECT detail FROM journal WHERE kind='managed_resend_unloaded' ORDER BY seq DESC LIMIT 1").Scan(&detail); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(detail, "t-1") || !strings.Contains(detail, "thread/unarchive t-1") {
@@ -598,7 +609,7 @@ func TestBusinessResendUnloadRecordsArchivedChildWhenCancelled(t *testing.T) {
 func businessResendUnloadDetail(t *testing.T, k *reconcileKit) string {
 	t.Helper()
 	var detail string
-	if err := k.start.Store.DB.QueryRow("SELECT detail FROM journal WHERE kind='managed_resend_unloaded'").Scan(&detail); err != nil {
+	if err := k.start.Store.DB.QueryRow("SELECT detail FROM journal WHERE kind='managed_resend_unloaded' ORDER BY seq DESC LIMIT 1").Scan(&detail); err != nil {
 		t.Fatal(err)
 	}
 	return detail
@@ -622,7 +633,7 @@ func TestBusinessResendUnloadRecoversLostArchiveReply(t *testing.T) {
 	if !reflect.DeepEqual(k.host.threads["t-1"].turns, []string{"standby", "business"}) {
 		t.Fatalf("business turn count: %v", k.host.threads["t-1"].turns)
 	}
-	if n := businessResendJournalCount(t, k, "managed_resend_unloaded"); n != 1 {
+	if n := businessResendLoweringRows(t, k); n != 1 {
 		t.Fatalf("unload journal rows: %d", n)
 	}
 	detail := businessResendUnloadDetail(t, k)
@@ -647,7 +658,7 @@ func TestBusinessResendUnloadLostArchiveReplyIsBoundedPerAttempt(t *testing.T) {
 	if k.host.sent != 0 || k.host.operations[businessResendID("managed-1", business, 1)] != nil {
 		t.Fatal("still loaded child was resent")
 	}
-	if n := businessResendJournalCount(t, k, "managed_resend_unloaded"); n != 1 {
+	if n := businessResendLoweringRows(t, k); n != 1 {
 		t.Fatalf("unload journal rows: %d", n)
 	}
 }
@@ -675,7 +686,7 @@ func TestBusinessResendUnloadLostArchiveReplyUnconfirmedHolds(t *testing.T) {
 			if len(app.unarchiveCalls) != 0 || k.host.sent != 0 || len(k.host.sends) != 0 {
 				t.Fatalf("unconfirmed lost reply unarchived or sent: %v sent=%d", app.unarchiveCalls, k.host.sent)
 			}
-			if n := businessResendJournalCount(t, k, "managed_resend_unloaded"); n != 0 {
+			if n := businessResendLoweringRows(t, k); n != 0 {
 				t.Fatalf("unconfirmed lost reply wrote %d unload rows", n)
 			}
 		})
@@ -697,7 +708,7 @@ func TestBusinessResendUnloadLostArchiveReplyUnarchiveErrorHolds(t *testing.T) {
 	if !strings.Contains(detail, `"archive":"reply_lost"`) || !strings.Contains(detail, "thread/unarchive t-1") {
 		t.Fatalf("lost reply unarchive failure detail: %s", detail)
 	}
-	if n := businessResendJournalCount(t, k, "managed_resend_unloaded"); n != 1 {
+	if n := businessResendLoweringRows(t, k); n != 1 {
 		t.Fatalf("unload journal rows: %d", n)
 	}
 }
@@ -719,7 +730,7 @@ func TestBusinessResendUnloadLostArchiveReplyCancelledDuringCheck(t *testing.T) 
 	if len(app.unarchiveCalls) != 0 {
 		t.Fatalf("cancelled check unarchived: %v", app.unarchiveCalls)
 	}
-	if n := businessResendJournalCount(t, k, "managed_resend_unloaded"); n != 0 {
+	if n := businessResendLoweringRows(t, k); n != 0 {
 		t.Fatalf("cancelled check wrote %d unload rows", n)
 	}
 }
@@ -743,7 +754,7 @@ func TestBusinessResendUnloadHostRefusedArchiveHolds(t *testing.T) {
 	if app.listingCalls != 0 {
 		t.Fatalf("host-refused archive asked the archived listing %d times", app.listingCalls)
 	}
-	if n := businessResendJournalCount(t, k, "managed_resend_unloaded"); n != 0 {
+	if n := businessResendLoweringRows(t, k); n != 0 {
 		t.Fatalf("host-refused archive wrote %d unload rows", n)
 	}
 }
@@ -765,7 +776,7 @@ func TestBusinessResendUnloadNeverArchivesNonStandbyHistory(t *testing.T) {
 	if len(app.archiveCalls) != 0 || len(app.unarchiveCalls) != 0 || k.host.sent != 0 {
 		t.Fatalf("non-standby history reached the archive: %v %v sent=%d", app.archiveCalls, app.unarchiveCalls, k.host.sent)
 	}
-	if n := businessResendJournalCount(t, k, "managed_resend_unloaded"); n != 0 {
+	if n := businessResendLoweringRows(t, k); n != 0 {
 		t.Fatalf("non-standby history wrote %d unload rows", n)
 	}
 }
