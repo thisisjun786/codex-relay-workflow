@@ -92,13 +92,16 @@ type resumeReport struct {
 	Servers    map[string]string `json:"servers"`
 	AdmitTurn  string            `json:"admitTurn,omitempty"`
 	DryRun     bool              `json:"dryRun,omitempty"`
-	// AutoCompactTokenLimit is the value this resume sent, nil when the pair declares none. The
+	// AutoCompactTokenLimit is the value this resume sent, nil when the pair declares none or the run sent nothing (a dry run). The
 	// host never reports it back, so the report states it the way the bridge states a setting the
 	// host cannot confirm: the value that went out, and AutoCompactUnobservable saying the host
 	// cannot be asked about it. Without these a reader cannot tell a capped reload from an
 	// uncapped one.
 	AutoCompactTokenLimit   *int64 `json:"autoCompactTokenLimit,omitempty"`
 	AutoCompactUnobservable bool   `json:"autoCompactUnobservable,omitempty"`
+	// PlannedAutoCompactTokenLimit is what a dry run reports in their place: the limit a real run would
+	// send, with nothing sent. It is never set by a run that sent a resume.
+	PlannedAutoCompactTokenLimit *int64 `json:"plannedAutoCompactTokenLimit,omitempty"`
 }
 
 // resumeFailure is a refusal: the reason and, where the host or the relay gave one, its detail.
@@ -356,10 +359,10 @@ func resumeRun(ctx context.Context, e *Env, cfg *Config, opts resumeOptions) (*r
 	}
 	report := &resumeReport{OK: true, Thread: child, Generation: generation, Model: settings.Model,
 		Effort: settings.ReasoningEffort, Servers: map[string]string{}, DryRun: opts.dryRun}
-	if limit != nil {
-		// The value is not in the host's answer, so the report carries it rather than reading it back.
-		report.AutoCompactTokenLimit = limit
-		report.AutoCompactUnobservable = true
+	if limit != nil && opts.dryRun {
+		// A dry run sends nothing, so it states the limit a real run would send and leaves the fields
+		// that say what went out empty (CRW-1000 d1).
+		report.PlannedAutoCompactTokenLimit = limit
 	}
 	client := appserver.New(cfg.Relay.Socket, appserver.DefaultBounds)
 	defer client.Close()
@@ -438,6 +441,9 @@ func resumeRun(ctx context.Context, e *Env, cfg *Config, opts resumeOptions) (*r
 		"mcp_servers": resumeMCPConfig(disabled)}, settings.Sandbox)
 	if limit != nil {
 		config["model_auto_compact_token_limit"] = *limit
+		// The value is not in the host's answer, so the report carries it rather than reading it back.
+		report.AutoCompactTokenLimit = limit
+		report.AutoCompactUnobservable = true
 	}
 	resumed, err := call("thread/resume", map[string]any{
 		"threadId": child, "excludeTurns": true, "model": settings.Model, "cwd": settings.CWD,

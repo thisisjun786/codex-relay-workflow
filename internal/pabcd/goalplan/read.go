@@ -106,6 +106,10 @@ func revivalLossReadPlan(dir *os.File, real, path, slug string) (GoalplanReadRes
 	return GoalplanReadResult{Plan: plan}, revivalLossFile{parsed: parsed, text: decoded, badByte: revivalLossBadByte(raw)}
 }
 
+// UnpairedJSONSurrogate is the offset of the first unpaired \u surrogate escape in JSON text s, -1 when there is none: the
+// goalplan reader's refusal, for a caller that decodes JSON of its own (the loop CLI's steering batch).
+func UnpairedJSONSurrogate(s string) int { return unpairedSurrogate(s) }
+
 // Refuse valid JSON that encoding/json would decode lossily (data-loss exception).
 // Escaped backslashes and complete surrogate pairs keep their original meaning.
 func unpairedSurrogate(s string) int {

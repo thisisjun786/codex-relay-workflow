@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"strings"
 )
 
@@ -69,22 +70,22 @@ func ReconcilePass(ctx context.Context, rc *Reconciler, adapter Adapter, budget 
 	}
 	parents, err := rc.OpenParents(ctx)
 	if err != nil || len(parents) == 0 {
-		return err
+		return observed(err)
 	}
 	cursors := &Scheduler{Delivery: rc.Delivery}
 	cursor, err := cursors.cursor(ctx, "reconcile_parents", len(parents))
 	if err != nil {
-		return err
+		return observed(err)
 	}
 	order := append(append([]string(nil), parents[cursor:]...), parents[:cursor]...)
 	if err := cursors.advance(ctx, "reconcile_parents", 1, len(parents)); err != nil {
-		return err
+		return written(err)
 	}
 	share := max(1, budget/len(order))
 	queues := make([][]Row, len(order))
 	for i, parent := range order {
 		if queues[i], err = attemptsFor(ctx, rc, cursors, parent, share); err != nil {
-			return err
+			return observed(err)
 		}
 	}
 	var dealt []Row
@@ -114,10 +115,10 @@ func ReconcilePass(ctx context.Context, rc *Reconciler, adapter Adapter, budget 
 		if taken > 0 {
 			total, err := rc.OpenAttemptCount(ctx, parent)
 			if err != nil {
-				return err
+				return observed(err)
 			}
 			if err := cursors.advance(ctx, "reconcile:"+parent, taken, total); err != nil {
-				return err
+				return written(err)
 			}
 		}
 	}
@@ -125,7 +126,7 @@ func ReconcilePass(ctx context.Context, rc *Reconciler, adapter Adapter, budget 
 		id := attempt.S("request_id")
 		decision, fingerprint, err := gate(ctx, rc, adapter, attempt)
 		if err != nil {
-			return err
+			return err // gate marks the site of each of its steps
 		}
 		if !decision {
 			report.Skipped++
@@ -133,9 +134,15 @@ func ReconcilePass(ctx context.Context, rc *Reconciler, adapter Adapter, budget 
 		}
 		outcome, err := rc.ReconcileAttempt(ctx, id, adapter, &now)
 		if err != nil {
+			// A failure of the class that halts the relay's writes (CRW-848) ends the pass and reaches the
+			// caller, which marks the store: recording it as the attempt's retry reason would write on, and
+			// the next attempt would be tried, against a store the pass has just seen damaged (CRW-945).
+			if _, corrupting := store.CorruptingFailure(err); corrupting {
+				return err
+			}
 			text := err.Error()
 			if err := markGate(ctx, rc, id, nil, true, text); err != nil {
-				return err
+				return written(err)
 			}
 			report.Notes = append(report.Notes, "reconcile failed for "+id+": "+text)
 			continue
@@ -149,7 +156,7 @@ func ReconcilePass(ctx context.Context, rc *Reconciler, adapter Adapter, budget 
 			failure = "reads incomplete"
 		}
 		if err := markGate(ctx, rc, id, print, !complete, failure); err != nil {
-			return err
+			return written(err)
 		}
 		report.Reconciled++
 	}
@@ -217,11 +224,11 @@ func gate(ctx context.Context, rc *Reconciler, adapter Adapter, attempt Row) (bo
 	id := attempt.S("request_id")
 	row, err := one(ctx, rc.Store, "SELECT * FROM reconcile_gate WHERE request_id = ?", id)
 	if err != nil {
-		return false, nil, err
+		return false, nil, observed(err)
 	}
 	delivery, err := rc.Delivery.Find(ctx, attempt.S("event_id"))
 	if err != nil {
-		return false, nil, err
+		return false, nil, observed(err)
 	}
 	receipt, readErr := adapter.GetOperation(ctx, id)
 	var content string
@@ -229,7 +236,7 @@ func gate(ctx context.Context, rc *Reconciler, adapter Adapter, attempt Row) (bo
 		content, readErr = adapter.RecipientFingerprint(ctx, delivery.S("recipient_thread_id"))
 	}
 	if readErr != nil {
-		return true, nil, markGate(ctx, rc, id, nil, true, readErr.Error())
+		return true, nil, written(markGate(ctx, rc, id, nil, true, readErr.Error()))
 	}
 	status, turnID := "missing", ""
 	if receipt != nil {

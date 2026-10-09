@@ -42,11 +42,11 @@ func resetLinkDotWorkspace(t *testing.T, target string, keepMode os.FileMode) (*
 	return pinned, dir
 }
 
-// TestResetLinkDotTargetSkipsTheRootStat: a link whose Readlink target ends in a "." or ".."
-// component is judged by the walk, which reads the target's components through the pinned
-// descriptor with Lstat and Readlink only, so the target directory is never opened the way
-// os.Root.Stat would open it with O_DIRECTORY (CRW-554); every other target keeps the descriptor
-// path. Verdicts match the descriptor path's.
+// TestResetLinkDotTargetSkipsTheRootStat: a link whose target stays inside the root is judged by the
+// walk, which reads the target's components through the pinned descriptor with fstatat and readlinkat
+// only, so the root stat is never asked and the target directory is never opened the way
+// os.Root.Stat would open it with O_DIRECTORY (CRW-554). That holds for a dot-ending target and for
+// a plain one alike (CRW-927). Verdicts match the kernel's.
 func TestResetLinkDotTargetSkipsTheRootStat(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
@@ -60,7 +60,7 @@ func TestResetLinkDotTargetSkipsTheRootStat(t *testing.T) {
 		{"missing_slash_dot", "missing/.", 0, false, 0},
 		{"search_only_keep_slash_dot", "keep/.", 0o311, true, 0},
 		// A target that stays inside the root is decided by the walk alone, dot-ending or not, so the
-		// descriptor path is never asked for it. This row is the one expectation CRW-927 changes.
+		// descriptor path is never asked for it.
 		{"plain_keep_is_decided_by_the_walk", "keep", 0, true, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

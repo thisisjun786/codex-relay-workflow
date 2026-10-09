@@ -55,7 +55,7 @@ while false; do cd /tmp; done; rm -rf ../repo
 --why d5 variant: a for loop with an empty list.
 for i in; do cd /tmp; done; rm -rf ../repo
 
-=== CRW-1028-ev-d6-parallel | U
+=== CRW-1028-ev-d6-parallel | U | deviation=none/allow/deny
 --why d6: parallel's ::: input is the removal target.
 parallel rm -rf {} ::: {CHECKOUT}
 
@@ -223,8 +223,8 @@ echo refreshed > lint.sh
 --cmd
 bash lint.sh; bash refresh.sh
 
-=== CRW-1028-ev-overblock-02 | T | deviation=U
---why Over-block, port: kept (follow-up NEW: sequential executions inside bash -c and command substitution see later scripts' writes): the same two scripts run in order inside bash -c, but a carried text is unordered for the body writes, so lint.sh counts as rewritten.
+=== CRW-1028-ev-overblock-02 | T
+--why Over-block, fixed by CRW-1059 (was a follow-up: sequential executions inside bash -c and command substitution see later scripts' writes): the same two scripts run in order inside bash -c, but a carried text is unordered for the body writes, so lint.sh counts as rewritten.
 --file lint.sh
 echo lint
 --file refresh.sh
@@ -232,8 +232,8 @@ echo refreshed > lint.sh
 --cmd
 bash -c 'bash lint.sh; bash refresh.sh'
 
-=== CRW-1028-ev-overblock-03 | T | deviation=U
---why Over-block, port: kept (same follow-up): the same in a command substitution that runs after lint.sh.
+=== CRW-1028-ev-overblock-03 | T
+--why Over-block, fixed by CRW-1059 (same follow-up): the same in a command substitution that runs after lint.sh.
 --file lint.sh
 echo lint
 --file refresh.sh

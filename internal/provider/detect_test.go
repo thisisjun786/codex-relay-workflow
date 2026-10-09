@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/harness"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 func TestDetectBClass(t *testing.T) {
@@ -124,7 +125,7 @@ func TestRealResolverRetainsRelativePATH(t *testing.T) {
 	if err := os.Mkdir("bin", 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile("bin/ocx", []byte("#!/bin/sh\nprintf '%s' '{\"proxy\":{\"running\":true}}'\n"), 0o755); err != nil {
+	if err := testsupport.WriteProgram("bin/ocx", []byte("#!/bin/sh\nprintf '%s' '{\"proxy\":{\"running\":true}}'\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", "bin")
@@ -140,7 +141,7 @@ func TestResolvedOcxWithEmptyPATH(t *testing.T) {
 	t.Setenv("HOME", root)
 	t.Setenv("CODEX_HOME", root)
 	t.Setenv("PATH", "")
-	if err := os.WriteFile("ocx", []byte("#!/bin/sh\nprintf '%s' '{\"proxy\":{\"running\":true}}'\n"), 0o755); err != nil {
+	if err := testsupport.WriteProgram("ocx", []byte("#!/bin/sh\nprintf '%s' '{\"proxy\":{\"running\":true}}'\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer

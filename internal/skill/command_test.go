@@ -94,7 +94,7 @@ func TestSkillDoubleDashPassesOptionLikePositionals(t *testing.T) {
 	goldenRoot(t)
 	binary := recordedCRW(t)
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "-h"), []byte("run_mode: loop\nobservation_path: blocked\n"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "-h"), []byte("run_mode: goal\nobservation_path: blocked\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "--help"), []byte(`{"observation":{}}`), 0600); err != nil {

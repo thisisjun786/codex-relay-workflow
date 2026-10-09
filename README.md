@@ -22,8 +22,7 @@ live Codex hook or Desktop compatibility.
 | [crw-define](plugins/crw/skills/crw-define/SKILL.md) | Explore intent and define an initiative goal, success evidence, and scope |
 | [crw-plan](plugins/crw/skills/crw-plan/SKILL.md) | Decompose an agreed goal into projects, milestones, and one-delivery issues |
 | [crw-add-issue](plugins/crw/skills/crw-add-issue/SKILL.md) | Turn one short request into one ready issue: criteria, edit regions, decided answer, tests to write first and done condition, with an open design question held as design first |
-| [crw-run](plugins/crw/skills/crw-run/SKILL.md) | Bind the parent and execute one project's agreed scope, including parallel issue delivery and successors, without a parent goal |
-| [crw-loop](plugins/crw/skills/crw-loop/SKILL.md) | Add a parent goal and automatic continuation to the same Run project execution |
+| [crw-run](plugins/crw/skills/crw-run/SKILL.md) | Bind the parent and execute one project's agreed scope, including parallel issue delivery and successors, without a parent goal unless goal mode is explicitly requested |
 | [crw-status](plugins/crw/skills/crw-status/SKILL.md) | Report where work stands, including the supervisor midpoint check and progress against the agreed schedule |
 | [crw-check](plugins/crw/skills/crw-check/SKILL.md) | Verify delivery and return in-scope corrections to managed tasks |
 | [crw-logic](plugins/crw/skills/crw-logic/SKILL.md) | Find consequential contradictions using its own checks and minimal counterexamples |
@@ -234,7 +233,7 @@ $crw-next [Linear project or product repository] 다음에 뭐 하지? 시작할
 $crw-define [idea or initiative] 목표·완료 기준·범위를 정의해 Linear에 반영해줘.
 $crw-plan [defined initiative or existing project] 프로젝트·마일스톤·이슈와 의존성을 계획해 Linear에 반영해줘.
 $crw-run [Linear project link]
-$crw-loop [Linear project link]
+$crw-run [Linear project link] 부모 goal을 열어서 끝까지 진행해줘. (goal mode)
 $crw-check [Linear project or issue] 기획대로 구현됐는지 확인해줘.
 $crw-status 중간점검. 지금 어디까지 됐는지, 막힌 이유와 내 결정이 필요한 부분을 근거와 함께 짧게 알려줘.
 $crw-logic [Linear document or project] 설계와 계산 규칙의 모순을 찾아줘.
@@ -250,19 +249,21 @@ their deliveries and start newly ready successors as capacity opens. Run creates
 parent goal; the first ready batch is not its finish boundary. An explicit issue,
 milestone or batch request narrows the assignment. Status-only requests remain read-only.
 
-Use `$crw-loop <Linear project link>` to explicitly request a parent goal and automatic
-continuation of that same project execution. Run owns scheduling and delivery; Loop
-creates or restores the parent's goal and keeps it across continuations. Both fill
-available capacity and serialize shared-target merges. Run inside Loop returns to
-the same owner. Children keep their own issue
-goals and CXC implementation workflow. Parent completion uses verified scoped deliveries,
-without requiring a parent-local diff or CXC implementation phases.
+Ask `$crw-run <Linear project link>` explicitly for a parent goal to get goal mode: a
+native parent goal and automatic continuation of that same project execution. Run owns
+scheduling and delivery; goal mode creates or restores the parent's goal and keeps it
+across continuations. Both fill available capacity and serialize shared-target merges.
+`$crw-loop <Linear project link>` is not a second way in: it starts no loop and hands the
+request to goal mode. A loop is the PABCD completion loop of one task, and the project
+parent never follows it. Children keep their own issue goals and `crw-loop` implementation
+workflow. Parent completion uses verified scoped deliveries, without requiring a
+parent-local diff or PABCD implementation phases.
 
-Goal activation requires the [parent goal preflight](plugins/crw/skills/crw-loop/references/parent-goal.md),
+Goal activation requires the [parent goal preflight](plugins/crw/skills/crw-run/references/goal-mode.md#preflight-before-starting-workers),
 including compatible goal/Stop hooks and a supported observation/continuation path.
-A hook that forces every active goal into CXC phases blocks activation even in a fresh
-parent. This skill does not install a wake service or silently migrate existing goals.
-An explicit no-goal limit prevents Loop activation; goal-free Run remains a separately
+A hook that forces every active goal into PABCD phases blocks activation even in a fresh
+parent. Goal mode does not install a wake service or silently migrate existing goals.
+An explicit no-goal limit prevents goal mode; goal-free Run remains a separately
 authorized option. Keep narrower scope, pause and delivery limits in either mode.
 
 `crw-run` keeps implementation in the responsible independent child task for
@@ -273,11 +274,11 @@ subagents assist within those tasks and do not replace the independent child.
 
 Independent child tasks run under the shared
 [Default independent execution](plugins/crw/skills/crw-plan/references/integrations.md#default-independent-execution)
-settings unless the request chooses otherwise. A child running CXC Loop owns its own
+settings unless the request chooses otherwise. A child running `crw-loop` owns its own
 goal and phases; an explicit non-Loop or no-goal assignment keeps the agreed workflow
 without one. The coordinator's launch job is small: apply those settings through the
 creation tool, send the bounded packet in the initial work prompt, invoke the
-installed `cxc-loop` skill when Loop is the effective workflow, and verify the
+`crw-loop` skill when it is the effective workflow, and verify the
 settings that actually came back. A worker starts the assigned work without a routine
 readiness handshake, and a mismatch found afterwards is reconciled on that same task
 instead of adding an approval round.
@@ -296,7 +297,7 @@ intent. The submitted project-run shorthand above does express that intent.
 Host restrictions and explicit current-task, read-only, or no-create limits still
 apply. See [Independent implementation tasks](plugins/crw/skills/crw-run/SKILL.md#independent-implementation-tasks).
 
-Run and Loop use the shared [project binding procedure](plugins/crw/skills/crw-plan/references/integrations.md#project-parent-binding)
+Run, goal mode included, uses the shared [project binding procedure](plugins/crw/skills/crw-plan/references/integrations.md#project-parent-binding)
 to record project/task IDs in Linear, set the task title and sidebar pin when
 supported, and restore context. Management titles lead with the linked project's
 product-family label in brackets, spelled exactly as Linear spells it, followed by a

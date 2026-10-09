@@ -17,6 +17,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/acceptance"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dagsched"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -173,7 +174,7 @@ func checkpointOpenStore(ctx context.Context, state string) (*checkpointStore, e
 	if state == "" {
 		return nil, errors.New("the relay state directory is not configured")
 	}
-	path := filepath.Join(state, checkpointStoreFile)
+	path := crwconfig.JoinRoot(state, checkpointStoreFile)
 	if _, err := os.Stat(path); err != nil {
 		return nil, fmt.Errorf("relay store: %w", err)
 	}
@@ -534,7 +535,7 @@ func checkpointTargetKeys(values map[[2]string]checkpointTargetObservation) [][2
 // instant of every line, by project. A directory that does not exist yet has no records, which
 // is not an error.
 func checkpointRecordInstants(stateDir string) (map[string][]time.Time, error) {
-	dir := filepath.Join(stateDir, checkpointDirName)
+	dir := crwconfig.JoinRoot(stateDir, checkpointDirName)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -547,7 +548,7 @@ func checkpointRecordInstants(stateDir string) (map[string][]time.Time, error) {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".jsonl") {
 			continue
 		}
-		data, err := os.ReadFile(filepath.Join(dir, entry.Name()))
+		data, err := os.ReadFile(crwconfig.JoinRoot(dir, entry.Name()))
 		if err != nil {
 			return nil, err
 		}
@@ -1212,11 +1213,11 @@ func checkpointRecord(e *Env, cfg *Config, project, summaryFile string) (string,
 		return "", fmt.Errorf("the summary file: %w", err)
 	}
 	sum := sha256.Sum256(summary)
-	dir := filepath.Join(auditStateDir(e, cfg), checkpointDirName)
+	dir := crwconfig.JoinRoot(auditStateDir(e, cfg), checkpointDirName)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", err
 	}
-	path := filepath.Join(dir, project+".jsonl")
+	path := crwconfig.JoinRoot(dir, project+".jsonl")
 	// O_NOFOLLOW refuses a record path that is a symbolic link, so an existing link cannot send
 	// the append to a target outside the state directory; the file is then checked to be a regular
 	// one, so a fifo or device at that path is refused too.

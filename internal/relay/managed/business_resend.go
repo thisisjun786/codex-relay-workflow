@@ -3,6 +3,7 @@ package managed
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"errors"
 	"strconv"
@@ -161,32 +162,23 @@ func (r *startRun) businessResendReady(ctx context.Context) (string, error) {
 // per business attempt, and reports why it could not. It never sends: the ordinary resend path
 // does, and only after the child is notLoaded again with the standby-only history.
 //
-// thread/archive accepts an active sub-thread and unloads it, so the idle precondition is read
-// again here, immediately before the archive. An archive error the host answered is a refusal, so
-// this call did not apply the archive and the child holds as a loaded one does. An error with no
-// host answer may still have applied, so the archived listing is asked once and a confirmed archive
-// continues as a successful one; one the listing does not confirm leaves the child as it was and
-// answers recipient_not_idle. An unarchive that fails twice answers lifecycle_unknown and names the
-// archived thread for an operator. A child still loaded afterwards answers recipient_not_idle.
+// thread/archive accepts an active sub-thread and unloads it, so the idle read comes last: the
+// journal lookup, the readiness and ledger checks and the begin mark all precede it, and nothing
+// but the host call sits between that read and the archive. The begin mark is written before any
+// effect and a failed write archives nothing; the result row written afterwards may fail without
+// reopening the bound, because the begin mark alone stops a second lowering. An archive error the
+// host answered is a refusal, so this call did not apply the archive and the child holds as a
+// loaded one does. An error with no host answer may still have applied, so the archived listing is
+// asked once and a confirmed archive continues as a successful one; a complete listing that does
+// not hold the child leaves it as it was and answers recipient_not_idle; a failed or incomplete
+// listing leaves the archive unknown, closes the mark with archive "unknown" and keeps the attempt
+// spent. Every way out that archived nothing (a cancelled or failed last read included) closes the
+// begin mark with a row that says so (archive "none"), so it does not spend the attempt. An unarchive that fails twice answers lifecycle_unknown and names the archived thread
+// for an operator. A child still loaded afterwards answers recipient_not_idle.
 func (r *startRun) businessResendUnload(ctx context.Context) (string, error) {
-	status, code, err := r.businessResendThreadStatus(ctx)
-	if err != nil {
-		if ctx.Err() != nil {
-			return "", ctx.Err()
-		}
-		return "lifecycle_unknown", nil
-	}
-	if code != "" {
-		return code, nil
-	}
-	if status != "idle" {
-		return "recipient_not_idle", nil
-	}
 	// One lowering per business attempt is a durable bound, not a per-invocation one: a replay of
 	// an attempt whose unload did not unload the child reconstructs the same attempt from the
-	// retained failure, so the row an earlier lowering wrote is what stops the second one. An
-	// archive error writes no row unless the archived listing shows the child was archived after
-	// all, in which case the lowering is recorded like any other.
+	// retained failure, so the rows an earlier lowering wrote are what stop the second one.
 	lowered, err := r.resendUnloadLowered(ctx)
 	if err != nil {
 		return "", err
@@ -206,32 +198,91 @@ func (r *startRun) businessResendUnload(ctx context.Context) (string, error) {
 	if err := r.m.Adapter.RequireLedger(ctx, r.ledger); err != nil {
 		return "", err
 	}
-	detail := map[string]any{"threadId": r.task, "attempt": r.businessAttempt}
-	if _, err := r.m.Adapter.HostCall(ctx, "thread/archive", map[string]any{"threadId": r.task}); err != nil {
+	if err := r.recordResendUnload(ctx, map[string]any{"threadId": r.task, "attempt": r.businessAttempt, "phase": "begin"}); err != nil {
+		return "", err
+	}
+	// closeBegin closes the begin mark with a context that survives cancellation so the closing
+	// row is not lost to it. archive "none" says nothing was archived and leaves the attempt
+	// available; archive "unknown" says the archive may have applied and keeps it spent.
+	closeBegin := func(archive, reason, code string) (string, error) {
+		if err := r.recordResendUnload(context.WithoutCancel(ctx), map[string]any{"threadId": r.task, "attempt": r.businessAttempt, "phase": "end", "archive": archive, "reason": reason}); err != nil {
+			return "", err
+		}
+		return code, nil
+	}
+	notArchived := func(reason, code string) (string, error) { return closeBegin("none", reason, code) }
+	// settle closes the begin mark for an outcome the host evidence settled and then answers the
+	// caller: a cancelled context keeps its error ahead of the answer, but only after the mark
+	// is closed, so a cancellation racing a confirmed non-archive does not spend the attempt.
+	settle := func(reason, code string) (string, error) {
+		answer, err := notArchived(reason, code)
+		if err != nil {
+			return "", err
+		}
 		if ctx.Err() != nil {
 			return "", ctx.Err()
 		}
+		return answer, nil
+	}
+	status, code, err := r.businessResendThreadStatus(ctx)
+	if err != nil {
+		if ctx.Err() != nil {
+			// The read failed before any archive was sent, so nothing was archived: the attempt is
+			// not spent, and the closing row says so before the context error is returned.
+			if _, rerr := notArchived("status_unreadable", ""); rerr != nil {
+				return "", rerr
+			}
+			return "", ctx.Err()
+		}
+		return notArchived("status_unreadable", "lifecycle_unknown")
+	}
+	if code != "" {
+		return notArchived("status_unreadable", code)
+	}
+	if status != "idle" {
+		return notArchived("not_idle", "recipient_not_idle")
+	}
+	detail := map[string]any{"threadId": r.task, "attempt": r.businessAttempt, "phase": "end"}
+	if _, err := r.m.Adapter.HostCall(ctx, "thread/archive", map[string]any{"threadId": r.task}); err != nil {
 		// The host's own error response is a refusal of this call, so this invocation did not apply
 		// the archive: another client may have archived the child first. An archived listing cannot
 		// tell which request archived it, and unarchiving here would undo that client's action, so
-		// the child holds exactly as a loaded one does.
+		// the child holds exactly as a loaded one does. The refusal is classified before the
+		// context is looked at: a cancellation that lands after the host answered does not undo
+		// the evidence, and the mark closes as archive "none" before the context error returns.
 		var rpcErr *appserver.RPCError
 		if errors.As(err, &rpcErr) {
-			return "recipient_not_idle", nil
+			return settle("archive_refused", "recipient_not_idle")
+		}
+		if ctx.Err() != nil {
+			// No host answer on a cancelled call: the archive may have applied, so the begin mark
+			// stays and the attempt is spent.
+			return "", ctx.Err()
 		}
 		// With no host answer read - a transport error, a closed connection, a deadline - the
 		// archive may have applied and only its reply been lost, which would leave the child
 		// archived until an operator unarchived it. Ask the host once, with the same complete
-		// archived scan the resend guard uses, and continue exactly as after a successful archive
-		// when it confirms the child is archived. Every other answer, and a failed check, keeps
-		// the answer a loaded child earns: nothing was lowered as far as this attempt can tell,
-		// so nothing is recorded and no unarchive follows a failed archive.
-		code, checkErr := businessResendCheckHost(ctx, r.m.Adapter, r.task, true)
+		// archived scan the resend guard uses and nothing else: whether the archive applied is a
+		// fact of the archived listing alone, and a later state or goal read has no bearing on it.
+		// Continue exactly as after a successful archive when the listing holds the child. A
+		// complete listing that does not hold the child shows the archive did not apply: the child
+		// answers as a loaded one does, the begin mark closes as archive "none" and no unarchive
+		// follows, also when a cancellation lands after the listing returned. A failed or
+		// incomplete listing leaves the archive unknown: the child may be archived, so the mark
+		// closes as archive "unknown" and the attempt stays spent, and an operator who unarchives
+		// the child does not see the same attempt archive it a second time.
+		archived, complete, checkErr := scanThreadListing(ctx, r.m.Adapter, r.task, true)
+		if checkErr != nil || !complete {
+			if ctx.Err() != nil {
+				return "", ctx.Err()
+			}
+			return closeBegin("unknown", "archive_unconfirmed", "recipient_not_idle")
+		}
+		if !archived {
+			return settle("archive_unconfirmed", "recipient_not_idle")
+		}
 		if ctx.Err() != nil {
 			return "", ctx.Err()
-		}
-		if checkErr != nil || code != "recipient_archived" {
-			return "recipient_not_idle", nil
 		}
 		detail["archive"] = "reply_lost"
 	} else {
@@ -287,9 +338,10 @@ func (r *startRun) businessResendUnload(ctx context.Context) (string, error) {
 	return r.businessResendOnlyStandby(ctx)
 }
 
-// recordResendUnload writes the one managed_resend_unloaded row an unload leaves. The row is
-// written before any send, and an insert that fails withholds the send: an unrecorded unload is
-// never reported as done.
+// recordResendUnload writes one managed_resend_unloaded row of an unload: the begin mark before
+// the archive, then the row that closes it. The begin row is written before any effect and an
+// insert that fails withholds the archive; the closing row is written before any send and an
+// insert that fails withholds the send: an unrecorded unload is never reported as done.
 func (r *startRun) recordResendUnload(ctx context.Context, detail map[string]any) error {
 	encoded, err := compactPythonJSON(detail)
 	if err != nil {
@@ -299,14 +351,20 @@ func (r *startRun) recordResendUnload(ctx context.Context, detail map[string]any
 	return err
 }
 
-// resendUnloadLowered reports whether this business attempt already lowered the child, read from
-// the row the lowering wrote. The detail is the compact, key-sorted object recordResendUnload
-// writes, so the attempt is the field "attempt":<n> followed by its separator.
+// resendUnloadLowered reports whether this business attempt already started a lowering, read from
+// the rows the lowering wrote: the begin mark counts as the lowering itself, because it is written
+// before the archive and a failed result row must not reopen the bound. The one exception is a
+// lowering whose latest row says nothing was archived (archive "none"), which leaves the attempt
+// as it was. The detail is the compact, key-sorted object recordResendUnload writes, so the
+// attempt is the field "attempt":<n> followed by its separator.
 func (r *startRun) resendUnloadLowered(ctx context.Context) (bool, error) {
-	var rows int
-	err := r.m.Store.Querier(ctx).QueryRowContext(ctx, "SELECT COUNT(*) FROM journal WHERE kind='managed_resend_unloaded' AND subject=? AND detail LIKE ?", r.identity.RequestID, `%"attempt":`+strconv.Itoa(r.businessAttempt)+`,%`).Scan(&rows)
+	var detail string
+	err := r.m.Store.Querier(ctx).QueryRowContext(ctx, "SELECT detail FROM journal WHERE kind='managed_resend_unloaded' AND subject=? AND detail LIKE ? ORDER BY seq DESC LIMIT 1", r.identity.RequestID, `%"attempt":`+strconv.Itoa(r.businessAttempt)+`,%`).Scan(&detail)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
 	if err != nil {
 		return false, err
 	}
-	return rows > 0, nil
+	return !strings.Contains(detail, `"archive":"none"`), nil
 }

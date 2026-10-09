@@ -51,7 +51,6 @@
  | `screen-capture` | macOS screen/camera capture |
  | `search` | Unified search hub (web, X, deep research) |
  | `structured-renderers` | Web UI structured renderer schemas |
- | `telegram-send` | Telegram voice/photo/document delivery |
  | `video` | Code-based video create/edit/render (Remotion, FFmpeg) |
  | `xlsx` | Excel create/read/edit/analyze |
  

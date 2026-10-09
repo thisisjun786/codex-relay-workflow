@@ -23,6 +23,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import assert from 'node:assert/strict';
 import { pathToFileURL } from 'node:url';
+import { deep } from './deep.mjs';
 
 const [oracle, scratchArg, outputArg] = process.argv.slice(2);
 if (!oracle || !scratchArg || !outputArg) {
@@ -55,8 +56,6 @@ const cliRows = (() => {
 const rename = s => cliRows(s).replaceAll('cxc orchestration', 'crw orchestration').replaceAll('$codexclaw:cxc-', '$crw:crw-').replaceAll('cxc-', 'crw-').replaceAll('CXC-', 'CRW-')
   .replace(/\bcodexclaw\b/g, 'crw')
   .replace(/\{SKILLS\}\/(dev|search|dev-testing)\//g, '{SKILLS}/crw-$1/');
-const deep = (v, fn) => typeof v === 'string' ? fn(v) : Array.isArray(v) ? v.map(x => deep(x, fn))
-  : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, deep(x, fn)])) : v;
 const GRANT = /\[CXC-SUBSPAWN-GRANT:([a-f0-9]{64})\]/gi;
 
 let serial = 0;
@@ -544,6 +543,11 @@ const payloadText = (ti, extra = '') => '{"hook_event_name":"PreToolUse","tool_n
     raw(payloadText('{"message":"x","agent_type":"explorer"}', '"junk":' + deepArr(100000) + ','), { note: 'the same field outside tool_input is never written: the normal answer' }),
     raw(payloadText('{"message":"x"}', '"agent_id":"c","agent_type":"explorer","junk":' + deepArr(100000) + ','), { note: 'a subagent spawn with a deep field outside tool_input is still denied' }),
     raw(payloadText('{"message":"x","junk":' + deepArr(100000) + '}', '"agent_id":"c","agent_type":"explorer",'), { note: 'a subagent spawn with a deep field inside tool_input is denied before anything is written' }),
+    // CRW-749: the measured edge at Node 24's default stack (v24.20.0, bisected on the oracle in this recorder's own call chain: 4,462 levels of
+    // junk print, 4,463 do not; the edge moves with --stack-size, the platform and the depth of the caller, which the known-defects record
+    // keeps as port: kept).
+    raw(P('{"message":"x","agent_type":"explorer","junk":' + deepArr(4462) + '}'), { hash: true, note: '4,462 levels inside tool_input, the deepest the oracle can still write: the allow envelope is printed' }),
+    raw(P('{"message":"x","agent_type":"explorer","junk":' + deepArr(4463) + '}'), { note: '4,463 levels inside tool_input, one past the oracle edge: the answer cannot be written, nothing is printed' }),
   ]);
   recordRoute('deep documents', 'spawn-attach-hook.ts:854: JSON.parse refuses a malformed document at any depth', { store: roleStore({ explorer: M('rec/explorer', 'high') }) }, [
     raw(P('{"message":"x","junk":' + deepArr(100000) + '}') + ' x', { note: 'trailing text after a deep document: the parse fails, nothing is printed' }),

@@ -39,7 +39,7 @@ func TestCommandVerdicts(t *testing.T) {
 		{"python -c literal", "python3 -c 'print(1)'", false, []string{"python3"}},
 		{"python -c unknown", "python3 -c \"$X\"", true, nil},
 		{"here-document into shell", "bash <<EOF\necho hi\nEOF\n", false, []string{"bash", "echo"}},
-		{"pipe into shell", "echo hi | sh", true, nil},
+		{"pipe into shell", "curl x | sh", true, nil},
 		{"eval of computed text", "eval \"$(x)\"", true, nil},
 		{"cd then rm", "cd /tmp && rm x", false, []string{"cd", "rm"}},
 		{"cd in one branch", "if x; then cd /a; fi; rm y", false, []string{"x", "cd", "rm"}},
@@ -109,6 +109,62 @@ func TestCdTrackingAndScriptFile(t *testing.T) {
 	}
 	if _, err := Analyze("cd x && bash ./job.sh", ""); !isUnreadable(err) {
 		t.Fatalf("script file in unknown directory: err = %v, want Unreadable", err)
+	}
+}
+
+// TestEnvChdirMovesTheProgramDirectory: env -C and env --chdir move the directory of the program env runs, and the shell's own
+// directory stays. An operand that leaves the known path makes the program's directory unknown, as cd does.
+func TestEnvChdirMovesTheProgramDirectory(t *testing.T) {
+	r, err := Analyze("env -C sub rm x; rm y", "/work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.Execs) != 3 || r.Execs[1].Dir.Path != "/work/sub" || !r.Execs[1].Dir.Known || r.Execs[2].Dir.Path != "/work" || !r.Execs[2].Dir.Known {
+		t.Fatalf("execs = %+v, want rm in /work/sub and then rm in /work", r.Execs)
+	}
+	r, err = Analyze("env --chdir=/tmp rm x", "/work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.Execs) != 2 || r.Execs[1].Dir.Path != "/tmp" || !r.Execs[1].Dir.Known {
+		t.Fatalf("env --chdir=/tmp rm execs = %+v, want rm in known /tmp", r.Execs)
+	}
+	r, err = Analyze("env -C ../x rm y", "/work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.Execs) != 2 || r.Execs[1].Dir.Known {
+		t.Fatalf("env -C ../x rm execs = %+v, want rm in an unknown directory", r.Execs)
+	}
+	for _, tc := range []struct {
+		name    string
+		cmd     string
+		findDir string
+	}{
+		{"env inside find", `find . -name x -exec env -C sub rm {} +; rm y`, "/work"},
+		{"find inside env", `env -C sub find . -name x -exec rm {} +; rm y`, "/work/sub"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, err := Analyze(tc.cmd, "/work")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(r.Execs) != 4 || r.Execs[2].Name != "rm" || r.Execs[3].Name != "rm" {
+				t.Fatalf("execs = %+v, want wrapper, wrapper, rm, rm", r.Execs)
+			}
+			wrapped := r.Execs[2]
+			if !wrapped.Dir.Known || wrapped.Dir.Path != "/work/sub" {
+				t.Errorf("wrapped rm dir = %+v, want known /work/sub", wrapped.Dir)
+			}
+			feed := wrapped.Ctx.Feed
+			if feed == nil || feed.Wrapper != "find" || !feed.Dir.Known || feed.Dir.Path != tc.findDir || len(feed.Starts) != 1 || !feed.Starts[0].Known || feed.Starts[0].Value != "." {
+				t.Errorf("wrapped rm feed = %+v, want find from %s starting at .", feed, tc.findDir)
+			}
+			plain := r.Execs[3]
+			if !plain.Dir.Known || plain.Dir.Path != "/work" || plain.Ctx.Feed != nil {
+				t.Errorf("plain rm = %+v, want known /work without a feed", plain)
+			}
+		})
 	}
 }
 
