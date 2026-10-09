@@ -193,7 +193,22 @@ func runCLI(ctx context.Context, argv []string, fetch fetchFunc, stdout, stderr 
 		fmt.Fprintln(stdout, Usage)
 		return 0, nil
 	}
+	switch argv[0] {
+	case "--help", "-h", "help":
+		fmt.Fprintln(stdout, Help)
+		return 0, nil
+	}
 	f := ParseFlags(argv[1:])
+	if argv[0] == "search" || argv[0] == "show" {
+		if f.Help {
+			fmt.Fprintln(stdout, Help)
+			return 0, nil
+		}
+		if f.Err != "" {
+			fmt.Fprintf(stderr, "skill-search: %s\n%s\nplace -- before a query word or id that starts with -; --help explains the options\n", f.Err, Usage)
+			return 2, nil
+		}
+	}
 	cmdCtx, cancel := context.WithTimeout(ctx, commandTimeout)
 	defer cancel()
 	switch argv[0] {
@@ -249,8 +264,13 @@ func runCLI(ctx context.Context, argv []string, fetch fetchFunc, stdout, stderr 
 		}
 		id := f.Rest[0]
 		wanted := []string{f.Source}
-		if f.Source == "all" || f.Source == "gh" {
+		switch f.Source {
+		case "all":
 			wanted = []string{"jaw", "hermes", "clawhub"}
+		case "gh":
+			// gh searches code and has no catalog to look an id up in; show used to read the other three instead.
+			fmt.Fprintf(stderr, "skill-search: show does not support source \"gh\" (use jaw, hermes, clawhub or all)\n")
+			return 1, nil
 		}
 		for _, name := range wanted {
 			row, found := findSkill(cmdCtx, name, id, f.Refresh, fetch, stderr)

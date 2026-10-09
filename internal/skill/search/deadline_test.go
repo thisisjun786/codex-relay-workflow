@@ -188,7 +188,7 @@ func TestSearchTimeoutKeepsTheUsableCache(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	file := filepath.Join(dir, cacheKey("jaw", JAWRegistryURL)+".cache")
+	file := filepath.Join(dir, CacheKey("jaw", JAWRegistryURL)+".cache")
 	if err := os.WriteFile(file, []byte(cliRegistry), 0o644); err != nil {
 		t.Fatal(err)
 	}

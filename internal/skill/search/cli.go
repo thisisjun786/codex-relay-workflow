@@ -3,7 +3,8 @@ package search
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -27,20 +28,67 @@ import (
 // Usage is cli.ts's usage under the CRW name table.
 const Usage = "crw skill <search <query...> [--source jaw|hermes|clawhub|gh|all] [--limit N] [--json] [--refresh] | show <id> [--source ...]>"
 
+// Help is what --help prints (stdout, exit 0, no network), and so the caller's documentation of the command.
+const Help = Usage + `
+
+Search external skill catalogs and print one skill. Nothing is installed.
+
+  search <query...>  rank the skills that match the query
+  show <id>          print one skill's body, behind the external-skill adapter preamble
+
+Options:
+  --source S  jaw (default), hermes, clawhub, gh, or all (jaw, hermes and clawhub); show reads jaw, hermes, clawhub or all
+  --limit N   at most N rows (default 10)
+  --json      print JSON: search a list of rows, show one object with body and preamble
+  --refresh   read a catalog again although its cache is fresh
+  --help, -h  print this text
+  --          end of options; every word after it is a query word or id, even one that starts with -
+
+Each remote read ends at a deadline (20 s per source, 60 s per command) and is limited in size (a catalog 4 MiB,
+a skill body 1 MiB); a read over its limit is refused, never cut. A search over several sources reads them at the
+same time and keeps one list: each source keeps its own order and the lists are merged by reciprocal rank (jaw and
+hermes weigh 1, clawhub 0.8, gh 0.6), an exact match of the whole query on a skill's id, then on its name, first. A
+row's score is the score its own source gave it, comparable only with rows of that source; the same id from two
+sources stays two rows.
+
+Exit status: 0 done (a source that answered with no rows is done); 1 no such skill, or an error; 2 a bad option
+(nothing was read); 3 every selected source was unavailable (nothing on stdout; stderr names each failure; a
+source served from a stale cache is available); 130 interrupted.`
+
 type Flags struct {
 	Source        string
 	Limit         float64
 	JSON, Refresh bool
+	Help          bool
+	Err           string // the first bad option, in words
 	Rest          []string
 }
 
-// ParseFlags preserves unknown options, empty values and dangling flags as positionals.
+// ParseFlags reads the options. --help and -h set Help; -- ends the options; an option it does not know, an option
+// without its value and an --option=value are left in Err, never taken for query words.
 func ParseFlags(argv []string) Flags {
 	f := Flags{Source: "jaw", Limit: 10, Rest: []string{}}
+	fail := func(format string, args ...any) {
+		if f.Err == "" {
+			f.Err = fmt.Sprintf(format, args...)
+		}
+	}
 	for i := 0; i < len(argv); i++ {
 		a := argv[i]
 		switch {
-		case (a == "--source" || a == "--limit") && i+1 < len(argv) && argv[i+1] != "":
+		case a == "--":
+			f.Rest = append(f.Rest, argv[i+1:]...)
+			return f
+		case a == "--help" || a == "-h":
+			f.Help = true
+		case a == "--source" || a == "--limit":
+			if i+1 >= len(argv) || argv[i+1] == "" {
+				fail("option %s needs a value", a)
+				if i+1 < len(argv) {
+					i++ // the empty value belongs to the option
+				}
+				continue
+			}
 			i++
 			if a == "--source" {
 				f.Source = argv[i]
@@ -51,6 +99,8 @@ func ParseFlags(argv []string) Flags {
 			f.JSON = true
 		case a == "--refresh":
 			f.Refresh = true
+		case len(a) > 1 && a[0] == '-':
+			fail("unknown option %q", a)
 		default:
 			f.Rest = append(f.Rest, a)
 		}
@@ -97,13 +147,16 @@ func sliceLimit(limit float64, length int) int {
 	return int(limit) // CLI limits are >=1; conversion truncates toward zero as JS slice does.
 }
 
-func cacheKey(source, url string) string {
-	return source + "-" + base64.RawURLEncoding.EncodeToString([]byte(url))[:24]
+// CacheKey names the cache file of one catalog URL of one source: the source and a digest of the whole URL, so two
+// URLs that begin alike (every raw.githubusercontent.com address does) never share a file.
+func CacheKey(source, url string) string {
+	sum := sha256.Sum256([]byte(source + "\x00" + url))
+	return source + "-" + hex.EncodeToString(sum[:])
 }
 
 func loadSource(ctx context.Context, source string, refresh bool, fetch fetchFunc, warnings io.Writer) ([]SkillRow, error) {
 	cached := func(url string) (string, error) {
-		key := cacheKey(source, url)
+		key := CacheKey(source, url)
 		res, err := CachedFetchText(key, func() (string, error) { return fetch(ctx, url, MaxBodyBytes) }, CacheOptions{Refresh: refresh, Warnings: warnings})
 		return res.Text, err
 	}

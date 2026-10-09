@@ -61,7 +61,9 @@ func CachedFetchText(key string, fetcher func() (string, error), opts CacheOptio
 	}
 	file := filepath.Join(dir, key+".cache")
 	if !opts.Refresh {
-		if info, err := os.Stat(file); err == nil && time.Duration(now().UnixMilli()-info.ModTime().UnixMilli())*time.Millisecond < ttl {
+		// A file stamped in the future is not fresh: its age is negative, which no TTL bounds, so the oracle kept it
+		// for the time left until that stamp plus the TTL. Only a stamp within the clock skew tolerance counts.
+		if info, err := os.Stat(file); err == nil && fresh(time.Duration(now().UnixMilli()-info.ModTime().UnixMilli())*time.Millisecond, ttl) {
 			if body, err := readCache(file); err == nil {
 				return CacheResult{Text: body}, nil
 			}
@@ -71,8 +73,10 @@ func CachedFetchText(key string, fetcher func() (string, error), opts CacheOptio
 	if err == nil && len(body) > MaxBodyBytes {
 		err = fmt.Errorf("skill cache body exceeds %d bytes", MaxBodyBytes)
 	}
+	writeFailed := false // the body arrived and could not be stored, which is a disk problem and not a network one
 	if err == nil {
 		err = os.MkdirAll(dir, 0o777)
+		writeFailed = err != nil
 	}
 	if err == nil {
 		err = publishCache(file, []byte(body))
@@ -81,6 +85,7 @@ func CachedFetchText(key string, fetcher func() (string, error), opts CacheOptio
 		if crwdir.Published(err) {
 			err = nil
 		}
+		writeFailed = err != nil
 	}
 	if err == nil {
 		return CacheResult{Text: body}, nil
@@ -93,9 +98,18 @@ func CachedFetchText(key string, fetcher func() (string, error), opts CacheOptio
 	if warnings == nil {
 		warnings = os.Stderr
 	}
-	_, _ = fmt.Fprintf(warnings, "skill-search: network fetch failed for %s; serving stale cache (%s)\n", key, err)
+	if writeFailed {
+		_, _ = fmt.Fprintf(warnings, "skill-search: cache write failed for %s; the fetched catalog was not stored, serving stale cache (%s)\n", key, err)
+	} else {
+		_, _ = fmt.Fprintf(warnings, "skill-search: network fetch failed for %s; serving stale cache (%s)\n", key, err)
+	}
 	return CacheResult{Text: stale, Stale: true}, nil
 }
+
+// clockSkewTolerance is how far ahead of the clock a cache file's stamp may be and still count as written now.
+const clockSkewTolerance = time.Minute
+
+func fresh(age, ttl time.Duration) bool { return age >= -clockSkewTolerance && age < ttl }
 
 // publishCache is the cache file's write; a test replaces it to stage a publication whose directory sync failed.
 var publishCache = crwdir.Publish

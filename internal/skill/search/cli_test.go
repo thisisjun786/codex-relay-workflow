@@ -42,7 +42,7 @@ func cliRun(args []string, fetch FetchText) (int, string, string) {
 
 func TestCLIFlags(t *testing.T) {
 	f := ParseFlags([]string{"telegram", "bot", "--source", "all", "--limit", "3", "--json", "--refresh"})
-	want := Flags{"all", 3, true, true, []string{"telegram", "bot"}}
+	want := Flags{Source: "all", Limit: 3, JSON: true, Refresh: true, Rest: []string{"telegram", "bot"}}
 	if !reflect.DeepEqual(f, want) {
 		t.Fatalf("%+v != %+v", f, want)
 	}
@@ -58,10 +58,25 @@ func TestCLIFlags(t *testing.T) {
 			}
 		})
 	}
-	for _, args := range [][]string{{"--source"}, {"--limit"}, {"--source", ""}, {"--wat", "--limit="}} {
-		if got := ParseFlags(args); !reflect.DeepEqual(got.Rest, args) {
-			t.Fatalf("%q => %+v", args, got)
+	for _, c := range []struct {
+		args []string
+		err  string
+		rest []string
+	}{
+		{[]string{"--source"}, "option --source needs a value", []string{}},
+		{[]string{"--limit"}, "option --limit needs a value", []string{}},
+		{[]string{"--source", ""}, "option --source needs a value", []string{}},
+		{[]string{"--wat", "--limit="}, `unknown option "--wat"`, []string{}},
+		{[]string{"-x", "word"}, `unknown option "-x"`, []string{"word"}},
+		{[]string{"--", "--wat", "--json", "-h"}, "", []string{"--wat", "--json", "-h"}},
+		{[]string{"a", "-", "b"}, "", []string{"a", "-", "b"}},
+	} {
+		if got := ParseFlags(c.args); got.Err != c.err || !reflect.DeepEqual(got.Rest, c.rest) || got.JSON || got.Help {
+			t.Fatalf("%q => %+v", c.args, got)
 		}
+	}
+	if f := ParseFlags([]string{"x", "--help"}); !f.Help || !reflect.DeepEqual(f.Rest, []string{"x"}) {
+		t.Fatalf("%+v", f)
 	}
 }
 
@@ -90,6 +105,15 @@ func TestCLIPortedCases(t *testing.T) {
 	if code != 0 || out != Usage+"\n" {
 		t.Fatalf("%d %q", code, out)
 	}
+}
+
+// recordedOracleChanges are the recorded cases whose answer the port changed on purpose (known-defects/CRW-1137.md).
+var recordedOracleChanges = map[string]struct {
+	Exit           int
+	Stdout, Stderr string
+}{
+	// `show --source gh` read jaw, hermes and clawhub; gh has no catalog to look an id up in.
+	"show x --source gh": {1, "", "skill-search: show does not support source \"gh\" (use jaw, hermes, clawhub or all)\n"},
 }
 
 // Recorded by Node v24 from v0.2.40 cli.ts, with only the declared name substitutions.
@@ -122,6 +146,9 @@ func TestCLIRecordedOracle(t *testing.T) {
 				}
 			}
 			code, out, errOut := cliRun(c.Args, fetch)
+			if changed, ok := recordedOracleChanges[strings.Join(c.Args, " ")]; ok {
+				c.Exit, c.Stdout, c.Stderr = changed.Exit, changed.Stdout, changed.Stderr
+			}
 			if code != c.Exit || out != c.Stdout || errOut != c.Stderr {
 				t.Fatalf("args=%q\nexit=%d want%d\nstdout=%q want%q\nstderr=%q want%q", c.Args, code, c.Exit, out, c.Stdout, errOut, c.Stderr)
 			}
@@ -153,7 +180,7 @@ func TestCLICacheAndFreshBody(t *testing.T) {
 		t.Fatal(catalogs)
 	}
 	dir, _ := CacheDir(os.LookupEnv)
-	file := filepath.Join(dir, "jaw-aHR0cHM6Ly9yYXcuZ2l0aHVi.cache")
+	file := filepath.Join(dir, CacheKey("jaw", JAWRegistryURL)+".cache")
 	old := time.Now().Add(-2 * time.Hour)
 	if err := os.Chtimes(file, old, old); err != nil {
 		t.Fatal(err)
@@ -203,7 +230,7 @@ func TestCLISourceBranches(t *testing.T) {
 	if json.Unmarshal([]byte(out), &rows) != nil || code != 0 || len(rows) != 1 || rows[0].Score != 3 {
 		t.Fatal(out)
 	}
-	for _, source := range []string{"all", "gh", "clawhub"} {
+	for _, source := range []string{"all", "clawhub"} {
 		if code, out, errOut := cliRun([]string{"show", "remote", "--source", source}, fetch); code != 0 || !strings.Contains(out, "fresh") || errOut != "" {
 			t.Fatalf("%s %d %q %q", source, code, out, errOut)
 		}
