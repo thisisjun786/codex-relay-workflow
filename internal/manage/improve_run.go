@@ -169,6 +169,11 @@ func improveRoadmapDocument(boundary, ref, bundle string, report improveProposeR
 	b.WriteString(fmt.Sprintf("- updated drafts: %d\n", len(report.Updated)))
 	b.WriteString(fmt.Sprintf("- suppressed by the issue list: %d\n", len(report.Suppressed)))
 	b.WriteString(fmt.Sprintf("- left for a later run: %d\n", report.Remaining))
+	if report.Remaining > 0 {
+		// A repeated run of this boundary and ref drafts nothing new, so a candidate the cap left is
+		// drafted by proposing this bundle, which holds its evidence, with the configured cap.
+		b.WriteString("- draft the left candidates: crw manage improve propose --bundle " + bundle + "\n")
+	}
 	b.WriteString("\n## Candidates\n\n")
 	if len(report.Candidates) == 0 {
 		b.WriteString("(the pass found no candidate)\n")
