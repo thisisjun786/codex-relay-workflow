@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -23,6 +24,16 @@ func RunScanCli(args ScanCliArgs) CliResult {
 	return scanRecordRun(args, state.AppendInterviewEvent)
 }
 
+// RunScanCliContext is RunScanCli for a caller the first SIGINT can end (the scan row of cmd/crw serve,
+// CRW-1074): the session lock wait ends with ctx, and ctx is read once more with the lock held, immediately
+// before the scan_completed row is appended, which is the command's first write. A run they end returns the
+// context's own error with the tracker and the interview ledger untouched and nothing to print, as the
+// oracle's process dies at the signal; once the append has started the run finishes and answers as RunScanCli
+// does. The help action reads nothing and prints under any context.
+func RunScanCliContext(ctx context.Context, args ScanCliArgs) (CliResult, error) {
+	return cliScanRecordRunContext(ctx, args, state.AppendInterviewEvent, state.WriteState, nil)
+}
+
 func scanRecordRun(a ScanCliArgs, appendEvent func(string, state.InterviewEvent) error) CliResult {
 	return cliPublishedScanRecordRun(a, appendEvent, state.WriteState)
 }
@@ -32,18 +43,32 @@ func scanRecordRun(a ScanCliArgs, appendEvent func(string, state.InterviewEvent)
 // is an argument, never package state, so a test can drive the published-but-unsynced path without
 // changing what any other caller does; scanRecordRun passes state.WriteState.
 func cliPublishedScanRecordRun(a ScanCliArgs, appendEvent func(string, state.InterviewEvent) error, writeState func(string, state.State) error) CliResult {
+	result, _ := cliScanRecordRunContext(context.Background(), a, appendEvent, writeState, nil)
+	return result
+}
+
+// cliScanRecordRunContext is the scan record run under the invocation's context. interrupt is the CRW-1074 test
+// seam, a field of the caller's own: it runs immediately before the pre-write context check, so a test can end the
+// context exactly between the lock and the first write. nil means no hook.
+//
+// Every answer reached before the scan_completed append began (the lock's own error, and the unreadable,
+// interview and verdict refusals of the state read under the lock) is the answer of a process the signal would
+// already have ended: an ended context takes precedence and nothing is printed. Once the append has begun, the run
+// goes on to the tracker write and its answer stands.
+func cliScanRecordRunContext(ctx context.Context, a ScanCliArgs, appendEvent func(string, state.InterviewEvent) error, writeState func(string, state.State) error, interrupt func()) (CliResult, error) {
 	if a.Action == ScanActionHelp {
-		return CliResult{Output: scanRecordHelp}
+		return CliResult{Output: scanRecordHelp}, nil
 	}
 	// CRW-871: a direct caller builds ScanCliArgs and bypasses ParseScanCliArgs, and this runner locks,
 	// reads and writes through the sanitised key, so a non-canonical id would rewrite a DIFFERENT
 	// session's file. The judgement runs before the lock is taken, as the parser's does for the CLI.
 	if !state.IsCanonicalSessionID(a.SessionID) {
-		return CliResult{Code: 1, Output: "scan record: " + sessionAliasRefusalText}
+		return CliResult{Code: 1, Output: "scan record: " + sessionAliasRefusalText}, nil
 	}
 	var round float64
 	derivedCount := 0
-	err := state.WithSessionLock(a.Cwd, a.SessionID, func() error {
+	begun := false
+	err := state.WithSessionLockContext(ctx, a.Cwd, a.SessionID, func() error {
 		s, unreadable := state.ReadStateStrict(a.Cwd, a.SessionID)
 		if unreadable {
 			return errors.New("session state is unreadable; refusing to overwrite it")
@@ -69,6 +94,14 @@ func cliPublishedScanRecordRun(a ScanCliArgs, appendEvent func(string, state.Int
 				e.Map = append(e.Map, state.MapEntry{QuestionID: key, Dimension: string(a.Map[key])})
 			}
 		}
+		// CRW-1074: the pre-write cancellation check. Cancelled here, no row is appended and the tracker stays.
+		if interrupt != nil {
+			interrupt()
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		begun = true
 		if err := appendEvent(a.Cwd, e); err != nil {
 			return err
 		}
@@ -126,8 +159,16 @@ func cliPublishedScanRecordRun(a ScanCliArgs, appendEvent func(string, state.Int
 	// written round: the round is visible and the ledger row it appended is already there, so a retry
 	// would record the same round twice. The durability failure is carried as a warning instead. A
 	// failure before the rename published nothing and stays the failure it was.
+	if !begun {
+		if cerr := ctx.Err(); cerr != nil {
+			return CliResult{}, cerr
+		}
+	}
+	if err != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
+		return CliResult{}, err
+	}
 	if err != nil && !state.Published(err) {
-		return CliResult{Code: 1, Output: "scan record failed: " + cliErrorMessage(err)}
+		return CliResult{Code: 1, Output: "scan record failed: " + cliErrorMessage(err)}, nil
 	}
 	derived := ""
 	if a.Derive {
@@ -142,9 +183,9 @@ func cliPublishedScanRecordRun(a ScanCliArgs, appendEvent func(string, state.Int
 	}
 	recorded := fmt.Sprintf("scan record: round %s recorded for session %s (contradictions=%s, high=%s%s)", scanRecordNumberText(round), a.SessionID, scanRecordNumberText(a.ContradictionCount), scanRecordNumberText(a.HighContradictionCount), derived)
 	if err != nil {
-		return CliResult{Output: recorded + "\n" + cliPublishedStateWarning(err)}
+		return CliResult{Output: recorded + "\n" + cliPublishedStateWarning(err)}, nil
 	}
-	return CliResult{Output: recorded}
+	return CliResult{Output: recorded}, nil
 }
 
 // Working values stay raw until write-side normalization, like the oracle.

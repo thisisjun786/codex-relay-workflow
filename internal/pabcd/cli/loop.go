@@ -10,6 +10,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -212,6 +213,15 @@ func loopInitAppendWarnings(result LoopCliResult, warnings []string) LoopCliResu
 // RunLoopCli is runGoalplanCli (:751-865) for the verbs this issue owns. A non-nil error is the oracle's
 // uncaught throw: a write that failed, or a lock status that could not be read.
 func RunLoopCli(args LoopCliArgs) (LoopCliResult, error) {
+	return RunLoopCliContext(context.Background(), args)
+}
+
+// RunLoopCliContext is RunLoopCli for a caller the first SIGINT can end (the loop row of cmd/crw serve,
+// CRW-1074). Only steer takes the context: its batch read and its goalplan lock wait end with it, and it
+// is read once more with the lock held, before the steering transaction's first write. A steer that ends
+// that way returns the context's own error with nothing written; the caller answers Interrupted. Every
+// other verb, and a context that can never end, behave as RunLoopCli always did.
+func RunLoopCliContext(ctx context.Context, args LoopCliArgs) (LoopCliResult, error) {
 	if args.Verb == LoopVerbHelp {
 		return LoopCliResult{Output: RenderLoopHelp(), Code: 0}, nil
 	}
@@ -229,7 +239,7 @@ func RunLoopCli(args LoopCliArgs) (LoopCliResult, error) {
 		return loopInit(args)
 	}
 	if loopIsMutatingVerb(args.Verb) {
-		return loopRunMutating(args)
+		return loopRunMutating(ctx, args)
 	}
 	slug := ResolveLoopSlug(args)
 	if slug == nil {
