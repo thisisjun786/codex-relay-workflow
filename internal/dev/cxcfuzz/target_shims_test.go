@@ -34,21 +34,35 @@ func registeredShimTargets() []string {
 	return names
 }
 
-// handshakeAnswers is the inert answer each registered shim gives a start-up handshake, as it stood at
-// 1633ddc2a, as the output's JSON value. Five shims answer null, the answer the handshake is specified
-// to get. The memorygate, shellwrite, spawn and worktreedel shims answer their own inert non-null values
-// for a non-object input (CRW-932 keeps those answers byte-identical). A new registered shim has no
-// entry here and fails the test until it is added.
+// handshakeAnswers is the exact reply line (without its newline) each registered shim gives a start-up
+// handshake `{"id":1,"input":null,"root":...}`. The nine lines are the bytes the shims write: the five
+// that answer null, and the memorygate, shellwrite, spawn and worktreedel shims' own inert non-null values
+// for a non-object input. The eight shims other than doctor are pinned as they stood at 1633ddc2a, taken
+// from running those unchanged shims there (CRW-932 keeps those answers byte-identical). The test compares
+// the raw line, so a change to the key order, the spacing or an added field is noticed. A new registered
+// shim has no entry here and fails the test until it is added.
 var handshakeAnswers = map[string]string{
-	"echo":        `null`,
-	"doctor":      `null`,
-	"goalplan":    `null`,
-	"pyjson":      `null`,
-	"state":       `null`,
-	"memorygate":  `""`,
-	"shellwrite":  `[]`,
-	"spawn":       `"the input is outside the target's grammar"`,
-	"worktreedel": `{"decision":"allow","reason":""}`,
+	"echo":        `{"id":1,"output":null}`,
+	"doctor":      `{"id":1,"output":null}`,
+	"goalplan":    `{"id":1,"output":null}`,
+	"pyjson":      `{"id":1,"output":null}`,
+	"state":       `{"id":1,"output":null}`,
+	"memorygate":  `{"id":1,"output":""}`,
+	"shellwrite":  `{"id":1,"output":[]}`,
+	"spawn":       `{"id":1,"output":"the input is outside the target's grammar"}`,
+	"worktreedel": `{"id":1,"output":{"decision":"allow","reason":""}}`,
+}
+
+// handshakeOutput is the output value of the pinned reply line for the named shim.
+func handshakeOutput(t *testing.T, name string) string {
+	t.Helper()
+	var reply struct {
+		Output json.RawMessage `json:"output"`
+	}
+	if err := json.Unmarshal([]byte(handshakeAnswers[name]), &reply); err != nil {
+		t.Fatalf("the pinned handshake answer for %s is not JSON: %v", name, err)
+	}
+	return string(reply.Output)
 }
 
 // startupLoadingShims are the shims that import their original module at their top level, when the
@@ -137,7 +151,7 @@ func TestNonNullHandshakeAnswersAreThePortsAnswerToNullInput(t *testing.T) {
 				t.Fatal(err)
 			}
 			var want bytes.Buffer
-			if err := json.Compact(&want, []byte(handshakeAnswers[name])); err != nil {
+			if err := json.Compact(&want, []byte(handshakeOutput(t, name))); err != nil {
 				t.Fatal(err)
 			}
 			if compact.String() != want.String() {
@@ -191,7 +205,9 @@ func TestDoctorShimImportsNothingForTheHandshake(t *testing.T) {
 
 // runShim starts the named shim in an empty working directory with its homes and TMPDIR in a temporary
 // directory outside it and ORACLE_ROOT set to oracleRoot (plus extraEnv), sends it one request line,
-// waits for the one reply line and for the shim to exit after its stdin closes, and returns the reply.
+// reads the one reply line, and only then closes its stdin and waits for the shim to exit. The pool
+// keeps a worker's stdin open while it works, and the doctor shim exits as soon as its stdin ends, so
+// closing it before the reply would end an in-flight import and lose the reply (CRW-932).
 func runShim(t *testing.T, root, name, oracleRoot string, extraEnv []string, request string) string {
 	line, _ := runShimIn(t, root, name, oracleRoot, extraEnv, request)
 	return line
@@ -243,15 +259,19 @@ func runShimIn(t *testing.T, root, name, oracleRoot string, extraEnv []string, r
 	if _, err := io.WriteString(stdin, request+"\n"); err != nil {
 		t.Fatal(err)
 	}
-	_ = stdin.Close()
-	line, err := bufio.NewReader(stdout).ReadString('\n')
+	// A shim that never answers fails the test at the deadline instead of hanging it.
+	timer := time.AfterFunc(30*time.Second, func() { _ = cmd.Process.Kill() })
+	defer timer.Stop()
+	reader := bufio.NewReader(stdout)
+	line, err := reader.ReadString('\n')
 	if err != nil {
 		t.Fatalf("the shim did not answer: %v", err)
 	}
-	// The reply is discarded by the pool, so only its presence matters. Wait for the process to exit
+	// The reply is in, so closing stdin now cannot cut an answer short. Wait for the process to exit
 	// before the caller looks at what it wrote.
+	_ = stdin.Close()
 	done := make(chan struct{})
-	go func() { _, _ = io.Copy(io.Discard, stdout); close(done) }()
+	go func() { _, _ = io.Copy(io.Discard, reader); close(done) }()
 	select {
 	case <-done:
 	case <-time.After(10 * time.Second):
@@ -261,8 +281,8 @@ func runShimIn(t *testing.T, root, name, oracleRoot string, extraEnv []string, r
 }
 
 // checkStartupHandshake sends one start-up handshake for the named shim with the given request root and
-// original (oracle) root, checks the answer is the want output (a JSON value) for request 1 with no
-// error, and that nothing was written under the worker's working directory or the request root.
+// original (oracle) root, checks the raw reply line (without its newline) is exactly want, and that
+// nothing was written under the worker's working directory or the request root.
 func checkStartupHandshake(t *testing.T, root, name, requestRoot, oracleRoot, want string) {
 	t.Helper()
 	request, err := json.Marshal(map[string]any{"id": 1, "input": nil, "root": requestRoot})
@@ -270,31 +290,11 @@ func checkStartupHandshake(t *testing.T, root, name, requestRoot, oracleRoot, wa
 		t.Fatal(err)
 	}
 	line, dir := runShimIn(t, root, name, oracleRoot, nil, string(request))
-	// The answer must be the inert one: the reply to request 1 carrying the shim's own inert output
-	// (null for the five shims whose existing answer is null). A shim that ran the case still answers
-	// (an error envelope or a case answer) and may leave no file behind, so checking only for a reply
-	// and an empty directory would miss it: the pyjson shim would spawn python3 on every worker start
-	// and still pass.
-	var reply struct {
-		ID     int             `json:"id"`
-		Output json.RawMessage `json:"output"`
-		Error  json.RawMessage `json:"error"`
-	}
-	if err := json.Unmarshal([]byte(line), &reply); err != nil {
-		t.Fatalf("the handshake answer %q is not JSON: %v", line, err)
-	}
-	if reply.ID != 1 || len(reply.Error) != 0 {
-		t.Fatalf("the handshake answer %q is not an inert answer to request 1 without an error", line)
-	}
-	var got, expected bytes.Buffer
-	if err := json.Compact(&got, reply.Output); err != nil {
-		t.Fatalf("the handshake output %q is not JSON: %v", reply.Output, err)
-	}
-	if err := json.Compact(&expected, []byte(want)); err != nil {
-		t.Fatalf("the expected handshake output %q is not JSON: %v", want, err)
-	}
-	if got.String() != expected.String() {
-		t.Fatalf("the handshake answer %q does not carry the inert output %s", line, want)
+	// The answer must be the pinned one byte for byte. A shim that ran the case still answers (an error
+	// envelope or a case answer) and may leave no file behind, so checking only for a reply and an empty
+	// directory would miss it: the pyjson shim would spawn python3 on every worker start and still pass.
+	if got := strings.TrimSuffix(line, "\n"); got != want {
+		t.Fatalf("the handshake answer is %q, want exactly %q", got, want)
 	}
 	// The handshake wrote nothing under the worker's working directory or under the request root.
 	for _, where := range []string{dir, requestRoot} {
