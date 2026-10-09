@@ -13,7 +13,7 @@ import (
 // A generation opened by hand for an accepted node whose plan revision changed only its criteria (CRW-1036). The route of such a node is a re-validation
 // (revalidation.go): the same output is ruled again under the plan's criteria and accepted again, with no new generation and no new child. dag-correct
 // therefore refuses to record a hand-opened generation for it, and dag-accept refuses a generation that is not recorded as an execution, so the child
-// would finish work that can only be refused afterwards. generation-open and generation-bind ask this before they write.
+// would finish work that can only be refused afterwards. generation-open and generation-bind ask this inside the transaction that writes the generation or the binding.
 
 func init() { registry.HandOpenedGenerationGuard = guardHandOpenedGeneration }
 
