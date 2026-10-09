@@ -1,7 +1,7 @@
 # CRW-894 fix round 4: the finding of the independent verifier on b7d8826d (P1: the reading with no directory lost its "no directory" state
 # where branches join, so an ordinary script named stdin or fd/0 in the working directory was refused after an if that does not change directory).
-# ../repo is the managed checkout. (A loop that changes nothing is not a row: the readings that have a directory lose it after any loop, as on dev; the
-# reading with no directory is pinned by TestAnalyzeNoDirKeepsNoDirectoryThroughStatements.)
+# ../repo is the managed checkout. (The loop that changes nothing, vg-05 here at first, is row vh-01 of rows/23-crw-894-verifier-8b02f7be.txt: on dev
+# and at 1688f7c5 it was allowed by all three gates, and fix round 5 keeps the directory known through such a loop.)
 
 === CRW-894-vg-01 | B
 --why An if that changes nothing, then an ordinary file named stdin in the working directory is the script python3 runs (verifier of b7d8826d, P1: the memory gate refused it after the join of the branches).
