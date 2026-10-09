@@ -76,18 +76,21 @@ type mapDeps struct {
 	installedSkill func(env host.LookupEnv, defaultScript string) string
 }
 
-// installedRepoMapDir is the scripts directory of the repo-map skill a plugin installation keeps
-// under the Codex home's plugin cache (<codex>/plugins/cache/<marketplace>/crw/<version>/skills),
-// or under PLUGIN_ROOT when the host provides it. It answers only when the default script, the one
-// a skills link gives, is absent; of several installed versions the most recently written wins.
+// installedRepoMapDir is the scripts directory of the repo-map skill a plugin installation keeps:
+// PLUGIN_ROOT's when the host provides it and its repomap.py is a regular file, otherwise the most
+// recently written of the versions under the Codex home's plugin cache
+// (<codex>/plugins/cache/<marketplace>/crw/<version>/skills). It answers only when the default
+// script, the one a skills link gives, is absent. A cached copy never displaces the active
+// PLUGIN_ROOT, however recently it was written (CRW-392).
 func installedRepoMapDir(env host.LookupEnv, defaultScript string) string {
-	if info, err := os.Stat(defaultScript); err == nil && info.Mode().IsRegular() {
+	if regularFile(defaultScript) {
 		return ""
 	}
 	skill := filepath.Join("skills", "crw-repo-map", "scripts")
-	var candidates []string
 	if root, _ := env("PLUGIN_ROOT"); text.Trim(root) != "" {
-		candidates = append(candidates, filepath.Join(root, skill))
+		if dir := filepath.Join(root, skill); regularFile(filepath.Join(dir, "repomap.py")) {
+			return dir
+		}
 	}
 	codex, _ := env("CODEX_HOME")
 	if codex == "" {
@@ -95,12 +98,12 @@ func installedRepoMapDir(env host.LookupEnv, defaultScript string) string {
 			codex = filepath.Join(home, ".codex")
 		}
 	}
-	if codex != "" {
-		cached, _ := filepath.Glob(filepath.Join(codex, "plugins", "cache", "*", "crw", "*", skill))
-		candidates = append(candidates, cached...)
+	if codex == "" {
+		return ""
 	}
+	cached, _ := filepath.Glob(filepath.Join(codex, "plugins", "cache", "*", "crw", "*", skill))
 	best, bestTime := "", time.Time{}
-	for _, dir := range candidates {
+	for _, dir := range cached {
 		info, err := os.Stat(filepath.Join(dir, "repomap.py"))
 		if err != nil || !info.Mode().IsRegular() {
 			continue
@@ -110,6 +113,11 @@ func installedRepoMapDir(env host.LookupEnv, defaultScript string) string {
 		}
 	}
 	return best
+}
+
+func regularFile(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.Mode().IsRegular()
 }
 
 func runRepoMap(c invocation) int {
