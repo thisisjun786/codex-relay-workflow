@@ -16,15 +16,15 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// receiptLockHeld reports whether another open file description holds the lock on the receipt directory. It asks on a
+// receiptLockHeld reports whether another open file description holds the receipt's lock file. It asks on a
 // handle of its own: flock locks belong to the open file description, so this contends with the run under test even
 // inside one process.
 func receiptLockHeld(t *testing.T, root string) bool {
 	t.Helper()
-	dir, err := os.Open(filepath.Dir(expectedReceiptPath(root)))
+	lock, err := receiptLockFile(expectedReceiptPath(root))
 	receiptMust(t, err)
-	defer dir.Close() // drops the lock if the probe took it
-	err = unix.Flock(int(dir.Fd()), unix.LOCK_EX|unix.LOCK_NB)
+	defer lock.Close() // drops the lock if the probe took it
+	err = unix.Flock(int(lock.Fd()), unix.LOCK_EX|unix.LOCK_NB)
 	if errors.Is(err, unix.EWOULDBLOCK) {
 		return true
 	}
@@ -140,8 +140,9 @@ func TestReceiptWithdrawalKeepsAnotherRunsReceipt(t *testing.T) {
 	}
 }
 
-// The lock is on the receipt directory handle itself: held from the publication through the withdrawal's unlink,
-// released when the call returns, and never a file in the directory (a fixture tree would list it).
+// The lock is the receipt's lock file (test-receipt.json.lock): held from the publication through the withdrawal's
+// unlink and released when the call returns. The file stays in the session directory once a run has taken it, and it
+// is the only file besides the receipt that a run leaves there.
 func TestReceiptDirectoryIsLockedFromPublishThroughWithdrawal(t *testing.T) {
 	root := receiptRepo(t)
 	t.Setenv("CRW_HOME", t.TempDir())
@@ -166,8 +167,8 @@ func TestReceiptDirectoryIsLockedFromPublishThroughWithdrawal(t *testing.T) {
 	if receiptLockHeld(t, root) {
 		t.Fatal("the lock outlives the call")
 	}
-	if names := receiptDirNames(t, root); len(names) != 0 {
-		t.Fatalf("withdrawn run left %v", names)
+	if names := receiptDirNames(t, root); !reflect.DeepEqual(names, []string{"test-receipt.json.lock"}) {
+		t.Fatalf("withdrawn run left %v, want only the lock file", names)
 	}
 
 	receiptAfterPublishHook, receiptLockAfterCompareHook = nil, nil
@@ -175,8 +176,8 @@ func TestReceiptDirectoryIsLockedFromPublishThroughWithdrawal(t *testing.T) {
 	if got != (ReceiptCLIResult{Output: expectedReceiptPath(root)}) {
 		t.Fatalf("uninterrupted run = %#v", got)
 	}
-	if names := receiptDirNames(t, root); !reflect.DeepEqual(names, []string{"test-receipt.json"}) {
-		t.Fatalf("uninterrupted run left %v, want only the receipt (no lock file)", names)
+	if names := receiptDirNames(t, root); !reflect.DeepEqual(names, []string{"test-receipt.json", "test-receipt.json.lock"}) {
+		t.Fatalf("uninterrupted run left %v, want the receipt and its lock file", names)
 	}
 	if receiptLockHeld(t, root) {
 		t.Fatal("the lock outlives the call")
@@ -208,7 +209,7 @@ func TestReceiptLockWaitEndsWithTheContext(t *testing.T) {
 			parked := make(chan struct{})
 			receiptBeforePublishHook = func() { // the directory exists here; another holder takes its lock
 				var err error
-				holder, err = os.Open(filepath.Dir(expectedReceiptPath(root)))
+				holder, err = receiptLockFile(expectedReceiptPath(root))
 				receiptMust(t, err)
 				receiptMust(t, unix.Flock(int(holder.Fd()), unix.LOCK_EX))
 				if !tc.endDuringWait {
@@ -254,8 +255,8 @@ func TestReceiptLockWaitEndsWithTheContext(t *testing.T) {
 				t.Fatalf("got %#v, want the interrupted refusal", got)
 			}
 			receiptAbsent(t, root)
-			if names := receiptDirNames(t, root); len(names) != 0 {
-				t.Fatalf("the refused run left %v", names)
+			if names := receiptDirNames(t, root); !reflect.DeepEqual(names, []string{"test-receipt.json.lock"}) {
+				t.Fatalf("the refused run left %v, want only the lock file", names)
 			}
 		})
 	}

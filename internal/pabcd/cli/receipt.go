@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -148,7 +149,7 @@ var receiptBeforePublishHook func()
 // where the rename beat the cancellation.
 var receiptAfterPublishHook func()
 
-// receiptLockRetry is how often a run whose context can end asks again for a receipt directory lock that another run holds.
+// receiptLockRetry is how often a run whose context can end asks again for a receipt lock file that another run holds.
 const receiptLockRetry = 20 * time.Millisecond
 
 // receiptLateCancelHook, when non-nil, runs immediately before the late-cancellation check in a
@@ -170,13 +171,18 @@ var receiptLockAfterCompareHook func()
 // is really waiting, instead of from a timer that can fire before the wait begins.
 var receiptLockWaitParkedHook func()
 
+// receiptLockRefusedHook, when non-nil, runs after the lock file could not be opened and the run judged what to report,
+// just before the run returns. A test changes the evidence directory's mode there, the moment a lockless publication
+// would have become possible, to pin that the run still publishes nothing.
+var receiptLockRefusedHook func()
+
 // RunReceiptCLI ports receipt-cli.ts:75-185: guard, unlink stale receipt, capture, execute argv without a shell, capture again
 // and publish only a successful unchanged-tree result. The receipt stays native while a bound command runs in its source.
 // A cancellation seen anywhere before the rename refuses the receipt, and one that lands after the publication check
 // withdraws the receipt the rename beat it to.
-// The publication, the cancellation check after it and that withdrawal run under one exclusive flock on the receipt
-// directory, so a withdrawal never removes a receipt another run published after the withdrawal compared the bytes. The
-// lock is the open directory handle: no lock file is created. A wait for it that ends with the context publishes nothing and
+// The publication, the cancellation check after it and that withdrawal run under one exclusive flock on the receipt's lock file
+// (receiptLockFile), so a withdrawal never removes a receipt another run published after the withdrawal compared the bytes.
+// The lock needs no read permission on the directory. A wait for it that ends with the context publishes nothing and
 // answers the interrupted refusal. The lock is cooperative: the run-start removal below, which is the oracle's, and any other
 // writer of the file do not take it.
 // A non-nil error models the oracle's thrown remove/before-capture/publication errors. Atomic publication intentionally fixes
@@ -264,12 +270,25 @@ func RunReceiptCLI(args ReceiptCLIArgs, options ReceiptRunOptions) (ReceiptCLIRe
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	dir, err := os.Open(filepath.Dir(path))
+	lock, err := receiptLockFile(path)
 	if err != nil {
+		if errors.Is(err, errReceiptLockNotRegular) {
+			return refuse("receipt test: the lock file " + path + ".lock is not a regular file (a symlink or other special file); remove it and run again; no receipt written")
+		}
+		// No run publishes without the lock. A directory that takes no write permission also takes no temporary file, and
+		// the refusal below is the error the publication always gave there. The lock error is returned in every other case.
+		if errors.Is(err, fs.ErrPermission) {
+			if probeErr := receiptTempProbe(path); probeErr != nil {
+				err = probeErr
+			}
+		}
+		if receiptLockRefusedHook != nil {
+			receiptLockRefusedHook()
+		}
 		return ReceiptCLIResult{}, err
 	}
-	defer dir.Close() // drops the lock
-	if err = receiptLockWait(ctx, dir); err != nil {
+	defer lock.Close() // drops the lock
+	if err = receiptLockWait(ctx, lock); err != nil {
 		if ctx.Err() != nil && err == ctx.Err() {
 			return refuse(receiptInterrupted)
 		}
@@ -308,19 +327,63 @@ func receiptPublishRefusal(ctx context.Context, err error) (ReceiptCLIResult, bo
 	return ReceiptCLIResult{Output: receiptInterrupted, Code: 1}, true
 }
 
-// receiptLockWait takes the exclusive lock on the receipt directory. A context that can end is asked for it without blocking,
+// errReceiptLockNotRegular is what receiptLockFile reports for a lock file path that is not a regular file.
+var errReceiptLockNotRegular = errors.New("not a regular file")
+
+// receiptLockFile opens the lock file of the receipt at path, creating it when it is missing. The lock file is path + ".lock",
+// the sidecar-lock name of the state files (state.WithSessionLock); its name ends in .lock, so the listings that take only
+// .json names skip it. It needs the write and search permission on the directory that a publication needs, and no read
+// permission on the directory itself. The file is left in place, so no two runs can lock different inodes of one name.
+// The open never follows a link (O_NOFOLLOW) and never waits for a peer on a special file (O_NONBLOCK), and the descriptor
+// it opened must be a regular file: a symlink to the receipt would put the lock on an inode every publication replaces, and
+// a FIFO would block the open before the context-aware wait begins. Anything else answers errReceiptLockNotRegular.
+func receiptLockFile(path string) (*os.File, error) {
+	name := path + ".lock"
+	lock, err := os.OpenFile(name, os.O_RDONLY|os.O_CREATE|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0o666)
+	if err != nil {
+		if errors.Is(err, syscall.ELOOP) { // a symlink at the path: the open is refused, not followed
+			return nil, &fs.PathError{Op: "lock", Path: name, Err: errReceiptLockNotRegular}
+		}
+		return nil, err
+	}
+	info, err := lock.Stat()
+	if err != nil {
+		_ = lock.Close()
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		_ = lock.Close()
+		return nil, &fs.PathError{Op: "lock", Path: name, Err: errReceiptLockNotRegular}
+	}
+	return lock, nil
+}
+
+// receiptTempProbe tries to create, and removes, a temporary file named as the publication names its own beside path. It
+// returns the creation error, which is the one the publication gives in a directory that takes no write permission, and nil
+// when the file could be created.
+func receiptTempProbe(path string) error {
+	tmp := filepath.Join(filepath.Dir(path), "."+filepath.Base(path)+"."+rand.Text()+".tmp")
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	_ = f.Close()
+	return os.Remove(tmp)
+}
+
+// receiptLockWait takes the exclusive lock on the receipt's lock file. A context that can end is asked for it without blocking,
 // and again every receiptLockRetry while another run holds it, so the wait ends with ctx and returns its error. One that can
 // never end (context.Background) blocks in the kernel. A free lock is taken even when ctx has ended since the caller looked:
 // PublishContext then reports the cancellation at its rename step, as it did before the lock existed.
-func receiptLockWait(ctx context.Context, dir *os.File) error {
+func receiptLockWait(ctx context.Context, lock *os.File) error {
 	if ctx.Done() == nil {
-		return unix.Flock(int(dir.Fd()), unix.LOCK_EX)
+		return unix.Flock(int(lock.Fd()), unix.LOCK_EX)
 	}
 	tick := time.NewTicker(receiptLockRetry)
 	defer tick.Stop()
 	refused := false
 	for {
-		err := unix.Flock(int(dir.Fd()), unix.LOCK_EX|unix.LOCK_NB)
+		err := unix.Flock(int(lock.Fd()), unix.LOCK_EX|unix.LOCK_NB)
 		if !errors.Is(err, unix.EWOULDBLOCK) {
 			return err
 		}
