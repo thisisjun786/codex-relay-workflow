@@ -137,6 +137,18 @@ func reviveSteeringEvents(raw any) ([]SteeringEventRecord, bool) {
 	return out, true
 }
 
+// validSchemaVersion reports whether a plan's schemaVersion is one a reader can honour (CRW-1109): absent, or a value that is no
+// number (both read as version 1, the legacy reading), or a whole finite number of at least 1. The oracle floors a fraction (2.9
+// reads as 2), keeps 0 and a negative number as written and drops -1e999, although no plan is ever written with such a version; the
+// port refuses them, so the plan is reported and its bytes are left as they are.
+func validSchemaVersion(m map[string]any) bool {
+	f, ok := jsNumber(m["schemaVersion"])
+	if !ok {
+		return true
+	}
+	return !math.IsInf(f, 0) && !math.IsNaN(f) && f >= 1 && f == math.Trunc(f)
+}
+
 // declaredSchemaVersion is declaredSchemaVersion: the number a plan names as its schemaVersion, 1 when it names none.
 func declaredSchemaVersion(m map[string]any) float64 {
 	if f, ok := jsNumber(m["schemaVersion"]); ok {
@@ -255,7 +267,7 @@ func reviveGoalplan(parsed any, expectedSlug *string) *Goalplan {
 	if !ok || !hasObjective || !hasSlug {
 		return nil
 	}
-	if _, err := ValidateGoalplanSlug(slug); err != nil || expectedSlug != nil && slug != *expectedSlug || declaredSchemaVersion(o) > SupportedMaxSchemaVersion {
+	if _, err := ValidateGoalplanSlug(slug); err != nil || expectedSlug != nil && slug != *expectedSlug || declaredSchemaVersion(o) > SupportedMaxSchemaVersion || !validSchemaVersion(o) {
 		return nil
 	}
 	phases, phasesOK := o["workPhases"].([]any)

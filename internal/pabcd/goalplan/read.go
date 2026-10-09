@@ -108,7 +108,7 @@ func revivalLossReadPlan(dir *os.File, real, path, slug string) (GoalplanReadRes
 	if plan == nil {
 		// No plan, but the text is kept for the write lock: stored data a write would lose (bytes that are not UTF-8, a
 		// repeated key) makes the file a refusal there, not an absent plan (CRW-975).
-		field := firstInvalidField(parsed)
+		field := firstInvalidField(parsed, &slug)
 		return readFailure("invalid-shape", path, "the goalplan parsed as JSON but field '"+field+"' did not satisfy the schema", field), revivalLossFile{text: decoded, badByte: revivalLossBadByte(raw)}
 	}
 	return GoalplanReadResult{Plan: plan}, revivalLossFile{parsed: parsed, text: decoded, badByte: revivalLossBadByte(raw)}
@@ -151,9 +151,11 @@ func unpairedSurrogate(s string) int {
 	return -1
 }
 
-// firstInvalidField follows the oracle's diagnostic order (:875-913), including
-// (unknown) for a mismatch of slugs or malformed nested steering entry.
-func firstInvalidField(parsed any) string {
+// firstInvalidField follows the oracle's diagnostic order (:875-913). The oracle answers (unknown) for a
+// slug that is not a valid one or not the requested one, a criterion with no id and a malformed steering
+// entry, and blames a missing host - which revival defaults and never refuses - for whatever failed after it;
+// CRW-1109 names the field each of those refusals is about instead. What is refused is unchanged.
+func firstInvalidField(parsed any, expectedSlug *string) string {
 	o, ok := parsed.(map[string]any)
 	if !ok {
 		return "(root: not an object)"
@@ -161,11 +163,21 @@ func firstInvalidField(parsed any) string {
 	if _, ok := text(o, "objective"); !ok {
 		return "objective"
 	}
-	if _, ok := text(o, "slug"); !ok {
+	slug, ok := text(o, "slug")
+	if !ok {
 		return "slug"
+	}
+	if _, err := ValidateGoalplanSlug(slug); err != nil {
+		return "slug (not a valid goalplan slug)"
+	}
+	if expectedSlug != nil && slug != *expectedSlug {
+		return "slug (the stored slug is not the requested one)"
 	}
 	if declaredSchemaVersion(o) > SupportedMaxSchemaVersion {
 		return "schemaVersion"
+	}
+	if !validSchemaVersion(o) {
+		return "schemaVersion (a whole number from 1)"
 	}
 	phases, ok := o["workPhases"].([]any)
 	if !ok {
@@ -209,17 +221,31 @@ func firstInvalidField(parsed any) string {
 		if _, scenario := text(c, "scenario"); !ok || !scenario {
 			return "criteria[] entries (each needs scenario/expectedEvidence/status)"
 		}
-	}
-	host, ok := o["host"].(map[string]any)
-	if _, armed := host["armed"].(bool); !ok || !armed {
-		return "host (needs armed/armedAt/source)"
+		if _, id := text(c, "id"); !id {
+			return "criteria[].id"
+		}
 	}
 	if _, ok := reviveDecisions(o, "decisions"); !ok {
 		return "decisions"
 	}
 	if v, present := o["steeringLog"]; present {
-		if _, ok := v.([]any); !ok {
+		list, ok := v.([]any)
+		if !ok {
 			return "steeringLog"
+		}
+		for _, entry := range list {
+			e, ok := entry.(map[string]any)
+			for _, k := range [...]string{"idempotencyKey", "rationale", "evidence", "appliedAt", "summary"} {
+				if f, _ := text(e, k); !ok || f == "" {
+					return "steeringLog[] entries (each needs idempotencyKey/rationale/evidence/appliedAt/summary)"
+				}
+			}
+			if _, ok := reviveSteeringOps(e["ops"]); !ok {
+				return "steeringLog[].ops"
+			}
+			if _, ok := reviveSteeringEvents(e["events"]); !ok {
+				return "steeringLog[].events"
+			}
 		}
 	}
 	return "(unknown)"

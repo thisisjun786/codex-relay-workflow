@@ -67,6 +67,18 @@ func promptOrchestrateHandle(p PromptSubmitPayload, current state.State, turn st
 		return "", false
 	}
 
+	// CRW-1109: a recognized command whose form is broken, or whose --attest is explicitly malformed, is
+	// refused before anything else is judged or written. The oracle never reads attestError and reads a
+	// command line holding a CR, U+2028 or U+2029 as chat, so both used to pass: the free transition went
+	// ahead without the attestation the user typed, or the command was silently ignored. An attestation the
+	// user simply left out is still valid.
+	if command.FormError != "" {
+		return promptOrchestrateRefusal(command.FormError + ". Nothing was written."), true
+	}
+	if command.AttestError != "" {
+		return promptOrchestrateRefusal("the --attest of this command is malformed: " + command.AttestError + ". Fix it or leave --attest out; nothing was written."), true
+	}
+
 	// SOURCE-ROOT: every verb but status and reset needs a session source that resolves. status is a
 	// read and reset is the operator's stand-down, so neither is refused by a broken binding.
 	if verb != fsm.VerbStatus && verb != fsm.VerbReset {

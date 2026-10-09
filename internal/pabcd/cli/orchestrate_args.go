@@ -59,7 +59,7 @@ func VerbText(v fsm.OrchestrateVerb) string {
 
 func isHelpToken(v string) bool { return v == "help" || v == "--help" || v == "-h" }
 
-// readFlagValue takes the first occurrence, used only on the unknown-verb path.
+// readFlagValue takes the first occurrence of name's value; the metric row reads its flags with it.
 func readFlagValue(argv []string, name string) *string {
 	for i, a := range argv {
 		if a == name {
@@ -85,9 +85,11 @@ func cliVerb(token string) fsm.OrchestrateVerb {
 	switch s := string(b); s {
 	case "i", "p", "a", "b", "c", "d":
 		return fsm.OrchestrateVerb(strings.ToUpper(s))
-	case "status", "reset", "constructor", "__proto__":
+	case "status", "reset":
 		return fsm.OrchestrateVerb(s)
 	}
+	// The oracle's verb table is a plain object, so constructor and __proto__ find inherited values; only the
+	// documented verbs are verbs here (CRW-1109).
 	return ""
 }
 
@@ -141,79 +143,167 @@ func readCliAttest(file, cwd string) (*attest.Attestation, string) {
 	return att, ""
 }
 
+// orchestrateCliFlags is one scan of the options after the verb (CRW-1109), shared by a recognized verb
+// and the unknown-verb diagnostic so the two select the same session and cwd. help is a help token in an
+// option position; err is the first strictness refusal; session and cwd are nil and the input cwd when a
+// conflicting repeat makes them ambiguous.
+type orchestrateCliFlags struct {
+	help        bool
+	err         string
+	session     *string
+	cwd         string
+	json        bool
+	attest      []*string // each --attest value in order, nil for one that is missing
+	attestFile  *string
+	fileMissing bool
+}
+
+// scanOrchestrateCliFlags reads the options strictly: --session, --cwd, --attest and --attest-file take
+// a value, either the next argument or after "=" in the same one; --json takes none. An unknown option, a
+// stray argument, a missing --session or --cwd value, a value that is itself an option (a typo would
+// otherwise send the work to the input cwd or to no session), and a --session or --cwd repeated with a
+// different value are refusals. A help token in an option position is help; as an option's value it is
+// that value. The forms the skills use - space-separated values - are unchanged.
+func scanOrchestrateCliFlags(args []string, cwd string) orchestrateCliFlags {
+	f := orchestrateCliFlags{cwd: cwd}
+	fail := func(msg string) {
+		if f.err == "" {
+			f.err = msg
+		}
+	}
+	var sessions, cwds []string
+	for i := 0; i < len(args); i++ {
+		tok := args[i]
+		name, value, inline := tok, "", false
+		if strings.HasPrefix(tok, "--") {
+			if k := strings.IndexByte(tok, '='); k > 0 {
+				name, value, inline = tok[:k], tok[k+1:], true
+			}
+		}
+		switch name {
+		case "--json":
+			if inline {
+				fail("--json takes no value, got " + tok)
+				continue
+			}
+			f.json = true
+			continue
+		case "--session", "--cwd", "--attest", "--attest-file":
+		default:
+			switch {
+			case isHelpToken(tok):
+				f.help = true
+			case strings.HasPrefix(tok, "-"):
+				fail("unknown option " + tok + " (expected --session, --cwd, --attest, --attest-file, --json)")
+			default:
+				fail("unexpected argument '" + tok + "' (values follow their option: --session <id>, --cwd <path>, --attest <json>)")
+			}
+			continue
+		}
+		present := inline
+		if !inline && i+1 < len(args) {
+			i++
+			value, present = args[i], true
+			if strings.HasPrefix(value, "--") && name != "--attest" {
+				fail(name + " needs a value, but the next argument is the option " + value + " (use " + name + "=<value> for a value that starts with --)")
+				continue
+			}
+		}
+		switch name {
+		case "--session":
+			if !present {
+				fail("--session requires a value")
+				continue
+			}
+			sessions = append(sessions, value)
+		case "--cwd":
+			if !present {
+				fail("--cwd requires a value")
+				continue
+			}
+			cwds = append(cwds, value)
+		case "--attest":
+			if !present {
+				f.attest = append(f.attest, nil)
+				continue
+			}
+			v := value
+			f.attest = append(f.attest, &v)
+		case "--attest-file":
+			if !present {
+				f.fileMissing = true
+				continue
+			}
+			v := value
+			f.attestFile = &v
+		}
+	}
+	pick := func(flag string, values []string) (*string, bool) {
+		if len(values) == 0 {
+			return nil, true
+		}
+		for _, v := range values[1:] {
+			if v != values[0] {
+				fail(flag + " is given more than once with different values ('" + values[0] + "', '" + v + "'); pass it once")
+				return nil, false
+			}
+		}
+		v := values[0]
+		return &v, true
+	}
+	f.session, _ = pick("--session", sessions)
+	if c, ok := pick("--cwd", cwds); ok && c != nil {
+		f.cwd = *c
+	}
+	return f
+}
+
 // ParseOrchestrateCliArgs ports orchestrate-cli.ts:169-300 (CXC v0.2.40, 3c1459ac); argv
 // excludes the orchestrate token. It reads only an explicitly supplied attest file and never
-// writes. Help anywhere wins; unknown flags are ignored; value flags consume the next token
-// even when it is another flag. These oracle quirks are deliberate parity, not gates.
+// writes. CRW-1109 departs from the oracle's lenient scan, which ignored unknown flags and
+// --flag=value forms, let a value flag swallow the next flag, took help from anywhere in argv (a
+// session named help included) and picked a repeated --session or --cwd differently for the
+// diagnostic and for the command: the options are scanned once, strictly
+// (scanOrchestrateCliFlags), help is decided after the option values are read, and only the
+// documented verbs are verbs. The attestation rules are the oracle's.
 func ParseOrchestrateCliArgs(argv []string, cwd string) OrchestrateCliParsed {
-	if len(argv) == 0 {
+	if len(argv) == 0 || isHelpToken(argv[0]) {
 		return OrchestrateCliParsed{Help: &OrchestrateCliHelpArgs{Cwd: cwd}}
 	}
-	for _, a := range argv {
-		if isHelpToken(a) {
-			return OrchestrateCliParsed{Help: &OrchestrateCliHelpArgs{Cwd: cwd}}
-		}
+	flags := scanOrchestrateCliFlags(argv[1:], cwd)
+	if flags.help {
+		return OrchestrateCliParsed{Help: &OrchestrateCliHelpArgs{Cwd: cwd}}
 	}
 	verb := cliVerb(argv[0])
 	if verb == "" {
-		out := cwd
-		if v := readFlagValue(argv, "--cwd"); v != nil {
-			out = *v
-		}
-		return OrchestrateCliParsed{Error: &CliParseError{Error: fmt.Sprintf("unknown orchestrate verb '%s' (expected I|P|A|B|C|D|status|reset); run crw pabcd orchestrate --help", argv[0]), Session: readFlagValue(argv, "--session"), Cwd: out}}
+		return OrchestrateCliParsed{Error: &CliParseError{Error: fmt.Sprintf("unknown orchestrate verb '%s' (expected I|P|A|B|C|D|status|reset); run crw pabcd orchestrate --help", argv[0]), Session: flags.session, Cwd: flags.cwd}}
 	}
-	a := &OrchestrateCliArgs{Verb: verb, Cwd: cwd}
-	var file *string
-	sawInline := false
-	for i := 1; i < len(argv); i++ {
-		flag := argv[i]
-		next := func() *string {
-			i++
-			if i < len(argv) {
-				value := argv[i]
-				return &value
-			}
-			return nil
+	if flags.err != "" {
+		return OrchestrateCliParsed{Error: &CliParseError{Error: "orchestrate " + VerbText(verb) + ": " + flags.err + "; nothing was done", Session: flags.session, Cwd: flags.cwd}}
+	}
+	a := &OrchestrateCliArgs{Verb: verb, Cwd: flags.cwd, Session: flags.session, JSON: flags.json}
+	for _, raw := range flags.attest {
+		if raw == nil {
+			a.AttestError = "--attest requires a JSON argument"
+			continue
 		}
-		switch flag {
-		case "--attest":
-			sawInline = true
-			raw := next()
-			if raw == nil {
-				a.AttestError = "--attest requires a JSON argument"
-				continue
-			}
-			att, err := decodeCliAttest(*raw)
-			if err != nil {
-				a.AttestError = "attest JSON is not valid JSON"
-			} else if att == nil {
-				a.AttestError = "attest JSON missing valid from/to"
-			} else {
-				a.Attest = att
-			}
-		case "--attest-file":
-			raw := next()
-			if raw == nil {
-				a.AttestError = "--attest-file requires a path argument"
-				continue
-			}
-			file = raw
-		case "--session":
-			a.Session = next()
-		case "--cwd":
-			a.Cwd = cwd
-			if raw := next(); raw != nil {
-				a.Cwd = *raw
-			}
-		case "--json":
-			a.JSON = true
+		att, err := decodeCliAttest(*raw)
+		if err != nil {
+			a.AttestError = "attest JSON is not valid JSON"
+		} else if att == nil {
+			a.AttestError = "attest JSON missing valid from/to"
+		} else {
+			a.Attest = att
 		}
 	}
-	if file != nil {
-		if sawInline {
+	if flags.fileMissing {
+		a.AttestError = "--attest-file requires a path argument"
+	}
+	if flags.attestFile != nil {
+		if len(flags.attest) > 0 {
 			a.AttestError = "pass --attest OR --attest-file, not both"
 		} else {
-			att, errText := readCliAttest(*file, a.Cwd)
+			att, errText := readCliAttest(*flags.attestFile, a.Cwd)
 			if errText != "" {
 				a.AttestError = errText
 			} else {
