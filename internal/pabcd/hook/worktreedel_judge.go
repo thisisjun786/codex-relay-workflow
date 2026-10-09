@@ -3,7 +3,9 @@ package hook
 // The worktree deletion guard reads a command through the shared command reader (internal/pabcd/shellir).
 // Every program the reader shows is judged: a recursive rm, an rmdir, or a git worktree remove whose target is
 // the session's own worktree, its slot, or an ancestor of the directory the command runs in is denied. A text
-// the reader cannot read is denied, and so is a removal whose target the reader cannot evaluate.
+// the reader cannot read is denied, and so is a removal whose target the reader cannot evaluate. A find that deletes
+// (-delete, or -exec and its kin running rm, rmdir, unlink, shred or git worktree remove) is judged by its start points
+// and a test before the action, and the same programs run by xargs by the names on its standard input (CRW-895).
 
 import (
 	"io"
