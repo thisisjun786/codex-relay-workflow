@@ -1103,3 +1103,149 @@ func TestPremergeFilesNameNoHostValue(t *testing.T) {
 		}
 	}
 }
+
+// C2 (d1): a conflict in the manifest's version line is settled on that line alone: the tree takes dev's
+// version and keeps every other change the pull request made to the manifest.
+func TestPremergeEvalManifestVersionConflictKeepsTheOtherManifestChanges(t *testing.T) {
+	const manifest = "plugins/crw/.codex-plugin/plugin.json"
+	spec := premergeTestCleanSpec()
+	spec.prFiles[manifest] = "{\n  \"name\": \"crw\",\n  \"description\": \"added by the pull request\",\n  \"version\": \"0.4.0+bbbbbbbbbbbb\"\n}\n"
+	spec.devFiles[manifest] = "{\n  \"name\": \"crw\",\n  \"version\": \"0.4.0+cccccccccccc\"\n}\n"
+	f := premergeTestNew(t, premergeTestOptions{spec: &spec})
+	if _, err := f.eval(PremergeEvalOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(filepath.Join(f.bundle(), "candidate", "tree", filepath.FromSlash(manifest)))
+	want := "{\n  \"name\": \"crw\",\n  \"description\": \"added by the pull request\",\n  \"version\": \"0.4.0+cccccccccccc\"\n}\n"
+	if err != nil || string(body) != want {
+		t.Errorf("the manifest in the tree = %q, %v; want %q", body, err, want)
+	}
+	if patch, err := os.ReadFile(filepath.Join(f.bundle(), "candidate", "diff.patch")); err != nil || !strings.Contains(string(patch), "added by the pull request") {
+		t.Errorf("the diff does not show the pull request's manifest change: %v", err)
+	}
+	criteria, err := os.ReadFile(filepath.Join(f.bundle(), "criteria.md"))
+	if err != nil || !strings.Contains(string(criteria), "version line") || !strings.Contains(string(criteria), "other change") {
+		t.Errorf("criteria.md does not say the manifest keeps the pull request's other changes: %q, %v", criteria, err)
+	}
+}
+
+// C2 (d1): a manifest conflict outside the version line is base_refresh_required, whether or not the version
+// conflicts too, and writes no record.
+func TestPremergeEvalManifestConflictOutsideTheVersionLineIsRefused(t *testing.T) {
+	const manifest = "plugins/crw/.codex-plugin/plugin.json"
+	for name, spec := range map[string]premergeTestRepoSpec{
+		"the name and the version": {
+			prFiles:  map[string]string{manifest: "{\n  \"name\": \"crw-pr\",\n  \"version\": \"0.4.0+bbbbbbbbbbbb\"\n}\n"},
+			devFiles: map[string]string{manifest: "{\n  \"name\": \"crw-dev\",\n  \"version\": \"0.4.0+cccccccccccc\"\n}\n"},
+		},
+		"the name only": {
+			prFiles:  map[string]string{manifest: "{\n  \"name\": \"crw-pr\",\n  \"version\": \"0.4.0+aaaaaaaaaaaa\"\n}\n"},
+			devFiles: map[string]string{manifest: "{\n  \"name\": \"crw-dev\",\n  \"version\": \"0.4.0+aaaaaaaaaaaa\"\n}\n"},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := premergeTestNew(t, premergeTestOptions{spec: &spec})
+			_, err := f.eval(PremergeEvalOptions{})
+			pe := premergeTestErr(t, err, 3, "base_refresh_required")
+			if !strings.Contains(pe.Detail, "plugin.json") {
+				t.Errorf("the refusal does not name the manifest: %s", pe.Detail)
+			}
+			premergeTestNoRecords(t, f.records)
+			if f.graderRuns() != 0 {
+				t.Error("the grader ran on a conflicting merge")
+			}
+		})
+	}
+}
+
+// C2 (d2): the evaluation works on the configured checkout whatever repository the process's own Git
+// variables name, through the diff and the changed-path lookup as well as the merge.
+func TestPremergeEvalIgnoresInheritedGitRepositoryVariables(t *testing.T) {
+	f := premergeTestNew(t, premergeTestOptions{})
+	other := t.TempDir()
+	premergeTestGit(t, other, "init", "--quiet", "-b", "other")
+	t.Setenv("GIT_DIR", filepath.Join(other, ".git"))
+	t.Setenv("GIT_WORK_TREE", other)
+	if _, err := f.eval(PremergeEvalOptions{}); err != nil {
+		t.Fatalf("the evaluation followed the inherited Git variables: %v", err)
+	}
+	if body, err := os.ReadFile(filepath.Join(f.bundle(), "candidate", "tree", "feature.go")); err != nil || !strings.Contains(string(body), "Feature") {
+		t.Errorf("feature.go = %q, %v", body, err)
+	}
+	if patch, err := os.ReadFile(filepath.Join(f.bundle(), "candidate", "diff.patch")); err != nil || !strings.Contains(string(patch), "feature.go") {
+		t.Errorf("diff.patch = %q, %v", patch, err)
+	}
+}
+
+// C7 (d3): a record that is a symbolic link is refused before anything is written, so the record it names
+// is never left unchanged beside a new file that took the link's place.
+func TestPremergeDisposeRefusesASymbolicLinkRecord(t *testing.T) {
+	f, path := premergeTestEvaluated(t)
+	if _, err := PremergeDispose(context.Background(), f.e, f.cfg, PremergeDisposeOptions{Record: path, Ref: "d1", Class: "blocking", Note: "first reading", By: "parent"}); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(filepath.Dir(path), "latest.json")
+	if err := os.Symlink(filepath.Base(path), link); err != nil {
+		t.Fatal(err)
+	}
+	entriesBefore, err := os.ReadDir(filepath.Dir(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = PremergeDispose(context.Background(), f.e, f.cfg, PremergeDisposeOptions{Record: link, Ref: "d1", Class: "blocking", Note: "updated parent decision", By: "parent"})
+	if err == nil {
+		t.Fatal("a disposition through a symbolic link was written")
+	}
+	var pe *PremergeError
+	if !errors.As(err, &pe) || pe.Exit != 3 {
+		t.Errorf("error = %v, want exit 3", err)
+	}
+	if after, err := os.ReadFile(path); err != nil || !bytes.Equal(after, before) {
+		t.Errorf("the record changed: %v", err)
+	}
+	if info, err := os.Lstat(link); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("the link was replaced: %v", err)
+	}
+	entriesAfter, err := os.ReadDir(filepath.Dir(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entriesAfter) != len(entriesBefore) {
+		t.Errorf("the record directory holds %d entries, was %d", len(entriesAfter), len(entriesBefore))
+	}
+}
+
+// C3 (d3): --replace does not take the place of a link at the record path either: the record it names, and
+// the kept copy, stay what they were.
+func TestPremergeEvalReplaceRefusesASymbolicLinkRecord(t *testing.T) {
+	f := premergeTestNew(t, premergeTestOptions{})
+	target := filepath.Join(t.TempDir(), "elsewhere.json")
+	if err := os.WriteFile(target, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(f.records, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, f.recordPath()); err != nil {
+		t.Fatal(err)
+	}
+	_, err := f.eval(PremergeEvalOptions{Replace: true})
+	premergeTestErr(t, err, 1, "record_write_failed")
+	if info, err := os.Lstat(f.recordPath()); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("the link was replaced: %v", err)
+	}
+	if body, err := os.ReadFile(target); err != nil || string(body) != "{}\n" {
+		t.Errorf("the target changed: %q, %v", body, err)
+	}
+	entries, err := os.ReadDir(f.records)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Errorf("the record directory holds %d entries, want the link alone", len(entries))
+	}
+}
