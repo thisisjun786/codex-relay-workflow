@@ -98,6 +98,18 @@ func (w *walker) pythonModule(prog Word, args []Word, assigns []Assign, redirs [
 	if err := w.moduleImportsClear(st); err != nil {
 		return true, err
 	}
+	// Importing the runner itself can write under a configured cache prefix,
+	// even when discovery finds no local source or json.tool only reads data.
+	if moduleBytecodeEnabled(args[:at], assigns, st) {
+		prefix, known := moduleStartupEnv("PYTHONPYCACHEPREFIX", args[:at], assigns, st)
+		if prefix != "" || !known && moduleAssigned("PYTHONPYCACHEPREFIX", assigns) {
+			if !known {
+				prefix = "\x00unknown"
+			}
+			name, cacheArgs := fileRecord([]string{prefix})
+			w.out = append(w.out, Exec{Kind: KindCommand, Name: name, Args: cacheArgs, Dir: st.dir, Ctx: ctx})
+		}
+	}
 	if module == "json.tool" {
 		return true, nil
 	}
@@ -203,7 +215,7 @@ func (w *walker) pythonModule(prog Word, args []Word, assigns []Assign, redirs [
 		if module == "py_compile" || moduleBytecodeEnabled(args[:at], assigns, st) {
 			// -B suppresses import caches, but never explicit py_compile.
 			// Model the prefix itself conservatively: every cache is below it.
-			cache := moduleCacheDir(file, assigns, st)
+			cache := moduleCacheDir(file, args[:at], assigns, st)
 			name, cacheArgs := fileRecord([]string{cache})
 			w.out = append(w.out, Exec{Kind: KindCommand, Name: name, Args: cacheArgs, Dir: st.dir, Ctx: ctx})
 		}
@@ -220,17 +232,34 @@ func moduleEnv(name string, assigns []Assign, st *state) (string, bool) {
 	}
 	return st.value(name), st.known(name)
 }
+func moduleAssigned(name string, assigns []Assign) bool {
+	for _, a := range assigns {
+		if a.Name == name {
+			return true
+		}
+	}
+	return false
+}
+func moduleStartupEnv(name string, args []Word, assigns []Assign, st *state) (string, bool) {
+	for _, a := range args {
+		if a.Known && strings.HasPrefix(a.Value, "-") && !strings.HasPrefix(a.Value, "--") && strings.ContainsAny(a.Value[1:], "EI") {
+			return "", true // Python -E and -I ignore PYTHON* environment variables.
+		}
+	}
+	return moduleEnv(name, assigns, st)
+}
+
 func moduleBytecodeEnabled(args []Word, assigns []Assign, st *state) bool {
 	for _, a := range args {
 		if a.Known && strings.HasPrefix(a.Value, "-") && !strings.HasPrefix(a.Value, "--") && strings.Contains(a.Value[1:], "B") {
 			return false
 		}
 	}
-	v, known := moduleEnv("PYTHONDONTWRITEBYTECODE", assigns, st)
+	v, known := moduleStartupEnv("PYTHONDONTWRITEBYTECODE", args, assigns, st)
 	return !known || v == ""
 }
-func moduleCacheDir(file string, assigns []Assign, st *state) string {
-	prefix, known := moduleEnv("PYTHONPYCACHEPREFIX", assigns, st)
+func moduleCacheDir(file string, args []Word, assigns []Assign, st *state) string {
+	prefix, known := moduleStartupEnv("PYTHONPYCACHEPREFIX", args, assigns, st)
 	if !known {
 		for _, a := range assigns {
 			if a.Name == "PYTHONPYCACHEPREFIX" {

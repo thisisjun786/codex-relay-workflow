@@ -1,6 +1,7 @@
 package hook
 
 import (
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -42,6 +43,22 @@ func shellIRDestsResult(res shellir.Result, cwd string, resolve bool, depth int,
 				dests = append(dests, shellIRUnknownDest)
 			} else {
 				dests = append(dests, shellIRScriptDests(e, cwd, resolve, depth, writes.at(i).as(githubPostBodyKey(e.Script.Value, e.Dir)))...)
+			}
+			continue
+		}
+		if depth > 0 && githubPostDirectPath(e) && !githubPostInstalledName(e) {
+			// A direct child of an admitted shell file must also be read.
+			// Only a bounded shell program has a destination reader here.
+			if _, err := os.Lstat(githubPostScriptPath(e.Program.Value, e.Dir.Path)); os.IsNotExist(err) && e.Dir.Known && !writes.stale(i, e.Program.Value, e.Dir) {
+				continue // A proven missing child has no body to execute.
+			}
+			_, kind := githubPostReadDirect(e.Program.Value, e.Dir.Path)
+			if kind != githubPostFileShell || writes.stale(i, e.Program.Value, e.Dir) {
+				dests = append(dests, shellIRUnknownDest)
+			} else {
+				child := e
+				child.Kind, child.Name, child.Script = shellir.KindScriptFile, "sh", e.Program
+				dests = append(dests, shellIRScriptDests(child, cwd, resolve, depth, writes.at(i).as(githubPostBodyKey(e.Program.Value, e.Dir)))...)
 			}
 			continue
 		}
