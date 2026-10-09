@@ -341,6 +341,12 @@ func (a *Adapter) guardedSend(ctx context.Context, requestID, thread, message st
 		// from the policy by the pair the record states, on both routes: a settings-free resume sends
 		// no pair, but it may still send the limit of the pair the record says the thread is on.
 		limit := a.withAutoCompactLimit(send, params)
+		// The record is made before the request goes out: a resume whose answer is lost is outcome_unknown
+		// and may have installed the limit, so its receipt must say what it carried. Once the answer is
+		// read, the observation below replaces this one with the settings the host reported.
+		if limit != nil {
+			receipt["settings"] = bridgesettings.AutoCompactReceipt(*limit, nil)
+		}
 		if client, ok := a.rpc.(*appserver.Client); ok {
 			watch, err = client.WatchTurn(ctx, thread)
 			if err = awaited(err); err != nil {
@@ -353,13 +359,6 @@ func (a *Adapter) guardedSend(ctx context.Context, requestID, thread, message st
 			return err
 		}
 		receipt["resumed"] = resumed
-		// The host never reports this value back, so the receipt is the only place the send can say
-		// what it carried: recorded as requested and unobservable, never as verified, in the same
-		// notation the bridge uses. A resume that carried no limit records no settings observation.
-		if limit != nil {
-			observed, _ := plain(resumed).(map[string]any)
-			receipt["settings"] = bridgesettings.AutoCompactReceipt(*limit, observed)
-		}
 		if settings.SettingsFreeResume {
 			receipt["settingsFreeResume"] = true
 		}
@@ -370,6 +369,14 @@ func (a *Adapter) guardedSend(ctx context.Context, requestID, thread, message st
 			if err = awaited(err); err != nil {
 				return err
 			}
+		}
+		// The host never reports this value back, so the receipt is the only place the send can say
+		// what it carried: recorded as requested and unobservable, never as verified, in the same
+		// notation the bridge uses. The actual snapshot is taken after the servers were read back, so it
+		// carries mcpServers too. A resume that carried no limit records no settings observation.
+		if limit != nil {
+			observed, _ := plain(response).(map[string]any)
+			receipt["settings"] = bridgesettings.AutoCompactReceipt(*limit, observed)
 		}
 		if err = save(); err != nil {
 			return err
