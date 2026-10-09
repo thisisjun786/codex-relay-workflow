@@ -336,33 +336,86 @@ const (
 )
 
 // ClassifyLoopArmScope reads the scope words of a prompt that has already been found to ask for a loop. It is lexical and reads
-// only the request clauses requestLines keeps, so a quoted or listed example, a fence, an explanation and a negated clause
-// ("do not implement this task") say nothing about the scope. A current-task implementation needs an implement verb and a
-// this/current session, task or issue in the SAME clause, with no negation before the verb or after it ("without
-// implementing", "구현하지 마"); a project is the word "project", a Linear project link or a coordination word in any clause.
-// The current-task exception wins over a project mention.
+// only the request clauses requestLines keeps, after scopeText has dropped the example spans, so a quoted, listed, fenced or
+// plainly introduced example ("Example: ...", "e.g.", "예: ..."), an explanation and a negated clause say nothing about the scope.
+//
+// A current-task implementation needs an implement verb and a this/current session, task or issue in the SAME clause, with no
+// negation governing the verb: a negation word right before it, at most a few filler words apart ("do not actually implement",
+// "not to implement"), or a Korean negation after it ("구현하지 마"). A negation elsewhere in the clause ("no questions, please
+// implement ...") does not govern the verb.
+//
+// A project is a Linear project link, a coordination word (coordinate, supervise, children or child tasks, 조정, 감독, 부모, 자식
+// but not a child process), or the word "project" - except where "project" only names the place of a single-task fix: "in this
+// project", "of the project", "이 프로젝트에서" in a clause that carries its own ungoverned implement verb. A named project ("the
+// migration project") stays a project. The current-task exception wins over a project mention.
 func ClassifyLoopArmScope(prompt string) LoopArmScope {
-	implement := detectorRE(`\b(?:implement|build|fix|code|develop|work\s+on)\b|구현|고쳐|수정|개발|작업해`)
 	current := detectorRE(`\b(?:this|current|my)\s+(?:session|task|issue|thread|worktree|checkout)\b|\bin\s+the\s+current\s+(?:session|thread)\b|(?:이|현재)\s*(?:세션|작업|이슈|태스크|스레드)|지금\s*세션`)
-	negatedBefore := detectorRE(`\b(?:not|never|without|don't|dont|cannot|can't|instead\s+of|rather\s+than)\b|\bno\s|말고`)
-	negatedAfter := detectorRE(`^\S*\s*(?:(?:하|지|고)\s*)?(?:지\s*)?(?:마|말|않|못)`)
-	project := detectorRE(`\bprojects?\b|프로젝트|linear\.app/\S+/project/|\bcoordinat\w*|\bchild(?:ren)?\b|\bsupervis\w*|조정|부모|자식|감독`)
-	clauses := requestLines(prompt)
+	childProcess := detectorRE(`\bchild\s+process(?:es)?\b|\bsubprocess(?:es)?\b|자식\s*프로세스`)
+	coordination := detectorRE(`linear\.app/\S+/project/|\bcoordinat(?:e|es|ing|ion)\b|\bsupervis(?:e|es|ing|ion)\b|\bchildren\b|\bchild\s+(?:tasks?|issues?|sessions?|lanes?|threads?|agents?|goals?)\b|조정|감독|부모|자식`)
+	projectWord := detectorRE(`\bprojects?\b|프로젝트`)
+	location := detectorRE(`\b(?:in|inside|within|across|throughout|of|for)\s+(?:the\s+current|this|the|current|my|our)\s+(?:project|repo|repository|codebase)\b|(?:이|현재|우리|내)\s*프로젝트\s*(?:에서|안에서|안의|의|에)`)
+	clauses := requestLines(scopeText(prompt))
 	for i := range clauses {
 		clauses[i] = foldASCII(clauses[i])
 	}
 	for _, clause := range clauses {
-		if !current.MatchString(clause) {
-			continue
-		}
-		for _, at := range implement.FindAllStringIndex(clause, -1) {
-			if !negatedBefore.MatchString(clause[:at[0]]) && !negatedAfter.MatchString(clause[at[1]:]) {
-				return LoopScopeCurrentTask
-			}
+		if current.MatchString(clause) && ungovernedImplement(clause) {
+			return LoopScopeCurrentTask
 		}
 	}
-	if project.MatchString(strings.Join(clauses, "\n")) {
-		return LoopScopeProject
+	for _, clause := range clauses {
+		if coordination.MatchString(childProcess.ReplaceAllString(clause, " ")) {
+			return LoopScopeProject
+		}
+		if ungovernedImplement(clause) {
+			clause = location.ReplaceAllString(clause, " ")
+		}
+		if projectWord.MatchString(clause) {
+			return LoopScopeProject
+		}
 	}
 	return LoopScopeNone
+}
+
+// ungovernedImplement reports an implement verb in a folded clause that no negation governs (ClassifyLoopArmScope).
+func ungovernedImplement(clause string) bool {
+	implement := detectorRE(`\b(?:implement|build|fix|code|develop|work\s+on)\b|구현|고쳐|수정|개발|작업해`)
+	filler := `(?:(?:,|\s)+(?:actually|really|yet|ever|even|just|please|to|be|want|need|you|i|we|me|going|try|trying|start|starting|begin|bother|asking))*`
+	negatedBefore := detectorRE(`(?:\b(?:not|never|don't|dont|cannot|can't|won't|wont|shouldn't|mustn't|avoid|stop|without|instead\s+of|rather\s+than|no\s+need\s+to)\b` +
+		filler + `|\bno|말고)(?:,|\s)*$`)
+	negatedAfter := detectorRE(`^\S*\s*(?:(?:하|지|고)\s*)?(?:지\s*)?(?:마|말|않|못)`)
+	for _, at := range implement.FindAllStringIndex(clause, -1) {
+		if !negatedBefore.MatchString(clause[:at[0]]) && !negatedAfter.MatchString(clause[at[1]:]) {
+			return true
+		}
+	}
+	return false
+}
+
+// scopeText is the prompt without its plainly introduced examples, for ClassifyLoopArmScope (CRW-1084): a parenthesis that
+// opens with an example marker is dropped, a line is cut at an example marker ("example:", "for example", "for instance",
+// "e.g.", "sample:", "such as", "예:", "예시", "예를 들어", "예컨대", "가령", "이를테면"), and a marker that ends its line
+// ("Example:") drops the next nonempty line too, unless that line opens or closes a fence. Quotes, backticks, lists and fences
+// are requestLines' own.
+func scopeText(prompt string) string {
+	paren := detectorRE(`\((?:e\.g\.?|eg\.|for\s+example|for\s+instance|examples?\b|samples?\b|예시|예\s*:|예를\s*들|예컨대|가령)[^)]*\)`)
+	marker := detectorRE(`(?:^|[^a-z0-9_])(?:for\s+example|for\s+instance|e\.g\.|eg\.|examples?\s*:|samples?\s*:|such\s+as)|예\s*[:)]|예시|예를\s*들|예컨대|가령|이를테면`)
+	headingRest := detectorRE(`^(?:\s|[:,.)-])*$`)
+	var out []string
+	skipNext := false
+	for _, line := range text.SplitLines(prompt) {
+		if skipNext && text.Trim(line) != "" {
+			skipNext = false
+			if _, n := fenceRun(text.Trim(line)); n < 3 {
+				continue
+			}
+		}
+		folded := paren.ReplaceAllString(foldASCII(line), " ")
+		if at := marker.FindStringIndex(folded); at != nil {
+			skipNext = headingRest.MatchString(folded[at[1]:])
+			folded = folded[:at[0]]
+		}
+		out = append(out, folded)
+	}
+	return strings.Join(out, "\n")
 }

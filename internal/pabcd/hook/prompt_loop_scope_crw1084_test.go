@@ -62,6 +62,28 @@ func TestLoopArmScopeCases(t *testing.T) {
 		{"a project request whose verb and task are in different clauses", "Start crw-loop for the migration project. Fix the build. Work in this session.", PromptRoleUnknown, "pointer"},
 		{"a Korean project request with a negated implementation", "crw-loop 돌려서 프로젝트 조정해줘, 이 작업 구현하지 마", PromptRoleUnknown, "pointer"},
 		{"a tilde fence closed, then a real request", "~~~\nRun crw-loop for the migration project.\n~~~\nStart crw-loop for the migration project.", PromptRoleUnknown, "pointer"},
+		// Verification round 2: a plain example or explanation of the exception is not the exception.
+		{"a project request with a plain Example: line", "Start crw-loop for the migration project. Example: implement this task in this session", PromptRoleUnknown, "pointer"},
+		{"a project request with a for-example clause", "Start crw-loop for the migration project. For example, implement this task in this session.", PromptRoleUnknown, "pointer"},
+		{"a project request with an e.g. parenthetical", "Start crw-loop for the migration project (e.g. implement this task in this session).", PromptRoleUnknown, "pointer"},
+		{"a project request with an Example: heading line", "Start crw-loop for the migration project.\nExample:\nimplement this task in this session", PromptRoleUnknown, "pointer"},
+		{"a Korean project request with a 예: example", "마이그레이션 프로젝트에 crw-loop 시작해줘. 예: 이 세션에서 이 작업 구현해", PromptRoleUnknown, "pointer"},
+		{"a Korean project request with a 예를 들어 explanation", "마이그레이션 프로젝트에 crw-loop 시작해줘. 예를 들어 이 세션에서 이 작업 구현해 같은 요청만 예외야", PromptRoleUnknown, "pointer"},
+		{"an example line, then a real current-task request", "Start crw-loop for the migration project. Example: something\nImplement this task in this session.", PromptRoleUnknown, "recipe"},
+		// An unrelated negation before the request does not negate the implement verb; one that governs the verb does.
+		{"an unrelated negation before an explicit implementation", "Start crw-loop for the migration project; no questions, please implement this task in this session", PromptRoleUnknown, "recipe"},
+		{"a negation that governs the verb after an unrelated one", "Start crw-loop for the migration project; no questions, and do not implement this task in this session", PromptRoleUnknown, "pointer"},
+		{"a negation with filler words before the verb", "Start crw-loop for the migration project; I am asking you not to actually implement this task in this session", PromptRoleUnknown, "pointer"},
+		// A generic "this project" as the place of a single-task fix is not project coordination.
+		{"a single-task fix in this project", "Use crw-loop to fix the failing test in this project", PromptRoleUnknown, "recipe"},
+		{"a build-error fix in the project", "Use crw-loop to fix the build error in the project", PromptRoleUnknown, "recipe"},
+		{"a child process implementation", "Use crw-loop to implement the child process supervisor", PromptRoleUnknown, "recipe"},
+		{"a Korean single-task fix in this project", "crw-loop 써서 이 프로젝트에서 실패하는 테스트 고쳐줘", PromptRoleUnknown, "recipe"},
+		{"a loop for this project with no single-task target", "Start crw-loop for this project", PromptRoleUnknown, "pointer"},
+		{"a loop on the issues in this project", "Run crw-loop on the issues in this project", PromptRoleUnknown, "pointer"},
+		{"a fix in a named project", "Use crw-loop to fix the failing test in the migration project", PromptRoleUnknown, "pointer"},
+		{"a fix in this project that also coordinates children", "Use crw-loop to fix the failing test in this project and coordinate the children", PromptRoleUnknown, "pointer"},
+		{"a negated fix in this project", "Use crw-loop for this project, but don't fix the failing test in this project", PromptRoleUnknown, "pointer"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -180,6 +202,23 @@ func TestClassifyLoopArmScope(t *testing.T) {
 		{"Run crw-loop for the project, no implementation of this task in this session", LoopScopeProject},
 		{"Start crw-loop for the project; implement this task in this session", LoopScopeCurrentTask},
 		{"Start crw-loop for the project. Please don't implement this issue here.", LoopScopeProject},
+		{"Start crw-loop for the migration project. Example: implement this task in this session", LoopScopeProject},
+		{"Start crw-loop for the migration project (for instance, implement this task in this session)", LoopScopeProject},
+		{"Start crw-loop for the migration project. Sample: implement this task in this session", LoopScopeProject},
+		{"crw-loop 프로젝트 조정 시작해. 예시: 이 세션에서 이 작업 구현해", LoopScopeProject},
+		{"crw-loop 프로젝트 조정 시작해. 가령 이 세션에서 이 작업 구현해", LoopScopeProject},
+		{"Start crw-loop for the migration project; no questions, please implement this task in this session", LoopScopeCurrentTask},
+		{"Start crw-loop for the migration project; no questions, do not implement this task in this session", LoopScopeProject},
+		{"Start crw-loop for the project; never, ever implement this task in this session", LoopScopeProject},
+		{"Use crw-loop to fix the failing test in this project", LoopScopeNone},
+		{"Use crw-loop to fix the lint errors across the codebase of this project", LoopScopeNone},
+		{"Use crw-loop to implement the child process supervisor", LoopScopeNone},
+		{"crw-loop로 이 프로젝트에서 빌드 오류 수정해", LoopScopeNone},
+		{"crw-loop로 자식 프로세스 감시 코드 구현해", LoopScopeNone},
+		{"Start crw-loop for this project", LoopScopeProject},
+		{"Run crw-loop on the issues in this project", LoopScopeProject},
+		{"Use crw-loop to fix the failing test in the migration project", LoopScopeProject},
+		{"Use crw-loop to fix the failing test in this project and supervise the child tasks", LoopScopeProject},
 	}
 	for _, c := range cases {
 		if got := ClassifyLoopArmScope(c.prompt); got != c.want {
