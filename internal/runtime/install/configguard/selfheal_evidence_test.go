@@ -710,7 +710,9 @@ func TestSelfHealEvidenceUnparsableRecordDoesNotRestoreTheLegacyCache(t *testing
 func TestSelfHealEvidenceFingerprintsTheConfigTheKernelResolves(t *testing.T) {
 	base := t.TempDir()
 	storage := filepath.Join(base, "storage")
-	for _, dir := range []string{filepath.Join(base, "work"), filepath.Join(storage, "project"), filepath.Join(storage, "codex"), filepath.Join(base, "codex")} {
+	lexical := filepath.Join(base, "work", "codex")
+	physical := filepath.Join(storage, "codex")
+	for _, dir := range []string{lexical, filepath.Join(storage, "project"), physical} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -718,20 +720,21 @@ func TestSelfHealEvidenceFingerprintsTheConfigTheKernelResolves(t *testing.T) {
 	if err := os.Symlink(filepath.Join(storage, "project"), filepath.Join(base, "work", "alias")); err != nil {
 		t.Fatal(err)
 	}
-	// Spelled by concatenation: filepath.Join would fold the ".." before the kernel sees it.
+	// Spelled by concatenation: filepath.Join would fold the ".." before the kernel sees it. The
+	// kernel reaches storage/codex, the lexical clean base/work/codex; both are prepared.
 	home := base + "/work/alias/../codex"
-	for _, dir := range []string{filepath.Join(base, "codex"), filepath.Join(storage, "codex")} {
+	for _, dir := range []string{lexical, physical} {
 		if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte("[features]\nhooks = true\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
 	t.Setenv("HOME", base)
-	cwd := selfHealEvidenceCwd(t, filepath.Join(base, "codex"))
+	cwd := selfHealEvidenceCwd(t, lexical)
 	runner := &selfHealEvidenceRunner{version: "codex-cli 1.2.3", listing: selfHealReportSoftOn}
 	selfHealEvidenceRecordIn(t, home, cwd, runner)
 	runner.calls = nil
 	// Only the config.toml the kernel reaches through the link changes.
-	if err := os.WriteFile(filepath.Join(storage, "codex", "config.toml"), []byte("[features]\nhooks = false\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(physical, "config.toml"), []byte("[features]\nhooks = false\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	runner.listing = selfHealReportSoftOff

@@ -14,7 +14,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
@@ -319,23 +318,19 @@ func RecordSelfHealEvidence(deps RecordSelfHealEvidenceDeps) error {
 	})
 }
 
-// selfHealMarkerLockWait is how long a marker writer waits for another's lock. A holder keeps it only
-// for one read and one publication.
-const selfHealMarkerLockWait = activationLockWait
-
-// updateSelfHealMarker is the one read-modify-write of the marker file, under an exclusive lock on its
-// sidecar so the explicit commands' writers (enable's recorder, disable's opt-out, enable's clear)
-// never interleave: a stale marker read before another writer published is never published after it
-// (CRW-1150). update returns the marker to publish, or nil to leave the file as it is. A refused
-// lock is an error and writes nothing; when the filesystem cannot lock at all, a writer that is not
-// optional (an explicit opt-out or clear, which must not be lost) goes on without the lock, as it did
-// before the lock existed.
+// updateSelfHealMarker is the one read-modify-write of the marker file, under an exclusive lock so the
+// explicit commands' writers (enable's recorder, disable's opt-out, enable's clear, the removal of
+// stale evidence) never interleave: a stale marker read before another writer published is never
+// published after it (CRW-1150). update returns the marker to publish, or nil to leave the file as it
+// is. A busy lock is an error and writes nothing; when the filesystem cannot lock at all, a writer
+// that is not optional (an explicit opt-out or clear, which must not be lost) goes on without the
+// lock, as it did before the lock existed, and the optional recorder records nothing.
 func updateSelfHealMarker(home string, requireLock bool, update func() (*SelfHealMarker, error)) error {
-	lock, err := crwdir.LockConfig(SelfHealMarkerPath(home), selfHealMarkerLockWait)
+	unlock, err := lockSelfHealMarker(home)
 	switch {
 	case err == nil:
-		defer lock.Release()
-	case requireLock || err.Error() == crwdir.ConfigLockBusy:
+		defer unlock()
+	case requireLock || errors.Is(err, errSelfHealMarkerBusy):
 		return err
 	}
 	marker, err := update()

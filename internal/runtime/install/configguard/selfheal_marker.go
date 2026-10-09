@@ -2,13 +2,16 @@ package configguard
 
 import (
 	"encoding/json"
+	"errors"
 	"math"
 	"os"
 	"path/filepath"
 	"slices"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/role"
+	"golang.org/x/sys/unix"
 )
 
 const SelfHealMarkerName = "crw-self-heal.json"
@@ -201,4 +204,40 @@ func ClearSelfHealOptOut(home string) error {
 		m.OptedOut, m.OptedOutAt = nil, nil
 		return m, nil
 	})
+}
+
+var errSelfHealMarkerBusy = errors.New("the self-heal marker is busy: another CRW writer holds its lock")
+
+// selfHealMarkerLockWait is how long a marker writer waits for another's lock. A holder keeps it only
+// for one read and one publication.
+const selfHealMarkerLockWait = activationLockWait
+
+// lockSelfHealMarker takes an exclusive advisory lock on the codex home directory, which every writer
+// of the marker shares. The directory is locked rather than a sidecar file so that the lock leaves
+// nothing in CODEX_HOME (the recorded home trees of the disable cases are compared whole); it is a
+// different file from config.toml's sidecar lock, so it never contends with the activation's.
+func lockSelfHealMarker(home string) (func(), error) {
+	if err := os.MkdirAll(home, 0777); err != nil {
+		return nil, err
+	}
+	dir, err := os.Open(home)
+	if err != nil {
+		return nil, err
+	}
+	deadline := time.Now().Add(selfHealMarkerLockWait)
+	for {
+		err := unix.Flock(int(dir.Fd()), unix.LOCK_EX|unix.LOCK_NB)
+		if err == nil {
+			return func() { _ = unix.Flock(int(dir.Fd()), unix.LOCK_UN); _ = dir.Close() }, nil
+		}
+		if !errors.Is(err, unix.EWOULDBLOCK) && !errors.Is(err, unix.EAGAIN) && !errors.Is(err, unix.EACCES) {
+			_ = dir.Close()
+			return nil, err
+		}
+		if !time.Now().Before(deadline) {
+			_ = dir.Close()
+			return nil, errSelfHealMarkerBusy
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
