@@ -341,10 +341,11 @@ func (a *Adapter) guardedSend(ctx context.Context, requestID, thread, message st
 		// CRW-1140: the thread's PABCD state lives at the cwd the host reports for it now, not at the
 		// recorded cwd, which a later settings record may have changed. A resume that would run the
 		// thread elsewhere while that state is in flight is refused before anything is sent, so the
-		// refusal is retry-safe and a repeated request ID is checked again once the conflict is gone.
+		// refusal is retry-safe and a repeated request ID is checked again once the conflict is gone;
+		// so is a resume whose native root could not be recorded for the thread's SessionStart.
 		target, _ := params["cwd"].(string)
-		if conflict := stateroot.Guard(os.LookupEnv, pyjson.Text(th["cwd"]), target, thread); conflict != nil {
-			refuse("thread/read", contract.OrderedObject{{Key: "code", Value: stateroot.Code}, {Key: "message", Value: conflict.Error() + "; message withheld"}}, true)
+		if refusal := stateroot.Guard(os.LookupEnv, pyjson.Text(th["cwd"]), target, thread); refusal != nil {
+			refuse("thread/read", contract.OrderedObject{{Key: "code", Value: stateroot.CodeOf(refusal)}, {Key: "message", Value: refusal.Error() + "; message withheld"}}, true)
 			return nil
 		}
 		// The limit is not in the record (the host never reports it back), so a resume built from the

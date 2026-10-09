@@ -92,8 +92,8 @@ func TestSessionStartOfAStandaloneSessionBootstrapsAsBefore(t *testing.T) {
 	}
 }
 
-// An anchored thread bootstraps at its root, at another cwd when nothing is in flight at the root,
-// and never touches a state that already exists where it starts.
+// An anchored thread bootstraps at its root, and at another cwd when nothing is in flight at the
+// root.
 func TestSessionStartOfAnAnchoredThreadOtherwiseBootstrapsAsBefore(t *testing.T) {
 	t.Run("at its root", func(t *testing.T) {
 		a := t.TempDir()
@@ -126,19 +126,49 @@ func TestSessionStartOfAnAnchoredThreadOtherwiseBootstrapsAsBefore(t *testing.T)
 			t.Fatal(err)
 		}
 	})
-	t.Run("a state already at the cwd", func(t *testing.T) {
-		a, b := t.TempDir(), t.TempDir()
-		env := rootEnv(filepath.Join(t.TempDir(), ".crw"))
-		rootInFlight(t, a)
-		stateroot.Guard(env, a, a, rootSession)
-		existing := rootInFlight(t, b)
-		if answer := sessionHookSessionStart(SessionHookSessionStartPayload{Cwd: b, SessionID: rootSession}, env); answer != "" {
-			t.Fatalf("answer %q", answer)
-		}
-		if after, _ := os.ReadFile(state.StatePath(b, rootSession)); string(after) != string(existing) {
-			t.Fatal("the existing state changed")
-		}
-	})
+}
+
+// Verification round 2: a state that already exists where the session starts does not exempt it
+// from the anchored root. A legacy IDLE state at B (or another state in flight there) beside work in
+// flight at A is refused exactly as the resume to B is: no state changes, and the context names A.
+func TestSessionStartBesideAnExistingStateIsJudgedAgainstTheAnchoredRoot(t *testing.T) {
+	for name, write := range map[string]func(t *testing.T, root string) []byte{
+		"legacy IDLE": func(t *testing.T, root string) []byte {
+			t.Helper()
+			if _, err := state.EnsureState(root, rootSession); err != nil {
+				t.Fatal(err)
+			}
+			raw, err := os.ReadFile(state.StatePath(root, rootSession))
+			if err != nil {
+				t.Fatal(err)
+			}
+			return raw
+		},
+		"in flight": rootInFlight,
+	} {
+		t.Run(name, func(t *testing.T) {
+			a, b := t.TempDir(), t.TempDir()
+			env := rootEnv(filepath.Join(t.TempDir(), ".crw"))
+			before := rootInFlight(t, a)
+			if err := stateroot.Guard(env, a, a, rootSession); err != nil {
+				t.Fatal(err)
+			}
+			existing := write(t, b)
+			if stateroot.Resolve(env, b, b, rootSession) == nil {
+				t.Fatal("the resume to B went ahead")
+			}
+			answer := sessionHookSessionStart(SessionHookSessionStartPayload{Cwd: b, SessionID: rootSession}, env)
+			if !strings.Contains(answer, "PABCD state root") || !strings.Contains(answer, "--cwd "+a) {
+				t.Fatalf("SessionStart at B beside work in flight at A: %q", answer)
+			}
+			if after, _ := os.ReadFile(state.StatePath(b, rootSession)); string(after) != string(existing) {
+				t.Fatal("the state at B changed")
+			}
+			if after, _ := os.ReadFile(state.StatePath(a, rootSession)); string(after) != string(before) {
+				t.Fatal("the native state changed")
+			}
+		})
+	}
 }
 
 // Review P1: the first CRW resume of a thread precedes its first SessionStart. The thread is

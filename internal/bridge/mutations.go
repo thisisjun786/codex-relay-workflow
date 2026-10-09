@@ -156,11 +156,12 @@ func (b *Bridge) SendMessageToThread(ctx context.Context, in SendMessage) (ledge
 		}
 		// CRW-1140: the thread's PABCD state lives at the cwd the host reports for it now. A resume at
 		// another cwd while that state is in flight would open an empty IDLE state machine beside it,
-		// so it is refused here, before anything is resumed, and the preserved state is named.
+		// so it is refused here, before anything is resumed, and the preserved state is named; so is a
+		// resume whose native root could not be recorded for the thread's SessionStart.
 		native := pyjson.Text(pyjson.Map(state["thread"])["cwd"])
-		if conflict := stateroot.Guard(os.LookupEnv, native, contract.CWD, in.ThreadID); conflict != nil {
-			message := conflict.Error() + "; message withheld"
-			return &appserver.RPCError{Method: "thread/read", Message: message, Object: map[string]any{"code": stateroot.Code, "message": message}}
+		if refusal := stateroot.Guard(os.LookupEnv, native, contract.CWD, in.ThreadID); refusal != nil {
+			message := refusal.Error() + "; message withheld"
+			return &appserver.RPCError{Method: "thread/read", Message: message, Object: map[string]any{"code": stateroot.CodeOf(refusal), "message": message}}
 		}
 		if selection.Name != "" {
 			var info map[string]any

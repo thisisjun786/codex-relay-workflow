@@ -82,6 +82,15 @@ func TestCheckRefusesOnlyAMoveAwayFromWorkInFlight(t *testing.T) {
 	}
 }
 
+// conflictOf is the *Conflict a Guard error carries, nil for none.
+func conflictOf(err error) *Conflict {
+	var c *Conflict
+	if errors.As(err, &c) {
+		return c
+	}
+	return nil
+}
+
 func anchorOf(t *testing.T, env host.LookupEnv) string {
 	t.Helper()
 	raw, err := os.ReadFile(AnchorPath(env, session))
@@ -135,7 +144,7 @@ func TestGuardJudgesAgainstThePreservedAnchorWhateverTheHostReportsNow(t *testin
 		t.Fatal("the first resume at the root was refused")
 	}
 	for name, target := range map[string]string{"cwd sent": b, "settings-free": ""} {
-		c := Guard(env, b, target, session)
+		c := conflictOf(Guard(env, b, target, session))
 		if c == nil || c.NativeCwd != a || c.TargetCwd != b {
 			t.Errorf("%s: host cwd %s, anchor %s: conflict %+v", name, b, a, c)
 		}
@@ -242,7 +251,7 @@ func TestALinkedSourceBindingKeepsTheStateAtTheNativeRoot(t *testing.T) {
 	if c := Guard(env, a, a, session); c != nil {
 		t.Fatalf("a resume at the native root: %v", c)
 	}
-	if c := Guard(env, a, b, session); c == nil || c.NativeCwd != a {
+	if c := conflictOf(Guard(env, a, b, session)); c == nil || c.NativeCwd != a {
 		t.Fatalf("a resume at the source worktree: %+v", c)
 	}
 	if c := Bootstrap(env, b, session); c == nil {

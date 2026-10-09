@@ -42,8 +42,9 @@ type SessionHookPostToolUsePayload struct {
 // CRW-1140 (port: fixed): the oracle bootstraps in whatever cwd the payload names, so a thread
 // resumed at another cwd gets an empty IDLE state beside the one it left in flight. A relay-managed
 // thread (one a CRW resume path anchored at its native root, stateroot.Guard) is judged with the
-// same resolution the resume paths use: when its root holds work in flight and the payload cwd holds
-// no state for it, nothing is created and the answer tells the agent where its state is. A thread
+// same resolution the resume paths use: when its root holds work in flight and the payload cwd is
+// another directory, nothing is created (a state already there, a legacy IDLE one included, is left
+// alone and does not exempt it) and the answer tells the agent where its state is. A thread
 // with no anchor, a standalone terminal session, bootstraps exactly as before; the anchor is a local
 // file, so no hook needs a running relay.
 func SessionHookSessionStart(p SessionHookSessionStartPayload) string {

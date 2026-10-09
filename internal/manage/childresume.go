@@ -437,14 +437,19 @@ func resumeRun(ctx context.Context, e *Env, cfg *Config, opts resumeOptions) (*r
 	// recorded cwd, which a later settings record may have changed. A record that would resume the
 	// child elsewhere while that state is in flight is refused before anything is sent, the dry run
 	// included, and the preserved state is named. Only a run that goes on to resume records the
-	// child's anchor; the dry run writes nothing.
+	// child's anchor, and it is refused when that record cannot be written (the child's SessionStart
+	// could not be guarded); the dry run writes nothing.
 	rootEnv := resumeLookupEnv(e)
-	judge := stateroot.Guard
+	var refusal error
 	if opts.dryRun {
-		judge = stateroot.Resolve
+		if conflict := stateroot.Resolve(rootEnv, read.Thread.Cwd, settings.CWD, child); conflict != nil {
+			refusal = conflict
+		}
+	} else {
+		refusal = stateroot.Guard(rootEnv, read.Thread.Cwd, settings.CWD, child)
 	}
-	if conflict := judge(rootEnv, read.Thread.Cwd, settings.CWD, child); conflict != nil {
-		return nil, &resumeFailure{Reason: stateroot.Code, Detail: conflict.Error() + "; nothing was sent"}
+	if refusal != nil {
+		return nil, &resumeFailure{Reason: stateroot.CodeOf(refusal), Detail: refusal.Error() + "; nothing was sent"}
 	}
 	if opts.dryRun {
 		// The settings comparison the dry run is for, against what the thread reports now. A thread
