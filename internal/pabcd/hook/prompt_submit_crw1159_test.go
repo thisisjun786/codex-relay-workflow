@@ -1,0 +1,177 @@
+// prompt_submit_crw1159_test.go holds CRW-1159: an advisory answer is emitted only when the session lock that records
+// it finds the turn not yet recorded and the decision's inputs (phase, orchestration, binding, injection cursor, the
+// bound work phase) as the handler read them. The oracle judged the turn and chose the directive on a read before any
+// lock (hook.ts:691), so two invocations of one turn both answered and a phase that moved meanwhile got a stale directive
+// and an old cursor.
+package hook
+
+import (
+	"slices"
+	"strings"
+	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/goalplan"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
+)
+
+// crw1159Lock is the session lock whose first acquisition first runs before (another handler, a participating
+// writer), so the handler under test has made its unlocked read when before lands.
+func crw1159Lock(before func()) func(cwd, sessionID string, fn func() error) error {
+	return crw1159LockAt(1, before)
+}
+
+// crw1159LockAt runs before at the nth acquisition instead: with a state file the first is the Stop-budget
+// stamp, which comes before the handler builds its answer, and the second is the answer's own recording write.
+func crw1159LockAt(n int, before func()) func(cwd, sessionID string, fn func() error) error {
+	calls := 0
+	return func(cwd, sessionID string, fn func() error) error {
+		if calls++; calls == n {
+			before()
+		}
+		return state.WithSessionLock(cwd, sessionID, fn)
+	}
+}
+
+// TestCRW1159OneTurnIsAnsweredOnce is end condition 1: two handlers that both read the turn as unrecorded answer one
+// non-empty context between them, on every path that records the turn.
+func TestCRW1159OneTurnIsAnsweredOnce(t *testing.T) {
+	cursor := state.PhaseP
+	for _, c := range []struct {
+		name, prompt string
+		setup        func(*state.State)
+	}{
+		{"loop-arm mandate", "Run crw-loop for this task", nil},
+		{"trigger advice", "Use crw-pabcd to start Plan phase", nil},
+		{"agbrowse fail-closed", "agbrowse search for the release notes", nil},
+		{"mode 2 directive", "keep going", func(s *state.State) { s.Phase, s.OrchestrationActive = state.PhaseP, true }},
+		{"mode 3 header", "keep going", func(s *state.State) {
+			s.Phase, s.OrchestrationActive, s.LastInjectedPhase = state.PhaseP, true, &cursor
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			cwd := t.TempDir()
+			if c.setup != nil {
+				promptSubmitStateFile(t, cwd, "s1", c.setup)
+			}
+			payload := PromptSubmitPayload{Cwd: cwd, SessionID: "s1", Prompt: c.prompt, TurnID: "t1", PabcdEnabled: true}
+			var second string
+			first := promptSubmitHandle(payload, "", promptSubmitHost(cwd), crw1159Lock(func() {
+				second = promptSubmitHandle(payload, "", promptSubmitHost(cwd), state.WithSessionLock)
+			}))
+			answered := 0
+			for _, a := range []string{first, second} {
+				if a != "" {
+					answered++
+				}
+			}
+			if answered != 1 {
+				t.Errorf("%d answers for one turn:\nfirst  %.120q\nsecond %.120q", answered, first, second)
+			}
+		})
+	}
+}
+
+// TestCRW1159AStaleDecisionIsDropped is end condition 2: a phase, binding, cursor or bound work phase that moved between
+// the handler's read and its injection lock neither answers the stale directive nor writes the old cursor.
+func TestCRW1159AStaleDecisionIsDropped(t *testing.T) {
+	cursor := state.PhaseP
+	move := func(t *testing.T, cwd string, mutate func(*state.State)) func() {
+		return func() {
+			s := state.ReadState(cwd, "s1")
+			mutate(&s)
+			if err := state.WriteState(cwd, s); err != nil {
+				t.Error(err)
+			}
+		}
+	}
+	for _, c := range []struct {
+		name  string
+		setup func(*state.State)
+		moved func(*state.State)
+	}{
+		{"P to B before the mode 2 directive", func(s *state.State) { s.Phase, s.OrchestrationActive = state.PhaseP, true },
+			func(s *state.State) { s.Phase = state.PhaseB }},
+		{"P to B before the mode 3 header", func(s *state.State) {
+			s.Phase, s.OrchestrationActive, s.LastInjectedPhase = state.PhaseP, true, &cursor
+		},
+			func(s *state.State) { s.Phase = state.PhaseB }},
+		{"a PostCompact reset before the mode 3 header", func(s *state.State) {
+			s.Phase, s.OrchestrationActive, s.LastInjectedPhase = state.PhaseP, true, &cursor
+		},
+			func(s *state.State) { s.LastInjectedPhase = nil }},
+		{"a new binding before the mode 2 directive", func(s *state.State) { s.Phase, s.OrchestrationActive = state.PhaseP, true },
+			func(s *state.State) { s.Slug = "other" }},
+		{"a closed cycle before the mode 2 directive", func(s *state.State) { s.Phase, s.OrchestrationActive = state.PhaseP, true },
+			func(s *state.State) { s.Phase, s.OrchestrationActive = state.PhaseIdle, false }},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			cwd := t.TempDir()
+			promptSubmitStateFile(t, cwd, "s1", c.setup)
+			payload := PromptSubmitPayload{Cwd: cwd, SessionID: "s1", Prompt: "keep going", TurnID: "t1", PabcdEnabled: true}
+			var moved state.State
+			got := promptSubmitHandle(payload, "", promptSubmitHost(cwd), crw1159Lock(func() {
+				move(t, cwd, c.moved)()
+				moved = state.ReadState(cwd, "s1")
+			}))
+			if strings.Contains(got, "PLAN") {
+				t.Errorf("a stale PLAN context was answered: %.160q", got)
+			}
+			if s := state.ReadState(cwd, "s1"); !promptSamePhase(s.LastInjectedPhase, moved.LastInjectedPhase) || slices.Contains(s.InjectedTurns, "t1") {
+				t.Errorf("the stale decision was recorded: cursor %v, turns %v", s.LastInjectedPhase, s.InjectedTurns)
+			}
+		})
+	}
+
+	t.Run("a new active work phase before the B directive", func(t *testing.T) {
+		cwd := t.TempDir()
+		wp1, wp2 := "wp1", "wp2"
+		write := func(active *string) {
+			stopWritePlan(t, cwd, "export", func(p *goalplan.Goalplan) {
+				p.WorkPhases = []goalplan.GoalplanWorkPhase{stopWorkPhase("wp1", "Exporter", goalplan.WorkPhasePending), stopWorkPhase("wp2", "Importer", goalplan.WorkPhasePending)}
+				p.ActiveWorkPhaseID = active
+			})
+		}
+		write(&wp1)
+		promptSubmitStateFile(t, cwd, "s1", func(s *state.State) { s.Phase, s.OrchestrationActive, s.Slug = state.PhaseB, true, "export" })
+		payload := PromptSubmitPayload{Cwd: cwd, SessionID: "s1", Prompt: "keep going", TurnID: "t1", PabcdEnabled: true}
+		got := promptSubmitHandle(payload, "", promptSubmitHost(cwd), crw1159LockAt(2, func() { write(&wp2) }))
+		if strings.Contains(got, "Exporter") {
+			t.Errorf("the directive named the work phase the plan has left: %.200q", got)
+		}
+		if s := state.ReadState(cwd, "s1"); s.LastInjectedPhase != nil {
+			t.Errorf("a stale directive's cursor was written: %v", *s.LastInjectedPhase)
+		}
+	})
+}
+
+// TestCRW1159ARepeatedTurnStillRecordsTheRememberRequest is end condition 3: a turn that is already recorded, or that
+// a concurrent handler records first, still records the remember request before its early return.
+func TestCRW1159ARepeatedTurnStillRecordsTheRememberRequest(t *testing.T) {
+	const remember = "Remember this: the deploy key lives in the vault. Use crw-pabcd to start Plan phase"
+	cwd := t.TempDir()
+	promptSubmitStateFile(t, cwd, "s1", func(s *state.State) { s.InjectedTurns = []string{"t1"} })
+	if got := promptSubmitAnswer(t, cwd, "s1", "t1", remember, true); got != "" {
+		t.Errorf("a recorded turn answered %q", got)
+	}
+	if s := state.ReadState(cwd, "s1"); !s.MemoryWriteRequested || s.MemoryWriteTurn == nil || *s.MemoryWriteTurn != "t1" {
+		t.Errorf("the repeated turn's remember request was lost: %+v", s)
+	}
+
+	cwd = t.TempDir()
+	payload := PromptSubmitPayload{Cwd: cwd, SessionID: "s1", Prompt: remember, TurnID: "t2", PabcdEnabled: true}
+	var second string
+	first := promptSubmitHandle(payload, "", promptSubmitHost(cwd), crw1159Lock(func() {
+		second = promptSubmitHandle(payload, "", promptSubmitHost(cwd), state.WithSessionLock)
+		s := state.ReadState(cwd, "s1")
+		s.MemoryWriteRequested, s.MemoryWriteTurn = false, nil // the gate consumed the first request
+		if err := state.WriteState(cwd, s); err != nil {
+			t.Error(err)
+		}
+	}))
+	if (first == "") == (second == "") {
+		t.Errorf("want exactly one answer: %q / %q", first, second)
+	}
+	if s := state.ReadState(cwd, "s1"); !s.MemoryWriteRequested {
+		t.Errorf("the concurrent repeat did not record its remember request: %+v", s)
+	}
+}

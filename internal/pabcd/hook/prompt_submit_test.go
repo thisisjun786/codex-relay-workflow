@@ -444,8 +444,9 @@ func TestPromptSubmitLoopArmKeepsAParticipatingWritersUpdate(t *testing.T) {
 }
 
 // TestPromptSubmitLoopArmStoresTheTurnOnce is the concurrent case the unlocked guard cannot separate
-// (hook.ts:691 is read before the lock in both invocations): both answer the mandate, as the oracle's
-// do, and the turn is stored once, as the oracle's own write also ends up storing it.
+// (hook.ts:691 is read before the lock in both invocations). The oracle answered both; since CRW-1159
+// the lock that records the mandate finds the turn another invocation recorded, so this one answers
+// nothing, and the turn is stored once.
 func TestPromptSubmitLoopArmStoresTheTurnOnce(t *testing.T) {
 	cwd := t.TempDir()
 	promptSubmitStateFile(t, cwd, "rec-s1", func(*state.State) {})
@@ -458,8 +459,8 @@ func TestPromptSubmitLoopArmStoresTheTurnOnce(t *testing.T) {
 		return state.WithSessionLock(cwd, sessionID, fn)
 	}
 	answer := promptSubmitHandle(PromptSubmitPayload{Cwd: cwd, SessionID: "rec-s1", Prompt: "Run crw-loop for this task", TurnID: "rec-t1", PabcdEnabled: true}, "", promptSubmitHost(cwd), writer)
-	if answer == "" {
-		t.Fatal("the mandate was not answered")
+	if answer != "" {
+		t.Fatalf("a turn another invocation recorded was answered again: %q", answer)
 	}
 	if s := state.ReadState(cwd, "rec-s1"); len(s.InjectedTurns) != 1 || s.InjectedTurns[0] != "rec-t1" {
 		t.Errorf("the turn was stored %d times: %+v", len(s.InjectedTurns), s.InjectedTurns)

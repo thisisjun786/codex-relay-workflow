@@ -183,20 +183,19 @@ func promptSubmitHandleWith(p PromptSubmitPayload, platform string, env host.Loo
 	if !current.OrchestrationActive && loopArmRequested {
 		// 260714 wp3 (audit decision a): persist loopArmSeen OUTSIDE the turn guard - a turnless
 		// payload must not lose the flag; injectedTurns stays turn-guarded.
-		// The turn is appended only when the state the lock found does not already hold it: two
-		// concurrent invocations for one turn both pass the unlocked guard at hook.ts:691 and both
-		// answer the mandate, as the oracle's do, and the stored list then holds the turn once, as the
-		// oracle's does. A write that failed ends the hook in silence, as the oracle's own writeState
-		// throwing does (cli.ts's generic catch answers nothing); a write this port's rewrite guard
-		// skipped still answers the mandate, because the oracle has no such guard and would have
-		// written and answered there.
-		if promptSubmitWriteState(lock, p.Cwd, p.SessionID, func(fresh *state.State) bool {
+		// The mandate is answered only when the lock that records it finds the turn unrecorded and the
+		// session still un-armed (CRW-1159): two concurrent invocations for one turn both pass the
+		// unlocked guard at hook.ts:691, and the oracle answered both. A write that failed ends the hook
+		// in silence, as the oracle's own writeState throwing does (cli.ts's generic catch answers
+		// nothing); a write this port's rewrite guard skipped still answers the mandate, because the
+		// oracle has no such guard and would have written and answered there.
+		if promptSubmitClaim(lock, p.Cwd, p.SessionID, turn, promptClaimInputs{read: current}, func(fresh *state.State) bool {
 			fresh.LoopArmSeen = true
-			if turn != "" && !slices.Contains(fresh.InjectedTurns, turn) {
+			if turn != "" {
 				fresh.InjectedTurns = promptSubmitAppendTurn(fresh.InjectedTurns, turn)
 			}
 			return true
-		}) == promptSubmitFailed {
+		}) != promptClaimEmit {
 			return ""
 		}
 		parts := []string{ResolveCRWInDirective(LoopArmDirective(platform), env)}
@@ -300,6 +299,91 @@ func promptSubmitWriteStateReason(lock func(cwd, sessionID string, fn func() err
 		return promptSubmitPublished, warning, nil
 	}
 	return promptSubmitFailed, "", err
+}
+
+// promptClaimOutcome is what an advisory answer's recording write found inside the session lock (CRW-1159).
+type promptClaimOutcome int
+
+const (
+	// promptClaimEmit: the decision held and the answer may go out. The change was written or published, or the
+	// port's rewrite guard skipped it (a state the reader cannot read or keep whole), where the oracle would have
+	// written and answered.
+	promptClaimEmit promptClaimOutcome = iota
+	// promptClaimDuplicate: the state the lock found already records the turn: another invocation answered it.
+	promptClaimDuplicate
+	// promptClaimStale: an input the answer was chosen from moved since the handler's unlocked read.
+	promptClaimStale
+	// promptClaimFailed: the session lock could not be taken, or the write failed before the rename.
+	promptClaimFailed
+)
+
+// promptClaimInputs is what an advisory answer was chosen from: the handler's unlocked read, whether the
+// injection cursor chose it (the passive modes), and the bound work phase a B directive names (work, when
+// checkWork is set).
+type promptClaimInputs struct {
+	read      state.State
+	cursor    bool
+	checkWork bool
+	work      *DirectiveOptions
+}
+
+// holds is whether fresh, the state the lock found, still chooses the same answer: the phase, the orchestration
+// flag and the binding, the injection cursor when it chose the answer (a PostCompact reset or another injection
+// moves it), and the bound goalplan's active work phase when the answer names it.
+func (in promptClaimInputs) holds(cwd string, fresh state.State) bool {
+	read := in.read
+	if fresh.Phase != read.Phase || fresh.OrchestrationActive != read.OrchestrationActive || fresh.Slug != read.Slug {
+		return false
+	}
+	if in.cursor && !promptSamePhase(fresh.LastInjectedPhase, read.LastInjectedPhase) {
+		return false
+	}
+	return !in.checkWork || promptSameWork(ActiveWorkPhaseOpts(cwd, fresh.Slug), in.work)
+}
+
+func promptSamePhase(a, b *state.Phase) bool {
+	return a == nil && b == nil || a != nil && b != nil && *a == *b
+}
+
+func promptSameWork(a, b *DirectiveOptions) bool {
+	aw, bw := (*ActiveWorkPhase)(nil), (*ActiveWorkPhase)(nil)
+	if a != nil {
+		aw = a.ActiveWorkPhase
+	}
+	if b != nil {
+		bw = b.ActiveWorkPhase
+	}
+	return aw == nil && bw == nil || aw != nil && bw != nil && *aw == *bw
+}
+
+// promptSubmitClaim records an advisory answer and says whether it may go out. The oracle judged the turn and chose
+// the answer on a read before any lock (hook.ts:691), and its writes reported success whatever the state held, so two
+// invocations of one turn both answered, and a phase, binding or cursor that moved meanwhile got a stale directive and
+// an old cursor. Here the lock that records the answer reads the state again and the answer goes out only when that
+// read does not record the turn yet and still chooses the same answer (in.holds); change then lands on that read, under
+// promptSubmitWriteStateReason's rewrite guard. A turnless payload has no turn to find recorded.
+func promptSubmitClaim(lock func(cwd, sessionID string, fn func() error) error, cwd, sessionID, turn string, in promptClaimInputs, change func(*state.State) bool) promptClaimOutcome {
+	outcome := promptClaimEmit
+	err := lock(cwd, sessionID, func() error {
+		fresh, unreadable := state.ReadStateStrict(cwd, sessionID)
+		switch {
+		case unreadable:
+			return nil
+		case turn != "" && slices.Contains(fresh.InjectedTurns, turn):
+			outcome = promptClaimDuplicate
+			return nil
+		case !in.holds(cwd, fresh):
+			outcome = promptClaimStale
+			return nil
+		case !promptSubmitRewritable(cwd, sessionID, fresh) || !change(&fresh):
+			return nil
+		}
+		return state.WriteState(cwd, fresh)
+	})
+	if err != nil && !state.Published(err) {
+		return promptClaimFailed
+	}
+	return outcome
 }
 
 // promptSubmitRewritable says whether writing next back over the session file would keep every record the file stores (the

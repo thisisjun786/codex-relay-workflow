@@ -25,7 +25,10 @@
 // A write the oracle's own writeState would have thrown out of the handler - a lock that cannot be
 // taken, or a write that fails - ends this handler in silence, as cli.ts's catch answers nothing
 // there; a write this port's rewrite guard only skips still answers, because the oracle has no such
-// guard and would have written and answered.
+// guard and would have written and answered. A write that records an answer goes through
+// promptSubmitClaim (CRW-1159): the answer goes out only when the lock finds the turn unrecorded and
+// the phase, binding, cursor and bound work phase it was chosen from unmoved, so one turn is answered
+// once and a stale decision is dropped instead of answered and recorded.
 //
 // The handler answers the context to hand the model, not the envelope: harness.ContextOutput wraps it
 // (hook.ts:583-597 buildContextOutput), which is where the CRLF normalisation, the trim and the
@@ -61,12 +64,15 @@ func promptTriggerHandle(p PromptSubmitPayload, env host.LookupEnv, lock func(cw
 	// calls own phase entry and advancement through real gates. Keep phase, orchestrationActive and
 	// lastInjectedPhase unchanged, including from IDLE; only dedup and loop-arm bookkeeping is recorded.
 	if trigger != "" {
-		directive := PhaseDirective(trigger, ActiveWorkPhaseOpts(p.Cwd, current.Slug))
+		opts := ActiveWorkPhaseOpts(p.Cwd, current.Slug)
+		directive := PhaseDirective(trigger, opts)
+		inputs := promptClaimInputs{read: current, checkWork: true, work: opts}
 		if trigger == state.PhaseI || adviseInterview {
 			directive = InterviewDirective(env)
+			inputs.checkWork = false
 		}
 		if turn != "" || loopArmRequested {
-			if promptTriggerWrite(lock, p.Cwd, p.SessionID, promptTriggerDedup(turn, loopArmRequested)) == promptSubmitFailed {
+			if promptSubmitClaim(lock, p.Cwd, p.SessionID, turn, inputs, promptTriggerDedup(turn, loopArmRequested)) != promptClaimEmit {
 				return ""
 			}
 		}
@@ -77,7 +83,7 @@ func promptTriggerHandle(p PromptSubmitPayload, env host.LookupEnv, lock func(cw
 	// fail-closed: no trigger and orchestration never activated -> stay silent.
 	if !current.OrchestrationActive {
 		if agbrowseRequested {
-			if promptTriggerWrite(lock, p.Cwd, p.SessionID, promptTriggerDedup(turn, false)) == promptSubmitFailed {
+			if promptSubmitClaim(lock, p.Cwd, p.SessionID, turn, promptClaimInputs{read: current}, promptTriggerDedup(turn, false)) != promptClaimEmit {
 				return ""
 			}
 			return AgbrowseSearchDirective
@@ -119,9 +125,13 @@ func promptTriggerHandle(p PromptSubmitPayload, env host.LookupEnv, lock func(cw
 	// compaction's recovery window (host.TranscriptGeneration.ContextPressure), so the oracle's pressure
 	// suppression has no case left here; the Stop leg keeps it.
 	generation := host.ReadTranscriptGeneration(p.TranscriptPath, host.TailBytes)
+	// Each passive answer below goes out only when the lock that records it finds the turn unrecorded and
+	// the phase, the binding and the cursor it was chosen from unmoved (CRW-1159, promptSubmitClaim); a
+	// stale decision is dropped rather than answered or recorded.
+	passive := promptClaimInputs{read: current, cursor: true}
 	if current.LastInjectedPhase != nil && generation.HasStageMarkerForPhase(string(current.Phase)) {
 		if turn != "" {
-			if promptTriggerWrite(lock, p.Cwd, p.SessionID, promptTriggerReinject(current.Phase, turn)) == promptSubmitFailed {
+			if promptSubmitClaim(lock, p.Cwd, p.SessionID, turn, passive, promptTriggerReinject(current.Phase, turn)) != promptClaimEmit {
 				return ""
 			}
 		}
@@ -133,16 +143,19 @@ func promptTriggerHandle(p PromptSubmitPayload, env host.LookupEnv, lock func(cw
 
 	// mode 2: the phase changed since the last injected phase -> the full directive.
 	if current.LastInjectedPhase == nil || *current.LastInjectedPhase != current.Phase {
-		directive := PhaseDirective(current.Phase, ActiveWorkPhaseOpts(p.Cwd, current.Slug))
+		opts := ActiveWorkPhaseOpts(p.Cwd, current.Slug)
+		directive := PhaseDirective(current.Phase, opts)
+		inputs := promptClaimInputs{read: current, cursor: true, checkWork: true, work: opts}
 		if current.Phase == state.PhaseI {
 			directive = InterviewDirective(env)
+			inputs.checkWork = false
 		}
 		context := directive
 		if agbrowseRequested {
 			context = directive + "\n\n" + AgbrowseSearchDirective
 		}
 		if turn != "" {
-			if promptTriggerWrite(lock, p.Cwd, p.SessionID, promptTriggerReinject(current.Phase, turn)) == promptSubmitFailed {
+			if promptSubmitClaim(lock, p.Cwd, p.SessionID, turn, inputs, promptTriggerReinject(current.Phase, turn)) != promptClaimEmit {
 				return ""
 			}
 		}
@@ -151,7 +164,7 @@ func promptTriggerHandle(p PromptSubmitPayload, env host.LookupEnv, lock func(cw
 
 	// mode 3: the same phase -> the short compaction-immune stage header every turn.
 	if turn != "" {
-		if promptTriggerWrite(lock, p.Cwd, p.SessionID, promptTriggerDedup(turn, false)) == promptSubmitFailed {
+		if promptSubmitClaim(lock, p.Cwd, p.SessionID, turn, passive, promptTriggerDedup(turn, false)) != promptClaimEmit {
 			return ""
 		}
 	}
