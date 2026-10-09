@@ -78,9 +78,9 @@ func physicalHome(home string) string {
 	return resolved
 }
 
-// usableDatabase is a regular file, or a link that reaches one. A directory or a dangling link with a
+// usableFile is a regular file, or a link that reaches one. A directory or a dangling link with a
 // matching name is not a database, and must not hide the one that is.
-func usableDatabase(path string) bool {
+func usableFile(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && info.Mode().IsRegular()
 }
@@ -104,7 +104,7 @@ func latestVersionedDb(home, prefix string) (string, error) {
 			continue
 		}
 		number, _ := strconv.ParseFloat(digits, 64)
-		if (best == "" || number > bestNumber) && usableDatabase(filepath.Join(home, name)) {
+		if (best == "" || number > bestNumber) && usableFile(filepath.Join(home, name)) {
 			best, bestNumber = name, number
 		}
 	}

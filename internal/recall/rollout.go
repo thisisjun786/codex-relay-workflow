@@ -190,7 +190,7 @@ func ListRolloutFiles(home string, days float64, now ...time.Time) ([]RolloutFil
 		}
 		for _, entry := range names {
 			name := source.DecodeUTF8([]byte(entry.Name()))
-			if strings.HasSuffix(name, ".jsonl") && usableDatabase(filepath.Join(dir, entry.Name())) {
+			if strings.HasSuffix(name, ".jsonl") && usableFile(filepath.Join(dir, entry.Name())) {
 				out = append(out, RolloutFile{filepath.Join(dir, name), date})
 			}
 		}
@@ -211,7 +211,7 @@ func ListRolloutFiles(home string, days float64, now ...time.Time) ([]RolloutFil
 			for _, entry := range names {
 				name := source.DecodeUTF8([]byte(entry.Name()))
 				date := DateFromRolloutName(name)
-				if strings.HasSuffix(name, ".jsonl") && date != nil && inWindow(*date) && usableDatabase(filepath.Join(archive, entry.Name())) {
+				if strings.HasSuffix(name, ".jsonl") && date != nil && inWindow(*date) && usableFile(filepath.Join(archive, entry.Name())) {
 					out = append(out, RolloutFile{filepath.Join(archive, name), *date})
 				}
 			}
