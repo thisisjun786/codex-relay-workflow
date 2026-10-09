@@ -253,6 +253,8 @@ func PendingLedgerEvents(cwd, sessionID string) (events []LedgerEvent, damaged [
 type LedgerDrainOptions struct {
 	Published map[string]bool
 	Followup  func(ev LedgerEvent) error
+	// FollowupDone names the events whose followup the caller has just completed itself.
+	FollowupDone map[string]bool
 }
 
 // LedgerDrainReport is what a drain did: the rows it appended, the events it dropped as never published, and the events still
@@ -328,7 +330,7 @@ func DrainLedgerOutbox(cwd, sessionID string, o LedgerDrainOptions) LedgerDrainR
 			continue
 		}
 		ev.Published, ev.RowRecorded = true, true
-		if len(ev.Followup) > 0 {
+		if len(ev.Followup) > 0 && !o.FollowupDone[ev.ID] {
 			err := errors.New("no followup handler")
 			if o.Followup != nil {
 				err = o.Followup(ev)

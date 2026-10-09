@@ -6,19 +6,39 @@ package hook
 // writer died or whose append failed is recorded by the next one, exactly once.
 
 import (
+	"bufio"
+	"encoding/json"
+	"errors"
+	"io"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
+	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/goalplan"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/review"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
 )
 
-// DrainSessionLedger finishes the session's pending ledger events. The caller holds the session lock. published names the events
-// the caller has just published itself, so the drain does not judge them from the state.
+// DrainSessionLedger finishes the session's pending ledger events. The caller holds the session lock and no goalplan write lock
+// (a followup takes one). published names the events the caller has just published itself, so the drain does not judge them from
+// the state.
 func DrainSessionLedger(cwd, sessionID string, published ...string) state.LedgerDrainReport {
-	known := map[string]bool{}
+	return DrainSessionLedgerWith(cwd, sessionID, published, nil)
+}
+
+// DrainSessionLedgerWith is DrainSessionLedger with the events whose followup the caller completed itself.
+func DrainSessionLedgerWith(cwd, sessionID string, published, followupDone []string) state.LedgerDrainReport {
+	known, done := map[string]bool{}, map[string]bool{}
 	for _, id := range published {
 		known[id] = true
 	}
-	return state.DrainLedgerOutbox(cwd, sessionID, state.LedgerDrainOptions{Published: known, Followup: ledgerOutboxFollowup(cwd, sessionID)})
+	for _, id := range followupDone {
+		done[id] = true
+	}
+	return state.DrainLedgerOutbox(cwd, sessionID, state.LedgerDrainOptions{Published: known, FollowupDone: done, Followup: ledgerOutboxFollowup(cwd, sessionID)})
 }
 
 // DrainSessionLedgerRows is DrainSessionLedger for a caller that holds a goalplan write lock: it records
@@ -32,9 +52,117 @@ func DrainSessionLedgerRows(cwd, sessionID string, published ...string) state.Le
 	return state.DrainLedgerOutbox(cwd, sessionID, state.LedgerDrainOptions{Published: known})
 }
 
-// ledgerOutboxFollowup is the followup handler of the session's events. No event carries a followup yet.
-func ledgerOutboxFollowup(_, _ string) func(state.LedgerEvent) error {
+// ledgerOutboxFollowup is the followup handler of the session's events: the plan-audit cleanup of a P>A
+// re-plan (CRW-1100), the one followup an event carries today, run under the bound plan's write lock.
+func ledgerOutboxFollowup(cwd, sessionID string) func(state.LedgerEvent) error {
+	return func(ev state.LedgerEvent) error {
+		var cleanup PlanAuditCleanup
+		if err := json.Unmarshal(ev.Followup, &cleanup); err != nil || cleanup.Kind != PlanAuditCleanupKind {
+			return errors.New("the event carries a followup this build does not know")
+		}
+		locked, err := goalplan.WithGoalplanWriteLock(cwd, cleanup.Slug, func(plan *goalplan.Goalplan) (struct{}, error) {
+			return struct{}{}, SupersedePlanAuditRounds(cwd, sessionID, cleanup, plan)
+		}, nil)
+		switch {
+		case err != nil:
+			return err
+		case locked.Kind == "ok":
+			return nil
+		case locked.Kind == "unreadable" && locked.Reason == "goalplan '"+cleanup.Slug+"' does not exist":
+			// The plan is gone, and its rounds with it: nothing is left to close.
+			return nil
+		}
+		return errors.New(locked.Reason)
+	}
+}
+
+// PlanAuditCleanupKind names the followup of a P>A event.
+const PlanAuditCleanupKind = "plan-audit-supersede"
+
+// PlanAuditCleanup is the followup a P>A event of a bound session carries (CRW-1100): the plan it minted the
+// epoch in, the epoch itself and the exact plan_audit rounds of this session that the new epoch strands,
+// listed under the plan's write lock before the state was published. Recording them keeps one epoch and one
+// round list across every retry: a reconcile never mints an epoch and never widens the list.
+type PlanAuditCleanup struct {
+	Kind   string   `json:"kind"`
+	Slug   string   `json:"slug"`
+	Epoch  string   `json:"epoch"`
+	Rounds []string `json:"rounds"`
+}
+
+// SupersedePlanAuditRounds closes the rounds of c on plan, which the caller's write lock of c.Slug read, and
+// records one review_round_superseded row per round it closed now or an earlier attempt closed; a row the
+// plan's ledger already holds is not written again. A plan write that published and then failed its
+// directory sync counts as written. The first failure is returned and the caller keeps the work pending.
+func SupersedePlanAuditRounds(cwd, sessionID string, c PlanAuditCleanup, plan *goalplan.Goalplan) error {
+	swept, closed := review.SupersedeRounds(plan, goalplan.PurposePlanAudit, sessionID, c.Epoch, c.Rounds)
+	if len(closed) > 0 {
+		if err := goalplan.WriteGoalplan(cwd, swept); err != nil && !state.Published(err) {
+			return err
+		}
+	}
+	owed := []string{}
+	for _, r := range swept.ReviewRounds {
+		if r.Purpose == goalplan.PurposePlanAudit && r.Status == goalplan.ReviewInconclusive && slices.Contains(c.Rounds, r.RoundID) &&
+			r.Lane.Verdict == "" && !slices.Contains(owed, r.RoundID) {
+			owed = append(owed, r.RoundID)
+		}
+	}
+	if len(owed) == 0 {
+		return nil
+	}
+	recorded, err := planAuditSupersededRows(cwd, c.Slug)
+	if err != nil {
+		return err
+	}
+	for _, roundID := range owed {
+		if recorded[roundID] {
+			continue
+		}
+		row := roundID
+		if err := goalplan.AppendGoalplanLedger(cwd, c.Slug, goalplan.GoalplanLedgerEntry{
+			Ts: time.Now().UTC().Format("2006-01-02T15:04:05.000Z"), Slug: c.Slug, Event: goalplan.EventReviewRoundSuperseded,
+			Detail: "the plan was re-planned, so this round can no longer be spent", RoundID: &row,
+		}); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+// planAuditSupersededRows is the set of round ids the plan's ledger already holds a review_round_superseded
+// row for. The ledger is read one line at a time; a line that is not an object matches nothing.
+func planAuditSupersededRows(cwd, slug string) (map[string]bool, error) {
+	dir, err := goalplan.GoalplanDir(cwd, slug)
+	if err != nil {
+		return nil, err
+	}
+	f, err := os.Open(filepath.Join(dir, goalplan.GoalplanLedgerFile))
+	if errors.Is(err, fs.ErrNotExist) {
+		return map[string]bool{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	seen := map[string]bool{}
+	r := bufio.NewReader(f)
+	for {
+		line, readErr := r.ReadBytes('\n')
+		var row struct {
+			Event   string  `json:"event"`
+			RoundID *string `json:"roundId"`
+		}
+		if json.Unmarshal(line, &row) == nil && row.Event == string(goalplan.EventReviewRoundSuperseded) && row.RoundID != nil {
+			seen[*row.RoundID] = true
+		}
+		if errors.Is(readErr, io.EOF) {
+			return seen, nil
+		}
+		if readErr != nil {
+			return nil, readErr
+		}
+	}
 }
 
 // LedgerEventStillPending reports whether the event is among the ones a drain left pending.

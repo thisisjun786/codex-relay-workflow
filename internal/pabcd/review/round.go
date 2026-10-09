@@ -11,6 +11,7 @@ package review
 import (
 	"fmt"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -340,6 +341,48 @@ func SupersedeStaleRounds(p *goalplan.Goalplan, purpose goalplan.ReviewPurpose, 
 		return p, closed
 	}
 	return reviewWithRounds(p, list, purpose, nil), closed
+}
+
+// ObsoleteRounds lists the open rounds of purpose that session owns and that belong to an epoch other than keep (CRW-1100):
+// every round a re-plan to keep strands, where SupersedeStaleRounds names one earlier epoch only. A round without an epoch, a
+// round another session owns, another purpose's round and a closed round are not listed.
+func ObsoleteRounds(p *goalplan.Goalplan, purpose goalplan.ReviewPurpose, session, keep string) []string {
+	ids := []string{}
+	for _, r := range p.ReviewRounds {
+		if r.Purpose == purpose && !reviewTerminal(r.Status) && r.OwnerSessionID != "" && r.OwnerSessionID == session &&
+			r.PlanEpoch != "" && r.PlanEpoch != keep {
+			ids = append(ids, r.RoundID)
+		}
+	}
+	return ids
+}
+
+// SupersedeRounds closes the rounds named in ids that are still what ObsoleteRounds lists for session and keep: open, of
+// purpose, owned by session, of another non-empty epoch. A round that changed since it was listed (closed, re-owned, re-bound
+// to keep) is left alone, so replaying the same list closes nothing twice. The cursor of purpose is cleared only when it named
+// a round this call closed; a cursor on another round, which may hold a valid review, is kept. With nothing to close the
+// original plan pointer is returned.
+func SupersedeRounds(p *goalplan.Goalplan, purpose goalplan.ReviewPurpose, session, keep string, ids []string) (*goalplan.Goalplan, []string) {
+	closed := []string{}
+	now := reviewTimestamp(nil)
+	list := make([]goalplan.ReviewRoundState, len(p.ReviewRounds))
+	for i, r := range p.ReviewRounds {
+		if r.Purpose == purpose && !reviewTerminal(r.Status) && r.OwnerSessionID != "" && r.OwnerSessionID == session &&
+			r.PlanEpoch != "" && r.PlanEpoch != keep && slices.Contains(ids, r.RoundID) {
+			closed = append(closed, r.RoundID)
+			r.Status = goalplan.ReviewInconclusive
+			r.ClosedAt = &now
+		}
+		list[i] = r
+	}
+	if len(closed) == 0 {
+		return p, closed
+	}
+	cursor := *reviewCursor(p, purpose)
+	if cursor != nil && slices.Contains(closed, *cursor) {
+		cursor = nil
+	}
+	return reviewWithRounds(p, list, purpose, cursor), closed
 }
 
 // AbortRound abandons the selected live round without approving it.
