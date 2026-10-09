@@ -259,17 +259,18 @@ func Activate(deps ActivateDeps) (*InstallManifest, error) {
 	// enable" calls below rewrite config.toml themselves and may atomically replace the caller's
 	// pathname, so the managed-key read-modify-writes and the post-activation hash must follow the
 	// path that names the live config rather than the target the link pointed at when the lock was
-	// taken. When that replacement happened the lock guarded the old target while the keys went to
-	// the caller's path, which is the limitation recorded in docs/port-cxc/known-defects/CRW-899.md.
+	// taken. When that replacement happened, the key is published only once the new file's lock is
+	// held as well (configIdentityAfterRunner, CRW-1144).
 	// The declared-state probe reads the same config.toml through the injected CLI, and its answer
 	// decides both which flags are enabled below and every flag's priorEnabled, so it runs inside the
 	// critical section too. A probe taken before the wait would let an activation that holds the lock
 	// enable a flag and publish its manifest, after which this activation would enable the flag again,
 	// record it as previously disabled and claim it as its own, and a later deactivation would turn
 	// off a flag the other activation enabled.
-	// An interrupted change is recorded before this activation reads anything it decides from (CRW-1153), so the flags and
-	// the key it left on are crw's, not pre-existing state.
-	// The directory the config file lies in, pinned for the check after the CLI ran (CRW-1144).
+	//
+	// The directory the config file lies in is pinned for the check after the CLI ran (CRW-1144), and an
+	// interrupted change is recorded before this activation reads anything it decides from (CRW-1153),
+	// so the flags and the key it left on are crw's, not pre-existing state.
 	dirInfo, _ := os.Stat(filepath.Dir(path))
 	recovered, recErr := recoverIntent(deps.CodexHome, path, deps.Run)
 	if recErr != nil && !crwdir.Published(recErr) {
