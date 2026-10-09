@@ -336,13 +336,14 @@ func (w *walker) stmt(s *syntax.Stmt, st *state, ctx Context) error {
 	case *syntax.IfClause:
 		return w.ifClause(c, st, ctx)
 	case *syntax.WhileClause:
-		prescanLoop(st, c.Cond, c.Do)
+		keepsDir := prescanLoop(st, c.Cond, c.Do)
+		before := st.dir
 		lctx := loopContext(ctx)
 		if err := w.stmts(c.Cond, st, lctx); err != nil {
 			return err
 		}
 		err := w.stmts(c.Do, st, lctx)
-		afterLoop(st)
+		afterLoop(st, before, keepsDir)
 		return err
 	case *syntax.ForClause:
 		return w.forClause(c, st, ctx)
@@ -380,9 +381,13 @@ func (w *walker) stmt(s *syntax.Stmt, st *state, ctx Context) error {
 }
 
 // afterLoop makes the state unknown once a loop has run: the body may have run zero or many times, so the directory and the
-// variables after it are not those of any one iteration (a cd in a loop body is unknown afterwards).
-func afterLoop(st *state) {
-	st.dir = notProvenDir(st.dir)
+// variables after it are not those of any one iteration (a cd in a loop body is unknown afterwards). A loop whose condition and
+// body cannot change the directory (keepsDir, from prescanLoop) leaves it where it was before the loop (before): every iteration
+// starts and ends there, so the directory after zero, one or many iterations is that one.
+func afterLoop(st *state, before Dir, keepsDir bool) {
+	if !keepsDir || st.dir != before {
+		st.dir = notProvenDir(st.dir)
+	}
 	st.clearVars()
 }
 
@@ -392,9 +397,11 @@ func loopContext(ctx Context) Context {
 }
 
 // prescanLoop makes the state conservative before a loop body runs, because a
-// later iteration sees what an earlier one changed.
-func prescanLoop(st *state, lists ...[]*syntax.Stmt) {
-	changes := false
+// later iteration sees what an earlier one changed. It reports whether the
+// statements cannot change the directory (see changesDir); only then does the
+// directory stay known through the loop.
+func prescanLoop(st *state, lists ...[]*syntax.Stmt) (keepsDir bool) {
+	changes, dir := false, changesDir(st, lists...)
 	for _, list := range lists {
 		for _, s := range list {
 			syntax.Walk(s, func(n syntax.Node) bool {
@@ -410,10 +417,55 @@ func prescanLoop(st *state, lists ...[]*syntax.Stmt) {
 			})
 		}
 	}
-	if changes {
+	if dir {
 		st.dir = notProvenDir(st.dir)
+	}
+	if changes {
 		st.clearVars()
 	}
+	return !dir
+}
+
+// changesDir reports statements that may change the directory of the shell that runs them: a cd, pushd or popd; anything
+// that runs text or a builtin the reader does not see at this point (eval, source, ., trap, builtin, command, exec, an alias, a
+// zsh precommand modifier, a function call, a command whose name is not a plain word); or any mention of CDPATH, which changes
+// where a later cd goes. It looks inside nested statements, command substitutions and subshells too (it does not tell a subshell
+// from the shell itself, so it may say yes where the directory cannot change, never the other way).
+func changesDir(st *state, lists ...[]*syntax.Stmt) bool {
+	changes := false
+	for _, list := range lists {
+		for _, s := range list {
+			syntax.Walk(s, func(n syntax.Node) bool {
+				switch c := n.(type) {
+				case *syntax.Lit:
+					if strings.Contains(c.Value, "CDPATH") {
+						changes = true
+					}
+				case *syntax.CallExpr:
+					if len(c.Args) > 0 && changesDirCall(c.Args[0].Lit(), st) {
+						changes = true
+					}
+				}
+				return !changes
+			})
+		}
+	}
+	return changes
+}
+
+func changesDirCall(name string, st *state) bool {
+	if name == "" || strings.ContainsAny(name, `\$'"`+"`") {
+		return true // a name the parser does not hand over as one plain word: the reader cannot say which command it is
+	}
+	if _, ok := st.funcs[name]; ok {
+		return true
+	}
+	switch name {
+	case "cd", "pushd", "popd", "eval", "source", ".", "trap", "builtin", "command", "exec",
+		"alias", "unalias", "shopt", "enable", "noglob", "nocorrect", "-":
+		return true
+	}
+	return false
 }
 
 func changesStateCall(c *syntax.CallExpr, st *state) bool {
@@ -487,6 +539,7 @@ func (w *walker) ifClause(c *syntax.IfClause, st *state, ctx Context) error {
 }
 
 func (w *walker) forClause(c *syntax.ForClause, st *state, ctx Context) error {
+	var keepsDir bool
 	switch loop := c.Loop.(type) {
 	case *syntax.WordIter:
 		for _, item := range loop.Items {
@@ -494,19 +547,20 @@ func (w *walker) forClause(c *syntax.ForClause, st *state, ctx Context) error {
 				return err
 			}
 		}
-		prescanLoop(st, c.Do)
+		keepsDir = prescanLoop(st, c.Do)
 		st.unsetVar(loop.Name.Value)
 	case *syntax.CStyleLoop:
 		if err := w.substsIn(loop, st, ctx); err != nil {
 			return err
 		}
 		st.clearVars()
-		prescanLoop(st, c.Do)
+		keepsDir = prescanLoop(st, c.Do)
 	default:
 		return unreadablef("unsupported loop %T", c.Loop)
 	}
+	before := st.dir
 	err := w.stmts(c.Do, st, loopContext(ctx))
-	afterLoop(st)
+	afterLoop(st, before, keepsDir)
 	return err
 }
 
@@ -516,8 +570,15 @@ func (w *walker) caseClause(c *syntax.CaseClause, st *state, ctx Context) error 
 	}
 	for _, item := range c.Items {
 		if item.Op != syntax.Break {
-			// Fall-through runs later arms after this one, so the arms share state.
-			st.dir = notProvenDir(st.dir)
+			// Fall-through runs later arms after this one, so the arms share state. The directory stays known when no arm can
+			// change it (changesDir).
+			arms := make([][]*syntax.Stmt, 0, len(c.Items))
+			for _, it := range c.Items {
+				arms = append(arms, it.Stmts)
+			}
+			if changesDir(st, arms...) {
+				st.dir = notProvenDir(st.dir)
+			}
 			st.clearVars()
 			break
 		}
