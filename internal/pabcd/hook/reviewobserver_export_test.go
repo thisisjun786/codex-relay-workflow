@@ -18,3 +18,11 @@ func SetReviewObserverWriteGoalplan(write func(cwd string, plan *goalplan.Goalpl
 	reviewObserverWriteGoalplan = write
 	return func() { reviewObserverWriteGoalplan = previous }
 }
+
+// SetReviewObserverInboxCounted replaces the hook between the inbox's capacity check and the link of an entry for one test and
+// returns the restore (CRW-1113): it lets a test hold two invocations at the moment both have passed the check.
+func SetReviewObserverInboxCounted(f func()) (restore func()) {
+	previous := reviewObserverInboxCounted
+	reviewObserverInboxCounted = f
+	return func() { reviewObserverInboxCounted = previous }
+}

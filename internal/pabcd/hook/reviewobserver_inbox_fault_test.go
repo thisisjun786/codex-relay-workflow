@@ -176,9 +176,9 @@ func TestReviewObserverInLockDrainAnswersThePublishedPlan(t *testing.T) {
 	defer restore()
 	if err := state.WithSessionLock(e.cwd, e.session, func() error {
 		_, err := goalplan.WithGoalplanWriteLock(e.cwd, e.slug, func(plan *goalplan.Goalplan) (string, error) {
-			next, kept := hook.DrainReviewObserverInboxInLock(e.cwd, e.session, plan)
-			if kept != 0 || next == nil || next.ReviewRounds[0].Lane.Verdict != goalplan.VerdictFail {
-				t.Fatalf("the published FAIL is the plan judged, with nothing kept: kept=%d plan=%+v", kept, next)
+			drained, err := hook.DrainReviewObserverInboxInLock(e.cwd, e.session, plan, nil)
+			if err != nil || drained.Kept != 0 || !drained.Wrote || drained.Plan == nil || drained.Plan.ReviewRounds[0].Lane.Verdict != goalplan.VerdictFail {
+				t.Fatalf("the published FAIL is the plan judged, with nothing kept: err=%v %+v", err, drained)
 			}
 			return "", nil
 		}, nil)

@@ -87,16 +87,15 @@ func HandleReviewObserver(raw string) (out string) {
 			return nil
 		}
 		observer := reviewObserver{cwd: cwd, slug: st.Slug}
-		dir, pending, unreadable := reviewObserverInboxRead(cwd, sessionID)
-		if dir != nil {
-			defer dir.Close()
+		inbox := reviewObserverInboxReadAll(cwd, sessionID)
+		if inbox.dir != nil {
+			defer inbox.dir.Close()
 		}
 		_, _ = goalplan.WithGoalplanWriteLock(cwd, st.Slug, func(plan *goalplan.Goalplan) (string, error) {
 			if signoff == nil {
 				observer.observeUnparsed(plan, st)
 			}
-			observer.dropUnreadable(dir, unreadable)
-			_, _ = observer.drainInbox(dir, plan, st, sessionID, append(pending, inMemory...))
+			_, _ = observer.drainInbox(inbox, plan, st, sessionID, inMemory, nil)
 			return "", nil
 		}, nil)
 		return nil

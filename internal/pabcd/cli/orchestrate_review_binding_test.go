@@ -442,11 +442,11 @@ func TestOrchestrateReviewBindingDispatchAdviceNamesTheReviewerRole(t *testing.T
 // verdict and let the attest through. The observer now keeps the sign-off, and the A>B transition drains it under the session
 // lock it already holds before it judges the binding: the kept FAIL is honoured, and a kept PASS counts as the reviewer's.
 //
-// "released before" frees the lock before the transition starts. "held through the first drain" keeps the lock until the
-// publication's own lock is about to be taken, so the transition's first drain meets a busy lock and the kept sign-off has to be
-// applied by the publication itself, inside its goalplan lock (the drain that gave up must not become an approval of the round).
+// "released before" frees the lock before the transition starts. "held until the publication" keeps the lock until the
+// publication's own lock is about to be taken, so the unlocked first look at the plan sees a round with no verdict and the kept
+// sign-off has to be applied by the publication itself, inside its goalplan lock.
 func TestOrchestrateReviewBindingDrainsAKeptSignoffBeforeTheCheck(t *testing.T) {
-	for _, when := range []string{"released before", "held through the first drain"} {
+	for _, when := range []string{"released before", "held until the publication"} {
 		for _, verdict := range []string{"fail", "pass"} {
 			t.Run(when+"/"+verdict, func(t *testing.T) {
 				cwd := orchestrateTransitionRoot(t)
