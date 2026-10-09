@@ -221,3 +221,44 @@ func TestWriteStateRefusesASpecialFileWithoutOpeningIt(t *testing.T) {
 		})
 	}
 }
+
+// CRW-1065: the CXC original reads a file that is not JSON as an unreadable default and its writer rewrites it with the default
+// state, which publishes over the stored bytes. The port refuses such a rewrite when the bytes hold a lone surrogate escape. The
+// refusal must come before any temp file is staged or any byte is written, so the file stays byte for byte as it was, and the
+// sessions directory keeps only that file. The inputs are the non-JSON shapes a lone escape can sit in.
+func TestWriteStateRefusalLeavesANonJSONFileByteForByte(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+	}{
+		{"plain-text", "not json \\ud800"},
+		{"truncated-object", `{"phase": "P", "slug": "\ud800"`},
+		{"trailing-garbage", `{"phase": "P", "slug": "\ud800"}}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cwd := t.TempDir()
+			if err := makeSessionsDir(cwd); err != nil {
+				t.Fatal(err)
+			}
+			path := StatePath(cwd, "s")
+			raw := []byte(tc.body)
+			if err := os.WriteFile(path, raw, 0o666); err != nil {
+				t.Fatal(err)
+			}
+			s, unreadable := ReadStateStrict(cwd, "s")
+			if !unreadable {
+				t.Fatal("the non-JSON file read as readable; the case does not exercise the unreadable default")
+			}
+			if err := WriteState(cwd, s); err == nil {
+				t.Fatalf("WriteState rewrote a non-JSON file holding a lone surrogate; the file now reads %q", fileText(t, path))
+			}
+			if got, _ := os.ReadFile(path); !bytes.Equal(got, raw) {
+				t.Fatalf("a refused rewrite changed the file: got %q, want %q", got, raw)
+			}
+			if entries, _ := os.ReadDir(filepath.Dir(path)); len(entries) != 1 {
+				t.Fatalf("a refused rewrite left %d entries beside the state file, want 1", len(entries))
+			}
+		})
+	}
+}
