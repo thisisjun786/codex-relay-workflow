@@ -29,7 +29,6 @@
 package pyjson
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 )
@@ -84,8 +83,10 @@ type pyScan struct {
 	s                            []rune
 	integerError, recursionError string
 	depth, maxDepth              int
-	// hookDepth > 0 models an object_pairs_hook: an object closing deeper than it refuses
-	// with RecursionError, and with hookKeys a repeated key refuses it at its close.
+	// hooked models an object_pairs_hook: an object closing deeper than hookDepth refuses
+	// with RecursionError (hookDepth may be zero or negative for a budget of one or two), and
+	// with hookKeys a repeated key refuses it at its close.
+	hooked    bool
 	hookDepth int
 	hookKeys  bool
 	// decoded: the text json.loads decoded from bytes, which meets no byte-order-mark check
@@ -285,8 +286,11 @@ func (p *pyScan) object(i int) (int, string, int) {
 			return 0, msg, at
 		}
 		if p.hookKeys {
-			var key string
-			_ = json.Unmarshal([]byte(string(p.s[i:end])), &key)
+			// The key is read as loads reads a str (Surrogates): a lone surrogate escape stays
+			// the surrogate it is, so two distinct ones are two keys, not one U+FFFD.
+			keyText := &decoder{s: string(p.s[i:end]), o: LoadOptions{Surrogates: true}}
+			keyValue, _ := keyText.str()
+			key, _ := keyValue.(string)
 			repeated = repeated || keys[key]
 			keys[key] = true
 		}
@@ -318,7 +322,7 @@ func (p *pyScan) object(i int) (int, string, int) {
 // closed ends an object at its '}' (index i): with a hook modelled, calling it past hookDepth
 // is the RecursionError, and a repeated key is the hook's own refusal.
 func (p *pyScan) closed(i int, repeated bool) (int, string, int) {
-	if p.hookDepth > 0 && p.depth > p.hookDepth {
+	if p.hooked && p.depth > p.hookDepth {
 		p.recursionError = "maximum recursion depth exceeded"
 		return 0, p.recursionError, i
 	}
@@ -375,7 +379,7 @@ func HookedError(doc string, limit int) (message string, duplicate, recursion bo
 	s := []rune(doc)
 	p := &pyScan{s: s, hookKeys: true}
 	if limit > 0 {
-		p.maxDepth, p.hookDepth = limit, limit-2
+		p.maxDepth, p.hookDepth, p.hooked = limit, limit-2, true
 	}
 	end, msg, at := p.value(p.ws(0))
 	switch {

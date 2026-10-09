@@ -210,7 +210,7 @@ func resetLinkTargetExistsWith(pinned *resetLinkWalkPin, name string, statRoot f
 	// that may only be searched where the kernel answers with the target.
 	target, readErr := resetLinkWalkReadlink(pinned.dir, name)
 	if readErr == nil {
-		if exists, inside := resetLinkWalkTarget(pinned.dir, name, target); inside {
+		if exists, inside := resetLinkWalkTarget(pinned.dir, target); inside {
 			return exists, nil
 		}
 	}
@@ -238,8 +238,9 @@ func resetLinkTargetExistsWith(pinned *resetLinkWalkPin, name string, statRoot f
 // resetLinkWalkTarget judges a link's readlink text against the pinned directory by walking the
 // target's path components with fstatat(AT_SYMLINK_NOFOLLOW) and readlinkat relative to the
 // descriptor resetPin took, so the walk opens nothing: a component that is not a link is read with
-// fstatat, and the search permission a "." or ".." component needs is asked of the kernel with
-// faccessat(X_OK) relative to that descriptor, which opens nothing. A multi-component path is still
+// fstatat, and the search permission a "." or ".." component needs is asked of the kernel with an
+// fstatat(AT_SYMLINK_NOFOLLOW) of the walked directory's own "." entry (resetLinkWalkSearchable),
+// relative to that descriptor, which opens nothing. A multi-component path is still
 // resolved by the kernel component by component, the way the OS-path judgement resolves it too.
 //
 // The walk reports whether the target exists and whether it stayed inside the root at all; a target
@@ -263,7 +264,7 @@ func resetLinkTargetExistsWith(pinned *resetLinkWalkPin, name string, statRoot f
 // the kernel counts that link as the first traversal it allows for the whole resolution, so a chain
 // of resetLinkWalkLimit() links inside the target makes one more than the ceiling and must not
 // resolve.
-func resetLinkWalkTarget(dir *os.File, name, target string) (exists, inside bool) {
+func resetLinkWalkTarget(dir *os.File, target string) (exists, inside bool) {
 	// A target that does not resolve against the pinned directory keeps the OS-path judgement: an
 	// absolute one, and on Windows a rooted-without-volume one (backslash keep backslash dot, which
 	// filepath.IsAbs does not report) or a drive-relative one (C:keep backslash dot, whose VolumeName

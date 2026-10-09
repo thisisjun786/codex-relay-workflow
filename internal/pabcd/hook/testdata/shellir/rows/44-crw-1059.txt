@@ -1,0 +1,94 @@
+# CRW-1059: a sequential execution inside bash -c or a command substitution is ordered like a top-level one: a script body
+# writes reach only the executions after it. The controls keep the unordered contexts (loop, pipe, background job, function body)
+# and the real rewrite (the writer runs before the rewritten script). Format: see shellwrite_repro_test.go.
+
+=== CRW-1059-01 | T
+--why Sequential: inside bash -c with &&, the later script rewrites the earlier one only after it ran, as at the top level.
+--file lint.sh
+echo lint
+--file refresh.sh
+echo refreshed > lint.sh
+--cmd
+bash -c 'bash lint.sh && bash refresh.sh'
+
+=== CRW-1059-02 | T
+--why Sequential: inside bash -c with ||, the same order as CRW-1059-01.
+--file lint.sh
+echo lint
+--file refresh.sh
+echo refreshed > lint.sh
+--cmd
+bash -c 'bash lint.sh || bash refresh.sh'
+
+=== CRW-1059-03 | T
+--why Sequential: inside bash -c, the two commands on two lines of the text run in line order.
+--file lint.sh
+echo lint
+--file refresh.sh
+echo refreshed > lint.sh
+--cmd
+bash -c 'bash lint.sh
+bash refresh.sh'
+
+=== CRW-1059-04 | T
+--why Sequential: in a command substitution, the script run first is not rewritten by the script run after it.
+--file lint.sh
+echo lint
+--file refresh.sh
+echo refreshed > lint.sh
+--cmd
+x=$(bash lint.sh; bash refresh.sh)
+
+=== CRW-1059-05 | U
+--why Control: in a command substitution the rewriting script runs first and the rewritten one after it is a real rewrite, refused.
+--file lint.sh
+echo lint
+--file refresh.sh
+echo refreshed > lint.sh
+--cmd
+x=$(bash refresh.sh); bash lint.sh
+
+=== CRW-1059-06 | U
+--why Control: a loop runs its body again, so the rewrite reaches the next run of lint.sh in the loop: refused.
+--file lint.sh
+echo lint
+--file refresh.sh
+echo refreshed > lint.sh
+--cmd
+bash -c 'for i in 1 2; do bash lint.sh; bash refresh.sh; done'
+
+=== CRW-1059-07 | U
+--why Control: a pipe runs alongside the next command, so its body sees the later rewrite: refused.
+--file lint.sh
+echo lint
+--file refresh.sh
+echo refreshed > lint.sh
+--cmd
+bash -c 'bash lint.sh | cat; bash refresh.sh'
+
+=== CRW-1059-08 | U
+--why Control: a background job runs alongside the next command, so its body sees the later rewrite: refused.
+--file lint.sh
+echo lint
+--file refresh.sh
+echo refreshed > lint.sh
+--cmd
+bash -c 'bash lint.sh & bash refresh.sh'
+
+=== CRW-1059-09 | U
+--why Control: a function body runs where it is called, after the rewrite: refused.
+--file lint.sh
+echo lint
+--file refresh.sh
+echo refreshed > lint.sh
+--cmd
+bash -c 'f() { bash lint.sh; }; bash refresh.sh; f'
+
+=== CRW-1059-10 | U
+--why Control: the third run of lint.sh follows the rewrite made by refresh.sh, so it is the rewritten file: refused.
+--file lint.sh
+echo lint
+--file refresh.sh
+echo refreshed > lint.sh
+--cmd
+bash -c 'bash lint.sh; bash refresh.sh; bash lint.sh'

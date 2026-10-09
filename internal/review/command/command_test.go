@@ -21,6 +21,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/review"
 	"github.com/thisisjun786/codex-relay-workflow/internal/review/agy"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 type repo struct {
@@ -551,7 +552,7 @@ func TestEndToEndWithFakeAgy(t *testing.T) {
 	h := f.repo.change(f.base, 2)
 	script, err := os.ReadFile(filepath.Join("testdata", "fake-agy.sh"))
 	bin := filepath.Join(t.TempDir(), "agy") // the fake records beside itself
-	if err != nil || os.WriteFile(bin, script, 0o755) != nil {
+	if err != nil || testsupport.WriteProgram(bin, script, 0o755) != nil {
 		t.Fatal("cannot install the fake agy", err)
 	}
 	rec := filepath.Join(filepath.Dir(bin), "rec")

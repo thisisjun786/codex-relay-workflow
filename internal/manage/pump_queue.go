@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 	"io"
 	"os"
 	"path/filepath"
@@ -46,7 +47,7 @@ const (
 // notice has waited max_queue_seconds. Files move to sent/ only on accepted. A probe that does not
 // confirm the thread idle leaves the notices queued.
 func pumpQueueFlush(ctx context.Context, e *Env, cfg *Config, st *pumpState, s pumpSettings, dry bool) error {
-	root := filepath.Join(cfg.StateDir, pumpQueueDir)
+	root := crwconfig.JoinRoot(cfg.StateDir, pumpQueueDir)
 	if err := pumpQueueSafe(root, "parent queue directory"); err != nil {
 		return err
 	}
@@ -70,7 +71,7 @@ func pumpQueueFlush(ctx context.Context, e *Env, cfg *Config, st *pumpState, s p
 
 // pumpQueueFlushThread delivers one thread's queued notices.
 func pumpQueueFlushThread(ctx context.Context, e *Env, cfg *Config, st *pumpState, s pumpSettings, root, thread string, dry bool) error {
-	dir := filepath.Join(root, thread)
+	dir := crwconfig.JoinRoot(root, thread)
 	// A cancelled round makes no durable change: the pin, the membership and the moves are all
 	// writes, and a first SIGINT must not leave one behind for a round that is already over.
 	if err := ctx.Err(); err != nil {
@@ -364,7 +365,7 @@ const pumpReview776QueueReadTries = 8
 // is no longer the one the name held when it was checked, or whose file changed while it was read, is
 // read again.
 func pumpReview776QueueReadNotice(dir, name string) (string, time.Time, error) {
-	path := filepath.Join(dir, name)
+	path := crwconfig.JoinRoot(dir, name)
 	for attempt := 0; attempt < pumpReview776QueueReadTries; attempt++ {
 		info, err := os.Lstat(path)
 		if err != nil {
@@ -419,7 +420,7 @@ func pumpReview776QueueReadHandle(path string, checked os.FileInfo) (string, tim
 func pumpReview776QueueOldest(dir string, names []string) (time.Time, error) {
 	var oldest time.Time
 	for _, name := range names {
-		info, err := os.Lstat(filepath.Join(dir, name))
+		info, err := os.Lstat(crwconfig.JoinRoot(dir, name))
 		if err != nil {
 			return oldest, err
 		}
@@ -452,7 +453,7 @@ func pumpReview776QueueQuarantine(ctx context.Context, e *Env, cfg *Config, dir,
 		if err := ctx.Err(); err != nil {
 			return keptNames, keptTexts, err
 		}
-		oversizeDir := filepath.Join(dir, pumpReview776OversizeDir)
+		oversizeDir := crwconfig.JoinRoot(dir, pumpReview776OversizeDir)
 		// The destination is checked the way the queue root is: a symlink planted in its place would
 		// redirect the move outside the state directory.
 		if err := pumpQueueSafe(oversizeDir, "oversize directory"); err != nil {
@@ -490,10 +491,10 @@ func pumpReview776QueueQuarantine(ctx context.Context, e *Env, cfg *Config, dir,
 // taken, so a destination is never picked by a check the move itself could invalidate.
 func pumpReview776QueueDestName(destDir, name string, attempt int) string {
 	if attempt == 0 {
-		return filepath.Join(destDir, name)
+		return crwconfig.JoinRoot(destDir, name)
 	}
 	now := time.Now()
-	return filepath.Join(destDir, fmt.Sprintf("%s.%s-%d",
+	return crwconfig.JoinRoot(destDir, fmt.Sprintf("%s.%s-%d",
 		name, now.UTC().Format("20060102T150405"), attempt))
 }
 
@@ -775,7 +776,7 @@ func pumpReview776QueueFinishAccepted(ctx context.Context, e *Env, cfg *Config, 
 		// The moves and the pin clear are durable effects: a cancelled round makes neither.
 		return err
 	}
-	sent := filepath.Join(dir, pumpSentDir)
+	sent := crwconfig.JoinRoot(dir, pumpSentDir)
 	created := false
 	for _, name := range pin.Names {
 		if err := ctx.Err(); err != nil {
@@ -858,7 +859,7 @@ func pumpQueueRefusedLift(ctx context.Context, cfg *Config, st *pumpState, dir, 
 		st.QueueRefused[thread] = pumpQueueRefusal{ID: base, Count: count}
 		return pumpReview776QueuePinLift(ctx, cfg, st, thread, cause)
 	}
-	refused := filepath.Join(dir, pumpQueueRefusedDir)
+	refused := crwconfig.JoinRoot(dir, pumpQueueRefusedDir)
 	// The directory is checked the way the queue root is, so a symlink planted in its place cannot
 	// redirect the moves outside the thread.
 	if err := pumpQueueSafe(refused, "refused directory"); err != nil {
@@ -944,7 +945,7 @@ const pumpReview776QueueDestTries = 64
 // and nothing was disturbed. Any other failure -- an unreadable file, a rename, link or removal
 // that failed -- is returned, so a caller never records a batch as moved when it was not.
 func pumpReview776QueueMoveVerified(dir, name, destDir, expectedDigest string) (string, bool, error) {
-	source := filepath.Join(dir, name)
+	source := crwconfig.JoinRoot(dir, name)
 	file, err := os.Open(source)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -1005,7 +1006,7 @@ func pumpReview776QueueMoveVerified(dir, name, destDir, expectedDigest string) (
 // crosses a filesystem, and the producer writes only <logical id>.txt there, so it can neither
 // create this directory nor a file inside it.
 func pumpReview776QueueAsideDir(dir string) string {
-	return filepath.Join(dir, pumpReview776AsideDir)
+	return crwconfig.JoinRoot(dir, pumpReview776AsideDir)
 }
 
 // pumpReview776QueueTakeAside takes the queue name into the aside directory with one atomic rename
@@ -1022,8 +1023,8 @@ func pumpReview776QueueTakeAside(dir, name string) (string, error) {
 	if err := os.MkdirAll(asideDir, 0o700); err != nil {
 		return "", err
 	}
-	aside := filepath.Join(asideDir, name)
-	if err := os.Rename(filepath.Join(dir, name), aside); err != nil {
+	aside := crwconfig.JoinRoot(asideDir, name)
+	if err := os.Rename(crwconfig.JoinRoot(dir, name), aside); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return "", nil
 		}
@@ -1055,7 +1056,7 @@ func pumpReview776QueueRecoverAsides(ctx context.Context, e *Env, dir string, dr
 	}
 	for _, entry := range entries {
 		name := entry.Name()
-		aside := filepath.Join(asideDir, name)
+		aside := crwconfig.JoinRoot(asideDir, name)
 		info, err := os.Lstat(aside)
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
@@ -1084,7 +1085,7 @@ func pumpReview776QueueRecoverAsides(ctx context.Context, e *Env, dir string, dr
 			}
 			continue
 		}
-		if err := pumpReview776QueuePutBack(aside, filepath.Join(dir, name)); err != nil {
+		if err := pumpReview776QueuePutBack(aside, crwconfig.JoinRoot(dir, name)); err != nil {
 			return err
 		}
 	}
@@ -1095,7 +1096,7 @@ func pumpReview776QueueRecoverAsides(ctx context.Context, e *Env, dir string, dr
 // oversize/ or refused/ -- the three directories a move publishes into -- which is what the publish
 // step of a move leaves behind when the process died before it dropped the aside.
 func pumpReview776QueuePublished(dir string, aside os.FileInfo) (bool, error) {
-	for _, destDir := range []string{filepath.Join(dir, pumpSentDir), filepath.Join(dir, pumpReview776OversizeDir), filepath.Join(dir, pumpQueueRefusedDir)} {
+	for _, destDir := range []string{crwconfig.JoinRoot(dir, pumpSentDir), crwconfig.JoinRoot(dir, pumpReview776OversizeDir), crwconfig.JoinRoot(dir, pumpQueueRefusedDir)} {
 		entries, err := os.ReadDir(destDir)
 		if err != nil {
 			if os.IsNotExist(err) {
@@ -1104,7 +1105,7 @@ func pumpReview776QueuePublished(dir string, aside os.FileInfo) (bool, error) {
 			return false, err
 		}
 		for _, entry := range entries {
-			info, err := os.Lstat(filepath.Join(destDir, entry.Name()))
+			info, err := os.Lstat(crwconfig.JoinRoot(destDir, entry.Name()))
 			if err != nil {
 				if errors.Is(err, os.ErrNotExist) {
 					continue
@@ -1174,7 +1175,7 @@ func pumpReview776BodyDigest(text string) string {
 func pumpReview776QueuePresent(dir string, names []string) []string {
 	present := make([]string, 0, len(names))
 	for _, name := range names {
-		if _, err := os.Lstat(filepath.Join(dir, name)); err == nil {
+		if _, err := os.Lstat(crwconfig.JoinRoot(dir, name)); err == nil {
 			present = append(present, name)
 		}
 	}
@@ -1190,7 +1191,7 @@ func pumpReview776QueueMoveByName(ctx context.Context, dir string, names []strin
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	sent := filepath.Join(dir, pumpSentDir)
+	sent := crwconfig.JoinRoot(dir, pumpSentDir)
 	if err := os.MkdirAll(sent, 0o700); err != nil {
 		return err
 	}
@@ -1208,7 +1209,7 @@ func pumpReview776QueueMoveByName(ctx context.Context, dir string, names []strin
 			continue
 		}
 		if _, err := pumpReview776QueuePublish(aside, sent, name); err != nil {
-			if putErr := pumpReview776QueuePutBack(aside, filepath.Join(dir, name)); putErr != nil {
+			if putErr := pumpReview776QueuePutBack(aside, crwconfig.JoinRoot(dir, name)); putErr != nil {
 				return putErr
 			}
 			return err
@@ -1366,7 +1367,7 @@ func pumpReview776QueueOutboxIDs(cfg *Config) (map[string]bool, error) {
 	if err := deliverOutboxDirSafe(cfg); err != nil {
 		return nil, err
 	}
-	entries, err := os.ReadDir(filepath.Dir(deliverOutboxPath(cfg, "id")))
+	entries, err := os.ReadDir(rootDir(deliverOutboxPath(cfg, "id")))
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, nil
@@ -1503,7 +1504,7 @@ func pumpReview776QueueGateNames(dir string, pinned []string) ([]string, error) 
 			continue
 		}
 		seen[name] = true
-		info, err := os.Lstat(filepath.Join(dir, name))
+		info, err := os.Lstat(crwconfig.JoinRoot(dir, name))
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
 				continue
@@ -1513,7 +1514,7 @@ func pumpReview776QueueGateNames(dir string, pinned []string) ([]string, error) 
 		if !info.Mode().IsRegular() {
 			continue
 		}
-		raw, err := os.ReadFile(filepath.Join(dir, name))
+		raw, err := os.ReadFile(crwconfig.JoinRoot(dir, name))
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
 				continue
@@ -2021,7 +2022,7 @@ func pumpReview776QueueSettleOverlap(ctx context.Context, e *Env, cfg *Config, s
 	}
 	intact := map[string]bool{}
 	for _, name := range pin.Names {
-		path := filepath.Join(dir, name)
+		path := crwconfig.JoinRoot(dir, name)
 		info, err := os.Lstat(path)
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
@@ -2175,7 +2176,7 @@ func pumpReview776QueueCompleteProven(ctx context.Context, cfg *Config, dir, thr
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	sent := filepath.Join(dir, pumpSentDir)
+	sent := crwconfig.JoinRoot(dir, pumpSentDir)
 	if err := os.MkdirAll(sent, 0o700); err != nil {
 		return err
 	}

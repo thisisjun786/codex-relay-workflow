@@ -12,3 +12,16 @@ condition = "AND"
 paths = ['''^internal/pabcd/hook/testdata/shellir/rows/08-frozen-pr845\.txt$''']
 regexTarget = "match"
 regexes = ['''^GH_TOKEN=abc123456789$''']
+
+# CRW-917: the GitHub post guard's own tests and reproduction rows carry a fake secret the guard MUST refuse to
+# post (MY_API_KEY=sentinel, also spelled with a M escape in a JSON key). Only a match containing the
+# literal "sentinel" in these two fixtures is allowed; any other secret-shaped string there is still scanned.
+[[allowlists]]
+description = "CRW-917 fake MY_API_KEY=sentinel fixtures of the GitHub post guard tests"
+condition = "AND"
+paths = [
+  '''^internal/pabcd/hook/testdata/shellir/rows/41-crw-917\.txt$''',
+  '''^internal/pabcd/hook/githubpost_crw917_test\.go$''',
+]
+regexTarget = "match"
+regexes = ['''sentinel''']

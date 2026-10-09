@@ -81,7 +81,7 @@ identities of every later hook in that file and detaches the trusted hash record
 identity. The registration is then read back, and the identity, the trusted hash and the hook
 file's own SHA-256 are recorded with the issue that installed it.
 
-Existing CXC, other MCP servers and other hooks are preserved. An entry already held by a different
+Other MCP servers and other hooks are preserved. An entry already held by a different
 command or a different trusted hash is a `conflict`, which stops the installation with both values
 reported rather than overwriting either.
 

@@ -1,0 +1,59 @@
+# CRW-1064 after the pre-merge evaluation of 9701e19e (record crw1064-9701e19e.json): an arithmetic or parameter assignment in a
+# function or wrapper must change the variables a loop write reads (d1, P0), and a function named chdir must not hide the builtin
+# chdir (d2, P0). Each row is judged by the three gates; the controls keep the harmless shapes unchanged. A link named dir1 or dx
+# points at the memory root, so a write there is a write into the protected root.
+
+=== CRW-1064-13 | W
+--why d1 P0: a function whose body assigns n through arithmetic makes n 1 before the loop's write; the write lands in dir1, the link into the memory root, so the memory gate must ask for a grant.
+--file dir0/a
+old
+--link dir1 {MEMORY}
+--cmd
+n=0; f() { : "$((n=1))"; }; for i in 1; do f; echo x >"dir$n/a"; done
+
+=== CRW-1064-14 | W
+--why d1 P0, wrapper form: builtin around the arithmetic assignment in a loop body; the write lands in the memory root as in CRW-1064-13.
+--file dir0/a
+old
+--link dir1 {MEMORY}
+--cmd
+n=0; for i in 1; do builtin : "$((n=1))"; echo x >"dir$n/a"; done
+
+=== CRW-1064-15 | W
+--why d1 P0, parameter form: a default assignment in a function body sets m to x before the loop's write, which then lands in dx, the link into the memory root.
+--file d/a
+old
+--link dx {MEMORY}
+--cmd
+m=; f() { : "${m:=x}"; }; for i in 1; do f; echo y >"d$m/a"; done
+
+=== CRW-1064-16 | B
+--why control of CRW-1064-13: arithmetic without an assignment leaves n known, so the write stays in dir0, an ordinary directory.
+--file dir0/a
+old
+--link dir1 {MEMORY}
+--cmd
+n=0; for i in 1; do : "$((n+1))"; echo x >"dir$n/a"; done
+
+=== CRW-1064-17 | W
+--why d1 P0, no loop: an assignment in an arithmetic expansion of a plain command changes n, so the later write lands in the memory root.
+--file dir0/a
+old
+--link dir1 {MEMORY}
+--cmd
+n=0; : "$((n=1))"; echo x >"dir$n/a"
+
+=== CRW-1064-18 | U
+--why d2 P0: a function named chdir is refused as a shadow of a modelled name; the builtin chdir, which zsh runs past the function, is not modelled as the function, so the reader cannot prove the write.
+--cmd
+chdir() { :; }; for i in 1; do builtin chdir {MEMORY}; echo x >a; done
+
+=== CRW-1064-19 | U
+--why d2 P0 without the loop: a function named chdir hides the directory change the call makes.
+--cmd
+chdir() { :; }; chdir {MEMORY}; echo x >a
+
+=== CRW-1064-20 | W
+--why control of CRW-1064-18: the builtin chdir into the memory root in a loop body makes the directory unknown, so the write has a destination the gate cannot name.
+--cmd
+for i in 1; do builtin chdir {MEMORY}; echo x >a; done

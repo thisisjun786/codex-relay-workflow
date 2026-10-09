@@ -47,7 +47,7 @@ func TestSkillInstalledOutsideCheckout(t *testing.T) {
 		{"title replay", []string{"parent-title", "replay"}, "", 0},
 		{"policy selftest", []string{"start-policy", "selftest"}, "", 0},
 		{"policy vocabulary", []string{"start-policy", "vocabulary"}, "", 0},
-		{"policy legal", []string{"start-policy", "check"}, "run_mode: loop\nobservation_path: blocked\n", 0},
+		{"policy legal", []string{"start-policy", "check"}, "run_mode: goal\nobservation_path: blocked\n", 0},
 		{"policy illegal", []string{"start-policy", "check"}, "run_mode: blocked\nobservation_path: event-driven-idle\n", 1},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -76,7 +76,7 @@ func TestSkillStartPolicyCommands(t *testing.T) {
 	}{
 		{"selftest", "", []string{"selftest"}, 0, "vocabulary: "},
 		{"vocabulary", "", []string{"vocabulary"}, 0, "legal pairings, each one two lines to copy:\n"},
-		{"passing check", "run_mode: loop\nobservation_path: blocked\n", []string{"check"}, 0, "run_mode: loop -> ok\nobservation_path: blocked -> ok\npairing: loop + blocked -> legal\n"},
+		{"passing check", "run_mode: goal\nobservation_path: blocked\n", []string{"check"}, 0, "run_mode: goal -> ok\nobservation_path: blocked -> ok\npairing: goal + blocked -> legal\n"},
 		{"failing check", "run_mode: blocked\nobservation_path: event-driven-idle\n", []string{"check"}, 1, "pairing: blocked + event-driven-idle -> illegal; this is a record to repair\n"},
 	} {
 		t.Run(test.name, func(t *testing.T) {

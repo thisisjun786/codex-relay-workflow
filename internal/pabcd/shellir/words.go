@@ -41,7 +41,8 @@ func refuseProcSubst(*syntax.ProcSubst) (string, error) {
 }
 
 // substsIn walks every command and process substitution under n. Each one runs
-// in a copy of the state, so a directory change inside it does not leak out.
+// in a copy of the state, so a directory change inside it does not leak out. An expansion that assigns a variable (an
+// arithmetic assignment or increment, a default assignment) makes the variables unknown: the reader does not evaluate it.
 func (w *walker) substsIn(n syntax.Node, st *state, ctx Context) error {
 	var firstErr error
 	syntax.Walk(n, func(m syntax.Node) bool {
@@ -59,6 +60,20 @@ func (w *walker) substsIn(n syntax.Node, st *state, ctx Context) error {
 			sctx.ProcSubst = true
 			firstErr = w.substBody(c.Stmts, st, sctx)
 			return false
+		case *syntax.BinaryArithm:
+			// an assignment in an arithmetic expansion, $((n=1)), sets a variable the reader does not follow
+			if assignsArithm(c.Op) {
+				st.clearVars()
+			}
+		case *syntax.UnaryArithm:
+			if c.Op == syntax.Inc || c.Op == syntax.Dec {
+				st.clearVars()
+			}
+		case *syntax.ParamExp:
+			// a default assignment, ${n:=x}, sets the variable it names
+			if c.Exp != nil && (c.Exp.Op == syntax.AssignUnset || c.Exp.Op == syntax.AssignUnsetOrNull) {
+				st.clearVars()
+			}
 		}
 		return true
 	})

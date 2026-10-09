@@ -36,6 +36,7 @@ type mcpRPC struct {
 	applied    bool
 	paged      bool
 	failRead   bool
+	failStatus bool
 	model      string
 }
 
@@ -71,6 +72,9 @@ func (r *mcpRPC) Call(_ context.Context, method string, params map[string]any) (
 	case "plugin/installed":
 		answer = map[string]any{"marketplaces": []any{map[string]any{"plugins": []any{map[string]any{"id": "cua@openai-bundled", "installed": true, "enabled": true}}}}}
 	case "mcpServerStatus/list":
+		if r.failStatus {
+			return nil, fmt.Errorf("mcpServerStatus/list: the host is busy")
+		}
 		off, pluginsOff := map[string]bool{}, map[string]bool{}
 		config, _ := r.params["thread/resume"]["config"].(map[string]any)
 		for name, entry := range config["mcp_servers"].(map[string]any) {

@@ -40,6 +40,8 @@ func (r Row) Text(name string) string {
 // All is Store.all: every row of a read, through the querier the context selects, so a read
 // inside a transaction body sees that transaction's writes. The rows are closed before return.
 func (s *Store) All(ctx context.Context, query string, args ...any) (_ []Row, err error) {
+	// A failure of the corrupting class, at the query or while the rows are read, is a read (CRW-945).
+	defer func() { err = MarkSite(HaltSiteObservation, err) }()
 	rows, err := s.q(ctx).QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query: %w", err)

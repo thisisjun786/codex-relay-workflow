@@ -11,7 +11,6 @@ import (
 	"io"
 	"os"
 	"path"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -20,6 +19,7 @@ import (
 	"golang.org/x/sys/unix"
 	"mvdan.cc/sh/v3/syntax"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
 )
 
@@ -1132,7 +1132,7 @@ func dagHostStateLock(ctx context.Context, stateDir string) (func(), error) {
 	if err := os.MkdirAll(stateDir, 0o700); err != nil {
 		return nil, err
 	}
-	path := filepath.Join(stateDir, dagHostStateLockFile)
+	path := crwconfig.JoinRoot(stateDir, dagHostStateLockFile)
 	if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSymlink != 0 {
 		return nil, errors.New("the review state lock is a symlink; refusing to lock through it")
 	}
@@ -1159,7 +1159,7 @@ func dagHostStateLock(ctx context.Context, stateDir string) (func(), error) {
 // "reported" member is an empty list; one this build cannot read is an error, so a file this build
 // cannot fully understand never becomes a reason to re-report a refusal.
 func dagHostLoadOffsets(stateDir string) (dagHostOffsets, error) {
-	data, err := os.ReadFile(filepath.Join(stateDir, dagHostStateFile))
+	data, err := os.ReadFile(crwconfig.JoinRoot(stateDir, dagHostStateFile))
 	if errors.Is(err, os.ErrNotExist) {
 		return dagHostOffsets{Offsets: map[string]int64{}, Reported: map[string][]string{}, Unparsed: map[string][]string{}, raw: map[string]json.RawMessage{}}, nil
 	}
@@ -1254,7 +1254,7 @@ func dagHostSaveOffsets(ctx context.Context, stateDir string, state dagHostOffse
 		os.Remove(temporary)
 		return err
 	}
-	if err := os.Rename(temporary, filepath.Join(stateDir, dagHostStateFile)); err != nil {
+	if err := os.Rename(temporary, crwconfig.JoinRoot(stateDir, dagHostStateFile)); err != nil {
 		return fail("commit the offset file", err)
 	}
 	handle, err := os.Open(stateDir)

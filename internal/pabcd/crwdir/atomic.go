@@ -29,7 +29,7 @@ const (
 	stepWrite
 	stepSync
 	stepRename
-	stepDirSync // after the rename, the fsync of the directory that holds the new entry (PublishDurable only)
+	stepDirSync // after the rename, the fsync of the directory that holds the new entry
 )
 
 // Publish writes data as finalPath through a temp file in the same directory: the data is written, fsynced and renamed over
@@ -42,9 +42,15 @@ const (
 //   - a file that cannot be opened for writing (one the owner made read-only), a directory and any other file that is not
 //     a regular file are refused, and so is a link that leads nowhere.
 //
-// The owner of an existing file and its hard links are not kept, there is no lock against a concurrent writer (the last
-// rename wins), and the directory is not fsynced: after a power failure the rename may not have happened, and then the previous
-// file is still there (PublishDurable fsyncs the directory after the rename).
+// After the rename the directory that holds the file is fsynced (SyncDir), so that once Publish returns the entry survives a
+// power failure and not only the file's data. A failure of that sync is returned as a *PublishedError although the rename has
+// happened: the file is in place and must not be undone, but it is not known to be durable. Published(err) tells that error from
+// one returned before the rename, where nothing was published (CRW-802). That includes a directory the process can write into
+// but not open for reading (mode 0300): the sync did not run, so the publication is reported as published and unsynced, and a
+// caller whose file does not depend on the sync (the receipt) decides that for itself.
+//
+// The owner of an existing file and its hard links are not kept, and there is no lock against a concurrent writer (the last
+// rename wins).
 func Publish(finalPath string, data []byte) error { return publish(finalPath, data, nil) }
 
 // PublishChecked is Publish with check run at the last step: after the temp file is written and synced and
@@ -84,19 +90,12 @@ func publishContext(ctx context.Context, finalPath string, data []byte, fail fun
 	})
 }
 
-// PublishDurable is Publish for a file that a record written afterwards depends on: after the rename it fsyncs the directory
-// that holds the file (SyncDir), so that once it returns the entry survives a power failure and not only the file's data. A
-// failure of that sync is returned although the rename has happened: the file is in place but is not known to be durable.
-func PublishDurable(finalPath string, data []byte) error {
-	return publishWith(finalPath, data, true, nil)
-}
+// PublishDurable is Publish: every publication syncs the directory after the rename. The name stays for the callers that
+// state, by using it, that a record written afterwards depends on the file.
+func PublishDurable(finalPath string, data []byte) error { return publish(finalPath, data, nil) }
 
 // publish takes a hook that is called just before each step and fails it by returning an error.
-func publish(finalPath string, data []byte, fail func(publishStep) error) error {
-	return publishWith(finalPath, data, false, fail)
-}
-
-func publishWith(finalPath string, data []byte, durable bool, fail func(publishStep) error) (err error) {
+func publish(finalPath string, data []byte, fail func(publishStep) error) (err error) {
 	at := func(step publishStep) error {
 		if fail == nil {
 			return nil
@@ -158,13 +157,20 @@ func publishWith(finalPath string, data []byte, durable bool, fail func(publishS
 	if err = Rename(tmp, target); err != nil {
 		return err
 	}
-	if durable {
-		if err = at(stepDirSync); err != nil {
-			return err
-		}
-		return SyncDir(filepath.Dir(target))
+	// The rename has happened: a failure from here on is a PublishedError, which the deferred cleanup above treats like any
+	// error (the temp file no longer exists) and the caller must not read as an unpublished file.
+	if err = at(stepDirSync); err != nil {
+		return &PublishedError{Err: publishedUnsynced(err)}
+	}
+	if err = SyncDir(filepath.Dir(target)); err != nil {
+		return &PublishedError{Err: publishedUnsynced(err)}
 	}
 	return nil
+}
+
+// publishedUnsynced words a failed directory sync so that a caller that prints the error says the file is in place.
+func publishedUnsynced(err error) error {
+	return fmt.Errorf("the new file is in place but its directory could not be synced: %w", err)
 }
 
 // resolveTarget is the path Publish replaces and what is there now: a nil info means a new file. A symlink is followed to
