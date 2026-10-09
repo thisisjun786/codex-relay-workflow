@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -200,6 +201,16 @@ func TestAttemptsFileNames(t *testing.T) {
 	for _, k := range c.Names {
 		cwd := t.TempDir()
 		WriteAttempts(cwd, k.Session, k.Agent, 2, k.Turn)
+		if !state.IsCanonicalSessionID(k.Session) {
+			// Changed (port: fixed, CRW-1106): a session id that sanitising changes shares the oracle's name with its sanitised
+			// twin (session_slash and session_dash are one file there), so its counter lives in its own directory instead.
+			raw, err := os.ReadFile(counterPath(cwd, k.Session, k.Agent, k.Turn))
+			want := fmt.Sprintf(`{"attempts":2%s%s%s}`+"\n", jsonField("sessionId", k.Session), jsonField("agentId", k.Agent), jsonField("turnId", k.Turn))
+			if err != nil || string(raw) != want || len(attemptsDir(cwd)) != 1 || attemptsDir(cwd)[0] != counterVersionDir {
+				t.Errorf("%s: %q (%v), want %q in %s", k.ID, raw, err, want, counterDir(cwd, k.Session))
+			}
+			continue
+		}
 		files, content := attemptsDir(cwd), []string{}
 		if files == nil {
 			files = []string{}
@@ -213,11 +224,26 @@ func TestAttemptsFileNames(t *testing.T) {
 	}
 }
 
+// jsonField is `,"key":"value"` for a value that is not empty, as the record's omitempty fields are written.
+func jsonField(key, value string) string {
+	if value == "" {
+		return ""
+	}
+	raw, _ := json.Marshal(value)
+	return `,"` + key + `":` + string(raw)
+}
+
 func TestReadAttempts(t *testing.T) {
 	c, g := load(t)
 	// A counter nested deeper than Go's JSON depth limit that JSON.parse rejects for another reason (cut off, trailing
 	// text) reads as the cap here, where the oracle reads 0: the port stops at the depth error.
 	port := map[string]int{"depth_20000_truncated": MaxAttempts, "depth_20000_trailing_text": MaxAttempts}
+	// Changed (port: fixed, CRW-1106): a counter file that is there but is not an object with an integer count from 0 to
+	// MaxAttempts read as 0 in the oracle, which restarted the budget; it ends the budget now, as hasSpentBudget always read it.
+	for _, id := range []string{"json_null", "json_zero", "json_five", "json_empty_string", "json_string", "json_true", "json_false",
+		"counter_garbage", "counter_empty", "bom", "trailing_garbage", "path_is_directory"} {
+		port[id] = MaxAttempts
+	}
 	for _, k := range c.Counter {
 		cwd := t.TempDir()
 		at := [3]string{"s1", "a1", ""}
@@ -297,7 +323,13 @@ func TestWriteAndClearAttempts(t *testing.T) {
 			}
 			files, content = names, texts
 		}
-		same(t, k.ID, map[string]any{"returns": returns, "files": files, "content": content}, g.Writes[k.ID])
+		want := g.Writes[k.ID]
+		if k.ID == "write_counter_is_directory" {
+			// Changed (port: fixed, CRW-1106): the write whose rename fails removes its own temp file; the oracle leaves it.
+			w := want.(map[string]any)
+			want = map[string]any{"returns": w["returns"], "files": w["files"].([]any)[:1], "content": w["content"].([]any)[:1]}
+		}
+		same(t, k.ID, map[string]any{"returns": returns, "files": files, "content": content}, want)
 	}
 }
 

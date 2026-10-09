@@ -17,7 +17,8 @@ type SubagentStopPayload struct {
 // A receipt resolves before the terminal latch; three blocks spend the budget,
 // then a durable negative verdict lets the child exit without waiving verification.
 // The evidence assignments of CRW-1115 (a receipt in the assigned tree, a scope
-// conflict) are a recorded deviation: docs/port-cxc/known-defects/CRW-1115.md.
+// conflict) and the counter rules of CRW-1106 (one reader, a tuple lock) are
+// recorded deviations: docs/port-cxc/known-defects/CRW-1115.md and CRW-1106.md.
 func RunSubagentStopGate(p SubagentStopPayload, env func(string) string) (out string) {
 	item := evidence.Payload{AgentType: p.AgentType, AgentID: p.AgentID, TurnID: p.TurnID, LastAssistantMessage: p.LastAssistantMessage}
 	defer func() {
@@ -35,6 +36,22 @@ func RunSubagentStopGate(p SubagentStopPayload, env func(string) string) (out st
 			return ""
 		}
 	}
+	// CRW-1106 (port: fixed): the whole decision runs under the lock of the exact (session, agent, turn), so stops of one child
+	// that arrive together reserve the budget one at a time. A lock that cannot be had leaves the counter alone: the child is
+	// released and its negative verdict recorded, as for any counter that cannot be advanced.
+	decided := false
+	if err := evidence.WithCounterLock(p.Cwd, p.SessionID, p.AgentID, p.TurnID, func() error {
+		out, decided = subagentStopDecide(p, item, true), true
+		return nil
+	}); err != nil || !decided {
+		return subagentStopDecide(p, item, false)
+	}
+	return out
+}
+
+// subagentStopDecide is the gate's decision for one stop. reserve says whether the caller holds the tuple's counter lock: without it
+// the counter is never written, and a stop that would have spent an attempt is a terminal verdict instead.
+func subagentStopDecide(p SubagentStopPayload, item evidence.Payload, reserve bool) string {
 	// CRW-1115 (port: fixed): besides the native root, a receipt in the tree the parent's packet assigned this child counts, bound
 	// to the first child that claims it (evidence.AcceptAssignedReceipt). Without an assignment the native root is the only one.
 	if receipt, ok := evidence.ExtractReceiptPath(p.LastAssistantMessage); ok &&
@@ -43,24 +60,28 @@ func RunSubagentStopGate(p SubagentStopPayload, env func(string) string) (out st
 		evidence.ResolveTombstone(p.Cwd, p.SessionID, item)
 		return ""
 	}
+	counter := evidence.ReadCounter(p.Cwd, p.SessionID, p.AgentID, p.TurnID)
+	terminal := func(attempts int) string {
+		evidence.RecordTombstone(p.Cwd, p.SessionID, item, attempts, evidence.WriteUnrecordableMarker)
+		return ""
+	}
 	// A packet that allows no evidence write is released at once with an unverified verdict the parent must resolve with its own
 	// verification; it is never a pass, and only the assignment the spawn hook recorded for it qualifies.
 	if id, ok := evidence.ExtractScopeConflict(p.LastAssistantMessage); ok && evidence.ClaimScopeConflict(p.Cwd, p.SessionID, p.AgentID, p.TurnID, id) {
-		evidence.RecordTombstone(p.Cwd, p.SessionID, item, evidence.ReadAttempts(p.Cwd, p.SessionID, p.AgentID, p.TurnID), evidence.WriteUnrecordableMarker)
-		return ""
+		return terminal(counter.Attempts)
 	}
 	if evidence.HasTombstone(p.Cwd, p.SessionID, item) {
 		return ""
 	}
-	attempts := evidence.ReadAttempts(p.Cwd, p.SessionID, p.AgentID, p.TurnID)
-	if attempts >= evidence.MaxAttempts {
-		evidence.RecordTombstone(p.Cwd, p.SessionID, item, attempts, evidence.WriteUnrecordableMarker)
-		return ""
+	// CRW-1106 (port: fixed): a counter that is exhausted, corrupt or unreadable ends the budget alike, and its bytes stay, so the
+	// goal-complete gate, which reads the same snapshot, keeps refusing until a valid receipt clears both. The oracle read a
+	// corrupt counter as 0 and wrote a fresh one over it.
+	if counter.Spent() {
+		return terminal(evidence.MaxAttempts)
 	}
-	next := attempts + 1
-	if !evidence.WriteAttempts(p.Cwd, p.SessionID, p.AgentID, next, p.TurnID) {
-		evidence.RecordTombstone(p.Cwd, p.SessionID, item, attempts, evidence.WriteUnrecordableMarker)
-		return ""
+	next := counter.Attempts + 1
+	if !reserve || !evidence.WriteAttempts(p.Cwd, p.SessionID, p.AgentID, next, p.TurnID) {
+		return terminal(counter.Attempts)
 	}
 	return `{"decision":"block","reason":` + pyjson.Dumps(evidence.VerifierDirective(next), pyjson.Options{Unicode: true}) + `}`
 }

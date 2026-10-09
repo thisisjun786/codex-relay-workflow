@@ -264,22 +264,17 @@ func TestSubagentStopPersistenceFailuresAndCorruptCounter(t *testing.T) {
 	if out := subagentStopRun(t, cwd, "executor", "a1", "", "", nil); out != "" {
 		t.Fatal(out)
 	}
+	// CRW-1106: a file where the attempts directory belongs makes the counter unreadable, which ends the budget: the verdict
+	// records the cap, and the goal-complete gate reads the same counter as spent.
 	entries := state.ReadState(cwd, "s1").UnverifiedSubagents
-	if len(entries) != 1 || entries[0].Attempts != 0 {
-		t.Fatalf("failed write must record old count: %+v", entries)
+	if len(entries) != 1 || entries[0].Attempts != evidence.MaxAttempts || !evidence.HasSpentBudget(cwd, "s1") {
+		t.Fatalf("an unreadable counter must end the budget: %+v", entries)
 	}
 	for _, bad := range []string{"-1", "2.5", "999999", `"three"`} {
 		fresh := t.TempDir()
 		subagentStopRun(t, fresh, "executor", "a1", "", "", nil)
-		dir := filepath.Join(fresh, ".crw/evidence-attempts")
-		names, err := os.ReadDir(dir)
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, name := range names {
-			if strings.HasSuffix(name.Name(), ".json") {
-				subagentStopPut(t, filepath.Join(dir, name.Name()), `{"attempts":`+bad+`}`)
-			}
+		for _, file := range counterFiles(t, fresh) {
+			subagentStopPut(t, file, `{"attempts":`+bad+`}`)
 		}
 		if out := subagentStopRun(t, fresh, "executor", "a1", "", "", nil); out != "" {
 			t.Fatal(out)
@@ -394,7 +389,11 @@ func TestSubagentStopReceiptRecoveryIOFailures(t *testing.T) {
 				if os.Geteuid() == 0 {
 					t.Skip("counter deletion permissions require a non-root process")
 				}
-				dir := filepath.Join(cwd, ".crw/evidence-attempts")
+				files := counterFiles(t, cwd)
+				if len(files) != 1 {
+					t.Fatalf("counter files: %v", files)
+				}
+				dir := filepath.Dir(files[0])
 				if err := os.Chmod(dir, 0o500); err != nil {
 					t.Fatal(err)
 				}

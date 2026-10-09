@@ -85,7 +85,13 @@ func RunEvidenceCLI(a EvidenceResolveArgs) (string, int) {
 		writeState = state.WriteState
 	}
 	removed, ambiguous, warning := false, false, error(nil)
-	err := state.WithSessionLock(a.Cwd, a.SessionID, func() error {
+	// CRW-1106: a receipt's resolution is serialised with the SubagentStop gate of the same child, under the lock of the exact
+	// (session, agent, turn), which is taken before the session lock (the one lock order). The turn is found by an unlocked read
+	// first and then pinned, so the locked step resolves exactly the verdict whose lock it holds.
+	if turn, ok := cliEvidenceTurn(a); ok {
+		a.TurnID = &turn
+	}
+	resolve := func() error {
 		s := state.ReadState(a.Cwd, a.SessionID)
 		index := -1
 		for i, entry := range s.UnverifiedSubagents {
@@ -139,7 +145,13 @@ func RunEvidenceCLI(a EvidenceResolveArgs) (string, int) {
 		evidence.ClearAttempts(a.Cwd, a.SessionID, a.AgentID, target.TurnID)
 		removed = true
 		return nil
-	})
+	}
+	var err error
+	if a.TurnID != nil {
+		err = evidence.WithCounterLock(a.Cwd, a.SessionID, a.AgentID, *a.TurnID, func() error { return state.WithSessionLock(a.Cwd, a.SessionID, resolve) })
+	} else {
+		err = state.WithSessionLock(a.Cwd, a.SessionID, resolve)
+	}
 	if err != nil {
 		return "evidence resolve: " + cliErrorMessage(err), 1
 	}
@@ -154,6 +166,22 @@ func RunEvidenceCLI(a EvidenceResolveArgs) (string, int) {
 		return line + "\n" + fmt.Sprintf("evidence resolve: warning: the session state was published but its directory sync failed: %s", warning), 0
 	}
 	return line, 0
+}
+
+// cliEvidenceTurn is the turn of the one resolvable verdict of the agent that the request names, read without a lock: the turn
+// itself when the request gives one, the single match's when it does not, and false when there is none or more than one (the
+// locked step then reports that).
+func cliEvidenceTurn(a EvidenceResolveArgs) (string, bool) {
+	if a.TurnID != nil {
+		return *a.TurnID, true
+	}
+	turn, found := "", 0
+	for _, entry := range state.ReadState(a.Cwd, a.SessionID).UnverifiedSubagents {
+		if entry.Resolvable && entry.AgentID == a.AgentID {
+			turn, found = entry.TurnID, found+1
+		}
+	}
+	return turn, found == 1
 }
 
 // The stale-lock diagnostic is observable in the corpus. Other filesystem errors

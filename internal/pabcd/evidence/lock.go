@@ -17,36 +17,67 @@ const fileLockWait = 5 * time.Second
 // errLockBusy is what withFileLock answers when the lock stayed held for fileLockWait.
 var errLockBusy = errors.New("evidence record lock is busy")
 
-// withFileLock runs fn holding an exclusive flock(2) on path, which is created (mode 0600) when it is missing; its directory
-// must exist. The kernel drops the lock when the process ends, so a holder that dies leaves nothing to break by hand, unlike the
-// session lock's pid file. A link at path is refused (O_NOFOLLOW). The lock file stays in place: removing it would let a
-// waiter that opened the old file and a newcomer that created a new one hold "the" lock together.
+// withFileLock runs fn holding an exclusive flock(2) on path, which is created (mode 0600) when it is missing; its directory must
+// exist. The kernel drops the lock when the process ends, so a holder that dies leaves nothing to break by hand, unlike the session
+// lock's pid file. The holder removes the file before it lets go, so the lock leaves nothing behind; a waiter that locked a file
+// already removed (or replaced by a newer holder's) finds that the path no longer names what it holds and starts again, so two
+// holders never run together. A link at path is refused (O_NOFOLLOW).
 //
 // Lock order (CRW-1106): a record lock of this package is taken first and the session lock (state.WithSessionLock) inside it,
 // never the other way round, so a writer that records a terminal verdict while it holds a counter lock cannot deadlock against
 // one that holds the session lock.
 func withFileLock(path string, fn func() error) error {
-	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|syscall.O_NOFOLLOW, 0o600)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
 	deadline := time.Now().Add(fileLockWait)
 	for {
-		err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|syscall.O_NOFOLLOW, 0o600)
+		if err != nil {
+			return err
+		}
+		held, err := flockUntil(f, deadline)
+		if err != nil {
+			_ = f.Close()
+			return err
+		}
+		if held {
+			defer f.Close()
+			defer func() { _ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN) }()
+			defer func() { _ = os.Remove(path) }() // runs first: removed while still held
+			return fn()
+		}
+		_ = f.Close()
+		if time.Now().After(deadline) {
+			return errLockBusy
+		}
+	}
+}
+
+// flockUntil takes the exclusive lock of f, retrying until deadline, and reports whether path still names the file it locked.
+// false with no error means the previous holder removed it: the caller opens the path again.
+func flockUntil(f *os.File, deadline time.Time) (bool, error) {
+	for {
+		err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
 		if err == nil {
 			break
 		}
 		if !errors.Is(err, syscall.EWOULDBLOCK) && !errors.Is(err, syscall.EINTR) {
-			return err
+			return false, err
 		}
 		if time.Now().After(deadline) {
-			return errLockBusy
+			return false, errLockBusy
 		}
 		time.Sleep(2 * time.Millisecond)
 	}
-	defer func() { _ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN) }()
-	return fn()
+	held, err := f.Stat()
+	if err != nil {
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		return false, err
+	}
+	named, err := os.Lstat(f.Name())
+	if err != nil || !os.SameFile(held, named) {
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		return false, nil
+	}
+	return true, nil
 }
 
 func stateDir(cwd string) string { return filepath.Join(cwd, crwdir.DirName) }
