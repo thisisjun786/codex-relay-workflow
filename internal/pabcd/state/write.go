@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -201,6 +202,21 @@ func writeState(cwd string, next State, now time.Time, rename func(tmp, finalPat
 		return err
 	}
 	finalPath := StatePath(cwd, next.SessionID)
+	// CRW-1005 (decision D1): a file that holds an unpaired surrogate escape is refused, not rewritten. The reader reads the
+	// escape as U+FFFD, so a rewrite would replace stored text the CXC original keeps; the refusal leaves the file as it is.
+	// A file that cannot be read cannot be shown clean, so only a missing file is a new write; any other read error returns
+	// before a temp file is staged. A directory at the path (EISDIR) holds no escape and the rename onto it fails by itself,
+	// so it falls through to that failure, which the oracle's write also reports.
+	switch raw, readErr := readExisting(finalPath); {
+	case readErr == nil:
+		if rewriteLosslessUnpaired(raw) {
+			return fmt.Errorf("refusing to rewrite %s: it holds an unpaired surrogate escape that a rewrite would replace with U+FFFD", finalPath)
+		}
+	case errors.Is(readErr, errNotRegular):
+		return fmt.Errorf("refusing to rewrite %s: %w", finalPath, readErr)
+	case !errors.Is(readErr, fs.ErrNotExist) && !errors.Is(readErr, syscall.EISDIR):
+		return fmt.Errorf("refusing to rewrite %s: it cannot be checked for an unpaired surrogate escape: %w", finalPath, readErr)
+	}
 	tmp := tempPath(finalPath)
 	defer func() {
 		if err != nil {
@@ -233,6 +249,59 @@ func writeState(cwd string, next State, now time.Time, rename func(tmp, finalPat
 		return &PublishedError{Err: err}
 	}
 	return nil
+}
+
+// errNotRegular is the answer for a state path that holds something other than a regular file (a FIFO, a device, a socket, or a
+// link to one).
+var errNotRegular = errors.New("the path is not a regular file")
+
+// classifyBeforeOpen is the check that runs before the open: lstat the path and, for a symbolic link, stat what it points at, so
+// a FIFO, device or socket (or a link to one) is refused without ever being opened. Opening a device has effects of its own and
+// opening a FIFO releases a peer that waits on it. A dangling link reports fs.ErrNotExist, as the open would.
+func classifyBeforeOpen(path string) error {
+	fi, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if fi.Mode()&os.ModeSymlink != 0 {
+		if fi, err = os.Stat(path); err != nil {
+			return err
+		}
+	}
+	if !fi.Mode().IsRegular() && !fi.IsDir() {
+		return errNotRegular
+	}
+	return nil
+}
+
+// readExisting reads the file at path for the lone-surrogate check without ever blocking on it. The path is classified before it
+// is opened (classifyBeforeOpen); the open is then non-blocking, so a FIFO swapped in after the classification returns at once
+// instead of waiting for a writer, and the descriptor is inspected again before any read: only a regular file is read. A
+// directory returns EISDIR (the rename onto it fails by itself later), a missing path fs.ErrNotExist, and a FIFO, device or
+// socket (opening a socket fails with ENXIO) errNotRegular. A symbolic link to a regular file is followed, as the rename's
+// replacement of it was never refused.
+func readExisting(path string) ([]byte, error) {
+	if err := classifyBeforeOpen(path); err != nil {
+		return nil, err
+	}
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		if errors.Is(err, syscall.ENXIO) {
+			return nil, errNotRegular
+		}
+		return nil, err
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	switch {
+	case err != nil:
+		return nil, err
+	case fi.IsDir():
+		return nil, syscall.EISDIR
+	case !fi.Mode().IsRegular():
+		return nil, errNotRegular
+	}
+	return io.ReadAll(f)
 }
 
 // makeSessionsDir is ensureCodexclawDir(cwd) then mkdirSync(sessionsDir, { recursive: true }), in that order.
