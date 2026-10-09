@@ -24,6 +24,11 @@ var pushOnlySeedPhrases = regexp.MustCompile(`(?i)exactly one pull request|pull 
 // pushOnlyGradePhrases are the grade-first phrases; a refusal-name table row may keep them, never a pull-request phrase.
 var pushOnlyGradePhrases = regexp.MustCompile("(?i)red or security|P0, P1|red, P0|blocking P2")
 
+// pushOnlyRelayPhrases are the pull-request phrases the relay operations documents and the staged port
+// skills (CRW-1024) keep in their rule wording: a description or gate named for a PR. They are read only
+// in those files, where a PR gate is a rule the reader would follow.
+var pushOnlyRelayPhrases = regexp.MustCompile(`(?i)PR description|pull request description|PR gate|Blocks PR\b`)
+
 // pushOnlyCaseAllowlist maps a dispatch case ID to the reason its text may keep the old procedure.
 var pushOnlyCaseAllowlist = map[string]string{}
 
@@ -36,17 +41,30 @@ const pushOnlyGenerated = "plugins/crw/skills/crw-run/references/dispatch-verifi
 const pushOnlyManifest = "plugins/crw/.codex-plugin/plugin.json"
 const pushOnlyInFlightFile = "plugins/crw/skills/crw-run/references/merge-readiness.md"
 const pushOnlyExampleFile = "plugins/crw/skills/crw-run/references/task-packet.md"
+const pushOnlyRelayReadme = "docs/relay/README.md"
+const pushOnlyRelayLaneHeading = "## The merge lane: landing a bundle"
+const pushOnlyCoordination = "docs/relay/coordination.md"
+const pushOnlyCoordinationHeading = "## An independent review beside a restatement"
 
-// pushOnlyExempt names, per file, the one heading whose text may keep a pull-request phrase.
+// pushOnlyExempt names, per file, the one heading whose text may keep a pull-request phrase. The relay
+// lane section of docs/relay/README.md is the in-flight transition lane (CRW-965 replaces it); the
+// coordination section grades the threads and findings the relay compares, not an ordering rule.
 var pushOnlyExempt = map[string]string{
 	pushOnlyInFlightFile: pushOnlyInFlightHeading,
 	pushOnlyExampleFile:  pushOnlyExampleHeading,
+	pushOnlyRelayReadme:  pushOnlyRelayLaneHeading,
+	pushOnlyCoordination: pushOnlyCoordinationHeading,
 }
 
 var pushOnlyDocs = []string{
 	"POLICY.md", "CONTRIBUTING.md", "AGENTS.md", "README.md",
 	"docs/CI.md", "docs/releases.md", "docs/plugin-packaging.md", "docs/runtime-install.md",
 	"docs/live-trial.md", "docs/role-execution-policy.md",
+	// CRW-1024: the relay operations documents and the staged port skills the push-only change left with
+	// pull-request wording.
+	"docs/relay/README.md", "docs/relay/coordination.md",
+	"port/cxc/skills/crw-dev/references/stacked-prs.md",
+	"port/cxc/skills/crw-dev-backend/references/core/api-lifecycle.md",
 }
 
 // pushOnlyFiles lists the documents the guard reads, as slash paths relative to the repository root.
@@ -134,7 +152,8 @@ func pushOnlyOutside(rel string, text string, fileCase string) []string {
 		if _, ok := pushOnlyCaseAllowlist[id]; ok && id != "" {
 			continue
 		}
-		if pushOnlySeedPhrases.MatchString(line) || (pushOnlyGradePhrases.MatchString(line) && !pushOnlyHistory.MatchString(line) && !strings.Contains(line, "the relay grades")) {
+		relay := strings.HasPrefix(rel, "docs/relay/") || strings.HasPrefix(rel, "port/cxc/skills/")
+		if pushOnlySeedPhrases.MatchString(line) || (relay && pushOnlyRelayPhrases.MatchString(line)) || (pushOnlyGradePhrases.MatchString(line) && !pushOnlyHistory.MatchString(line) && !strings.Contains(line, "the relay grades")) {
 			hits = append(hits, fmt.Sprintf("%s:%d: %s", rel, i+1, strings.TrimSpace(line)))
 		}
 	}
@@ -179,6 +198,11 @@ func TestPushOnlyWording_GuardScope(t *testing.T) {
 		{"same phrase under another heading of the in-flight file", pushOnlyInFlightFile, "## Other\n\nopen a pull request\n", 1},
 		{"in-flight exemption does not reach another file", skill, pushOnlyInFlightHeading + "\n\nopen a pull request\n", 1},
 		{"worked example is exempt", pushOnlyExampleFile, pushOnlyExampleHeading + "\n\nopen a pull request\n", 0},
+		{"relay PR description in a staged port skill", "port/cxc/skills/crw-dev-backend/references/core/api-lifecycle.md", "require a link in the PR description.", 1},
+		{"relay PR gate in a relay document", pushOnlyRelayReadme, "| PR gate: `oasdiff` |", 1},
+		{"relay lane section is exempt", pushOnlyRelayReadme, pushOnlyRelayLaneHeading + "\n\nafter its CI finishes, a PR gate\n", 0},
+		{"coordination comparison section is exempt", pushOnlyCoordination, pushOnlyCoordinationHeading + "\n\nevery kept P0, P1 or security finding\n", 0},
+		{"coordination other section keeps the grade check", pushOnlyCoordination, "## Other\n\nevery kept P0, P1 or security finding\n", 1},
 		{"same phrase under another heading of the example file", pushOnlyExampleFile, "## Other\n\nopen a pull request\n", 1},
 	}
 	for _, c := range cases {
