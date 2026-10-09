@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
@@ -50,6 +51,7 @@ type spawnHookAssembly struct {
 	dispatchSource     string                      // dispatchSource: the source line that resolved (:893)
 	sessionID          string                      // sessionID: obj.session_id when it is a string, else "" (:899)
 	toolUseID          *string                     // toolUseID: obj.tool_use_id when it is a string, else nil (:1096)
+	evidenceAssignment *evidence.Assignment        // CRW-1115: the evidence assignment the packet asked for, written once the spawn is allowed
 }
 
 // spawnHookAssemble reads one PreToolUse payload in the oracle's order. The third result is true when the answer is already known:
@@ -244,7 +246,45 @@ func spawnHookAssemble(obj map[string]any, env host.LookupEnv) (spawnHookAssembl
 	default:
 		a.updatedMessage = a.guard + "\n\n" + affordance
 	}
+	if deny := spawnHookEvidenceAssignment(&a, time.Now()); deny != "" {
+		return stop(deny)
+	}
 	return a, "", false
+}
+
+// spawnHookEvidenceAssignment is CRW-1115 (port: fixed; the oracle has no such step): when the caller's packet assigns its child a
+// worktree (CRW-WORKTREE:) or allows it no evidence write (CRW-EVIDENCE: none), it builds the session's evidence assignment and
+// injects its block right after the guard. The record itself is written by spawnHookRoute once the spawn is allowed. A packet
+// that already carries an assignment block (a second pass of this hook) is left alone, and a native V2 ciphertext cannot be read,
+// so it gets none. An ambiguous request or a tree that cannot be registered is a deny envelope: the parent asked for a contract
+// the gate could not honour.
+func spawnHookEvidenceAssignment(a *spawnHookAssembly, now time.Time) string {
+	if a.encryptedV2Message || strings.Contains(a.message, EvidenceAssignmentMarker) {
+		return ""
+	}
+	worktree, none, present, err := spawnEvidenceRequest(a.message)
+	if err == nil && !present {
+		return ""
+	}
+	mode := evidence.AssignTree
+	if none {
+		mode = evidence.AssignNone
+	}
+	var assignment evidence.Assignment
+	if err == nil {
+		assignment, err = evidence.NewAssignment(a.sessionID, worktree, mode, now)
+	}
+	if err != nil {
+		return DenyEnvelope("evidence assignment: " + err.Error())
+	}
+	a.evidenceAssignment = &assignment
+	block := EvidenceAssignmentBlock(assignment.ID, assignment.Root, none)
+	if a.updatedMessage == a.guard {
+		a.updatedMessage = a.guard + "\n\n" + block
+	} else {
+		a.updatedMessage = strings.Replace(a.updatedMessage, a.guard+"\n\n", a.guard+"\n\n"+block+"\n\n", 1)
+	}
+	return ""
 }
 
 // spawnHookRecord is isRecord over a decoded value: an ordered object, or a plain map with its keys sorted.

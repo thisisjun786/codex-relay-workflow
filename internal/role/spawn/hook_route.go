@@ -349,6 +349,13 @@ func spawnHookRoute(a spawnHookAssembly, env host.LookupEnv) string {
 			updated = updated.Set("reasoning_effort", string(*a.managed.Candidate.Effort))
 		}
 	}
+	// CRW-1115: the evidence assignment injected into the packet is recorded only now that the spawn is allowed; a record that
+	// cannot be written refuses the spawn, because the child would be told a location the gate does not know.
+	if a.evidenceAssignment != nil {
+		if err := a.evidenceAssignment.Persist(a.cwd); err != nil {
+			return DenyEnvelope("evidence assignment: the record could not be written: " + err.Error())
+		}
+	}
 	output := pyjson.Object{{Key: "hookEventName", Value: "PreToolUse"}, {Key: "permissionDecision", Value: "allow"}, {Key: "updatedInput", Value: updated}}
 	if context != "" {
 		output = append(output, pyjson.Field{Key: "additionalContext", Value: context})

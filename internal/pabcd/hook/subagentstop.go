@@ -16,6 +16,8 @@ type SubagentStopPayload struct {
 // RunSubagentStopGate ports CXC v0.2.40 subagent-evidence.ts:476-532 (3c1459ac).
 // A receipt resolves before the terminal latch; three blocks spend the budget,
 // then a durable negative verdict lets the child exit without waiving verification.
+// The evidence assignments of CRW-1115 (a receipt in the assigned tree, a scope
+// conflict) are a recorded deviation: docs/port-cxc/known-defects/CRW-1115.md.
 func RunSubagentStopGate(p SubagentStopPayload, env func(string) string) (out string) {
 	item := evidence.Payload{AgentType: p.AgentType, AgentID: p.AgentID, TurnID: p.TurnID, LastAssistantMessage: p.LastAssistantMessage}
 	defer func() {
@@ -33,9 +35,18 @@ func RunSubagentStopGate(p SubagentStopPayload, env func(string) string) (out st
 			return ""
 		}
 	}
-	if receipt, ok := evidence.ExtractReceiptPath(p.LastAssistantMessage); ok && evidence.HasValidReceipt(p.Cwd, receipt) {
+	// CRW-1115 (port: fixed): besides the native root, a receipt in the tree the parent's packet assigned this child counts, bound
+	// to the first child that claims it (evidence.AcceptAssignedReceipt). Without an assignment the native root is the only one.
+	if receipt, ok := evidence.ExtractReceiptPath(p.LastAssistantMessage); ok &&
+		(evidence.HasValidReceipt(p.Cwd, receipt) || evidence.AcceptAssignedReceipt(p.Cwd, p.SessionID, p.AgentID, receipt)) {
 		evidence.ClearAttempts(p.Cwd, p.SessionID, p.AgentID, p.TurnID)
 		evidence.ResolveTombstone(p.Cwd, p.SessionID, item)
+		return ""
+	}
+	// A packet that allows no evidence write is released at once with an unverified verdict the parent must resolve with its own
+	// verification; it is never a pass, and only the assignment the spawn hook recorded for it qualifies.
+	if id, ok := evidence.ExtractScopeConflict(p.LastAssistantMessage); ok && evidence.ClaimScopeConflict(p.Cwd, p.SessionID, p.AgentID, p.TurnID, id) {
+		evidence.RecordTombstone(p.Cwd, p.SessionID, item, evidence.ReadAttempts(p.Cwd, p.SessionID, p.AgentID, p.TurnID), evidence.WriteUnrecordableMarker)
 		return ""
 	}
 	if evidence.HasTombstone(p.Cwd, p.SessionID, item) {

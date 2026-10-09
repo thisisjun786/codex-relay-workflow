@@ -113,8 +113,12 @@ func realPathSafe(p string) string {
 // is never opened. Any failure is false. A link that makes the evidence root itself point elsewhere is accepted, and a path
 // swapped between these checks and its later use is not defended.
 func HasValidReceipt(cwd, receiptPath string) bool {
-	root := evidenceRoot(cwd)
-	resolved := resolve(cwd, receiptPath)
+	return receiptInside(evidenceRoot(cwd), resolve(cwd, receiptPath))
+}
+
+// receiptInside is the receipt check of HasValidReceipt for a resolved path against an evidence root; the assigned-tree check
+// (AcceptAssignedReceipt) applies it too.
+func receiptInside(root, resolved string) bool {
 	if !insideDirectory(resolved, root) {
 		return false
 	}
