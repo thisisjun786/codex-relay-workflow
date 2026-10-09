@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -69,6 +70,21 @@ type ReportOwner struct {
 	// (case roots are removed by the engine as each case ends: zero is the expected value).
 	LeftBehind int    `json:"leftBehind"`
 	Cleanup    string `json:"cleanup"`
+	// CPUs and the one-minute load average at the start and the end of the run: a latency cell on a
+	// host whose load is above its CPU count is measuring the host as much as the hook.
+	CPUs      int    `json:"cpus"`
+	LoadStart string `json:"loadStart,omitempty"`
+	LoadEnd   string `json:"loadEnd,omitempty"`
+}
+
+// load1 is the one-minute load average, or empty where the host does not say.
+func load1() string {
+	raw, err := os.ReadFile("/proc/loadavg")
+	if err != nil {
+		return ""
+	}
+	first, _, _ := strings.Cut(string(raw), " ")
+	return first
 }
 
 // ReportCRW names the build under test.
@@ -139,7 +155,7 @@ func runCommand(command string, args []string, stdout, stderr io.Writer) int {
 	oracle := set.String("oracle", "", "latency: the extracted CXC v0.2.40 tree")
 	node := set.String("node", "", "latency: node executable (default: node on PATH)")
 	runs := set.Int("runs", 30, "latency: runs per leg and side")
-	attempts := set.Int("attempts", 3, "latency: measurements of a leg that fails before it is reported failing (a shared host's load puts outliers in a p95)")
+	attempts := set.Int("attempts", 5, "latency: measurements of a leg that fails before it is reported failing (a shared host's load puts outliers in a p95)")
 	jsonOut := set.String("json", "", "write the report here")
 	scratch := set.String("scratch", "", "parent of the run's directory of case roots (default: $TMPDIR)")
 	reuse := set.String("reuse", "", "a report: when it judged the same build, plugin root, criteria and options and passed, its evidence stands and nothing is run")
@@ -231,7 +247,7 @@ func runCommand(command string, args []string, stdout, stderr io.Writer) int {
 	if err := os.Mkdir(cases, 0o700); err != nil {
 		return fail(err)
 	}
-	report.Test = ReportOwner{User: os.Getenv("USER"), PID: os.Getpid(), Scratch: run,
+	report.Test = ReportOwner{User: os.Getenv("USER"), PID: os.Getpid(), Scratch: run, CPUs: runtime.NumCPU(), LoadStart: load1(),
 		Cleanup: "each case root is removed as its case ends and the run directory when the run ends; nothing outside the run directory is written, and no shared database, live session, Codex home or runtime is used"}
 	pluginRoot := *plugin
 	if pluginRoot == "" {
@@ -295,6 +311,7 @@ func runCommand(command string, args []string, stdout, stderr io.Writer) int {
 			}
 		}
 	}
+	report.Test.LoadEnd = load1()
 	if left, err := os.ReadDir(cases); err == nil {
 		report.Test.LeftBehind = len(left)
 		if len(left) > 0 {
