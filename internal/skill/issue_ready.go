@@ -186,6 +186,12 @@ func placeholderEntry(s string) bool {
 	return false
 }
 
+// answerEntry is an entry that states something a required item can stand on: no placeholder and no none
+// entry (없음, None, N/A), which say there is nothing.
+func answerEntry(s string) bool {
+	return !placeholderEntry(s) && !noneEntry(s)
+}
+
 // openEntry is an open decision that states something: neither empty nor a none entry. A placeholder
 // (TBD, 미정, 추후 결정) is a decision not yet taken, so it is open.
 func openEntry(s string) bool {
@@ -274,9 +280,49 @@ func commandText(code string) bool {
 	return strings.IndexFunc(code, unicode.IsLetter) >= 0 && !placeholderEntry(code)
 }
 
+// resultLabels are the stems of the words that name the command or the result without stating one
+// ("Command:", "Run", "명령", "실행", "Expected result:") and the filler around them.
+var resultLabels = []string{
+	"command", "cmd", "run", "execut", "invok", "result", "expect", "output", "outcome", "done", "verif", "check",
+	"명령", "커맨드", "실행", "결과", "기대", "예상", "출력", "검증", "확인", "완료",
+}
+
+var resultFiller = map[string]bool{
+	"the": true, "a": true, "an": true, "of": true, "with": true, "and": true, "is": true, "are": true, "to": true,
+	"in": true, "on": true, "it": true, "for": true, "then": true, "by": true, "as": true,
+	"은": true, "는": true, "이": true, "가": true, "을": true, "를": true, "의": true, "에": true, "와": true, "과": true,
+	"로": true, "으로": true, "에서": true, "및": true,
+}
+
+// statesResult is whether prose left beside the command spans says anything besides a label.
+func statesResult(prose string) bool {
+	words := strings.FieldsFunc(strings.ToLower(prose), func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) })
+	for _, w := range words {
+		if resultFiller[w] {
+			continue
+		}
+		label := false
+		for _, stem := range resultLabels {
+			if strings.HasPrefix(w, stem) {
+				label = true
+				break
+			}
+		}
+		if !label {
+			return true
+		}
+	}
+	return false
+}
+
+// outputLine is a line of a fenced block that gives the expected result of the command above it: a
+// comment, an arrow, an exit status or the test tool's own verdict. A second command is not one.
+var outputLine = regexp.MustCompile(`^(#|//|--\s|=>|->|→|>|exit\b|ok\b|pass\b|fail\b|\$\?)`)
+
 // doneStated is whether a done condition names a command and the result it must give. The command is
-// a backticked span or a line of a fenced block; the result is text beside it (outside the command
-// spans, not a placeholder) or a second line in a block (the expected output or a comment).
+// a backticked span or a line of a fenced block; the result is prose beside it that says more than a
+// label (not the span, not a placeholder) or an output line of the block (the expected output, an exit
+// status or a comment).
 func (s section) doneStated() bool {
 	command, result := false, false
 	for i, line := range s.lines {
@@ -295,7 +341,7 @@ func (s section) doneStated() bool {
 			}
 			return " " + code + " "
 		})
-		if !placeholderEntry(rest) {
+		if !placeholderEntry(rest) && statesResult(rest) {
 			result = true
 		}
 	}
@@ -310,12 +356,19 @@ func (s section) doneStated() bool {
 		}
 		if t := strings.TrimSpace(line); t != "" && !placeholderEntry(t) {
 			block++
-			command = command || commandText(t)
-			result = result || block >= 2
+			if block == 1 {
+				command = command || commandText(t)
+			} else if outputLine.MatchString(strings.ToLower(t)) && statesResult(strings.TrimLeft(t, "#/-=>→ \t")) {
+				result = true
+			}
 		}
 	}
 	return command && result
 }
+
+// entryPath is the backticked token that opens an entry of the edit region section: with no slash or
+// extension (a root directory such as web) it is a path there and nowhere else.
+var entryPath = regexp.MustCompile("^[\\s|]*`([^`\\s]+)`")
 
 func questionLine(s string) string {
 	line, _, _ := strings.Cut(s, "\n")
@@ -327,7 +380,7 @@ func questionLine(s string) string {
 }
 
 func readyReportFor(in readyInput) (readyReport, error) {
-	sections, unread, err := readSectionsSplit(in.Description, readyHeadingKind, readySplit)
+	sections, unread, err := readSectionsSplit(in.Description, readyHeadingKind, readySplit, readyOutOfScopeHeading)
 	if err != nil {
 		return readyReport{}, err
 	}
@@ -339,6 +392,7 @@ func readyReportFor(in readyInput) (readyReport, error) {
 	has := map[string]bool{}
 	var open []string
 	var regionText []string
+	firstPaths := map[string]bool{} // slashless tokens that open an entry of an edit region section
 	for _, s := range sections {
 		switch s.kind {
 		case readyOpen:
@@ -356,7 +410,7 @@ func readyReportFor(in readyInput) (readyReport, error) {
 			}
 		case itemCriteria, itemDecided, itemRedTest:
 			for _, e := range s.entries() {
-				if !placeholderEntry(e) {
+				if answerEntry(e) {
 					has[s.kind] = true
 				}
 			}
@@ -368,8 +422,15 @@ func readyReportFor(in readyInput) (readyReport, error) {
 		case itemEdit, readyScope, itemCriteria, itemDecided:
 			regionText = append(regionText, s.text())
 		}
+		if s.kind == itemEdit {
+			for _, e := range s.entries() {
+				if m := entryPath.FindStringSubmatch(e); m != nil {
+					firstPaths[m[1]] = true
+				}
+			}
+		}
 	}
-	regions := pathRegions(strings.Join(regionText, "\n"))
+	regions := pathRegionsWith(strings.Join(regionText, "\n"), func(t string) bool { return firstPaths[t] })
 	if len(regions) > 0 {
 		has[itemEdit] = true
 	}

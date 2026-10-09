@@ -522,3 +522,112 @@ func TestIssueReadyDoneConditionNeedsCommandAndResult(t *testing.T) {
 		}
 	}
 }
+
+// d1: a none entry (없음, None, N/A) is an answer to the open decisions only. As the criteria, the decided
+// answer or the first-failing tests it states nothing, so the item is missing.
+func TestIssueReadyNoneEntryIsNoRequiredItem(t *testing.T) {
+	for _, none := range []string{"- 없음", "* None", "N/A", "- 해당 없음", "* n/a."} {
+		for item, body := range map[string]string{
+			"red_test":       strings.Replace(readyBody, "* 빈 본문은 not_ready로 나온다.\n* 설계 먼저 라벨은 design_first로 나온다.", none, 1),
+			"decided_answer": strings.Replace(readyBody, "해제 판정은 `crw skill issue-ready check`가 한다. 아키텍트 제안과 부모 결정은 이 절에 적는다.", none, 1),
+			"criteria":       strings.Replace(readyBody, "* c1: 준비 항목이 빠진 이슈의 해제가 이유와 함께 거절된다.\n* c2: 설계 먼저 상태가 보인다.", none, 1),
+		} {
+			code, out, _ := readyCall(readyIssue(t, body, nil))
+			if code != 1 || strings.Join(strs(atList(decodeReport(t, out), "missing")), ",") != item {
+				t.Errorf("%s as %s: exit %d: %s", none, item, code, out)
+			}
+		}
+	}
+	// A real entry beside a none entry still counts.
+	if code, out, _ := readyCall(readyIssue(t, strings.Replace(readyBody, "* 빈 본문은 not_ready로 나온다.", "* 없음\n* 빈 본문은 not_ready로 나온다.", 1), nil)); code != 0 {
+		t.Errorf("none beside an entry: exit %d: %s", code, out)
+	}
+}
+
+// d2: a label such as "Command:" or "Run" is no expected result, and neither is a second command.
+func TestIssueReadyCommandLabelIsNoResult(t *testing.T) {
+	start := strings.Index(readyBody, "## 끝 조건")
+	end := strings.Index(readyBody, "## 범위 밖")
+	with := func(text string) string {
+		return readyBody[:start] + "## 끝 조건\n\n" + text + "\n\n" + readyBody[end:]
+	}
+	for _, text := range []string{
+		"- Command: `go test ./internal/skill`",
+		"* 명령: `go test ./internal/skill`",
+		"* Run `go test ./internal/skill`",
+		"* 실행: `go test ./internal/skill`",
+		"* Command: `go test ./internal/skill`\n* Expected result:",
+		"```sh\ngo vet ./internal/skill\ngo test ./internal/skill\n```",
+	} {
+		code, out, _ := readyCall(readyIssue(t, with(text), nil))
+		if code != 1 || strings.Join(strs(atList(decodeReport(t, out), "missing")), ",") != "done_condition" {
+			t.Errorf("%q: exit %d: %s", text, code, out)
+		}
+	}
+	for _, text := range []string{
+		"- Command: `go test ./internal/skill`; result: all tests pass",
+		"* 명령: `go test ./internal/skill` 결과: 모두 통과",
+		"* Run `go test ./internal/skill`: exit 0",
+		"```sh\ngo test ./internal/skill\nok  \tgithub.com/x/internal/skill\t0.4s\n```",
+		"```sh\ngo test ./internal/skill\nexit 0\n```",
+	} {
+		if code, out, _ := readyCall(readyIssue(t, with(text), nil)); code != 0 {
+			t.Errorf("%q: exit %d: %s", text, code, out)
+		}
+	}
+}
+
+// d3: the files and directories at the repository root are edit regions: root metadata by name, and a
+// slashless directory named as the first path of an edit region entry.
+func TestIssueReadyRootEditTargetsAreRegions(t *testing.T) {
+	start := strings.Index(readyBody, "## 편집 영역")
+	end := strings.Index(readyBody, "## 정한 답")
+	with := func(text string) string {
+		return readyBody[:start] + "## 편집 영역\n\n" + text + "\n\n" + readyBody[end:]
+	}
+	for text, want := range map[string]string{
+		"- `go.mod`\n- `go.sum`": ".",
+		"- `Makefile`":           ".",
+		"- `LICENSE`":            ".",
+		"- `web`":                "web",
+		"| `web` | 설명 |":         "web",
+	} {
+		code, out, _ := readyCall(readyIssue(t, with(text), nil))
+		got := strings.Join(strs(atList(decodeReport(t, out), "observed", "edit_regions")), ",")
+		if code != 0 || got != want {
+			t.Errorf("%q: exit %d regions %q: %s", text, code, got, out)
+		}
+	}
+	// A slashless word is no region outside the edit region section, and a prose word in backticks beside
+	// the path is not one either.
+	if code, out, _ := readyCall(readyIssue(t, with("- 관련 파일 `internal/skill/issue_ready.go`의 `web` 쪽"), nil)); code != 0 || strings.Contains(out, `"web"`) {
+		t.Errorf("a word after the path: exit %d: %s", code, out)
+	}
+	noEdit := readyBody[:start] + readyBody[end:]
+	code, out, _ := readyCall(readyIssue(t, strings.Replace(noEdit, "* c2: 설계 먼저 상태가 보인다.", "* c2: `web`", 1), nil))
+	if code != 1 || strings.Join(strs(atList(decodeReport(t, out), "missing")), ",") != "edit_region" {
+		t.Errorf("a slashless word in the criteria: exit %d: %s", code, out)
+	}
+}
+
+// d4: whatever sits under an out-of-scope heading is excluded, however its own heading reads.
+func TestIssueReadyDescendantsOfOutOfScopeAreExcluded(t *testing.T) {
+	start := strings.Index(readyBody, "## 편집 영역")
+	end := strings.Index(readyBody, "## 정한 답")
+	without := readyBody[:start] + readyBody[end:]
+	for _, tail := range []string{
+		"\n## Out of scope\n\n### Scope details\n\n- `internal/relay/`\n",
+		"\n## 범위 밖\n\n### 편집 영역\n\n- `internal/relay/`\n",
+		"\n## 범위 밖\n\n### 메모\n\n#### Decided answer\n\n- `internal/relay/`\n",
+	} {
+		code, out, _ := readyCall(readyIssue(t, without+tail, nil))
+		if code != 1 || strings.Join(strs(atList(decodeReport(t, out), "missing")), ",") != "edit_region" {
+			t.Errorf("%q: exit %d: %s", tail, code, out)
+		}
+	}
+	// A later heading at the level of the out-of-scope one is read again.
+	code, out, _ := readyCall(readyIssue(t, without+"\n## Out of scope\n\n### Scope details\n\n- `internal/relay/`\n\n## Scope\n\n- `internal/skill/`\n", nil))
+	if got := strings.Join(strs(atList(decodeReport(t, out), "observed", "edit_regions")), ","); code != 0 || got != "internal/skill" {
+		t.Errorf("after the out-of-scope section: exit %d regions %q: %s", code, got, out)
+	}
+}
