@@ -136,6 +136,36 @@ func TestEnvChdirMovesTheProgramDirectory(t *testing.T) {
 	if len(r.Execs) != 2 || r.Execs[1].Dir.Known {
 		t.Fatalf("env -C ../x rm execs = %+v, want rm in an unknown directory", r.Execs)
 	}
+	for _, tc := range []struct {
+		name    string
+		cmd     string
+		findDir string
+	}{
+		{"env inside find", `find . -name x -exec env -C sub rm {} +; rm y`, "/work"},
+		{"find inside env", `env -C sub find . -name x -exec rm {} +; rm y`, "/work/sub"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, err := Analyze(tc.cmd, "/work")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(r.Execs) != 4 || r.Execs[2].Name != "rm" || r.Execs[3].Name != "rm" {
+				t.Fatalf("execs = %+v, want wrapper, wrapper, rm, rm", r.Execs)
+			}
+			wrapped := r.Execs[2]
+			if !wrapped.Dir.Known || wrapped.Dir.Path != "/work/sub" {
+				t.Errorf("wrapped rm dir = %+v, want known /work/sub", wrapped.Dir)
+			}
+			feed := wrapped.Ctx.Feed
+			if feed == nil || feed.Wrapper != "find" || !feed.Dir.Known || feed.Dir.Path != tc.findDir || !reflect.DeepEqual(feed.Starts, []string{"."}) {
+				t.Errorf("wrapped rm feed = %+v, want find from %s starting at .", feed, tc.findDir)
+			}
+			plain := r.Execs[3]
+			if !plain.Dir.Known || plain.Dir.Path != "/work" || plain.Ctx.Feed != nil {
+				t.Errorf("plain rm = %+v, want known /work without a feed", plain)
+			}
+		})
+	}
 }
 
 func TestInlineProgramBytes(t *testing.T) {

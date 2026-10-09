@@ -1,0 +1,55 @@
+# CRW-895 after the third verification of f0857f317: find substitutes {} anywhere in the text of a shell, so a {} that sets the
+# directory or a variable decides what every removal in the text names; and find name patterns whose case or locale the reader
+# cannot settle. ../repo is the managed checkout itself, .. its slot.
+
+=== CRW-895-r1 | R
+--why The verifier's trigger: find puts .. in place of {}, the shell moves to the slot and removes the checkout by name.
+find .. -maxdepth 0 -exec sh -c 'cd {}; rm -rf repo' \;
+
+=== CRW-895-r2 | R
+--why The same through git worktree remove.
+find .. -maxdepth 0 -exec sh -c 'cd {} && git worktree remove --force repo' \;
+
+=== CRW-895-r3 | R
+--why A guarded start, but the shell moves to a found path whose depth the reader does not know: the directory is unknown.
+find . -path ./a/b -exec sh -c 'cd {}; rm -rf ../../../repo' \;
+
+=== CRW-895-r4 | R
+--why {} reaches the directory through a variable.
+find . -name b -exec sh -c 'D={}; cd "$D"; rm -rf ../../../repo' \;
+
+=== CRW-895-r5 | R
+--why rmdir after a cd into a word that holds {}.
+find . -path ./a/b -exec sh -c 'cd {}/x; rmdir ../../../../repo' \;
+
+=== CRW-895-r6 | R
+--why git -C takes a word that climbs out of the found path with ..: the directory git runs in is not bounded by the start.
+find . -path ./a/b -exec git -C {}/../.. worktree remove --force ../repo \;
+
+=== CRW-895-r7 | R
+--why The start point is judged from the directory find runs in as well as from the directory the shell moved to.
+find .. -name x -exec sh -c 'cd /tmp/a/b; rm -rf {}' \;
+
+=== CRW-895-r8 | B
+--why The body holds no {} and ignores its parameters: a fixed cleanup inside the checkout (d7 stays allowed).
+find ../repo -exec sh -c 'rm build/old.o' \;
+
+=== CRW-895-r9 | B
+--why {} in the body after a cd inside the checkout, with a test that leaves the checkout out.
+find . -name '*.o' -exec sh -c 'cd build; rm -f {}' \;
+
+=== CRW-895-r10 | B
+--why A suffix after {} without .. names the found file's neighbour.
+find . -name '*.o' -exec rm -f {}.tmp \;
+
+=== CRW-895-r11 | R
+--why A collating symbol matches r: a pattern the reader cannot evaluate is not a test that leaves the checkout out.
+find ../repo -name '[[.r.]]*' -delete
+
+=== CRW-895-r12 | R
+--why An equivalence class matches r as well.
+find ../repo -name '[[=r=]]*' -delete
+
+=== CRW-895-r13 | B
+--why A case-insensitive class that cannot fit the first letter of repo.
+find ../repo -iname '[[:digit:]]*' -delete
