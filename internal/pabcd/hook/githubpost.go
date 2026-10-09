@@ -55,12 +55,13 @@ func GitHubPostAnswer(in io.Reader) string {
 	return HandleGitHubPostGuard(string(b))
 }
 
-// githubPostDeny is the deny envelope: the rule, the place, and one way forward.
-// GitHubPostCancelledAnswer is the deny answer of a GitHub post guard cancelled before it judged the command.
+// GitHubPostCancelledAnswer is the deny answer of a GitHub post guard cancelled before it judged the command. The command is
+// not read, so the answer is the one for an unreadable command: the post is refused at the command.
 func GitHubPostCancelledAnswer() string {
-	return githubPostDeny("cancelled", "the hook")
+	return githubPostDeny(githubPostRuleUnread, githubPostWhereCommand)
 }
 
+// githubPostDeny is the deny envelope: the rule, the place, and one way forward.
 func githubPostDeny(rule, place string) string {
 	reason := "GitHub post blocked (" + rule + ") at " + place +
 		": write the text to a file, check it, and pass it with --body-file, -F body=@file or --input"
@@ -210,47 +211,50 @@ func githubPostPost(args []string, cwd string) (githubPostSite, bool, bool) {
 		if !ok {
 			return githubPostSite{githubPostRuleUnread, file}, true, true
 		}
-		if line, found := githubPostSecretLine(githubPostScanText(content)); found {
+		if line, found := githubPostSecretLine(content); found {
 			return githubPostSite{githubPostRuleSecret, file + ":" + strconv.Itoa(line)}, true, true
 		}
 	}
 	return githubPostSite{}, false, true
 }
 
-// githubPostScanText is the text the secret scan reads from a body file: the strings of a JSON document (keys and values,
-// with their escapes decoded), so a secret inside a JSON string is seen as the text gh posts; any other file is its text.
-func githubPostScanText(content string) string {
-	if text, ok := githubPostJSONText(content); ok {
-		return text
-	}
-	return content
-}
-
-// githubPostJSONText is the text of one JSON document: its keys and strings, with their escapes decoded, one per line. ok is
-// false when the content is not one JSON document, so a body read as JSON must be one.
+// githubPostJSONText is the text of one JSON document: every key and string value, with its escapes decoded, one per line. A key
+// that repeats is kept at each place it stands, so every value the body carries is scanned. ok is false when the content is not
+// exactly one JSON document, so a body read as JSON must be one.
 func githubPostJSONText(content string) (text string, ok bool) {
-	var doc any
-	if err := json.Unmarshal([]byte(content), &doc); err != nil {
+	if !json.Valid([]byte(content)) {
 		return "", false
 	}
+	dec := json.NewDecoder(strings.NewReader(content))
 	var parts []string
-	var walk func(any)
-	walk = func(x any) {
-		switch t := x.(type) {
+	var walk func() error
+	walk = func() error {
+		tok, err := dec.Token()
+		if err != nil {
+			return err
+		}
+		switch t := tok.(type) {
 		case string:
 			parts = append(parts, t)
-		case []any:
-			for _, e := range t {
-				walk(e)
+		case json.Delim:
+			for dec.More() {
+				if err := walk(); err != nil { // an array element, or an object key
+					return err
+				}
+				if t == '{' {
+					if err := walk(); err != nil { // the value of that key
+						return err
+					}
+				}
 			}
-		case map[string]any:
-			for k, e := range t {
-				parts = append(parts, k)
-				walk(e)
-			}
+			_, err := dec.Token() // the closing delimiter
+			return err
 		}
+		return nil
 	}
-	walk(doc)
+	if err := walk(); err != nil {
+		return "", false
+	}
 	return strings.Join(parts, "\n"), true
 }
 
@@ -342,8 +346,9 @@ func githubPostAPI(args []string, cwd string) (githubPostSite, bool, bool) {
 		if !ok {
 			return githubPostSite{githubPostRuleUnread, file}, true, true
 		}
-		// --input is the request body and is JSON: a body that is not one JSON document is unreadable, and the scan reads its strings.
-		text := githubPostScanText(content)
+		// --input is the request body and is JSON: a body that is not one JSON document is unreadable, and the scan reads its
+		// strings. A field file is posted as its raw text, so that text is scanned.
+		text := content
 		if jsonBody {
 			var ok bool
 			if text, ok = githubPostJSONText(content); !ok {
