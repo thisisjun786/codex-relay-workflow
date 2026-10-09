@@ -481,6 +481,15 @@ func (f *branchFixture) closedRelease(node string) *branchFixture {
 	return f
 }
 
+// rereleased records the release that followed a closed one (the rereleased row of
+// dag_release_recoveries): the successor request is the node's open intent.
+func (f *branchFixture) rereleased(node string) *branchFixture {
+	f.exec("INSERT INTO dag_release_recoveries (plan_id, node_id, manifest_digest, abandoned_request_id, action, successor_request_id, request_sha256, request_json, marker_root, socket, state_selector, slot_released, reason, recorded_by, coordinator_epoch, recorded_at)"+
+		" VALUES (?,?,?,?,'rereleased',?,'sha','{}','marker','socket','selector',0,'recovered','task-parent',0,?)",
+		branchTestPlan, node, "manifest-"+node, "request-"+node, "request-"+node+"-2", branchTestStamp(1))
+	return f
+}
+
 // executed records that one node was run by the relationship its acceptance names: the execution row
 // is what the relay's integration judgement walks, so a node without one is not integrated whatever
 // its observations say.
@@ -936,8 +945,9 @@ func TestBranchCandidatesCountAClosedReleaseAsNotOwned(t *testing.T) {
 	branchWant(t, got, "A+B pkg/A.go,pkg/B.go ready=1 edges=1", "C+D pkg/C.go,pkg/D.go ready=1 edges=1")
 }
 
-// CRW-1048 C1 (control): a release that is still open owns its node, so its bundle stays out, while a
-// closed release on another node leaves the open one owning.
+// CRW-1048 C1 (control): ownership is read node by node. A is closed (so A+B is a candidate again)
+// while C holds an open release (so C+D stays out): a closure of one node does not open another
+// node's bundle.
 func TestBranchCandidatesKeepABundleWhoseReleaseIsOpen(t *testing.T) {
 	f := branchNewFixture(t, "CRW-1", "CRW-2")
 	f.node("A", "CRW-1").node("B", "CRW-2").node("C", "CRW-3").node("D", "CRW-4").node("E", "CRW-5")
@@ -945,7 +955,24 @@ func TestBranchCandidatesKeepABundleWhoseReleaseIsOpen(t *testing.T) {
 	for _, node := range []string{"A", "B", "C", "D", "E"} {
 		f.region(node, "pkg/"+node+".go", "file", "", "edit", false)
 	}
+	f.closedRelease("A")
 	f.release("C")
+	got := branchSummaries(branchList(t, f.publish().run()))
+	branchWant(t, got, "A+B pkg/A.go,pkg/B.go ready=1 edges=1")
+}
+
+// CRW-1048 C1 (control): a closed release that a rerelease followed owns its node again, through the
+// successor (latestRelease reads the rereleased row), so C+D stays out while A, closed with no
+// successor, is a candidate.
+func TestBranchCandidatesKeepABundleWhoseClosedReleaseWasRereleased(t *testing.T) {
+	f := branchNewFixture(t, "CRW-1", "CRW-2")
+	f.node("A", "CRW-1").node("B", "CRW-2").node("C", "CRW-3").node("D", "CRW-4").node("E", "CRW-5")
+	f.edge("e1", "A", "B").edge("e2", "C", "D")
+	for _, node := range []string{"A", "B", "C", "D", "E"} {
+		f.region(node, "pkg/"+node+".go", "file", "", "edit", false)
+	}
+	f.closedRelease("A")
+	f.closedRelease("C").rereleased("C")
 	got := branchSummaries(branchList(t, f.publish().run()))
 	branchWant(t, got, "A+B pkg/A.go,pkg/B.go ready=1 edges=1")
 }
