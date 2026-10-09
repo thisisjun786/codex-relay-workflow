@@ -11,41 +11,39 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// upTo is a walk that covers n descriptor numbers.
-func upTo(n int) func() (int, error) { return func() (int, error) { return n, nil } }
+// listingOf is a directory that lists the given descriptor numbers, as /proc/self/fd does.
+func listingOf(t *testing.T, fds ...string) string {
+	t.Helper()
+	dir := t.TempDir()
+	for _, fd := range fds {
+		if err := os.WriteFile(filepath.Join(dir, fd), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir
+}
 
-// A descriptor that cannot be marked close-on-exec fails the sweep on every way that finds it, and
-// a number that is not open is no failure.
+// A descriptor that cannot be marked close-on-exec fails the sweep, a number that is not open is no
+// failure, and a sweep with no way to reach the descriptors fails too.
 func TestFDSweepFailsWhenAMarkFails(t *testing.T) {
 	refuse := errors.New("F_SETFD refused")
 	missing := filepath.Join(t.TempDir(), "missing")
-	for name, sweep := range map[string]fdSweep{
-		"listing": {dirs: []string{missing, t.TempDir()}, limit: upTo(0)},
-		"walk":    {dirs: []string{missing}, limit: upTo(8)},
-	} {
-		t.Run(name, func(t *testing.T) {
-			if name == "listing" {
-				if err := os.WriteFile(filepath.Join(sweep.dirs[1], "7"), nil, 0o600); err != nil {
-					t.Fatal(err)
-				}
-			}
-			sweep.mark = func(fd int) error {
-				if fd == 7 {
-					return refuse
-				}
-				return nil
-			}
-			if err := sweep.apply(); !errors.Is(err, refuse) {
-				t.Fatalf("want the refused mark, got %v", err)
-			}
-			sweep.mark = func(int) error { return nil }
-			if err := sweep.apply(); err != nil {
-				t.Fatal(err)
-			}
-		})
+	sweep := fdSweep{dirs: []string{missing, listingOf(t, "0", "1", "2", "5", "7")}}
+	sweep.mark = func(fd int) error {
+		if fd == 7 {
+			return refuse
+		}
+		return nil
 	}
-	if err := (fdSweep{dirs: []string{missing}}).apply(); !errors.Is(err, ErrDescriptorsUnbounded) {
-		t.Fatalf("no way and no bound must fail, got %v", err)
+	if err := sweep.apply(); !errors.Is(err, refuse) {
+		t.Fatalf("want the refused mark, got %v", err)
+	}
+	sweep.mark = func(int) error { return nil }
+	if err := sweep.apply(); err != nil {
+		t.Fatal(err)
+	}
+	if err := (fdSweep{dirs: []string{missing}}).apply(); !errors.Is(err, ErrDescriptorsUnlisted) {
+		t.Fatalf("no way to reach the descriptors must fail, got %v", err)
 	}
 }
 
@@ -77,7 +75,7 @@ func TestLaunchRefusedWhenTheSweepFails(t *testing.T) {
 	refuse := errors.New("F_SETFD refused")
 	saved := defaultFDSweep
 	t.Cleanup(func() { defaultFDSweep = saved })
-	defaultFDSweep = fdSweep{closeRange: func() error { return errors.ErrUnsupported }, dirs: []string{"/dev/null/none"}, limit: upTo(5), mark: func(fd int) error {
+	defaultFDSweep = fdSweep{closeRange: func() error { return errors.ErrUnsupported }, dirs: []string{"/dev/null/none", listingOf(t, "3", "4")}, mark: func(fd int) error {
 		if fd == 4 {
 			return refuse
 		}

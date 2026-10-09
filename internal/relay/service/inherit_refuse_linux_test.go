@@ -5,8 +5,6 @@ package service
 import (
 	"os"
 	"os/exec"
-	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 	"unsafe"
@@ -77,39 +75,5 @@ func TestFDSweepRefusesWhatItCannotMark(t *testing.T) {
 	}
 	if err != nil {
 		t.Fatalf("child failed: %v", err)
-	}
-}
-
-// The last-resort walk (no close_range, no listing) is only an answer when it reaches every number
-// an open descriptor can have, which is below fs.nr_open (CRW-1057 re-evaluation of 9c0015af, d2):
-// a descriptor above the walked numbers, such as 1500000 after the limits were lowered, would
-// otherwise go on to the daemon. Where fs.nr_open is more than the walk can cover the sweep must
-// refuse the start; where it can, the walk marks the descriptor.
-func TestFDSweepLastResortCoversEveryNumberOrRefuses(t *testing.T) {
-	raw, err := os.ReadFile("/proc/sys/fs/nr_open")
-	if err != nil {
-		t.Skipf("fs.nr_open unreadable: %v", err)
-	}
-	nrOpen, err := strconv.Atoi(strings.TrimSpace(string(raw)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	fd := heldWithoutCloExec(t)
-	missing := filepath.Join(t.TempDir(), "missing")
-	sweep := fdSweep{
-		closeRange: func() error { return errNoCloseRange },
-		dirs:       []string{missing},
-		limit:      descriptorLimit,
-	}
-	err = sweep.apply()
-	t.Logf("fs.nr_open %d, sweep error: %v, descriptor %d close-on-exec %v", nrOpen, err, fd, cloExec(t, fd))
-	if nrOpen > sweepCap {
-		if err == nil {
-			t.Fatalf("fs.nr_open %d is above the %d numbers the walk covers, yet the sweep reported success", nrOpen, sweepCap)
-		}
-		return
-	}
-	if err != nil || !cloExec(t, fd) {
-		t.Fatalf("a walk that covers fs.nr_open %d left descriptor %d unmarked (error %v)", nrOpen, fd, err)
 	}
 }

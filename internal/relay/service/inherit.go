@@ -9,28 +9,24 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// sweepCap is the most descriptor numbers the last-resort walk covers (about a second of fcntl
-// calls).
-const sweepCap = 1 << 24
-
-// ErrDescriptorsUnbounded is a last-resort walk that cannot cover every descriptor number a process
-// can hold, so the descriptors the caller left open cannot all be accounted for.
-var ErrDescriptorsUnbounded = errors.New("the number of descriptors a process may hold cannot be bounded")
+// ErrDescriptorsUnlisted is a sweep that has no way to reach every open descriptor: close_range is
+// not offered and no listing of the open descriptors is readable. No number taken from a limit
+// bounds the descriptors already open (RLIMIT_NOFILE and fs.nr_open can both be lowered after a
+// descriptor above them was opened, and lowering them closes nothing), so walking the numbers up to
+// one proves nothing and the start is refused instead.
+var ErrDescriptorsUnlisted = errors.New("no way to reach every open descriptor: close_range is not offered and no descriptor listing is readable")
 
 // fdSweep marks every descriptor above 2 close-on-exec. Each way of doing it is tried in turn and
 // the first that works wins, so the sweep never depends on one filesystem path being mounted: an
 // isolated or containerised Linux can hide /dev/fd, or /proc, or both. A way that is reachable but
-// fails to mark a descriptor fails the sweep: a start that would hand the caller's descriptor to the
-// daemon is refused (CRW-1057).
+// fails to mark a descriptor fails the sweep, and so does having no way at all: a start that could
+// hand the caller's descriptor to the daemon is refused (CRW-1057).
 type fdSweep struct {
-	// closeRange marks the whole range in one call (close_range with CLOSE_RANGE_CLOEXEC, Linux 5.11
-	// and up). An error means this kernel or sandbox policy does not offer it.
+	// closeRange marks the whole range 3..~0U in one call (close_range with CLOSE_RANGE_CLOEXEC,
+	// Linux 5.11 and up). An error means this kernel or sandbox policy does not offer it.
 	closeRange func() error
 	// dirs list the open descriptors of this process, one entry per descriptor.
 	dirs []string
-	// limit is the number of descriptor numbers the last resort walks: a bound that no open
-	// descriptor reaches, or the error that says no such bound is known.
-	limit func() (int, error)
 	// mark marks one descriptor close-on-exec; markCloseOnExec when nil.
 	mark func(fd int) error
 }
@@ -38,7 +34,6 @@ type fdSweep struct {
 var defaultFDSweep = fdSweep{
 	closeRange: closeRangeCloExec,
 	dirs:       []string{"/proc/self/fd", "/dev/fd"},
-	limit:      descriptorLimit,
 }
 
 // closeOnExecInherited marks every descriptor above 2 close-on-exec before a daemon is spawned, or
@@ -71,19 +66,7 @@ func (s fdSweep) apply() error {
 			return err
 		}
 	}
-	if s.limit == nil {
-		return ErrDescriptorsUnbounded
-	}
-	n, err := s.limit()
-	if err != nil {
-		return err
-	}
-	for fd := 3; fd < n; fd++ {
-		if err := mark(fd); err != nil {
-			return err
-		}
-	}
-	return nil
+	return ErrDescriptorsUnlisted
 }
 
 // sweepListing marks the descriptors that dir lists. It reports whether the listing was readable,
@@ -106,7 +89,7 @@ func sweepListing(dir string, mark func(int) error) (bool, error) {
 }
 
 // markCloseOnExec makes descriptor fd close-on-exec and checks that it is. A number that is not
-// open (the listing's own descriptor, a gap in the walk) is nothing to mark. unix.CloseOnExec does
+// open (the listing's own descriptor, one closed since the listing was read) is nothing to mark. unix.CloseOnExec does
 // not do: it returns no error, and a sandbox that refuses F_SETFD would go unnoticed.
 func markCloseOnExec(fd int) error {
 	flags, err := unix.FcntlInt(uintptr(fd), unix.F_GETFD, 0)
@@ -127,28 +110,4 @@ func markCloseOnExec(fd int) error {
 		return fmt.Errorf("descriptor %d is still inherited after marking it close-on-exec: %v", fd, err)
 	}
 	return nil
-}
-
-// descriptorLimit is how far the last-resort walk goes, and it is a bound: a descriptor opened
-// before a limit was lowered (by this process or by a caller before the exec) stays open above the
-// limit, so the soft and hard limits do not bound the open descriptors, but nothing is ever opened
-// at or above the kernel's own maximum (fs.nr_open on Linux), which is therefore walked too. When
-// that maximum is unknown, or more than sweepCap numbers, the walk could miss a descriptor and the
-// sweep fails (CRW-1057 re-evaluation of 9c0015af).
-func descriptorLimit() (int, error) { return descriptorBound(kernelMaxDescriptors) }
-
-func descriptorBound(kernelMax func() (uint64, error)) (int, error) {
-	var limit unix.Rlimit
-	if err := unix.Getrlimit(unix.RLIMIT_NOFILE, &limit); err != nil {
-		return 0, err
-	}
-	kernel, err := kernelMax()
-	if err != nil {
-		return 0, fmt.Errorf("%w: the kernel's maximum is unknown: %v", ErrDescriptorsUnbounded, err)
-	}
-	n := max(limit.Cur, limit.Max, kernel)
-	if n > sweepCap {
-		return 0, fmt.Errorf("%w: up to %d, the walk covers %d", ErrDescriptorsUnbounded, n, sweepCap)
-	}
-	return int(n), nil
 }
