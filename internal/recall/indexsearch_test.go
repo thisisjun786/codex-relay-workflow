@@ -52,11 +52,6 @@ func indexRankOracle(t *testing.T) indexRankOracleData {
 }
 func indexRankCorpus(t *testing.T, name string) (string, *RwDb, indexRankOracleCorpus, float64) {
 	t.Helper()
-	// The oracle was recorded in UTC and its zone-less spellings ("2026/09/09") read in
-	// the local zone, so the scores depend on the zone the test runs in.
-	old := time.Local
-	time.Local = time.UTC
-	t.Cleanup(func() { time.Local = old })
 	data := indexRankOracle(t)
 	for _, c := range data.Corpora {
 		if c.Name != name {
