@@ -269,3 +269,33 @@ func TestDotsContactMessageCarriesTheDecisionAsDeliveryInput(t *testing.T) {
 		t.Fatal("a wait verdict produced a delivery message")
 	}
 }
+
+func TestDotsContactAdmitConvergesSameDigestApprovalBeforeFreshnessCheck(t *testing.T) {
+	req := dotsContactTestApproval()
+	entry := dotsContactEntry{Digest: dotsContactDigest(req), LogicalID: dotsContactLogicalID(req.RequestID), Outcome: "accepted"}
+	changes := map[string]func(*dotsContactLocal){
+		"question closed":    func(l *dotsContactLocal) { l.Question = nil },
+		"question moved on":  func(l *dotsContactLocal) { l.Question.Revision = "rev-2" },
+		"question cancelled": func(l *dotsContactLocal) { l.Question.Cancelled = true },
+	}
+	for name, change := range changes {
+		local := dotsContactTestLocal("idle")
+		change(&local)
+		local.Ledger[req.RequestID] = entry
+		got := dotsContactAdmit(req, local)
+		if got.Action != dotsContactConverge || got.Reason != "accepted_not_applied" || got.LogicalID != entry.LogicalID {
+			t.Fatalf("%s: got %q/%q/%q, want converge/accepted_not_applied on the earlier logical id: an accepted repeat must not be refused as stale", name, got.Action, got.Reason, got.LogicalID)
+		}
+	}
+}
+
+func TestDotsContactAdmitWaitsOnUnknownSameDigestApprovalBeforeFreshnessCheck(t *testing.T) {
+	req := dotsContactTestApproval()
+	local := dotsContactTestLocal("idle")
+	local.Question = nil
+	local.Ledger[req.RequestID] = dotsContactEntry{Digest: dotsContactDigest(req), LogicalID: dotsContactLogicalID(req.RequestID), Outcome: "unknown"}
+	got := dotsContactAdmit(req, local)
+	if got.Action != dotsContactWait || got.Reason != "outcome_unknown_reconcile_first" {
+		t.Fatalf("got %q/%q, want wait/outcome_unknown_reconcile_first: the ledger is read before the approval freshness check", got.Action, got.Reason)
+	}
+}

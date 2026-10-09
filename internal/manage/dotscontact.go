@@ -84,8 +84,10 @@ type dotsContactVerdict struct {
 }
 
 // dotsContactAdmit returns the one action for req. Checks run in the order that never acts on a
-// request whose identity or authority is unclear: encoding, identity, routing, approval, then the
-// ledger, and only then the manager's liveness.
+// request whose identity or authority is unclear: encoding, identity, routing, purpose, the ledger,
+// approval freshness, and only then the manager's liveness. The ledger comes before the approval
+// freshness check because a repeat of an earlier request is answered from the ledger whatever the
+// question holds now: an accepted repeat converges and an unknown one waits, and neither sends.
 func dotsContactAdmit(req dotsContactRequest, local dotsContactLocal) dotsContactVerdict {
 	if !dotsContactValidText(req) {
 		return dotsContactRefusal("invalid_encoding")
@@ -100,11 +102,7 @@ func dotsContactAdmit(req dotsContactRequest, local dotsContactLocal) dotsContac
 		return dotsContactRefusal("previous_manager")
 	}
 	switch req.Purpose {
-	case "instruction":
-	case "approval":
-		if reason := dotsContactApprovalRefusal(req, local.Question); reason != "" {
-			return dotsContactRefusal(reason)
-		}
+	case "instruction", "approval":
 	default:
 		return dotsContactRefusal("unknown_purpose")
 	}
@@ -124,6 +122,11 @@ func dotsContactAdmit(req dotsContactRequest, local dotsContactLocal) dotsContac
 			return dotsContactVerdict{Action: dotsContactWait, Reason: "outcome_unknown_reconcile_first", LogicalID: entry.LogicalID}
 		default:
 			return dotsContactRefusal("previously_refused")
+		}
+	}
+	if req.Purpose == "approval" {
+		if reason := dotsContactApprovalRefusal(req, local.Question); reason != "" {
+			return dotsContactRefusal(reason)
 		}
 	}
 	switch local.Liveness {
