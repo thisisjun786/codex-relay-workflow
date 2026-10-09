@@ -781,3 +781,4 @@ added by CRW-951 (allow counterexample of the pathlib touch and mkdir rule)	pyth
 added by CRW-951 (allow counterexample of the pathlib touch and mkdir rule)	python3 -c 'print("touch()")'	CRW-951-read-05-string-data	row	-
 added by CRW-951 (allow counterexample of the pathlib touch and mkdir rule)	python3 -c 'import os; print("touch() and mkdir()", os.path.exists("/w/x"))'	CRW-951-read-06-string-data-with-api	row	-
 added by CRW-951 (allow counterexample of the pathlib touch and mkdir rule)	python3 -c 'import os; touch = 1; mkdir = 2; print(touch + mkdir, os.path.exists("/w/x"))'	CRW-951-read-07-bare-names	row	-
+added by CRW-951 (allow counterexample of the pathlib touch and mkdir rule)	python3 -c 'import os; os.mkdir("/w/d")'	CRW-951-mkdir-08-os-mkdir-work-tree	row	-

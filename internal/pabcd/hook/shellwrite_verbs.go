@@ -574,7 +574,7 @@ func shellVerbCallKind(rs []rune, i int, c rune) byte {
 	return 0
 }
 
-// shellVerbWriteMethod reports whether .write_text( or .write_bytes( follows at j (blanks allowed), as after Path(...).
+// shellVerbWriteMethod reports whether .write_text(, .write_bytes(, .touch( or .mkdir( follows at j (blanks allowed), as after Path(...).
 func shellVerbWriteMethod(rs []rune, j int) bool {
 	for j < len(rs) && shellVerbSpaceRune(rs[j]) {
 		j++
@@ -585,7 +585,7 @@ func shellVerbWriteMethod(rs []rune, j int) bool {
 	for j++; j < len(rs) && shellVerbSpaceRune(rs[j]); {
 		j++
 	}
-	for _, name := range []string{"write_text", "write_bytes"} {
+	for _, name := range []string{"write_text", "write_bytes", "touch", "mkdir"} {
 		if end := j + len(name); end <= len(rs) && string(rs[j:end]) == name {
 			for ; end < len(rs) && shellVerbSpaceRune(rs[end]); end++ {
 			}

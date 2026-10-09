@@ -93,3 +93,7 @@ python3 -c 'import os; print("touch() and mkdir()", os.path.exists("/w/x"))'
 === CRW-951-read-07-bare-names | B
 --why Allow counterexample: bare names touch and mkdir are no pathlib method.
 python3 -c 'import os; touch = 1; mkdir = 2; print(touch + mkdir, os.path.exists("/w/x"))'
+
+=== CRW-951-mkdir-08-os-mkdir-work-tree | B
+--why Allow counterexample: os.mkdir("/w/d") is another call (not a pathlib method) and names a work tree path.
+python3 -c 'import os; os.mkdir("/w/d")'

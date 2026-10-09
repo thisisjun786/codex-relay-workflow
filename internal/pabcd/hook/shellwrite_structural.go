@@ -26,6 +26,10 @@ func shellIRWriteNames(tok string) bool {
 	return false
 }
 
+// shellIRPyPathCreateName names the pathlib methods that create a file or a directory at their receiver (CRW-951): Path.touch and
+// Path.mkdir. They are read like write_text: a Path(...) call receiver names its destination, any other receiver is unknown.
+func shellIRPyPathCreateName(tok string) bool { return tok == "touch" || tok == "mkdir" }
+
 // shellIRStructuralWriteUnknown reports a program that holds a file API and a write the reader cannot attribute to a literal
 // destination: a bare or unattached write name, a run-time name (getattr, __import__, eval, ...), or a computed subscript.
 func shellIRStructuralWriteUnknown(src string, python bool) bool {
@@ -54,6 +58,13 @@ func shellIRStructuralWriteUnknown(src string, python bool) bool {
 		tok := src[sp[0]:sp[1]]
 		if shellIRRunTimeName(tok) {
 			return true
+		}
+		if python && shellIRPyPathCreateName(tok) {
+			// touch and mkdir create a file or a directory only as methods (Path(...).touch()); a bare name is no such call.
+			if shellIRPrevNonSpace(src, sp[0]) == '.' && (shellIRNextNonSpace(src, sp[1]) != '(' || shellIRPyUnattributedCall(src, sp, tok)) {
+				return true
+			}
+			continue
 		}
 		if !shellIRWriteNames(tok) {
 			continue
@@ -145,6 +156,12 @@ func shellIRPyUnattributedCall(src string, sp [2]int, name string) bool {
 		}
 		recv := shellIRPyReceiverIdent(src, sp[0])
 		return recv != "shutil" && !shellIRPyImportAlias(src, recv, "shutil")
+	case "touch":
+		return !shellIRPyPathCallReceiver(src, sp[0])
+	case "mkdir":
+		// os.mkdir(path) is a different call that this reader has never judged (CRW-951 scope: the pathlib methods only).
+		recv := shellIRPyReceiverIdent(src, sp[0])
+		return !shellIRPyPathCallReceiver(src, sp[0]) && recv != "os" && !shellIRPyImportAlias(src, recv, "os")
 	case "rename", "renames", "symlink", "link":
 		recv := shellIRPyReceiverIdent(src, sp[0])
 		return !shellIRPyPathCallReceiver(src, sp[0]) && recv != "os" && !shellIRPyImportAlias(src, recv, "os")
