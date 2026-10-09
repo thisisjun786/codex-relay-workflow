@@ -78,6 +78,12 @@ func componentHooks() []componentHook {
 					done <- ""
 					return
 				}
+				// Input that arrives once the leg has been cancelled finds a leg that already answered the deny: nothing is recorded
+				// or judged for it (the answer here is the same deny, so which of the two reaches the select first does not matter).
+				if c.ctx.Err() != nil {
+					done <- pabcdhook.GitHubPostCancelledAnswer()
+					return
+				}
 				// Like every other leg, the record is left before the judgment; it is metadata-only and an over-bound payload leaves none.
 				if !over {
 					harness.RecordInvocation(raw, harness.Component, "pre-tool-use-github-post", os.LookupEnv)

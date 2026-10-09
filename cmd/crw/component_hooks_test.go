@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/job"
 )
@@ -361,6 +362,59 @@ func TestGitHubPostGuardLegLeavesObservation(t *testing.T) {
 				t.Fatalf("the record carries a decision: %v", records[0])
 			}
 		})
+	}
+}
+
+// TestGitHubPostGuardLegLeavesNoObservationForInputThatArrivesAfterCancel: a guard cancelled while it waits for its input answers
+// the deny and returns; a payload that arrives afterwards finds a leg that has already answered, so it records nothing, as the
+// other pabcd-state legs do (CRW-1139).
+func TestGitHubPostGuardLegLeavesNoObservationForInputThatArrivesAfterCancel(t *testing.T) {
+	home := recallHookComponentHome(t)
+	plugin := filepath.Join(t.TempDir(), "plugin")
+	if err := os.MkdirAll(filepath.Join(plugin, ".codex-plugin"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(plugin, ".codex-plugin", "plugin.json"), []byte(`{"version":"1.0.0"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PLUGIN_ROOT", plugin)
+	in, w := io.Pipe()
+	t.Cleanup(func() { w.Close() })
+	ctx, cancel := context.WithCancel(context.Background())
+	var out bytes.Buffer
+	answered := make(chan int, 1)
+	go func() {
+		_, code := runComponentHook(invocation{ctx: ctx, args: []string{"pre-tool-use", "--leg", "pre-tool-use-guarding-github-post"}, stdout: &out}, in, componentHooks())
+		answered <- code
+	}()
+	cancel()
+	select {
+	case code := <-answered:
+		if code != 0 || !strings.Contains(out.String(), `"permissionDecision":"deny"`) {
+			t.Fatalf("code %d, out %q: the cancelled guard did not answer the deny", code, out.String())
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the cancelled guard did not return")
+	}
+	payload, err := json.Marshal(map[string]any{"session_id": "hook-fixture", "hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": map[string]any{"command": "ls -la"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Write(payload); err != nil {
+		t.Fatal(err)
+	}
+	w.Close()
+	// The late reader runs on its own goroutine; give it the time a record would take, then count what it left.
+	time.Sleep(500 * time.Millisecond)
+	var files []string
+	_ = filepath.WalkDir(home, func(p string, d os.DirEntry, err error) error {
+		if err == nil && !d.IsDir() && strings.HasSuffix(p, ".json") {
+			files = append(files, p)
+		}
+		return nil
+	})
+	if len(files) != 0 {
+		t.Fatalf("the cancelled leg created a late observation after returning the deny: %v", files)
 	}
 }
 
