@@ -11,14 +11,13 @@ import (
 	"testing"
 )
 
-// Every crw:crw-<name> a shipped skill names resolves to a skill this repository holds, either shipped
-// under plugins/crw/skills or staged under port/cxc/skills for the activation move to ship with it. A
-// reference that resolves to neither would be a skill the plugin tells a child to load and nothing
-// provides, so the move cannot leave one behind.
+// Every crw:crw-<name> a shipped skill names resolves to a skill the plugin ships under
+// plugins/crw/skills, where the activation move (CRW-392) put the ported skills too. A reference that
+// resolves to none would be a skill the plugin tells a child to load and nothing provides.
 func TestShippedSkillsNameOnlySkillsTheRepositoryHolds(t *testing.T) {
 	root := repoRoot()
 	held := map[string]string{}
-	for _, dir := range []string{"plugins/crw/skills", "port/cxc/skills"} {
+	for _, dir := range []string{"plugins/crw/skills"} {
 		entries, err := os.ReadDir(filepath.Join(root, dir))
 		if err != nil {
 			t.Fatal(err)
@@ -43,7 +42,7 @@ func TestShippedSkillsNameOnlySkillsTheRepositoryHolds(t *testing.T) {
 			seen++
 			if _, ok := held[m[1]]; !ok {
 				rel, _ := filepath.Rel(root, path)
-				t.Errorf("%s names crw:%s, a skill neither plugins/crw/skills nor port/cxc/skills holds", rel, m[1])
+				t.Errorf("%s names crw:%s, a skill plugins/crw/skills does not hold", rel, m[1])
 			}
 		}
 		return nil

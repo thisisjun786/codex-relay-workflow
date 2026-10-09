@@ -92,7 +92,7 @@ func newFixture(t *testing.T) fixture {
 }
 
 func (f fixture) path(rel string) string {
-	return filepath.Join(f.root, StagingRoot, "crw-kwrite", rel)
+	return filepath.Join(f.root, SkillsRoot, "crw-kwrite", rel)
 }
 
 // rewrite changes the staged skill's record.
@@ -157,7 +157,7 @@ func TestCheckNamesUnrecordedDifferences(t *testing.T) {
 		name, want string
 		mutate     func(t *testing.T, f fixture)
 	}{
-		{"edited file", "port/cxc/skills/crw-kwrite/SKILL.md: differs from the substituted original",
+		{"edited file", "plugins/crw/skills/crw-kwrite/SKILL.md: differs from the substituted original",
 			func(t *testing.T, f fixture) { put(t, f.path("SKILL.md"), "changed\n", 0o644) }},
 		{"extra file", "crw-kwrite/extra.md: is not in the substituted original",
 			func(t *testing.T, f fixture) { put(t, f.path("extra.md"), "x\n", 0o644) }},
@@ -198,13 +198,19 @@ func TestMissingAndUnrecordedSkills(t *testing.T) {
 	}
 	f.stage(t)
 	must(t, os.RemoveAll(filepath.Dir(f.path("SKILL.md"))))
-	expectProblem(t, "directory gone", f.problems(nil), "port/cxc/skills/crw-kwrite: staged skill is missing")
+	expectProblem(t, "directory gone", f.problems(nil), "plugins/crw/skills/crw-kwrite: ported skill is missing")
 	g := newFixture(t)
 	g.stage(t)
+	// A skill without a record is one CRW wrote itself, which shares the plugin's skills root since the
+	// activation move (CRW-392): the check does not look at it.
+	put(t, filepath.Join(g.root, SkillsRoot, "crw-run/SKILL.md"), "x\n", 0o644)
+	if n, problems := Check(g.root, nil); n != 1 || len(problems) != 0 {
+		t.Errorf("a CRW skill beside the ported one: %d, %q", n, problems)
+	}
 	must(t, os.Remove(filepath.Join(g.root, RecordDir, "crw-kwrite.json")))
-	expectProblem(t, "record gone", g.problems(nil), "port/cxc/skills/crw-kwrite: staged skill has no record")
-	put(t, filepath.Join(g.root, StagingRoot, "crw-other/SKILL.md"), "x\n", 0o644)
-	expectProblem(t, "unrecorded directory", g.problems(nil), "port/cxc/skills/crw-other: staged skill has no record")
+	if n, problems := Check(g.root, nil); n != 0 || len(problems) != 0 {
+		t.Errorf("no record left: %d, %q", n, problems)
+	}
 }
 
 func TestRecordsShareAnOrigin(t *testing.T) {
@@ -285,7 +291,7 @@ func TestUnsafeLayoutsAreRefused(t *testing.T) {
 	for _, row := range []struct {
 		name, rel string
 		link      bool
-	}{{"linked port", "port", true}, {"linked staging root", StagingRoot, true}, {"linked records root", RecordDir, true}, {"records root is a file", RecordDir, false}} {
+	}{{"linked port", "port", true}, {"linked staging root", SkillsRoot, true}, {"linked records root", RecordDir, true}, {"records root is a file", RecordDir, false}} {
 		t.Run(row.name, func(t *testing.T) {
 			f, outside := newFixture(t), t.TempDir()
 			path := filepath.Join(f.root, row.rel)
@@ -319,7 +325,7 @@ func TestUnreadableRootsAreNotEmpty(t *testing.T) {
 		t.Skip("root reads any directory")
 	}
 	f := newFixture(t)
-	dir := filepath.Join(f.root, StagingRoot)
+	dir := filepath.Join(f.root, SkillsRoot)
 	must(t, os.MkdirAll(dir, 0o755))
 	must(t, os.Chmod(dir, 0))
 	t.Cleanup(func() { os.Chmod(dir, 0o755) })
@@ -359,7 +365,7 @@ func TestConcurrentStagesPublishOnce(t *testing.T) {
 func leftovers(t *testing.T, root string) []string {
 	t.Helper()
 	var left []string
-	for _, pattern := range []string{StagingRoot + "/*", RecordDir + "/*"} {
+	for _, pattern := range []string{SkillsRoot + "/*", RecordDir + "/*"} {
 		found, err := filepath.Glob(filepath.Join(root, pattern))
 		must(t, err)
 		left = append(left, found...)

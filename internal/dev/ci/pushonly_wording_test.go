@@ -15,9 +15,10 @@ import (
 // fast-forwards to dev, so no document states that a pull request or a hosted gate is required.
 // The one place that still describes a pull request lane is the in-flight section of merge-readiness.md,
 // and the dated worked example of task-packet.md keeps the old Launch text. The guard reads the skills
-// (markdown and agent YAML), the policy documents, the dispatch case data, the generated dispatch document
-// and the plugin manifest as text, and fails on a seed phrase anywhere else. A case whose data quotes the
-// old procedure on purpose is listed in pushOnlyCaseAllowlist with its reason.
+// CRW wrote itself (markdown and agent YAML; not the ones ported from CXC), the policy documents, the
+// dispatch case data, the generated dispatch document and the plugin manifest as text, and fails on a
+// seed phrase anywhere else. A case whose data quotes the old procedure on purpose is listed in
+// pushOnlyCaseAllowlist with its reason.
 
 var pushOnlySeedPhrases = regexp.MustCompile(`(?i)exactly one pull request|pull request open|pull request is open|open the pull request|open a pull request|open that pull request|open the PR\b|open a PR\b|open this PR\b|open it non-draft|open pull request|opens the pull request|opens a pull request|opens its pull request|opens the PR\b|intended PR[ ,.]|PR landing|after its CI finishes|on this pull request|dev-gate is required|dev-gate required|dev-gate must|PR body|pull request body|every CI job|pull-request CI|hosted CI run is required|CI run is required|pull request is required|PR is required`)
 
@@ -58,6 +59,13 @@ func pushOnlyFiles(t *testing.T) []string {
 		err := filepath.Walk(filepath.Join(root, filepath.FromSlash(dir)), func(p string, info os.FileInfo, err error) error {
 			if err != nil {
 				return err
+			}
+			// A skill ported from CXC (one with a record under port/cxc/records, CRW-392) is general
+			// guidance about other repositories' pull requests, not CRW's own procedure: it is not read.
+			if info.IsDir() && filepath.Dir(p) == filepath.Join(root, "plugins", "crw", "skills") {
+				if _, err := os.Stat(filepath.Join(root, "port", "cxc", "records", info.Name()+".json")); err == nil {
+					return filepath.SkipDir
+				}
 			}
 			agentYAML := strings.HasSuffix(p, ".yaml") && filepath.Base(filepath.Dir(p)) == "agents"
 			if !info.IsDir() && (strings.HasSuffix(p, ".md") || agentYAML) {

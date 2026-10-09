@@ -40,9 +40,9 @@ func stagedRepoSource(t *testing.T, skill string) (*fixtureRepo, skillport.Sourc
 	return r, src
 }
 
-// A staged skill rides the validate check: its fidelity to the record, its metadata and its links.
+// A ported skill rides the validate check: its fidelity to the record, its metadata and its links.
 func TestStagedSkillsAreValidated(t *testing.T) {
-	const staged = "port/cxc/skills/crw-kwrite/"
+	const staged = "plugins/crw/skills/crw-kwrite/"
 	const good = "---\nname: cxc-kwrite\ndescription: \"Demo\"\n---\n\nSee [a](references/a.md).\n"
 	r := stagedRepo(t, good)
 	if got := validate(t, r); got.code != 0 || !strings.HasPrefix(got.stdout, "Validated 2 skills, ") || got.stderr != "" { // the rest of the line is the Python rule's, which dev changed
@@ -61,7 +61,7 @@ func TestStagedSkillsAreValidated(t *testing.T) {
 }
 
 func TestRecordedStagedEditsAreValidated(t *testing.T) {
-	const staged = "port/cxc/skills/crw-kwrite/"
+	const staged = "plugins/crw/skills/crw-kwrite/"
 	const original = "---\nname: cxc-kwrite\ndescription: \"Demo\"\nmetadata: x\n---\n\nSee [a](references/a.md).\n"
 	r, src := stagedRepoSource(t, original)
 	good := "---\nname: crw-kwrite\ndescription: \"Demo\"\n---\n\nSee [a](references/a.md).\n"

@@ -640,9 +640,15 @@ func Test47_PLG_18_JSONReport(t *testing.T) {
 	if err := json.Unmarshal([]byte(got.stdout), &r); err != nil {
 		t.Fatalf("report: %v: %+v", err, got)
 	}
-	// The plugin ships the skills the repository holds; crw-loop returns with the staged PABCD loop when the
-	// activation move lands, and the parent-goal procedure it carried is crw-run's goal mode.
-	names := []any{"crw-check", "crw-define", "crw-logic", "crw-next", "crw-plan", "crw-refactor", "crw-run", "crw-status", "crw-tidy"}
+	// The plugin ships the skills the repository holds: its own nine and, since the activation move
+	// (CRW-392), the 24 ported from CXC, crw-loop (the PABCD loop) among them; the parent-goal procedure
+	// crw-loop once carried is crw-run's goal mode.
+	names := []any{"crw-ast-grep", "crw-check", "crw-define", "crw-dev", "crw-dev-architecture",
+		"crw-dev-backend", "crw-dev-code-reviewer", "crw-dev-data", "crw-dev-debugging", "crw-dev-devops",
+		"crw-dev-frontend", "crw-dev-scaffolding", "crw-dev-security", "crw-dev-testing", "crw-dev-uiux-design",
+		"crw-dev-visualizer", "crw-interview", "crw-kwrite", "crw-logic", "crw-loop", "crw-lunasearch", "crw-next",
+		"crw-pabcd", "crw-plan", "crw-qa", "crw-recall", "crw-refactor", "crw-repo-map", "crw-run", "crw-search",
+		"crw-status", "crw-tidy", "crw-worktree-guardian"}
 	var expected []any
 	for _, n := range names {
 		expected = append(expected, "crw:"+n.(string))
