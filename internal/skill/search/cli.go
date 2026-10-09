@@ -113,13 +113,13 @@ func loadSource(ctx context.Context, source string, refresh bool, fetch fetchFun
 	return FetchHermesRows(cached)
 }
 
-func clawhubSearch(ctx context.Context, query string, limit float64, fetch fetchFunc) ([]ScoredRow, error) {
+func clawhubSearch(ctx context.Context, query string, fetch fetchFunc) ([]ScoredRow, error) {
 	rows, err := SearchClawhubRows(func(url string) (string, error) { return fetch(ctx, url, MaxBodyBytes) }, query)
 	if err != nil {
 		return nil, err
 	}
 	out := []ScoredRow{}
-	for i, row := range rows[:sliceLimit(limit, len(rows))] {
+	for i, row := range rows {
 		out = append(out, ScoredRow{SkillRow: row, Score: float64(len(rows) - i)})
 	}
 	return out, nil

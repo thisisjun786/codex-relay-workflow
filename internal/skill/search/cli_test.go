@@ -196,7 +196,7 @@ func TestCLISourceBranches(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &rows); err != nil {
 		t.Fatal(err)
 	}
-	if code != 0 || errOut != "" || len(requests) != 3 || len(rows) != 2 || rows[0].Source != SourceHermes || rows[1].Source != SourceJaw {
+	if code != 0 || errOut != "" || len(requests) != 3 || len(rows) != 2 || rows[0].Source != SourceJaw || rows[1].Source != SourceHermes {
 		t.Fatalf("%d %q %+v %q", code, errOut, rows, requests)
 	}
 	code, out, _ = cliRun([]string{"search", "tdd", "--source", "clawhub", "--limit", "1", "--json"}, fetch)

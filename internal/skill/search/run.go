@@ -153,12 +153,12 @@ func searchSource(ctx context.Context, source, query string, f Flags, fetch fetc
 		}
 		r.rows = rows
 	case "clawhub":
-		r.rows, r.err = clawhubSearch(ctx, query, f.Limit, fetch)
+		r.rows, r.err = clawhubSearch(ctx, query, fetch)
 	default:
 		var catalog []SkillRow
 		catalog, r.err = loadSource(ctx, source, f.Refresh, fetch, &r.log)
 		if r.err == nil {
-			r.rows = Rank(catalog, query, sliceLimit(f.Limit, len(catalog)))
+			r.rows = Rank(catalog, query, len(catalog)) // the limit applies to the merged list
 		}
 	}
 	if r.err != nil && ctx.Err() != nil {
@@ -216,7 +216,7 @@ func runCLI(ctx context.Context, argv []string, fetch fetchFunc, stdout, stderr 
 			fmt.Fprintln(stderr, "skill-search: interrupted")
 			return exitInterrupted, nil
 		}
-		rows := []ScoredRow{}
+		lists := [][]ScoredRow{}
 		unavailable := 0
 		for i, r := range results {
 			_, _ = stderr.Write(r.log.Bytes())
@@ -227,7 +227,7 @@ func runCLI(ctx context.Context, argv []string, fetch fetchFunc, stdout, stderr 
 				}
 				continue
 			}
-			rows = append(rows, r.rows...)
+			lists = append(lists, r.rows)
 		}
 		if unavailable == len(wanted) {
 			if len(wanted) > 1 {
@@ -235,15 +235,7 @@ func runCLI(ctx context.Context, argv []string, fetch fetchFunc, stdout, stderr 
 			}
 			return exitUnavailable, nil
 		}
-		slices.SortStableFunc(rows, func(a, b ScoredRow) int {
-			if a.Score > b.Score {
-				return -1
-			}
-			if a.Score < b.Score {
-				return 1
-			}
-			return 0
-		})
+		rows := mergeSources(query, lists)
 		out, err := renderRows(rows[:sliceLimit(f.Limit, len(rows))], f.JSON)
 		if err != nil {
 			return 1, err
