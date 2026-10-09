@@ -1481,3 +1481,13 @@ fix round after verification of 632401ae (P1 escaped literal read as match-all)	
 fix round after verification of 632401ae (P1 escaped literal read as match-all)	find .. -maxdepth 0 -regex '.*\.' -exec rm -rf {} +	CRW-895-x6	row	-
 fix round after verification of 632401ae (P1 escaped literal read as match-all)	find ../repo -regex '.*' -delete	CRW-895-x7	row	-
 fix round after verification of 632401ae (P1 escaped literal read as match-all)	find ../repo -regex '\(.*\)' -delete	CRW-895-x8	row	-
+CRW-1059 evaluation of 0ef1b43d (post-evaluation round, findings d1 to d3)	X=$(bash lint.sh) printf "%s\n" "$(bash refresh.sh)"	CRW-1059-11	row	-
+CRW-1059 evaluation of 0ef1b43d (post-evaluation round, findings d1 to d3)	X=$(bash lint.sh) printf "%s\n" "$(bash refresh.sh)" with evil.sh posting	CRW-1059-12	row	-
+CRW-1059 evaluation of 0ef1b43d (post-evaluation round, findings d1 to d3)	X=$(bash lint.sh) printf "%s\n" "$(bash refresh.sh)" with evil.sh removing the checkout	CRW-1059-13	row	-
+CRW-1059 evaluation of 0ef1b43d (post-evaluation round, findings d1 to d3)	watch -x bash -c 'bash lint.sh; bash refresh.sh'	CRW-1059-14	row	-
+CRW-1059 evaluation of 0ef1b43d (post-evaluation round, findings d1 to d3)	watch -x bash lint.sh; bash refresh.sh	CRW-1059-15	row	-
+CRW-1059 evaluation of 0ef1b43d (post-evaluation round, findings d1 to d3)	watch 'bash lint.sh; bash refresh.sh'	CRW-1059-16	row	-
+CRW-1059 evaluation of 0ef1b43d (post-evaluation round, findings d1 to d3)	bash -c 'for ((i=0; $(bash lint.sh; echo 1) && i<2; i+=$(bash refresh.sh; echo 1))); do :; done'	CRW-1059-17	row	-
+CRW-1059 evaluation of 0ef1b43d (post-evaluation round, findings d1 to d3)	for ((i=0; $(bash lint.sh; echo 1) && i<2; i+=$(bash refresh.sh; echo 1))); do :; done	CRW-1059-18	row	-
+CRW-1059 evaluation of 0ef1b43d (post-evaluation round, findings d1 to d3)	X=$(bash refresh.sh) bash lint.sh	CRW-1059-19	row	-
+CRW-1059 evaluation of 0ef1b43d (post-evaluation round, findings d1 to d3)	X=$(bash lint.sh) bash refresh.sh	CRW-1059-20	row	-
