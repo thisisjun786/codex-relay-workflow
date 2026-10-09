@@ -59,6 +59,16 @@ func PromptSubmitHandle(p PromptSubmitPayload, platform string, env host.LookupE
 	return promptSubmitHandleWith(p, platform, env, state.WithSessionLock, nil)
 }
 
+// PromptSubmitHandleWithRole is PromptSubmitHandle with the production registry role reader (CRW-1084): role is called, at most
+// once and only for an un-armed loop request that is not an explicit current-task implementation, with the payload's cwd and session id, and answers what a verified
+// registry read says this session is (PromptRoleUnknown for anything it cannot verify). nil is no reader.
+func PromptSubmitHandleWithRole(p PromptSubmitPayload, platform string, env host.LookupEnv, role func(cwd, sessionID string) PromptRole) string {
+	if role == nil {
+		return PromptSubmitHandle(p, platform, env)
+	}
+	return promptSubmitHandleWith(p, platform, env, state.WithSessionLock, &promptDcloseSeams{role: role})
+}
+
 // promptSubmitHandle takes the session lock as an argument so that a test can land a participating
 // writer's update before the handler's own read, the way the oracle's unlocked read would miss it.
 func promptSubmitHandle(p PromptSubmitPayload, platform string, env host.LookupEnv, lock func(cwd, sessionID string, fn func() error) error) string {
@@ -198,10 +208,14 @@ func promptSubmitHandleWith(p PromptSubmitPayload, platform string, env host.Loo
 		// not negated. The pointer arms nothing, so it does not set loopArmSeen; it records the turn so the same turn is
 		// not answered twice. An explicit request to implement a task in this session keeps the recipe, as a session the
 		// registry reports as a dispatched task does, and a request that names no project (the single-task loop) is
-		// unchanged. The role comes only from a verified registry read (CRW-386); with none it is unknown and a project link
-		// never makes it a parent.
-		role := promptSubmitRole(seams, p.Cwd, p.SessionID)
+		// unchanged. The role comes only from a verified registry read (the harness's read-only scope-binding reader); with none it is
+		// unknown and a project link never makes it a parent.
 		scope := ClassifyLoopArmScope(p.Prompt)
+		role := PromptRoleUnknown
+		if scope != LoopScopeCurrentTask {
+			// The explicit current-task request is the recipe whatever the registry says, so the read is for the other scopes.
+			role = promptSubmitRole(seams, p.Cwd, p.SessionID)
+		}
 		pointer := scope != LoopScopeCurrentTask && role != PromptRoleTask && (role == PromptRoleParent || scope == LoopScopeProject)
 		if promptSubmitWriteState(lock, p.Cwd, p.SessionID, func(fresh *state.State) bool {
 			if !pointer {
@@ -230,8 +244,8 @@ func promptSubmitHandleWith(p PromptSubmitPayload, platform string, env host.Loo
 	return promptTriggerHandle(p, env, lock, current, state.Phase(trigger), entry.AdviseInterview, agbrowseRequested, loopArmRequested)
 }
 
-// promptSubmitRole is the session's registry role, or unknown. The reader is a seam: the registry read that verifies a parent
-// binding is CRW-386's, and a production run holds none, so no role is ever claimed from the prompt.
+// promptSubmitRole is the session's registry role, or unknown. The reader is a seam: PromptSubmitHandle holds none, and the
+// harness hands PromptSubmitHandleWithRole the read-only registry reader, so no role is ever claimed from the prompt.
 func promptSubmitRole(seams *promptDcloseSeams, cwd, sessionID string) PromptRole {
 	if seams == nil || seams.role == nil {
 		return PromptRoleUnknown

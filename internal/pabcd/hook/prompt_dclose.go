@@ -77,7 +77,7 @@ type promptDcloseSeams struct {
 	// report a post-rename failure without a package-level variable (CRW-869, finding 2).
 	writeMarker func(cwd string, held state.State, closePhaseID string, nextWorkPhaseID *string) error
 	writePlan   func(cwd string, plan *goalplan.Goalplan) error
-	// role is the verified registry read of this session's role (CRW-1084; CRW-386 supplies the production reader). nil means no
+	// role is the verified registry read of this session's role (CRW-1084; the harness supplies the production reader through PromptSubmitHandleWithRole). nil means no
 	// reader, which is an unknown role: the loop-arm branch then decides from the prompt's scope words alone.
 	role func(cwd, sessionID string) PromptRole
 }

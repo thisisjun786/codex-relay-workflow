@@ -342,7 +342,8 @@ const (
 // A current-task implementation needs an implement verb and a this/current session, task or issue in the SAME clause, with no
 // negation governing the verb: a negation word right before it, at most a few filler words apart ("do not actually implement",
 // "not to implement"), or a Korean negation after it ("구현하지 마"). A negation elsewhere in the clause ("no questions, please
-// implement ...") does not govern the verb.
+// implement ...") does not govern the verb. Nor does the verb count when another agent does it: a children, worker, subagent or
+// "child <noun>" up to three words before it ("while child tasks implement their issues") makes the clause a coordination.
 //
 // A project is a Linear project link, a coordination word (coordinate, supervise, children or child tasks, 조정, 감독, 부모, 자식
 // but not a child process), or the word "project" - except where "project" only names the place of a single-task fix: "in this
@@ -351,7 +352,10 @@ const (
 func ClassifyLoopArmScope(prompt string) LoopArmScope {
 	current := detectorRE(`\b(?:this|current|my)\s+(?:session|task|issue|thread|worktree|checkout)\b|\bin\s+the\s+current\s+(?:session|thread)\b|(?:이|현재)\s*(?:세션|작업|이슈|태스크|스레드)|지금\s*세션`)
 	childProcess := detectorRE(`\bchild\s+process(?:es)?\b|\bsubprocess(?:es)?\b|자식\s*프로세스`)
-	coordination := detectorRE(`linear\.app/\S+/project/|\bcoordinat(?:e|es|ing|ion)\b|\bsupervis(?:e|es|ing|ion)\b|\bchildren\b|\bchild\s+(?:tasks?|issues?|sessions?|lanes?|threads?|agents?|goals?)\b|조정|감독|부모|자식`)
+	// "coordinate" and "coordinates" are also a plain noun (coordinate values, the coordinates in the parser), so the bare forms
+	// count only in a verb position: at the start of a clause or after a word that introduces a verb ("to coordinate", "and
+	// coordinate"). "coordinating" and "coordination" always count.
+	coordination := detectorRE(`linear\.app/\S+/project/|(?:^|\b(?:to|and|then|will|would|should|must|can|please|also|just|help|let's|lets)\s+)coordinate\b|\bcoordinat(?:ing|ion)\b|\bsupervis(?:e|es|ing|ion)\b|\bchildren\b|\bchild\s+(?:tasks?|issues?|sessions?|lanes?|threads?|agents?|goals?)\b|조정|감독|부모|자식`)
 	projectWord := detectorRE(`\bprojects?\b|프로젝트`)
 	location := detectorRE(`\b(?:in|inside|within|across|throughout|of|for)\s+(?:the\s+current|this|the|current|my|our)\s+(?:project|repo|repository|codebase)\b|(?:이|현재|우리|내)\s*프로젝트\s*(?:에서|안에서|안의|의|에)`)
 	clauses := requestLines(scopeText(prompt))
@@ -384,8 +388,11 @@ func ungovernedImplement(clause string) bool {
 	negatedBefore := detectorRE(`(?:\b(?:not|never|don't|dont|cannot|can't|won't|wont|shouldn't|mustn't|avoid|stop|without|instead\s+of|rather\s+than|no\s+need\s+to)\b` +
 		filler + `|\bno|말고)(?:,|\s)*$`)
 	negatedAfter := detectorRE(`^\S*\s*(?:(?:하|지|고)\s*)?(?:지\s*)?(?:마|말|않|못)`)
+	// Another agent as the subject or the delegate of the verb ("while child tasks implement", "ask the children to implement")
+	// is not this session implementing: the verb must not follow such a noun by up to three words of the same clause.
+	delegated := detectorRE(`(?:\b(?:children|workers?|sub-?agents?|others|they|child\s+\w+|other\s+(?:agents?|sessions?|tasks?|threads?))|(?:자식|하위|워커)\S*)\s+(?:\S+\s+){0,3}$`)
 	for _, at := range implement.FindAllStringIndex(clause, -1) {
-		if !negatedBefore.MatchString(clause[:at[0]]) && !negatedAfter.MatchString(clause[at[1]:]) {
+		if !negatedBefore.MatchString(clause[:at[0]]) && !negatedAfter.MatchString(clause[at[1]:]) && !delegated.MatchString(clause[:at[0]]) {
 			return true
 		}
 	}

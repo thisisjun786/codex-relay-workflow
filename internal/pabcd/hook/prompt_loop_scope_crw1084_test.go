@@ -84,6 +84,10 @@ func TestLoopArmScopeCases(t *testing.T) {
 		{"a fix in a named project", "Use crw-loop to fix the failing test in the migration project", PromptRoleUnknown, "pointer"},
 		{"a fix in this project that also coordinates children", "Use crw-loop to fix the failing test in this project and coordinate the children", PromptRoleUnknown, "pointer"},
 		{"a negated fix in this project", "Use crw-loop for this project, but don't fix the failing test in this project", PromptRoleUnknown, "pointer"},
+		// Post-evaluation (ec92b03a): the noun coordinate is not coordination, and children implementing is not this session.
+		{"a single-task fix of coordinate values", "Use crw-loop to fix rounding of coordinate values in the parser.", PromptRoleUnknown, "recipe"},
+		{"a dispatched task fixing coordinates", "Use crw-loop to fix the coordinates in the parser", PromptRoleTask, "recipe"},
+		{"coordination while children implement", "Run crw-loop in this session to coordinate the migration project while child tasks implement their assigned issues.", PromptRoleUnknown, "pointer"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -169,8 +173,8 @@ func TestLoopScopePointerComposesWithAgbrowse(t *testing.T) {
 	}
 }
 
-// Production holds no role reader until CRW-386 supplies the verified registry read: with no seam the role is unknown, and a
-// project request still gets the pointer rather than a parent claim.
+// PromptSubmitHandle holds no role reader (the harness hands PromptSubmitHandleWithRole one): with no seam the role is unknown,
+// and a project request still gets the pointer rather than a parent claim.
 func TestLoopScopeWithoutARoleReaderReadsNoRole(t *testing.T) {
 	cwd := t.TempDir()
 	answer := PromptSubmitHandle(PromptSubmitPayload{Cwd: cwd, SessionID: "s1", Prompt: "Start crw-loop for the migration project.", TurnID: "t1", PabcdEnabled: true}, "linux", promptSubmitHost(cwd))
@@ -219,6 +223,23 @@ func TestClassifyLoopArmScope(t *testing.T) {
 		{"Run crw-loop on the issues in this project", LoopScopeProject},
 		{"Use crw-loop to fix the failing test in the migration project", LoopScopeProject},
 		{"Use crw-loop to fix the failing test in this project and supervise the child tasks", LoopScopeProject},
+		// Post-evaluation (ec92b03a): the noun "coordinate(s)" is data, not coordination intent.
+		{"Use crw-loop to fix rounding of coordinate values in the parser.", LoopScopeNone},
+		{"Use crw-loop to fix the coordinates in the parser", LoopScopeNone},
+		{"Use crw-loop to fix the coordinate system conversion", LoopScopeNone},
+		{"Use crw-loop for the coordinate transform bug", LoopScopeNone},
+		{"Use crw-loop to coordinate the migration", LoopScopeProject},
+		{"Run crw-loop and coordinate the lanes", LoopScopeProject},
+		{"Run crw-loop for the coordination of the lanes", LoopScopeProject},
+		{"Run crw-loop, coordinating the lanes", LoopScopeProject},
+		// A this/current session plus an implement verb is the exception only when this session is the implementer.
+		{"Run crw-loop in this session to coordinate the migration project while child tasks implement their assigned issues.", LoopScopeProject},
+		{"Run crw-loop in this session to coordinate the migration project; the children will implement their issues", LoopScopeProject},
+		{"Run crw-loop in this session and have the child tasks implement the issues of the project", LoopScopeProject},
+		{"Run crw-loop in this session, ask the children to implement their issues", LoopScopeProject},
+		{"이 세션에서 crw-loop로 프로젝트 조정해줘, 자식 작업이 구현하게 해", LoopScopeProject},
+		{"Use crw-loop to implement this task in this session, and report to the children", LoopScopeCurrentTask},
+		{"Use crw-loop in this session to implement the parser; child tasks wait", LoopScopeCurrentTask},
 	}
 	for _, c := range cases {
 		if got := ClassifyLoopArmScope(c.prompt); got != c.want {
