@@ -8,21 +8,30 @@ import (
 
 // nodeErrorMessage is the oracle's Error.message for err. The Node runtime spells a filesystem
 // failure whose errno planErrno names as "<NAME>: <description>, <op> '<path>'", with the path left
-// out for write and close; anything else keeps err.Error(). divergence-cli.ts:153 prints err.message
+// out for write and close, and "<NAME>: <description>, <op> '<old>' -> '<new>'" for a rename (*os.LinkError); anything else keeps err.Error(). divergence-cli.ts:153 prints err.message
 // verbatim for a failed candidate save, and plan-cli.ts's uncaught failures carry the same text, so
 // planFailure and the divergence candidate add branch share this conversion.
 func nodeErrorMessage(err error) string {
 	output := err.Error()
 	var path *os.PathError
+	var link *os.LinkError
 	var errno syscall.Errno
-	if errors.As(err, &path) && errors.As(err, &errno) {
-		name, desc := planErrno(errno)
-		if name != "" {
-			output = name + ": " + desc + ", " + path.Op
-			if path.Op != "write" && path.Op != "close" {
-				output += " '" + path.Path + "'"
-			}
+	if !errors.As(err, &errno) {
+		return output
+	}
+	name, desc := planErrno(errno)
+	if name == "" {
+		return output
+	}
+	switch {
+	case errors.As(err, &path):
+		output = name + ": " + desc + ", " + path.Op
+		if path.Op != "write" && path.Op != "close" {
+			output += " '" + path.Path + "'"
 		}
+	case errors.As(err, &link):
+		// A rename, link or symlink names both ends: Node's "rename 'old' -> 'new'" (the divergence mode write ends in a rename).
+		output = name + ": " + desc + ", " + link.Op + " '" + link.Old + "' -> '" + link.New + "'"
 	}
 	return output
 }

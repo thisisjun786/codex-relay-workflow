@@ -23,6 +23,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import assert from 'node:assert/strict';
 import { pathToFileURL } from 'node:url';
+import { deep } from './deep.mjs';
 
 const [oracle, scratchArg, outputArg] = process.argv.slice(2);
 if (!oracle || !scratchArg || !outputArg) {
@@ -55,23 +56,6 @@ const cliRows = (() => {
 const rename = s => cliRows(s).replaceAll('cxc orchestration', 'crw orchestration').replaceAll('$codexclaw:cxc-', '$crw:crw-').replaceAll('cxc-', 'crw-').replaceAll('CXC-', 'CRW-')
   .replace(/\bcodexclaw\b/g, 'crw')
   .replace(/\{SKILLS\}\/(dev|search|dev-testing)\//g, '{SKILLS}/crw-$1/');
-// deep maps fn over every string of a JSON value with an explicit stack, so a value nested at the Node stack edge (the CRW-749 cases) is
-// transformed where a recursive walk would overflow before the oracle's own answer does.
-const deep = (v, fn) => {
-  if (typeof v === 'string') return fn(v);
-  if (!v || typeof v !== 'object') return v;
-  const root = Array.isArray(v) ? [] : {};
-  const stack = [[v, root]];
-  while (stack.length) {
-    const [src, dst] = stack.pop();
-    for (const [k, x] of Array.isArray(src) ? src.map((e, i) => [i, e]) : Object.entries(src)) {
-      if (typeof x === 'string') dst[k] = fn(x);
-      else if (x && typeof x === 'object') { const child = Array.isArray(x) ? [] : {}; dst[k] = child; stack.push([x, child]); }
-      else dst[k] = x;
-    }
-  }
-  return root;
-};
 const GRANT = /\[CXC-SUBSPAWN-GRANT:([a-f0-9]{64})\]/gi;
 
 let serial = 0;
