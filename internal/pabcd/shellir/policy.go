@@ -46,7 +46,7 @@ func modelledName(name string) bool {
 		return true
 	}
 	switch name {
-	case "eval", "source", ".", "trap", "cd", "pushd", "popd", "su", "git", "npm", "gh",
+	case "eval", "source", ".", "trap", "cd", "chdir", "pushd", "popd", "su", "git", "npm", "gh",
 		"set", "unset", "hash", "tee", "cp", "mv", "install", "dd", "sort", "rm", "ln",
 		"unlink", "rmdir", "curl", "wget", "setopt", "unsetopt", "alias", "unalias",
 		"repeat", "foreach", "read", "printf", "test", "[":

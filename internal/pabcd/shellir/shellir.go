@@ -407,10 +407,12 @@ func loopContext(ctx Context) Context {
 // statements cannot change the directory (see changesDir); only then does the
 // directory stay known through the loop.
 func prescanLoop(st *state, lists ...[]*syntax.Stmt) (keepsDir bool) {
-	changes, dir := false, changesDir(st, lists...)
+	dir := changesDir(st, lists...)
+	vars := newEffectScan(st, false)
+	changes := false
 	for _, list := range lists {
 		for _, s := range list {
-			if stateChanges(s, st, nil, false) {
+			if vars.stateChanges(s) {
 				changes = true
 			}
 		}
@@ -427,9 +429,10 @@ func prescanLoop(st *state, lists ...[]*syntax.Stmt) (keepsDir bool) {
 // changesDir checks only directory changes, following the same functions and wrappers as the state prescan. CDPATH and
 // commands that may replace the shell's builtins remain conservative; harmless function and wrapper calls keep the directory.
 func changesDir(st *state, lists ...[]*syntax.Stmt) bool {
+	e := newEffectScan(st, true)
 	for _, list := range lists {
 		for _, s := range list {
-			if stateChanges(s, st, nil, true) {
+			if e.stateChanges(s) {
 				return true
 			}
 		}
@@ -437,40 +440,82 @@ func changesDir(st *state, lists ...[]*syntax.Stmt) bool {
 	return false
 }
 
-// stateChanges reports whether a node can change the directory or the variables a later command reads. A call to a function
-// counts when the function's body does, and a wrapper (command, builtin, exec) counts when the program it runs does. calls is
-// the chain of functions being judged, so a recursive function counts as a change. directoryOnly excludes variable changes.
-func stateChanges(n syntax.Node, st *state, calls []string, directoryOnly bool) bool {
+// effectScan judges whether a statement can change the directory (directoryOnly) or the variables a later command reads. A call
+// to a function counts when the function's body does, and a wrapper (command, builtin, exec) counts when the program it runs
+// does. The verdict for each function is kept, so a function that many calls reach is judged once and the work stays bounded by
+// the size of the text. A verdict of no change is exact. A verdict of change may be conservative: a call back into a function
+// being judged, or a chain of calls deeper than MaxNestingDepth, counts as a change.
+type effectScan struct {
+	st            *state
+	directoryOnly bool
+	verdicts      map[string]bool
+	active        []string
+}
+
+func newEffectScan(st *state, directoryOnly bool) *effectScan {
+	return &effectScan{st: st, directoryOnly: directoryOnly, verdicts: map[string]bool{}}
+}
+
+// stateChanges reports whether a node can change the state the scan judges. Changes are only ever set to true, so a later
+// node in the same tree cannot undo an earlier one.
+func (e *effectScan) stateChanges(n syntax.Node) bool {
 	changes := false
 	syntax.Walk(n, func(n syntax.Node) bool {
 		switch c := n.(type) {
 		case *syntax.Lit:
-			if directoryOnly && strings.Contains(c.Value, "CDPATH") {
+			if e.directoryOnly && strings.Contains(c.Value, "CDPATH") {
 				changes = true
 			}
 		case *syntax.CallExpr:
-			if !directoryOnly && len(c.Assigns) > 0 || callChanges(c, st, calls, directoryOnly) {
+			if !e.directoryOnly && len(c.Assigns) > 0 || e.callChanges(c) {
 				changes = true
 			}
 		case *syntax.DeclClause, *syntax.LetClause, *syntax.ArithmCmd, *syntax.ForClause:
-			changes = !directoryOnly
+			if !e.directoryOnly {
+				changes = true
+			}
+		case *syntax.BinaryArithm:
+			// an assignment inside an arithmetic expansion, $((n=1)), sets the variable on its left
+			if !e.directoryOnly && assignsArithm(c.Op) {
+				changes = true
+			}
+		case *syntax.UnaryArithm:
+			if !e.directoryOnly && (c.Op == syntax.Inc || c.Op == syntax.Dec) {
+				changes = true
+			}
+		case *syntax.ParamExp:
+			// a default assignment, ${n:=x} or ${n=x}, sets the variable it names when the test holds
+			if !e.directoryOnly && c.Exp != nil && (c.Exp.Op == syntax.AssignUnset || c.Exp.Op == syntax.AssignUnsetOrNull) {
+				changes = true
+			}
 		}
 		return !changes
 	})
 	return changes
 }
 
-func callChanges(c *syntax.CallExpr, st *state, calls []string, directoryOnly bool) bool {
+// assignsArithm reports whether an arithmetic operator assigns to its left operand.
+func assignsArithm(op syntax.BinAritOperator) bool {
+	switch op {
+	case syntax.Assgn, syntax.AddAssgn, syntax.SubAssgn, syntax.MulAssgn, syntax.QuoAssgn, syntax.RemAssgn,
+		syntax.AndAssgn, syntax.OrAssgn, syntax.XorAssgn, syntax.ShlAssgn, syntax.ShrAssgn,
+		syntax.AndBoolAssgn, syntax.OrBoolAssgn, syntax.XorBoolAssgn, syntax.PowAssgn:
+		return true
+	}
+	return false
+}
+
+func (e *effectScan) callChanges(c *syntax.CallExpr) bool {
 	words := make([]Word, len(c.Args))
 	for i, a := range c.Args {
 		v := a.Lit()
 		words[i] = Word{Known: v != "", Value: v}
 	}
-	return wordsChange(words, st, calls, directoryOnly)
+	return e.wordsChange(words)
 }
 
 // wordsChange reports whether a command with these words can change the state. A program the text does not show counts.
-func wordsChange(words []Word, st *state, calls []string, directoryOnly bool) bool {
+func (e *effectScan) wordsChange(words []Word) bool {
 	if len(words) == 0 {
 		return false
 	}
@@ -478,16 +523,11 @@ func wordsChange(words []Word, st *state, calls []string, directoryOnly bool) bo
 		return true
 	}
 	name := words[0].Value
-	if directoryOnly && strings.ContainsAny(name, `\$'"`+"`") {
+	if e.directoryOnly && strings.ContainsAny(name, `\$'"`+"`") {
 		return true
 	}
-	if body, ok := st.funcs[name]; ok {
-		for _, f := range calls {
-			if f == name {
-				return true
-			}
-		}
-		return stateChanges(body, st, append(calls, name), directoryOnly)
+	if body, ok := e.st.funcs[name]; ok {
+		return e.function(name, body)
 	}
 	switch name {
 	case "command", "builtin", "exec":
@@ -496,7 +536,7 @@ func wordsChange(words []Word, st *state, calls []string, directoryOnly bool) bo
 			return true
 		}
 		for _, inner := range u.inner {
-			if wordsChange(inner, st, calls, directoryOnly) {
+			if e.wordsChange(inner) {
 				return true
 			}
 		}
@@ -506,9 +546,30 @@ func wordsChange(words []Word, st *state, calls []string, directoryOnly bool) bo
 		return true
 	case "read", "mapfile", "readarray", "getopts", "printf", "unset",
 		"let", "export", "declare", "typeset", "local", "readonly", "set", "shift":
-		return !directoryOnly
+		return !e.directoryOnly
 	}
 	return false
+}
+
+// function judges the body of a function once for this scan. A call back into a function being judged is a change, as is a
+// chain deeper than MaxNestingDepth; both only keep the state unknown.
+func (e *effectScan) function(name string, body *syntax.Stmt) bool {
+	if v, ok := e.verdicts[name]; ok {
+		return v
+	}
+	if len(e.active) >= MaxNestingDepth {
+		return true
+	}
+	for _, f := range e.active {
+		if f == name {
+			return true
+		}
+	}
+	e.active = append(e.active, name)
+	changes := e.stateChanges(body)
+	e.active = e.active[:len(e.active)-1]
+	e.verdicts[name] = changes
+	return changes
 }
 
 func (w *walker) binary(c *syntax.BinaryCmd, st *state, ctx Context) error {
