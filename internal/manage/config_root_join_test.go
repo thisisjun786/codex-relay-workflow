@@ -2,7 +2,9 @@ package manage
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -412,11 +414,12 @@ func TestRootDirTakesTheDirectoryFromTheText(t *testing.T) {
 	}
 }
 
-// joinRootCleaningCalls are the calls of path/filepath that clean their result. Below a configured
+// joinRootCleaningCalls are the calls of path/filepath that clean their result, directly or in the
+// names a search or a walk builds from the directory it was given (Glob, Walk, WalkDir). Below a configured
 // or environment root they fold a ".." that follows a symbolic link before the filesystem does, so
 // a path built that way names a directory the configuration did not. internal/manage builds such a
 // path with crwconfig.JoinRoot and takes its directory with rootDir.
-var joinRootCleaningCalls = map[string]bool{"Join": true, "Dir": true, "Clean": true, "Abs": true, "Split": true}
+var joinRootCleaningCalls = map[string]bool{"Join": true, "Dir": true, "Clean": true, "Abs": true, "Split": true, "Glob": true, "Walk": true, "WalkDir": true}
 
 // joinRootCleaningAllowed names the functions that may still call one, and why: each works on a
 // path that is already resolved, or on text that is not a root.
@@ -427,7 +430,7 @@ var joinRootCleaningAllowed = map[string]string{
 	"improve_collect.go:improvePlanOutput":   "takes the directory of the output store.Realpath already resolved",
 }
 
-// No internal/manage source calls filepath.Join, Dir, Clean, Abs or Split outside the functions
+// No internal/manage source calls filepath.Join, Dir, Clean, Abs, Split, Glob, Walk or WalkDir outside the functions
 // above, so a new path below a configured root cannot reintroduce the cleaning.
 func TestJoinRootNoCleaningPathCallsInManage(t *testing.T) {
 	files, err := filepath.Glob("*.go")
@@ -472,5 +475,100 @@ func TestJoinRootNoCleaningPathCallsInManage(t *testing.T) {
 	sort.Strings(found)
 	for _, f := range found {
 		t.Errorf("%s: build a path below a configured root with crwconfig.JoinRoot and take its directory with rootDir", f)
+	}
+}
+
+// A directory listing a command makes below a configured root keeps the spelling too: the
+// filepath.Glob and filepath.WalkDir calls join each name they find to the directory with
+// filepath.Join, which folds a ".." that follows a link, so a search for the pump's rollout, the
+// release archive or the audit reference sources went on in the wrong directory after its first level.
+
+// pump_sources: the rollout of a parent is found below a CODEX_HOME spelled through a link and "..".
+func TestJoinRootPumpRolloutIsFoundBelowTheConfiguredHome(t *testing.T) {
+	f := newJoinRoot(t)
+	day := f.mkdir(t, "sessions", "2026", "10", "09")
+	want := filepath.Join(day, "rollout-thread-a.jsonl")
+	if err := os.WriteFile(want, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	e, _, _ := auditTestEnv(t)
+	e.Getenv = func(name string) string {
+		if name == "CODEX_HOME" {
+			return f.spelled
+		}
+		return ""
+	}
+	got, err := pumpRolloutPath(e, "thread-a")
+	if err != nil {
+		t.Fatalf("pumpRolloutPath: %v", err)
+	}
+	if got == "" {
+		t.Fatalf("the rollout below the configured CODEX_HOME was not found")
+	}
+	requireJoinRootNames(t, got, want)
+	if missing, err := pumpRolloutPath(e, "thread-b"); err != nil || missing != "" {
+		t.Errorf("a thread without a rollout answered %q, %v", missing, err)
+	}
+	f.requireNoWrong(t)
+}
+
+// upgrade_steps: the release archive is found, copied and verified below a release directory
+// spelled through a link and "..".
+func TestJoinRootUpgradeFindsTheArchiveInTheReleaseDirectory(t *testing.T) {
+	f := newJoinRoot(t)
+	archive := []byte("archive bytes")
+	name := "crw_1.0.0_linux_amd64.tar.gz"
+	if err := os.WriteFile(filepath.Join(f.real, name), archive, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(archive)
+	sums := hex.EncodeToString(digest[:]) + "  " + name + "\n"
+	if err := os.WriteFile(filepath.Join(f.real, upgradeSumsName), []byte(sums), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	e, _, _ := auditTestEnv(t)
+	run := &upgradeRunState{ctx: context.Background(), e: e, opts: upgradeOptions{ReleaseDir: f.spelled}, dir: t.TempDir()}
+	pinned, code, reason := run.verifySums()
+	if code != 0 {
+		t.Fatalf("verifySums exit %d (%s), steps %+v", code, reason, run.steps)
+	}
+	if got, err := os.ReadFile(pinned); err != nil || string(got) != string(archive) {
+		t.Errorf("the pinned copy is %q, %v", got, err)
+	}
+	f.requireNoWrong(t)
+}
+
+// audit_package: a reference source directory spelled through a link and "..", whose same-named
+// file also exists in the directory a cleaned spelling names, copies the configured one.
+func TestJoinRootAuditCopiesTheConfiguredSourceDirectory(t *testing.T) {
+	f := newJoinRoot(t)
+	f.mkdir(t, "sub")
+	for rel, text := range map[string]string{"a.txt": "configured a", "sub/b.txt": "configured b"} {
+		if err := os.WriteFile(filepath.Join(f.real, rel), []byte(text), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.MkdirAll(f.wrong, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(f.wrong, "a.txt"), []byte("decoy a"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dst := t.TempDir()
+	if err := auditPkgCopySources([]string{f.spelled}, dst); err != nil {
+		t.Fatalf("auditPkgCopySources: %v", err)
+	}
+	for rel, want := range map[string]string{"a.txt": "configured a", "sub/b.txt": "configured b"} {
+		got, err := os.ReadFile(filepath.Join(dst, "state", rel))
+		if err != nil || string(got) != want {
+			t.Errorf("reference/state/%s is %q, %v; want %q", rel, got, err, want)
+		}
+	}
+	// a link below the source is still refused
+	if err := os.Symlink(f.real, filepath.Join(f.real, "sub", "loop")); err != nil {
+		t.Fatal(err)
+	}
+	if err := auditPkgCopySources([]string{f.spelled}, t.TempDir()); err == nil {
+		t.Errorf("a symbolic link below the source was copied")
 	}
 }

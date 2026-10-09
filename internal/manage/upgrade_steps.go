@@ -107,7 +107,7 @@ func upgradeOutputHead(text string) string {
 // by the copy, and never again: the bytes that were checked are the bytes every later step reads,
 // so replacing an original after the check cannot change what is unpacked and run.
 func (r *upgradeRunState) verifySums() (string, int, string) {
-	matches, err := filepath.Glob(crwconfig.JoinRoot(r.opts.ReleaseDir, upgradeArchiveGlob))
+	matches, err := rootGlob(r.opts.ReleaseDir, upgradeArchiveGlob)
 	if err != nil || len(matches) == 0 {
 		r.note(upgradeStepSums, nil, 1, "", fmt.Errorf("no %s in %s", upgradeArchiveGlob, r.opts.ReleaseDir))
 		return "", upgradeExitRefused, upgradeReasonSumsFailed

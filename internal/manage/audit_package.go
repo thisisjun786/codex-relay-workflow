@@ -540,19 +540,12 @@ func auditPkgCopySources(sources []string, dst string) error {
 			}
 			continue
 		}
-		err = filepath.WalkDir(source, func(path string, entry os.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
+		err = rootWalk(source, func(path, rel string, entry os.DirEntry) error {
 			if entry.Type()&os.ModeSymlink != 0 {
 				return fmt.Errorf("reference source %s is a symbolic link", path)
 			}
-			rel, err := filepath.Rel(source, path)
-			if err != nil {
-				return err
-			}
 			target := crwconfig.JoinRoot(dst, filepath.Base(source))
-			if rel != "." {
+			if rel != "" {
 				target = crwconfig.JoinRoot(target, rel)
 			}
 			if entry.IsDir() {
