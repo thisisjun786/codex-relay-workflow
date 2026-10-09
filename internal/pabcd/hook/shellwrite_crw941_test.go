@@ -178,3 +178,49 @@ func TestShellIRSedDestsReadsOptionsAsGetopt(t *testing.T) {
 		}
 	}
 }
+
+// TestCRW941ShapesThroughTheThreeEntryPoints sends the re-check shapes through HandleMemoryWriteGate, HandleGitHubPostGuard
+// and HandleWorktreeGuardPreTool as a hook does: a write under the memories root is a memory attempt only (the other two see no
+// post and no removal), a command the reader cannot prove (a sed script file, an ambiguous or unmodelled option) is refused by all
+// three, and a control passes all three.
+func TestCRW941ShapesThroughTheThreeEntryPoints(t *testing.T) {
+	githubPostTempHome(t)
+	rig := newDelRig(t)
+	cwd, root, env := gateScene(t)
+	for _, c := range []struct {
+		command string
+		want    [3]string // memory, github, worktree
+	}{
+		{"sort --o=M/a x.txt", [3]string{"attempt", "allow", "allow"}},
+		{"sort --ou M/a x.txt", [3]string{"attempt", "allow", "allow"}},
+		{"sed --expression 'w M/a' x.txt", [3]string{"attempt", "allow", "allow"}},
+		{"sed --expr='w M/a' x.txt", [3]string{"attempt", "allow", "allow"}},
+		{"sed -e p --e 'W M/a' <<'EOF'\nabc\nEOF", [3]string{"attempt", "allow", "allow"}},
+		{"sed --in 's/a/b/' M/a", [3]string{"attempt", "allow", "allow"}},
+		{"sed -f s.sed x.txt", [3]string{"attempt", "deny", "deny"}},
+		{"sed --fi=s.sed x.txt", [3]string{"attempt", "deny", "deny"}},
+		{"sed --f s.sed x.txt", [3]string{"attempt", "deny", "deny"}},
+		{"sed --s p x.txt", [3]string{"attempt", "deny", "deny"}},
+		{"sort --o=out.txt x.txt", [3]string{"none", "allow", "allow"}},
+		{"sort -o out.txt x.txt", [3]string{"none", "allow", "allow"}},
+		{"sed -n p x.txt", [3]string{"none", "allow", "allow"}},
+		{"sed --expression 's/a/b/' x.txt", [3]string{"none", "allow", "allow"}},
+	} {
+		command := strings.ReplaceAll(c.command, "M/", root+"/")
+		var got [3]string
+		got[0], got[1], got[2] = "none", "allow", "allow"
+		if HandleMemoryWriteGate(gateBash(t, cwd, command), env) != "" {
+			got[0] = "attempt"
+		}
+		if HandleGitHubPostGuard(githubPostShell(t, cwd, command)) != "" {
+			got[1] = "deny"
+		}
+		raw := gatePayload(t, rig.checkout, map[string]any{"tool_name": "Bash", "tool_input": map[string]any{"command": command}})
+		if HandleWorktreeGuardPreTool(raw, rig.env()) != "" {
+			got[2] = "deny"
+		}
+		if got != c.want {
+			t.Errorf("%q: memory/github/worktree = %v, want %v", c.command, got, c.want)
+		}
+	}
+}
