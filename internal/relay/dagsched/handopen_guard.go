@@ -54,9 +54,13 @@ func guardHandOpenedGeneration(ctx context.Context, st *store.Store, relationshi
 		}
 	}
 	s := &Scheduler{Store: st}
-	snap, n, err := liveNode(ctx, q, plan, node)
+	// only a node the plan no longer holds has no route to ask about; a plan that cannot be read (a stored plan that fails its own check, a failed read) is an error, not an absent node
+	snap, _, err := dag.SnapshotAt(ctx, q, plan, 0)
 	if err != nil {
-		// a node the plan no longer holds has no route to ask about
+		return err
+	}
+	n, ok := nodeOf(snap, node)
+	if !ok {
 		return nil
 	}
 	rel, found, err := currentRelationshipOf(ctx, q, plan, node)

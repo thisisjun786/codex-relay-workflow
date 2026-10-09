@@ -3,9 +3,11 @@ package dagsched
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 )
 
@@ -218,5 +220,44 @@ func TestARecordedHandCorrectionIsNotADeadEndAfterACriteriaRevision(t *testing.T
 	k.rvReportGeneration(rid, "B", 2, criteria)
 	if res, err := k.accept("sr", "B", AcceptInput{Supersedes: accepted["B"].AcceptanceID}); err != nil || res.SupersededID != accepted["B"].AcceptanceID {
 		t.Fatalf("accept the recorded correction = %+v %v", res, err)
+	}
+}
+
+// The guard asks the plan, so a plan it cannot read is not a plan without the node (pre-merge evaluation d2 of CRW-1036): a stored plan that fails its own digest check makes generation-open and
+// generation-bind fail with that error and write nothing, where only a node the plan no longer holds has no route to ask about and keeps the generation allowed.
+func TestGenerationOpenAndBindAreNotAllowedOnAPlanThatCannotBeRead(t *testing.T) {
+	t.Parallel()
+	k, accepted := rvSettledSharedRoot(t)
+	rid := accepted["A"].RelationshipID
+	k.invRevise("sr", "A", "sr-r2", withCriteria(dig("the second edition of A's criteria")))
+	number := openUnguarded(t, k, rid, "by-hand-old", "accepted_result_correction")
+	generations := k.count("SELECT COUNT(*) FROM generations")
+	k.exec("DROP TRIGGER dag_plan_revisions_no_update")
+	k.exec("UPDATE dag_plan_revisions SET state_digest = ? WHERE plan_id = 'sr' AND revision_no = (SELECT MAX(revision_no) FROM dag_plan_revisions WHERE plan_id = 'sr')", dig("not the digest of the rows"))
+	reg := &registry.Registry{Store: k.s}
+	var corrupt *dag.CorruptError
+	if _, err := reg.OpenGeneration(context.Background(), rid, "by-hand-new", "accepted_result_correction", sql.NullString{}); !errors.As(err, &corrupt) {
+		t.Fatalf("generation-open on a plan that fails its digest = %v, want the plan's corrupt error", err)
+	}
+	if _, err := reg.BindAnchor(context.Background(), rid, number, "turn-dispatch", "dispatch_receipt"); !errors.As(err, &corrupt) {
+		t.Fatalf("generation-bind on a plan that fails its digest = %v, want the plan's corrupt error", err)
+	}
+	if got := k.count("SELECT COUNT(*) FROM generations"); got != generations {
+		t.Fatalf("%d generations after the failed open, want %d", got, generations)
+	}
+	if k.count("SELECT COUNT(*) FROM generations WHERE relationship_id = ? AND execution_generation = ? AND anchor_state = 'bound'", rid, number) != 0 {
+		t.Fatal("the generation was bound")
+	}
+}
+
+// A node the plan no longer holds has no route to ask about: the generation is allowed, as before.
+func TestGenerationOpenIsAllowedForANodeThatLeftThePlan(t *testing.T) {
+	t.Parallel()
+	k, accepted := rvSettledSharedRoot(t)
+	rid := accepted["B"].RelationshipID
+	k.putPlan("sr", int(k.snapshot("sr").Revision), "sr-r2", doc{"op": dag.OpRetireEdge, "edge_id": "rb"}, doc{"op": dag.OpRetireNode, "node_id": "B"})
+	reg := &registry.Registry{Store: k.s}
+	if _, err := reg.OpenGeneration(context.Background(), rid, "by-hand-gone", "accepted_result_correction", sql.NullString{}); err != nil {
+		t.Fatalf("generation-open for a node that left the plan = %v, want it allowed", err)
 	}
 }
