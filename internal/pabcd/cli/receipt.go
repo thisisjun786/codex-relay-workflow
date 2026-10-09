@@ -294,7 +294,7 @@ func RunReceiptCLI(args ReceiptCLIArgs, options ReceiptRunOptions) (ReceiptCLIRe
 		}
 		return ReceiptCLIResult{}, err
 	}
-	if err = crwdir.PublishContext(ctx, path, data); err != nil {
+	if err = crwdir.PublishContext(ctx, path, data); err != nil && !receiptUnsyncedOnly(err) {
 		if result, refused := receiptPublishRefusal(ctx, err); refused {
 			return result, nil
 		}
@@ -313,6 +313,15 @@ func RunReceiptCLI(args ReceiptCLIArgs, options ReceiptRunOptions) (ReceiptCLIRe
 		return refuse(receiptInterrupted)
 	}
 	return ReceiptCLIResult{Output: path}, nil
+}
+
+// receiptUnsyncedOnly is true when err says the receipt was renamed into place and only the sync of its directory did not run
+// because the directory could not be opened for reading: the evidence directory takes write and search permission and no read
+// permission (mode 0300), and the receipt, which no later record depends on, stands. Any other post-rename failure (a sync
+// that ran and failed) is not covered and is returned.
+func receiptUnsyncedOnly(err error) bool {
+	var path *fs.PathError
+	return crwdir.Published(err) && errors.As(err, &path) && path.Op == "open" && errors.Is(err, fs.ErrPermission)
 }
 
 // receiptPublishRefusal maps the error of the receipt's publish onto the caller's result: the

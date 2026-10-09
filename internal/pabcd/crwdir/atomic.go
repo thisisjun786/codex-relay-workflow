@@ -45,8 +45,9 @@ const (
 // After the rename the directory that holds the file is fsynced (SyncDir), so that once Publish returns the entry survives a
 // power failure and not only the file's data. A failure of that sync is returned as a *PublishedError although the rename has
 // happened: the file is in place and must not be undone, but it is not known to be durable. Published(err) tells that error from
-// one returned before the rename, where nothing was published (CRW-802). A directory the process can write into but not open
-// for reading (mode 0300) cannot be synced and is published without the sync, with no error.
+// one returned before the rename, where nothing was published (CRW-802). That includes a directory the process can write into
+// but not open for reading (mode 0300): the sync did not run, so the publication is reported as published and unsynced, and a
+// caller whose file does not depend on the sync (the receipt) decides that for itself.
 //
 // The owner of an existing file and its hard links are not kept, and there is no lock against a concurrent writer (the last
 // rename wins).
@@ -161,7 +162,7 @@ func publish(finalPath string, data []byte, fail func(publishStep) error) (err e
 	if err = at(stepDirSync); err != nil {
 		return &PublishedError{Err: publishedUnsynced(err)}
 	}
-	if err = syncDirIfReadable(filepath.Dir(target)); err != nil {
+	if err = SyncDir(filepath.Dir(target)); err != nil {
 		return &PublishedError{Err: publishedUnsynced(err)}
 	}
 	return nil
@@ -170,24 +171,6 @@ func publish(finalPath string, data []byte, fail func(publishStep) error) (err e
 // publishedUnsynced words a failed directory sync so that a caller that prints the error says the file is in place.
 func publishedUnsynced(err error) error {
 	return fmt.Errorf("the new file is in place but its directory could not be synced: %w", err)
-}
-
-// syncDirIfReadable is SyncDir for a directory the publication was able to write into: a directory this process may search
-// and write but not read (mode 0300, a write-only evidence directory) cannot be opened for the sync, which says nothing about
-// the disk, and the publication stands without it. Every other failure is returned.
-func syncDirIfReadable(dir string) error {
-	d, err := os.Open(dir)
-	if errors.Is(err, fs.ErrPermission) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	if err = d.Sync(); err != nil {
-		_ = d.Close()
-		return err
-	}
-	return d.Close()
 }
 
 // resolveTarget is the path Publish replaces and what is there now: a nil info means a new file. A symlink is followed to

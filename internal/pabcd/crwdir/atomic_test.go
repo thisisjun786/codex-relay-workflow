@@ -3,6 +3,7 @@ package crwdir
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -303,22 +304,35 @@ func TestPublishCheckedAndContextSyncTheDirectory(t *testing.T) {
 	}
 }
 
-// A directory that takes writes but cannot be opened for reading cannot be fsynced; the publication stands without an error.
-func TestPublishInAWriteOnlyDirectoryNeedsNoDirectorySync(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.Chmod(dir, 0o300); err != nil {
-		t.Fatal(err)
+// A directory that takes writes but cannot be opened for reading cannot be fsynced: the rename has happened, so every publish
+// entry point reports the failed open as a PublishedError (the file is in place, its entry is not known to be durable) and
+// none of them reports success for a sync that did not run (CRW-802).
+func TestPublishInAWriteOnlyDirectoryReportsTheUnsyncedDirectory(t *testing.T) {
+	entries := map[string]func(final string) error{
+		"Publish":        func(final string) error { return Publish(final, []byte("new")) },
+		"PublishChecked": func(final string) error { return PublishChecked(final, []byte("new"), func() error { return nil }) },
+		"PublishContext": func(final string) error { return PublishContext(context.Background(), final, []byte("new")) },
+		"PublishDurable": func(final string) error { return PublishDurable(final, []byte("new")) },
 	}
-	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
-	if _, err := os.ReadDir(dir); err == nil {
-		t.Skip("the directory stays readable despite mode 0300 (privileged user)")
-	}
-	final := filepath.Join(dir, "crw.json")
-	if err := Publish(final, []byte("new")); err != nil {
-		t.Fatalf("Publish in a write-only directory: %v", err)
-	}
-	if err := os.Chmod(dir, 0o755); err != nil || read(t, final) != "new" {
-		t.Fatalf("chmod %v, content %q", err, read(t, final))
+	for name, run := range entries {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.Chmod(dir, 0o300); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+			if _, err := os.ReadDir(dir); err == nil {
+				t.Skip("the directory stays readable despite mode 0300 (privileged user)")
+			}
+			final := filepath.Join(dir, "crw.json")
+			err := run(final)
+			if !Published(err) || !errors.Is(err, fs.ErrPermission) {
+				t.Fatalf("%s in a write-only directory: err %v (published %v, permission %v), want a PublishedError for the failed directory open", name, err, Published(err), errors.Is(err, fs.ErrPermission))
+			}
+			if err := os.Chmod(dir, 0o755); err != nil || read(t, final) != "new" || len(temps(t, dir)) != 0 {
+				t.Fatalf("chmod %v, content %q, temp files %v", err, read(t, final), temps(t, dir))
+			}
+		})
 	}
 }
 
