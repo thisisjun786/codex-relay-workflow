@@ -10,7 +10,12 @@ import (
 func TestProbeEnvRemovesEveryGitVariableAndAppliesOverridesOnce(t *testing.T) {
 	base := []string{"PATH=/bin", "GIT_DIR=/x", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_SSH_COMMAND=ssh", "LC_ALL=ko_KR.UTF-8", "HOME=/h"}
 	got := ProbeEnv(base, "LC_ALL=C", "GIT_INDEX_FILE=/i")
-	want := []string{"GIT_TERMINAL_PROMPT=0", "GIT_NO_LAZY_FETCH=1", "PATH=/bin", "HOME=/h", "LC_ALL=C", "GIT_INDEX_FILE=/i"}
+	want := append(policyEnv(), "PATH=/bin", "HOME=/h", "LC_ALL=C", "GIT_INDEX_FILE=/i")
+	if !slices.Equal(policyEnv(), []string{"GIT_TERMINAL_PROMPT=0", "GIT_NO_LAZY_FETCH=1", "GIT_OPTIONAL_LOCKS=0", "GIT_NO_REPLACE_OBJECTS=1", "GIT_CONFIG_COUNT=3",
+		"GIT_CONFIG_KEY_0=core.hooksPath", "GIT_CONFIG_VALUE_0=" + os.DevNull, "GIT_CONFIG_KEY_1=submodule.recurse", "GIT_CONFIG_VALUE_1=false",
+		"GIT_CONFIG_KEY_2=core.fsmonitor", "GIT_CONFIG_VALUE_2=false"}) {
+		t.Fatalf("policy %q", policyEnv())
+	}
 	if !slices.Equal(got, want) {
 		t.Fatalf("got %q\nwant %q", got, want)
 	}

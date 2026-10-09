@@ -45,29 +45,29 @@ func TestParseStatusZ(t *testing.T) {
 func TestRunOutputLimit(t *testing.T) {
 	hermetic(t)
 	for limit, ok := range map[int]bool{8: true, 7: false, 5: false} {
-		out, err := runBounded("sh", []string{"-c", "printf aaaa; printf bbbb >&2"}, nil, limit, time.Minute)
+		out, err := runBounded("", "sh", []string{"-c", "printf aaaa; printf bbbb >&2"}, nil, limit, time.Minute)
 		if (err == nil) != ok || (ok && string(out) != "aaaa") {
 			t.Errorf("limit %d: %q, %v", limit, out, err)
 		}
 	}
 	started := time.Now()
-	if _, err := runBounded("sh", []string{"-c", "sleep 5 & printf 12345; wait"}, nil, 4, time.Minute); err == nil || time.Since(started) > 3*time.Second {
+	if _, err := runBounded("", "sh", []string{"-c", "sleep 5 & printf 12345; wait"}, nil, 4, time.Minute); err == nil || time.Since(started) > 3*time.Second {
 		t.Fatalf("a child over the limit must be killed at once: %v after %v", err, time.Since(started))
 	}
 	started = time.Now()
-	if _, err := runBounded("sh", []string{"-c", "sleep 5 & printf 1; wait"}, nil, 1<<20, 200*time.Millisecond); !errors.Is(err, context.DeadlineExceeded) || time.Since(started) > 3*time.Second {
+	if _, err := runBounded("", "sh", []string{"-c", "sleep 5 & printf 1; wait"}, nil, 1<<20, 200*time.Millisecond); !errors.Is(err, context.DeadlineExceeded) || time.Since(started) > 3*time.Second {
 		t.Fatalf("a child past the time limit must be killed at once: %v after %v", err, time.Since(started))
 	}
 	var exit *ExitError
-	if _, err := runBounded("sh", []string{"-c", "echo 'fatal: not a git repository' >&2; exit 128"}, nil, 1<<20, time.Minute); !errors.As(err, &exit) || !NotARepository(err) {
+	if _, err := runBounded("", "sh", []string{"-c", "echo 'fatal: not a git repository' >&2; exit 128"}, nil, 1<<20, time.Minute); !errors.As(err, &exit) || !NotARepository(err) {
 		t.Fatalf("exit 128: %v", err)
 	}
 	for _, script := range []string{"echo 'fatal: detected dubious ownership' >&2; exit 128", "echo 'fatal: not a git repository' >&2; exit 1"} {
-		if _, err := runBounded("sh", []string{"-c", script}, nil, 1<<20, time.Minute); err == nil || NotARepository(err) {
+		if _, err := runBounded("", "sh", []string{"-c", script}, nil, 1<<20, time.Minute); err == nil || NotARepository(err) {
 			t.Errorf("%s: %v is not the not-a-repository answer", script, err)
 		}
 	}
-	if _, err := runBounded("/nonexistent/git", nil, nil, 1<<20, time.Minute); err == nil || NotARepository(err) {
+	if _, err := runBounded("", "/nonexistent/git", nil, nil, 1<<20, time.Minute); err == nil || NotARepository(err) {
 		t.Errorf("a git that cannot start: %v", err)
 	}
 }

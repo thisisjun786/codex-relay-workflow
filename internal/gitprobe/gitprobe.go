@@ -2,8 +2,11 @@
 // environment, the global options and the time bound the bridge's managed worktrees introduced, shared so the
 // session source binding, the source identity capture and the bridge verify one worktree the same way.
 //
-// Two environments are offered. ProbeEnv is the read-only probe's: every inherited GIT_* variable removed, the
-// probe made non-interactive, then the caller's trusted overrides. Sanitize is the common base for a caller that
+// Two environments are offered. ProbeEnv is the read-only probe's: every inherited GIT_* variable removed, then the
+// whole probe policy as environment (no prompt, no lazy fetch, no optional locks, no replacement objects, and the
+// configuration of GlobalOptions through GIT_CONFIG_COUNT), then the caller's trusted overrides. A caller that keeps
+// git's argument list as the oracle recorded it (the source identity capture, whose calls the CXC replay compares)
+// gets the policy from the environment alone; Command passes GlobalOptions as arguments too, as the bridge did. Sanitize is the common base for a caller that
 // runs more than probes (premerge fetches over the network, so it keeps the transport variables): only the
 // variables that point git at another repository, object store, index, namespace or discovery boundary, or that
 // inject configuration, are removed, then the overrides. Both apply an override once, after the safe default, so
@@ -15,6 +18,7 @@ import (
 	"os"
 	"os/exec"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -52,13 +56,27 @@ func Args(cwd string, args ...string) []string {
 	return append(append(GlobalOptions(), "-C", cwd), args...)
 }
 
+// policyConfig is the configuration GlobalOptions sets, as key and value.
+var policyConfig = [][2]string{{"core.hooksPath", os.DevNull}, {"submodule.recurse", "false"}, {"core.fsmonitor", "false"}}
+
+// policyEnv is the probe policy as environment variables: GIT_OPTIONAL_LOCKS=0 is --no-optional-locks,
+// GIT_NO_REPLACE_OBJECTS is --no-replace-objects, and GIT_CONFIG_COUNT with its keys and values is the -c options
+// (command-line scope, so no file overrides them).
+func policyEnv() []string {
+	env := []string{"GIT_TERMINAL_PROMPT=0", "GIT_NO_LAZY_FETCH=1", "GIT_OPTIONAL_LOCKS=0", "GIT_NO_REPLACE_OBJECTS=1", "GIT_CONFIG_COUNT=" + strconv.Itoa(len(policyConfig))}
+	for i, kv := range policyConfig {
+		env = append(env, "GIT_CONFIG_KEY_"+strconv.Itoa(i)+"="+kv[0], "GIT_CONFIG_VALUE_"+strconv.Itoa(i)+"="+kv[1])
+	}
+	return env
+}
+
 // ProbeEnv is the read-only probe's environment: base (nil is the process environment) without any GIT_*
-// variable, after GIT_TERMINAL_PROMPT=0 and GIT_NO_LAZY_FETCH=1, then overrides.
+// variable, after the policy (policyEnv), then overrides.
 func ProbeEnv(base []string, overrides ...string) []string {
 	if base == nil {
 		base = os.Environ()
 	}
-	env := []string{"GIT_TERMINAL_PROMPT=0", "GIT_NO_LAZY_FETCH=1"}
+	env := policyEnv()
 	for _, entry := range base {
 		if !strings.HasPrefix(entry, "GIT_") {
 			env = append(env, entry)

@@ -69,16 +69,17 @@ func run(cwd string, limit int, args ...string) ([]byte, error) {
 }
 
 // Probe runs git in cwd under gitprobe's read-only probe policy (every inherited GIT_* variable removed, no
-// prompt, no hooks, no file system monitor, the options of gitprobe.Args) and returns its stdout. Stderr is kept
+// prompt, no hooks, no file system monitor, no optional locks), given through the environment so the argument
+// list stays the one the oracle ran, and returns its stdout. Stderr is kept
 // only for the ExitError: git failing here is an outcome the caller handles, so its diagnostics must not reach
 // the user. Going over the output limit, as Node's maxBuffer does, or past the time limit kills the child and
 // returns at once, even if a grandchild still holds the pipes.
 func Probe(cwd string, o ProbeOptions, args ...string) ([]byte, error) {
-	return runBounded("git", gitprobe.Args(cwd, args...), gitprobe.ProbeEnv(nil, o.Env...), o.Limit, o.Timeout)
+	return runBounded(cwd, "git", args, gitprobe.ProbeEnv(nil, o.Env...), o.Limit, o.Timeout)
 }
 
-// runBounded runs name with args in env and returns its stdout, within limit bytes of output and timeout.
-func runBounded(name string, args, env []string, limit int, timeout time.Duration) ([]byte, error) {
+// runBounded runs name with args in cwd and env and returns its stdout, within limit bytes of output and timeout.
+func runBounded(cwd, name string, args, env []string, limit int, timeout time.Duration) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	outR, outW, err := os.Pipe()
@@ -92,7 +93,7 @@ func runBounded(name string, args, env []string, limit int, timeout time.Duratio
 	}
 	defer func() { _, _ = outR.Close(), errR.Close() }()
 	cmd := exec.Command(name, args...)
-	cmd.Env, cmd.Stdout, cmd.Stderr = env, outW, errW
+	cmd.Dir, cmd.Env, cmd.Stdout, cmd.Stderr = cwd, env, outW, errW
 	err = cmd.Start()
 	_, _ = outW.Close(), errW.Close() // the child holds its own copies
 	if err != nil {
