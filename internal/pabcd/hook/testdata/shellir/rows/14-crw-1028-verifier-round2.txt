@@ -128,7 +128,7 @@ echo hi >&2
 --cmd
 echo hi 2>&1
 
-=== CRW-1028-v2-14 | T
+=== CRW-1028-v2-14 | B
 --why Control: >&FILE writes another file than the script the text runs (other.sh, not post.sh).
 --file post.sh
 #!/bin/sh
@@ -140,7 +140,7 @@ gh pr comment 1 -b x
 --cmd
 cat evil.sh >&other.sh; bash post.sh
 
-=== CRW-1028-v2-15 | T
+=== CRW-1028-v2-15 | B
 --why Control: a copied directory leaves the script the text runs untouched (it lies outside bin).
 --file other/tool
 #!/bin/sh
@@ -152,7 +152,7 @@ gh pr comment 1 -b x
 --cmd
 cp -r evil bin; bash other/tool
 
-=== CRW-1028-v2-16 | T
+=== CRW-1028-v2-16 | B
 --why Control: the outer text rewrites other.sh, the script runner.sh runs is post.sh, which is not written.
 --file post.sh
 #!/bin/sh

@@ -1557,3 +1557,7 @@ Source: `plugins/codexclaw/components/pabcd-state/src/goalplan.ts` (`closeFixedW
 ## Found by the oracle review of the live model catalog (CRW-1078)
 
 - An OCX that refuses the live-catalog command is treated by the oracle as an ordinary discovery failure (`live-catalog.ts:108-113`), and the port reports it as its own catalog state, `unsupported-ocx-catalog`, with its own message, also over a cached list (`internal/role/livecatalog.go`); port: fixed (CRW-890; the before and after states and messages, the pointers and the pinning tests are in [known-defects/CRW-890.md](known-defects/CRW-890.md)). This row is the one edit CRW-1078's acceptance criterion 2 names to the read-only list.
+
+## CRW-1085 — CRW-726/741 reader range
+
+CRW's shared reader accepts non-executing diagnostic options, bracket conditions, bounded shell files, four fixed Python modules with bounded test discovery, and read-only awk while unreadable code and destinations still fail closed. The oracle has no matching reader; port: fixed (CRW-specific over-refusal). Details and the superseded CRW-894 module controls are in [CRW-1085](known-defects/CRW-1085.md).

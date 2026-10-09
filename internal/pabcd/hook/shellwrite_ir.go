@@ -30,9 +30,19 @@ func shellIRDests(command, cwd string, lookup func(string) (string, bool), resol
 	if err != nil {
 		return nil, false
 	}
-	for _, e := range res.Execs {
+	return shellIRDestsResult(res, cwd, resolve, 0, nil), true
+}
+
+func shellIRDestsResult(res shellir.Result, cwd string, resolve bool, depth int, outer *githubPostWrites) []string {
+	var dests []string
+	writes := githubPostWritesOf(res.Execs, outer)
+	for i, e := range res.Execs {
 		if e.Kind == shellir.KindScriptFile {
-			dests = append(dests, shellIRUnknownDest)
+			if writes.stale(i, e.Script.Value, e.Dir) {
+				dests = append(dests, shellIRUnknownDest)
+			} else {
+				dests = append(dests, shellIRScriptDests(e, cwd, resolve, depth, writes.at(i).as(githubPostBodyKey(e.Script.Value, e.Dir)))...)
+			}
 			continue
 		}
 		own := shellIRExecDests(e)
@@ -41,7 +51,7 @@ func shellIRDests(command, cwd string, lookup func(string) (string, bool), resol
 		}
 		dests = append(dests, own...)
 	}
-	return shellIRUnique(dests), true
+	return shellIRUnique(dests)
 }
 
 // shellIRExecDests returns the destinations one program record writes: its redirections, the files its verb names and the writes
@@ -323,6 +333,11 @@ func shellIRLanguageDests(e shellir.Exec) []string {
 			res = append(res, shellIRUnknownDest)
 		}
 		return append(out, res...)
+	case "awk":
+		if shellIRAwkReadOnly(src) {
+			return out
+		}
+		return append(out, shellIRUnknownDest)
 	case "sed":
 		return append(out, shellVerbSedWrites(shellIRStrings(e.Args))...)
 	case "perl", "ruby":

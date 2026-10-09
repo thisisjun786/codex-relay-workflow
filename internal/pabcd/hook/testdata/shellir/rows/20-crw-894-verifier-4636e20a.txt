@@ -161,21 +161,21 @@ cp evil.py json.py; printf x | python3 -m json.tool
 --why In a directory the reader does not know the module search path starts somewhere it cannot see: python3 -m json.tool is not proven.
 cd "$DIR"; printf x | python3 -m json.tool
 
-=== CRW-894-vf-35 | B | deviation=attempt/deny/deny
+=== CRW-894-vf-35 | B
 --why Control: a json directory with no __init__ is a namespace candidate the standard library package outranks.
 --file json/notes.txt
 x
 --cmd
 printf x | python3 -m json.tool
 
-=== CRW-894-vf-36 | B | deviation=attempt/deny/deny
+=== CRW-894-vf-36 | B
 --why Control: a file json.txt is not a module.
 --file json.txt
 x
 --cmd
 printf x | python3 -m json.tool
 
-=== CRW-894-vf-37 | B | deviation=attempt/deny/deny
+=== CRW-894-vf-37 | B
 --why Control: a file json.py in another directory is not on the module search path.
 --file sub/json.py
 print('local')

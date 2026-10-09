@@ -3,7 +3,7 @@
 # the files the posts read; any other post line, and any write that may reach a trusted temporary root, is refused. The second
 # half is the CDPATH case: a cd by an absolute or ./ path never consults CDPATH, so the directory stays known.
 
-=== CRW-875-22-01 | T
+=== CRW-875-22-01 | B
 --why A script of two clean --body-file posts (with a comment and a blank line) is allowed: every post line is form A.
 --file {TMP}/b.md
 hello
@@ -18,7 +18,7 @@ gh pr comment 2 --body-file {TMP}/c.md
 --cmd
 bash post.sh
 
-=== CRW-875-22-02 | T
+=== CRW-875-22-02 | B
 --why A script of clean posts and commands of exception B (echo, ls, grep, wc) that write nothing is allowed.
 --file {TMP}/b.md
 hello
@@ -31,7 +31,7 @@ gh pr comment 2 --body-file {TMP}/b.md
 --cmd
 sh post.sh
 
-=== CRW-875-22-03 | T
+=== CRW-875-22-03 | B
 --why source reads the same script by the same rule.
 --file {TMP}/b.md
 hello
@@ -41,7 +41,7 @@ gh issue comment 2 --body-file {TMP}/b.md
 --cmd
 source post.sh
 
-=== CRW-875-22-03b | T
+=== CRW-875-22-03b | B
 --why The dot builtin reads the same script by the same rule.
 --file {TMP}/b.md
 hello
@@ -51,7 +51,7 @@ gh issue comment 2 --body-file {TMP}/b.md
 --cmd
 . post.sh
 
-=== CRW-875-22-04 | Q
+=== CRW-875-22-04 | none/deny/allow
 --why A line that runs another script is neither form A nor exception B: the posting script is refused.
 --file {TMP}/b.md
 hello
@@ -64,7 +64,7 @@ gh pr comment 3 --body-file {TMP}/b.md
 --cmd
 bash post.sh
 
-=== CRW-875-22-04b | Q
+=== CRW-875-22-04b | none/deny/allow
 --why A gh read line (gh pr view) is neither form A nor exception B.
 --file {TMP}/b.md
 hello
@@ -74,7 +74,7 @@ gh pr comment 1 --body-file {TMP}/b.md
 --cmd
 bash post.sh
 
-=== CRW-875-22-04c | Q
+=== CRW-875-22-04c | none/deny/allow
 --why A cd line, an assignment line and a git line are not exception B either.
 --file {TMP}/b.md
 hello
@@ -84,7 +84,7 @@ gh pr comment 1 --body-file {TMP}/b.md
 --cmd
 bash post.sh
 
-=== CRW-875-22-04d | Q
+=== CRW-875-22-04d | none/deny/allow
 --why rg with --pre runs a program: not exception B.
 --file {TMP}/b.md
 hello
@@ -94,7 +94,7 @@ gh pr comment 1 --body-file {TMP}/b.md
 --cmd
 bash post.sh
 
-=== CRW-875-22-04e | Q
+=== CRW-875-22-04e | none/deny/allow
 --why An exception B command with a word the reader cannot evaluate is not a literal command.
 --file {TMP}/b.md
 hello
@@ -104,7 +104,7 @@ gh pr comment 1 --body-file {TMP}/b.md
 --cmd
 bash post.sh
 
-=== CRW-875-22-04f | Q
+=== CRW-875-22-04f | none/deny/allow
 --why An exception B program named by a path is the file at that path, not the installed program.
 --file {TMP}/b.md
 hello
@@ -117,7 +117,7 @@ gh pr comment 9 -b "$(env)"
 --cmd
 bash post.sh
 
-=== CRW-875-22-05 | Q
+=== CRW-875-22-05 | none/deny/allow
 --why The second post line carries a command substitution: one bad line refuses the script.
 --file {TMP}/b.md
 hello
@@ -127,7 +127,7 @@ gh pr comment 2 -b "$(env)"
 --cmd
 bash post.sh
 
-=== CRW-875-22-06 | Q
+=== CRW-875-22-06 | none/deny/allow
 --why The second post reads a body file that holds a secret: refused by the secret scan, whatever the first post is.
 --file {TMP}/b.md
 hello
@@ -139,7 +139,7 @@ gh pr comment 2 --body-file {TMP}/s.md
 --cmd
 bash post.sh
 
-=== CRW-875-22-07 | Q
+=== CRW-875-22-07 | none/deny/allow
 --why The script writes the body file before it posts it: the file the guard reads is not the file gh reads.
 --file {TMP}/b.md
 hello
@@ -150,7 +150,7 @@ gh pr comment 2 --body-file {TMP}/b.md
 --cmd
 bash post.sh
 
-=== CRW-875-22-08 | Q
+=== CRW-875-22-08 | none/deny/allow
 --why A writer script of the body file runs before the posting script in the same text.
 --file {TMP}/b.md
 hello
@@ -162,7 +162,7 @@ gh pr comment 2 --body-file {TMP}/b.md
 --cmd
 bash writer.sh; bash post.sh
 
-=== CRW-875-22-08b | Q
+=== CRW-875-22-08b | none/deny/allow
 --why The script writes the body file through a link inside the temporary root.
 --file {TMP}/b.md
 hello
@@ -174,7 +174,7 @@ gh pr comment 2 --body-file {TMP}/b.md
 --cmd
 bash post.sh
 
-=== CRW-875-22-08c | T
+=== CRW-875-22-08c | B
 --why Control: the text around the script writes a file that is not a body file it posts, in a directory the posts do not read.
 --file {TMP}/b.md
 hello
@@ -195,7 +195,7 @@ gh pr comment 2 --body-file {TMP}/b.md
 --cmd
 bash post.sh
 
-=== CRW-875-22-10 | Q
+=== CRW-875-22-10 | none/deny/allow
 --why The text that runs the script writes the body file first.
 --file {TMP}/b.md
 hello
@@ -205,7 +205,7 @@ gh pr comment 2 --body-file {TMP}/b.md
 --cmd
 echo x > {TMP}/b.md; bash post.sh
 
-=== CRW-875-22-11 | Q
+=== CRW-875-22-11 | none/deny/allow
 --why The same, with a clean script of one post line.
 --file {TMP}/b.md
 hello
@@ -214,7 +214,7 @@ gh pr comment 1 --body-file {TMP}/b.md
 --cmd
 echo x > {TMP}/b.md; bash post.sh
 
-=== CRW-875-22-12 | Q
+=== CRW-875-22-12 | none/deny/allow
 --why A post inside a conditional of the script is not one plain line.
 --file {TMP}/b.md
 hello
@@ -224,7 +224,7 @@ if true; then gh pr comment 2 --body-file {TMP}/b.md; fi
 --cmd
 bash post.sh
 
-=== CRW-875-22-13 | Q
+=== CRW-875-22-13 | none/deny/allow
 --why A post in a loop of the script is not one plain line.
 --file {TMP}/b.md
 hello
@@ -234,7 +234,7 @@ gh pr comment 1 --body-file {TMP}/b.md
 --cmd
 bash post.sh
 
-=== CRW-875-22-14 | Q
+=== CRW-875-22-14 | none/deny/allow
 --why A post piped or sent to the background is not one plain line.
 --file {TMP}/b.md
 hello
@@ -244,7 +244,7 @@ gh pr comment 2 --body-file {TMP}/b.md
 --cmd
 bash post.sh
 
-=== CRW-875-22-15 | Q
+=== CRW-875-22-15 | none/deny/allow
 --why A relative body file after a cd the reader cannot resolve (CDPATH search) is refused.
 --file {TMP}/b.md
 hello
@@ -276,21 +276,21 @@ bash missing.sh
 --cmd
 bash post.sh
 
-=== CRW-875-22-20 | T
+=== CRW-875-22-20 | B
 --why CDPATH assigned, then an absolute cd: the absolute target is never searched in CDPATH, so the directory is known and the script runs from it.
 --file sub/clean.sh
 echo clean
 --cmd
 CDPATH=/x; cd {WORK}/sub; bash clean.sh
 
-=== CRW-875-22-21 | T
+=== CRW-875-22-21 | B
 --why CDPATH assigned, then a ./ cd: a ./ target is never searched in CDPATH either.
 --file sub/clean.sh
 echo clean
 --cmd
 CDPATH=/x; cd ./sub; bash clean.sh
 
-=== CRW-875-22-22 | T
+=== CRW-875-22-22 | B
 --why export CDPATH, then a ./ cd; a later script run of the same text is read from the directory reached.
 --file sub/clean.sh
 echo clean
@@ -299,7 +299,7 @@ echo more
 --cmd
 export CDPATH=/x:.; cd ./sub; bash clean.sh; bash more.sh
 
-=== CRW-875-22-23 | Q
+=== CRW-875-22-23 | none/deny/allow
 --why The script is read from the directory the ./ cd reaches under CDPATH (sub/post.sh posts), not from the working directory (post.sh is clean).
 --file post.sh
 echo clean
@@ -333,7 +333,7 @@ CDPATH=/x; cd {WORK}/sub; cd inner; bash clean.sh
 --why Control: CDPATH assigned in a text with no script and no post is not judged.
 echo hi
 
-=== CRW-875-22-30 | Q
+=== CRW-875-22-30 | none/deny/allow
 --why rg --hostname-bin runs the program it names (a program that rewrites the checked body file), so the line is not exception B: the script is refused.
 --file {TMP}/b.md
 hello
@@ -346,7 +346,7 @@ gh pr comment 1 --body-file {TMP}/b.md
 --cmd
 bash post.sh
 
-=== CRW-875-22-30b | Q
+=== CRW-875-22-30b | none/deny/allow
 --why The separated form of --hostname-bin is refused the same way.
 --file {TMP}/b.md
 hello
@@ -386,7 +386,7 @@ gh pr comment 1 --body-file {TMP}/b.md
 --cmd
 bash post.sh
 
-=== CRW-875-22-31c | Q
+=== CRW-875-22-31c | none/deny/allow
 --why A prefix assignment on echo is refused as well (no assignment before any line).
 --file {TMP}/b.md
 hello
@@ -399,7 +399,7 @@ gh pr comment 1 --body-file {TMP}/b.md
 --cmd
 bash post.sh
 
-=== CRW-875-22-31d | Q
+=== CRW-875-22-31d | none/deny/allow
 --why printf -v assigns a variable (PATH among them): printf with an option is refused.
 --file {TMP}/b.md
 hello
@@ -412,7 +412,7 @@ gh pr comment 1 --body-file {TMP}/b.md
 --cmd
 bash post.sh
 
-=== CRW-875-22-32 | T
+=== CRW-875-22-32 | B
 --why Exception B names git status (no option before the subcommand): the script of a clean post and git status after it is allowed (a git line before a post that reads a file is refused, rows 22-56).
 --file {TMP}/b.md
 hello
@@ -425,7 +425,7 @@ git status
 --cmd
 bash post.sh
 
-=== CRW-875-22-32b | T
+=== CRW-875-22-32b | B
 --why git log, show, diff and grep without an option before the subcommand are exception B (git commit is not: it runs hooks, row 22-55); after the last post.
 --file {TMP}/b.md
 hello
@@ -442,7 +442,7 @@ git log --oneline -- docs
 --cmd
 bash post.sh
 
-=== CRW-875-22-32c | Q
+=== CRW-875-22-32c | none/deny/allow
 --why An option before the git subcommand (-C) is not exception B.
 --file {TMP}/b.md
 hello
@@ -455,7 +455,7 @@ gh pr comment 1 --body-file {TMP}/b.md
 --cmd
 bash post.sh
 
-=== CRW-875-22-32d | Q
+=== CRW-875-22-32d | none/deny/allow
 --why git branch is not a subcommand of exception B.
 --file {TMP}/b.md
 hello
@@ -468,7 +468,7 @@ gh pr comment 1 --body-file {TMP}/b.md
 --cmd
 bash post.sh
 
-=== CRW-875-22-32e | Q
+=== CRW-875-22-32e | none/deny/allow
 --why git diff --output writes a file by the text (it could rewrite the checked body file): refused.
 --file {TMP}/b.md
 hello
@@ -481,7 +481,7 @@ gh pr comment 1 --body-file {TMP}/b.md
 --cmd
 bash post.sh
 
-=== CRW-875-22-32f | Q
+=== CRW-875-22-32f | none/deny/allow
 --why An unambiguous abbreviation of --output is read as --output by git.
 --file {TMP}/b.md
 hello
@@ -494,7 +494,7 @@ gh pr comment 1 --body-file {TMP}/b.md
 --cmd
 bash post.sh
 
-=== CRW-875-22-32g | Q
+=== CRW-875-22-32g | none/deny/allow
 --why git grep -O runs a program on the files it finds.
 --file {TMP}/b.md
 hello
@@ -507,7 +507,7 @@ gh pr comment 1 --body-file {TMP}/b.md
 --cmd
 bash post.sh
 
-=== CRW-875-22-33 | Q
+=== CRW-875-22-33 | none/deny/allow
 --why Two posts on one line joined by ; are a list, not a simple command: refused.
 --file {TMP}/b.md
 hello
@@ -519,7 +519,7 @@ gh pr comment 1 --body-file {TMP}/b.md; gh pr comment 2 --body-file {TMP}/b.md
 --cmd
 bash post.sh
 
-=== CRW-875-22-33b | Q
+=== CRW-875-22-33b | none/deny/allow
 --why A redirection on a post line is not form A: refused.
 --file {TMP}/b.md
 hello
@@ -531,7 +531,7 @@ gh pr comment 1 --body-file {TMP}/b.md > {TMP}/out.log
 --cmd
 bash post.sh
 
-=== CRW-875-22-33c | Q
+=== CRW-875-22-33c | none/deny/allow
 --why A redirection on an exception B line is refused (it writes a file).
 --file {TMP}/b.md
 hello
@@ -544,7 +544,7 @@ gh pr comment 1 --body-file {TMP}/b.md
 --cmd
 bash post.sh
 
-=== CRW-875-22-33d | Q
+=== CRW-875-22-33d | none/deny/allow
 --why A trailing ; is a control operator of the line.
 --file {TMP}/b.md
 hello
@@ -556,7 +556,7 @@ gh pr comment 1 --body-file {TMP}/b.md;
 --cmd
 bash post.sh
 
-=== CRW-875-22-34 | T
+=== CRW-875-22-34 | B
 --why An exception B program named by an absolute path in a system directory is the installed program.
 --file {TMP}/b.md
 hello
@@ -569,7 +569,7 @@ gh pr comment 1 --body-file {TMP}/b.md
 --cmd
 bash post.sh
 
-=== CRW-875-22-34b | Q
+=== CRW-875-22-34b | none/deny/allow
 --why A program named by a relative path is a file of the directory, not the installed program.
 --file {TMP}/b.md
 hello
@@ -582,7 +582,7 @@ gh pr comment 1 --body-file {TMP}/b.md
 --cmd
 bash post.sh
 
-=== CRW-875-22-40 | Q
+=== CRW-875-22-40 | none/deny/allow
 --why zsh printf %n stores the count of characters printed so far in the named variable: printf '%n' PATH sets PATH to 0.
 --file {TMP}/b.md
 hello
@@ -592,7 +592,7 @@ gh pr comment 1 --body-file {TMP}/b.md
 --cmd
 zsh -f post.sh
 
-=== CRW-875-22-40b | Q
+=== CRW-875-22-40b | none/deny/allow
 --why A %n after another conversion, and a positional %1$n, assign a variable as well.
 --file {TMP}/b.md
 hello
@@ -602,7 +602,7 @@ gh pr comment 1 --body-file {TMP}/b.md
 --cmd
 zsh -f post.sh
 
-=== CRW-875-22-40c | Q
+=== CRW-875-22-40c | none/deny/allow
 --why A conversion the line rule does not know the meaning of (%(...)T, a * width) is refused rather than read.
 --file {TMP}/b.md
 hello
@@ -612,7 +612,7 @@ gh pr comment 1 --body-file {TMP}/b.md
 --cmd
 bash post.sh
 
-=== CRW-875-22-40d | T
+=== CRW-875-22-40d | B
 --why printf with a format of plain conversions (%s, %d, %%, flags and widths) and escapes prints only.
 --file {TMP}/b.md
 hello
@@ -693,7 +693,7 @@ gh pr comment 1 --body-file {TMP}/b.md
 --cmd
 GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=diff.external GIT_CONFIG_VALUE_0={TMP}/w.sh bash post.sh
 
-=== CRW-875-22-42 | T
+=== CRW-875-22-42 | B
 --why The O of git log -SOrder is the value of -S, not the option -O.
 --file {TMP}/b.md
 hello
@@ -703,7 +703,7 @@ git log -SOrder
 --cmd
 bash post.sh
 
-=== CRW-875-22-42b | T
+=== CRW-875-22-42b | B
 --why The O of git grep -eOpen is the pattern of -e, and the -O after -e is its separate pattern.
 --file {TMP}/b.md
 hello
@@ -714,7 +714,7 @@ git grep -e -O
 --cmd
 bash post.sh
 
-=== CRW-875-22-42c | Q
+=== CRW-875-22-42c | none/deny/allow
 --why In git grep -lO the O is an option of the bundle (-l takes no value): -O runs a program on the files.
 --file {TMP}/b.md
 hello
@@ -724,7 +724,7 @@ gh pr comment 1 --body-file {TMP}/b.md
 --cmd
 bash post.sh
 
-=== CRW-875-22-42d | Q
+=== CRW-875-22-42d | none/deny/allow
 --why A context count bundled before O (git grep -3O) is a number option; the O after it is -O.
 --file {TMP}/b.md
 hello
@@ -777,7 +777,7 @@ echo clean
 --cmd
 CDPATH=/x source entry.sh
 
-=== CRW-875-22-51 | T
+=== CRW-875-22-51 | B
 --why Control: under CDPATH a ./ cd inside the script resolves as without it, so the script is read from the directory reached.
 --file entry.sh
 cd ./sub
@@ -815,14 +815,14 @@ echo clean
 --cmd
 for CDPATH in /x; do :; done; cd sub; bash clean.sh
 
-=== CRW-875-22-53 | T
+=== CRW-875-22-53 | B
 --why Control: the cdpath array does not move a ./ cd.
 --file sub/clean.sh
 echo clean
 --cmd
 cdpath=(/x); cd ./sub; bash clean.sh
 
-=== CRW-875-22-54 | Q
+=== CRW-875-22-54 | none/deny/allow
 --why git diff --src-prefix takes -- as its value, so the --output after it writes the patch to the body file the next line posts (git is also a configured program, so any git line refuses a post that reads a file).
 --file {TMP}/b.md
 hello
@@ -834,7 +834,7 @@ gh pr comment 1 --body-file {TMP}/b.md
 --cmd
 bash post.sh
 
-=== CRW-875-22-55 | Q
+=== CRW-875-22-55 | none/deny/allow
 --why git commit runs the hooks of the repository (a hook can rewrite the body file between the lines): it is not a reading subcommand, and the post after it is refused.
 --file {TMP}/b.md
 hello
@@ -844,7 +844,7 @@ gh pr comment 1 --body-file {TMP}/b.md
 --cmd
 bash post.sh
 
-=== CRW-875-22-56 | Q
+=== CRW-875-22-56 | none/deny/allow
 --why git status may run core.fsmonitor and git diff a textconv or external diff driver of the repository: a post that reads a file after a git line may read a file that program wrote.
 --file {TMP}/b.md
 hello
@@ -854,7 +854,7 @@ gh pr comment 1 --body-file {TMP}/b.md
 --cmd
 bash post.sh
 
-=== CRW-875-22-56b | T
+=== CRW-875-22-56b | B
 --why A git line after the last post cannot change what that post read.
 --file {TMP}/b.md
 hello
@@ -864,7 +864,7 @@ git status
 --cmd
 bash post.sh
 
-=== CRW-875-22-56c | Q
+=== CRW-875-22-56c | none/deny/allow
 --why The git line is in the text that runs the script: it happens before the script's post reads its file.
 --file {TMP}/b.md
 hello
@@ -873,7 +873,7 @@ gh pr comment 1 --body-file {TMP}/b.md
 --cmd
 git status; bash post.sh
 
-=== CRW-875-22-56d | Q
+=== CRW-875-22-56d | none/deny/allow
 --why A script that runs git, run before the script that posts, may have changed the file the post reads.
 --file {TMP}/b.md
 hello
@@ -884,7 +884,7 @@ gh pr comment 1 --body-file {TMP}/b.md
 --cmd
 bash g.sh; bash post.sh
 
-=== CRW-875-22-56e | Q
+=== CRW-875-22-56e | none/deny/allow
 --why rg reads a configuration file whose --pre runs a program: a post after an rg line is refused like one after git.
 --file {TMP}/b.md
 hello

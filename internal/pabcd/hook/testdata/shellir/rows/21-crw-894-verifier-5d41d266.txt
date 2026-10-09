@@ -180,29 +180,29 @@ x
 --cmd
 cat evil.so > "$N"; printf '{}' | python3 -m json.tool
 
-=== CRW-894-vr-26 | B | deviation=attempt/deny/deny
+=== CRW-894-vr-26 | B
 --why Control: the pipeline of the benign corpus, grep, tail and head around python3 -m json.tool, writes no file.
 --file alerts.jsonl
 {"pr": 737}
 --cmd
 grep '"pr": *737' alerts.jsonl | tail -1 | python3 -m json.tool | head -80
 
-=== CRW-894-vr-27 | B | deviation=attempt/deny/deny
+=== CRW-894-vr-27 | B
 --why Control: output to a file whose name is no module.
 --file in.json
 {}
 --cmd
 cat in.json | python3 -m json.tool > out.json
 
-=== CRW-894-vr-28 | B | deviation=attempt/deny/deny
+=== CRW-894-vr-28 | B
 --why Control: descriptor duplication writes no file.
 echo '{}' | python3 -m json.tool 2>&1 | head -5
 
-=== CRW-894-vr-29 | B | deviation=attempt/deny/deny
+=== CRW-894-vr-29 | B
 --why Control: a redirection to a file that is no json module, before python3 -m json.tool.
 echo '{}' > in.json; python3 -m json.tool < in.json
 
-=== CRW-894-vr-30 | B | deviation=attempt/deny/deny
+=== CRW-894-vr-30 | B
 --why Control: python3 -m json.tool in a subdirectory the text enters.
 --file sub/x.txt
 x
@@ -253,14 +253,14 @@ x
 --cmd
 cat evil.txt > re/__init__.py; printf '{}' | python3 -m json.tool
 
-=== CRW-894-vr-37 | B | deviation=attempt/deny/deny
+=== CRW-894-vr-37 | B
 --why Control: a python file in a subdirectory that is no package is not on the module search path.
 --file tools/gen.py
 print('local')
 --cmd
 printf '{}' | python3 -m json.tool
 
-=== CRW-894-vr-38 | B | deviation=attempt/deny/deny
+=== CRW-894-vr-38 | B
 --why Control: files that are no python modules.
 --file README.md
 x
