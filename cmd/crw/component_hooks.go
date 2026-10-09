@@ -73,6 +73,7 @@ func componentHooks() []componentHook {
 		{"pre-tool-use-guarding-github-post", "pre-tool-use", func(c invocation, in io.Reader) int {
 			done := make(chan string, 1)
 			go func() {
+				defer githubPostGuardReaderDone()
 				raw, over, ok := pabcdhook.GitHubPostInput(in)
 				if !ok {
 					done <- ""
@@ -121,6 +122,10 @@ func componentHooks() []componentHook {
 		{"post-compact-injecting-bg-terminal-affordance.user-prompt-submit", "user-prompt-submit", aff("user-prompt-submit")},
 	}
 }
+
+// githubPostGuardReaderDone runs when the GitHub post guard's input goroutine has finished, recorded and judged or not; a test
+// waits on it instead of on a sleep.
+var githubPostGuardReaderDone = func() {}
 
 func runComponentHook(c invocation, in io.Reader, rows []componentHook) (bool, int) {
 	id := legArg(c.args)

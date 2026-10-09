@@ -380,6 +380,11 @@ func TestGitHubPostGuardLegLeavesNoObservationForInputThatArrivesAfterCancel(t *
 	t.Setenv("PLUGIN_ROOT", plugin)
 	in, w := io.Pipe()
 	t.Cleanup(func() { w.Close() })
+	readerDone := make(chan struct{})
+	old := githubPostGuardReaderDone
+	var once sync.Once
+	githubPostGuardReaderDone = func() { once.Do(func() { close(readerDone) }) }
+	t.Cleanup(func() { githubPostGuardReaderDone = old })
 	ctx, cancel := context.WithCancel(context.Background())
 	var out bytes.Buffer
 	answered := make(chan int, 1)
@@ -404,15 +409,24 @@ func TestGitHubPostGuardLegLeavesNoObservationForInputThatArrivesAfterCancel(t *
 		t.Fatal(err)
 	}
 	w.Close()
-	// The late reader runs on its own goroutine; give it the time a record would take, then count what it left.
-	time.Sleep(500 * time.Millisecond)
+	// The late reader runs on its own goroutine: wait until it has finished with the input, then count what it left.
+	select {
+	case <-readerDone:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the guard's input goroutine did not finish after its input arrived")
+	}
 	var files []string
-	_ = filepath.WalkDir(home, func(p string, d os.DirEntry, err error) error {
-		if err == nil && !d.IsDir() && strings.HasSuffix(p, ".json") {
+	if err := filepath.WalkDir(home, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() && strings.HasSuffix(p, ".json") {
 			files = append(files, p)
 		}
 		return nil
-	})
+	}); err != nil {
+		t.Fatalf("reading the observation store: %v", err)
+	}
 	if len(files) != 0 {
 		t.Fatalf("the cancelled leg created a late observation after returning the deny: %v", files)
 	}
