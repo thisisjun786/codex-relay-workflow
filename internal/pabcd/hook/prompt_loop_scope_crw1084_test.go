@@ -51,6 +51,16 @@ func TestLoopArmScopeCases(t *testing.T) {
 		{"a backtick fence", "```\nRun crw-loop for the migration project.\n```", PromptRoleUnknown, "none"},
 		{"a tilde fence", "~~~\nRun crw-loop for the migration project.\n~~~", PromptRoleUnknown, "none"},
 		{"a longer tilde fence with an info string", "~~~~text\nRun crw-loop for the migration project.\n~~~~", PromptRoleUnknown, "none"},
+		// A project request that carries a negation, an example or a quotation of the exception is still a project request.
+		{"a project request with a negated implementation", "Start crw-loop for the migration project. Do not implement this task.", PromptRoleUnknown, "pointer"},
+		{"a project request with a negation in its own clause", "Start crw-loop for the migration project without implementing this task in this session", PromptRoleUnknown, "pointer"},
+		{"a project request with a negated clause after but", "Start crw-loop for the migration project but don't implement this task", PromptRoleUnknown, "pointer"},
+		{"a project request with a backtick example", "Start crw-loop for the migration project.\nExample: `fix this task`", PromptRoleUnknown, "pointer"},
+		{"a project request with a quoted example", "Start crw-loop for the migration project.\n\"Implement this task\" is only an example.", PromptRoleUnknown, "pointer"},
+		{"a project request with a tilde-fenced example", "Start crw-loop for the migration project.\n~~~\nImplement this task in this session\n~~~", PromptRoleUnknown, "pointer"},
+		{"a project request with a listed example", "Start crw-loop for the migration project.\n- implement this task", PromptRoleUnknown, "pointer"},
+		{"a project request whose verb and task are in different clauses", "Start crw-loop for the migration project. Fix the build. Work in this session.", PromptRoleUnknown, "pointer"},
+		{"a Korean project request with a negated implementation", "crw-loop 돌려서 프로젝트 조정해줘, 이 작업 구현하지 마", PromptRoleUnknown, "pointer"},
 		{"a tilde fence closed, then a real request", "~~~\nRun crw-loop for the migration project.\n~~~\nStart crw-loop for the migration project.", PromptRoleUnknown, "pointer"},
 	}
 	for _, c := range cases {
@@ -108,6 +118,15 @@ func TestLoopScopePointerNamesTheOwnersAndNoRecipeStep(t *testing.T) {
 				t.Errorf("parent=%v: the pointer lacks %q", parent, want)
 			}
 		}
+		// A requested parent native goal follows crw-run's goal-mode lifecycle; only the implementation goalplan and FSM are barred.
+		for _, want := range []string{"goal-mode lifecycle", "creates no implementation goalplan or FSM"} {
+			if !strings.Contains(d, want) {
+				t.Errorf("parent=%v: the pointer lacks %q", parent, want)
+			}
+		}
+		if strings.Contains(d, "creates no goal,") {
+			t.Errorf("parent=%v: the pointer bars the parent goal that was asked for", parent)
+		}
 		if strings.Contains(d, "1. Session id") || strings.Contains(d, "`crw pabcd loop init") {
 			t.Errorf("parent=%v: the pointer carries recipe steps", parent)
 		}
@@ -153,6 +172,14 @@ func TestClassifyLoopArmScope(t *testing.T) {
 		{"crw-loop로 현재 세션에서 구현해줘 (프로젝트 CRW)", LoopScopeCurrentTask},
 		{"Run crw-loop on this issue, in the current session, and fix the build", LoopScopeCurrentTask},
 		{"Run crw-loop in this session for the project", LoopScopeProject},
+		{"Start crw-loop for the migration project. Do not implement this task.", LoopScopeProject},
+		{"Start crw-loop for the migration project. Example: `fix this task`", LoopScopeProject},
+		{"Start crw-loop for the migration project.\n\"Implement this task\" is only an example.", LoopScopeProject},
+		{"Start crw-loop for the project but never fix this task", LoopScopeProject},
+		{"Run crw-loop with no-tests and no-goal, implement this task in this session", LoopScopeCurrentTask},
+		{"Run crw-loop for the project, no implementation of this task in this session", LoopScopeProject},
+		{"Start crw-loop for the project; implement this task in this session", LoopScopeCurrentTask},
+		{"Start crw-loop for the project. Please don't implement this issue here.", LoopScopeProject},
 	}
 	for _, c := range cases {
 		if got := ClassifyLoopArmScope(c.prompt); got != c.want {

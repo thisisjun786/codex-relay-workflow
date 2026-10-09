@@ -335,25 +335,33 @@ const (
 	PromptRoleTask    PromptRole = "task"
 )
 
-// ClassifyLoopArmScope reads the scope words of a prompt that has already been found to ask for a loop. It is lexical: a
-// current-task implementation needs both an implement verb and a this/current session, task or issue; a project is the word
-// "project", a Linear project link or a coordination word. The current-task exception wins over a project mention.
+// ClassifyLoopArmScope reads the scope words of a prompt that has already been found to ask for a loop. It is lexical and reads
+// only the request clauses requestLines keeps, so a quoted or listed example, a fence, an explanation and a negated clause
+// ("do not implement this task") say nothing about the scope. A current-task implementation needs an implement verb and a
+// this/current session, task or issue in the SAME clause, with no negation before the verb or after it ("without
+// implementing", "구현하지 마"); a project is the word "project", a Linear project link or a coordination word in any clause.
+// The current-task exception wins over a project mention.
 func ClassifyLoopArmScope(prompt string) LoopArmScope {
-	skip := detectorRE(`^(?:>|[-*] |\d+[.)] )`)
-	var lines []string
-	for _, line := range unfencedLines(prompt) {
-		if !skip.MatchString(line) {
-			lines = append(lines, foldASCII(line))
-		}
-	}
-	folded := strings.Join(lines, "\n")
 	implement := detectorRE(`\b(?:implement|build|fix|code|develop|work\s+on)\b|구현|고쳐|수정|개발|작업해`)
 	current := detectorRE(`\b(?:this|current|my)\s+(?:session|task|issue|thread|worktree|checkout)\b|\bin\s+the\s+current\s+(?:session|thread)\b|(?:이|현재)\s*(?:세션|작업|이슈|태스크|스레드)|지금\s*세션`)
-	if implement.MatchString(folded) && current.MatchString(folded) {
-		return LoopScopeCurrentTask
-	}
+	negatedBefore := detectorRE(`\b(?:not|never|without|don't|dont|cannot|can't|instead\s+of|rather\s+than)\b|\bno\s|말고`)
+	negatedAfter := detectorRE(`^\S*\s*(?:(?:하|지|고)\s*)?(?:지\s*)?(?:마|말|않|못)`)
 	project := detectorRE(`\bprojects?\b|프로젝트|linear\.app/\S+/project/|\bcoordinat\w*|\bchild(?:ren)?\b|\bsupervis\w*|조정|부모|자식|감독`)
-	if project.MatchString(folded) {
+	clauses := requestLines(prompt)
+	for i := range clauses {
+		clauses[i] = foldASCII(clauses[i])
+	}
+	for _, clause := range clauses {
+		if !current.MatchString(clause) {
+			continue
+		}
+		for _, at := range implement.FindAllStringIndex(clause, -1) {
+			if !negatedBefore.MatchString(clause[:at[0]]) && !negatedAfter.MatchString(clause[at[1]:]) {
+				return LoopScopeCurrentTask
+			}
+		}
+	}
+	if project.MatchString(strings.Join(clauses, "\n")) {
 		return LoopScopeProject
 	}
 	return LoopScopeNone
