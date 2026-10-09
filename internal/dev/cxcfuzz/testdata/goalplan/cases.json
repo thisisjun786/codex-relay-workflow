@@ -94,5 +94,13 @@
     "go": "{\"detail\": \"open ${ROOT}/.crw/goalplans/rec-plan: not a directory\", \"kind\": \"unreadable\", \"path\": \"${ROOT}/.crw/goalplans/rec-plan/goalplan.json\", \"plan\": null}",
     "tag": "open",
     "record": "follow-up: a dangling symlink at the slug directory reads as unreadable in the port and absent in the oracle (a real behaviour difference in the read diagnostic)"
+  },
+  {
+    "name": "empty-goalplan-file",
+    "input": "{\"fs\": [{\"kind\": \"file\", \"path\": \".crw/goalplans/rec-plan/goalplan.json\"}]}",
+    "oracle": "{\"detail\": \"Unexpected end of JSON input\", \"kind\": \"invalid-json\", \"path\": \"${ROOT}/.codexclaw/goalplans/rec-plan/goalplan.json\", \"plan\": null}",
+    "go": "{\"detail\": \"EOF\", \"kind\": \"invalid-json\", \"path\": \"${ROOT}/.crw/goalplans/rec-plan/goalplan.json\", \"plan\": null}",
+    "tag": "intentionally-changed",
+    "record": "CRW-711 known-defects (wording): an empty goalplan file reads as unreadable on both sides; the diagnostic detail is the parser's own text (Go EOF, Node Unexpected end of JSON input) and the path names .crw where the oracle names .codexclaw, the same wording class as broken-json (port: kept)"
   }
 ]
