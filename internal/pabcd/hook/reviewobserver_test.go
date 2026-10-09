@@ -388,3 +388,33 @@ func TestReviewObserverBaselineEmptyWorkspace(t *testing.T) {
 		t.Fatalf("unexpected state: %v", err)
 	}
 }
+
+// A stored round that revival cannot read would be deleted by the write that follows. The write lock refuses such a plan, so the
+// observer leaves the file as it is and records nothing (the oracle drops the round silently; known-defects CRW-564).
+func TestReviewObserverLeavesAPlanWithAnUnreadableRoundAlone(t *testing.T) {
+	e := reviewObsSeed(t, "loss", nil)
+	launch := e.open(t)
+	dir, err := goalplan.GoalplanDir(e.cwd, e.slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, goalplan.GoalplanFile)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored := map[string]any{}
+	if err := json.Unmarshal(raw, &stored); err != nil {
+		t.Fatal(err)
+	}
+	stored["reviewRounds"] = append(stored["reviewRounds"].([]any), map[string]any{"roundId": "r0", "status": "bogus"})
+	edited, err := json.Marshal(stored)
+	if err != nil {
+		t.Fatal(err)
+	}
+	subagentStopPut(t, path, string(edited))
+	e.stop(t, reviewObsType("explorer"), "reviewer-1", reviewObsSignoff(launch, "PASS"))
+	if after, _ := os.ReadFile(path); string(after) != string(edited) {
+		t.Fatal("the observer rewrote a plan whose stored round it cannot keep")
+	}
+}

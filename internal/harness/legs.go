@@ -123,7 +123,9 @@ func Legs() []Leg {
 			return pabcdhook.RunSubagentStopGate(pabcdhook.SubagentStopPayload{Cwd: p.Cwd, SessionID: p.SessionID,
 				AgentType: p.AgentType, AgentID: value(p.AgentID), TurnID: value(p.TurnID), LastAssistantMessage: value(p.LastAssistantMessage)}, os.Getenv)
 		}},
-		{"subagent-stop-observing-review", "subagent-stop", "subagent-stop-review", Generic, false, true, true, nil},
+		{"subagent-stop-observing-review", "subagent-stop", "subagent-stop-review", Generic, false, true, true, func(c Call) string {
+			return pabcdhook.HandleReviewObserver(c.Raw)
+		}},
 		{"post-compact-resetting-reinject-cursor", "post-compact", "post-compact", Generic, false, false, true, func(c Call) string {
 			p, ok := ParsePostCompact(c.Raw)
 			if !ok {
