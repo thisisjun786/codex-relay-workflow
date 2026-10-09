@@ -452,11 +452,11 @@ func AdoptOrphans(ws string, sessionID *string, clock func() time.Time) ([]BgRec
 
 // adoptOrphans runs under the store lock. It adopts from recs when the caller has listed the store already, else it lists it.
 func adoptOrphans(ws string, sessionID *string, clock func() time.Time, recs []BgRecord) ([]BgRecord, error) {
-	at := clock().UTC().Format(isoLayout)
 	adopted := []BgRecord{}
 	if sessionID == nil {
 		return adopted, nil
 	}
+	at := clock().UTC().Format(isoLayout)
 	var err error
 	if recs == nil {
 		if recs, err = listRecords(ws, clock, true); err != nil {

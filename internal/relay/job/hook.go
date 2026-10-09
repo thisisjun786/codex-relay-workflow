@@ -6,8 +6,10 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/harness"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
@@ -44,15 +46,68 @@ func PayloadCwd(p HookPayload, fallback string) string {
 }
 
 func CompletionText(recs []BgRecord) string {
-	lines := []string{"[crw bg] 백그라운드 작업 " + stringNumber(len(recs)) + "건이 끝났습니다."}
-	for _, rec := range recs {
-		lines = append(lines, DescribeRecord(rec))
-	}
+	lines := append([]string{"[crw bg] 백그라운드 작업 " + stringNumber(len(recs)) + "건이 끝났습니다."}, WakeLines(recs)...)
 	// map(...).join on an empty batch still contributes an empty body line.
 	if len(recs) == 0 {
 		lines = append(lines, "")
 	}
 	return strings.Join(append(lines, "출력은 `crw relay job get <id> --tail 40`으로 봅니다. 전체 목록은 `crw relay job list`.\n결과를 확인하고 필요한 후속 작업을 이어가세요."), "\n")
+}
+
+// The byte budget of the text a wake hands to the session (CRW-1095): a command longer than WakeCommandBytes and a note longer than
+// WakeNoteBytes are cut at a rune boundary and the line points at `get`, and a batch whose lines pass WakeLinesBytes is written again
+// without commands and notes. The id, the status, the exit code and the duration of every job are always there, and the record keeps
+// the whole command.
+const (
+	WakeCommandBytes = 160
+	WakeNoteBytes    = 120
+	WakeLinesBytes   = 2048
+)
+
+// WakeLines is the line of each job a wake, an adoption or a drain describes, inside the budget. A job whose command fits and that has
+// no note gets DescribeRecord's line.
+func WakeLines(recs []BgRecord) []string {
+	render := func(command, note int) ([]string, int) {
+		lines, size := make([]string, len(recs)), 0
+		for i, rec := range recs {
+			lines[i] = briefRecord(rec, command, note)
+			size += len(lines[i]) + 1
+		}
+		return lines, size
+	}
+	lines, size := render(WakeCommandBytes, WakeNoteBytes)
+	if size > WakeLinesBytes {
+		lines, _ = render(0, 0)
+	}
+	return lines
+}
+
+// briefRecord is DescribeRecord with the command cut to command bytes and the note, when there is one, to note bytes; a line that
+// leaves anything out names the job's get.
+func briefRecord(rec BgRecord, command, note int) string {
+	full := strings.Join(rec.Command, " ")
+	shown, cut := clip(full, command)
+	line := strings.TrimSuffix(DescribeRecord(rec), full) + shown
+	if rec.Note != nil {
+		n, noteCut := clip(*rec.Note, note)
+		line += " [" + n + "]"
+		cut = cut || noteCut
+	}
+	if cut {
+		line += " (전체: crw relay job get " + rec.ID + ")"
+	}
+	return line
+}
+
+// clip is s cut to at most n bytes at a rune boundary, with an ellipsis when anything was cut.
+func clip(s string, n int) (string, bool) {
+	if len(s) <= n {
+		return s, false
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n] + "…", true
 }
 
 func stringNumber(n int) string { b, _ := value(n, 0); return string(b) }
@@ -107,20 +162,32 @@ func completion(p HookPayload, cwd string, getenv func(string) string, clock fun
 func HandleSessionStart(p HookPayload, cwd string, getenv func(string) string, clock func() time.Time) string {
 	return silent(func() string {
 		ws, sid := PayloadCwd(p, cwd), PayloadSessionID(p, getenv)
-		adopted, err := AdoptOrphans(ws, sid, clock)
+		// One reconciled snapshot serves the adoption and the has-task question, so each record is reconciled once in this event
+		// (CRW-1095).
+		unlock, err := lockStore(ws)
+		if err != nil {
+			return ""
+		}
+		defer unlock()
+		recs, err := listRecords(ws, clock, true)
+		if err != nil {
+			return ""
+		}
+		adopted, err := adoptOrphans(ws, sid, clock, recs)
 		if err != nil || WakeSuppressed(ws, getenv) {
 			return ""
 		}
-		has, err := HasAnyTask(ws, sid, clock)
-		if err != nil || !has {
+		has := len(recs) > 0
+		if sid != nil {
+			has = len(adopted) > 0 || slices.ContainsFunc(recs, func(r BgRecord) bool { return ownedBy(r, *sid) })
+		}
+		if !has {
 			return ""
 		}
 		lines := []string{}
 		if len(adopted) > 0 {
 			lines = append(lines, "[crw bg] 이전 세션에서 끝난 백그라운드 작업 "+stringNumber(len(adopted))+"건이 아직 전달되지 않았습니다.")
-			for _, r := range adopted[:min(5, len(adopted))] {
-				lines = append(lines, DescribeRecord(r))
-			}
+			lines = append(lines, WakeLines(adopted[:min(5, len(adopted))])...)
 		}
 		return contextEnvelope("SessionStart", strings.Join(append(lines, Affordance), "\n"))
 	})
