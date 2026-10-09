@@ -157,11 +157,11 @@ func activationBackup(path string, b []byte, mode fs.FileMode) (err error) {
 		return err
 	}
 	// The backup is what a later restore reads, and config.toml is rewritten next: a backup whose entry may not
-	// survive a power failure stops the activation here, before config.toml changes (CRW-802).
-	if err = crwdir.SyncDir(filepath.Dir(target)); err != nil && !errors.Is(err, fs.ErrPermission) {
-		return err
-	}
-	return nil
+	// survive a power failure stops the activation here, before config.toml changes (CRW-802). A directory that
+	// cannot be opened for the sync (mode 0300) is such a backup too, so its permission error is returned as well;
+	// this differs from activationPublished, which counts a published config.toml or manifest as done because the
+	// files after it depend on it, while nothing has been changed yet when the backup fails.
+	return crwdir.SyncDir(filepath.Dir(target))
 }
 
 func activationFailureMessage(s string) string {
