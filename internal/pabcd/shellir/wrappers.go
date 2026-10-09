@@ -211,6 +211,11 @@ func unwrapEnv(args []Word) (unwrapped, error) {
 			args = args[1:]
 			continue
 		}
+		if len(u.chdirs) > 0 && (v == "-C" || v == "--chdir" || strings.HasPrefix(v, "--chdir=")) {
+			// The reader cannot tell which directory the program runs in once a second operand is given: GNU env keeps the last one,
+			// and other implementations refuse the repeat, so the program's directory is not read.
+			return u, unreadablef("env with a second directory operand is not modelled")
+		}
 		if v == "-C" || v == "--chdir" {
 			if len(args) < 2 {
 				return u, unreadablef("env %s without a directory", v)
