@@ -5,6 +5,7 @@ package hookswitch
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -53,6 +54,24 @@ func TestReadDanglingLinkIsOn(t *testing.T) {
 		t.Fatal(err)
 	}
 	mustBeOnWithProblem(t, readWithin(t, home))
+}
+
+// The warning for a link whose target is gone names the switch file once, says it is a symlink and
+// names the missing target; the verdict (on, treated as crw) is the same as before (CRW-1142).
+func TestDanglingLinkProblemNamesPathOnceAndTarget(t *testing.T) {
+	home, file := switchDir(t)
+	target := filepath.Join(home, "nonexistent", "switch.json")
+	if err := os.Symlink(target, file); err != nil {
+		t.Fatal(err)
+	}
+	r := readWithin(t, home)
+	mustBeOnWithProblem(t, r)
+	if n := strings.Count(r.Problem, file); n != 1 {
+		t.Fatalf("the switch path appears %d times in %q, want once", n, r.Problem)
+	}
+	if !strings.Contains(r.Problem, "symlink") || !strings.Contains(r.Problem, target) {
+		t.Fatalf("problem %q does not say symlink and name the target %q", r.Problem, target)
+	}
 }
 
 // A FIFO as the switch must not hold the hook: with no writer, and with a writer that never closes.
