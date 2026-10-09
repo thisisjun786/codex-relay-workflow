@@ -24,14 +24,16 @@ func evaluateCommand(command, cwd string, id WorktreeIdentity) GuardVerdict {
 	if !id.Managed || text.Trim(command) == "" {
 		return GuardVerdict{}
 	}
-	return worktreeDelJudgeText(command, shellirPayloadCwd(cwd), id, 0)
+	return worktreeDelJudgeText(command, shellirPayloadCwd(cwd), id, 0, nil)
 }
 
 func worktreeDelUnreadable(id WorktreeIdentity) GuardVerdict {
 	return GuardVerdict{Deny: true, Reason: denyReason("a command the guard cannot read", id)}
 }
 
-func worktreeDelJudgeText(command, cwd string, id WorktreeIdentity, depth int) GuardVerdict {
+// worktreeDelJudgeText judges one text; outer is the writes of the texts that run it (a script file's body), which happen before
+// its own commands.
+func worktreeDelJudgeText(command, cwd string, id WorktreeIdentity, depth int, outer *githubPostWrites) GuardVerdict {
 	res, err := shellir.Analyze(command, cwd)
 	if err != nil {
 		return worktreeDelUnreadable(id)
@@ -42,12 +44,12 @@ func worktreeDelJudgeText(command, cwd string, id WorktreeIdentity, depth int) G
 		if e.Kind == shellir.KindScriptFile {
 			// A script the same text rewrites is not the file the guard reads before the command runs.
 			if written == nil {
-				written = githubPostWritesOf(res.Execs)
+				written = githubPostWritesOf(res.Execs, outer)
 			}
 			if written.rewrites(e.Script.Value, e.Dir) {
 				return worktreeDelUnreadable(id)
 			}
-			v = worktreeDelJudgeScript(e, id, depth)
+			v = worktreeDelJudgeScript(e, id, depth, written)
 		} else {
 			v = worktreeDelJudgeExec(e, id)
 		}
@@ -59,7 +61,7 @@ func worktreeDelJudgeText(command, cwd string, id WorktreeIdentity, depth int) G
 }
 
 // worktreeDelJudgeScript reads the script file a shell runs and judges its text in the script's directory.
-func worktreeDelJudgeScript(e shellir.Exec, id WorktreeIdentity, depth int) GuardVerdict {
+func worktreeDelJudgeScript(e shellir.Exec, id WorktreeIdentity, depth int, writes *githubPostWrites) GuardVerdict {
 	if depth >= worktreeDelMaxScriptDepth || !e.Script.Known || !e.Dir.Known {
 		return worktreeDelUnreadable(id)
 	}
@@ -72,22 +74,8 @@ func worktreeDelJudgeScript(e shellir.Exec, id WorktreeIdentity, depth int) Guar
 	if err != nil || len(b) > worktreeDelMaxScriptBytes {
 		return worktreeDelUnreadable(id)
 	}
-	res, err := shellir.Analyze(string(b), e.Dir.Path)
-	if err != nil {
-		return worktreeDelUnreadable(id)
-	}
-	for _, inner := range res.Execs {
-		var v GuardVerdict
-		if inner.Kind == shellir.KindScriptFile {
-			v = worktreeDelJudgeScript(inner, id, depth+1)
-		} else {
-			v = worktreeDelJudgeExec(inner, id)
-		}
-		if v.Deny {
-			return v
-		}
-	}
-	return GuardVerdict{}
+	// The body is judged as any text is: the script files it runs are checked against what it and the texts around it write.
+	return worktreeDelJudgeText(string(b), e.Dir.Path, id, depth+1, writes)
 }
 
 // worktreeDelJudgeExec is the verdict for one program the reader shows.

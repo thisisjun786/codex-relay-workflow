@@ -67,14 +67,36 @@ func (w *walker) noteCreated(e Exec) {
 // target directory).
 const copyValuedOptions = "tSmog"
 
-// noteCopied adds the files ln, cp, mv and install write. With -t or --target-directory every source operand is written into that
-// directory under its own name; with -T the last operand is the file; otherwise the last operand is a file, or a directory the
-// sources are written into when it is one: the reader cannot say which, so both are recorded (the last operand as a file, and
-// each source name below it as the tree a copied directory fills). A single operand of ln links into the working directory.
+// noteCopied adds the files and trees ln, cp, mv and install write to the created sets.
 func (w *walker) noteCopied(e Exec, add func(string, Dir)) {
+	files, trees := CopiedPaths(e)
+	for _, f := range files {
+		add(f, e.Dir)
+	}
+	for _, t := range trees {
+		if key := createdKey(t, e.Dir); key != "" {
+			w.createdTrees[key] = true
+		}
+	}
+}
+
+// CopiedPaths returns what a ln, cp, mv or install record writes, as the operands spell them (relative to the record's
+// directory): the files, and the trees, a path under which may be written too. With -t or --target-directory every source
+// operand is written into that directory under its own name; with -T the last operand is the file; otherwise the last operand
+// is a file, or a directory the sources are written into when it is one: the reader cannot say which, so both are recorded
+// (the last operand as a file, and each source name below it as the tree a copied directory fills). A destination that a
+// directory source may become itself (cp -r evil bin, cp -rT evil bin, mv evil bin, ln -s evildir bin) is a tree as a whole:
+// every file below it comes from the source. A single operand of ln links into the working directory. An operand the reader
+// cannot evaluate is not returned.
+func CopiedPaths(e Exec) (files, trees []string) {
+	if e.Name != "ln" && e.Name != "cp" && e.Name != "mv" && e.Name != "install" {
+		return nil, nil
+	}
 	var operands []Word
 	target := (*Word)(nil)
 	noTarget := false
+	recursive := e.Name == "mv" || e.Name == "ln"
+	parents := false
 	for i := 0; i < len(e.Args); i++ {
 		a := e.Args[i]
 		if !a.Known {
@@ -99,6 +121,10 @@ func (w *walker) noteCopied(e Exec, add func(string, Dir)) {
 			}
 		case v == "--no-target-directory":
 			noTarget = true
+		case v == "--recursive" || v == "--archive":
+			recursive = true
+		case v == "--parents":
+			parents = true
 		case strings.HasPrefix(v, "--"):
 			// a long option: its value, if any, is attached
 		default:
@@ -106,6 +132,9 @@ func (w *walker) noteCopied(e Exec, add func(string, Dir)) {
 				c := v[j]
 				if c == 'T' {
 					noTarget = true
+				}
+				if c == 'r' || c == 'R' || c == 'a' {
+					recursive = true
 				}
 				if strings.IndexByte(copyValuedOptions, c) < 0 {
 					continue
@@ -126,7 +155,7 @@ func (w *walker) noteCopied(e Exec, add func(string, Dir)) {
 			}
 		}
 	}
-	tree := func(dir Word, sources []Word) {
+	below := func(dir Word, sources []Word) {
 		for _, s := range sources {
 			if !dir.Known || !s.Known {
 				continue
@@ -135,27 +164,38 @@ func (w *walker) noteCopied(e Exec, add func(string, Dir)) {
 			if base == "" || base == "." || base == ".." || base == "/" {
 				continue
 			}
-			if key := createdKey(path.Join(dir.Value, base), e.Dir); key != "" {
-				w.createdTrees[key] = true
+			trees = append(trees, path.Join(dir.Value, base))
+			if parents {
+				// cp --parents rebuilds the source's own directories below the destination
+				trees = append(trees, path.Join(dir.Value, s.Value))
 			}
+		}
+	}
+	// whole records that the destination itself may become the copied directory.
+	whole := func(dest Word) {
+		if recursive && dest.Known && dest.Value != "" {
+			trees = append(trees, strings.TrimSuffix(dest.Value, "/"))
 		}
 	}
 	switch {
 	case target != nil:
-		tree(*target, operands)
+		below(*target, operands)
 	case noTarget:
 		if n := len(operands); n >= 1 && operands[n-1].Known {
-			add(operands[n-1].Value, e.Dir)
+			files = append(files, operands[n-1].Value)
+			whole(operands[n-1])
 		}
 	case len(operands) >= 2:
 		last := operands[len(operands)-1]
 		if last.Known {
-			add(last.Value, e.Dir)
-			tree(last, operands[:len(operands)-1])
+			files = append(files, last.Value)
+			whole(last)
+			below(last, operands[:len(operands)-1])
 		}
 	case len(operands) == 1 && e.Name == "ln" && operands[0].Known:
-		tree(Word{Known: true, Value: "."}, operands)
+		below(Word{Known: true, Value: "."}, operands)
 	}
+	return files, trees
 }
 
 // createdKey is a path in a comparable form: relative names lose a leading ./ and keep their directory only when it is known.

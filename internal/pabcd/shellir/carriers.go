@@ -224,7 +224,13 @@ options:
 		case v == "-" || fdAliasPath(v):
 			return unreadablef("%s reads its program from standard input or a descriptor alias (%s)", name, v)
 		case v == "--":
-			operand = i+1 < len(args)
+			// the word after -- is the script operand, which is judged as one before the options end (php -- /dev/stdin)
+			if i+1 < len(args) {
+				operand = true
+				if next := args[i+1]; next.Known && (next.Value == "-" || fdAliasPath(next.Value)) {
+					return unreadablef("%s reads its program from standard input or a descriptor alias (%s)", name, next.Value)
+				}
+			}
 			break options
 		case !strings.HasPrefix(v, "-"):
 			operand = true

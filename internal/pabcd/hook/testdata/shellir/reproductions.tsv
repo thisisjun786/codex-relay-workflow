@@ -675,3 +675,20 @@ added by CRW-1028 (verifier round 1, reader gaps)	cp --target-directory=bin evil
 added by CRW-1028 (verifier round 1, reader gaps)	cp -r evil bin; bin/evil/tool	CRW-1028-v1-13	row	-
 added by CRW-1028 (verifier round 1, reader gaps)	mv evil/tool bin; bin/tool	CRW-1028-v1-14	row	-
 added by CRW-1028 (verifier round 1, reader gaps)	cp -t bin evil/tool; echo done	CRW-1028-v1-15	row	-
+added by CRW-1028 (verifier round 2, created and rewritten programs)	cp -rT evil bin; bin/tool	CRW-1028-v2-01	row	-
+added by CRW-1028 (verifier round 2, created and rewritten programs)	cp -r evil bin; bin/tool	CRW-1028-v2-02	row	-
+added by CRW-1028 (verifier round 2, created and rewritten programs)	mv evil bin; bin/tool	CRW-1028-v2-03	row	-
+added by CRW-1028 (verifier round 2, created and rewritten programs)	ln -s evildir bin; bin/tool	CRW-1028-v2-04	row	-
+added by CRW-1028 (verifier round 2, created and rewritten programs)	cat evil.sh >&post.sh; bash post.sh	CRW-1028-v2-05	row	-
+added by CRW-1028 (verifier round 2, created and rewritten programs)	printf 'rm -rf {CHECKOUT}\n' >&tool.sh; chmod +x tool.sh; ./tool.sh	CRW-1028-v2-06	row	-
+added by CRW-1028 (verifier round 2, created and rewritten programs)	cp evil/tool bin; bash bin/tool	CRW-1028-v2-07	row	-
+added by CRW-1028 (verifier round 2, created and rewritten programs)	cp -r evil bin; bash bin/tool	CRW-1028-v2-08	row	-
+added by CRW-1028 (verifier round 2, created and rewritten programs)	cat evil.sh > post.sh; bash runner.sh	CRW-1028-v2-09	row	-
+added by CRW-1028 (verifier round 2, created and rewritten programs)	bash rewriter.sh	CRW-1028-v2-10	row	-
+added by CRW-1028 (verifier round 2, created and rewritten programs)	php -- /dev/stdin <<'EOF'\n<?php system("rm -rf {CHECKOUT}");\nEOF	CRW-1028-v2-11	row	-
+added by CRW-1028 (verifier round 2, created and rewritten programs)	echo hi >&2	CRW-1028-v2-12	row	-
+added by CRW-1028 (verifier round 2, created and rewritten programs)	echo hi 2>&1	CRW-1028-v2-13	row	-
+added by CRW-1028 (verifier round 2, created and rewritten programs)	cat evil.sh >&other.sh; bash post.sh	CRW-1028-v2-14	row	-
+added by CRW-1028 (verifier round 2, created and rewritten programs)	cp -r evil bin; bash other/tool	CRW-1028-v2-15	row	-
+added by CRW-1028 (verifier round 2, created and rewritten programs)	cat evil.sh > other.sh; bash runner.sh	CRW-1028-v2-16	row	-
+added by CRW-1028 (verifier round 2, created and rewritten programs)	php -- script.php	CRW-1028-v2-17	row	-

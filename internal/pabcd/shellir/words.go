@@ -173,9 +173,28 @@ func (w *walker) redirects(list []*syntax.Redirect, st *state, ctx Context) ([]R
 		if err != nil {
 			return nil, err
 		}
+		if r.Op == syntax.DplOut && (rd.Fd == "" || rd.Fd == "1") && !(rd.Target.Known && isDescriptorDup(rd.Target.Value)) {
+			// >&word with a word that is no descriptor is &>word: standard output and error go to the file. A word the reader
+			// cannot evaluate may be a file as well, so it is a write to a destination not known.
+			rd.Op, rd.Fd = "&>", ""
+		}
 		out = append(out, rd)
 	}
 	return out, nil
+}
+
+// isDescriptorDup is whether the word after >& names a descriptor to copy or move (2, 2-) or closes standard output (-).
+func isDescriptorDup(v string) bool {
+	v = strings.TrimSuffix(v, "-")
+	if v == "" {
+		return true // the word was "-": close
+	}
+	for _, c := range v {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func redirOp(op syntax.RedirOperator) string {

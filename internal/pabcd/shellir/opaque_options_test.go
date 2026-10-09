@@ -32,6 +32,12 @@ func TestOpaqueInterpreterOptionGrammar(t *testing.T) {
 		`php --no-such-option ignored.php`,
 		`php -f /dev/stdin`,
 		`php -f - ignored`,
+		// the script operand after -- is judged as any other (verifier round 2)
+		"php -- /dev/stdin <<'EOF'\n<?php echo 1;\nEOF",
+		`php -- -`,
+		`php -n -- /dev/fd/0`,
+		`php -d x=1 -- /proc/self/fd/0`,
+		`lua -- /dev/stdin`,
 	} {
 		analyzeUnreadable(t, cmd, true)
 	}
@@ -49,6 +55,9 @@ func TestOpaqueInterpreterOptionGrammar(t *testing.T) {
 		"tclsh -encoding utf-8 script.tcl",
 		"osascript -l JavaScript script.scpt",
 		"groovy script.groovy",
+		"php -- script.php",
+		"php -n -- script.php arg",
+		"lua -- script.lua",
 		"php --version",
 		"lua -v",
 	} {

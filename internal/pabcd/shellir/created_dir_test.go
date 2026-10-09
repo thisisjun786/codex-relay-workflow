@@ -28,6 +28,22 @@ func TestProgramCreatedInADirectoryByTheText(t *testing.T) {
 		"cp -t bin a b; bin/b",
 		"cp -- evil/tool bin; bin/tool",
 		"cp evil/tool bin; ./bin/../bin/tool",
+		// the destination that a directory source becomes itself (verifier round 2): every file below it is the source's
+		"cp -rT evil bin; bin/tool",
+		"cp -r evil bin; bin/tool",
+		"cp -R evil bin/; bin/tool",
+		"cp -a evil bin; bin/sub/tool",
+		"cp --recursive evil bin; bin/tool",
+		"mv evil bin; bin/tool",
+		"mv -T evil bin; bin/tool",
+		"ln -s evildir bin; bin/tool",
+		"ln -sT evildir bin; bin/tool",
+		"cp --parents evil/tool bin; bin/evil/tool",
+		"cp --parents -t bin evil/tool; bin/evil/tool",
+		"cd sub; cp -rT ../evil bin; bin/tool",
+		// >&FILE writes the file (verifier round 2)
+		"cat evil.sh >&tool.sh; ./tool.sh",
+		"echo x 1>&tool.sh; ./tool.sh",
 	} {
 		analyzeUnreadable(t, cmd, true)
 	}
@@ -40,6 +56,15 @@ func TestProgramCreatedInADirectoryByTheText(t *testing.T) {
 		"cp evil/tool bin",
 		"ln -s /bin/bash bin; ./other",
 		"cp -S .bak a b; ./c",
+		"cp -rT evil bin; other/tool",
+		"cp -r evil bin; ./tool",
+		"cp evil/tool bin; bin/other", // no -r: a file is copied, the destination is not a tree
+		"install -D evil/tool bin; bin/other",
+		"echo x >&2; ./tool",
+		"echo x >&2-; ./tool",
+		"echo x 2>&1; ./tool",
+		"echo x >&-; ./tool",
+		"cat evil.sh >&other.sh; ./tool.sh",
 	} {
 		analyzeUnreadable(t, cmd, false)
 	}

@@ -1,0 +1,174 @@
+# CRW-1028 verifier round 2: reader and consumer gaps the independent verifier found in the round 1 head (befffbdef).
+# Format: see shellwrite_repro_test.go.
+
+=== CRW-1028-v2-01 | U
+--why A copied directory that becomes the destination itself (cp -rT evil bin): every file below bin comes from evil, so bin/tool is the copied program.
+--file bin/tool
+#!/bin/sh
+echo clean
+--file evil/tool
+#!/bin/sh
+rm -rf {CHECKOUT}
+gh pr comment 1 -b x
+--cmd
+cp -rT evil bin; bin/tool
+
+=== CRW-1028-v2-02 | U
+--why cp -r onto a destination that does not exist yet: bin becomes a copy of evil, so bin/tool is the copied program.
+--file evil/tool
+#!/bin/sh
+rm -rf {CHECKOUT}
+gh pr comment 1 -b x
+--cmd
+cp -r evil bin; bin/tool
+
+=== CRW-1028-v2-03 | U
+--why mv of a directory onto a destination that does not exist: bin is evil, so bin/tool is the moved program.
+--file evil/tool
+#!/bin/sh
+rm -rf {CHECKOUT}
+gh pr comment 1 -b x
+--cmd
+mv evil bin; bin/tool
+
+=== CRW-1028-v2-04 | U
+--why A link to a directory (ln -s evildir bin): bin/tool is the program of the linked directory.
+--file evildir/tool
+#!/bin/sh
+rm -rf {CHECKOUT}
+gh pr comment 1 -b x
+--cmd
+ln -s evildir bin; bin/tool
+
+=== CRW-1028-v2-05 | U
+--why >&FILE (not a descriptor) writes the file, here the script the text then runs.
+--file post.sh
+#!/bin/sh
+echo clean
+--file evil.sh
+#!/bin/sh
+rm -rf {CHECKOUT}
+gh pr comment 1 -b x
+--cmd
+cat evil.sh >&post.sh; bash post.sh
+
+=== CRW-1028-v2-06 | U
+--why >&FILE rewrites a program that the text makes executable and runs by path.
+--file tool.sh
+#!/bin/sh
+echo clean
+--cmd
+printf 'rm -rf {CHECKOUT}\n' >&tool.sh; chmod +x tool.sh; ./tool.sh
+
+=== CRW-1028-v2-07 | U
+--why cp into a directory, then a shell runs the copied script as its script operand: the body the guards read is stale.
+--file bin/tool
+#!/bin/sh
+echo clean
+--file evil/tool
+#!/bin/sh
+rm -rf {CHECKOUT}
+gh pr comment 1 -b x
+--cmd
+cp evil/tool bin; bash bin/tool
+
+=== CRW-1028-v2-08 | U
+--why A copied directory tree, then a shell runs a script below it as its script operand.
+--file bin/tool
+#!/bin/sh
+echo clean
+--file evil/tool
+#!/bin/sh
+rm -rf {CHECKOUT}
+gh pr comment 1 -b x
+--cmd
+cp -r evil bin; bash bin/tool
+
+=== CRW-1028-v2-09 | U
+--why A script the text rewrites is run by another script (runner.sh runs post.sh): the nested read must see the rewrite of the outer text.
+--file post.sh
+#!/bin/sh
+echo clean
+--file evil.sh
+#!/bin/sh
+rm -rf {CHECKOUT}
+gh pr comment 1 -b x
+--file runner.sh
+bash post.sh
+--cmd
+cat evil.sh > post.sh; bash runner.sh
+
+=== CRW-1028-v2-10 | U
+--why A script that rewrites another script and runs it (the worktree guard reads the script body and judges it as a text).
+--file post.sh
+echo clean
+--file evil.sh
+#!/bin/sh
+rm -rf {CHECKOUT}
+gh pr comment 1 -b x
+--file rewriter.sh
+cat evil.sh > post.sh; bash post.sh
+--cmd
+bash rewriter.sh
+
+=== CRW-1028-v2-11 | U
+--why php -- /dev/stdin: the word after -- is the script operand, a descriptor alias that holds the here-document program.
+--cmd
+php -- /dev/stdin <<'EOF'
+<?php system("rm -rf {CHECKOUT}");
+EOF
+
+=== CRW-1028-v2-12 | B
+--why Control: >&2 duplicates standard error onto standard output, it writes no file.
+--cmd
+echo hi >&2
+
+=== CRW-1028-v2-13 | B
+--why Control: 2>&1 duplicates a descriptor and writes no file.
+--cmd
+echo hi 2>&1
+
+=== CRW-1028-v2-14 | T
+--why Control: >&FILE writes another file than the script the text runs (other.sh, not post.sh).
+--file post.sh
+#!/bin/sh
+echo clean
+--file evil.sh
+#!/bin/sh
+rm -rf {CHECKOUT}
+gh pr comment 1 -b x
+--cmd
+cat evil.sh >&other.sh; bash post.sh
+
+=== CRW-1028-v2-15 | T
+--why Control: a copied directory leaves the script the text runs untouched (it lies outside bin).
+--file other/tool
+#!/bin/sh
+echo clean
+--file evil/tool
+#!/bin/sh
+rm -rf {CHECKOUT}
+gh pr comment 1 -b x
+--cmd
+cp -r evil bin; bash other/tool
+
+=== CRW-1028-v2-16 | T
+--why Control: the outer text rewrites other.sh, the script runner.sh runs is post.sh, which is not written.
+--file post.sh
+#!/bin/sh
+echo clean
+--file other.sh
+echo other
+--file evil.sh
+#!/bin/sh
+rm -rf {CHECKOUT}
+gh pr comment 1 -b x
+--file runner.sh
+bash post.sh
+--cmd
+cat evil.sh > other.sh; bash runner.sh
+
+=== CRW-1028-v2-17 | B
+--why Control: php -- script.php runs a script file, which the port does not judge (as php script.php).
+--cmd
+php -- script.php
