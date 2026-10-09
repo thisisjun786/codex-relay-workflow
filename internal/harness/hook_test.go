@@ -58,9 +58,6 @@ func TestOverflowAnswersBeforeAnythingElse(t *testing.T) {
 	for _, l := range p.legs("never") {
 		code, out, errOut := hook([]Leg{l}, argsOf(l), big, env)
 		wantOut, wantCode := want[l.Slug], 0
-		if wantOut == "" && l.Stage != Permission {
-			wantCode = 1
-		}
 		if code != wantCode || out != wantOut || errOut != "" {
 			t.Errorf("%s (%s): %d %q %q, want %d %q", l.ID, l.Slug, code, out, errOut, wantCode, wantOut)
 		}

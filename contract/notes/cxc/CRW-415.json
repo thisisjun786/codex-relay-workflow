@@ -3,9 +3,7 @@
   "identical": [
     "hook__permission-request-allowing-agent-thread__oversized_stdin_silent",
     "hook__pre-tool-use-guarding-interview-in-goal__oversized_stdin_denies",
-    "hook__pre-tool-use-guarding-managed-worktree-deletion__oversized_stdin_exits_1",
     "hook__pre-tool-use-guarding-memory-write__oversized_stdin_denies",
-    "hook__session-start-detecting-managed-worktree__oversized_stdin_exits_1",
     "hook__subagent-stop-verifying-evidence__oversized_stdin_blocks",
     "hook__session-start-bootstrapping-pabcd-state__empty_stdin_fails_open",
     "hook__session-start-bootstrapping-pabcd-state__garbage_stdin_fails_open",
@@ -109,6 +107,24 @@
         "steps/0/form": "empty",
         "steps/0/stdout": "",
         "steps/0/stderr": "usage: crw [-h] [--version] {relay,bridge,hook,skill,doctor,install,review,manage,gui,config,tools,help,version} ...\ncrw: error: argument command: invalid choice: \"frobnicate\" (choose from 'relay', 'bridge', 'hook', 'skill', 'doctor', 'install', 'review', 'manage', 'gui', 'config', 'tools', 'help', 'version')\n"
+      }
+    },
+    {
+      "id": "hook__pre-tool-use-guarding-managed-worktree-deletion__oversized_stdin_exits_1",
+      "reason": "CRW-1101: explicit leg ingress policy denies protection failures and silently releases advisory failures before any handler or observation. Oracle bytes remain recorded.",
+      "set": {
+        "exit": "0",
+        "steps/0/exit": "0",
+        "steps/0/form": "jsonl",
+        "steps/0/stdout": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"[crw] hook input exceeded 4194304 bytes; refusing to bypass policy enforcement\",\"additionalContext\":\"[crw] hook input exceeded 4194304 bytes; refusing to bypass policy enforcement\"}}\n"
+      }
+    },
+    {
+      "id": "hook__session-start-detecting-managed-worktree__oversized_stdin_exits_1",
+      "reason": "CRW-1101: explicit leg ingress policy denies protection failures and silently releases advisory failures before any handler or observation. Oracle bytes remain recorded.",
+      "set": {
+        "exit": "0",
+        "steps/0/exit": "0"
       }
     }
   ]
