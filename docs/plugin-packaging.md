@@ -223,7 +223,7 @@ verification fails.
 Beside the completion Stop the package declares the 32 hook legs CXC v0.2.40 registered (K1,
 `contract/schema/cxc/hook-declarations.json`) and CRW's own GitHub post guard, one file per leg
 under `wiring/hooks/`: 34 declarations with the completion Stop. `crw-dev cxc hooks` writes the 33
-files from K1, and `crw-dev cxc lint` (part of `crw-dev ci contracts`) refuses a file or a manifest
+files from K1 (inside the selected repository only; it refuses a linked hooks directory or declaration), and `crw-dev cxc lint` (part of `crw-dev ci contracts`) refuses a file or a manifest
 `hooks` list that differs from what it would write. Each declaration keeps:
 
 - the K1 event, matcher and timeout byte for byte; the longest is 20 seconds, which is the cap
@@ -240,8 +240,9 @@ The GitHub post guard (`pre-tool-use-guarding-github-post`) is a `PreToolUse` ho
 tools (`^(Bash|shell|exec_command|local_shell)$`), 10 seconds, `(crw) Guarding GitHub posts`.
 
 Every ported leg, and the guard, reads the switch `<CODEX_HOME>/crw/switch.json`
-(`{"active": "crw" | "cxc", "changedAt", "by"}`) before anything else. `crw install switch`
-(CRW-201) writes it, through a temporary file renamed into place; the hook only reads it.
+(`{"active": "crw" | "cxc", "changedAt", "by"}`) before anything else. The hook only reads it. The
+writer, `crw install switch`, is CRW-201's and is not in the installer yet; until it is, the file
+is written by hand.
 
 | Switch | What a ported leg does |
 | --- | --- |
@@ -252,10 +253,9 @@ Every ported leg, and the guard, reads the switch `<CODEX_HOME>/crw/switch.json`
 
 The completion Stop runs whatever the switch says. The command a declaration names does not change
 with the switch, so neither do the hooks' trust hashes. The 33 ported declarations are new hook
-identities and each needs its own trust, which the user gives; installing records none. Two legs,
-`stop-checking-pabcd-continuation` and `subagent-stop-observing-review`, answer nothing until their
-issues fill their handlers (CRW-192, CRW-564); a trust hash covers the declaration, not the
-handler, so filling them needs no new trust. With these files the package check's report counts
+identities and each needs its own trust, which the user gives; installing records none. One leg,
+`subagent-stop-observing-review`, answers nothing until its issue fills the handler (CRW-564); a
+trust hash covers the declaration, not the handler, so filling it needs no new trust. With these files the package check's report counts
 three Stop hooks (`stopHooks`), and an update from a payload without them reads as `changed` in
 [updating safely](#updating-safely).
 
