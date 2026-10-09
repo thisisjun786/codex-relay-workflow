@@ -168,7 +168,7 @@ func cliPublishedStateWarning(err error) string {
 // avoids changing that package's public API. Reads occur under WithSessionLock. Absent/null lists are
 // valid old-schema states; non-arrays are not.
 func cliVerdictsIntact(cwd, sessionID string, count int) bool {
-	raw, err := os.ReadFile(state.StatePath(cwd, sessionID))
+	raw, err := state.ReadStateFile(cwd, sessionID)
 	if os.IsNotExist(err) {
 		return count == 0
 	}
@@ -189,7 +189,7 @@ const cliInterviewRefusalReason = "session state holds interview records this co
 // good (state.RewriteKeepsInterview). A file that does not exist stores nothing to lose; one that cannot be
 // read is refused, as is one the reader calls unreadable. Reads occur under WithSessionLock, as cliVerdictsIntact's do.
 func cliInterviewIntact(cwd, sessionID string) bool {
-	raw, err := os.ReadFile(state.StatePath(cwd, sessionID))
+	raw, err := state.ReadStateFile(cwd, sessionID)
 	if os.IsNotExist(err) {
 		return true
 	}

@@ -391,3 +391,66 @@ func TestPabcdLoopSteerRefusalOnAnEndedContextIsSilent(t *testing.T) {
 	}
 	orchestrateTestSameTree(t, before, orchestrateTestTree(t, root))
 }
+
+// TestPabcdMutatorRowsBinaryEndOnASessionFileThatIsAFIFOWithAnOpenWriter is the post-evaluation d1 case on the built
+// crw: the session state is a FIFO whose writer stays open without EOF. The state reads that precede the first
+// write used to block in read for good, so the first SIGINT could not end the run (and memory and scan kept their
+// session lock). The reader now refuses a state file that is not a regular file without reading it: the run ends
+// by itself with its refusal (exit 1), and a SIGINT sent at the start ends it too (130, or the refusal when the
+// refusal came first), with the lock gone either way.
+func TestPabcdMutatorRowsBinaryEndOnASessionFileThatIsAFIFOWithAnOpenWriter(t *testing.T) {
+	crw := testsupport.CRW(t)
+	for _, name := range []string{"loop steer", "memory allow-write", "scan record"} {
+		for _, signalled := range []bool{false, true} {
+			t.Run(name+map[bool]string{false: "/no signal", true: "/SIGINT"}[signalled], func(t *testing.T) {
+				home := t.TempDir()
+				root := filepath.Join(home, "work")
+				if err := os.MkdirAll(filepath.Join(root, ".crw", "sessions"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				path := state.StatePath(root, "s")
+				if err := syscall.Mkfifo(path, 0o600); err != nil {
+					t.Fatal(err)
+				}
+				holder, err := os.OpenFile(path, os.O_RDWR, 0)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer holder.Close()
+				cmd, stdout, stderr := pabcd1074Run(t, crw, home, root, pabcd1074Rows(pabcd1074Batch)[name])
+				if err := cmd.Start(); err != nil {
+					t.Fatal(err)
+				}
+				done := make(chan error, 1)
+				go func() { done <- cmd.Wait() }()
+				if signalled {
+					time.Sleep(20 * time.Millisecond)
+					_ = cmd.Process.Signal(syscall.SIGINT)
+				}
+				select {
+				case <-done:
+				case <-time.After(5 * time.Second):
+					_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+					<-done
+					t.Fatalf("the run did not end on a FIFO session file (signalled %v)\nstdout:\n%s\nstderr:\n%s", signalled, stdout.String(), stderr.String())
+				}
+				code := cmd.ProcessState.ExitCode()
+				switch {
+				case !signalled && code != 1:
+					t.Fatalf("exit code %d, want the refusal's 1\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+				case signalled && code != Interrupted && code != 1:
+					t.Fatalf("exit code %d, want %d or the refusal's 1\nstdout:\n%s\nstderr:\n%s", code, Interrupted, stdout.String(), stderr.String())
+				}
+				if code == Interrupted && (stdout.Len() != 0 || stderr.Len() != 0) {
+					t.Fatalf("the interrupted run wrote to its streams\nstdout:\n%q\nstderr:\n%q", stdout.String(), stderr.String())
+				}
+				if _, err := os.Lstat(path + ".lock"); !os.IsNotExist(err) {
+					t.Fatalf("the session lock was left behind: %v", err)
+				}
+				if info, err := os.Lstat(path); err != nil || info.Mode()&os.ModeNamedPipe == 0 {
+					t.Fatalf("the session state was replaced: %v %v", info, err)
+				}
+			})
+		}
+	}
+}

@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/goalplan"
@@ -283,26 +282,29 @@ func TestLoopSteerInterruptEndedContextRefusalsAreSilent(t *testing.T) {
 
 // Fix round 2: a cancellation that lands after the lock is taken and before the first write takes precedence
 // over every refusal or error that run reaches before that write, not only over a clean pre-write answer.
-// mutatorsFIFOState makes the session state a FIFO whose writer cancels ctx as soon as the run under the lock
-// opens it to read, then hands it a malformed document: the run is cancelled while its state read is in
-// progress, and that read ends in the unreadable-state refusal.
-func mutatorsFIFOState(t *testing.T, path string, cancel context.CancelFunc) {
+// mutatorsLockedThenEnded is a context that is live through the session lock's own checks and ended for every
+// check after them, the shape of a SIGINT that arrives once the lock is held.
+type mutatorsLockedThenEnded struct {
+	context.Context
+	live  int
+	calls int
+}
+
+func (c *mutatorsLockedThenEnded) Err() error {
+	c.calls++
+	if c.calls > c.live {
+		return context.Canceled
+	}
+	return nil
+}
+
+func newMutatorsLockedThenEnded(t *testing.T) *mutatorsLockedThenEnded {
 	t.Helper()
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+	probe := &mutatorsLockedThenEnded{Context: context.Background(), live: 1 << 30}
+	if err := state.WithSessionLockContext(probe, t.TempDir(), "probe", func() error { return nil }); err != nil {
 		t.Fatal(err)
 	}
-	if err := syscall.Mkfifo(path, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	go func() {
-		f, err := os.OpenFile(path, os.O_WRONLY, 0)
-		if err != nil {
-			return
-		}
-		cancel()
-		_, _ = f.Write([]byte("{"))
-		_ = f.Close()
-	}()
+	return &mutatorsLockedThenEnded{Context: context.Background(), live: probe.calls}
 }
 
 func mutatorsStillFIFO(t *testing.T, path string) {
@@ -315,10 +317,9 @@ func mutatorsStillFIFO(t *testing.T, path string) {
 
 func TestMemoryAllowWriteInterruptCancelledDuringARefusedStateReadIsSilent(t *testing.T) {
 	cwd, _, _ := cliSeed(t)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := newMutatorsLockedThenEnded(t)
 	path := state.StatePath(cwd, "rec-s1")
-	mutatorsFIFOState(t, path, cancel)
+	fifoStateWithOpenWriter(t, path)
 	writes := 0
 	out, code, err := cliMemoryAllowWriteRun(ctx, MemoryAllowWriteArgs{Verb: "allow-write", SessionID: "rec-s1", Cwd: cwd},
 		func(cwd string, s state.State) error { writes++; return state.WriteState(cwd, s) }, nil)
@@ -341,10 +342,9 @@ func TestMemoryAllowWriteInterruptCancelledOnceTheWriteBeganKeepsItsFailure(t *t
 
 func TestScanRecordInterruptCancelledDuringARefusedStateReadIsSilent(t *testing.T) {
 	cwd := scanInterruptWorkspace(t)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := newMutatorsLockedThenEnded(t)
 	path := state.StatePath(cwd, "s1")
-	mutatorsFIFOState(t, path, cancel)
+	fifoStateWithOpenWriter(t, path)
 	appends, writes := 0, 0
 	got, err := cliScanRecordRunContext(ctx, scanInterruptArgs(t, cwd),
 		func(cwd string, e state.InterviewEvent) error { appends++; return state.AppendInterviewEvent(cwd, e) },
