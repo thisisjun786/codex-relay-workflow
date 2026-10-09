@@ -26,12 +26,6 @@ func object(raw string) map[string]any {
 	return o
 }
 
-func envelope(event string, lines []string) string {
-	return pyjson.Dumps(pyjson.Object{{Key: "hookSpecificOutput", Value: pyjson.Object{
-		{Key: "hookEventName", Value: event}, {Key: "additionalContext", Value: strings.Join(lines, "\n\n")},
-	}}}, pyjson.Options{Compact: true, Unicode: true}) + "\n"
-}
-
 func rootStamp(v any) bool {
 	if v == nil {
 		return true
@@ -124,8 +118,10 @@ func RunUserPromptAffordance(raw string, env host.LookupEnv) string {
 	if err != nil || !st.Mode().IsRegular() || os.Remove(path) != nil {
 		return ""
 	}
-	return envelope("UserPromptSubmit", []string{RenderBackgroundTerminalAffordance(), RenderLoopAffordance(env),
-		RenderStackedPrAffordance(), RenderQuestionAffordance()})
+	return harness.ContextOutputSections("UserPromptSubmit", []harness.ContextSection{
+		{Text: RenderBackgroundTerminalAffordance()}, {Text: RenderLoopAffordance(env), Required: true},
+		{Text: RenderStackedPrAffordance()}, {Text: RenderQuestionAffordance()},
+	})
 }
 
 // RunMapAffordanceSessionStart is read-only and keeps unconditional pointers on
@@ -138,24 +134,24 @@ func RunMapAffordanceSessionStart(raw, fallbackCwd string, env host.LookupEnv) s
 		}
 		sid, _ = p["session_id"].(string)
 	}
-	lines := []string{}
-	if sid != "" {
-		lines = append(lines, RenderSessionBinding(sid, env))
+	lines := []harness.ContextSection{}
+	if validSessionID(sid) {
+		lines = append(lines, harness.ContextSection{Text: RenderSessionBinding(sid, env), Required: true})
 	}
 	if count := CountSourceFiles(cwd); count >= MapAffordanceMinFiles {
-		lines = append(lines, RenderMapAffordance(count, env))
+		lines = append(lines, harness.ContextSection{Text: RenderMapAffordance(count, env)})
 	}
-	lines = append(lines, RenderSkillSearchAffordance(env), RenderKwriteAffordance(), RenderLoopAffordance(env),
-		RenderStackedPrAffordance(), RenderBackgroundTerminalAffordance(), RenderQuestionAffordance())
+	lines = append(lines, harness.ContextSection{Text: RenderSkillSearchAffordance(env)}, harness.ContextSection{Text: RenderKwriteAffordance()},
+		harness.ContextSection{Text: RenderLoopAffordance(env), Required: true}, harness.ContextSection{Text: RenderStackedPrAffordance()},
+		harness.ContextSection{Text: RenderBackgroundTerminalAffordance()}, harness.ContextSection{Text: RenderQuestionAffordance()})
 	if inv := invocation(env); inv != "crw" {
-		lines = append(lines, "[crw] `crw` is not on PATH here; wherever docs say `crw`, run: "+inv)
+		lines = append(lines, harness.ContextSection{Text: "[crw] `crw` is not on PATH here; wherever docs say `crw`, run: " + inv})
 	}
-	return envelope("SessionStart", lines)
+	return harness.ContextOutputSections("SessionStart", lines)
 }
 
-// RunHook ports cxc-ops/cli.ts:19-25,116-133: unlike PABCD and bg-wake, stdin
-// is unbounded. A read error means empty stdin, then cxc-ops is observed and the
-// handler runs. Cancellation prevents any late-read observation or marker write.
+// RunHook bounds physical stdin before decoding, observation or handlers. Input
+// failures release advisory hooks silently; cancellation prevents late effects.
 func RunHook(ctx context.Context, event string, in io.Reader, out io.Writer, env host.LookupEnv, cwd string) int {
 	done := make(chan int, 1)
 	go func() { done <- runHook(ctx, event, in, out, env, cwd) }()
@@ -168,14 +164,14 @@ func RunHook(ctx context.Context, event string, in io.Reader, out io.Writer, env
 }
 
 func runHook(ctx context.Context, event string, in io.Reader, out io.Writer, env host.LookupEnv, cwd string) int {
-	data, err := io.ReadAll(in)
+	input := harness.ReadInput(in)
 	if ctx.Err() != nil {
 		return harness.Interrupted
 	}
-	raw := ""
-	if err == nil {
-		raw = nodeUTF8(data)
+	if input.Failed() {
+		return 0
 	}
+	raw := input.Raw
 	harness.RecordInvocation(raw, "cxc-ops", event, env)
 	var answer string
 	switch event {

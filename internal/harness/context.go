@@ -1,7 +1,6 @@
 package harness
 
 import (
-	"fmt"
 	"strings"
 	"unicode/utf16"
 
@@ -28,20 +27,48 @@ func ContextOutput(event, ctx string) string {
 	return `{"hookSpecificOutput":{"hookEventName":` + jsString(event) + `,"additionalContext":` + body + `}}` + "\n"
 }
 
-// truncated is the cut text followed by the marker, as JSON.stringify writes it. JavaScript cuts
-// between UTF-16 units, so the cut can split an astral character and leave its high surrogate last;
-// a Go string cannot hold that, so it is written as the escape JSON.stringify gives a lone
-// surrogate (lower-case hex) and the trailing-space trim, which a regular expression anchored at the
-// end of the text does not reach past it, is skipped.
+// contextHead backs off one unit if a UTF-16 cut would split an astral character.
+func contextHead(units []uint16) string {
+	if n := len(units); n > 0 && units[n-1] >= 0xD800 && units[n-1] < 0xDC00 {
+		units = units[:n-1]
+	}
+	return strings.TrimRight(string(utf16.Decode(units)), " \t\r\n")
+}
+
+// truncated retains the UTF-16 limit and marker without emitting an unpaired surrogate.
 func truncated(units []uint16) string {
-	lone := ""
-	if n := len(units); units[n-1] >= 0xD800 && units[n-1] < 0xDC00 {
-		lone, units = fmt.Sprintf(`\u%04x`, units[n-1]), units[:n-1]
+	return jsString(contextHead(units) + "\n\n[truncated]")
+}
+
+// ContextSection lets callers retain identity, snapshot and gate instructions
+// before spending the context budget on variable descriptions.
+type ContextSection struct {
+	Text     string
+	Required bool
+}
+
+func ContextOutputSections(event string, sections []ContextSection) string {
+	lines := make([]string, len(sections))
+	required := 0
+	for i, s := range sections {
+		lines[i] = s.Text
+		if s.Required {
+			required += len(utf16.Encode([]rune(s.Text)))
+		}
 	}
-	head := string(utf16.Decode(units))
-	if lone == "" {
-		head = strings.TrimRight(head, " \t\r\n")
+	if len(utf16.Encode([]rune(strings.Join(lines, "\n\n")))) <= MaxContext {
+		return ContextOutput(event, strings.Join(lines, "\n\n"))
 	}
-	quoted := jsString(head)
-	return quoted[:len(quoted)-1] + lone + jsString("\n\n[truncated]")[1:]
+	budget := max(0, MaxContext-64-required-2*max(0, len(lines)-1))
+	for i, s := range sections {
+		if s.Required {
+			continue
+		}
+		units := utf16.Encode([]rune(s.Text))
+		if len(units) > budget {
+			lines[i] = contextHead(units[:budget])
+		}
+		budget -= min(budget, len(units))
+	}
+	return ContextOutput(event, strings.Join(lines, "\n\n")+"\n\n[truncated]")
 }

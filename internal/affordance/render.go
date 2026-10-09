@@ -53,7 +53,28 @@ func RenderSkillSearchAffordance(env host.LookupEnv) string {
 	return ResolveCRWCommands(skillText, env)
 }
 func RenderSessionBinding(id string, env host.LookupEnv) string {
+	if !validSessionID(id) {
+		return ""
+	}
 	return ResolveCRWCommands(strings.ReplaceAll(bindingText, "SESSION", id), env)
+}
+
+// Native UUIDs and supported recorder/session keys are ASCII tokens. Reject
+// invalid identities intact, rather than sanitize or truncate into another key.
+func validSessionID(id string) bool {
+	if len(id) == 0 || len(id) > 128 {
+		return false
+	}
+	for i, c := range id {
+		if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' {
+			continue
+		}
+		if i > 0 && (c == '-' || c == '_') {
+			continue
+		}
+		return false
+	}
+	return true
 }
 func RenderLoopAffordance(env host.LookupEnv) string { return ResolveCRWCommands(loopText, env) }
 func RenderKwriteAffordance() string                 { return kwriteText }

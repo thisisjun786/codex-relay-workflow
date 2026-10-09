@@ -344,17 +344,17 @@ func recallHookRun(ctx context.Context, event string, in io.Reader, out io.Write
 			code = 0
 		}
 	}()
-	data, err := io.ReadAll(in)
+	input := harness.ReadInput(in)
 	if ctx.Err() != nil {
 		return harness.Interrupted
 	}
-	if err != nil {
+	if input.Failed() {
 		return 0
 	}
 	if env == nil {
 		env = os.LookupEnv
 	}
-	raw := source.DecodeUTF8(data)
+	raw := input.Raw
 	harness.RecordInvocation(raw, "recall", event, env)
 	if event != "user-prompt-submit" && text.Trim(raw) == "" {
 		raw = "{}"
