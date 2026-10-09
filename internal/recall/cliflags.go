@@ -55,7 +55,11 @@ type ParsedFlags struct {
 	Positionals []string       `json:"positionals"`
 }
 
-const boolFlagNames = "any all no-tools rank recent scan no-refresh no-synonyms synonyms no-chat full rebuild status json verify"
+const boolFlagNames = "any all no-tools rank recent scan no-refresh no-synonyms synonyms no-chat full rebuild status json"
+
+// portBoolFlagNames are boolean flags of the port that the oracle does not have. They are accepted,
+// but a parse that did not see one does not list it, so the parsed shape of every oracle case is unchanged.
+const portBoolFlagNames = "verify"
 
 func WantsHelp(args []string) bool {
 	for _, s := range args {
@@ -119,7 +123,7 @@ func flagOption(name string) (string, bool) {
 	case "days", "limit", "context", "role", "cwd", "cwd-only", "source", "home", "index-path":
 		return name, false
 	}
-	for _, key := range strings.Fields(boolFlagNames) {
+	for _, key := range strings.Fields(boolFlagNames + " " + portBoolFlagNames) {
 		if key == name {
 			return name, true
 		}
