@@ -30,12 +30,8 @@ import (
 const configLockPathsPre = "[features]\nhooks = false\n"
 const configLockPathsRunnerPost = "[features]\nmulti_agent = true\ngoals = true\nhooks = true\ndefault_mode_request_user_input = true\n"
 
-// configLockPathsFeatureList is the declared-state probe's answer with every flag off, so every
-// declared flag is an enable this activation would run.
-func configLockPathsFeatureList() string { return configLockPathsFeatureListWith(nil) }
-
-// configLockPathsFeatureListWith answers the list with the flags a runner enabled turned on, so the activation's read-back
-// (CRW-1143) observes them.
+// configLockPathsFeatureListWith is the declared-state probe's answer: every flag off until the runner enables it, so
+// every declared flag is an enable this activation would run, and the read-back after it (CRW-1143) observes the enable.
 func configLockPathsFeatureListWith(enabled map[string]bool) string {
 	rows := make([]string, 0, len(DeclaredFeatures()))
 	for _, key := range DeclaredFeatures() {
