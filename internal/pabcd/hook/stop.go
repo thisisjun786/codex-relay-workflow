@@ -213,10 +213,10 @@ type stopProgress struct {
 // switch or a new, better metric row happen since the last Stop. Fail-open: an unreadable ledger or
 // goalplan is no progress.
 func stopObserveProgress(cwd string, st state.State) stopProgress {
-	cursor, improved := st.StopMetricCursor, false
+	improved := false
 	rows := metric.ReadObjectiveMetrics(cwd, st.SessionID)
 	// High-water: a hand-truncated ledger must not let restored rows replay as new observations.
-	cursor = math.Max(st.StopMetricCursor, float64(len(rows)))
+	cursor := math.Max(st.StopMetricCursor, float64(len(rows)))
 	if float64(len(rows)) > st.StopMetricCursor {
 		improved = !metric.CheckObjectivePlateau(cwd, st.SessionID, metric.PlateauOptions{MinRecords: stopPlateauMetricRecords, NoiseFloor: stopPlateauNoiseFloor}).Flat
 	}
@@ -314,13 +314,13 @@ func stopNextCommand(phase state.Phase, platform string) (string, bool) {
 	if !ok || stopNodePlatform(platform) != "win32" {
 		return posix, ok
 	}
-	json := stopAttestJSON.FindStringSubmatch(posix)
+	attest := stopAttestJSON.FindStringSubmatch(posix)
 	verb := stopVerb.FindStringSubmatch(posix)
-	if json == nil || verb == nil {
+	if attest == nil || verb == nil {
 		return posix, true
 	}
 	const q = "`"
-	write := q + "'" + json[1] + "' | Set-Content -Encoding utf8 " + crwdir.DirName + "/attest.json" + q
+	write := q + "'" + attest[1] + "' | Set-Content -Encoding utf8 " + crwdir.DirName + "/attest.json" + q
 	run := q + "crw pabcd orchestrate " + verb[1] + " --attest-file " + crwdir.DirName + "/attest.json" + q
 	return write + " then " + run, true
 }
