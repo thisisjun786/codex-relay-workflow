@@ -39,6 +39,17 @@ func indexOracle(t *testing.T) map[string]any {
 	}
 	return want
 }
+// indexPortDeviations applies the recorded port: fixed schema changes (docs/port-cxc/known-defects/CRW-1154.md)
+// to the oracle recording: schema version 3, and the unique (path, ord) index replacing msgs(path).
+func indexPortDeviations(want map[string]any) {
+	want["version"] = "3"
+	schema := want["schema"].([]any)
+	for i, row := range schema {
+		if row.(map[string]any)["name"] == "idx_msgs_path" {
+			schema[i] = map[string]any{"type": "index", "name": "idx_msgs_path_ord", "sql": "CREATE UNIQUE INDEX idx_msgs_path_ord ON msgs(path, ord)"}
+		}
+	}
+}
 func indexRows(t *testing.T, db *RwDb, q string) []map[string]any {
 	t.Helper()
 	rows, err := recallStmt(t, db, q).All()
@@ -66,8 +77,9 @@ func TestIndexPath(t *testing.T) {
 func TestIndexOracle(t *testing.T) {
 	db, path := indexTestDB(t)
 	want := indexOracle(t)
+	indexPortDeviations(want)
 	got := map[string]any{"version": IndexSchemaVersion}
-	got["schema"] = indexRows(t, db, "SELECT type,name,sql FROM sqlite_master WHERE name IN ('meta','files','msgs','idx_msgs_path','idx_msgs_ts','idx_files_repo_key','msgs_fts','msgs_tri','msgs_ai','msgs_ad','recall_hit_counts') ORDER BY name")
+	got["schema"] = indexRows(t, db, "SELECT type,name,sql FROM sqlite_master WHERE name IN ('meta','files','msgs','idx_msgs_path_ord','idx_msgs_ts','idx_files_repo_key','msgs_fts','msgs_tri','msgs_ai','msgs_ad','recall_hit_counts') ORDER BY name")
 	fresh, err := indexStatus(db, "fixture-index")
 	if err != nil {
 		t.Fatal(err)

@@ -124,9 +124,11 @@ func readSlice(path string, from, to int64) ([]byte, error) {
 	return buf[:n], nil
 }
 
-// Per-file transactions, and separate backfill batches, match the oracle.
+// Per-file transactions, and separate backfill batches, match the oracle. Each one takes the
+// SQLite write permit first (BEGIN IMMEDIATE) so that what work reads is what it then writes:
+// a deferred BEGIN would let a decision taken from an older read commit over another refresh.
 func ingestTransaction(db *RwDb, work func() error) error {
-	if err := db.Exec("BEGIN"); err != nil {
+	if err := db.Exec("BEGIN IMMEDIATE"); err != nil {
 		return err
 	}
 	if err := work(); err != nil {
@@ -143,6 +145,10 @@ func ingestTransaction(db *RwDb, work func() error) error {
 	}
 	return nil
 }
+
+// ingestBeforeFileLock is a test seam: it runs after a file is chosen for work and before
+// that file's write transaction begins.
+var ingestBeforeFileLock func(path string)
 
 type ingestStatements struct{ delMsgs, delFile, insFile, insMsg *Stmt }
 
@@ -203,7 +209,13 @@ func ingest(home string, db *RwDb, days float64) (IngestResult, error) {
 		if prev != nil && fingerprintMatches(*prev, st) {
 			continue
 		}
-		if err := ingestTransaction(db, func() error { return ingestFile(s, file, prev, st, &r) }); err != nil {
+		if ingestBeforeFileLock != nil {
+			ingestBeforeFileLock(file.Path)
+		}
+		// Only the lock holder decides: the cursor is read again inside the transaction, because
+		// another refresh may have committed this file since the snapshot above. No lock is held
+		// while the home is listed or while unchanged files are skipped.
+		if err := ingestTransaction(db, func() error { return ingestLocked(db, s, file, &r) }); err != nil {
 			return IngestResult{}, err
 		}
 	}
@@ -216,12 +228,14 @@ func ingest(home string, db *RwDb, days float64) (IngestResult, error) {
 				if _, err := s.delMsgs.Run(path); err != nil {
 					return err
 				}
-				_, err := s.delFile.Run(path)
+				gone, err := s.delFile.Run(path)
+				if gone.Changes > 0 {
+					r.Pruned++ // Another refresh may have pruned it since the snapshot.
+				}
 				return err
 			}); err != nil {
 				return IngestResult{}, err
 			}
-			r.Pruned++
 		}
 	}
 	if r.Ingested+r.Appended+r.Pruned > 0 {
@@ -235,6 +249,49 @@ func ingest(home string, db *RwDb, days float64) (IngestResult, error) {
 	}
 	r.ElapsedMs = float64(time.Now().UnixMilli() - started)
 	return r, nil
+}
+
+// ingestLocked runs inside the write transaction. It reads the file's committed cursor and the
+// file's state now, and decides from those: skip, append or rebuild.
+func ingestLocked(db *RwDb, s ingestStatements, file RolloutFile, result *IngestResult) error {
+	st, err := os.Stat(file.Path)
+	if err != nil {
+		return nil // Gone since it was listed; a later refresh prunes its rows.
+	}
+	prev, err := ingestCursor(db, file.Path)
+	if err != nil {
+		return err
+	}
+	if prev != nil && fingerprintMatches(*prev, st) {
+		return nil // Another refresh already took this state.
+	}
+	if prev != nil {
+		// The cursor is trusted only while it equals what is committed for the file.
+		stmt, err := db.Prepare("SELECT COUNT(*) AS n, MAX(ord) + 1 AS top FROM msgs WHERE path = ?")
+		if err != nil {
+			return err
+		}
+		row, err := stmt.Get(file.Path)
+		if err != nil {
+			return err
+		}
+		if n := hitCountNumber(row["n"]); n != prev.LastOrd || (n > 0 && hitCountNumber(row["top"]) != n) {
+			prev = nil
+		}
+	}
+	return ingestFile(s, file, prev, st, result)
+}
+
+func ingestCursor(db *RwDb, path string) (*KnownFile, error) {
+	stmt, err := db.Prepare("SELECT mtime_ms, size, bytes_ingested, last_ord FROM files WHERE path = ?")
+	if err != nil {
+		return nil, err
+	}
+	row, err := stmt.Get(path)
+	if err != nil || row == nil {
+		return nil, err
+	}
+	return &KnownFile{hitCountNumber(row["mtime_ms"]), hitCountNumber(row["size"]), hitCountNumber(row["bytes_ingested"]), hitCountNumber(row["last_ord"])}, nil
 }
 
 func ingestFile(s ingestStatements, file RolloutFile, prev *KnownFile, st os.FileInfo, result *IngestResult) error {

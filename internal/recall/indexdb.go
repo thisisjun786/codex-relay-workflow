@@ -9,7 +9,9 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 )
 
-const IndexSchemaVersion = "2"
+// IndexSchemaVersion 3 adds the unique (path, ord) invariant. A database of an older version holds
+// only derived rows, so it is dropped and rebuilt from the rollouts; the hit history is kept.
+const IndexSchemaVersion = "3"
 const hitCountsDDL = `
 CREATE TABLE IF NOT EXISTS recall_hit_counts (
   ref TEXT PRIMARY KEY,
@@ -41,7 +43,7 @@ CREATE TABLE IF NOT EXISTS msgs (
   synthetic INTEGER NOT NULL,
   text TEXT NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_msgs_path ON msgs(path);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_msgs_path_ord ON msgs(path, ord);
 CREATE INDEX IF NOT EXISTS idx_msgs_ts ON msgs(ts DESC);
 CREATE VIRTUAL TABLE IF NOT EXISTS msgs_fts USING fts5(
   text, content='msgs', content_rowid='id', tokenize='unicode61'
@@ -122,7 +124,9 @@ func initializeIndex(db *RwDb) error {
 			_ = db.Exec("ROLLBACK")
 		}
 	}()
-	if err := db.Exec(indexSchema); err != nil {
+	// The version is read before the schema is applied: a unique index cannot be created over
+	// the duplicate rows an older version may hold.
+	if err := db.Exec("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);"); err != nil {
 		return err
 	}
 	stmt, err := db.Prepare("SELECT value FROM meta WHERE key = 'schema_version'")
@@ -138,9 +142,9 @@ func initializeIndex(db *RwDb) error {
 		if err = db.Exec("DROP TRIGGER IF EXISTS msgs_ai; DROP TRIGGER IF EXISTS msgs_ad;\nDROP TABLE IF EXISTS msgs_fts; DROP TABLE IF EXISTS msgs_tri;\nDROP TABLE IF EXISTS msgs; DROP TABLE IF EXISTS files; DROP TABLE IF EXISTS meta;"); err != nil {
 			return err
 		}
-		if err = db.Exec(indexSchema); err != nil {
-			return err
-		}
+	}
+	if err = db.Exec(indexSchema); err != nil {
+		return err
 	}
 	if row == nil || row["value"] != IndexSchemaVersion {
 		stmt, err = db.Prepare("INSERT INTO meta (key, value) VALUES ('schema_version', ?)")
