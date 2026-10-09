@@ -51,18 +51,26 @@ func HandleReviewObserver(raw string) (out string) {
 	// last_assistant_message only: reading the child transcript would scan bytes without knowing whose they are, so a
 	// LAUNCH/VERDICT example inside the dispatch packet could sign off on itself.
 	signoff := review.ParseSignoff(field("last_assistant_message"))
-	st := state.ReadState(cwd, sessionID)
-	if st.Slug == "" {
+	// CRW-564 d1 (port: fixed): the oracle reads the state and writes the verdict without the session lock, so a FAIL could land
+	// between the A>B transition's review check and its publication, both of which run inside that lock. The session lock comes
+	// first and the goalplan lock second, the order every writer of this tree follows, and the state is read under it. A held
+	// session lock is a missed recording, as a held goalplan lock is: the lock gives up after about 250 ms.
+	// A workspace with no session state is left alone: the lock would create the state directory (baseline_empty_workspace).
+	if state.ReadState(cwd, sessionID).Slug == "" {
 		return ""
 	}
-	observer := reviewObserver{cwd: cwd, slug: st.Slug}
-	locked, err := goalplan.WithGoalplanWriteLock(cwd, st.Slug, func(plan *goalplan.Goalplan) (string, error) {
-		observer.observe(plan, st, sessionID, field("agent_id"), signoff)
-		return "", nil
-	}, nil)
-	if err != nil || locked.Kind != "ok" {
-		return ""
-	}
+	_ = state.WithSessionLock(cwd, sessionID, func() error {
+		st := state.ReadState(cwd, sessionID)
+		if st.Slug == "" {
+			return nil
+		}
+		observer := reviewObserver{cwd: cwd, slug: st.Slug}
+		_, _ = goalplan.WithGoalplanWriteLock(cwd, st.Slug, func(plan *goalplan.Goalplan) (string, error) {
+			observer.observe(plan, st, sessionID, field("agent_id"), signoff)
+			return "", nil
+		}, nil)
+		return nil
+	})
 	return ""
 }
 
@@ -112,6 +120,11 @@ func (o reviewObserver) observe(plan *goalplan.Goalplan, st state.State, session
 		return
 	case round.PlanEpoch == "" || st.PlanEpoch == nil || round.PlanEpoch != *st.PlanEpoch:
 		ignore("the plan was re-planned after this round opened")
+		return
+	case agentID == "":
+		// CRW-564 d2 (port: fixed): the oracle takes `agent_id ?? ""`, so a child it cannot name would close the round with an
+		// empty reviewerSession that the A>B check spends as an approval and that locks out the real reviewer.
+		ignore("the child named no agent id")
 		return
 	case round.Lane.ReviewerSession != nil && *round.Lane.ReviewerSession != agentID:
 		ignore("round " + round.RoundID + " was already signed by " + *round.Lane.ReviewerSession)
