@@ -400,7 +400,8 @@ func TestGitHubPostGuardJudgements(t *testing.T) {
 		{"post after a loop closes", "for i in 1; do :; done; gh pr comment 1 -b plain", githubPostRuleInline, githubPostWhereCommand},
 		{"nested control structures with nothing to do with gh", "if true; then for i in 1 2; do echo hi; done; fi", "", ""},
 		{"post after a loop that changes the directory", "for i in 1; do cd sub; done; gh pr comment 1 --body-file body.md", githubPostRuleUnread, "body.md"}, // the loop leaves the directory unknown, so the body file is unreadable where it is named
-		{"clean post after a loop closes", "for i in 1; do :; done; gh pr comment 1 --body-file body.md", githubPostRuleUnread, githubPostWhereCommand}, // the loop keeps the directory, and the body file the test does not create is refused at the command (CRW-1064 c1)
+		// The loop keeps the directory (CRW-1064 c1); the body file the test does not create is refused at the command.
+		{"clean post after a loop closes", "for i in 1; do :; done; gh pr comment 1 --body-file body.md", githubPostRuleUnread, githubPostWhereCommand},
 		{"timeout with a duration suffix", "timeout 30s gh pr comment 1 -b plain", githubPostRuleInline, githubPostWhereCommand},
 		{"timeout with a duration and a variable", "timeout 30s gh pr comment 1 -b \"$BODY\"", githubPostRuleInline, githubPostWhereCommand},
 		{"exec", "exec gh pr comment 1 -b plain", githubPostRuleInline, githubPostWhereCommand},
