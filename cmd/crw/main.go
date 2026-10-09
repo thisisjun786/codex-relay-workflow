@@ -209,7 +209,7 @@ func modes() []mode {
 			role.OpenDispatchHost = dispatchhost.Open
 			return role.CLI(c.args, os.Stdin, c.stdout, c.stderr, os.LookupEnv)
 		}},
-		{"provider", false, func(c invocation) int { return provider.Run(c.ctx, c.stdout) }},
+		{"provider", false, func(c invocation) int { return provider.Run(c.ctx, c.args, c.stdout, c.stderr) }},
 		{"map", false, runRepoMap},
 		{"help", true, help}, {"-h", false, help}, {"--help", false, help},
 		{"version", true, showVersion}, {"--version", false, showVersion},
