@@ -927,3 +927,28 @@ evaluation of 83a490cef (fix round 1 of the pre-merge evaluation of 101be077, fi
 evaluation of 83a490cef (fix round 1 of the pre-merge evaluation of 101be077, finding d3 in the POSIX option scan)	sed --in='{MEMORY}/*' -e p out.txt --in-place=.bak	CRW-941-D14	row	-
 evaluation of 83a490cef (fix round 1 of the pre-merge evaluation of 101be077, finding d3 in the POSIX option scan)	sed -i'{MEMORY}/*' p out.txt -ni	CRW-941-D15	row	-
 evaluation of 83a490cef (fix round 1 of the pre-merge evaluation of 101be077, finding d3 in the POSIX option scan)	sed -i.bak -e p out.txt -i	CRW-941-D16	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	parallel echo {} ::: a b	CRW-1058-01	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	parallel -j2 -k echo {/.} {#} ::: dir/a.tar.gz other/b.txt	CRW-1058-02	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	parallel echo {1} {2} ::: a b :::+ c d	CRW-1058-03	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	printf 'echo hi\n' | bash	CRW-1058-04	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	echo 'echo hi' | sh -s	CRW-1058-05	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	bash /dev/fd/3 3<<'EOF'\necho hi\nEOF	CRW-1058-06	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	bash /dev/fd/3 3<<<'echo hi'	CRW-1058-07	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	python3 /dev/fd/4 3<<'PY' 4<&3\nprint(1)\nPY	CRW-1058-08	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	parallel cp /tmp/x {MEMORY}/{} ::: a	CRW-1058-09	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	printf 'echo x > {MEMORY}/a' | bash	CRW-1058-10	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	bash /dev/fd/3 3<<'EOF'\necho x > {MEMORY}/a\nEOF	CRW-1058-11	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	parallel echo x '>' {MEMORY}/{} ::: a	CRW-1058-12	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	printf 'gh pr comment 1 -b plain' | bash	CRW-1058-13	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	parallel gh pr comment {} -b plain ::: 1	CRW-1058-14	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	parallel rm -rf {} ::: {CHECKOUT}	CRW-1058-15	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	printf 'rm -rf {CHECKOUT}' | bash	CRW-1058-16	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	bash /dev/fd/3 3<<'EOF'\nrm -rf {CHECKOUT}\nEOF	CRW-1058-17	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	parallel rm -rf {} ::: $X	CRW-1058-18	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	printf "$X" | bash	CRW-1058-19	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	parallel -S host rm -rf {} ::: {CHECKOUT}	CRW-1058-20	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	parallel rm -rf {} :::: list.txt	CRW-1058-21	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	printf 'rm -rf {CHECKOUT}' | bash </dev/null	CRW-1058-22	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	bash /dev/fd/3	CRW-1058-23	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	printf 'echo hi\n' | bash -s foo	CRW-1058-24	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	printf 'rm -rf {CHECKOUT}' | bash -s foo	CRW-1058-25	row	-

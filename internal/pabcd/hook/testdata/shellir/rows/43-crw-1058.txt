@@ -1,0 +1,136 @@
+# CRW-1058: GNU parallel templates and pipe- or descriptor-fed programs. {MEMORY} the protected memory root, {CHECKOUT} the managed
+# checkout. The harmless shapes are controls (B); each protected shape keeps the refusal its consumer gives (W, P, R); a shape the reader
+# cannot prove stays U.
+
+=== CRW-1058-01 | B
+--why parallel with a plain echo template: the expanded lines are echo commands that touch no gate.
+--cmd
+parallel echo {} ::: a b
+
+=== CRW-1058-02 | B
+--why parallel options that change no command line (-j, -k), a path modifier and the sequence number.
+--cmd
+parallel -j2 -k echo {/.} {#} ::: dir/a.tar.gz other/b.txt
+
+=== CRW-1058-03 | B
+--why linked sources (:::+) and two sources named by position: the expanded lines are echo commands.
+--cmd
+parallel echo {1} {2} ::: a b :::+ c d
+
+=== CRW-1058-04 | B
+--why printf writes a literal echo line; the shell runs it: echo, touches no gate.
+--cmd
+printf 'echo hi\n' | bash
+
+=== CRW-1058-05 | B
+--why echo writes a literal text into a shell with a dash option: the bytes are the program.
+--cmd
+echo 'echo hi' | sh -s
+
+=== CRW-1058-06 | B
+--why a descriptor 3 holds a here-document with an echo: bash runs the body, which touches no gate.
+--cmd
+bash /dev/fd/3 3<<'EOF'
+echo hi
+EOF
+
+=== CRW-1058-07 | B
+--why the here-string form of the same descriptor shape.
+--cmd
+bash /dev/fd/3 3<<<'echo hi'
+
+=== CRW-1058-08 | B
+--why a python program on a copied descriptor: print touches no gate.
+--cmd
+python3 /dev/fd/4 3<<'PY' 4<&3
+print(1)
+PY
+
+=== CRW-1058-09 | W
+--why parallel's expanded cp writes into the memory root: the destination is the template's {MEMORY} with the source value.
+--cmd
+parallel cp /tmp/x {MEMORY}/{} ::: a
+
+=== CRW-1058-10 | W
+--why a literal printf carries an echo redirected into the memory root: the shell runs it.
+--cmd
+printf 'echo x > {MEMORY}/a' | bash
+
+=== CRW-1058-11 | W
+--why the same redirect on a descriptor copied from a here-document.
+--cmd
+bash /dev/fd/3 3<<'EOF'
+echo x > {MEMORY}/a
+EOF
+
+=== CRW-1058-12 | W
+--why parallel's template word joins a redirect into the memory root: the expanded line writes there.
+--cmd
+parallel echo x '>' {MEMORY}/{} ::: a
+
+=== CRW-1058-13 | P
+--why a literal printf carries a GitHub comment: the post guard refuses an inline body carried by a shell.
+--cmd
+printf 'gh pr comment 1 -b plain' | bash
+
+=== CRW-1058-14 | P
+--why parallel expands a GitHub comment with an inline body: the post guard refuses it.
+--cmd
+parallel gh pr comment {} -b plain ::: 1
+
+=== CRW-1058-15 | R
+--why parallel's expanded rm removes the managed checkout named by its source.
+--cmd
+parallel rm -rf {} ::: {CHECKOUT}
+
+=== CRW-1058-16 | R
+--why a literal printf carries the removal of the managed checkout.
+--cmd
+printf 'rm -rf {CHECKOUT}' | bash
+
+=== CRW-1058-17 | R
+--why a descriptor copied from a here-document carries the removal of the managed checkout.
+--cmd
+bash /dev/fd/3 3<<'EOF'
+rm -rf {CHECKOUT}
+EOF
+
+=== CRW-1058-18 | U
+--why a parallel source the reader cannot see: the expanded commands are unknown.
+--cmd
+parallel rm -rf {} ::: $X
+
+=== CRW-1058-19 | U
+--why a pipe whose producer word is unknown: the program bytes are not shown.
+--cmd
+printf "$X" | bash
+
+=== CRW-1058-20 | U
+--why a parallel template run on a remote host: the program runs elsewhere, not in the text.
+--cmd
+parallel -S host rm -rf {} ::: {CHECKOUT}
+
+=== CRW-1058-21 | U
+--why parallel reads its sources from a file: the removal targets are not in the text.
+--cmd
+parallel rm -rf {} :::: list.txt
+
+=== CRW-1058-22 | U
+--why a pipe the shell reads with its own stdin redirection stays refused (zsh MULTIOS reads the pipe and the file).
+--cmd
+printf 'rm -rf {CHECKOUT}' | bash </dev/null
+
+=== CRW-1058-23 | U
+--why a descriptor alias the text never sets: no program is shown.
+--cmd
+bash /dev/fd/3
+
+=== CRW-1058-24 | B
+--why bash -s reads its program from the pipe; the operand foo is a positional parameter, not a script file. The program is echo.
+--cmd
+printf 'echo hi\n' | bash -s foo
+
+=== CRW-1058-25 | R
+--why bash -s with an operand: the piped removal is the program the shell runs, not the script file named by the operand.
+--cmd
+printf 'rm -rf {CHECKOUT}' | bash -s foo
