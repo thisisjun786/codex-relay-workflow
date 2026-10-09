@@ -148,12 +148,16 @@ func isReservation(rec BgRecord) bool {
 	})
 }
 
-// settledKeys is the record without the reservation mark once it is no longer a reservation.
+// settledKeys is the record without the keys that only a running record needs: the reservation mark once it is no longer a reservation,
+// and the moment of the cancel request once the job is over. A record that has left running is the oracle's thirteen keys again.
 func settledKeys(rec BgRecord) BgRecord {
-	if rec.PID == nil && rec.Status == StatusRunning {
+	drop := func(m Member) bool {
+		return m.Key == launchingKey && (rec.PID != nil || rec.Status != StatusRunning) || m.Key == requestedAtKey && IsTerminal(rec.Status)
+	}
+	if !slices.ContainsFunc(rec.Extra, drop) {
 		return rec
 	}
-	rec.Extra = slices.DeleteFunc(slices.Clone(rec.Extra), func(m Member) bool { return m.Key == launchingKey })
+	rec.Extra = slices.DeleteFunc(slices.Clone(rec.Extra), drop)
 	if len(rec.Extra) == 0 {
 		rec.Extra = nil
 	}

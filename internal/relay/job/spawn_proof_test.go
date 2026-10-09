@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
@@ -161,5 +162,22 @@ func TestGroupProven(t *testing.T) {
 		if got := groupProven(tc.procs, g, seen); got != tc.want {
 			t.Errorf("%s: %v, want %v", name, got, tc.want)
 		}
+	}
+}
+
+// The moment of a cancel request is kept while the job runs and leaves the record when the job is over: a finished record is the
+// oracle's thirteen keys.
+func TestTheCancelRequestMomentLeavesWithTheJob(t *testing.T) {
+	needPS(t)
+	ws := workspace(t)
+	job := `trap '' TERM; echo ready > ready.tmp && mv ready.tmp ready; while :; do sleep 0.05; done`
+	rec := start(t, ws, RunOptions{Command: []string{"sh", "-c", job}})
+	until(t, "the job to ignore SIGTERM", func() bool { return exists(filepath.Join(ws, "ready")) })
+	got, err := Cancel(ws, rec, time.Now)
+	if err != nil || got.Status != requestedStatus || !strings.Contains(get(t, RecordPath(ws, rec.ID)), requestedAtKey) {
+		t.Fatalf("a requested cancel keeps its moment: %+v %v", got, err)
+	}
+	if got, err = Cancel(ws, got, time.Now); err != nil || got.Status != StatusCancelled || len(got.Extra) != 0 || strings.Contains(get(t, RecordPath(ws, rec.ID)), requestedAtKey) {
+		t.Errorf("a cancelled record keeps the moment: %+v %v", got, err)
 	}
 }
