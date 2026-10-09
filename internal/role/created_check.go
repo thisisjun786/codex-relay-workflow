@@ -228,15 +228,12 @@ func createdCheckSpawnResult(ctx context.Context, env host.LookupEnv, session, c
 		return createdSpawnResult{}, err
 	}
 	defer f.Close()
-	quoted, err := json.Marshal(call)
-	if err != nil {
-		return createdSpawnResult{}, err
-	}
 	var out createdSpawnResult
 	r := bufio.NewReaderSize(f, 64*1024)
 	for {
 		line, err := r.ReadBytes('\n')
-		if bytes.Contains(line, quoted) {
+		// Only a line naming the item type is decoded; the id is compared decoded, however the host escaped it.
+		if bytes.Contains(line, []byte(`"CollabAgentToolCall"`)) {
 			var e struct {
 				Type    string `json:"type"`
 				Payload struct {
