@@ -72,28 +72,48 @@ func TestSelfHealEvidenceAllOnIsReusedWithoutAListing(t *testing.T) {
 	}
 }
 
+// The recorded SessionStart input run again and again through the real hook entry and a fake codex
+// on PATH: the soft flag that is off is announced every session, and the listing is not repeated.
 func TestSelfHealEvidenceOffStillWarnsEverySession(t *testing.T) {
 	home := selfHealReportTempHome(t)
 	selfHealReportWriteConfig(t, home)
+	dir := selfHealReportFakeCodexAt(t)
+	log := filepath.Join(dir, "calls.log")
+	selfHealReportWriteFakeCodex(t, dir, "printf '%s\\n' \"$*\" >> \""+log+"\"\n"+
+		"if [ \"$1\" = --version ]; then echo 'codex-cli 1.2.3'; exit 0; fi\n"+
+		"if [ \"$1\" = features ] && [ \"$2\" = list ]; then printf '%s' '"+selfHealReportSoftOff+"'; exit 0; fi\n"+
+		"exit 1\n")
 	runner := &selfHealEvidenceRunner{version: "codex-cli 1.2.3", listing: selfHealReportSoftOff}
 	selfHealEvidenceRecord(t, home, runner)
-	runner.calls = nil
+	before := selfHealReportListing(t, home)
 	for i := 0; i < 3; i++ {
 		out, code := selfHealReportRun(t, home, selfHealReportSessionStart)
-		want := selfHealReportEnvelopePrefix
-		if code != 0 || !strings.HasPrefix(out, want) || !strings.Contains(out, "default_mode_request_user_input") {
+		if code != 0 || !strings.HasPrefix(out, selfHealReportEnvelopePrefix) || !strings.Contains(out, "default_mode_request_user_input") {
 			t.Fatalf("session %d: exit %d stdout %q", i, code, out)
 		}
 	}
-	// The hook above uses the real PATH runner; the pure rule is checked with the stub too.
-	for i := 0; i < 3; i++ {
-		outcomes := SelfHealReport(SelfHealReportDeps{CodexHome: home, Run: runner.run})
-		if len(outcomes) != 1 || outcomes[0].Action != SelfHealReportOff || outcomes[0].Key != "default_mode_request_user_input" {
-			t.Fatalf("round %d: %+v", i, outcomes)
+	for _, call := range selfHealReportCalls(t, log) {
+		if call != "--version" {
+			t.Fatalf("a repeated session ran %q; only the version is read", call)
 		}
 	}
-	if runner.listings() != 0 {
-		t.Fatalf("repeated rounds listed %d times: %v", runner.listings(), runner.calls)
+	if after := selfHealReportListing(t, home); !reflect.DeepEqual(before, after) {
+		t.Fatalf("the sessions wrote into CODEX_HOME:\n before %v\n after  %v", before, after)
+	}
+	// A new codex version is diagnosed afresh, and an all-on listing is silent.
+	if err := os.Remove(filepath.Join(dir, "codex")); err != nil {
+		t.Fatal(err)
+	}
+	selfHealReportWriteFakeCodex(t, dir, "printf '%s\\n' \"$*\" >> \""+log+"\"\n"+
+		"if [ \"$1\" = --version ]; then echo 'codex-cli 1.2.4'; exit 0; fi\n"+
+		"if [ \"$1\" = features ] && [ \"$2\" = list ]; then printf '%s' '"+selfHealReportSoftOn+"'; exit 0; fi\n"+
+		"exit 1\n")
+	if out, code := selfHealReportRun(t, home, selfHealReportSessionStart); code != 0 || out != "" {
+		t.Fatalf("exit %d stdout %q, want the fresh all-on listing to be silent", code, out)
+	}
+	calls := selfHealReportCalls(t, log)
+	if calls[len(calls)-1] != "features list" {
+		t.Fatalf("a new codex version was not diagnosed afresh: %v", calls)
 	}
 }
 
