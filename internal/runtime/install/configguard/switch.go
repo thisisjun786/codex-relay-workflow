@@ -2,6 +2,7 @@ package configguard
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -34,6 +35,9 @@ func switchSpecs() []struct{ Table, Key string } {
 // SwitchDeps injects every path and the clock. Fail, when set, is asked before each step and a
 // non-nil answer fails that step, so a test can prove each rollback.
 type SwitchDeps struct {
+	// Ctx, when set, is the installer's cancellation: it is asked before the lock, after the lock and
+	// before each step, and a cancelled one undoes the steps already done and writes nothing more.
+	Ctx                   context.Context
 	CodexHome, ConfigPath string
 	Now                   func() string
 	Fail                  func(step string) error
@@ -79,10 +83,25 @@ func ReadInstallManifest(home string) (*InstallManifest, error) {
 type switchTx struct {
 	undo []func() error
 	fail func(string) error
+	ctx  context.Context
+}
+
+// cancelled is the installer's cancellation, nil while it is not cancelled or none was given.
+func (t *switchTx) cancelled(step string) error {
+	if t.ctx == nil {
+		return nil
+	}
+	if err := t.ctx.Err(); err != nil {
+		return fmt.Errorf("step %s: %w", step, err)
+	}
+	return nil
 }
 
 // run performs one step. do returns the undo of what it changed even when it fails half way.
 func (t *switchTx) run(step string, do func() (func() error, error)) error {
+	if err := t.cancelled(step); err != nil {
+		return err
+	}
 	if t.fail != nil {
 		if err := t.fail(step); err != nil {
 			return fmt.Errorf("step %s: %w", step, err)
@@ -100,6 +119,9 @@ func (t *switchTx) run(step string, do func() (func() error, error)) error {
 
 // check asks the injected failure for a boundary inside a step.
 func (t *switchTx) check(step string) error {
+	if err := t.cancelled(step); err != nil {
+		return err
+	}
 	if t.fail == nil {
 		return nil
 	}
@@ -180,6 +202,13 @@ func RunSwitch(deps SwitchDeps, target string) (*SwitchReport, error) {
 	if now == nil {
 		now = func() string { return time.Now().UTC().Format("2006-01-02T15:04:05.000Z") }
 	}
+	ctx := deps.Ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if err := os.MkdirAll(home, 0o777); err != nil {
 		return nil, err
 	}
@@ -191,6 +220,10 @@ func RunSwitch(deps SwitchDeps, target string) (*SwitchReport, error) {
 		return nil, err
 	}
 	defer lock.Release()
+	// A stop that came while the lock was awaited ends the command before it reads or writes anything.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	cfg := lock.Target
 
 	manifestFile := manifestPath(home)
@@ -214,7 +247,7 @@ func RunSwitch(deps SwitchDeps, target string) (*SwitchReport, error) {
 	}
 	stamp := now()
 	report := &SwitchReport{Active: target, ChangedAt: stamp, ManifestPath: manifestFile, Keys: []SwitchKeyChange{}, Roles: []SwitchRoleChange{}, Notes: []string{}}
-	tx := &switchTx{fail: deps.Fail}
+	tx := &switchTx{fail: deps.Fail, ctx: ctx}
 
 	var prior *SwitchRecord
 	if m != nil {

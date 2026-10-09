@@ -100,7 +100,7 @@ func Main(ctx context.Context, args []string, env scope.Env, stdout, stderr io.W
 	if command == "switch" {
 		// Routed before the generic install options, as features and config are: it takes its own
 		// flags and prints its own text or JSON report (CRW-201).
-		return runSwitch(rest, env, stdout, stderr)
+		return runSwitch(ctx, rest, env, stdout, stderr)
 	}
 	if command == "migrate-state" {
 		// Routed before the generic install options, as features and config are: it takes its own

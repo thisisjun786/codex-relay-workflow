@@ -1,6 +1,7 @@
 package install
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -9,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/role"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/doctor"
@@ -19,7 +19,7 @@ import (
 )
 
 const switchUsage = "Usage:\n" +
-	"  crw install switch crw       turn the CRW hooks on and the CXC plugin off\n" +
+	"  crw install switch crw       select CRW: switch.json says crw, the CXC plugin off\n" +
 	"  crw install switch cxc       return to CXC: restore what the switch changed\n" +
 	"  crw install switch status    which side is on, plugin keys, hook trust, role files\n\n" +
 	"  --json                 print one JSON document\n" +
@@ -123,7 +123,7 @@ type switchResult struct {
 
 // runSwitch is `crw install switch`: routed before the generic install options, as features and
 // config are, because it prints its own text or JSON report.
-func runSwitch(args []string, env scope.Env, stdout, stderr io.Writer) int {
+func runSwitch(ctx context.Context, args []string, env scope.Env, stdout, stderr io.Writer) int {
 	for _, arg := range args {
 		if arg == "--help" || arg == "-h" || arg == "help" {
 			fmt.Fprint(stdout, switchUsage)
@@ -159,7 +159,7 @@ func runSwitch(args []string, env scope.Env, stdout, stderr io.Writer) int {
 		status := ReadSwitchStatus(home, root)
 		return renderSwitch(stdout, *jsonOut, status, nil)
 	}
-	report, err := configguard.RunSwitch(configguard.SwitchDeps{CodexHome: home}, action)
+	report, err := configguard.RunSwitch(configguard.SwitchDeps{Ctx: ctx, CodexHome: home}, action)
 	if err != nil {
 		fmt.Fprintln(stderr, "crw: switch "+action+": "+err.Error())
 		return Refused
@@ -266,19 +266,19 @@ func ReadSwitchStatus(home, pluginRoot string) *SwitchStatus {
 		s.Switch.Active, s.Switch.ChangedAt, s.Switch.By = string(st.Active), st.ChangedAt, st.By
 		selectedCRW = st.Active == switchstate.CRW
 	}
-	config, _ := os.ReadFile(filepath.Join(home, "config.toml"))
+	config, err := os.ReadFile(filepath.Join(home, "config.toml"))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		s.Notes = append(s.Notes, "config.toml: "+err.Error())
+	}
 	for _, p := range []struct{ name, plugin string }{{"crw", "crw"}, {"codexclaw", "codexclaw"}} {
-		keys, err := doctor.ReadInstalledPluginKeys(home, p.plugin)
-		if err != nil {
-			s.Notes = append(s.Notes, "plugin "+p.plugin+": "+err.Error())
-		}
 		key := p.plugin + "@" + p.plugin
-		present := configguard.FindTableHeader(strings.Split(string(config), "\n"), `plugins."`+key+`"`) >= 0
-		enabled := false
-		for _, k := range keys {
-			enabled = enabled || k == key
+		// The plugin's table and its enabled key are read by their TOML names, as the switch edits
+		// them: a quoted key or an alternate spelling of the header is the same table and key.
+		table := configguard.ReadPluginTableState(string(config), key)
+		if table.Unsupported {
+			s.Notes = append(s.Notes, "plugin "+key+": enabled holds a value crw does not read as true or false; it is counted as enabled")
 		}
-		s.Plugins[p.name] = switchPluginStatus{Key: key, Present: present, Enabled: enabled}
+		s.Plugins[p.name] = switchPluginStatus{Key: key, Present: table.Present, Enabled: table.Enabled}
 	}
 	// The CRW hooks act only while the CRW plugin is on: switch.json says which side was picked, the
 	// plugin's own key says whether it is running.

@@ -82,6 +82,12 @@ CRW and CXC stay installed side by side, and exactly one side's hooks act. `crw 
 explicit command that picks the side; nothing calls it implicitly. `crw@crw` is never touched: the
 relay, the MCP bridge and the completion hook stay on in both positions.
 
+The command is the selector and the CXC half of the switch: it writes `<CODEX_HOME>/crw/switch.json`, turns
+the CXC plugin off and exchanges the role files. It does not itself register CRW workflow hooks. The
+shipped `plugins/crw` package declares only the completion hook, and no hook reads `switch.json` yet
+(CRW-392 owns that reader and the cutover that wires the CRW workflow hooks), so until that lands
+`switch crw` leaves CXC off and the completion hook as it was, and `switch cxc` only puts CXC back.
+
 ```text
 crw install switch crw       CRW hooks on, the CXC plugin off
 crw install switch cxc       back to CXC: put back what the switch changed
@@ -101,10 +107,12 @@ writer of `config.toml` takes:
    library so the hook side can read the file with it;
 3. sets `enabled = false` in `[plugins."codexclaw@codexclaw"]` after copying `config.toml` to
    `config.toml.crw-<ts>.bak`. The key is recorded as its line verbatim, so `switch cxc` gives back
-   `enabled=true`, a tab-separated line or a CRLF file to the byte. The key spelled `"enabled"` or
-   `'enabled'` is the same key and is edited in place; a value form crw will not rewrite (`[true]`, a
-   string) or the key on two lines is refused before anything is written, in both directions and on
-   every run. A missing CXC table is left missing,
+   `enabled=true`, a tab-separated line or a CRLF file to the byte. A key and a table are identified by
+   the name TOML decodes from their spelling: `"enabled"`, `'enabled'` and `"en\u0061bled"` are the key
+   `enabled` and are edited in place, and `[plugins.'codexclaw@codexclaw']` or
+   `[ plugins . "codexclaw@codexclaw" ]` is the CXC table. A value that is not a bare `true` or `false`
+   (`[true]`, `"true"`, `1`) or the key on two lines is refused before anything is written, in both
+   directions and on every run. A missing CXC table is left missing,
    and one that appeared since the first switch (`codex plugin add`) is read and switched off by the
    next `switch crw`, with its line recorded then;
 4. replaces the CXC-owned `agents/executor.toml` and `agents/architect.toml` (first line
@@ -129,7 +137,12 @@ an error, not a success: restore it by hand or remove the file. The install mani
 left, so a hand edit stays drift for `Deactivate`. The managed keys of the switch are an internal list: `crw install config set` does
 not offer them.
 
-`switch status` reads and writes nothing. State is `crw` (`switch.json` says crw, `crw@crw` is enabled and the
+The installer's cancellation (SIGINT, SIGTERM, SIGHUP) reaches the command: it is checked before the lock,
+after the lock was taken and before every step, and a cancelled command undoes the steps it had done and
+exits 1 with the context error.
+
+`switch status` reads and writes nothing, and reads each plugin's table and `enabled` key by the same TOML
+names the switch edits by. State is `crw` (`switch.json` says crw, `crw@crw` is enabled and the
 CXC plugin is off), `cxc` (the CXC plugin is on and the CRW side is not), `conflict` (both are on) or `off`
 (neither); a `switch.json` that says crw while `crw@crw` is not enabled is reported with a note. It also reports both plugins' `enabled` keys, a summary of the CRW hooks' trust
 (trusted, drifted and untrusted counts, read from the package given by `--plugin-root`,
