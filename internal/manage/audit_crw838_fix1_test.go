@@ -25,7 +25,7 @@ func TestCRW838PaginationPastTenThousandAuditedPullRequests(t *testing.T) {
 	}
 	w.install(t)
 	pattern := regexp.MustCompile(auditPRDefaultPattern)
-	entries, err := auditPRListPages(context.Background(), nil, base, pattern, audited, nil, 1)
+	entries, err := auditPRListPages(context.Background(), nil, base, base, pattern, audited, nil, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +48,7 @@ func TestCRW838PaginationStallIsAnError(t *testing.T) {
 	for n := 1; n <= 201; n++ {
 		audited[fmt.Sprintf("pr-%d", n)] = true
 	}
-	_, err := auditPRListPages(context.Background(), nil, base, regexp.MustCompile(auditPRDefaultPattern), audited, nil, 1)
+	_, err := auditPRListPages(context.Background(), nil, base, base, regexp.MustCompile(auditPRDefaultPattern), audited, nil, 1)
 	if err == nil || !strings.Contains(err.Error(), "pr_list_stalled") {
 		t.Fatalf("a stalled listing must be a named error, got %v", err)
 	}

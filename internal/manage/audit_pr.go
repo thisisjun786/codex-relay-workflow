@@ -183,7 +183,7 @@ func auditPRList(ctx context.Context, e *Env, cfg *Config, since time.Time) ([]a
 
 // auditPRListWindow is one gh list call: the merged pull requests from since on, or, when until
 // is set, from since to until (both ends included). gh answers at most auditPRListLimit of them,
-// newest first.
+// in its search order (by creation), not by merge time.
 func auditPRListWindow(ctx context.Context, cfg *Config, since, until time.Time) ([]auditPRListEntry, error) {
 	args := []string{"pr", "list"}
 	if cfg != nil && cfg.Repository != "" {
@@ -208,29 +208,44 @@ func auditPRListWindow(ctx context.Context, cfg *Config, since, until time.Time)
 }
 
 // auditPRPager reads the merged pull requests the run selects from, one gh window at a time. gh
-// answers at most auditPRListLimit per call, newest first, so when the newest window is all in the
-// ledger (or all failed) the unaudited pull requests behind it are reached only by reading on. A
-// window that came back full is followed by the next one, narrowed to end at the oldest merge time
-// the last window held, until a window comes back short: the windows are older and older, so the
-// entries stay newest first. There is no page cap, because a cap would stop the reading at the same
+// answers at most auditPRListLimit per call and orders a search by creation, not by merge time,
+// so a full answer says nothing about which merge times it covers: a pull request created early
+// and merged late can be the one --limit cut, at any merge time in the window. A full answer is
+// therefore never taken as part of the list. Its merge-time range is split in two, and both halves
+// are read the same way, until every half answers short, which is the whole of that range in any
+// order. The ranges are read newest first (the newer half before the older one), so the entries
+// read so far are every pull request merged from some time on to now: a newer unaudited pull
+// request is never passed over for an older one, and stopping early (once --max is filled) leaves
+// out only older ones. There is no page cap, because a cap would stop the reading at the same
 // newest windows on every run and leave an old unaudited pull request unreachable for good.
 type auditPRPager struct {
 	ctx     context.Context
 	cfg     *Config
 	since   time.Time
+	now     time.Time
 	entries []auditPRListEntry
 	seen    map[int]bool
-	until   time.Time
+	// pending is the merge-time ranges still to read, the newest on top.
+	pending []auditPRRange
 	done    bool
 }
 
-func newAuditPRPager(ctx context.Context, cfg *Config, since time.Time) *auditPRPager {
-	return &auditPRPager{ctx: ctx, cfg: cfg, since: since, seen: map[int]bool{}}
+// auditPRRange is a merge-time range in whole seconds, both ends included; open is a range with no
+// upper end (merged at or after from).
+type auditPRRange struct {
+	from, to int64
+	open     bool
 }
 
-// more reads the next window. A full window that cannot be followed (it added nothing new, or did
-// not reach further back, as when more than a window's worth of pull requests merged in one
-// second) is an error rather than a short list that looks whole.
+func newAuditPRPager(ctx context.Context, cfg *Config, since, now time.Time) *auditPRPager {
+	return &auditPRPager{ctx: ctx, cfg: cfg, since: since, now: now, seen: map[int]bool{},
+		pending: []auditPRRange{{from: since.Unix(), open: true}}}
+}
+
+// more reads the next range. A short answer adds its entries; a full one splits its range and adds
+// nothing, so a call may add no entries while the reading goes on. A full answer for a single
+// second cannot be split (more than a window's worth of pull requests merged in one second) and is
+// an error rather than a short list that looks whole.
 func (p *auditPRPager) more() error {
 	if p.done {
 		return nil
@@ -239,43 +254,66 @@ func (p *auditPRPager) more() error {
 	if err != nil {
 		return err
 	}
-	window, err := auditPRListWindow(p.ctx, p.cfg, p.since, p.until)
+	r := p.pending[len(p.pending)-1]
+	p.pending = p.pending[:len(p.pending)-1]
+	until := time.Time{}
+	if !r.open {
+		until = time.Unix(r.to, 0)
+	}
+	window, err := auditPRListWindow(p.ctx, p.cfg, time.Unix(r.from, 0), until)
 	if err != nil {
 		return err
 	}
-	added := 0
-	oldest := time.Time{}
+	newest := int64(0)
 	for _, entry := range window {
-		if !p.seen[entry.Number] {
-			p.seen[entry.Number] = true
-			p.entries = append(p.entries, entry)
-			added++
-		}
 		at, err := time.Parse(time.RFC3339, entry.MergedAt)
 		if err != nil {
-			// The selection names this entry and refuses the run, as it does for any listing.
-			p.done = true
-			return nil
+			// gh filtered by this field, so a value that does not parse is not the answer that was
+			// asked for; the ranges cannot be split on it, and the run is refused as the selection
+			// refuses it.
+			return fmt.Errorf("the merged time of pull request #%d is %q: %w", entry.Number, entry.MergedAt, err)
 		}
-		if oldest.IsZero() || at.Before(oldest) {
-			oldest = at
+		if at.Unix() > newest {
+			newest = at.Unix()
 		}
 	}
-	if len(window) < limit || oldest.IsZero() {
-		p.done = true
+	if len(window) < limit {
+		for _, entry := range window {
+			if !p.seen[entry.Number] {
+				p.seen[entry.Number] = true
+				p.entries = append(p.entries, entry)
+			}
+		}
+		p.done = len(p.pending) == 0
 		return nil
 	}
-	if added == 0 || (!p.until.IsZero() && !oldest.Before(p.until)) {
-		return fmt.Errorf("pr_list_stalled: the gh pull request list answered a full window ending at %s that cannot be followed further back", oldest.UTC().Format(time.RFC3339))
+	if r.open {
+		// The open range has no upper end to halve at; the clock and the newest merge time read
+		// stand in for one. When both are behind from, from is read on its own and the rest stays
+		// open, which still moves on by a second.
+		top := p.now.Unix()
+		if newest > top {
+			top = newest
+		}
+		mid := r.from
+		if top > r.from {
+			mid = r.from + (top-r.from)/2
+		}
+		p.pending = append(p.pending, auditPRRange{from: r.from, to: mid}, auditPRRange{from: mid + 1, open: true})
+		return nil
 	}
-	p.until = oldest
+	if r.from >= r.to {
+		return fmt.Errorf("pr_list_stalled: the gh pull request list answered a full window for the single second %s, which cannot be split further", time.Unix(r.from, 0).UTC().Format(time.RFC3339))
+	}
+	mid := r.from + (r.to-r.from)/2
+	p.pending = append(p.pending, auditPRRange{from: r.from, to: mid}, auditPRRange{from: mid + 1, to: r.to})
 	return nil
 }
 
 // auditPRListPages reads windows until the targets that never failed number max or the list is
 // exhausted, and returns the entries read.
-func auditPRListPages(ctx context.Context, cfg *Config, since time.Time, pattern *regexp.Regexp, audited map[string]bool, failures []auditPRFailureRow, max int) ([]auditPRListEntry, error) {
-	pager := newAuditPRPager(ctx, cfg, since)
+func auditPRListPages(ctx context.Context, cfg *Config, since, now time.Time, pattern *regexp.Regexp, audited map[string]bool, failures []auditPRFailureRow, max int) ([]auditPRListEntry, error) {
+	pager := newAuditPRPager(ctx, cfg, since, now)
 	for {
 		if err := pager.more(); err != nil {
 			return nil, err
@@ -1063,7 +1101,7 @@ func auditPRRunWith(ctx context.Context, e *Env, cfg *Config, max int, dryRun bo
 		return 1
 	}
 	audited := auditPRAudited(rows)
-	pager := newAuditPRPager(ctx, cfg, since)
+	pager := newAuditPRPager(ctx, cfg, since, e.Now())
 	failed := false
 	// The targets are resolved before --max cuts them (CRW-963): a target whose relay resolution
 	// fails is named, recorded as a failure and left out, and the next candidate takes the place,
