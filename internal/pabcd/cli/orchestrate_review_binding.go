@@ -29,7 +29,13 @@ func orchestrateReviewBindingRefuse(cur state.State, verb fsm.OrchestrateVerb, s
 // whose verdict was recorded must still be honest. nil means "advance".
 func orchestrateReviewBindingCheck(cur state.State, a OrchestrateCliArgs, sessionID string) *CliResult {
 	// readGoalplan's catch: an unreadable plan is no plan, and a plan with no round has nothing to check.
-	plan := goalplan.ReadGoalplan(a.Cwd, cur.Slug)
+	return orchestrateReviewBindingCheckPlan(goalplan.ReadGoalplan(a.Cwd, cur.Slug), cur, a, sessionID)
+}
+
+// orchestrateReviewBindingCheckPlan is the check over a plan the caller already holds. The publication
+// calls it with the plan it read inside the goalplan write lock (CRW-975), so a verdict recorded between
+// the first, unlocked check and the write is judged too; nil is no plan.
+func orchestrateReviewBindingCheckPlan(plan *goalplan.Goalplan, cur state.State, a OrchestrateCliArgs, sessionID string) *CliResult {
 	if plan == nil {
 		return nil
 	}

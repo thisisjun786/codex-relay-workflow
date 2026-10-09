@@ -30,6 +30,10 @@ type GoalplanWriteLockResult[T any] struct {
 	Kind   string `json:"kind"`
 	Value  *T     `json:"value,omitempty"`
 	Reason string `json:"reason,omitempty"`
+	// Refused is set with Kind "unreadable" when the plan was read but is withheld from writers because a
+	// write would lose stored data (bytes that are not UTF-8, a repeated key, a field this build cannot
+	// keep). It is a refusal, where an absent or unreadable plan is the oracle's fail-open "no plan".
+	Refused bool `json:"refused,omitempty"`
 }
 
 // GoalplanLockStatus is GoalplanWriteLockStatus (:774-778); AgeMs null means absent.
@@ -51,19 +55,30 @@ type GoalplanLockStatusOptions struct {
 var goalplanLockVanishedAfterHeldOpen func()
 
 // goalplanLockVanished reports whether a refused held-open is the lock directory the holder
-// released and removed between the openat and boundFile's descriptor check. The descriptor is
-// re-read while it is still open, so the answer comes from the kernel rather than from
-// boundFile's message: exactly the expected path plus the Linux " (deleted)" suffix is a
-// released lock. Any other path (a rename, a swap) stays refused.
-func goalplanLockVanished(f *os.File, dir string) bool {
-	if f == nil {
+// released and removed between the openat and boundFile's descriptor check. The answer comes from
+// the descriptor, which is still open: the kernel names a removed directory with the Linux
+// " (deleted)" suffix, but a name is only a spelling, and a live lock moved to a sibling literally
+// called "<lock> (deleted)" has the same one. So the suffix is necessary and not sufficient: the
+// descriptor must also be unlinked (nlink 0) and the lock name in parent must be absent or another
+// directory. Any other path (a rename, a swap) and any lock that is still linked stays refused.
+func goalplanLockVanished(f, parent *os.File, dir string) bool {
+	if f == nil || parent == nil {
 		return false
 	}
 	actual, err := descriptorPath(f)
-	if err != nil {
+	if err != nil || actual != dir+" (deleted)" {
 		return false
 	}
-	return actual == dir+" (deleted)"
+	var held unix.Stat_t
+	if unix.Fstat(int(f.Fd()), &held) != nil || held.Nlink != 0 {
+		return false
+	}
+	var named unix.Stat_t
+	err = unix.Fstatat(int(parent.Fd()), GoalplanLockDir, &named, unix.AT_SYMLINK_NOFOLLOW)
+	if err != nil {
+		return pathAbsent(err)
+	}
+	return named.Dev != held.Dev || named.Ino != held.Ino
 }
 
 // goalplanLockVanishedOpenHeld opens the extant lock directory the way openAt does, so the
@@ -78,7 +93,7 @@ func goalplanLockVanishedOpenHeld(parent *os.File, dir string) (*os.File, error)
 		goalplanLockVanishedAfterHeldOpen()
 	}
 	if e := boundFile(f, dir, true); e != nil {
-		if goalplanLockVanished(f, dir) {
+		if goalplanLockVanished(f, parent, dir) {
 			_ = f.Close()
 			return nil, nil
 		}
@@ -381,8 +396,14 @@ func WithGoalplanWriteLock[T any](cwd, slug string, fn func(*Goalplan) (T, error
 	if pathAbsent(err) {
 		return missing(), nil
 	}
+	// A plan directory or file that cannot be reached (EACCES and the like) is a plan that cannot be read,
+	// which ReadGoalplan answers with nil and the oracle's orchestrate gate (orchestrate-cli.ts 606-622)
+	// goes on from; the caller decides, so this is "unreadable" with the reason, not a Go error.
+	unreachable := func(err error) GoalplanWriteLockResult[T] {
+		return GoalplanWriteLockResult[T]{Kind: "unreadable", Reason: "goalplan '" + slug + "' could not be reached: " + err.Error()}
+	}
 	if err != nil {
-		return result, err
+		return unreachable(err), nil
 	}
 	defer parent.Close()
 	var st unix.Stat_t
@@ -391,7 +412,7 @@ func WithGoalplanWriteLock[T any](cwd, slug string, fn func(*Goalplan) (T, error
 		return missing(), nil
 	}
 	if err != nil {
-		return result, err
+		return unreachable(err), nil
 	}
 	if st.Mode&unix.S_IFMT == unix.S_IFLNK {
 		return result, fmt.Errorf("goalplan state path must not be a symlink: %s", filepath.Join(real, GoalplanFile))
@@ -417,13 +438,13 @@ func WithGoalplanWriteLock[T any](cwd, slug string, fn func(*Goalplan) (T, error
 	// refused first, because revival and its re-encoding would both read them as U+FFFD, and a key repeated in one object next,
 	// because decoding keeps only its last value.
 	if file.badByte > 0 {
-		return GoalplanWriteLockResult[T]{Kind: "unreadable", Reason: revivalLossRefusal(slug, fmt.Sprintf("invalid UTF-8 at byte %d", file.badByte-1))}, nil
+		return GoalplanWriteLockResult[T]{Kind: "unreadable", Reason: revivalLossRefusal(slug, fmt.Sprintf("invalid UTF-8 at byte %d", file.badByte-1)), Refused: true}, nil
 	}
 	if dup := revivalLossDuplicate(file.text); dup != "" {
-		return GoalplanWriteLockResult[T]{Kind: "unreadable", Reason: revivalLossRefusal(slug, "the repeated key "+dup)}, nil
+		return GoalplanWriteLockResult[T]{Kind: "unreadable", Reason: revivalLossRefusal(slug, "the repeated key "+dup), Refused: true}, nil
 	}
 	if lost := revivalLoss(file.parsed); lost != "" {
-		return GoalplanWriteLockResult[T]{Kind: "unreadable", Reason: revivalLossRefusal(slug, lost)}, nil
+		return GoalplanWriteLockResult[T]{Kind: "unreadable", Reason: revivalLossRefusal(slug, lost), Refused: true}, nil
 	}
 	value, err := fn(read.Plan)
 	if err != nil {

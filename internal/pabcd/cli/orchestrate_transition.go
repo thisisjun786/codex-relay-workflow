@@ -300,8 +300,10 @@ func orchestrateCommitLock(seams *orchestrateCommitSeams) orchestrateCommitLockF
 // binding revalidated there, and the state is published in the same lock, so a plan another writer
 // republishes in between cannot approve a stale workPhaseId. Lock order is the session lock the caller
 // holds, then this goalplan lock; no path in this tree takes them the other way. A busy lock refuses with
-// its reason and publishes nothing; an absent or unreadable goalplan stays fail-open, as the unlocked read
-// did; any other lock failure is a Go error, as it is for the other writers of this package.
+// its reason and publishes nothing; an absent or unreachable goalplan stays fail-open, as the unlocked read
+// did; a plan the lock withholds from writers refuses and publishes nothing; any other lock failure is a Go
+// error, as it is for the other writers of this package. A gated A>B edge also revalidates the review
+// binding on the plan read inside the lock (CRW-975).
 func orchestrateCommitPublish(ctx context.Context, seams *orchestrateCommitSeams, a OrchestrateCliArgs, cwd, sessionID string, cur, next state.State, to state.Phase, recoveringDclose bool, binding *orchestrateTransitionPlanBinding) orchestrateCommitOutcome {
 	if !attest.IsGated(cur.Phase, to) || cur.Slug == "" || recoveringDclose {
 		return orchestrateCommitWrite(seams, cwd, next)
@@ -316,6 +318,14 @@ func orchestrateCommitPublish(ctx context.Context, seams *orchestrateCommitSeams
 		}
 		if bindCheck := attest.ValidateWorkPhaseBinding(a.Attest, goalplan.EffectiveActiveWorkPhaseID(plan)); !bindCheck.OK {
 			return orchestrateCommitOutcome{refusal: &CliResult{Code: 1, Output: "orchestrate " + VerbText(a.Verb) + ": " + RenderPhaseContext(cur, sessionID) + "; " + bindCheck.Reason}}, nil
+		}
+		// CRW-975: the A>B review binding is judged again on the plan this lock read, so a reviewer verdict
+		// recorded between the first check (before the lock) and this publication is not ignored. The
+		// oracle runs validateReviewBinding and the write without the lock and has the same race.
+		if cur.Phase == state.PhaseA && to == state.PhaseB {
+			if refusal := orchestrateReviewBindingCheckPlan(plan, cur, a, sessionID); refusal != nil {
+				return orchestrateCommitOutcome{refusal: refusal}, nil
+			}
 		}
 		// 032: a fresh epoch orphans every round the old one owned. The cleanup runs here, after the binding is
 		// revalidated and before the state is published, so a refusal above leaves the round open for a
@@ -346,7 +356,17 @@ func orchestrateCommitPublish(ctx context.Context, seams *orchestrateCommitSeams
 		}
 		return orchestrateCommitOutcome{refusal: &CliResult{Code: 1, Output: "orchestrate " + VerbText(a.Verb) + ": " + RenderPhaseContext(cur, sessionID) + "; " + locked.Reason}}
 	}
-	// unreadable: fail-open, as the unlocked read did. The publication runs outside the lock.
+	// A plan the lock read and withholds from writers (bytes that are not UTF-8, a repeated key, stored data
+	// a write would lose) is a refusal with the lock's reason: nothing was judged under the lock for it, so
+	// nothing is published (CRW-975).
+	if locked.Refused {
+		if err := ctx.Err(); err != nil {
+			return orchestrateCommitOutcome{err: err}
+		}
+		return orchestrateCommitOutcome{refusal: &CliResult{Code: 1, Output: "orchestrate " + VerbText(a.Verb) + ": " + RenderPhaseContext(cur, sessionID) + "; " + locked.Reason + ". Nothing was written."}}
+	}
+	// unreadable: an absent or unreachable plan is fail-open, as the unlocked read did and as the oracle
+	// does when it cannot open the plan (orchestrate-cli.ts 606-622). The publication runs outside the lock.
 	if err := ctx.Err(); err != nil {
 		return orchestrateCommitOutcome{err: err}
 	}
