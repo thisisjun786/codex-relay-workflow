@@ -247,3 +247,7 @@ python3 -c 'import os; exec("print(\"p.\x74ouch()\")"); print(os.path.exists("{M
 === CRW-951-exec-03-nested-escaped-touch | E
 --why Verifier round 2 (P2): a nested literal exec keeps the file API and the names of its ancestors: the outer literal decodes to exec("p.\x74ouch()"), whose receiver p is unattributed.
 python3 -c 'from pathlib import Path; p=Path("{MEMORY}/n.md"); exec("\x65\x78\x65\x63\x28\x22\x70\x2e\x5c\x78\x37\x34\x6f\x75\x63\x68\x28\x29\x22\x29")'
+
+=== CRW-951-fstring-data-08-exec-call-in-field | E
+--why Verifier round 2 keep: an exec call inside a replacement field runs its string, so the field's program text is code and the decoded p.touch() is an attempt.
+python3 -c "from pathlib import Path; p=Path('{MEMORY}/n.md'); print(f\"{exec('p.touch()')}\")"

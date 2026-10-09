@@ -65,37 +65,47 @@ func shellIRPyDataMask(src string, spans [][2]int) []bool {
 			mask[k] = v
 		}
 	}
-	for i := 0; i < len(rs); {
-		switch c := rs[i]; {
-		case c == '\'' || c == '"':
-			if shellWriteFStringPrefix(rs, i) {
-				end, fields, bad := shellWriteFStringRegion(rs, i, 0)
-				if end > len(rs) {
-					end = len(rs)
-				}
-				if !bad {
-					set(i, end, true)
-					for _, f := range fields {
-						set(f[0], f[1], false)
+	// scan marks the data of rs[lo:hi]. A replacement field of an f-string is program text, but a string or a comment inside
+	// it is data again, and an f-string nested in it is read the same way (CRW-951, verifier round 2).
+	var scan func(lo, hi int)
+	scan = func(lo, hi int) {
+		for i := lo; i < hi; {
+			switch c := rs[i]; {
+			case c == '\'' || c == '"':
+				if shellWriteFStringPrefix(rs, i) {
+					end, fields, bad := shellWriteFStringRegion(rs, i, 0)
+					if end > hi {
+						end = hi
 					}
+					if !bad {
+						set(i, end, true)
+						for _, f := range fields {
+							set(f[0], f[1], false)
+							scan(f[0], f[1])
+						}
+					}
+					i = end
+					continue
 				}
+				end := shellWriteTripleScanRegion(rs, i, true)
+				if end > hi {
+					end = hi
+				}
+				set(i, end, true)
 				i = end
-				continue
+			case c == '#':
+				end := i + 1
+				for end < hi && rs[end] != '\n' && rs[end] != '\r' {
+					end++
+				}
+				set(i, end, true)
+				i = end
+			default:
+				i++
 			}
-			end := shellWriteTripleScanRegion(rs, i, true)
-			set(i, end, true)
-			i = end
-		case c == '#':
-			end := i + 1
-			for end < len(rs) && rs[end] != '\n' && rs[end] != '\r' {
-				end++
-			}
-			set(i, end, true)
-			i = end
-		default:
-			i++
 		}
 	}
+	scan(0, len(rs))
 	for _, sp := range spans {
 		if !mask[sp[0]] && shellIRPyRunsText(src[sp[0]:sp[1]]) {
 			return nil
@@ -107,6 +117,14 @@ func shellIRPyDataMask(src string, spans [][2]int) []bool {
 // shellIRStructuralWriteUnknown reports a program that holds a file API and a write the reader cannot attribute to a literal
 // destination: a bare or unattached write name, a run-time name (getattr, __import__, eval, ...), or a computed subscript.
 func shellIRStructuralWriteUnknown(src string, python bool) bool {
+	return shellIRStructuralWriteUnknownFrom(src, 0, python)
+}
+
+// shellIRStructuralWriteUnknownFrom is shellIRStructuralWriteUnknown for the program text src[from:], read in the scope that
+// the text before it makes: the file APIs, imports and names of src[:from] are in scope, but only the tokens from from on are
+// judged, and the data mask (comment and string text, and whether the program runs text) is that of src[from:] alone, so an exec
+// or a string of the enclosing text never changes how the decoded program's own strings are read (CRW-951, verifier round 2).
+func shellIRStructuralWriteUnknownFrom(src string, from int, python bool) bool {
 	spans := shellIRTokenSpans(src)
 	if !python {
 		// A Node program that evaluates text (eval, new Function, vm) runs code the program does not show, with the file APIs
@@ -130,9 +148,17 @@ func shellIRStructuralWriteUnknown(src string, python bool) bool {
 	}
 	var data []bool // Python source offsets that are comment or plain string text; nil when the program may run a string
 	if python {
-		data = shellIRPyDataMask(src, spans)
+		part := src[from:]
+		partSpans := shellIRTokenSpans(part)
+		if m := shellIRPyDataMask(part, partSpans); m != nil {
+			data = make([]bool, len(src)+1)
+			copy(data[from:], m)
+		}
 	}
 	for _, sp := range spans {
+		if sp[0] < from {
+			continue
+		}
 		tok := src[sp[0]:sp[1]]
 		if shellIRRunTimeName(tok) {
 			return true

@@ -478,7 +478,9 @@ func shellWriteExecProgram(rs []rune, spans [][2]int, depth int, outer shellWrit
 		// The text a literal exec, eval or compile runs gets the same structural write analysis as a top-level program, read in
 		// the scope that holds it (it inherits the names and imports of the enclosing text); a write the enclosing text
 		// already makes unknown is not counted twice (CRW-951, E2).
-		if enclosing := string(rs); shellIRStructuralWriteUnknown(enclosing+"\n"+program, true) && !shellIRStructuralWriteUnknown(enclosing, true) {
+		// enclosing is the text of every program that holds this one (outer.scope, which already ends with rs), so a name or an
+		// import of an ancestor stays in scope in a nested literal program.
+		if enclosing := outer.scope; shellIRStructuralWriteUnknownFrom(enclosing+"\n"+program, len(enclosing)+1, true) && !shellIRStructuralWriteUnknown(enclosing, true) {
 			more = append(more, shellIRUnknownDest)
 		}
 		return more, inner
@@ -791,6 +793,9 @@ func shellWriteCopyFunc(module, name string) bool {
 type shellWriteCopyImports struct {
 	alias map[string][]string
 	from  map[string][]string
+	// scope is the text of the program being read and of every program that holds it (empty outside the walk), for the
+	// structural write analysis of a literal exec program (CRW-951).
+	scope string
 }
 
 // shellWriteCopyBind records that a statement bound local to module, once per module.
@@ -833,6 +838,10 @@ func shellWriteCopyImportsMerge(outer, inner shellWriteCopyImports) shellWriteCo
 // which is the fail-open direction).
 func shellWriteCopyImportsOf(rs []rune, outer shellWriteCopyImports) shellWriteCopyImports {
 	binds := shellWriteCopyImportsMerge(outer, shellWriteCopyImports{alias: map[string][]string{}, from: map[string][]string{}})
+	binds.scope = string(rs)
+	if outer.scope != "" {
+		binds.scope = outer.scope + "\n" + string(rs)
+	}
 	words := []string{}
 	flush := func() {
 		if len(words) > 0 {

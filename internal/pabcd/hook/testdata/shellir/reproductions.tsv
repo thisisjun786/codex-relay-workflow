@@ -816,3 +816,4 @@ added by CRW-951 (fix round 3: verifier P1 findings of 9701540a4)	python3 -c "im
 added by CRW-951 (fix round 3: verifier P1 findings of 9701540a4)	python3 -c "import os; print(f\"{'a' + str(p.touch())}\", os.path.exists('{MEMORY}/n.md'))"	CRW-951-fstring-data-07-call-beside-string-in-field	row	-
 added by CRW-951 (fix round 3: verifier P1 findings of 9701540a4)	python3 -c 'import os; exec("print(\"p.\x74ouch()\")"); print(os.path.exists("{MEMORY}/n.md"))'	CRW-951-exec-02-decoded-print-data	row	-
 added by CRW-951 (fix round 3: verifier P1 findings of 9701540a4)	python3 -c 'from pathlib import Path; p=Path("{MEMORY}/n.md"); exec("\x65\x78\x65\x63\x28\x22\x70\x2e\x5c\x78\x37\x34\x6f\x75\x63\x68\x28\x29\x22\x29")'	CRW-951-exec-03-nested-escaped-touch	row	-
+added by CRW-951 (fix round 3: verifier P1 findings of 9701540a4)	python3 -c "from pathlib import Path; p=Path('{MEMORY}/n.md'); print(f\"{exec('p.touch()')}\")"	CRW-951-fstring-data-08-exec-call-in-field	row	-
