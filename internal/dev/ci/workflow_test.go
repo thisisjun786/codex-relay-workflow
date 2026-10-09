@@ -389,23 +389,31 @@ func envSplitLong(w string) bool {
 
 // wrapperRunsNodeTest reports whether a wrapper runs a Node test: its program is read from args, the words
 // after the wrapper's name. The options are walked from the first word. A listed option skips its value; an
-// env assignment and a timeout duration are skipped; env -S and --split-string (and its abbreviations) take a
-// command line that env splits into words (CRW-983, CRW-1047). An option the table does not list has no known value, so both readings are judged: the option
-// alone takes no value, and the option takes the next word. A node test under either reading is a finding.
-// A word that starts no option is the program, and the words from it on are judged as a command.
+// env assignment is skipped; env -S and --split-string (and its abbreviations) take a command line that env
+// splits into words (CRW-983, CRW-1047). An option the table does not list has no known value, so both readings
+// are judged: the option alone takes no value, and the option takes the next word. A node test under either
+// reading is a finding. timeout's first word that starts no option is its duration, whatever its spelling and
+// after a double dash as well, so the program is a later word. A double dash ends the options. Any other word
+// that starts no option is the program, and the words from it on are judged as a command.
 func wrapperRunsNodeTest(name string, args []string, depth int) bool {
 	takes := shellWrapperArgs[name]
-	seen := map[int]bool{}
-	var walk func(i int) bool
-	walk = func(i int) bool {
-		if i >= len(args) || seen[i] {
+	type state struct {
+		i        int
+		duration bool
+	}
+	seen := map[state]bool{}
+	var walk func(i int, duration bool) bool
+	walk = func(i int, duration bool) bool {
+		if i >= len(args) || seen[state{i, duration}] {
 			return false
 		}
-		seen[i] = true
+		seen[state{i, duration}] = true
 		w := args[i]
 		switch {
 		case name == "env" && assignmentWord.MatchString(w):
-			return walk(i + 1)
+			return walk(i+1, duration)
+		case w == "--" && name == "timeout" && !duration:
+			return i+2 < len(args) && commandRunsNodeTest(args[i+2:], depth+1)
 		case w == "--":
 			return commandRunsNodeTest(args[i+1:], depth+1)
 		case name == "env" && envSplitCluster.MatchString(w):
@@ -419,16 +427,16 @@ func wrapperRunsNodeTest(name string, args []string, depth int) bool {
 			}
 			return i+1 < len(args) && envSplitRuns(args[i+1], args[i+2:], depth)
 		case takes[w]:
-			return walk(i + 2)
+			return walk(i+2, duration)
 		case strings.HasPrefix(w, "-") && w != "-":
-			return walk(i+1) || walk(i+2)
-		case name == "timeout" && w != "" && w[0] >= '0' && w[0] <= '9':
-			return walk(i + 1)
+			return walk(i+1, duration) || walk(i+2, duration)
+		case name == "timeout" && !duration:
+			return walk(i+1, true)
 		default:
 			return commandRunsNodeTest(args[i:], depth+1)
 		}
 	}
-	return walk(0)
+	return walk(0, false)
 }
 
 // envSplitRuns reads the value of env -S as env does (CRW-1047): the value is split into words by env's own
@@ -447,9 +455,11 @@ func envSplitRuns(value string, rest []string, depth int) bool {
 // form feed, carriage return) separate words outside quotes; '...' keeps every character but takes \\ and \' as
 // escapes; "..." takes the escapes below; a # that starts a word begins a comment that runs to the end. The
 // escapes are \_ (a separator outside quotes, a space inside double quotes), \c (ends the value; not allowed in
-// double quotes), \f \n \r \t \v, and \\ \# \$ \" \' for the character itself. It reports false for what it
-// does not read whole: an unterminated quote, a backslash at the end, an escape not listed, and a $ outside
-// single quotes (a ${NAME} expansion needs env's environment), so a caller fails closed on it.
+// double quotes), \f \n \r \t \v, and \\ \# \$ \" \' for the character itself. A word starts at a character
+// or a quote, so a \_ or \c where no word has started adds no word; only an empty pair of quotes is an empty
+// word. It reports false for what it does not read whole: an unterminated quote, a backslash at the end, an
+// escape not listed, and a $ outside single quotes (a ${NAME} expansion needs env's environment), so a caller
+// fails closed on it.
 func envSplitString(value string) ([]string, bool) {
 	var (
 		words   []string
@@ -509,7 +519,6 @@ func envSplitString(value string) ([]string, bool) {
 			if i >= len(value) {
 				return nil, false
 			}
-			started = true
 			switch value[i] {
 			case 'c':
 				if quote == '"' {
@@ -524,17 +533,17 @@ func envSplitString(value string) ([]string, bool) {
 					flush()
 				}
 			case 'f':
-				word = append(word, '\f')
+				word, started = append(word, '\f'), true
 			case 'n':
-				word = append(word, '\n')
+				word, started = append(word, '\n'), true
 			case 'r':
-				word = append(word, '\r')
+				word, started = append(word, '\r'), true
 			case 't':
-				word = append(word, '\t')
+				word, started = append(word, '\t'), true
 			case 'v':
-				word = append(word, '\v')
+				word, started = append(word, '\v'), true
 			case '\\', '#', '$', '"', '\'':
-				word = append(word, value[i])
+				word, started = append(word, value[i]), true
 			default:
 				return nil, false
 			}
@@ -1869,6 +1878,36 @@ func TestWorkflow_an_unknown_option_with_an_equals_is_read_both_ways(t *testing.
 	}
 }
 
+// CRW-1047, fix round 2. A separator escape (\_) or the end escape (\c) where no word has started adds no
+// word: GNU env 9.7 ran the fake node with --test for each env -S row below, and only an empty pair of quotes
+// is an empty word. timeout's first word that is not an option is its duration, after a double dash as well and
+// whatever its spelling (inf, .5), so the program is the word after it.
+func TestWorkflow_a_separator_escape_and_a_timeout_duration_hide_no_node_test(t *testing.T) {
+	for _, row := range []struct {
+		name  string
+		line  string
+		found bool
+	}{
+		{"a leading separator escape", "      - run: env -S '\\_node --test'\n", true},
+		{"two separator escapes after an assignment", "      - run: env -S 'FOO=1\\_\\_node --test'\n", true},
+		{"an end escape that is the whole value", "      - run: env -S '\\c' node --test\n", true},
+		{"a quoted empty word is the program", "      - run: env -S \"'' node --test\"\n", false},
+		{"a double dash before the timeout duration", "      - run: timeout -- 10 node --test\n", true},
+		{"an echo after a double dash and the duration", "      - run: timeout -- 10 echo node --test\n", false},
+		{"options before a double dash and the duration", "      - run: timeout -k 1 -- 10 node --test\n", true},
+		{"a timeout duration spelled inf", "      - run: timeout inf node --test\n", true},
+		{"a timeout duration with no leading digit", "      - run: timeout .5 node --test\n", true},
+		{"an echo after a duration spelled infinity", "      - run: timeout infinity echo node --test\n", false},
+		{"a timeout duration and the test", "      - run: timeout 10 node --test\n", true},
+		{"an echo after a timeout duration", "      - run: timeout 10 echo node --test\n", false},
+		{"only one word is the timeout duration", "      - run: timeout 10 20 node --test\n", false},
+	} {
+		if got := pythonInWorkflow("release.yml", row.line); (len(got) > 0) != row.found {
+			t.Errorf("%s: found = %q, want found = %v", row.name, got, row.found)
+		}
+	}
+}
+
 // envSplitString is GNU env's -S splitter; the want values are what GNU env 9.7 passed to a program.
 func TestEnvSplitString(t *testing.T) {
 	for _, row := range []struct {
@@ -1894,6 +1933,14 @@ func TestEnvSplitString(t *testing.T) {
 		{`node 'a\\b\nc\'`, nil, false},
 		{`node "a b`, nil, false},
 		{`node a\`, nil, false},
+		{`\_node --test`, []string{"node", "--test"}, true},
+		{`FOO=1\_\_node --test`, []string{"FOO=1", "node", "--test"}, true},
+		{`node\_\_--test`, []string{"node", "--test"}, true},
+		{`node --test \_`, []string{"node", "--test"}, true},
+		{`\c`, nil, true},
+		{`\cnode`, nil, true},
+		{`node --test \c`, []string{"node", "--test"}, true},
+		{`'' node`, []string{"", "node"}, true},
 	} {
 		got, ok := envSplitString(row.in)
 		if ok != row.ok || (ok && !slices.Equal(got, row.want)) {
