@@ -37,7 +37,9 @@
 package hook
 
 import (
+	"bufio"
 	"errors"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -76,6 +78,9 @@ type promptDcloseSeams struct {
 	// ledger row is recorded; true stops the write there, as a writer killed at that point would stop
 	// (CRW-1097). nil goes on.
 	afterOrchestratePublish func() bool
+	// openLedger replaces the open of a ledger the close reads for its row guards (CRW-1103), so a test
+	// can count the reads. nil is os.Open.
+	openLedger func(path string) (*os.File, error)
 	// writeMarker and writePlan are the two plan-stage writes the close makes before its rows.
 	// nil means the real function, so a production run holds neither and a test can make one
 	// report a post-rename failure without a package-level variable (CRW-869, finding 2).
@@ -504,7 +509,7 @@ func promptDcloseClose(p PromptSubmitPayload, held state.State, turn, closePhase
 	// guarded append below, as before.
 	var allDoneEvent *state.LedgerEvent
 	if plan.allDone && result.Ledger != nil {
-		if present, readErr := promptDcloseHasPabcdCloseRow(p.Cwd, p.SessionID, held.CheckEpoch, ""); readErr == nil && !present {
+		if present, readErr := promptDcloseHasPabcdCloseRowOpen(p.Cwd, p.SessionID, held.CheckEpoch, "", promptDcloseOpenSeam(seams)); readErr == nil && !present {
 			row := promptDcloseCloseRow(*result.Ledger, held.CheckEpoch, "")
 			ev, err := state.NewLedgerEvent(p.Cwd, held, next, &row, nil)
 			if err == nil {
@@ -546,16 +551,17 @@ func promptDcloseClose(p PromptSubmitPayload, held state.State, turn, closePhase
 	// session lock the caller holds is a different lock and serialises one session only.
 	rowsErr := error(nil)
 	finalize, finalizeErr := goalplan.WithGoalplanWriteLock(p.Cwd, slug, func(*goalplan.Goalplan) (struct{}, error) {
-		for _, row := range plan.rows {
-			// CRW-869 finding 1: a row read that failed with anything but ENOENT is unreadable, not
-			// absent. Believing it would append the row again, so the close stops here with the
-			// ledger read as the reason; the caller answers the pending text (or the all-done
-			// warning) and the marker is kept, because the cleanup below never runs.
-			present, readErr := promptDcloseHasGoalplanRow(p.Cwd, slug, string(row.event), row.detail)
-			if readErr != nil {
-				return struct{}{}, errors.New("the goalplan ledger could not be read: " + readErr.Error())
-			}
-			if present {
+		// CRW-869 finding 1: a row read that failed with anything but ENOENT is unreadable, not absent.
+		// Believing it would append the row again, so the close stops here with the ledger read as the
+		// reason; the caller answers the pending text (or the all-done warning) and the marker is kept,
+		// because the cleanup below never runs. CRW-1103: every row's guard is answered by one streamed
+		// pass over the plan's ledger, before any of them is appended.
+		presentRows, readErr := promptDcloseHasGoalplanRows(p.Cwd, slug, promptDcloseOpenSeam(seams), plan.rows)
+		if readErr != nil {
+			return struct{}{}, errors.New("the goalplan ledger could not be read: " + readErr.Error())
+		}
+		for i, row := range plan.rows {
+			if presentRows[i] {
 				continue
 			}
 			if rowErr := goalplan.AppendGoalplanLedger(p.Cwd, slug, goalplan.GoalplanLedgerEntry{
@@ -578,7 +584,7 @@ func promptDcloseClose(p PromptSubmitPayload, held state.State, turn, closePhase
 			}
 			promptDcloseSeam(seams, func(s *promptDcloseSeams) func() { return s.afterPabcdLedgerAppend })
 		} else if result.Ledger != nil {
-			present, readErr := promptDcloseHasPabcdCloseRow(p.Cwd, p.SessionID, closeCheckEpoch, closedWorkPhaseID)
+			present, readErr := promptDcloseHasPabcdCloseRowOpen(p.Cwd, p.SessionID, closeCheckEpoch, closedWorkPhaseID, promptDcloseOpenSeam(seams))
 			if readErr != nil {
 				return struct{}{}, errors.New("the PABCD ledger could not be read: " + readErr.Error())
 			}
@@ -1085,15 +1091,41 @@ func promptDcloseWriteMarker(cwd string, held state.State, closePhaseID string, 
 // directory the slug cannot be resolved to is unreadable, not absent: the row's presence is unknown
 // and a caller must not append (CRW-869, finding 1).
 func promptDcloseHasGoalplanRow(cwd, slug, event, detail string) (bool, error) {
-	dir, err := goalplan.GoalplanDir(cwd, slug)
+	have, err := promptDcloseHasGoalplanRows(cwd, slug, nil, []promptDcloseGoalplanRow{{event: goalplan.GoalplanLedgerEvent(event), detail: detail}})
 	if err != nil {
 		return false, err
 	}
-	return promptDcloseAnyRow(filepath.Join(dir, goalplan.GoalplanLedgerFile), func(row map[string]any) bool {
+	return have[0], nil
+}
+
+// promptDcloseHasGoalplanRows answers hasGoalplanRow for every row of rows in one streamed pass over the
+// bound plan's ledger (CRW-1103): the oracle reads the whole ledger once per row (:628-632). open is the
+// read seam a test counts; nil is os.Open.
+func promptDcloseHasGoalplanRows(cwd, slug string, open func(string) (*os.File, error), rows []promptDcloseGoalplanRow) ([]bool, error) {
+	have := make([]bool, len(rows))
+	if len(rows) == 0 {
+		return have, nil
+	}
+	dir, err := goalplan.GoalplanDir(cwd, slug)
+	if err != nil {
+		return nil, err
+	}
+	err = promptDcloseScanRows(filepath.Join(dir, goalplan.GoalplanLedgerFile), open, func(row map[string]any) bool {
 		gotEvent, _ := row["event"].(string)
 		gotDetail, _ := row["detail"].(string)
-		return gotEvent == event && gotDetail == detail
+		done := true
+		for i, want := range rows {
+			if gotEvent == string(want.event) && gotDetail == want.detail {
+				have[i] = true
+			}
+			done = done && have[i]
+		}
+		return done
 	})
+	if err != nil {
+		return nil, err
+	}
+	return have, nil
 }
 
 // promptDcloseHasPabcdCloseRow is hasPabcdCloseRow (:634-645): the PABCD close row of this
@@ -1101,7 +1133,12 @@ func promptDcloseHasGoalplanRow(cwd, slug, event, detail string) (bool, error) {
 // the id is empty. A row of a damaged line matches nothing, as in promptDcloseHasGoalplanRow, and
 // an unreadable ledger is unreadable, not absent (CRW-869, finding 1).
 func promptDcloseHasPabcdCloseRow(cwd, sessionID string, checkEpoch *string, closedWorkPhaseID string) (bool, error) {
-	return promptDcloseAnyRow(filepath.Join(cwd, crwdir.DirName, state.LedgerFile), func(row map[string]any) bool {
+	return promptDcloseHasPabcdCloseRowOpen(cwd, sessionID, checkEpoch, closedWorkPhaseID, nil)
+}
+
+// promptDcloseHasPabcdCloseRowOpen is promptDcloseHasPabcdCloseRow with the read seam.
+func promptDcloseHasPabcdCloseRowOpen(cwd, sessionID string, checkEpoch *string, closedWorkPhaseID string, open func(string) (*os.File, error)) (bool, error) {
+	return promptDcloseAnyRowOpen(filepath.Join(cwd, crwdir.DirName, state.LedgerFile), open, func(row map[string]any) bool {
 		gotSession, _ := row["sessionId"].(string)
 		gotFrom, _ := row["from"].(string)
 		gotTo, _ := row["to"].(string)
@@ -1132,30 +1169,68 @@ func promptDcloseClosedKey(closedWorkPhaseID string) *string {
 // surrogate, where encoding/json folds it into U+FFFD and a stored "closed wp-\ud800" row then
 // compared equal to a U+FFFD close and the close skipped the row it owed.
 func promptDcloseAnyRow(path string, match func(map[string]any) bool) (bool, error) {
-	data, err := os.ReadFile(path)
+	return promptDcloseAnyRowOpen(path, nil, match)
+}
+
+// promptDcloseAnyRowOpen is promptDcloseAnyRow with the read seam: the file is streamed and the read
+// stops at the first match, because the chat close skips a damaged line rather than refusing it.
+func promptDcloseAnyRowOpen(path string, open func(string) (*os.File, error), match func(map[string]any) bool) (bool, error) {
+	found := false
+	err := promptDcloseScanRows(path, open, func(row map[string]any) bool {
+		found = match(row)
+		return found
+	})
+	return found, err
+}
+
+// promptDcloseScanRows streams the JSON-object lines of a JSONL file to visit, which answers true to stop
+// the read (CRW-1103: the oracle reads the whole file and keeps every object). Lines split as the oracle's
+// text.split(/\r?\n/) splits them; each is decoded as UTF-8 on its own, which is what decoding the whole
+// file gives, because a line feed never belongs to an invalid sequence. A blank line, a line that does
+// not parse and a line that is not an object are skipped, as the chat close always skipped them (CRW-797);
+// the CLI's reader refuses them and the two policies stay apart. A missing file is no rows; any other read
+// error is returned (CRW-869, finding 1). No line length is capped. open nil is os.Open.
+func promptDcloseScanRows(path string, open func(string) (*os.File, error), visit func(map[string]any) bool) error {
+	if open == nil {
+		open = os.Open
+	}
+	f, err := open(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return false, nil
+			return nil
 		}
-		return false, err
+		return err
 	}
-	for _, line := range text.SplitLines(source.DecodeUTF8(data)) {
-		if strings.TrimSpace(line) == "" {
-			continue
+	defer f.Close()
+	r := bufio.NewReader(f)
+	for {
+		raw, readErr := r.ReadBytes('\n')
+		if readErr != nil && !errors.Is(readErr, io.EOF) {
+			return readErr
 		}
-		value, err := pyjson.Loads(line, promptDcloseRowOptions())
-		if err != nil {
-			continue
+		line := source.DecodeUTF8(raw)
+		if strings.HasSuffix(line, "\n") {
+			line = strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
 		}
-		row, isObject := value.(map[string]any)
-		if !isObject || row == nil {
-			continue
+		if strings.TrimSpace(line) != "" {
+			if value, err := pyjson.Loads(line, promptDcloseRowOptions()); err == nil {
+				if row, isObject := value.(map[string]any); isObject && row != nil && visit(row) {
+					return nil
+				}
+			}
 		}
-		if match(row) {
-			return true, nil
+		if readErr != nil {
+			return nil
 		}
 	}
-	return false, nil
+}
+
+// promptDcloseOpenSeam is the test's ledger-open seam, nil in production.
+func promptDcloseOpenSeam(seams *promptDcloseSeams) func(string) (*os.File, error) {
+	if seams == nil {
+		return nil
+	}
+	return seams.openLedger
 }
 
 // promptDcloseRowOptions is the oracle's JSON.parse for a ledger line: a lone surrogate escape is

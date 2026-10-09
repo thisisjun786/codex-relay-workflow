@@ -32,8 +32,10 @@ package cli
 // answering a goalplan lock that gave up, so a cancelled close never reports the busy text instead.
 
 import (
+	"bufio"
 	"context"
 	"errors"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -81,6 +83,9 @@ type orchestrateDcloseSeam struct {
 	// state write that read precedes. A test cancels the context here to order the cancellation after that
 	// read and before that write, which a check that had run before the read cannot see. Nil means no hook.
 	afterRecoveryStateRead func()
+	// openLedger replaces the open of a ledger the close reads for its row guards (CRW-1103), so a test can
+	// count the reads; nil is os.Open.
+	openLedger func(path string) (*os.File, error)
 }
 
 // orchestrateDcloseRunHook runs one hook, or nothing when the test left it nil.
@@ -174,70 +179,111 @@ type orchestrateDcloseLockAnswer struct {
 var orchestrateDcloseSurrogateOptions = pyjson.LoadOptions{Surrogates: true, Map: true, Numbers: pyjson.SpelledNumbers}
 
 // orchestrateDcloseReadJSONLObjects is readJsonlObjects (:431-435): every non-empty line of the file
-// as a JSON object. A missing file is no rows. The bytes are decoded as UTF-8 first (source.DecodeUTF8,
-// what Node's readFileSync(path, "utf8") and goalplan read.go both do: an invalid byte becomes one
-// U+FFFD), then each non-empty line is parsed the way the oracle's JSON.parse parses it.
-//
-// A line the oracle's readers would refuse is an error, so a damaged ledger fails the close loudly
-// instead of silently answering "no row yet" and writing a duplicate: text JSON.parse cannot read at
-// all, and a bare `null`, whose property access is the TypeError the oracle's .some() callback throws.
-// A line that is another JSON value is not an error there - property access on a number, string,
-// boolean or array answers undefined - so it is dropped as a row that matches nothing, and no reader
-// is fooled into treating it as an empty object. A repeated key keeps its last value, as a JS object
-// literal and a Python dict both do.
-//
-// The error text is the reader's own, not the oracle's V8 SyntaxError text. Two refusals differ from
-// the encoding/json reading this replaces, both named in the pull request: a number past float64's
-// range is now read rather than refused, and text after the value reads as "trailing data after the
-// JSON value" rather than encoding/json's own wording.
+// as a JSON object, read with orchestrateDcloseScanJSONL and gathered. The close itself never gathers the
+// rows (CRW-1103); this whole list is for a caller that wants to look at all of them.
 func orchestrateDcloseReadJSONLObjects(path string) ([]map[string]any, error) {
-	raw, err := os.ReadFile(path)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil, nil
-	}
+	rows := []map[string]any{}
+	err := orchestrateDcloseScanJSONL(path, nil, func(row map[string]any) { rows = append(rows, row) })
 	if err != nil {
 		return nil, err
-	}
-	rows := []map[string]any{}
-	for _, line := range strings.Split(source.DecodeUTF8(raw), "\n") {
-		if line == "" {
-			continue
-		}
-		value, err := pyjson.Loads(line, orchestrateDcloseSurrogateOptions)
-		if err != nil {
-			return nil, err
-		}
-		if value == nil {
-			return nil, errors.New("ledger line " + strconv.Quote(line) + " is null, which the oracle's readers refuse")
-		}
-		row, isObject := value.(map[string]any)
-		if !isObject {
-			continue
-		}
-		rows = append(rows, row)
 	}
 	return rows, nil
 }
 
-// orchestrateDcloseHasGoalplanRow is hasGoalplanRow (:437-440): a row of the plan's own ledger with
-// this event and detail. It is the idempotence guard of both goalplan rows.
-func orchestrateDcloseHasGoalplanRow(cwd, slug string, event goalplan.GoalplanLedgerEvent, detail string) (bool, error) {
-	dir, err := goalplan.GoalplanDir(cwd, slug)
-	if err != nil {
-		return false, err
+// orchestrateDcloseScanJSONL streams readJsonlObjects (:431-435): each non-empty line of the file as a
+// JSON object, handed to visit and then dropped, so no more than one line and one row is held at a time
+// (CRW-1103: the oracle reads the whole file, splits it and keeps every object, and the close read the
+// plan's ledger twice and the workspace ledger once more, all while it held the session and goalplan
+// locks). A missing file is no rows. Each line is decoded as UTF-8 first (source.DecodeUTF8, what Node's
+// readFileSync(path, "utf8") and goalplan read.go both do: an invalid byte becomes one U+FFFD; a line
+// feed never belongs to an invalid sequence, so a line decodes as it would inside the whole file), then
+// parsed the way the oracle's JSON.parse parses it.
+//
+// A line the oracle's readers would refuse is an error, so a damaged ledger fails the close loudly
+// instead of silently answering "no row yet" and writing a duplicate: text JSON.parse cannot read at
+// all, and a bare `null`, whose property access is the TypeError the oracle's .some() callback throws.
+// The whole file is checked, a line after a match included, because the oracle parses every line before
+// it looks for one. A line that is another JSON value is not an error there - property access on a
+// number, string, boolean or array answers undefined - so it is dropped as a row that matches nothing.
+// A repeated key keeps its last value, as a JS object literal and a Python dict both do. No line length
+// is capped, so a large receipt row is read as before.
+//
+// The error text is the reader's own, not the oracle's V8 SyntaxError text. open is the seam a test counts
+// the reads with; nil is os.Open.
+func orchestrateDcloseScanJSONL(path string, open func(string) (*os.File, error), visit func(map[string]any)) error {
+	if open == nil {
+		open = os.Open
 	}
-	rows, err := orchestrateDcloseReadJSONLObjects(filepath.Join(dir, goalplan.GoalplanLedgerFile))
-	if err != nil {
-		return false, err
+	f, err := open(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
 	}
-	for _, row := range rows {
-		gotEvent, _ := row["event"].(string)
-		gotDetail, _ := row["detail"].(string)
-		if gotEvent == string(event) && gotDetail == detail {
-			return true, nil
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	r := bufio.NewReader(f)
+	for {
+		raw, readErr := r.ReadBytes('\n')
+		if readErr != nil && !errors.Is(readErr, io.EOF) {
+			return readErr
+		}
+		if line := strings.TrimSuffix(source.DecodeUTF8(raw), "\n"); line != "" {
+			value, err := pyjson.Loads(line, orchestrateDcloseSurrogateOptions)
+			if err != nil {
+				return err
+			}
+			if value == nil {
+				return errors.New("ledger line " + strconv.Quote(line) + " is null, which the oracle's readers refuse")
+			}
+			if row, isObject := value.(map[string]any); isObject {
+				visit(row)
+			}
+		}
+		if readErr != nil {
+			return nil
 		}
 	}
-	return false, nil
+}
+
+// orchestrateDcloseGoalplanKey is one hasGoalplanRow question: a row of the plan's own ledger with this
+// event and detail.
+type orchestrateDcloseGoalplanKey struct {
+	event  goalplan.GoalplanLedgerEvent
+	detail string
+}
+
+// orchestrateDcloseHasGoalplanRows answers every hasGoalplanRow question of the close in one pass over
+// the plan's own ledger (CRW-1103): the oracle reads the whole ledger once per question (:437-440, at
+// :607 and :635). It is the idempotence guard of both goalplan rows.
+func orchestrateDcloseHasGoalplanRows(cwd, slug string, open func(string) (*os.File, error), keys ...orchestrateDcloseGoalplanKey) ([]bool, error) {
+	have := make([]bool, len(keys))
+	dir, err := goalplan.GoalplanDir(cwd, slug)
+	if err != nil {
+		return nil, err
+	}
+	err = orchestrateDcloseScanJSONL(filepath.Join(dir, goalplan.GoalplanLedgerFile), open, func(row map[string]any) {
+		gotEvent, _ := row["event"].(string)
+		gotDetail, _ := row["detail"].(string)
+		for i, key := range keys {
+			if gotEvent == string(key.event) && gotDetail == key.detail {
+				have[i] = true
+			}
+		}
+	})
+	if err != nil {
+		return nil, err
+	}
+	return have, nil
+}
+
+// orchestrateDcloseHasGoalplanRow is hasGoalplanRow (:437-440) for one question.
+func orchestrateDcloseHasGoalplanRow(cwd, slug string, event goalplan.GoalplanLedgerEvent, detail string) (bool, error) {
+	have, err := orchestrateDcloseHasGoalplanRows(cwd, slug, nil, orchestrateDcloseGoalplanKey{event, detail})
+	if err != nil {
+		return false, err
+	}
+	return have[0], nil
 }
 
 // orchestrateDcloseRowMatchesKey compares a stored JSON value against a *string key the way the
@@ -255,12 +301,16 @@ func orchestrateDcloseRowMatchesKey(row map[string]any, key string, want *string
 // orchestrateDcloseHasPabcdCloseRow is hasPabcdCloseRow (:442-453): the PABCD ledger already holds
 // this close's C -> IDLE row for this session, check epoch and closed work phase. It is the guard
 // that makes a retry append the row once.
+//
+// The workspace ledger is streamed (CRW-1103): no row is kept, and every line is still checked.
 func orchestrateDcloseHasPabcdCloseRow(cwd, sessionID string, checkEpoch, closedWorkPhaseID *string) (bool, error) {
-	rows, err := orchestrateDcloseReadJSONLObjects(filepath.Join(cwd, crwdir.DirName, state.LedgerFile))
-	if err != nil {
-		return false, err
-	}
-	for _, row := range rows {
+	return orchestrateDcloseHasPabcdCloseRowOpen(cwd, sessionID, checkEpoch, closedWorkPhaseID, nil)
+}
+
+// orchestrateDcloseHasPabcdCloseRowOpen is orchestrateDcloseHasPabcdCloseRow with the read seam.
+func orchestrateDcloseHasPabcdCloseRowOpen(cwd, sessionID string, checkEpoch, closedWorkPhaseID *string, open func(string) (*os.File, error)) (bool, error) {
+	have := false
+	err := orchestrateDcloseScanJSONL(filepath.Join(cwd, crwdir.DirName, state.LedgerFile), open, func(row map[string]any) {
 		gotSession, _ := row["sessionId"].(string)
 		gotFrom, _ := row["from"].(string)
 		gotTo, _ := row["to"].(string)
@@ -268,10 +318,13 @@ func orchestrateDcloseHasPabcdCloseRow(cwd, sessionID string, checkEpoch, closed
 		if gotSession == sessionID && gotFrom == "C" && gotTo == "IDLE" && gotReason == "done" &&
 			orchestrateDcloseRowMatchesKey(row, "checkEpoch", checkEpoch) &&
 			orchestrateDcloseRowMatchesKey(row, "closedWorkPhaseId", closedWorkPhaseID) {
-			return true, nil
+			have = true
 		}
+	})
+	if err != nil {
+		return false, err
 	}
-	return false, nil
+	return have, nil
 }
 
 // orchestrateDcloseFindWorkPhase is the oracle's workPhases.find((wp) => wp.id === id).
@@ -548,7 +601,7 @@ func orchestrateDcloseContext(ctx context.Context, cwd, sessionID, closePhaseID 
 				// neither way and never describes a close that did not happen.
 				owed := false
 				if cur.Phase == state.PhaseC {
-					have, err := orchestrateDcloseHasPabcdCloseRow(cwd, sessionID, cur.CheckEpoch, nil)
+					have, err := orchestrateDcloseHasPabcdCloseRowOpen(cwd, sessionID, cur.CheckEpoch, nil, seam.openLedger)
 					if err != nil {
 						return orchestrateDcloseLockAnswer{}, err
 					}
@@ -630,10 +683,26 @@ func orchestrateDcloseContext(ctx context.Context, cwd, sessionID, closePhaseID 
 			}
 		}
 
-		haveDone, err := orchestrateDcloseHasGoalplanRow(cwd, slug, goalplan.EventWorkphaseDone, "closed "+closePhaseID)
+		// §52: the started row names the successor THIS close activated, which the marker records. The
+		// persisted cursor is the wrong source on a resume: a retry that answers already_done leaves
+		// `closedPlan` as the file, and that cursor may have moved past the successor - or been nulled
+		// by an all-done plan - so the row this close still owed would never be written. The
+		// hasGoalplanRow guard keeps it idempotent when the row already exists.
+		startedID := closedPlan.ActiveWorkPhaseID
+		if recovering {
+			startedID = cur.DcloseRecovery.NextWorkPhaseID
+		}
+		// CRW-1103: both guards are answered by one streamed pass over the plan's ledger, before either row
+		// is appended; the done row this close appends is not a started row, so the started answer holds.
+		keys := []orchestrateDcloseGoalplanKey{{goalplan.EventWorkphaseDone, "closed " + closePhaseID}}
+		if startedID != nil && *startedID != "" {
+			keys = append(keys, orchestrateDcloseGoalplanKey{goalplan.EventWorkphaseStarted, "started " + *startedID})
+		}
+		have, err := orchestrateDcloseHasGoalplanRows(cwd, slug, seam.openLedger, keys...)
 		if err != nil {
 			return orchestrateDcloseLockAnswer{}, err
 		}
+		haveDone, haveStarted := have[0], len(have) > 1 && have[1]
 		if !haveDone {
 			if err := orchestrateDcloseCancelCheck(ctx, seam.interrupt, wrote); err != nil {
 				return orchestrateDcloseLockAnswer{}, err
@@ -645,22 +714,6 @@ func orchestrateDcloseContext(ctx context.Context, cwd, sessionID, closePhaseID 
 				return orchestrateDcloseLockAnswer{}, err
 			}
 			wrote = true
-		}
-		// §52: the started row names the successor THIS close activated, which the marker records. The
-		// persisted cursor is the wrong source on a resume: a retry that answers already_done leaves
-		// `closedPlan` as the file, and that cursor may have moved past the successor - or been nulled
-		// by an all-done plan - so the row this close still owed would never be written. The
-		// hasGoalplanRow guard keeps it idempotent when the row already exists.
-		startedID := closedPlan.ActiveWorkPhaseID
-		if recovering {
-			startedID = cur.DcloseRecovery.NextWorkPhaseID
-		}
-		haveStarted := false
-		if startedID != nil && *startedID != "" {
-			haveStarted, err = orchestrateDcloseHasGoalplanRow(cwd, slug, goalplan.EventWorkphaseStarted, "started "+*startedID)
-			if err != nil {
-				return orchestrateDcloseLockAnswer{}, err
-			}
 		}
 		if startedID != nil && *startedID != "" && !haveStarted {
 			if err := orchestrateDcloseCancelCheck(ctx, seam.interrupt, wrote); err != nil {
@@ -756,7 +809,7 @@ func orchestrateDcloseContext(ctx context.Context, cwd, sessionID, closePhaseID 
 	// to clear, so it never enters this second critical section.
 	if !allDoneClose {
 		finalize, err := goalplan.WithGoalplanWriteLock(cwd, slug, func(plan *goalplan.Goalplan) (struct{}, error) {
-			have, err := orchestrateDcloseHasPabcdCloseRow(cwd, sessionID, closeCheckEpoch, closedWorkPhaseID)
+			have, err := orchestrateDcloseHasPabcdCloseRowOpen(cwd, sessionID, closeCheckEpoch, closedWorkPhaseID, seam.openLedger)
 			if err != nil {
 				return struct{}{}, err
 			}
