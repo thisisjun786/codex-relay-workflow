@@ -97,3 +97,38 @@ python3 -c 'import os; touch = 1; mkdir = 2; print(touch + mkdir, os.path.exists
 === CRW-951-mkdir-08-os-mkdir-work-tree | B
 --why Allow counterexample: os.mkdir("/w/d") is another call (not a pathlib method) and names a work tree path.
 python3 -c 'import os; os.mkdir("/w/d")'
+
+=== CRW-951-node-01-touch-method | B
+--why Allow counterexample (fix round 1): a Node program with its own Path().touch() method writes nothing; the touch/mkdir rule reads Python only.
+node -e 'function Path(x) { return {touch() { console.log(x) }} }; Path("{MEMORY}/a").touch()'
+
+=== CRW-951-node-02-mkdir-method | B
+--why Allow counterexample (fix round 1): a Node program with its own Path().mkdir() method writes nothing.
+node -e 'function Path(x) { return {mkdir() { console.log(x) }} }; Path("{MEMORY}/d").mkdir()'
+
+=== CRW-951-read-08-string-data-dotted-touch | B
+--why Allow counterexample (fix round 1): the text p.touch() inside a string literal is data, not a call.
+python3 -c 'import os; print("p.touch()", os.path.exists("/w/x"))'
+
+=== CRW-951-read-09-comment-dotted-mkdir | B
+--why Allow counterexample (fix round 1): the text p.mkdir() in a comment is not a call.
+python3 -c 'import os; print(os.path.exists("/w/x")) # p.mkdir()'
+
+=== CRW-951-read-10-docstring-dotted-touch | B
+--why Allow counterexample (fix round 1): the text p.touch() in a triple-quoted string is data.
+python3 -c 'import os; print("""a p.touch() b""", os.path.exists("/w/x"))'
+
+=== CRW-951-touch-10-fstring-field | W
+--why An f-string replacement field is program text: the unattributed p.touch() inside it is an unknown destination.
+python3 -c 'import os; print(f"{p.touch()}", os.path.exists("/w/x"))'
+
+=== CRW-951-touch-11-exec-program-name-receiver | E
+--why A string run by exec is program text: the unattributed p.touch() in it is an unknown destination.
+python3 -c 'import os; exec("p.touch()"); os.path.exists("/w/x")'
+
+=== CRW-951-mkdir-09-comment-then-call | W
+--why A comment does not hide a call on the next line: p.mkdir() after a comment line.
+python3 -c 'import os
+# note
+p.mkdir()
+os.path.exists("/w/x")'
