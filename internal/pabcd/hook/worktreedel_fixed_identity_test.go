@@ -55,3 +55,11 @@ func TestUnreadableWorktreeCommandGivesAnalysisRemedy(t *testing.T) {
 		t.Fatalf("unreadable verdict: %+v", v)
 	}
 }
+
+func TestXargsDotUsesFixedProtectionPredicate(t *testing.T) {
+	r := newDelRig(t)
+	r.denied(t, "printf '%s\\n' . | xargs git worktree remove")
+	r.allowed(t, "cd "+r.other+" && printf '%s\\n' . | xargs git worktree remove")
+	// Recursive rm through a run-time carrier keeps its pre-existing conservative refusal.
+	r.denied(t, "cd "+r.other+" && printf '%s\\n' . | xargs rm -rf")
+}
