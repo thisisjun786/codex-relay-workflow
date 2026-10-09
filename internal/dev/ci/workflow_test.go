@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The CI workflow's structure (.github/workflows/ci.yml) and its one aggregate check, dev-gate.
@@ -365,7 +366,7 @@ var shellWrappers = map[string]bool{"env": true, "sudo": true, "timeout": true, 
 
 // shellWrapperArgs are the options each wrapper takes a value for, as listed; wrapperRunsNodeTest skips the
 // value so the program after it is read (CRW-983). env's -S is not listed: its value is a command line
-// (envSplitRuns). An option that is not listed is read both ways (CRW-1047).
+// (wrapperWalk.split). An option that is not listed is read both ways (CRW-1047).
 var shellWrapperArgs = map[string]map[string]bool{
 	"env":     {"-u": true, "-C": true},
 	"sudo":    {"-u": true, "-g": true, "-C": true, "-h": true, "-p": true, "-r": true, "-t": true, "-T": true, "-U": true},
@@ -387,6 +388,21 @@ func envSplitLong(w string) bool {
 	return len(name) > 2 && strings.HasPrefix(name, "--") && strings.HasPrefix("--split-string", name)
 }
 
+// envAssignmentWord is an assignment in env's own argument list: GNU env takes any NAME=VALUE whose NAME is not
+// empty as one, whether or not NAME is a shell identifier (9=1, a-b=1). Before the program, a word that starts
+// with "-" is an option, so envAssignment excludes it; after a double dash every such word is an assignment.
+var envAssignmentWord = regexp.MustCompile("^[^=]+=")
+
+func envAssignment(w string, afterDashes bool) bool {
+	return envAssignmentWord.MatchString(w) && (afterDashes || !strings.HasPrefix(w, "-"))
+}
+
+// wrapperWalk is the state one wrapper reading shares with the env splits inside it: the argument lists
+// already walked, so a state is walked once however many splits lead to it, and the work stays linear.
+type wrapperWalk struct {
+	seen map[string]bool
+}
+
 // wrapperRunsNodeTest reports whether a wrapper runs a Node test: its program is read from args, the words
 // after the wrapper's name. The options are walked from the first word. A listed option skips its value; an
 // env assignment is skipped; env -S and --split-string (and its abbreviations) take a command line that env
@@ -394,38 +410,52 @@ func envSplitLong(w string) bool {
 // are judged: the option alone takes no value, and the option takes the next word. A node test under either
 // reading is a finding. timeout's first word that starts no option is its duration, whatever its spelling and
 // after a double dash as well, so the program is a later word. A double dash ends the options. Any other word
-// that starts no option is the program, and the words from it on are judged as a command.
+// that starts no option is the program, and the words from it on are judged as a command. Each env split
+// is one more level of depth and shares the walked states, so the walk is bounded by shellMaxDepth and by the
+// number of distinct argument lists, not by the number of ways to reach them.
 func wrapperRunsNodeTest(name string, args []string, depth int) bool {
-	takes := shellWrapperArgs[name]
-	type state struct {
-		i        int
-		duration bool
+	return (&wrapperWalk{seen: map[string]bool{}}).runs(name, args, depth)
+}
+
+func (ww *wrapperWalk) runs(name string, args []string, depth int) bool {
+	if depth > shellMaxDepth {
+		return true
 	}
-	seen := map[state]bool{}
+	takes := shellWrapperArgs[name]
 	var walk func(i int, duration bool) bool
 	walk = func(i int, duration bool) bool {
-		if i >= len(args) || seen[state{i, duration}] {
+		if i >= len(args) {
 			return false
 		}
-		seen[state{i, duration}] = true
+		key := fmt.Sprintf("%s\x00%t\x00%s", name, duration, strings.Join(args[i:], "\x00"))
+		if ww.seen[key] {
+			return false
+		}
+		ww.seen[key] = true
 		w := args[i]
 		switch {
-		case name == "env" && assignmentWord.MatchString(w):
+		case name == "env" && envAssignment(w, false):
 			return walk(i+1, duration)
 		case w == "--" && name == "timeout" && !duration:
 			return i+2 < len(args) && commandRunsNodeTest(args[i+2:], depth+1)
+		case w == "--" && name == "env":
+			rest := args[i+1:]
+			for len(rest) > 0 && envAssignment(rest[0], true) {
+				rest = rest[1:]
+			}
+			return commandRunsNodeTest(rest, depth+1)
 		case w == "--":
 			return commandRunsNodeTest(args[i+1:], depth+1)
 		case name == "env" && envSplitCluster.MatchString(w):
 			if rest := w[len(envSplitCluster.FindString(w)):]; rest != "" {
-				return envSplitRuns(rest, args[i+1:], depth)
+				return ww.split(rest, args[i+1:], depth)
 			}
-			return i+1 < len(args) && envSplitRuns(args[i+1], args[i+2:], depth)
+			return i+1 < len(args) && ww.split(args[i+1], args[i+2:], depth)
 		case name == "env" && envSplitLong(w):
 			if _, value, ok := strings.Cut(w, "="); ok {
-				return envSplitRuns(value, args[i+1:], depth)
+				return ww.split(value, args[i+1:], depth)
 			}
-			return i+1 < len(args) && envSplitRuns(args[i+1], args[i+2:], depth)
+			return i+1 < len(args) && ww.split(args[i+1], args[i+2:], depth)
 		case takes[w]:
 			return walk(i+2, duration)
 		case strings.HasPrefix(w, "-") && w != "-":
@@ -439,16 +469,16 @@ func wrapperRunsNodeTest(name string, args []string, depth int) bool {
 	return walk(0, false)
 }
 
-// envSplitRuns reads the value of env -S as env does (CRW-1047): the value is split into words by env's own
+// split reads the value of env -S as env does (CRW-1047): the value is split into words by env's own
 // rules (envSplitString), not by the shell's, and the words replace the option in env's argument list, so the
 // words after the value follow them, the way env builds its argv. The result is one argv, not a script: a ";"
 // in the value is a character of a word. A value the splitter cannot read whole is a finding.
-func envSplitRuns(value string, rest []string, depth int) bool {
+func (ww *wrapperWalk) split(value string, rest []string, depth int) bool {
 	words, ok := envSplitString(value)
 	if !ok {
 		return true
 	}
-	return wrapperRunsNodeTest("env", append(words, rest...), depth+1)
+	return ww.runs("env", append(words, rest...), depth+1)
 }
 
 // envSplitString splits the value of env -S the way GNU env does. Blanks (space, tab, newline, vertical tab,
@@ -1904,6 +1934,56 @@ func TestWorkflow_a_separator_escape_and_a_timeout_duration_hide_no_node_test(t 
 	} {
 		if got := pythonInWorkflow("release.yml", row.line); (len(got) > 0) != row.found {
 			t.Errorf("%s: found = %q, want found = %v", row.name, got, row.found)
+		}
+	}
+}
+
+// CRW-1047, fix round 3. env takes any NAME=VALUE argument as an assignment when NAME is not empty and holds no
+// "=", whether or not NAME is a shell identifier (9=1, a-b=1), so the program is the word after the
+// assignments. A word that starts with "-" before the program is an option, not an assignment.
+func TestWorkflow_an_env_assignment_need_not_be_a_shell_identifier(t *testing.T) {
+	for _, row := range []struct {
+		name  string
+		line  string
+		found bool
+	}{
+		{"env -S with a numeric assignment", "      - run: env -S \"9=1 node --test\"\n", true},
+		{"an unlisted env option and a numeric assignment", "      - run: env --unset HOME '9=1' node --test\n", true},
+		{"a plain numeric assignment", "      - run: env 9=1 node --test\n", true},
+		{"an assignment whose name is not an identifier", "      - run: env a-b=1 node --test\n", true},
+		{"a numeric assignment after a double dash", "      - run: env -- 9=1 node --test\n", true},
+		{"a numeric assignment in the words after -S", "      - run: env -S 'FOO=1' 9=1 node --test\n", true},
+		{"a numeric assignment behind an unknown option", "      - run: env --chdir /x 9=1 node --test\n", true},
+		{"a numeric assignment before an echo", "      - run: env 9=1 echo node --test\n", false},
+		{"a numeric assignment in -S before an echo", "      - run: env -S \"9=1 echo node --test\"\n", false},
+		{"an unlisted option and a numeric assignment before an echo", "      - run: env --unset HOME '9=1' echo node --test\n", false},
+		{"an identifier assignment before an echo stays a log line", "      - run: env FOO=1 echo node --test\n", false},
+		{"a numeric assignment after a double dash before an echo", "      - run: env -- 9=1 echo node --test\n", false},
+	} {
+		if got := pythonInWorkflow("release.yml", row.line); (len(got) > 0) != row.found {
+			t.Errorf("%s: found = %q, want found = %v", row.name, got, row.found)
+		}
+	}
+}
+
+// CRW-1047, fix round 3. Repeated env split options must not branch: each "-i" is read both ways and each
+// "-S" splits the next word, and the walk shares its visited states and its depth across the splits, so 40
+// repetitions end at once with a bounded answer (the depth bound, a finding), not after 2^40 steps.
+func TestWorkflow_repeated_env_split_options_are_read_in_bounded_work(t *testing.T) {
+	for _, row := range []struct {
+		reps  int
+		found bool
+	}{{3, false}, {40, true}} {
+		line := "      - run: env " + strings.Repeat("-i -S ", row.reps) + "-i\n"
+		done := make(chan []string, 1)
+		go func() { done <- pythonInWorkflow("release.yml", line) }()
+		select {
+		case got := <-done:
+			if (len(got) > 0) != row.found {
+				t.Errorf("%d repetitions: found = %q, want found = %v", row.reps, got, row.found)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatalf("%d repetitions: no answer after 10s, the split recursion branches", row.reps)
 		}
 	}
 }
