@@ -72,6 +72,7 @@ func TestPromptDcloseAllDoneKeyAbsentRowIsNotTheNullCloseRow(t *testing.T) {
 		wantRows int
 	}{
 		{"absent closedWorkPhaseId key", `{"sessionId":"s1","from":"C","to":"IDLE","reason":"done","checkEpoch":"c-u02"}`, 2},
+		{"absent checkEpoch key with null closedWorkPhaseId", `{"sessionId":"s1","from":"C","to":"IDLE","reason":"done","closedWorkPhaseId":null}`, 2},
 		{"explicit null closedWorkPhaseId", `{"sessionId":"s1","from":"C","to":"IDLE","reason":"done","checkEpoch":"c-u02","closedWorkPhaseId":null}`, 1},
 	}
 	for _, c := range cases {
@@ -108,7 +109,12 @@ func TestPromptDcloseAllDoneKeyAbsentRowIsNotTheNullCloseRow(t *testing.T) {
 			}
 			// The same close again, from the same session state, adds nothing.
 			promptDcloseSeedState(t, cwd, "s1", "chat-all-done-key", epoch)
-			promptDcloseRun(t, cwd, "s1", "t2", attest)
+			if again := promptDcloseRun(t, cwd, "s1", "t2", attest); !strings.Contains(again, "[crw: DONE]") {
+				t.Fatalf("the repeated close did not finish: %q", again)
+			}
+			if s := state.ReadState(cwd, "s1"); s.Phase != state.PhaseIdle {
+				t.Errorf("the resting phase after the repeated close: %+v", s)
+			}
 			if again := promptDcloseLedgerLines(t, path); len(again) != c.wantRows {
 				t.Errorf("a repeated close changed the ledger: %q", again)
 			}
@@ -156,7 +162,7 @@ func TestPromptDcloseLoneSurrogateRowIsNotTheReplacementCharacterRow(t *testing.
 		wantPabcd    int
 	}{
 		{"lone surrogate escape", `wp-\ud800`, 2, 2},
-		{"U+FFFD escape", `wp-�`, 1, 1},
+		{"U+FFFD escape", `wp-\ufffd`, 1, 1},
 		{"U+FFFD character", "wp-�", 1, 1},
 	}
 	for _, c := range cases {
