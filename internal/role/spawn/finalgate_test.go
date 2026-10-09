@@ -268,3 +268,170 @@ func TestCheckFinalGatePrereqsRecapturesWithoutTheReceiptsExclusions(t *testing.
 		t.Fatalf("a receipt that left out its generated path and the state directory was not stale: %+v", got)
 	}
 }
+
+// spawnFinalGateTestAliasTree is an empty working directory and a symbolic link to it beside it, so one tree is reachable by two
+// spellings: the real path and the alias.
+func spawnFinalGateTestAliasTree(t *testing.T) (real, alias string) {
+	t.Helper()
+	real = spawnFinalGateTestTree(t)
+	alias = filepath.Join(filepath.Dir(real), "alias")
+	if err := os.Symlink(real, alias); err != nil {
+		t.Fatal(err)
+	}
+	return real, alias
+}
+
+// spawnFinalGateTestReceiptPlan writes the session state and a goalplan under root whose test receipt is recorded at recorded, and
+// the test receipt, holding the aaaaaaa identity, at file (absolute, or below root).
+func spawnFinalGateTestReceiptPlan(t *testing.T, root, recorded, file string) {
+	t.Helper()
+	receipt, err := json.Marshal(map[string]any{"kind": "test", "sourceIdentity": source.Identity{Kind: source.KindResolved, CommitSha: "aaaaaaa"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := json.Marshal(map[string]any{"criteria": []any{}, "finalGate": map[string]any{"testReceiptPath": recorded}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	spawnFinalGateTestWrite(t, root, ".crw/sessions/sess-1.json", `{"sessionId":"sess-1","slug":"demo"}`)
+	spawnFinalGateTestWrite(t, root, ".crw/goalplans/demo/goalplan.json", string(plan))
+	if !filepath.IsAbs(file) {
+		file = filepath.Join(root, file)
+	}
+	if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(file, receipt, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// spawnFinalGateTestIdentity is the capture the receipts above match: the tree is at the aaaaaaa commit.
+func spawnFinalGateTestIdentity(string) source.Identity {
+	return source.Identity{Kind: source.KindResolved, CommitSha: "aaaaaaa"}
+}
+
+// A receipt given as an absolute path inside the working directory is read as the path below it, whatever the working directory is
+// spelled as: ".", absolute, a relative alias, or a symbolic link to the real directory, and whichever spelling the receipt uses.
+func TestCheckFinalGatePrereqsReadsAnAbsoluteReceiptInsideCwd(t *testing.T) {
+	const receipt = ".crw/evidence/test.json"
+	cases := []struct {
+		name     string
+		chdir    string // "real", "parent" or "" (the test's own directory)
+		cwd      string // the working directory the check is given, where the chdir is "" the real or alias path
+		recorded string // the path the goalplan records, with "real" or "alias" standing for the two spellings of the tree
+	}{
+		{name: "cwd dot, absolute receipt", chdir: "real", cwd: ".", recorded: "real/" + receipt},
+		{name: "cwd absolute, absolute receipt", cwd: "real", recorded: "real/" + receipt},
+		{name: "cwd absolute, relative receipt", cwd: "real", recorded: receipt},
+		{name: "cwd dot, relative receipt", chdir: "real", cwd: ".", recorded: receipt},
+		{name: "cwd alias, absolute receipt by the real path", cwd: "alias", recorded: "real/" + receipt},
+		{name: "cwd alias, absolute receipt by the alias path", cwd: "alias", recorded: "alias/" + receipt},
+		{name: "cwd alias, relative receipt", cwd: "alias", recorded: receipt},
+		{name: "cwd real, absolute receipt by the alias path", cwd: "real", recorded: "alias/" + receipt},
+		{name: "relative alias cwd, absolute receipt by the real path", chdir: "parent", cwd: "alias", recorded: "real/" + receipt},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			real, alias := spawnFinalGateTestAliasTree(t)
+			paths := map[string]string{"real": real, "alias": alias}
+			switch c.chdir {
+			case "real":
+				t.Chdir(real)
+			case "parent":
+				t.Chdir(filepath.Dir(real))
+			}
+			recorded := strings.NewReplacer("real/", real+"/", "alias/", alias+"/").Replace(c.recorded)
+			spawnFinalGateTestReceiptPlan(t, real, recorded, filepath.Join(real, receipt))
+			cwd := c.cwd
+			if p, ok := paths[cwd]; ok {
+				cwd = p
+			}
+			if got := CheckFinalGatePrereqs(spawnFinalGateTestPacket, "sess-1", cwd, spawnFinalGateTestIdentity); !got.OK {
+				t.Fatalf("a receipt at %q inside cwd %q was refused: %s", recorded, cwd, got.Reason)
+			}
+		})
+	}
+}
+
+// A receipt that leaves the working directory is refused, by name, by an alias of the working directory, or by a link, as before the
+// fix: every read stays below the os.Root of cwd (the oracle reads them, the port does not).
+func TestCheckFinalGatePrereqsKeepsAReceiptOutsideCwdRejected(t *testing.T) {
+	const receipt = ".crw/evidence/test.json"
+	cases := []struct {
+		name  string
+		chdir bool // whether the check runs in the real tree, with "." as cwd
+		setup func(t *testing.T, real, alias string) (cwd, recorded string)
+	}{
+		{
+			name:  "cwd dot, absolute receipt beside cwd",
+			chdir: true,
+			setup: func(t *testing.T, real, alias string) (string, string) {
+				outside := filepath.Join(filepath.Dir(real), "outside.json")
+				spawnFinalGateTestReceiptPlan(t, real, outside, outside)
+				return ".", outside
+			},
+		},
+		{
+			name: "cwd alias, absolute receipt beside cwd by the real path",
+			setup: func(t *testing.T, real, alias string) (string, string) {
+				outside := filepath.Join(real, "..", "outside.json")
+				spawnFinalGateTestReceiptPlan(t, real, outside, outside)
+				return alias, outside
+			},
+		},
+		{
+			name: "cwd alias, absolute receipt in a directory linked outside",
+			setup: func(t *testing.T, real, alias string) (string, string) {
+				outsideDir := filepath.Join(filepath.Dir(real), "outside-dir")
+				if err := os.MkdirAll(filepath.Join(real, ".crw"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(outsideDir, filepath.Join(real, ".crw", "linked")); err != nil {
+					t.Fatal(err)
+				}
+				recorded := filepath.Join(alias, ".crw", "linked", "test.json")
+				spawnFinalGateTestReceiptPlan(t, real, recorded, filepath.Join(outsideDir, "test.json"))
+				return alias, recorded
+			},
+		},
+		{
+			name: "absolute link to a receipt inside cwd",
+			setup: func(t *testing.T, real, alias string) (string, string) {
+				link := filepath.Join(real, ".crw", "evidence", "link.json")
+				spawnFinalGateTestReceiptPlan(t, real, link, filepath.Join(real, receipt))
+				if err := os.Symlink(filepath.Join(real, receipt), link); err != nil {
+					t.Fatal(err)
+				}
+				return real, link
+			},
+		},
+		{
+			name: "relative link out of cwd, reached by an absolute receipt through the alias",
+			setup: func(t *testing.T, real, alias string) (string, string) {
+				outside := filepath.Join(filepath.Dir(real), "outside.json")
+				spawnFinalGateTestReceiptPlan(t, real, filepath.Join(alias, ".crw", "evidence", "escape.json"), outside)
+				if err := os.MkdirAll(filepath.Join(real, ".crw", "evidence"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink("../../../outside.json", filepath.Join(real, ".crw", "evidence", "escape.json")); err != nil {
+					t.Fatal(err)
+				}
+				return alias, filepath.Join(alias, ".crw", "evidence", "escape.json")
+			},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			real, alias := spawnFinalGateTestAliasTree(t)
+			if c.chdir {
+				t.Chdir(real)
+			}
+			cwd, recorded := c.setup(t, real, alias)
+			got := CheckFinalGatePrereqs(spawnFinalGateTestPacket, "sess-1", cwd, spawnFinalGateTestIdentity)
+			if want := "test receipt is missing, empty or unreadable: " + recorded; got.OK || !strings.Contains(got.Reason, want) {
+				t.Fatalf("a receipt at %q outside cwd %q was not refused as unreadable: %+v", recorded, cwd, got)
+			}
+		})
+	}
+}
