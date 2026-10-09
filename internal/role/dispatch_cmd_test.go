@@ -59,6 +59,9 @@ func TestDispatchCommandHostReportsAcrossProcesses(t *testing.T) {
 	createdCheckSeed(t, native, "child-b", "session-test")
 	createdCheckSeed(t, native, "child-c", "session-test")
 	createdCheckSeed(t, native, "foreign", "other-session")
+	// The task failures below hand on only a child seen to have ended: the host's rollouts of child-a and child-b show it.
+	dispatchHandoffEnded(t, native, "child-a")
+	dispatchHandoffEnded(t, native, "child-b")
 	vars := map[string]string{"HOME": userHome, "CODEX_HOME": native, "CRW_HOME": global}
 	var env host.LookupEnv = func(k string) (string, bool) { v, ok := vars[k]; return v, ok }
 	_, err := SetRole(env, Executor, RolePatch{Mode: Some(ModeModel), Model: Some("primary/model"), Fallback: Some(FallbackPatch{Model: Some("fallback/model"), Effort: Some(EffortLow)})})

@@ -60,7 +60,10 @@ type DispatchAttempt struct {
 	Reconciliation *string              `json:"reconciliation"`
 	SpawnIssued    bool                 `json:"spawnIssued"`
 	ToolUseID      *string              `json:"toolUseId"`
-	raw            object
+	// Termination is set by the checked boundary when a handoff relied on an observed end of the child; the parity ledger
+	// never writes it, and a stored one is kept as it was read.
+	Termination *DispatchTermination `json:"termination,omitempty"`
+	raw         object
 }
 
 func (a DispatchAttempt) MarshalJSON() ([]byte, error) {
@@ -71,6 +74,9 @@ func (a DispatchAttempt) MarshalJSON() ([]byte, error) {
 	o := slices.Clone(a.raw)
 	for _, m := range []member{{"claimed", a.Claimed}, {"agentId", a.AgentID}, {"observedModel", a.ObservedModel}, {"code", a.Code}, {"status", a.Status}, {"reconciliation", a.Reconciliation}, {"taskFailure", a.TaskFailure}} {
 		o.set(m.key, m.value)
+	}
+	if a.Termination != nil {
+		o.set("termination", a.Termination)
 	}
 	return o.MarshalJSON()
 }
@@ -602,8 +608,17 @@ func dispatchRun(cwd string, input any, env host.LookupEnv, before func(string, 
 // dispatchPinnedRun is the ledger operation itself: the directory is pinned once and the lock, the read and the save all
 // work on it. check (nil: none) runs before each publication and after is the callback of dispatchPinnedDir.
 func dispatchPinnedRun(cwd string, input any, env host.LookupEnv, check dispatchPinnedCheck, after func(string)) (DispatchResult, error) {
-	return dispatchPinnedRunHeld(cwd, input, env, check, after, false)
+	return dispatchPinnedRunHeld(cwd, input, env, check, after, false, nil)
 }
+
+// dispatchReporter applies a report to the record read under the lock, before it is saved; an error leaves the record as it
+// was. nil is the parity ledger's own dispatchReport; the checked boundary passes one that reads the host first.
+type dispatchReporter func(dir *dispatchPinnedDir, name string, d *Dispatch, b map[string]any) (DispatchResult, error)
+
+// dispatchGate is asked before a failed or task_failed report hands an attempt whose child is recorded on to the next
+// candidate or to the main session. nil proceeds; a result stops there and is saved with the record as the gate left it
+// (reconcile); an error refuses the report and nothing is written.
+type dispatchGate func(d *Dispatch) (*DispatchResult, error)
 
 // dispatchSessionLock names the lock of a whole session directory (dir.lock adds ".lock"). A created report holds it, before
 // the lock of its own record, from the scan of the sibling records to the write of its own, so that two dispatches of one
@@ -612,7 +627,8 @@ const dispatchSessionLock = ".session"
 
 // dispatchPinnedRunHeld is dispatchPinnedRun with lockSession: when set, the session lock is taken before the lock of the
 // record and given back after it. A held lock is the same immediate refusal as a held record lock; nothing is stolen.
-func dispatchPinnedRunHeld(cwd string, input any, env host.LookupEnv, check dispatchPinnedCheck, after func(string), lockSession bool) (out DispatchResult, err error) {
+// report (nil: dispatchReport) applies a report once the attempt and its claim have been checked.
+func dispatchPinnedRunHeld(cwd string, input any, env host.LookupEnv, check dispatchPinnedCheck, after func(string), lockSession bool, report dispatchReporter) (out DispatchResult, err error) {
 	if env == nil {
 		env = os.LookupEnv
 	}
@@ -725,14 +741,19 @@ func dispatchPinnedRunHeld(cwd string, input any, env host.LookupEnv, check disp
 	if !a.Claimed {
 		return out, errors.New("claim the attempt before reporting an outcome")
 	}
-	out, err = dispatchReport(&d, b)
+	if report == nil {
+		report = func(_ *dispatchPinnedDir, _ string, d *Dispatch, b map[string]any) (DispatchResult, error) {
+			return dispatchReport(d, b, nil)
+		}
+	}
+	out, err = report(dir, name, &d, b)
 	if err != nil {
 		return out, err
 	}
 	err = dispatchSave(dir, name, &d, check)
 	return out, err
 }
-func dispatchReport(d *Dispatch, b map[string]any) (DispatchResult, error) {
+func dispatchReport(d *Dispatch, b map[string]any, gate dispatchGate) (DispatchResult, error) {
 	a := &d.Attempts[len(d.Attempts)-1]
 	none := DispatchResult{}
 	if dispatchIs(b["outcome"], "created") {
@@ -761,7 +782,7 @@ func dispatchReport(d *Dispatch, b map[string]any) (DispatchResult, error) {
 		return dispatchResult(d, nil, ""), nil
 	}
 	if dispatchIs(b["outcome"], "task_failed") {
-		return dispatchTaskFailed(d, b)
+		return dispatchTaskFailed(d, b, gate)
 	}
 	unavailable := dispatchIs(b["outcome"], "unavailable")
 	if !unavailable && !dispatchIs(b["outcome"], "failed") {
@@ -797,7 +818,7 @@ func dispatchReport(d *Dispatch, b map[string]any) (DispatchResult, error) {
 	if dispatchIs(b["executionState"], "stopped") && (a.AgentID == nil || *a.AgentID == "") {
 		return none, errors.New("record created agent before stopped handoff")
 	}
-	return dispatchHandoff(d), nil
+	return dispatchGatedHandoff(d, gate)
 }
 func dispatchProviderDecision(d *Dispatch, f FailureDecision) (DispatchResult, bool) {
 	if f.Action == "stop" {
@@ -810,6 +831,20 @@ func dispatchProviderDecision(d *Dispatch, f FailureDecision) (DispatchResult, b
 	}
 	return DispatchResult{}, false
 }
+
+// dispatchGatedHandoff asks gate (when there is one and the attempt recorded a child) before dispatchHandoff.
+func dispatchGatedHandoff(d *Dispatch, gate dispatchGate) (DispatchResult, error) {
+	if a := d.Attempts[len(d.Attempts)-1]; gate != nil && a.AgentID != nil && *a.AgentID != "" {
+		r, err := gate(d)
+		if err != nil {
+			return DispatchResult{}, err
+		}
+		if r != nil {
+			return *r, nil
+		}
+	}
+	return dispatchHandoff(d), nil
+}
 func dispatchHandoff(d *Dispatch) DispatchResult {
 	d.Attempts[len(d.Attempts)-1].Status = "failed"
 	if len(d.Attempts) == len(d.Candidates) {
@@ -819,7 +854,7 @@ func dispatchHandoff(d *Dispatch) DispatchResult {
 	}
 	return dispatchResult(d, nil, "")
 }
-func dispatchTaskFailed(d *Dispatch, b map[string]any) (DispatchResult, error) {
+func dispatchTaskFailed(d *Dispatch, b map[string]any, gate dispatchGate) (DispatchResult, error) {
 	a := &d.Attempts[len(d.Attempts)-1]
 	none := DispatchResult{}
 	if v, present := b["error"]; present {
@@ -854,5 +889,5 @@ func dispatchTaskFailed(d *Dispatch, b map[string]any) (DispatchResult, error) {
 	a.Reconciliation = &s
 	a.Code = nil
 	a.TaskFailure = failure
-	return dispatchHandoff(d), nil
+	return dispatchGatedHandoff(d, gate)
 }

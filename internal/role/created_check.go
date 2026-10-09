@@ -12,7 +12,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"time"
 )
 
@@ -48,6 +47,12 @@ func dispatchPinnedChecked(ctx context.Context, cwd string, input any, env host.
 	if dispatchIs(b["action"], "report") && dispatchIs(b["outcome"], "stopped") {
 		return createdCheckStop(ctx, cwd, b, env, h, after)
 	}
+	if dispatchIs(b["action"], "report") && (dispatchIs(b["outcome"], "failed") || dispatchIs(b["outcome"], "task_failed")) {
+		gate := dispatchHandoffGate(ctx, env, h)
+		return dispatchPinnedRunHeld(cwd, input, env, nil, after, false, func(_ *dispatchPinnedDir, _ string, d *Dispatch, b map[string]any) (DispatchResult, error) {
+			return dispatchReport(d, b, gate)
+		})
+	}
 	if !dispatchIs(b["action"], "report") || !dispatchIs(b["outcome"], "created") {
 		return RunDispatch(cwd, input, env)
 	}
@@ -66,7 +71,7 @@ func dispatchPinnedChecked(ctx context.Context, cwd string, input any, env host.
 			return errors.New("agentId is not a real subagent thread parented by this session" + createdCheckCorrection)
 		}
 		return nil
-	}, after, true)
+	}, after, true, nil)
 }
 
 // createdArchivedReplay refuses an agent id that another attempt of the session already holds. The
@@ -122,6 +127,9 @@ func createdCheckHeld(d *Dispatch, i int) string {
 type createdCheckIdentity struct {
 	ID, Parent, Status string
 	Subagent           bool
+	// RolloutPath is the native database's rollout_path of the thread, "" when the column is absent or empty. Only the native
+	// read fills it.
+	RolloutPath string
 }
 
 func createdCheckRead(ctx context.Context, env host.LookupEnv, h DispatchHost, agent string) (createdCheckIdentity, error) {
@@ -227,16 +235,13 @@ func createdCheckStop(ctx context.Context, cwd string, b map[string]any, env hos
 	if err != nil {
 		return DispatchResult{}, err
 	}
-	readCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	identity, readErr := createdCheckRead(readCtx, env, h, *a.AgentID)
-	own := readErr == nil && identity.ID == *a.AgentID && identity.Parent == session && identity.Subagent
-	if own && identity.Status == "active" {
+	o := dispatchObserve(ctx, env, h, session, *a.AgentID, false)
+	if !o.Foreign && o.Status == "active" {
 		return DispatchResult{}, errors.New("recorded child is active; stop it before closing")
 	}
 	newest := ""
-	if own && h != nil {
-		newest = createdRuntimeStatus(readCtx, h, *a.AgentID)
+	if !o.Foreign {
+		newest = o.Newest
 	}
 	if newest == "inProgress" {
 		return DispatchResult{}, errors.New("recorded child has a turn in progress; stop it before closing")
@@ -250,7 +255,7 @@ func createdCheckStop(ctx context.Context, cwd string, b map[string]any, env hos
 		return DispatchResult{}, err
 	}
 	reason := "dispatch closed; caller reconciliation recorded, recorded identity retained"
-	if !slices.Contains([]string{"completed", "interrupted", "failed"}, newest) {
+	if !dispatchTerminalTurn(newest) {
 		reason += "; runtime not confirmed"
 	}
 	return dispatchResult(&d, "stop", reason), nil
@@ -309,8 +314,20 @@ func createdCheckNative(ctx context.Context, env host.LookupEnv, agent string) (
 	if _, err := conn.ExecContext(ctx, "PRAGMA query_only=ON"); err != nil {
 		return createdCheckIdentity{}, err
 	}
-	var id, source string
-	if err := conn.QueryRowContext(ctx, "SELECT id, source FROM threads WHERE id = ?", agent).Scan(&id, &source); err != nil {
+	columns, err := createdCheckColumns(ctx, conn)
+	if err != nil {
+		return createdCheckIdentity{}, err
+	}
+	// Optional columns are read when the host's schema has them; a missing one reads as "".
+	optional := func(name string) string {
+		if columns[name] {
+			return "COALESCE(CAST(" + name + " AS TEXT), '')"
+		}
+		return "''"
+	}
+	var id, source, rollout string
+	query := "SELECT id, source, " + optional("rollout_path") + " FROM threads WHERE id = ?"
+	if err := conn.QueryRowContext(ctx, query, agent).Scan(&id, &source, &rollout); err != nil {
 		return createdCheckIdentity{}, err
 	}
 	// The archive flag is a lifecycle fact, not part of the identity: the host archives a child
@@ -329,5 +346,23 @@ func createdCheckNative(ctx context.Context, env host.LookupEnv, agent string) (
 		return createdCheckIdentity{}, err
 	}
 	parent := marker.Subagent.Spawn.Parent
-	return createdCheckIdentity{ID: id, Parent: parent, Subagent: parent != ""}, nil
+	return createdCheckIdentity{ID: id, Parent: parent, Subagent: parent != "", RolloutPath: rollout}, nil
+}
+
+// createdCheckColumns lists the columns of the native threads table, whose schema grows with the host's versions.
+func createdCheckColumns(ctx context.Context, conn *sql.Conn) (map[string]bool, error) {
+	rows, err := conn.QueryContext(ctx, "SELECT name FROM pragma_table_info('threads')")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	columns := map[string]bool{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		columns[name] = true
+	}
+	return columns, rows.Err()
 }

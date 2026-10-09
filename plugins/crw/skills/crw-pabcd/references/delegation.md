@@ -391,6 +391,9 @@ protocol. A PreToolUse reminder after a direct call cannot retroactively manage 
    with `taskFailure: {kind: "stagnation" | "unusable_output", evidence: "..."}`.
    This requires a recorded child, `executionState:stopped`, matching `agentId`
    and `reconciliation`; running or unknown work must be reconciled first.
+   Before a `failed` or `task_failed` handoff of a recorded child, the command reads
+   that child: an active child or a turn in progress refuses, and an end it cannot
+   see returns `reconcile` with the child kept; stop the child, then report again.
    Task evidence explains the failure; reconciliation explains termination and
    partial-work inspection. Both are non-empty text of at most 2000 characters.
    No other task kinds or taskFailure keys are accepted. Never label cancellation,
