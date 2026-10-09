@@ -55,7 +55,7 @@ func worktreeDelJudgeText(command, cwd string, id WorktreeIdentity, depth int, o
 			if written.rewrites(e.Script.Value, e.Dir) {
 				return worktreeDelUnreadable(id)
 			}
-			v = worktreeDelJudgeScript(e, id, depth, written)
+			v = worktreeDelJudgeScript(e, id, depth, written.as(githubPostBodyKey(e.Script.Value, e.Dir)))
 		} else {
 			v = worktreeDelJudgeExec(e, id)
 		}

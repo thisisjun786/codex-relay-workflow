@@ -703,3 +703,4 @@ added by CRW-1028 (verifier round 3, copied contents, sibling scripts, deferred 
 added by CRW-1028 (verifier round 3, copied contents, sibling scripts, deferred Python aliases)	bash writer.sh; bash post.sh (writer.sh: cat evil.sh > other.sh)	CRW-1028-v3-09	row	-
 added by CRW-1028 (verifier round 3, copied contents, sibling scripts, deferred Python aliases)	python3 -c "import io; f=io.open; f('{MEMORY}/target','w').write('x')"	CRW-1028-v3-10	row	-
 added by CRW-1028 (verifier round 3, copied contents, sibling scripts, deferred Python aliases)	python3 -c "from io import open as o; o('{MEMORY}/target','w').write('x')"	CRW-1028-v3-11	row	-
+added by CRW-1028 (verifier round 3, copied contents, sibling scripts, deferred Python aliases)	bash build.sh (build.sh: cat post.sh > "$OUT")	CRW-1028-v3-12	row	-

@@ -99,7 +99,7 @@ func githubPostJudgeExecs(execs []shellir.Exec, depth int, outer *githubPostWrit
 			if writes().rewrites(e.Script.Value, e.Dir) {
 				return githubPostSite{githubPostRuleUnread, githubPostWhereCommand}, true
 			}
-			if site, denied := githubPostJudgeScript(e, depth, writes()); denied {
+			if site, denied := githubPostJudgeScript(e, depth, writes().as(githubPostBodyKey(e.Script.Value, e.Dir))); denied {
 				return site, true
 			}
 			continue
@@ -109,7 +109,7 @@ func githubPostJudgeExecs(execs []shellir.Exec, depth int, outer *githubPostWrit
 			if writes().rewrites(e.Program.Value, e.Dir) {
 				return githubPostSite{githubPostRuleUnread, githubPostWhereCommand}, true
 			}
-			if site, denied := githubPostJudgeDirect(e, depth, writes()); denied {
+			if site, denied := githubPostJudgeDirect(e, depth, writes().as(githubPostBodyKey(e.Program.Value, e.Dir))); denied {
 				return site, true
 			}
 			continue
@@ -143,7 +143,7 @@ func githubPostJudgeExecs(execs []shellir.Exec, depth int, outer *githubPostWrit
 		}
 		// ./gh is a file in the directory, which may be a script and not the installed gh: the file is read as well.
 		if direct {
-			if site, denied := githubPostJudgeDirect(e, depth, writes()); denied {
+			if site, denied := githubPostJudgeDirect(e, depth, writes().as(githubPostBodyKey(e.Program.Value, e.Dir))); denied {
 				return site, true
 			}
 		}
@@ -436,8 +436,22 @@ type githubPostWrites struct {
 	files    map[string]bool
 	existing map[int64][]os.FileInfo // the files a write reaches that exist already, by size: a hard link has another name and the same file
 	trees    []string                // paths below which a write may land (a copied directory)
-	unknown  bool                    // some write has a destination the reader cannot name
-	outer    *githubPostWrites       // the writes of the text that runs this one: they happened before it
+	unknown  bool                    // some write of the text's own records has a destination the reader cannot name
+	// unknownBodies holds the scripts (githubPostBodyKey) whose bodies write a destination the reader cannot name, or whose writes
+	// cannot be computed: an unknown write for every other script, not for the script itself (its own unknown write says nothing of
+	// its own file, as a known write to it does).
+	unknownBodies map[string]bool
+	outer         *githubPostWrites // the writes of the text that runs this one: they happened before it
+	// self is set on the view of the outer writes a script body is judged against: the script whose body it is, whose own unknown
+	// writes are the body's and are counted in the body's own writes.
+	self string
+}
+
+// as is the view of these writes that the body of the script key is judged against.
+func (w *githubPostWrites) as(key string) *githubPostWrites {
+	v := *w
+	v.self = key
+	return &v
 }
 
 // add records one destination by the name the kernel gives it and, when the file exists, by the file itself.
@@ -478,7 +492,15 @@ func githubPostWritesOf(execs []shellir.Exec, outer *githubPostWrites) *githubPo
 }
 
 func newGithubPostWrites(outer *githubPostWrites) *githubPostWrites {
-	return &githubPostWrites{files: map[string]bool{}, existing: map[int64][]os.FileInfo{}, outer: outer}
+	return &githubPostWrites{files: map[string]bool{}, existing: map[int64][]os.FileInfo{}, unknownBodies: map[string]bool{}, outer: outer}
+}
+
+// githubPostBodyKey names a script a record runs: the file by the identity the kernel gives it, and the directory it runs in.
+func githubPostBodyKey(script string, dir shellir.Dir) string {
+	if !dir.Known {
+		return ""
+	}
+	return githubPostIdentity(githubPostScriptPath(script, dir.Path)) + "\x00" + dir.Path
 }
 
 // collect adds the writes of the records of one text; depth counts the script bodies around it, memo holds the writes of each body
@@ -490,12 +512,12 @@ func (w *githubPostWrites) collect(execs []shellir.Exec, depth int, memo map[str
 			case "sed", "awk", "gawk", "mawk", "nawk":
 				// a sed or awk program file is not shell text
 			default:
-				w.merge(githubPostBodyWrites(o.Script, o.Dir, depth, memo, false))
+				w.merge(githubPostBodyKey(o.Script.Value, o.Dir), githubPostBodyWrites(o.Script, o.Dir, depth, memo, false))
 			}
 			continue
 		}
 		if githubPostDirectPath(o) {
-			w.merge(githubPostBodyWrites(o.Program, o.Dir, depth, memo, true))
+			w.merge(githubPostBodyKey(o.Program.Value, o.Dir), githubPostBodyWrites(o.Program, o.Dir, depth, memo, true))
 		}
 		if o.Name == "ln" {
 			w.unknown = true
@@ -539,7 +561,7 @@ func githubPostBodyWrites(script shellir.Word, dir shellir.Dir, depth int, memo 
 	if !script.Known || !dir.Known || depth >= githubPostMaxScriptDepth {
 		return unknown
 	}
-	key := githubPostIdentity(githubPostScriptPath(script.Value, dir.Path)) + "\x00" + dir.Path
+	key := githubPostBodyKey(script.Value, dir)
 	if got, ok := memo[key]; ok {
 		return got
 	}
@@ -571,12 +593,15 @@ func githubPostBodyWrites(script shellir.Word, dir shellir.Dir, depth int, memo 
 	return got
 }
 
-// merge adds the writes of a script body to the writes of the text that runs it.
-func (w *githubPostWrites) merge(o *githubPostWrites) {
+// merge adds the writes of the body of the script key to the writes of the text that runs it. An unknown write anywhere in the body
+// (its own records, or a script it runs) is recorded under key: it counts for every other script the text runs.
+func (w *githubPostWrites) merge(key string, o *githubPostWrites) {
 	if o == nil {
 		return
 	}
-	w.unknown = w.unknown || o.unknown
+	if o.unknown || len(o.unknownBodies) > 0 {
+		w.unknownBodies[key] = true
+	}
 	for f := range o.files {
 		w.files[f] = true
 	}
@@ -602,14 +627,27 @@ func githubPostIdentity(p string) string {
 // rewrites is whether the text itself writes the script file it runs (cp evil.sh post.sh && bash post.sh): the file the guard reads
 // before the command is then not the file that runs. A write to a destination the reader cannot name is taken as a write to the
 // script.
+//
+// The writes of the script bodies the text runs count as well (bash writer.sh; bash post.sh): a known write wherever it is, an unknown
+// one for every script but the one whose body makes it. In a body judged inside another, the writes around it are walked with the
+// script of each level excluded the same way.
 func (w *githubPostWrites) rewrites(script string, dir shellir.Dir) bool {
 	if !dir.Known {
 		return false // the script is unreadable already
 	}
 	p := githubPostScriptPath(script, dir.Path)
-	for ; w != nil; w = w.outer {
-		if w.unknown || w.reaches(p) || w.underTree(p) {
+	self := githubPostBodyKey(script, dir)
+	for x := w; x != nil; x = x.outer {
+		if x != w {
+			self = x.self
+		}
+		if x.unknown || x.reaches(p) || x.underTree(p) {
 			return true
+		}
+		for key := range x.unknownBodies {
+			if key != self {
+				return true
+			}
 		}
 	}
 	return false

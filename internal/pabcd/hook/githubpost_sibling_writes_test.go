@@ -77,7 +77,9 @@ func TestCopiedDirectoryContentsFillTheTarget(t *testing.T) {
 // caller and in every text around it. bash writer.sh; bash post.sh, where writer.sh overwrites post.sh, runs the new post.sh, not the
 // body the guards read before the command. The writes of a nested script (outer.sh runs writer.sh) and of a script run by path
 // (./dwriter.sh) count too, and a script whose writes cannot be computed (an unknown destination, an unreadable body) writes an
-// unknown file. A write to another file, and a binary, leave the later script readable (CRW-1028 verifier round 3, finding 2).
+// unknown file for the scripts after it. A write to another file, a binary, and a script's own write to a destination the reader
+// cannot name (which says nothing of the script itself, or of the script that runs it) leave the scripts readable (CRW-1028 verifier
+// round 3, finding 2).
 func TestScriptWritesReachLaterSiblingScripts(t *testing.T) {
 	r, cwd := round3Scene(t, map[string]string{
 		"writer.sh":        "cat evil.sh > post.sh\n",
@@ -92,6 +94,10 @@ func TestScriptWritesReachLaterSiblingScripts(t *testing.T) {
 		"cpwriter.sh":      "cp -r -t bin evil/.\n",
 		"dbad.sh":          "#!/bin/sh\neval \"$X\"\n",
 		"elf/tool":         "\x7fELF\x02\x01\x01\x00gh pr comment 1 -b x\x00",
+		"build.sh":         "cat post.sh > \"$OUT\"\necho done\n",
+		"build2.sh":        "bash build.sh\necho done\n",
+		"build3.sh":        "bash build.sh\nbash post.sh\n",
+		"self.sh":          "cat evil.sh > self.sh\n",
 	})
 	for _, c := range []struct {
 		cmd       string
@@ -110,6 +116,10 @@ func TestScriptWritesReachLaterSiblingScripts(t *testing.T) {
 		{"bash unknownwriter.sh; bash post.sh", true, true},
 		{"bash cpwriter.sh; bash bin/tool", true, true},
 		{"./dbad.sh; bash post.sh", true, true},
+		{"bash build.sh; bash post.sh", true, true},
+		{"bash build2.sh; bash post.sh", true, true},
+		{"bash build3.sh", true, true},
+		{"bash self.sh", true, true},
 		// controls
 		{"bash otherwriter.sh; bash post.sh", false, false},
 		{"bash writer.sh; bash other.sh", false, false},
@@ -117,6 +127,10 @@ func TestScriptWritesReachLaterSiblingScripts(t *testing.T) {
 		{"bash cpwriter.sh; bash other/tool", false, false},
 		{"./elf/tool; bash post.sh", false, false},
 		{"bash runner.sh", false, false},
+		// a script's own write to a destination the reader cannot name is no rewrite of that script, nor of the script that runs it
+		{"bash build.sh", false, false},
+		{"bash build2.sh", false, false},
+		{"bash build.sh && echo ok", false, false},
 	} {
 		_, gh := githubPostJudgeText(c.cmd, cwd)
 		del := r.verdict(c.cmd).Deny
