@@ -63,3 +63,18 @@ func TestXargsDotUsesFixedProtectionPredicate(t *testing.T) {
 	// Recursive rm through a run-time carrier keeps its pre-existing conservative refusal.
 	r.denied(t, "cd "+r.other+" && printf '%s\\n' . | xargs rm -rf")
 }
+
+func TestOriginalSessionSubdirectoryRemainsProtected(t *testing.T) {
+	r := newDelRig(t)
+	sub := filepath.Join(r.checkout, "session-dir")
+	wtWrite(t, filepath.Join(sub, "keep"), "x")
+	id := detectManagedWorktree(sub, r.env())
+	for _, cmd := range []string{"cd " + r.other + " && rm -rf " + sub, "cd " + r.other + " && mv " + sub + " ./gone"} {
+		if v := evaluateCommand(cmd, sub, id); !v.Deny {
+			t.Errorf("original session cwd removal allowed: %s", cmd)
+		}
+	}
+	if v := evaluateCommand("cd "+sub+" && rm -rf ./build", sub, id); v.Deny {
+		t.Fatal("safe cleanup below original cwd refused")
+	}
+}

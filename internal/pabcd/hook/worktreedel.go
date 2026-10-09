@@ -41,14 +41,10 @@ func resolveFrom(base, target string) string {
 }
 
 // protectedWorktreeRoots stays bound to the payload identity. Execution directories
-// only resolve operands. With no checkout identity, the original session cwd is
-// the fallback; safe subdirectory cleanup never becomes a new protected root.
+// only resolve operands. The original session cwd is also fixed, including when
+// the session starts below the checkout root; without a checkout it is the fallback.
 func protectedWorktreeRoots(id WorktreeIdentity) []string {
-	root := id.CheckoutRoot
-	if root == "" {
-		root = id.cwd
-	}
-	return []string{root, id.SlotRoot}
+	return []string{id.CheckoutRoot, id.SlotRoot, id.cwd}
 }
 
 func isProtectedTarget(target, segCwd string, id WorktreeIdentity) bool {
