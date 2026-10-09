@@ -927,3 +927,15 @@ evaluation of 83a490cef (fix round 1 of the pre-merge evaluation of 101be077, fi
 evaluation of 83a490cef (fix round 1 of the pre-merge evaluation of 101be077, finding d3 in the POSIX option scan)	sed --in='{MEMORY}/*' -e p out.txt --in-place=.bak	CRW-941-D14	row	-
 evaluation of 83a490cef (fix round 1 of the pre-merge evaluation of 101be077, finding d3 in the POSIX option scan)	sed -i'{MEMORY}/*' p out.txt -ni	CRW-941-D15	row	-
 evaluation of 83a490cef (fix round 1 of the pre-merge evaluation of 101be077, finding d3 in the POSIX option scan)	sed -i.bak -e p out.txt -i	CRW-941-D16	row	-
+linear-issue-CRW-1064.json	f() { :; }; for i in 1; do f; done; bash prog.sh	CRW-1064-01	row	-
+linear-issue-CRW-1064.json	for i in 1; do command true; done; bash prog.sh	CRW-1064-02	row	-
+linear-issue-CRW-1064.json	f() { :; }; for i in 1; do f; done; bash /dev/fd/0 </dev/null	CRW-1064-03	row	-
+linear-issue-CRW-1064.json	chdir sub; bash prog.sh	CRW-1064-04	row	-
+linear-issue-CRW-1064.json	f() { cd sub; }; for i in 1; do f; done; bash prog.sh	CRW-1064-05	row	-
+linear-issue-CRW-1064.json	for i in 1; do command cd sub; done; bash prog.sh	CRW-1064-06	row	-
+linear-issue-CRW-1064.json	for i in 1; do builtin cd sub; done; bash prog.sh	CRW-1064-07	row	-
+linear-issue-CRW-1064.json	for i in 1; do chdir sub; done; bash prog.sh	CRW-1064-08	row	-
+linear-issue-CRW-1064.json	chdir ../repo; bash prog.sh	CRW-1064-09	row	-
+linear-issue-CRW-1064.json	f() { f2; }; f2() { cd sub; }; for i in 1; do f; done; bash prog.sh	CRW-1064-10	row	-
+linear-issue-CRW-1064.json	bash /dev/fd/0 </dev/null	CRW-1064-11	row	-
+linear-issue-CRW-1064.json	bash prog.sh	CRW-1064-12	row	-

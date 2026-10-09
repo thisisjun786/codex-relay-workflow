@@ -322,13 +322,15 @@ func (w *walker) stmt(s *syntax.Stmt, st *state, ctx Context) error {
 	case *syntax.IfClause:
 		return w.ifClause(c, st, ctx)
 	case *syntax.WhileClause:
-		prescanLoop(st, c.Cond, c.Do)
+		changed := prescanLoop(st, c.Cond, c.Do)
 		lctx := loopContext(ctx)
 		if err := w.stmts(c.Cond, st, lctx); err != nil {
 			return err
 		}
 		err := w.stmts(c.Do, st, lctx)
-		afterLoop(st)
+		if changed {
+			afterLoop(st)
+		}
 		return err
 	case *syntax.ForClause:
 		return w.forClause(c, st, ctx)
@@ -365,8 +367,8 @@ func (w *walker) stmt(s *syntax.Stmt, st *state, ctx Context) error {
 	return unreadablef("unsupported command %T", s.Cmd)
 }
 
-// afterLoop makes the state unknown once a loop has run: the body may have run zero or many times, so the directory and the
-// variables after it are not those of any one iteration (a cd in a loop body is unknown afterwards).
+// afterLoop makes the state unknown once a loop whose body changes the directory or the variables has run: the body may have
+// run zero or many times, so the directory and the variables after it are not those of any one iteration.
 func afterLoop(st *state) {
 	st.dir = unknownDir(st.dir)
 	st.clearVars()
@@ -377,43 +379,84 @@ func loopContext(ctx Context) Context {
 	return ctx
 }
 
-// prescanLoop makes the state conservative before a loop body runs, because a
-// later iteration sees what an earlier one changed.
-func prescanLoop(st *state, lists ...[]*syntax.Stmt) {
+// prescanLoop makes the state conservative before a loop body runs, because a later iteration sees what an earlier one
+// changed. It reports whether the body can change the directory or the variables at all.
+func prescanLoop(st *state, lists ...[]*syntax.Stmt) bool {
 	changes := false
 	for _, list := range lists {
 		for _, s := range list {
-			syntax.Walk(s, func(n syntax.Node) bool {
-				switch c := n.(type) {
-				case *syntax.CallExpr:
-					if len(c.Assigns) > 0 || changesStateCall(c, st) {
-						changes = true
-					}
-				case *syntax.DeclClause, *syntax.LetClause, *syntax.ArithmCmd, *syntax.ForClause:
-					changes = true
-				}
-				return true
-			})
+			if stateChanges(s, st, nil) {
+				changes = true
+			}
 		}
 	}
 	if changes {
 		st.dir = unknownDir(st.dir)
 		st.clearVars()
 	}
+	return changes
 }
 
-func changesStateCall(c *syntax.CallExpr, st *state) bool {
-	if len(c.Args) == 0 {
+// stateChanges reports whether a node can change the directory or the variables a later command reads. A call to a function
+// counts when the function's body does, and a wrapper (command, builtin, exec) counts when the program it runs does. calls is
+// the chain of functions being judged, so a recursive function counts as a change.
+func stateChanges(n syntax.Node, st *state, calls []string) bool {
+	changes := false
+	syntax.Walk(n, func(n syntax.Node) bool {
+		switch c := n.(type) {
+		case *syntax.CallExpr:
+			if len(c.Assigns) > 0 || callChanges(c, st, calls) {
+				changes = true
+			}
+		case *syntax.DeclClause, *syntax.LetClause, *syntax.ArithmCmd, *syntax.ForClause:
+			changes = true
+		}
+		return !changes
+	})
+	return changes
+}
+
+func callChanges(c *syntax.CallExpr, st *state, calls []string) bool {
+	words := make([]Word, len(c.Args))
+	for i, a := range c.Args {
+		v := a.Lit()
+		words[i] = Word{Known: v != "", Value: v}
+	}
+	return wordsChange(words, st, calls)
+}
+
+// wordsChange reports whether a command with these words can change the state. A program the text does not show counts.
+func wordsChange(words []Word, st *state, calls []string) bool {
+	if len(words) == 0 {
 		return false
 	}
-	name := c.Args[0].Lit()
-	if _, ok := st.funcs[name]; ok {
+	if !words[0].Known {
 		return true
 	}
+	name := words[0].Value
+	if body, ok := st.funcs[name]; ok {
+		for _, f := range calls {
+			if f == name {
+				return true
+			}
+		}
+		return stateChanges(body, st, append(calls, name))
+	}
 	switch name {
-	case "cd", "pushd", "popd", "read", "mapfile", "readarray", "getopts", "printf", "unset",
+	case "command", "builtin", "exec":
+		u, err := unwrapCommand(name, words[1:])
+		if err != nil {
+			return true
+		}
+		for _, inner := range u.inner {
+			if wordsChange(inner, st, calls) {
+				return true
+			}
+		}
+		return false
+	case "cd", "chdir", "pushd", "popd", "read", "mapfile", "readarray", "getopts", "printf", "unset",
 		"let", "export", "declare", "typeset", "local", "readonly", "eval", "source", ".",
-		"trap", "set", "shift", "builtin", "command", "exec":
+		"trap", "set", "shift":
 		return true
 	}
 	return false
@@ -473,6 +516,7 @@ func (w *walker) ifClause(c *syntax.IfClause, st *state, ctx Context) error {
 }
 
 func (w *walker) forClause(c *syntax.ForClause, st *state, ctx Context) error {
+	changed := false
 	switch loop := c.Loop.(type) {
 	case *syntax.WordIter:
 		for _, item := range loop.Items {
@@ -480,19 +524,21 @@ func (w *walker) forClause(c *syntax.ForClause, st *state, ctx Context) error {
 				return err
 			}
 		}
-		prescanLoop(st, c.Do)
+		changed = prescanLoop(st, c.Do)
 		st.unsetVar(loop.Name.Value)
 	case *syntax.CStyleLoop:
 		if err := w.substsIn(loop, st, ctx); err != nil {
 			return err
 		}
 		st.clearVars()
-		prescanLoop(st, c.Do)
+		changed = prescanLoop(st, c.Do)
 	default:
 		return unreadablef("unsupported loop %T", c.Loop)
 	}
 	err := w.stmts(c.Do, st, loopContext(ctx))
-	afterLoop(st)
+	if changed {
+		afterLoop(st)
+	}
 	return err
 }
 
@@ -803,7 +849,7 @@ func (w *walker) dispatch(words []Word, assigns []Assign, redirs []Redir, st *st
 		return w.trapCall(words[1:], st, ctx)
 	case name == "su":
 		return w.suCall(words[1:], st, ctx)
-	case name == "cd":
+	case name == "cd" || name == "chdir":
 		st.cd(words[1:])
 		return nil
 	case name == "pushd" || name == "popd":
@@ -992,7 +1038,7 @@ func shellStateBuiltin(w Word) bool {
 		return false
 	}
 	switch w.Value {
-	case "cd", "pushd", "popd", "export", "unset", "set", "shopt", "alias", "unalias", "hash", "trap", "source", ".",
+	case "cd", "chdir", "pushd", "popd", "export", "unset", "set", "shopt", "alias", "unalias", "hash", "trap", "source", ".",
 		"eval", "read", "mapfile", "readarray", "getopts", "let", "declare", "typeset", "local", "readonly", "shift",
 		"umask", "ulimit", "enable", "builtin", "command", "exec":
 		return true
