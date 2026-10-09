@@ -5312,6 +5312,10 @@ above in the same rollout, so the lane is never left calling a command it cannot
 satisfy. The version line `plugin.json` records is settled by the coordinator's
 own merge of the tree, as it is for every sibling.
 
+### Correction (CRW-731, 2026-10-06): the verified head is read from the ruling's record
+
+Option (c) above is replaced by **the head fixed with the ruling** (CRW-742: `verdict --verified-head`, one `dag_verified_heads` row per event). `dag-accept` takes no head and no `--verified-head`; it reads `P` from the row of the event it accepts. Reason (post-merge finding P1-1 of the CRW-666 pull request): with `P` as an input of the acceptance, a parent that resolved a code conflict by hand and pushed `N` could pass `N` as `P`, the `N == P` branch needed no proof, and `N` was accepted unproved. Read from the ruling's record, `P` is fixed before `N` exists, so the only way to a head other than `P` is the proof. An event whose ruling recorded no head is accepted as before (the transition; the record becomes required once every parent's lane passes `--verified-head`), and the narrowed guarantee stays "the accepted head is the head the parent recorded at the verdict plus merges of the base and nothing else". The place of the built-in rule in piece 3 is widened as CRW-732 decided (finding P1-2 of the same pull request and P1 of PR 636): the plugin-manifest version rule is applied by the relay's classifier for every proof, `dag-base-refresh` and `dag-accept` alike, and not only for a path a declaration covers. The rest of this section is unchanged.
+
 ## 79. A merge train reuses a proven tree; it never weakens the strict gate (CRW-725)
 
 Decision (design only, 2026-10-06): the strict conclusion holds for today's ruleset and

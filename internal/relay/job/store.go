@@ -233,14 +233,10 @@ type (
 	Event []Member
 )
 
-// AppendLedger appends {"at": the time, ...event} as one line (appendLedger). A row that cannot be written is lost: ledger loss must
-// never break a hook.
-func AppendLedger(cwd string, event Event) { _ = appendLedger(cwd, event, time.Now) }
-
 // isoLayout is Date.prototype.toISOString: UTC with three fraction digits.
 const isoLayout = "2006-01-02T15:04:05.000Z"
 
-// appendLedger is AppendLedger with the clock as an argument and the failure returned. As in a JavaScript spread, an event's own "at"
+// appendLedger appends {"at": the time, ...event} as one line, with the clock as an argument and the failure returned (a caller that must not break on a lost row drops it). As in a JavaScript spread, an event's own "at"
 // replaces the time and keeps the first place.
 func appendLedger(cwd string, event Event, now func() time.Time) error {
 	dir, err := EnsureDir(cwd)

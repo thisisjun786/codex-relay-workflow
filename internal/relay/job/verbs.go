@@ -1,13 +1,9 @@
 package job
 
 import (
-	"encoding/json"
-	"io"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf16"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
@@ -29,44 +25,6 @@ crw relay job cancel <id>                          중지
 crw relay job off | on | status                    완료 웨이크 스위치 (이 워크트리)
 crw relay job drain --session <id> [--json]        미전달 완료를 받아가고 전달 표시
 crw relay job removal                              제거 체크리스트`
-
-// ReadCLIStdin is readStdin, including reading before applying the unit bound.
-// It is a forward-use seam for the separately ported hook entry.
-func ReadCLIStdin(in io.Reader) string {
-	b, err := io.ReadAll(in)
-	if err != nil {
-		return ""
-	}
-	raw := decodeUTF8(b)
-	if len(utf16.Encode([]rune(raw))) > MaxCLIStdinBytes {
-		return ""
-	}
-	return raw
-}
-
-// ParseCLIPayload keeps parsePayload's object/array tolerance and silent fallback.
-func ParseCLIPayload(raw string) any {
-	dec := json.NewDecoder(strings.NewReader(raw))
-	dec.UseNumber()
-	var v any
-	if dec.Decode(&v) == nil {
-		if _, err := dec.Token(); err == io.EOF {
-			switch v.(type) {
-			case map[string]any, []any:
-				return v
-			}
-		}
-	}
-	return map[string]any{}
-}
-
-func cliFlagValue(args []string, name string) *string {
-	i := slices.Index(args, name)
-	if i < 0 || i+1 == len(args) {
-		return nil
-	}
-	return &args[i+1]
-}
 
 func cliFormatList(recs []BgRecord) string {
 	if len(recs) == 0 {
@@ -100,26 +58,6 @@ type CLIOptions struct {
 	Command             []string
 	Note, Tail, Session *string
 	JSON                bool
-}
-
-// RunCLI is the oracle argv facade. The relay uses RunParsedCLI after validation.
-func RunCLI(argv []string, cwd string, getenv func(string) (string, bool), clock func() time.Time) (CLIResult, error) {
-	verb, args := "", []string{}
-	if len(argv) > 0 {
-		verb, args = argv[0], argv[1:]
-	}
-	opts := CLIOptions{Verb: verb, Note: cliFlagValue(args, "--note"), Tail: cliFlagValue(args, "--tail"), Session: cliFlagValue(args, "--session"), JSON: slices.Contains(args, "--json")}
-	if len(args) > 0 {
-		opts.ID = args[0]
-	}
-	if verb == "run" {
-		sep := slices.Index(args, "--")
-		if sep < 0 || sep == len(args)-1 {
-			return CLIResult{cliUsage, 1}, nil
-		}
-		opts.Command, opts.Note = args[sep+1:], cliFlagValue(args[:sep], "--note")
-	}
-	return RunParsedCLI(opts, cwd, getenv, clock)
 }
 
 // RunParsedCLI executes validated values without interpreting metadata as argv.

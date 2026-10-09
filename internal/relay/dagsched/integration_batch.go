@@ -288,7 +288,7 @@ func (s *Scheduler) readyIntegrationCandidates(ctx context.Context, in Integrati
 	if err != nil {
 		return nil, err
 	}
-	all = candidatesInCheckout(all, in.Checkout)
+	all = candidatesInCheckout(ctx, all, in.Checkout)
 	pick := all
 	if len(in.Nodes) > 0 {
 		byNode := map[string]Candidate{}
@@ -923,11 +923,18 @@ func withoutCandidateNode(set []Candidate, node string) []Candidate {
 }
 
 // candidatesInCheckout is the candidates accepted for the checkout a batch integrates into: a candidate accepted in
-// another repository is judged there, never merged here (CRW-965 review).
-func candidatesInCheckout(set []Candidate, checkout string) []Candidate {
+// another repository is judged there, never merged here (CRW-965 review). A candidate accepted by commit carries the
+// checkout path; one accepted on its pull request carries the forge slug of that pull request (CRW-1033), which is the
+// checkout's when the checkout's origin remote names that slug on the forge the relay talks to. A slug the origin does
+// not name, and every slug when the checkout has no origin, stays another repository's.
+func candidatesInCheckout(ctx context.Context, set []Candidate, checkout string) []Candidate {
+	names := map[string]bool{checkout: true}
+	for _, n := range repositoryNames(ctx, checkout) {
+		names[n] = true
+	}
 	var out []Candidate
 	for _, c := range set {
-		if c.Repository == checkout {
+		if names[c.Repository] {
 			out = append(out, c)
 		}
 	}

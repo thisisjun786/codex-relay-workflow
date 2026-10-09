@@ -99,19 +99,6 @@ func completion(p HookPayload, cwd string, getenv func(string) string, clock fun
 	})
 }
 
-// DrainNow deliberately ignores both wake switches: explicit collection still works.
-func DrainNow(ws string, sessionID *string, clock func() time.Time) string {
-	return silent(func() string {
-		due, err := SelectWake(ws, sessionID, WakeBatchLimit, clock)
-		if err != nil || len(due) == 0 {
-			return ""
-		}
-		body := CompletionText(due)
-		MarkDelivered(ws, due, clock)
-		return body
-	})
-}
-
 // HandleSessionStart adopts even while off. Adoption is not delivery; Stop or the
 // next prompt stamps the completion. Only the first five adopted jobs are described.
 func HandleSessionStart(p HookPayload, cwd string, getenv func(string) string, clock func() time.Time) string {
