@@ -14,7 +14,8 @@ const configUsage = "Usage:\n" +
 	"  crw install config list                          managed keys, their live values and side effects\n" +
 	"  crw install config get <table.key>\n" +
 	"  crw install config set <table.key> <true|false>\n" +
-	"  crw install config unset <table.key>             restore the value from before crw set it\n" +
+	"  crw install config unset <table.key>             restore the value from before crw set it, while crw still owns it\n" +
+	"  crw install config unset <table.key> --release   drop crw's record and leave config.toml as it is\n" +
 	"  crw pabcd config interview [off|new-unit|always]\n\n" +
 	"Only whitelisted keys can be set; 'config list' shows them. Installation writes just the\n" +
 	"ones marked auto-enable in managed-keys.ts, records the pre-install value, and 'crw install features\n" +
@@ -117,6 +118,20 @@ func runConfig(args []string, env scope.Env, stdout, stderr io.Writer) int {
 		}
 		fmt.Fprintf(stdout, "주의: %s\n", entry.Caution)
 	}
+	if action == "unset" && len(args) > 2 && args[2] == "--release" {
+		// The explicit release of a record crw no longer owns (CRW-1149): config.toml is not touched.
+		r, err := configguard.ReleaseManagedKey(configguard.ConfigSetDeps{CodexHome: home}, id)
+		if err != nil {
+			fmt.Fprintln(stderr, "crw: "+err.Error())
+			return 1
+		}
+		if !r.OK {
+			fmt.Fprintf(stderr, "config unset: %s\n", r.Reason)
+			return 1
+		}
+		fmt.Fprintf(stdout, "%s: crw's record released; config.toml left as it is\n", id)
+		return 0
+	}
 	r, err := configguard.ApplyManagedKey(configguard.ConfigSetDeps{CodexHome: home}, id, value)
 	if err != nil {
 		fmt.Fprintln(stderr, "crw: "+err.Error())
@@ -127,8 +142,10 @@ func runConfig(args []string, env scope.Env, stdout, stderr io.Writer) int {
 		return 1
 	}
 	suffix := ""
-	if !r.Changed {
+	if !r.Changed && action == "set" {
 		suffix = " (already set; recorded)"
+	} else if !r.Changed {
+		suffix = " (already at that value; record cleared)"
 	}
 	fmt.Fprintf(stdout, "%s: %s -> %s%s\n", id, configValue(r.PriorValue, "(unset)"), r.AppliedValue, suffix)
 	if r.BackupPath != nil {

@@ -13,6 +13,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tomledit"
 )
 
 type DeactivateDeps struct {
@@ -490,7 +491,8 @@ func DecideKeyRestore(rec TableKeyRecord, live *string, drift, backupKnown bool,
 		return false, SkipChanged
 	case live == nil:
 		return false, SkipMissing
-	case *live != rec.AppliedValue:
+	case *live != rec.AppliedValue && !tomledit.SameValue(*live, rec.AppliedValue):
+		// The values are compared as TOML values (CRW-1149): the same value written another way is still crw's.
 		return false, SkipChanged
 	case rec.PriorValue == nil && drift && (!backupKnown || backup != nil):
 		return false, SkipUnverifiable

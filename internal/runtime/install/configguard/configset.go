@@ -1,6 +1,8 @@
 package configguard
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -107,6 +109,13 @@ func ApplyManagedKey(deps ConfigSetDeps, id string, value *bool) (ConfigSetOutco
 		if !hadRecord {
 			return ConfigSetOutcome{Reason: keyID + " is not recorded as set by crw; nothing to unset."}, nil
 		}
+		// Unset decides ownership as the deactivation does (CRW-1149): only a key crw set, that still holds the value crw
+		// applied, and whose original absence is proven when it was absent, is restored. Anything else writes nothing and
+		// keeps the record; the explicit release drops it.
+		if why := configUnsetRefusal(m, recorded, pre, content); why != "" {
+			return ConfigSetOutcome{Reason: keyID + " " + why + "; config.toml was not changed and crw's record was kept. " +
+				"Set the value by hand, or run 'crw install config unset " + keyID + " --release' to drop crw's record and leave config.toml as it is."}, nil
+		}
 		prior = recorded.PriorValue
 		res, refused, err = semanticRestore(content, entry.Table, entry.Key, prior)
 		if prior != nil {
@@ -173,6 +182,47 @@ func ApplyManagedKey(deps ConfigSetDeps, id string, value *bool) (ConfigSetOutco
 	return ConfigSetOutcome{OK: true, Changed: res.Changed, Entry: *entry, PriorValue: prior, AppliedValue: applied, BackupPath: backup}, nil
 }
 
+// configUnsetRefusal answers why unset must not restore rec, or "" when crw still owns the key. The live value and the
+// backup's are read semantically (CRW-1141), and the decision is DecideKeyRestore, the deactivation's own table: drift is
+// a config.toml that changed since crw last recorded its hash, and the backup is the activation's.
+func configUnsetRefusal(m *InstallManifest, rec TableKeyRecord, pre []byte, content string) string {
+	live, editable := semanticRaw(content, rec.Table, rec.Key)
+	if !editable {
+		return "is now written in a form crw does not edit (changed)"
+	}
+	drift := false
+	if m.PostActivateHash != nil {
+		sum := sha256.Sum256(pre)
+		drift = hex.EncodeToString(sum[:]) != *m.PostActivateHash
+	}
+	var backup *string
+	backupKnown := false
+	if m.BackupPath != nil && *m.BackupPath != "" {
+		if text, err := readTextOrNull(*m.BackupPath); err == nil && text != nil {
+			backup, backupKnown = semanticRaw(*text, rec.Table, rec.Key)
+		}
+	}
+	ok, reason := DecideKeyRestore(rec, live, drift, backupKnown, backup)
+	switch {
+	case ok:
+		return ""
+	case !rec.SetByCodexclaw:
+		return "was not set by crw (it already held " + configShown(rec.PriorValue) + " when crw recorded it)"
+	case reason == SkipMissing:
+		return "was removed after crw set it (missing)"
+	case reason == SkipChanged:
+		return "now holds " + configShown(live) + ", not the value crw set (" + rec.AppliedValue + ") (changed)"
+	}
+	return "cannot be shown to have been absent before crw set it: config.toml changed since and no backup proves it (unverifiable)"
+}
+
+func configShown(value *string) string {
+	if value == nil {
+		return "(unset)"
+	}
+	return *value
+}
+
 // ReadManagedState ports config-set.ts:162-168 without resolving a real home.
 func ReadManagedState(configPath string) ([]ManagedState, error) {
 	b, _, err := activationReadFile(configPath)
@@ -194,4 +244,41 @@ func ReadManagedState(configPath string) ([]ManagedState, error) {
 		states = append(states, state)
 	}
 	return states, nil
+}
+
+// ReleaseManagedKey drops crw's record of a managed key and leaves config.toml as it is (CRW-1149). It is the explicit
+// answer to an unset that refused because crw no longer owns the key: the record is the evidence of what crw changed, so it is
+// never dropped silently, only when the user asks.
+func ReleaseManagedKey(deps ConfigSetDeps, id string) (ConfigSetOutcome, error) {
+	entry, reason := ResolveManagedKey(id)
+	if entry == nil {
+		return ConfigSetOutcome{Reason: reason}, nil
+	}
+	path := deps.ConfigPath
+	if path == "" {
+		path = filepath.Join(deps.CodexHome, "config.toml")
+	}
+	lock, err := crwdir.LockConfig(path, activationLockWait)
+	if err != nil {
+		return ConfigSetOutcome{}, err
+	}
+	defer lock.Release()
+	m, err := readPriorManifest(deps.CodexHome)
+	if err != nil || m == nil {
+		return ConfigSetOutcome{Reason: "no readable install manifest under this codex home; there is no record to release."}, nil
+	}
+	keyID := ManagedKeyID(*entry)
+	rec, ok := m.TableKeys[keyID]
+	if !ok {
+		return ConfigSetOutcome{Reason: keyID + " is not recorded as set by crw; nothing to release."}, nil
+	}
+	delete(m.TableKeys, keyID)
+	b, err := manifestBytes(m)
+	if err != nil {
+		return ConfigSetOutcome{}, err
+	}
+	if err := activationPublish(manifestPath(deps.CodexHome), b); err != nil {
+		return ConfigSetOutcome{}, err
+	}
+	return ConfigSetOutcome{OK: true, Entry: *entry, PriorValue: rec.PriorValue, AppliedValue: rec.AppliedValue}, nil
 }
