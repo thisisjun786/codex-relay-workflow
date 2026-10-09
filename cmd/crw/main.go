@@ -178,7 +178,7 @@ func modes() []mode {
 			}
 			return hook.Run(c.ctx, c.args, os.Stdin, c.stdout, c.started)
 		}},
-		{"skill", true, func(c invocation) int { return skill.Run(c.args, os.Stdin, c.stdout, c.stderr) }},
+		{"skill", true, func(c invocation) int { return skill.RunContext(c.ctx, c.args, os.Stdin, c.stdout, c.stderr) }},
 		{"doctor", true, func(c invocation) int { return doctor.Run(c.ctx, c.args, c.stdout, c.stderr) }},
 		{"install", true, func(c invocation) int {
 			// An install command waits on locks and then removes or replaces things, so every way an

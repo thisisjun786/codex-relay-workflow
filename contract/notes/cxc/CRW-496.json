@@ -1,17 +1,21 @@
 {
   "issue": "CRW-496",
   "identical": [
-    "cli__skill__search_gh_absent",
-    "cli__skill__search_gh_auth_failure",
     "cli__skill__search_gh_scripted"
   ],
   "intentionally-changed": [
     {
       "id": "cli-help__skill__search_dashdash_help",
-      "reason": "The closed-network Go replayer provides no fetch call log; runtime behavior is unchanged.",
+      "reason": "The closed-network Go replayer provides no fetch call log; runtime behavior is unchanged. CRW-1156: every selected source unavailable is exit 3 with no rows on stdout (the oracle printed no matching skills and exited 0).",
       "remove": [
         "calls/0"
-      ]
+      ],
+      "set": {
+        "exit": "3",
+        "steps/0/exit": "3",
+        "steps/0/form": "empty",
+        "steps/0/stdout": ""
+      }
     },
     {
       "id": "cli-help__skill__show_dashdash_help",
@@ -22,10 +26,16 @@
     },
     {
       "id": "cli__skill__search_offline_without_cache",
-      "reason": "The closed-network Go replayer provides no fetch call log; runtime behavior is unchanged.",
+      "reason": "The closed-network Go replayer provides no fetch call log; runtime behavior is unchanged. CRW-1156: every selected source unavailable is exit 3 with no rows on stdout (the oracle printed no matching skills and exited 0).",
       "remove": [
         "calls/0"
-      ]
+      ],
+      "set": {
+        "exit": "3",
+        "steps/0/exit": "3",
+        "steps/0/form": "empty",
+        "steps/0/stdout": ""
+      }
     },
     {
       "id": "cli__skill__show_known_id_needs_network",
@@ -125,6 +135,26 @@
         "mtimes": {
           "cxc/skill-cache/jaw-aHR0cHM6Ly9yYXcuZ2l0aHVi.cache": "2099-01-01T00:00:00Z"
         }
+      }
+    },
+    {
+      "id": "cli__skill__search_gh_absent",
+      "reason": "CRW-1156: every selected source unavailable is exit 3 with no rows on stdout (the oracle printed no matching skills and exited 0).",
+      "set": {
+        "exit": "3",
+        "steps/0/exit": "3",
+        "steps/0/form": "empty",
+        "steps/0/stdout": ""
+      }
+    },
+    {
+      "id": "cli__skill__search_gh_auth_failure",
+      "reason": "CRW-1156: every selected source unavailable is exit 3 with no rows on stdout (the oracle printed no matching skills and exited 0).",
+      "set": {
+        "exit": "3",
+        "steps/0/exit": "3",
+        "steps/0/form": "empty",
+        "steps/0/stdout": ""
       }
     }
   ]

@@ -2,6 +2,7 @@ package search
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -173,8 +175,11 @@ func TestCLICacheAndFreshBody(t *testing.T) {
 func TestCLISourceBranches(t *testing.T) {
 	cliHome(t)
 	requests := []string{}
+	var mu sync.Mutex
 	fetch := func(url string) (string, error) {
+		mu.Lock()
 		requests = append(requests, url)
+		mu.Unlock()
 		switch {
 		case url == JAWRegistryURL:
 			return cliRegistry, nil
@@ -205,7 +210,7 @@ func TestCLISourceBranches(t *testing.T) {
 	}
 	cliHome(t)
 	code, out, errOut = cliRun([]string{"search", "x", "--source", "hermes", "--json"}, func(string) (string, error) { return "", errors.New("down") })
-	if code != 0 || out != "[]\n" || errOut != "skill-search: source hermes failed (down)\n" {
+	if code != 3 || out != "" || errOut != "skill-search: source hermes failed (down)\n" {
 		t.Fatalf("%d %q %q", code, out, errOut)
 	}
 	code, out, errOut = cliRun([]string{"search", "missing"}, cliFetch)
@@ -308,15 +313,15 @@ func TestHTTPFetch(t *testing.T) {
 		_, _ = w.Write([]byte("\uFEFFa\xff\xff<>&\u2028"))
 	}))
 	defer server.Close()
-	body, err := fetchHTTP(server.URL)
+	body, err := fetchHTTP(context.Background(), server.URL, MaxBodyBytes)
 	if err != nil || body != "a��<>&\u2028" {
 		t.Fatalf("%q %v", body, err)
 	}
-	if _, err := fetchHTTP(server.URL + "/status"); err == nil || err.Error() != "HTTP 503 for "+server.URL+"/status" {
+	if _, err := fetchHTTP(context.Background(), server.URL+"/status", MaxBodyBytes); err == nil || err.Error() != "HTTP 503 for "+server.URL+"/status" {
 		t.Fatal(err)
 	}
 	server.Close()
-	if _, err := fetchHTTP(server.URL); err == nil || err.Error() != "fetch failed" {
+	if _, err := fetchHTTP(context.Background(), server.URL, MaxBodyBytes); err == nil || err.Error() != "fetch failed" {
 		t.Fatal(err)
 	}
 }
@@ -332,7 +337,7 @@ func TestCLIReviewRegressions(t *testing.T) {
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte{0xe2, 0x82, 0x41}) }))
 	defer server.Close()
-	if body, err := fetchHTTP(server.URL); err != nil || body != "�A" {
+	if body, err := fetchHTTP(context.Background(), server.URL, MaxBodyBytes); err != nil || body != "�A" {
 		t.Errorf("body=%q err=%v, want �A", body, err)
 	}
 }
@@ -349,7 +354,7 @@ func TestHTTPTruncatedUTF8(t *testing.T) {
 		t.Run(fmt.Sprintf("%x", c.bytes), func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(c.bytes) }))
 			defer server.Close()
-			if body, err := fetchHTTP(server.URL); err != nil || body != c.want {
+			if body, err := fetchHTTP(context.Background(), server.URL, MaxBodyBytes); err != nil || body != c.want {
 				t.Fatalf("%q %v want %q", body, err, c.want)
 			}
 		})
