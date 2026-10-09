@@ -16,7 +16,8 @@ import (
 // as-is, the oracle's defects included (docs/port-cxc/known-defects.md, "Found by the divergence CLI
 // port"), with one adaptation the result type forces: the oracle's mode write sits outside any try and
 // its entry point reports the throw as "codexclaw cli failed: <message>" on stderr, exit 1, so this
-// library returns that error to its caller (see RunDivergenceCli) instead of crashing.
+// library returns that error to its caller (see RunDivergenceCli) instead of crashing, spelled as Node
+// spells it (nodeSpelled).
 //
 // No command is registered here: CRW-547 adds the dispatcher row (crw pabcd divergence). The file has
 // no package-level initializer.
@@ -279,7 +280,8 @@ func divergenceCliMode(ctx context.Context, cwdOut, sessionID, verb string, argv
 	}
 	mode, err := metric.WriteDivergenceModeContext(ctx, cwdOut, metric.ModeInput{SessionID: sessionID, Active: *state, CollapsePoint: collapsePoint, Reason: reason})
 	if err != nil {
-		return DivergenceCliResult{}, err
+		// The oracle's uncaught path prints err.message, which is Node's spelling of a failed filesystem call (CRW-749).
+		return DivergenceCliResult{}, nodeSpelled(err)
 	}
 	if asJSON {
 		return DivergenceCliResult{Output: metric.EncodeMode(mode), Code: 0}, nil

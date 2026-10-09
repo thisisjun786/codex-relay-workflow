@@ -784,3 +784,62 @@ func (s *Scheduler) outsideDenominator(ctx context.Context, q store.Querier, pla
 	out.Nodes = len(out.NodeIDs)
 	return out, nil
 }
+
+// RelationshipPullRequest is the pull request a relationship is about, read the way a node's link is
+// read (pullRequestOf): the active acceptance that names the relationship first, else the work report
+// of the relationship's current head. Nil when the store holds no link. It is an error when the
+// relationship is not in the store, when more than one active acceptance names it, or when the link
+// has a number but no recorded repository.
+func (s *Scheduler) RelationshipPullRequest(ctx context.Context, q store.Querier, rid string) (*PullRequestLink, error) {
+	rel, found, err := loadRelationship(ctx, q, rid)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, fmt.Errorf("relationship %s is not in the store", rid)
+	}
+	acc, hasAcc, err := loadActiveAcceptanceOfRelationship(ctx, q, rid)
+	if err != nil {
+		return nil, err
+	}
+	link, err := s.pullRequestOf(ctx, q, rel, true, acc, hasAcc)
+	if err != nil || link == nil {
+		return nil, err
+	}
+	// A number without the repository it belongs to names no pull request a consumer can use. An
+	// acceptance whose forge identity is not recorded keeps only a number (its own repository column
+	// can be a local checkout), so the link is unreadable, not a pull request with an empty repository.
+	if link.Repository == "" {
+		return nil, fmt.Errorf("relationship %s names pull request #%d from its %s but the store records no repository for it", rid, link.Number, link.Source)
+	}
+	return link, nil
+}
+
+// loadActiveAcceptanceOfRelationship is the active acceptance that names a relationship. The store
+// allows one active acceptance per node, and a relationship named by more than one is refused rather
+// than one of them picked.
+func loadActiveAcceptanceOfRelationship(ctx context.Context, q store.Querier, rid string) (Acceptance, bool, error) {
+	rows, err := q.QueryContext(ctx, "SELECT "+acceptanceColumns+" FROM dag_acceptances WHERE relationship_id = ? AND state = 'active' ORDER BY acceptance_id", rid)
+	if err != nil {
+		return Acceptance{}, false, err
+	}
+	defer rows.Close()
+	var named []Acceptance
+	for rows.Next() {
+		a, err := scanAcceptance(rows)
+		if err != nil {
+			return Acceptance{}, false, err
+		}
+		named = append(named, a)
+	}
+	if err := rows.Err(); err != nil {
+		return Acceptance{}, false, err
+	}
+	switch len(named) {
+	case 0:
+		return Acceptance{}, false, nil
+	case 1:
+		return named[0], true, nil
+	}
+	return Acceptance{}, false, fmt.Errorf("%d active acceptances name relationship %s", len(named), rid)
+}

@@ -72,14 +72,15 @@ func ParseRequest(raw []byte) (map[string]any, error) {
 		value any
 		at    string
 	}{{parent["taskId"], "parent.taskId"}, {parent["hostId"], "parent.hostId"}, {child["hostId"], "child.hostId"}, {child["title"], "child.title"}} {
-		if err = text(f.value, f.at, 500); err != nil {
-			return nil, err
-		}
 		// The bridge bounds a create's title in bytes, not characters (internal/bridge/create.go), so a
 		// title inside the character bound but over the byte bound would be armed here and refused at
-		// the create. The title is checked against the bridge's own byte bound before anything is armed.
-		if f.at == "child.title" && len(f.value.(string)) > 500 {
+		// the create. The title is checked against the bridge's own byte bound before anything is armed,
+		// and before the character bound, so a title over 500 bytes always gets the byte diagnostic.
+		if title, isText := f.value.(string); f.at == "child.title" && isText && len(title) > 500 {
 			return nil, fmt.Errorf("child.title must be at most 500 bytes")
+		}
+		if err = text(f.value, f.at, 500); err != nil {
+			return nil, err
 		}
 	}
 	if err := validateSettings(parent["settings"], "parent.settings"); err != nil {

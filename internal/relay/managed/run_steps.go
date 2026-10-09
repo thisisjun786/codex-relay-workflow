@@ -256,21 +256,7 @@ func (r *startRun) incompleteCreation(ctx context.Context) (contract.OrderedObje
 	if _, err := delivery.RecordAttempt(context.WithoutCancel(ctx), r.identity.MarkerRoot, r.identity.Workspace, r.assignment, outcome, r.m.now(), attemptedTask); err != nil {
 		return nil, err
 	}
-	incomplete := r.result()
-	var retained any
-	if receipt != nil {
-		retained = receipt["threadId"]
-	}
-	recovery := contract.OrderedObject{}
-	for _, key := range []string{"recoveryReason", "recoveryRequestId", "recoveryStatus"} {
-		if receipt != nil {
-			if value, ok := receipt[key]; ok {
-				recovery = append(recovery, contract.Field{Key: key, Value: value})
-			}
-		}
-	}
-	incomplete.Observed = contract.OrderedObject{{Key: "retainedChildTaskId", Value: retained}, {Key: "standbyRecovery", Value: recovery}}
-	return incomplete.Observe(ctx, r.m.Store, r.m.now(), "incomplete", "creation", "creation_"+outcome)
+	return r.incompleteResult().Observe(ctx, r.m.Store, r.m.now(), "incomplete", "creation", "creation_"+outcome)
 }
 
 // verifyCreation takes the child's identity from the accepted receipt, checks that the host created it
@@ -536,4 +522,35 @@ func settingsWithRole(settings map[string]any, role string) map[string]any {
 	}
 	out["citedRole"] = role
 	return out
+}
+
+// incompleteResult is the receipt of a start whose creation did not end accepted: the retained
+// thread and the standby recovery the receipt names.
+func (r *startRun) incompleteResult() startResult {
+	receipt := r.receipt
+	incomplete := r.result()
+	var retained any
+	if receipt != nil {
+		retained = receipt["threadId"]
+	}
+	recovery := contract.OrderedObject{}
+	for _, key := range []string{"recoveryReason", "recoveryRequestId", "recoveryStatus"} {
+		if receipt != nil {
+			if value, ok := receipt[key]; ok {
+				recovery = append(recovery, contract.Field{Key: key, Value: value})
+			}
+		}
+	}
+	incomplete.Observed = contract.OrderedObject{{Key: "retainedChildTaskId", Value: retained}, {Key: "standbyRecovery", Value: recovery}}
+	return incomplete
+}
+
+// unrecordedIncomplete answers an unknown creation exactly as incompleteCreation does, but records
+// nothing: the stop it serves leaves no attempt marker and no journal row.
+func (r *startRun) unrecordedIncomplete() contract.OrderedObject {
+	outcome := "unknown"
+	if r.receipt != nil && r.receipt["status"] == "failed" {
+		outcome = "failed"
+	}
+	return r.incompleteResult().result("incomplete", "creation", "creation_"+outcome)
 }

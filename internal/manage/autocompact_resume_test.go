@@ -122,3 +122,42 @@ func TestResumeReportsTheLimitItSentAsUnobservable(t *testing.T) {
 		t.Fatalf("the report does not mark the limit unobservable: %+v", report)
 	}
 }
+
+// CRW-1000 d1: a dry run sends nothing, so it must not report a limit as sent. The fields that say what
+// went out (autoCompactTokenLimit, autoCompactUnobservable) are left empty, and the limit the real run
+// would send is stated in its own field.
+func TestResumeDryRunDoesNotReportALimitAsSent(t *testing.T) {
+	host := resumeHost(t, "notLoaded")
+	exe, _ := resumeRelayScript(t, resumeTestAssignment, autoCompactResumeSettings, 0)
+	e, _, _ := resumeEnv(t, exe)
+	t.Setenv(execution.EnvPolicy, autoCompactResumePolicy(t))
+	cfg := resumeConfig(host, "alpha")
+	cfg.Bridge.ExecutionPolicy = os.Getenv(execution.EnvPolicy)
+	report, err := resumeRun(context.Background(), e, cfg, resumeOptions{relationship: "rel-1", message: "m", dryRun: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.AutoCompactTokenLimit != nil || report.AutoCompactUnobservable {
+		t.Fatalf("a dry run that sent nothing reports a limit as sent: %+v", report)
+	}
+	if report.PlannedAutoCompactTokenLimit == nil || *report.PlannedAutoCompactTokenLimit != 550000 {
+		t.Fatalf("the dry run does not state the limit a real run would send: %+v", report)
+	}
+	raw, err := json.Marshal(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if _, present := fields["autoCompactTokenLimit"]; present {
+		t.Fatalf("the dry run's JSON carries autoCompactTokenLimit: %s", raw)
+	}
+	if _, present := fields["autoCompactUnobservable"]; present {
+		t.Fatalf("the dry run's JSON carries autoCompactUnobservable: %s", raw)
+	}
+	if fields["plannedAutoCompactTokenLimit"] != float64(550000) {
+		t.Fatalf("the dry run's JSON does not carry plannedAutoCompactTokenLimit: %s", raw)
+	}
+}

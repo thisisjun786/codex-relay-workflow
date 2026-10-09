@@ -223,3 +223,26 @@ func TestRunScenario_modes_do_not_depend_on_the_process_umask(t *testing.T) {
 		}
 	}
 }
+
+// A file a write step creates, and the directory that holds it, are newer than the clock a Go replay reads, as
+// everything the oracle writes is newer than its frozen clock (an age read from them is 0, not a few ms).
+func TestStampWrittenSetsTheFileAndItsDirectoryAheadOfTheClock(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "plans", ".lock")
+	path := filepath.Join(dir, "owner.json")
+	if err := writeFile(path, []byte("{}")); err != nil {
+		t.Fatal(err)
+	}
+	before := time.Now()
+	if err := stampWritten(path); err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range []string{path, dir} {
+		info, err := os.Stat(entry)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !info.ModTime().After(before.Add(writtenStampLead / 2)) {
+			t.Errorf("%s mtime %v is not ahead of the clock %v", entry, info.ModTime(), before)
+		}
+	}
+}

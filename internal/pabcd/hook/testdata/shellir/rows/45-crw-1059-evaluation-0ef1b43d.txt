@@ -1,0 +1,97 @@
+# CRW-1059 after the pre-merge evaluation of 0ef1b43d (findings d1 to d3): an argument or assignment substitution in one simple
+# command, a watch -x argv, and an arithmetic for header. Controls keep the ordered and the refused cases the earlier rows already fix.
+# Format: see shellwrite_repro_test.go.
+
+=== CRW-1059-11 | U
+--why Evaluation d1: the argument substitution runs refresh.sh first, so the assignment substitution runs the rewritten lint.sh: refused.
+--file lint.sh
+echo lint
+--file refresh.sh
+echo refreshed > lint.sh
+--cmd
+X=$(bash lint.sh) printf "%s\n" "$(bash refresh.sh)"
+
+=== CRW-1059-12 | U
+--why Evaluation d1: the rewritten lint.sh is the post of evil.sh, run by the assignment substitution after the rewrite: refused.
+--file lint.sh
+echo lint
+--file refresh.sh
+cat evil.sh > lint.sh
+--file evil.sh
+gh pr comment 1 -b "x"
+--cmd
+X=$(bash lint.sh) printf "%s\n" "$(bash refresh.sh)"
+
+=== CRW-1059-13 | U
+--why Evaluation d1: the rewritten lint.sh removes the managed checkout when the assignment substitution runs it: refused.
+--file lint.sh
+echo lint
+--file refresh.sh
+cat evil.sh > lint.sh
+--file evil.sh
+rm -rf {CHECKOUT}
+--cmd
+X=$(bash lint.sh) printf "%s\n" "$(bash refresh.sh)"
+
+=== CRW-1059-14 | U
+--why Evaluation d2: watch -x runs its argv again, so the second run of lint.sh reads the file refresh.sh rewrote: refused.
+--file lint.sh
+echo lint
+--file refresh.sh
+echo refreshed > lint.sh
+--cmd
+watch -x bash -c 'bash lint.sh; bash refresh.sh'
+
+=== CRW-1059-15 | U
+--why Evaluation d2 (top level): watch -x with a plain argv repeats lint.sh after refresh.sh rewrote it: refused.
+--file lint.sh
+echo lint
+--file refresh.sh
+echo refreshed > lint.sh
+--cmd
+watch -x bash lint.sh; bash refresh.sh
+
+=== CRW-1059-16 | U
+--why Control: watch with a shell string repeats its text, so the rewrite reaches the next run of lint.sh: refused.
+--file lint.sh
+echo lint
+--file refresh.sh
+echo refreshed > lint.sh
+--cmd
+watch 'bash lint.sh; bash refresh.sh'
+
+=== CRW-1059-17 | U
+--why Evaluation d3: the condition of an arithmetic for loop runs again after the update rewrote lint.sh: refused.
+--file lint.sh
+echo lint
+--file refresh.sh
+echo refreshed > lint.sh
+--cmd
+bash -c 'for ((i=0; $(bash lint.sh; echo 1) && i<2; i+=$(bash refresh.sh; echo 1))); do :; done'
+
+=== CRW-1059-18 | U
+--why Evaluation d3 (top level): the same header outside bash -c: refused.
+--file lint.sh
+echo lint
+--file refresh.sh
+echo refreshed > lint.sh
+--cmd
+for ((i=0; $(bash lint.sh; echo 1) && i<2; i+=$(bash refresh.sh; echo 1))); do :; done
+
+=== CRW-1059-19 | U
+--why Control: the rewrite runs in the first substitution, so the rewritten lint.sh runs in the command after it: refused.
+--file lint.sh
+echo lint
+--file refresh.sh
+echo refreshed > lint.sh
+--cmd
+X=$(bash refresh.sh) bash lint.sh
+
+=== CRW-1059-20 | T
+--why Control: the substitution runs lint.sh before the command rewrites it, so the sequence is allowed.
+--file lint.sh
+echo lint
+--file refresh.sh
+echo refreshed > lint.sh
+--cmd
+X=$(bash lint.sh) bash refresh.sh

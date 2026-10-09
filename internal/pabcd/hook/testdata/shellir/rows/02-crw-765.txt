@@ -70,7 +70,7 @@ bash 0<<'EOF'
 echo x > {MEMORY}/a
 EOF
 
-=== CRW-765-12 | U
+=== CRW-765-12 | U | deviation=none/allow/allow
 --why A script operand that is a descriptor alias is the here-document itself, which the reader does not follow: unreadable (CRW-989).
 bash /dev/fd/3 3<<'EOF'
 echo hi

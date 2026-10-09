@@ -38,7 +38,9 @@ func (OmissionObserver) Observe(ctx context.Context, r faults.ManagedReadingRequ
 	}
 	reading := delivery.ObserveOmission(ctx, selection, r.Root, r.Workspace, r.Assignment, r.Session, r.Turn, r.Now, omissionObserverGrace)
 	reading = unclaimedOmission(ctx, selection, r, reading, nil)
-	haltOnUnreadableStore(ctx, selection, reading)
+	if err := haltOnUnreadableStore(ctx, selection, reading); err != nil {
+		return nil, err
+	}
 	return orderedMap(reading), nil
 }
 
@@ -48,21 +50,42 @@ func (OmissionObserver) Observe(ctx context.Context, r faults.ManagedReadingRequ
 // observer's answer shape does not move - and the store is not read a second time: the classification
 // runs on the text the reading already holds, and only the marker (which lives beside the store, not
 // in it) is written. A reading that is not of that shape, and a failure that is not of that class,
-// change nothing.
-func haltOnUnreadableStore(ctx context.Context, selection store.StateSelection, reading delivery.Obj) {
+// change nothing. A marker that cannot be written is returned (CRW-945).
+func haltOnUnreadableStore(ctx context.Context, selection store.StateSelection, reading delivery.Obj) error {
 	if reading.Get("reportingState") != "unmeasured" {
-		return
+		return nil
 	}
 	detail, ok := strings.CutPrefix(fmt.Sprint(reading.Get("reason")), "store_unreadable: ")
 	if !ok {
-		return
+		return nil
 	}
 	cause, ok := store.CorruptingDetail(detail)
 	if !ok {
-		return
+		return nil
 	}
 	cause.Site = store.HaltSiteObservation
-	_ = store.RecordHalt(ctx, selection.DBPath(), cause)
+	if err := store.RecordHalt(ctx, selection.DBPath(), cause); err != nil {
+		// A marker that could not be published is not a marker the next pass will find, so the failure is
+		// the observer's error: the sweep ends on it and the daemon, which classifies it as the class it
+		// is, keeps its own halt (CRW-945, CRW-848).
+		return &store.DetectedCorruption{Cause: cause, Err: fmt.Errorf("store writes are halted, and the halt marker could not be written: %w", err)}
+	}
+	return nil
+}
+
+// storeDamage is the reading of a turn whose store read met a failure of the corrupting class (CRW-848): the
+// original reading with the reason the delivery reader gives for a store it cannot read, "store_unreadable: "
+// and the failure's text, which is the shape haltOnUnreadableStore classifies. It is nil for a read that
+// succeeded and for a failure that is not of that class, which leave the original reading as they always did
+// (CRW-945).
+func storeDamage(original delivery.Obj, read store.RowsRead) delivery.Obj {
+	if read.Detail == "" {
+		return nil
+	}
+	if _, corrupting := store.CorruptingDetail(read.Detail); !corrupting {
+		return nil
+	}
+	return append(delivery.Obj(nil), original...).Set("reason", "store_unreadable: "+read.Detail)
 }
 
 // A claim is the child's declaration, not the relay's admission. For this one missing-claim case,
@@ -121,6 +144,9 @@ func unclaimedOmission(ctx context.Context, selection store.StateSelection, r fa
 		})
 	}
 	snapshot := read()
+	if damaged := storeDamage(original, snapshot); damaged != nil {
+		return damaged
+	}
 	if !snapshot.Readable || snapshot.Detail != "" || snapshot.Raised != nil || len(rows) != 1 {
 		return original
 	}
@@ -158,7 +184,14 @@ func unclaimedOmission(ctx context.Context, selection store.StateSelection, r fa
 	}
 	afterMarker, problems := delivery.ReadAssignment(ctx, directory)
 	disposition, readable := delivery.ReadDisposition(ctx, directory, r.Session, r.Turn)
-	if len(problems) != 0 || !reflect.DeepEqual(marker, afterMarker) || !readable || disposition != nil || read() != snapshot || len(rows) != 1 || !reflect.DeepEqual(t, rows[0]) {
+	if len(problems) != 0 || !reflect.DeepEqual(marker, afterMarker) || !readable || disposition != nil {
+		return original
+	}
+	again := read()
+	if damaged := storeDamage(original, again); damaged != nil {
+		return damaged
+	}
+	if again != snapshot || len(rows) != 1 || !reflect.DeepEqual(t, rows[0]) {
 		return original
 	}
 	witness := true

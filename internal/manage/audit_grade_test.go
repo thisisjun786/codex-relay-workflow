@@ -14,6 +14,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // auditTestEnv is the Env these tests drive: the streams, the host lookups and a fixed
@@ -445,7 +447,7 @@ func TestAuditGradeKeepsATimeoutDespiteAUsableFile(t *testing.T) {
 		"dir=$(dirname $1)\n" +
 		"printf '%s' \"$AUDIT_JSON\" > $dir/grade.json\n" +
 		"sleep 30\n"
-	if err := os.WriteFile(script, []byte(body), 0o700); err != nil {
+	if err := testsupport.WriteProgram(script, []byte(body), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("AUDIT_JSON", auditJSONClean)

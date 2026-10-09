@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 	"os"
 	"path/filepath"
 	"strings"
@@ -42,7 +43,7 @@ func improveRoadmapLock(dir, boundary, ref string) (func(), error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
-	lockPath := filepath.Join(dir, improveRoadmapLockName(boundary, ref))
+	lockPath := crwconfig.JoinRoot(dir, improveRoadmapLockName(boundary, ref))
 	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return nil, err
@@ -144,14 +145,14 @@ func improveRoadmapPlainRef(ref string) bool {
 // improveRoadmapDir is where the improvement pass keeps its bundles and roadmap documents:
 // below the state directory the configuration names, so it never writes beside the checkout.
 func improveRoadmapDir(e *Env, cfg *Config) string {
-	return filepath.Join(auditStateDir(e, cfg), "improve")
+	return crwconfig.JoinRoot(auditStateDir(e, cfg), "improve")
 }
 
 // improveRoadmapBundlePath is the bundle one run keeps: a per-run file beside its roadmap, so
 // a later run of the same ref never replaces the evidence an earlier roadmap cites. The stamp
 // is the run's own, so the bundle and the roadmap of one run pair by name.
 func improveRoadmapBundlePath(dir, ref, stamp string) string {
-	return filepath.Join(dir, ref, "bundle-"+stamp+".json")
+	return crwconfig.JoinRoot(dir, ref, "bundle-"+stamp+".json")
 }
 
 // improveRoadmapStamp is the UTC stamp a roadmap file name carries.
@@ -221,7 +222,7 @@ func improveRoadmapImpactName(impact int) string {
 // improveRoadmapWriteFile writes the roadmap atomically: a temporary file beside it, fsynced,
 // then renamed over it, so a reader never sees a half-written document.
 func improveRoadmapWriteFile(path string, data []byte) error {
-	dir := filepath.Dir(path)
+	dir := rootDir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
@@ -271,7 +272,7 @@ func improveRoadmapRun(ctx context.Context, e *Env, boundary, ref string) (strin
 	defer release()
 	stamp := improveRoadmapStamp(e.Now())
 	bundlePath := improveRoadmapBundlePath(dir, ref, stamp)
-	if err := os.MkdirAll(filepath.Dir(bundlePath), 0o700); err != nil {
+	if err := os.MkdirAll(rootDir(bundlePath), 0o700); err != nil {
 		return "", err
 	}
 	// collect is called first, so the bundle it writes is the evidence the roadmap cites.
@@ -293,7 +294,7 @@ func improveRoadmapRun(ctx context.Context, e *Env, boundary, ref string) (strin
 	if err != nil {
 		return "", err
 	}
-	path := filepath.Join(dir, "roadmap-"+stamp+".md")
+	path := crwconfig.JoinRoot(dir, "roadmap-"+stamp+".md")
 	if err := improveRoadmapWriteFile(path, []byte(improveRoadmapDocument(boundary, ref, bundlePath, report))); err != nil {
 		return "", err
 	}
@@ -319,7 +320,7 @@ func improveRoadmapAlreadyRan(dir, boundary, ref string) (bool, error) {
 		if entry.IsDir() || !strings.HasPrefix(name, "roadmap-") || !strings.HasSuffix(name, ".md") {
 			continue
 		}
-		data, err := os.ReadFile(filepath.Join(dir, name))
+		data, err := os.ReadFile(crwconfig.JoinRoot(dir, name))
 		if err != nil {
 			return false, err
 		}

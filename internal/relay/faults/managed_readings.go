@@ -9,6 +9,8 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"strings"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 // ManagedReadingRequest is the complete omitted.observe selector set. Selection
@@ -37,6 +39,8 @@ type ManagedReadingPage struct {
 	Cursor   any   `json:"cursor"`
 	Filled   bool  `json:"filled"`
 	Complete bool  `json:"complete"`
+	// Halted is set when the page ended because the observer published the store's halt marker.
+	Halted bool `json:"halted,omitempty"`
 }
 
 func (sw *Sweeper) ManagedReadings(ctx context.Context, selection any, observer ManagedReadingObserver, limit int, cursor any, now string) (ManagedReadingPage, error) {
@@ -70,15 +74,33 @@ func (sw *Sweeper) ManagedReadings(ctx context.Context, selection any, observer 
 	if now == "" {
 		now = sw.Now()
 	}
+	// A halt marker is the halt (CRW-848): one that stands before a turn is read, whoever published it, or that the
+	// observer has just published, whatever it then answered, ends the page. No later turn is read, and none is
+	// gapped, on a store that has been seen damaged; the sweep ends on the marker (CRW-945).
+	halted := func() bool { return sw.Store != nil && store.HaltStateAt(sw.Store.Path).Present }
 	for _, r := range rows {
+		if halted() {
+			answer.Halted = true
+			return answer, nil
+		}
 		sum := sha256.Sum256([]byte(r.Text("dispatch_request_id")))
 		reading, err := observer.Observe(ctx, ManagedReadingRequest{Selection: selection, Root: r.Text("marker_root"), Workspace: r.Text("workspace"), Assignment: fmt.Sprintf("%x", sum), Session: r.Text("thread_id"), Turn: r.Text("turn_id"), Now: now})
 		var reason string
 		object, ok := reading.(map[string]any)
 		if err != nil {
+			// A failure of the class that halts the relay's writes (CRW-848) is the sweep's failure, not a
+			// gap in one reading: the daemon marks the store on it and nothing more is read or recorded
+			// (CRW-945). Any other failure stays the gap it has been.
+			if _, corrupting := store.CorruptingFailure(err); corrupting {
+				return answer, err
+			}
 			reason = err.Error()
 		} else if !ok || object == nil {
 			reason = "the observer returned no reading"
+		}
+		if reason != "" && halted() {
+			answer.Halted = true
+			return answer, nil
 		}
 		if reason != "" {
 			answer.Gaps = append(answer.Gaps, map[string]any{"gap": "managed_reading_failed", "relationId": r.Get("relationship_id"), "reason": reason})
@@ -90,6 +112,11 @@ func (sw *Sweeper) ManagedReadings(ctx context.Context, selection any, observer 
 			object["relationshipId"] = r.Get("relationship_id")
 		}
 		answer.Readings = append(answer.Readings, object)
+		if halted() {
+			// The reading that published the marker is kept: it says what the observer saw.
+			answer.Halted = true
+			return answer, nil
+		}
 	}
 	answer.Filled = len(rows) >= limit
 	answer.Complete = after == nil && !answer.Filled
