@@ -793,9 +793,66 @@ func TestSelfHealReportOnlyAnUnrunnableCodexIsSilent(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", front)
-	if _, err := selfHealReportBinary(selfHealReportEnv(home)); err != errSelfHealReportEACCES {
+	if _, err := selfHealReportCandidates(selfHealReportEnv(home)); err != errSelfHealReportEACCES {
 		t.Fatalf("err = %v, want EACCES", err)
 	}
+	out, code := selfHealReportRun(t, home, selfHealReportSessionStart)
+	if code != 0 || out != "" {
+		t.Fatalf("answered exit %d with %q, want silent exit 0", code, out)
+	}
+}
+
+// selfHealReportShebangFront writes a codex that passes the access check but cannot be executed: its
+// shebang names an interpreter that exists and has no execute permission, so execve answers EACCES for the
+// script although faccessat(X_OK) on the script itself succeeds.
+func selfHealReportShebangFront(t *testing.T) string {
+	t.Helper()
+	front, interpreters := t.TempDir(), t.TempDir()
+	interpreter := filepath.Join(interpreters, "interp")
+	if err := os.WriteFile(interpreter, []byte("#!/bin/sh\nexit 0\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := execfile.WriteExecutable(filepath.Join(front, "codex"), []byte("#!"+interpreter+"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return front
+}
+
+// TestSelfHealReportPathSearchSkipsACodexThatFailsToExecute is CRW-977 (evaluation of 50f1f3c2, d2): the
+// access check on the file does not see an interpreter it cannot run, so the failure only shows when the
+// process starts. execvp (libuv's search) takes EACCES from the exec as "try the next directory", and so
+// does the runner: the working codex behind such a file is the one that answers.
+func TestSelfHealReportPathSearchSkipsACodexThatFailsToExecute(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root may execute a file that has any execute bit")
+	}
+	home := selfHealReportTempHome(t)
+	selfHealReportWriteConfig(t, home)
+	front, back := selfHealReportShebangFront(t), t.TempDir()
+	script := "#!/bin/sh\nif [ \"$1\" = features ] && [ \"$2\" = list ]; then\nprintf '%s' '" + selfHealReportSoftOff + "'\nexit 0\nfi\nexit 1\n"
+	if err := execfile.WriteExecutable(filepath.Join(back, "codex"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", front+string(os.PathListSeparator)+back)
+
+	out, code := selfHealReportRun(t, home, selfHealReportSessionStart)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	if !strings.Contains(out, "default_mode_request_user_input") {
+		t.Fatalf("the working codex behind one that fails to execute was not used: %q", out)
+	}
+}
+
+// TestSelfHealReportOnlyACodexThatFailsToExecuteIsSilent: with no later candidate the failure to start is a
+// failed measurement and the round stays silent, as before.
+func TestSelfHealReportOnlyACodexThatFailsToExecuteIsSilent(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root may execute a file that has any execute bit")
+	}
+	home := selfHealReportTempHome(t)
+	selfHealReportWriteConfig(t, home)
+	t.Setenv("PATH", selfHealReportShebangFront(t))
 	out, code := selfHealReportRun(t, home, selfHealReportSessionStart)
 	if code != 0 || out != "" {
 		t.Fatalf("answered exit %d with %q, want silent exit 0", code, out)
