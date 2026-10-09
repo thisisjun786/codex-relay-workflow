@@ -211,6 +211,19 @@ func (r *startRun) businessResendUnload(ctx context.Context) (string, error) {
 		return code, nil
 	}
 	notArchived := func(reason, code string) (string, error) { return closeBegin("none", reason, code) }
+	// settle closes the begin mark for an outcome the host evidence settled and then answers the
+	// caller: a cancelled context keeps its error ahead of the answer, but only after the mark
+	// is closed, so a cancellation racing a confirmed non-archive does not spend the attempt.
+	settle := func(reason, code string) (string, error) {
+		answer, err := notArchived(reason, code)
+		if err != nil {
+			return "", err
+		}
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+		return answer, nil
+	}
 	status, code, err := r.businessResendThreadStatus(ctx)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -231,16 +244,20 @@ func (r *startRun) businessResendUnload(ctx context.Context) (string, error) {
 	}
 	detail := map[string]any{"threadId": r.task, "attempt": r.businessAttempt, "phase": "end"}
 	if _, err := r.m.Adapter.HostCall(ctx, "thread/archive", map[string]any{"threadId": r.task}); err != nil {
-		if ctx.Err() != nil {
-			return "", ctx.Err()
-		}
 		// The host's own error response is a refusal of this call, so this invocation did not apply
 		// the archive: another client may have archived the child first. An archived listing cannot
 		// tell which request archived it, and unarchiving here would undo that client's action, so
-		// the child holds exactly as a loaded one does.
+		// the child holds exactly as a loaded one does. The refusal is classified before the
+		// context is looked at: a cancellation that lands after the host answered does not undo
+		// the evidence, and the mark closes as archive "none" before the context error returns.
 		var rpcErr *appserver.RPCError
 		if errors.As(err, &rpcErr) {
-			return notArchived("archive_refused", "recipient_not_idle")
+			return settle("archive_refused", "recipient_not_idle")
+		}
+		if ctx.Err() != nil {
+			// No host answer on a cancelled call: the archive may have applied, so the begin mark
+			// stays and the attempt is spent.
+			return "", ctx.Err()
 		}
 		// With no host answer read - a transport error, a closed connection, a deadline - the
 		// archive may have applied and only its reply been lost, which would leave the child
@@ -250,18 +267,22 @@ func (r *startRun) businessResendUnload(ctx context.Context) (string, error) {
 		// Continue exactly as after a successful archive when the listing holds the child. A
 		// complete listing that does not hold the child shows the archive did not apply: the child
 		// answers as a loaded one does, the begin mark closes as archive "none" and no unarchive
-		// follows. A failed or incomplete listing leaves the archive unknown: the child may be
-		// archived, so the mark closes as archive "unknown" and the attempt stays spent, and an
-		// operator who unarchives the child does not see the same attempt archive it a second time.
+		// follows, also when a cancellation lands after the listing returned. A failed or
+		// incomplete listing leaves the archive unknown: the child may be archived, so the mark
+		// closes as archive "unknown" and the attempt stays spent, and an operator who unarchives
+		// the child does not see the same attempt archive it a second time.
 		archived, complete, checkErr := scanThreadListing(ctx, r.m.Adapter, r.task, true)
-		if ctx.Err() != nil {
-			return "", ctx.Err()
-		}
 		if checkErr != nil || !complete {
+			if ctx.Err() != nil {
+				return "", ctx.Err()
+			}
 			return closeBegin("unknown", "archive_unconfirmed", "recipient_not_idle")
 		}
 		if !archived {
-			return notArchived("archive_unconfirmed", "recipient_not_idle")
+			return settle("archive_unconfirmed", "recipient_not_idle")
+		}
+		if ctx.Err() != nil {
+			return "", ctx.Err()
 		}
 		detail["archive"] = "reply_lost"
 	} else {

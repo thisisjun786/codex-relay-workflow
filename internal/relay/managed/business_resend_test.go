@@ -348,6 +348,8 @@ type businessResendUnloadApp struct {
 	archiveLostReply bool
 	archivedListing  string
 	onArchivedList   func()
+	// onArchive runs when thread/archive is called, before it answers.
+	onArchive func()
 	// onRead runs on each thread/read and may fail it; the unload's last read before the archive
 	// is the one a cancellation test aims at.
 	onRead         func() error
@@ -403,6 +405,9 @@ func (a *businessResendUnloadApp) HostCall(ctx context.Context, method string, p
 		}
 	case "thread/archive":
 		a.archiveCalls = append(a.archiveCalls, id)
+		if a.onArchive != nil {
+			a.onArchive()
+		}
 		if a.archiveLostReply {
 			a.markArchived(id, true)
 			if !a.stayLoaded {
@@ -873,5 +878,61 @@ func TestBusinessResendUnloadNeverArchivesNonStandbyHistory(t *testing.T) {
 	}
 	if n := businessResendLoweringRows(t, k); n != 0 {
 		t.Fatalf("non-standby history wrote %d unload rows", n)
+	}
+}
+
+// A host refusal of the archive that arrives together with a cancellation is still a confirmed
+// refusal: nothing was archived, so the begin mark is closed with archive "none" before the
+// context error is returned, and a rerun under a live context reaches the archive.
+func TestBusinessResendUnloadRefusedArchiveWithCancellationDoesNotSpendTheAttempt(t *testing.T) {
+	k, _, _ := businessResendKit(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	app := &businessResendUnloadApp{Adapter: k.host, host: k.host, archiveErr: &appserver.RPCError{Method: "thread/archive", Code: -32603, Message: "no rollout found"}}
+	app.onArchive = cancel
+	k.host.threads["t-1"].status = "idle"
+	k.start.Adapter = app
+	r := &startRun{m: k.start, task: "t-1", standby: "standby", businessAttempt: 1, resendFailure: businessResendLegacyReceipt("t-1"), identity: Identity{RequestID: "managed-1"}, ledger: k.host.ledger}
+	if code, err := r.businessResendUnload(ctx); code != "" || !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled refused archive: %q %v", code, err)
+	}
+	if detail := businessResendUnloadDetail(t, k); !strings.Contains(detail, `"archive":"none"`) || !strings.Contains(detail, `"phase":"end"`) {
+		t.Fatalf("cancelled refused archive closing row: %s", detail)
+	}
+	app.onArchive = nil
+	app.archiveErr = nil
+	if _, err := r.businessResendUnload(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(app.archiveCalls, []string{"t-1", "t-1"}) {
+		t.Fatalf("rerun archive calls: %v", app.archiveCalls)
+	}
+}
+
+// An archive with no host answer followed by a complete archived listing that does not hold the
+// child shows the archive did not apply. A cancellation that lands after that listing returns
+// keeps the context error, and the begin mark still closes with archive "none".
+func TestBusinessResendUnloadCompleteMissWithCancellationDoesNotSpendTheAttempt(t *testing.T) {
+	k, _, _ := businessResendKit(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	app := &businessResendUnloadApp{Adapter: k.host, host: k.host, archiveErr: errors.New("thread/archive: connection closed")}
+	app.onArchivedList = cancel
+	k.host.threads["t-1"].status = "idle"
+	k.start.Adapter = app
+	r := &startRun{m: k.start, task: "t-1", standby: "standby", businessAttempt: 1, resendFailure: businessResendLegacyReceipt("t-1"), identity: Identity{RequestID: "managed-1"}, ledger: k.host.ledger}
+	if code, err := r.businessResendUnload(ctx); code != "" || !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled complete miss: %q %v", code, err)
+	}
+	if detail := businessResendUnloadDetail(t, k); !strings.Contains(detail, `"archive":"none"`) || !strings.Contains(detail, `"phase":"end"`) {
+		t.Fatalf("cancelled complete miss closing row: %s", detail)
+	}
+	app.onArchivedList = nil
+	app.archiveErr = nil
+	if _, err := r.businessResendUnload(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(app.archiveCalls, []string{"t-1", "t-1"}) {
+		t.Fatalf("rerun archive calls: %v", app.archiveCalls)
 	}
 }

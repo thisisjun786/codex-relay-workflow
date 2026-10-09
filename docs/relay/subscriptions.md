@@ -239,7 +239,9 @@ the load state observed afterwards; once the archive has succeeded that row is w
 context that survives the caller's cancellation, because an archived child with no row would
 leave an operator nothing to read. When nothing was archived (the last read was not `idle`, failed or was cancelled, or the archive
 was refused, or a complete archived listing does not hold the child) the closing row says `archive`
-`none` with its reason and the attempt stays available. When the archive may have applied and the
+`none` with its reason and the attempt stays available, also when the caller's cancellation
+arrives right after the host's refusal or the complete listing: the closing row is written first and the
+context error is returned. When the archive may have applied and the
 archived listing failed or was incomplete, the closing row says `archive` `unknown` and the attempt
 stays spent: an operator who unarchives the child does not see the same attempt archive it again. Empty, missing-rollout or
 unreadable history stays held as `lifecycle_unknown`; another turn refuses as
