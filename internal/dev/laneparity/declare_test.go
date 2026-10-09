@@ -55,6 +55,27 @@ func TestRoute(t *testing.T) {
 		{`node "${PLUGIN_ROOT}/components/pabcd-state/dist/cli.js" hook session-start`, "", "", false},
 		{`exit 0`, "", "", false},
 		{`echo hook stop --legacy x`, "", "", false},
+		{`crw hook session-start --leg x`, "session-start", "x", true},
+		{`"$CRW_BIN" hook stop --leg x`, "stop", "x", true},
+		{`${CRW_BIN} hook stop --leg x;`, "stop", "x", true},
+		// The hook syntax must be what the shell runs, not text it skips or passes to something else.
+		{`"/x/crw" --version >/dev/null # "/x/crw" hook session-start --leg x`, "", "", false},
+		{`/bin/true # "/x/crw" hook session-start --leg x`, "", "", false},
+		{`echo "/x/crw" hook session-start --leg x`, "", "", false},
+		{`/bin/echo hook session-start --leg x`, "", "", false},
+		{`false && "/x/crw" hook session-start --leg x`, "", "", false},
+		{`if false; then "/x/crw" hook session-start --leg x; fi`, "", "", false},
+		{`"/x/crw" hook session-start --leg x || true`, "", "", false},
+		{`"/x/crw" hook session-start --leg x > /dev/null`, "", "", false},
+		{`"/x/crw" hook session-start --leg x; /bin/sleep 1`, "", "", false},
+		{`"/x/crw" hook session-start --leg x extra`, "", "", false},
+		{`"/x/crw" hook --plugin-launch; exit 3`, "", "", false},
+		{`"/x/crw" hook session-start --leg "x"`, "", "", false},
+		{`"$(id)/crw" hook session-start --leg x`, "", "", false},
+		{"`id`/crw hook session-start --leg x", "", "", false},
+		{`relative/crw hook session-start --leg x`, "", "", false},
+		{`'/x/crw' hook session-start --leg x`, "", "", false},
+		{"\"/x/crw\" hook session-start --leg x\n/bin/true", "", "", false},
 	} {
 		event, leg, ok := Route(c.command)
 		if event != c.event || leg != c.leg || ok != c.ok {

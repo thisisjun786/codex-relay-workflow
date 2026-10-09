@@ -6,10 +6,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // slice is a few legs of every shape: stateless and once-per-session, answering and silent, with
@@ -181,6 +184,133 @@ func TestRun_registrationOfATamperedRootFails(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "no registration starts this leg") {
 		t.Errorf("output %.400q", out.String())
+	}
+}
+
+// A declaration whose hook syntax sits behind a comment registers nothing: the shell runs /bin/true.
+func TestRun_registrationOfACommentedOutHookFails(t *testing.T) {
+	plugin, _ := generated(t)
+	editDeclaration(t, plugin, `"command": "`, `"command": "/bin/true # `)
+	var out, errs bytes.Buffer
+	if code := Run([]string{"registration", "--plugin", plugin}, &out, &errs); code != 1 {
+		t.Fatalf("a root whose hooks are commented out exits %d: %.600s", code, out.String())
+	}
+	if !strings.Contains(out.String(), "no registration starts this leg") {
+		t.Errorf("output %.400q", out.String())
+	}
+}
+
+// A passing report is evidence of the executables the declared commands start, by content: the same
+// path holding another file is another artifact, and the report is not reused for it.
+func TestRun_reuseIsRefusedWhenTheStartedExecutableChanges(t *testing.T) {
+	real, err := crwUnderTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	started := filepath.Join(dir, "bin", "crw")
+	if err := testsupport.CopyBinary(real, started); err != nil {
+		t.Fatal(err)
+	}
+	root := repoRoot(t)
+	legs, err := ExpectedLegs(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plugin := filepath.Join(dir, "plugin", "crw")
+	if err := GeneratePluginRoot(plugin, filepath.Join(root, "plugins", "crw"), started, legs); err != nil {
+		t.Fatal(err)
+	}
+	report := filepath.Join(dir, "report.json")
+	args := func(extra ...string) []string {
+		return append([]string{"fire", "--crw", real, "--plugin", plugin, "--scratch", t.TempDir(),
+			"--only", `^hook__session-start-announcing-map-affordance__`, "--json", report}, extra...)
+	}
+	var out, errs bytes.Buffer
+	if code := Run(args(), &out, &errs); code != 0 {
+		t.Fatalf("the first run exits %d: %.800s %s", code, out.String(), errs.String())
+	}
+	other, err := exec.LookPath("true")
+	if err != nil {
+		t.Skip("no true on PATH")
+	}
+	if err := os.Remove(started); err != nil {
+		t.Fatal(err)
+	}
+	if err := testsupport.CopyBinary(other, started); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	code := Run(args("--reuse", report), &out, &errs)
+	if strings.Contains(out.String(), "reused") || code == 0 {
+		t.Fatalf("a report was reused for another executable at the same path, exit %d: %.800s", code, out.String())
+	}
+}
+
+// The oracle's files are part of what a latency cell judged: another file at the same path is
+// another oracle.
+func TestOracleIdentity_namesTheOracleByContent(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "components", "x", "dist", "cli.js")
+	if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(file, []byte("one"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := oracleIdentity("fire", dir); got != "" {
+		t.Errorf("a cell that runs no oracle has no oracle identity: %q", got)
+	}
+	a := oracleIdentity("latency", dir)
+	if a == "" || a != oracleIdentity("all", dir) {
+		t.Fatalf("identity %q", a)
+	}
+	if err := os.WriteFile(file, []byte("two"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if b := oracleIdentity("latency", dir); b == a {
+		t.Error("another file at the same path keeps the oracle's identity")
+	}
+	if c := oracleIdentity("latency", filepath.Join(dir, "missing")); c == a || c == "" {
+		t.Errorf("a missing oracle: %q", c)
+	}
+}
+
+// Without an oracle, `all` has measured no latency: the report says the cell is not verified rather
+// than leaving it out of a green report; `latency` alone refuses to run.
+func TestRun_withoutAnOracleTheLatencyCellIsNotVerified(t *testing.T) {
+	o := fireFixture(t)
+	report := filepath.Join(t.TempDir(), "report.json")
+	var out, errs bytes.Buffer
+	code := Run([]string{"all", "--crw", o.CRW, "--plugin", o.Plugin, "--scratch", o.Scratch,
+		"--only", `^hook__session-start-announcing-map-affordance__`, "--json", report}, &out, &errs)
+	if code != 0 {
+		t.Fatalf("all exits %d: %.800s %s", code, out.String(), errs.String())
+	}
+	raw, err := os.ReadFile(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rep Report
+	if err := json.Unmarshal(raw, &rep); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, n := range rep.NotVerified {
+		if strings.HasPrefix(n.Cell, "latency") && strings.Contains(n.Reason, "--oracle") {
+			found = true
+		}
+	}
+	if rep.Latency != nil || !found {
+		t.Errorf("latency %v, notVerified %+v", rep.Latency, rep.NotVerified)
+	}
+	if !strings.Contains(out.String(), "NOT VERIFIED: latency") {
+		t.Errorf("output does not say the latency cell is not verified: %.600s", out.String())
+	}
+	out.Reset()
+	errs.Reset()
+	if code := Run([]string{"latency", "--crw", o.CRW, "--plugin", o.Plugin, "--scratch", o.Scratch}, &out, &errs); code == 0 || !strings.Contains(errs.String(), "--oracle") {
+		t.Errorf("latency without --oracle exits %d: %s %s", code, out.String(), errs.String())
 	}
 }
 

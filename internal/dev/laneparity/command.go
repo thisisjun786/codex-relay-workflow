@@ -9,6 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -31,12 +32,14 @@ const usage = `usage: crw-dev parity {plugin-root,registration,fire,latency,all}
   fire         --crw PATH --plugin DIR  fire the corpus's hook fixtures through the declared commands
                [--only RE] [--inject FAULT]
   latency      --crw PATH --plugin DIR --oracle DIR [--node PATH] [--runs N] [--attempts N] [--strict] [--legs RE]
-                                        p50 and p95 of the Go command against the CXC v0.2.40 command
+                                        p50 and p95 of the Go command against the CXC v0.2.40 command (--oracle required)
   all          --crw PATH [--plugin DIR] [--oracle DIR] [--node PATH] [--runs N] [--attempts N] [--strict]
-                                        every cell; a generated root when --plugin is not given
+                                        every cell; a generated root when --plugin is not given; without
+                                        --oracle the latency cell is not run and is reported not verified
 
 common flags: --repo DIR (default: the git top level) --json FILE (the report) --scratch DIR (parent of the run's case roots)
-              --reuse FILE (a passing report of the same build, plugin root, criteria and options stands in for a run)
+              --reuse FILE (a passing report of the same build, plugin root, executables started, oracle, harness,
+              criteria and options stands in for a run)
 
 The crw build for the fire and latency cells is built the way TestDomain/cxc builds it (go build -trimpath
 -ldflags "-X main.recallTestClock=1767225600000 -X github.com/thisisjun786/codex-relay-workflow/internal/runtime/doctor.retrustTestClock=1767225600000" ./cmd/crw).
@@ -54,7 +57,10 @@ type Report struct {
 	Registration *RegistrationReport `json:"registration,omitempty"`
 	Fire         *FireReport         `json:"fire,omitempty"`
 	Latency      []Latency           `json:"latency,omitempty"`
-	NotVerified  []NotVerified       `json:"notVerified"`
+	// LatencyLaterAttempts names the legs whose latency passed only on a later measurement than the
+	// first, with the attempt that passed.
+	LatencyLaterAttempts []string      `json:"latencyLaterAttempts,omitempty"`
+	NotVerified          []NotVerified `json:"notVerified"`
 	// Key identifies the artifact, plugin root, criteria and options a run judged: a report with the
 	// same key already holds the evidence (--reuse).
 	Key  string      `json:"key"`
@@ -267,13 +273,25 @@ func runCommand(command string, args []string, stdout, stderr io.Writer) int {
 	if report.Plugin.Digest, err = PluginDigest(pluginRoot); err != nil {
 		return fail(err)
 	}
-	// The key holds every option that changes what is run or how it is judged: the strictness of the
-	// latency verdict, and the node that runs the oracle (by its path and its content).
-	if report.Key, err = ReportKey(root, report.CRW.SHA256, report.Plugin.Digest, command, *only, *legs, *inject, *oracle, *runs, *attempts,
-		"strict="+strconv.FormatBool(*strict), "node="+nodeIdentity(command, *oracle, *node)); err != nil {
+	if command == "latency" && *oracle == "" {
+		return fail(fmt.Errorf("--oracle is required: the latency cell compares the Go command with the CXC v0.2.40 command, and without the tree nothing is compared"))
+	}
+	_, registered, err := ReadRegistered(pluginRoot)
+	if err != nil {
 		return fail(err)
 	}
-	if *reuse != "" {
+	harness, harnessKnown := harnessIdentity()
+	// The key holds every option that changes what is run or how it is judged (the strictness of the
+	// latency verdict among them) and every artifact a cell runs, by content: the executables the
+	// declared commands start, the node and the oracle tree a latency cell runs, and this harness.
+	if report.Key, err = ReportKey(root, report.CRW.SHA256, report.Plugin.Digest, command, *only, *legs, *inject, *oracle, *runs, *attempts,
+		"strict="+strconv.FormatBool(*strict), "node="+nodeIdentity(command, *oracle, *node), "oracle="+oracleIdentity(command, *oracle),
+		"started="+startedIdentity(registered, bin), "harness="+harness); err != nil {
+		return fail(err)
+	}
+	if *reuse != "" && !harnessKnown {
+		fmt.Fprintf(stdout, "not reused: this harness cannot read its own executable (%s), so no report is known to be its own\n", harness)
+	} else if *reuse != "" {
 		if prior, ok := reusable(*reuse, report.Key); ok {
 			fmt.Fprintf(stdout, "reused: %s judged this build, plugin root, criteria and options (key %.16s) and passed\n", *reuse, report.Key)
 			if *jsonOut != "" && *jsonOut != *reuse {
@@ -303,6 +321,10 @@ func runCommand(command string, args []string, stdout, stderr io.Writer) int {
 		printFire(stdout, rep)
 		report.OK = report.OK && rep.OK
 	}
+	if command == "all" && *oracle == "" {
+		report.NotVerified = append(report.NotVerified, NotVerified{"latency of every leg (Go p95 against the CXC v0.2.40 p95 and half the declared timeout)",
+			"no --oracle was given: nothing was timed", "run all or latency with --oracle"})
+	}
 	if command == "latency" || (command == "all" && *oracle != "") {
 		lat, err := MeasureLatency(LatencyOptions{Root: root, CRW: bin, Plugin: pluginRoot, Scratch: cases, Oracle: *oracle, Node: *node, Runs: *runs, Attempts: *attempts, Strict: *strict, Only: legsRE})
 		if err != nil {
@@ -312,6 +334,9 @@ func runCommand(command string, args []string, stdout, stderr io.Writer) int {
 		printLatency(stdout, lat)
 		for _, l := range lat {
 			report.OK = report.OK && l.OK
+			if l.OK && !l.Skipped && !l.Inconclusive && l.Attempts > 1 {
+				report.LatencyLaterAttempts = append(report.LatencyLaterAttempts, fmt.Sprintf("%s (attempt %d)", l.Leg, l.Attempts))
+			}
 			if l.Skipped {
 				report.NotVerified = append(report.NotVerified, NotVerified{"latency of " + l.Leg, l.Reason, "the issue that ports the leg"})
 			}
@@ -373,6 +398,100 @@ func nodeIdentity(command, oracle, node string) string {
 		return abs + ": unreadable"
 	}
 	return abs + " sha256 " + digest
+}
+
+// oracleIdentity names the oracle tree a latency cell runs, by content: every file's path, type and
+// bytes (a link by its target). It is empty where no oracle runs, and says so when the tree cannot
+// be read, so an oracle that is not there never shares a key with one that is.
+func oracleIdentity(command, oracle string) string {
+	if oracle == "" || (command != "latency" && command != "all") {
+		return ""
+	}
+	abs, err := filepath.Abs(oracle)
+	if err != nil {
+		return oracle + ": " + err.Error()
+	}
+	sum := sha256.New()
+	err = filepath.WalkDir(abs, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(abs, path)
+		switch {
+		case d.Type()&fs.ModeSymlink != 0:
+			target, err := os.Readlink(path)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(sum, "L\x00%s\x00%s\x00", rel, target)
+		case d.IsDir():
+			fmt.Fprintf(sum, "D\x00%s\x00", rel)
+		case d.Type().IsRegular():
+			f, err := os.Open(path)
+			if err != nil {
+				return err
+			}
+			defer f.Close()
+			info, err := f.Stat()
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(sum, "F\x00%s\x00%o\x00%d\x00", rel, info.Mode().Perm(), info.Size())
+			if _, err := io.Copy(sum, f); err != nil {
+				return err
+			}
+		default:
+			fmt.Fprintf(sum, "O\x00%s\x00%s\x00", rel, d.Type())
+		}
+		return nil
+	})
+	if err != nil {
+		return abs + ": unreadable: " + err.Error()
+	}
+	return abs + " sha256 " + hex.EncodeToString(sum.Sum(nil))
+}
+
+// startedIdentity names, by content, the executable every declared command starts first, as the
+// receipts resolve it (CommandExecutable): the same plugin root starting another file at the same
+// path is another artifact. A command that starts no identifiable file, or one that cannot be read,
+// is named as such.
+func startedIdentity(registered []Registered, crw string) string {
+	commands := map[string]bool{}
+	for _, r := range registered {
+		commands[r.Command] = true
+	}
+	sorted := make([]string, 0, len(commands))
+	for c := range commands {
+		sorted = append(sorted, c)
+	}
+	sort.Strings(sorted)
+	var b strings.Builder
+	for _, c := range sorted {
+		path, ok := CommandExecutable(c, crw)
+		switch digest, err := FileDigest(path); {
+		case !ok:
+			fmt.Fprintf(&b, "%q: unidentified\n", c)
+		case err != nil:
+			fmt.Fprintf(&b, "%q: %s unreadable\n", c, path)
+		default:
+			fmt.Fprintf(&b, "%q: %s sha256 %s\n", c, path, digest)
+		}
+	}
+	return b.String()
+}
+
+// harnessIdentity is the sha256 of this harness's own executable: the verdict rules are its code, so
+// a report another harness revision wrote is not its evidence. False when it cannot be read.
+func harnessIdentity() (string, bool) {
+	self, err := os.Executable()
+	if err != nil {
+		return "unknown: " + err.Error(), false
+	}
+	digest, err := FileDigest(self)
+	if err != nil {
+		return "unknown: " + err.Error(), false
+	}
+	return digest, true
 }
 
 // ReportKey identifies what a run judged: the build, the plugin root's declarations, the corpus
@@ -516,7 +635,7 @@ func printLatency(w io.Writer, lat []Latency) {
 		fmt.Fprintf(w, "%s latency %-62s runs %d go p50 %s p95 %s; %s; timeout %dms %s\n", mark, l.Leg, l.Runs,
 			l.GoP50.Round(time.Microsecond), l.GoP95.Round(time.Microsecond), ts, l.TimeoutMs, attemptNote(l)+l.Reason)
 	}
-	skipped, inconclusive := 0, 0
+	skipped, inconclusive, first := 0, 0, 0
 	for _, l := range lat {
 		if l.Skipped {
 			skipped++
@@ -524,8 +643,12 @@ func printLatency(w io.Writer, lat []Latency) {
 		if l.Inconclusive {
 			inconclusive++
 		}
+		if l.OK && !l.Skipped && !l.Inconclusive && l.Attempts <= 1 {
+			first++
+		}
 	}
-	fmt.Fprintf(w, "latency: %d/%d legs pass (Go p95 <= TS p95 and <= half the timeout), %d inconclusive under host load, %d not timed\n", good, len(lat)-skipped, inconclusive, skipped)
+	fmt.Fprintf(w, "latency: %d/%d legs pass (Go p95 <= TS p95 where the leg has an oracle, and <= half the declared timeout): %d on the first attempt, %d on a later one; %d inconclusive under host load, %d not timed\n",
+		good, len(lat)-skipped, first, good-first, inconclusive, skipped)
 }
 
 // HelperEnv is the variable that marks a process as a stub program or git wrapper of a replay case.

@@ -192,6 +192,16 @@ func CheckRegistration(manifest Manifest, got []Registered, want []Leg) Registra
 // command line: what the host would run when that event fires. A registration under another event
 // is not run for this leg's payloads, and a leg declared twice is ambiguous; both are absent.
 func Declared(got []Registered, want []Leg) map[string]string {
+	out := map[string]string{}
+	for leg, r := range DeclaredRegistrations(got, want) {
+		out[leg] = r.Command
+	}
+	return out
+}
+
+// DeclaredRegistrations is Declared with the whole registration of each leg: the latency cell holds
+// a leg to the timeout the root declares for it.
+func DeclaredRegistrations(got []Registered, want []Leg) map[string]Registered {
 	event := map[string]string{}
 	for _, l := range want {
 		event[l.Leg] = l.Event
@@ -202,10 +212,10 @@ func Declared(got []Registered, want []Leg) map[string]string {
 			count[r.Leg]++
 		}
 	}
-	out := map[string]string{}
+	out := map[string]Registered{}
 	for _, r := range got {
 		if r.Leg != "" && count[r.Leg] == 1 && r.Event == event[r.Leg] {
-			out[r.Leg] = r.Command
+			out[r.Leg] = r
 		}
 	}
 	return out

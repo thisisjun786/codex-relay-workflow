@@ -39,12 +39,13 @@ type Latency struct {
 	Runs    int    `json:"runs"`
 	// GoP50 and GoP95 are the declared Go command's; TSP50 and TSP95 the CXC v0.2.40 command's for
 	// the same payload (zero, and Oracle false, for a registration CRW holds that CXC does not).
-	GoP50     time.Duration `json:"goP50"`
-	GoP95     time.Duration `json:"goP95"`
-	TSP50     time.Duration `json:"tsP50"`
-	TSP95     time.Duration `json:"tsP95"`
-	Oracle    bool          `json:"oracle"`
-	TimeoutMs int           `json:"timeoutMs"`
+	GoP50  time.Duration `json:"goP50"`
+	GoP95  time.Duration `json:"goP95"`
+	TSP50  time.Duration `json:"tsP50"`
+	TSP95  time.Duration `json:"tsP95"`
+	Oracle bool          `json:"oracle"`
+	// TimeoutMs is the timeout the plugin root declares for the leg, the one the verdict holds it to.
+	TimeoutMs int `json:"timeoutMs"`
 	// Attempts is how many measurements it took (1 when the first passed).
 	Attempts int  `json:"attempts"`
 	OK       bool `json:"ok"`
@@ -65,7 +66,7 @@ type Latency struct {
 }
 
 // Judge decides a leg: the Go p95 must not exceed the TS p95 (when the leg has an oracle) and must
-// be at most half the declared timeout, so a loaded host still answers inside it.
+// be at most half the timeout the root declares for it, so a loaded host still answers inside it.
 func Judge(leg, fixture string, timeoutSec int, goSamples, tsSamples []time.Duration) Latency {
 	l := Latency{
 		Leg: leg, Fixture: fixture, Runs: len(goSamples), Oracle: len(tsSamples) > 0, TimeoutMs: timeoutSec * 1000,
@@ -146,6 +147,7 @@ func MeasureLatency(o LatencyOptions) ([]Latency, error) {
 	if err != nil {
 		return nil, err
 	}
+	entries := DeclaredRegistrations(registered, want)
 	declared := Declared(registered, want)
 	scratch := o.Scratch
 	if scratch == "" {
@@ -155,7 +157,18 @@ func MeasureLatency(o LatencyOptions) ([]Latency, error) {
 		defer os.RemoveAll(scratch)
 	}
 	in := contracttest.HookFireInput{Root: o.Root, CRW: o.CRW, Plugin: o.Plugin, Declared: declared, Scratch: scratch, Light: true}
-	all, err := contracttest.FireHooks(in)
+	// The fixtures that pick a leg's timed payload are those named for the legs timed (hook__<leg>__).
+	choose := in
+	if o.Only != nil {
+		var names []string
+		for _, l := range want {
+			if !l.Own && o.Only.MatchString(l.Leg) {
+				names = append(names, regexp.QuoteMeta(l.Leg))
+			}
+		}
+		choose.Only = regexp.MustCompile(`^hook__(?:` + strings.Join(names, "|") + `)__`)
+	}
+	all, err := contracttest.FireHooks(choose)
 	if err != nil {
 		return nil, err
 	}
@@ -187,6 +200,10 @@ func MeasureLatency(o LatencyOptions) ([]Latency, error) {
 		if o.Only != nil && !o.Only.MatchString(l.Leg) {
 			continue
 		}
+		// The leg is held to the timeout the root declares for it (zero when it declares none): a
+		// registration may pass its own cell with another timeout than the table's (CRW's own legs need
+		// only a positive one), and the host gives the command what the root declares.
+		timeout := entries[l.Leg].Timeout
 		var verdict Latency
 		fixture := "probe"
 		var res contracttest.HookFireResult
@@ -195,10 +212,10 @@ func MeasureLatency(o LatencyOptions) ([]Latency, error) {
 		if !l.Own {
 			var ok bool
 			if res, ok = pick[l.Leg]; !ok && unfit[l.Leg] != "" {
-				out = append(out, Latency{Leg: l.Leg, TimeoutMs: l.Timeout * 1000, Broken: true, Reason: "the declared command does not do its work: " + unfit[l.Leg]})
+				out = append(out, Latency{Leg: l.Leg, TimeoutMs: timeout * 1000, Broken: true, Reason: "the declared command does not do its work: " + unfit[l.Leg]})
 				continue
 			} else if !ok {
-				out = append(out, Latency{Leg: l.Leg, TimeoutMs: l.Timeout * 1000, OK: true, Skipped: true, Reason: "no claimed fixture to time (its port is pending)"})
+				out = append(out, Latency{Leg: l.Leg, TimeoutMs: timeout * 1000, OK: true, Skipped: true, Reason: "no claimed fixture to time (its port is pending)"})
 				continue
 			}
 			fixture = res.ID
@@ -209,7 +226,7 @@ func MeasureLatency(o LatencyOptions) ([]Latency, error) {
 			}
 		}
 		if problem := timedBuildProblem(declared[l.Leg], o.CRW); problem != "" {
-			out = append(out, Latency{Leg: l.Leg, Fixture: fixture, TimeoutMs: l.Timeout * 1000, Broken: true, Attempts: 1, Reason: problem})
+			out = append(out, Latency{Leg: l.Leg, Fixture: fixture, TimeoutMs: timeout * 1000, Broken: true, Attempts: 1, Reason: problem})
 			continue
 		}
 		for attempt := 1; attempt <= max(o.Attempts, 1); attempt++ {
@@ -250,11 +267,11 @@ func MeasureLatency(o LatencyOptions) ([]Latency, error) {
 				}
 			}
 			if broken != "" {
-				verdict = Latency{Leg: l.Leg, Fixture: fixture, Runs: len(goSamples), TimeoutMs: l.Timeout * 1000, Broken: true, Attempts: attempt,
+				verdict = Latency{Leg: l.Leg, Fixture: fixture, Runs: len(goSamples), TimeoutMs: timeout * 1000, Broken: true, Attempts: attempt,
 					Reason: "the command did not do its work while it was timed: " + broken}
 				break
 			}
-			verdict = Judge(l.Leg, fixture, l.Timeout, goSamples, tsSamples)
+			verdict = Judge(l.Leg, fixture, timeout, goSamples, tsSamples)
 			verdict.Attempts = attempt
 			if verdict.OK {
 				break

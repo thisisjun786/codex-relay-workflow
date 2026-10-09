@@ -104,20 +104,125 @@ func Command(crw string, l Leg) string {
 }
 
 var (
-	routed       = regexp.MustCompile(`(?:^|\s|")hook ([a-z]+(?:-[a-z]+)*) --leg[= ]([A-Za-z0-9._-]+)(?:\s|;|$)`)
-	routedLaunch = regexp.MustCompile(`(?:^|\s|")hook --plugin-launch(?:\s|;|$)`)
+	eventToken = regexp.MustCompile(`^[a-z]+(?:-[a-z]+)*$`)
+	legToken   = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 )
 
 // Route is the event token and leg a declared command line starts, and false for a command that
-// starts none: the registration is then not one of the leg table.
+// starts none: the registration is then not one of the leg table. Only the forms a CRW root declares
+// are read, and only as the shell runs them: one simple command
+//
+//	<crw> hook <event> --leg <leg>    <crw> hook <event> --leg=<leg>    <crw> hook --plugin-launch
+//
+// optionally followed by `; exit 0`, where <crw> is crw, $CRW_BIN, or the path of a file named crw
+// (absolute, or under $HOME or $PLUGIN_ROOT), bare or in double quotes. Hook syntax anywhere else is
+// not a registration: in a comment, as the argument of another command, after && or || or in a
+// branch, behind a redirect or a pipe, followed by another command, or with an extra argument.
 func Route(command string) (event, leg string, ok bool) {
-	if m := routed.FindStringSubmatch(command); m != nil {
-		return m[1], m[2], true
+	words, rest, ok := firstCommand(command)
+	if !ok || len(words) < 3 || !crwWord(words[0]) || words[1] != (shellWord{text: "hook"}) {
+		return "", "", false
 	}
-	if routedLaunch.MatchString(command) {
+	if tail := strings.TrimSpace(rest); tail != "" && tail != "exit 0" {
+		return "", "", false
+	}
+	args := words[2:]
+	for _, a := range args {
+		if a.quoted {
+			return "", "", false
+		}
+	}
+	switch {
+	case len(args) == 1 && args[0].text == "--plugin-launch":
 		return "stop", CompletionLeg, true
+	case len(args) == 3 && args[1].text == "--leg":
+		event, leg = args[0].text, args[2].text
+	case len(args) == 2 && strings.HasPrefix(args[1].text, "--leg="):
+		event, leg = args[0].text, strings.TrimPrefix(args[1].text, "--leg=")
+	default:
+		return "", "", false
 	}
-	return "", "", false
+	if !eventToken.MatchString(event) || !legToken.MatchString(leg) {
+		return "", "", false
+	}
+	return event, leg, true
+}
+
+// shellWord is a word of a command line with its quotes removed; quoted is whether any of it was.
+type shellWord struct {
+	text   string
+	quoted bool
+}
+
+// firstCommand splits the first simple command of a command line into words, the way /bin/sh would,
+// for the plain words a declaration uses: blanks separate words, double quotes group them, and `;`
+// ends the command (rest is what follows it). It refuses (false) whatever it does not read exactly,
+// so nothing is taken for a word the shell would treat otherwise: a comment, single quotes, a
+// backslash, a command substitution, a newline, an operator (&, |, <, >, parentheses) or a glob.
+func firstCommand(command string) (words []shellWord, rest string, ok bool) {
+	var cur strings.Builder
+	inWord, quoted := false, false
+	flush := func() {
+		if inWord {
+			words = append(words, shellWord{text: cur.String(), quoted: quoted})
+		}
+		cur.Reset()
+		inWord, quoted = false, false
+	}
+	for i := 0; i < len(command); i++ {
+		c := command[i]
+		switch c {
+		case ' ', '\t':
+			flush()
+		case ';':
+			flush()
+			return words, command[i+1:], true
+		case '"':
+			end := strings.IndexByte(command[i+1:], '"')
+			if end < 0 {
+				return nil, "", false
+			}
+			seg := command[i+1 : i+1+end]
+			if strings.ContainsAny(seg, "\\`\n") || strings.Contains(seg, "$(") {
+				return nil, "", false
+			}
+			cur.WriteString(seg)
+			inWord, quoted = true, true
+			i += end + 1
+		case '#':
+			if !inWord {
+				return nil, "", false
+			}
+			cur.WriteByte(c)
+		case '\'', '\\', '`', '\n', '\r', '&', '|', '<', '>', '(', ')', '*', '?', '[':
+			return nil, "", false
+		default:
+			if c == '$' && strings.HasPrefix(command[i:], "$(") {
+				return nil, "", false
+			}
+			cur.WriteByte(c)
+			inWord = true
+		}
+	}
+	flush()
+	return words, "", true
+}
+
+// crwWord is whether a command word names the crw runtime: crw or $CRW_BIN, or the path of a file
+// named crw, absolute or under $HOME or $PLUGIN_ROOT, with no other expansion in it.
+func crwWord(w shellWord) bool {
+	switch w.text {
+	case "crw", "$CRW_BIN", "${CRW_BIN}":
+		return true
+	}
+	path := w.text
+	for _, prefix := range []string{"$HOME/", "${HOME}/", "$PLUGIN_ROOT/", "${PLUGIN_ROOT}/"} {
+		if strings.HasPrefix(path, prefix) {
+			path = "/" + strings.TrimPrefix(path, prefix)
+			break
+		}
+	}
+	return strings.HasPrefix(path, "/") && !strings.ContainsAny(path, "$*?[") && filepath.Base(path) == "crw"
 }
 
 // hookFile is the JSON a host reads for one hook file.

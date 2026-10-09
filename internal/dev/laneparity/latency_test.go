@@ -3,13 +3,17 @@
 package laneparity
 
 import (
+	"bytes"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 func ms(n ...int) []time.Duration {
@@ -139,31 +143,109 @@ func latencyOf(t *testing.T, o FireOptions, leg string) Latency {
 	return lat[0]
 }
 
-// A hook that fails at once is faster than a working one: the cell must not pass it.
+// rootStarting is a generated root whose every command starts crw, fired and timed as the build under test.
+func rootStarting(t *testing.T, crw string) FireOptions {
+	t.Helper()
+	root := repoRoot(t)
+	legs, err := ExpectedLegs(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plugin := filepath.Join(t.TempDir(), "crw")
+	if err := GeneratePluginRoot(plugin, filepath.Join(root, "plugins", "crw"), crw, legs); err != nil {
+		t.Fatal(err)
+	}
+	return FireOptions{Root: root, CRW: crw, Plugin: plugin, Scratch: t.TempDir()}
+}
+
+// wrapper writes an executable named crw that runs body (the real build is "$REAL").
+func wrapper(t *testing.T, body string) string {
+	t.Helper()
+	real, err := crwUnderTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "bin", "crw")
+	script := "#!/bin/sh\nREAL='" + real + "'\n" + body + "\n"
+	if err := testsupport.WriteProgram(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// A hook that fails at once is faster than a working one: the cell must not pass it. Each declared
+// command is a well-formed registration of the leg; what it starts is what fails.
 func TestMeasureLatency_aFailingHookIsNotAFastPass(t *testing.T) {
 	good := latencyOf(t, fireFixture(t), mapLeg)
 	if !good.OK {
 		t.Fatalf("the working hook does not pass: %+v", good)
 	}
-	for name, edit := range map[string]func(*testing.T, string, string){
-		"exits nonzero": func(t *testing.T, plugin, crw string) {
-			editDeclaration(t, plugin, "--leg "+mapLeg+`"`, "--leg "+mapLeg+`; exit 3"`)
+	for name, setup := range map[string]func(*testing.T) FireOptions{
+		"exits nonzero": func(t *testing.T) FireOptions {
+			return rootStarting(t, wrapper(t, `"$REAL" "$@"; exit 3`))
 		},
-		"another executable": func(t *testing.T, plugin, crw string) {
-			editDeclaration(t, plugin, `\"`+crw+`\" hook session-start --leg `+mapLeg, "/bin/false hook session-start --leg "+mapLeg)
+		"another executable": func(t *testing.T) FireOptions {
+			real, err := crwUnderTest()
+			if err != nil {
+				t.Fatal(err)
+			}
+			other, err := exec.LookPath("false")
+			if err != nil {
+				t.Skip("no false on PATH")
+			}
+			started := filepath.Join(t.TempDir(), "bin", "crw")
+			if err := testsupport.CopyBinary(other, started); err != nil {
+				t.Fatal(err)
+			}
+			o := rootStarting(t, started)
+			o.CRW = real
+			return o
 		},
-		"killed": func(t *testing.T, plugin, crw string) {
-			editDeclaration(t, plugin, "--leg "+mapLeg+`"`, "--leg "+mapLeg+`; kill -9 $$"`)
+		"killed": func(t *testing.T) FireOptions {
+			return rootStarting(t, wrapper(t, `kill -9 $$`))
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			o := fireFixture(t)
-			edit(t, o.Plugin, o.CRW)
-			got := latencyOf(t, o, mapLeg)
-			if got.OK || got.Inconclusive || got.Skipped {
-				t.Fatalf("a failing hook passed the latency cell: %+v", got)
+			got := latencyOf(t, setup(t), mapLeg)
+			if got.OK || got.Inconclusive || got.Skipped || !got.Broken {
+				t.Fatalf("a failing hook passed the latency cell, or failed it for another reason: %+v", got)
 			}
+			t.Logf("%s", got.Reason)
 		})
+	}
+}
+
+// The verdict holds a leg to half the timeout the root declares for it, not to the table's: a
+// registration of CRW's own passes the registration cell with any positive timeout.
+func TestMeasureLatency_judgesAgainstTheDeclaredTimeout(t *testing.T) {
+	o := rootStarting(t, wrapper(t, `/bin/sleep 0.6; exec "$REAL" "$@"`))
+	if got := latencyOf(t, o, GitHubPostLeg); !got.OK || got.TimeoutMs != 10000 {
+		t.Fatalf("a 0.6s hook under a 10s timeout: %+v", got)
+	}
+	path := filepath.Join(o.Plugin, githubPostFile)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(strings.Replace(string(raw), `"timeout": 10`, `"timeout": 1`, 1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var out, errs bytes.Buffer
+	if code := Run([]string{"registration", "--plugin", o.Plugin}, &out, &errs); code != 0 {
+		t.Fatalf("setup: the shortened timeout must still register, exit %d: %s", code, out.String())
+	}
+	got := latencyOf(t, o, GitHubPostLeg)
+	if got.OK || got.TimeoutMs != 1000 || !strings.Contains(got.Reason, "half of the 1s timeout") {
+		t.Fatalf("a 0.6s hook under a declared 1s timeout passed or was judged against another timeout: %+v", got)
+	}
+}
+
+func TestPrintLatency_countsTheLegsThatNeededAnotherAttempt(t *testing.T) {
+	lat := []Latency{{Leg: "a", OK: true, Attempts: 1}, {Leg: "b", OK: true, Attempts: 2}, {Leg: "c", OK: true, Attempts: 3}, {Leg: "d", Skipped: true, OK: true}}
+	var out bytes.Buffer
+	printLatency(&out, lat)
+	if !strings.Contains(out.String(), "3/3 legs pass") || !strings.Contains(out.String(), "1 on the first attempt, 2 on a later one") {
+		t.Errorf("%s", out.String())
 	}
 }
 
