@@ -268,7 +268,7 @@ func DetectMemoryWriteRequest(prompt string) bool {
 	}
 	// Unlike requestLines, actual requests in lists are eligible and don't
 	// forget is affirmative. A memory-specific negative wins in its sentence.
-	negative := detectorRE(`\b(?:do\s+not|don['’]?t|dont|never|not\s+to|avoid)\s+(?:(?:ever|actually|just|really|please)\s+)*(?:remember\b|make\s+a\s+note\b|note\s+(?:this|that|it)\s+down\b|(?:save|store|write|record|keep|note)\s+(?:(?:this|that|it)\s+(?:to|in|into|as)\s+)?(?:memory|memories|a\s+note|notes?)\b)|(?:기억|저장|기록|남기|적)\s*(?:하|해|해두|해 두|해둬|하라|해라|해줘|해 줘)?지\s*(?:마|말)|(?:기억|저장|기록)\s*금지`)
+	negative := detectorRE(`\b(?:do\s+not|don['’]?t|dont|never|not\s+to|avoid)\s+(?:(?:ever|actually|just|really|please)\s+)*(?:remember\b|make\s+a\s+note\b|note\s+(?:this|that|it)\s+down\b|(?:save|store|write|record|keep|note)\s+(?:(?:(?:this|that|it)\s+)?(?:to|in|into|as)\s+)?(?:memory|memories|a\s+note|notes?)\b|(?:save|store|write|record|keep|note)\s+(?:this|that|it)(?:\s+down)?\s*(?:[.!?;,]|$))|(?:기억|저장|기록|남기|적)\s*(?:하|해|해두|해 두|해둬|하라|해라|해줘|해 줘)?지\s*(?:마|말)|(?:기억|저장|기록)\s*금지`)
 	explain := detectorRE(`^(?:please\s+)?(?:explain|describe|how\s+to|how\s+do|what\s+does)\b|^(?:설명|어떻게)`)
 	list := detectorRE(`^(?:[-*+]\s+|[0-9]+[.)]\s+)`)
 	packet := detectorRE(`(?i)<(?:task[-_ ]?packet|instructions|untrusted[-_ ]?text|untrusted[-_ ]?data)\b|^(?:#{1,6}\s+)?(?:begin\s+)?task[-_ ]?packet(?:\s*:|\s*$)`)
