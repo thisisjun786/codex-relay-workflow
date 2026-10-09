@@ -125,3 +125,41 @@ func TestLoads_deep_reading_needs_no_stack_for_the_nesting_of_its_document(t *te
 		}
 	}
 }
+
+// CRW-1075. Whether a Deep reading past MaxDepth goes on is decided by the value it reads, never by the text a
+// Trailing option leaves unread behind it: a closed value followed by an unclosed container is the value.
+func TestLoads_deep_reading_past_max_depth_does_not_read_the_trailing_text(t *testing.T) {
+	const levels = pyjson.MaxDepth + 1
+	value := strings.Repeat("[", levels) + "0" + strings.Repeat("]", levels)
+	cases := []struct {
+		name, doc string
+		trailing  pyjson.Trailing
+		ok        bool
+	}{
+		{"anything after the value", value + "[", pyjson.TrailingAnything, true},
+		{"anything after the value, nested", value + " " + strings.Repeat("[", levels), pyjson.TrailingAnything, true},
+		{"a closer then anything after the value", value + "][", pyjson.TrailingClose, true},
+		{"a closer then nesting after the value", value + "}" + strings.Repeat("{", levels), pyjson.TrailingClose, true},
+		{"an opener after the value", value + "[", pyjson.TrailingClose, false},
+		{"nothing allowed after the value", value + "[", pyjson.TrailingNothing, false},
+	}
+	for _, c := range cases {
+		o := pyjson.LoadOptions{Deep: true, Trailing: c.trailing}
+		got, err := pyjson.Loads(c.doc, o)
+		if (err == nil) != c.ok {
+			t.Errorf("%s: %v, want ok=%v", c.name, err, c.ok)
+			continue
+		}
+		if err != nil {
+			// The refusal is the one the whole value read through the recursive walk gives the same document.
+			if _, plain := pyjson.Loads(c.doc, pyjson.LoadOptions{Trailing: c.trailing}); plain == nil || plain.Error() != err.Error() {
+				t.Errorf("%s: deep %v, recursive %v", c.name, err, plain)
+			}
+			continue
+		}
+		want, _ := pyjson.Loads(value, o)
+		if !pyjsontest.Same(got, want) {
+			t.Errorf("%s: read %.60v, want the value alone", c.name, got)
+		}
+	}
+}

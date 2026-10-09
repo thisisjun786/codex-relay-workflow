@@ -125,6 +125,9 @@ type decoder struct {
 	depth int
 	// closable is set once a Deep reading has checked that the document closes every container it opens.
 	closable bool
+	// from is where the Deep reading's value starts: the text before it is space and the text the value's closing
+	// leaves behind it is what Trailing allows, neither of which the reading reads as the value.
+	from int
 }
 
 // open enters a container, refusing it past MaxDepth unless the reading is Deep, and refusing a Deep
@@ -133,9 +136,10 @@ func (d *decoder) open() error {
 	d.depth++
 	if d.o.Deep && d.depth > MaxDepth && !d.closable {
 		// Past what encoding/json reads, a reading is only worth its memory when the document can close what
-		// it opens; a document that cannot is refused before anything is allocated for it. Checked once.
+		// it opens; a document that cannot is refused before anything is allocated for it. Checked once, on the
+		// value alone: what follows it is left unread when Trailing allows it, and refused after the value when not.
 		d.closable = true
-		if !closes(d.s) {
+		if !closes(d.s[d.from:]) {
 			return errSyntax
 		}
 	}
@@ -361,6 +365,8 @@ type frame struct {
 // the same refusals.
 func (d *decoder) deep() (any, error) {
 	var stack []frame
+	d.space()
+	d.from = d.i
 	for {
 		d.space()
 		if d.i >= len(d.s) {
@@ -453,46 +459,28 @@ func (d *decoder) deep() (any, error) {
 	}
 }
 
-// closes is whether a document can close every container it opens: at each opener outside a string, no more
-// containers are open than there are closers left in the rest of the document. It does not read the document, so
-// it accepts what is not JSON; it refuses only a nesting that no completion of the text could close.
+// closes is whether the value s starts with can close every container it opens: counting the openers and closers
+// outside strings from its first opener, the count comes back to zero. What follows that point is not the value, so
+// it is not looked at. It does not read the value, so it accepts what is not JSON; it refuses only a value whose
+// text ends with containers no closer is left to close.
 func closes(s string) bool {
-	closers := 0
-	scan := func(visit func(byte)) {
-		inString := false
-		for i := 0; i < len(s); i++ {
-			switch c := s[i]; {
-			case inString && c == '\\':
-				i++
-			case c == '"':
-				inString = !inString
-			case !inString:
-				visit(c)
+	open, inString := 0, false
+	for i := 0; i < len(s); i++ {
+		switch c := s[i]; {
+		case inString && c == '\\':
+			i++
+		case c == '"':
+			inString = !inString
+		case inString:
+		case c == '[' || c == '{':
+			open++
+		case c == ']' || c == '}':
+			if open--; open == 0 {
+				return true
 			}
 		}
 	}
-	scan(func(c byte) {
-		if c == ']' || c == '}' {
-			closers++
-		}
-	})
-	open := 0
-	ok := true
-	scan(func(c byte) {
-		switch c {
-		case '[', '{':
-			open++
-			if open > closers {
-				ok = false
-			}
-		case ']', '}':
-			closers--
-			if open > 0 {
-				open--
-			}
-		}
-	})
-	return ok
+	return false
 }
 
 func (d *decoder) made(fields Object, fieldMap map[string]any) any {
