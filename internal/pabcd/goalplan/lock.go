@@ -433,21 +433,33 @@ func WithGoalplanWriteLock[T any](cwd, slug string, fn func(*Goalplan) (T, error
 	dir := filepath.Join(real, GoalplanLockDir)
 	defer releaseLock(parent, lock, dir)
 	read, file := revivalLossReadPlan(parent, real, filepath.Join(real, GoalplanFile), slug)
+	if file.openErr != nil && !pathAbsent(file.openErr) {
+		// The preliminary lookup found a plan file, so the walk to it failing now is an access failure (the plan cannot be
+		// read, which the caller decides) or a path-safety refusal: a link, a special file or a relocated descriptor swapped in
+		// after the lookup stays a Go error, and nothing is published past it (CRW-975).
+		if _, err := unreachable(file.openErr); err != nil {
+			return result, err
+		}
+	}
+	// A plan whose revival would drop or change stored data is not handed to a writer (revivalLoss); bytes that are not UTF-8 are
+	// refused first, because revival and its re-encoding would both read them as U+FFFD, and a key repeated in one object next,
+	// because decoding keeps only its last value. Text the reader could not turn into a plan is judged the same way: a file the
+	// writers would refuse is not an absent plan, and the caller must not publish past it as if it were.
+	if file.refuse != "" {
+		return GoalplanWriteLockResult[T]{Kind: "unreadable", Reason: file.refuse, Refused: true}, nil
+	}
+	if file.badByte > 0 {
+		return GoalplanWriteLockResult[T]{Kind: "unreadable", Reason: revivalLossRefusal(slug, fmt.Sprintf("invalid UTF-8 at byte %d", file.badByte-1)), Refused: true}, nil
+	}
+	if dup := revivalLossDuplicate(file.text); dup != "" {
+		return GoalplanWriteLockResult[T]{Kind: "unreadable", Reason: revivalLossRefusal(slug, "the repeated key "+dup), Refused: true}, nil
+	}
 	if read.Plan == nil {
 		detail := "goalplan '" + slug + "' could not be read"
 		if d := read.Diagnostic; d != nil && d.Kind != "absent" {
 			detail = d.Detail
 		}
 		return GoalplanWriteLockResult[T]{Kind: "unreadable", Reason: detail}, nil
-	}
-	// A plan whose revival would drop or change stored data is not handed to a writer (revivalLoss); bytes that are not UTF-8 are
-	// refused first, because revival and its re-encoding would both read them as U+FFFD, and a key repeated in one object next,
-	// because decoding keeps only its last value.
-	if file.badByte > 0 {
-		return GoalplanWriteLockResult[T]{Kind: "unreadable", Reason: revivalLossRefusal(slug, fmt.Sprintf("invalid UTF-8 at byte %d", file.badByte-1)), Refused: true}, nil
-	}
-	if dup := revivalLossDuplicate(file.text); dup != "" {
-		return GoalplanWriteLockResult[T]{Kind: "unreadable", Reason: revivalLossRefusal(slug, "the repeated key "+dup), Refused: true}, nil
 	}
 	if lost := revivalLoss(file.parsed); lost != "" {
 		return GoalplanWriteLockResult[T]{Kind: "unreadable", Reason: revivalLossRefusal(slug, lost), Refused: true}, nil

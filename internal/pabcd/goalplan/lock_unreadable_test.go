@@ -5,6 +5,8 @@ package goalplan
 import (
 	"os"
 	"path/filepath"
+	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -102,5 +104,82 @@ func TestWithGoalplanWriteLockPlanDirectoryNotADirectoryStaysAnError(t *testing.
 	got, err := WithGoalplanWriteLock(cwd, "demo", func(*Goalplan) (int, error) { return 0, nil }, nil)
 	if err == nil || got.Kind == "ok" {
 		t.Fatalf("a plan directory that is a file must be an error: got %+v err=%v", got, err)
+	}
+}
+
+// TestWithGoalplanWriteLockUnrevivablePlanThatLosesTextIsRefused (CRW-975, evaluation of 50f1f3c2): a plan the
+// reader returns no plan for is not always an absent or unreachable one. When the file holds text a write
+// would lose (an unpaired surrogate escape) or a repeated key whose last value leaves the plan malformed,
+// the lock must refuse it, as it does for a plan that revived, and not fall into the fail-open "unreadable".
+func TestWithGoalplanWriteLockUnrevivablePlanThatLosesTextIsRefused(t *testing.T) {
+	cases := map[string]string{
+		"unpaired surrogate":                 strings.Replace(readTestPlan, `"o"`, `"\ud800"`, 1),
+		"repeated key with a malformed last": `{"objective":"keep me",` + strings.Replace(readTestPlan, `"objective":"o"`, `"objective":null`, 1)[1:],
+		"invalid UTF-8 in a malformed plan":  strings.Replace(readTestPlan, `"o"`, "null,\"x\":\"\xff\"", 1),
+	}
+	for name, body := range cases {
+		t.Run(name, func(t *testing.T) {
+			cwd, dir := readWorkspace(t)
+			writeReadFile(t, dir+"/"+GoalplanFile, body)
+			if ReadGoalplan(cwd, "demo") != nil {
+				t.Fatal("the fixture must be a plan the reader returns nothing for")
+			}
+			ran := false
+			got, err := WithGoalplanWriteLock(cwd, "demo", func(*Goalplan) (int, error) { ran = true; return 0, nil }, nil)
+			if err != nil || got.Kind != "unreadable" || !got.Refused || ran {
+				t.Fatalf("got %+v ran=%v err=%v, want unreadable and Refused", got, ran, err)
+			}
+		})
+	}
+	t.Run("an invalid JSON plan stays fail-open", func(t *testing.T) {
+		cwd, dir := readWorkspace(t)
+		writeReadFile(t, dir+"/"+GoalplanFile, `{"objective":`)
+		got, err := WithGoalplanWriteLock(cwd, "demo", func(*Goalplan) (int, error) { return 0, nil }, nil)
+		if err != nil || got.Kind != "unreadable" || got.Refused {
+			t.Fatalf("got %+v err=%v, want unreadable without Refused", got, err)
+		}
+	})
+}
+
+// TestWithGoalplanWriteLockSpecialPlanFileStaysAnError: a plan file that is a FIFO (or a link swapped in
+// after the preliminary lookup) is a path-safety refusal, not an unreadable plan: the open walk found it
+// and nothing may be published past it.
+func TestWithGoalplanWriteLockSpecialPlanFileStaysAnError(t *testing.T) {
+	cwd, dir := readWorkspace(t)
+	file := dir + "/" + GoalplanFile
+	if err := os.Remove(file); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Mkfifo(file, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ran := false
+	got, err := WithGoalplanWriteLock(cwd, "demo", func(*Goalplan) (int, error) { ran = true; return 0, nil }, nil)
+	if err == nil || ran || got.Kind == "ok" {
+		t.Fatalf("a FIFO plan file must be an error: got %+v err=%v ran=%v", got, err, ran)
+	}
+}
+
+// TestRevivalLossReadPlanLinkIsAPathSafetyFailure: the read after the lock's preliminary lookup opens the
+// plan file with O_NOFOLLOW, so a link swapped in between is reported as the open failure the lock turns
+// into a Go error (the lookup itself cannot be interleaved from a test).
+func TestRevivalLossReadPlanLinkIsAPathSafetyFailure(t *testing.T) {
+	cwd, dir := readWorkspace(t)
+	file := dir + "/" + GoalplanFile
+	moved := file + ".moved"
+	if err := os.Rename(file, moved); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(moved, file); err != nil {
+		t.Fatal(err)
+	}
+	parent, real, err := openPlanDir(cwd, "demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer parent.Close()
+	read, lossFile := revivalLossReadPlan(parent, real, real+"/"+GoalplanFile, "demo")
+	if read.Plan != nil || lossFile.openErr == nil || pathAbsent(lossFile.openErr) {
+		t.Fatalf("a linked plan file must be an open failure that is not an absence: %+v %+v", read, lossFile)
 	}
 }

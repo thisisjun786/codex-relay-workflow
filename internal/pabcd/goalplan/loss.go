@@ -13,11 +13,16 @@ import (
 
 // revivalLossFile is what the write lock needs of a read besides the plan: the JSON value the file decoded to, which revivalLoss
 // judges, the text it was decoded from, which revivalLossDuplicate scans, and badByte, 1 plus the offset of the first byte that is
-// not valid UTF-8 (0 when there is none). All three are the zero value whenever the read returned no plan.
+// not valid UTF-8 (0 when there is none). parsed is the zero value whenever the read returned no plan; text and badByte are also
+// set for a file that parsed but did not revive, so the lock can tell stored data a write would lose from an absent plan.
+// openErr is the failure of the walk to the plan file (an absence, an access failure, a link or a wrong kind of file), and refuse
+// the reason when the text holds something a write would lose (an unpaired surrogate escape) and no plan could be built.
 type revivalLossFile struct {
 	parsed  any
 	text    string
 	badByte int
+	openErr error
+	refuse  string
 }
 
 // revivalLossBadByte is revivalLossFile.badByte of raw. Revival decodes such bytes to U+FFFD, which would then read as equal to the

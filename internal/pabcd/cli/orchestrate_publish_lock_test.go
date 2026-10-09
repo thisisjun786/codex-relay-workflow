@@ -9,6 +9,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/goalplan"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
@@ -124,6 +125,13 @@ func TestOrchestrateCommitWithheldPlanPublishesNothing(t *testing.T) {
 		"invalid UTF-8": {func(raw string) string {
 			return regexp.MustCompile(`"objective":\s*"`).ReplaceAllStringFunc(raw, func(m string) string { return m + "\xff" })
 		}, "invalid UTF-8"},
+		// The reader returns no plan for these two, which is not the same as an absent plan (CRW-975, evaluation of 50f1f3c2).
+		"unpaired surrogate": {func(raw string) string {
+			return regexp.MustCompile(`"objective":\s*"`).ReplaceAllStringFunc(raw, func(m string) string { return m + `\ud800` })
+		}, "unpaired JSON surrogate"},
+		"repeated key with a malformed last value": {func(raw string) string {
+			return strings.TrimSuffix(strings.TrimSpace(raw), "}") + `,"objective":null}`
+		}, "repeated key"},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -144,7 +152,7 @@ func TestOrchestrateCommitWithheldPlanPublishesNothing(t *testing.T) {
 			orchestrateTransitionSession(t, cwd, id, `{"phase":"B","slug":"`+id+`"}`)
 			got := orchestrateCommitRunOK(t, cwd, nil, "C", "--session", id, "--attest",
 				`{"from":"B","to":"C","did":"built it","workPhaseId":"wp1"}`)
-			if got.Code != 1 || !strings.Contains(got.Output, c.reason) || !strings.Contains(got.Output, "refusing to rewrite") {
+			if got.Code != 1 || !strings.Contains(got.Output, c.reason) || !strings.Contains(got.Output, "Nothing was written") {
 				t.Fatalf("a withheld plan must refuse with the lock's reason: %+v", got)
 			}
 			if after := state.ReadState(cwd, id); after.Phase != state.PhaseB {
@@ -187,44 +195,106 @@ func TestOrchestrateCommitLinkedPlanDirectoryAfterTheGateIsNotFailOpen(t *testin
 	}
 }
 
+// orchestratePublishLockFifo replaces the first recorded plan file of the approved round with a FIFO that
+// has no writer, and returns its path. A read that opens it without O_NONBLOCK blocks until a writer
+// arrives; the cleanup connects one, so a test that fails by timeout does not leave its goroutine behind.
+func orchestratePublishLockFifo(t *testing.T, cwd, slug string) string {
+	t.Helper()
+	plan := goalplan.ReadGoalplan(cwd, slug)
+	file := filepath.Join(cwd, plan.ReviewRounds[0].PlanFiles[0].Path)
+	if err := os.Remove(file); err != nil {
+		t.Error(err) // not Fatal: the seam calls this from the goroutine under test
+		return file
+	}
+	if err := syscall.Mkfifo(file, 0o600); err != nil {
+		t.Error(err)
+		return file
+	}
+	t.Cleanup(func() {
+		if f, err := os.OpenFile(file, os.O_RDWR|syscall.O_NONBLOCK, 0); err == nil {
+			_ = f.Close()
+		}
+	})
+	return file
+}
+
+// TestRecomputedReadsASpecialFileAsMissing: a plan file that is not a regular file (a FIFO swapped in after
+// the entry was looked at) must not block the hash. It reads "missing", as every unreadable entry does
+// (CRW-975; the oracle's readFileSync would block on it).
+func TestRecomputedReadsASpecialFileAsMissing(t *testing.T) {
+	cwd, id := orchestrateTransitionRoot(t), "recomputed-fifo"
+	orchestratePublishLockApproved(t, cwd, id)
+	round := goalplan.ReadGoalplan(cwd, id).ReviewRounds[0]
+	orchestratePublishLockFifo(t, cwd, id)
+	got := make(chan []goalplan.PlanFileHash, 1)
+	go func() { got <- Recomputed(cwd, round.PlanFiles) }()
+	select {
+	case files := <-got:
+		if files[0].Sha256 != "missing" {
+			t.Fatalf("a FIFO plan file must read missing: %+v", files[0])
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Recomputed blocked on a FIFO plan file")
+	}
+}
+
+// TestOrchestrateCommitLockedReviewRehashDoesNotBlockOnAFifo: the re-hash under the goalplan lock reads the
+// plan files, so a plan file replaced by a FIFO after the unlocked check must not hold the lock. The edge
+// refuses (the plan changed) and releases the lock, so another writer of the plan is not kept waiting.
+func TestOrchestrateCommitLockedReviewRehashDoesNotBlockOnAFifo(t *testing.T) {
+	cwd, id := orchestrateTransitionRoot(t), "publish-lock-fifo-rehash"
+	orchestratePublishLockApproved(t, cwd, id)
+	seams := &orchestrateCommitSeams{lockGoalplan: func(cwd, slug string, fn func(*goalplan.Goalplan) (orchestrateCommitOutcome, error)) (goalplan.GoalplanWriteLockResult[orchestrateCommitOutcome], error) {
+		orchestratePublishLockFifo(t, cwd, slug)
+		return goalplan.WithGoalplanWriteLock(cwd, slug, fn, nil)
+	}}
+	type answer struct {
+		got CliResult
+		err error
+	}
+	parsed := ParseOrchestrateCliArgs([]string{"B", "--session", id, "--attest", orchestrateReviewBindingAttest("pass")}, cwd)
+	read, rerr := RunOrchestrateRead(parsed, ReadEnv{})
+	if rerr != nil || read.Result != nil {
+		t.Fatalf("read: %+v %v", read.Result, rerr)
+	}
+	done := make(chan answer, 1)
+	go func() {
+		got, err := orchestrateCommitRun(*parsed.Args, read.SessionID, seams)
+		done <- answer{got, err}
+	}()
+	select {
+	case a := <-done:
+		if a.err != nil || a.got.Code != 1 || !strings.Contains(a.got.Output, "the plan changed after round") {
+			t.Fatalf("a FIFO plan file under the lock must refuse as a changed plan: %+v %v", a.got, a.err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the locked review re-hash blocked on a FIFO plan file while holding the goalplan lock")
+	}
+	if after := state.ReadState(cwd, id); after.Phase != state.PhaseA {
+		t.Fatalf("the refused transition moved the session: %+v", after)
+	}
+	got, err := goalplan.WithGoalplanWriteLock(cwd, id, func(*goalplan.Goalplan) (int, error) { return 1, nil }, nil)
+	if err != nil || got.Kind != "ok" {
+		t.Fatalf("the goalplan lock was left held: %+v %v", got, err)
+	}
+}
+
 // TestOrchestrateCommitCancelDuringLockedReviewRehashWritesNothing: the review binding is judged again under
 // the lock and that re-hash reads the plan files, so a cancellation that arrives during it must still write
 // nothing (CRW-871: nothing is written once the invocation is cancelled before the first durable effect).
-// The order is fixed without a sleep: a plan file is replaced by a FIFO, the re-hash's read blocks until a
-// writer connects, and that writer cancels the context and only then supplies the original bytes.
+// The order is fixed without a sleep through the interrupt seam, which runs before every cancellation
+// check: the first call is the one at the top of the lock callback, the second the one after the re-hash.
 func TestOrchestrateCommitCancelDuringLockedReviewRehashWritesNothing(t *testing.T) {
 	cwd, id := orchestrateTransitionRoot(t), "publish-lock-cancel-rehash"
 	orchestratePublishLockApproved(t, cwd, id)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	done := make(chan struct{})
-	seams := &orchestrateCommitSeams{lockGoalplan: func(cwd, slug string, fn func(*goalplan.Goalplan) (orchestrateCommitOutcome, error)) (goalplan.GoalplanWriteLockResult[orchestrateCommitOutcome], error) {
-		plan := goalplan.ReadGoalplan(cwd, slug)
-		file := filepath.Join(cwd, plan.ReviewRounds[0].PlanFiles[0].Path)
-		data, err := os.ReadFile(file)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Remove(file); err != nil {
-			t.Fatal(err)
-		}
-		if err := syscall.Mkfifo(file, 0o600); err != nil {
-			t.Fatal(err)
-		}
-		go func() {
-			defer close(done)
-			f, err := os.OpenFile(file, os.O_WRONLY, 0)
-			if err != nil {
-				t.Error(err)
-				return
-			}
-			defer f.Close()
+	calls := 0
+	seams := &orchestrateCommitSeams{interrupt: func() {
+		calls++
+		if calls == 2 {
 			cancel()
-			if _, err := f.Write(data); err != nil {
-				t.Error(err)
-			}
-		}()
-		return goalplan.WithGoalplanWriteLock(cwd, slug, fn, nil)
+		}
 	}}
 	parsed := ParseOrchestrateCliArgs([]string{"B", "--session", id, "--attest", orchestrateReviewBindingAttest("pass")}, cwd)
 	read, err := RunOrchestrateRead(parsed, ReadEnv{})
@@ -232,9 +302,8 @@ func TestOrchestrateCommitCancelDuringLockedReviewRehashWritesNothing(t *testing
 		t.Fatalf("read: %+v %v", read.Result, err)
 	}
 	got, err := orchestrateCommitRunContext(ctx, *parsed.Args, read.SessionID, seams)
-	<-done
 	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("a cancellation during the locked re-hash must answer Interrupted: got=%+v err=%v", got, err)
+		t.Fatalf("a cancellation during the locked re-hash must answer Interrupted: got=%+v err=%v calls=%d", got, err, calls)
 	}
 	if after := state.ReadState(cwd, id); after.Phase != state.PhaseA {
 		t.Fatalf("the cancelled transition moved the session: %+v", after)

@@ -72,7 +72,7 @@ func revivalLossReadPlan(dir *os.File, real, path, slug string) (GoalplanReadRes
 		if pathAbsent(err) {
 			kind = "absent"
 		}
-		return readFailure(kind, path, err.Error(), ""), revivalLossFile{}
+		return readFailure(kind, path, err.Error(), ""), revivalLossFile{openErr: err}
 	}
 	defer file.Close()
 	raw, err := io.ReadAll(file)
@@ -96,12 +96,15 @@ func revivalLossReadPlan(dir *os.File, real, path, slug string) (GoalplanReadRes
 		return readFailure("invalid-json", path, err.Error(), ""), revivalLossFile{}
 	}
 	if at := unpairedSurrogate(decoded); at >= 0 {
-		return readFailure("unreadable", path, fmt.Sprintf("unpaired JSON surrogate at byte %d would lose stored text", at), ""), revivalLossFile{}
+		detail := fmt.Sprintf("unpaired JSON surrogate at byte %d would lose stored text", at)
+		return readFailure("unreadable", path, detail, ""), revivalLossFile{refuse: detail}
 	}
 	plan := reviveGoalplan(parsed, &slug)
 	if plan == nil {
+		// No plan, but the text is kept for the write lock: stored data a write would lose (bytes that are not UTF-8, a
+		// repeated key) makes the file a refusal there, not an absent plan (CRW-975).
 		field := firstInvalidField(parsed)
-		return readFailure("invalid-shape", path, "the goalplan parsed as JSON but field '"+field+"' did not satisfy the schema", field), revivalLossFile{}
+		return readFailure("invalid-shape", path, "the goalplan parsed as JSON but field '"+field+"' did not satisfy the schema", field), revivalLossFile{text: decoded, badByte: revivalLossBadByte(raw)}
 	}
 	return GoalplanReadResult{Plan: plan}, revivalLossFile{parsed: parsed, text: decoded, badByte: revivalLossBadByte(raw)}
 }
