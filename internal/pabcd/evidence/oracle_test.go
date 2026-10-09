@@ -214,9 +214,10 @@ func TestAttemptsFileNames(t *testing.T) {
 	for _, k := range c.Names {
 		cwd := t.TempDir()
 		WriteAttempts(cwd, k.Session, k.Agent, 2, k.Turn)
-		if !state.IsCanonicalSessionID(k.Session) {
-			// Changed (port: fixed, CRW-1106): a session id that sanitising changes shares the oracle's name with its sanitised
-			// twin (session_slash and session_dash are one file there), so its counter lives in its own directory instead.
+		if ownDirectoryCounter(k.Session, k.Agent, k.Turn) {
+			// Changed (port: fixed, CRW-1106): a session id, an agent id or a turn id that sanitising changes shares the oracle's name
+			// with its sanitised twin (session_slash and session_dash are one file there), so its counter lives in its own directory
+			// and repeats the identity that the name cannot keep.
 			raw, err := os.ReadFile(counterPath(cwd, k.Session, k.Agent, k.Turn))
 			want := fmt.Sprintf(`{"attempts":2%s%s%s}`+"\n", jsonField("sessionId", k.Session), jsonField("agentId", k.Agent), jsonField("turnId", k.Turn))
 			if err != nil || string(raw) != want || len(attemptsDir(cwd)) != 1 || attemptsDir(cwd)[0] != counterVersionDir {

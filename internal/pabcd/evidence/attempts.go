@@ -33,6 +33,11 @@ func attemptsPath(cwd, sessionID, agentID, turnID string) string {
 	return filepath.Join(cwd, crwdir.DirName, AttemptsSubdir, name+tupleDigest(agentID, turnID)+".json")
 }
 
+// sanitizingChanges reports whether an agent or turn id names a different file part than it is: a part that is absent (an empty turn,
+// which has no part) is not one. An empty agent id is named "missing", which counterOwner reads back (an agent of that name and
+// an empty one have different digests).
+func sanitizingChanges(id string) bool { return id != "" && state.SanitizeKey(id) != id }
+
 // counterVersionDir holds the counters of a session whose id is not canonical (CRW-1106): two such ids can sanitise to one name
 // (a/b and a-b), so their counters live in a directory per exact session (sessionRecordDir), one file per (agent, turn) named by
 // tupleDigest, and the record repeats its identity.
@@ -42,13 +47,30 @@ func counterDir(cwd, sessionID string) string {
 	return filepath.Join(cwd, crwdir.DirName, AttemptsSubdir, counterVersionDir, sessionRecordDir(sessionID))
 }
 
-// counterPath is where the counter of the exact tuple lives: the oracle's name for a canonical session, the session's own
-// directory otherwise.
+// counterPath is where the counter of the exact tuple lives: the oracle's name when that name fixes the tuple's session (a canonical
+// session whose agent and turn sanitising leaves as they are), the session's own directory otherwise.
 func counterPath(cwd, sessionID, agentID, turnID string) string {
-	if state.IsCanonicalSessionID(sessionID) {
+	if !ownDirectoryCounter(sessionID, agentID, turnID) {
 		return attemptsPath(cwd, sessionID, agentID, turnID)
 	}
 	return filepath.Join(counterDir(cwd, sessionID), tupleDigest(agentID, turnID)+".json")
+}
+
+// ownDirectoryCounter reports whether the tuple's counter has the session's own directory and repeats its identity (CRW-1106). The
+// oracle's name keeps the sanitised ids, so two tuples whose ids differ only where sanitising changes them, or two sessions whose
+// keys continue one another, can share it; only for a canonical session and an agent and turn that sanitising leaves as they are
+// does the name, with its digest, fix the whole tuple.
+func ownDirectoryCounter(sessionID, agentID, turnID string) bool {
+	return !state.IsCanonicalSessionID(sessionID) || sanitizingChanges(agentID) || sanitizingChanges(turnID)
+}
+
+// legacyCounterPath is the oracle's name of a tuple that ownDirectoryCounter moved: the counter an earlier version wrote, which
+// still counts until a receipt clears it.
+func legacyCounterPath(cwd, sessionID, agentID, turnID string) (string, bool) {
+	if !state.IsCanonicalSessionID(sessionID) || !ownDirectoryCounter(sessionID, agentID, turnID) {
+		return "", false
+	}
+	return attemptsPath(cwd, sessionID, agentID, turnID), true
 }
 
 // tupleDigest is the first 32 hex digits of the SHA-256 of "<len>:<agent>:<len>:<turn>" taken as UTF-16 code units in
@@ -89,8 +111,8 @@ type Counter struct {
 // room for another attempt.
 func (c Counter) Spent() bool { return c.State != CounterMissing && c.State != CounterActive }
 
-// counterRecord is a counter file. A canonical session's file holds attempts only, as the oracle writes it; the record of a session
-// whose id is not canonical repeats its identity.
+// counterRecord is a counter file. A file in the oracle's layout holds attempts only, as the oracle writes it; a file in the session's
+// own directory (ownDirectoryCounter) repeats its identity.
 type counterRecord struct {
 	Attempts  int    `json:"attempts"`
 	SessionID string `json:"sessionId,omitempty"`
@@ -107,12 +129,17 @@ type counterRecord struct {
 // restarted the budget and the next write replaced the evidence, while hasSpentBudget read the same file as spent.
 func ReadCounter(cwd, sessionID, agentID, turnID string) Counter {
 	var owns func(counterRecord) bool
-	if !state.IsCanonicalSessionID(sessionID) {
+	if ownDirectoryCounter(sessionID, agentID, turnID) {
 		owns = func(r counterRecord) bool {
 			return r.SessionID == sessionID && r.AgentID == agentID && r.TurnID == turnID
 		}
 	}
-	c, _ := readCounterFile(counterPath(cwd, sessionID, agentID, turnID), owns)
+	c, err := readCounterFile(counterPath(cwd, sessionID, agentID, turnID), owns)
+	if errors.Is(err, fs.ErrNotExist) {
+		if legacy, ok := legacyCounterPath(cwd, sessionID, agentID, turnID); ok {
+			c, _ = readCounterFile(legacy, nil) // a counter an earlier version wrote for this tuple
+		}
+	}
 	return c
 }
 
@@ -197,7 +224,7 @@ func WithCounterLock(cwd, sessionID, agentID, turnID string, fn func() error) er
 func WriteAttempts(cwd, sessionID, agentID string, attempts int, turnID string) bool {
 	path := counterPath(cwd, sessionID, agentID, turnID)
 	record := counterRecord{Attempts: attempts}
-	if state.IsCanonicalSessionID(sessionID) {
+	if !ownDirectoryCounter(sessionID, agentID, turnID) {
 		if _, err := crwdir.EnsureDir(cwd); err != nil {
 			return false
 		}
@@ -210,12 +237,21 @@ func WriteAttempts(cwd, sessionID, agentID string, attempts int, turnID string) 
 		}
 		record = counterRecord{Attempts: attempts, SessionID: sessionID, AgentID: agentID, TurnID: turnID}
 	}
-	return writeRecord(path, record) == nil
+	if writeRecord(path, record) != nil {
+		return false
+	}
+	if legacy, ok := legacyCounterPath(cwd, sessionID, agentID, turnID); ok {
+		removeFile(legacy) // the counter now lives in the session's directory
+	}
+	return true
 }
 
 // ClearAttempts removes the counter file of the tuple, best effort: a missing file is fine and a directory in its place stays.
 func ClearAttempts(cwd, sessionID, agentID, turnID string) {
 	removeFile(counterPath(cwd, sessionID, agentID, turnID))
+	if legacy, ok := legacyCounterPath(cwd, sessionID, agentID, turnID); ok {
+		removeFile(legacy)
+	}
 }
 
 func removeFile(path string) {

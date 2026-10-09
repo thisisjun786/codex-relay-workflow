@@ -23,12 +23,13 @@ import (
 // counters of a session whose id continues with a dash after this one's (s1-x for s1) count too. A counter name is
 // <session>-<agent>-[<turn>-]<digest of the raw agent and turn>.json, so a name is this session's when one way of reading the part
 // after the prefix as an agent and a turn reproduces the digest, and another session's when a reading under a longer session
-// does; such a file is skipped. A name that no reading explains (an agent or turn id that sanitising changed) may be anyone's and
-// still counts, the denying direction. The counters of a session whose id is not canonical are in its own directory
-// (counterVersionDir) and are matched by the identity they repeat; a file of the oracle's layout under its sanitised name may be its
-// own from before CRW-1106 or its canonical twin's, which cannot be told, so it counts too.
+// does; such a file is skipped. A name that no reading explains (a file of an earlier version for an agent or turn id that
+// sanitising changed) may be anyone's and still counts, the denying direction. The counters written since the fix for a session
+// whose id is not canonical, or for an agent or turn that sanitising changes, are in the session's own directory (counterVersionDir),
+// each matched by the identity it repeats, so they are exact; a file of the oracle's layout under a sanitised name may be its own from
+// before CRW-1106 or its canonical twin's, which cannot be told, so it counts too.
 func HasSpentBudget(cwd, sessionID string) bool {
-	if !state.IsCanonicalSessionID(sessionID) && sessionCountersSpent(cwd, sessionID) {
+	if sessionCountersSpent(cwd, sessionID) {
 		return true
 	}
 	dir := filepath.Join(cwd, crwdir.DirName, AttemptsSubdir)
@@ -67,12 +68,15 @@ func counterOwner(name string) string {
 	}
 	for i, a := range dashes {
 		session, rest := head[:a], head[a+1:]
-		if tupleDigest(rest, "") == digest && state.SanitizeKey(rest) == rest {
+		if state.SanitizeKey(rest) == rest && (tupleDigest(rest, "") == digest || rest == "missing" && tupleDigest("", "") == digest) {
 			return session
 		}
 		for _, b := range dashes[i+1:] {
 			agent, turn := head[a+1:b], head[b+1:]
-			if tupleDigest(agent, turn) == digest && state.SanitizeKey(agent) == agent && state.SanitizeKey(turn) == turn {
+			if state.SanitizeKey(agent) != agent || state.SanitizeKey(turn) != turn {
+				continue
+			}
+			if tupleDigest(agent, turn) == digest || agent == "missing" && tupleDigest("", turn) == digest {
 				return session
 			}
 		}
@@ -80,8 +84,8 @@ func counterOwner(name string) string {
 	return ""
 }
 
-// sessionCountersSpent is HasSpentBudget for a session whose id is not canonical: its own directory, each record matched by the
-// identity it repeats.
+// sessionCountersSpent is HasSpentBudget for the counters in the session's own directory, each record matched by the identity it
+// repeats.
 func sessionCountersSpent(cwd, sessionID string) bool {
 	dir := counterDir(cwd, sessionID)
 	names, err := dirNames(dir)
