@@ -41,9 +41,13 @@ Nothing here touches the real Codex home: every case is a temporary root, and th
 
 // Report is the whole result of a run.
 type Report struct {
-	CRW          ReportCRW           `json:"crw"`
-	Plugin       ReportPlugin        `json:"plugin"`
-	Spec         string              `json:"spec"`
+	CRW    ReportCRW    `json:"crw"`
+	Plugin ReportPlugin `json:"plugin"`
+	// Spec is the revision of the registration spec the cells judged against: the oracle and the sha256
+	// of contract K1 (hook-declarations.json).
+	Spec string `json:"spec"`
+	// Scope is what a pass means.
+	Scope        string              `json:"scope"`
 	Registration *RegistrationReport `json:"registration,omitempty"`
 	Fire         *FireReport         `json:"fire,omitempty"`
 	Latency      []Latency           `json:"latency,omitempty"`
@@ -205,13 +209,17 @@ func runCommand(command string, args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return fail(err)
 	}
-	report := Report{NotVerified: NotVerifiedCells(), OK: true}
+	report := Report{NotVerified: NotVerifiedCells(), OK: true,
+		Scope: "isolated roots only: the declared commands of the named plugin root, fired with corpus payloads; not a real host turn, not a normal installation (CRW-201, CRW-204)"}
 	report.CRW.Path = bin
 	if report.CRW.SHA256, err = FileDigest(bin); err != nil {
 		return fail(err)
 	}
 	if file, _, derr := cxccorpus.LoadDeclarations(root); derr == nil {
 		report.Spec = file.Oracle + ", " + cxccorpus.Declarations
+		if digest, derr := FileDigest(filepath.Join(root, cxccorpus.Declarations)); derr == nil {
+			report.Spec += " sha256 " + digest
+		}
 	}
 	// Every case root and a generated plugin root live in one directory of this run, removed at the end.
 	run, err := os.MkdirTemp(*scratch, "crw-parity-run-")
@@ -297,6 +305,7 @@ func runCommand(command string, args []string, stdout, stderr io.Writer) int {
 	for _, n := range report.NotVerified {
 		fmt.Fprintf(stdout, "NOT VERIFIED: %s -- %s\n", n.Cell, n.Reason)
 	}
+	fmt.Fprintln(stdout, "SCOPE: "+report.Scope)
 	if *jsonOut != "" {
 		raw, _ := json.MarshalIndent(report, "", "  ")
 		if err := os.WriteFile(*jsonOut, append(raw, '\n'), 0o644); err != nil {
