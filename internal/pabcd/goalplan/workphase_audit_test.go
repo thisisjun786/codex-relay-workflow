@@ -144,3 +144,37 @@ func TestCRW1076_CloseFixedKeepsTheCursorOnTheRunnableDuplicate(t *testing.T) {
 		})
 	}
 }
+
+// CRW-1076. The readiness half of the same find: a phase carrying the cursor's id that waits on an unfinished dependency is
+// not found, and a later one that is ready is. Expected values are closeFixedWorkPhase from the oracle's dist/goalplan.js on
+// the same plans (closing wp1, recorded next wp2, wp9 pending).
+func TestCRW1076_CloseFixedKeepsTheCursorOnlyOnAReadyDuplicate(t *testing.T) {
+	waiting := func() GoalplanWorkPhase {
+		wp := auditPhase("wp3", WorkPhaseInProgress)
+		wp.DependsOn = []string{"wp9"}
+		return wp
+	}
+	cases := []struct {
+		name   string
+		phases []GoalplanWorkPhase
+		want   string // the cursor, "" for none
+	}{
+		{"waiting wp3 then ready wp3", []GoalplanWorkPhase{waiting(), auditPhase("wp3", WorkPhaseInProgress)}, "wp3"},
+		{"ready wp3 then waiting wp3", []GoalplanWorkPhase{auditPhase("wp3", WorkPhaseInProgress), waiting()}, "wp3"},
+		{"only waiting wp3", []GoalplanWorkPhase{waiting(), waiting()}, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			phases := append([]GoalplanWorkPhase{auditPhase("wp1", WorkPhasePending), auditPhase("wp2", WorkPhaseDone)}, c.phases...)
+			phases = append(phases, auditPhase("wp9", WorkPhasePending))
+			cursor, next := "wp3", "wp2"
+			got := workPhaseCloseFixed(&Goalplan{ActiveWorkPhaseID: &cursor, WorkPhases: phases}, "wp1", WorkPhaseRecordedNext{Known: true, ID: &next})
+			if got.Kind != WorkPhaseCloseFixedOK || got.Plan == nil {
+				t.Fatalf("kind = %q, want ok", got.Kind)
+			}
+			if have := got.Plan.ActiveWorkPhaseID; (c.want == "") != (have == nil) || have != nil && *have != c.want {
+				t.Errorf("cursor = %v, want %q", have, c.want)
+			}
+		})
+	}
+}
