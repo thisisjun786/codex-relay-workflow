@@ -115,6 +115,9 @@ type Context struct {
 	// -c string runs its text again or later (xargs, find, watch, trap, eval, a shell reading stdin). A shell's -c string runs
 	// once, where the text puts it.
 	Repeat bool
+	// Unsequenced is whether the command substitutions of one simple command run in an order the reader does not model: bash expands
+	// the argument substitutions before the assignment ones, so with two or more of them, none is ordered against the others.
+	Unsequenced bool
 	// Feed says where the operands of a program that find or xargs runs come from; nil outside them.
 	Feed *Feed
 	// pipeSrc is what the left side of the pipe the command reads prints.
@@ -313,7 +316,14 @@ func (w *walker) stmt(s *syntax.Stmt, st *state, ctx Context) error {
 			return unreadablef("nesting is deeper than %d", MaxNestingDepth)
 		}
 	}
-	redirs, err := w.redirects(s.Redirs, st, ctx)
+	// With two or more command substitutions in one simple command, none of them is ordered against the others (Context.Unsequenced).
+	multiSubst := false
+	if c, ok := s.Cmd.(*syntax.CallExpr); ok {
+		multiSubst = cmdSubsts(c, s.Redirs) > 1
+	}
+	rctx := ctx
+	rctx.Unsequenced = multiSubst
+	redirs, err := w.redirects(s.Redirs, st, rctx)
 	if err != nil {
 		return err
 	}
@@ -334,7 +344,9 @@ func (w *walker) stmt(s *syntax.Stmt, st *state, ctx Context) error {
 	}
 	switch c := s.Cmd.(type) {
 	case *syntax.CallExpr:
-		return w.call(c, redirs, st, ctx)
+		wctx := ctx
+		wctx.Unsequenced = multiSubst
+		return w.call(c, redirs, st, ctx, wctx)
 	case *syntax.BinaryCmd:
 		return w.binary(c, st, ctx)
 	case *syntax.Subshell:
@@ -567,7 +579,7 @@ func (w *walker) forClause(c *syntax.ForClause, st *state, ctx Context) error {
 		keepsDir = prescanLoop(st, c.Do)
 		st.unsetVar(loop.Name.Value)
 	case *syntax.CStyleLoop:
-		if err := w.substsIn(loop, st, ctx); err != nil {
+		if err := w.substsIn(loop, st, loopContext(ctx)); err != nil {
 			return err
 		}
 		st.clearVars()
@@ -718,7 +730,46 @@ func (w *walker) pipeProducer(x *syntax.Stmt, before int, st *state) *pipeSource
 	return producerSource(execs)
 }
 
-func (w *walker) call(c *syntax.CallExpr, redirs []Redir, st *state, ctx Context) error {
+// cmdSubsts counts the command substitutions a simple command expands in its assignments, its words and its redirections. A process
+// substitution is not counted: its body is unordered already.
+func cmdSubsts(c *syntax.CallExpr, redirs []*syntax.Redirect) int {
+	n := 0
+	visit := func(m syntax.Node) bool {
+		switch m.(type) {
+		case *syntax.CmdSubst:
+			n++
+			return false
+		case *syntax.ProcSubst:
+			return false
+		}
+		return true
+	}
+	for _, a := range c.Assigns {
+		if a.Value != nil {
+			syntax.Walk(a.Value, visit)
+		}
+		if a.Index != nil {
+			syntax.Walk(a.Index, visit)
+		}
+		if a.Array != nil {
+			syntax.Walk(a.Array, visit)
+		}
+	}
+	for _, x := range c.Args {
+		syntax.Walk(x, visit)
+	}
+	for _, r := range redirs {
+		if r.Word != nil {
+			syntax.Walk(r.Word, visit)
+		}
+		if r.Hdoc != nil {
+			syntax.Walk(r.Hdoc, visit)
+		}
+	}
+	return n
+}
+
+func (w *walker) call(c *syntax.CallExpr, redirs []Redir, st *state, ctx, wctx Context) error {
 	assigns := make([]Assign, 0, len(c.Assigns))
 	for _, a := range c.Assigns {
 		if a.Name == nil {
@@ -732,7 +783,7 @@ func (w *walker) call(c *syntax.CallExpr, redirs []Redir, st *state, ctx Context
 			asg.Value = Word{Reason: "array assignment"}
 			asg.Array = true
 		case a.Value != nil:
-			v, err := w.word(a.Value, st, ctx)
+			v, err := w.word(a.Value, st, wctx)
 			if err != nil {
 				return err
 			}
@@ -744,7 +795,7 @@ func (w *walker) call(c *syntax.CallExpr, redirs []Redir, st *state, ctx Context
 	}
 	words := make([]Word, 0, len(c.Args))
 	for _, arg := range c.Args {
-		v, err := w.word(arg, st, ctx)
+		v, err := w.word(arg, st, wctx)
 		if err != nil {
 			return err
 		}
@@ -1098,6 +1149,10 @@ func (w *walker) wrapped(name string, args []Word, assigns []Assign, redirs []Re
 	if name == "xargs" || name == "find" || name == "parallel" || name == "entr" {
 		// The operands of these programs arrive at run time, so the inner program is marked.
 		ctx.Carrier = name
+		ctx.Repeat = true
+	}
+	if name == "watch" {
+		// watch runs its command again at every interval, with or without -x: the text may run after the rest of the text.
 		ctx.Repeat = true
 	}
 	if u.recordName != "" {
