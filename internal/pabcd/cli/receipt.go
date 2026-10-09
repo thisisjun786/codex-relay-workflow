@@ -272,6 +272,9 @@ func RunReceiptCLI(args ReceiptCLIArgs, options ReceiptRunOptions) (ReceiptCLIRe
 	}
 	lock, err := receiptLockFile(path)
 	if err != nil {
+		if errors.Is(err, errReceiptLockNotRegular) {
+			return refuse("receipt test: the lock file " + path + ".lock is not a regular file (a symlink or other special file); remove it and run again; no receipt written")
+		}
 		// No run publishes without the lock. A directory that takes no write permission also takes no temporary file, and
 		// the refusal below is the error the publication always gave there. The lock error is returned in every other case.
 		if errors.Is(err, fs.ErrPermission) {
@@ -324,12 +327,35 @@ func receiptPublishRefusal(ctx context.Context, err error) (ReceiptCLIResult, bo
 	return ReceiptCLIResult{Output: receiptInterrupted, Code: 1}, true
 }
 
+// errReceiptLockNotRegular is what receiptLockFile reports for a lock file path that is not a regular file.
+var errReceiptLockNotRegular = errors.New("not a regular file")
+
 // receiptLockFile opens the lock file of the receipt at path, creating it when it is missing. The lock file is path + ".lock",
 // the sidecar-lock name of the state files (state.WithSessionLock); its name ends in .lock, so the listings that take only
 // .json names skip it. It needs the write and search permission on the directory that a publication needs, and no read
 // permission on the directory itself. The file is left in place, so no two runs can lock different inodes of one name.
+// The open never follows a link (O_NOFOLLOW) and never waits for a peer on a special file (O_NONBLOCK), and the descriptor
+// it opened must be a regular file: a symlink to the receipt would put the lock on an inode every publication replaces, and
+// a FIFO would block the open before the context-aware wait begins. Anything else answers errReceiptLockNotRegular.
 func receiptLockFile(path string) (*os.File, error) {
-	return os.OpenFile(path+".lock", os.O_RDONLY|os.O_CREATE, 0o666)
+	name := path + ".lock"
+	lock, err := os.OpenFile(name, os.O_RDONLY|os.O_CREATE|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0o666)
+	if err != nil {
+		if errors.Is(err, syscall.ELOOP) { // a symlink at the path: the open is refused, not followed
+			return nil, &fs.PathError{Op: "lock", Path: name, Err: errReceiptLockNotRegular}
+		}
+		return nil, err
+	}
+	info, err := lock.Stat()
+	if err != nil {
+		_ = lock.Close()
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		_ = lock.Close()
+		return nil, &fs.PathError{Op: "lock", Path: name, Err: errReceiptLockNotRegular}
+	}
+	return lock, nil
 }
 
 // receiptTempProbe tries to create, and removes, a temporary file named as the publication names its own beside path. It
