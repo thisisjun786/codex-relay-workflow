@@ -268,7 +268,7 @@ func DetectMemoryWriteRequest(prompt string) bool {
 	}
 	// Unlike requestLines, actual requests in lists are eligible and don't
 	// forget is affirmative. A memory-specific negative wins in its sentence.
-	negative := detectorRE(`\b(?:do\s+not|don['’]?t|dont|never|not\s+to|avoid)\s+(?:(?:ever|actually|just|really|please)\s+)*(?:remember|save|store|write|record|keep|make\s+a\s+note|note)\b|(?:기억|저장|기록|남기|적)\s*(?:하|해|해두|해 두|해둬|하라|해라|해줘|해 줘)?지\s*(?:마|말)|(?:기억|저장|기록)\s*금지`)
+	negative := detectorRE(`\b(?:do\s+not|don['’]?t|dont|never|not\s+to|avoid)\s+(?:(?:ever|actually|just|really|please)\s+)*(?:remember\b|make\s+a\s+note\b|note\s+(?:this|that|it)\s+down\b|(?:save|store|write|record|keep|note)\s+(?:(?:this|that|it)\s+(?:to|in|into|as)\s+)?(?:memory|memories|a\s+note|notes?)\b)|(?:기억|저장|기록|남기|적)\s*(?:하|해|해두|해 두|해둬|하라|해라|해줘|해 줘)?지\s*(?:마|말)|(?:기억|저장|기록)\s*금지`)
 	explain := detectorRE(`^(?:please\s+)?(?:explain|describe|how\s+to|how\s+do|what\s+does)\b|^(?:설명|어떻게)`)
 	list := detectorRE(`^(?:[-*+]\s+|[0-9]+[.)]\s+)`)
 	packet := detectorRE(`(?i)<(?:task[-_ ]?packet|instructions|untrusted[-_ ]?text|untrusted[-_ ]?data)\b|^(?:#{1,6}\s+)?(?:begin\s+)?task[-_ ]?packet(?:\s*:|\s*$)`)
@@ -276,6 +276,7 @@ func DetectMemoryWriteRequest(prompt string) bool {
 	inPacket := false
 	fence := byte(0)
 	fenceWidth := 0
+	var prose strings.Builder
 	for _, raw := range text.SplitLines(prompt) {
 		line := text.Trim(raw)
 		if inPacket {
@@ -305,24 +306,32 @@ func DetectMemoryWriteRequest(prompt string) bool {
 		if fence != 0 || strings.HasPrefix(line, ">") {
 			continue
 		}
+		if list.MatchString(line) {
+			prose.WriteString(";")
+		}
 		line = list.ReplaceAllString(line, "")
-		line = foldASCII(memoryRequestUnquote(line))
-		if explain.MatchString(line) {
+		prose.WriteString(line)
+		prose.WriteString("\n")
+	}
+	// Quote delimiters and sentence-level negation can span physical lines.
+	// Preserve terminal punctuation so a recall question cannot become an
+	// affirmative Korean sentence merely by deleting its question mark.
+	eligible := foldASCII(memoryRequestUnquote(prose.String()))
+	for _, sentence := range detectorRE(`[^.!?;]+[.!?;]?`).FindAllString(eligible, -1) {
+		sentence = text.Trim(sentence)
+		if explain.MatchString(sentence) || negative.MatchString(sentence) {
 			continue
 		}
-		// Keep each sentence whole: a negative after 'but' also takes precedence.
-		for _, sentence := range detectorRE(`[.!?;]`).Split(line, -1) {
-			if negative.MatchString(sentence) {
-				continue
-			}
-			for _, pattern := range patterns {
-				if detectorRE(pattern).MatchString(text.Trim(sentence)) {
-					return true
-				}
-			}
-			if memoryDestination(sentence) {
+		if detectorRE(`기억\s*해\s*\?$`).MatchString(sentence) {
+			continue
+		}
+		for _, pattern := range patterns {
+			if detectorRE(pattern).MatchString(sentence) {
 				return true
 			}
+		}
+		if memoryDestination(sentence) {
+			return true
 		}
 	}
 	return false

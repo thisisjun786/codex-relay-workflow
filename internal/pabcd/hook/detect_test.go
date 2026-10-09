@@ -212,7 +212,7 @@ func TestDetectorsOracle(t *testing.T) {
 		{"\"remember this\"", "", false, false, false},
 		{"기억해", "", false, false, true},
 		{"기억해\n", "", false, false, true},
-		{"기억해?", "", false, false, true},
+		{"기억해?", "", false, false, false},
 		{"잊지 말고", "", false, false, true},
 		{"note this down", "", false, false, true},
 		{"keep it in mind", "", false, false, true},
