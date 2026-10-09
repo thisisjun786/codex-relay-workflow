@@ -11,14 +11,6 @@
   ],
   "intentionally-changed": [
     {
-      "id": "cli-help__subagents__dispatch_dashdash_help",
-      "reason": "Go JSON parser wording differs; dispatch still ignores --help and reads stdin.",
-      "set": {
-        "steps/0/stdout": "{\"error\":\"unexpected end of JSON input\"}"
-      },
-      "remove": []
-    },
-    {
       "id": "cli__subagents__dispatch_held_lock_fails_closed",
       "reason": "Go filesystem error wording differs; held lock still fails closed.",
       "set": {

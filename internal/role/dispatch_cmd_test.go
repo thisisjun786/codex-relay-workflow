@@ -36,7 +36,7 @@ func TestDispatchCommandBoundedJSONErrors(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var out bytes.Buffer
-			code := DispatchCommand([]string{"--help"}, tc.in, &out, env)
+			code := DispatchCommand(nil, tc.in, &out, env)
 			var answer map[string]string
 			if code != 1 || json.Unmarshal(out.Bytes(), &answer) != nil || !strings.Contains(answer["error"], tc.want) || !strings.HasSuffix(out.String(), "\n") {
 				t.Fatalf("error answer = %d %q", code, out.String())

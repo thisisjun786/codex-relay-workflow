@@ -7,13 +7,44 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
+	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 )
 
-// DispatchCommand ports fallback-dispatch-cli.ts:25-34,40-45. Trailing argv
-// remains ignored; the dispatch path consumes one bounded JSON value on stdin.
-func DispatchCommand(_ []string, in io.Reader, out io.Writer, env host.LookupEnv) int {
+// DispatchHelp is the usage dispatch --help prints: the stdin form and one line per action.
+func DispatchHelp() string {
+	return strings.Join([]string{
+		"usage: crw role helper dispatch < request.json",
+		"Reads one JSON object (at most 64 KiB) on stdin and prints one JSON answer; a refusal prints {\"error\":...} and exits 1.",
+		"It records the managed fallback ledger of .crw/dispatches and never starts a model or a native call.", "",
+		`  {"action":"start","sessionId":"<main-id>","dispatchId":"<task-id>","role":"<role>"}`,
+		`  {"action":"claim","sessionId":"<main-id>","dispatchId":"<task-id>","attemptId":"<attempt-id>"}`,
+		`  {"action":"report","outcome":"created","sessionId":"<main-id>","dispatchId":"<task-id>","attemptId":"<attempt-id>","agentId":"<child-id>"}`,
+		`  {"action":"report","outcome":"complete|failed|task_failed|unavailable|stopped", ...the ids, "agentId", "executionState", "reconciliation"...}`,
+		`  {"action":"status","sessionId":"<main-id>","dispatchId":"<task-id>"}`, "",
+		"The protocol is the crw-pabcd skill's delegation reference (Configured first fallback).",
+	}, "\n")
+}
+
+// DispatchCommand ports fallback-dispatch-cli.ts:25-34,40-45. Help (--help, -h or help) prints DispatchHelp and any other
+// argument is refused, both before stdin is read (CRW-1117); the dispatch path consumes one bounded JSON value on stdin.
+func DispatchCommand(args []string, in io.Reader, out io.Writer, env host.LookupEnv) int {
+	if len(args) > 0 {
+		if slices.ContainsFunc(args, helperCLIHelpToken) || args[0] == "help" {
+			if _, err := fmt.Fprintln(out, DispatchHelp()); err != nil {
+				return 1
+			}
+			return 0
+		}
+		encoded, err := Stringify(map[string]string{"error": "dispatch takes no arguments (got '" + args[0] + "'); send one JSON request on stdin, see crw role helper dispatch --help"}, "")
+		if err == nil {
+			_, err = fmt.Fprintln(out, string(encoded))
+		}
+		_ = err
+		return 1
+	}
 	data, err := io.ReadAll(io.LimitReader(in, dispatchMaxInput+1))
 	if err == nil && len(data) > dispatchMaxInput {
 		err = errors.New("dispatch input exceeds 64 KiB")
