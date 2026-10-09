@@ -128,19 +128,30 @@ See `dev` §0.0 for the full class definitions and tie-break rules.
 
 ## Delegation model — choosing a surface
 
-Choose the surface before dispatching. A **subagent** (`spawn_agent`) is a leaf
+Choose the surface before dispatching, and start from the binding: before any
+dispatch of an independent lane, apply
+[DISPATCH-MANAGED-01](references/dispatch-surfaces.md#dispatch-managed-01-strict--start-from-the-binding-not-from-the-mechanism).
+A Linear issue or DAG node (also one the relay holds no assignment for yet) is an
+independent relay child started and resumed through `crw-run`, never a
+`create_thread` lane, and the relay's duplicate-assignment and capacity refusals are
+followed, not routed around by creating a thread by hand. An unresolved binding is
+not permission to take the unmanaged route. The thread and subagent choice below is
+for unmanaged work: standalone PABCD with no Linear issue and no CRW execution
+binding, and bounded helper delegation inside any task.
+
+A **subagent** (`spawn_agent`) is a leaf
 running in **this session's own working directory**, with no session state, no
 goal and no FSM; its writes are your uncommitted changes. A **thread**
 (`create_thread`) is a separate Codex task with its own goal and PABCD state, and
 with `environment: worktree` its own checkout — `local` shares the project
-checkout. Work needing its own branch, checkout or merge/CI lane is thread work,
-one worktree thread per lane; a bounded slice of the tree you are already editing
-is subagent work. Asking for parallel lane work is asking for those threads — the lanes are
+checkout. For unmanaged work, work needing its own branch, checkout or merge/CI
+lane is thread work, one worktree thread per lane; a bounded slice of the tree you are already editing
+is subagent work. Asking for unmanaged parallel lane work is asking for those threads — the lanes are
 the mechanism, not an extra deliverable — so do not fall back to subagents on the
 shared tree to avoid creating tasks. Concurrent subagents need non-overlapping
 write scopes and must never run branch-level git operations at the same time.
-Before an authorized dispatch that is not obviously one or the other, read
-[Dispatch surfaces](references/dispatch-surfaces.md).
+Before every authorized dispatch, read [Dispatch surfaces](references/dispatch-surfaces.md)
+(DISPATCH-MANAGED-01 first).
 
 This section governs dispatched children, not independently user-owned peer tasks.
 For necessary read-only context, follow

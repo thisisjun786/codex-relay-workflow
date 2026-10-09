@@ -62,9 +62,11 @@ create a managed worktree, then give its absolute path to a subagent. The
 subagent's native cwd still inherits the coordinator's; the packet must require
 that path as the shell workdir on every command. Workers do not acquire their
 own goal or PABCD state. Different workers must use different worktrees. The
-worker's evidence is read in the tree the dispatch assigned to it, not in the
-coordinator's native cwd; a dispatch that recorded no assigned tree keeps the
-native cwd.
+SubagentStop gate reads `.crw/evidence` under the coordinator's native cwd, so a receipt
+the worker writes under its assigned tree is not accepted there: have the worker write its
+receipt under the native cwd's `.crw/evidence` and report that absolute path. Only where the
+runtime in use reads the tree the dispatch assigned (the evidence-location change of the 10-10
+review) is a receipt in the assigned tree accepted.
 
 Say which one you are creating, in those words, before you create it.
 

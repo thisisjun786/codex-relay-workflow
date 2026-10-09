@@ -80,7 +80,7 @@ preflight failure: resolve it or report the limitation before the governed actio
 | Repeated failure, reviewer FAIL, or unclear loop archetype | [Loop engineering](../crw-pabcd/references/loop-engineering.md) |
 | Score optimization, plateau, or mechanism comparison | [Optimization rules](../crw-pabcd/references/optimization.md) and loop engineering |
 | Deliberate divergence/candidate comparison | [Divergence tiers](references/divergence-tiers.md) |
-| Choosing between a thread and a subagent, or planning parallel lanes | [Dispatch surfaces](../crw-pabcd/references/dispatch-surfaces.md) |
+| Choosing between a thread and a subagent, or planning parallel lanes (binding check first: DISPATCH-MANAGED-01) | [Dispatch surfaces](../crw-pabcd/references/dispatch-surfaces.md) |
 | Dispatching tasks that will run their own loop, or watching more than a few lanes | [Lane dispatch](references/lane-dispatch.md) |
 | Dispatch is authorized and needed | [Delegation](../crw-pabcd/references/delegation.md) |
 | Waiting on dispatched work or long external processes, HITL or HOTL | [Waiting on work](references/waiting.md) |
@@ -91,7 +91,16 @@ Keep explicit-only skills and leaf-safe delivery restrictions intact.
 
 ## Execution invariants
 
-- DISPATCH-SURFACE-01 (STRICT): name the surface before fanning work out, because
+- DISPATCH-MANAGED-01 (STRICT): before fanning work out, start from the binding. A
+  Linear issue or DAG node (also one the relay holds no assignment for yet) is an
+  independent relay child started and resumed through `crw-run`, never a
+  `create_thread` lane; the relay refuses a second active or paused assignment of
+  the same issue and a release past capacity, and those answers are followed, not
+  routed around by creating a thread by hand. An unresolved binding is not
+  permission to take the unmanaged route. Only standalone PABCD with no Linear issue
+  and no CRW execution binding, and bounded helper delegation, use the rule below.
+  Details: [Dispatch surfaces](../crw-pabcd/references/dispatch-surfaces.md#dispatch-managed-01-strict--start-from-the-binding-not-from-the-mechanism).
+- DISPATCH-SURFACE-01 (STRICT): for unmanaged work, name the surface before fanning work out, because
   two mechanisms answer to "dispatch" and they are not substitutes. A **subagent**
   (`spawn_agent`) is a leaf that runs in **this session's own working directory**,
   with no session state, no goal and no FSM; its edits land in your checkout as
@@ -102,7 +111,7 @@ Keep explicit-only skills and leaf-safe delivery restrictions intact.
   means N worktree threads, and the workers inside each lane are that lane's
   subagents, not threads of their own. Spawning N subagents for N branches puts
   N writers on one HEAD. Concurrent subagents need non-overlapping write scopes
-  and must never run branch-level git operations at the same time. A request for
+  and must never run branch-level git operations at the same time. For unmanaged work, a request for
   parallel branch or worktree lanes **is** the user request that creating those
   threads needs — the lanes are the mechanism the work requires, so do not
   downgrade them onto the shared tree to avoid creating tasks. If the shape is
