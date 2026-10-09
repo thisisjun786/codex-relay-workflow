@@ -522,6 +522,9 @@ var shellIRPyOsImport = regexp.MustCompile(`^\s*import\s+(?:[A-Za-z_][\w.]*(?:\s
 // assignment, a parameter, a loop, with or except target, a def or class name, the word in a string or a comment) may rebind the
 // name to something else, and then the receiver is unknown (CRW-951, E3). Data text is not excused: a string may name the binding.
 func shellIRPyOsIsModule(src string) bool {
+	// Explicit continuations belong to one logical import statement. A normal
+	// import may also follow the colon of a compound statement's header.
+	src = strings.NewReplacer("\\\r\n", "", "\\\n", "").Replace(src)
 	spans := shellIRTokenSpans(src)
 	seen := false
 	for _, sp := range spans {
@@ -536,7 +539,7 @@ func shellIRPyOsIsModule(src string) bool {
 			seen = true
 			continue
 		}
-		start := strings.LastIndexAny(src[:sp[0]], ";\n\r") + 1
+		start := strings.LastIndexAny(src[:sp[0]], ";\n\r:") + 1
 		if !shellIRPyOsImport.MatchString(src[start:sp[0]]) {
 			return false
 		}
