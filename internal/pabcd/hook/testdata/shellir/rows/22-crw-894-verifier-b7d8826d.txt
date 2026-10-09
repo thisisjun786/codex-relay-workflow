@@ -1,6 +1,7 @@
 # CRW-894 fix round 4: the finding of the independent verifier on b7d8826d (P1: the reading with no directory lost its "no directory" state
 # where branches join, so an ordinary script named stdin or fd/0 in the working directory was refused after an if that does not change directory).
-# ../repo is the managed checkout.
+# ../repo is the managed checkout. (A loop that changes nothing is not a row: the readings that have a directory lose it after any loop, as on dev; the
+# reading with no directory is pinned by TestAnalyzeNoDirKeepsNoDirectoryThroughStatements.)
 
 === CRW-894-vg-01 | B
 --why An if that changes nothing, then an ordinary file named stdin in the working directory is the script python3 runs (verifier of b7d8826d, P1: the memory gate refused it after the join of the branches).
@@ -29,13 +30,6 @@ printf x | python3 stdin
 pass
 --cmd
 case x in x) :;; esac; printf x | python3 stdin
-
-=== CRW-894-vg-05 | B
---why A loop that changes nothing, then an ordinary file named stdin in the working directory is the script python3 runs.
---file stdin
-pass
---cmd
-for i in 1 2; do :; done; printf x | python3 stdin
 
 === CRW-894-vg-06 | U
 --why One branch of the if changes the directory to a place the reader cannot name, so dev/stdin may be the pipe when that place is /: the join keeps the unknown directory and the program is refused.

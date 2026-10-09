@@ -998,7 +998,6 @@ verifier of b7d8826d (CRW-894 fix round 4)	if true; then :; fi; printf x | pytho
 verifier of b7d8826d (CRW-894 fix round 4)	if true; then :; else :; fi; printf x | python3 fd/0	CRW-894-vg-02	row	-
 verifier of b7d8826d (CRW-894 fix round 4)	printf x | python3 stdin	CRW-894-vg-03	row	-
 verifier of b7d8826d (CRW-894 fix round 4)	case x in x) :;; esac; printf x | python3 stdin	CRW-894-vg-04	row	-
-verifier of b7d8826d (CRW-894 fix round 4)	for i in 1 2; do :; done; printf x | python3 stdin	CRW-894-vg-05	row	-
 verifier of b7d8826d (CRW-894 fix round 4)	if true; then cd "$D"; fi; printf '...' | python3 dev/stdin	CRW-894-vg-06	row	-
 verifier of b7d8826d (CRW-894 fix round 4)	if true; then cd "$A"; else cd "$B"; fi; printf '...' | python3 dev/stdin	CRW-894-vg-07	row	-
 verifier of b7d8826d (CRW-894 fix round 4)	for i in 1; do cd "$D"; done; printf '...' | python3 dev/stdin	CRW-894-vg-08	row	-

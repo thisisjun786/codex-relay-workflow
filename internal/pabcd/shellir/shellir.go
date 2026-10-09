@@ -214,7 +214,7 @@ func (s *state) setVar(name string, v Word, appendValue bool) {
 func joinStates(states ...*state) *state {
 	first := states[0]
 	out := &state{
-		dir:   Dir{Path: first.dir.Path, Known: true},
+		dir:   Dir{Path: first.dir.Path, Known: true, Unset: true},
 		vars:  map[string]string{},
 		funcs: map[string]*syntax.Stmt{},
 	}
@@ -222,6 +222,9 @@ func joinStates(states ...*state) *state {
 	for _, s := range states {
 		if !s.dir.Known || !first.dir.Known || s.dir.Path != first.dir.Path {
 			out.dir.Known = false
+		}
+		if !s.dir.Unset {
+			out.dir.Unset = false // a branch that changed the directory leaves it unknown, not unset
 		}
 		if s.cdpath {
 			out.cdpath = true
@@ -245,7 +248,14 @@ func joinStates(states ...*state) *state {
 	return out
 }
 
+// unknownDir is the directory after something that may have changed it (a cd to a place the reader cannot name, pushd, popd,
+// a sourced file): it is not known, and it is no longer a reading with no directory (Dir.Unset).
 func unknownDir(d Dir) Dir { return Dir{Path: d.Path} }
+
+// notProvenDir is the directory where the reader gives up proving a state without having seen the directory change (after a
+// loop, past a case arm that falls through, before a loop body that changes something): it is not known, but a reading with
+// no directory at all stays one. A cd inside the loop or the arm is a change of its own and has made the directory unknown.
+func notProvenDir(d Dir) Dir { return Dir{Path: d.Path, Unset: d.Unset} }
 
 // walker collects Exec records in run order.
 type walker struct {
@@ -372,7 +382,7 @@ func (w *walker) stmt(s *syntax.Stmt, st *state, ctx Context) error {
 // afterLoop makes the state unknown once a loop has run: the body may have run zero or many times, so the directory and the
 // variables after it are not those of any one iteration (a cd in a loop body is unknown afterwards).
 func afterLoop(st *state) {
-	st.dir = unknownDir(st.dir)
+	st.dir = notProvenDir(st.dir)
 	st.clearVars()
 }
 
@@ -401,7 +411,7 @@ func prescanLoop(st *state, lists ...[]*syntax.Stmt) {
 		}
 	}
 	if changes {
-		st.dir = unknownDir(st.dir)
+		st.dir = notProvenDir(st.dir)
 		st.clearVars()
 	}
 }
@@ -507,7 +517,7 @@ func (w *walker) caseClause(c *syntax.CaseClause, st *state, ctx Context) error 
 	for _, item := range c.Items {
 		if item.Op != syntax.Break {
 			// Fall-through runs later arms after this one, so the arms share state.
-			st.dir = unknownDir(st.dir)
+			st.dir = notProvenDir(st.dir)
 			st.clearVars()
 			break
 		}
