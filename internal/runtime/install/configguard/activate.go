@@ -111,6 +111,29 @@ func activationSetKeyLocked(path, table, key string) (TomlEditResult, error) {
 	return res, nil
 }
 
+// activationCarries reports whether an activation continues the ownership prior records (CRW-1145): a manifest of the same
+// config file that no deactivation released. A config file is the same when both spellings resolve to one path.
+func activationCarries(prior *InstallManifest, path string) bool {
+	if prior == nil || prior.ReleasedAt != nil {
+		return false
+	}
+	if prior.ConfigPath == path {
+		return true
+	}
+	a, okA := configLockPathsRealPath(prior.ConfigPath)
+	b, okB := configLockPathsRealPath(path)
+	return okA && okB && a == b
+}
+
+// carriedFlag is the record a carried activation continues for key.
+func (m *InstallManifest) carriedFlag(carried bool, key string) (FlagRecord, bool) {
+	if !carried || m == nil {
+		return FlagRecord{}, false
+	}
+	rec, ok := m.Flags[key]
+	return rec, ok
+}
+
 // activationLockWait is how long the activation publish waits for another CRW writer's sidecar lock.
 const activationLockWait = 2 * time.Second
 
@@ -260,6 +283,30 @@ func Activate(deps ActivateDeps) (*InstallManifest, error) {
 	if e = validateConfig(path, string(pre)); e != nil {
 		return nil, e
 	}
+	prior, e := readPriorManifest(deps.CodexHome)
+	if e != nil {
+		return nil, e
+	}
+	// A repeated activation of the same install carries every flag's first prior state and crw's ownership, as it always
+	// carried the managed keys' (CRW-1145): recomputing them from the live flags recorded the flags the first activation
+	// turned on as pre-existing, so the deactivation left them on. Another config file, or an install a deactivation
+	// released, starts a new baseline.
+	carried := activationCarries(prior, path)
+	toEnable := FeaturesToEnable(state)
+	keysChange := false
+	for _, entry := range AutoEnabledManagedKeys() {
+		res, _, e := semanticSet(string(pre), entry.Table, entry.Key, true)
+		if e != nil {
+			return nil, errInvalidConfig(path, e.Error())
+		}
+		keysChange = keysChange || res.Changed
+	}
+	// An activation of a carried install that has nothing to change writes no backup and no manifest (CRW-1145). A soft flag
+	// that failed before is off, so it is in toEnable and its explicit retry still runs.
+	if carried && len(toEnable) == 0 && !keysChange {
+		prior.Unchanged = true
+		return prior, nil
+	}
 	var backup *string
 	if exists {
 		info, e := os.Stat(path)
@@ -272,17 +319,22 @@ func Activate(deps ActivateDeps) (*InstallManifest, error) {
 		}
 		backup = &name
 	}
-	prior, e := readPriorManifest(deps.CodexHome)
-	if e != nil {
-		return nil, e
+	m := &InstallManifest{Version: 2, ConfigPath: path, BackupPath: backup, RunBackupPath: backup, Flags: map[string]FlagRecord{}, TableKeys: map[string]TableKeyRecord{}}
+	if carried {
+		// The baseline's backup stays the evidence of the state before crw: the deactivation reads a key's original absence
+		// from it, and this run's backup already holds crw's own values.
+		m.BackupPath = prior.BackupPath
 	}
-	m := &InstallManifest{Version: 2, ConfigPath: path, BackupPath: backup, Flags: map[string]FlagRecord{}, TableKeys: map[string]TableKeyRecord{}}
 	for _, k := range DeclaredFeatures() {
 		key := string(k)
-		m.Flags[key] = FlagRecord{PriorEnabled: state[key]}
+		f := FlagRecord{PriorEnabled: state[key]}
+		if rec, ok := prior.carriedFlag(carried, key); ok {
+			f = FlagRecord{PriorEnabled: rec.PriorEnabled, EnabledByCodexclaw: rec.EnabledByCodexclaw}
+		}
+		m.Flags[key] = f
 		m.flagOrder = append(m.flagOrder, key)
 	}
-	for _, key := range FeaturesToEnable(state) {
+	for _, key := range toEnable {
 		r := deps.Run([]string{"features", "enable", string(key)})
 		f := m.Flags[string(key)]
 		if r.ExitCode == 0 {
@@ -313,10 +365,10 @@ func Activate(deps ActivateDeps) (*InstallManifest, error) {
 			continue
 		}
 		owned := res.Changed
-		if prior != nil {
-			if carried, ok := prior.TableKeys[id]; ok {
-				priorValue = carried.PriorValue
-				owned = carried.SetByCodexclaw || res.Changed
+		if carried {
+			if rec, ok := prior.TableKeys[id]; ok {
+				priorValue = rec.PriorValue
+				owned = rec.SetByCodexclaw || res.Changed
 			}
 		}
 		m.TableKeys[id] = TableKeyRecord{entry.Table, entry.Key, priorValue, "true", owned}

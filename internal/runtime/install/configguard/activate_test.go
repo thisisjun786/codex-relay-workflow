@@ -134,8 +134,10 @@ func TestActivateRerunKeepsManagedPriorAndOwnership(t *testing.T) {
 	if len(calls) != 1 || key.PriorValue == nil || *key.PriorValue != "false" || !key.SetByCodexclaw {
 		t.Fatalf("rerun=%+v calls=%v", key, calls)
 	}
-	if !first.Flags["goals"].EnabledByCodexclaw || second.Flags["goals"].EnabledByCodexclaw || !second.Flags["goals"].PriorEnabled {
-		t.Fatal("oracle flag-rerun quirk changed")
+	// CRW-1145 (port: fixed): the rerun carries each flag's first prior state and crw's ownership, as it carries the managed
+	// key's, and an activation that changes nothing publishes nothing.
+	if !first.Flags["goals"].EnabledByCodexclaw || !second.Flags["goals"].EnabledByCodexclaw || second.Flags["goals"].PriorEnabled || !second.Unchanged {
+		t.Fatalf("flag ownership was not carried: %+v", second)
 	}
 }
 func TestActivateManagedValues(t *testing.T) {
@@ -211,6 +213,9 @@ func TestActivateMissingConfigAndTickingClock(t *testing.T) {
 	if m.BackupPath != nil || m.TableKeys["memories.dedicated_tools"].PriorValue != nil {
 		t.Fatalf("manifest=%+v", m)
 	}
+	// The second activation has something to change (the managed key was removed), so it writes a backup; the baseline's
+	// backup (none: there was no config.toml) stays the manifest's evidence (CRW-1145).
+	activationWrite(t, filepath.Join(home, "config.toml"), "# user\n")
 	ticks := 0
 	deps.Now = func() string {
 		ticks++
@@ -223,7 +228,7 @@ func TestActivateMissingConfigAndTickingClock(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if ticks != 2 || m.ActivatedAt != "activation" || !strings.HasSuffix(*m.BackupPath, ".crw-backup.bak") {
+	if ticks != 2 || m.ActivatedAt != "activation" || m.BackupPath != nil || m.RunBackupPath == nil || !strings.HasSuffix(*m.RunBackupPath, ".crw-backup.bak") {
 		t.Fatalf("clock=%+v ticks=%d", m, ticks)
 	}
 }

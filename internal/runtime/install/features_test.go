@@ -298,9 +298,10 @@ func TestFeaturesDisableBranches(t *testing.T) {
 	}
 	h.env = h.env.Without("CRW499_FAKE_LIST_FAIL")
 	h.success("enable")
+	// CRW-1145 (port: fixed): a flag that could not be disabled fails the command and is named.
 	h.env = h.env.With("CRW499_FAKE_DISABLE_FAIL", "1")
-	if out := h.success("disable"); !strings.Contains(out, "disabled [none]") {
-		t.Fatal(out)
+	if code, out, err := h.run("disable"); code != 1 || !strings.Contains(out, "disabled [none]") || !strings.Contains(err, "could not disable 'multi_agent' (exit 2)") {
+		t.Fatalf("%d %q %q", code, out, err)
 	}
 }
 

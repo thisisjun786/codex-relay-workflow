@@ -42,6 +42,18 @@ type DeactivateResult struct {
 	SkippedExternal          []SkippedExternal `json:"skippedExternal"`
 	FileDrifted              bool              `json:"fileDrifted"`
 	FeaturesStateUnavailable bool              `json:"featuresStateUnavailable"`
+	// Failed lists the flags crw owns whose disable did not succeed (CRW-1145); the ownership is not released while it is
+	// not empty, so a retry disables them.
+	Failed []FailedFlag `json:"failed"`
+	// Released reports a manifest a completed deactivation already released: there is nothing left to revert.
+	Released bool `json:"released"`
+}
+
+// FailedFlag is one flag a deactivation could not disable.
+type FailedFlag struct {
+	Key      string `json:"key"`
+	ExitCode int    `json:"exitCode"`
+	Message  string `json:"message"`
 }
 
 // configLockPathsPinned answers the path this deactivation must work on, and refuses when the file
@@ -512,7 +524,7 @@ func Deactivate(deps DeactivateDeps) (*DeactivateResult, error) {
 	// Oracle parity: marker failure never gates uninstall, including early exits. The
 	// marker API itself refuses unreadable records rather than replacing their consent data.
 	markOptedOut := func() { _ = MarkSelfHealOptedOut(deps.CodexHome, now()) }
-	r := &DeactivateResult{Disabled: []string{}, SkippedPreExisting: []string{}, NoManifest: true, RestoredKeys: []string{}, SkippedExternal: []SkippedExternal{}}
+	r := &DeactivateResult{Disabled: []string{}, SkippedPreExisting: []string{}, NoManifest: true, RestoredKeys: []string{}, SkippedExternal: []SkippedExternal{}, Failed: []FailedFlag{}}
 	noManifest := func() (*DeactivateResult, error) {
 		markOptedOut()
 		r.NoManifest = true
@@ -529,6 +541,16 @@ func Deactivate(deps DeactivateDeps) (*DeactivateResult, error) {
 		return noManifest()
 	}
 	r.NoManifest = false
+	// A manifest a completed deactivation released owns nothing any more: reverting from it again would turn off a flag
+	// or reset a key the user set since (CRW-1145).
+	released := func() (*DeactivateResult, error) {
+		markOptedOut()
+		r.Released = true
+		return r, nil
+	}
+	if m.ReleasedAt != nil {
+		return released()
+	}
 	path := deps.ConfigPath
 	if path == "" {
 		path = m.ConfigPath
@@ -569,6 +591,9 @@ func Deactivate(deps DeactivateDeps) (*DeactivateResult, error) {
 		}
 		if m = parseInstallManifest(*fresh); m == nil {
 			return noManifest()
+		}
+		if m.ReleasedAt != nil {
+			return released()
 		}
 		// The lock is held on the file the first reading named. A manifest that now names a different
 		// config file would have this deactivation apply one file's ownership records to another, so
@@ -641,11 +666,47 @@ func Deactivate(deps DeactivateDeps) (*DeactivateResult, error) {
 			r.SkippedExternal = append(r.SkippedExternal, SkippedExternal{key, SkipMissing})
 			continue
 		}
-		if deps.Run([]string{"features", "disable", key}).ExitCode == 0 {
-			r.Disabled = append(r.Disabled, key)
+		res := deps.Run([]string{"features", "disable", key})
+		if res.ExitCode != 0 {
+			// A failed disable is reported, and keeps the ownership for a retry (CRW-1145).
+			r.Failed = append(r.Failed, FailedFlag{key, res.ExitCode, activationFailureMessage(res.Stderr)})
+			continue
+		}
+		r.Disabled = append(r.Disabled, key)
+	}
+	// A deactivation that reverted everything it owned releases the manifest: the records stay as evidence, and the next
+	// activation starts a new baseline (CRW-1145). A flag that failed to disable, or a key whose provenance could not be
+	// proven, is unresolved ownership and keeps the manifest live for a retry. The release is written only under the config
+	// lock this command holds when it owned something (an install that owned nothing has nothing to release), and only over a
+	// regular file.
+	if len(r.Failed) == 0 && pin != nil && !deactivateUnresolved(r) && deactivateRegularFile(manifestPath(deps.CodexHome)) {
+		at := now()
+		m.ReleasedAt = &at
+		b, err := manifestBytes(m)
+		if err != nil {
+			return r, err
+		}
+		if err := activationPublish(manifestPath(deps.CodexHome), b); err != nil {
+			return r, fmt.Errorf("everything crw owned was reverted, but the release could not be recorded in the install manifest: %w", err)
 		}
 	}
 	return r, nil
+}
+
+// deactivateUnresolved reports a key the deactivation left because its provenance could not be proven.
+func deactivateUnresolved(r *DeactivateResult) bool {
+	for _, skipped := range r.SkippedExternal {
+		if skipped.Reason == SkipUnverifiable {
+			return true
+		}
+	}
+	return false
+}
+
+// deactivateRegularFile reports whether path is (or links to) a regular file.
+func deactivateRegularFile(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.Mode().IsRegular()
 }
 
 func deactivateTableKeys(path, content string, m *InstallManifest, r *DeactivateResult, guard func() error) error {

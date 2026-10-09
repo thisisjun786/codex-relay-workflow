@@ -58,8 +58,16 @@ func runFeatures(ctx context.Context, args []string, env scope.Env, stdout, stde
 	case "disable":
 		var result *configguard.DeactivateResult
 		result, err = configguard.Deactivate(configguard.DeactivateDeps{Run: run, CodexHome: home})
-		if err == nil {
+		if result != nil {
 			renderFeatureDisable(stdout, result)
+		}
+		if err == nil && result != nil && len(result.Failed) > 0 {
+			// A flag crw could not disable fails the command (CRW-1145); the ownership stays recorded for a retry.
+			for _, f := range result.Failed {
+				fmt.Fprintf(stderr, "crw: could not disable '%s' (exit %d): %s\n", f.Key, f.ExitCode, f.Message)
+			}
+			fmt.Fprintln(stderr, "crw: the flags above are still recorded as crw's; run 'crw install features disable' again once codex can disable them")
+			return 1
 		}
 	case "status":
 		var state map[string]bool
@@ -122,6 +130,11 @@ func renderFeatureEnable(stdout, stderr io.Writer, m *configguard.InstallManifes
 			keys = append(keys, id)
 		}
 	}
+	if m.Unchanged {
+		// Nothing was changed and nothing published (CRW-1145).
+		fmt.Fprintf(stdout, "crw: already enabled [%s]; nothing changed\n", featureList(enabled))
+		return
+	}
 	fmt.Fprintf(stdout, "crw: enabled [%s]", featureList(enabled))
 	if len(keys) > 0 {
 		fmt.Fprintf(stdout, "\nconfig keys: %s", strings.Join(keys, ", "))
@@ -131,8 +144,8 @@ func renderFeatureEnable(stdout, stderr io.Writer, m *configguard.InstallManifes
 			fmt.Fprintf(stdout, "\n  %s", entry.Caution)
 		}
 	}
-	if m.BackupPath != nil && *m.BackupPath != "" {
-		fmt.Fprintf(stdout, "\nbackup: %s", *m.BackupPath)
+	if m.RunBackupPath != nil && *m.RunBackupPath != "" {
+		fmt.Fprintf(stdout, "\nbackup: %s", *m.RunBackupPath)
 	}
 	fmt.Fprintln(stdout)
 	for _, key := range failed {
@@ -160,6 +173,10 @@ func featureWarning(key string, rec *configguard.FlagRecord) string {
 func renderFeatureDisable(stdout io.Writer, r *configguard.DeactivateResult) {
 	if r.NoManifest {
 		fmt.Fprintln(stdout, "crw: no install manifest; nothing to revert")
+		return
+	}
+	if r.Released {
+		fmt.Fprintln(stdout, "crw: already disabled; nothing to revert")
 		return
 	}
 	fmt.Fprintf(stdout, "crw: disabled [%s]; kept pre-existing [%s]\n", featureList(r.Disabled), featureList(r.SkippedPreExisting))

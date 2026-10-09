@@ -12,7 +12,9 @@ func TestActivationPreservesAcceptedSurrogatesAndCutsUTF16(t *testing.T) {
 	home := activationHome(t)
 	path := filepath.Join(home, "config.toml")
 	activationWrite(t, path, "[memories]\ndedicated_tools = true\n")
-	activationWrite(t, manifestPath(home), `{"version":2,"configPath":"x","flags":{},"tableKeys":{"memories.dedicated_tools":{"table":"memories","key":"dedicated_tools","priorValue":"\ud800","appliedValue":"true","setByCodexclaw":true}}}`)
+	// The manifest names this config file, so the activation carries its records (CRW-1145 carries only the same install's).
+	configJSON, _ := json.Marshal(path)
+	activationWrite(t, manifestPath(home), `{"version":2,"configPath":`+string(configJSON)+`,"flags":{},"tableKeys":{"memories.dedicated_tools":{"table":"memories","key":"dedicated_tools","priorValue":"\ud800","appliedValue":"true","setByCodexclaw":true}}}`)
 	var calls [][]string
 	deps := activationDeps(t, home, allActivationFlags(), &calls)
 	base := deps.Run

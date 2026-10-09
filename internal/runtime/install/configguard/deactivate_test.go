@@ -178,7 +178,12 @@ func TestDeactivateActivationRoundTrip(t *testing.T) {
 			if err != nil || r.FileDrifted != drift || !reflect.DeepEqual(r.Disabled, []string{"goals", "hooks", "default_mode_request_user_input"}) || !reflect.DeepEqual(r.SkippedPreExisting, []string{"multi_agent"}) {
 				t.Fatalf("result=%+v error=%v", r, err)
 			}
-			if !state["multi_agent"] || state["goals"] || state["hooks"] || strings.Contains(activationRead(t, path), "dedicated_tools") || activationRead(t, manifestPath(home)) != beforeManifest {
+			// The records stay as evidence; a completed deactivation adds only its release (CRW-1145).
+			before, after := parseInstallManifest(beforeManifest), parseInstallManifest(activationRead(t, manifestPath(home)))
+			if before == nil || after == nil || after.ReleasedAt == nil || !reflect.DeepEqual(before.Flags, after.Flags) || !reflect.DeepEqual(before.TableKeys, after.TableKeys) || before.BackupPath == nil || after.BackupPath == nil || *before.BackupPath != *after.BackupPath {
+				t.Fatalf("the deactivation changed the ownership records: %+v -> %+v", before, after)
+			}
+			if !state["multi_agent"] || state["goals"] || state["hooks"] || strings.Contains(activationRead(t, path), "dedicated_tools") {
 				t.Fatal("roundtrip changed ownership or retained an owned setting")
 			}
 			if drift && !strings.Contains(activationRead(t, path), "# user edit\n") {
