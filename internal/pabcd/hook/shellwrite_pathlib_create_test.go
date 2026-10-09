@@ -25,6 +25,8 @@ func TestPathlibCreateRealGate(t *testing.T) {
 		`python3 -c 'from pathlib import Path; os=Path("{M}/d"); os.mkdir()'`,
 		`python3 -c "import os; print(f\"{'a' + str(p.touch())}\", os.path.exists('{M}/n.md'))"`,
 		`python3 -c 'from pathlib import Path; p=Path("{M}/n.md"); exec("\x65\x78\x65\x63\x28\x22\x70\x2e\x5c\x78\x37\x34\x6f\x75\x63\x68\x28\x29\x22\x29")'`,
+		`python3 -c 'from pathlib import Path; p=Path("{M}/n.md"); exec("p.\x77rite_bytes(b\"x\")")'`,
+		`python3 -c 'from pathlib import Path; p=Path("{M}/n.md"); exec("\x67etattr(p, \"write_text\")(\"x\")")'`,
 	}
 	pass := []string{
 		`node -e 'function Path(x) { return {touch() { console.log(x) }} }; Path("{M}/a").touch()'`,
@@ -43,6 +45,10 @@ func TestPathlibCreateRealGate(t *testing.T) {
 		`python3 -c "import os; print(f\"{f'p.touch()'}\", os.path.exists('{M}/n.md'))"`,
 		"python3 -c \"import os\nprint(f\\\"{'x' # execute p.touch()\n}\\\", os.path.exists('{M}/n.md'))\"",
 		`python3 -c 'import os; exec("print(\"p.\x74ouch()\")"); print(os.path.exists("{M}/n.md"))'`,
+		`python3 -c 'import os; exec("print(\"p.\x77rite_text()\")"); print(os.path.exists("{M}/n.md"))'`,
+		`python3 -c 'import os; exec("print(\"p.\x77rite_bytes()\")"); print(os.path.exists("{M}/n.md"))'`,
+		`python3 -c 'import os; exec("# p.\x77rite_text()\nprint(1)"); print(os.path.exists("{M}/n.md"))'`,
+		`python3 -c 'import os; exec("print(\"\x67etattr\")"); print(os.path.exists("{M}/n.md"))'`,
 	}
 	for _, tmpl := range write {
 		t.Run("write "+tmpl, func(t *testing.T) {

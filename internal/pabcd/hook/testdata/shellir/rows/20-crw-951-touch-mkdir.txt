@@ -251,3 +251,27 @@ python3 -c 'from pathlib import Path; p=Path("{MEMORY}/n.md"); exec("\x65\x78\x6
 === CRW-951-fstring-data-08-exec-call-in-field | E
 --why Verifier round 2 keep: an exec call inside a replacement field runs its string, so the field's program text is code and the decoded p.touch() is an attempt.
 python3 -c "from pathlib import Path; p=Path('{MEMORY}/n.md'); print(f\"{exec('p.touch()')}\")"
+
+=== CRW-951-exec-04-decoded-write-text-data | R
+--why Verifier round 3: the decoded program of a literal exec is read with its own strings for every write name, not only touch and mkdir: print("p.write_text()") is data (the worktree guard's own raw exec word check, unchanged, still denies).
+python3 -c 'import os; exec("print(\"p.\x77rite_text()\")"); print(os.path.exists("{MEMORY}/n.md"))'
+
+=== CRW-951-exec-05-decoded-write-bytes-data | R
+--why Verifier round 3: print("p.write_bytes()") in a decoded exec program is data.
+python3 -c 'import os; exec("print(\"p.\x77rite_bytes()\")"); print(os.path.exists("{MEMORY}/n.md"))'
+
+=== CRW-951-exec-06-decoded-write-text-comment | R
+--why Verifier round 3: a comment in a decoded exec program is data: # p.write_text() holds no call.
+python3 -c 'import os; exec("# p.\x77rite_text()\nprint(1)"); print(os.path.exists("{MEMORY}/n.md"))'
+
+=== CRW-951-exec-07-decoded-runtime-name-data | R
+--why Verifier round 3 (same class): a run-time name in a string of a decoded exec program is data: print("getattr") calls nothing.
+python3 -c 'import os; exec("print(\"\x67etattr\")"); print(os.path.exists("{MEMORY}/n.md"))'
+
+=== CRW-951-exec-08-decoded-write-bytes-call | E
+--why Verifier round 3 keep: a real decoded p.write_bytes(b"x") call stays an attempt (an unattributed receiver).
+python3 -c 'from pathlib import Path; p=Path("{MEMORY}/n.md"); exec("p.\x77rite_bytes(b\"x\")")'
+
+=== CRW-951-exec-09-decoded-getattr-call | E
+--why Verifier round 3 keep: a real decoded getattr call is a run-time name and stays an attempt.
+python3 -c 'from pathlib import Path; p=Path("{MEMORY}/n.md"); exec("\x67etattr(p, \"write_text\")(\"x\")")'
