@@ -230,16 +230,18 @@ so this invocation did not apply the archive and the answer is incomplete `recip
 no archived-listing check, no unarchive and no send. An error with no host answer read asks the same
 complete archived scan the resend guard uses once, and an answer of `recipient_archived` continues
 exactly as after a successful archive, recording `reply_lost` as the archive result in the row;
-any other answer, and a failed check, keeps that hold. An unarchive that fails twice answers incomplete `lifecycle_unknown`,
+a complete listing that does not hold the child keeps that hold, and a failed or incomplete check keeps it too but leaves the archive unknown. An unarchive that fails twice answers incomplete `lifecycle_unknown`,
 naming the archived thread for an operator in the journal; a child still loaded afterwards answers
 `recipient_not_idle`. Every unload writes a `managed_resend_unloaded` begin row (`phase` `begin`,
 the attempt) before the archive, and a begin row that cannot be written archives nothing. It then
 writes one closing row (`phase` `end`) naming the thread, the archive and unarchive results and
 the load state observed afterwards; once the archive has succeeded that row is written with a
 context that survives the caller's cancellation, because an archived child with no row would
-leave an operator nothing to read. When nothing was archived (the last read was not `idle` or
-failed, or the archive was refused or not confirmed) the closing row says `archive` `none` with its
-reason and the attempt stays available. Empty, missing-rollout or
+leave an operator nothing to read. When nothing was archived (the last read was not `idle`, failed or was cancelled, or the archive
+was refused, or a complete archived listing does not hold the child) the closing row says `archive`
+`none` with its reason and the attempt stays available. When the archive may have applied and the
+archived listing failed or was incomplete, the closing row says `archive` `unknown` and the attempt
+stays spent: an operator who unarchives the child does not see the same attempt archive it again. Empty, missing-rollout or
 unreadable history stays held as `lifecycle_unknown`; another turn refuses as
 `business_identity_unobserved`. The final business guard repeats the standby-only check after the
 recorded-profile resume.

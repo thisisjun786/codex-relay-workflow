@@ -348,10 +348,13 @@ type businessResendUnloadApp struct {
 	archiveLostReply bool
 	archivedListing  string
 	onArchivedList   func()
-	archived         map[string]bool
-	listingCalls     int
-	archiveCalls     []string
-	unarchiveCalls   []string
+	// onRead runs on each thread/read and may fail it; the unload's last read before the archive
+	// is the one a cancellation test aims at.
+	onRead         func() error
+	archived       map[string]bool
+	listingCalls   int
+	archiveCalls   []string
+	unarchiveCalls []string
 }
 
 func (a *businessResendUnloadApp) markArchived(id string, archived bool) {
@@ -388,6 +391,12 @@ func (a *businessResendUnloadApp) archivedPage() (map[string]any, error) {
 func (a *businessResendUnloadApp) HostCall(ctx context.Context, method string, params map[string]any) (map[string]any, error) {
 	id := pyjson.Text(params["threadId"])
 	switch method {
+	case "thread/read":
+		if a.onRead != nil {
+			if err := a.onRead(); err != nil {
+				return nil, err
+			}
+		}
 	case "thread/list":
 		if params["archived"] == true {
 			return a.archivedPage()
@@ -654,17 +663,19 @@ func TestBusinessResendUnloadLostArchiveReplyIsBoundedPerAttempt(t *testing.T) {
 	}
 }
 
-// An archive error the host does not confirm as applied keeps today's answer: the child is not in
-// the archived listing, the listing is incomplete, or the listing read fails, and in every case
-// there is no unarchive, no row and no send.
+// An archive error the host does not confirm as applied answers recipient_not_idle with no
+// unarchive and no send. A complete listing that does not hold the child shows the archive did not
+// apply, so the attempt stays available; an incomplete listing or a failed read leaves it unknown,
+// so the closing row keeps the attempt spent (TestBusinessResendUnloadAppliedButUnconfirmedArchiveStaysSpent).
 func TestBusinessResendUnloadLostArchiveReplyUnconfirmedHolds(t *testing.T) {
 	for _, c := range []struct {
 		name            string
 		archivedListing string
+		archives        int
 	}{
-		{"not-archived", ""},
-		{"listing-incomplete", "incomplete"},
-		{"listing-error", "error"},
+		{"not-archived", "", 2},
+		{"listing-incomplete", "incomplete", 1},
+		{"listing-error", "error", 1},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			k, _, _ := businessResendKit(t)
@@ -677,10 +688,71 @@ func TestBusinessResendUnloadLostArchiveReplyUnconfirmedHolds(t *testing.T) {
 			if len(app.unarchiveCalls) != 0 || k.host.sent != 0 || len(k.host.sends) != 0 {
 				t.Fatalf("unconfirmed lost reply unarchived or sent: %v sent=%d", app.unarchiveCalls, k.host.sent)
 			}
-			if n := businessResendLoweringRows(t, k); n != 0 {
+			if len(app.archiveCalls) != c.archives {
+				t.Fatalf("archive calls over two runs: %v, want %d", app.archiveCalls, c.archives)
+			}
+			if n := businessResendLoweringRows(t, k); n != 2-c.archives {
 				t.Fatalf("unconfirmed lost reply wrote %d unload rows", n)
 			}
 		})
+	}
+}
+
+// An archive that applied and whose reply was lost, with an archived listing that then fails or
+// is incomplete, may have archived the child. The attempt stays spent: the closing row says the
+// archive is unknown, and a replay after an operator brought the child back never archives again.
+func TestBusinessResendUnloadAppliedButUnconfirmedArchiveStaysSpent(t *testing.T) {
+	for _, listing := range []string{"error", "incomplete"} {
+		t.Run(listing, func(t *testing.T) {
+			k, business, _ := businessResendKit(t)
+			app := &businessResendUnloadApp{Adapter: k.start.Adapter, host: k.host, archiveLostReply: true, archivedListing: listing}
+			k.start.Adapter = app
+			k.host.threads["t-1"].status = "idle"
+			k.expect(k.run(), "incomplete", "recipient_not_idle", "")
+			if detail := businessResendUnloadDetail(t, k); !strings.Contains(detail, `"archive":"unknown"`) || !strings.Contains(detail, `"reason":"archive_unconfirmed"`) {
+				t.Fatalf("unconfirmed archive closing row: %s", detail)
+			}
+			// An operator unarchives the child, which comes back idle under the same attempt.
+			app.markArchived("t-1", false)
+			k.host.threads["t-1"].status = "idle"
+			k.expect(k.run(), "incomplete", "recipient_not_idle", "")
+			if !reflect.DeepEqual(app.archiveCalls, []string{"t-1"}) || len(app.unarchiveCalls) != 0 || k.host.sent != 0 || k.host.operations[businessResendID("managed-1", business, 1)] != nil {
+				t.Fatalf("replay archived or sent again: archive=%v unarchive=%v sent=%d", app.archiveCalls, app.unarchiveCalls, k.host.sent)
+			}
+		})
+	}
+}
+
+// The unload's last state read before the archive can be cancelled. Nothing was archived, so the
+// begin mark is closed with a row that says so and the cancelled call does not spend the attempt:
+// a rerun under a live context reaches the archive.
+func TestBusinessResendUnloadCancelledLastReadDoesNotSpendTheAttempt(t *testing.T) {
+	k, _, _ := businessResendKit(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	app := &businessResendUnloadApp{Adapter: k.host, host: k.host}
+	app.onRead = func() error {
+		cancel()
+		return ctx.Err()
+	}
+	k.host.threads["t-1"].status = "idle"
+	k.start.Adapter = app
+	r := &startRun{m: k.start, task: "t-1", standby: "standby", businessAttempt: 1, resendFailure: businessResendLegacyReceipt("t-1"), identity: Identity{RequestID: "managed-1"}, ledger: k.host.ledger}
+	if code, err := r.businessResendUnload(ctx); code != "" || !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled last read: %q %v", code, err)
+	}
+	if len(app.archiveCalls) != 0 {
+		t.Fatalf("cancelled read archived: %v", app.archiveCalls)
+	}
+	if detail := businessResendUnloadDetail(t, k); !strings.Contains(detail, `"archive":"none"`) || !strings.Contains(detail, `"phase":"end"`) {
+		t.Fatalf("cancelled read closing row: %s", detail)
+	}
+	app.onRead = nil
+	if _, err := r.businessResendUnload(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(app.archiveCalls, []string{"t-1"}) {
+		t.Fatalf("rerun archive calls: %v", app.archiveCalls)
 	}
 }
 
