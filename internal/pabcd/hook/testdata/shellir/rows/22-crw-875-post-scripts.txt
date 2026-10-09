@@ -1,0 +1,335 @@
+# CRW-875 (a shell that runs a script file of GitHub posts) after the CRW-1028 reader. A script whose every post is one plain
+# line in the one form the guard reads whole (form A) is allowed when nothing the script or the text around it runs can write
+# the files the posts read; any other post line, and any write that may reach a trusted temporary root, is refused. The second
+# half is the CDPATH case: a cd by an absolute or ./ path never consults CDPATH, so the directory stays known.
+
+=== CRW-875-22-01 | T
+--why A script of two clean --body-file posts (with a comment and a blank line) is allowed: every post line is form A.
+--file {TMP}/b.md
+hello
+--file {TMP}/c.md
+second
+--file post.sh
+# post both comments
+
+gh pr comment 1 --body-file {TMP}/b.md
+
+gh pr comment 2 --body-file {TMP}/c.md
+--cmd
+bash post.sh
+
+=== CRW-875-22-02 | T
+--why A script of clean posts and commands of exception B (echo, ls, grep, wc) that write nothing is allowed.
+--file {TMP}/b.md
+hello
+--file post.sh
+echo posting
+gh pr comment 1 --body-file {TMP}/b.md
+ls
+grep -c hello {TMP}/b.md
+gh pr comment 2 --body-file {TMP}/b.md
+--cmd
+sh post.sh
+
+=== CRW-875-22-03 | T
+--why source reads the same script by the same rule.
+--file {TMP}/b.md
+hello
+--file post.sh
+gh pr comment 1 --body-file {TMP}/b.md
+gh issue comment 2 --body-file {TMP}/b.md
+--cmd
+source post.sh
+
+=== CRW-875-22-03b | T
+--why The dot builtin reads the same script by the same rule.
+--file {TMP}/b.md
+hello
+--file post.sh
+gh pr comment 1 --body-file {TMP}/b.md
+gh issue comment 2 --body-file {TMP}/b.md
+--cmd
+. post.sh
+
+=== CRW-875-22-04 | Q
+--why A line that runs another script is neither form A nor exception B: the posting script is refused.
+--file {TMP}/b.md
+hello
+--file inner.sh
+gh pr comment 1 --body-file {TMP}/b.md
+gh pr comment 2 --body-file {TMP}/b.md
+--file post.sh
+bash inner.sh
+gh pr comment 3 --body-file {TMP}/b.md
+--cmd
+bash post.sh
+
+=== CRW-875-22-04b | Q
+--why A gh read line (gh pr view) is neither form A nor exception B.
+--file {TMP}/b.md
+hello
+--file post.sh
+gh pr view 1
+gh pr comment 1 --body-file {TMP}/b.md
+--cmd
+bash post.sh
+
+=== CRW-875-22-04c | Q
+--why A cd line, an assignment line and a git line are not exception B either.
+--file {TMP}/b.md
+hello
+--file post.sh
+cd .
+gh pr comment 1 --body-file {TMP}/b.md
+--cmd
+bash post.sh
+
+=== CRW-875-22-04d | Q
+--why rg with --pre runs a program: not exception B.
+--file {TMP}/b.md
+hello
+--file post.sh
+rg --pre ./x.sh hello .
+gh pr comment 1 --body-file {TMP}/b.md
+--cmd
+bash post.sh
+
+=== CRW-875-22-04e | Q
+--why An exception B command with a word the reader cannot evaluate is not a literal command.
+--file {TMP}/b.md
+hello
+--file post.sh
+echo $UNSET_NAME_875
+gh pr comment 1 --body-file {TMP}/b.md
+--cmd
+bash post.sh
+
+=== CRW-875-22-04f | Q
+--why An exception B program named by a path is the file at that path, not the installed program.
+--file {TMP}/b.md
+hello
+--file post.sh
+./echo hi
+gh pr comment 1 --body-file {TMP}/b.md
+--file echo
+#!/bin/sh
+gh pr comment 9 -b "$(env)"
+--cmd
+bash post.sh
+
+=== CRW-875-22-05 | Q
+--why The second post line carries a command substitution: one bad line refuses the script.
+--file {TMP}/b.md
+hello
+--file post.sh
+gh pr comment 1 --body-file {TMP}/b.md
+gh pr comment 2 -b "$(env)"
+--cmd
+bash post.sh
+
+=== CRW-875-22-06 | Q
+--why The second post reads a body file that holds a secret: refused by the secret scan, whatever the first post is.
+--file {TMP}/b.md
+hello
+--file {TMP}/s.md
+MY_API_KEY=sentinel
+--file post.sh
+gh pr comment 1 --body-file {TMP}/b.md
+gh pr comment 2 --body-file {TMP}/s.md
+--cmd
+bash post.sh
+
+=== CRW-875-22-07 | Q
+--why The script writes the body file before it posts it: the file the guard reads is not the file gh reads.
+--file {TMP}/b.md
+hello
+--file post.sh
+echo changed > {TMP}/b.md
+gh pr comment 1 --body-file {TMP}/b.md
+gh pr comment 2 --body-file {TMP}/b.md
+--cmd
+bash post.sh
+
+=== CRW-875-22-08 | Q
+--why A writer script of the body file runs before the posting script in the same text.
+--file {TMP}/b.md
+hello
+--file writer.sh
+echo x >> {TMP}/b.md
+--file post.sh
+gh pr comment 1 --body-file {TMP}/b.md
+gh pr comment 2 --body-file {TMP}/b.md
+--cmd
+bash writer.sh; bash post.sh
+
+=== CRW-875-22-08b | Q
+--why The script writes the body file through a link inside the temporary root.
+--file {TMP}/b.md
+hello
+--link {TMP}/lnk {TMP}/b.md
+--file post.sh
+echo changed > {TMP}/lnk
+gh pr comment 1 --body-file {TMP}/b.md
+gh pr comment 2 --body-file {TMP}/b.md
+--cmd
+bash post.sh
+
+=== CRW-875-22-08c | T
+--why Control: the script writes a file that is not a body file it posts, in a directory the posts do not read.
+--file {TMP}/b.md
+hello
+--file post.sh
+echo done > {WORK}/out.log
+gh pr comment 1 --body-file {TMP}/b.md
+gh pr comment 2 --body-file {TMP}/b.md
+--cmd
+bash post.sh
+
+=== CRW-875-22-09 | Q
+--why A write the reader cannot name (a computed destination) may reach the body file.
+--file {TMP}/b.md
+hello
+--file post.sh
+echo x > "$OUT"
+gh pr comment 1 --body-file {TMP}/b.md
+gh pr comment 2 --body-file {TMP}/b.md
+--cmd
+bash post.sh
+
+=== CRW-875-22-10 | Q
+--why The text that runs the script writes the body file first.
+--file {TMP}/b.md
+hello
+--file post.sh
+gh pr comment 1 --body-file {TMP}/b.md
+gh pr comment 2 --body-file {TMP}/b.md
+--cmd
+echo x > {TMP}/b.md; bash post.sh
+
+=== CRW-875-22-11 | Q
+--why The same, with a clean script of one post line.
+--file {TMP}/b.md
+hello
+--file post.sh
+gh pr comment 1 --body-file {TMP}/b.md
+--cmd
+echo x > {TMP}/b.md; bash post.sh
+
+=== CRW-875-22-12 | Q
+--why A post inside a conditional of the script is not one plain line.
+--file {TMP}/b.md
+hello
+--file post.sh
+gh pr comment 1 --body-file {TMP}/b.md
+if true; then gh pr comment 2 --body-file {TMP}/b.md; fi
+--cmd
+bash post.sh
+
+=== CRW-875-22-13 | Q
+--why A post in a loop of the script is not one plain line.
+--file {TMP}/b.md
+hello
+--file post.sh
+for i in 1 2; do gh pr comment $i --body-file {TMP}/b.md; done
+gh pr comment 1 --body-file {TMP}/b.md
+--cmd
+bash post.sh
+
+=== CRW-875-22-14 | Q
+--why A post piped or sent to the background is not one plain line.
+--file {TMP}/b.md
+hello
+--file post.sh
+gh pr comment 1 --body-file {TMP}/b.md &
+gh pr comment 2 --body-file {TMP}/b.md
+--cmd
+bash post.sh
+
+=== CRW-875-22-15 | Q
+--why A relative body file after a cd the reader cannot resolve (CDPATH search) is refused.
+--file {TMP}/b.md
+hello
+--file post.sh
+CDPATH=/x
+cd sub
+gh pr comment 1 --body-file b.md
+gh pr comment 2 --body-file b.md
+--cmd
+bash post.sh
+
+=== CRW-875-22-16 | attempt/deny/deny
+--why A script over 1 MiB that holds a post is unreadable, as before.
+--file post.sh
+gh pr comment 1 -b x
+gh pr comment 2 -b x
+{PAD1M}
+--cmd
+bash post.sh
+
+=== CRW-875-22-17 | attempt/deny/deny
+--why The clean first line does not clear a hidden second script: the bash script it runs is missing.
+--file {TMP}/b.md
+hello
+--file post.sh
+gh pr comment 1 --body-file {TMP}/b.md
+gh pr comment 2 --body-file {TMP}/b.md
+bash missing.sh
+--cmd
+bash post.sh
+
+=== CRW-875-22-20 | T
+--why CDPATH assigned, then an absolute cd: the absolute target is never searched in CDPATH, so the directory is known and the script runs from it.
+--file sub/clean.sh
+echo clean
+--cmd
+CDPATH=/x; cd {WORK}/sub; bash clean.sh
+
+=== CRW-875-22-21 | T
+--why CDPATH assigned, then a ./ cd: a ./ target is never searched in CDPATH either.
+--file sub/clean.sh
+echo clean
+--cmd
+CDPATH=/x; cd ./sub; bash clean.sh
+
+=== CRW-875-22-22 | T
+--why export CDPATH, then a ./ cd; a later script run of the same text is read from the directory reached.
+--file sub/clean.sh
+echo clean
+--file sub/more.sh
+echo more
+--cmd
+export CDPATH=/x:.; cd ./sub; bash clean.sh; bash more.sh
+
+=== CRW-875-22-23 | Q
+--why The script is read from the directory the ./ cd reaches under CDPATH (sub/post.sh posts), not from the working directory (post.sh is clean).
+--file post.sh
+echo clean
+--file sub/post.sh
+gh pr comment 1 -b "$(env)"
+--cmd
+CDPATH=/x; cd ./sub; bash post.sh
+
+=== CRW-875-22-24 | U
+--why Control: a bare name is searched in CDPATH, so the directory is unknown and the script cannot be proven.
+--file sub/clean.sh
+echo clean
+--cmd
+CDPATH=/x; cd sub; bash clean.sh
+
+=== CRW-875-22-25 | U
+--why Control: a ../ target is out of the reader's model whatever CDPATH holds.
+--file sub/clean.sh
+echo clean
+--cmd
+CDPATH=/x; cd ../sub; bash clean.sh
+
+=== CRW-875-22-26 | U
+--why Control: a bare name after an absolute cd is still searched in CDPATH.
+--file sub/inner/clean.sh
+echo clean
+--cmd
+CDPATH=/x; cd {WORK}/sub; cd inner; bash clean.sh
+
+=== CRW-875-22-27 | B
+--why Control: CDPATH assigned in a text with no script and no post is not judged.
+echo hi

@@ -643,7 +643,7 @@ func (w *walker) call(c *syntax.CallExpr, redirs []Redir, st *state, ctx Context
 }
 
 // checkAssigns refuses the assignments that change what a program means
-// before it runs, and makes the directory unknown when CDPATH changes.
+// before it runs, and records that CDPATH was assigned: from then on a cd to a bare name may land in a CDPATH directory.
 func checkAssigns(assigns []Assign, st *state) error {
 	for _, a := range assigns {
 		switch {
@@ -653,7 +653,6 @@ func checkAssigns(assigns []Assign, st *state) error {
 			return unreadablef("assignment to %s makes a program run code the text does not show", a.Name)
 		case a.Name == "CDPATH":
 			st.cdpath = true
-			st.dir = unknownDir(st.dir)
 		}
 	}
 	return nil
@@ -823,12 +822,18 @@ func (w *walker) dispatch(words []Word, assigns []Assign, redirs []Redir, st *st
 }
 
 func (s *state) cd(args []Word) {
-	if s.cdpath || len(args) != 1 || !args[0].Known {
+	if len(args) != 1 || !args[0].Known {
 		s.dir = unknownDir(s.dir)
 		return
 	}
 	target := args[0].Value
 	if target == "" || strings.HasPrefix(target, "-") || strings.Contains(target, "..") {
+		s.dir = unknownDir(s.dir)
+		return
+	}
+	// With CDPATH assigned a bare name is searched in its directories first, so it names a directory the text does not show. A
+	// target that begins with / or ./ is never searched there (bash and zsh): it resolves from the directory as without CDPATH.
+	if s.cdpath && !path.IsAbs(target) && !strings.HasPrefix(target, "./") {
 		s.dir = unknownDir(s.dir)
 		return
 	}

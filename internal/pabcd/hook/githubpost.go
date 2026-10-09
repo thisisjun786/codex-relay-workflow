@@ -105,7 +105,7 @@ func githubPostCommand(input map[string]any) (string, bool) {
 // githubPostForm is form A: the one allowed gh post shape. handled is false when the command is not a
 // gh post shape at all, so the caller keeps judging; a gh read and every other known gh command are
 // handled and allowed, whatever words follow.
-func githubPostForm(words []string, cwd string) (site githubPostSite, denied, handled bool) {
+func githubPostForm(words []string, cwd githubPostDir) (site githubPostSite, denied, handled bool) {
 	if len(words) < 2 || githubPostProgram(words[0]) != "gh" || !githubPostGhCommand(githubPostProgram(words[1])) {
 		return githubPostSite{}, false, false
 	}
@@ -150,7 +150,7 @@ func githubPostForm(words []string, cwd string) (site githubPostSite, denied, ha
 }
 
 // githubPostPost is form A1: a gh pr or gh issue post, with only the words the rule allows.
-func githubPostPost(args []string, cwd string) (githubPostSite, bool, bool) {
+func githubPostPost(args []string, cwd githubPostDir) (githubPostSite, bool, bool) {
 	file, fileSet, titles := "", false, []string{}
 	for i := 0; i < len(args); i++ {
 		w := args[i]
@@ -208,7 +208,7 @@ func githubPostPost(args []string, cwd string) (githubPostSite, bool, bool) {
 		if strings.Contains(file, githubPostUnknownMark) {
 			return githubPostSite{githubPostRuleUnread, githubPostWhereCommand}, true, true
 		}
-		content, ok := githubPostReadFile(file, cwd)
+		content, ok := cwd.read(file)
 		if !ok {
 			return githubPostSite{githubPostRuleUnread, file}, true, true
 		}
@@ -249,7 +249,7 @@ func githubPostScanText(content string) string {
 
 // githubPostAPI is form A2: gh api, with only the words the rule allows. At most one of -F body=@F,
 // --field body=@F or --input F carries the text; none of them is a read.
-func githubPostAPI(args []string, cwd string) (githubPostSite, bool, bool) {
+func githubPostAPI(args []string, cwd githubPostDir) (githubPostSite, bool, bool) {
 	file, fileSet, endpoint := "", false, false
 	for i := 0; i < len(args); i++ {
 		w := args[i]
@@ -330,7 +330,7 @@ func githubPostAPI(args []string, cwd string) (githubPostSite, bool, bool) {
 		if strings.Contains(file, githubPostUnknownMark) {
 			return githubPostSite{githubPostRuleUnread, githubPostWhereCommand}, true, true
 		}
-		content, ok := githubPostReadFile(file, cwd)
+		content, ok := cwd.read(file)
 		if !ok {
 			return githubPostSite{githubPostRuleUnread, file}, true, true
 		}
@@ -419,14 +419,36 @@ func githubPostGhCommand(w string) bool {
 	return false
 }
 
+// githubPostDir is the directory a post's relative file names resolve from, and where the files the post reads are recorded
+// (reads may be nil): the judge of a script asks whether a write of the script can reach them.
+type githubPostDir struct {
+	path  string
+	reads *[]string
+}
+
+// read is githubPostReadFile, recording the file that was read.
+func (d githubPostDir) read(name string) (string, bool) {
+	text, resolved, ok := githubPostReadFileAt(name, d.path)
+	if ok && d.reads != nil {
+		*d.reads = append(*d.reads, resolved)
+	}
+	return text, ok
+}
+
 // githubPostReadFile reads the text a post names: a literal path that lies under a temporary root, is a
 // regular file of at most 1 MiB, and whose bytes the guard can read.
 func githubPostReadFile(name, cwd string) (string, bool) {
+	text, _, ok := githubPostReadFileAt(name, cwd)
+	return text, ok
+}
+
+// githubPostReadFileAt is githubPostReadFile that also returns the path the file was opened by (links resolved).
+func githubPostReadFileAt(name, cwd string) (string, string, bool) {
 	raw := name
 	if !filepath.IsAbs(raw) {
 		// A relative name needs a known directory; the hook's own process directory is never a stand-in for it.
 		if cwd == "" {
-			return "", false
+			return "", "", false
 		}
 		raw = strings.TrimSuffix(cwd, "/") + "/" + raw
 	}
@@ -435,23 +457,23 @@ func githubPostReadFile(name, cwd string) (string, bool) {
 	path := filepath.Clean(raw)
 	// "-" is standard input, which the guard cannot read in the file it names.
 	if name == "-" || !githubPostUnderRoots(path) {
-		return "", false
+		return "", "", false
 	}
 	// The trusted root is judged on the file the path resolves to, so a link inside it cannot reach another file.
 	resolved, err := filepath.EvalSymlinks(raw)
 	if err != nil || !githubPostUnderRoots(resolved) {
-		return "", false
+		return "", "", false
 	}
 	file, ok := githubPostRegularFile(resolved)
 	if !ok {
-		return "", false
+		return "", "", false
 	}
 	defer file.Close()
 	b, err := io.ReadAll(io.LimitReader(file, githubPostMaxFileBytes+1))
 	if err != nil || len(b) > githubPostMaxFileBytes {
-		return "", false
+		return "", "", false
 	}
-	return string(b), true
+	return string(b), resolved, true
 }
 
 // githubPostUnderRoots is whether a cleaned path lies under a temporary root the guard trusts: the

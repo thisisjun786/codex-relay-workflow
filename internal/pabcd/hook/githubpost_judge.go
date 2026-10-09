@@ -87,6 +87,16 @@ func githubPostJudgeExecs(execs []shellir.Exec, depth int, outer *githubPostWrit
 	// The closed rule: a post is judged only as one simple command. A post that sits behind a wrapper,
 	// a shell, a list, a pipe or a substitution is refused.
 	simple := len(execs) == 1 && githubPostPlainContext(execs[0].Ctx)
+	// A script file that holds a post is read by the line rule: every command line of it is a post in form A or a command of
+	// exception B, each a plain line of its own. One line that is neither refuses the script.
+	lines := depth > 0 && githubPostHasPost(execs)
+	if lines {
+		for _, e := range execs {
+			if !githubPostScriptLine(e) {
+				return githubPostSite{githubPostRuleUnread, githubPostWhereCommand}, true
+			}
+		}
+	}
 	var written *githubPostTextWrites
 	var i int
 	textWrites := func() *githubPostTextWrites {
@@ -129,22 +139,21 @@ func githubPostJudgeExecs(execs []shellir.Exec, depth int, outer *githubPostWrit
 		if githubPostProgram(e.Name) != "gh" {
 			continue
 		}
-		words := []string{"gh"}
-		for _, a := range e.Args {
-			if a.Known {
-				words = append(words, a.Value)
-			} else {
-				words = append(words, githubPostUnknownMark)
-			}
-		}
+		words := githubPostWordsOf(e)
 		base := e.Dir.Path
 		if !e.Dir.Known {
 			base = githubPostNoDir
 		}
-		if site, denied := githubPostJudgeWords(words, base); denied {
+		var reads []string
+		if site, denied := githubPostJudgeWords(words, githubPostDir{path: base, reads: &reads}); denied {
 			return site, true
 		}
-		if !simple && githubPostPostSub(words) {
+		// A post of a script that passed the line rule is the whole command of its line, so what it reads is what the guard read
+		// unless something the script, or the text that runs it, writes reaches that file.
+		if !simple && !lines && githubPostPostSub(words) {
+			return githubPostSite{githubPostRuleUnread, githubPostWhereCommand}, true
+		}
+		if depth > 0 && len(reads) > 0 && writes().readsReach(reads) {
 			return githubPostSite{githubPostRuleUnread, githubPostWhereCommand}, true
 		}
 		// ./gh is a file in the directory, which may be a script and not the installed gh: the file is read as well.
@@ -155,6 +164,61 @@ func githubPostJudgeExecs(execs []shellir.Exec, depth int, outer *githubPostWrit
 		}
 	}
 	return githubPostSite{}, false
+}
+
+// githubPostWordsOf is the words of a gh execution: gh, then each argument, an argument the reader cannot evaluate as
+// githubPostUnknownMark.
+func githubPostWordsOf(e shellir.Exec) []string {
+	words := []string{"gh"}
+	for _, a := range e.Args {
+		if a.Known {
+			words = append(words, a.Value)
+		} else {
+			words = append(words, githubPostUnknownMark)
+		}
+	}
+	return words
+}
+
+// githubPostHasPost is whether a text runs a gh command that posts (or calls the API): the mention that makes a script file a
+// target of the line rule.
+func githubPostHasPost(execs []shellir.Exec) bool {
+	for _, e := range execs {
+		if e.Kind == shellir.KindCommand && githubPostProgram(e.Name) == "gh" && githubPostPostSub(githubPostWordsOf(e)) {
+			return true
+		}
+	}
+	return false
+}
+
+// githubPostScriptLine is whether one execution of a script that holds a post is a line the rule allows: a plain command of its
+// own line that is a gh post (its form is judged by the caller) or a command of exception B. Exception B is a program named by a
+// bare word and run on literal words only: rg without --pre or --pre-glob, grep, egrep, fgrep, cat, head, tail, wc, ls, echo
+// and printf. Every other line (a gh read, git, cd, an assignment, a script or an inline program) refuses the script.
+func githubPostScriptLine(e shellir.Exec) bool {
+	if e.Kind != shellir.KindCommand || e.Inline != nil || !githubPostPlainContext(e.Ctx) || !e.Program.Known {
+		return false
+	}
+	if githubPostProgram(e.Name) == "gh" {
+		return githubPostPostSub(githubPostWordsOf(e))
+	}
+	if e.Program.Value != e.Name {
+		return false // a path names a file, not the installed program
+	}
+	switch e.Name {
+	case "rg", "grep", "egrep", "fgrep", "cat", "head", "tail", "wc", "ls", "echo", "printf":
+	default:
+		return false
+	}
+	for _, a := range e.Args {
+		if !a.Known {
+			return false
+		}
+		if e.Name == "rg" && (a.Value == "--pre" || strings.HasPrefix(a.Value, "--pre=") || a.Value == "--pre-glob" || strings.HasPrefix(a.Value, "--pre-glob=")) {
+			return false
+		}
+	}
+	return true
 }
 
 // githubPostPlainContext is whether a context is the top level of the text: no wrapper, shell, list,
@@ -220,7 +284,7 @@ func githubPostReadScript(name, cwd string) (string, bool) {
 }
 
 // githubPostJudgeWords is the rule for one gh command whose words the reader gave.
-func githubPostJudgeWords(words []string, cwd string) (githubPostSite, bool) {
+func githubPostJudgeWords(words []string, cwd githubPostDir) (githubPostSite, bool) {
 	expansion := githubPostSite{githubPostRuleExpand, githubPostWhereCommand}
 	unread := githubPostSite{githubPostRuleUnread, githubPostWhereCommand}
 	site, denied, handled := githubPostForm(words, cwd)
@@ -726,6 +790,22 @@ func githubPostIdentity(p string) string {
 		return filepath.Join(r, base)
 	}
 	return filepath.Clean(p)
+}
+
+// readsReach is whether a write of these writes, or of the texts around them, may land on one of the files a post read: a write
+// to the file by any name or link, to a directory it lies in (a copied tree), or to a destination the reader cannot name.
+func (w *githubPostWrites) readsReach(files []string) bool {
+	for x := w; x != nil; x = x.outer {
+		if x.unknown || len(x.unknownBodies) > 0 {
+			return true
+		}
+		for _, p := range files {
+			if x.reaches(p) || x.underTree(p) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // rewrites is whether the text itself writes the script file it runs (cp evil.sh post.sh && bash post.sh): the file the guard reads
