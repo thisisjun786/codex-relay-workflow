@@ -50,7 +50,7 @@
   "edits": [
     {
       "file": "SKILL.md",
-      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. Normalize frontmatter to the repository-supported name and description fields; preserve invocation description and record the removed oracle metadata. Distinguish task implementation P/C from Linear plan/check ownership and exclude the crw-run parent from implementation PABCD. Disambiguate task host-goal execution from crw-run parent goal mode beside the goal firewall. Remove the nonexistent orchestrate skill stub; keep the human chat command and the CRW CLI.",
+      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. Normalize frontmatter to the repository-supported name and description fields; preserve invocation description and record the removed oracle metadata. Distinguish task implementation P/C from Linear plan/check ownership and exclude the crw-run parent from implementation PABCD. Disambiguate task host-goal execution from crw-run parent goal mode beside the goal firewall. Remove the nonexistent orchestrate skill stub; keep the human chat command and the CRW CLI. CRW-1151: the hook hint names the condition DetectTrigger applies (PABCD marker, request verb, phase word) instead of a bare interview word.",
       "hunks": [
         {
           "line": 4,
@@ -79,6 +79,26 @@
             "goalplan or FSM, including in crw-run goal mode. A task's host goal running PABCD\n",
             "is distinct from that parent goal.\n",
             "\n"
+          ]
+        },
+        {
+          "line": 27,
+          "old": [
+            "- **Hook hint (narrow):** `UserPromptSubmit` detects `interview` / `인터뷰`\n",
+            "  and other existing lexical phase hints and injects scoped advice only. Natural\n",
+            "  hints never enter or advance a phase. A line-anchored `orchestrate i` command\n",
+            "  instead takes the existing explicit-command parser path.\n"
+          ],
+          "new": [
+            "- **Hook hint (narrow):** `UserPromptSubmit` injects scoped advice only, and only\n",
+            "  when a prompt names the PABCD marker (`crw-pabcd`, `crw:crw-pabcd`, or `pabcd로` /\n",
+            "  `pabcd phase`), a request verb (`use`, `run`, `start`, `invoke`, `enter`, `apply`,\n",
+            "  or 시작, 진행, 적용, 실행, 돌려, 써서, 으로, 들어가) and a phase word (`interview` /\n",
+            "  `인터뷰`, plan, audit, build, check, or `phase X`). A bare `인터뷰 먼저 해줘`,\n",
+            "  `interview me first` or `pabcd로 인터뷰 해줘` (no request verb) injects nothing;\n",
+            "  `Use crw-pabcd to start the interview` injects phase I. Natural hints never enter\n",
+            "  or advance a phase. A line-anchored `orchestrate i` command instead takes the\n",
+            "  existing explicit-command parser path.\n"
           ]
         },
         {
