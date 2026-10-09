@@ -296,7 +296,7 @@ func auditListDrafts(e *Env, cfg *Config) ([]auditDraftSummary, error) {
 			continue
 		}
 		path := crwconfig.JoinRoot(dir, name)
-		data, err := os.ReadFile(path)
+		data, err := auditDraftReadFile(path)
 		if err != nil {
 			return nil, err
 		}
@@ -316,7 +316,9 @@ func auditListDrafts(e *Env, cfg *Config) ([]auditDraftSummary, error) {
 			}
 			continue
 		}
-		doc, err := auditDraftLoad(path)
+		// The bytes read for the schema are the ones decoded, so a draft cannot be judged by one file
+		// and listed from another.
+		doc, err := improveAuditDraftDecode(path, data)
 		if err != nil {
 			return nil, err
 		}

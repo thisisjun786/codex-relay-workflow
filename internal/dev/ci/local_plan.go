@@ -127,7 +127,10 @@ if ! jq -e 'type == "object" and length > 0 and all(.[]; type == "object" and .r
   exit 1
 fi
 echo 'Every prerequisite job succeeded.'`
-	localCorpusCommand = `make test-part TEST_PART="${PART#test-}"`
+	// localSecretsCommand is the secrets job's scan. The script downloads the linux x64 Gitleaks archive and
+	// calls sha256sum, so a plan that carries it runs only on linux x64 (CRW-1027, merged into CRW-1025).
+	localSecretsCommand = "bash scripts/ci/secrets.sh"
+	localCorpusCommand  = `make test-part TEST_PART="${PART#test-}"`
 )
 
 // localPlan is the table: every ci.yml job, every step of it, in workflow order. A job's steps are
@@ -165,7 +168,7 @@ func localPlan() []localJob {
 	secrets := localJob{name: "secrets", legs: nil}
 	secrets.steps = append(secrets.steps, mirrorPair()...)
 	secrets.steps = append(secrets.steps, checkout)
-	secrets.steps = append(secrets.steps, localStep{name: "", kind: localRun, command: "bash scripts/ci/secrets.sh",
+	secrets.steps = append(secrets.steps, localStep{name: "", kind: localRun, command: localSecretsCommand,
 		tool: "", scope: "range", heavy: true, legs: nil, env: []string{"GITHUB_EVENT_NAME=pull_request", "PR_BASE_SHA=" + localBaseEnv}})
 	plan = append(plan, secrets)
 	skill_scripts_node := localJob{name: "skill-scripts-node", legs: nil}

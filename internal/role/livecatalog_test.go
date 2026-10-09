@@ -315,6 +315,11 @@ func TestLiveCatalogSourceIdentityAndClock(t *testing.T) {
 
 // Date.parse results recorded under UTC; numeric falsiness is separately tested through cache reads.
 func TestLiveCatalogOracleDates(t *testing.T) {
+	// Zone-less inputs ("2026/1/2", "1/2/2026", "0") are read in the local zone; pin it to the zone the
+	// recorded values were made in so a non-UTC host (TZ=Asia/Seoul) gives the same answers.
+	old := time.Local
+	time.Local = time.UTC
+	t.Cleanup(func() { time.Local = old })
 	for _, c := range []struct {
 		input string
 		ms    int64
