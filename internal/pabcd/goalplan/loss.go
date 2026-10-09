@@ -14,9 +14,10 @@ import (
 // revivalLossFile is what the write lock needs of a read besides the plan: the JSON value the file decoded to, which revivalLoss
 // judges, the text it was decoded from, which revivalLossDuplicate scans, and badByte, 1 plus the offset of the first byte that is
 // not valid UTF-8 (0 when there is none). parsed is the zero value whenever the read returned no plan; text and badByte are also
-// set for a file that parsed but did not revive, so the lock can tell stored data a write would lose from an absent plan.
+// set for a file that did not parse or did not revive, so the lock can tell stored data a write would lose from an absent plan.
 // openErr is the failure of the walk to the plan file (an absence, an access failure, a link or a wrong kind of file), and refuse
-// the reason when the text holds something a write would lose (an unpaired surrogate escape) and no plan could be built.
+// the reason when the text holds something a write would lose (an unpaired surrogate escape), whether it parsed or not, and no plan
+// could be built.
 type revivalLossFile struct {
 	parsed  any
 	text    string
@@ -47,20 +48,23 @@ func revivalLossRefusal(slug, what string) string {
 
 // revivalLossDuplicate is the path of the first key that an object of text states twice, "" when none does. Decoding keeps the last
 // value of a repeated key, so the earlier value, a whole review round list included, never reaches revivalLoss and a write would
-// erase it. text is valid JSON: the read decoded it already.
+// erase it. text may also be JSON that does not parse: the keys before its syntax error are scanned, and the scan stops there.
 func revivalLossDuplicate(text string) string {
 	dec := json.NewDecoder(strings.NewReader(text))
+	broken := false
 	var walk func(path string) string
 	walk = func(path string) string {
 		tok, err := dec.Token()
 		switch {
 		case err != nil:
+			broken = true
 			return ""
 		case tok == json.Delim('{'):
 			seen := map[string]bool{}
-			for dec.More() {
+			for !broken && dec.More() {
 				k, err := dec.Token()
 				if err != nil {
+					broken = true
 					return ""
 				}
 				key, at := k.(string), revivalLossKey(path, k.(string))
@@ -74,7 +78,7 @@ func revivalLossDuplicate(text string) string {
 			}
 			_, _ = dec.Token()
 		case tok == json.Delim('['):
-			for i := 0; dec.More(); i++ {
+			for i := 0; !broken && dec.More(); i++ {
 				if lost := walk(fmt.Sprintf("%s[%d]", path, i)); lost != "" {
 					return lost
 				}

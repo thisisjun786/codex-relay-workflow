@@ -92,12 +92,17 @@ func revivalLossReadPlan(dir *os.File, real, path, slug string) (GoalplanReadRes
 			err = fmt.Errorf("unexpected trailing JSON value")
 		}
 	}
-	if err != nil {
-		return readFailure("invalid-json", path, err.Error(), ""), revivalLossFile{}
-	}
+	surrogate := ""
 	if at := unpairedSurrogate(decoded); at >= 0 {
-		detail := fmt.Sprintf("unpaired JSON surrogate at byte %d would lose stored text", at)
-		return readFailure("unreadable", path, detail, ""), revivalLossFile{refuse: detail}
+		surrogate = fmt.Sprintf("unpaired JSON surrogate at byte %d would lose stored text", at)
+	}
+	if err != nil {
+		// Text that does not parse keeps what the write lock judges: it is the oracle's unparseable plan, which the
+		// orchestrate gate goes on from, only when nothing in it would be lost by a write (CRW-975).
+		return readFailure("invalid-json", path, err.Error(), ""), revivalLossFile{text: decoded, badByte: revivalLossBadByte(raw), refuse: surrogate}
+	}
+	if surrogate != "" {
+		return readFailure("unreadable", path, surrogate, ""), revivalLossFile{refuse: surrogate}
 	}
 	plan := reviveGoalplan(parsed, &slug)
 	if plan == nil {
@@ -114,7 +119,8 @@ func revivalLossReadPlan(dir *os.File, real, path, slug string) (GoalplanReadRes
 func UnpairedJSONSurrogate(s string) int { return unpairedSurrogate(s) }
 
 // Refuse valid JSON that encoding/json would decode lossily (data-loss exception).
-// Escaped backslashes and complete surrogate pairs keep their original meaning.
+// Escaped backslashes and complete surrogate pairs keep their original meaning. s
+// may also be text that does not parse (the write lock judges it too).
 func unpairedSurrogate(s string) int {
 	unit := func(at int) uint64 {
 		if at+6 > len(s) || s[at:at+2] != `\u` {
@@ -136,7 +142,7 @@ func unpairedSurrogate(s string) int {
 			i += 11
 		} else if n >= 0xdc00 && n <= 0xdfff {
 			return i
-		} else if s[i+1] == 'u' {
+		} else if i+1 < len(s) && s[i+1] == 'u' {
 			i += 5
 		} else {
 			i++

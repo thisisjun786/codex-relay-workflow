@@ -165,6 +165,53 @@ func TestOrchestrateCommitWithheldPlanPublishesNothing(t *testing.T) {
 	}
 }
 
+// TestOrchestrateCommitLossyMalformedPlanAfterTheGatePublishesNothing (CRW-975, verification of 8995efbd): a plan
+// that passed the unlocked gate and is then rewritten, before the lock reads it, into text that does not parse and
+// holds bytes that are not UTF-8 is a plan the writers would refuse, not the oracle's unparseable plan. The lock
+// must refuse it and the A>B edge must publish nothing. Text that does not parse and loses nothing stays fail-open
+// as the oracle's catch (orchestrate-cli.ts 606-622) does.
+func TestOrchestrateCommitLossyMalformedPlanAfterTheGatePublishesNothing(t *testing.T) {
+	cases := map[string]struct {
+		tail    string
+		refused bool
+	}{
+		"invalid UTF-8":      {"\xff", true},
+		"plain invalid JSON": {",", false},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			cwd, id := orchestrateTransitionRoot(t), "publish-lock-lossy-malformed"
+			orchestratePublishLockApproved(t, cwd, id)
+			seams := &orchestrateCommitSeams{lockGoalplan: func(cwd, slug string, fn func(*goalplan.Goalplan) (orchestrateCommitOutcome, error)) (goalplan.GoalplanWriteLockResult[orchestrateCommitOutcome], error) {
+				path := filepath.Join(cwd, ".crw", "goalplans", slug, "goalplan.json")
+				raw, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, append(raw, c.tail...), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				return goalplan.WithGoalplanWriteLock(cwd, slug, fn, nil)
+			}}
+			got := orchestrateCommitRunOK(t, cwd, seams, "B", "--session", id, "--attest", orchestrateReviewBindingAttest("pass"))
+			after := state.ReadState(cwd, id)
+			rows := orchestrateTransitionLedger(t, cwd)
+			if !c.refused {
+				if got.Code != 0 || after.Phase != state.PhaseB {
+					t.Fatalf("plain invalid JSON must stay fail-open: got=%+v phase=%v", got, after.Phase)
+				}
+				return
+			}
+			if got.Code != 1 || !strings.Contains(got.Output, "invalid UTF-8") || !strings.Contains(got.Output, "Nothing was written") {
+				t.Fatalf("a lossy malformed plan must refuse with the lock's reason: %+v", got)
+			}
+			if after.Phase != state.PhaseA || len(rows) != 0 {
+				t.Fatalf("the refused transition published: phase=%v ledgerRows=%d", after.Phase, len(rows))
+			}
+		})
+	}
+}
+
 // TestOrchestrateCommitLinkedPlanDirectoryAfterTheGateIsNotFailOpen: only an access failure is fail-open. A
 // plan directory swapped for a symbolic link between the unlocked gate read and the lock is a path-safety
 // refusal, so nothing is published; the baseline refused it as a Go error and must still.

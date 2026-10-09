@@ -8,6 +8,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 )
 
 // TestWithGoalplanWriteLockUnreadableDirectoryIsUnreadable is CRW-975 (CRW-811 review): a plan directory
@@ -139,6 +140,55 @@ func TestWithGoalplanWriteLockUnrevivablePlanThatLosesTextIsRefused(t *testing.T
 			t.Fatalf("got %+v err=%v, want unreadable without Refused", got, err)
 		}
 	})
+}
+
+// TestWithGoalplanWriteLockLossyInvalidJSONIsRefused (CRW-975, verification of 8995efbd): text that does not
+// parse is the oracle's unparseable plan, which its orchestrate gate goes on from, only when it holds nothing a
+// write would lose. Bytes that are not UTF-8, an unpaired surrogate escape or a key repeated before the syntax
+// error are refused as they are in a plan that parses; the reader's diagnostic stays invalid-json.
+func TestWithGoalplanWriteLockLossyInvalidJSONIsRefused(t *testing.T) {
+	cases := map[string]struct {
+		body    string
+		refused bool
+	}{
+		"invalid UTF-8 after the plan":           {readTestPlan + "\xff", true},
+		"invalid UTF-8 in a truncated plan":      {`{"objective":"` + "\xff", true},
+		"unpaired surrogate in a truncated plan": {`{"objective":"\ud800",`, true},
+		"repeated key before the syntax error":   {`{"objective":"keep me","objective":"o",`, true},
+		"plain invalid JSON":                     {readTestPlan + ",", false},
+		"invalid JSON ending in a backslash":     {`{"objective":"o\`, false},
+		"invalid JSON inside an array":           {`{"workPhases":[x]}`, false},
+		"invalid JSON inside an object":          {`{"host":{"a":1 x}}`, false},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			cwd, dir := readWorkspace(t)
+			writeReadFile(t, dir+"/"+GoalplanFile, c.body)
+			if d := ReadGoalplanDetailed(cwd, "demo").Diagnostic; d == nil || d.Kind != "invalid-json" {
+				t.Fatalf("the fixture must be a plan the reader cannot parse: %+v", d)
+			}
+			type answer struct {
+				got GoalplanWriteLockResult[int]
+				err error
+				ran bool
+			}
+			done := make(chan answer, 1)
+			go func() {
+				ran := false
+				got, err := WithGoalplanWriteLock(cwd, "demo", func(*Goalplan) (int, error) { ran = true; return 0, nil }, nil)
+				done <- answer{got, err, ran}
+			}()
+			var a answer
+			select {
+			case a = <-done:
+			case <-time.After(10 * time.Second):
+				t.Fatal("the write lock did not return for a plan that does not parse")
+			}
+			if a.err != nil || a.got.Kind != "unreadable" || a.got.Refused != c.refused || a.ran {
+				t.Fatalf("got %+v ran=%v err=%v, want unreadable with Refused=%v", a.got, a.ran, a.err, c.refused)
+			}
+		})
+	}
 }
 
 // TestWithGoalplanWriteLockSpecialPlanFileStaysAnError: a plan file that is a FIFO (or a link swapped in
