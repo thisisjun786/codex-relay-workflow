@@ -49,6 +49,8 @@ func TestPathlibCreateRealGate(t *testing.T) {
 		`python3 -c 'import os; exec("print(\"p.\x77rite_bytes()\")"); print(os.path.exists("{M}/n.md"))'`,
 		`python3 -c 'import os; exec("# p.\x77rite_text()\nprint(1)"); print(os.path.exists("{M}/n.md"))'`,
 		`python3 -c 'import os; exec("print(\"\x67etattr\")"); print(os.path.exists("{M}/n.md"))'`,
+		`python3 -c 'import os; exec("print(\"io\x2eopen(\x27w\x27)\")"); print(os.path.exists("{M}/n.md"))'`,
+		`python3 -c 'import os; exec("print(\"a\x5bi]\")"); print(os.path.exists("{M}/n.md"))'`,
 	}
 	for _, tmpl := range write {
 		t.Run("write "+tmpl, func(t *testing.T) {

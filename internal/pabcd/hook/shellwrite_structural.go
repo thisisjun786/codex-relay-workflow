@@ -159,6 +159,12 @@ func shellIRStructuralWriteUnknownFrom(src string, from int, python bool) bool {
 		if sp[0] < from {
 			continue
 		}
+		if from > 0 && data != nil && data[sp[0]] {
+			// In a decoded exec program (from > 0) every judged name in a comment or in string text the program never runs
+			// is data: print("p.write_text()") or a "getattr" string calls nothing. A top-level program keeps the dev reading
+			// of the write and run-time names; only touch and mkdir are masked there (CRW-951, verifier round 3).
+			continue
+		}
 		tok := src[sp[0]:sp[1]]
 		if shellIRRunTimeName(tok) {
 			return true
@@ -186,6 +192,24 @@ func shellIRStructuralWriteUnknownFrom(src string, from int, python bool) bool {
 		if python && shellIRPyUnattributedCall(src, sp, tok) {
 			return true
 		}
+	}
+	if from > 0 && data != nil {
+		// The open-mode and computed-subscript checks read a decoded exec program's code alone too: an io.open("w") or an a[i]
+		// in its string or comment text is data (CRW-951, verifier round 3). A data [ is blanked so it opens no subscript.
+		code := make([][2]int, 0, len(spans))
+		for _, sp := range spans {
+			if sp[0] < from || !data[sp[0]] {
+				code = append(code, sp)
+			}
+		}
+		spans = code
+		b := []byte(src)
+		for i := from; i < len(b); i++ {
+			if b[i] == '[' && data[i] {
+				b[i] = ' '
+			}
+		}
+		src = string(b)
 	}
 	if python && shellIRPyModeOpenOnModule(src, spans) {
 		return true
