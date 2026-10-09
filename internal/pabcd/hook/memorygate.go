@@ -71,7 +71,7 @@ func memoryGateReason(a MemoryWriteAttempt, sid, cwd string) string {
 
 func memoryGateReasonFor(a MemoryWriteAttempt, sid, cwd string, leaf bool) string {
 	prefix := "[crw MEMORY-WRITE-GATE] "
-	recovery := "Run a readable script file or `crw pabcd receipt test -- ...`."
+	recovery := "Run a readable script file."
 	if leaf {
 		recovery = "Report the blocked command and cause code to your parent."
 	}
