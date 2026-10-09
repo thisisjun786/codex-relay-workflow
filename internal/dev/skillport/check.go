@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/dev/cxccorpus"
 )
 
 // entries is the names in root/dir (without suffix), ignoring hidden temp items; a missing
@@ -33,8 +35,9 @@ func entries(root, dir, suffix string) (map[string]bool, error) {
 // problems found, each as "<path>: <what is wrong>". A ported skill is any skill of SkillsRoot but the
 // ones CRW wrote itself (OwnSkills, which share the root since the activation move, CRW-392), and any
 // record: a ported skill without a record and a record without its skill are refused. Nothing ported
-// and no record is silent. With a source it also checks that tree against the record origin and
-// renders the originals again.
+// and no record is silent, and so is a tree without the name table and without a record: staging
+// needs the table, so such a tree holds only skills of its own. With a source it also checks that
+// tree against the record origin and renders the originals again.
 func Check(root string, src *Source) (int, []string) {
 	var problems []string
 	report := func(format string, a ...any) { problems = append(problems, fmt.Sprintf(format, a...)) }
@@ -55,7 +58,7 @@ func Check(root string, src *Source) (int, []string) {
 		}
 	}
 	names := slices.Sorted(maps.Keys(set))
-	if len(names) == 0 {
+	if len(names) == 0 || len(recorded) == 0 && !hasTable(root) {
 		return 0, nil
 	}
 	sub, err := newSubstituter(root)
@@ -106,6 +109,13 @@ func Check(root string, src *Source) (int, []string) {
 		}
 	}
 	return len(names), problems
+}
+
+// hasTable reports whether root holds the name table, or anything that could be it: only a table
+// that is certainly absent counts as none.
+func hasTable(root string) bool {
+	_, err := os.Lstat(filepath.Join(root, cxccorpus.Substitution))
+	return !errors.Is(err, fs.ErrNotExist)
 }
 
 // compare is the differences between a staged tree and what its record accounts for.

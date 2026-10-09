@@ -21,6 +21,15 @@ func stagedRepo(t *testing.T, skill string) *fixtureRepo {
 func stagedRepoSource(t *testing.T, skill string) (*fixtureRepo, skillport.Source) {
 	t.Helper()
 	r, tree := validateRepo(t), newRepo(t)
+	// Beside the ported skills the plugin holds only skills CRW wrote itself: the fixture's own skill
+	// takes one of their names, as any other skill there would need a record.
+	if err := os.RemoveAll(filepath.Join(r.root, "plugins/crw/skills/example")); err != nil {
+		t.Fatal(err)
+	}
+	own := skillport.OwnSkills[0]
+	r.write("plugins/crw/skills/"+own+"/SKILL.md", "---\nname: "+own+"\ndescription: \"Do useful work\"\n---\n")
+	r.write("plugins/crw/skills/"+own+"/agents/openai.yaml", "interface:\n  display_name: \"Own\"\n"+
+		"  short_description: \"Do useful work\"\n  default_prompt: \"$"+own+" work\"\n")
 	table, err := os.ReadFile(filepath.Join(repoRoot(), "contract/schema/cxc/name-substitution.json"))
 	if err != nil {
 		t.Fatal(err)

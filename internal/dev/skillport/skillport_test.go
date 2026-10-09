@@ -226,6 +226,15 @@ func TestMissingAndUnrecordedSkills(t *testing.T) {
 	expectProblem(t, "skill renamed, record gone", k.problems(nil), "plugins/crw/skills/crw-other: ported skill has no record")
 	put(t, filepath.Join(k.root, SkillsRoot, "crw-another/SKILL.md"), "x\n", 0o644)
 	expectProblem(t, "unrecorded directory", k.problems(nil), "plugins/crw/skills/crw-another: ported skill has no record")
+	// Without the name table nothing can have been staged: a tree with neither table nor record holds
+	// only skills of its own, while a record still needs the table.
+	m := t.TempDir()
+	put(t, filepath.Join(m, SkillsRoot, "example/SKILL.md"), "x\n", 0o644)
+	if n, problems := Check(m, nil); n != 0 || len(problems) != 0 {
+		t.Errorf("no table, no record: %d, %q", n, problems)
+	}
+	put(t, filepath.Join(m, RecordDir, "example.json"), "{}\n", 0o644)
+	expectProblem(t, "a record without the table", strings.Join(func() []string { _, p := Check(m, nil); return p }(), "\n"), "name-substitution.json")
 }
 
 func TestRecordsShareAnOrigin(t *testing.T) {
