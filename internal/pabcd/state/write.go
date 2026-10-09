@@ -255,12 +255,35 @@ func writeState(cwd string, next State, now time.Time, rename func(tmp, finalPat
 // link to one).
 var errNotRegular = errors.New("the path is not a regular file")
 
-// readExisting reads the file at path for the lone-surrogate check without ever blocking on it. The open is non-blocking, so a
-// FIFO with no writer returns at once instead of waiting for one, and the descriptor is inspected before any read: only a regular
-// file is read. A directory returns EISDIR (the rename onto it fails by itself later), a missing path fs.ErrNotExist, and a FIFO,
-// device or socket (opening a socket fails with ENXIO) errNotRegular. A symbolic link is followed, as the rename's replacement
-// of it was never refused.
+// classifyBeforeOpen is the check that runs before the open: lstat the path and, for a symbolic link, stat what it points at, so
+// a FIFO, device or socket (or a link to one) is refused without ever being opened. Opening a device has effects of its own and
+// opening a FIFO releases a peer that waits on it. A dangling link reports fs.ErrNotExist, as the open would.
+func classifyBeforeOpen(path string) error {
+	fi, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if fi.Mode()&os.ModeSymlink != 0 {
+		if fi, err = os.Stat(path); err != nil {
+			return err
+		}
+	}
+	if !fi.Mode().IsRegular() && !fi.IsDir() {
+		return errNotRegular
+	}
+	return nil
+}
+
+// readExisting reads the file at path for the lone-surrogate check without ever blocking on it. The path is classified before it
+// is opened (classifyBeforeOpen); the open is then non-blocking, so a FIFO swapped in after the classification returns at once
+// instead of waiting for a writer, and the descriptor is inspected again before any read: only a regular file is read. A
+// directory returns EISDIR (the rename onto it fails by itself later), a missing path fs.ErrNotExist, and a FIFO, device or
+// socket (opening a socket fails with ENXIO) errNotRegular. A symbolic link to a regular file is followed, as the rename's
+// replacement of it was never refused.
 func readExisting(path string) ([]byte, error) {
+	if err := classifyBeforeOpen(path); err != nil {
+		return nil, err
+	}
 	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		if errors.Is(err, syscall.ENXIO) {

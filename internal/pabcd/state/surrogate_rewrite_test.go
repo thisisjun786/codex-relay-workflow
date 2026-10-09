@@ -172,3 +172,52 @@ func TestWriteStateRefusesASpecialFileWithoutBlocking(t *testing.T) {
 		}
 	}
 }
+
+// The refusal happens before the special file is opened at all. A writer blocked in open(2) on a FIFO returns as soon as any
+// reader opens it, so a writer that is still blocked after WriteState has refused shows that the FIFO (or the target of a link
+// to it) was classified without being opened; opening a device that a link points at has side effects of its own.
+func TestWriteStateRefusesASpecialFileWithoutOpeningIt(t *testing.T) {
+	for _, mode := range []string{"fifo", "symlink-to-fifo"} {
+		t.Run(mode, func(t *testing.T) {
+			cwd := t.TempDir()
+			if err := makeSessionsDir(cwd); err != nil {
+				t.Fatal(err)
+			}
+			path := StatePath(cwd, "s")
+			fifo := path
+			if mode == "symlink-to-fifo" {
+				fifo = filepath.Join(cwd, "target.fifo")
+			}
+			if err := syscall.Mkfifo(fifo, 0o666); err != nil {
+				t.Skipf("no FIFOs here: %v", err)
+			}
+			if fifo != path {
+				if err := os.Symlink(fifo, path); err != nil {
+					t.Fatal(err)
+				}
+			}
+			opened := make(chan struct{})
+			go func() {
+				if f, err := os.OpenFile(fifo, os.O_WRONLY, 0); err == nil { // blocks until a reader opens the FIFO
+					_ = f.Close()
+				}
+				close(opened)
+			}()
+			time.Sleep(100 * time.Millisecond) // let the writer reach its open
+			release := func() {
+				if f, err := os.OpenFile(fifo, os.O_RDONLY|syscall.O_NONBLOCK, 0); err == nil {
+					_ = f.Close()
+				}
+			}
+			t.Cleanup(func() { release(); <-opened })
+			if err := WriteState(cwd, State{Phase: "P", SessionID: "s"}); err == nil {
+				t.Fatal("WriteState wrote over a special file")
+			}
+			select {
+			case <-opened:
+				t.Fatal("WriteState opened the special file before refusing it")
+			case <-time.After(200 * time.Millisecond):
+			}
+		})
+	}
+}
