@@ -1501,3 +1501,11 @@ fix round after verification of 632401ae (P1 escaped literal read as match-all)	
 fix round after verification of 632401ae (P1 escaped literal read as match-all)	find .. -maxdepth 0 -regex '.*\.' -exec rm -rf {} +	CRW-895-x6	row	-
 fix round after verification of 632401ae (P1 escaped literal read as match-all)	find ../repo -regex '.*' -delete	CRW-895-x7	row	-
 fix round after verification of 632401ae (P1 escaped literal read as match-all)	find ../repo -regex '\(.*\)' -delete	CRW-895-x8	row	-
+CRW-910 pre-merge evaluation 39c72966 (d1: second -C operand)	env -C sub -C . rm -rf ../repo	CRW-910-E01	row	-
+CRW-910 pre-merge evaluation 39c72966 (d1: second --chdir operand)	env --chdir=sub --chdir=. rm -rf ../repo	CRW-910-E02	row	-
+CRW-910 pre-merge evaluation 39c72966 (d2: find {} in env -C, memory root)	find {MEMORY} -maxdepth 0 -exec env -C '{}' sh -c 'echo x > a' \;	CRW-910-E03	row	-
+CRW-910 pre-merge evaluation 39c72966 (d2: find {} in env -C, checkout)	find {CHECKOUT} -maxdepth 0 -exec env -C '{}' rm -rf . \;	CRW-910-E04	row	-
+CRW-910 pre-merge evaluation 39c72966 (control of d2)	find . -maxdepth 0 -exec env -C sub ls \;	CRW-910-E05	row	-
+CRW-910 pre-merge evaluation 39c72966 (d3: redirect in outer dir, control)	env -C {MEMORY} ls > out.txt	CRW-910-E06	row	-
+CRW-910 pre-merge evaluation 39c72966 (d3: redirect into memory root by name)	env -C {CHECKOUT} ls > {MEMORY}/out.txt	CRW-910-E07	row	-
+CRW-910 pre-merge evaluation 39c72966 (d3: redirect in memory outer dir)	cd {MEMORY} && env -C {CHECKOUT} ls > out.txt	CRW-910-E08	row	-
