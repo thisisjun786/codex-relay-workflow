@@ -1243,7 +1243,7 @@ func TestPumpReview776LegacyMembershipCompletionNeverReplaces(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(sent, "aaaaaaaaaaaaaaaa.txt"), []byte("earlier"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := pumpReview776QueueMoveByName(dir, []string{"aaaaaaaaaaaaaaaa.txt"}); err != nil {
+	if err := pumpReview776QueueMoveByName(context.Background(), dir, []string{"aaaaaaaaaaaaaaaa.txt"}); err != nil {
 		t.Fatal(err)
 	}
 	if raw, err := os.ReadFile(filepath.Join(sent, "aaaaaaaaaaaaaaaa.txt")); err != nil || string(raw) != "earlier" {

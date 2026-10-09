@@ -184,7 +184,8 @@ func pumpOverlapShapes() []pumpOverlapShape {
 	return []pumpOverlapShape{
 		{
 			// The reviewer's reproduction: a and c were written again after both attempts, b was not, so
-			// both records carried b alone.
+			// both records carried b alone. Neither record can prove the text b holds is the text it sent
+			// (its digest covers a's and c's old texts, which are gone), so an accepted answer holds b.
 			name: "same-members",
 			notices: []pumpOverlapNotice{
 				{pumpOverlapA, "A-new-after-both", time.Minute},
@@ -234,6 +235,19 @@ func pumpOverlapShapes() []pumpOverlapShape {
 			},
 		},
 		{
+			// A record over [a b] whose a was written again after it carried b by time only; the record over
+			// [b] alone carries b's text on disk and proves or disproves a delivery of it by itself.
+			name: "partial-and-whole",
+			notices: []pumpOverlapNotice{
+				{pumpOverlapA, "A-new-after-both", time.Minute},
+				{pumpOverlapB, "B-partial-and-whole", -time.Minute},
+			},
+			records: []pumpOverlapRecord{
+				{[]string{pumpOverlapA, pumpOverlapB}, []string{"A-old", "B-partial-and-whole"}, 0, []string{pumpOverlapB}},
+				{[]string{pumpOverlapB}, []string{"B-partial-and-whole"}, 0, []string{pumpOverlapB}},
+			},
+		},
+		{
 			name: "nested3",
 			notices: []pumpOverlapNotice{
 				{pumpOverlapA, "A-nested3", -time.Minute},
@@ -262,6 +276,18 @@ func pumpOverlapShapes() []pumpOverlapShape {
 	}
 }
 
+// pumpOverlapShapeNamed is the overlap shape with the given name.
+func pumpOverlapShapeNamed(t *testing.T, name string) pumpOverlapShape {
+	t.Helper()
+	for _, shape := range pumpOverlapShapes() {
+		if shape.name == name {
+			return shape
+		}
+	}
+	t.Fatalf("no overlap shape %q", name)
+	return pumpOverlapShape{}
+}
+
 // pumpOverlapCombos is every assignment of a receipt kind to n records.
 func pumpOverlapCombos(n int) [][]string {
 	combos := [][]string{{}}
@@ -277,16 +303,42 @@ func pumpOverlapCombos(n int) [][]string {
 	return combos
 }
 
-// pumpOverlapCoverage classifies each notice under one receipt assignment: delivered when a record
-// that carried it answers accepted, pending when none does and one that carried it is undetermined,
-// free otherwise (every record that carried it says it never went, or none carried it).
-func pumpOverlapCoverage(shape pumpOverlapShape, kinds []string) (delivered, pending map[string]bool) {
-	delivered, pending = map[string]bool{}, map[string]bool{}
+// pumpOverlapProvable reports whether a record proves which text it sent: it carried every member of
+// its set and each member's text on disk is the text it sent. A record that carried only some members
+// (the others were written again after it) cannot: its digest covers texts that are gone, and a member
+// older than its stamp may still have been replaced after the old pump read it.
+func pumpOverlapProvable(shape pumpOverlapShape, record pumpOverlapRecord) bool {
+	if len(record.carries) != len(record.names) {
+		return false
+	}
+	onDisk := map[string]string{}
+	for _, notice := range shape.notices {
+		onDisk[notice.name] = notice.text
+	}
+	for i, name := range record.names {
+		if onDisk[name] != record.texts[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// pumpOverlapCoverage classifies each notice under one receipt assignment: delivered when a provable
+// record that carried it answers accepted; pending when it is not delivered and a record that carried
+// it is undetermined; held when neither, and a record that cannot prove its text answers accepted; free
+// otherwise (every record that carried it says it never went, or none carried it).
+func pumpOverlapCoverage(shape pumpOverlapShape, kinds []string) (delivered, pending, held map[string]bool) {
+	delivered, pending, held = map[string]bool{}, map[string]bool{}, map[string]bool{}
 	for i, record := range shape.records {
+		provable := pumpOverlapProvable(shape, record)
 		for _, name := range record.carries {
 			switch kinds[i] {
 			case pumpOverlapAccepted:
-				delivered[name] = true
+				if provable {
+					delivered[name] = true
+				} else {
+					held[name] = true
+				}
 			case pumpOverlapUnknown, pumpOverlapUnreachable:
 				pending[name] = true
 			}
@@ -294,8 +346,12 @@ func pumpOverlapCoverage(shape pumpOverlapShape, kinds []string) (delivered, pen
 	}
 	for name := range delivered {
 		delete(pending, name)
+		delete(held, name)
 	}
-	return delivered, pending
+	for name := range pending {
+		delete(held, name)
+	}
+	return delivered, pending, held
 }
 
 // pumpOverlapSentCount is how many deliveries the fake bridge saw that carried text.
@@ -310,9 +366,10 @@ func pumpOverlapSentCount(t *testing.T, log, text string) int {
 
 // pumpOverlapRun sets one shape up, runs rounds of the queue under the first receipt assignment,
 // checks I1 and I2, then settles every undetermined receipt (unknown turns accepted, unreachable
-// turns not_attempted), runs more rounds and checks I1 and I3: a notice an attempt delivered is
-// never sent and is completed, every other notice is sent exactly once, and nothing stays queued or
-// pinned.
+// turns not_attempted), runs more rounds and checks I1 and I3: a notice a provable attempt delivered
+// is never sent and is completed, a notice only an attempt that cannot prove its text delivered is
+// never sent and stays queued under a held pin (and the thread waits behind it), every other notice
+// is sent exactly once, and nothing else stays queued or pinned.
 func pumpOverlapRun(t *testing.T, shape pumpOverlapShape, kinds []string) {
 	now := pumpTestNow
 	e := pumpTestEnv(t, &now)
@@ -354,7 +411,8 @@ func pumpOverlapRun(t *testing.T, shape pumpOverlapShape, kinds []string) {
 	}
 
 	flush(3)
-	delivered, pending := pumpOverlapCoverage(shape, kinds)
+	delivered, pending, held := pumpOverlapCoverage(shape, kinds)
+	waits := len(pending) > 0 || len(held) > 0
 	for _, notice := range shape.notices {
 		sent := pumpOverlapSentCount(t, log, notice.text)
 		switch {
@@ -372,17 +430,25 @@ func pumpOverlapRun(t *testing.T, shape pumpOverlapShape, kinds []string) {
 			if !queued(notice.name) {
 				t.Errorf("I2: %s left the queue while an attempt that carried it is undetermined", notice.name)
 			}
-		default:
-			if sent > 1 {
-				t.Errorf("I3: %s was sent %d times", notice.name, sent)
+		case held[notice.name]:
+			if sent != 0 || completed(notice.name) || !queued(notice.name) {
+				t.Errorf("I1 (unprovable): %s was sent %d times, completed %v, queued %v; want held in the queue", notice.name, sent, completed(notice.name), queued(notice.name))
 			}
-			if len(pending) == 0 && (sent != 1 || !completed(notice.name)) {
+		default:
+			if waits && (sent != 0 || !queued(notice.name)) {
+				t.Errorf("I3: %s was sent %d times (queued %v) while the thread waits", notice.name, sent, queued(notice.name))
+			}
+			if !waits && (sent != 1 || !completed(notice.name)) {
 				t.Errorf("I3: %s was sent %d times (sent/ %v), want exactly once", notice.name, sent, completed(notice.name))
 			}
 		}
 	}
-	if _, pinned := pumpReview776QueueAttempt(t, cfg, thread); pinned != (len(pending) > 0) {
-		t.Errorf("after the first rounds the pin is present=%v, want %v (pending %v)", pinned, len(pending) > 0, pending)
+	pin, pinned := pumpReview776QueueAttempt(t, cfg, thread)
+	if pinned != waits {
+		t.Errorf("after the first rounds the pin is present=%v, want %v (pending %v, held %v)", pinned, waits, pending, held)
+	}
+	if isHeld, _ := pin["held"].(bool); isHeld != (len(pending) == 0 && len(held) > 0) {
+		t.Errorf("after the first rounds the pin held=%v (pending %v, held %v)", isHeld, pending, held)
 	}
 	if t.Failed() {
 		return
@@ -404,25 +470,37 @@ func pumpOverlapRun(t *testing.T, shape pumpOverlapShape, kinds []string) {
 		final[i] = settled[id]
 	}
 	flush(3)
-	delivered, _ = pumpOverlapCoverage(shape, final)
+	delivered, _, held = pumpOverlapCoverage(shape, final)
 	for _, notice := range shape.notices {
 		sent := pumpOverlapSentCount(t, log, notice.text)
-		if delivered[notice.name] {
+		switch {
+		case delivered[notice.name]:
 			if sent != 0 {
 				t.Errorf("I1: %s was delivered by a pre-change attempt and sent again %d times", notice.name, sent)
 			}
-		} else if sent != 1 {
-			t.Errorf("I3: %s was sent %d times, want exactly once", notice.name, sent)
-		}
-		if !completed(notice.name) || queued(notice.name) {
-			t.Errorf("%s is not completed at the end (sent/ %v, queued %v)", notice.name, completed(notice.name), queued(notice.name))
+			if !completed(notice.name) || queued(notice.name) {
+				t.Errorf("%s is not completed at the end (sent/ %v, queued %v)", notice.name, completed(notice.name), queued(notice.name))
+			}
+		case len(held) > 0:
+			// A held pin keeps the thread: the notice it holds and every other one wait, unsent and queued.
+			if sent != 0 || completed(notice.name) || !queued(notice.name) {
+				t.Errorf("%s was sent %d times, completed %v, queued %v behind a held pin", notice.name, sent, completed(notice.name), queued(notice.name))
+			}
+		default:
+			if sent != 1 {
+				t.Errorf("I3: %s was sent %d times, want exactly once", notice.name, sent)
+			}
+			if !completed(notice.name) || queued(notice.name) {
+				t.Errorf("%s is not completed at the end (sent/ %v, queued %v)", notice.name, completed(notice.name), queued(notice.name))
+			}
 		}
 	}
-	if names := pumpQueueTestNames(t, cfg, thread); len(names) != 0 {
-		t.Errorf("notices left queued at the end: %v", names)
+	pin, pinned = pumpReview776QueueAttempt(t, cfg, thread)
+	if pinned != (len(held) > 0) {
+		t.Errorf("at the end the pin is present=%v, want %v (held %v): %v", pinned, len(held) > 0, held, pin)
 	}
-	if pin, pinned := pumpReview776QueueAttempt(t, cfg, thread); pinned {
-		t.Errorf("a pin is left at the end: %v", pin)
+	if isHeld, _ := pin["held"].(bool); isHeld != (len(held) > 0) {
+		t.Errorf("at the end the pin held=%v, want %v", isHeld, len(held) > 0)
 	}
 	if t.Failed() {
 		t.Logf("%s; texts %v; receipts %v then %v; deliveries %q", pumpOverlapDescribe(shape), texts, kinds, final, pumpQueueTestSentMessages(t, log))
@@ -446,9 +524,10 @@ func TestPumpQueueOverlappingLegacyRecordsKeepTheInvariants(t *testing.T) {
 
 // The reviewer's reproduction, by name: two unsettled records over [a b] and [a b c], a and c written
 // again after both, b not. The longer record's receipt says it never went, the shorter one's says it
-// was delivered. b must not be sent again; a and c are new notices and go once.
+// was delivered. b must not be sent again. The shorter record carried b by time only and cannot prove
+// b's text is the one it sent, so b is held rather than completed, and a and c wait behind the held pin.
 func TestPumpQueueOverlappingUnsettledRecordsNeverResendADeliveredMember(t *testing.T) {
-	pumpOverlapRun(t, pumpOverlapShapes()[0], []string{pumpOverlapAccepted, pumpOverlapNotAttempted})
+	pumpOverlapRun(t, pumpOverlapShapeNamed(t, "same-members"), []string{pumpOverlapAccepted, pumpOverlapNotAttempted})
 }
 
 // A bridge that cannot be started answers no receipt, so every overlapping record is undetermined:
@@ -459,7 +538,7 @@ func TestPumpQueueOverlappingLegacyRecordsHoldWhileTheBridgeIsDown(t *testing.T)
 	e := pumpTestEnv(t, &now)
 	bridge, receiptsPath, log := pumpOverlapBridge(t)
 	cfg := pumpTestConfig(t, bridge)
-	shape := pumpOverlapShapes()[5]
+	shape := pumpOverlapShapeNamed(t, "mixed3")
 	thread := "parent-1"
 	dir := filepath.Join(cfg.StateDir, pumpQueueDir, thread)
 	stamp := now.Add(-time.Hour)

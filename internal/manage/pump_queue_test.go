@@ -767,6 +767,55 @@ func TestPumpQueueRoundCancelledMidwayChangesNothingAfterwards(t *testing.T) {
 				t.Fatal(err)
 			}
 		}},
+		{"accepted pin over several notices", func(t *testing.T, cfg *Config) {
+			// The cancellation can land between any two of the moves; nothing after it moves and the pin stays.
+			names := []string{"aaaaaaaaaaaaaaaa.txt", "bbbbbbbbbbbbbbbb.txt", "cccccccccccccccc.txt", "dddddddddddddddd.txt"}
+			var texts []string
+			for _, name := range names {
+				pumpQueueTestNotice(t, cfg, "parent-1", name, name[:1]+"-body")
+				texts = append(texts, name[:1]+"-body")
+			}
+			pumpQueueTestPin(t, cfg, "parent-1", "acceptedid", names, texts)
+			st := pumpTestReadStatePtr(t, cfg)
+			pin := st.QueueAttempt["parent-1"]
+			pin.Accepted = true
+			st.QueueAttempt["parent-1"] = pin
+			if err := st.pumpSave(cfg); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"third refusal over several notices", func(t *testing.T, cfg *Config) {
+			names := []string{"aaaaaaaaaaaaaaaa.txt", "bbbbbbbbbbbbbbbb.txt", "cccccccccccccccc.txt"}
+			var texts []string
+			for _, name := range names {
+				pumpQueueTestSetTime(t, pumpQueueTestNotice(t, cfg, "parent-1", name, name[:1]+"-body"), pumpTestNow.Add(-time.Hour))
+				texts = append(texts, name[:1]+"-body")
+			}
+			pumpQueueTestPin(t, cfg, "parent-1", "pinid-r2", names, texts)
+			st := pumpTestReadStatePtr(t, cfg)
+			pin := st.QueueAttempt["parent-1"]
+			pin.Base = "pinid"
+			st.QueueAttempt["parent-1"] = pin
+			st.QueueRefused["parent-1"] = pumpQueueRefusal{ID: "pinid", Count: 2}
+			if err := st.pumpSave(cfg); err != nil {
+				t.Fatal(err)
+			}
+			if err := deliverSave(cfg, deliverRecord{LogicalID: "pinid-r2", RequestID: "pinid-r2", Tool: deliverToolSend, TargetThread: "parent-1",
+				MessageSHA256: deliverMessageSHA256(pumpReview776QueueBody(texts)), CreatedAt: pumpQueueTestStamp(pumpTestNow.Add(-30 * time.Minute)), State: deliverStateRefused}); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"pre-pin accepted membership over several notices", func(t *testing.T, cfg *Config) {
+			names := []string{"aaaaaaaaaaaaaaaa.txt", "bbbbbbbbbbbbbbbb.txt", "cccccccccccccccc.txt"}
+			for _, name := range names {
+				pumpQueueTestNotice(t, cfg, "parent-1", name, name[:1]+"-body")
+			}
+			st := pumpTestReadStatePtr(t, cfg)
+			st.QueueAccepted["parent-1"] = names
+			if err := st.pumpSave(cfg); err != nil {
+				t.Fatal(err)
+			}
+		}},
 	}
 	for _, sc := range scenarios {
 		t.Run(sc.name, func(t *testing.T) {
@@ -895,10 +944,14 @@ func pumpQueuePartialSetup(t *testing.T, cfg *Config, state string) time.Time {
 	return stamp
 }
 
-// An accepted pre-change record over two names where the producer later replaced only one of them:
-// the unchanged member was carried by the accepted attempt and is completed, never sent under a new
-// id, while the replaced member is a notice the attempt never carried and is delivered on its own.
-func TestPumpQueuePartiallyReplacedAcceptedLegacyRecordCompletesTheUnchangedMember(t *testing.T) {
+// An accepted pre-change record over two names where the producer later replaced only one of them.
+// The unchanged member is older than the record by its modification time, but that is no proof the
+// attempt carried the text it holds now: the old pump read the queue some time before the delivery
+// core stamped the record, and the record's digest covers the replaced member's old text, which is
+// gone. The record therefore cannot show which text it delivered, the case the decided rule answers
+// with Held: nothing is sent (it may have gone) and nothing is archived (it may not have), and the log
+// names the hold for the operator.
+func TestPumpQueuePartiallyReplacedAcceptedLegacyRecordHoldsTheThread(t *testing.T) {
 	now := pumpTestNow
 	e := pumpTestEnv(t, &now)
 	bridge, log := deliverFakeBridge(t, []map[string]any{
@@ -907,34 +960,44 @@ func TestPumpQueuePartiallyReplacedAcceptedLegacyRecordCompletesTheUnchangedMemb
 	})
 	cfg := pumpTestConfig(t, bridge)
 	pumpQueuePartialSetup(t, cfg, deliverStateAccepted)
-	for round := 0; round < 2; round++ {
+	pumpQueuePartialHeld(t, e, cfg, log)
+}
+
+// pumpQueuePartialHeld runs rounds over pumpQueuePartialSetup's queue and checks the thread is held:
+// nothing was sent, both notices are still queued and none reached sent/, the pin holds and the log
+// names the hold.
+func pumpQueuePartialHeld(t *testing.T, e *Env, cfg *Config, log string) {
+	t.Helper()
+	for round := 0; round < 3; round++ {
 		if err := pumpQueueFlush(context.Background(), e, cfg, pumpTestReadStatePtr(t, cfg), pumpSettingsFrom(cfg), false); err != nil {
 			t.Fatal(err)
 		}
 	}
 	dir := filepath.Join(cfg.StateDir, pumpQueueDir, "parent-1")
-	messages := pumpQueueTestSentMessages(t, log)
-	for _, message := range messages {
-		if strings.Contains(message, "B-already-delivered") {
-			t.Errorf("the member the accepted attempt carried was delivered again: %q", message)
-		}
-	}
-	if len(messages) != 1 || !strings.Contains(messages[0], "A2-after-the-attempt") {
-		t.Errorf("the replaced member was not delivered on its own: %q", messages)
+	if messages := pumpQueueTestSentMessages(t, log); len(messages) != 0 {
+		t.Errorf("a notice was sent from a record that cannot prove its text: %q", messages)
 	}
 	for _, name := range []string{"aaaaaaaaaaaaaaaa.txt", "bbbbbbbbbbbbbbbb.txt"} {
-		if _, err := os.Stat(filepath.Join(dir, pumpSentDir, name)); err != nil {
-			t.Errorf("the notice %s did not reach sent/: %v", name, err)
+		if _, err := os.Stat(filepath.Join(dir, pumpSentDir, name)); err == nil {
+			t.Errorf("the notice %s reached sent/ without a delivery anyone can prove", name)
+		}
+		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+			t.Errorf("the notice %s left the queue: %v", name, err)
 		}
 	}
-	if _, ok := pumpReview776QueueAttempt(t, cfg, "parent-1"); ok {
-		t.Errorf("a pin survived the two rounds")
+	if pin, ok := pumpReview776QueueAttempt(t, cfg, "parent-1"); !ok || pin["held"] != true {
+		t.Errorf("the thread is not held: %v", pin)
+	}
+	if !strings.Contains(pumpQueueTestLog(t, cfg), "legacy_unprovable_hold") {
+		t.Errorf("no legacy_unprovable_hold line in the log:\n%s", pumpQueueTestLog(t, cfg))
 	}
 }
 
 // An unsettled pre-change record over two names where only one was replaced is reconciled through
-// the bridge's receipt. The receipt says the attempt went: the unchanged member is completed and not
-// sent under a new id, and the replaced member is delivered on its own afterwards.
+// the bridge's receipt alone. The receipt says the attempt went, but the record cannot show which text
+// of the unchanged member it carried, so the thread is held: the member is neither sent again nor
+// archived. (A receipt that says it never went sends both notices once: see
+// TestPumpQueuePartlyReplacedLegacyRecordIsNoProofOfTheText.)
 func TestPumpQueuePartiallyReplacedUnsettledLegacyRecordIsReconciled(t *testing.T) {
 	now := pumpTestNow
 	e := pumpTestEnv(t, &now)
@@ -945,23 +1008,7 @@ func TestPumpQueuePartiallyReplacedUnsettledLegacyRecordIsReconciled(t *testing.
 	})
 	cfg := pumpTestConfig(t, bridge)
 	pumpQueuePartialSetup(t, cfg, deliverStateUnknown)
-	for round := 0; round < 3; round++ {
-		if err := pumpQueueFlush(context.Background(), e, cfg, pumpTestReadStatePtr(t, cfg), pumpSettingsFrom(cfg), false); err != nil {
-			t.Fatal(err)
-		}
-	}
-	dir := filepath.Join(cfg.StateDir, pumpQueueDir, "parent-1")
-	for _, message := range pumpQueueTestSentMessages(t, log) {
-		if strings.Contains(message, "B-already-delivered") {
-			t.Errorf("the member the unsettled attempt carried was delivered under a new id: %q", message)
-		}
-	}
-	if _, err := os.Stat(filepath.Join(dir, pumpSentDir, "bbbbbbbbbbbbbbbb.txt")); err != nil {
-		t.Errorf("the unchanged member was not completed from the receipt: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(dir, pumpSentDir, "aaaaaaaaaaaaaaaa.txt")); err != nil {
-		t.Errorf("the replaced member was not delivered afterwards: %v", err)
-	}
+	pumpQueuePartialHeld(t, e, cfg, log)
 }
 
 // A refused batch's third refusal moves its notice into refused/; a process that died after the

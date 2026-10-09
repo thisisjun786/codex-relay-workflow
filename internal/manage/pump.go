@@ -156,8 +156,9 @@ type pumpReview776QueuePin struct {
 	// Such an attempt is reconciled through the bridge's own receipt instead of being replayed with
 	// the text on disk, which a notice the producer replaced no longer matches.
 	// A legacy pin without digests cannot prove which notices the attempt carried and holds the thread
-	// when the receipt says it went. One that carries digests names only the members written before
-	// the attempt, so an accepted receipt completes exactly those.
+	// when the receipt says it went. An overlap pin carries digests only to tell a notice the producer
+	// wrote again from the one the records were matched against; a notice is completed only when a
+	// record that proves its text shows it delivered.
 	Legacy bool `json:"legacy,omitempty"`
 	// Held marks a pin whose pre-change attempt the ledger accepted but whose text is not
 	// recoverable. The attempt covered the pin's names, so completing them by name could archive a
@@ -175,9 +176,10 @@ type pumpReview776QueuePin struct {
 
 // pumpReview776QueueLegacyRef is one pre-change record of an overlap pin: its logical id and the
 // notices it carried, those of its set that were not written again after it. Unprovable marks a
-// record over a whole set whose text is not the text on disk, so an accepted answer cannot show which
-// queued notice it carried: a notice only such a record shows delivered is held instead of completed,
-// while a notice another, provable record shows delivered is still completed.
+// record that cannot prove which text it carried -- one that carried only part of its set, or one over
+// a whole set whose text is not the text on disk -- so an accepted answer cannot show which queued text
+// it delivered: a notice only such a record shows delivered is held instead of completed, while a
+// notice another, provable record shows delivered is still completed.
 type pumpReview776QueueLegacyRef struct {
 	LogicalID  string   `json:"logical_id"`
 	Names      []string `json:"names"`
