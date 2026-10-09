@@ -127,6 +127,46 @@ func requestClauses(s string) []string {
 	}
 }
 
+// unfencedLines are the trimmed nonempty lines of the prompt outside a code fence. A fence opens with three or more backticks
+// or tildes and closes with a line of the same character, at least as long, and nothing else; a different fence character
+// inside it is text. CRW-1084 (port: fixed): the oracle knew only the backtick fence (hook.ts:236-322), so a tilde example of a
+// request was read as one.
+func unfencedLines(prompt string) []string {
+	var out []string
+	var fence byte
+	fenceLen := 0
+	for _, raw := range text.SplitLines(prompt) {
+		line := text.Trim(raw)
+		if c, n := fenceRun(line); n >= 3 {
+			switch {
+			case fence == 0:
+				fence, fenceLen = c, n
+				continue
+			case c == fence && n >= fenceLen && strings.Trim(line, string(fence)) == "":
+				fence, fenceLen = 0, 0
+				continue
+			}
+		}
+		if fence != 0 || line == "" {
+			continue
+		}
+		out = append(out, line)
+	}
+	return out
+}
+
+// fenceRun is the fence character the line opens with and the length of its run, or zero.
+func fenceRun(line string) (byte, int) {
+	if line == "" || line[0] != '`' && line[0] != '~' {
+		return 0, 0
+	}
+	n := 0
+	for n < len(line) && line[n] == line[0] {
+		n++
+	}
+	return line[0], n
+}
+
 // requestLines keeps only clauses that can carry an advisory request. Quoted
 // examples, lists, fences, explanatory leads and mode negations stay silent.
 func requestLines(prompt string) []string {
@@ -134,14 +174,8 @@ func requestLines(prompt string) []string {
 	explain := detectorRE(`^(?:(?:please|좀)\s+)?(?:explain|describe|how do|how to|what is|what does|why)\b|^(?:좀\s*)?(?:설명|어떻게|뭐야)`)
 	lead, tail := detectorRE(negatedLead), detectorRE(negatedTail)
 	var result []string
-	fenced := false
-	for _, raw := range text.SplitLines(prompt) {
-		line := text.Trim(raw)
-		if strings.HasPrefix(line, "```") {
-			fenced = !fenced
-			continue
-		}
-		if fenced || line == "" || skip.MatchString(line) {
+	for _, line := range unfencedLines(prompt) {
+		if skip.MatchString(line) {
 			continue
 		}
 		explanatory := explain.MatchString(foldASCII(line))
@@ -273,4 +307,54 @@ func DetectMemoryWriteRequest(prompt string) bool {
 		}
 	}
 	return memoryDestination(p)
+}
+
+// LoopArmScope is what a loop-arm request says about its scope (CRW-1084).
+type LoopArmScope int
+
+const (
+	// LoopScopeNone names no project and no current-task implementation: the request is about the task at hand, and the
+	// implementation recipe is its answer.
+	LoopScopeNone LoopArmScope = iota
+	// LoopScopeProject names a project or a coordination of children, which crw-run owns (goal mode where a parent goal was
+	// asked for) and the project parent never runs as a loop.
+	LoopScopeProject
+	// LoopScopeCurrentTask asks, in so many words, to implement a task in this session. The session is then the task's
+	// implementer and not the project parent, which is the one exception goal-mode.md makes.
+	LoopScopeCurrentTask
+)
+
+// PromptRole is what the relay registry says this session is. The hook reads it only through a verified registry read; a
+// session with no such evidence is PromptRoleUnknown, and a project link never makes it a parent.
+type PromptRole string
+
+// The roles a verified registry read can report.
+const (
+	PromptRoleUnknown PromptRole = ""
+	PromptRoleParent  PromptRole = "parent"
+	PromptRoleTask    PromptRole = "task"
+)
+
+// ClassifyLoopArmScope reads the scope words of a prompt that has already been found to ask for a loop. It is lexical: a
+// current-task implementation needs both an implement verb and a this/current session, task or issue; a project is the word
+// "project", a Linear project link or a coordination word. The current-task exception wins over a project mention.
+func ClassifyLoopArmScope(prompt string) LoopArmScope {
+	skip := detectorRE(`^(?:>|[-*] |\d+[.)] )`)
+	var lines []string
+	for _, line := range unfencedLines(prompt) {
+		if !skip.MatchString(line) {
+			lines = append(lines, foldASCII(line))
+		}
+	}
+	folded := strings.Join(lines, "\n")
+	implement := detectorRE(`\b(?:implement|build|fix|code|develop|work\s+on)\b|구현|고쳐|수정|개발|작업해`)
+	current := detectorRE(`\b(?:this|current|my)\s+(?:session|task|issue|thread|worktree|checkout)\b|\bin\s+the\s+current\s+(?:session|thread)\b|(?:이|현재)\s*(?:세션|작업|이슈|태스크|스레드)|지금\s*세션`)
+	if implement.MatchString(folded) && current.MatchString(folded) {
+		return LoopScopeCurrentTask
+	}
+	project := detectorRE(`\bprojects?\b|프로젝트|linear\.app/\S+/project/|\bcoordinat\w*|\bchild(?:ren)?\b|\bsupervis\w*|조정|부모|자식|감독`)
+	if project.MatchString(folded) {
+		return LoopScopeProject
+	}
+	return LoopScopeNone
 }

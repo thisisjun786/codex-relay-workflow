@@ -189,7 +189,8 @@ func TestDetectorsOracle(t *testing.T) {
 		{"Uſe crw-loop", "", false, false, false},
 		{"1) Run crw-loop", "", false, false, false},
 		{"* Run crw-loop", "", false, false, false},
-		{"~~~\nRun crw-loop\n~~~", "", true, false, false},
+		// CRW-1084 (port: fixed): a tilde fence is a fence; the oracle read this example as a request.
+		{"~~~\nRun crw-loop\n~~~", "", false, false, false},
 		{"Do not run crw-loop but start crw-loop", "", true, false, false},
 		{"crw-loop 금지 하지만 crw-pabcd로 계획 진행해", "P", false, false, false},
 		{"don't Run crw-loop", "", false, false, false},
@@ -280,7 +281,7 @@ func TestRequestLines(t *testing.T) {
 		{"", []string{}},
 		{"\ufeff  Run crw-loop\r\n", []string{"Run crw-loop"}},
 		{"```ts\nRun crw-loop\n```\nUse crw-pabcd to plan", []string{"Use crw-pabcd to plan"}},
-		{"~~~\nRun crw-loop\n~~~", []string{"~~~", "Run crw-loop", "~~~"}},
+		{"~~~\nRun crw-loop\n~~~", []string{}}, // CRW-1084 (port: fixed): the oracle listed all three lines
 		{"> Run crw-loop\n- Run crw-loop\n* Run crw-loop\n1) Run crw-loop\n2. Run crw-loop", []string{}},
 		{"Please explain how to run crw-loop", []string{}},
 		{"좀 설명해 crw-loop으로 진행", []string{}},

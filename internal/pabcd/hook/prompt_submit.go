@@ -190,16 +190,35 @@ func promptSubmitHandleWith(p PromptSubmitPayload, platform string, env host.Loo
 		// throwing does (cli.ts's generic catch answers nothing); a write this port's rewrite guard
 		// skipped still answers the mandate, because the oracle has no such guard and would have
 		// written and answered there.
+		//
+		// CRW-1084 (port: fixed): a loop request that names a project, or that a session registered as a project parent makes,
+		// is a scope choice before it is an implementation, and the answer is the short scope pointer, not the recipe. The
+		// request is the project parent's to route to crw-run (goal-mode.md), and the recipe's create_goal, loop init and
+		// orchestrate P are what it must not run for itself. The oracle emitted the recipe for every loop request that was
+		// not negated. The pointer arms nothing, so it does not set loopArmSeen; it records the turn so the same turn is
+		// not answered twice. An explicit request to implement a task in this session keeps the recipe, as a session the
+		// registry reports as a dispatched task does, and a request that names no project (the single-task loop) is
+		// unchanged. The role comes only from a verified registry read (CRW-386); with none it is unknown and a project link
+		// never makes it a parent.
+		role := promptSubmitRole(seams, p.Cwd, p.SessionID)
+		scope := ClassifyLoopArmScope(p.Prompt)
+		pointer := scope != LoopScopeCurrentTask && role != PromptRoleTask && (role == PromptRoleParent || scope == LoopScopeProject)
 		if promptSubmitWriteState(lock, p.Cwd, p.SessionID, func(fresh *state.State) bool {
-			fresh.LoopArmSeen = true
-			if turn != "" && !slices.Contains(fresh.InjectedTurns, turn) {
+			if !pointer {
+				fresh.LoopArmSeen = true
+			}
+			recorded := turn != "" && !slices.Contains(fresh.InjectedTurns, turn)
+			if recorded {
 				fresh.InjectedTurns = promptSubmitAppendTurn(fresh.InjectedTurns, turn)
 			}
-			return true
+			return !pointer || recorded
 		}) == promptSubmitFailed {
 			return ""
 		}
 		parts := []string{ResolveCRWInDirective(LoopArmDirective(platform), env)}
+		if pointer {
+			parts[0] = ResolveCRWInDirective(LoopScopeDirective(role == PromptRoleParent), env)
+		}
 		if agbrowseRequested {
 			parts = append(parts, AgbrowseSearchDirective)
 		}
@@ -209,6 +228,15 @@ func promptSubmitHandleWith(p PromptSubmitPayload, platform string, env host.Loo
 	// The oracle continues at hook.ts:755 with the trigger branch, the agbrowse-only branch and the
 	// passive pipeline, in prompt_trigger.go; it answers the context, which the harness wraps.
 	return promptTriggerHandle(p, env, lock, current, state.Phase(trigger), entry.AdviseInterview, agbrowseRequested, loopArmRequested)
+}
+
+// promptSubmitRole is the session's registry role, or unknown. The reader is a seam: the registry read that verifies a parent
+// binding is CRW-386's, and a production run holds none, so no role is ever claimed from the prompt.
+func promptSubmitRole(seams *promptDcloseSeams, cwd, sessionID string) PromptRole {
+	if seams == nil || seams.role == nil {
+		return PromptRoleUnknown
+	}
+	return seams.role(cwd, sessionID)
 }
 
 // promptSubmitTurn is the oracle's `turn === "" ? null : turn` for the marker's memoryWriteTurn.

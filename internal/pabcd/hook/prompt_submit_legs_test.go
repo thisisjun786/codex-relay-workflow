@@ -49,8 +49,19 @@ func TestPromptSubmitLegAnswersThroughTheEnvelope(t *testing.T) {
 		}
 		return harness.Call{Raw: string(raw), PabcdEnabled: enabled}
 	}
+	// The recorded loop_arm_request, replayed with the CRW name (CRW-1084, port: fixed): a project coordination request gets
+	// the scope pointer for crw-run, where the oracle gave the implementation recipe; the pointer arms nothing.
 	answer := leg.Handle(call(map[string]any{"hook_event_name": "UserPromptSubmit", "session_id": "rec-s1", "cwd": cwd, "turn_id": "rec-t1", "prompt": "Start crw-loop for the migration project."}, true))
 	ctx := answerContext(t, answer, "UserPromptSubmit")
+	if !strings.HasPrefix(ctx, "[crw: LOOP — scope choice (ORCH-MANDATE-01)]") || strings.Contains(ctx, "loop init") {
+		t.Errorf("the project coordination pointer: %q", ctx)
+	}
+	if s := state.ReadState(cwd, "rec-s1"); s.LoopArmSeen || len(s.InjectedTurns) != 1 {
+		t.Errorf("the pointer must not record loopArmSeen: %+v", s)
+	}
+	// A single-task loop request keeps the recipe and records loopArmSeen.
+	answer = leg.Handle(call(map[string]any{"hook_event_name": "UserPromptSubmit", "session_id": "rec-s1", "cwd": cwd, "turn_id": "rec-t1b", "prompt": "Run crw-loop for this task"}, true))
+	ctx = answerContext(t, answer, "UserPromptSubmit")
 	if !strings.HasPrefix(ctx, "[crw: LOOP — orchestrate arming mandate (ORCH-MANDATE-01)]") {
 		t.Errorf("the arming mandate: %q", ctx)
 	}

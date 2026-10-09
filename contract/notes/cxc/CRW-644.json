@@ -3,8 +3,6 @@
   "identical": [
     "hook__user-prompt-submit-checking-pabcd-trigger__baseline_empty_workspace",
     "hook__user-prompt-submit-checking-pabcd-trigger__pabcd_off_keeps_memory_marker",
-    "hook__user-prompt-submit-checking-pabcd-trigger__loop_arm_request",
-    "hook__user-prompt-submit-checking-pabcd-trigger__korean_plan_request",
     "hook__user-prompt-submit-checking-pabcd-trigger__goal_firewall_suppresses_interview",
     "hook__user-prompt-submit-checking-pabcd-trigger__english_negation_is_not_a_request",
     "hook__user-prompt-submit-checking-pabcd-trigger__explanatory_backticks_are_not_a_request",
