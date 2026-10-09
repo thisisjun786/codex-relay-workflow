@@ -33,4 +33,3 @@ env -C {CHECKOUT} ls > {MEMORY}/out.txt
 === CRW-910-E08 | W
 --why d3 with an outer directory: the shell opens out.txt in the memory root before env changes to the checkout, so the write is a memory write.
 cd {MEMORY} && env -C {CHECKOUT} ls > out.txt
-
