@@ -1357,7 +1357,7 @@ the obligations were met.
 
 ### OPS-10.2 The workflow is present, or its absence is reported
 
-Managed execution here always runs with the `crw-loop` workflow, which this plugin ships with the
+Managed execution here always runs the `crw-loop` workflow and the
 `crw pabcd` commands and hooks behind it, so a missing runtime, an absent contract, or an incompatible
 version is a condition to report, not something to route around while calling the run normal. Quietly proceeding without it produces work that looks ordinary and
 carries none of the evidence the workflow exists to produce.
