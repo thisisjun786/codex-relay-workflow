@@ -442,3 +442,79 @@ func TestDoctorPinnedOracleAnswersAreStoredInPortNames(t *testing.T) {
 		}
 	}
 }
+
+// TestDoctorPinnedOracleAnswersMatchTheOracle replays every doctor case through the real oracle
+// worker and checks that its answer, run through the corpus rename table as the campaign's
+// comparison does, equals the case's stored oracle field. The shared check of target_pins_test.go
+// covers the three shim targets whose stored fields are the raw oracle answers; a doctor case
+// stores the renamed answer, so it needs the rename before the comparison. It needs Node and the
+// extracted oracle tree, so it skips on a host without them.
+func TestDoctorPinnedOracleAnswersMatchTheOracle(t *testing.T) {
+	requireNode(t)
+	requireOracleModule(t, "doctor")
+	requireOracleCommands(t, "doctor")
+	target, ok := Lookup("doctor")
+	if !ok {
+		t.Fatal("the doctor target is not registered")
+	}
+	sub, err := doctorSubstitution()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases, err := LoadCases(filepath.Join("testdata", "doctor"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool, err := NewPool(target.Oracle, 1, DefaultTimeout, DefaultStartupTimeout, os.Environ())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := pool.Close(); err != nil {
+			t.Errorf("the replay's worker start-up root was not removed: %v", err)
+		}
+	}()
+	for _, c := range cases {
+		input, err := decode(c.Input)
+		if err != nil {
+			t.Errorf("%s: the input is not JSON: %v", c.Name, err)
+			continue
+		}
+		root := t.TempDir()
+		if err := PrepareRoot(root); err != nil {
+			t.Errorf("%s: the case root was not prepared: %v", c.Name, err)
+			continue
+		}
+		answer, err := pool.Call(canonical(input), root)
+		if err != nil {
+			t.Errorf("%s: the oracle did not answer: %v", c.Name, err)
+			continue
+		}
+		value, err := decode(answer)
+		if err != nil {
+			t.Errorf("%s: the oracle answer is not JSON: %v", c.Name, err)
+			continue
+		}
+		text, jsonText, err := doctorAnswer(stripRoot(value, root))
+		if err != nil {
+			t.Errorf("%s: the oracle answer: %v", c.Name, err)
+			continue
+		}
+		stored, err := decode(c.Oracle)
+		if err != nil {
+			t.Errorf("%s: the stored oracle answer is not JSON: %v", c.Name, err)
+			continue
+		}
+		storedText, storedJSON, err := doctorAnswer(stored)
+		if err != nil {
+			t.Errorf("%s: the stored oracle answer: %v", c.Name, err)
+			continue
+		}
+		if want := sub.Expected(text); want != storedText {
+			t.Errorf("%s: the oracle's text, renamed, is %q, pinned %q", c.Name, want, storedText)
+		}
+		if want := sub.Expected(jsonText); want != storedJSON {
+			t.Errorf("%s: the oracle's json, renamed, is %q, pinned %q", c.Name, want, storedJSON)
+		}
+	}
+}
