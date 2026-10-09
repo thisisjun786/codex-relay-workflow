@@ -78,9 +78,10 @@ activation or of a session that can continue unchanged.
 
 ## The CRW/CXC switch
 
-CRW and CXC stay installed side by side, and exactly one side's hooks act. `crw install switch` is the
-explicit command that picks the side; nothing calls it implicitly. `crw@crw` is never touched: the
-relay, the MCP bridge and the completion hook stay on in both positions.
+CRW and CXC stay installed side by side, and once the hook-side reader of `switch.json` is integrated
+(CRW-392) exactly one side's workflow hooks act; this change provides the selector and the CXC half.
+`crw install switch` is the explicit command that picks the side; nothing calls it implicitly.
+`crw@crw` is never touched: the relay, the MCP bridge and the completion hook stay on in both positions.
 
 The command is the selector and the CXC half of the switch: it writes `<CODEX_HOME>/crw/switch.json`, turns
 the CXC plugin off and exchanges the role files. It does not itself register CRW workflow hooks. The
@@ -89,7 +90,7 @@ shipped `plugins/crw` package declares only the completion hook, and no hook rea
 `switch crw` leaves CXC off and the completion hook as it was, and `switch cxc` only puts CXC back.
 
 ```text
-crw install switch crw       CRW hooks on, the CXC plugin off
+crw install switch crw       select CRW: record it in switch.json, the CXC plugin off
 crw install switch cxc       back to CXC: put back what the switch changed
 crw install switch status    which side is on; --json prints one document
                              [--json] [--codex-home <dir>] [--plugin-root <dir>]
@@ -138,8 +139,10 @@ left, so a hand edit stays drift for `Deactivate`. The managed keys of the switc
 not offer them.
 
 The installer's cancellation (SIGINT, SIGTERM, SIGHUP) reaches the command: it is checked before the lock,
-after the lock was taken and before every step, and a cancelled command undoes the steps it had done and
-exits 1 with the context error.
+after the lock was taken, before and after every step and at every boundary inside one, the last write
+(the manifest's final section) included. A cancelled command either had finished every step or undoes
+every step it had done (`config.toml`, `switch.json`, the role files and the manifest) and exits 1 with
+the context error.
 
 `switch status` reads and writes nothing, and reads each plugin's table and `enabled` key by the same TOML
 names the switch edits by. State is `crw` (`switch.json` says crw, `crw@crw` is enabled and the

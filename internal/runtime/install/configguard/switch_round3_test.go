@@ -96,33 +96,117 @@ func TestSwitchHonoursTheInstallerCancellation(t *testing.T) {
 		}
 	})
 	t.Run("cancelled at every step", func(t *testing.T) {
+		switchCancelAtEveryBoundary(t, config)
+	})
+}
+
+// switchCancelAtEveryBoundary cancels the installer context from the failure seam at boundary 1, 2, ...
+// of a switch in each direction, up to the last boundary there is. A run in which the cancel was
+// called must report context.Canceled and leave the host to the byte; a run that never reached the
+// boundary must have completed. Whether the cancel was called is tracked, so a cancelled run that
+// returns success cannot pass (CRW-201 round 4: the last boundary, manifest-final).
+func switchCancelAtEveryBoundary(t *testing.T, config string) {
+	t.Helper()
+	for _, target := range []string{"crw", "cxc"} {
+		last := ""
 		for at := 1; ; at++ {
 			home := switchHost(t, config)
+			if target == "cxc" {
+				switchMustRun(t, home, "crw")
+			}
 			before := switchTree(t, home)
 			ctx, cancel := context.WithCancel(context.Background())
 			deps := switchDeps(home)
 			deps.Ctx = ctx
-			n := 0
+			n, cancelledAt := 0, ""
 			deps.Fail = func(step string) error {
 				if n++; n == at {
+					cancelledAt = step
 					cancel()
 				}
 				return nil
 			}
-			_, err := RunSwitch(deps, "crw")
+			_, err := RunSwitch(deps, target)
 			cancel()
-			if err == nil {
-				if at < 4 {
-					t.Fatalf("a switch cancelled at boundary %d succeeded", at)
+			if cancelledAt == "" {
+				if err != nil {
+					t.Fatalf("switch %s: boundary %d was never reached but the run failed: %v", target, at, err)
+				}
+				break
+			}
+			last = cancelledAt
+			if !errors.Is(err, context.Canceled) {
+				t.Fatalf("switch %s cancelled at boundary %d (%s): err = %v, want context.Canceled", target, at, cancelledAt, err)
+			}
+			if d := switchDiff(before, switchTree(t, home)); d != "" {
+				t.Fatalf("switch %s cancelled at boundary %d (%s) left changes:\n%s", target, at, cancelledAt, d)
+			}
+		}
+		if last != "manifest-final" {
+			t.Fatalf("switch %s: the last boundary cancelled was %q, want manifest-final", target, last)
+		}
+	}
+}
+
+// stopAfter is a context whose Err turns to Canceled at its n-th question, so every place the switch
+// asks for the cancellation (before and after a step, at the end) is tried with a stop right there.
+type stopAfter struct {
+	context.Context
+	left    int
+	stopped *bool
+	events  *[]string
+}
+
+func (c *stopAfter) Err() error {
+	*c.events = append(*c.events, "ask")
+	if c.left--; c.left < 0 {
+		*c.stopped = true
+		return context.Canceled
+	}
+	return nil
+}
+
+func TestSwitchStoppedAtEveryQuestionIsCompleteOrRolledBack(t *testing.T) {
+	const config = "[plugins.\"codexclaw@codexclaw\"]\nenabled = true\n"
+	for _, target := range []string{"crw", "cxc"} {
+		for at := 0; ; at++ {
+			home := switchHost(t, config)
+			if target == "cxc" {
+				switchMustRun(t, home, "crw")
+			}
+			before := switchTree(t, home)
+			stopped := false
+			var events []string
+			deps := switchDeps(home)
+			deps.Ctx = &stopAfter{Context: context.Background(), left: at, stopped: &stopped, events: &events}
+			deps.Fail = func(step string) error { events = append(events, "step:"+step); return nil }
+			_, err := RunSwitch(deps, target)
+			if !stopped {
+				if err != nil {
+					t.Fatalf("switch %s: never stopped but failed: %v", target, err)
+				}
+				// The cancellation is asked again once the last step has been written, so a stop that
+				// came during the last write is not answered with success.
+				lastStep, lastAsk := -1, -1
+				for i, e := range events {
+					if e == "step:manifest-final" {
+						lastStep = i
+					}
+					if e == "ask" {
+						lastAsk = i
+					}
+				}
+				if lastStep < 0 || lastAsk < lastStep {
+					t.Fatalf("switch %s: the cancellation was not asked after the last step (events %v)", target, events)
 				}
 				break
 			}
 			if !errors.Is(err, context.Canceled) {
-				t.Fatalf("boundary %d: err = %v", at, err)
+				t.Fatalf("switch %s stopped at question %d: err = %v, want context.Canceled", target, at, err)
 			}
 			if d := switchDiff(before, switchTree(t, home)); d != "" {
-				t.Fatalf("boundary %d: a cancelled switch left changes:\n%s", at, d)
+				t.Fatalf("switch %s stopped at question %d left changes:\n%s", target, at, d)
 			}
 		}
-	})
+	}
 }

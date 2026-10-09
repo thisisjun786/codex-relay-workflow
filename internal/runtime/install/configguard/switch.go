@@ -35,8 +35,10 @@ func switchSpecs() []struct{ Table, Key string } {
 // SwitchDeps injects every path and the clock. Fail, when set, is asked before each step and a
 // non-nil answer fails that step, so a test can prove each rollback.
 type SwitchDeps struct {
-	// Ctx, when set, is the installer's cancellation: it is asked before the lock, after the lock and
-	// before each step, and a cancelled one undoes the steps already done and writes nothing more.
+	// Ctx, when set, is the installer's cancellation: it is asked before the lock, after the lock, before
+	// and after each step and at each boundary inside one. A cancelled run either has finished every
+	// step (a stop that came after the last one is not seen) or undoes every step done, the last one
+	// included, and returns the context error.
 	Ctx                   context.Context
 	CodexHome, ConfigPath string
 	Now                   func() string
@@ -97,15 +99,13 @@ func (t *switchTx) cancelled(step string) error {
 	return nil
 }
 
-// run performs one step. do returns the undo of what it changed even when it fails half way.
+// run performs one step. do returns the undo of what it changed even when it fails half way. The
+// cancellation is asked before the step, again once the boundary seam has answered (a stop that came
+// with it) and after the step has written, so a stop is never answered with success: the caller undoes
+// every step done, this one included (CRW-201 round 4).
 func (t *switchTx) run(step string, do func() (func() error, error)) error {
-	if err := t.cancelled(step); err != nil {
+	if err := t.check(step); err != nil {
 		return err
-	}
-	if t.fail != nil {
-		if err := t.fail(step); err != nil {
-			return fmt.Errorf("step %s: %w", step, err)
-		}
 	}
 	undo, err := do()
 	if undo != nil {
@@ -114,7 +114,7 @@ func (t *switchTx) run(step string, do func() (func() error, error)) error {
 	if err != nil {
 		return fmt.Errorf("step %s: %w", step, err)
 	}
-	return nil
+	return t.cancelled(step)
 }
 
 // check asks the injected failure for a boundary inside a step.
@@ -128,7 +128,7 @@ func (t *switchTx) check(step string) error {
 	if err := t.fail(step); err != nil {
 		return fmt.Errorf("step %s: %w", step, err)
 	}
-	return nil
+	return t.cancelled(step)
 }
 
 func (t *switchTx) rollback() error {
