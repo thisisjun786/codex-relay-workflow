@@ -1041,7 +1041,7 @@ an unclaimed turn says `store_unreadable` with it, and an observer that cannot p
 which ends the fault sweep. The marker's site is the one of the step that met the failure: the requeue's enqueue and
 the sweep's ledger writes are `write`, and the scans and readings are `observation`. Once the halt stands in a pass,
 the observation loop, the deferred settlements and the rest of the tick end there, and a marker the sweep's readings
-published is taken over before the sweep records anything. A failure that is not of the class is still a note, and
+published is taken over, whatever the sweep returned after it, before the sweep records anything, and no further settled turn is read after the reading that published it; a halt in the delivery or reconciliation pass keeps the counts and notes of the attempts made before it. A failure that is not of the class is still a note, and
 the pass goes on.
 
 The daemon also keeps its own halt in memory. A marker that cannot be written (a state directory

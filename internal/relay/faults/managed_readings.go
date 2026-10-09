@@ -39,6 +39,8 @@ type ManagedReadingPage struct {
 	Cursor   any   `json:"cursor"`
 	Filled   bool  `json:"filled"`
 	Complete bool  `json:"complete"`
+	// Halted is set when the page ended because the observer published the store's halt marker.
+	Halted bool `json:"halted,omitempty"`
 }
 
 func (sw *Sweeper) ManagedReadings(ctx context.Context, selection any, observer ManagedReadingObserver, limit int, cursor any, now string) (ManagedReadingPage, error) {
@@ -98,6 +100,13 @@ func (sw *Sweeper) ManagedReadings(ctx context.Context, selection any, observer 
 			object["relationshipId"] = r.Get("relationship_id")
 		}
 		answer.Readings = append(answer.Readings, object)
+		if sw.Store != nil && store.HaltStateAt(sw.Store.Path).Present {
+			// The observer has just published the halt marker (CRW-848): the marker is the halt, so no later
+			// turn is read, and none is gapped, on a store that has been seen damaged. The page ends here and
+			// the sweep ends on the marker (CRW-945).
+			answer.Halted = true
+			return answer, nil
+		}
 	}
 	answer.Filled = len(rows) >= limit
 	answer.Complete = after == nil && !answer.Filled

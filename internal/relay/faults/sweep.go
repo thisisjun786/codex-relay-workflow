@@ -192,6 +192,10 @@ func (sw *Sweeper) SweepReadings(ctx context.Context, product, project string, r
 		if e != nil {
 			return Batch{}, e
 		}
+		if managedPage.Halted {
+			// The marker is the halt: nothing after the readings is collected or recorded (CRW-945).
+			return Batch{}, store.HaltRefusal(store.HaltStateAt(sw.Store.Path))
+		}
 		managedReadingCursor = managedPage.Cursor
 		gaps = append(gaps, managedPage.Gaps...)
 		observations, readingGaps, _, _, e := sw.readingFaults(ctx, product, project, managedPage.Readings, 0)

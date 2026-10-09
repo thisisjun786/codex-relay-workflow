@@ -114,3 +114,39 @@ func TestSchedulerHalt_aFailureThatIsNotCorruptionStaysANote(t *testing.T) {
 		t.Fatalf("notes %v", counts.Notes)
 	}
 }
+
+// CRW-945 item 5: a corrupting failure the pass met in its own read of the store carries the observation site, and
+// one it met in a statement that changes the store carries the write site, so the daemon's marker says which.
+func requireSite(t *testing.T, err error, want string) {
+	t.Helper()
+	requireCorruption(t, err)
+	if got := store.SiteOf(err, "unmarked"); got != want {
+		t.Fatalf("the failure carries site %q, want %q: %v", got, want, err)
+	}
+}
+
+func TestReconcilePassHalt_aReadFailureIsMarkedAtTheObservationSite(t *testing.T) {
+	t.Parallel()
+	f, rc, _ := reconcileWorld(t)
+	testsupport.DamageTable(t, f.store.DB, f.store.Path, "attempts")
+	var report ReconcileReport
+	requireSite(t, ReconcilePass(f.ctx, rc, f.host, 8, f.clock.Now(), &report), store.HaltSiteObservation)
+}
+
+// The gate row the pass stores after an attempt is its write: the same table damaged, met by the statement that
+// changes it, is the write site.
+func TestReconcilePassHalt_aGateWriteFailureIsMarkedAtTheWriteSite(t *testing.T) {
+	t.Parallel()
+	f, rc, _ := reconcileWorld(t)
+	testsupport.DamageTable(t, f.store.DB, f.store.Path, "reconcile_gate")
+	var report ReconcileReport
+	requireSite(t, ReconcilePass(f.ctx, rc, f.host, 8, f.clock.Now(), &report), store.HaltSiteWrite)
+}
+
+func TestSchedulerHalt_aListingReadFailureIsMarkedAtTheObservationSite(t *testing.T) {
+	t.Parallel()
+	f, sc := schedulerWorld(t)
+	testsupport.DamageTable(t, f.store.DB, f.store.Path, "events")
+	var counts TickCounts
+	requireSite(t, sc.Deliver(f.ctx, f.host, f.clock.Now(), &counts), store.HaltSiteObservation)
+}

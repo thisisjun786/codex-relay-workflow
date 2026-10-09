@@ -3,6 +3,7 @@ package delivery
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"slices"
@@ -58,7 +59,7 @@ func (sc *Scheduler) advance(ctx context.Context, listing string, by, size int) 
 	}
 	current, err := sc.cursor(ctx, listing, size)
 	if err != nil {
-		return err
+		return observed(err)
 	}
 	position := (current + max(1, by)) % size
 	return sc.setCursor(ctx, listing, strconv.Itoa(position))
@@ -206,7 +207,7 @@ func (sc *Scheduler) Deliver(ctx context.Context, adapter Adapter, now float64, 
 	d := sc.Delivery
 	parents, err := d.EligibleParents(ctx, now)
 	if err != nil || len(parents) == 0 {
-		return err
+		return observed(err)
 	}
 	budget := sc.MaxSendsTick
 	if budget == 0 {
@@ -218,7 +219,7 @@ func (sc *Scheduler) Deliver(ctx context.Context, adapter Adapter, now float64, 
 	// The first parent with an id after the one that started the previous tick, wrapping.
 	after, err := sc.pointer(ctx, parentsKey)
 	if err != nil {
-		return err
+		return observed(err)
 	}
 	start := sort.Search(len(parents), func(i int) bool { return parents[i] > after }) % len(parents)
 	order := append(slices.Clone(parents[start:]), parents[:start]...)
@@ -233,7 +234,7 @@ func (sc *Scheduler) Deliver(ctx context.Context, adapter Adapter, now float64, 
 		}
 		w, err := sc.open(ctx, parent, now, attempts)
 		if err != nil {
-			return err
+			return observed(err)
 		}
 		if w != nil {
 			walks = append(walks, w)
@@ -248,7 +249,7 @@ func (sc *Scheduler) Deliver(ctx context.Context, adapter Adapter, now float64, 
 		started = walks[0].parent
 	}
 	if err := sc.setCursor(ctx, parentsKey, started); err != nil {
-		return err
+		return written(err)
 	}
 	for budget > 0 {
 		progressed := false
@@ -284,7 +285,7 @@ func (sc *Scheduler) Deliver(ctx context.Context, adapter Adapter, now float64, 
 	}
 	for _, w := range walks {
 		if err := sc.close(ctx, w); err != nil {
-			return err
+			return written(err)
 		}
 	}
 	return nil
@@ -356,7 +357,7 @@ func (sc *Scheduler) attempt(ctx context.Context, adapter Adapter, row Row, now 
 		moved, err := d.moved(ctx, row)
 		if err != nil {
 			if corrupting(err) {
-				return false, err
+				return false, observed(err)
 			}
 			report.Notes = append(report.Notes, "delivery "+event+" not re-read: "+err.Error())
 			return false, nil
@@ -368,7 +369,7 @@ func (sc *Scheduler) attempt(ctx context.Context, adapter Adapter, row Row, now 
 			behind, err := d.behindBusyHead(ctx, event, now)
 			if err != nil {
 				if corrupting(err) {
-					return false, err
+					return false, observed(err)
 				}
 				report.Notes = append(report.Notes, "delivery "+event+" not re-read: "+err.Error())
 				return false, nil
@@ -403,6 +404,20 @@ func (sc *Scheduler) attempt(ctx context.Context, adapter Adapter, row Row, now 
 func corrupting(err error) bool {
 	_, ok := store.CorruptingFailure(err)
 	return ok
+}
+
+// observed and written say where a failure of that class was met - the relay's own read of the store, or a
+// statement it issued to change it - so the daemon writes the right site on the halt marker (CRW-945). Any other
+// failure is returned as it is, so nothing that matches on the error itself moves.
+func observed(err error) error { return atSite(store.HaltSiteObservation, err) }
+func written(err error) error  { return atSite(store.HaltSiteWrite, err) }
+
+func atSite(site string, err error) error {
+	var marked *store.SiteError
+	if err == nil || !corrupting(err) || errors.As(err, &marked) {
+		return err // the step that met it has already said where
+	}
+	return store.AtSite(site, err)
 }
 
 // moved reports whether a delivery changed its own scheduling since it was selected: its state, its

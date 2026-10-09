@@ -142,15 +142,17 @@ func (d *Daemon) Tick(ctx context.Context) (Report, error) {
 		return r, nil
 	}
 	var rr delivery.ReconcileReport
-	if err := delivery.ReconcilePass(ctx, d.Reconciler, d.Host, d.Policy.MaxReconciles, now, &rr); err != nil {
-		if d.halted(ctx, &r, store.HaltSiteWrite, err) {
-			return r, nil
-		}
-		return r, err
-	}
+	reconcileErr := delivery.ReconcilePass(ctx, d.Reconciler, d.Host, d.Policy.MaxReconciles, now, &rr)
+	// What the pass did before it ended is this tick's whatever ended it (CRW-945).
 	r.Reconciled += rr.Reconciled
 	r.Skipped += rr.Skipped
 	r.Notes = append(r.Notes, rr.Notes...)
+	if reconcileErr != nil {
+		if d.halted(ctx, &r, store.HaltSiteWrite, reconcileErr) {
+			return r, nil
+		}
+		return r, reconcileErr
+	}
 	if bind() {
 		return r, nil
 	}
@@ -194,11 +196,18 @@ func (d *Daemon) Tick(ctx context.Context) (Report, error) {
 		return r, err
 	}
 	var sent delivery.TickCounts
-	if err := (&delivery.Scheduler{Delivery: d.Delivery, Ack: d.Ack, MaxSendsTick: d.Policy.MaxSends}).Deliver(ctx, d.Host, now, &sent); err != nil {
-		if d.halted(ctx, &r, store.HaltSiteWrite, err) {
+	deliverErr := (&delivery.Scheduler{Delivery: d.Delivery, Ack: d.Ack, MaxSendsTick: d.Policy.MaxSends}).Deliver(ctx, d.Host, now, &sent)
+	if deliverErr != nil {
+		// The attempts made before the pass ended were made: the halt and the error both keep their counts and
+		// notes (CRW-945). The pass that goes on adds them below.
+		r.Delivered += sent.Delivered
+		r.Deferred += sent.Deferred
+		r.Skipped += sent.Skipped
+		r.Notes = append(r.Notes, sent.Notes...)
+		if d.halted(ctx, &r, store.HaltSiteWrite, deliverErr) {
 			return r, nil
 		}
-		return r, err
+		return r, deliverErr
 	}
 	if err := d.idle.hold(ctx, &r, d.Host, now); err != nil {
 		// The waiting heads are read out of the store after the delivery pass (CRW-1007, decision 2): a corrupting
@@ -357,14 +366,14 @@ func (d *Daemon) sweep(ctx context.Context, r *Report) error {
 		return nil
 	}
 	batch, err := d.Sweeper.Sweep(ctx, "crw")
-	if err != nil {
-		return sweepFailure(r, err)
-	}
-	// The sweep's readings may have published the halt marker (the omission observer does, CRW-848): the
-	// marker is the halt, so the recording that follows is not attempted on a store the sweep has just seen
-	// damaged (CRW-945).
+	// The sweep's readings may have published the halt marker (the omission observer does, CRW-848): the marker
+	// is the halt whatever else the sweep returned after it, so a later failure of the sweep does not hide it,
+	// and the recording that follows is not attempted on a store the sweep has just seen damaged (CRW-945).
 	if d.adoptMarker(r) {
 		return nil
+	}
+	if err != nil {
+		return sweepFailure(r, err)
 	}
 	answer, err := d.Sweeper.RecordAll(ctx, d.Faults, batch)
 	if err != nil {
