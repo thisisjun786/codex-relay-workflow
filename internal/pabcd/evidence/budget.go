@@ -128,11 +128,18 @@ func resolveTombstone(cwd, sessionID string, p Payload, lock lockFunc, published
 	}
 	removed := false
 	_ = lock(cwd, sessionID, func() error { // a lock that cannot be had never runs the function, so removed stays false
+		if err := RecoverOverflow(cwd, sessionID, write); err != nil {
+			return err
+		}
 		s := state.ReadState(cwd, sessionID)
 		next := slices.DeleteFunc(slices.Clone(s.UnverifiedSubagents), func(e state.UnverifiedSubagent) bool {
 			return sameAgent(e, agentID, turnID)
 		})
-		if len(next) == len(s.UnverifiedSubagents) || storedVerdicts(cwd, sessionID) != len(s.UnverifiedSubagents) || !rewriteGuardKeeps(cwd, sessionID, s) {
+		if len(next) == len(s.UnverifiedSubagents) {
+			removed = removeOverflow(cwd, sessionID, agentID, turnID) // CRW-1110: a verdict recorded beside the main list
+			return nil
+		}
+		if storedVerdicts(cwd, sessionID) != len(s.UnverifiedSubagents) || !rewriteGuardKeeps(cwd, sessionID, s) {
 			return nil
 		}
 		s.SessionID, s.UnverifiedSubagents = sessionID, next

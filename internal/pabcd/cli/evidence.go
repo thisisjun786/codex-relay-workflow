@@ -92,6 +92,10 @@ func RunEvidenceCLI(a EvidenceResolveArgs) (string, int) {
 		a.TurnID = &turn
 	}
 	resolve := func() error {
+		// CRW-1110: a file that holds more verdicts than the reader keeps is recovered first, so no verdict is lost to the rewrite.
+		if err := evidence.RecoverOverflow(a.Cwd, a.SessionID, writeState); err != nil {
+			return err
+		}
 		s := state.ReadState(a.Cwd, a.SessionID)
 		index := -1
 		for i, entry := range s.UnverifiedSubagents {
@@ -104,7 +108,7 @@ func RunEvidenceCLI(a EvidenceResolveArgs) (string, int) {
 			}
 		}
 		if index < 0 {
-			return nil
+			return cliResolveOverflow(a, s.Phase, &removed, &ambiguous)
 		}
 		// Intentionally changed: publishing a capped/repaired read loses interview records too. This
 		// check runs first because cliVerdictsIntact now covers the tracker, and the interview loss
@@ -168,6 +172,43 @@ func RunEvidenceCLI(a EvidenceResolveArgs) (string, int) {
 	return line, 0
 }
 
+// cliResolveOverflow resolves the agent's one resolvable verdict recorded beside the full main list (CRW-1110), with the same
+// ledger row as a verdict of the list. The caller holds the session lock and has checked the receipt.
+func cliResolveOverflow(a EvidenceResolveArgs, phase state.Phase, removed, ambiguous *bool) error {
+	verdicts, _ := evidence.OverflowVerdicts(a.Cwd, a.SessionID)
+	var target *state.UnverifiedSubagent
+	for i, entry := range verdicts {
+		if entry.Resolvable && entry.AgentID == a.AgentID && (a.TurnID == nil || entry.TurnID == *a.TurnID) {
+			if target != nil {
+				*ambiguous = true
+				return nil
+			}
+			target = &verdicts[i]
+		}
+	}
+	if target == nil {
+		return nil
+	}
+	turn := target.TurnID
+	if turn == "" {
+		turn = "<none>"
+	}
+	override := false
+	if err := state.AppendLedger(a.Cwd, state.LedgerEntry{
+		TS: time.Now().UTC().Format("2006-01-02T15:04:05.000Z"), SessionID: a.SessionID, From: &phase, To: phase,
+		Reason:   fmt.Sprintf("evidence resolve: agent=%s turn=%s resolved with a valid receipt", a.AgentID, turn),
+		Evidence: &a.Receipt, EvidenceAfterReason: true, Actor: "agent", Override: &override,
+	}); err != nil {
+		return err
+	}
+	if !evidence.ResolveOverflowVerdict(a.Cwd, a.SessionID, a.AgentID, target.TurnID) {
+		return errors.New("the unverified record beside the session state could not be removed")
+	}
+	evidence.ClearAttempts(a.Cwd, a.SessionID, a.AgentID, target.TurnID)
+	*removed = true
+	return nil
+}
+
 // cliEvidenceTurn is the turn of the one resolvable verdict of the agent that the request names, read without a lock: the turn
 // itself when the request gives one, the single match's when it does not, and false when there is none or more than one (the
 // locked step then reports that).
@@ -176,7 +217,8 @@ func cliEvidenceTurn(a EvidenceResolveArgs) (string, bool) {
 		return *a.TurnID, true
 	}
 	turn, found := "", 0
-	for _, entry := range state.ReadState(a.Cwd, a.SessionID).UnverifiedSubagents {
+	overflow, _ := evidence.OverflowVerdicts(a.Cwd, a.SessionID)
+	for _, entry := range append(state.ReadState(a.Cwd, a.SessionID).UnverifiedSubagents, overflow...) {
 		if entry.Resolvable && entry.AgentID == a.AgentID {
 			turn, found = entry.TurnID, found+1
 		}

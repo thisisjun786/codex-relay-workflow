@@ -12,6 +12,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
 )
 
 // testdata/oracle-unrecordable.json holds what the CXC v0.2.40 oracle answered for the cases of testdata/cases-unrecordable.json,
@@ -336,8 +338,32 @@ func TestResolveTombstone(t *testing.T) {
 			}
 			slices.Sort(gotSessions)
 		}
-		if slices.Contains([]string{"sixty_six_entries_resolve_first", "malformed_entry_beside_resolved", "uppercase_key_hides_the_overflow", "no_agent_id_clears_idless_tombstones"}, k.ID) {
+		if slices.Contains([]string{"malformed_entry_beside_resolved", "no_agent_id_clears_idless_tombstones"}, k.ID) {
 			want.Returns, want.State = []bool{false}, stateOf(before)
+		}
+		if slices.Contains([]string{"sixty_six_entries_resolve_first", "sixty_six_entries_resolve_last", "uppercase_key_hides_the_overflow"}, k.ID) {
+			// Changed (port: fixed, CRW-1110): a file that holds 66 verdicts is recovered first, keeping every one: the first 64 stay
+			// in the main list and the rest move beside it, and then the exact verdict is resolved wherever it is. The oracle wrote
+			// back what its read kept, losing the 65th and 66th.
+			resolved := k.Payloads[0]["agent_id"].(string)
+			stored := overflowStoredIDs(t, before)
+			wantMain, wantBeside := slices.DeleteFunc(slices.Clone(stored[:64]), func(id string) bool { return id == resolved }),
+				slices.DeleteFunc(slices.Clone(stored[64:]), func(id string) bool { return id == resolved })
+			s, unreadable := state.ReadStateStrict(cwd, "s1")
+			var gotMain, gotBeside []string
+			for _, e := range s.UnverifiedSubagents {
+				gotMain = append(gotMain, e.AgentID)
+			}
+			beside, besideUnreadable := OverflowVerdicts(cwd, "s1")
+			for _, e := range beside {
+				gotBeside = append(gotBeside, e.AgentID)
+			}
+			slices.Sort(gotBeside)
+			slices.Sort(wantBeside)
+			if unreadable || s.UnverifiedCorrupt || besideUnreadable || !slices.Equal(gotMain, wantMain) || !slices.Equal(gotBeside, wantBeside) || !slices.Equal(returns, []bool{true}) {
+				t.Errorf("%s: returns %v, main %v (corrupt %v), beside %v, want main %v beside %v", k.ID, returns, gotMain, s.UnverifiedCorrupt, gotBeside, wantMain, wantBeside)
+			}
+			continue
 		}
 		if !slices.Contains(want.Returns, true) && before != nil && !bytes.Equal(after, before) {
 			t.Errorf("%s: nothing was resolved and the file changed: %q, was %q", k.ID, after, before)
@@ -351,4 +377,20 @@ func TestResolveTombstone(t *testing.T) {
 // linkFollowed names the recorded cases in which the oracle follows a symbolic link out of the workspace.
 func linkFollowed(id string) bool {
 	return slices.Contains([]string{"marker_dir_is_symlink_out", "marker_dir_symlink_to_dir", "state_dir_is_symlink"}, id)
+}
+
+// overflowStoredIDs is the agent ids of the unverifiedSubagents a raw session file stores, in order.
+func overflowStoredIDs(t *testing.T, raw []byte) []string {
+	t.Helper()
+	var f map[string]json.RawMessage // the exact key: a struct tag would also match one that differs in case
+	var records []struct {
+		AgentID string `json:"agentId"`
+	}
+	must(t, json.Unmarshal(raw, &f))
+	must(t, json.Unmarshal(f["unverifiedSubagents"], &records))
+	ids := []string{}
+	for _, r := range records {
+		ids = append(ids, r.AgentID)
+	}
+	return ids
 }

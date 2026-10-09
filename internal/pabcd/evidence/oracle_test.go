@@ -467,14 +467,32 @@ func TestTombstone(t *testing.T) {
 			gotState = fileState(raw)
 		}
 		wantState, wantMarkers := any(want.State), want.Markers
+		wantReturns := want.Returns
+		if k.ID == "record_65th_when_64_exist" {
+			// Changed (port: fixed, CRW-1110): the 65th verdict is recorded beside the main list, which keeps the 64 the reader
+			// reads, and hasTombstone finds it there; the oracle appended it to the file, where no reader finds it.
+			wantReturns, wantState = []bool{true, true}, fileStateSeed(t, want.Seed)
+			if _, ok := readOverflow(overflowPath(cwd, "s1", "a1", "t1"), tupleDigest("a1", "t1")+".json", "s1"); !ok {
+				t.Errorf("%s: no overflow verdict of a1", k.ID)
+			}
+		}
 		switch {
 		case k.Changed:
 			wantState, wantMarkers = fileState([]byte(*k.StateRaw)), []marked{{"s1", "a1"}}
 		case k.ID == "tier3_state_dir_is_file": // the oracle's marker write fails there too; the port still hands over
 			wantMarkers = []marked{{"s1", "a1"}}
 		}
-		same(t, k.ID+" returns", returns, want.Returns)
+		same(t, k.ID+" returns", returns, wantReturns)
 		same(t, k.ID+" state", gotState, wantState)
 		same(t, k.ID+" markers", markers, wantMarkers)
 	}
+}
+
+// fileStateSeed is a recorded seed state as a map without its updatedAt.
+func fileStateSeed(t *testing.T, seed *string) map[string]any {
+	t.Helper()
+	var m map[string]any
+	must(t, json.Unmarshal([]byte(*seed), &m))
+	delete(m, "updatedAt")
+	return m
 }

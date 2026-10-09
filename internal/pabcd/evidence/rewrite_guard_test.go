@@ -60,28 +60,66 @@ func rewriteGuardStoredIDs(t *testing.T, raw []byte) (ids []string) {
 	return ids
 }
 
-// The 65th verdict is stored (a state of 64 records is rewritten as it is), after which the reader sees 64 and the corruption flag:
-// the 66th verdict used to be written over a file the reader had already shortened, which dropped the 65th. Now the 66th goes to the
-// marker and the file is the one a65 left.
+// CRW-1110: the 65th and 66th verdicts are recorded beside the main list, which keeps the 64 the reader reads and is never flagged
+// as overflowed; each verdict is found and resolved where it is. (Before CRW-1110 the 65th was appended to the file, the reader then
+// saw 64 and the corruption flag, and the 66th could only reach the marker.)
 func TestRewriteGuardKeepsThe65thVerdictWhenThe66thArrives(t *testing.T) {
 	cwd := t.TempDir()
-	for i := 1; i <= 65; i++ {
+	for i := 1; i <= 66; i++ {
 		if !RecordTombstone(cwd, "s1", agent(fmt.Sprintf("a%d", i), "t1"), MaxAttempts, WriteUnrecordableMarker) {
 			t.Fatalf("a%d was not recorded", i)
 		}
 	}
-	after65 := rewriteGuardFile(t, cwd)
-	if ids := rewriteGuardStoredIDs(t, after65); len(ids) != 65 || ids[64] != "a65" {
-		t.Fatalf("after a65 the file holds %d records, last %q", len(ids), ids[len(ids)-1])
+	if ids := rewriteGuardStoredIDs(t, rewriteGuardFile(t, cwd)); len(ids) != 64 || ids[63] != "a64" {
+		t.Fatalf("the main list holds %d records, last %q", len(ids), ids[len(ids)-1])
 	}
-	if RecordTombstone(cwd, "s1", agent("a66", "t1"), MaxAttempts, WriteUnrecordableMarker) {
-		t.Error("the 66th verdict was reported recorded")
+	if s, _ := state.ReadStateStrict(cwd, "s1"); s.UnverifiedCorrupt {
+		t.Error("the main list reads as overflowed")
 	}
-	if after66 := rewriteGuardFile(t, cwd); !bytes.Equal(after66, after65) {
-		t.Errorf("the file changed: a65 is %v", strings.Contains(string(after66), "a65"))
+	for _, id := range []string{"a1", "a64", "a65", "a66"} {
+		if !HasTombstone(cwd, "s1", agent(id, "t1")) {
+			t.Errorf("%s is not found", id)
+		}
 	}
-	if got := UnrecordableVerdictStatus(cwd, "s1"); !got.Present {
-		t.Errorf("the 66th verdict has no marker: %+v", got)
+	if !ResolveTombstone(cwd, "s1", agent("a66", "t1")) || HasTombstone(cwd, "s1", agent("a66", "t1")) || !HasTombstone(cwd, "s1", agent("a65", "t1")) {
+		t.Error("resolving a66 did not resolve exactly a66")
+	}
+	if got := UnrecordableVerdictStatus(cwd, "s1"); got.Present {
+		t.Errorf("a verdict went to the marker: %+v", got)
+	}
+}
+
+// CRW-1110: a file written before the fix with 65 whole records is recovered by the next writer: the 65th moves beside the main
+// list and nothing is dropped. One with a record the reader would change is still refused, byte for byte.
+func TestRewriteGuardRecoversA65RecordFile(t *testing.T) {
+	cwd := t.TempDir()
+	rewriteGuardSeed(t, cwd, rewriteGuardRecords(65, nil))
+	if !RecordTombstone(cwd, "s1", agent("new", "t1"), MaxAttempts, WriteUnrecordableMarker) {
+		t.Fatal("a tombstone was not recorded after the recovery")
+	}
+	if ids := rewriteGuardStoredIDs(t, rewriteGuardFile(t, cwd)); len(ids) != 64 || ids[63] != "a64" {
+		t.Fatalf("recovered main list %v", ids)
+	}
+	for _, id := range []string{"a1", "a64", "a65", "new"} {
+		if !HasTombstone(cwd, "s1", agent(id, "t1")) {
+			t.Errorf("%s was lost", id)
+		}
+	}
+	if s, _ := state.ReadStateStrict(cwd, "s1"); s.UnverifiedCorrupt {
+		t.Error("the recovered list still reads as overflowed")
+	}
+	long := func(i int, m map[string]any) {
+		if i == 64 {
+			m["receiptClaimed"] = strings.Repeat("r", state.MaxReceiptClaimLen+1)
+		}
+	}
+	bad := t.TempDir()
+	before := rewriteGuardSeed(t, bad, rewriteGuardRecords(65, long))
+	if RecordTombstone(bad, "s1", agent("new", "t1"), MaxAttempts, WriteUnrecordableMarker) || ResolveTombstone(bad, "s1", agent("a1", "t1")) {
+		t.Error("a 65-record file with a record the reader changes was rewritten")
+	}
+	if after := rewriteGuardFile(t, bad); !bytes.Equal(after, before) {
+		t.Error("the file changed")
 	}
 }
 
@@ -95,7 +133,6 @@ func TestRewriteGuardRefusesAListTheReaderChanges(t *testing.T) {
 		"attempts stored as text":             rewriteGuardRecords(1, func(i int, m map[string]any) { m["attempts"] = "3" }),
 		"a long receipt after a short one":    append(rewriteGuardRecords(1, nil), rewriteGuardRecords(2, long)[1]),
 		"a malformed record beside a valid":   append(rewriteGuardRecords(1, nil), map[string]any{"bad": true}),
-		"65 records":                          rewriteGuardRecords(65, nil),
 	} {
 		t.Run(name, func(t *testing.T) {
 			cwd := t.TempDir()
