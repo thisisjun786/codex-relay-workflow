@@ -107,6 +107,10 @@ type Context struct {
 	// Carrier names the construct that re-read this text, for example "bash -c".
 	Carrier string
 	Depth   int
+	// Repeat is whether the text may run more than once or alongside the rest of its text: a carrier other than a shell's own
+	// -c string runs its text again or later (xargs, find, watch, trap, eval, a shell reading stdin). A shell's -c string runs
+	// once, where the text puts it.
+	Repeat bool
 }
 
 // Inline is the program text an interpreter receives on its command line or
@@ -894,6 +898,9 @@ func (w *walker) carried(text string, st *state, ctx Context, carrier string) er
 		return unreadablef("nesting is deeper than %d", MaxNestingDepth)
 	}
 	ctx.Carrier = carrier
+	if !isOnceCarrier(carrier) {
+		ctx.Repeat = true
+	}
 	// A shell that runs the text starts a new text: a pipe of the text around it is not a pipe inside it, so an input
 	// redirection in it replaces the inherited input (zsh with MULTIOS joins a pipe and a file only within one pipeline).
 	ctx.inTextPipe = false
@@ -954,6 +961,7 @@ func (w *walker) wrapped(name string, args []Word, assigns []Assign, redirs []Re
 	if name == "xargs" || name == "find" || name == "parallel" || name == "entr" {
 		// The operands of these programs arrive at run time, so the inner program is marked.
 		ctx.Carrier = name
+		ctx.Repeat = true
 	}
 	if u.recordName != "" {
 		// The wrapper's own file operand is a write of its own (script transcript, strace -o FILE).

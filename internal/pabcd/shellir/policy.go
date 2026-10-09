@@ -20,6 +20,12 @@ func isShell(name string) bool {
 	return false
 }
 
+// isOnceCarrier names the carrier of a shell's -c string: the shell runs that text once, in place.
+func isOnceCarrier(carrier string) bool {
+	name, ok := strings.CutSuffix(carrier, " -c")
+	return ok && isShell(name)
+}
+
 // isCodeEnvName lists the environment names that make a program run code the
 // text does not show. The list is closed; tests pin it. SHELL picks the shell that
 // flock -c, script -c, watch and entr -s run their string with.
