@@ -39,11 +39,6 @@ const (
 	ActionRedefine = "redefine"
 )
 
-// StaleActions are the routes of a stale node, in the order the documentation lists them.
-func StaleActions() []string {
-	return []string{ActionRevalidate, ActionCorrect, ActionHold, ActionRedefine}
-}
-
 // How a correction generation was opened (CorrectionResult.OpenedBy).
 const (
 	OpenedByRuling         = "ruling"
