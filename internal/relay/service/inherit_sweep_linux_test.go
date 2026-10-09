@@ -43,6 +43,11 @@ func cloExec(t *testing.T, fd int) bool {
 
 var errNoCloseRange = errors.New("close_range not offered")
 
+// boundedBy is the walk bound of a kernel whose maximum descriptor count is kernelMax.
+func boundedBy(kernelMax uint64) func() (int, error) {
+	return func() (int, error) { return descriptorBound(func() (uint64, error) { return kernelMax, nil }) }
+}
+
 // A Linux sandbox may leave /proc but hide /dev/fd (CRW-1057 verification): the sweep must neither
 // fail the start nor skip the descriptors.
 func TestFDSweepWithoutDevFD(t *testing.T) {
@@ -50,7 +55,7 @@ func TestFDSweepWithoutDevFD(t *testing.T) {
 	sweep := fdSweep{
 		closeRange: func() error { return errNoCloseRange },
 		dirs:       []string{filepath.Join(t.TempDir(), "no-dev-fd"), "/proc/self/fd"},
-		limit:      func() int { return 0 },
+		limit:      func() (int, error) { return 0, nil },
 	}
 	if err := sweep.apply(); err != nil {
 		t.Fatal(err)
@@ -67,7 +72,7 @@ func TestFDSweepWithoutAnyListing(t *testing.T) {
 	sweep := fdSweep{
 		closeRange: func() error { return errNoCloseRange },
 		dirs:       []string{missing, filepath.Join(missing, "again")},
-		limit:      descriptorLimit,
+		limit:      boundedBy(4096),
 	}
 	if err := sweep.apply(); err != nil {
 		t.Fatal(err)
@@ -107,6 +112,13 @@ func TestFDSweepEachWay(t *testing.T) {
 // sweepChildEnv names which limits the child of TestFDSweepWalksPastLoweredLimits lowers.
 const sweepChildEnv = "CRW_1057_SWEEP_CHILD"
 
+// heldHigh is the number of the descriptor that stays open above the lowered limits, and kernelHigh
+// is the maximum descriptor count of the kernel the child pretends to run on.
+const (
+	heldHigh   = 90000
+	kernelHigh = 100000
+)
+
 // Lowering RLIMIT_NOFILE does not close the descriptors already open above it, and a caller may
 // lower the limit before it runs `relay service start` (CRW-1057 verification of 794b8188). With no
 // close_range and neither listing, the walk must still reach such a descriptor, whether the soft
@@ -130,14 +142,14 @@ func TestFDSweepWalksPastLoweredLimits(t *testing.T) {
 	}
 }
 
-// sweepPastLoweredLimit holds a descriptor at 1000, lowers the soft (and with hard, the hard)
+// sweepPastLoweredLimit holds a descriptor at heldHigh, lowers the soft (and with hard, the hard)
 // descriptor limit to 64 and runs the last-resort walk.
 func sweepPastLoweredLimit(t *testing.T, hard bool) {
 	opened, err := unix.Open(filepath.Join(t.TempDir(), "held"), unix.O_RDWR|unix.O_CREAT, 0o600)
 	if err != nil {
 		t.Fatal(err)
 	}
-	fd, err := unix.FcntlInt(uintptr(opened), unix.F_DUPFD, 1000)
+	fd, err := unix.FcntlInt(uintptr(opened), unix.F_DUPFD, heldHigh)
 	_ = unix.Close(opened)
 	if err != nil {
 		t.Fatal(err)
@@ -157,12 +169,13 @@ func sweepPastLoweredLimit(t *testing.T, hard bool) {
 	sweep := fdSweep{
 		closeRange: func() error { return errNoCloseRange },
 		dirs:       []string{missing, filepath.Join(missing, "again")},
-		limit:      descriptorLimit,
+		limit:      boundedBy(kernelHigh),
 	}
 	if err := sweep.apply(); err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("descriptor %d, limit %d/%d, walk bound %d", fd, limit.Cur, limit.Max, descriptorLimit())
+	bound, _ := boundedBy(kernelHigh)()
+	t.Logf("descriptor %d, limit %d/%d, walk bound %d", fd, limit.Cur, limit.Max, bound)
 	if !cloExec(t, fd) {
 		t.Fatalf("descriptor %d above the lowered limit still survives an exec", fd)
 	}
