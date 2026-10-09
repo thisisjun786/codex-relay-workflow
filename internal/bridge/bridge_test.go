@@ -13,6 +13,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/ledger"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 func testBridge(t *testing.T) (*Bridge, *fakehost.Server) {
@@ -138,13 +139,9 @@ func Test_SteerThread_refuses_inactive_thread_without_sending(t *testing.T) {
 func Test_CreateWorktreeThread_creates_locked_detached_checkout_when_host_accepts(t *testing.T) {
 	// Given
 	b, host := testBridge(t)
-	root, err := os.MkdirTemp("", "crw-bridge-worktree-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	root := testsupport.MkdirTempOutsideRepositories(t, "crw-bridge-worktree-")
 	source := filepath.Join(root, "source")
-	if err = os.Mkdir(source, 0700); err != nil {
+	if err := os.Mkdir(source, 0700); err != nil {
 		t.Fatal(err)
 	}
 	for _, args := range [][]string{{"init"}, {"config", "user.email", "test@example.invalid"}, {"config", "user.name", "Test"}} {
@@ -153,7 +150,7 @@ func Test_CreateWorktreeThread_creates_locked_detached_checkout_when_host_accept
 			t.Fatalf("git %v: %v %s", args, err, output)
 		}
 	}
-	if err = os.WriteFile(filepath.Join(source, "tracked"), []byte("base\n"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(source, "tracked"), []byte("base\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	for _, args := range [][]string{{"add", "tracked"}, {"commit", "-m", "base"}} {
@@ -201,11 +198,7 @@ func Test_CreateWorktreeThread_creates_locked_detached_checkout_when_host_accept
 func Test_CreateWorktreeThread_refuses_nested_destination_before_git_effect(t *testing.T) {
 	// Given
 	b, host := testBridge(t)
-	source, err := os.MkdirTemp("", "crw-bridge-source-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(source) })
+	source := testsupport.MkdirTempOutsideRepositories(t, "crw-bridge-source-")
 	cmd := exec.Command("git", "-C", source, "init")
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git init: %v %s", err, output)
