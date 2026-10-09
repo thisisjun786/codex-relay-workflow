@@ -89,6 +89,9 @@ func githubPostDenyPayload(site githubPostSite, p, input map[string]any, cwd str
 		if site.place != githubPostWhereCommand && site.place != githubPostWhereTitle {
 			raw := site.place
 			if !filepath.IsAbs(raw) {
+				if cwd == "" {
+					return editAnswer("deny", reason, reason)
+				}
 				raw = filepath.Join(cwd, raw)
 			}
 			resolved, err := filepath.EvalSymlinks(raw)

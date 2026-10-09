@@ -48,7 +48,10 @@ func TestCRW1157GithubRecovery(t *testing.T) {
 		}
 	}
 	// A lexical cwd outside the trusted temp roots does not need a real file to be rejected.
-	outside := "/opt/crw-synthetic"
+	outside, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(cwd, "clean.md"), []byte("clean"), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -63,5 +66,12 @@ func TestCRW1157LongTargetKeepsBasename(t *testing.T) {
 	reason := memoryGateReason(MemoryWriteAttempt{Surface: "edit", Target: target}, strings.Repeat("s", 200), strings.Repeat("한", 1000))
 	if len(reason) > 700 || !strings.Contains(reason, "/memories/n.md)") {
 		t.Error("bounded diagnosis must retain the target basename")
+	}
+}
+
+func TestCRW1157UnknownBodyDirectory(t *testing.T) {
+	reason := githubPostAnswerReason(t, HandleGitHubPostGuard(gateBash(t, "", "gh pr comment 1 --body-file relative.md")))
+	if strings.Contains(reason, "outside") || !strings.Contains(reason, "cannot be verified") {
+		t.Errorf("unknown directory was treated as known: %s", reason)
 	}
 }

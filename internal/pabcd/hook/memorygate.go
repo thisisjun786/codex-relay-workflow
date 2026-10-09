@@ -97,7 +97,10 @@ func memoryGateReasonFor(a MemoryWriteAttempt, sid, cwd string, leaf bool) strin
 	if cwd == "" {
 		cwd = "the session working directory"
 	}
-	return reason + "Ask the user to confirm (remember this), or use `crw pabcd memory allow-write --session " + memoryGateLabel(sid) + "` from " + memoryGateLabel(cwd) + ". The grant is stored per cwd and permits one write."
+	stem := reason + "Ask the user to confirm (remember this), or use `crw pabcd memory allow-write --session " + memoryGateLabel(sid) + "` from "
+	suffix := ". The grant is stored per cwd and permits one write."
+	budget := min(190, 700-len(stem)-len(suffix)-3)
+	return stem + memoryGateLabelLimit(cwd, budget) + suffix
 }
 
 func memoryGateLabel(s string) string { return memoryGateLabelLimit(s, 100) }
