@@ -142,7 +142,7 @@
     },
     {
       "file": "references/delegation.md",
-      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments.",
+      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. State the dispatch rules of CRW-1126, CRW-1127 and CRW-1129: a failed or task_failed handoff reads the recorded child first, a created report needs the spawn hook's issuance and a child tied to the attempt's marker (an unissued child only through reconciliation, never satisfying independent review), and a policy stop's child cleanup is recorded by a stopped report without reopening the dispatch.",
       "hunks": [
         {
           "line": 141,
@@ -151,6 +151,38 @@
           ],
           "new": [
             "[Waiting on work](../../crw-loop/references/waiting.md) rules in either HITL or HOTL.\n"
+          ]
+        },
+        {
+          "line": 378,
+          "old": [
+            "   Report `outcome:created` and the actual `agentId`, then use native wait. Report\n"
+          ],
+          "new": [
+            "   Report `outcome:created` and the actual `agentId`, then use native wait. Created\n",
+            "   requires the spawn hook's issuance of the attempt, and the child's first message\n",
+            "   must carry this attempt's marker; a child the host cannot yet tie to the marker is\n",
+            "   recorded unverified and cannot complete an independent review until created is\n",
+            "   reported again. A child spawned while the hook was off is recorded only with\n",
+            "   `reconciliation` evidence, never deleted or respawned, and cannot satisfy\n",
+            "   independent review. Report\n"
+          ]
+        },
+        {
+          "line": 394,
+          "new": [
+            "   Before a `failed` or `task_failed` handoff of a recorded child, the command reads\n",
+            "   that child: an active child or a turn in progress refuses, and an end it cannot\n",
+            "   see returns `reconcile` with the child kept; stop the child, then report again.\n"
+          ]
+        },
+        {
+          "line": 402,
+          "new": [
+            "   A policy `stop` that leaves a recorded child marks its cleanup pending; once the\n",
+            "   child has ended, report `outcome:stopped` with its `agentId`,\n",
+            "   `executionState:stopped` and `reconciliation`. That only records the cleanup:\n",
+            "   the dispatch stays stopped and nothing is reopened or switched.\n"
           ]
         }
       ]
