@@ -28,9 +28,8 @@ func TestMoveWithUnknownOperandIsRefused(t *testing.T) {
 	r.denied(t, "mv \"$SRC\" /tmp/x")
 }
 
-// TestXargsFedRemovalIsRefused (CRW-1062): the operands xargs reads from its input arrive at run time. The reader does not
-// prove what the input holds, so a removal or move behind xargs is refused whatever the input is. The printf format, the file
-// operand filter, the custom delimiter and a plain echo are all refused; an unrelated xargs is a control.
+// TestXargsFedRemovalIsRefused (CRW-1062): checkout removals fed through printf, a file-operand filter, a custom delimiter
+// and plain echo are refused. CRW-895's proven unrelated removal operands stay allowed; moves keep the run-time wrapper rule.
 func TestXargsFedRemovalIsRefused(t *testing.T) {
 	r := newDelRig(t)
 	r.denied(t,
@@ -45,6 +44,10 @@ func TestXargsFedRemovalIsRefused(t *testing.T) {
 		"printf '%s\\n' a.txt | xargs cat",
 		"echo x | xargs git status",
 		"xargs rm ./build",
+		"printf '%s\\n' ../other | xargs git worktree remove -f",
+		"printf '%s\\n' ../other | xargs git -P worktree remove -f",
+		"find build -maxdepth 0 -exec git worktree remove -f {} \\;",
+		"find build -maxdepth 0 -exec sh -c 'git worktree remove -f {}' \\;",
 	)
 }
 
