@@ -433,12 +433,16 @@ type walkState struct {
 	name     string
 	duration bool
 	list     int
+	depth    int
 }
 
 // wrapperWalk is the state one command reading shares with the env splits and the wrappers inside it: the
 // argument lists already walked, so a state is walked once however many splits or candidate programs lead to it,
-// and the work stays linear. A state is a wrapper name, whether timeout's duration was read, and the interned
-// argument list, so naming it costs a constant however long the list is. A candidate program is judged on the
+// and the work stays linear. A state is a wrapper name, whether timeout's duration was read, the interned
+// argument list and the depth, so naming it costs a constant however long the list is. The depth is part of
+// every remembered answer (a walked state, a judged position): past shellMaxDepth a reading is a finding, so an
+// answer found at one depth says nothing about a deeper one, and with at most shellMaxDepth+1 depths the work
+// stays linear. A candidate program is judged on the
 // shared list, never on a copy of the words after it, and what the judgment looks for in those words (the first
 // word that is no prefix, a --test flag, an interpreter's -c) is found once per position and remembered (first),
 // so many candidates over one tail scan it once (CRW-1047).
@@ -446,13 +450,20 @@ type wrapperWalk struct {
 	seen     map[walkState]bool
 	interned map[argListKey]*argList
 	found    map[firstKey]*argList
-	judged   map[firstKey]bool
+	judged   map[judgedKey]bool
 }
 
 // firstKey names one search of a list position: what is searched for (a firstKind) and the position's id.
 type firstKey struct {
 	kind firstKind
 	list int
+}
+
+// judgedKey names one judgment of the text found at a position: the search that found it and the depth it is
+// judged at, since the same text can pass shellMaxDepth from a deeper reading only.
+type judgedKey struct {
+	firstKey
+	depth int
 }
 
 type firstKind int
@@ -511,7 +522,7 @@ func (ww *wrapperWalk) first(kind firstKind, l *argList) *argList {
 
 // newWrapperWalk is an empty walk.
 func newWrapperWalk() *wrapperWalk {
-	return &wrapperWalk{seen: map[walkState]bool{}, interned: map[argListKey]*argList{}, found: map[firstKey]*argList{}, judged: map[firstKey]bool{}}
+	return &wrapperWalk{seen: map[walkState]bool{}, interned: map[argListKey]*argList{}, found: map[firstKey]*argList{}, judged: map[judgedKey]bool{}}
 }
 
 // list chains words in front of tail.
@@ -557,7 +568,7 @@ func (ww *wrapperWalk) runs(name string, args *argList, depth int) bool {
 		if l == nil {
 			return false
 		}
-		state := walkState{name: name, duration: duration, list: l.id}
+		state := walkState{name: name, duration: duration, list: l.id, depth: depth}
 		if ww.seen[state] {
 			return false
 		}
@@ -1056,10 +1067,10 @@ func (ww *wrapperWalk) command(l *argList, depth int) bool {
 	return false
 }
 
-// judge is nodeTestRun on text found at a position, run once per position and search: candidates that find the
-// same position share the answer.
+// judge is nodeTestRun on text found at a position, run once per position, search and depth: candidates that find
+// the same position at the same depth share the answer.
 func (ww *wrapperWalk) judge(kind firstKind, at *argList, text string, depth int) bool {
-	key := firstKey{kind, at.id}
+	key := judgedKey{firstKey{kind, at.id}, depth}
 	if found, ok := ww.judged[key]; ok {
 		return found
 	}
@@ -2185,6 +2196,33 @@ func TestWorkflow_an_env_assignment_ends_env_options(t *testing.T) {
 		{"a long option-shaped assignment before an echo", "      - run: env FOO=1 '--split-string=echo' echo node --test\n", false},
 		{"an option-shaped assignment inside -S before an echo", "      - run: env -S \"FOO=1 -S=echo echo node --test\"\n", false},
 		{"an option-shaped assignment behind an unlisted option before an echo", "      - run: env --unset HOME FOO=1 '-S=echo' echo node --test\n", false},
+	} {
+		if got := pythonInWorkflow("release.yml", row.line); (len(got) > 0) != row.found {
+			t.Errorf("%s: found = %q, want found = %v", row.name, got, row.found)
+		}
+	}
+}
+
+// CRW-1047, fix round 6. A remembered answer holds only at the depth it was found at: past shellMaxDepth a run
+// is a finding, so a state or a judged position that was no finding at a shallow depth can be one at a deeper
+// depth. Each row reaches "sh -c T" twice in one walk, first directly (T read at depth 2) and then through an
+// env -S split (T read at depth 3); T nests six evals, so only the deeper reading passes the bound. The first
+// row shares the walked state [sh -c T] (a -u that takes -S as its value reaches it without the split), the
+// second only the judged -c position (a separate sh program reaches it). Both are findings, as at the evaluated
+// head, which walked every reading without remembering any; five evals stay within the bound on every reading.
+func TestWorkflow_a_remembered_answer_holds_only_at_its_depth(t *testing.T) {
+	evals := func(n int) string { return strings.Repeat("eval ", n) + "true" }
+	for _, row := range []struct {
+		name  string
+		line  string
+		found bool
+	}{
+		{"a walked state reached again through a split", "      - run: env -x -u -S sh -c '" + evals(6) + "'\n", true},
+		{"a judged position reached again through a split", "      - run: env -x sh -S sh -c '" + evals(6) + "'\n", true},
+		{"the split reading alone", "      - run: env -S sh -c '" + evals(6) + "'\n", true},
+		{"the direct reading alone", "      - run: env -u -S sh -c '" + evals(6) + "'\n", false},
+		{"a walked state within the bound", "      - run: env -x -u -S sh -c '" + evals(5) + "'\n", false},
+		{"a judged position within the bound", "      - run: env -x sh -S sh -c '" + evals(5) + "'\n", false},
 	} {
 		if got := pythonInWorkflow("release.yml", row.line); (len(got) > 0) != row.found {
 			t.Errorf("%s: found = %q, want found = %v", row.name, got, row.found)
