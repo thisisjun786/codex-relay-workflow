@@ -83,6 +83,38 @@ func TestTheBackupStillAcceptsAnOrdinaryLogThatWentAndCameBackBetweenTheListings
 	}
 }
 
+// The case the test above does not reach: the ordinary log is gone when its copy starts (so it is left out and the
+// manifest says it went) and a header-only log is back in the state directory only after the copy, before the second
+// listing. The second listing names a log the copy does not hold, which holds no frame, and is accepted.
+//
+// sequential: replaces the state-backup seams.
+func TestTheBackupAcceptsAnOrdinaryLogThatWentBeforeItsCopyAndCameBackAfterIt(t *testing.T) {
+	h, _, second, _, next := zoneInstalled(t)
+	zoneStore(t, h)
+	putSidecar(t, h, sidecarWalName, 32)
+	wal := filepath.Join(h.relayState, sidecarWalName)
+	restoreListed := install.ReplaceStateBackupListed(func() error { return os.Remove(wal) })
+	defer restoreListed()
+	restoreStep := install.ReplaceStateBackupStep(func(step string) error {
+		if step == "copied" {
+			return os.WriteFile(wal, make([]byte, 32), 0o600)
+		}
+		return nil
+	})
+	defer restoreStep()
+	o := h.options()
+	o.StateBackup = backupOf(h, "wal-back-after-copy")
+	result, code := install.Install(context.Background(), o, "update", install.Source{From: second})
+	if code != install.OK || at(result, "promoted") != true || h.pointerTarget(t) != next {
+		t.Fatalf("a header-only log back after the copy must not refuse: exit %d\n%s", code, golden.Canon(at(result, "swapGate")))
+	}
+	backup := backupOf(h, "wal-back-after-copy")
+	nothingAt(t, filepath.Join(backup, sidecarWalName))
+	if got := storeSidecarsOf(t, backup)[sidecarWalName]; got != "gone before its copy" {
+		t.Errorf("storeSidecars[%s] = %q, want %q", sidecarWalName, got, "gone before its copy")
+	}
+}
+
 // The scratch preflight charges the store's own two files and nothing that only starts with their name: a leftover
 // journal, a store-like directory's contents and a backup copy of the store are not duplicated by the gate.
 //
