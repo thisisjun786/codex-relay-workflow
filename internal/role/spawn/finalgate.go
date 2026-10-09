@@ -157,10 +157,11 @@ func spawnFinalGateReceipt(root *os.Root, cwd, path string) (source.Identity, bo
 }
 
 // spawnFinalGateBelow is the path of the absolute path abs relative to the working directory cwd, or false when cwd cannot be made
-// absolute or the directory of abs cannot be compared with it. cwd is made absolute, then resolved through its links, so a relative
-// working directory and a symbolic link to the real directory name the same tree as the receipt's path does, whichever spelling the
-// receipt uses: the directory of abs is resolved the same way. A path that leaves the tree stays outside it here and os.Root refuses
-// it, so the boundary is kept.
+// absolute or no ancestor of abs is cwd. cwd is made absolute, then resolved through its links; the ancestor of abs that names the
+// same directory (abs itself spelled through a link to cwd, or through the real path while cwd is the link) is the base, found from
+// the root down. Only that prefix is resolved: the links below it stay in the returned path, so os.Root refuses a link that leaves
+// cwd, whatever its target, an absolute one to a directory below cwd or a relative one that leaves and comes back, and the boundary
+// is kept.
 func spawnFinalGateBelow(cwd, abs string) (string, bool) {
 	base, err := filepath.Abs(cwd)
 	if err != nil {
@@ -169,14 +170,21 @@ func spawnFinalGateBelow(cwd, abs string) (string, bool) {
 	if resolved, err := filepath.EvalSymlinks(base); err == nil {
 		base = resolved
 	}
-	if dir, err := filepath.EvalSymlinks(filepath.Dir(abs)); err == nil {
-		abs = filepath.Join(dir, filepath.Base(abs))
+	for i := 0; i <= len(abs); i++ {
+		if i != len(abs) && abs[i] != filepath.Separator {
+			continue
+		}
+		prefix := abs[:i]
+		if prefix == "" {
+			prefix = string(filepath.Separator)
+		}
+		if resolved, err := filepath.EvalSymlinks(prefix); err != nil || resolved != base {
+			continue
+		}
+		rel, err := filepath.Rel(prefix, abs)
+		return rel, err == nil
 	}
-	rel, err := filepath.Rel(base, abs)
-	if err != nil {
-		return "", false
-	}
-	return rel, true
+	return "", false
 }
 
 // spawnFinalGateFSPath is path as Node's fs reads a string: a lone surrogate, which pyjson keeps as the three WTF-8 bytes of its code
