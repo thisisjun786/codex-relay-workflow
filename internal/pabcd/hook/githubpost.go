@@ -211,7 +211,7 @@ func githubPostPost(args []string, cwd string) (githubPostSite, bool, bool) {
 		if !ok {
 			return githubPostSite{githubPostRuleUnread, file}, true, true
 		}
-		if line, found := githubPostSecretLine(content); found {
+		if line, found := githubPostRawSecretLine(content); found {
 			return githubPostSite{githubPostRuleSecret, file + ":" + strconv.Itoa(line)}, true, true
 		}
 	}
@@ -256,6 +256,28 @@ func githubPostJSONText(content string) (text string, ok bool) {
 		return "", false
 	}
 	return strings.Join(parts, "\n"), true
+}
+
+// githubPostRawSecretLine is the first line of a body file's raw content that holds a secret, and whether one does. gh posts the
+// raw bytes, so they are scanned as they are: the secret patterns and the NAME=value lines of githubPostSecretLine. A JSON document
+// also has its strings split out at the quotes, brackets, commas and \n escapes, so a NAME=value shape inside a string is read as
+// it is in a line of its own. Nothing is decoded, and the line numbers are the raw ones.
+func githubPostRawSecretLine(content string) (int, bool) {
+	if line, found := githubPostSecretLine(content); found {
+		return line, true
+	}
+	if !json.Valid([]byte(content)) {
+		return 0, false
+	}
+	split := strings.NewReplacer("\"", "\n", "{", "\n", "}", "\n", "[", "\n", "]", "\n", ",", "\n", "\\n", "\n")
+	for i, line := range strings.Split(content, "\n") {
+		for _, part := range strings.Split(split.Replace(line), "\n") {
+			if name, ok := githubPostAssignment(part); ok && githubPostSecretName(name) {
+				return i + 1, true
+			}
+		}
+	}
+	return 0, false
 }
 
 // githubPostAPI is form A2: gh api, with only the words the rule allows. At most one of -F body=@F,
@@ -348,14 +370,17 @@ func githubPostAPI(args []string, cwd string) (githubPostSite, bool, bool) {
 		}
 		// --input is the request body and is JSON: a body that is not one JSON document is unreadable, and the scan reads its
 		// strings. A field file is posted as its raw text, so that text is scanned.
-		text := content
+		line, found := 0, false
 		if jsonBody {
-			var ok bool
-			if text, ok = githubPostJSONText(content); !ok {
+			text, ok := githubPostJSONText(content)
+			if !ok {
 				return githubPostSite{githubPostRuleUnread, file}, true, true
 			}
+			line, found = githubPostSecretLine(text)
+		} else {
+			line, found = githubPostRawSecretLine(content)
 		}
-		if line, found := githubPostSecretLine(text); found {
+		if found {
 			return githubPostSite{githubPostRuleSecret, file + ":" + strconv.Itoa(line)}, true, true
 		}
 	}
