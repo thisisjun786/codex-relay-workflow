@@ -207,15 +207,25 @@ func auditPRDiff(ctx context.Context, cfg *Config, number int) ([]byte, error) {
 
 // auditPRSelect is the target list: the merged pull requests whose title carries an issue
 // key, that merged at or after since, and that the ledger does not already hold as a pull
-// request audit. They come back newest first, which is the order a bounded run wants, and
-// the list is cut to max.
+// request audit. The list is cut to max.
+//
+// A target that failed before (the failure record, auditPRFailuresFile) does not take a --max
+// place ahead of one that never failed: the targets that never failed at their head come
+// first, newest first, and the ones that did fail come after them, the one whose last failure
+// is oldest first. A target that failed auditPRFailureLimit times at its current head is left
+// out and returned as skipped until its head changes, and takes no --max place.
 //
 // A merge time gh did not answer with as a timestamp is an error rather than a skip: gh
 // filtered the list by the same field, so a value that does not parse means the answer is
 // not the one that was asked for, and skipping it would silently drop a pull request from
 // the audit.
-func auditPRSelect(entries []auditPRListEntry, pattern *regexp.Regexp, since time.Time, audited map[string]bool, max int) ([]auditPRTarget, error) {
-	var targets []auditPRTarget
+func auditPRSelect(entries []auditPRListEntry, pattern *regexp.Regexp, since time.Time, audited map[string]bool, failures []auditPRFailureRow, max int) ([]auditPRTarget, []auditPRSkip, error) {
+	type candidate struct {
+		target auditPRTarget
+		last   int // the record position of its last failure at this head; -1 when none
+	}
+	var fresh, failed []candidate
+	var skipped []auditPRSkip
 	for _, entry := range entries {
 		key := pattern.FindString(entry.Title)
 		if key == "" {
@@ -223,7 +233,7 @@ func auditPRSelect(entries []auditPRListEntry, pattern *regexp.Regexp, since tim
 		}
 		mergedAt, err := time.Parse(time.RFC3339, entry.MergedAt)
 		if err != nil {
-			return nil, fmt.Errorf("the merged time of pull request #%d is %q: %w", entry.Number, entry.MergedAt, err)
+			return nil, nil, fmt.Errorf("the merged time of pull request #%d is %q: %w", entry.Number, entry.MergedAt, err)
 		}
 		if mergedAt.Before(since) {
 			continue
@@ -231,21 +241,44 @@ func auditPRSelect(entries []auditPRListEntry, pattern *regexp.Regexp, since tim
 		if entry.MergeCommit.OID == "" || audited[auditPRSubject(entry.Number)] {
 			continue
 		}
-		targets = append(targets, auditPRTarget{
+		subject := auditPRSubject(entry.Number)
+		count, last := auditPRFailureState(failures, subject, entry.MergeCommit.OID)
+		if count >= auditPRFailureLimit {
+			skipped = append(skipped, auditPRSkip{Number: entry.Number, Subject: subject, Head: entry.MergeCommit.OID, Failures: count})
+			continue
+		}
+		c := candidate{target: auditPRTarget{
 			Number: entry.Number, Issue: key, Title: entry.Title, Body: entry.Body,
 			Merge: entry.MergeCommit.OID, MergedAt: mergedAt,
-		})
-	}
-	sort.SliceStable(targets, func(i, j int) bool {
-		if !targets[i].MergedAt.Equal(targets[j].MergedAt) {
-			return targets[i].MergedAt.After(targets[j].MergedAt)
+		}, last: last}
+		if count == 0 {
+			fresh = append(fresh, c)
+		} else {
+			failed = append(failed, c)
 		}
-		return targets[i].Number > targets[j].Number
+	}
+	byMerge := func(a, b candidate) bool {
+		if !a.target.MergedAt.Equal(b.target.MergedAt) {
+			return a.target.MergedAt.After(b.target.MergedAt)
+		}
+		return a.target.Number > b.target.Number
+	}
+	sort.SliceStable(fresh, func(i, j int) bool { return byMerge(fresh[i], fresh[j]) })
+	sort.SliceStable(failed, func(i, j int) bool {
+		if failed[i].last != failed[j].last {
+			return failed[i].last < failed[j].last
+		}
+		return byMerge(failed[i], failed[j])
 	})
+	var targets []auditPRTarget
+	for _, c := range append(fresh, failed...) {
+		targets = append(targets, c.target)
+	}
 	if max >= 0 && len(targets) > max {
 		targets = targets[:max]
 	}
-	return targets, nil
+	sort.SliceStable(skipped, func(i, j int) bool { return skipped[i].Number < skipped[j].Number })
+	return targets, skipped, nil
 }
 
 // auditPRAudited is the bundle subjects the ledger already holds as pull request audits,
@@ -915,10 +948,18 @@ func auditPRRunWith(ctx context.Context, e *Env, cfg *Config, max int, dryRun bo
 		fmt.Fprintf(e.Stderr, "crw manage audit pr: error: %v\n", err)
 		return 1
 	}
-	targets, err := auditPRSelect(entries, pattern, since, auditPRAudited(rows), max)
+	failures, err := auditPRReadFailures(e, cfg)
 	if err != nil {
 		fmt.Fprintf(e.Stderr, "crw manage audit pr: error: %v\n", err)
 		return 1
+	}
+	targets, skipped, err := auditPRSelect(entries, pattern, since, auditPRAudited(rows), failures, max)
+	if err != nil {
+		fmt.Fprintf(e.Stderr, "crw manage audit pr: error: %v\n", err)
+		return 1
+	}
+	for _, skip := range skipped {
+		fmt.Fprintf(e.Stderr, "crw manage audit pr: #%d: skipped: failed %d times at %s\n", skip.Number, skip.Failures, skip.Head)
 	}
 	failed := false
 	// Resolving a target reads the relay for that one pull request, so a failure is that
@@ -934,7 +975,7 @@ func auditPRRunWith(ctx context.Context, e *Env, cfg *Config, max int, dryRun bo
 			if auditPRCancelled(e, ctx) {
 				return 1
 			}
-			auditPRSkipTarget(e, targets[i], err)
+			auditPRFailTarget(e, cfg, targets[i], err, !dryRun)
 			failed = true
 			continue
 		}
@@ -976,7 +1017,7 @@ func auditPRRunWith(ctx context.Context, e *Env, cfg *Config, max int, dryRun bo
 				if auditPRCancelled(e, ctx) {
 					return 1
 				}
-				auditPRSkipTarget(e, target, err)
+				auditPRFailTarget(e, cfg, target, err, true)
 				failed = true
 				continue
 			}
@@ -985,7 +1026,7 @@ func auditPRRunWith(ctx context.Context, e *Env, cfg *Config, max int, dryRun bo
 				if auditPRCancelled(e, ctx) {
 					return 1
 				}
-				auditPRSkipTarget(e, target, err)
+				auditPRFailTarget(e, cfg, target, err, true)
 				failed = true
 				continue
 			}
@@ -1005,13 +1046,19 @@ func auditPRRunWith(ctx context.Context, e *Env, cfg *Config, max int, dryRun bo
 				if auditPRCancelled(e, ctx) {
 					return 1
 				}
-				auditPRSkipTarget(e, target, err)
+				auditPRFailTarget(e, cfg, target, err, true)
 				failed = true
 				continue
 			}
 		}
 	}
-	if err := auditReportWrite(e, cfg); err != nil {
+	// The report names the targets the failure record holds out, judged at the heads this run
+	// listed, so a target whose head changed is no longer reported as skipped.
+	heads := map[string]string{}
+	for _, entry := range entries {
+		heads[auditPRSubject(entry.Number)] = entry.MergeCommit.OID
+	}
+	if err := auditReportWriteWith(e, cfg, heads); err != nil {
 		fmt.Fprintf(e.Stderr, "crw manage audit pr: error: %v\n", err)
 		return 1
 	}

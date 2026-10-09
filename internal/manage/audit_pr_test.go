@@ -238,7 +238,7 @@ func TestAuditPRSelectsOnlyNewKeyedPullRequests(t *testing.T) {
 		auditPRListEntryOf(7, "CRW-7: older but new", "2026-10-03T00:00:00Z", "m7"),
 	}
 	audited := map[string]bool{auditPRSubject(11): true}
-	targets, err := auditPRSelect(entries, pattern, since, audited, 9)
+	targets, _, err := auditPRSelect(entries, pattern, since, audited, nil, 9)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -251,14 +251,14 @@ func TestAuditPRSelectsOnlyNewKeyedPullRequests(t *testing.T) {
 	if targets[0].Issue != "CRW-12" || targets[0].Merge != "m12" {
 		t.Errorf("the first target carries issue %q and merge %q", targets[0].Issue, targets[0].Merge)
 	}
-	capped, err := auditPRSelect(entries, pattern, since, audited, 1)
+	capped, _, err := auditPRSelect(entries, pattern, since, audited, nil, 1)
 	if err != nil || len(capped) != 1 || capped[0].Number != 12 {
 		t.Errorf("--max 1 selected %+v (%v), want the newest target only", capped, err)
 	}
 	// A merge time that is not a timestamp is an error, not a silent skip: the pull request
 	// would otherwise drop out of the audit with nothing said.
 	broken := []auditPRListEntry{auditPRListEntryOf(12, "CRW-12: a change", "yesterday", "m12")}
-	if _, err := auditPRSelect(broken, pattern, since, map[string]bool{}, 9); err == nil {
+	if _, _, err := auditPRSelect(broken, pattern, since, map[string]bool{}, nil, 9); err == nil {
 		t.Error("a merge time that is not a timestamp was accepted")
 	}
 }
@@ -953,10 +953,10 @@ func TestAuditPRSelectIgnoresAPackageRow(t *testing.T) {
 	pattern := regexp.MustCompile(auditPRDefaultPattern)
 	since := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
 	entries := []auditPRListEntry{auditPRListEntryOf(12, "CRW-12: a change", "2026-10-05T00:00:00Z", "m12")}
-	if got, err := auditPRSelect(entries, pattern, since, auditPRAudited([]auditLedgerRow{{Mode: auditModePackage, Subject: "pr-12"}}), 9); err != nil || len(got) != 1 {
+	if got, _, err := auditPRSelect(entries, pattern, since, auditPRAudited([]auditLedgerRow{{Mode: auditModePackage, Subject: "pr-12"}}), nil, 9); err != nil || len(got) != 1 {
 		t.Errorf("a package row hid the pull request: %v (%v)", got, err)
 	}
-	if got, err := auditPRSelect(entries, pattern, since, auditPRAudited([]auditLedgerRow{{Mode: auditModePR, Subject: "pr-12"}}), 9); err != nil || len(got) != 0 {
+	if got, _, err := auditPRSelect(entries, pattern, since, auditPRAudited([]auditLedgerRow{{Mode: auditModePR, Subject: "pr-12"}}), nil, 9); err != nil || len(got) != 0 {
 		t.Errorf("an audited pull request was selected again: %v (%v)", got, err)
 	}
 }
