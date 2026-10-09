@@ -122,7 +122,8 @@ func TestWritesMatchTheRecordedOracle(t *testing.T) {
 				s.InjectedTurns, s.UnverifiedSubagents = []string{}, []UnverifiedSubagent{}
 				errs = append(errs, WriteState(cwd, s))
 			}
-			same("alias", []any{sessionFiles(cwd), string(ReadState(cwd, "a-b").Phase), errors.Is(errs[0], ErrNonCanonicalSessionID), errs[1]}, []any{c.strs("listing"), c.str("phase"), true, error(nil)})
+			_, readErr := ReadStateFile(cwd, "a/b")
+			same("alias", []any{sessionFiles(cwd), string(ReadState(cwd, "a-b").Phase), errors.Is(errs[0], ErrNonCanonicalSessionID), errs[1], errors.Is(readErr, ErrNonCanonicalSessionID), ReadState(cwd, "a/b").Phase}, []any{c.strs("listing"), c.str("phase"), true, error(nil), true, PhaseIdle})
 		case id == "write_final_is_directory":
 			_ = os.MkdirAll(state, 0o777)
 			// os.Rename refuses a directory target itself, with EEXIST where rename(2) and Node say EISDIR; the failure, the removed temp

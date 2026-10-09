@@ -77,3 +77,30 @@ func TestReadInterviewEventsCountsOnlyThisSessionsCompleteRows(t *testing.T) {
 		}
 	}
 }
+
+// CRW-1108 read side: a/b and "" sanitise to a-b and missing, so reading them used to return those sessions' state,
+// grants included. ReadStateFile refuses a non-canonical id before any file access, and ReadStateStrict marks it
+// unreadable (a default, never the alias's state); canonical ids still read.
+func TestStateReadsRefuseNonCanonicalSessionIDs(t *testing.T) {
+	cwd := t.TempDir()
+	for _, id := range []string{"a-b", "missing"} {
+		s := DefaultState(id, "")
+		s.Phase = PhaseB
+		s.MemoryWriteGrant = true
+		if err := WriteState(cwd, s); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, id := range []string{"a/b", "", "missing/", " a-b"} {
+		raw, err := ReadStateFile(cwd, id)
+		s, unreadable := ReadStateStrict(cwd, id)
+		if !errors.Is(err, ErrNonCanonicalSessionID) || raw != nil || !unreadable || s.Phase == PhaseB || s.MemoryWriteGrant {
+			t.Errorf("id=%q ReadStateFile err=%v raw=%d; ReadStateStrict phase=%s grant=%v unreadable=%v; a non-canonical read must not expose an alias's state", id, err, len(raw), s.Phase, s.MemoryWriteGrant, unreadable)
+		}
+	}
+	for _, id := range []string{"a-b", "missing"} {
+		if s, unreadable := ReadStateStrict(cwd, id); unreadable || s.Phase != PhaseB || !s.MemoryWriteGrant {
+			t.Errorf("canonical %q read changed: phase=%s grant=%v unreadable=%v", id, s.Phase, s.MemoryWriteGrant, unreadable)
+		}
+	}
+}
