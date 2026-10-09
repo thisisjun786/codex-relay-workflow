@@ -8,7 +8,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/skill/search"
 )
 
-const skillUsage = "usage: crw skill {hook-probe,issue-size,parent-title,start-policy,base-refresh} ..."
+const skillUsage = "usage: crw skill {hook-probe,issue-ready,issue-size,parent-title,start-policy,base-refresh} ..."
 
 // Run dispatches `crw skill` commands.
 func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
@@ -24,6 +24,8 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runHookProbe(args[1:], stdout, stderr)
 	case "pair-choice":
 		return runPairChoice(args[1:], stdin, stdout, stderr)
+	case "issue-ready":
+		return runIssueReady(args[1:], stdin, stdout, stderr)
 	case "issue-size":
 		return runIssueSize(args[1:], stdin, stdout, stderr)
 	case "parent-title":
@@ -40,7 +42,7 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 0
 	default:
 		fmt.Fprintln(stderr, skillUsage)
-		fmt.Fprintf(stderr, "crw skill: error: invalid command %q (choose from hook-probe, issue-size, parent-title, start-policy, base-refresh)\n", args[0])
+		fmt.Fprintf(stderr, "crw skill: error: invalid command %q (choose from hook-probe, issue-ready, issue-size, parent-title, start-policy, base-refresh)\n", args[0])
 		return usageExit
 	}
 }
