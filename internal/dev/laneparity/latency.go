@@ -156,7 +156,8 @@ func MeasureLatency(o LatencyOptions) ([]Latency, error) {
 		}
 		defer os.RemoveAll(scratch)
 	}
-	in := contracttest.HookFireInput{Root: o.Root, CRW: o.CRW, Plugin: o.Plugin, Declared: declared, Scratch: scratch, Light: true}
+	// Every case's CODEX_HOME holds the hook switch at crw, so the ported legs do their work (CRW-392).
+	in := contracttest.HookFireInput{Root: o.Root, CRW: o.CRW, Plugin: o.Plugin, Declared: declared, Scratch: scratch, Light: true, Seed: seedSwitch}
 	// The fixtures that pick a leg's timed payload are those named for the legs timed (hook__<leg>__).
 	choose := in
 	if o.Only != nil {

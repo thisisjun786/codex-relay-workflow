@@ -222,7 +222,7 @@ test("generation receipt leaves provenance unknown and reports malformed metadat
 
   const malformed = generationReceipt(model(), {
     sourceSha: "../checkout/HEAD",
-    hostAdapter: "/Users/example/account",
+    hostAdapter: "/var/example/account",
     templateIds: ["ok", 7],
     checks: [{ id: "claim-evidence", status: "MAGIC" }],
   });

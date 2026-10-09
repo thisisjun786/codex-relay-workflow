@@ -90,7 +90,10 @@ func ExpectedLegs(root string) ([]Leg, error) {
 	}
 	legs = append(legs,
 		Leg{Leg: CompletionLeg, File: completionFile, Event: "Stop", Timeout: 10, Status: "(crw) Checking the completion records", Own: true},
-		Leg{Leg: GitHubPostLeg, File: githubPostFile, Event: "PreToolUse", Matcher: "^Bash$", Timeout: 10, Status: "(crw) Guarding GitHub posts", Own: true},
+		// The GitHub post guard is the declaration the shipped plugin generates for it (CRW-392): its
+		// matcher is the guard's own set of shell tools.
+		Leg{Leg: GitHubPostLeg, File: githubPostFile, Event: cxccorpus.GitHubPostGuard.Event, Matcher: cxccorpus.GitHubPostGuard.Matcher,
+			Timeout: cxccorpus.GitHubPostGuard.Timeout, Status: cxccorpus.GitHubPostGuard.Status, Own: true},
 	)
 	return legs, nil
 }

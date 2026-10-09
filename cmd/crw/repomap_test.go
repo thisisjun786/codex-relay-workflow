@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 )
@@ -191,4 +192,110 @@ func TestRepoMapNoBootstrapUnlessExactOptIn(t *testing.T) {
 			t.Fatalf("opt-in %q calls %d %q", flag, calls, stderr.String())
 		}
 	}
+}
+
+// A plugin installation keeps the repo-map skill under the Codex home's plugin cache and creates no
+// standalone skill link: crw map runs that script instead of a nonexistent <CODEX_HOME>/skills one
+// (CRW-392), and an explicit CRW_SKILLS_DIR or an existing link still wins.
+func TestRepoMapFindsThePluginInstalledSkill(t *testing.T) {
+	write := func(t *testing.T, dir string, age time.Duration) string {
+		t.Helper()
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		script := filepath.Join(dir, "repomap.py")
+		if err := os.WriteFile(script, []byte("print()\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		when := time.Now().Add(-age)
+		if err := os.Chtimes(script, when, when); err != nil {
+			t.Fatal(err)
+		}
+		return dir
+	}
+	launch := func(t *testing.T, env map[string]string) string {
+		t.Helper()
+		var script string
+		d := mapDeps{
+			exists:         func(string) bool { return false },
+			remove:         func(string) error { return nil },
+			installedSkill: installedRepoMapDir,
+			run: func(cmd string, args []string, quiet bool) (int, error) {
+				for i, a := range args {
+					if a == "-B" && i+1 < len(args) {
+						script = args[i+1]
+					}
+				}
+				return 0, nil
+			},
+		}
+		if code := launchRepoMap([]string{"--help"}, mapEnv(env), &strings.Builder{}, d); code != 0 {
+			t.Fatalf("exit %d", code)
+		}
+		return script
+	}
+	t.Run("plugin cache", func(t *testing.T) {
+		home := t.TempDir()
+		codex := filepath.Join(home, "codex")
+		old := write(t, filepath.Join(codex, "plugins", "cache", "market", "crw", "0.9.0", "skills", "crw-repo-map", "scripts"), 48*time.Hour)
+		cur := write(t, filepath.Join(codex, "plugins", "cache", "market", "crw", "0.10.0", "skills", "crw-repo-map", "scripts"), time.Hour)
+		_ = old
+		if got := launch(t, map[string]string{"HOME": home, "CODEX_HOME": codex}); got != filepath.Join(cur, "repomap.py") {
+			t.Fatalf("script %q, want the newest installed %q", got, filepath.Join(cur, "repomap.py"))
+		}
+	})
+	t.Run("plugin root from the host", func(t *testing.T) {
+		home := t.TempDir()
+		root := filepath.Join(home, "pkg")
+		dir := write(t, filepath.Join(root, "skills", "crw-repo-map", "scripts"), time.Hour)
+		if got := launch(t, map[string]string{"HOME": home, "CODEX_HOME": filepath.Join(home, "codex"), "PLUGIN_ROOT": root}); got != filepath.Join(dir, "repomap.py") {
+			t.Fatalf("script %q", got)
+		}
+	})
+	t.Run("plugin root beats a newer cached older version", func(t *testing.T) {
+		home := t.TempDir()
+		codex := filepath.Join(home, "codex")
+		root := filepath.Join(home, "pkg")
+		active := write(t, filepath.Join(root, "skills", "crw-repo-map", "scripts"), 48*time.Hour)
+		write(t, filepath.Join(codex, "plugins", "cache", "market", "crw", "0.9.0", "skills", "crw-repo-map", "scripts"), time.Minute)
+		if got := launch(t, map[string]string{"HOME": home, "CODEX_HOME": codex, "PLUGIN_ROOT": root}); got != filepath.Join(active, "repomap.py") {
+			t.Fatalf("script %q, want the active plugin's %q", got, filepath.Join(active, "repomap.py"))
+		}
+	})
+	t.Run("an unusable plugin root falls back to the cache", func(t *testing.T) {
+		home := t.TempDir()
+		codex := filepath.Join(home, "codex")
+		root := filepath.Join(home, "pkg")
+		if err := os.MkdirAll(filepath.Join(root, "skills", "crw-repo-map", "scripts", "repomap.py"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		cached := write(t, filepath.Join(codex, "plugins", "cache", "market", "crw", "1.0.0", "skills", "crw-repo-map", "scripts"), time.Hour)
+		if got := launch(t, map[string]string{"HOME": home, "CODEX_HOME": codex, "PLUGIN_ROOT": root}); got != filepath.Join(cached, "repomap.py") {
+			t.Fatalf("script %q, want the cached %q", got, filepath.Join(cached, "repomap.py"))
+		}
+	})
+	t.Run("a skills link wins", func(t *testing.T) {
+		home := t.TempDir()
+		codex := filepath.Join(home, "codex")
+		link := write(t, filepath.Join(codex, "skills", "crw-repo-map", "scripts"), time.Hour)
+		write(t, filepath.Join(codex, "plugins", "cache", "market", "crw", "1.0.0", "skills", "crw-repo-map", "scripts"), time.Minute)
+		if got := launch(t, map[string]string{"HOME": home, "CODEX_HOME": codex}); got != filepath.Join(link, "repomap.py") {
+			t.Fatalf("script %q", got)
+		}
+	})
+	t.Run("an explicit skills dir wins", func(t *testing.T) {
+		home := t.TempDir()
+		codex := filepath.Join(home, "codex")
+		write(t, filepath.Join(codex, "plugins", "cache", "market", "crw", "1.0.0", "skills", "crw-repo-map", "scripts"), time.Minute)
+		if got := launch(t, map[string]string{"HOME": home, "CODEX_HOME": codex, "CRW_SKILLS_DIR": "/staged"}); got != "/staged/crw-repo-map/scripts/repomap.py" {
+			t.Fatalf("script %q", got)
+		}
+	})
+	t.Run("nothing installed keeps the default", func(t *testing.T) {
+		home := t.TempDir()
+		codex := filepath.Join(home, "codex")
+		if got := launch(t, map[string]string{"HOME": home, "CODEX_HOME": codex}); got != filepath.Join(codex, "skills", "crw-repo-map", "scripts", "repomap.py") {
+			t.Fatalf("script %q", got)
+		}
+	})
 }

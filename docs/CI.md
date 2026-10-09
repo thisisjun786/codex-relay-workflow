@@ -13,12 +13,12 @@ workflow starts only on a manual dispatch, and integration does not wait on it.
 
 | Command | Where CI runs it |
 | --- | --- |
-| `crw-dev ci validate` | `validate`: skill metadata, local Markdown links, and that Python sits only in skill assets: a `.py` file or a python-shebang script, tracked or untracked and not ignored, fails it unless it is below `<skill>/scripts/` or `<skill>/examples/` of `plugins/crw/skills` or `port/cxc/skills` (`TestTrackedPythonStaysInSkillAssets` holds the tracked files for `make test`); CI installs no Python and runs no skill script (`TestWorkflow_installs_no_python`); and that no blob over 2 MiB comes into the history unless the allow list names it ([large blobs](#large-blobs)) |
+| `crw-dev ci validate` | `validate`: skill metadata, local Markdown links, and that Python sits only in skill assets: a `.py` file or a python-shebang script, tracked or untracked and not ignored, fails it unless it is below `<skill>/scripts/` or `<skill>/examples/` of `plugins/crw/skills` (`TestTrackedPythonStaysInSkillAssets` holds the tracked files for `make test`); CI installs no Python and runs no skill script (`TestWorkflow_installs_no_python`); and that no blob over 2 MiB comes into the history unless the allow list names it ([large blobs](#large-blobs)) |
 | `crw-dev ci plugin` | `validate`: plugin package shape, payload hygiene and the recorded version digest ([below](#plugin-package)) |
-| `crw-dev ci contracts` | `validate`: the offline contract checks built into `crw-dev`: the hook replay, the operations shape check (`crw-dev ci operations`), the component definition, the start-policy self-test and the parent-title replay |
+| `crw-dev ci contracts` | `validate`: the offline contract checks built into `crw-dev`: the hook replay, the CXC corpus lint (which also holds the plugin's hook declarations to K1; `crw-dev cxc hooks` regenerates them), the operations shape check (`crw-dev ci operations`), the component definition, the start-policy self-test and the parent-title replay |
 | `crw-dev ci refactor-backlog` | `validate`: the generated refactor backlog: assembles `docs/port/refactor-backlog.md` from the fragments under `docs/port/refactor-backlog.d` and refuses when the committed file differs from the fragments (`--write` regenerates it. The file ends in a comment that seals everything above it: a file that still matches its seal is replaced freely, because every line the fragments no longer produce is the old text of an edited or removed fragment; a file that does not match (edited by hand, or written before the seal) is refused when it holds an entry, compared as its whole line, that no fragment produces. It also refuses when the file or the fragments cannot be read, or when both are missing from this repository, whatever is left of `docs/port`) |
 | `bash scripts/ci/secrets.sh` | `secrets`: checksum-pinned Gitleaks scan: on a manual dispatch every fetched ref ([scope](#secret-scanning)) |
-| `node --test port/cxc/skills/*/tests/*.test.mjs` | `skill-scripts-node`: the staged skills' own Node tests, on Node 24.20.0, only when a staged skill path changed from the run's own base (a pull request from its merge base); a run that skips them is success |
+| `node --test plugins/crw/skills/*/tests/*.test.mjs` | `skill-scripts-node`: the skills' own Node tests (the skills ported from CXC carry them), on Node 24.20.0, only when a skill path changed from the run's own base (a pull request from its merge base); a run that skips them is success |
 | `npm ci`, `npm test`, `npm run build -- --outDir "$RUNNER_TEMP/gui-built" --emptyOutDir`, `crw-dev ci gui-drift --built "$RUNNER_TEMP/gui-built"` | `gui`: the screens under `web/` build and match the committed `internal/gui/assets` tree byte for byte, on Node 24.20.0, only when a watched path changed ([below](#the-gui-job)); `make gui` runs the same three commands locally |
 | `make lint` | `go-product` leg `lint`: vet (also of the `dev` and `integration` tagged packages), staticcheck and gofmt |
 | `make test-part TEST_PART=<n>` | `go-product` legs `test-<n>` and `test-rest`: the Go tests and the contract corpus; together the parts are `make test` |
@@ -178,8 +178,8 @@ dispatch run is a developer's remote check and never integration or release
 evidence. The job bodies are the ones `crw-dev ci local` runs locally (the local full
 verification CRW-964 adds), so a dispatch exercises the same checks.
 
-Two jobs gate themselves on changed paths. `skill-scripts-node` runs the staged skills' Node
-tests only when a staged skill path changed, and ends successfully without installing Node when
+Two jobs gate themselves on changed paths. `skill-scripts-node` runs the skills' Node
+tests only when a path under `plugins/crw/skills` changed, and ends successfully without installing Node when
 none did. A pull request is judged from its merge base — the three-dot range `base...head`, the
 commits the branch adds to its base — so a staged-skill change that only the base branch carries is
 not this pull request's, and a branch that carries the same change as its base is still selected;
@@ -336,7 +336,8 @@ find -H "${TMPDIR:-/tmp}" -mindepth 1 -maxdepth 1 -type d -name 'crw-relay-test-
 It refuses what installs silently wrong. Installation copies the plugin root verbatim, so a
 symlink inside it (dropped), an untracked or ignored file (published), an empty directory,
 anything outside `.codex-plugin/`, the declared components and `LICENSE`, operational state,
-credential names and a personal home path in shipped instructions are all rejected; each declared
+credential names and a personal home path in shipped instructions are all rejected; a hook
+timeout over 20 seconds (the longest K1 timeout) is refused; each declared
 skill must carry `SKILL.md` and `agents/openai.yaml`, and the manifest may carry only keys the
 ingestion validator knows, in the shapes it accepts. The working tree is checked with the same
 rules, because a local marketplace installs it.

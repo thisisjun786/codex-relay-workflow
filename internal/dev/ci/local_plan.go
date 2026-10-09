@@ -175,11 +175,11 @@ func localPlan() []localJob {
 	skill_scripts_node.steps = append(skill_scripts_node.steps, mirrorPair()...)
 	skill_scripts_node.steps = append(skill_scripts_node.steps, checkout)
 	skill_scripts_node.steps = append(skill_scripts_node.steps, localStep{name: "Decide from the changed files whether the staged skills changed", kind: localRun, command: "set -euo pipefail\n# A pull request compares from its merge base: the commits the branch adds to its base,\n# never the base tip's own changes. A push to dev compares the previous commit with this\n# one, where the range is already the pushed commits. A manual dispatch has neither, so\n# it runs the tests.\nif [[ -n \"${PR_BASE_SHA}\" ]]; then\n  range=\"${PR_BASE_SHA}...${PR_HEAD_SHA}\"\nelif [[ -n \"${PUSH_BEFORE_SHA}\" && \"${PUSH_BEFORE_SHA}\" != \"0000000000000000000000000000000000000000\" ]]; then\n  range=\"${PUSH_BEFORE_SHA}..${GITHUB_SHA}\"\nelse\n  echo \"changed=true\" >> \"$GITHUB_OUTPUT\"\n  echo 'no base to compare with; the staged skill-script tests run'\n  exit 0\nfi\nchanged=\"$(git diff --name-only \"${range}\" -- \"${SKILLS_ROOT}\")\"\nif [[ -n \"${changed}\" ]]; then\n  echo \"changed=true\" >> \"$GITHUB_OUTPUT\"\n  printf 'staged skill paths changed:\\n%s\\n' \"${changed}\"\nelse\n  echo \"changed=false\" >> \"$GITHUB_OUTPUT\"\n  echo 'no staged skill path changed; the job ends without installing Node'\nfi",
-		tool: "", scope: "range", heavy: false, legs: nil, env: []string{"PR_BASE_SHA=" + localBaseEnv, "PR_HEAD_SHA=" + localHeadEnv, "GITHUB_OUTPUT=" + localGuiOutputEnv, "SKILLS_ROOT=port/cxc/skills"},
+		tool: "", scope: "range", heavy: false, legs: nil, env: []string{"PR_BASE_SHA=" + localBaseEnv, "PR_HEAD_SHA=" + localHeadEnv, "GITHUB_OUTPUT=" + localGuiOutputEnv, "SKILLS_ROOT=plugins/crw/skills"},
 		note: "the same changed-path decision ci.yml runs, recorded; the local run performs every step, so the answer skips nothing"})
 	skill_scripts_node.steps = append(skill_scripts_node.steps, nodeToolchain)
 	skill_scripts_node.steps = append(skill_scripts_node.steps, localStep{name: "Run the staged skill-script tests", kind: localRun, command: localSkillTests,
-		tool: "node", scope: "full", heavy: true, legs: nil, env: []string{"SKILLS_ROOT=port/cxc/skills"}})
+		tool: "node", scope: "full", heavy: true, legs: nil, env: []string{"SKILLS_ROOT=plugins/crw/skills"}})
 	plan = append(plan, skill_scripts_node)
 	gui := localJob{name: "gui", legs: nil}
 	gui.steps = append(gui.steps, mirrorPair()...)

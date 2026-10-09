@@ -16,9 +16,10 @@ import (
 // fast-forwards to dev, so no document states that a pull request or a hosted gate is required.
 // The one place that still describes a pull request lane is the in-flight section of merge-readiness.md,
 // and the dated worked example of task-packet.md keeps the old Launch text. The guard reads the skills
-// (markdown and agent YAML), the policy documents, the dispatch case data, the generated dispatch document
-// and the plugin manifest as text, and fails on a seed phrase anywhere else. A case whose data quotes the
-// old procedure on purpose is listed in pushOnlyCaseAllowlist with its reason.
+// CRW wrote itself (markdown and agent YAML; not the ones ported from CXC), the policy documents, the
+// dispatch case data, the generated dispatch document and the plugin manifest as text, and fails on a
+// seed phrase anywhere else. A case whose data quotes the old procedure on purpose is listed in
+// pushOnlyCaseAllowlist with its reason.
 
 var pushOnlySeedPhrases = regexp.MustCompile(`(?i)exactly one pull request|pull request open|pull request is open|open the pull request|open a pull request|open that pull request|open the PR\b|open a PR\b|open this PR\b|open it non-draft|open pull request|opens the pull request|opens a pull request|opens its pull request|opens the PR\b|intended PR[ ,.]|PR landing|after its CI finishes|on this pull request|dev-gate is required|dev-gate required|dev-gate must|PR body|pull request body|every CI job|pull-request CI|hosted CI run is required|CI run is required|pull request is required|PR is required`)
 
@@ -61,12 +62,15 @@ var pushOnlyDocs = []string{
 	"POLICY.md", "CONTRIBUTING.md", "AGENTS.md", "README.md",
 	"docs/CI.md", "docs/releases.md", "docs/plugin-packaging.md", "docs/runtime-install.md",
 	"docs/live-trial.md", "docs/role-execution-policy.md",
-	// CRW-1024: the relay operations documents and the staged port skills the push-only change left with
-	// pull-request wording.
+	// CRW-1024: the relay operations documents and the ported skills the push-only change left with
+	// pull-request wording. The skills moved from port/cxc/skills into the plugin (CRW-392).
 	"docs/relay/README.md", "docs/relay/coordination.md",
-	"port/cxc/skills/crw-dev/references/stacked-prs.md",
-	"port/cxc/skills/crw-dev-backend/references/core/api-lifecycle.md",
+	pushOnlyStackedPrs, pushOnlyAPILifecycle,
 }
+
+// pushOnlyAPILifecycle is the second ported skill reference the guard reads by name, because the ported
+// skills are otherwise skipped by pushOnlyFiles.
+const pushOnlyAPILifecycle = "plugins/crw/skills/crw-dev-backend/references/core/api-lifecycle.md"
 
 // pushOnlyFiles lists the documents the guard reads, as slash paths relative to the repository root.
 func pushOnlyFiles(t *testing.T) []string {
@@ -77,6 +81,13 @@ func pushOnlyFiles(t *testing.T) []string {
 		err := filepath.Walk(filepath.Join(root, filepath.FromSlash(dir)), func(p string, info os.FileInfo, err error) error {
 			if err != nil {
 				return err
+			}
+			// A skill ported from CXC (one with a record under port/cxc/records, CRW-392) is general
+			// guidance about other repositories' pull requests, not CRW's own procedure: it is not read.
+			if info.IsDir() && filepath.Dir(p) == filepath.Join(root, "plugins", "crw", "skills") {
+				if _, err := os.Stat(filepath.Join(root, "port", "cxc", "records", info.Name()+".json")); err == nil {
+					return filepath.SkipDir
+				}
 			}
 			agentYAML := strings.HasSuffix(p, ".yaml") && filepath.Base(filepath.Dir(p)) == "agents"
 			if !info.IsDir() && (strings.HasSuffix(p, ".md") || agentYAML) {
@@ -153,7 +164,7 @@ func pushOnlyOutside(rel string, text string, fileCase string) []string {
 		if _, ok := pushOnlyCaseAllowlist[id]; ok && id != "" {
 			continue
 		}
-		relay := strings.HasPrefix(rel, "docs/relay/") || strings.HasPrefix(rel, "port/cxc/skills/")
+		relay := strings.HasPrefix(rel, "docs/relay/") || rel == pushOnlyStackedPrs || rel == pushOnlyAPILifecycle
 		if pushOnlySeedPhrases.MatchString(line) || (relay && pushOnlyRelayPhrases.MatchString(line)) || (pushOnlyGradePhrases.MatchString(line) && !pushOnlyHistory.MatchString(line) && !strings.Contains(line, "the relay grades")) {
 			hits = append(hits, fmt.Sprintf("%s:%d: %s", rel, i+1, strings.TrimSpace(line)))
 		}
@@ -199,7 +210,7 @@ func TestPushOnlyWording_GuardScope(t *testing.T) {
 		{"same phrase under another heading of the in-flight file", pushOnlyInFlightFile, "## Other\n\nopen a pull request\n", 1},
 		{"in-flight exemption does not reach another file", skill, pushOnlyInFlightHeading + "\n\nopen a pull request\n", 1},
 		{"worked example is exempt", pushOnlyExampleFile, pushOnlyExampleHeading + "\n\nopen a pull request\n", 0},
-		{"relay PR description in a staged port skill", "port/cxc/skills/crw-dev-backend/references/core/api-lifecycle.md", "require a link in the PR description.", 1},
+		{"relay PR description in a ported skill", pushOnlyAPILifecycle, "require a link in the PR description.", 1},
 		{"relay PR gate in a relay document", pushOnlyRelayReadme, "| PR gate: `oasdiff` |", 1},
 		{"relay lane section is exempt", pushOnlyRelayReadme, pushOnlyRelayLaneHeading + "\n\nafter its CI finishes, a PR gate\n", 0},
 		{"coordination comparison section is exempt", pushOnlyCoordination, pushOnlyCoordinationHeading + "\n\nevery kept P0, P1 or security finding\n", 0},
@@ -238,10 +249,10 @@ func TestPushOnlyWording_InFlightSectionIsSingle(t *testing.T) {
 	}
 }
 
-// pushOnlyStackedPrs is the staged stacked-PR reference. It keeps its ordinary pull-request rules for a
+// pushOnlyStackedPrs is the ported stacked-PR reference. It keeps its ordinary pull-request rules for a
 // change that arrives as a pull request, so the word guard cannot see the paragraph that excludes CRW
 // internal work from them; this check does (CRW-1024).
-const pushOnlyStackedPrs = "port/cxc/skills/crw-dev/references/stacked-prs.md"
+const pushOnlyStackedPrs = "plugins/crw/skills/crw-dev/references/stacked-prs.md"
 
 // pushOnlyScopeProblem is empty when text opens, before its first section, with a CRW scope paragraph that
 // says internal work is push-only, opens no pull request and is not bound by the pull-request rules below.

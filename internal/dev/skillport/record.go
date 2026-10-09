@@ -1,12 +1,15 @@
 //go:build dev
 
-// Package skillport stages CXC v0.2.40 skills outside the plugin root and checks the staged copies.
+// Package skillport ports CXC v0.2.40 skills into the plugin and checks the ported copies.
 //
-// "skillport stage" copies a skill folder of the extracted CXC tree into port/cxc/skills/crw-<folder>
+// "skillport stage" copies a skill folder of the extracted CXC tree into plugins/crw/skills/crw-<folder>
 // with the checked-in name table applied, as the corpus replay applies it, and records the digest of
 // every substituted original file in port/cxc/records/crw-<folder>.json. "skillport check" verifies the
-// staged tree against the records; crw-dev ci validate runs the same Check and validates the staged
-// skills like the plugin's own. Offline, Check proves each staged file is what its record holds under
+// ported skills against the records; crw-dev ci validate runs the same Check and validates them like the
+// plugin's other skills. The skills CRW wrote itself (OwnSkills) share the directory and have no record,
+// so the check does not look at them; every other skill there is a ported one and needs its record.
+// The ported skills were staged under port/cxc/skills until the activation move (CRW-392) put them in
+// the plugin. Offline, Check proves each staged file is what its record holds under
 // the pinned name table; a difference requires a justified edit recorded by "skillport edits --source DIR --reason TEXT NAME".
 // Hunks are checked by restoring the original; additions pin bytes and mode, removals require absence. It holds
 // no original: that the digests are the substituted originals is proved by check --source against an
@@ -31,10 +34,16 @@ import (
 )
 
 const (
-	StagingRoot = "port/cxc/skills"
-	RecordDir   = "port/cxc/records"
-	prefix      = "crw-"
+	// SkillsRoot is where a ported skill lives: the plugin's skills directory.
+	SkillsRoot = "plugins/crw/skills"
+	RecordDir  = "port/cxc/records"
+	prefix     = "crw-"
 )
+
+// OwnSkills is the skills CRW wrote itself. They share SkillsRoot with the ported skills since the
+// activation move (CRW-392) and have no record, so Check does not look at them; every other skill in
+// SkillsRoot is a ported one and needs its record. A new skill of CRW's own is added here.
+var OwnSkills = []string{"crw-add-issue", "crw-check", "crw-define", "crw-logic", "crw-next", "crw-plan", "crw-refactor", "crw-run", "crw-status", "crw-tidy"}
 
 // Origin names the original tree: the tag, its commit and the digest of the original skills
 // directory listing.
@@ -112,7 +121,7 @@ func localPath(p string) bool {
 // layout refuses a staging root or records root that is, or lies below, anything but a plain
 // directory (a symlink would carry reads and writes out of the checkout); a missing one is fine.
 func layout(root string) error {
-	for _, rel := range []string{StagingRoot, RecordDir} {
+	for _, rel := range []string{SkillsRoot, RecordDir} {
 		p := root
 		for _, part := range strings.Split(rel, "/") {
 			p = filepath.Join(p, part)

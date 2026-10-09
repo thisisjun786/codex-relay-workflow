@@ -247,7 +247,7 @@ func Test47_PLG_5_DeclaredComponentsMustShip(t *testing.T) {
 			field+` names "./x.json", which the package does not ship`)
 	}
 	// Shipped component documents are read with the rules a host loads them by.
-	hooks := files{"hooks/hooks.json": `{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "x", "timeout": 11}, {"type": "prompt"}, {"type": "command", "timeout": true}, {"type": "command", "command": "y", "timeout": 5.0}]}], "Start": []}}`}
+	hooks := files{"hooks/hooks.json": `{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "x", "timeout": 21}, {"type": "prompt"}, {"type": "command", "timeout": true}, {"type": "command", "command": "y", "timeout": 5.0}]}], "Start": []}}`}
 	mcp := files{"mcp.json": `{"mcpServers": {"codex-thread-bridge": {"command": "$HOME/x", "args": ["/abs", "./missing", "%X%"], "tools": {"create_thread": {"approval_mode": "never"}, "t2": {"x": 1}}}, "b": 5, "c": {"command": "./ok", "cwd": ".", "args": []}}}`}
 	m := testManifest().set("hooks", []string{"./hooks/hooks.json", "../out.json"}).set("mcpServers", "./mcp.json")
 	all := goodFiles(t)
@@ -258,7 +258,7 @@ func Test47_PLG_5_DeclaredComponentsMustShip(t *testing.T) {
 		all = all.with(name, text)
 	}
 	errs := manifestErrs(t, m, "crw", all.payload())
-	for _, fragment := range []string{"a hook timeout may not exceed 10 seconds", "every hook must be a command hook",
+	for _, fragment := range []string{"a hook timeout may not exceed 20 seconds", "every hook must be a command hook",
 		"every hook needs a positive integer timeout", "Start must hold a nonempty list", "carries a variable",
 		"is an absolute path", "names a file the package does not ship",
 		`approval_mode "never" is not one of`, `must gate send_message_to_thread with "approve"`, "a server must be an object",
@@ -640,9 +640,15 @@ func Test47_PLG_18_JSONReport(t *testing.T) {
 	if err := json.Unmarshal([]byte(got.stdout), &r); err != nil {
 		t.Fatalf("report: %v: %+v", err, got)
 	}
-	// The plugin ships the skills the repository holds; crw-loop returns with the staged PABCD loop when the
-	// activation move lands, and the parent-goal procedure it carried is crw-run's goal mode.
-	names := []any{"crw-add-issue", "crw-check", "crw-define", "crw-logic", "crw-next", "crw-plan", "crw-refactor", "crw-run", "crw-status", "crw-tidy"}
+	// The plugin ships the skills the repository holds: its own ten and, since the activation move
+	// (CRW-392), the 24 ported from CXC, crw-loop (the PABCD loop) among them; the parent-goal procedure
+	// crw-loop once carried is crw-run's goal mode.
+	names := []any{"crw-add-issue", "crw-ast-grep", "crw-check", "crw-define", "crw-dev", "crw-dev-architecture",
+		"crw-dev-backend", "crw-dev-code-reviewer", "crw-dev-data", "crw-dev-debugging", "crw-dev-devops",
+		"crw-dev-frontend", "crw-dev-scaffolding", "crw-dev-security", "crw-dev-testing", "crw-dev-uiux-design",
+		"crw-dev-visualizer", "crw-interview", "crw-kwrite", "crw-logic", "crw-loop", "crw-lunasearch", "crw-next",
+		"crw-pabcd", "crw-plan", "crw-qa", "crw-recall", "crw-refactor", "crw-repo-map", "crw-run", "crw-search",
+		"crw-status", "crw-tidy", "crw-worktree-guardian"}
 	var expected []any
 	for _, n := range names {
 		expected = append(expected, "crw:"+n.(string))
@@ -796,4 +802,44 @@ func Test47_PLG_11_InstalledPayloadModeIsRead(t *testing.T) {
 	executable := good.payload()
 	executable["LICENSE"] = entry{"100755", []byte("MIT")}
 	expectEqual(t, "digest", payloadDigest(read), payloadDigest(executable))
+}
+
+// The package as this checkout ships it, with its 34 hook declarations (the completion Stop, the 32
+// K1 legs and the GitHub post guard, CRW-392), passes every payload rule: the K1 timeouts up to 20
+// seconds are within the cap, and the report counts the three Stop hooks a host runs. The version
+// is recorded for these bytes here, so the check does not depend on the manifest's version line.
+func Test47_PLG_20_ShippedHookDeclarationsPass(t *testing.T) {
+	plugin := filepath.Join(repoRoot(), "plugins", "crw")
+	f := files{}
+	if err := filepath.WalkDir(plugin, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(plugin, path)
+		f[filepath.ToSlash(rel)] = string(data)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	m := doc(parse(t, f[manifestPath]))
+	hooks, _ := m["hooks"].([]any)
+	if len(hooks) != 34 {
+		t.Fatalf("the manifest declares %d hook files", len(hooks))
+	}
+	for _, h := range hooks {
+		if _, ok := f[strings.TrimPrefix(h.(string), "./")]; !ok {
+			t.Errorf("%s is declared but not shipped", h)
+		}
+	}
+	m = m.set("version", strings.SplitN(m["version"].(string), "+", 2)[0])
+	got := goCheck(t, t.TempDir(), nil, "plugin", "--payload", writePayload(t, recordedFiles(t, f, m)), "--json")
+	var r map[string]any
+	if err := json.Unmarshal([]byte(got.stdout), &r); err != nil || got.code != 0 {
+		t.Fatalf("the shipped package: %v: %+v", err, got)
+	}
+	expectEqual(t, "stopHooks", r["stopHooks"], float64(3))
 }

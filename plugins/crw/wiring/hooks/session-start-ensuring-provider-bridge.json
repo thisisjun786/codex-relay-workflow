@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$HOME/.local/share/crw-runtime/current/bin/crw\" hook session-start --leg session-start-ensuring-provider-bridge",
+            "timeout": 20,
+            "statusMessage": "(crw) Detecting provider bridge"
+          }
+        ]
+      }
+    ]
+  }
+}

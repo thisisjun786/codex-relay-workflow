@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PostCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$HOME/.local/share/crw-runtime/current/bin/crw\" hook post-compact --leg post-compact-resetting-reinject-cursor",
+            "timeout": 10,
+            "statusMessage": "(crw) Recovering PABCD state after compaction"
+          }
+        ]
+      }
+    ]
+  }
+}

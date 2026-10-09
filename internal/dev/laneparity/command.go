@@ -59,8 +59,11 @@ type Report struct {
 	Latency      []Latency           `json:"latency,omitempty"`
 	// LatencyLaterAttempts names the legs whose latency passed only on a later measurement than the
 	// first, with the attempt that passed.
-	LatencyLaterAttempts []string      `json:"latencyLaterAttempts,omitempty"`
-	NotVerified          []NotVerified `json:"notVerified"`
+	LatencyLaterAttempts []string `json:"latencyLaterAttempts,omitempty"`
+	// Switch is the hook switch (CRW-392) every case root of the fire and latency cells held: the
+	// harness writes it into each isolated CODEX_HOME, since the ported legs are silent without it.
+	Switch      *SwitchReport `json:"switch,omitempty"`
+	NotVerified []NotVerified `json:"notVerified"`
 	// Key identifies the artifact, plugin root, criteria and options a run judged: a report with the
 	// same key already holds the evidence (--reuse).
 	Key  string      `json:"key"`
@@ -126,7 +129,7 @@ func NotVerifiedCells() []NotVerified {
 		{"context recovery after a real compaction", "post-compact and recall legs are fired with corpus payloads; the host's compaction is not", realHost},
 		{"native spawn surface: skill selection, delivery and behaviour of a spawned agent", "the spawn attach leg is fired with corpus payloads; the spawned agent is not", realHost},
 		{"real-model behaviour of the injected directives", "no model runs", realHost},
-		{"the CRW-392 switch (<CODEX_HOME>/crw/switch.json) and a normal installation", "not on dev; installation parity belongs to CRW-201 and CRW-204, and a pass here is never an installation pass", "CRW-201, CRW-204"},
+		{"the CRW-392 switch turned by crw install switch, and a normal installation", "the harness writes <CODEX_HOME>/crw/switch.json at crw into every case root itself (the report's switch); the writer and installation parity belong to CRW-201 and CRW-204, and a pass here is never an installation pass", "CRW-201, CRW-204"},
 		{"completion Stop effect", "the declared command is fired and released in silence; its guard daemon is not started here (see internal/runtime/integration)", "CRW-204"},
 	}
 }
@@ -275,6 +278,10 @@ func runCommand(command string, args []string, stdout, stderr io.Writer) int {
 		report.Plugin.Generated = true
 	}
 	report.Plugin.Root = pluginRoot
+	if command == "fire" || command == "latency" || command == "all" {
+		sw := switchReport(false)
+		report.Switch = &sw
+	}
 	if report.Plugin.Digest, err = PluginDigest(pluginRoot); err != nil {
 		return fail(err)
 	}
@@ -627,6 +634,11 @@ func printFire(w io.Writer, rep FireReport) {
 	}
 	fmt.Fprintf(w, "fire (run %s): %d fixture(s) fired and equal their expectation, %d differ, %d pending; %d receipt(s), %d receipt problem(s)\n",
 		rep.Run, matched, failed, pending, len(rep.Receipts), len(rep.ReceiptProblems))
+	if rep.Switch.Absent {
+		fmt.Fprintf(w, "hook switch: no %s in any case root (the ported legs are off)\n", rep.Switch.File)
+	} else {
+		fmt.Fprintf(w, "hook switch: %s active %q by %s in every case root\n", rep.Switch.File, rep.Switch.Active, rep.Switch.By)
+	}
 }
 
 func attemptNote(l Latency) string {

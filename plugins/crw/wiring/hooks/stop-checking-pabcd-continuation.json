@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$HOME/.local/share/crw-runtime/current/bin/crw\" hook stop --leg stop-checking-pabcd-continuation",
+            "timeout": 15,
+            "statusMessage": "(crw) Checking PABCD continuation"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -529,6 +529,66 @@ func TestRegisteredMatchingReadsTheSettingsAStopCommandReads(t *testing.T) {
 	}
 }
 
+// The Stop legs a plugin version declares (CRW-392) run "$HOME/.local/share/crw-runtime/current/bin/crw"
+// hook stop --leg <leg> (or --leg=<leg>): crw routes the declared leg and reads no settings file, and
+// the command names the runtime through the current pointer. The reading follows that pointer and
+// leaves no settings unknown; the completion Stop's form still reads the default settings; a
+// command that is not exactly the leg form is judged as before, its argument a settings path.
+func TestRegisteredMatchingReadsTheDeclaredLegStopForm(t *testing.T) {
+	h := newHost(t)
+	selected, _ := h.goRuntime(t, "bin-0.4.0-aaaaaaaaaaaa")
+	link(t, selected, h.current())
+	other, _ := h.goRuntime(t, "bin-0.4.0-bbbbbbbbbbbb")
+	relay := filepath.Join(other, "bin", "codex-session-relay")
+	write(t, filepath.Join(h.codex, "crw-completion-hook.json"), `{"relayExecutable": "`+relay+`"}`, 0o600)
+	pointer := `"$HOME/.local/share/crw-runtime/current/bin/crw"`
+	hooks := filepath.Join(h.codex, "plugins", "cache", "crw", "crw", "0.4.0+aaaaaaaaaaaa", "wiring", "hooks")
+	declare := func(name, command string) {
+		write(t, filepath.Join(hooks, name+".json"), `{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": `+strconv.Quote(command)+`, "timeout": 15}]}]}}`, 0o644)
+	}
+	declare("stop-checking-pabcd-continuation", pointer+` hook stop --leg stop-checking-pabcd-continuation`)
+	declare("stop-waking-on-background-completion", pointer+` hook stop --leg=stop-waking-on-background-completion`)
+	declare("stop-recording-completion", pointer+` hook --plugin-launch; exit 0`)
+	// Removing the unselected runtime: only the completion Stop's settings name it.
+	found, unreadable := h.registrationsAs(t, other, false)
+	if len(unreadable) != 0 {
+		t.Fatalf("the declared legs leave the reading unable to judge: %v", unreadable)
+	}
+	if !slices.Equal(found, []string{"4:relayExecutable:" + relay}) {
+		t.Fatalf("found %v", found)
+	}
+	// The selected runtime: every declaration names it through the pointer.
+	found, unreadable = h.registrationsAs(t, selected, false)
+	if len(unreadable) != 0 {
+		t.Fatalf("unreadable %v", unreadable)
+	}
+	var cached int
+	for _, f := range found {
+		if f == "5:hooks.Stop[0].hooks[0].command:"+filepath.Join(h.current(), "bin", "crw") {
+			cached++
+		}
+	}
+	if cached != 3 {
+		t.Fatalf("%d cached declarations name the selected runtime: %v", cached, found)
+	}
+	// Anything but the exact leg form still reads its argument as settings.
+	stopHooks(t, h,
+		pointer+` hook stop`,
+		pointer+` hook stop --leg`,
+		pointer+` hook stop --leg x extra`,
+		pointer+` hook stop --leg "$LEG"`,
+		pointer+` hook ./stop --leg x`,
+		pointer+` hook stop --leg=`,
+		pointer+` hook stop --leg x/y`,
+	)
+	_, unreadable = h.registrations(t, "")
+	for i := range 7 {
+		if !listed(unreadable, "hooks.Stop[0].hooks["+strconv.Itoa(i)+"].command: which settings this Stop command reads could not be established") {
+			t.Errorf("hook %d is read as a declared leg: %v", i, unreadable)
+		}
+	}
+}
+
 // A directory the reading enumerates is listed explicitly: the Codex home (row 4) and a cached
 // plugin version's hook declarations (row 5) that cannot be listed are unreadable, never read as
 // empty. A stray file in the plugin cache is not a version directory: Codex loads nothing from it.

@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -670,13 +671,43 @@ type stopAdapterCall struct {
 	settings shellWord // the word after the hook (after crw hook); Written "" when there is none
 }
 
-// stopAdapterIn is the Stop adapter one command runs, if any.
+// legToken and eventToken are the words of a declared leg command: crw hook <event> --leg <leg>.
+var (
+	eventToken = regexp.MustCompile(`^[a-z]+(?:-[a-z]+)*$`)
+	legToken   = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+)
+
+// declaredLeg is whether the words after crw hook are exactly a declared leg, <event> --leg <leg>
+// or <event> --leg=<leg>, each a literal word (CRW-392's hook declarations,
+// cxccorpus.ShippedHook.Command): crw routes it to the leg and reads no settings file, so the
+// command runs no Stop adapter. Anything else is not the leg form.
+func declaredLeg(args []shellWord) bool {
+	for _, a := range args {
+		if a.Missing != "" || a.Written != a.Value {
+			return false
+		}
+	}
+	switch {
+	case len(args) == 3:
+		return eventToken.MatchString(args[0].Value) && args[1].Value == "--leg" && legToken.MatchString(args[2].Value)
+	case len(args) == 2:
+		leg, ok := strings.CutPrefix(args[1].Value, "--leg=")
+		return ok && eventToken.MatchString(args[0].Value) && legToken.MatchString(leg)
+	}
+	return false
+}
+
+// stopAdapterIn is the Stop adapter one command runs, if any. crw hook <event> --leg <leg> runs a
+// declared leg, not the adapter (declaredLeg).
 func stopAdapterIn(argv []shellWord) (stopAdapterCall, bool) {
 	for i, w := range argv {
 		base := filepath.Base(w.Written)
 		call := stopAdapterCall{argv: argv, at: i}
 		next := i + 1
 		if base == "crw" && i+1 < len(argv) && argv[i+1].Value == "hook" {
+			if declaredLeg(argv[i+2:]) {
+				return stopAdapterCall{}, false
+			}
 			call.crwHook, next = true, i+2
 		} else if base != retiredHookLink {
 			continue

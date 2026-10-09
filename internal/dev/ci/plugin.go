@@ -33,7 +33,7 @@ const (
 	marketplacePath    = ".agents/plugins/marketplace.json"
 	manifestPath       = pluginversion.ManifestPath
 	licenseID          = "MIT"
-	hookTimeoutSeconds = 10
+	hookTimeoutSeconds = 20 // the K1 legs keep their timeouts byte for byte, and the longest is 20 (CRW-392)
 )
 
 var (

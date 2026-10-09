@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$HOME/.local/share/crw-runtime/current/bin/crw\" hook pre-tool-use --leg pre-tool-use-guarding-automation-ownership",
+            "timeout": 10,
+            "statusMessage": "(crw) Checking automation ownership"
+          }
+        ],
+        "matcher": "^(mcp__codex_app__|mcp__codex_app[._]|codex_app[._])?automation_update$"
+      }
+    ]
+  }
+}

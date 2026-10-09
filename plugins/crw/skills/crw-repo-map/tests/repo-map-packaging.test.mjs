@@ -3,7 +3,7 @@
  *
  * Ported by CRW-939 from CXC v0.2.40 plugins/codexclaw/test/repo-map-packaging.test.mjs with the
  * name substitution of contract/schema/cxc/name-substitution.json: the skill is crw-repo-map and
- * it sits at port/cxc/skills/crw-repo-map, so the paths are the skill's own.
+ * it sits at plugins/crw/skills/crw-repo-map, so the paths are the skill's own.
  *
  * The repo-map skill ships a vendored Python script (no TS component, no dist build). This test
  * pins the vendoring contract: required files present, attribution intact, no server file

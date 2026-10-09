@@ -60,7 +60,7 @@ func run(args []string, stdout, stderr io.Writer, origin Origin) int {
 			fmt.Fprintln(stderr, strings.Join(problems, "\n"))
 			return 1
 		}
-		fmt.Fprintf(stdout, "Checked %d staged skills against their records (fidelity only; crw-dev ci validate also validates skills and links).\n", n)
+		fmt.Fprintf(stdout, "Checked %d ported skills against their records (fidelity only; crw-dev ci validate also validates skills and links).\n", n)
 	}
 	return 0
 }

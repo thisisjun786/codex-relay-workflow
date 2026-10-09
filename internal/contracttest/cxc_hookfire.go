@@ -37,6 +37,9 @@ type HookFireInput struct {
 	// fixture runs (a fault injected between the process and the comparison, or into the delivery).
 	Mutate func(id string, got *cxccorpus.Expect)
 	Steps  func(id string, steps []cxccorpus.Step) []cxccorpus.Step
+	// Seed puts the harness's own files into every case root it fires in (cxccorpus.RunOptions.Seed),
+	// and takes them out before the tree is observed.
+	Seed func(c *cxccorpus.Case) (undo func() error, err error)
 }
 
 // FiredStep is one step of a fixture as delivered: the leg it fires and the payload it sends.
@@ -74,7 +77,7 @@ func FireHooks(in HookFireInput) ([]HookFireResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	r.plugin, r.declared, r.mutate, r.light = in.Plugin, in.Declared, in.Mutate, in.Light
+	r.plugin, r.declared, r.mutate, r.light, r.seed = in.Plugin, in.Declared, in.Mutate, in.Light, in.Seed
 	ids, fixtures, err := loadCXCFixtures(in.Root)
 	if err != nil {
 		return nil, err
@@ -160,13 +163,13 @@ func FireProbes(in HookFireInput, probes []Probe) ([]ProbeResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	r.plugin, r.declared, r.light = in.Plugin, in.Declared, in.Light
+	r.plugin, r.declared, r.light, r.seed = in.Plugin, in.Declared, in.Light, in.Seed
 	syscall.Umask(0o022)
 	var out []ProbeResult
 	for _, p := range probes {
 		s := p.Scenario
 		s.ID = p.ID
-		got, err := cxccorpus.RunScenario(r, cxccorpus.RunOptions{Scratch: in.Scratch, HomeVar: "CRW_HOME", Rules: r.rules}, s)
+		got, err := cxccorpus.RunScenario(r, cxccorpus.RunOptions{Scratch: in.Scratch, HomeVar: "CRW_HOME", Rules: r.rules, Seed: r.seed}, s)
 		res := ProbeResult{ID: p.ID, Observed: got}
 		if err != nil {
 			res.Err = err
