@@ -446,9 +446,14 @@ func TestHarnessRunExecTimeoutIsDriftKilled(t *testing.T) {
 	if *run.Status != harnessDriftKilled {
 		t.Fatalf("status = %d, want %d", *run.Status, harnessDriftKilled)
 	}
+	if !run.Killed {
+		t.Fatal("a timeout kill did not set Killed")
+	}
 	// A binary that does not exist is the other shape: a nil status (the oracle's spawn error).
 	if missing := harnessRunExec(filepath.Join(t.TempDir(), "nope"), nil, time.Second); missing.Status != nil {
 		t.Fatalf("a missing binary answered status %d, want nil", *missing.Status)
+	} else if missing.Killed {
+		t.Fatal("a missing binary was read as a killed run")
 	}
 }
 

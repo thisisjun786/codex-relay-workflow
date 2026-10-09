@@ -2,11 +2,15 @@ package manage
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -21,6 +25,51 @@ const improveRoadmapUsage = "usage: crw manage improve run --boundary <milestone
 
 // improveRoadmapBoundaries is the set of plan boundaries a run may name.
 var improveRoadmapBoundaries = map[string]bool{"milestone": true, "project": true}
+
+// improveReasonRoadmapLocked is the named refusal of a second improvement pass over one boundary
+// and ref: the pass lock is held, so this run reports it rather than proposing against a state
+// another run is still changing.
+const improveReasonRoadmapLocked = "improve_roadmap_locked"
+
+// improveRoadmapLock takes the pass lock for one boundary and ref, so two runs of one pass cannot
+// both decide the pass has not happened yet and each spend the configured cap. It is non-blocking,
+// like the drafts lock: a second run is refused by name rather than waiting. The lock file itself
+// is never removed, because another process may hold it. The drafts lock is taken inside this one,
+// so the two are always taken in that order.
+func improveRoadmapLock(dir, boundary, ref string) (func(), error) {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, err
+	}
+	lockPath := filepath.Join(dir, improveRoadmapLockName(boundary, ref))
+	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		_ = f.Close()
+		if errors.Is(err, syscall.EWOULDBLOCK) {
+			return nil, fmt.Errorf("%s: %s is held by another run", improveReasonRoadmapLocked, filepath.Base(lockPath))
+		}
+		return nil, err
+	}
+	return func() {
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		_ = f.Close()
+	}, nil
+}
+
+// improveRoadmapLockName is the pass lock's file name: a fixed-length digest of the boundary and
+// ref, so a long but legal ref cannot push the name past the filesystem's name limit. The two
+// fields are hashed as a JSON array, so no delimiter inside either can make two passes share a
+// name.
+func improveRoadmapLockName(boundary, ref string) string {
+	parts, err := json.Marshal([]string{boundary, ref})
+	if err != nil {
+		parts = []byte(boundary + "\x00" + ref)
+	}
+	sum := sha256.Sum256(parts)
+	return "roadmap-" + hex.EncodeToString(sum[:])[:auditDraftFingerprintChars] + ".lock"
+}
 
 // improveRoadmapStampFormat is the UTC stamp a roadmap file name carries. It keeps
 // nanoseconds, so two runs of one ref in the same second do not overwrite each other.
@@ -71,12 +120,23 @@ func improveRoadmapParseArgs(args []string) (boundary, ref string, help bool, er
 }
 
 // improveRoadmapPlainRef reports whether a boundary ref is one plain path segment: a non-empty
-// name that is neither "." nor ".." and carries no path separator.
+// name that is neither "." nor "..", carries no path separator, and holds no control character. A
+// control character (U+0000 to U+001F, U+007F) is refused because the roadmap document writes the
+// ref verbatim and the header reader compares it line by line: an embedded newline would let one
+// ref's document stand in for another's, suppressing a first run or spending the cap on a rerun.
 func improveRoadmapPlainRef(ref string) bool {
 	if ref == "" || ref == "." || ref == ".." {
 		return false
 	}
-	return !strings.ContainsRune(ref, '/') && !strings.ContainsRune(ref, '\\')
+	if strings.ContainsRune(ref, '/') || strings.ContainsRune(ref, '\\') {
+		return false
+	}
+	for _, r := range ref {
+		if r <= 0x1F || r == 0x7F {
+			return false
+		}
+	}
+	return true
 }
 
 // improveRoadmapDir is where the improvement pass keeps its bundles and roadmap documents:
@@ -192,6 +252,14 @@ func improveRoadmapWriteFile(path string, data []byte) error {
 func improveRoadmapRun(ctx context.Context, e *Env, boundary, ref string) (string, error) {
 	cfg := coreDefaults(e)
 	dir := improveRoadmapDir(e, cfg)
+	// The pass is held for the whole run, so the check for a previous roadmap, the collection, the
+	// proposal and the roadmap write happen under one lock: two runs of one boundary and ref cannot
+	// both find no roadmap and each spend the configured cap.
+	release, err := improveRoadmapLock(dir, boundary, ref)
+	if err != nil {
+		return "", err
+	}
+	defer release()
 	stamp := improveRoadmapStamp(e.Now())
 	bundlePath := improveRoadmapBundlePath(dir, ref, stamp)
 	if err := os.MkdirAll(filepath.Dir(bundlePath), 0o700); err != nil {
@@ -201,7 +269,18 @@ func improveRoadmapRun(ctx context.Context, e *Env, boundary, ref string) (strin
 	if code := improveRunCollect(ctx, e, []string{"--out", bundlePath}); code != 0 {
 		return "", fmt.Errorf("collect exited with status %d", code)
 	}
-	report, err := improveProposeRun(ctx, e, bundlePath, false)
+	// A boundary and ref that already have a roadmap document are not proposed again: the drafts
+	// that exist still grow their seen list, and the candidates the cap leaves are counted for a
+	// later run rather than drafted now.
+	ran, err := improveRoadmapAlreadyRan(dir, boundary, ref)
+	if err != nil {
+		return "", err
+	}
+	capOverride := -1
+	if ran {
+		capOverride = 0
+	}
+	report, err := improveProposeRunCapped(ctx, e, bundlePath, false, capOverride)
 	if err != nil {
 		return "", err
 	}
@@ -210,6 +289,57 @@ func improveRoadmapRun(ctx context.Context, e *Env, boundary, ref string) (strin
 		return "", err
 	}
 	return path, nil
+}
+
+// improveRoadmapAlreadyRan reports whether the roadmap directory already holds a document for this
+// boundary and ref. The document names both in its header, so a run of the same boundary and ref is
+// recognised by the document it wrote, not by a file name a clock chose. A roadmap the directory
+// holds but cannot read is an error rather than a silent "never ran": treating an unreadable
+// document as absent would spend the cap on a pass that already happened.
+func improveRoadmapAlreadyRan(dir, boundary, ref string) (bool, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, err
+	}
+	boundaryLine, refLine := "- boundary: "+boundary, "- ref: "+ref
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasPrefix(name, "roadmap-") || !strings.HasSuffix(name, ".md") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			return false, err
+		}
+		if improveRoadmapHeaderCovers(string(data), boundaryLine, refLine) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// improveRoadmapHeaderCovers reports whether a roadmap document's header names this boundary and
+// ref. Only the lines before the first "## " section are read: a candidate title, a reason or an
+// evidence location is written into the body verbatim, so a body line that happens to spell these
+// lines must not stand in for the header the run itself wrote.
+func improveRoadmapHeaderCovers(body, boundaryLine, refLine string) bool {
+	hasBoundary, hasRef := false, false
+	for _, line := range strings.Split(body, "\n") {
+		line = strings.TrimRight(line, "\r")
+		if strings.HasPrefix(line, "## ") {
+			break
+		}
+		switch line {
+		case boundaryLine:
+			hasBoundary = true
+		case refLine:
+			hasRef = true
+		}
+	}
+	return hasBoundary && hasRef
 }
 
 // improveRunRoadmap is crw manage improve run. It prints the roadmap path it wrote.

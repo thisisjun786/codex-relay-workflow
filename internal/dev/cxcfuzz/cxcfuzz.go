@@ -43,6 +43,8 @@ type Config struct {
 	Cases   int
 	Seconds int
 	Seed    int64
+	// SeedSet says Seed was given, so a Seed of 0 is the seed the campaign runs, not a request for the clock.
+	SeedSet bool
 	Workers int
 	Out     string
 	Timeout time.Duration
@@ -66,14 +68,22 @@ type Summary struct {
 	Extra    int     `json:"extra"`
 	Differ   int     `json:"differ"`
 	Timeouts int     `json:"timeouts"`
+	// DeadWorkers, NoAnswers and Errors count the cases the harness could not answer for a reason other than a
+	// timeout: a worker that ended before it replied, a reply that answers nothing, and a failure of the case's own
+	// machinery (CRW-978 c7).
+	DeadWorkers int `json:"deadWorkers"`
+	NoAnswers   int `json:"noAnswers"`
+	Errors      int `json:"errors"`
 	// Refused counts the cases whose fs scenario the harness declined to build; it says nothing about the gates. The three
-	// fields below count the cases whose command the shared reader could not read, the ones the Go side refused and the ones it
+	// fields after it count the cases whose command the shared reader could not read, the ones the Go side refused and the ones it
 	// did not; the run fails when the last is not zero.
-	Refused              int     `json:"refused"`
-	UnreadableCases      int     `json:"unreadableCases"`
-	UnreadableRefused    int     `json:"unreadableRefused"`
-	UnreadableNotRefused int     `json:"unreadableNotRefused"`
-	PerSecond            float64 `json:"casesPerSecond"`
+	Refused              int `json:"refused"`
+	UnreadableCases      int `json:"unreadableCases"`
+	UnreadableRefused    int `json:"unreadableRefused"`
+	UnreadableNotRefused int `json:"unreadableNotRefused"`
+	// Failures names the case records written under the output directory, one per distinct failing input.
+	Failures  []string `json:"failures,omitempty"`
+	PerSecond float64  `json:"casesPerSecond"`
 }
 
 // Divergence is one shrunk difference, written to <out>/divergences/<kind>-<sha12>.json.
@@ -129,6 +139,12 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "crw-dev fuzz: error: unrecognized arguments: %s\n", strings.Join(extra, " "))
 		return 2
 	}
+	seedGiven := false
+	set.Visit(func(f *flag.Flag) {
+		if f.Name == "seed" {
+			seedGiven = true
+		}
+	})
 	target, ok := Lookup(targetName)
 	if !ok {
 		fmt.Fprintf(stderr, "crw-dev fuzz: error: unknown target %q (registered: %s)\n", targetName, strings.Join(Names(), ", "))
@@ -146,7 +162,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "crw-dev fuzz: error: one of --seconds or --cases is required")
 		return 2
 	}
-	cfg := Config{Target: target, Cases: *cases, Seconds: *seconds, Seed: *seed, Workers: *workers, Timeout: DefaultTimeout, DevSHA: devSHA()}
+	cfg := Config{Target: target, Cases: *cases, Seconds: *seconds, Seed: *seed, SeedSet: seedGiven, Workers: *workers, Timeout: DefaultTimeout, DevSHA: devSHA()}
 	if *out != "" {
 		cfg.Out = *out
 	} else {
@@ -181,18 +197,19 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-// campaignFailed is whether a campaign's summary is a failure. A case that timed out, or whose fs scenario was refused, compared
-// nothing, so it is not an agreement either: a campaign that compared nothing does not report success. A case whose command the
+// campaignFailed is whether a campaign's summary is a failure. A case that timed out, whose worker died or did not answer, whose own
+// machinery failed (CRW-978 c7), or whose fs scenario was refused, compared nothing, so it is not an agreement either: a campaign
+// that compared nothing does not report success. A case whose command the
 // reader could not read and the Go side did not refuse is a failure of its own, whatever the oracle answered.
 func campaignFailed(summary Summary) bool {
-	return summary.Differ+summary.Miss+summary.Extra+summary.Timeouts+summary.Refused+summary.UnreadableNotRefused > 0
+	return summary.Differ+summary.Miss+summary.Extra+summary.Timeouts+summary.DeadWorkers+summary.NoAnswers+summary.Errors+summary.Refused+summary.UnreadableNotRefused > 0
 }
 
 // Campaign runs one target: it generates inputs, evaluates each on both sides, shrinks every
 // divergence, and writes the divergence files and summary.json under cfg.Out.
-func Campaign(cfg Config) (Summary, error) {
+func Campaign(cfg Config) (summary Summary, err error) {
 	seed := cfg.Seed
-	if seed == 0 {
+	if seed == 0 && !cfg.SeedSet {
 		now := cfg.Now
 		if now.IsZero() {
 			now = time.Now()
@@ -207,15 +224,16 @@ func Campaign(cfg Config) (Summary, error) {
 	if err != nil {
 		return Summary{}, err
 	}
-	defer func() { _ = pool.Close() }()
+	defer func() { err = joinCleanup(err, pool.Close()) }()
 	run := &campaign{cfg: cfg, pool: pool, rng: rand.New(rand.NewSource(seed))}
 	start := time.Now()
 	deadline := time.Time{}
 	if cfg.Seconds > 0 {
 		deadline = start.Add(time.Duration(cfg.Seconds) * time.Second)
 	}
-	summary := Summary{Target: cfg.Target.Name, Seed: seed, DevSHA: cfg.DevSHA}
+	summary = Summary{Target: cfg.Target.Name, Seed: seed, DevSHA: cfg.DevSHA}
 	written := map[string]bool{}
+	failed := map[string]bool{}
 	for n := 0; cfg.Cases <= 0 || n < cfg.Cases; n++ {
 		if !deadline.IsZero() && time.Now().After(deadline) {
 			break
@@ -229,8 +247,10 @@ func Campaign(cfg Config) (Summary, error) {
 			// A root that survived its removal is reported, never counted: the caller must see which root
 			// was left and why, and the run must not continue as if the case had merely been refused.
 			return summary, err
-		case caseTimedOut:
-			summary.Timeouts++
+		case caseFailed:
+			if err := recordFailure(cfg, &summary, seed, summary.Cases, input, err, failed); err != nil {
+				return summary, err
+			}
 			continue
 		case caseRefused:
 			summary.Refused++
@@ -297,8 +317,9 @@ const (
 	caseOK caseOutcome = iota
 	// caseRefused is a scenario the harness declined, which the run counts and carries on from.
 	caseRefused
-	// caseTimedOut is a worker that died or did not answer, which the run counts and carries on from.
-	caseTimedOut
+	// caseFailed is a case the harness could not answer: a timeout, a worker that died, a reply that answers
+	// nothing, or a failure of the case's own machinery. The run records it under its cause and carries on.
+	caseFailed
 	// caseRemovalFailed is a root that outlived its run, which is reported and never counted.
 	caseRemovalFailed
 )
@@ -316,7 +337,7 @@ func classifyCaseError(err error) caseOutcome {
 	if errors.Is(err, errRefused) {
 		return caseRefused
 	}
-	return caseTimedOut
+	return caseFailed
 }
 
 // refusedOutcome turns a scenario failure into the error the caller sees. A refusal is the harness
@@ -366,17 +387,17 @@ func (c *campaign) evaluate(input any) (verdict Verdict, goText, oracleText stri
 	text := canonical(input)
 	goRoot, err := os.MkdirTemp("", "cxcfuzz-go-")
 	if err != nil {
-		return Verdict{}, "", "", err
+		return Verdict{}, "", "", CaseFailure{Cause: CauseTempRoot, Err: err}
 	}
 	defer func() { err = joinCleanup(err, CleanupCaseRoot(goRoot)) }()
 	oracleRoot, err := os.MkdirTemp("", "cxcfuzz-oracle-")
 	if err != nil {
-		return Verdict{}, "", "", err
+		return Verdict{}, "", "", CaseFailure{Cause: CauseTempRoot, Err: err}
 	}
 	defer func() { err = joinCleanup(err, CleanupCaseRoot(oracleRoot)) }()
 	for _, root := range []string{goRoot, oracleRoot} {
 		if err := PrepareRoot(root); err != nil {
-			return Verdict{}, "", "", err
+			return Verdict{}, "", "", CaseFailure{Cause: CauseTempRoot, Err: err}
 		}
 	}
 	// A refused scenario is the harness declining the case, and a removal that still failed is its own
@@ -390,7 +411,7 @@ func (c *campaign) evaluate(input any) (verdict Verdict, goText, oracleText stri
 	}
 	value, err := decode(text)
 	if err != nil {
-		return Verdict{}, "", "", err
+		return Verdict{}, "", "", CaseFailure{Cause: CauseDecode, Err: err}
 	}
 	goValue, goErr := c.cfg.Target.Go(value, RootEnv(goRoot))
 	goOut := any(goValue)
@@ -406,7 +427,7 @@ func (c *campaign) evaluate(input any) (verdict Verdict, goText, oracleText stri
 	}
 	oracleValue, err := decode(oracleAnswer)
 	if err != nil {
-		return Verdict{}, "", "", err
+		return Verdict{}, "", "", CaseFailure{Cause: CauseDecode, Err: err}
 	}
 	goStripped := stripRoot(goOut, goRoot)
 	oracleStripped := stripRoot(oracleValue, oracleRoot)
@@ -415,7 +436,8 @@ func (c *campaign) evaluate(input any) (verdict Verdict, goText, oracleText stri
 }
 
 // shrinkRun is the shrinker's keep test. A candidate is kept only while it still produces the
-// same verdict kind, and the verdict and the two answers of the last candidate kept are what the
+// same verdict kind and detail, so a divergence keeps its class and a read difference never shrinks into a
+// write difference of the same kind (CRW-978 c1, review d1). The verdict and the two answers of the last candidate kept are what the
 // divergence file ends up holding: the shrunk input, the answers and the verdict must describe
 // one run, or a case adopted from the file could never replay and its detail could contradict it.
 type shrinkRun struct {
@@ -435,7 +457,7 @@ func (s *shrinkRun) keep(candidate any) bool {
 	if errors.As(err, &removal) && s.removal == nil {
 		s.removal = err
 	}
-	if err != nil || verdict.Kind != s.verdict.Kind {
+	if err != nil || verdict.Kind != s.verdict.Kind || verdict.Detail != s.verdict.Detail {
 		return false
 	}
 	s.verdict, s.goOut, s.oracleOut = verdict, goOut, oracleOut

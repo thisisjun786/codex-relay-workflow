@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -79,6 +80,24 @@ func TestReadHookObservationsRefusesWhatItCannotTrust(t *testing.T) {
 				t.Fatal("cannot link")
 			}
 		},
+		"trailing object": func(t *testing.T, f, _ string, _ *ObservationQuery) {
+			data, _ := os.ReadFile(f)
+			writeFile(t, f, string(data)+"{}")
+		},
+		"trailing junk": func(t *testing.T, f, _ string, _ *ObservationQuery) {
+			data, _ := os.ReadFile(f)
+			writeFile(t, f, string(data)+"junk")
+		},
+		"observedAt in another Date.parse spelling": func(t *testing.T, f, _ string, _ *ObservationQuery) {
+			data, _ := os.ReadFile(f)
+			var record map[string]any
+			if json.Unmarshal(data, &record) != nil {
+				t.Fatal("the record is not JSON")
+			}
+			record["observedAt"] = time.Now().UTC().Format("2006-01-02 15:04:05") + " UTC"
+			out, _ := json.Marshal(record)
+			writeFile(t, f, string(out))
+		},
 		"oversized": func(t *testing.T, f, _ string, _ *ObservationQuery) {
 			data, _ := os.ReadFile(f)
 			writeFile(t, f, string(data)+strings.Repeat(" ", 8192))
@@ -120,6 +139,16 @@ func TestReadHookObservationsRefusesWhatItCannotTrust(t *testing.T) {
 				t.Errorf("%+v", got)
 			}
 		})
+	}
+}
+
+// A manifest is read whole as JSON.parse reads it: trailing data after the object leaves the payload unreadable.
+// The writer refuses such a manifest too, so this pins the reader's own check on the payload it reads.
+func TestObservationPayloadRefusesAManifestWithTrailingData(t *testing.T) {
+	_, _, plugin := hookEnv(t)
+	writeFile(t, filepath.Join(plugin, ".codex-plugin", "plugin.json"), readerManifest+"{}")
+	if _, _, _, _, ok := observationPayload(plugin); ok {
+		t.Errorf("a manifest with trailing data reads as a payload")
 	}
 }
 

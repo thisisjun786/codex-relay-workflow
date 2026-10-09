@@ -100,7 +100,9 @@ func TestCompareAndDescribe(t *testing.T) {
 	id := func(sha string, dirty bool, tree string) Identity {
 		return Identity{Kind: KindResolved, CommitSha: sha, Dirty: dirty, TreeHash: tree}
 	}
-	different := func(detail string) Comparison { return Comparison{Kind: ComparisonDifferent, Detail: detail} }
+	different := func(detail string) Comparison {
+		return Comparison{Kind: ComparisonDifferent, Detail: detail, DetailSet: true}
+	}
 	for _, c := range []struct {
 		a, b Identity
 		want Comparison

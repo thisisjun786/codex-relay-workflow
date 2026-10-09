@@ -38,9 +38,13 @@ var Keys = []string{"writer_protocol", "owner", "owner_epoch", "takeover_id", "r
 // Refused is an ownership refusal.
 type Refused struct {
 	Detail string
+	// Cause is the error the refusal was made from, when there is one (a failed read of the durable
+	// stamp keeps the driver's error); it is reachable through errors.Unwrap and is not part of the text.
+	Cause error
 }
 
 func (e *Refused) Error() string              { return "ownership refused: " + e.Detail }
+func (e *Refused) Unwrap() error              { return e.Cause }
 func refuse(format string, args ...any) error { return &Refused{Detail: fmt.Sprintf(format, args...)} }
 
 type Database struct {
@@ -193,7 +197,7 @@ func owner(s string) bool { return s == "python" || s == "go" }
 func ReadStamp(ctx context.Context, db Queryer) (Stamp, error) {
 	rows, err := db.QueryContext(ctx, "SELECT key,value FROM schema_meta")
 	if err != nil {
-		return Stamp{}, refuse("read durable ownership: %v", err)
+		return Stamp{}, &Refused{Detail: fmt.Sprintf("read durable ownership: %v", err), Cause: err}
 	}
 	defer rows.Close()
 	meta := map[string]string{}

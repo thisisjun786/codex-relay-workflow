@@ -30,6 +30,8 @@ type Candidate struct {
 	CriteriaSetDigest string
 	// AcceptedCriteriaDigest is the criteria set the acceptance was made under, before any revalidation (CRW-965, D1).
 	AcceptedCriteriaDigest string
+	// PremergeDigest is the digest of the pre-merge record the acceptance stores, judged again for this candidate (CRW-952 answer 3).
+	PremergeDigest string
 }
 
 // alreadyIntegratedNode is whether a node's active acceptance already landed on an integration target (CRW-965,
@@ -65,6 +67,9 @@ func (s *Scheduler) AcceptedCandidates(ctx context.Context, plan string) ([]Cand
 			continue
 		}
 		c, ok, err := s.currentCandidate(ctx, q, plan, snap, n)
+		if _, held := premergeHeld(err); held {
+			continue
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -130,9 +135,14 @@ func (s *Scheduler) currentCandidate(ctx context.Context, q store.Querier, plan 
 	if id, _ := objString(head, "eventId"); id != stand.EventID {
 		return Candidate{}, false, nil
 	}
+	// the stored pre-merge record is judged again on every selection: a refusal holds the candidate with its premerge_* name
+	judged, err := s.premergeOfAcceptance(ctx, q, acc, n, stand.Head)
+	if err != nil {
+		return Candidate{}, false, err
+	}
 	return Candidate{PlanID: plan, NodeID: n.NodeID, AcceptanceID: acc.AcceptanceID, RelationshipID: stand.RelationshipID,
 		EventID: stand.EventID, RevisionHash: stand.RevisionHash, Generation: stand.Generation, HeadSHA: stand.Head, Repository: acc.Repository,
-		CriteriaSetDigest: criteria, AcceptedCriteriaDigest: acc.CriteriaSetDigest}, true, nil
+		CriteriaSetDigest: criteria, AcceptedCriteriaDigest: acc.CriteriaSetDigest, PremergeDigest: judged.digest}, true, nil
 }
 
 // frozenCandidateStillCurrent is whether a frozen candidate is still the current candidate of its node under the same
@@ -149,11 +159,14 @@ func (s *Scheduler) frozenCandidateStillCurrent(ctx context.Context, f Candidate
 		return false, nil
 	}
 	c, ok, err := s.currentCandidate(ctx, q, f.PlanID, snap, n)
+	if _, held := premergeHeld(err); held {
+		return false, nil
+	}
 	if err != nil || !ok {
 		return false, err
 	}
 	return c.AcceptanceID == f.AcceptanceID && c.EventID == f.EventID && c.RevisionHash == f.RevisionHash &&
-		c.Generation == f.Generation && c.HeadSHA == f.HeadSHA && c.CriteriaSetDigest == f.CriteriaSetDigest, nil
+		c.Generation == f.Generation && c.HeadSHA == f.HeadSHA && c.CriteriaSetDigest == f.CriteriaSetDigest && c.PremergeDigest == f.PremergeDigest, nil
 }
 
 // currentCriteriaDigest is the criteria set a candidate is verified under: the one its latest revalidation names, else

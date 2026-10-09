@@ -91,12 +91,18 @@ func unstampedRefusal(ctx context.Context, q ownership.Queryer, resolved string,
 // description this call opens. From here the returned gate is this call's to close on every
 // failure path, and the store's to release on success.
 func verifyWritable(ctx context.Context, db *sql.DB, resolved, socket string, handed *os.File) (*os.File, error) {
-	stamp, err := stampOn(ctx, db)
+	// A peer open may be creating the DAG zone while these reads run, which changes the schema under
+	// them (CRW-1054): a read is run again when SQLite says so.
+	var stamp ownership.Stamp
+	err := retrySchemaChanged(ctx, "ownership stamp", func() (e error) {
+		stamp, e = stampOn(ctx, db)
+		return e
+	})
 	if err != nil {
 		return nil, refuseWithHanded(unstampedRefusal(ctx, db, resolved, err), handed)
 	}
 	// A missing table or column is the command's host error, as the fence raised it.
-	if err = ValidateOwnershipSchema(ctx, db); err != nil {
+	if err = retrySchemaChanged(ctx, "ownership schema", func() error { return ValidateOwnershipSchema(ctx, db) }); err != nil {
 		return nil, refuseWithHanded(err, handed)
 	}
 	canonical := ""

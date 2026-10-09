@@ -7,7 +7,7 @@ var offlineCommands = []string{
 	"decision-show", "decision-withdraw", "doctor", "emit", "generation-bind", "generation-open",
 	"intervention-show", "register",
 	"relationship-resume", "relationship-status", "revision-head", "settings-record", "settings-show",
-	"show", "status", "store-challenge", "store-identity", "verdict", "linkage-attach",
+	"show", "status", "store-challenge", "store-halt-clear", "store-identity", "verdict", "linkage-attach",
 	"linkage-bind", "linkage-counterpart", "linkage-directive", "linkage-completion", "linkage-down",
 	"linkage-handover", "linkage-outstanding", "linkage-peer", "linkage-settle", "linkage-supervise",
 	"linkage-up", "fault-target", "fault-observe", "fault-sweep", "fault-show", "fault-fix",
@@ -30,7 +30,7 @@ var offlineCommands = []string{
 	"supervisor-report-recorded", "reporting-derive", "supervisor-stage", "supervisor-show",
 	"packet-check", "merge-evidence", "intent-declare", "intent-attempt", "intent-bind",
 	"intent-register", "intent-claim", "intent-disposition", "intent-resolve", "intent-show",
-	"dag-plan-put", "dag-plan-show", "dag-plan-log", "merge-turn-progress", "merge-turn-pass",
+	"dag-plan-put", "dag-plan-show", "dag-plan-log", "dag-bundle-candidates", "merge-turn-progress", "merge-turn-pass",
 	// CRW-768: the merge train's five commands are offline like the merge-turn ones: they read the
 	// forge and git themselves and need no host.
 	"merge-train-open", "merge-train-verify", "merge-train-land", "merge-train-close", "merge-train-show",

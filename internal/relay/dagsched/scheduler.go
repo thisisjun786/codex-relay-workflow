@@ -50,6 +50,7 @@ type Scheduler struct {
 	testAfterReserve         func() error
 	testAfterStart           func() error
 	testInSweepTx            func() error
+	testBetweenPassBundles   func()
 }
 
 // Selectors are what the managed identity fingerprints besides the request: the marker root, the socket and the state

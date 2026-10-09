@@ -3,8 +3,11 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+	"regexp"
 	"slices"
+	"strings"
 )
 
 // The additive DAG zone (D-01 of the DAG execution contract, docs/relay/dag-plans.md).
@@ -40,13 +43,89 @@ import (
 func DAGZoneStatements() []string { return slices.Clone(dagZone) }
 
 // installDAGZone creates the zone on the writable database db, after the v1 script. Every step is
-// idempotent, so a crash between two steps is completed by the next open.
+// idempotent. A store that already holds every object of the zone is not touched: the open reads the
+// catalog and returns, so it neither waits for the daemon's write transaction nor holds up its next one.
+// A store that lacks some gets all the steps in ONE write transaction (BEGIN IMMEDIATE ... COMMIT), so a
+// crash leaves the zone as it was and a concurrent opener waits for the first one's commit and then finds
+// the zone whole. Step by step, each step was a schema change of its own that a peer's open, still
+// reading or preparing statements in between, could meet as "database schema has changed (17)"
+// (SQLITE_SCHEMA): the 1007 integration verification failed its dag test that way (CRW-1054). One commit is
+// one change for a peer to meet, and a peer that does meet it runs again (retrySchemaChanged).
 func installDAGZone(ctx context.Context, db *sql.DB) error {
+	return retrySchemaChanged(ctx, "DAG zone", func() error {
+		missing, err := zoneIncomplete(ctx, db)
+		if err != nil {
+			return fmt.Errorf("initialize DAG zone: %w", err)
+		}
+		if !missing {
+			return nil
+		}
+		return installDAGZoneTx(ctx, db)
+	})
+}
+
+// zoneObjectName finds the type and the name a zone statement creates; every statement of dagZone is a
+// CREATE ... IF NOT EXISTS of one table, index or trigger (TestDAGZoneStatementsNameWhatTheyCreate).
+var zoneObjectName = regexp.MustCompile(`(?is)^\s*CREATE\s+(?:UNIQUE\s+)?(TABLE|INDEX|TRIGGER)\s+IF\s+NOT\s+EXISTS\s+([A-Za-z_][A-Za-z_0-9]*)`)
+
+// zoneIncomplete is whether the catalog lacks an object the zone declares, read by type and name: tables and
+// indexes share one namespace and triggers have their own, so a trigger named like a missing index does not
+// stand in for it (CRW-1054 evaluation d1). A statement whose type and name cannot be read counts as lacking,
+// so the transaction runs it.
+func zoneIncomplete(ctx context.Context, db *sql.DB) (bool, error) {
+	rows, err := db.QueryContext(ctx, "SELECT type, name FROM sqlite_master")
+	if err != nil {
+		return false, err
+	}
+	present := map[[2]string]bool{}
+	for rows.Next() {
+		var kind, name string
+		if err = rows.Scan(&kind, &name); err != nil {
+			break
+		}
+		present[[2]string{strings.ToLower(kind), name}] = true
+	}
+	if err = errors.Join(err, rows.Err(), rows.Close()); err != nil {
+		return false, err
+	}
+	for _, statement := range dagZone {
+		match := zoneObjectName.FindStringSubmatch(statement)
+		if match == nil || !present[[2]string{strings.ToLower(match[1]), match[2]}] {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// installDAGZoneTx runs every step on one connection in one write transaction.
+func installDAGZoneTx(ctx context.Context, db *sql.DB) (err error) {
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("initialize DAG zone: %w", err)
+	}
+	defer func() { err = errors.Join(err, conn.Close()) }()
+	if _, err = conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		return fmt.Errorf("initialize DAG zone: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_, e := conn.ExecContext(context.WithoutCancel(ctx), "ROLLBACK")
+			err = errors.Join(err, e)
+		}
+	}()
 	for i, statement := range dagZone {
-		if _, err := db.ExecContext(ctx, statement); err != nil {
+		if err = schemaAttempt(fmt.Sprintf("DAG zone step %d", i+1)); err == nil {
+			_, err = conn.ExecContext(ctx, statement)
+		}
+		if err != nil {
 			return fmt.Errorf("initialize DAG zone (step %d): %w", i+1, err)
 		}
 	}
+	if _, err = conn.ExecContext(ctx, "COMMIT"); err != nil {
+		return fmt.Errorf("initialize DAG zone (commit): %w", err)
+	}
+	committed = true
 	return nil
 }
 
@@ -846,6 +925,30 @@ BEGIN SELECT RAISE(ABORT, 'merge_trains.train_id is NULL: a train is addressed b
     expired_reason      TEXT NOT NULL
 )`,
 	`CREATE INDEX IF NOT EXISTS dag_user_decisions_fingerprint ON dag_user_decisions (fingerprint)`,
+	// CRW-904: the idle-edge wake of a delivery that waits out a busy backoff. A row here says one
+	// thing: this deferred-busy delivery was woken by its recipient's thread/status/changed to idle (or
+	// notLoaded), so it is due now and keeps the head of its recipient's line until the wake is spent,
+	// whatever its own deadline. It is a zone table rather than a column of deliveries because a
+	// shipped statement is never edited (the swap gate compares the stored text of every object) and
+	// because the marker has to survive a daemon restart.
+	//
+	// original_deadline is the deadline the delivery carried when the wake was written. The wake never
+	// moves deliveries.next_eligible_at, so this column is where that deadline survives the attempt:
+	// the claim records the wake as spent and leaves the row in place, and every arm that answers a
+	// busy recipient then takes due = min(original_deadline, the recomputed backoff) from here, however
+	// late the answer arrives and whether or not the original deadline has already passed. The row is
+	// deleted by the arm that takes it, and by the next busy deferral.
+	//
+	// spent_at is when the wake stopped holding the line, which is the claim: the attempt the wake
+	// released has begun, so the head set stops counting the row while its deadline is still readable.
+	// A row with spent_at NULL is the wake a head still holds; a row whose delivery has left
+	// deferred_busy is inert, because every reader of this table pairs it with that state.
+	`CREATE TABLE IF NOT EXISTS delivery_wakes (
+    event_id          TEXT PRIMARY KEY CHECK (event_id <> ''),
+    woken_at          TEXT NOT NULL CHECK (woken_at <> ''),
+    original_deadline REAL NOT NULL,
+    spent_at          TEXT
+)`,
 
 	// CRW-965: the pull-request-less acceptance and integration path. Two appended tables, because a
 	// shipped statement is never edited: the verification record an acceptance was taken on (the body
@@ -914,4 +1017,43 @@ BEGIN SELECT RAISE(ABORT, 'dag_integration_stages.stage_id is NULL: a row is add
 BEGIN SELECT RAISE(ABORT, 'dag_integration_stages rows are append-only: never updated'); END`,
 	`CREATE TRIGGER IF NOT EXISTS dag_integration_stages_no_delete BEFORE DELETE ON dag_integration_stages
 BEGIN SELECT RAISE(ABORT, 'dag_integration_stages rows are append-only: never deleted'); END`,
+	// CRW-952: the pre-merge record an acceptance was taken on. One row per acceptance, appended with it in
+	// the same transaction, so dag-integrate judges the stored text and never a file that was edited later.
+	`CREATE TABLE IF NOT EXISTS dag_acceptance_premerge (
+    acceptance_id     TEXT PRIMARY KEY REFERENCES dag_acceptances (acceptance_id),
+    record_digest     TEXT NOT NULL CHECK (record_digest <> ''),
+    record_json       TEXT NOT NULL CHECK (record_json <> ''),
+    evaluated_head    TEXT NOT NULL CHECK (evaluated_head <> ''),
+    accepted_head     TEXT NOT NULL CHECK (accepted_head <> ''),
+    recorded_by       TEXT NOT NULL CHECK (recorded_by <> ''),
+    coordinator_epoch INTEGER NOT NULL CHECK (coordinator_epoch >= 0),
+    recorded_at       TEXT NOT NULL
+)`,
+	`CREATE TRIGGER IF NOT EXISTS dag_acceptance_premerge_acceptance_id_not_null BEFORE INSERT ON dag_acceptance_premerge
+WHEN NEW.acceptance_id IS NULL
+BEGIN SELECT RAISE(ABORT, 'dag_acceptance_premerge.acceptance_id is NULL: a row is addressed by a non-empty id'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_acceptance_premerge_no_update BEFORE UPDATE ON dag_acceptance_premerge
+BEGIN SELECT RAISE(ABORT, 'dag_acceptance_premerge rows are append-only: never updated'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_acceptance_premerge_no_delete BEFORE DELETE ON dag_acceptance_premerge
+BEGIN SELECT RAISE(ABORT, 'dag_acceptance_premerge rows are append-only: never deleted'); END`,
+	// CRW-952: the pre-merge record a re-validation was judged on (criteria re-registered). One row per revalidation, so the
+	// acceptance keeps the record it was accepted with and integration judges the latest revalidation record when there is one.
+	`CREATE TABLE IF NOT EXISTS dag_revalidation_premerge (
+    revalidation_id   TEXT PRIMARY KEY REFERENCES dag_acceptance_revalidations (revalidation_id),
+    acceptance_id     TEXT NOT NULL REFERENCES dag_acceptances (acceptance_id),
+    record_digest     TEXT NOT NULL CHECK (record_digest <> ''),
+    record_json       TEXT NOT NULL CHECK (record_json <> ''),
+    evaluated_head    TEXT NOT NULL CHECK (evaluated_head <> ''),
+    accepted_head     TEXT NOT NULL CHECK (accepted_head <> ''),
+    recorded_by       TEXT NOT NULL CHECK (recorded_by <> ''),
+    coordinator_epoch INTEGER NOT NULL CHECK (coordinator_epoch >= 0),
+    recorded_at       TEXT NOT NULL
+)`,
+	`CREATE TRIGGER IF NOT EXISTS dag_revalidation_premerge_revalidation_id_not_null BEFORE INSERT ON dag_revalidation_premerge
+WHEN NEW.revalidation_id IS NULL
+BEGIN SELECT RAISE(ABORT, 'dag_revalidation_premerge.revalidation_id is NULL: a row is addressed by a non-empty id'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_revalidation_premerge_no_update BEFORE UPDATE ON dag_revalidation_premerge
+BEGIN SELECT RAISE(ABORT, 'dag_revalidation_premerge rows are append-only: never updated'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_revalidation_premerge_no_delete BEFORE DELETE ON dag_revalidation_premerge
+BEGIN SELECT RAISE(ABORT, 'dag_revalidation_premerge rows are append-only: never deleted'); END`,
 }

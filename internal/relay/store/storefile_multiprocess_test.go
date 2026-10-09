@@ -14,6 +14,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 	"unsafe"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
@@ -174,12 +175,39 @@ func storeFileDropOwnLock(path string) {
 // line is: idx TYPE ADVISORY READ <pid> <major:minor:inode> <start> <end>. The counting rule is
 // CRW-846's, unchanged: field 4 is the owner pid and field 5 splits on ':' with the inode last. A
 // read failure keeps the -1 count and reports itself as the one uncounted line.
+//
+// CRW-1054: /proc/locks is not a snapshot. It is a seq_file over the kernel's lock list, and a read
+// resumes the walk at the position the previous read reached, so when other processes add or remove
+// locks between two reads a held line can be skipped (reproduced with cross-process lock churn: a
+// read of a held lock missed it and the next read found it, and no miss survived five reads). So the
+// count is taken from the first read that shows a lock. A lock that is really gone reads 0 on every
+// read and still returns 0 after storeFileLockReads reads, with the lines of the last read.
 func storeFileLocks(pid int, inode uint64) (int, []string) {
-	raw, err := os.ReadFile("/proc/locks")
-	if err != nil {
-		return -1, []string{"read /proc/locks: " + err.Error()}
+	for read := 1; ; read++ {
+		raw, err := readProcLocks()
+		if err != nil {
+			return -1, []string{"read /proc/locks: " + err.Error()}
+		}
+		count, uncounted := storeFileLockCountsFrom(raw, pid, inode)
+		if count >= 1 || read == storeFileLockReads {
+			return count, uncounted
+		}
+		time.Sleep(storeFileLockReadGap)
 	}
-	return storeFileLockCountsFrom(string(raw), pid, inode)
+}
+
+// storeFileLockReads bounds how many reads of /proc/locks storeFileLocks makes before it reports a
+// count of 0; storeFileLockReadGap is the pause between two of them.
+const (
+	storeFileLockReads   = 5
+	storeFileLockReadGap = 10 * time.Millisecond
+)
+
+// readProcLocks returns the text of one read of /proc/locks. It is a package variable only so the
+// reader test can feed storeFileLocks a recorded sequence of texts.
+var readProcLocks = func() (string, error) {
+	raw, err := os.ReadFile("/proc/locks")
+	return string(raw), err
 }
 
 // storeFileLockCountsFrom applies the counting rule to the text of /proc/locks and collects the
@@ -388,14 +416,16 @@ func TestStoreFileHandlesSurviveTheReadPaths(t *testing.T) {
 		t.Fatalf("holder did not start: %q (%v)", lines.Text(), lines.Err())
 	}
 	if before < 1 {
-		// A zero count before any read path has not been shown to be a lost lock and has cost a
-		// merge-lane turn, so this run records the holder's evidence and skips instead of failing.
-		// A real I-563 loss reads 0 after the read paths, which still fails below.
-		t.Logf("%s", storeFileDiagnosticMessage(holder.Process.Pid, before, askStoreFileDiagnostic(t, stdin, lines)))
-		t.Skip("the holder holds no POSIX lock on the store's main inode before any read path ran, so this run cannot observe the lock it means to")
+		// CRW-888: a count of 0, or a lookup error, before any read path is a failed precondition
+		// with the holder's evidence in the failure. A skip or a log alone judges nothing.
+		t.Fatalf("%s", storeFileDiagnosticMessage(holder.Process.Pid, before, askStoreFileDiagnostic(t, stdin, lines)))
 	}
 
 	after := askStoreFileLocks(t, stdin, lines, "paths")
+	if after < 0 {
+		// A lookup error is not a transient drop: only a count of 0 after the read paths is a lost lock.
+		t.Fatalf("the holder could not read its lock count after the read paths (locks=%d), so the lock was not observed (CRW-888)\n%s", after, askStoreFileDiagnostic(t, stdin, lines))
+	}
 	if after == 0 {
 		t.Fatalf("the store's POSIX lock did not survive the read paths: %d lock(s) before, %d after. A process that holds a WAL connection must never close another descriptor of the same file (CRW-846)\n%s", before, after, askStoreFileDiagnostic(t, stdin, lines))
 	}

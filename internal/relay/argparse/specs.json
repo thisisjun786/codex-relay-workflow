@@ -566,6 +566,11 @@
   {"flag":"--write","kind":"true"},
   {"flag":"--read"},
   {"flag":"--actor"}]},
+{"name":"store-halt-clear","options":[
+  {"flag":"--restore-reading","required":true,"help":"the operator's restore reading file: it must exist and be non-empty"},
+  {"flag":"--reconcile-reading","required":true,"help":"the operator's reconcile reading file: it must exist and be non-empty"},
+  {"flag":"--actor","required":true},
+  {"flag":"--reason","required":true}]},
 {"name":"intent-declare","options":[
   {"flag":"--marker-root"},
   {"flag":"--workspace","required":true},
@@ -847,6 +852,9 @@
   {"flag":"--plan","required":true},
   {"flag":"--record","kind":"true","help":"keep this reading as a pass (dag_passes); needs --actor"},
   {"flag":"--actor","help":"the task asking for the recorded pass"}]},
+{"name":"dag-bundle-candidates","summary":"the candidates a parent may bundle into one issue (CRW-810), read from the stored plan at its head revision and written to nothing: the live implementation nodes that no release or managed start holds, grouped where two of them share a file or a directory other than the repository root (same_region, mechanical regions left out) or form a chain slice (an edge A->B where B has no other incoming edge and A no other outgoing edge, chain_slice). A bundle is a connected group of two or more nodes with its reasons, pairs, the union of its regions and its internal edges; every node left out is listed with one reason: non_pr, released, parent_excluded (a --exclude node) or other_plan_exclusive (an unintegrated node of another plan holds the place exclusively). The parent decides what to merge, by a plan revision","options":[
+  {"flag":"--plan","required":true},
+  {"flag":"--exclude","kind":"append","help":"a live node of the plan the candidates leave out (repeatable), for example an urgent or security node the plan does not mark; a name the plan does not hold is an argument error"}]},
 {"name":"dag-progress","summary":"how far a DAG plan has come, read from the relay store alone and opened read-only: the live nodes partitioned into stages (waiting on a predecessor, a decision or a resource, ready, releasing, running, reported, verifying, correcting, accepted, integrated, stale, paused and the rest), a blocked overlay with one closed reason per node, cumulative accepted and integrated counts kept apart from the stages, the denominator at every plan revision and whether it changed, and the exact relationship, thread and pull request of each node. Writes nothing and reads no clock, artifact or forge","options":[
   {"flag":"--plan","required":true}]},
 {"name":"dag-summary-enqueue","summary":"records the Linear summary a DAG plan owes a document, as the plan stands now: it reads the plan's progress in the transaction it writes in, appends the next entry of the (plan, document) stream and supersedes the entries of the stream that were not confirmed, so an older summary is never written after a newer one. The same state of the plan is one entry (a replay); --again records it anew when the confirmed summary is no longer in the document. Only the project's registered parent enqueues. The relay holds no Linear credential: the parent writes the entry with its own connector","options":[
@@ -911,6 +919,7 @@
   {"flag":"--base","help":"with --commit: the commit the head must descend from"},
   {"flag":"--checkout","help":"with --commit: an absolute path to the local checkout that holds both commits"},
   {"flag":"--verification","help":"with --commit: the verification-record/1 document (JSON or @file) that names this commit tree with a PASS it may reuse"},
+  {"flag":"--premerge","help":"the premerge-record/1 document (JSON or @file) the pre-merge gate judged the head on (CRW-952). Required for an implementation node\u0027s new acceptance, a --supersedes acceptance and a re-validation, and to attach a record to an acceptance that has none; a pure replay needs none"},
   {"flag":"--rule-version","required":true,"help":"the rules the result was verified under, {skills_digest, model, effort} as JSON or @file"},
   {"flag":"--expect-epoch","type":"int","help":"the coordinator epoch this session holds (dag-coordinator-claim answers it); a write from another epoch is refused stale_coordinator_epoch. 0 names none, which only a plan nobody claimed takes"}]},
 {"name":"dag-integration-observe","summary":"records whether an accepted implementation node's head is contained in the branches it has to land on, read by the relay itself (git merge-base --is-ancestor for a local checkout, the compare API for a forge repository). Integration needs every required target to contain the head and the parent's merged mark on the same revision; the node's slot is returned when it does. A landing also runs the conflict sweep it owes (conflict_sweep in the answer), once per landing","options":[

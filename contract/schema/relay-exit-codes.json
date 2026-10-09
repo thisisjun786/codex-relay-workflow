@@ -120,6 +120,16 @@
     "MERGE_EVIDENCE_MALFORMED": "merge_evidence_malformed",
     "STORE_OWNED_BY_OTHER": "store_owned_by_other",
     "PLAN_REVISION_CONFLICT": "plan_revision_conflict",
-    "STALE_COORDINATOR_EPOCH": "stale_coordinator_epoch"
+    "STALE_COORDINATOR_EPOCH": "stale_coordinator_epoch",
+    "PREMERGE_MISSING": "premerge_missing",
+    "PREMERGE_SUBJECT_MISMATCH": "premerge_subject_mismatch",
+    "PREMERGE_HEAD_MISMATCH": "premerge_head_mismatch",
+    "PREMERGE_AFTER_EVALUATION_MISSING": "premerge_after_evaluation_missing",
+    "PREMERGE_CRITERIA_STALE": "premerge_criteria_stale",
+    "PREMERGE_UNDISPOSED": "premerge_undisposed",
+    "PREMERGE_BLOCKED": "premerge_blocked",
+    "PREMERGE_SEPARABLE_FORBIDDEN": "premerge_separable_forbidden",
+    "PREMERGE_CARRIED_FORBIDDEN": "premerge_carried_forbidden",
+    "PREMERGE_DISPOSITION_INVALID": "premerge_disposition_invalid"
   }
 }

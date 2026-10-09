@@ -265,7 +265,7 @@ func fencedPaths() []fencedPath {
 		{name: "an acceptance", plan: "rp", setup: func(t *testing.T) (*releaseKit, func(*Scheduler) error) {
 			k := releaseKitFor(t)
 			return k, func(s *Scheduler) error {
-				_, err := s.Accept(context.Background(), "rp", "A", "parent", AcceptInput{RuleVersion: verifier})
+				_, err := s.Accept(context.Background(), "rp", "A", "parent", premergeWithRecord(s, context.Background(), "rp", "A", "parent", AcceptInput{RuleVersion: verifier}))
 				return err
 			}
 		}, prepare: func(t *testing.T, k *releaseKit) {
@@ -414,7 +414,7 @@ func TestTheRowsCarryTheEpochOfTheDecidingSession(t *testing.T) {
 		t.Fatalf("release = %+v, %v", res, err)
 	}
 	k.seedReport(res.RelationshipID, "A", "rp")
-	if _, err := s3.Accept(ctx, "rp", "A", "parent", AcceptInput{RuleVersion: verifier}); err != nil {
+	if _, err := s3.Accept(ctx, "rp", "A", "parent", premergeWithRecord(s3, ctx, "rp", "A", "parent", AcceptInput{RuleVersion: verifier})); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s3.RecordDecision(ctx, "rp", "parent", DecisionInput{Subject: "merge holds", Digest: dig("subject"), Disposition: "approved", AuthorityKind: "user", AuthorityRef: "ref"}); err != nil {

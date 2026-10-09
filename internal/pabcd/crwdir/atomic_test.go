@@ -227,3 +227,70 @@ func TestPublishReportsATempFileItCannotRemove(t *testing.T) {
 		t.Errorf("err %v, content %q, temp files %v", err, read(t, final), temps(t, dir))
 	}
 }
+
+// PublishDurable fsyncs the directory after the rename, as the last step: the file is in place under its final name when the sync is called, and a failed sync is returned (the rename has happened, so the
+// caller must not rely on the file being durable).
+func TestPublishDurableSyncsTheDirectoryAfterTheRename(t *testing.T) {
+	dir, final := withFile(t, "old", 0o640)
+	var order []publishStep
+	err := publishWith(final, []byte("new"), true, func(at publishStep) error {
+		order = append(order, at)
+		if at == stepDirSync && read(t, final) != "new" {
+			t.Errorf("the directory is synced before the rename: %q", read(t, final))
+		}
+		return nil
+	})
+	want := []publishStep{stepCreate, stepMode, stepWrite, stepSync, stepRename, stepDirSync}
+	if err != nil || !slices.Equal(order, want) || read(t, final) != "new" || !slices.Equal(names(t, dir), []string{"crw.json"}) {
+		t.Fatalf("err %v, steps %v, want %v, content %q, directory %v", err, order, want, read(t, final), names(t, dir))
+	}
+}
+
+func TestPublishDurableReportsAFailedDirectorySync(t *testing.T) {
+	injected := errors.New("injected")
+	dir, final := withFile(t, "old", 0o640)
+	err := publishWith(final, []byte("new"), true, func(at publishStep) error {
+		if at == stepDirSync {
+			return injected
+		}
+		return nil
+	})
+	if !errors.Is(err, injected) || !slices.Equal(names(t, dir), []string{"crw.json"}) {
+		t.Fatalf("err %v, directory %v", err, names(t, dir))
+	}
+}
+
+// Publish does not sync the directory; only the durable publish does.
+func TestPublishDoesNotSyncTheDirectory(t *testing.T) {
+	_, final := withFile(t, "old", 0o640)
+	err := publish(final, []byte("new"), func(at publishStep) error {
+		if at == stepDirSync {
+			t.Error("Publish synced the directory")
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPublishDurableCreatesAndReplaces(t *testing.T) {
+	dir := t.TempDir()
+	final := filepath.Join(dir, "new.json")
+	if err := PublishDurable(final, []byte("a")); err != nil || read(t, final) != "a" {
+		t.Fatalf("create: %v %q", err, read(t, final))
+	}
+	if err := PublishDurable(final, []byte("b")); err != nil || read(t, final) != "b" || len(temps(t, dir)) != 0 {
+		t.Fatalf("replace: %v %q", err, read(t, final))
+	}
+}
+
+func TestSyncDirOpensAndSyncsADirectoryAndRefusesAMissingOne(t *testing.T) {
+	dir := t.TempDir()
+	if err := SyncDir(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := SyncDir(filepath.Join(dir, "missing")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("a missing directory: %v", err)
+	}
+}

@@ -297,9 +297,9 @@ func TestCapacityDocumentTextThresholdsAndExitStatuses(t *testing.T) {
 		t.Fatalf("--text: exit %d %s", code, errOut.String())
 	}
 	lines := strings.Split(strings.TrimRight(out.String(), "\n"), "\n")
-	if len(lines) != 1 {
-		t.Fatalf("--text printed %d lines, want 1: %q", len(lines), out.String())
-	}
+	// The plan's own judgement is the first line. This fixture's store carries no DAG zone, so the
+	// branch reading follows it with the line that says the branches could not be measured (CRW-865);
+	// what this test pins is the judgement line itself.
 	for _, want := range []string{"p-crw-129", "parent-1", capacityExpand} {
 		if !strings.Contains(lines[0], want) {
 			t.Errorf("the line does not carry %q: %q", want, lines[0])

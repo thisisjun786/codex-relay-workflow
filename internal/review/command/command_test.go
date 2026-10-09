@@ -124,14 +124,19 @@ type fixture struct {
 	base             string
 	state, out, lock string
 	s                *script
-	at               time.Time // the fake clock
-	forge            forge     // when set, --post-summary talks to it instead of the gh CLI
+	at               time.Time                            // the fake clock
+	forge            forge                                // when set, --post-summary talks to it instead of the gh CLI
+	keep             func(path string, data []byte) error // when set, the kept copy of a result is written by this instead of crwdir.PublishDurable
+	fault            func(r record) error                 // when set, a ledger append of a record it fails is not made
 }
 
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
 	r := newRepo(t)
-	tmp := t.TempDir()
+	tmp, err := filepath.EvalSymlinks(t.TempDir()) // the physical path: the command records output paths with their directories resolved
+	if err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("XDG_STATE_HOME", filepath.Join(tmp, "xdg")) // no default path may reach the real state
 	return &fixture{t: t, repo: r, base: r.commit(map[string]string{"a.go": "package a\n\nfunc F() int { return 1 }\n"}),
 		state: filepath.Join(tmp, "state"), out: filepath.Join(tmp, "out"), lock: filepath.Join(tmp, "agy.lock"),
@@ -146,7 +151,7 @@ func (f *fixture) args(head string, extra ...string) []string {
 // run is the command with the scripted runner; it is safe to call from a goroutine.
 func (f *fixture) run(head string, extra ...string) (int, Summary, string) {
 	var out, errOut bytes.Buffer
-	code := run(context.Background(), f.args(head, extra...), &out, &errOut, env{runner: f.s.run, now: func() time.Time { return f.at }, forge: func(Config) forge { return f.forge }})
+	code := run(context.Background(), f.args(head, extra...), &out, &errOut, env{runner: f.s.run, now: func() time.Time { return f.at }, forge: func(Config) forge { return f.forge }, keep: f.keep, fault: f.fault})
 	var sum Summary
 	if out.Len() > 0 {
 		if err := json.Unmarshal(out.Bytes(), &sum); err != nil {

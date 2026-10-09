@@ -136,19 +136,26 @@ type HarnessOptions struct {
 }
 
 // HarnessRun is one runner answer (doctor.ts:132): the exit status and the two streams. Status
-// nil is the oracle null status, a spawnSync that threw or a process ended by a signal.
+// nil is the oracle null status, a spawnSync that threw or a process ended by a signal. Killed
+// tells the two apart (CRW-1015): it is set when the process ran and the timeout or a signal ended
+// it (the oracle's status null beside signal SIGTERM and error ETIMEDOUT), and it is false for a
+// process that never started (error ENOENT). A runner that cannot set it still answers correctly
+// to the ast-grep check by the status -1 os.ProcessState.ExitCode gives a signalled process, or by
+// the "signal: ..." text os/exec gives such a run on stderr.
 type HarnessRun struct {
 	Status *int
 	Stdout string
 	Stderr string
+	Killed bool
 }
 
 // HarnessRunner is the injected subprocess seam (the runner / agRunner argument of the oracle):
 // the file, its arguments, the per-call timeout the oracle passes, and the completed run. The
 // Codex version probe passes 5 s (doctor.ts:91) and the features probe runDoctor makes passes
-// 8 s (doctor.ts:349). A runner that cannot start the process, or kills one that did not finish
-// in time, answers HarnessRun{Status: nil, Stderr: <message>}, the object the oracle catch
-// clause builds.
+// 8 s (doctor.ts:349). A runner that cannot start the process answers HarnessRun{Status: nil,
+// Stderr: <message>}, the object the oracle catch clause builds. One that kills a process that did
+// not finish in time answers HarnessRun{Killed: true} (Status nil or -1), which the ast-grep check
+// must not read as a missing interpreter (CRW-1015).
 type HarnessRunner func(file string, args []string, timeout time.Duration) HarnessRun
 
 // harnessReportIsDir is isDir (doctor.ts:64-70): a stat that reads false instead of throwing.

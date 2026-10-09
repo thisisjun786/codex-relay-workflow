@@ -55,11 +55,13 @@ func invBoundaryPlan(t *testing.T) *Plan {
 	ws := filepath.Join(base, "ws")
 	mkdirs(t, ws)
 	invTree(t, filepath.Join(ws, ProjectSourceName), map[string]string{
-		"plan/rec-1/draft.tmp":                    "ordinary plan data",
-		"evidence/x/.123.1760000000000.tmp":       "ordinary evidence data",
-		"evidence/x/a.json.123.1760000000000.tmp": "half a write",
-		"bg/j1.json.tmp-x-2":                      "a shape mismatch",
-		"sessions/notes.tmp":                      "a bare .tmp outside a producer shape",
+		"plan/rec-1/draft.tmp":                      "ordinary plan data",
+		"evidence/x/.123.1760000000000.tmp":         "ordinary evidence data",
+		"evidence/x/.123." + invUUID + ".tmp":       "ordinary evidence data",
+		"evidence/x/a.json.123.1760000000000.tmp":   "half a write",
+		"evidence/x/a.json.123." + invUUID + ".tmp": "half a write",
+		"bg/j1.json.tmp-x-2":                        "a shape mismatch",
+		"sessions/notes.tmp":                        "a bare .tmp outside a producer shape",
 	})
 	p, err := invClassify(t, Options{Scope: ScopeProject, Cwd: ws})
 	must(t, err)
@@ -76,6 +78,11 @@ func TestInventoryUserTmpIsCopied(t *testing.T) {
 	if it := invWant(t, p, ScopeProject, "evidence/x/.123.1760000000000.tmp", DispCopy); it.Destination != "evidence/x/.123.1760000000000.tmp" {
 		t.Errorf("an empty-final .tmp in evidence is ordinary data; got %+v", it)
 	}
+	// CRW-1019: the PID-then-UUID shape with an empty final name is the same ordinary data as the millisecond shape.
+	rel := "evidence/x/.123." + invUUID + ".tmp"
+	if it := invWant(t, p, ScopeProject, rel, DispCopy); it.Destination != rel {
+		t.Errorf("an empty-final pid-uuid .tmp in evidence is ordinary data; got %+v", it)
+	}
 }
 
 // TestInventoryProducerTmpInEvidenceIsSkipped proves c2: a producer .tmp in evidence with a non-empty final part is still
@@ -84,6 +91,9 @@ func TestInventoryProducerTmpInEvidenceIsSkipped(t *testing.T) {
 	p := invBoundaryPlan(t)
 	if it := invWant(t, p, ScopeProject, "evidence/x/a.json.123.1760000000000.tmp", DispSkip); it.Reason != inventoryReasonIntermediate {
 		t.Errorf("a producer .tmp in evidence reason = %q, want %q", it.Reason, inventoryReasonIntermediate)
+	}
+	if it := invWant(t, p, ScopeProject, "evidence/x/a.json.123."+invUUID+".tmp", DispSkip); it.Reason != inventoryReasonIntermediate {
+		t.Errorf("a pid-uuid producer .tmp in evidence reason = %q, want %q", it.Reason, inventoryReasonIntermediate)
 	}
 }
 
@@ -173,8 +183,11 @@ func TestInventoryProducerTempFinalName(t *testing.T) {
 		want bool
 	}{
 		{".123.1760000000000.tmp", false},
+		{".123." + invUUID + ".tmp", false},
 		{"a.json.123.1760000000000.tmp", true},
+		{"a.json.123." + invUUID + ".tmp", true},
 		{".a.json.123.1760000000000.tmp", true},
+		{".a.json.123." + invUUID + ".tmp", true},
 		{"." + invUUID + ".tmp", false},
 		{"a.json." + invUUID + ".tmp", true},
 		{".a.json." + invUUID + ".tmp", true},

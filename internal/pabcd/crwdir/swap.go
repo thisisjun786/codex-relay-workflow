@@ -254,8 +254,14 @@ func crwdirSwapSyncDirs(syncDir func(string) error, paths ...string) error {
 // the sidecar file, which is created once and never unlinked (docs/port/decisions.md 7); release
 // unlocks and closes and leaves the file in place.
 type ConfigLock struct {
-	// Target is the resolved file the lock guards; the caller must read and publish that path, not
-	// the possibly-symlinked path it named, so two writers reaching one file share one lock.
+	// Target is the resolved file the lock guards: the caller's path with a symlink followed, so two
+	// writers reaching one file through different spellings share one lock. It is the lock's key and
+	// the identity a caller compares against, not a mandatory content path. A writer whose content
+	// path can change under an external runner reads and publishes through the caller's path instead
+	// (the rule CRW-891 gave the multi-agent repair and CRW-899 the activation), because the runner
+	// may atomically replace the caller's pathname while the lock still names the file the link
+	// pointed at when it was taken; the caller records that window as a limitation. Every other
+	// writer reads and publishes Target, which is the file the lock actually guards.
 	Target string
 	// Path is the sidecar the flock is held on.
 	Path string
@@ -311,6 +317,40 @@ func crwdirSwapResolvePath(target string) (string, error) {
 		return filepath.EvalSymlinks(target)
 	}
 	return target, nil
+}
+
+// HoldsSidecar reports whether the sidecar beside resolvedPath is the very file this lock holds
+// open. It is the proof a writer needs before it acts on a path it resolved *after* the lock wait:
+// a directory symlink retargeted while the writer waited makes that path name another file, whose
+// sidecar is a different inode from the one this lock flocked, so the writer must refuse rather than
+// edit a file the lock does not guard (CRW-899). The comparison is fstat of the held descriptor
+// against os.Stat of the sidecar path, never a path comparison, because a path is only a spelling.
+// It answers false for a nil or released lock and for a sidecar that does not stat, so a caller that
+// cannot prove the identity fails closed. The sidecar is created once and never unlinked
+// (docs/port/decisions.md 7), so while the lock is held the held descriptor is the same file the
+// path names unless something replaced that path.
+func (l *ConfigLock) HoldsSidecar(resolvedPath string) bool {
+	if l == nil || l.file == nil {
+		return false
+	}
+	held, err := l.file.Stat()
+	if err != nil || held == nil {
+		return false
+	}
+	side, err := os.Stat(resolvedPath + crwdirSwapLockSuffix)
+	if err != nil || side == nil {
+		return false
+	}
+	return os.SameFile(held, side)
+}
+
+// HeldInfo answers the identity and link count of the sidecar this lock holds, from one fstat of the held
+// descriptor. It fails for a nil or released lock. The caller compares it with a lookup by name (CRW-993 d1).
+func (l *ConfigLock) HeldInfo() (os.FileInfo, error) {
+	if l == nil || l.file == nil {
+		return nil, errors.New("the config lock is not held")
+	}
+	return l.file.Stat()
 }
 
 // Release unlocks and closes the sidecar. The file is never unlinked.

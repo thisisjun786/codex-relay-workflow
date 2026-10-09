@@ -129,6 +129,16 @@ func (s *Scheduler) IntegrateBatch(ctx context.Context, in IntegrationBatchInput
 	if err != nil {
 		return out, err
 	}
+	// a ready candidate whose stored pre-merge record fails is left out with its premerge_* reason, as other left-out candidates are (CRW-952 answer 3)
+	if len(in.Nodes) == 0 {
+		held, err := s.premergeLeftOut(ctx, in.Plan)
+		if err != nil {
+			return out, err
+		}
+		for _, l := range held {
+			out.Split = append(out.Split, IntegrationBatchSplit{NodeID: l.NodeID, AcceptanceID: l.AcceptanceID, HeadSHA: l.HeadSHA, Reason: l.Reason})
+		}
+	}
 	if len(candidates) == 0 {
 		return out, refuse(contract.RefusalDispositionConflict, "plan %s has no ready accepted candidate to integrate", in.Plan)
 	}
@@ -189,7 +199,7 @@ func (s *Scheduler) IntegrateBatch(ctx context.Context, in IntegrationBatchInput
 			return out, err
 		}
 	}
-	out.Split = settled.split
+	out.Split = append(out.Split, settled.split...)
 	for _, m := range settled.merged {
 		out.Merged = append(out.Merged, IntegrationBatchMerged{NodeID: m.NodeID, AcceptanceID: m.AcceptanceID, HeadSHA: m.HeadSHA, MergeCommit: m.MergeCommit})
 	}
@@ -294,6 +304,15 @@ func (s *Scheduler) readyIntegrationCandidates(ctx context.Context, in Integrati
 			picked[id] = true
 			c, ok := byNode[id]
 			if !ok {
+				held, err := s.premergeLeftOut(ctx, in.Plan)
+				if err != nil {
+					return nil, err
+				}
+				for _, l := range held {
+					if l.NodeID == id {
+						return nil, refuse(contract.RefusalReason(l.Reason), "node %s is left out of the integration: its pre-merge record does not pass (%s)", id, l.Reason)
+					}
+				}
 				landed, err := s.alreadyIntegratedNode(ctx, in.Plan, id)
 				if err != nil {
 					return nil, err
@@ -327,7 +346,7 @@ func (s *Scheduler) readyIntegrationCandidates(ctx context.Context, in Integrati
 func integrationBatchID(in IntegrationBatchInput, old string, candidates []Candidate) string {
 	var parts []string
 	for _, c := range candidates {
-		parts = append(parts, c.NodeID+"="+c.AcceptanceID+"@"+c.EventID+"#"+c.HeadSHA)
+		parts = append(parts, c.NodeID+"="+c.AcceptanceID+"@"+c.EventID+"#"+c.HeadSHA+"/"+c.PremergeDigest)
 	}
 	return registry.CoordinationID("dib", in.Plan, in.Checkout, in.IntegrationRef, old, in.BaseRef, strings.Join(parts, ","))
 }
@@ -344,7 +363,12 @@ func (s *Scheduler) recordIntent(ctx context.Context, in IntegrationBatchInput, 
 			return nil
 		}
 	}
-	detail, err := json.Marshal(map[string]string{"integration_ref": in.IntegrationRef, "base": baseTip, "old_head": old})
+	fields := map[string]string{"integration_ref": in.IntegrationRef, "base": baseTip, "old_head": old}
+	// the pre-merge digest each candidate is frozen with: the stored record the batch judged (CRW-952 answer 3)
+	for _, c := range candidates {
+		fields["premerge."+c.NodeID] = c.PremergeDigest
+	}
+	detail, err := json.Marshal(fields)
 	if err != nil {
 		return err
 	}

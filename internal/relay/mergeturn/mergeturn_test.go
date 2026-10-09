@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"path/filepath"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
@@ -15,18 +14,10 @@ import (
 func setup(t *testing.T) *Service {
 	t.Helper()
 	ctx := context.Background()
-	db, err := store.Open(ctx, filepath.Join(t.TempDir(), "relay.sqlite3"), "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := db.Close(); err != nil {
-			t.Error(err)
-		}
-	})
+	db := openFresh(t)
 	r := &registry.Registry{Store: db}
 	for _, pair := range [][2]string{{"p1", "A"}, {"p2", "B"}} {
-		_, err = db.Querier(ctx).ExecContext(ctx, "INSERT INTO scope_bindings (binding_id,role,scope_kind,scope_key,task_id,host_id,status,revision,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)", pair[0], "parent", "project", pair[1], pair[0], "host", "active", 1, "now", "now")
+		_, err := db.Querier(ctx).ExecContext(ctx, "INSERT INTO scope_bindings (binding_id,role,scope_kind,scope_key,task_id,host_id,status,revision,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)", pair[0], "parent", "project", pair[1], pair[0], "host", "active", 1, "now", "now")
 		if err != nil {
 			t.Fatal(err)
 		}

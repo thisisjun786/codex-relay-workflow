@@ -585,11 +585,41 @@ event is of an earlier generation, or whose relationship has spent its hourly bu
 holds nothing back, so one relationship's trouble cannot keep its siblings waiting (CRW-259). A delivery
 that supervision has overtaken (an obsolete merge-turn grant, a superseded revision) is only found when it
 is attempted, so it can still head a line until its backoff ends. A line is
-held for one backoff at a time, at most `BusyMax` ahead; a recipient that turns idle is reached when the
-oldest waiting delivery's backoff ends, up to five minutes and a tick later, and a delivery held at
-`busy_cap` stops holding. Two limits remain: a refusal marker an earlier tick left still starts the next
+held for one backoff at a time, at most `BusyMax` ahead, and a delivery held at `busy_cap` stops
+holding. Two limits remain: a refusal marker an earlier tick left still starts the next
 walk after the refused row, and a relay CLI `deliver` can still send a delivery ahead of one that is
 sending under a live lease.
+
+The timer is not what ends the wait. While the head waits out its backoff the relay holds a
+subscription on the recipient (the override-free `thread/resume` in
+[subscriptions](subscriptions.md#the-busy-hold-a-subscription-kept-for-the-recipients-idle-edge)),
+and a `thread/status/changed` reporting `idle` or `notLoaded` writes the head's wake, one row in the
+zone's `delivery_wakes` table. A woken head is due at once and is attempted at its parent's next turn,
+and it keeps the head of the line until that wake is spent, whatever its own deadline: `busyHeadSQL`
+names the oldest delivery that is waiting out a busy backoff or whose wake has no `spent_at`, the due list,
+`Attempt` and the claim read the same set, and the wake is judged against the row still being the
+`deferred_busy` one it was written for. The claim spends it as the attempt begins, so a woken head
+that was not claimed before its old deadline still cannot be overtaken by a younger delivery of the
+same recipient. The wake never moves
+`next_eligible_at`, so an attempt that is woken early and meets the recipient busy again keeps
+`due = min(original, recomputed)` and the early wake never pushes the safety-net timer later; the wake
+row is kept until that attempt is answered, so a busy answer that arrives late, after the original
+deadline or after the attempt was first settled uncertain, still takes the earlier deadline. A wake
+the delivery never spent — the row left `deferred_busy` for a withhold or a supersession without ever
+being claimed — is dropped with that transition, so it cannot outlive the wait it was written for and
+make a later ordinary busy deferral due at once. The
+backoff is the trigger for every case the report cannot cover: a report the relay never saw, a host
+that reports no status, a recipient the relay could not subscribe, and a recipient that is busy again
+before the attempt lands. The min send interval and the hourly budget pace the send as before, and a
+busy recipient is still never interrupted: the wake only decides when the relay looks.
+
+The two store failures this pass can meet go through the daemon's halt (CRW-848), as the other write and
+observation sites do. A corrupting failure of the wake write publishes the write marker and ends the tick before
+the delivery pass and the supervisor channel write anything. A corrupting failure of the waiting-head read
+publishes the observation marker after the delivery pass, so the deliveries and deferrals written earlier in that
+tick stay written, no subscription is opened, and the supervisor channel does not write after it. The next tick
+reads the marker first and writes nothing. A failure the classifier does not call corruption ends the tick with
+its error, as it did before the halt, and a wake that is not written leaves the head on its timer.
 
 A delivery that has reached its busy or pre-send attempt cap is annotated when its generation
 advances. Once a cap sets a hold, `attempt` returns before the pre-send supersession check, so
@@ -1027,18 +1057,40 @@ because the directory entry decides presence and not what a read makes of it). `
 for every option, so its own preflight never runs: with `--probe-write` against a halted store the
 write probe is not run at all - it would take the store's write lock - and the answer says so.
 
-**Clearing it by hand, until the command exists.** The operator command that clears the marker
-ships separately (the follow-up issue for `store-halt-clear`). Until then:
+**Clearing it: `store-halt-clear` (CRW-885).** The operator clears the marker with one command:
+
+```
+codex-session-relay --state <state> store-halt-clear --restore-reading <file> --reconcile-reading <file> --actor <id> --reason <text>
+```
 
 1. Stop the relay service. Nothing must be writing while the store is being restored.
 2. Keep a copy of `corruption.json` as evidence: it records the code, the message, the site and the
    process, and it is the only record of what the store looked like when it broke.
-3. Restore the store from a backup and check the readings agree - the restore slice's own reading and
-   the reconcile reading - before any write is admitted again. The halt does not do this for you and
-   does not lift itself.
-4. Only then remove `corruption.json` from the state directory, and start the service.
+3. Restore the store from a backup. Write the restore slice's reading and the reconcile reading to
+   two files. Until the restore (S2) and reconcile (S4) commands exist, the operator makes both files
+   by hand. The halt does not do this for you and does not lift itself.
+4. Run `store-halt-clear` with both files. It takes the write gate exclusively on the store it
+   names, and it checks both files before anything is written: a file that is missing or empty is refused
+   `malformed_receipt` (exit 2) and the marker stays. With both files present it writes one journal row,
+   kind `store_halt_cleared`, and only then removes `corruption.json`. The row's subject is the
+   actor; its detail holds the marker's sequence and detection time (null when the marker cannot be
+   decoded), a sha256 of the marker's bytes, the sha256 and byte count of each reading, and the reason.
+   The command answers `cleared` true with `markerSequence`, `markerDetectedAt`, `restoreSha256`,
+   `reconcileSha256`, `actor` and `reason`. A writer holding the write gate is refused
+   `store_owned_by_other`.
 
-Removing the marker without a verified restore re-admits writes to a store that is still damaged.
+   The row comes first, so a failure after it leaves the row and a marker still present. Run the command
+   again with the same two files: it removes the marker and writes no second row. Run it with other
+   files and it is refused, because the record would then say something other than what cleared the
+   marker. A failure before the row leaves the marker as it was.
+5. Start the service.
+
+With no marker, and no store to read, the command changes nothing, writes no row, creates no store, and answers `cleared` false. The command
+does not judge what the two readings say: it checks that each one exists and is not empty, and
+records their digests. The nonce, replay-dedup and grant-sequence findings of the section 83
+post-merge evaluation belong to the restore (S2) and reconcile (S4) commands, not to this one.
+
+Clearing the marker without a verified restore re-admits writes to a store that is still damaged.
 `doctor` reports the marker and the halt is visible in the daemon's notes, so a store that is
 halted cannot be mistaken for a quiet one.
 

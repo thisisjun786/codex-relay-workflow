@@ -164,10 +164,10 @@ func observationPayload(pluginRoot string) (root, version, digest string, inside
 	if err != nil {
 		return "", "", "", false, false
 	}
-	parsed, _ := decode(string(data))
+	parsed, whole := decode(string(data))
 	object, _ := parsed.(map[string]any)
 	version, _ = object["version"].(string)
-	if !metadata(version) {
+	if !whole || !metadata(version) {
 		return "", "", "", false, false
 	}
 	real, err := filepath.EvalSymlinks(path)
@@ -181,9 +181,9 @@ func observationRecord(path string, q ObservationQuery, root, version, manifest 
 	if err != nil {
 		return HookObservation{}, false
 	}
-	parsed, _ := decode(string(data))
+	parsed, whole := decode(string(data))
 	record, ok := parsed.(map[string]any)
-	if !ok {
+	if !ok || !whole {
 		return HookObservation{}, false
 	}
 	component, _ := record["component"].(string)
@@ -197,7 +197,8 @@ func observationRecord(path string, q ObservationQuery, root, version, manifest 
 		!slug(component) || !slug(event) {
 		return HookObservation{}, false
 	}
-	// Date.parse reads many spellings; the writer's, and any RFC 3339 one, is read here.
+	// The time is RFC 3339: the writer's spelling and any other RFC 3339 one. A record whose time is another
+	// spelling that Date.parse reads is not fresh here (CRW-1016 decision D1, intentionally changed).
 	at, err := time.Parse(time.RFC3339Nano, observedAt)
 	if err != nil {
 		return HookObservation{}, false

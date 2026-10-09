@@ -59,7 +59,8 @@ func TestToolsReview809AncestorRemovedDuringCreate(t *testing.T) {
 	// every entry is one of the two and that the ancestor comes before the target, which is the order
 	// removeCreated's reverse walk needs.
 	first, last := -1, -1
-	for i, path := range created {
+	for i, entry := range created {
+		path := entry.path
 		switch path {
 		case toolsDir:
 			if first < 0 {

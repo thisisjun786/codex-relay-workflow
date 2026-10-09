@@ -47,7 +47,7 @@ const (
 	ReasonStoreAbsent = "store_absent"
 	// ReasonStoreWriteHalted is the refusal a writable path answers with while S/corruption.json
 	// exists: the store was seen damaged (halt.go, CRW-848) and no command may write to it until
-	// the marker is cleared by hand after a restore. It is a member of the frozen enum.
+	// the marker is cleared with store-halt-clear after a restore. It is a member of the frozen enum.
 	ReasonStoreWriteHalted = string(contract.RefusalStoreWriteHalted)
 )
 

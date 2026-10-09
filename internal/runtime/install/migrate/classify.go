@@ -35,7 +35,9 @@ type classifier struct {
 }
 
 // classifyDest is a destination directory that received a mapped item, in first-seen order; classifyDestTemps reports the
-// temporaries of older runs left there.
+// temporaries of older runs left there. A destination root that does not exist yet has no directory to walk, so the scope's
+// holder - the directory that holds the root - is read instead, wherever a run interrupted while creating that root left its
+// temporary.
 type classifyDest struct {
 	scope Scope
 	root  *Dir
@@ -378,7 +380,7 @@ func (c *classifier) skipItem(scope Scope, dir *Dir, childPath, name, reason str
 
 func (c *classifier) noteDest(scope Scope, dirPath string) {
 	root := c.destRoot(scope)
-	if root == nil {
+	if root == nil && c.destHolder(scope) == nil {
 		return
 	}
 	key := string(scope) + ":" + dirPath
@@ -389,10 +391,45 @@ func (c *classifier) noteDest(scope Scope, dirPath string) {
 	c.dests = append(c.dests, classifyDest{scope: scope, root: root, path: dirPath})
 }
 
+// destHolder is the pinned directory that holds a scope's destination root, where a run whose root creation was
+// interrupted leaves its temporary. It is nil for a scope with no such pair.
+func (c *classifier) destHolder(scope Scope) *Dir {
+	switch scope {
+	case ScopeProject:
+		if c.roots.Project != nil {
+			return c.roots.Project.parent
+		}
+	case ScopeUser:
+		if c.roots.User != nil {
+			return c.roots.User.parent
+		}
+	}
+	return nil
+}
+
 // classifyDestTemps reports the .migrate-<26>-<n>.tmp names an older run left in a destination directory. They are named and put
 // in the plan, never adopted, moved or removed (M1's Publisher does the same for a run of its own).
 func (c *classifier) classifyDestTemps() error {
+	// The directory that holds a scope's destination root is read once for every scope the plan covers,
+	// whatever that root's own state. A run interrupted while creating the root leaves its temporary there,
+	// and that leftover is retained independently of whether the root exists by the next run: another actor,
+	// or a later attempt, can create the root without touching the temporary beside it.
+	holders := map[Scope]bool{}
 	for _, d := range c.dests {
+		if holders[d.scope] {
+			continue
+		}
+		holders[d.scope] = true
+		if err := c.classifyHolderTemps(d.scope); err != nil {
+			return err
+		}
+	}
+	for _, d := range c.dests {
+		// A scope whose destination root does not exist yet has no directory to walk; its holder was read
+		// above.
+		if d.root == nil {
+			continue
+		}
 		dir, opened, err := classifyOpenDest(d.root, d.path)
 		if err != nil {
 			classifyCloseAll(opened)
@@ -417,6 +454,30 @@ func (c *classifier) classifyDestTemps() error {
 			}
 			c.add(Item{Scope: d.scope, Destination: rel, Disposition: DispSkip, Reason: inventoryReasonOldTemp})
 		}
+	}
+	return nil
+}
+
+// classifyHolderTemps reports the temporaries a run that was interrupted while creating a scope's destination
+// root left in the directory that holds that root. They are named, reported and never adopted, moved or
+// removed, the same rule the destination directories' temporaries get. That directory is beside the destination
+// root, not inside it, so the item carries the leftover's own location in Source, as the literal-home fallback
+// does for the same reason, and leaves Destination empty rather than spelling a destination-root-relative path
+// that would place the leftover inside the root.
+func (c *classifier) classifyHolderTemps(scope Scope) error {
+	holder := c.destHolder(scope)
+	if holder == nil {
+		return nil
+	}
+	names, err := holder.Names()
+	if err != nil {
+		return err
+	}
+	for _, name := range names {
+		if _, ok := tempRun(name); !ok {
+			continue
+		}
+		c.add(Item{Scope: scope, Source: holder.join(name), Disposition: DispSkip, Reason: inventoryReasonOldTemp})
 	}
 	return nil
 }
@@ -586,8 +647,9 @@ func classifyEvidenceTree(path string) bool {
 // classifyProducerTemp reports whether name is exactly the temporary shape a producer writes beside its final file: the CRW
 // shape "." + final + "." + 26 base32 characters + ".tmp" (crwdir/atomic.go:92) and the CXC shapes final + "." + pid + "." +
 // ms + ".tmp" and final + "." + pid + "." + uuid + ".tmp" (subagent-evidence.ts:221, state.ts:387,625). Every other ".tmp"
-// name is ordinary data. The final-name part must be non-empty, so a user file such as .123.1760000000000.tmp (an empty final
-// name) stays ordinary data; a dotfile final name such as .receipt.json is not empty and keeps its previous disposition.
+// name is ordinary data. The final-name part must be non-empty, so a user file such as .123.1760000000000.tmp or
+// .123.<uuid>.tmp (an empty final name before the pid) stays ordinary data; a dotfile final name such as .receipt.json is not
+// empty and keeps its previous disposition.
 func classifyProducerTemp(name string) bool {
 	core, ok := strings.CutSuffix(name, tempSuffix)
 	if !ok || core == "" {
@@ -603,6 +665,10 @@ func classifyProducerTemp(name string) bool {
 		return false
 	}
 	if classifyUUID(last) {
+		// A pid directly before the uuid needs a non-empty final name before it, as the millisecond shape does (CRW-1019).
+		if base, pid, cut := classifyCutLast(head, "."); cut && classifyPid(pid) {
+			return base != ""
+		}
 		return true
 	}
 	if classifyMillis(last) {

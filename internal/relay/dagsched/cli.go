@@ -21,6 +21,8 @@ func init() {
 	dispatch.Register(nil,
 		// dag-ready reads, and writes only when it is asked to keep the pass.
 		dispatch.Command{Name: "dag-ready", ReadOnlyWhen: func(args dispatch.Args) bool { return !args.Bool("record") }, Run: runReady},
+		// dag-bundle-candidates reads the nodes a parent may bundle into one issue (CRW-810): a reading of the stored plan, nothing is written.
+		dispatch.Command{Name: "dag-bundle-candidates", ReadOnly: true, Run: runBundleCandidates},
 		dispatch.Command{Name: "dag-region-declare", Run: runRegionDeclare},
 		// dag-release starts a managed task: like managed-start it opens its own admitted connection and needs the explicit --state and --socket.
 		dispatch.Command{Name: "dag-release", OwnAdmission: true, Exempt: true, Run: runRelease},
@@ -77,17 +79,31 @@ func runReady(ctx context.Context, services dispatch.Services, args dispatch.Arg
 		return nil, err
 	}
 	if !record {
-		reading, err := sched.Read(ctx, args.Text("plan"), ReadyOptions{})
+		reading, bundles, err := sched.ReadWithBundles(ctx, args.Text("plan"))
 		if err != nil {
 			return nil, hostFailure(err)
 		}
-		return reading.Object(), nil
+		return append(reading.Object(), contract.Field{Key: "bundleCandidates", Value: bundles.lists()}), nil
 	}
-	reading, seq, err := sched.RecordPass(ctx, args.Text("plan"), actor, ReadyOptions{})
+	reading, seq, bundles, err := sched.RecordPassWithBundles(ctx, args.Text("plan"), actor)
 	if err != nil {
 		return nil, hostFailure(err)
 	}
-	return append(reading.Object(), contract.Field{Key: "pass_seq", Value: seq}), nil
+	return append(reading.Object(), contract.Field{Key: "pass_seq", Value: seq}, contract.Field{Key: "bundleCandidates", Value: bundles.lists()}), nil
+}
+
+// runBundleCandidates answers the bundle candidates of a plan (CRW-810). Each --exclude names a live node the parent leaves out.
+func runBundleCandidates(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
+	sched, closeStore, err := openScheduler(ctx, services, args)
+	if err != nil {
+		return nil, err
+	}
+	defer closeStore()
+	bundles, err := sched.ReadBundles(ctx, args.Text("plan"), args.Strings("exclude"))
+	if err != nil {
+		return nil, hostFailure(err)
+	}
+	return bundles.Object(), nil
 }
 
 // wireRegion is one region of the --regions document.
@@ -212,6 +228,14 @@ func runAccept(ctx context.Context, services dispatch.Services, args dispatch.Ar
 		return nil, usage("--rule-version is {skills_digest, model, effort}: " + err.Error())
 	}
 	input := AcceptInput{Event: args.Text("event"), Supersedes: args.Text("supersedes"), RuleVersion: rule}
+	if args.Given("premerge") {
+		// the pre-merge record the gate judged the head on (CRW-952): inline JSON or @file
+		raw, err := readPremergeRecord(args.Text("premerge"))
+		if err != nil {
+			return nil, err
+		}
+		input.Premerge = raw
+	}
 	if args.Given("repository") || args.Given("pull-request") {
 		if !args.Given("repository") || !args.Given("pull-request") {
 			return nil, usage("--repository and --pull-request name a pull request together")

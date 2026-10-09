@@ -49,6 +49,8 @@ type Store struct {
 	gate *os.File
 	// readOnly is Store(read_only=True): mode=ro, query_only=ON, deferred BEGIN.
 	readOnly bool
+	// live is this store's reference in the store-file identity table (CRW-967), given back by Close.
+	live *liveStoreRef
 }
 
 // The frozen contract contains DDL, then guard indexes, then illustrative seed SQL.
@@ -63,6 +65,10 @@ type OpenOptions struct {
 	// verify is the fenced opener's check of a writable store, run on the opened database
 	// before the schema script; it returns the write gate the store holds (verifyWritable).
 	verify func(context.Context, *sql.DB) (*os.File, error)
+	// unsynced opens the database with synchronous=OFF instead of FULL. Only buildAbsent sets it, on the
+	// temporary database no other process can name yet: the build is one private writer, a crash discards the
+	// file, and createAbsent syncs the finished file before it links it into place (CRW-1054).
+	unsynced bool
 }
 
 func Open(ctx context.Context, path, socketPath string) (*Store, error) {
@@ -135,6 +141,16 @@ func open(ctx context.Context, path, socketPath string, options OpenOptions) (_ 
 	if err != nil {
 		return nil, err
 	}
+	// The registry takes a reference on the resolved database path before this process connects
+	// (CRW-880, CRW-967): the artifact reader refuses a store file this process has open, and the
+	// reference is what lets it recognise the database by identity and its sidecars by name. The
+	// reference is given back if the open fails, and by Close if it succeeds.
+	live := registerLiveStore(resolved)
+	defer func() {
+		if err != nil {
+			live.release()
+		}
+	}()
 	d := &sqlite.Driver{}
 	if err := commitid.Register(d); err != nil {
 		return nil, err
@@ -145,7 +161,11 @@ func open(ctx context.Context, path, socketPath string, options OpenOptions) (_ 
 		}
 		// Python's sqlite3.connect installs its timeout before executing journal_mode.
 		// Do the same: journal_mode may need a lock even before the schema is read.
-		pragmas := []string{fmt.Sprintf("PRAGMA busy_timeout=%d", options.BusyTimeout.Milliseconds()), "PRAGMA journal_mode=WAL", "PRAGMA synchronous=FULL", "PRAGMA foreign_keys=ON"}
+		synchronous := "FULL"
+		if options.unsynced {
+			synchronous = "OFF"
+		}
+		pragmas := []string{fmt.Sprintf("PRAGMA busy_timeout=%d", options.BusyTimeout.Milliseconds()), "PRAGMA journal_mode=WAL", "PRAGMA synchronous=" + synchronous, "PRAGMA foreign_keys=ON"}
 		busyConfigured := false
 		for _, pragma := range pragmas {
 			deadline := time.Now().Add(options.BusyTimeout)
@@ -199,6 +219,9 @@ func open(ctx context.Context, path, socketPath string, options OpenOptions) (_ 
 	if err = db.PingContext(ctx); err != nil {
 		return nil, fmt.Errorf("connect database: %w", err)
 	}
+	if err = live.attach(); err != nil {
+		return nil, err
+	}
 	var gate *os.File
 	if options.verify != nil {
 		if gate, err = options.verify(ctx, db); err != nil {
@@ -218,7 +241,7 @@ func open(ctx context.Context, path, socketPath string, options OpenOptions) (_ 
 	if len(sections) != 2 {
 		return nil, errors.New("embedded schema lacks guard marker")
 	}
-	if _, err = db.ExecContext(ctx, sections[0]); err != nil {
+	if err = execSchema(ctx, db, "v1 script", sections[0]); err != nil {
 		return nil, fmt.Errorf("initialize schema: %w", err)
 	}
 	// The additive DAG zone follows the v1 script and is not part of what the open validated
@@ -230,7 +253,7 @@ func open(ctx context.Context, path, socketPath string, options OpenOptions) (_ 
 			return nil, err
 		}
 	}
-	result := &Store{DB: db, Path: pathlibSpelling(path), gate: gate}
+	result := &Store{DB: db, Path: pathlibSpelling(path), gate: gate, live: live}
 	guards := strings.SplitN(sections[1], seedMarker, 2)
 	if len(guards) != 2 {
 		return nil, errors.New("embedded schema lacks seed marker")
@@ -240,7 +263,7 @@ func open(ctx context.Context, path, socketPath string, options OpenOptions) (_ 
 		if statement == "" {
 			continue
 		}
-		if _, guardErr := db.ExecContext(ctx, statement); guardErr != nil {
+		if guardErr := execSchema(ctx, db, "guard index", statement); guardErr != nil {
 			name := strings.Fields(strings.TrimPrefix(statement, "CREATE UNIQUE INDEX IF NOT EXISTS "))[0]
 			result.UnenforcedIndexes = append(result.UnenforcedIndexes, UnenforcedIndex{Index: name, Detail: guardErr.Error()})
 		}
@@ -446,12 +469,16 @@ func randomBytes(size int) ([]byte, error) {
 	return b, nil
 }
 
+// Close closes the store's connection and gives back its reference in the store-file identity
+// table (CRW-967). The reference is released after the connection, so the database descriptor is
+// closed before its identity stops being recognised.
 func (s *Store) Close() error {
 	err := s.DB.Close()
 	if s.gate != nil {
 		err = errors.Join(err, s.gate.Close())
 		s.gate = nil
 	}
+	s.live.release()
 	return err
 }
 

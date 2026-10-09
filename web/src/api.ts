@@ -205,6 +205,263 @@ async function errorText(response: Response): Promise<string> {
   return `request failed (${response.status})`;
 }
 
+/* ---- the run-state screen (GET /api/status) ---- */
+
+// The endpoint is read-only, so it carries no token and no body: every value below comes from a
+// named read the server already has. Nothing here re-derives a judgement the server made - a
+// source that could not be read arrives as unknown with the reason the command itself gave.
+
+/** Whether a source answered. A source that could not be read is unknown, never ok. */
+export type SourceState = "ok" | "unknown";
+
+/** One status-bar reading. */
+export interface StatusMark {
+  state: SourceState;
+  reason?: string;
+}
+
+/**
+ * The execution policy's reading. The file, registered and running digests are separate values,
+ * each with its own reason, so the bar never conflates the bytes on disk with the digest the
+ * wiring record names and with the digest the running service published.
+ */
+export interface StatusPolicyReading extends StatusMark {
+  policyState: string;
+  path?: string;
+  fileDigest: string | null;
+  fileReason?: string;
+  registeredDigest: string | null;
+  registeredReason?: string;
+  runningDigest: string | null;
+  runningReason?: string;
+  applied: string;
+}
+
+/** One manage source's own document, passed through from the command unchanged. */
+export interface StatusSource<T = unknown> {
+  state: SourceState;
+  reason?: string;
+  data: T | null;
+}
+
+/** One relay relationship, as the relay's own projection spells it. */
+/** One live owner of a scope, as the relay read reports it. */
+export interface RelayBindingView {
+  bindingId?: unknown;
+  role?: unknown;
+  scopeKind?: unknown;
+  scopeKey?: unknown;
+  taskId?: unknown;
+  cwd?: unknown;
+  status?: unknown;
+  read?: { state?: string; reason?: string } | null;
+}
+
+export interface RelayRelationshipView {
+  relationshipId?: unknown;
+  issueKey?: unknown;
+  parentTaskId?: unknown;
+  childTaskId?: unknown;
+  relationshipStatus?: unknown;
+  executionGeneration?: unknown;
+  nextExpectedAction?: unknown;
+  head?: { eventId?: unknown; revisionHash?: unknown; detail?: unknown } | null;
+  read?: { state?: string; reason?: string } | null;
+}
+
+/** One DAG plan's progress, under the scheduler's own stage names. */
+export interface RelayPlanView {
+  planId?: unknown;
+  projectKey?: unknown;
+  revision?: unknown;
+  stages?: Record<string, number> | null;
+  blocked?: unknown;
+  denominator?: unknown;
+  read?: { state?: string; reason?: string } | null;
+}
+
+/** One merge turn. */
+export interface RelayMergeTurnView {
+  turnId?: unknown;
+  repository?: unknown;
+  prNumber?: unknown;
+  holderTaskId?: unknown;
+  state?: unknown;
+  updatedAt?: unknown;
+  read?: { state?: string; reason?: string } | null;
+}
+
+/** The crw manage relay-read document. */
+export interface RelayDocument {
+  stateDir?: unknown;
+  readAt?: unknown;
+  bindings?: RelayBindingView[] | null;
+  relationships?: RelayRelationshipView[] | null;
+  plans?: RelayPlanView[] | null;
+  mergeTurns?: RelayMergeTurnView[] | null;
+  failures?: { section?: string; item?: string; reason?: string }[] | null;
+}
+
+/** One capacity judgement. */
+export interface CapacityPlanView {
+  plan?: unknown;
+  project?: unknown;
+  family?: unknown;
+  parent?: unknown;
+  verdict?: unknown;
+  waiting?: unknown[] | null;
+  waiting_minutes?: number;
+  held?: number;
+  ceiling?: number;
+  host_memory?: string;
+  reasons?: string[] | null;
+}
+
+/** The crw manage capacity document. */
+export interface CapacityDocument {
+  lane?: { merges_last_hour?: number | null } | null;
+  actions?: { state?: string; incident?: string | null } | null;
+  child_429?: { state?: string; count?: number | null } | null;
+  plans?: CapacityPlanView[] | null;
+}
+
+/** One DAG anomaly the review found. */
+export interface DagAnomalyView {
+  kind?: string;
+  plan?: string;
+  node?: string;
+  issue?: string;
+  detail?: string;
+}
+
+/** The crw manage dag-review document. */
+export interface DagDocument {
+  plans?: unknown[] | null;
+  anomalies?: DagAnomalyView[] | null;
+  checks?: { name?: string; state?: string; detail?: string }[] | null;
+}
+
+/** The GET /api/status document. */
+export interface RunState {
+  schema: string;
+  readAt: string;
+  bar: {
+    relayStore: StatusMark;
+    appServer: StatusMark;
+    executionPolicy: StatusPolicyReading;
+  };
+  relay: StatusSource<RelayDocument>;
+  capacity: StatusSource<CapacityDocument>;
+  dag: StatusSource<DagDocument>;
+}
+
+/** One part of a reading: a value with its own state, so a blank is never read as a value. */
+export interface ReadingPart {
+  label: string;
+  value: string;
+  state: SourceState;
+  reason: string;
+}
+
+/** One status-bar reading, as the bar renders it. */
+export interface RunStateReading {
+  key: "relayStore" | "appServer" | "executionPolicy";
+  label: string;
+  state: SourceState;
+  reason: string;
+  parts: ReadingPart[];
+}
+
+/** GET /api/status. A read: it carries no token and no body. */
+export function fetchStatus(signal?: AbortSignal): Promise<RunState> {
+  return request<RunState>("/api/status", signal ? { signal } : {});
+}
+
+/**
+ * The three status-bar readings, in a fixed order. The mapping is deliberately total: a document
+ * that never arrived turns all three unknown with the request's reason, and one source that could
+ * not be read keeps its own reason without changing the other two.
+ */
+export function runStateReadings(state: RunState | null, error?: string | null): RunStateReading[] {
+  const failed = typeof error === "string" && error !== "" ? error : "the status request did not answer";
+  if (!state) {
+    return [
+      { key: "relayStore", label: "Relay store", state: "unknown", reason: failed, parts: [] },
+      { key: "appServer", label: "App Server", state: "unknown", reason: failed, parts: [] },
+      { key: "executionPolicy", label: "Execution policy", state: "unknown", reason: failed, parts: [] },
+    ];
+  }
+  const policy = state.bar.executionPolicy;
+  return [
+    {
+      key: "relayStore",
+      label: "Relay store",
+      state: state.bar.relayStore.state,
+      reason: state.bar.relayStore.reason ?? "",
+      parts: [],
+    },
+    {
+      key: "appServer",
+      label: "App Server",
+      state: state.bar.appServer.state,
+      reason: state.bar.appServer.reason ?? "",
+      parts: [],
+    },
+    {
+      key: "executionPolicy",
+      label: "Execution policy",
+      state: policy.state,
+      reason: policy.reason ?? "",
+      parts: [
+        digestPart("File digest", policy.fileDigest, policy.fileReason),
+        digestPart("Registered digest", policy.registeredDigest, policy.registeredReason),
+        digestPart("Running digest", policy.runningDigest, policy.runningReason),
+      ],
+    },
+  ];
+}
+
+/** One digest as a part: a value when it was read, otherwise unknown with its reason. */
+function digestPart(label: string, digest: string | null | undefined, reason?: string): ReadingPart {
+  if (typeof digest === "string" && digest !== "") {
+    return { label, value: digest, state: "ok", reason: "" };
+  }
+  return { label, value: "", state: "unknown", reason: reason ?? "not read" };
+}
+
+/**
+ * One section of a manage document: whether it was read, and what it held.
+ *
+ * "Could not be read" and "read and empty" are different facts, and this is where they are kept
+ * apart. A section named in the read's own failures list, or one the document did not carry at
+ * all, is unknown with its reason; only an array the document really carried and that holds
+ * nothing is an empty list. Turning the first into the second would let a failed read pass as a
+ * clean one.
+ */
+export interface SectionReading<T> {
+  state: SourceState;
+  items: T[] | null;
+  reason: string;
+}
+
+/** The reading of one section, from the document, its failures list and the source's own reason. */
+export function sectionReading<T>(
+  section: string,
+  items: T[] | null | undefined,
+  failures: { section?: string; reason?: string }[] | null | undefined,
+  sourceReason?: string | null,
+): SectionReading<T> {
+  const failure = (failures ?? []).find((entry) => entry?.section === section);
+  if (failure || items == null) {
+    const reason = failure?.reason;
+    return {
+      state: "unknown",
+      items: null,
+      reason: reason && reason !== "" ? reason : sourceReason && sourceReason !== "" ? sourceReason : "the section was not read",
+    };
+  }
+  return { state: "ok", items, reason: "" };
+}
 /* ---- helper-role settings ---- */
 
 // Ported from CXC v0.2.40 plugins/codexclaw/gui/src/api.ts (12-38, 129-153, 333-359), modified:
