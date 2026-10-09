@@ -927,3 +927,41 @@ evaluation of 83a490cef (fix round 1 of the pre-merge evaluation of 101be077, fi
 evaluation of 83a490cef (fix round 1 of the pre-merge evaluation of 101be077, finding d3 in the POSIX option scan)	sed --in='{MEMORY}/*' -e p out.txt --in-place=.bak	CRW-941-D14	row	-
 evaluation of 83a490cef (fix round 1 of the pre-merge evaluation of 101be077, finding d3 in the POSIX option scan)	sed -i'{MEMORY}/*' p out.txt -ni	CRW-941-D15	row	-
 evaluation of 83a490cef (fix round 1 of the pre-merge evaluation of 101be077, finding d3 in the POSIX option scan)	sed -i.bak -e p out.txt -i	CRW-941-D16	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed p x.txt -e 'w {MEMORY}/a'	CRW-1063-01	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed p x.txt --expression='w {MEMORY}/a'	CRW-1063-02	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed p x.txt -ne 'w {MEMORY}/a'	CRW-1063-03	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed p x.txt -e'w {MEMORY}/a'	CRW-1063-04	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed p x.txt --expr 'w {MEMORY}/a'	CRW-1063-05	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed p x.txt -s -e 'W {MEMORY}/a'	CRW-1063-06	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed p x.txt -i -e 'w {MEMORY}/a'	CRW-1063-07	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed p x.txt -i.bak --expression='s/a/b/w {MEMORY}/a'	CRW-1063-08	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed 's/a/b/' x.txt -i {MEMORY}/a	CRW-1063-09	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed 's/a/b/' x.txt --in-place=.bak {MEMORY}/a	CRW-1063-10	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed x.txt -e 'w {MEMORY}/a'	CRW-1063-11	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed 'w {MEMORY}/a' x.txt -e p	CRW-1063-12	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed p x.txt -l 5 -e 'w {MEMORY}/a'	CRW-1063-13	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed p x.txt -e p -e 'w {MEMORY}/a'	CRW-1063-14	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed p x.txt -n --expression 'W {MEMORY}/a'	CRW-1063-15	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed -n p x.txt -E -e 'w {MEMORY}/a'	CRW-1063-16	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed p x.txt -ni -e 'w {MEMORY}/a'	CRW-1063-17	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed p x.txt --in-place --expression='w {MEMORY}/a'	CRW-1063-18	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed p x.txt -z -e 'W {MEMORY}/a'	CRW-1063-19	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed p x.txt -u -e 'w {MEMORY}/a'	CRW-1063-20	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed p x.txt -e p	CRW-1063-21	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed p x.txt -i -e p	CRW-1063-22	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed -n p x.txt --expression p	CRW-1063-23	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed p x.txt -i'{MEMORY}/*'	CRW-1063-24	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed p x.txt --in-place='{MEMORY}/*'	CRW-1063-25	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed p x.txt -ni'{MEMORY}/*'	CRW-1063-26	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed p x.txt -i'{MEMORY}/*' -i	CRW-1063-27	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed p x.txt -i '{MEMORY}/a'	CRW-1063-28	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	bash -c "sed p x.txt -e 'w {MEMORY}/a'"	CRW-1063-29	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	env sed p x.txt -e 'w {MEMORY}/a'	CRW-1063-30	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	command sed p x.txt -e 'w {MEMORY}/a'	CRW-1063-31	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed p x.txt -e 'w {MEMORY}/a' < /dev/null	CRW-1063-32	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed p x.txt -e 'w {MEMORY}/a' | cat	CRW-1063-33	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed p x.txt -n --expression='s/a/b/w {MEMORY}/a'	CRW-1063-34	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed p x.txt -e "w {MEMORY}/a"	CRW-1063-35	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed 'w {MEMORY}/b' x.txt -i -e p	CRW-1063-36	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed p x.txt -e 'w {MEMORY}/a' -s	CRW-1063-37	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed -n p x.txt -s -e 'W {MEMORY}/a'	CRW-1063-38	row	-
