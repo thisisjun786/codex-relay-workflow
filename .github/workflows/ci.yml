@@ -120,8 +120,9 @@ jobs:
       contents: read
       actions: read
     env:
-      # The staged skills root, named once: the changed-path filter and the test run both read it.
-      SKILLS_ROOT: port/cxc/skills
+      # The skills root, named once: the changed-path filter and the test run both read it. The
+      # ported skills and their tests live in the plugin since the activation move (CRW-392).
+      SKILLS_ROOT: plugins/crw/skills
     steps:
       # A body-only edit needs only the mirror script, and the script has to exist before the
       # mirror decides, so it is fetched sparsely first. Every other run skips this step.

@@ -84,7 +84,27 @@ func Legs() []Leg {
 				Cwd: p.Cwd, SessionID: p.SessionID, Prompt: p.Prompt, TurnID: turn, TranscriptPath: transcript,
 				PabcdEnabled: c.PabcdEnabled}, "", os.LookupEnv))
 		}},
-		{"stop-checking-pabcd-continuation", "stop", "stop", Generic, false, false, true, nil},
+		{"stop-checking-pabcd-continuation", "stop", "stop", Generic, false, false, true, func(c Call) string {
+			p, ok := ParseStop(c.Raw)
+			if !ok {
+				return ""
+			}
+			transcript := ""
+			if p.TranscriptPath != nil {
+				transcript = *p.TranscriptPath
+			}
+			// The platform argument stays empty, as for UserPromptSubmit: the block texts resolve this host's
+			// platform when it is not given, which is the oracle's default (process.platform).
+			turn := ""
+			if p.TurnID != nil {
+				turn = *p.TurnID
+			}
+			answer := pabcdhook.StopHandle(pabcdhook.StopPayload{Cwd: p.Cwd, SessionID: p.SessionID, TranscriptPath: transcript, TurnID: turn}, "", os.LookupEnv)
+			if answer.Context != "" {
+				return ContextOutput("Stop", answer.Context)
+			}
+			return answer.Stdout
+		}},
 		{"pre-tool-use-guarding-goal-budget", "pre-tool-use", "pre-tool-use", FailClosed, false, false, false, func(c Call) string {
 			return pabcdhook.GoalGateHandlePreToolUseFailClosed(c.Raw, os.LookupEnv, c.PabcdEnabled)
 		}},
@@ -123,7 +143,9 @@ func Legs() []Leg {
 			return pabcdhook.RunSubagentStopGate(pabcdhook.SubagentStopPayload{Cwd: p.Cwd, SessionID: p.SessionID,
 				AgentType: p.AgentType, AgentID: value(p.AgentID), TurnID: value(p.TurnID), LastAssistantMessage: value(p.LastAssistantMessage)}, os.Getenv)
 		}},
-		{"subagent-stop-observing-review", "subagent-stop", "subagent-stop-review", Generic, false, true, true, nil},
+		{"subagent-stop-observing-review", "subagent-stop", "subagent-stop-review", Generic, false, true, true, func(c Call) string {
+			return pabcdhook.HandleReviewObserver(c.Raw)
+		}},
 		{"post-compact-resetting-reinject-cursor", "post-compact", "post-compact", Generic, false, false, true, func(c Call) string {
 			p, ok := ParsePostCompact(c.Raw)
 			if !ok {

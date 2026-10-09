@@ -202,3 +202,58 @@ func TestChildCheckReportsAWriteFailure(t *testing.T) {
 		t.Fatalf("exit %d, stderr %q", code, errOut.String())
 	}
 }
+
+// CRW-973: child-check reads the mcpServerStatus/list answer with the structure checks internal/bridge makes
+// (settings.MCPExpectation.Observe): an answer that reader calls unreadable is host_error exit 3 here, never ok.
+func TestChildCheckRefusesAnMCPServerListTheBridgeCannotRead(t *testing.T) {
+	cases := []struct {
+		name   string
+		result map[string]any
+	}{
+		{"a row without a pluginId", map[string]any{"data": []any{map[string]any{"name": "alpha", "runtimeStatus": "disabled"}}, "nextCursor": nil}},
+		{"a pluginId that is no text", map[string]any{"data": []any{map[string]any{"name": "alpha", "runtimeStatus": "disabled", "pluginId": float64(7)}}, "nextCursor": nil}},
+		{"no data", map[string]any{"nextCursor": nil}},
+		{"null data", map[string]any{"data": nil, "nextCursor": nil}},
+		{"data that is no list", map[string]any{"data": "none", "nextCursor": nil}},
+		{"a null row", map[string]any{"data": []any{nil}, "nextCursor": nil}},
+		{"a row that is no object", map[string]any{"data": []any{"alpha"}, "nextCursor": nil}},
+		{"a row without a name", map[string]any{"data": []any{map[string]any{"runtimeStatus": "disabled", "pluginId": nil}}, "nextCursor": nil}},
+		{"an expected server without a status", map[string]any{"data": []any{map[string]any{"name": "alpha", "pluginId": nil}}, "nextCursor": nil}},
+		{"an expected server with an empty status", map[string]any{"data": []any{map[string]any{"name": "alpha", "runtimeStatus": "", "pluginId": nil}}, "nextCursor": nil}},
+		{"another page", map[string]any{"data": []any{map[string]any{"name": "alpha", "runtimeStatus": "disabled", "pluginId": nil}}, "nextCursor": "more"}},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			host := fakehost.Start(t)
+			host.Respond("thread/read", fakehost.Reply{Result: map[string]any{"thread": map[string]any{
+				"model": "m", "reasoningEffort": "none", "status": map[string]any{"type": "idle"}}}})
+			host.Respond("mcpServerStatus/list", fakehost.Reply{Result: test.result})
+			hostReadEnv(t, host.SocketPath)
+			code, out := hostReadRun(t, "child-check", "--thread", "t1", "--model", "m", "--effort", "none", "--disabled", "alpha")
+			if got := hostReadDecode(t, out); code != 3 || got.OK || got.Reason != "host_error" {
+				t.Fatalf("exit %d, output %s", code, out)
+			}
+		})
+	}
+}
+
+// CRW-973 control: a readable list still decides by the servers, so an unlisted server is a mismatch (exit 1),
+// not a read failure, and a plugin-owned row with a text pluginId reads like any other.
+func TestChildCheckStillComparesAReadableMCPServerList(t *testing.T) {
+	host := fakehost.Start(t)
+	host.Respond("thread/read", fakehost.Reply{Result: map[string]any{"thread": map[string]any{
+		"model": "m", "reasoningEffort": "none", "status": map[string]any{"type": "idle"}}}})
+	host.Respond("mcpServerStatus/list", fakehost.Reply{Result: map[string]any{"data": []any{
+		map[string]any{"name": "alpha", "runtimeStatus": "disabled", "pluginId": "p@bundle"},
+		map[string]any{"name": "other", "pluginId": nil},
+	}, "nextCursor": ""}})
+	hostReadEnv(t, host.SocketPath)
+	code, out := hostReadRun(t, "child-check", "--thread", "t1", "--model", "m", "--effort", "none", "--disabled", "alpha,gamma")
+	var report childCheckReport
+	if err := json.Unmarshal([]byte(out), &report); err != nil {
+		t.Fatal(err)
+	}
+	if code != 1 || report.OK || !slices.Equal(report.Missing, []string{"gamma"}) || report.Servers["alpha"] != "disabled" {
+		t.Fatalf("exit %d, report %+v", code, report)
+	}
+}

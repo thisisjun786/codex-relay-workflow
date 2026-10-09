@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -1043,5 +1044,47 @@ func TestSendParentReportsARefusalForALocalError(t *testing.T) {
 	}
 	if reply := sendParentReply(t, stdout); reply["class"] != deliverClassRefused {
 		t.Errorf("the report was %v, want the refused class", reply)
+	}
+}
+
+// CRW-913: the test binary started again as a fake bridge (deliver or pump overlap) makes no isolation root.
+// TestMain used to send that process through coreMain, which made a crw-manage-* root and left through os.Exit before its defer
+// removed it, so every fake bridge left one empty directory in TMPDIR.
+func TestFakeBridgeReexecMakesNoIsolationRoot(t *testing.T) {
+	if os.Getenv(deliverFakeScenarioEnv) != "" || os.Getenv(pumpOverlapReceiptsEnv) != "" {
+		t.Skip("this is a fake bridge itself")
+	}
+	for name, fake := range map[string]struct{ env, run, content string }{
+		"deliver": {deliverFakeScenarioEnv, deliverFakeRun, "[]"},
+		"pump":    {pumpOverlapReceiptsEnv, pumpOverlapFakeRun, "{}"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			scenario := filepath.Join(dir, "scenario.json")
+			if err := os.WriteFile(scenario, []byte(fake.content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			scratch := filepath.Join(dir, "tmp")
+			if err := os.Mkdir(scratch, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			cmd := exec.Command(os.Args[0], "-test.run", fake.run)
+			cmd.Env = append(os.Environ(), fake.env+"="+scenario, "TMPDIR="+scratch)
+			cmd.Stdin = strings.NewReader("")
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("the fake bridge: %v\n%s", err, out)
+			}
+			left, err := os.ReadDir(scratch)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(left) != 0 {
+				names := []string{}
+				for _, entry := range left {
+					names = append(names, entry.Name())
+				}
+				t.Fatalf("the fake bridge left %v in TMPDIR", names)
+			}
+		})
 	}
 }

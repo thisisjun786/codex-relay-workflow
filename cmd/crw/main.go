@@ -164,7 +164,13 @@ func modes() []mode {
 		{"relay", true, func(c invocation) int { return relay(c.ctx, "crw relay", c.args, c.stdout, c.stderr) }},
 		{"bridge", true, func(c invocation) int { return bridge(c.ctx, c.program, c.args) }},
 		{"hook", true, func(c invocation) int {
-			if claimed, code := runComponentHook(c, os.Stdin, componentHooks()); claimed {
+			rows := componentHooks()
+			// The ported legs stay silent until the switch turns them on (CRW-392); the relay's
+			// own Stop (--plugin-launch) is not behind it.
+			if leg, ok := switchedLeg(c.args, rows); ok && !hookSwitchOn(leg, os.LookupEnv) {
+				return 0
+			}
+			if claimed, code := runComponentHook(c, os.Stdin, rows); claimed {
 				return code
 			}
 			if harness.ClaimsHook(c.args) {

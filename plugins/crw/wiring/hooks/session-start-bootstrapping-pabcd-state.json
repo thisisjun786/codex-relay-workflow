@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$HOME/.local/share/crw-runtime/current/bin/crw\" hook session-start --leg session-start-bootstrapping-pabcd-state",
+            "timeout": 15,
+            "statusMessage": "(crw) Bootstrapping PABCD session state"
+          }
+        ]
+      }
+    ]
+  }
+}

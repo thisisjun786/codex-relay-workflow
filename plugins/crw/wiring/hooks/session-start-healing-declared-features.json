@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$HOME/.local/share/crw-runtime/current/bin/crw\" hook session-start --leg session-start-healing-declared-features",
+            "timeout": 20,
+            "statusMessage": "(crw) Ensuring declared codex features"
+          }
+        ]
+      }
+    ]
+  }
+}

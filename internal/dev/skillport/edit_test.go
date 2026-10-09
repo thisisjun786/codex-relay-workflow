@@ -171,7 +171,7 @@ func TestRun(t *testing.T) {
 	if code, out, errs := do("stage", "--root", f.root, "--source", f.src.Dir, "kwrite"); code != 0 || !strings.Contains(out, "staged crw-kwrite") {
 		t.Fatalf("stage: %d %q %q", code, out, errs)
 	}
-	if code, out, _ := do("check", "--root", f.root, "--source", f.src.Dir); code != 0 || !strings.Contains(out, "Checked 1 staged skills") || !strings.Contains(out, "fidelity only") {
+	if code, out, _ := do("check", "--root", f.root, "--source", f.src.Dir); code != 0 || !strings.Contains(out, "Checked 1 ported skills") || !strings.Contains(out, "fidelity only") {
 		t.Errorf("check: %d %q", code, out)
 	}
 	put(t, f.path("SKILL.md"), "changed\n", 0o644)
@@ -298,7 +298,7 @@ func TestRecordingRefusalsPreserveTheRecord(t *testing.T) {
 }
 
 func TestRecordEditsRefusesLinkedLayout(t *testing.T) {
-	for _, rel := range []string{StagingRoot, RecordDir} {
+	for _, rel := range []string{SkillsRoot, RecordDir} {
 		t.Run(rel, func(t *testing.T) {
 			f := newFixture(t)
 			f.stage(t)

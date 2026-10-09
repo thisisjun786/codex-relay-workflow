@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$HOME/.local/share/crw-runtime/current/bin/crw\" hook user-prompt-submit --leg user-prompt-submit-detecting-recall-intent",
+            "timeout": 5,
+            "statusMessage": "(crw) Checking recall intent"
+          }
+        ]
+      }
+    ]
+  }
+}

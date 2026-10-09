@@ -1,8 +1,6 @@
 package host
 
 import (
-	"database/sql"
-	"errors"
 	"os"
 	"path/filepath"
 )
@@ -44,14 +42,27 @@ func GoalActiveStatus(threadID, dbPath string) GoalStatus {
 		return GoalUnreadable
 	}
 	defer db.Close()
-	var status any
-	err = db.QueryRow(GoalStatusQuery, threadID).Scan(&status)
-	if errors.Is(err, sql.ErrNoRows) {
+	rows, err := db.Query(GoalStatusQuery, threadID)
+	if err != nil {
+		return GoalUnreadable
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		if rows.Err() != nil { // a lock, or a malformed file
+			return GoalUnreadable
+		}
 		return GoalInactive
 	}
+	names, err := rows.Columns()
+	var status any
+	if err != nil || rows.Scan(&status) != nil {
+		return GoalUnreadable
+	}
+	// JavaScript reads row.status, and SQLite keeps the column name the table declares, so a column
+	// declared STATUS or Status leaves the property undefined: unreadable, whatever the row holds.
 	text, isText := status.(string)
 	switch {
-	case err != nil || !isText: // schema drift, a lock, or a status that is not text
+	case len(names) != 1 || names[0] != "status" || !isText: // schema drift, or a status that is not text
 		return GoalUnreadable
 	case text == "active":
 		return GoalActive

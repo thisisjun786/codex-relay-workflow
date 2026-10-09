@@ -156,7 +156,16 @@ func (d *Daemon) Tick(ctx context.Context) (Report, error) {
 	if bind() {
 		return r, nil
 	}
-	r.Notes = append(r.Notes, delivery.ConfirmKeptAcks(ctx, d.Ack, d.Reconciler, d.Host, now)...)
+	kept, keptErr := delivery.ConfirmKeptAcks(ctx, d.Ack, d.Reconciler, d.Host, now)
+	r.Notes = append(r.Notes, kept...)
+	if keptErr != nil {
+		// A confirmation that met a corrupting failure ends the tick before the acknowledgements are verified and
+		// the turns checked on that store (CRW-1071).
+		if d.halted(ctx, &r, store.HaltSiteWrite, keptErr) {
+			return r, nil
+		}
+		return r, keptErr
+	}
 	results, err := d.Ack.VerifyPendingAcks(ctx, d.Host, 8, &now)
 	if err != nil {
 		if d.halted(ctx, &r, store.HaltSiteWrite, err) {
@@ -176,10 +185,18 @@ func (d *Daemon) Tick(ctx context.Context) (Report, error) {
 	}
 	d.checks.Budget = d.Policy.MaxTurnChecks
 	var tc delivery.TurnCheckReport
-	d.checks.Pass(ctx, d.Host, now, &tc)
+	checkErr := d.checks.Pass(ctx, d.Host, now, &tc)
 	r.TurnsLost += tc.TurnsLost
 	r.TurnsUndecided += tc.TurnsUndecided
 	r.Notes = append(r.Notes, tc.Notes...)
+	if checkErr != nil {
+		// The checks made before the failure are counted above; the tick ends on it before the idle edge, the
+		// delivery pass and the supervisor channel write anything (CRW-1071, I-564).
+		if d.halted(ctx, &r, store.HaltSiteWrite, checkErr) {
+			return r, nil
+		}
+		return r, checkErr
+	}
 	// The idle edge (CRW-904). The status reports the host pushed since the last tick release the
 	// heads they name before this tick's delivery pass, and the subscription below is opened for
 	// every recipient the pass leaves waiting out a busy backoff. Both are no-ops on a host that
@@ -310,7 +327,7 @@ func haltNote(state store.HaltState) string {
 	if state.Detail != "" {
 		return "store writes are halted: " + state.Detail + " (" + state.Path + ")"
 	}
-	return fmt.Sprintf("store writes are halted: %s records %s (code %d) seen at %s on %s; no write is attempted until it is cleared by hand",
+	return fmt.Sprintf("store writes are halted: %s records %s (code %d) seen at %s on %s; no write is attempted until it is cleared by store-halt-clear, after a restore and a reconcile reading agree",
 		state.Path, state.Marker.Message, state.Marker.Code, state.Marker.Site, state.Marker.DetectedAt)
 }
 

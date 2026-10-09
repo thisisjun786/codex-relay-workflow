@@ -39,10 +39,13 @@ var (
 	// value derived from it (cmd/crw/recall_clock.go for recall's recency scores, and
 	// internal/runtime/doctor/cli.go for the retrust backup name). 1767225600000 is
 	// 2026-01-01T00:00:00Z, the instant the oracle recorded under before its clock advanced 1 ms
-	// per Date read (contract/notes/cxc/README.md "Seams the replay does not provide").
+	// per Date read (contract/notes/cxc/README.md "Seams the replay does not provide"). The hook
+	// switch is linked on (cmd/crw/hook_switch.go): the oracle's legs had no switch, and a switch
+	// file in a case's Codex home would be observed with the tree the fixture records.
 	cxcRecallBinary = func() (string, error) {
 		return testsupport.BuildCRWPath("-trimpath", "-ldflags="+strings.Join([]string{
 			"-X main.recallTestClock=1767225600000",
+			"-X main.hookSwitchTestState=crw",
 			"-X github.com/thisisjun786/codex-relay-workflow/internal/runtime/doctor.retrustTestClock=1767225600000",
 		}, " "))
 	}

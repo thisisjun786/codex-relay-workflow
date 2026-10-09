@@ -449,30 +449,59 @@ func auditGradeOne(ctx context.Context, e *Env, section auditSection, bundle *au
 	result := AuditResult{
 		Mode: bundle.Mode, Subject: bundle.Subject, Head: bundle.Head, Issue: bundle.Issue,
 		Pair: job.Pair, Phase: job.Phase, Round: job.Round,
-		Bundle: absBundle, GradedAt: e.Now().UTC().Format(auditTimeFormat),
+		Bundle: absBundle, BundleGiven: job.Bundle, GradedAt: e.Now().UTC().Format(auditTimeFormat),
 	}
+	if status := auditRunGrader(ctx, section, absBundle, auditPrompt(bundle), log); status != "" {
+		result.Status = status
+		return result
+	}
+	result.Status = auditStatusInvalid
+	data, err := os.ReadFile(crwconfig.JoinRoot(absBundle, auditGradeFile))
+	if err != nil {
+		return result
+	}
+	doc, ok := auditParseResultBytes(data)
+	if !ok {
+		return result
+	}
+	result.graded = data
+	result.Status = auditStatusOK
+	result.Score = *doc.Score
+	result.Criteria = make([]AuditCriterion, 0, len(doc.Criteria))
+	for _, criterion := range doc.Criteria {
+		result.Criteria = append(result.Criteria, AuditCriterion(criterion))
+	}
+	result.Defects = doc.Defects
+	return result
+}
+
+// auditRunGrader is the run both the audit and the pre-merge evaluation share: it clears the
+// grade file an earlier run left, writes prompt as the bundle's prompt file (created
+// exclusively), runs the configured grader in the bundle under grader_timeout_seconds with its
+// whole process group killed on the limit, and keeps the first auditLogLimit bytes of its output
+// in log. It reports "" when the grader ran to its end inside the limit, so the caller reads the
+// grade file it left; auditStatusInvalid when the bundle could not be prepared; and
+// auditStatusTimeout when the limit ended the run.
+func auditRunGrader(ctx context.Context, section auditSection, absBundle, prompt string, log *auditLog) string {
 	grade := crwconfig.JoinRoot(absBundle, auditGradeFile)
 	// The grader is told to write this file, so a file an earlier run left is not this
 	// run's result and must not be read as one.
 	if err := os.Remove(grade); err != nil && !errors.Is(err, os.ErrNotExist) {
-		result.Status = auditStatusInvalid
-		return result
+		return auditStatusInvalid
 	}
-	prompt := crwconfig.JoinRoot(absBundle, auditPromptFile)
+	promptFile := crwconfig.JoinRoot(absBundle, auditPromptFile)
 	// A bundle can come from another process, so an existing prompt.md is removed first and
 	// the new one is created exclusively: a symlink left there is never followed into
 	// whatever file it points at.
-	if err := os.Remove(prompt); err != nil && !errors.Is(err, os.ErrNotExist) {
-		result.Status = auditStatusInvalid
-		return result
+	if err := os.Remove(promptFile); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return auditStatusInvalid
 	}
-	if err := auditWriteNewFile(prompt, []byte(auditPrompt(bundle)), 0o644); err != nil {
-		result.Status = auditStatusInvalid
-		return result
+	if err := auditWriteNewFile(promptFile, []byte(prompt), 0o644); err != nil {
+		return auditStatusInvalid
 	}
 	runCtx, cancel := context.WithTimeout(ctx, time.Duration(section.GraderTimeoutSeconds)*time.Second)
 	defer cancel()
-	argv := auditGraderArgv(section.Grader, prompt, absBundle)
+	argv := auditGraderArgv(section.Grader, promptFile, absBundle)
 	cmd := exec.CommandContext(runCtx, argv[0], argv[1:]...)
 	cmd.Dir = absBundle
 	cmd.Stdout = log
@@ -486,22 +515,9 @@ func auditGradeOne(ctx context.Context, e *Env, section auditSection, bundle *au
 	// The time limit wins over the file: a grader that wrote a usable document and then hung
 	// did not finish inside its limit, and recording it as ok would score an unfinished run.
 	if runCtx.Err() != nil {
-		result.Status = auditStatusTimeout
-		return result
+		return auditStatusTimeout
 	}
-	result.Status = auditStatusInvalid
-	doc, ok := auditParseResult(grade)
-	if !ok {
-		return result
-	}
-	result.Status = auditStatusOK
-	result.Score = *doc.Score
-	result.Criteria = make([]AuditCriterion, 0, len(doc.Criteria))
-	for _, criterion := range doc.Criteria {
-		result.Criteria = append(result.Criteria, AuditCriterion(criterion))
-	}
-	result.Defects = doc.Defects
-	return result
+	return ""
 }
 
 // auditGraderArgv fills the placeholders of the configured grader command. The prompt
@@ -542,6 +558,12 @@ func auditParseResult(path string) (auditGradeDoc, bool) {
 	if err != nil {
 		return auditGradeDoc{}, false
 	}
+	return auditParseResultBytes(data)
+}
+
+// auditParseResultBytes is auditParseResult over the bytes of a grade.json already read, so a
+// reader of a ledger row's copy judges the copy's bytes by the same rules.
+func auditParseResultBytes(data []byte) (auditGradeDoc, bool) {
 	var doc auditGradeDoc
 	if err := json.Unmarshal(data, &doc); err != nil {
 		return auditGradeDoc{}, false

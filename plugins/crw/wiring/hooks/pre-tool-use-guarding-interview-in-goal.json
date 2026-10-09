@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$HOME/.local/share/crw-runtime/current/bin/crw\" hook pre-tool-use --leg pre-tool-use-guarding-interview-in-goal",
+            "timeout": 15,
+            "statusMessage": "(crw) Denying interview/user-input in goal mode"
+          }
+        ],
+        "matcher": "^request_user_input$"
+      }
+    ]
+  }
+}

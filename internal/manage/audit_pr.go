@@ -178,12 +178,23 @@ func auditPRPattern(section auditPRSection) (*regexp.Regexp, error) {
 // auditPRList asks gh for the merged pull requests of the integration branch at or after
 // since, in the one shape the issue fixes.
 func auditPRList(ctx context.Context, e *Env, cfg *Config, since time.Time) ([]auditPRListEntry, error) {
+	return auditPRListWindow(ctx, cfg, since, time.Time{})
+}
+
+// auditPRListWindow is one gh list call: the merged pull requests from since on, or, when until
+// is set, from since to until (both ends included). gh answers at most auditPRListLimit of them,
+// in its search order (by creation), not by merge time.
+func auditPRListWindow(ctx context.Context, cfg *Config, since, until time.Time) ([]auditPRListEntry, error) {
 	args := []string{"pr", "list"}
 	if cfg != nil && cfg.Repository != "" {
 		args = append(args, "--repo", cfg.Repository)
 	}
+	search := "merged:>=" + since.UTC().Format(time.RFC3339)
+	if !until.IsZero() {
+		search = "merged:" + since.UTC().Format(time.RFC3339) + ".." + until.UTC().Format(time.RFC3339)
+	}
 	args = append(args, "--state", "merged", "--base", auditPRBaseRef,
-		"--search", "merged:>="+since.UTC().Format(time.RFC3339),
+		"--search", search,
 		"--json", "number,title,body,mergeCommit,mergedAt", "--limit", auditPRListLimit)
 	out, err := auditPRGh(ctx, args...)
 	if err != nil {
@@ -194,6 +205,136 @@ func auditPRList(ctx context.Context, e *Env, cfg *Config, since time.Time) ([]a
 		return nil, fmt.Errorf("the gh pull request list: %w", err)
 	}
 	return entries, nil
+}
+
+// auditPRPager reads the merged pull requests the run selects from, one gh window at a time. gh
+// answers at most auditPRListLimit per call and orders a search by creation, not by merge time,
+// so a full answer says nothing about which merge times it covers: a pull request created early
+// and merged late can be the one --limit cut, at any merge time in the window. A full answer is
+// therefore never taken as part of the list. Its merge-time range is split in two, and both halves
+// are read the same way, until every half answers short, which is the whole of that range in any
+// order. The ranges are read newest first (the newer half before the older one), so the entries
+// read so far are every pull request merged from some time on to now: a newer unaudited pull
+// request is never passed over for an older one, and stopping early (once --max is filled) leaves
+// out only older ones. There is no page cap, because a cap would stop the reading at the same
+// newest windows on every run and leave an old unaudited pull request unreachable for good.
+type auditPRPager struct {
+	ctx     context.Context
+	cfg     *Config
+	since   time.Time
+	now     time.Time
+	entries []auditPRListEntry
+	seen    map[int]bool
+	// pending is the merge-time ranges still to read, the newest on top.
+	pending []auditPRRange
+	done    bool
+}
+
+// auditPRRange is a merge-time range in whole seconds, both ends included; open is a range with no
+// upper end (merged at or after from).
+type auditPRRange struct {
+	from, to int64
+	open     bool
+}
+
+func newAuditPRPager(ctx context.Context, cfg *Config, since, now time.Time) *auditPRPager {
+	return &auditPRPager{ctx: ctx, cfg: cfg, since: since, now: now, seen: map[int]bool{},
+		pending: []auditPRRange{{from: since.Unix(), open: true}}}
+}
+
+// more reads the next range. A short answer adds its entries; a full one splits its range and adds
+// nothing, so a call may add no entries while the reading goes on. A full answer for a single
+// second cannot be split (more than a window's worth of pull requests merged in one second) and is
+// an error rather than a short list that looks whole.
+func (p *auditPRPager) more() error {
+	if p.done {
+		return nil
+	}
+	limit, err := strconv.Atoi(auditPRListLimit)
+	if err != nil {
+		return err
+	}
+	r := p.pending[len(p.pending)-1]
+	p.pending = p.pending[:len(p.pending)-1]
+	until := time.Time{}
+	if !r.open {
+		until = time.Unix(r.to, 0)
+	}
+	window, err := auditPRListWindow(p.ctx, p.cfg, time.Unix(r.from, 0), until)
+	if err != nil {
+		return err
+	}
+	newest := int64(0)
+	for _, entry := range window {
+		at, err := time.Parse(time.RFC3339, entry.MergedAt)
+		if err != nil {
+			// gh filtered by this field, so a value that does not parse is not the answer that was
+			// asked for; the ranges cannot be split on it, and the run is refused as the selection
+			// refuses it.
+			return fmt.Errorf("the merged time of pull request #%d is %q: %w", entry.Number, entry.MergedAt, err)
+		}
+		if at.Unix() > newest {
+			newest = at.Unix()
+		}
+	}
+	if len(window) < limit {
+		for _, entry := range window {
+			if !p.seen[entry.Number] {
+				p.seen[entry.Number] = true
+				p.entries = append(p.entries, entry)
+			}
+		}
+		p.done = len(p.pending) == 0
+		return nil
+	}
+	if r.open {
+		// The open range has no upper end to halve at; the clock and the newest merge time read
+		// stand in for one. When both are behind from, from is read on its own and the rest stays
+		// open, which still moves on by a second.
+		top := p.now.Unix()
+		if newest > top {
+			top = newest
+		}
+		mid := r.from
+		if top > r.from {
+			mid = r.from + (top-r.from)/2
+		}
+		p.pending = append(p.pending, auditPRRange{from: r.from, to: mid}, auditPRRange{from: mid + 1, open: true})
+		return nil
+	}
+	if r.from >= r.to {
+		return fmt.Errorf("pr_list_stalled: the gh pull request list answered a full window for the single second %s, which cannot be split further", time.Unix(r.from, 0).UTC().Format(time.RFC3339))
+	}
+	mid := r.from + (r.to-r.from)/2
+	p.pending = append(p.pending, auditPRRange{from: r.from, to: mid}, auditPRRange{from: mid + 1, to: r.to})
+	return nil
+}
+
+// auditPRListPages reads windows until the targets that never failed number max or the list is
+// exhausted, and returns the entries read.
+func auditPRListPages(ctx context.Context, cfg *Config, since, now time.Time, pattern *regexp.Regexp, audited map[string]bool, failures []auditPRFailureRow, max int) ([]auditPRListEntry, error) {
+	pager := newAuditPRPager(ctx, cfg, since, now)
+	for {
+		if err := pager.more(); err != nil {
+			return nil, err
+		}
+		if pager.done {
+			return pager.entries, nil
+		}
+		targets, _, err := auditPRSelect(pager.entries, pattern, since, audited, failures, -1)
+		if err != nil {
+			return nil, err
+		}
+		fresh := 0
+		for _, target := range targets {
+			if count, _ := auditPRFailureState(failures, auditPRSubject(target.Number), target.Merge); count == 0 {
+				fresh++
+			}
+		}
+		if fresh >= max {
+			return pager.entries, nil
+		}
+	}
 }
 
 // auditPRDiff is one pull request's patch.
@@ -207,15 +348,25 @@ func auditPRDiff(ctx context.Context, cfg *Config, number int) ([]byte, error) {
 
 // auditPRSelect is the target list: the merged pull requests whose title carries an issue
 // key, that merged at or after since, and that the ledger does not already hold as a pull
-// request audit. They come back newest first, which is the order a bounded run wants, and
-// the list is cut to max.
+// request audit. The list is cut to max.
+//
+// A target that failed before (the failure record, auditPRFailuresFile) does not take a --max
+// place ahead of one that never failed: the targets that never failed at their head come
+// first, newest first, and the ones that did fail come after them, the one whose last failure
+// is oldest first. A target that failed auditPRFailureLimit times at its current head is left
+// out and returned as skipped until its head changes, and takes no --max place.
 //
 // A merge time gh did not answer with as a timestamp is an error rather than a skip: gh
 // filtered the list by the same field, so a value that does not parse means the answer is
 // not the one that was asked for, and skipping it would silently drop a pull request from
 // the audit.
-func auditPRSelect(entries []auditPRListEntry, pattern *regexp.Regexp, since time.Time, audited map[string]bool, max int) ([]auditPRTarget, error) {
-	var targets []auditPRTarget
+func auditPRSelect(entries []auditPRListEntry, pattern *regexp.Regexp, since time.Time, audited map[string]bool, failures []auditPRFailureRow, max int) ([]auditPRTarget, []auditPRSkip, error) {
+	type candidate struct {
+		target auditPRTarget
+		last   int // the record position of its last failure at this head; -1 when none
+	}
+	var fresh, failed []candidate
+	var skipped []auditPRSkip
 	for _, entry := range entries {
 		key := pattern.FindString(entry.Title)
 		if key == "" {
@@ -223,7 +374,7 @@ func auditPRSelect(entries []auditPRListEntry, pattern *regexp.Regexp, since tim
 		}
 		mergedAt, err := time.Parse(time.RFC3339, entry.MergedAt)
 		if err != nil {
-			return nil, fmt.Errorf("the merged time of pull request #%d is %q: %w", entry.Number, entry.MergedAt, err)
+			return nil, nil, fmt.Errorf("the merged time of pull request #%d is %q: %w", entry.Number, entry.MergedAt, err)
 		}
 		if mergedAt.Before(since) {
 			continue
@@ -231,21 +382,44 @@ func auditPRSelect(entries []auditPRListEntry, pattern *regexp.Regexp, since tim
 		if entry.MergeCommit.OID == "" || audited[auditPRSubject(entry.Number)] {
 			continue
 		}
-		targets = append(targets, auditPRTarget{
+		subject := auditPRSubject(entry.Number)
+		count, last := auditPRFailureState(failures, subject, entry.MergeCommit.OID)
+		if count >= auditPRFailureLimit {
+			skipped = append(skipped, auditPRSkip{Number: entry.Number, Subject: subject, Head: entry.MergeCommit.OID, Failures: count})
+			continue
+		}
+		c := candidate{target: auditPRTarget{
 			Number: entry.Number, Issue: key, Title: entry.Title, Body: entry.Body,
 			Merge: entry.MergeCommit.OID, MergedAt: mergedAt,
-		})
-	}
-	sort.SliceStable(targets, func(i, j int) bool {
-		if !targets[i].MergedAt.Equal(targets[j].MergedAt) {
-			return targets[i].MergedAt.After(targets[j].MergedAt)
+		}, last: last}
+		if count == 0 {
+			fresh = append(fresh, c)
+		} else {
+			failed = append(failed, c)
 		}
-		return targets[i].Number > targets[j].Number
+	}
+	byMerge := func(a, b candidate) bool {
+		if !a.target.MergedAt.Equal(b.target.MergedAt) {
+			return a.target.MergedAt.After(b.target.MergedAt)
+		}
+		return a.target.Number > b.target.Number
+	}
+	sort.SliceStable(fresh, func(i, j int) bool { return byMerge(fresh[i], fresh[j]) })
+	sort.SliceStable(failed, func(i, j int) bool {
+		if failed[i].last != failed[j].last {
+			return failed[i].last < failed[j].last
+		}
+		return byMerge(failed[i], failed[j])
 	})
+	var targets []auditPRTarget
+	for _, c := range append(fresh, failed...) {
+		targets = append(targets, c.target)
+	}
 	if max >= 0 && len(targets) > max {
 		targets = targets[:max]
 	}
-	return targets, nil
+	sort.SliceStable(skipped, func(i, j int) bool { return skipped[i].Number < skipped[j].Number })
+	return targets, skipped, nil
 }
 
 // auditPRAudited is the bundle subjects the ledger already holds as pull request audits,
@@ -389,20 +563,32 @@ func auditPRPhaseOf(section auditPRSection, merged time.Time) (string, error) {
 // error: reporting that as "no criteria" would grade a pull request against nothing while
 // looking like a clean run.
 func auditPRCriteria(ctx context.Context, e *Env, cfg *Config, relationship string) ([]map[string]any, bool, error) {
+	criteria, _, unavailable, err := auditPRCriteriaSet(ctx, e, cfg, relationship)
+	return criteria, unavailable, err
+}
+
+// auditPRCriteriaSet is auditPRCriteria with the set digest the relay holds for the relationship's
+// criteria, which the pre-merge evaluation compares with the digest its node fixes.
+func auditPRCriteriaSet(ctx context.Context, e *Env, cfg *Config, relationship string) ([]map[string]any, string, bool, error) {
 	if relationship == "" {
-		return nil, true, nil
+		return nil, "", true, nil
 	}
 	out, err := auditPRRelay(ctx, e, cfg, "criteria-show", "--relationship", relationship)
 	if err != nil {
-		return nil, true, err
+		return nil, "", true, err
 	}
 	var answer struct {
-		Criteria []map[string]any `json:"criteria"`
+		Criteria  []map[string]any `json:"criteria"`
+		SetDigest *string          `json:"setDigest"`
 	}
 	if err := json.Unmarshal(out, &answer); err != nil {
-		return nil, true, fmt.Errorf("the criteria-show answer: %w", err)
+		return nil, "", true, fmt.Errorf("the criteria-show answer: %w", err)
 	}
-	return answer.Criteria, len(answer.Criteria) == 0, nil
+	digest := ""
+	if answer.SetDigest != nil {
+		digest = *answer.SetDigest
+	}
+	return answer.Criteria, digest, len(answer.Criteria) == 0, nil
 }
 
 // auditPRScrub replaces the configured strings with a redaction marker. The longest string
@@ -905,49 +1091,109 @@ func auditPRRunWith(ctx context.Context, e *Env, cfg *Config, max int, dryRun bo
 		fmt.Fprintf(e.Stderr, "crw manage audit pr: error: %v\n", err)
 		return 1
 	}
-	entries, err := auditPRList(ctx, e, cfg, since)
-	if err != nil {
-		fmt.Fprintf(e.Stderr, "crw manage audit pr: error: %v\n", err)
-		return 1
+	// One audit run at a time (CRW-838): two runs would read the ledger for their targets before
+	// either appended a row, pick the same pull request and empty each other's bundle. A dry run
+	// writes nothing and takes no lock.
+	if !dryRun {
+		release, err := auditRunLock(e, cfg)
+		if err != nil {
+			fmt.Fprintf(e.Stderr, "crw manage audit pr: error: %v\n", err)
+			return 1
+		}
+		defer release()
 	}
 	rows, err := auditReportLedger(e, cfg)
 	if err != nil {
 		fmt.Fprintf(e.Stderr, "crw manage audit pr: error: %v\n", err)
 		return 1
 	}
-	targets, err := auditPRSelect(entries, pattern, since, auditPRAudited(rows), max)
+	failures, err := auditPRReadFailures(e, cfg)
 	if err != nil {
 		fmt.Fprintf(e.Stderr, "crw manage audit pr: error: %v\n", err)
 		return 1
 	}
+	audited := auditPRAudited(rows)
+	pager := newAuditPRPager(ctx, cfg, since, e.Now())
 	failed := false
-	// Resolving a target reads the relay for that one pull request, so a failure is that
-	// target's: it is named and skipped, and the run reports the failure at the end. A phase
-	// start is configuration, common to every target, so a bad one still stops the run.
-	resolved := make([]auditPRTarget, 0, len(targets))
-	for i := range targets {
-		if auditPRCancelled(e, ctx) {
+	// The targets are resolved before --max cuts them (CRW-963): a target whose relay resolution
+	// fails is named, recorded as a failure and left out, and the next candidate takes the place,
+	// so one pull request the relay cannot resolve never starves a healthy one behind it. The
+	// candidates are taken in the order auditPRSelect fixes (the ones that never failed, newest
+	// first, then the ones that did) and the list is read on only when the candidates read so far
+	// are used up, so the order does not depend on how many windows were read. Resolving a target
+	// reads the relay for that one pull request, so a failure is that target's; a phase start is
+	// configuration, common to every target, so a bad one still stops the run.
+	resolved := make([]auditPRTarget, 0, max)
+	tried := map[int]bool{}
+	var skipped []auditPRSkip
+	if err := pager.more(); err != nil {
+		fmt.Fprintf(e.Stderr, "crw manage audit pr: error: %v\n", err)
+		return 1
+	}
+	if max == 0 {
+		// Nothing is resolved, but the targets the failure record holds out are still reported.
+		if _, held, err := auditPRSelect(pager.entries, pattern, since, audited, failures, -1); err == nil {
+			skipped = held
+		} else {
+			fmt.Fprintf(e.Stderr, "crw manage audit pr: error: %v\n", err)
 			return 1
 		}
-		child, err := auditPRChildOf(ctx, e, cfg, targets[i].Issue)
-		if err != nil {
-			if auditPRCancelled(e, ctx) {
-				return 1
-			}
-			auditPRSkipTarget(e, targets[i], err)
-			failed = true
-			continue
-		}
-		targets[i].Child = child
-		targets[i].Pair = auditPRPairOf(section.Pairs, child.Model)
-		phase, err := auditPRPhaseOf(section, targets[i].MergedAt)
+	}
+	for len(resolved) < max {
+		candidates, held, err := auditPRSelect(pager.entries, pattern, since, audited, failures, -1)
 		if err != nil {
 			fmt.Fprintf(e.Stderr, "crw manage audit pr: error: %v\n", err)
 			return 1
 		}
-		targets[i].Phase = phase
-		resolved = append(resolved, targets[i])
+		skipped = held
+		next := -1
+		for i, candidate := range candidates {
+			if tried[candidate.Number] {
+				continue
+			}
+			if count, _ := auditPRFailureState(failures, auditPRSubject(candidate.Number), candidate.Merge); count == 0 || pager.done {
+				next = i
+			}
+			break
+		}
+		if next < 0 {
+			if pager.done {
+				break
+			}
+			if err := pager.more(); err != nil {
+				fmt.Fprintf(e.Stderr, "crw manage audit pr: error: %v\n", err)
+				return 1
+			}
+			continue
+		}
+		target := candidates[next]
+		tried[target.Number] = true
+		if auditPRCancelled(e, ctx) {
+			return 1
+		}
+		child, err := auditPRChildOf(ctx, e, cfg, target.Issue)
+		if err != nil {
+			if auditPRCancelled(e, ctx) {
+				return 1
+			}
+			auditPRFailTarget(e, cfg, target, err, !dryRun)
+			failed = true
+			continue
+		}
+		target.Child = child
+		target.Pair = auditPRPairOf(section.Pairs, child.Model)
+		phase, err := auditPRPhaseOf(section, target.MergedAt)
+		if err != nil {
+			fmt.Fprintf(e.Stderr, "crw manage audit pr: error: %v\n", err)
+			return 1
+		}
+		target.Phase = phase
+		resolved = append(resolved, target)
 	}
+	for _, skip := range skipped {
+		fmt.Fprintf(e.Stderr, "crw manage audit pr: #%d: skipped: failed %d times at %s\n", skip.Number, skip.Failures, skip.Head)
+	}
+	entries := pager.entries
 	if dryRun {
 		if code := auditPRWriteDryRun(e, resolved); code != 0 {
 			return code
@@ -976,7 +1222,7 @@ func auditPRRunWith(ctx context.Context, e *Env, cfg *Config, max int, dryRun bo
 				if auditPRCancelled(e, ctx) {
 					return 1
 				}
-				auditPRSkipTarget(e, target, err)
+				auditPRFailTarget(e, cfg, target, err, true)
 				failed = true
 				continue
 			}
@@ -985,7 +1231,7 @@ func auditPRRunWith(ctx context.Context, e *Env, cfg *Config, max int, dryRun bo
 				if auditPRCancelled(e, ctx) {
 					return 1
 				}
-				auditPRSkipTarget(e, target, err)
+				auditPRFailTarget(e, cfg, target, err, true)
 				failed = true
 				continue
 			}
@@ -1005,13 +1251,19 @@ func auditPRRunWith(ctx context.Context, e *Env, cfg *Config, max int, dryRun bo
 				if auditPRCancelled(e, ctx) {
 					return 1
 				}
-				auditPRSkipTarget(e, target, err)
+				auditPRFailTarget(e, cfg, target, err, true)
 				failed = true
 				continue
 			}
 		}
 	}
-	if err := auditReportWrite(e, cfg); err != nil {
+	// The report names the targets the failure record holds out, judged at the heads this run
+	// listed, so a target whose head changed is no longer reported as skipped.
+	heads := map[string]string{}
+	for _, entry := range entries {
+		heads[auditPRSubject(entry.Number)] = entry.MergeCommit.OID
+	}
+	if err := auditReportWriteWith(e, cfg, heads); err != nil {
 		fmt.Fprintf(e.Stderr, "crw manage audit pr: error: %v\n", err)
 		return 1
 	}

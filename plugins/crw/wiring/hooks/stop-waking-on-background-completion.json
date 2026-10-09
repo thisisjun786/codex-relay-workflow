@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$HOME/.local/share/crw-runtime/current/bin/crw\" hook stop --leg stop-waking-on-background-completion",
+            "timeout": 10,
+            "statusMessage": "(crw) Checking background task completions"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -23,14 +23,14 @@ func Verbs() []Verb {
 		{Name: "plan", Run: planVerb},
 		{Name: "receipt", RunContext: receiptVerb},
 		{Name: "evidence", Run: evidenceVerb},
-		{Name: "memory", Run: memoryVerb},
+		{Name: "memory", RunContext: memoryVerb},
 		{Name: "reset", Run: resetVerb},
 		{Name: "config", Run: configVerb},
-		{Name: "scan", Run: scanVerb},
+		{Name: "scan", RunContext: scanVerb},
 		{Name: "review-round", Run: reviewRoundVerb},
 		{Name: "metric", RunContext: metricVerb},
 		{Name: "divergence", RunContext: divergenceVerb},
-		{Name: "loop", Run: loopVerb},
+		{Name: "loop", RunContext: loopVerb},
 		{Name: "orchestrate", RunContext: orchestrateVerb},
 	}
 }

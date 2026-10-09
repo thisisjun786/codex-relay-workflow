@@ -11,6 +11,7 @@ import (
 	"path"
 	"slices"
 	"strconv"
+	"syscall"
 	"time"
 	"unicode/utf16"
 
@@ -30,11 +31,35 @@ func ReadState(cwd, sessionID string) State {
 // marked unreadable, so a gate that must fail closed can tell "nothing to report" from "cannot tell".
 func ReadStateStrict(cwd, sessionID string) (State, bool) {
 	now := time.Now()
-	raw, err := os.ReadFile(StatePath(cwd, sessionID))
+	raw, err := ReadStateFile(cwd, sessionID)
 	if err != nil {
 		return defaultState(sessionID, "", now), !errors.Is(err, fs.ErrNotExist)
 	}
 	return restore(sessionID, raw, now)
+}
+
+// ErrStateNotRegular is what ReadStateFile answers for a session path that is not a regular file.
+var ErrStateNotRegular = errors.New("session state is not a regular file")
+
+// ReadStateFile is the bytes of the session's state file, os.ReadFile except that a path that is not a regular file
+// (a FIFO, a device, a directory, or a link to one) is refused with ErrStateNotRegular without being read. CRW-1074:
+// the file is opened with O_NONBLOCK, which returns at once for a FIFO whatever its writers do, and judged by fstat
+// of the open descriptor, so the read that follows only ever touches a regular file and no stalled writer can hold
+// a caller past the first SIGINT. An absent file is fs.ErrNotExist, as os.ReadFile answers.
+func ReadStateFile(cwd, sessionID string) ([]byte, error) {
+	f, err := os.OpenFile(StatePath(cwd, sessionID), os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, ErrStateNotRegular
+	}
+	return io.ReadAll(f)
 }
 
 // restore is the part of readStateStrict that follows the read; now stamps the defaults.

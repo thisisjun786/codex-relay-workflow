@@ -241,6 +241,10 @@ func runAccept(ctx context.Context, services dispatch.Services, args dispatch.Ar
 			return nil, usage("--repository and --pull-request name a pull request together")
 		}
 		input.PullRequest = &PRRef{Repository: args.Text("repository"), Number: args.Integer("pull-request")}
+		if args.Given("checkout") {
+			// the clone that holds the commits of a parent-made refresh, read only when the pull request shows a head the ruling did not fix (CRW-731)
+			input.Checkout = args.Text("checkout")
+		}
 	}
 	if args.Given("commit") {
 		// the pull-request-less acceptance (CRW-965): the commit, its base, its checkout and its verification record
@@ -266,11 +270,24 @@ func runAccept(ctx context.Context, services dispatch.Services, args dispatch.Ar
 	answer := contract.OrderedObject{{Key: "ok", Value: true}, {Key: "schema", Value: "dag-accept/1"}, {Key: "plan_id", Value: result.PlanID}, {Key: "node_id", Value: result.NodeID},
 		{Key: "acceptance_id", Value: result.AcceptanceID}, {Key: "relationship_id", Value: optionalText(result.RelationshipID)}, {Key: "execution_generation", Value: result.Generation},
 		{Key: "replayed", Value: result.Replayed}, {Key: "revalidated", Value: result.Revalidated}, {Key: "superseded_acceptance_id", Value: optionalText(result.SupersededID)},
-		{Key: "head_sha", Value: optionalText(result.HeadSHA)}, {Key: "evidence_digest", Value: optionalText(result.EvidenceDigest)}, {Key: "slot_released", Value: result.SlotReleased}}
+		{Key: "head_sha", Value: optionalText(result.HeadSHA)}, {Key: "evidence_digest", Value: optionalText(result.EvidenceDigest)}, {Key: "slot_released", Value: result.SlotReleased},
+		{Key: "verified_head_sha", Value: optionalText(result.VerifiedHead)}, {Key: "refresh_id", Value: optionalText(result.RefreshID)}, {Key: "manual_paths", Value: acceptManualPaths(result.Manual)}}
 	if result.Sweep != nil {
 		answer = append(answer, contract.Field{Key: "conflict_sweep", Value: result.Sweep.Object()})
 	}
 	return answer, nil
+}
+
+// acceptManualPaths is the manual_paths member of dag-accept: null when no refresh was proved, else the (empty) list of paths left to a hand resolution.
+func acceptManualPaths(paths []string) any {
+	if paths == nil {
+		return nil
+	}
+	list := make([]any, len(paths))
+	for i, p := range paths {
+		list[i] = p
+	}
+	return list
 }
 
 func runObserve(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {

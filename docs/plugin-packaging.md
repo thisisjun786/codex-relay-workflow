@@ -1,7 +1,9 @@
 # Plugin packaging
 
 This repository publishes its skills as a versioned Codex plugin. The package also
-declares the task-bridge MCP server and the completion Stop hook. Both reach the Go runtime
+declares the task-bridge MCP server, the completion Stop hook, and the hooks ported from CXC
+behind the CRW/CXC switch ([the ported hooks and the switch](#the-ported-hooks-and-the-switch)).
+All of them reach the Go runtime
 through the installer's pointer, `$HOME/.local/share/crw-runtime/current/bin/`: the hook
 command names `crw` there directly and the server starts a three-line `sh` launcher that execs
 its `codex-thread-bridge` link ([the native wiring](#the-native-wiring)). It carries no runtime: the runtime keeps its own
@@ -14,8 +16,8 @@ installer, and the package only points at what that installer left behind.
 | `.agents/plugins/marketplace.json` | Marketplace entry; its `source.path` names the plugin root |
 | `plugins/crw/` | The plugin root, copied into the version cache as it stands |
 | `plugins/crw/.codex-plugin/plugin.json` | Manifest: plugin name, the version that names the payload, and the declared skills path |
-| `plugins/crw/skills/` | The registered skills, one of the two declared components |
-| `plugins/crw/wiring/` | The declared Stop hook and MCP server, and the `crw-bridge.sh` launcher the server starts. The two Python launchers the pre-native declarations started left the package in todo 43 ([the native wiring](#the-native-wiring)) |
+| `plugins/crw/skills/` | The registered skills: CRW's own and, since the activation move (CRW-392), the 24 ported from CXC, whose records stay under `port/cxc/records` |
+| `plugins/crw/wiring/` | The 34 declared hooks (`wiring/hooks/`) and the MCP server, and the `crw-bridge.sh` launcher the server starts. The two Python launchers the pre-native declarations started left the package in todo 43 ([the native wiring](#the-native-wiring)) |
 | `plugins/crw/LICENSE` | The repository license, shipped with the package |
 Edit the skills at `plugins/crw/skills/`. Until todo 44 the repository root also kept `skills`, a
 Git symlink to that directory, for installations made before the move; nothing installed through
@@ -128,6 +130,7 @@ the native wiring anchors the runtime pointer under it.
 | --- | --- | --- |
 | Stop hook | `"$HOME/.local/share/crw-runtime/current/bin/crw" hook --plugin-launch; exit 0`, `timeout: 10` | `crw hook --plugin-launch` through the pointer, reading the host's payload on stdin |
 | MCP server | `command: "sh"`, `args: ["./wiring/crw-bridge.sh"]`, `cwd: "."` | `exec "$HOME/.local/share/crw-runtime/current/bin/codex-thread-bridge" --plugin-launch "$@"` |
+| Ported hooks (33) | `"$HOME/.local/share/crw-runtime/current/bin/crw" hook <event> --leg <leg>`, the K1 timeout | the leg's handler, once the switch says `crw` ([the ported hooks and the switch](#the-ported-hooks-and-the-switch)) |
 
 `--plugin-launch` is where the record contract the Python launchers carried now lives
 ([decision 26](port/decisions.md)). `codex-thread-bridge --plugin-launch` (`crw bridge
@@ -214,6 +217,47 @@ install` and its subcommands write the settings they manage, including the subag
 files under `~/.codex/agents/<role>.toml`. Each writes a backup before it replaces an
 existing file, and `crw doctor retrust` restores that backup when the write or its
 verification fails.
+
+## The ported hooks and the switch
+
+Beside the completion Stop the package declares the 32 hook legs CXC v0.2.40 registered (K1,
+`contract/schema/cxc/hook-declarations.json`) and CRW's own GitHub post guard, one file per leg
+under `wiring/hooks/`: 34 declarations with the completion Stop. `crw-dev cxc hooks` writes the 33
+files from K1 (inside the selected repository only; it refuses a linked hooks directory or declaration), and `crw-dev cxc lint` (part of `crw-dev ci contracts`) refuses a file or a manifest
+`hooks` list that differs from what it would write. Each declaration keeps:
+
+- the K1 event, matcher and timeout byte for byte; the longest is 20 seconds, which is the cap
+  `crw-dev ci plugin` holds a hook to;
+- the K1 statusMessage with `(codexclaw) ` made `(crw) ` (rule R24 of the name substitution) and
+  nothing else;
+- the command `"$HOME/.local/share/crw-runtime/current/bin/crw" hook <event> --leg <leg>`, without
+  `; exit 0`, so a leg's own failure status reaches the host;
+- a file named after its leg. The one oracle file that registered two events
+  (`post-compact-injecting-bg-terminal-affordance`) is split into one file per event, so adding an
+  event never renumbers another.
+
+The GitHub post guard (`pre-tool-use-guarding-github-post`) is a `PreToolUse` hook on the shell
+tools (`^(Bash|shell|exec_command|local_shell)$`), 10 seconds, `(crw) Guarding GitHub posts`.
+
+Every ported leg, and the guard, reads the switch `<CODEX_HOME>/crw/switch.json`
+(`{"active": "crw" | "cxc", "changedAt", "by"}`) before anything else. The hook only reads it. The
+writer, `crw install switch`, is CRW-201's and is not in the installer yet; until it is, the file
+is written by hand.
+
+| Switch | What a ported leg does |
+| --- | --- |
+| No file | Exits 0 with no output, its input unread, nothing recorded: the package installs silent |
+| `cxc` | The same: CXC's own plugin serves the session |
+| `crw` | Runs |
+| Present but unreadable (a read error, over 64 KiB, not JSON, another `active`) | Runs, so a protective guard never goes quiet on a damaged switch, and writes `<CODEX_HOME>/crw/hook-observations/switch-warning.json` |
+
+The completion Stop runs whatever the switch says. The command a declaration names does not change
+with the switch, so neither do the hooks' trust hashes. The 33 ported declarations are new hook
+identities and each needs its own trust, which the user gives; installing records none. One leg,
+`subagent-stop-observing-review`, answers nothing until its issue fills the handler (CRW-564); a
+trust hash covers the declaration, not the handler, so filling it needs no new trust. With these files the package check's report counts
+three Stop hooks (`stopHooks`), and an update from a payload without them reads as `changed` in
+[updating safely](#updating-safely).
 
 ## Install
 

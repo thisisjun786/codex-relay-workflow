@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$HOME/.local/share/crw-runtime/current/bin/crw\" hook pre-tool-use --leg pre-tool-use-guarding-github-post",
+            "timeout": 10,
+            "statusMessage": "(crw) Guarding GitHub posts"
+          }
+        ],
+        "matcher": "^(Bash|shell|exec_command|local_shell)$"
+      }
+    ]
+  }
+}

@@ -86,7 +86,7 @@ func TestMindsDispatchOwnerPointer(t *testing.T) {
 	if ref != "references/mind-dispatch.md" {
 		t.Fatalf("owner pointer=%q", ref)
 	}
-	if _, err := os.Stat(filepath.Join("..", "..", "..", "port", "cxc", "skills", "crw-interview", ref)); err != nil {
+	if _, err := os.Stat(filepath.Join("..", "..", "..", "plugins", "crw", "skills", "crw-interview", ref)); err != nil {
 		t.Fatal(err)
 	}
 }

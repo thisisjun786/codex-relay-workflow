@@ -193,9 +193,9 @@ func skillsRoot(manifestPath string) (string, error) {
 // needs them. Allowing another place is one edit here.
 var (
 	// skillAssetRoots are the directories that hold skills, relative to the repository root: the
-	// plugin's declared skills directory (the metadata check reads it from the manifest) and the
-	// staging root of ported skills.
-	skillAssetRoots = []string{"plugins/crw/skills", skillport.StagingRoot}
+	// plugin's declared skills directory (the metadata check reads it from the manifest), which
+	// holds the ported skills too since the activation move (CRW-392).
+	skillAssetRoots = []string{skillport.SkillsRoot}
 	// skillAssetDirs are the directories of a skill that hold its assets.
 	skillAssetDirs = []string{"scripts", "examples"}
 )
@@ -324,7 +324,6 @@ func Validate(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return failf(stderr, "%s: %s", manifest, err)
 	}
-	staging := resolve(filepath.Join(root, skillport.StagingRoot))
 	names := sortedSet(strings.Split(string(out), "\x00"))
 	errs := pythonFileErrors(root, names)
 	count := 0
@@ -341,7 +340,7 @@ func Validate(args []string, stdout, stderr io.Writer) int {
 			}
 			errs = append(errs, found...)
 		}
-		if parent := resolve(filepath.Dir(filepath.Dir(path))); filepath.Base(name) == "SKILL.md" && (parent == skills || parent == staging) {
+		if parent := resolve(filepath.Dir(filepath.Dir(path))); filepath.Base(name) == "SKILL.md" && parent == skills {
 			if err := SkillMetadata(path); err != nil {
 				errs = append(errs, name+": "+err.Error())
 				continue

@@ -13,6 +13,7 @@
 package cli
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -41,10 +42,10 @@ func loopIsMutatingVerb(verb LoopVerb) bool {
 }
 
 // loopRunMutating dispatches one mutating verb (:810-826).
-func loopRunMutating(args LoopCliArgs) (LoopCliResult, error) {
+func loopRunMutating(ctx context.Context, args LoopCliArgs) (LoopCliResult, error) {
 	switch args.Verb {
 	case LoopVerbSteer:
-		return loopSteer(args)
+		return loopSteer(ctx, args, nil, nil)
 	case LoopVerbAsk, LoopVerbDecide:
 		return loopDecision(args)
 	case LoopVerbAddCriterion, LoopVerbAddWorkPhase:
@@ -110,9 +111,69 @@ func loopLossyJSON(raw string) string {
 	return ""
 }
 
+// loopReadBatch reads the batch file. A context that can end reads it in a goroutine, so a path that blocks
+// (a pipe whose writer has not finished, as --batch-json /proc/self/fd/0 on an open stdin does) does not hold
+// the verb past the first SIGINT, which the oracle's process dies at (CRW-1074). The read that outlives an
+// ended context is abandoned with the process; nothing it returns is used.
+func loopReadBatch(ctx context.Context, path string) ([]byte, error) {
+	if ctx.Done() == nil {
+		return os.ReadFile(path)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	type read struct {
+		bytes []byte
+		err   error
+	}
+	done := make(chan read, 1)
+	go func() {
+		bytes, err := os.ReadFile(path)
+		done <- read{bytes, err}
+	}()
+	select {
+	case r := <-done:
+		// A line that arrived just before the signal is not applied either.
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		return r.bytes, r.err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
 // loopSteer is runSteer (:296-352): the plan is the one the session is bound to, the batch is inline JSON or a
 // file, and the steering transaction answers.
-func loopSteer(args LoopCliArgs) (LoopCliResult, error) {
+//
+// The first SIGINT ends it (CRW-1074, the CRW-871 rule): the batch read, the goalplan lock wait and the check
+// made with the lock held and immediately before the transaction's first write all observe ctx, and a steer
+// they end returns the context's own error with nothing written. A steer whose transaction has begun to write
+// finishes and answers as before. lock is the test seam of the goalplan lock (its Now runs right after the lock
+// is taken); nil means the real lock. beforeWrite is the test seam of the plan write (it runs as that write
+// begins); nil means none.
+func loopSteer(ctx context.Context, args LoopCliArgs, lock *goalplan.GoalplanWriteLockOptions, beforeWrite func()) (LoopCliResult, error) {
+	begun := false
+	result, err := loopSteerRun(ctx, args, lock, func() {
+		begun = true
+		if beforeWrite != nil {
+			beforeWrite()
+		}
+	})
+	// Every answer reached before the transaction's first write began (a refusal of the arguments or the batch,
+	// an unbound session, a duplicate, a locked, unusable or rejected plan, and an error of the lock or the plan
+	// path) is the answer of a process the signal would already have ended: an ended context takes precedence and
+	// nothing is printed. Once the write has begun, the answer stands, error or not.
+	if !begun {
+		if cerr := ctx.Err(); cerr != nil {
+			return LoopCliResult{}, cerr
+		}
+	}
+	return result, err
+}
+
+// loopSteerRun is loopSteer's body; began runs as the steering transaction's plan write begins.
+func loopSteerRun(ctx context.Context, args LoopCliArgs, lock *goalplan.GoalplanWriteLockOptions, began func()) (LoopCliResult, error) {
 	session := loopSessionID(args)
 	if session == "" {
 		return LoopCliResult{Output: "loop steer: --session <id> is required", Code: 1}, nil
@@ -130,7 +191,10 @@ func loopSteer(args LoopCliArgs) (LoopCliResult, error) {
 		if !filepath.IsAbs(path) {
 			path = filepath.Join(args.Cwd, path)
 		}
-		bytes, err := os.ReadFile(path)
+		bytes, err := loopReadBatch(ctx, path)
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return LoopCliResult{}, err
+		}
 		if err != nil {
 			return LoopCliResult{Output: fmt.Sprintf("loop steer: could not read the batch at %s (%s)", raw, loopNodeReadMessage(err)), Code: 1}, nil
 		}
@@ -147,7 +211,18 @@ func loopSteer(args LoopCliArgs) (LoopCliResult, error) {
 	if slug == "" {
 		return loopNotBound(LoopVerbSteer, session, "—"), nil
 	}
-	result, err := goalplan.ApplySteeringBatch(args.Cwd, slug, batch, nil)
+	options := &goalplan.SteeringBatchOptions{BeforeWrite: began}
+	if lock != nil || ctx.Done() != nil {
+		var lockOptions goalplan.GoalplanWriteLockOptions
+		if lock != nil {
+			lockOptions = *lock
+		}
+		if ctx.Done() != nil {
+			lockOptions.Context = ctx
+		}
+		options.Lock = &lockOptions
+	}
+	result, err := goalplan.ApplySteeringBatch(args.Cwd, slug, batch, options)
 	if err != nil {
 		return LoopCliResult{}, err
 	}
@@ -271,10 +346,12 @@ func loopAddOpConflict(plan *goalplan.Goalplan, op map[string]any) string {
 		scenario, _ := op["scenario"].(string)
 		surface, _ := op["surface"].(string)
 		presented, _ := op["presented"].(string)
+		found := false
 		for _, criterion := range plan.Criteria {
 			if criterion.Scenario != scenario {
 				continue
 			}
+			found = true
 			have := string(criterion.Surface)
 			if have == "" {
 				have = "logic"
@@ -283,6 +360,12 @@ func loopAddOpConflict(plan *goalplan.Goalplan, op map[string]any) string {
 				quoted, _ := json.Marshal(scenario)
 				return "a criterion with scenario " + string(quoted) + " is already registered with another surface or presentation"
 			}
+		}
+		// A key without its criterion (the state an old command left behind) shows no surface or presentation to compare
+		// with: only the default retry (logic, no presentation) is the legacy retry the key stays for.
+		if !found && (surface != "logic" || presented != "") {
+			quoted, _ := json.Marshal(scenario)
+			return "a criterion with scenario " + string(quoted) + " has a recorded key but is not in the plan, so its --surface and --presented cannot be checked against what was registered"
 		}
 		return ""
 	}
