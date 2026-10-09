@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -373,7 +374,7 @@ func premergeTestFakeGh(t *testing.T, prs map[int]premergeTestPull) *[][]string 
 		*calls = append(*calls, args)
 		if len(args) >= 3 && args[0] == "pr" && args[1] == "view" {
 			for number, pr := range prs {
-				if args[2] == itoaForTest(number) {
+				if args[2] == strconv.Itoa(number) {
 					return json.Marshal(map[string]any{"number": number, "title": pr.title, "body": pr.body, "headRefOid": pr.head, "state": pr.state})
 				}
 			}
@@ -382,11 +383,6 @@ func premergeTestFakeGh(t *testing.T, prs map[int]premergeTestPull) *[][]string 
 	}
 	t.Cleanup(func() { auditPRGh = previous })
 	return calls
-}
-
-func itoaForTest(n int) string {
-	b, _ := json.Marshal(n)
-	return string(b)
 }
 
 func premergeTestReadRecord(t *testing.T, path string) map[string]any {

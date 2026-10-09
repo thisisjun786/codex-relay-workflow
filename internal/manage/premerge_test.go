@@ -767,6 +767,24 @@ func TestPremergeDisposeSameRefReplacesAndKeepsTheOldRecord(t *testing.T) {
 	if len(entries) != 2 {
 		t.Errorf("the record directory holds %d entries (a temporary file left?), want 2", len(entries))
 	}
+	// a second replacement within the same second keeps its record under another name, not over the first
+	second, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err = PremergeDispose(context.Background(), f.e, f.cfg, PremergeDisposeOptions{Record: path, Ref: "d1", Class: "blocking", Note: "back to blocking", By: "parent"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := strings.TrimSuffix(path, ".json") + ".replaced-20261009T010203Z-2.json"; result.Replaced != want {
+		t.Errorf("replaced = %q, want %q", result.Replaced, want)
+	}
+	if body, err := os.ReadFile(result.Replaced); err != nil || !bytes.Equal(body, second) {
+		t.Errorf("the second kept record is not the record it replaced: %v", err)
+	}
+	if body, err := os.ReadFile(kept); err != nil || !bytes.Equal(body, first) {
+		t.Errorf("the first kept record was overwritten: %v", err)
+	}
 }
 
 // C7: a ref the record does not hold, a class the contract does not know, a missing note and a malformed
