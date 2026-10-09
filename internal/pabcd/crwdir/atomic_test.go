@@ -1,6 +1,7 @@
 package crwdir
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -228,12 +229,12 @@ func TestPublishReportsATempFileItCannotRemove(t *testing.T) {
 	}
 }
 
-// PublishDurable fsyncs the directory after the rename, as the last step: the file is in place under its final name when the sync is called, and a failed sync is returned (the rename has happened, so the
-// caller must not rely on the file being durable).
-func TestPublishDurableSyncsTheDirectoryAfterTheRename(t *testing.T) {
+// Publish fsyncs the directory after the rename, as the last step: the file is in place under its final name when the sync is called, and a failed sync is returned as a PublishedError (the rename has
+// happened, so the caller must not rely on the file being durable but must not undo it either; CRW-802).
+func TestPublishSyncsTheDirectoryAfterTheRename(t *testing.T) {
 	dir, final := withFile(t, "old", 0o640)
 	var order []publishStep
-	err := publishWith(final, []byte("new"), true, func(at publishStep) error {
+	err := publish(final, []byte("new"), func(at publishStep) error {
 		order = append(order, at)
 		if at == stepDirSync && read(t, final) != "new" {
 			t.Errorf("the directory is synced before the rename: %q", read(t, final))
@@ -246,31 +247,78 @@ func TestPublishDurableSyncsTheDirectoryAfterTheRename(t *testing.T) {
 	}
 }
 
-func TestPublishDurableReportsAFailedDirectorySync(t *testing.T) {
+func TestPublishReportsAFailedDirectorySyncAsPublished(t *testing.T) {
 	injected := errors.New("injected")
 	dir, final := withFile(t, "old", 0o640)
-	err := publishWith(final, []byte("new"), true, func(at publishStep) error {
+	err := publish(final, []byte("new"), func(at publishStep) error {
 		if at == stepDirSync {
 			return injected
 		}
 		return nil
 	})
-	if !errors.Is(err, injected) || !slices.Equal(names(t, dir), []string{"crw.json"}) {
-		t.Fatalf("err %v, directory %v", err, names(t, dir))
+	if !errors.Is(err, injected) || !Published(err) || read(t, final) != "new" || !slices.Equal(names(t, dir), []string{"crw.json"}) {
+		t.Fatalf("err %v (published %v), content %q, directory %v", err, Published(err), read(t, final), names(t, dir))
 	}
 }
 
-// Publish does not sync the directory; only the durable publish does.
-func TestPublishDoesNotSyncTheDirectory(t *testing.T) {
-	_, final := withFile(t, "old", 0o640)
-	err := publish(final, []byte("new"), func(at publishStep) error {
-		if at == stepDirSync {
-			t.Error("Publish synced the directory")
+// A failure before the rename is not a publication: nothing is in place and the error is not a PublishedError.
+func TestPublishFailureBeforeTheRenameIsNotPublished(t *testing.T) {
+	injected := errors.New("injected")
+	dir, final := withFile(t, "old", 0o640)
+	for _, step := range []publishStep{stepCreate, stepMode, stepWrite, stepSync, stepRename} {
+		err := publish(final, []byte("new"), func(at publishStep) error {
+			if at == step {
+				return injected
+			}
+			return nil
+		})
+		if !errors.Is(err, injected) || Published(err) || read(t, final) != "old" || !slices.Equal(names(t, dir), []string{"crw.json"}) {
+			t.Errorf("step %d: err %v (published %v), content %q, directory %v", step, err, Published(err), read(t, final), names(t, dir))
 		}
+	}
+}
+
+// PublishChecked and PublishContext reach the same directory sync, and a cancellation at the rename step returns before it.
+func TestPublishCheckedAndContextSyncTheDirectory(t *testing.T) {
+	_, final := withFile(t, "old", 0o640)
+	synced := false
+	err := publishContext(context.Background(), final, []byte("ctx"), func(at publishStep) error {
+		synced = synced || at == stepDirSync
 		return nil
 	})
-	if err != nil {
+	if err != nil || !synced || read(t, final) != "ctx" {
+		t.Fatalf("PublishContext: err %v, synced %v, content %q", err, synced, read(t, final))
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	synced = false
+	if err := publishContext(ctx, final, []byte("late"), func(at publishStep) error {
+		synced = synced || at == stepDirSync
+		return nil
+	}); !errors.Is(err, context.Canceled) || Published(err) || synced || read(t, final) != "ctx" {
+		t.Fatalf("a cancelled PublishContext: err %v (published %v), synced %v, content %q", err, Published(err), synced, read(t, final))
+	}
+	if err := PublishChecked(final, []byte("checked"), func() error { return nil }); err != nil || read(t, final) != "checked" {
+		t.Fatalf("PublishChecked: err %v, content %q", err, read(t, final))
+	}
+}
+
+// A directory that takes writes but cannot be opened for reading cannot be fsynced; the publication stands without an error.
+func TestPublishInAWriteOnlyDirectoryNeedsNoDirectorySync(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o300); err != nil {
 		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+	if _, err := os.ReadDir(dir); err == nil {
+		t.Skip("the directory stays readable despite mode 0300 (privileged user)")
+	}
+	final := filepath.Join(dir, "crw.json")
+	if err := Publish(final, []byte("new")); err != nil {
+		t.Fatalf("Publish in a write-only directory: %v", err)
+	}
+	if err := os.Chmod(dir, 0o755); err != nil || read(t, final) != "new" {
+		t.Fatalf("chmod %v, content %q", err, read(t, final))
 	}
 }
 
