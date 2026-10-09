@@ -30,6 +30,63 @@ func shellIRWriteNames(tok string) bool {
 // Path.mkdir. They are read like write_text: a Path(...) call receiver names its destination, any other receiver is unknown.
 func shellIRPyPathCreateName(tok string) bool { return tok == "touch" || tok == "mkdir" }
 
+// shellIRPyRunsText names the calls that run a string as a program or a command (exec, eval, compile, a subprocess or an os.system
+// call, runpy, timeit, an interactive console): a program that names one may run any string literal it holds.
+func shellIRPyRunsText(tok string) bool {
+	switch tok {
+	case "exec", "eval", "compile", "system", "subprocess", "run", "call", "check_call", "check_output", "getoutput",
+		"getstatusoutput", "runpy", "run_path", "run_module", "run_code", "interact", "timeit", "startfile", "Popen":
+		return true
+	}
+	return strings.HasPrefix(tok, "exec") || strings.HasPrefix(tok, "spawn") || strings.HasPrefix(tok, "popen") || strings.HasPrefix(tok, "posix_spawn")
+}
+
+// shellIRPyDataMask marks (by byte offset of src) the text of a Python program that is only data: a # comment and the body of a
+// string literal without an f in its prefix. An f-string stays code, since its replacement fields are program text, and so
+// does every string of a program that names a call which runs text (shellIRPyRunsText): the mask is nil then, and every offset
+// is read as code. It is the same string and comment reading as shellVerbWithoutComments and shellWriteTripleScanRegion.
+func shellIRPyDataMask(src string, spans [][2]int) []bool {
+	for _, sp := range spans {
+		if shellIRPyRunsText(src[sp[0]:sp[1]]) {
+			return nil
+		}
+	}
+	rs := []rune(src)
+	offs := make([]int, len(rs)+1)
+	for i, n := 0, 0; i <= len(rs); i++ {
+		offs[i] = n
+		if i < len(rs) {
+			n += len(string(rs[i]))
+		}
+	}
+	mask := make([]bool, len(src)+1)
+	mark := func(from, to int) {
+		for k := offs[from]; k < offs[to]; k++ {
+			mask[k] = true
+		}
+	}
+	for i := 0; i < len(rs); {
+		switch c := rs[i]; {
+		case c == '\'' || c == '"':
+			end := shellWriteTripleScanRegion(rs, i, true)
+			if !shellWriteFStringPrefix(rs, i) {
+				mark(i, end)
+			}
+			i = end
+		case c == '#':
+			end := i + 1
+			for end < len(rs) && rs[end] != '\n' && rs[end] != '\r' {
+				end++
+			}
+			mark(i, end)
+			i = end
+		default:
+			i++
+		}
+	}
+	return mask
+}
+
 // shellIRStructuralWriteUnknown reports a program that holds a file API and a write the reader cannot attribute to a literal
 // destination: a bare or unattached write name, a run-time name (getattr, __import__, eval, ...), or a computed subscript.
 func shellIRStructuralWriteUnknown(src string, python bool) bool {
@@ -54,13 +111,21 @@ func shellIRStructuralWriteUnknown(src string, python bool) bool {
 	if !api {
 		return false
 	}
+	var data []bool // Python source offsets that are comment or plain string text; nil when the program may run a string
+	if python {
+		data = shellIRPyDataMask(src, spans)
+	}
 	for _, sp := range spans {
 		tok := src[sp[0]:sp[1]]
 		if shellIRRunTimeName(tok) {
 			return true
 		}
 		if python && shellIRPyPathCreateName(tok) {
-			// touch and mkdir create a file or a directory only as methods (Path(...).touch()); a bare name is no such call.
+			// touch and mkdir create a file or a directory only as methods (Path(...).touch()); a bare name is no such call,
+			// and the text p.touch() in a comment or a string the program never runs is no call either.
+			if data != nil && data[sp[0]] {
+				continue
+			}
 			if shellIRPrevNonSpace(src, sp[0]) == '.' && (shellIRNextNonSpace(src, sp[1]) != '(' || shellIRPyUnattributedCall(src, sp, tok)) {
 				return true
 			}
