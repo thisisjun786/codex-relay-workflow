@@ -98,6 +98,9 @@ func promptSubmitHandleWith(p PromptSubmitPayload, platform string, env host.Loo
 	if !p.PabcdEnabled {
 		return ""
 	}
+	// The transcript is marked before the state is read: a compaction recorded after this point is a context
+	// generation the decision below was not made in (promptClaimInputs.holds).
+	mark := host.MarkTranscript(p.TranscriptPath)
 	current := state.ReadState(p.Cwd, p.SessionID)
 	if turn != "" && promptSubmitStateExists(p.Cwd, p.SessionID) && (current.StopBlockTurnID == nil || *current.StopBlockTurnID != turn) {
 		// The turn is judged again on the state the lock found, so a participating writer that
@@ -207,7 +210,7 @@ func promptSubmitHandleWith(p PromptSubmitPayload, platform string, env host.Loo
 
 	// The oracle continues at hook.ts:755 with the trigger branch, the agbrowse-only branch and the
 	// passive pipeline, in prompt_trigger.go; it answers the context, which the harness wraps.
-	return promptTriggerHandle(p, env, lock, current, state.Phase(trigger), entry.AdviseInterview, agbrowseRequested, loopArmRequested)
+	return promptTriggerHandle(p, env, lock, current, mark, state.Phase(trigger), entry.AdviseInterview, agbrowseRequested, loopArmRequested)
 }
 
 // promptSubmitTurn is the oracle's `turn === "" ? null : turn` for the marker's memoryWriteTurn.
@@ -325,6 +328,7 @@ type promptClaimInputs struct {
 	cursor    bool
 	checkWork bool
 	work      *DirectiveOptions
+	mark      host.TranscriptMark // the transcript before the read; with cursor, a compaction recorded since moves the context generation
 }
 
 // holds is whether fresh, the state the lock found, still chooses the same answer: the phase, the orchestration
@@ -335,7 +339,7 @@ func (in promptClaimInputs) holds(cwd string, fresh state.State) bool {
 	if fresh.Phase != read.Phase || fresh.OrchestrationActive != read.OrchestrationActive || fresh.Slug != read.Slug {
 		return false
 	}
-	if in.cursor && !promptSamePhase(fresh.LastInjectedPhase, read.LastInjectedPhase) {
+	if in.cursor && (!promptSamePhase(fresh.LastInjectedPhase, read.LastInjectedPhase) || in.mark.CompactedSince()) {
 		return false
 	}
 	return !in.checkWork || promptSameWork(ActiveWorkPhaseOpts(cwd, fresh.Slug), in.work)

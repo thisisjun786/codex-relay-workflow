@@ -6,6 +6,7 @@
 package hook
 
 import (
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -142,6 +143,55 @@ func TestCRW1159AStaleDecisionIsDropped(t *testing.T) {
 			t.Errorf("a stale directive's cursor was written: %v", *s.LastInjectedPhase)
 		}
 	})
+}
+
+// TestCRW1159ACompactionAfterTheDecisionDropsTheAnswer is fix round 1, finding 2: the injection cursor is not the only
+// witness of the context generation (PostCompact leaves a cursor that is already nil as it is), so a compaction the
+// transcript records between the handler's read and its recording lock drops the answer and the cursor write, whatever
+// the cursor held. An append that is no compaction does not.
+func TestCRW1159ACompactionAfterTheDecisionDropsTheAnswer(t *testing.T) {
+	cursor := state.PhaseP
+	for _, c := range []struct {
+		name   string
+		last   *state.Phase
+		append func(*testing.T) string
+		stale  bool
+	}{
+		{"mode 2, cursor already reset, compacted", nil, func(t *testing.T) string { return codexCompaction(t, "[crw: PLAN]") }, true},
+		{"mode 3, compacted", &cursor, func(t *testing.T) string { return codexCompaction(t, "[crw: PLAN]") }, true},
+		{"mode 2, a huge compacted record", nil, func(t *testing.T) string {
+			return codexCompaction(t, strings.Repeat("x", 200_000))
+		}, true},
+		{"mode 2, an ordinary append", nil, func(t *testing.T) string { return codexMessage(t, "assistant", "", "working") }, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			cwd := t.TempDir()
+			transcript := writeTranscript(t, cwd, codexUserTurn(t, "plan it"))
+			promptSubmitStateFile(t, cwd, "s1", func(s *state.State) {
+				s.Phase, s.OrchestrationActive, s.LastInjectedPhase = state.PhaseP, true, c.last
+			})
+			payload := PromptSubmitPayload{Cwd: cwd, SessionID: "s1", Prompt: "keep going", TurnID: "t1", TranscriptPath: transcript, PabcdEnabled: true}
+			got := promptSubmitHandle(payload, "", promptSubmitHost(cwd), crw1159LockAt(2, func() {
+				f, err := os.OpenFile(transcript, os.O_APPEND|os.O_WRONLY, 0)
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				defer f.Close()
+				if _, err := f.WriteString(c.append(t)); err != nil {
+					t.Error(err)
+				}
+				SessionHookPostCompact(SessionHookPostCompactPayload{Cwd: cwd, SessionID: "s1"})
+			}))
+			s := state.ReadState(cwd, "s1")
+			if c.stale && (got != "" || slices.Contains(s.InjectedTurns, "t1") || !promptSamePhase(s.LastInjectedPhase, nil)) {
+				t.Errorf("a compaction after the decision: answered %.120q, cursor %v, turns %v", got, s.LastInjectedPhase, s.InjectedTurns)
+			}
+			if !c.stale && (got == "" || !slices.Contains(s.InjectedTurns, "t1")) {
+				t.Errorf("an ordinary append dropped the answer: %.120q, turns %v", got, s.InjectedTurns)
+			}
+		})
+	}
 }
 
 // TestCRW1159ARepeatedTurnStillRecordsTheRememberRequest is end condition 3: a turn that is already recorded, or that

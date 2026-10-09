@@ -57,7 +57,7 @@ func RenderStatusLine(phase state.Phase, interview, auditPassed, checkPassed boo
 // phase hint the loose detector produced (empty for none), adviseInterview is the interview-entry
 // decision for it, and agbrowseRequested and loopArmRequested are the two prompt heuristics. It
 // returns the context to inject, or "" for every path that injects nothing.
-func promptTriggerHandle(p PromptSubmitPayload, env host.LookupEnv, lock func(cwd, sessionID string, fn func() error) error, current state.State, trigger state.Phase, adviseInterview, agbrowseRequested, loopArmRequested bool) string {
+func promptTriggerHandle(p PromptSubmitPayload, env host.LookupEnv, lock func(cwd, sessionID string, fn func() error) error, current state.State, mark host.TranscriptMark, trigger state.Phase, adviseInterview, agbrowseRequested, loopArmRequested bool) string {
 	turn := p.TurnID
 
 	// Natural-language triggers are advisory only. Explicit chat commands above or authorized agent CLI
@@ -126,9 +126,9 @@ func promptTriggerHandle(p PromptSubmitPayload, env host.LookupEnv, lock func(cw
 	// suppression has no case left here; the Stop leg keeps it.
 	generation := host.ReadTranscriptGeneration(p.TranscriptPath, host.TailBytes)
 	// Each passive answer below goes out only when the lock that records it finds the turn unrecorded and
-	// the phase, the binding and the cursor it was chosen from unmoved (CRW-1159, promptSubmitClaim); a
+	// the phase, the binding, the cursor and the context generation it was chosen from unmoved (CRW-1159, promptSubmitClaim); a
 	// stale decision is dropped rather than answered or recorded.
-	passive := promptClaimInputs{read: current, cursor: true}
+	passive := promptClaimInputs{read: current, cursor: true, mark: mark}
 	if current.LastInjectedPhase != nil && generation.HasStageMarkerForPhase(string(current.Phase)) {
 		if turn != "" {
 			if promptSubmitClaim(lock, p.Cwd, p.SessionID, turn, passive, promptTriggerReinject(current.Phase, turn)) != promptClaimEmit {
@@ -145,7 +145,7 @@ func promptTriggerHandle(p PromptSubmitPayload, env host.LookupEnv, lock func(cw
 	if current.LastInjectedPhase == nil || *current.LastInjectedPhase != current.Phase {
 		opts := ActiveWorkPhaseOpts(p.Cwd, current.Slug)
 		directive := PhaseDirective(current.Phase, opts)
-		inputs := promptClaimInputs{read: current, cursor: true, checkWork: current.Phase == state.PhaseB, work: opts}
+		inputs := promptClaimInputs{read: current, cursor: true, checkWork: current.Phase == state.PhaseB, work: opts, mark: mark}
 		if current.Phase == state.PhaseI {
 			directive = InterviewDirective(env)
 		}
