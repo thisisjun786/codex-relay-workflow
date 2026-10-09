@@ -140,3 +140,51 @@ func TestSessionStartOfAnAnchoredThreadOtherwiseBootstrapsAsBefore(t *testing.T)
 		}
 	})
 }
+
+// Review P1: the first CRW resume of a thread precedes its first SessionStart. The thread is
+// anchored by that resume although no state file exists yet, so the sequence resume at A, the
+// bootstrap at A, work to P, then a SessionStart at B leaves B without an IDLE file.
+func TestSessionStartAfterTheFirstResumeStillGuardsTheRoot(t *testing.T) {
+	a, b := t.TempDir(), t.TempDir()
+	env := rootEnv(filepath.Join(t.TempDir(), ".crw"))
+	if conflict := stateroot.Guard(env, a, a, rootSession); conflict != nil {
+		t.Fatal(conflict)
+	}
+	if answer := sessionHookSessionStart(SessionHookSessionStartPayload{Cwd: a, SessionID: rootSession}, env); answer != "" {
+		t.Fatalf("answer %q", answer)
+	}
+	before := rootInFlight(t, a)
+	answer := sessionHookSessionStart(SessionHookSessionStartPayload{Cwd: b, SessionID: rootSession}, env)
+	if !strings.Contains(answer, "state_root") && !strings.Contains(answer, "PABCD state root") {
+		t.Fatalf("answer %q", answer)
+	}
+	if _, err := os.Stat(state.StatePath(b, rootSession)); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("SessionStart created a state at the other cwd: %v", err)
+	}
+	if after, _ := os.ReadFile(state.StatePath(a, rootSession)); string(after) != string(before) {
+		t.Fatal("the native state changed")
+	}
+}
+
+// Review P1: an anchored thread whose root held nothing in flight and that starts at another cwd
+// now runs there, so its anchor follows it and a later SessionStart elsewhere is guarded against
+// the work at the new cwd.
+func TestSessionStartThatMovesAnIdleAnchoredThreadReAnchorsIt(t *testing.T) {
+	a, b, c := t.TempDir(), t.TempDir(), t.TempDir()
+	env := rootEnv(filepath.Join(t.TempDir(), ".crw"))
+	if _, err := state.EnsureState(a, rootSession); err != nil {
+		t.Fatal(err)
+	}
+	stateroot.Guard(env, a, a, rootSession)
+	if answer := sessionHookSessionStart(SessionHookSessionStartPayload{Cwd: b, SessionID: rootSession}, env); answer != "" {
+		t.Fatalf("answer %q", answer)
+	}
+	rootInFlight(t, b)
+	answer := sessionHookSessionStart(SessionHookSessionStartPayload{Cwd: c, SessionID: rootSession}, env)
+	if !strings.Contains(answer, state.StatePath(b, rootSession)) {
+		t.Fatalf("a SessionStart beside work at the new root was not guarded: %q", answer)
+	}
+	if _, err := os.Stat(state.StatePath(c, rootSession)); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("SessionStart created a state beside the work: %v", err)
+	}
+}

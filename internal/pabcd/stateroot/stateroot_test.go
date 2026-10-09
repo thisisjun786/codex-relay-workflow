@@ -82,39 +82,110 @@ func TestCheckRefusesOnlyAMoveAwayFromWorkInFlight(t *testing.T) {
 	}
 }
 
-func TestGuardAnchorsTheRootTheThreadRunsIn(t *testing.T) {
+func anchorOf(t *testing.T, env host.LookupEnv) string {
+	t.Helper()
+	raw, err := os.ReadFile(AnchorPath(env, session))
+	if err != nil {
+		return ""
+	}
+	var got anchor
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	return got.NativeCwd
+}
+
+// The root a CRW resume path resolves is recorded before anything is sent, whether or not the
+// thread has a state file yet, and it is the root the thread is on: a target the resume has not
+// reached is not recorded by the check.
+func TestGuardAnchorsTheNativeRootNotTheTarget(t *testing.T) {
 	a, b := t.TempDir(), t.TempDir()
 	env := envAt(t.TempDir())
-	anchorOf := func() string {
-		raw, err := os.ReadFile(AnchorPath(env, session))
-		if err != nil {
-			return ""
-		}
-		var got anchor
-		if err := json.Unmarshal(raw, &got); err != nil {
-			t.Fatal(err)
-		}
-		return got.NativeCwd
-	}
-	if Guard(env, a, b, session) != nil || anchorOf() != "" {
-		t.Fatal("a thread without state was anchored")
+	if Guard(env, a, b, session) != nil || anchorOf(t, env) != a {
+		t.Fatalf("a thread without state anchored %q, want %q", anchorOf(t, env), a)
 	}
 	writePhase(t, a, state.PhaseIdle)
-	if Guard(env, a, b, session) != nil || anchorOf() != b {
-		t.Fatalf("a thread moving on with nothing in flight anchored %q", anchorOf())
+	if Guard(env, a, b, session) != nil || anchorOf(t, env) != a {
+		t.Fatalf("a move with nothing in flight anchored %q before the host confirmed it", anchorOf(t, env))
 	}
 	writePhase(t, a, state.PhaseP)
-	if c := Guard(env, a, b, session); c == nil || anchorOf() != a {
-		t.Fatalf("a refused move: %v, anchor %q", c, anchorOf())
+	if c := Guard(env, a, b, session); c == nil || anchorOf(t, env) != a {
+		t.Fatalf("a refused move: %v, anchor %q", c, anchorOf(t, env))
 	}
-	if Guard(env, a, "", session) != nil || anchorOf() != a {
-		t.Fatalf("a resume that keeps the root anchored %q", anchorOf())
+	if Guard(env, a, "", session) != nil || anchorOf(t, env) != a {
+		t.Fatalf("a resume that keeps the root anchored %q", anchorOf(t, env))
 	}
 	if c := Bootstrap(env, b, session); c == nil || c.NativeCwd != a {
 		t.Fatalf("bootstrap at the other cwd: %+v", c)
 	}
 	if c := Bootstrap(envAt(t.TempDir()), b, session); c != nil {
 		t.Fatalf("a session without an anchor: %v", c)
+	}
+}
+
+// Review P1: a resume the host moved away from the anchored root (an external resume changed the
+// cwd it reports) is judged against the anchor, not the cwd the host reports now, so Guard and the
+// SessionStart bootstrap name the same root. The settings-free resume, which sends no cwd, is the
+// same.
+func TestGuardJudgesAgainstThePreservedAnchorWhateverTheHostReportsNow(t *testing.T) {
+	a, b := t.TempDir(), t.TempDir()
+	env := envAt(t.TempDir())
+	writePhase(t, a, state.PhaseP)
+	if Guard(env, a, a, session) != nil {
+		t.Fatal("the first resume at the root was refused")
+	}
+	for name, target := range map[string]string{"cwd sent": b, "settings-free": ""} {
+		c := Guard(env, b, target, session)
+		if c == nil || c.NativeCwd != a || c.TargetCwd != b {
+			t.Errorf("%s: host cwd %s, anchor %s: conflict %+v", name, b, a, c)
+		}
+	}
+	if c := Bootstrap(env, b, session); c == nil || c.NativeCwd != a {
+		t.Errorf("Bootstrap names another root: %+v", c)
+	}
+	if anchorOf(t, env) != a {
+		t.Errorf("the anchor moved to %q", anchorOf(t, env))
+	}
+	// A resume back at the anchored root is the root.
+	if c := Guard(env, b, a, session); c != nil {
+		t.Errorf("a resume back at the root: %v", c)
+	}
+}
+
+// Review P1: a resume that fails after the check leaves the thread where it was, so the anchor
+// stays at the work, and the SessionStart of the thread that did not move is still guarded.
+func TestAFailedResumeDoesNotLoseTheNativeAnchor(t *testing.T) {
+	a, b := t.TempDir(), t.TempDir()
+	env := envAt(t.TempDir())
+	writePhase(t, a, state.PhaseIdle)
+	if Guard(env, a, b, session) != nil {
+		t.Fatal("a move with nothing in flight was refused")
+	}
+	// The resume was rejected: no Moved. The thread is still at a and goes on to work there.
+	writePhase(t, a, state.PhaseP)
+	if c := Bootstrap(env, b, session); c == nil || c.NativeCwd != a {
+		t.Fatalf("the failed resume lost the native anchor: %+v (anchor %q)", c, anchorOf(t, env))
+	}
+}
+
+// Review P1: the first CRW resume of a thread that has no state file yet still anchors it, so a
+// later SessionStart elsewhere, after the work started at the root, is guarded.
+func TestTheFirstResumeAnchorsBeforeSessionStartCreatesState(t *testing.T) {
+	a, b := t.TempDir(), t.TempDir()
+	env := envAt(t.TempDir())
+	if Guard(env, a, a, session) != nil {
+		t.Fatal("the first resume was refused")
+	}
+	if _, err := state.EnsureState(a, session); err != nil {
+		t.Fatal(err)
+	}
+	writePhase(t, a, state.PhaseP)
+	if c := Bootstrap(env, b, session); c == nil || c.NativeCwd != a {
+		t.Fatalf("a thread resumed by CRW before it had state is unguarded: %+v", c)
+	}
+	// The standalone control: nothing resolved it, so there is no anchor and no guard.
+	if c := Bootstrap(envAt(t.TempDir()), b, session); c != nil {
+		t.Fatalf("a standalone session: %v", c)
 	}
 }
 

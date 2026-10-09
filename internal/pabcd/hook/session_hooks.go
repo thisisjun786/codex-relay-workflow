@@ -55,6 +55,7 @@ func sessionHookSessionStart(p SessionHookSessionStartPayload, env host.LookupEn
 		return sessionHookAnswer("SessionStart", sessionHookStateRootContext(conflict))
 	}
 	_, _ = state.EnsureState(p.Cwd, p.SessionID)
+	stateroot.Bootstrapped(env, p.Cwd, p.SessionID)
 	return ""
 }
 

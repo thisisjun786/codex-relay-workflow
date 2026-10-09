@@ -2,6 +2,7 @@ package manage
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io/fs"
 	"os"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/stateroot"
 )
 
 // resumeInFlightAt writes the child's PABCD state at root in phase P with a plan epoch and a
@@ -118,5 +120,82 @@ func TestResumeAtTheNativeCwdGoesAheadWithWorkInFlight(t *testing.T) {
 	}
 	if n := host.Count("thread/resume"); n != 1 {
 		t.Fatalf("thread/resume was called %d times", n)
+	}
+}
+
+func resumeAnchor(t *testing.T) string {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(os.Getenv("CRW_HOME"), "state-roots", "01child.json"))
+	if err != nil {
+		return ""
+	}
+	var anchor struct{ NativeCwd string }
+	if json.Unmarshal(raw, &anchor) != nil {
+		t.Fatalf("anchor %s", raw)
+	}
+	return anchor.NativeCwd
+}
+
+// Review P1: the child was anchored at A, which holds its work, and the host now reports B (an
+// external resume moved it). A record naming B is judged against A, in the run and the dry run, and
+// the dry run writes nothing.
+func TestResumeIsJudgedAgainstThePreservedAnchorWhenTheHostReportsAnotherCwd(t *testing.T) {
+	for _, dry := range []bool{false, true} {
+		t.Run(map[bool]string{false: "run", true: "dry-run"}[dry], func(t *testing.T) {
+			a, b := t.TempDir(), t.TempDir()
+			t.Setenv("CRW_HOME", t.TempDir())
+			before := resumeInFlightAt(t, a)
+			if c := stateroot.Guard(os.LookupEnv, a, a, "01child"); c != nil {
+				t.Fatal(c)
+			}
+			host := resumeHost(t, "notLoaded")
+			host.Respond("thread/read", fakehost.Reply{Result: map[string]any{"thread": map[string]any{
+				"cwd": b, "model": "m", "reasoningEffort": "xhigh", "status": map[string]any{"type": "notLoaded"}}}})
+			exe, _ := resumeRelayScript(t, resumeTestAssignment, resumeSettingsAt(b), 0)
+			e, _, _ := resumeEnv(t, exe)
+			_, err := resumeRun(context.Background(), e, resumeConfig(host, "alpha", "beta"), resumeOptions{relationship: "rel-1", message: "m", dryRun: dry})
+			var failure *resumeFailure
+			if !errors.As(err, &failure) || failure.Reason != "state_root_conflict" {
+				t.Fatalf("err = %v, want state_root_conflict", err)
+			}
+			if methods := resumeHostMethods(host); !slices.Equal(methods, []string{"thread/read"}) {
+				t.Fatalf("the host saw %q", methods)
+			}
+			if after := resumeTreeBytes(t, a); len(after) != len(before) || resumeAnchor(t) != a {
+				t.Fatalf("the native state or anchor changed (anchor %q)", resumeAnchor(t))
+			}
+		})
+	}
+}
+
+// A run the host took moves the anchor to the cwd the child now runs at; a dry run, which resumes
+// nothing, leaves the anchor where it was.
+func TestOnlyAResumeTheHostTookMovesTheAnchor(t *testing.T) {
+	for _, dry := range []bool{true, false} {
+		t.Run(map[bool]string{false: "run", true: "dry-run"}[dry], func(t *testing.T) {
+			a, b := t.TempDir(), t.TempDir()
+			t.Setenv("CRW_HOME", t.TempDir())
+			if _, err := state.EnsureState(a, "01child"); err != nil {
+				t.Fatal(err)
+			}
+			if c := stateroot.Guard(os.LookupEnv, a, a, "01child"); c != nil {
+				t.Fatal(c)
+			}
+			host := resumeHost(t, "notLoaded")
+			host.Respond("thread/read", fakehost.Reply{Result: map[string]any{"thread": map[string]any{
+				"cwd": a, "model": "m", "reasoningEffort": "xhigh", "status": map[string]any{"type": "notLoaded"}}}})
+			exe, _ := resumeRelayScript(t, resumeTestAssignment, resumeSettingsAt(b), 0)
+			e, _, _ := resumeEnv(t, exe)
+			if _, err := resumeRun(context.Background(), e, resumeConfig(host, "alpha", "beta"), resumeOptions{relationship: "rel-1", message: "m", dryRun: dry}); err != nil {
+				t.Fatal(err)
+			}
+			want := a
+			if !dry {
+				want = b
+			}
+			if got := resumeAnchor(t); got != want {
+				t.Fatalf("anchor %q, want %q", got, want)
+			}
+		})
 	}
 }

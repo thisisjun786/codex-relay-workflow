@@ -176,6 +176,8 @@ func (b *Bridge) SendMessageToThread(ctx context.Context, in SendMessage) (ledge
 		if err != nil {
 			return err
 		}
+		// The host took the resume: the thread now runs at the cwd it was resumed at.
+		stateroot.Moved(os.LookupEnv, native, contract.CWD, in.ThreadID)
 		receipt["resumed"] = resumed
 		observed := resumed
 		if contract.MCP != nil {

@@ -12,6 +12,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/stateroot"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
@@ -150,5 +151,75 @@ func TestASendToAnotherCwdGoesAheadWhenNothingIsInFlight(t *testing.T) {
 		if err != nil || receipt["status"] != "accepted" || host.Count("thread/resume") != 1 {
 			t.Fatalf("idle=%v receipt=%v err=%v", idle, receipt, err)
 		}
+	}
+}
+
+func anchorAt(t *testing.T) string {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(os.Getenv("CRW_HOME"), "state-roots", stateRootThread+".json"))
+	if err != nil {
+		return ""
+	}
+	var anchor struct{ NativeCwd string }
+	if json.Unmarshal(raw, &anchor) != nil {
+		t.Fatalf("anchor %s", raw)
+	}
+	return anchor.NativeCwd
+}
+
+// Review P1: a resume the host rejects leaves the thread at its native root, so the anchor stays
+// there; a send that reached the host moves the anchor to the cwd the thread now runs in.
+func TestTheAnchorFollowsAResumeOnlyOnceTheHostTookIt(t *testing.T) {
+	a, b := t.TempDir(), t.TempDir()
+	if _, err := state.EnsureState(a, stateRootThread); err != nil {
+		t.Fatal(err)
+	}
+	bridge, host, input := stateRootSend(t, a, "notLoaded", b)
+	host.Respond("thread/resume", fakehost.Reply{Error: &fakehost.RPCError{Code: -32000, Message: "no such rollout"}})
+	receipt, err := bridge.SendMessageToThread(context.Background(), input)
+	if err != nil || receipt["status"] == "accepted" || host.Count("thread/resume") != 1 {
+		t.Fatalf("receipt=%v err=%v", receipt, err)
+	}
+	if got := anchorAt(t); got != a {
+		t.Fatalf("a rejected resume left the anchor at %q, want the native root %q", got, a)
+	}
+}
+
+// A send the host took runs the thread at the cwd it asked for, so the anchor follows it there once
+// nothing was in flight at the root it left.
+func TestTheAnchorMovesWithAResumeTheHostTook(t *testing.T) {
+	a, b := t.TempDir(), t.TempDir()
+	if _, err := state.EnsureState(a, stateRootThread); err != nil {
+		t.Fatal(err)
+	}
+	bridge, host, input := stateRootSend(t, a, "notLoaded", b)
+	receipt, err := bridge.SendMessageToThread(context.Background(), input)
+	if err != nil || receipt["status"] != "accepted" || host.Count("thread/resume") != 1 {
+		t.Fatalf("receipt=%v err=%v", receipt, err)
+	}
+	if got := anchorAt(t); got != b {
+		t.Fatalf("anchor %q, want %q", got, b)
+	}
+}
+
+// Review P1: the thread was anchored at A, which holds its work, and an external resume moved the
+// cwd the host reports to B. A send asking for B is judged against A, not against the host's B.
+func TestASendIsJudgedAgainstThePreservedAnchorWhenTheHostReportsAnotherCwd(t *testing.T) {
+	a, b := t.TempDir(), t.TempDir()
+	before := inFlightAt(t, a)
+	bridge, host, input := stateRootSend(t, b, "notLoaded", b)
+	if c := stateroot.Guard(os.LookupEnv, a, a, stateRootThread); c != nil {
+		t.Fatal(c)
+	}
+	receipt, err := bridge.SendMessageToThread(context.Background(), input)
+	rpc := pyjson.Map(receipt["rpcError"])
+	if err != nil || receipt["status"] != "failed" || rpc["code"] != "state_root_conflict" {
+		t.Fatalf("receipt=%v err=%v", receipt, err)
+	}
+	if n := host.Count("thread/resume"); n != 0 {
+		t.Fatalf("thread/resume was called %d times", n)
+	}
+	if !sameBytes(before, treeBytes(t, a)) || anchorAt(t) != a {
+		t.Fatalf("the native state or anchor changed (anchor %q)", anchorAt(t))
 	}
 }

@@ -340,10 +340,11 @@ func (a *Adapter) guardedSend(ctx context.Context, requestID, thread, message st
 		}
 		// CRW-1140: the thread's PABCD state lives at the cwd the host reports for it now, not at the
 		// recorded cwd, which a later settings record may have changed. A resume that would run the
-		// thread elsewhere while that state is in flight is refused before anything is sent.
+		// thread elsewhere while that state is in flight is refused before anything is sent, so the
+		// refusal is retry-safe and a repeated request ID is checked again once the conflict is gone.
 		target, _ := params["cwd"].(string)
 		if conflict := stateroot.Guard(os.LookupEnv, pyjson.Text(th["cwd"]), target, thread); conflict != nil {
-			refuse("thread/read", contract.OrderedObject{{Key: "code", Value: stateroot.Code}, {Key: "message", Value: conflict.Error() + "; message withheld"}}, false)
+			refuse("thread/read", contract.OrderedObject{{Key: "code", Value: stateroot.Code}, {Key: "message", Value: conflict.Error() + "; message withheld"}}, true)
 			return nil
 		}
 		// The limit is not in the record (the host never reports it back), so a resume built from the
@@ -374,6 +375,10 @@ func (a *Adapter) guardedSend(ctx context.Context, requestID, thread, message st
 			}
 		}
 		resumed, err := a.callValue(ctx, "thread/resume", params)
+		if err == nil {
+			// The host took the resume: the thread now runs at the cwd it was resumed at.
+			stateroot.Moved(os.LookupEnv, pyjson.Text(th["cwd"]), target, thread)
+		}
 		// A resume the transport certainly withheld never reached the host, so the stored limit is
 		// withdrawn; a resume that may have gone out (its answer lost) keeps it. The transport's own
 		// error decides this before a cancellation of the caller replaces it, as the caller's

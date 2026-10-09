@@ -437,14 +437,13 @@ func resumeRun(ctx context.Context, e *Env, cfg *Config, opts resumeOptions) (*r
 	// recorded cwd, which a later settings record may have changed. A record that would resume the
 	// child elsewhere while that state is in flight is refused before anything is sent, the dry run
 	// included, and the preserved state is named. Only a run that goes on to resume records the
-	// root as the child's anchor; the dry run writes nothing.
-	judge := func() *stateroot.Conflict {
-		if opts.dryRun {
-			return stateroot.Check(read.Thread.Cwd, settings.CWD, child)
-		}
-		return stateroot.Guard(resumeLookupEnv(e), read.Thread.Cwd, settings.CWD, child)
+	// child's anchor; the dry run writes nothing.
+	rootEnv := resumeLookupEnv(e)
+	judge := stateroot.Guard
+	if opts.dryRun {
+		judge = stateroot.Resolve
 	}
-	if conflict := judge(); conflict != nil {
+	if conflict := judge(rootEnv, read.Thread.Cwd, settings.CWD, child); conflict != nil {
 		return nil, &resumeFailure{Reason: stateroot.Code, Detail: conflict.Error() + "; nothing was sent"}
 	}
 	if opts.dryRun {
@@ -479,6 +478,8 @@ func resumeRun(ctx context.Context, e *Env, cfg *Config, opts resumeOptions) (*r
 	if err != nil {
 		return nil, err
 	}
+	// The host took the resume: the child now runs at the cwd it was resumed at.
+	stateroot.Moved(rootEnv, read.Thread.Cwd, settings.CWD, child)
 	var resumedSettings struct{ Model, ReasoningEffort string }
 	if err := json.Unmarshal(resumed, &resumedSettings); err != nil {
 		return nil, &resumeFailure{Reason: string(hostReadHostError), Detail: "thread/resume result: " + err.Error()}
