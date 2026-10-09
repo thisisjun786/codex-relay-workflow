@@ -266,7 +266,12 @@ func shellWriteExecCalleeExpr(rs []rune, end int) bool {
 			k := shellWriteExecSkipSpaceBack(rs, j) // builtins .exec: blanks may stand before the dot too
 			for _, module := range []string{"builtins", "__builtins__"} {
 				m := len(module)
-				if k < m || string(rs[k-m:k]) != module || shellWriteExecIdentRune(rs, k-m-1) || k-m-1 >= 0 && rs[k-m-1] == '.' {
+				if k < m || string(rs[k-m:k]) != module || shellWriteExecIdentRune(rs, k-m-1) {
+					continue
+				}
+				// Another object's .builtins (runner . builtins.exec) is a different callee; Python reads the dot through the
+				// same spacing, so it is looked for past blanks and continuations before the module name, as the forward dot is.
+				if p := shellWriteExecSkipSpaceBack(rs, k-m) - 1; p >= 0 && rs[p] == '.' {
 					continue
 				}
 				return true
