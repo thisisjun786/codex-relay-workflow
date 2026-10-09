@@ -77,45 +77,59 @@ func shellIRResolve(dests []string, dir shellir.Dir, cwd string) []string {
 	return out
 }
 
-// shellIRSortDests returns the file sort writes with -o: the separate, attached and long forms (-o FILE, -oFILE, -ro FILE,
-// --output FILE, --output=FILE and an unambiguous abbreviation of --output).
+// shellIRSortDests returns the file sort writes with -o, read the way getopt_long reads sort's command line: the separate,
+// attached and long forms (-o FILE, -oFILE, -ro FILE, --output FILE, --output=FILE), and --output spelled as any prefix GNU
+// accepts (--o, --ou, ... are --output: no other option of sort begins with o). The value of every other option that takes
+// one is skipped, so a value that looks like -o is no output. An option that is no option of sort, or a prefix that is
+// ambiguous, makes sort stop before it writes: no destination.
 func shellIRSortDests(args []shellir.Word) []string {
 	var out []string
+	longs := shellir.SortLongOptions()
 	for i := 0; i < len(args); i++ {
 		v := shellIRPlain(args[i])
-		name, _, _ := strings.Cut(v, "=")
 		switch {
 		case v == shellIRUnknownDest:
 			out = append(out, v)
 		case v == "--":
 			return out
-		case len(name) >= 5 && strings.HasPrefix("--output", name) && strings.HasPrefix(v, "--"):
-			if strings.Contains(v, "=") {
-				out = append(out, strings.TrimPrefix(v, name+"="))
-				break
+		case strings.HasPrefix(v, "--"):
+			name, attached, hasValue := strings.Cut(v[2:], "=")
+			opt, match := shellir.MatchLongOption(longs, name)
+			if match != shellir.LongFound || opt.Arg == shellir.OptionNoArg {
+				continue
 			}
-			if i+1 < len(args) {
-				i++
-				out = append(out, shellIRPlain(args[i]))
-			} else {
-				out = append(out, shellIRUnknownDest)
+			value, taken := attached, hasValue
+			if opt.Arg == shellir.OptionRequiredArg && !hasValue {
+				if i+1 < len(args) {
+					i++
+					value, taken = shellIRPlain(args[i]), true
+				} else if opt.Key == "o" {
+					out = append(out, shellIRUnknownDest)
+				}
 			}
-		case strings.HasPrefix(v, "-") && !strings.HasPrefix(v, "--") && len(v) > 1:
+			if taken && opt.Key == "o" {
+				out = append(out, value)
+			}
+		case strings.HasPrefix(v, "-") && len(v) > 1:
 			for j := 1; j < len(v); j++ {
-				if v[j] == 'o' {
-					if j+1 < len(v) {
-						out = append(out, v[j+1:])
-					} else if i+1 < len(args) {
-						i++
-						out = append(out, shellIRPlain(args[i]))
-					} else {
-						out = append(out, shellIRUnknownDest)
+				if !strings.ContainsRune(shellir.SortShortValueOptions, rune(v[j])) {
+					continue
+				}
+				value := v[j+1:]
+				if value == "" {
+					if i+1 >= len(args) {
+						if v[j] == 'o' {
+							out = append(out, shellIRUnknownDest)
+						}
+						break
 					}
-					break
+					i++
+					value = shellIRPlain(args[i])
 				}
-				if strings.ContainsRune("kStTyx", rune(v[j])) {
-					break // this option takes a value: the rest of the word is that value
+				if v[j] == 'o' {
+					out = append(out, value)
 				}
+				break // the rest of the word, or the next word, is this option's value
 			}
 		}
 	}
@@ -325,42 +339,28 @@ var (
 	shellIRPyOpenAlias      = regexp.MustCompile(`[=,(\[:]\s*open\s*(?:[,)\]:;#\r\n]|$)`)
 )
 
-// shellIRSedDests returns the files sed -i rewrites. Every operand is reported, the script included, as the reading of
-// sed's operands always did; the option values of -e, -f and -l are not operands.
+// shellIRSedDests returns the files sed -i rewrites (-i, -I and --in-place in any spelling, abbreviations included). Every
+// operand is reported, the script included, as the reading of sed's operands always did; the option values of -e, -f and -l
+// are not operands, and neither is the empty suffix word of the BSD form of -i. A word the reader cannot evaluate is the
+// unknown destination.
 func shellIRSedDests(args []shellir.Word) []string {
-	inPlace := false
 	for _, a := range args {
-		v := shellIRPlain(a)
-		if v == shellIRUnknownDest {
+		if v := shellIRPlain(a); v == shellIRUnknownDest {
 			return []string{v}
 		}
-		if v == "--in-place" || strings.HasPrefix(v, "--in-place=") || (strings.HasPrefix(v, "-") && !strings.HasPrefix(v, "--") && strings.Contains(v, "i")) {
-			inPlace = true
-		}
 	}
-	if !inPlace {
+	pa, err := shellir.ParseSedArgs("sed", args)
+	if err != nil {
+		return []string{shellIRUnknownDest}
+	}
+	if !pa.InPlace {
 		return nil
 	}
 	var out []string
-	skip := false
-	for i, a := range args {
-		v := shellIRPlain(a)
-		if skip {
-			skip = false
-			continue
+	for _, w := range pa.Operands {
+		if v := shellIRPlain(w); v != "" && v != "-" {
+			out = append(out, v)
 		}
-		if v == "-i" && i+1 < len(args) && shellIRPlain(args[i+1]) == "" {
-			skip = true
-			continue
-		}
-		if v == "-e" || v == "-f" || v == "-l" {
-			skip = true
-			continue
-		}
-		if strings.HasPrefix(v, "-") && v != shellIRUnknownDest {
-			continue
-		}
-		out = append(out, v)
 	}
 	return out
 }

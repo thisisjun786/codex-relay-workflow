@@ -1,0 +1,558 @@
+# CRW-941 (sed script writes, sort -o, script files, in-place) read the way getopt_long reads GNU options: any unambiguous
+# prefix of a long option names it (re-check of 2026-10-09 on dev 09e5c5bcc: sort --o, --ou and the rest of the prefixes of
+# --output were not read; the verifier added sed --expression with a separate script word).
+
+=== CRW-941-S01 | W
+--why --o=FILE is an unambiguous GNU prefix of --output (getopt_long): the file is written.
+sort --o={MEMORY}/a x.txt
+
+=== CRW-941-S02 | W
+--why --o FILE (separate value), the shortest prefix of --output.
+sort --o {MEMORY}/a x.txt
+
+=== CRW-941-S03 | W
+--why --ou=FILE, prefix of --output.
+sort --ou={MEMORY}/a x.txt
+
+=== CRW-941-S04 | W
+--why --ou FILE, prefix of --output.
+sort --ou {MEMORY}/a x.txt
+
+=== CRW-941-S05 | W
+--why --out=FILE, prefix of --output.
+sort --out={MEMORY}/a x.txt
+
+=== CRW-941-S06 | W
+--why --out FILE, prefix of --output.
+sort --out {MEMORY}/a x.txt
+
+=== CRW-941-S07 | W
+--why --outp=FILE, prefix of --output.
+sort --outp={MEMORY}/a x.txt
+
+=== CRW-941-S08 | W
+--why --outp FILE, prefix of --output.
+sort --outp {MEMORY}/a x.txt
+
+=== CRW-941-S09 | W
+--why --outpu=FILE, prefix of --output.
+sort --outpu={MEMORY}/a x.txt
+
+=== CRW-941-S10 | W
+--why --outpu FILE, prefix of --output.
+sort --outpu {MEMORY}/a x.txt
+
+=== CRW-941-S11 | W
+--why --output FILE, the full name with a separate value.
+sort --output {MEMORY}/a x.txt
+
+=== CRW-941-S12 | W
+--why -oFILE, the attached short form.
+sort -o{MEMORY}/a x.txt
+
+=== CRW-941-S13 | W
+--why -o FILE, the separate short form.
+sort -o {MEMORY}/a x.txt
+
+=== CRW-941-S14 | W
+--why -ro FILE, a bundle that ends in o takes the next word.
+sort -ro {MEMORY}/a x.txt
+
+=== CRW-941-S15 | W
+--why -roFILE, a bundle with the value attached.
+sort -ro{MEMORY}/a x.txt
+
+=== CRW-941-S16 | W
+--why The option after the operand: getopt permutes, so --o=FILE still counts.
+sort x.txt --o={MEMORY}/a
+
+=== CRW-941-S17 | W
+--why Other options before the abbreviated one.
+sort -n -k 1,1 --ou {MEMORY}/a x.txt
+
+=== CRW-941-S18 | W
+--why --o=FILE with a here-document as the input.
+sort --o={MEMORY}/a <<'EOF'
+b
+a
+EOF
+
+=== CRW-941-S19 | W
+--why --ou FILE with a here-document as the input.
+sort --ou {MEMORY}/a <<'EOF'
+b
+a
+EOF
+
+=== CRW-941-S20 | W
+--why The value of --key is consumed, then --o FILE writes.
+sort --key=1 --o {MEMORY}/a x.txt
+
+=== CRW-941-S21 | W
+--why -t, then the abbreviation.
+sort -t, --o={MEMORY}/a x.txt
+
+=== CRW-941-S22 | W
+--why A quoted value.
+sort --o="{MEMORY}/a" x.txt
+
+=== CRW-941-S23 | W
+--why A pipe feeds the input.
+cat x.txt | sort --o {MEMORY}/a
+
+=== CRW-941-S24 | W
+--why The separate value of a long option that takes one (--compress-program) is consumed before --o.
+sort --compress-program gzip --o {MEMORY}/a x.txt
+
+=== CRW-941-S25 | W
+--why The destination is an expansion the reader cannot evaluate: unknown, so the gate asks.
+sort --o="$OUT" x.txt
+
+=== CRW-941-S26 | W
+--why sort -o in a bundle with a key option before it: -k takes its own value.
+sort -k1,1 -o {MEMORY}/a x.txt
+
+=== CRW-941-S27 | W
+--why A bundle of flags then --ou: -nr is no output.
+sort -nr --ou={MEMORY}/a x.txt
+
+=== CRW-941-S28 | B
+--why --o=FILE in the working directory writes outside the protected root.
+sort --o=out.txt x.txt
+
+=== CRW-941-S29 | B
+--why --ou FILE in the working directory.
+sort --ou out.txt x.txt
+
+=== CRW-941-S30 | B
+--why --o=FILE under the trusted temporary root.
+sort --o={TMP}/out x.txt
+
+=== CRW-941-S31 | B
+--why After -- the word is an input file, not an option.
+sort -- --o={MEMORY}/a
+
+=== CRW-941-S32 | B
+--why --s is ambiguous (--sort, --stable): sort refuses to run, nothing is written.
+sort --s={MEMORY}/a x.txt
+
+=== CRW-941-S33 | B
+--why --so=VALUE is --sort=VALUE, not an output.
+sort --so={MEMORY}/a x.txt
+
+=== CRW-941-S34 | B
+--why The value of --key is read as the value: -o here is the key, and the memory file is an input.
+sort --key -o {MEMORY}/a
+
+=== CRW-941-S35 | B
+--why sort options that write nothing.
+sort --reverse --unique --version-sort x.txt
+
+=== CRW-941-S36 | B
+--why Several short options, no output.
+sort -u -n -k2,2 x.txt
+
+=== CRW-941-E01 | W
+--why --expression SCRIPT with the script as a separate argument.
+sed --expression 'w {MEMORY}/a' x.txt
+
+=== CRW-941-E02 | W
+--why --expression=SCRIPT.
+sed --expression='w {MEMORY}/a' x.txt
+
+=== CRW-941-E03 | W
+--why --expr=SCRIPT, a prefix of --expression.
+sed --expr='w {MEMORY}/a' x.txt
+
+=== CRW-941-E04 | W
+--why --expr SCRIPT with a separate argument.
+sed --expr 'w {MEMORY}/a' x.txt
+
+=== CRW-941-E05 | W
+--why --exp SCRIPT.
+sed --exp 'w {MEMORY}/a' x.txt
+
+=== CRW-941-E06 | W
+--why --e=SCRIPT: only --expression starts with e.
+sed --e='w {MEMORY}/a' x.txt
+
+=== CRW-941-E07 | W
+--why --e SCRIPT.
+sed --e 'w {MEMORY}/a' x.txt
+
+=== CRW-941-E08 | W
+--why --expressio=SCRIPT, one letter short.
+sed --expressio='w {MEMORY}/a' x.txt
+
+=== CRW-941-E09 | W
+--why -n then --expression SCRIPT.
+sed -n --expression 'w {MEMORY}/a' x.txt
+
+=== CRW-941-E10 | W
+--why Two --expression arguments; the second writes.
+sed --expression p --expression 'W {MEMORY}/a' x.txt
+
+=== CRW-941-E11 | W
+--why --expression SCRIPT with a here-document as the input.
+sed --expression 'w {MEMORY}/a' <<'EOF'
+abc
+EOF
+
+=== CRW-941-E12 | W
+--why --exp=SCRIPT with a here-document as the input.
+sed --exp='w {MEMORY}/a' <<'EOF'
+abc
+EOF
+
+=== CRW-941-E13 | W
+--why -eSCRIPT attached.
+sed -e'w {MEMORY}/a' x.txt
+
+=== CRW-941-E14 | W
+--why -ne SCRIPT in a bundle.
+sed -ne 'w {MEMORY}/a' x.txt
+
+=== CRW-941-E15 | W
+--why The s///w flag in a later -e.
+sed -n -e p -e 's/a/b/w {MEMORY}/a' x.txt
+
+=== CRW-941-E16 | W
+--why The script after -- is the first operand.
+sed -n -- 'w {MEMORY}/a' x.txt
+
+=== CRW-941-E17 | W
+--why w after ; in the script.
+sed 'p;w {MEMORY}/a' x.txt
+
+=== CRW-941-E18 | W
+--why w on the second line of the script.
+sed 'p
+w {MEMORY}/a' x.txt
+
+=== CRW-941-E19 | W
+--why The w flag after g.
+sed 's/a/b/gw {MEMORY}/a' x.txt
+
+=== CRW-941-E20 | W
+--why The w flag after a number.
+sed 's/a/b/2w {MEMORY}/a' x.txt
+
+=== CRW-941-E21 | W
+--why s with another delimiter.
+sed 'sxaxbxw {MEMORY}/a' x.txt
+
+=== CRW-941-E22 | W
+--why w inside a block; the name runs to the end of the line.
+sed -n '/x/{p;w {MEMORY}/a
+}' x.txt
+
+=== CRW-941-E23 | W
+--why -E with a w flag.
+sed -E 's/(a)/\1/w {MEMORY}/a' x.txt
+
+=== CRW-941-E24 | W
+--why -l takes a value; the script after it.
+sed -l 5 'w {MEMORY}/a' x.txt
+
+=== CRW-941-E25 | W
+--why --line-length N then the script.
+sed --line-length 5 'w {MEMORY}/a' x.txt
+
+=== CRW-941-E26 | W
+--why --line-length=N then the script.
+sed --line-length=5 'w {MEMORY}/a' x.txt
+
+=== CRW-941-E27 | W
+--why --line N (a prefix) then the script.
+sed --line 5 'w {MEMORY}/a' x.txt
+
+=== CRW-941-E28 | W
+--why -s with two inputs.
+sed -s 'w {MEMORY}/a' x.txt y.txt
+
+=== CRW-941-E29 | W
+--why --quiet then the script.
+sed --quiet 'w {MEMORY}/a' x.txt
+
+=== CRW-941-E30 | W
+--why --silent then the script.
+sed --silent 'w {MEMORY}/a' x.txt
+
+=== CRW-941-E31 | W
+--why --regexp-extended then the script.
+sed --regexp-extended 'w {MEMORY}/a' x.txt
+
+=== CRW-941-E32 | W
+--why --regexp (a prefix) then the script.
+sed --regexp 'w {MEMORY}/a' x.txt
+
+=== CRW-941-E33 | W
+--why --null-data then the script.
+sed --null-data 'w {MEMORY}/a' x.txt
+
+=== CRW-941-E34 | W
+--why --zero-terminated then the script.
+sed --zero-terminated 'w {MEMORY}/a' x.txt
+
+=== CRW-941-E35 | W
+--why --z (a prefix of --zero-terminated) then the script.
+sed --z 'w {MEMORY}/a' x.txt
+
+=== CRW-941-E36 | W
+--why --posix then the script.
+sed --posix 'w {MEMORY}/a' x.txt
+
+=== CRW-941-E37 | W
+--why -z -u then the script.
+sed -z -u 'w {MEMORY}/a' x.txt
+
+=== CRW-941-E38 | W
+--why GNU opens every w file when it compiles the script, so a w after q still creates and truncates the file.
+sed 'q;w {MEMORY}/a' x.txt
+
+=== CRW-941-E39 | W
+--why q with an exit code, then w.
+sed 'q5;w {MEMORY}/a' x.txt
+
+=== CRW-941-E40 | W
+--why l with a width, then w.
+sed -n 'l 5;w {MEMORY}/a' x.txt
+
+=== CRW-941-E41 | W
+--why A branch whose label ends at the semicolon, then w.
+sed 'b end;w {MEMORY}/a;:end' x.txt
+
+=== CRW-941-E42 | W
+--why A label ends at the semicolon, then w.
+sed ':a;w {MEMORY}/a;ba' x.txt
+
+=== CRW-941-E43 | W
+--why w in a script given with -e and the input as a here-document.
+sed -n -e p -e 'w {MEMORY}/a' <<'EOF'
+abc
+EOF
+
+=== CRW-941-E44 | U
+--why The file name is an expansion the reader cannot evaluate: the destination is unknown, so the gate asks.
+sed "w $X/a" x.txt
+
+=== CRW-941-E45 | W
+--why T and t labels then w.
+sed 't end;w {MEMORY}/a;:end' x.txt
+
+=== CRW-941-E46 | W
+--why Two inputs and an option after the script.
+sed 'w {MEMORY}/a' x.txt -n
+
+=== CRW-941-F01 | U
+--why --file FILE (separate): the script file is not read.
+sed --file s.sed x.txt
+
+=== CRW-941-F02 | U
+--why --file=FILE.
+sed --file=s.sed x.txt
+
+=== CRW-941-F03 | U
+--why --fi=FILE, a prefix of --file.
+sed --fi=s.sed x.txt
+
+=== CRW-941-F04 | U
+--why --fil FILE, a prefix of --file.
+sed --fil s.sed x.txt
+
+=== CRW-941-F05 | U
+--why -nf FILE in a bundle.
+sed -nf s.sed x.txt
+
+=== CRW-941-F06 | U
+--why -fFILE attached.
+sed -fs.sed x.txt
+
+=== CRW-941-F07 | U
+--why A script file next to an -e script.
+sed -e p -f s.sed x.txt
+
+=== CRW-941-F08 | U
+--why --file=- reads the script from the here-document.
+sed --file=- <<'EOF'
+w {MEMORY}/a
+EOF
+
+=== CRW-941-F09 | U
+--why --file - reads the script from the here-document.
+sed --file - x.txt <<'EOF'
+w {MEMORY}/a
+EOF
+
+=== CRW-941-F10 | U
+--why The script file is written by the same text and then run.
+printf 'w {MEMORY}/a\n' > s.sed; sed -f s.sed x.txt
+
+=== CRW-941-F11 | U
+--why The script file is a here-document written first and then run.
+cat > s.sed <<'EOF'
+w {MEMORY}/a
+EOF
+sed -f s.sed x.txt
+
+=== CRW-941-F12 | U
+--why --f is ambiguous (--file, --follow-symlinks): the reader refuses what it cannot prove.
+sed --f s.sed x.txt
+
+=== CRW-941-F13 | U
+--why --s is ambiguous (--silent, --separate, --sandbox): refused.
+sed --s p x.txt
+
+=== CRW-941-F14 | U
+--why An option outside the model.
+sed --no-such-option p x.txt
+
+=== CRW-941-I01 | W
+--why -i rewrites its operand.
+sed -i 's/a/b/' {MEMORY}/a
+
+=== CRW-941-I02 | W
+--why --in-place rewrites its operand.
+sed --in-place 's/a/b/' {MEMORY}/a
+
+=== CRW-941-I03 | W
+--why --in (a prefix of --in-place) rewrites its operand.
+sed --in 's/a/b/' {MEMORY}/a
+
+=== CRW-941-I04 | W
+--why --i=SUFFIX rewrites its operand.
+sed --i=.bak 's/a/b/' {MEMORY}/a
+
+=== CRW-941-I05 | W
+--why --in-place=SUFFIX with -e.
+sed --in-place=.bak -e p {MEMORY}/a
+
+=== CRW-941-I06 | W
+--why -i with -e.
+sed -i -e 's/a/b/' {MEMORY}/a
+
+=== CRW-941-I07 | W
+--why -ni rewrites its operand.
+sed -ni p {MEMORY}/a
+
+=== CRW-941-I08 | W
+--why -i.bak rewrites its operand.
+sed -i.bak 's/a/b/' {MEMORY}/a
+
+=== CRW-941-I09 | W
+--why --in-pl (a prefix) with --expression.
+sed --in-pl --expression 's/a/b/' {MEMORY}/a
+
+=== CRW-941-I10 | B
+--why --in-place on a file in the working directory.
+sed --in-place 's/a/b/' out.txt
+
+=== CRW-941-I11 | B
+--why --in=SUFFIX on a file in the working directory.
+sed --in=.bak 's/a/b/' out.txt
+
+=== CRW-941-C01 | B
+--why --expression with a substitution writes nothing.
+sed --expression 's/a/b/' x.txt
+
+=== CRW-941-C02 | B
+--why --expr=p writes nothing.
+sed --expr=p x.txt
+
+=== CRW-941-C03 | B
+--why --quiet --expression=p writes nothing.
+sed --quiet --expression=p x.txt
+
+=== CRW-941-C04 | B
+--why w in a pattern is no command.
+sed -n -e 's/w/x/' x.txt
+
+=== CRW-941-C05 | B
+--why y with w characters.
+sed 'y/w/x/' x.txt
+
+=== CRW-941-C06 | B
+--why A w in an address pattern is no command.
+sed -n '/w a/p' x.txt
+
+=== CRW-941-C07 | B
+--why w to a file in the working directory.
+sed 'w out.txt' x.txt
+
+=== CRW-941-C08 | B
+--why The w flag to a file in the working directory.
+sed 's/a/b/w out.txt' x.txt
+
+=== CRW-941-C09 | B
+--why --expr with a w to a file in the working directory.
+sed --expr='w out.txt' x.txt
+
+=== CRW-941-C10 | B
+--why w to /dev/stdout.
+sed -e 'w /dev/stdout' x.txt
+
+=== CRW-941-C11 | B
+--why w to /dev/stderr.
+sed --expression 'w /dev/stderr' x.txt
+
+=== CRW-941-C12 | B
+--why r reads the file, it does not write it.
+sed 'r {MEMORY}/a' x.txt
+
+=== CRW-941-C13 | B
+--why R reads the file.
+sed 'R {MEMORY}/a' x.txt
+
+=== CRW-941-C14 | B
+--why The text of a is no command.
+sed 'a w {MEMORY}/a' x.txt
+
+=== CRW-941-C15 | B
+--why The text of i is no command.
+sed '1i w {MEMORY}/a' x.txt
+
+=== CRW-941-C16 | B
+--why sed -n p with a here-document as the input.
+sed -n p <<'EOF'
+abc
+EOF
+
+=== CRW-941-C17 | B
+--why The common join loop: a label, N, a branch.
+sed ':a;N;$!ba;s/\n/ /g' x.txt
+
+=== CRW-941-C18 | B
+--why A block with p and q.
+sed -n '/a/{p;q}' x.txt
+
+=== CRW-941-C19 | B
+--why A branch, a test and a label.
+sed 's/a/b/;t end;s/c/d/;:end' x.txt
+
+=== CRW-941-C20 | B
+--why Delete lines.
+sed '1d;$d' x.txt
+
+=== CRW-941-C21 | B
+--why -s -n with two inputs.
+sed -s -n '$p' x.txt y.txt
+
+=== CRW-941-C22 | B
+--why -E with a group.
+sed -E 's/(a|b)/\1/' x.txt
+
+=== CRW-941-C23 | B
+--why l with a width and q with a code.
+sed -n 'l 5;q5' x.txt
+
+=== CRW-941-C24 | B
+--why sed in a pipe into sort -o in the working directory.
+sed -n p x.txt | sort --o=out.txt
+
+=== CRW-941-C25 | B
+--why -e script, another -e script, no write.
+sed -e 's/a/b/' -e 's/c/d/' x.txt
+
+=== CRW-941-C26 | B
+--why The script after -- is the first operand and writes nothing.
+sed -n -- p x.txt

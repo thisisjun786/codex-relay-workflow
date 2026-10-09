@@ -7,85 +7,28 @@ import (
 )
 
 // shellIRSedScriptDests returns the files a sed command's script writes: the file of a w or W command and of the w flag
-// of s, read from the script text the command gives (-e, --expression, or the first operand when no -e or -f is
-// given). A script file (-f) is not read here: its text is not in the command. A script this reader cannot read names
-// the unknown destination.
+// of s, read from the script text the command gives (-e, --expression, any unambiguous abbreviation of it, or the first
+// operand when no -e or -f is given). The options are read as getopt_long reads them (shellir.ParseSedArgs). A script file
+// (-f) is not read here: its text is not in the command, and the walker records it as a script file the gates cannot read. A
+// word or script this reader cannot read names the unknown destination.
 func shellIRSedScriptDests(args []shellir.Word) []string {
-	var scripts, operands []string
-	haveScript := false
 	unknown := []string{shellIRUnknownDest}
-	for i := 0; i < len(args); i++ {
-		v := shellIRPlain(args[i])
-		if v == shellIRUnknownDest {
+	for _, a := range args {
+		if shellIRPlain(a) == shellIRUnknownDest {
 			return unknown
 		}
-		switch {
-		case v == "--":
-			for _, rest := range args[i+1:] {
-				operands = append(operands, shellIRPlain(rest))
-			}
-			i = len(args)
-		case v == "-e" || v == "--expression" || v == "-f" || v == "--file" || v == "-l" || v == "--line-length":
-			if i+1 >= len(args) {
-				return unknown
-			}
-			i++
-			val := shellIRPlain(args[i])
-			if val == shellIRUnknownDest {
-				return unknown
-			}
-			if v == "-e" || v == "--expression" {
-				haveScript = true
-				scripts = append(scripts, val)
-			} else if v == "-f" || v == "--file" {
-				haveScript = true
-			}
-		case strings.HasPrefix(v, "--expression="):
-			haveScript = true
-			scripts = append(scripts, strings.TrimPrefix(v, "--expression="))
-		case strings.HasPrefix(v, "--file="):
-			haveScript = true
-		case strings.HasPrefix(v, "--"):
-		case strings.HasPrefix(v, "-") && len(v) > 1:
-			for j := 1; j < len(v); j++ {
-				c := v[j]
-				if c == 'e' || c == 'f' || c == 'l' {
-					rest := v[j+1:]
-					if rest == "" {
-						if i+1 >= len(args) {
-							return unknown
-						}
-						i++
-						rest = shellIRPlain(args[i])
-						if rest == shellIRUnknownDest {
-							return unknown
-						}
-					}
-					if c == 'e' {
-						haveScript = true
-						scripts = append(scripts, rest)
-					} else if c == 'f' {
-						haveScript = true
-					}
-					break
-				}
-				if c == 'i' {
-					break // -i[SUFFIX] takes the rest of the word as its suffix
-				}
-			}
-		default:
-			operands = append(operands, v)
-		}
 	}
-	if !haveScript {
-		if len(operands) == 0 {
-			return nil
-		}
-		scripts = append(scripts, operands[0])
+	pa, err := shellir.ParseSedArgs("sed", args)
+	if err != nil {
+		return unknown
+	}
+	scripts := pa.Scripts
+	if len(scripts) == 0 && len(pa.Files) == 0 && len(pa.Operands) > 0 {
+		scripts = pa.Operands[:1]
 	}
 	var out []string
-	for _, s := range scripts {
-		for _, d := range shellSedWriteDests(s) {
+	for _, w := range scripts {
+		for _, d := range shellSedWriteDests(shellIRPlain(w)) {
 			if !slicesContainsString(out, d) {
 				out = append(out, d)
 			}
@@ -186,8 +129,28 @@ func shellSedWriteDests(script string) []string {
 			out = append(out, name)
 		case 'e':
 			return unknown // e runs a shell command the script names
-		case 'r', 'R', 'a', 'i', 'c', ':', 'b', 't', 'T', 'l', 'L', 'q', 'Q':
+		case 'r', 'R', 'a', 'i', 'c':
 			toEOL()
+		case ':', 'b', 't', 'T':
+			// A label ends at a blank, a semicolon or a brace: GNU sed goes on with the commands after it (b end;w f). A
+			// reading that ended it later would skip a w the script runs, so the earliest end is taken.
+			for i < len(rs) && (rs[i] == ' ' || rs[i] == '\t') {
+				i++
+			}
+			for i < len(rs) && !strings.ContainsRune(" \t\n;}", rs[i]) {
+				i++
+			}
+		case 'l', 'L', 'q', 'Q':
+			// An optional number (a line width or an exit code), then the next command: sed opens every w file when it
+			// reads the script, so a w after q is a write too.
+			for i < len(rs) && (rs[i] == ' ' || rs[i] == '\t') {
+				i++
+			}
+			for i < len(rs) && rs[i] >= '0' && rs[i] <= '9' {
+				i++
+			}
+		case '{', '}':
+			// a block opened or closed after an address: the commands inside are read in turn
 		case '=', 'd', 'D', 'g', 'G', 'h', 'H', 'n', 'N', 'p', 'P', 'x', 'z', 'F':
 		case 's':
 			if i >= len(rs) {

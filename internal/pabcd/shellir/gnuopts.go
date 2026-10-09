@@ -1,0 +1,246 @@
+package shellir
+
+import "strings"
+
+// OptionArg says whether a GNU option takes a value: none, a required one (attached with = or =VALUE for a long option, the
+// next word otherwise), or an optional one (attached only).
+type OptionArg int
+
+const (
+	OptionNoArg OptionArg = iota
+	OptionRequiredArg
+	OptionOptionalArg
+)
+
+// LongOption is one entry of a getopt_long table. Key names what the option means: two names (or a long name and a short
+// letter) that mean the same thing share a Key, which is what getopt_long compares when it decides an abbreviation is
+// unambiguous.
+type LongOption struct {
+	Name string
+	Arg  OptionArg
+	Key  string
+}
+
+// LongMatch is the outcome of reading a long option name against a table.
+type LongMatch int
+
+const (
+	// LongNone: no option of the table begins with the name.
+	LongNone LongMatch = iota
+	// LongFound: the name is an option, spelled in full or as the only prefix that matches.
+	LongFound
+	// LongAmbiguous: several options with different meanings begin with the name; getopt_long stops the program.
+	LongAmbiguous
+)
+
+// MatchLongOption reads a long option name (the text after the two dashes, without any =VALUE) the way getopt_long does: a
+// name that is exactly an option is that option; otherwise a name that is a prefix of exactly one option, or of several that
+// all take the same kind of value and mean the same thing, is that option; a prefix of options that differ is ambiguous.
+func MatchLongOption(table []LongOption, name string) (LongOption, LongMatch) {
+	var found []LongOption
+	for _, o := range table {
+		if o.Name == name {
+			return o, LongFound
+		}
+		if strings.HasPrefix(o.Name, name) {
+			found = append(found, o)
+		}
+	}
+	switch len(found) {
+	case 0:
+		return LongOption{}, LongNone
+	case 1:
+		return found[0], LongFound
+	}
+	for _, o := range found[1:] {
+		if o.Arg != found[0].Arg || o.Key != found[0].Key {
+			return LongOption{}, LongAmbiguous
+		}
+	}
+	return found[0], LongFound
+}
+
+// SortLongOptions is the long option table of GNU sort (coreutils sort.c). The destination of the write sort makes is the
+// value of the option with Key "o".
+func SortLongOptions() []LongOption {
+	return []LongOption{
+		{"batch-size", OptionRequiredArg, "batch-size"},
+		{"buffer-size", OptionRequiredArg, "S"},
+		{"check", OptionOptionalArg, "check"},
+		{"compress-program", OptionRequiredArg, "compress-program"},
+		{"debug", OptionNoArg, "debug"},
+		{"dictionary-order", OptionNoArg, "d"},
+		{"field-separator", OptionRequiredArg, "t"},
+		{"files0-from", OptionRequiredArg, "files0-from"},
+		{"general-numeric-sort", OptionNoArg, "g"},
+		{"help", OptionNoArg, "help"},
+		{"human-numeric-sort", OptionNoArg, "h"},
+		{"ignore-case", OptionNoArg, "f"},
+		{"ignore-leading-blanks", OptionNoArg, "b"},
+		{"ignore-nonprinting", OptionNoArg, "i"},
+		{"key", OptionRequiredArg, "k"},
+		{"merge", OptionNoArg, "m"},
+		{"month-sort", OptionNoArg, "M"},
+		{"numeric-sort", OptionNoArg, "n"},
+		{"output", OptionRequiredArg, "o"},
+		{"parallel", OptionRequiredArg, "parallel"},
+		{"random-sort", OptionNoArg, "R"},
+		{"random-source", OptionRequiredArg, "random-source"},
+		{"reverse", OptionNoArg, "r"},
+		{"sort", OptionRequiredArg, "sort"},
+		{"stable", OptionNoArg, "s"},
+		{"temporary-directory", OptionRequiredArg, "T"},
+		{"unique", OptionNoArg, "u"},
+		{"version", OptionNoArg, "version"},
+		{"version-sort", OptionNoArg, "V"},
+		{"zero-terminated", OptionNoArg, "z"},
+	}
+}
+
+// SortShortValueOptions are the short options of GNU sort that take a value, attached or as the next word.
+const SortShortValueOptions = "koSTty"
+
+// SedLongOptions is the long option table of GNU sed (sed.c).
+func SedLongOptions() []LongOption {
+	return []LongOption{
+		{"binary", OptionNoArg, "b"},
+		{"debug", OptionNoArg, "debug"},
+		{"expression", OptionRequiredArg, "e"},
+		{"file", OptionRequiredArg, "f"},
+		{"follow-symlinks", OptionNoArg, "follow-symlinks"},
+		{"help", OptionNoArg, "help"},
+		{"in-place", OptionOptionalArg, "i"},
+		{"line-length", OptionRequiredArg, "l"},
+		{"null-data", OptionNoArg, "z"},
+		{"posix", OptionNoArg, "posix"},
+		{"quiet", OptionNoArg, "n"},
+		{"regexp-extended", OptionNoArg, "E"},
+		{"sandbox", OptionNoArg, "sandbox"},
+		{"separate", OptionNoArg, "s"},
+		{"silent", OptionNoArg, "n"},
+		{"unbuffered", OptionNoArg, "u"},
+		{"version", OptionNoArg, "version"},
+		{"zero-terminated", OptionNoArg, "z"},
+	}
+}
+
+// SedArgs is what sed's command line holds, read the way getopt_long reads it: options may follow operands, -- ends them,
+// and a long option may be abbreviated to any unambiguous prefix.
+type SedArgs struct {
+	// Scripts are the values of -e and --expression, in order.
+	Scripts []Word
+	// Files are the values of -f and --file.
+	Files []Word
+	// InPlace is set by -i, -I and --in-place (in any spelling).
+	InPlace bool
+	// Operands are the words that are no option or option value. When neither -e nor -f gives a script, the first operand is the
+	// script.
+	Operands []Word
+}
+
+// ParseSedArgs reads the arguments of sed. A word the reader cannot evaluate before the first operand, an option the reader
+// does not model (including --help and --version, which run no script), an ambiguous abbreviation, an option that needs a
+// value and has none, and a value given to an option that takes none are unreadable: what runs is not proven.
+func ParseSedArgs(name string, args []Word) (SedArgs, error) {
+	var pa SedArgs
+	longs := SedLongOptions()
+	optionsEnd := false
+	for i := 0; i < len(args); {
+		a := args[i]
+		if !a.Known {
+			if len(pa.Operands) == 0 && !optionsEnd {
+				return SedArgs{}, unreadablef("%s option is not known (%s)", name, a.Reason)
+			}
+			pa.Operands = append(pa.Operands, a)
+			i++
+			continue
+		}
+		v := a.Value
+		switch {
+		case optionsEnd || v == "-" || !strings.HasPrefix(v, "-"):
+			pa.Operands = append(pa.Operands, a)
+			i++
+			continue
+		case v == "--":
+			optionsEnd = true
+			i++
+			continue
+		}
+		i++
+		if strings.HasPrefix(v, "--") {
+			optName, attached, hasValue := strings.Cut(v[2:], "=")
+			opt, match := MatchLongOption(longs, optName)
+			switch match {
+			case LongNone:
+				return SedArgs{}, unreadablef("%s option %s is not modelled", name, v)
+			case LongAmbiguous:
+				return SedArgs{}, unreadablef("%s option %s is an ambiguous abbreviation", name, v)
+			}
+			var val Word
+			switch opt.Arg {
+			case OptionNoArg:
+				if hasValue {
+					return SedArgs{}, unreadablef("%s option %s takes no value", name, v)
+				}
+			case OptionRequiredArg:
+				if hasValue {
+					val = Word{Known: true, Value: attached}
+				} else {
+					if i >= len(args) {
+						return SedArgs{}, unreadablef("%s option %s without a value", name, v)
+					}
+					val = args[i]
+					i++
+				}
+			}
+			if err := pa.apply(name, opt.Key, val, v); err != nil {
+				return SedArgs{}, err
+			}
+			continue
+		}
+		for k := 1; k < len(v); k++ {
+			c := v[k]
+			switch c {
+			case 'n', 'E', 'r', 's', 'u', 'z', 'b':
+			case 'i', 'I':
+				pa.InPlace = true
+				k = len(v) // the rest of the word is the suffix
+			case 'e', 'f', 'l':
+				var val Word
+				if k < len(v)-1 {
+					val = Word{Known: true, Value: v[k+1:]}
+				} else {
+					if i >= len(args) {
+						return SedArgs{}, unreadablef("%s -%c without a value", name, c)
+					}
+					val = args[i]
+					i++
+				}
+				if err := pa.apply(name, string(c), val, v); err != nil {
+					return SedArgs{}, err
+				}
+				k = len(v)
+			default:
+				return SedArgs{}, unreadablef("%s option -%c is not modelled", name, c)
+			}
+		}
+	}
+	return pa, nil
+}
+
+// apply records one option by its Key.
+func (pa *SedArgs) apply(name, key string, val Word, spelled string) error {
+	switch key {
+	case "e":
+		pa.Scripts = append(pa.Scripts, val)
+	case "f":
+		pa.Files = append(pa.Files, val)
+	case "i":
+		pa.InPlace = true
+	case "n", "E", "s", "u", "z", "b", "l", "debug", "posix", "sandbox", "follow-symlinks":
+	default:
+		// --help and --version print and exit: no script runs, and the reader does not model them.
+		return unreadablef("%s option %s is not modelled", name, spelled)
+	}
+	return nil
+}
