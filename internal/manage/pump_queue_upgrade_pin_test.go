@@ -236,3 +236,83 @@ func TestPumpQueueCancelledMembershipCompletionWritesNothing(t *testing.T) {
 		t.Errorf("MoveByName created sent/ under a cancelled context: %v", err)
 	}
 }
+
+// An overlap pin an earlier build built from fewer candidate sets answers only for [a,b]; the record
+// over [b,z], accepted, also delivered z. The search runs before the pin completes a and b, finds [b,z]
+// while b is still queued and folds it in, so z is completed and never sent again.
+func TestPumpQueueEarlierOverlapPinGainsTheRecordItMissed(t *testing.T) {
+	now := pumpTestNow
+	e := pumpTestEnv(t, &now)
+	bridge, _, log := pumpOverlapBridge(t)
+	cfg := pumpTestConfig(t, bridge)
+	thread := "parent-1"
+	dir := filepath.Join(cfg.StateDir, pumpQueueDir, thread)
+	stamp := now.Add(-time.Hour)
+	names := []string{pumpOverlapA, pumpOverlapB, pumpOverlapZ}
+	texts := []string{"A-delivered", "B-delivered", "Z-delivered"}
+	for i, name := range names {
+		pumpQueueTestSetTime(t, pumpQueueTestNotice(t, cfg, thread, name, texts[i]), stamp.Add(-time.Minute))
+	}
+	abID := pumpQueueTestLegacyRecord(t, cfg, thread, names[:2], texts[:2], stamp, deliverStateAccepted)
+	pumpQueueTestLegacyRecord(t, cfg, thread, names[1:], texts[1:], stamp, deliverStateAccepted)
+	st := pumpTestReadStatePtr(t, cfg)
+	st.QueueAttempt[thread] = pumpReview776QueuePin{LogicalID: abID, Legacy: true, Names: names[:2],
+		SHA256:  pumpReview776QueueDigests(names[:2], texts[:2]),
+		Overlap: []pumpReview776QueueLegacyRef{{LogicalID: abID, Names: names[:2], Members: names[:2]}}}
+	if err := st.pumpSave(cfg); err != nil {
+		t.Fatal(err)
+	}
+	pumpLegacyHoldFlush(t, e, cfg, 3)
+	if messages := pumpQueueTestSentMessages(t, log); len(messages) != 0 {
+		t.Errorf("I1: a delivered notice went again: %q", messages)
+	}
+	if left, _ := pumpQueueSortedNames(dir); len(left) != 0 {
+		t.Errorf("notices left queued: %v", left)
+	}
+	for _, name := range names {
+		if _, err := os.Stat(filepath.Join(dir, pumpSentDir, name)); err != nil {
+			t.Errorf("the delivered notice %s was not completed: %v", name, err)
+		}
+	}
+	if pin, ok := pumpReview776QueueAttempt(t, cfg, thread); ok {
+		t.Errorf("a pin is left: %v", pin)
+	}
+}
+
+// A legacy pin an earlier build left without digests cannot prove its text; when the search also finds
+// another record, the pin is folded in as an unprovable ref and the thread holds with its named line,
+// while the other record's delivered notice is still completed.
+func TestPumpQueueEarlierUnprovablePinHoldsWhenFolded(t *testing.T) {
+	now := pumpTestNow
+	e := pumpTestEnv(t, &now)
+	bridge, _, log := pumpOverlapBridge(t)
+	cfg := pumpTestConfig(t, bridge)
+	thread := "parent-1"
+	dir := filepath.Join(cfg.StateDir, pumpQueueDir, thread)
+	stamp := now.Add(-time.Hour)
+	names := []string{pumpOverlapA, pumpOverlapB}
+	texts := []string{"A-delivered", "B-unknown"}
+	for i, name := range names {
+		pumpQueueTestSetTime(t, pumpQueueTestNotice(t, cfg, thread, name, texts[i]), stamp.Add(-time.Minute))
+	}
+	pumpQueueTestLegacyRecord(t, cfg, thread, names[:1], texts[:1], stamp, deliverStateAccepted)
+	oldPin := pumpQueueLegacyBatchID(thread, []string{pumpOverlapB, "0000000000000009.txt"})
+	st := pumpTestReadStatePtr(t, cfg)
+	st.QueueAttempt[thread] = pumpReview776QueuePin{LogicalID: oldPin, Legacy: true, Names: names[1:]}
+	if err := st.pumpSave(cfg); err != nil {
+		t.Fatal(err)
+	}
+	pumpLegacyHoldFlush(t, e, cfg, 3)
+	if messages := pumpQueueTestSentMessages(t, log); len(messages) != 0 {
+		t.Errorf("R2: a batch went under an unprovable pin: %q", messages)
+	}
+	if left, _ := pumpQueueSortedNames(dir); !reflect.DeepEqual(left, []string{pumpOverlapB}) {
+		t.Errorf("queued after the rounds: %v, want only b", left)
+	}
+	if pin, ok := pumpReview776QueueAttempt(t, cfg, thread); !ok || pin["held"] != true {
+		t.Errorf("no held pin: %v", pin)
+	}
+	if logText := pumpQueueTestLog(t, cfg); !strings.Contains(logText, pumpQueueLegacyUnprovableHold) || !strings.Contains(logText, oldPin) {
+		t.Errorf("no %s line naming %s:\n%s", pumpQueueLegacyUnprovableHold, oldPin, logText)
+	}
+}
