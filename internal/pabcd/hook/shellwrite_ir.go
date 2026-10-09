@@ -26,7 +26,11 @@ func shellIRWriteDestsResolved(command, cwd string, lookup func(string) (string,
 }
 
 func shellIRDests(command, cwd string, lookup func(string) (string, bool), resolve bool) (dests []string, ok bool) {
-	res, err := shellir.AnalyzeEnv(command, cwd, lookup)
+	read := shellir.AnalyzeEnv
+	if resolve {
+		read = shellir.AnalyzeEnvProvenDirectory
+	}
+	res, err := read(command, cwd, lookup)
 	if err != nil {
 		return nil, false
 	}

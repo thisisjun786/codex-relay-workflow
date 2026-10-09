@@ -18,6 +18,16 @@ func AnalyzeEnv(src, cwd string, lookup func(string) (string, bool)) (Result, er
 	return analyze(src, newState(cwd), lookup)
 }
 
+// AnalyzeEnvProvenDirectory retains the previous directory when a cd can fail
+// and execution can continue. Only a success condition such as && establishes
+// the requested directory for subsequent commands. The legacy AnalyzeEnv
+// reading is kept for consumers whose existing policy assumes literal cd succeeds.
+func AnalyzeEnvProvenDirectory(src, cwd string, lookup func(string) (string, bool)) (Result, error) {
+	st := newState(cwd)
+	st.proveCD = true
+	return analyze(src, st, lookup)
+}
+
 // AnalyzeNoDir reads a command text with no working directory at all, with no environment. It is the reading of the memory write
 // gate that does not depend on a directory (the Python programs of the text, and whether the text is readable at all); the
 // judgments that need a directory are made by the readings that have one (see Dir.Unset).

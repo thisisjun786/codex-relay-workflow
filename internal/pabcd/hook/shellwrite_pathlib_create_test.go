@@ -132,7 +132,7 @@ func TestPathlibCreateEffectiveDirectory(t *testing.T) {
 					case "cwd-work":
 						wantWrite = false
 					case "cd-work":
-						prefix = "cd '" + cwd + "'; "
+						prefix = "cd '" + cwd + "' && "
 						cwd, wantWrite = root, false
 					}
 					program := `from pathlib import Path; name="x"; p=Path("x"); ` + receiver + "." + method + "()"
