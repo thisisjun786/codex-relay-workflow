@@ -1,0 +1,9 @@
+{
+  "issue": "CRW-383",
+  "identical": [
+    "cli__loop__criteria_questions_and_steer",
+    "cli__loop__held_goalplan_lock_refuses_write",
+    "cli__loop__refusals",
+    "cli__loop__work_phases_tasks_and_completion"
+  ]
+}

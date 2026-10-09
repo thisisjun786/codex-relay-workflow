@@ -62,7 +62,7 @@ EOF
 --why env --ignore-environment takes no operand: rm is the program.
 env --ignore-environment rm -rf ../repo
 
-=== LEDGER-CRW-726-d4b | U
+=== LEDGER-CRW-726-d4b | U | deviation=none/allow/deny
 --why A shell after env --ignore-environment reads the pipe.
 printf 'rm -rf ../repo' | env --ignore-environment bash
 

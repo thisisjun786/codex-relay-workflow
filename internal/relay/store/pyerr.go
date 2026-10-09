@@ -175,6 +175,10 @@ func sqliteMessage(err error) string {
 // StoredSQLiteError classifies with. ok is false for every other failure, including the SQLite
 // failures that are not the class (a busy database, a constraint violation, a plain IOERR).
 func CorruptingFailure(err error) (CorruptingCause, bool) {
+	var detected *DetectedCorruption
+	if errors.As(err, &detected) {
+		return detected.Cause, true
+	}
 	var failure *sqlite.Error
 	if !errors.As(err, &failure) {
 		return CorruptingCause{}, false

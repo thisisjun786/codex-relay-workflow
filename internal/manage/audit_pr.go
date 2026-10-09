@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -151,7 +152,7 @@ func auditPRBundleRoot(e *Env, cfg *Config, section auditPRSection) string {
 	if section.BundleDir != "" {
 		return section.BundleDir
 	}
-	return filepath.Join(auditStateDir(e, cfg), "audit", "bundles")
+	return crwconfig.JoinRoot(auditStateDir(e, cfg), "audit", "bundles")
 }
 
 // auditPRSubject is the bundle directory name and the ledger row's subject: the pull
@@ -647,7 +648,7 @@ func auditPRBuild(ctx context.Context, e *Env, cfg *Config, section auditPRSecti
 		return "", errors.New("checkout_unconfigured: the checkout section names no repository")
 	}
 	root := auditPRBundleRoot(e, cfg, section)
-	dir := filepath.Join(root, auditPRSubject(source.Target.Number))
+	dir := crwconfig.JoinRoot(root, auditPRSubject(source.Target.Number))
 	if err := auditPkgResetDir(root, dir); err != nil {
 		return "", err
 	}
@@ -667,7 +668,7 @@ func auditPRBuild(ctx context.Context, e *Env, cfg *Config, section auditPRSecti
 	}()
 	// Every file the bundle holds goes through the scrub, so no model, pair or child id the
 	// configuration names reaches the grader through a description, a criterion or a patch.
-	if err := auditPRWriteFile(filepath.Join(dir, auditPRDiffFile), auditPRScrub(source.Patch, section.Scrub)); err != nil {
+	if err := auditPRWriteFile(crwconfig.JoinRoot(dir, auditPRDiffFile), auditPRScrub(source.Patch, section.Scrub)); err != nil {
 		return "", err
 	}
 	// A path is a bundle entry name as well as a source path, so it goes through the same scrub
@@ -684,7 +685,7 @@ func auditPRBuild(ctx context.Context, e *Env, cfg *Config, section auditPRSecti
 			return "", fmt.Errorf("the pull request paths %q and %q both redact to %q", other, path, name)
 		}
 		placed[name] = path
-		target := filepath.Join(dir, auditPRFilesDir, filepath.FromSlash(name))
+		target := crwconfig.JoinRoot(dir, auditPRFilesDir, filepath.FromSlash(name))
 		if !auditPkgContained(dir, target) {
 			return "", fmt.Errorf("the pull request names %q, which leaves the bundle", path)
 		}
@@ -696,14 +697,14 @@ func auditPRBuild(ctx context.Context, e *Env, cfg *Config, section auditPRSecti
 			return "", err
 		}
 	}
-	if err := auditPRWriteFile(filepath.Join(dir, auditPRTaskFile), auditPRScrub([]byte(auditPRTask(source)), section.Scrub)); err != nil {
+	if err := auditPRWriteFile(crwconfig.JoinRoot(dir, auditPRTaskFile), auditPRScrub([]byte(auditPRTask(source)), section.Scrub)); err != nil {
 		return "", err
 	}
 	criteria, err := auditPRCriteriaDocument(source, section.Scrub)
 	if err != nil {
 		return "", err
 	}
-	if err := auditPRWriteFile(filepath.Join(dir, auditPRCriteriaFile), criteria); err != nil {
+	if err := auditPRWriteFile(crwconfig.JoinRoot(dir, auditPRCriteriaFile), criteria); err != nil {
 		return "", err
 	}
 	bundle := map[string]any{
@@ -716,7 +717,7 @@ func auditPRBuild(ctx context.Context, e *Env, cfg *Config, section auditPRSecti
 	if err != nil {
 		return "", err
 	}
-	if err := auditPRWriteFile(filepath.Join(dir, auditBundleFile), append(data, '\n')); err != nil {
+	if err := auditPRWriteFile(crwconfig.JoinRoot(dir, auditBundleFile), append(data, '\n')); err != nil {
 		return "", err
 	}
 	complete = true
@@ -785,7 +786,7 @@ func auditPRCriteriaDocument(source auditPRSource, scrubs []string) ([]byte, err
 // symbolic link at the path, so a link planted at a bundle entry cannot redirect this write
 // outside the bundle even though the lexical containment check passed.
 func auditPRWriteBlob(path string, data []byte) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	if err := os.MkdirAll(rootDir(path), 0o700); err != nil {
 		return err
 	}
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY|syscall.O_NOFOLLOW, 0o600)
@@ -810,7 +811,7 @@ func auditPRBlob(ctx context.Context, co auditPkgCheckout, merge, path string) (
 
 // auditPRWriteFile writes one bundle file, making its directory first.
 func auditPRWriteFile(path string, data []byte) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	if err := os.MkdirAll(rootDir(path), 0o700); err != nil {
 		return err
 	}
 	return os.WriteFile(path, data, 0o600)

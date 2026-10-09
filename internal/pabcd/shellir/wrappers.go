@@ -11,9 +11,17 @@ type unwrapped struct {
 	isShell      bool
 	shell        string
 	shellCarrier string
+	// chdirs are the directory operands of env -C and env --chdir, in the order the program applies them.
+	chdirs []Word
 	// recordName and record name the wrapper's own file operand (script's transcript, strace -o) as a synthetic record.
 	recordName string
 	record     []Word
+	// feeds is the feed of each program in inner (find's actions); xopts are the options of xargs that decide its operands.
+	feeds []*Feed
+	xopts xargsOpts
+	// shellLines is the shell text of each job of a parallel text, one line per command line, when the wrapper runs each job
+	// in a shell of its own; shell holds the same lines joined by newlines.
+	shellLines []string
 }
 
 // unwrapCommand applies the option grammar of one wrapper. An option the
@@ -25,12 +33,13 @@ func unwrapCommand(name string, args []Word) (unwrapped, error) {
 	}
 	switch name {
 	case "parallel":
-		// parallel runs the program its ::: operands name at run time, so the program it runs is not in the text.
-		return u, unreadablef("parallel runs the program its operands name at run time")
+		return parallelUnwrap(args)
 	case "env":
 		return unwrapEnv(args)
 	case "find":
 		return unwrapFind(args)
+	case "xargs":
+		return unwrapXargs(args)
 	case "busybox":
 		if len(args) == 0 {
 			return u, nil
@@ -62,9 +71,6 @@ func unwrapCommand(name string, args []Word) (unwrapped, error) {
 	}
 	if idx < len(args) {
 		rest := args[idx:]
-		if name == "parallel" {
-			rest = parallelCommand(rest)
-		}
 		if len(rest) > 0 {
 			u.inner = [][]Word{rest}
 		}
@@ -101,8 +107,6 @@ func wrapperOptions(name string, args []Word) (int, error) {
 		return skipOptions(name, args, "n", "u", "")
 	case "xargs":
 		return skipOptions(name, args, "0rtxpe", "ILnPdEsa", "il")
-	case "parallel":
-		return skipOptions(name, args, "0kqv", "jnaX", "")
 	}
 	return 0, unreadablef("wrapper %s has no option grammar", name)
 }
@@ -185,16 +189,6 @@ func isDashDigits(v string) bool {
 	return true
 }
 
-// parallelCommand keeps the command template and drops the ':::' argument list.
-func parallelCommand(args []Word) []Word {
-	for i, a := range args {
-		if a.Value == ":::" || a.Value == "::::" {
-			return args[:i]
-		}
-	}
-	return args
-}
-
 func unwrapEnv(args []Word) (unwrapped, error) {
 	var u unwrapped
 	for len(args) > 0 {
@@ -202,7 +196,25 @@ func unwrapEnv(args []Word) (unwrapped, error) {
 		if err != nil {
 			return u, err
 		}
-		if v == "-" || v == "-i" || v == "--ignore-environment" || v == "-0" || v == "--null" {
+		if v == "-" || v == "-i" || v == "--ignore-environment" || v == "-0" || v == "--null" || v == "-v" || v == "--debug" {
+			args = args[1:]
+			continue
+		}
+		if len(u.chdirs) > 0 && (v == "-C" || v == "--chdir" || strings.HasPrefix(v, "--chdir=")) {
+			// The reader cannot tell which directory the program runs in once a second operand is given: GNU env keeps the last one,
+			// and other implementations refuse the repeat, so the program's directory is not read.
+			return u, unreadablef("env with a second directory operand is not modelled")
+		}
+		if v == "-C" || v == "--chdir" {
+			if len(args) < 2 {
+				return u, unreadablef("env %s without a directory", v)
+			}
+			u.chdirs = append(u.chdirs, args[1])
+			args = args[2:]
+			continue
+		}
+		if strings.HasPrefix(v, "--chdir=") {
+			u.chdirs = append(u.chdirs, Word{Known: true, Value: strings.TrimPrefix(v, "--chdir=")})
 			args = args[1:]
 			continue
 		}
@@ -295,30 +307,114 @@ func validName(s string) bool {
 	return true
 }
 
-// unwrapFind returns each program that find -exec, -execdir, -ok or -okdir runs.
+// unwrapFind returns each program that find -exec, -execdir, -ok or -okdir runs, with the feed that says where its operands
+// come from: the start points of the find and the tests that stand before the action.
 func unwrapFind(args []Word) (unwrapped, error) {
 	var u unwrapped
-	for _, a := range args {
-		if !a.Known {
-			return u, unreadablef("find argument is not known (%s)", a.Reason)
-		}
+	starts, actions, err := FindScan(args)
+	if err != nil {
+		return u, err
 	}
-	for i := 0; i < len(args); i++ {
-		switch args[i].Value {
-		case "-exec", "-execdir", "-ok", "-okdir":
-			j := i + 1
-			for j < len(args) && args[j].Value != ";" && args[j].Value != "+" {
-				j++
-			}
-			if j >= len(args) {
-				return u, unreadablef("find %s without a terminator", args[i].Value)
-			}
-			if j == i+1 {
-				return u, unreadablef("find %s without a program", args[i].Value)
-			}
-			u.inner = append(u.inner, args[i+1:j])
-			i = j
+	for _, a := range actions {
+		if a.Name == "-delete" {
+			continue
 		}
+		u.inner = append(u.inner, a.Command)
+		u.feeds = append(u.feeds, &Feed{Wrapper: "find", Starts: starts, chains: a.chains})
 	}
 	return u, nil
+}
+
+// unwrapXargs returns the program xargs runs and the options that decide what operands it builds from standard input: -a names
+// a file the operands are read from, -0 and -d change the separator, -I and -i name the string that stands for an input line
+// in the command.
+func unwrapXargs(args []Word) (unwrapped, error) {
+	var u unwrapped
+	const flags, valued = "0rtxp", "ILnPdsa"
+	i := 0
+	for i < len(args) {
+		v, err := knownValue(args[i], "xargs option")
+		if err != nil {
+			return u, err
+		}
+		if v == "--" {
+			i++
+			break
+		}
+		if len(v) < 2 || v[0] != '-' {
+			break
+		}
+		if strings.HasPrefix(v, "--") {
+			return u, unreadablef("xargs option %s is not modelled", v)
+		}
+		i++
+		for k := 1; k < len(v); k++ {
+			c := v[k]
+			switch {
+			case strings.IndexByte(valued, c) >= 0 || c == 'E':
+				val := v[k+1:]
+				if val == "" {
+					if i >= len(args) {
+						return u, unreadablef("xargs -%c without a value", c)
+					}
+					w, err := knownValue(args[i], "xargs -"+string(c)+" value")
+					if err != nil {
+						return u, err
+					}
+					val = w
+					i++
+				}
+				switch c {
+				case 'a':
+					u.xopts.ArgFile = true
+				case 'd':
+					d, ok := xargsDelimiter(val)
+					if !ok {
+						return u, unreadablef("xargs -d %q is not modelled", val)
+					}
+					u.xopts.Delim, u.xopts.DelimSet = d, true
+				case 'I':
+					u.xopts.Replace = val
+				}
+				k = len(v)
+			case c == 'i' || c == 'l' || c == 'e':
+				// -i[STR], -l[N] and -e[EOF] take an attached value only.
+				if c == 'i' {
+					u.xopts.Replace = v[k+1:]
+					if u.xopts.Replace == "" {
+						u.xopts.Replace = "{}"
+					}
+				}
+				k = len(v)
+			case strings.IndexByte(flags, c) >= 0:
+				if c == '0' {
+					u.xopts.Null = true
+				}
+			default:
+				return u, unreadablef("xargs option -%c is not modelled", c)
+			}
+		}
+	}
+	if i < len(args) {
+		u.inner = [][]Word{args[i:]}
+	}
+	return u, nil
+}
+
+// xargsDelimiter is the separator -d names: one character, or an escape such as \n, \t, \0 or \\.
+func xargsDelimiter(v string) (string, bool) {
+	switch v {
+	case `\n`:
+		return "\n", true
+	case `\t`:
+		return "\t", true
+	case `\0`:
+		return "\x00", true
+	case `\\`:
+		return `\`, true
+	}
+	if len(v) == 1 {
+		return v, true
+	}
+	return "", false
 }

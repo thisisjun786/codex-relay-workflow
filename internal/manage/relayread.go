@@ -109,19 +109,27 @@ type RelayVerdict struct {
 	DecidedAt           any `json:"decidedAt"`
 }
 
+// RelayPullRequest is the pull request a relationship is about: its repository and number, as the
+// relay's own record names them. A relationship that names none carries a null.
+type RelayPullRequest struct {
+	Repository string `json:"repository"`
+	Number     int64  `json:"number"`
+}
+
 // RelayRelationship is one assignment's state, as the assignment view reports it.
 type RelayRelationship struct {
-	RelationshipID      any           `json:"relationshipId"`
-	IssueKey            any           `json:"issueKey"`
-	ParentTaskID        any           `json:"parentTaskId"`
-	ChildTaskID         any           `json:"childTaskId"`
-	RelationshipStatus  any           `json:"relationshipStatus"`
-	ExecutionGeneration any           `json:"executionGeneration"`
-	State               any           `json:"state"`
-	Head                *RelayHead    `json:"head"`
-	LastVerdict         *RelayVerdict `json:"lastVerdict"`
-	NextExpectedAction  any           `json:"nextExpectedAction"`
-	Read                RelayReadMark `json:"read"`
+	RelationshipID      any               `json:"relationshipId"`
+	IssueKey            any               `json:"issueKey"`
+	ParentTaskID        any               `json:"parentTaskId"`
+	ChildTaskID         any               `json:"childTaskId"`
+	RelationshipStatus  any               `json:"relationshipStatus"`
+	ExecutionGeneration any               `json:"executionGeneration"`
+	State               any               `json:"state"`
+	Head                *RelayHead        `json:"head"`
+	LastVerdict         *RelayVerdict     `json:"lastVerdict"`
+	PullRequest         *RelayPullRequest `json:"pullRequest"`
+	NextExpectedAction  any               `json:"nextExpectedAction"`
+	Read                RelayReadMark     `json:"read"`
 }
 
 // RelayPlan is one DAG plan's progress: the stage counts under the scheduler's own stage names,
@@ -355,6 +363,7 @@ func relayReadRelationships(ctx context.Context, st *store.Store, opts RelayRead
 		return nil
 	}
 	view := registry.NewAssignmentView(&registry.Registry{Store: st})
+	scheduler := &dagsched.Scheduler{Store: st}
 	items := make([]RelayRelationship, 0, len(ids))
 	for _, rid := range ids {
 		item := RelayRelationship{RelationshipID: rid, Read: RelayReadMark{State: relayReadReadOK}}
@@ -378,6 +387,17 @@ func relayReadRelationships(ctx context.Context, st *store.Store, opts RelayRead
 		if verdict, ok := state.Get("lastVerdict").(relayReadRecord); ok && verdict != nil {
 			item.LastVerdict = &RelayVerdict{Verdict: verdict.Get("verdict"), EventID: verdict.Get("eventId"),
 				ExecutionGeneration: verdict.Get("executionGeneration"), DecidedAt: verdict.Get("decidedAt")}
+		}
+		// The pull request is the relay's own link (the active acceptance, else the current head's work
+		// report); a link the relay cannot read is unknown, never a null that reads as no pull request.
+		link, err := scheduler.RelationshipPullRequest(ctx, st.Q(ctx), rid)
+		if err != nil {
+			item.Read = RelayReadMark{State: relayReadReadUnknown, Reason: err.Error()}
+			items = append(items, item)
+			continue
+		}
+		if link != nil {
+			item.PullRequest = &RelayPullRequest{Repository: link.Repository, Number: link.Number}
 		}
 		items = append(items, item)
 	}

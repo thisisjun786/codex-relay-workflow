@@ -189,6 +189,11 @@ func TestStandbyTurnAnythingElseKeepsTodaysAnswer(t *testing.T) {
 		{"a part that is not text", "turn-timeout", listing([]any{summaryRow("a", "completed", crw842UserParts(crw842TextPart(bootstrap), map[string]any{"type": "image"}))}, ""), "thread_has_turn"},
 		{"the item text differs from the content", "turn-timeout", listing([]any{summaryRow("a", "completed", crw842UserTextAndContent(bootstrap, crw842TextPart(bootstrap+"!")))}, ""), "thread_has_turn"},
 		{"the item text with two content parts", "turn-timeout", listing([]any{summaryRow("a", "completed", crw842UserTextAndContent(bootstrap, crw842TextPart(bootstrap), crw842TextPart("!")))}, ""), "thread_has_turn"},
+		// CRW-935: a field that is present but disagrees or cannot be read is not an absent one.
+		{"an explicitly empty item text beside a content bootstrap", "turn-timeout", listing([]any{summaryRow("a", "completed", crw842UserTextAndContent("", crw842TextPart(bootstrap)))}, ""), "thread_has_turn"},
+		{"content that is not a list beside a bootstrap item text", "turn-timeout", listing([]any{summaryRow("a", "completed", map[string]any{"type": "userMessage", "id": "user-text", "text": bootstrap, "content": "not a list"})}, ""), "thread_has_turn"},
+		{"content that is an object beside a bootstrap item text", "turn-timeout", listing([]any{summaryRow("a", "completed", map[string]any{"type": "userMessage", "id": "user-text", "text": bootstrap, "content": map[string]any{"type": "text", "text": bootstrap}})}, ""), "thread_has_turn"},
+		{"an item text that is not text beside a content bootstrap", "turn-timeout", listing([]any{summaryRow("a", "completed", map[string]any{"type": "userMessage", "id": "user-text", "text": 5, "content": []any{crw842TextPart(bootstrap)}})}, ""), "thread_has_turn"},
 		{"a next page", "turn-timeout", listing([]any{summaryRow("a", "completed", userText(bootstrap))}, "more"), "thread_has_turn"},
 		{"the listing fails", "turn-timeout", func(string) (map[string]any, error) { return nil, errors.New("host unavailable") }, "unobservable"},
 		{"a scan found the thread", "lost-applied", listing([]any{summaryRow("a", "completed", userText(bootstrap))}, ""), "thread_has_turn"},

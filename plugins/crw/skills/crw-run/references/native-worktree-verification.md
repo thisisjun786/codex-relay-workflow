@@ -268,11 +268,12 @@ Measured 2026-09-22 on the command-line surface, Codex 0.154.0, for a real issue
 created with `codex exec --enable worktrees --worktree` and left to run its own
 workflow. It activated: an `active` row in the host goal store keyed on the child's
 thread id and carrying the child's OWN objective; a registered goalplan under the
-worktree's `.codexclaw/goalplans/<slug>/` with its work phases and criteria; an
-accepted transition row in that worktree's `.codexclaw/ledger.jsonl`; and the
+worktree's `goalplans/<slug>/` with its work phases and criteria; an
+accepted transition row in that worktree's `ledger.jsonl`; and the
 orchestrate call exiting zero in the child's rollout. The checkout's own
-`.codexclaw/` tree is where all of it lands, and none of it appeared in the source
-checkout.
+state tree is where all of it lands, and none of it appeared in the source
+checkout. That tree was `.codexclaw/` on the CXC plugin this was measured on; in CRW it is `.crw/`
+with the same layout.
 
 Require all four together, because three cheaper signals each look like activation
 and none of them is:

@@ -214,11 +214,15 @@ Before a resend, the host must list exactly the recorded standby turn with no co
 cursor, then report the same child as `notLoaded`. A child the host holds loaded under other MCP
 settings is lowered once instead of waiting, but only when its immediately preceding business
 failure is the structured `settings_not_preserved` refusal and the same read reports it `idle`:
-the gate rechecks that idle state, calls `thread/archive` then `thread/unarchive`, requires
-`notLoaded` and the standby-only history again, and only then resends with the recorded profile.
+the gate checks the journal, asks readiness and the ledger, writes the begin mark, reads the child
+`idle` once more as the last step before the archive (only the host call sits between that read and
+`thread/archive`), calls `thread/archive` then `thread/unarchive`, requires `notLoaded` and the
+standby-only history again, and only then resends with the recorded profile.
 That unload is the one automatic archive the relay performs, and it is bounded to one lowering per
 business attempt inside the existing successor chain: a replay reconstructs the same attempt from
-the retained failure, so the journal row an earlier lowering wrote is what stops the next one. An
+the retained failure, so the begin mark an earlier lowering wrote before its archive is what stops
+the next one, even when the closing row could not be written. A child that is no longer `idle` at
+that last read is not archived and answers `recipient_not_idle`. An
 `active` child, one whose history shows a foreign turn and one whose preceding failure is not that
 refusal are never archived and hold as before.
 An archive error the host answered with its own JSON-RPC error response is a refusal of that call,
@@ -226,12 +230,20 @@ so this invocation did not apply the archive and the answer is incomplete `recip
 no archived-listing check, no unarchive and no send. An error with no host answer read asks the same
 complete archived scan the resend guard uses once, and an answer of `recipient_archived` continues
 exactly as after a successful archive, recording `reply_lost` as the archive result in the row;
-any other answer, and a failed check, keeps that hold. An unarchive that fails twice answers incomplete `lifecycle_unknown`,
+a complete listing that does not hold the child keeps that hold, and a failed or incomplete check keeps it too but leaves the archive unknown. An unarchive that fails twice answers incomplete `lifecycle_unknown`,
 naming the archived thread for an operator in the journal; a child still loaded afterwards answers
-`recipient_not_idle`. Every unload writes one `managed_resend_unloaded` journal row naming the
-thread, the archive and unarchive results and the load state observed afterwards; once the archive
-has succeeded the row is written with a context that survives the caller's cancellation, because
-an archived child with no row would leave an operator nothing to read. Empty, missing-rollout or
+`recipient_not_idle`. Every unload writes a `managed_resend_unloaded` begin row (`phase` `begin`,
+the attempt) before the archive, and a begin row that cannot be written archives nothing. It then
+writes one closing row (`phase` `end`) naming the thread, the archive and unarchive results and
+the load state observed afterwards; once the archive has succeeded that row is written with a
+context that survives the caller's cancellation, because an archived child with no row would
+leave an operator nothing to read. When nothing was archived (the last read was not `idle`, failed or was cancelled, or the archive
+was refused, or a complete archived listing does not hold the child) the closing row says `archive`
+`none` with its reason and the attempt stays available, also when the caller's cancellation
+arrives right after the host's refusal or the complete listing: the closing row is written first and the
+context error is returned. When the archive may have applied and the
+archived listing failed or was incomplete, the closing row says `archive` `unknown` and the attempt
+stays spent: an operator who unarchives the child does not see the same attempt archive it again. Empty, missing-rollout or
 unreadable history stays held as `lifecycle_unknown`; another turn refuses as
 `business_identity_unobserved`. The final business guard repeats the standby-only check after the
 recorded-profile resume.

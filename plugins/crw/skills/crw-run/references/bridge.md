@@ -14,7 +14,7 @@ IDs and Desktop saved-project IDs are not interchangeable.
 Observed capabilities: creation, messaging, read/list/wait, goal reads, steering an
 active turn, and pausing a goal. The bridge does not write a goal objective or
 budget, expose an interrupt or a turn queue, guarantee Desktop project membership,
-or handle client-side dynamic tools/interactive approvals. CXC availability must
+or handle client-side dynamic tools/interactive approvals. `crw-loop` availability must
 be established inside the created task, not inferred from this capability list.
 
 What this bridge exposes and what the host supports are two different facts, and
@@ -327,7 +327,7 @@ rollout. Subsequent `send_message_to_thread` failed at `thread/resume`:
 
 Read/turn listing also failed for those empty IDs. A later create with an initial
 prompt yielded a recorded user message/turn and appeared in Desktop. This proves
-creation and dispatch, not successful CXC execution or universal follow-up support.
+creation and dispatch, not successful `crw-loop` execution or universal follow-up support.
 
 On that version, prefer creation with the full work prompt.
 Do not recommend “empty creation, then resume” as a verified workflow.

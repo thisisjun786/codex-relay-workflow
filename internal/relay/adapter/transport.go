@@ -348,20 +348,41 @@ func (a *Adapter) guardedSend(ctx context.Context, requestID, thread, message st
 			}
 			ctx = watch.Context(ctx)
 		}
+		// The record is made when the request is about to go out, and stored before it does: a resume whose
+		// answer is lost is outcome_unknown and may have installed the limit, so its receipt must say what it
+		// carried, and a process that stops while it waits must leave that in the ledger. It is made after the
+		// watch is admitted and the caller asked, so a send that fails before this point never claims a limit
+		// was requested. A record that cannot be stored is withdrawn and nothing is sent: the receipt says
+		// not_attempted and retry-safe, so the same request ID may send again. Once the answer is read, the
+		// observation below replaces this one with the settings the host reported.
+		if limit != nil {
+			receipt["settings"] = bridgesettings.AutoCompactReceipt(*limit, nil)
+			if err := save(); err != nil {
+				delete(receipt, "settings")
+				refuse("thread/resume", contract.OrderedObject{{Key: "code", Value: "receipt_unsaved"}, {Key: "message", Value: "the receipt could not be stored before the resume; nothing was sent: " + errorText(err)}}, true)
+				return nil
+			}
+		}
 		resumed, err := a.callValue(ctx, "thread/resume", params)
+		// A resume the transport certainly withheld never reached the host, so the stored limit is
+		// withdrawn; a resume that may have gone out (its answer lost) keeps it. The transport's own
+		// error decides this before a cancellation of the caller replaces it, as the caller's
+		// cancellation changes what the send returns, not what the transport sent.
+		if limit != nil && err != nil && notSent(err) {
+			delete(receipt, "settings")
+		}
 		if err = awaited(err); err != nil {
 			return err
 		}
 		receipt["resumed"] = resumed
-		// The host never reports this value back, so the receipt is the only place the send can say
-		// what it carried: recorded as requested and unobservable, never as verified, in the same
-		// notation the bridge uses. A resume that carried no limit records no settings observation.
+		if settings.SettingsFreeResume {
+			receipt["settingsFreeResume"] = true
+		}
+		// What the host reported is recorded as soon as it is read, so a read-back of the servers that
+		// fails after it keeps the settings the resume reported; the servers are added when it succeeds.
 		if limit != nil {
 			observed, _ := plain(resumed).(map[string]any)
 			receipt["settings"] = bridgesettings.AutoCompactReceipt(*limit, observed)
-		}
-		if settings.SettingsFreeResume {
-			receipt["settingsFreeResume"] = true
 		}
 		response := resumed
 		if expectedMCP != nil {
@@ -370,6 +391,14 @@ func (a *Adapter) guardedSend(ctx context.Context, requestID, thread, message st
 			if err = awaited(err); err != nil {
 				return err
 			}
+		}
+		// The host never reports this value back, so the receipt is the only place the send can say
+		// what it carried: recorded as requested and unobservable, never as verified, in the same
+		// notation the bridge uses. The actual snapshot is taken again after the servers were read back, so it
+		// carries mcpServers too. A resume that carried no limit records no settings observation.
+		if limit != nil {
+			observed, _ := plain(response).(map[string]any)
+			receipt["settings"] = bridgesettings.AutoCompactReceipt(*limit, observed)
 		}
 		if err = save(); err != nil {
 			return err

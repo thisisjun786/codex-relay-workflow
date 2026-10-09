@@ -1,0 +1,35 @@
+# CRW-910 pre-merge evaluation of 39c72966 (findings d1 to d3 of the record crw910-39c72966.json): repeated env directory
+# operands, a directory operand that find replaces at run time, and redirections of a command env changes the directory for.
+# {MEMORY}, {CHECKOUT} and the work directory are filled in by the test; ../repo is the managed checkout from the work directory.
+
+=== CRW-910-E01 | U
+--why d1: GNU env takes the directory of the last -C; the reader cannot tell which one the program runs in, so it refuses a second operand (every gate refuses).
+env -C sub -C . rm -rf ../repo
+
+=== CRW-910-E02 | U
+--why d1 (long form): a second --chdir operand is refused for the same reason.
+env --chdir=sub --chdir=. rm -rf ../repo
+
+=== CRW-910-E03 | W
+--why d2: find replaces {} with each path it finds, so the directory env changes to is the memory root and the relative write lands in it.
+find {MEMORY} -maxdepth 0 -exec env -C '{}' sh -c 'echo x > a' \;
+
+=== CRW-910-E04 | R
+--why d2 with the managed checkout: the directory env changes to is the checkout, where rm -rf . deletes it.
+find {CHECKOUT} -maxdepth 0 -exec env -C '{}' rm -rf . \;
+
+=== CRW-910-E05 | B
+--why Control of d2: a directory operand that find does not replace is an ordinary directory, and a plain program in it deletes nothing.
+find . -maxdepth 0 -exec env -C sub ls \;
+
+=== CRW-910-E06 | B
+--why d3: the redirection opens in the work directory, not in the memory root env changes to; the inner ls writes nothing protected.
+env -C {MEMORY} ls > out.txt
+
+=== CRW-910-E07 | W
+--why d3: a redirection into the memory root by its own name is a write, whichever directory env changes to.
+env -C {CHECKOUT} ls > {MEMORY}/out.txt
+
+=== CRW-910-E08 | W
+--why d3 with an outer directory: the shell opens out.txt in the memory root before env changes to the checkout, so the write is a memory write.
+cd {MEMORY} && env -C {CHECKOUT} ls > out.txt

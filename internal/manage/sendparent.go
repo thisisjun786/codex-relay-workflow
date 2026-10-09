@@ -7,9 +7,9 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 	"io"
 	"os"
-	"path/filepath"
 )
 
 // The exit status of crw manage send-parent, as the issue body fixes it: 0 for a delivery that
@@ -71,7 +71,7 @@ func sendParentDispatch(ctx context.Context, e *Env, cfg *Config, parsed sendPar
 			fmt.Fprintf(e.Stderr, "crw manage send-parent: error: %v\n", err)
 			return sendParentExitRefused
 		}
-		dest := filepath.Join(cfg.StateDir, sendParentQueueDir, parsed.thread, logicalID+".txt")
+		dest := crwconfig.JoinRoot(cfg.StateDir, sendParentQueueDir, parsed.thread, logicalID+".txt")
 		if err := deliverWriteAtomic(dest, text); err != nil {
 			fmt.Fprintf(e.Stderr, "crw manage send-parent: error: %v\n", err)
 			return sendParentExitRefused
@@ -105,11 +105,11 @@ func sendParentQueueSafe(cfg *Config, thread, logicalID string) error {
 	if err := deliverPathComponent(logicalID, "logical id"); err != nil {
 		return err
 	}
-	queue := filepath.Join(cfg.StateDir, sendParentQueueDir)
+	queue := crwconfig.JoinRoot(cfg.StateDir, sendParentQueueDir)
 	if err := sendParentNoSymlink(queue, "parent queue directory"); err != nil {
 		return err
 	}
-	return sendParentNoSymlink(filepath.Join(queue, thread), "parent queue thread directory")
+	return sendParentNoSymlink(crwconfig.JoinRoot(queue, thread), "parent queue thread directory")
 }
 
 // sendParentNoSymlink refuses a directory that is a symlink. A path that does not exist yet is

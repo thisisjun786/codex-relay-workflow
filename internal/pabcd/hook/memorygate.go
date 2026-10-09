@@ -223,7 +223,7 @@ func memoryGateShellReadable(command, dir string, env host.LookupEnv) bool {
 	if _, err := shellir.Analyze(command, dir); err != nil {
 		return false
 	}
-	_, err := shellir.Analyze(command, "")
+	_, err := shellir.AnalyzeNoDir(command)
 	return err == nil
 }
 

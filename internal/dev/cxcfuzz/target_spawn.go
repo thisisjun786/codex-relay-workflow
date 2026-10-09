@@ -72,7 +72,7 @@ var spawnLoneSurrogates = []string{"\xed\xa0\x80", "\xed\xa0\x81", "\xed\xb0\x80
 
 // spawnMentionedFoldersInput is the whole MentionedFolders case, in the grammar the target reads: the
 // drawn message, made as long as the size draws. This target makes no depth claim. MentionedFolders
-// and the other classifiers it compares read strings, and the 4,400-level bound is the writer bound of
+// and the other classifiers it compares read strings, and the 4,463-level bound is the writer bound of
 // RunSpawnAttachHook (internal/role/spawn/hook_route.go, spawnHookRouteMaxDepth), which a classifier
 // comparison never reaches. So nothing here nests and no harness strips a container before a classifier
 // receives the input: what the two sides compare is the argument itself. The bound is covered by

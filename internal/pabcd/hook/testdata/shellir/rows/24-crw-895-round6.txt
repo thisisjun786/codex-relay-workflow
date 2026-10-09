@@ -1,0 +1,36 @@
+# CRW-895 fix round after the verification of 632401ae: the match-all shortcut of find -regex took every backslash and every escaped
+# character for an operator, so a regular expression that ends in an escaped literal (.*\*, .*\., .*\$, .*\^, .*\\) was read as one
+# that fits every path and the selective removal it guards was refused. An escaped literal is evaluated as the character it names.
+# ../repo is the managed checkout itself, .. its slot.
+
+=== CRW-895-x1 | B
+--why The verification's trigger: .*\* selects only the paths that end in a star; the start point . does not, so the removal is selective (allowed on 3d1fe314).
+find . -regex '.*\*' -delete
+
+=== CRW-895-x2 | B
+--why An escaped dot from the checkout itself: ../repo does not end in a dot, so the checkout is left out and only its matching files go.
+find ../repo -regex '.*\.' -delete
+
+=== CRW-895-x3 | B
+--why An escaped dollar is a literal dollar.
+find . -regex '.*\$' -delete
+
+=== CRW-895-x4 | B
+--why An escaped caret is a literal caret.
+find . -regex '.*\^' -delete
+
+=== CRW-895-x5 | B
+--why An escaped backslash is a literal backslash.
+find . -regex '.*\\' -delete
+
+=== CRW-895-x6 | R
+--why Control: the same escaped dot fits the slot root .. itself, so the start point is not left out and the removal stays refused.
+find .. -maxdepth 0 -regex '.*\.' -exec rm -rf {} +
+
+=== CRW-895-x7 | R
+--why Control: a match-all regular expression still guards nothing.
+find ../repo -regex '.*' -delete
+
+=== CRW-895-x8 | R
+--why Control: a group around a match-all is not read and guards nothing.
+find ../repo -regex '\(.*\)' -delete
