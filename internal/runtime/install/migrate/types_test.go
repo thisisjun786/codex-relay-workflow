@@ -24,12 +24,12 @@ func TestCodexLeaf(t *testing.T) {
 		"codexclaw-self-heal.json":                         "crw-self-heal.json",
 		"config.toml.codexclaw-" + stamp + ".bak":          "config.toml.crw-" + stamp + ".bak",
 		"config.toml.codexclaw-2026-10-05T05:49:04.1Z.bak": "config.toml.crw-2026-10-05T05:49:04.1Z.bak",
-		"config.toml":                                 "",
-		"config.toml.codexclaw-.bak":                  "",
-		"config.toml.codexclaw-xyz.bak":               "",
-		"config.toml.codexclaw-" + stamp + ".bak.bak": "",
-		"config.toml.codexclaw-" + stamp:              "",
-		".crw-install.json":                           "",
+		"config.toml":                                      "",
+		"config.toml.codexclaw-.bak":                       "",
+		"config.toml.codexclaw-xyz.bak":                    "",
+		"config.toml.codexclaw-" + stamp + ".bak.bak":      "",
+		"config.toml.codexclaw-" + stamp:                   "",
+		".crw-install.json":                                "",
 	} {
 		if got, ok := CodexLeaf(in); got != want || ok != (want != "") {
 			t.Errorf("CodexLeaf(%q) = %q, %v; want %q", in, got, ok, want)
