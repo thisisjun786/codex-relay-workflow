@@ -135,9 +135,12 @@ type pumpState struct {
 	QueueRefused map[string]pumpQueueRefusal `json:"queue_refused"`
 
 	// QueueLegacyChecked marks a queue thread whose queue was searched for the pre-change ledger
-	// records that could have carried its notices and left nothing to answer for beyond a plain pin it
-	// took: no record, only records that settled as never delivered, or the one provable record the pin
-	// adopts. The pre-change pump no longer writes such records, so the search runs until then, and never
+	// records that could have carried its notices and left nothing to answer for beyond a pin that holds
+	// the whole evidence: no record, only records that settled as never delivered, the one provable record
+	// the pin adopts, a provable pin that answers for every record found, or an overlap pin whose records
+	// all settled with nothing left waiting. A thread with a ledger record that could have carried a text
+	// it may still send and that neither the search nor the pin answers for is never marked. The
+	// pre-change pump no longer writes such records, so the search runs until then, and never
 	// again; a thread holding a pin it has not been marked for (one another build left) is searched before
 	// that pin is acted on. A state written before the key existed reads as no thread searched.
 	QueueLegacyChecked map[string]bool `json:"queue_legacy_checked"`
@@ -179,6 +182,12 @@ type pumpReview776QueuePin struct {
 	// the pin Held: the thread sends nothing until an operator settles it, and the provable records are
 	// still reconciled under the hold.
 	Overlap []pumpReview776QueueLegacyRef `json:"overlap,omitempty"`
+	// Judged lists the pre-change records the search that took an overlap pin matched over the queue
+	// and found to answer for nothing queued: refused with proof of its text, or written before every
+	// member it names was written again. An overlap pin never replays a text, so they stay answered while
+	// it holds, and a later round that cannot match them by name (a member completed, or a queue past the
+	// search's limit) does not hold on them as records nothing answers for.
+	Judged []string `json:"judged,omitempty"`
 }
 
 // pumpReview776QueueLegacyRef is one pre-change record of an overlap pin: its logical id, the names

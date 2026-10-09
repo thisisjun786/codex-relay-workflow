@@ -833,7 +833,7 @@ func TestPumpQueueReadNoticePairsTheTextWithItsOwnFile(t *testing.T) {
 	if _, _, err := pumpReview776QueueReadNotice(dir, pumpOverlapB); err == nil || !strings.Contains(err.Error(), "symlink") {
 		t.Errorf("a symlinked notice was read: %v", err)
 	}
-	if _, _, err := pumpReview776QueueLegacyScan(&Config{StateDir: dir}, "parent-1", pumpReview776QueueBatch{names: []string{pumpOverlapA}, texts: []string{"B"}}); err == nil {
+	if _, _, _, err := pumpReview776QueueLegacyScan(&Config{StateDir: dir}, "parent-1", pumpReview776QueueBatch{names: []string{pumpOverlapA}, texts: []string{"B"}}, nil); err == nil {
 		t.Errorf("a snapshot without the times read with its texts was judged")
 	}
 }

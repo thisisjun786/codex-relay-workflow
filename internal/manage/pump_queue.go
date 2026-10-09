@@ -1257,6 +1257,11 @@ const pumpQueueLegacyScanLimit = 16
 // while the ledger holds a record that could have carried one of its notices, for the operator.
 const pumpQueueLegacyScanLimitHold = "legacy_scan_limit_hold"
 
+// pumpQueueLegacyUnmatchedHold names the log line of a thread that holds because the ledger keeps a
+// record for it that could have carried a text the thread may still send, while no set of the queue's
+// names is that record's id and no pin answers for it, for the operator.
+const pumpQueueLegacyUnmatchedHold = "legacy_unmatched_hold"
+
 // pumpReview776QueueLegacyScan finds every pre-change record that carried a notice of the queue the
 // round read. The pre-change id hashed the thread and the sorted names of the whole queue at the time,
 // and the queue has changed since in ways no order recovers: a notice added later may sort anywhere,
@@ -1264,33 +1269,44 @@ const pumpQueueLegacyScanLimitHold = "legacy_scan_limit_hold"
 // neither a name-ordered nor an oldest-first prefix of today's queue. The search therefore does not
 // guess which set an attempt covered: it hashes every non-empty subset of today's names and looks each
 // id up among the ledger's records (one directory read, then a lookup per id the ledger holds). A
-// record over a set that names a notice no longer queued is not found: the pre-change pump moved a
-// batch's notices only all together, after an accepted answer, so such a record carried nothing that
-// is still queued; and this build runs the search before any move of its own can take a notice out of
-// the queue -- before a batch is formed, and before a pin another build left is acted on
-// (pumpReview776QueueLegacyBeforePin) -- and keeps every record it found that still matters in a stored
-// overlap pin before the first move, so no move of the queue's own hides a record it has to answer for.
+// record over a set that names a notice no longer queued is not found here. The pre-change pump moved a
+// batch's notices only all together, after an accepted answer, and this build runs the search before any
+// move of its own can take a notice out of the queue -- before a batch is formed, and before a pin another
+// build left is acted on (pumpReview776QueueLegacyBeforePin) -- and keeps every record it found that still
+// matters in a stored overlap pin before the first move. A member can still have left before this build
+// first ran (an operator's removal, or an earlier build's completion), so the search is not trusted to
+// have seen every record: whatever it did not match is checked by pumpReview776QueueLegacyUnmatched, and a
+// record there that could have carried a text the thread may send holds the thread.
 //
 // A record is kept when it carried at least one member (carriedBy) -- a record written before every
 // member it names was written again carried none of the texts queued now -- unless it was refused and
 // proves its text, which shows it sent nothing; a refused record that cannot prove its text is kept, so
-// it holds the thread like any other. The records come longest set first. over reports a queue larger than
+// it holds the thread like any other. The records come longest set first. judged lists every record the
+// search matched by id, found or set aside, so the check for records nothing answers for
+// (pumpReview776QueueLegacyUnmatched) does not count them. over reports a queue larger than
 // pumpQueueLegacyScanLimit, which is not searched.
+//
+// frozen is the per-member digest a pin that would replay its own frozen body holds (nil without one).
+// A member whose queued text is no longer the frozen one cannot date the text a replay would send: the
+// record may have carried the frozen text however new the queued file is, so a record over such a member
+// is never set aside as written before its members; it is kept, and it cannot prove its text
+// (pumpReview776QueueLegacyUnprovable).
 //
 // Each member's time is the one read with its text (batch.modTimes), never one read again from the
 // path: a notice the producer replaced since the read would otherwise pair the older text with the
 // newer time, and the record that carried the older text would look stale. A batch without those
 // times is refused rather than judged on other times.
-func pumpReview776QueueLegacyScan(cfg *Config, thread string, batch pumpReview776QueueBatch) (found []pumpReview776QueueLegacyFound, over bool, err error) {
+func pumpReview776QueueLegacyScan(cfg *Config, thread string, batch pumpReview776QueueBatch, frozen map[string]string) (found []pumpReview776QueueLegacyFound, judged map[string]bool, over bool, err error) {
 	if len(batch.modTimes) != len(batch.names) || len(batch.texts) != len(batch.names) {
-		return nil, false, fmt.Errorf("crw manage pump: the queue snapshot has %d names, %d texts and %d modification times", len(batch.names), len(batch.texts), len(batch.modTimes))
+		return nil, nil, false, fmt.Errorf("crw manage pump: the queue snapshot has %d names, %d texts and %d modification times", len(batch.names), len(batch.texts), len(batch.modTimes))
 	}
+	judged = map[string]bool{}
 	if len(batch.names) > pumpQueueLegacyScanLimit {
-		return nil, true, nil
+		return nil, judged, true, nil
 	}
 	ids, err := pumpReview776QueueOutboxIDs(cfg)
 	if err != nil || len(ids) == 0 {
-		return nil, false, err
+		return nil, judged, false, err
 	}
 	n := len(batch.names)
 	for mask := 1; mask < 1<<n; mask++ {
@@ -1309,18 +1325,25 @@ func pumpReview776QueueLegacyScan(cfg *Config, thread string, batch pumpReview77
 		}
 		record, known, err := deliverLoad(cfg, oldID)
 		if err != nil {
-			return nil, false, err
+			return nil, nil, false, err
 		}
 		if !known {
 			continue
 		}
+		judged[oldID] = true
+		var refrozen []string
+		for i, name := range candidate.names {
+			if digest, pinned := frozen[name]; pinned && digest != pumpReview776BodyDigest(candidate.texts[i]) {
+				refrozen = append(refrozen, name)
+			}
+		}
 		carried := candidate.carriedBy(record.CreatedAt)
-		if len(carried) == 0 {
+		if len(carried) == 0 && len(refrozen) == 0 {
 			// Every member was last modified after the record was written, so the attempt carried none of
 			// the texts queued now: it can neither pin a stale attempt nor hold the thread.
 			continue
 		}
-		f := pumpReview776QueueLegacyFound{oldID: oldID, record: record, candidate: candidate, carried: carried}
+		f := pumpReview776QueueLegacyFound{oldID: oldID, record: record, candidate: candidate, carried: carried, frozen: refrozen}
 		if record.State == deliverStateRefused && pumpReview776QueueLegacyUnprovable(f) == "" {
 			// A refusal of a record that proves its text sent nothing, so its notices are sent once (R1). A
 			// refused record that cannot prove its text is kept: its answer never authorises a send (R2).
@@ -1334,7 +1357,7 @@ func pumpReview776QueueLegacyScan(cfg *Config, thread string, batch pumpReview77
 		}
 		return found[a].oldID < found[b].oldID
 	})
-	return found, false, nil
+	return found, judged, false, nil
 }
 
 // pumpReview776QueueOutboxIDs is the set of logical ids the delivery ledger holds a record for, read
@@ -1359,12 +1382,29 @@ func pumpReview776QueueOutboxIDs(cfg *Config) (map[string]bool, error) {
 	return ids, nil
 }
 
-// pumpReview776QueueLegacyUnidentified lists the records a queue too large for the search may still
-// have to answer for: a record for the thread written no earlier than the second of the oldest queued
-// notice's modification, so it could have carried a notice queued now. A refused one is listed too: its
-// members are unknown, so it cannot prove its text, and its refusal does not authorise a send (R2). A
-// stamp that does not parse is no evidence against the record. Every record in the ledger is read.
-func pumpReview776QueueLegacyUnidentified(cfg *Config, thread string, batch pumpReview776QueueBatch) ([]deliverRecord, error) {
+// pumpReview776QueueLegacyUnmatched lists the ledger records for the thread that nothing answers for and
+// that could have carried a text the thread may still send. The search over the queue's names finds a
+// record only while every member it names is queued, and it does not run at all on a queue past its
+// limit, so it is not trusted to have seen every record: every record for the thread is read instead
+// (R2), and one is left out only when
+//
+//   - the search matched it by id (judged), or the pin answers for it (evidence: the pin's own id, its
+//     overlap records and the records its search set aside);
+//   - it is a direct send-parent delivery: its id is the digest of its own text, which no queue batch id
+//     is (a queue id hashes the thread and the names);
+//   - bounded, and it was written before the second of the oldest queued notice's modification, so it
+//     could not have carried any notice queued now. A stamp that does not parse is no evidence against
+//     the record.
+//
+// bounded is false when the pin would replay a frozen text that is not the text queued now (a member the
+// producer wrote again, or one that left the queue): nothing dates that text, so every record not left
+// out above could have carried it. With bounded and nothing queued, no text is at risk and nothing is
+// listed. A refused record is listed too: its members are unknown, so it cannot prove its text, and its
+// refusal does not authorise a send (R2). Every record in the ledger is read.
+func pumpReview776QueueLegacyUnmatched(cfg *Config, thread string, batch pumpReview776QueueBatch, judged, evidence map[string]bool, bounded bool) ([]deliverRecord, error) {
+	if bounded && len(batch.modTimes) == 0 {
+		return nil, nil
+	}
 	ids, err := pumpReview776QueueOutboxIDs(cfg)
 	if err != nil || len(ids) == 0 {
 		return nil, err
@@ -1377,7 +1417,9 @@ func pumpReview776QueueLegacyUnidentified(cfg *Config, thread string, batch pump
 	}
 	sorted := make([]string, 0, len(ids))
 	for id := range ids {
-		sorted = append(sorted, id)
+		if !judged[id] && !evidence[id] {
+			sorted = append(sorted, id)
+		}
 	}
 	sort.Strings(sorted)
 	var out []deliverRecord
@@ -1389,12 +1431,43 @@ func pumpReview776QueueLegacyUnidentified(cfg *Config, thread string, batch pump
 		if !known || record.TargetThread != thread {
 			continue
 		}
-		if created, err := time.Parse(time.RFC3339, record.CreatedAt); err == nil && oldest.Truncate(time.Second).After(created) {
+		if pumpReview776QueueDirectSend(record) {
 			continue
+		}
+		if bounded {
+			if created, err := time.Parse(time.RFC3339, record.CreatedAt); err == nil && oldest.Truncate(time.Second).After(created) {
+				continue
+			}
 		}
 		out = append(out, record)
 	}
 	return out, nil
+}
+
+// pumpReview776QueueDirectSend reports a record send-parent wrote for a direct delivery under its own
+// default id, the first 16 characters of the text's sha256 (sendParentLogicalID). The record's message
+// digest is that same sha256, so the id is the head of the digest; a queue batch's id hashes the thread
+// and its names instead, and is never the head of its body's digest.
+func pumpReview776QueueDirectSend(record deliverRecord) bool {
+	return len(record.LogicalID) == 16 && strings.HasPrefix(record.MessageSHA256, record.LogicalID)
+}
+
+// pumpReview776QueueLogUnmatched logs each record pumpReview776QueueLegacyUnmatched listed, with the
+// scan-limit name when the queue was too large for the search and the unmatched name otherwise.
+func pumpReview776QueueLogUnmatched(cfg *Config, thread string, records []deliverRecord, over bool, queued int, pinID string) {
+	acted := "nothing is sent"
+	if pinID != "" {
+		acted = "the pin " + pinID + " is not acted on and nothing is sent"
+	}
+	for _, record := range records {
+		if over {
+			pumpLog(cfg, fmt.Sprintf("queue %s %s: the pre-change attempt %s (state %s, written %s) may have carried a queued notice, but the queue holds %d notices, more than the %d the search for its members can match; its members are unknown and it cannot prove its text, so %s until an operator settles it",
+				thread, pumpQueueLegacyScanLimitHold, record.LogicalID, record.State, record.CreatedAt, queued, pumpQueueLegacyScanLimit, acted))
+			continue
+		}
+		pumpLog(cfg, fmt.Sprintf("queue %s %s: the attempt %s (state %s, written %s) may have carried a text this thread may still send, but no set of the queued names is its id (a member it names has left the queue) and no pin answers for it; its members are unknown and it cannot prove its text, so %s until an operator settles it",
+			thread, pumpQueueLegacyUnmatchedHold, record.LogicalID, record.State, record.CreatedAt, acted))
+	}
 }
 
 // pumpReview776QueueCarriedBy lists the members of a set that were already queued, unchanged, when a
@@ -1485,34 +1558,33 @@ func pumpReview776QueueGateNames(dir string, pinned []string) ([]string, error) 
 // the text it did not; a notice a provable record shows delivered is still completed under the hold.
 // The round never falls through to a new batch while such a record is there.
 //
-// A queue too large for the search is held for the round, with a legacy_scan_limit_hold line, while
-// the ledger holds any record for the thread that could have carried one of its notices; the members of
-// such a record are unknown, so it is treated as one that cannot prove its text.
+// The search does not see every record (pumpReview776QueueLegacyUnmatched): a record for the thread that
+// no set of the queue's names matched -- a member it names left the queue, or the queue is too large for
+// the search -- and that could have carried a queued notice holds the round, with a legacy_unmatched_hold
+// line (legacy_scan_limit_hold for a queue past the limit) naming it; its members are unknown, so it is
+// treated as one that cannot prove its text. The hold writes nothing and is read again every round, so a
+// record that stops mattering (its notices handled by the operator) releases the thread by itself.
 //
 // A search that finds nothing to answer for -- no record, or only records that settled as never
-// delivered with none holding the thread -- marks the thread searched, and the search does not run for it
-// again: the pre-change pump no longer writes records, and a notice queued later is newer than every
-// record it wrote, so it can never be one such a record carried.
+// delivered with none holding the thread, and no record nothing answers for -- marks the thread searched,
+// and the search does not run for it again: the pre-change pump no longer writes records, and a notice
+// queued later is newer than every record it wrote, so it can never be one such a record carried. So does
+// an overlap pin whose records all settle with nothing left waiting or held.
 func pumpReview776QueueAdoptLegacy(ctx context.Context, e *Env, cfg *Config, st *pumpState, dir, thread string, batch pumpReview776QueueBatch) (pumpReview776QueueLegacyAction, error) {
 	if st.QueueLegacyChecked[thread] {
 		return pumpReview776QueueLegacyNone, nil
 	}
-	found, over, err := pumpReview776QueueLegacyScan(cfg, thread, batch)
+	found, judged, over, err := pumpReview776QueueLegacyScan(cfg, thread, batch, nil)
 	if err != nil {
 		return pumpReview776QueueLegacyWait, err
 	}
-	if over {
-		records, err := pumpReview776QueueLegacyUnidentified(cfg, thread, batch)
-		if err != nil {
-			return pumpReview776QueueLegacyWait, err
-		}
-		for _, record := range records {
-			pumpLog(cfg, fmt.Sprintf("queue %s %s: the pre-change attempt %s (state %s, written %s) may have carried a queued notice, but the queue holds %d notices, more than the %d the search for its members can match; its members are unknown and it cannot prove its text, so nothing is sent until an operator settles it",
-				thread, pumpQueueLegacyScanLimitHold, record.LogicalID, record.State, record.CreatedAt, len(batch.names), pumpQueueLegacyScanLimit))
-		}
-		if len(records) > 0 {
-			return pumpReview776QueueLegacyWait, nil
-		}
+	unmatched, err := pumpReview776QueueLegacyUnmatched(cfg, thread, batch, judged, nil, true)
+	if err != nil {
+		return pumpReview776QueueLegacyWait, err
+	}
+	if len(unmatched) > 0 {
+		pumpReview776QueueLogUnmatched(cfg, thread, unmatched, over, len(batch.names), "")
+		return pumpReview776QueueLegacyWait, nil
 	}
 	if len(found) == 0 {
 		// The mark is written with the round's next save (the pin of the batch it sends), not on its own:
@@ -1524,7 +1596,7 @@ func pumpReview776QueueAdoptLegacy(ctx context.Context, e *Env, cfg *Config, st 
 	if len(found) == 1 && pumpReview776QueueLegacyUnprovable(found[0]) == "" {
 		return pumpReview776QueueAdoptOne(ctx, cfg, st, thread, found[0])
 	}
-	pin := pumpReview776QueueOverlapPin(found)
+	pin := pumpReview776QueueOverlapPin(found, judged)
 	outcome, err := pumpReview776QueueSettleOverlap(ctx, e, cfg, st, dir, thread, pin, false)
 	if err != nil {
 		return pumpReview776QueueLegacyWait, err
@@ -1541,11 +1613,22 @@ func pumpReview776QueueAdoptLegacy(ctx context.Context, e *Env, cfg *Config, st 
 }
 
 // pumpReview776QueueOverlapPin is the overlap pin over the records the search found: their refs, the
-// notices they carried and those notices' digests. Every candidate set comes from the one snapshot the
-// round read, so a name's text, and its digest, is the same whichever record lists it. A record that
-// cannot prove its text marks the pin held.
-func pumpReview776QueueOverlapPin(found []pumpReview776QueueLegacyFound) pumpReview776QueuePin {
+// notices they carried and those notices' digests, and the ids of the records the search matched and set
+// aside (Judged). Every candidate set comes from the one snapshot the round read, so a name's text, and
+// its digest, is the same whichever record lists it. A record that cannot prove its text marks the pin
+// held.
+func pumpReview776QueueOverlapPin(found []pumpReview776QueueLegacyFound, judged map[string]bool) pumpReview776QueuePin {
 	pin := pumpReview776QueuePin{LogicalID: found[0].oldID, Legacy: true, SHA256: map[string]string{}}
+	listed := map[string]bool{}
+	for _, f := range found {
+		listed[f.oldID] = true
+	}
+	for id := range judged {
+		if !listed[id] {
+			pin.Judged = append(pin.Judged, id)
+		}
+	}
+	sort.Strings(pin.Judged)
 	for _, f := range found {
 		ref := pumpReview776QueueLegacyRef{LogicalID: f.oldID, Members: append([]string(nil), f.candidate.names...)}
 		for _, i := range f.carried {
@@ -1572,37 +1655,43 @@ func pumpReview776QueueOverlapPin(found []pumpReview776QueueLegacyFound) pumpRev
 //
 // This build marks the thread searched whenever it takes a plain pin (the search found nothing, only
 // records that never went, or the one record the pin adopts), so an unsearched thread holds an overlap
-// pin of this build -- whose records the search finds again, a no-op -- or a pin another build left: an
-// old id pin an earlier adoption wrote without the evidence of the other records, a size-split prefix
-// pin written before any search, or an overlap pin an earlier build built from fewer candidate sets.
-// Acting on such a pin first loses evidence for good. Replaying an old id pin
-// whose record says nothing went resends a notice a shorter record shows delivered; completing an
-// accepted prefix pin moves a member another record names, and that record is then a set of no queue
-// the search can match, so the notices it delivered would form a new batch.
+// pin of this build or a pin another build left: an old id pin an earlier adoption wrote without the
+// evidence of the other records, a size-split prefix pin written before any search, or an overlap pin an
+// earlier build built from fewer candidate sets. Acting on such a pin first loses evidence for good.
+// Replaying an old id pin whose record says nothing went resends a notice a shorter record shows
+// delivered; completing an accepted prefix pin moves a member another record names, and that record is
+// then a set of no queue the search can match, so the notices it delivered would form a new batch.
 //
-// The search therefore reads the whole queue while every member is still in it. When it finds nothing
-// the pin does not already answer for (the pin then is the whole evidence, frozen when it was taken), the
-// thread is handled through the pin as before. Otherwise the pin is folded into the overlap pin of the
-// found records (pumpReview776QueueFoldPin) -- a plain pin as one more ref, its attempt answered by its
-// accepted mark, else by the ledger and the bridge like any record, its notices those still carrying the
-// digest it sent; an overlap pin with each of its records -- and the overlap
-// reconciliation keeps I1-I3 over the whole set: a notice any of them shows delivered is completed, a
-// notice one of them has no answer for waits, and a record or pin that cannot prove its text holds the
-// thread (R2). A pin that cannot prove its text (a legacy pin, a held one, or one without digests) is
-// such a ref. When the whole set settles with nothing delivered, held or waiting, the pin's attempt went
-// nowhere either: the pin lifts and the next round forms its batch under the search as usual.
+// The search therefore reads the whole queue while every member is still in it. A pin that would replay
+// its own frozen body (a plain pin, not accepted, held or legacy) lends the search its frozen digests: a
+// record over a member whose queued text is no longer the frozen one may have carried the frozen text the
+// replay would send, so it is kept and cannot prove its text. Then every ledger record for the thread
+// that neither the search matched nor the pin answers for, and that could have carried a text the thread
+// may send, holds the round (pumpReview776QueueLegacyUnmatched): an overlap pin, whichever build took it,
+// is no proof the search behind it saw every record, and a queue past the search's limit is not searched
+// at all. When a frozen text of the pin is no longer queued, nothing dates it, so every such record holds.
 //
-// A queue too large for the search holds the round of a plain pin, with a legacy_scan_limit_hold line,
-// while the ledger keeps a record for the thread that the pin does not answer for and that could have
-// carried a queued notice.
+// When the search finds nothing the pin does not already answer for, the pin is the whole evidence,
+// frozen when it was taken, and the thread is handled through it as before; a pin that proves its text is
+// then the thread's whole answer, and the thread is marked searched with it, while one that cannot leaves
+// the thread unsearched. Otherwise the pin is folded
+// into the overlap pin of the found records (pumpReview776QueueFoldPin) -- a plain pin as one more ref,
+// its attempt answered by its accepted mark, else by the ledger and the bridge like any record, its
+// notices those still carrying the digest it sent; an overlap pin with each of its records -- and the
+// overlap reconciliation keeps I1-I3 over the whole set: a notice any of them shows delivered is
+// completed, a notice one of them has no answer for waits, and a record or pin that cannot prove its text
+// holds the thread (R2). A pin that cannot prove its text (a legacy pin, a held one, or one without
+// digests) is such a ref. When the whole set settles with nothing delivered, held or waiting, the pin's
+// attempt went nowhere either: the pin lifts and the next round forms its batch under the search as usual.
 func pumpReview776QueueLegacyBeforePin(ctx context.Context, e *Env, cfg *Config, st *pumpState, dir, thread string, pin pumpReview776QueuePin) (bool, error) {
+	replays := len(pin.Overlap) == 0 && !pin.Legacy && !pin.Held && !pin.Accepted
 	names, err := pumpQueueSortedNames(dir)
 	if err != nil {
 		return true, err
 	}
-	if len(names) == 0 {
-		// Nothing is queued, so no record carried a queued notice, and a notice queued later is newer than
-		// every pre-change record.
+	if len(names) == 0 && !replays {
+		// Nothing is queued and the pin sends nothing of its own, so no record carried a text the thread may
+		// send, and a notice queued later is newer than every pre-change record.
 		st.QueueLegacyChecked[thread] = true
 		return false, nil
 	}
@@ -1611,32 +1700,33 @@ func pumpReview776QueueLegacyBeforePin(ctx context.Context, e *Env, cfg *Config,
 		return true, err
 	}
 	whole := pumpReview776QueueBatch{names: names, texts: texts, body: pumpReview776QueueBody(texts), modTimes: modTimes}
-	found, over, err := pumpReview776QueueLegacyScan(cfg, thread, whole)
+	current := pumpReview776QueueDigests(names, texts)
+	var frozen map[string]string
+	bounded := true
+	if replays {
+		// A pin without digests cannot tell a frozen text from the queued one, so each of its members counts
+		// as written again.
+		frozen = map[string]string{}
+		for _, name := range pin.Names {
+			frozen[name] = pin.SHA256[name]
+			if digest, queued := current[name]; !queued || digest != frozen[name] {
+				bounded = false
+			}
+		}
+	}
+	found, judged, over, err := pumpReview776QueueLegacyScan(cfg, thread, whole, frozen)
 	if err != nil {
 		return true, err
 	}
-	if over && len(pin.Overlap) == 0 {
-		// An overlap pin is itself the evidence of a search, and the notices queued since it was taken are
-		// newer than every pre-change record, so a queue that grew past the search's limit under it goes on
-		// through it. A plain pin another build left has no such search behind it.
-		records, err := pumpReview776QueueLegacyUnidentified(cfg, thread, whole)
-		if err != nil {
-			return true, err
-		}
-		held := false
-		for _, record := range records {
-			if pumpReview776QueuePinEvidence(pin)[record.LogicalID] {
-				continue
-			}
-			held = true
-			pumpLog(cfg, fmt.Sprintf("queue %s %s: the pre-change attempt %s (state %s, written %s) may have carried a queued notice, but the queue holds %d notices, more than the %d the search for its members can match; its members are unknown and it cannot prove its text, so the pin %s is not acted on and nothing is sent until an operator settles it",
-				thread, pumpQueueLegacyScanLimitHold, record.LogicalID, record.State, record.CreatedAt, len(names), pumpQueueLegacyScanLimit, pin.LogicalID))
-		}
-		if held {
-			return true, nil
-		}
-	}
 	covered := pumpReview776QueuePinEvidence(pin)
+	unmatched, err := pumpReview776QueueLegacyUnmatched(cfg, thread, whole, judged, covered, bounded)
+	if err != nil {
+		return true, err
+	}
+	if len(unmatched) > 0 {
+		pumpReview776QueueLogUnmatched(cfg, thread, unmatched, over, len(names), pin.LogicalID)
+		return true, nil
+	}
 	fresh := false
 	for _, f := range found {
 		if !covered[f.oldID] {
@@ -1644,15 +1734,19 @@ func pumpReview776QueueLegacyBeforePin(ctx context.Context, e *Env, cfg *Config,
 		}
 	}
 	if !fresh {
-		// Nothing found that the pin does not already hold: the pin is the whole evidence, frozen when it
-		// was taken, and the thread is handled through it as before.
-		if len(found) == 0 {
+		// Nothing found that the pin does not already hold, and no record nothing answers for: the pin is the
+		// whole evidence, frozen when it was taken, and the thread is handled through it as before. A pin that
+		// proves its text is then the thread's whole answer, so the thread is marked searched with it, and the
+		// completion or replay of the pin cannot leave a record behind that a later search would no longer
+		// match. A pin that cannot prove its text holds the thread, and keeps it unsearched: once an operator
+		// clears it, the next round searches again rather than forming a batch around what it held.
+		if pumpReview776QueuePinProvable(pin) {
 			st.QueueLegacyChecked[thread] = true
 		}
 		return false, nil
 	}
-	overlap := pumpReview776QueueOverlapPin(found)
-	pumpReview776QueueFoldPin(&overlap, pin, pumpReview776QueueDigests(names, texts))
+	overlap := pumpReview776QueueOverlapPin(found, judged)
+	pumpReview776QueueFoldPin(&overlap, pin, current)
 	pumpLog(cfg, fmt.Sprintf("queue %s: the pin %s is reconciled together with the pre-change attempts the search found", thread, pin.LogicalID))
 	outcome, err := pumpReview776QueueSettleOverlap(ctx, e, cfg, st, dir, thread, overlap, false)
 	if err != nil {
@@ -1664,12 +1758,33 @@ func pumpReview776QueueLegacyBeforePin(ctx context.Context, e *Env, cfg *Config,
 	return true, nil
 }
 
+// pumpReview776QueuePinProvable reports whether a pin proves the text of every attempt it answers for, so
+// that it can stand as a thread's whole evidence: a plain pin with per-member digests, or an overlap pin
+// whose every record proves its text; never a held pin or a legacy pin without an overlap.
+func pumpReview776QueuePinProvable(pin pumpReview776QueuePin) bool {
+	if pin.Held {
+		return false
+	}
+	if len(pin.Overlap) == 0 {
+		return !pin.Legacy && len(pin.SHA256) > 0
+	}
+	for _, ref := range pin.Overlap {
+		if ref.Unprovable {
+			return false
+		}
+	}
+	return true
+}
+
 // pumpReview776QueuePinEvidence is the set of attempt ids a pin already answers for: its own logical id,
-// and every record of its overlap.
+// every record of its overlap, and the records the search that took it set aside (Judged).
 func pumpReview776QueuePinEvidence(pin pumpReview776QueuePin) map[string]bool {
 	ids := map[string]bool{pin.LogicalID: true}
 	for _, ref := range pin.Overlap {
 		ids[ref.LogicalID] = true
+	}
+	for _, id := range pin.Judged {
+		ids[id] = true
 	}
 	return ids
 }
@@ -1682,12 +1797,21 @@ func pumpReview776QueuePinEvidence(pin pumpReview776QueuePin) map[string]bool {
 // cannot prove its text (a legacy pin, a held one, or one without digests) is an unprovable ref and holds
 // the thread. An overlap pin brings each of its records: one the search found again keeps the ref built
 // from the snapshot, unprovable when either says so; one it did not find keeps its old ref, whose
-// notices are those still carrying the digest the old pin recorded. A held pin stays held.
+// notices are those still carrying the digest the old pin recorded; and the records its search set aside.
+// A held pin stays held.
 func pumpReview776QueueFoldPin(overlap *pumpReview776QueuePin, pin pumpReview776QueuePin, current map[string]string) {
 	index := map[string]int{}
 	for i, ref := range overlap.Overlap {
 		index[ref.LogicalID] = i
 	}
+	// The records the earlier search set aside stay set aside: they answered for nothing queued then, and
+	// an overlap pin replays no text.
+	for _, id := range pin.Judged {
+		if _, found := index[id]; !found && !pumpReview776QueueListed(overlap.Judged, id) {
+			overlap.Judged = append(overlap.Judged, id)
+		}
+	}
+	sort.Strings(overlap.Judged)
 	// add lists a notice under the overlap pin with its current digest.
 	add := func(name string) {
 		if _, listed := overlap.SHA256[name]; !listed {
@@ -1758,8 +1882,13 @@ func pumpReview776QueueFoldPin(overlap *pumpReview776QueuePin, pin pumpReview776
 // modification time older than the stamp does not show the record carried the text it holds now: the
 // old pump read the queue, then probed the parent's turn, and only then did the delivery core stamp the
 // record, so an atomic --queue write in that window leaves a notice older than the stamp that the
-// attempt never carried.
+// attempt never carried. A record over a member whose text a pin froze and the producer wrote again
+// since cannot prove its text either: the pin would replay the frozen text, which the record may have
+// carried and which no file on disk holds any more.
 func pumpReview776QueueLegacyUnprovable(f pumpReview776QueueLegacyFound) string {
+	if len(f.frozen) > 0 {
+		return fmt.Sprintf("its members %s were written again after a pin froze the text a replay of that pin would send, so it may have carried that frozen text, which is not on disk", strings.Join(f.frozen, ","))
+	}
 	if len(f.carried) != len(f.candidate.names) {
 		carried := make(map[int]bool, len(f.carried))
 		for _, i := range f.carried {
@@ -1796,6 +1925,9 @@ type pumpReview776QueueLegacyFound struct {
 	record    deliverRecord
 	candidate pumpReview776QueueLegacyCandidate
 	carried   []int
+	// frozen lists the members whose queued text is no longer the one a pin that would replay its frozen
+	// body holds for them, so the record may have carried the text that replay would send.
+	frozen []string
 }
 
 // pumpReview776QueueAdoptOne adopts the only pre-change record that carried a queued notice, one that
@@ -1986,6 +2118,9 @@ func pumpReview776QueueSettleOverlap(ctx context.Context, e *Env, cfg *Config, s
 			return pumpReview776QueueOverlapHold, err
 		}
 		pumpLog(cfg, fmt.Sprintf("queue %s: the overlapping pre-change attempts settled without a delivery", thread))
+		// Every record settled and nothing waits or holds, so the pin's evidence is spent and the thread is
+		// marked searched with the lift, as after a delivery below.
+		st.QueueLegacyChecked[thread] = true
 		return pumpReview776QueueOverlapFree, pumpReview776QueuePinLift(ctx, cfg, st, thread, nil)
 	}
 	// The pin is written before the first move, so a crash part way leaves an overlap pin that the next
@@ -2008,6 +2143,15 @@ func pumpReview776QueueSettleOverlap(ctx context.Context, e *Env, cfg *Config, s
 			thread, pumpQueueLegacyOverlapHold, strings.Join(waiting, ","), strings.Join(waitingOn, ",")))
 		return pumpReview776QueueOverlapHold, nil
 	}
+	if err := ctx.Err(); err != nil {
+		return pumpReview776QueueOverlapHold, err
+	}
+	// Every record settled, the delivered notices are completed and nothing waits or holds: the thread is
+	// marked searched with the lift. Every record that could have carried a queued notice was answered
+	// before this reconciliation ran -- found by the search, held by the pin, or set aside by it -- and a
+	// record whose members this completion moved can no longer be matched by name, so a later search would
+	// only take it for one nothing answers for and hold the thread on the notices it already settled.
+	st.QueueLegacyChecked[thread] = true
 	return pumpReview776QueueOverlapDone, pumpReview776QueuePinLift(ctx, cfg, st, thread, nil)
 }
 

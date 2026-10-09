@@ -1501,37 +1501,58 @@ func TestPumpReview776LegacyAcceptedWithUnrecoverableTextHoldsTheQueue(t *testin
 }
 
 // A pre-change attempt whose names are not a subset of today's queue -- it names a notice no longer
-// queued -- is not this batch's attempt: adopting it could complete notices it never carried, so the
-// batch takes its own id. The notices predate the record, so its stamp is not what rules it out.
+// queued -- is never adopted: it could complete notices it never carried, so no reconciliation runs for
+// it. Its members are unknown, so whether it carried a notice queued now depends on its stamp alone. One
+// written before the queued notices carried none of them, and the batch takes its own id. One written
+// after them may have carried z (its y left the queue), and nothing answers for it, so the thread holds
+// with a legacy_unmatched_hold line naming it (R2) instead of sending z again.
 func TestPumpReview776LegacyLookupIgnoresAnotherNameSet(t *testing.T) {
-	now := pumpTestNow
-	e := pumpTestEnv(t, &now)
-	bridge, log := deliverFakeBridge(t, []map[string]any{
-		{"payload": map[string]any{"observation": "active", "activeTurnId": "turn-1"}},
-		{"payload": map[string]any{"status": "accepted", "delivery": "accepted_not_applied"}},
-	})
-	cfg := pumpTestConfig(t, bridge)
-	// The old attempt carried y.txt and z.txt; y.txt is not queued, so its name set is no subset of the
-	// queue.
-	pumpQueueTestNotice(t, cfg, "parent-1", "aaaaaaaaaaaaaaaa.txt", "a-body")
-	pumpQueueTestNotice(t, cfg, "parent-1", "zzzzzzzzzzzzzzzz.txt", "z-body")
-	pumpQueueTestBackdate(t, cfg, "parent-1")
-	otherID := pumpBatchIDStrings([]string{"parent-1", "yyyyyyyyyyyyyyyy.txt", "zzzzzzzzzzzzzzzz.txt"})
-	if err := deliverSave(cfg, deliverRecord{
-		LogicalID: otherID, RequestID: otherID, Tool: deliverToolSend, TargetThread: "parent-1",
-		MessageSHA256: deliverMessageSHA256("z-body"), CreatedAt: deliverNow(e), State: deliverStateUnknown}); err != nil {
-		t.Fatal(err)
-	}
-	if err := pumpQueueFlush(context.Background(), e, cfg, pumpTestReadStatePtr(t, cfg), pumpSettingsFrom(cfg), false); err != nil {
-		t.Fatal(err)
-	}
-	for _, call := range deliverSendCallsOf(t, log) {
-		if call["tool"] == deliverToolOperation {
-			t.Errorf("the round reconciled an attempt for another name set: %v", deliverSendToolsOf(t, log))
-		}
-	}
-	if names := pumpQueueTestNames(t, cfg, "parent-1"); len(names) != 0 {
-		t.Errorf("the batch was not delivered under its own id: %v", names)
+	for _, recordAfterQueue := range []bool{false, true} {
+		t.Run(fmt.Sprintf("record_after_queue=%v", recordAfterQueue), func(t *testing.T) {
+			now := pumpTestNow
+			e := pumpTestEnv(t, &now)
+			bridge, log := deliverFakeBridge(t, []map[string]any{
+				{"payload": map[string]any{"observation": "active", "activeTurnId": "turn-1"}},
+				{"payload": map[string]any{"status": "accepted", "delivery": "accepted_not_applied"}},
+			})
+			cfg := pumpTestConfig(t, bridge)
+			// The old attempt carried y.txt and z.txt; y.txt is not queued, so its name set is no subset of
+			// the queue.
+			pumpQueueTestNotice(t, cfg, "parent-1", "aaaaaaaaaaaaaaaa.txt", "a-body")
+			pumpQueueTestNotice(t, cfg, "parent-1", "zzzzzzzzzzzzzzzz.txt", "z-body")
+			pumpQueueTestBackdate(t, cfg, "parent-1")
+			created := pumpQueueTestStamp(pumpTestNow.Add(-2 * time.Hour))
+			if recordAfterQueue {
+				created = deliverNow(e)
+			}
+			otherID := pumpBatchIDStrings([]string{"parent-1", "yyyyyyyyyyyyyyyy.txt", "zzzzzzzzzzzzzzzz.txt"})
+			if err := deliverSave(cfg, deliverRecord{
+				LogicalID: otherID, RequestID: otherID, Tool: deliverToolSend, TargetThread: "parent-1",
+				MessageSHA256: deliverMessageSHA256("z-body"), CreatedAt: created, State: deliverStateUnknown}); err != nil {
+				t.Fatal(err)
+			}
+			if err := pumpQueueFlush(context.Background(), e, cfg, pumpTestReadStatePtr(t, cfg), pumpSettingsFrom(cfg), false); err != nil {
+				t.Fatal(err)
+			}
+			for _, call := range deliverSendCallsOf(t, log) {
+				if call["tool"] == deliverToolOperation {
+					t.Errorf("the round reconciled an attempt for another name set: %v", deliverSendToolsOf(t, log))
+				}
+			}
+			names := pumpQueueTestNames(t, cfg, "parent-1")
+			if !recordAfterQueue {
+				if len(names) != 0 {
+					t.Errorf("the batch was not delivered under its own id: %v", names)
+				}
+				return
+			}
+			if len(names) != 2 {
+				t.Errorf("R2: the thread did not hold on the unmatched record %s; queued: %v", otherID, names)
+			}
+			if logText := pumpQueueTestLog(t, cfg); !strings.Contains(logText, pumpQueueLegacyUnmatchedHold) || !strings.Contains(logText, otherID) {
+				t.Errorf("no %s line naming %s:\n%s", pumpQueueLegacyUnmatchedHold, otherID, logText)
+			}
+		})
 	}
 }
 
