@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -31,19 +32,22 @@ import (
 // injected into the child's packet. A child never declares a root: the gate looks only at assignments the hook recorded.
 //
 // The contract of a child is found from the child itself, never from the order in which receipts arrive. The packet the spawn hook
-// injected carries [CRW-EVIDENCE-ASSIGNMENT:<id>]; the SubagentStop payload names that child's own transcript, which starts with its
-// packet, so the id in it is the assignment this very actor was dispatched with (a surface that gives no transcript falls back on
-// the id the child cites on a line EVIDENCE_ASSIGNMENT: <id>; an actor that already claimed an assignment keeps it). A child that
-// has a contract is judged by it alone: its native-cwd receipt counts for nothing, and a different actor, or an actor whose packet
-// did not hold the id, cannot claim it. Only a child with no contract at all keeps the native root.
+// injected carries [CRW-EVIDENCE-ASSIGNMENT:<id>]; the SubagentStop payload names that child's own transcript, a Codex rollout whose
+// first UserMessage item of the child's own thread is that packet, so the id in it is the assignment this very actor was dispatched
+// with. A marker anywhere else in the transcript (a tool's output, the child's words, a packet the child sent to an agent it
+// spawned, a forked parent history) is not its contract. A transcript that shows no packet falls back on the id the child cites on a
+// line EVIDENCE_ASSIGNMENT: <id>, and an actor that already claimed an assignment keeps it. A child that has a contract is judged by
+// it alone: its native-cwd receipt counts for nothing, a contract it names that cannot be read (removed, damaged, an unreadable
+// directory) refuses the receipt instead of falling back on the native root, and a different actor, or an actor whose packet did not
+// hold the id, cannot claim it. Only a child with no contract at all keeps the native root.
 //
 //   - mode tree: the receipt is verified under <root>/.crw/evidence of the registered tree, with the native checks (inside the
 //     root lexically and physically, a regular non-empty file that is not a link) and more: the tree must still be the directory
 //     that was registered (same real path, device and inode; a link put in its place or a recreated directory is refused), its
-//     .crw and .crw/evidence must be real directories, the receipt must not predate the dispatch, and when the tree was a git
-//     checkout its HEAD at dispatch must still be an ancestor of its HEAD now (an unrelated history is foreign). The first actor
-//     whose receipt passes claims the assignment; another actor's receipt is refused. Each dispatch has its own id, so a finished
-//     dispatch of the same tree is never a candidate for a later one.
+//     .crw and .crw/evidence must be real directories, the receipt must not predate the dispatch (at the precision the dispatch
+//     time was recorded with), and when the tree was a git checkout its HEAD at dispatch must still be an ancestor of its HEAD now
+//     (an unrelated history is foreign). The first actor whose receipt passes claims the assignment; another actor's receipt is
+//     refused. Each dispatch has its own id, so a finished dispatch of the same tree is never a candidate for a later one.
 //   - mode none: the packet allows no evidence write. The child ends with EVIDENCE_SCOPE_CONFLICT: <id>; the gate releases it at
 //     once with a resolvable unverified verdict and marks the assignment scope-conflict, so the parent's own verification
 //     (crw pabcd evidence resolve with a receipt the parent recorded) or nothing at all decides completion. It is never a pass,
@@ -266,16 +270,20 @@ const AssignmentMarker = "[CRW-EVIDENCE-ASSIGNMENT"
 // AssignmentCitation is the line a child writes to name its assignment where the harness gives no transcript.
 const AssignmentCitation = "EVIDENCE_ASSIGNMENT:"
 
-// transcriptReadLimit bounds how much of a child's transcript is read for its packet, which is the first thing in it.
+// transcriptReadLimit bounds how much of a child's transcript is read for its packet, which is near its start.
 const transcriptReadLimit = 8 << 20
 
-// transcriptAssignmentID is the id of the first [CRW-EVIDENCE-ASSIGNMENT:<id>] block in the transcript at path, whether the
-// transcript could be read at all, and the id ("" when there is none). Later blocks belong to what the child itself spawned.
-func transcriptAssignmentID(path string) (id string, readable bool) {
+// dispatchPacket is the text of the packet the child at path was dispatched with, and whether the transcript showed one. The
+// transcript is a Codex rollout (JSON lines): the packet is the first UserMessage item of the child's own thread (the id of the
+// rollout's session_meta). Nothing else in the transcript is the packet: a tool's output, the child's own words, a message the child
+// sent to an agent it spawned, a later input and the items of a forked parent history all live in other lines or other threads, and
+// the harness writes each line as one JSON value, so no output can forge one. The file is opened without blocking and must be a
+// regular file, so a FIFO or a device at the path never holds the gate.
+func dispatchPacket(path string) (string, bool) {
 	if path == "" {
 		return "", false
 	}
-	f, err := os.Open(path)
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOCTTY, 0)
 	if err != nil {
 		return "", false
 	}
@@ -287,72 +295,137 @@ func transcriptAssignmentID(path string) (id string, readable bool) {
 	if err != nil {
 		return "", false
 	}
-	rest := string(raw)
+	type rolloutLine struct {
+		Type    string `json:"type"`
+		Payload struct {
+			ID       string `json:"id"`
+			Type     string `json:"type"`
+			ThreadID string `json:"thread_id"`
+			Item     struct {
+				Type    string `json:"type"`
+				Content []struct {
+					Type string `json:"type"`
+					Text string `json:"text"`
+				} `json:"content"`
+			} `json:"item"`
+		} `json:"payload"`
+	}
+	own, sawMeta := "", false
+	for _, text := range bytes.Split(raw, []byte{'\n'}) {
+		var line rolloutLine
+		if json.Unmarshal(text, &line) != nil {
+			continue
+		}
+		switch {
+		case line.Type == "session_meta" && !sawMeta:
+			own, sawMeta = line.Payload.ID, true
+		case line.Type == "event_msg" && line.Payload.Type == "item_completed" && line.Payload.Item.Type == "UserMessage":
+			if own != "" && line.Payload.ThreadID != own {
+				continue // an item of another thread: a forked parent history
+			}
+			var b strings.Builder
+			for _, p := range line.Payload.Item.Content {
+				if p.Type == "text" {
+					b.WriteString(p.Text)
+				}
+			}
+			return b.String(), true
+		}
+	}
+	return "", false
+}
+
+// packetAssignmentID is the id of the first [CRW-EVIDENCE-ASSIGNMENT:<id>] block of a packet, "" when it has none. The spawn hook
+// puts its block right after the guard, before the parent's own text.
+func packetAssignmentID(packet string) string {
+	rest := packet
 	for {
 		i := strings.Index(rest, AssignmentMarker+":")
 		if i < 0 {
-			return "", true
+			return ""
 		}
 		rest = rest[i+len(AssignmentMarker)+1:]
 		if end := strings.IndexByte(rest, ']'); end >= 0 && validAssignmentID(rest[:end]) {
-			return rest[:end], true
+			return rest[:end]
 		}
 	}
 }
 
-// childAssignment finds the assignment of the session that this child was dispatched with: the id in its own transcript when the
-// transcript can be read (a cited id is then ignored, so an actor cannot name a packet it was not given), else the id it cites, and
-// last the one assignment an actor of this id already claimed.
-func childAssignment(dir, sessionID, agentID, transcriptPath, message string) (Assignment, bool) {
+// contractID is the assignment id this child was dispatched with, and whether its transcript showed its packet. When the packet was
+// found its marker alone decides ("" is a dispatch without a contract, and an id the child cites is ignored, so an actor cannot
+// name a packet it was not given); when it was not, the id the child cites on an EVIDENCE_ASSIGNMENT: line stands in for it.
+func contractID(transcriptPath, message string) (id string, fromPacket bool) {
+	if packet, ok := dispatchPacket(transcriptPath); ok {
+		return packetAssignmentID(packet), true
+	}
+	if cited, ok := lastMarkerValue(message, AssignmentCitation); ok && validAssignmentID(cited) {
+		return cited, false
+	}
+	return "", false
+}
+
+// childAssignment finds the assignment of the session that this child was dispatched with and says what decides the child:
+// NoContract when it has none (the native root), AssignedRefused when its packet or citation names a contract that cannot be read
+// or does not belong to the session (removed, damaged, an unreadable directory: never the native root), and AssignedAccepted with
+// the record when it is there. Where the transcript showed no packet and the child cites nothing, the one assignment an actor of
+// this id already claimed is its contract.
+func childAssignment(cwd, sessionID, agentID, transcriptPath, message string) (Assignment, AssignedVerdict) {
+	id, fromPacket := contractID(transcriptPath, message)
+	dir, dirErr := existingRecordDir(cwd, AssignmentsSubdir, sessionRecordDir(sessionID))
 	load := func(id string) (Assignment, bool) {
-		if !validAssignmentID(id) {
-			return Assignment{}, false
-		}
 		a, ok := readAssignment(filepath.Join(dir, id+".json"), id)
 		return a, ok && a.SessionID == sessionID
 	}
-	id, readable := transcriptAssignmentID(transcriptPath)
-	if !readable {
-		id, _ = lastMarkerValue(message, AssignmentCitation)
+	if id != "" {
+		if dirErr != nil {
+			return Assignment{}, AssignedRefused
+		}
+		if a, ok := load(id); ok {
+			return a, AssignedAccepted
+		}
+		return Assignment{}, AssignedRefused
 	}
-	if a, ok := load(id); ok {
-		return a, true
+	if fromPacket || errors.Is(dirErr, fs.ErrNotExist) {
+		return Assignment{}, NoContract
+	}
+	if dirErr != nil {
+		return Assignment{}, AssignedRefused // a contract this actor holds cannot be ruled out
 	}
 	names, err := dirNames(dir)
 	if err != nil {
-		return Assignment{}, false
+		return Assignment{}, AssignedRefused
 	}
 	var held *Assignment
 	for _, name := range names {
 		id, isRecord := strings.CutSuffix(name, ".json")
-		if a, ok := load(id); isRecord && ok && a.AgentID == agentID && (held == nil || a.CreatedAt > held.CreatedAt) {
+		if !isRecord || !validAssignmentID(id) {
+			continue
+		}
+		if a, ok := load(id); ok && a.AgentID == agentID && (held == nil || a.CreatedAt > held.CreatedAt) {
 			held = &a
 		}
 	}
 	if held == nil {
-		return Assignment{}, false
+		return Assignment{}, NoContract
 	}
-	return *held, true
+	return *held, AssignedAccepted
 }
 
 // JudgeAssignedReceipt judges receipt (absolute, or relative to the assigned tree) of the child agentID against the contract that
 // child was dispatched with (see the rules above) and binds the assignment to the child when the receipt passes. A child with no
-// id, or with no contract, is NoContract and the caller applies the native root.
+// id, or with no contract, is NoContract and the caller applies the native root; a child whose contract cannot be read is refused.
 func JudgeAssignedReceipt(cwd, sessionID, agentID, transcriptPath, message, receipt string) AssignedVerdict {
 	if agentID == "" || sessionID == "" {
 		return NoContract
 	}
-	dir, err := existingRecordDir(cwd, AssignmentsSubdir, sessionRecordDir(sessionID))
-	if err != nil {
-		return NoContract
-	}
-	a, ok := childAssignment(dir, sessionID, agentID, transcriptPath, message)
-	if !ok {
-		return NoContract
+	a, found := childAssignment(cwd, sessionID, agentID, transcriptPath, message)
+	if found != AssignedAccepted {
+		return found
 	}
 	if a.Mode != AssignTree || receipt == "" || (a.AgentID != "" && a.AgentID != agentID) || !assignedReceiptValid(a, receipt) {
 		return AssignedRefused
 	}
+	dir := filepath.Join(stateDir(cwd), AssignmentsSubdir, sessionRecordDir(sessionID))
 	if !claimAssignment(filepath.Join(dir, a.ID+".json"), a.ID, sessionID, agentID, nil) {
 		return AssignedRefused
 	}
@@ -376,9 +449,11 @@ func assignedReceiptValid(a Assignment, receipt string) bool {
 	if !receiptInside(evidenceDir, resolved) {
 		return false
 	}
+	// The receipt must not predate its own dispatch, at the precision the dispatch time was recorded with: a receipt of an
+	// earlier dispatch written in the same second is as stale as one written a day before.
 	created, err := time.Parse(time.RFC3339Nano, a.CreatedAt)
 	info, statErr := os.Lstat(resolved)
-	if err != nil || statErr != nil || info.ModTime().Before(created.Truncate(time.Second)) {
+	if err != nil || statErr != nil || info.ModTime().Before(created) {
 		return false
 	}
 	if a.Head != "" {
@@ -404,7 +479,7 @@ func ClaimScopeConflict(cwd, sessionID, agentID, transcriptPath, turnID, id stri
 	if agentID == "" || sessionID == "" || !validAssignmentID(id) {
 		return false
 	}
-	if own, readable := transcriptAssignmentID(transcriptPath); readable && own != id {
+	if own, fromPacket := contractID(transcriptPath, ""); fromPacket && own != id {
 		return false
 	}
 	dir, err := existingRecordDir(cwd, AssignmentsSubdir, sessionRecordDir(sessionID))

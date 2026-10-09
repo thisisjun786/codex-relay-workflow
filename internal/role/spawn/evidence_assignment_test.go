@@ -32,9 +32,9 @@ type assignedRig struct {
 	t       *testing.T
 	rig     *spawnHookRig
 	cwd, wt string
-	// packets is what each child was handed: the harness gives the SubagentStop leg that child's own transcript, which starts with
-	// its packet.
-	packets map[string]string
+	// packets is what each child was handed: the harness gives the SubagentStop leg that child's own transcript, whose first user
+	// message item is its packet; outputs is what a tool showed the child afterwards.
+	packets, outputs map[string]string
 }
 
 func newAssignedRig(t *testing.T) *assignedRig {
@@ -45,7 +45,7 @@ func newAssignedRig(t *testing.T) *assignedRig {
 		t.Setenv(key, home)
 	}
 	t.Setenv("CRW_PABCD", "")
-	r := &assignedRig{t: t, rig: rig, cwd: rig.ws, wt: assignedGitTree(t), packets: map[string]string{}}
+	r := &assignedRig{t: t, rig: rig, cwd: rig.ws, wt: assignedGitTree(t), packets: map[string]string{}, outputs: map[string]string{}}
 	s := state.DefaultState("s1", "")
 	s.Phase, s.OrchestrationActive = state.PhaseB, true
 	spawnHookMust(t, state.WriteState(r.cwd, s))
@@ -90,7 +90,8 @@ func (r *assignedRig) spawn(message string) (string, string) {
 	return got, out
 }
 
-// deliver hands packet to the child agent: its transcript, as the SubagentStop leg receives it, starts with that packet.
+// deliver hands packet to the child agent: its transcript, as the SubagentStop leg receives it, holds that packet as its first
+// user message item.
 func (r *assignedRig) deliver(agent, packet string) {
 	r.t.Helper()
 	r.packets[agent] = packet
@@ -104,9 +105,7 @@ func (r *assignedRig) stop(agent, turn, message string) string {
 		"agent_id": agent, "turn_id": turn, "last_assistant_message": message}
 	if packet, ok := r.packets[agent]; ok {
 		transcript := filepath.Join(r.t.TempDir(), "agent.jsonl")
-		line, err := json.Marshal(map[string]any{"role": "user", "text": packet})
-		spawnHookMust(r.t, err)
-		spawnHookMust(r.t, os.WriteFile(transcript, append(line, '\n'), 0o644))
+		spawnHookMust(r.t, os.WriteFile(transcript, assignedRollout(agent, packet, r.outputs[agent]), 0o644))
 		payload["agent_transcript_path"] = transcript
 	}
 	raw, err := json.Marshal(payload)
@@ -119,6 +118,29 @@ func (r *assignedRig) stop(agent, turn, message string) string {
 	return out.String()
 }
 
+// assignedRollout is a child's Codex rollout as the harness writes it: its session_meta, the instructions the harness puts before
+// the packet, the packet as the first UserMessage item of the child's own thread, and the child's later work (a tool's output).
+func assignedRollout(thread, packet, output string) []byte {
+	var b bytes.Buffer
+	for _, line := range []any{
+		map[string]any{"type": "session_meta", "payload": map[string]any{"id": thread, "session_id": "s1"}},
+		map[string]any{"type": "response_item", "payload": map[string]any{"type": "message", "role": "user",
+			"content": []any{map[string]any{"type": "input_text", "text": "# AGENTS.md instructions"}}}},
+		map[string]any{"type": "response_item", "payload": map[string]any{"type": "message", "role": "user",
+			"content": []any{map[string]any{"type": "input_text", "text": packet}}}},
+		map[string]any{"type": "event_msg", "payload": map[string]any{"type": "item_completed", "thread_id": thread, "turn_id": "turn",
+			"item": map[string]any{"type": "UserMessage", "id": "u", "content": []any{map[string]any{"type": "text", "text": packet}}}}},
+		map[string]any{"type": "event_msg", "payload": map[string]any{"type": "item_completed", "thread_id": thread, "turn_id": "turn",
+			"item": map[string]any{"type": "AgentMessage", "id": "m", "content": []any{map[string]any{"type": "Text", "text": "done"}}}}},
+		map[string]any{"type": "response_item", "payload": map[string]any{"type": "custom_tool_call_output", "call_id": "c",
+			"output": []any{map[string]any{"type": "input_text", "text": output}}}},
+	} {
+		raw, _ := json.Marshal(line)
+		b.Write(append(raw, '\n'))
+	}
+	return b.Bytes()
+}
+
 // complete is the parent's update_goal status complete through the goal-complete gate: "" allows it.
 func (r *assignedRig) complete() string {
 	r.t.Helper()
@@ -128,8 +150,11 @@ func (r *assignedRig) complete() string {
 	return pabcdhook.GoalGateHandlePreToolUseFailClosed(string(raw), os.LookupEnv, false)
 }
 
+// put writes a file. It waits a little first: a receipt is compared with the time of its dispatch, and the kernel stamps a file
+// with a clock that may trail the one the dispatch read by a tick.
 func (r *assignedRig) put(path, text string) string {
 	r.t.Helper()
+	time.Sleep(20 * time.Millisecond)
 	spawnHookMust(r.t, os.MkdirAll(filepath.Dir(path), 0o755))
 	spawnHookMust(r.t, os.WriteFile(path, []byte(text), 0o644))
 	return path
@@ -408,6 +433,22 @@ func TestEvidenceAssignmentForeignActorCannotClaimFirst(t *testing.T) {
 	assignedBlocked(t, r.stop("unrelated-worker", "foreign-turn-2", "EVIDENCE_ASSIGNMENT: "+m[1]+"\nEVIDENCE_RECORDED: "+receipt), 1)
 }
 
+// CRW-1115 verification round 2: the other dispatch's packet reaches an unrelated actor through a tool's output (it read the
+// record, a log or the other child's transcript). Only its own packet is its contract, so it still cannot claim the assignment,
+// and the actor the packet was handed to keeps it.
+func TestEvidenceAssignmentForeignMarkerInToolOutputCannotClaim(t *testing.T) {
+	r := newAssignedRig(t)
+	child, _ := r.spawn("TASK: fix it\nCRW-WORKTREE: " + r.wt)
+	r.deliver("w1", child)
+	r.deliver("unrelated-worker", "TASK: something else entirely")
+	r.outputs["unrelated-worker"] = child
+	receipt := r.put(filepath.Join(r.wt, ".crw", "evidence", "check.txt"), "ok")
+	assignedBlocked(t, r.stop("unrelated-worker", "foreign-turn", "EVIDENCE_RECORDED: "+receipt), 1)
+	if out := r.stop("w1", "t1", "EVIDENCE_RECORDED: "+receipt); out != "" {
+		t.Fatalf("the assigned actor was refused after a foreign attempt: %s", out)
+	}
+}
+
 // Where the harness gives no transcript the id the child cites stands in for it; the first actor to cite it still claims it, and
 // no other actor can take it afterwards.
 func TestEvidenceAssignmentCitationWithoutTranscript(t *testing.T) {
@@ -435,7 +476,6 @@ func TestEvidenceAssignmentSameTreeSequentialAndConcurrent(t *testing.T) {
 	if out := r.stop("w1", "t1", "EVIDENCE_RECORDED: "+first); out != "" {
 		t.Fatalf("first dispatch refused: %s", out)
 	}
-	time.Sleep(1100 * time.Millisecond) // receipt times are compared in whole seconds
 	assignedGit(t, r.wt, "commit", "-q", "--allow-empty", "-m", "work of the first worker")
 	child2, _ := r.spawn("TASK: second\nCRW-WORKTREE: " + r.wt)
 	child3, _ := r.spawn("TASK: third, at once\nCRW-WORKTREE: " + r.wt)
@@ -475,5 +515,27 @@ func TestEvidenceAssignmentContractExcludesNativeReceipt(t *testing.T) {
 				t.Fatalf("a dispatch without a contract lost the native root: %s", out)
 			}
 		})
+	}
+}
+
+// CRW-1115 verification round 2: the child's packet names its contract, and the record of that contract is gone (removed, or the
+// directory replaced by something unreadable). The contract still stands: neither the native-cwd receipt nor the assigned tree's
+// passes, where a dispatch whose packet names no contract keeps the native root.
+func TestEvidenceAssignmentLostRecordStillBindsTheChild(t *testing.T) {
+	r := newAssignedRig(t)
+	child, _ := r.spawn("TASK: fix it\nCRW-WORKTREE: " + r.wt)
+	r.deliver("w1", child)
+	r.deliver("free", "TASK: a dispatch with no packet lines")
+	records, _ := filepath.Glob(filepath.Join(r.cwd, ".crw", "evidence-assignments", "*", "*.json"))
+	if len(records) != 1 {
+		t.Fatalf("records: %v", records)
+	}
+	spawnHookMust(t, os.Remove(records[0]))
+	native := r.put(filepath.Join(r.cwd, ".crw", "evidence", "native.txt"), "native check")
+	tree := r.put(filepath.Join(r.wt, ".crw", "evidence", "check.txt"), "ok")
+	assignedBlocked(t, r.stop("w1", "t1", "EVIDENCE_RECORDED: "+native), 1)
+	assignedBlocked(t, r.stop("w1", "t1", "EVIDENCE_RECORDED: "+tree), 2)
+	if out := r.stop("free", "t9", "EVIDENCE_RECORDED: "+native); out != "" {
+		t.Fatalf("a dispatch without a contract lost the native root: %s", out)
 	}
 }
