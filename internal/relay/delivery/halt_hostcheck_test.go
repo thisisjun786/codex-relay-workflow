@@ -1,9 +1,12 @@
 package delivery
 
 import (
+	"context"
+	"fmt"
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
@@ -139,6 +142,109 @@ func TestTurnChecksHalt_aFailureThatIsNotCorruptionStaysANote(t *testing.T) {
 	}
 	if len(report.Notes) == 0 || !strings.Contains(strings.Join(report.Notes, "\n"), "recipient turn check failed for") {
 		t.Fatalf("notes %v", report.Notes)
+	}
+}
+
+// keptAcksWorld is count folded deliveries to one parent, each acknowledged and kept because the relay could not
+// confirm its send, with the confirmations due in the order the returned events are listed (earliest check first).
+func keptAcksWorld(t *testing.T, count int) (*hl, []string) {
+	t.Helper()
+	h := hostCheckWorld(t)
+	h.parentHistory()
+	var events []string
+	for i := 0; i < count; i++ {
+		h.rid = h.register(regOpts{issue: fmt.Sprintf("REL-%d", i+2), dispatchRequest: fmt.Sprintf("dispatch-%d", i+2)})
+		payload := h.readyPayload(h.rid, 1, []string{h.artifact(fmt.Sprintf("out-%d.txt", i), fmt.Sprintf("deliverable %d", i))}, 1, assigned("completed"))
+		_, err := h.accept(payload, storeAcceptNone)
+		mustDo(t, err)
+		event := pyjson.Text(payload.Get("eventId"))
+		_, err = h.delivery.Enqueue(h.ctx, event, "", "")
+		mustDo(t, err)
+		turn := fmt.Sprintf("folded-%d", i)
+		h.host.startTurn(parent, turn, "inProgress", "")
+		h.clock.Advance(120)
+		h.host.script = []string{"in_progress"}
+		h.attemptOn(event, h.host, nil)
+		h.cliAck(event, turn, nil)
+		if got := h.ackRow(event).Opt("last_reason"); got != DeliveryUnconfirmed {
+			t.Fatalf("the acknowledgement of %s was not kept for the unconfirmed delivery: %v", event, got)
+		}
+		events = append(events, event)
+	}
+	h.clock.Advance(5)
+	for i, event := range events {
+		h.exec("UPDATE ack_evidence SET next_check_at = ? WHERE event_id = ?", float64(i+1), event)
+	}
+	return h, events
+}
+
+// A pass that has noted one confirmation and then meets a corrupting failure keeps that note, returns the failure,
+// and confirms nothing after it: the confirmation behind the damaged one is neither read nor moved.
+func TestConfirmKeptAcksHalt_theNotesMadeBeforeTheFailureAreKeptAndTheRestIsUntouched(t *testing.T) {
+	t.Parallel()
+	h, events := keptAcksWorld(t, 3)
+	asks := map[string]int{}
+	h.adapter = &hooked{Adapter: h.host,
+		findInTurn: func(thread, token, turnID string, limit int) (TokenScan, error) {
+			return TokenScan{}, fmt.Errorf("the turn could not be read")
+		},
+		getOperation: func(id string) (Obj, error) {
+			asks[id]++
+			if len(asks) == 2 && asks[id] == 1 {
+				testsupport.DamageTable(t, h.store.DB, h.store.Path, "journal")
+			}
+			return h.host.GetOperation(context.Background(), id)
+		}}
+	before := h.ackRow(events[2])
+	notes, err := confirmKept(h, h.clock.Now())
+	requireCorruption(t, err)
+	if len(notes) != 1 || !strings.Contains(notes[0], "kept acknowledgement "+events[0]+" not confirmed") {
+		t.Fatalf("the note of the confirmation made before the failure was not kept: %v", notes)
+	}
+	if len(asks) != 2 {
+		t.Fatalf("the pass read %d confirmations (%v), want the noted one and the damaged one only", len(asks), asks)
+	}
+	if after := h.ackRow(events[2]); fmt.Sprint(after) != fmt.Sprint(before) {
+		t.Fatalf("the confirmation behind the damaged one moved: %v -> %v", before, after)
+	}
+}
+
+// completionsLostByTheHost is count delivered completions whose turns the host lost, in the order the recipient-turn
+// check lists them.
+func completionsLostByTheHost(t *testing.T, count int) (*hl, [][3]string) {
+	t.Helper()
+	h := hostCheckWorld(t)
+	delivered := h.completions(count)
+	for _, d := range delivered {
+		h.hostLoses(d[2], true)
+	}
+	h.clock.Advance(120)
+	return h, delivered
+}
+
+// A pass that has counted a lost turn and then meets a corrupting failure keeps the count, returns the failure, and
+// checks no turn after it.
+func TestTurnChecksHalt_theCountsMadeBeforeTheFailureAreKeptAndTheRestIsUntouched(t *testing.T) {
+	t.Parallel()
+	h, delivered := completionsLostByTheHost(t, 3)
+	var checked []string
+	h.adapter = &hooked{Adapter: h.host, findDispatched: func(thread, turn string, sentAt float64) (TurnPresence, error) {
+		checked = append(checked, turn)
+		if len(checked) == 2 {
+			testsupport.DamageTable(t, h.store.DB, h.store.Path, "journal")
+		}
+		return h.host.FindDispatchedTurn(context.Background(), thread, turn, sentAt)
+	}}
+	var report TurnCheckReport
+	requireCorruption(t, passChecks(h, h.clock.Now(), &report))
+	if report.TurnsLost != 1 {
+		t.Fatalf("the loss settled before the failure was not counted: %+v", report)
+	}
+	if len(checked) != 2 || checked[0] != delivered[0][2] || checked[1] != delivered[1][2] {
+		t.Fatalf("the pass checked %v, want the first two turns of %v only", checked, delivered)
+	}
+	if got := h.row(delivered[2][0]).S("state"); got != Dispatched {
+		t.Fatalf("the turn behind the damaged one moved: %s", got)
 	}
 }
 
