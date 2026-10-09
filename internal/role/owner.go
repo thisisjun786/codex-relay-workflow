@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"regexp"
 )
@@ -43,9 +44,31 @@ func RoleFilePath(codexHome string, role NativeRoleName) string {
 	return filepath.Join(codexHome, "agents", string(role)+".toml")
 }
 
+// CheckAgentsDirectory refuses an agents directory that is not a real directory, a symlink above all,
+// as RegisterRole refuses it; an absent one is no error. A caller checks it before each read and each
+// write of a role file in it, so no file behind a symlink is read, replaced or removed.
+func CheckAgentsDirectory(dir string) error {
+	st, err := os.Lstat(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !st.IsDir() || st.Mode()&fs.ModeSymlink != 0 {
+		return sentinel(fmt.Sprintf("Refusing non-regular agents directory: %s", dir))
+	}
+	return nil
+}
+
 // ReadRoleFile is the role file's bytes, or nil when it is absent. A path that is not a regular file is refused.
+// The agents directory is checked first (CheckAgentsDirectory).
 func ReadRoleFile(codexHome string, role NativeRoleName) ([]byte, error) {
-	raw, err := registrationRead(RoleFilePath(codexHome, role))
+	path := RoleFilePath(codexHome, role)
+	if err := CheckAgentsDirectory(filepath.Dir(path)); err != nil {
+		return nil, err
+	}
+	raw, err := registrationRead(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
 	}

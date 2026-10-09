@@ -4,6 +4,8 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -58,5 +60,21 @@ func TestNativeRoleContentIsWhatRegisterRoleWrites(t *testing.T) {
 	}
 	if raw, err := ReadRoleFile(t.TempDir(), Executor); raw != nil || err != nil {
 		t.Fatalf("absent role file = %q, %v", raw, err)
+	}
+}
+
+func TestReadRoleFileRefusesASymlinkedAgentsDirectory(t *testing.T) {
+	home, outside := t.TempDir(), t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "executor.toml"), []byte("x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(home, "agents")); err != nil {
+		t.Fatal(err)
+	}
+	if raw, err := ReadRoleFile(home, Executor); raw != nil || err == nil || !strings.Contains(err.Error(), "non-regular agents directory") {
+		t.Fatalf("ReadRoleFile through a symlinked agents directory = %q, %v", raw, err)
+	}
+	if err := CheckAgentsDirectory(filepath.Join(home, "missing")); err != nil {
+		t.Fatalf("an absent agents directory: %v", err)
 	}
 }

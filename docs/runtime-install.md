@@ -101,17 +101,27 @@ writer of `config.toml` takes:
    library so the hook side can read the file with it;
 3. sets `enabled = false` in `[plugins."codexclaw@codexclaw"]` after copying `config.toml` to
    `config.toml.crw-<ts>.bak`. The key is recorded as its line verbatim, so `switch cxc` gives back
-   `enabled=true`, a tab-separated line or a CRLF file to the byte. A missing CXC table is left missing,
+   `enabled=true`, a tab-separated line or a CRLF file to the byte. The key spelled `"enabled"` or
+   `'enabled'` is the same key and is edited in place; a value form crw will not rewrite (`[true]`, a
+   string) or the key on two lines is refused before anything is written, in both directions and on
+   every run. A missing CXC table is left missing,
    and one that appeared since the first switch (`codex plugin add`) is read and switched off by the
    next `switch crw`, with its line recorded then;
 4. replaces the CXC-owned `agents/executor.toml` and `agents/architect.toml` (first line
    `# codexclaw-managed: <sha256 of the rest>`) with the CRW role files after copying each to
    `<role>.toml.crw-<ts>.bak`, installs a role file that is absent, and leaves any other file alone,
-   including a CRW-owned role file that differs from this build's (`kept-crw`).
+   including a CRW-owned role file that differs from this build's (`kept-crw`). A CXC role file that
+   appeared after the first switch is backed up and recorded the same way, so the way back restores it.
+   An `agents` directory that is a symlink or not a directory is refused, as role registration refuses
+   it, before any file is read or written.
 
-`switch cxc` runs the same steps the other way: `switch.json` says `cxc`, the CXC key's line is put back,
-a role file CRW installed is removed or replaced by its backup, and the `switch` section keeps no
-values. A step that fails undoes the steps before it, each to the byte it read, and the command exits
+`switch cxc` runs the same steps the other way: `switch.json` says `cxc`, the CXC key's line is put back
+(inserted again at the end of its table when the line was deleted since; refused, with the recorded
+values kept, when the table itself is gone), a role file CRW installed is removed or replaced by its
+backup, and the `switch` section keeps no values. A role file is removed or replaced only while it is
+byte for byte the file the switch installed (its SHA-256 is recorded); a CRW role file updated since,
+by `crw register` of another build say, is kept (`left-modified`) and the path of the CXC backup is
+reported. A step that fails undoes the steps before it, each to the byte it read, and the command exits
 1; a command that died part way, in either direction, leaves a `pending` section, and running it again
 finishes from the recorded values. A CRW role file that replaced a CXC one with no backup on record is
 an error, not a success: restore it by hand or remove the file. The install manifest's

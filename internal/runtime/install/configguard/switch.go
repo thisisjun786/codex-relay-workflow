@@ -127,8 +127,18 @@ func switchDigest(b []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// switchAgentsDir refuses a role file whose agents directory is not a real directory (CRW-201 round
+// 2): it is asked before every read, backup, write and removal of a role file.
+func switchAgentsDir(path string) error { return role.CheckAgentsDirectory(filepath.Dir(path)) }
+
 func switchPublishRole(path string, b []byte) error {
+	if err := switchAgentsDir(path); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o777); err != nil {
+		return err
+	}
+	if err := switchAgentsDir(path); err != nil {
 		return err
 	}
 	return activationPublished(crwdir.Publish(path, b))
@@ -137,6 +147,9 @@ func switchPublishRole(path string, b []byte) error {
 func switchRestoreBytes(path string, prior []byte) func() error {
 	return func() error {
 		if prior == nil {
+			if err := switchAgentsDir(path); err != nil {
+				return err
+			}
 			if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
 				return err
 			}
@@ -168,6 +181,9 @@ func RunSwitch(deps SwitchDeps, target string) (*SwitchReport, error) {
 		now = func() string { return time.Now().UTC().Format("2006-01-02T15:04:05.000Z") }
 	}
 	if err := os.MkdirAll(home, 0o777); err != nil {
+		return nil, err
+	}
+	if err := role.CheckAgentsDirectory(filepath.Join(home, "agents")); err != nil {
 		return nil, err
 	}
 	lock, err := crwdir.LockConfig(path, activationLockWait)
@@ -229,6 +245,21 @@ func RunSwitch(deps SwitchDeps, target string) (*SwitchReport, error) {
 			rec.Roles = append(rec.Roles, SwitchRoleRecord{Role: string(name), Path: rolePath, PriorOwner: string(role.OwnerOf(raw))})
 		}
 	}
+	for _, rr := range rec.Roles {
+		if err := switchAgentsDir(rr.Path); err != nil {
+			return nil, err
+		}
+	}
+	// A key the switch is about to edit that holds a value form it will not rewrite is refused before
+	// anything is written, whichever the direction and whether or not it was recorded already.
+	for _, k := range rec.Keys {
+		if !k.TablePresent && target != string(switchstate.CRW) {
+			continue
+		}
+		if st := ReadTableKeyLine(string(pre), k.Table, k.Key); st.Unsupported {
+			return nil, fmt.Errorf("%s.%s currently holds a value crw will not rewrite (or names the key twice); edit config.toml by hand, then run the command again", k.Table, k.Key)
+		}
+	}
 	if target == string(switchstate.CRW) {
 		// A CXC table that was not there at the first switch (the plugin was added since) is read
 		// now, before the key is changed, so the way back has its line too.
@@ -238,9 +269,6 @@ func RunSwitch(deps SwitchDeps, target string) (*SwitchReport, error) {
 				continue
 			}
 			st := ReadTableKeyLine(string(pre), k.Table, k.Key)
-			if st.Unsupported {
-				return nil, fmt.Errorf("%s.%s currently holds a value crw will not rewrite; edit config.toml by hand", k.Table, k.Key)
-			}
 			if st.TablePresent {
 				k.TablePresent, k.PriorLine = true, nil
 				if st.Found {
@@ -266,9 +294,16 @@ func RunSwitch(deps SwitchDeps, target string) (*SwitchReport, error) {
 			var edited string
 			var did bool
 			if target == string(switchstate.CRW) {
-				edited, _, did = SetTableKeyExact(content, k.Table, k.Key, false)
+				var st TomlKeyLineState
+				if edited, st, did = SetTableKeyExact(content, k.Table, k.Key, false); st.Unsupported {
+					return nil, fmt.Errorf("%s.%s currently holds a value crw will not rewrite; edit config.toml by hand", k.Table, k.Key)
+				}
 			} else {
-				edited, did = RestoreTableKeyExact(content, k.Table, k.Key, k.PriorLine)
+				var err error
+				if edited, did, err = RestoreTableKeyExact(content, k.Table, k.Key, k.PriorLine); err != nil {
+					// Nothing is written yet, and the record that holds the line stays.
+					return nil, fmt.Errorf("the way back to cxc cannot restore %s.%s: %w; the recorded values stay in %s: fix config.toml by hand, then run the command again", k.Table, k.Key, err, manifestFile)
+				}
 			}
 			content, changed = edited, changed || did
 			after = "(absent)"
@@ -402,6 +437,9 @@ func RunSwitch(deps SwitchDeps, target string) (*SwitchReport, error) {
 		if err != nil {
 			return finish(err)
 		}
+		if change.Action == "left-modified" && change.BackupPath != nil {
+			report.Notes = append(report.Notes, change.Path+" changed since the switch installed it and is kept; the CXC role file it replaced is at "+*change.BackupPath)
+		}
 		report.Roles = append(report.Roles, change)
 	}
 
@@ -457,7 +495,15 @@ func switchRoleToCRW(home string, name role.NativeRoleName, rr *SwitchRoleRecord
 		return change, nil, nil
 	case role.OwnerNone:
 		change.Action = "installed"
+		// The way back removes the file again unless a CXC backup is to come back in its place.
+		if rr.PriorOwner != string(role.OwnerCXC) || rr.BackupPath == nil {
+			rr.PriorOwner = string(role.OwnerNone)
+		}
 		rr.AppliedDigest = switchDigest(want)
+		// The digest the way back compares with is recorded before the file is written.
+		if err := persist(); err != nil {
+			return change, nil, err
+		}
 		return change, undo, switchPublishRole(rr.Path, want)
 	case role.OwnerCXC:
 		backup := rr.Path + ".crw-" + switchStamp(stamp) + ".bak"
@@ -472,10 +518,15 @@ func switchRoleToCRW(home string, name role.NativeRoleName, rr *SwitchRoleRecord
 			if err != nil {
 				return change, nil, err
 			}
+			if err := switchAgentsDir(backup); err != nil {
+				return change, nil, err
+			}
 			if err := activationBackup(backup, raw, info.Mode()); err != nil {
 				return change, nil, err
 			}
 		}
+		// A CXC file that appeared after the first switch is now what the way back restores.
+		rr.PriorOwner = string(role.OwnerCXC)
 		rr.BackupPath = &backup
 		rr.AppliedDigest = switchDigest(want)
 		change.BackupPath = &backup
@@ -505,10 +556,13 @@ func switchRoleToCXC(home string, name role.NativeRoleName, rr *SwitchRoleRecord
 	owner := role.OwnerOf(raw)
 	change.Owner = string(owner)
 	undo := switchRestoreBytes(rr.Path, raw)
+	// A CRW role file that is not the one the switch installed (crw register of another build, say)
+	// is the user's now: it is neither removed nor replaced.
+	installedHere := owner == role.OwnerCRW && rr.AppliedDigest != "" && switchDigest(raw) == rr.AppliedDigest
 	switch rr.PriorOwner {
 	case string(role.OwnerCXC):
-		switch owner {
-		case role.OwnerCRW:
+		switch {
+		case installedHere:
 			if rr.BackupPath == nil {
 				return change, nil, fmt.Errorf("%s is a CRW role file that replaced a CXC one, but no backup of the CXC file is recorded; restore it by hand or remove the file, then run the command again", rr.Path)
 			}
@@ -521,17 +575,17 @@ func switchRoleToCXC(home string, name role.NativeRoleName, rr *SwitchRoleRecord
 			}
 			change.Action = "restored-cxc"
 			return change, undo, switchPublishRole(rr.Path, saved)
-		case role.OwnerCXC:
+		case owner == role.OwnerCXC:
 			change.Action = "already-cxc"
 		default:
 			change.Action = "left-modified"
 		}
 	case string(role.OwnerNone):
-		switch owner {
-		case role.OwnerCRW:
+		switch {
+		case installedHere:
 			change.Action = "removed"
 			return change, undo, switchRestoreBytes(rr.Path, nil)()
-		case role.OwnerNone:
+		case owner == role.OwnerNone:
 			change.Action = "already-absent"
 		default:
 			change.Action = "left-modified"
