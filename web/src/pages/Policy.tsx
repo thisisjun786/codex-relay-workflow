@@ -51,6 +51,7 @@ import {
   runSave,
   runRead,
   lostRecheckDelay,
+  startLostRecheck,
   screenRepairCleared,
   screenSaving,
   initialScreen,
@@ -820,14 +821,11 @@ export function PolicyPage() {
   // A lost write whose result is open - the file is still at the starting digest (the request may not
   // have reached it yet), or it holds the change but the wiring record has not caught up (the
   // registration is still running, or failing and about to be put back) - stays Result unknown, and
-  // the screen reads again on a timer, within the server's bound for a write, so the verdict follows
-  // the file to Saved or Not saved without the operator pressing anything.
+  // the screen reads again on a timer (startLostRecheck, policy-state.ts) for LOST_SETTLE_MS, so the
+  // verdict follows the file to Saved or Not saved without the operator pressing anything. A read in
+  // flight turns the delay to null and back, which is what schedules the next one.
   const recheck = lostRecheckDelay(state);
-  useEffect(() => {
-    if (recheck === null) return;
-    const timer = window.setTimeout(() => readAgain(true), recheck);
-    return () => window.clearTimeout(timer);
-  }, [recheck, state.notice]);
+  useEffect(() => startLostRecheck(state, readAgain), [recheck, state.notice]);
 
   /** readAgain re-reads the policy, keeping the operator's inputs. */
   function readAgain(keep: boolean) {

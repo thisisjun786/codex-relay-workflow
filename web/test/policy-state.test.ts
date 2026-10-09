@@ -8,7 +8,7 @@
 // Everything is asserted through policy-state.ts, which is the screen's own state logic: a test
 // that called the API client with a hand-made value would not cover a criterion stated about the
 // screen.
-import { test } from "node:test";
+import { test, mock } from "node:test";
 import assert from "node:assert/strict";
 import {
   POLICY_BLAST_RADIUS,
@@ -28,8 +28,9 @@ import {
   lostRecheckDelay,
   judgeLostWrite,
   readingHoldsChange,
-  LOST_RECHECK_LIMIT,
   LOST_RECHECK_MS,
+  LOST_SETTLE_MS,
+  startLostRecheck,
   saveHeading,
   modelLadder,
   modelOptions,
@@ -576,7 +577,7 @@ test("a digest another write moved is not this change: the lost write is headed 
   assert.equal(saveHeading(state.notice), "Not saved");
   assert.equal(state.notice?.lost?.outcome, "not_stored");
   assert.ok(state.notice?.text.includes("does not hold this change"), state.notice?.text);
-  assert.ok(state.notice?.text.includes("another write changed the file"));
+  assert.ok(state.notice?.text.includes("another write finished"), state.notice?.text);
   assert.ok(!state.notice?.text.includes("was stored"), "the digest alone is never read as stored");
   assert.equal(state.change?.kind, "setAllowed", "the operator's change is kept");
 });
@@ -646,40 +647,69 @@ test("efforts typed in reverse order are the change the sorted file holds: Resul
   assert.equal(readingHoldsChange(stored(), { kind: "setAllowed", model: "anthropic/opus", efforts: ["max"] }), false);
 });
 
-// CRW-994 d1 (verification round 1): one failed read while the registration is awaited must not end the
-// automatic re-reading; the failed read spends one of the bounded readings.
-test("a failed re-read while a registration is awaited keeps the timer going, within the bound", async () => {
-  const awaiting = screenLoaded(await afterLostWrite(), readingWithTheLostChange({ registeredDigest: "a".repeat(64) }), true);
-  assert.equal(lostRecheckDelay(awaiting), 2000);
-  const out = await runRead(awaiting, async () => { throw new Error("connection refused"); }, true);
-  assert.equal(out.ok, false);
-  assert.equal(out.state.reading, null);
-  assert.equal(lostRecheckDelay(out.state), 2000, "the read failed, the wait is not over");
-  assert.equal(out.state.notice?.lost?.awaitingRegistration, true);
-  // The next read lands after the registration finished: the verdict follows the file.
-  const next = await runRead(out.state, async () => readingWithTheLostChange(), true);
-  assert.equal(saveHeading(next.state.notice), "Saved");
-  assert.equal(lostRecheckDelay(next.state), null);
-  // Failing reads alone cannot run past the bound.
-  let state = awaiting;
-  let delays = 0;
-  while (lostRecheckDelay(state) !== null) {
-    delays += 1;
-    assert.ok(delays <= LOST_RECHECK_LIMIT, "bounded");
-    state = (await runRead(state, async () => { throw new Error("down"); }, true)).state;
+/**
+ * Runs a test body with the clock the lost-write bound reads (Date.now()) under the test's control:
+ * the bound is wall time, so a test that spends readings must also say how much time they took.
+ */
+async function withClock(body: (tick: (ms: number) => void) => Promise<void> | void): Promise<void> {
+  mock.timers.enable({ apis: ["Date"], now: 1_000_000 });
+  try {
+    await body((ms) => mock.timers.tick(ms));
+  } finally {
+    mock.timers.reset();
   }
-  assert.equal(saveHeading(state.notice), "Result unknown");
+}
+
+// CRW-994 d1 (verification round 1): one failed read while the registration is awaited must not end the
+// automatic re-reading. Round 3: it changes nothing but the clock, so quick failures cannot end it early.
+test("a failed re-read while a registration is awaited keeps the timer going until the wait has run out", async () => {
+  await withClock(async (tick) => {
+    const awaiting = screenLoaded(await afterLostWrite(), readingWithTheLostChange({ registeredDigest: "a".repeat(64) }), true);
+    assert.equal(lostRecheckDelay(awaiting), 2000);
+    const out = await runRead(awaiting, async () => { throw new Error("connection refused"); }, true);
+    assert.equal(out.ok, false);
+    assert.equal(out.state.reading, null);
+    assert.equal(lostRecheckDelay(out.state), 2000, "the read failed, the wait is not over");
+    assert.equal(out.state.notice?.lost?.awaitingRegistration, true);
+    // The next read lands after the registration finished: the verdict follows the file.
+    const next = await runRead(out.state, async () => readingWithTheLostChange(), true);
+    assert.equal(saveHeading(next.state.notice), "Saved");
+    assert.equal(lostRecheckDelay(next.state), null);
+    // A hundred failures in a row (a Retry pressed rapidly) do not run the wait out: no time passed.
+    let state = awaiting;
+    for (let i = 0; i < 100; i += 1) {
+      state = (await runRead(state, async () => { throw new Error("down"); }, true)).state;
+      assert.equal(lostRecheckDelay(state), 2000, `failure ${i + 1}`);
+    }
+    // Failing reads alone end the reading only when the time has passed, and the result stays unknown.
+    tick(LOST_SETTLE_MS);
+    state = (await runRead(state, async () => { throw new Error("down"); }, true)).state;
+    assert.equal(lostRecheckDelay(state), null);
+    assert.equal(state.notice?.lost?.watching, false);
+    assert.equal(saveHeading(state.notice), "Result unknown");
+  });
 });
 
-test("the wait for a registration is bounded", async () => {
-  let state = screenLoaded(await afterLostWrite(), readingWithTheLostChange({ registeredDigest: "a".repeat(64) }), true);
-  for (let i = 1; i < LOST_RECHECK_LIMIT; i += 1) {
-    assert.equal(lostRecheckDelay(state), 2000, `reading ${i}`);
-    state = screenLoaded(state, readingWithTheLostChange({ registeredDigest: "a".repeat(64) }), true);
-  }
-  assert.equal(lostRecheckDelay(state), null, "the screen stops reading on its own, and the heading stays Result unknown");
-  assert.equal(saveHeading(state.notice), "Result unknown");
-  assert.equal(lostRecheckDelay(screenReadStarted(state)), null);
+test("the wait for a registration is bounded by time, and the result stays unknown at the bound", async () => {
+  await withClock(async (tick) => {
+    const awaiting = readingWithTheLostChange({ registeredDigest: "a".repeat(64) });
+    let state = screenLoaded(await afterLostWrite(), awaiting, true);
+    // Any number of readings inside the bound keeps the screen reading.
+    for (let i = 1; i <= 200; i += 1) {
+      assert.equal(lostRecheckDelay(state), 2000, `reading ${i}`);
+      state = screenLoaded(state, awaiting, true);
+    }
+    tick(LOST_SETTLE_MS - 1);
+    state = screenLoaded(state, awaiting, true);
+    assert.equal(lostRecheckDelay(state), 2000, "one millisecond short of the bound");
+    tick(1);
+    assert.equal(lostRecheckDelay(state), null, "the bound has passed");
+    state = screenLoaded(state, awaiting, true);
+    assert.equal(lostRecheckDelay(state), null, "the screen stops reading on its own");
+    assert.equal(saveHeading(state.notice), "Result unknown", "and the heading stays Result unknown");
+    assert.ok(state.notice?.text.includes("stopped reading"), state.notice?.text);
+    assert.equal(lostRecheckDelay(screenReadStarted(state)), null);
+  });
 });
 
 test("readingHoldsChange compares each kind of change with the file", () => {
@@ -708,13 +738,13 @@ test("a lost write whose request cannot name its change stays unknown when the d
   assert.equal(judged.lost.outcome, "unknown");
   assert.equal(judged.lost.awaitingRegistration, false);
   assert.equal(judgeLostWrite(lost, reading()).lost.outcome, "unknown", "one reading at the starting digest settles nothing");
-  assert.equal(judgeLostWrite({ ...lost, readings: LOST_RECHECK_LIMIT - 1 }, reading()).lost.outcome, "not_stored", "at the bound it does");
+  assert.equal(judgeLostWrite(lost, reading(), lost.startedAt + LOST_SETTLE_MS).lost.outcome, "unknown", "neither does the bound");
 });
 
 // CRW-994 (verification round 2): one reading at the starting digest is not evidence that the write
 // was refused. The request may still be waiting for the policy lock, or be past its last cancellation
 // check and about to exchange the file (internal/policystore/policy_write.go), when the first re-read
-// lands, so the screen keeps the result unknown and keeps reading within the server's bound.
+// lands, so the screen keeps the result unknown and keeps reading.
 test("a lost write re-read that still finds the starting digest stays Result unknown and reads again", async () => {
   const state = screenLoaded(await afterLostWrite(), reading(), true);
   assert.equal(saveHeading(state.notice), "Result unknown");
@@ -740,51 +770,185 @@ test("a write that lands after a first reading at the starting digest is followe
   assert.equal(lostRecheckDelay(state), null);
 });
 
-test("a file still at the starting digest once the server's bound has passed is Not saved", async () => {
-  let state = screenLoaded(await afterLostWrite(), reading(), true);
-  let readings = 1;
-  while (lostRecheckDelay(state) !== null) {
-    assert.equal(saveHeading(state.notice), "Result unknown", `reading ${readings}`);
-    assert.ok(readings < LOST_RECHECK_LIMIT, "bounded");
+// CRW-994 d1 (pre-merge evaluation of 711ab36e, also CRW-914 d1 and CRW-876 d2): the polling budget
+// running out is not proof that the request has ended - the file exchange has no deadline of its own
+// and the server's two minute phase starts after it - so a file still at the starting digest at the
+// bound leaves the result unknown, however many readings it took.
+test("a file still at the starting digest at the bound stays Result unknown, however many readings were spent", async () => {
+  await withClock(async (tick) => {
+    let state = screenLoaded(await afterLostWrite(), reading(), true);
+    for (let i = 0; i < 500; i += 1) state = screenLoaded(state, reading(), true);
+    assert.equal(saveHeading(state.notice), "Result unknown", "500 quick readings are not 150 seconds");
+    assert.equal(lostRecheckDelay(state), 2000);
+    tick(LOST_SETTLE_MS);
     state = screenLoaded(state, reading(), true);
-    readings += 1;
-  }
-  assert.equal(readings, LOST_RECHECK_LIMIT);
-  assert.equal(saveHeading(state.notice), "Not saved");
-  assert.equal(state.notice?.lost?.outcome, "not_stored");
-  assert.ok(state.notice?.text.includes("was not stored"), state.notice?.text);
+    assert.equal(saveHeading(state.notice), "Result unknown", "the bound is not evidence that the write ended");
+    assert.equal(state.notice?.lost?.outcome, "unknown");
+    assert.equal(lostRecheckDelay(state), null, "the screen stops reading");
+    assert.ok(state.notice?.text.includes("stopped reading"), state.notice?.text);
+    assert.ok(state.notice?.text.includes("cannot tell whether the request has ended"), state.notice?.text);
+    assert.ok(!state.notice?.text.includes("was not stored"), state.notice?.text);
+    // The operator's inputs stay, and a save from the starting digest is refused by the server if the
+    // write lands after all.
+    assert.equal(state.change?.kind, "setAllowed");
+  });
 });
 
 test("the bound covers the server's lock wait and its two minute decision phase", () => {
   // internal/policystore: writeLockTimeout (10 s) before the exchange, writeDecisionTimeout (2 min)
-  // after it; the readings are at least LOST_RECHECK_MS apart.
-  assert.ok((LOST_RECHECK_LIMIT - 1) * LOST_RECHECK_MS >= 130_000);
+  // after it.
+  assert.ok(LOST_SETTLE_MS >= 130_000);
 });
 
-// CRW-994 (verification round 2): a reading that is not registered judges nothing, but it is still
-// one of the bounded readings; otherwise a record that went away while a registration was awaited
-// kept the screen reading every two seconds for ever.
-test("readings that are not registered spend the bound, and the result stays unknown", async () => {
-  for (const other of [
-    reading({ state: "unreadable", reason: "the file could not be read", digest: "" }),
-    reading({ state: "not_registered", reason: "no record", digest: "" }),
-  ]) {
-    for (const start of [
-      screenLoaded(await afterLostWrite(), readingWithTheLostChange({ registeredDigest: "a".repeat(64) }), true),
-      screenLoaded(await afterLostWrite(), reading(), true),
-      await afterLostWrite(),
-    ]) {
-      let state = start;
-      let delays = 0;
-      while (lostRecheckDelay(state) !== null) {
-        delays += 1;
-        assert.ok(delays <= LOST_RECHECK_LIMIT, `bounded (${other.state})`);
-        state = screenLoaded(state, other, true);
-      }
-      assert.equal(saveHeading(state.notice), "Result unknown", other.state);
-      assert.equal(state.notice?.lost?.outcome, "unknown");
-    }
+// CRW-1001 d2 / CRW-876 d1 (pre-merge evaluation of 711ab36e): a moved file that lacks the change is
+// not a refusal while the wiring record names something else. It may be another writer's provisional
+// publication: if that writer's registration fails and puts the starting bytes back, this request
+// publishes and registers after all.
+test("a moved file without the change whose record names another digest stays unknown and is followed to Saved", async () => {
+  const provisional = reading({ digest: "c".repeat(64), registeredDigest: "a".repeat(64), allowed: [{ model: "anthropic/opus", efforts: ["xhigh"] }, { model: "gpt-6.1-sol", efforts: ["max"] }] });
+  let state = screenLoaded(await afterLostWrite(), provisional, true);
+  assert.equal(saveHeading(state.notice), "Result unknown");
+  assert.equal(state.notice?.lost?.outcome, "unknown");
+  assert.equal(state.notice?.lost?.watching, true, "automatic reconciliation stays on");
+  assert.equal(lostRecheckDelay(state), 2000);
+  assert.ok(state.notice?.text.includes("may still be running"), state.notice?.text);
+  // The other writer's registration failed and put the starting bytes back; this request went through.
+  state = screenLoaded(state, reading(), true);
+  assert.equal(saveHeading(state.notice), "Result unknown", "back at the starting digest settles nothing");
+  state = screenLoaded(state, readingWithTheLostChange({ registeredDigest: "a".repeat(64) }), true);
+  state = screenLoaded(state, readingWithTheLostChange(), true);
+  assert.equal(saveHeading(state.notice), "Saved");
+  assert.equal(lostRecheckDelay(state), null);
+});
+
+test("a moved file without the change settles Not saved only when the record names that file", async () => {
+  const unregistered = reading({ digest: "c".repeat(64), registeredDigest: "a".repeat(64), allowed: [{ model: "anthropic/opus", efforts: ["xhigh"] }] });
+  const registered = reading({ digest: "c".repeat(64), registeredDigest: "c".repeat(64), allowed: [{ model: "anthropic/opus", efforts: ["xhigh"] }] });
+  const first = screenLoaded(await afterLostWrite(), unregistered, true);
+  assert.equal(saveHeading(first.notice), "Result unknown");
+  const settled = screenLoaded(first, registered, true);
+  assert.equal(saveHeading(settled.notice), "Not saved");
+  assert.equal(settled.notice?.lost?.outcome, "not_stored");
+  assert.equal(lostRecheckDelay(settled), null);
+  assert.ok(settled.notice?.text.includes("another write finished"), settled.notice?.text);
+});
+
+// CRW-994 d3 (pre-merge evaluation of 711ab36e): the wiring the page runs, driven through
+// startLostRecheck with a fake timer and a scripted transport, so removing the timer or reading
+// without waiting is caught.
+test("the page's recheck schedules one read per delay and cancels it with the effect", async () => {
+  const state = screenLoaded(await afterLostWrite(), reading(), true);
+  const scheduled: Array<{ run: () => void; ms: number; cleared: boolean }> = [];
+  const clock = {
+    set: (run: () => void, ms: number) => { const entry = { run, ms, cleared: false }; scheduled.push(entry); return entry; },
+    clear: (handle: unknown) => { (handle as { cleared: boolean }).cleared = true; },
+  };
+  const reads: boolean[] = [];
+  const readAgain = (keep: boolean): void => { reads.push(keep); };
+  const stop = startLostRecheck(state, readAgain, clock);
+  assert.equal(scheduled.length, 1, "one read is scheduled");
+  assert.equal(scheduled[0].ms, LOST_RECHECK_MS, "after the recheck delay, not at once");
+  assert.deepEqual(reads, [], "nothing is read before the timer fires");
+  stop();
+  assert.equal(scheduled[0].cleared, true, "the effect's cleanup cancels the timer");
+  startLostRecheck(state, readAgain, clock)();
+  scheduled[1].run();
+  assert.deepEqual(reads, [true], "the read keeps the operator's inputs");
+  // A read in flight, a settled verdict and an explicit re-read schedule nothing.
+  for (const quiet of [screenReadStarted(state), screenLoaded(state, readingWithTheLostChange(), true), screenReread(state)]) {
+    const before: number = scheduled.length;
+    startLostRecheck(quiet, readAgain, clock)();
+    assert.equal(scheduled.length, before, "no timer is scheduled");
   }
+});
+
+/** Whether the page's effect would schedule a read for this state, and after how long. */
+function scheduledRead(state: PolicyScreenState): number | null {
+  let delay: number | null = null;
+  startLostRecheck(state, () => {}, { set: (_run, ms) => { delay = ms; return 0; }, clear: () => {} })();
+  return delay;
+}
+
+test("the page follows a lost write across waits to the verdict, and stops at the bound without one", async () => {
+  await withClock(async (tick) => {
+    // The page's loop: the effect schedules a read, the timer fires after its delay, the read lands.
+    const script = [reading(), reading(), readingWithTheLostChange({ registeredDigest: "a".repeat(64) }), readingWithTheLostChange()];
+    let state = await afterLostWrite();
+    let taken = 0;
+    const started = Date.now();
+    for (let delay = scheduledRead(state); delay !== null; delay = scheduledRead(state)) {
+      tick(delay);
+      const wanted = script[taken++];
+      state = (await runRead(state, async () => wanted, true)).state;
+    }
+    assert.equal(saveHeading(state.notice), "Saved", "the loop followed the registration");
+    assert.equal(taken, script.length, "every scripted reading was taken");
+    assert.equal(Date.now() - started, script.length * LOST_RECHECK_MS, "each reading came after a wait");
+
+    // A write that never lands: the loop ends at the bound with the result unknown.
+    state = await afterLostWrite();
+    const begun = Date.now();
+    for (let delay = scheduledRead(state); delay !== null; delay = scheduledRead(state)) {
+      tick(delay);
+      state = (await runRead(state, async () => reading(), true)).state;
+    }
+    const waited = Date.now() - begun;
+    assert.ok(waited >= LOST_SETTLE_MS && waited < LOST_SETTLE_MS + LOST_RECHECK_MS, `waited ${waited} ms`);
+    assert.equal(saveHeading(state.notice), "Result unknown");
+  });
+});
+
+// CRW-994 d3: the explicit "Read the policy again" drops the notice (screenReread) before the read, so
+// the later reading is not judged against the lost write: the operator asked to see the file, and the
+// result of the lost write is no longer tracked.
+test("an explicit re-read drops the lost write: no later reading is judged against it and no timer runs", async () => {
+  const lost = await afterLostWrite();
+  assert.equal(lostRecheckDelay(lost), 2000);
+  const dropped = screenReread(lost);
+  assert.equal(dropped.notice, null);
+  assert.equal(lostRecheckDelay(dropped), null);
+  const landed = (await runRead(dropped, async () => readingWithTheLostChange(), false)).state;
+  assert.equal(landed.notice, null, "the reading is shown as the file, with no Saved or Not saved verdict");
+  assert.equal(saveHeading(landed.notice), "");
+  assert.equal(lostRecheckDelay(landed), null);
+});
+
+// CRW-994 d3: Retry after a failed read keeps the notice, so the lost write keeps being followed.
+test("Retry after a failed read keeps the lost write and its timer", async () => {
+  const awaiting = screenLoaded(await afterLostWrite(), readingWithTheLostChange({ registeredDigest: "a".repeat(64) }), true);
+  const failed = (await runRead(awaiting, async () => { throw new Error("down"); }, true)).state;
+  const retried = screenRetryRead(failed);
+  assert.equal(retried.notice?.lost?.awaitingRegistration, true);
+  assert.equal(lostRecheckDelay(retried), 2000);
+});
+
+// CRW-994 (verification round 2): a reading that is not registered judges nothing; it only moves the
+// clock. A record that went away while a registration was awaited does not keep the screen reading
+// for ever, and it never produces a verdict.
+test("readings that are not registered end the reading at the bound, and the result stays unknown", async () => {
+  await withClock(async (tick) => {
+    for (const other of [
+      reading({ state: "unreadable", reason: "the file could not be read", digest: "" }),
+      reading({ state: "not_registered", reason: "no record", digest: "" }),
+    ]) {
+      for (const start of [
+        screenLoaded(await afterLostWrite(), readingWithTheLostChange({ registeredDigest: "a".repeat(64) }), true),
+        screenLoaded(await afterLostWrite(), reading(), true),
+        await afterLostWrite(),
+      ]) {
+        let state = start;
+        let delays = 0;
+        while (lostRecheckDelay(state) !== null) {
+          delays += 1;
+          assert.ok(delays <= LOST_SETTLE_MS / LOST_RECHECK_MS + 1, `bounded (${other.state})`);
+          tick(LOST_RECHECK_MS);
+          state = screenLoaded(state, other, true);
+        }
+        assert.equal(saveHeading(state.notice), "Result unknown", other.state);
+        assert.equal(state.notice?.lost?.outcome, "unknown");
+      }
+    }
+  });
 });
 
 test("a lost write whose re-read fails stays Result unknown", async () => {
@@ -852,6 +1016,7 @@ test("a cancelled answer names its cause and the file it left alone", () => {
   assert.ok(notice.text.includes("cancelled during publish"), notice.text);
   assert.ok(notice.text.includes("the browser tab closed"));
   assert.ok(notice.text.includes("dddddddddddd"));
+  assert.ok(notice.text.includes("when the write ended"), "the digest is an observation, not a claim about what the write left");
   assert.equal(noticeForWrite(500, { error: "cancelled", step: "start" }).text, "The write was cancelled during start.");
 });
 

@@ -454,6 +454,25 @@ test("the screen heads a lost write by what the file holds: Not saved for anothe
   assert.ok(!done.markup.includes("Not saved") && !done.markup.includes("Result unknown"));
 });
 
+// CRW-1001 d2 / CRW-876 d1 (pre-merge evaluation of 711ab36e) on the rendered screen: a file that moved
+// to bytes without the change, under a record that names something else, is not a refusal yet.
+test("the screen keeps a lost write Result unknown while a moved file's record names another digest", async () => {
+  const pure = await import("../src/policy-state.ts");
+  let state = pure.initialScreen();
+  state = pure.screenLoaded(state, pure.decodePolicy(readingBody()));
+  state = pure.screenAllowedDraft(state, "anthropic/opus", ["max"]);
+  const out = await pure.runSave(state as never, {
+    check: async () => ({ status: 200, body: { valid: true, errors: [], currentDigest: "a".repeat(64), stale: false, diff: [] } }),
+    write: async () => { throw new Error("connection lost"); },
+  });
+  const provisional = pure.screenLoaded(out.state, pure.decodePolicy({ ...readingBody(), digest: "c".repeat(64), registeredDigest: "a".repeat(64), allowed: [{ model: "anthropic/opus", efforts: ["xhigh"] }] }), true);
+  const shown = await mount(provisional as unknown as Record<string, unknown>);
+  assert.ok(shown.markup.includes("Result unknown"));
+  assert.ok(shown.markup.includes("may still be running"));
+  assert.ok(!shown.markup.includes("Not saved"));
+  assert.equal(pure.lostRecheckDelay(provisional), pure.LOST_RECHECK_MS);
+});
+
 // CRW-994 (verification round 2) on the rendered screen: a first re-read that still finds the starting
 // digest is not a refusal. The request may publish after it, so the headline stays Result unknown, the
 // page keeps reading on its own, and it follows the late write to Saved.
