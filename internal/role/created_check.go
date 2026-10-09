@@ -1,11 +1,14 @@
 package role
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
+	"io"
 	"io/fs"
 	"math/big"
 	"net/url"
@@ -75,9 +78,8 @@ func dispatchPinnedChecked(ctx context.Context, cwd string, input any, env host.
 // anything is written and without a host call until the record's own checks pass: a toolUseId the report names must be the
 // native call the attempt was issued to, and the attempt must have been issued by the spawn hook, unless the report takes the
 // explicit reconciliation path for a child spawned without it. Then the session's other records must not hold the id, the
-// host must witness a subagent of this session, and, when the native database shows the child's first message, that message
-// must carry this attempt's dispatch marker and the child must not be one the host already showed when the spawn was issued (createdCheckOrdered). The accepted
-// report writes the attempt's receipt; a report of a child whose receipt is already attempt-marker keeps that receipt.
+// host must witness a subagent of this session, and the child is tied to the issued call (createdCheckTie). The accepted
+// report writes the attempt's receipt; a report of a child whose receipt is already spawn-result keeps that receipt.
 func createdCheckReporter(ctx context.Context, env host.LookupEnv, h DispatchHost) dispatchReporter {
 	return func(dir *dispatchPinnedDir, name string, d *Dispatch, b map[string]any) (DispatchResult, error) {
 		a := &d.Attempts[len(d.Attempts)-1]
@@ -106,7 +108,7 @@ func createdCheckReporter(ctx context.Context, env host.LookupEnv, h DispatchHos
 		if err := createdArchivedReplay(dir, name, d.SessionID, a.ID, agent); err != nil {
 			return DispatchResult{}, err
 		}
-		if prior != nil && prior.Correlation == "attempt-marker" && prior.Child.AgentID == agent {
+		if prior != nil && prior.Correlation == "spawn-result" && prior.Child.AgentID == agent {
 			// The same child reported again: the evidence that tied it to the issued call stays as it was recorded, whatever the
 			// host shows now. Only the caller's own claim is refreshed.
 			prior.ObservedModel = a.ObservedModel
@@ -126,19 +128,11 @@ func createdCheckReporter(ctx context.Context, env host.LookupEnv, h DispatchHos
 		} else if native, err = createdCheckNative(ctx, env, agent); err != nil || native.ID != agent || native.Parent != d.SessionID {
 			native = createdCheckIdentity{}
 		}
-		correlation := "unverified"
-		if native.FirstMessage != "" {
-			if m := managedSpawnMarker(native.FirstMessage); m != nil && m[1] == d.ID && m[2] == a.ID {
-				var err error
-				if correlation, err = createdCheckOrdered(ctx, env, d, a, native, issued); err != nil {
-					return DispatchResult{}, err
-				}
-			} else if issued {
-				return DispatchResult{}, errors.New("agentId is not the child the issued spawn created: its first message carries no marker of this attempt" + createdCheckCorrection)
+		correlation := "unissued"
+		if issued {
+			if correlation, err = createdCheckTie(ctx, env, d, a, agent, native.FirstMessage); err != nil {
+				return DispatchResult{}, err
 			}
-		}
-		if !issued {
-			correlation = "unissued"
 		}
 		settings := DispatchHostSettings{Source: "unobservable"}
 		for _, v := range []struct {
@@ -155,7 +149,7 @@ func createdCheckReporter(ctx context.Context, env host.LookupEnv, h DispatchHos
 		reason := ""
 		switch correlation {
 		case "unverified":
-			reason = "the host does not show that this child was created by the issued spawn (its first message, its creation time after the issuance, and no other child with this attempt's marker), so it cannot satisfy independent review; report created again once it does"
+			reason = "the host does not show the issued spawn's result naming this child, so it cannot satisfy independent review; report created again once it does"
 		case "unissued":
 			reason = "recorded without issuance on caller reconciliation; this child cannot satisfy independent review"
 		}
@@ -163,42 +157,122 @@ func createdCheckReporter(ctx context.Context, env host.LookupEnv, h DispatchHos
 	}
 }
 
-// createdCheckOrdered decides whether a child whose first message carries this attempt's marker is the child the issued native
-// call created. The marker is written by the caller into the call's message, so it names the call but is not the call's
-// result: a child made before the spawn was issued (the hook off, an older call) can carry it too. The spawn hook recorded
-// which marked children the host already showed when it issued the attempt; such a child is refused, and a child the call
-// created after it is tied to the call ("attempt-marker") only when no other new child of the session carries the marker. An
-// issuance whose prior children could not be observed, an unreadable host database or a second new marked child leaves the
-// child "unverified". An unissued attempt only needs the marker read.
-func createdCheckOrdered(ctx context.Context, env host.LookupEnv, d *Dispatch, a *DispatchAttempt, child createdCheckIdentity, issued bool) (string, error) {
-	if !issued {
-		return "attempt-marker", nil
-	}
-	if slices.Contains(a.PriorChildren, child.ID) {
-		return "", errors.New("agentId is not the child the issued spawn created: the host already showed it with this attempt's marker when the spawn was issued" + createdCheckCorrection)
-	}
-	if a.PriorUnobserved {
-		return "unverified", nil
-	}
-	marked, err := createdCheckMarked(ctx, env, d.SessionID, d.ID, a.ID)
-	if err != nil {
-		return "unverified", nil
-	}
-	for _, other := range marked {
-		if other.ID != child.ID && !slices.Contains(a.PriorChildren, other.ID) {
-			return "unverified", nil
+// createdCheckTie decides whether the child agent of an issued attempt is the child the issued native call created. Two things
+// the host shows refuse it on their own: a first message that carries no marker of this attempt, and a child the host already
+// showed with the marker when the hook issued the attempt (PriorChildren). The marker itself is written by the caller into the
+// call's message, so it names the attempt but is not the call's result: a child made before the issuance or by another call
+// (the hook off) can carry it too. The tie is the host's own result of the issued call, the completed spawn item of its tool
+// use id in the parent's rollout (createdCheckSpawnResult): naming this child ties it ("spawn-result"); a failed call or one
+// that returned another child refuses the report; no readable result leaves the child "unverified", which cannot satisfy an
+// independent review.
+func createdCheckTie(ctx context.Context, env host.LookupEnv, d *Dispatch, a *DispatchAttempt, agent, first string) (string, error) {
+	if first != "" {
+		if m := managedSpawnMarker(first); m == nil || m[1] != d.ID || m[2] != a.ID {
+			return "", errors.New("agentId is not the child the issued spawn created: its first message carries no marker of this attempt" + createdCheckCorrection)
 		}
 	}
-	return "attempt-marker", nil
+	if slices.Contains(a.PriorChildren, agent) {
+		return "", errors.New("agentId is not the child the issued spawn created: the host already showed it with this attempt's marker when the spawn was issued" + createdCheckCorrection)
+	}
+	if a.ToolUseID == nil || *a.ToolUseID == "" {
+		return "unverified", nil
+	}
+	result, err := createdCheckSpawnResult(ctx, env, d.SessionID, *a.ToolUseID)
+	switch {
+	case err != nil || !result.Seen:
+		return "unverified", nil
+	case result.Status == "completed" && slices.Contains(result.Children, agent):
+		return "spawn-result", nil
+	case result.Status == "completed":
+		return "", errors.New("agentId is not the child the issued spawn created: the host's result of the issued call names another child" + createdCheckCorrection)
+	case result.Status == "failed":
+		return "", errors.New("agentId is not the child the issued spawn created: the host's result of the issued call shows it failed" + createdCheckCorrection)
+	}
+	return "unverified", nil
+}
+
+// createdSpawnResult is the host's own result of one spawn call: whether the parent's rollout holds the call's completed
+// item, the status it ended with and the child threads it returned.
+type createdSpawnResult struct {
+	Seen     bool
+	Status   string
+	Children []string
+}
+
+// createdCheckSpawnResult reads the host's result of the native spawn call with tool use id call out of the rollout of the
+// session, whose path the native thread database holds. The host writes each collaboration tool call it runs as an item of
+// type CollabAgentToolCall whose id is the call's tool use id (the id the spawn hook received and recorded), and its
+// item_completed event names the threads the call created (receiver_thread_ids). The caller cannot write that event; a line
+// that does not parse is not a result.
+func createdCheckSpawnResult(ctx context.Context, env host.LookupEnv, session, call string) (createdSpawnResult, error) {
+	path := ""
+	err := createdCheckWithDB(ctx, env, func(conn *sql.Conn, columns map[string]bool) error {
+		if !columns["rollout_path"] {
+			return nil
+		}
+		err := conn.QueryRowContext(ctx, "SELECT COALESCE(CAST(rollout_path AS TEXT), '') FROM threads WHERE id = ?", session).Scan(&path)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		return err
+	})
+	if err != nil || path == "" {
+		return createdSpawnResult{}, err
+	}
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return createdSpawnResult{}, err
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return createdSpawnResult{}, err
+	}
+	defer f.Close()
+	quoted, err := json.Marshal(call)
+	if err != nil {
+		return createdSpawnResult{}, err
+	}
+	var out createdSpawnResult
+	r := bufio.NewReaderSize(f, 64*1024)
+	for {
+		line, err := r.ReadBytes('\n')
+		if bytes.Contains(line, quoted) {
+			var e struct {
+				Type    string `json:"type"`
+				Payload struct {
+					Type string `json:"type"`
+					Item struct {
+						Type      string   `json:"type"`
+						ID        string   `json:"id"`
+						Tool      string   `json:"tool"`
+						Status    string   `json:"status"`
+						Sender    string   `json:"sender_thread_id"`
+						Receivers []string `json:"receiver_thread_ids"`
+					} `json:"item"`
+				} `json:"payload"`
+			}
+			if json.Unmarshal(line, &e) == nil && e.Type == "event_msg" && e.Payload.Type == "item_completed" {
+				if it := e.Payload.Item; it.Type == "CollabAgentToolCall" && it.Tool == "spawn_agent" && it.ID == call && it.Sender == session {
+					out = createdSpawnResult{Seen: true, Status: it.Status, Children: it.Receivers}
+				}
+			}
+		}
+		if err != nil {
+			if !errors.Is(err, io.EOF) {
+				return createdSpawnResult{}, err
+			}
+			return out, nil
+		}
+	}
 }
 
 // createdCheckComplete is the complete report at the checked boundary: an independent review is complete only through a child
-// tied to its issued spawn (receipt correlation attempt-marker). Every other check is the ledger's.
+// tied to its issued spawn (receipt correlation spawn-result). Every other check is the ledger's.
 func createdCheckComplete(_ *dispatchPinnedDir, _ string, d *Dispatch, b map[string]any) (DispatchResult, error) {
 	a := d.Attempts[len(d.Attempts)-1]
-	if d.Role == Reviewer && (a.Receipt == nil || a.Receipt.Correlation != "attempt-marker") {
+	if d.Role == Reviewer && (a.Receipt == nil || a.Receipt.Correlation != "spawn-result") {
 		return DispatchResult{}, errors.New("this child is not tied to its issued spawn, so it cannot satisfy independent review; " +
-			"report created again once the host shows its first message, or close it with outcome stopped")
+			"report created again once the host shows the issued spawn's result, or close it with outcome stopped")
 	}
 	return dispatchReport(d, b, nil)
 }

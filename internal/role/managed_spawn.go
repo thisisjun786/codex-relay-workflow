@@ -53,7 +53,9 @@ func IssueManagedSpawn(cwd, session, message string, toolUseID *string) (*Manage
 }
 
 // IssueManagedSpawnEnv is IssueManagedSpawn that also records which children the host already shows with the attempt's marker
-// (see DispatchAttempt.PriorChildren), reading the native thread database through env. A nil env records nothing.
+// (see DispatchAttempt.PriorChildren), reading the native thread database through env. A nil env, a host without a thread
+// database and one that cannot be read record nothing; that only removes an early refusal, because the created check ties a
+// child to the issued call by the host's result of the call alone.
 func IssueManagedSpawnEnv(cwd, session, message string, toolUseID *string, env host.LookupEnv) (*ManagedSpawnSelection, error) {
 	root, err := dispatchRoot(cwd)
 	if err != nil {
@@ -93,15 +95,11 @@ func IssueManagedSpawnEnv(cwd, session, message string, toolUseID *string, env h
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		prior, err := createdCheckMarked(ctx, env, session, d.ID, a.ID)
 		cancel()
-		switch {
-		case err == nil && len(prior) > 0:
+		if err == nil && len(prior) > 0 {
 			for _, child := range prior {
 				a.PriorChildren = append(a.PriorChildren, child.ID)
 			}
 			a.raw.set("priorChildren", a.PriorChildren)
-		case err != nil && !errors.Is(err, errCreatedNoDatabase):
-			a.PriorUnobserved = true
-			a.raw.set("priorUnobserved", true)
 		}
 	}
 	a.SpawnIssued, a.ToolUseID = true, toolUseID

@@ -8,11 +8,11 @@ type DispatchReceipt struct {
 	Candidate DispatchCandidate `json:"candidate"`
 	Issuance  DispatchIssuance  `json:"issuance"`
 	Child     DispatchChild     `json:"child"`
-	// Correlation is how the child is tied to this attempt: "attempt-marker" (the host's first message of the child carries
-	// this attempt's dispatch marker, the host had not shown it when the hook issued the attempt, and no other new child of the
-	// session carries the marker), "unverified" (issued, but the host does not show enough to compare) or "unissued"
-	// (recorded through the explicit reconciliation path without an issuance). Only "attempt-marker" satisfies an
-	// independent review.
+	// Correlation is how the child is tied to this attempt: "spawn-result" (the host's own result of the issued native call, the
+	// completed spawn item of its tool use id in the parent's rollout, names this child), "unverified" (issued, but the host
+	// shows no result of the issued call to compare with) or "unissued" (recorded through the explicit reconciliation path
+	// without an issuance). The dispatch marker in the child's first message only refuses a child; it never ties one. Only
+	// "spawn-result" satisfies an independent review.
 	Correlation string `json:"correlation"`
 	// ObservedModel is the caller's observedModel, a claim and never evidence.
 	ObservedModel *string              `json:"observedModel"`

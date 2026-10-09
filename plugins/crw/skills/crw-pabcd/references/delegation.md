@@ -377,9 +377,10 @@ protocol. A PreToolUse reminder after a direct call cannot retroactively manage 
 3. Every report includes `sessionId`, `dispatchId`, and the current `attemptId`.
    Report `outcome:created` and the actual `agentId`, then use native wait. Created
    requires the spawn hook's issuance of the attempt, and the child's first message
-   must carry this attempt's marker; a child the host cannot yet tie to the marker is
-   recorded unverified and cannot complete an independent review until created is
-   reported again. A child spawned while the hook was off is recorded only with
+   must carry this attempt's marker. The marker does not tie the child to the call:
+   only the host's own result of the issued spawn call naming this `agentId` does, and
+   a child the host cannot yet tie that way is recorded unverified and cannot complete
+   an independent review until created is reported again. A child spawned while the hook was off is recorded only with
    `reconciliation` evidence, never deleted or respawned, and cannot satisfy
    independent review. Report
    `outcome:complete` with that ID only after validating the final work. A native
