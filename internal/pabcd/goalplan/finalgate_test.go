@@ -814,3 +814,83 @@ func TestFinalGateEmptyPanicIsStillAFailure(t *testing.T) {
 		t.Fatalf("reasons = %#v", got)
 	}
 }
+
+// CRW-1018: a schema-v2 marker whose path is refused (here the slug directory is a symbolic link to a directory that holds
+// the marker) is a refusal. The oracle's schemaMarkerPath throws on that path, so the final gate never reads the plan as
+// unmarked; the port must answer with the same refusal rather than an empty list.
+func TestFinalGateRefusedMarkerPathIsARefusal(t *testing.T) {
+	for _, declared := range []float64{1, 2} {
+		cwd, outside := t.TempDir(), t.TempDir()
+		p := finalGatePlanFixture(func(p *Goalplan) {
+			p.SchemaVersion = finalGateNum(declared)
+			g := finalGateGateFixture(nil)
+			p.FinalGate = &g
+			p.ReviewRounds = []ReviewRoundState{finalGateRoundFixture(nil)}
+		})
+		if err := os.WriteFile(filepath.Join(outside, "schema-v2.marker"), []byte("promoted"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		plansRoot := filepath.Join(cwd, crwdir.DirName, GoalplansSubdir)
+		if err := os.MkdirAll(plansRoot, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(outside, filepath.Join(plansRoot, p.Slug)); err != nil {
+			t.Fatal(err)
+		}
+		got := finalGateReasons(p, finalGateCtx(cwd, finalGateHere, nil))
+		if len(got) != 1 || !strings.Contains(got[0], "goalplan state path must not be a symlink") || !strings.Contains(got[0], "a refusal, not a pass") {
+			t.Fatalf("declared schemaVersion %v: reasons = %#v, want one refusal carrying the path refusal", declared, got)
+		}
+	}
+}
+
+// CRW-1018: the comparison detail is the one the comparison gives. An absent detail renders the "changed" fallback (the
+// oracle's ?? "changed"); an explicitly empty detail renders "()" as the oracle's nullish fallback leaves it.
+func TestFinalGateComparisonDetailPresenceDecidesTheText(t *testing.T) {
+	cases := []struct {
+		name string
+		cmp  source.Comparison
+		want string
+	}{
+		{"absent detail", source.Comparison{Kind: source.ComparisonDifferent}, "(changed)"},
+		{"explicitly empty detail", source.Comparison{Kind: source.ComparisonDifferent, DetailSet: true}, "()"},
+		{"given detail", source.Comparison{Kind: source.ComparisonDifferent, Detail: "commit aaa -> bbb"}, "(commit aaa -> bbb)"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := finalGatePlanFixture(func(p *Goalplan) {
+				p.SchemaVersion = finalGateNum(2)
+				g := finalGateGateFixture(nil)
+				p.FinalGate = &g
+				p.ReviewRounds = []ReviewRoundState{finalGateRoundFixture(nil)}
+			})
+			ctx := finalGateCtx(t.TempDir(), finalGateHere, nil)
+			ctx.CompareSource = func(a, b SourceIdentity) source.Comparison { return tc.cmp }
+			if why := finalGateJoined(p, ctx); !strings.Contains(why, "describes a different source than the tree right now "+tc.want+" — re-run the gate") {
+				t.Fatalf("reasons = %q, want the detail %s", why, tc.want)
+			}
+		})
+	}
+}
+
+// CRW-1018 (c3, already fixed on dev): a schemaVersion past 1e21 or below -1e21 prints as JavaScript's Number::toString in
+// the final-gate reasons, the same text the oracle's template literal gives.
+func TestFinalGateSchemaVersionTextIsJavaScriptNumberText(t *testing.T) {
+	marked := finalGatePlanFixture(func(p *Goalplan) {
+		p.SchemaVersion = finalGateNum(-1e21)
+		g := finalGateGateFixture(nil)
+		p.FinalGate = &g
+		p.ReviewRounds = []ReviewRoundState{finalGateRoundFixture(nil)}
+	})
+	dir := t.TempDir()
+	finalGateWriteMarker(t, dir, marked.Slug)
+	if why := finalGateJoined(marked, finalGateCtx(dir, finalGateHere, nil)); !strings.Contains(why, "but the plan file declares -1e+21 — restore") {
+		t.Fatalf("downgrade reasons = %q", why)
+	}
+	huge := finalGatePlanFixture(func(p *Goalplan) {
+		p.SchemaVersion = finalGateNum(1e21)
+	})
+	if why := finalGateJoined(huge, finalGateCtx(t.TempDir(), finalGateHere, nil)); !strings.HasPrefix(why, "schemaVersion 1e+21 requires an approved finalGate") {
+		t.Fatalf("no-gate reasons = %q", why)
+	}
+}

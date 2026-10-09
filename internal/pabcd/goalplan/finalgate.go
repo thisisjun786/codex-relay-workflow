@@ -23,11 +23,15 @@ import (
 func finalGateReasons(plan *Goalplan, ctx *GoalplanValidationCtx) []string {
 	markerPath, markerPresent := "", false
 	if ctx != nil {
-		if p, err := SchemaMarkerPath(ctx.Cwd, plan.Slug); err == nil {
-			markerPath = p
-			if _, statErr := os.Stat(p); statErr == nil {
-				markerPresent = true
-			}
+		// A refused marker path is a refusal, not an absent marker (CRW-1018): the oracle's schemaMarkerPath throws here, so
+		// a plan whose slug directory is a link is never read as unmarked and promoted plans cannot slip past the gate.
+		p, err := SchemaMarkerPath(ctx.Cwd, plan.Slug)
+		if err != nil {
+			return []string{"the schema-v2 marker of this plan could not be checked: " + err.Error() + " — this is a refusal, not a pass"}
+		}
+		markerPath = p
+		if _, statErr := os.Stat(p); statErr == nil {
+			markerPresent = true
 		}
 	}
 	version := EffectiveSchemaVersion(plan, markerPresent)
@@ -192,9 +196,10 @@ func finalGateIdentityReasons(plan *Goalplan, g *FinalGateState, ctx *GoalplanVa
 		}
 		cmp := ctx.CompareSource(*entry.identity, current)
 		if cmp.Kind == source.ComparisonDifferent {
-			detail := cmp.Detail
-			if detail == "" {
-				detail = "changed"
+			// The oracle's ?? "changed" applies to an absent detail only; an explicitly empty one renders "()" (CRW-1018).
+			detail := "changed"
+			if cmp.DetailSet || cmp.Detail != "" {
+				detail = cmp.Detail
 			}
 			out = append(out, fmt.Sprintf("%s describes a different source than the tree right now (%s) — re-run the gate", entry.label, detail))
 		} else if cmp.Kind == source.ComparisonUnavailable {
