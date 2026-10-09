@@ -2,6 +2,8 @@ package gui
 
 import (
 	"context"
+	"crypto/sha256"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,6 +18,10 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/policystore"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/storeseed"
 )
 
 // The status tests drive GET /api/status through the real guard over the package registry,
@@ -132,6 +138,16 @@ func object(t *testing.T, parent map[string]any, key string) map[string]any {
 func bar(t *testing.T, body map[string]any) map[string]any {
 	t.Helper()
 	return object(t, body, "bar")
+}
+
+// statusList reads one nested list from a decoded body.
+func statusList(t *testing.T, parent map[string]any, key string) []any {
+	t.Helper()
+	list, ok := parent[key].([]any)
+	if !ok {
+		t.Fatalf("%s is %#v, want a list", key, parent[key])
+	}
+	return list
 }
 
 // mark reads one bar reading's state and reason.
@@ -395,8 +411,9 @@ func TestStatusHasNoWritePath(t *testing.T) {
 	}
 }
 
-// statusTree is the recursive listing of a directory: every path with its size, sorted, so a
-// file created, removed or grown by one request is visible.
+// statusTree is the recursive listing of a directory: every path with its size and the SHA-256 of
+// its content, sorted, so a file created, removed, grown or rewritten in place (even with a value of
+// the same length) by one request is visible.
 func statusTree(t *testing.T, root string) []string {
 	t.Helper()
 	var entries []string
@@ -412,7 +429,11 @@ func statusTree(t *testing.T, root string) []string {
 			entries = append(entries, "dir "+relative)
 			return nil
 		}
-		entries = append(entries, fmt.Sprintf("file %s %d", relative, info.Size()))
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		entries = append(entries, fmt.Sprintf("file %s %d %x", relative, info.Size(), sha256.Sum256(content)))
 		return nil
 	})
 	if err != nil {
@@ -422,14 +443,96 @@ func statusTree(t *testing.T, root string) []string {
 	return entries
 }
 
-// TestStatusReadsWriteNothing is C3: the real manage path is invoked, and neither the
-// configuration directory nor the state directory gains a file.
+// TestStatusTreeSeesSameLengthRewrite pins the oracle of the no-write test: a file rewritten in
+// place with a value of the same length keeps its size, so the listing must carry the content too.
+func TestStatusTreeSeesSameLengthRewrite(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "crw-config.json")
+	if err := os.WriteFile(path, []byte(`{"mode":"aaaa"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	before := statusTree(t, root)
+	if err := os.WriteFile(path, []byte(`{"mode":"bbbb"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	after := statusTree(t, root)
+	if strings.Join(before, "\n") == strings.Join(after, "\n") {
+		t.Fatalf("a same-length rewrite is invisible to the tree listing: %v", after)
+	}
+}
+
+// The fake relay the no-write test reads: one plan with one node, one live relationship and one
+// capacity plan that names the plan.
+const (
+	statusFakePlan    = "plan-status"
+	statusFakeProject = "project-status"
+	statusFakeParent  = "task-parent"
+	statusFakeStamp   = "2026-10-07T00:00:00.000000+00:00"
+)
+
+// statusSeedFakeRelay writes the fake relay store below relayState through the product's own store
+// and repository, then closes it. socketPath is the App Server socket the store records: the one the
+// command resolves from the test's configuration, since a store that records another socket is
+// refused. The close comes before the request is made, so the store is a settled file with no
+// write-ahead frames: a read that creates a sidecar is then visible to the tree comparison rather
+// than masked by a log the open already had to write.
+func statusSeedFakeRelay(t *testing.T, relayState, socketPath string) {
+	t.Helper()
+	ctx := context.Background()
+	st, err := store.Open(ctx, filepath.Join(relayState, "relay.sqlite3"), socketPath)
+	if err != nil {
+		t.Fatalf("create the fake relay store: %v", err)
+	}
+	defer func() {
+		if err := st.Close(); err != nil {
+			t.Fatalf("close the fake relay store: %v", err)
+		}
+	}()
+	raw, err := json.Marshal(map[string]any{
+		"schema": dag.SchemaRevision, "plan_id": statusFakePlan, "project_key": statusFakeProject,
+		"request_id": statusFakePlan + "-r1", "expected_parent_revision": 0, "author_task_id": statusFakeParent,
+		"changes": []any{map[string]any{"op": dag.OpAddNode, "node": map[string]any{
+			"node_id": "A", "issue_key": "CRW-1", "kind": dag.NodeImplementation,
+			"criteria_set_digest": testsupport.Dig("criteria A")}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	revision, err := dag.DecodeRevision(raw)
+	if err != nil {
+		t.Fatalf("decode the fake plan revision: %v", err)
+	}
+	if _, err := (&dag.Repo{Store: st, Now: func() string { return statusFakeStamp }}).Put(ctx, revision); err != nil {
+		t.Fatalf("put the fake plan revision: %v", err)
+	}
+	if err := storeseed.RecordRelationshipScope(ctx, st, "rel-CRW-1", statusFakeProject, statusFakeStamp); err != nil {
+		t.Fatalf("scope the fake relationship: %v", err)
+	}
+	if err := storeseed.RecordRelationship(ctx, st, store.Relationship{
+		ID: "rel-CRW-1", IssueKey: "CRW-1", Status: "active", ParentTaskID: statusFakeParent, ChildTaskID: "child-CRW-1",
+		Generation: 1, ArtifactRoots: "[]", AllowedRecipients: `["parent"]`, CreatedAt: statusFakeStamp, UpdatedAt: statusFakeStamp,
+	}, store.Generation{RelationshipID: "rel-CRW-1", Number: 1, DispatchRequestID: "dispatch-rel-CRW-1",
+		AnchorState: store.AnchorBound, DispatchTurnID: sql.NullString{String: "turn-dispatch", Valid: true},
+		OpenedAt: statusFakeStamp, BoundAt: sql.NullString{String: statusFakeStamp, Valid: true}}, "host", "host"); err != nil {
+		t.Fatalf("fake relationship: %v", err)
+	}
+}
+
+// TestStatusReadsWriteNothing is C3: the real manage path is invoked, over a fake relay store and a
+// capacity plan that the reads succeed on, and neither the configuration directory nor the state
+// directory gains a file.
 func TestStatusReadsWriteNothing(t *testing.T) {
+	// The capacity reading runs the relay command through this test binary (see TestMain), so the
+	// crw binary is built first. testsupport caches it for the whole test process and TestMain
+	// removes it when the process ends, so this test never deletes it (a second run in the same
+	// process, as with -count=2, reuses it).
+	testsupport.CRW(t)
 	root := t.TempDir()
 	// The real manage path runs below, so the argument list is recorded around it rather than
-	// faked: this test must discriminate the non-writing form of each command, and a fixture with
-	// no relay store would otherwise let dag-review exit before it ever reaches the offset write
-	// the flag suppresses.
+	// faked: this test must discriminate the non-writing form of each command. The fake relay store
+	// and capacity plan let relay-read, capacity and dag-review succeed, so each one reaches the
+	// reads that could write (the offset file is the one dag-review writes unless --no-state) instead
+	// of stopping on a missing store before it.
 	previous := statusManage
 	var calls []string
 	statusManage = func(ctx context.Context, args []string) (int, string, string) {
@@ -454,10 +557,12 @@ func TestStatusReadsWriteNothing(t *testing.T) {
 		_, _ = io.WriteString(w, `{"incidents":[]}`)
 	}))
 	defer actions.Close()
+	statusSeedFakeRelay(t, relayState, filepath.Join(codexHome, "app-server-control", "app-server-control.sock"))
 	config, err := json.Marshal(map[string]any{"manage": map[string]any{
 		"relay":     map[string]any{"state": relayState},
 		"state_dir": manageState,
-		"capacity":  map[string]any{"actions_status_url": actions.URL},
+		"capacity": map[string]any{"actions_status_url": actions.URL,
+			"plans": []map[string]any{{"plan": statusFakePlan, "project": statusFakeProject, "parent": statusFakeParent}}},
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -482,6 +587,31 @@ func TestStatusReadsWriteNothing(t *testing.T) {
 	after := statusTree(t, root)
 	if strings.Join(before, "\n") != strings.Join(after, "\n") {
 		t.Fatalf("the request changed the tree:\nbefore: %v\nafter:  %v", before, after)
+	}
+	// HTTP 200 comes back when every source failed, so the test also requires each named read to
+	// have succeeded: a pass over an empty fixture would say nothing about the read paths.
+	var body map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("status body %q: %v", recorder.Body.String(), err)
+	}
+	for _, source := range []string{"relay", "capacity", "dag"} {
+		if state, reason := mark(t, body, source); state != statusOK {
+			t.Fatalf("the %s read is %q (%s), want ok", source, state, reason)
+		}
+	}
+	// The reads succeeded on the fake store and plan, so the values they carry came from it: the
+	// relationship is listed with the pull request the relay exports (null here, the relationship has
+	// none), and the capacity reading judges the configured plan.
+	relayData := object(t, object(t, body, "relay"), "data")
+	relationships := statusList(t, relayData, "relationships")
+	if len(relationships) != 1 {
+		t.Fatalf("relay relationships = %d, want the one the fake store holds", len(relationships))
+	}
+	if _, ok := relationships[0].(map[string]any)["pullRequest"]; !ok {
+		t.Fatalf("the relay relationship carries no pullRequest field: %#v", relationships[0])
+	}
+	if plans := statusList(t, object(t, object(t, body, "capacity"), "data"), "plans"); len(plans) != 1 {
+		t.Fatalf("capacity plans = %d, want the one the configuration names", len(plans))
 	}
 	// The same run proves the argument lists: the file comparison alone cannot tell the two
 	// commands' non-writing forms apart when a fixture stops them before the write.

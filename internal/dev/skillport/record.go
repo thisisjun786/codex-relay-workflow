@@ -43,7 +43,7 @@ const (
 // OwnSkills is the skills CRW wrote itself. They share SkillsRoot with the ported skills since the
 // activation move (CRW-392) and have no record, so Check does not look at them; every other skill in
 // SkillsRoot is a ported one and needs its record. A new skill of CRW's own is added here.
-var OwnSkills = []string{"crw-check", "crw-define", "crw-logic", "crw-next", "crw-plan", "crw-refactor", "crw-run", "crw-status", "crw-tidy"}
+var OwnSkills = []string{"crw-add-issue", "crw-check", "crw-define", "crw-logic", "crw-next", "crw-plan", "crw-refactor", "crw-run", "crw-status", "crw-tidy"}
 
 // Origin names the original tree: the tag, its commit and the digest of the original skills
 // directory listing.

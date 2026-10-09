@@ -53,8 +53,14 @@ is added to the envelope.
 | Correlation and reply target | the logical id from `dotsContactLogicalID`, plus `QuestionID` for an approval | Each reply names the question it answers. |
 | Logical id (outbox key) | `dotsContactLogicalID`, one path component under the bridge request limit | The same request id always gives the same logical id. |
 
-The transport request id on a delivery attempt (`del-<event>-a<attempt>`) changes on every retry.
-It is not the dots request id and is never used as one.
+The transport request id that `Deliver` (`internal/manage/deliver_send.go`) sends to the bridge is the
+logical id on the first attempt. A retry after a `not_delivered` refusal, and a recovery resend for an id
+the bridge never recorded or answered `not_delivered` for, takes `<logical-id>-rN` (`deliverRetryRequestID`,
+N counted from the outbox record). A recovery resend for an id the bridge recorded and answered
+`not_attempted` keeps the request id the outbox record holds (the unsuffixed logical id, or the `-rN` id
+the record already moved to), so the bridge receipt stays correlated. The id is not the dots request id and
+is never used as one. The relay's own `del-<event>-a<attempt>` form belongs to relay delivery and is not
+the id `Deliver` sends.
 
 ## Delivery input
 
@@ -118,7 +124,8 @@ current revision does. A separate approval that a platform or a user policy requ
 ## Test boundaries
 
 `internal/manage/dotscontact_test.go` covers each boundary with a fake manager view and ledger:
-busy and idle delivery, offline and unknown waiting, duplicate convergence, a repeat that differs in
+busy and idle delivery, offline and unknown waiting, duplicate convergence (including an accepted approval
+repeated after its question closed or moved on), a repeat that differs in
 any field, unknown outcome reconciliation, wrong repository, previous manager, cancellation and pause
 from the local view, stale and unbound answers, missing action, target, scope or authority, a blank
 open question, invalid UTF-8, field boundaries in the digest, the path safety of the logical id, and

@@ -26,13 +26,13 @@ func evaluateCommand(command, cwd string, id WorktreeIdentity) GuardVerdict {
 	if !id.Managed || text.Trim(command) == "" {
 		return GuardVerdict{}
 	}
-	return worktreeDelJudgeText(command, shellirPayloadCwd(cwd), id, 0, nil)
+	return worktreeDelJudgeText(command, shellirPayloadCwd(cwd), id, 0, nil, false)
 }
 
 // worktreeDelRead is the guard's reading of a text: the shared reader with no environment, so a variable is unknown whatever the
 // session's environment holds. The differential fuzz counts the commands this reading refuses (WorktreeGuardCommandReadable).
-func worktreeDelRead(command, cwd string) (shellir.Result, error) {
-	return shellir.Analyze(command, cwd)
+func worktreeDelRead(command, cwd string, cdpath bool) (shellir.Result, error) {
+	return shellir.AnalyzeScript(command, cwd, cdpath)
 }
 
 func worktreeDelUnreadable(id WorktreeIdentity) GuardVerdict {
@@ -41,8 +41,8 @@ func worktreeDelUnreadable(id WorktreeIdentity) GuardVerdict {
 
 // worktreeDelJudgeText judges one text; outer is the writes of the texts that run it (a script file's body), which happen before
 // its own commands.
-func worktreeDelJudgeText(command, cwd string, id WorktreeIdentity, depth int, outer *githubPostWrites) GuardVerdict {
-	res, err := worktreeDelRead(command, cwd)
+func worktreeDelJudgeText(command, cwd string, id WorktreeIdentity, depth int, outer *githubPostWrites, cdpath bool) GuardVerdict {
+	res, err := worktreeDelRead(command, cwd, cdpath)
 	if err != nil {
 		return worktreeDelUnreadable(id)
 	}
@@ -83,7 +83,7 @@ func worktreeDelJudgeScript(e shellir.Exec, id WorktreeIdentity, depth int, writ
 		return worktreeDelUnreadable(id)
 	}
 	// The body is judged as any text is: the script files it runs are checked against what it and the texts around it write.
-	return worktreeDelJudgeText(string(b), e.Dir.Path, id, depth+1, writes)
+	return worktreeDelJudgeText(string(b), e.Dir.Path, id, depth+1, writes, e.Cdpath)
 }
 
 // worktreeDelJudgeExec is the verdict for one program the reader shows.

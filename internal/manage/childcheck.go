@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/settings"
 )
 
 // childCheckOptions is the comparison crw manage child-check is asked to make.
@@ -94,7 +96,7 @@ func childCheck(ctx context.Context, cfg *Config, opts childCheckOptions) (*chil
 	if err := json.Unmarshal(raw, &read); err != nil {
 		return nil, &hostReadError{reason: hostReadHostError, detail: "thread/read result: " + err.Error()}
 	}
-	status, err := childCheckServerStatus(ctx, cfg, opts.thread)
+	status, err := childCheckServerStatus(ctx, cfg, opts.thread, disabled)
 	if err != nil {
 		return nil, err
 	}
@@ -119,26 +121,21 @@ func childCheck(ctx context.Context, cfg *Config, opts childCheckOptions) (*chil
 	return report, nil
 }
 
-// childCheckServerStatus reads the host's per-server MCP status, keyed by name; a paged answer is refused.
-func childCheckServerStatus(ctx context.Context, cfg *Config, thread string) (map[string]string, error) {
+// childCheckServerStatus reads the host's per-server MCP status, keyed by name, with the structure
+// checks internal/bridge makes (settings.ServerStatus): an answer that reader cannot read is a host error,
+// never a clean one. The servers asked about must carry a status when they are listed.
+func childCheckServerStatus(ctx context.Context, cfg *Config, thread string, asked []string) (map[string]string, error) {
 	raw, err := HostRead(ctx, cfg, "mcpServerStatus/list", map[string]any{"threadId": thread, "detail": "toolsAndAuthOnly", "limit": 500})
 	if err != nil {
 		return nil, err
 	}
-	var answer struct {
-		Data       []struct{ Name, RuntimeStatus string }
-		NextCursor any
-	}
+	var answer map[string]any
 	if err := json.Unmarshal(raw, &answer); err != nil {
 		return nil, &hostReadError{reason: hostReadHostError, detail: "mcpServerStatus/list result: " + err.Error()}
 	}
-	// Any non-nil, non-empty cursor means paged, the reading internal/bridge makes of the answer.
-	if answer.NextCursor != nil && answer.NextCursor != "" {
-		return nil, &hostReadError{reason: hostReadHostError, detail: "mcpServerStatus/list answer is paged; the server list is incomplete"}
-	}
-	status := map[string]string{}
-	for _, row := range answer.Data {
-		status[row.Name] = row.RuntimeStatus
+	status, _, ok := settings.ServerStatus(answer, asked)
+	if !ok {
+		return nil, &hostReadError{reason: hostReadHostError, detail: "mcpServerStatus/list answer cannot be read: it is paged, its data is no list, a row lacks a name or a pluginId, or a compared server has no status"}
 	}
 	return status, nil
 }

@@ -640,10 +640,10 @@ func Test47_PLG_18_JSONReport(t *testing.T) {
 	if err := json.Unmarshal([]byte(got.stdout), &r); err != nil {
 		t.Fatalf("report: %v: %+v", err, got)
 	}
-	// The plugin ships the skills the repository holds: its own nine and, since the activation move
+	// The plugin ships the skills the repository holds: its own ten and, since the activation move
 	// (CRW-392), the 24 ported from CXC, crw-loop (the PABCD loop) among them; the parent-goal procedure
 	// crw-loop once carried is crw-run's goal mode.
-	names := []any{"crw-ast-grep", "crw-check", "crw-define", "crw-dev", "crw-dev-architecture",
+	names := []any{"crw-add-issue", "crw-ast-grep", "crw-check", "crw-define", "crw-dev", "crw-dev-architecture",
 		"crw-dev-backend", "crw-dev-code-reviewer", "crw-dev-data", "crw-dev-debugging", "crw-dev-devops",
 		"crw-dev-frontend", "crw-dev-scaffolding", "crw-dev-security", "crw-dev-testing", "crw-dev-uiux-design",
 		"crw-dev-visualizer", "crw-interview", "crw-kwrite", "crw-logic", "crw-loop", "crw-lunasearch", "crw-next",

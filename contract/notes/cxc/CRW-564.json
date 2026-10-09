@@ -1,0 +1,8 @@
+{
+  "issue": "CRW-564",
+  "identical": [
+    "hook__subagent-stop-observing-review__baseline_empty_workspace",
+    "hook__subagent-stop-observing-review__non_reviewer_ignored"
+  ],
+  "intentionally-changed": []
+}

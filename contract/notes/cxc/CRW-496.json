@@ -65,7 +65,7 @@
       "set": {
         "exit": "0",
         "steps/0/exit": "0",
-        "steps/0/stdout": "usage: crw skill {hook-probe,issue-size,parent-title,start-policy,base-refresh} ...\ncrw skill <search <query...> [--source jaw|hermes|clawhub|gh|all] [--limit N] [--json] [--refresh] | show <id> [--source ...]>\n"
+        "steps/0/stdout": "usage: crw skill {hook-probe,issue-ready,issue-size,parent-title,start-policy,base-refresh} ...\ncrw skill <search <query...> [--source jaw|hermes|clawhub|gh|all] [--limit N] [--json] [--refresh] | show <id> [--source ...]>\n"
       }
     },
     {
@@ -74,7 +74,7 @@
       "set": {
         "exit": "0",
         "steps/0/exit": "0",
-        "steps/0/stdout": "usage: crw skill {hook-probe,issue-size,parent-title,start-policy,base-refresh} ...\ncrw skill <search <query...> [--source jaw|hermes|clawhub|gh|all] [--limit N] [--json] [--refresh] | show <id> [--source ...]>\n"
+        "steps/0/stdout": "usage: crw skill {hook-probe,issue-ready,issue-size,parent-title,start-policy,base-refresh} ...\ncrw skill <search <query...> [--source jaw|hermes|clawhub|gh|all] [--limit N] [--json] [--refresh] | show <id> [--source ...]>\n"
       }
     },
     {
@@ -84,7 +84,7 @@
         "exit": "2",
         "steps/0/exit": "2",
         "steps/0/form": "empty",
-        "steps/0/stderr": "usage: crw skill {hook-probe,issue-size,parent-title,start-policy,base-refresh} ...\ncrw skill: error: invalid command \"help\" (choose from hook-probe, issue-size, parent-title, start-policy, base-refresh)\n",
+        "steps/0/stderr": "usage: crw skill {hook-probe,issue-ready,issue-size,parent-title,start-policy,base-refresh} ...\ncrw skill: error: invalid command \"help\" (choose from hook-probe, issue-ready, issue-size, parent-title, start-policy, base-refresh)\n",
         "steps/0/stdout": ""
       }
     },
@@ -93,10 +93,10 @@
       "reason": "Preserve the existing CRW family help and missing-command behavior; new search/show usage and unknown-source behavior remain identical.",
       "set": {
         "steps/0/exit": "0",
-        "steps/0/stdout": "usage: crw skill {hook-probe,issue-size,parent-title,start-policy,base-refresh} ...\ncrw skill <search <query...> [--source jaw|hermes|clawhub|gh|all] [--limit N] [--json] [--refresh] | show <id> [--source ...]>\n",
+        "steps/0/stdout": "usage: crw skill {hook-probe,issue-ready,issue-size,parent-title,start-policy,base-refresh} ...\ncrw skill <search <query...> [--source jaw|hermes|clawhub|gh|all] [--limit N] [--json] [--refresh] | show <id> [--source ...]>\n",
         "steps/1/exit": "2",
         "steps/1/form": "empty",
-        "steps/1/stderr": "usage: crw skill {hook-probe,issue-size,parent-title,start-policy,base-refresh} ...\ncrw skill: error: a command is required\n",
+        "steps/1/stderr": "usage: crw skill {hook-probe,issue-ready,issue-size,parent-title,start-policy,base-refresh} ...\ncrw skill: error: a command is required\n",
         "steps/1/stdout": ""
       }
     },

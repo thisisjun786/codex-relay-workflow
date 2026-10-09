@@ -584,6 +584,17 @@ resulting evidence, not the child's internals. Creating a task does not create a
 goal; an active turn does not prove the loop is armed. Missing loop prerequisites
 are reported explicitly, with no silent substitution of a different workflow.
 
+### Check the issue is ready before release
+
+Before an issue gets a packet, a task, a `managed-start` or a DAG release, run `crw skill issue-ready check` on the issue as the Linear tools return it (id, title, description and labels; JSON on stdin or saved to a file), before the size check below. It judges the [release gate](../crw-plan/references/integrations.md#the-release-gate): registered criteria, edit regions, a decided answer with no design question left, the test cases to write first, and the done condition. Unlike the size check, its answer holds the release.
+
+- `ready` (exit 0): the release goes on under the checks below.
+- `not_ready` or `design_first` (exit 1): do not release. Create no packet, no task, no `managed-start` and no `dag-release` for the issue, and do not send it to a child with a note to design it. Report the `reasons` to the issue's owner: each names the missing item and the heading that supplies it, and a `design_first` reason names the label or the open question that holds it. A `design_first` issue gets its design first (an architect-role proposal and the parent's decision), the result is written into the decided answer and the label removed, and then the check runs again. Skip the issue in the ready set and release the others; a held issue never holds the rest.
+- `bypassed` (exit 0): the input carried the management session's explicit approval (`exception`) for this issue. Write the report's `exception_record` into the coordination record beside the launch record, then release. Without that approval record the answer stays held; your own judgment that the issue is small, a child's request and a sibling's earlier release are not the approval.
+- Exit 2 and 3 mean the issue was not read: correct the input and run the check again. An unread answer is not `ready`.
+
+The relay's release request does not carry the issue body, so the hold is this step and not a relay refusal. Where no issue-ready answer was recorded, the dispatch record says so. `crw-tidy` finds the unreleased issues that fall short and a missing `설계 먼저` label.
+
 ### Check the size before dispatch
 
 Before an issue gets a packet, a task or a `managed-start`, and before a DAG release of it (a release goes through `managed-start`),

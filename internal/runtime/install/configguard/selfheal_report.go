@@ -3,6 +3,7 @@ package configguard
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
@@ -17,6 +18,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+	"golang.org/x/sys/unix"
 )
 
 // The SessionStart self-heal leg, report only (Jun's J4 decision, 2026-10-06).
@@ -251,58 +253,100 @@ func selfHealReportContains(list []string, want string) bool {
 // reused here because it takes a scope.Env and this package is below install.
 func SelfHealReportRunner(ctx context.Context, env host.LookupEnv) CodexRunner {
 	return func(args []string) CodexRunResult {
-		file, err := selfHealReportBinary(env)
+		candidates, err := selfHealReportCandidates(env)
 		if err != nil {
 			return CodexRunResult{Stderr: err.Error(), ExitCode: 1}
 		}
-		var out, errOut selfHealReportCapture
-		run, cancel := context.WithCancel(ctx)
-		defer cancel()
-		budget := &selfHealReportBudget{cancel: cancel}
-		out.budget, errOut.budget = budget, budget
-		cmd := exec.CommandContext(run, file, args...)
-		// spawnSync inherits process.env, so the child sees every variable the hook does (the
-		// corpus stubs read their own control variables from it). Env stays nil: inherited.
-		cmd.Stdout, cmd.Stderr = &out, &errOut
-		// A cancelled invocation ends the probe and its descendants, and the answer is not held open
-		// by a grandchild that inherited the pipe (skill/merge_build_check_go.go's pattern).
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-		cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
-		cmd.WaitDelay = selfHealReportWaitDelay
-		runErr := cmd.Run()
-		result := CodexRunResult{Stdout: source.DecodeUTF8(out.buffer.Bytes()), Stderr: source.DecodeUTF8(errOut.buffer.Bytes()), ExitCode: 1}
-		if !budget.overflow && cmd.ProcessState != nil && cmd.ProcessState.ExitCode() >= 0 {
-			result.ExitCode = cmd.ProcessState.ExitCode()
-		}
-		if cmd.ProcessState == nil && result.Stderr == "" && runErr != nil {
-			result.Stderr = runErr.Error()
+		// execvp semantics: a candidate whose exec fails the way a search goes on from (EACCES, which the access
+		// check cannot see for a script whose interpreter may not run, and ENOENT for a missing interpreter) is
+		// skipped for the next directory's; the first that starts is the answer, whatever its exit status. When none
+		// starts, the last start failure is the answer, and the round stays silent (CRW-977).
+		result := CodexRunResult{Stderr: errSelfHealReportENOENT.Error(), ExitCode: 1}
+		for _, file := range candidates {
+			var started bool
+			var startErr error
+			result, started, startErr = selfHealReportRunOne(ctx, file, args)
+			if started || !selfHealReportSearchGoesOn(startErr) {
+				break
+			}
 		}
 		return result
 	}
 }
 
-// selfHealReportBinary resolves codex against the supplied PATH, as spawnSync does.
-func selfHealReportBinary(env host.LookupEnv) (string, error) {
+// selfHealReportSearchGoesOn is whether execvp tries the next PATH directory after an exec failed with err: glibc continues on
+// EACCES (remembering it), ENOENT, ESTALE, ENOTDIR, ENODEV and ETIMEDOUT, and stops on anything else.
+func selfHealReportSearchGoesOn(err error) bool {
+	for _, errno := range []syscall.Errno{syscall.EACCES, syscall.ENOENT, syscall.ESTALE, syscall.ENOTDIR, syscall.ENODEV, syscall.ETIMEDOUT} {
+		if errors.Is(err, errno) {
+			return true
+		}
+	}
+	return false
+}
+
+// selfHealReportRunOne runs one resolved codex. started is false when the process could not be started (the exec failed, startErr
+// is why).
+func selfHealReportRunOne(ctx context.Context, file string, args []string) (result CodexRunResult, started bool, startErr error) {
+	var out, errOut selfHealReportCapture
+	run, cancel := context.WithCancel(ctx)
+	defer cancel()
+	budget := &selfHealReportBudget{cancel: cancel}
+	out.budget, errOut.budget = budget, budget
+	cmd := exec.CommandContext(run, file, args...)
+	// spawnSync inherits process.env, so the child sees every variable the hook does (the
+	// corpus stubs read their own control variables from it). Env stays nil: inherited.
+	cmd.Stdout, cmd.Stderr = &out, &errOut
+	// A cancelled invocation ends the probe and its descendants, and the answer is not held open
+	// by a grandchild that inherited the pipe (skill/merge_build_check_go.go's pattern).
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	cmd.WaitDelay = selfHealReportWaitDelay
+	runErr := cmd.Run()
+	result = CodexRunResult{Stdout: source.DecodeUTF8(out.buffer.Bytes()), Stderr: source.DecodeUTF8(errOut.buffer.Bytes()), ExitCode: 1}
+	// exec.ErrWaitDelay is a probe that exited while a descendant still held its output open: the
+	// list that arrived may be cut short, and a cut list would read an enabled flag as off. spawnSync
+	// has no timeout and waits for the whole list; the hook has a time limit, so the port ends the wait
+	// and takes the list for a failed measurement (CRW-977, known-defects).
+	if !budget.overflow && !errors.Is(runErr, exec.ErrWaitDelay) && cmd.ProcessState != nil && cmd.ProcessState.ExitCode() >= 0 {
+		result.ExitCode = cmd.ProcessState.ExitCode()
+	}
+	if cmd.ProcessState == nil && result.Stderr == "" && runErr != nil {
+		result.Stderr = runErr.Error()
+	}
+	return result, cmd.Process != nil, runErr
+}
+
+// selfHealReportCandidates resolves codex against the supplied PATH, as spawnSync does: every directory's codex the caller may
+// execute, in order. With none, the error is EACCES when some entry exists and ENOENT when none does.
+func selfHealReportCandidates(env host.LookupEnv) ([]string, error) {
 	path, set := env("PATH")
 	if !set {
 		path = "/usr/bin:/bin"
 	}
 	var denied bool
+	var found []string
 	for _, dir := range strings.Split(path, string(os.PathListSeparator)) {
 		candidate, err := filepath.Abs(filepath.Join(dir, "codex"))
 		if err != nil {
-			return "", err
+			return nil, err
 		}
 		info, err := os.Stat(candidate)
-		if err == nil && !info.IsDir() && info.Mode().Perm()&0o111 != 0 {
-			return candidate, nil
+		// libuv's PATH search (execvp) skips a candidate the caller may not execute (EACCES) and tries
+		// the next directory, so the test is the access check with the effective ids, not an execute bit.
+		if err == nil && !info.IsDir() && unix.Faccessat(unix.AT_FDCWD, candidate, unix.X_OK, unix.AT_EACCESS) == nil {
+			found = append(found, candidate)
+			continue
 		}
 		denied = denied || err == nil || os.IsPermission(err)
 	}
-	if denied {
-		return "", errSelfHealReportEACCES
+	if len(found) > 0 {
+		return found, nil
 	}
-	return "", errSelfHealReportENOENT
+	if denied {
+		return nil, errSelfHealReportEACCES
+	}
+	return nil, errSelfHealReportENOENT
 }
 
 var (
@@ -314,12 +358,11 @@ type errSelfHealReport string
 
 func (e errSelfHealReport) Error() string { return string(e) }
 
-// selfHealReportBudget is spawnSync's default 1 MiB, shared across stdout and stderr.
 // selfHealReportWaitDelay bounds how long a probe's output may be held open after it exited or was
 // killed, the same bound internal/runtime/doctor's commandWaitDelay gives its codex probe: a
 // descendant that inherited the pipe would otherwise hold the hook (and the session start) until it
-// exits.
-const selfHealReportWaitDelay = 5 * time.Second
+// exits. A variable only so a test can shorten it.
+var selfHealReportWaitDelay = 5 * time.Second
 
 // selfHealReportBudget is spawnSync's default 1 MiB, shared across stdout and stderr.
 type selfHealReportBudget struct {

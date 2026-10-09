@@ -152,6 +152,12 @@ type Exec struct {
 	Inline  *Inline
 	// Script is the script path of a KindScriptFile record.
 	Script Word
+	// Cdpath is whether CDPATH (or the zsh cdpath array) may be set where the program runs: the text assigned it, or names it. A
+	// program or script file that is run there inherits it: a cd to a bare name in a script body searches its directories. A
+	// reader of the body starts with it (AnalyzeScript).
+	Cdpath bool
+	// Line is the line, in the text the record was read from, of the statement that holds it (1-based; 0 when unknown).
+	Line int
 }
 
 // Result is the list of Exec records in the order the text runs them.
@@ -310,6 +316,15 @@ func (w *walker) stmt(s *syntax.Stmt, st *state, ctx Context) error {
 	if s == nil {
 		return nil
 	}
+	// The records this statement adds that no inner statement already placed are on this statement's line.
+	start, line := len(w.out), int(s.Pos().Line())
+	defer func() {
+		for i := start; i < len(w.out); i++ {
+			if w.out[i].Line == 0 {
+				w.out[i].Line = line
+			}
+		}
+	}()
 	if s.Background {
 		ctx.Background = true
 		st = st.clone()
@@ -765,6 +780,10 @@ func (w *walker) decl(c *syntax.DeclClause, st *state, ctx Context) error {
 			if !v.Known || strings.HasPrefix(v.Value, "-") && strings.Contains(v.Value, "n") {
 				st.clearVars()
 			}
+			// A word that names a variable by a value built at run time (export "${n}PATH=/x") may name CDPATH.
+			if mentionsCdpath([]Word{v}) {
+				st.cdpath = true
+			}
 			continue
 		}
 		asg := Assign{Name: a.Name.Value, Append: a.Append}
@@ -909,8 +928,27 @@ func (w *walker) call(c *syntax.CallExpr, redirs []Redir, st *state, ctx, wctx C
 	return w.dispatch(words, assigns, redirs, st, ctx)
 }
 
+// isCdpathName is whether a variable name is the directory search path of cd: CDPATH of bash, and zsh's cdpath array, which
+// zsh ties to CDPATH and searches the same way (a lower-case assignment of bash is a plain variable; it is read as CDPATH here).
+func isCdpathName(name string) bool { return strings.EqualFold(name, "CDPATH") }
+
+// mentionsCdpath is whether the words of a builtin that assigns variables (read, printf -v, export, declare, mapfile and the
+// rest) may name CDPATH: one is not known, or is the name, with or without a value.
+func mentionsCdpath(args []Word) bool {
+	for _, a := range args {
+		if !a.Known {
+			return true
+		}
+		name, _, _ := strings.Cut(a.Value, "=")
+		if isCdpathName(name) {
+			return true
+		}
+	}
+	return false
+}
+
 // checkAssigns refuses the assignments that change what a program means
-// before it runs, and makes the directory unknown when CDPATH changes.
+// before it runs, and records that CDPATH was assigned: from then on a cd to a bare name may land in a CDPATH directory.
 func checkAssigns(assigns []Assign, st *state) error {
 	for _, a := range assigns {
 		switch {
@@ -918,9 +956,8 @@ func checkAssigns(assigns []Assign, st *state) error {
 			return unreadablef("assignment to %s changes which program runs", a.Name)
 		case isCodeEnvName(a.Name):
 			return unreadablef("assignment to %s makes a program run code the text does not show", a.Name)
-		case a.Name == "CDPATH":
+		case isCdpathName(a.Name):
 			st.cdpath = true
-			st.dir = unknownDir(st.dir)
 		}
 	}
 	return nil
@@ -1053,7 +1090,7 @@ func (w *walker) dispatch(words []Word, assigns []Assign, redirs []Redir, st *st
 	}
 	w.out = append(w.out, Exec{
 		Kind: KindCommand, Program: prog, Name: name, Args: words[1:],
-		Assigns: assigns, Redirs: redirs, Dir: st.dir, Ctx: ctx, Inline: inline,
+		Assigns: assigns, Redirs: redirs, Dir: st.dir, Ctx: ctx, Inline: inline, Cdpath: st.cdpath,
 	})
 	if script != nil {
 		if err := w.scriptFile(name, *script, st, ctx); err != nil {
@@ -1102,17 +1139,26 @@ func (w *walker) dispatch(words []Word, assigns []Assign, redirs []Redir, st *st
 		return w.wrapped(name, words[1:], assigns, redirs, st, ctx)
 	case clobbersVars(name, words[1:]):
 		st.clearVars()
+		if mentionsCdpath(words[1:]) {
+			st.cdpath = true
+		}
 	}
 	return nil
 }
 
 func (s *state) cd(args []Word) {
-	if s.cdpath || len(args) != 1 || !args[0].Known {
+	if len(args) != 1 || !args[0].Known {
 		s.dir = unknownDir(s.dir)
 		return
 	}
 	target := args[0].Value
 	if target == "" || strings.HasPrefix(target, "-") || strings.Contains(target, "..") {
+		s.dir = unknownDir(s.dir)
+		return
+	}
+	// With CDPATH assigned a bare name is searched in its directories first, so it names a directory the text does not show. A
+	// target that begins with / or ./ is never searched there (bash and zsh): it resolves from the directory as without CDPATH.
+	if s.cdpath && !path.IsAbs(target) && !strings.HasPrefix(target, "./") {
 		s.dir = unknownDir(s.dir)
 		return
 	}
@@ -1167,7 +1213,7 @@ func (w *walker) scriptFile(name string, script Word, st *state, ctx Context) er
 	}
 	w.out = append(w.out, Exec{
 		Kind: KindScriptFile, Program: Word{Known: true, Value: name}, Name: name,
-		Script: script, Dir: st.dir, Ctx: ctx,
+		Script: script, Dir: st.dir, Ctx: ctx, Cdpath: st.cdpath,
 	})
 	return nil
 }
@@ -1196,6 +1242,9 @@ func (w *walker) carried(text string, st *state, ctx Context, carrier string) er
 	file, err := parseText(text)
 	if err != nil {
 		return err
+	}
+	if textNamesCdpath(text) {
+		st.cdpath = true
 	}
 	return w.stmts(file.Stmts, st, ctx)
 }

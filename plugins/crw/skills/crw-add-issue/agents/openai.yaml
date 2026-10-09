@@ -1,0 +1,6 @@
+interface:
+  display_name: "CRW Add Issue"
+  short_description: "한 문단 요청을 해제 전 준비 항목을 채운 이슈 하나로 등록"
+  default_prompt: "$crw-add-issue 이 요청을 저장소 코드와 기존 이슈를 확인해서 기준, 편집 영역, 정한 답, 먼저 실패하게 쓸 시험, 끝 조건을 채운 이슈 하나로 등록해줘. 설계 질문이 남으면 답을 지어내지 말고 열린 결정에 적고 설계 먼저로 표시해줘. 등록 뒤 준비 점검 결과를 알려줘."
+policy:
+  allow_implicit_invocation: true

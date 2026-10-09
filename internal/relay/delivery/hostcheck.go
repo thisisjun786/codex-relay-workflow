@@ -96,7 +96,8 @@ func (rc *Reconciler) CheckDispatchedTurn(ctx context.Context, requestID string,
 
 // ConfirmDelivery is confirm_delivery: settle an uncertain completion send before the parent's
 // acknowledgement is judged, reading the acknowledging turn's own items for the message. Nil when
-// nothing was read; read errors are reported in the outcome, never returned.
+// nothing was read; read errors are reported in the outcome, never returned. A failure of the corrupting class
+// (CRW-848) is the exception: it is returned, not reported, so the caller can halt on it (CRW-1071).
 func (rc *Reconciler) ConfirmDelivery(ctx context.Context, eventID string, adapter Adapter, turnID string) (Obj, error) {
 	delivery, err := rc.Delivery.Find(ctx, eventID)
 	if err != nil || delivery == nil || delivery.S("kind") != Completion || delivery.S("state") != HeldUncertain {
@@ -110,6 +111,9 @@ func (rc *Reconciler) ConfirmDelivery(ctx context.Context, eventID string, adapt
 	out := Obj{{Key: "eventId", Value: eventID}, {Key: "requestId", Value: requestID}}
 	reconciled, err := rc.ReconcileAttempt(ctx, requestID, adapter, nil)
 	if err != nil {
+		if corrupting(err) {
+			return nil, err
+		}
 		return append(out, F{Key: "error", Value: "reconcile: " + errorLabel(err)}), nil
 	}
 	kept := Obj{}
@@ -267,11 +271,13 @@ func contains(list []string, id string) bool {
 	return false
 }
 
-// Pass is one tick's recipient-turn check.
-func (tc *TurnChecks) Pass(ctx context.Context, adapter Adapter, now float64, report *TurnCheckReport) {
+// Pass is one tick's recipient-turn check. A failure of the corrupting class (CRW-848) ends the pass and is
+// returned (CRW-1071), marked with the site that met it, with the counts and notes of the checks made before it kept
+// in report; any other failure stays a note.
+func (tc *TurnChecks) Pass(ctx context.Context, adapter Adapter, now float64, report *TurnCheckReport) error {
 	budget := tc.Budget
 	if budget <= 0 || adapter == nil {
-		return
+		return nil
 	}
 	if tc.nextRead == nil {
 		tc.nextRead = map[string]float64{}
@@ -282,8 +288,11 @@ func (tc *TurnChecks) Pass(ctx context.Context, adapter Adapter, now float64, re
 	}
 	after := tc.after
 	if err := tc.forgetDeparted(ctx, page); err != nil {
+		if corrupting(err) {
+			return observed(err)
+		}
 		report.Notes = append(report.Notes, "recipient turn check could not list deliveries: "+err.Error())
-		return
+		return nil
 	}
 	rows, err := AwaitingAck(ctx, tc.Reconciler.Store, after, page)
 	if err == nil && after != "" && len(rows) < page {
@@ -297,8 +306,11 @@ func (tc *TurnChecks) Pass(ctx context.Context, adapter Adapter, now float64, re
 		}
 	}
 	if err != nil {
+		if corrupting(err) {
+			return observed(err)
+		}
 		report.Notes = append(report.Notes, "recipient turn check could not list deliveries: "+err.Error())
-		return
+		return nil
 	}
 	spent := 0
 	for _, row := range rows {
@@ -316,6 +328,9 @@ func (tc *TurnChecks) Pass(ctx context.Context, adapter Adapter, now float64, re
 		spent++
 		outcome, err := tc.Reconciler.CheckDispatchedTurn(ctx, id, adapter)
 		if err != nil {
+			if corrupting(err) {
+				return err // the statement that met it has marked its site; the caller names one for an unmarked failure
+			}
 			report.Notes = append(report.Notes, fmt.Sprintf("recipient turn check failed for %s: %s", id, err))
 			continue
 		}
@@ -346,6 +361,7 @@ func (tc *TurnChecks) Pass(ctx context.Context, adapter Adapter, now float64, re
 			report.TurnsUndecided += int(n.(int64))
 		}
 	}
+	return nil
 }
 
 // KeptUnconfirmed is kept_unconfirmed: (event, acknowledging turn) of each acknowledgement kept
@@ -360,16 +376,23 @@ func (a *Ack) KeptUnconfirmed(ctx context.Context, now float64, limit int) ([][2
 	return out, err
 }
 
-// ConfirmKeptAcks is daemon._confirm_kept_acks.
-func ConfirmKeptAcks(ctx context.Context, a *Ack, rc *Reconciler, adapter Adapter, now float64) []string {
+// ConfirmKeptAcks is daemon._confirm_kept_acks. A failure of the corrupting class (CRW-848) ends the pass and is
+// returned with the notes of the confirmations made before it (CRW-1071); any other failure stays a note.
+func ConfirmKeptAcks(ctx context.Context, a *Ack, rc *Reconciler, adapter Adapter, now float64) ([]string, error) {
 	var notes []string
 	rows, err := a.KeptUnconfirmed(ctx, now, 8)
 	if err != nil {
-		return []string{"kept acknowledgement pass failed: " + err.Error()}
+		if corrupting(err) {
+			return nil, observed(err)
+		}
+		return []string{"kept acknowledgement pass failed: " + err.Error()}, nil
 	}
 	for _, r := range rows {
 		outcome, err := rc.ConfirmDelivery(ctx, r[0], adapter, r[1])
 		if err != nil {
+			if corrupting(err) {
+				return notes, err
+			}
 			notes = append(notes, fmt.Sprintf("kept acknowledgement %s not confirmed: %s", r[0], err))
 			continue
 		}
@@ -381,5 +404,5 @@ func ConfirmKeptAcks(ctx context.Context, a *Ack, rc *Reconciler, adapter Adapte
 			notes = append(notes, fmt.Sprintf("kept acknowledgement %s not confirmed: %s", r[0], problem))
 		}
 	}
-	return notes
+	return notes, nil
 }
