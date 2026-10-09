@@ -67,6 +67,9 @@ func TestFire_aGeneratedRootFiresAndItsEffectsMatchTheCorpus(t *testing.T) {
 	if len(rep.Probes) != 3 {
 		t.Errorf("%d probes", len(rep.Probes))
 	}
+	if rep.Switch.Absent || rep.Switch.Active != "crw" || rep.Switch.By != SwitchBy {
+		t.Errorf("switch report %+v: every case root must hold the switch at crw", rep.Switch)
+	}
 }
 
 func failed(rep FireReport) (out []FixtureFire) {
@@ -179,8 +182,17 @@ func TestRun_registrationOfATamperedRootFails(t *testing.T) {
 		t.Fatalf("a generated root exits %d: %s", code, out.String())
 	}
 	out.Reset()
-	if code := Run([]string{"registration", "--plugin", filepath.Join(repoRoot(t), "plugins", "crw")}, &out, &errs); code != 1 {
-		t.Fatalf("the shipped plugin declares one hook of 34 and must fail, exit %d: %s", code, out.String())
+	// The shipped plugin declares the 34 registrations itself since CRW-392.
+	if code := Run([]string{"registration", "--plugin", filepath.Join(repoRoot(t), "plugins", "crw")}, &out, &errs); code != 0 {
+		t.Fatalf("the shipped plugin declares every leg and must pass, exit %d: %s", code, out.String())
+	}
+	out.Reset()
+	// The leg's file stays (the manifest lists it) but declares nothing.
+	if err := os.WriteFile(filepath.Join(o.Plugin, "wiring", "hooks", "session-start-bootstrapping-pabcd-state.json"), []byte(`{"hooks":{}}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code := Run([]string{"registration", "--plugin", o.Plugin}, &out, &errs); code != 1 {
+		t.Fatalf("a root missing one declaration must fail, exit %d: %s %s", code, out.String(), errs.String())
 	}
 	if !strings.Contains(out.String(), "no registration starts this leg") {
 		t.Errorf("output %.400q", out.String())

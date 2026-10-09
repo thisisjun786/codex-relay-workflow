@@ -21,6 +21,13 @@ is not an installation pass: installation parity belongs to CRW-201 and CRW-204.
 | receipts | every firing leaves a receipt naming this run, the plugin root digest, the sha256 of the executable the declared command starts (resolved from the command line: an absolute path, `crw` or `$CRW_BIN`), the leg, its event, and the payload's session, turn, tool call, tool and agent and the skills its answer names; the verifier compares them with what the fixtures say | a receipt is of another run or plugin root, or names a build other than `--crw` (or none: the command starts no executable the harness can identify), names another event, leg, agent or skill, is missing, doubled or unexplained |
 | latency | p50 and p95 of the Go command against the CXC v0.2.40 command (`node .../dist/cli.js`) on the same payload (`--oracle` is required: `latency` refuses to run without it, and `all` without it reports the cell not verified), N fresh case roots per side, the two sides alternating; a leg that fails is measured again (`--attempts`, five in all by default) because a shared host's load puts outliers in a p95, and the report records the attempts a leg took and the load average; a leg that still fails while the host's load average is above its CPU count is inconclusive (listed as not verified; `--strict` makes it a failure) | Go p95 is above the TS p95, or above half of the timeout the plugin root declares for the leg (the one the host gives the command, which for CRW's own legs may differ from the table's); the fixture timed does not match its expectation (the command exits nonzero, is killed, times out or answers something else: a hook that fails at once is quicker than one that works), the oracle's command does not exit as recorded, or the declared command starts another executable than `--crw`; none of these is excused by host load |
 
+The ported legs stay silent until `<CODEX_HOME>/crw/switch.json` says `crw` (CRW-392), so the harness writes
+`{"active":"crw","changedAt":...,"by":"laneparity"}` (a temporary file renamed into place) into the isolated
+`CODEX_HOME` of every case root the firing and latency cells start, and takes it out again before the case's tree
+is observed, so the observed tree is the scenario's and the hooks' alone. The report's `switch` (and the fire
+cell's) names the state every case root held. `internal/dev/laneparity` also fires a root without the file and
+requires every ported leg to answer nothing and exit 0.
+
 A leg whose matched fixtures all expect silence is listed as unverified: a command that does nothing passes
 them too. A leg whose fixtures are all still pending is listed the same way. Both stay visible in every
 report (`unverified`, `notVerified`) and neither fails the run.
@@ -42,8 +49,9 @@ crw-dev parity plugin-root --crw "$TMPDIR/crw" --out /path/to/new-root/crw
 
 The plugin root and the oracle path are arguments; nothing is hard-coded. Without `--plugin`, `all` generates a
 root from K1 (`plugin-root`): the files of `plugins/crw` with a manifest and hook files that declare the 34 legs,
-each command starting the crw under test as `crw hook <event> --leg <leg>`. That root exists so the harness does not
-wait for the activation PR (CRW-392); pointing `--plugin` at the real root checks the real declarations.
+each command starting the crw under test as `crw hook <event> --leg <leg>`. The shipped root declares the same 34
+legs (CRW-392), starting the runtime through `$HOME/.local/share/crw-runtime/current/bin/crw`; pointing `--plugin`
+at it checks the real declarations.
 
 ## Evidence and cleanup
 
@@ -73,4 +81,4 @@ Real-host cells with a stub model provider are out of this issue's scope (the 10
 are reported as `notVerified` on every run: the real Codex binary firing the hook from a turn (trust, thread,
 turn and socket receipts), pause, cancel, permission refusal, forced exit and restart of the host, context
 recovery after a real compaction, the native spawn surface and a spawned agent's skill, real-model behaviour,
-the CRW-392 switch file, and a normal installation.
+the CRW-392 switch as `crw install switch` turns it (the harness writes the file itself), and a normal installation.

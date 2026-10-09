@@ -51,6 +51,9 @@ type FireOptions struct {
 	Only    *regexp.Regexp // restrict the fixtures
 	Fault   string
 	Run     string // the run id (a fresh one when empty)
+	// NoSwitch fires without the hook switch file, the state of an installation nobody switched: the
+	// ported legs are then silent (CRW-392). By default every case's CODEX_HOME holds the switch at crw.
+	NoSwitch bool
 }
 
 // FixtureFire is the firing and effect of one fixture.
@@ -81,10 +84,12 @@ type LegFire struct {
 
 // FireReport is the firing, effect and receipt cells of a run.
 type FireReport struct {
-	Run             string        `json:"run"`
-	Plugin          string        `json:"pluginDigest"`
-	Binary          string        `json:"binarySha256"`
-	Fault           string        `json:"fault,omitempty"`
+	Run    string `json:"run"`
+	Plugin string `json:"pluginDigest"`
+	Binary string `json:"binarySha256"`
+	Fault  string `json:"fault,omitempty"`
+	// Switch is the hook switch every case root held while the declared commands ran.
+	Switch          SwitchReport  `json:"switch"`
 	Legs            []LegFire     `json:"legs"`
 	Fixtures        []FixtureFire `json:"fixtures"`
 	Probes          []ProbeFire   `json:"probes"`
@@ -98,7 +103,7 @@ type FireReport struct {
 // Fire fires every claimed hook fixture of the corpus, plus CRW's own probes, through the commands
 // the plugin root declares, and returns the firing, effect and receipt cells.
 func Fire(o FireOptions) (FireReport, error) {
-	rep := FireReport{Run: o.Run, Fault: o.Fault}
+	rep := FireReport{Run: o.Run, Fault: o.Fault, Switch: switchReport(o.NoSwitch)}
 	if rep.Run == "" {
 		rep.Run = NewRunID()
 	}
@@ -135,6 +140,9 @@ func Fire(o FireOptions) (FireReport, error) {
 		defer os.RemoveAll(scratch)
 	}
 	in := contracttest.HookFireInput{Root: o.Root, CRW: o.CRW, Plugin: o.Plugin, Declared: declared, Scratch: scratch, Only: o.Only}
+	if !o.NoSwitch {
+		in.Seed = seedSwitch
+	}
 	switch o.Fault {
 	case FaultDropStdout:
 		in.Mutate = func(_ string, got *cxccorpus.Expect) {

@@ -268,6 +268,10 @@ type RunOptions struct {
 	Rules   *Normaliser   // normalises every output
 	Timeout time.Duration // per step; a minute when zero
 	Keep    bool          // keep the case root for inspection
+	// Seed, when set, puts a harness's own files into the case after the given and before the first
+	// step; the undo it returns takes them out again before the tree is observed, so the observation
+	// is the scenario's alone (crw-dev parity's hook switch, CRW-392).
+	Seed func(c *Case) (undo func() error, err error)
 }
 
 // RunScenario runs a scenario once in a fresh case root and returns its normalised outcome. A case
@@ -292,6 +296,12 @@ func RunScenario(rt Runtime, o RunOptions, s Scenario) (expect Expect, err error
 	}
 	if err := setUp(c, s.Given, rt); err != nil {
 		return Expect{}, fmt.Errorf("%s: given: %w", s.ID, err)
+	}
+	var undo func() error
+	if o.Seed != nil {
+		if undo, err = o.Seed(c); err != nil {
+			return Expect{}, fmt.Errorf("%s: seed: %w", s.ID, err)
+		}
 	}
 	session := o.Rules.NewSession(c.bind)
 	var results []StepResult
@@ -333,6 +343,11 @@ func RunScenario(rt Runtime, o RunOptions, s Scenario) (expect Expect, err error
 			return Expect{}, fmt.Errorf("%s: step %d: %w", s.ID, i, err)
 		}
 		results = append(results, shapeStep(session, raw))
+	}
+	if undo != nil {
+		if err := undo(); err != nil {
+			return Expect{}, fmt.Errorf("%s: unseed: %w", s.ID, err)
+		}
 	}
 	observe := s.Observe
 	if len(observe) == 0 {

@@ -60,6 +60,8 @@ type cxcReplayer struct {
 	// first (a fault injected between the process and the comparison).
 	observe func(id string, got cxccorpus.Expect)
 	mutate  func(id string, got *cxccorpus.Expect)
+	// seed puts a harness's own files into each case root and takes them out before it is observed.
+	seed func(c *cxccorpus.Case) (undo func() error, err error)
 }
 
 func newCXCReplayer(root, crw string) (*cxcReplayer, error) {
@@ -294,7 +296,7 @@ func (r *cxcReplayer) check(id string, fix cxccorpus.Fixture, claim cxcClaim, tm
 	if !slices.Contains(r.long, id) {
 		scratch = tmp()
 	}
-	got, err := cxccorpus.RunScenario(r, cxccorpus.RunOptions{Scratch: scratch, HomeVar: "CRW_HOME", Rules: r.rules}, scenario)
+	got, err := cxccorpus.RunScenario(r, cxccorpus.RunOptions{Scratch: scratch, HomeVar: "CRW_HOME", Rules: r.rules, Seed: r.seed}, scenario)
 	if err != nil {
 		return err
 	}

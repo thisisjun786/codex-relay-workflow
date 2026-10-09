@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contracttest"
+	"github.com/thisisjun786/codex-relay-workflow/internal/dev/cxccorpus"
 )
 
 func repoRoot(t *testing.T) string {
@@ -43,6 +44,9 @@ func TestExpectedLegs_areK1ThenTheTwoOwnRegistrations(t *testing.T) {
 	}
 	if legs[32].Leg != CompletionLeg || legs[33].Leg != GitHubPostLeg {
 		t.Errorf("own legs are %s and %s", legs[32].Leg, legs[33].Leg)
+	}
+	if g := cxccorpus.GitHubPostGuard; legs[33].Leg != g.Leg || legs[33].Event != g.Event || legs[33].Matcher != g.Matcher || legs[33].Timeout != g.Timeout || legs[33].Status != g.Status {
+		t.Errorf("the GitHub post leg %+v is not the declaration the shipped plugin generates %+v", legs[33], g)
 	}
 }
 
