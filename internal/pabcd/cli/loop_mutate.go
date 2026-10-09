@@ -262,7 +262,7 @@ func loopAddOp(args LoopCliArgs) (LoopCliResult, error) {
 
 // loopAddOpConflict is the refusal for a retry of an add verb whose recorded key matches but whose plan holds the
 // criterion or phase with other options than the retry asks for, "" for an exact retry (or when the plan no longer
-// shows the entry, which the key then speaks for).
+// shows the entry and the retry names no prerequisites, which the key then speaks for).
 func loopAddOpConflict(plan *goalplan.Goalplan, op map[string]any) string {
 	if plan == nil {
 		return ""
@@ -303,6 +303,12 @@ func loopAddOpConflict(plan *goalplan.Goalplan, op map[string]any) string {
 		if !slices.Equal(have, want) {
 			return "work phase '" + id + "' is already registered with other prerequisites"
 		}
+		return ""
+	}
+	// A key without its phase (the state an old command left behind) shows no prerequisites to compare with: only the
+	// retry that names none is the legacy retry the key stays for.
+	if len(want) > 0 {
+		return "work phase '" + id + "' has a recorded key but is not in the plan, so its --depends-on cannot be checked against what was registered"
 	}
 	return ""
 }

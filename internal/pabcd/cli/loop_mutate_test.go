@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -712,9 +713,12 @@ func TestLoopSteerRefusesATextThatDecodesLossily(t *testing.T) {
 	}
 	before.assertUnchanged(t, cwd, slug)
 
-	// A complete pair and an escaped backslash keep their meaning.
-	if out := loopMutRun(t, cwd, 0, "steer", "--session", loopMutSession, "--batch-json", batch(`😀`)); !strings.HasPrefix(out, "loop steer: applied ") {
+	// A complete escaped pair and an escaped backslash keep their meaning; the key is stored decoded.
+	if out := loopMutRun(t, cwd, 0, "steer", "--session", loopMutSession, "--batch-json", batch(`\ud83d\ude00`)); !strings.HasPrefix(out, "loop steer: applied ") {
 		t.Errorf("pair output = %q", out)
+	}
+	if !slices.ContainsFunc(loopMutPlan(t, cwd, slug).SteeringLog, func(e goalplan.SteeringEntry) bool { return e.IdempotencyKey == "\U0001F600" }) {
+		t.Errorf("steering log = %+v, want the key U+1F600", loopMutPlan(t, cwd, slug).SteeringLog)
 	}
 	if out := loopMutRun(t, cwd, 0, "steer", "--session", loopMutSession, "--batch-json", strings.Replace(batch(`\\ud800`), `"first"`, `"second"`, 1)); !strings.HasPrefix(out, "loop steer: applied ") {
 		t.Errorf("escaped backslash output = %q", out)
