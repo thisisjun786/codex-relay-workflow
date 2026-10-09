@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -223,8 +224,25 @@ func (b *reviewRoundArgsBase) inside(abs string) (below string, ok bool) {
 	return below, err == nil && filepath.IsLocal(below)
 }
 
-// read reads below, relative to the base, through the handle.
-func (b *reviewRoundArgsBase) read(below string) ([]byte, error) { return b.root.ReadFile(below) }
+// read reads below, relative to the base, through the handle. The entry is opened O_NONBLOCK and read only when the opened
+// descriptor is a regular file, so a FIFO (or any other special file) swapped in after the caller's own look at the entry is an
+// error at once instead of a read that waits for a writer: this runs under the session and goalplan locks (CRW-975), where a
+// stalled read keeps every other writer of the plan out and cannot be interrupted. The oracle's readFileSync would block.
+func (b *reviewRoundArgsBase) read(below string) ([]byte, error) {
+	f, err := b.root.OpenFile(below, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file", below)
+	}
+	return io.ReadAll(f)
+}
 
 // readInside is inside followed by read: the file abs names, its real path relative to the base, whether it is inside (nothing is
 // read when it is not) and the error of the read.
