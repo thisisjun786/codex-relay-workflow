@@ -38,11 +38,9 @@ func DispatchCommand(args []string, in io.Reader, out io.Writer, env host.Lookup
 			}
 			return 0
 		}
-		encoded, err := Stringify(map[string]string{"error": "dispatch takes no arguments (got '" + args[0] + "'); send one JSON request on stdin, see crw role helper dispatch --help"}, "")
-		if err == nil {
-			_, err = fmt.Fprintln(out, string(encoded))
+		if encoded, err := Stringify(map[string]string{"error": "dispatch takes no arguments (got '" + args[0] + "'); send one JSON request on stdin, see crw role helper dispatch --help"}, ""); err == nil {
+			fmt.Fprintln(out, string(encoded))
 		}
-		_ = err
 		return 1
 	}
 	data, err := io.ReadAll(io.LimitReader(in, dispatchMaxInput+1))
