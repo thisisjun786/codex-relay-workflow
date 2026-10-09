@@ -170,6 +170,10 @@ var receiptLockAfterCompareHook func()
 // is really waiting, instead of from a timer that can fire before the wait begins.
 var receiptLockWaitParkedHook func()
 
+// receiptLockRefusedHook, when non-nil, runs after the lock file could not be opened and the run judged the directory not
+// writable. A test changes the evidence directory's mode there, the moment a lockless publication would become possible.
+var receiptLockRefusedHook func()
+
 // RunReceiptCLI ports receipt-cli.ts:75-185: guard, unlink stale receipt, capture, execute argv without a shell, capture again
 // and publish only a successful unchanged-tree result. The receipt stays native while a bound command runs in its source.
 // A cancellation seen anywhere before the rename refuses the receipt, and one that lands after the publication check
@@ -270,6 +274,9 @@ func RunReceiptCLI(args ReceiptCLIArgs, options ReceiptRunOptions) (ReceiptCLIRe
 		// error it always gave. Any other failure, or a lock refused in a directory that can be written, is returned.
 		if !errors.Is(err, fs.ErrPermission) || unix.Access(filepath.Dir(path), unix.W_OK) == nil {
 			return ReceiptCLIResult{}, err
+		}
+		if receiptLockRefusedHook != nil {
+			receiptLockRefusedHook()
 		}
 	} else {
 		defer lock.Close() // drops the lock

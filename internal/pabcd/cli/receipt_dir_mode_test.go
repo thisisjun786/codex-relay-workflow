@@ -58,3 +58,26 @@ func TestReceiptPublishInAReadOnlyEvidenceDirectoryKeepsItsRefusal(t *testing.T)
 		t.Fatalf("a refused publish left a receipt: %v", statErr)
 	}
 }
+
+// A run that could not take the lock never publishes, even when the directory becomes writable between the failed lock
+// open and the publication: an unlocked publication could be withdrawn over another run's receipt (CRW-636).
+func TestReceiptNeverPublishesWithoutTheLockWhenTheDirectoryModeChanges(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: root writes a read-only directory, so the lock open cannot fail")
+	}
+	root := receiptRepo(t)
+	t.Setenv("CRW_HOME", t.TempDir())
+	dir := filepath.Dir(expectedReceiptPath(root))
+	receiptMust(t, os.MkdirAll(dir, 0o777))
+	receiptMust(t, os.Chmod(dir, 0o555))
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+	receiptLockRefusedHook = func() { receiptMust(t, os.Chmod(dir, 0o755)) }
+	t.Cleanup(func() { receiptLockRefusedHook = nil })
+	a := ReceiptCLIArgs{Verb: "test", Cwd: root, Session: "s1", Command: receiptCommand(t, "exit", "0")}
+	if _, err := RunReceiptCLI(a, ReceiptRunOptions{Stdout: io.Discard, Stderr: io.Discard}); err == nil {
+		t.Fatal("a run without the lock succeeded")
+	}
+	if _, statErr := os.Stat(expectedReceiptPath(root)); !errors.Is(statErr, fs.ErrNotExist) {
+		t.Fatalf("a run without the lock published a receipt: %v", statErr)
+	}
+}
