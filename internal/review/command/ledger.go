@@ -47,9 +47,10 @@ var errBusy = errors.New("another review holds the run lock")
 
 // ledger is the state directory: ledger.jsonl and run.lock. Reads need no lock; appends are made only while the run lock is held.
 type ledger struct {
-	dir  string
-	now  func() time.Time
-	good int64 // the length of the complete lines read last; a torn tail beyond it is cut off by the next append
+	dir         string
+	now         func() time.Time
+	publishKept func(path string, data []byte) error // writes a kept copy; nil is the production write
+	good        int64                                // the length of the complete lines read last; a torn tail beyond it is cut off by the next append
 }
 
 func (l *ledger) path() string { return filepath.Join(l.dir, "ledger.jsonl") }

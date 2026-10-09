@@ -10,27 +10,90 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 )
 
-// A result that cannot be kept in the state directory still costs no second model call: the review is recorded and published, and the command says what was lost.
-func TestResultThatCannotBeKeptIsStillRecordedAndPublished(t *testing.T) {
+// finishedRecords counts the finished records of the ledger.
+func (f *fixture) finishedRecords() (n int) {
+	for _, r := range f.ledger() {
+		if r.Event == "finished" {
+			n++
+		}
+	}
+	return n
+}
+
+// A result that cannot be kept in the state directory is not recorded as finished and nothing is published: the command fails naming the cause, and the same patch is reviewed again once
+// the fault is gone (a second model call is accepted over a finished record that points to a copy that does not exist).
+func TestResultThatCannotBeKeptIsNotRecordedAsFinishedAndTheNextCallReviewsAgain(t *testing.T) {
 	f := newFixture(t)
 	h := f.repo.change(f.base, 2)
-	if err := errors.Join(os.MkdirAll(f.state, 0o700), os.WriteFile(filepath.Join(f.state, "results"), nil, 0o600)); err != nil { // a file where the directory of kept results belongs
+	blocker := filepath.Join(f.state, "results")
+	if err := errors.Join(os.MkdirAll(f.state, 0o700), os.WriteFile(blocker, nil, 0o600)); err != nil { // a file where the directory of kept results belongs
 		t.Fatal(err)
 	}
 	code, _, errOut := f.run(h)
 	recs := f.ledger()
-	if code != 1 || !strings.Contains(errOut, "could not be kept") || f.s.count() != 2 || len(recs) == 0 || recs[len(recs)-1].Event != "finished" {
+	if code != 1 || !strings.Contains(errOut, "could not be kept") || !strings.Contains(errOut, "results") || f.s.count() != 2 || f.finishedRecords() != 0 || len(recs) == 0 || recs[len(recs)-1].Event != "failed" {
 		t.Fatalf("kept copy failure: %d %s (calls %d, ledger %+v)", code, errOut, f.s.count(), recs)
 	}
 	for _, name := range []string{h + ".json", h + ".json.sha256"} {
-		if _, err := os.Stat(filepath.Join(f.out, name)); err != nil {
-			t.Errorf("%s was not published: %v", name, err)
+		if _, err := os.Stat(filepath.Join(f.out, name)); !os.IsNotExist(err) {
+			t.Errorf("%s was published although the result was not kept: %v", name, err)
 		}
 	}
-	if code, again, _ := f.run(h); code != 0 || again.Outcome != OutcomeAlreadyReviewed || f.s.count() != 2 {
-		t.Fatalf("run again: %d %+v (calls %d)", code, again, f.s.count())
+	if err := os.Remove(blocker); err != nil { // the fault is gone
+		t.Fatal(err)
+	}
+	code, again, errOut := f.run(h)
+	if code != 0 || again.Outcome != OutcomeReviewed || f.s.count() != 4 || f.finishedRecords() != 1 {
+		t.Fatalf("run again: %d %+v %s (calls %d, ledger %+v)", code, again, errOut, f.s.count(), f.ledger())
+	}
+	for _, name := range []string{h + ".json", h + ".json.sha256"} {
+		if _, err := os.Stat(filepath.Join(f.out, name)); err != nil {
+			t.Errorf("%s was not published after the retry: %v", name, err)
+		}
+	}
+	if _, third, _ := f.run(h); third.Outcome != OutcomeAlreadyReviewed || f.s.count() != 4 {
+		t.Fatalf("a kept and recorded result is reviewed again: %+v (calls %d)", third, f.s.count())
+	}
+}
+
+// The failure that kept a copy from being written may also be one of the kept copy's last step (the directory entry that makes it durable): the result is then not recorded either, and the cause is named.
+func TestResultWhoseKeptCopyCannotBeMadeDurableIsNotRecordedAsFinished(t *testing.T) {
+	f := newFixture(t)
+	h := f.repo.change(f.base, 2)
+	injected := errors.New("directory fsync injected")
+	f.keep = func(path string, data []byte) error {
+		if err := crwdir.PublishDurable(path, data); err != nil {
+			return err
+		}
+		return injected // the copy is in place, but the directory entry is not known to be durable
+	}
+	code, _, errOut := f.run(h)
+	if code != 1 || !strings.Contains(errOut, injected.Error()) || f.finishedRecords() != 0 {
+		t.Fatalf("durability failure: %d %s (ledger %+v)", code, errOut, f.ledger())
+	}
+	if _, err := os.Stat(filepath.Join(f.out, h+".json")); !os.IsNotExist(err) {
+		t.Fatalf("the artifact was published: %v", err)
+	}
+}
+
+// The kept copy is written by the durable publish (the directory entry fsynced after the rename), and that happens before the finished record is appended, never after.
+func TestKeptCopyIsWrittenDurablyBeforeTheFinishedRecord(t *testing.T) {
+	f := newFixture(t)
+	h := f.repo.change(f.base, 2)
+	var seen []string
+	f.keep = func(path string, data []byte) error {
+		seen = append(seen, path)
+		if n := f.finishedRecords(); n != 0 {
+			t.Errorf("%d finished records exist while the kept copy is being written", n)
+		}
+		return crwdir.PublishDurable(path, data)
+	}
+	if code, sum, errOut := f.run(h); code != 0 || len(seen) != 1 || seen[0] != filepath.Join(f.state, "results", sum.SHA256+".json") || f.finishedRecords() != 1 {
+		t.Fatalf("run: %d %+v %s (kept %v)", code, sum, errOut, seen)
 	}
 }
 

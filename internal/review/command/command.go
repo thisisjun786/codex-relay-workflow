@@ -78,7 +78,8 @@ type Counts struct {
 type env struct {
 	runner pipeline.Runner
 	now    func() time.Time
-	forge  func(Config) forge // nil: the gh CLI of the checkout
+	forge  func(Config) forge                   // nil: the gh CLI of the checkout
+	keep   func(path string, data []byte) error // nil: crwdir.PublishDurable; a test fails or watches the write of the kept copy
 }
 
 // Run is crw review.
@@ -140,7 +141,7 @@ func execute(ctx context.Context, cfg Config, e env) (*Summary, error) {
 		return nil, errors.New("base...head has no changes; there is nothing to review")
 	}
 	sum := &Summary{Outcome: OutcomeReviewed, Issue: cfg.Issue, Base: m.Base, Head: m.Head, PatchID: m.PatchID}
-	l := &ledger{dir: cfg.StateDir, now: e.now}
+	l := &ledger{dir: cfg.StateDir, now: e.now, publishKept: e.keep}
 	entry := func(event string) record {
 		return record{Event: event, PatchID: m.PatchID, Base: m.Base, Head: m.Head, Issue: cfg.Issue}
 	}
@@ -253,8 +254,11 @@ func execute(ctx context.Context, cfg Config, e env) (*Summary, error) {
 	if a.Status != review.StatusComplete { // the failure record of a run that did not end complete, written apart from the retry decision above
 		result.Reason, result.AgyCalled = ledgerFailureReason(a), agyCalledOf(a)
 	}
-	// The result is kept before the review is recorded, so that a record always has its copy; if it cannot be kept, the review is recorded and published all the same (a second model call is what this order exists to avoid) and the failure is reported at the end.
-	keepErr := l.keep(result.SHA256, data)
+	// The result is kept, durably, before the review is recorded, so that a record always has its copy. If it cannot be kept nothing is recorded as finished and nothing is published: the failure is returned
+	// naming its cause and the patch stays open, so that the same call can be made again once the cause is gone (a second model call is accepted over a finished record whose copy is missing).
+	if err = l.keep(result.SHA256, data); err != nil {
+		return fail(fmt.Errorf("the review ran but its result could not be kept in the state directory; nothing is recorded as finished and no file is written, so run the same command again: %w", err))
+	}
 	// The review is recorded before its files are written, so that nothing after this point can let the patch be reviewed again.
 	if err = l.append(result); err != nil {
 		return nil, err
@@ -269,9 +273,6 @@ func execute(ctx context.Context, cfg Config, e env) (*Summary, error) {
 	}
 	sum.Artifact, sum.SHA256, sum.Status, sum.Reason = artifact, result.SHA256, result.Status, a.Reason
 	sum.Counts = &Counts{Reviewers: a.Reviewers, Findings: len(a.Findings), Dropped: len(a.Dropped), Calls: len(a.Calls)}
-	if keepErr != nil {
-		return nil, fmt.Errorf("the review is recorded and its files are written, but its result could not be kept in the state directory, so a failed write of the files could not have been repaired without a model call: %w", keepErr)
-	}
 	return sum, nil
 }
 

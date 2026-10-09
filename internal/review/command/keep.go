@@ -13,16 +13,28 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 )
 
-// A result is kept in the state directory, in results/<sha256>.json, before the ledger record that names it is appended. The record is what closes the patch, and the
-// two output files are written after it, so a failed write leaves a patch that is reviewed and a result that exists nowhere else; the kept copy lets the next call write
-// the files again without a model call.
+// A result is kept in the state directory, in results/<sha256>.json, before the ledger record that names it is appended, and the record is appended only when the copy is kept: written, renamed into
+// place and the directory entry fsynced (crwdir.PublishDurable; the directory of results itself is synced into the state directory when it is created), so a record never names a copy that a power
+// failure can take away, and a copy that cannot be kept leaves the patch open for another run. The record is what closes the patch, and the two output files are written after it, so a failed write
+// leaves a patch that is reviewed and a result that is kept; the kept copy lets the next call write the files again without a model call.
 func (l *ledger) keptPath(sha string) string { return filepath.Join(l.dir, "results", sha+".json") }
 
 func (l *ledger) keep(sha string, data []byte) error {
-	if err := os.MkdirAll(filepath.Join(l.dir, "results"), 0o700); err != nil {
+	results := filepath.Join(l.dir, "results")
+	_, statErr := os.Lstat(results)
+	if err := os.MkdirAll(results, 0o700); err != nil {
 		return err
 	}
-	return crwdir.Publish(l.keptPath(sha), data)
+	if statErr != nil { // the directory was just created: its entry in the state directory is made durable too
+		if err := crwdir.SyncDir(l.dir); err != nil {
+			return fmt.Errorf("sync %s: %w", l.dir, err)
+		}
+	}
+	publish := l.publishKept
+	if publish == nil {
+		publish = crwdir.PublishDurable
+	}
+	return publish(l.keptPath(sha), data)
 }
 
 func checksumLine(r record) string { return r.SHA256 + "  " + filepath.Base(r.Artifact) + "\n" }

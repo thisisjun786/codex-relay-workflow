@@ -124,8 +124,9 @@ type fixture struct {
 	base             string
 	state, out, lock string
 	s                *script
-	at               time.Time // the fake clock
-	forge            forge     // when set, --post-summary talks to it instead of the gh CLI
+	at               time.Time                            // the fake clock
+	forge            forge                                // when set, --post-summary talks to it instead of the gh CLI
+	keep             func(path string, data []byte) error // when set, the kept copy of a result is written by this instead of crwdir.PublishDurable
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -146,7 +147,7 @@ func (f *fixture) args(head string, extra ...string) []string {
 // run is the command with the scripted runner; it is safe to call from a goroutine.
 func (f *fixture) run(head string, extra ...string) (int, Summary, string) {
 	var out, errOut bytes.Buffer
-	code := run(context.Background(), f.args(head, extra...), &out, &errOut, env{runner: f.s.run, now: func() time.Time { return f.at }, forge: func(Config) forge { return f.forge }})
+	code := run(context.Background(), f.args(head, extra...), &out, &errOut, env{runner: f.s.run, now: func() time.Time { return f.at }, forge: func(Config) forge { return f.forge }, keep: f.keep})
 	var sum Summary
 	if out.Len() > 0 {
 		if err := json.Unmarshal(out.Bytes(), &sum); err != nil {

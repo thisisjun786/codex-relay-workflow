@@ -29,6 +29,7 @@ const (
 	stepWrite
 	stepSync
 	stepRename
+	stepDirSync // after the rename, the fsync of the directory that holds the new entry (PublishDurable only)
 )
 
 // Publish writes data as finalPath through a temp file in the same directory: the data is written, fsynced and renamed over
@@ -43,7 +44,7 @@ const (
 //
 // The owner of an existing file and its hard links are not kept, there is no lock against a concurrent writer (the last
 // rename wins), and the directory is not fsynced: after a power failure the rename may not have happened, and then the previous
-// file is still there.
+// file is still there (PublishDurable fsyncs the directory after the rename).
 func Publish(finalPath string, data []byte) error { return publish(finalPath, data, nil) }
 
 // PublishChecked is Publish with check run at the last step: after the temp file is written and synced and
@@ -83,8 +84,19 @@ func publishContext(ctx context.Context, finalPath string, data []byte, fail fun
 	})
 }
 
+// PublishDurable is Publish for a file that a record written afterwards depends on: after the rename it fsyncs the directory
+// that holds the file (SyncDir), so that once it returns the entry survives a power failure and not only the file's data. A
+// failure of that sync is returned although the rename has happened: the file is in place but is not known to be durable.
+func PublishDurable(finalPath string, data []byte) error {
+	return publishWith(finalPath, data, true, nil)
+}
+
 // publish takes a hook that is called just before each step and fails it by returning an error.
-func publish(finalPath string, data []byte, fail func(publishStep) error) (err error) {
+func publish(finalPath string, data []byte, fail func(publishStep) error) error {
+	return publishWith(finalPath, data, false, fail)
+}
+
+func publishWith(finalPath string, data []byte, durable bool, fail func(publishStep) error) (err error) {
 	at := func(step publishStep) error {
 		if fail == nil {
 			return nil
@@ -143,7 +155,16 @@ func publish(finalPath string, data []byte, fail func(publishStep) error) (err e
 	if err = at(stepRename); err != nil {
 		return err
 	}
-	return Rename(tmp, target)
+	if err = Rename(tmp, target); err != nil {
+		return err
+	}
+	if durable {
+		if err = at(stepDirSync); err != nil {
+			return err
+		}
+		return SyncDir(filepath.Dir(target))
+	}
+	return nil
 }
 
 // resolveTarget is the path Publish replaces and what is there now: a nil info means a new file. A symlink is followed to
@@ -170,4 +191,17 @@ func resolveTarget(path string) (target string, info fs.FileInfo, err error) {
 		return "", nil, err
 	}
 	return target, info, probe.Close()
+}
+
+// SyncDir fsyncs the directory dir, which makes the entries created, renamed or removed in it durable.
+func SyncDir(dir string) error {
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	if err = d.Sync(); err != nil {
+		_ = d.Close()
+		return err
+	}
+	return d.Close()
 }
