@@ -106,13 +106,7 @@ func componentHooks() []componentHook {
 }
 
 func runComponentHook(c invocation, in io.Reader, rows []componentHook) (bool, int) {
-	var id string
-	switch {
-	case len(c.args) == 3 && c.args[1] == "--leg":
-		id = c.args[2]
-	case len(c.args) == 2 && len(c.args[1]) >= 6 && c.args[1][:6] == "--leg=":
-		id = c.args[1][6:]
-	}
+	id := legArg(c.args)
 	for _, row := range rows {
 		if id != "" && row.ID == id && row.Event == c.args[0] {
 			return true, row.Run(c, in)

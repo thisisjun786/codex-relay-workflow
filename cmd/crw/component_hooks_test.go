@@ -19,7 +19,9 @@ import (
 func TestBgComponentHookModeRoutesTheThreeLegs(t *testing.T) {
 	old := os.Stdin
 	t.Cleanup(func() { os.Stdin = old })
-	t.Setenv("CODEX_HOME", t.TempDir())
+	codexHome := t.TempDir()
+	t.Setenv("CODEX_HOME", codexHome)
+	switchOn(t, codexHome)
 	t.Setenv("CRW_BGWAKE", "1")
 	for _, c := range []struct{ event, id, want string }{
 		{"stop", "stop-waking-on-background-completion", `"decision":"block"`},
