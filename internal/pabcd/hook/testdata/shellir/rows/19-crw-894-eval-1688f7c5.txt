@@ -133,7 +133,7 @@ printf 'rm -rf ../repo\n' | bash -s -- safe.sh
 printf 'rm -rf ../repo\n' | bash -xs safe.sh
 
 === CRW-894-ev-30 | U
---why The pipe is the program: -s after -o in one cluster: -o takes posix, -s is still a flag.
+--why The pipe is the program: -s behind -o in one cluster: bash reads it as a flag (-o posix -s), zsh as part of the option name, so the reader refuses it.
 --file safe.sh
 :
 --cmd

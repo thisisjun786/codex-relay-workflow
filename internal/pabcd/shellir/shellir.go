@@ -300,7 +300,7 @@ func (w *walker) stmt(s *syntax.Stmt, st *state, ctx Context) error {
 	case stdinKind(redirs, "") != "":
 		// An input redirection of its own replaces what an outer one gave: when it names no file the reader can name (a
 		// variable, a descriptor alias) the command reads a file unknown, not the file the outer redirection named.
-		f, _ := lastStdinFile(redirs)
+		f, _ := lastStdinFile(redirs, st.dir)
 		ctx.stdinFile = f
 	}
 	if isCompound(s.Cmd) && len(redirs) > 0 {
@@ -759,7 +759,7 @@ func (w *walker) dispatch(words []Word, assigns []Assign, redirs []Redir, st *st
 		}
 	}
 	if isOpaqueInterpreter(name) {
-		if err := opaqueInterpreter(name, words[1:], redirs, ctx); err != nil {
+		if err := opaqueInterpreter(name, words[1:], redirs, st.dir, ctx); err != nil {
 			return err
 		}
 	}
@@ -767,7 +767,7 @@ func (w *walker) dispatch(words []Word, assigns []Assign, redirs []Redir, st *st
 	var script *Word
 	if isInterpreter(name) {
 		var err error
-		inline, script, err = w.interpreterInline(name, words[1:], redirs, ctx)
+		inline, script, err = w.interpreterInline(name, words[1:], redirs, st.dir, ctx)
 		if err != nil {
 			return err
 		}
@@ -875,6 +875,11 @@ func (w *walker) scriptFile(name string, script Word, st *state, ctx Context) er
 	}
 	if !st.dir.Known {
 		return unreadablef("script file %s is resolved from an unknown directory", script.Value)
+	}
+	if fdAliasPath(script.Value, st.dir) {
+		// A script operand that names a descriptor reads what the shell gave that descriptor (the pipe, a here-document): there
+		// is no file to read, so the program is unreadable whatever the spelling of the path.
+		return unreadablef("%s reads its program from %s, a file-descriptor alias", name, script.Value)
 	}
 	w.out = append(w.out, Exec{
 		Kind: KindScriptFile, Program: Word{Known: true, Value: name}, Name: name,

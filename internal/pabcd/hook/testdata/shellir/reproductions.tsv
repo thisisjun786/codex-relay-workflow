@@ -844,3 +844,69 @@ recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	echo ash mksh bu
 recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf x | if false; then :; elif cat; then :; fi	CRW-894-sf-84	row	-
 recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf x | while cat; do :; done	CRW-894-sf-85	row	-
 recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf x | until cat; do :; done	CRW-894-sf-86	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d1)	printf 'import shutil; shutil.rmtree("../repo")\n' | python3 /dev/./stdin	CRW-894-ev-01	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d1)	printf 'import shutil; shutil.rmtree("../repo")\n' | python3 //dev/stdin	CRW-894-ev-02	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d1)	printf 'import shutil; shutil.rmtree("../repo")\n' | python3 /dev/../dev/stdin	CRW-894-ev-03	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d1)	printf 'import shutil; shutil.rmtree("../repo")\n' | python3 /dev//fd//0	CRW-894-ev-04	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d1)	printf 'import shutil; shutil.rmtree("../repo")\n' | python3 /proc/self/../self/fd/0	CRW-894-ev-05	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d1)	printf 'import shutil; shutil.rmtree("../repo")\n' | python3 /proc/self/root/dev/stdin	CRW-894-ev-06	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d1)	printf 'import shutil; shutil.rmtree("../repo")\n' | python3 -- /dev/./stdin	CRW-894-ev-07	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d1)	printf 'import shutil; shutil.rmtree("../repo")\n' | node /dev/./stdin	CRW-894-ev-08	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d1)	printf 'import shutil; shutil.rmtree("../repo")\n' | perl /dev/./stdin	CRW-894-ev-09	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d1)	printf 'import shutil; shutil.rmtree("../repo")\n' | php /dev/./stdin	CRW-894-ev-10	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d1)	printf 'rm -rf ../repo\n' | bash /dev/./stdin	CRW-894-ev-11	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d1)	printf 'rm -rf ../repo\n' | sh /dev//stdin	CRW-894-ev-12	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d1)	printf 'rm -rf ../repo\n' | source /dev/./stdin	CRW-894-ev-13	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d1)	printf 'rm -rf ../repo\n' | . /dev/./stdin	CRW-894-ev-14	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d1)	printf 'rm -rf ../repo\n' | bash </dev/./stdin	CRW-894-ev-15	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d1)	printf 'rm -rf ../repo\n' | ash </dev//fd/0	CRW-894-ev-16	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d1)	cd /dev; printf 'import shutil; shutil.rmtree("../repo")\n' | python3 stdin	CRW-894-ev-17	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d1)	cd /proc/self/fd; printf 'import shutil; shutil.rmtree("../repo")\n' | python3 0	CRW-894-ev-18	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d1)	cd /dev; printf 'import shutil; shutil.rmtree("../repo")\n' | python3 /proc/self/cwd/stdin	CRW-894-ev-19	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d1)	cd /dev; printf 'rm -rf ../repo\n' | bash <stdin	CRW-894-ev-20	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d1)	python3 /dev/./stdin <<< 'import shutil; shutil.rmtree("../repo")'	CRW-894-ev-21	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d1)	printf x | python3 ./dev/stdin	CRW-894-ev-22	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d1)	printf x | python3 /dev/null	CRW-894-ev-23	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d1)	printf x | python3 script.py	CRW-894-ev-24	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d2)	printf 'rm -rf ../repo\n' | bash -s safe.sh	CRW-894-ev-25	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d2)	printf 'rm -rf ../repo\n' | ash -s safe.sh	CRW-894-ev-26	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d2)	printf 'rm -rf ../repo\n' | mksh -s safe.sh arg	CRW-894-ev-27	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d2)	printf 'rm -rf ../repo\n' | bash -s -- safe.sh	CRW-894-ev-28	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d2)	printf 'rm -rf ../repo\n' | bash -xs safe.sh	CRW-894-ev-29	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d2)	printf 'rm -rf ../repo\n' | bash -os posix safe.sh	CRW-894-ev-30	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d2)	printf 'rm -rf ../repo\n' | bash +s safe.sh	CRW-894-ev-31	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d2)	printf 'rm -rf ../repo\n' | busybox ash -s safe.sh	CRW-894-ev-32	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d2)	printf 'rm -rf ../repo\n' | sh -s safe.sh	CRW-894-ev-33	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d2)	printf 'rm -rf ../repo\n' | zsh -s safe.sh	CRW-894-ev-34	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d2)	printf 'rm -rf ../repo\n' | dash -s safe.sh	CRW-894-ev-35	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d2)	bash -s safe.sh <<'EOF'\nrm -rf ../repo\nEOF	CRW-894-ev-36	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d2)	bash -s arg <<< ':'	CRW-894-ev-37	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d2)	bash -sc 'echo hi' safe.sh	CRW-894-ev-38	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d2)	printf 'rm -rf ../repo\n' | bash safe.sh	CRW-894-ev-39	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d3)	printf 'gh pr create --title T --body hi\n' | ./runner.sh	CRW-894-ev-40	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d3)	printf 'gh pr create --title T --body hi\n' | ./runner.sh	CRW-894-ev-41	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d3)	printf 'gh pr create --title T --body hi\n' | ./runner.sh	CRW-894-ev-42	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d3)	printf 'gh pr create --title T --body hi\n' | ./runner.sh	CRW-894-ev-43	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d3)	printf 'gh pr create --title T --body hi\n' | ./runner.sh	CRW-894-ev-44	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d3)	printf 'gh pr create --title T --body hi\n' | ./runner.sh	CRW-894-ev-45	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d3)	printf 'gh pr create --title T --body hi\n' | ./runner.sh	CRW-894-ev-46	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d3)	printf 'gh pr create --title T --body hi\n' | ./runner.sh	CRW-894-ev-47	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d3)	printf 'gh pr create --title T --body hi\n' | ./runner.sh	CRW-894-ev-48	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d3)	printf 'gh pr create --title T --body hi\n' | ./runner.sh	CRW-894-ev-49	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d3)	./runner.sh	CRW-894-ev-50	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d3)	./runner.py	CRW-894-ev-51	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d4)	printf x | python3 -m json.tool	CRW-894-ev-52	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d4)	printf x | python3 -m json.tool --sort-keys	CRW-894-ev-53	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d4)	printf x | python3 -m json.tool --indent 2	CRW-894-ev-54	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d4)	printf x | python3 -m json.tool --indent=2	CRW-894-ev-55	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d4)	printf x | python3 -m json.tool --no-ensure-ascii --tab	CRW-894-ev-56	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d4)	printf x | python3 -mjson.tool	CRW-894-ev-57	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d4)	printf x | python3 -B -m json.tool	CRW-894-ev-58	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d4)	printf x | python3 -m json.tool - {MEMORY}/a.md	CRW-894-ev-59	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d4)	printf x | python3 -m json.tool in.json	CRW-894-ev-60	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d4)	printf x | python3 -m pdb	CRW-894-ev-61	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d4)	printf x | python3 -m json	CRW-894-ev-62	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d4)	printf x | python3 -m json.tool.evil	CRW-894-ev-63	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d4)	printf x | python3 -c 'print(1)' -m json.tool	CRW-894-ev-64	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d4)	printf x | python3 -m json.tool -c 'import os'	CRW-894-ev-65	row	-
+pre-eval-crw894-1688f7c5.json (CRW-894 d4)	printf x | python3 -m	CRW-894-ev-66	row	-
