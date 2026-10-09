@@ -308,7 +308,7 @@ func auditRecord(e *Env, cfg *Config, results []AuditResult) (rows int, err erro
 		}
 		defer func() { err = errors.Join(err, alerts.Close()) }()
 	}
-	for _, result := range results {
+	for i, result := range results {
 		p0, p1, p2, p3 := auditCounts(result.Defects)
 		row := auditLedgerRow{
 			Mode: result.Mode, Subject: result.Subject, Head: result.Head, Issue: result.Issue,
@@ -320,6 +320,9 @@ func auditRecord(e *Env, cfg *Config, results []AuditResult) (rows int, err erro
 		if err := auditResultCopyFor(e, cfg, result, &row); err != nil {
 			return rows, err
 		}
+		// A grade that started in the second of another grade of its target is recorded at the
+		// next free second; the caller's result carries the time the row records.
+		results[i].GradedAt = row.GradedAt
 		if err := auditAppendLine(ledger, ledgerPath, row); err != nil {
 			return rows, err
 		}

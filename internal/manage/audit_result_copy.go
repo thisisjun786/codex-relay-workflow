@@ -1,16 +1,15 @@
 package manage
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 	"os"
-	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 )
 
 // auditResultsDir is where the copies of graded results live, below the audit state directory:
@@ -22,7 +21,8 @@ const auditRowIDChars = 16
 
 // auditRowID is the id of an ok ledger row: the first sixteen hex characters of
 // sha256(target "\n" head "\n" gradedAt), the target being the row's subject. Two grades of one
-// bundle differ in their gradedAt, so a regrade never shares a row's id (CRW-838).
+// target differ in their gradedAt, so a regrade never shares a row's id: a grade that starts in
+// the same second as another takes the next free second (auditResultCopyPublish) (CRW-838).
 func auditRowID(subject, head, gradedAt string) string {
 	sum := sha256.Sum256([]byte(subject + "\n" + head + "\n" + gradedAt))
 	return hex.EncodeToString(sum[:])[:auditRowIDChars]
@@ -47,48 +47,63 @@ func auditResultCopyName(id string) error {
 	return nil
 }
 
-// auditResultCopyWrite writes the bytes of a graded result to path and makes them visible only
-// whole: a temporary file beside it is written and fsynced, then linked to the final name, so a
-// reader never sees a half-written copy and an existing copy is never replaced. A copy that
-// already exists is accepted only when its bytes are the same; any other content under the id is
-// an error and the copy stays as it was.
-func auditResultCopyWrite(path string, data []byte) error {
-	dir := rootDir(path)
+// auditResultCopyBumps is how many following seconds a grade may move on to before its copy
+// finds a free name.
+const auditResultCopyBumps = 100000
+
+// auditResultCopyPublish makes the bytes of a graded result visible whole under the first free
+// copy name at or after gradedAt, and returns that name's id, its path and the graded_at it
+// stands for. A temporary file beside the copies is written and fsynced once, then linked to the
+// name, so a reader never sees a half-written copy and a copy that exists is never replaced.
+//
+// The id is a function of the target, the head and graded_at only, and graded_at has whole
+// seconds, so two grades of one target that start in the same second (a regrade, or bundles that
+// name the same subject and head graded together) would name one copy. Neither is refused for
+// that: a name that is taken, whatever it holds, moves this grade's graded_at on by a second
+// until the name is free, so every ok row has an id and a copy of its own and the id is still the
+// digest of the graded_at the row records.
+func auditResultCopyPublish(e *Env, cfg *Config, subject, head, gradedAt string, data []byte) (id, path, at string, err error) {
+	first := auditResultCopyPath(e, cfg, "x")
+	dir := rootDir(first)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
+		return "", "", "", err
 	}
-	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-")
+	tmp, err := os.CreateTemp(dir, "result.tmp-")
 	if err != nil {
-		return err
+		return "", "", "", err
 	}
 	tmpName := tmp.Name()
 	defer func() { _ = os.Remove(tmpName) }()
 	if _, err := tmp.Write(data); err != nil {
 		_ = tmp.Close()
-		return err
+		return "", "", "", err
 	}
 	if err := tmp.Sync(); err != nil {
 		_ = tmp.Close()
-		return err
+		return "", "", "", err
 	}
 	if err := tmp.Close(); err != nil {
-		return err
+		return "", "", "", err
 	}
 	if err := os.Chmod(tmpName, 0o600); err != nil {
-		return err
+		return "", "", "", err
 	}
-	if err := os.Link(tmpName, path); err != nil {
+	at = gradedAt
+	for bump := 0; ; bump++ {
+		id = auditRowID(subject, head, at)
+		path = auditResultCopyPath(e, cfg, id)
+		err := os.Link(tmpName, path)
+		if err == nil {
+			break
+		}
 		if !errors.Is(err, os.ErrExist) {
-			return err
+			return "", "", "", err
 		}
-		have, readErr := os.ReadFile(path)
-		if readErr != nil {
-			return readErr
+		when, perr := time.Parse(auditTimeFormat, at)
+		if perr != nil || bump >= auditResultCopyBumps {
+			return "", "", "", fmt.Errorf("result_copy_conflict: %s already holds another grade of %s at %s", path, subject, gradedAt)
 		}
-		if !bytes.Equal(have, data) {
-			return fmt.Errorf("result_copy_conflict: %s already holds another result", path)
-		}
-		return nil
+		at = when.UTC().Add(time.Second).Format(auditTimeFormat)
 	}
 	// The name is durable once its directory is; a directory that cannot be synced leaves the
 	// copy in place, and the caller's row is appended after this returns.
@@ -96,7 +111,7 @@ func auditResultCopyWrite(path string, data []byte) error {
 		_ = d.Sync()
 		_ = d.Close()
 	}
-	return nil
+	return id, path, at, nil
 }
 
 // auditResultCopyFor makes the copy a row carries and fills the row's id, copy path and digest.
@@ -122,13 +137,12 @@ func auditResultCopyFor(e *Env, cfg *Config, result AuditResult, row *auditLedge
 		}
 		data = read
 	}
-	id := auditRowID(result.Subject, result.Head, result.GradedAt)
-	path := auditResultCopyPath(e, cfg, id)
-	if err := auditResultCopyWrite(path, data); err != nil {
+	id, path, gradedAt, err := auditResultCopyPublish(e, cfg, result.Subject, result.Head, result.GradedAt, data)
+	if err != nil {
 		return err
 	}
 	sum := sha256.Sum256(data)
-	row.ID, row.Result, row.ResultSHA256 = id, path, hex.EncodeToString(sum[:])
+	row.ID, row.Result, row.ResultSHA256, row.GradedAt = id, path, hex.EncodeToString(sum[:]), gradedAt
 	return nil
 }
 
