@@ -341,18 +341,25 @@ func (a *Adapter) guardedSend(ctx context.Context, requestID, thread, message st
 		// from the policy by the pair the record states, on both routes: a settings-free resume sends
 		// no pair, but it may still send the limit of the pair the record says the thread is on.
 		limit := a.withAutoCompactLimit(send, params)
-		// The record is made before the request goes out: a resume whose answer is lost is outcome_unknown
-		// and may have installed the limit, so its receipt must say what it carried. Once the answer is
-		// read, the observation below replaces this one with the settings the host reported.
-		if limit != nil {
-			receipt["settings"] = bridgesettings.AutoCompactReceipt(*limit, nil)
-		}
 		if client, ok := a.rpc.(*appserver.Client); ok {
 			watch, err = client.WatchTurn(ctx, thread)
 			if err = awaited(err); err != nil {
 				return err
 			}
 			ctx = watch.Context(ctx)
+		}
+		// The record is made when the request is about to go out, and stored before it does: a resume whose
+		// answer is lost is outcome_unknown and may have installed the limit, so its receipt must say what it
+		// carried, and a process that stops while it waits must leave that in the ledger. It is made after the
+		// watch is admitted and the caller asked, so a send that fails before this point never claims a limit
+		// was requested; a record that cannot be stored is withdrawn and nothing is sent. Once the answer is
+		// read, the observation below replaces this one with the settings the host reported.
+		if limit != nil {
+			receipt["settings"] = bridgesettings.AutoCompactReceipt(*limit, nil)
+			if err := save(); err != nil {
+				delete(receipt, "settings")
+				return err
+			}
 		}
 		resumed, err := a.callValue(ctx, "thread/resume", params)
 		if err = awaited(err); err != nil {
