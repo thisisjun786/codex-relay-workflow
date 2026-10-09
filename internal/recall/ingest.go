@@ -8,7 +8,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
+	"path/filepath"
+	"strings"
+	"syscall"
 	"time"
 	"unicode/utf16"
 
@@ -166,7 +170,7 @@ type ingestOptions struct {
 }
 
 func measureIndexFreshnessMode(home string, db *RwDb, days float64, budget *FreshnessBudget, verify bool) (IndexFreshness, error) {
-	files, err := ListRolloutFiles(home, days)
+	files, unread, err := listRolloutFiles(home, days)
 	if err != nil {
 		return IndexFreshness{}, err
 	}
@@ -202,7 +206,7 @@ func measureIndexFreshnessMode(home string, db *RwDb, days float64, budget *Fres
 	}
 	if days == 0 {
 		for path := range known {
-			if !paths[path] {
+			if !paths[path] && !underAnyDir(path, unread) {
 				f.ExtraFiles++
 			}
 		}
@@ -304,7 +308,7 @@ func ingest(home string, db *RwDb, days float64) (IngestResult, error) {
 func ingestWith(home string, db *RwDb, days float64, opts ingestOptions) (IngestResult, error) {
 	started := time.Now().UnixMilli()
 	backfillRepoKeysFromThreads(home, db)
-	files, err := ListRolloutFiles(home, days)
+	files, unread, err := listRolloutFiles(home, days)
 	if err != nil {
 		return IngestResult{}, err
 	}
@@ -355,10 +359,16 @@ func ingestWith(home string, db *RwDb, days float64, opts ingestOptions) (Ingest
 	}
 	if days == 0 {
 		for _, path := range paths {
-			if seen[path] {
-				continue
+			if seen[path] || underAnyDir(path, unread) {
+				continue // Listed, or in a directory that could not be read: not shown to be gone.
 			}
+			// The listing is a snapshot, and may be old by now: the file may have come back and
+			// been appended by another refresh. Only the lock holder decides, and it prunes a path
+			// only when the file is absent at that moment.
 			if err := ingestTransaction(db, func() error {
+				if !rolloutPathGone(path) {
+					return nil
+				}
 				if _, err := s.delMsgs.Run(path); err != nil {
 					return err
 				}
@@ -383,6 +393,27 @@ func ingestWith(home string, db *RwDb, days float64, opts ingestOptions) (Ingest
 	}
 	r.ElapsedMs = float64(time.Now().UnixMilli() - started)
 	return r, nil
+}
+
+// rolloutPathGone is true only when the path is shown to be absent, or to be no longer a regular file
+// (a directory, a link to nothing). A stat that fails for any other reason (permission, I/O) proves
+// nothing, and the file's rows stay.
+func rolloutPathGone(path string) bool {
+	st, err := os.Stat(path)
+	if err != nil {
+		return errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR)
+	}
+	return !st.Mode().IsRegular()
+}
+
+// underAnyDir reports whether path lies below one of the directories.
+func underAnyDir(path string, dirs []string) bool {
+	for _, dir := range dirs {
+		if path == dir || strings.HasPrefix(path, dir+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
 }
 
 // ingestLocked runs inside the write transaction. It reads the file's committed cursor and the
