@@ -704,3 +704,9 @@ added by CRW-1028 (verifier round 3, copied contents, sibling scripts, deferred 
 added by CRW-1028 (verifier round 3, copied contents, sibling scripts, deferred Python aliases)	python3 -c "import io; f=io.open; f('{MEMORY}/target','w').write('x')"	CRW-1028-v3-10	row	-
 added by CRW-1028 (verifier round 3, copied contents, sibling scripts, deferred Python aliases)	python3 -c "from io import open as o; o('{MEMORY}/target','w').write('x')"	CRW-1028-v3-11	row	-
 added by CRW-1028 (verifier round 3, copied contents, sibling scripts, deferred Python aliases)	bash build.sh (build.sh: cat post.sh > "$OUT")	CRW-1028-v3-12	row	-
+added by CRW-1028 (verifier round 4, shell and direct readings, direct ./gh rewrites, runner binaries by path)	./writer.sh; bash writer.sh; bash post.sh (writer.sh: #!/bin/true, cat evil.sh > post.sh)	CRW-1028-v4-01	row	-
+added by CRW-1028 (verifier round 4, shell and direct readings, direct ./gh rewrites, runner binaries by path)	./writer.sh; bash post.sh (writer.sh: #!/bin/true, cat evil.sh > post.sh)	CRW-1028-v4-02	row	-
+added by CRW-1028 (verifier round 4, shell and direct readings, direct ./gh rewrites, runner binaries by path)	bash ghwriter.sh; ./gh pr view 1 (ghwriter.sh: cat evil.sh > gh)	CRW-1028-v4-03	row	-
+added by CRW-1028 (verifier round 4, shell and direct readings, direct ./gh rewrites, runner binaries by path)	bash otherwriter.sh; ./gh pr view 1	CRW-1028-v4-04	row	-
+added by CRW-1028 (verifier round 4, shell and direct readings, direct ./gh rewrites, runner binaries by path)	./tmux new-session 'gh pr comment 1 -b x' (./tmux a binary)	CRW-1028-v4-05	row	-
+added by CRW-1028 (verifier round 4, shell and direct readings, direct ./gh rewrites, runner binaries by path)	./tmux ls (./tmux a binary)	CRW-1028-v4-06	row	-

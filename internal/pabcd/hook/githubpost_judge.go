@@ -104,21 +104,23 @@ func githubPostJudgeExecs(execs []shellir.Exec, depth int, outer *githubPostWrit
 			}
 			continue
 		}
+		if e.Inline != nil && githubPostInlineNamesPost(e.Inline.Source.Value) {
+			return githubPostSite{githubPostRuleUnread, githubPostWhereCommand}, true
+		}
+		// A runner's arguments are judged whatever runs it: an installed tmux, or ./tmux, a binary of any size the reader does not read.
+		if githubPostRunnerNamesPost(e) {
+			return githubPostSite{githubPostRuleUnread, githubPostWhereCommand}, true
+		}
 		direct := githubPostDirectPath(e)
+		// A file run by path (./gh among them) that the text, or a script body it runs before, writes is not the file read here.
+		if direct && writes().rewrites(e.Program.Value, e.Dir) {
+			return githubPostSite{githubPostRuleUnread, githubPostWhereCommand}, true
+		}
 		if direct && githubPostProgram(e.Name) != "gh" {
-			if writes().rewrites(e.Program.Value, e.Dir) {
-				return githubPostSite{githubPostRuleUnread, githubPostWhereCommand}, true
-			}
 			if site, denied := githubPostJudgeDirect(e, depth, writes().as(githubPostBodyKey(e.Program.Value, e.Dir))); denied {
 				return site, true
 			}
 			continue
-		}
-		if e.Inline != nil && githubPostInlineNamesPost(e.Inline.Source.Value) {
-			return githubPostSite{githubPostRuleUnread, githubPostWhereCommand}, true
-		}
-		if githubPostRunnerNamesPost(e) {
-			return githubPostSite{githubPostRuleUnread, githubPostWhereCommand}, true
 		}
 		if githubPostProgram(e.Name) != "gh" {
 			continue
@@ -504,7 +506,8 @@ func githubPostBodyKey(script string, dir shellir.Dir) string {
 }
 
 // collect adds the writes of the records of one text; depth counts the script bodies around it, memo holds the writes of each body
-// already read (by script identity and directory), so a text that runs one script many times reads it once.
+// already read (by script identity, directory and whether it runs by path or by a shell), so a text that runs one script many times
+// reads it once.
 func (w *githubPostWrites) collect(execs []shellir.Exec, depth int, memo map[string]*githubPostWrites) {
 	for _, o := range execs {
 		if o.Kind == shellir.KindScriptFile {
@@ -561,7 +564,13 @@ func githubPostBodyWrites(script shellir.Word, dir shellir.Dir, depth int, memo 
 	if !script.Known || !dir.Known || depth >= githubPostMaxScriptDepth {
 		return unknown
 	}
-	key := githubPostBodyKey(script.Value, dir)
+	// The memo key holds how the file runs as well: run by path, a #! line of another program makes the file that program's input
+	// (no writes read); run by a shell (bash f, source f), every line is shell text and the #! line a comment. One reading must not
+	// stand for the other (./writer.sh; bash writer.sh; bash post.sh).
+	key := githubPostBodyKey(script.Value, dir) + "\x00shell"
+	if direct {
+		key = githubPostBodyKey(script.Value, dir) + "\x00direct"
+	}
 	if got, ok := memo[key]; ok {
 		return got
 	}
