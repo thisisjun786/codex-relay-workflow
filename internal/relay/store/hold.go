@@ -84,7 +84,7 @@ func openExamined(ctx context.Context, examined string, params url.Values, timeo
 		live.release()
 		return nil, fmt.Errorf("the store's sidecars were examined beside %s, but SQLite opened %s, so its committed state was not read", pyvalue.StrRepr(examined), pyvalue.StrRepr(opened))
 	}
-	if err := live.attach(); err != nil {
+	if err := live.attach(ctx, db); err != nil {
 		_ = db.Close()
 		live.release()
 		return nil, err
@@ -155,7 +155,7 @@ func OpenReadOnly(ctx context.Context, path string, timeout time.Duration) (*Rea
 		live.release()
 		return nil, err
 	}
-	if err := live.attach(); err != nil {
+	if err := live.attach(ctx, db); err != nil {
 		_ = db.Close()
 		live.release()
 		return nil, err
@@ -335,7 +335,7 @@ func OpenReadOnlyStore(ctx context.Context, path string) (*Store, error) {
 		// The failed connect is the command's host error.
 		return nil, &hostError{cause: err}
 	}
-	if err = live.attach(); err != nil {
+	if err = live.attach(ctx, db); err != nil {
 		_ = db.Close()
 		live.release()
 		return nil, err
@@ -389,14 +389,18 @@ func (s *Store) Projection(ctx context.Context) (_ *Store, release func() error,
 	}
 	// The copy is a store file this process has open from here until release (CRW-967).
 	live := registerLiveStore(copyPath)
-	if err := live.attach(); err != nil {
-		live.release()
-		return nil, nil, err
-	}
 	db, err := boundedDB(copyPath, "rw", 5*time.Second)
 	if err != nil {
 		live.release()
 		return nil, nil, err
+	}
+	if err := db.PingContext(ctx); err != nil {
+		live.release()
+		return nil, nil, errors.Join(err, db.Close())
+	}
+	if err := live.attach(ctx, db); err != nil {
+		live.release()
+		return nil, nil, errors.Join(err, db.Close())
 	}
 	projected := &Store{DB: db, Path: s.Path, live: live}
 	return projected, func() error {

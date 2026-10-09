@@ -219,7 +219,7 @@ func open(ctx context.Context, path, socketPath string, options OpenOptions) (_ 
 	if err = db.PingContext(ctx); err != nil {
 		return nil, fmt.Errorf("connect database: %w", err)
 	}
-	if err = live.attach(); err != nil {
+	if err = live.attach(ctx, db); err != nil {
 		return nil, err
 	}
 	var gate *os.File
@@ -560,5 +560,20 @@ type dsnConnector struct {
 	dsn    string
 }
 
-func (c dsnConnector) Connect(context.Context) (driver.Conn, error) { return c.driver.Open(c.dsn) }
-func (c dsnConnector) Driver() driver.Driver                        { return c.driver }
+// storeBeforeConnectHook and storeAfterConnectHook are deterministic seams for tests, called with the DSN
+// before SQLite opens the file and once the connection has opened it. A test can move the path to
+// another file for the connection to open and put the original back before attach runs (CRW-1052).
+// Production leaves both nil.
+var storeBeforeConnectHook, storeAfterConnectHook func(dsn string)
+
+func (c dsnConnector) Connect(context.Context) (driver.Conn, error) {
+	if storeBeforeConnectHook != nil {
+		storeBeforeConnectHook(c.dsn)
+	}
+	conn, err := c.driver.Open(c.dsn)
+	if storeAfterConnectHook != nil {
+		storeAfterConnectHook(c.dsn)
+	}
+	return conn, err
+}
+func (c dsnConnector) Driver() driver.Driver { return c.driver }
