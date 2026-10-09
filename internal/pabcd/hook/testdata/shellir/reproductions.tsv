@@ -1471,3 +1471,30 @@ fix round after verification of 632401ae (P1 escaped literal read as match-all)	
 fix round after verification of 632401ae (P1 escaped literal read as match-all)	find .. -maxdepth 0 -regex '.*\.' -exec rm -rf {} +	CRW-895-x6	row	-
 fix round after verification of 632401ae (P1 escaped literal read as match-all)	find ../repo -regex '.*' -delete	CRW-895-x7	row	-
 fix round after verification of 632401ae (P1 escaped literal read as match-all)	find ../repo -regex '\(.*\)' -delete	CRW-895-x8	row	-
+CRW-900 completion (D1-D4, Linear CRW-900 comments of 10-07)	python3 -c 'if True: from shutil import copy; copy("/w/a", "{MEMORY}/n.md")'	CRW-900-D1-01	row	-
+CRW-900 completion (D1-D4, Linear CRW-900 comments of 10-07)	python3 -c 'if True: import shutil as s; s.copy("/w/a", "{MEMORY}/n.md")'	CRW-900-D1-02	row	-
+CRW-900 completion (D1-D4, Linear CRW-900 comments of 10-07)	python3 -c 'def f(): import shutil; shutil.copy("/w/a", "{MEMORY}/n.md")'	CRW-900-D1-03	row	-
+CRW-900 completion (D1-D4, Linear CRW-900 comments of 10-07)	python3 -c 'import shutil as os; os.copy("/w/a", "{MEMORY}/n.md")'	CRW-900-D2-01	row	-
+CRW-900 completion (D1-D4, Linear CRW-900 comments of 10-07)	python3 -c 'import os as shutil; shutil.rename("/w/a", "{MEMORY}/n.md")'	CRW-900-D2-02	row	-
+CRW-900 completion (D1-D4, Linear CRW-900 comments of 10-07)	python3 -c 'from os import renames as mv; mv(old="/w/a", new="{MEMORY}/n.md")'	CRW-900-D3-01	row	-
+CRW-900 completion (D1-D4, Linear CRW-900 comments of 10-07)	python3 -c 'from os import rename as renames; renames(src="/w/a", dst="{MEMORY}/n.md")'	CRW-900-D3-02	row	-
+CRW-900 completion (D1-D4, Linear CRW-900 comments of 10-07)	python3 -c 'from shutil import copy as Path; Path("/w/a", "{MEMORY}/n.md")'	CRW-900-D4-01	row	-
+CRW-900 completion (D1-D4, Linear CRW-900 comments of 10-07)	python3 -c 'from os import rename as open; open("/w/a", "{MEMORY}/n.md")'	CRW-900-D4-02	row	-
+CRW-900 completion (D1-D4, Linear CRW-900 comments of 10-07)	python3 -c 'from pathlib import Path; Path("{MEMORY}/n.md").read_text()'	CRW-900-C-01	row	-
+CRW-900 completion (D1-D4, Linear CRW-900 comments of 10-07)	python3 -c 'import shutil; shutil.copy("{MEMORY}/n.md", "/w/b")'	CRW-900-C-02	row	-
+CRW-900 completion (D1-D4, Linear CRW-900 comments of 10-07)	python3 -c 'import os; os.rename("/w/a", "/w/b")'	CRW-900-C-03	row	-
+CRW-900 fix round (post-evaluation of 0e215a28, findings d1-d4)	python3 -c 'def f(): import shutil as s; s.copy("/w/a", "{MEMORY}/n.md")'	CRW-900-D1-04	row	-
+CRW-900 fix round (post-evaluation of 0e215a28, findings d1-d4)	python3 -c 'if True: from shutil import copy as c; c("/w/a", "{MEMORY}/n.md")'	CRW-900-D1-05	row	-
+CRW-900 fix round (post-evaluation of 0e215a28, findings d1-d4)	python3 -c 'def f(): import os as shutil; shutil.rename("/w/a", "{MEMORY}/n.md")'	CRW-900-D2-03	row	-
+CRW-900 fix round (post-evaluation of 0e215a28, findings d1-d4)	python3 -c 'import json as shutil; shutil.copy("/w/a", "{MEMORY}/n.md")'	CRW-900-D2-04	row	-
+CRW-900 fix round (post-evaluation of 0e215a28, findings d1-d4)	python3 -c 'from shutil import copy as c; c("/w/a", "{MEMORY}/n.md")'	CRW-900-D4-03	row	-
+CRW-900 fix round (post-evaluation of 0e215a28, findings d1-d4)	python3 -c 'from shutil import copy as c; c("{MEMORY}/n.md", "/w/b")'	CRW-900-C-04	row	-
+CRW-900 fix round (post-evaluation of 0e215a28, findings d1-d4)	python3 -c 'import os as shutil; shutil.rename("/w/a", "/w/b")'	CRW-900-C-05	row	-
+CRW-900 fix round (post-evaluation of 0e215a28, findings d1-d4)	python3 -c 'from os import rename; rename("/w/a", "/w/b")'	CRW-900-C-06	row	-
+CRW-900 fix round (post-evaluation of 0e215a28, findings d1-d4)	python3 -c 'import shutil as s; s.copy("{MEMORY}/n.md", "/w/b")'	CRW-900-C-07	row	-
+CRW-900 fix round (post-evaluation of 0e215a28, findings d1-d4)	python3 -c 'from shutil import copy as c; g = c; g("/w/a", "{MEMORY}/n.md")'	CRW-900-D4-04	row	-
+CRW-900 fix round (post-evaluation of 0e215a28, findings d1-d4)	python3 -c 'from shutil import copy as c; run(c, "/w/a", "{MEMORY}/n.md")'	CRW-900-D4-05	row	-
+CRW-900 fix round (post-evaluation of 0e215a28, findings d1-d4)	python3 -c 'from shutil import copy, move; copy("/w/a", "{MEMORY}/n.md")'	CRW-900-D4-06	row	-
+CRW-900 fix round (post-evaluation of 0e215a28, findings d1-d4)	python3 -c 'from shutil import copy, move; copy("{MEMORY}/n.md", "/w/b")'	CRW-900-C-08	row	-
+CRW-900 fix round (post-evaluation of 0e215a28, findings d1-d4)	python3 -c 'import os as shutil; def f(shutil): shutil.copy("/w/a", "{MEMORY}/n.md")'	CRW-900-D2-05	row	-
+CRW-900 fix round (post-evaluation of 0e215a28, findings d1-d4)	python3 -c 'import json as os; def f(os): os.rename("/w/a", "{MEMORY}/n.md")'	CRW-900-D2-06	row	-
