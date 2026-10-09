@@ -233,7 +233,7 @@ func open(ctx context.Context, path, socketPath string, options OpenOptions) (_ 
 	if len(sections) != 2 {
 		return nil, errors.New("embedded schema lacks guard marker")
 	}
-	if _, err = db.ExecContext(ctx, sections[0]); err != nil {
+	if err = execSchema(ctx, db, "v1 script", sections[0]); err != nil {
 		return nil, fmt.Errorf("initialize schema: %w", err)
 	}
 	// The additive DAG zone follows the v1 script and is not part of what the open validated
@@ -255,7 +255,7 @@ func open(ctx context.Context, path, socketPath string, options OpenOptions) (_ 
 		if statement == "" {
 			continue
 		}
-		if _, guardErr := db.ExecContext(ctx, statement); guardErr != nil {
+		if guardErr := execSchema(ctx, db, "guard index", statement); guardErr != nil {
 			name := strings.Fields(strings.TrimPrefix(statement, "CREATE UNIQUE INDEX IF NOT EXISTS "))[0]
 			result.UnenforcedIndexes = append(result.UnenforcedIndexes, UnenforcedIndex{Index: name, Detail: guardErr.Error()})
 		}
