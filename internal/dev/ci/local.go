@@ -152,6 +152,14 @@ func localVerify(opts localOptions, reusePath string, stdout io.Writer) (verific
 	if err != nil {
 		return verificationRecord{}, false, err
 	}
+	// CRW-1025: the plan is compiled from the caller's engine source, so a run from an engine that is not the
+	// verified commit's would record that commit's pass for steps it does not define. Refused before any step
+	// runs and before any record is reused.
+	if differs, err := localEngineDiffers(opts.Root, current.HeadCommit); err != nil {
+		return verificationRecord{}, false, err
+	} else if differs != "" {
+		return verificationRecord{}, false, fmt.Errorf("engine_differs_from_commit: the engine source (%s) differs from %s; run from a checkout of that commit", differs, shortHash(current.HeadCommit))
+	}
 	if reusePath != "" {
 		// A record path that does not exist is a usage error, not a silent full run: the caller
 		// asked for that record.
@@ -881,6 +889,33 @@ const (
 	localReasonMarked = 20
 	localReasonLine   = 300
 )
+
+// localEngineSources are the paths the engine's plan is compiled from: the engine package, the command
+// that runs it and the Makefile target that starts it (CRW-1025).
+var localEngineSources = []string{"internal/dev/ci", "cmd/crw-dev", "Makefile"}
+
+// localEngineDiffers names the engine source the caller's tree holds that the commit does not: tracked
+// files that differ from it and untracked files under the engine paths. Ignored files are not engine
+// source. An empty result means the caller runs the commit's engine.
+func localEngineDiffers(root, commit string) (string, error) {
+	changed, err := runGit(root, append([]string{"diff", "--name-only", commit, "--"}, localEngineSources...)...)
+	if err != nil {
+		return "", err
+	}
+	untracked, err := runGit(root, append([]string{"ls-files", "--others", "--exclude-standard", "--"}, localEngineSources...)...)
+	if err != nil {
+		return "", err
+	}
+	var names []string
+	for _, out := range [][]byte{changed, untracked} {
+		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+			if line = strings.TrimSpace(line); line != "" {
+				names = append(names, line)
+			}
+		}
+	}
+	return strings.Join(names, ", "), nil
+}
 
 // shortHash is a commit hash's first twelve characters.
 func shortHash(commit string) string {

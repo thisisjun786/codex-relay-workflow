@@ -43,7 +43,7 @@ The run makes a **clean worktree** of the commit being verified under the work r
 (`git worktree add --detach`), with `HOME` and the XDG directories pointed into a
 temporary home and `TZ=UTC`, so uncommitted changes in the caller's checkout and the host's
 caches cannot change the result. The record names the commit and its tree, never the caller's
-working state. The worktree is removed afterwards. `GOCACHE` and `NPM_CONFIG_CACHE` are inherited: they decide how fast a step runs, not what it decides. The module cache is not inherited, and GOFLAGS is set by the engine.
+working state. The worktree is removed afterwards. The engine that decides the steps is the caller's own source (`internal/dev/ci`, `cmd/crw-dev`, `Makefile`), so the run refuses with `engine_differs_from_commit` when any of those paths differs from the commit, tracked or untracked, and no record is written or reused from such a checkout. `GOCACHE` and `NPM_CONFIG_CACHE` are inherited: they decide how fast a step runs, not what it decides. The module cache is not inherited, and GOFLAGS is set by the engine.
 
 ### The local step to GitHub job mapping
 
