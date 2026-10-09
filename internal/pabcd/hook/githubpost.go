@@ -12,11 +12,9 @@ package hook
 // still holds an expansion after that (a variable, a substitution, a backtick, a glob) names a command
 // the guard cannot judge, so a text that names a post through it is refused rather than passed.
 //
-// A text that is not one simple command is read through its canonical words: every quote character and
-// every backslash removed from the whole text, the ASCII letters lowered, then split on whitespace. The
-// canonical words name a post when a pr or issue word is followed by a word outside the read list, when
-// an api word sits with a body or method flag, or when a release word sits with a text flag, whether or
-// not gh appears; that is what refuses a program word built in quote pieces or one quoting level down.
+// The words of a command are the ones the shared command reader (internal/pabcd/shellir) gives after the shell's own quote and
+// backslash removal, so a quoted option, a glued redirect or a quoted program name is judged as the word the shell runs. A text
+// the reader cannot read is refused; no text is judged by splitting it on whitespace.
 
 import (
 	"encoding/json"
@@ -222,9 +220,18 @@ func githubPostPost(args []string, cwd string) (githubPostSite, bool, bool) {
 // githubPostScanText is the text the secret scan reads from a body file: the strings of a JSON document (keys and values,
 // with their escapes decoded), so a secret inside a JSON string is seen as the text gh posts; any other file is its text.
 func githubPostScanText(content string) string {
+	if text, ok := githubPostJSONText(content); ok {
+		return text
+	}
+	return content
+}
+
+// githubPostJSONText is the text of one JSON document: its keys and strings, with their escapes decoded, one per line. ok is
+// false when the content is not one JSON document, so a body read as JSON must be one.
+func githubPostJSONText(content string) (text string, ok bool) {
 	var doc any
 	if err := json.Unmarshal([]byte(content), &doc); err != nil {
-		return content
+		return "", false
 	}
 	var parts []string
 	var walk func(any)
@@ -244,13 +251,13 @@ func githubPostScanText(content string) string {
 		}
 	}
 	walk(doc)
-	return strings.Join(parts, "\n")
+	return strings.Join(parts, "\n"), true
 }
 
 // githubPostAPI is form A2: gh api, with only the words the rule allows. At most one of -F body=@F,
 // --field body=@F or --input F carries the text; none of them is a read.
 func githubPostAPI(args []string, cwd string) (githubPostSite, bool, bool) {
-	file, fileSet, endpoint := "", false, false
+	file, fileSet, endpoint, jsonBody := "", false, false, false
 	for i := 0; i < len(args); i++ {
 		w := args[i]
 		switch {
@@ -286,6 +293,7 @@ func githubPostAPI(args []string, cwd string) (githubPostSite, bool, bool) {
 				return githubPostSite{githubPostRuleUnread, githubPostWhereCommand}, true, true
 			}
 			file, fileSet = v, true
+			jsonBody = true
 		case w == "-F" || w == "--field":
 			v, ok := githubPostNext(args, &i)
 			if !ok {
@@ -334,7 +342,15 @@ func githubPostAPI(args []string, cwd string) (githubPostSite, bool, bool) {
 		if !ok {
 			return githubPostSite{githubPostRuleUnread, file}, true, true
 		}
-		if line, found := githubPostSecretLine(githubPostScanText(content)); found {
+		// --input is the request body and is JSON: a body that is not one JSON document is unreadable, and the scan reads its strings.
+		text := githubPostScanText(content)
+		if jsonBody {
+			var ok bool
+			if text, ok = githubPostJSONText(content); !ok {
+				return githubPostSite{githubPostRuleUnread, file}, true, true
+			}
+		}
+		if line, found := githubPostSecretLine(text); found {
 			return githubPostSite{githubPostRuleSecret, file + ":" + strconv.Itoa(line)}, true, true
 		}
 	}
