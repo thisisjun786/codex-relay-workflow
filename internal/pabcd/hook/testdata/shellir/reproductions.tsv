@@ -972,3 +972,18 @@ third verification of f0857f317 (P0 find {} sets the context of a shell)	find . 
 third verification of f0857f317 (P2 find name pattern the reader cannot settle)	find ../repo -name '[[.r.]]*' -delete	CRW-895-r11	row	-
 third verification of f0857f317 (P2 find name pattern the reader cannot settle)	find ../repo -name '[[=r=]]*' -delete	CRW-895-r12	row	-
 third verification of f0857f317 (P2 find name pattern the reader cannot settle)	find ../repo -iname '[[:digit:]]*' -delete	CRW-895-r13	row	-
+fix round after review of cf7844fce (P0 find -regex the reader cannot evaluate guards)	find ../repo -regex '.*\(repo\|x\)' -delete	CRW-895-s1	row	-
+fix round after review of cf7844fce (P0 find -regex the reader cannot evaluate guards)	find ../repo -regextype posix-extended -regex '.*(repo|x)' -delete	CRW-895-s2	row	-
+fix round after review of cf7844fce (P0 find -regex the reader cannot evaluate guards)	find ../repo -iregex '.*\(REPO\|x\)' -delete	CRW-895-s3	row	-
+fix round after review of cf7844fce (P0 find -regex the reader cannot evaluate guards)	find ../repo -regex '\.\./re\(po\)\?' -delete	CRW-895-s4	row	-
+fix round after review of cf7844fce (P0 find -regex the reader cannot evaluate guards)	find .. -maxdepth 0 -regex '.*\(repo\|x\)' -exec rm -rf {} +	CRW-895-s5	row	-
+fix round after review of cf7844fce (P0 find -regex the reader cannot evaluate guards)	find ../repo -maxdepth 0 -regex '.*\(repo\|x\)' -exec git worktree remove --force {} \;	CRW-895-s6	row	-
+fix round after review of cf7844fce (P0 find -regex the reader cannot evaluate guards)	find . -regex '.*\.o' -delete	CRW-895-s7	row	-
+fix round after review of cf7844fce (P0 find -regex the reader cannot evaluate guards)	find . -type f -regex '.*\(o\|a\)' -delete	CRW-895-s8	row	-
+fix round after review of cf7844fce (P0 find -regex the reader cannot evaluate guards)	find . -name '*.o' -regex '.*\(o\|a\)' -delete	CRW-895-s9	row	-
+fix round after review of cf7844fce (P1 regression of the third round (absolute find start from an unknown directory))	find /tmp/build -name '*.o' -exec sh -c 'cd {}; rm x' \;	CRW-895-t1	row	-
+fix round after review of cf7844fce (P1 regression of the third round (absolute find start from an unknown directory))	find /tmp/build -type f -exec sh -c 'D={}; cd "$D"; rm file' \;	CRW-895-t2	row	-
+fix round after review of cf7844fce (P1 regression of the third round (absolute find start from an unknown directory))	find /tmp/build -type f -exec sh -c 'cd {}; rm {}.o' \;	CRW-895-t3	row	-
+fix round after review of cf7844fce (P1 regression of the third round (absolute find start from an unknown directory))	find /tmp/build -type f -exec sh -c 'cd {}/..; rm -f ./stale' \;	CRW-895-t4	row	-
+fix round after review of cf7844fce (P1 regression of the third round (absolute find start from an unknown directory))	find {CHECKOUT} -exec sh -c 'cd {}; rm x' \;	CRW-895-t5	row	-
+fix round after review of cf7844fce (P1 regression of the third round (absolute find start from an unknown directory))	find {CHECKOUT}/.. -maxdepth 0 -exec sh -c 'cd {}; rm x' \;	CRW-895-t6	row	-

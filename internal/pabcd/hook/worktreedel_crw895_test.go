@@ -84,6 +84,23 @@ func crw895Shapes() []crw895Shape {
 		{"find ../repo -name '[[:digit:]]*' -delete", false, false},
 		{"echo ../other | cat roots.list | xargs git worktree remove --force", true, false},
 		{"echo build/old.o | cat - | xargs rm", false, false},
+		// the fix round after cf7844fce: a regular expression the reader cannot evaluate never guards; an absolute start point is
+		// judged as itself wherever the removal's directory is
+		{`find ../repo -regex '.*\(repo\|x\)' -delete`, true, false},
+		{`find ../repo -regextype posix-extended -regex '.*(repo|x)' -delete`, true, false},
+		{`find ../repo -iregex '.*\(REPO\|x\)' -delete`, true, false},
+		{`find ../repo -regex '\.\./re\(po\)\?' -delete`, true, false},
+		{`find .. -maxdepth 0 -regex '.*\(repo\|x\)' -exec rm -rf {} +`, true, false},
+		{`find ../repo -maxdepth 0 -regex '.*\(repo\|x\)' -exec git worktree remove --force {} \;`, true, false},
+		{`find . -regex '.*\.o' -delete`, false, false},
+		{`find . -type f -regex '.*\(o\|a\)' -delete`, false, false},
+		{`find . -name '*.o' -regex '.*\(o\|a\)' -delete`, false, false},
+		{`find /tmp/build -name '*.o' -exec sh -c 'cd {}; rm x' \;`, false, false},
+		{`find /tmp/build -type f -exec sh -c 'D={}; cd "$D"; rm file' \;`, false, false},
+		{`find /tmp/build -type f -exec sh -c 'cd {}; rm {}.o' \;`, false, false},
+		{`find /tmp/build -type f -exec sh -c 'cd {}/..; rm -f ./stale' \;`, false, false},
+		{`find ../repo -exec sh -c 'cd {}; rm x' \;`, true, false},
+		{`find .. -maxdepth 0 -exec sh -c 'cd {}; rm x' \;`, true, false},
 	}
 }
 
