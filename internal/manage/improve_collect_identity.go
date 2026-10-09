@@ -21,6 +21,18 @@ import (
 // no rename changes; the paths are resolved the way the readers resolve theirs, so the guard and
 // the read name the same file.
 //
+// A store is read by name, and that is the decision CRW-1050 settled. store.OpenInPlace hands SQLite a
+// path: SQLite opens the file at that name and looks for its write-ahead log and shared-memory index
+// beside that name, so no descriptor the collection holds can be given to it. A variant of OpenInPlace that
+// took an opened descriptor would have to hand SQLite /proc/self/fd/N, which SQLite resolves back to a name
+// when it opens (so the pin is a name again, with a narrower window), which exists only on Linux (Darwin has
+// no equivalent, and these tools build for both release platforms), and which would change an API that the
+// relay's own readers share. The protection is therefore the identity comparison: the descriptor pinned
+// before the read, and the name examined again after each reader and before the rename. What it does not
+// catch is a store file moved away and moved back inside one read, which leaves the same inode at the name;
+// that needs a writer with access to the store's directory, and the stores are the operator's own. The draft
+// and the other plain-file inputs are read from their descriptors (improveIdentityRead, auditDraftReadFile).
+//
 // An input that was absent when it was recorded is still a name the bundle must not be written to,
 // and it is examined again at every comparison: a path that is there by the time the collection is
 // ready to write is an input it never pinned, and the run is refused rather than reading or
