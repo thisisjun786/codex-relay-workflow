@@ -927,3 +927,15 @@ evaluation of 83a490cef (fix round 1 of the pre-merge evaluation of 101be077, fi
 evaluation of 83a490cef (fix round 1 of the pre-merge evaluation of 101be077, finding d3 in the POSIX option scan)	sed --in='{MEMORY}/*' -e p out.txt --in-place=.bak	CRW-941-D14	row	-
 evaluation of 83a490cef (fix round 1 of the pre-merge evaluation of 101be077, finding d3 in the POSIX option scan)	sed -i'{MEMORY}/*' p out.txt -ni	CRW-941-D15	row	-
 evaluation of 83a490cef (fix round 1 of the pre-merge evaluation of 101be077, finding d3 in the POSIX option scan)	sed -i.bak -e p out.txt -i	CRW-941-D16	row	-
+CRW-900 completion (D1-D4, Linear CRW-900 comments of 10-07)	python3 -c 'if True: from shutil import copy; copy("/w/a", "{MEMORY}/n.md")'	CRW-900-D1-01	row	-
+CRW-900 completion (D1-D4, Linear CRW-900 comments of 10-07)	python3 -c 'if True: import shutil as s; s.copy("/w/a", "{MEMORY}/n.md")'	CRW-900-D1-02	row	-
+CRW-900 completion (D1-D4, Linear CRW-900 comments of 10-07)	python3 -c 'def f(): import shutil; shutil.copy("/w/a", "{MEMORY}/n.md")'	CRW-900-D1-03	row	-
+CRW-900 completion (D1-D4, Linear CRW-900 comments of 10-07)	python3 -c 'import shutil as os; os.copy("/w/a", "{MEMORY}/n.md")'	CRW-900-D2-01	row	-
+CRW-900 completion (D1-D4, Linear CRW-900 comments of 10-07)	python3 -c 'import os as shutil; shutil.rename("/w/a", "{MEMORY}/n.md")'	CRW-900-D2-02	row	-
+CRW-900 completion (D1-D4, Linear CRW-900 comments of 10-07)	python3 -c 'from os import renames as mv; mv(old="/w/a", new="{MEMORY}/n.md")'	CRW-900-D3-01	row	-
+CRW-900 completion (D1-D4, Linear CRW-900 comments of 10-07)	python3 -c 'from os import rename as renames; renames(src="/w/a", dst="{MEMORY}/n.md")'	CRW-900-D3-02	row	-
+CRW-900 completion (D1-D4, Linear CRW-900 comments of 10-07)	python3 -c 'from shutil import copy as Path; Path("/w/a", "{MEMORY}/n.md")'	CRW-900-D4-01	row	-
+CRW-900 completion (D1-D4, Linear CRW-900 comments of 10-07)	python3 -c 'from os import rename as open; open("/w/a", "{MEMORY}/n.md")'	CRW-900-D4-02	row	-
+CRW-900 completion (D1-D4, Linear CRW-900 comments of 10-07)	python3 -c 'from pathlib import Path; Path("{MEMORY}/n.md").read_text()'	CRW-900-C-01	row	-
+CRW-900 completion (D1-D4, Linear CRW-900 comments of 10-07)	python3 -c 'import shutil; shutil.copy("{MEMORY}/n.md", "/w/b")'	CRW-900-C-02	row	-
+CRW-900 completion (D1-D4, Linear CRW-900 comments of 10-07)	python3 -c 'import os; os.rename("/w/a", "/w/b")'	CRW-900-C-03	row	-
