@@ -10,6 +10,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/attest"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/goalplan"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/hook"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source/session"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
@@ -433,5 +434,51 @@ func TestOrchestrateReviewBindingDispatchAdviceNamesTheReviewerRole(t *testing.T
 	if resolved.Model == nil || *resolved.Model != "reviewer-only" || resolved.Effort == nil || *resolved.Effort != role.EffortHigh ||
 		resolved.PromptOverride == nil || *resolved.PromptOverride != "Audit the change." {
 		t.Fatalf("the reviewer role resolved to %+v, want the reviewer configuration", resolved)
+	}
+}
+
+// CRW-1113 (A3-06, port: fixed). A reviewer's FAIL that met the goalplan lock was dropped, so the A>B check saw a round with no
+// verdict and let the attest through. The observer now keeps the sign-off, and the A>B transition drains it under the session
+// lock it already holds before it judges the binding: the kept FAIL is honoured, and a kept PASS counts as the reviewer's.
+func TestOrchestrateReviewBindingDrainsAKeptSignoffBeforeTheCheck(t *testing.T) {
+	for _, verdict := range []string{"fail", "pass"} {
+		t.Run(verdict, func(t *testing.T) {
+			cwd := orchestrateTransitionRoot(t)
+			id := "review-binding-inbox-" + verdict
+			unit := orchestrateReviewBindingPlanUnit(t, cwd)
+			epoch := "e-plan-1"
+			files, hash := orchestrateReviewBindingBoundFiles(t, cwd, unit)
+			round := orchestrateReviewBindingVerdictRound("r1", id, "wp1", epoch, "pass", files)
+			round["planSha256"], round["status"], round["lane"] = hash, "in_flight", map[string]any{"launchId": "r1-20260101000000"}
+			orchestrateReviewBindingSeed(t, cwd, id, unit, []map[string]any{round}, &epoch, "A")
+
+			lock := filepath.Join(cwd, ".crw", "goalplans", id, goalplan.GoalplanLockDir)
+			if err := os.Mkdir(lock, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(lock, "owner.json"), []byte(`{"pid":4242}`+"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			payload, _ := json.Marshal(map[string]any{"hook_event_name": "SubagentStop", "cwd": cwd, "session_id": id, "agent_type": "explorer",
+				"agent_id": "reviewer-1", "last_assistant_message": "done\nLAUNCH: r1-20260101000000\nVERDICT: " + strings.ToUpper(verdict)})
+			if out := hook.HandleReviewObserver(string(payload)); out != "" {
+				t.Fatalf("the observer answers nothing: %q", out)
+			}
+			if err := os.RemoveAll(lock); err != nil {
+				t.Fatal(err)
+			}
+
+			got := orchestrateTransitionRun(t, cwd, "B", "--session", id, "--attest", orchestrateReviewBindingAttest("pass"))
+			if verdict == "pass" {
+				if got.Code != 0 {
+					t.Fatalf("a kept PASS is the reviewer's verdict: %+v", got)
+				}
+				return
+			}
+			want := "orchestrate B: current=A session=" + id + "; you attested \"pass\" but the reviewer recorded \"fail\" (LEAN-REVIEW-01)."
+			if got.Code != 1 || !strings.HasPrefix(got.Output, want) {
+				t.Fatalf("a kept FAIL is honoured\n got: %+v\nwant prefix: %s", got, want)
+			}
+		})
 	}
 }

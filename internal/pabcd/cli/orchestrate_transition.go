@@ -619,6 +619,9 @@ func orchestrateTransitionApply(ctx context.Context, a OrchestrateCliArgs, sessi
 	}
 	// LEAN-REVIEW-01: an open round is honoured, never required; the B>C source gates follow, then the D close.
 	if cur.Phase == state.PhaseA && to == state.PhaseB && cur.Slug != "" {
+		// CRW-1113: a reviewer sign-off the observer kept because a lock was busy is applied first, under the session lock held here
+		// and then the goalplan lock, so the check below judges the round the reviewer closed and not the one the lock lost.
+		hook.DrainReviewObserverInbox(cwd, sessionID)
 		if refusal := orchestrateReviewBindingCheck(cur, a, sessionID); refusal != nil {
 			return *refusal, nil
 		}
