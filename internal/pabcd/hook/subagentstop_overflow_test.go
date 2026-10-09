@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -132,5 +133,42 @@ func TestSubagentStopOverflowRecoversA65File(t *testing.T) {
 	}
 	if counterComplete(t, cwd, "s1") == "" {
 		t.Fatal("completion allowed while verdicts remain")
+	}
+}
+
+// CRW-1110 verification round 1: one agent's two verdicts, in different turns, sit one in the main list and one beside the full
+// list. A resolve that names no turn is ambiguous across both and resolves neither.
+func TestEvidenceCLIAmbiguityAcrossMainAndOverflow(t *testing.T) {
+	cwd := subagentStopWorkspace(t)
+	overflowSeed(t, cwd, state.MaxUnverifiedSubagents)
+	for n := 1; n <= 3; n++ {
+		subagentStopBlock(t, counterStop(t, cwd, "s1", "a0", "second-turn", ""), n)
+	}
+	if out := counterStop(t, cwd, "s1", "a0", "second-turn", ""); out != "" {
+		t.Fatalf("terminal stop blocked: %s", out)
+	}
+	if got, _ := evidence.OverflowVerdicts(cwd, "s1"); len(got) != 1 || got[0].AgentID != "a0" || got[0].TurnID != "second-turn" {
+		t.Fatalf("precondition: the second turn's verdict is beside the list: %+v", got)
+	}
+	receipt := filepath.Join(cwd, ".crw/evidence/parent.md")
+	subagentStopPut(t, receipt, "parent verified")
+	out, code := cli.RunEvidenceCLI(cli.EvidenceResolveArgs{Verb: "resolve", SessionID: "s1", AgentID: "a0", Receipt: receipt, Cwd: cwd})
+	if code == 0 || !strings.Contains(out, "more than one unverified record") {
+		t.Fatalf("an ambiguous resolve across the list and its overflow: code=%d %q", code, out)
+	}
+	for _, turn := range []string{"t", "second-turn"} {
+		if !evidence.HasTombstone(cwd, "s1", evidence.Payload{AgentID: "a0", TurnID: turn}) {
+			t.Fatalf("the ambiguous resolve removed the verdict of turn %s", turn)
+		}
+	}
+	// Naming the turn resolves exactly that verdict, in either place.
+	for _, turn := range []string{"second-turn", "t"} {
+		args := cli.EvidenceResolveArgs{Verb: "resolve", SessionID: "s1", AgentID: "a0", Receipt: receipt, Cwd: cwd, TurnID: &turn}
+		if out, code := cli.RunEvidenceCLI(args); code != 0 {
+			t.Fatalf("resolve of turn %s: %s", turn, out)
+		}
+		if evidence.HasTombstone(cwd, "s1", evidence.Payload{AgentID: "a0", TurnID: turn}) {
+			t.Fatalf("turn %s still unresolved", turn)
+		}
 	}
 }

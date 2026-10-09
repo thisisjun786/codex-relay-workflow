@@ -87,25 +87,59 @@ func RunEvidenceCLI(a EvidenceResolveArgs) (string, int) {
 	removed, ambiguous, warning := false, false, error(nil)
 	// CRW-1106: a receipt's resolution is serialised with the SubagentStop gate of the same child, under the lock of the exact
 	// (session, agent, turn), which is taken before the session lock (the one lock order). The turn is found by an unlocked read
-	// first and then pinned, so the locked step resolves exactly the verdict whose lock it holds.
+	// first and then pinned, so the locked step resolves exactly the verdict whose lock it holds. A request that names no turn and
+	// finds none or several is run under the session lock alone, where it resolves nothing but reports the ambiguity; if it finds
+	// exactly one there (the unlocked read raced a writer), it only names the turn and the whole request runs again pinned.
 	if turn, ok := cliEvidenceTurn(a); ok {
 		a.TurnID = &turn
 	}
+	var pinTurn *string
 	resolve := func() error {
 		// CRW-1110: a file that holds more verdicts than the reader keeps is recovered first, so no verdict is lost to the rewrite.
 		if err := evidence.RecoverOverflow(a.Cwd, a.SessionID, writeState); err != nil {
 			return err
 		}
 		s := state.ReadState(a.Cwd, a.SessionID)
-		index := -1
+		// CRW-1110: the verdicts of the main list and those recorded beside it are one set. A request that matches more than one of
+		// them, in either place, is ambiguous and resolves none.
+		index, beside := -1, 0
 		for i, entry := range s.UnverifiedSubagents {
-			if entry.Resolvable && entry.AgentID == a.AgentID && (a.TurnID == nil || entry.TurnID == *a.TurnID) {
+			if cliEvidenceMatches(a, entry) {
 				if index >= 0 {
 					ambiguous = true
 					return nil
 				}
 				index = i
 			}
+		}
+		overflow, _ := evidence.OverflowVerdicts(a.Cwd, a.SessionID)
+		for _, entry := range overflow {
+			if cliEvidenceMatches(a, entry) {
+				beside++
+			}
+		}
+		inMain := 0
+		if index >= 0 {
+			inMain = 1
+		}
+		if inMain+beside > 1 {
+			ambiguous = true
+			return nil
+		}
+		if a.TurnID == nil && inMain+beside == 1 {
+			// The one match of an unpinned request: name its turn and run again with the tuple lock held.
+			turn := ""
+			if index >= 0 {
+				turn = s.UnverifiedSubagents[index].TurnID
+			} else {
+				for _, entry := range overflow {
+					if cliEvidenceMatches(a, entry) {
+						turn = entry.TurnID
+					}
+				}
+			}
+			pinTurn = &turn
+			return nil
 		}
 		if index < 0 {
 			return cliResolveOverflow(a, s.Phase, &removed, &ambiguous)
@@ -151,10 +185,17 @@ func RunEvidenceCLI(a EvidenceResolveArgs) (string, int) {
 		return nil
 	}
 	var err error
-	if a.TurnID != nil {
-		err = evidence.WithCounterLock(a.Cwd, a.SessionID, a.AgentID, *a.TurnID, func() error { return state.WithSessionLock(a.Cwd, a.SessionID, resolve) })
-	} else {
-		err = state.WithSessionLock(a.Cwd, a.SessionID, resolve)
+	for range 3 {
+		pinTurn = nil
+		if a.TurnID != nil {
+			err = evidence.WithCounterLock(a.Cwd, a.SessionID, a.AgentID, *a.TurnID, func() error { return state.WithSessionLock(a.Cwd, a.SessionID, resolve) })
+		} else {
+			err = state.WithSessionLock(a.Cwd, a.SessionID, resolve)
+		}
+		if err != nil || pinTurn == nil {
+			break
+		}
+		a.TurnID = pinTurn
 	}
 	if err != nil {
 		return "evidence resolve: " + cliErrorMessage(err), 1
@@ -172,13 +213,18 @@ func RunEvidenceCLI(a EvidenceResolveArgs) (string, int) {
 	return line, 0
 }
 
+// cliEvidenceMatches reports whether a verdict is a resolvable one of the agent (and of the turn, when the request names one).
+func cliEvidenceMatches(a EvidenceResolveArgs, entry state.UnverifiedSubagent) bool {
+	return entry.Resolvable && entry.AgentID == a.AgentID && (a.TurnID == nil || entry.TurnID == *a.TurnID)
+}
+
 // cliResolveOverflow resolves the agent's one resolvable verdict recorded beside the full main list (CRW-1110), with the same
 // ledger row as a verdict of the list. The caller holds the session lock and has checked the receipt.
 func cliResolveOverflow(a EvidenceResolveArgs, phase state.Phase, removed, ambiguous *bool) error {
 	verdicts, _ := evidence.OverflowVerdicts(a.Cwd, a.SessionID)
 	var target *state.UnverifiedSubagent
 	for i, entry := range verdicts {
-		if entry.Resolvable && entry.AgentID == a.AgentID && (a.TurnID == nil || entry.TurnID == *a.TurnID) {
+		if cliEvidenceMatches(a, entry) {
 			if target != nil {
 				*ambiguous = true
 				return nil
