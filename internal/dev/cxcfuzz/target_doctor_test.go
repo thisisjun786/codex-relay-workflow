@@ -391,3 +391,54 @@ func doctorStatusOf(t *testing.T, code int) *int {
 	t.Helper()
 	return &code
 }
+
+// TestDoctorPinnedOracleAnswersAreStoredInPortNames pins how a doctor case stores its oracle
+// answer (target_doctor.go): already run through the corpus rename table, as a corpus fixture's
+// expectation is. An answer stored in the oracle's own CXC names would still replay (an
+// intentionally-changed case judges only the Go field) yet say nothing true about the oracle, so
+// every case's oracle text and json must be a fixed point of the table. The wording pin of CRW-711
+// must also keep what its record claims: the renamed texts are the same and only the --json
+// evidence differs.
+func TestDoctorPinnedOracleAnswersAreStoredInPortNames(t *testing.T) {
+	sub, err := doctorSubstitution()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases, err := LoadCases(filepath.Join("testdata", "doctor"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range cases {
+		oracleValue, err := decode(c.Oracle)
+		if err != nil {
+			t.Fatalf("%s: the oracle answer is not JSON: %v", c.Name, err)
+		}
+		oracleText, oracleJSON, err := doctorAnswer(oracleValue)
+		if err != nil {
+			t.Fatalf("%s: the oracle answer: %v", c.Name, err)
+		}
+		if want := sub.Expected(oracleText); oracleText != want {
+			t.Errorf("%s: the stored oracle text is not in port names:\n got %q\nwant %q", c.Name, oracleText, want)
+		}
+		if want := sub.Expected(oracleJSON); oracleJSON != want {
+			t.Errorf("%s: the stored oracle json is not in port names:\n got %q\nwant %q", c.Name, oracleJSON, want)
+		}
+		if c.Name != "features-wtf8-lone-surrogate-evidence-spelled-as-replacement" {
+			continue
+		}
+		goValue, err := decode(c.Go)
+		if err != nil {
+			t.Fatalf("%s: the go answer is not JSON: %v", c.Name, err)
+		}
+		goText, goJSON, err := doctorAnswer(goValue)
+		if err != nil {
+			t.Fatalf("%s: the go answer: %v", c.Name, err)
+		}
+		if goText != oracleText {
+			t.Errorf("%s: the texts differ, but the record says only the --json evidence does:\n go %q\n oracle %q", c.Name, goText, oracleText)
+		}
+		if goJSON == oracleJSON {
+			t.Errorf("%s: the --json documents are equal, so the case pins no difference", c.Name)
+		}
+	}
+}
