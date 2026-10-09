@@ -2,6 +2,7 @@ package configguard
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -158,12 +159,16 @@ func SetMultiAgentV2State(deps MultiAgentV2Deps, version MultiAgentVersion) (*Mu
 	// published in that window would otherwise be overwritten by the repair, which is computed from
 	// the pre-image this read took. An explicitly empty config path names no file, so it is not
 	// given a sidecar and keeps its missing-path no-op behaviour.
+	var lock *crwdir.ConfigLock
+	var dirInfo os.FileInfo
 	if path != "" {
-		lock, err := crwdir.LockConfig(path, activationLockWait)
+		var err error
+		lock, err = crwdir.LockConfig(path, activationLockWait)
 		if err != nil {
 			return nil, err
 		}
 		defer lock.Release()
+		dirInfo, _ = os.Stat(filepath.Dir(path))
 		// The lock is keyed by lock.Target, the caller's path with a symlink followed, so two writers
 		// reaching one file through different spellings share one lock. The content path stays the
 		// caller's (CRW-891), unlike the other writers of config.toml: the runner below may atomically
@@ -191,6 +196,14 @@ func SetMultiAgentV2State(deps MultiAgentV2Deps, version MultiAgentVersion) (*Mu
 	res := deps.Run([]string{"features", op, "multi_agent_v2"})
 	if res.ExitCode != 0 {
 		return nil, fmt.Errorf("codex features %s multi_agent_v2 failed (exit %d): %s", op, res.ExitCode, text.Trim(res.Stderr))
+	}
+	// The repair is published only under a lock that guards the file the caller's path names after the runner (CRW-1144).
+	if lock != nil {
+		extra, err := configIdentityAfterRunner(lock, path, dirInfo)
+		if err != nil {
+			return nil, fmt.Errorf("%w; the runner's change is in place, the multi_agent_v2 tuning repair was not written", err)
+		}
+		defer extra.Release()
 	}
 	post, exists, err := activationReadFile(path)
 	if err != nil {

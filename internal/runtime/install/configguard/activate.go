@@ -216,12 +216,9 @@ func activationFailureMessage(s string) string {
 func Activate(deps ActivateDeps) (*InstallManifest, error) {
 	path := deps.ConfigPath
 	if path == "" {
-		// The oracle derives this path the same way (activate.ts:201, deps.configPath ??
-		// join(codexHome, "config.toml")), and Node's path.join folds a ".." lexically exactly as
-		// filepath.Join does. Resolving it through the kernel here would name a different file
-		// from the oracle for a CODEX_HOME that contains a symlink followed by "..", so the port
-		// keeps the oracle's derivation; the shared limitation is recorded in
-		// docs/port-cxc/known-defects/CRW-899.md (parity wins).
+		// The command resolves CodexHome once through the kernel (ResolveCodexHome, CRW-1144) and
+		// hands the same physical home to the CLI it runs, so this join names the file the CLI
+		// edits; the oracle's lexical join of a symlink followed by ".." named another one.
 		path = filepath.Join(deps.CodexHome, "config.toml")
 	}
 	now := deps.Now
@@ -272,6 +269,8 @@ func Activate(deps ActivateDeps) (*InstallManifest, error) {
 	// off a flag the other activation enabled.
 	// An interrupted change is recorded before this activation reads anything it decides from (CRW-1153), so the flags and
 	// the key it left on are crw's, not pre-existing state.
+	// The directory the config file lies in, pinned for the check after the CLI ran (CRW-1144).
+	dirInfo, _ := os.Stat(filepath.Dir(path))
 	recovered, recErr := recoverIntent(deps.CodexHome, path, deps.Run)
 	if recErr != nil && !crwdir.Published(recErr) {
 		return nil, recErr
@@ -455,6 +454,16 @@ func Activate(deps ActivateDeps) (*InstallManifest, error) {
 	}
 	if hardErr != nil {
 		return finish(hardErr)
+	}
+	// The CLI may have replaced config.toml or its directory (CRW-1144): the key is published only under a lock that guards
+	// the file the caller's path names now. Otherwise nothing more is published, and the intent stays for the explicit retry
+	// to record what the CLI did.
+	if ran {
+		extra, err := configIdentityAfterRunner(lock, path, dirInfo)
+		if err != nil {
+			return nil, fmt.Errorf("%w; the flags codex changed are kept in %s, and the next 'crw install features enable' or 'disable' records them", err, intentPath(deps.CodexHome))
+		}
+		defer extra.Release()
 	}
 	for i, effect := range in.Effects {
 		if effect.Kind != intentKey {

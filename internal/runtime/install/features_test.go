@@ -47,6 +47,10 @@ func TestFeatureCodexHelper(t *testing.T) {
 		os.Exit(3)
 	}
 	path := filepath.Join(home, "config.toml")
+	if os.Getenv("CRW499_FAKE_USE_CODEX_HOME") != "" {
+		// The real CLI reads the config.toml that CODEX_HOME names through the kernel, ".." after a symlink included.
+		path = os.Getenv("CRW499_FAKE_CODEX_HOME") + string(filepath.Separator) + "config.toml"
+	}
 	b, _ := os.ReadFile(path)
 	content := string(b)
 	if args[1] == "list" {
@@ -65,6 +69,7 @@ func TestFeatureCodexHelper(t *testing.T) {
 	}
 	content = configguard.SetTableKey(content, "features", args[2], args[1] == "enable").Content
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		fmt.Fprintln(os.Stderr, err)
 		os.Exit(93)
 	}
 	os.Exit(0)
@@ -88,12 +93,13 @@ func newFeatureHome(t *testing.T, content string) featureHome {
 		t.Fatal(err)
 	}
 	quoted := "'" + strings.ReplaceAll(exe, "'", "'\\''") + "'"
-	script := "#!/bin/sh\nexec " + quoted + " -test.run='^TestFeatureCodexHelper$' -- \"$@\"\n"
+	// The CODEX_HOME the command hands the CLI is captured before the test binary's own isolation replaces it.
+	script := "#!/bin/sh\nCRW499_FAKE_CODEX_HOME=\"$CODEX_HOME\" exec " + quoted + " -test.run='^TestFeatureCodexHelper$' -- \"$@\"\n"
 	if err := writeExecutable(filepath.Join(bin, "codex"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	env := scope.Env(os.Environ()).With("HOME", t.TempDir()).With("CODEX_HOME", home).With("PATH", bin).With("CRW499_FAKE_HOME", home)
-	for _, key := range []string{"CRW499_FAKE_MODE", "CRW499_FAKE_LIST_FAIL", "CRW499_FAKE_FAIL_KEY", "CRW499_FAKE_DISABLE_FAIL"} {
+	for _, key := range []string{"CRW499_FAKE_MODE", "CRW499_FAKE_LIST_FAIL", "CRW499_FAKE_FAIL_KEY", "CRW499_FAKE_DISABLE_FAIL", "CRW499_FAKE_USE_CODEX_HOME"} {
 		env = env.Without(key)
 	}
 	return featureHome{t, home, env}

@@ -41,11 +41,16 @@ func runFeatures(ctx context.Context, args []string, env scope.Env, stdout, stde
 		return 2
 	}
 	home, err := resolveFeatureHome(env)
+	if err == nil {
+		// One physical home for the whole command (CRW-1144): the CLI is handed the same directory the edits, the backup,
+		// the manifest and the lock use, so a symlink followed by ".." cannot make them name different files.
+		home, err = configguard.ResolveCodexHome(home)
+	}
 	if err != nil {
 		fmt.Fprintln(stderr, "crw: "+err.Error())
 		return 1
 	}
-	run := featureRunner(ctx, env)
+	run := featureRunner(ctx, env.With("CODEX_HOME", home))
 	switch args[0] {
 	case "enable":
 		var m *configguard.InstallManifest

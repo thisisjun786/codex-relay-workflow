@@ -51,6 +51,9 @@ func runConfig(args []string, env scope.Env, stdout, stderr io.Writer) int {
 		return 0
 	}
 	home, err := resolveFeatureHome(env)
+	if err == nil {
+		home, err = configguard.ResolveCodexHome(home) // one physical home (CRW-1144)
+	}
 	if err != nil {
 		fmt.Fprintln(stderr, "crw: "+err.Error())
 		return 1
