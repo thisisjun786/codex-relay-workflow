@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 )
@@ -17,10 +16,6 @@ import (
 // dispatchReceiptRow is one thread of a native database with the columns the host writes for a spawned child.
 type dispatchReceiptRow struct {
 	id, parent, first, model, effort string
-	// created is the thread's created_at_ms; 0 is now, which is after any issuance the test made before seeding. noClock
-	// leaves the column out of the schema, as a host whose threads table has no creation time.
-	created int64
-	noClock bool
 }
 
 // dispatchReceiptNative seeds a native database holding rows and returns the environment that reads it.
@@ -31,22 +26,10 @@ func dispatchReceiptNative(t *testing.T, env host.LookupEnv, rows ...dispatchRec
 	defer db.Close()
 	_, err := db.Exec("CREATE TABLE threads (id TEXT PRIMARY KEY, rollout_path TEXT, source TEXT, archived INTEGER, first_user_message TEXT, model TEXT, reasoning_effort TEXT)")
 	check(t, err)
-	if len(rows) == 0 || !rows[0].noClock {
-		_, err = db.Exec("ALTER TABLE threads ADD COLUMN created_at_ms INTEGER")
-		check(t, err)
-	}
 	for _, r := range rows {
 		source := string(must(json.Marshal(map[string]any{"subagent": map[string]any{"thread_spawn": map[string]any{"parent_thread_id": r.parent, "depth": 1}}})))
-		_, err = db.Exec("INSERT INTO threads (id, rollout_path, source, archived, first_user_message, model, reasoning_effort) VALUES (?,?,?,0,?,?,?)", r.id, "", source, r.first, r.model, r.effort)
+		_, err = db.Exec("INSERT INTO threads VALUES (?,?,?,0,?,?,?)", r.id, "", source, r.first, r.model, r.effort)
 		check(t, err)
-		if !r.noClock {
-			created := r.created
-			if created == 0 {
-				created = time.Now().UnixMilli() + 1
-			}
-			_, err = db.Exec("UPDATE threads SET created_at_ms=? WHERE id=?", created, r.id)
-			check(t, err)
-		}
 	}
 	return func(k string) (string, bool) {
 		if k == "CODEX_HOME" {
@@ -68,6 +51,15 @@ func dispatchReceiptClaim(t *testing.T, ws string, env host.LookupEnv, role Role
 func dispatchReceiptIssue(t *testing.T, ws, marker, tool string) {
 	t.Helper()
 	if _, err := IssueManagedSpawn(ws, "session-test", marker+"\nTASK", &tool); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// dispatchReceiptIssueSeeing is the issuance the hook makes with the host's thread database readable through env, which
+// records the marked children the host already shows.
+func dispatchReceiptIssueSeeing(t *testing.T, ws string, env host.LookupEnv, marker, tool string) {
+	t.Helper()
+	if _, err := IssueManagedSpawnEnv(ws, "session-test", marker+"\nTASK", &tool, env); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -274,48 +266,57 @@ func dispatchTestClaimIssued(t *testing.T, ws string, env host.LookupEnv, fields
 }
 
 // The marker in a child's first message is not proof that the issued call created it: a child made before the spawn was issued
-// (the hook off, or an older call) can carry the same claimed marker. The host's creation time of the child must be after the
-// issuance, and the marker must belong to that one child. The older child is refused and writes nothing; the child created
-// after the issuance is adopted; a second marked child after the issuance leaves the match unverified.
+// (the hook off, an older call) can carry the same claimed marker. The hook records the marked children the host already shows
+// when it issues the attempt, so such a child is refused and writes nothing; a new child is tied to the call only when no
+// other new child carries the marker (two leave it unverified), and an issuance that could not read the host's database leaves
+// every child unverified.
 func TestDispatchReceiptMarkerAloneDoesNotProveTheIssuedCall(t *testing.T) {
 	ws := t.TempDir()
 	env, _ := home(t)
 	attempt, marker := dispatchReceiptClaim(t, ws, env, Reviewer, "review-test")
-	dispatchReceiptIssue(t, ws, marker, "call-1")
+	old := dispatchReceiptRow{id: "child-old", parent: "session-test", first: marker + "\nREVIEW"}
+	dispatchReceiptIssueSeeing(t, ws, dispatchReceiptNative(t, env, old), marker, "call-1")
 	file := dispatchReceiptFile(ws, "review-test")
+	if stored := must(dispatchRead(file, "session-test", "review-test")).Attempts[0]; len(stored.PriorChildren) != 1 || stored.PriorChildren[0] != "child-old" || stored.PriorUnobserved {
+		t.Fatalf("issuance recorded prior %v %v", stored.PriorChildren, stored.PriorUnobserved)
+	}
+	fresh := dispatchReceiptRow{id: "child-new", parent: "session-test", first: marker + "\nREVIEW"}
+	twin := dispatchReceiptRow{id: "child-twin", parent: "session-test", first: marker + "\nREVIEW"}
 	before := must(os.ReadFile(file))
-	old := dispatchReceiptNative(t, env,
-		dispatchReceiptRow{id: "child-old", parent: "session-test", first: marker + "\nREVIEW", created: 1},
-		dispatchReceiptRow{id: "child-new", parent: "session-test", first: marker + "\nREVIEW"},
-	)
-	if _, err := CheckedDispatch(context.Background(), ws, dispatchReceiptCreated("review-test", attempt, "child-old"), old, nil); err == nil || !strings.Contains(err.Error(), "before the spawn was issued") {
-		t.Fatalf("created of a child older than the issuance = %v", err)
+	if _, err := CheckedDispatch(context.Background(), ws, dispatchReceiptCreated("review-test", attempt, "child-old"), dispatchReceiptNative(t, env, old, fresh), nil); err == nil || !strings.Contains(err.Error(), "when the spawn was issued") {
+		t.Fatalf("created of a child the host showed at issuance = %v", err)
 	}
 	if string(before) != string(must(os.ReadFile(file))) {
 		t.Fatal("the refused created report wrote state")
 	}
-	// A host with no creation time cannot show the order: the child is recorded unverified and cannot complete the review.
-	noClock := dispatchReceiptNative(t, env, dispatchReceiptRow{id: "child-new", parent: "session-test", first: marker + "\nREVIEW", noClock: true})
-	out, err := CheckedDispatch(context.Background(), ws, dispatchReceiptCreated("review-test", attempt, "child-new"), noClock, nil)
+	out, err := CheckedDispatch(context.Background(), ws, dispatchReceiptCreated("review-test", attempt, "child-new"), dispatchReceiptNative(t, env, old, fresh, twin), nil)
 	check(t, err)
 	if r := out.Attempts[0].Receipt; r == nil || r.Correlation != "unverified" {
-		t.Fatalf("created without a creation time = %+v", out.Attempts[0].Receipt)
+		t.Fatalf("created with two new marked children = %+v", out.Attempts[0].Receipt)
 	}
-	// Two marked children after the issuance: neither is the one the call returned.
-	twins := dispatchReceiptNative(t, env,
-		dispatchReceiptRow{id: "child-new", parent: "session-test", first: marker + "\nREVIEW"},
-		dispatchReceiptRow{id: "child-twin", parent: "session-test", first: marker + "\nREVIEW"},
-	)
-	out, err = CheckedDispatch(context.Background(), ws, dispatchReceiptCreated("review-test", attempt, "child-new"), twins, nil)
-	check(t, err)
-	if r := out.Attempts[0].Receipt; r == nil || r.Correlation != "unverified" {
-		t.Fatalf("created with two marked children = %+v", out.Attempts[0].Receipt)
-	}
-	// The child created after the issuance, alone, is adopted and completes the review.
-	out, err = CheckedDispatch(context.Background(), ws, dispatchReceiptCreated("review-test", attempt, "child-new"), old, nil)
+	out, err = CheckedDispatch(context.Background(), ws, dispatchReceiptCreated("review-test", attempt, "child-new"), dispatchReceiptNative(t, env, old, fresh), nil)
 	check(t, err)
 	if r := out.Attempts[0].Receipt; r == nil || r.Correlation != "attempt-marker" {
-		t.Fatalf("created of the child after the issuance = %+v", out.Attempts[0].Receipt)
+		t.Fatalf("created of the only new child = %+v", out.Attempts[0].Receipt)
+	}
+
+	// A host database that cannot be read at issuance leaves nothing to compare with.
+	attempt, marker = dispatchReceiptClaim(t, ws, env, Reviewer, "review-two")
+	broken := t.TempDir()
+	check(t, os.WriteFile(filepath.Join(broken, "state_5.sqlite"), []byte("not a database"), 0o600))
+	dispatchReceiptIssueSeeing(t, ws, func(k string) (string, bool) {
+		if k == "CODEX_HOME" {
+			return broken, true
+		}
+		return env(k)
+	}, marker, "call-2")
+	if stored := must(dispatchRead(dispatchReceiptFile(ws, "review-two"), "session-test", "review-two")).Attempts[0]; !stored.PriorUnobserved {
+		t.Fatal("an unreadable database at issuance was not recorded")
+	}
+	out, err = CheckedDispatch(context.Background(), ws, dispatchReceiptCreated("review-two", attempt, "child-b"), dispatchReceiptNative(t, env, dispatchReceiptRow{id: "child-b", parent: "session-test", first: marker + "\nREVIEW"}), nil)
+	check(t, err)
+	if r := out.Attempts[0].Receipt; r == nil || r.Correlation != "unverified" {
+		t.Fatalf("created after an unobserved issuance = %+v", out.Attempts[0].Receipt)
 	}
 }
 

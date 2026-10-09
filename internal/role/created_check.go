@@ -12,7 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"strconv"
+	"slices"
 	"time"
 )
 
@@ -76,7 +76,7 @@ func dispatchPinnedChecked(ctx context.Context, cwd string, input any, env host.
 // native call the attempt was issued to, and the attempt must have been issued by the spawn hook, unless the report takes the
 // explicit reconciliation path for a child spawned without it. Then the session's other records must not hold the id, the
 // host must witness a subagent of this session, and, when the native database shows the child's first message, that message
-// must carry this attempt's dispatch marker and the child must not predate the issuance (createdCheckOrdered). The accepted
+// must carry this attempt's dispatch marker and the child must not be one the host already showed when the spawn was issued (createdCheckOrdered). The accepted
 // report writes the attempt's receipt; a report of a child whose receipt is already attempt-marker keeps that receipt.
 func createdCheckReporter(ctx context.Context, env host.LookupEnv, h DispatchHost) dispatchReporter {
 	return func(dir *dispatchPinnedDir, name string, d *Dispatch, b map[string]any) (DispatchResult, error) {
@@ -165,27 +165,27 @@ func createdCheckReporter(ctx context.Context, env host.LookupEnv, h DispatchHos
 
 // createdCheckOrdered decides whether a child whose first message carries this attempt's marker is the child the issued native
 // call created. The marker is written by the caller into the call's message, so it names the call but is not the call's
-// result: a child made before the spawn was issued (the hook off, an older call) can carry it too. The host's own record is
-// compared with the issuance the hook wrote: a child the host created before the issuance is refused, and one created after it
-// is tied to the call ("attempt-marker") only when no other child of the session carries the marker from the issuance on. A
-// host that shows no creation time, an attempt issued without a recorded time, or a second marked child leaves the child
-// "unverified". An unissued attempt only needs the marker read.
+// result: a child made before the spawn was issued (the hook off, an older call) can carry it too. The spawn hook recorded
+// which marked children the host already showed when it issued the attempt; such a child is refused, and a child the call
+// created after it is tied to the call ("attempt-marker") only when no other new child of the session carries the marker. An
+// issuance whose prior children could not be observed, an unreadable host database or a second new marked child leaves the
+// child "unverified". An unissued attempt only needs the marker read.
 func createdCheckOrdered(ctx context.Context, env host.LookupEnv, d *Dispatch, a *DispatchAttempt, child createdCheckIdentity, issued bool) (string, error) {
 	if !issued {
 		return "attempt-marker", nil
 	}
-	if a.IssuedAtMs == 0 || child.CreatedMs == 0 {
-		return "unverified", nil
+	if slices.Contains(a.PriorChildren, child.ID) {
+		return "", errors.New("agentId is not the child the issued spawn created: the host already showed it with this attempt's marker when the spawn was issued" + createdCheckCorrection)
 	}
-	if child.CreatedMs < a.IssuedAtMs {
-		return "", errors.New("agentId is not the child the issued spawn created: the host created it before the spawn was issued" + createdCheckCorrection)
+	if a.PriorUnobserved {
+		return "unverified", nil
 	}
 	marked, err := createdCheckMarked(ctx, env, d.SessionID, d.ID, a.ID)
 	if err != nil {
 		return "unverified", nil
 	}
 	for _, other := range marked {
-		if other.ID != child.ID && (other.CreatedMs == 0 || other.CreatedMs >= a.IssuedAtMs) {
+		if other.ID != child.ID && !slices.Contains(a.PriorChildren, other.ID) {
 			return "unverified", nil
 		}
 	}
@@ -291,9 +291,6 @@ type createdCheckIdentity struct {
 	// RolloutPath, FirstMessage, Model and Effort are the native database's rollout_path, first_user_message, model and
 	// reasoning_effort of the thread, "" when the column is absent or empty. Only the native read fills them.
 	RolloutPath, FirstMessage, Model, Effort string
-	// CreatedMs is the thread's creation time in Unix milliseconds (created_at_ms, else created_at in seconds); 0 when the
-	// host's table shows neither.
-	CreatedMs int64
 }
 
 func createdCheckRead(ctx context.Context, env host.LookupEnv, h DispatchHost, agent string) (createdCheckIdentity, error) {
@@ -495,6 +492,9 @@ func createdCheckMarked(ctx context.Context, env host.LookupEnv, session, dispat
 	return out, err
 }
 
+// errCreatedNoDatabase says the host has no thread database yet, so it shows no thread at all.
+var errCreatedNoDatabase = errors.New("host thread database is missing")
+
 // createdCheckWithDB opens the newest native thread database read-only, without networking, and runs fn on one connection.
 func createdCheckWithDB(ctx context.Context, env host.LookupEnv, fn func(*sql.Conn, map[string]bool) error) error {
 	home, err := host.CodexSQLiteHome(env)
@@ -502,6 +502,9 @@ func createdCheckWithDB(ctx context.Context, env host.LookupEnv, fn func(*sql.Co
 		return err
 	}
 	entries, err := os.ReadDir(home)
+	if errors.Is(err, fs.ErrNotExist) {
+		return errCreatedNoDatabase
+	}
 	if err != nil {
 		return err
 	}
@@ -519,7 +522,7 @@ func createdCheckWithDB(ctx context.Context, env host.LookupEnv, fn func(*sql.Co
 		}
 	}
 	if name == "" {
-		return errors.New("host thread database is missing")
+		return errCreatedNoDatabase
 	}
 	path := filepath.Join(home, name)
 	info, err := os.Lstat(path)
@@ -554,7 +557,7 @@ func createdCheckWithDB(ctx context.Context, env host.LookupEnv, fn func(*sql.Co
 }
 
 // createdCheckScan reads one threads row selected by where. Optional columns are read when the host's schema has them; a
-// missing one reads as "" (0 for the creation time).
+// missing one reads as "".
 func createdCheckScan(ctx context.Context, conn *sql.Conn, columns map[string]bool, where, arg string) (id, source string, row createdCheckIdentity, err error) {
 	optional := func(name string) string {
 		if columns[name] {
@@ -562,15 +565,9 @@ func createdCheckScan(ctx context.Context, conn *sql.Conn, columns map[string]bo
 		}
 		return "''"
 	}
-	var createdMs, createdS string
-	query := "SELECT id, source, " + optional("rollout_path") + ", " + optional("first_user_message") + ", " + optional("model") + ", " + optional("reasoning_effort") + ", " + optional("created_at_ms") + ", " + optional("created_at") + " FROM threads " + where
-	if err = conn.QueryRowContext(ctx, query, arg).Scan(&id, &source, &row.RolloutPath, &row.FirstMessage, &row.Model, &row.Effort, &createdMs, &createdS); err != nil {
+	query := "SELECT id, source, " + optional("rollout_path") + ", " + optional("first_user_message") + ", " + optional("model") + ", " + optional("reasoning_effort") + " FROM threads " + where
+	if err = conn.QueryRowContext(ctx, query, arg).Scan(&id, &source, &row.RolloutPath, &row.FirstMessage, &row.Model, &row.Effort); err != nil {
 		return "", "", createdCheckIdentity{}, err
-	}
-	if ms, err := strconv.ParseInt(createdMs, 10, 64); err == nil && ms > 0 {
-		row.CreatedMs = ms
-	} else if s, err := strconv.ParseInt(createdS, 10, 64); err == nil && s > 0 {
-		row.CreatedMs = s * 1000
 	}
 	return id, source, row, nil
 }

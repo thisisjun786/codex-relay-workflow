@@ -61,9 +61,12 @@ type DispatchAttempt struct {
 	Reconciliation *string              `json:"reconciliation"`
 	SpawnIssued    bool                 `json:"spawnIssued"`
 	ToolUseID      *string              `json:"toolUseId"`
-	// IssuedAtMs is the spawn hook's clock (Unix milliseconds) when it issued the attempt; 0 for an attempt issued before the
-	// hook recorded it. The checked boundary compares it with the host's creation time of the reported child.
-	IssuedAtMs int64 `json:"issuedAtMs,omitempty"`
+	// PriorChildren are the children of the session the host already showed with this attempt's dispatch marker when the spawn
+	// hook issued the attempt: whatever the issued call creates comes after them, so none of them is its result. PriorUnobserved
+	// is set when the host's thread database could not be read at issuance, so nothing can be said of which children were
+	// there. Both are omitted when empty, which keeps the record the oracle's when the host shows no marked child.
+	PriorChildren   []string `json:"priorChildren,omitempty"`
+	PriorUnobserved bool     `json:"priorUnobserved,omitempty"`
 	// Termination is set by the checked boundary when a handoff relied on an observed end of the child; the parity ledger
 	// never writes it, and a stored one is kept as it was read.
 	Termination *DispatchTermination `json:"termination,omitempty"`
@@ -508,10 +511,11 @@ func dispatchPinnedDecode(data []byte, session, id string) (Dispatch, error) {
 			return d, errors.New("invalid spawn issuance")
 		}
 		a.SpawnIssued = string(spawn) == "true"
-		if issued := dispatchRaw(a.raw, "issuedAtMs"); issued != nil {
-			if json.Unmarshal(issued, &a.IssuedAtMs) != nil || a.IssuedAtMs < 0 {
-				return d, errors.New("invalid spawn issuance")
-			}
+		if prior := dispatchRaw(a.raw, "priorChildren"); prior != nil && json.Unmarshal(prior, &a.PriorChildren) != nil {
+			return d, errors.New("invalid spawn issuance")
+		}
+		if prior := dispatchRaw(a.raw, "priorUnobserved"); prior != nil && json.Unmarshal(prior, &a.PriorUnobserved) != nil {
+			return d, errors.New("invalid spawn issuance")
 		}
 		if a.Status, err = dispatchStatus(dispatchRaw(a.raw, "status"), "ready", "claimed", "running", "reconcile", "failed", "complete"); err != nil {
 			if errors.Is(err, errNotObject) {

@@ -1,7 +1,9 @@
 package role
 
 import (
+	"context"
 	"errors"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"path/filepath"
 	"regexp"
 	"time"
@@ -47,6 +49,12 @@ func ManagedSpawn(cwd, session, message string) (*ManagedSpawnSelection, error) 
 // IssueManagedSpawn consumes issuance under the ledger lock (oracle:250-267).
 // Repeated hook delivery may reuse only the same nonempty host tool-use ID.
 func IssueManagedSpawn(cwd, session, message string, toolUseID *string) (*ManagedSpawnSelection, error) {
+	return IssueManagedSpawnEnv(cwd, session, message, toolUseID, nil)
+}
+
+// IssueManagedSpawnEnv is IssueManagedSpawn that also records which children the host already shows with the attempt's marker
+// (see DispatchAttempt.PriorChildren), reading the native thread database through env. A nil env records nothing.
+func IssueManagedSpawnEnv(cwd, session, message string, toolUseID *string, env host.LookupEnv) (*ManagedSpawnSelection, error) {
 	root, err := dispatchRoot(cwd)
 	if err != nil {
 		return nil, err
@@ -81,9 +89,20 @@ func IssueManagedSpawn(cwd, session, message string, toolUseID *string) (*Manage
 	if a.SpawnIssued && (toolUseID == nil || *toolUseID == "" || a.ToolUseID == nil || *a.ToolUseID != *toolUseID) {
 		return nil, errors.New("attempt already issued to another native call; reconcile before retry")
 	}
-	if !a.SpawnIssued {
-		a.IssuedAtMs = time.Now().UnixMilli()
-		a.raw.set("issuedAtMs", a.IssuedAtMs)
+	if !a.SpawnIssued && env != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		prior, err := createdCheckMarked(ctx, env, session, d.ID, a.ID)
+		cancel()
+		switch {
+		case err == nil && len(prior) > 0:
+			for _, child := range prior {
+				a.PriorChildren = append(a.PriorChildren, child.ID)
+			}
+			a.raw.set("priorChildren", a.PriorChildren)
+		case err != nil && !errors.Is(err, errCreatedNoDatabase):
+			a.PriorUnobserved = true
+			a.raw.set("priorUnobserved", true)
+		}
 	}
 	a.SpawnIssued, a.ToolUseID = true, toolUseID
 	// The ledger marshaler overlays only the fields its own operations mutate.
