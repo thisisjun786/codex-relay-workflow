@@ -1250,6 +1250,26 @@ CRW-1059 issue text (Linear, read only)	bash -c 'bash lint.sh | cat; bash refres
 CRW-1059 issue text (Linear, read only)	bash -c 'bash lint.sh & bash refresh.sh'	CRW-1059-08	row	-
 CRW-1059 issue text (Linear, read only)	bash -c 'f() { bash lint.sh; }; bash refresh.sh; f'	CRW-1059-09	row	-
 CRW-1059 issue text (Linear, read only)	bash -c 'bash lint.sh; bash refresh.sh; bash lint.sh'	CRW-1059-10	row	-
+linear-issue-CRW-1064.json	f() { :; }; for i in 1; do f; done; bash prog.sh	CRW-1064-01	row	-
+linear-issue-CRW-1064.json	for i in 1; do command true; done; bash prog.sh	CRW-1064-02	row	-
+linear-issue-CRW-1064.json	f() { :; }; for i in 1; do f; done; bash /dev/fd/0 </dev/null	CRW-1064-03	row	-
+linear-issue-CRW-1064.json	chdir sub; bash prog.sh	CRW-1064-04	row	-
+linear-issue-CRW-1064.json	f() { cd sub; }; for i in 1; do f; done; bash prog.sh	CRW-1064-05	row	-
+linear-issue-CRW-1064.json	for i in 1; do command cd sub; done; bash prog.sh	CRW-1064-06	row	-
+linear-issue-CRW-1064.json	for i in 1; do builtin cd sub; done; bash prog.sh	CRW-1064-07	row	-
+linear-issue-CRW-1064.json	for i in 1; do chdir sub; done; bash prog.sh	CRW-1064-08	row	-
+linear-issue-CRW-1064.json	chdir ../repo; bash prog.sh	CRW-1064-09	row	-
+linear-issue-CRW-1064.json	f() { f2; }; f2() { cd sub; }; for i in 1; do f; done; bash prog.sh	CRW-1064-10	row	-
+linear-issue-CRW-1064.json	bash /dev/fd/0 </dev/null	CRW-1064-11	row	-
+linear-issue-CRW-1064.json	bash prog.sh	CRW-1064-12	row	-
+pre-eval-crw1064-9701e19e (d1 P0)	n=0; f() { : "$((n=1))"; }; for i in 1; do f; echo x >"dir$n/a"; done	CRW-1064-13	row	-
+pre-eval-crw1064-9701e19e (d1 P0)	n=0; for i in 1; do builtin : "$((n=1))"; echo x >"dir$n/a"; done	CRW-1064-14	row	-
+pre-eval-crw1064-9701e19e (d1 P0)	m=; f() { : "${m:=x}"; }; for i in 1; do f; echo y >"d$m/a"; done	CRW-1064-15	row	-
+pre-eval-crw1064-9701e19e (d1 control)	n=0; for i in 1; do : "$((n+1))"; echo x >"dir$n/a"; done	CRW-1064-16	row	-
+pre-eval-crw1064-9701e19e (d1 P0)	n=0; : "$((n=1))"; echo x >"dir$n/a"	CRW-1064-17	row	-
+pre-eval-crw1064-9701e19e (d2 P0)	chdir() { :; }; for i in 1; do builtin chdir {MEMORY}; echo x >a; done	CRW-1064-18	row	-
+pre-eval-crw1064-9701e19e (d2 P0)	chdir() { :; }; chdir {MEMORY}; echo x >a	CRW-1064-19	row	-
+pre-eval-crw1064-9701e19e (d2 control)	for i in 1; do builtin chdir {MEMORY}; echo x >a; done	CRW-1064-20	row	-
 recheck-20261009-g4-RC-851-v3	python3 -c 'import builtins; builtins \<nl>.exec("""open(file="<m>/a",mode="w")""")'	CRW-851-lc-01	row	-
 recheck-20261009-g4-RC-851-v3d	python3 -c 'import builtins; (builtins \<nl>.exec)("""open(file="<m>/a",mode="w")""")'	CRW-851-lc-02	row	-
 added by CRW-851 (line-continuation variant of the 10-09 re-check RC-851-v3)	python3 -c 'import builtins; builtins.\<nl>exec("""open(file="<m>/a",mode="w")""")'	CRW-851-lc-03	row	-

@@ -429,20 +429,14 @@ func loopContext(ctx Context) Context {
 // statements cannot change the directory (see changesDir); only then does the
 // directory stay known through the loop.
 func prescanLoop(st *state, lists ...[]*syntax.Stmt) (keepsDir bool) {
-	changes, dir := false, changesDir(st, lists...)
+	dir := changesDir(st, lists...)
+	vars := newEffectScan(st, false)
+	changes := false
 	for _, list := range lists {
 		for _, s := range list {
-			syntax.Walk(s, func(n syntax.Node) bool {
-				switch c := n.(type) {
-				case *syntax.CallExpr:
-					if len(c.Assigns) > 0 || changesStateCall(c, st) {
-						changes = true
-					}
-				case *syntax.DeclClause, *syntax.LetClause, *syntax.ArithmCmd, *syntax.ForClause:
-					changes = true
-				}
-				return true
-			})
+			if vars.stateChanges(s) {
+				changes = true
+			}
 		}
 	}
 	if dir {
@@ -454,63 +448,150 @@ func prescanLoop(st *state, lists ...[]*syntax.Stmt) (keepsDir bool) {
 	return !dir
 }
 
-// changesDir reports statements that may change the directory of the shell that runs them: a cd, pushd or popd; anything
-// that runs text or a builtin the reader does not see at this point (eval, source, ., trap, builtin, command, exec, an alias, a
-// zsh precommand modifier, a function call, a command whose name is not a plain word); or any mention of CDPATH, which changes
-// where a later cd goes. It looks inside nested statements, command substitutions and subshells too (it does not tell a subshell
-// from the shell itself, so it may say yes where the directory cannot change, never the other way).
+// changesDir checks only directory changes, following the same functions and wrappers as the state prescan. CDPATH and
+// commands that may replace the shell's builtins remain conservative; harmless function and wrapper calls keep the directory.
 func changesDir(st *state, lists ...[]*syntax.Stmt) bool {
-	changes := false
+	e := newEffectScan(st, true)
 	for _, list := range lists {
 		for _, s := range list {
-			syntax.Walk(s, func(n syntax.Node) bool {
-				switch c := n.(type) {
-				case *syntax.Lit:
-					if strings.Contains(c.Value, "CDPATH") {
-						changes = true
-					}
-				case *syntax.CallExpr:
-					if len(c.Args) > 0 && changesDirCall(c.Args[0].Lit(), st) {
-						changes = true
-					}
-				}
-				return !changes
-			})
+			if e.stateChanges(s) {
+				return true
+			}
 		}
 	}
+	return false
+}
+
+// effectScan judges whether a statement can change the directory (directoryOnly) or the variables a later command reads. A call
+// to a function counts when the function's body does, and a wrapper (command, builtin, exec) counts when the program it runs
+// does. The verdict for each function is kept, so a function that many calls reach is judged once and the work stays bounded by
+// the size of the text. A verdict of no change is exact. A verdict of change may be conservative: a call back into a function
+// being judged, or a chain of calls deeper than MaxNestingDepth, counts as a change.
+type effectScan struct {
+	st            *state
+	directoryOnly bool
+	verdicts      map[string]bool
+	active        []string
+}
+
+func newEffectScan(st *state, directoryOnly bool) *effectScan {
+	return &effectScan{st: st, directoryOnly: directoryOnly, verdicts: map[string]bool{}}
+}
+
+// stateChanges reports whether a node can change the state the scan judges. Changes are only ever set to true, so a later
+// node in the same tree cannot undo an earlier one.
+func (e *effectScan) stateChanges(n syntax.Node) bool {
+	changes := false
+	syntax.Walk(n, func(n syntax.Node) bool {
+		switch c := n.(type) {
+		case *syntax.Lit:
+			if e.directoryOnly && strings.Contains(c.Value, "CDPATH") {
+				changes = true
+			}
+		case *syntax.CallExpr:
+			if !e.directoryOnly && len(c.Assigns) > 0 || e.callChanges(c) {
+				changes = true
+			}
+		case *syntax.DeclClause, *syntax.LetClause, *syntax.ArithmCmd, *syntax.ForClause:
+			if !e.directoryOnly {
+				changes = true
+			}
+		case *syntax.BinaryArithm:
+			// an assignment inside an arithmetic expansion, $((n=1)), sets the variable on its left
+			if !e.directoryOnly && assignsArithm(c.Op) {
+				changes = true
+			}
+		case *syntax.UnaryArithm:
+			if !e.directoryOnly && (c.Op == syntax.Inc || c.Op == syntax.Dec) {
+				changes = true
+			}
+		case *syntax.ParamExp:
+			// a default assignment, ${n:=x} or ${n=x}, sets the variable it names when the test holds
+			if !e.directoryOnly && c.Exp != nil && (c.Exp.Op == syntax.AssignUnset || c.Exp.Op == syntax.AssignUnsetOrNull) {
+				changes = true
+			}
+		}
+		return !changes
+	})
 	return changes
 }
 
-func changesDirCall(name string, st *state) bool {
-	if name == "" || strings.ContainsAny(name, `\$'"`+"`") {
-		return true // a name the parser does not hand over as one plain word: the reader cannot say which command it is
-	}
-	if _, ok := st.funcs[name]; ok {
-		return true
-	}
-	switch name {
-	case "cd", "pushd", "popd", "eval", "source", ".", "trap", "builtin", "command", "exec",
-		"alias", "unalias", "shopt", "enable", "noglob", "nocorrect", "-":
+// assignsArithm reports whether an arithmetic operator assigns to its left operand.
+func assignsArithm(op syntax.BinAritOperator) bool {
+	switch op {
+	case syntax.Assgn, syntax.AddAssgn, syntax.SubAssgn, syntax.MulAssgn, syntax.QuoAssgn, syntax.RemAssgn,
+		syntax.AndAssgn, syntax.OrAssgn, syntax.XorAssgn, syntax.ShlAssgn, syntax.ShrAssgn,
+		syntax.AndBoolAssgn, syntax.OrBoolAssgn, syntax.XorBoolAssgn, syntax.PowAssgn:
 		return true
 	}
 	return false
 }
 
-func changesStateCall(c *syntax.CallExpr, st *state) bool {
-	if len(c.Args) == 0 {
+func (e *effectScan) callChanges(c *syntax.CallExpr) bool {
+	words := make([]Word, len(c.Args))
+	for i, a := range c.Args {
+		v := a.Lit()
+		words[i] = Word{Known: v != "", Value: v}
+	}
+	return e.wordsChange(words)
+}
+
+// wordsChange reports whether a command with these words can change the state. A program the text does not show counts.
+func (e *effectScan) wordsChange(words []Word) bool {
+	if len(words) == 0 {
 		return false
 	}
-	name := c.Args[0].Lit()
-	if _, ok := st.funcs[name]; ok {
+	if !words[0].Known {
 		return true
+	}
+	name := words[0].Value
+	if e.directoryOnly && strings.ContainsAny(name, `\$'"`+"`") {
+		return true
+	}
+	if body, ok := e.st.funcs[name]; ok {
+		return e.function(name, body)
 	}
 	switch name {
-	case "cd", "pushd", "popd", "read", "mapfile", "readarray", "getopts", "printf", "unset",
-		"let", "export", "declare", "typeset", "local", "readonly", "eval", "source", ".",
-		"trap", "set", "shift", "builtin", "command", "exec":
+	case "command", "builtin", "exec":
+		u, err := unwrapCommand(name, words[1:])
+		if err != nil {
+			return true
+		}
+		for _, inner := range u.inner {
+			if e.wordsChange(inner) {
+				return true
+			}
+		}
+		return false
+	case "cd", "chdir", "pushd", "popd", "eval", "source", ".", "trap",
+		"alias", "unalias", "shopt", "enable", "noglob", "nocorrect", "-":
 		return true
+	case "read", "mapfile", "readarray", "getopts", "printf", "unset",
+		"let", "export", "declare", "typeset", "local", "readonly", "set", "shift":
+		return !e.directoryOnly
 	}
 	return false
+}
+
+// function judges the body of a function once for this scan. A call back into a function being judged is a change, as is a
+// chain deeper than MaxNestingDepth; both only keep the state unknown.
+func (e *effectScan) function(name string, body *syntax.Stmt) bool {
+	if v, ok := e.verdicts[name]; ok {
+		return v
+	}
+	if len(e.active) >= MaxNestingDepth {
+		return true
+	}
+	for _, f := range e.active {
+		if f == name {
+			return true
+		}
+	}
+	e.active = append(e.active, name)
+	changes := e.stateChanges(body)
+	e.active = e.active[:len(e.active)-1]
+	e.verdicts[name] = changes
+	return changes
 }
 
 func (w *walker) binary(c *syntax.BinaryCmd, st *state, ctx Context) error {
@@ -999,7 +1080,7 @@ func (w *walker) dispatch(words []Word, assigns []Assign, redirs []Redir, st *st
 		return w.trapCall(words[1:], st, ctx)
 	case name == "su":
 		return w.suCall(words[1:], st, ctx)
-	case name == "cd":
+	case name == "cd" || name == "chdir":
 		if ctx.Feed.replacedIn(words[1:]) {
 			// The wrapper puts a name the reader does not know in place of its string (find's {} is each path it finds).
 			st.dir = unknownDir(st.dir)
@@ -1288,7 +1369,7 @@ func shellStateBuiltin(w Word) bool {
 		return false
 	}
 	switch w.Value {
-	case "cd", "pushd", "popd", "export", "unset", "set", "shopt", "alias", "unalias", "hash", "trap", "source", ".",
+	case "cd", "chdir", "pushd", "popd", "export", "unset", "set", "shopt", "alias", "unalias", "hash", "trap", "source", ".",
 		"eval", "read", "mapfile", "readarray", "getopts", "let", "declare", "typeset", "local", "readonly", "shift",
 		"umask", "ulimit", "enable", "builtin", "command", "exec":
 		return true

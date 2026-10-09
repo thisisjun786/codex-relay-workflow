@@ -399,8 +399,10 @@ func TestGitHubPostGuardJudgements(t *testing.T) {
 		{"nested control structures", "if true; then for i in 1 2; do gh pr comment 1 -b plain; done; fi", githubPostRuleInline, githubPostWhereCommand},
 		{"post after a loop closes", "for i in 1; do :; done; gh pr comment 1 -b plain", githubPostRuleInline, githubPostWhereCommand},
 		{"nested control structures with nothing to do with gh", "if true; then for i in 1 2; do echo hi; done; fi", "", ""},
-		{"clean post after a loop closes", "for i in 1; do :; done; gh pr comment 1 --body-file body.md", githubPostRuleUnread, githubPostWhereCommand},                // a loop that changes no directory keeps it known (CRW-894), so the refusal is that of a body file post with other commands, as for "another file written before a clean post"
-		{"clean post after a loop that changes the directory", "for i in 1; do cd \"$D\"; done; gh pr comment 1 --body-file body.md", githubPostRuleUnread, "body.md"}, // the loop leaves the directory unknown, so the body file is unreadable where it is named
+		{"post after a loop that changes the directory", "for i in 1; do cd sub; done; gh pr comment 1 --body-file body.md", githubPostRuleUnread, "body.md"}, // the loop leaves the directory unknown, so the body file is unreadable where it is named
+		// The loop keeps the directory (CRW-1064 c1); the body file the test does not create is refused at the command.
+		{"clean post after a loop closes", "for i in 1; do :; done; gh pr comment 1 --body-file body.md", githubPostRuleUnread, githubPostWhereCommand},
+		{"clean post after a loop that changes the directory", "for i in 1; do cd \"$D\"; done; gh pr comment 1 --body-file body.md", githubPostRuleUnread, "body.md"},
 		{"timeout with a duration suffix", "timeout 30s gh pr comment 1 -b plain", githubPostRuleInline, githubPostWhereCommand},
 		{"timeout with a duration and a variable", "timeout 30s gh pr comment 1 -b \"$BODY\"", githubPostRuleInline, githubPostWhereCommand},
 		{"exec", "exec gh pr comment 1 -b plain", githubPostRuleInline, githubPostWhereCommand},
