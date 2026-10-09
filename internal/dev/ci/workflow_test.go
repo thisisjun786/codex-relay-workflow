@@ -9,6 +9,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"sort"
 	"strings"
@@ -397,10 +398,65 @@ func envAssignment(w string, afterDashes bool) bool {
 	return envAssignmentWord.MatchString(w) && (afterDashes || !strings.HasPrefix(w, "-"))
 }
 
+// argList is an argument list as a shared chain: a list and its tail are the same nodes, and equal lists
+// (same first word, same tail) are one node with one id, so a state of the walk is named by a number and the
+// words after a position are never copied. The empty list is nil.
+type argList struct {
+	head string
+	tail *argList
+	id   int
+}
+
+func (l *argList) next() *argList {
+	if l == nil {
+		return nil
+	}
+	return l.tail
+}
+
+func (l *argList) words() []string {
+	var out []string
+	for ; l != nil; l = l.tail {
+		out = append(out, l.head)
+	}
+	return out
+}
+
+type argListKey struct {
+	head string
+	tail int
+}
+
+type walkState struct {
+	name     string
+	duration bool
+	list     int
+}
+
 // wrapperWalk is the state one wrapper reading shares with the env splits inside it: the argument lists
-// already walked, so a state is walked once however many splits lead to it, and the work stays linear.
+// already walked, so a state is walked once however many splits lead to it, and the work stays linear. A state
+// is a wrapper name, whether timeout's duration was read, and the interned argument list, so naming it costs a
+// constant however long the list is.
 type wrapperWalk struct {
-	seen map[string]bool
+	seen     map[walkState]bool
+	interned map[argListKey]*argList
+}
+
+// list chains words in front of tail.
+func (ww *wrapperWalk) list(words []string, tail *argList) *argList {
+	for i := len(words) - 1; i >= 0; i-- {
+		key := argListKey{head: words[i]}
+		if tail != nil {
+			key.tail = tail.id
+		}
+		node := ww.interned[key]
+		if node == nil {
+			node = &argList{head: words[i], tail: tail, id: len(ww.interned) + 1}
+			ww.interned[key] = node
+		}
+		tail = node
+	}
+	return tail
 }
 
 // wrapperRunsNodeTest reports whether a wrapper runs a Node test: its program is read from args, the words
@@ -414,71 +470,73 @@ type wrapperWalk struct {
 // is one more level of depth and shares the walked states, so the walk is bounded by shellMaxDepth and by the
 // number of distinct argument lists, not by the number of ways to reach them.
 func wrapperRunsNodeTest(name string, args []string, depth int) bool {
-	return (&wrapperWalk{seen: map[string]bool{}}).runs(name, args, depth)
+	ww := &wrapperWalk{seen: map[walkState]bool{}, interned: map[argListKey]*argList{}}
+	return ww.runs(name, ww.list(args, nil), depth)
 }
 
-func (ww *wrapperWalk) runs(name string, args []string, depth int) bool {
+func (ww *wrapperWalk) runs(name string, args *argList, depth int) bool {
 	if depth > shellMaxDepth {
 		return true
 	}
 	takes := shellWrapperArgs[name]
-	var walk func(i int, duration bool) bool
-	walk = func(i int, duration bool) bool {
-		if i >= len(args) {
+	var walk func(l *argList, duration bool) bool
+	walk = func(l *argList, duration bool) bool {
+		if l == nil {
 			return false
 		}
-		key := fmt.Sprintf("%s\x00%t\x00%s", name, duration, strings.Join(args[i:], "\x00"))
-		if ww.seen[key] {
+		state := walkState{name: name, duration: duration, list: l.id}
+		if ww.seen[state] {
 			return false
 		}
-		ww.seen[key] = true
-		w := args[i]
+		ww.seen[state] = true
+		w := l.head
 		switch {
 		case name == "env" && envAssignment(w, false):
-			return walk(i+1, duration)
+			return walk(l.tail, duration)
 		case w == "--" && name == "timeout" && !duration:
-			return i+2 < len(args) && commandRunsNodeTest(args[i+2:], depth+1)
+			after := l.tail.next()
+			return after != nil && commandRunsNodeTest(after.words(), depth+1)
 		case w == "--" && name == "env":
-			rest := args[i+1:]
-			for len(rest) > 0 && envAssignment(rest[0], true) {
-				rest = rest[1:]
+			rest := l.tail
+			for rest != nil && envAssignment(rest.head, true) {
+				rest = rest.tail
 			}
-			return commandRunsNodeTest(rest, depth+1)
+			return commandRunsNodeTest(rest.words(), depth+1)
 		case w == "--":
-			return commandRunsNodeTest(args[i+1:], depth+1)
+			return commandRunsNodeTest(l.tail.words(), depth+1)
 		case name == "env" && envSplitCluster.MatchString(w):
 			if rest := w[len(envSplitCluster.FindString(w)):]; rest != "" {
-				return ww.split(rest, args[i+1:], depth)
+				return ww.split(rest, l.tail, depth)
 			}
-			return i+1 < len(args) && ww.split(args[i+1], args[i+2:], depth)
+			return l.tail != nil && ww.split(l.tail.head, l.tail.tail, depth)
 		case name == "env" && envSplitLong(w):
 			if _, value, ok := strings.Cut(w, "="); ok {
-				return ww.split(value, args[i+1:], depth)
+				return ww.split(value, l.tail, depth)
 			}
-			return i+1 < len(args) && ww.split(args[i+1], args[i+2:], depth)
+			return l.tail != nil && ww.split(l.tail.head, l.tail.tail, depth)
 		case takes[w]:
-			return walk(i+2, duration)
+			return walk(l.tail.next(), duration)
 		case strings.HasPrefix(w, "-") && w != "-":
-			return walk(i+1, duration) || walk(i+2, duration)
+			return walk(l.tail, duration) || walk(l.tail.next(), duration)
 		case name == "timeout" && !duration:
-			return walk(i+1, true)
+			return walk(l.tail, true)
 		default:
-			return commandRunsNodeTest(args[i:], depth+1)
+			return commandRunsNodeTest(l.words(), depth+1)
 		}
 	}
-	return walk(0, false)
+	return walk(args, false)
 }
 
 // split reads the value of env -S as env does (CRW-1047): the value is split into words by env's own
 // rules (envSplitString), not by the shell's, and the words replace the option in env's argument list, so the
 // words after the value follow them, the way env builds its argv. The result is one argv, not a script: a ";"
 // in the value is a character of a word. A value the splitter cannot read whole is a finding.
-func (ww *wrapperWalk) split(value string, rest []string, depth int) bool {
+func (ww *wrapperWalk) split(value string, rest *argList, depth int) bool {
 	words, ok := envSplitString(value)
 	if !ok {
 		return true
 	}
-	return ww.runs("env", append(words, rest...), depth+1)
+	return ww.runs("env", ww.list(words, rest), depth+1)
 }
 
 // envSplitString splits the value of env -S the way GNU env does. Blanks (space, tab, newline, vertical tab,
@@ -1984,6 +2042,28 @@ func TestWorkflow_repeated_env_split_options_are_read_in_bounded_work(t *testing
 			}
 		case <-time.After(10 * time.Second):
 			t.Fatalf("%d repetitions: no answer after 10s, the split recursion branches", row.reps)
+		}
+	}
+}
+
+// CRW-1047, fix round 4. The walk costs a constant per option: a long option list with no split must not copy
+// the rest of the list at every option. An unknown option is read both ways, so each option is one walked state;
+// a state key that copied the remaining words would allocate quadratically (about 350MB for 4000 options, while
+// the linear walk needs well under 2MB).
+func TestWorkflow_a_long_wrapper_option_list_is_walked_in_linear_work(t *testing.T) {
+	const options, budget = 4000, 16 << 20
+	for _, name := range []string{"env", "sudo", "timeout"} {
+		args := append(slices.Repeat([]string{"--unknown"}, options), "echo")
+		var before, after runtime.MemStats
+		runtime.GC()
+		runtime.ReadMemStats(&before)
+		got := wrapperRunsNodeTest(name, args, 0)
+		runtime.ReadMemStats(&after)
+		if allocated := after.TotalAlloc - before.TotalAlloc; allocated > budget {
+			t.Errorf("%s with %d unknown options allocated %d bytes, want at most %d: the walk copies the rest of the list per option", name, options, allocated, budget)
+		}
+		if got {
+			t.Errorf("%s with %d unknown options and an echo: found, want no finding", name, options)
 		}
 	}
 }
