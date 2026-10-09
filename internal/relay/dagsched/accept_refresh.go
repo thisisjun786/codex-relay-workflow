@@ -216,6 +216,10 @@ func (s *Scheduler) settleAcceptRefresh(ctx context.Context, q store.Querier, pl
 	if err != nil {
 		return nil, "", err
 	}
+	// the reader reports a failed or unstable collection in the verdict and the problems of the snapshot, not as an error: the snapshot is classified as the first reading was
+	if err := ClassifyPullRequest(again); err != nil {
+		return nil, "", err
+	}
 	if again.HeadSHA != pr.HeadSHA || again.BaseRef != pr.BaseRef || again.State != pr.State || again.IsDraft != pr.IsDraft {
 		return nil, "", moved("the pull request")
 	}

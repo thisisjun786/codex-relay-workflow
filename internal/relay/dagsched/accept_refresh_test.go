@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pluginversion"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -306,6 +307,33 @@ func TestAcceptRefusesWhenThePullRequestMovesAfterTheProof(t *testing.T) {
 	}
 	if a.acceptCount() != 0 || a.refreshRows() != 0 {
 		t.Fatalf("%d acceptances and %d refresh rows written on a proof of another head", a.acceptCount(), a.refreshRows())
+	}
+}
+
+// The forge read again inside the write is judged like the first reading (ClassifyPullRequest, pre-merge evaluation d1 of CRW-731): a reader reports a collection failure or a pull request that moved
+// while it was read in the verdict and the problems of the snapshot, not as an error, and its head, base, state and draft fields come from the pinned read. A snapshot that is stale or unknown writes
+// neither the acceptance nor the proof row, whatever the four fields say.
+func TestAcceptRefusesWhenTheReadAgainIsStaleOrUnknown(t *testing.T) {
+	for _, c := range []struct{ name, verdict, code, reason, text string }{
+		{"stale", evidence.Stale, evidence.CandidateMoved, "merge_candidate_moved", "moved while it was read"},
+		{"unknown", evidence.UnknownVerdict, "collection_failed", "", "could not be read completely"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			a := newAcceptRefreshKit(t)
+			a.refresh("other.txt")
+			a.sched.testBeforeAcceptTx = func() {
+				pr := a.forge.by["owner/repo#7"]
+				pr.Verdict, pr.Problems = c.verdict, []Problem{{Code: c.code, Detail: "the pull request changed after the pinned read"}}
+				a.forge.by["owner/repo#7"] = pr
+			}
+			_, err := a.acceptWith(a.repo.path)
+			if err == nil || !strings.Contains(err.Error(), c.text) || (c.reason != "" && refusalReason(err) != c.reason) {
+				t.Fatalf("accept on a read that is %s = %v (%q), want %q", c.name, err, refusalReason(err), c.text)
+			}
+			if a.acceptCount() != 0 || a.refreshRows() != 0 {
+				t.Fatalf("%d acceptances and %d refresh rows written on a read that is %s", a.acceptCount(), a.refreshRows(), c.name)
+			}
+		})
 	}
 }
 
