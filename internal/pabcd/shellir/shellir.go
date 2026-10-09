@@ -112,7 +112,7 @@ type Context struct {
 	Carrier string
 	// RuntimeCarrier keeps the outer run-time wrapper through nested shells, even when it has no structured Feed.
 	RuntimeCarrier string
-	Depth   int
+	Depth          int
 	// Feed says where the operands of a program that find or xargs runs come from; nil outside them.
 	Feed *Feed
 	// pipeSrc is what the left side of the pipe the command reads prints.
