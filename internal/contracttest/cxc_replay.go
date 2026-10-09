@@ -50,6 +50,14 @@ type cxcReplayer struct {
 	long        []string       // fixtures whose answer depends on the case-root length
 	mask        *regexp.Regexp // text no rule may rename: upstream addresses and rewrite-rule text
 	rewrite     *regexp.Regexp // text a rewrite-kind rule (R19, R29, R30) names
+
+	// declared, when set, makes a hook step run the command the plugin root declares for its leg
+	// through /bin/sh -c, as the host does, instead of crw hook <event> --leg <leg> (FireHooks).
+	declared map[string]string
+	// observe sees the outcome of each replayed fixture before it is compared; mutate may change it
+	// first (a fault injected between the process and the comparison).
+	observe func(id string, got cxccorpus.Expect)
+	mutate  func(id string, got *cxccorpus.Expect)
 }
 
 func newCXCReplayer(root, crw string) (*cxcReplayer, error) {
@@ -203,6 +211,13 @@ func (r *cxcReplayer) Bindings(c *cxccorpus.Case) []cxccorpus.Binding {
 func (r *cxcReplayer) Command(c *cxccorpus.Case, s cxccorpus.Scenario, step cxccorpus.Step) (cxccorpus.Invocation, error) {
 	inv := cxccorpus.Invocation{Argv: []string{"/bin/sh", "-c", `umask 022 && exec "$0" "$@"`, "${BIN}/crw"}}
 	switch {
+	case step.Hook != "" && r.declared != nil:
+		command, ok := r.declared[step.Hook]
+		if !ok {
+			return inv, fmt.Errorf("hook leg %q has no declared command in the plugin root", step.Hook)
+		}
+		inv.Argv = []string{"/bin/sh", "-c", command}
+		inv.Env = []string{"PLUGIN_ROOT=" + r.plugin}
 	case step.Hook != "":
 		decl, ok := r.decls[step.Hook]
 		if !ok {
@@ -273,6 +288,12 @@ func (r *cxcReplayer) check(id string, fix cxccorpus.Fixture, claim cxcClaim, tm
 	got, err := cxccorpus.RunScenario(r, cxccorpus.RunOptions{Scratch: scratch, HomeVar: "CRW_HOME", Rules: r.rules}, scenario)
 	if err != nil {
 		return err
+	}
+	if r.observe != nil {
+		r.observe(id, got)
+	}
+	if r.mutate != nil {
+		r.mutate(id, &got)
 	}
 	want, err := mapStrings(fix.Expect, r.rename)
 	if err != nil {

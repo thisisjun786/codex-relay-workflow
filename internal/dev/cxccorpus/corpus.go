@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"time"
 )
 
 // The corpus layout, relative to the repository root.
@@ -149,6 +150,9 @@ type StepResult struct {
 	StdoutJSONL []json.RawMessage `json:"stdout_jsonl,omitempty"`
 	Stdout      *string           `json:"stdout,omitempty"`
 	Stderr      string            `json:"stderr"`
+	// Elapsed is the wall time of the step's process, start to exit. It is a measurement of this
+	// run, not an observation: it is never written to a fixture and a JSON round trip drops it.
+	Elapsed time.Duration `json:"-"`
 }
 
 // Entry is one observed path after the run.

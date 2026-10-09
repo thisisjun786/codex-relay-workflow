@@ -1,0 +1,130 @@
+//go:build dev
+
+package laneparity
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/contracttest"
+)
+
+func repoRoot(t *testing.T) string {
+	t.Helper()
+	root, err := contracttest.Root()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+func TestExpectedLegs_areK1ThenTheTwoOwnRegistrations(t *testing.T) {
+	legs, err := ExpectedLegs(repoRoot(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(legs) != 34 {
+		t.Fatalf("%d legs, want 32 of K1 and 2 own", len(legs))
+	}
+	for i, l := range legs {
+		if !strings.HasPrefix(l.Status, "(crw) ") || strings.Contains(l.Status, "codexclaw") {
+			t.Errorf("%s: status %q is not renamed by R24", l.Leg, l.Status)
+		}
+		if !strings.HasPrefix(l.File, "wiring/hooks/") {
+			t.Errorf("%s: file %q is not under wiring/hooks", l.Leg, l.File)
+		}
+		if l.Own != (i >= 32) {
+			t.Errorf("%s: Own = %v at index %d", l.Leg, l.Own, i)
+		}
+	}
+	if legs[32].Leg != CompletionLeg || legs[33].Leg != GitHubPostLeg {
+		t.Errorf("own legs are %s and %s", legs[32].Leg, legs[33].Leg)
+	}
+}
+
+func TestRoute(t *testing.T) {
+	for _, c := range []struct {
+		command, event, leg string
+		ok                  bool
+	}{
+		{`"/x/crw" hook session-start --leg session-start-bootstrapping-pabcd-state`, "session-start", "session-start-bootstrapping-pabcd-state", true},
+		{`"$HOME/.local/share/crw-runtime/current/bin/crw" hook post-compact --leg=a.post-compact; exit 0`, "post-compact", "a.post-compact", true},
+		{`"$HOME/.local/share/crw-runtime/current/bin/crw" hook --plugin-launch; exit 0`, "stop", CompletionLeg, true},
+		{`node "${PLUGIN_ROOT}/components/pabcd-state/dist/cli.js" hook session-start`, "", "", false},
+		{`exit 0`, "", "", false},
+		{`echo hook stop --legacy x`, "", "", false},
+	} {
+		event, leg, ok := Route(c.command)
+		if event != c.event || leg != c.leg || ok != c.ok {
+			t.Errorf("Route(%q) = %q %q %v, want %q %q %v", c.command, event, leg, ok, c.event, c.leg, c.ok)
+		}
+	}
+}
+
+func generated(t *testing.T) (string, []Leg) {
+	t.Helper()
+	root := repoRoot(t)
+	legs, err := ExpectedLegs(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(t.TempDir(), "crw")
+	if err := GeneratePluginRoot(dir, filepath.Join(root, "plugins", "crw"), "/opt/crw-under-test/crw", legs); err != nil {
+		t.Fatal(err)
+	}
+	return dir, legs
+}
+
+func TestGeneratePluginRoot_declaresEveryLegOnceAndKeepsTheSkills(t *testing.T) {
+	dir, legs := generated(t)
+	manifest, got, err := ReadRegistered(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep := CheckRegistration(manifest, got, legs); !rep.OK {
+		t.Fatalf("a generated root does not register as required: %+v", rep)
+	}
+	if len(got) != 34 {
+		t.Errorf("%d registrations, want 34", len(got))
+	}
+	for _, r := range got {
+		if !strings.HasPrefix(r.Command, `"/opt/crw-under-test/crw" hook `) {
+			t.Errorf("%s: command %q does not start the build under test", r.Leg, r.Command)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, "skills", "crw-run", "SKILL.md")); err != nil {
+		t.Errorf("the skills are not reachable through the root: %v", err)
+	}
+	if _, err := PluginDigest(dir); err != nil {
+		t.Error(err)
+	}
+}
+
+func TestGeneratePluginRoot_refusesACrwPathTheShellWouldReadDifferently(t *testing.T) {
+	legs, _ := ExpectedLegs(repoRoot(t))
+	for _, bad := range []string{"relative/crw", `/x/"crw`, "/x/$HOME/crw", "/x/`id`/crw"} {
+		if err := GeneratePluginRoot(t.TempDir()+"/r", filepath.Join(repoRoot(t), "plugins", "crw"), bad, legs); err == nil {
+			t.Errorf("%q was accepted", bad)
+		}
+	}
+}
+
+func TestPluginDigest_differsWhenADeclarationChanges(t *testing.T) {
+	a, _ := generated(t)
+	b, _ := generated(t)
+	da, _ := PluginDigest(a)
+	db, _ := PluginDigest(b)
+	if da != db {
+		t.Fatal("two generated roots of one build differ")
+	}
+	path := filepath.Join(b, "wiring", "hooks", "stop-recording-completion.json")
+	raw, _ := os.ReadFile(path)
+	if err := os.WriteFile(path, []byte(strings.Replace(string(raw), `"timeout": 10`, `"timeout": 11`, 1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if dc, _ := PluginDigest(b); dc == da {
+		t.Error("the digest ignores a changed timeout")
+	}
+}
