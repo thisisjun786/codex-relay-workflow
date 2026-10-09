@@ -141,6 +141,14 @@ type SedArgs struct {
 	// environment can do, and the reader cannot prove it does not) getopt stops at the first operand: it is the script that
 	// runs and the later options are files. Both readings are judged, so a script the other reading would run is not hidden.
 	PosixScript *Word
+	// PosixTail, PosixInPlace and PosixInPlaceSuffix are the other reading of the same command line, set only when an option
+	// follows the first operand (so the two readings differ). With POSIXLY_CORRECT getopt stops at the first operand: PosixTail
+	// is every word from it on, all of them operands (an option-looking word is then a file name), and only the -i, -I and
+	// --in-place before it count (PosixInPlace, PosixInPlaceSuffix). A later -i does not replace the suffix of an earlier one
+	// there, so the in-place places of both readings are judged.
+	PosixTail          []Word
+	PosixInPlace       bool
+	PosixInPlaceSuffix string
 	// Operands are the words that are no option or option value. When neither -e nor -f gives a script, the first operand is the
 	// script.
 	Operands []Word
@@ -154,6 +162,17 @@ func ParseSedArgs(name string, args []Word) (SedArgs, error) {
 	longs := SedLongOptions()
 	optionsEnd := false
 	scriptBeforeOperand := false
+	firstOperand := -1
+	lateOption := false
+	var posixInPlace bool
+	var posixSuffix string
+	setSuffix := func(s string) {
+		pa.InPlace = true
+		pa.InPlaceSuffix = s
+		if len(pa.Operands) == 0 {
+			posixInPlace, posixSuffix = true, s
+		}
+	}
 	for i := 0; i < len(args); {
 		a := args[i]
 		if !a.Known {
@@ -162,6 +181,7 @@ func ParseSedArgs(name string, args []Word) (SedArgs, error) {
 			}
 			if len(pa.Operands) == 0 {
 				scriptBeforeOperand = len(pa.Scripts)+len(pa.Files) > 0
+				firstOperand = i
 			}
 			pa.Operands = append(pa.Operands, a)
 			i++
@@ -172,16 +192,19 @@ func ParseSedArgs(name string, args []Word) (SedArgs, error) {
 		case optionsEnd || v == "-" || !strings.HasPrefix(v, "-"):
 			if len(pa.Operands) == 0 {
 				scriptBeforeOperand = len(pa.Scripts)+len(pa.Files) > 0
+				firstOperand = i
 			}
 			pa.Operands = append(pa.Operands, a)
 			i++
 			continue
 		case v == "--":
 			optionsEnd = true
+			lateOption = lateOption || len(pa.Operands) > 0
 			i++
 			continue
 		}
 		i++
+		lateOption = lateOption || len(pa.Operands) > 0
 		if strings.HasPrefix(v, "--") {
 			optName, attached, hasValue := strings.Cut(v[2:], "=")
 			opt, match := MatchLongOption(longs, optName)
@@ -209,7 +232,7 @@ func ParseSedArgs(name string, args []Word) (SedArgs, error) {
 				}
 			}
 			if opt.Key == "i" {
-				pa.InPlaceSuffix = attached
+				setSuffix(attached)
 			}
 			if pa.lateScript(opt.Key, scriptBeforeOperand) {
 				pa.PosixScript = &pa.Operands[0]
@@ -224,8 +247,7 @@ func ParseSedArgs(name string, args []Word) (SedArgs, error) {
 			switch c {
 			case 'n', 'E', 'r', 's', 'u', 'z', 'b':
 			case 'i', 'I':
-				pa.InPlace = true
-				pa.InPlaceSuffix = v[k+1:] // the rest of the word is the suffix
+				setSuffix(v[k+1:]) // the rest of the word is the suffix
 				k = len(v)
 			case 'e', 'f', 'l':
 				var val Word
@@ -249,6 +271,10 @@ func ParseSedArgs(name string, args []Word) (SedArgs, error) {
 				return SedArgs{}, unreadablef("%s option -%c is not modelled", name, c)
 			}
 		}
+	}
+	if lateOption && firstOperand >= 0 {
+		pa.PosixTail = args[firstOperand:]
+		pa.PosixInPlace, pa.PosixInPlaceSuffix = posixInPlace, posixSuffix
 	}
 	return pa, nil
 }

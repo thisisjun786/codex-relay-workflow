@@ -60,6 +60,13 @@ func TestMemoryGateReadsSortOutputAndSedScriptWrites(t *testing.T) {
 		gateCommandCase{"sed -ni'" + root + "/*.bak' p out.txt", true},
 		gateCommandCase{"sed -i'bak/*' p out.txt", false},
 		gateCommandCase{"sed -i.bak p out.txt", false},
+		// POSIXLY_CORRECT stops getopt at the first operand: a later -i is a file name there and does not replace the suffix
+		gateCommandCase{"POSIXLY_CORRECT=1 sed --in='" + root + "/*' -e p out.txt --in-place", true},
+		gateCommandCase{"sed --in='" + root + "/*' -e p out.txt -i", true},
+		gateCommandCase{"sed --in='" + root + "/*' -e p out.txt -i.bak", true},
+		gateCommandCase{"sed --in='" + root + "/*' -e p out.txt --in-place=.bak", true},
+		gateCommandCase{"sed -i'" + root + "/*' p out.txt -ni", true},
+		gateCommandCase{"sed -i.bak -e p out.txt -i", false},
 		gateCommandCase{"K=1; sort -k $K -o out.txt x.txt", false},
 		gateCommandCase{"sed p -e p x.txt", false},
 		gateCommandCase{"sort -o " + root + "/a x.txt", true},
@@ -210,6 +217,10 @@ func TestShellIRSedDestsReadsOptionsAsGetopt(t *testing.T) {
 		{"sed p -e 'w M/b' x", []string{"M/b"}},
 		{"sed -e p x -e 'w M/b'", []string{"M/b"}},
 		{"sed -n p x -n", nil},
+		// a later option does not hide the suffix of an earlier -i in the POSIXLY_CORRECT reading
+		{"sed --in='M/*' -e p out.txt --in-place", []string{"out.txt", "M/out.txt", "--in-place", "M/--in-place"}},
+		{"sed -i'M/*' p out.txt -i", []string{"p", "out.txt", "M/out.txt", "-i", "M/-i"}},
+		{"sed -i.bak -e p out.txt -i", []string{"out.txt", "-i"}},
 	} {
 		got, ok := shellIRWriteDests(c.command, cwd, none)
 		if !ok || !slices.Equal(got, c.want) {

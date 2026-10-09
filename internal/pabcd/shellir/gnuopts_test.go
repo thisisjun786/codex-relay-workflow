@@ -210,3 +210,31 @@ func TestParseSedArgsPosixScriptAndSuffix(t *testing.T) {
 		}
 	}
 }
+
+// TestParseSedArgsPosixInPlaceReading: when an option follows the first operand the POSIXLY_CORRECT reading is reported too:
+// every word from the first operand on is a file, and only the -i before the first operand counts, with its own suffix.
+func TestParseSedArgsPosixInPlaceReading(t *testing.T) {
+	for _, c := range []struct {
+		args    []string
+		tail    []string // PosixTail, nil when the readings agree
+		inPlace bool
+		suffix  string // PosixInPlaceSuffix
+		permSfx string // InPlaceSuffix
+	}{
+		{[]string{"--in=/m/*", "-e", "p", "x", "--in-place"}, []string{"x", "--in-place"}, true, "/m/*", ""},
+		{[]string{"--in=/m/*", "-e", "p", "x", "-i.b"}, []string{"x", "-i.b"}, true, "/m/*", ".b"},
+		{[]string{"-e", "p", "x", "-i/m/*"}, []string{"x", "-i/m/*"}, false, "", "/m/*"},
+		{[]string{"-i/m/*", "p", "x", "-ni"}, []string{"p", "x", "-ni"}, true, "/m/*", ""},
+		{[]string{"-i/m/*", "p", "x"}, nil, false, "", "/m/*"},
+		{[]string{"-i", "-e", "p", "x", "--", "y"}, []string{"x", "--", "y"}, true, "", ""},
+	} {
+		pa, err := ParseSedArgs("sed", optWords(c.args...))
+		if err != nil {
+			t.Errorf("%q: %v", c.args, err)
+			continue
+		}
+		if !slices.Equal(optValues(pa.PosixTail), c.tail) || pa.PosixInPlace != c.inPlace || pa.PosixInPlaceSuffix != c.suffix || pa.InPlaceSuffix != c.permSfx {
+			t.Errorf("%q: tail %q in-place %v suffix %q perm suffix %q, want %q %v %q %q", c.args, optValues(pa.PosixTail), pa.PosixInPlace, pa.PosixInPlaceSuffix, pa.InPlaceSuffix, c.tail, c.inPlace, c.suffix, c.permSfx)
+		}
+	}
+}

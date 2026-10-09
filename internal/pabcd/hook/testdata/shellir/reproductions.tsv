@@ -921,3 +921,9 @@ pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json,
 pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	sed -i'{MEMORY}/*' -i p out.txt	CRW-941-D10	row	-
 pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	sed -f s.sed x.txt	CRW-941-F15	row	-
 pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	sed --file=s.sed x.txt	CRW-941-F16	row	-
+evaluation of 83a490cef (fix round 1 of the pre-merge evaluation of 101be077, finding d3 in the POSIX option scan)	POSIXLY_CORRECT=1 sed --in='{MEMORY}/*' -e p out.txt --in-place	CRW-941-D11	row	-
+evaluation of 83a490cef (fix round 1 of the pre-merge evaluation of 101be077, finding d3 in the POSIX option scan)	sed --in='{MEMORY}/*' -e p out.txt -i	CRW-941-D12	row	-
+evaluation of 83a490cef (fix round 1 of the pre-merge evaluation of 101be077, finding d3 in the POSIX option scan)	sed --in='{MEMORY}/*' -e p out.txt -i.bak	CRW-941-D13	row	-
+evaluation of 83a490cef (fix round 1 of the pre-merge evaluation of 101be077, finding d3 in the POSIX option scan)	sed --in='{MEMORY}/*' -e p out.txt --in-place=.bak	CRW-941-D14	row	-
+evaluation of 83a490cef (fix round 1 of the pre-merge evaluation of 101be077, finding d3 in the POSIX option scan)	sed -i'{MEMORY}/*' p out.txt -ni	CRW-941-D15	row	-
+evaluation of 83a490cef (fix round 1 of the pre-merge evaluation of 101be077, finding d3 in the POSIX option scan)	sed -i.bak -e p out.txt -i	CRW-941-D16	row	-

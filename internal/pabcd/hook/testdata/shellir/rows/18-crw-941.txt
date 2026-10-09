@@ -709,3 +709,27 @@ sed -f s.sed x.txt
 w {MEMORY}/a
 --cmd
 sed --file=s.sed x.txt
+
+=== CRW-941-D11 | W
+--why POSIXLY_CORRECT stops getopt at out.txt: the later --in-place is a file name and the suffix of the earlier --in stays the backup place (evaluation of the d3 fix, 83a490cef).
+POSIXLY_CORRECT=1 sed --in='{MEMORY}/*' -e p out.txt --in-place
+
+=== CRW-941-D12 | W
+--why The same with a later -i: it does not replace the suffix in the POSIXLY_CORRECT reading.
+sed --in='{MEMORY}/*' -e p out.txt -i
+
+=== CRW-941-D13 | W
+--why The same with a later -i.bak.
+sed --in='{MEMORY}/*' -e p out.txt -i.bak
+
+=== CRW-941-D14 | W
+--why The same with a later --in-place=.bak.
+sed --in='{MEMORY}/*' -e p out.txt --in-place=.bak
+
+=== CRW-941-D15 | W
+--why The later option is a bundle -ni.
+sed -i'{MEMORY}/*' p out.txt -ni
+
+=== CRW-941-D16 | B
+--why A later option after an earlier suffix without a place: the backup stays next to the input.
+sed -i.bak -e p out.txt -i

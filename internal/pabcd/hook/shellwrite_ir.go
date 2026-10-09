@@ -369,8 +369,20 @@ func shellIRSedDests(args []shellir.Word) []string {
 		if v := shellIRPlain(w); v != "" && v != "-" {
 			out = append(out, v)
 			// the first operand is the script when no -e or -f gives one: no file, no backup
-			if i > 0 || len(pa.Scripts) > 0 {
+			if i > 0 || len(pa.Scripts)+len(pa.Files) > 0 {
 				out = append(out, shellIRSedBackups(v, pa.InPlaceSuffix)...)
+			}
+		}
+	}
+	// POSIXLY_CORRECT reading: every word from the first operand on is a file, and only the -i before it counts, with its own
+	// suffix (a later -i does not replace it there)
+	if pa.PosixInPlace {
+		for i, w := range pa.PosixTail {
+			if v := shellIRPlain(w); v != "" && v != "-" {
+				out = append(out, v)
+				if i > 0 || len(pa.Scripts)+len(pa.Files) > 0 {
+					out = append(out, shellIRSedBackups(v, pa.PosixInPlaceSuffix)...)
+				}
 			}
 		}
 	}
