@@ -58,7 +58,7 @@ const (
 // auditDraftUsage is what the drafts subcommand prints.
 const auditDraftUsage = "usage: crw manage audit drafts [--round R | --since T] [--severity P1]\n" +
 	"       crw manage audit drafts mark --fingerprint F --posted ISSUE\n" +
-	"       crw manage audit drafts --mark-posted DRAFT [--ref REF]"
+	"       crw manage audit drafts --mark-posted DRAFT --to P1 [--ref REF]"
 
 // auditDraftSeverityRank orders the severities from the most to the least severe. A defect
 // whose severity is not one of the four is not a defect this surface drafts.
@@ -1097,7 +1097,7 @@ func auditRunDrafts(_ context.Context, e *Env, args []string) int {
 			return auditDraftRunMark(e, args[1:])
 		}
 	}
-	values, err := auditPkgParseArgs(args, map[string]bool{"round": true, "since": true, "severity": true, "mark-posted": true, "ref": true})
+	values, err := auditPkgParseArgs(args, map[string]bool{"round": true, "since": true, "severity": true, "mark-posted": true, "ref": true, "to": true})
 	if err == nil {
 		if _, markPosted := values["mark-posted"]; markPosted {
 			if values["round"] != "" || values["since"] != "" || values["severity"] != "" {
@@ -1105,10 +1105,16 @@ func auditRunDrafts(_ context.Context, e *Env, args []string) int {
 			} else if values["mark-posted"] == "" {
 				err = errors.New("--mark-posted needs a draft id")
 			} else {
-				return auditDraftRunMarkPosted(e, values["mark-posted"], values["ref"])
+				if _, known := auditDraftSeverityRank[values["to"]]; !known {
+					err = fmt.Errorf("--mark-posted needs --to P0, P1, P2 or P3, the severity that was posted (got %q)", values["to"])
+				} else {
+					return auditDraftRunMarkPosted(e, values["mark-posted"], values["to"], values["ref"])
+				}
 			}
 		} else if _, ref := values["ref"]; ref {
 			err = errors.New("--ref belongs to --mark-posted")
+		} else if _, to := values["to"]; to {
+			err = errors.New("--to belongs to --mark-posted")
 		}
 	}
 	if err == nil && values["round"] != "" && values["since"] != "" {
@@ -1149,7 +1155,7 @@ func auditRunDrafts(_ context.Context, e *Env, args []string) int {
 // auditDraftRunMarkPosted is crw manage audit drafts --mark-posted: it records, as a line of
 // the audit ledger, that the management session posted the raise of a posted draft's severity,
 // so no later drafts run reports the same raise again (CRW-962). It prints the line it wrote.
-func auditDraftRunMarkPosted(e *Env, fingerprint, ref string) int {
+func auditDraftRunMarkPosted(e *Env, fingerprint, to, ref string) int {
 	if err := auditDraftFingerprintName(fingerprint); err != nil {
 		fmt.Fprintln(e.Stderr, auditDraftUsage)
 		fmt.Fprintf(e.Stderr, "crw manage audit drafts --mark-posted: error: %v\n", err)
@@ -1162,7 +1168,7 @@ func auditDraftRunMarkPosted(e *Env, fingerprint, ref string) int {
 		return 1
 	}
 	defer release()
-	row, err := auditDraftMarkPosted(e, cfg, fingerprint, ref)
+	row, err := auditDraftMarkPosted(e, cfg, fingerprint, to, ref)
 	if err != nil {
 		fmt.Fprintf(e.Stderr, "crw manage audit drafts --mark-posted: error: %v\n", err)
 		return 1

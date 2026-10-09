@@ -90,14 +90,22 @@ func auditEscalationAppend(e *Env, cfg *Config, row auditEscalationRow) error {
 }
 
 // auditDraftMarkPosted records that the management session posted the raise of one draft's
-// severity, and returns the line it wrote. It writes nothing and succeeds when the ledger
-// already holds a posted line that covers the raise (the same mark again), and refuses a draft
-// that is not posted or a draft the audits have not reported above the severity its issue
-// stands at. The draft file is never written: a posted draft is the record of its issue.
+// severity to `to`, and returns the line it wrote. The severity is the one the session says it
+// posted, never one worked out from the ledger when the command runs: the post happens outside
+// this command, so audits recorded after the post must not be acknowledged with it. The
+// line is written only when the audits read in full report the draft's defect at `to` or higher
+// (a result that cannot be read does not count, and the refusal says how many were skipped), and
+// `to` is above the severity the draft's issue stands at. It writes nothing and succeeds when the
+// ledger already holds a posted line at `to` or higher (the same mark again), and refuses a draft
+// that is not posted. The draft file is never written: a posted draft is the record of its issue.
 // The caller holds the drafts lock.
-func auditDraftMarkPosted(e *Env, cfg *Config, fingerprint, ref string) (*auditEscalationRow, error) {
+func auditDraftMarkPosted(e *Env, cfg *Config, fingerprint, to, ref string) (*auditEscalationRow, error) {
 	if err := auditDraftFingerprintName(fingerprint); err != nil {
 		return nil, err
+	}
+	toRank, known := auditDraftSeverityRank[to]
+	if !known {
+		return nil, fmt.Errorf("invalid_severity: --to %q is not P0, P1, P2 or P3", to)
 	}
 	doc, err := auditDraftLoad(crwconfig.JoinRoot(auditDraftDir(e, cfg), fingerprint+".json"))
 	if err != nil {
@@ -113,8 +121,7 @@ func auditDraftMarkPosted(e *Env, cfg *Config, fingerprint, ref string) (*auditE
 	if err != nil {
 		return nil, err
 	}
-	// Every severity is considered: the raise is the highest the audits reported for this defect,
-	// whatever threshold a drafts run reports at.
+	// Every severity is considered, whatever threshold a drafts run reports at.
 	collected, err := auditDraftCollect(e, cfg, section, auditDraftScope{}, auditDraftSeverityRank["P3"])
 	if err != nil {
 		return nil, err
@@ -124,19 +131,30 @@ func auditDraftMarkPosted(e *Env, cfg *Config, fingerprint, ref string) (*auditE
 	if have && auditDraftSeverityRank[posted.To] < auditDraftSeverityRank[standing] {
 		standing = posted.To
 	}
-	candidate, found := collected.candidates[fingerprint]
-	if found && auditDraftSeverityRank[candidate.severity] < auditDraftSeverityRank[standing] {
-		row := auditEscalationRow{
-			Kind: auditLedgerKindEscalationPosted, Target: fingerprint, From: standing, To: candidate.severity,
-			At: e.Now().UTC().Format(auditTimeFormat), Ref: ref,
-		}
-		if err := auditEscalationAppend(e, cfg, row); err != nil {
-			return nil, err
-		}
-		return &row, nil
-	}
-	if have {
+	if have && auditDraftSeverityRank[posted.To] <= toRank {
 		return nil, nil
 	}
-	return nil, fmt.Errorf("no_escalation: no audit reported the draft %s above P%s", fingerprint, standing[1:])
+	if toRank >= auditDraftSeverityRank[standing] {
+		return nil, fmt.Errorf("no_escalation: the draft %s stands at %s; %s is not a raise", fingerprint, standing, to)
+	}
+	candidate, found := collected.candidates[fingerprint]
+	if !found || auditDraftSeverityRank[candidate.severity] > toRank {
+		reported := "no audit"
+		if found {
+			reported = "the audits read report it only at " + candidate.severity + ", so no audit"
+		}
+		unread := ""
+		if n := len(collected.skipped) + collected.torn; n > 0 {
+			unread = fmt.Sprintf(" (%d ledger results or lines could not be read; mark again once they can)", n)
+		}
+		return nil, fmt.Errorf("no_escalation: %s reported the draft %s at %s%s", reported, fingerprint, to, unread)
+	}
+	row := auditEscalationRow{
+		Kind: auditLedgerKindEscalationPosted, Target: fingerprint, From: standing, To: to,
+		At: e.Now().UTC().Format(auditTimeFormat), Ref: ref,
+	}
+	if err := auditEscalationAppend(e, cfg, row); err != nil {
+		return nil, err
+	}
+	return &row, nil
 }

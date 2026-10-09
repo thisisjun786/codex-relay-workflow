@@ -68,7 +68,7 @@ func TestCRW962PostedEscalationIsNotReportedAgain(t *testing.T) {
 			t.Fatalf("run %d before posting: %+v, want the P2 to P1 raise", i, report.PostedEscalations)
 		}
 	}
-	if code, _, errOut := crw962MarkPosted(t, fingerprint, "--ref", "https://example.test/comment/1"); code != 0 {
+	if code, _, errOut := crw962MarkPosted(t, fingerprint, "--to", "P1", "--ref", "https://example.test/comment/1"); code != 0 {
 		t.Fatalf("--mark-posted: exit %d %q", code, errOut)
 	}
 	for i := 0; i < 2; i++ {
@@ -84,7 +84,7 @@ func TestCRW962MarkPostedAppendsOneLedgerRow(t *testing.T) {
 	state, _, fingerprint := crw962Posted(t)
 	crw962Raise(t, state, "P1", "s2")
 	before := crw962Ledger(t, state)
-	code, out, errOut := crw962MarkPosted(t, fingerprint, "--ref", "https://example.test/comment/1")
+	code, out, errOut := crw962MarkPosted(t, fingerprint, "--to", "P1", "--ref", "https://example.test/comment/1")
 	if code != 0 {
 		t.Fatalf("--mark-posted: exit %d %q", code, errOut)
 	}
@@ -108,7 +108,7 @@ func TestCRW962MarkPostedAppendsOneLedgerRow(t *testing.T) {
 		t.Errorf("--mark-posted printed %q, want the row it wrote", out)
 	}
 	// The same mark again is the same record: nothing more is written.
-	if code, _, errOut := crw962MarkPosted(t, fingerprint); code != 0 {
+	if code, _, errOut := crw962MarkPosted(t, fingerprint, "--to", "P1"); code != 0 {
 		t.Fatalf("the repeated --mark-posted: exit %d %q", code, errOut)
 	}
 	if again := crw962Ledger(t, state); string(again) != string(after) {
@@ -121,7 +121,7 @@ func TestCRW962MarkPostedAppendsOneLedgerRow(t *testing.T) {
 func TestCRW962AHigherEscalationIsReportedAgain(t *testing.T) {
 	state, cfg, fingerprint := crw962Posted(t)
 	crw962Raise(t, state, "P1", "s2")
-	if code, _, errOut := crw962MarkPosted(t, fingerprint); code != 0 {
+	if code, _, errOut := crw962MarkPosted(t, fingerprint, "--to", "P1"); code != 0 {
 		t.Fatalf("--mark-posted: exit %d %q", code, errOut)
 	}
 	crw962Raise(t, state, "P0", "s3")
@@ -133,7 +133,7 @@ func TestCRW962AHigherEscalationIsReportedAgain(t *testing.T) {
 	if got.Fingerprint != fingerprint || got.From != "P1" || got.To != "P0" || got.Issue != "CRW-999" {
 		t.Errorf("the escalation reads %+v", got)
 	}
-	if code, _, errOut := crw962MarkPosted(t, fingerprint); code != 0 {
+	if code, _, errOut := crw962MarkPosted(t, fingerprint, "--to", "P0"); code != 0 {
 		t.Fatalf("the second --mark-posted: exit %d %q", code, errOut)
 	}
 	if report := auditDraftRunOf(t, cfg, auditDraftScope{Severity: "P3"}); len(report.PostedEscalations) != 0 {
@@ -152,7 +152,7 @@ func TestCRW962ExistingLedgerRowsAreReadAsBefore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if code, _, errOut := crw962MarkPosted(t, fingerprint); code != 0 {
+	if code, _, errOut := crw962MarkPosted(t, fingerprint, "--to", "P1"); code != 0 {
 		t.Fatalf("--mark-posted: exit %d %q", code, errOut)
 	}
 	rowsAfter, err := auditReportLedger(e, cfg)
@@ -183,9 +183,11 @@ func TestCRW962MarkPostedRefusals(t *testing.T) {
 	state, _, fingerprint := crw962Posted(t)
 	before := crw962Ledger(t, state)
 	for name, args := range map[string][]string{
-		"an unknown draft":            {"0123456789abcdef"},
-		"a name that is not a draft":  {"../escape"},
-		"no escalation to record yet": {fingerprint},
+		"an unknown draft":            {"0123456789abcdef", "--to", "P1"},
+		"a name that is not a draft":  {"../escape", "--to", "P1"},
+		"no escalation to record yet": {fingerprint, "--to", "P1"},
+		"no severity named":           {fingerprint},
+		"a severity that is not one":  {fingerprint, "--to", "P9"},
 	} {
 		if code, _, errOut := crw962MarkPosted(t, args...); code == 0 {
 			t.Errorf("%s: exit 0, want a refusal (%q)", name, errOut)
@@ -200,7 +202,7 @@ func TestCRW962MarkPostedRefusals(t *testing.T) {
 		t.Fatalf("the second defect created %d drafts", len(report.Created))
 	}
 	auditDraftFixture(t, state, auditDraftFixtureRow{mode: auditModePR, subject: "s10", head: "h10", round: "r10", gradedAt: "2026-03-02T00:00:00Z", defects: []AuditDefect{{Severity: "P0", What: "another defect", Where: "b.go:1"}}})
-	if code, _, errOut := crw962MarkPosted(t, report.Created[0].Fingerprint); code == 0 {
+	if code, _, errOut := crw962MarkPosted(t, report.Created[0].Fingerprint, "--to", "P0"); code == 0 {
 		t.Errorf("a draft that was never posted was marked: %q", errOut)
 	}
 	after := crw962Ledger(t, state)

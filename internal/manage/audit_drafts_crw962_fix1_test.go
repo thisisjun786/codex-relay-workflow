@@ -21,7 +21,7 @@ func TestCRW962MarkPostedRefusesAnUnknownSeverity(t *testing.T) {
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	code, _, stderr := crw962MarkPosted(t, fingerprint)
+	code, _, stderr := crw962MarkPosted(t, fingerprint, "--to", "P1")
 	if code == 0 || !strings.Contains(stderr, "invalid_severity") {
 		t.Fatalf("code=%d stderr=%s", code, stderr)
 	}
