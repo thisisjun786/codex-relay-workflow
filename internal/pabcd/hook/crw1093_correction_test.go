@@ -22,6 +22,7 @@ func TestCRW1093CorrectionActualIngress(t *testing.T) {
 			{"Remember this,\nbut do not save it to memory.", false},
 			{"Remember this,\nbut do not save it.", false},
 			{"Remember this but do not store it", false},
+			{"Do not keep\nthis in mind", false},
 			{"Remember this but do not write to memory", false},
 			{"Do not\nremember this", false},
 			{"이거 기억해 둬,\n하지만 저장하지 마", false},
