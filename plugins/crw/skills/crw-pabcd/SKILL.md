@@ -29,14 +29,18 @@ is distinct from that parent goal.
 Two distinct things, do not conflate them:
 
 - **Hook hint (narrow):** `UserPromptSubmit` injects scoped advice only, and only
-  when a prompt names the PABCD marker (`crw-pabcd`, `crw:crw-pabcd`, or `pabcd로` /
-  `pabcd phase`), a request verb (`use`, `run`, `start`, `invoke`, `enter`, `apply`,
-  or 시작, 진행, 적용, 실행, 돌려, 써서, 으로, 들어가) and a phase word (`interview` /
-  `인터뷰`, plan, audit, build, check, or `phase X`). A bare `인터뷰 먼저 해줘`,
-  `interview me first` or `pabcd로 인터뷰 해줘` (no request verb) injects nothing;
-  `Use crw-pabcd to start the interview` injects phase I. Natural hints never enter
-  or advance a phase. A line-anchored `orchestrate i` command instead takes the
-  existing explicit-command parser path.
+  when one request clause names the PABCD marker (`crw-pabcd`, `crw:crw-pabcd`, or
+  `pabcd로` / `pabcd phase`) together with a request verb (`use`, `run`, `start`,
+  `invoke`, `enter`, `apply`, or 시작, 진행, 적용, 실행, 돌려, 써서, 으로, 들어가).
+  The phase is then picked by the first matching phase pattern, in this order: I
+  (`interview`, `인터뷰`, `phase i`), P (`plan`, `phase p`, 계획), A (`audit`, `phase a`,
+  감사), B (`build`, `phase b`, 구현), C (`check`, `phase c`, 검증). A request with the
+  marker and a verb but no phase pattern (`Use crw-pabcd`, `pabcd로 시작해줘`) falls
+  back to phase P. Without a request verb nothing is injected: a bare `인터뷰 먼저 해줘`,
+  `interview me first` or `pabcd로 인터뷰 해줘` inject nothing, while `Use crw-pabcd to
+  start the interview` injects phase I. Natural hints never enter or advance a phase.
+  A line-anchored `orchestrate i` command instead takes the existing explicit-command
+  parser path.
 - **Agent judgment (broad):** for unclear requirements phrased otherwise, select
   `crw-interview` and its applicable references. Loading a skill is not a state
   transition. When phase entry is authorized, use `crw pabcd orchestrate I --session <id>`
