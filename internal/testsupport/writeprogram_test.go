@@ -37,7 +37,8 @@ func TestWriteProgramWaitsForAForkInProgressAndWritesTheFile(t *testing.T) {
 		t.Fatal("WriteProgram did not finish after the fork released the lock")
 	}
 	info, err := os.Stat(path)
-	if err != nil || info.Mode().Perm() != 0o755 {
+	// The mode is os.WriteFile's: the process umask applies, so the contract is that the owner can execute the file, not the exact 0o755.
+	if err != nil || info.Mode().Perm()&0o700 != 0o700 {
 		t.Fatalf("%v %v", info, err)
 	}
 	// it replaces what is there, as os.WriteFile does
