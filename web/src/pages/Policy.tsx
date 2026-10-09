@@ -50,6 +50,7 @@ import {
   screenReread,
   runSave,
   runRead,
+  lostRecheckDelay,
   screenRepairCleared,
   screenSaving,
   initialScreen,
@@ -815,6 +816,17 @@ export function PolicyPage() {
       generation.current++;
     };
   }, [reload]);
+
+  // A lost write whose file already holds the change but whose wiring record has not caught up is a
+  // registration still running on the server (or failing and about to be put back). Its heading stays
+  // Result unknown, and the screen reads again on a timer, within the registration's bound, so the
+  // verdict follows the file to Saved or Not saved without the operator pressing anything.
+  const recheck = lostRecheckDelay(state);
+  useEffect(() => {
+    if (recheck === null) return;
+    const timer = window.setTimeout(() => readAgain(true), recheck);
+    return () => window.clearTimeout(timer);
+  }, [recheck, state.notice]);
 
   /** readAgain re-reads the policy, keeping the operator's inputs. */
   function readAgain(keep: boolean) {

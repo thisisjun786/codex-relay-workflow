@@ -416,6 +416,30 @@ test("the screen headlines a lost write Result unknown, never Not saved", async 
   assert.ok(!markup.includes("Not saved"), "it is never headed Not saved");
 });
 
+// CRW-994 d1 on the rendered screen: the headline and the sentence under it follow the comparison of
+// the proposed change with the file, not the digest.
+test("the screen heads a lost write by what the file holds: Not saved for another write's digest, Result unknown while the registration runs, Saved when the record names the change", async () => {
+  const pure = await import("../src/policy-state.ts");
+  let state = pure.initialScreen();
+  state = pure.screenLoaded(state, pure.decodePolicy(readingBody()));
+  state = pure.screenAllowedDraft(state, "anthropic/opus", ["max"]);
+  const out = await pure.runSave(state as never, {
+    check: async () => ({ status: 200, body: { valid: true, errors: [], currentDigest: "a".repeat(64), stale: false, diff: [] } }),
+    write: async () => { throw new Error("connection lost"); },
+  });
+  const heldBy = (changes: Record<string, unknown>) => pure.screenLoaded(out.state, pure.decodePolicy({ ...readingBody(), ...changes }), true) as unknown as Record<string, unknown>;
+  const other = await mount(heldBy({ digest: "b".repeat(64), registeredDigest: "b".repeat(64), allowed: [{ model: "anthropic/opus", efforts: ["xhigh"] }] }));
+  assert.ok(other.markup.includes("Not saved"), "another write's digest is not this change");
+  assert.ok(other.markup.includes("does not hold this change"));
+  assert.ok(!other.markup.includes("Result unknown") && !other.markup.includes(">Saved<"));
+  const early = await mount(heldBy({ digest: "b".repeat(64), registeredDigest: "a".repeat(64), allowed: [{ model: "anthropic/opus", efforts: ["max"] }] }));
+  assert.ok(early.markup.includes("Result unknown"), "the file holds the change before the record names it");
+  assert.ok(early.markup.includes("registration has not finished"));
+  const done = await mount(heldBy({ digest: "b".repeat(64), registeredDigest: "b".repeat(64), allowed: [{ model: "anthropic/opus", efforts: ["max"] }] }));
+  assert.ok(done.markup.includes("Saved"), "the record names the file that holds the change");
+  assert.ok(!done.markup.includes("Not saved") && !done.markup.includes("Result unknown"));
+});
+
 test("a save in flight disables the screen's other edit controls", async () => {
   const pure = await import("../src/policy-state.ts");
   let state = pure.initialScreen();

@@ -25,6 +25,10 @@ import {
   draftForNewException,
   exceptionRoleOptions,
   lostWriteNotice,
+  lostRecheckDelay,
+  judgeLostWrite,
+  readingHoldsChange,
+  LOST_RECHECK_LIMIT,
   saveHeading,
   modelLadder,
   modelOptions,
@@ -543,11 +547,114 @@ test("a lost write is headed Result unknown, never Not saved, before any re-read
   assert.equal(saveHeading(state.notice), "Result unknown");
 });
 
-test("a lost write re-read that finds a new digest is headed Saved and says what was found", async () => {
-  const state = screenLoaded(await afterLostWrite(), reading({ digest: "b".repeat(64), registeredDigest: "b".repeat(64) }), true);
+/** The file after the lost write's own change landed: opus allows exactly max. */
+function readingWithTheLostChange(changes: Partial<PolicyReading> = {}): PolicyReading {
+  return reading({
+    digest: "b".repeat(64),
+    registeredDigest: "b".repeat(64),
+    allowed: [{ model: "anthropic/opus", efforts: ["max"] }, { model: "gpt-6.1-sol", efforts: ["xhigh"] }],
+    ...changes,
+  });
+}
+
+test("a lost write re-read whose file holds the change and whose record names it is headed Saved", async () => {
+  const state = screenLoaded(await afterLostWrite(), readingWithTheLostChange(), true);
   assert.equal(saveHeading(state.notice), "Saved");
   assert.ok(state.notice?.text.includes("now has digest"), "the notice says what the re-read found");
+  assert.ok(state.notice?.text.includes("holds this change"), "and that it holds the change");
   assert.equal(state.notice?.lost?.outcome, "stored");
+  assert.equal(state.notice?.lost?.awaitingRegistration, false);
+});
+
+// CRW-994 d1: the old inference was "the digest moved, so the change was stored". Two tabs: tab A read
+// D0 and passed the check, tab B stored a different change as D1, and tab A's request answered
+// stale_digest, which was lost. A reads D1 and its own change is not in it.
+test("a digest another write moved is not this change: the lost write is headed Not saved", async () => {
+  const other = reading({ digest: "b".repeat(64), registeredDigest: "b".repeat(64), allowed: [{ model: "anthropic/opus", efforts: ["xhigh"] }, { model: "gpt-6.1-sol", efforts: ["xhigh"] }] });
+  const state = screenLoaded(await afterLostWrite(), other, true);
+  assert.equal(saveHeading(state.notice), "Not saved");
+  assert.equal(state.notice?.lost?.outcome, "not_stored");
+  assert.ok(state.notice?.text.includes("does not hold this change"), state.notice?.text);
+  assert.ok(state.notice?.text.includes("another write changed the file"));
+  assert.ok(!state.notice?.text.includes("was stored"), "the digest alone is never read as stored");
+  assert.equal(state.change?.kind, "setAllowed", "the operator's change is kept");
+});
+
+// CRW-994 d1: the server replaces the file and registers it detached from the request. A read that
+// lands between the two sees the new bytes under the old record; if the registration then fails the
+// file is put back. The heading must not say Saved on the first read, and must follow the restore.
+test("a file that holds the change before its registration finished stays Result unknown", async () => {
+  const early = readingWithTheLostChange({ registeredDigest: "a".repeat(64), applied: "needs_user_action", actions: ["re-register the execution policy"] });
+  const state = screenLoaded(await afterLostWrite(), early, true);
+  assert.equal(saveHeading(state.notice), "Result unknown");
+  assert.equal(state.notice?.lost?.outcome, "unknown");
+  assert.equal(state.notice?.lost?.awaitingRegistration, true);
+  assert.ok(state.notice?.text.includes("registration has not finished"), state.notice?.text);
+  assert.equal(lostRecheckDelay(state), 2000, "the screen reads again while it waits");
+});
+
+test("a late restore turns the awaiting verdict into Not saved, and a finished registration into Saved", async () => {
+  const awaiting = screenLoaded(await afterLostWrite(), readingWithTheLostChange({ registeredDigest: "a".repeat(64) }), true);
+  assert.equal(saveHeading(awaiting.notice), "Result unknown");
+  // The registration failed and the server put the original bytes back.
+  const restored = screenLoaded(awaiting, reading(), true);
+  assert.equal(saveHeading(restored.notice), "Not saved");
+  assert.equal(restored.notice?.lost?.outcome, "not_stored");
+  assert.equal(lostRecheckDelay(restored), null, "nothing more to wait for");
+  // The registration finished instead.
+  const finished = screenLoaded(awaiting, readingWithTheLostChange(), true);
+  assert.equal(saveHeading(finished.notice), "Saved");
+  assert.equal(lostRecheckDelay(finished), null);
+});
+
+test("a verdict is judged again by every later reading, so a stored verdict follows a restore", async () => {
+  const stored = screenLoaded(await afterLostWrite(), readingWithTheLostChange(), true);
+  assert.equal(saveHeading(stored.notice), "Saved");
+  const undone = screenLoaded(stored, reading(), true);
+  assert.equal(saveHeading(undone.notice), "Not saved");
+  assert.equal(undone.notice?.lost?.outcome, "not_stored");
+  // A reading that is not registered judges nothing: the verdict stands.
+  const unreadable = screenLoaded(stored, reading({ state: "unreadable", reason: "gone", digest: "" }), true);
+  assert.equal(saveHeading(unreadable.notice), "Saved");
+});
+
+test("the wait for a registration is bounded", async () => {
+  let state = screenLoaded(await afterLostWrite(), readingWithTheLostChange({ registeredDigest: "a".repeat(64) }), true);
+  for (let i = 1; i < LOST_RECHECK_LIMIT; i += 1) {
+    assert.equal(lostRecheckDelay(state), 2000, `reading ${i}`);
+    state = screenLoaded(state, readingWithTheLostChange({ registeredDigest: "a".repeat(64) }), true);
+  }
+  assert.equal(lostRecheckDelay(state), null, "the screen stops reading on its own, and the heading stays Result unknown");
+  assert.equal(saveHeading(state.notice), "Result unknown");
+  assert.equal(lostRecheckDelay(screenReadStarted(state)), null);
+});
+
+test("readingHoldsChange compares each kind of change with the file", () => {
+  const file = reading();
+  const holds = (change: PolicyChange) => readingHoldsChange(file, change);
+  assert.equal(holds({ kind: "setRolePairs", role: "child", pairs: [{ model: "anthropic/opus", reasoningEffort: "xhigh" }] }), true);
+  assert.equal(holds({ kind: "setRolePairs", role: "child", pairs: [{ model: "anthropic/opus", reasoningEffort: "max" }] }), false);
+  assert.equal(holds({ kind: "setRolePairs", role: "parent", pairs: [{ model: "gpt-6.1-sol", reasoningEffort: "xhigh" }, { model: "x", reasoningEffort: "y" }] }), false);
+  assert.equal(holds({ kind: "setAllowed", model: "gpt-6.1-sol", efforts: ["xhigh"] }), true);
+  assert.equal(holds({ kind: "setAllowed", model: "gpt-6.1-sol", efforts: ["max"] }), false);
+  assert.equal(holds({ kind: "setAllowed", model: "new/model", efforts: ["max"] }), false);
+  assert.equal(holds({ kind: "removeAllowed", model: "new/model" }), true);
+  assert.equal(holds({ kind: "removeAllowed", model: "gpt-6.1-sol" }), false);
+  assert.equal(holds({ kind: "setException", id: "legacy", role: "parent", model: "devin/swe-2", effort: "max", cwd: ["/srv/project"] }), true);
+  assert.equal(holds({ kind: "setException", id: "legacy", model: "devin/swe-2", effort: "max", cwd: ["/srv/project"] }), true, "an omitted role keeps the recorded one");
+  assert.equal(holds({ kind: "setException", id: "legacy", role: "child", model: "devin/swe-2", effort: "max", cwd: ["/srv/project"] }), false);
+  assert.equal(holds({ kind: "setException", id: "legacy", role: "parent", model: "devin/swe-2", effort: "max", cwd: ["/srv/project", "/srv/other"] }), false);
+  assert.equal(holds({ kind: "setException", id: "fresh", model: "m", effort: "high", cwd: ["/p"] }), false);
+  assert.equal(holds({ kind: "removeException", id: "legacy" }), false);
+  assert.equal(holds({ kind: "removeException", id: "gone" }), true);
+});
+
+test("a lost write whose request cannot name its change stays unknown when the digest moved", () => {
+  const lost = lostWriteNotice("a".repeat(64)).lost!;
+  const judged = judgeLostWrite(lost, readingWithTheLostChange());
+  assert.equal(judged.lost.outcome, "unknown");
+  assert.equal(judged.lost.awaitingRegistration, false);
+  assert.equal(judgeLostWrite(lost, reading()).lost.outcome, "not_stored");
 });
 
 test("a lost write re-read that still finds the starting digest is headed Not saved", async () => {
@@ -571,6 +678,48 @@ test("a re-read that is not a registered reading leaves a lost write Result unkn
 test("a refused write is still headed Not saved and a stored one Saved", () => {
   assert.equal(saveHeading(noticeForWrite(422, { error: "invalid_policy", errors: ["x"] })), "Not saved");
   assert.equal(saveHeading(noticeForWrite(200, { stored: { digest: "c".repeat(64) }, registered: { digest: "c".repeat(64) }, applied: "applied", actions: [] })), "Saved");
+});
+
+// CRW-994 d2 at the state layer: a 200 that confirms nothing (no stored digest) is an answer whose
+// result is unknown, so it is a lost write that is read again, not a plain failure headed Not saved.
+test("a 200 without a stored digest is a lost write that is read again", async () => {
+  let state = screenLoaded(initialScreen(), reading());
+  state = screenAllowedDraft(state, "anthropic/opus", ["max"]);
+  for (const body of [null, {}, { stored: {} }, "ok"]) {
+    const out = await runSave(state, {
+      check: async () => ({ status: 200, body: { valid: true, errors: [], currentDigest: "a".repeat(64), stale: false, diff: [] } }),
+      write: async () => ({ status: 200, body }),
+    });
+    assert.equal(saveHeading(out.state.notice), "Result unknown", JSON.stringify(body));
+    assert.equal(out.reread, true);
+    assert.equal(out.rereadKeepsInputs, true);
+    assert.equal(out.saved, false);
+    assert.equal(out.state.notice?.lost?.change?.kind, "setAllowed", "the re-read is judged against the proposed change");
+    assert.equal(screenLoaded(out.state, readingWithTheLostChange(), true).notice?.lost?.outcome, "stored");
+  }
+});
+
+// CRW-1001 d1: the file moved under the write and already agrees with the record. The answer is its
+// own outcome, not a recovery: nothing blocks editing and no repair is shown.
+test("a not_applied answer asks for a re-read, keeps the inputs and blocks nothing", () => {
+  const notice = noticeForWrite(409, { error: "not_applied", reason: "x", currentDigest: "c".repeat(64), fileDigest: "c".repeat(64), registeredDigest: "c".repeat(64) });
+  assert.equal(notice.blockEditing, false);
+  assert.equal(notice.reread, true);
+  assert.equal(notice.keepInputs, true);
+  assert.equal(saveHeading(notice), "Not saved");
+  assert.ok(notice.text.includes("was not applied"), notice.text);
+  assert.ok(notice.text.includes("cccccccccccc"), "it names the digest of the document");
+  assert.ok(!notice.text.includes("disagree"), "it does not describe a disagreement");
+  const recovery = noticeForWrite(500, { error: "recovery_needed", fileDigest: "1".repeat(64), registeredDigest: "2".repeat(64), recovery: "r" });
+  assert.equal(recovery.blockEditing, true, "a real disagreement still blocks");
+});
+
+test("a cancelled answer names its cause and the file it left alone", () => {
+  const notice = noticeForWrite(500, { error: "cancelled", step: "publish", reason: "context canceled: the browser tab closed", fileDigest: "d".repeat(64) });
+  assert.ok(notice.text.includes("cancelled during publish"), notice.text);
+  assert.ok(notice.text.includes("the browser tab closed"));
+  assert.ok(notice.text.includes("dddddddddddd"));
+  assert.equal(noticeForWrite(500, { error: "cancelled", step: "start" }).text, "The write was cancelled during start.");
 });
 
 async function afterLostWrite(): Promise<PolicyScreenState> {
