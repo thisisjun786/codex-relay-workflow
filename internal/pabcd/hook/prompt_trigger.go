@@ -66,7 +66,7 @@ func promptTriggerHandle(p PromptSubmitPayload, env host.LookupEnv, lock func(cw
 	if trigger != "" {
 		opts := ActiveWorkPhaseOpts(p.Cwd, current.Slug)
 		directive := PhaseDirective(trigger, opts)
-		inputs := promptClaimInputs{read: current, checkWork: true, work: opts}
+		inputs := promptClaimInputs{read: current, checkWork: trigger == state.PhaseB, work: opts} // only B names the work phase
 		if trigger == state.PhaseI || adviseInterview {
 			directive = InterviewDirective(env)
 			inputs.checkWork = false
@@ -145,10 +145,9 @@ func promptTriggerHandle(p PromptSubmitPayload, env host.LookupEnv, lock func(cw
 	if current.LastInjectedPhase == nil || *current.LastInjectedPhase != current.Phase {
 		opts := ActiveWorkPhaseOpts(p.Cwd, current.Slug)
 		directive := PhaseDirective(current.Phase, opts)
-		inputs := promptClaimInputs{read: current, cursor: true, checkWork: true, work: opts}
+		inputs := promptClaimInputs{read: current, cursor: true, checkWork: current.Phase == state.PhaseB, work: opts}
 		if current.Phase == state.PhaseI {
 			directive = InterviewDirective(env)
-			inputs.checkWork = false
 		}
 		context := directive
 		if agbrowseRequested {

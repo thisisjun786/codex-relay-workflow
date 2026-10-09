@@ -319,7 +319,7 @@ const (
 
 // promptClaimInputs is what an advisory answer was chosen from: the handler's unlocked read, whether the
 // injection cursor chose it (the passive modes), and the bound work phase a B directive names (work, when
-// checkWork is set).
+// checkWork is set: PhaseDirective names it only for B).
 type promptClaimInputs struct {
 	read      state.State
 	cursor    bool
