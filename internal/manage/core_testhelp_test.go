@@ -29,6 +29,12 @@ func TestMain(m *testing.M) {
 		coreFakeMain()
 		return
 	}
+	if os.Getenv(deliverFakeScenarioEnv) != "" || os.Getenv(pumpOverlapReceiptsEnv) != "" {
+		// A fake bridge: this binary started again to serve a scenario over stdio. It reads and
+		// writes no home, and it leaves through os.Exit, so an isolation root made here would never
+		// be removed (CRW-913). Like the fake crw, it makes none.
+		os.Exit(m.Run())
+	}
 	os.Exit(coreMain(m))
 }
 
