@@ -176,6 +176,10 @@ func memoryGateRewritable(file string, s state.State) bool {
 
 // memoryGateClassify is classifyMemoryWrite with the protected root worked out from env.
 func memoryGateClassify(tool string, input any, cwd string, env host.LookupEnv) MemoryWriteAttempt {
+	return memoryGateClassifyUsing(tool, input, cwd, env, newMemoryShellAnalysis)
+}
+
+func memoryGateClassifyUsing(tool string, input any, cwd string, env host.LookupEnv, analyses func(string, string, host.LookupEnv) *memoryShellAnalysis) MemoryWriteAttempt {
 	g := newMemoryGateEnv(env)
 	root, ok := g.root()
 	if !ok {
@@ -212,7 +216,9 @@ func memoryGateClassify(tool string, input any, cwd string, env host.LookupEnv) 
 		// perl and ruby -i operands are the write surface (ShellWriteDestinations).
 		command, _ := record["command"].(string)
 		dir := shellirPayloadCwd(cwd)
-		if dests, readable := shellIRWriteDestsResolved(command, dir, env); readable {
+		a := analyses(command, dir, env)
+		if res, err := a.withEnv(); err == nil {
+			dests := shellIRDestsResult(res, dir, true, 0, nil)
 			for _, token := range dests {
 				if token == shellIRUnknownDest {
 					return MemoryWriteAttempt{Surface: "shell", Cause: "unknown-destination", Target: "(a destination the gate cannot read)"}
@@ -224,13 +230,13 @@ func memoryGateClassify(tool string, input any, cwd string, env host.LookupEnv) 
 		}
 		// A Python program the reader cannot finish - an f-string replacement field it cannot walk - may hold a write
 		// it never sees, so it is a write attempt of its own and the gate fails closed (CRW-741).
-		if _, ok := shellIRFStringUnreadable(command); ok {
+		if _, ok := shellIRFStringResult(a.withoutDir()); ok {
 			return MemoryWriteAttempt{Surface: "shell", Cause: "unreadable-program", Target: "(a program the gate cannot read: unsupported-program)"}
 		}
 		// A shell program position the outer shell builds at run time - a -c program, an eval operand, a source
 		// operand, a shell reading a pipe, a here-string or a here-document - may hold a write the destination reader
 		// never sees, so it is a write attempt of its own and the gate fails closed (CRW-726, beside CRW-741's check).
-		if !memoryGateShellReadable(command, dir, env) {
+		if !a.readable() {
 			return MemoryWriteAttempt{Surface: "shell", Cause: "unreadable-program", Target: "(a program the gate cannot read: unsupported-program)"}
 		}
 	}
