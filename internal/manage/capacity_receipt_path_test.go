@@ -1,9 +1,12 @@
 package manage
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -51,8 +54,8 @@ func TestCapacityReceiptWaitResolvesTheStateSpellingThroughALink(t *testing.T) {
 	}
 }
 
-// C1: a read-only open of a store with no write-ahead log creates no sidecar, and neither does a
-// read of a store whose log is present with its index.
+// C1: a store whose last writer closed (SQLite removes the log and its index at the checkpointed
+// close) is read with no sidecar created beside it.
 func TestCapacityReceiptWaitCreatesNoSidecarBesideACleanStore(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, relayReadStoreFile)
@@ -66,31 +69,117 @@ func TestCapacityReceiptWaitCreatesNoSidecarBesideACleanStore(t *testing.T) {
 	capacityTestReceipt(t, &capacityFixture{relayDir: dir}, "e1", "parent-1", 10, false)
 	assertNoReceiptSidecar(t, path)
 	since := capacityTestNow.Add(-24 * time.Hour)
-	if _, err := capacityReceiptWaitFor(context.Background(), dir, "parent-1", since); err != nil {
+	wait, err := capacityReceiptWaitFor(context.Background(), dir, "parent-1", since)
+	if err != nil {
 		t.Fatalf("capacityReceiptWaitFor: %v", err)
+	}
+	if wait.Count != 1 || wait.MedianMinutes == nil || *wait.MedianMinutes != 10 {
+		t.Errorf("the wait = %+v, want the one receipt (10 minutes)", wait)
 	}
 	assertNoReceiptSidecar(t, path)
 }
 
-// C1: a write-ahead log that holds frames beside no shared-memory index can be read only by building
-// the index, which is a sidecar, so the wait refuses and creates nothing.
-func TestCapacityReceiptWaitRefusesWithoutCreatingASidecar(t *testing.T) {
-	dir := t.TempDir()
+// capacityLiveWALStore builds a relay store in write-ahead mode whose one receipt is committed only
+// to the log: the writer stays open (and does not checkpoint), so the log and its shared-memory
+// index exist beside the store the way a running relay leaves them. The caller closes the writer.
+func capacityLiveWALStore(t *testing.T, dir, event, parent string, waitMinutes float64) (string, *sql.DB) {
+	t.Helper()
 	path := filepath.Join(dir, relayReadStoreFile)
 	capacityTestStore(t, path)
-	capacityTestReceipt(t, &capacityFixture{relayDir: dir}, "e1", "parent-1", 10, false)
-	// A log past its header (32 bytes) with no index beside it: the frames are not readable without one.
-	wal := path + "-wal"
-	capacityTestMust(t, os.WriteFile(wal, make([]byte, 64), 0o600))
+	writer, err := sql.Open("sqlite", "file:"+path)
+	capacityTestMust(t, err)
+	writer.SetMaxOpenConns(1)
+	for _, statement := range []string{"PRAGMA journal_mode=WAL", "PRAGMA wal_autocheckpoint=0"} {
+		if _, err := writer.Exec(statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	created := capacityTestNow.Add(-time.Duration(waitMinutes+1) * time.Minute)
+	for _, statement := range []struct {
+		query string
+		args  []any
+	}{
+		{"INSERT INTO deliveries (event_id, recipient_task_id, created_at) VALUES (?,?,?)", []any{event, parent, capacityStamp(created)}},
+		{"INSERT INTO acks (event_id, ack_at) VALUES (?,?)", []any{event, capacityStamp(created.Add(time.Duration(waitMinutes * float64(time.Minute))))}},
+		{"INSERT INTO events (event_id, outcome) VALUES (?,?)", []any{event, "ready_for_review"}},
+	} {
+		if _, err := writer.Exec(statement.query, statement.args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return path, writer
+}
+
+// C1: a receipt committed only to a live write-ahead log (the log and its index both present, the
+// store file not yet holding the commit) is read, and the read leaves the log and index as they were.
+// A reader that skipped the log (immutable) or refused every non-empty log would miss it.
+func TestCapacityReceiptWaitReadsAReceiptCommittedOnlyToALiveLog(t *testing.T) {
+	dir := t.TempDir()
+	path, writer := capacityLiveWALStore(t, dir, "e-live", "parent-1", 10)
+	defer writer.Close()
+	main, err := os.ReadFile(path)
+	capacityTestMust(t, err)
+	if bytes.Contains(main, []byte("e-live")) {
+		t.Fatal("the receipt reached the store file; the test needs it only in the log")
+	}
+	walBefore, err := os.ReadFile(path + "-wal")
+	capacityTestMust(t, err)
+	if len(walBefore) <= 32 || !bytes.Contains(walBefore, []byte("e-live")) {
+		t.Fatalf("the log holds no frame with the receipt (%d bytes)", len(walBefore))
+	}
+	shmBefore, err := os.Stat(path + "-shm")
+	capacityTestMust(t, err)
 	since := capacityTestNow.Add(-24 * time.Hour)
-	if _, err := capacityReceiptWaitFor(context.Background(), dir, "parent-1", since); err == nil {
+	wait, err := capacityReceiptWaitFor(context.Background(), dir, "parent-1", since)
+	if err != nil {
+		t.Fatalf("capacityReceiptWaitFor: %v", err)
+	}
+	if wait.Count != 1 || wait.MedianMinutes == nil || *wait.MedianMinutes != 10 {
+		t.Errorf("the wait = %+v, want the one receipt of the log (10 minutes)", wait)
+	}
+	walAfter, err := os.ReadFile(path + "-wal")
+	capacityTestMust(t, err)
+	if !bytes.Equal(walBefore, walAfter) {
+		t.Errorf("the read changed the log (%d -> %d bytes)", len(walBefore), len(walAfter))
+	}
+	if info, err := os.Stat(path + "-shm"); err != nil || info.Size() != shmBefore.Size() {
+		t.Errorf("the read changed the shared-memory index: %v, %v", info, err)
+	}
+}
+
+// C1: a genuine write-ahead log with committed frames beside no shared-memory index (the state an
+// unclean shutdown leaves) can be read only by building the index, which is a sidecar, so the wait
+// refuses on that ground and creates nothing.
+func TestCapacityReceiptWaitRefusesWithoutCreatingASidecar(t *testing.T) {
+	liveDir := t.TempDir()
+	livePath, writer := capacityLiveWALStore(t, liveDir, "e-crashed", "parent-1", 10)
+	defer writer.Close()
+	main, err := os.ReadFile(livePath)
+	capacityTestMust(t, err)
+	wal, err := os.ReadFile(livePath + "-wal")
+	capacityTestMust(t, err)
+	// The crashed copy: the store file and a real log with frames, and no index beside them.
+	dir := t.TempDir()
+	path := filepath.Join(dir, relayReadStoreFile)
+	capacityTestMust(t, os.WriteFile(path, main, 0o600))
+	capacityTestMust(t, os.WriteFile(path+"-wal", wal, 0o600))
+	since := capacityTestNow.Add(-24 * time.Hour)
+	_, err = capacityReceiptWaitFor(context.Background(), dir, "parent-1", since)
+	if err == nil {
 		t.Fatal("capacityReceiptWaitFor read a store whose log holds frames without its index")
+	}
+	if !errors.Is(err, ErrRelayStoreUnreadable) || !strings.Contains(err.Error(), "write-ahead log") {
+		t.Errorf("the refusal = %v, want ErrRelayStoreUnreadable naming the write-ahead log", err)
 	}
 	if _, err := os.Stat(path + "-shm"); !os.IsNotExist(err) {
 		t.Errorf("the refused read left a shared-memory index beside the store (stat err %v)", err)
 	}
-	if info, err := os.Stat(wal); err != nil || info.Size() != 64 {
-		t.Errorf("the refused read changed the log: %v, %v", info, err)
+	after, err := os.ReadFile(path + "-wal")
+	if err != nil || !bytes.Equal(after, wal) {
+		t.Errorf("the refused read changed the log: %d bytes, %v", len(after), err)
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 2 {
+		t.Errorf("the refused read created a file beside the store: %v", entries)
 	}
 }
 
