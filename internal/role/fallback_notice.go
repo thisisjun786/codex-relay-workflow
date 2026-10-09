@@ -109,12 +109,12 @@ func RunFallbackNoticeHook(ctx context.Context, in io.Reader, out io.Writer, env
 	if err != nil {
 		return 0
 	}
-	if resumed && guidancerecord.Delivered(env, session, fallbackNoticeLeg, answer) {
+	if resumed && guidancerecord.Delivered(env, session, fallbackNoticeLeg, answer, "") {
 		return 0
 	}
 	_, _ = io.WriteString(out, answer)
 	if ctx.Err() == nil {
-		guidancerecord.Record(env, session, fallbackNoticeLeg, answer)
+		guidancerecord.Record(env, session, fallbackNoticeLeg, answer, "")
 	}
 	return 0
 }

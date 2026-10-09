@@ -158,27 +158,36 @@ func mapAffordanceSessionStart(raw, fallbackCwd string, env host.LookupEnv) (str
 	if sid != "" {
 		lines = append(lines, RenderSessionBinding(sid, env))
 	}
-	pointers, identity := []string{}, []string{}
-	if count := CountSourceFiles(cwd); count >= MapAffordanceMinFiles {
-		pointers = append(pointers, RenderMapAffordance(count, env))
-		// The file count in the map pointer is a size hint that moves with every new file; whether the pointer is there is the
-		// guidance.
-		identity = append(identity, RenderMapAffordance(MapAffordanceMinFiles, env))
+	// The pointers as said, and as compared with a session's record: with the command spelled as one fixed word (the record keeps
+	// the command in a field of its own, a path that differs per host) and the map pointer's file count, a size hint that moves
+	// with every new file, left out.
+	words := func(k string) (string, bool) {
+		if k == host.BinEnv {
+			return "crw", true
+		}
+		return env(k)
 	}
-	rest := []string{RenderSkillSearchAffordance(env), RenderKwriteAffordance(), RenderLoopAffordance(env),
-		RenderStackedPrAffordance(), RenderBackgroundTerminalAffordance(), RenderQuestionAffordance()}
-	pointers, identity = append(pointers, rest...), append(identity, rest...)
+	fixed := func(env host.LookupEnv) []string {
+		return []string{RenderSkillSearchAffordance(env), RenderKwriteAffordance(), RenderLoopAffordance(env),
+			RenderStackedPrAffordance(), RenderBackgroundTerminalAffordance(), RenderQuestionAffordance()}
+	}
+	pointers, identity := fixed(env), fixed(words)
+	if count := CountSourceFiles(cwd); count >= MapAffordanceMinFiles {
+		pointers = append([]string{RenderMapAffordance(count, env)}, pointers...)
+		identity = append([]string{RenderMapAffordance(MapAffordanceMinFiles, words)}, identity...)
+	}
 	banner := []string{}
-	if inv := invocation(env); inv != "crw" {
-		banner = append(banner, "[crw] `crw` is not on PATH here; wherever docs say `crw`, run: "+inv)
+	command := invocation(env)
+	if command != "crw" {
+		banner = append(banner, "[crw] `crw` is not on PATH here; wherever docs say `crw`, run: "+command)
 	}
 	given := strings.Join(identity, "\n\n")
 	record := func() {
 		if sid != "" {
-			guidancerecord.Record(env, sid, mapAffordanceLeg, given)
+			guidancerecord.Record(env, sid, mapAffordanceLeg, given, command)
 		}
 	}
-	if resumed && sid != "" && guidancerecord.Delivered(env, sid, mapAffordanceLeg, given) {
+	if resumed && sid != "" && guidancerecord.Delivered(env, sid, mapAffordanceLeg, given, command) {
 		lines = append(lines, banner...)
 		return envelope("SessionStart", lines), func() {}
 	}

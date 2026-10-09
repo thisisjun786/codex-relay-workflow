@@ -1,6 +1,7 @@
 // Package guidancerecord remembers which SessionStart guidance a session has been given, so a resumed session is
-// not given the same text again (CRW-1146). A record is the SHA-256 of the text a hook leg delivered, kept per session
-// and leg under <CODEX_HOME>/crw/session-guidance; it holds no text and no payload. Every failure answers "not
+// not given the same text again (CRW-1146). A record is one JSON line holding the SHA-256 of the text a hook leg
+// delivered and, for a leg whose text spells the command that runs crw, that command, kept per session and leg under
+// <CODEX_HOME>/crw/session-guidance; it holds no text and no payload. Every failure answers "not
 // delivered", so a missing, unreadable or changed record makes the leg say the whole thing, as it did before records.
 package guidancerecord
 
@@ -8,9 +9,9 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
 	"unicode/utf16"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
@@ -19,6 +20,16 @@ import (
 const dirName = "session-guidance"
 
 func digest(s string) string { h := sha256.Sum256([]byte(s)); return hex.EncodeToString(h[:]) }
+
+// line is the record of a text and the command it names ("" when it names none), as it is stored.
+func line(text, command string) string {
+	b, _ := json.Marshal(struct {
+		SchemaVersion int    `json:"schemaVersion"`
+		Digest        string `json:"digest"`
+		Command       string `json:"command,omitempty"`
+	}{1, digest(text), command})
+	return string(b) + "\n"
+}
 
 // slot is the record file for a session and a leg, or "" when the host has no home, the session is not an identifier
 // (1 to 256 UTF-16 units without a control character or space, as the hook observation requires) or the leg is not a slug.
@@ -50,21 +61,23 @@ func slot(env host.LookupEnv, session, leg string) string {
 	return filepath.Join(home, "crw", dirName, digest(session), leg)
 }
 
-// Delivered reports whether this session was given exactly this text by this leg.
-func Delivered(env host.LookupEnv, session, leg, text string) bool {
+// Delivered reports whether this session was given exactly this text, naming exactly this command, by this leg. The text is what
+// the leg says with the command spelled as a fixed word, so a path that differs between hosts and runs is compared as the command
+// and is not part of the digest.
+func Delivered(env host.LookupEnv, session, leg, text, command string) bool {
 	path := slot(env, session, leg)
 	if path == "" {
 		return false
 	}
-	if st, err := os.Lstat(path); err != nil || !st.Mode().IsRegular() || st.Size() > 128 {
+	if st, err := os.Lstat(path); err != nil || !st.Mode().IsRegular() || st.Size() > 4096 {
 		return false
 	}
 	data, err := os.ReadFile(path)
-	return err == nil && strings.TrimSpace(string(data)) == digest(text)
+	return err == nil && string(data) == line(text, command)
 }
 
 // Record notes that this session was given this text by this leg, replacing the leg's earlier record. It is best effort.
-func Record(env host.LookupEnv, session, leg, text string) {
+func Record(env host.LookupEnv, session, leg, text, command string) {
 	path := slot(env, session, leg)
 	if path == "" || os.MkdirAll(filepath.Dir(path), 0o700) != nil {
 		return
@@ -78,7 +91,7 @@ func Record(env host.LookupEnv, session, leg, text string) {
 	if err != nil {
 		return
 	}
-	_, werr := f.WriteString(digest(text) + "\n")
+	_, werr := f.WriteString(line(text, command))
 	if err := f.Close(); werr != nil || err != nil || os.Rename(tmp, path) != nil {
 		_ = os.Remove(tmp)
 	}
