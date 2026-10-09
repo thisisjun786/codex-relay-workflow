@@ -1,0 +1,154 @@
+# CRW-1063 (GNU sed reads options and extra scripts after the first operand: getopt_long permutes the arguments unless
+# POSIXLY_CORRECT is set). Every write named after the first operand is a write to a protected destination.
+=== CRW-1063-01 | W
+--why sed reads a -e script after the first operand (a file here); GNU runs the w command it names
+--cmd
+sed p x.txt -e 'w {MEMORY}/a'
+=== CRW-1063-02 | W
+--why --expression after the first operand, long form with =
+--cmd
+sed p x.txt --expression='w {MEMORY}/a'
+=== CRW-1063-03 | W
+--why a clustered -ne after the first operand takes its script from the next word
+--cmd
+sed p x.txt -ne 'w {MEMORY}/a'
+=== CRW-1063-04 | W
+--why an attached -e value after the first operand
+--cmd
+sed p x.txt -e'w {MEMORY}/a'
+=== CRW-1063-05 | W
+--why an abbreviated --expr after the first operand
+--cmd
+sed p x.txt --expr 'w {MEMORY}/a'
+=== CRW-1063-06 | W
+--why a W command in a late -e after -s
+--cmd
+sed p x.txt -s -e 'W {MEMORY}/a'
+=== CRW-1063-07 | W
+--why -i after the first operand rewrites the operand files, and a late -e writes through w
+--cmd
+sed p x.txt -i -e 'w {MEMORY}/a'
+=== CRW-1063-08 | W
+--why an s///w flag in a late --expression, with a backup suffix on a late -i
+--cmd
+sed p x.txt -i.bak --expression='s/a/b/w {MEMORY}/a'
+=== CRW-1063-09 | W
+--why -i after the script puts the memory file among the rewritten operands
+--cmd
+sed 's/a/b/' x.txt -i {MEMORY}/a
+=== CRW-1063-10 | W
+--why --in-place with a suffix after the script puts the memory file among the rewritten operands
+--cmd
+sed 's/a/b/' x.txt --in-place=.bak {MEMORY}/a
+=== CRW-1063-11 | W
+--why a script operand with a late -e: the first operand is the file and the -e value runs
+--cmd
+sed x.txt -e 'w {MEMORY}/a'
+=== CRW-1063-12 | W
+--why the first operand is a w script and a late -e follows; the POSIX reading runs the first operand
+--cmd
+sed 'w {MEMORY}/a' x.txt -e p
+=== CRW-1063-13 | W
+--why a late -l with its value, then a late -e
+--cmd
+sed p x.txt -l 5 -e 'w {MEMORY}/a'
+=== CRW-1063-14 | W
+--why a second late -e after an earlier one
+--cmd
+sed p x.txt -e p -e 'w {MEMORY}/a'
+=== CRW-1063-15 | W
+--why a late --expression with a W command after -n and an operand
+--cmd
+sed p x.txt -n --expression 'W {MEMORY}/a'
+=== CRW-1063-16 | W
+--why a late -e after -E and -n in a separate word
+--cmd
+sed -n p x.txt -E -e 'w {MEMORY}/a'
+=== CRW-1063-17 | W
+--why a -ni cluster after the first operand with a late -e
+--cmd
+sed p x.txt -ni -e 'w {MEMORY}/a'
+=== CRW-1063-18 | W
+--why --in-place without a value does not take the next word: the late -e still writes
+--cmd
+sed p x.txt --in-place --expression='w {MEMORY}/a'
+=== CRW-1063-19 | W
+--why a late -e with a W command and -z
+--cmd
+sed p x.txt -z -e 'W {MEMORY}/a'
+=== CRW-1063-20 | W
+--why a late -e after -u
+--cmd
+sed p x.txt -u -e 'w {MEMORY}/a'
+=== CRW-1063-21 | B
+--why control: a late -e that only prints
+--cmd
+sed p x.txt -e p
+=== CRW-1063-22 | B
+--why control: a late -i on a plain file with a late -e that only prints
+--cmd
+sed p x.txt -i -e p
+=== CRW-1063-23 | B
+--why control: the late -n form of a benign script
+--cmd
+sed -n p x.txt --expression p
+=== CRW-1063-24 | W
+--why a late -i with a suffix that is a directory of memory: the backup of the operand lands there
+--cmd
+sed p x.txt -i'{MEMORY}/*'
+=== CRW-1063-25 | W
+--why a late --in-place with a memory suffix
+--cmd
+sed p x.txt --in-place='{MEMORY}/*'
+=== CRW-1063-26 | W
+--why a late -ni cluster with a memory suffix
+--cmd
+sed p x.txt -ni'{MEMORY}/*'
+=== CRW-1063-27 | B
+--why control: GNU sed keeps the last -i suffix, so the earlier memory suffix is no backup place and the empty one counts (verified with sed 4.9)
+--cmd
+sed p x.txt -i'{MEMORY}/*' -i
+=== CRW-1063-28 | W
+--why an in-place operand after the script that is a memory file
+--cmd
+sed p x.txt -i '{MEMORY}/a'
+=== CRW-1063-29 | W
+--why a late -e inside bash -c
+--cmd
+bash -c "sed p x.txt -e 'w {MEMORY}/a'"
+=== CRW-1063-30 | W
+--why a late -e behind env
+--cmd
+env sed p x.txt -e 'w {MEMORY}/a'
+=== CRW-1063-31 | W
+--why a late -e behind command
+--cmd
+command sed p x.txt -e 'w {MEMORY}/a'
+=== CRW-1063-32 | W
+--why a late -e with a redirection of stdin
+--cmd
+sed p x.txt -e 'w {MEMORY}/a' < /dev/null
+=== CRW-1063-33 | W
+--why a late -e in a pipeline
+--cmd
+sed p x.txt -e 'w {MEMORY}/a' | cat
+=== CRW-1063-34 | W
+--why a late --expression with an s///w flag after a late -n
+--cmd
+sed p x.txt -n --expression='s/a/b/w {MEMORY}/a'
+=== CRW-1063-35 | W
+--why a late -e in a command substitution argument
+--cmd
+sed p x.txt -e "w {MEMORY}/a"
+=== CRW-1063-36 | W
+--why a late -i with a backup into memory and a late script under the POSIX reading
+--cmd
+sed 'w {MEMORY}/b' x.txt -i -e p
+=== CRW-1063-37 | W
+--why a late -e whose value is an option-looking word that starts a write
+--cmd
+sed p x.txt -e 'w {MEMORY}/a' -s
+=== CRW-1063-38 | W
+--why a late -s with a W command under an -n before the operand
+--cmd
+sed -n p x.txt -s -e 'W {MEMORY}/a'
