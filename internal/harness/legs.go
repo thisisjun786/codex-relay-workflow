@@ -84,7 +84,23 @@ func Legs() []Leg {
 				Cwd: p.Cwd, SessionID: p.SessionID, Prompt: p.Prompt, TurnID: turn, TranscriptPath: transcript,
 				PabcdEnabled: c.PabcdEnabled}, "", os.LookupEnv))
 		}},
-		{"stop-checking-pabcd-continuation", "stop", "stop", Generic, false, false, true, nil},
+		{"stop-checking-pabcd-continuation", "stop", "stop", Generic, false, false, true, func(c Call) string {
+			p, ok := ParseStop(c.Raw)
+			if !ok {
+				return ""
+			}
+			transcript := ""
+			if p.TranscriptPath != nil {
+				transcript = *p.TranscriptPath
+			}
+			// The platform argument stays empty, as for UserPromptSubmit: the block texts resolve this host's
+			// platform when it is not given, which is the oracle's default (process.platform).
+			answer := pabcdhook.StopHandle(pabcdhook.StopPayload{Cwd: p.Cwd, SessionID: p.SessionID, TranscriptPath: transcript}, "", os.LookupEnv)
+			if answer.Context != "" {
+				return ContextOutput("Stop", answer.Context)
+			}
+			return answer.Stdout
+		}},
 		{"pre-tool-use-guarding-goal-budget", "pre-tool-use", "pre-tool-use", FailClosed, false, false, false, func(c Call) string {
 			return pabcdhook.GoalGateHandlePreToolUseFailClosed(c.Raw, os.LookupEnv, c.PabcdEnabled)
 		}},
