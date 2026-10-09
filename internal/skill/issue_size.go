@@ -164,7 +164,7 @@ var headingWords = []struct {
 	words, prefixes []string
 }{
 	{kindResearch, []string{"연구보강", "researchreinforcement"}, []string{"research"}},
-	{kindCriteria, []string{"완료기준", "completioncriteria", "acceptancecriteria"}, nil},
+	{kindCriteria, []string{"완료기준", "completioncriteria", "acceptancecriteria"}, []string{"기준", "criteria"}},
 	{kindDeliverables, []string{"산출물", "deliverable"}, nil},
 	{kindVerification, []string{"검증", "verification"}, nil},
 	{kindScope, []string{"범위", "결과", "크기", "scope", "outcome", "result"}, []string{"size"}},

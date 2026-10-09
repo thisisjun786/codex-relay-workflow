@@ -318,3 +318,92 @@ func TestIssueReadyHeadingsNamedInReasonsAreRead(t *testing.T) {
 		}
 	}
 }
+
+// The two required checks run one after the other on the same Linear record (crw-run), so a body the
+// add-issue skill writes must pass both reads: the criteria heading is one both know.
+func TestIssueReadyAndSizeReadTheSameCriteriaHeading(t *testing.T) {
+	in := readyIssue(t, readyBody, nil)
+	if code, out, errOut := readyCall(in); code != 0 {
+		t.Fatalf("issue-ready: exit %d: %s%s", code, out, errOut)
+	}
+	code, out, errOut := sizeCall(in)
+	if code == 2 || strings.Contains(errOut, "no completion criteria") {
+		t.Fatalf("issue-size cannot read the criteria heading issue-ready accepts: exit %d: %s%s", code, out, errOut)
+	}
+	if got := atNum(t, decodeReport(t, out), "signals", "criteria"); got != 2 {
+		t.Errorf("issue-size counts %d criteria, want 2: %s", got, out)
+	}
+	english := "## Criteria\n\n- c1: a thing\n- c2: another\n"
+	code, out, errOut = sizeCall(readyIssue(t, english, nil))
+	if code == 2 || atNum(t, decodeReport(t, out), "signals", "criteria") != 2 {
+		t.Errorf("the English 'Criteria' heading: exit %d: %s%s", code, out, errOut)
+	}
+}
+
+// The edit-region section supplies the item only with a path the repository could have: a sentence
+// with no path in backticks names no region.
+func TestIssueReadyEditRegionNeedsAPath(t *testing.T) {
+	body := strings.Replace(readyBody, "* `internal/skill/issue_ready.go`\n* `plugins/crw/skills/crw-run/SKILL.md`", "* 관련 파일 몇 개\n* related files", 1)
+	code, out, _ := readyCall(readyIssue(t, body, nil))
+	r := decodeReport(t, out)
+	if code != 1 || strings.Join(strs(atList(r, "missing")), ",") != "edit_region" || len(atList(r, "observed", "edit_regions")) != 0 {
+		t.Fatalf("exit %d: %s", code, out)
+	}
+}
+
+// What a section about what stays out does not count as an edit region, in any spelling of its heading.
+func TestIssueReadyOutOfScopePathsAreNoEditRegion(t *testing.T) {
+	start := strings.Index(readyBody, "## 편집 영역")
+	end := strings.Index(readyBody, "## 정한 답")
+	for _, heading := range []string{"## Out-of-scope", "## Out of scope", "## 범위 밖", "## Non-goals", "## Non goals"} {
+		body := readyBody[:start] + readyBody[end:] + "\n" + heading + "\n\n* `internal/relay/`\n"
+		code, out, _ := readyCall(readyIssue(t, body, nil))
+		r := decodeReport(t, out)
+		if code != 1 || strings.Join(strs(atList(r, "missing")), ",") != "edit_region" || len(atList(r, "observed", "edit_regions")) != 0 {
+			t.Errorf("%s: exit %d: %s", heading, code, out)
+		}
+	}
+}
+
+// An entry is a none only when it says nothing is open; a question that starts with a none word is a
+// question.
+func TestIssueReadyOpenDecisionStartingWithANoneWordIsAQuestion(t *testing.T) {
+	for _, q := range []string{
+		"* None of the providers supports CAS; which fallback should we choose?",
+		"* No retry budget is defined; pick one",
+		"* N/A for the cache, but the eviction order is open",
+		"* 없다고 가정해도 되는가?",
+		"* 없음 처리할지 오류로 볼지 정해야 한다",
+		"* Nothing in the spec says who owns the lock",
+	} {
+		b := strings.Replace(readyBody, "## 열린 결정\n\n없음\n", "## 열린 결정\n\n"+q+"\n", 1)
+		code, out, _ := readyCall(readyIssue(t, b, nil))
+		r := decodeReport(t, out)
+		if code != 1 || at(r, "decision") != "design_first" || len(atList(r, "open_questions")) != 1 {
+			t.Errorf("%q: exit %d: %s", q, code, out)
+		}
+	}
+	for _, none := range []string{"None (everything is in the decided answer)", "없음 (정한 답에 반영)", "No open decisions.", "없습니다.", "Nothing."} {
+		b := strings.Replace(readyBody, "## 열린 결정\n\n없음\n", "## 열린 결정\n\n"+none+"\n", 1)
+		if code, out, _ := readyCall(readyIssue(t, b, nil)); code != 0 {
+			t.Errorf("open decisions %q hold nothing: exit %d: %s", none, code, out)
+		}
+	}
+}
+
+// A done condition written only as a block (the command and its expected result) is a done condition.
+func TestIssueReadyDoneConditionOnlyInACodeBlock(t *testing.T) {
+	block := "## 끝 조건\n\n```sh\ngo test ./internal/skill -run IssueReady\n# Expected: all tests pass, exit 0\n```\n\n"
+	start := strings.Index(readyBody, "## 끝 조건")
+	end := strings.Index(readyBody, "## 범위 밖")
+	body := readyBody[:start] + block + readyBody[end:]
+	if code, out, _ := readyCall(readyIssue(t, body, nil)); code != 0 {
+		t.Fatalf("exit %d: %s", code, out)
+	}
+	// A block with a heading-shaped line is still no new section, and an empty block is no condition.
+	empty := readyBody[:start] + "## 끝 조건\n\n```sh\n```\n\n" + readyBody[end:]
+	code, out, _ := readyCall(readyIssue(t, empty, nil))
+	if code != 1 || strings.Join(strs(atList(decodeReport(t, out), "missing")), ",") != "done_condition" {
+		t.Errorf("an empty block: exit %d: %s", code, out)
+	}
+}

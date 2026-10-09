@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"regexp"
 	"strings"
 	"unicode/utf8"
 )
@@ -68,7 +69,7 @@ var readyHeadings = []struct {
 	{readyScope, []string{"범위", "scope"}, nil},
 }
 
-var readyOutOfScope = []string{"범위밖", "outofscope", "non-goal", "nongoal"}
+var readyOutOfScope = []string{"범위밖", "outofscope", "out-of-scope", "non-goal", "nongoal"}
 
 func readyHeadingKind(title string) string {
 	compact := compactHeading(title)
@@ -168,18 +169,22 @@ func placeholderEntry(s string) bool {
 	return false
 }
 
-// noneEntry is an entry that says there is nothing (for the open decisions).
+// noneWords are the whole entries (compact form) that say nothing is open.
+var noneWords = map[string]bool{
+	"no": true, "nil": true, "na": true, "n/a": true, "none": true, "nothing": true,
+	"noopendecisions": true, "noopenquestions": true, "noneopen": true,
+	"없음": true, "없다": true, "없습니다": true, "해당없음": true, "해당사항없음": true, "열린결정없음": true, "남은질문없음": true,
+}
+
+// parenthetical is a note in brackets after the word, which the none check leaves out.
+var parenthetical = regexp.MustCompile(`\([^()]*\)|（[^（）]*）`)
+
+// noneEntry is an entry that says there is nothing (for the open decisions): the whole entry is a none
+// word, with at most a note in brackets. An entry that only starts with one ("None of the providers
+// supports CAS; which fallback?") is a question.
 func noneEntry(s string) bool {
-	c := compactEntry(s)
-	if c == "" || c == "no" || c == "nil" || c == "na" {
-		return true
-	}
-	for _, p := range []string{"없음", "없다", "해당없음", "none", "n/a"} {
-		if strings.HasPrefix(c, p) {
-			return true
-		}
-	}
-	return false
+	c := compactEntry(parenthetical.ReplaceAllString(s, ""))
+	return c == "" || noneWords[c]
 }
 
 // entries are what a section states: its list items and table rows, or, when it has none, its
@@ -194,6 +199,20 @@ func (s section) entries() []string {
 		}
 	}
 	return items
+}
+
+// fencedLines are the lines of a fenced block that carry content: not the fence lines, not blank. A
+// done condition may be written as a block alone (the command and its expected result).
+func (s section) fencedLines() int {
+	n := 0
+	for i, line := range s.lines {
+		if s.fenced[i] && strings.TrimSpace(line) != "" {
+			if mark, _, _ := fenceRun(line); mark == 0 {
+				n++
+			}
+		}
+	}
+	return n
 }
 
 // hasCommand is whether the section names a command: a backticked token outside code, or a line of a
@@ -251,10 +270,11 @@ func readyReportFor(in readyInput) (readyReport, error) {
 			}
 			continue
 		case itemDone:
-			if len(real) > 0 && s.hasCommand() {
+			if (len(real) > 0 || s.fencedLines() > 0) && s.hasCommand() {
 				has[itemDone] = true
 			}
-		case readyScope:
+		case itemEdit, readyScope:
+			// These supply the edit region only through the paths they name (below).
 		default:
 			if len(real) > 0 {
 				has[s.kind] = true
