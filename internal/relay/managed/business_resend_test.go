@@ -422,15 +422,6 @@ func (a *businessResendUnloadApp) HostCall(ctx context.Context, method string, p
 	return a.Adapter.HostCall(ctx, method, params)
 }
 
-func businessResendJournalCount(t *testing.T, k *reconcileKit, kind string) int {
-	t.Helper()
-	var n int
-	if err := k.start.Store.DB.QueryRow("SELECT COUNT(*) FROM journal WHERE kind=?", kind).Scan(&n); err != nil {
-		t.Fatal(err)
-	}
-	return n
-}
-
 // businessResendLoweringRows counts the lowerings an unload recorded: the closing rows that name an
 // archive. The begin marks and the rows that say nothing was archived are not lowerings.
 func businessResendLoweringRows(t *testing.T, k *reconcileKit) int {
