@@ -251,3 +251,31 @@ func TestLoopSteerInterruptLiveContextIsTheControl(t *testing.T) {
 		t.Fatal("the ledger holds no steered row")
 	}
 }
+
+// TestLoopSteerInterruptEndedContextRefusalsAreSilent: the argument and batch refusals that precede the lock are
+// answers of a process the signal has already ended, so an ended context takes precedence over each of them.
+func TestLoopSteerInterruptEndedContextRefusalsAreSilent(t *testing.T) {
+	cwd, slug := loopMutWorkspace(t, nil)
+	before := loopMutTake(t, cwd, slug)
+	tree := mutatorsTree(t, cwd)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	for name, argv := range map[string][]string{
+		"malformed inline batch": {"steer", "--session", loopMutSession, "--batch-json", "{", "--cwd", cwd},
+		"missing batch":          {"steer", "--session", loopMutSession, "--cwd", cwd},
+		"missing session":        {"steer", "--batch-json", "{}", "--cwd", cwd},
+		"unreadable batch file":  {"steer", "--session", loopMutSession, "--batch-json", "absent.json", "--cwd", cwd},
+		"unbound session":        {"steer", "--session", "00000000-0000-4000-8000-000000000001", "--batch-json", "{}", "--cwd", cwd},
+	} {
+		args, err := ParseLoopCliArgs(argv, cwd)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		got, err := RunLoopCliContext(ctx, args)
+		if !errors.Is(err, context.Canceled) || got != (LoopCliResult{}) {
+			t.Fatalf("%s under an ended context: %+v %v, want the context's error and nothing to print", name, got, err)
+		}
+		before.assertUnchanged(t, cwd, slug)
+		mutatorsSameTree(t, tree, mutatorsTree(t, cwd))
+	}
+}

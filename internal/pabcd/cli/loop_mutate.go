@@ -152,16 +152,30 @@ func loopReadBatch(ctx context.Context, path string) ([]byte, error) {
 // finishes and answers as before. lock is the test seam of the goalplan lock (its Now runs right after the lock
 // is taken); nil means the real lock.
 func loopSteer(ctx context.Context, args LoopCliArgs, lock *goalplan.GoalplanWriteLockOptions) (LoopCliResult, error) {
+	result, wrote, err := loopSteerRun(ctx, args, lock)
+	// Every answer that is not a write (a refusal of the arguments or the batch, an unbound session, a duplicate, a
+	// locked or rejected plan) is the answer of a process the signal would already have ended: an ended context
+	// takes precedence and nothing is printed.
+	if err == nil && !wrote {
+		if cerr := ctx.Err(); cerr != nil {
+			return LoopCliResult{}, cerr
+		}
+	}
+	return result, err
+}
+
+// loopSteerRun is loopSteer's body; wrote reports that the steering transaction applied the batch.
+func loopSteerRun(ctx context.Context, args LoopCliArgs, lock *goalplan.GoalplanWriteLockOptions) (LoopCliResult, bool, error) {
 	session := loopSessionID(args)
 	if session == "" {
-		return LoopCliResult{Output: "loop steer: --session <id> is required", Code: 1}, nil
+		return LoopCliResult{Output: "loop steer: --session <id> is required", Code: 1}, false, nil
 	}
 	if !state.IsCanonicalSessionID(session) {
-		return LoopCliResult{Output: fmt.Sprintf("loop steer: --session \"%s\" is not a canonical session id — it would resolve to a different state file and steer another goal", session), Code: 1}, nil
+		return LoopCliResult{Output: fmt.Sprintf("loop steer: --session \"%s\" is not a canonical session id — it would resolve to a different state file and steer another goal", session), Code: 1}, false, nil
 	}
 	raw := text.Trim(loopOpt(args.BatchJSON))
 	if raw == "" {
-		return LoopCliResult{Output: "loop steer: --batch-json <path-or-json> is required", Code: 1}, nil
+		return LoopCliResult{Output: "loop steer: --batch-json <path-or-json> is required", Code: 1}, false, nil
 	}
 	batchText := raw
 	if !strings.HasPrefix(raw, "{") {
@@ -171,23 +185,23 @@ func loopSteer(ctx context.Context, args LoopCliArgs, lock *goalplan.GoalplanWri
 		}
 		bytes, err := loopReadBatch(ctx, path)
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return LoopCliResult{}, err
+			return LoopCliResult{}, false, err
 		}
 		if err != nil {
-			return LoopCliResult{Output: fmt.Sprintf("loop steer: could not read the batch at %s (%s)", raw, loopNodeReadMessage(err)), Code: 1}, nil
+			return LoopCliResult{Output: fmt.Sprintf("loop steer: could not read the batch at %s (%s)", raw, loopNodeReadMessage(err)), Code: 1}, false, nil
 		}
 		batchText = string(bytes)
 	}
 	batch, err := loopParseJSON(batchText)
 	if err != nil {
-		return LoopCliResult{Output: fmt.Sprintf("loop steer: batch is not valid JSON (%s)", err.Error()), Code: 1}, nil
+		return LoopCliResult{Output: fmt.Sprintf("loop steer: batch is not valid JSON (%s)", err.Error()), Code: 1}, false, nil
 	}
 	if lossy := loopLossyJSON(batchText); lossy != "" {
-		return LoopCliResult{Output: "loop steer: batch holds " + lossy, Code: 1}, nil
+		return LoopCliResult{Output: "loop steer: batch holds " + lossy, Code: 1}, false, nil
 	}
 	slug := loopBoundSlug(args, session)
 	if slug == "" {
-		return loopNotBound(LoopVerbSteer, session, "—"), nil
+		return loopNotBound(LoopVerbSteer, session, "—"), false, nil
 	}
 	var options *goalplan.SteeringBatchOptions
 	if lock != nil || ctx.Done() != nil {
@@ -202,7 +216,7 @@ func loopSteer(ctx context.Context, args LoopCliArgs, lock *goalplan.GoalplanWri
 	}
 	result, err := goalplan.ApplySteeringBatch(args.Cwd, slug, batch, options)
 	if err != nil {
-		return LoopCliResult{}, err
+		return LoopCliResult{}, false, err
 	}
 	switch result.Kind {
 	case goalplan.SteerResultApplied:
@@ -210,12 +224,12 @@ func loopSteer(ctx context.Context, args LoopCliArgs, lock *goalplan.GoalplanWri
 		if result.Warning != "" {
 			output += "\n  warning: " + result.Warning
 		}
-		return LoopCliResult{Output: output, Code: 0}, nil
+		return LoopCliResult{Output: output, Code: 0}, true, nil
 	case goalplan.SteerResultDuplicate:
 		return LoopCliResult{Output: fmt.Sprintf("loop steer: %s was already applied at %s — nothing to do",
-			result.Entry.IdempotencyKey, result.Entry.AppliedAt), Code: 0}, nil
+			result.Entry.IdempotencyKey, result.Entry.AppliedAt), Code: 0}, false, nil
 	}
-	return LoopCliResult{Output: "loop steer: " + result.Reason, Code: 1}, nil
+	return LoopCliResult{Output: "loop steer: " + result.Reason, Code: 1}, false, nil
 }
 
 // loopAddOp is runAddOp (:354-420): add-criterion and add-work-phase are sugar over the steering batch, which

@@ -376,3 +376,18 @@ func TestPabcdSessionLockRowsBinaryEndOnTheFirstInterrupt(t *testing.T) {
 		})
 	}
 }
+
+// TestPabcdLoopSteerRefusalOnAnEndedContextIsSilent: a malformed inline batch is refused before any lock, and the
+// refusal is still the answer of a process the signal has already ended: Interrupted, nothing printed.
+func TestPabcdLoopSteerRefusalOnAnEndedContextIsSilent(t *testing.T) {
+	root := pabcd1074Seed(t, true)
+	before := orchestrateTestTree(t, root)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var stdout, stderr bytes.Buffer
+	code := PabcdContext(ctx, []string{"loop", "steer", "--session", "s", "--batch-json", "{"}, strings.NewReader(""), &stdout, &stderr, Verbs())
+	if code != Interrupted || stdout.Len() != 0 || stderr.Len() != 0 {
+		t.Fatalf("malformed batch under an ended context: code %d, stdout %q, stderr %q; want %d with nothing printed", code, stdout.String(), stderr.String(), Interrupted)
+	}
+	orchestrateTestSameTree(t, before, orchestrateTestTree(t, root))
+}

@@ -143,3 +143,22 @@ func TestSteeringInterruptLiveContextIsTheControl(t *testing.T) {
 		t.Fatalf("live context: %v %+v", err, result)
 	}
 }
+
+// TestSteeringInterruptCancelledWhilePreparingTheChangeWritesNothing cancels from the batch's clock, which runs
+// after the lock is taken and before the plan write: the change is prepared and the context read again just
+// before the first write, so nothing is published, no ledger row is written and the lock is released.
+func TestSteeringInterruptCancelledWhilePreparingTheChangeWritesNothing(t *testing.T) {
+	cwd, slug := steeringApplyWorkspace(t)
+	dir := steeringApplyDir(t, cwd, slug)
+	before := steeringInterruptBytes(t, dir)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	_, err := ApplySteeringBatch(cwd, slug, steeringApplyBatch(nil), &SteeringBatchOptions{
+		Lock: &GoalplanWriteLockOptions{Context: ctx},
+		Now:  func() string { cancel(); return "2026-03-03T00:00:00.000Z" },
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled while preparing: %v, want context.Canceled", err)
+	}
+	steeringInterruptSame(t, before, steeringInterruptBytes(t, dir))
+}

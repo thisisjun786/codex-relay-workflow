@@ -13,6 +13,7 @@ package goalplan
 // The op grammar, its validation and the pure fold are in steering_ops.go (B15a / CRW-376) and
 // are called, never copied. The oracle's own comment there says this half is B15b.
 import (
+	"context"
 	"strconv"
 	"strings"
 
@@ -81,6 +82,7 @@ func ApplySteeringBatch(cwd, slug string, rawBatch any, o *SteeringBatchOptions)
 	now := writeTimestamp
 	var lockOptions *GoalplanWriteLockOptions
 	var publish *goalplanPublishedOptions
+	var ctx context.Context
 	if o != nil {
 		if o.Now != nil {
 			now = o.Now
@@ -88,8 +90,11 @@ func ApplySteeringBatch(cwd, slug string, rawBatch any, o *SteeringBatchOptions)
 		lockOptions = o.Lock
 		publish = o.publish
 	}
+	if lockOptions != nil {
+		ctx = lockOptions.Context
+	}
 	locked, err := WithGoalplanWriteLock(cwd, slug, func(plan *Goalplan) (SteerResult, error) {
-		return steeringApplyLocked(cwd, slug, plan, batch, now, publish)
+		return steeringApplyLocked(ctx, cwd, slug, plan, batch, now, publish)
 	}, lockOptions)
 	if err != nil {
 		return SteerResult{}, err
@@ -117,7 +122,12 @@ func ApplySteeringBatch(cwd, slug string, rawBatch any, o *SteeringBatchOptions)
 // steeringApplyLocked is the oracle's callback (:264-320): the whole read-modify-write, run while
 // the shared goalplan write lock is held. The duplicate scan comes first, so an injected clock is
 // not consulted for a batch that will not be recorded.
-func steeringApplyLocked(cwd, slug string, plan *Goalplan, batch SteerBatch, now func() string, publish *goalplanPublishedOptions) (SteerResult, error) {
+//
+// ctx (CRW-1074, nil for a caller the first SIGINT cannot end) is read once more after the batch is prepared
+// (duplicate scan, clock, ops applied) and immediately before the plan write, the transaction's first write, so
+// a first SIGINT that lands while the change is being prepared publishes nothing. After that write has begun
+// it is not read again: the transaction finishes and answers as before.
+func steeringApplyLocked(ctx context.Context, cwd, slug string, plan *Goalplan, batch SteerBatch, now func() string, publish *goalplanPublishedOptions) (SteerResult, error) {
 	for i := range plan.SteeringLog {
 		if plan.SteeringLog[i].IdempotencyKey == batch.IdempotencyKey {
 			existing := plan.SteeringLog[i]
@@ -143,6 +153,11 @@ func steeringApplyLocked(cwd, slug string, plan *Goalplan, batch SteerBatch, now
 	// be written at all. The durability failure is carried as a warning and the ledger work below runs as
 	// on a clean write. A failure before the rename published nothing and stays an error.
 	warning := ""
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return SteerResult{}, err
+		}
+	}
 	if err := goalplanPublishedWriteGoalplan(cwd, &next, publish); err != nil {
 		if !state.Published(err) {
 			return SteerResult{}, err
