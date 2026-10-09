@@ -959,3 +959,16 @@ second verification of ad1b3d605 (P2 filter file operand)	echo build | sort root
 second verification of ad1b3d605 (P2 filter file operand)	echo ../other | grep o roots.list | xargs rmdir	CRW-895-q3	row	-
 second verification of ad1b3d605 (P2 filter file operand)	echo build/old.o | cat - | xargs rm	CRW-895-q4	row	-
 second verification of ad1b3d605 (P2 filter file operand)	echo build/old.o | grep old | xargs rm	CRW-895-q5	row	-
+third verification of f0857f317 (P0 find {} sets the context of a shell)	find .. -maxdepth 0 -exec sh -c 'cd {}; rm -rf repo' \;	CRW-895-r1	row	-
+third verification of f0857f317 (P0 find {} sets the context of a shell)	find .. -maxdepth 0 -exec sh -c 'cd {} && git worktree remove --force repo' \;	CRW-895-r2	row	-
+third verification of f0857f317 (P0 find {} sets the context of a shell)	find . -path ./a/b -exec sh -c 'cd {}; rm -rf ../../../repo' \;	CRW-895-r3	row	-
+third verification of f0857f317 (P0 find {} sets the context of a shell)	find . -name b -exec sh -c 'D={}; cd "$D"; rm -rf ../../../repo' \;	CRW-895-r4	row	-
+third verification of f0857f317 (P0 find {} sets the context of a shell)	find . -path ./a/b -exec sh -c 'cd {}/x; rmdir ../../../../repo' \;	CRW-895-r5	row	-
+third verification of f0857f317 (P0 find {} sets the context of a shell)	find . -path ./a/b -exec git -C {}/../.. worktree remove --force ../repo \;	CRW-895-r6	row	-
+third verification of f0857f317 (P0 find {} sets the context of a shell)	find .. -name x -exec sh -c 'cd /tmp/a/b; rm -rf {}' \;	CRW-895-r7	row	-
+third verification of f0857f317 (P0 find {} sets the context of a shell)	find ../repo -exec sh -c 'rm build/old.o' \;	CRW-895-r8	row	-
+third verification of f0857f317 (P0 find {} sets the context of a shell)	find . -name '*.o' -exec sh -c 'cd build; rm -f {}' \;	CRW-895-r9	row	-
+third verification of f0857f317 (P0 find {} sets the context of a shell)	find . -name '*.o' -exec rm -f {}.tmp \;	CRW-895-r10	row	-
+third verification of f0857f317 (P2 find name pattern the reader cannot settle)	find ../repo -name '[[.r.]]*' -delete	CRW-895-r11	row	-
+third verification of f0857f317 (P2 find name pattern the reader cannot settle)	find ../repo -name '[[=r=]]*' -delete	CRW-895-r12	row	-
+third verification of f0857f317 (P2 find name pattern the reader cannot settle)	find ../repo -iname '[[:digit:]]*' -delete	CRW-895-r13	row	-

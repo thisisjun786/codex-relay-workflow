@@ -1,6 +1,7 @@
 package hook
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -154,6 +155,101 @@ func TestCRW895ShapesFromOtherDirectories(t *testing.T) {
 	} {
 		if got := evaluateCommand(cmd, sub, id); got.Deny != deny {
 			t.Errorf("%q from %s: deny = %v, want %v (%s)", cmd, sub, got.Deny, deny, got.Reason)
+		}
+	}
+}
+
+// newDelRigNamed is newDelRig with the managed checkout under another name (Repo, 리포), for the name patterns whose case or locale
+// decides whether find selects the checkout.
+func newDelRigNamed(t *testing.T, name string) delRig {
+	t.Helper()
+	home, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := delRig{wtRig: wtRig{home: home, codexHome: filepath.Join(home, ".codex")}}
+	r.worktrees = filepath.Join(r.codexHome, "worktrees")
+	r.slotRoot = filepath.Join(r.worktrees, "zk3q")
+	r.checkout = filepath.Join(r.slotRoot, name)
+	r.other = filepath.Join(home, "elsewhere", "build")
+	wtWrite(t, filepath.Join(r.checkout, ".git"), "gitdir: /fake/main/.git/worktrees/zk3q\n")
+	wtWrite(t, filepath.Join(r.other, "keep"), "x")
+	return r
+}
+
+// crw895GuardAnswer is the worktree guard's answer to a Bash command run in the rig's checkout, through the public entry point.
+func crw895GuardAnswer(t *testing.T, r delRig, cwd, cmd string) string {
+	t.Helper()
+	payload := wtPayload(t, map[string]any{"hook_event_name": "PreToolUse", "tool_name": "Bash", "cwd": cwd,
+		"tool_input": map[string]any{"command": cmd}})
+	return HandleWorktreeGuardPreTool(payload, r.env())
+}
+
+// TestCRW895PlaceholderChangesTheShellContext (third verification of f0857f317): find substitutes {} anywhere in the text of a
+// shell, so a {} that sets the directory (cd {}) or a variable the text uses later decides what every removal in the text names.
+// The find's start points then judge each removal in the text, from the directory find runs in; a cd to a word holding {} leaves
+// the directory unknown; a removal operand that puts text before {} or climbs out of it with .. names a path the start points do
+// not bound. A shell that does not hold {} and ignores its parameters keeps its fixed cleanup (d7).
+func TestCRW895PlaceholderChangesTheShellContext(t *testing.T) {
+	r := newDelRig(t)
+	wtWrite(t, filepath.Join(r.checkout, "a", "b", "keep"), "x")
+	for cmd, deny := range map[string]bool{
+		`find .. -maxdepth 0 -exec sh -c 'cd {}; rm -rf repo' \;`:                        true, // the verifier's trigger
+		`find .. -maxdepth 0 -exec sh -c 'cd {} && git worktree remove --force repo' \;`: true,
+		`find . -path ./a/b -exec sh -c 'cd {}; rm -rf ../../../repo' \;`:                true, // a guarded start, cd to a found path
+		`find . -name b -exec sh -c 'D={}; cd "$D"; rm -rf ../../../repo' \;`:            true, // {} through a variable
+		`find . -path ./a/b -exec sh -c 'cd {}/x; rmdir ../../../../repo' \;`:            true,
+		`find . -path ./a/b -exec rm -rf {}/../../../repo \;`:                            true, // .. after {} climbs out of the found path
+		`find . -name repo -exec rm -rf ../{} \;`:                                        true, // text before {} names another tree
+		`find . -path ./a/b -exec git -C {}/../.. worktree remove --force ../repo \;`:    true,
+		`find .. -name x -exec sh -c 'cd /tmp/a/b; rm -rf {}' \;`:                        true, // the start is judged where find runs
+		// kept
+		`echo ../repo | xargs sh -c 'rm build/old.o'`:            false, // d7
+		`find ../repo -exec sh -c 'rm build/old.o' \;`:           false,
+		`find . -name '*.o' -exec sh -c 'rm -f {}' \;`:           false,
+		`find build -exec sh -c 'rm -rf {}' \;`:                  false,
+		`find . -name '*.o' -exec sh -c 'cd build; rm -f {}' \;`: false,
+		`find . -name '*.o' -exec rm -f {}.tmp \;`:               false,
+		`find . -name '*.o' -exec rm -f ./{} \;`:                 false,
+	} {
+		got := crw895GuardAnswer(t, r, r.checkout, cmd)
+		switch {
+		case deny && !strings.Contains(got, "WORKTREE-GUARD-03"):
+			t.Errorf("%q: the worktree guard answered %q, want a WORKTREE-GUARD-03 deny", cmd, got)
+		case !deny && got != "":
+			t.Errorf("%q: the worktree guard denied: %s", cmd, got)
+		}
+	}
+}
+
+// TestCRW895NamePatternCaseAndLocale (third verification of f0857f317): find -iname folds the case of letters but tests a POSIX
+// class against the name as it is ([[:upper:]] selects Repo), and in a UTF-8 locale a class or ? takes a whole character ([[:alpha:]]
+// selects 리포). A pattern the reader cannot evaluate in every locale is not a test that leaves the checkout out.
+func TestCRW895NamePatternCaseAndLocale(t *testing.T) {
+	for _, c := range []struct {
+		name, cmd string
+		deny      bool
+	}{
+		{"Repo", "find ../Repo -iname '[[:upper:]]*' -delete", true},
+		{"Repo", "find ../Repo -iname 'repo' -delete", true},
+		{"Repo", "find ../Repo -iname '[^[:lower:]]*' -delete", true},
+		{"Repo", "find ../Repo -ipath '../[[:upper:]]*' -delete", true},
+		{"Repo", "find ../Repo -iname '[[:digit:]]*' -delete", false},
+		{"Repo", "find ../Repo -iname '*.o' -delete", false},
+		{"리포", "find ../리포 -iname '[[:alpha:]]*' -delete", true},
+		{"리포", "find ../리포 -name '[[:print:]]*' -delete", true},
+		{"리포", "find ../리포 -name '??' -delete", true},
+		{"리포", "find ../리포 -name '*.o' -delete", false},
+		{"repo", "find ../repo -name '[[.r.]]*' -delete", true},
+		{"repo", "find ../repo -name '[[=r=]]*' -delete", true},
+	} {
+		r := newDelRigNamed(t, c.name)
+		got := crw895GuardAnswer(t, r, r.checkout, c.cmd)
+		switch {
+		case c.deny && !strings.Contains(got, "WORKTREE-GUARD-03"):
+			t.Errorf("%q in %s: the worktree guard answered %q, want a WORKTREE-GUARD-03 deny", c.cmd, c.name, got)
+		case !c.deny && got != "":
+			t.Errorf("%q in %s: the worktree guard denied: %s", c.cmd, c.name, got)
 		}
 	}
 }
