@@ -275,3 +275,55 @@ func TestDispatchCommandHandoffReadsTheHost(t *testing.T) {
 		t.Fatalf("CLI handoff = %q after %d opens", out.Action, calls)
 	}
 }
+
+// dispatchHandoffTail appends raw bytes to the rollout dispatchHandoffNative wrote for child-a.
+func dispatchHandoffTail(t *testing.T, env host.LookupEnv, tail string) {
+	t.Helper()
+	native, _ := env("CODEX_HOME")
+	f := must(os.OpenFile(filepath.Join(native, "rollout-child-a.jsonl"), os.O_APPEND|os.O_WRONLY, 0o600))
+	defer f.Close()
+	must(f.WriteString(tail))
+}
+
+// A rollout whose last lines are unfinished or damaged does not show how the newest turn stands: an earlier turn's end must
+// not stand for it. A partial task_started after a whole turn, and a damaged event line, leave the handoff to reconcile and
+// the cleanup unconfirmed; a later whole turn is read again.
+func TestDispatchHandoffDamagedRolloutDoesNotShowAnEnd(t *testing.T) {
+	whole := []map[string]any{{"type": "task_started", "turn_id": "turn-1"}, {"type": "task_complete", "turn_id": "turn-1"}}
+	for _, tc := range []struct{ name, tail, action string }{
+		{"partial task_started", `{"type":"event_msg","payload":{"type":"task_started","turn_id":"turn-2"`, "reconcile"},
+		{"damaged line", "{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_started\",\"turn_id\":\"turn-2\"\n", "reconcile"},
+		{"partial prefix", `{"timestamp":"2026-10-10T00:00:00Z","ordin`, "reconcile"},
+		{"later whole turn", "{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_started\",\"turn_id\":\"turn-2\"\n" +
+			`{"type":"event_msg","payload":{"type":"task_started","turn_id":"turn-3"}}` + "\n" + `{"type":"event_msg","payload":{"type":"task_complete","turn_id":"turn-3"}}` + "\n", "ready"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ws, env, attempt, file := dispatchHandoffStart(t, true)
+			env = dispatchHandoffNative(t, env, whole...)
+			dispatchHandoffTail(t, env, tc.tail)
+			out, err := CheckedDispatch(context.Background(), ws, dispatchHandoffReports(attempt)["task_failed"], env, nil)
+			check(t, err)
+			stored := must(dispatchRead(file, "session-test", "task-test"))
+			if out.Action != tc.action || len(stored.Attempts) != map[string]int{"ready": 2, "reconcile": 1}[tc.action] {
+				t.Fatalf("handoff after %s = %q %q with %d attempts", tc.name, out.Action, out.Reason, len(stored.Attempts))
+			}
+		})
+	}
+}
+
+// The cleanup of a policy-stopped dispatch reads the same rollout: a damaged tail leaves the child's cleanup unconfirmed and
+// its id held.
+func TestDispatchCleanupDamagedRolloutStaysUnconfirmed(t *testing.T) {
+	ws, env, attempt, file := dispatchHandoffStart(t, true)
+	stop := map[string]any{"action": "report", "sessionId": "session-test", "dispatchId": "task-test", "attemptId": attempt, "outcome": "failed", "error": "permission_denied", "executionState": "running"}
+	_, err := CheckedDispatch(context.Background(), ws, stop, env, nil)
+	check(t, err)
+	env = dispatchHandoffNative(t, env, map[string]any{"type": "task_started", "turn_id": "turn-1"}, map[string]any{"type": "task_complete", "turn_id": "turn-1"})
+	dispatchHandoffTail(t, env, `{"type":"event_msg","payload":{"type":"task_started","turn_id":"turn-2"`)
+	out, err := CheckedDispatch(context.Background(), ws, dispatchCleanupStop(attempt), env, nil)
+	check(t, err)
+	a := must(dispatchRead(file, "session-test", "task-test")).Attempts[0]
+	if out.Action != "stop" || a.Cleanup == nil || a.Cleanup.Status != "unconfirmed" {
+		t.Fatalf("cleanup after a damaged tail = %q %+v", out.Action, a.Cleanup)
+	}
+}
