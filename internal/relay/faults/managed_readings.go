@@ -74,7 +74,15 @@ func (sw *Sweeper) ManagedReadings(ctx context.Context, selection any, observer 
 	if now == "" {
 		now = sw.Now()
 	}
+	// A halt marker is the halt (CRW-848): one that stands before a turn is read, whoever published it, or that the
+	// observer has just published, whatever it then answered, ends the page. No later turn is read, and none is
+	// gapped, on a store that has been seen damaged; the sweep ends on the marker (CRW-945).
+	halted := func() bool { return sw.Store != nil && store.HaltStateAt(sw.Store.Path).Present }
 	for _, r := range rows {
+		if halted() {
+			answer.Halted = true
+			return answer, nil
+		}
 		sum := sha256.Sum256([]byte(r.Text("dispatch_request_id")))
 		reading, err := observer.Observe(ctx, ManagedReadingRequest{Selection: selection, Root: r.Text("marker_root"), Workspace: r.Text("workspace"), Assignment: fmt.Sprintf("%x", sum), Session: r.Text("thread_id"), Turn: r.Text("turn_id"), Now: now})
 		var reason string
@@ -90,6 +98,10 @@ func (sw *Sweeper) ManagedReadings(ctx context.Context, selection any, observer 
 		} else if !ok || object == nil {
 			reason = "the observer returned no reading"
 		}
+		if reason != "" && halted() {
+			answer.Halted = true
+			return answer, nil
+		}
 		if reason != "" {
 			answer.Gaps = append(answer.Gaps, map[string]any{"gap": "managed_reading_failed", "relationId": r.Get("relationship_id"), "reason": reason})
 			continue
@@ -100,10 +112,8 @@ func (sw *Sweeper) ManagedReadings(ctx context.Context, selection any, observer 
 			object["relationshipId"] = r.Get("relationship_id")
 		}
 		answer.Readings = append(answer.Readings, object)
-		if sw.Store != nil && store.HaltStateAt(sw.Store.Path).Present {
-			// The observer has just published the halt marker (CRW-848): the marker is the halt, so no later
-			// turn is read, and none is gapped, on a store that has been seen damaged. The page ends here and
-			// the sweep ends on the marker (CRW-945).
+		if halted() {
+			// The reading that published the marker is kept: it says what the observer saw.
 			answer.Halted = true
 			return answer, nil
 		}

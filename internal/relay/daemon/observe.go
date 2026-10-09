@@ -118,7 +118,7 @@ func (o *pass) spent() bool {
 // A turn that ended completed is settled as it is read. One that ended failed or interrupted waits until the pass
 // has read what it will read (pass.deferred), so that a later turn's staged claim confirmed in the same pass is
 // counted whichever of the two turns was read first.
-func (d *Daemon) observe(ctx context.Context, report *Report) error {
+func (d *Daemon) observe(ctx context.Context, report *Report) (err error) {
 	budget := d.Policy.MaxTurnReads
 	work, err := d.census(ctx)
 	if err != nil || len(work) == 0 || budget <= 0 {
@@ -141,7 +141,12 @@ func (d *Daemon) observe(ctx context.Context, report *Report) error {
 	// Whatever ends the loop (the budget, the time, a failure), the failed and interrupted ends it has read are
 	// settled before it returns, as each was when it was read. A cancelled context refuses every store call, and
 	// leaves them to the next tick; a store this process has halted refuses nothing but is not written (CRW-945).
+	// A failure of the corrupting class the loop returns - its own read of the store met the damage - halts the
+	// store here, before the settlement would write on it: Tick sees the halt already standing.
 	defer func() {
+		if err != nil {
+			d.halted(ctx, report, store.HaltSiteObservation, err)
+		}
 		if ctx.Err() == nil && !d.haltedStore {
 			o.settleDeferred(ctx)
 		}

@@ -286,6 +286,20 @@ func AtSite(site string, err error) error {
 	return &SiteError{Site: site, Err: err}
 }
 
+// MarkSite says a failure of the corrupting class (CorruptingFailure) was met at site, unless the step that met
+// it has already said where: the innermost statement knows whether it read or wrote, so its mark stands. Any
+// other failure, and nil, is returned as it is, so nothing that matches on the error itself moves.
+func MarkSite(site string, err error) error {
+	var marked *SiteError
+	if err == nil || errors.As(err, &marked) {
+		return err
+	}
+	if _, corrupting := CorruptingFailure(err); !corrupting {
+		return err
+	}
+	return &SiteError{Site: site, Err: err}
+}
+
 // SiteOf is the site err was marked with, or fallback when it carries none.
 func SiteOf(err error, fallback string) string {
 	var marked *SiteError

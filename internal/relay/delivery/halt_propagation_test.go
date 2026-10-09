@@ -150,3 +150,38 @@ func TestSchedulerHalt_aListingReadFailureIsMarkedAtTheObservationSite(t *testin
 	var counts TickCounts
 	requireSite(t, sc.Deliver(f.ctx, f.host, f.clock.Now(), &counts), store.HaltSiteObservation)
 }
+
+// CRW-945, verification round 2: past the listings, the attempt itself reads and writes. A read inside the attempt
+// that meets the damage is the observation site, and a statement inside it that changes the store is the write
+// site, whatever sub-pass called it.
+func TestSchedulerHalt_aReadInsideTheAttemptIsMarkedAtTheObservationSite(t *testing.T) {
+	t.Parallel()
+	f, sc := schedulerWorld(t)
+	testsupport.DamageTable(t, f.store.DB, f.store.Path, "generations")
+	var counts TickCounts
+	requireSite(t, sc.Deliver(f.ctx, f.host, f.clock.Now(), &counts), store.HaltSiteObservation)
+}
+
+func TestSchedulerHalt_aWriteInsideTheAttemptIsMarkedAtTheWriteSite(t *testing.T) {
+	t.Parallel()
+	f, sc := schedulerWorld(t)
+	testsupport.DamageTable(t, f.store.DB, f.store.Path, "journal")
+	var counts TickCounts
+	requireSite(t, sc.Deliver(f.ctx, f.host, f.clock.Now(), &counts), store.HaltSiteWrite)
+}
+
+func TestReconcilePassHalt_aReadInsideTheAttemptIsMarkedAtTheObservationSite(t *testing.T) {
+	t.Parallel()
+	f, rc, _ := reconcileWorld(t)
+	testsupport.DamageTable(t, f.store.DB, f.store.Path, "events")
+	var report ReconcileReport
+	requireSite(t, ReconcilePass(f.ctx, rc, f.host, 8, f.clock.Now(), &report), store.HaltSiteObservation)
+}
+
+func TestReconcilePassHalt_aWriteInsideTheAttemptIsMarkedAtTheWriteSite(t *testing.T) {
+	t.Parallel()
+	f, rc, _ := reconcileWorld(t)
+	testsupport.DamageTable(t, f.store.DB, f.store.Path, "journal")
+	var report ReconcileReport
+	requireSite(t, ReconcilePass(f.ctx, rc, f.host, 8, f.clock.Now(), &report), store.HaltSiteWrite)
+}

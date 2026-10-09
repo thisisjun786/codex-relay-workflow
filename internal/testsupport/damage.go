@@ -15,6 +15,18 @@ import (
 // database file of db. Tests only: the store must be a temporary one.
 func DamageTable(t testing.TB, db *sql.DB, path, table string) {
 	t.Helper()
+	damage(t, db, path, "table", table)
+}
+
+// DamageIndex is DamageTable for the b-tree of an index (an automatic one included): only a statement that has to
+// open the index meets the damage.
+func DamageIndex(t testing.TB, db *sql.DB, path, index string) {
+	t.Helper()
+	damage(t, db, path, "index", index)
+}
+
+func damage(t testing.TB, db *sql.DB, path, kind, table string) {
+	t.Helper()
 	ctx := context.Background()
 	conn, err := db.Conn(ctx)
 	if err != nil {
@@ -22,7 +34,7 @@ func DamageTable(t testing.TB, db *sql.DB, path, table string) {
 	}
 	defer conn.Close()
 	var root, pageSize int64
-	if err = conn.QueryRowContext(ctx, "SELECT rootpage FROM sqlite_master WHERE type='table' AND name=?", table).Scan(&root); err != nil {
+	if err = conn.QueryRowContext(ctx, "SELECT rootpage FROM sqlite_master WHERE type=? AND name=?", kind, table).Scan(&root); err != nil {
 		t.Fatalf("the root page of %s: %v", table, err)
 	}
 	if err = conn.QueryRowContext(ctx, "PRAGMA page_size").Scan(&pageSize); err != nil {

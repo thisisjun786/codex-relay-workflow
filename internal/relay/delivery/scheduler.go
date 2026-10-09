@@ -3,7 +3,6 @@ package delivery
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"slices"
@@ -409,16 +408,9 @@ func corrupting(err error) bool {
 // observed and written say where a failure of that class was met - the relay's own read of the store, or a
 // statement it issued to change it - so the daemon writes the right site on the halt marker (CRW-945). Any other
 // failure is returned as it is, so nothing that matches on the error itself moves.
-func observed(err error) error { return atSite(store.HaltSiteObservation, err) }
-func written(err error) error  { return atSite(store.HaltSiteWrite, err) }
-
-func atSite(site string, err error) error {
-	var marked *store.SiteError
-	if err == nil || !corrupting(err) || errors.As(err, &marked) {
-		return err // the step that met it has already said where
-	}
-	return store.AtSite(site, err)
-}
+// The step that met it has already said where when it marked it, and its mark stands (store.MarkSite).
+func observed(err error) error { return store.MarkSite(store.HaltSiteObservation, err) }
+func written(err error) error  { return store.MarkSite(store.HaltSiteWrite, err) }
 
 // moved reports whether a delivery changed its own scheduling since it was selected: its state, its
 // attempt count, its backoff or a hold. A row that was attempted and did not move is stuck, and
