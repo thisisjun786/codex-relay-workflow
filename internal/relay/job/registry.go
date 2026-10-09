@@ -300,7 +300,7 @@ func dateMs(s string) (int64, bool) {
 // (CRW-1155): a record another writer has moved on since it was read is returned as it is now and not written.
 //
 // A record whose cancel was requested is settled cancelled only once no process of its group is left: a leader that has ended says
-// nothing of its descendants (CRW-1155).
+// nothing of its descendants (CRW-1155). A reservation is judged by its age alone: no exit file is its own.
 func Reconcile(ws string, rec BgRecord, clock func() time.Time) (BgRecord, error) {
 	return reconcile(ws, rec, clock, false)
 }
@@ -312,7 +312,13 @@ func reconcile(ws string, rec BgRecord, clock func() time.Time, held bool) (BgRe
 		return rec, nil
 	}
 	next, event := rec, Event{{"event", "completed"}, {"id", rec.ID}, {"exitCode", nil}, {"detail", "watcher vanished"}}
-	switch exit := readExitCode(ws, rec.ID); {
+	// A reservation (CRW-1155) is published before the stale files of a reused id are cleared, and its shell cannot run before the
+	// launch has published its pid: an exit file beside it is the previous job's, so only its age settles it.
+	exit := ExitRead{State: "absent"}
+	if !isReservation(rec) {
+		exit = readExitCode(ws, rec.ID)
+	}
+	switch {
 	case exit.State == "known":
 		code := exit.Code
 		next.Status, next.ExitCode, event = StatusComplete, &code, Event{{"event", "completed"}, {"id", rec.ID}, {"exitCode", code}}
@@ -365,7 +371,7 @@ func settle(ws string, rec, next BgRecord, event Event, clock func() time.Time, 
 		}
 		fixed := cur
 		fixed.Status, fixed.ExitCode, fixed.EndedAt = next.Status, next.ExitCode, next.EndedAt
-		if next.ExitCode == nil {
+		if next.ExitCode == nil && !isReservation(cur) {
 			// The shell may have published its code since the exit file was read: the code wins over "vanished" (CRW-1134).
 			if exit := readExitCode(ws, rec.ID); exit.State == "known" {
 				code := exit.Code

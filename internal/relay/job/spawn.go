@@ -247,7 +247,7 @@ func runBackground(ws string, opts RunOptions, clock func() time.Time, start fun
 		return BgRecord{}, err
 	}
 	rec, err := reserve(ws, opts.ID, BgRecord{SessionID: opts.SessionID, Cwd: ws, Command: opts.Command, Note: opts.Note, Status: StatusRunning,
-		StartedAt: clock().UTC().Format(isoLayout)}, clock)
+		StartedAt: clock().UTC().Format(isoLayout), Extra: []Member{{launchingKey, true}}}, clock)
 	if err != nil {
 		return BgRecord{}, err
 	}
@@ -365,8 +365,9 @@ func deferredStartError(err error) bool {
 }
 
 // Cancel stops a running job (cancel). It reconciles first, so a finished job keeps its real outcome. It signals only a job whose
-// shell it can prove is still the recorded one: a pid in range whose start token is recorded and still matches. A record without a
-// token (an old record, or one edited by hand) is refused with ErrOwnerUnproven and nothing is signalled (CRW-1155).
+// shell it can prove is still the recorded one: a pid in range whose start token is recorded and still matches, shown again under the
+// store lock right before the signal. A record without a token (an old record, or one edited by hand) is refused with ErrOwnerUnproven
+// and nothing is signalled (CRW-1155).
 //
 // The request is recorded first (cancellation-requested), then the job's process group is sent SIGTERM, or SIGKILL when a cancel was
 // already requested. The record says cancelled only once no process of the group is left, which cancel waits for up to cancelWait;
@@ -430,32 +431,34 @@ func cancel(ws string, input BgRecord, clock func() time.Time, kill func(pid int
 	if pid <= 1 || pid > math.MaxInt32 || rec.StartToken == nil {
 		return rec, ErrOwnerUnproven{ID: rec.ID, PID: rec.PID}
 	}
-	// The shell must still be the one the record started. Once a cancel was requested (with that proof) the shell may have ended on
-	// SIGTERM while processes of its group ignore it: the group is then still the job's, since a process group id is not handed out
-	// again while the group has a member.
-	owned := startsAt(pid, *rec.StartToken)
-	if !owned && rec.Status == StatusCancelRequested {
-		if errors.Is(kill(-pid, 0), syscall.ESRCH) {
-			return finishCancel(ws, rec, now, clock, func(c BgRecord) bool { return c.Status == StatusCancelRequested && samePID(c.PID, rec.PID) })
-		}
-		owned = PidGone(pid) // the shell ended and its group lives on: still the job's
-	}
-	if !owned {
-		return rec, ErrOwnerUnproven{ID: rec.ID, PID: rec.PID}
+	// A requested cancel whose group is empty is over, whoever has the number now. Otherwise the proof is made under the store lock
+	// (ownsGroup), right before the record is changed and the signal follows, so a wait for the lock cannot carry an old proof over to a
+	// recycled pid.
+	if rec.Status == StatusCancelRequested && errors.Is(kill(-pid, 0), syscall.ESRCH) {
+		return finishCancel(ws, rec, now, clock, func(c BgRecord) bool { return c.Status == StatusCancelRequested && samePID(c.PID, rec.PID) })
 	}
 	sig := syscall.SIGTERM
+	unproven := false
 	cur, err := update(ws, rec.ID, clock, false, func(cur BgRecord) change {
 		if !samePID(cur.PID, rec.PID) || IsTerminal(cur.Status) {
+			return change{}
+		}
+		if !ownsGroup(cur) {
+			unproven = true
 			return change{}
 		}
 		if cur.Status == StatusCancelRequested {
 			sig = syscall.SIGKILL // asked before, and still running
 			return change{}
 		}
-		next := cur
+		// The shell is shown alive now: the moment is kept with the request, for the proof of a later cancel (group.go).
+		next := withRequestedAt(cur, now)
 		next.Status = StatusCancelRequested
 		return change{next: next, write: true}
 	})
+	if unproven {
+		return cur, ErrOwnerUnproven{ID: rec.ID, PID: rec.PID}
+	}
 	if err != nil || cur.Status != StatusCancelRequested || !samePID(cur.PID, rec.PID) {
 		return cur, err
 	}

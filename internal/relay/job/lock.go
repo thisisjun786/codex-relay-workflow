@@ -80,6 +80,7 @@ func update(ws, id string, clock func() time.Time, held bool, decide func(cur Bg
 			return err
 		}
 		c := decide(cur)
+		c.next = settledKeys(c.next)
 		if !c.write {
 			out = cur
 			return nil
