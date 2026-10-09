@@ -32,7 +32,7 @@ func memoForgetFakeProcess(t *testing.T, doctorState string, exit int) (record s
 // calls t.Parallel: a concurrent Run would otherwise lose the entry it is still using.
 func memoForgetClear() {
 	relayHelperMemoMu.Lock()
-	relayHelperMemo = map[*Env]string{}
+	relayHelperMemo = map[*Env]*relayHelperEntry{}
 	relayHelperMemoMu.Unlock()
 	coreConfigMemoMu.Lock()
 	coreConfigMemo = map[*Env]coreConfigState{}

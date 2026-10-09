@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 	"io"
 	"os"
 	"path/filepath"
@@ -82,7 +83,7 @@ func memlogNewProcSampler(root string) memlogSampler { return memlogProcTree{roo
 
 // Snapshot reads the counters and every process; a process that vanishes is skipped.
 func (p memlogProcTree) Snapshot() (memlogSnapshot, error) {
-	data, err := os.ReadFile(filepath.Join(p.root, "meminfo"))
+	data, err := os.ReadFile(crwconfig.JoinRoot(p.root, "meminfo"))
 	if err != nil {
 		return memlogSnapshot{}, err
 	}
@@ -100,7 +101,7 @@ func (p memlogProcTree) Snapshot() (memlogSnapshot, error) {
 	}
 	snapshot := memlogSnapshot{MemAvailableKB: meminfo["MemAvailable"],
 		SwapTotalKB: meminfo["SwapTotal"], SwapFreeKB: meminfo["SwapFree"]}
-	pressure, err := os.ReadFile(filepath.Join(p.root, "pressure", "memory"))
+	pressure, err := os.ReadFile(crwconfig.JoinRoot(p.root, "pressure", "memory"))
 	if err != nil {
 		return memlogSnapshot{}, err
 	}
@@ -134,7 +135,7 @@ func (p memlogProcTree) Snapshot() (memlogSnapshot, error) {
 		if err != nil {
 			continue
 		}
-		if proc, err := memlogReadProc(filepath.Join(p.root, entry.Name()), pid); err == nil {
+		if proc, err := memlogReadProc(crwconfig.JoinRoot(p.root, entry.Name()), pid); err == nil {
 			snapshot.Procs = append(snapshot.Procs, proc)
 		}
 	}
@@ -143,15 +144,15 @@ func (p memlogProcTree) Snapshot() (memlogSnapshot, error) {
 
 // memlogReadProc reads one process: its parent, its memory and its command line.
 func memlogReadProc(dir string, pid int) (memlogProc, error) {
-	stat, err := os.ReadFile(filepath.Join(dir, "stat"))
+	stat, err := os.ReadFile(crwconfig.JoinRoot(dir, "stat"))
 	if err != nil {
 		return memlogProc{}, err
 	}
-	status, err := os.ReadFile(filepath.Join(dir, "status"))
+	status, err := os.ReadFile(crwconfig.JoinRoot(dir, "status"))
 	if err != nil {
 		return memlogProc{}, err
 	}
-	cmdline, err := os.ReadFile(filepath.Join(dir, "cmdline"))
+	cmdline, err := os.ReadFile(crwconfig.JoinRoot(dir, "cmdline"))
 	if err != nil {
 		return memlogProc{}, err
 	}
@@ -411,7 +412,7 @@ func memlogAppend(dir string, now time.Time, record memlogRecord) (string, error
 	if err != nil {
 		return "", err
 	}
-	path := filepath.Join(dir, now.UTC().Format("20060102")+".jsonl")
+	path := crwconfig.JoinRoot(dir, now.UTC().Format("20060102")+".jsonl")
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		return "", err
@@ -478,7 +479,7 @@ func memlogRunWith(ctx context.Context, e *Env, cfg *Config, args []string, samp
 		fmt.Fprintf(e.Stderr, "crw manage memlog: error: the memlog section: %v\n", err)
 		return 1
 	}
-	dir := filepath.Join(cfg.StateDir, "memlog")
+	dir := crwconfig.JoinRoot(cfg.StateDir, "memlog")
 	for {
 		snapshot, err := sampler.Snapshot()
 		if err != nil {

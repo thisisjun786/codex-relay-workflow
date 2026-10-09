@@ -734,9 +734,28 @@ async function postPolicy(path: string, payload: PolicyWritePayload): Promise<Po
   return { status: response.status, body };
 }
 
-/** Save one change to the execution policy. A refusal is returned, never thrown. */
-export function writePolicy(payload: PolicyWritePayload): Promise<PolicyResponse> {
-  return postPolicy("/api/policy", payload);
+/**
+ * Save one change to the execution policy. A refusal is returned, never thrown.
+ *
+ * The one thing this does not return is an answer whose body never arrived whole. The server replaces
+ * the file and registers it detached from the request, so a response that ended mid-body (a 200 header
+ * and then a reset) says nothing about the write: reporting it as a status with an empty body would
+ * let the screen turn a stored change into a failure. It is thrown, exactly as a request that never
+ * answered is, and the screen reads the file again to find out.
+ */
+export async function writePolicy(payload: PolicyWritePayload): Promise<PolicyResponse> {
+  const response = await fetch("/api/policy", {
+    method: "POST",
+    headers: writeHeaders(),
+    body: JSON.stringify(payload),
+  });
+  let body: unknown;
+  try {
+    body = (await response.json()) as unknown;
+  } catch (error) {
+    throw new Error(`The policy write answered ${response.status} and its body could not be read: ${error instanceof Error ? error.message : "the response ended early"}`);
+  }
+  return { status: response.status, body };
 }
 
 /** Check one change without writing it. The server judges it with the bridge's own parser. */

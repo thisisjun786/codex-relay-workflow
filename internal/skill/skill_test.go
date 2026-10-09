@@ -97,8 +97,8 @@ func TestParentTitleCommands(t *testing.T) {
 	}
 }
 func TestStartPolicyCheck(t *testing.T) {
-	code, out, err := call([]string{"start-policy", "check"}, "run_mode: loop\nobservation_path: blocked\n")
-	if code != 0 || err != "" || !strings.Contains(out, "pairing: loop + blocked -> legal") {
+	code, out, err := call([]string{"start-policy", "check"}, "run_mode: goal\nobservation_path: blocked\n")
+	if code != 0 || err != "" || !strings.Contains(out, "pairing: goal + blocked -> legal") {
 		t.Fatalf("%d %q %q", code, out, err)
 	}
 }

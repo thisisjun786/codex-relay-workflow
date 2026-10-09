@@ -573,7 +573,9 @@ func TestBusy_the_scheduler_ends_the_queue_when_an_older_busy_row_appears_after_
 		t.Fatalf("got %v", record)
 	}
 	w.busy(false)
-	if refused := w.sc.attempt(f.ctx, f.host, rows[1], now, &TickCounts{}); refused {
+	refused, err := w.sc.attempt(f.ctx, f.host, rows[1], now, &TickCounts{})
+	mustDo(t, err)
+	if refused {
 		t.Error("the scheduler took the newer row's wait behind a busy older row for a refusal")
 	}
 	if len(f.host.sends) != 0 {

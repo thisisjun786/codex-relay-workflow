@@ -41,18 +41,44 @@ type querier interface {
 // q is where a read runs: on the open transaction's connection when ctx carries one of this
 // store's, so it sees that transaction's own writes (Python reads on self.db, the one
 // connection); otherwise on the pool, waiting for the connection like any other caller.
+//
+// Whichever it is, a failure of the corrupting class carries the site of the statement that met it
+// (siteQuerier, CRW-945).
 func (s *Store) q(ctx context.Context) querier {
 	if open, ok := ctx.Value(openTxKey{}).(openTx); ok && open.store == s {
-		return open.conn
+		return siteQuerier{open.conn}
 	}
 	if !s.readOnly {
 		// A statement issued outside a transaction is autocommitted and takes no writer lock, so
 		// Transaction's own check cannot cover it (CRW-848): the marker is read per statement. A
 		// read-only store answers as it always has, because a read-only command must still answer.
-		return haltedQuerier{store: s, inner: s.DB}
+		return siteQuerier{haltedQuerier{store: s, inner: s.DB}}
 	}
-	return s.DB
+	return siteQuerier{s.DB}
 }
+
+// siteQuerier marks a failure of the corrupting class with the site of the statement that met it: a query is the
+// relay's read of the store (HaltSiteObservation), an exec a statement that changes it (HaltSiteWrite), so the
+// halt marker says which whatever pass called it (CRW-945). A single-row query reports its failure only at
+// Scan, which this cannot reach: the readers that scan one row mark it themselves (scanned).
+type siteQuerier struct{ inner querier }
+
+func (q siteQuerier) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	rows, err := q.inner.QueryContext(ctx, query, args...)
+	return rows, MarkSite(HaltSiteObservation, err)
+}
+
+func (q siteQuerier) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
+	return q.inner.QueryRowContext(ctx, query, args...)
+}
+
+func (q siteQuerier) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
+	result, err := q.inner.ExecContext(ctx, query, args...)
+	return result, MarkSite(HaltSiteWrite, err)
+}
+
+// scanned marks the failure of a single-row read as met at the observation site.
+func scanned(err error) error { return MarkSite(HaltSiteObservation, err) }
 
 // haltedQuerier refuses a statement a writable store issues outside a transaction once the halt
 // marker exists. Reads pass through: the halt stops writes, not answers.
@@ -97,7 +123,7 @@ func (s *Store) Transaction(ctx context.Context, run func(context.Context, *sql.
 		begin = "BEGIN"
 	}
 	if _, err = conn.ExecContext(ctx, begin); err != nil {
-		return fmt.Errorf("%s: %w", strings.ToLower(begin), err)
+		return fmt.Errorf("%s: %w", strings.ToLower(begin), MarkSite(HaltSiteWrite, err))
 	}
 	defer func() {
 		if err != nil {
@@ -123,7 +149,7 @@ func (s *Store) Transaction(ctx context.Context, run func(context.Context, *sql.
 		s.faultHook()
 	}
 	if _, err = conn.ExecContext(ctx, "COMMIT"); err != nil {
-		return fmt.Errorf("commit: %w", err)
+		return fmt.Errorf("commit: %w", MarkSite(HaltSiteWrite, err))
 	}
 	return nil
 }
@@ -150,7 +176,7 @@ func (s *Store) Relationship(ctx context.Context, id string) (Relationship, erro
 		&row.ParentTaskID, &row.ChildTaskID, &row.Generation, &row.ArtifactRoots,
 		&row.AllowedRecipients, &row.CreatedAt, &row.UpdatedAt)
 	if err != nil {
-		return Relationship{}, fmt.Errorf("relationship %q: %w", id, err)
+		return Relationship{}, fmt.Errorf("relationship %q: %w", id, scanned(err))
 	}
 	return row, nil
 }
@@ -173,7 +199,7 @@ func (s *Store) Generation(ctx context.Context, relationshipID string, number in
 		&row.RelationshipID, &row.Number, &row.DispatchRequestID, &row.AnchorState,
 		&row.DispatchTurnID, &row.OpenedAt, &row.BoundAt)
 	if err != nil {
-		return Generation{}, fmt.Errorf("generation %q/%d: %w", relationshipID, number, err)
+		return Generation{}, fmt.Errorf("generation %q/%d: %w", relationshipID, number, scanned(err))
 	}
 	return row, nil
 }
@@ -197,7 +223,7 @@ func (s *Store) Attempt(ctx context.Context, requestID string) (Attempt, error) 
 		&row.RequestID, &row.EventID, &row.Number, &row.Kind, &row.InternalState,
 		&row.State, &row.Record, &row.Sealed, &row.ObservedAt)
 	if err != nil {
-		return Attempt{}, fmt.Errorf("attempt %q: %w", requestID, err)
+		return Attempt{}, fmt.Errorf("attempt %q: %w", requestID, scanned(err))
 	}
 	return row, nil
 }
@@ -213,7 +239,7 @@ func (s *Store) Challenge(ctx context.Context, nonce string) (Challenge, error) 
 	err := s.q(ctx).QueryRowContext(ctx, `SELECT nonce, written_by, written_at FROM store_challenge
  WHERE nonce=?`, nonce).Scan(&row.Nonce, &row.WrittenBy, &row.WrittenAt)
 	if err != nil {
-		return Challenge{}, fmt.Errorf("challenge %q: %w", nonce, err)
+		return Challenge{}, fmt.Errorf("challenge %q: %w", nonce, scanned(err))
 	}
 	return row, nil
 }

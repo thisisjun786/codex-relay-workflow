@@ -812,18 +812,18 @@ evidence and has none here.
 Select the waiting mode from the parent's requested workflow and observed host capability.
 A project parent executes the agreed project scope, including successors, and by default it holds
 no native goal: it ends its turn when nothing but waiting remains and a delivered relay event
-starts the next one. [crw-loop](../../crw-loop/SKILL.md) owns the lifecycle of a goal where the
+starts the next one. [Goal mode](goal-mode.md) holds the lifecycle of a goal where the
 user explicitly asked for one, and holding a goal settles nothing about whether a continuation was
-observed. A CXC parent follows its installed lifecycle. The start policy records the two answers
+observed. A goal-mode parent follows that lifecycle. The start policy records the two answers
 separately: `run_mode` says whether a goal exists and `observation_path` says what brings the
-parent back. An explicit no-goal or read-only limit agrees with the default and bars only an
-explicit Loop; `blocked` is for a parent that can neither hold a goal it needs nor proceed.
-Goal/Stop hook compatibility must pass the Loop's preflight before activating a goal that was
+parent back. An explicit no-goal or read-only limit agrees with the default and bars only
+goal mode; `blocked` is for a parent that can neither hold a goal it needs nor proceed.
+Goal/Stop hook compatibility must pass goal mode's preflight before activating a goal that was
 actually requested. In active observation mode, keep the
 authorized run active, use bounded transport waits, inspect meaningful results and continue
-ready work within that operation. Neither Run nor Loop stops just because the first
+ready work within that operation. Neither Run nor goal mode stops just because the first
 ready batch finished when scoped successors remain. Explicit batch/dispatch-only limits
-still apply. A child assignment or active child goal does not arm the parent's Loop.
+still apply. A child assignment or active child goal does not arm the parent's goal mode.
 
 Ending the parent turn is the default once, and only once, every readiness fact in
 [Before a parent may wait idle](start-policy.md#before-a-parent-may-wait-idle) holds. Short of
@@ -864,7 +864,7 @@ the outset, and record that mode. Do not register a relay assignment for that ru
 is already registered, preserve its owner, artifacts and pending events; report the incompatible
 delivery mode as a blocker and record the relationship/event IDs and required supported handoff
 for recovery. Do not loop on waits expecting that blocker to clear, fake an acknowledgement,
-reroute the registered work, reset CXC state or create a replacement writer. Continue unrelated
+reroute the registered work, reset `.crw/` state or create a replacement writer. Continue unrelated
 ready work only within its verified ownership and authorized scope.
 
 Those deferrals are the relay's own receipt gates, not proof that a running task cannot be reached.
@@ -878,8 +878,8 @@ holds for its operating scope: the registered assignment, a delivery service who
 actually progressing, this parent's own reachability including its goal status, delivery coverage
 for every disposition it waits on, and a wake already observed on this scope. A package
 installation, capability flag or staged receipt alone establishes none of them. An explicitly
-chosen CXC parent must also satisfy its
-installed waiting rules; this clause does not override them. Short of those facts use bounded
+chosen goal-mode parent must also satisfy
+[its waiting rules](goal-mode.md#wait-finish-or-hand-off); this clause does not override them. Short of those facts use bounded
 observation through the transport's
 own wait during the authorized run, recording which fact was missing rather than the fallback
 alone. A timeout leaves the work running: refresh observations and
@@ -1357,9 +1357,9 @@ the obligations were met.
 
 ### OPS-10.2 The workflow is present, or its absence is reported
 
-Managed execution here always runs with the CXC workflow alongside it, so a missing installation, an
-absent contract, or an incompatible version is a condition to report, not something to route around
-while calling the run normal. Quietly proceeding without it produces work that looks ordinary and
+Managed execution here always runs the `crw-loop` workflow and the
+`crw pabcd` commands and hooks behind it, so a missing runtime, an absent contract, or an incompatible
+version is a condition to report, not something to route around while calling the run normal. Quietly proceeding without it produces work that looks ordinary and
 carries none of the evidence the workflow exists to produce.
 
 That reading belongs to the assignment's first turn, taken inside the task, where the installation
@@ -1373,8 +1373,8 @@ exactly as they already do; this clause only forbids the silent substitution.
 
 ### OPS-10.3 Where the packet and report formats are defined
 
-The detailed correspondence between a CXC instruction packet and the report and review formats is
-owned elsewhere and is deliberately not restated here. The installed CXC skill files are the source:
+The detailed correspondence between a `crw-loop` instruction packet and the report and review formats is
+owned elsewhere and is deliberately not restated here. The `crw-pabcd` and `crw-loop` skill files are the source:
 `delegation.md` for the task packet, `plan-output.md` for plan output, `loop-engineering.md` sections
 11.2 and 11.3, `phase-check.md` for check evidence, `phase-control.md` for attestation evidence,
 `dispatch-surfaces.md` for choosing a surface, and `waiting.md` for waiting on work.
@@ -1417,7 +1417,7 @@ code rather than with the repository it lands in.
 
 The skills and the runtime own different things. The skills hold workflow instructions that an agent
 reads; `cmd/` and `internal/` hold runtime code that a host executes. A rule that belongs to one does not move
-into the other just because they now share a commit. CXC stays outside this repository
+into the other just because they now share a commit. Paperthin stays outside this repository
 entirely and is not vendored by this decision.
 
 ### OPS-11.3 Four stages that are not one event

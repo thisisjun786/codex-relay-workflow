@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -217,6 +218,68 @@ func TestWriteStateRefusesASpecialFileWithoutOpeningIt(t *testing.T) {
 			case <-opened:
 				t.Fatal("WriteState opened the special file before refusing it")
 			case <-time.After(200 * time.Millisecond):
+			}
+		})
+	}
+}
+
+// CRW-1065: the CXC original reads a file that is not JSON as an unreadable default and its writer rewrites it with the default
+// state, which publishes over the stored bytes. The port refuses such a rewrite when the bytes hold a lone surrogate escape. The
+// refusal must come before any temp file is staged or any byte is written, so the file stays byte for byte as it was, and the
+// sessions directory keeps only that file. The order is pinned: the directory is read-only, so staging first would fail on the
+// create, and the sync and rename seams must not be reached. The inputs are the non-JSON shapes a lone escape can sit in.
+func TestWriteStateRefusalLeavesANonJSONFileByteForByte(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+	}{
+		{"plain-text", "not json \\ud800"},
+		{"truncated-object", `{"phase": "P", "slug": "\ud800"`},
+		{"trailing-garbage", `{"phase": "P", "slug": "\ud800"}}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cwd := t.TempDir()
+			if err := makeSessionsDir(cwd); err != nil {
+				t.Fatal(err)
+			}
+			path := StatePath(cwd, "s")
+			raw := []byte(tc.body)
+			if err := os.WriteFile(path, raw, 0o666); err != nil {
+				t.Fatal(err)
+			}
+			s, unreadable := ReadStateStrict(cwd, "s")
+			if !unreadable {
+				t.Fatal("the non-JSON file read as readable; the case does not exercise the unreadable default")
+			}
+			// The sessions directory is read-only (when the test is not root), so a refusal that came after the temp file was
+			// created would fail on the create with a permission error instead of the refusal. The sync and rename seams count
+			// the staging steps: a refusal that comes first reaches neither.
+			dir := filepath.Dir(path)
+			if os.Geteuid() != 0 {
+				if err := os.Chmod(dir, 0o555); err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+			}
+			var syncs, renames int
+			err := writeState(cwd, s, time.Now(),
+				func(tmp, finalPath string) error { renames++; return nil },
+				func(*os.File) error { syncs++; return nil })
+			if err == nil {
+				t.Fatalf("writeState rewrote a non-JSON file holding a lone surrogate; the file now reads %q", fileText(t, path))
+			}
+			if !strings.Contains(err.Error(), "unpaired surrogate escape") {
+				t.Fatalf("the rewrite failed for another reason than the refusal: %v", err)
+			}
+			if syncs != 0 || renames != 0 {
+				t.Fatalf("a refused rewrite had already staged a temp file: %d syncs, %d renames", syncs, renames)
+			}
+			if got, _ := os.ReadFile(path); !bytes.Equal(got, raw) {
+				t.Fatalf("a refused rewrite changed the file: got %q, want %q", got, raw)
+			}
+			if entries, _ := os.ReadDir(filepath.Dir(path)); len(entries) != 1 {
+				t.Fatalf("a refused rewrite left %d entries beside the state file, want 1", len(entries))
 			}
 		})
 	}

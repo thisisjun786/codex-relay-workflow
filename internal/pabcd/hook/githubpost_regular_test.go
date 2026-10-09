@@ -98,4 +98,7 @@ func TestGitHubPostCancelledAnswerDenies(t *testing.T) {
 	if !strings.Contains(out, `"permissionDecision":"deny"`) {
 		t.Errorf("the cancelled answer is not a deny: %s", out)
 	}
+	if !strings.Contains(out, "(unreadable-github-post) at command") {
+		t.Errorf("the cancelled answer does not name the post as an unreadable command: %s", out)
+	}
 }

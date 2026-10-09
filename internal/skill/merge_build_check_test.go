@@ -14,6 +14,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // The merge-build-check tests run the real command on synthetic repositories that hold a tiny Go
@@ -366,7 +368,7 @@ func TestMergeBuildCheckNamesTheEmptyTagSetOnEveryStep(t *testing.T) {
 	}
 	log := filepath.Join(t.TempDir(), "go.log")
 	shim := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$MBC_SHIM_LOG\"\nexec " + realGo + " \"$@\"\n"
-	if err := os.WriteFile(filepath.Join(bin, "go"), []byte(shim), 0o700); err != nil {
+	if err := testsupport.WriteProgram(filepath.Join(bin, "go"), []byte(shim), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin)
@@ -414,7 +416,7 @@ func TestMergeBuildCheckKeepsTheGoToolInsideItsOwnScratchAndEndsItOnTimeout(t *t
 		t.Fatal(err)
 	}
 	shim := "#!/bin/sh\n{ echo \"pid=$$\"; echo \"args=$*\"; echo \"home=$HOME\"; echo \"tmpdir=$TMPDIR\"; echo \"gotmpdir=$GOTMPDIR\"; echo \"gocache=$GOCACHE\"; echo \"gowork=$GOWORK\"; echo \"xdg=$XDG_CONFIG_HOME\"; echo \"goenv=$GOENV\"; } > \"$MBC_SHIM_LOG\"\n/bin/mkdir \"$TMPDIR/go-build123\"\nexec /bin/sleep 60\n"
-	if err := os.WriteFile(filepath.Join(bin, "go"), []byte(shim), 0o700); err != nil {
+	if err := testsupport.WriteProgram(filepath.Join(bin, "go"), []byte(shim), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	realHome := t.TempDir()
@@ -583,7 +585,7 @@ func TestMergeBuildEnvMovesOnlyTheDarwinHome(t *testing.T) {
 func TestMergeBuildEnvKeepsWhatGoEnvAnswers(t *testing.T) {
 	bin := t.TempDir()
 	shim := "#!/bin/sh\nprintf '%s' '{\"GOCACHE\":\"/cache with space/ \",\"GOMODCACHE\":\"/mod\",\"GOPATH\":\"/gopath\"}'\n"
-	if err := os.WriteFile(filepath.Join(bin, "go"), []byte(shim), 0o700); err != nil {
+	if err := testsupport.WriteProgram(filepath.Join(bin, "go"), []byte(shim), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin)
@@ -674,7 +676,7 @@ func telemetryOffForbidLocal(t *testing.T, env []string) {
 // with the check instead of keeping merge-build-check running past --timeout (CRW-562).
 func TestMergeBuildEnvStopsAStalledCacheRead(t *testing.T) {
 	bin := t.TempDir()
-	if err := os.WriteFile(filepath.Join(bin, "go"), []byte("#!/bin/sh\nexec sleep 60\n"), 0o700); err != nil {
+	if err := testsupport.WriteProgram(filepath.Join(bin, "go"), []byte("#!/bin/sh\nexec sleep 60\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin)

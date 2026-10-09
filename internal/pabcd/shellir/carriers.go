@@ -109,10 +109,14 @@ func (w *walker) interpreterInline(name string, args []Word, redirs []Redir, dir
 		return &Inline{Language: lang, Source: Word{Known: true, Value: text}}, nil, nil
 	}
 	if operand < len(args) && args[operand].Value != "-" {
-		// A script operand named through a file-descriptor alias runs the text of that descriptor (a here-string or a
-		// pipe the text shows): the reader cannot follow the alias, so the program is unreadable.
 		if args[operand].Known && fdAliasPath(args[operand].Value, dir) {
-			return nil, nil, unreadablef("%s reads its program from %s, a file-descriptor alias", name, args[operand].Value)
+			// A script operand named through a descriptor alias runs the text that descriptor carries: a here-document,
+			// a here-string, or the pipe on standard input. An alias the text does not set is unreadable.
+			text, err := aliasProgram(args[operand].Value, redirs, ctx, name)
+			if err != nil {
+				return nil, nil, err
+			}
+			return &Inline{Language: lang, Source: Word{Known: true, Value: text}}, nil, nil
 		}
 		return nil, nil, nil
 	}
@@ -120,7 +124,7 @@ func (w *walker) interpreterInline(name string, args []Word, redirs []Redir, dir
 		// The program is a file the text names (python3 < prog.py): run like a script file operand, not judged.
 		return nil, nil, nil
 	}
-	text, err := stdinProgram(redirs, ctx.Stdin, name)
+	text, err := stdinProgram(redirs, ctx.Stdin, name, ctx)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -390,6 +394,8 @@ loop:
 		}
 		switch {
 		case v == "--" || v == "-":
+			// bash, dash and zsh end the options at either, and the operand after it is the script file; only -s makes the
+			// operands positional parameters, so a lone - does not change stdinMode.
 			i++
 			break loop
 		case strings.HasPrefix(v, "--"):
@@ -438,6 +444,14 @@ loop:
 		}
 		return w.carried(text, st.clone(), ctx, name+" -c")
 	}
+	if operand != nil && !stdinMode && operand.Known && fdAliasPath(operand.Value, st.dir) {
+		// A shell that runs a descriptor alias runs the text that descriptor carries, as a shell string does.
+		text, err := aliasProgram(operand.Value, redirs, ctx, name)
+		if err != nil {
+			return err
+		}
+		return w.carried(text, st.clone(), ctx, name+" fd")
+	}
 	if operand != nil && !stdinMode {
 		return w.scriptFile(name, *operand, st, ctx)
 	}
@@ -449,7 +463,7 @@ loop:
 		}
 		return w.scriptFile(name, Word{Known: true, Value: file}, st, ctx)
 	}
-	body, err := stdinProgram(redirs, ctx.Stdin, name)
+	body, err := stdinProgram(redirs, ctx.Stdin, name, ctx)
 	if err != nil {
 		return err
 	}

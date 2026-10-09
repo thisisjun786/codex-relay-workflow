@@ -1,0 +1,134 @@
+# CRW-910 (the 726 reader gaps D1-D8 of the pair evaluation of PR 746, and the variants the answers name). Each row is
+# judged by the three gates: memory attempt, GitHub deny, worktree deny.
+
+=== CRW-910-01 | R
+--why D1: an argument cd is not a directory change; the command substitution removes the checkout.
+echo cd /tmp `rm -rf ../repo`
+
+=== CRW-910-02 | R
+--why D1 (the substitution spelled with a dollar and parentheses, the other half of the same row).
+echo cd /tmp "$(rm -rf ../repo)"
+
+=== CRW-910-03 | R
+--why D2 variant: a redirect of standard error before -c does not move the program word.
+X='rm -rf ../repo'; bash 2>/dev/null -c "$X"
+
+=== CRW-910-04 | W
+--why D2 variant with a memory write program: the memory gate reads the program through the redirect.
+X='echo x > {MEMORY}/a'; bash 2>/dev/null -c "$X"
+
+=== CRW-910-05 | R
+--why D3 variant: a quoted here-document delimiter with a space; the body is the program bash runs.
+bash << 'EOF'
+rm -rf ../repo
+EOF
+
+=== CRW-910-06 | R
+--why D3 variant: a dash here-document with a space before the delimiter word.
+bash <<- EOF
+rm -rf ../repo
+EOF
+
+=== CRW-910-07 | R
+--why D3 variant: a double-quoted delimiter after a space; the body is the program.
+bash << "EOF"
+rm -rf ../repo
+EOF
+
+=== CRW-910-08 | U
+--why D3 memory form: an unquoted here-document with a parameter in a python3 program is unreadable to the memory gate.
+P=x; python3 << EOF
+open('$P','w')
+EOF
+
+=== CRW-910-09 | R
+--why D4 variant: env -u NAME takes an operand; rm is the program.
+env -u HOME rm -rf ../repo
+
+=== CRW-910-10 | R
+--why D4 variant: the long form --unset=NAME takes its operand in the same word.
+env --unset=HOME rm -rf ../repo
+
+=== CRW-910-11 | R
+--why D4 variant: env -C DIR takes a directory operand; rm is the program.
+env -C . rm -rf ../repo
+
+=== CRW-910-12 | R
+--why D4 variant: the long form --chdir DIR takes a separate operand; rm is the program.
+env --chdir . rm -rf ../repo
+
+=== CRW-910-13 | R
+--why D4 variant: env -S STRING splits the string into the command and its arguments.
+env -S 'rm -rf ../repo'
+
+=== CRW-910-14 | R
+--why D4 variant: -i takes no operand; rm is the program.
+env -i rm -rf ../repo
+
+=== CRW-910-15 | R
+--why D5 variant: the subshell's cd returns at the closing parenthesis on its own line.
+X=rm; (
+cd /tmp
+); "$X" -rf ../repo
+
+=== CRW-910-16 | R
+--why D6 variant: eval re-reads the program with the -c operand held in a variable.
+X='rm -rf ../repo'; eval bash -c '"$X"'
+
+=== CRW-910-17 | R
+--why D7 variant: a # in a default word of a parameter expansion is no comment; the -c program is the variable.
+X='rm -rf ../repo'; echo ${x:- #}; bash -c "$X"
+
+=== CRW-910-18 | W
+--why D7 memory form: the same expansion shape with a memory write program.
+X='echo x > {MEMORY}/a'; echo ${x:- #}; bash -c "$X"
+
+=== CRW-910-19 | U
+--why D2 memory form: an unreadable -c program that a command substitution produces.
+bash 2>/dev/null -c "$(printf 'echo x > {MEMORY}/a')"
+
+=== CRW-910-20 | B
+--why Control of D1: echo cd /tmp is data, and no delete command runs.
+echo cd /tmp
+
+=== CRW-910-21 | B
+--why Control of D2: a program read from the input redirect runs echo.
+bash </dev/null -c 'echo hi'
+
+=== CRW-910-22 | B
+--why Control of D4: env with -i and a plain program reads no deletion.
+env --ignore-environment ls
+
+=== CRW-910-23 | B
+--why Control of D4: env -v takes no operand and names a plain program.
+env -v ls
+
+=== CRW-910-24 | B
+--why Control of D4: env --chdir DIR with a plain program is an ordinary command.
+env --chdir . ls
+
+=== CRW-910-25 | B
+--why Control of D5: a subshell with a cd and no delete command.
+(cd /tmp); ls
+
+=== CRW-910-26 | B
+--why Control of D3: a here-document whose body is data for cat.
+cat << EOF
+rm hi
+EOF
+
+=== CRW-910-27 | B
+--why Control of D8: the single-quoted substitution is data; the double-quoted one is a harmless true.
+echo "$(true)" '$(rm -rf ../repo)'
+
+=== CRW-910-28 | B
+--why D8: the closing quote of a double-quoted substitution ends it; the single-quoted word after it is data.
+echo "$(true)x" '$(rm -rf ../repo)'
+
+=== CRW-910-29 | R
+--why D4 with the directory operand: env -C DIR runs the program in the checkout, where rm deletes it.
+env -C {CHECKOUT} rm -rf .
+
+=== CRW-910-30 | W
+--why D4 with the directory operand: env -C into the memory root makes the relative write a memory write.
+env -C {MEMORY} sh -c 'echo x > a'

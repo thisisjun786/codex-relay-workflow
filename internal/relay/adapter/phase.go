@@ -1,6 +1,8 @@
 package adapter
 
 import (
+	"errors"
+
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
@@ -17,4 +19,11 @@ func phaseText(e *appserver.PhaseTimeout) string {
 	default:
 		return e.Method + ": response unavailable; do not resend"
 	}
+}
+
+// notSent reports a request the transport certainly never delivered: the client withheld it before
+// writing its frame, or the connection could not be established. A lost answer is not one.
+func notSent(err error) bool {
+	var phase *appserver.PhaseTimeout
+	return appserver.Withheld(err) || (errors.As(err, &phase) && phase.Phase == "establish")
 }

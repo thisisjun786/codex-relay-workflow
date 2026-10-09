@@ -6,8 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 	"os"
-	"path/filepath"
 	"strings"
 )
 
@@ -179,7 +179,7 @@ func auditReadBundle(dir string) (*auditBundle, error) {
 	if !info.IsDir() {
 		return nil, fmt.Errorf("bundle %s: not a directory", dir)
 	}
-	data, err := os.ReadFile(filepath.Join(dir, auditBundleFile))
+	data, err := os.ReadFile(crwconfig.JoinRoot(dir, auditBundleFile))
 	if err != nil {
 		return nil, fmt.Errorf("bundle %s: %w", dir, err)
 	}
@@ -267,11 +267,11 @@ func auditStateDir(e *Env, cfg *Config) string {
 // prefix of the results, and a caller that has to know which results are recorded reads it from
 // the writer rather than re-reading the file, which may not be readable even when it was written.
 func auditRecord(e *Env, cfg *Config, results []AuditResult) (rows int, err error) {
-	dir := filepath.Join(auditStateDir(e, cfg), "audit")
+	dir := crwconfig.JoinRoot(auditStateDir(e, cfg), "audit")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return 0, err
 	}
-	ledgerPath := filepath.Join(dir, auditLedgerFile)
+	ledgerPath := crwconfig.JoinRoot(dir, auditLedgerFile)
 	ledger, err := os.OpenFile(ledgerPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return 0, err
@@ -288,7 +288,7 @@ func auditRecord(e *Env, cfg *Config, results []AuditResult) (rows int, err erro
 	var alerts *os.File
 	alertsPath := ""
 	if alerting {
-		alertsPath = filepath.Join(dir, auditAlertFile)
+		alertsPath = crwconfig.JoinRoot(dir, auditAlertFile)
 		if alerts, err = os.OpenFile(alertsPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600); err != nil {
 			return 0, err
 		}

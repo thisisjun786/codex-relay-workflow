@@ -77,6 +77,34 @@ type upgradeEnv struct {
 	// script is the fake, and now is the clock every run reads.
 	script string
 	now    time.Time
+
+	// stateSpelled, when set, is the management state directory the run is configured with, a
+	// spelling of manageRoot() through a symbolic link and "..".
+	stateSpelled string
+}
+
+// manageRoot is the management state directory as the filesystem has it.
+func (h *upgradeEnv) manageRoot() string {
+	if h.stateSpelled != "" {
+		return filepath.Join(h.home, "real", "manage-state")
+	}
+	return filepath.Join(h.home, "manage-state")
+}
+
+// spellManageState configures the run with <home>/lnk/../manage-state, where lnk is a link to
+// <home>/real/sub: the kernel resolves it to <home>/real/manage-state, a cleaned spelling names
+// <home>/manage-state, which is never created.
+func (h *upgradeEnv) spellManageState() {
+	h.t.Helper()
+	for _, dir := range []string{filepath.Join(h.home, "real", "sub"), h.manageRoot()} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			h.t.Fatal(err)
+		}
+	}
+	h.stateSpelled = h.home + "/lnk/../manage-state"
+	if err := os.Symlink(filepath.Join(h.home, "real", "sub"), filepath.Join(h.home, "lnk")); err != nil {
+		h.t.Fatal(err)
+	}
 }
 
 type upgradeHarnessOptions struct {
@@ -466,6 +494,9 @@ func (h *upgradeEnv) run(args ...string) int {
 		cfg := coreDefaults(e)
 		cfg.Repository = "owner/repo"
 		cfg.StateDir = filepath.Join(h.home, "manage-state")
+		if h.stateSpelled != "" {
+			cfg.StateDir = h.stateSpelled
+		}
 		cfg.Relay.State = h.state
 		cfg.Relay.Socket = filepath.Join(h.codex, "app-server-control.sock")
 		return cfg
@@ -539,7 +570,7 @@ func (h *upgradeEnv) calledFrom(exe, verb string) bool {
 // recordDirs is the run directories the command left behind.
 func (h *upgradeEnv) recordDirs() []string {
 	h.t.Helper()
-	entries, err := os.ReadDir(filepath.Join(h.home, "manage-state", "upgrades"))
+	entries, err := os.ReadDir(filepath.Join(h.manageRoot(), "upgrades"))
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
@@ -557,7 +588,7 @@ func (h *upgradeEnv) recordDirs() []string {
 // without depending on the struct.
 func (h *upgradeEnv) recordJSON(t *testing.T) map[string]any {
 	t.Helper()
-	root := filepath.Join(h.home, "manage-state", "upgrades")
+	root := filepath.Join(h.manageRoot(), "upgrades")
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		t.Fatal(err)
@@ -578,7 +609,7 @@ func (h *upgradeEnv) recordJSON(t *testing.T) map[string]any {
 
 func (h *upgradeEnv) recordOf(t *testing.T) upgradeRecord {
 	t.Helper()
-	root := filepath.Join(h.home, "manage-state", "upgrades")
+	root := filepath.Join(h.manageRoot(), "upgrades")
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		t.Fatal(err)

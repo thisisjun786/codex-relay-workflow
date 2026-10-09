@@ -167,8 +167,8 @@ func TestGitHubPostGuardJudgements(t *testing.T) {
 		// The generation-5 closed rule: a command that is not one simple command of literal words in the
 		// one allowed form is refused when it names a post; an allow-listed program's output is a shell
 		// program, a gh alias may expand to a post, and a body file must lie under a temporary root.
-		{"allow-listed program piped to a shell", "printf 'gh pr comment 1 -b plain' | bash", githubPostRuleUnread, githubPostWhereCommand},
-		{"allow-listed program piped to sh", "echo gh pr comment 1 -b plain | sh", githubPostRuleUnread, githubPostWhereCommand},
+		{"allow-listed program piped to a shell", "printf 'gh pr comment 1 -b plain' | bash", githubPostRuleInline, githubPostWhereCommand},
+		{"allow-listed program piped to sh", "echo gh pr comment 1 -b plain | sh", githubPostRuleInline, githubPostWhereCommand},
 		{"gh alias", "gh c 1 --body plain", githubPostRuleUnread, githubPostWhereCommand},
 		{"gh alias set", "gh alias set c 'pr comment'", githubPostRuleUnread, githubPostWhereCommand},
 		{"api mutation query", `gh api graphql -f query='mutation{addComment(input:{subjectId:"x",body:"plain"}){clientMutationId}}'`, githubPostRuleUnread, githubPostWhereCommand},
@@ -208,7 +208,7 @@ func TestGitHubPostGuardJudgements(t *testing.T) {
 		// The generation-5 ruling's own controls, each a case.
 		{"a full form A create", "gh pr create --base dev --title 'CRW-1: x' --body-file " + githubPostAbs(cwd, "body.md"), "", ""},
 		{"an api file field on a nested path", "gh api repos/o/r/pulls/1/comments/2/replies -F body=@" + githubPostAbs(cwd, "body.md"), "", ""},
-		{"an api input with a clean file", "gh api graphql --input " + githubPostAbs(cwd, "clean.md"), "", ""},
+		{"an api input that is not JSON", "gh api graphql --input " + githubPostAbs(cwd, "clean.md"), githubPostRuleUnread, githubPostAbs(cwd, "clean.md")},
 		{"an issue list with a search", "gh issue list --search review", "", ""},
 		{"a review approval", "gh pr review 1 --approve", "", ""},
 		{"a git log with a grep", "git log --grep 'gh api'", "", ""},
@@ -262,7 +262,7 @@ func TestGitHubPostGuardJudgements(t *testing.T) {
 		{"api attached file field", "gh api repos/o/r/pulls/1/reviews -Fbody=@credential.md", githubPostRuleUnread, githubPostWhereCommand},
 		{"api clean file field", "gh api repos/o/r/pulls/1/reviews -F body=@clean.md", "", ""},
 		{"api input", "gh api repos/o/r/pulls/1/reviews --input input.json", githubPostRuleSecret, "input.json:2"}, // the place numbers the JSON strings the scan reads: the key is line 1, its value line 2
-		{"api input equals", "gh api repos/o/r/pulls/1/reviews --input=clean.md", "", ""},
+		{"api input equals, not JSON", "gh api repos/o/r/pulls/1/reviews --input=clean.md", githubPostRuleUnread, "clean.md"},
 		{"missing file", "gh pr comment 1 --body-file nowhere.md", githubPostRuleUnread, "nowhere.md"},
 		{"directory", "gh pr comment 1 --body-file adir", githubPostRuleUnread, "adir"},
 		{"clean quoted heredoc", "gh pr comment 1 --body-file - <<'EOF'\na clean body\nEOF\n", githubPostRuleInline, githubPostWhereCommand},
@@ -399,8 +399,10 @@ func TestGitHubPostGuardJudgements(t *testing.T) {
 		{"nested control structures", "if true; then for i in 1 2; do gh pr comment 1 -b plain; done; fi", githubPostRuleInline, githubPostWhereCommand},
 		{"post after a loop closes", "for i in 1; do :; done; gh pr comment 1 -b plain", githubPostRuleInline, githubPostWhereCommand},
 		{"nested control structures with nothing to do with gh", "if true; then for i in 1 2; do echo hi; done; fi", "", ""},
-		{"clean post after a loop closes", "for i in 1; do :; done; gh pr comment 1 --body-file body.md", githubPostRuleUnread, githubPostWhereCommand},                // a loop that changes no directory keeps it known (CRW-894), so the refusal is that of a body file post with other commands, as for "another file written before a clean post"
-		{"clean post after a loop that changes the directory", "for i in 1; do cd \"$D\"; done; gh pr comment 1 --body-file body.md", githubPostRuleUnread, "body.md"}, // the loop leaves the directory unknown, so the body file is unreadable where it is named
+		{"post after a loop that changes the directory", "for i in 1; do cd sub; done; gh pr comment 1 --body-file body.md", githubPostRuleUnread, "body.md"}, // the loop leaves the directory unknown, so the body file is unreadable where it is named
+		// The loop keeps the directory (CRW-1064 c1); the body file the test does not create is refused at the command.
+		{"clean post after a loop closes", "for i in 1; do :; done; gh pr comment 1 --body-file body.md", githubPostRuleUnread, githubPostWhereCommand},
+		{"clean post after a loop that changes the directory", "for i in 1; do cd \"$D\"; done; gh pr comment 1 --body-file body.md", githubPostRuleUnread, "body.md"},
 		{"timeout with a duration suffix", "timeout 30s gh pr comment 1 -b plain", githubPostRuleInline, githubPostWhereCommand},
 		{"timeout with a duration and a variable", "timeout 30s gh pr comment 1 -b \"$BODY\"", githubPostRuleInline, githubPostWhereCommand},
 		{"exec", "exec gh pr comment 1 -b plain", githubPostRuleInline, githubPostWhereCommand},

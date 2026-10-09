@@ -316,16 +316,16 @@ nobody reported.
 | Register | Values | Where it is read |
 |---|---|---|
 | The task, right now | `active`, `idle`, `notLoaded`, `systemError` | the host, per [the bridge](bridge.md#reach-a-task-that-is-already-working) |
-| That task's native goal | none, complete, active, paused, blocked, a different unfinished goal, unreadable | its goal tool, under [Parent goal lifecycle](../../crw-loop/references/parent-goal.md) |
+| That task's native goal | none, complete, active, paused, blocked, a different unfinished goal, unreadable | its goal tool, under [Parent goal lifecycle](goal-mode.md#parent-goal-lifecycle) |
 | The task's lifecycle, set by a person | paused, cancelled, archived | [OPS-8.2](operations.md#ops-82-busy-paused-cancelled-and-archived-parents) |
-| The mode this run recorded when it started | `loop`, `goal-free-run`, `blocked` | the start-policy record, under [Record the start adjudication](../../crw-loop/references/parent-goal.md#record-the-start-adjudication) |
+| The mode this run recorded when it started | `goal`, `goal-free-run`, `blocked` | the start-policy record, under [Record the start adjudication](goal-mode.md#record-the-start-adjudication) |
 | The project and the record | completed, and a dependency recorded as blocking | Linear and the supervision record |
 
 Label every reading with its register before anything acts on it. The fourth register is the one a
 restart is most likely to skip, and it is what makes the second readable: a project parent holds no
 goal by default under [Start policy](start-policy.md), so an absent goal is the ordinary resting
 state rather than a finding. Read it against the recorded mode — `goal-free-run` accounts for it,
-`loop` makes it a
+`goal` makes it a
 finding, and `blocked` means no child should exist yet. Where a record exists, restore it and
 re-adjudicate only the fields whose conditions have changed. Where none is found, that is unknown
 rather than proof none was written: a record can also be partial or damaged, and adjudicating from

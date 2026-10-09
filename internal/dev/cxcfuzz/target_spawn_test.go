@@ -232,7 +232,7 @@ func TestSpawnShimAnswersWithoutTheOracleTree(t *testing.T) {
 
 // c3 (corrected, CRW-938): the size still shapes a generated case, as the length of the mention text,
 // and the bytes are decided from the size before anything is built. This target makes no depth claim:
-// MentionedFolders and the other classifiers it compares read strings, and the 4,400-level bound is
+// MentionedFolders and the other classifiers it compares read strings, and the 4,463-level bound is
 // RunSpawnAttachHook's writer bound (internal/role/spawn/hook_route.go, spawnHookRouteMaxDepth), which
 // a classifier comparison never reaches. Red before the fix: spawnGenerate ignored size, so every
 // generated case carried the same length. Red again before the correction of 2026-10-08: the size was

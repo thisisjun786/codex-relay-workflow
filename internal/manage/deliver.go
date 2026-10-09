@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 	"os"
 	"path/filepath"
 	"strings"
@@ -221,7 +222,7 @@ func deliverPathComponentLimit(name, what string, limit int) error {
 
 // deliverOutboxPath is where one logical message's record lives.
 func deliverOutboxPath(cfg *Config, logicalID string) string {
-	return filepath.Join(cfg.StateDir, "outbox", logicalID+".json")
+	return crwconfig.JoinRoot(cfg.StateDir, "outbox", logicalID+".json")
 }
 
 // deliverLoad reads one record. A record that is not there is not an error: it is the first
@@ -265,7 +266,7 @@ func deliverSave(cfg *Config, record deliverRecord) error {
 // private name per writer matters because two processes can save one logical message at once: a
 // shared temporary path would let one rename the inode the other still has open.
 func deliverWriteAtomic(path string, data []byte) error {
-	dir := filepath.Dir(path)
+	dir := rootDir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("crw manage: the outbox directory: %w", err)
 	}
@@ -312,7 +313,7 @@ func deliverSyncDir(dir string) error {
 // deliverOutboxDirSafe refuses an outbox directory that is a symlink, so a link planted in its
 // place cannot redirect a ledger write outside the state directory.
 func deliverOutboxDirSafe(cfg *Config) error {
-	info, err := os.Lstat(filepath.Join(cfg.StateDir, "outbox"))
+	info, err := os.Lstat(crwconfig.JoinRoot(cfg.StateDir, "outbox"))
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil

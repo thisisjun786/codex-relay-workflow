@@ -142,16 +142,7 @@ func shellVerbSedWrites(args []string) []string {
 	return files
 }
 
-// shellVerbScriptWrites is scriptWriteDestinations (:535): the path of open(path, "w"), Path(path).write_text(...) and
-// writeFile(path...) calls, pattern by pattern in that order. The oracle's backreferences (the closing quote repeats the opening
-// one) become one alternative per quote; each alternation picks its branch by the quote present, so it never competes with
-// lazy matching and each pattern matches what the backtracking original does. hard adds template literal paths, the open() and
-// Path reader and the decoded value of a JavaScript literal, after the oracle's raw text.
-func shellVerbScriptWrites(script string, hard bool) []string {
-	return shellVerbScriptWritesIn(script, hard, true)
-}
-
-// shellVerbScriptWritesIn is shellVerbScriptWrites with the program's language: python selects the Python readers, whose
+// shellVerbScriptWritesIn is the script reader with the program's language: python selects the Python readers, whose
 // triple-quoted region rule belongs to Python source alone. A JavaScript program is not Python source, so three quotes inside a
 // template literal must not open a triple-quoted region and swallow the rest of the program, which would lose the destination
 // of a later write; a Node program keeps the single-quote walk the reader always had.
@@ -184,16 +175,7 @@ func shellVerbScriptWritesIn(script string, hard, python bool) []string {
 	return out
 }
 
-// shellVerbOpenWrites reads each open(...) call of a program as Python does, in one pass over the text: the path is the first
-// argument or file=, the mode the second or mode=, in either order and with other keywords between. A call whose mode writes,
-// appends, creates or updates (a w, a, x or + in it) names its path; only string literals count. One frame is kept per open
-// bracket and arguments are spans of the text, so unclosed and nested calls cost no more than their own characters. A
-// Path(...).write_text or .write_bytes call names the join of its arguments (shellWriteEscapePath).
-func shellVerbOpenWrites(script string) []string {
-	return shellVerbOpenWritesIn(script, true)
-}
-
-// shellVerbOpenWritesIn is shellVerbOpenWrites with the program's language: python enables the triple-quoted region rule, so a
+// shellVerbOpenWritesIn is the open(...) reader with the program's language: python enables the triple-quoted region rule, so a
 // Node program is scanned exactly as it was before that rule existed (shellVerbScriptWritesIn).
 func shellVerbOpenWritesIn(script string, python bool) []string {
 	return shellWriteFStringOpenWritesRunes(shellVerbWithoutComments(script, python), python)

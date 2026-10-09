@@ -198,3 +198,9 @@ func ReplaceProcessOwner(owner func(dir string) (int, error)) (restore func()) {
 func WriteExecutable(target string, body []byte, mode os.FileMode) error {
 	return writeExecutable(target, body, mode)
 }
+
+// SqliteIntegrityCheck is the backup's real integrity gate: it duplicates the copied store (and its log, when the
+// copy holds one) beside dest and returns SQLite's PRAGMA integrity_check answer.
+func SqliteIntegrityCheck(ctx context.Context, dest string, copied []BackedUp) (string, error) {
+	return sqliteIntegrityCheck(ctx, dest, copied)
+}

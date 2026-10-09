@@ -36,6 +36,11 @@ type ReceiptQuery struct {
 	// Dispatch is the dispatch request id this session claimed. nil means it claimed none, and the
 	// generations table is not consulted.
 	Dispatch any
+	// ReportCorruption makes a read of the store that fails with the corrupting class (store.CorruptingFailure) the
+	// lookup's error, marked as met at the observation site, instead of the guard's (nil, false). Only the daemon's
+	// own observation of the store sets it (the omission observer, CRW-945): the Stop hook and every other caller
+	// keep the guard's answer for an unreadable store.
+	ReportCorruption bool
 }
 
 func (q ReceiptQuery) named() bool {
@@ -121,7 +126,7 @@ func lookupStoredReceiptAt(ctx context.Context, path string, fallback func() (st
 		return nil, false, err
 	}
 	if err != nil {
-		return nil, false, nil
+		return nil, false, openFailure(want, err)
 	}
 	head, answer, readable, _, err := readSnapshot(ctx, ro, want, afterHead)
 	_ = ro.Close()
@@ -144,7 +149,7 @@ type receiptHead struct {
 func readPooledSnapshot(ctx context.Context, s *store.Store, want ReceiptQuery, afterHead func()) (*receiptHead, Obj, bool, error) {
 	conn, err := s.DB.Conn(ctx)
 	if err != nil {
-		return readFailure(err)
+		return readFailure(want, err)
 	}
 	head, answer, readable, rollbackErr, err := readSnapshot(ctx, conn, want, afterHead)
 	if rollbackErr != nil {
@@ -160,7 +165,7 @@ func readPooledSnapshot(ctx context.Context, s *store.Store, want ReceiptQuery, 
 // so for the caller that owns the connection); one that already has its answer keeps it.
 func readSnapshot(ctx context.Context, q store.Querier, want ReceiptQuery, afterHead func()) (head *receiptHead, answer Obj, readable bool, rollbackErr, err error) {
 	if _, beginErr := q.ExecContext(ctx, "BEGIN DEFERRED"); beginErr != nil {
-		head, answer, readable, err = readFailure(beginErr)
+		head, answer, readable, err = readFailure(want, beginErr)
 		return head, answer, readable, nil, err
 	}
 	head, answer, readable, err = readReceiptHead(ctx, q, want, afterHead)
@@ -173,11 +178,26 @@ func readSnapshot(ctx context.Context, q store.Querier, want ReceiptQuery, after
 // readFailure is what a failed read answers. The guard's except sqlite3.Error is (None, False), but
 // a string the store's driver could not bind raises UnicodeEncodeError, which is not a
 // sqlite3.Error and leaves lookup_receipt.
-func readFailure(err error) (*receiptHead, Obj, bool, error) {
+//
+// A caller that asked for it (want.ReportCorruption) also gets a failure of the corrupting class, marked as met at
+// the observation site; any other failure is the guard's answer as before.
+func readFailure(want ReceiptQuery, err error) (*receiptHead, Obj, bool, error) {
 	if store.EncodeError(err) != nil {
 		return nil, nil, false, err
 	}
+	if want.ReportCorruption {
+		if _, corrupting := store.CorruptingFailure(err); corrupting {
+			return nil, nil, false, store.MarkSite(store.HaltSiteObservation, err)
+		}
+	}
 	return nil, nil, false, nil
+}
+
+// openFailure is what a read-only open that failed answers: the guard's nothing, or the failure of the corrupting
+// class for a caller that asked for it (ReceiptQuery.ReportCorruption).
+func openFailure(want ReceiptQuery, err error) error {
+	_, _, _, reported := readFailure(want, err)
+	return reported
 }
 
 // readReceiptHead is lookup_receipt's reads, all on q, in the guard's order: the relationship, the
@@ -197,7 +217,7 @@ func readReceiptHead(ctx context.Context, q store.Querier, want ReceiptQuery, af
 		return answer("relationship_absent")
 	}
 	if err != nil {
-		return readFailure(err)
+		return readFailure(want, err)
 	}
 	if status != "active" || (superseded.Valid && superseded.String != "") {
 		return answer("relationship_not_active")
@@ -206,7 +226,7 @@ func readReceiptHead(ctx context.Context, q store.Querier, want ReceiptQuery, af
 	if want.Generation != nil && !pyvalue.Equal(want.Generation, current) {
 		continued, err = registrationContinues(ctx, q, want, current)
 		if err != nil {
-			return readFailure(err)
+			return readFailure(want, err)
 		}
 		if !continued {
 			return answer("registration_generation_mismatch", F{Key: "detail", Value: "the assignment registered generation " + pyvalue.Str(want.Generation) + " and the relationship now stands on generation " + strconv.FormatInt(current, 10)})
@@ -219,7 +239,7 @@ func readReceiptHead(ctx context.Context, q store.Querier, want ReceiptQuery, af
 			return answer("generation_absent", F{Key: "detail", Value: "the relationship reports generation " + strconv.FormatInt(current, 10) + " and the store holds no record of which dispatch opened it"})
 		}
 		if err != nil {
-			return readFailure(err)
+			return readFailure(want, err)
 		}
 		if !SameIdentity(opened.String, want.Dispatch) {
 			return answer("generation_dispatch_mismatch", F{Key: "detail", Value: "the relationship stands on generation " + strconv.FormatInt(current, 10) + ", which a different dispatch request opened"})
@@ -227,7 +247,7 @@ func readReceiptHead(ctx context.Context, q store.Querier, want ReceiptQuery, af
 	}
 	head, err := HeadRevisionFrom(ctx, q, relationship, current)
 	if err != nil {
-		return readFailure(err)
+		return readFailure(want, err)
 	}
 	if afterHead != nil {
 		afterHead()
@@ -245,7 +265,7 @@ func readReceiptHead(ctx context.Context, q store.Querier, want ReceiptQuery, af
 		return answer("no_reviewable_revision")
 	}
 	if err != nil {
-		return readFailure(err)
+		return readFailure(want, err)
 	}
 	return &found, nil, false, nil
 }

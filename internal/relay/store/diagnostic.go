@@ -147,6 +147,11 @@ type heldConn struct {
 	db    *sql.DB
 	conn  *sql.Conn
 	seams diagnosticSeams
+	// ref keeps the database path in the registry's table while the connection is open (CRW-1052): SQLite resolves
+	// the descriptor's name and opens the real -wal and -shm beside the store, so when no ordinary store is open
+	// the connection alone holds those sidecars, and an artifact reader pointed at one must be refused rather than
+	// open and close a descriptor of it, which would drop the connection's POSIX locks on it.
+	ref *liveStoreRef
 }
 
 func openHeld(ctx context.Context, file *os.File, mode string) (*heldConn, error) {
@@ -176,15 +181,22 @@ func openHeldRead(ctx context.Context, file *os.File, expected string, sidecarFr
 func openHeldWith(ctx context.Context, file *os.File, params url.Values) (*heldConn, error) {
 	seams := seamsOf(ctx)
 	open := func() (*heldConn, error) {
-		db, err := boundedURI(procFD+"/"+strconv.FormatUint(uint64(file.Fd()), 10), params, 5*time.Second)
+		name := procFD + "/" + strconv.FormatUint(uint64(file.Fd()), 10)
+		var ref *liveStoreRef
+		if resolved, err := os.Readlink(name); err == nil {
+			ref = registerLiveStore(resolved)
+		}
+		db, err := boundedURI(name, params, 5*time.Second)
 		if err != nil {
+			ref.release()
 			return nil, err
 		}
 		conn, err := db.Conn(ctx)
 		if err != nil {
+			ref.release()
 			return nil, errors.Join(err, db.Close())
 		}
-		return &heldConn{db: db, conn: conn, seams: seams}, nil
+		return &heldConn{db: db, conn: conn, seams: seams, ref: ref}, nil
 	}
 	if seams.connect != nil {
 		return seams.connect(open)
@@ -195,6 +207,7 @@ func openHeldWith(ctx context.Context, file *os.File, params url.Values) (*heldC
 func (h *heldConn) close() {
 	_ = h.conn.Close()
 	_ = h.db.Close()
+	h.ref.release()
 	if h.seams.closed != nil {
 		h.seams.closed()
 	}

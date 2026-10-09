@@ -8,7 +8,7 @@ is asked before anything is created rather than after.
 This reference belongs to [crw-run](../SKILL.md#prepare-and-dispatch). The standing cap and its
 precedence are in [Default parent start policy](../../crw-plan/references/integrations.md#default-parent-start-policy),
 and the goal side of the compatibility field is in
-[Parent goal lifecycle](../../crw-loop/references/parent-goal.md#record-the-start-adjudication).
+[Parent goal lifecycle](goal-mode.md#record-the-start-adjudication).
 Nothing here adds a store, a questionnaire, a planning document or a scheduler: the fields below
 are written under the settings and authorization entries the
 [coordination record](task-packet.md#coordination-record) already keeps, and the facts that reach
@@ -24,8 +24,8 @@ what follows is the goal convention those roles carry.
 | Role | Native goal | Implementation loop | What it never takes |
 | --- | --- | --- | --- |
 | Initiative management task | None, and no automatic loop | None | Development, technical acceptance and merge judgment. It talks with the user, relays requests, reads parent state, resumes within the approved scope, and summarises. |
-| Project parent | None by default. It waits idle with no goal and a relay event brings it back. A goal exists only where the user explicitly asked for one through [crw-loop](../../crw-loop/SKILL.md) | None. It builds no CXC goalplan and no FSM | A fabricated source change to close a goal it does hold |
-| Issue child | Creates or reuses its own for the issue scope | Keeps CXC Loop and PABCD | The parent's merge authority, and a second goal where one already exists |
+| Project parent | None by default. It waits idle with no goal and a relay event brings it back. A goal exists only where the user explicitly asked for one, in [goal mode](goal-mode.md) | None. It builds no goalplan and no FSM | A fabricated source change to close a goal it does hold |
+| Issue child | Creates or reuses its own for the issue scope | Keeps `crw-loop` and PABCD | The parent's merge authority, and a second goal where one already exists |
 
 A project parent runs goal-free by default, and that is a decision about what wakes it rather
 than a restriction on what it may do. Waiting is the only thing a goal was carrying, and a
@@ -77,7 +77,7 @@ project's scope or a child count.
 
 | Field | What it holds |
 | --- | --- |
-| `run_mode` | `goal-free-run`, `loop` or `blocked`, in the vocabulary [Parent goal lifecycle](../../crw-loop/references/parent-goal.md#record-the-start-adjudication) defines. It answers one question only: does this parent hold a native goal. For a project parent `goal-free-run` is the default and needs no separate authorization. `loop` applies where the user explicitly asked for a parent goal. A `no-goal` limit is already satisfied by the default and bars only `loop`. `blocked` is for a parent that can neither hold a goal nor proceed without one. |
+| `run_mode` | `goal-free-run`, `goal` or `blocked`, in the vocabulary [Parent goal lifecycle](goal-mode.md#record-the-start-adjudication) defines. It answers one question only: does this parent hold a native goal. For a project parent `goal-free-run` is the default and needs no separate authorization. `goal` applies where the user explicitly asked for a parent goal, which is goal mode. A `no-goal` limit is already satisfied by the default and bars only `goal`. `blocked` is for a parent that can neither hold a goal nor proceed without one. |
 | `child_cap` | The ceiling in force, and every bound that produced the number actually dispatched. |
 | `host_compatibility` | The preflight outcome, the installed identities it was read at, and the issue that owns an unresolved blocker. |
 | `observation_path` | `event-driven-idle`, `active-observation` or `blocked`, selected under [OPS-8.1](operations.md#ops-81-parent-continuation-and-waiting) with the evidence that it is available. It answers the other question: what brings this parent back. These are two fields because one value cannot carry both answers, and the pairing matrix below says which combinations are legal. |
@@ -208,8 +208,8 @@ because one of them passing says nothing about the other two.
 1. **Goal support.** Whether the host supports the goal this role opens, read from the exposed
    goal tools rather than assumed. A bridge that can read a goal cannot write one; a read-only
    goal API is not remote goal-write support. Under the project parent default no goal is opened,
-   so this fact is recorded `not_applicable` for that role and becomes load-bearing only where an
-   explicit Loop or an issue child asks the host for a goal.
+   so this fact is recorded `not_applicable` for that role and becomes load-bearing only where goal
+   mode or an issue child asks the host for a goal.
 2. **Delivery path.** Whether the active and idle paths can actually carry a callback to this
    task, under [OPS-8.1](operations.md#ops-81-parent-continuation-and-waiting).
 3. **Approval-policy declaration.** Whether the policy the caller declares matches the one the
@@ -253,18 +253,18 @@ product is declared rather than left to judgement.
 | | `event-driven-idle` | `active-observation` | `blocked` |
 | --- | --- | --- | --- |
 | `goal-free-run` | the default | legal: readiness is unproven | legal, transitional |
-| `loop` | legal as a compatibility mode, at the cost recorded below | legal | legal, transitional |
+| `goal` | legal in goal mode, at the cost recorded below | legal | legal, transitional |
 | `blocked` | illegal | illegal | the only legal pairing |
 
 `blocked` as a run mode means activation and execution are both unavailable and no child is
 created, so pairing it with a return path a running parent would use describes a parent that does
 not exist. Either operational path beside it is a record to repair, not a state to act on.
 
-`goal-free-run` or `loop` beside `blocked` is different and is legal: the parent is running and
+`goal-free-run` or `goal` beside `blocked` is different and is legal: the parent is running and
 has no usable wait path. It records the concrete blocker and keeps whatever authorized work does
 not depend on the delivery moving.
 
-The `loop` and `event-driven-idle` cell is legal and is not the same path the default gets. A
+The `goal` and `event-driven-idle` cell is legal and is not the same path the default gets. A
 parent holding an active goal does not reach idle cleanly, because the Stop behaviour recorded
 below blocks the stop first. It reaches idle only after that bounded budget releases, and each
 block costs it a turn. That difference is the cost the transition was made to remove, and it is
@@ -337,23 +337,27 @@ Where fact 5 has no evidence it is recorded `unmeasured` and the path is `active
 That is a decision not to use event-idle, not a fifth fact that passed, and the two must not be
 written the same way.
 
-## An explicit Loop activates its goal; its Stop-continuation does not carry the run
+## Goal mode activates its goal; its Stop-continuation does not carry the run
 
-This section governs `run_mode: loop` only. Under the default no goal exists, so none of it
+This section governs `run_mode: goal` only. Under the default no goal exists, so none of it
 applies. Activation and durable continuation are different claims, and on the measured
 installation only the first holds. Keep them apart in every report.
 
 The goal activates: a project parent creates or reuses its native goal and reads it back active.
-What follows is not durable automatic continuation. Measured on CXC `0.2.33` and re-read on
-`0.2.34`, `handleStop` in the `pabcd-state` component blocks the stop when a goal reads `active` while the phase is `IDLE` and no
-orchestration is in flight, and the continuation it injects carries an unconditional directive to
-enter PABCD, adding a loop-initialisation line when no goalplan slug is bound. A project
-parent declines that directive, because this contract forbids it a goalplan or an FSM and forbids
+What follows is not durable automatic continuation. Measured before the port on the CXC plugin
+`0.2.33` and re-read on `0.2.34`, the Stop handler of its `pabcd-state` component blocked the stop
+when a goal read `active` while the phase was `IDLE` and no orchestration was in flight, and the
+continuation it injected carried an unconditional directive to enter PABCD, adding a
+loop-initialisation line (`crw pabcd loop init` in CRW) when no goalplan slug is bound. CRW's own
+PABCD Stop continuation is not in the Go tree yet (its handler is empty today), so the measurement
+describes the behaviour to expect once the hook is ported from that handler, and it is re-read when
+the hook is activated. A project parent declines that directive, because this contract forbids it a goalplan or an FSM and forbids
 closing a goal before its scope is actually delivered, and it spends the continued turn on its
 coordination duties instead. The honest exits the block itself names are completing the goal, which
 is honest only once the agreed scope is verified, or recording it blocked.
 
-That budget is finite, though not in the way a first reading suggests. Three consecutive blocks are
+That budget is finite, though not in the way a first reading suggests. The figures here are the
+CXC measurement, not something the current CRW tree executes or tests. Three consecutive blocks are
 allowed, and the next one releases instead, so the turn can end. The release also clears the
 per-phase counter, and a cleared counter no longer matches the phase it is compared against, so the
 stop after it reads as progress and can open another burst of three. What never resets is the
@@ -381,19 +385,23 @@ continuation cost. And one trivial actor is one trivial actor: how often this ha
 must, what a real project parent carrying scope would do, and any saving between the two modes are
 all `unmeasured`.
 
-This is a known incompatibility rather than a scheduled repair. CRW runs as an overlay on CXC as
-installed, and nothing here changes CXC: overriding a hook by registration order, intercepting its
-output, patching the plugin cache and writing private state are all excluded, and none of them is
-offered as a workaround. The evidence sits in [CRW-29](https://linear.app/jun786/issue/CRW-29) and
-[CRW-145](https://linear.app/jun786/issue/CRW-145), and CRW-145 is a documented upstream defect and
-proposal held in the backlog, which is not an authorization to execute it, so no CXC-side fix is
-promised here.
+This is a known incompatibility rather than a scheduled repair. The design is a single CRW Stop
+entry that composes the completion guard with the PABCD continuation; today the entry runs one
+evaluator per invocation and the continuation is unimplemented, so nothing composes them yet. When
+the continuation is ported as it stood, it will not skip a project parent registered in goal mode, and making it skip one is a
+deliberate deviation from the port, an owner decision recorded in
+[known defects](../../../../../docs/port-cxc/known-defects/CRW-195.md), and until it is taken the
+parent declines the steer. Overriding a hook by registration order, intercepting its output,
+patching the plugin cache and writing private state are excluded, and none of them is offered as
+a workaround. The evidence sits in [CRW-29](https://linear.app/jun786/issue/CRW-29) and
+[CRW-145](https://linear.app/jun786/issue/CRW-145), and CRW-145 is a documented defect and
+proposal held in the backlog, which is not an authorization to execute it.
 
 The supported operation meanwhile is the one above: keep the goal active, decline the steer, and
-spend the continued turn on coordination. A durable resolution waits on whatever supported
-interface the overlay evaluation establishes, the path under evaluation being supported per-task
-or profile hook scoping or an extension interface in
-[CRW-129](https://linear.app/jun786/issue/CRW-129), which is deferred.
+spend the continued turn on coordination. A durable resolution waits on the owner decision above
+and on whatever supported interface the evaluation of per-task or profile hook scoping or an
+extension interface in [CRW-129](https://linear.app/jun786/issue/CRW-129), which is deferred,
+establishes.
 
 ## When the host cannot support the parent goal
 
@@ -404,7 +412,7 @@ they are not offered to the user as options either, because presenting one as a 
 becomes an approved plan.
 
 Progress already authorized to run goal-free may continue while the compatibility problem is being
-fixed, reported as exactly that. It is never described as an activated goal loop, and a run
+fixed, reported as exactly that. It is never described as an activated goal mode, and a run
 continuing that way evidences nothing about automatic continuation.
 
 ## Five facts that are not one fact
@@ -426,13 +434,13 @@ reading its goal establishes none of the five.
 
 An explicit user limit on a task, a stop, read-only or no-goal, stays in force and the default
 above does not touch it. Since 2026-09-21 a `no-goal` limit and the project parent default agree
-rather than conflict: the default already opens no goal, so the limit bars only an explicit Loop
+rather than conflict: the default already opens no goal, so the limit bars only goal mode
 and subtracts nothing else. Record it anyway, because a limit the user stated and a default that
 happened to match are different facts, and lifting one must never read as lifting the other.
 
 An existing paused, blocked or differently scoped unfinished goal is preserved and moved only
 through the supported transition its lifecycle defines, which
-[Parent goal lifecycle](../../crw-loop/references/parent-goal.md) already sets out row by row. None
+[Parent goal lifecycle](goal-mode.md#parent-goal-lifecycle) already sets out row by row. None
 is deleted, marked complete or replaced to make room. No token budget is invented; one is set only
 where the user supplied it.
 
@@ -506,15 +514,15 @@ creation; `no-create` bars that. Unless a row says otherwise the project parent 
 | 4 | A different project on the same host | none for the cap | D | standing cap; case 5 does not reach here | host facts carry, project decisions do not |
 | 5 | The user states a limit of four | none | D with the cap in force at four | source is the explicit limit, scope `this-run` | restored while the run lasts, never promoted |
 | 6a | `no-create` in force | none | 0 | the mode as adjudicated, no child created | the limit recorded as the precedence that applied |
-| 6b | `no-goal` in force | none | D | `goal-free-run` under the cap in force, which is the default anyway | the limit restored; it bars `loop` and changes nothing else, because the default already holds no goal |
-| 7a | An explicit Loop was requested, its goal is unsupported, and the user declines goal-free Run in its place | none | 0 | `blocked`, owning issue cited | the blocker preserved, not re-asked as new |
+| 6b | `no-goal` in force | none | D | `goal-free-run` under the cap in force, which is the default anyway | the limit restored; it bars `goal` and changes nothing else, because the default already holds no goal |
+| 7a | Goal mode was requested, its goal is unsupported, and the user declines goal-free Run in its place | none | 0 | `blocked`, owning issue cited | the blocker preserved, not re-asked as new |
 | 7b | A genuinely new decision is required | asked before any creation | 0 until answered | that action alone held | baseline, packets and read-only diagnosis continue |
-| 7c | An explicit Loop was requested, its goal is unsupported, and the user has not declined goal-free Run in its place | none | D | `goal-free-run`, reported as the default rather than as a degraded Loop | path, error and impact returned to CRW-29 owner; never reported as an activated goal loop |
-| 7d | An explicit Loop activates and its Stop-continuation is the bounded PABCD nudge | none | D | `loop`, the directive declined and the nudge recorded as bounded | goal-active and continuation kept as separate facts; a known incompatibility evidenced in CRW-29 and CRW-145, not a promised fix, and not a reason to open a goal the default does not need |
+| 7c | Goal mode was requested, its goal is unsupported, and the user has not declined goal-free Run in its place | none | D | `goal-free-run`, reported as the default rather than as a degraded goal mode | path, error and impact returned to CRW-29 owner; never reported as an activated goal mode |
+| 7d | Goal mode activates and its Stop-continuation is the bounded PABCD nudge | none | D | `goal`, the directive declined and the nudge recorded as bounded | goal-active and continuation kept as separate facts; a known incompatibility evidenced in CRW-29 and CRW-145, not a promised fix, and not a reason to open a goal the default does not need |
 | 7e | Readiness fact 5 has no evidence on this operating scope | none | D | `goal-free-run` with `active-observation`, fact 5 recorded `unmeasured` | the parent keeps bounded waits and claims no automatic resume until a wake is observed here |
 | 8 | An installed version or hook rule changed | only if the re-read forces one | D | the changed field re-adjudicated, the rest restored | the changed identity recorded against the superseded value |
 | 9 | Children of this parent are already live | none | D, which subtracts them | `goal-free-run`; the standing cap is unchanged and D subtracts the live children | the existing owners preserved, never replaced |
-| 10 | A parent from before this decision is still holding its own active goal | none | D | `loop`, recorded as carried over rather than chosen | the goal is preserved and retired only at its scope boundary under [Parent goal lifecycle](../../crw-loop/references/parent-goal.md); it is never paused to reach the default, because a paused goal is undeliverable |
+| 10 | A parent from before this decision is still holding its own active goal | none | D | `goal`, recorded as carried over rather than chosen | the goal is preserved and retired only at its scope boundary under [Parent goal lifecycle](goal-mode.md#retiring-a-goal-a-parent-already-holds); it is never paused to reach the default, because a paused goal is undeliverable |
 
 An edit does not alter a turn that has already loaded these instructions. It does not stop there,
 though: where an installation links this checkout, a later read of these instructions loads the

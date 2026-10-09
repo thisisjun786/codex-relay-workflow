@@ -115,7 +115,7 @@ func (c *Client) request(ctx context.Context, ws *websocket.Conn, method string,
 	watch, _ := ctx.Value(watchContextKey{}).(*TurnWatch)
 	if ws == nil || c.conn != ws {
 		c.mu.Unlock()
-		return nil, &TransportError{Reason: "subscription connection ended; request withheld"}
+		return nil, &TransportError{Reason: "subscription connection ended; request withheld", withheld: true}
 	}
 	if watch != nil {
 		c.subscriptions.mu.Lock()
@@ -123,7 +123,7 @@ func (c *Client) request(ctx context.Context, ws *websocket.Conn, method string,
 		c.subscriptions.mu.Unlock()
 		if retired {
 			c.mu.Unlock()
-			return nil, &TransportError{Reason: "subscription watch retired; request withheld"}
+			return nil, &TransportError{Reason: "subscription watch retired; request withheld", withheld: true}
 		}
 	}
 	c.counter++
@@ -192,7 +192,7 @@ func (c *Client) request(ctx context.Context, ws *websocket.Conn, method string,
 		return nil, rpcError(method, result.response.Error)
 	}
 	if result.response.Result == nil {
-		return nil, &TransportError{method + ": invalid response; outcome unknown"}
+		return nil, &TransportError{Reason: method + ": invalid response; outcome unknown"}
 	}
 	return result.response.Result, nil
 }
