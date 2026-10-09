@@ -39,6 +39,7 @@ func indexOracle(t *testing.T) map[string]any {
 	}
 	return want
 }
+
 // indexPortDeviations applies the recorded port: fixed schema changes (docs/port-cxc/known-defects/CRW-1154.md)
 // to the oracle recording: schema version 3, and the unique (path, ord) index replacing msgs(path).
 func indexPortDeviations(want map[string]any) {
