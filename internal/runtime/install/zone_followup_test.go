@@ -168,7 +168,7 @@ func damagePages(t *testing.T, path string, pages ...int) {
 //
 // sequential: none (private temporary directories).
 func TestTheIntegrityGateFindsARealDamagedPage(t *testing.T) {
-	check := func(t *testing.T, damaged bool) (string, error, []byte, []byte) {
+	check := func(t *testing.T, damaged bool) (string, []byte, []byte, error) {
 		t.Helper()
 		dest := filepath.Join(t.TempDir(), "backup")
 		if err := os.Mkdir(dest, 0o700); err != nil {
@@ -181,10 +181,10 @@ func TestTheIntegrityGateFindsARealDamagedPage(t *testing.T) {
 		}
 		before := mustRead(t, store)
 		answer, err := install.SqliteIntegrityCheck(context.Background(), dest, []install.BackedUp{{Path: "relay.sqlite3", Kind: "file", Size: int64(len(before))}})
-		return answer, err, before, mustRead(t, store)
+		return answer, before, mustRead(t, store), err
 	}
 	t.Run("a healthy store", func(t *testing.T) {
-		answer, err, before, after := check(t, false)
+		answer, before, after, err := check(t, false)
 		if err != nil || answer != "ok" {
 			t.Fatalf("a healthy store: answer %q, error %v", answer, err)
 		}
@@ -193,7 +193,7 @@ func TestTheIntegrityGateFindsARealDamagedPage(t *testing.T) {
 		}
 	})
 	t.Run("a store with damaged pages", func(t *testing.T) {
-		answer, err, before, after := check(t, true)
+		answer, before, after, err := check(t, true)
 		if err == nil || answer == "ok" {
 			t.Fatalf("the gate passed a store whose pages are damaged: answer %q, error %v", answer, err)
 		}
