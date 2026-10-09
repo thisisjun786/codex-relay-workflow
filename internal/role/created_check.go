@@ -54,7 +54,11 @@ func dispatchPinnedChecked(ctx context.Context, cwd string, input any, env host.
 	if dispatchIs(b["action"], "report") && (dispatchIs(b["outcome"], "failed") || dispatchIs(b["outcome"], "task_failed")) {
 		gate := dispatchHandoffGate(ctx, env, h)
 		return dispatchPinnedRunHeld(cwd, input, env, nil, after, false, func(_ *dispatchPinnedDir, _ string, d *Dispatch, b map[string]any) (DispatchResult, error) {
-			return dispatchReport(d, b, gate)
+			r, err := dispatchReport(d, b, gate)
+			if err == nil && dispatchIs(d.Status, "stopped") {
+				r = dispatchPolicyStopCleanup(d, r)
+			}
+			return r, err
 		})
 	}
 	if dispatchIs(b["action"], "report") && dispatchIs(b["outcome"], "complete") {
@@ -158,6 +162,34 @@ func createdCheckComplete(_ *dispatchPinnedDir, _ string, d *Dispatch, b map[str
 	return dispatchReport(d, b, nil)
 }
 
+// dispatchPolicyStopCleanup marks the outstanding cleanup of a child a policy stop left recorded: the dispatch is stopped by
+// the provider decision, which keeps its code and never hands on, while the attempt still names a child that may be running.
+// The stopped report accounts for the child later (dispatchCleanupRecord).
+func dispatchPolicyStopCleanup(d *Dispatch, r DispatchResult) DispatchResult {
+	a := &d.Attempts[len(d.Attempts)-1]
+	if a.AgentID == nil || *a.AgentID == "" || dispatchIs(a.Status, "failed") || dispatchIs(a.Status, "complete") {
+		return r
+	}
+	a.Cleanup = &DispatchCleanup{Status: "pending", Note: "the policy stopped the dispatch; the recorded child is not yet accounted for"}
+	r.Attempts = d.Attempts
+	r.Reason += "; the recorded child's cleanup is outstanding: once it has ended, report outcome stopped with its agentId, executionState stopped and reconciliation"
+	return r
+}
+
+// dispatchCleanupRecord records the cleanup evidence of a stopped dispatch's child on its attempt, which the caller then saves;
+// the dispatch stays stopped and nothing is handed on. A child seen to have ended (newest is a terminal turn) is cleaned up:
+// the attempt is failed with the reconciliation, the original code and task failure are kept, and its id is free. Otherwise
+// the evidence is recorded as unconfirmed and the id stays held. It returns the reason of the answer.
+func dispatchCleanupRecord(a *DispatchAttempt, evidence, newest, source string) string {
+	if !dispatchTerminalTurn(newest) {
+		a.Cleanup = &DispatchCleanup{Status: "unconfirmed", Evidence: evidence, Note: "the child's end was not observed"}
+		return "dispatch stays stopped; cleanup evidence recorded, but the child's end was not confirmed, so its id stays held; report again once it can be observed"
+	}
+	a.Status, a.Reconciliation = "failed", &evidence
+	a.Cleanup = &DispatchCleanup{Status: "confirmed", Evidence: evidence, Newest: newest, Source: source, Note: dispatchTerminationNote}
+	return "dispatch stays stopped; child cleanup recorded and its id released"
+}
+
 // createdArchivedReplay refuses an agent id that another attempt of the session already holds. The
 // host archives a child when it finishes, but it stays a real child of the session, so only the
 // ledger can tell that it was spawned for an earlier attempt. The attempt that reports its own id
@@ -200,10 +232,14 @@ func createdCheckClosed(d *Dispatch, i int) bool {
 }
 
 // createdCheckHeld ends a refusal with the way out of it: the stopped close frees the id of the last attempt of a dispatch
-// that is still active; any other holder keeps it for good, and the caller needs a child of its own.
+// that is still active, and the cleanup report of a dispatch a policy stopped frees it once the child is seen to have ended;
+// any other holder keeps it for good, and the caller needs a child of its own.
 func createdCheckHeld(d *Dispatch, i int) string {
 	if i == len(d.Attempts)-1 && dispatchIs(d.Status, "active") {
 		return createdCheckClose + "; once dispatch " + d.ID + " is closed that way its agentId is free"
+	}
+	if i == len(d.Attempts)-1 && dispatchIs(d.Status, "stopped") {
+		return "; dispatch " + d.ID + " was stopped by policy with its child unaccounted for: once the child has ended, a report with outcome stopped, executionState stopped and reconciliation records its cleanup and frees the agentId"
 	}
 	return "; its agentId stays reserved, so spawn a new child for this attempt"
 }
@@ -309,7 +345,8 @@ func createdCheckStop(ctx context.Context, cwd string, b map[string]any, env hos
 	if !dispatchIs(b["attemptId"], a.ID) {
 		return DispatchResult{}, errors.New("stale or missing attemptId; inspect status")
 	}
-	if !dispatchIs(d.Status, "active") {
+	cleanup := dispatchIs(d.Status, "stopped") && a.AgentID != nil && !createdCheckClosed(&d, len(d.Attempts)-1)
+	if !dispatchIs(d.Status, "active") && !cleanup {
 		return dispatchResult(&d, nil, ""), nil
 	}
 	if !dispatchIs(b["executionState"], "stopped") || a.AgentID == nil || !dispatchIs(b["agentId"], *a.AgentID) {
@@ -329,6 +366,13 @@ func createdCheckStop(ctx context.Context, cwd string, b map[string]any, env hos
 	}
 	if newest == "inProgress" {
 		return DispatchResult{}, errors.New("recorded child has a turn in progress; stop it before closing")
+	}
+	if cleanup {
+		reason := dispatchCleanupRecord(a, reconciliation, newest, o.Source)
+		if err := dispatchSave(dir, name, &d, nil); err != nil {
+			return DispatchResult{}, err
+		}
+		return dispatchResult(&d, "stop", reason), nil
 	}
 	a.Reconciliation = &reconciliation
 	a.Code = nil

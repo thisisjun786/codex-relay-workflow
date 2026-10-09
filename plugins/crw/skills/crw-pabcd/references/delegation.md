@@ -408,6 +408,10 @@ protocol. A PreToolUse reminder after a direct call cannot retroactively manage 
    remaining work; `independentReviewRequired` stays true for reviewer tasks.
    Main implementation is never independent review. `stop` or `reconcile` means
    no model switch or direct-execution permission. Inspect the reason and state.
+   A policy `stop` that leaves a recorded child marks its cleanup pending; once the
+   child has ended, report `outcome:stopped` with its `agentId`,
+   `executionState:stopped` and `reconciliation`. That only records the cleanup:
+   the dispatch stays stopped and nothing is reopened or switched.
 
 A task-failure report has no provider `error`; for example:
 

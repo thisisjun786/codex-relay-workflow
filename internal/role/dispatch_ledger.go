@@ -66,6 +66,9 @@ type DispatchAttempt struct {
 	Termination *DispatchTermination `json:"termination,omitempty"`
 	// Receipt is set by the checked boundary when it accepts a created report (see DispatchReceipt); a stored one is decoded.
 	Receipt *DispatchReceipt `json:"receipt,omitempty"`
+	// Cleanup is set by the checked boundary for a child a policy stop left recorded (see DispatchCleanup); a stored one is
+	// decoded.
+	Cleanup *DispatchCleanup `json:"cleanup,omitempty"`
 	raw     object
 }
 
@@ -83,6 +86,9 @@ func (a DispatchAttempt) MarshalJSON() ([]byte, error) {
 	}
 	if a.Receipt != nil {
 		o.set("receipt", a.Receipt)
+	}
+	if a.Cleanup != nil {
+		o.set("cleanup", a.Cleanup)
 	}
 	return o.MarshalJSON()
 }
@@ -517,6 +523,12 @@ func dispatchPinnedDecode(data []byte, session, id string) (Dispatch, error) {
 			a.Receipt = &DispatchReceipt{}
 			if json.Unmarshal(receipt, a.Receipt) != nil {
 				return d, errors.New("invalid attempt receipt")
+			}
+		}
+		if cleanup := dispatchRaw(a.raw, "cleanup"); cleanup != nil && string(cleanup) != "null" {
+			a.Cleanup = &DispatchCleanup{}
+			if json.Unmarshal(cleanup, a.Cleanup) != nil {
+				return d, errors.New("invalid attempt cleanup")
 			}
 		}
 		tf := dispatchRaw(a.raw, "taskFailure")

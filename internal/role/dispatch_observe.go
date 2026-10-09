@@ -168,3 +168,15 @@ type DispatchTermination struct {
 	Source       string `json:"source"`
 	Note         string `json:"note"`
 }
+
+// DispatchCleanup is the outstanding cleanup of a child whose dispatch a policy stopped: "pending" when the stop left the
+// child recorded and unaccounted for, "unconfirmed" once cleanup evidence was submitted but the child's end could not be
+// seen (its id stays held), and "confirmed" once the child was seen to have ended (the attempt is failed and its id free).
+// The dispatch stays stopped in every state: the policy ended the dispatch, the cleanup only accounts for the child.
+type DispatchCleanup struct {
+	Status   string `json:"status"`
+	Evidence string `json:"evidence,omitempty"`
+	Newest   string `json:"newestTurn,omitempty"`
+	Source   string `json:"source,omitempty"`
+	Note     string `json:"note,omitempty"`
+}
