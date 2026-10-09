@@ -792,31 +792,51 @@ func auditDraftCollect(e *Env, cfg *Config, section auditDraftSection, scope aud
 		if !matches {
 			continue
 		}
-		if owner, ok := newest[bundles[i]]; ok && owner != i {
-			collected.skipped = append(collected.skipped, auditDraftSkip{Mode: row.Mode, Subject: row.Subject, Head: row.Head,
-				Reason: "the bundle was graded again after this row, so its " + auditGradeFile + " is that later audit's"})
-			continue
-		}
-		// A ledger is append-only and unscoped runs read every ok row, so one row the product
-		// cannot read must not stop the rows it can: the row is named in the report instead.
-		if err := auditDraftBundleOf(row); err != nil {
-			collected.skipped = append(collected.skipped, auditDraftSkip{Mode: row.Mode, Subject: row.Subject, Head: row.Head, Reason: err.Error()})
-			continue
-		}
-		// A grade marks its bundle before its grader can leave a file and clears the mark once
-		// its ledger row is on disk. A bundle that still carries the mark holds the result of a
-		// run nothing names, so no row is drafted from it: the file may belong to a run that
-		// timed out, failed or was killed, and attributing it to this older row would report
-		// defects the row never found.
-		if auditPending(e, cfg, row.Bundle) {
-			collected.skipped = append(collected.skipped, auditDraftSkip{Mode: row.Mode, Subject: row.Subject, Head: row.Head,
-				Reason: "the bundle carries an unrecorded grade, so its " + auditGradeFile + " is not this row's"})
-			continue
-		}
-		doc, ok := auditParseResult(crwconfig.JoinRoot(row.Bundle, auditGradeFile))
-		if !ok {
-			collected.skipped = append(collected.skipped, auditDraftSkip{Mode: row.Mode, Subject: row.Subject, Head: row.Head, Reason: "no usable " + auditGradeFile})
-			continue
+		var doc auditGradeDoc
+		if row.ID != "" {
+			// A row written since CRW-838 carries the copy of its own grade.json, which no later
+			// grade of the bundle can change: it is read instead of the bundle, so a bundle graded
+			// again, rebuilt or marked does not take the row's defects away. The copy must match the
+			// digest the row records.
+			data, err := auditResultCopyRead(e, cfg, row)
+			if err != nil {
+				collected.skipped = append(collected.skipped, auditDraftSkip{Mode: row.Mode, Subject: row.Subject, Head: row.Head, Reason: err.Error()})
+				continue
+			}
+			parsed, ok := auditParseResultBytes(data)
+			if !ok {
+				collected.skipped = append(collected.skipped, auditDraftSkip{Mode: row.Mode, Subject: row.Subject, Head: row.Head, Reason: "no usable result copy"})
+				continue
+			}
+			doc = parsed
+		} else {
+			if owner, ok := newest[bundles[i]]; ok && owner != i {
+				collected.skipped = append(collected.skipped, auditDraftSkip{Mode: row.Mode, Subject: row.Subject, Head: row.Head,
+					Reason: "the bundle was graded again after this row, so its " + auditGradeFile + " is that later audit's"})
+				continue
+			}
+			// A ledger is append-only and unscoped runs read every ok row, so one row the product
+			// cannot read must not stop the rows it can: the row is named in the report instead.
+			if err := auditDraftBundleOf(row); err != nil {
+				collected.skipped = append(collected.skipped, auditDraftSkip{Mode: row.Mode, Subject: row.Subject, Head: row.Head, Reason: err.Error()})
+				continue
+			}
+			// A grade marks its bundle before its grader can leave a file and clears the mark once
+			// its ledger row is on disk. A bundle that still carries the mark holds the result of a
+			// run nothing names, so no row is drafted from it: the file may belong to a run that
+			// timed out, failed or was killed, and attributing it to this older row would report
+			// defects the row never found.
+			if auditPending(e, cfg, row.Bundle) {
+				collected.skipped = append(collected.skipped, auditDraftSkip{Mode: row.Mode, Subject: row.Subject, Head: row.Head,
+					Reason: "the bundle carries an unrecorded grade, so its " + auditGradeFile + " is not this row's"})
+				continue
+			}
+			parsed, ok := auditParseResult(crwconfig.JoinRoot(row.Bundle, auditGradeFile))
+			if !ok {
+				collected.skipped = append(collected.skipped, auditDraftSkip{Mode: row.Mode, Subject: row.Subject, Head: row.Head, Reason: "no usable " + auditGradeFile})
+				continue
+			}
+			doc = parsed
 		}
 		for _, defect := range doc.Defects {
 			rank, knownSeverity := auditDraftSeverityRank[defect.Severity]

@@ -449,7 +449,7 @@ func auditGradeOne(ctx context.Context, e *Env, section auditSection, bundle *au
 	result := AuditResult{
 		Mode: bundle.Mode, Subject: bundle.Subject, Head: bundle.Head, Issue: bundle.Issue,
 		Pair: job.Pair, Phase: job.Phase, Round: job.Round,
-		Bundle: absBundle, GradedAt: e.Now().UTC().Format(auditTimeFormat),
+		Bundle: absBundle, BundleGiven: job.Bundle, GradedAt: e.Now().UTC().Format(auditTimeFormat),
 	}
 	grade := crwconfig.JoinRoot(absBundle, auditGradeFile)
 	// The grader is told to write this file, so a file an earlier run left is not this
@@ -542,6 +542,12 @@ func auditParseResult(path string) (auditGradeDoc, bool) {
 	if err != nil {
 		return auditGradeDoc{}, false
 	}
+	return auditParseResultBytes(data)
+}
+
+// auditParseResultBytes is auditParseResult over the bytes of a grade.json already read, so a
+// reader of a ledger row's copy judges the copy's bytes by the same rules.
+func auditParseResultBytes(data []byte) (auditGradeDoc, bool) {
 	var doc auditGradeDoc
 	if err := json.Unmarshal(data, &doc); err != nil {
 		return auditGradeDoc{}, false

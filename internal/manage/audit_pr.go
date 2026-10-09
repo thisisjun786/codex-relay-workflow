@@ -938,6 +938,17 @@ func auditPRRunWith(ctx context.Context, e *Env, cfg *Config, max int, dryRun bo
 		fmt.Fprintf(e.Stderr, "crw manage audit pr: error: %v\n", err)
 		return 1
 	}
+	// One audit run at a time (CRW-838): two runs would read the ledger for their targets before
+	// either appended a row, pick the same pull request and empty each other's bundle. A dry run
+	// writes nothing and takes no lock.
+	if !dryRun {
+		release, err := auditRunLock(e, cfg)
+		if err != nil {
+			fmt.Fprintf(e.Stderr, "crw manage audit pr: error: %v\n", err)
+			return 1
+		}
+		defer release()
+	}
 	entries, err := auditPRList(ctx, e, cfg, since)
 	if err != nil {
 		fmt.Fprintf(e.Stderr, "crw manage audit pr: error: %v\n", err)

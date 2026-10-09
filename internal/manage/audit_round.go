@@ -355,6 +355,13 @@ func auditRoundRunStart(ctx context.Context, e *Env, args []string) int {
 		return usageExit
 	}
 	cfg := coreDefaults(e)
+	// One audit run at a time (CRW-838): the lock is held for the whole start.
+	releaseRun, err := auditRunLock(e, cfg)
+	if err != nil {
+		fmt.Fprintf(e.Stderr, "crw manage audit round start: error: %v\n", err)
+		return 1
+	}
+	defer releaseRun()
 	co, err := auditPkgCheckoutOf(cfg)
 	if err != nil {
 		fmt.Fprintf(e.Stderr, "crw manage audit round start: error: %v\n", err)
