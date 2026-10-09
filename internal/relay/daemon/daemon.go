@@ -285,7 +285,7 @@ func haltNote(state store.HaltState) string {
 	if state.Detail != "" {
 		return "store writes are halted: " + state.Detail + " (" + state.Path + ")"
 	}
-	return fmt.Sprintf("store writes are halted: %s records %s (code %d) seen at %s on %s; no write is attempted until it is cleared by hand",
+	return fmt.Sprintf("store writes are halted: %s records %s (code %d) seen at %s on %s; no write is attempted until it is cleared by store-halt-clear, after a restore and a reconcile reading agree",
 		state.Path, state.Marker.Message, state.Marker.Code, state.Marker.Site, state.Marker.DetectedAt)
 }
 
