@@ -927,3 +927,10 @@ evaluation of 83a490cef (fix round 1 of the pre-merge evaluation of 101be077, fi
 evaluation of 83a490cef (fix round 1 of the pre-merge evaluation of 101be077, finding d3 in the POSIX option scan)	sed --in='{MEMORY}/*' -e p out.txt --in-place=.bak	CRW-941-D14	row	-
 evaluation of 83a490cef (fix round 1 of the pre-merge evaluation of 101be077, finding d3 in the POSIX option scan)	sed -i'{MEMORY}/*' p out.txt -ni	CRW-941-D15	row	-
 evaluation of 83a490cef (fix round 1 of the pre-merge evaluation of 101be077, finding d3 in the POSIX option scan)	sed -i.bak -e p out.txt -i	CRW-941-D16	row	-
+Linear issue CRW-1062 (description, 10-09)	mv {CHECKOUT} /tmp/gone	CRW-1062-01	row	-
+Linear issue CRW-1062 (description, 10-09)	printf '%s\n' {CHECKOUT} | xargs git worktree remove -f	CRW-1062-02	row	-
+Linear issue CRW-1062 (description, 10-09)	echo x | cat list.txt | xargs git worktree remove -f	CRW-1062-03	row	-
+Linear issue CRW-1062 (description, 10-09)	echo {CHECKOUT},x | xargs -d, git worktree remove -f	CRW-1062-04	row	-
+Linear issue CRW-1062 (description, 10-09)	echo {CHECKOUT} | xargs git worktree remove -f	CRW-1062-05	row	-
+Linear issue CRW-1062 (description, 10-09)	echo x | xargs wc -l	CRW-1062-06	row	-
+Linear issue CRW-1062 (description, 10-09)	mv build.log archive/	CRW-1062-07	row	-
