@@ -573,6 +573,37 @@ func TestPremergeEvalRefusesASubmoduleInTheMergedTree(t *testing.T) {
 	premergeTestNoRecords(t, f.records)
 }
 
+// The bundle's tree keeps the merge's executable bits: a file the change adds as 100755, a file whose
+// only change is the bit, and an executable file from dev's side are executable (0700), the other files
+// are not (0600). Without it a change to the bit is invisible and an executable helper cannot run.
+func TestPremergeEvalBundleKeepsTheExecutableBit(t *testing.T) {
+	spec := premergeTestCleanSpec()
+	spec.prFiles["run.sh"] = "exec:#!/bin/sh\necho ok\n"
+	spec.prFiles["README.md"] = "exec:readme\n" // the base's content: only the bit changes
+	spec.devFiles["tool.sh"] = "exec:#!/bin/sh\necho dev\n"
+	f := premergeTestNew(t, premergeTestOptions{spec: &spec})
+	if mode := premergeTestGit(t, f.repo.checkout, "ls-tree", f.repo.head, "README.md"); !strings.HasPrefix(mode, "100755 ") {
+		t.Fatalf("the fixture did not make README.md executable: %s", mode)
+	}
+	if _, err := f.eval(PremergeEvalOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	tree := filepath.Join(f.bundle(), "candidate", "tree")
+	for name, want := range map[string]os.FileMode{
+		"run.sh": 0o700, "README.md": 0o700, "tool.sh": 0o700,
+		"a.go": 0o600, "feature.go": 0o600, "dev_only.go": 0o600, "docs/old.md": 0o600,
+	} {
+		info, err := os.Lstat(filepath.Join(tree, filepath.FromSlash(name)))
+		if err != nil {
+			t.Errorf("%s: %v", name, err)
+			continue
+		}
+		if !info.Mode().IsRegular() || info.Mode().Perm() != want {
+			t.Errorf("%s has mode %v, want %v", name, info.Mode(), want)
+		}
+	}
+}
+
 // A grade must answer exactly the criteria the relay registered: the one a record binds a digest of.
 // (The cases of a criterion left out and one nobody registered are rows of the grade-failure table.)
 func TestPremergeEvalGradeCoversTheRegisteredCriteria(t *testing.T) {
@@ -744,6 +775,45 @@ func TestPremergeCommandUsage(t *testing.T) {
 		f.errOut.Reset()
 		if code := premergeRunWith(context.Background(), f.e, f.cfg, args); code != 0 || !strings.Contains(f.out.String(), "usage: crw manage premerge eval") || !strings.Contains(f.out.String(), "dispose") {
 			t.Errorf("%q: exit %d, stdout %q", args, code, f.out)
+		}
+	}
+}
+
+// A configuration file this product cannot use is refused before any work, in Run's words and with
+// exit 2, even when an option's value is -h or --help (which makes the shared entry point skip its own
+// refusal); a real help request still prints the usage.
+func TestPremergeCommandRefusesAnUnusableConfiguration(t *testing.T) {
+	f, path := premergeTestEvaluated(t)
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	coreConfigAt(t, coreConfigDocument(t, map[string]any{"management_thread": 123}))
+	for _, args := range [][]string{
+		{"premerge", "dispose", path, "--ref", "d1", "--class", "blocking", "--note", "-h", "--by", "me"},
+		{"premerge", "dispose", path, "--ref", "d1", "--class", "blocking", "--note=--help"},
+		{"premerge", "eval", "7", "--node", "-h"},
+		{"premerge", "eval", "7"},
+	} {
+		code, out, errOut := coreRunManage(t, args...)
+		if code != usageExit || out != "" || !strings.HasPrefix(errOut, "crw manage: error: ") {
+			t.Errorf("%q: exit %d, stdout %q, stderr %q", args, code, out, errOut)
+		}
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Error("the record changed under a configuration the product cannot use")
+	}
+	if f.graderRuns() != 1 {
+		t.Errorf("the grader ran %d times, want only the fixture's own run", f.graderRuns())
+	}
+	for _, args := range [][]string{{"premerge", "--help"}, {"premerge", "help"}, {"premerge", "dispose", "-h"}, {"premerge", "eval", "help"}} {
+		code, out, errOut := coreRunManage(t, args...)
+		if code != 0 || !strings.Contains(out, "usage: crw manage premerge eval") || errOut != "" {
+			t.Errorf("%q: exit %d, stdout %q, stderr %q", args, code, out, errOut)
 		}
 	}
 }

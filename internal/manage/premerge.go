@@ -644,7 +644,7 @@ func premergeWriteTree(ctx context.Context, co auditPkgCheckout, commit, dir str
 			if changed[entry.path] {
 				body = auditPRScrub(body, scrubs)
 			}
-			if err := auditPRWriteBlob(filepath.Join(dir, filepath.FromSlash(names[i])), body); err != nil {
+			if err := premergeWriteTreeFile(filepath.Join(dir, filepath.FromSlash(names[i])), body, entry.mode); err != nil {
 				return err
 			}
 		}
@@ -662,6 +662,33 @@ func premergeWriteTree(ctx context.Context, co auditPkgCheckout, commit, dir str
 		return fmt.Errorf("git cat-file: %w: %s", waitErr, strings.TrimSpace(errOut.String()))
 	}
 	return nil
+}
+
+// premergeWriteTreeFile writes one file of the merged tree with the permissions its git mode gives: 0700 for
+// an executable file (100755), 0600 for the others, so the bundle keeps the merge's executable bits (a change
+// to the bit alone, a helper the evaluation runs) without opening the files to other users. The permissions
+// are set on the open file, so the process umask does not narrow them, and a link at the path is not followed.
+func premergeWriteTreeFile(path string, data []byte, mode string) error {
+	perm := os.FileMode(0o600)
+	if mode == "100755" {
+		perm = 0o700
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY|syscall.O_NOFOLLOW, perm)
+	if err != nil {
+		return err
+	}
+	if _, err := file.Write(data); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err := file.Chmod(perm); err != nil {
+		_ = file.Close()
+		return err
+	}
+	return file.Close()
 }
 
 // ---- the bundle ----
@@ -1304,7 +1331,17 @@ func premergeHelpRequested(args []string) bool {
 	return false
 }
 
+// premergeRun refuses a configuration file this product cannot use before any work, in Run's words and with
+// its status. Run already does so, except that it skips the refusal for any -h or --help it sees, including
+// one an option takes as its value ("dispose ... --note -h"); this command reads such a line as real work, so
+// only its own help rule lets the usage through on an unusable file.
 func premergeRun(ctx context.Context, e *Env, args []string) int {
+	if !premergeHelpRequested(args) {
+		if err := coreConfigError(e); err != nil {
+			fmt.Fprintf(e.Stderr, "crw manage: error: %v\n", err)
+			return usageExit
+		}
+	}
 	return premergeRunWith(ctx, e, coreDefaults(e), args)
 }
 

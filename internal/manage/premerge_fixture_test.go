@@ -46,7 +46,8 @@ var premergeTestBase = map[string]string{
 
 // premergeTestRepoSpec says what the pull request branch and dev change after the shared base.
 // A value of "-" deletes the path; a value starting with "link:" makes a symbolic link; "gitlink:" makes a
-// nested repository, which git stages as a submodule entry.
+// nested repository, which git stages as a submodule entry; "exec:" makes an executable file (mode 100755)
+// of the rest of the value.
 type premergeTestRepoSpec struct {
 	prFiles  map[string]string
 	devFiles map[string]string
@@ -105,7 +106,15 @@ func premergeTestWrite(t *testing.T, root string, files map[string]string) {
 			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			mode := os.FileMode(0o644)
+			if rest, ok := strings.CutPrefix(body, "exec:"); ok {
+				body, mode = rest, 0o755
+			}
+			if err := os.WriteFile(path, []byte(body), mode); err != nil {
+				t.Fatal(err)
+			}
+			// a file the base already has keeps its permissions through WriteFile, so set them here
+			if err := os.Chmod(path, mode); err != nil {
 				t.Fatal(err)
 			}
 		}
