@@ -116,7 +116,8 @@ holds, or `$crw-loop` given a Linear project and coordination intent. In the las
 say so, and continue here in goal mode. A *loop* is the PABCD completion loop of one task, owned by
 `crw-loop`; goal mode is this mode, and the two are different procedures. The parent follows
 [Goal mode](references/goal-mode.md) and never the `crw-loop` or `crw-pabcd` procedure, with or without
-a goal. Nothing else enters it: an ordinary project execution request, a status or explanation request,
+a goal, for as long as it acts as project parent; the one way a session leaves that role is the
+explicit current-task implementation request under task creation below. Nothing else enters it: an ordinary project execution request, a status or explanation request,
 a quoted example, automatic skill discovery or an unsubmitted UI prompt opens no goal.
 
 ## Keep a project run moving
@@ -282,7 +283,15 @@ preparation, report the specific missing permission or tool, and request only
 the unresolved decision. Do not silently switch execution mode or widen permissions.
 
 An explicit request to implement within the current task overrides this workflow's
-default separation: honor it with `crw-loop` and label the actual mode accurately.
+default separation: honor it with `crw-loop` and label the actual mode accurately. For that
+task the session is its implementer and not acting as project parent, which is the supported
+role change that lets it follow the loop procedure: it creates no child and dispatches nothing,
+and it starts no goal mode. A session bound to the project that holds no parent goal does this
+and says the parent role is paused for that task. A session that holds an active parent goal
+cannot run the loop under it, because that goal and the loop's would be one host goal: report
+the conflict and offer the supported choices (a child implements, or the user ends or blocks the
+parent goal first), and change neither goal nor binding on its own. Coordination of the other
+issues resumes when the loop ends or the user returns the session to the parent role.
 Status-only, report-only, read-only, and no-create limits also win. Ordinary
 coordinator review, verification, CI inspection, and authorized integration
 remain here. Assignment is not loop evidence: creating or assigning a child task

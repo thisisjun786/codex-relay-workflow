@@ -348,15 +348,16 @@ What follows is not durable automatic continuation. Measured before the port on 
 `0.2.33` and re-read on `0.2.34`, the Stop handler of its `pabcd-state` component blocked the stop
 when a goal read `active` while the phase was `IDLE` and no orchestration was in flight, and the
 continuation it injected carried an unconditional directive to enter PABCD, adding a
-loop-initialisation line (`crw pabcd loop init` in CRW) when no goalplan slug is bound. The PABCD
-Stop continuation is CRW's own hook now, ported from that handler, so the measurement describes the
-behaviour to expect from it and is re-read when the hook is activated. A project
-parent declines that directive, because this contract forbids it a goalplan or an FSM and forbids
+loop-initialisation line (`crw pabcd loop init` in CRW) when no goalplan slug is bound. CRW's own
+PABCD Stop continuation is not in the Go tree yet (its handler is empty today), so the measurement
+describes the behaviour to expect once the hook is ported from that handler, and it is re-read when
+the hook is activated. A project parent declines that directive, because this contract forbids it a goalplan or an FSM and forbids
 closing a goal before its scope is actually delivered, and it spends the continued turn on its
 coordination duties instead. The honest exits the block itself names are completing the goal, which
 is honest only once the agreed scope is verified, or recording it blocked.
 
-That budget is finite, though not in the way a first reading suggests. Three consecutive blocks are
+That budget is finite, though not in the way a first reading suggests. The figures here are the
+CXC measurement, not something the current CRW tree executes or tests. Three consecutive blocks are
 allowed, and the next one releases instead, so the turn can end. The release also clears the
 per-phase counter, and a cleared counter no longer matches the phase it is compared against, so the
 stop after it reads as progress and can open another burst of three. What never resets is the
@@ -384,10 +385,11 @@ continuation cost. And one trivial actor is one trivial actor: how often this ha
 must, what a real project parent carrying scope would do, and any saving between the two modes are
 all `unmeasured`.
 
-This is a known incompatibility rather than a scheduled repair. The single CRW Stop entry composes
-the completion guard with the PABCD continuation, and the continuation is ported as it stood: it
-does not yet skip a project parent registered in goal mode. Making it skip one is a deliberate
-deviation from the port, an owner decision recorded in
+This is a known incompatibility rather than a scheduled repair. The design is a single CRW Stop
+entry that composes the completion guard with the PABCD continuation; today the entry runs one
+evaluator per invocation and the continuation is unimplemented, so nothing composes them yet. When
+the continuation is ported as it stood, it will not skip a project parent registered in goal mode, and making it skip one is a
+deliberate deviation from the port, an owner decision recorded in
 [known defects](../../../../../docs/port-cxc/known-defects/CRW-195.md), and until it is taken the
 parent declines the steer. Overriding a hook by registration order, intercepting its output,
 patching the plugin cache and writing private state are excluded, and none of them is offered as

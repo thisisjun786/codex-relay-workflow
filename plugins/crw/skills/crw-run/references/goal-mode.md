@@ -22,11 +22,14 @@ Three rules follow, and every section below keeps them.
    goal-mode request, the `$crw-loop` handoff above, or the restoration of a goal the parent already
    holds. Binding-only, status, explanation, quoted examples, automatic skill discovery and unsubmitted
    UI prompts authorize neither a goal nor an execution.
-2. **The parent never follows the loop procedure.** The project parent does not follow the crw-loop or
-   crw-pabcd procedure, with or without a goal: it creates no implementation goalplan or FSM, enters no
+2. **The parent never follows the loop procedure.** While it acts as project parent, the session does
+   not follow the crw-loop or crw-pabcd procedure, with or without a goal: it creates no implementation goalplan or FSM, enters no
    PABCD phase, and runs no `crw pabcd orchestrate` or `crw pabcd loop init` for itself. The parent's
    native goal tracks verified results and integrations for the agreed scope and needs no source diff in
-   the parent checkout.
+   the parent checkout. The one exception is a user's explicit request to implement a task in the
+   current session: for that task the session is its implementer and not acting as project parent, runs
+   the loop with its own goalplan, creates no child and starts no goal mode, and a session that holds an
+   active parent goal cannot take it up under that goal (see task creation in [crw-run](../SKILL.md)).
 3. **A child's workflow is named `crw-loop`.** Children keep their own implementation workflow, the
    PABCD loop, and a packet names it `crw-loop`. The parent coordinates children; it does not adopt a
    child's goal or FSM.

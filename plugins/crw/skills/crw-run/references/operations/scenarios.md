@@ -542,8 +542,9 @@ and the separation between entering review, being merge ready, and reporting an 
 Observed: a goal-mode parent has a verified active coordination goal on a host with
 compatible goal/continuation hooks, and no implementation FSM. Every child in its agreed
 scope has delivered verified results, required PRs have landed, and no owned work or
-receipt remains pending. Its own checkout is unchanged. Separately, another parent task
-explicitly chose to run a `crw-loop` of its own and has a blocked FSM with no supported
+receipt remains pending. Its own checkout is unchanged. Separately, another session bound to the
+project was explicitly asked to implement one task itself, paused its parent role for that task
+and runs a `crw-loop` as that task's implementer; its FSM is blocked, and it has no supported
 transition to goal mode.
 
 Clauses: OPS-8.1, OPS-8.4, OPS-10.1; lifecycle decisions belong to
@@ -553,12 +554,12 @@ Action: the goal-mode parent completes its coordination record and matching host
 on the verified scoped deliveries, then reads back completion, without manufacturing
 a parent-local code change. Child completion alone is
 insufficient if any required result, correction, receipt or integration remains unresolved.
-The other parent retains its `crw-loop` lifecycle and cannot start goal mode
+The other session retains its `crw-loop` lifecycle and cannot start goal mode
 while its transition is unsupported. Record the transition blocker and exact supported
 resume requirement; do not reset the FSM, edit phases or report a new loop as armed.
 
 Preserved: child identities and delivery evidence, the distinct parent completion boundary,
-and the other parent's binding, goalplan, pending obligations and recovery evidence.
+and the other session's binding, goalplan, pending obligations and recovery evidence.
 
 ## S25 Run and goal mode share project scope; the parent holds no goal by default
 
