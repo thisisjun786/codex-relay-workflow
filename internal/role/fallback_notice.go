@@ -91,6 +91,11 @@ func RunFallbackNoticeHook(ctx context.Context, in io.Reader, out io.Writer, env
 		if id, ok := object["agent_id"].(string); ok && id != "" {
 			return 0
 		}
+		// CRW-1146: a resumed session holds this static card from its first start; startup, compact and an absent or unknown
+		// source still answer it.
+		if object["source"] == "resume" {
+			return 0
+		}
 	}
 	answer, err := SessionFallbackNotice(env)
 	if ctx.Err() != nil {

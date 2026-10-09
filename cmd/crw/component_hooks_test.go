@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -360,5 +361,38 @@ func TestGitHubPostGuardLegLeavesObservation(t *testing.T) {
 				t.Fatalf("the record carries a decision: %v", records[0])
 			}
 		})
+	}
+}
+
+// TestSessionStartStaticLegsSkipResumeThroughTheDispatcher: through the production row table, a resumed session gets only the
+// session binding from the map-affordance leg and nothing from the subagent fallback leg, while startup and compact get both
+// whole (CRW-1146).
+func TestSessionStartStaticLegsSkipResumeThroughTheDispatcher(t *testing.T) {
+	_ = fallbackComponentEnv(t)
+	t.Setenv("CRW_BIN", "crw")
+	ws := t.TempDir()
+	run := func(leg, source string) string {
+		raw := `{"session_id":"s-1","cwd":` + strconv.Quote(ws) + `,"hook_event_name":"SessionStart","source":` + strconv.Quote(source) + `}`
+		var out bytes.Buffer
+		claimed, code := runComponentHook(invocation{ctx: context.Background(), args: []string{"session-start", "--leg", leg}, stdout: &out}, strings.NewReader(raw), componentHooks())
+		if !claimed || code != 0 {
+			t.Fatalf("%s %s: claimed=%v code=%d", leg, source, claimed, code)
+		}
+		return out.String()
+	}
+	for _, source := range []string{"startup", "compact"} {
+		if out := run("session-start-announcing-map-affordance", source); !strings.Contains(out, "External skill catalogs are searchable") || !strings.Contains(out, "This session's id is `s-1`") {
+			t.Errorf("map affordance, source %s: %q", source, out)
+		}
+		if out := run("session-start-announcing-subagent-fallback", source); out == "" {
+			t.Errorf("subagent fallback, source %s answered nothing", source)
+		}
+	}
+	out := run("session-start-announcing-map-affordance", "resume")
+	if !strings.Contains(out, "This session's id is `s-1`") || strings.Contains(out, "External skill catalogs") || strings.Contains(out, "Loop contract") {
+		t.Errorf("map affordance on resume: %q", out)
+	}
+	if out := run("session-start-announcing-subagent-fallback", "resume"); out != "" {
+		t.Errorf("subagent fallback on resume: %q", out)
 	}
 }

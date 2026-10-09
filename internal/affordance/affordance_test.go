@@ -402,3 +402,35 @@ func TestUnicodeSessionBoundAndSingleConsumer(t *testing.T) {
 		t.Fatal("consumers", n)
 	}
 }
+
+// CRW-1146: a resumed session already holds the static pointers from its first start, so source=resume re-issues only what can
+// change (the session binding and the not-on-PATH banner); startup, compact, clear, a missing or an unknown or non-string source
+// keep the whole list.
+func TestSessionStartResumeKeepsOnlyTheChangeableSections(t *testing.T) {
+	big := t.TempDir()
+	seed(t, big, 40)
+	full := RunMapAffordanceSessionStart(payload(big, "SessionStart", "SESSION", nil), big, testEnv)
+	if n := len(strings.Split(contextOf(t, full, "SessionStart"), "\n\n")); n != 8 {
+		t.Fatalf("baseline has %d sections", n)
+	}
+	for _, source := range []any{"startup", "compact", "clear", "", "future-source", 7, nil, "RESUME", "resume "} {
+		got := RunMapAffordanceSessionStart(payload(big, "SessionStart", "SESSION", map[string]any{"source": source}), big, testEnv)
+		if got != full {
+			t.Errorf("source %v changed the output", source)
+		}
+	}
+	resumed := RunMapAffordanceSessionStart(payload(big, "SessionStart", "SESSION", map[string]any{"source": "resume"}), big, testEnv)
+	if got := contextOf(t, resumed, "SessionStart"); got != RenderSessionBinding("SESSION", testEnv) {
+		t.Errorf("resume context is not exactly the session binding: %q", got)
+	}
+	// The banner depends on where crw is, so a resumed session hears it again.
+	notOnPath := func(k string) (string, bool) { return "chosen-crw", k == "CRW_BIN" }
+	got := contextOf(t, RunMapAffordanceSessionStart(payload(big, "SessionStart", "SESSION", map[string]any{"source": "resume"}), big, notOnPath), "SessionStart")
+	if parts := strings.Split(got, "\n\n"); len(parts) != 2 || parts[0] != RenderSessionBinding("SESSION", notOnPath) || !strings.Contains(parts[1], "is not on PATH here") {
+		t.Errorf("resume with crw off PATH: %q", got)
+	}
+	// Nothing to say is no output, not an empty envelope.
+	if got := RunMapAffordanceSessionStart(payload(big, "SessionStart", "", map[string]any{"source": "resume"}), big, testEnv); got != "" {
+		t.Errorf("resume without a session id and with crw on PATH answered %q", got)
+	}
+}

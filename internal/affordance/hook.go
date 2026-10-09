@@ -129,18 +129,32 @@ func RunUserPromptAffordance(raw string, env host.LookupEnv) string {
 }
 
 // RunMapAffordanceSessionStart is read-only and keeps unconditional pointers on
-// malformed stdin or a failed walk. Only this handler trims before JSON.parse.
+// malformed stdin or a failed walk. Only this handler trims before JSON.parse. A resume (CRW-1146)
+// re-issues only the session binding and the PATH banner.
 func RunMapAffordanceSessionStart(raw, fallbackCwd string, env host.LookupEnv) string {
-	cwd, sid := fallbackCwd, ""
+	cwd, sid, resumed := fallbackCwd, "", false
 	if p := object(text.Trim(raw)); p != nil {
 		if s, ok := p["cwd"].(string); ok && s != "" {
 			cwd = s
 		}
 		sid, _ = p["session_id"].(string)
+		// CRW-1146: only a source that says resume is a resumed session; a missing or unknown one keeps the whole list.
+		resumed = p["source"] == "resume"
 	}
 	lines := []string{}
 	if sid != "" {
 		lines = append(lines, RenderSessionBinding(sid, env))
+	}
+	if resumed {
+		// The resumed session holds the static pointers from its first start (and compaction, which empties the context, is
+		// not a resume): only what can change since then is said again, the binding above and where crw is.
+		if inv := invocation(env); inv != "crw" {
+			lines = append(lines, "[crw] `crw` is not on PATH here; wherever docs say `crw`, run: "+inv)
+		}
+		if len(lines) == 0 {
+			return ""
+		}
+		return envelope("SessionStart", lines)
 	}
 	if count := CountSourceFiles(cwd); count >= MapAffordanceMinFiles {
 		lines = append(lines, RenderMapAffordance(count, env))
