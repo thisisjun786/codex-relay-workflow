@@ -1,0 +1,88 @@
+# CRW-895 fix round after the verification of 9f189ad1: a find -regex whose syntax find and Go do not read the same never guards
+# (the GNU end-of-buffer anchor \' is a literal quote in Go), find's start points are judged from the directory find runs in and
+# not again from the unknown directory of a shell that names nothing find found, and a prefix before {} that keeps the word below
+# a directory outside the protected area stays allowed. ../repo is the managed checkout itself, .. its slot.
+
+=== CRW-895-u1 | R
+--why The verification's trigger: GNU \' anchors at the end of the path, so ".*\'" selects every path including the checkout; Go reads \' as a literal quote and called it a guard.
+find ../repo -regex ".*\'" -delete
+
+=== CRW-895-u2 | R
+--why The same with git worktree remove.
+find ../repo -regex ".*\'" -exec git worktree remove --force {} \;
+
+=== CRW-895-u3 | R
+--why The word-end anchor \> of GNU regular expressions also fits the checkout's path and is not read.
+find ../repo -regex '.*po\>' -delete
+
+=== CRW-895-u4 | R
+--why The start-of-buffer anchor \` is not read either.
+find ../repo -regex '\`.*' -delete
+
+=== CRW-895-u5 | R
+--why A backslash inside a bracket is a plain character in one dialect and an escape in another; the reader does not read it.
+find ../repo -regex '.*[\.]po' -delete
+
+=== CRW-895-u6 | R
+--why An unread regular expression from the slot root with -exec rm -rf.
+find .. -maxdepth 0 -regex ".*\'" -exec rm -rf {} +
+
+=== CRW-895-u7 | B
+--why Control: a regular expression made of syntax both dialects read that leaves the start point out still guards.
+find . -regex '.*\.o' -delete
+
+=== CRW-895-u8 | B
+--why Control: path text with slashes and a bracket expression.
+find . -regex '.*/build/.*[0-9]' -delete
+
+=== CRW-895-u9 | B
+--why Control: a POSIX class in a bracket.
+find . -regex '.*[[:digit:]]' -delete
+
+=== CRW-895-u10 | B
+--why Control: a regular expression anchored at the start that the start point does not fit.
+find . -regex '^\./src/.*$' -delete
+
+=== CRW-895-v1 | B
+--why Regression of the third round: a relative start point below the worktree is not re-read from the unknown directory a shell has moved to (cd {}) when its commands name nothing find found.
+find build -type d -exec sh -c 'cd {}; rm -f stale' \;
+
+=== CRW-895-v2 | B
+--why The same with the found path in a variable.
+find src -exec sh -c 'D={}; cd "$D"; rm x' \;
+
+=== CRW-895-v3 | R
+--why A relative start point that is the checkout itself with no test stays refused for the same shell.
+find . -exec sh -c 'cd {}; rm x' \;
+
+=== CRW-895-v4 | R
+--why A relative start point that is the slot root stays refused for the same shell.
+find .. -maxdepth 0 -exec sh -c 'cd {}; rm x' \;
+
+=== CRW-895-v5 | R
+--why A shell that moved to an unknown directory and removes the found path itself reads the relative start point from there: refused.
+find build -type d -exec sh -c 'cd $X; rm -rf {}' \;
+
+=== CRW-895-w1 | B
+--why Regression: a directory prefix before {} keeps the word below that directory (find . -maxdepth 1 gives ./a.tmp, so build/./a.tmp).
+find . -maxdepth 1 -name '*.tmp' -exec rm -f build/{} \;
+
+=== CRW-895-w2 | B
+--why The same with an absolute directory outside the worktree.
+find . -maxdepth 1 -name '*.tmp' -exec rm -f /tmp/stash/{} \;
+
+=== CRW-895-w3 | R
+--why A prefix that climbs to the slot root names the slot's children: ../{} with the start point .
+find . -name '*.tmp' -exec rm -rf ../{} \;
+
+=== CRW-895-w4 | R
+--why A prefix that names the checkout joined to a found path: ../repo/{} with the start point . reaches the checkout itself.
+find . -name x -exec rm -rf ../repo/{} \;
+
+=== CRW-895-w5 | R
+--why A start point that climbs under a prefix is not bounded by the prefix.
+find ../build -name x -exec rm -rf build/{} \;
+
+=== CRW-895-w6 | R
+--why A .. after {} climbs out of the found path.
+find . -name x -exec rm -rf {}/../.. \;

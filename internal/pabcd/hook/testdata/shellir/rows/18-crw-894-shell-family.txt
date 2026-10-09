@@ -1,0 +1,356 @@
+# CRW-894 re-check of 10-09 on dev 09e5c5bcc: the shell family (ash, mksh, hush and the busybox applets) in every place bash and sh are recognised,
+# and the conditions (if, elif, while, until, !) that inherit a pipe. ../repo is the managed checkout.
+
+=== CRW-894-sf-01 | U
+--why The pipe feeds a program to ash, a shell of the family the reader must know (re-check 10-09).
+printf 'rm -rf ../repo' | ash
+
+=== CRW-894-sf-02 | U
+--why The pipe feeds a program to mksh, a shell of the family the reader must know (re-check 10-09).
+printf 'rm -rf ../repo' | mksh
+
+=== CRW-894-sf-03 | U
+--why The pipe feeds a program to hush, a shell of the family the reader must know (re-check 10-09).
+printf 'rm -rf ../repo' | hush
+
+=== CRW-894-sf-04 | U
+--why The pipe feeds a program to pdksh, a shell of the family the reader must know (re-check 10-09).
+printf 'rm -rf ../repo' | pdksh
+
+=== CRW-894-sf-05 | U
+--why The pipe feeds a program to oksh, a shell of the family the reader must know (re-check 10-09).
+printf 'rm -rf ../repo' | oksh
+
+=== CRW-894-sf-06 | U
+--why The pipe feeds a program to posh, a shell of the family the reader must know (re-check 10-09).
+printf 'rm -rf ../repo' | posh
+
+=== CRW-894-sf-07 | U
+--why The pipe feeds a program to yash, a shell of the family the reader must know (re-check 10-09).
+printf 'rm -rf ../repo' | yash
+
+=== CRW-894-sf-08 | U
+--why The pipe feeds a program to rbash, a shell of the family the reader must know (re-check 10-09).
+printf 'rm -rf ../repo' | rbash
+
+=== CRW-894-sf-09 | U
+--why busybox ash reads the pipe as its program (re-check G3B-02).
+printf 'rm -rf ../repo' | busybox ash
+
+=== CRW-894-sf-10 | U
+--why busybox hush reads the pipe as its program.
+printf 'rm -rf ../repo' | busybox hush
+
+=== CRW-894-sf-11 | U
+--why busybox sh reads the pipe as its program (already refused; pinned).
+printf 'rm -rf ../repo' | busybox sh
+
+=== CRW-894-sf-12 | U
+--why /bin/busybox ash: the wrapper is named by path.
+printf 'rm -rf ../repo' | /bin/busybox ash
+
+=== CRW-894-sf-13 | U
+--why /bin/busybox sh: the wrapper is named by path.
+printf 'rm -rf ../repo' | /bin/busybox sh
+
+=== CRW-894-sf-14 | U
+--why A bare busybox without an applet in a pipe has no applet the reader can prove (re-check G3B-04).
+printf 'rm -rf ../repo' | busybox
+
+=== CRW-894-sf-15 | U
+--why A bare /bin/busybox without an applet in a pipe.
+printf 'rm -rf ../repo' | /bin/busybox
+
+=== CRW-894-sf-16 | U
+--why A pipe shell reached through exec -a.
+printf 'rm -rf ../repo' | exec -a x ash
+
+=== CRW-894-sf-17 | U
+--why A pipe shell reached through nohup.
+printf 'rm -rf ../repo' | nohup mksh
+
+=== CRW-894-sf-18 | U
+--why A pipe shell reached through env.
+printf 'rm -rf ../repo' | env X=1 ash
+
+=== CRW-894-sf-19 | U
+--why A pipe shell reached through sudo.
+printf 'rm -rf ../repo' | sudo mksh
+
+=== CRW-894-sf-20 | U
+--why A pipe shell reached through busybox and nohup.
+printf 'rm -rf ../repo' | nohup busybox ash
+
+=== CRW-894-sf-21 | U
+--why The pipe shell's -c program starts a shell that inherits the pipe (item 3 for ash).
+printf x | ash -c 'ash'
+
+=== CRW-894-sf-22 | U
+--why The pipe shell's -c program execs a shell that inherits the pipe (mksh).
+printf x | mksh -c 'exec mksh'
+
+=== CRW-894-sf-23 | U
+--why busybox ash -c with an inner ash that inherits the pipe.
+printf x | busybox ash -c 'ash'
+
+=== CRW-894-sf-24 | U
+--why eval of a family shell in a pipe.
+printf x | eval ash
+
+=== CRW-894-sf-25 | U
+--why su -c starts a family shell that inherits the pipe.
+printf x | su -c 'ash'
+
+=== CRW-894-sf-26 | U
+--why su --command= starts a family shell that inherits the pipe.
+printf x | su --command='mksh'
+
+=== CRW-894-sf-27 | U
+--why A family shell reading a descriptor alias of the pipe.
+printf 'rm -rf ../repo' | ash </dev/stdin
+
+=== CRW-894-sf-28 | U
+--why A family shell reading the pipe through a copied descriptor.
+printf 'rm -rf ../repo' | mksh 3</dev/fd/0 </dev/null <&3
+
+=== CRW-894-sf-29 | U
+--why An elif condition inherits the pipe: bash reads it.
+printf x | if false; then :; elif bash; then :; fi
+
+=== CRW-894-sf-30 | U
+--why A while condition inherits the pipe: bash reads it.
+printf x | while bash; do :; done
+
+=== CRW-894-sf-31 | U
+--why An until condition inherits the pipe: bash reads it.
+printf x | until bash; do :; done
+
+=== CRW-894-sf-32 | U
+--why An if condition inherits the pipe: bash reads it.
+printf x | if bash; then :; fi
+
+=== CRW-894-sf-33 | U
+--why A negation inherits the pipe: bash reads it.
+printf x | ! bash
+
+=== CRW-894-sf-34 | U
+--why An elif condition inherits the pipe: ash reads it.
+printf x | if false; then :; elif ash; then :; fi
+
+=== CRW-894-sf-35 | U
+--why A while condition inherits the pipe: ash reads it.
+printf x | while ash; do :; done
+
+=== CRW-894-sf-36 | U
+--why An until condition inherits the pipe: ash reads it.
+printf x | until ash; do :; done
+
+=== CRW-894-sf-37 | U
+--why An if condition inherits the pipe: ash reads it.
+printf x | if ash; then :; fi
+
+=== CRW-894-sf-38 | U
+--why A negation inherits the pipe: ash reads it.
+printf x | ! ash
+
+=== CRW-894-sf-39 | U
+--why An elif condition inherits the pipe: mksh reads it.
+printf x | if false; then :; elif mksh; then :; fi
+
+=== CRW-894-sf-40 | U
+--why A while condition inherits the pipe: mksh reads it.
+printf x | while mksh; do :; done
+
+=== CRW-894-sf-41 | U
+--why An until condition inherits the pipe: mksh reads it.
+printf x | until mksh; do :; done
+
+=== CRW-894-sf-42 | U
+--why An if condition inherits the pipe: mksh reads it.
+printf x | if mksh; then :; fi
+
+=== CRW-894-sf-43 | U
+--why A negation inherits the pipe: mksh reads it.
+printf x | ! mksh
+
+=== CRW-894-sf-44 | R
+--why ash runs the removal its here-string shows.
+ash <<< 'rm -rf ../repo'
+
+=== CRW-894-sf-45 | R
+--why ash runs the removal its -c string shows.
+ash -c 'rm -rf ../repo'
+
+=== CRW-894-sf-46 | R
+--why ash runs the removal its here-document shows.
+ash <<'EOF'
+rm -rf ../repo
+EOF
+
+=== CRW-894-sf-47 | W
+--why ash runs the memory write its -c string shows.
+ash -c 'echo hi > {MEMORY}/a'
+
+=== CRW-894-sf-48 | W
+--why ash runs the memory write its here-string shows.
+ash <<< 'echo hi > {MEMORY}/a'
+
+=== CRW-894-sf-49 | R
+--why mksh runs the removal its here-string shows.
+mksh <<< 'rm -rf ../repo'
+
+=== CRW-894-sf-50 | R
+--why mksh runs the removal its -c string shows.
+mksh -c 'rm -rf ../repo'
+
+=== CRW-894-sf-51 | R
+--why mksh runs the removal its here-document shows.
+mksh <<'EOF'
+rm -rf ../repo
+EOF
+
+=== CRW-894-sf-52 | W
+--why mksh runs the memory write its -c string shows.
+mksh -c 'echo hi > {MEMORY}/a'
+
+=== CRW-894-sf-53 | W
+--why mksh runs the memory write its here-string shows.
+mksh <<< 'echo hi > {MEMORY}/a'
+
+=== CRW-894-sf-54 | R
+--why busybox ash runs the removal its here-string shows.
+busybox ash <<< 'rm -rf ../repo'
+
+=== CRW-894-sf-55 | R
+--why busybox ash runs the removal its -c string shows.
+busybox ash -c 'rm -rf ../repo'
+
+=== CRW-894-sf-56 | R
+--why busybox ash runs the removal its here-document shows.
+busybox ash <<'EOF'
+rm -rf ../repo
+EOF
+
+=== CRW-894-sf-57 | W
+--why busybox ash runs the memory write its -c string shows.
+busybox ash -c 'echo hi > {MEMORY}/a'
+
+=== CRW-894-sf-58 | W
+--why busybox ash runs the memory write its here-string shows.
+busybox ash <<< 'echo hi > {MEMORY}/a'
+
+=== CRW-894-sf-59 | R
+--why busybox sh runs the removal its here-string shows.
+busybox sh <<< 'rm -rf ../repo'
+
+=== CRW-894-sf-60 | R
+--why busybox sh runs the removal its -c string shows.
+busybox sh -c 'rm -rf ../repo'
+
+=== CRW-894-sf-61 | R
+--why busybox sh runs the removal its here-document shows.
+busybox sh <<'EOF'
+rm -rf ../repo
+EOF
+
+=== CRW-894-sf-62 | W
+--why busybox sh runs the memory write its -c string shows.
+busybox sh -c 'echo hi > {MEMORY}/a'
+
+=== CRW-894-sf-63 | W
+--why busybox sh runs the memory write its here-string shows.
+busybox sh <<< 'echo hi > {MEMORY}/a'
+
+=== CRW-894-sf-64 | R
+--why /bin/busybox ash runs the removal its here-string shows.
+/bin/busybox ash <<< 'rm -rf ../repo'
+
+=== CRW-894-sf-65 | R
+--why /bin/busybox ash runs the removal its -c string shows.
+/bin/busybox ash -c 'rm -rf ../repo'
+
+=== CRW-894-sf-66 | R
+--why /bin/busybox ash runs the removal its here-document shows.
+/bin/busybox ash <<'EOF'
+rm -rf ../repo
+EOF
+
+=== CRW-894-sf-67 | W
+--why /bin/busybox ash runs the memory write its -c string shows.
+/bin/busybox ash -c 'echo hi > {MEMORY}/a'
+
+=== CRW-894-sf-68 | W
+--why /bin/busybox ash runs the memory write its here-string shows.
+/bin/busybox ash <<< 'echo hi > {MEMORY}/a'
+
+=== CRW-894-sf-69 | R
+--why su -c runs the removal through the shell; ash is named inside.
+su -c "ash -c 'rm -rf ../repo'"
+
+=== CRW-894-sf-70 | W
+--why su --command= runs a family shell with a memory write.
+su --command="mksh -c 'echo hi > {MEMORY}/a'"
+
+=== CRW-894-sf-71 | R
+--why A family shell inside a bash -c text runs the removal.
+bash -c "ash -c 'rm -rf ../repo'"
+
+=== CRW-894-sf-72 | R
+--why The pipe shell's -c program holds its own removal; nothing is read from the pipe.
+printf x | ash -c 'rm -rf ../repo'
+
+=== CRW-894-sf-73 | B
+--why Control: a family shell with a harmless -c string and no pipe to read.
+ash -c 'echo hi'
+
+=== CRW-894-sf-74 | B
+--why Control: mksh -c harmless.
+mksh -c 'echo hi'
+
+=== CRW-894-sf-75 | B
+--why Control: busybox ash -c harmless.
+busybox ash -c 'echo hi'
+
+=== CRW-894-sf-76 | B
+--why Control: a pipe into ash -c with a harmless program: the pipe is data, no shell reads it.
+printf x | ash -c 'echo hi'
+
+=== CRW-894-sf-77 | B
+--why Control: a pipe into busybox cat.
+printf x | busybox cat
+
+=== CRW-894-sf-78 | B
+--why Control: busybox ls, no pipe.
+busybox ls
+
+=== CRW-894-sf-79 | B
+--why Control: a bare busybox with nothing to read prints its usage.
+busybox
+
+=== CRW-894-sf-80 | B
+--why Control: a bare /bin/busybox with nothing to read.
+/bin/busybox
+
+=== CRW-894-sf-81 | B
+--why Control: a pipe into a subshell running cat.
+printf x | (cd sub; cat)
+
+=== CRW-894-sf-82 | B
+--why Control: a name that only resembles a family shell.
+printf x | cat ash
+
+=== CRW-894-sf-83 | B
+--why Control: echo names a family shell as an argument.
+echo ash mksh busybox
+
+=== CRW-894-sf-84 | B
+--why Control: an elif condition that is no shell.
+printf x | if false; then :; elif cat; then :; fi
+
+=== CRW-894-sf-85 | B
+--why Control: a while condition that is no shell.
+printf x | while cat; do :; done
+
+=== CRW-894-sf-86 | B
+--why Control: an until condition that is no shell.
+printf x | until cat; do :; done

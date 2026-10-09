@@ -212,10 +212,57 @@ func shellWriteExecCallee(rs []rune, i int, c rune) bool {
 	if c != '(' {
 		return false
 	}
-	for i > 0 && shellVerbSpaceRune(rs[i-1]) {
-		i--
+	return shellWriteExecCalleeExpr(rs, shellWriteExecSkipSpaceBack(rs, i))
+}
+
+// shellWriteExecSkipSpaceBack is the end of the expression that ends before rs[end], past the spacing Python allows between two
+// tokens: blanks, and a backslash directly followed by a newline (also CR LF or a lone CR), which Python joins into one logical
+// line outside a string literal (CRW-851: builtins \<newline>.exec is builtins.exec). A backslash with a blank before its newline
+// is no continuation and stays a character of its own.
+func shellWriteExecSkipSpaceBack(rs []rune, end int) int {
+	for end > 0 {
+		start := end
+		for start > 0 && shellVerbSpaceRune(rs[start-1]) {
+			start--
+		}
+		switch {
+		case start > 0 && rs[start-1] == '\\' && start < end && (rs[start] == '\n' || rs[start] == '\r'):
+			end = start - 1 // the continuation: the blanks after it and the pair itself are spacing
+		default:
+			return start
+		}
 	}
-	return shellWriteExecCalleeExpr(rs, i)
+	return end
+}
+
+// shellWriteExecSkipInlineSpaceBack is shellWriteExecSkipSpaceBack for a reading that must not cross a statement boundary: blanks
+// and a backslash directly followed by a newline are spacing, but a newline that no backslash precedes (LF, CR LF or a lone CR)
+// ends the logical line and stops the skip. A newline inside brackets would not end it in Python, so a chain split that way is
+// read as two statements: the module is then treated as called, the side that over-reports (CRW-851, verifier P0).
+func shellWriteExecSkipInlineSpaceBack(rs []rune, end int) int {
+	for end > 0 {
+		start := end
+		for start > 0 && shellVerbSpaceRune(rs[start-1]) && rs[start-1] != '\n' && rs[start-1] != '\r' {
+			start--
+		}
+		p := start
+		switch {
+		case p > 0 && rs[p-1] == '\n':
+			p--
+			if p > 0 && rs[p-1] == '\r' {
+				p--
+			}
+		case p > 0 && rs[p-1] == '\r':
+			p--
+		default:
+			return start
+		}
+		if p == 0 || rs[p-1] != '\\' {
+			return start // a line end with no backslash before it: a new statement begins after it
+		}
+		end = p - 1 // the continuation: the backslash and its newline are spacing
+	}
+	return end
 }
 
 // shellWriteExecCalleeExpr reports whether the expression that ends just before rs[end] is exec, eval or compile, called
@@ -225,9 +272,7 @@ func shellWriteExecCallee(rs []rune, i int, c rune) bool {
 // to the dynamic routes this issue records as out of scope. Any other character (a newline, a semicolon, a comma, an opening
 // bracket, the start of the program) leaves a plain call, and a def or async def header binds a name instead.
 func shellWriteExecCalleeExpr(rs []rune, end int) bool {
-	for end > 0 && shellVerbSpaceRune(rs[end-1]) {
-		end--
-	}
+	end = shellWriteExecSkipSpaceBack(rs, end)
 	if end == 0 {
 		return false
 	}
@@ -246,18 +291,18 @@ func shellWriteExecCalleeExpr(rs []rune, end int) bool {
 		if end < n || string(rs[end-n:end]) != name || shellWriteExecIdentRune(rs, end-n-1) {
 			continue
 		}
-		j := end - n - 1
-		for j >= 0 && shellVerbSpaceRune(rs[j]) {
-			j-- // legal spacing around the attribute operator: runner . exec(src)
-		}
+		j := shellWriteExecSkipSpaceBack(rs, end-n) - 1 // legal spacing around the attribute operator: runner . exec(src)
 		if j >= 0 && rs[j] == '.' {
-			k := j
-			for k > 0 && shellVerbSpaceRune(rs[k-1]) {
-				k-- // builtins .exec: blanks may stand before the dot too
-			}
+			k := shellWriteExecSkipSpaceBack(rs, j) // builtins .exec: blanks may stand before the dot too
 			for _, module := range []string{"builtins", "__builtins__"} {
 				m := len(module)
-				if k < m || string(rs[k-m:k]) != module || shellWriteExecIdentRune(rs, k-m-1) || k-m-1 >= 0 && rs[k-m-1] == '.' {
+				if k < m || string(rs[k-m:k]) != module || shellWriteExecIdentRune(rs, k-m-1) {
+					continue
+				}
+				// Another object's .builtins (runner . builtins.exec) is a different callee; Python reads the dot through blanks
+				// and continuations, so those are skipped before the module name. A plain line end is not: a statement that
+				// ends in a dot (x = ... or x = 1.) is followed by a new statement, and that builtins.exec is the module's.
+				if p := shellWriteExecSkipInlineSpaceBack(rs, k-m) - 1; p >= 0 && rs[p] == '.' {
 					continue
 				}
 				return true

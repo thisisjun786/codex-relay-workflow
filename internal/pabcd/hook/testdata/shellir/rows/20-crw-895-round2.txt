@@ -1,0 +1,78 @@
+# CRW-895 after the second verification of ad1b3d605: the find placeholder inside the text of a shell, POSIX character classes in a
+# find name pattern, and a filter that reads a file instead of standard input. ../repo is the managed checkout itself.
+
+=== CRW-895-n1 | R
+--why find substitutes {} in the text of a shell too; the body removes the checkout through git.
+find ../repo -exec sh -c 'git worktree remove --force {}' \;
+
+=== CRW-895-n2 | R
+--why The body removes the slot root's content: .. is an ancestor of the checkout.
+find .. -exec bash -c 'rm -rf {}' \;
+
+=== CRW-895-n3 | R
+--why rmdir in the body takes the substituted start point.
+find ../repo -exec sh -c 'rmdir {}' \;
+
+=== CRW-895-n4 | R
+--why -execdir and a quoted placeholder in a longer word are substituted as well.
+find ../repo -execdir sh -c 'rm -rf "x/{}"' \;
+
+=== CRW-895-n5 | B
+--why A start inside the checkout, with the placeholder in the body.
+find build -exec sh -c 'rm -rf {}' \;
+
+=== CRW-895-n6 | B
+--why A test before the action keeps the checkout itself out, whatever the body does with the placeholder.
+find . -name '*.o' -exec sh -c 'rm -f {}' \;
+
+=== CRW-895-n7 | R
+--why A start at the checkout with no test, the placeholder in the body.
+find . -exec sh -c 'rm -rf {}' \;
+
+=== CRW-895-n8 | R
+--why The shell's positional parameter is the placeholder.
+find ../repo -exec sh -c 'rm -rf "$1"' _ {} \;
+
+=== CRW-895-n9 | B
+--why The body ignores the placeholder and the start is the checkout: a fixed removal inside it.
+find ../repo -exec sh -c 'rm build/old.o' \;
+
+=== CRW-895-o1 | R
+--why [[:alpha:]]* fits repo; a POSIX class does not end the bracket at its first ].
+find ../repo -name '[[:alpha:]]*' -delete
+
+=== CRW-895-o2 | R
+--why [[:print:]]* fits repo as well.
+find ../repo -name '[[:print:]]*' -delete
+
+=== CRW-895-o3 | B
+--why [[:digit:]]* does not fit repo, so the test leaves the checkout out.
+find ../repo -name '[[:digit:]]*' -delete
+
+=== CRW-895-o4 | R
+--why A class inside a longer bracket still fits r.
+find ../repo -name '[[:digit:]r]*' -delete
+
+=== CRW-895-o5 | B
+--why A negated class that excludes the first letter of repo.
+find ../repo -name '[^[:alpha:]]*' -delete
+
+=== CRW-895-q1 | R
+--why cat reads the file operand, not the standard input that holds the name; the list it prints is not the producer's.
+echo ../other | cat roots.list | xargs git worktree remove --force
+
+=== CRW-895-q2 | R
+--why sort and head read a file operand too.
+echo build | sort roots.list | xargs rmdir
+
+=== CRW-895-q3 | R
+--why grep's operands after the pattern are files.
+echo ../other | grep o roots.list | xargs rmdir
+
+=== CRW-895-q4 | B
+--why cat - reads standard input; the name is inside the checkout.
+echo build/old.o | cat - | xargs rm
+
+=== CRW-895-q5 | B
+--why grep with the pattern only reads standard input.
+echo build/old.o | grep old | xargs rm
