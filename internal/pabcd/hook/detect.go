@@ -248,8 +248,8 @@ func memoryDestination(p string) bool {
 	return false
 }
 
-// DetectMemoryWriteRequest recognizes the eleven source idioms. Like the oracle,
-// this scans the whole prompt and does not infer intent from quotation or negation.
+// DetectMemoryWriteRequest recognizes affirmative requests in user prose.
+// Quoted examples and task packets cannot authorize durable memory (CRW-1093).
 func DetectMemoryWriteRequest(prompt string) bool {
 	if text.Trim(prompt) == "" {
 		return false
@@ -260,17 +260,70 @@ func DetectMemoryWriteRequest(prompt string) bool {
 		`메모리\s*(에|에다)?\s*(남겨|기록|추가|저장|적어|넣어|써)`,
 		`(노트|메모)\s*(로|를|에)?\s*(남겨|남겨둬|추가|저장|기록)`,
 		`잊지\s*(말고|마|마라|말아)`,
-		`\bremember\s+(this|that|it|these)\b`,
+		`\bremember\s+(this|that|it|these|the\s+following)\b`,
 		`\bnote\s+(this|that|it)\s+down\b`,
 		`\bmake\s+a\s+note\b`,
 		`\bkeep\s+(this|that|it)\s+in\s+mind\b`,
 		`\bdon'?t\s+forget\b`,
 	}
-	p := foldASCII(prompt)
-	for _, pattern := range patterns {
-		if detectorRE(pattern).MatchString(p) {
-			return true
+	// Unlike requestLines, actual requests in lists are eligible and don't
+	// forget is affirmative. A memory-specific negative wins in its sentence.
+	negative := detectorRE(`\b(?:do\s+not|don['’]?t|dont|never|not\s+to|avoid)\s+(?:remember|save|store|write|record|keep|make\s+a\s+note|note)\b|(?:기억|저장|기록|남기|적)\s*(?:하|해|해두|해 두|해둬|하라|해라|해줘|해 줘)?지\s*(?:마|말)|(?:기억|저장|기록)\s*금지`)
+	explain := detectorRE(`^(?:please\s+)?(?:explain|describe|how\s+to|how\s+do|what\s+does)\b|^(?:설명|어떻게)`)
+	list := detectorRE(`^(?:[-*+]\s+|[0-9]+[.)]\s+)`)
+	packet := detectorRE(`(?i)<(?:task[-_ ]?packet|instructions|untrusted[-_ ]?text|untrusted[-_ ]?data)\b|^#{1,6}\s+task[-_ ]?packet\b`)
+	packetEnd := detectorRE(`(?i)</(?:task[-_ ]?packet|instructions|untrusted[-_ ]?text|untrusted[-_ ]?data)\s*>`)
+	inPacket := false
+	fence := byte(0)
+	fenceWidth := 0
+	for _, raw := range text.SplitLines(prompt) {
+		line := text.Trim(raw)
+		if inPacket {
+			if packetEnd.MatchString(line) {
+				inPacket = false
+			}
+			continue
+		}
+		if packet.MatchString(line) {
+			inPacket = !packetEnd.MatchString(line)
+			continue
+		}
+		if len(line) >= 3 && (line[0] == '`' || line[0] == '~') {
+			n := 0
+			for n < len(line) && line[n] == line[0] {
+				n++
+			}
+			if n >= 3 {
+				if fence == 0 {
+					fence, fenceWidth = line[0], n
+				} else if fence == line[0] && n >= fenceWidth && text.Trim(line[n:]) == "" {
+					fence = 0
+				}
+				continue
+			}
+		}
+		if fence != 0 || strings.HasPrefix(line, ">") {
+			continue
+		}
+		line = list.ReplaceAllString(line, "")
+		line = foldASCII(stripQuotes(stripBackticks(line, true)))
+		if explain.MatchString(line) {
+			continue
+		}
+		// Keep each sentence whole: a negative after 'but' also takes precedence.
+		for _, sentence := range detectorRE(`[.!?;]`).Split(line, -1) {
+			if negative.MatchString(sentence) {
+				continue
+			}
+			for _, pattern := range patterns {
+				if detectorRE(pattern).MatchString(text.Trim(sentence)) {
+					return true
+				}
+			}
+			if memoryDestination(sentence) {
+				return true
+			}
 		}
 	}
-	return memoryDestination(p)
+	return false
 }
