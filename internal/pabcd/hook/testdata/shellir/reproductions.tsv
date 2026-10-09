@@ -758,3 +758,89 @@ added by CRW-1028 (over-block of sequential script executions in a carried text)
 added by CRW-1028 (over-block of sequential script executions in a carried text)	bash -c 'bash lint.sh; bash refresh.sh'	CRW-1028-ev-overblock-02	row	-
 added by CRW-1028 (over-block of sequential script executions in a carried text)	bash lint.sh; x=$(bash refresh.sh)	CRW-1028-ev-overblock-03	row	-
 added by CRW-1028 (over-block of sequential script executions in a carried text)	bash -c 'bash refresh.sh; bash lint.sh'	CRW-1028-ev-overblock-04	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf 'rm -rf ../repo' | ash	CRW-894-sf-01	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf 'rm -rf ../repo' | mksh	CRW-894-sf-02	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf 'rm -rf ../repo' | hush	CRW-894-sf-03	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf 'rm -rf ../repo' | pdksh	CRW-894-sf-04	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf 'rm -rf ../repo' | oksh	CRW-894-sf-05	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf 'rm -rf ../repo' | posh	CRW-894-sf-06	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf 'rm -rf ../repo' | yash	CRW-894-sf-07	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf 'rm -rf ../repo' | rbash	CRW-894-sf-08	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf 'rm -rf ../repo' | busybox ash	CRW-894-sf-09	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf 'rm -rf ../repo' | busybox hush	CRW-894-sf-10	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf 'rm -rf ../repo' | busybox sh	CRW-894-sf-11	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf 'rm -rf ../repo' | /bin/busybox ash	CRW-894-sf-12	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf 'rm -rf ../repo' | /bin/busybox sh	CRW-894-sf-13	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf 'rm -rf ../repo' | busybox	CRW-894-sf-14	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf 'rm -rf ../repo' | /bin/busybox	CRW-894-sf-15	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf 'rm -rf ../repo' | exec -a x ash	CRW-894-sf-16	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf 'rm -rf ../repo' | nohup mksh	CRW-894-sf-17	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf 'rm -rf ../repo' | env X=1 ash	CRW-894-sf-18	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf 'rm -rf ../repo' | sudo mksh	CRW-894-sf-19	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf 'rm -rf ../repo' | nohup busybox ash	CRW-894-sf-20	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf x | ash -c 'ash'	CRW-894-sf-21	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf x | mksh -c 'exec mksh'	CRW-894-sf-22	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf x | busybox ash -c 'ash'	CRW-894-sf-23	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf x | eval ash	CRW-894-sf-24	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf x | su -c 'ash'	CRW-894-sf-25	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf x | su --command='mksh'	CRW-894-sf-26	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf 'rm -rf ../repo' | ash </dev/stdin	CRW-894-sf-27	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf 'rm -rf ../repo' | mksh 3</dev/fd/0 </dev/null <&3	CRW-894-sf-28	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf x | if false; then :; elif bash; then :; fi	CRW-894-sf-29	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf x | while bash; do :; done	CRW-894-sf-30	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf x | until bash; do :; done	CRW-894-sf-31	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf x | if bash; then :; fi	CRW-894-sf-32	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf x | ! bash	CRW-894-sf-33	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf x | if false; then :; elif ash; then :; fi	CRW-894-sf-34	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf x | while ash; do :; done	CRW-894-sf-35	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf x | until ash; do :; done	CRW-894-sf-36	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf x | if ash; then :; fi	CRW-894-sf-37	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf x | ! ash	CRW-894-sf-38	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf x | if false; then :; elif mksh; then :; fi	CRW-894-sf-39	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf x | while mksh; do :; done	CRW-894-sf-40	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf x | until mksh; do :; done	CRW-894-sf-41	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf x | if mksh; then :; fi	CRW-894-sf-42	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf x | ! mksh	CRW-894-sf-43	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	ash <<< 'rm -rf ../repo'	CRW-894-sf-44	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	ash -c 'rm -rf ../repo'	CRW-894-sf-45	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	ash <<'EOF' / rm -rf ../repo / EOF	CRW-894-sf-46	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	ash -c 'echo hi > {MEMORY}/a'	CRW-894-sf-47	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	ash <<< 'echo hi > {MEMORY}/a'	CRW-894-sf-48	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	mksh <<< 'rm -rf ../repo'	CRW-894-sf-49	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	mksh -c 'rm -rf ../repo'	CRW-894-sf-50	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	mksh <<'EOF' / rm -rf ../repo / EOF	CRW-894-sf-51	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	mksh -c 'echo hi > {MEMORY}/a'	CRW-894-sf-52	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	mksh <<< 'echo hi > {MEMORY}/a'	CRW-894-sf-53	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	busybox ash <<< 'rm -rf ../repo'	CRW-894-sf-54	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	busybox ash -c 'rm -rf ../repo'	CRW-894-sf-55	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	busybox ash <<'EOF' / rm -rf ../repo / EOF	CRW-894-sf-56	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	busybox ash -c 'echo hi > {MEMORY}/a'	CRW-894-sf-57	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	busybox ash <<< 'echo hi > {MEMORY}/a'	CRW-894-sf-58	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	busybox sh <<< 'rm -rf ../repo'	CRW-894-sf-59	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	busybox sh -c 'rm -rf ../repo'	CRW-894-sf-60	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	busybox sh <<'EOF' / rm -rf ../repo / EOF	CRW-894-sf-61	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	busybox sh -c 'echo hi > {MEMORY}/a'	CRW-894-sf-62	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	busybox sh <<< 'echo hi > {MEMORY}/a'	CRW-894-sf-63	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	/bin/busybox ash <<< 'rm -rf ../repo'	CRW-894-sf-64	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	/bin/busybox ash -c 'rm -rf ../repo'	CRW-894-sf-65	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	/bin/busybox ash <<'EOF' / rm -rf ../repo / EOF	CRW-894-sf-66	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	/bin/busybox ash -c 'echo hi > {MEMORY}/a'	CRW-894-sf-67	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	/bin/busybox ash <<< 'echo hi > {MEMORY}/a'	CRW-894-sf-68	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	su -c "ash -c 'rm -rf ../repo'"	CRW-894-sf-69	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	su --command="mksh -c 'echo hi > {MEMORY}/a'"	CRW-894-sf-70	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	bash -c "ash -c 'rm -rf ../repo'"	CRW-894-sf-71	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf x | ash -c 'rm -rf ../repo'	CRW-894-sf-72	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	ash -c 'echo hi'	CRW-894-sf-73	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	mksh -c 'echo hi'	CRW-894-sf-74	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	busybox ash -c 'echo hi'	CRW-894-sf-75	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf x | ash -c 'echo hi'	CRW-894-sf-76	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf x | busybox cat	CRW-894-sf-77	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	busybox ls	CRW-894-sf-78	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	busybox	CRW-894-sf-79	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	/bin/busybox	CRW-894-sf-80	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf x | (cd sub; cat)	CRW-894-sf-81	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf x | cat ash	CRW-894-sf-82	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	echo ash mksh busybox	CRW-894-sf-83	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf x | if false; then :; elif cat; then :; fi	CRW-894-sf-84	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf x | while cat; do :; done	CRW-894-sf-85	row	-
+recheck-20261009 + verifier c9(c)/c10(c) (CRW-894 shell family)	printf x | until cat; do :; done	CRW-894-sf-86	row	-
