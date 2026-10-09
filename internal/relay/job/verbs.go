@@ -1,6 +1,7 @@
 package job
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -51,6 +52,36 @@ func cliFormatList(recs []BgRecord, broken []BrokenRecord) string {
 	return strings.Join(lines, "\n")
 }
 
+// cliJSONList is the JSON list: an array of the records, as it was. With broken record files in the store it is an object that holds
+// the records and the broken files instead, which the caller sees with a non-zero exit code, so a damaged store is never read as an
+// empty one (CRW-1134).
+func cliJSONList(recs []BgRecord, broken []BrokenRecord) (any, error) {
+	items := make([]json.RawMessage, 0, len(recs))
+	for _, rec := range recs {
+		b, err := encode(rec)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, b)
+	}
+	var doc any = items
+	if len(broken) > 0 {
+		list := make([]map[string]string, len(broken))
+		for i, b := range broken {
+			list[i] = map[string]string{"id": b.ID, "reason": b.Reason}
+		}
+		doc = struct {
+			Records []json.RawMessage   `json:"records"`
+			Broken  []map[string]string `json:"broken"`
+		}{items, list}
+	}
+	b, err := json.Marshal(doc)
+	if err != nil {
+		return nil, err
+	}
+	return pyjson.Loads(string(b), pyjson.LoadOptions{Surrogates: true})
+}
+
 func cliRecord(rec BgRecord) (any, error) {
 	b, err := encode(rec)
 	if err != nil {
@@ -91,17 +122,13 @@ func RunParsedCLI(opts CLIOptions, cwd string, getenv func(string) (string, bool
 	case "list":
 		var recs []BgRecord
 		recs, err = ListRecords(cwd, clock)
-		result.Out = cliFormatList(recs, BrokenRecords(cwd))
+		broken := BrokenRecords(cwd)
+		result.Out = cliFormatList(recs, broken)
+		if len(broken) > 0 {
+			result.Code = 1 // a broken record is not "no job": the exit code says so in the text and the JSON form alike (CRW-1134)
+		}
 		if err == nil && asJSON {
-			items := make([]any, 0, len(recs))
-			for _, rec := range recs {
-				var item any
-				if item, err = cliRecord(rec); err != nil {
-					break
-				}
-				items = append(items, item)
-			}
-			result.Out = items
+			result.Out, err = cliJSONList(recs, broken)
 		}
 	case "get", "cancel":
 		rec, readErr := readRecord(cwd, id)
@@ -221,20 +248,42 @@ func cliSwitch(cwd, verb string, clock func() time.Time) (string, error) {
 		path, event = EnabledAtPath(cwd), "enabled"
 		out = "bg wake ON. 꺼져 있는 동안 끝난 작업은 웨이크하지 않고 crw relay job list 에만 남습니다."
 	}
-	if err := AtomicWrite(cwd, path, clock().UTC().Format(isoLayout)+"\n"); err != nil {
-		return "", err
-	}
-	if verb == "on" {
+	// The switch and the enabled-at time change together under the store lock, and a failed on leaves both as they were: a
+	// completion that ended while the wake was off is held back by that time, so a time written by an on that did not turn the wake on
+	// would hide completions from the wake that is still off (CRW-1134).
+	err := withLock(cwd, false, func() error {
+		prev, prevErr := readText(path)
+		if err := AtomicWrite(cwd, path, clock().UTC().Format(isoLayout)+"\n"); err != nil {
+			return err
+		}
+		if verb != "on" {
+			return nil
+		}
 		if err := RemovePath(cwd, DisabledPath(cwd)); err != nil {
-			return "", err
+			restoreText(cwd, path, prev, prevErr)
+			return err
 		}
 		// RemovePath ignores what it cannot remove (a directory): the switch would stay off while on says ON (CRW-1134).
 		if _, err := os.Lstat(DisabledPath(cwd)); !errors.Is(err, os.ErrNotExist) {
-			return "", fmt.Errorf("the off switch %s cannot be removed, so the wake stays off", DisabledPath(cwd))
+			restoreText(cwd, path, prev, prevErr)
+			return fmt.Errorf("the off switch %s cannot be removed, so the wake stays off", DisabledPath(cwd))
 		}
+		return nil
+	})
+	if err != nil {
+		return "", err
 	}
 	_ = appendLedger(cwd, Event{{"event", event}}, clock)
 	return out, nil
+}
+
+// restoreText puts a file back as readText found it: its text, or no file when it was not there.
+func restoreText(cwd, path, prev string, prevErr error) {
+	if prevErr == nil {
+		_ = AtomicWrite(cwd, path, prev)
+	} else if errors.Is(prevErr, os.ErrNotExist) {
+		_ = RemovePath(cwd, path)
+	}
 }
 
 func cliTail(arg *string, available int) int {

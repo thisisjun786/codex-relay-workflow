@@ -83,24 +83,33 @@ func checkRecord(m map[string]json.RawMessage) error {
 		if !ok {
 			return fmt.Errorf("no %q", k.key)
 		}
+		raw = bytes.TrimSpace(raw)
 		if strings.HasSuffix(k.kind, "?") && string(raw) == "null" {
 			continue
 		}
-		var bad bool
-		switch strings.TrimSuffix(k.kind, "?") {
-		case "s":
+		// json.Unmarshal reads a null into a string, a number or a slice element without an error, so a null is refused here for every
+		// key that does not allow it, and a text must be a JSON string token.
+		bad := len(raw) == 0 || string(raw) == "null"
+		switch kind := strings.TrimSuffix(k.kind, "?"); {
+		case bad:
+		case kind == "s":
 			var v string
-			bad = json.Unmarshal(raw, &v) != nil
-		case "[s]":
-			var v []string
-			bad = len(raw) == 0 || raw[0] != '[' || json.Unmarshal(raw, &v) != nil
-		case "n":
+			bad = raw[0] != '"' || json.Unmarshal(raw, &v) != nil
+		case kind == "[s]":
+			var v []json.RawMessage
+			bad = raw[0] != '[' || json.Unmarshal(raw, &v) != nil
+			for _, el := range v {
+				if el = bytes.TrimSpace(el); len(el) == 0 || el[0] != '"' {
+					bad = true
+				}
+			}
+		case kind == "n":
 			var v float64
-			bad = len(raw) == 0 || raw[0] == '"' || json.Unmarshal(raw, &v) != nil
-		case "i":
+			bad = raw[0] == '"' || json.Unmarshal(raw, &v) != nil
+		case kind == "i":
 			var v int
 			bad = json.Unmarshal(raw, &v) != nil
-		case "st":
+		case kind == "st":
 			var v BgStatus
 			bad = json.Unmarshal(raw, &v) != nil || !slices.Contains([]BgStatus{StatusRunning, StatusComplete, StatusFailed, StatusCancelled, StatusCancelRequested}, v)
 		}
