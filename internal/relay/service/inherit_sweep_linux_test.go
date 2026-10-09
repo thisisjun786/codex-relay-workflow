@@ -135,29 +135,36 @@ func TestFDSweepEachWay(t *testing.T) {
 	}
 }
 
-// sweepChildEnv names which limits the child of TestFDSweepWalksPastLoweredLimits lowers.
+// sweepChildEnv names which limits the child of TestFDSweepPastLoweredLimitsMarksOrRefuses lowers.
 const sweepChildEnv = "CRW_1057_SWEEP_CHILD"
 
-// heldHigh is the number of the descriptor that stays open above the lowered limits, and kernelHigh
-// is the maximum descriptor count of the kernel the child pretends to run on.
-const (
-	heldHigh   = 90000
-	kernelHigh = 100000
-)
+// heldHigh is the number of the descriptor that stays open above the lowered limits. It is below
+// the soft limit the test starts with (1024 or more on a normal host), so the test does not depend
+// on a raised limit.
+const heldHigh = 1000
 
 // Lowering RLIMIT_NOFILE does not close the descriptors already open above it, and a caller may
-// lower the limit before it runs `relay service start` (CRW-1057 verification of 794b8188). With no
-// close_range and neither listing, the walk must still reach such a descriptor, whether the soft
-// limit alone or the hard limit too was lowered. Lowering the hard limit cannot be undone, so each
-// case runs in a child copy of this test binary.
-func TestFDSweepWalksPastLoweredLimits(t *testing.T) {
+// lower the limit before it runs `relay service start` (CRW-1057 verification of 794b8188); nor is
+// fs.nr_open a bound of the descriptors already open, since it can be lowered after one was opened
+// (CRW-1057 verification of feaf05dc). With no close_range and neither listing, the sweep must mark
+// such a descriptor or refuse the start, never report success with it still inherited, whether the
+// soft limit alone or the hard limit too was lowered, and whatever the kernel's maximum now is.
+// Lowering the hard limit cannot be undone, so each case runs in a child copy of this test binary.
+func TestFDSweepPastLoweredLimitsMarksOrRefuses(t *testing.T) {
 	if which := os.Getenv(sweepChildEnv); which != "" {
 		sweepPastLoweredLimit(t, which == "hard")
 		return
 	}
+	var limit unix.Rlimit
+	if err := unix.Getrlimit(unix.RLIMIT_NOFILE, &limit); err != nil {
+		t.Fatal(err)
+	}
+	if limit.Cur <= heldHigh {
+		t.Skipf("the soft descriptor limit %d leaves no room for descriptor %d", limit.Cur, heldHigh)
+	}
 	for _, which := range []string{"soft", "hard"} {
 		t.Run(which, func(t *testing.T) {
-			cmd := exec.Command(os.Args[0], "-test.run=^TestFDSweepWalksPastLoweredLimits$", "-test.count=1", "-test.v")
+			cmd := exec.Command(os.Args[0], "-test.run=^TestFDSweepPastLoweredLimitsMarksOrRefuses$", "-test.count=1", "-test.v")
 			cmd.Env = append(os.Environ(), sweepChildEnv+"="+which)
 			out, err := cmd.CombinedOutput()
 			t.Logf("child (%s limit lowered):\n%s", which, out)
@@ -169,7 +176,8 @@ func TestFDSweepWalksPastLoweredLimits(t *testing.T) {
 }
 
 // sweepPastLoweredLimit holds a descriptor at heldHigh, lowers the soft (and with hard, the hard)
-// descriptor limit to 64 and runs the last-resort walk.
+// descriptor limit to 64, and runs the sweep with close_range and both listings unavailable on a
+// kernel whose maximum was lowered to the held descriptor's number.
 func sweepPastLoweredLimit(t *testing.T, hard bool) {
 	opened, err := unix.Open(filepath.Join(t.TempDir(), "held"), unix.O_RDWR|unix.O_CREAT, 0o600)
 	if err != nil {
@@ -195,14 +203,11 @@ func sweepPastLoweredLimit(t *testing.T, hard bool) {
 	sweep := fdSweep{
 		closeRange: func() error { return errNoCloseRange },
 		dirs:       []string{missing, filepath.Join(missing, "again")},
-		limit:      boundedBy(kernelHigh),
+		limit:      boundedBy(heldHigh),
 	}
-	if err := sweep.apply(); err != nil {
-		t.Fatal(err)
-	}
-	bound, _ := boundedBy(kernelHigh)()
-	t.Logf("descriptor %d, limit %d/%d, walk bound %d", fd, limit.Cur, limit.Max, bound)
-	if !cloExec(t, fd) {
-		t.Fatalf("descriptor %d above the lowered limit still survives an exec", fd)
+	err = sweep.apply()
+	t.Logf("descriptor %d, limit %d/%d, sweep error: %v", fd, limit.Cur, limit.Max, err)
+	if err == nil && !cloExec(t, fd) {
+		t.Fatalf("the sweep reported success while descriptor %d above the lowered limit still survives an exec", fd)
 	}
 }
