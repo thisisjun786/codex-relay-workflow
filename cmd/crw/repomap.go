@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -8,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"syscall"
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
@@ -23,13 +25,25 @@ type mapCommand struct {
 	args []string
 }
 
+// repoMapOverride is CRW_PYTHON trimmed once: a value of only whitespace is unset for the ladder, the fallback and the
+// bootstrap alike (CRW-1147; the oracle reused it as a literal command and let it suppress the bootstrap).
+func repoMapOverride(env host.LookupEnv) string {
+	override, _ := env("CRW_PYTHON")
+	return text.Trim(override)
+}
+
+// repoMapHelp is an explicit help request: it only prints usage, so it needs neither a venv nor uv.
+func repoMapHelp(args []string) bool {
+	return slices.Contains(args, "--help") || slices.Contains(args, "-h")
+}
+
 // selectRepoMapCommand is the POSIX ladder in bin/codexclaw.mjs:335-358.
 func selectRepoMapCommand(args []string, env host.LookupEnv, p mapPaths) mapCommand {
-	override, _ := env("CRW_PYTHON")
-	help := slices.Contains(args, "--help") || slices.Contains(args, "-h")
+	override := repoMapOverride(env)
+	help := repoMapHelp(args)
 	pythonArgs := append([]string{"-B", p.script}, args...)
 	switch {
-	case !help && text.Trim(override) != "":
+	case !help && override != "":
 		return mapCommand{override, pythonArgs}
 	case !help && p.hasUv:
 		return mapCommand{"uv", append([]string{"run", "--quiet", "--with-requirements", p.requirements, "python", "-B", p.script}, args...)}
@@ -71,6 +85,9 @@ type mapDeps struct {
 	run    func(string, []string, bool) (int, error)
 	exists func(string) bool
 	remove func(string) error
+	// lock serializes the venv bootstrap of one crw home: it returns once this process holds the lock on dir's
+	// directory (CRW-1147). Nil means no serialization (tests with fakes).
+	lock func(dir string) (unlock func(), err error)
 	// installedSkill names the scripts directory of the plugin-installed crw-repo-map skill when the
 	// default skills-link script is absent (CRW-392); nil or an empty answer keeps the default.
 	installedSkill func(env host.LookupEnv, defaultScript string) string
@@ -120,10 +137,57 @@ func regularFile(path string) bool {
 	return err == nil && info.Mode().IsRegular()
 }
 
+// repoMapProbeTimeout bounds a quiet probe (the uv availability check): a probe that does not answer is a tool that is not there.
+var repoMapProbeTimeout = 5 * time.Second
+
+// repoMapLockPoll is how often a waiting bootstrap tries the lock again.
+var repoMapLockPoll = 100 * time.Millisecond
+
+// repoMapBootstrapLock takes the exclusive lock that serializes the venv bootstrap of one crw home, waiting for another
+// bootstrap to finish until ctx ends. The lock file lives beside the venv directory, never inside the directory a failed
+// bootstrap removes.
+func repoMapBootstrapLock(ctx context.Context, venvs string, stderr io.Writer) (func(), error) {
+	if err := os.MkdirAll(venvs, 0o700); err != nil {
+		return nil, err
+	}
+	f, err := os.OpenFile(filepath.Join(venvs, ".repomap-bootstrap.lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	waited := false
+	for {
+		err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		if err == nil {
+			return func() { _ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN); _ = f.Close() }, nil
+		}
+		if !errors.Is(err, syscall.EWOULDBLOCK) && !errors.Is(err, syscall.EAGAIN) {
+			_ = f.Close()
+			return nil, err
+		}
+		if !waited {
+			waited = true
+			fmt.Fprintln(stderr, "crw map: waiting for another venv bootstrap to finish...")
+		}
+		select {
+		case <-ctx.Done():
+			_ = f.Close()
+			return nil, ctx.Err()
+		case <-time.After(repoMapLockPoll):
+		}
+	}
+}
+
 func runRepoMap(c invocation) int {
 	d := mapDeps{
+		lock: func(dir string) (func(), error) { return repoMapBootstrapLock(c.ctx, dir, c.stderr) },
 		run: func(command string, args []string, quiet bool) (int, error) {
-			cmd := exec.CommandContext(c.ctx, command, args...)
+			ctx := c.ctx
+			if quiet {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, repoMapProbeTimeout)
+				defer cancel()
+			}
+			cmd := exec.CommandContext(ctx, command, args...)
 			// POSIX oracle lookup permits relative PATH entries.
 			if errors.Is(cmd.Err, exec.ErrDot) {
 				cmd.Path, cmd.Err = filepath.Abs(cmd.Path)
@@ -155,28 +219,64 @@ func launchRepoMap(args []string, env host.LookupEnv, stderr io.Writer, d mapDep
 			p.script, p.requirements = filepath.Join(dir, "repomap.py"), filepath.Join(dir, "requirements.txt")
 		}
 	}
+	// An explicit help is read-only: it needs no venv, no bootstrap and no uv, so it answers before any of them (CRW-1147).
+	if repoMapHelp(args) {
+		return runRepoMapCommand(selectRepoMapCommand(args, env, p), stderr, d)
+	}
+	override := repoMapOverride(env)
 	p.hasVenv = d.exists(p.python)
-	bootstrap, _ := env("CRW_MAP_BOOTSTRAP")
-	override, _ := env("CRW_PYTHON")
-	if !p.hasVenv && bootstrap == "1" && override == "" {
-		dir := filepath.Dir(filepath.Dir(p.python))
-		fmt.Fprintf(stderr, "crw map: bootstrapping venv at %s (one-time)...\n", dir)
-		if code, _ := d.run("python3", []string{"-m", "venv", dir}, false); code == 0 {
-			code, _ := d.run(p.python, []string{"-m", "pip", "install", "-q", "-r", p.requirements}, false)
-			p.hasVenv = code == 0
-			if !p.hasVenv {
-				fmt.Fprintln(stderr, "crw map: venv bootstrap failed; falling back.")
-				if err := d.remove(dir); err != nil {
-					fmt.Fprintln(stderr, "crw map:", err)
-					return 1
-				}
-			}
+	if bootstrap, _ := env("CRW_MAP_BOOTSTRAP"); !p.hasVenv && bootstrap == "1" && override == "" {
+		ok, exit := bootstrapRepoMapVenv(p, stderr, d)
+		if exit != 0 {
+			return exit
+		}
+		p.hasVenv = ok
+	}
+	// uv is probed only for a run it can serve: an explicit interpreter and help (above) never reach it.
+	if override == "" {
+		code, err := d.run("uv", []string{"--version"}, true)
+		p.hasUv = err == nil && code == 0
+	}
+	return runRepoMapCommand(selectRepoMapCommand(args, env, p), stderr, d)
+}
+
+// bootstrapRepoMapVenv builds the one-time venv under the bootstrap lock, so concurrent runs wait for one another and the
+// second finds the first's venv. A failed attempt removes only a directory this attempt made: a tree that was there before it
+// (another run's, or an earlier partial one) is never deleted (CRW-1147). It returns whether the venv is usable, or a nonzero
+// exit when the cleanup itself failed.
+func bootstrapRepoMapVenv(p mapPaths, stderr io.Writer, d mapDeps) (ok bool, exit int) {
+	dir := filepath.Dir(filepath.Dir(p.python))
+	if d.lock != nil {
+		unlock, err := d.lock(filepath.Dir(dir))
+		if err != nil {
+			fmt.Fprintln(stderr, "crw map: venv bootstrap skipped:", err)
+			return false, 0
+		}
+		defer unlock()
+		if d.exists(p.python) {
+			return true, 0 // the run that held the lock before this one built it
 		}
 	}
-	code, err := d.run("uv", []string{"--version"}, true)
-	p.hasUv = err == nil && code == 0
-	sel := selectRepoMapCommand(args, env, p)
-	code, err = d.run(sel.cmd, sel.args, false)
+	existed := d.exists(dir)
+	fmt.Fprintf(stderr, "crw map: bootstrapping venv at %s (one-time)...\n", dir)
+	if code, _ := d.run("python3", []string{"-m", "venv", dir}, false); code != 0 {
+		return false, 0
+	}
+	if code, _ := d.run(p.python, []string{"-m", "pip", "install", "-q", "-r", p.requirements}, false); code == 0 {
+		return true, 0
+	}
+	fmt.Fprintln(stderr, "crw map: venv bootstrap failed; falling back.")
+	if !existed {
+		if err := d.remove(dir); err != nil {
+			fmt.Fprintln(stderr, "crw map:", err)
+			return false, 1
+		}
+	}
+	return false, 0
+}
+
+func runRepoMapCommand(sel mapCommand, stderr io.Writer, d mapDeps) int {
+	code, err := d.run(sel.cmd, sel.args, false)
 	if errors.Is(err, os.ErrNotExist) || errors.Is(err, exec.ErrNotFound) || code == 127 || code == 9009 {
 		exit := "spawn error"
 		if code >= 0 {
