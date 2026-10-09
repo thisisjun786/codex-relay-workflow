@@ -316,11 +316,13 @@ func groupEnded(pid int) bool {
 }
 
 // ListRecords is every parseable record of the store, reconciled; other files are skipped (listRecords).
-func ListRecords(ws string, clock func() time.Time) ([]BgRecord, error) {
+func ListRecords(ws string, clock func() time.Time) ([]BgRecord, error) { return listRecords(ws, clock, false) }
+
+func listRecords(ws string, clock func() time.Time, held bool) ([]BgRecord, error) {
 	out := []BgRecord{}
 	for _, id := range ListRecordIDs(ws) {
 		if rec, ok := ReadRecord(ws, id); ok {
-			fresh, err := Reconcile(ws, rec, clock)
+			fresh, err := reconcile(ws, rec, clock, held)
 			if err != nil {
 				return nil, err
 			}
@@ -373,11 +375,16 @@ func ownedBy(rec BgRecord, sessionID string) bool {
 // SelectWake is the completions to hand to the session, oldest first, at most limit: terminal, undelivered, the session's own or
 // adopted, and finished after the "bg on" time (selectWake). A job that ends in the millisecond of "bg on" ended in the off window, so
 // the strings compare with <=, in UTF-16 order as JavaScript does. The records are not changed; the caller stamps them with
-// MarkDelivered once it has emitted them.
+// MarkDelivered once it has emitted them. A caller that must not hand a completion out twice selects and stamps under one store lock
+// (deliver).
 func SelectWake(ws string, sessionID *string, limit int, clock func() time.Time) ([]BgRecord, error) {
+	return selectWake(ws, sessionID, limit, clock, false)
+}
+
+func selectWake(ws string, sessionID *string, limit int, clock func() time.Time, held bool) ([]BgRecord, error) {
 	raw, _ := ReadText(EnabledAtPath(ws))
 	gate := text.Trim(raw)
-	recs, err := ListRecords(ws, clock)
+	recs, err := listRecords(ws, clock, held)
 	if err != nil {
 		return nil, err
 	}
@@ -397,42 +404,86 @@ func SelectWake(ws string, sessionID *string, limit int, clock func() time.Time)
 
 // MarkDelivered stamps each record independently: one whose write fails stays undelivered for a later wake, which costs less than a
 // dropped completion (markDelivered). It returns the records it stamped as they were passed in, with their old deliveredAt, as the
-// oracle did.
+// oracle did. Each stamp is written over the record as it is on disk under the store lock (CRW-1092): a record that is no longer
+// terminal and undelivered there is left alone, and an adoption written since it was selected is kept.
 func MarkDelivered(ws string, recs []BgRecord, clock func() time.Time) []BgRecord {
+	return markDelivered(ws, recs, clock, false)
+}
+
+func markDelivered(ws string, recs []BgRecord, clock func() time.Time, held bool) []BgRecord {
 	stamp := clock().UTC().Format(isoLayout)
 	stamped := []BgRecord{}
 	for _, rec := range recs {
-		next := rec
-		next.DeliveredAt = &stamp
-		if writeRecord(ws, next, clock) != nil {
-			continue
+		wrote := false
+		_, err := update(ws, rec.ID, clock, held, func(cur BgRecord) change {
+			if !IsTerminal(cur.Status) || cur.DeliveredAt != nil {
+				return change{}
+			}
+			next := cur
+			next.DeliveredAt, wrote = &stamp, true
+			return change{next: next, event: Event{{"event", "delivered"}, {"id", rec.ID}, {"sessionId", opt(cmp.Or(cur.AdoptedBy, cur.SessionID))}}, write: true}
+		})
+		if err == nil && wrote {
+			stamped = append(stamped, rec)
 		}
-		_ = appendLedger(ws, Event{{"event", "delivered"}, {"id", rec.ID}, {"sessionId", opt(cmp.Or(rec.AdoptedBy, rec.SessionID))}}, clock)
-		stamped = append(stamped, rec)
 	}
 	return stamped
 }
 
 // AdoptOrphans hands the undelivered completions of other sessions to this one, because after a restart the registering session is
-// gone and nobody would be woken (adoptOrphans). Adoption is not delivery: a later Stop or UserPromptSubmit does that.
+// gone and nobody would be woken (adoptOrphans). Adoption is not delivery: a later Stop or UserPromptSubmit does that. Each adoption is
+// written over the record as it is on disk under the store lock (CRW-1092), so a stamp written since the listing is never put back.
 func AdoptOrphans(ws string, sessionID *string, clock func() time.Time) ([]BgRecord, error) {
+	if sessionID == nil {
+		return []BgRecord{}, nil
+	}
+	unlock, err := lockStore(ws)
+	if errors.Is(err, os.ErrNotExist) {
+		return []BgRecord{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	return adoptOrphans(ws, sessionID, clock, nil)
+}
+
+// adoptOrphans runs under the store lock. It adopts from recs when the caller has listed the store already, else it lists it.
+func adoptOrphans(ws string, sessionID *string, clock func() time.Time, recs []BgRecord) ([]BgRecord, error) {
 	at := clock().UTC().Format(isoLayout)
 	adopted := []BgRecord{}
 	if sessionID == nil {
 		return adopted, nil
 	}
-	recs, err := ListRecords(ws, clock)
+	var err error
+	if recs == nil {
+		if recs, err = listRecords(ws, clock, true); err != nil {
+			return adopted, err
+		}
+	}
 	for _, rec := range recs {
 		if !IsTerminal(rec.Status) || rec.DeliveredAt != nil || ownedBy(rec, *sessionID) {
 			continue
 		}
-		next := rec
-		next.AdoptedBy = sessionID
-		if err = writeRecord(ws, next, clock); err != nil {
+		var next BgRecord
+		next, err = update(ws, rec.ID, clock, true, func(cur BgRecord) change {
+			if !IsTerminal(cur.Status) || cur.DeliveredAt != nil || ownedBy(cur, *sessionID) {
+				return change{}
+			}
+			next := cur
+			next.AdoptedBy = sessionID
+			return change{next: next, event: Event{{"event", "adopted"}, {"id", rec.ID}, {"sessionId", *sessionID}, {"at", at}}, write: true}
+		})
+		if errors.Is(err, errRecordGone) {
+			err = nil
+			continue
+		}
+		if err != nil {
 			break
 		}
-		_ = appendLedger(ws, Event{{"event", "adopted"}, {"id", rec.ID}, {"sessionId", *sessionID}, {"at", at}}, clock)
-		adopted = append(adopted, next)
+		if next.AdoptedBy != nil && *next.AdoptedBy == *sessionID && next.DeliveredAt == nil {
+			adopted = append(adopted, next)
+		}
 	}
 	return adopted, err
 }
@@ -445,6 +496,33 @@ func HasAnyTask(ws string, sessionID *string, clock func() time.Time) (bool, err
 		return len(recs) > 0, err
 	}
 	return slices.ContainsFunc(recs, func(r BgRecord) bool { return ownedBy(r, *sessionID) }), nil
+}
+
+// deliver hands the session's due completions over (CRW-1092). Under the store lock it selects them from the records as they are now,
+// renders them, emits the text and stamps them delivered only once the emission has succeeded, so a failed write leaves them pending
+// for a later wake and a concurrent hook sees them stamped. It returns the emitted text, "" when there was none.
+func deliver(ws string, sessionID *string, clock func() time.Time, render func([]BgRecord) string, emit func(string) error) (string, error) {
+	unlock, err := lockStore(ws)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	defer unlock()
+	due, err := selectWake(ws, sessionID, WakeBatchLimit, clock, true)
+	if err != nil || len(due) == 0 {
+		return "", err
+	}
+	out := render(due)
+	if out == "" {
+		return "", nil
+	}
+	if err := emit(out); err != nil {
+		return "", err
+	}
+	markDelivered(ws, due, clock, true)
+	return out, nil
 }
 
 // DurationLabel is "running", "?" when the stamps do not read or run backwards, "<s>s" under a minute and "<m>m<ss>s" after it.

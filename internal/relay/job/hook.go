@@ -66,41 +66,44 @@ func silent(fn func() string) (out string) {
 	return fn()
 }
 
-// HandleStop stamps before returning its block. A second Stop cannot wake the
-// same stamped records, even if the caller lost the first output.
+// HandleStop returns the block of the session's due completions and stamps them delivered: the caller has the text, which is the
+// emission here. RunHook emits to its stdout first and stamps only after that write succeeded (CRW-1092).
 func HandleStop(p HookPayload, cwd string, getenv func(string) string, clock func() time.Time) string {
-	return completion(p, cwd, getenv, clock, "Stop")
+	return completion(p, cwd, getenv, clock, "Stop", acceptAll)
 }
 
 // HandleUserPromptSubmit injects context only: a decision would reject the prompt.
 func HandleUserPromptSubmit(p HookPayload, cwd string, getenv func(string) string, clock func() time.Time) string {
-	return completion(p, cwd, getenv, clock, "UserPromptSubmit")
+	return completion(p, cwd, getenv, clock, "UserPromptSubmit", acceptAll)
 }
 
-func completion(p HookPayload, cwd string, getenv func(string) string, clock func() time.Time, event string) string {
+func acceptAll(string) error { return nil }
+
+// completion selects, emits and stamps under the store lock (deliver): emit is the write of the envelope, and a completion whose
+// envelope was not written stays pending. A store that is locked for longer than lockWait emits nothing.
+func completion(p HookPayload, cwd string, getenv func(string) string, clock func() time.Time, event string, emit func(string) error) string {
 	return silent(func() string {
 		ws := PayloadCwd(p, cwd)
 		if WakeSuppressed(ws, getenv) {
 			return ""
 		}
-		due, err := SelectWake(ws, PayloadSessionID(p, getenv), WakeBatchLimit, clock)
-		if err != nil || len(due) == 0 {
-			return ""
-		}
-		body := CompletionText(due)
-		if text.Trim(body) == "" {
-			return ""
-		}
-		MarkDelivered(ws, due, clock)
-		if event == "Stop" {
-			return blockEnvelope(body)
-		}
-		return contextEnvelope(event, body)
+		out, _ := deliver(ws, PayloadSessionID(p, getenv), clock, func(due []BgRecord) string {
+			body := CompletionText(due)
+			if text.Trim(body) == "" {
+				return ""
+			}
+			if event == "Stop" {
+				return blockEnvelope(body)
+			}
+			return contextEnvelope(event, body)
+		}, emit)
+		return out
 	})
 }
 
 // HandleSessionStart adopts even while off. Adoption is not delivery; Stop or the
 // next prompt stamps the completion. Only the first five adopted jobs are described.
+// The adoption is written under the store lock over the records as they are then (CRW-1092).
 func HandleSessionStart(p HookPayload, cwd string, getenv func(string) string, clock func() time.Time) string {
 	return silent(func() string {
 		ws, sid := PayloadCwd(p, cwd), PayloadSessionID(p, getenv)
@@ -182,16 +185,19 @@ func runHook(ctx context.Context, event string, in io.Reader, stdout io.Writer, 
 	harness.RecordInvocation(raw, "bg-wake", event, env)
 	p, out := parseHookPayload(raw), ""
 	getenv := func(k string) string { v, _ := env(k); return v }
+	// Stop and UserPromptSubmit write their envelope from inside the delivery, so a completion is stamped only after its text reached
+	// stdout; a failed write leaves it pending (CRW-1092).
+	emit := func(text string) error { return writeHookOutput(stdout, text+"\n") }
 	switch event {
 	case "stop":
-		out = HandleStop(p, cwd, getenv, clock)
+		completion(p, cwd, getenv, clock, "Stop", emit)
 	case "user-prompt-submit":
-		out = HandleUserPromptSubmit(p, cwd, getenv, clock)
+		completion(p, cwd, getenv, clock, "UserPromptSubmit", emit)
 	case "session-start":
 		out = HandleSessionStart(p, cwd, getenv, clock)
 	}
 	if out != "" {
-		writeHookOutput(stdout, out+"\n")
+		_ = writeHookOutput(stdout, out+"\n")
 	}
 	return 0
 }

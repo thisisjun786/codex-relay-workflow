@@ -130,7 +130,12 @@ func TestRunBackgroundReservesTheIDBeforeTheStart(t *testing.T) {
 		return cmd.Start()
 	})
 	if err != nil || first.ID != "same" || second.ID == "same" || second.ID == "" {
-		t.Errorf("two jobs drew one id: %q and %q (%v)", first.ID, second.ID, err)
+		t.Fatalf("two jobs drew one id: %q and %q (%v)", first.ID, second.ID, err)
+	}
+	for _, id := range []string{first.ID, second.ID} { // both ran, each under its own record, before the workspace goes
+		if got := settled(t, ws, id); got.Status != StatusComplete {
+			t.Errorf("%s: %+v", id, got)
+		}
 	}
 }
 

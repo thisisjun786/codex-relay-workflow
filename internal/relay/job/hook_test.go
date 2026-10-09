@@ -241,8 +241,8 @@ func TestBgRunHookThresholdFallbackAndErrors(t *testing.T) {
 		if RunHook(context.Background(), "stop", strings.NewReader("{}"), badHookWriter{panicWrite}, lookup, ws, noon) != 0 {
 			t.Fatal("broken stdout failed closed")
 		}
-		if r, _ := ReadRecord(ws, "lost"); r.DeliveredAt == nil {
-			t.Fatal("oracle stamps even when output is lost")
+		if r, _ := ReadRecord(ws, "lost"); r.DeliveredAt != nil {
+			t.Fatal("a completion whose output was lost is stamped (CRW-1092: it stays pending)")
 		}
 	}
 	ws := workspace(t)
