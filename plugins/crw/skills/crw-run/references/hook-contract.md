@@ -667,11 +667,21 @@ into a stuck session.
 
 Other evaluators hold independently, and the host was observed to honour every one of them: two
 handlers holding the same Stop both had their reasons carried into a single continuation, and a
-handler that released did not suppress one that held. The single CRW Stop entry composes this
-completion guard with the PABCD continuation and the background completion wake as three independent
-evaluators, each with its own state and budget, and several that hold emit one block whose reasons
-are joined in a fixed order. The PABCD continuation applies its own continuation caps, so a turn can
-be held by more than one owner and the totals compound. This contract governs only its own holds; it
+handler that released did not suppress one that held. That is an observation of the host with
+several registered handlers, not of anything CRW runs today.
+
+What CRW runs today composes nothing. This completion guard is not installed (see the top of this
+reference), and the Go tree registers one Stop entry, `stop-checking-pabcd-continuation`, with no
+handler behind it: the entry runs one evaluator per invocation and the PABCD continuation is
+unimplemented, as the implementation status in
+[start policy](start-policy.md#goal-mode-activates-its-goal-its-stop-continuation-does-not-carry-the-run)
+states.
+
+The design target, not yet built, is a single CRW Stop entry that composes this completion guard with
+the PABCD continuation and the background completion wake as three independent evaluators, each with
+its own state and budget, where several that hold emit one block whose reasons are joined in a fixed
+order. Once the PABCD continuation exists it applies its own continuation caps, so a turn can then be
+held by more than one owner and the totals compound. This contract governs only its own holds; it
 never inspects, relaxes, or counts another evaluator's.
 
 Release is unconditional on any of: `stop_hook_active` true; a disposition recorded for this session
