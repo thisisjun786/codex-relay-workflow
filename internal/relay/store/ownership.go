@@ -563,7 +563,7 @@ func createAbsent(ctx context.Context, path, socket string, options OpenOptions)
 	if err != nil {
 		return nil, err
 	}
-	if err = syncFile(temp); err != nil {
+	if err = syncBuilt(temp); err != nil {
 		return nil, err
 	}
 	if err = createFault("built"); err != nil {
@@ -676,6 +676,14 @@ func creatingOrBinding(path string) bool {
 // createFault is a deterministic crash seam for tests; production leaves it inert.
 var createFault = func(string) error { return nil }
 
+// syncBuilt makes the finished temporary database durable before createAbsent links it into place; tests
+// replace it to see the order and to fail it. buildObserved is called with the build's connection before
+// the build writes anything, so a test can read the connection's settings; production leaves it inert.
+var (
+	syncBuilt     = syncFile
+	buildObserved = func(*sql.DB) error { return nil }
+)
+
 // buildAbsent runs the frozen DDL, seeds and the six ownership keys on the unpublished
 // temporary database, then closes it so no WAL outlives the connection. It returns the stamp it
 // wrote, which the mirror publishAbsent writes is derived from.
@@ -689,6 +697,9 @@ func buildAbsent(ctx context.Context, temp, socket string, options OpenOptions) 
 		return stamp, err
 	}
 	defer func() { err = errors.Join(err, s.Close()) }()
+	if err = buildObserved(s.DB); err != nil {
+		return stamp, err
+	}
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return stamp, err
