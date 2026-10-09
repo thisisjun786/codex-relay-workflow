@@ -754,7 +754,7 @@ func shellWriteCopyKind(callee, name string, binds shellWriteCopyImports) byte {
 	var funcs []string
 	for _, module := range bound {
 		if module != "shutil" && module != "os" {
-			return 'u'
+			continue // a module the reader does not model names no destination; the gate's structural check refuses the call (CRW-900 d1)
 		}
 		if shellWriteCopyFunc(module, name) {
 			funcs = append(funcs, module+"."+name)
