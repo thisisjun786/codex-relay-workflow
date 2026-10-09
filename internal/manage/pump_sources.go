@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -71,7 +72,7 @@ func pumpRolloutPath(e *Env, thread string) (string, error) {
 	if strings.ContainsAny(thread, "*?[]") {
 		return "", fmt.Errorf("crw manage pump: parent thread %q carries a glob character", thread)
 	}
-	pattern := filepath.Join(coreHomeDir(e, "CODEX_HOME", ".codex"), pumpRolloutSessions, "*", "*", "*", "*"+thread+".jsonl")
+	pattern := crwconfig.JoinRoot(coreHomeDir(e, "CODEX_HOME", ".codex"), pumpRolloutSessions, "*", "*", "*", "*"+thread+".jsonl")
 	matches, err := filepath.Glob(pattern)
 	if err != nil {
 		return "", fmt.Errorf("crw manage pump: the rollout glob: %w", err)

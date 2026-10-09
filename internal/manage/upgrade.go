@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 )
@@ -204,7 +204,7 @@ type upgradeRunState struct {
 
 func (r *upgradeRunState) run() int {
 	r.started = r.e.Now().UTC()
-	r.dir = filepath.Join(r.cfg.StateDir, "upgrades", r.started.Format("20060102T150405Z"))
+	r.dir = crwconfig.JoinRoot(r.cfg.StateDir, "upgrades", r.started.Format("20060102T150405Z"))
 	if err := upgradeRunDir(r.dir); err != nil {
 		fmt.Fprintf(r.e.Stderr, "crw manage runtime-upgrade: error: %v\n", err)
 		return upgradeExitRefused
@@ -302,7 +302,7 @@ func (r *upgradeRunState) write(reason string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(r.dir, "record.json"), append(data, '\n'), 0o600)
+	return os.WriteFile(crwconfig.JoinRoot(r.dir, "record.json"), append(data, '\n'), 0o600)
 }
 
 func (r *upgradeRunState) note(step string, argv []string, code int, out string, err error) {

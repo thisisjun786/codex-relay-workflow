@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -31,7 +31,7 @@ type auditReportGroup struct {
 // report; a line that is not a document is an error, because an unread ledger line would
 // silently drop a result from the aggregation.
 func auditReportLedger(e *Env, cfg *Config) ([]auditLedgerRow, error) {
-	path := filepath.Join(auditStateDir(e, cfg), "audit", auditLedgerFile)
+	path := crwconfig.JoinRoot(auditStateDir(e, cfg), "audit", auditLedgerFile)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -55,7 +55,7 @@ func auditReportLedger(e *Env, cfg *Config) ([]auditLedgerRow, error) {
 
 // auditReportPath is the report file: <state_dir>/audit/report.md.
 func auditReportPath(e *Env, cfg *Config) string {
-	return filepath.Join(auditStateDir(e, cfg), "audit", auditReportFile)
+	return crwconfig.JoinRoot(auditStateDir(e, cfg), "audit", auditReportFile)
 }
 
 // auditReportGroups folds the ok rows of the pull request mode into one entry per pair and

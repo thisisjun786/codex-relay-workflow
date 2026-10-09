@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 	"io"
 	"os"
 	"os/exec"
@@ -127,13 +128,27 @@ func auditPkgGoListRun(ctx context.Context, repo, pattern string) ([]byte, error
 	return out.Bytes(), nil
 }
 
+// auditPkgRelativeTo is dir relative to the configured repository. go list answers directories the
+// kernel resolved, while the repository is the spelling the configuration gave, which may mix a
+// symbolic link and "..": filepath.Rel would clean that spelling to a different directory and call
+// every package outside the checkout. Both sides are resolved component by component first, as the
+// kernel would; a side that cannot be resolved keeps its spelling.
+func auditPkgRelativeTo(repository, dir string) (string, error) {
+	base, errBase := filepath.EvalSymlinks(repository)
+	target, errTarget := filepath.EvalSymlinks(dir)
+	if errBase == nil && errTarget == nil {
+		return filepath.Rel(base, target)
+	}
+	return filepath.Rel(repository, dir)
+}
+
 // auditPkgRelative turns the directories go list answered with into paths inside the
 // checkout, which is how the package files are read and how a package_criteria prefix is
 // matched. A directory outside the checkout is refused rather than silently read.
 func auditPkgRelative(co auditPkgCheckout, dirs []string) ([]string, error) {
 	out := make([]string, 0, len(dirs))
 	for _, dir := range dirs {
-		rel, err := filepath.Rel(co.Repository, dir)
+		rel, err := auditPkgRelativeTo(co.Repository, dir)
 		if err != nil {
 			return nil, fmt.Errorf("package directory %s: %w", dir, err)
 		}
@@ -213,7 +228,7 @@ func auditPkgBundleRoot(e *Env, cfg *Config, section auditPkgSection) string {
 	if section.BundleDir != "" {
 		return section.BundleDir
 	}
-	return filepath.Join(auditStateDir(e, cfg), "audit", "bundles")
+	return crwconfig.JoinRoot(auditStateDir(e, cfg), "audit", "bundles")
 }
 
 // auditPkgSourceFor is the criteria source of a package: the longest declared path prefix
@@ -296,7 +311,7 @@ func auditPkgBuild(ctx context.Context, e *Env, cfg *Config, section auditPkgSec
 		return "", errors.New("checkout_unconfigured: the checkout section names no repository")
 	}
 	root := auditPkgBundleRoot(e, cfg, section)
-	dir := filepath.Join(root, auditPkgBundleName(pkg, head))
+	dir := crwconfig.JoinRoot(root, auditPkgBundleName(pkg, head))
 	if err := auditPkgResetDir(root, dir); err != nil {
 		return "", err
 	}
@@ -310,7 +325,7 @@ func auditPkgBuild(ctx context.Context, e *Env, cfg *Config, section auditPkgSec
 		return "", err
 	}
 	if len(large) > 0 {
-		listing := filepath.Join(dir, auditPkgSrcDir, auditPkgLargeListName)
+		listing := crwconfig.JoinRoot(dir, auditPkgSrcDir, auditPkgLargeListName)
 		if err := os.WriteFile(listing, []byte(strings.Join(large, "\n")+"\n"), 0o600); err != nil {
 			return "", err
 		}
@@ -323,24 +338,24 @@ func auditPkgBuild(ctx context.Context, e *Env, cfg *Config, section auditPkgSec
 	criteriaDoc := map[string]any{
 		"package": pkg, "head": head, "criteria": criteria, "criteria_missing": missing,
 	}
-	if err := auditPkgWriteJSON(filepath.Join(dir, auditPkgCriteriaFile), criteriaDoc); err != nil {
+	if err := auditPkgWriteJSON(crwconfig.JoinRoot(dir, auditPkgCriteriaFile), criteriaDoc); err != nil {
 		return "", err
 	}
-	if err := auditPkgCopySources(source.Source, filepath.Join(dir, auditPkgReferenceDir)); err != nil {
+	if err := auditPkgCopySources(source.Source, crwconfig.JoinRoot(dir, auditPkgReferenceDir)); err != nil {
 		return "", err
 	}
-	if err := auditPkgWriteAtHead(ctx, co, head, source.KnownDefects, filepath.Join(dir, auditPkgKnownDefectsDir)); err != nil {
+	if err := auditPkgWriteAtHead(ctx, co, head, source.KnownDefects, crwconfig.JoinRoot(dir, auditPkgKnownDefectsDir)); err != nil {
 		return "", err
 	}
 	task := auditPkgTask(pkg, head, criteria, missing)
-	if err := os.WriteFile(filepath.Join(dir, auditPkgTaskFile), []byte(task), 0o600); err != nil {
+	if err := os.WriteFile(crwconfig.JoinRoot(dir, auditPkgTaskFile), []byte(task), 0o600); err != nil {
 		return "", err
 	}
 	bundle := map[string]any{
 		"schema": auditBundleSchema, "mode": auditModePackage, "subject": pkg,
 		"head": head, "issue": auditPkgIssue, "criteria_unavailable": unavailable,
 	}
-	if err := auditPkgWriteJSON(filepath.Join(dir, auditBundleFile), bundle); err != nil {
+	if err := auditPkgWriteJSON(crwconfig.JoinRoot(dir, auditBundleFile), bundle); err != nil {
 		return "", err
 	}
 	return dir, nil
@@ -431,7 +446,7 @@ func auditPkgWriteSrc(ctx context.Context, co auditPkgCheckout, head, dir string
 			large = append(large, fmt.Sprintf("%s %d sha256:%s", entry.Path, entry.Size, hex.EncodeToString(sum.Sum(nil))))
 			continue
 		}
-		target := filepath.Join(dir, auditPkgSrcDir, filepath.FromSlash(entry.Path))
+		target := crwconfig.JoinRoot(dir, auditPkgSrcDir, filepath.FromSlash(entry.Path))
 		if !auditPkgContained(dir, target) {
 			return nil, fmt.Errorf("the head names %q, which leaves the bundle", entry.Path)
 		}
@@ -444,7 +459,7 @@ func auditPkgWriteSrc(ctx context.Context, co auditPkgCheckout, head, dir string
 
 // auditPkgWriteBlob writes one file of the head to target.
 func auditPkgWriteBlob(ctx context.Context, co auditPkgCheckout, head, path, target string) error {
-	if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+	if err := os.MkdirAll(rootDir(target), 0o700); err != nil {
 		return err
 	}
 	f, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
@@ -478,8 +493,8 @@ func auditPkgWriteAtHead(ctx context.Context, co auditPkgCheckout, head string, 
 			return err
 		}
 		for _, name := range auditPkNulRecords(out) {
-			target := filepath.Join(dst, filepath.FromSlash(name))
-			if !auditPkgContained(filepath.Dir(dst), target) {
+			target := crwconfig.JoinRoot(dst, filepath.FromSlash(name))
+			if !auditPkgContained(rootDir(dst), target) {
 				return fmt.Errorf("the head names %q, which leaves the bundle", name)
 			}
 			if err := auditPkgWriteBlob(ctx, co, head, name, target); err != nil {
@@ -515,7 +530,7 @@ func auditPkgCopySources(sources []string, dst string) error {
 		if info.Mode()&os.ModeSymlink != 0 {
 			return fmt.Errorf("reference source %s is a symbolic link", source)
 		}
-		target := filepath.Join(dst, filepath.Base(source))
+		target := crwconfig.JoinRoot(dst, filepath.Base(source))
 		if _, err := os.Stat(target); err == nil {
 			return fmt.Errorf("two reference sources share the name %q", filepath.Base(source))
 		}
@@ -536,7 +551,10 @@ func auditPkgCopySources(sources []string, dst string) error {
 			if err != nil {
 				return err
 			}
-			target := filepath.Join(dst, filepath.Base(source), rel)
+			target := crwconfig.JoinRoot(dst, filepath.Base(source))
+			if rel != "." {
+				target = crwconfig.JoinRoot(target, rel)
+			}
 			if entry.IsDir() {
 				return os.MkdirAll(target, 0o700)
 			}
@@ -550,7 +568,7 @@ func auditPkgCopySources(sources []string, dst string) error {
 }
 
 func auditPkgCopyFile(src, dst string) error {
-	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
+	if err := os.MkdirAll(rootDir(dst), 0o700); err != nil {
 		return err
 	}
 	in, err := os.Open(src)
