@@ -3,7 +3,6 @@ package manage
 import (
 	"database/sql"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -18,7 +17,8 @@ import (
 // fall back, a platform without the unnamed form, and improve run reaching the same path.
 
 // improveNamedStepSeam makes one step of the temporary file write fail with err (an empty step fails none) and
-// records every step the write reached, in order.
+// records every step the write reached, in order. The error takes the place of the step's own result, so it
+// reaches the error branch the step's real failure reaches.
 func improveNamedStepSeam(t *testing.T, step string, err error) *[]string {
 	t.Helper()
 	seen := new([]string)
@@ -113,20 +113,44 @@ func TestImproveUnnamedTemporaryPermissionDeniedIsNotFallenBack(t *testing.T) {
 	}
 }
 
-// C1.3: the answer of improveCreateTemporary on a platform without the unnamed form is the unsupported
-// error, and collect --out then succeeds with the named form.
-func TestImproveUnnamedTemporaryPlatformAnswerWritesTheNamedForm(t *testing.T) {
-	platform := fmt.Errorf("%w: the unnamed temporary file is unavailable on this platform", errImproveNoUnnamedName)
-	if !improveUnnamedUnsupported(platform) {
-		t.Fatal("the platform answer is not recognised as the unsupported form")
+// improveUnnamedPlatform chooses the platform improveCreateTemporary judges the unnamed form by, so the production
+// branch of a platform without the unnamed form runs and nothing in the unnamed creation is stubbed.
+func improveUnnamedPlatform(t *testing.T, goos string) {
+	t.Helper()
+	previous := improveGOOS
+	improveGOOS = goos
+	t.Cleanup(func() { improveGOOS = previous })
+}
+
+// C1.3: improveCreateTemporary on a platform without the unnamed form answers the unsupported error without
+// touching the descriptor.
+func TestImproveCreateTemporaryAnswersUnsupportedOffLinux(t *testing.T) {
+	for _, goos := range []string{"darwin", "freebsd", "windows"} {
+		t.Run(goos, func(t *testing.T) {
+			improveUnnamedPlatform(t, goos)
+			fd, err := improveCreateTemporary(-1)
+			if fd != -1 || !errors.Is(err, errImproveNoUnnamedName) || !improveUnnamedUnsupported(err) {
+				t.Fatalf("improveCreateTemporary on %s = %d, %v, want -1 and the unsupported error", goos, fd, err)
+			}
+		})
 	}
+}
+
+// C1.3: collect --out on such a platform succeeds with the named form.
+func TestImproveUnnamedTemporaryPlatformAnswerWritesTheNamedForm(t *testing.T) {
+	improveUnnamedPlatform(t, "darwin")
 	seen := improveNamedStepSeam(t, "", nil)
-	code, stderr, out, outDir, calls := improveNamedRun(t, platform)
+	s := improveTestSetup(t)
+	improveReview799Store(t, s)
+	improveInputRelayConfig(t, s)
+	outDir := improveReview799OutDir(t, s)
+	out := filepath.Join(outDir, "bundle.json")
+	code, _, stderr := improveTestRun(t, s, "--out", out)
 	if code != 0 {
 		t.Fatalf("collect --out on a platform without the unnamed form: exit %d, stderr %q", code, stderr)
 	}
-	if *calls == 0 || !slices.Contains(*seen, "rename") {
-		t.Errorf("the named form was not used: unnamed attempts %d, steps %v", *calls, *seen)
+	if want := []string{"write", "sync", "chmod", "close", "rename"}; !slices.Equal(*seen, want) {
+		t.Errorf("the named form was not used: steps %v, want %v", *seen, want)
 	}
 	if bundle := improveTestReadBundle(t, out); bundle.Schema != improveBundleSchema {
 		t.Errorf("the bundle is not written: %+v", bundle)
@@ -157,8 +181,21 @@ func TestImproveRunSucceedsWithTheUnnamedFormRefused(t *testing.T) {
 	if path := strings.TrimSpace(out); !strings.HasPrefix(filepath.Base(path), "roadmap-") {
 		t.Errorf("the run printed %q, want a roadmap path", out)
 	}
-	if got := improveRoadmapTestBundles(t, manageState, "M2"); len(got) != 1 {
-		t.Errorf("the ref directory holds %v, want one bundle", got)
+	bundles := improveRoadmapTestBundles(t, manageState, "M2")
+	if len(bundles) != 1 {
+		t.Fatalf("the ref directory holds %v, want one bundle", bundles)
+	}
+	bundle := improveTestReadBundle(t, filepath.Join(manageState, "improve", "M2", bundles[0]))
+	if bundle.Schema != improveBundleSchema || len(bundle.Records) == 0 {
+		t.Errorf("the bundle written through the named steps is not the collected one: %+v", bundle)
+	}
+	if drafts := improveRoadmapTestDrafts(t, manageState); len(drafts) != 1 {
+		t.Errorf("the drafts directory holds %v, want one draft", drafts)
+	}
+	if roadmaps := improveRoadmapTestRoadmaps(t, manageState); len(roadmaps) != 1 {
+		t.Errorf("the improve directory holds %v, want one roadmap", roadmaps)
+	} else if path := strings.TrimSpace(out); filepath.Base(path) != roadmaps[0] {
+		t.Errorf("the run printed %q, want the roadmap %s it wrote", out, roadmaps[0])
 	}
 	if left := improveTestTemporaryNames(t, filepath.Join(manageState, "improve", "M2")); len(left) != 0 {
 		t.Errorf("the run left %v", left)

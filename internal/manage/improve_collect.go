@@ -104,19 +104,27 @@ var improveUnlinkTemporary func(dirfd int, name string) error = func(dirfd int, 
 	return unix.Unlinkat(dirfd, name, 0)
 }
 
-// improveTemporaryStep runs before each step that writes the temporary file (write, sync, chmod, close,
-// rename) and answers the error that step should fail with, or nil. It is the seam a test uses to make one
-// step fail and prove the refusal removes the named temporary file. The step is skipped when the seam
-// answers an error. Production leaves it nil.
+// improveTemporaryStep is consulted before each step that writes the temporary file (write, sync, chmod,
+// close, rename) and answers the error that step should fail with, or nil. It is the seam a test uses to make
+// one step fail: the answered error takes the place of the step's own result, so the failure reaches the same
+// error branch the step's real failure does and proves that branch removes the named temporary file. The step
+// itself is not run when the seam answers an error. Production leaves it nil.
 var improveTemporaryStep func(step string) error
 
-// improveStepFails answers the error a test asked the named step to fail with, nil in production.
-func improveStepFails(step string) error {
+// improveStep runs one step of the temporary file write. A test that asked this step to fail gets that error
+// as the step's result; every other call is the step.
+func improveStep(step string, op func() error) error {
 	if improveTemporaryStep != nil {
-		return improveTemporaryStep(step)
+		if err := improveTemporaryStep(step); err != nil {
+			return err
+		}
 	}
-	return nil
+	return op()
 }
+
+// improveGOOS is the platform improveCreateTemporary judges the unnamed form by. It is the seam a test uses to
+// reach the production branch of a platform without the unnamed form. Production leaves it at runtime.GOOS.
+var improveGOOS = runtime.GOOS
 
 // improveStoreFile is the relay store's file name inside a state directory.
 const improveStoreFile = "relay.sqlite3"
@@ -666,30 +674,18 @@ func improveWriteTemporary(dirfd int, held os.FileInfo, plan improveOutputPlan, 
 		}
 		return cause
 	}
-	if err := improveStepFails("write"); err != nil {
+	if err := improveStep("write", func() error { _, err := file.Write(data); return err }); err != nil {
 		return discard(err)
 	}
-	if _, err := file.Write(data); err != nil {
-		return discard(err)
-	}
-	if err := improveStepFails("sync"); err != nil {
-		return discard(err)
-	}
-	if err := file.Sync(); err != nil {
+	if err := improveStep("sync", file.Sync); err != nil {
 		return discard(err)
 	}
 	// The mode is set on the descriptor, not by spelling the name again.
-	if err := improveStepFails("chmod"); err != nil {
-		return discard(err)
-	}
-	if err := unix.Fchmod(fd, 0o600); err != nil {
+	if err := improveStep("chmod", func() error { return unix.Fchmod(fd, 0o600) }); err != nil {
 		return discard(err)
 	}
 	if !unnamed {
-		if err := improveStepFails("close"); err != nil {
-			return discard(err)
-		}
-		if err := file.Close(); err != nil {
+		if err := improveStep("close", file.Close); err != nil {
 			return discard(err)
 		}
 	}
@@ -732,10 +728,7 @@ func improveWriteTemporary(dirfd int, held os.FileInfo, plan improveOutputPlan, 
 		}
 		named = true
 	}
-	if err := improveStepFails("rename"); err != nil {
-		return discard(err)
-	}
-	if err := unix.Renameat(dirfd, name, dirfd, filepath.Base(fresh.Dest)); err != nil {
+	if err := improveStep("rename", func() error { return unix.Renameat(dirfd, name, dirfd, filepath.Base(fresh.Dest)) }); err != nil {
 		return discard(err)
 	}
 	_ = file.Close()
@@ -779,7 +772,7 @@ func improveProcSelfFd(fd int) string { return fmt.Sprintf("/proc/self/fd/%d", f
 // buildable for both release platforms, and a platform or filesystem without it reports an error
 // and the caller falls back to a named file.
 func improveCreateTemporary(dirfd int) (int, error) {
-	if runtime.GOOS != "linux" {
+	if improveGOOS != "linux" {
 		return -1, fmt.Errorf("%w: the unnamed temporary file is unavailable on this platform", errImproveNoUnnamedName)
 	}
 	return unix.Openat(dirfd, ".", unix.O_WRONLY|improveOtmpfile|unix.O_CLOEXEC, 0o600)
