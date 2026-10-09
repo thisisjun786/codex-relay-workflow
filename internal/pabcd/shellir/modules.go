@@ -108,36 +108,82 @@ func (w *walker) pythonModule(prog Word, args []Word, assigns []Assign, redirs [
 	if err != nil {
 		return true, unreadablef("module directory cannot be resolved")
 	}
-	if len(args[at:]) == 0 || len(files) == 0 {
+	if module == "unittest" || module == "pytest" {
+		// Imports, package initializers and collection hooks can execute even
+		// with explicit operands. Inspect the bounded local source inventory;
+		// the test selection alone never establishes an execution boundary.
 		err := filepath.WalkDir(physical, func(p string, d fs.DirEntry, err error) error {
 			if err != nil {
 				return err
 			}
 			if d.IsDir() {
-				if d.Name() == ".git" || d.Name() == ".crw" || d.Name() == "__pycache__" {
+				if d.Name() == ".git" || d.Name() == ".crw" {
 					return filepath.SkipDir
 				}
 				return nil
 			}
 			if d.Type()&os.ModeSymlink != 0 {
-				info, err := os.Stat(p)
-				if err != nil || info.IsDir() {
-					return unreadablef("discovery cannot prove a linked directory")
-				}
+				return unreadablef("module import inventory contains a link")
 			}
 			n := d.Name()
-			if strings.HasSuffix(n, ".py") && (strings.HasPrefix(n, "test") || strings.HasSuffix(n, "_test.py") || module == "pytest" && n == "conftest.py") {
+			if strings.HasSuffix(n, ".pyc") || strings.HasSuffix(n, ".pyd") || strings.Contains(n, ".so") {
+				return unreadablef("module imports compiled code that is not read")
+			}
+			if strings.HasSuffix(n, ".py") {
 				files = append(files, p)
-				if len(files) > maxModuleFiles {
-					return unreadablef("module discovery file limit exceeded")
+				if len(files) > maxModuleFiles*2 {
+					return unreadablef("module inventory file limit exceeded")
 				}
 			}
 			return nil
 		})
 		if err != nil {
-			return true, unreadablef("module discovery refused")
+			return true, unreadablef("module import inventory refused")
+		}
+		// Pytest also loads ancestor conftest files and configuration. Config
+		// can name plugins whose execution set this reader cannot establish.
+		if module == "pytest" {
+			for dir := physical; ; dir = filepath.Dir(dir) {
+				for _, name := range []string{"pytest.ini", ".pytest.ini", "pyproject.toml", "tox.ini", "setup.cfg"} {
+					if _, err := os.Lstat(filepath.Join(dir, name)); err == nil || !os.IsNotExist(err) {
+						return true, unreadablef("pytest configuration is not modelled")
+					}
+				}
+				p := filepath.Join(dir, "conftest.py")
+				if _, err := os.Lstat(p); err == nil {
+					files = append(files, p)
+				} else if !os.IsNotExist(err) {
+					return true, unreadablef("pytest collection file cannot be read")
+				}
+				if filepath.Dir(dir) == dir {
+					break
+				}
+			}
 		}
 	}
+	// Preserve operand components until the kernel resolves links and '..'.
+	seen := map[string]bool{}
+	unique := files[:0]
+	for _, file := range files {
+		if !filepath.IsAbs(file) {
+			file = strings.TrimSuffix(physical, "/") + "/" + file
+		}
+		if !seen[file] {
+			seen[file] = true
+			unique = append(unique, file)
+		}
+	}
+	files = unique
+	if module == "unittest" || module == "pytest" {
+		for _, file := range files {
+			resolved, err := filepath.EvalSymlinks(file)
+			if err != nil || !(resolved == physical || strings.HasPrefix(resolved, physical+"/")) {
+				// External sources may import siblings outside this inventory.
+				return true, unreadablef("module operand imports outside the local inventory")
+			}
+		}
+	}
+
 	total := 0
 	if len(files) > maxModuleFiles {
 		return true, unreadablef("module file limit exceeded")
@@ -154,14 +200,48 @@ func (w *walker) pythonModule(prog Word, args []Word, assigns []Assign, redirs [
 			return true, unreadablef("module file read refused")
 		}
 		total += len(body)
-		if module == "py_compile" {
-			// Explicit compilation writes bytecode even with Python -B.
-			name, args := fileRecord([]string{file[:strings.LastIndexByte(file, '/')] + "/__pycache__"})
-			w.out = append(w.out, Exec{Kind: KindCommand, Name: name, Args: args, Dir: st.dir, Ctx: ctx})
+		if module == "py_compile" || moduleBytecodeEnabled(args[:at], assigns, st) {
+			// -B suppresses import caches, but never explicit py_compile.
+			// Model the prefix itself conservatively: every cache is below it.
+			cache := moduleCacheDir(file, assigns, st)
+			name, cacheArgs := fileRecord([]string{cache})
+			w.out = append(w.out, Exec{Kind: KindCommand, Name: name, Args: cacheArgs, Dir: st.dir, Ctx: ctx})
 		}
 		w.out = append(w.out, Exec{Kind: KindCommand, Program: prog, Name: programName(prog.Value), Dir: st.dir, Ctx: ctx, Inline: &Inline{Language: "python", Source: Word{Known: true, Value: body}}})
 	}
 	return true, nil
+}
+
+func moduleEnv(name string, assigns []Assign, st *state) (string, bool) {
+	for i := len(assigns) - 1; i >= 0; i-- {
+		if assigns[i].Name == name {
+			return assigns[i].Value.Value, assigns[i].Value.Known
+		}
+	}
+	return st.value(name), st.known(name)
+}
+func moduleBytecodeEnabled(args []Word, assigns []Assign, st *state) bool {
+	for _, a := range args {
+		if a.Known && strings.HasPrefix(a.Value, "-") && !strings.HasPrefix(a.Value, "--") && strings.Contains(a.Value[1:], "B") {
+			return false
+		}
+	}
+	v, known := moduleEnv("PYTHONDONTWRITEBYTECODE", assigns, st)
+	return !known || v == ""
+}
+func moduleCacheDir(file string, assigns []Assign, st *state) string {
+	prefix, known := moduleEnv("PYTHONPYCACHEPREFIX", assigns, st)
+	if !known {
+		for _, a := range assigns {
+			if a.Name == "PYTHONPYCACHEPREFIX" {
+				return "\x00unknown"
+			}
+		}
+	}
+	if prefix != "" {
+		return prefix
+	}
+	return file[:strings.LastIndexByte(file, '/')] + "/__pycache__"
 }
 
 func readModuleFile(path string, limit int) (string, error) {
@@ -192,7 +272,7 @@ func readModuleFile(path string, limit int) (string, error) {
 // compiled files), and command-time code writes whose imports cannot be proven.
 func (w *walker) moduleImportsClear(st *state) error {
 	names := map[string]bool{}
-	for _, n := range strings.Fields("json argparse re shutil inspect unittest pytest py_compile os sys pathlib importlib typing collections contextlib traceback linecache warnings functools types enum dataclasses io tokenize token ast copy") {
+	for _, n := range strings.Fields("json argparse re shutil inspect unittest pytest py_compile os sys pathlib importlib typing collections contextlib traceback linecache warnings functools types enum dataclasses io tokenize token ast copy gettext _pytest pluggy site sitecustomize usercustomize") {
 		names[n] = true
 	}
 	entries, err := os.ReadDir(st.dir.Path)

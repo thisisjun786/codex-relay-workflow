@@ -2,6 +2,7 @@ package hook
 
 import (
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/shellir"
@@ -29,6 +30,18 @@ func shellIRScriptDests(e shellir.Exec, cwd string, resolve bool, depth int, out
 		return unknown
 	}
 	for _, exec := range res.Execs {
+		// These child programs were opaque on the top-level file path. Reading
+		// the enclosing shell file does not prove their effects harmless.
+		if exec.Kind == shellir.KindCommand && exec.Inline == nil {
+			if githubPostDirectPath(exec) && !githubPostInstalledName(exec) {
+				return unknown
+			}
+			if regexp.MustCompile(`^(?:python[0-9.]*|py|node|ruby|perl)$`).MatchString(exec.Name) {
+				if len(exec.Args) != 1 || !exec.Args[0].Known || !slices.Contains([]string{"-V", "-v", "--version", "-h"}, exec.Args[0].Value) {
+					return unknown
+				}
+			}
+		}
 		if exec.Inline != nil && exec.Inline.Language == "python" {
 			if _, bad := shellIRProgramUnreadable(exec.Inline.Source.Value); bad {
 				return unknown
