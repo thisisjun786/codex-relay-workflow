@@ -173,7 +173,7 @@ func TestShellWriteFStringGateDeniesAndSpends(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			payload := gateBash(t, cwd, c.command)
 			reason := gateDeny(t, HandleMemoryWriteGate(payload, env))
-			if !strings.Contains(reason, root+"/a") && !strings.Contains(reason, shellWriteFStringUnreadableWhat) {
+			if !strings.Contains(reason, root+"/a") && !strings.Contains(reason, "unreadable-program") {
 				t.Errorf("the reason names neither the path nor the reason: %s", reason)
 			}
 			gateSeed(t, cwd, func(s *state.State) { s.MemoryWriteGrant = true })

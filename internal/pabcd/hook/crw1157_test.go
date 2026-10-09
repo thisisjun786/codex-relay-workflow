@@ -57,3 +57,11 @@ func TestCRW1157GithubRecovery(t *testing.T) {
 		t.Errorf("temp recovery: %s", reason)
 	}
 }
+
+func TestCRW1157LongTargetKeepsBasename(t *testing.T) {
+	target := strings.Repeat("한", 1000) + "/memories/n.md"
+	reason := memoryGateReason(MemoryWriteAttempt{Surface: "edit", Target: target}, strings.Repeat("s", 200), strings.Repeat("한", 1000))
+	if len(reason) > 700 || !strings.Contains(reason, "/memories/n.md)") {
+		t.Error("bounded diagnosis must retain the target basename")
+	}
+}

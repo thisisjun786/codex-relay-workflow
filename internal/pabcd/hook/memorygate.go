@@ -83,9 +83,9 @@ func memoryGateReasonFor(a MemoryWriteAttempt, sid, cwd string, leaf bool) strin
 	case "authorization-state":
 		return prefix + "Cannot spend the authorization (authorization-state): session state is locked, unwritable or cannot be preserved. " + "Report this state failure to the parent or session owner; retry after state repair."
 	}
-	what := "a file under the Codex memories directory (" + memoryGateLabel(a.Target) + ")"
+	what := "a file under the Codex memories directory (" + memoryGateLabelLimit(a.Target, 190) + ")"
 	if a.Surface == "tool" {
-		what = "a memory note (" + memoryGateLabel(a.Target) + ")"
+		what = "a memory note (" + memoryGateLabelLimit(a.Target, 190) + ")"
 	}
 	reason := prefix + "Blocked a write of " + what + ": MEMORY-WRITE-GATE-01 requires an explicit user request. "
 	if leaf {
@@ -97,21 +97,23 @@ func memoryGateReasonFor(a MemoryWriteAttempt, sid, cwd string, leaf bool) strin
 	if cwd == "" {
 		cwd = "the session working directory"
 	}
-	return reason + "Ask the user to confirm (remember this), or record a grant with `crw pabcd memory allow-write --session " + memoryGateLabel(sid) + "` from " + memoryGateLabel(cwd) + ". The grant is stored per cwd and permits one write."
+	return reason + "Ask the user to confirm (remember this), or use `crw pabcd memory allow-write --session " + memoryGateLabel(sid) + "` from " + memoryGateLabel(cwd) + ". The grant is stored per cwd and permits one write."
 }
 
-func memoryGateLabel(s string) string {
-	if len(s) <= 100 {
+func memoryGateLabel(s string) string { return memoryGateLabelLimit(s, 100) }
+
+func memoryGateLabelLimit(s string, limit int) string {
+	if len(s) <= limit {
 		return s
 	}
-	end := 0
-	for at, r := range s {
-		if at+utf8.RuneLen(r) > 100 {
-			break
-		}
-		end = at + utf8.RuneLen(r)
+	head, tail := limit/2, len(s)-limit/2
+	for head > 0 && !utf8.RuneStart(s[head]) {
+		head--
 	}
-	return s[:end] + "..."
+	for tail < len(s) && !utf8.RuneStart(s[tail]) {
+		tail++
+	}
+	return s[:head] + "..." + s[tail:]
 }
 
 // memoryGateSpend names the authorization the state holds for this turn: the CLI grant first, then the marker. A marker that
