@@ -14,7 +14,7 @@
 //   - AtomicWrite creates its temporary file exclusively, and the ledger is opened without following a link.
 //
 // The store is private to its owner (CRW-1134): EnsureDir creates bg with mode 0700, and the records, the switch files and the ledger
-// are created 0600 from their first write; a bg directory that exists already is not changed (no chmod of the tree). The privacy
+// are created 0600 from their first write; a bg directory, a ledger or a record that exists already keeps its mode (no chmod of the tree), so a store the oracle made stays as readable as it was. The privacy
 // matters because a record and the ledger keep the job's command as it was given, every argument included, for diagnosis: a secret
 // passed as an argument stays in <id>.json and ledger.jsonl until the operator deletes .crw/bg.
 //
@@ -53,6 +53,9 @@ const (
 type sentinel string
 
 func (e sentinel) Error() string { return string(e) }
+
+// errDanglingLink is a link of the store whose target is missing.
+const errDanglingLink = sentinel("a link whose target is missing")
 
 // ErrOutsideStore is the refusal of a write, a removal or a directory that is not inside the workspace's .crw/bg.
 const ErrOutsideStore = sentinel("path is not a file directly inside the workspace's .crw/bg")
@@ -187,6 +190,13 @@ func ReadText(path string) (string, bool) {
 func readText(path string) (string, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			// Reading through a link whose target is missing fails as a missing file does, but the entry is there: it is not absent
+			// (CRW-1134).
+			if _, lerr := os.Lstat(path); lerr == nil {
+				return "", &os.PathError{Op: "read", Path: path, Err: errDanglingLink}
+			}
+		}
 		return "", err
 	}
 	return decodeUTF8(b), nil
