@@ -114,6 +114,34 @@ func TestLocal_a_deleted_tracked_engine_source_refuses_the_run(t *testing.T) {
 	}
 }
 
+// Git's line-ending normalisation and clean filters rewrite a file before hashing it, so an engine edit
+// they undo (CRLF line endings under eol=lf, a token a clean filter maps back to the committed one) would
+// hash like the committed blob. Go compiles the raw bytes, so the raw bytes are compared (verifier P1).
+func TestLocal_an_engine_edit_hidden_by_line_ending_normalisation_refuses_the_run(t *testing.T) {
+	repo := newLocalFixture(t)
+	repo.write(".gitattributes", "*.go text eol=lf\n")
+	repo.write("internal/dev/ci/engine.go", "package ci\n\nconst engineCommand = \"safe\"\n")
+	repo.commit()
+	repo.write("internal/dev/ci/engine.go", "package ci\r\n\r\nconst engineCommand = \"safe\"\r\n")
+	made, _, err := localVerify(localRunOptions(repo, localFixturePlan("echo hello"), filepath.Join(t.TempDir(), "r.json")), "", io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "engine_differs_from_commit") {
+		t.Fatalf("err = %v, result = %q; want an engine_differs_from_commit refusal", err, made.Result)
+	}
+}
+
+func TestLocal_an_engine_edit_hidden_by_a_clean_filter_refuses_the_run(t *testing.T) {
+	repo := newLocalFixture(t)
+	repo.write(".gitattributes", "*.go filter=engine\n")
+	repo.write("internal/dev/ci/engine.go", "package ci\n\nconst engineCommand = \"safe\"\n")
+	repo.commit()
+	repo.git("config", "filter.engine.clean", "sed s/unsafe/safe/g")
+	repo.write("internal/dev/ci/engine.go", "package ci\n\nconst engineCommand = \"unsafe\"\n")
+	made, _, err := localVerify(localRunOptions(repo, localFixturePlan("echo hello"), filepath.Join(t.TempDir(), "r.json")), "", io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "engine_differs_from_commit") {
+		t.Fatalf("err = %v, result = %q; want an engine_differs_from_commit refusal", err, made.Result)
+	}
+}
+
 // CRW-1027 (merged into CRW-1025): the secrets step downloads the linux x64 Gitleaks archive and calls
 // sha256sum, so a plan that carries it refuses a host that is not linux x64 before any step runs, and no
 // record is written. A plan without the step is platform independent.

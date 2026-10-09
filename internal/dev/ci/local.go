@@ -923,9 +923,11 @@ var localCompiledExt = []string{".go", ".s", ".S", ".c", ".h", ".cc", ".cpp", ".
 
 // localEngineDiffers names the engine source the caller's tree holds that the commit does not. The working
 // tree is compared with the commit's blobs byte for byte, never through the index (assume-unchanged and
-// skip-worktree marks hide an edit from git diff, and the exclude files hide a new file from git status), so
-// every engine file the commit holds must exist with its bytes, every other file under the engine paths is a
-// difference, and an ignored file is let through only when Go does not compile it (a log, a coverage file).
+// skip-worktree marks hide an edit from git diff, and the exclude files hide a new file from git status) and
+// never through Git's line-ending normalisation or clean filters (hash-object --no-filters: Go compiles the raw
+// bytes, which a filter could map back to the committed blob), so every engine file the commit holds must
+// exist with its bytes, every other file under the engine paths is a difference, and an ignored file is let
+// through only when Go does not compile it (a log, a coverage file).
 // An empty result means the caller runs the commit's engine.
 func localEngineDiffers(root, commit string) (string, error) {
 	out, err := runGit(root, append([]string{"ls-tree", "-r", "-z", commit, "--"}, localEngineSources...)...)
@@ -1016,7 +1018,7 @@ func localEngineDiffers(root, commit string) (string, error) {
 	}
 	sort.Strings(hashed)
 	if len(hashed) > 0 {
-		cmd := exec.Command("git", "hash-object", "--stdin-paths")
+		cmd := exec.Command("git", "hash-object", "--no-filters", "--stdin-paths")
 		cmd.Dir = root
 		cmd.Stdin = strings.NewReader(strings.Join(hashed, "\n") + "\n")
 		var stderr bytes.Buffer
