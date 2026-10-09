@@ -13,9 +13,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/hookswitch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/role"
-	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/install/switchstate"
 )
 
 // SwitchCXCPlugin is the install key of the CXC plugin, the one Codex plugin whose activation the
@@ -190,7 +190,7 @@ func switchStamp(now string) string { return strings.NewReplacer(":", "-", ".", 
 // fails is reported with the cause. A switch that died without undoing leaves its pending section,
 // and running the command again finishes it from the recorded values.
 func RunSwitch(deps SwitchDeps, target string) (*SwitchReport, error) {
-	if target != string(switchstate.CRW) && target != string(switchstate.CXC) {
+	if target != hookswitch.CRW && target != hookswitch.CXC {
 		return nil, fmt.Errorf("switch target %q is neither crw nor cxc", target)
 	}
 	home := deps.CodexHome
@@ -237,7 +237,7 @@ func RunSwitch(deps SwitchDeps, target string) (*SwitchReport, error) {
 			return nil, fmt.Errorf("%s is not a readable install manifest (left unchanged)", manifestFile)
 		}
 	}
-	prevState, err := switchstate.ReadRaw(home)
+	prevState, err := hookswitch.ReadRaw(home)
 	if err != nil {
 		return nil, err
 	}
@@ -264,7 +264,7 @@ func RunSwitch(deps SwitchDeps, target string) (*SwitchReport, error) {
 		} else {
 			rec.ChangedAt = prior.ChangedAt
 		}
-	} else if target == string(switchstate.CRW) {
+	} else if target == hookswitch.CRW {
 		// The values from before: read now, before anything is written.
 		for _, spec := range switchSpecs() {
 			rec.Keys = append(rec.Keys, SwitchKeyRecord{Table: spec.Table, Key: spec.Key, AppliedValue: "false"})
@@ -286,14 +286,14 @@ func RunSwitch(deps SwitchDeps, target string) (*SwitchReport, error) {
 	// A key the switch is about to edit that holds a value form it will not rewrite is refused before
 	// anything is written, whichever the direction and whether or not it was recorded already.
 	for _, k := range rec.Keys {
-		if !k.TablePresent && target != string(switchstate.CRW) {
+		if !k.TablePresent && target != hookswitch.CRW {
 			continue
 		}
 		if st := ReadTableKeyLine(string(pre), k.Table, k.Key); st.Unsupported {
 			return nil, fmt.Errorf("%s.%s currently holds a value crw will not rewrite (or names the key twice); edit config.toml by hand, then run the command again", k.Table, k.Key)
 		}
 	}
-	if target == string(switchstate.CRW) {
+	if target == hookswitch.CRW {
 		// A CXC table that was not there at the first switch (the plugin was added since) is read
 		// now, before the key is changed, so the way back has its line too.
 		for i := range rec.Keys {
@@ -326,7 +326,7 @@ func RunSwitch(deps SwitchDeps, target string) (*SwitchReport, error) {
 			}
 			var edited string
 			var did bool
-			if target == string(switchstate.CRW) {
+			if target == hookswitch.CRW {
 				var st TomlKeyLineState
 				if edited, st, did = SetTableKeyExact(content, k.Table, k.Key, false); st.Unsupported {
 					return nil, fmt.Errorf("%s.%s currently holds a value crw will not rewrite; edit config.toml by hand", k.Table, k.Key)
@@ -392,7 +392,7 @@ func RunSwitch(deps SwitchDeps, target string) (*SwitchReport, error) {
 		return undo, activationPublish(manifestFile, b)
 	}
 	// The pending section, with everything a restart needs, is on disk before the first change.
-	if target == string(switchstate.CRW) || prior.captured() {
+	if target == hookswitch.CRW || prior.captured() {
 		rec.Pending = true
 		base.Switch = rec
 		if err := tx.run("manifest", func() (func() error, error) { return writeManifest(base) }); err != nil {
@@ -401,16 +401,16 @@ func RunSwitch(deps SwitchDeps, target string) (*SwitchReport, error) {
 	}
 
 	// switch.json
-	current, curErr := switchstate.Parse(prevState)
-	if prevState == nil || curErr != nil || string(current.Active) != target {
+	current, curErr := hookswitch.Parse(prevState)
+	if prevState == nil || curErr != nil || current.Active != target {
 		err = tx.run("state", func() (func() error, error) {
 			undo := func() error {
 				if prevState == nil {
-					return switchstate.Remove(home)
+					return hookswitch.Remove(home)
 				}
-				return switchstate.WriteRaw(home, prevState)
+				return hookswitch.WriteRaw(home, prevState)
 			}
-			return undo, switchstate.Write(home, switchstate.State{Active: switchstate.Active(target), ChangedAt: stamp, By: SwitchBy})
+			return undo, hookswitch.Write(home, hookswitch.State{Active: target, ChangedAt: stamp, By: SwitchBy})
 		})
 		if err != nil {
 			return finish(err)
@@ -449,7 +449,7 @@ func RunSwitch(deps SwitchDeps, target string) (*SwitchReport, error) {
 		err = tx.run("role:"+rr.Role, func() (func() error, error) {
 			var undo func() error
 			var err error
-			if target == string(switchstate.CRW) {
+			if target == hookswitch.CRW {
 				persist := func() error {
 					// The backup is recorded before the role file is replaced.
 					undo, err := writeManifest(base)
@@ -479,7 +479,7 @@ func RunSwitch(deps SwitchDeps, target string) (*SwitchReport, error) {
 	// the manifest's final section
 	err = tx.run("manifest-final", func() (func() error, error) {
 		final := base
-		if target == string(switchstate.CRW) {
+		if target == hookswitch.CRW {
 			rec.Pending, rec.ConfigHash = false, nil
 			final.Switch = rec
 		} else {

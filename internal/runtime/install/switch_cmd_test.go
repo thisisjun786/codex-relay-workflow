@@ -11,9 +11,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/hookswitch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/doctor"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/install"
-	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/install/switchstate"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/scope"
 )
 
@@ -155,6 +155,44 @@ func TestInstallSwitchRoundTripThroughTheCommand(t *testing.T) {
 	}
 }
 
+// The file crw install switch writes is the file the hooks read: hookswitch reports the side the
+// command picked, with nothing it could not read.
+func TestInstallSwitchWritesWhatTheHooksRead(t *testing.T) {
+	h := newSwitchHome(t, switchConfig)
+	env := func(k string) (string, bool) {
+		if k == "CODEX_HOME" {
+			return h.home, true
+		}
+		return "", false
+	}
+	if r := hookswitch.Read(env); r.On || r.Problem != "" || r.CodexHome != h.home {
+		t.Fatalf("before any switch the hooks read %+v, want off", r)
+	}
+	for _, c := range []struct {
+		side string
+		on   bool
+	}{{hookswitch.CRW, true}, {hookswitch.CXC, false}, {hookswitch.CRW, true}} {
+		if code, _, errOut := h.run(c.side); code != 0 {
+			t.Fatalf("switch %s: exit %d stderr=%q", c.side, code, errOut)
+		}
+		st, err := hookswitch.Load(h.home)
+		if err != nil || st == nil || st.Active != c.side || st.By != "crw install switch" || st.ChangedAt == "" {
+			t.Fatalf("switch %s: hookswitch.Load = %+v, %v", c.side, st, err)
+		}
+		if r := hookswitch.Read(env); r.On != c.on || r.Problem != "" {
+			t.Fatalf("switch %s: the hooks read %+v, want on=%v", c.side, r, c.on)
+		}
+		raw, err := os.ReadFile(hookswitch.Path(h.home))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var doc map[string]string
+		if err := json.Unmarshal(raw, &doc); err != nil || doc["active"] != c.side || len(doc) != 3 {
+			t.Fatalf("switch %s: switch.json = %q, %v", c.side, raw, err)
+		}
+	}
+}
+
 func TestInstallSwitchStatusNamesConflictAndOff(t *testing.T) {
 	h := newSwitchHome(t, switchConfig)
 	if code, _, e := h.run("crw"); code != 0 {
@@ -180,10 +218,10 @@ func TestInstallSwitchStatusNamesConflictAndOff(t *testing.T) {
 	}
 	// A damaged switch.json is reported, not guessed.
 	bad := newSwitchHome(t, switchConfig)
-	if err := os.MkdirAll(filepath.Dir(switchstate.Path(bad.home)), 0o777); err != nil {
+	if err := os.MkdirAll(filepath.Dir(hookswitch.Path(bad.home)), 0o777); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(switchstate.Path(bad.home), []byte("{"), 0o600); err != nil {
+	if err := os.WriteFile(hookswitch.Path(bad.home), []byte("{"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if s := bad.status(); s.Switch.Error == "" || s.State != "cxc" {
@@ -252,7 +290,7 @@ func TestInstallSwitchRefusalWritesNothing(t *testing.T) {
 	if code != 1 || !strings.Contains(stderr.String(), "will not rewrite") {
 		t.Fatalf("exit %d stderr=%q", code, stderr.String())
 	}
-	if _, err := os.Stat(switchstate.Path(h.home)); !os.IsNotExist(err) {
+	if _, err := os.Stat(hookswitch.Path(h.home)); !os.IsNotExist(err) {
 		t.Fatalf("switch.json written by a refused switch: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(h.home, ".crw-install.json")); !os.IsNotExist(err) {
@@ -264,7 +302,7 @@ func TestInstallSwitchRefusalWritesNothing(t *testing.T) {
 func TestInstallSwitchStatusReadsTheCRWPluginsOwnKey(t *testing.T) {
 	selectCRW := func(t *testing.T, h *switchHome) {
 		t.Helper()
-		if err := switchstate.Write(h.home, switchstate.State{Active: switchstate.CRW, ChangedAt: "2026-10-10T01:00:00.000Z", By: "crw install switch"}); err != nil {
+		if err := hookswitch.Write(h.home, hookswitch.State{Active: hookswitch.CRW, ChangedAt: "2026-10-10T01:00:00.000Z", By: "crw install switch"}); err != nil {
 			t.Fatal(err)
 		}
 	}

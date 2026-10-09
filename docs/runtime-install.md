@@ -104,8 +104,9 @@ writer of `config.toml` takes:
    never touch it, and `Activate` and `config set` carry it over unchanged). The section is written
    again, before the file it protects is replaced, to record the copy of each CXC role file;
 2. writes `<CODEX_HOME>/crw/switch.json`, `{"active":"crw","changedAt":"<RFC 3339 UTC>","by":"crw install switch"}`,
-   atomically. The Go type is `internal/runtime/install/switchstate`, which imports only the standard
-   library so the hook side can read the file with it;
+   atomically (a synced temporary file in the same directory, renamed into place). The path, the
+   document and the writer are `internal/hookswitch`, the package the hooks read the file with, so the
+   file has one definition;
 3. sets `enabled = false` in `[plugins."codexclaw@codexclaw"]` after copying `config.toml` to
    `config.toml.crw-<ts>.bak`. The key is recorded as its line verbatim, so `switch cxc` gives back
    `enabled=true`, a tab-separated line or a CRLF file to the byte. A key and a table are identified by

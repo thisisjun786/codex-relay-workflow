@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/hookswitch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/role"
-	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/install/switchstate"
 )
 
 const switchStampA = "2026-10-10T01:00:00.000Z"
@@ -125,7 +125,7 @@ func TestSwitchRoundTripGivesTheConfigBackToTheByte(t *testing.T) {
 				t.Fatal(err)
 			}
 			after := switchTree(t, home)
-			delete(after, switchstate.Dir+string(filepath.Separator)+switchstate.File)
+			delete(after, switchFileRel(t))
 			delete(after, InstallManifestName)
 			delete(before, InstallManifestName)
 			if d := switchDiff(before, after); d != "" {
@@ -140,8 +140,8 @@ func TestSwitchWritesStateAndTheSwitchSectionApart(t *testing.T) {
 	if _, err := RunSwitch(switchDeps(home), "crw"); err != nil {
 		t.Fatal(err)
 	}
-	st, err := switchstate.Read(home)
-	if err != nil || st == nil || st.Active != switchstate.CRW || st.ChangedAt != switchStampA || st.By != SwitchBy {
+	st, err := hookswitch.Load(home)
+	if err != nil || st == nil || st.Active != hookswitch.CRW || st.ChangedAt != switchStampA || st.By != SwitchBy {
 		t.Fatalf("switch.json = %+v, %v", st, err)
 	}
 	m, err := ReadInstallManifest(home)
@@ -176,7 +176,7 @@ func TestSwitchWritesStateAndTheSwitchSectionApart(t *testing.T) {
 	if m.Switch == nil || m.Switch.Active != "cxc" || len(m.Switch.Keys) != 0 || len(m.Switch.Roles) != 0 {
 		t.Fatalf("switch section after cxc = %+v", m.Switch)
 	}
-	if st, _ := switchstate.Read(home); st.Active != switchstate.CXC {
+	if st, _ := hookswitch.Load(home); st.Active != hookswitch.CXC {
 		t.Fatalf("switch.json after cxc = %+v", st)
 	}
 }
@@ -283,7 +283,7 @@ func TestSwitchTwiceKeepsTheFirstValues(t *testing.T) {
 		}
 	}
 	after := switchTree(t, home)
-	for _, k := range []string{InstallManifestName, switchstate.Dir + string(filepath.Separator) + switchstate.File} {
+	for _, k := range []string{InstallManifestName, switchFileRel(t)} {
 		delete(before, k)
 		delete(after, k)
 	}
@@ -438,7 +438,7 @@ func switchRunCrashing(t *testing.T, deps SwitchDeps, target string, at int) (cr
 
 func switchTreeWithoutSwitchFiles(t *testing.T, home string) switchSnapshot {
 	tree := switchTree(t, home)
-	delete(tree, switchstate.Dir+string(filepath.Separator)+switchstate.File)
+	delete(tree, switchFileRel(t))
 	delete(tree, InstallManifestName)
 	return tree
 }
@@ -624,4 +624,14 @@ func TestSwitchDiedAtEveryBoundaryKeepsTheActivationHash(t *testing.T) {
 			t.Fatalf("step %d: hash %v, switch %+v", at, m.PostActivateHash, m.Switch)
 		}
 	}
+}
+
+// switchFileRel is switch.json relative to the Codex home, as switchTree keys it.
+func switchFileRel(t *testing.T) string {
+	t.Helper()
+	rel, err := filepath.Rel("/h", hookswitch.Path("/h"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rel
 }

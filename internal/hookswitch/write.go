@@ -1,10 +1,6 @@
-// Package switchstate is the one file that says which plugin's hooks act: <CODEX_HOME>/crw/switch.json.
-// `crw install switch` writes it; the CRW hook side reads it. The package imports only the standard
-// library, so both sides can import it without a cycle.
-package switchstate
+package hookswitch
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,44 +9,20 @@ import (
 	"path/filepath"
 )
 
-// Active names the plugin whose hooks act.
-type Active string
+// This file is the writing side of the switch file, which crw install switch (CRW-201) uses: the
+// same path, document and states the hooks read above, so there is one definition of the file.
 
-// The two values the file holds.
-const (
-	CRW Active = "crw"
-	CXC Active = "cxc"
-)
+// Valid reports whether active names one of the two states.
+func Valid(active string) bool { return active == CRW || active == CXC }
 
-// State is the content of switch.json: {"active":"crw"|"cxc","changedAt":"<RFC 3339 UTC>","by":"<writer>"}.
-type State struct {
-	Active    Active `json:"active"`
-	ChangedAt string `json:"changedAt"`
-	By        string `json:"by"`
-}
-
-// Dir and File are the directory below the Codex home and the file name inside it.
-const (
-	Dir  = "crw"
-	File = "switch.json"
-)
-
-// Path is the file's location under a Codex home.
-func Path(codexHome string) string { return filepath.Join(codexHome, Dir, File) }
-
-// Parse reads the file's bytes. An unknown active value or unknown field is an error: a reader
-// that guessed would turn the wrong plugin on.
+// Parse reads the document the way a hook does, and refuses an active value that is neither state:
+// a reader that guessed would turn the wrong plugin on.
 func Parse(b []byte) (State, error) {
 	var s State
-	dec := json.NewDecoder(bytes.NewReader(b))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&s); err != nil {
+	if err := json.Unmarshal(b, &s); err != nil {
 		return State{}, fmt.Errorf("switch state is not valid: %w", err)
 	}
-	if dec.More() {
-		return State{}, errors.New("switch state is not valid: trailing content")
-	}
-	if s.Active != CRW && s.Active != CXC {
+	if !Valid(s.Active) {
 		return State{}, fmt.Errorf("switch state is not valid: active %q is neither %q nor %q", s.Active, CRW, CXC)
 	}
 	return s, nil
@@ -58,7 +30,7 @@ func Parse(b []byte) (State, error) {
 
 // Marshal is the bytes Write publishes: indented JSON ending in a newline.
 func Marshal(s State) ([]byte, error) {
-	if s.Active != CRW && s.Active != CXC {
+	if !Valid(s.Active) {
 		return nil, fmt.Errorf("switch state: active %q is neither %q nor %q", s.Active, CRW, CXC)
 	}
 	b, err := json.MarshalIndent(s, "", "  ")
@@ -68,17 +40,18 @@ func Marshal(s State) ([]byte, error) {
 	return append(b, '\n'), nil
 }
 
-// ReadRaw is the file's bytes, or nil when it is absent.
+// ReadRaw is the switch file's bytes under a Codex home, or nil when it is absent. It reads the
+// file as a hook does: without waiting on it, and refusing an entry that is not a regular file.
 func ReadRaw(codexHome string) ([]byte, error) {
-	b, err := os.ReadFile(Path(codexHome))
-	if errors.Is(err, fs.ErrNotExist) {
+	b, err := readFile(Path(codexHome))
+	if errors.Is(err, errAbsent) {
 		return nil, nil
 	}
 	return b, err
 }
 
-// Read is the state under a Codex home, or nil when no switch has ever been written.
-func Read(codexHome string) (*State, error) {
+// Load is the state under a Codex home, or nil when no switch has ever been written.
+func Load(codexHome string) (*State, error) {
 	b, err := ReadRaw(codexHome)
 	if err != nil || b == nil {
 		return nil, err
@@ -99,14 +72,15 @@ func Write(codexHome string, s State) error {
 	return WriteRaw(codexHome, b)
 }
 
-// WriteRaw publishes bytes as the file through a synced temporary file and a rename.
+// WriteRaw publishes bytes as the switch file: a temporary file in the same directory, synced, and
+// renamed into place, then the directory synced.
 func WriteRaw(codexHome string, b []byte) error {
 	path := Path(codexHome)
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o777); err != nil {
 		return err
 	}
-	f, err := os.CreateTemp(dir, "."+File+".*.tmp")
+	f, err := os.CreateTemp(dir, ".switch.json.*.tmp")
 	if err != nil {
 		return err
 	}
@@ -134,7 +108,7 @@ func WriteRaw(codexHome string, b []byte) error {
 	return nil
 }
 
-// Remove deletes the file; an absent file is not an error.
+// Remove deletes the switch file; an absent file is not an error.
 func Remove(codexHome string) error {
 	err := os.Remove(Path(codexHome))
 	if errors.Is(err, fs.ErrNotExist) {

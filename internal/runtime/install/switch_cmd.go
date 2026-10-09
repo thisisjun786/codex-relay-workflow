@@ -11,10 +11,10 @@ import (
 	"path/filepath"
 	"sort"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/hookswitch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/role"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/doctor"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/install/configguard"
-	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/install/switchstate"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/scope"
 )
 
@@ -258,13 +258,13 @@ func renderSwitch(stdout io.Writer, asJSON bool, status *SwitchStatus, result *s
 // then looked for in the Codex home's plugin cache.
 func ReadSwitchStatus(home, pluginRoot string) *SwitchStatus {
 	s := &SwitchStatus{Command: "switch", Action: "status", CodexHome: home, Plugins: map[string]switchPluginStatus{}, Roles: []switchRoleStatus{}, Notes: []string{}}
-	s.Switch.Path = switchstate.Path(home)
+	s.Switch.Path = hookswitch.Path(home)
 	selectedCRW := false
-	if st, err := switchstate.Read(home); err != nil {
+	if st, err := hookswitch.Load(home); err != nil {
 		s.Switch.Error = err.Error()
 	} else if st != nil {
-		s.Switch.Active, s.Switch.ChangedAt, s.Switch.By = string(st.Active), st.ChangedAt, st.By
-		selectedCRW = st.Active == switchstate.CRW
+		s.Switch.Active, s.Switch.ChangedAt, s.Switch.By = st.Active, st.ChangedAt, st.By
+		selectedCRW = st.Active == hookswitch.CRW
 	}
 	config, err := os.ReadFile(filepath.Join(home, "config.toml"))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
