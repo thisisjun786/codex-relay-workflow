@@ -50,7 +50,7 @@
   "edits": [
     {
       "file": "SKILL.md",
-      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. Normalize frontmatter to the repository-supported name and description fields; preserve invocation description and record the removed oracle metadata. Distinguish task implementation P/C from Linear plan/check ownership and exclude the crw-run parent from implementation PABCD. Disambiguate task host-goal execution from crw-run parent goal mode beside the goal firewall. Remove the nonexistent orchestrate skill stub; keep the human chat command and the CRW CLI. CRW-1151: the hook hint names the condition DetectTrigger applies (PABCD marker plus request verb; phase patterns choose I/P/A/B/C, with P as the fallback) instead of a bare interview word.",
+      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. Normalize frontmatter to the repository-supported name and description fields; preserve invocation description and record the removed oracle metadata. Distinguish task implementation P/C from Linear plan/check ownership and exclude the crw-run parent from implementation PABCD. Disambiguate task host-goal execution from crw-run parent goal mode beside the goal firewall. Remove the nonexistent orchestrate skill stub; keep the human chat command and the CRW CLI. CRW-1151: the hook hint names the condition DetectTrigger applies (PABCD marker plus request verb; phase patterns choose I/P/A/B/C, with P as the fallback only for a crw-pabcd or pabcd로 request) instead of a bare interview word.",
       "hunks": [
         {
           "line": 4,
@@ -96,9 +96,11 @@
             "  `invoke`, `enter`, `apply`, or 시작, 진행, 적용, 실행, 돌려, 써서, 으로, 들어가).\n",
             "  The phase is then picked by the first matching phase pattern, in this order: I\n",
             "  (`interview`, `인터뷰`, `phase i`), P (`plan`, `phase p`, 계획), A (`audit`, `phase a`,\n",
-            "  감사), B (`build`, `phase b`, 구현), C (`check`, `phase c`, 검증). A request with the\n",
-            "  marker and a verb but no phase pattern (`Use crw-pabcd`, `pabcd로 시작해줘`) falls\n",
-            "  back to phase P. Without a request verb nothing is injected: a bare `인터뷰 먼저 해줘`,\n",
+            "  감사), B (`build`, `phase b`, 구현), C (`check`, `phase c`, 검증). With no phase\n",
+            "  pattern, only a request naming `crw-pabcd` (in any form above) or `pabcd로` falls\n",
+            "  back to phase P (`Use crw-pabcd`, `pabcd로 시작해줘`); `pabcd phase` has no such\n",
+            "  fallback, so `Start pabcd phase` injects nothing and `Start pabcd phase i` injects\n",
+            "  phase I. Without a request verb nothing is injected: a bare `인터뷰 먼저 해줘`,\n",
             "  `interview me first` or `pabcd로 인터뷰 해줘` inject nothing, while `Use crw-pabcd to\n",
             "  start the interview` injects phase I. Natural hints never enter or advance a phase.\n",
             "  A line-anchored `orchestrate i` command instead takes the existing explicit-command\n",
