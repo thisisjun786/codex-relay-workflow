@@ -758,3 +758,22 @@ added by CRW-1028 (over-block of sequential script executions in a carried text)
 added by CRW-1028 (over-block of sequential script executions in a carried text)	bash -c 'bash lint.sh; bash refresh.sh'	CRW-1028-ev-overblock-02	row	-
 added by CRW-1028 (over-block of sequential script executions in a carried text)	bash lint.sh; x=$(bash refresh.sh)	CRW-1028-ev-overblock-03	row	-
 added by CRW-1028 (over-block of sequential script executions in a carried text)	bash -c 'bash refresh.sh; bash lint.sh'	CRW-1028-ev-overblock-04	row	-
+recheck-20261009-g4-RC-851-v3	python3 -c 'import builtins; builtins \<nl>.exec("""open(file="<m>/a",mode="w")""")'	CRW-851-lc-01	row	-
+recheck-20261009-g4-RC-851-v3d	python3 -c 'import builtins; (builtins \<nl>.exec)("""open(file="<m>/a",mode="w")""")'	CRW-851-lc-02	row	-
+added by CRW-851 (line-continuation variant of the 10-09 re-check RC-851-v3)	python3 -c 'import builtins; builtins.\<nl>exec("""open(file="<m>/a",mode="w")""")'	CRW-851-lc-03	row	-
+added by CRW-851 (line-continuation variant of the 10-09 re-check RC-851-v3)	python3 -c 'import builtins; builtins \{CR}<nl>.exec("""open(file="<m>/a",mode="w")""")'	CRW-851-lc-04	row	-
+added by CRW-851 (line-continuation variant of the 10-09 re-check RC-851-v3)	python3 -c 'import builtins; builtins \<nl> . \<nl> exec("""open(file="<m>/a",mode="w")""")'	CRW-851-lc-05	row	-
+added by CRW-851 (line-continuation variant of the 10-09 re-check RC-851-v3)	python3 -c 'import builtins; __builtins__ \<nl>.eval("""open(file="<m>/a",mode="w")""")'	CRW-851-lc-06	row	-
+added by CRW-851 (line-continuation variant of the 10-09 re-check RC-851-v3)	python3 -c 'import builtins; exec(builtins \<nl>.compile("""open(file="<m>/a",mode="w")""", "x", "exec"))'	CRW-851-lc-07	row	-
+added by CRW-851 (line-continuation variant of the 10-09 re-check RC-851-v3)	python3 -c 'exec \<nl>("""open(file="<m>/a",mode="w")""")'	CRW-851-lc-08	row	-
+added by CRW-851 (line-continuation variant of the 10-09 re-check RC-851-v3)	python3 -c 'import builtins; (builtins.exec) \<nl>("""open(file="<m>/a",mode="w")""")'	CRW-851-lc-09	row	-
+added by CRW-851 (line-continuation variant of the 10-09 re-check RC-851-v3)	python3 -c 'import builtins; builtins \<nl>\<nl>.exec("""open(file="<m>/a",mode="w")""")'	CRW-851-lc-10	row	-
+added by CRW-851 (line-continuation variant of the 10-09 re-check RC-851-v3)	python3 -c 'import builtins; ((builtins \<nl>.exec))("""open(file="<m>/a",mode="w")""")'	CRW-851-lc-11	row	-
+added by CRW-851 (line-continuation allow counterexample of the 10-09 re-check)	python3 -c 'print("builtins \<nl>.exec(x)")'	CRW-851-lc-b01	row	-
+added by CRW-851 (line-continuation allow counterexample of the 10-09 re-check)	python3 -c 'print("""builtins \<nl>.exec(x)""")'	CRW-851-lc-b02	row	-
+added by CRW-851 (line-continuation allow counterexample of the 10-09 re-check)	python3 -c 'import re; re \<nl>.compile("a")'	CRW-851-lc-b03	row	-
+added by CRW-851 (line-continuation allow counterexample of the 10-09 re-check)	python3 -c 'import re; (re \<nl>.compile)("a")'	CRW-851-lc-b04	row	-
+added by CRW-851 (line-continuation allow counterexample of the 10-09 re-check)	python3 -c 'x = 1 + \<nl>2; print(x)'	CRW-851-lc-b05	row	-
+added by CRW-851 (line-continuation allow counterexample of the 10-09 re-check)	python3 -c 'runner = object(); runner \<nl>.exec("x")'	CRW-851-lc-b06	row	-
+added by CRW-851 (line-continuation allow counterexample of the 10-09 re-check)	python3 -c 'def myexec(s): return s<nl>myexec \<nl>("x")'	CRW-851-lc-b07	row	-
+added by CRW-851 (line-continuation allow counterexample of the 10-09 re-check)	python3 -c 'import mybuiltins; mybuiltins \<nl>.exec("x")'	CRW-851-lc-b08	row	-

@@ -1,0 +1,104 @@
+# CRW-851 (exec, eval and compile reached through builtins), the line-continuation bypass of the 10-09 re-check
+# (/state/crw/mgmt/recheck-20261009/g4, rows RC-851-v3 and RC-851-v3d): Python joins two physical lines at a backslash and a newline
+# anywhere between two tokens, so the callee identification must read that pair as spacing, as it reads a blank. The E rows write a
+# protected memory file when run; the controls must stay unjudged by the memory gate (memory none). A control that names exec, eval
+# or compile is denied by the worktree guard as a run-time name, with or without the continuation, so its verdict is none/allow/deny.
+# Format: see shellwrite_repro_test.go.
+
+=== CRW-851-lc-01 | E
+--why RC-851-v3: a backslash and a newline between builtins and the attribute dot must not hide builtins.exec.
+python3 -c 'import builtins; builtins \
+.exec("""open(file="{MEMORY}/a",mode="w")""")'
+
+=== CRW-851-lc-02 | E
+--why RC-851-v3d: the parenthesized callee (builtins <continuation>.exec)(...) must not hide the call.
+python3 -c 'import builtins; (builtins \
+.exec)("""open(file="{MEMORY}/a",mode="w")""")'
+
+=== CRW-851-lc-03 | E
+--why A backslash and a newline after the attribute dot.
+python3 -c 'import builtins; builtins.\
+exec("""open(file="{MEMORY}/a",mode="w")""")'
+
+=== CRW-851-lc-04 | E
+--why A backslash and a CR LF pair (Python joins the lines at it) before the attribute dot.
+python3 -c 'import builtins; builtins \{CR}
+.exec("""open(file="{MEMORY}/a",mode="w")""")'
+
+=== CRW-851-lc-05 | E
+--why A backslash and a newline on both sides of the dot, with blanks around them.
+python3 -c 'import builtins; builtins \
+ . \
+ exec("""open(file="{MEMORY}/a",mode="w")""")'
+
+=== CRW-851-lc-06 | E
+--why The __builtins__ module name and eval, with a continuation before the dot.
+python3 -c 'import builtins; __builtins__ \
+.eval("""open(file="{MEMORY}/a",mode="w")""")'
+
+=== CRW-851-lc-07 | E
+--why The compile name through builtins with a continuation before the dot (the program is compiled, then run by exec).
+python3 -c 'import builtins; exec(builtins \
+.compile("""open(file="{MEMORY}/a",mode="w")""", "x", "exec"))'
+
+=== CRW-851-lc-08 | E
+--why A backslash and a newline between the plain name and its parenthesis.
+python3 -c 'exec \
+("""open(file="{MEMORY}/a",mode="w")""")'
+
+=== CRW-851-lc-09 | E
+--why A backslash and a newline between the closing parenthesis of a parenthesized callee and the call parenthesis.
+python3 -c 'import builtins; (builtins.exec) \
+("""open(file="{MEMORY}/a",mode="w")""")'
+
+=== CRW-851-lc-10 | E
+--why Two continuations in a row before the dot.
+python3 -c 'import builtins; builtins \
+\
+.exec("""open(file="{MEMORY}/a",mode="w")""")'
+
+=== CRW-851-lc-11 | E
+--why Continuations in a nested parenthesized callee, (( builtins <continuation>.exec )).
+python3 -c 'import builtins; ((builtins \
+.exec))("""open(file="{MEMORY}/a",mode="w")""")'
+
+=== CRW-851-lc-b01 | none/allow/deny
+--why Control: backslash-newline inside a string literal is data that is never executed (print of the text builtins .exec(x)).
+python3 -c 'print("builtins \
+.exec(x)")'
+
+=== CRW-851-lc-b02 | none/allow/deny
+--why Control: the same text in a triple-quoted string with a real newline and a backslash.
+python3 -c 'print("""builtins \
+.exec(x)""")'
+
+=== CRW-851-lc-b03 | none/allow/deny
+--why Control: re.compile of a non-builtins module with a continuation before the dot.
+python3 -c 'import re; re \
+.compile("a")'
+
+=== CRW-851-lc-b04 | none/allow/deny
+--why Control: a parenthesized re.compile callee with a continuation.
+python3 -c 'import re; (re \
+.compile)("a")'
+
+=== CRW-851-lc-b05 | B
+--why Control: an ordinary harmless program with a backslash continuation.
+python3 -c 'x = 1 + \
+2; print(x)'
+
+=== CRW-851-lc-b06 | none/allow/deny
+--why Control: exec as an attribute of another object (runner.exec) with a continuation before the dot.
+python3 -c 'runner = object(); runner \
+.exec("x")'
+
+=== CRW-851-lc-b07 | none/allow/deny
+--why Control: a name that merely ends in exec (myexec) called after a continuation.
+python3 -c 'def myexec(s): return s
+myexec \
+("x")'
+
+=== CRW-851-lc-b08 | none/allow/deny
+--why Control: a module whose name merely ends in builtins (mybuiltins) with a continuation before the dot.
+python3 -c 'import mybuiltins; mybuiltins \
+.exec("x")'
