@@ -290,3 +290,28 @@ func TestAnalyzeNoDirRelativeAliases(t *testing.T) {
 		}
 	}
 }
+
+// TestAnalyzeNoDirKeepsNoDirectoryThroughStatements: a statement that does not change the directory (an if, a case, a loop)
+// leaves the reading with no directory as it was, so an ordinary script path is not judged after it; a statement that changes the
+// directory to a place the reader cannot name (in any branch, or in a loop body) makes the reading refuse a path that may be an alias.
+func TestAnalyzeNoDirKeepsNoDirectoryThroughStatements(t *testing.T) {
+	for _, c := range []struct {
+		cmd        string
+		unreadable bool
+	}{
+		{"printf x | python3 stdin", false},
+		{"if true; then :; fi; printf x | python3 stdin", false},
+		{"if true; then :; else :; fi; printf x | python3 fd/0", false},
+		{"case x in x) :;; esac; printf x | python3 stdin", false},
+		{"for i in 1 2; do :; done; printf x | python3 stdin", false},
+		{"if true; then cd \"$D\"; fi; printf x | python3 dev/stdin", true},
+		{"if true; then cd \"$A\"; else cd \"$B\"; fi; printf x | python3 dev/stdin", true},
+		{"for i in 1; do cd \"$D\"; done; printf x | python3 dev/stdin", true},
+		{"if true; then :; fi; printf x | python3 /dev/./stdin", true},
+	} {
+		_, err := AnalyzeNoDir(c.cmd)
+		if got := err != nil; got != c.unreadable {
+			t.Errorf("AnalyzeNoDir(%q): unreadable=%v, want %v (%v)", c.cmd, got, c.unreadable, err)
+		}
+	}
+}
