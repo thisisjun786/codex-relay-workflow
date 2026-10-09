@@ -96,7 +96,7 @@ func TestFdAliasPathSpellings(t *testing.T) {
 func TestInterpreterAliasSpellingsAreUnreadable(t *testing.T) {
 	for _, in := range []string{"python3", "node", "perl", "ruby", "php", "lua"} {
 		for _, p := range []string{"/dev/stdin", "/dev/./stdin", "//dev/stdin", "/dev/../dev/stdin", "/dev//fd//0", "/proc/self/root/dev/stdin"} {
-			cmd := "printf x | " + in + " " + p
+			cmd := "cat program | " + in + " " + p
 			if _, err := Analyze(cmd, "/work"); err == nil {
 				t.Errorf("%q is read; the interpreter reads the pipe", cmd)
 			}
@@ -126,17 +126,24 @@ func TestShellStdinOption(t *testing.T) {
 			cmd        string
 			unreadable bool
 		}{
-			{"printf x | " + sh + " -s safe.sh", true},
-			{"printf x | " + sh + " -s -- safe.sh", true},
-			{"printf x | " + sh + " -xs safe.sh", true},
-			{"printf x | " + sh + " -sx safe.sh", true},
-			{"printf x | " + sh + " +s safe.sh", true},
-			{"printf x | " + sh + " -s", true},
+			{"printf x | " + sh + " -s safe.sh", false}, // CRW-1058 reads the pipe, not safe.sh
+			{"printf x | " + sh + " -s -- safe.sh", false},
+			{"printf x | " + sh + " -xs safe.sh", false},
+			{"printf x | " + sh + " -sx safe.sh", false},
+			{"printf x | " + sh + " +s safe.sh", false},
+			{"printf x | " + sh + " -s", false},
+			{"cat program | " + sh + " -s safe.sh", true},
+			{"cat program | " + sh + " -s -- safe.sh", true},
+			{"cat program | " + sh + " -xs safe.sh", true},
+			{"cat program | " + sh + " -sx safe.sh", true},
+			{"cat program | " + sh + " +s safe.sh", true},
+			{"cat program | " + sh + " -s", true},
 			{"printf x | " + sh + " -os posix safe.sh", true},
 			{"printf x | " + sh + " -oc posix 'echo hi'", true},
 			{sh + " -s", true},
 			{"printf x | bash -c '" + sh + " -s safe.sh'", true},
-			{"printf x | exec -a x " + sh + " -s safe.sh", true},
+			{"printf x | exec -a x " + sh + " -s safe.sh", false},
+			{"cat program | exec -a x " + sh + " -s safe.sh", true},
 			{sh + " -s safe.sh arg <<< ':'", false},
 			{sh + " -s safe.sh <<'EOF'\n:\nEOF", false},
 			{sh + " -sc 'echo hi' safe.sh", false},

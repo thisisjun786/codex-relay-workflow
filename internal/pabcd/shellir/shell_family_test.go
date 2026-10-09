@@ -11,8 +11,10 @@ func TestShellFamilyProgramPositions(t *testing.T) {
 			cmd        string
 			unreadable bool
 		}{
-			{"printf x | " + sh, true},
-			{"printf x | exec -a x " + sh, true},
+			{"printf x | " + sh, false}, // CRW-1058 reads the literal pipe program
+			{"printf x | exec -a x " + sh, false},
+			{"cat program | " + sh, true},
+			{"cat program | exec -a x " + sh, true},
 			{"printf x | " + sh + " </dev/stdin", true},
 			{"printf x | " + sh + " -c '" + sh + "'", true},
 			{"printf x | eval '" + sh + "'", true},

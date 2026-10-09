@@ -1,56 +1,56 @@
 # CRW-894 re-check of 10-09 on dev 09e5c5bcc: the shell family (ash, mksh, hush and the busybox applets) in every place bash and sh are recognised,
 # and the conditions (if, elif, while, until, !) that inherit a pipe. ../repo is the managed checkout.
 
-=== CRW-894-sf-01 | U
---why The pipe feeds a program to ash, a shell of the family the reader must know (re-check 10-09).
+=== CRW-894-sf-01 | U | deviation=none/allow/deny
+--why The pipe feeds a program to ash, a shell of the family the reader must know (re-check 10-09). CRW-1058 reads the literal pipe program: the worktree guard refuses the removal; the memory and GitHub guards allow it.
 printf 'rm -rf ../repo' | ash
 
-=== CRW-894-sf-02 | U
---why The pipe feeds a program to mksh, a shell of the family the reader must know (re-check 10-09).
+=== CRW-894-sf-02 | U | deviation=none/allow/deny
+--why The pipe feeds a program to mksh, a shell of the family the reader must know (re-check 10-09). CRW-1058 reads the literal pipe program: the worktree guard refuses the removal; the memory and GitHub guards allow it.
 printf 'rm -rf ../repo' | mksh
 
-=== CRW-894-sf-03 | U
---why The pipe feeds a program to hush, a shell of the family the reader must know (re-check 10-09).
+=== CRW-894-sf-03 | U | deviation=none/allow/deny
+--why The pipe feeds a program to hush, a shell of the family the reader must know (re-check 10-09). CRW-1058 reads the literal pipe program: the worktree guard refuses the removal; the memory and GitHub guards allow it.
 printf 'rm -rf ../repo' | hush
 
-=== CRW-894-sf-04 | U
---why The pipe feeds a program to pdksh, a shell of the family the reader must know (re-check 10-09).
+=== CRW-894-sf-04 | U | deviation=none/allow/deny
+--why The pipe feeds a program to pdksh, a shell of the family the reader must know (re-check 10-09). CRW-1058 reads the literal pipe program: the worktree guard refuses the removal; the memory and GitHub guards allow it.
 printf 'rm -rf ../repo' | pdksh
 
-=== CRW-894-sf-05 | U
---why The pipe feeds a program to oksh, a shell of the family the reader must know (re-check 10-09).
+=== CRW-894-sf-05 | U | deviation=none/allow/deny
+--why The pipe feeds a program to oksh, a shell of the family the reader must know (re-check 10-09). CRW-1058 reads the literal pipe program: the worktree guard refuses the removal; the memory and GitHub guards allow it.
 printf 'rm -rf ../repo' | oksh
 
-=== CRW-894-sf-06 | U
---why The pipe feeds a program to posh, a shell of the family the reader must know (re-check 10-09).
+=== CRW-894-sf-06 | U | deviation=none/allow/deny
+--why The pipe feeds a program to posh, a shell of the family the reader must know (re-check 10-09). CRW-1058 reads the literal pipe program: the worktree guard refuses the removal; the memory and GitHub guards allow it.
 printf 'rm -rf ../repo' | posh
 
-=== CRW-894-sf-07 | U
---why The pipe feeds a program to yash, a shell of the family the reader must know (re-check 10-09).
+=== CRW-894-sf-07 | U | deviation=none/allow/deny
+--why The pipe feeds a program to yash, a shell of the family the reader must know (re-check 10-09). CRW-1058 reads the literal pipe program: the worktree guard refuses the removal; the memory and GitHub guards allow it.
 printf 'rm -rf ../repo' | yash
 
-=== CRW-894-sf-08 | U
---why The pipe feeds a program to rbash, a shell of the family the reader must know (re-check 10-09).
+=== CRW-894-sf-08 | U | deviation=none/allow/deny
+--why The pipe feeds a program to rbash, a shell of the family the reader must know (re-check 10-09). CRW-1058 reads the literal pipe program: the worktree guard refuses the removal; the memory and GitHub guards allow it.
 printf 'rm -rf ../repo' | rbash
 
-=== CRW-894-sf-09 | U
---why busybox ash reads the pipe as its program (re-check G3B-02).
+=== CRW-894-sf-09 | U | deviation=none/allow/deny
+--why busybox ash reads the pipe as its program (re-check G3B-02). CRW-1058 reads the literal pipe program: the worktree guard refuses the removal; the memory and GitHub guards allow it.
 printf 'rm -rf ../repo' | busybox ash
 
-=== CRW-894-sf-10 | U
---why busybox hush reads the pipe as its program.
+=== CRW-894-sf-10 | U | deviation=none/allow/deny
+--why busybox hush reads the pipe as its program. CRW-1058 reads the literal pipe program: the worktree guard refuses the removal; the memory and GitHub guards allow it.
 printf 'rm -rf ../repo' | busybox hush
 
-=== CRW-894-sf-11 | U
---why busybox sh reads the pipe as its program (already refused; pinned).
+=== CRW-894-sf-11 | U | deviation=none/allow/deny
+--why busybox sh reads the pipe as its program (already refused; pinned). CRW-1058 reads the literal pipe program: the worktree guard refuses the removal; the memory and GitHub guards allow it.
 printf 'rm -rf ../repo' | busybox sh
 
-=== CRW-894-sf-12 | U
---why /bin/busybox ash: the wrapper is named by path.
+=== CRW-894-sf-12 | U | deviation=none/allow/deny
+--why /bin/busybox ash: the wrapper is named by path. CRW-1058 reads the literal pipe program: the worktree guard refuses the removal; the memory and GitHub guards allow it.
 printf 'rm -rf ../repo' | /bin/busybox ash
 
-=== CRW-894-sf-13 | U
---why /bin/busybox sh: the wrapper is named by path.
+=== CRW-894-sf-13 | U | deviation=none/allow/deny
+--why /bin/busybox sh: the wrapper is named by path. CRW-1058 reads the literal pipe program: the worktree guard refuses the removal; the memory and GitHub guards allow it.
 printf 'rm -rf ../repo' | /bin/busybox sh
 
 === CRW-894-sf-14 | U
@@ -61,24 +61,24 @@ printf 'rm -rf ../repo' | busybox
 --why A bare /bin/busybox without an applet in a pipe.
 printf 'rm -rf ../repo' | /bin/busybox
 
-=== CRW-894-sf-16 | U
---why A pipe shell reached through exec -a.
+=== CRW-894-sf-16 | U | deviation=none/allow/deny
+--why A pipe shell reached through exec -a. CRW-1058 reads the literal pipe program: the worktree guard refuses the removal; the memory and GitHub guards allow it.
 printf 'rm -rf ../repo' | exec -a x ash
 
-=== CRW-894-sf-17 | U
---why A pipe shell reached through nohup.
+=== CRW-894-sf-17 | U | deviation=none/allow/deny
+--why A pipe shell reached through nohup. CRW-1058 reads the literal pipe program: the worktree guard refuses the removal; the memory and GitHub guards allow it.
 printf 'rm -rf ../repo' | nohup mksh
 
-=== CRW-894-sf-18 | U
---why A pipe shell reached through env.
+=== CRW-894-sf-18 | U | deviation=none/allow/deny
+--why A pipe shell reached through env. CRW-1058 reads the literal pipe program: the worktree guard refuses the removal; the memory and GitHub guards allow it.
 printf 'rm -rf ../repo' | env X=1 ash
 
-=== CRW-894-sf-19 | U
---why A pipe shell reached through sudo.
+=== CRW-894-sf-19 | U | deviation=none/allow/deny
+--why A pipe shell reached through sudo. CRW-1058 reads the literal pipe program: the worktree guard refuses the removal; the memory and GitHub guards allow it.
 printf 'rm -rf ../repo' | sudo mksh
 
-=== CRW-894-sf-20 | U
---why A pipe shell reached through busybox and nohup.
+=== CRW-894-sf-20 | U | deviation=none/allow/deny
+--why A pipe shell reached through busybox and nohup. CRW-1058 reads the literal pipe program: the worktree guard refuses the removal; the memory and GitHub guards allow it.
 printf 'rm -rf ../repo' | nohup busybox ash
 
 === CRW-894-sf-21 | U

@@ -55,7 +55,7 @@ while false; do cd /tmp; done; rm -rf ../repo
 --why d5 variant: a for loop with an empty list.
 for i in; do cd /tmp; done; rm -rf ../repo
 
-=== CRW-1028-ev-d6-parallel | U
+=== CRW-1028-ev-d6-parallel | U | deviation=none/allow/deny
 --why d6: parallel's ::: input is the removal target.
 parallel rm -rf {} ::: {CHECKOUT}
 

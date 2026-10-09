@@ -5,7 +5,7 @@
 --why A pipe into a shell that re-opens standard input through /dev/stdin is still the pipe (c1 of CRW-894).
 printf 'rm -rf ../repo' | bash </dev/stdin
 
-=== CRW-894-02 | U
+=== CRW-894-02 | U | deviation=none/allow/deny
 --why A pipe into an interpreter without a program argument (item 5).
 printf 'import shutil; shutil.rmtree("../repo")' | python3
 
@@ -29,7 +29,7 @@ bash -c 'echo hi'
 --why exec -a with an ordinary program and no pipe.
 exec -a x true
 
-=== CRW-894-08 | U
+=== CRW-894-08 | U | deviation=attempt/allow/allow
 --why exec -a NAME bash reads the pipe (item 2).
 printf 'echo x > {MEMORY}/a' | exec -a x bash
 
@@ -67,11 +67,11 @@ printf x | python3 -c 'print(1)'
 --why Control: node with a script operand receives the pipe as data.
 printf x | node script.js
 
-=== CRW-894-17 | U
+=== CRW-894-17 | U | deviation=none/allow/deny
 --why Item 1: a script operand that is /dev/stdin is the pipe.
 printf 'rm -rf ../repo' | bash /dev/stdin
 
-=== CRW-894-18 | U
+=== CRW-894-18 | U | deviation=none/allow/deny
 --why Item 1: /proc/self/fd/0.
 printf 'rm -rf ../repo' | bash /proc/self/fd/0
 
@@ -87,7 +87,7 @@ printf 'rm -rf ../repo' | bash -c 'bash'
 --why Item 3: eval of a shell name.
 printf 'rm -rf ../repo' | eval bash
 
-=== CRW-894-22 | U
+=== CRW-894-22 | U | deviation=none/allow/deny
 --why Item 4: busybox sh reads the pipe.
 printf 'rm -rf ../repo' | busybox sh
 
@@ -119,13 +119,13 @@ printf 'rm -rf ../repo' | exec -a x &>/dev/null bash
 --why d2: the same with a memory write program.
 printf 'echo x > {MEMORY}/a' | exec -a x &>/dev/null bash
 
-=== CRW-989-03 | U
+=== CRW-989-03 | U | deviation=none/allow/deny
 --why d3: a descriptor alias copied by 4<&3 is the here-document.
 python3 /dev/fd/4 3<<'PY' 4<&3
 import shutil; shutil.rmtree('../repo')
 PY
 
-=== CRW-989-04 | U
+=== CRW-989-04 | U | deviation=none/allow/deny
 --why d3: the here-string form.
 python3 /dev/fd/4 3<<< 'import shutil; shutil.rmtree("../repo")' 4<&3
 

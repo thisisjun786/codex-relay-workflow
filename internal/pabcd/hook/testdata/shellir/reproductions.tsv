@@ -1215,6 +1215,31 @@ CRW-910 issue (Linear description)	echo "$(true)" '$(rm -rf ../repo)'	CRW-910-27
 CRW-910 issue (Linear description)	echo "$(true)x" '$(rm -rf ../repo)'	CRW-910-28	row	-
 CRW-910 issue (Linear description)	env -C {CHECKOUT} rm -rf .	CRW-910-29	row	-
 CRW-910 issue (Linear description)	env -C {MEMORY} sh -c 'echo x > a'	CRW-910-30	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	parallel echo {} ::: a b	CRW-1058-01	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	parallel -j2 -k echo {/.} {#} ::: dir/a.tar.gz other/b.txt	CRW-1058-02	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	parallel echo {1} {2} ::: a b :::+ c d	CRW-1058-03	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	printf 'echo hi\n' | bash	CRW-1058-04	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	echo 'echo hi' | sh -s	CRW-1058-05	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	bash /dev/fd/3 3<<'EOF'\necho hi\nEOF	CRW-1058-06	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	bash /dev/fd/3 3<<<'echo hi'	CRW-1058-07	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	python3 /dev/fd/4 3<<'PY' 4<&3\nprint(1)\nPY	CRW-1058-08	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	parallel cp /tmp/x {MEMORY}/{} ::: a	CRW-1058-09	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	printf 'echo x > {MEMORY}/a' | bash	CRW-1058-10	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	bash /dev/fd/3 3<<'EOF'\necho x > {MEMORY}/a\nEOF	CRW-1058-11	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	parallel echo x '>' {MEMORY}/{} ::: a	CRW-1058-12	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	printf 'gh pr comment 1 -b plain' | bash	CRW-1058-13	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	parallel gh pr comment {} -b plain ::: 1	CRW-1058-14	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	parallel rm -rf {} ::: {CHECKOUT}	CRW-1058-15	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	printf 'rm -rf {CHECKOUT}' | bash	CRW-1058-16	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	bash /dev/fd/3 3<<'EOF'\nrm -rf {CHECKOUT}\nEOF	CRW-1058-17	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	parallel rm -rf {} ::: $X	CRW-1058-18	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	printf "$X" | bash	CRW-1058-19	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	parallel -S host rm -rf {} ::: {CHECKOUT}	CRW-1058-20	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	parallel rm -rf {} :::: list.txt	CRW-1058-21	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	printf 'rm -rf {CHECKOUT}' | bash </dev/null	CRW-1058-22	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	bash /dev/fd/3	CRW-1058-23	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	printf 'echo hi\n' | bash -s foo	CRW-1058-24	row	-
+CRW-1058 issue text (Linear, 2026-10-09)	printf 'rm -rf {CHECKOUT}' | bash -s foo	CRW-1058-25	row	-
 recheck-20261009-g4-RC-851-v3	python3 -c 'import builtins; builtins \<nl>.exec("""open(file="<m>/a",mode="w")""")'	CRW-851-lc-01	row	-
 recheck-20261009-g4-RC-851-v3d	python3 -c 'import builtins; (builtins \<nl>.exec)("""open(file="<m>/a",mode="w")""")'	CRW-851-lc-02	row	-
 added by CRW-851 (line-continuation variant of the 10-09 re-check RC-851-v3)	python3 -c 'import builtins; builtins.\<nl>exec("""open(file="<m>/a",mode="w")""")'	CRW-851-lc-03	row	-
@@ -1595,3 +1620,14 @@ CRW-910 pre-merge evaluation 39c72966 (control of d2)	find . -maxdepth 0 -exec e
 CRW-910 pre-merge evaluation 39c72966 (d3: redirect in outer dir, control)	env -C {MEMORY} ls > out.txt	CRW-910-E06	row	-
 CRW-910 pre-merge evaluation 39c72966 (d3: redirect into memory root by name)	env -C {CHECKOUT} ls > {MEMORY}/out.txt	CRW-910-E07	row	-
 CRW-910 pre-merge evaluation 39c72966 (d3: redirect in memory outer dir)	cd {MEMORY} && env -C {CHECKOUT} ls > out.txt	CRW-910-E08	row	-
+CRW-1058 pre-merge record crw1058-e83d8ec4 (findings d1 to d9)	echo -n -e 'rm -rf {CHECKOUT}' | bash	CRW-1058-26	row	-
+CRW-1058 pre-merge record crw1058-e83d8ec4 (findings d1 to d9)	echo -n -n 'echo hi' | bash	CRW-1058-27	row	-
+CRW-1058 pre-merge record crw1058-e83d8ec4 (findings d1 to d9)	echo() { printf 'rm -rf {CHECKOUT}'; }; echo ignored | bash	CRW-1058-28	row	-
+CRW-1058 pre-merge record crw1058-e83d8ec4 (findings d1 to d9)	bash - remove.sh <<<':' with remove.sh holding rm -rf {CHECKOUT}	CRW-1058-29	row	-
+CRW-1058 pre-merge record crw1058-e83d8ec4 (findings d1 to d9)	printf 'rm -rf {CHECKOUT}\n' | bash /dev/stdin <<<'echo hi'	CRW-1058-30	row	-
+CRW-1058 pre-merge record crw1058-e83d8ec4 (findings d1 to d9)	parallel -j1 cd '{}' ';' rm -rf ../repo ::: sub .	CRW-1058-31	row	-
+CRW-1058 pre-merge record crw1058-e83d8ec4 (findings d1 to d9)	parallel rm -rf '{.}' ::: ../repo.v1/../repo	CRW-1058-32	row	-
+CRW-1058 pre-merge record crw1058-e83d8ec4 (findings d1 to d9)	echo {CHECKOUT} | xargs parallel rm -rf '{}' ::: /tmp/unprotected	CRW-1058-33	row	-
+CRW-1058 pre-merge record crw1058-e83d8ec4 (findings d1 to d9)	printf 'echo hi\n' | bash >/dev/null	CRW-1058-34	row	-
+CRW-1058 pre-merge record crw1058-e83d8ec4 (findings d1 to d9)	bash /dev/stdin 3<<<'echo hi' 0<&3	CRW-1058-35	row	-
+CRW-1058 pre-merge record crw1058-e83d8ec4 (findings d1 to d9)	python3 /dev/fd/0 3<<<'print(1)' 0<&3	CRW-1058-36	row	-

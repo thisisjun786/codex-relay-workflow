@@ -99,36 +99,36 @@ printf x | python3 /dev/null
 --why Control: a script file operand of an interpreter is not judged.
 printf x | python3 script.py
 
-=== CRW-894-ev-25 | U
---why The pipe is the program: -s makes safe.sh a positional parameter, the program is the pipe (d2 of the 1688f7c5 evaluation).
+=== CRW-894-ev-25 | U | deviation=none/allow/deny
+--why The pipe is the program: -s makes safe.sh a positional parameter, the program is the pipe (d2 of the 1688f7c5 evaluation). CRW-1058 reads the literal pipe program: the worktree guard refuses the removal; the memory and GitHub guards allow it.
 --file safe.sh
 :
 --cmd
 printf 'rm -rf ../repo\n' | bash -s safe.sh
 
-=== CRW-894-ev-26 | U
---why The pipe is the program: -s with ash.
+=== CRW-894-ev-26 | U | deviation=none/allow/deny
+--why The pipe is the program: -s with ash. CRW-1058 reads the literal pipe program: the worktree guard refuses the removal; the memory and GitHub guards allow it.
 --file safe.sh
 :
 --cmd
 printf 'rm -rf ../repo\n' | ash -s safe.sh
 
-=== CRW-894-ev-27 | U
---why The pipe is the program: -s with mksh and two positional parameters.
+=== CRW-894-ev-27 | U | deviation=none/allow/deny
+--why The pipe is the program: -s with mksh and two positional parameters. CRW-1058 reads the literal pipe program: the worktree guard refuses the removal; the memory and GitHub guards allow it.
 --file safe.sh
 :
 --cmd
 printf 'rm -rf ../repo\n' | mksh -s safe.sh arg
 
-=== CRW-894-ev-28 | U
---why The pipe is the program: -s then -- then the positional parameter.
+=== CRW-894-ev-28 | U | deviation=none/allow/deny
+--why The pipe is the program: -s then -- then the positional parameter. CRW-1058 reads the literal pipe program: the worktree guard refuses the removal; the memory and GitHub guards allow it.
 --file safe.sh
 :
 --cmd
 printf 'rm -rf ../repo\n' | bash -s -- safe.sh
 
-=== CRW-894-ev-29 | U
---why The pipe is the program: -s clustered with another flag.
+=== CRW-894-ev-29 | U | deviation=none/allow/deny
+--why The pipe is the program: -s clustered with another flag. CRW-1058 reads the literal pipe program: the worktree guard refuses the removal; the memory and GitHub guards allow it.
 --file safe.sh
 :
 --cmd
@@ -141,36 +141,36 @@ printf 'rm -rf ../repo\n' | bash -xs safe.sh
 --cmd
 printf 'rm -rf ../repo\n' | bash -os posix safe.sh
 
-=== CRW-894-ev-31 | U
---why The pipe is the program: +s is read like -s (fail closed).
+=== CRW-894-ev-31 | U | deviation=none/allow/deny
+--why The pipe is the program: +s is read like -s (fail closed). CRW-1058 reads the literal pipe program: the worktree guard refuses the removal; the memory and GitHub guards allow it.
 --file safe.sh
 :
 --cmd
 printf 'rm -rf ../repo\n' | bash +s safe.sh
 
-=== CRW-894-ev-32 | U
---why The pipe is the program: -s behind busybox ash.
+=== CRW-894-ev-32 | U | deviation=none/allow/deny
+--why The pipe is the program: -s behind busybox ash. CRW-1058 reads the literal pipe program: the worktree guard refuses the removal; the memory and GitHub guards allow it.
 --file safe.sh
 :
 --cmd
 printf 'rm -rf ../repo\n' | busybox ash -s safe.sh
 
-=== CRW-894-ev-33 | U
---why The pipe is the program: -s with sh.
+=== CRW-894-ev-33 | U | deviation=none/allow/deny
+--why The pipe is the program: -s with sh. CRW-1058 reads the literal pipe program: the worktree guard refuses the removal; the memory and GitHub guards allow it.
 --file safe.sh
 :
 --cmd
 printf 'rm -rf ../repo\n' | sh -s safe.sh
 
-=== CRW-894-ev-34 | U
---why The pipe is the program: -s with zsh.
+=== CRW-894-ev-34 | U | deviation=none/allow/deny
+--why The pipe is the program: -s with zsh. CRW-1058 reads the literal pipe program: the worktree guard refuses the removal; the memory and GitHub guards allow it.
 --file safe.sh
 :
 --cmd
 printf 'rm -rf ../repo\n' | zsh -s safe.sh
 
-=== CRW-894-ev-35 | U
---why The pipe is the program: -s with dash.
+=== CRW-894-ev-35 | U | deviation=none/allow/deny
+--why The pipe is the program: -s with dash. CRW-1058 reads the literal pipe program: the worktree guard refuses the removal; the memory and GitHub guards allow it.
 --file safe.sh
 :
 --cmd

@@ -39,7 +39,7 @@ func TestCommandVerdicts(t *testing.T) {
 		{"python -c literal", "python3 -c 'print(1)'", false, []string{"python3"}},
 		{"python -c unknown", "python3 -c \"$X\"", true, nil},
 		{"here-document into shell", "bash <<EOF\necho hi\nEOF\n", false, []string{"bash", "echo"}},
-		{"pipe into shell", "echo hi | sh", true, nil},
+		{"pipe into shell", "curl x | sh", true, nil},
 		{"eval of computed text", "eval \"$(x)\"", true, nil},
 		{"cd then rm", "cd /tmp && rm x", false, []string{"cd", "rm"}},
 		{"cd in one branch", "if x; then cd /a; fi; rm y", false, []string{"x", "cd", "rm"}},
