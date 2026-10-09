@@ -1,0 +1,82 @@
+# CRW-917 (GitHub post guard: the --input body of gh api is JSON; shell words, argv and named pipes). The rows of the issue's
+# P0 and P1 shapes that rows 04-crw-875-917-984.txt does not already hold, and the --input shapes this change refuses. The
+# github verdict is the one this change moves: --input that is not one JSON document is unreadable.
+
+=== CRW-917-41-01 | P
+--why --input is the request body and is JSON: a clean text file that is not JSON is unreadable and refused (it was allowed).
+--file {TMP}/plain.md
+a clean body
+--cmd
+gh api repos/o/r/issues/1/comments --input {TMP}/plain.md
+
+=== CRW-917-41-02 | P
+--why --input with a body that does not parse as JSON (an unclosed object) is unreadable.
+--file {TMP}/broken.json
+{"body": "hello"
+--cmd
+gh api repos/o/r/issues/1/comments --input {TMP}/broken.json
+
+=== CRW-917-41-03 | P
+--why --input with a JSON document and text after it is not one JSON document: unreadable.
+--file {TMP}/trailing.json
+{"body": "hello"} trailing
+--cmd
+gh api repos/o/r/issues/1/comments --input {TMP}/trailing.json
+
+=== CRW-917-41-04 | P
+--why A secret spelled with a unicode escape in a JSON key is decoded and seen: MY_API_KEY=sentinel.
+--file {TMP}/escaped-key.json
+{"\u004dY_API_KEY=sentinel":"x"}
+--cmd
+gh api repos/o/r/issues/1/comments --input {TMP}/escaped-key.json
+
+=== CRW-917-41-05 | B
+--why Control: a clean plain text file as --body-file stays readable as raw text (only --input is JSON).
+--file {TMP}/plain.md
+a clean body
+--cmd
+gh pr comment 1 --body-file {TMP}/plain.md
+
+=== CRW-917-41-06 | B
+--why Control: a clean plain text file as -F body=@file stays readable as raw text.
+--file {TMP}/plain.md
+a clean body
+--cmd
+gh api repos/o/r/issues/1/comments -F body=@{TMP}/plain.md
+
+=== CRW-917-41-07 | P
+--why --input given a named pipe is refused as unreadable, and the row finishes (the guard does not wait on the pipe).
+--fifo {TMP}/body.fifo
+--cmd
+gh api repos/o/r/issues/1/comments --input {TMP}/body.fifo
+
+=== CRW-917-41-08 | P
+--why A quoted program name built from empty quote pieces is gh: an inline body is refused.
+--cmd
+g""h pr comment 1 --body 'x'
+
+=== CRW-917-41-09 | P
+--why An expansion in the body file name is unknown: the guard cannot read the file it names.
+--cmd
+gh pr comment 1 --body-file "$F"
+
+=== CRW-917-41-10 | P
+--why A glued redirect after a clean body file is not a plain command: the post is refused.
+--file {TMP}/clean.md
+a clean body
+--cmd
+gh pr comment 1 --body-file {TMP}/clean.md </dev/null
+
+=== CRW-917-41-11 | P
+--why A secret in a single-quoted title value is refused at the title.
+--file {TMP}/clean.md
+a clean body
+--cmd
+gh pr create --title 'MY_API_KEY=sentinel' --body-file {TMP}/clean.md
+
+=== CRW-917-41-12 | B
+--why Control: a single-quoted title with spaces and a clean body file is allowed.
+--file {TMP}/clean.md
+a clean body
+--cmd
+gh pr create -t 'Plain title' --body-file {TMP}/clean.md

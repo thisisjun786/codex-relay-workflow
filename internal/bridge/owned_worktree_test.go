@@ -11,6 +11,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 func gitAt(t *testing.T, dir string, args ...string) string {
@@ -24,11 +25,7 @@ func gitAt(t *testing.T, dir string, args ...string) string {
 
 func worktreeInput(t *testing.T) CreateWorktree {
 	t.Helper()
-	root, err := os.MkdirTemp("", "crw-bridge-owned-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	root := testsupport.MkdirTempOutsideRepositories(t, "crw-bridge-owned-")
 	source := filepath.Join(root, "source")
 	if err := os.Mkdir(source, 0700); err != nil {
 		t.Fatal(err)

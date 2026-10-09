@@ -236,7 +236,7 @@ func shellIRInPlaceFiles(args []shellir.Word) []string {
 func shellIRVerbDests(e shellir.Exec) []string {
 	args := e.Args
 	if shellIRRunTimeCarrier(e.Ctx.Carrier) && shellIRWriterVerb(filepath.Base(e.Name)) {
-		// xargs, find -exec and parallel build the operands of this program at run time, so its destination is not in the text.
+		// xargs, find -exec and entr build the operands of this program at run time, so its destination is not in the text.
 		return []string{shellIRUnknownDest}
 	}
 	switch filepath.Base(e.Name) {
@@ -516,9 +516,10 @@ func ShellWriteDestinations(command string) []string {
 }
 
 // shellIRRunTimeCarrier names the carriers whose operands are made at run time: the program they run gets its operands
-// from the input or from the file list, not from the text (xargs, find -exec and -execdir and -ok, parallel).
+// from the input or from the file list, not from the text (xargs, find -exec and -execdir and -ok, entr). A parallel
+// template names its sources in the text, so its command lines are read like any other text.
 func shellIRRunTimeCarrier(carrier string) bool {
-	return carrier == "xargs" || carrier == "find" || carrier == "parallel" || carrier == "entr"
+	return carrier == "xargs" || carrier == "find" || carrier == "entr"
 }
 
 // shellIRWriterVerb names the programs whose destination shellIRVerbDests reads.

@@ -46,5 +46,6 @@ func queryRows[T any](ctx context.Context, s *Store, scan func(scanner) (T, erro
 
 // queryRow reads the one row query selects; sql.ErrNoRows when there is none.
 func queryRow[T any](ctx context.Context, s *Store, scan func(scanner) (T, error), query string, args ...any) (T, error) {
-	return scan(s.q(ctx).QueryRowContext(ctx, query, args...))
+	row, err := scan(s.q(ctx).QueryRowContext(ctx, query, args...))
+	return row, scanned(err)
 }

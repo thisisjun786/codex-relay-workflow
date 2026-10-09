@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 func runGit(t *testing.T, dir string, args ...string) string {
@@ -20,11 +22,7 @@ func runGit(t *testing.T, dir string, args ...string) string {
 }
 func repository(t *testing.T) (string, string, string) {
 	t.Helper()
-	root, err := os.MkdirTemp("", "crw-worktree-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	root := testsupport.MkdirTempOutsideRepositories(t, "crw-worktree-")
 	source := filepath.Join(root, "source")
 	if err := os.Mkdir(source, 0700); err != nil {
 		t.Fatal(err)

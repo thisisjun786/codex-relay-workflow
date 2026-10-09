@@ -191,9 +191,10 @@ func githubPostJudgeScript(e shellir.Exec, depth int, writes *githubPostWrites) 
 }
 
 // githubPostInlineNamesPost is whether an interpreter's program text names a gh post. The program may run
-// that post through a shell or a system call, so a text that names one is refused.
+// that post through a shell or a system call, so a text that names one is refused. The text is judged as the shell reads its
+// words: quotes and backslashes are deleted first, so a name built from quoted pieces (g""h) is the name it spells.
 func githubPostInlineNamesPost(src string) bool {
-	lower := strings.ToLower(src)
+	lower := strings.ToLower(strings.NewReplacer("\"", "", "'", "", "\\", "").Replace(src))
 	if !strings.Contains(lower, "gh") {
 		return false
 	}
@@ -495,8 +496,8 @@ func (w *githubPostWrites) reaches(p string) bool {
 // A body's writes happen when its script runs: they reach the executions after it (and the script itself, which a shell reads as it
 // runs: githubPostTextWrites.stale), not the ones that ran before (bash lint.sh; bash refresh.sh, where refresh.sh rewrites lint.sh, ran the lint.sh read here).
 // The text's own records are taken whole, wherever they sit. Where the text's order is not the order things run (githubPostInOrder:
-// a loop runs its body again, a pipe or a background job runs alongside, a function body runs where it is called, a carried text may
-// be run again), a body's writes reach every execution, and an execution there sees every body's writes.
+// a loop runs its body again, a pipe or a background job runs alongside, a function body runs where it is called, a carried text that is not a shell's -c
+// string may be run again, and two or more substitutions of one simple command are unordered), a body's writes reach every execution, and an execution there sees every body's writes.
 func githubPostWritesOf(execs []shellir.Exec, outer *githubPostWrites) *githubPostTextWrites {
 	t := &githubPostTextWrites{execs: execs, ordered: newGithubPostWrites(outer), bodies: make([]githubPostBody, len(execs))}
 	t.ordered.collect(execs, 0, map[string]*githubPostWrites{}, func(i int, key string, o *githubPostWrites) {
@@ -561,9 +562,10 @@ func (t *githubPostTextWrites) stale(i int, script string, dir shellir.Dir) bool
 }
 
 // githubPostInOrder is whether an execution runs once, where the text puts it, after the executions before it and before the
-// executions after it finish.
+// executions after it finish. A shell's -c string and a command substitution run once where the text puts them, so they are in order,
+// except that the substitutions of a simple command are unordered when there are two or more (Context.Unsequenced).
 func githubPostInOrder(c shellir.Context) bool {
-	return !c.Loop && !c.FuncBody && !c.Background && !c.Coprocess && !c.Pipeline && !c.CmdSubst && !c.ProcSubst && c.Carrier == ""
+	return !c.Loop && !c.FuncBody && !c.Background && !c.Coprocess && !c.Pipeline && !c.ProcSubst && !c.Repeat && !c.Unsequenced
 }
 
 // clone is a copy of these writes that later merges into either do not reach the other.

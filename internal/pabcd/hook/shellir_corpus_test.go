@@ -54,7 +54,7 @@ func shellCorpusRows() []shellCorpusRow {
 		{"CRW-894", "printf x | nohup cat", "A", "A"},
 		{"CRW-894", "bash -c 'echo hi'", "A", "A"},
 		{"CRW-894", "exec -a x true", "A", "A"},
-		{"CRW-894", "printf 'echo x > memories/a' | exec -a x bash", "U", "D"},
+		{"CRW-894", "printf 'echo x > memories/a' | exec -a x bash", "W", "A"},
 		{"CRW-894", "printf 'rm -rf ../repo' | bash 3</dev/fd/0 </dev/null <&3", "U", "D"},
 		{"CRW-894", "exec -a x >/dev/null rm -rf ../repo", "A", "A"},
 		{"CRW-894", "php -f script.php", "A", "A"},

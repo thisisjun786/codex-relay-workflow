@@ -192,6 +192,10 @@ func (sw *Sweeper) SweepReadings(ctx context.Context, product, project string, r
 		if e != nil {
 			return Batch{}, e
 		}
+		if managedPage.Halted {
+			// The marker is the halt: nothing after the readings is collected or recorded (CRW-945).
+			return Batch{}, store.HaltRefusal(store.HaltStateAt(sw.Store.Path))
+		}
 		managedReadingCursor = managedPage.Cursor
 		gaps = append(gaps, managedPage.Gaps...)
 		observations, readingGaps, _, _, e := sw.readingFaults(ctx, product, project, managedPage.Readings, 0)
@@ -276,7 +280,10 @@ func (sw *Sweeper) RecordAll(ctx context.Context, ledger *Ledger, batch Batch) (
 				answer.Gaps = append(answer.Gaps, map[string]any{"gap": "observation_refused", "faultClass": o.FaultClass, "reason": reason + ": " + strings.TrimPrefix(err.Error(), "transaction body: ")})
 				continue
 			}
-			return answer, err
+			// The ledger's record reads before it writes: a failure of the corrupting class keeps the site of the
+			// statement that met it (a read of its rows is the observation site), and one that carries none is met
+			// by the record's write (CRW-945).
+			return answer, store.MarkSite(store.HaltSiteWrite, err)
 		}
 		answer.Read++
 		row, e := sw.Store.One(ctx, "SELECT state,cycle,severity,occurrence_count,suppression FROM fault_ledger WHERE fault_id=?", id)
@@ -302,7 +309,7 @@ func (sw *Sweeper) RecordAll(ctx context.Context, ledger *Ledger, batch Batch) (
 		}
 	}
 	if err := sw.writeCursors(ctx, batch.positions, batch.stored); err != nil {
-		return answer, err
+		return answer, store.MarkSite(store.HaltSiteWrite, err)
 	}
 	return answer, nil
 }

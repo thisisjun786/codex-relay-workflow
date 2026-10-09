@@ -9,8 +9,8 @@ import (
 )
 
 // CRW-894 after the evaluation of 1688f7c5: the facts the reader's rules rest on, run under the real programs. Each case runs a
-// command text that prints a marker when the piped program runs, and checks that it does: the reader must refuse the text
-// (rows/19-crw-894-eval-1688f7c5.txt) because the program that runs is the pipe, not the file or the redirection the text names.
+// command text that prints a marker when the piped program runs, and checks that it does. CRW-1058 reads the literal pipe
+// program for -s; the unmodelled alias spellings, option clusters and MULTIOS redirections remain refused.
 func TestPipedProgramRunsUnderRealPrograms(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "safe.sh"), []byte(":\n"), 0o644); err != nil {
@@ -72,9 +72,13 @@ func TestPipedProgramRunsUnderRealPrograms(t *testing.T) {
 			if !strings.Contains(string(out), marker) {
 				t.Fatalf("the piped program did not run under %s: %q (output %q)", c.runner, c.cmd, out)
 			}
-			// and the reader refuses the same text through the three gates
-			if got := reproGotText(t, c.cmd); got != reproClasses["U"] {
-				t.Errorf("memory/github/worktree = %v, want every gate to refuse a program it cannot read: %q", got, c.cmd)
+			want := reproClasses["U"]
+			switch c.name {
+			case "bash -s file", "bash -xs file", "dash -s file", "busybox ash -s file":
+				want = reproClasses["B"] // the literal program only prints the marker
+			}
+			if got := reproGotText(t, c.cmd); got != want {
+				t.Errorf("memory/github/worktree = %v, want %v: %q", got, want, c.cmd)
 			}
 		})
 	}

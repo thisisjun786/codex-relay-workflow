@@ -38,6 +38,9 @@ func TestXargsFedRemovalIsRefused(t *testing.T) {
 		"echo ../repo,x | xargs -d, git worktree remove -f",
 		"echo ../repo | xargs git worktree remove -f",
 		"echo ../repo | xargs mv -t /tmp/gone",
+		// parallel's shell text keeps the run-time move rule even when its sources are literal.
+		"parallel mv '{}' archive/ ::: build.log",
+		"parallel bash -c 'mv build.log archive/' ::: x",
 	)
 	r.allowed(t,
 		"echo x | xargs wc -l",

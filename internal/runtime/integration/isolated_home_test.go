@@ -456,7 +456,7 @@ func copyTree(t *testing.T, from, to string) {
 			if err != nil {
 				return err
 			}
-			return os.WriteFile(target, raw, info.Mode().Perm())
+			return testsupport.WriteProgram(target, raw, info.Mode().Perm())
 		}
 		return fmt.Errorf("%s is neither a file, a directory nor a link", path)
 	})

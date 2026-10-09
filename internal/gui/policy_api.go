@@ -232,9 +232,18 @@ func policyWriteHandler(_ *Env, r *http.Request) (Response, error) {
 			Error: "recovery_needed", FileDigest: result.FileDigest, RegisteredDigest: result.RegisteredDigest,
 			Backup: pathText(result.Backup), Kept: pathText(result.Kept),
 			Recovery: messageText(result.Recovery), Errors: textList(emptyIfNil(result.Errors))}}, nil
+	case policystore.WriteNotApplied:
+		// The file moved under the write and the wiring record names the very document that is on
+		// disk, so there is nothing to repair: the change was not applied, and the body says what the
+		// document is. It is a conflict like a stale digest, and it carries no recovery advice.
+		return Response{Status: http.StatusConflict, Body: policyWriteErrorBody{
+			Error: "not_applied", Reason: messageText(firstReason(result.Errors)), CurrentDigest: result.CurrentDigest,
+			FileDigest: result.FileDigest, RegisteredDigest: result.RegisteredDigest,
+			Backup: pathText(result.Backup), Warnings: textList(result.Warnings)}}, nil
 	case policystore.WriteCancelled:
 		return Response{Status: http.StatusInternalServerError, Body: policyWriteErrorBody{
-			Error: "cancelled", Step: result.Step, Backup: pathText(result.Backup), FileDigest: result.FileDigest}}, nil
+			Error: "cancelled", Reason: messageText(firstReason(result.Errors)), Step: result.Step,
+			Backup: pathText(result.Backup), FileDigest: result.FileDigest}}, nil
 	case policystore.WriteFailed:
 		return Response{Status: http.StatusInternalServerError, Body: policyWriteErrorBody{
 			Error: "failed", Reason: messageText(firstReason(result.Errors))}}, nil

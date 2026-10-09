@@ -8,12 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 	"golang.org/x/sys/unix"
 )
 
@@ -240,7 +240,7 @@ func pumpNewState() pumpState {
 // cannot be decoded is reported, so a round never continues on a state it misread.
 func pumpLoadState(cfg *Config) (pumpState, error) {
 	st := pumpNewState()
-	raw, err := os.ReadFile(filepath.Join(cfg.StateDir, pumpStateFile))
+	raw, err := os.ReadFile(crwconfig.JoinRoot(cfg.StateDir, pumpStateFile))
 	if err != nil {
 		if os.IsNotExist(err) {
 			return st, nil
@@ -353,7 +353,7 @@ func (st pumpState) pumpSave(cfg *Config) error {
 	if err != nil {
 		return fmt.Errorf("crw manage pump: encode the state: %w", err)
 	}
-	path := filepath.Join(cfg.StateDir, pumpStateFile)
+	path := crwconfig.JoinRoot(cfg.StateDir, pumpStateFile)
 	if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSymlink != 0 {
 		return errors.New("crw manage pump: the state file is a symlink; refusing to write through it")
 	}
@@ -369,7 +369,7 @@ func pumpLock(cfg *Config) (func(), error) {
 	if err := os.MkdirAll(cfg.StateDir, 0o700); err != nil {
 		return nil, fmt.Errorf("crw manage pump: the state directory: %w", err)
 	}
-	file, err := os.OpenFile(filepath.Join(cfg.StateDir, pumpLockFile), os.O_CREATE|os.O_RDWR, 0o600)
+	file, err := os.OpenFile(crwconfig.JoinRoot(cfg.StateDir, pumpLockFile), os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("crw manage pump: the lock: %w", err)
 	}
@@ -681,7 +681,7 @@ func pumpLog(cfg *Config, message string) {
 		return
 	}
 	line := time.Now().UTC().Format(time.RFC3339) + " " + message + "\n"
-	file, err := os.OpenFile(filepath.Join(cfg.StateDir, pumpLogFile), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	file, err := os.OpenFile(crwconfig.JoinRoot(cfg.StateDir, pumpLogFile), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		return
 	}

@@ -348,10 +348,15 @@ type businessResendUnloadApp struct {
 	archiveLostReply bool
 	archivedListing  string
 	onArchivedList   func()
-	archived         map[string]bool
-	listingCalls     int
-	archiveCalls     []string
-	unarchiveCalls   []string
+	// onArchive runs when thread/archive is called, before it answers.
+	onArchive func()
+	// onRead runs on each thread/read and may fail it; the unload's last read before the archive
+	// is the one a cancellation test aims at.
+	onRead         func() error
+	archived       map[string]bool
+	listingCalls   int
+	archiveCalls   []string
+	unarchiveCalls []string
 }
 
 func (a *businessResendUnloadApp) markArchived(id string, archived bool) {
@@ -388,12 +393,21 @@ func (a *businessResendUnloadApp) archivedPage() (map[string]any, error) {
 func (a *businessResendUnloadApp) HostCall(ctx context.Context, method string, params map[string]any) (map[string]any, error) {
 	id := pyjson.Text(params["threadId"])
 	switch method {
+	case "thread/read":
+		if a.onRead != nil {
+			if err := a.onRead(); err != nil {
+				return nil, err
+			}
+		}
 	case "thread/list":
 		if params["archived"] == true {
 			return a.archivedPage()
 		}
 	case "thread/archive":
 		a.archiveCalls = append(a.archiveCalls, id)
+		if a.onArchive != nil {
+			a.onArchive()
+		}
 		if a.archiveLostReply {
 			a.markArchived(id, true)
 			if !a.stayLoaded {
@@ -422,10 +436,12 @@ func (a *businessResendUnloadApp) HostCall(ctx context.Context, method string, p
 	return a.Adapter.HostCall(ctx, method, params)
 }
 
-func businessResendJournalCount(t *testing.T, k *reconcileKit, kind string) int {
+// businessResendLoweringRows counts the lowerings an unload recorded: the closing rows that name an
+// archive. The begin marks and the rows that say nothing was archived are not lowerings.
+func businessResendLoweringRows(t *testing.T, k *reconcileKit) int {
 	t.Helper()
 	var n int
-	if err := k.start.Store.DB.QueryRow("SELECT COUNT(*) FROM journal WHERE kind=?", kind).Scan(&n); err != nil {
+	if err := k.start.Store.DB.QueryRow(`SELECT COUNT(*) FROM journal WHERE kind='managed_resend_unloaded' AND detail LIKE '%"phase":"end"%' AND detail NOT LIKE '%"archive":"none"%'`).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
 	return n
@@ -448,7 +464,7 @@ func TestBusinessResendUnloadsIdleStandbyOnlyChild(t *testing.T) {
 	if !reflect.DeepEqual(k.host.threads["t-1"].turns, []string{"standby", "business"}) {
 		t.Fatalf("business turn count: %v", k.host.threads["t-1"].turns)
 	}
-	if n := businessResendJournalCount(t, k, "managed_resend_unloaded"); n != 1 {
+	if n := businessResendLoweringRows(t, k); n != 1 {
 		t.Fatalf("unload journal rows: %d", n)
 	}
 }
@@ -483,7 +499,7 @@ func TestBusinessResendUnloadOnlyForIdleSettingsMismatch(t *testing.T) {
 			if len(app.archiveCalls) != 0 || len(app.unarchiveCalls) != 0 || k.host.sent != 0 || len(k.host.sends) != 0 {
 				t.Fatalf("held case touched the thread: %v %v sent=%d", app.archiveCalls, app.unarchiveCalls, k.host.sent)
 			}
-			if n := businessResendJournalCount(t, k, "managed_resend_unloaded"); n != 0 {
+			if n := businessResendLoweringRows(t, k); n != 0 {
 				t.Fatalf("held case wrote %d unload rows", n)
 			}
 		})
@@ -503,7 +519,7 @@ func TestBusinessResendUnloadArchiveErrorHolds(t *testing.T) {
 	if len(app.unarchiveCalls) != 0 || k.host.sent != 0 || len(k.host.sends) != 0 {
 		t.Fatalf("archive failure unarchived or sent: %v sent=%d", app.unarchiveCalls, k.host.sent)
 	}
-	if n := businessResendJournalCount(t, k, "managed_resend_unloaded"); n != 0 {
+	if n := businessResendLoweringRows(t, k); n != 0 {
 		t.Fatalf("archive failure wrote %d unload rows", n)
 	}
 }
@@ -520,13 +536,13 @@ func TestBusinessResendUnloadUnarchiveErrorHolds(t *testing.T) {
 		t.Fatalf("unarchive retry/withhold: archive=%v unarchive=%v sent=%d", app.archiveCalls, app.unarchiveCalls, k.host.sent)
 	}
 	var detail string
-	if err := k.start.Store.DB.QueryRow("SELECT detail FROM journal WHERE kind='managed_resend_unloaded'").Scan(&detail); err != nil {
+	if err := k.start.Store.DB.QueryRow("SELECT detail FROM journal WHERE kind='managed_resend_unloaded' ORDER BY seq DESC LIMIT 1").Scan(&detail); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(detail, "t-1") || !strings.Contains(detail, "thread/unarchive t-1") {
 		t.Fatalf("unarchive failure detail: %s", detail)
 	}
-	if n := businessResendJournalCount(t, k, "managed_resend_unloaded"); n != 1 {
+	if n := businessResendLoweringRows(t, k); n != 1 {
 		t.Fatalf("unload journal rows: %d", n)
 	}
 }
@@ -547,7 +563,7 @@ func TestBusinessResendUnloadStillLoadedHolds(t *testing.T) {
 	if !reflect.DeepEqual(app.archiveCalls, []string{"t-1"}) || !reflect.DeepEqual(app.unarchiveCalls, []string{"t-1"}) {
 		t.Fatalf("replay lowered the child again: %v %v", app.archiveCalls, app.unarchiveCalls)
 	}
-	if n := businessResendJournalCount(t, k, "managed_resend_unloaded"); n != 1 {
+	if n := businessResendLoweringRows(t, k); n != 1 {
 		t.Fatalf("unload journal rows: %d", n)
 	}
 }
@@ -586,7 +602,7 @@ func TestBusinessResendUnloadRecordsArchivedChildWhenCancelled(t *testing.T) {
 		t.Fatalf("archive/unarchive calls: %v %v", app.archiveCalls, app.unarchiveCalls)
 	}
 	var detail string
-	if err := k.start.Store.DB.QueryRow("SELECT detail FROM journal WHERE kind='managed_resend_unloaded'").Scan(&detail); err != nil {
+	if err := k.start.Store.DB.QueryRow("SELECT detail FROM journal WHERE kind='managed_resend_unloaded' ORDER BY seq DESC LIMIT 1").Scan(&detail); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(detail, "t-1") || !strings.Contains(detail, "thread/unarchive t-1") {
@@ -598,7 +614,7 @@ func TestBusinessResendUnloadRecordsArchivedChildWhenCancelled(t *testing.T) {
 func businessResendUnloadDetail(t *testing.T, k *reconcileKit) string {
 	t.Helper()
 	var detail string
-	if err := k.start.Store.DB.QueryRow("SELECT detail FROM journal WHERE kind='managed_resend_unloaded'").Scan(&detail); err != nil {
+	if err := k.start.Store.DB.QueryRow("SELECT detail FROM journal WHERE kind='managed_resend_unloaded' ORDER BY seq DESC LIMIT 1").Scan(&detail); err != nil {
 		t.Fatal(err)
 	}
 	return detail
@@ -622,7 +638,7 @@ func TestBusinessResendUnloadRecoversLostArchiveReply(t *testing.T) {
 	if !reflect.DeepEqual(k.host.threads["t-1"].turns, []string{"standby", "business"}) {
 		t.Fatalf("business turn count: %v", k.host.threads["t-1"].turns)
 	}
-	if n := businessResendJournalCount(t, k, "managed_resend_unloaded"); n != 1 {
+	if n := businessResendLoweringRows(t, k); n != 1 {
 		t.Fatalf("unload journal rows: %d", n)
 	}
 	detail := businessResendUnloadDetail(t, k)
@@ -647,22 +663,24 @@ func TestBusinessResendUnloadLostArchiveReplyIsBoundedPerAttempt(t *testing.T) {
 	if k.host.sent != 0 || k.host.operations[businessResendID("managed-1", business, 1)] != nil {
 		t.Fatal("still loaded child was resent")
 	}
-	if n := businessResendJournalCount(t, k, "managed_resend_unloaded"); n != 1 {
+	if n := businessResendLoweringRows(t, k); n != 1 {
 		t.Fatalf("unload journal rows: %d", n)
 	}
 }
 
-// An archive error the host does not confirm as applied keeps today's answer: the child is not in
-// the archived listing, the listing is incomplete, or the listing read fails, and in every case
-// there is no unarchive, no row and no send.
+// An archive error the host does not confirm as applied answers recipient_not_idle with no
+// unarchive and no send. A complete listing that does not hold the child shows the archive did not
+// apply, so the attempt stays available; an incomplete listing or a failed read leaves it unknown,
+// so the closing row keeps the attempt spent (TestBusinessResendUnloadAppliedButUnconfirmedArchiveStaysSpent).
 func TestBusinessResendUnloadLostArchiveReplyUnconfirmedHolds(t *testing.T) {
 	for _, c := range []struct {
 		name            string
 		archivedListing string
+		archives        int
 	}{
-		{"not-archived", ""},
-		{"listing-incomplete", "incomplete"},
-		{"listing-error", "error"},
+		{"not-archived", "", 2},
+		{"listing-incomplete", "incomplete", 1},
+		{"listing-error", "error", 1},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			k, _, _ := businessResendKit(t)
@@ -675,10 +693,103 @@ func TestBusinessResendUnloadLostArchiveReplyUnconfirmedHolds(t *testing.T) {
 			if len(app.unarchiveCalls) != 0 || k.host.sent != 0 || len(k.host.sends) != 0 {
 				t.Fatalf("unconfirmed lost reply unarchived or sent: %v sent=%d", app.unarchiveCalls, k.host.sent)
 			}
-			if n := businessResendJournalCount(t, k, "managed_resend_unloaded"); n != 0 {
+			if len(app.archiveCalls) != c.archives {
+				t.Fatalf("archive calls over two runs: %v, want %d", app.archiveCalls, c.archives)
+			}
+			if n := businessResendLoweringRows(t, k); n != 2-c.archives {
 				t.Fatalf("unconfirmed lost reply wrote %d unload rows", n)
 			}
 		})
+	}
+}
+
+// An archive that applied and whose reply was lost, with an archived listing that then fails or
+// is incomplete, may have archived the child. The attempt stays spent: the closing row says the
+// archive is unknown, and a replay after an operator brought the child back never archives again.
+func TestBusinessResendUnloadAppliedButUnconfirmedArchiveStaysSpent(t *testing.T) {
+	for _, listing := range []string{"error", "incomplete"} {
+		t.Run(listing, func(t *testing.T) {
+			k, business, _ := businessResendKit(t)
+			app := &businessResendUnloadApp{Adapter: k.start.Adapter, host: k.host, archiveLostReply: true, archivedListing: listing}
+			k.start.Adapter = app
+			k.host.threads["t-1"].status = "idle"
+			k.expect(k.run(), "incomplete", "recipient_not_idle", "")
+			if detail := businessResendUnloadDetail(t, k); !strings.Contains(detail, `"archive":"unknown"`) || !strings.Contains(detail, `"reason":"archive_unconfirmed"`) {
+				t.Fatalf("unconfirmed archive closing row: %s", detail)
+			}
+			// An operator unarchives the child, which comes back idle under the same attempt.
+			app.markArchived("t-1", false)
+			k.host.threads["t-1"].status = "idle"
+			k.expect(k.run(), "incomplete", "recipient_not_idle", "")
+			if !reflect.DeepEqual(app.archiveCalls, []string{"t-1"}) || len(app.unarchiveCalls) != 0 || k.host.sent != 0 || k.host.operations[businessResendID("managed-1", business, 1)] != nil {
+				t.Fatalf("replay archived or sent again: archive=%v unarchive=%v sent=%d", app.archiveCalls, app.unarchiveCalls, k.host.sent)
+			}
+		})
+	}
+}
+
+// The archive check after an unanswered archive rests on the archived listing alone: a complete
+// listing that does not hold the child shows this call archived nothing, so a thread/read or
+// thread/goal/get failure after it does not make the archive unknown. The begin mark closes as
+// archive "none" and, once the host recovers, the same attempt still reaches its one archive.
+func TestBusinessResendUnloadCompleteArchivedMissIgnoresLaterReadFailure(t *testing.T) {
+	for _, method := range []string{"thread/read", "thread/goal/get"} {
+		t.Run(method, func(t *testing.T) {
+			k, _, _ := businessResendKit(t)
+			app := &businessResendUnloadApp{Adapter: k.host, host: k.host, archiveErr: errors.New("thread/archive: transport failure before applying")}
+			k.host.threads["t-1"].status = "idle"
+			app.onArchivedList = func() { k.host.failures[method+"|t-1"] = errors.New(method + ": temporary transport failure") }
+			k.start.Adapter = app
+			r := businessResendUnloadRun(k)
+			if code, err := r.businessResendUnload(t.Context()); code != "recipient_not_idle" || err != nil {
+				t.Fatalf("unanswered archive: %q %v", code, err)
+			}
+			if detail := businessResendUnloadDetail(t, k); !strings.Contains(detail, `"archive":"none"`) || !strings.Contains(detail, `"reason":"archive_unconfirmed"`) {
+				t.Fatalf("complete archived miss closing row: %s", detail)
+			}
+			delete(k.host.failures, method+"|t-1")
+			app.onArchivedList = nil
+			app.archiveErr = nil
+			if code, err := r.businessResendUnload(t.Context()); code != "" || err != nil {
+				t.Fatalf("recovered host: %q %v", code, err)
+			}
+			if !reflect.DeepEqual(app.archiveCalls, []string{"t-1", "t-1"}) {
+				t.Fatalf("archive calls: %v, want the recovered attempt to archive", app.archiveCalls)
+			}
+		})
+	}
+}
+
+// The unload's last state read before the archive can be cancelled. Nothing was archived, so the
+// begin mark is closed with a row that says so and the cancelled call does not spend the attempt:
+// a rerun under a live context reaches the archive.
+func TestBusinessResendUnloadCancelledLastReadDoesNotSpendTheAttempt(t *testing.T) {
+	k, _, _ := businessResendKit(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	app := &businessResendUnloadApp{Adapter: k.host, host: k.host}
+	app.onRead = func() error {
+		cancel()
+		return ctx.Err()
+	}
+	k.host.threads["t-1"].status = "idle"
+	k.start.Adapter = app
+	r := &startRun{m: k.start, task: "t-1", standby: "standby", businessAttempt: 1, resendFailure: businessResendLegacyReceipt("t-1"), identity: Identity{RequestID: "managed-1"}, ledger: k.host.ledger}
+	if code, err := r.businessResendUnload(ctx); code != "" || !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled last read: %q %v", code, err)
+	}
+	if len(app.archiveCalls) != 0 {
+		t.Fatalf("cancelled read archived: %v", app.archiveCalls)
+	}
+	if detail := businessResendUnloadDetail(t, k); !strings.Contains(detail, `"archive":"none"`) || !strings.Contains(detail, `"phase":"end"`) {
+		t.Fatalf("cancelled read closing row: %s", detail)
+	}
+	app.onRead = nil
+	if _, err := r.businessResendUnload(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(app.archiveCalls, []string{"t-1"}) {
+		t.Fatalf("rerun archive calls: %v", app.archiveCalls)
 	}
 }
 
@@ -697,7 +808,7 @@ func TestBusinessResendUnloadLostArchiveReplyUnarchiveErrorHolds(t *testing.T) {
 	if !strings.Contains(detail, `"archive":"reply_lost"`) || !strings.Contains(detail, "thread/unarchive t-1") {
 		t.Fatalf("lost reply unarchive failure detail: %s", detail)
 	}
-	if n := businessResendJournalCount(t, k, "managed_resend_unloaded"); n != 1 {
+	if n := businessResendLoweringRows(t, k); n != 1 {
 		t.Fatalf("unload journal rows: %d", n)
 	}
 }
@@ -719,7 +830,7 @@ func TestBusinessResendUnloadLostArchiveReplyCancelledDuringCheck(t *testing.T) 
 	if len(app.unarchiveCalls) != 0 {
 		t.Fatalf("cancelled check unarchived: %v", app.unarchiveCalls)
 	}
-	if n := businessResendJournalCount(t, k, "managed_resend_unloaded"); n != 0 {
+	if n := businessResendLoweringRows(t, k); n != 0 {
 		t.Fatalf("cancelled check wrote %d unload rows", n)
 	}
 }
@@ -743,7 +854,7 @@ func TestBusinessResendUnloadHostRefusedArchiveHolds(t *testing.T) {
 	if app.listingCalls != 0 {
 		t.Fatalf("host-refused archive asked the archived listing %d times", app.listingCalls)
 	}
-	if n := businessResendJournalCount(t, k, "managed_resend_unloaded"); n != 0 {
+	if n := businessResendLoweringRows(t, k); n != 0 {
 		t.Fatalf("host-refused archive wrote %d unload rows", n)
 	}
 }
@@ -765,7 +876,63 @@ func TestBusinessResendUnloadNeverArchivesNonStandbyHistory(t *testing.T) {
 	if len(app.archiveCalls) != 0 || len(app.unarchiveCalls) != 0 || k.host.sent != 0 {
 		t.Fatalf("non-standby history reached the archive: %v %v sent=%d", app.archiveCalls, app.unarchiveCalls, k.host.sent)
 	}
-	if n := businessResendJournalCount(t, k, "managed_resend_unloaded"); n != 0 {
+	if n := businessResendLoweringRows(t, k); n != 0 {
 		t.Fatalf("non-standby history wrote %d unload rows", n)
+	}
+}
+
+// A host refusal of the archive that arrives together with a cancellation is still a confirmed
+// refusal: nothing was archived, so the begin mark is closed with archive "none" before the
+// context error is returned, and a rerun under a live context reaches the archive.
+func TestBusinessResendUnloadRefusedArchiveWithCancellationDoesNotSpendTheAttempt(t *testing.T) {
+	k, _, _ := businessResendKit(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	app := &businessResendUnloadApp{Adapter: k.host, host: k.host, archiveErr: &appserver.RPCError{Method: "thread/archive", Code: -32603, Message: "no rollout found"}}
+	app.onArchive = cancel
+	k.host.threads["t-1"].status = "idle"
+	k.start.Adapter = app
+	r := &startRun{m: k.start, task: "t-1", standby: "standby", businessAttempt: 1, resendFailure: businessResendLegacyReceipt("t-1"), identity: Identity{RequestID: "managed-1"}, ledger: k.host.ledger}
+	if code, err := r.businessResendUnload(ctx); code != "" || !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled refused archive: %q %v", code, err)
+	}
+	if detail := businessResendUnloadDetail(t, k); !strings.Contains(detail, `"archive":"none"`) || !strings.Contains(detail, `"phase":"end"`) {
+		t.Fatalf("cancelled refused archive closing row: %s", detail)
+	}
+	app.onArchive = nil
+	app.archiveErr = nil
+	if _, err := r.businessResendUnload(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(app.archiveCalls, []string{"t-1", "t-1"}) {
+		t.Fatalf("rerun archive calls: %v", app.archiveCalls)
+	}
+}
+
+// An archive with no host answer followed by a complete archived listing that does not hold the
+// child shows the archive did not apply. A cancellation that lands after that listing returns
+// keeps the context error, and the begin mark still closes with archive "none".
+func TestBusinessResendUnloadCompleteMissWithCancellationDoesNotSpendTheAttempt(t *testing.T) {
+	k, _, _ := businessResendKit(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	app := &businessResendUnloadApp{Adapter: k.host, host: k.host, archiveErr: errors.New("thread/archive: connection closed")}
+	app.onArchivedList = cancel
+	k.host.threads["t-1"].status = "idle"
+	k.start.Adapter = app
+	r := &startRun{m: k.start, task: "t-1", standby: "standby", businessAttempt: 1, resendFailure: businessResendLegacyReceipt("t-1"), identity: Identity{RequestID: "managed-1"}, ledger: k.host.ledger}
+	if code, err := r.businessResendUnload(ctx); code != "" || !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled complete miss: %q %v", code, err)
+	}
+	if detail := businessResendUnloadDetail(t, k); !strings.Contains(detail, `"archive":"none"`) || !strings.Contains(detail, `"phase":"end"`) {
+		t.Fatalf("cancelled complete miss closing row: %s", detail)
+	}
+	app.onArchivedList = nil
+	app.archiveErr = nil
+	if _, err := r.businessResendUnload(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(app.archiveCalls, []string{"t-1", "t-1"}) {
+		t.Fatalf("rerun archive calls: %v", app.archiveCalls)
 	}
 }

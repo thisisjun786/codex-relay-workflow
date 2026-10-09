@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 	"os"
 	"path/filepath"
 	"sort"
@@ -72,7 +73,7 @@ type auditRoundStatus struct {
 
 // auditRoundDir is where the round files live, below the audit state directory.
 func auditRoundDir(e *Env, cfg *Config) string {
-	return filepath.Join(auditStateDir(e, cfg), "audit", "rounds")
+	return crwconfig.JoinRoot(auditStateDir(e, cfg), "audit", "rounds")
 }
 
 // auditRoundName accepts a round name that is a plain file name, so a name can never make
@@ -92,7 +93,7 @@ func auditRoundPath(e *Env, cfg *Config, name string) (string, error) {
 	if err := auditRoundName(name); err != nil {
 		return "", err
 	}
-	return filepath.Join(auditRoundDir(e, cfg), name+".json"), nil
+	return crwconfig.JoinRoot(auditRoundDir(e, cfg), name+".json"), nil
 }
 
 // auditRoundLock takes the round's lock for the whole read-modify-write of one round, so
@@ -100,7 +101,7 @@ func auditRoundPath(e *Env, cfg *Config, name string) (string, error) {
 // refused by name rather than waiting. The lock file itself is never removed, because
 // another process may hold it.
 func auditRoundLock(path string) (func(), error) {
-	dir := filepath.Dir(path)
+	dir := rootDir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
@@ -161,7 +162,7 @@ func auditRoundSave(path string, doc *auditRoundFile) error {
 		return err
 	}
 	data = append(data, '\n')
-	dir := filepath.Dir(path)
+	dir := rootDir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}

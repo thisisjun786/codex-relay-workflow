@@ -169,24 +169,24 @@ func branchReadPlan(ctx context.Context, q store.Querier, plan string) ([]branch
 }
 
 // branchReadReleased reads the nodes the relay released or executed. A bundle that holds one of them
-// cannot be taken out, so it is not a candidate.
+// cannot be taken out, so it is not a candidate. A release owns its node only while it is open: a
+// release that dag-release-close closed does not (CRW-1048), and the open ones are the scheduler's
+// own reading (dagsched.OpenReleaseNodes), not a query of this file's.
 func branchReadReleased(ctx context.Context, q store.Querier, plan string) (map[string]bool, error) {
-	out := map[string]bool{}
-	for _, query := range []string{
-		"SELECT node_id FROM dag_releases WHERE plan_id = ?",
-		"SELECT node_id FROM dag_node_executions WHERE plan_id = ?",
-	} {
-		rows, err := dagReviewRows(ctx, q, query, []any{plan}, func(rows *sql.Rows) (string, error) {
-			var id string
-			err := rows.Scan(&id)
-			return id, err
-		})
-		if err != nil {
-			return nil, err
-		}
-		for _, id := range rows {
-			out[id] = true
-		}
+	out, err := dagsched.OpenReleaseNodes(ctx, q, plan)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := dagReviewRows(ctx, q, "SELECT node_id FROM dag_node_executions WHERE plan_id = ?", []any{plan}, func(rows *sql.Rows) (string, error) {
+		var id string
+		err := rows.Scan(&id)
+		return id, err
+	})
+	if err != nil {
+		return nil, err
+	}
+	for _, id := range rows {
+		out[id] = true
 	}
 	return out, nil
 }

@@ -11,12 +11,17 @@ type unwrapped struct {
 	isShell      bool
 	shell        string
 	shellCarrier string
+	// chdirs are the directory operands of env -C and env --chdir, in the order the program applies them.
+	chdirs []Word
 	// recordName and record name the wrapper's own file operand (script's transcript, strace -o) as a synthetic record.
 	recordName string
 	record     []Word
 	// feeds is the feed of each program in inner (find's actions); xopts are the options of xargs that decide its operands.
 	feeds []*Feed
 	xopts xargsOpts
+	// shellLines is the shell text of each job of a parallel text, one line per command line, when the wrapper runs each job
+	// in a shell of its own; shell holds the same lines joined by newlines.
+	shellLines []string
 }
 
 // unwrapCommand applies the option grammar of one wrapper. An option the
@@ -28,8 +33,7 @@ func unwrapCommand(name string, args []Word) (unwrapped, error) {
 	}
 	switch name {
 	case "parallel":
-		// parallel runs the program its ::: operands name at run time, so the program it runs is not in the text.
-		return u, unreadablef("parallel runs the program its operands name at run time")
+		return parallelUnwrap(args)
 	case "env":
 		return unwrapEnv(args)
 	case "find":
@@ -67,9 +71,6 @@ func unwrapCommand(name string, args []Word) (unwrapped, error) {
 	}
 	if idx < len(args) {
 		rest := args[idx:]
-		if name == "parallel" {
-			rest = parallelCommand(rest)
-		}
 		if len(rest) > 0 {
 			u.inner = [][]Word{rest}
 		}
@@ -104,8 +105,8 @@ func wrapperOptions(name string, args []Word) (int, error) {
 		return skipOptions(name, args, "EHnSkb", "ug", "")
 	case "doas":
 		return skipOptions(name, args, "n", "u", "")
-	case "parallel":
-		return skipOptions(name, args, "0kqv", "jnaX", "")
+	case "xargs":
+		return skipOptions(name, args, "0rtxpe", "ILnPdEsa", "il")
 	}
 	return 0, unreadablef("wrapper %s has no option grammar", name)
 }
@@ -188,16 +189,6 @@ func isDashDigits(v string) bool {
 	return true
 }
 
-// parallelCommand keeps the command template and drops the ':::' argument list.
-func parallelCommand(args []Word) []Word {
-	for i, a := range args {
-		if a.Value == ":::" || a.Value == "::::" {
-			return args[:i]
-		}
-	}
-	return args
-}
-
 func unwrapEnv(args []Word) (unwrapped, error) {
 	var u unwrapped
 	for len(args) > 0 {
@@ -205,7 +196,25 @@ func unwrapEnv(args []Word) (unwrapped, error) {
 		if err != nil {
 			return u, err
 		}
-		if v == "-" || v == "-i" || v == "--ignore-environment" || v == "-0" || v == "--null" {
+		if v == "-" || v == "-i" || v == "--ignore-environment" || v == "-0" || v == "--null" || v == "-v" || v == "--debug" {
+			args = args[1:]
+			continue
+		}
+		if len(u.chdirs) > 0 && (v == "-C" || v == "--chdir" || strings.HasPrefix(v, "--chdir=")) {
+			// The reader cannot tell which directory the program runs in once a second operand is given: GNU env keeps the last one,
+			// and other implementations refuse the repeat, so the program's directory is not read.
+			return u, unreadablef("env with a second directory operand is not modelled")
+		}
+		if v == "-C" || v == "--chdir" {
+			if len(args) < 2 {
+				return u, unreadablef("env %s without a directory", v)
+			}
+			u.chdirs = append(u.chdirs, args[1])
+			args = args[2:]
+			continue
+		}
+		if strings.HasPrefix(v, "--chdir=") {
+			u.chdirs = append(u.chdirs, Word{Known: true, Value: strings.TrimPrefix(v, "--chdir=")})
 			args = args[1:]
 			continue
 		}

@@ -8,12 +8,12 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"unicode/utf8"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 	"golang.org/x/sys/unix"
 )
 
@@ -85,14 +85,14 @@ func deliverLock(cfg *Config, logicalID string) (func(), error) {
 	if err := deliverPathComponent(logicalID, "logical id"); err != nil {
 		return nil, err
 	}
-	dir := filepath.Join(cfg.StateDir, deliverLockDir)
+	dir := crwconfig.JoinRoot(cfg.StateDir, deliverLockDir)
 	if info, err := os.Lstat(dir); err == nil && info.Mode()&os.ModeSymlink != 0 {
 		return nil, errors.New("crw manage: the lock directory is a symlink; refusing to lock through it")
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("crw manage: the lock directory: %w", err)
 	}
-	file, err := os.OpenFile(filepath.Join(dir, logicalID+".lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	file, err := os.OpenFile(crwconfig.JoinRoot(dir, logicalID+".lock"), os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("crw manage: the delivery lock: %w", err)
 	}

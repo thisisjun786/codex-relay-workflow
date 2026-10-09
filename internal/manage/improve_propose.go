@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 )
@@ -839,7 +839,7 @@ func improveProposeRunCapped(ctx context.Context, e *Env, bundlePath string, dry
 		if err := ctx.Err(); err != nil {
 			return report, err
 		}
-		path := filepath.Join(dir, candidate.Key+".json")
+		path := crwconfig.JoinRoot(dir, candidate.Key+".json")
 		doc, err := auditDraftLoad(path)
 		if err != nil {
 			if !errors.Is(err, os.ErrNotExist) {

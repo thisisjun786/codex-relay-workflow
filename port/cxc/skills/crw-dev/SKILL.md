@@ -215,7 +215,7 @@ CI/merge collision, subject to host permissions and wake checks in
 unsolicited progress notifications or follow-ups. Authorized subagent work uses
 its own scoped delegation tools.
 Use `dev` plus repo tools for local facts; load `search`, `pabcd`, `loop`, `recall`,
-`crw-qa`, or the matching `dev-*` owner for their named domains. `skill-hub` is deprecated.
+`crw-qa`, or the matching `dev-*` owner for their named domains.
 
 ### Native execution
 

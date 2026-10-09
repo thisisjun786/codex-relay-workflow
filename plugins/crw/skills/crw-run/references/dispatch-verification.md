@@ -3,10 +3,10 @@
 A dispatch can fail in four different places, and the four are routinely read as one.
 This reference holds the judgment cases that keep them apart: which fact establishes
 which verdict, what the recorded regression cases already decided, and what a missing
-CXC Loop looks like when it is real rather than assumed.
+`crw-loop` looks like when it is real rather than assumed.
 [Prepare and dispatch](../SKILL.md#prepare-and-dispatch) owns the dispatch itself and
 [Observe and verify](../SKILL.md#observe-and-verify) owns the evidence table these cases
-apply. Loop mechanics belong to the child's own `cxc-loop`/`cxc-pabcd`; nothing here
+apply. Loop mechanics belong to the child's own `crw-loop`/`crw-pabcd`; nothing here
 restates them, and nothing here adds a preparation turn before the work starts.
 
 ## Four verdicts, judged separately
@@ -53,7 +53,7 @@ the contrast cases below.
 | L0 | The invocation was never in the assignment | The assignment message for this dispatch, selected by its marker or receipt and read from that task, carries no installed-skill invocation and no agreed alternative |
 | L1 | The invocation was sent, the skill was never loaded or never invoked | Assignment carries it; no session binding, no orchestration entry, no goalplan |
 | L2 | It was invoked, but own-session binding or goalplan/FSM initialization failed | Binding or orchestration attempted and refused, or bound to the wrong session; the refusal itself is the evidence |
-| L3 | A native goal is active and no CXC Loop exists | Host goal present; no bound goalplan and no persisted phase transitions |
+| L3 | A native goal is active and no `crw-loop` exists | Host goal present; no bound goalplan and no persisted phase transitions |
 | L4 | Activation succeeded, then was lost on resume or compaction | Earlier goalplan/FSM evidence exists; the later turn runs without it, or against a second goal for the same assignment |
 | L5 | Running correctly | The child's own bound goalplan identifier, current phase, and persisted transitions for this assignment |
 | L6 | Insufficient evidence | Nothing readable yet distinguishes the classes above |
@@ -149,7 +149,7 @@ a case whose owner has moved or been reworded before relying on it.
 | S6 | A busy task or an uncertain send is reconciled rather than duplicated | [Independent implementation tasks](../SKILL.md#independent-implementation-tasks) and [Bridge launch and recovery](bridge.md) | Recovery | unchanged |
 | S7 | Permission for an unrelated earlier task does not travel to this scope | The paragraph following that table | Preserved limits | unchanged |
 | S8 | Explicit current-task, read-only, status-only and no-create limits win | Same paragraph, with precedence in [Default independent execution](../../crw-plan/references/integrations.md#default-independent-execution) | Preserved limits | unchanged |
-| S9 | With no explicit choice the child runs the pair its issue records (the issue body's child pair line, or the routing table's answer for an issue with none), which is one of the pairs the declared policy lists for the child role, with CXC Loop | [Default independent execution](../../crw-plan/references/integrations.md#default-independent-execution) and [Child pair by issue type](../../crw-plan/references/integrations.md#child-pair-by-issue-type) | Default settings | criterion revised 2026-10-04: the child role holds two pairs (Jun's 2026-10-03 decision), so the row no longer names one model; the 2026-09-29 revision had moved the single pair from `anthropic/claude-opus-5-5`; read against the text, and the owning sentence now reads the pair from the issue's record under the declared policy |
+| S9 | With no explicit choice the child runs the pair its issue records (the issue body's child pair line, or the routing table's answer for an issue with none), which is one of the pairs the declared policy lists for the child role, with `crw-loop` | [Default independent execution](../../crw-plan/references/integrations.md#default-independent-execution) and [Child pair by issue type](../../crw-plan/references/integrations.md#child-pair-by-issue-type) | Default settings | criterion revised 2026-10-04: the child role holds two pairs (Jun's 2026-10-03 decision), so the row no longer names one model; the 2026-09-29 revision had moved the single pair from `anthropic/claude-opus-5-5`; read against the text, and the owning sentence now reads the pair from the issue's record under the declared policy |
 | S9b | A SOL-routed issue is created with the declared SOL pair and a Sonnet-routed issue with the declared Sonnet pair; both are read from `get_capabilities` at the call and neither from a document, `role` is passed, and the first packet takes the form of the recorded pair | "Creating the child" and "The packet" in [Child pair by issue type](../../crw-plan/references/integrations.md#child-pair-by-issue-type) and [Bridge launch and recovery](bridge.md) | Default settings | added 2026-10-04; read against the text, and no creation under a policy that lists two child pairs has been observed |
 | S9c | The parent issues no creation whose pair is of another family than the issue body's child pair line: the host refuses only a pair outside the role and both child pairs are inside it, so this refusal is the parent's own, and a change of pair is written on the line first (the user's choice, or a SOL failure on a provider limit or a policy refusal) | "Creating the child" in [Child pair by issue type](../../crw-plan/references/integrations.md#child-pair-by-issue-type) | Default settings | added 2026-10-04; nothing enforces it, so it can be read only against the parent's calls |
 | S9d | The pair is checked on the creation receipt: the model, reasoning effort and role it returns are the pair that was stated and belong to the line's family. A receipt of the other family is a mismatch observed after creation that a resend never fixes; it ends with the user changing the pair and re-recording it, or with the user accepting the pair the child came up on and the parent writing it onto the line, or with a permitted replacement on the right pair. The relay's record accepts any pair of the role and cannot catch the difference | "After creation" in [Child pair by issue type](../../crw-plan/references/integrations.md#child-pair-by-issue-type) and [codex-session-relay](relay.md) | Recovery | added 2026-10-04; same basis |
@@ -190,10 +190,10 @@ a case whose owner has moved or been reworded before relying on it.
 | S24c | A merge of the base with no conflict and no hand-resolved hunk is a `clean` refresh by tree identity (the tree of `git merge-tree --write-tree <previous> <merged>` is the merge's own tree, which is what `crw skill base-refresh check` measures): it is not new scope and reruns only the gates, and the parent re-checks the claim with the helper | [What a handoff discloses](task-packet.md#what-a-handoff-discloses) (`baseRefresh`) and [Refresh the base yourself when only the base moved](merge-readiness.md#refresh-the-base-yourself-when-only-the-base-moved) | Handoff | added 2026-10-03; same basis, see below |
 | S24d | A `mechanical` refresh (hunks resolved by a rule the assignment names, each reproduced) reruns the gates and the deterministic checks over those hunks, and a `manual` one adds an independent check of the hand-resolved hunks only, run by the child's reviewer. A claimed `clean` the helper refuses is read by its reason and never accepted on the child's word: an ordinary edit between the reviewed head and a conflicting merge is caught by accounting for every first-parent commit, and an edit riding inside a merge by `git show --remerge-diff` | The same two owners, and the refusal reasons in [the verdict checks](merge-readiness.md#what-the-handoff-discloses-checked-at-the-verdict) | Handoff | added 2026-10-03; same basis, see below |
 | S24e | The handoff compares the changed paths with the declared edit regions (the parent re-checks with `git diff --name-only origin/dev...<head>`, and by hunk where a region covers part of a file) and carries a sibling impact, and a correction's restoration block carries the siblings' landings and the conflicts the parent expects as relay facts, so a task restored after compaction does not assume a base that is not there | [What a handoff discloses](task-packet.md#what-a-handoff-discloses) (`changedPaths`, `siblingImpact`), the verdict checks and the [Restoration block](task-packet.md#restoration-block) | Handoff | added 2026-10-03; same basis, see below |
-| S25 | Where a packet's `Delivery:` covers publication, the child pushes its task branch without stopping for a push approval, because the packet carries the approval CXC `DEV-GIT-PUSH-01` requires, and it never merges, force-pushes, tags or pushes to `dev` or `main`; a packet that excludes publication carries none and the child pushes nothing | [Default dev integration](../../crw-plan/references/integrations.md#default-dev-integration), the publication bullet of the [Launch packet](task-packet.md#launch-packet) and [First full assignment required fields](task-packet.md#first-full-assignment-required-fields) | Approval context | added 2026-10-03; the rule text was read and the identifier search returned no match, a child at the push step was not observed, see below |
-| S25b | A child that needs something only a person can give does not call `request_user_input`, which CXC denies while a goal is active: it writes the question out, records `blocked_needs_input` on its turn and, where a relay holds the assignment, emits that outcome; where none does it returns the CXC status the case takes with the question | The same three places and [OPS-6.2](operations.md#ops-62-record-shape) | Recovery | added 2026-10-03; the hook denial was read in the CXC source, no child's use of the route was observed, see below |
-| S25c | `LOOP-DOCS-FIRST-01` applies to a CRW child as CXC states it, to the child's own issue: a single-cycle issue skips the docs-only first cycle, and a child that plans two or more work-phases opens with one, with CXC's roadmap debt for scope found later | [Default independent execution](../../crw-plan/references/integrations.md#default-independent-execution) and the Loop bullet of the [Launch packet](task-packet.md#launch-packet) | Default settings | added 2026-10-03; read against recorded goalplans, the correction-generation and publication-phase cases it left open are decided by S25d, see below |
-| S25d | A correction generation, a base-refresh generation and a separated publication step are not the first work-phase of new work, so they do not open `LOOP-DOCS-FIRST-01`'s docs-only cycle, and the CXC rule text is unchanged | [Default independent execution](../../crw-plan/references/integrations.md#default-independent-execution), the Loop bullet of the [Launch packet](task-packet.md#launch-packet) and the workflow bullet of the [Restoration block](task-packet.md#restoration-block) | Default settings | added 2026-10-03; decides the cases S25c left open, from S25c's goalplan record, and no child reading the line was observed, see below |
+| S25 | Where a packet's `Delivery:` covers publication, the child pushes its task branch without stopping for a push approval, because the packet carries the approval `DEV-GIT-PUSH-01` (`crw-dev`) requires, and it never merges, force-pushes, tags or pushes to `dev` or `main`; a packet that excludes publication carries none and the child pushes nothing | [Default dev integration](../../crw-plan/references/integrations.md#default-dev-integration), the publication bullet of the [Launch packet](task-packet.md#launch-packet) and [First full assignment required fields](task-packet.md#first-full-assignment-required-fields) | Approval context | added 2026-10-03; the rule text was read and the identifier search returned no match, a child at the push step was not observed, see below |
+| S25b | A child that needs something only a person can give does not call `request_user_input`, which the PABCD hook denies while a goal is active: it writes the question out, records `blocked_needs_input` on its turn and, where a relay holds the assignment, emits that outcome; where none does it returns the status the case takes with the question | The same three places and [OPS-6.2](operations.md#ops-62-record-shape) | Recovery | added 2026-10-03; the hook denial was read in the CXC source it was ported from, no child's use of the route was observed, see below |
+| S25c | `LOOP-DOCS-FIRST-01` applies to a CRW child as `crw-loop` states it, to the child's own issue: a single-cycle issue skips the docs-only first cycle, and a child that plans two or more work-phases opens with one, with the roadmap debt for scope found later | [Default independent execution](../../crw-plan/references/integrations.md#default-independent-execution) and the Loop bullet of the [Launch packet](task-packet.md#launch-packet) | Default settings | added 2026-10-03; read against recorded goalplans, the correction-generation and publication-phase cases it left open are decided by S25d, see below |
+| S25d | A correction generation, a base-refresh generation and a separated publication step are not the first work-phase of new work, so they do not open `LOOP-DOCS-FIRST-01`'s docs-only cycle, and the `crw-loop` rule text is unchanged | [Default independent execution](../../crw-plan/references/integrations.md#default-independent-execution), the Loop bullet of the [Launch packet](task-packet.md#launch-packet) and the workflow bullet of the [Restoration block](task-packet.md#restoration-block) | Default settings | added 2026-10-03; decides the cases S25c left open, from S25c's goalplan record, and no child reading the line was observed, see below |
 | S26 | A task that has to stop its own tests, a child or the parent, stops them by the pid it recorded when it started them or by the process group it created for them, and never by pattern or name (`pkill -f`, `killall`); a long command records its pid from the start or runs under `timeout`, and a process the task did not start is reported with its pid and working directory, not stopped | The `Processes you start:` line of the [Launch packet](task-packet.md#launch-packet) and its line in [First full assignment required fields](task-packet.md#first-full-assignment-required-fields); for the parent, [Observe and verify](../SKILL.md#observe-and-verify) and [Check the verification evidence](merge-readiness.md#check-the-verification-evidence) | Preserved limits | added 2026-10-03; the mechanics were measured on this host's own processes, no child or parent reading the wording has been observed, see below |
 | S27 | Devin Review and the Codex review are references and not merge gates: a candidate integrates when its verification evidence passes on the tree that would land (this repository's `verification-record/1` from `crw-dev ci local`), the coordinator verified it by its usual procedure (it read the diff and the code and reran the tests the criteria rest on) and the local gates pass; the integration waits for no Devin or Codex status or review, neither inheriting an earlier review by patch-id nor a substitute review comment is required, and a later head with no review of its own is normal | [The three gates](merge-readiness.md#the-three-gates) | Merge gate | added 2026-10-03; basis below |
 | S27b | The child waits for the one run of each reviewer within the waiting budget before it emits: a Devin status `Analyzing your changes` is waited for up to the budget and `Full review skipped: trial expired and no credits remaining` is not; Codex is waited for while its eyes reaction is on the pull request or any row of its summary comment is not `Completed`, and each of its code review and security review must be `Completed` or skipped by the bot's notice (a thumbs-up counts for both when no row contradicts it), so a Security Review row `Completed` alone is not finished; past the budget a run still going is recorded as pending, not complete, and the wait is released only where the candidate's required independent review and its finding dispositions already exist; when neither reviewer shows any signal 30 minutes after the pull request became ready or was opened, the handoff says `review unavailable (no signal)` and the child goes on, and when only one is silent the same 30 minutes apply to it and the handoff says so; a thread that arrives after the receipt is a late finding: unless the parent has dispositioned it for that head (`--late-dispositions`) it returns the candidate before the acceptance, and after the acceptance the correction goes through the hand-opened generation [Late review threads](merge-readiness.md#late-review-threads) describes, while a node that landed is held ([Late review threads](merge-readiness.md#late-review-threads)) | [The one run of each reviewer, awaited before the receipt](merge-readiness.md#the-one-run-of-each-reviewer-awaited-before-the-receipt) and [Recheck, integrate, and record](merge-readiness.md#recheck-integrate-and-record) and [a late thread the parent dispositions itself](merge-readiness.md#a-late-thread-the-parent-dispositions-itself) | Merge gate | changed with CRW-808; the unlimited wait became the waiting budget with a pending record |
@@ -338,20 +338,20 @@ observed on a child that read the new wording: whether a child stops at the push
 observed in the next real-use run, and a test that matches the wording would show only that the text
 is present.
 
-S25: `DEV-GIT-PUSH-01` is skill prose in CXC's `cxc-dev` (the Safety rules bullet "Push requires
-explicit user approval", class ESCALATE). A search of the plugin's non-Markdown files, hooks and
-compiled components included, for the rule identifier returned no match. That shows no hook cites it
+S25: `DEV-GIT-PUSH-01` is skill prose in `crw-dev`, ported from CXC's `cxc-dev` (the Safety rules
+bullet "Push requires explicit user approval", class ESCALATE). A search of the CXC plugin's
+non-Markdown files, hooks and compiled components included, for the rule identifier returned no match. That shows no hook cites it
 by name, not that nothing equivalent exists, so the one mechanism found is the rule text itself: a
 child stops if it reads the rule and follows it. The coordinator's reading of the October child
 rollouts on 2026-10-03, which was not repeated here, found no child that stopped pushing because of
 it, so the conflict is latent: a change of model or effort could make a child that follows the rule
 to the letter report BLOCKED at the push step. The sentence is wording, so it is an early warning
-and no enforcement. A child can still read the CXC rule first and stop, and "never merge" rests on
+and no enforcement. A child can still read the rule first and stop, and "never merge" rests on
 this text and on the coordinator's review of the pull request, with the merge gate that POLICY.md
 describes. Whether that gate is active on the server was not read back here.
 
-S25b: the CXC hook `hooks/pre-tool-use-guarding-interview-in-goal.json` denies the user-input
-request while a goal is active (the denial is implemented in the plugin's
+S25b: the hook ported from CXC's `hooks/pre-tool-use-guarding-interview-in-goal.json` denies the
+user-input request while a goal is active (the denial was implemented in that plugin's
 components/pabcd-state/dist/goal-gate.js, read as source and not observed on a host), which is real
 enforcement for the first half of the line. That a `blocked_needs_input` turn then reaches the
 parent is not shown: [OPS-8.1](operations.md#ops-81-parent-continuation-and-waiting) says whether
@@ -366,17 +366,17 @@ not linked). Since 2026-10-01 they hold 33 plans with work-phases: 24 with one, 
 are a generation-2 correction, one is an implementation followed by a publication phase) and 5 with
 three or more, four of which record a docs-only roadmap phase first; an independent recount
 reproduced these figures and found three explicit generation-2 correction phases. A single-cycle
-issue opens no docs-only cycle in this record. Two cases were left open because CXC counts
+issue opens no docs-only cycle in this record. Two cases were left open because the rule counts
 work-phases and not what a phase does: a correction or base-refresh generation, and a publication
-phase split off from the implementation. CXC says multi-cycle scope discovered later pays the
+phase split off from the implementation. The rule says multi-cycle scope discovered later pays the
 roadmap debt in the next P, and none of the three recorded generation-2 corrections and the one
 recorded implementation-then-publication plan opened a docs-only phase. That is recorded practice,
-not permission. S25c did not decide these cases; S25d does. The CXC text stands.
+not permission. S25c did not decide these cases; S25d does. The rule text stands.
 
 S25d: read on 2026-10-03 against this checkout at dev aae21a98 and the CXC plugin
 0.2.40+codex.20260929183231, and decided on that date within the scope Jun delegated, from the
 record S25c holds and not from a new reading of goalplans. For a multi-cycle loop,
-`LOOP-DOCS-FIRST-01` (cxc-loop, "Docs-first multi-cycle entry") makes the first work-phase of new
+`LOOP-DOCS-FIRST-01` (`crw-loop`, "Docs-first multi-cycle entry") makes the first work-phase of new
 work a docs-only roadmap cycle, and a single-cycle task skips it. A correction generation (the same
 deliverable of the same issue), a base-refresh generation (a merge of the base and the resolution of
 its conflicts) and a separated publication step (the push and the pull request) all come after the
@@ -388,7 +388,7 @@ That is practice, which is why the line is written and not relied on. It stands 
 of the Launch packet, in the workflow bullet of the Restoration block and in the Default independent
 execution paragraph, which the packet points to. It does not waive `LOOP-DOCS-FIRST-01` when a loop
 is entered, or the roadmap debt for new scope found later: it says only that these three later steps
-are not the first work-phase of new work. The CXC rule text is not changed and still counts
+are not the first work-phase of new work. The rule text is not changed and still counts
 work-phases, so the line is how CRW reads that rule for its own children. Not observed: a child
 reading the line at a correction, a base refresh or a publication step; that waits for the next
 real-use run, and a test that matches the wording would show only that the text is present.
@@ -520,7 +520,7 @@ arming normally. The honest verdict here is L6 and the repair is to read again.
 
 ## Contrast cases
 
-**C1 — a normal Loop child. L5.** Effective workflow is CXC Loop, the first full
+**C1 — a normal Loop child. L5.** Effective workflow is `crw-loop`, the first full
 assignment carries the invocation with the applicable skills, and the child's first
 execution leaves a bound goalplan and persisted transitions it can name in its report.
 This needs no coordinator turn beyond reading what the child returns. The four children of
@@ -534,8 +534,8 @@ Judging it as L0 or L1 is the mirror-image error to N4, and a non-PR audit child
 execution mode is settled by its own assignment rather than by this default.
 
 **C3 — a parent coordinating without a goal. Not a class; a different role.** A project parent
-holds no native goal by default and no CXC implementation goalplan or FSM either, and is resumed by
-the delivery path rather than by a goal. Where an explicit Loop was requested it holds a native
+holds no native goal by default and no implementation goalplan or FSM either, and is resumed by
+the delivery path rather than by a goal. Where goal mode was requested it holds a native
 goal for the agreed scope and still no goalplan or FSM. Either way that is the
 parent's defined shape, not an unarmed child. The role that requires both is the
 issue-owning implementation child.

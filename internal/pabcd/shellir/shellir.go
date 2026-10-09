@@ -108,15 +108,28 @@ type Context struct {
 	// whether the command is the right side of a pipe in the text being read (a carried text starts again at false).
 	stdinFile  string
 	inTextPipe bool
+	// pipeProgram is the text a literal printf or echo writes into the pipe this command reads; pipeKnown says it is set.
+	pipeProgram string
+	pipeKnown   bool
 	// Carrier names the construct that re-read this text, for example "bash -c".
 	Carrier string
 	// RuntimeCarrier keeps the outer run-time wrapper through nested shells, even when it has no structured Feed.
 	RuntimeCarrier string
 	Depth          int
+	// Repeat is whether the text may run more than once or alongside the rest of its text: a carrier other than a shell's own
+	// -c string runs its text again or later (xargs, find, watch, trap, eval, a shell reading stdin). A shell's -c string runs
+	// once, where the text puts it.
+	Repeat bool
+	// Unsequenced is whether the command substitutions of one simple command run in an order the reader does not model: bash expands
+	// the argument substitutions before the assignment ones, so with two or more of them, none is ordered against the others.
+	Unsequenced bool
 	// Feed says where the operands of a program that find or xargs runs come from; nil outside them.
 	Feed *Feed
 	// pipeSrc is what the left side of the pipe the command reads prints.
 	pipeSrc *pipeSource
+	// wrapRedirs says a wrapper around this command carries a redirection: the reader does not follow a pipe into a shell
+	// behind a redirected wrapper (exec with a redirection), so the piped program stays unreadable there.
+	wrapRedirs bool
 }
 
 // Inline is the program text an interpreter receives on its command line or
@@ -311,7 +324,14 @@ func (w *walker) stmt(s *syntax.Stmt, st *state, ctx Context) error {
 			return unreadablef("nesting is deeper than %d", MaxNestingDepth)
 		}
 	}
-	redirs, err := w.redirects(s.Redirs, st, ctx)
+	// With two or more command substitutions in one simple command, none of them is ordered against the others (Context.Unsequenced).
+	multiSubst := false
+	if c, ok := s.Cmd.(*syntax.CallExpr); ok {
+		multiSubst = cmdSubsts(c, s.Redirs) > 1
+	}
+	rctx := ctx
+	rctx.Unsequenced = multiSubst
+	redirs, err := w.redirects(s.Redirs, st, rctx)
 	if err != nil {
 		return err
 	}
@@ -332,7 +352,9 @@ func (w *walker) stmt(s *syntax.Stmt, st *state, ctx Context) error {
 	}
 	switch c := s.Cmd.(type) {
 	case *syntax.CallExpr:
-		return w.call(c, redirs, st, ctx)
+		wctx := ctx
+		wctx.Unsequenced = multiSubst
+		return w.call(c, redirs, st, ctx, wctx)
 	case *syntax.BinaryCmd:
 		return w.binary(c, st, ctx)
 	case *syntax.Subshell:
@@ -409,20 +431,14 @@ func loopContext(ctx Context) Context {
 // statements cannot change the directory (see changesDir); only then does the
 // directory stay known through the loop.
 func prescanLoop(st *state, lists ...[]*syntax.Stmt) (keepsDir bool) {
-	changes, dir := false, changesDir(st, lists...)
+	dir := changesDir(st, lists...)
+	vars := newEffectScan(st, false)
+	changes := false
 	for _, list := range lists {
 		for _, s := range list {
-			syntax.Walk(s, func(n syntax.Node) bool {
-				switch c := n.(type) {
-				case *syntax.CallExpr:
-					if len(c.Assigns) > 0 || changesStateCall(c, st) {
-						changes = true
-					}
-				case *syntax.DeclClause, *syntax.LetClause, *syntax.ArithmCmd, *syntax.ForClause:
-					changes = true
-				}
-				return true
-			})
+			if vars.stateChanges(s) {
+				changes = true
+			}
 		}
 	}
 	if dir {
@@ -434,63 +450,150 @@ func prescanLoop(st *state, lists ...[]*syntax.Stmt) (keepsDir bool) {
 	return !dir
 }
 
-// changesDir reports statements that may change the directory of the shell that runs them: a cd, pushd or popd; anything
-// that runs text or a builtin the reader does not see at this point (eval, source, ., trap, builtin, command, exec, an alias, a
-// zsh precommand modifier, a function call, a command whose name is not a plain word); or any mention of CDPATH, which changes
-// where a later cd goes. It looks inside nested statements, command substitutions and subshells too (it does not tell a subshell
-// from the shell itself, so it may say yes where the directory cannot change, never the other way).
+// changesDir checks only directory changes, following the same functions and wrappers as the state prescan. CDPATH and
+// commands that may replace the shell's builtins remain conservative; harmless function and wrapper calls keep the directory.
 func changesDir(st *state, lists ...[]*syntax.Stmt) bool {
-	changes := false
+	e := newEffectScan(st, true)
 	for _, list := range lists {
 		for _, s := range list {
-			syntax.Walk(s, func(n syntax.Node) bool {
-				switch c := n.(type) {
-				case *syntax.Lit:
-					if strings.Contains(c.Value, "CDPATH") {
-						changes = true
-					}
-				case *syntax.CallExpr:
-					if len(c.Args) > 0 && changesDirCall(c.Args[0].Lit(), st) {
-						changes = true
-					}
-				}
-				return !changes
-			})
+			if e.stateChanges(s) {
+				return true
+			}
 		}
 	}
+	return false
+}
+
+// effectScan judges whether a statement can change the directory (directoryOnly) or the variables a later command reads. A call
+// to a function counts when the function's body does, and a wrapper (command, builtin, exec) counts when the program it runs
+// does. The verdict for each function is kept, so a function that many calls reach is judged once and the work stays bounded by
+// the size of the text. A verdict of no change is exact. A verdict of change may be conservative: a call back into a function
+// being judged, or a chain of calls deeper than MaxNestingDepth, counts as a change.
+type effectScan struct {
+	st            *state
+	directoryOnly bool
+	verdicts      map[string]bool
+	active        []string
+}
+
+func newEffectScan(st *state, directoryOnly bool) *effectScan {
+	return &effectScan{st: st, directoryOnly: directoryOnly, verdicts: map[string]bool{}}
+}
+
+// stateChanges reports whether a node can change the state the scan judges. Changes are only ever set to true, so a later
+// node in the same tree cannot undo an earlier one.
+func (e *effectScan) stateChanges(n syntax.Node) bool {
+	changes := false
+	syntax.Walk(n, func(n syntax.Node) bool {
+		switch c := n.(type) {
+		case *syntax.Lit:
+			if e.directoryOnly && strings.Contains(c.Value, "CDPATH") {
+				changes = true
+			}
+		case *syntax.CallExpr:
+			if !e.directoryOnly && len(c.Assigns) > 0 || e.callChanges(c) {
+				changes = true
+			}
+		case *syntax.DeclClause, *syntax.LetClause, *syntax.ArithmCmd, *syntax.ForClause:
+			if !e.directoryOnly {
+				changes = true
+			}
+		case *syntax.BinaryArithm:
+			// an assignment inside an arithmetic expansion, $((n=1)), sets the variable on its left
+			if !e.directoryOnly && assignsArithm(c.Op) {
+				changes = true
+			}
+		case *syntax.UnaryArithm:
+			if !e.directoryOnly && (c.Op == syntax.Inc || c.Op == syntax.Dec) {
+				changes = true
+			}
+		case *syntax.ParamExp:
+			// a default assignment, ${n:=x} or ${n=x}, sets the variable it names when the test holds
+			if !e.directoryOnly && c.Exp != nil && (c.Exp.Op == syntax.AssignUnset || c.Exp.Op == syntax.AssignUnsetOrNull) {
+				changes = true
+			}
+		}
+		return !changes
+	})
 	return changes
 }
 
-func changesDirCall(name string, st *state) bool {
-	if name == "" || strings.ContainsAny(name, `\$'"`+"`") {
-		return true // a name the parser does not hand over as one plain word: the reader cannot say which command it is
-	}
-	if _, ok := st.funcs[name]; ok {
-		return true
-	}
-	switch name {
-	case "cd", "pushd", "popd", "eval", "source", ".", "trap", "builtin", "command", "exec",
-		"alias", "unalias", "shopt", "enable", "noglob", "nocorrect", "-":
+// assignsArithm reports whether an arithmetic operator assigns to its left operand.
+func assignsArithm(op syntax.BinAritOperator) bool {
+	switch op {
+	case syntax.Assgn, syntax.AddAssgn, syntax.SubAssgn, syntax.MulAssgn, syntax.QuoAssgn, syntax.RemAssgn,
+		syntax.AndAssgn, syntax.OrAssgn, syntax.XorAssgn, syntax.ShlAssgn, syntax.ShrAssgn,
+		syntax.AndBoolAssgn, syntax.OrBoolAssgn, syntax.XorBoolAssgn, syntax.PowAssgn:
 		return true
 	}
 	return false
 }
 
-func changesStateCall(c *syntax.CallExpr, st *state) bool {
-	if len(c.Args) == 0 {
+func (e *effectScan) callChanges(c *syntax.CallExpr) bool {
+	words := make([]Word, len(c.Args))
+	for i, a := range c.Args {
+		v := a.Lit()
+		words[i] = Word{Known: v != "", Value: v}
+	}
+	return e.wordsChange(words)
+}
+
+// wordsChange reports whether a command with these words can change the state. A program the text does not show counts.
+func (e *effectScan) wordsChange(words []Word) bool {
+	if len(words) == 0 {
 		return false
 	}
-	name := c.Args[0].Lit()
-	if _, ok := st.funcs[name]; ok {
+	if !words[0].Known {
 		return true
+	}
+	name := words[0].Value
+	if e.directoryOnly && strings.ContainsAny(name, `\$'"`+"`") {
+		return true
+	}
+	if body, ok := e.st.funcs[name]; ok {
+		return e.function(name, body)
 	}
 	switch name {
-	case "cd", "pushd", "popd", "read", "mapfile", "readarray", "getopts", "printf", "unset",
-		"let", "export", "declare", "typeset", "local", "readonly", "eval", "source", ".",
-		"trap", "set", "shift", "builtin", "command", "exec":
+	case "command", "builtin", "exec":
+		u, err := unwrapCommand(name, words[1:])
+		if err != nil {
+			return true
+		}
+		for _, inner := range u.inner {
+			if e.wordsChange(inner) {
+				return true
+			}
+		}
+		return false
+	case "cd", "chdir", "pushd", "popd", "eval", "source", ".", "trap",
+		"alias", "unalias", "shopt", "enable", "noglob", "nocorrect", "-":
 		return true
+	case "read", "mapfile", "readarray", "getopts", "printf", "unset",
+		"let", "export", "declare", "typeset", "local", "readonly", "set", "shift":
+		return !e.directoryOnly
 	}
 	return false
+}
+
+// function judges the body of a function once for this scan. A call back into a function being judged is a change, as is a
+// chain deeper than MaxNestingDepth; both only keep the state unknown.
+func (e *effectScan) function(name string, body *syntax.Stmt) bool {
+	if v, ok := e.verdicts[name]; ok {
+		return v
+	}
+	if len(e.active) >= MaxNestingDepth {
+		return true
+	}
+	for _, f := range e.active {
+		if f == name {
+			return true
+		}
+	}
+	e.active = append(e.active, name)
+	changes := e.stateChanges(body)
+	e.active = e.active[:len(e.active)-1]
+	e.verdicts[name] = changes
+	return changes
 }
 
 func (w *walker) binary(c *syntax.BinaryCmd, st *state, ctx Context) error {
@@ -518,6 +621,10 @@ func (w *walker) binary(c *syntax.BinaryCmd, st *state, ctx Context) error {
 		rctx.Pipeline = true
 		rctx.Stdin = StdinPipe
 		rctx.inTextPipe = true
+		rctx.pipeProgram, rctx.pipeKnown = "", false
+		if text, ok := pipeProducer(c.X); ok && simpleCallStmt(c.Y) {
+			rctx.pipeProgram, rctx.pipeKnown = text, true
+		}
 		rctx.pipeSrc = w.stageSource(c.X, before, st)
 		beforeY := len(w.out)
 		if err := w.stmt(c.Y, st.clone(), rctx); err != nil {
@@ -565,7 +672,7 @@ func (w *walker) forClause(c *syntax.ForClause, st *state, ctx Context) error {
 		keepsDir = prescanLoop(st, c.Do)
 		st.unsetVar(loop.Name.Value)
 	case *syntax.CStyleLoop:
-		if err := w.substsIn(loop, st, ctx); err != nil {
+		if err := w.substsIn(loop, st, loopContext(ctx)); err != nil {
 			return err
 		}
 		st.clearVars()
@@ -716,7 +823,46 @@ func (w *walker) pipeProducer(x *syntax.Stmt, before int, st *state) *pipeSource
 	return producerSource(execs)
 }
 
-func (w *walker) call(c *syntax.CallExpr, redirs []Redir, st *state, ctx Context) error {
+// cmdSubsts counts the command substitutions a simple command expands in its assignments, its words and its redirections. A process
+// substitution is not counted: its body is unordered already.
+func cmdSubsts(c *syntax.CallExpr, redirs []*syntax.Redirect) int {
+	n := 0
+	visit := func(m syntax.Node) bool {
+		switch m.(type) {
+		case *syntax.CmdSubst:
+			n++
+			return false
+		case *syntax.ProcSubst:
+			return false
+		}
+		return true
+	}
+	for _, a := range c.Assigns {
+		if a.Value != nil {
+			syntax.Walk(a.Value, visit)
+		}
+		if a.Index != nil {
+			syntax.Walk(a.Index, visit)
+		}
+		if a.Array != nil {
+			syntax.Walk(a.Array, visit)
+		}
+	}
+	for _, x := range c.Args {
+		syntax.Walk(x, visit)
+	}
+	for _, r := range redirs {
+		if r.Word != nil {
+			syntax.Walk(r.Word, visit)
+		}
+		if r.Hdoc != nil {
+			syntax.Walk(r.Hdoc, visit)
+		}
+	}
+	return n
+}
+
+func (w *walker) call(c *syntax.CallExpr, redirs []Redir, st *state, ctx, wctx Context) error {
 	assigns := make([]Assign, 0, len(c.Assigns))
 	for _, a := range c.Assigns {
 		if a.Name == nil {
@@ -730,7 +876,7 @@ func (w *walker) call(c *syntax.CallExpr, redirs []Redir, st *state, ctx Context
 			asg.Value = Word{Reason: "array assignment"}
 			asg.Array = true
 		case a.Value != nil:
-			v, err := w.word(a.Value, st, ctx)
+			v, err := w.word(a.Value, st, wctx)
 			if err != nil {
 				return err
 			}
@@ -742,7 +888,7 @@ func (w *walker) call(c *syntax.CallExpr, redirs []Redir, st *state, ctx Context
 	}
 	words := make([]Word, 0, len(c.Args))
 	for _, arg := range c.Args {
-		v, err := w.word(arg, st, ctx)
+		v, err := w.word(arg, st, wctx)
 		if err != nil {
 			return err
 		}
@@ -807,7 +953,19 @@ func stdinKind(redirs []Redir, def string) string {
 
 // stdinProgram returns the text a program reads from standard input when that
 // text is a here-document or here-string the reader can see.
-func stdinProgram(redirs []Redir, stdin, name string) (string, error) {
+func stdinProgram(redirs []Redir, stdin, name string, ctx Context) (string, error) {
+	if stdin == StdinPipe && ctx.pipeKnown && !hasStdinRedirect(redirs) && !ctx.wrapRedirs {
+		return ctx.pipeProgram, nil
+	}
+	if stdin == StdinUnknown && !ctx.wrapRedirs {
+		if fd, idx, ok := stdinCopySource(redirs); ok {
+			if ctx.inTextPipe {
+				// A copy onto standard input on the right of a pipe: zsh with MULTIOS reads the pipe too, so the copy is not the program.
+				return "", unreadablef("%s reads descriptor %s copied onto a pipe's standard input", name, fd)
+			}
+			return fdBody(redirs, fd, idx, 0)
+		}
+	}
 	if stdin == StdinHeredoc || stdin == StdinHerestring {
 		for i := len(redirs) - 1; i >= 0; i-- {
 			r := redirs[i]
@@ -924,7 +1082,7 @@ func (w *walker) dispatch(words []Word, assigns []Assign, redirs []Redir, st *st
 		return w.trapCall(words[1:], st, ctx)
 	case name == "su":
 		return w.suCall(words[1:], st, ctx)
-	case name == "cd":
+	case name == "cd" || name == "chdir":
 		if ctx.Feed.replacedIn(words[1:]) {
 			// The wrapper puts a name the reader does not know in place of its string (find's {} is each path it finds).
 			st.dir = unknownDir(st.dir)
@@ -1025,12 +1183,16 @@ func (w *walker) carried(text string, st *state, ctx Context, carrier string) er
 		return unreadablef("nesting is deeper than %d", MaxNestingDepth)
 	}
 	ctx.Carrier = carrier
+	if !isOnceCarrier(carrier) {
+		ctx.Repeat = true
+	}
 	// The operands of a wrapper outside the text reach it through the shell's positional parameters, and through the text where the
 	// wrapper replaces a string in it (find's {}).
 	ctx.Feed = ctx.Feed.asCarried(text)
 	// A shell that runs the text starts a new text: a pipe of the text around it is not a pipe inside it, so an input
 	// redirection in it replaces the inherited input (zsh with MULTIOS joins a pipe and a file only within one pipeline).
 	ctx.inTextPipe = false
+	ctx.pipeKnown = false
 	file, err := parseText(text)
 	if err != nil {
 		return err
@@ -1078,10 +1240,19 @@ func (w *walker) wrapped(name string, args []Word, assigns []Assign, redirs []Re
 	if ctx.Depth > MaxNestingDepth {
 		return unreadablef("nesting is deeper than %d", MaxNestingDepth)
 	}
+	for _, r := range redirs {
+		if r.Fd == "" || r.Fd == "0" || r.Fd == "1" {
+			ctx.wrapRedirs = true // a redirection of standard input or output; a descriptor 2 copy leaves the pipe alone
+		}
+	}
 	if name == "busybox" && len(args) == 0 && ctx.Stdin != StdinNone && ctx.Stdin != StdinFile {
 		// A bare busybox names no applet. Behind a pipe, a here-document or a here-string the reader cannot prove
 		// what it runs, so it is refused; a bare busybox with nothing to read only prints its usage.
 		return unreadablef("busybox without an applet has standard input from %s", ctx.Stdin)
+	}
+	if name == "parallel" && ctx.Feed != nil {
+		// An operand feed (xargs, find) appends values to the ::: sources of parallel, and the reader does not see them.
+		return unreadablef("parallel receives operands from %s, which add to its ::: sources", ctx.Feed.Wrapper)
 	}
 	u, err := unwrapCommand(name, args)
 	if err != nil {
@@ -1090,9 +1261,18 @@ func (w *walker) wrapped(name string, args []Word, assigns []Assign, redirs []Re
 	if err := checkAssigns(u.assigns, st); err != nil {
 		return err
 	}
-	if name == "xargs" || name == "find" || name == "parallel" || name == "entr" {
+	if name == "xargs" || name == "find" || name == "entr" {
 		// The operands of these programs arrive at run time, so the inner program is marked.
 		ctx.Carrier = name
+		ctx.RuntimeCarrier = name
+		ctx.Repeat = true
+	}
+	if name == "watch" {
+		// watch runs its command again at every interval, with or without -x: the text may run after the rest of the text.
+		ctx.Repeat = true
+	}
+	if name == "parallel" {
+		// parallel carries shell text now, but its moves still receive operands at run time.
 		ctx.RuntimeCarrier = name
 	}
 	if u.recordName != "" {
@@ -1101,7 +1281,16 @@ func (w *walker) wrapped(name string, args []Word, assigns []Assign, redirs []Re
 			Args: u.record, Redirs: redirs, Dir: st.dir, Ctx: ctx})
 	}
 	if u.isShell {
-		// A shell string the wrapper runs is code the text shows: it is read by the same layer, as bash -c is.
+		// A shell string the wrapper runs is code the text shows: it is read by the same layer, as bash -c is. Each job of a
+		// parallel text is a shell of its own that starts where this text starts, so each line is read from a copy of the state.
+		if len(u.shellLines) > 0 {
+			for _, line := range u.shellLines {
+				if err := w.carried(line, st.clone(), ctx, u.shellCarrier); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
 		return w.carried(u.shell, st.clone(), ctx, u.shellCarrier)
 	}
 	if name == "xargs" {
@@ -1126,7 +1315,22 @@ func (w *walker) wrapped(name string, args []Word, assigns []Assign, redirs []Re
 			if len(inner) > 0 && shellStateBuiltin(inner[0]) {
 				return unreadablef("a shell builtin named behind the external program %s", name)
 			}
-			if err := w.dispatch(inner, inherited, redirs, st.clone(), ictx); err != nil {
+			// env -C and --chdir move the program's own directory, not the shell's: the copy takes each operand in turn.
+			child := st.clone()
+			childRedirs := redirs
+			if len(u.chdirs) > 0 {
+				// The shell opens a redirection before env changes directory, so its file is placed from the command's own directory.
+				childRedirs = redirsFromOuter(redirs, st.dir)
+			}
+			for _, d := range u.chdirs {
+				if ictx.Feed.replacedIn([]Word{d}) {
+					// find or xargs replaces the string with a path only the run can name: the directory is unknown, as cd leaves it.
+					child.dir = unknownDir(child.dir)
+					continue
+				}
+				child.cd([]Word{d})
+			}
+			if err := w.dispatch(inner, inherited, childRedirs, child, ictx); err != nil {
 				return err
 			}
 			continue
@@ -1138,6 +1342,33 @@ func (w *walker) wrapped(name string, args []Word, assigns []Assign, redirs []Re
 	return nil
 }
 
+// redirsFromOuter places the file operands of redirections in the directory the outer command runs in. The shell opens them before
+// env changes directory, so the program's own directory does not move them. Here-documents, here-strings and descriptor copies are
+// not files and stay as they are; a relative file the outer directory cannot place is unknown.
+func redirsFromOuter(redirs []Redir, outer Dir) []Redir {
+	out := make([]Redir, len(redirs))
+	copy(out, redirs)
+	for i, r := range redirs {
+		switch r.Op {
+		case "<<", "<<-", "<<<":
+			continue
+		case ">&", "<&":
+			if r.Target.Known && isDescriptorDup(r.Target.Value) {
+				continue
+			}
+		}
+		if !r.Target.Known || r.Target.Value == "" || path.IsAbs(r.Target.Value) {
+			continue
+		}
+		if !outer.Known {
+			out[i].Target = Word{Reason: "a relative file in a directory the reader cannot place"}
+			continue
+		}
+		out[i].Target = Word{Known: true, Value: path.Join(outer.Path, r.Target.Value)}
+	}
+	return out
+}
+
 // shellStateBuiltin is whether a word names a shell builtin that changes the shell's own directory, variables, functions or
 // options: these take no effect in a child process, so behind an external program they are not read.
 func shellStateBuiltin(w Word) bool {
@@ -1145,7 +1376,7 @@ func shellStateBuiltin(w Word) bool {
 		return false
 	}
 	switch w.Value {
-	case "cd", "pushd", "popd", "export", "unset", "set", "shopt", "alias", "unalias", "hash", "trap", "source", ".",
+	case "cd", "chdir", "pushd", "popd", "export", "unset", "set", "shopt", "alias", "unalias", "hash", "trap", "source", ".",
 		"eval", "read", "mapfile", "readarray", "getopts", "let", "declare", "typeset", "local", "readonly", "shift",
 		"umask", "ulimit", "enable", "builtin", "command", "exec":
 		return true

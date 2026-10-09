@@ -35,7 +35,7 @@ python3 - <<< "open('{MEMORY}/a','w')"
 --why printf with a format directive as the producer of a stdin program is not modelled; known-defects keeps the refusal (fail closed).
 printf '%s' "open('{MEMORY}/a','w')" | python3 -
 
-=== CRW-851-07b | U
+=== CRW-851-07b | U | deviation=attempt/allow/allow
 --why echo with a literal text as the producer: the issue reads the text like a here-string body; the reader refuses every pipe into python3 - outright, which gives the memory verdict the issue asks for (attempt).
 echo "open('{MEMORY}/a','w')" | python3 -
 
@@ -51,7 +51,7 @@ echo hi | python3 script.py
 --why printf into cat is a data pipeline.
 printf hi | cat
 
-=== CRW-851-11 | U
+=== CRW-851-11 | U | deviation=attempt/allow/allow
 --why ruby reading its program from the pipe is an interpreter the reader does not model (item 5).
 printf 'puts 1' | ruby
 

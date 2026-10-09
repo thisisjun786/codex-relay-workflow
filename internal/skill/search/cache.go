@@ -75,7 +75,12 @@ func CachedFetchText(key string, fetcher func() (string, error), opts CacheOptio
 		err = os.MkdirAll(dir, 0o777)
 	}
 	if err == nil {
-		err = crwdir.Publish(file, []byte(body))
+		err = publishCache(file, []byte(body))
+		// A file that is in place but whose directory could not be synced is a fresh cache entry: the cache has
+		// no record that depends on it surviving a power failure, and the body is what the caller asked for (CRW-802).
+		if crwdir.Published(err) {
+			err = nil
+		}
 	}
 	if err == nil {
 		return CacheResult{Text: body}, nil
@@ -91,6 +96,10 @@ func CachedFetchText(key string, fetcher func() (string, error), opts CacheOptio
 	_, _ = fmt.Fprintf(warnings, "skill-search: network fetch failed for %s; serving stale cache (%s)\n", key, err)
 	return CacheResult{Text: stale, Stale: true}, nil
 }
+
+// publishCache is the cache file's write; a test replaces it to stage a publication whose directory sync failed.
+var publishCache = crwdir.Publish
+
 func readCache(file string) (string, error) {
 	f, err := os.Open(file)
 	if err != nil {

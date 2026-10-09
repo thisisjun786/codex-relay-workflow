@@ -47,11 +47,14 @@ func TestNodeBooleanLongOptions(t *testing.T) {
 	for _, cmd := range []string{
 		"printf x | node --no-warnings --require fs",
 		"printf x | node --frobnicate script.js",
-		"printf x | node --no-warnings",
 	} {
 		if _, err := Analyze(cmd, "/work"); err == nil {
 			t.Errorf("%q: read, want unreadable", cmd)
 		}
+	}
+	// CRW-1058: the bytes a literal printf writes are the program node reads from standard input.
+	if _, err := Analyze("printf x | node --no-warnings", "/work"); err != nil {
+		t.Errorf("printf x | node --no-warnings: unreadable: %v", err)
 	}
 }
 
