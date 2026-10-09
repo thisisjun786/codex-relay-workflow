@@ -1,14 +1,9 @@
 package shellir
 
 import (
-	"errors"
-	"io/fs"
-	"os"
 	"path"
-	"path/filepath"
 	"slices"
 	"strings"
-	"syscall"
 )
 
 // shellFlagLetters are the single-letter options a shell accepts before its
@@ -61,7 +56,6 @@ func (w *walker) suCall(args []Word, st *state, ctx Context) error {
 }
 
 type interpSpec struct {
-	module    string   // letters whose argument is a module the interpreter runs (python -m); the words after it are the module's
 	repl      string   // letters that keep the interpreter reading commands from standard input after its program (python -i, node -i)
 	code      string   // letters whose argument is program text
 	consume   string   // letters whose argument is not program text
@@ -73,7 +67,7 @@ type interpSpec struct {
 func interpreterSpec(lang string) interpSpec {
 	switch lang {
 	case "python":
-		return interpSpec{module: "m", repl: "i", code: "c", consume: "WX", flags: "BbdEhiIOPqRsSuvxV", attach: true}
+		return interpSpec{repl: "i", code: "c", consume: "WX", flags: "BbdEhiIOPqRsSuvxV", attach: true}
 	case "node":
 		return interpSpec{repl: "i", code: "ep", consume: "r", flags: "ci", longFlags: nodeLongFlags}
 	case "perl":
@@ -95,7 +89,7 @@ func (w *walker) interpreterInline(name string, args []Word, redirs []Redir, dir
 	case "sed":
 		return sedInline(name, args, redirs, ctx)
 	}
-	codes, operand, module, repl, err := clusterInterp(name, args, interpreterSpec(lang))
+	codes, operand, repl, err := clusterInterp(name, args, interpreterSpec(lang))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -103,12 +97,6 @@ func (w *walker) interpreterInline(name string, args []Word, redirs []Redir, dir
 		// -i keeps the interpreter reading commands from standard input after its script or program, so the pipe (or the
 		// here-document) is a program whatever the script operand or the -c string shows.
 		return nil, nil, unreadablef("%s -i reads commands from standard input (%s) after its program", name, ctx.Stdin)
-	}
-	if module != nil {
-		if len(codes) > 0 {
-			return nil, nil, unreadablef("%s receives a program and a module", name)
-		}
-		return nil, nil, w.checkPythonModule(name, *module, args[operand:], dir)
 	}
 	if len(codes) > 1 {
 		return nil, nil, unreadablef("%s receives more than one program", name)
@@ -547,16 +535,16 @@ func interpreterLanguage(name string) string {
 	return ""
 }
 
-// clusterInterp reads interpreter options. It returns the program words it found, the index of the first operand, for a module option (python -m) the module word (the operand index then points at the module's own arguments), and whether an option keeps the interpreter reading commands from standard input (-i).
+// clusterInterp reads interpreter options. It returns the program words it found, the index of the first operand, and whether an option keeps the interpreter reading commands from standard input (-i). An option it does not model (python -m, which puts the working directory first on the module search path) is unreadable.
 // Node's --eval and --print take the program as the next word or after an =.
-func clusterInterp(name string, args []Word, spec interpSpec) ([]Word, int, *Word, bool, error) {
+func clusterInterp(name string, args []Word, spec interpSpec) ([]Word, int, bool, error) {
 	var codes []Word
 	repl := false
 	i := 0
 	for i < len(args) {
 		v, err := knownValue(args[i], name+" option")
 		if err != nil {
-			return nil, 0, nil, false, err
+			return nil, 0, false, err
 		}
 		if v == "--" {
 			i++
@@ -564,7 +552,7 @@ func clusterInterp(name string, args []Word, spec interpSpec) ([]Word, int, *Wor
 		}
 		if v == "--eval" || v == "--print" {
 			if i+1 >= len(args) {
-				return nil, 0, nil, false, unreadablef("%s %s without a program", name, v)
+				return nil, 0, false, unreadablef("%s %s without a program", name, v)
 			}
 			codes = append(codes, args[i+1])
 			i += 2
@@ -580,7 +568,7 @@ func clusterInterp(name string, args []Word, spec interpSpec) ([]Word, int, *Wor
 				i++
 				continue
 			}
-			return nil, 0, nil, false, unreadablef("%s option %s is not modelled", name, v)
+			return nil, 0, false, unreadablef("%s option %s is not modelled", name, v)
 		}
 		if v == "-" || len(v) < 2 || v[0] != '-' {
 			break
@@ -592,34 +580,22 @@ func clusterInterp(name string, args []Word, spec interpSpec) ([]Word, int, *Wor
 			switch {
 			case strings.IndexByte(spec.code, c) >= 0:
 				if !last && !spec.attach {
-					return nil, 0, nil, false, unreadablef("%s option -%c must stand alone", name, c)
+					return nil, 0, false, unreadablef("%s option -%c must stand alone", name, c)
 				}
 				if !last {
 					codes = append(codes, Word{Known: true, Value: v[k+1:]})
 				} else {
 					if i >= len(args) {
-						return nil, 0, nil, false, unreadablef("%s -%c without a program", name, c)
+						return nil, 0, false, unreadablef("%s -%c without a program", name, c)
 					}
 					codes = append(codes, args[i])
 					i++
 				}
 				k = len(v)
-			case strings.IndexByte(spec.module, c) >= 0:
-				var mod Word
-				if !last {
-					mod = Word{Known: true, Value: v[k+1:]}
-				} else {
-					if i >= len(args) {
-						return nil, 0, nil, false, unreadablef("%s -%c without a module", name, c)
-					}
-					mod = args[i]
-					i++
-				}
-				return codes, i, &mod, repl, nil
 			case strings.IndexByte(spec.consume, c) >= 0:
 				if last {
 					if i >= len(args) {
-						return nil, 0, nil, false, unreadablef("%s -%c without a value", name, c)
+						return nil, 0, false, unreadablef("%s -%c without a value", name, c)
 					}
 					i++
 				}
@@ -629,11 +605,11 @@ func clusterInterp(name string, args []Word, spec interpSpec) ([]Word, int, *Wor
 					repl = true
 				}
 			default:
-				return nil, 0, nil, false, unreadablef("%s option -%c is not modelled", name, c)
+				return nil, 0, false, unreadablef("%s option -%c is not modelled", name, c)
 			}
 		}
 	}
-	return codes, i, nil, repl, nil
+	return codes, i, repl, nil
 }
 
 // fdAliasPath reports a path that names a file descriptor of this process, so that reading it reads what the shell gave
@@ -784,105 +760,4 @@ func isDigits(s string) bool {
 		}
 	}
 	return true
-}
-
-// pythonModuleFlags are the options of python -m json.tool that take no value.
-var pythonModuleFlags = []string{"--sort-keys", "--no-ensure-ascii", "--tab", "--compact", "--no-indent", "--json-lines", "-h", "--help"}
-
-// checkPythonModule reads python -m MODULE. The module json.tool reads JSON from standard input and runs no program, so the
-// issue's control (printf x | python3 -m json.tool) is read: the module and its options are all the text shows. Every other
-// module may run what it reads (pdb, code, runpy, http.server, a module the working directory holds), and so may an operand of
-// json.tool (it names a file the module writes); they are unreadable. The options are a closed list: a flag, or --indent with an
-// integer. The module is the standard library's only when the working directory, the first entry of the module search path of
-// python -m, holds no python module (see pythonJSONShadow): a text that does not show the directory, or shows a module there
-// or writes one, runs code the reader cannot read.
-func (w *walker) checkPythonModule(name string, module Word, rest []Word, dir Dir) error {
-	mod, err := knownValue(module, name+" -m module")
-	if err != nil {
-		return err
-	}
-	if mod != "json.tool" {
-		return unreadablef("%s -m %s runs a module the reader cannot read", name, mod)
-	}
-	if err := w.pythonJSONShadow(name, dir); err != nil {
-		return err
-	}
-	for i := 0; i < len(rest); i++ {
-		v, err := knownValue(rest[i], name+" -m json.tool option")
-		if err != nil {
-			return err
-		}
-		switch {
-		case slices.Contains(pythonModuleFlags, v):
-		case v == "--indent":
-			if i+1 >= len(rest) || !rest[i+1].Known || !allDigits(rest[i+1].Value) {
-				return unreadablef("%s -m json.tool --indent without an integer", name)
-			}
-			i++
-		case strings.HasPrefix(v, "--indent=") && allDigits(strings.TrimPrefix(v, "--indent=")):
-		default:
-			return unreadablef("%s -m json.tool argument %q is outside the options the reader models", name, v)
-		}
-	}
-	return nil
-}
-
-func allDigits(s string) bool {
-	if s == "" || len(s) > 3 {
-		return false
-	}
-	for _, c := range s {
-		if c < '0' || c > '9' {
-			return false
-		}
-	}
-	return true
-}
-
-// pythonJSONShadow proves that python -m json.tool runs the standard library. The working directory heads the module search
-// path of python -m, and json.tool imports through it json and, after it, many more standard modules (argparse, re, shutil,
-// inspect, locale, ...; the list changes from one python to the next). So the directory must be known, hold no python module
-// at all (a .py, .pyc, .pyw, .pyd or .so file, or a directory with an __init__), and the text must write none there
-// (checkJSONToolWrites, once the whole text is read). A directory the reader cannot list holds nothing it can prove; one that
-// does not exist holds no module.
-func (w *walker) pythonJSONShadow(name string, dir Dir) error {
-	if dir.Unset {
-		return nil // a reading with no directory: the readings that have one make this judgment
-	}
-	if !dir.Known || dir.Path == "" {
-		return unreadablef("%s -m json.tool searches the working directory first and the reader does not know it", name)
-	}
-	// The python record is the next one the walk appends; the writes of the whole text are judged when it is read.
-	w.jsonTools = append(w.jsonTools, jsonToolUse{name: name, dir: dir, at: len(w.out)})
-	entries, err := os.ReadDir(dir.Path)
-	switch {
-	case err == nil:
-	case errors.Is(err, fs.ErrNotExist):
-		return nil
-	default:
-		return unreadablef("%s -m json.tool: the working directory %s cannot be listed: %v", name, dir.Path, err)
-	}
-	for _, e := range entries {
-		n := e.Name()
-		if pythonModuleFile(n) {
-			return unreadablef("%s -m json.tool imports from the working directory first, and it holds the python module %s", name, n)
-		}
-		if !e.IsDir() && e.Type()&fs.ModeSymlink == 0 {
-			continue
-		}
-		sub, err := os.ReadDir(filepath.Join(dir.Path, n))
-		switch {
-		case err == nil:
-		case errors.Is(err, fs.ErrNotExist), errors.Is(err, syscall.ENOTDIR):
-			continue
-		default:
-			return unreadablef("%s -m json.tool: the directory %s of the working directory cannot be listed: %v", name, n, err)
-		}
-		for _, f := range sub {
-			if strings.HasPrefix(f.Name(), "__init__.") {
-				return unreadablef("%s -m json.tool imports from the working directory first, and it holds the python package %s", name, n)
-			}
-		}
-	}
-	return nil
 }

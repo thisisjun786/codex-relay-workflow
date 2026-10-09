@@ -69,7 +69,7 @@ type Dir struct {
 	Path  string
 	Known bool
 	// Unset is a reading made with no directory at all (AnalyzeNoDir): the directory-dependent judgments that need a directory
-	// (a relative stdin alias, the module search path of python -m) are left to the readings that are given one. A directory
+	// (a relative stdin alias) are left to the readings that are given one. A directory
 	// that becomes unknown inside the text (cd "$X") is not Unset: it is unknown and those judgments refuse.
 	Unset bool
 }
@@ -256,8 +256,6 @@ type walker struct {
 	created      map[string]bool
 	createdTrees map[string]bool // directories a copy fills: any file below one is created by the text
 	createdUpTo  int
-	// jsonTools are the python -m json.tool the walk read; checkJSONToolWrites judges the writes of the whole text for them.
-	jsonTools []jsonToolUse
 }
 
 func (w *walker) stmts(list []*syntax.Stmt, st *state, ctx Context) error {
