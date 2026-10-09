@@ -8,7 +8,9 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -163,5 +165,289 @@ func TestTempRootLockCRW980ConcurrentInstallsShareAMissingRoot(t *testing.T) {
 	}
 	if _, err := os.Stat(pin.ExecutablePath(tree.toolsRoot)); err != nil {
 		t.Fatalf("the pinned executable is not installed: %v", err)
+	}
+}
+
+// openFDCount is the number of descriptors this process holds.
+func openFDCount(t *testing.T) int {
+	t.Helper()
+	entries, err := os.ReadDir("/proc/self/fd")
+	if err != nil {
+		t.Skipf("no /proc/self/fd: %v", err)
+	}
+	return len(entries)
+}
+
+// CRW-1045 (1): when the path names another directory after every lock is granted, openLockedDir opens and
+// locks again exactly tempRootLockAttempts times and then answers a host failure. It holds no descriptor and no
+// lock afterwards.
+func TestTempRootLockCRW1045AttemptsAreBoundedAndLeaveNothingHeld(t *testing.T) {
+	base := t.TempDir()
+	path := filepath.Join(base, "parent")
+	if err := os.Mkdir(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	attempts := 0
+	saved := tempRootAfterLock
+	t.Cleanup(func() { tempRootAfterLock = saved })
+	var locked []string
+	tempRootAfterLock = func(p string) {
+		attempts++
+		// The directory the lock was taken on is moved away and another one takes the name.
+		old := filepath.Join(base, "old", string(rune('a'+attempts)))
+		if err := os.MkdirAll(filepath.Dir(old), 0o755); err != nil {
+			t.Error(err)
+			return
+		}
+		if err := os.Rename(p, old); err != nil {
+			t.Error(err)
+			return
+		}
+		if err := os.Mkdir(p, 0o755); err != nil {
+			t.Error(err)
+		}
+		locked = append(locked, old)
+	}
+
+	before := openFDCount(t)
+	dir, held, err := openLockedDir(path)
+	if dir != nil || held {
+		t.Fatalf("openLockedDir kept a descriptor (%v) or a lock (%v) after a path that never held still", dir, held)
+	}
+	var failed *failure
+	if !errors.As(err, &failed) || failed.status != notInstalledExit || !strings.Contains(failed.detail, "changed on each of 8 attempts") {
+		t.Fatalf("the failure is %v, want a host failure naming the 8 attempts", err)
+	}
+	if attempts != tempRootLockAttempts || tempRootLockAttempts != 8 {
+		t.Fatalf("openLockedDir locked %d times, want %d (the bound is 8)", attempts, tempRootLockAttempts)
+	}
+	if after := openFDCount(t); after != before {
+		t.Errorf("the process holds %d descriptors after the failure, %d before", after, before)
+	}
+	// No lock stays on any directory that was locked: a non-blocking lock succeeds on each.
+	for _, old := range locked {
+		probe, err := os.Open(old)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := unix.Flock(int(probe.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
+			t.Errorf("%s is still locked after the failure: %v", old, err)
+		}
+		probe.Close()
+	}
+}
+
+// CRW-1045 (1) contrast: a path that changes fewer times than the bound is locked at last.
+func TestTempRootLockCRW1045ASettledPathIsLockedAfterAChange(t *testing.T) {
+	base := t.TempDir()
+	path := filepath.Join(base, "parent")
+	if err := os.Mkdir(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	changes := 0
+	saved := tempRootAfterLock
+	t.Cleanup(func() { tempRootAfterLock = saved })
+	tempRootAfterLock = func(p string) {
+		if changes >= tempRootLockAttempts-1 {
+			return
+		}
+		changes++
+		if err := os.Rename(p, filepath.Join(base, "old"+string(rune('a'+changes)))); err != nil {
+			t.Error(err)
+			return
+		}
+		if err := os.Mkdir(p, 0o755); err != nil {
+			t.Error(err)
+		}
+	}
+	dir, held, err := openLockedDir(path)
+	if err != nil || dir == nil || !held {
+		t.Fatalf("openLockedDir = %v, %v, %v after %d changes", dir, held, err, changes)
+	}
+	dir.Close()
+	if changes != tempRootLockAttempts-1 {
+		t.Fatalf("the path changed %d times, want %d", changes, tempRootLockAttempts-1)
+	}
+}
+
+// CRW-1045 (2): a filesystem whose flock answers ENOLCK, EOPNOTSUPP, ENOSYS or EINVAL runs the walk unlocked: openLockedDir
+// answers the descriptor without a lock, and a whole fetch succeeds. Any other error is a host failure.
+func TestTempRootLockCRW1045RefusedFlockInstallsUnlocked(t *testing.T) {
+	archive := syntheticArchive(t, []byte("gitleaks\n"))
+	sum := sha256.Sum256(archive)
+	pin := testPin(hex.EncodeToString(sum[:]))
+	withPin(t, pin)
+	release := newFakeRelease(t, archive)
+
+	for _, refused := range []error{unix.ENOLCK, unix.EOPNOTSUPP, unix.ENOSYS, unix.EINVAL} {
+		t.Run(refused.Error(), func(t *testing.T) {
+			calls := 0
+			saved := tempRootFlock
+			t.Cleanup(func() { tempRootFlock = saved })
+			tempRootFlock = func(int, int) error { calls++; return refused }
+
+			parent := filepath.Join(t.TempDir(), "tmp")
+			if err := os.Mkdir(parent, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			dir, held, err := openLockedDir(parent)
+			if err != nil || dir == nil || held {
+				t.Fatalf("openLockedDir = %v, %v, %v, want a descriptor with no lock and no error", dir, held, err)
+			}
+			dir.Close()
+
+			tempRoot := filepath.Join(parent, "a", "b")
+			body, err := fetch(context.Background(), pin, &Seams{URLBase: release.server.URL}, tempRoot)
+			if err != nil || string(body) != "gitleaks\n" {
+				t.Fatalf("fetch under a filesystem that refuses flock: %q, %v", body, err)
+			}
+			if calls < 2 {
+				t.Errorf("flock was asked %d times, the refusal was never reached by the fetch", calls)
+			}
+			if _, err := os.Lstat(filepath.Join(parent, "a")); !errors.Is(err, fs.ErrNotExist) {
+				t.Errorf("the temp root this call made survived its cleanup: %v", err)
+			}
+		})
+	}
+
+	t.Run("another error is a host failure", func(t *testing.T) {
+		saved := tempRootFlock
+		t.Cleanup(func() { tempRootFlock = saved })
+		tempRootFlock = func(int, int) error { return unix.EIO }
+		parent := filepath.Join(t.TempDir(), "tmp")
+		if err := os.Mkdir(parent, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if dir, _, err := openLockedDir(parent); err == nil || dir != nil {
+			t.Fatalf("openLockedDir answered %v, %v for an EIO lock", dir, err)
+		}
+		tempRoot := filepath.Join(parent, "a", "b")
+		_, err := fetch(context.Background(), pin, &Seams{URLBase: release.server.URL}, tempRoot)
+		var failed *failure
+		if !errors.As(err, &failed) || failed.status != notInstalledExit {
+			t.Fatalf("fetch with an EIO lock = %v, want a host failure", err)
+		}
+		if _, err := os.Lstat(filepath.Join(parent, "a")); !errors.Is(err, fs.ErrNotExist) {
+			t.Errorf("the failed fetch left its temp root: %v", err)
+		}
+	})
+}
+
+// CRW-1045 (3): two installs on one missing temp root are ordered by the lock on the directory that holds it.
+// The first is held inside its locked mkdir. The flock seam then observes the second install asking for the
+// contested lock while the first holds it, and that the call is still blocked; only then is the first let go
+// and the second must reach its mkdir afterwards. An install that never asks for the lock is a failure of the
+// observation itself, not a pass by the absence of an event, so the result does not depend on how fast the
+// second goroutine is scheduled.
+func TestTempRootLockCRW1045ConcurrentInstallsAreOrderedByTheLock(t *testing.T) {
+	archive := syntheticArchive(t, []byte("gitleaks\n"))
+	sum := sha256.Sum256(archive)
+	pin := testPin(hex.EncodeToString(sum[:]))
+	withPin(t, pin)
+	release := newFakeRelease(t, archive)
+	parent := filepath.Join(t.TempDir(), "tmp")
+	if err := os.Mkdir(parent, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	tempRoot := filepath.Join(parent, "crw")
+
+	// An install whose temp root was removed under it tries its mkdir again, so a hook may run twice.
+	firstInside, firstGo, secondInside := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	secondAsked := make(chan struct{})
+	var firstOnce, secondOnce, askedOnce sync.Once
+	// held is true from the moment the first install is parked inside its mkdir until the test releases it,
+	// so a flock request made in that window is the second install's: the first makes none while parked.
+	var held atomic.Bool
+	var blocked atomic.Int32
+	saved := tempRootFlock
+	t.Cleanup(func() { tempRootFlock = saved })
+	tempRootFlock = func(fd, how int) error {
+		if !held.Load() {
+			return unix.Flock(fd, how)
+		}
+		askedOnce.Do(func() { close(secondAsked) })
+		blocked.Add(1)
+		defer blocked.Add(-1)
+		return unix.Flock(fd, how)
+	}
+	first := &Seams{URLBase: release.server.URL, MkdirTemp: func(dir, pattern string) (string, error) {
+		firstOnce.Do(func() {
+			held.Store(true)
+			close(firstInside)
+			<-firstGo
+		})
+		return os.MkdirTemp(dir, pattern)
+	}}
+	second := &Seams{URLBase: release.server.URL, MkdirTemp: func(dir, pattern string) (string, error) {
+		secondOnce.Do(func() { close(secondInside) })
+		return os.MkdirTemp(dir, pattern)
+	}}
+	type result struct {
+		body []byte
+		err  error
+	}
+	results := make(chan result, 2)
+	go func() {
+		body, err := fetch(context.Background(), pin, first, tempRoot)
+		results <- result{body, err}
+	}()
+	select {
+	case <-firstInside:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the first install never reached its locked mkdir")
+	}
+	go func() {
+		body, err := fetch(context.Background(), pin, second, tempRoot)
+		results <- result{body, err}
+	}()
+	select {
+	case <-secondAsked:
+	case <-secondInside:
+		held.Store(false)
+		close(firstGo)
+		t.Fatal("the second install reached its mkdir without asking for the lock on the directory that holds the temp root")
+	case <-time.After(10 * time.Second):
+		held.Store(false)
+		close(firstGo)
+		t.Fatal("the second install never asked for the lock on the directory that holds the temp root")
+	}
+	// The second has asked for the contested lock; the kernel keeps that call blocked while the first holds it.
+	select {
+	case <-secondInside:
+		held.Store(false)
+		close(firstGo)
+		t.Fatal("the second install reached its mkdir while the first held the lock on the directory that holds the temp root")
+	case <-time.After(200 * time.Millisecond):
+	}
+	if blocked.Load() != 1 {
+		held.Store(false)
+		close(firstGo)
+		t.Fatalf("%d lock requests are waiting while the first install holds the lock, want the second install's one", blocked.Load())
+	}
+	held.Store(false)
+	close(firstGo)
+	for range 2 {
+		select {
+		case r := <-results:
+			if r.err != nil || string(r.body) != "gitleaks\n" {
+				t.Fatalf("an install failed: %q, %v", r.body, r.err)
+			}
+		case <-time.After(30 * time.Second):
+			t.Fatal("an install did not finish")
+		}
+	}
+	select {
+	case <-secondInside:
+	default:
+		t.Fatal("the second install never made its directory")
+	}
+	if entries, err := os.ReadDir(parent); err == nil {
+		for _, entry := range entries {
+			if entry.Name() == "crw" {
+				if left, _ := os.ReadDir(tempRoot); len(left) != 0 {
+					t.Errorf("a download directory survived under the temp root: %v", left)
+				}
+			}
+		}
 	}
 }

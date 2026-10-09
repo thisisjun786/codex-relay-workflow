@@ -420,7 +420,9 @@ func (h *hl) tickWith(policy tickPolicy, adapter Adapter, checks *TurnChecks) ti
 	mustDo(h.t, ReconcilePass(h.ctx, h.rc, adapter, policy.maxReconciles, now, &rr))
 	r.reconciled, r.skipped = rr.Reconciled, rr.Skipped
 	bind()
-	r.notes = append(r.notes, ConfirmKeptAcks(h.ctx, h.ack, h.rc, adapter, now)...)
+	kept, err := ConfirmKeptAcks(h.ctx, h.ack, h.rc, adapter, now)
+	mustDo(h.t, err)
+	r.notes = append(r.notes, kept...)
 	results, err := h.ack.VerifyPendingAcks(h.ctx, adapter, 8, &now)
 	mustDo(h.t, err)
 	for _, one := range results {
@@ -430,7 +432,7 @@ func (h *hl) tickWith(policy tickPolicy, adapter Adapter, checks *TurnChecks) ti
 	}
 	checks.Budget = policy.maxTurnChecks
 	var tc TurnCheckReport
-	checks.Pass(h.ctx, adapter, now, &tc)
+	mustDo(h.t, checks.Pass(h.ctx, adapter, now, &tc))
 	r.turnsLost, r.turnsUndecided = tc.TurnsLost, tc.TurnsUndecided
 	sends := policy.maxSendsTick
 	if sends == 0 {

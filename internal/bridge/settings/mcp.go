@@ -37,35 +37,44 @@ func (m *MCPExpectation) Overrides() map[string]any {
 	return out
 }
 
-// Observe reduces a mcpServerStatus/list answer to the shape of the expectation: the expected-off
-// servers that report "disabled", the kept servers that report anything else, and the plugins that
-// are expected off and no longer listed. ok is false when the answer cannot decide that: data that is
-// no list, a further page, a row that is no object or lacks a name or a pluginId, or an expected
-// server without a status. An unreadable answer is never a clean one.
-func (m *MCPExpectation) Observe(answer map[string]any) (map[string]any, bool) {
+// ServerStatus is the structure check every reader of a mcpServerStatus/list answer shares: the host's
+// runtimeStatus per server name and the plugin ids that are still listed. ok is false when the answer
+// cannot decide that: data that is no list, a further page, a row that is no object or lacks a name or a
+// pluginId, or an expected server without a status. An unreadable answer is never a clean one.
+func ServerStatus(answer map[string]any, expected []string) (status map[string]string, plugins map[string]bool, ok bool) {
 	rows, isList := answer["data"].([]any)
 	if cursor, paged := answer["nextCursor"]; !isList || (paged && cursor != nil && cursor != "") {
-		return nil, false
+		return nil, nil, false
 	}
-	expected := append(slices.Clone(m.Disabled), m.Enabled...)
-	status, plugins := map[string]string{}, map[string]bool{}
+	status, plugins = map[string]string{}, map[string]bool{}
 	for _, item := range rows {
 		row, isObject := item.(map[string]any)
 		name, named := row["name"].(string)
 		pluginID, hasPlugin := row["pluginId"]
 		if !isObject || !named || !hasPlugin {
-			return nil, false
+			return nil, nil, false
 		}
 		if id, isText := pluginID.(string); isText {
 			plugins[id] = true
 		} else if pluginID != nil {
-			return nil, false
+			return nil, nil, false
 		}
 		state, hasState := row["runtimeStatus"].(string)
 		if slices.Contains(expected, name) && (!hasState || state == "") {
-			return nil, false
+			return nil, nil, false
 		}
 		status[name] = state
+	}
+	return status, plugins, true
+}
+
+// Observe reduces a mcpServerStatus/list answer to the shape of the expectation: the expected-off
+// servers that report "disabled", the kept servers that report anything else, and the plugins that
+// are expected off and no longer listed. ok is false when ServerStatus cannot read the answer.
+func (m *MCPExpectation) Observe(answer map[string]any) (map[string]any, bool) {
+	status, plugins, ok := ServerStatus(answer, append(slices.Clone(m.Disabled), m.Enabled...))
+	if !ok {
+		return nil, false
 	}
 	observed := map[string]any{"disabled": []any{}, "enabled": []any{}, "pluginsAbsent": []any{}}
 	for key, list := range map[string][]string{"disabled": m.Disabled, "enabled": m.Enabled, "pluginsAbsent": m.PluginsOff} {

@@ -90,3 +90,66 @@ func TestLockVanishedOtherPathRefused(t *testing.T) {
 		})
 	}
 }
+
+// TestLockVanishedLiveLockUnderTheDeletedNameRefused is CRW-975 (CRW-976): a live lock moved to a sibling
+// literally named "<lock> (deleted)" has the descriptor path of a released lock, but it was not released.
+// It still has its directory entry (nlink > 0), so it is an error and the second writer does not enter.
+func TestLockVanishedLiveLockUnderTheDeletedNameRefused(t *testing.T) {
+	cwd, dir := readWorkspace(t)
+	lock := filepath.Join(dir, GoalplanLockDir)
+	if err := os.Mkdir(lock, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	spoof := lock + " (deleted)"
+	goalplanLockVanishedAfterHeldOpen = func() {
+		if err := os.Rename(lock, spoof); err != nil {
+			t.Errorf("rename held lock: %v", err)
+		}
+	}
+	defer func() { goalplanLockVanishedAfterHeldOpen = nil }()
+	ran := false
+	got, err := WithGoalplanWriteLock(cwd, "demo", func(*Goalplan) (int, error) { ran = true; return 0, nil },
+		&GoalplanWriteLockOptions{RetryDelaysMs: []int{0, 0, 0, 0}, Sleep: func(int) {}})
+	if ran {
+		t.Fatalf("a second writer entered the plan while the live lock sat under the deleted name: %+v", got)
+	}
+	if err == nil || !strings.Contains(err.Error(), "goalplan descriptor path") {
+		t.Fatalf("err = %v, want the descriptor path error", err)
+	}
+	if _, statErr := os.Stat(spoof); statErr != nil {
+		t.Fatalf("the live lock was disturbed: %v", statErr)
+	}
+}
+
+// TestLockVanishedRemovedAndReplacedRetries is the contrast: the lock really removed, and another writer
+// has already taken the name again (a different inode at the expected path), is a released lock that is
+// retried, as it was.
+func TestLockVanishedRemovedAndReplacedRetries(t *testing.T) {
+	cwd, dir := readWorkspace(t)
+	lock := filepath.Join(dir, GoalplanLockDir)
+	if err := os.Mkdir(lock, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	var opens int
+	goalplanLockVanishedAfterHeldOpen = func() {
+		opens++
+		if opens == 1 {
+			if err := os.Remove(lock); err != nil {
+				t.Errorf("remove held lock: %v", err)
+			}
+			if err := os.Mkdir(lock, 0o700); err != nil {
+				t.Errorf("replace held lock: %v", err)
+			}
+		}
+		if opens == 2 {
+			_ = os.Remove(lock)
+		}
+	}
+	defer func() { goalplanLockVanishedAfterHeldOpen = nil }()
+	ran := false
+	got, err := WithGoalplanWriteLock(cwd, "demo", func(*Goalplan) (int, error) { ran = true; return 7, nil },
+		&GoalplanWriteLockOptions{RetryDelaysMs: []int{0, 0, 0, 0}, Sleep: func(int) {}})
+	if err != nil || got.Kind != "ok" || !ran {
+		t.Fatalf("a released lock that was replaced was not retried: %+v ran=%v err=%v", got, ran, err)
+	}
+}

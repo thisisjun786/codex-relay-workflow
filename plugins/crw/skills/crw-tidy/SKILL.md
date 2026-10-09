@@ -19,7 +19,7 @@ Fix the rule source in the same pass. A rule is already agreed when Integrations
 
 ## Judge the surfaces
 
-Five surfaces are in scope: the `저장소` repository label, the explicit repository address in the body, the required body sections and linked documents, the project an implementation issue belongs to, and an approved decision the record has not yet reflected. [Surfaces](references/surfaces.md) holds each one's applicable target, its named exceptions, and the condition that makes a gap clear enough to supplement.
+Six surfaces are in scope: the `저장소` repository label, the explicit repository address in the body, the required body sections and linked documents, the project an implementation issue belongs to, an approved decision the record has not yet reflected, and the release readiness of an unreleased implementation issue. [Surfaces](references/surfaces.md) holds each one's applicable target, its named exceptions, and the condition that makes a gap clear enough to supplement.
 
 Give every judged item one disposition:
 

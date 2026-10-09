@@ -370,9 +370,11 @@ func TestSubagentStopOmittedFieldsAndObserverIsolation(t *testing.T) {
 		t.Fatal(code)
 	}
 	subagentStopBlock(t, out.String(), 1)
+	// CRW-564 wired the observer's own row. The two stay separate registrations: the gate's leg answered above without touching the
+	// observer's state, and the observer leaves executor and worker exits to the gate (reviewobserver_test.go, TestReviewObserverRoles).
 	for _, leg := range harness.Legs() {
-		if leg.ID == "subagent-stop-observing-review" && leg.Handle != nil {
-			t.Fatal("observer was activated")
+		if leg.ID == "subagent-stop-observing-review" && leg.Handle == nil {
+			t.Fatal("observer row has no handler")
 		}
 	}
 }
