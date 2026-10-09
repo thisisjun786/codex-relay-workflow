@@ -219,7 +219,7 @@ func open(ctx context.Context, path, socketPath string, options OpenOptions) (_ 
 	if err = db.PingContext(ctx); err != nil {
 		return nil, fmt.Errorf("connect database: %w", err)
 	}
-	if err = live.attach(); err != nil {
+	if err = live.attach(ctx, db); err != nil {
 		return nil, err
 	}
 	var gate *os.File
