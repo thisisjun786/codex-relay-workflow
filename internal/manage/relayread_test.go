@@ -939,3 +939,82 @@ func TestRelayReadHidesSettingsAndDeliveryBodies(t *testing.T) {
 		}
 	}
 }
+
+// ---------------------------------------------------------------- CRW-1042
+
+// relayReadWorkReport writes one submission of a work report for a relationship's revision: the
+// record the relay reads a pull request from. pr is the pull request number, or nil when the
+// submission names none.
+func (f *dagReviewFixture) relayReadWorkReport(eventID string, submission int, rid string, generation int, revisionHash, repository string, pr any) {
+	f.exec("INSERT INTO work_reports (event_id, submission_no, relationship_id, execution_generation, revision_hash, repository, pr_number, pr_url, head_sha, cxc_status, cxc_reason, contract_version, summary, next_action, recorded_at)"+
+		" VALUES (?,?,?,?,?,?,?,?,?,'DONE','proved','v1','done','merge',?)",
+		eventID, submission, rid, generation, revisionHash, repository, pr, dagReviewNull(""), "head-1", dagReviewAt(0))
+}
+
+// CRW-1042: a relationship carries the pull request its current head names, as the relay's own
+// record of that head gives it, and null when the relay holds none.
+func TestRelayReadRelationshipCarriesItsPullRequest(t *testing.T) {
+	f := relayReadEverything(t)
+	f.relayReadWorkReport("evt-1", 1, "rel-1", 1, "hash-1", "owner/repo", 7)
+	f.relayReadRelationship("rel-2", "CRW-2", "active", "parent-2", "child-2", 1)
+	f.close()
+
+	projection, err := RelayReadState(context.Background(), f.dir, RelayReadOptions{})
+	if err != nil {
+		t.Fatalf("RelayReadState: %v", err)
+	}
+	with := relayReadProjectedField(t, relayReadRelationshipByID(t, projection, "rel-1"), "pullRequest")
+	pr, ok := with.(map[string]any)
+	if !ok {
+		t.Fatalf("rel-1 pullRequest = %#v, want the pull request owner/repo#7", with)
+	}
+	if pr["repository"] != "owner/repo" || pr["number"] != float64(7) {
+		t.Fatalf("rel-1 pullRequest = %#v, want repository owner/repo and number 7", pr)
+	}
+	if without := relayReadProjectedField(t, relayReadRelationshipByID(t, projection, "rel-2"), "pullRequest"); without != nil {
+		t.Fatalf("rel-2 has no head and no report, pullRequest = %#v, want null", without)
+	}
+	if n := len(projection.Failures); n != 0 {
+		t.Fatalf("the read recorded failures: %+v", projection.Failures)
+	}
+}
+
+// CRW-1042: the newest submission of the head decides the link: a later submission that names no
+// pull request withdraws the link an earlier one gave.
+func TestRelayReadNewestReportWithoutPullRequestIsNoLink(t *testing.T) {
+	f := relayReadEverything(t)
+	f.relayReadWorkReport("evt-1", 1, "rel-1", 1, "hash-1", "owner/repo", 7)
+	f.relayReadWorkReport("evt-1", 2, "rel-1", 1, "hash-1", "owner/repo", nil)
+	f.close()
+
+	projection, err := RelayReadState(context.Background(), f.dir, RelayReadOptions{})
+	if err != nil {
+		t.Fatalf("RelayReadState: %v", err)
+	}
+	if got := relayReadProjectedField(t, relayReadRelationshipByID(t, projection, "rel-1"), "pullRequest"); got != nil {
+		t.Fatalf("pullRequest = %#v, want null: the newest report names no pull request", got)
+	}
+}
+
+// CRW-1042: an active acceptance that names the relationship decides its pull request before the
+// work report of the head does, the way the relay reads a node's link: the forge row's repository and
+// number win over the report's.
+func TestRelayReadAcceptedRelationshipNamesTheAcceptedPullRequest(t *testing.T) {
+	f := relayReadEverything(t)
+	f.relayReadWorkReport("evt-1", 1, "rel-1", 1, "hash-1", "owner/repo", 7)
+	f.acceptance("plan-1", "A", "acc-1", "rel-1", dagReviewAt(0))
+	f.exec("INSERT INTO dag_acceptance_forge (acceptance_id, forge_repository, pr_number) VALUES (?,?,?)", "acc-1", "owner/forge", 9)
+	f.close()
+
+	projection, err := RelayReadState(context.Background(), f.dir, RelayReadOptions{})
+	if err != nil {
+		t.Fatalf("RelayReadState: %v", err)
+	}
+	pr, ok := relayReadProjectedField(t, relayReadRelationshipByID(t, projection, "rel-1"), "pullRequest").(map[string]any)
+	if !ok {
+		t.Fatalf("rel-1 has an accepted pull request, pullRequest = %#v", pr)
+	}
+	if pr["repository"] != "owner/forge" || pr["number"] != float64(9) {
+		t.Fatalf("rel-1 pullRequest = %#v, want the forge row owner/forge#9", pr)
+	}
+}
