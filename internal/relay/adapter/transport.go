@@ -364,17 +364,25 @@ func (a *Adapter) guardedSend(ctx context.Context, requestID, thread, message st
 			}
 		}
 		resumed, err := a.callValue(ctx, "thread/resume", params)
+		// A resume the transport certainly withheld never reached the host, so the stored limit is
+		// withdrawn; a resume that may have gone out (its answer lost) keeps it. The transport's own
+		// error decides this before a cancellation of the caller replaces it, as the caller's
+		// cancellation changes what the send returns, not what the transport sent.
+		if limit != nil && err != nil && notSent(err) {
+			delete(receipt, "settings")
+		}
 		if err = awaited(err); err != nil {
-			// A resume the transport certainly withheld never reached the host, so the stored limit is
-			// withdrawn; a resume that may have gone out (its answer lost) keeps it.
-			if limit != nil && notSent(err) {
-				delete(receipt, "settings")
-			}
 			return err
 		}
 		receipt["resumed"] = resumed
 		if settings.SettingsFreeResume {
 			receipt["settingsFreeResume"] = true
+		}
+		// What the host reported is recorded as soon as it is read, so a read-back of the servers that
+		// fails after it keeps the settings the resume reported; the servers are added when it succeeds.
+		if limit != nil {
+			observed, _ := plain(resumed).(map[string]any)
+			receipt["settings"] = bridgesettings.AutoCompactReceipt(*limit, observed)
 		}
 		response := resumed
 		if expectedMCP != nil {
@@ -386,7 +394,7 @@ func (a *Adapter) guardedSend(ctx context.Context, requestID, thread, message st
 		}
 		// The host never reports this value back, so the receipt is the only place the send can say
 		// what it carried: recorded as requested and unobservable, never as verified, in the same
-		// notation the bridge uses. The actual snapshot is taken after the servers were read back, so it
+		// notation the bridge uses. The actual snapshot is taken again after the servers were read back, so it
 		// carries mcpServers too. A resume that carried no limit records no settings observation.
 		if limit != nil {
 			observed, _ := plain(response).(map[string]any)

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
@@ -24,8 +25,10 @@ func idleHost(t *testing.T) *fakehost.Server {
 
 func assertNoLimitRecorded(t *testing.T, a *Adapter, request string, receipt map[string]any) {
 	t.Helper()
-	if value, present := autoCompactSentValue(t, receipt); present {
-		t.Fatalf("no resume left, but the returned receipt records the limit %d as requested: %v", value, receipt)
+	if receipt != nil {
+		if value, present := autoCompactSentValue(t, receipt); present {
+			t.Fatalf("no resume left, but the returned receipt records the limit %d as requested: %v", value, receipt)
+		}
 	}
 	stored, err := a.GetOperation(context.Background(), request)
 	if err != nil {
@@ -141,4 +144,45 @@ func TestAFailedPreResumeStoreWhoseRefusalCannotBeStoredReturnsTheError(t *testi
 	if _, resumed := rpc.params["thread/resume"]; resumed {
 		t.Fatalf("a resume went out although its receipt could not be stored: %v", rpc.calls)
 	}
+}
+
+// CRW-1000 (post-evaluation d1): the transport's proof that the resume was withheld decides the withdrawal,
+// whatever else happens to the caller. A caller that is cancelled in the same moment must not turn the
+// withheld error into a bare cancellation that keeps a limit no frame carried.
+func TestACancelledSendWhoseResumeWasWithheldRecordsNoLimit(t *testing.T) {
+	host := idleHost(t)
+	client := appserver.New(host.SocketPath, appserver.DefaultBounds)
+	defer client.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	closed := false
+	l, err := ledger.OpenWithOptions(filepath.Join(t.TempDir(), "ledger.sqlite3"), ledger.Options{Encode: func(r ledger.Receipt) ([]byte, error) {
+		if _, ok := r["settings"]; ok && !closed {
+			closed = true
+			_ = client.Close()
+			cancel()
+		}
+		return encodeReceipt(r)
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := childRecord(false, "")
+	a := New(Options{RPC: client, Ledger: l, Policy: autoCompactChildPolicy(t, record)})
+	if _, err := a.Send(ctx, "send-cancelled-withheld", "thread-1", "hello", record, nil, 0); err == nil {
+		t.Fatal("the cancelled send reported success")
+	}
+	t.Cleanup(func() { _ = a.Close() })
+	// Send answers the cancelled caller at once; the send settles its receipt on its own goroutine.
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+		if stored, err := a.GetOperation(context.Background(), "send-cancelled-withheld"); err == nil {
+			if m, _ := plain(stored).(map[string]any); m["status"] == "outcome_unknown" {
+				break
+			}
+		}
+	}
+	if !closed || host.Count("thread/resume") != 0 {
+		t.Fatalf("the injection did not keep the resume from the host: closed=%t resumes=%d", closed, host.Count("thread/resume"))
+	}
+	assertNoLimitRecorded(t, a, "send-cancelled-withheld", nil)
 }
