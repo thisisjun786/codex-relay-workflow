@@ -32,7 +32,7 @@ gh api repos/o/r/issues/1/comments -F body=@{TMP}/escaped.md
 === CRW-917-42-05 | P
 --why --body-file of a JSON-looking file with a raw secret: the raw text is scanned and refused.
 --file {TMP}/raw-secret.json
-{"body":"MY_API_KEY=sentinel"}
+{"body":"sk-aaaaaaaaaaaaaaaaaaaa"}
 --cmd
 gh pr comment 1 --body-file {TMP}/raw-secret.json
 

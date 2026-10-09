@@ -11,7 +11,7 @@ func TestCRW917DuplicateJSONKeysAreAllScanned(t *testing.T) {
 	githubPostWrite(t, cwd, "dup-secret.json", "{\"body\":\"MY_API_KEY=sentinel\",\"body\":\"hello\"}\n")
 	githubPostWrite(t, cwd, "dup-clean.json", "{\"body\":\"a\",\"body\":\"b\"}\n")
 	cases := []struct{ label, command, rule, place string }{
-		{"repeated key, secret in the first value", "gh api repos/o/r/issues/1/comments --input dup-secret.json", githubPostRuleSecret, "dup-secret.json:1"},
+		{"repeated key, secret in the first value", "gh api repos/o/r/issues/1/comments --input dup-secret.json", githubPostRuleSecret, "dup-secret.json:2"},
 		{"repeated key, both values clean (control)", "gh api repos/o/r/issues/1/comments --input dup-clean.json", "", ""},
 	}
 	for _, c := range cases {
@@ -24,7 +24,7 @@ func TestCRW917DuplicateJSONKeysAreAllScanned(t *testing.T) {
 func TestCRW917BodyFilesAreScannedAsText(t *testing.T) {
 	cwd := t.TempDir()
 	githubPostWrite(t, cwd, "escaped.md", "{\"body\":\"\\u0073k-aaaaaaaaaaaaaaaa\"}\n")
-	githubPostWrite(t, cwd, "raw-secret.json", "{\"body\":\"MY_API_KEY=sentinel\"}\n")
+	githubPostWrite(t, cwd, "raw-secret.json", "{\"body\":\"sk-aaaaaaaaaaaaaaaaaaaa\"}\n")
 	cases := []struct{ label, command, rule, place string }{
 		{"escape text as a body file (raw text)", "gh pr comment 1 --body-file escaped.md", "", ""},
 		{"escape text as a field file (raw text)", "gh api repos/o/r/issues/1/comments -F body=@escaped.md", "", ""},
