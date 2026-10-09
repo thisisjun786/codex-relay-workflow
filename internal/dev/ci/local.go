@@ -9,10 +9,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -56,6 +59,20 @@ type localOptions struct {
 	output string
 	// script counts the step scripts written under the run's temporary root.
 	script int
+	// hostOS and hostArch name the platform the run judges itself on; empty is this host. Only tests set them.
+	hostOS, hostArch string
+}
+
+// platform is the operating system and architecture the run records and judges itself on.
+func (o localOptions) platform() (string, string) {
+	goos, goarch := o.hostOS, o.hostArch
+	if goos == "" {
+		goos = localHostOS()
+	}
+	if goarch == "" {
+		goarch = localHostArch()
+	}
+	return goos, goarch
 }
 
 // Local is `crw-dev ci local`: run every ci.yml job and step locally, or install the
@@ -160,6 +177,11 @@ func localVerify(opts localOptions, reusePath string, stdout io.Writer) (verific
 	} else if differs != "" {
 		return verificationRecord{}, false, fmt.Errorf("engine_differs_from_commit: the engine source (%s) differs from %s; run from a checkout of that commit", differs, shortHash(current.HeadCommit))
 	}
+	// CRW-1027 (merged into CRW-1025): the secrets step is linux x64 only, so a plan that carries it is refused
+	// on any other host before a step runs or a record is reused.
+	if err := localPlatformRefusal(plan, opts); err != nil {
+		return verificationRecord{}, false, err
+	}
 	if reusePath != "" {
 		// A record path that does not exist is a usage error, not a silent full run: the caller
 		// asked for that record.
@@ -200,6 +222,7 @@ func localVerify(opts localOptions, reusePath string, stdout io.Writer) (verific
 // versions, the dependency digests and the platform. It is computed from the verified commit, not
 // from the caller's working tree, so a dirty checkout does not change it (comment-c6).
 func localCurrentKeys(opts localOptions) (verificationRecord, error) {
+	hostOS, hostArch := opts.platform()
 	head, err := localRev(opts.Root, opts.Commit+"^{commit}")
 	if err != nil {
 		return verificationRecord{}, err
@@ -263,8 +286,8 @@ func localCurrentKeys(opts localOptions) (verificationRecord, error) {
 		HeavyGate:    localGateDigest(opts.HeavyGate),
 		GoEnv:        localIsolatedGoEnv,
 		Dependencies: dependencies,
-		OS:           localHostOS(),
-		Arch:         localHostArch(),
+		OS:           hostOS,
+		Arch:         hostArch,
 	}, nil
 }
 
@@ -894,27 +917,149 @@ const (
 // that runs it and the Makefile target that starts it (CRW-1025).
 var localEngineSources = []string{"internal/dev/ci", "cmd/crw-dev", "Makefile"}
 
-// localEngineDiffers names the engine source the caller's tree holds that the commit does not: tracked
-// files that differ from it and untracked files under the engine paths. Ignored files are not engine
-// source. An empty result means the caller runs the commit's engine.
+// localCompiledExt are the extensions of files the Go toolchain compiles or links into a package, so an
+// ignored file with one of them under the engine paths is engine source whatever git ignores.
+var localCompiledExt = []string{".go", ".s", ".S", ".c", ".h", ".cc", ".cpp", ".cxx", ".hh", ".hpp", ".hxx", ".m", ".f", ".F", ".for", ".f90", ".syso", ".swig", ".swigcxx", ".mod", ".sum", ".work"}
+
+// localEngineDiffers names the engine source the caller's tree holds that the commit does not. The working
+// tree is compared with the commit's blobs byte for byte, never through the index (assume-unchanged and
+// skip-worktree marks hide an edit from git diff, and the exclude files hide a new file from git status), so
+// every engine file the commit holds must exist with its bytes, every other file under the engine paths is a
+// difference, and an ignored file is let through only when Go does not compile it (a log, a coverage file).
+// An empty result means the caller runs the commit's engine.
 func localEngineDiffers(root, commit string) (string, error) {
-	changed, err := runGit(root, append([]string{"diff", "--name-only", commit, "--"}, localEngineSources...)...)
+	out, err := runGit(root, append([]string{"ls-tree", "-r", "-z", commit, "--"}, localEngineSources...)...)
 	if err != nil {
 		return "", err
 	}
-	untracked, err := runGit(root, append([]string{"ls-files", "--others", "--exclude-standard", "--"}, localEngineSources...)...)
+	type entry struct{ mode, oid string }
+	committed := map[string]entry{}
+	for _, record := range strings.Split(string(out), "\x00") {
+		if record == "" {
+			continue
+		}
+		meta, path, found := strings.Cut(record, "\t")
+		fields := strings.Fields(meta)
+		if !found || len(fields) != 3 {
+			return "", fmt.Errorf("git ls-tree returned an unreadable entry: %q", record)
+		}
+		if fields[1] == "blob" {
+			committed[path] = entry{mode: fields[0], oid: fields[2]}
+		}
+	}
+	// Files git reports as ignored and untracked: the ones that may stay when Go does not compile them.
+	ignoredOut, err := runGit(root, append([]string{"ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--"}, localEngineSources...)...)
 	if err != nil {
 		return "", err
 	}
-	var names []string
-	for _, out := range [][]byte{changed, untracked} {
-		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-			if line = strings.TrimSpace(line); line != "" {
-				names = append(names, line)
+	ignored := map[string]bool{}
+	for _, path := range strings.Split(string(ignoredOut), "\x00") {
+		if path != "" {
+			ignored[path] = true
+		}
+	}
+	disk := map[string]bool{}
+	for _, source := range localEngineSources {
+		err := filepath.WalkDir(filepath.Join(root, source), func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				if os.IsNotExist(err) {
+					return nil
+				}
+				return err
+			}
+			if d.IsDir() {
+				if d.Name() == ".git" {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			rel, err := filepath.Rel(root, path)
+			if err != nil {
+				return err
+			}
+			disk[filepath.ToSlash(rel)] = true
+			return nil
+		})
+		if err != nil {
+			return "", err
+		}
+	}
+	var names, hashed []string
+	for path := range disk {
+		want, inCommit := committed[path]
+		switch {
+		case strings.ContainsAny(path, "\n\r"):
+			names = append(names, strconv.Quote(path))
+		case !inCommit:
+			if !ignored[path] || localCompiledExtension(path) {
+				names = append(names, path)
+			}
+		case want.mode == "120000":
+			target, err := os.Readlink(filepath.Join(root, filepath.FromSlash(path)))
+			blob, gitErr := runGit(root, "cat-file", "blob", want.oid)
+			if err != nil || gitErr != nil || string(blob) != target {
+				names = append(names, path)
+			}
+		default:
+			info, err := os.Lstat(filepath.Join(root, filepath.FromSlash(path)))
+			if err != nil || info.Mode()&fs.ModeSymlink != 0 {
+				names = append(names, path)
+				continue
+			}
+			hashed = append(hashed, path)
+		}
+	}
+	for path := range committed {
+		if !disk[path] {
+			names = append(names, path)
+		}
+	}
+	sort.Strings(hashed)
+	if len(hashed) > 0 {
+		cmd := exec.Command("git", "hash-object", "--stdin-paths")
+		cmd.Dir = root
+		cmd.Stdin = strings.NewReader(strings.Join(hashed, "\n") + "\n")
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		got, err := cmd.Output()
+		if err != nil {
+			return "", fmt.Errorf("git hash-object: %w: %s", err, strings.TrimSpace(stderr.String()))
+		}
+		oids := strings.Fields(string(got))
+		if len(oids) != len(hashed) {
+			return "", fmt.Errorf("git hash-object returned %d ids for %d files", len(oids), len(hashed))
+		}
+		for i, path := range hashed {
+			if oids[i] != committed[path].oid {
+				names = append(names, path)
 			}
 		}
 	}
+	sort.Strings(names)
 	return strings.Join(names, ", "), nil
+}
+
+// localCompiledExtension reports whether Go compiles a file with this name's extension.
+func localCompiledExtension(path string) bool {
+	return localContains(localCompiledExt, filepath.Ext(path))
+}
+
+// localPlatformRefusal is the unsupported_platform refusal for a plan whose secrets step cannot run on the
+// host: scripts/ci/secrets.sh downloads the linux x64 Gitleaks archive and calls sha256sum. A plan without
+// that step is platform independent.
+func localPlatformRefusal(plan []localJob, opts localOptions) error {
+	goos, goarch := opts.platform()
+	if goos == "linux" && goarch == "amd64" {
+		return nil
+	}
+	for _, job := range plan {
+		for _, step := range job.steps {
+			if step.kind == localRun && step.command == localSecretsCommand {
+				return fmt.Errorf("unsupported_platform: the %s job runs %s, which fetches the linux x64 Gitleaks archive and calls sha256sum; this host is %s/%s", job.name, localSecretsCommand, goos, goarch)
+			}
+		}
+	}
+	return nil
 }
 
 // shortHash is a commit hash's first twelve characters.
