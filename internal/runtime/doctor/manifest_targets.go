@@ -74,11 +74,34 @@ func targetReadJSON(kind TargetKind, path string) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	return targetParseJSON(kind, path, b)
+}
+
+func targetParseJSON(kind TargetKind, path string, b []byte) (any, error) {
 	v, err := pyjson.Loads(source.DecodeUTF8(b), pyjson.LoadOptions{Surrogates: true, Numbers: pyjson.SpelledNumbers, Deep: true})
 	if err != nil {
 		return nil, &TargetParseError{kind, path, err}
 	}
 	return v, nil
+}
+
+// targetReadRooted reads a hook or MCP file the plugin manifest names, through a handle bound to the
+// plugin root (CRW-1015). The caller's targetEscapesRoot is a verdict on a name; reading the same name
+// again would follow a link swapped in after it, so the existence check and the read are one rooted
+// open (doctorRootedRead). escaped and missing report the two findings the caller makes; any other
+// error is the read's own.
+func targetReadRooted(kind TargetKind, root, file string) (v any, escaped, missing bool, err error) {
+	b, err := doctorRootedRead(root, targetNodeText(file))
+	switch {
+	case errors.Is(err, errDoctorRootEscape):
+		return nil, true, false, nil
+	case errors.Is(err, errDoctorRootMissing):
+		return nil, false, true, nil
+	case err != nil:
+		return nil, false, false, err
+	}
+	v, err = targetParseJSON(kind, file, b)
+	return v, false, false, err
 }
 func targetCommands(command any) []string {
 	s, ok := command.(string)
@@ -434,13 +457,17 @@ func ValidateManifestTargets(pluginRoot string) ([]TargetIssue, error) {
 			issues = append(issues, TargetIssue{TargetHook, "manifest hook file escapes plugin root: " + rel})
 			continue
 		}
-		if _, err := os.Stat(targetNodeText(file)); err != nil {
-			issues = append(issues, TargetIssue{TargetHook, "manifest hook file missing: " + rel})
-			continue
-		}
-		v, err := targetReadJSON(TargetHook, file)
+		v, escaped, missing, err := targetReadRooted(TargetHook, pluginRoot, file)
 		if err != nil {
 			return nil, err
+		}
+		if escaped {
+			issues = append(issues, TargetIssue{TargetHook, "manifest hook file escapes plugin root: " + rel})
+			continue
+		}
+		if missing {
+			issues = append(issues, TargetIssue{TargetHook, "manifest hook file missing: " + rel})
+			continue
 		}
 		v, err = targetProperty(v, "hooks")
 		if err != nil {
@@ -462,12 +489,15 @@ func ValidateManifestTargets(pluginRoot string) ([]TargetIssue, error) {
 	if filepath.IsAbs(rel) || targetEscapesRoot(pluginRoot, file) {
 		return append(issues, TargetIssue{TargetMCP, "manifest mcpServers file escapes plugin root: " + rel}), nil
 	}
-	if _, err := os.Stat(targetNodeText(file)); err != nil {
-		return append(issues, TargetIssue{TargetMCP, "manifest mcpServers file missing: " + rel}), nil
-	}
-	v, err := targetReadJSON(TargetMCP, file)
+	v, escaped, missing, err := targetReadRooted(TargetMCP, pluginRoot, file)
 	if err != nil {
 		return nil, err
+	}
+	if escaped {
+		return append(issues, TargetIssue{TargetMCP, "manifest mcpServers file escapes plugin root: " + rel}), nil
+	}
+	if missing {
+		return append(issues, TargetIssue{TargetMCP, "manifest mcpServers file missing: " + rel}), nil
 	}
 	v, err = targetProperty(v, "mcpServers")
 	if err != nil {

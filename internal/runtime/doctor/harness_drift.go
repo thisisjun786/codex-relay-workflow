@@ -131,10 +131,19 @@ func harnessDriftMCPCheck(pluginRoot string, manifest any) HarnessCheck {
 	if targetEscapesRoot(pluginRoot, path) {
 		return HarnessCheck{Name: "drift:mcp", Severity: HarnessFail, Evidence: "mcpServers -> " + text + " resolves outside the plugin root"}
 	}
-	if _, err := os.Stat(path); err != nil {
+	// The verdict above is on a name; the file is read through a handle bound to the plugin root, so
+	// a link swapped after it cannot lead the read out of the root (CRW-1015).
+	raw, err := doctorRootedRead(pluginRoot, path)
+	switch {
+	case errors.Is(err, errDoctorRootEscape):
+		return HarnessCheck{Name: "drift:mcp", Severity: HarnessFail, Evidence: "mcpServers -> " + text + " resolves outside the plugin root"}
+	case errors.Is(err, errDoctorRootMissing):
 		return HarnessCheck{Name: "drift:mcp", Severity: HarnessFail, Evidence: "mcpServers -> " + text + " but file is missing"}
 	}
-	document, err := harnessDriftReadJSON(path)
+	var document any
+	if err == nil {
+		document, err = harnessDriftParse(raw)
+	}
 	if err == nil {
 		var servers any
 		servers, err = harnessDriftMember(document, "mcpServers")
@@ -196,13 +205,14 @@ func harnessDriftNullMember(key string) error {
 // error the catch clauses report. The depth is the manifest-target reader's (Deep), not the
 // hook-trust reader's shallower cap: a document JSON.parse accepts must not read as unparseable.
 func harnessDriftReadJSON(path string) (any, error) {
-	if doctorRootedReadSeam != nil {
-		doctorRootedReadSeam(path)
-	}
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
+	return harnessDriftParse(raw)
+}
+
+func harnessDriftParse(raw []byte) (any, error) {
 	return pyjson.Loads(hookTrustEntriesUTF8(raw), pyjson.LoadOptions{Surrogates: true, Deep: true})
 }
 
